@@ -70,6 +70,8 @@ uses
   Objects.Manager,
   Io.Startup,
   Io.BlockCache,
+  Drivers.Ps2Keyboard,
+  Drivers.UsbKeyboard,
   FileSystem.Files,
   Processes.Process,
   Processes.Thread,
@@ -173,6 +175,9 @@ begin
   RemoveBootIdentityMapping;
   InitializeVirtualRanges;
   InitializeKernelHeap;
+  { The console scrolls in ordinary memory from now on. }
+  if FramebufferShadowSize > 0 then
+    StartFramebufferShadow(PLongWord(AllocateKernelMemory(FramebufferShadowSize)));
   WritePhysicalMemorySummary;
 end;
 
@@ -201,6 +206,19 @@ begin
       made a thread ready, the dispatch interrupt switches to it. }
     HaltProcessor;
   end;
+end;
+
+{ Which keyboards the keys came from (the input test checks both). }
+procedure WriteKeyboardSummary;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('input');
+  DebugWrite('keys pressed: PS/2 ');
+  DebugWriteDecimal(Ps2KeyboardKeyCount);
+  DebugWrite(', USB ');
+  DebugWriteDecimal(UsbKeyboardKeyCount);
+  DebugWriteLine('');
+  DebugEndMessage;
 end;
 
 procedure SystemInitializationPhaseOne(Context: Pointer);
@@ -258,6 +276,7 @@ begin
   begin
     { Leave the disks clean (journals empty) for the host's checks. }
     SyncAllVolumes;
+    WriteKeyboardSummary;
     { Without a system disk no program runs; that is only a failure if a
       test program was asked for. }
     if (InitialProgramExitCode = 0) or

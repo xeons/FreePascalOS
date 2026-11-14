@@ -23,6 +23,17 @@
   so it is available from the start of kernel initialization until a real
   display driver takes over. Callers are responsible for locking; the
   kernel debug output unit serializes access.
+
+  Text is UTF-8; the font (Debug.ConsoleFont.inc) has ASCII, Latin-1 and
+  a few more characters, and anything else shows as a question mark. The
+  escape sequences programs use (ESC [ ... : cursor movement and
+  positioning, erasing in a line or the screen, colours) are carried out;
+  others are swallowed.
+
+  Once the kernel heap is there, the console keeps a copy of the screen
+  in ordinary memory (StartFramebufferShadow): every pixel is written to
+  both, and scrolling moves the copy and writes the framebuffer, never
+  reading video memory, which is very slow to read.
 }
 unit Debug.FramebufferConsole;
 
@@ -66,6 +77,13 @@ procedure ConsoleClearScreen;
 function ConsoleColumnCount: LongWord;
 function ConsoleRowCount: LongWord;
 
+{ Gives the console a copy of the screen in ordinary memory (Shadow,
+  Width x Height pixels), once the kernel heap can provide one; from then
+  on scrolling moves the copy and only writes the framebuffer. }
+procedure StartFramebufferShadow(Shadow: PLongWord);
+{ The bytes of a shadow for this framebuffer; 0 without a console. }
+function FramebufferShadowSize: QWord;
+
 implementation
 
 uses
@@ -76,8 +94,12 @@ uses
 const
   TabWidth = 8;
   ConsoleMargin = 8;
+  MaximumParameters = 8;
 
 type
+  { Where the console is in decoding its input. }
+  TInputState = (InputNormal, InputEscape, InputControlSequence);
+
   TConsoleState = record
     IsAvailable: Boolean;
     Pixels: PLongWord;
@@ -85,16 +107,31 @@ type
     WidthInPixels: LongWord;
     HeightInPixels: LongWord;
     PixelFormat: LongWord;
+    { The copy of the screen, WidthInPixels pixels per line; nil before
+      StartFramebufferShadow. }
+    Shadow: PLongWord;
     Columns: LongWord;
     Rows: LongWord;
     CursorColumn: LongWord;
     CursorRow: LongWord;
     ForegroundPixel: LongWord;
     BackgroundPixel: LongWord;
+    DefaultForegroundPixel: LongWord;
+    DefaultBackgroundPixel: LongWord;
+    { UTF-8: the character being put together and how many bytes it
+      still needs. }
+    PendingCodePoint: LongWord;
+    PendingBytes: Integer;
+    { Escape sequences (ESC [ parameters final). }
+    State: TInputState;
+    Parameters: array[0..MaximumParameters - 1] of LongWord;
+    ParameterCount: Integer;
   end;
 
 var
   Console: TConsoleState;
+
+{ --- Pixels ------------------------------------------------------------------ }
 
 function EncodePixel(const Color: TColor): LongWord;
 begin
@@ -109,6 +146,20 @@ begin
   Result := Console.Pixels + QWord(PixelRow) * Console.PixelsPerScanLine;
 end;
 
+function ShadowLineAddress(PixelRow: LongWord): PLongWord;
+begin
+  Result := Console.Shadow + QWord(PixelRow) * Console.WidthInPixels;
+end;
+
+{ Writes Count pixels to a line, at Left: into the shadow (if any) and the
+  framebuffer. }
+procedure PutPixels(PixelRow, Left: LongWord; Source: PLongWord; Count: LongWord);
+begin
+  if Console.Shadow <> nil then
+    CopyMemory(ShadowLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
+  CopyMemory(ScanLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
+end;
+
 procedure FillRectangle(Left, Top, Width, Height: LongWord; Pixel: LongWord);
 var
   RowOffset: LongWord;
@@ -119,11 +170,13 @@ begin
   while RowOffset < Height do
   begin
     Line := ScanLineAddress(Top + RowOffset);
-    ColumnOffset := 0;
-    while ColumnOffset < Width do
-    begin
+    for ColumnOffset := 0 to Width - 1 do
       Line[Left + ColumnOffset] := Pixel;
-      Inc(ColumnOffset);
+    if Console.Shadow <> nil then
+    begin
+      Line := ShadowLineAddress(Top + RowOffset);
+      for ColumnOffset := 0 to Width - 1 do
+        Line[Left + ColumnOffset] := Pixel;
     end;
     Inc(RowOffset);
   end;
@@ -142,13 +195,38 @@ begin
   Console.WidthInPixels := Framebuffer.Width;
   Console.HeightInPixels := Framebuffer.Height;
   Console.PixelFormat := Framebuffer.PixelFormat;
+  Console.Shadow := nil;
   Console.Columns := (Framebuffer.Width - 2 * ConsoleMargin) div ConsoleFontWidth;
   Console.Rows := (Framebuffer.Height - 2 * ConsoleMargin) div ConsoleFontHeight;
-  Console.ForegroundPixel := EncodePixel(ColorLightGray);
-  Console.BackgroundPixel := EncodePixel(ColorDarkBlue);
+  Console.DefaultForegroundPixel := EncodePixel(ColorLightGray);
+  Console.DefaultBackgroundPixel := EncodePixel(ColorDarkBlue);
+  Console.ForegroundPixel := Console.DefaultForegroundPixel;
+  Console.BackgroundPixel := Console.DefaultBackgroundPixel;
+  Console.State := InputNormal;
+  Console.PendingBytes := 0;
   Console.IsAvailable := True;
 
   ConsoleClearScreen;
+end;
+
+function FramebufferShadowSize: QWord;
+begin
+  if not Console.IsAvailable then
+    Exit(0);
+  Result := QWord(Console.WidthInPixels) * Console.HeightInPixels * SizeOf(LongWord);
+end;
+
+procedure StartFramebufferShadow(Shadow: PLongWord);
+var
+  PixelRow: LongWord;
+begin
+  if not Console.IsAvailable or (Shadow = nil) or (Console.Shadow <> nil) then
+    Exit;
+  { The one time the framebuffer is read. }
+  for PixelRow := 0 to Console.HeightInPixels - 1 do
+    CopyMemory(Shadow + QWord(PixelRow) * Console.WidthInPixels, ScanLineAddress(PixelRow),
+      Console.WidthInPixels * SizeOf(LongWord));
+  Console.Shadow := Shadow;
 end;
 
 function FramebufferConsoleIsAvailable: Boolean;
@@ -185,7 +263,33 @@ begin
   Console.CursorRow := 0;
 end;
 
-procedure DrawGlyph(Character: Char; Column, Row: LongWord);
+{ --- Characters --------------------------------------------------------------- }
+
+{ The glyph of CodePoint (a question mark if the font lacks it). }
+function GlyphIndexOf(CodePoint: LongWord): Integer;
+var
+  Low: Integer;
+  High: Integer;
+  Middle: Integer;
+begin
+  Low := 0;
+  High := ConsoleFontGlyphCount - 1;
+  while Low <= High do
+  begin
+    Middle := (Low + High) div 2;
+    if ConsoleFontCodePoints[Middle] = CodePoint then
+      Exit(Middle);
+    if ConsoleFontCodePoints[Middle] < CodePoint then
+      Low := Middle + 1
+    else
+      High := Middle - 1;
+  end;
+  if CodePoint = Ord('?') then
+    Exit(0);
+  Result := GlyphIndexOf(Ord('?'));
+end;
+
+procedure DrawGlyph(CodePoint: LongWord; Column, Row: LongWord);
 var
   GlyphIndex: Integer;
   PixelLeft: LongWord;
@@ -193,43 +297,52 @@ var
   GlyphRow: Integer;
   GlyphColumn: Integer;
   RowBits: Byte;
-  Line: PLongWord;
+  Line: array[0..ConsoleFontWidth - 1] of LongWord;
 begin
-  GlyphIndex := Ord(Character);
-  if (GlyphIndex < ConsoleFontFirstCharacter) or (GlyphIndex > ConsoleFontLastCharacter) then
-    GlyphIndex := Ord('?');
-
+  GlyphIndex := GlyphIndexOf(CodePoint);
   PixelLeft := ConsoleMargin + Column * ConsoleFontWidth;
   PixelTop := ConsoleMargin + Row * ConsoleFontHeight;
-
   for GlyphRow := 0 to ConsoleFontHeight - 1 do
   begin
     RowBits := ConsoleFontGlyphs[GlyphIndex, GlyphRow];
-    Line := ScanLineAddress(PixelTop + LongWord(GlyphRow));
     for GlyphColumn := 0 to ConsoleFontWidth - 1 do
-    begin
       if (RowBits and ($80 shr GlyphColumn)) <> 0 then
-        Line[PixelLeft + LongWord(GlyphColumn)] := Console.ForegroundPixel
+        Line[GlyphColumn] := Console.ForegroundPixel
       else
-        Line[PixelLeft + LongWord(GlyphColumn)] := Console.BackgroundPixel;
-    end;
+        Line[GlyphColumn] := Console.BackgroundPixel;
+    PutPixels(PixelTop + LongWord(GlyphRow), PixelLeft, @Line[0], ConsoleFontWidth);
   end;
+end;
+
+procedure ClearCells(Row, FirstColumn, LastColumn: LongWord);
+begin
+  if FirstColumn > LastColumn then
+    Exit;
+  FillRectangle(ConsoleMargin + FirstColumn * ConsoleFontWidth, ConsoleMargin + Row * ConsoleFontHeight,
+    (LastColumn - FirstColumn + 1) * ConsoleFontWidth, ConsoleFontHeight, Console.BackgroundPixel);
 end;
 
 procedure ScrollUpOneRow;
 var
   TextAreaTop: LongWord;
-  BytesPerScanLine: QWord;
   ScanLinesToMove: LongWord;
+  PixelRow: LongWord;
 begin
   TextAreaTop := ConsoleMargin;
-  BytesPerScanLine := QWord(Console.PixelsPerScanLine) * SizeOf(LongWord);
   ScanLinesToMove := (Console.Rows - 1) * ConsoleFontHeight;
-
-  MoveMemory(ScanLineAddress(TextAreaTop),
-    ScanLineAddress(TextAreaTop + ConsoleFontHeight),
-    ScanLinesToMove * BytesPerScanLine);
-
+  if Console.Shadow <> nil then
+  begin
+    { Moved in ordinary memory, then written out: video memory is slow to
+      read. }
+    MoveMemory(ShadowLineAddress(TextAreaTop), ShadowLineAddress(TextAreaTop + ConsoleFontHeight),
+      QWord(ScanLinesToMove) * Console.WidthInPixels * SizeOf(LongWord));
+    for PixelRow := TextAreaTop to TextAreaTop + ScanLinesToMove - 1 do
+      CopyMemory(ScanLineAddress(PixelRow), ShadowLineAddress(PixelRow),
+        Console.WidthInPixels * SizeOf(LongWord));
+  end
+  else
+    MoveMemory(ScanLineAddress(TextAreaTop), ScanLineAddress(TextAreaTop + ConsoleFontHeight),
+      QWord(ScanLinesToMove) * Console.PixelsPerScanLine * SizeOf(LongWord));
   FillRectangle(0, TextAreaTop + ScanLinesToMove, Console.WidthInPixels,
     ConsoleFontHeight, Console.BackgroundPixel);
 end;
@@ -243,35 +356,245 @@ begin
     ScrollUpOneRow;
 end;
 
-procedure ConsoleWriteCharacter(Character: Char);
+procedure PutCodePoint(CodePoint: LongWord);
 begin
-  if not Console.IsAvailable then
-    Exit;
+  if Console.CursorColumn >= Console.Columns then
+    AdvanceToNextLine;
+  DrawGlyph(CodePoint, Console.CursorColumn, Console.CursorRow);
+  Inc(Console.CursorColumn);
+end;
 
+{ --- Escape sequences ----------------------------------------------------------- }
+
+function Parameter(Index: Integer; Default: LongWord): LongWord;
+begin
+  if (Index < Console.ParameterCount) and (Console.Parameters[Index] <> 0) then
+    Result := Console.Parameters[Index]
+  else
+    Result := Default;
+end;
+
+function PaletteColor(Index: LongWord; Bright: Boolean): LongWord;
+const
+  Normal: array[0..7] of TColor = (
+    (Red: $00; Green: $00; Blue: $00), (Red: $C0; Green: $30; Blue: $30),
+    (Red: $40; Green: $B0; Blue: $40), (Red: $C0; Green: $A0; Blue: $30),
+    (Red: $40; Green: $60; Blue: $D0), (Red: $B0; Green: $40; Blue: $B0),
+    (Red: $40; Green: $B0; Blue: $C0), (Red: $C0; Green: $C0; Blue: $C0));
+  Light: array[0..7] of TColor = (
+    (Red: $60; Green: $60; Blue: $60), (Red: $F0; Green: $50; Blue: $50),
+    (Red: $60; Green: $D0; Blue: $60), (Red: $F0; Green: $D0; Blue: $40),
+    (Red: $70; Green: $90; Blue: $F0), (Red: $E0; Green: $70; Blue: $E0),
+    (Red: $40; Green: $D0; Blue: $E0), (Red: $FF; Green: $FF; Blue: $FF));
+begin
+  if Bright then
+    Result := EncodePixel(Light[Index and 7])
+  else
+    Result := EncodePixel(Normal[Index and 7]);
+end;
+
+procedure SelectGraphicRendition;
+var
+  Index: Integer;
+  Value: LongWord;
+begin
+  if Console.ParameterCount = 0 then
+    Console.ParameterCount := 1;
+  for Index := 0 to Console.ParameterCount - 1 do
+  begin
+    Value := Console.Parameters[Index];
+    case Value of
+      0:
+        begin
+          Console.ForegroundPixel := Console.DefaultForegroundPixel;
+          Console.BackgroundPixel := Console.DefaultBackgroundPixel;
+        end;
+      30..37: Console.ForegroundPixel := PaletteColor(Value - 30, False);
+      39: Console.ForegroundPixel := Console.DefaultForegroundPixel;
+      40..47: Console.BackgroundPixel := PaletteColor(Value - 40, False);
+      49: Console.BackgroundPixel := Console.DefaultBackgroundPixel;
+      90..97: Console.ForegroundPixel := PaletteColor(Value - 90, True);
+    end;
+  end;
+end;
+
+{ Carries out ESC [ parameters Final: cursor movement and positioning,
+  erasing, colours. Anything else is ignored. }
+procedure RunControlSequence(Final: Char);
+var
+  Count: LongWord;
+begin
+  case Final of
+    'A':
+      begin
+        Count := Parameter(0, 1);
+        if Count > Console.CursorRow then
+          Count := Console.CursorRow;
+        Console.CursorRow := Console.CursorRow - Count;
+      end;
+    'B':
+      begin
+        Console.CursorRow := Console.CursorRow + Parameter(0, 1);
+        if Console.CursorRow >= Console.Rows then
+          Console.CursorRow := Console.Rows - 1;
+      end;
+    'C':
+      begin
+        Console.CursorColumn := Console.CursorColumn + Parameter(0, 1);
+        if Console.CursorColumn >= Console.Columns then
+          Console.CursorColumn := Console.Columns - 1;
+      end;
+    'D':
+      begin
+        Count := Parameter(0, 1);
+        if Count > Console.CursorColumn then
+          Count := Console.CursorColumn;
+        Console.CursorColumn := Console.CursorColumn - Count;
+      end;
+    'G':
+      Console.CursorColumn := Parameter(0, 1) - 1;
+    'H', 'f':
+      begin
+        Console.CursorRow := Parameter(0, 1) - 1;
+        Console.CursorColumn := Parameter(1, 1) - 1;
+      end;
+    'K':
+      case Parameter(0, 0) of
+        0: ClearCells(Console.CursorRow, Console.CursorColumn, Console.Columns - 1);
+        1: ClearCells(Console.CursorRow, 0, Console.CursorColumn);
+        2: ClearCells(Console.CursorRow, 0, Console.Columns - 1);
+      end;
+    'J':
+      if Parameter(0, 0) = 2 then
+        ConsoleClearScreen
+      else if Parameter(0, 0) = 0 then
+      begin
+        ClearCells(Console.CursorRow, Console.CursorColumn, Console.Columns - 1);
+        if Console.CursorRow + 1 < Console.Rows then
+          FillRectangle(0, ConsoleMargin + (Console.CursorRow + 1) * ConsoleFontHeight, Console.WidthInPixels,
+            (Console.Rows - Console.CursorRow - 1) * ConsoleFontHeight, Console.BackgroundPixel);
+      end;
+    'm':
+      SelectGraphicRendition;
+  end;
+  if Console.CursorRow >= Console.Rows then
+    Console.CursorRow := Console.Rows - 1;
+  if Console.CursorColumn >= Console.Columns then
+    Console.CursorColumn := Console.Columns - 1;
+end;
+
+{ Takes one byte of an escape sequence (after its ESC). }
+procedure TakeSequenceByte(Character: Char);
+begin
+  if Console.State = InputEscape then
+  begin
+    if Character = '[' then
+    begin
+      Console.State := InputControlSequence;
+      Console.ParameterCount := 0;
+      FillMemory(@Console.Parameters[0], SizeOf(Console.Parameters), 0);
+    end
+    else
+      Console.State := InputNormal;
+    Exit;
+  end;
+  case Character of
+    '0'..'9':
+      begin
+        if Console.ParameterCount = 0 then
+          Console.ParameterCount := 1;
+        if Console.ParameterCount <= MaximumParameters then
+          Console.Parameters[Console.ParameterCount - 1] :=
+            Console.Parameters[Console.ParameterCount - 1] * 10 + LongWord(Ord(Character) - Ord('0'));
+      end;
+    ';':
+      begin
+        if Console.ParameterCount = 0 then
+          Console.ParameterCount := 1;
+        if Console.ParameterCount < MaximumParameters then
+          Inc(Console.ParameterCount);
+      end;
+    '?', ' ', '<'..'>':
+      ; { private markers and intermediates }
+    '@'..'~':
+      begin
+        RunControlSequence(Character);
+        Console.State := InputNormal;
+      end;
+  else
+    Console.State := InputNormal;
+  end;
+end;
+
+{ --- Bytes ------------------------------------------------------------------------- }
+
+procedure TakeControlCharacter(Character: Char);
+begin
   case Character of
     #10:
       AdvanceToNextLine;
     #13:
       Console.CursorColumn := 0;
     #9:
-      begin
-        repeat
-          ConsoleWriteCharacter(' ');
-        until (Console.CursorColumn mod TabWidth) = 0;
-      end;
+      repeat
+        PutCodePoint(Ord(' '));
+      until (Console.CursorColumn mod TabWidth) = 0;
     #8:
-      begin
-        if Console.CursorColumn > 0 then
-          Dec(Console.CursorColumn);
-      end;
-  else
-    begin
-      if Console.CursorColumn >= Console.Columns then
-        AdvanceToNextLine;
-      DrawGlyph(Character, Console.CursorColumn, Console.CursorRow);
-      Inc(Console.CursorColumn);
-    end;
+      if Console.CursorColumn > 0 then
+        Dec(Console.CursorColumn);
+    #27:
+      Console.State := InputEscape;
   end;
+end;
+
+{ Decodes UTF-8: a complete character is drawn; a malformed one shows as
+  a question mark. }
+procedure TakeTextByte(Value: Byte);
+begin
+  if Console.PendingBytes > 0 then
+  begin
+    if (Value and $C0) = $80 then
+    begin
+      Console.PendingCodePoint := (Console.PendingCodePoint shl 6) or (Value and $3F);
+      Dec(Console.PendingBytes);
+      if Console.PendingBytes = 0 then
+        PutCodePoint(Console.PendingCodePoint);
+      Exit;
+    end;
+    Console.PendingBytes := 0;
+    PutCodePoint(Ord('?'));
+  end;
+  if Value < $80 then
+    PutCodePoint(Value)
+  else if (Value and $E0) = $C0 then
+  begin
+    Console.PendingCodePoint := Value and $1F;
+    Console.PendingBytes := 1;
+  end
+  else if (Value and $F0) = $E0 then
+  begin
+    Console.PendingCodePoint := Value and $0F;
+    Console.PendingBytes := 2;
+  end
+  else if (Value and $F8) = $F0 then
+  begin
+    Console.PendingCodePoint := Value and $07;
+    Console.PendingBytes := 3;
+  end
+  else
+    PutCodePoint(Ord('?'));
+end;
+
+procedure ConsoleWriteCharacter(Character: Char);
+begin
+  if not Console.IsAvailable then
+    Exit;
+  if Console.State <> InputNormal then
+    TakeSequenceByte(Character)
+  else if Character < ' ' then
+    TakeControlCharacter(Character)
+  else if Character <> #127 then
+    TakeTextByte(Byte(Character));
 end;
 
 end.
