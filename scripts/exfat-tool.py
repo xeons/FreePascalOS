@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Copies a directory tree into a freshly formatted exFAT image.
+Minimal exFAT tool for building and checking test images without root.
 
-exfatprogs can create an exFAT file system but has no way to put files on
-it without mounting, which needs root. This test helper writes the
-directory entry sets, allocation bitmap and FAT directly.
+exfatprogs can create and check an exFAT file system but cannot put files
+on it or read them back without mounting, which needs root. This helper
+works on the image directly.
 
-Small files and directories are stored contiguously ("no FAT chain").
-Files listed with --fragment are deliberately spread over every other
-free cluster and linked through the FAT, so readers must follow chains.
+    exfat-tool.py add <image> <source-directory> [--fragment NAME ...]
+        Copies a directory tree into a freshly formatted image. Small files
+        and directories are stored contiguously ("no FAT chain"); files
+        named with --fragment are spread over every other free cluster and
+        linked through the FAT, so readers must follow chains.
 
-    exfat-add-files.py <image> <source-directory> [--fragment NAME ...]
+    exfat-tool.py cat <image> <path>
+        Writes the contents of a file to standard output. Names are matched
+        ignoring ASCII letter case.
 """
 
 import argparse
@@ -219,17 +223,91 @@ def append_to_root(image, entries):
     image.write(root_offset + position, entries)
 
 
+def read_chain(image, first_cluster, length, contiguous):
+    """Returns `length` bytes of the data starting at first_cluster."""
+    data = bytearray()
+    cluster = first_cluster
+    while len(data) < length:
+        data += image.read(image.cluster_offset(cluster), image.bytes_per_cluster)
+        if contiguous:
+            cluster += 1
+        else:
+            cluster = struct.unpack("<I", image.read(image.fat_offset + cluster * 4, 4))[0]
+            if cluster >= 0xFFFFFFF7 and len(data) < length:
+                sys.exit("cluster chain ends early")
+    return bytes(data[:length])
+
+
+def directory_entries(image, data):
+    """Yields (name, attributes, first_cluster, data_length, contiguous)."""
+    position = 0
+    while position + ENTRY_SIZE <= len(data):
+        entry_type = data[position]
+        if entry_type == 0:
+            return
+        if entry_type != ENTRY_FILE:
+            position += ENTRY_SIZE
+            continue
+        secondary_count = data[position + 1]
+        attributes = struct.unpack_from("<H", data, position + 4)[0]
+        stream = position + ENTRY_SIZE
+        flags = data[stream + 1]
+        name_length = data[stream + 3]
+        first_cluster, data_length = struct.unpack_from("<IQ", data, stream + 20)
+        units = b""
+        for part in range(2, secondary_count + 1):
+            units += data[position + part * ENTRY_SIZE + 2:position + part * ENTRY_SIZE + 32]
+        name = units[:name_length * 2].decode("utf-16-le")
+        yield name, attributes, first_cluster, data_length, bool(flags & STREAM_NO_FAT_CHAIN)
+        position += (1 + secondary_count) * ENTRY_SIZE
+
+
+def root_directory_data(image):
+    data = bytearray()
+    cluster = image.root_cluster
+    while cluster < 0xFFFFFFF7:
+        data += image.read(image.cluster_offset(cluster), image.bytes_per_cluster)
+        cluster = struct.unpack("<I", image.read(image.fat_offset + cluster * 4, 4))[0]
+    return bytes(data)
+
+
+def cat_file(image, path):
+    directory_data = root_directory_data(image)
+    components = [part for part in path.split("/") if part]
+    for index, component in enumerate(components):
+        for name, attributes, first_cluster, data_length, contiguous in directory_entries(image, directory_data):
+            if name.upper() == component.upper():
+                break
+        else:
+            sys.exit(f"not found: {component}")
+        contents = read_chain(image, first_cluster, data_length, contiguous) if data_length else b""
+        if index == len(components) - 1:
+            return contents
+        if not attributes & ATTRIBUTE_DIRECTORY:
+            sys.exit(f"not a directory: {component}")
+        directory_data = contents
+    sys.exit("empty path")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    parser.add_argument("image")
-    parser.add_argument("source")
-    parser.add_argument("--fragment", action="append", default=[])
+    commands = parser.add_subparsers(dest="command", required=True)
+    add_command = commands.add_parser("add")
+    add_command.add_argument("image")
+    add_command.add_argument("source")
+    add_command.add_argument("--fragment", action="append", default=[])
+    cat_command = commands.add_parser("cat")
+    cat_command.add_argument("image")
+    cat_command.add_argument("path")
     arguments = parser.parse_args()
 
     image = ExFatImage(arguments.image)
-    entries = populate_directory(image, arguments.source, set(arguments.fragment))
-    append_to_root(image, entries)
-    image.flush()
+    if arguments.command == "add":
+        entries = populate_directory(image, arguments.source, set(arguments.fragment))
+        append_to_root(image, entries)
+        image.flush()
+    else:
+        sys.stdout.buffer.write(cat_file(image, arguments.path))
 
 
 if __name__ == "__main__":

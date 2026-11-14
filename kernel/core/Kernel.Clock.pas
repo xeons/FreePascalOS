@@ -4,12 +4,18 @@
   The HAL raises a periodic clock interrupt. Each one advances the tick
   count (the kernel's notion of time) and lets the scheduler account for
   time slices and sleeping threads.
+
+  Wall clock time is the real-time clock reading taken at startup plus
+  the time elapsed since, in whole seconds.
 }
 unit Kernel.Clock;
 
 {$mode objfpc}
 
 interface
+
+uses
+  Runtime.Time;
 
 const
   ClockTicksPerSecond = 100;
@@ -20,6 +26,9 @@ procedure StartSystemClock;
 function ClockTickCount: QWord;
 function UptimeMilliseconds: QWord;
 
+{ Current date and time as Unix time (UTC). }
+function CurrentWallClockTime: TUnixTime;
+
 { Converts a duration to clock ticks, rounding up so that a sleep never
   ends early. }
 function MillisecondsToTicks(Milliseconds: QWord): QWord;
@@ -28,6 +37,7 @@ implementation
 
 uses
   Hal.Platform,
+  Hal.RealTimeClock,
   Kernel.Arch.TrapFrame,
   Kernel.Interrupts,
   Kernel.Scheduler,
@@ -35,6 +45,7 @@ uses
 
 var
   TickCount: QWord;
+  WallClockAtStart: TUnixTime;
 
 procedure HandleClockInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
@@ -47,6 +58,7 @@ end;
 procedure StartSystemClock;
 begin
   TickCount := 0;
+  WallClockAtStart := ReadRealTimeClock;
   if not RegisterInterruptHandler(HalClockInterruptVector, @HandleClockInterrupt, nil) then
     KernelPanic('clock interrupt vector is already in use');
   HalStartClock(ClockTicksPerSecond);
@@ -60,6 +72,11 @@ end;
 function UptimeMilliseconds: QWord;
 begin
   Result := TickCount * MillisecondsPerTick;
+end;
+
+function CurrentWallClockTime: TUnixTime;
+begin
+  Result := WallClockAtStart + TUnixTime(TickCount div ClockTicksPerSecond);
 end;
 
 function MillisecondsToTicks(Milliseconds: QWord): QWord;

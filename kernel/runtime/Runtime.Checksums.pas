@@ -3,6 +3,8 @@
 
     Crc32   The common IEEE 802.3 polynomial, used by GPT, zip and PNG.
     Crc32c  The Castagnoli polynomial, used by ext4 metadata checksums.
+    Crc16   The reflected 0x8005 polynomial (CRC-16/ARC), used by ext4
+            group descriptors on file systems without metadata_csum.
 
   Both use the reflected (least significant bit first) form. To checksum
   data in pieces, pass the previous result as the starting value.
@@ -27,11 +29,15 @@ function Crc32(Data: Pointer; ByteCount: PtrUInt): LongWord;
   requires it (ext4 stores the raw value). }
 function Crc32cUpdate(Crc: LongWord; Data: Pointer; ByteCount: PtrUInt): LongWord;
 
+{ Continues a CRC-16 computation (no inversion at either end). }
+function Crc16Update(Crc: Word; Data: Pointer; ByteCount: PtrUInt): Word;
+
 implementation
 
 const
   Crc32Polynomial = LongWord($EDB88320);
   Crc32cPolynomial = LongWord($82F63B78);
+  Crc16Polynomial = Word($A001);
 
 var
   Crc32Table: array[0..255] of LongWord;
@@ -85,6 +91,29 @@ end;
 function Crc32cUpdate(Crc: LongWord; Data: Pointer; ByteCount: PtrUInt): LongWord;
 begin
   Result := UpdateWithTable(Crc32cTable, Crc, PByte(Data), ByteCount);
+end;
+
+function Crc16Update(Crc: Word; Data: Pointer; ByteCount: PtrUInt): Word;
+var
+  Bytes: PByte;
+  Index: PtrUInt;
+  Bit: Integer;
+begin
+  Bytes := PByte(Data);
+  Index := 0;
+  while Index < ByteCount do
+  begin
+    Crc := Crc xor Bytes[Index];
+    for Bit := 1 to 8 do
+    begin
+      if (Crc and 1) <> 0 then
+        Crc := (Crc shr 1) xor Crc16Polynomial
+      else
+        Crc := Crc shr 1;
+    end;
+    Inc(Index);
+  end;
+  Result := Crc;
 end;
 
 end.

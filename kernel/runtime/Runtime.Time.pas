@@ -24,6 +24,12 @@ function CalendarToUnixTime(Year, Month, Day, Hour, Minute, Second: LongInt): TU
   units). Returns zero for an unset date. }
 function DosDateTimeToUnixTime(DateWord, TimeWord: Word): TUnixTime;
 
+procedure UnixTimeToCalendar(Time: TUnixTime; out Year, Month, Day, Hour, Minute, Second: LongInt);
+
+{ The inverse of DosDateTimeToUnixTime. Times before 1980 become the
+  earliest representable date. Seconds are rounded down to even. }
+procedure UnixTimeToDosDateTime(Time: TUnixTime; out DateWord, TimeWord: Word);
+
 implementation
 
 function DaysSinceUnixEpoch(Year, Month, Day: LongInt): Int64;
@@ -78,6 +84,64 @@ begin
 
   Result := CalendarToUnixTime(Year, Month, Day,
     TimeWord shr 11, (TimeWord shr 5) and $3F, (TimeWord and $1F) * 2);
+end;
+
+procedure UnixTimeToCalendar(Time: TUnixTime; out Year, Month, Day, Hour, Minute, Second: LongInt);
+var
+  Days: Int64;
+  SecondsOfDay: Int64;
+  Era: Int64;
+  DayOfEra: Int64;
+  YearOfEra: Int64;
+  DayOfYear: Int64;
+  ShiftedMonth: Int64;
+begin
+  Days := Time div 86400;
+  SecondsOfDay := Time mod 86400;
+  if SecondsOfDay < 0 then
+  begin
+    SecondsOfDay := SecondsOfDay + 86400;
+    Days := Days - 1;
+  end;
+  Hour := LongInt(SecondsOfDay div 3600);
+  Minute := LongInt((SecondsOfDay mod 3600) div 60);
+  Second := LongInt(SecondsOfDay mod 60);
+
+  { Howard Hinnant's civil_from_days, the inverse of days_from_civil. }
+  Days := Days + 719468;
+  if Days >= 0 then
+    Era := Days div 146097
+  else
+    Era := (Days - 146096) div 146097;
+  DayOfEra := Days - Era * 146097;
+  YearOfEra := (DayOfEra - DayOfEra div 1460 + DayOfEra div 36524 - DayOfEra div 146096) div 365;
+  DayOfYear := DayOfEra - (365 * YearOfEra + YearOfEra div 4 - YearOfEra div 100);
+  ShiftedMonth := (5 * DayOfYear + 2) div 153;
+  Day := LongInt(DayOfYear - (153 * ShiftedMonth + 2) div 5 + 1);
+  if ShiftedMonth < 10 then
+    Month := LongInt(ShiftedMonth + 3)
+  else
+    Month := LongInt(ShiftedMonth - 9);
+  Year := LongInt(YearOfEra + Era * 400);
+  if Month <= 2 then
+    Inc(Year);
+end;
+
+procedure UnixTimeToDosDateTime(Time: TUnixTime; out DateWord, TimeWord: Word);
+var
+  Year, Month, Day, Hour, Minute, Second: LongInt;
+begin
+  UnixTimeToCalendar(Time, Year, Month, Day, Hour, Minute, Second);
+  if Year < 1980 then
+  begin
+    DateWord := (1 shl 5) or 1; { 1980-01-01 }
+    TimeWord := 0;
+    Exit;
+  end;
+  if Year > 2107 then
+    Year := 2107;
+  DateWord := Word(((Year - 1980) shl 9) or (Month shl 5) or Day);
+  TimeWord := Word((Hour shl 11) or (Minute shl 5) or (Second div 2));
 end;
 
 end.

@@ -142,7 +142,7 @@ run: esp $(TEST_DISK)
 debug: esp $(TEST_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug $(TEST_DISK)
 
-$(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-add-files.py
+$(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@
 
 test-disk: $(TEST_DISK)

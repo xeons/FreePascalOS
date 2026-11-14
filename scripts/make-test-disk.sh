@@ -72,7 +72,7 @@ make_exfat() {
     rm -f "$image"
     truncate -s "${size}M" "$image"
     mkfs.exfat -q -L EXFATTEST "$image" > /dev/null
-    python3 -I "$script_directory/exfat-add-files.py" "$image" "$content" --fragment big.bin
+    python3 -I "$script_directory/exfat-tool.py" add "$image" "$content" --fragment big.bin
 }
 
 make_ext() {

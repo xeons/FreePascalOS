@@ -10,6 +10,10 @@
   Lines are found through a hash table and evicted least recently used
   first. One mutex protects the whole cache, so device reads issued for a
   cache miss are serialized; that keeps this first version simple.
+
+  Writes are write-through: the cached line is updated and the affected
+  device blocks are written immediately, so the disk never lags behind
+  the cache and nothing needs to be flushed.
 }
 unit Io.BlockCache;
 
@@ -30,6 +34,14 @@ procedure InitializeBlockCache;
   Returns False on a device error or when the range is past the end. }
 function CachedRead(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
   Buffer: Pointer): Boolean;
+
+{ Writes ByteCount bytes from Buffer at ByteOffset on Device, through the
+  cache. Returns False on a device error. }
+function CachedWrite(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer): Boolean;
+
+{ Writes ByteCount zero bytes at ByteOffset. }
+function CachedWriteZeros(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
 
 { Drops every cached line of Device (used when a volume is unmounted). }
 procedure InvalidateCachedDevice(Device: PBlockDevice);
@@ -260,6 +272,95 @@ begin
     ByteCount := ByteCount - ChunkBytes;
   end;
   ReleaseMutex(CacheLock);
+end;
+
+{ Writes the device blocks of Line that overlap [OffsetInLine,
+  OffsetInLine + ByteCount). }
+function WriteLineRange(Line: PCacheLine; Device: PBlockDevice; OffsetInLine: QWord;
+  ByteCount: QWord): Boolean;
+var
+  BlocksPerLine: QWord;
+  FirstBlockInLine: QWord;
+  LastBlockInLine: QWord;
+begin
+  BlocksPerLine := CacheLineSize div Device^.BlockSize;
+  FirstBlockInLine := OffsetInLine div Device^.BlockSize;
+  LastBlockInLine := (OffsetInLine + ByteCount - 1) div Device^.BlockSize;
+  Result := WriteBlocks(Device, Line^.LineNumber * BlocksPerLine + FirstBlockInLine,
+    LongWord(LastBlockInLine - FirstBlockInLine + 1),
+    Line^.Data + FirstBlockInLine * Device^.BlockSize);
+end;
+
+{ Shared by CachedWrite and CachedWriteZeros: Source = nil writes zeros. }
+function WriteThroughCache(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Source: PByte): Boolean;
+var
+  LineNumber: QWord;
+  OffsetInLine: QWord;
+  ChunkBytes: QWord;
+  Line: PCacheLine;
+begin
+  if ByteCount = 0 then
+    Exit(True);
+  if (ByteOffset >= BlockDeviceSizeInBytes(Device)) or
+     (ByteCount > BlockDeviceSizeInBytes(Device) - ByteOffset) then
+    Exit(False);
+  if not DeviceIsCacheable(Device) then
+    Exit(False);
+
+  Result := True;
+  AcquireMutex(CacheLock);
+  while ByteCount > 0 do
+  begin
+    LineNumber := ByteOffset div CacheLineSize;
+    OffsetInLine := ByteOffset mod CacheLineSize;
+    ChunkBytes := CacheLineSize - OffsetInLine;
+    if ChunkBytes > ByteCount then
+      ChunkBytes := ByteCount;
+
+    { The line is read first so that partially written device blocks keep
+      their other bytes. }
+    Line := GetLine(Device, LineNumber);
+    if Line = nil then
+    begin
+      Result := False;
+      Break;
+    end;
+
+    if Source <> nil then
+    begin
+      CopyMemory(Line^.Data + OffsetInLine, Source, ChunkBytes);
+      Source := Source + ChunkBytes;
+    end
+    else
+      ZeroMemory(Line^.Data + OffsetInLine, ChunkBytes);
+
+    if not WriteLineRange(Line, Device, OffsetInLine, ChunkBytes) then
+    begin
+      { The cached copy no longer matches the disk. }
+      RemoveFromBucket(Line);
+      Line^.IsValid := False;
+      Result := False;
+      Break;
+    end;
+
+    ByteOffset := ByteOffset + ChunkBytes;
+    ByteCount := ByteCount - ChunkBytes;
+  end;
+  ReleaseMutex(CacheLock);
+end;
+
+function CachedWrite(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer): Boolean;
+begin
+  if (Buffer = nil) and (ByteCount > 0) then
+    Exit(False);
+  Result := WriteThroughCache(Device, ByteOffset, ByteCount, PByte(Buffer));
+end;
+
+function CachedWriteZeros(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
+begin
+  Result := WriteThroughCache(Device, ByteOffset, ByteCount, nil);
 end;
 
 procedure InvalidateCachedDevice(Device: PBlockDevice);

@@ -182,23 +182,40 @@ The VFS (`kernel/filesystems`) has three parts:
 - `FileSystem.Files` resolves paths and implements open files (objects of
   type `File`).
 
+Nodes are shared: every node a driver hands out goes through a node cache
+(keyed by a per-volume node number), so all opens of one file see the same
+size and each other's writes, and a file that is open cannot be removed.
+Every driver call holds the volume's lock.
+
 The namespace is a single tree. The root lists the mounted volumes, each a
 directory named after its block device: `/disk1p7/docs/readme.txt`. Paths
 are absolute; `.` and `..` are resolved textually first. Symbolic links are
 followed up to 8 deep, and an absolute link target is resolved from the
 root of the link's own volume.
 
-Drivers (all read-only for now):
+Drivers (each split into Structures / Volume / Write units plus a main
+unit; ext also has Blocks and Directories):
 
 | Driver           | Formats               | Notes                                                  |
 |------------------|-----------------------|--------------------------------------------------------|
-| `FileSystem.Fat`   | FAT12, FAT16, FAT32 | VFAT long names, case-insensitive lookup               |
-| `FileSystem.ExFat` | exFAT               | contiguous and FAT-chained files, up-case table lookup |
-| `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees, 64-bit, flex_bg, META_BG, htree directories (read linearly), fast and slow symlinks; the journal is not replayed |
+| `FileSystem.Fat`   | FAT12, FAT16, FAT32 | VFAT long names with generated `~N` short names, NT lower-case flags, all FAT copies kept in sync, FSInfo free count |
+| `FileSystem.ExFat` | exFAT               | contiguous ("no FAT chain") and chained files, allocation bitmap, entry set checksums and name hashes, up-case table lookup, volume dirty flag |
+| `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees (writing up to depth 1), 64-bit, flex_bg, META_BG, all metadata checksums, fast and slow symlinks, holes |
+
+Writes are write-through (the block cache writes every change to disk
+immediately). ext volumes are written without the journal; they are only
+mounted read-write when the journal is clean, and are mounted read-only if
+they use features the driver cannot keep consistent (bigalloc, quota,
+encryption, case folding, multiple-mount protection). htree indexed
+directories are read but not modified.
 
 `make test` builds a GPT test disk (`scripts/make-test-disk.sh`) with one
-partition per format and the same files on each, and the kernel's file
-system self test checks every one of them.
+partition per format and the same files on each. The kernel reads every one
+of them (`Kernel.FileSystemTest`), then writes to each one
+(`Kernel.FileSystemWriteTest`). Afterwards `scripts/verify-test-disk.sh`
+checks every partition on the host with the format's own consistency
+checker and reads the written files back through independent
+implementations.
 
 ## Objects
 

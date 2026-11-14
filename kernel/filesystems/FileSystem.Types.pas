@@ -8,9 +8,21 @@
 
   Nodes
     A node is a file, directory or symbolic link on a mounted volume. A
-    driver allocates nodes in Lookup (and for the root at mount time) and
-    frees them in ReleaseNode. Drivers usually allocate a larger record
-    that starts with a TNode and holds format specific data after it.
+    driver allocates nodes in Lookup and CreateNode (and for the root at
+    mount time) and frees them in ReleaseNode. Drivers usually allocate a
+    larger record that starts with a TNode and holds format specific data
+    after it.
+
+    The VFS keeps one node per file in use (the node cache) and counts
+    references to it, so every open of a file shares the same node. A
+    driver must therefore give each node a NodeNumber that identifies the
+    file uniquely within the volume for as long as the node exists, and
+    update it if a rename changes the identity.
+
+  Writing
+    The write routines are optional; a driver without them only mounts
+    read-only. The VFS calls every driver routine with the volume's lock
+    held, so drivers need no locking of their own.
 
   Names
     Names passed to and returned by drivers are UTF-8, without a path
@@ -28,6 +40,8 @@ interface
 
 uses
   Runtime.Time,
+  Runtime.LinkedList,
+  Kernel.Mutex,
   Io.BlockDevice;
 
 const
@@ -53,7 +67,12 @@ type
     StatusCorrupted,
     StatusUnsupported,
     StatusOutOfMemory,
-    StatusReadOnly
+    StatusReadOnly,
+    StatusAlreadyExists,
+    StatusDirectoryNotEmpty,
+    StatusNoSpace,
+    StatusInUse,
+    StatusInvalidName
   );
 
   TNodeKind = (
@@ -83,6 +102,9 @@ type
   TNode = record
     Volume: PVolume;
     Information: TNodeInformation;
+    { Owned by the VFS node cache; drivers leave these alone. }
+    ReferenceCount: LongInt;
+    CacheLink: TListEntry;
   end;
 
   { Position within a directory listing. Its meaning belongs to the
@@ -125,6 +147,35 @@ type
     ReadSymbolicLink: function(Node: PNode; Target: PChar; Capacity: PtrUInt): TFileSystemStatus;
 
     ReleaseNode: procedure(Node: PNode);
+
+    { --- Optional write support --- }
+
+    { Creates a file, directory or symbolic link (with target LinkTarget)
+      named Name in Directory. The VFS has checked that Name is free. }
+    CreateNode: function(Directory: PNode; Name: PChar; Kind: TNodeKind; LinkTarget: PChar;
+      out Created: PNode): TFileSystemStatus;
+
+    { Writes ByteCount bytes at Offset, growing the file as needed. A gap
+      between the old end of the file and Offset reads back as zeros. }
+    WriteFile: function(Node: PNode; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+      out BytesWritten: QWord): TFileSystemStatus;
+
+    { Shortens (releasing space) or lengthens (with zeros) a file. }
+    SetFileSize: function(Node: PNode; NewSize: QWord): TFileSystemStatus;
+
+    { Removes Node, which is named Name in Directory. Directories must be
+      empty. The VFS guarantees nobody else is using Node. }
+    RemoveNode: function(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+
+    { Moves Node (named SourceName in SourceDirectory) to TargetName in
+      TargetDirectory. The VFS has checked that TargetName is free and
+      that a directory is not moved into itself. }
+    RenameNode: function(SourceDirectory: PNode; SourceName: PChar; Node: PNode;
+      TargetDirectory: PNode; TargetName: PChar): TFileSystemStatus;
+
+    { Brings on-disk summary information (free space counters and the
+      like) up to date. }
+    Sync: function(Volume: PVolume): TFileSystemStatus;
   end;
 
   TVolume = record
@@ -138,6 +189,10 @@ type
     DriverData: Pointer;
     TotalBytes: QWord;
     IsReadOnly: Boolean;
+    { Serializes every driver call on this volume. }
+    Lock: TMutex;
+    { Nodes currently in use, see "Nodes" above. }
+    NodeCache: TListEntry;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;
@@ -147,6 +202,11 @@ function NodeKindText(Kind: TNodeKind): PChar;
   block cache. }
 function VolumeRead(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
   Buffer: Pointer): Boolean;
+function VolumeWrite(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer): Boolean;
+function VolumeWriteZeros(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord): Boolean;
+
+function DriverSupportsWriting(Driver: PFileSystemDriver): Boolean;
 
 implementation
 
@@ -169,6 +229,11 @@ begin
     StatusUnsupported: Result := 'unsupported';
     StatusOutOfMemory: Result := 'out of memory';
     StatusReadOnly: Result := 'read-only';
+    StatusAlreadyExists: Result := 'already exists';
+    StatusDirectoryNotEmpty: Result := 'directory not empty';
+    StatusNoSpace: Result := 'no space left on volume';
+    StatusInUse: Result := 'in use';
+    StatusInvalidName: Result := 'invalid name';
   else
     Result := 'unknown status';
   end;
@@ -189,6 +254,24 @@ function VolumeRead(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
   Buffer: Pointer): Boolean;
 begin
   Result := CachedRead(Volume^.Device, ByteOffset, ByteCount, Buffer);
+end;
+
+function VolumeWrite(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer): Boolean;
+begin
+  Result := CachedWrite(Volume^.Device, ByteOffset, ByteCount, Buffer);
+end;
+
+function VolumeWriteZeros(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord): Boolean;
+begin
+  Result := CachedWriteZeros(Volume^.Device, ByteOffset, ByteCount);
+end;
+
+function DriverSupportsWriting(Driver: PFileSystemDriver): Boolean;
+begin
+  Result := Assigned(Driver^.CreateNode) and Assigned(Driver^.WriteFile) and
+    Assigned(Driver^.SetFileSize) and Assigned(Driver^.RemoveNode) and
+    Assigned(Driver^.RenameNode) and Assigned(Driver^.Sync);
 end;
 
 end.

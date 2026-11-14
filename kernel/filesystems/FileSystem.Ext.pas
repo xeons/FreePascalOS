@@ -1,24 +1,23 @@
 {
-  ext2, ext3 and ext4 file system driver (read-only).
+  ext2, ext3 and ext4 file system driver.
 
   The three are one family. ext3 adds a journal to ext2; ext4 adds
-  extents, 64-bit block numbers, flexible block groups and more. This
-  driver reads all of them:
-
-    * Block groups and their descriptors (32 or 64 bytes, optionally laid
-      out with META_BG).
-    * Inodes of any size.
-    * File data mapped either through classic block pointers (direct,
-      single, double and triple indirect) or through extent trees.
-    * Linear directories, including directories with an htree index (the
-      index blocks look like empty entries to a linear reader).
-    * Fast symbolic links stored inside the inode, and slow ones stored in
-      a data block.
-
-  A volume that needs journal recovery is still mounted, with a warning:
-  the journal is not replayed, so the most recent changes may be missing.
+  extents, 64-bit block numbers, flexible block groups, metadata
+  checksums and more. This driver reads all of them and writes them as
+  long as the volume uses no feature it cannot keep consistent; such
+  volumes (and volumes whose journal needs recovery, which is not
+  replayed) are mounted read-only.
 
   Name lookups are exact (case sensitive).
+
+  The work is split over several units:
+    FileSystem.Ext.Structures    on-disk records and feature flags
+    FileSystem.Ext.Volume        checksums, group descriptors, inodes,
+                                 block and inode allocation
+    FileSystem.Ext.Blocks        block pointers and extent trees
+    FileSystem.Ext.Directories   directory records
+    FileSystem.Ext.Write         creating, writing, removing, renaming
+    FileSystem.Ext               (this unit) probing, mounting, reading
 }
 unit FileSystem.Ext;
 
@@ -37,50 +36,35 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Text,
+  Runtime.Checksums,
   Memory.KernelHeap,
   Io.BlockDevice,
   Io.BlockCache,
+  FileSystem.Ext.Structures,
+  FileSystem.Ext.Volume,
+  FileSystem.Ext.Blocks,
+  FileSystem.Ext.Directories,
+  FileSystem.Ext.Write,
   Debug.Output;
 
 const
-  SuperblockOffset = 1024;
-  ExtMagic = $EF53;
-  RootInodeNumber = 2;
-  GoodOldInodeSize = 128;
-  GoodOldRevision = 0;
-
-  CompatibleHasJournal = $0004;
-
-  IncompatibleCompression = $0001;
-  IncompatibleFileType = $0002;
-  IncompatibleNeedsRecovery = $0004;
-  IncompatibleJournalDevice = $0008;
-  IncompatibleMetaBlockGroups = $0010;
-  IncompatibleExtents = $0040;
-  Incompatible64Bit = $0080;
-  IncompatibleMultipleMountProtection = $0100;
-  IncompatibleFlexibleBlockGroups = $0200;
-  IncompatibleExtendedAttributeInodes = $0400;
-  IncompatibleDirectoryData = $1000;
-  IncompatibleChecksumSeed = $2000;
-  IncompatibleLargeDirectories = $4000;
-  IncompatibleInlineData = $8000;
-  IncompatibleEncryption = $10000;
-  IncompatibleCaseFolding = $20000;
-
-  SupportedIncompatibleFeatures = IncompatibleFileType or IncompatibleNeedsRecovery or
+  { Incompatible features that can be read. }
+  ReadableIncompatibleFeatures = IncompatibleFileType or IncompatibleNeedsRecovery or
     IncompatibleMetaBlockGroups or IncompatibleExtents or Incompatible64Bit or
     IncompatibleMultipleMountProtection or IncompatibleFlexibleBlockGroups or
     IncompatibleExtendedAttributeInodes or IncompatibleChecksumSeed or
     IncompatibleLargeDirectories or IncompatibleInlineData or IncompatibleEncryption or
     IncompatibleCaseFolding;
 
-  ReadOnlyCompatibleSparseSuper = $0001;
-  ReadOnlyCompatibleHugeFile = $0008;
-  ReadOnlyCompatibleGroupDescriptorChecksum = $0010;
-  ReadOnlyCompatibleDirectoryLinkCount = $0020;
-  ReadOnlyCompatibleExtraInodeSize = $0040;
-  ReadOnlyCompatibleMetadataChecksum = $0400;
+  { Incompatible features that prevent writing. }
+  WriteBlockingIncompatibleFeatures = IncompatibleNeedsRecovery or
+    IncompatibleMultipleMountProtection or IncompatibleEncryption or IncompatibleCaseFolding;
+
+  { Read-only compatible features this driver keeps consistent. }
+  WritableReadOnlyCompatibleFeatures = ReadOnlyCompatibleSparseSuper or ReadOnlyCompatibleLargeFile or
+    $0004 { btree_dir, unused } or ReadOnlyCompatibleHugeFile or
+    ReadOnlyCompatibleGroupDescriptorChecksum or ReadOnlyCompatibleDirectoryLinkCount or
+    ReadOnlyCompatibleExtraInodeSize or ReadOnlyCompatibleMetadataChecksum;
 
   { Features that only exist from ext4 on. }
   Ext4OnlyIncompatibleFeatures = IncompatibleExtents or Incompatible64Bit or
@@ -89,552 +73,35 @@ const
     ReadOnlyCompatibleGroupDescriptorChecksum or ReadOnlyCompatibleDirectoryLinkCount or
     ReadOnlyCompatibleExtraInodeSize or ReadOnlyCompatibleMetadataChecksum;
 
-  ModeTypeMask = $F000;
-  ModeTypeDirectory = $4000;
-  ModeTypeRegular = $8000;
-  ModeTypeSymbolicLink = $A000;
-  ModePermissionMask = $0FFF;
-
-  InodeFlagExtents = $00080000;
-  InodeFlagInlineData = $10000000;
-  InodeFlagHugeFile = $00040000;
-
-  ExtentMagic = $F30A;
-  ExtentUninitializedLength = 32768;
-  MaximumExtentDepth = 5;
-
-  DirectBlockCount = 12;
-  SingleIndirectSlot = 12;
-  DoubleIndirectSlot = 13;
-  TripleIndirectSlot = 14;
-
-  InlineDataCapacity = 60;
-  DirectoryEntryHeaderSize = 8;
-
-  FileTypeRegular = 1;
-  FileTypeDirectory = 2;
-  FileTypeSymbolicLink = 7;
-
-type
-  TSuperblock = packed record
-    InodesCount: LongWord;
-    BlocksCountLow: LongWord;
-    ReservedBlocksCountLow: LongWord;
-    FreeBlocksCountLow: LongWord;
-    FreeInodesCount: LongWord;
-    FirstDataBlock: LongWord;
-    LogBlockSize: LongWord;
-    LogClusterSize: LongWord;
-    BlocksPerGroup: LongWord;
-    ClustersPerGroup: LongWord;
-    InodesPerGroup: LongWord;
-    MountTime: LongWord;
-    WriteTime: LongWord;
-    MountCount: Word;
-    MaximumMountCount: Word;
-    Magic: Word;
-    State: Word;
-    Errors: Word;
-    MinorRevisionLevel: Word;
-    LastCheck: LongWord;
-    CheckInterval: LongWord;
-    CreatorOs: LongWord;
-    RevisionLevel: LongWord;
-    DefaultReservedUid: Word;
-    DefaultReservedGid: Word;
-    FirstInode: LongWord;
-    InodeSize: Word;
-    BlockGroupNumber: Word;
-    FeatureCompatible: LongWord;
-    FeatureIncompatible: LongWord;
-    FeatureReadOnlyCompatible: LongWord;
-    Uuid: array[0..15] of Byte;
-    VolumeName: array[0..15] of Char;
-    LastMounted: array[0..63] of Char;
-    AlgorithmUsageBitmap: LongWord;
-    PreallocateBlocks: Byte;
-    PreallocateDirectoryBlocks: Byte;
-    ReservedGroupDescriptorBlocks: Word;
-    JournalUuid: array[0..15] of Byte;
-    JournalInode: LongWord;
-    JournalDevice: LongWord;
-    LastOrphan: LongWord;
-    HashSeed: array[0..3] of LongWord;
-    DefaultHashVersion: Byte;
-    JournalBackupType: Byte;
-    DescriptorSize: Word;
-    DefaultMountOptions: LongWord;
-    FirstMetaBlockGroup: LongWord;
-    MakeFileSystemTime: LongWord;
-    JournalBlocks: array[0..16] of LongWord;
-    BlocksCountHigh: LongWord;
-    ReservedBlocksCountHigh: LongWord;
-    FreeBlocksCountHigh: LongWord;
-    MinimumExtraInodeSize: Word;
-    WantExtraInodeSize: Word;
-  end;
-
-  TGroupDescriptor = packed record
-    BlockBitmapLow: LongWord;
-    InodeBitmapLow: LongWord;
-    InodeTableLow: LongWord;
-    FreeBlocksCountLow: Word;
-    FreeInodesCountLow: Word;
-    UsedDirectoriesCountLow: Word;
-    Flags: Word;
-    ExcludeBitmapLow: LongWord;
-    BlockBitmapChecksumLow: Word;
-    InodeBitmapChecksumLow: Word;
-    UnusedInodeCountLow: Word;
-    Checksum: Word;
-    { Present when the descriptor size is 64 bytes. }
-    BlockBitmapHigh: LongWord;
-    InodeBitmapHigh: LongWord;
-    InodeTableHigh: LongWord;
-  end;
-
-  TInode = packed record
-    Mode: Word;
-    UserId: Word;
-    SizeLow: LongWord;
-    AccessTime: LongWord;
-    ChangeTime: LongWord;
-    ModificationTime: LongWord;
-    DeletionTime: LongWord;
-    GroupId: Word;
-    LinksCount: Word;
-    BlocksLow: LongWord;
-    Flags: LongWord;
-    OsDependent1: LongWord;
-    Block: array[0..14] of LongWord;
-    Generation: LongWord;
-    FileAclLow: LongWord;
-    SizeHigh: LongWord;
-    ObsoleteFragmentAddress: LongWord;
-    OsDependent2: array[0..11] of Byte;
-  end;
-
-  TExtentHeader = packed record
-    Magic: Word;
-    Entries: Word;
-    Maximum: Word;
-    Depth: Word;
-    Generation: LongWord;
-  end;
-  PExtentHeader = ^TExtentHeader;
-
-  { Leaf entries and index entries share the same 12-byte size. }
-  TExtentEntry = packed record
-    LogicalBlock: LongWord;
-    case Boolean of
-      False: (
-        Length: Word;
-        StartHigh: Word;
-        StartLow: LongWord);
-      True: (
-        ChildLow: LongWord;
-        ChildHigh: Word;
-        Unused: Word);
-  end;
-  PExtentEntry = ^TExtentEntry;
-
-  TDirectoryEntryHeader = packed record
-    InodeNumber: LongWord;
-    RecordLength: Word;
-    NameLength: Byte;
-    FileType: Byte;
-  end;
-
-  PExtVolume = ^TExtVolume;
-  TExtVolume = record
-    BlockSize: QWord;
-    InodeSize: LongWord;
-    InodesPerGroup: LongWord;
-    BlocksPerGroup: LongWord;
-    FirstDataBlock: LongWord;
-    GroupCount: LongWord;
-    DescriptorSize: LongWord;
-    DescriptorsPerBlock: LongWord;
-    FirstMetaBlockGroup: LongWord;
-    FeatureIncompatible: LongWord;
-    FeatureReadOnlyCompatible: LongWord;
-    BlockCount: QWord;
-  end;
-
-  PExtNode = ^TExtNode;
-  TExtNode = record
-    Common: TNode;
-    InodeNumber: LongWord;
-    Inode: TInode;
-  end;
+  StateHasErrors = $0002;
+  ChecksumTypeCrc32c = 1;
+  ChecksumTypeOffset = $175;
 
 var
   Driver: TFileSystemDriver;
 
-function ExtVolumeOf(Node: PNode): PExtVolume;
-begin
-  Result := PExtVolume(Node^.Volume^.DriverData);
-end;
-
-function HasIncompatibleFeature(Ext: PExtVolume; Feature: LongWord): Boolean;
-begin
-  Result := (Ext^.FeatureIncompatible and Feature) <> 0;
-end;
-
-{ --- Block groups and inodes ----------------------------------------- }
-
-function IsPowerOf(Value, Base: LongWord): Boolean;
-begin
-  while (Value > 1) and ((Value mod Base) = 0) do
-    Value := Value div Base;
-  Result := Value = 1;
-end;
-
-{ With the sparse superblock feature only groups 0, 1 and powers of 3, 5
-  and 7 hold superblock (and descriptor) backups. }
-function GroupHasSuperblockBackup(Ext: PExtVolume; Group: LongWord): Boolean;
-begin
-  if (Ext^.FeatureReadOnlyCompatible and ReadOnlyCompatibleSparseSuper) = 0 then
-    Exit(True);
-  Result := (Group <= 1) or IsPowerOf(Group, 3) or IsPowerOf(Group, 5) or IsPowerOf(Group, 7);
-end;
-
-function GroupDescriptorOffset(Ext: PExtVolume; Group: LongWord): QWord;
-var
-  MetaGroup: LongWord;
-  FirstGroupOfMeta: LongWord;
-  DescriptorBlock: QWord;
-begin
-  if (not HasIncompatibleFeature(Ext, IncompatibleMetaBlockGroups)) or
-     (Group < Ext^.FirstMetaBlockGroup * Ext^.DescriptorsPerBlock) then
-    Exit((QWord(Ext^.FirstDataBlock) + 1) * Ext^.BlockSize + QWord(Group) * Ext^.DescriptorSize);
-
-  { With META_BG each run of DescriptorsPerBlock groups keeps its single
-    descriptor block in the first group of the run. }
-  MetaGroup := Group div Ext^.DescriptorsPerBlock;
-  FirstGroupOfMeta := MetaGroup * Ext^.DescriptorsPerBlock;
-  DescriptorBlock := QWord(Ext^.FirstDataBlock) + QWord(FirstGroupOfMeta) * Ext^.BlocksPerGroup;
-  if GroupHasSuperblockBackup(Ext, FirstGroupOfMeta) then
-    Inc(DescriptorBlock);
-  Result := DescriptorBlock * Ext^.BlockSize + QWord(Group mod Ext^.DescriptorsPerBlock) * Ext^.DescriptorSize;
-end;
-
-function ReadInodeTableBlock(Volume: PVolume; Group: LongWord; out TableBlock: QWord): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  Descriptor: TGroupDescriptor;
-  BytesToRead: LongWord;
-begin
-  Ext := PExtVolume(Volume^.DriverData);
-  ZeroMemory(@Descriptor, SizeOf(Descriptor));
-  BytesToRead := Ext^.DescriptorSize;
-  if BytesToRead > SizeOf(Descriptor) then
-    BytesToRead := SizeOf(Descriptor);
-  if not VolumeRead(Volume, GroupDescriptorOffset(Ext, Group), BytesToRead, @Descriptor) then
-    Exit(StatusIoError);
-
-  TableBlock := Descriptor.InodeTableLow;
-  if Ext^.DescriptorSize >= 64 then
-    TableBlock := TableBlock or (QWord(Descriptor.InodeTableHigh) shl 32);
-  if (TableBlock = 0) or (TableBlock >= Ext^.BlockCount) then
-    Exit(StatusCorrupted);
-  Result := StatusSuccess;
-end;
-
-function ReadInode(Volume: PVolume; InodeNumber: LongWord; out Inode: TInode): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  Group: LongWord;
-  IndexInGroup: LongWord;
-  TableBlock: QWord;
-begin
-  Ext := PExtVolume(Volume^.DriverData);
-  ZeroMemory(@Inode, SizeOf(Inode));
-  if (InodeNumber = 0) or (InodeNumber > Ext^.InodesPerGroup * Ext^.GroupCount) then
-    Exit(StatusCorrupted);
-
-  Group := (InodeNumber - 1) div Ext^.InodesPerGroup;
-  IndexInGroup := (InodeNumber - 1) mod Ext^.InodesPerGroup;
-  Result := ReadInodeTableBlock(Volume, Group, TableBlock);
-  if Result <> StatusSuccess then
-    Exit;
-
-  if not VolumeRead(Volume, TableBlock * Ext^.BlockSize + QWord(IndexInGroup) * Ext^.InodeSize,
-    SizeOf(TInode), @Inode) then
-    Exit(StatusIoError);
-  Result := StatusSuccess;
-end;
-
-function InodeSize(const Inode: TInode): QWord;
-begin
-  Result := Inode.SizeLow or (QWord(Inode.SizeHigh) shl 32);
-end;
-
-{ --- Block mapping: extent trees ------------------------------------- }
-
-function ReadExtentHeader(Volume: PVolume; Address: QWord; out Header: TExtentHeader): Boolean;
-begin
-  Result := VolumeRead(Volume, Address, SizeOf(Header), @Header) and (Header.Magic = ExtentMagic);
-end;
-
-{ Maps a logical block through an extent tree whose root header and
-  entries are stored in the inode's block array. }
-function MapThroughExtents(Node: PExtNode; LogicalBlock: LongWord; out PhysicalBlock: QWord): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  Header: TExtentHeader;
-  Entry: TExtentEntry;
-  NextEntry: TExtentEntry;
-  RootEntries: PExtentEntry;
-  FromInode: Boolean;
-  NodeAddress: QWord;
-  EntryIndex: Integer;
-  ChosenIndex: Integer;
-  Level: Integer;
-  Length: LongWord;
-  StartBlock: QWord;
-
-  function GetEntry(Index: Integer; out Value: TExtentEntry): Boolean;
-  begin
-    if FromInode then
-    begin
-      Value := RootEntries[Index];
-      Result := True;
-    end
-    else
-      Result := VolumeRead(Node^.Common.Volume,
-        NodeAddress + SizeOf(TExtentHeader) + QWord(Index) * SizeOf(TExtentEntry),
-        SizeOf(TExtentEntry), @Value);
-  end;
-
-begin
-  PhysicalBlock := 0;
-  Ext := ExtVolumeOf(@Node^.Common);
-  Header := PExtentHeader(@Node^.Inode.Block[0])^;
-  if Header.Magic <> ExtentMagic then
-    Exit(StatusCorrupted);
-  RootEntries := PExtentEntry(PByte(@Node^.Inode.Block[0]) + SizeOf(TExtentHeader));
-  FromInode := True;
-  NodeAddress := 0;
-
-  for Level := 0 to MaximumExtentDepth do
-  begin
-    if Header.Depth = 0 then
-    begin
-      { Leaf: find the extent that covers the block, if any. }
-      for EntryIndex := 0 to Integer(Header.Entries) - 1 do
-      begin
-        if not GetEntry(EntryIndex, Entry) then
-          Exit(StatusIoError);
-        Length := Entry.Length;
-        if Length > ExtentUninitializedLength then
-        begin
-          { Allocated but never written: reads as zeros, like a hole. }
-          if (LogicalBlock >= Entry.LogicalBlock) and
-             (LogicalBlock < Entry.LogicalBlock + (Length - ExtentUninitializedLength)) then
-            Exit(StatusSuccess);
-          Continue;
-        end;
-        if (LogicalBlock >= Entry.LogicalBlock) and (LogicalBlock < Entry.LogicalBlock + Length) then
-        begin
-          StartBlock := Entry.StartLow or (QWord(Entry.StartHigh) shl 32);
-          PhysicalBlock := StartBlock + (LogicalBlock - Entry.LogicalBlock);
-          if PhysicalBlock >= Ext^.BlockCount then
-            Exit(StatusCorrupted);
-          Exit(StatusSuccess);
-        end;
-      end;
-      Exit(StatusSuccess); { a hole }
-    end;
-
-    { Index node: descend into the last child starting at or before the
-      wanted block. }
-    if Header.Entries = 0 then
-      Exit(StatusSuccess);
-    ChosenIndex := 0;
-    for EntryIndex := 1 to Integer(Header.Entries) - 1 do
-    begin
-      if not GetEntry(EntryIndex, NextEntry) then
-        Exit(StatusIoError);
-      if NextEntry.LogicalBlock > LogicalBlock then
-        Break;
-      ChosenIndex := EntryIndex;
-    end;
-    if not GetEntry(ChosenIndex, Entry) then
-      Exit(StatusIoError);
-
-    StartBlock := Entry.ChildLow or (QWord(Entry.ChildHigh) shl 32);
-    if StartBlock >= Ext^.BlockCount then
-      Exit(StatusCorrupted);
-    NodeAddress := StartBlock * Ext^.BlockSize;
-    FromInode := False;
-    if not ReadExtentHeader(Node^.Common.Volume, NodeAddress, Header) then
-      Exit(StatusCorrupted);
-  end;
-  Result := StatusCorrupted; { deeper than any valid tree }
-end;
-
-{ --- Block mapping: classic block pointers --------------------------- }
-
-function ReadBlockPointer(Volume: PVolume; TableBlock: QWord; Index: QWord;
-  out Value: LongWord): Boolean;
-var
-  Ext: PExtVolume;
-begin
-  Ext := PExtVolume(Volume^.DriverData);
-  Result := VolumeRead(Volume, TableBlock * Ext^.BlockSize + Index * 4, 4, @Value);
-end;
-
-{ Blocks 0-11 are listed in the inode. After those, block slot 12 points
-  at a table of block numbers, slot 13 at a table of tables, and slot 14
-  at a table of tables of tables. }
-function MapThroughBlockPointers(Node: PExtNode; LogicalBlock: LongWord;
-  out PhysicalBlock: QWord): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  Volume: PVolume;
-  PointersPerBlock: QWord;
-  Remaining: QWord;
-  LevelCount: Integer;
-  Level: Integer;
-  BlocksPerEntry: QWord;
-  Multiplication: Integer;
-  TableBlock: LongWord;
-  NextBlock: LongWord;
-  IndexInTable: QWord;
-begin
-  PhysicalBlock := 0;
-  Volume := Node^.Common.Volume;
-  Ext := ExtVolumeOf(@Node^.Common);
-  PointersPerBlock := Ext^.BlockSize div 4;
-  Remaining := LogicalBlock;
-
-  if Remaining < DirectBlockCount then
-  begin
-    PhysicalBlock := Node^.Inode.Block[Remaining];
-    Exit(StatusSuccess);
-  end;
-  Remaining := Remaining - DirectBlockCount;
-
-  if Remaining < PointersPerBlock then
-  begin
-    TableBlock := Node^.Inode.Block[SingleIndirectSlot];
-    LevelCount := 1;
-  end
-  else
-  begin
-    Remaining := Remaining - PointersPerBlock;
-    if Remaining < PointersPerBlock * PointersPerBlock then
-    begin
-      TableBlock := Node^.Inode.Block[DoubleIndirectSlot];
-      LevelCount := 2;
-    end
-    else
-    begin
-      Remaining := Remaining - PointersPerBlock * PointersPerBlock;
-      if Remaining >= PointersPerBlock * PointersPerBlock * PointersPerBlock then
-        Exit(StatusCorrupted);
-      TableBlock := Node^.Inode.Block[TripleIndirectSlot];
-      LevelCount := 3;
-    end;
-  end;
-
-  for Level := LevelCount downto 1 do
-  begin
-    if TableBlock = 0 then
-      Exit(StatusSuccess); { a hole }
-    if TableBlock >= Ext^.BlockCount then
-      Exit(StatusCorrupted);
-
-    { Each entry at this level covers PointersPerBlock^(Level - 1) blocks. }
-    BlocksPerEntry := 1;
-    for Multiplication := 2 to Level do
-      BlocksPerEntry := BlocksPerEntry * PointersPerBlock;
-    IndexInTable := Remaining div BlocksPerEntry;
-    Remaining := Remaining mod BlocksPerEntry;
-
-    if not ReadBlockPointer(Volume, TableBlock, IndexInTable, NextBlock) then
-      Exit(StatusIoError);
-    TableBlock := NextBlock;
-  end;
-
-  PhysicalBlock := TableBlock;
-  Result := StatusSuccess;
-end;
-
-function MapLogicalBlock(Node: PExtNode; LogicalBlock: LongWord; out PhysicalBlock: QWord): TFileSystemStatus;
-begin
-  if (Node^.Inode.Flags and InodeFlagExtents) <> 0 then
-    Result := MapThroughExtents(Node, LogicalBlock, PhysicalBlock)
-  else
-    Result := MapThroughBlockPointers(Node, LogicalBlock, PhysicalBlock);
-end;
-
-{ --- Data access ----------------------------------------------------- }
-
-{ Reads data of the node, treating holes as zeros. The range must lie
-  within the file. }
-function ReadNodeData(Node: PExtNode; Offset: QWord; ByteCount: QWord; Buffer: PByte): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  LogicalBlock: QWord;
-  OffsetInBlock: QWord;
-  ChunkBytes: QWord;
-  PhysicalBlock: QWord;
-begin
-  Ext := ExtVolumeOf(@Node^.Common);
-
-  if (Node^.Inode.Flags and InodeFlagInlineData) <> 0 then
-  begin
-    { Small files may live entirely inside the inode's block array. Data
-      beyond that spills into an extended attribute, not supported yet. }
-    if Offset + ByteCount > InlineDataCapacity then
-      Exit(StatusUnsupported);
-    CopyMemory(Buffer, PByte(@Node^.Inode.Block[0]) + Offset, ByteCount);
-    Exit(StatusSuccess);
-  end;
-
-  while ByteCount > 0 do
-  begin
-    LogicalBlock := Offset div Ext^.BlockSize;
-    if LogicalBlock > High(LongWord) then
-      Exit(StatusCorrupted);
-    OffsetInBlock := Offset mod Ext^.BlockSize;
-    ChunkBytes := Ext^.BlockSize - OffsetInBlock;
-    if ChunkBytes > ByteCount then
-      ChunkBytes := ByteCount;
-
-    Result := MapLogicalBlock(Node, LongWord(LogicalBlock), PhysicalBlock);
-    if Result <> StatusSuccess then
-      Exit;
-
-    if PhysicalBlock = 0 then
-      ZeroMemory(Buffer, ChunkBytes)
-    else if not VolumeRead(Node^.Common.Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock,
-      ChunkBytes, Buffer) then
-      Exit(StatusIoError);
-
-    Buffer := Buffer + ChunkBytes;
-    Offset := Offset + ChunkBytes;
-    ByteCount := ByteCount - ChunkBytes;
-  end;
-  Result := StatusSuccess;
-end;
-
 { --- Nodes ----------------------------------------------------------- }
 
-function KindFromMode(Mode: Word): TNodeKind;
+function LoadNode(Volume: PVolume; InodeNumber: LongWord; out Node: PExtNode): TFileSystemStatus;
 begin
-  case Mode and ModeTypeMask of
-    ModeTypeDirectory: Result := NodeKindDirectory;
-    ModeTypeRegular: Result := NodeKindFile;
-    ModeTypeSymbolicLink: Result := NodeKindSymbolicLink;
-  else
-    Result := NodeKindOther;
+  Node := PExtNode(AllocateZeroedKernelMemory(SizeOf(TExtNode)));
+  if Node = nil then
+    Exit(StatusOutOfMemory);
+
+  Result := ReadInodeBytes(Volume, InodeNumber, @Node^.InodeBytes[0]);
+  if Result <> StatusSuccess then
+  begin
+    FreeKernelMemory(Node);
+    Node := nil;
+    Exit;
   end;
+
+  Node^.Common.Volume := Volume;
+  Node^.InodeNumber := InodeNumber;
+  RefreshNodeInformation(Node);
 end;
 
-function KindFromDirectoryFileType(FileType: Byte): TNodeKind;
+function KindFromFileType(FileType: Byte): TNodeKind;
 begin
   case FileType of
     FileTypeRegular: Result := NodeKindFile;
@@ -645,133 +112,35 @@ begin
   end;
 end;
 
-function LoadNode(Volume: PVolume; InodeNumber: LongWord; out Node: PExtNode): TFileSystemStatus;
-begin
-  Node := PExtNode(AllocateZeroedKernelMemory(SizeOf(TExtNode)));
-  if Node = nil then
-    Exit(StatusOutOfMemory);
-
-  Result := ReadInode(Volume, InodeNumber, Node^.Inode);
-  if Result <> StatusSuccess then
-  begin
-    FreeKernelMemory(Node);
-    Node := nil;
-    Exit;
-  end;
-
-  Node^.Common.Volume := Volume;
-  Node^.InodeNumber := InodeNumber;
-  Node^.Common.Information.Kind := KindFromMode(Node^.Inode.Mode);
-  Node^.Common.Information.SizeInBytes := InodeSize(Node^.Inode);
-  Node^.Common.Information.NodeNumber := InodeNumber;
-  Node^.Common.Information.LinkCount := Node^.Inode.LinksCount;
-  Node^.Common.Information.Mode := Node^.Inode.Mode and ModePermissionMask;
-  Node^.Common.Information.ModificationTime := Node^.Inode.ModificationTime;
-end;
-
-{ --- Directories ----------------------------------------------------- }
-
-{ Reads the directory entry at Cursor.Position (a byte offset) and moves
-  past it. Entries with inode number zero are unused space; they are
-  skipped, as are "." and "..". }
-function NextDirectoryEntry(Directory: PExtNode; var Cursor: TDirectoryCursor;
-  out Entry: TDirectoryEntry): TFileSystemStatus;
-var
-  Ext: PExtVolume;
-  DirectorySize: QWord;
-  Header: TDirectoryEntryHeader;
-  NameLength: LongWord;
-  BlockRemainder: QWord;
-begin
-  Ext := ExtVolumeOf(@Directory^.Common);
-  DirectorySize := InodeSize(Directory^.Inode);
-
-  repeat
-    if Cursor.Position + DirectoryEntryHeaderSize > DirectorySize then
-      Exit(StatusEndOfDirectory);
-
-    Result := ReadNodeData(Directory, Cursor.Position, DirectoryEntryHeaderSize, @Header);
-    if Result <> StatusSuccess then
-      Exit;
-
-    BlockRemainder := Ext^.BlockSize - (Cursor.Position mod Ext^.BlockSize);
-    if (Header.RecordLength < DirectoryEntryHeaderSize) or ((Header.RecordLength mod 4) <> 0) or
-       (Header.RecordLength > BlockRemainder) then
-      Exit(StatusCorrupted);
-
-    if HasIncompatibleFeature(Ext, IncompatibleFileType) then
-      NameLength := Header.NameLength
-    else
-      NameLength := Header.NameLength or (LongWord(Header.FileType) shl 8);
-
-    if (Header.InodeNumber = 0) or (NameLength = 0) or
-       (NameLength + DirectoryEntryHeaderSize > Header.RecordLength) then
-    begin
-      Cursor.Position := Cursor.Position + Header.RecordLength;
-      Continue;
-    end;
-
-    Result := ReadNodeData(Directory, Cursor.Position + DirectoryEntryHeaderSize, NameLength,
-      @Entry.Name[0]);
-    if Result <> StatusSuccess then
-      Exit;
-    Entry.Name[NameLength] := #0;
-    Cursor.Position := Cursor.Position + Header.RecordLength;
-
-    if TextIsEqual(@Entry.Name[0], '.') or TextIsEqual(@Entry.Name[0], '..') then
-      Continue;
-
-    Entry.NodeNumber := Header.InodeNumber;
-    if HasIncompatibleFeature(Ext, IncompatibleFileType) then
-      Entry.Kind := KindFromDirectoryFileType(Header.FileType)
-    else
-      Entry.Kind := NodeKindOther;
-    Exit(StatusSuccess);
-  until False;
-end;
-
-{ --- Driver routines ------------------------------------------------- }
-
-function DirectoryIsReadable(Directory: PExtNode): TFileSystemStatus;
-begin
-  if (Directory^.Inode.Flags and InodeFlagInlineData) <> 0 then
-    Result := StatusUnsupported
-  else
-    Result := StatusSuccess;
-end;
+{ --- Reading --------------------------------------------------------- }
 
 function ExtLookup(Directory: PNode; Name: PChar; out Found: PNode): TFileSystemStatus;
 var
-  Cursor: TDirectoryCursor;
-  Entry: TDirectoryEntry;
+  Entry: TExtDirectoryEntry;
   Node: PExtNode;
 begin
   Found := nil;
-  Result := DirectoryIsReadable(PExtNode(Directory));
+  if TextIsEqual(Name, '.') or TextIsEqual(Name, '..') then
+    Exit(StatusNotFound);
+  Result := FindDirectoryEntry(PExtNode(Directory), Name, Entry);
   if Result <> StatusSuccess then
     Exit;
-
-  Cursor.Position := 0;
-  Cursor.Extra := 0;
-  repeat
-    Result := NextDirectoryEntry(PExtNode(Directory), Cursor, Entry);
-    if Result = StatusEndOfDirectory then
-      Exit(StatusNotFound);
-    if Result <> StatusSuccess then
-      Exit;
-  until TextIsEqual(@Entry.Name[0], Name);
-
-  Result := LoadNode(Directory^.Volume, LongWord(Entry.NodeNumber), Node);
+  Result := LoadNode(Directory^.Volume, Entry.InodeNumber, Node);
   if Result = StatusSuccess then
     Found := @Node^.Common;
 end;
 
 function ExtReadDirectory(Directory: PNode; var Cursor: TDirectoryCursor;
   out Entry: TDirectoryEntry): TFileSystemStatus;
+var
+  ExtEntry: TExtDirectoryEntry;
 begin
-  Result := DirectoryIsReadable(PExtNode(Directory));
-  if Result = StatusSuccess then
-    Result := NextDirectoryEntry(PExtNode(Directory), Cursor, Entry);
+  Result := NextDirectoryEntry(PExtNode(Directory), Cursor, False, ExtEntry);
+  if Result <> StatusSuccess then
+    Exit;
+  CopyText(@Entry.Name[0], @ExtEntry.Name[0], MaximumNameBytes);
+  Entry.Kind := KindFromFileType(ExtEntry.FileType);
+  Entry.NodeNumber := ExtEntry.InodeNumber;
 end;
 
 function ExtReadFile(Node: PNode; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
@@ -791,37 +160,19 @@ begin
     BytesRead := ByteCount;
 end;
 
-{ A "fast" symbolic link keeps its target in the inode's block array
-  instead of a data block. }
-function IsFastSymbolicLink(Node: PExtNode): Boolean;
-var
-  Ext: PExtVolume;
-  ExtendedAttributeBlocks: LongWord;
-begin
-  Ext := ExtVolumeOf(@Node^.Common);
-  if (Node^.Inode.Flags and (InodeFlagExtents or InodeFlagInlineData)) <> 0 then
-    Exit(False);
-  if InodeSize(Node^.Inode) >= InlineDataCapacity then
-    Exit(False);
-  ExtendedAttributeBlocks := 0;
-  if Node^.Inode.FileAclLow <> 0 then
-    ExtendedAttributeBlocks := LongWord(Ext^.BlockSize div 512);
-  Result := Node^.Inode.BlocksLow = ExtendedAttributeBlocks;
-end;
-
 function ExtReadSymbolicLink(Node: PNode; Target: PChar; Capacity: PtrUInt): TFileSystemStatus;
 var
   ExtNode: PExtNode;
   LinkLength: QWord;
 begin
   ExtNode := PExtNode(Node);
-  LinkLength := InodeSize(ExtNode^.Inode);
+  LinkLength := InodeSize(InodeRecord(ExtNode)^);
   if LinkLength + 1 > Capacity then
     Exit(StatusNameTooLong);
 
-  if IsFastSymbolicLink(ExtNode) then
+  if IsFastSymbolicLink(Node) then
   begin
-    CopyMemory(Target, @ExtNode^.Inode.Block[0], LinkLength);
+    CopyMemory(Target, @InodeRecord(ExtNode)^.Block[0], LinkLength);
     Result := StatusSuccess;
   end
   else
@@ -876,34 +227,90 @@ begin
   Volume^.VolumeLabel[Index] := #0;
 end;
 
-procedure WarnAboutUnreplayedJournal(Volume: PVolume);
+procedure ReportReadOnlyReason(Volume: PVolume; Reason: PChar);
 begin
   DebugBeginMessage;
   DebugWriteTag('ext');
   DebugWrite(@Volume^.Name[0]);
-  DebugWriteLine(': journal needs recovery; mounting without replaying it');
+  DebugWrite(': mounting read-only: ');
+  DebugWriteLine(Reason);
   DebugEndMessage;
+end;
+
+{ Decides whether this driver can write the volume without breaking it. }
+procedure CheckWritability(Volume: PVolume; Ext: PExtVolume; const Superblock: TSuperblock;
+  SuperblockBytes: PByte);
+begin
+  if Volume^.IsReadOnly then
+    Exit;
+
+  if HasIncompatibleFeature(Ext, IncompatibleNeedsRecovery) then
+    ReportReadOnlyReason(Volume, 'the journal needs recovery, which is not supported')
+  else if (Superblock.FeatureIncompatible and WriteBlockingIncompatibleFeatures) <> 0 then
+    ReportReadOnlyReason(Volume, 'it uses features that cannot be written yet')
+  else if (Superblock.FeatureReadOnlyCompatible and not WritableReadOnlyCompatibleFeatures) <> 0 then
+    ReportReadOnlyReason(Volume, 'it has read-only compatible features that are not supported')
+  else if Superblock.LogClusterSize <> Superblock.LogBlockSize then
+    ReportReadOnlyReason(Volume, 'clusters larger than blocks (bigalloc) are not supported')
+  else if (Superblock.State and StateHasErrors) <> 0 then
+    ReportReadOnlyReason(Volume, 'it is marked as having errors')
+  else if Ext^.HasMetadataChecksums and (SuperblockBytes[ChecksumTypeOffset] <> ChecksumTypeCrc32c) then
+    ReportReadOnlyReason(Volume, 'unknown metadata checksum type')
+  else
+    Exit;
+  Volume^.IsReadOnly := True;
+end;
+
+{ The per-group free counters are authoritative; the superblock copies
+  are only updated lazily by some implementations. }
+function SumFreeCounters(Volume: PVolume): TFileSystemStatus;
+var
+  Ext: PExtVolume;
+  Descriptor: array[0..MaximumDescriptorSize - 1] of Byte;
+  Group: LongWord;
+begin
+  Ext := PExtVolume(Volume^.DriverData);
+  Ext^.FreeBlockCount := 0;
+  Ext^.FreeInodeCount := 0;
+  Group := 0;
+  while Group < Ext^.GroupCount do
+  begin
+    Result := ReadGroupDescriptor(Volume, Group, @Descriptor[0]);
+    if Result <> StatusSuccess then
+      Exit;
+    Ext^.FreeBlockCount := Ext^.FreeBlockCount + DescriptorValue(Ext, @Descriptor[0],
+      DescriptorOffsetFreeBlocksLow, DescriptorOffsetFreeBlocksHigh, False);
+    Ext^.FreeInodeCount := Ext^.FreeInodeCount + LongWord(DescriptorValue(Ext, @Descriptor[0],
+      DescriptorOffsetFreeInodesLow, DescriptorOffsetFreeInodesHigh, False));
+    Inc(Group);
+  end;
+  Result := StatusSuccess;
 end;
 
 function ExtMount(Volume: PVolume): TFileSystemStatus;
 var
   Superblock: TSuperblock;
+  SuperblockBytes: array[0..SuperblockSize - 1] of Byte;
   Ext: PExtVolume;
   Root: PExtNode;
   UnsupportedFeatures: LongWord;
 begin
-  if not ReadSuperblock(Volume^.Device, Superblock) then
+  if not CachedRead(Volume^.Device, SuperblockOffset, SuperblockSize, @SuperblockBytes[0]) then
+    Exit(StatusIoError);
+  Superblock := PSuperblock(@SuperblockBytes[0])^;
+  if Superblock.Magic <> ExtMagic then
     Exit(StatusCorrupted);
 
   if Superblock.RevisionLevel = GoodOldRevision then
   begin
     Superblock.InodeSize := GoodOldInodeSize;
+    Superblock.FirstInode := 11;
     Superblock.FeatureIncompatible := 0;
     Superblock.FeatureReadOnlyCompatible := 0;
     Superblock.FeatureCompatible := 0;
   end;
 
-  UnsupportedFeatures := Superblock.FeatureIncompatible and not SupportedIncompatibleFeatures;
+  UnsupportedFeatures := Superblock.FeatureIncompatible and not ReadableIncompatibleFeatures;
   if UnsupportedFeatures <> 0 then
   begin
     DebugBeginMessage;
@@ -925,9 +332,21 @@ begin
   Ext^.InodesPerGroup := Superblock.InodesPerGroup;
   Ext^.BlocksPerGroup := Superblock.BlocksPerGroup;
   Ext^.FirstDataBlock := Superblock.FirstDataBlock;
+  Ext^.FeatureCompatible := Superblock.FeatureCompatible;
   Ext^.FeatureIncompatible := Superblock.FeatureIncompatible;
   Ext^.FeatureReadOnlyCompatible := Superblock.FeatureReadOnlyCompatible;
   Ext^.FirstMetaBlockGroup := Superblock.FirstMetaBlockGroup;
+  Ext^.FirstNonReservedInode := Superblock.FirstInode;
+  Ext^.WantExtraInodeSize := Superblock.WantExtraInodeSize;
+  CopyMemory(@Ext^.Uuid[0], @Superblock.Uuid[0], 16);
+  Ext^.HasMetadataChecksums :=
+    (Superblock.FeatureReadOnlyCompatible and ReadOnlyCompatibleMetadataChecksum) <> 0;
+  Ext^.HasGroupDescriptorChecksums :=
+    (Superblock.FeatureReadOnlyCompatible and ReadOnlyCompatibleGroupDescriptorChecksum) <> 0;
+  if HasIncompatibleFeature(Ext, IncompatibleChecksumSeed) then
+    Ext^.ChecksumSeed := PLongWord(@SuperblockBytes[SuperblockChecksumSeedOffset])^
+  else
+    Ext^.ChecksumSeed := Crc32cUpdate(Crc32InitialValue, @Superblock.Uuid[0], 16);
 
   Ext^.BlockCount := Superblock.BlocksCountLow;
   if HasIncompatibleFeature(Ext, Incompatible64Bit) then
@@ -937,10 +356,12 @@ begin
     Ext^.DescriptorSize := Superblock.DescriptorSize
   else
     Ext^.DescriptorSize := 32;
+  if Ext^.DescriptorSize > MaximumDescriptorSize then
+    Ext^.DescriptorSize := MaximumDescriptorSize;
   Ext^.DescriptorsPerBlock := LongWord(Ext^.BlockSize div Ext^.DescriptorSize);
 
-  if (Ext^.InodeSize < GoodOldInodeSize) or (Ext^.InodeSize > Ext^.BlockSize) or
-     (Ext^.BlockCount <= Ext^.FirstDataBlock) or
+  if (Ext^.InodeSize < GoodOldInodeSize) or (Ext^.InodeSize > MaximumInodeSize) or
+     (Ext^.InodeSize > Ext^.BlockSize) or (Ext^.BlockCount <= Ext^.FirstDataBlock) or
      (Ext^.BlockCount * Ext^.BlockSize > BlockDeviceSizeInBytes(Volume^.Device)) then
   begin
     FreeKernelMemory(Ext);
@@ -953,11 +374,13 @@ begin
   Volume^.TotalBytes := Ext^.BlockCount * Ext^.BlockSize;
   DetermineVariantName(Volume, Superblock);
   CopyVolumeName(Volume, Superblock);
+  CheckWritability(Volume, Ext, Superblock, @SuperblockBytes[0]);
 
-  if HasIncompatibleFeature(Ext, IncompatibleNeedsRecovery) then
-    WarnAboutUnreplayedJournal(Volume);
-
-  Result := LoadNode(Volume, RootInodeNumber, Root);
+  Result := StatusSuccess;
+  if not Volume^.IsReadOnly then
+    Result := SumFreeCounters(Volume);
+  if Result = StatusSuccess then
+    Result := LoadNode(Volume, RootInodeNumber, Root);
   if (Result = StatusSuccess) and (Root^.Common.Information.Kind <> NodeKindDirectory) then
   begin
     FreeKernelMemory(Root);
@@ -992,6 +415,12 @@ begin
   Driver.ReadFile := @ExtReadFile;
   Driver.ReadSymbolicLink := @ExtReadSymbolicLink;
   Driver.ReleaseNode := @ExtReleaseNode;
+  Driver.CreateNode := @ExtCreateNode;
+  Driver.WriteFile := @ExtWriteFile;
+  Driver.SetFileSize := @ExtSetFileSize;
+  Driver.RemoveNode := @ExtRemoveNode;
+  Driver.RenameNode := @ExtRenameNode;
+  Driver.Sync := @ExtSync;
   Result := @Driver;
 end;
 

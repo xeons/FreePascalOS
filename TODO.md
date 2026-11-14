@@ -66,8 +66,8 @@ how the existing pieces fit together.
 - [ ] NVMe driver
 - [ ] virtio-blk driver (fast QEMU disks)
 - [ ] USB mass storage (needs an xHCI driver first)
-- [x] Block cache (read)
-- [ ] Block cache: write-back, per-device locks, read-ahead
+- [x] Block cache (read, write-through)
+- [ ] Block cache: write-back with flush, per-device locks, read-ahead
 
 ## File systems
 
@@ -75,15 +75,24 @@ how the existing pieces fit together.
 - [x] FAT12 / FAT16 / FAT32 with long file names (read)
 - [x] exFAT (read)
 - [x] ext2 / ext3 / ext4 (read): block maps, extents, 64-bit, flex_bg, META_BG, htree
-- [ ] Write support: FAT family
-- [ ] Write support: exFAT
-- [ ] Write support: ext2, then ext3/ext4 with journaling
-- [ ] ext3/ext4 journal replay on mount
+- [x] Write support: FAT family (create, write, truncate, remove, rename, mkdir)
+- [x] Write support: exFAT
+- [x] Write support: ext2/ext3/ext4 with metadata checksums (unjournaled, journal kept clean)
+- [x] Shared node cache, per-volume locking, open flags (create, exclusive, truncate, append)
+- [x] Host side verification of written volumes in `make test`
+- [ ] ext3/ext4: write through the journal (crash safety), and journal replay on mount
+- [ ] ext4: modify htree indexed directories (currently read-only)
+- [ ] ext4: extent trees deeper than one index level when writing
+- [ ] ext4: allocate from block groups still marked uninitialized
+- [ ] ext4: bigalloc, quota, encryption and case folding (currently force read-only)
+- [ ] Hard links (ext) and replacing an existing file on rename
+- [ ] Delete-on-last-close for files removed while open (currently refused)
 - [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
       metadata checksum verification
 - [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
 - [ ] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
 - [ ] File timestamps beyond modification time; ext4 nanosecond timestamps
+- [ ] Time zones (the real-time clock is assumed to hold UTC)
 
 ## User mode
 

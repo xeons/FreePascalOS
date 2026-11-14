@@ -32,14 +32,19 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - Device discovery through ACPI tables and PCI Express (ECAM) enumeration.
 - An AHCI SATA driver, block devices, GPT and MBR (including logical)
   partitions, and a block cache.
-- A virtual file system with path lookup, symbolic links, open files and
-  directory listings, and read-only drivers for **FAT12, FAT16, FAT32 (with
+- A virtual file system with path lookup, symbolic links, a shared node
+  cache, open files, directory listings, and create / write / truncate /
+  remove / rename, with read-write drivers for **FAT12, FAT16, FAT32 (with
   long file names), exFAT, ext2, ext3 and ext4** (extents, 64-bit, flex_bg,
-  htree directories, sparse files, fast and slow symbolic links).
+  metadata checksums, htree directories for reading, sparse files, fast and
+  slow symbolic links).
+- A real-time clock driver, so files get correct timestamps.
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
-- Kernel self tests that run on every boot, including a file system test
-  against a disk image with one partition of every supported format.
+- Kernel self tests that run on every boot, including file system read and
+  write tests against a disk image with one partition of every supported
+  format. After a test run, `make test` checks every written partition with
+  the format's own tools (fsck.fat, fsck.exfat, e2fsck, mtools, debugfs).
 
 ## Requirements
 

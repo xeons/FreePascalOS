@@ -8,6 +8,11 @@
 
   Each volume appears in the file namespace as a directory under the
   root, named after its block device: /disk1p2, /disk0p1 and so on.
+
+  A volume is mounted read-write when its driver implements the write
+  routines, its device accepts writes, the driver did not ask for
+  read-only (for example because of unknown on-disk features), and the
+  kernel option "read-only-volumes" is not set.
 }
 unit FileSystem.Volumes;
 
@@ -39,8 +44,11 @@ implementation
 
 uses
   Runtime.Text,
+  Runtime.LinkedList,
   Memory.KernelHeap,
   Kernel.Mutex,
+  Kernel.Options,
+  FileSystem.Files,
   Io.BlockCache,
   FileSystem.Fat,
   FileSystem.ExFat,
@@ -90,7 +98,10 @@ begin
   end;
   DebugWrite(', ');
   DebugWriteSize(Volume^.TotalBytes);
-  DebugWrite(', mounted read-only at /');
+  if Volume^.IsReadOnly then
+    DebugWrite(', mounted read-only at /')
+  else
+    DebugWrite(', mounted read-write at /');
   DebugWriteLine(@Volume^.Name[0]);
   DebugEndMessage;
 end;
@@ -128,7 +139,10 @@ begin
       Exit;
     Volume^.Device := Device;
     Volume^.Driver := Driver;
-    Volume^.IsReadOnly := True;
+    Volume^.IsReadOnly := (not DriverSupportsWriting(Driver)) or BlockDeviceIsReadOnly(Device) or
+      KernelOptionIsSet('read-only-volumes');
+    InitializeMutex(Volume^.Lock);
+    InitializeListHead(Volume^.NodeCache);
     CopyText(@Volume^.Name[0], @Device^.Name[0], VolumeNameLength);
 
     Status := Driver^.Mount(Volume);
@@ -138,6 +152,8 @@ begin
       FreeKernelMemory(Volume);
       Continue;
     end;
+
+    RegisterRootNode(Volume);
 
     AcquireMutex(VolumeListLock);
     if MountedVolumeCount < MaximumVolumes then

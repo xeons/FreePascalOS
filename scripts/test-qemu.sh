@@ -11,7 +11,10 @@
 # directory as test-serial.log.
 #
 # When a test disk is given (see make-test-disk.sh), the file system self
-# test must also have passed for every file system type on it.
+# tests must also have passed for every file system type on it. The test
+# runs on a copy of the disk (test-disk-run.img), since the write tests
+# change it, and the copy is checked afterwards with each file system's
+# own tools by verify-test-disk.sh.
 
 set -uo pipefail
 
@@ -48,8 +51,10 @@ firmware_variables="$build_directory/test-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
 
 disk_arguments=(-drive format=raw,file=fat:rw:"$test_esp_directory")
+run_disk_image="$build_directory/test-disk-run.img"
 if [[ -n "$test_disk_image" ]]; then
-    disk_arguments+=(-drive format=raw,file="$test_disk_image")
+    cp -f "$test_disk_image" "$run_disk_image"
+    disk_arguments+=(-drive format=raw,file="$run_disk_image")
 fi
 
 timeout "$timeout_seconds" qemu-system-x86_64 \
@@ -72,6 +77,9 @@ if [[ -n "$test_disk_image" ]]; then
         if ! grep -q "filesystem $file_system on .*passed" "$serial_log"; then
             missing_file_systems+=("$file_system")
         fi
+        if ! grep -q "filesystem writes $file_system on .*passed" "$serial_log"; then
+            missing_file_systems+=("$file_system (writes)")
+        fi
     done
 fi
 
@@ -80,6 +88,12 @@ case "$qemu_status" in
         if (( ${#missing_file_systems[@]} > 0 )); then
             echo "TEST FAILED: no passing file system test for: ${missing_file_systems[*]}"
             exit 1
+        fi
+        if [[ -n "$test_disk_image" ]]; then
+            if ! "$(dirname "$0")/verify-test-disk.sh" "$run_disk_image"; then
+                echo "TEST FAILED: the written volumes did not pass the host side checks"
+                exit 1
+            fi
         fi
         echo "TEST PASSED"
         exit 0

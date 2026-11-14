@@ -45,6 +45,7 @@ uses
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.FileSystemTest,
+  Kernel.FileSystemWriteTest,
   Runtime.Checksums,
   Objects.Manager,
   Io.Manager,
@@ -158,6 +159,7 @@ begin
 
   RunKernelSelfTests;
   RunFileSystemSelfTests;
+  RunFileSystemWriteTests;
   WriteBlockCacheSummary;
 
   WriteKernelHeapSummary;
