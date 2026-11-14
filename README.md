@@ -35,8 +35,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - An object manager with reference counting and named objects, plus process
   and thread objects.
 - Device discovery through ACPI tables and PCI Express (ECAM) enumeration.
-- An AHCI SATA driver, block devices, GPT and MBR (including logical)
-  partitions, and a write-back block cache with read-ahead.
+- Storage drivers: AHCI (all command slots, native command queuing,
+  direct DMA, ATAPI optical drives), NVMe, virtio-blk, and USB mass
+  storage on an xHCI driver; MSI and MSI-X interrupts; disk flushes.
+  Block devices, GPT and MBR (including logical) partitions, and a
+  write-back block cache with read-ahead.
 - A virtual file system with path lookup, symbolic links, a shared node
   cache, open files, directory listings, and create / write / truncate /
   remove / rename, with read-write drivers for **FAT12, FAT16, FAT32 (with
