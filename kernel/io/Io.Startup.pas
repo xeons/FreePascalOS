@@ -65,6 +65,7 @@ uses
   Drivers.Nvme,
   Drivers.Xhci,
   Drivers.UsbStorage,
+  Drivers.UsbKeyboard,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -128,6 +129,7 @@ begin
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;
   RegisterUsbStorageDriver;
+  RegisterUsbKeyboardDriver;
   InitializeXhciControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;

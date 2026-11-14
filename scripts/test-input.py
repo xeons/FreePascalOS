@@ -17,8 +17,12 @@
 
 """
 Input test: boots the system with /bin/sh as the first program and types
-into it, on the emulated PS/2 keyboard (QEMU monitor "sendkey") and on the
-serial port, then checks what the shell printed. Covers both input
+into it, on a USB keyboard and the emulated PS/2 keyboard (QEMU monitor
+"sendkey": keys go to the USB keyboard until it is unplugged, then to
+the PS/2 one) and on the serial port, then checks
+what the shell printed. It also takes a screen dump to check that the
+framebuffer console draws UTF-8 text and colours correctly after
+scrolling. Covers both input
 drivers, the shell's line editing and history (also of a line longer
 than the screen), Ctrl-C (also of a loop of shell builtins), and job
 control (Ctrl-Z, jobs, fg, bg, a background program reading the console).
@@ -27,7 +31,9 @@ control (Ctrl-Z, jobs, fg, bg, a background program reading the console).
 
 Exits with 0 when every check passed.
 """
+import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -56,6 +62,7 @@ shutil.copy(firmware_variables, os.path.join(work, 'vars.fd'))
 
 # Unix socket paths are short; keep it relative to the build directory.
 monitor_path = os.path.relpath(os.path.join(work, 'monitor.sock'))
+screen_path = os.path.abspath(os.path.join(work, 'screen.ppm'))
 serial_log = os.path.join(work, 'serial.log')
 
 # A FIFO pair carries the serial port: QEMU writes serial.out, reads serial.in.
@@ -70,10 +77,12 @@ qemu = subprocess.Popen([
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),
     '-drive', 'format=raw,file=' + os.path.join(work, 'system.img'),
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
+    '-device', 'qemu-xhci,id=xhci', '-device', 'usb-kbd,bus=xhci.0,id=usbkbd',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
     '-monitor', 'unix:' + monitor_path + ',server,nowait'],
-    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+    stderr=open(os.path.join(work, 'qemu-errors.log'), 'wb'))
 
 serial_out = os.open(os.path.join(work, 'serial.out'), os.O_RDONLY | os.O_NONBLOCK)
 serial_in = open(os.path.join(work, 'serial.in'), 'wb', buffering=0)
@@ -135,6 +144,14 @@ def type_on_keyboard(text):
 
 
 checks = []
+
+# USB keyboard (QEMU's most recently started keyboard): letters, Shift,
+# Enter; then it is unplugged and the keys go to the PS/2 keyboard.
+type_on_keyboard('echo Usb-Keyboard')
+press('ret')
+checks.append(('usb keyboard', wait_for('\nUsb-Keyboard', 10)))
+monitor.sendall(b'device_del usbkbd\n')
+time.sleep(1)
 
 # Keyboard: Shift, Enter.
 type_on_keyboard('echo Keyboard-Works')
@@ -286,12 +303,62 @@ checks.append(('history shared through the file', received.count(b'waited=0') >=
 type_on_serial(b'exit\r')
 time.sleep(0.5)
 
+# The framebuffer console: after scrolling (through its copy in memory),
+# UTF-8 text and a coloured letter are drawn from the font.
+def font_glyphs():
+    source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'kernel', 'debug',
+                               'Debug.ConsoleFont.inc')).read()
+    declaration = source.split('ConsoleFontCodePoints: array')[1].split(');')[0]
+    code_points = [int(value, 16) for value in re.findall(r'\$([0-9A-F]{4})', declaration)]
+    rows = re.findall(r'\(((?:\$[0-9A-F]{2}, ){15}\$[0-9A-F]{2})\)', source)
+    return {code: [int(value[1:], 16) for value in row.split(', ')] for code, row in zip(code_points, rows)}
+
+
+def cell_matches(pixels, width, row, column, glyph, foreground, background):
+    for glyph_row in range(16):
+        for glyph_column in range(8):
+            x = 8 + column * 8 + glyph_column
+            y = 8 + row * 16 + glyph_row
+            offset = (y * width + x) * 3
+            expected = foreground if glyph[glyph_row] & (0x80 >> glyph_column) else background
+            if tuple(pixels[offset:offset + 3]) != expected:
+                return False
+    return True
+
+
+type_on_serial(b"seq 1 80; printf 'A\\303\\251\\342\\202\\254\\033[31mR\\033[0m'; sleep 4\r")
+time.sleep(2.5)
+monitor.sendall(('screendump ' + screen_path + '\n').encode())
+time.sleep(1)
+screen_ok = False
+try:
+    data = open(screen_path, 'rb').read()
+    header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data)
+    width, height = int(header.group(1)), int(header.group(2))
+    pixels = data[header.end():]
+    glyphs = font_glyphs()
+    last_row = (height - 16) // 16 - 1
+    gray, blue, red = (0xC0, 0xC0, 0xC0), (0x10, 0x18, 0x30), (0xC0, 0x30, 0x30)
+    screen_ok = (cell_matches(pixels, width, last_row, 0, glyphs[ord('A')], gray, blue) and
+                 cell_matches(pixels, width, last_row, 1, glyphs[0xE9], gray, blue) and
+                 cell_matches(pixels, width, last_row, 2, glyphs[0x20AC], gray, blue) and
+                 cell_matches(pixels, width, last_row, 3, glyphs[ord('R')], red, blue))
+except (OSError, AttributeError, KeyError):
+    pass
+checks.append(('framebuffer console: UTF-8 and colour after scrolling', screen_ok))
+time.sleep(2)
+
 serial_in.write(b'exit 0\r')
 try:
     qemu.wait(timeout=30)
 except subprocess.TimeoutExpired:
     qemu.kill()
 collect(0.5)
+
+# Both keyboards delivered keys (QEMU sent them where the test meant).
+counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)
+checks.append(('keys came from the PS/2 and the USB keyboard',
+               counts is not None and int(counts.group(1)) > 0 and int(counts.group(2)) > 0))
 
 failed = False
 for name, passed in checks:

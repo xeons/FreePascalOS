@@ -481,13 +481,42 @@ keeps one read outstanding on each (Io.ConsoleInput); the completion
 routine passes the characters to the console's input ring
 (DeliverConsoleInput) and a deferred call sends the next read. Without an
 I/O APIC there is no serial device and the console polls the serial
-port. The keyboard's characters come from a layout
-(Drivers.KeyboardLayouts: us, uk, de or fr, chosen with the kernel option
-`keymap=`), written as the keys that differ from US, with a third level
-on AltGr; characters beyond ASCII are sent in UTF-8 (the framebuffer font
-only has ASCII). The driver sets the Caps, Num and Scroll Lock lights
-(keyboard command 0xED, answered by interrupts); with Num Lock off the
-keypad sends cursor and editing keys.
+port.
+
+Every keyboard turns keys into characters the same way
+(Drivers.KeyboardTranslation, one TKeyboardState per keyboard): keys are
+numbered as PS/2 scan codes (set 1, with E0 for the extended keys), and
+the characters come from a layout (Drivers.KeyboardLayouts: us, uk, de
+or fr, chosen with the kernel option `keymap=`), written as the keys that
+differ from US, with a third level on AltGr. The accent keys of de
+(´ ` ^) and fr (^ ¨) are dead keys: their accent goes on the next letter
+(é, è, ê, ë, upper case too); space, or the dead key again, gives the
+accent alone, and any other key gives the accent followed by it.
+Characters beyond ASCII are sent in UTF-8; with Num Lock off the keypad
+sends cursor and editing keys. The PS/2 driver sets the Caps, Num and
+Scroll Lock lights (keyboard command 0xED, answered by interrupts).
+
+USB keyboards (Drivers.UsbKeyboard, on the xHCI driver) use the HID boot
+protocol. Their interrupt IN endpoint is read over and over (a report
+handler called from the xHCI event processing, which queues the next
+read). Each 8-byte report is compared with the one before: modifier bits
+and the usage codes of up to six held keys give the keys pressed and
+released, which are mapped onto the PS/2 scan codes. Each keyboard is an
+input device `usbkeyboardN` that the console reads. Keys do not repeat
+while held, and the lights stay off. The input test types on a QEMU USB
+keyboard, then unplugs it and types on the PS/2 keyboard; the kernel
+logs how many keys each kind delivered, and the test checks both.
+
+The framebuffer console (Debug.FramebufferConsole) decodes UTF-8 and
+draws from a font with ASCII, Latin-1, Œ œ Ÿ and € (generated from
+Terminus by `tools/PsfToPascal`; other characters show as `?`). It
+carries out the escape sequences programs use (cursor movement and
+positioning, erasing in a line or the screen, colours). Once the kernel
+heap is up it keeps a copy of the screen in memory: every pixel goes to
+both, and scrolling moves the copy and writes the framebuffer, never
+reading video memory. The input test checks UTF-8 text and a colour,
+pixel by pixel against the font, in a screen dump taken after
+scrolling.
 
 ## File systems
 

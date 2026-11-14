@@ -65,6 +65,9 @@ const
 
 type
   PUsbDevice = ^TUsbDevice;
+  { Called with each report of an interrupt IN endpoint, at dispatch
+    level (it must not wait). }
+  TUsbReportHandler = procedure(Device: PUsbDevice; Data: PByte; Length: LongWord; Context: Pointer);
   TUsbDevice = record
     Controller: Pointer;
     SlotId: LongWord;
@@ -93,6 +96,17 @@ type
     EventCode: LongWord;
     EventTrb: QWord;
     EventResidue: LongWord;
+    { The highest endpoint context in use (for the slot context). }
+    HighestContext: LongWord;
+    { A repeating interrupt IN transfer: its endpoint, buffer, length,
+      the TRB in flight and who gets the reports. }
+    InterruptContext: LongWord;
+    InterruptBuffer: PByte;
+    InterruptBufferPhysical: QWord;
+    InterruptLength: LongWord;
+    InterruptTrb: QWord;
+    InterruptHandler: TUsbReportHandler;
+    InterruptHandlerContext: Pointer;
   end;
 
   { Returns True if it took the device. }
@@ -110,6 +124,11 @@ function UsbControlTransfer(Device: PUsbDevice; RequestType, Request: Byte; Valu
 { Makes the bulk endpoints InAddress (80h set) and OutAddress usable. }
 function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
   InMaximumPacket, OutMaximumPacket: Word): Boolean;
+{ Starts reading the interrupt IN endpoint Address (Interval as in its
+  endpoint descriptor) over and over; Handler gets every report. One
+  such endpoint per device. }
+function UsbStartInterruptIn(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
+  Handler: TUsbReportHandler; Context: Pointer): Boolean;
 { Moves up to Length (at most UsbMaximumTransfer) bytes on the bulk
   endpoint EndpointAddress; Transferred says how many moved. }
 function UsbBulkTransfer(Device: PUsbDevice; EndpointAddress: Byte; Buffer: Pointer; Length: LongWord;
@@ -196,6 +215,7 @@ const
   EndpointTypeControl = 4;
   EndpointTypeBulkOut = 2;
   EndpointTypeBulkIn = 6;
+  EndpointTypeInterruptIn = 7;
 
 type
   PXhciController = ^TXhciController;
@@ -294,6 +314,35 @@ begin
   Result := False;
 end;
 
+{ Puts the next read of the device's interrupt endpoint on its ring.
+  Caller holds the event lock. }
+procedure QueueInterruptRead(Device: PUsbDevice);
+begin
+  Device^.InterruptTrb := EnqueueTrb(Device^.Rings[Device^.InterruptContext], Device^.InterruptBufferPhysical,
+    Device^.InterruptLength, (TrbTypeNormal shl TrbTypeShift) or TrbInterruptOnCompletion or
+    TrbInterruptOnShortPacket);
+  FullMemoryBarrier;
+  PXhciController(Device^.Controller)^.Doorbells[Device^.SlotId] := Device^.InterruptContext;
+end;
+
+{ A report arrived: the handler gets it and the next read is queued (a
+  failed read ends the reading). }
+procedure HandleInterruptReport(Controller: PXhciController; Device: PUsbDevice; const Event: TTrb);
+var
+  Code: LongWord;
+  Residue: LongWord;
+begin
+  Code := CompletionCode(Event);
+  Device^.InterruptTrb := 0;
+  if (Code <> CompletionSuccess) and (Code <> CompletionShortPacket) then
+    Exit;
+  Residue := Event.Status and $FFFFFF;
+  if Residue <= Device^.InterruptLength then
+    Device^.InterruptHandler(Device, Device^.InterruptBuffer, Device^.InterruptLength - Residue,
+      Device^.InterruptHandlerContext);
+  QueueInterruptRead(Device);
+end;
+
 procedure HandleEvent(Controller: PXhciController; const Event: TTrb);
 var
   Slot: LongWord;
@@ -315,8 +364,15 @@ begin
         if Slot > MaximumEnabledSlots then
           Exit;
         Device := Controller^.Devices[Slot];
+        if Device = nil then
+          Exit;
+        if (Device^.InterruptTrb <> 0) and (Event.Parameter = Device^.InterruptTrb) then
+        begin
+          HandleInterruptReport(Controller, Device, Event);
+          Exit;
+        end;
         { Only an event for a TRB of the transfer waited for counts. }
-        if (Device = nil) or not FindPendingTrb(Device, Event.Parameter, Index) then
+        if not FindPendingTrb(Device, Event.Parameter, Index) then
           Exit;
         Device^.EventCode := CompletionCode(Event);
         Device^.EventTrb := Event.Parameter;
@@ -431,6 +487,8 @@ begin
   Context[3] := LongWord(RingPhysical shr 32);
   Context[4] := AverageLength;
 end;
+
+function AllocatePage(out Physical: QWord): PByte; forward;
 
 { --- Transfers ---------------------------------------------------------------- }
 
@@ -585,36 +643,83 @@ begin
   ReleaseMutex(Device^.TransferLock);
 end;
 
-function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
-  InMaximumPacket, OutMaximumPacket: Word): Boolean;
+{ Adds endpoint Address (of EndpointType) with a fresh transfer ring:
+  a Configure Endpoint command with the slot (for its context entries)
+  and that endpoint. IntervalExponent: 125 us units, as a power of two. }
+function ConfigureEndpoint(Device: PUsbDevice; Address: Byte; EndpointType: LongWord; MaximumPacket: Word;
+  IntervalExponent: LongWord; AverageLength: Word): Boolean;
 var
-  InIndex: LongWord;
-  OutIndex: LongWord;
-  Highest: LongWord;
+  ContextIndex: LongWord;
+  Context: PLongWord;
   Slot: LongWord;
 begin
-  InIndex := ContextIndexOf(InAddress);
-  OutIndex := ContextIndexOf(OutAddress);
-  if (InIndex >= MaximumEndpointContexts) or (OutIndex >= MaximumEndpointContexts) or
-     not AllocateProducerRing(Device^.Rings[InIndex]) or not AllocateProducerRing(Device^.Rings[OutIndex]) then
+  ContextIndex := ContextIndexOf(Address);
+  if (ContextIndex >= MaximumEndpointContexts) or not AllocateProducerRing(Device^.Rings[ContextIndex]) then
     Exit(False);
-  Highest := InIndex;
-  if OutIndex > Highest then
-    Highest := OutIndex;
+  if ContextIndex > Device^.HighestContext then
+    Device^.HighestContext := ContextIndex;
   FillMemory(Device^.InputContext, 4096, 0);
-  { Add the slot (for its context entries) and both endpoints. }
-  InputControlContext(Device)[1] := 1 or (LongWord(1) shl InIndex) or (LongWord(1) shl OutIndex);
+  InputControlContext(Device)[1] := 1 or (LongWord(1) shl ContextIndex);
   CopyMemory(InputSlotContext(Device), Device^.OutputContext, 32);
   InputSlotContext(Device)[0] := (InputSlotContext(Device)[0] and not (LongWord($1F) shl 27)) or
-    (Highest shl 27);
-  FillEndpointContext(InputEndpointContext(Device, InIndex), EndpointTypeBulkIn, InMaximumPacket,
-    Device^.Rings[InIndex].Physical, 3072);
-  FillEndpointContext(InputEndpointContext(Device, OutIndex), EndpointTypeBulkOut, OutMaximumPacket,
-    Device^.Rings[OutIndex].Physical, 3072);
-  Device^.EndpointMaximumPacket[InIndex] := InMaximumPacket;
-  Device^.EndpointMaximumPacket[OutIndex] := OutMaximumPacket;
+    (Device^.HighestContext shl 27);
+  Context := InputEndpointContext(Device, ContextIndex);
+  FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].Physical, AverageLength);
+  Context[0] := IntervalExponent shl 16;
+  if EndpointType = EndpointTypeInterruptIn then
+    { The most bytes per service interval. }
+    Context[4] := Context[4] or (LongWord(MaximumPacket) shl 16);
+  Device^.EndpointMaximumPacket[ContextIndex] := MaximumPacket;
   Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
     (TrbTypeConfigureEndpoint shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
+end;
+
+function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
+  InMaximumPacket, OutMaximumPacket: Word): Boolean;
+begin
+  Result := ConfigureEndpoint(Device, InAddress, EndpointTypeBulkIn, InMaximumPacket, 0, 3072) and
+    ConfigureEndpoint(Device, OutAddress, EndpointTypeBulkOut, OutMaximumPacket, 0, 3072);
+end;
+
+{ The interval exponent (125 us units) of an endpoint descriptor's
+  bInterval: milliseconds on full and low speed, an exponent itself on
+  high and super speed. }
+function IntervalExponentFor(Device: PUsbDevice; Interval: Byte): LongWord;
+var
+  Microframes: LongWord;
+begin
+  if Interval = 0 then
+    Interval := 1;
+  if (Device^.Speed = UsbSpeedHigh) or (Device^.Speed = UsbSpeedSuper) then
+    Exit(Interval - 1);
+  Microframes := LongWord(Interval) * 8;
+  Result := 0;
+  while (LongWord(2) shl Result) <= Microframes do
+    Inc(Result);
+end;
+
+function UsbStartInterruptIn(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
+  Handler: TUsbReportHandler; Context: Pointer): Boolean;
+var
+  Controller: PXhciController;
+  PreviousLevel: TPriorityLevel;
+begin
+  Controller := PXhciController(Device^.Controller);
+  if (Device^.InterruptContext <> 0) or (MaximumPacket = 0) or (MaximumPacket > 1024) then
+    Exit(False);
+  Device^.InterruptBuffer := AllocatePage(Device^.InterruptBufferPhysical);
+  if (Device^.InterruptBuffer = nil) or
+     not ConfigureEndpoint(Device, Address, EndpointTypeInterruptIn, MaximumPacket,
+       IntervalExponentFor(Device, Interval), MaximumPacket) then
+    Exit(False);
+  Device^.InterruptLength := MaximumPacket;
+  Device^.InterruptHandler := Handler;
+  Device^.InterruptHandlerContext := Context;
+  PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  Device^.InterruptContext := ContextIndexOf(Address);
+  QueueInterruptRead(Device);
+  ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+  Result := True;
 end;
 
 { --- Enumeration ---------------------------------------------------------------- }
@@ -692,6 +797,25 @@ begin
   Result := UsbControlTransfer(Device, 0, RequestSetConfiguration, Header[5], 0, nil, 0);
 end;
 
+{ A full speed device's control endpoint takes 8, 16, 32 or 64 bytes a
+  packet; the first 8 bytes of its device descriptor say which, and an
+  Evaluate Context command tells the controller. }
+function CorrectControlPacketSize(Device: PUsbDevice): Boolean;
+var
+  Start: array[0..7] of Byte;
+  Slot: LongWord;
+begin
+  Result := GetDescriptor(Device, UsbDescriptorDevice, @Start[0], 8);
+  if not Result or (Start[7] = 8) or (Start[7] = 0) then
+    Exit;
+  FillMemory(Device^.InputContext, 4096, 0);
+  InputControlContext(Device)[1] := LongWord(1) shl 1;
+  CopyMemory(InputEndpointContext(Device, 1), Device^.OutputContext + PXhciController(Device^.Controller)^.ContextSize, 32);
+  InputEndpointContext(Device, 1)[1] := (InputEndpointContext(Device, 1)[1] and $FFFF) or (LongWord(Start[7]) shl 16);
+  Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
+    (TrbTypeEvaluateContext shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
+end;
+
 { Gives the device on PortNumber a slot and an address, reads its
   descriptors and offers it to the class drivers. }
 function EnumerateDevice(Controller: PXhciController; PortNumber: LongWord): Boolean;
@@ -740,6 +864,9 @@ begin
     DefaultControlPacketSize(Device^.Speed), Device^.Rings[1].Physical, 8);
   if not RunCommand(Controller, Device^.InputContextPhysical,
     (TrbTypeAddressDevice shl TrbTypeShift) or (Slot shl 24), Slot) then
+    Exit;
+  Device^.HighestContext := 1;
+  if (Device^.Speed = UsbSpeedFull) and not CorrectControlPacketSize(Device) then
     Exit;
   if not GetDescriptor(Device, UsbDescriptorDevice, @Device^.DeviceDescriptor[0], 18) or
      not SetFirstConfiguration(Device) then

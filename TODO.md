@@ -97,10 +97,12 @@ how the existing pieces fit together.
 - [x] Programs report write errors on standard output at exit (echo > /dev/full)
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
 - [x] Keyboard layouts us/uk/de/fr (keymap= option), AltGr, lock lights, Num Lock keypad
-- [ ] Dead keys for de/fr accents; non-ASCII glyphs in the framebuffer font
-- [ ] USB keyboards (HID boot protocol on the xHCI driver)
+- [x] Dead keys for de/fr accents; Latin-1 and the euro sign in the framebuffer
+      font, UTF-8 and escape sequences in the framebuffer console
+- [x] USB keyboards (HID boot protocol on the xHCI driver)
+- [ ] USB keyboards: key repeat, lock lights
 - [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
-- [ ] Shadow buffer for the framebuffer console so scrolling never reads
+- [x] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
 
 ## Storage
