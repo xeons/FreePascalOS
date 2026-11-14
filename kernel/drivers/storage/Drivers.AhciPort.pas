@@ -91,6 +91,7 @@ const
   AtaCommandIdentifyDevice = $EC;
   AtaCommandReadDmaExtended = $25;
   AtaCommandWriteDmaExtended = $35;
+  AtaCommandFlushCacheExtended = $EA;
 
   { Layout of the per-port control page. }
   CommandListOffset = $000;  { 32 headers of 32 bytes, 1 KiB aligned }

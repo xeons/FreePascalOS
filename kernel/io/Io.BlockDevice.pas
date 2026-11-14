@@ -72,6 +72,10 @@ function ReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWor
 function WriteBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
   Buffer: Pointer): Boolean;
 
+{ Makes everything written so far durable: the disk writes its volatile
+  cache to the medium. True also for disks that have no such cache. }
+function FlushBlockDevice(Device: PBlockDevice): Boolean;
+
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;
 function BlockDeviceIsReadOnly(Device: PBlockDevice): Boolean;
 function BlockDeviceSizeInBytes(Device: PBlockDevice): QWord;
@@ -212,6 +216,21 @@ begin
     Result := WriteBlocks(Device^.Parent, Device^.FirstBlockOnParent + FirstBlock, BlockCount, Buffer)
   else
     Result := TransferBlocks(Device, IoFunctionWrite, FirstBlock, BlockCount, Buffer);
+end;
+
+function FlushBlockDevice(Device: PBlockDevice): Boolean;
+var
+  Request: TIoRequest;
+  Status: LongInt;
+begin
+  if Device^.Parent <> nil then
+    Exit(FlushBlockDevice(Device^.Parent));
+  if Device^.StorageDevice = nil then
+    Exit(True);
+  FillMemory(@Request, SizeOf(Request), 0);
+  Request.Operation := IoFunctionFlush;
+  Status := CallDriverAndWait(Device^.StorageDevice, Request, False);
+  Result := (Status = ErrorNone) or (Status = ErrorUnsupported);
 end;
 
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;

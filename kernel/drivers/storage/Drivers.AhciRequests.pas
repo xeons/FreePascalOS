@@ -70,10 +70,12 @@ end;
 
 function AtaCommandFor(Request: PIoRequest): Byte;
 begin
-  if Request^.Operation = IoFunctionWrite then
-    Result := AtaCommandWriteDmaExtended
+  case Request^.Operation of
+    IoFunctionWrite: Result := AtaCommandWriteDmaExtended;
+    IoFunctionFlush: Result := AtaCommandFlushCacheExtended;
   else
     Result := AtaCommandReadDmaExtended;
+  end;
 end;
 
 { The next piece of Request starting CurrentDone bytes in: how many
@@ -87,6 +89,9 @@ end;
 
 function RequestIsValid(Port: PAhciPort; var Request: TIoRequest): Boolean;
 begin
+  { A flush moves no data: one command without a transfer. }
+  if Request.Operation = IoFunctionFlush then
+    Exit(Request.Length = 0);
   Result := (Request.Length > 0) and (Request.Length mod Port^.BlockSize = 0) and
     (Request.Offset mod Port^.BlockSize = 0) and
     (Request.Offset div Port^.BlockSize < Port^.BlockCount) and
@@ -120,6 +125,12 @@ begin
   Result := ErrorNone;
   Done := 0;
   AcquireMutex(Port^.PollingLock);
+  if (Request.Operation = IoFunctionFlush) and
+     not ExecuteCommand(Port, AtaCommandFlushCacheExtended, 0, 0, 0, False) then
+  begin
+    ReportRecovery(Port, 'flush failed', RecoverPort(Port));
+    Result := ErrorIo;
+  end;
   while Done < Request.Length do
   begin
     Piece := PieceLength(Port, @Request, Done);
@@ -341,6 +352,7 @@ begin
   FillMemory(@Dispatch, SizeOf(Dispatch), 0);
   Dispatch[IoFunctionRead] := @TransferAhciDevice;
   Dispatch[IoFunctionWrite] := @TransferAhciDevice;
+  Dispatch[IoFunctionFlush] := @TransferAhciDevice;
   AhciDriver := CreateDriver('ahci', Dispatch);
 end;
 

@@ -74,8 +74,11 @@ const
   StatusPending = -1;
 
 type
+  { IoFunctionFlush: block devices write what their volatile cache holds
+    to the medium (no buffer, Length 0); devices without such a cache
+    need not handle it. }
   TIoFunction = (IoFunctionOpen, IoFunctionClose, IoFunctionRead, IoFunctionWrite,
-    IoFunctionControl);
+    IoFunctionControl, IoFunctionFlush);
 
   TDeviceKind = (DeviceKindCharacter, DeviceKindBlock);
 

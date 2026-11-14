@@ -42,6 +42,7 @@ type
     Writes: Int64;
     BytesRead: Int64;
     BytesWritten: Int64;
+    Flushes: Int64;
     Failures: Int64;
   end;
 
@@ -64,6 +65,8 @@ begin
     AtomicIncrement(Statistics^.Reads);
     AtomicFetchAndAdd(Statistics^.BytesRead, Request^.Information);
   end
+  else if Request^.Operation = IoFunctionFlush then
+    AtomicIncrement(Statistics^.Flushes)
   else
   begin
     AtomicIncrement(Statistics^.Writes);
@@ -91,6 +94,7 @@ begin
   FillMemory(@Dispatch, SizeOf(Dispatch), 0);
   Dispatch[IoFunctionRead] := @TransferThroughFilter;
   Dispatch[IoFunctionWrite] := @TransferThroughFilter;
+  Dispatch[IoFunctionFlush] := @TransferThroughFilter;
   Driver := CreateDriver('diskstats', Dispatch);
   for Index := 0 to BlockDeviceCount - 1 do
   begin
@@ -128,6 +132,8 @@ begin
     DebugWrite(' writes (');
     DebugWriteSize(Statistics^.BytesWritten);
     DebugWrite('), ');
+    DebugWriteDecimal(Statistics^.Flushes);
+    DebugWrite(' flushes, ');
     DebugWriteDecimal(Statistics^.Failures);
     DebugWriteLine(' failed');
     DebugEndMessage;
