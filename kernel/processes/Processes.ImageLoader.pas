@@ -18,6 +18,19 @@
   LoadLibraryImage does steps 2 and 3 for a library requested at run time
   (dlopen), and FindExportedSymbol looks a symbol up in it (dlsym).
 
+  Thread-local storage (PT_TLS) uses the static model of x86-64 variant
+  II: the TLS blocks of the program and of the libraries loaded with it
+  sit at fixed negative offsets from each thread's thread pointer, in
+  load order (the program's block nearest to it, as the linker expects).
+  The layout is fixed once the program is loaded; a library with a TLS
+  segment (or with initializers, which only the startup code runs) can
+  then no longer be loaded and LoadLibraryImage returns ErrorUnsupported.
+  Processes.ThreadStorage builds each thread's copy of the blocks.
+
+  The "module id" of a TLS relocation (DTPMOD64) is the module's offset
+  from the thread pointer, so __tls_get_addr in libsystem simply adds the
+  thread pointer, that offset and the variable's offset.
+
   Each module keeps kernel copies of its symbol, string and hash tables
   so symbols can be found later without touching user memory.
 }
@@ -60,12 +73,35 @@ type
 
     Needed: array[0..MaximumNeededLibraries - 1] of Integer;
     NeededCount: Integer;
+
+    { The TLS segment, if HasThreadLocalStorage: the initialization image
+      (TlsImageSize bytes at TlsImageAddress, the rest of TlsSize is
+      zero) and where the block lies below the thread pointer. }
+    HasThreadLocalStorage: Boolean;
+    TlsImageAddress: QWord;
+    TlsImageSize: QWord;
+    TlsSize: QWord;
+    TlsAlignment: QWord;
+    TlsOffset: QWord;
+
+    { Initializers and finalizers (user addresses; 0 if absent). }
+    InitFunction: QWord;
+    InitArray: QWord;
+    InitArrayCount: QWord;
+    FiniFunction: QWord;
+    FiniArray: QWord;
+    FiniArrayCount: QWord;
   end;
 
   PModuleList = ^TModuleList;
   TModuleList = record
     Modules: array[0..MaximumModules - 1] of PLoadedModule;
     Count: Integer;
+    { The static TLS area every thread gets below its thread pointer. }
+    StaticTlsSize: QWord;
+    StaticTlsAlignment: QWord;
+    { Set once the program is loaded: the layout can no longer change. }
+    StartupComplete: Boolean;
   end;
 
 { All routines return 0 on success or an Abi error code. }
@@ -92,6 +128,8 @@ uses
 
 const
   MaximumImageSize = 64 * 1024 * 1024;
+  MaximumStaticTlsSize = 1024 * 1024;
+  MaximumInitializers = 4096;
   LibraryDirectory = '/lib/';
 
 type
@@ -111,6 +149,13 @@ type
     RelaSize: QWord;
     JumpRelocations: QWord;
     JumpRelocationsSize: QWord;
+    InitFunction: QWord;
+    InitArray: QWord;
+    InitArraySize: QWord;
+    FiniFunction: QWord;
+    FiniArray: QWord;
+    FiniArraySize: QWord;
+    HasPreinitArray: Boolean;
     NeededOffsets: array[0..MaximumNeededLibraries - 1] of QWord;
     NeededCount: Integer;
   end;
@@ -211,8 +256,6 @@ begin
   for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
   begin
     ProgramHeader := ProgramHeaderAt(Image, Index);
-    if ProgramHeader^.SegmentType = ProgramHeaderTypeThreadLocal then
-      Exit(False); { thread local storage is not supported }
     if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.MemorySize = 0) then
       Continue;
     if RoundDownToPage(ProgramHeader^.VirtualAddress) < LowestPage then
@@ -304,6 +347,51 @@ begin
   end;
 end;
 
+{ --- Thread-local storage -------------------------------------------- }
+
+function FindThreadLocalSegment(const Image: TImageFile): PElf64ProgramHeader;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+  begin
+    Result := ProgramHeaderAt(Image, Index);
+    if (Result^.SegmentType = ProgramHeaderTypeThreadLocal) and (Result^.MemorySize > 0) then
+      Exit;
+  end;
+  Result := nil;
+end;
+
+{ Gives the module a place in the static TLS area, below the blocks
+  placed before it. }
+function PlaceThreadLocalStorage(List: PModuleList; Module: PLoadedModule;
+  Segment: PElf64ProgramHeader; Bias: QWord): LongInt;
+var
+  Alignment: QWord;
+  Offset: QWord;
+begin
+  Alignment := Segment^.Alignment;
+  if Alignment = 0 then
+    Alignment := 1;
+  if ((Alignment and (Alignment - 1)) <> 0) or (Alignment > PageSize) or
+     (Segment^.FileSize > Segment^.MemorySize) or (Segment^.MemorySize > MaximumStaticTlsSize) then
+    Exit(ErrorBadExecutable);
+
+  Offset := (List^.StaticTlsSize + Segment^.MemorySize + Alignment - 1) and not (Alignment - 1);
+  if Offset > MaximumStaticTlsSize then
+    Exit(ErrorOutOfMemory);
+  Module^.HasThreadLocalStorage := True;
+  Module^.TlsImageAddress := Bias + Segment^.VirtualAddress;
+  Module^.TlsImageSize := Segment^.FileSize;
+  Module^.TlsSize := Segment^.MemorySize;
+  Module^.TlsAlignment := Alignment;
+  Module^.TlsOffset := Offset;
+  List^.StaticTlsSize := Offset;
+  if Alignment > List^.StaticTlsAlignment then
+    List^.StaticTlsAlignment := Alignment;
+  Result := ErrorNone;
+end;
+
 { --- Dynamic section ------------------------------------------------- }
 
 function ReadDynamicSection(const Image: TImageFile; out Dynamic: TDynamicInformation): LongInt;
@@ -343,6 +431,13 @@ begin
         DynamicRelaSize: Dynamic.RelaSize := Entry[EntryIndex].Value;
         DynamicJumpRelocations: Dynamic.JumpRelocations := Entry[EntryIndex].Value;
         DynamicPltRelocationSize: Dynamic.JumpRelocationsSize := Entry[EntryIndex].Value;
+        DynamicInitFunction: Dynamic.InitFunction := Entry[EntryIndex].Value;
+        DynamicFiniFunction: Dynamic.FiniFunction := Entry[EntryIndex].Value;
+        DynamicInitArray: Dynamic.InitArray := Entry[EntryIndex].Value;
+        DynamicInitArraySize: Dynamic.InitArraySize := Entry[EntryIndex].Value;
+        DynamicFiniArray: Dynamic.FiniArray := Entry[EntryIndex].Value;
+        DynamicFiniArraySize: Dynamic.FiniArraySize := Entry[EntryIndex].Value;
+        DynamicPreinitArray, DynamicPreinitArraySize: Dynamic.HasPreinitArray := True;
       end;
       Inc(EntryIndex);
     end;
@@ -474,6 +569,41 @@ end;
 function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt; forward;
 
+{ Once the program runs, the static TLS layout is fixed and nobody would
+  call a new library's initializers. }
+function CheckLateLoadable(List: PModuleList; const Image: TImageFile;
+  const Dynamic: TDynamicInformation): LongInt;
+begin
+  Result := ErrorNone;
+  if not List^.StartupComplete then
+    Exit;
+  if (FindThreadLocalSegment(Image) <> nil) or (Dynamic.InitFunction <> 0) or
+     (Dynamic.InitArraySize <> 0) or (Dynamic.FiniFunction <> 0) or
+     (Dynamic.FiniArraySize <> 0) or Dynamic.HasPreinitArray then
+    Result := ErrorUnsupported;
+end;
+
+function NoteInitializers(Module: PLoadedModule; const Dynamic: TDynamicInformation;
+  Bias: QWord): LongInt;
+begin
+  { Only executables may have DT_PREINIT_ARRAY, and ours have none. }
+  if Dynamic.HasPreinitArray then
+    Exit(ErrorUnsupported);
+  if Dynamic.InitFunction <> 0 then
+    Module^.InitFunction := Bias + Dynamic.InitFunction;
+  if Dynamic.FiniFunction <> 0 then
+    Module^.FiniFunction := Bias + Dynamic.FiniFunction;
+  Module^.InitArrayCount := Dynamic.InitArraySize div SizeOf(QWord);
+  Module^.FiniArrayCount := Dynamic.FiniArraySize div SizeOf(QWord);
+  if (Module^.InitArrayCount > MaximumInitializers) or (Module^.FiniArrayCount > MaximumInitializers) then
+    Exit(ErrorBadExecutable);
+  if Module^.InitArrayCount > 0 then
+    Module^.InitArray := Bias + Dynamic.InitArray;
+  if Module^.FiniArrayCount > 0 then
+    Module^.FiniArray := Bias + Dynamic.FiniArray;
+  Result := ErrorNone;
+end;
+
 { Loads the libraries a module needs, from /lib of the system volume. }
 function LoadNeededLibraries(Process: PProcess; Module: PLoadedModule;
   const Dynamic: TDynamicInformation): LongInt;
@@ -532,6 +662,10 @@ begin
 
   if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) then
     Result := ErrorBadExecutable;
+  if Result = ErrorNone then
+    Result := ReadDynamicSection(Image, Dynamic);
+  if Result = ErrorNone then
+    Result := CheckLateLoadable(List, Image, Dynamic);
 
   { Choose where the module goes. }
   if Result = ErrorNone then
@@ -570,10 +704,12 @@ begin
     Module^.EntryPoint := Bias + Image.Header^.EntryPoint;
     Module^.ProgramHeaderAddress := Bias + LowestPage + Image.Header^.ProgramHeaderOffset;
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
-    Result := ReadDynamicSection(Image, Dynamic);
+    Result := CopyDynamicTables(Module, Image, Dynamic);
   end;
   if Result = ErrorNone then
-    Result := CopyDynamicTables(Module, Image, Dynamic);
+    Result := NoteInitializers(Module, Dynamic, Bias);
+  if (Result = ErrorNone) and (FindThreadLocalSegment(Image) <> nil) then
+    Result := PlaceThreadLocalStorage(List, Module, FindThreadLocalSegment(Image), Bias);
 
   FreeKernelMemory(Image.Contents);
 
@@ -631,9 +767,11 @@ begin
   Result := False;
 end;
 
-{ Searches every module in load order (the global scope). }
+{ Searches every module in load order (the global scope). Address is the
+  symbol's address, or for a thread-local symbol its offset in the
+  defining module's TLS block. }
 function ResolveSymbol(List: PModuleList; Name: PChar; out Address: QWord;
-  out Size: QWord; SkipModule: PLoadedModule): Boolean;
+  out Size: QWord; SkipModule: PLoadedModule; out DefiningModule: PLoadedModule): Boolean;
 var
   Index: Integer;
   Hash: LongWord;
@@ -641,6 +779,7 @@ var
 begin
   Address := 0;
   Size := 0;
+  DefiningModule := nil;
   Hash := ElfHash(Name);
   for Index := 0 to List^.Count - 1 do
   begin
@@ -648,12 +787,35 @@ begin
       Continue;
     if FindDefinedSymbol(List^.Modules[Index], Name, Hash, Symbol) then
     begin
-      Address := List^.Modules[Index]^.Base + Symbol^.Value;
+      DefiningModule := List^.Modules[Index];
+      if SymbolType(Symbol^) = SymbolTypeThreadLocal then
+        Address := Symbol^.Value
+      else
+        Address := DefiningModule^.Base + Symbol^.Value;
       Size := Symbol^.Size;
       Exit(True);
     end;
   end;
   Result := False;
+end;
+
+{ The TLS relocations: Offset is the variable's offset in the TLS block
+  of DefiningModule. }
+function ThreadLocalRelocationValue(Kind: LongWord; DefiningModule: PLoadedModule; Offset: QWord;
+  out Value: QWord): LongInt;
+begin
+  Value := 0;
+  if (DefiningModule = nil) or not DefiningModule^.HasThreadLocalStorage then
+    Exit(ErrorBadExecutable);
+  case Kind of
+    RelocationTlsModule64:
+      Value := QWord(-Int64(DefiningModule^.TlsOffset));
+    RelocationTlsOffset64:
+      Value := Offset;
+    RelocationThreadPointerOffset64, RelocationThreadPointerOffset32:
+      Value := Offset - DefiningModule^.TlsOffset;
+  end;
+  Result := ErrorNone;
 end;
 
 function ApplyRelocation(Process: PProcess; Module: PLoadedModule; const Relocation: TElf64Rela): LongInt;
@@ -667,8 +829,12 @@ var
   Value: QWord;
   Target: QWord;
   CopyBuffer: Pointer;
+  DefiningModule: PLoadedModule;
+  Value32: LongWord;
 begin
   List := ModuleList(Process);
+  { Without a symbol, a TLS relocation refers to the module's own block. }
+  DefiningModule := Module;
   Kind := RelocationType(Relocation);
   SymbolIndex := RelocationSymbolIndex(Relocation);
   Target := Module^.Base + Relocation.Offset;
@@ -683,10 +849,12 @@ begin
     { A copy relocation must take the data from another module. }
     if Kind = RelocationCopy then
     begin
-      if not ResolveSymbol(List, SymbolName(Module, Symbol), SymbolAddress, SymbolSize, Module) then
+      if not ResolveSymbol(List, SymbolName(Module, Symbol), SymbolAddress, SymbolSize, Module,
+        DefiningModule) then
         Exit(ErrorBadExecutable);
     end
-    else if not ResolveSymbol(List, SymbolName(Module, Symbol), SymbolAddress, SymbolSize, nil) then
+    else if not ResolveSymbol(List, SymbolName(Module, Symbol), SymbolAddress, SymbolSize, nil,
+      DefiningModule) then
     begin
       if SymbolBinding(Symbol^) <> SymbolBindingWeak then
         Exit(ErrorBadExecutable); { an undefined symbol }
@@ -703,6 +871,22 @@ begin
       Value := SymbolAddress + QWord(Relocation.Addend);
     RelocationGlobalData, RelocationJumpSlot:
       Value := SymbolAddress;
+    RelocationTlsModule64, RelocationTlsOffset64, RelocationThreadPointerOffset64:
+      begin
+        Result := ThreadLocalRelocationValue(Kind, DefiningModule,
+          SymbolAddress + QWord(Relocation.Addend), Value);
+        if Result <> ErrorNone then
+          Exit;
+      end;
+    RelocationThreadPointerOffset32:
+      begin
+        Result := ThreadLocalRelocationValue(Kind, DefiningModule,
+          SymbolAddress + QWord(Relocation.Addend), Value);
+        if Result <> ErrorNone then
+          Exit;
+        Value32 := LongWord(Value);
+        Exit(WriteIntoAddressSpace(Process^.AddressSpace, Target, @Value32, SizeOf(Value32)));
+      end;
     RelocationCopy:
       begin
         CopyBuffer := AllocateKernelMemory(SymbolSize);
@@ -761,7 +945,10 @@ begin
   if Result = ErrorNone then
     Result := RelocatePendingModules(Process);
   if Result = ErrorNone then
+  begin
     MainModule := ModuleList(Process)^.Modules[ModuleIndex];
+    ModuleList(Process)^.StartupComplete := True;
+  end;
 end;
 
 function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;

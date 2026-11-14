@@ -50,7 +50,13 @@ how the existing pieces fit together.
 - [x] Per-process handle tables
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
-- [ ] Multiple threads per user process (thread creation call, thread local storage)
+- [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
+      thread handles; a crash or exit in one thread ends the whole process)
+- [x] User-mode locks: atomic fast path, CallWaitOnAddress / CallWakeAddress
+- [ ] Exception fixups for kernel accesses to user memory (today a thread
+      freeing memory another thread's system call is reading panics the kernel)
+- [ ] Dynamic TLS for libraries loaded with LoadLibrary (now ErrorUnsupported)
+- [ ] Thread priorities set by programs; thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [ ] Signals that do not end a program (stop, continue, user signals)
@@ -125,9 +131,13 @@ how the existing pieces fit together.
 - [ ] Scheduling priorities for programs (nice), load averages (uptime)
 - [ ] Allocated block counts in file information (du, ls -s, stat %b)
 - [x] `coretest`: user mode tests run by `make test`
-- [ ] Lazy binding (PLT resolution on first call) and symbol versioning
-- [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
-- [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
+- [ ] Lazy binding (PLT resolution on first call) and symbol versioning;
+      binding stays eager, which is simpler and costs little with few libraries
+- [x] Thread local storage (PT_TLS, static model) and FPC threadvars in user mode
+- [x] Unit initialization and finalization sections; DT_INIT / DT_INIT_ARRAY /
+      DT_FINI_ARRAY run in dependency order by the user runtime
+- [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
+- [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
 - [x] Shell: case, functions (local, return), here documents, ${...} forms,
       eval, exec, command, type, wait, arithmetic assignment

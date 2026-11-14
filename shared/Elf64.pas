@@ -39,12 +39,21 @@ const
   DynamicRelaEntrySize = 9;
   DynamicStringTableSize = 10;
   DynamicSymbolEntrySize = 11;
+  DynamicInitFunction = 12;
+  DynamicFiniFunction = 13;
   DynamicSharedObjectName = 14;
   DynamicPltRelocationType = 20;
   DynamicJumpRelocations = 23;
+  DynamicInitArray = 25;
+  DynamicFiniArray = 26;
+  DynamicInitArraySize = 27;
+  DynamicFiniArraySize = 28;
+  DynamicPreinitArray = 32;
+  DynamicPreinitArraySize = 33;
 
   SymbolUndefinedSection = 0;
   SymbolBindingWeak = 2;
+  SymbolTypeThreadLocal = 6;
 
   { x86-64 relocation types. }
   RelocationNone = 0;
@@ -53,6 +62,11 @@ const
   RelocationGlobalData = 6;
   RelocationJumpSlot = 7;
   RelocationRelative = 8;
+  { Thread-local storage (x86-64). }
+  RelocationTlsModule64 = 16;   { R_X86_64_DTPMOD64 }
+  RelocationTlsOffset64 = 17;   { R_X86_64_DTPOFF64 }
+  RelocationThreadPointerOffset64 = 18; { R_X86_64_TPOFF64 }
+  RelocationThreadPointerOffset32 = 23; { R_X86_64_TPOFF32 }
 
   SegmentFlagExecute = 1;
   SegmentFlagWrite = 2;
@@ -122,6 +136,7 @@ type
 function RelocationSymbolIndex(const Relocation: TElf64Rela): LongWord;
 function RelocationType(const Relocation: TElf64Rela): LongWord;
 function SymbolBinding(const Symbol: TElf64Symbol): Byte;
+function SymbolType(const Symbol: TElf64Symbol): Byte;
 
 { The classic System V ELF hash of a symbol name. }
 function ElfHash(Name: PChar): LongWord;
@@ -141,6 +156,11 @@ end;
 function SymbolBinding(const Symbol: TElf64Symbol): Byte;
 begin
   Result := Symbol.Information shr 4;
+end;
+
+function SymbolType(const Symbol: TElf64Symbol): Byte;
+begin
+  Result := Symbol.Information and $0F;
 end;
 
 function ElfHash(Name: PChar): LongWord;

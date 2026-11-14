@@ -57,6 +57,10 @@ type
       the kernel's for kernel threads, its process's for user threads. }
     AddressSpaceRoot: QWord;
 
+    { The user thread pointer (the FS base on x86-64), loaded whenever
+      the thread is switched to. Zero for kernel threads. }
+    UserThreadPointer: QWord;
+
     State: TThreadState;
     Priority: LongWord;
     QuantumRemaining: LongInt;

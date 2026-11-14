@@ -33,14 +33,20 @@ function ArchPrepareInitialStack(StackTop: QWord; EntryPoint: Pointer): QWord;
   the given thread is running in user mode. }
 procedure ArchSetThreadInterruptStack(StackTop: QWord);
 
+{ Loads the user thread pointer: the FS base, which user code reaches as
+  %fs:0 (thread-local storage). The kernel itself never uses FS. }
+procedure ArchSetUserThreadPointer(ThreadPointer: QWord);
+
 implementation
 
 uses
+  Kernel.Arch.Cpu,
   Kernel.Arch.DescriptorTables,
   Kernel.Arch.SystemCallEntry;
 
 const
   InitialFlags = QWord($2); { bit 1 is always set; interrupts disabled }
+  MsrFsBase = $C0000100;
 
 procedure ArchSwitchContext(SavedStackPointer: PQWord; NewStackPointer: QWord); assembler; nostackframe;
 asm
@@ -93,6 +99,11 @@ begin
   Slot^ := InitialFlags;       { RFLAGS }
 
   Result := QWord(Slot);
+end;
+
+procedure ArchSetUserThreadPointer(ThreadPointer: QWord);
+begin
+  WriteModelSpecificRegister(MsrFsBase, ThreadPointer);
 end;
 
 procedure ArchSetThreadInterruptStack(StackTop: QWord);

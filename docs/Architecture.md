@@ -286,7 +286,71 @@ heap allocations and an 8 MiB stack below 0x7FFF_FFFF_F000. Pages are only
 mapped when first touched: the page fault handler asks the address space
 whether the address belongs to a region and, if so, maps a zeroed page. A
 fault anywhere else in user mode ends just that process (exit status 139,
-as a segmentation fault on Unix).
+as a segmentation fault on Unix). The threads of a process share its
+address space; region changes, page commits and the copies the kernel
+makes in and out of it are serialized by a spin lock in the address space.
+
+### Threads
+
+A user process has one or more threads (`Processes.UserThread`). Each has
+its own kernel stack (system calls and interrupts run on it; the scheduler
+points the TSS and the system call entry at it on every switch), its own
+user stack (a region with an unmapped guard page below it) and its own
+thread data region (`Processes.ThreadStorage`) with the thread control
+block and static thread-local storage. The thread pointer, the FS base
+(MSR 0xC0000100), is part of each thread's state and is loaded by the
+scheduler whenever it switches to a thread with a different one.
+
+`CreateThread` (40) starts a thread at an entry point with one argument
+and returns a thread handle; `WaitForThread` (42) waits for its exit
+code; `ExitThread` (41) ends the calling thread. The process counts its
+active threads, and the thread that brings the count to zero ends the
+process: it closes the handles, releases the modules, frees the address
+space and wakes the waiters. Exit (or a crash) in any thread instead marks
+the process for termination, just as `TerminateProcess` does, so the other
+threads end at their next safe point (see "Ending other programs"). Every
+exiting thread first switches to the kernel's address space, so the last
+one can free the process's while the others are still on their way out.
+
+User-mode locks (`Sys.Locks`) take and release a free lock with one atomic
+instruction. Only a contended lock enters the kernel: `WaitOnAddress` (45)
+sleeps while a 32-bit word still holds a given value, comparing it under
+the same lock that `WakeAddress` (46) takes, so no wake-up is lost
+(`Processes.AddressWait`). The waits are alertable, so a process asked to
+end is never stuck in a lock.
+
+### Thread-local storage and initialization
+
+The loader lays out thread-local storage with the static model of x86-64
+variant II: the TLS block of the program and of each library loaded with
+it sits at a fixed offset below the thread pointer, and the thread pointer
+points at a control block whose first word points to itself (`%fs:0`),
+followed by a word for the user runtime and the thread id
+(`ThreadBlock*` in `Abi.SystemCalls`). Every new thread gets fresh copies
+of the TLS images. The loader handles the TLS relocations DTPMOD64,
+DTPOFF64, TPOFF64 and TPOFF32; a module's "id" is its offset from the
+thread pointer, so `__tls_get_addr` in the System unit is one addition.
+Libraries opened with `LoadLibrary` after startup may not have a TLS
+segment or initializers (`ErrorUnsupported`): the layout is fixed by then.
+
+Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
+`FPC_THREADVAR_RELOCATE` with an offset stored in the variable. The System
+unit hands out the offsets at startup from the program's
+`FPC_THREADVARTABLES` (which covers every unit the program uses, those in
+libraries included) and gives each thread a zeroed threadvar block on its
+first access, kept in the runtime word of its control block.
+
+Initialization code runs in user mode. The kernel collects the
+initializers (DT_INIT, then DT_INIT_ARRAY) of the program and its
+libraries, dependencies first, and the finalizers (DT_FINI_ARRAY in
+reverse, then DT_FINI) in the opposite order, and passes both lists in the
+auxiliary vector (`AuxiliaryInitializers` and friends). The System unit
+runs the initializers, then the unit initialization sections listed in
+the program's `INITFINAL` table (the compiler orders it by unit
+dependencies, across libraries), then the main block; at exit it runs the
+unit finalization sections in reverse, the output flush hook and the
+finalizers. Symbols stay bound eagerly when the program is loaded; there
+is no lazy PLT binding.
 
 ### System calls
 
@@ -306,6 +370,7 @@ process's regions before the kernel touches it (`Processes.UserAccess`).
 | Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind, ControlHandle (console modes) |
 | Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
+| Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
@@ -347,8 +412,8 @@ to it and ".." never leads above it.
 ### Handles
 
 A process has a table of 64 handles, each naming a referenced object and
-its kind: file, console, pipe read end, pipe write end, process or the
-null device. Handles 0-2 are standard input, output and error.
+its kind: file, console, pipe read end, pipe write end, process, thread
+or the null device. Handles 0-2 are standard input, output and error.
 `DuplicateHandle` copies one onto another number, which is how the shell
 redirects its own output for builtins. A pipe counts its open ends
 separately from object references, so a reader sees end of file once the
@@ -376,7 +441,7 @@ and `FindSymbol` looks a name up in a library and the libraries it needs.
 
 The initial stack holds the argument count, the arguments, the
 environment and an auxiliary vector (program headers, page size, entry
-point), as on Linux.
+point, and the initializer and finalizer lists), as on Linux.
 
 ### The userland
 
@@ -384,9 +449,11 @@ Everything in user mode is Free Pascal, compiled with `-Cg` (position
 independent) against `rtl/user/system.pas`:
 
 - **System unit** – the `syscall` instruction, program start (reads the
-  initial stack and runs the main block) and exit (with a hook so buffered
-  output is flushed).
-- **si_prc** – the `_start` entry point linked into each program.
+  initial stack, runs library initializers, unit initialization and the
+  main block), exit (unit finalization, a hook so buffered output is
+  flushed, library finalizers), threadvars and `__tls_get_addr`.
+- **si_prc** – the `_start` entry point linked into each program; it
+  passes the program's `INITFINAL` and threadvar tables to the System unit.
 - **libcryptography.so** – digests (`Crypto.Md5`, `Crypto.Sha1`,
   `Crypto.Sha256`, `Crypto.Sha512`, `Crypto.Blake2b` behind
   `Crypto.Digests`), `Crypto.Hmac`, `Crypto.Checksums`, `Crypto.Aes`,
@@ -396,7 +463,13 @@ independent) against `rtl/user/system.pas`:
   `Sys.Memory` (size class heap on top of AllocateMemory), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
-  `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`.
+  `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
+  `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
+  (creating, waiting for and ending threads). The heap is thread safe;
+  buffered output is not synchronized.
+- **libtlstest.so** – a small library in assembly with TLS and
+  initializer arrays, which Free Pascal does not emit; `threadtest` uses
+  it to test the loader and the runtime.
 - **libcoreutils.so** – `Util.Options` (GNU style options: grouped short
   options, long options with abbreviations, `--help` and `--version`),
   `Util.Messages` ("program: message: error" diagnostics), `Util.Input`,
@@ -423,8 +496,9 @@ independent) against `rtl/user/system.pas`:
   `wait`, `return`, `local`) are in `Shell.CommandBuiltins`.
 - **coreutils** – one program per file in `userland/bin`.
 
-Free Pascal units do not use initialization sections or threadvars in user
-mode; libraries are plain collections of routines and data.
+Units may have initialization and finalization sections and threadvars
+(see "Thread-local storage and initialization"); the libraries themselves
+have no initialization code of their own.
 
 ## Coding conventions
 

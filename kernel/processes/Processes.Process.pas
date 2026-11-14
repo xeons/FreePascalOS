@@ -42,6 +42,9 @@ type
     ThreadListLock: TSpinLock;
     Threads: TListEntry;
     ThreadCount: LongWord;
+    { User threads that have not exited yet; the one that brings this to
+      zero ends the process (see Processes.UserThread). }
+    ActiveUserThreads: Int64;
 
     { Protects the handle table, current directory and module list. }
     Lock: TMutex;

@@ -40,7 +40,8 @@ uses
   Processes.UserProcess,
   Processes.UserAccess,
   Processes.Termination,
-  Processes.FileCalls;
+  Processes.FileCalls,
+  Processes.ThreadCalls;
 
 const
   SystemName = 'FreePascalOS';
@@ -482,6 +483,15 @@ begin
     CallControlHandle: Result := PerformControlHandle(Int64(Argument0), Argument1, Argument2);
     CallSetInterruptIgnored: Result := PerformSetInterruptIgnored(Argument0);
     CallGetProcessGroup: Result := Int64(CurrentProcess^.GroupId);
+
+    { Threads (Processes.ThreadCalls). }
+    CallCreateThread: Result := PerformCreateThread(Argument0, Argument1, Argument2);
+    CallExitThread: PerformExitThread(Argument0);
+    CallWaitForThread: Result := PerformWaitForThread(Int64(Argument0), Int64(Argument1), Argument2);
+    CallSetThreadPointer: Result := PerformSetThreadPointer(Argument0);
+    CallGetThreadId: Result := PerformGetThreadId(Int64(Argument0));
+    CallWaitOnAddress: Result := PerformWaitOnAddress(Argument0, Argument1, Int64(Argument2));
+    CallWakeAddress: Result := PerformWakeAddress(Argument0, Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -495,6 +505,7 @@ procedure InitializeSystemCalls;
 begin
   InitializeUserProcesses;
   InitializeProcessTermination;
+  InitializeThreadCalls;
   InitializeSystemCallEntry(@DispatchSystemCall);
 end;
 
