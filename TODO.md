@@ -182,8 +182,8 @@ how the existing pieces fit together.
       NtContinue); exception filters (Sys.Exceptions)
 - [x] Stack overflow as a catchable exception (a reserve at the bottom of each
       stack, armed again once the stack is clear)
-- [ ] A system call whose buffer lies in an armed stack reserve fails with
-      ErrorBadAddress instead of raising the stack overflow
+- [x] A system call whose buffer lies in the stack's reserve completes, and the
+      stack overflow is raised as it returns
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion

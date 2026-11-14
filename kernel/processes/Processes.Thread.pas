@@ -61,6 +61,10 @@ type
     { The start of the stack region whose reserve a stack overflow opened,
       0 if none (Processes.UserExceptions). }
     OpenedStackReserve: QWord;
+    { The kernel ran into the reserve copying a system call's data; the
+      stack overflow is raised as the call returns. }
+    StackOverflowPending: Boolean;
+    PendingOverflowAddress: QWord;
   end;
 
 var

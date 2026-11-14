@@ -108,13 +108,21 @@ const
 
 { --- Faults ---------------------------------------------------------- }
 
+const
+  PageFaultFromUserMode = 4;
+
 function ResolvePageFault(FaultAddress: QWord; ErrorCode: QWord): Boolean;
 var
   Process: PProcess;
 begin
   Process := CurrentProcess;
-  Result := (Process <> nil) and Process^.IsUserProcess and
-    ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
+  if (Process = nil) or not Process^.IsUserProcess then
+    Exit(False);
+  { The kernel copying a system call's data into the stack's reserve:
+    open it, so the call can complete, and raise the overflow after. }
+  if ((ErrorCode and PageFaultFromUserMode) = 0) and (FaultAddress < UserSpaceLimit) then
+    NoteKernelAccessToStack(FaultAddress);
+  Result := ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
 end;
 
 procedure HandleUserException(Frame: PTrapFrame; Description: PChar; FaultAddress: QWord);

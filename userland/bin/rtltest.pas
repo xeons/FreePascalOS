@@ -497,6 +497,39 @@ begin
   RecurseWithoutEnd(1);
 end;
 
+var
+  ZeroDevice: THandle;
+  FailedReads: Integer;
+
+{ Recurses with a buffer only the kernel writes, reading /dev/zero into
+  it with an inline system call: nothing below the buffer is touched
+  before the kernel copies into it, so the stack's reserve is first
+  reached by the kernel. The buffer is the last (lowest) local. }
+function RecurseThroughSystemCalls(Depth: LongInt): LongInt;
+var
+  Handle: Int64;
+  ReadResult: Int64;
+  Buffer: array[0..8191] of Byte;
+begin
+  Handle := ZeroDevice;
+  asm
+    movq $2, %rax           { CallRead }
+    movq Handle, %rdi
+    leaq Buffer, %rsi
+    movq $8192, %rdx
+    syscall
+    movq %rax, ReadResult
+  end ['rax', 'rcx', 'rdx', 'rsi', 'rdi', 'r11'];
+  if ReadResult <> SizeOf(Buffer) then
+    Inc(FailedReads);
+  Result := RecurseThroughSystemCalls(Depth + 1) + Buffer[Depth and 8191];
+end;
+
+procedure OverflowStackInSystemCalls;
+begin
+  RecurseThroughSystemCalls(1);
+end;
+
 type
   TOverflowingThread = class(TThread)
   private
@@ -546,6 +579,14 @@ begin
   { The reserve is armed again at the next system call. }
   Sleep(1);
   Check(ExceptionClassOf(@OverflowStack) = 'EStackOverflow', 'a second stack overflow is caught too');
+  Sleep(1);
+  ZeroDevice := FileOpen('/dev/zero', fmOpenRead);
+  FailedReads := 0;
+  Check(ExceptionClassOf(@OverflowStackInSystemCalls) = 'EStackOverflow',
+    'a stack overflow reached by a system call raises EStackOverflow');
+  Check(FailedReads = 0, 'the system call into the reserve completed');
+  FileClose(ZeroDevice);
+  Sleep(1);
   Overflowing := TOverflowingThread.Create(False);
   Overflowing.WaitFor;
   Check(Overflowing.Caught = 'EStackOverflow', 'a stack overflow in a thread');

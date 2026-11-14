@@ -115,9 +115,10 @@ function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
 function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
-{ If Address lies in the armed reserve of a stack, opens the reserve and
-  returns True and the stack region's start. }
-function OpenStackReserve(Space: PAddressSpace; Address: QWord; out RegionStart: QWord): Boolean;
+{ If Address lies in the armed reserve of the stack region starting at
+  StackStart, opens the reserve and returns True and the region's start. }
+function OpenStackReserve(Space: PAddressSpace; Address: QWord; StackStart: QWord;
+  out RegionStart: QWord): Boolean;
 { Arms the opened reserve of the stack starting at RegionStart again if
   StackPointer is far enough above it, giving its pages back. Returns
   True if the reserve is armed (again). }
@@ -696,7 +697,8 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
-function OpenStackReserve(Space: PAddressSpace; Address: QWord; out RegionStart: QWord): Boolean;
+function OpenStackReserve(Space: PAddressSpace; Address: QWord; StackStart: QWord;
+  out RegionStart: QWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
   Index: Integer;
@@ -709,7 +711,7 @@ begin
   if Index >= 0 then
   begin
     Region := @Space^.Regions[Index];
-    if (Region^.Kind = RegionKindStack) and not Region^.ReserveInUse and
+    if (Region^.Kind = RegionKindStack) and (Region^.Start = StackStart) and not Region^.ReserveInUse and
        (Address < Region^.Start + Region^.ReserveBytes) then
     begin
       Region^.ReserveInUse := True;

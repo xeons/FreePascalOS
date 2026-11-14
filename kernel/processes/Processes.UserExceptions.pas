@@ -18,8 +18,10 @@
   no dispatcher registered, one that is never passed on (a machine check)
   or a record that does not fit on the stack.
 
-  A stack overflow - a touch of the reserve at the bottom of a stack
-  (Processes.AddressSpace) - is passed on as ExceptionStackOverflow: the
+  A stack overflow - a touch of the reserve at the bottom of the thread's
+  stack (Processes.AddressSpace) - is passed on as ExceptionStackOverflow
+  (when the kernel touches it, copying a system call's data, the call
+  completes and the overflow is raised as it returns): the
   reserve is opened, so the record and the handling fit. It is armed
   again once the thread's stack pointer is well above it, which is
   checked at every system call, interrupt return and exception
@@ -54,6 +56,16 @@ procedure RearmStackReserveIfClear(UserStackPointer: QWord);
 { True if the current thread has an opened stack reserve (a cheap test). }
 function StackReserveIsOpen: Boolean;
 
+{ For the page fault resolver: a fault of the kernel itself (copying a
+  system call's data) at FaultAddress. If it lies in the armed reserve of
+  the current thread's stack, opens the reserve - the call goes on - and
+  notes a stack overflow, which is raised when the call returns. Returns
+  True if it did. }
+function NoteKernelAccessToStack(FaultAddress: QWord): Boolean;
+{ At the end of a system call: raises a stack overflow noted during it,
+  with the call's result in the context. }
+procedure DeliverPendingStackOverflow(Frame: PTrapFrame);
+
 { CallContinue: replaces Frame (the system call's) with the context at
   ContextAddress. Returns ErrorNone, or an Abi error with Frame
   unchanged. }
@@ -73,7 +85,9 @@ uses
   Processes.Process,
   Processes.Thread,
   Processes.AddressSpace,
-  Processes.UserAccess;
+  Processes.UserAccess,
+  Processes.UserProcess,
+  Debug.Output;
 
 const
   VectorDivideError = 0;
@@ -162,7 +176,11 @@ begin
     (FaultAddress + StackOverflowDistance > Frame^.Rsp);
 end;
 
-function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
+{ Writes the exception record for Frame onto the user stack and changes
+  Frame so the thread continues in the dispatcher. Returns False if there
+  is no dispatcher, the dispatcher failed or the record does not fit.
+  Works with interrupts on or off and leaves them as they were. }
+function DeliverException(Frame: PTrapFrame; Code, Access: LongWord; FaultAddress: QWord): Boolean;
 var
   Process: PProcess;
   Thread: PThread;
@@ -171,6 +189,7 @@ var
   ReturnSlot: QWord;
   NoReturnAddress: QWord;
   Written: Boolean;
+  WereEnabled: Boolean;
 begin
   Result := False;
   Process := CurrentProcess;
@@ -178,20 +197,9 @@ begin
   if (Process^.ExceptionDispatcher = 0) or Thread^.IsDispatchingException then
     Exit;
   ZeroMemory(@ExceptionRecord, SizeOf(ExceptionRecord));
-  ExceptionRecord.Code := ExceptionCode(TrapFrameVector(Frame));
-  if ExceptionRecord.Code = 0 then
-    Exit;
-  EnableInterrupts;
-  RearmStackReserveIfClear(Frame^.Rsp);
-  if (TrapFrameVector(Frame) = VectorPageFault) and (Thread^.OpenedStackReserve = 0) and
-     OpenStackReserve(Process^.AddressSpace, FaultAddress, Thread^.OpenedStackReserve) then
-    ExceptionRecord.Code := ExceptionStackOverflow;
-  DisableInterrupts;
-  if TrapFrameVector(Frame) = VectorPageFault then
-  begin
-    ExceptionRecord.Access := AccessKindOf(Frame^.ErrorCode);
-    ExceptionRecord.FaultAddress := FaultAddress;
-  end;
+  ExceptionRecord.Code := Code;
+  ExceptionRecord.Access := Access;
+  ExceptionRecord.FaultAddress := FaultAddress;
   ExceptionRecord.Address := Frame^.Rip;
   CaptureContext(Frame, ExceptionRecord.Context);
 
@@ -202,11 +210,13 @@ begin
   NoReturnAddress := 0;
   { Writing may fault (a stack page not yet touched), which needs
     interrupts. }
+  WereEnabled := SaveAndDisableInterrupts;
   EnableInterrupts;
   Written := (RecordAddress < Frame^.Rsp) and
     (CopyToUser(RecordAddress, @ExceptionRecord, SizeOf(ExceptionRecord)) = ErrorNone) and
     (CopyToUser(ReturnSlot, @NoReturnAddress, SizeOf(NoReturnAddress)) = ErrorNone);
   DisableInterrupts;
+  RestoreInterrupts(WereEnabled);
   if not Written then
     Exit;
 
@@ -217,6 +227,73 @@ begin
     RflagsInterruptEnable;
   Thread^.IsDispatchingException := True;
   Result := True;
+end;
+
+{ Opens the armed reserve of the current thread's own stack if Address
+  lies in it; True if it did. }
+function OpenOwnStackReserve(Address: QWord): Boolean;
+var
+  Thread: PThread;
+begin
+  Thread := CurrentThreadObject;
+  Result := Thread^.IsUserThread and (Thread^.OpenedStackReserve = 0) and
+    OpenStackReserve(CurrentProcess^.AddressSpace, Address, Thread^.UserStackStart,
+      Thread^.OpenedStackReserve);
+end;
+
+function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
+var
+  Code: LongWord;
+  Access: LongWord;
+begin
+  Result := False;
+  Code := ExceptionCode(TrapFrameVector(Frame));
+  if Code = 0 then
+    Exit;
+  Access := 0;
+  EnableInterrupts;
+  RearmStackReserveIfClear(Frame^.Rsp);
+  if TrapFrameVector(Frame) = VectorPageFault then
+  begin
+    Access := AccessKindOf(Frame^.ErrorCode);
+    if OpenOwnStackReserve(FaultAddress) then
+      Code := ExceptionStackOverflow;
+  end
+  else
+    FaultAddress := 0;
+  DisableInterrupts;
+  Result := DeliverException(Frame, Code, Access, FaultAddress);
+end;
+
+function NoteKernelAccessToStack(FaultAddress: QWord): Boolean;
+var
+  Thread: PThread;
+begin
+  Result := OpenOwnStackReserve(FaultAddress);
+  if not Result then
+    Exit;
+  Thread := CurrentThreadObject;
+  Thread^.StackOverflowPending := True;
+  Thread^.PendingOverflowAddress := FaultAddress;
+end;
+
+procedure DeliverPendingStackOverflow(Frame: PTrapFrame);
+var
+  Thread: PThread;
+begin
+  Thread := CurrentThreadObject;
+  if (Thread = nil) or not Thread^.StackOverflowPending then
+    Exit;
+  Thread^.StackOverflowPending := False;
+  if DeliverException(Frame, ExceptionStackOverflow, AccessKindWrite, Thread^.PendingOverflowAddress) then
+    Exit;
+  { Nobody to pass it to, as for an overflow the program made itself. }
+  DebugBeginMessage;
+  DebugWriteTag('process');
+  DebugWrite(@CurrentProcess^.Name[0]);
+  DebugWriteLine(': stack overflow in a system call, terminated');
+  DebugEndMessage;
+  ExitCurrentProcess(ExitStatusException);
 end;
 
 function StackReserveIsOpen: Boolean;

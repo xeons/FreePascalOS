@@ -636,6 +636,9 @@ begin
   SetSystemCallResult(Frame, Result);
   { A program asked to end does so before it runs any further. }
   EndProcessIfTerminationRequested;
+  { The call's data ran into the stack's reserve: the program learns of
+    the overflow now, with the call's result in hand. }
+  DeliverPendingStackOverflow(Frame);
 end;
 
 procedure InitializeSystemCalls;

@@ -659,7 +659,12 @@ A **stack overflow** is caught the same way. The bottom of every stack
 does not provide on demand. Touching it opens the reserve (the region's
 `ReserveInUse`) and passes `ExceptionStackOverflow`, runtime error 202,
 `EStackOverflow`: the record and the runtime's handling fit in the
-reserve, and try/except blocks further up catch it. Once the thread's
+reserve, and try/except blocks further up catch it. When the kernel is
+the first to touch the reserve - copying a system call's data into a
+buffer on the stack - it opens the reserve, lets the call complete and
+raises the overflow as the call returns, with the call's result in the
+record's context. Only the thread's own stack reserve is opened this
+way. Once the thread's
 stack pointer is 64 KiB above the reserve again - checked at every system
 call, interrupt return and exception - its pages are given back and it is
 armed for the next overflow.
