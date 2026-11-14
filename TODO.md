@@ -7,12 +7,14 @@ how the existing pieces fit together.
 
 - [x] Parse ACPI tables (RSDP from the loader → XSDT/RSDT → table lookup)
 - [x] Use the MADT for I/O APICs and interrupt source overrides
-- [ ] Use the MADT processor list (SMP), HPET and FADT
+- [x] Use the MADT processor list (starting the other processors)
+- [ ] HPET and FADT (power off, reset, sleep states)
 - [x] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
 - [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
 - [ ] Legacy configuration access (ports 0xCF8/0xCFC) for machines without MCFG
-- [ ] MSI / MSI-X interrupts for PCI devices
+- [x] MSI interrupts for PCI devices (AHCI)
+- [ ] MSI-X
 
 ## Multiprocessor support
 
@@ -61,16 +63,19 @@ how the existing pieces fit together.
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
-      thread handles; a crash or exit in one thread ends the whole process)
+      thread handles; an uncaught exception in one thread ends the whole process)
 - [x] User-mode locks: atomic fast path, CallWaitOnAddress / CallWakeAddress
 - [x] Exception fixups for kernel accesses to user memory (fault-tolerant copy
       routines, transfer buffers for reads and writes, SMAP when available)
-- [ ] Dynamic TLS for libraries loaded with LoadLibrary (now ErrorUnsupported)
-- [ ] Thread priorities set by programs; thread names
+- [ ] Libraries loaded with LoadLibrary that have thread-local storage or
+      initializers (now ErrorUnsupported): dynamic TLS, running their initializers
+- [x] Thread priorities set by programs (offsets from the process's)
+- [ ] Thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
-- [ ] User signals and handlers (programs cannot yet catch anything)
+- [ ] Asynchronous notifications a program can handle (Ctrl-C, a request to end,
+      timers); processor exceptions are already catchable
 - [x] Users, groups and permission checks: real/effective/saved ids, supplementary
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
@@ -87,8 +92,6 @@ how the existing pieces fit together.
 - [x] Kernel timers (a deferred call after a delay)
 - [x] AHCI: a timeout for every command; port reset after a failed or hung
       command (tested with a QEMU blkdebug disk that fails one sector)
-- [ ] AHCI: several command slots per port (NCQ), DMA straight into page
-      aligned buffers
 - [x] Layered devices (filter drivers attached on top of a device); disk
       statistics filter
 - [x] Programs report write errors on standard output at exit (echo > /dev/full)
@@ -104,8 +107,8 @@ how the existing pieces fit together.
 
 - [x] Block device layer and partition devices
 - [x] GPT and MBR partition tables (with logical partitions)
-- [x] AHCI SATA driver (polled, one command slot)
-- [ ] AHCI: interrupts, all 32 command slots, NCQ, direct DMA without bounce buffer
+- [x] AHCI SATA driver (interrupts by MSI, timeouts and port recovery)
+- [ ] AHCI: all 32 command slots, NCQ, direct DMA without the bounce buffer
 - [ ] ATAPI (optical drives) on AHCI
 - [ ] NVMe driver
 - [ ] virtio-blk driver (fast QEMU disks)
@@ -137,7 +140,6 @@ how the existing pieces fit together.
 - [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
 - [ ] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
 - [ ] File timestamps beyond modification time; ext4 nanosecond timestamps
-- [ ] Time zones (the real-time clock is assumed to hold UTC)
 
 ## User mode
 
@@ -147,7 +149,7 @@ how the existing pieces fit together.
       (DT_NEEDED, eager binding, run time LoadLibrary / FindSymbol)
 - [x] First user mode program (`init=`, default `/bin/sh`)
 - [x] Pipes, console, /dev/null, handle duplication
-- [x] User System unit and startup code; libsystem.so; libcoreutils.so
+- [x] User runtime and startup code; libsystem.so; libcoreutils.so
 - [x] Shell: pipes, redirections, && ||, if/while/until/for, variables,
       $( ), $(( )), globbing, quoting, scripts, builtins
 - [x] Core utilities: all of GNU coreutils (104 commands) except chcon and runcon
@@ -174,7 +176,7 @@ how the existing pieces fit together.
       process starts or ends for that long
 - [ ] TThread.Suspend from another thread (the kernel supports it; Classes
       still uses the Unix TThread, which refuses)
-- [ ] Time zones (the runtime reports UTC)
+- [ ] Time zones (the real-time clock is taken as UTC, and so is everything else)
 - [x] Processor exceptions passed to the program (exception record on the
       user stack, runtime dispatcher); catchable EAccessViolation,
       EDivByZero, EZeroDivide, ...; x87 and SIMD exceptions enabled
@@ -188,7 +190,6 @@ how the existing pieces fit together.
       taken for a stack overflow (record at the top of the opened reserve)
 - [x] A 256 MiB guard below every stack, so a huge frame never reaches other
       memory (frames beyond that would need compiler emitted stack probes)
-- [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
 - [x] Shell: case, functions (local, return), here documents, ${...} forms,
