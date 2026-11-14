@@ -28,7 +28,28 @@ const
   ProcessNameLength = 32;
   ProcessPathCapacity = 1024;
 
+const
+  MaximumProcessGroups = 32;
+  RootUserId = 0;
+  DefaultUmask = $12; { ----w--w- : files rw-r--r--, directories rwxr-xr-x }
+
 type
+  { Who a process acts as (see Processes.Security). }
+  TProcessCredentials = record
+    RealUserId: LongWord;
+    EffectiveUserId: LongWord;
+    SavedUserId: LongWord;
+    RealGroupId: LongWord;
+    EffectiveGroupId: LongWord;
+    SavedGroupId: LongWord;
+    Groups: array[0..MaximumProcessGroups - 1] of LongWord;
+    GroupCount: LongWord;
+    { Permission bits removed from new files and directories. }
+    Umask: LongWord;
+    { -20 .. 19; lower runs at a higher thread priority. }
+    Nice: LongInt;
+  end;
+
   PProcess = ^TProcess;
   TProcess = record
     ProcessId: QWord;
@@ -70,6 +91,11 @@ type
     { Ctrl-C does not end this process (an interactive shell). }
     IgnoresInterrupt: Boolean;
 
+    { --- Users, priority and accounting (Processes.Security) --- }
+    Credentials: TProcessCredentials;
+    { Seconds since 1970. }
+    StartTime: Int64;
+
     { Links running user processes, so they can be found by id. }
     RunningLink: TListEntry;
     IsRegistered: Boolean;
@@ -107,6 +133,7 @@ implementation
 uses
   Runtime.Atomic,
   Runtime.Text,
+  Kernel.Clock,
   Memory.Arch.PageTables,
   Kernel.Panic;
 
@@ -149,6 +176,9 @@ begin
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
   CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);
   InitializeListHead(Process^.RunningLink);
+  { Root until told otherwise; user processes get their creator's. }
+  Process^.Credentials.Umask := DefaultUmask;
+  Process^.StartTime := CurrentWallClockTime;
 end;
 
 procedure InitializeProcessManager;

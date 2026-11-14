@@ -186,6 +186,7 @@ function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
 var
   Information: TFileInformation;
   Error: LongInt;
+  TargetExisted: Boolean;
 begin
   if Options.KeepLinks then
     Error := GetLinkInformation(Source, Information)
@@ -214,7 +215,13 @@ begin
     KindSymbolicLink:
       Result := CopyLink(Source, Target);
   else
-    Result := CopyFileContents(Source, Target);
+    begin
+      TargetExisted := PathExists(Target);
+      Result := CopyFileContents(Source, Target);
+      { A new copy gets the source's permissions, less the umask. }
+      if Result and not TargetExisted and not Options.PreserveAttributes then
+        ChangeMode(Target, Information.Mode and $1FF and not CurrentUmask);
+    end;
   end;
   if Result and Options.PreserveAttributes then
     PreserveAttributesOf(Target, Information);

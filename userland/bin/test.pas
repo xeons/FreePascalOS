@@ -127,6 +127,7 @@ begin
     'e', 'r', 'w': Result := Exists;
     'f': Result := Exists and (Information.Kind = KindFile);
     'd': Result := Exists and (Information.Kind = KindDirectory);
+    'p': Result := Exists and (Information.Kind = KindFifo);
     's': Result := Exists and (Information.SizeInBytes > 0);
     'x': Result := Exists and ((Information.Kind = KindDirectory) or ((Information.Mode and $49) <> 0));
   else
@@ -139,7 +140,7 @@ end;
 
 function IsUnaryOperator(Text: PChar): Boolean;
 begin
-  Result := (Text <> nil) and (Text[0] = '-') and (Text[1] in ['n', 'z', 'e', 'f', 'd', 'h', 'L', 's', 'r', 'w', 'x']) and
+  Result := (Text <> nil) and (Text[0] = '-') and (Text[1] in ['n', 'z', 'e', 'f', 'd', 'h', 'L', 'p', 's', 'r', 'w', 'x']) and
     (Text[2] = #0);
 end;
 

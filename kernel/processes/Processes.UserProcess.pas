@@ -45,9 +45,14 @@ type
     RootDirectory: PChar;
     { The group to join; 0 starts a new group led by the new process. }
     GroupId: QWord;
+    { Who the program runs as, and its nice value. }
+    Credentials: TProcessCredentials;
   end;
 
 procedure InitializeUserProcesses;
+
+{ The thread priority for a nice value (-20 .. 19). }
+function ThreadPriorityForNice(Nice: LongInt): LongWord;
 
 { Starts a program. On success Process holds a reference for the caller. }
 function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess): LongInt;
@@ -102,6 +107,12 @@ type
     StackPointer: QWord;
   end;
   PUserThreadStart = ^TUserThreadStart;
+
+function ThreadPriorityForNice(Nice: LongInt): LongWord;
+begin
+  { Nice 0 is the usual user priority; every 4 steps is one priority. }
+  Result := LongWord(LongInt(UserThreadPriority) - Nice div 4);
+end;
 
 { --- Faults ---------------------------------------------------------- }
 
@@ -266,6 +277,7 @@ begin
     Process^.GroupId := Startup.GroupId
   else
     Process^.GroupId := Process^.ProcessId;
+  Process^.Credentials := Startup.Credentials;
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then
@@ -298,8 +310,8 @@ begin
       { Registered before the thread starts, so it is always found
         while it runs. }
       RegisterRunningProcess(Process);
-      if CreateThreadInProcess(Process, @UserThreadStart, ThreadStart, UserThreadPriority,
-        Startup.Name, False) = nil then
+      if CreateThreadInProcess(Process, @UserThreadStart, ThreadStart,
+        ThreadPriorityForNice(Startup.Credentials.Nice), Startup.Name, False) = nil then
       begin
         UnregisterRunningProcess(Process);
         FreeKernelMemory(ThreadStart);

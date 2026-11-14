@@ -148,6 +148,18 @@ begin
   CreateSystemThread(@HandleConsoleInterrupts, nil, InterruptThreadPriority, 'console-interrupt', False);
 end;
 
+{ Users may end their own processes; root may end any. }
+function MayTerminate(Caller, Target: PProcess): Boolean;
+var
+  UserId: LongWord;
+begin
+  if not Caller^.IsUserProcess then
+    Exit(True);
+  UserId := Caller^.Credentials.EffectiveUserId;
+  Result := (UserId = RootUserId) or (UserId = Target^.Credentials.RealUserId) or
+    (Caller^.Credentials.RealUserId = Target^.Credentials.RealUserId);
+end;
+
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
 var
   Process: PProcess;
@@ -156,7 +168,7 @@ begin
   Process := FindRunningProcessLocked(ProcessId);
   if Process = nil then
     Result := ErrorNoSuchProcess
-  else if not Process^.IsUserProcess then
+  else if not Process^.IsUserProcess or not MayTerminate(CurrentProcess, Process) then
     Result := ErrorNotPermitted
   else
   begin

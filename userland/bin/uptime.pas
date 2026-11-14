@@ -3,13 +3,17 @@
 
   uptime [-ps]
 
-  The kernel does not compute load averages yet; they are shown as 0.00.
+  Load averages are the kernel's exponentially decayed counts of threads
+  running or ready to run, sampled every 5 seconds.
 }
 program uptime;
 
 {$mode objfpc}
 
 uses
+  Abi.SystemCalls,
+  Runtime.Memory,
+  Sys.Kernel,
   Sys.Format,
   Sys.Streams,
   Sys.Time,
@@ -35,7 +39,14 @@ begin
     Result := 's';
 end;
 
+procedure WriteLoad(Hundredths: LongWord);
+begin
+  WriteFormatted(StandardOutput, '%d.%02d', [ArgumentNumber(Hundredths div 100),
+    ArgumentNumber(Hundredths mod 100)]);
+end;
+
 var
+  Information: TAbiSystemInformation;
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
@@ -101,7 +112,15 @@ begin
         WriteFormatted(StandardOutput, '%2d:%02d, ', [ArgumentNumber(Hours), ArgumentNumber(Minutes)])
       else
         WriteFormatted(StandardOutput, '%d min, ', [ArgumentNumber(Minutes)]);
-      WriteLine(StandardOutput, ' 1 user,  load average: 0.00, 0.00, 0.00');
+      WriteText(StandardOutput, ' 1 user,  load average: ');
+      if KernelGetSystemInformation(Information) < 0 then
+        ZeroMemory(@Information, SizeOf(Information));
+      WriteLoad(Information.LoadAverages[0]);
+      WriteText(StandardOutput, ', ');
+      WriteLoad(Information.LoadAverages[1]);
+      WriteText(StandardOutput, ', ');
+      WriteLoad(Information.LoadAverages[2]);
+      WriteCharacter(StandardOutput, #10);
     end;
   end;
 end.

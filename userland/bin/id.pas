@@ -3,8 +3,8 @@
 
   id [-ugGnr] [USER]
 
-  Every program runs as root on this system, so without USER this
-  describes root.
+  Without USER this describes the running process: its effective ids
+  (real ones with -r), and euid=/egid= when they differ from the real.
 }
 program id;
 
@@ -58,7 +58,11 @@ var
   Groups: array[0..MaximumGroups - 1] of LongWord;
   GroupCount: Integer;
   Index: Integer;
+  RealIds: Boolean;
+  ForProcess: Boolean;
 begin
+  RealIds := False;
+  ForProcess := False;
   Selection := 0;
   AsName := False;
   Separator := ' ';
@@ -78,6 +82,7 @@ begin
           Selection := Code;
         end;
       OptionName: AsName := True;
+      OptionReal: RealIds := True;
       OptionZero: Separator := #0;
     end;
   if Parser.OperandCount > 1 then
@@ -92,10 +97,20 @@ begin
   end
   else
   begin
+    ForProcess := True;
     UserId := CurrentUserId;
     GroupId := CurrentGroupId;
+    { The plain form shows the real ids first, as GNU id does. }
+    if RealIds or (Selection = 0) then
+    begin
+      UserId := CurrentRealUserId;
+      GroupId := CurrentRealGroupId;
+    end;
   end;
-  GroupCount := GroupsOfUser(UserId, @Groups[0], MaximumGroups);
+  if ForProcess then
+    GroupCount := CurrentGroups(@Groups[0], MaximumGroups)
+  else
+    GroupCount := GroupsOfUser(UserId, @Groups[0], MaximumGroups);
   if GroupCount = 0 then
   begin
     Groups[0] := GroupId;
@@ -120,6 +135,18 @@ begin
       WriteFormatted(StandardOutput, ' gid=%u', [ArgumentUnsigned(GroupId)]);
       if GroupNameOf(GroupId) <> nil then
         WriteFormatted(StandardOutput, '(%s)', [ArgumentText(GroupNameOf(GroupId))]);
+      if ForProcess and (CurrentUserId <> UserId) then
+      begin
+        WriteFormatted(StandardOutput, ' euid=%u', [ArgumentUnsigned(CurrentUserId)]);
+        if UserNameOf(CurrentUserId) <> nil then
+          WriteFormatted(StandardOutput, '(%s)', [ArgumentText(UserNameOf(CurrentUserId))]);
+      end;
+      if ForProcess and (CurrentGroupId <> GroupId) then
+      begin
+        WriteFormatted(StandardOutput, ' egid=%u', [ArgumentUnsigned(CurrentGroupId)]);
+        if GroupNameOf(CurrentGroupId) <> nil then
+          WriteFormatted(StandardOutput, '(%s)', [ArgumentText(GroupNameOf(CurrentGroupId))]);
+      end;
       WriteText(StandardOutput, ' groups=');
       for Index := 0 to GroupCount - 1 do
       begin

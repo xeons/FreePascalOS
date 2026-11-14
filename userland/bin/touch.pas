@@ -62,7 +62,9 @@ var
   Error: LongInt;
   ExitStatus: LongInt;
   Time: TUnixTime;
+  UseNow: Boolean;
 begin
+  UseNow := True;
   NoCreate := False;
   FollowLinks := True;
   ChangeAccess := False;
@@ -85,6 +87,7 @@ begin
       OptionNoCreate: NoCreate := True;
       OptionDate:
         begin
+          UseNow := False;
           if not ParseDateText(Value, Time) then
             Fail(1, 'invalid date format ''%s''', [ArgumentText(Value)]);
           AccessTime := Time;
@@ -98,6 +101,7 @@ begin
       OptionModificationOnly: ChangeModification := True;
       OptionReference:
         begin
+          UseNow := False;
           Error := GetFileInformation(Value, Information);
           if Error <> ErrorNone then
             FailWithError(1, Error, 'failed to get attributes of ''%s''', [ArgumentText(Value)]);
@@ -106,6 +110,7 @@ begin
         end;
       OptionStamp:
         begin
+          UseNow := False;
           if not ParseTouchStamp(Value, Time) then
             Fail(1, 'invalid date format ''%s''', [ArgumentText(Value)]);
           AccessTime := Time;
@@ -141,7 +146,10 @@ begin
       end;
       CloseFile(Handle);
     end;
-    Error := SetFileTimes(Parser.Operands[Index], ModificationTime, AccessTime, FollowLinks);
+    if UseNow then
+      Error := SetFileTimesToNow(Parser.Operands[Index], ChangeModification, ChangeAccess, FollowLinks)
+    else
+      Error := SetFileTimes(Parser.Operands[Index], ModificationTime, AccessTime, FollowLinks);
     if Error <> ErrorNone then
     begin
       ReportError(Error, 'setting times of ''%s''', [ArgumentText(Parser.Operands[Index])]);

@@ -79,14 +79,17 @@ type
     StatusDirectoryNotEmpty,
     StatusNoSpace,
     StatusInUse,
-    StatusInvalidName
+    StatusInvalidName,
+    StatusAccessDenied
   );
 
   TNodeKind = (
     NodeKindFile,
     NodeKindDirectory,
     NodeKindSymbolicLink,
-    NodeKindOther
+    NodeKindOther,
+    { A named pipe. }
+    NodeKindFifo
   );
 
   TFileName = array[0..MaximumNameBytes - 1] of Char;
@@ -106,6 +109,8 @@ type
     AccessTime: TUnixTime;
     { When the node's information last changed. }
     ChangeTime: TUnixTime;
+    { Space the node takes up on the volume. }
+    AllocatedBytes: QWord;
   end;
 
   { Which fields of TAttributeChanges apply. }
@@ -269,6 +274,7 @@ begin
     StatusNoSpace: Result := 'no space left on volume';
     StatusInUse: Result := 'in use';
     StatusInvalidName: Result := 'invalid name';
+    StatusAccessDenied: Result := 'access denied';
   else
     Result := 'unknown status';
   end;
@@ -280,6 +286,7 @@ begin
     NodeKindFile: Result := 'file';
     NodeKindDirectory: Result := 'directory';
     NodeKindSymbolicLink: Result := 'symlink';
+    NodeKindFifo: Result := 'fifo';
   else
     Result := 'other';
   end;

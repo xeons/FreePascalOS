@@ -38,6 +38,7 @@ function PerformCreateHardLink(ExistingAddress: QWord; NewAddress: QWord): Int64
 function PerformSetRootDirectory(PathAddress: QWord): Int64;
 function PerformControlHandle(Handle: Int64; Request: QWord; Argument: QWord): Int64;
 function PerformSync: Int64;
+function PerformCreateFifo(PathAddress: QWord): Int64;
 
 implementation
 
@@ -58,7 +59,10 @@ uses
   Processes.Handles,
   Processes.Paths,
   Processes.Thread,
-  Processes.UserAccess;
+  Processes.UserAccess,
+  Processes.Security,
+  FileSystem.Security,
+  Kernel.Clock;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -133,9 +137,11 @@ begin
     NodeKindFile: UserInformation.Kind := KindFile;
     NodeKindDirectory: UserInformation.Kind := KindDirectory;
     NodeKindSymbolicLink: UserInformation.Kind := KindSymbolicLink;
+    NodeKindFifo: UserInformation.Kind := KindFifo;
   else
     UserInformation.Kind := KindOther;
   end;
+  UserInformation.AllocatedBytes := Information.AllocatedBytes;
   UserInformation.Mode := Information.Mode;
   UserInformation.SizeInBytes := Information.SizeInBytes;
   UserInformation.NodeNumber := Information.NodeNumber;
@@ -148,6 +154,27 @@ begin
 end;
 
 { --- Handles --------------------------------------------------------- }
+
+{ A named pipe opens as one end of the pipe shared by everyone who has
+  the node open, once someone opens the other end. }
+function OpenFifo(OpenedFile: POpenFile; Flags: QWord): Int64;
+var
+  ForWriting: Boolean;
+  Pipe: PPipe;
+begin
+  ForWriting := (Flags and (OpenForWriting or OpenAppend)) <> 0;
+  Pipe := OpenNamedPipe(OpenedFile^.Volume, OpenedFile^.Node^.Information.NodeNumber, ForWriting);
+  CloseFile(OpenedFile);
+  if Pipe = nil then
+    Exit(Failure(ErrorInterrupted));
+  if ForWriting then
+    Result := InsertCurrentHandle(HandleKindPipeWriteEnd, Pipe)
+  else
+    Result := InsertCurrentHandle(HandleKindPipeReadEnd, Pipe);
+  { The handle counts its own end and holds its own reference. }
+  ClosePipeEnd(Pipe, ForWriting);
+  DereferenceObject(Pipe);
+end;
 
 function PerformOpenFile(PathAddress: QWord; Flags: QWord): Int64;
 var
@@ -167,6 +194,8 @@ begin
   if Status <> StatusSuccess then
     Exit(Failure(ErrorFromStatus(Status)));
 
+  if (OpenedFile^.Node <> nil) and (OpenedFile^.Node^.Information.Kind = NodeKindFifo) then
+    Exit(OpenFifo(OpenedFile, Flags));
   Result := InsertCurrentHandle(HandleKindFile, OpenedFile);
   { The handle table took its own reference. }
   CloseFile(OpenedFile);
@@ -616,6 +645,18 @@ begin
     Result := 1;
 end;
 
+function PerformCreateFifo(PathAddress: QWord): Int64;
+var
+  KernelPath: PPathBuffer;
+  Error: LongInt;
+begin
+  Error := FetchKernelPath(PathAddress, KernelPath);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := -Int64(ErrorFromStatus(CreateFifo(@KernelPath^[0])));
+  FreeKernelMemory(KernelPath);
+end;
+
 function PerformSync: Int64;
 begin
   SyncAllVolumes;
@@ -623,6 +664,45 @@ begin
 end;
 
 { --- Attributes and links -------------------------------------------- }
+
+{ Who may change what:
+    mode       the owner (or root)
+    owner      root only
+    group      root, or the owner giving it to one of its own groups
+    times      the owner (or root); anyone with write permission may set
+               them to now. }
+function CheckAttributeChanges(Path: PChar; FollowLinks: Boolean; Fields: LongWord;
+  const Changes: TAttributeChanges): LongInt;
+var
+  Process: PProcess;
+  Information: TNodeInformation;
+  Status: TFileSystemStatus;
+  IsOwner: Boolean;
+begin
+  Process := CurrentProcess;
+  if not Process^.IsUserProcess or (Process^.Credentials.EffectiveUserId = RootUserId) then
+    Exit(ErrorNone);
+  Status := DescribePath(Path, FollowLinks, Information);
+  if Status <> StatusSuccess then
+    Exit(ErrorFromStatus(Status));
+  IsOwner := Information.OwnerId = Process^.Credentials.EffectiveUserId;
+  Result := ErrorNone;
+  if ((Changes.Fields and AttributeChangeMode) <> 0) and not IsOwner then
+    Exit(ErrorNotPermitted);
+  if ((Changes.Fields and AttributeChangeOwner) <> 0) and (Changes.OwnerId <> Information.OwnerId) then
+    Exit(ErrorNotPermitted);
+  if ((Changes.Fields and AttributeChangeGroup) <> 0) and (Changes.GroupId <> Information.GroupId) and
+     (not IsOwner or not IsInGroup(Process^.Credentials, Changes.GroupId)) then
+    Exit(ErrorNotPermitted);
+  if ((Changes.Fields and (AttributeChangeModificationTime or AttributeChangeAccessTime)) <> 0) and
+     not IsOwner then
+  begin
+    if (Fields and ChangeFieldTimesAreNow) = 0 then
+      Exit(ErrorNotPermitted);
+    if not CredentialsMayAccess(Process^.Credentials, Information, AccessWrite) then
+      Exit(ErrorAccessDenied);
+  end;
+end;
 
 function PerformSetPathAttributes(PathAddress: QWord; ChangesAddress: QWord; FollowLinks: QWord): Int64;
 var
@@ -643,7 +723,17 @@ begin
   Changes.GroupId := UserChanges.GroupId;
   Changes.ModificationTime := UserChanges.ModificationTime;
   Changes.AccessTime := UserChanges.AccessTime;
-  Result := -Int64(ErrorFromStatus(SetPathAttributes(@KernelPath^[0], FollowLinks <> 0, Changes)));
+  if (UserChanges.Fields and ChangeFieldTimesAreNow) <> 0 then
+  begin
+    Changes.Fields := Changes.Fields and not ChangeFieldTimesAreNow;
+    Changes.ModificationTime := CurrentWallClockTime;
+    Changes.AccessTime := Changes.ModificationTime;
+  end;
+  Error := CheckAttributeChanges(@KernelPath^[0], FollowLinks <> 0, UserChanges.Fields, Changes);
+  if Error <> ErrorNone then
+    Result := Failure(Error)
+  else
+    Result := -Int64(ErrorFromStatus(SetPathAttributes(@KernelPath^[0], FollowLinks <> 0, Changes)));
   FreeKernelMemory(KernelPath);
 end;
 

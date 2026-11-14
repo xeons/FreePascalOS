@@ -9,6 +9,11 @@
   Ends are counted separately from object references (handles call
   OpenPipeEnd/ClosePipeEnd), so end of file is detected even while the
   pipe object itself is still referenced.
+
+  Named pipes (FIFO nodes in a file system) are pipes found through a
+  registry keyed by volume and node number: everyone who opens the node
+  while one of its ends is open shares the same pipe. Opening one end
+  waits until the other end is opened too.
 }
 unit Io.Pipes;
 
@@ -18,6 +23,7 @@ unit Io.Pipes;
 interface
 
 uses
+  Runtime.LinkedList,
   Kernel.Mutex,
   Kernel.Events;
 
@@ -37,6 +43,11 @@ type
       and when room (or a closed reader) appears. }
     DataAvailable: TEvent;
     SpaceAvailable: TEvent;
+    { Named pipes only: the node it belongs to, and its registry link. }
+    NamedVolume: Pointer;
+    NamedNode: QWord;
+    RegistryLink: TListEntry;
+    IsRegistered: Boolean;
   end;
 
 procedure InitializePipes;
@@ -47,7 +58,13 @@ function CreatePipe: PPipe;
 procedure OpenPipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
 procedure ClosePipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
 
-{ Returns the number of bytes read (0 at end of file). }
+{ Opens one end of the named pipe of node NodeNumber on volume Volume
+  and waits until its other end is open as well. Returns the pipe with a
+  reference and with the end counted as open (the caller's handle opens
+  it again; the caller then closes this extra end), or nil if the wait
+  was cut short by an alert. }
+function OpenNamedPipe(Volume: Pointer; NodeNumber: QWord; ForWriting: Boolean): PPipe;
+
 { Reads up to ByteCount bytes, waiting for some. Returns 0 at end of
   file, or when the thread is alerted (its process is being ended). }
 function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): QWord;
@@ -61,12 +78,35 @@ uses
   Kernel.Scheduler,
   Objects.Manager;
 
+const
+  PeerPollMilliseconds = 20;
+
 var
   PipeObjectType: TObjectType;
+  RegistryLock: TMutex;
+  NamedPipes: TListEntry;
+
+procedure DeletePipe(ObjectBody: Pointer);
+var
+  Pipe: PPipe;
+begin
+  Pipe := PPipe(ObjectBody);
+  if Pipe^.NamedVolume = nil then
+    Exit;
+  AcquireMutex(RegistryLock);
+  if Pipe^.IsRegistered then
+  begin
+    RemoveListEntry(@Pipe^.RegistryLink);
+    Pipe^.IsRegistered := False;
+  end;
+  ReleaseMutex(RegistryLock);
+end;
 
 procedure InitializePipes;
 begin
-  RegisterObjectType(PipeObjectType, 'Pipe', SizeOf(TPipe), nil);
+  RegisterObjectType(PipeObjectType, 'Pipe', SizeOf(TPipe), @DeletePipe);
+  InitializeMutex(RegistryLock);
+  InitializeListHead(NamedPipes);
 end;
 
 function CreatePipe: PPipe;
@@ -77,6 +117,71 @@ begin
   InitializeMutex(Result^.Lock);
   InitializeEvent(Result^.DataAvailable, EventKindSynchronization, False);
   InitializeEvent(Result^.SpaceAvailable, EventKindSynchronization, False);
+end;
+
+{ Finds the live pipe of a node (registry lock held). A registered pipe
+  with no open ends is on its way out: it is dropped from the registry. }
+function FindNamedPipeLocked(Volume: Pointer; NodeNumber: QWord): PPipe;
+var
+  Entry: PListEntry;
+  Next: PListEntry;
+  Pipe: PPipe;
+begin
+  Result := nil;
+  Entry := NamedPipes.Next;
+  while Entry <> @NamedPipes do
+  begin
+    Next := Entry^.Next;
+    Pipe := PPipe(ContainingRecord(Entry, FieldOffset(PPipe(nil)^.RegistryLink)));
+    if (Pipe^.NamedVolume = Volume) and (Pipe^.NamedNode = NodeNumber) then
+    begin
+      if Pipe^.OpenReadEnds + Pipe^.OpenWriteEnds > 0 then
+        Exit(Pipe);
+      RemoveListEntry(@Pipe^.RegistryLink);
+      Pipe^.IsRegistered := False;
+    end;
+    Entry := Next;
+  end;
+end;
+
+function OpenNamedPipe(Volume: Pointer; NodeNumber: QWord; ForWriting: Boolean): PPipe;
+var
+  Pipe: PPipe;
+begin
+  AcquireMutex(RegistryLock);
+  Pipe := FindNamedPipeLocked(Volume, NodeNumber);
+  if Pipe <> nil then
+    { Open ends belong to handles, which hold references: it is alive. }
+    ReferenceObject(Pipe)
+  else
+  begin
+    Pipe := CreatePipe;
+    if Pipe = nil then
+    begin
+      ReleaseMutex(RegistryLock);
+      Exit(nil);
+    end;
+    Pipe^.NamedVolume := Volume;
+    Pipe^.NamedNode := NodeNumber;
+    InsertAtTail(NamedPipes, @Pipe^.RegistryLink);
+    Pipe^.IsRegistered := True;
+  end;
+  OpenPipeEnd(Pipe, ForWriting);
+  ReleaseMutex(RegistryLock);
+
+  { A reader must not see end of file before any writer came, nor a
+    writer a broken pipe before any reader: wait for the other end. }
+  while ((ForWriting and (Pipe^.OpenReadEnds = 0)) or
+         (not ForWriting and (Pipe^.OpenWriteEnds = 0))) do
+  begin
+    if not SleepAlertable(PeerPollMilliseconds) then
+    begin
+      ClosePipeEnd(Pipe, ForWriting);
+      DereferenceObject(Pipe);
+      Exit(nil);
+    end;
+  end;
+  Result := Pipe;
 end;
 
 procedure OpenPipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);

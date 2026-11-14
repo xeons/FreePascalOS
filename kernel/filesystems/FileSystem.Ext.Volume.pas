@@ -346,6 +346,21 @@ begin
   Offset := TableBlock * Ext^.BlockSize + QWord((InodeNumber - 1) mod Ext^.InodesPerGroup) * Ext^.InodeSize;
 end;
 
+{ i_blocks counts 512-byte sectors, or file system blocks for inodes
+  with the huge file flag. }
+function AllocatedBytesOf(Node: PExtNode): QWord;
+var
+  Inode: PInode;
+  Blocks: QWord;
+begin
+  Inode := InodeRecord(Node);
+  Blocks := Inode^.BlocksLow or (QWord(Inode^.BlocksHigh) shl 32);
+  if (Inode^.Flags and InodeFlagHugeFile) <> 0 then
+    Result := Blocks * ExtVolumeOf(@Node^.Common)^.BlockSize
+  else
+    Result := Blocks * 512;
+end;
+
 procedure RefreshNodeInformation(Node: PExtNode);
 var
   Inode: PInode;
@@ -355,6 +370,7 @@ begin
     ModeTypeDirectory: Node^.Common.Information.Kind := NodeKindDirectory;
     ModeTypeRegular: Node^.Common.Information.Kind := NodeKindFile;
     ModeTypeSymbolicLink: Node^.Common.Information.Kind := NodeKindSymbolicLink;
+    ModeTypeFifo: Node^.Common.Information.Kind := NodeKindFifo;
   else
     Node^.Common.Information.Kind := NodeKindOther;
   end;
@@ -367,6 +383,7 @@ begin
   Node^.Common.Information.ModificationTime := Inode^.ModificationTime;
   Node^.Common.Information.AccessTime := Inode^.AccessTime;
   Node^.Common.Information.ChangeTime := Inode^.ChangeTime;
+  Node^.Common.Information.AllocatedBytes := AllocatedBytesOf(Node);
 end;
 
 function ReadInodeBytes(Volume: PVolume; InodeNumber: LongWord; Destination: PByte): TFileSystemStatus;

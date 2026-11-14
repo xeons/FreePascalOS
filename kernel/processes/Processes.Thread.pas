@@ -64,6 +64,14 @@ function CurrentProcess: PProcess;
 { Alerts every thread of Process, ending their alertable waits. }
 procedure AlertProcessThreads(Process: PProcess);
 
+{ --- Priority and accounting (used by Processes.Security) --- }
+
+procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+{ Clock ticks used by the threads of Process. }
+function ProcessRunTicks(Process: PProcess): QWord;
+{ True if a thread of Process is running or ready to run. }
+function ProcessIsRunnable(Process: PProcess): Boolean;
+
 { Releases the resources of threads that have exited. Must be called at
   PassiveLevel; the idle thread does this whenever it runs. }
 procedure ReapTerminatedThreads;
@@ -221,6 +229,79 @@ begin
     Entry := Entry^.Next;
   end;
   ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+end;
+
+{ --- Priority and accounting ------------------------------------------ }
+
+type
+  TThreadVisitor = procedure(Thread: PThread; Context: Pointer);
+
+procedure VisitProcessThreads(Process: PProcess; Visit: TThreadVisitor; Context: Pointer);
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PListEntry;
+begin
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  Entry := Process^.Threads.Next;
+  while Entry <> @Process^.Threads do
+  begin
+    Visit(ThreadFromProcessLink(Entry), Context);
+    Entry := Entry^.Next;
+  end;
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+end;
+
+procedure AddRunTicks(Thread: PThread; Context: Pointer);
+begin
+  PQWord(Context)^ := PQWord(Context)^ + Thread^.ControlBlock.RunTicks;
+end;
+
+function ProcessRunTicks(Process: PProcess): QWord;
+begin
+  Result := 0;
+  VisitProcessThreads(Process, @AddRunTicks, @Result);
+end;
+
+procedure NoteRunnable(Thread: PThread; Context: Pointer);
+begin
+  if Thread^.ControlBlock.State in [ThreadStateReady, ThreadStateRunning] then
+    PBoolean(Context)^ := True;
+end;
+
+function ProcessIsRunnable(Process: PProcess): Boolean;
+begin
+  Result := False;
+  VisitProcessThreads(Process, @NoteRunnable, @Result);
+end;
+
+{ Thread priorities cannot change under the thread list lock (the
+  scheduler's lock is taken inside), so the threads are collected first. }
+procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+const
+  MaximumThreads = 64;
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PListEntry;
+  Threads: array[0..MaximumThreads - 1] of PThread;
+  Count: Integer;
+  Index: Integer;
+begin
+  Count := 0;
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  Entry := Process^.Threads.Next;
+  while (Entry <> @Process^.Threads) and (Count < MaximumThreads) do
+  begin
+    Threads[Count] := ThreadFromProcessLink(Entry);
+    ReferenceObject(Threads[Count]);
+    Inc(Count);
+    Entry := Entry^.Next;
+  end;
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+  for Index := 0 to Count - 1 do
+  begin
+    SetThreadPriority(@Threads[Index]^.ControlBlock, Priority);
+    DereferenceObject(Threads[Index]);
+  end;
 end;
 
 procedure ReapTerminatedThreads;

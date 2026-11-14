@@ -109,6 +109,7 @@ begin
     FileTypeRegular: Result := NodeKindFile;
     FileTypeDirectory: Result := NodeKindDirectory;
     FileTypeSymbolicLink: Result := NodeKindSymbolicLink;
+    FileTypeFifo: Result := NodeKindFifo;
   else
     Result := NodeKindOther;
   end;

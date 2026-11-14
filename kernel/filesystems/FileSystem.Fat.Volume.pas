@@ -538,6 +538,11 @@ end;
 
 { --- Nodes ----------------------------------------------------------- }
 
+function RoundUpToCluster(Fat: PFatVolume; Size: QWord): QWord;
+begin
+  Result := (Size + Fat^.BytesPerCluster - 1) div Fat^.BytesPerCluster * Fat^.BytesPerCluster;
+end;
+
 procedure DescribeNode(Node: PFatNode; const DirectoryRecord: TDirectoryRecord);
 begin
   if (DirectoryRecord.Attributes and AttributeDirectory) <> 0 then
@@ -551,6 +556,9 @@ begin
     Node^.Common.Information.SizeInBytes := DirectoryRecord.FileSize;
   end;
   Node^.Common.Information.LinkCount := 1;
+  { Whole clusters. }
+  Node^.Common.Information.AllocatedBytes := RoundUpToCluster(FatVolumeOf(@Node^.Common),
+    Node^.Common.Information.SizeInBytes);
   Node^.Common.Information.ModificationTime :=
     DosDateTimeToUnixTime(DirectoryRecord.WriteDate, DirectoryRecord.WriteTime);
   { FAT keeps only the date of the last access, and no change time. }
@@ -627,6 +635,8 @@ begin
   begin
     DirectoryRecord.FileSize := LongWord(Node^.Common.Information.SizeInBytes);
     SetRecordFirstCluster(DirectoryRecord, Node^.FirstCluster);
+    Node^.Common.Information.AllocatedBytes := RoundUpToCluster(FatVolumeOf(@Node^.Common),
+      Node^.Common.Information.SizeInBytes);
   end;
 
   if Modify then

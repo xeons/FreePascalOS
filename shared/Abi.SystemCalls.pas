@@ -62,7 +62,28 @@ const
   CallControlHandle = 37;
   CallSetInterruptIgnored = 38;
   CallGetProcessGroup = 39;
-  CallCount = 40;
+  { Users, permissions, process information and priorities. }
+  CallListProcesses = 50;
+  CallGetCredentials = 51;
+  CallSetUserIds = 52;
+  CallSetGroupIds = 53;
+  CallSetGroups = 54;
+  CallSetUmask = 55;
+  CallGetPriority = 56;
+  CallSetPriority = 57;
+  CallCreateFifo = 58;
+  CallCount = 70;
+
+  { "Leave unchanged" for CallSetUserIds and CallSetGroupIds. }
+  IdUnchanged = -1;
+  { Nice values: -20 (most favoured) .. 19 (least). }
+  NiceLowest = -20;
+  NiceHighest = 19;
+  MaximumSupplementaryGroups = 32;
+  { Process states in TAbiProcessInformation. }
+  ProcessStateRunning = 0;
+  ProcessStateSleeping = 1;
+  ProcessStateExiting = 2;
 
   { --- Arguments ------------------------------------------------------- }
 
@@ -75,6 +96,9 @@ const
   ChangeFieldGroup = $04;
   ChangeFieldModificationTime = $08;
   ChangeFieldAccessTime = $10;
+  { The given times are "now": the kernel fills them in, and someone with
+    write permission may do this to a file they do not own. }
+  ChangeFieldTimesAreNow = $20;
 
   { Requests of CallControlHandle (on a console handle). }
   ControlGetConsoleMode = 1;
@@ -100,6 +124,7 @@ const
   ErrorTimedOut = 110;
   ErrorNoSuchProcess = 3;
   ErrorNotPermitted = 1;
+  ErrorAccessDenied = 13;
   ErrorNotFound = 2;
   ErrorIo = 5;
   ErrorBadHandle = 9;
@@ -153,6 +178,7 @@ const
   KindDirectory = 1;
   KindSymbolicLink = 2;
   KindOther = 3;
+  KindFifo = 4;
 
   { --- Handle kinds ---------------------------------------------------- }
 
@@ -179,8 +205,44 @@ type
     ModificationTime: Int64;
     AccessTime: Int64;
     ChangeTime: Int64;
+    { Space taken on the volume. }
+    AllocatedBytes: QWord;
   end;
   PAbiFileInformation = ^TAbiFileInformation;
+
+  TAbiCredentials = record
+    RealUserId: LongWord;
+    EffectiveUserId: LongWord;
+    SavedUserId: LongWord;
+    RealGroupId: LongWord;
+    EffectiveGroupId: LongWord;
+    SavedGroupId: LongWord;
+    Umask: LongWord;
+    Nice: LongInt;
+    GroupCount: LongWord;
+    Reserved: LongWord;
+    Groups: array[0..MaximumSupplementaryGroups - 1] of LongWord;
+  end;
+  PAbiCredentials = ^TAbiCredentials;
+
+  TAbiProcessInformation = record
+    ProcessId: QWord;
+    ParentProcessId: QWord;
+    GroupId: QWord;
+    RealUserId: LongWord;
+    EffectiveUserId: LongWord;
+    State: LongWord;
+    ThreadCount: LongWord;
+    Nice: LongInt;
+    Reserved: LongWord;
+    { Committed user memory, in pages. }
+    MemoryPages: QWord;
+    CpuMilliseconds: QWord;
+    { Seconds since 1970. }
+    StartTime: Int64;
+    Name: array[0..AbiTextCapacity - 1] of Char;
+  end;
+  PAbiProcessInformation = ^TAbiProcessInformation;
 
   { Arguments of CallSetPathAttributes, passed by address. }
   TAbiAttributeChanges = record
@@ -212,6 +274,10 @@ type
     UptimeMilliseconds: QWord;
     ProcessorCount: LongWord;
     Reserved: LongWord;
+    { Average number of runnable threads over 1, 5 and 15 minutes, in
+      hundredths. }
+    LoadAverages: array[0..2] of LongWord;
+    RunnableThreads: LongWord;
   end;
   PAbiSystemInformation = ^TAbiSystemInformation;
 

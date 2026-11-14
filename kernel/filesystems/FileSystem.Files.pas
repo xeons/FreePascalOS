@@ -85,11 +85,16 @@ function GetFileInformation(OpenedFile: POpenFile; out Information: TNodeInforma
 function GetPathInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
 { Like GetPathInformation, but describes a final symbolic link itself. }
 function GetLinkInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+{ GetPathInformation or GetLinkInformation. }
+function DescribePath(Path: PChar; FollowFinalLink: Boolean;
+  out Information: TNodeInformation): TFileSystemStatus;
 { Copies the target of the symbolic link at Path (not followed). }
 function ReadSymbolicLinkTarget(Path: PChar; Target: PChar; Capacity: PtrUInt): TFileSystemStatus;
 
 function CreateDirectory(Path: PChar): TFileSystemStatus;
 function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
+{ Creates a named pipe. }
+function CreateFifo(Path: PChar): TFileSystemStatus;
 { Removes a file, symbolic link or empty directory. }
 function RemovePath(Path: PChar): TFileSystemStatus;
 { Moves or renames within one volume. The target must not exist. }
@@ -117,7 +122,8 @@ uses
   Runtime.LinkedList,
   Memory.KernelHeap,
   Objects.Manager,
-  FileSystem.Volumes;
+  FileSystem.Volumes,
+  FileSystem.Security;
 
 const
   MaximumComponents = 128;
@@ -354,6 +360,11 @@ begin
       Result := StatusNotADirectory;
       Break;
     end;
+    if not MayAccess(Node^.Information, AccessExecute) then
+    begin
+      Result := StatusAccessDenied;
+      Break;
+    end;
 
     Result := LookupAndIntern(Node, Split^.Components[ComponentIndex], NextNode);
     ReleaseNodeReference(Volume, Node);
@@ -427,6 +438,12 @@ begin
     not TextIsEqual(Name, '.') and not TextIsEqual(Name, '..');
 end;
 
+{ Changing the names in a directory needs write and search permission. }
+function MayChangeDirectory(Directory: PNode): Boolean;
+begin
+  Result := MayAccess(Directory^.Information, AccessWrite or AccessExecute);
+end;
+
 { Resolves everything but the last component of RemainingPath (with the
   volume lock held). The last component becomes Target^.Name. }
 function ResolveParent(Volume: PVolume; RemainingPath: PChar; Target: PParentAndName): TFileSystemStatus;
@@ -476,6 +493,13 @@ begin
     Target^.Parent := nil;
     Result := StatusNotADirectory;
   end;
+  { Looking the name up searches the parent. }
+  if (Result = StatusSuccess) and not MayAccess(Target^.Parent^.Information, AccessExecute) then
+  begin
+    ReleaseNodeReference(Volume, Target^.Parent);
+    Target^.Parent := nil;
+    Result := StatusAccessDenied;
+  end;
 end;
 
 { --- Open files ------------------------------------------------------ }
@@ -507,12 +531,13 @@ end;
 
 { Finds or creates the file for OpenFile. Volume lock held. }
 function ResolveForOpen(Volume: PVolume; RemainingPath: PChar; Flags: LongWord;
-  out Node: PNode): TFileSystemStatus;
+  out Node: PNode; out WasCreated: Boolean): TFileSystemStatus;
 var
   Target: PParentAndName;
   Created: PNode;
 begin
   Node := nil;
+  WasCreated := False;
   if (Flags and OpenCreate) = 0 then
     Exit(ResolveInVolume(Volume, RemainingPath, True, 0, Node));
 
@@ -542,9 +567,18 @@ begin
     end
     else if Result = StatusNotFound then
     begin
-      Result := Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], NodeKindFile, nil, Created);
-      if Result = StatusSuccess then
-        Node := InternNode(Volume, Created);
+      if not MayChangeDirectory(Target^.Parent) then
+        Result := StatusAccessDenied
+      else
+      begin
+        Result := Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], NodeKindFile, nil, Created);
+        if Result = StatusSuccess then
+        begin
+          Node := InternNode(Volume, Created);
+          ApplyCreationAttributes(Node, DefaultFileMode, True);
+          WasCreated := True;
+        end;
+      end;
     end;
     ReleaseNodeReference(Volume, Target^.Parent);
   end;
@@ -552,11 +586,22 @@ begin
   FreeKernelMemory(Target);
 end;
 
+{ The permissions an open with Flags needs on an existing node. }
+function AccessForFlags(Flags: LongWord): LongWord;
+begin
+  Result := 0;
+  if (Flags and OpenForReading) <> 0 then
+    Result := Result or AccessRead;
+  if WantsWriteAccess(Flags) then
+    Result := Result or AccessWrite;
+end;
+
 function OpenFile(Path: PChar; Flags: LongWord; out OpenedFile: POpenFile): TFileSystemStatus;
 var
   Volume: PVolume;
   RemainingPath: PChar;
   Node: PNode;
+  WasCreated: Boolean;
 begin
   OpenedFile := nil;
   Node := nil;
@@ -575,10 +620,14 @@ begin
       Exit(StatusReadOnly);
 
     AcquireMutex(Volume^.Lock);
-    Result := ResolveForOpen(Volume, RemainingPath, Flags, Node);
+    Result := ResolveForOpen(Volume, RemainingPath, Flags, Node, WasCreated);
     if (Result = StatusSuccess) and WantsWriteAccess(Flags) and
        (Node^.Information.Kind = NodeKindDirectory) then
       Result := StatusIsADirectory;
+    { The creator of a file may open it whatever mode it got. }
+    if (Result = StatusSuccess) and not WasCreated and
+       not MayAccess(Node^.Information, AccessForFlags(Flags)) then
+      Result := StatusAccessDenied;
     if (Result = StatusSuccess) and ((Flags and OpenTruncate) <> 0) and
        (Node^.Information.SizeInBytes <> 0) then
       Result := Volume^.Driver^.SetFileSize(Node, 0);
@@ -858,10 +907,23 @@ begin
     end
     else if Result = StatusNotFound then
     begin
-      Result := Target^.Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], Kind,
-        LinkTarget, Created);
+      if not MayChangeDirectory(Target^.Parent) then
+        Result := StatusAccessDenied
+      else
+        Result := Target^.Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], Kind,
+          LinkTarget, Created);
       if Result = StatusSuccess then
-        ReleaseNodeReference(Target^.Volume, InternNode(Target^.Volume, Created));
+      begin
+        Created := InternNode(Target^.Volume, Created);
+        { Symbolic links keep rwxrwxrwx; their target's mode matters. }
+        case Kind of
+          NodeKindDirectory: ApplyCreationAttributes(Created, DefaultDirectoryMode, True);
+          NodeKindSymbolicLink: ApplyCreationAttributes(Created, SymbolicLinkMode, False);
+        else
+          ApplyCreationAttributes(Created, DefaultFileMode, True);
+        end;
+        ReleaseNodeReference(Target^.Volume, Created);
+      end;
     end;
     FinishNameOperation(Target);
   end;
@@ -872,6 +934,11 @@ end;
 function CreateDirectory(Path: PChar): TFileSystemStatus;
 begin
   Result := CreateNamedNode(Path, NodeKindDirectory, nil);
+end;
+
+function CreateFifo(Path: PChar): TFileSystemStatus;
+begin
+  Result := CreateNamedNode(Path, NodeKindFifo, nil);
 end;
 
 function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
@@ -897,7 +964,9 @@ begin
     if Result = StatusSuccess then
     begin
       { Our own lookup holds one reference; any other means it is open. }
-      if Node^.ReferenceCount > 1 then
+      if not MayChangeDirectory(Target^.Parent) then
+        Result := StatusAccessDenied
+      else if Node^.ReferenceCount > 1 then
         Result := StatusInUse
       else
         Result := Target^.Volume^.Driver^.RemoveNode(Target^.Parent, @Target^.Name[0], Node);
@@ -956,7 +1025,9 @@ begin
         if LookupAndIntern(Target^.Parent, @Target^.Name[0], Existing) <> StatusSuccess then
           Existing := nil;
 
-        if (Existing <> nil) and (Existing <> Node) then
+        if not MayChangeDirectory(Source^.Parent) or not MayChangeDirectory(Target^.Parent) then
+          Result := StatusAccessDenied
+        else if (Existing <> nil) and (Existing <> Node) then
           Result := StatusAlreadyExists
         else if (Existing = Node) and TextIsEqual(@Source^.Name[0], @Target^.Name[0]) then
           Result := StatusSuccess { renaming something onto itself }
@@ -1039,6 +1110,8 @@ begin
       begin
         if Node^.Information.Kind = NodeKindDirectory then
           Result := StatusIsADirectory
+        else if not MayChangeDirectory(Target^.Parent) then
+          Result := StatusAccessDenied
         else if LookupAndIntern(Target^.Parent, @Target^.Name[0], Occupant) = StatusSuccess then
         begin
           ReleaseNodeReference(Target^.Volume, Occupant);

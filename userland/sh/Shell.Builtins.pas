@@ -2,7 +2,8 @@
   Commands built into the shell.
 
   Some commands have to run inside the shell because they change its
-  state (cd, exit, export, unset, set, shift, read, ., break, continue);
+  state (cd, exit, export, unset, set, shift, read, ., break, continue,
+  umask);
   a few more (:, true, false) are builtins only to save starting a
   process. Everything else is a program in /bin.
 }
@@ -29,6 +30,7 @@ uses
   Sys.Errors,
   Sys.Files,
   Sys.Format,
+  Sys.Kernel,
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
@@ -304,6 +306,68 @@ begin
   Result := LoopControlBuiltin('continue', Arguments, Count, LoopControlContinue);
 end;
 
+{ umask [-S] [MODE]: shows or sets the permission bits taken away from
+  new files. MODE is octal. }
+function BuiltinUmask(Arguments: PPChar; Count: Integer): LongInt;
+const
+  Classes: array[0..2] of Char = ('u', 'g', 'o');
+var
+  Mask: LongWord;
+  Symbolic: Boolean;
+  First: Integer;
+  Position: Integer;
+  ClassIndex: Integer;
+  Allowed: LongWord;
+begin
+  Symbolic := (Count >= 2) and TextIsEqual(Arguments[1], '-S');
+  First := 1;
+  if Symbolic then
+    First := 2;
+  if First < Count then
+  begin
+    Mask := 0;
+    Position := 0;
+    while Arguments[First][Position] in ['0'..'7'] do
+    begin
+      Mask := Mask * 8 + LongWord(Ord(Arguments[First][Position]) - Ord('0'));
+      Inc(Position);
+    end;
+    if (Position = 0) or (Arguments[First][Position] <> #0) or (Mask > $1FF) then
+    begin
+      BuiltinError('umask', '%s: octal number out of range', [ArgumentText(Arguments[First])]);
+      Exit(1);
+    end;
+    KernelSetUmask(Mask);
+    Exit(0);
+  end;
+  { Reading the mask means setting it and putting it back. }
+  Mask := LongWord(KernelSetUmask(0));
+  KernelSetUmask(Mask);
+  if Symbolic then
+  begin
+    for ClassIndex := 0 to 2 do
+    begin
+      if ClassIndex > 0 then
+        WriteCharacter(StandardOutput, ',');
+      WriteCharacter(StandardOutput, Classes[ClassIndex]);
+      WriteCharacter(StandardOutput, '=');
+      Allowed := (not Mask shr (3 * (2 - ClassIndex))) and 7;
+      if (Allowed and 4) <> 0 then WriteCharacter(StandardOutput, 'r');
+      if (Allowed and 2) <> 0 then WriteCharacter(StandardOutput, 'w');
+      if (Allowed and 1) <> 0 then WriteCharacter(StandardOutput, 'x');
+    end;
+  end
+  else
+  begin
+    WriteCharacter(StandardOutput, '0');
+    WriteCharacter(StandardOutput, Char(Ord('0') + (Mask shr 6) and 7));
+    WriteCharacter(StandardOutput, Char(Ord('0') + (Mask shr 3) and 7));
+    WriteCharacter(StandardOutput, Char(Ord('0') + Mask and 7));
+  end;
+  WriteCharacter(StandardOutput, #10);
+  Result := 0;
+end;
+
 function FindBuiltin(Name: PChar): TBuiltinRoutine;
 begin
   if TextIsEqual(Name, ':') or TextIsEqual(Name, 'true') then
@@ -330,6 +394,8 @@ begin
     Result := @BuiltinBreak
   else if TextIsEqual(Name, 'continue') then
     Result := @BuiltinContinue
+  else if TextIsEqual(Name, 'umask') then
+    Result := @BuiltinUmask
   else
     Result := nil;
 end;

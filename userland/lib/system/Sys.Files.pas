@@ -64,6 +64,14 @@ function ChangeOwner(Path: PChar; OwnerId, GroupId: Int64; FollowLinks: Boolean)
 { Times in seconds since 1970; a negative value leaves that time alone. }
 function SetFileTimes(Path: PChar; ModificationTime, AccessTime: Int64;
   FollowLinks: Boolean): LongInt;
+{ Sets the chosen times to the current time; this is allowed to anyone
+  who may write the file, not just its owner. }
+function SetFileTimesToNow(Path: PChar; ChangeModification, ChangeAccess: Boolean;
+  FollowLinks: Boolean): LongInt;
+{ Creates a named pipe. }
+function CreateFifo(Path: PChar): LongInt;
+{ The permission bits taken away from files this program creates. }
+function CurrentUmask: LongWord;
 function CreateHardLink(ExistingPath, NewPath: PChar): LongInt;
 
 implementation
@@ -230,6 +238,32 @@ begin
   if Changes.Fields = 0 then
     Exit(ErrorNone);
   Result := SetPathAttributes(Path, Changes, FollowLinks);
+end;
+
+function SetFileTimesToNow(Path: PChar; ChangeModification, ChangeAccess: Boolean;
+  FollowLinks: Boolean): LongInt;
+var
+  Changes: TAttributeChanges;
+begin
+  ZeroMemory(@Changes, SizeOf(Changes));
+  Changes.Fields := ChangeFieldTimesAreNow;
+  if ChangeModification then
+    Changes.Fields := Changes.Fields or ChangeFieldModificationTime;
+  if ChangeAccess then
+    Changes.Fields := Changes.Fields or ChangeFieldAccessTime;
+  Result := ErrorCodeOf(KernelSetPathAttributes(Path, Changes, FollowLinks));
+end;
+
+function CurrentUmask: LongWord;
+begin
+  { The only way to read the mask is to set it and put it back. }
+  Result := LongWord(KernelSetUmask(0));
+  KernelSetUmask(Result);
+end;
+
+function CreateFifo(Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelCreateFifo(Path));
 end;
 
 function SetFileTimes(Path: PChar; ModificationTime, AccessTime: Int64;

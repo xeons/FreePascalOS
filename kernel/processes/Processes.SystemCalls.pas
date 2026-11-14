@@ -40,7 +40,13 @@ uses
   Processes.UserProcess,
   Processes.UserAccess,
   Processes.Termination,
-  Processes.FileCalls;
+  Processes.FileCalls,
+  { Users, permissions, process information and priorities. }
+  FileSystem.Types,
+  FileSystem.Files,
+  FileSystem.Security,
+  Processes.Security,
+  Processes.SecurityCalls;
 
 const
   SystemName = 'FreePascalOS';
@@ -138,8 +144,41 @@ begin
   end;
 end;
 
+const
+  ModeSetUserId = $800;
+  ModeSetGroupId = $400;
+
+{ Running a program needs execute permission (root: any execute bit). A
+  set-user-ID or set-group-ID program runs as its owner or group. }
+function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
+  var Credentials: TProcessCredentials): LongInt;
+var
+  Information: TNodeInformation;
+begin
+  Result := ErrorNone;
+  if not Caller^.IsUserProcess then
+    Exit;
+  { A missing program is reported by the loader. }
+  if DescribePath(KernelPath, True, Information) <> StatusSuccess then
+    Exit;
+  if (Information.Kind <> NodeKindFile) or
+     not CredentialsMayAccess(Caller^.Credentials, Information, AccessExecute) then
+    Exit(ErrorAccessDenied);
+  if (Information.Mode and ModeSetUserId) <> 0 then
+  begin
+    Credentials.EffectiveUserId := Information.OwnerId;
+    Credentials.SavedUserId := Information.OwnerId;
+  end;
+  if (Information.Mode and ModeSetGroupId) <> 0 then
+  begin
+    Credentials.EffectiveGroupId := Information.GroupId;
+    Credentials.SavedGroupId := Information.GroupId;
+  end;
+end;
+
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
+  Credentials: TProcessCredentials;
   Creation: TAbiProcessCreation;
   Caller: PProcess;
   Startup: TProcessStartup;
@@ -163,6 +202,10 @@ begin
 
   Caller := CurrentProcess;
   Error := TranslateUserPath(Caller, @UserPath[0], @KernelPath[0], ProcessPathCapacity);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  InheritCredentials(Caller, Credentials);
+  Error := CheckMayExecute(Caller, @KernelPath[0], Credentials);
   if Error <> ErrorNone then
     Exit(Failure(Error));
 
@@ -198,6 +241,7 @@ begin
   Startup.EnvironmentCount := Environment.Count;
   Startup.WorkingDirectory := @WorkingDirectory[0];
   Startup.ParentProcessId := Caller^.ProcessId;
+  Startup.Credentials := Credentials;
   { A program started inside a chroot stays inside it. }
   Startup.RootDirectory := @RootDirectory[0];
   case Creation.GroupId of
@@ -426,6 +470,9 @@ begin
   Information.FreeMemory := Statistics.FreePages * PageSize;
   Information.UptimeMilliseconds := UptimeMilliseconds;
   Information.ProcessorCount := ProcessorCount;
+  GetLoadAverages(Information.LoadAverages[0], Information.LoadAverages[1],
+    Information.LoadAverages[2]);
+  Information.RunnableThreads := RunnableThreadCount;
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
 end;
 
@@ -482,6 +529,17 @@ begin
     CallControlHandle: Result := PerformControlHandle(Int64(Argument0), Argument1, Argument2);
     CallSetInterruptIgnored: Result := PerformSetInterruptIgnored(Argument0);
     CallGetProcessGroup: Result := Int64(CurrentProcess^.GroupId);
+
+    { --- Users, permissions, process information and priorities --- }
+    CallListProcesses: Result := PerformListProcesses(Argument0, Argument1);
+    CallGetCredentials: Result := PerformGetCredentials(Argument0);
+    CallSetUserIds: Result := PerformSetUserIds(Int64(Argument0), Int64(Argument1), Int64(Argument2));
+    CallSetGroupIds: Result := PerformSetGroupIds(Int64(Argument0), Int64(Argument1), Int64(Argument2));
+    CallSetGroups: Result := PerformSetGroups(Argument0, Argument1);
+    CallSetUmask: Result := PerformSetUmask(Argument0);
+    CallGetPriority: Result := PerformGetPriority(Argument0);
+    CallSetPriority: Result := PerformSetPriority(Argument0, Int64(Argument1));
+    CallCreateFifo: Result := PerformCreateFifo(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;

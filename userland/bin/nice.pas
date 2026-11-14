@@ -3,10 +3,10 @@
 
   nice [-n ADJUSTMENT] [COMMAND [ARG]...]
 
-  Without COMMAND prints the current niceness (always 0). The scheduler
-  does not let programs change priorities yet, so the command runs with
-  normal priority and nice says so, as GNU nice does when it cannot set
-  the niceness.
+  Without COMMAND prints the current niceness. Otherwise adds ADJUSTMENT
+  to it (clamped to -20 .. 19) and runs COMMAND, which inherits it. Only
+  root may lower the niceness; for others nice warns and runs COMMAND
+  anyway, as GNU nice does.
 }
 program nice;
 
@@ -15,6 +15,8 @@ program nice;
 
 uses
   Runtime.Text,
+  Sys.Kernel,
+  Sys.Errors,
   Sys.Environment,
   Sys.Format,
   Sys.Processes,
@@ -34,6 +36,9 @@ var
   Adjustment: Int64;
   Options: TProcessOptions;
   Text: PChar;
+  Current: LongInt;
+  Wanted: Int64;
+  Error: Int64;
 begin
   First := 1;
   Adjustment := 10;
@@ -68,13 +73,20 @@ begin
   if (First < ArgumentTotal) and TextIsEqual(Argument(First), '--') then
     Inc(First);
 
+  KernelGetPriority(0, Current);
   if First >= ArgumentTotal then
   begin
-    PrintLine('0');
+    WriteFormatted(StandardOutput, '%d'#10, [ArgumentNumber(Current)]);
     Halt(0);
   end;
-  if Adjustment <> 0 then
-    Report('cannot set niceness: Operation not supported', []);
+  Wanted := Current + Adjustment;
+  if Wanted < -20 then
+    Wanted := -20;
+  if Wanted > 19 then
+    Wanted := 19;
+  Error := KernelSetPriority(0, LongInt(Wanted));
+  if Error < 0 then
+    Report('cannot set niceness: %s', [ArgumentText(ErrorMessage(ErrorCodeOf(Error)))]);
   DefaultProcessOptions(Options);
   RunCommandAndExit(ArgumentValues + First, Options);
 end.

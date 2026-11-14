@@ -6,7 +6,8 @@
   FORMAT conversions: %n name  %s size  %F file type  %i node number
   %h link count  %a mode in octal  %A mode as text  %u %g owner and group
   ids  %U %G their names  %x %y %z access, modification and change time
-  %X %Y %Z the same in seconds since 1970  %%
+  %X %Y %Z the same in seconds since 1970  %b allocated blocks  %B the
+  size of those blocks (512)  %%
 }
 program stat;
 
@@ -22,6 +23,7 @@ uses
   Sys.Time,
   Util.Accounts,
   Util.Messages,
+  Util.Modes,
   Util.Options;
 
 const
@@ -33,7 +35,7 @@ const
     '                        output a newline after each use of FORMAT'#10 +
     '  -t, --terse           print the information in terse form'#10 +
     #10 +
-    'FORMAT: %n %s %F %i %h %a %A %u %U %g %G %x %X %y %Y %z %Z %%'#10;
+    'FORMAT: %n %s %F %i %h %a %A %u %U %g %G %x %X %y %Y %z %Z %b %B %%'#10;
 
   OptionDereference = 1;
   OptionFormat = 2;
@@ -50,30 +52,24 @@ begin
         Result := 'regular file';
     KindDirectory: Result := 'directory';
     KindSymbolicLink: Result := 'symbolic link';
+    KindFifo: Result := 'fifo';
   else
     Result := 'unknown';
   end;
 end;
 
 procedure WriteModeText(const Information: TFileInformation);
-const
-  Letters: array[0..8] of Char = ('r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x');
 var
-  Bit: Integer;
+  Buffer: array[0..15] of Char;
 begin
   case Information.Kind of
     KindDirectory: WriteCharacter(StandardOutput, 'd');
     KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
+    KindFifo: WriteCharacter(StandardOutput, 'p');
   else
     WriteCharacter(StandardOutput, '-');
   end;
-  for Bit := 0 to 8 do
-  begin
-    if (Information.Mode and (1 shl (8 - Bit))) <> 0 then
-      WriteCharacter(StandardOutput, Letters[Bit])
-    else
-      WriteCharacter(StandardOutput, '-');
-  end;
+  WriteText(StandardOutput, FormatModeText(Information.Mode, @Buffer[0]));
 end;
 
 procedure WriteTime(Time: Int64);
@@ -113,6 +109,8 @@ begin
       's': WriteUnsigned(StandardOutput, Information.SizeInBytes);
       'F': WriteText(StandardOutput, KindName(Information));
       'i': WriteUnsigned(StandardOutput, Information.NodeNumber);
+      'b': WriteUnsigned(StandardOutput, (Information.AllocatedBytes + 511) div 512);
+      'B': WriteText(StandardOutput, '512');
       'h': WriteUnsigned(StandardOutput, Information.LinkCount);
       'a': WriteFormatted(StandardOutput, '%o', [ArgumentUnsigned(Information.Mode and $FFF)]);
       'A': WriteModeText(Information);
@@ -147,7 +145,8 @@ begin
     WriteFormatted(StandardOutput, '  File: %s -> %s'#10, [ArgumentText(Name), ArgumentText(@Target[0])])
   else
     WriteFormatted(StandardOutput, '  File: %s'#10, [ArgumentText(Name)]);
-  WriteFormatted(StandardOutput, '  Size: %-15u Type: %s'#10, [ArgumentUnsigned(Information.SizeInBytes),
+  WriteFormatted(StandardOutput, '  Size: %-15u Blocks: %-10u Type: %s'#10, [
+    ArgumentUnsigned(Information.SizeInBytes), ArgumentUnsigned((Information.AllocatedBytes + 511) div 512),
     ArgumentText(KindName(Information))]);
   WriteFormatted(StandardOutput, '  Node: %-15u Links: %u'#10, [ArgumentUnsigned(Information.NodeNumber),
     ArgumentUnsigned(Information.LinkCount)]);

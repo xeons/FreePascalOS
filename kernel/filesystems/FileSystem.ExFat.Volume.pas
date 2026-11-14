@@ -690,6 +690,8 @@ begin
   else
     Result^.Common.Information.Kind := NodeKindFile;
   Result^.Common.Information.SizeInBytes := Entry.DataLength;
+  Result^.Common.Information.AllocatedBytes := (Entry.DataLength + PExFatVolume(Volume^.DriverData)^.BytesPerCluster - 1)
+    div PExFatVolume(Volume^.DriverData)^.BytesPerCluster * PExFatVolume(Volume^.DriverData)^.BytesPerCluster;
   Result^.Common.Information.NodeNumber := Entry.SetEntryOffsets[0];
   Result^.Common.Information.LinkCount := 1;
   Result^.Common.Information.ModificationTime :=
@@ -748,6 +750,7 @@ begin
 
   Stream^.FirstCluster := Node^.FirstCluster;
   Stream^.DataLength := Node^.DataLength;
+  Node^.Common.Information.AllocatedBytes := Node^.DataLength;
   Stream^.ValidDataLength := Node^.ValidDataLength;
   Stream^.GeneralSecondaryFlags := StreamFlagAllocationPossible;
   if Node^.IsContiguous and (Node^.FirstCluster <> 0) then

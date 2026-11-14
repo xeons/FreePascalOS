@@ -54,7 +54,12 @@ how the existing pieces fit together.
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [ ] Signals that do not end a program (stop, continue, user signals)
-- [ ] Users, groups and permission checks
+- [x] Users, groups and permission checks: real/effective/saved ids, supplementary
+      groups, umask, set-user-ID programs; open, create, remove, rename, search,
+      chmod, chown, times and execute are checked
+- [ ] Sticky directories (/tmp: only the owner may remove a file)
+- [ ] Permission checks on FAT and exFAT beyond their read-only attribute
+- [x] Process list (ps, pgrep, pkill), per-thread CPU time
 
 ## I/O
 
@@ -115,13 +120,14 @@ how the existing pieces fit together.
 - [x] User System unit and startup code; libsystem.so; libcoreutils.so
 - [x] Shell: pipes, redirections, && ||, if/while/until/for, variables,
       $( ), $(( )), globbing, quoting, scripts, builtins
-- [x] Core utilities: all of GNU coreutils (102 commands) except mkfifo,
-      mknod, chcon and runcon
+- [x] Core utilities: all of GNU coreutils (104 commands) except chcon and runcon
 - [x] libcryptography: MD5, SHA-1/2, BLAKE2b, HMAC, CRCs, AES, ChaCha20, random
 - [x] Regular expressions (POSIX BRE and ERE) in libcoreutils
-- [ ] Named pipes in the file systems (mkfifo, mknod)
-- [ ] Scheduling priorities for programs (nice), load averages (uptime)
-- [ ] Allocated block counts in file information (du, ls -s, stat %b)
+- [x] Named pipes in the file systems (mkfifo, mknod; ext only)
+- [x] Scheduling priorities for programs (nice, renice), load averages (uptime)
+- [x] Allocated block counts in file information (du, ls -s, stat %b)
+- [x] su and passwd (salted SHA-256 hashes in /etc/shadow), user "user"
+- [ ] login, and initializing supplementary groups for the first program
 - [x] `coretest`: user mode tests run by `make test`
 - [ ] Lazy binding (PLT resolution on first call) and symbol versioning
 - [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
@@ -129,7 +135,7 @@ how the existing pieces fit together.
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
 - [ ] Shell: case, functions, here documents, job control (fg, bg, jobs, Ctrl-Z)
 - [ ] Ctrl-C for loops made only of builtins (needs a pending-interrupt check)
-- [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less, ps
+- [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less
 - [x] Interrupt driven console input (keyboard and serial)
 
 ## ARM64 port
