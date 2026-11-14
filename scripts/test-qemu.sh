@@ -38,7 +38,7 @@ architecture="$1"
 esp_directory="$2"
 test_disk_image="${3:-}"
 system_disk_image="${4:-}"
-timeout_seconds=120
+timeout_seconds=180
 expected_file_systems=(fat12 fat16 fat32 exfat ext2 ext3 ext4)
 
 build_directory=$(dirname "$esp_directory")
@@ -99,6 +99,15 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-nvme.img" ]]; then
         -device nvme,serial=fpostest,drive=nvme0)
 else
     run_nvme_disk_image=""
+fi
+run_usb_disk_image="$build_directory/test-disk-usb-run.img"
+if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-usb.img" ]]; then
+    cp -f "${test_disk_image%.img}-usb.img" "$run_usb_disk_image"
+    disk_arguments+=(-device qemu-xhci,id=xhci
+        -drive if=none,id=usbdisk0,format=raw,cache=unsafe,file="$run_usb_disk_image"
+        -device usb-storage,bus=xhci.0,drive=usbdisk0)
+else
+    run_usb_disk_image=""
 fi
 run_system_disk_image="$build_directory/system-disk-run.img"
 if [[ -n "$system_disk_image" ]]; then
@@ -199,6 +208,17 @@ case "$qemu_status" in
             fi
             if ! "$(dirname "$0")/verify-test-disk.sh" "$run_nvme_disk_image"; then
                 echo "TEST FAILED: the volume on the NVMe disk did not pass the host side checks"
+                exit 1
+            fi
+        fi
+        if [[ -n "$run_usb_disk_image" ]]; then
+            if ! grep -q '\[xhci\] Controller .* interrupts' "$serial_log" ||
+               ! grep -q '\[usb\] Port [0-9]*: device' "$serial_log"; then
+                echo "TEST FAILED: the USB stick was not found through xHCI with interrupts"
+                exit 1
+            fi
+            if ! "$(dirname "$0")/verify-test-disk.sh" "$run_usb_disk_image"; then
+                echo "TEST FAILED: the volume on the USB stick did not pass the host side checks"
                 exit 1
             fi
         fi

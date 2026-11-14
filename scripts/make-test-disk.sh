@@ -235,6 +235,16 @@ size=64MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="fat32"' | sfdisk --
 dd if="$work_directory/fat32.img" of="$nvme_image" bs=1M seek=1 conv=notrunc status=none
 echo "Wrote $nvme_image (66 MiB, partition: fat32)"
 
+# A USB stick for the xHCI and USB mass storage drivers, with a copy of
+# the exFAT partition.
+usb_image="${output_image%.img}-usb.img"
+rm -f "$usb_image"
+truncate -s 34M "$usb_image"
+echo 'label: gpt
+size=32MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="exfat"' | sfdisk --quiet "$usb_image"
+dd if="$work_directory/exfat.img" of="$usb_image" bs=1M seek=1 conv=notrunc status=none
+echo "Wrote $usb_image (34 MiB, partition: exfat)"
+
 # A medium for the ATAPI (CD) drive: 64 blocks of 2048 bytes, each
 # starting with "FreePascalOS CD block NNNN".
 cdrom_image="${output_image%.img}-cdrom.img"

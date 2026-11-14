@@ -292,6 +292,24 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    controller's bounce pages, up to 128 KiB (or the controller's largest
    transfer) a command, described by PRP entries or a PRP list. The tests
    attach an NVMe disk holding a copy of the FAT32 test partition.
+
+   USB: xHCI controllers (`Drivers.Xhci`, rings in `Drivers.XhciRings`)
+   are taken over from the firmware, reset and given a device context
+   array (with scratchpad pages), a command ring and an event ring. Events
+   come by MSI-X or MSI (or are polled); a deferred call takes them off
+   the ring and wakes whoever waits for the command or transfer. At start
+   every connected port is reset and its device enumerated: a slot is
+   enabled, the device addressed, its descriptors read and its first
+   configuration set. The device is then offered to the class drivers
+   (`RegisterUsbClassDriver`). Hot plugging is not handled yet. Transfers
+   move through each device's DMA pages (64 KiB), and only events for the
+   TRBs being waited for count. USB mass storage (`Drivers.UsbStorage`,
+   Bulk-Only Transport) sends SCSI commands in command block wrappers:
+   INQUIRY, TEST UNIT READY with REQUEST SENSE, READ CAPACITY(10),
+   READ/WRITE(10) and SYNCHRONIZE CACHE(10). Each device becomes a disk of
+   the `usb-storage` driver, whose requests run in the caller's thread.
+   The tests attach a USB stick holding a copy of the exFAT test
+   partition.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.

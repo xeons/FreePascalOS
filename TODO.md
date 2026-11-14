@@ -98,7 +98,7 @@ how the existing pieces fit together.
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
 - [x] Keyboard layouts us/uk/de/fr (keymap= option), AltGr, lock lights, Num Lock keypad
 - [ ] Dead keys for de/fr accents; non-ASCII glyphs in the framebuffer font
-- [ ] USB keyboards (needs xHCI)
+- [ ] USB keyboards (HID boot protocol on the xHCI driver)
 - [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
 - [ ] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
@@ -112,7 +112,9 @@ how the existing pieces fit together.
 - [x] ATAPI (optical drives) on AHCI: read-only disks of the medium's block size
 - [x] NVMe driver (admin and one I/O queue pair, MSI-X/MSI, PRP lists, namespaces)
 - [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)
-- [ ] USB mass storage (needs an xHCI driver first)
+- [x] xHCI (enumeration at start, control and bulk transfers, MSI-X/MSI) and USB mass
+      storage (Bulk-Only Transport, SCSI)
+- [ ] USB hot plugging (port status change events), hubs
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead
 

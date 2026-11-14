@@ -63,6 +63,8 @@ uses
   Drivers.Ahci,
   Drivers.VirtioBlock,
   Drivers.Nvme,
+  Drivers.Xhci,
+  Drivers.UsbStorage,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -125,6 +127,8 @@ begin
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;
+  RegisterUsbStorageDriver;
+  InitializeXhciControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;
