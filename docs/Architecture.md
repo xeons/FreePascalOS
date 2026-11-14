@@ -175,6 +175,24 @@ and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
 device, evicts least recently used first, and lets callers read any byte
 range regardless of the device's block size.
 
+## Device interrupts
+
+The legacy 8259 PICs are masked; device interrupts go through the I/O
+APICs listed in the ACPI MADT (Firmware.Madt, Hal.IoApic). A driver asks
+`ConnectIsaInterrupt` (Io.InterruptRouting) for its IRQ: the MADT's
+interrupt source overrides give the real input, polarity and trigger
+mode, and the driver gets one of the device vectors 0x30-0x3F. Its handler
+runs at device level, where the dispatcher lock cannot be taken, so a
+handler that needs to wake a thread queues a deferred call
+(Kernel.DeferredCalls); queued calls run at dispatch level from the
+dispatch interrupt, before the scheduler picks the next thread.
+
+The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
+(Drivers.SerialInput, IRQ 4) feed characters to the console's input ring
+(DeliverConsoleInput); a deferred call signals the event a reading thread
+waits on. Without an I/O APIC the console falls back to polling the serial
+port.
+
 ## File systems
 
 The VFS (`kernel/filesystems`) has three parts:

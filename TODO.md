@@ -6,8 +6,9 @@ how the existing pieces fit together.
 ## Hardware discovery
 
 - [x] Parse ACPI tables (RSDP from the loader → XSDT/RSDT → table lookup)
-- [ ] Use the MADT (processor and I/O APIC list), HPET and FADT
-- [ ] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
+- [x] Use the MADT for I/O APICs and interrupt source overrides
+- [ ] Use the MADT processor list (SMP), HPET and FADT
+- [x] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
 - [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
 - [ ] Legacy configuration access (ports 0xCF8/0xCFC) for machines without MCFG
@@ -28,7 +29,7 @@ how the existing pieces fit together.
 - [x] Mutexes (owner tracking, recursion)
 - [ ] Semaphores and reader/writer locks
 - [ ] Wait on multiple objects
-- [ ] Deferred work queue that runs at dispatch level (for device drivers)
+- [x] Deferred calls that run at dispatch level (for device drivers)
 - [ ] Priority boosting for threads woken from waits
 - [ ] Stack back trace in the panic screen
 
@@ -58,7 +59,8 @@ how the existing pieces fit together.
 ## I/O
 
 - [ ] I/O manager: driver objects, device objects, request packets
-- [ ] PS/2 keyboard driver (first interrupt-driven device)
+- [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
+- [ ] Keyboard layouts other than US; keyboard LEDs; USB keyboards (needs xHCI)
 - [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
 - [ ] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
@@ -126,7 +128,7 @@ how the existing pieces fit together.
 - [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
 - [ ] Shell: case, functions, here documents, job control, history and line editing
 - [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less, ps
-- [ ] Interrupt driven console input (keyboard and serial) instead of polling
+- [x] Interrupt driven console input (keyboard and serial)
 
 ## ARM64 port
 

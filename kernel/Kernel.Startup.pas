@@ -40,6 +40,7 @@ uses
   Kernel.PriorityLevel,
   Kernel.Threads,
   Kernel.Scheduler,
+  Kernel.DeferredCalls,
   Kernel.Clock,
   Kernel.Options,
   Kernel.Panic,
@@ -265,6 +266,7 @@ begin
   BootStackBase := QWord(PhysicalToVirtual(BootInformation^.BootStackPhysicalBase));
   IdleThread := CreateIdleThreadFromBootContext(BootStackBase,
     BootStackBase + BootInformation^.BootStackSizeInBytes);
+  InitializeDeferredCalls;
   InitializeScheduler(@IdleThread^.ControlBlock);
 
   StartPhaseOne(BootInformation);

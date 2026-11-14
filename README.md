@@ -39,6 +39,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   metadata checksums, htree directories for reading, sparse files, fast and
   slow symbolic links).
 - A real-time clock driver, so files get correct timestamps.
+- I/O APIC interrupt routing (from the ACPI MADT), with interrupt-driven
+  PS/2 keyboard and serial console input; interrupt handlers hand work to
+  dispatch level through deferred calls.
 - **User mode**: processes with their own address spaces (demand-zero
   memory, isolated crashes), system calls through `syscall`, per-process
   handle tables, pipes, a console and `/dev/null`, and an ELF loader that
@@ -106,6 +109,7 @@ make image        # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
 ```
 
+Type into the QEMU window (PS/2 keyboard) or the terminal (serial port).
 After startup the kernel runs `/bin/sh` from the system volume (the volume
 labelled `FPOSROOT`, or the one named by the `root=` option) on the serial
 console; `init=/bin/program` picks another first program. Programs see the
@@ -150,6 +154,7 @@ kernel/
   io/               I/O startup, PCI, block devices, partitions, block cache,
                     pipes, console and null device
   drivers/storage/  AHCI SATA driver
+  drivers/input/    PS/2 keyboard and serial input drivers
   filesystems/      VFS (types, volumes, open files, attributes, hard links)
                     and the FAT, exFAT and ext2/3/4 drivers
   runtime/          Linked lists, atomics, checksums, Unicode

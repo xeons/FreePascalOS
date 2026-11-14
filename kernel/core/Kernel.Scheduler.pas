@@ -113,6 +113,7 @@ uses
   Kernel.SpinLock,
   Kernel.Interrupts,
   Kernel.Clock,
+  Kernel.DeferredCalls,
   Kernel.Panic;
 
 var
@@ -286,6 +287,9 @@ end;
 
 procedure HandleDispatchInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
+  { Work handed over by interrupt handlers may ready threads, so it runs
+    before the next thread is chosen. }
+  RunDeferredCalls;
   AcquireSpinLockAtCurrentLevel(DispatcherLock);
   WakeExpiredSleepersLocked;
   PreemptIfNeededLocked;

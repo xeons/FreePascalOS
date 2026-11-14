@@ -31,7 +31,10 @@ uses
   Io.Partitions,
   Drivers.Ahci,
   FileSystem.Volumes,
-  Debug.Output;
+  Debug.Output,
+  Io.InterruptRouting,
+  Drivers.SerialInput,
+  Drivers.Ps2Keyboard;
 
 procedure ScanAllDisksForPartitions;
 var
@@ -50,10 +53,27 @@ begin
   end;
 end;
 
+procedure InitializeInputDevices;
+var
+  SerialByInterrupt: Boolean;
+begin
+  SerialByInterrupt := InitializeSerialInput;
+  InitializePs2Keyboard;
+  DebugBeginMessage;
+  DebugWriteTag('input');
+  if SerialByInterrupt then
+    DebugWriteLine('Serial console input on IRQ 4')
+  else
+    DebugWriteLine('Serial console input is polled');
+  DebugEndMessage;
+end;
+
 procedure InitializeIoSystem(const BootInformation: TBootInformation);
 begin
   InitializeAcpi(BootInformation.AcpiRootPointer);
   WriteAcpiSummary;
+  InitializeInterruptRouting;
+  InitializeInputDevices;
 
   InitializePci;
   WritePciSummary;

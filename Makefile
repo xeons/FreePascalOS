@@ -4,7 +4,8 @@
 #   make run        Boot it in QEMU with OVMF firmware and the test disk (log on stdio)
 #   make debug      Like run, but wait for GDB on localhost:1234
 #   make test       Boot headless with the test and system disks, run all self tests
-#                   and the user mode tests (coretest), report pass/fail
+#                   and the user mode tests (coretest), then type into the shell on
+#                   the emulated keyboard and serial port; report pass/fail
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -54,6 +55,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/firmware \
 	kernel/io \
 	kernel/drivers/storage \
+	kernel/drivers/input \
 	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \
@@ -158,6 +160,7 @@ test-disk: $(TEST_DISK)
 
 test: esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 include userland/userland.mk
 

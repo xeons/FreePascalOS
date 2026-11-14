@@ -2,8 +2,9 @@
   16550 compatible UART driver for the first serial port (COM1).
 
   Used as the kernel debug output channel. It works from the very first
-  instruction of the kernel, before memory management or interrupts exist,
-  and only ever polls the hardware.
+  instruction of the kernel, before memory management or interrupts exist.
+  Output always polls the hardware; input can raise an interrupt once a
+  handler is connected (see Drivers.SerialInput).
 }
 unit Hal.SerialPort;
 
@@ -17,6 +18,9 @@ function SerialPortIsPresent: Boolean;
 
 { Returns True and the next received character if one is waiting. }
 function TryReadSerialCharacter(out Character: Char): Boolean;
+
+{ Makes the port raise its interrupt (IRQ 4) when data arrives. }
+procedure EnableSerialReceiveInterrupt;
 
 implementation
 
@@ -44,6 +48,8 @@ const
 
   FifoEnableAndClear = $C7;
   ModemControlDataTerminalReadyAndRequestToSend = $0B;
+
+  InterruptEnableDataAvailable = $01;
 
   LineStatusTransmitterEmpty = $20;
   LineStatusDataReady = $01;
@@ -105,6 +111,12 @@ begin
 
   WaitUntilTransmitterIsEmpty;
   WritePortByte(Com1BasePort + RegisterData, Byte(Character));
+end;
+
+procedure EnableSerialReceiveInterrupt;
+begin
+  if PortIsPresent then
+    WritePortByte(Com1BasePort + RegisterInterruptEnable, InterruptEnableDataAvailable);
 end;
 
 function TryReadSerialCharacter(out Character: Char): Boolean;
