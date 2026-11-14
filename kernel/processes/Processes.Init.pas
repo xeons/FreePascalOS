@@ -36,6 +36,7 @@ uses
   Processes.Handles,
   Processes.Paths,
   Processes.UserProcess,
+  Processes.Security,
   Debug.Output;
 
 const
@@ -47,6 +48,21 @@ const
     'HOME=/',
     'TERM=console',
     'SHELL=/bin/sh');
+
+{ "/bin/coretest" -> "coretest" }
+function ProgramFileName(Path: PChar): PChar;
+var
+  Index: PtrUInt;
+begin
+  Result := Path;
+  Index := 0;
+  while Path[Index] <> #0 do
+  begin
+    if Path[Index] = '/' then
+      Result := @Path[Index + 1];
+    Inc(Index);
+  end;
+end;
 
 procedure Report(Message: PChar; Detail: PChar);
 begin
@@ -88,8 +104,11 @@ begin
 
   Arguments[0] := @ProgramPath[0];
   FillMemory(@Startup, SizeOf(Startup), 0);
+  { The first program runs as root; from here on files are checked. }
+  GetRootCredentials(Startup.Credentials);
+  InitializeProcessSecurity;
   Startup.KernelPath := @KernelPath[0];
-  Startup.Name := @ProgramPath[0];
+  Startup.Name := ProgramFileName(@ProgramPath[0]);
   Startup.Arguments := @Arguments[0];
   Startup.ArgumentCount := 1;
   Startup.Environment := @DefaultEnvironment[0];

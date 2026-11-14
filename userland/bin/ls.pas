@@ -1,7 +1,7 @@
 {
   ls - list directory contents
 
-  ls [-1aAdFhilrRSt] [FILE]...
+  ls [-1aAdFhilrsRSt] [FILE]...
 
   Directories are listed by their contents, other files by name. On the
   console, names are arranged in columns; otherwise one per line.
@@ -28,6 +28,7 @@ uses
   Util.Accounts,
   Util.Directories,
   Util.Input,
+  Util.Modes,
   Util.Messages,
   Util.Options,
   Util.Paths,
@@ -49,6 +50,7 @@ const
     '  -n, --numeric-uid-gid      like -l, but list numeric user and group IDs'#10 +
     '  -r, --reverse              reverse order while sorting'#10 +
     '  -R, --recursive            list subdirectories recursively'#10 +
+    '  -s, --size                 print the allocated size of each file, in blocks'#10 +
     '  -S                         sort by file size, largest first'#10 +
     '  -t                         sort by modification time, newest first'#10 +
     '  -1                         list one file per line'#10;
@@ -66,6 +68,7 @@ const
   OptionSortTime = 11;
   OptionOnePerLine = 12;
   OptionNumeric = 13;
+  OptionSize = 14;
 
   ScreenWidth = 80;
   SecondsInHalfYear = 183 * 24 * 60 * 60;
@@ -94,6 +97,8 @@ var
   SortOrder: TSortOrder;
   OnePerLine: Boolean;
   NumericIds: Boolean;
+  ShowSizes: Boolean;
+  BlockWidth: Integer;
   Now: Int64;
   ExitStatus: LongInt;
 
@@ -162,6 +167,7 @@ begin
   case Entry^.Information.Kind of
     KindDirectory: Result := '/';
     KindSymbolicLink: Result := '@';
+    KindFifo: Result := '|';
     KindFile:
       if (Entry^.Information.Mode and $49) <> 0 then
         Result := '*';
@@ -173,6 +179,8 @@ begin
   Result := Integer(TextLength(Entry^.Name));
   if IndicatorOf(Entry) <> #0 then
     Inc(Result);
+  if ShowSizes then
+    Result := Result + BlockWidth + 1;
 end;
 
 procedure WriteName(Entry: PEntry);
@@ -183,24 +191,30 @@ begin
 end;
 
 procedure WriteModeText(const Information: TFileInformation);
-const
-  Letters: array[0..8] of Char = ('r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x');
 var
-  Bit: Integer;
+  Buffer: array[0..15] of Char;
 begin
   case Information.Kind of
     KindDirectory: WriteCharacter(StandardOutput, 'd');
     KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
+    KindFifo: WriteCharacter(StandardOutput, 'p');
   else
     WriteCharacter(StandardOutput, '-');
   end;
-  for Bit := 0 to 8 do
-  begin
-    if (Information.Mode and (1 shl (8 - Bit))) <> 0 then
-      WriteCharacter(StandardOutput, Letters[Bit])
-    else
-      WriteCharacter(StandardOutput, '-');
-  end;
+  WriteText(StandardOutput, FormatModeText(Information.Mode, @Buffer[0]));
+end;
+
+{ Allocated size in 1 KiB blocks, as -s and "total" show it. }
+function BlocksOf(const Information: TFileInformation): QWord;
+begin
+  Result := (Information.AllocatedBytes + 1023) div 1024;
+end;
+
+procedure WriteBlocks(Entry: PEntry);
+begin
+  if ShowSizes then
+    WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(BlockWidth),
+      ArgumentUnsigned(BlocksOf(Entry^.Information))]);
 end;
 
 procedure WriteTimestamp(Time: Int64);
@@ -280,6 +294,7 @@ begin
     Entry := PEntry(Entries[Index]);
     if ShowNodeNumbers then
       WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(NodeWidth), ArgumentUnsigned(Entry^.Information.NodeNumber)]);
+    WriteBlocks(Entry);
     WriteModeText(Entry^.Information);
     WriteFormatted(StandardOutput, ' %*u %-*s %-*s ', [ArgumentNumber(LinkWidth),
       ArgumentUnsigned(Entry^.Information.LinkCount), ArgumentNumber(OwnerWidth),
@@ -336,6 +351,7 @@ begin
       if Index >= Count then
         Break;
       Entry := PEntry(Entries[Index]);
+      WriteBlocks(Entry);
       WriteName(Entry);
       if (Index + Rows < Count) then
       begin
@@ -354,8 +370,17 @@ end;
 procedure WriteEntries(Entries: PPointer; Count: Integer);
 var
   Index: Integer;
+  NumberText: TNumberText;
+  Width: Integer;
 begin
   SortPointers(Entries, Count, @CompareEntries, nil);
+  BlockWidth := 1;
+  for Index := 0 to Count - 1 do
+  begin
+    Width := Integer(TextLength(FormatDecimal(BlocksOf(PEntry(Entries[Index])^.Information), NumberText)));
+    if Width > BlockWidth then
+      BlockWidth := Width;
+  end;
   if LongFormat then
     WriteLong(Entries, Count)
   else if OnePerLine then
@@ -363,6 +388,7 @@ begin
     begin
       if ShowNodeNumbers then
         WriteFormatted(StandardOutput, '%u ', [ArgumentUnsigned(PEntry(Entries[Index])^.Information.NodeNumber)]);
+      WriteBlocks(PEntry(Entries[Index]));
       WriteName(PEntry(Entries[Index]));
       WriteCharacter(StandardOutput, #10);
     end
@@ -409,14 +435,14 @@ begin
     if Entry = nil then
       Continue;
     Entries[Count] := Entry;
-    Total := Total + (Entry^.Information.SizeInBytes + 1023) div 1024;
+    Total := Total + BlocksOf(Entry^.Information);
     Inc(Count);
   end;
   FreeLineList(Names);
 
   if ShowHeader then
     WriteFormatted(StandardOutput, '%s:'#10, [ArgumentText(Path)]);
-  if LongFormat then
+  if LongFormat or ShowSizes then
     WriteFormatted(StandardOutput, 'total %u'#10, [ArgumentUnsigned(Total)]);
   WriteEntries(Entries, Count);
 
@@ -471,7 +497,8 @@ begin
     OptionDefinition('S', nil, False, OptionSortSize),
     OptionDefinition('t', nil, False, OptionSortTime),
     OptionDefinition('1', nil, False, OptionOnePerLine),
-    OptionDefinition('n', 'numeric-uid-gid', False, OptionNumeric)], Usage);
+    OptionDefinition('n', 'numeric-uid-gid', False, OptionNumeric),
+    OptionDefinition('s', 'size', False, OptionSize)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionAll: ShowAll := True;
@@ -486,6 +513,7 @@ begin
       OptionSortSize: SortOrder := SortBySize;
       OptionSortTime: SortOrder := SortByTime;
       OptionOnePerLine: OnePerLine := True;
+      OptionSize: ShowSizes := True;
       OptionNumeric:
         begin
           NumericIds := True;

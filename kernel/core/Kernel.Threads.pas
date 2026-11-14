@@ -83,6 +83,9 @@ type
       end at once. Used to stop threads of a process being terminated. }
     AlertPending: Boolean;
 
+    { Clock ticks spent running. }
+    RunTicks: QWord;
+
     StartRoutine: TThreadStartRoutine;
     StartContext: Pointer;
 

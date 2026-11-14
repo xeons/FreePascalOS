@@ -107,6 +107,7 @@ begin
     StatusDirectoryNotEmpty: Result := ErrorDirectoryNotEmpty;
     StatusNoSpace: Result := ErrorNoSpace;
     StatusInUse: Result := ErrorBusy;
+    StatusAccessDenied: Result := ErrorAccessDenied;
   else
     Result := ErrorIo;
   end;

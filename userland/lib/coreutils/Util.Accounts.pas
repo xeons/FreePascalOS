@@ -1,9 +1,10 @@
 {
   Users and groups, from /etc/passwd and /etc/group.
 
-  The system does not separate users yet: every program runs as root
-  (user and group 0). The account files give the numeric owners stored
-  in file systems their names, and let chown accept names.
+  Every process runs as a real and an effective user and group, with a
+  list of supplementary groups (see CallGetCredentials). The account
+  files give those numbers and the owners stored in file systems their
+  names, and let chown and su accept names.
 
   /etc/passwd lines: name:password:uid:gid:comment:home:shell
   /etc/group lines:  name:password:gid:member,member,...
@@ -18,9 +19,17 @@ interface
 const
   RootId = 0;
 
-{ The running program's user and group (always root for now). }
+{ The running program's effective user and group. }
 function CurrentUserId: LongWord;
 function CurrentGroupId: LongWord;
+{ Who started it (su changes both, set-user-ID programs only the
+  effective ids). }
+function CurrentRealUserId: LongWord;
+function CurrentRealGroupId: LongWord;
+{ The effective group followed by the supplementary groups, without
+  duplicates. Returns the count. }
+function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer;
+function ShellOf(UserId: LongWord): PChar;
 
 { Returns nil if there is no such account. }
 function UserNameOf(UserId: LongWord): PChar;
@@ -37,11 +46,14 @@ function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): I
 implementation
 
 uses
+  Runtime.Memory,
   Runtime.Text,
   Sys.Files,
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Sys.Kernel,
+  Abi.SystemCalls,
   Util.Input;
 
 type
@@ -50,6 +62,7 @@ type
     Id: LongWord;
     GroupId: LongWord;   { users: primary group }
     Home: PChar;         { users }
+    Shell: PChar;        { users }
     Members: PChar;      { groups: comma separated }
   end;
   PAccount = ^TAccount;
@@ -130,6 +143,10 @@ begin
         Entry^.Home := Fields[5]
       else
         Entry^.Home := '/';
+      if (FieldCount >= 7) and (Fields[6][0] <> #0) then
+        Entry^.Shell := Fields[6]
+      else
+        Entry^.Shell := '/bin/sh';
     end;
     Inc(Count);
   end;
@@ -146,14 +163,69 @@ begin
   LoadFile('/etc/group', True, Groups, GroupCount);
 end;
 
+var
+  Credentials: TAbiCredentials;
+  HaveCredentials: Boolean = False;
+
+procedure EnsureCredentials;
+begin
+  if HaveCredentials then
+    Exit;
+  if KernelGetCredentials(Credentials) < 0 then
+    ZeroMemory(@Credentials, SizeOf(Credentials));
+  HaveCredentials := True;
+end;
+
 function CurrentUserId: LongWord;
 begin
-  Result := RootId;
+  EnsureCredentials;
+  Result := Credentials.EffectiveUserId;
 end;
 
 function CurrentGroupId: LongWord;
 begin
-  Result := RootId;
+  EnsureCredentials;
+  Result := Credentials.EffectiveGroupId;
+end;
+
+function CurrentRealUserId: LongWord;
+begin
+  EnsureCredentials;
+  Result := Credentials.RealUserId;
+end;
+
+function CurrentRealGroupId: LongWord;
+begin
+  EnsureCredentials;
+  Result := Credentials.RealGroupId;
+end;
+
+function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer;
+var
+  Index: LongWord;
+  Seen: Integer;
+  Duplicate: Boolean;
+begin
+  EnsureCredentials;
+  Result := 0;
+  if Capacity < 1 then
+    Exit;
+  Groups[0] := Credentials.EffectiveGroupId;
+  Result := 1;
+  Index := 0;
+  while (Index < Credentials.GroupCount) and (Result < Capacity) do
+  begin
+    Duplicate := False;
+    for Seen := 0 to Result - 1 do
+      if Groups[Seen] = Credentials.Groups[Index] then
+        Duplicate := True;
+    if not Duplicate then
+    begin
+      Groups[Result] := Credentials.Groups[Index];
+      Inc(Result);
+    end;
+    Inc(Index);
+  end;
 end;
 
 function FindById(Table: PAccount; Count: Integer; Id: LongWord): PAccount;
@@ -244,6 +316,17 @@ begin
   Result := Entry <> nil;
   if Result then
     GroupId := Entry^.GroupId;
+end;
+
+function ShellOf(UserId: LongWord): PChar;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Users, UserCount, UserId);
+  if Entry = nil then
+    Exit('/bin/sh');
+  Result := Entry^.Shell;
 end;
 
 function HomeDirectoryOf(UserId: LongWord): PChar;

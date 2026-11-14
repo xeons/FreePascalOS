@@ -65,6 +65,16 @@ function SleepAlertable(Milliseconds: QWord): Boolean;
 { Makes every alertable wait of Thread end, now and in the future. }
 procedure AlertThread(Thread: PThreadControlBlock);
 
+{ Changes the priority of a thread, moving it between run queues if it
+  is ready. }
+procedure SetThreadPriority(Thread: PThreadControlBlock; Priority: LongWord);
+
+{ Average number of runnable threads over the last 1, 5 and 15 minutes,
+  in hundredths, and the number right now. }
+procedure GetLoadAverages(out OneMinute, FiveMinutes, FifteenMinutes: LongWord);
+function RunnableThreadCount: LongWord;
+function TicksToMilliseconds(Ticks: QWord): QWord;
+
 procedure TerminateCurrentThread; noreturn;
 
 { Removes one terminated thread from the scheduler's terminated list,
@@ -136,10 +146,25 @@ var
 
   SwitchCount: QWord;
 
+  { Threads in the run queues. }
+  ReadyThreadCount: LongWord;
+  { Exponentially decayed run queue lengths, fixed point with
+    LoadFractionBits bits after the point. }
+  LoadAverage: array[0..2] of QWord;
+  NextLoadSampleTick: QWord;
+
+const
+  LoadFractionBits = 11;
+  LoadOne = QWord(1) shl LoadFractionBits;
+  LoadSampleMilliseconds = 5000;
+  { exp(-5/60), exp(-5/300), exp(-5/900) in the same fixed point. }
+  LoadDecay: array[0..2] of QWord = (1884, 2014, 2037);
+
 { --- Run queues ------------------------------------------------------ }
 
 procedure EnqueueReadyThread(Thread: PThreadControlBlock);
 begin
+  Inc(ReadyThreadCount);
   Thread^.State := ThreadStateReady;
   InsertAtTail(RunQueues[Thread^.Priority], @Thread^.SchedulerLink);
   ReadyPriorityMask := ReadyPriorityMask or (LongWord(1) shl Thread^.Priority);
@@ -167,6 +192,7 @@ begin
     Exit(nil);
 
   Entry := RemoveHeadEntry(RunQueues[Priority]);
+  Dec(ReadyThreadCount);
   if ListIsEmpty(RunQueues[Priority]) then
     ReadyPriorityMask := ReadyPriorityMask and not (LongWord(1) shl Priority);
   Result := ThreadFromSchedulerLink(Entry);
@@ -299,6 +325,32 @@ begin
   ReleaseSpinLockAtCurrentLevel(DispatcherLock);
 end;
 
+function RunnableThreadCount: LongWord;
+begin
+  Result := ReadyThreadCount;
+  if RunningThread <> IdleThreadBlock then
+    Inc(Result);
+end;
+
+{ Runs at clock level every few seconds; only integer arithmetic. }
+procedure SampleLoad;
+var
+  Runnable: QWord;
+  Index: Integer;
+begin
+  Runnable := QWord(RunnableThreadCount) * LoadOne;
+  for Index := 0 to 2 do
+    LoadAverage[Index] := (LoadAverage[Index] * LoadDecay[Index] +
+      Runnable * (LoadOne - LoadDecay[Index])) shr LoadFractionBits;
+end;
+
+procedure GetLoadAverages(out OneMinute, FiveMinutes, FifteenMinutes: LongWord);
+begin
+  OneMinute := LongWord((LoadAverage[0] * 100 + LoadOne div 2) shr LoadFractionBits);
+  FiveMinutes := LongWord((LoadAverage[1] * 100 + LoadOne div 2) shr LoadFractionBits);
+  FifteenMinutes := LongWord((LoadAverage[2] * 100 + LoadOne div 2) shr LoadFractionBits);
+end;
+
 procedure SchedulerClockTick(TickCount: QWord);
 var
   Thread: PThreadControlBlock;
@@ -307,6 +359,12 @@ begin
   DispatchNeeded := TickCount >= NextWakeUpTick;
 
   Thread := RunningThread;
+  Inc(Thread^.RunTicks);
+  if TickCount >= NextLoadSampleTick then
+  begin
+    SampleLoad;
+    NextLoadSampleTick := TickCount + MillisecondsToTicks(LoadSampleMilliseconds);
+  end;
   if Thread <> IdleThreadBlock then
   begin
     Dec(Thread^.QuantumRemaining);
@@ -436,6 +494,35 @@ begin
   end;
   WaitCurrentThreadLocked;
   Result := Thread^.WaitResult;
+end;
+
+procedure SetThreadPriority(Thread: PThreadControlBlock; Priority: LongWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if Priority > HighestThreadPriority then
+    Priority := HighestThreadPriority;
+  if Priority < LowestThreadPriority then
+    Priority := LowestThreadPriority;
+  PreviousLevel := AcquireDispatcherLock;
+  if Thread^.State = ThreadStateReady then
+  begin
+    { Move it to the queue of its new priority. }
+    RemoveListEntry(@Thread^.SchedulerLink);
+    if ListIsEmpty(RunQueues[Thread^.Priority]) then
+      ReadyPriorityMask := ReadyPriorityMask and not (LongWord(1) shl Thread^.Priority);
+    Dec(ReadyThreadCount);
+    Thread^.Priority := Priority;
+    ReadyThreadLocked(Thread);
+  end
+  else
+    Thread^.Priority := Priority;
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+function TicksToMilliseconds(Ticks: QWord): QWord;
+begin
+  Result := Ticks * 1000 div ClockTicksPerSecond;
 end;
 
 procedure AlertThread(Thread: PThreadControlBlock);

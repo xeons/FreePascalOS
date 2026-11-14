@@ -1,7 +1,7 @@
 {
   logname - print user's login name
 
-  The console session is root's.
+  The console session belongs to the real user of the process.
 }
 program logname;
 
@@ -21,7 +21,7 @@ var
   Name: PChar;
 begin
   ParseOperandsOnly(Parser, Usage);
-  Name := UserNameOf(CurrentUserId);
+  Name := UserNameOf(CurrentRealUserId);
   if Name = nil then
     Name := 'root';
   PrintLine(Name);

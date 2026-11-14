@@ -27,7 +27,7 @@ staging_directory="$user_build_directory/root"
 partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
-mkdir -p "$staging_directory"/{bin,lib,etc,tmp,home}
+mkdir -p "$staging_directory"/{bin,lib,etc,tmp,home/user}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
@@ -49,11 +49,32 @@ copy_program expand unexpand
 copy_program grep egrep
 copy_program grep fgrep
 copy_program less more
+copy_program pgrep pkill
 
 partition_size_mib=$((image_size_mib - 2))
 rm -f "$partition_image"
 mke2fs -q -t ext4 -L FPOSROOT -d "$staging_directory" -E root_owner=0:0 \
     "$partition_image" "${partition_size_mib}M"
+
+# mke2fs -d copies the building user's ids: everything belongs to root,
+# except the home of "user". /tmp is world writable (sticky), the
+# password file readable by root only, and su and passwd run as root.
+ownership_script="$partition_image.debugfs"
+{
+    (cd "$staging_directory" && find . -mindepth 1) | while read -r path; do
+        echo "set_inode_field \"${path#.}\" uid 0"
+        echo "set_inode_field \"${path#.}\" gid 0"
+    done
+    echo 'set_inode_field /home/user uid 1000'
+    echo 'set_inode_field /home/user gid 1000'
+    echo 'set_inode_field /home/user mode 040755'
+    echo 'set_inode_field /tmp mode 041777'
+    echo 'set_inode_field /etc/shadow mode 0100600'
+    echo 'set_inode_field /bin/su mode 0104755'
+    echo 'set_inode_field /bin/passwd mode 0104755'
+} > "$ownership_script"
+debugfs -w -f "$ownership_script" "$partition_image" > /dev/null 2>&1
+rm -f "$ownership_script"
 
 rm -f "$output_image"
 truncate -s "${image_size_mib}M" "$output_image"

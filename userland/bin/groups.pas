@@ -21,13 +21,10 @@ const
     'for the current process.'#10;
   MaximumGroups = 64;
 
-procedure PrintGroups(UserId: LongWord);
+procedure PrintGroupList(Count: Integer; Groups: PLongWord);
 var
-  Groups: array[0..MaximumGroups - 1] of LongWord;
-  Count: Integer;
   Index: Integer;
 begin
-  Count := GroupsOfUser(UserId, @Groups[0], MaximumGroups);
   for Index := 0 to Count - 1 do
   begin
     if Index > 0 then
@@ -40,16 +37,24 @@ begin
   WriteCharacter(StandardOutput, #10);
 end;
 
+procedure PrintGroups(UserId: LongWord);
+var
+  Groups: array[0..MaximumGroups - 1] of LongWord;
+begin
+  PrintGroupList(GroupsOfUser(UserId, @Groups[0], MaximumGroups), @Groups[0]);
+end;
+
 var
   Parser: TOptionParser;
   Index: Integer;
   UserId: LongWord;
   ExitStatus: LongInt;
+  CurrentList: array[0..MaximumGroups - 1] of LongWord;
 begin
   ParseOperandsOnly(Parser, Usage);
   if Parser.OperandCount = 0 then
   begin
-    PrintGroups(CurrentUserId);
+    PrintGroupList(CurrentGroups(@CurrentList[0], MaximumGroups), @CurrentList[0]);
     Halt(0);
   end;
   ExitStatus := 0;

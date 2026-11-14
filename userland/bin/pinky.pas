@@ -62,7 +62,7 @@ begin
     Halt(0);
   end;
 
-  Name := UserNameOf(CurrentUserId);
+  Name := UserNameOf(CurrentRealUserId);
   if Name = nil then
     Name := 'root';
   PrintLine('Login    Name                 TTY      Idle   When');

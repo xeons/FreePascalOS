@@ -8,7 +8,8 @@
     * the program heap,
     * a list of shell command lines: each runs through "sh -c" with its
       standard output captured through a pipe, and both the output and
-      the exit status must match,
+      the exit status must match (those using su run commands as the
+      ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself.
@@ -47,7 +48,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..241] of TCommandTest = (
+  CommandTests: array[0..261] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -200,7 +201,7 @@ const
     (Command: 'echo "a!b" | base64 -d 2>&1; echo $?'; ExpectedOutput: 'base64: invalid input'#10'1'#10; ExpectedStatus: 0),
 
     { --- users and the system ---------------------------------------- }
-    (Command: 'id; id -un; id -g; whoami; groups'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'root'#10'0'#10'root'#10'root wheel'#10; ExpectedStatus: 0),
+    (Command: 'id; id -un; id -g; whoami; groups; groups root'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root)'#10'root'#10'0'#10'root'#10'root'#10'root : root wheel'#10; ExpectedStatus: 0),
     (Command: 'id nobody; logname; users'; ExpectedOutput: 'uid=65534(nobody) gid=65534(nobody) groups=65534(nobody)'#10'root'#10'root'#10; ExpectedStatus: 0),
     (Command: 'who | cut -c 1-16; who -q'; ExpectedOutput: 'root     console'#10'root'#10'# users=1'#10; ExpectedStatus: 0),
     (Command: 'nproc; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: '1'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
@@ -329,6 +330,27 @@ const
     (Command: '/bin/threadtest --exit-with-threads-running; echo $?'; ExpectedOutput: 'tlstest: library finalizer ran'#10'7'#10; ExpectedStatus: 0),
     (Command: '/bin/threadtest --last-thread-exits; echo $?'; ExpectedOutput: '5'#10; ExpectedStatus: 0),
     (Command: '/bin/threadtest --crash-in-thread; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0),
+    { --- users and processes ----------------------------------------- }
+    (Command: 'umask; umask 077; touch um1; mkdir um2; stat -c %a um1 um2; umask -S; umask 022'; ExpectedOutput: '0022'#10'600'#10'700'#10'u=rwx,g=,o='#10; ExpectedStatus: 0),
+    (Command: 'su user -c "id; whoami; logname; cd; pwd; echo \$HOME"'; ExpectedOutput: 'uid=1000(user) gid=1000(user) groups=1000(user)'#10'user'#10'user'#10'/home/user'#10'/home/user'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "touch /etc/x" 2>&1; echo $?; [ -e /etc/x ] || echo absent'; ExpectedOutput: 'touch: cannot touch ''/etc/x'': Permission denied'#10'1'#10'absent'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "cat /etc/shadow" >/dev/null 2>&1 || echo denied; su user -c "rm lines.txt" 2>/dev/null || echo kept'; ExpectedOutput: 'denied'#10'kept'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -m 700 priv && touch priv/f && su user -c "ls priv/f" >/dev/null 2>&1 || echo nosearch'; ExpectedOutput: 'nosearch'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "cd && echo hi > mine && ls -n mine | cut -d \" \" -f 3,4 && stat -c %a mine && rm mine"'; ExpectedOutput: '1000 1000'#10'644'#10; ExpectedStatus: 0),
+    (Command: 'touch own; chown user own; su user -c "chown root own" 2>/dev/null || echo no1; su user -c "chgrp wheel own" 2>/dev/null || echo no2; su user -c "chmod 600 own && stat -c %a own"; su user -c "chmod 600 lines.txt" 2>/dev/null || echo no3'; ExpectedOutput: 'no1'#10'no2'#10'600'#10'no3'#10; ExpectedStatus: 0),
+    (Command: 'touch shared; chmod 666 shared; su user -c "touch shared" && echo now; su user -c "touch -d @5 shared" 2>/dev/null || echo notowner'; ExpectedOutput: 'now'#10'notowner'#10; ExpectedStatus: 0),
+    (Command: 'cp /bin/echo myecho; chmod 644 myecho; ./myecho hi 2>/dev/null; echo $?; chmod 755 myecho; ./myecho hi'; ExpectedOutput: '126'#10'hi'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "echo root | su -c whoami" 2>/dev/null; su user -c "echo wrong | su -c whoami" 2>/dev/null; echo $?'; ExpectedOutput: 'root'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "printf ''user\nnew1\nnew1\n'' | passwd" 2>/dev/null; su user -c "echo new1 | su user -c whoami" 2>/dev/null; printf ''user\nuser\n'' | passwd user 2>/dev/null | tail -n 1'; ExpectedOutput: 'Changing password for user.'#10'passwd: password updated successfully'#10'user'#10'passwd: password updated successfully'#10; ExpectedStatus: 0),
+    (Command: 'ps | head -n 1; ps -f | head -n 1; ps -e -o comm= > ps.out; sort ps.out | tr "\n" " "; echo'; ExpectedOutput: '    PID TTY          TIME CMD'#10'UID          PID    PPID  C STIME TTY          TIME CMD'#10'coretest ps sh '#10; ExpectedStatus: 0),
+    (Command: 'ps aux | head -n 1; ps -o user= -o comm= -p $(pgrep -x coretest); su user -c "ps -o user= -u user" | sort -u'; ExpectedOutput: 'USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START     TIME COMMAND'#10'root     coretest'#10'user'#10; ExpectedStatus: 0),
+    (Command: 'nice; nice -n 5 nice; nice -n 5 nice -n 3 nice; nice -n -5 nice; su user -c "nice -n 5 nice -n -2 nice" 2>/dev/null'; ExpectedOutput: '0'#10'5'#10'8'#10'-5'#10'5'#10; ExpectedStatus: 0),
+    (Command: 'renice 3 -p $(pgrep -x coretest) | cut -d " " -f 2-; ps -o ni= -p $(pgrep -x coretest); su user -c "renice 0 -p $(pgrep -x coretest)" 2>/dev/null || echo denied; renice 0 -p $(pgrep -x coretest) > /dev/null'; ExpectedOutput: '(process ID) old priority 0, new priority 3'#10'  3'#10'denied'#10; ExpectedStatus: 0),
+    (Command: 'pgrep -x coretest | wc -l; pgrep -c nosuchprogram; echo $?; sleep 30 & pkill -x sleep; echo $?'; ExpectedOutput: '1'#10'0'#10'1'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'expr "$(uptime)" : ''.*up .*load average: [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9]$'' > /dev/null && echo ok'; ExpectedOutput: 'ok'#10; ExpectedStatus: 0),
+    (Command: 'mkfifo ff && ls -l ff | cut -c 1 && stat -c %F ff && test -p ff && echo isfifo; head -n 2 lines.txt | tee ff > /dev/null & cat ff; rm ff'; ExpectedOutput: 'p'#10'fifo'#10'isfifo'#10'one'#10'two'#10; ExpectedStatus: 0),
+    (Command: 'rm -f /tmp/fifo-check; mknod /tmp/fifo-check p && stat -c %F /tmp/fifo-check; mknod nb b 1 2 2>/dev/null || echo noblock'; ExpectedOutput: 'fifo'#10'noblock'#10; ExpectedStatus: 0),
+    (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '1'#9'a5'#10'14'#9's3k'#10' 1 a5'#10'14 s3k'#10'2 512'#10'2'#9'dutest'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

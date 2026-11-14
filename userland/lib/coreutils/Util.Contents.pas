@@ -25,7 +25,8 @@ uses
   Util.Commands,
   Util.RegularExpressions,
   Util.LineEditor,
-  Util.Globbing;
+  Util.Globbing,
+  Util.Passwords;
 
 implementation
 

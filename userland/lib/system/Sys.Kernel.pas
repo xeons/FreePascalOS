@@ -59,6 +59,21 @@ function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord):
 function KernelSetInterruptIgnored(Ignored: Boolean): Int64;
 function KernelGetProcessGroup: Int64;
 
+{ Users, permissions, process information and priorities. }
+function KernelListProcesses(Index: QWord; out Information: TAbiProcessInformation): Int64;
+function KernelGetCredentials(out Credentials: TAbiCredentials): Int64;
+{ IdUnchanged leaves an id as it is. }
+function KernelSetUserIds(RealId, EffectiveId, SavedId: Int64): Int64;
+function KernelSetGroupIds(RealId, EffectiveId, SavedId: Int64): Int64;
+function KernelSetGroups(Count: LongWord; Groups: PLongWord): Int64;
+{ Returns the previous mask. }
+function KernelSetUmask(Mask: LongWord): Int64;
+{ Returns the nice value of a process (0: the caller), or minus an error
+  code below -40. }
+function KernelGetPriority(ProcessId: QWord; out Nice: LongInt): Int64;
+function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
+function KernelCreateFifo(Path: PChar): Int64;
+
 implementation
 
 procedure KernelExit(Code: LongInt);
@@ -260,6 +275,59 @@ end;
 function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
 begin
   Result := SystemCall(CallControlHandle, QWord(Handle), Request, Argument, 0, 0, 0);
+end;
+
+{ --- Users, permissions, process information and priorities --- }
+
+function KernelListProcesses(Index: QWord; out Information: TAbiProcessInformation): Int64;
+begin
+  Result := SystemCall(CallListProcesses, Index, QWord(@Information), 0, 0, 0, 0);
+end;
+
+function KernelGetCredentials(out Credentials: TAbiCredentials): Int64;
+begin
+  Result := SystemCall(CallGetCredentials, QWord(@Credentials), 0, 0, 0, 0, 0);
+end;
+
+function KernelSetUserIds(RealId, EffectiveId, SavedId: Int64): Int64;
+begin
+  Result := SystemCall(CallSetUserIds, QWord(RealId), QWord(EffectiveId), QWord(SavedId), 0, 0, 0);
+end;
+
+function KernelSetGroupIds(RealId, EffectiveId, SavedId: Int64): Int64;
+begin
+  Result := SystemCall(CallSetGroupIds, QWord(RealId), QWord(EffectiveId), QWord(SavedId), 0, 0, 0);
+end;
+
+function KernelSetGroups(Count: LongWord; Groups: PLongWord): Int64;
+begin
+  Result := SystemCall(CallSetGroups, Count, QWord(Groups), 0, 0, 0, 0);
+end;
+
+function KernelSetUmask(Mask: LongWord): Int64;
+begin
+  Result := SystemCall(CallSetUmask, Mask, 0, 0, 0, 0, 0);
+end;
+
+function KernelGetPriority(ProcessId: QWord; out Nice: LongInt): Int64;
+begin
+  Result := SystemCall(CallGetPriority, ProcessId, 0, 0, 0, 0, 0);
+  Nice := 0;
+  if Result >= 0 then
+  begin
+    Nice := LongInt(20 - Result);
+    Result := 0;
+  end;
+end;
+
+function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
+begin
+  Result := SystemCall(CallSetPriority, ProcessId, QWord(Int64(Nice)), 0, 0, 0, 0);
+end;
+
+function KernelCreateFifo(Path: PChar): Int64;
+begin
+  Result := SystemCall(CallCreateFifo, QWord(Path), 0, 0, 0, 0, 0);
 end;
 
 end.

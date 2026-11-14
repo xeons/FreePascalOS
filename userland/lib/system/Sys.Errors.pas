@@ -34,6 +34,7 @@ begin
   case Code of
     ErrorNone: Result := 'Success';
     ErrorNotPermitted: Result := 'Operation not permitted';
+    ErrorAccessDenied: Result := 'Permission denied';
     ErrorNotFound: Result := 'No such file or directory';
     ErrorNoSuchProcess: Result := 'No such process';
     ErrorInterrupted: Result := 'Interrupted system call';

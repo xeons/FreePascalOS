@@ -51,6 +51,18 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   time (`LoadLibrary` / `FindSymbol`), end other programs (`kill`,
   `timeout`), wait with timeouts, change permissions, owners and times,
   make hard links, and run in a `chroot`.
+- **Users and permissions**: processes run as real, effective and saved
+  user and group ids with supplementary groups and a umask, all inherited;
+  opening, creating, removing, renaming, searching directories, chmod,
+  chown, setting times and running programs are checked against the
+  Unix mode bits (root passes everything but needs one execute bit to run
+  a file). Set-user-ID programs run as their owner; `su` and `passwd`
+  check salted SHA-256 hashes in `/etc/shadow`.
+- **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
+  with CPU time counted per thread, nice values mapped to thread
+  priorities (`nice`, `renice`), and 1/5/15 minute load averages
+  (`uptime`). Named pipes on ext volumes (`mkfifo`, `mknod NAME p`), and
+  the space files take on the volume (`du`, `ls -s`, `stat %b`).
 - **A userland written in Free Pascal**:
   - `libsystem.so`: system calls, heap, buffered streams, printf style
     formatting, files, processes, environment, time, console settings
@@ -68,20 +80,21 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     `type`, scripts), with line editing (long lines scroll sideways),
     history and Tab completion on the console; Ctrl-C ends the running
     pipeline, or a loop of builtins
-  - recreations of the GNU core utilities, 102 commands: arch b2sum
+  - recreations of the GNU core utilities, 104 commands: arch b2sum
     base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm
     cp csplit cut date dd df dir dirname du echo env expand expr factor
     false fmt fold groups head hostid id install join kill link ln logname
-    ls md5sum mkdir mktemp mv nice nl nohup nproc numfmt od paste pathchk
+    ls md5sum mkdir mkfifo mknod mktemp mv nice nl nohup nproc numfmt od
+    paste pathchk
     pinky pr printenv printf ptx pwd readlink realpath rm rmdir seq
     sha1sum sha224sum sha256sum sha384sum sha512sum shred shuf sleep sort
     split stat stdbuf stty sum sync tac tail tee test `[` timeout touch tr
     true truncate tsort tty uname unexpand uniq unlink uptime users vdir
-    wc who whoami yes (not included: mkfifo and mknod, which need named
-    pipes in the file systems, and the SELinux tools chcon and runcon)
+    wc who whoami yes (not included: the SELinux tools chcon and runcon)
   - everyday tools beyond the core utilities: `grep` (with `egrep` and
     `fgrep`), `sed`, `find`, `xargs`, `diff` (normal, unified and context
-    output, recursive) and the pager `less` (also started as `more`)
+    output, recursive), the pager `less` (also started as `more`), `ps`,
+    `pgrep`, `pkill`, `renice`, `su` and `passwd`
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
@@ -89,7 +102,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   format. After a test run, `make test` checks every written partition with
   the format's own tools (fsck.fat, fsck.exfat, e2fsck, mtools, debugfs).
   `make test` then runs `coretest` in user mode, which drives the shell and
-  every utility through about 190 command lines and checks their output.
+  every utility through about 210 command lines and checks their output.
 
 ## Requirements
 
@@ -121,9 +134,13 @@ make clean
 Type into the QEMU window (PS/2 keyboard) or the terminal (serial port).
 After startup the kernel runs `/bin/sh` from the system volume (the volume
 labelled `FPOSROOT`, or the one named by the `root=` option) on the serial
-console; `init=/bin/program` picks another first program. Programs see the
+console, as root; `init=/bin/program` picks another first program. Programs see the
 system volume as `/`; every mounted volume is also reachable as
 `/volumes/disk1p1`, `/volumes/disk1p2`, ...
+
+The system volume has two accounts: `root` (password `root`) and `user`
+(uid 1000, home `/home/user`, password `user`). `su user` becomes the
+ordinary user, `passwd` changes a password.
 
 Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
 (see `kernel/core/Kernel.Options.pas`).

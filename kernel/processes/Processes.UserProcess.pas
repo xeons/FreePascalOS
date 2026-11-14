@@ -48,6 +48,8 @@ type
     RootDirectory: PChar;
     { The group to join; 0 starts a new group led by the new process. }
     GroupId: QWord;
+    { Who the program runs as, and its nice value. }
+    Credentials: TProcessCredentials;
   end;
 
 procedure InitializeUserProcesses;
@@ -284,6 +286,7 @@ begin
     Process^.GroupId := Startup.GroupId
   else
     Process^.GroupId := Process^.ProcessId;
+  Process^.Credentials := Startup.Credentials;
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then

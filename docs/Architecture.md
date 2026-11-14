@@ -152,6 +152,15 @@ Rules that follow from this:
   held across a context switch and released by the thread that runs next.
 - Exited threads are put on a list and cleaned up by the idle thread
   (stack freed, object dereferenced).
+- Each clock tick is charged to the running thread (`RunTicks`), which is
+  where a process's CPU time comes from.
+- Every 5 seconds the clock tick samples the number of threads running or
+  ready and folds it into three exponentially decayed averages (1, 5 and
+  15 minutes, fixed point with 11 fraction bits, as in Unix load
+  averages). The run queues keep a count of their threads for this.
+- User threads run at priority 8 for nice 0; every 4 nice steps move one
+  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
+  ready thread to the run queue of its new priority.
 
 ## I/O and storage
 
@@ -371,6 +380,7 @@ process's regions before the kernel touches it (`Processes.UserAccess`).
 | Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
 | Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
+| Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
@@ -408,6 +418,56 @@ them. FAT and exFAT map the mode onto the read-only attribute, store times
 in their own resolution and refuse owners other than 0 and hard links.
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
+
+File information includes `AllocatedBytes`, the space a node takes on its
+volume: for ext the inode's block count (512-byte units, or file system
+blocks with the huge file flag), for FAT and exFAT the size rounded up to
+whole clusters.
+
+### Users and permissions
+
+Every process has real, effective and saved user and group ids, up to 32
+supplementary groups, a umask and a nice value (`TProcessCredentials`),
+copied to its children. The first program runs as root (0:0, umask 022).
+`SetUserIds` and `SetGroupIds` work like `setresuid`: root may set any id,
+others only switch among their three current ones. `SetGroups` is for
+root only. A program whose file has the set-user-ID (or set-group-ID) bit
+runs with its owner (group) as effective and saved id; `su` and `passwd`
+are installed that way and check passwords against salted SHA-256 hashes
+in `/etc/shadow` (`Util.Passwords`).
+
+The VFS does not know about processes. `FileSystem.Security` holds two
+hooks, installed by `Processes.Security` when the first program starts:
+"may the caller have this access to a node with this owner, group and
+mode" and "which owner, group and umask do nodes the caller creates get".
+Kernel threads act as root and keep the driver defaults. The checks:
+
+| Operation | Needs |
+|---|---|
+| each directory on a path | search (x) |
+| open | read and/or write on the node (not if the open just created it) |
+| create, remove, rename, link | write and search on the directory (both, for rename) |
+| chmod | being the owner |
+| chown | root; the owner may change the group to one of its own groups |
+| set times | being the owner, or write permission when setting them to now |
+| run a program | execute; root needs at least one x bit |
+
+Root passes every check except the last. New nodes get the effective user
+and group and mode 0666 (files) or 0777 (directories) less the umask; on
+FAT and exFAT, which have no owners, only the mode is applied. Refusals
+from the mode bits are `ErrorAccessDenied` (13, "Permission denied");
+refusals of chmod, chown, set-id calls and priorities are
+`ErrorNotPermitted`.
+
+### Named pipes
+
+ext volumes can hold FIFO nodes (`NodeKindFifo`, inode type `S_IFIFO`,
+directory entry type 5, no data blocks). Opening one does not give a file
+handle: `Io.Pipes` keeps a registry of named pipes keyed by volume and node
+number, so everyone who opens the node while an end is open shares one
+pipe object, and the handle is a pipe read or write end. Opening one end
+waits (alertably) until the other end is opened too, so a reader does not
+see end of file before the first writer arrives.
 
 ### Handles
 

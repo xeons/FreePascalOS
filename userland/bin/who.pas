@@ -3,8 +3,8 @@
 
   who [-abHqs] [am i]
 
-  The system has one session: root on the console, logged in since the
-  system started.
+  The system has one session: the real user of the process on the
+  console, logged in since the system started.
 }
 program who;
 
@@ -80,7 +80,7 @@ begin
       OptionCount: ShowCount := True;
     end;
 
-  Name := UserNameOf(CurrentUserId);
+  Name := UserNameOf(CurrentRealUserId);
   if Name = nil then
     Name := 'root';
   if ShowCount then

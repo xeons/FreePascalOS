@@ -34,6 +34,9 @@ uses
 const
   UserThreadPriority = 8;
 
+{ The thread priority for a nice value (-20 .. 19). }
+function ThreadPriorityForNice(Nice: LongInt): LongWord;
+
 { Starts a user thread in Process at EntryPoint with the given stack
   pointer and Argument in the first argument register. StackStart is the
   start of the thread's stack region, which the thread releases when it
@@ -109,6 +112,12 @@ begin
   ArchEnterUserMode(Start.EntryPoint, Start.StackPointer, Start.Argument);
 end;
 
+function ThreadPriorityForNice(Nice: LongInt): LongWord;
+begin
+  { Nice 0 is the usual user priority; every 4 steps is one priority. }
+  Result := LongWord(LongInt(UserThreadPriority) - Nice div 4);
+end;
+
 function StartUserThread(Process: PProcess; EntryPoint, StackPointer, Argument, StackStart: QWord;
   Name: PChar; ReturnReference: Boolean; out Thread: PThread): LongInt;
 var
@@ -133,7 +142,9 @@ begin
     an active thread (or the process has not started yet), so the count
     cannot reach zero in between. }
   AtomicIncrement(Process^.ActiveUserThreads);
-  Thread := CreateThreadInProcess(Process, @UserThreadStart, Start, UserThreadPriority, Name,
+  { Every thread runs at the priority its process's nice value gives. }
+  Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
+    ThreadPriorityForNice(Process^.Credentials.Nice), Name,
     ReturnReference);
   if Thread = nil then
   begin

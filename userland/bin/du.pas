@@ -1,11 +1,11 @@
 {
   du - estimate file space usage
 
-  du [-abchksSx] [-d N] [FILE]...
+  du [-abchksSx] [-d N] [--apparent-size] [FILE]...
 
-  Sizes are file sizes rounded up to whole kilobytes (the file system
-  does not report allocated blocks to programs yet), in 1 KiB units by
-  default. A file with several hard links is counted once.
+  Sizes are the space files take on their volume (whole blocks or
+  clusters), in 1 KiB units by default; --apparent-size and -b count
+  file sizes instead. A file with several hard links is counted once.
 }
 program du;
 
@@ -32,7 +32,8 @@ const
   Usage: PChar = 'Usage: du [OPTION]... [FILE]...'#10 +
     'Summarize device usage of the set of FILEs, recursively for directories.'#10#10 +
     '  -a, --all             write counts for all files, not just directories'#10 +
-    '  -b, --bytes           print sizes in bytes, not kilobytes'#10 +
+    '      --apparent-size   print apparent sizes rather than device usage'#10 +
+    '  -b, --bytes           equivalent to --apparent-size --block-size=1'#10 +
     '  -c, --total           produce a grand total'#10 +
     '  -d, --max-depth=N     print the total for a directory (or file, with --all)'#10 +
     '                          only if it is N or fewer levels below the command'#10 +
@@ -50,11 +51,13 @@ const
   OptionKilobytes = 6;
   OptionSummarize = 7;
   OptionSeparate = 8;
+  OptionApparent = 9;
   MaximumSeenNodes = 4096;
 
 var
   ShowAll: Boolean;
   InBytes: Boolean;
+  ApparentSizes: Boolean;
   Human: Boolean;
   MaximumDepth: Int64;   { -1 = unlimited }
   SeparateDirectories: Boolean;
@@ -64,10 +67,10 @@ var
 
 function SizeOfFile(const Information: TFileInformation): QWord;
 begin
-  if InBytes then
+  if ApparentSizes then
     Result := Information.SizeInBytes
   else
-    Result := (Information.SizeInBytes + 1023) and not QWord(1023);
+    Result := Information.AllocatedBytes;
 end;
 
 { True the first time a node with several links is seen. }
@@ -169,6 +172,7 @@ begin
   ShowTotal := False;
   BeginOptions(Parser, [
     OptionDefinition('a', 'all', False, OptionAll),
+    OptionDefinition(#0, 'apparent-size', False, OptionApparent),
     OptionDefinition('b', 'bytes', False, OptionBytes),
     OptionDefinition('c', 'total', False, OptionTotal),
     OptionDefinition('d', 'max-depth', True, OptionDepth),
@@ -179,7 +183,12 @@ begin
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionAll: ShowAll := True;
-      OptionBytes: InBytes := True;
+      OptionBytes:
+        begin
+          InBytes := True;
+          ApparentSizes := True;
+        end;
+      OptionApparent: ApparentSizes := True;
       OptionTotal: ShowTotal := True;
       OptionDepth:
         if not ParseInteger(Value, MaximumDepth) or (MaximumDepth < 0) then
