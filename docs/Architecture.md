@@ -518,6 +518,42 @@ reading video memory. The input test checks UTF-8 text and a colour,
 pixel by pixel against the font, in a screen dump taken after
 scrolling.
 
+## Sound
+
+The audio framework (`Io.AudioOutput`) is the part of sound that does
+not depend on the hardware:
+- **Registration.** A sound driver registers each output with routines to
+  start and stop playing, report where the hardware is in the ring, and
+  set the volume and rate. The framework gives the output a ring of 16
+  page-sized periods and a device file: the first output is `/dev/audio`.
+- **Writing.** Programs write 16-bit samples, stereo or mono (widened to
+  stereo), at 44100 or 48000 Hz (`ControlAudioSetFormat`). A write fills
+  the periods after the one playing and waits while all are full.
+  Playing starts when two periods are full.
+- **Playing.** Each period the hardware finishes (it interrupts, and the
+  driver calls `AudioPeriodsElapsed`) is cleared, so a program that falls
+  behind gives silence rather than old sound. Draining (on request, and
+  on close) pads the last period, waits for it to be played and stops
+  the hardware.
+
+The Intel HD Audio driver (`Drivers.HdAudio`) resets the controller and
+talks to its codecs through the immediate command interface. In the
+codec's audio function group it finds an output pin fed by an output
+converter, directly or through one mixer or selector, then powers the
+path up, enables the pin and unmutes it. The first output stream's buffer
+descriptor list has an entry per period, each interrupting when played
+(by MSI; otherwise a timer polls the position). The volume is the
+converter's output amplifier.
+
+In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
+draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
+from a quarter-sine table and a fixed point phase). The programs are
+`tone` (plays a tone or writes it as a WAV file), `play` (WAV files) and
+`mixer` (volume and format). The tests record what QEMU's HD Audio
+device plays (its `wav` audio backend). coretest plays a 1000 Hz tone,
+then a 440 Hz WAV file written by `tone`, and `scripts/check-audio.py`
+finds both tones, with their frequency and length, in the recording.
+
 ## File systems
 
 The VFS (`kernel/filesystems`) has three parts:

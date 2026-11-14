@@ -66,6 +66,7 @@ uses
   Drivers.Xhci,
   Drivers.UsbStorage,
   Drivers.UsbKeyboard,
+  Drivers.HdAudio,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -131,6 +132,7 @@ begin
   RegisterUsbStorageDriver;
   RegisterUsbKeyboardDriver;
   InitializeXhciControllers;
+  InitializeHdAudioControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;

@@ -230,6 +230,14 @@ if long_ok:
     long_ok = max(len(row) for row in shown.split(b'\n')) < 150
 checks.append(('editing: a line longer than the screen', long_ok))
 
+def interrupt_then_type(data):
+    """Ctrl-C, then (once it has taken effect) more input: Ctrl-C throws
+    away what was typed ahead of it, as a terminal does."""
+    type_on_serial(b'\x03')
+    time.sleep(0.5)
+    type_on_serial(data)
+
+
 # Ctrl-C: clears the line at the prompt, ends a sleeping program, a busy
 # program and a whole loop.
 type_on_serial(b'echo partial\x03echo cleared\r')
@@ -237,20 +245,20 @@ collect(1)
 checks.append(('ctrl-c at the prompt', b'\ncleared' in received and b'\npartial' not in received))
 type_on_serial(b'sleep 30\r')
 time.sleep(1)
-type_on_serial(b'\x03echo status=$?\r')
+interrupt_then_type(b'echo status=$?\r')
 checks.append(('ctrl-c ends a sleeping program', wait_for('status=130', 10)))
 type_on_serial(b'yes > /dev/null\r')
 time.sleep(1)
-type_on_serial(b'\x03echo busy=$?\r')
+interrupt_then_type(b'echo busy=$?\r')
 checks.append(('ctrl-c ends a busy program', wait_for('busy=130', 10)))
 type_on_serial(b'while true; do :; done; echo skipped-after-builtins\r')
 time.sleep(1.5)
-type_on_serial(b'\x03echo builtin-loop-ended\r')
+interrupt_then_type(b'echo builtin-loop-ended\r')
 checks.append(('ctrl-c ends a loop of builtins',
                wait_for('\nbuiltin-loop-ended', 10) and b'\nskipped-after-builtins' not in received))
 type_on_serial(b'while true; do sleep 1; done; echo not-reached\r')
 time.sleep(1.5)
-type_on_serial(b'\x03echo loop-ended\r')
+interrupt_then_type(b'echo loop-ended\r')
 checks.append(('ctrl-c ends a loop', wait_for('\nloop-ended', 10) and b'\nnot-reached' not in received))
 
 # Job control: Ctrl-Z stops the foreground program, which bg continues
@@ -303,7 +311,7 @@ type_on_serial(b'\x1a')
 checks.append(('ctrl-z stops a pipeline', wait_for('[1]+  Stopped                 sleep 30 | cat', 10)))
 type_on_serial(b'fg\r')
 time.sleep(1)
-type_on_serial(b'\x03echo pipeline-status=$?\r')
+interrupt_then_type(b'echo pipeline-status=$?\r')
 checks.append(('fg, then ctrl-c ends the pipeline', wait_for('pipeline-status=130', 10)))
 type_on_serial(b'sleep 1 & wait $!; echo waited=$?\r')
 checks.append(('wait for a background job', wait_for('waited=0', 10)))

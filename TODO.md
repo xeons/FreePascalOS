@@ -101,6 +101,10 @@ how the existing pieces fit together.
       font, UTF-8 and escape sequences in the framebuffer console
 - [x] USB keyboards (HID boot protocol on the xHCI driver)
 - [ ] USB keyboards: key repeat, lock lights
+- [x] Sound: audio framework (/dev/audio, periods ring, formats, volume, drain),
+      Intel HD Audio driver, libaudio, tone, play and mixer
+- [ ] Sound: recording, several programs playing at once (mixing), other rates
+      (resampling), AC'97
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads

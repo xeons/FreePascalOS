@@ -20,6 +20,7 @@
 #
 #   lib<name>.so   ld -shared over the object files of a library's units:
 #                  libsystem <- libcryptography <- libcoreutils <- programs
+#                  libsystem <- libaudio (for the sound programs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -56,10 +57,12 @@ USER_LIBRARY_LINK_FLAGS := $(USER_LINK_FLAGS) -Bsymbolic
 SYSTEM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/system
 CRYPTO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/cryptography
 CORE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/coreutils
+AUDIO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/audio
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
 CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
+AUDIO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libaudio.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -74,7 +77,7 @@ USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_P
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) \
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) \
 	$(USER_PROGRAMS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
@@ -116,6 +119,15 @@ $(CORE_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/coreutils/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcoreutils.so -o $@ \
 		$(CORE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
+# libaudio: the sound device, WAV files and tone synthesis.
+$(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
+	@rm -rf $(AUDIO_LIBRARY_OBJECTS)
+	@mkdir -p $(AUDIO_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/audio \
+		-FU$(AUDIO_LIBRARY_OBJECTS) userland/lib/audio/Audio.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
+		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # A library loaded at run time by the tests.
 $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 	@rm -rf $(USER_BUILD_DIRECTORY)/plugin
@@ -136,12 +148,16 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
+SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer)
+$(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
+$(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
+$(SOUND_PROGRAMS): $(AUDIO_LIBRARY)
 
 $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
 	@rm -rf $(USER_BUILD_DIRECTORY)/programs/$*
 	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(USER_PROGRAM_OUTPUT)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
-		-Fu$(CORE_LIBRARY_OBJECTS) -Fuuserland/$* \
+		-Fu$(CORE_LIBRARY_OBJECTS) $(EXTRA_PROGRAM_UNITS) -Fuuserland/$* \
 		-FU$(USER_BUILD_DIRECTORY)/programs/$* -FE$(USER_BUILD_DIRECTORY)/programs/$* $<
 	$(LD) -pie --no-dynamic-linker $(USER_LINK_FLAGS) -e _start -o $@ \
 		$(USER_BUILD_DIRECTORY)/programs/$*/*.o $(RTL_USER_DIRECTORY)/si_prc.o \

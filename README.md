@@ -47,6 +47,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   metadata checksums, htree directories for reading, sparse files, fast and
   slow symbolic links). ext3 and ext4 are written through their journal
   (ordered mode, with disk flushes), and replayed after a crash.
+- Sound: an audio framework (`/dev/audio`) with an Intel HD Audio driver,
+  `libaudio`, and the `tone`, `play` and `mixer` programs.
+- USB keyboards next to PS/2 ones, with dead keys for the German and
+  French layouts; a framebuffer console with UTF-8 and escape sequences.
+- A kernel debug shell (kernel option `kshell`).
 - A real-time clock driver, so files get correct timestamps.
 - I/O APIC interrupt routing (from the ACPI MADT), with interrupt-driven
   PS/2 keyboard and serial console input; interrupt handlers hand work to

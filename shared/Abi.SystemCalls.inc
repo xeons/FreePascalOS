@@ -256,6 +256,16 @@ const
   { Returns 1 (and forgets it) if Ctrl-C was passed to the reader since
     the last call, else 0. }
   ControlTakePendingInterrupt = 10;
+  { Requests of CallControlHandle on an audio output (/dev/audio). A
+    format is the sample rate shl 16 or the channels shl 8 or the bits
+    per sample (16). }
+  ControlAudioGetFormat = 100;
+  ControlAudioSetFormat = 101;
+  { The volume in percent (0-100). }
+  ControlAudioGetVolume = 102;
+  ControlAudioSetVolume = 103;
+  { Waits until everything written has been played. }
+  ControlAudioDrain = 104;
   ConsoleModeEcho = $01;
   ConsoleModeLineEditing = $02;
   { Ctrl-C ends the foreground process group instead of being read. }

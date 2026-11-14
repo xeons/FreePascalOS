@@ -138,6 +138,15 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-cdrom.img" ]]; then
         -device ide-cd,drive=cdrom0,bus=ide.4)
 fi
 
+# Sound: an HD Audio controller with an output codec, recorded into a WAV
+# file that the host checks afterwards.
+audio_recording="$build_directory/test-audio.wav"
+rm -f "$audio_recording"
+if [[ -n "$system_disk_image" ]]; then
+    disk_arguments+=(-audiodev wav,id=sound0,path="$audio_recording"
+        -device intel-hda -device hda-output,audiodev=sound0)
+fi
+
 # ACCEL=kvm runs on the real processor (faster, and with the processor's
 # own behaviour, such as SIMD floating point exceptions, which QEMU's
 # emulator does not raise).
@@ -219,6 +228,15 @@ case "$qemu_status" in
             fi
             if ! "$(dirname "$0")/verify-test-disk.sh" "$run_usb_disk_image"; then
                 echo "TEST FAILED: the volume on the USB stick did not pass the host side checks"
+                exit 1
+            fi
+        fi
+        # The tones coretest played: 1000 Hz for a second, then 440 Hz for
+        # half a second (from a WAV file).
+        if [[ -n "$system_disk_image" ]]; then
+            if ! grep -q '\[audio\] HD Audio .*interrupts by MSI' "$serial_log" ||
+               ! python3 -I "$(dirname "$0")/check-audio.py" "$audio_recording"; then
+                echo "TEST FAILED: the sound played was not right"
                 exit 1
             fi
         fi

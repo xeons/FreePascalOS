@@ -67,7 +67,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..281] of TCommandTest = (
+  CommandTests: array[0..283] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -393,6 +393,10 @@ const
     (Command: 'dd if=/dev/zero of=/dev/disk1p1 count=1 2>/dev/null; echo $?; su user -c "head -c 1 /dev/disk1p1" 2>/dev/null; echo $?; find /dev -type b -name "disk1p1"'; ExpectedOutput: '1'#10'1'#10'/dev/disk1p1'#10; ExpectedStatus: 0),
     (Command: 'ls /dev | grep -x -e keyboard -e serial0; stat -c "%F %a" /dev/keyboard; cat /dev/keyboard 2>/dev/null; echo $?; ls /dev | grep ahci || echo hidden'; ExpectedOutput: 'keyboard'#10'serial0'#10'character special file 600'#10'1'#10'hidden'#10; ExpectedStatus: 0),
     (Command: 'dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; echo $?; dd if=/dev/disk3 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; dd if=/dev/disk3 bs=512 skip=99 count=1 2>/dev/null | wc -c'; ExpectedOutput: '1'#10'512'#10'512'#10; ExpectedStatus: 0),
+    { Sound (HD Audio, recorded by QEMU and checked by the host): the
+      mixer, a tone, and a WAV file written by tone and played by play. }
+    (Command: 'mixer; mixer 90; mixer | cut -d , -f 1; mixer 80'; ExpectedOutput: 'volume 80%, 48000 Hz, 2 channels'#10'volume 90%'#10; ExpectedStatus: 0),
+    (Command: 'tone 1000 1 && tone -o t.wav -r 44100 440 0.5 && wc -c < t.wav && play t.wav; echo $?; play /etc/passwd 2>&1'; ExpectedOutput: '88244'#10'0'#10'play: /etc/passwd: not a WAV file'#10; ExpectedStatus: 1),
     { The optical drive (ATAPI) on the fifth AHCI port: 2048-byte blocks,
       read only. }
     (Command: 'dd if=/dev/disk4 bs=2048 skip=37 count=1 2>/dev/null | head -c 26; echo; dd if=/dev/disk4 bs=2048 skip=10 count=3 2>/dev/null | tail -c 2048 | head -c 26; echo; echo x | dd of=/dev/disk4 2>&1 | head -n 1'; ExpectedOutput: 'FreePascalOS CD block 0037'#10'FreePascalOS CD block 0012'#10'dd: error writing ''/dev/disk4'': Read-only file system'#10; ExpectedStatus: 0),
