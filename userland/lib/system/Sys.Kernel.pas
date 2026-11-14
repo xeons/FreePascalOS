@@ -56,6 +56,8 @@ function KernelCreateHardLink(ExistingPath, NewPath: PChar): Int64;
 function KernelTerminateProcess(ProcessId: QWord; ExitCode: LongInt): Int64;
 function KernelSetRootDirectory(Path: PChar): Int64;
 function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
+function KernelSetInterruptIgnored(Ignored: Boolean): Int64;
+function KernelGetProcessGroup: Int64;
 
 implementation
 
@@ -243,6 +245,16 @@ end;
 function KernelSetRootDirectory(Path: PChar): Int64;
 begin
   Result := SystemCall(CallSetRootDirectory, QWord(Path), 0, 0, 0, 0, 0);
+end;
+
+function KernelSetInterruptIgnored(Ignored: Boolean): Int64;
+begin
+  Result := SystemCall(CallSetInterruptIgnored, Ord(Ignored), 0, 0, 0, 0, 0);
+end;
+
+function KernelGetProcessGroup: Int64;
+begin
+  Result := SystemCall(CallGetProcessGroup, 0, 0, 0, 0, 0, 0);
 end;
 
 function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;

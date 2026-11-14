@@ -60,7 +60,9 @@ const
   CallTerminateProcess = 35;
   CallSetRootDirectory = 36;
   CallControlHandle = 37;
-  CallCount = 38;
+  CallSetInterruptIgnored = 38;
+  CallGetProcessGroup = 39;
+  CallCount = 40;
 
   { --- Arguments ------------------------------------------------------- }
 
@@ -79,8 +81,17 @@ const
   ControlSetConsoleMode = 2;
   { Returns rows shl 16 or columns. }
   ControlGetConsoleSize = 3;
+  { The process group that Ctrl-C ends. }
+  ControlSetForegroundGroup = 4;
+  ControlGetForegroundGroup = 5;
   ConsoleModeEcho = $01;
   ConsoleModeLineEditing = $02;
+  { Ctrl-C ends the foreground process group instead of being read. }
+  ConsoleModeInterruptKey = $04;
+
+  { GroupId of TAbiProcessCreation. }
+  GroupInherit = 0;
+  GroupNew = -1;
 
   { --- Error codes (returned negated) ---------------------------------- }
 
@@ -227,6 +238,9 @@ type
     InputHandle: Int64;         { handles of the caller to pass on }
     OutputHandle: Int64;
     ErrorHandle: Int64;
+    { GroupInherit, GroupNew (a group led by the new process) or the id
+      of an existing group to join. }
+    GroupId: Int64;
   end;
   PAbiProcessCreation = ^TAbiProcessCreation;
 

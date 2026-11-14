@@ -52,7 +52,7 @@ how the existing pieces fit together.
 - [x] Waiting on process objects (exit notification)
 - [ ] Multiple threads per user process (thread creation call, thread local storage)
 - [x] Ending another program (TerminateProcess; kill, timeout)
-- [ ] Ctrl-C on the console (needs a notion of the foreground program)
+- [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [ ] Signals that do not end a program (stop, continue, user signals)
 - [ ] Users, groups and permission checks
 
@@ -126,7 +126,9 @@ how the existing pieces fit together.
 - [ ] Lazy binding (PLT resolution on first call) and symbol versioning
 - [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
 - [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
-- [ ] Shell: case, functions, here documents, job control, history and line editing
+- [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
+- [ ] Shell: case, functions, here documents, job control (fg, bg, jobs, Ctrl-Z)
+- [ ] Ctrl-C for loops made only of builtins (needs a pending-interrupt check)
 - [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less, ps
 - [x] Interrupt driven console input (keyboard and serial)
 

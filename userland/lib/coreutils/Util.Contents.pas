@@ -23,7 +23,8 @@ uses
   Util.Dates,
   Util.Accounts,
   Util.Commands,
-  Util.RegularExpressions;
+  Util.RegularExpressions,
+  Util.LineEditor;
 
 implementation
 

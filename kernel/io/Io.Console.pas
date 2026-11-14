@@ -36,7 +36,9 @@ const
   { Input is collected and edited a line at a time; otherwise each
     character is handed to the reader as it arrives. }
   ConsoleModeLineEditing = $02;
-  ConsoleDefaultMode = ConsoleModeEcho or ConsoleModeLineEditing;
+  { Ctrl-C ends the foreground process group instead of being read. }
+  ConsoleModeInterruptKey = $04;
+  ConsoleDefaultMode = ConsoleModeEcho or ConsoleModeLineEditing or ConsoleModeInterruptKey;
   ConsoleColumns = 80;
   ConsoleRows = 25;
 
@@ -49,6 +51,19 @@ procedure DeliverConsoleInput(Character: Char);
 { Called once the serial port delivers its input by interrupt, so it no
   longer needs polling. }
 procedure SetSerialInputInterruptDriven;
+
+{ The process group that Ctrl-C ends (0 = none). }
+procedure SetConsoleForegroundGroup(GroupId: QWord);
+function ConsoleForegroundGroup: QWord;
+
+{ Ctrl-C is handled by a thread outside this unit (Processes.Termination):
+  it waits for InterruptKeyPressed, which returns once the key was
+  pressed (or the thread was alerted). }
+procedure WaitForInterruptKey;
+{ After Ctrl-C ended programs: show "^C" and forget typed input. }
+procedure FinishInterrupt;
+{ When nobody was ended, the reader gets Ctrl-C as a character. }
+procedure PassInterruptToReader;
 
 implementation
 
@@ -95,6 +110,10 @@ type
     InputAvailable: TEvent;
     WakeReader: TDeferredCall;
     SerialIsInterruptDriven: Boolean;
+
+    ForegroundGroup: QWord;
+    InterruptKey: TEvent;
+    WakeInterruptHandler: TDeferredCall;
   end;
   PConsole = ^TConsole;
 
@@ -108,12 +127,24 @@ begin
   SignalEvent(TheConsole^.InputAvailable);
 end;
 
+procedure SignalInterruptKey(Context: Pointer);
+begin
+  SignalEvent(TheConsole^.InterruptKey);
+end;
+
 procedure DeliverConsoleInput(Character: Char);
 var
   WereEnabled: Boolean;
 begin
   if TheConsole = nil then
     Exit;
+  if (Character = KeyInterrupt) and ((TheConsole^.Mode and ConsoleModeInterruptKey) <> 0) then
+  begin
+    { Ending programs needs locks an interrupt handler cannot take; a
+      thread does it. }
+    QueueDeferredCall(TheConsole^.WakeInterruptHandler);
+    Exit;
+  end;
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
   { When the buffer is full, newer input is dropped. }
@@ -162,6 +193,60 @@ begin
   InitializeSpinLock(TheConsole^.RingLock);
   InitializeEvent(TheConsole^.InputAvailable, EventKindSynchronization, False);
   InitializeDeferredCall(TheConsole^.WakeReader, @SignalInputAvailable, nil);
+  InitializeEvent(TheConsole^.InterruptKey, EventKindSynchronization, False);
+  InitializeDeferredCall(TheConsole^.WakeInterruptHandler, @SignalInterruptKey, nil);
+end;
+
+procedure SetConsoleForegroundGroup(GroupId: QWord);
+begin
+  TheConsole^.ForegroundGroup := GroupId;
+end;
+
+function ConsoleForegroundGroup: QWord;
+begin
+  Result := TheConsole^.ForegroundGroup;
+end;
+
+procedure WaitForInterruptKey;
+begin
+  WaitForEvent(TheConsole^.InterruptKey);
+end;
+
+procedure AddToRing(Character: Char);
+var
+  WereEnabled: Boolean;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  if TheConsole^.RingCount < RingCapacity then
+  begin
+    TheConsole^.Ring[(TheConsole^.RingStart + TheConsole^.RingCount) mod RingCapacity] := Character;
+    Inc(TheConsole^.RingCount);
+  end;
+  ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure FinishInterrupt;
+var
+  WereEnabled: Boolean;
+begin
+  { Shown even if the ended program had turned echo off. }
+  DebugBeginMessage;
+  DebugWrite('^C'#10);
+  DebugEndMessage;
+  { Typed-ahead input belonged to the program that was ended. }
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  TheConsole^.RingCount := 0;
+  ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure PassInterruptToReader;
+begin
+  AddToRing(KeyInterrupt);
+  SignalEvent(TheConsole^.InputAvailable);
 end;
 
 function GetConsoleMode: LongWord;

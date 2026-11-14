@@ -205,7 +205,7 @@ const
     (Command: 'nproc; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: '1'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
     (Command: 'printenv HOME; printenv NOPE; echo $?'; ExpectedOutput: '/'#10'1'#10; ExpectedStatus: 0),
     (Command: 'tty; tty < /dev/null; echo $?'; ExpectedOutput: '/dev/console'#10'not a tty'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'stty | tail -n 1; stty -echo; stty | tail -n 1; stty sane; stty | tail -n 1'; ExpectedOutput: 'icanon echo'#10'icanon -echo'#10'icanon echo'#10; ExpectedStatus: 0),
+    (Command: 'stty | tail -n 1; stty -echo; stty | tail -n 1; stty sane; stty | tail -n 1'; ExpectedOutput: 'isig icanon echo'#10'isig icanon -echo'#10'isig icanon echo'#10; ExpectedStatus: 0),
 
     { --- running and ending programs --------------------------------- }
     (Command: 'timeout 5 true; echo $?; timeout 0.2 sleep 5; echo $?'; ExpectedOutput: '0'#10'124'#10; ExpectedStatus: 0),

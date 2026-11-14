@@ -14,6 +14,11 @@
 
   The exit code is the one given by the caller; by Unix convention 128
   plus a signal number (143 for "terminate").
+
+  Ctrl-C on the console ends the console's foreground process group with
+  exit code 130 (128 + SIGINT), sparing processes that ignore it (an
+  interactive shell). A system thread does this, woken by the console. If
+  it ended nobody, the reader gets Ctrl-C as an ordinary character.
 }
 unit Processes.Termination;
 
@@ -23,8 +28,15 @@ interface
 
 procedure InitializeProcessTermination;
 
+{ Starts the thread that handles Ctrl-C (needs a running scheduler). }
+procedure StartConsoleInterruptHandler;
+
 { Returns ErrorNone, ErrorNoSuchProcess or ErrorNotPermitted. }
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
+
+{ Ends every process of group GroupId that does not ignore interrupts;
+  returns how many. }
+function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
 
 { Ends the current process if termination was requested. Called before
   returning from a system call (PassiveLevel, interrupts enabled). }
@@ -39,7 +51,8 @@ uses
   Kernel.Interrupts,
   Processes.Process,
   Processes.Thread,
-  Processes.UserProcess;
+  Processes.UserProcess,
+  Io.Console;
 
 procedure EndProcessIfTerminationRequested;
 var
@@ -63,9 +76,76 @@ begin
   end;
 end;
 
+const
+  InterruptExitCode = 130;
+  InterruptThreadPriority = 20;
+
+procedure RequestTerminationLocked(Process: PProcess; ExitCode: LongInt);
+begin
+  if not Process^.TerminationRequested then
+  begin
+    Process^.TerminationCode := ExitCode;
+    Process^.TerminationRequested := True;
+  end;
+  AlertProcessThreads(Process);
+end;
+
+type
+  TGroupInterrupt = record
+    GroupId: QWord;
+    ExitCode: LongInt;
+    Count: Integer;
+  end;
+  PGroupInterrupt = ^TGroupInterrupt;
+
+procedure InterruptIfInGroup(Process: PProcess; Context: Pointer);
+var
+  Request: PGroupInterrupt;
+begin
+  Request := PGroupInterrupt(Context);
+  if (Process^.GroupId = Request^.GroupId) and Process^.IsUserProcess and
+     not Process^.IgnoresInterrupt then
+  begin
+    RequestTerminationLocked(Process, Request^.ExitCode);
+    Inc(Request^.Count);
+  end;
+end;
+
+function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
+var
+  Request: TGroupInterrupt;
+begin
+  Request.GroupId := GroupId;
+  Request.ExitCode := ExitCode;
+  Request.Count := 0;
+  if GroupId <> 0 then
+  begin
+    LockProcessRegistry;
+    VisitRunningProcessesLocked(@InterruptIfInGroup, @Request);
+    UnlockProcessRegistry;
+  end;
+  Result := Request.Count;
+end;
+
+procedure HandleConsoleInterrupts(Context: Pointer);
+begin
+  repeat
+    WaitForInterruptKey;
+    if InterruptProcessGroup(ConsoleForegroundGroup, InterruptExitCode) > 0 then
+      FinishInterrupt
+    else
+      PassInterruptToReader;
+  until False;
+end;
+
 procedure InitializeProcessTermination;
 begin
   SetUserModeReturnHook(@CheckTerminationOnReturn);
+end;
+
+procedure StartConsoleInterruptHandler;
+begin
+  CreateSystemThread(@HandleConsoleInterrupts, nil, InterruptThreadPriority, 'console-interrupt', False);
 end;
 
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
@@ -80,12 +160,7 @@ begin
     Result := ErrorNotPermitted
   else
   begin
-    if not Process^.TerminationRequested then
-    begin
-      Process^.TerminationCode := ExitCode;
-      Process^.TerminationRequested := True;
-    end;
-    AlertProcessThreads(Process);
+    RequestTerminationLocked(Process, ExitCode);
     Result := ErrorNone;
   end;
   UnlockProcessRegistry;

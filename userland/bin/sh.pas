@@ -25,6 +25,8 @@ uses
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Sys.Processes,
+  Util.LineEditor,
   Shell.Syntax,
   Shell.Variables,
   Shell.Execution;
@@ -51,40 +53,78 @@ begin
   Result := ErrorNone;
 end;
 
-procedure WritePrompt(Continuation: Boolean);
+{ "fpos:/current/directory$ ", or "> " while a command continues. }
+function MakePrompt(Continuation: Boolean): PChar;
 var
   Directory: array[0..PathCapacity - 1] of Char;
+  Builder: TTextBuilder;
 begin
   if Continuation then
-    WriteText(StandardError, '> ')
-  else
-  begin
-    if GetCurrentDirectory(@Directory[0], PathCapacity) <> ErrorNone then
-      CopyText(@Directory[0], '?', PathCapacity);
-    WriteText(StandardError, 'fpos:');
-    WriteText(StandardError, @Directory[0]);
-    WriteText(StandardError, '$ ');
-  end;
-  FlushStream(StandardError);
+    Exit(DuplicateText('> '));
+  if GetCurrentDirectory(@Directory[0], PathCapacity) <> ErrorNone then
+    CopyText(@Directory[0], '?', PathCapacity);
+  BeginText(Builder);
+  AppendText(Builder, 'fpos:');
+  AppendText(Builder, @Directory[0]);
+  AppendText(Builder, '$ ');
+  Result := FinishText(Builder);
+end;
+
+function HistoryFilePath: PChar;
+var
+  Home: PChar;
+  Builder: TTextBuilder;
+begin
+  Home := LookupVariable('HOME');
+  if (Home = nil) or (Home^ = #0) then
+    Home := '/';
+  BeginText(Builder);
+  AppendText(Builder, Home);
+  if Builder.Text[Builder.Length - 1] <> '/' then
+    AppendCharacter(Builder, '/');
+  AppendText(Builder, '.sh_history');
+  Result := FinishText(Builder);
 end;
 
 { Reads and runs commands line by line until end of input or exit. A
   command spanning several lines (an open quote or an unfinished if,
-  while, ...) is collected before it runs. }
-procedure RunInteractive(ShowPrompt: Boolean);
+  while, ...) is collected before it runs. On the console, lines are read
+  with editing and history, and Ctrl-C does not end the shell. }
+procedure RunInteractive(OnConsole: Boolean);
 var
   Pending: TTextBuilder;
   Line: PChar;
   HadLineEnd: Boolean;
   Tree: PNode;
   Message: PChar;
+  Editor: TLineEditor;
+  Prompt: PChar;
+  HistoryPath: PChar;
+  GotLine: Boolean;
 begin
+  if OnConsole then
+  begin
+    ShellIsInteractive := True;
+    IgnoreInterrupts(True);
+    HistoryPath := HistoryFilePath;
+    BeginLineEditor(Editor, HistoryPath, StandardErrorHandle);
+    FreeMemory(HistoryPath);
+  end;
+
   BeginText(Pending);
   while not ExitRequested do
   begin
-    if ShowPrompt then
-      WritePrompt(Pending.Length > 0);
-    if not ReadLine(StandardInput, Line, HadLineEnd) then
+    if OnConsole then
+    begin
+      Prompt := MakePrompt(Pending.Length > 0);
+      GotLine := EditLine(Editor, Prompt, Line) = EditLineReady;
+      FreeMemory(Prompt);
+      if GotLine then
+        AddHistoryLine(Editor, Line);
+    end
+    else
+      GotLine := ReadLine(StandardInput, Line, HadLineEnd);
+    if not GotLine then
       Break;
     AppendText(Pending, Line);
     AppendCharacter(Pending, #10);
@@ -95,6 +135,7 @@ begin
         Continue;
       ParseSuccess:
         begin
+          InterruptRequested := False;
           ExecuteNode(Tree);
           FreeNode(Tree);
         end;
@@ -114,8 +155,8 @@ begin
     LastStatus := 2;
   end;
   DiscardText(Pending);
-  if ShowPrompt and not ExitRequested then
-    WriteCharacter(StandardError, #10);
+  if OnConsole then
+    SaveHistory(Editor);
 end;
 
 procedure SetDefaultVariables;

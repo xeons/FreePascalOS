@@ -200,6 +200,14 @@ begin
   Startup.ParentProcessId := Caller^.ProcessId;
   { A program started inside a chroot stays inside it. }
   Startup.RootDirectory := @RootDirectory[0];
+  case Creation.GroupId of
+    GroupInherit: Startup.GroupId := Caller^.GroupId;
+    GroupNew: Startup.GroupId := 0;
+  else
+    if Creation.GroupId < 0 then
+      Exit(Failure(ErrorInvalidArgument));
+    Startup.GroupId := QWord(Creation.GroupId);
+  end;
 
   StandardHandles[0] := Creation.InputHandle;
   StandardHandles[1] := Creation.OutputHandle;
@@ -293,6 +301,12 @@ end;
 function PerformTerminateProcess(ProcessId: QWord; ExitCode: QWord): Int64;
 begin
   Result := -Int64(TerminateProcessById(ProcessId, LongInt(ExitCode and $FF)));
+end;
+
+function PerformSetInterruptIgnored(Ignored: QWord): Int64;
+begin
+  CurrentProcess^.IgnoresInterrupt := Ignored <> 0;
+  Result := 0;
 end;
 
 function PerformSleep(Milliseconds: QWord): Int64;
@@ -466,6 +480,8 @@ begin
     CallTerminateProcess: Result := PerformTerminateProcess(Argument0, Argument1);
     CallSetRootDirectory: Result := PerformSetRootDirectory(Argument0);
     CallControlHandle: Result := PerformControlHandle(Int64(Argument0), Argument1, Argument2);
+    CallSetInterruptIgnored: Result := PerformSetInterruptIgnored(Argument0);
+    CallGetProcessGroup: Result := Int64(CurrentProcess^.GroupId);
   else
     Result := Failure(ErrorNotImplemented);
   end;

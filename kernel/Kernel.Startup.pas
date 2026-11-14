@@ -55,6 +55,7 @@ uses
   Processes.Process,
   Processes.Thread,
   Processes.SystemCalls,
+  Processes.Termination,
   Processes.Init,
   Io.Console,
   Io.NullDevice,
@@ -169,6 +170,7 @@ begin
   DebugWriteLine('Phase 1 started');
 
   InitializeIoSystem(PBootInformation(Context)^);
+  StartConsoleInterruptHandler;
 
   RunKernelSelfTests;
   RunFileSystemSelfTests;

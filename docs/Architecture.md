@@ -187,6 +187,20 @@ handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
 dispatch interrupt, before the scheduler picks the next thread.
 
+### Ctrl-C
+
+Processes belong to process groups (inherited, or a new group led by the
+new process). The console has a foreground group. When the console's
+interrupt key mode is on (the default; `stty -isig` turns it off), Ctrl-C
+does not reach the input buffer: a deferred call wakes the
+`console-interrupt` system thread, which ends every process of the
+foreground group with exit status 130, except processes that asked to
+ignore it. If it ended none (an interactive shell waiting at its prompt
+is the foreground), Ctrl-C is passed to the reader as a character, and
+the shell's line editor clears the line. The interactive shell runs each
+foreground pipeline in a new group and makes it the foreground group
+while it waits.
+
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
 (Drivers.SerialInput, IRQ 4) feed characters to the console's input ring
 (DeliverConsoleInput); a deferred call signals the event a reading thread
@@ -382,7 +396,9 @@ independent) against `rtl/user/system.pas`:
   `Util.Modes` (chmod modes), `Util.Dates`, `Util.BaseEncoding`,
   `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group) and
   `Util.Commands` (running a command, signal names).
-- **sh** – lexer, parser to a syntax tree, word expansion and execution.
+- **sh** – lexer, parser to a syntax tree, word expansion and execution;
+  on the console it reads lines through `Util.LineEditor` (cursor keys,
+  history in `$HOME/.sh_history`, Tab completion).
   Pipelines start their external programs first and then run builtins and
   compound commands inside the shell, so no stage waits for one that has
   not started.

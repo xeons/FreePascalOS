@@ -736,6 +736,12 @@ begin
         Result := 0;
       end;
     ControlGetConsoleSize: Result := (Int64(ConsoleRows) shl 16) or ConsoleColumns;
+    ControlSetForegroundGroup:
+      begin
+        SetConsoleForegroundGroup(Argument);
+        Result := 0;
+      end;
+    ControlGetForegroundGroup: Result := Int64(ConsoleForegroundGroup);
   else
     Result := Failure(ErrorInvalidArgument);
   end;

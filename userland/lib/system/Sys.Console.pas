@@ -13,6 +13,9 @@ function IsConsole(Handle: Int64): Boolean;
 function GetConsoleMode(Handle: Int64): Int64;
 function SetConsoleMode(Handle: Int64; Mode: LongWord): LongInt;
 procedure GetConsoleSize(Handle: Int64; out Rows, Columns: LongInt);
+{ The process group that Ctrl-C ends. }
+function SetForegroundGroup(Handle: Int64; GroupId: Int64): LongInt;
+function GetForegroundGroup(Handle: Int64): Int64;
 
 implementation
 
@@ -34,6 +37,16 @@ end;
 function SetConsoleMode(Handle: Int64; Mode: LongWord): LongInt;
 begin
   Result := ErrorCodeOf(KernelControlHandle(Handle, ControlSetConsoleMode, Mode));
+end;
+
+function SetForegroundGroup(Handle: Int64; GroupId: Int64): LongInt;
+begin
+  Result := ErrorCodeOf(KernelControlHandle(Handle, ControlSetForegroundGroup, QWord(GroupId)));
+end;
+
+function GetForegroundGroup(Handle: Int64): Int64;
+begin
+  Result := KernelControlHandle(Handle, ControlGetForegroundGroup, 0);
 end;
 
 procedure GetConsoleSize(Handle: Int64; out Rows, Columns: LongInt);

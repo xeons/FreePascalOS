@@ -43,6 +43,8 @@ type
     ParentProcessId: QWord;
     { The program's "/" (see TProcess.RootDirectory); nil means "/". }
     RootDirectory: PChar;
+    { The group to join; 0 starts a new group led by the new process. }
+    GroupId: QWord;
   end;
 
 procedure InitializeUserProcesses;
@@ -260,6 +262,10 @@ begin
   CopyText(@Process^.CurrentDirectory[0], Startup.WorkingDirectory, ProcessPathCapacity);
   if Startup.RootDirectory <> nil then
     CopyText(@Process^.RootDirectory[0], Startup.RootDirectory, ProcessPathCapacity);
+  if Startup.GroupId <> 0 then
+    Process^.GroupId := Startup.GroupId
+  else
+    Process^.GroupId := Process^.ProcessId;
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then

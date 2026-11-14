@@ -23,6 +23,8 @@ type
     InputHandle: Int64;
     OutputHandle: Int64;
     ErrorHandle: Int64;
+    { GroupInherit, GroupNew or the id of a group to join. }
+    GroupId: Int64;
   end;
 
 { Options with the standard handles and environment of this program. }
@@ -53,6 +55,10 @@ function ChangeRootDirectory(Path: PChar): LongInt;
 function RunProgram(Path: PChar; Arguments: PPChar): LongInt;
 
 function CurrentProcessId: Int64;
+{ The process group, which Ctrl-C on the console ends as a whole. }
+function CurrentProcessGroup: Int64;
+{ With True, Ctrl-C on the console no longer ends this program. }
+procedure IgnoreInterrupts(Ignore: Boolean);
 procedure SleepMilliseconds(Milliseconds: QWord);
 procedure ExitProgram(Code: LongInt);
 
@@ -77,6 +83,7 @@ begin
   Options.InputHandle := StandardInputHandle;
   Options.OutputHandle := StandardOutputHandle;
   Options.ErrorHandle := StandardErrorHandle;
+  Options.GroupId := GroupInherit;
 end;
 
 function FindProgram(Name: PChar; FullPath: PChar; Capacity: PtrUInt): Boolean;
@@ -132,6 +139,7 @@ begin
   Creation.InputHandle := Options.InputHandle;
   Creation.OutputHandle := Options.OutputHandle;
   Creation.ErrorHandle := Options.ErrorHandle;
+  Creation.GroupId := Options.GroupId;
   Result := KernelCreateProcess(Creation);
 end;
 
@@ -187,6 +195,16 @@ end;
 function CurrentProcessId: Int64;
 begin
   Result := KernelGetProcessId(NoHandle);
+end;
+
+function CurrentProcessGroup: Int64;
+begin
+  Result := KernelGetProcessGroup;
+end;
+
+procedure IgnoreInterrupts(Ignore: Boolean);
+begin
+  KernelSetInterruptIgnored(Ignore);
 end;
 
 procedure SleepMilliseconds(Milliseconds: QWord);

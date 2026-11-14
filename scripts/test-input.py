@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Input device test: boots the system with /bin/sh as the first program and
-types into it, both on the emulated PS/2 keyboard (QEMU monitor "sendkey")
-and on the serial port, then checks what the shell printed.
+Input test: boots the system with /bin/sh as the first program and types
+into it, on the emulated PS/2 keyboard (QEMU monitor "sendkey") and on the
+serial port, then checks what the shell printed. Covers both input
+drivers, the shell's line editing and history, and Ctrl-C.
 
     test-input.py <esp-directory> <system-disk-image>
 
@@ -128,24 +129,71 @@ press('ret')
 collect(1)
 checks.append(('keyboard ctrl-c', b'\nkept' in received and b'\ndiscarded' not in received))
 
-# Keyboard: Caps Lock (inverts Shift), arrow keys ignored while editing.
+# Keyboard: Caps Lock (inverts Shift); the left arrow moves the cursor.
 press('caps_lock')
 type_on_keyboard('ECHO')
 press('caps_lock')
+type_on_keyboard(' caps-ok')
 press('left')
-type_on_keyboard(' caps | tr a-z A-Z')
+press('left')
+press('left')
+press('left')
+press('left')
+press('left')
+press('left')
+type_on_keyboard('x')
 press('ret')
-checks.append(('keyboard caps lock and arrows', wait_for('\nCAPS', 10)))
+checks.append(('keyboard caps lock and cursor keys', wait_for('\nxcaps-ok', 10)))
+
+
+def type_on_serial(data):
+    for byte in data:
+        serial_in.write(bytes([byte]))
+        time.sleep(0.02)
+
 
 # Serial: a long line arrives complete, by interrupt.
-serial_in.write(b'echo ' + b's' * 200 + b' | wc -c\n')
-checks.append(('serial long line', wait_for('\n201', 10)))
+type_on_serial(b'echo ' + b's' * 200 + b' | wc -c\r')
+checks.append(('serial long line', wait_for('\n201', 15)))
 
-# Serial: an escape sequence in the middle of a line is ignored.
-serial_in.write(b'ec\x1b[Dho serial-escape\n')
-checks.append(('serial escape sequence', wait_for('\nserial-escape', 10)))
+# Line editing: insert in the middle, history, Ctrl-A / Ctrl-K, Tab.
+type_on_serial(b'echo hello wrld\x1b[D\x1b[D\x1b[Do\r')
+checks.append(('editing: insert with cursor keys', wait_for('\nhello world', 10)))
+type_on_serial(b'\x1b[A\x01\x0becho again\r')
+checks.append(('editing: history and Ctrl-A, Ctrl-K', wait_for('\nagain', 10)))
+type_on_serial(b'ls /et\t')
+collect(0.5)
+type_on_serial(b'\r')
+checks.append(('editing: tab completion', wait_for('passwd', 10)))
 
-serial_in.write(b'exit 0\n')
+# Ctrl-C: clears the line at the prompt, ends a sleeping program, a busy
+# program and a whole loop.
+type_on_serial(b'echo partial\x03echo cleared\r')
+collect(1)
+checks.append(('ctrl-c at the prompt', b'\ncleared' in received and b'\npartial' not in received))
+type_on_serial(b'sleep 30\r')
+time.sleep(1)
+type_on_serial(b'\x03echo status=$?\r')
+checks.append(('ctrl-c ends a sleeping program', wait_for('status=130', 10)))
+type_on_serial(b'yes > /dev/null\r')
+time.sleep(1)
+type_on_serial(b'\x03echo busy=$?\r')
+checks.append(('ctrl-c ends a busy program', wait_for('busy=130', 10)))
+type_on_serial(b'while true; do sleep 1; done; echo not-reached\r')
+time.sleep(1.5)
+type_on_serial(b'\x03echo loop-ended\r')
+checks.append(('ctrl-c ends a loop', wait_for('\nloop-ended', 10) and b'\nnot-reached' not in received))
+
+# History is shared through the file: a new shell recalls the last line.
+type_on_serial(b'sh\r')
+time.sleep(1)
+type_on_serial(b'\x1b[A\x1b[A\r')
+collect(1.5)
+checks.append(('history shared through the file', received.count(b'\nloop-ended') >= 2))
+type_on_serial(b'exit\r')
+time.sleep(0.5)
+
+serial_in.write(b'exit 0\r')
 try:
     qemu.wait(timeout=30)
 except subprocess.TimeoutExpired:

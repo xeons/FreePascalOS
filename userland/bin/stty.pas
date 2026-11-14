@@ -5,8 +5,9 @@
   stty SETTING...
 
   The console supports: echo / -echo, icanon / -icanon (line editing),
-  raw (both off), cooked and sane (both on), size, and a saved state
-  from stty -g. Speeds and control characters are fixed.
+  isig / -isig (Ctrl-C ends the foreground programs), raw (all off),
+  cooked and sane (all on), size, and a saved state from stty -g.
+  Speeds and control characters are fixed.
 }
 program stty;
 
@@ -30,7 +31,7 @@ const
     'Print or change terminal characteristics.'#10#10 +
     '  -a, --all          print all current settings in human-readable form'#10 +
     '  -g, --save         print all current settings in a stty-readable form'#10#10 +
-    'Settings: [-]echo [-]icanon raw cooked sane size'#10;
+    'Settings: [-]echo [-]icanon [-]isig raw cooked sane size'#10;
 
   SavedPrefix = 'fpos:';
 
@@ -94,6 +95,8 @@ begin
         [ArgumentNumber(Rows), ArgumentNumber(Columns)]);
       if ShowAll then
         WriteLine(StandardOutput, 'intr = ^C; eof = ^D; erase = ^?;');
+      ShowFlag('isig', ConsoleModeInterruptKey);
+      WriteCharacter(StandardOutput, ' ');
       ShowFlag('icanon', ConsoleModeLineEditing);
       WriteCharacter(StandardOutput, ' ');
       ShowFlag('echo', ConsoleModeEcho);
@@ -114,10 +117,14 @@ begin
       NewMode := NewMode or ConsoleModeLineEditing
     else if TextIsEqual(Setting, '-icanon') then
       NewMode := NewMode and not ConsoleModeLineEditing
+    else if TextIsEqual(Setting, 'isig') then
+      NewMode := NewMode or ConsoleModeInterruptKey
+    else if TextIsEqual(Setting, '-isig') then
+      NewMode := NewMode and not ConsoleModeInterruptKey
     else if TextIsEqual(Setting, 'raw') or TextIsEqual(Setting, '-cooked') then
       NewMode := 0
     else if TextIsEqual(Setting, 'cooked') or TextIsEqual(Setting, '-raw') or TextIsEqual(Setting, 'sane') then
-      NewMode := ConsoleModeEcho or ConsoleModeLineEditing
+      NewMode := ConsoleModeEcho or ConsoleModeLineEditing or ConsoleModeInterruptKey
     else if TextIsEqual(Setting, 'size') then
     begin
       GetConsoleSize(StandardInputHandle, Rows, Columns);

@@ -61,7 +61,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     modes, date parsing, base64/32/16/2/z85, accounts
   - a POSIX style shell `sh` (pipes, redirections, `&&` `||`, `if` /
     `while` / `until` / `for`, variables, `$( )` and `$(( ))`, globbing,
-    quoting, scripts)
+    quoting, scripts), with line editing, history and Tab completion on
+    the console; Ctrl-C ends the running pipeline
   - recreations of the GNU core utilities, 102 commands: arch b2sum
     base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm
     cp csplit cut date dd df dir dirname du echo env expand expr factor

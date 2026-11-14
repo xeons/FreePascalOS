@@ -103,6 +103,9 @@ begin
 
   Report('Starting ', @ProgramPath[0]);
   Error := CreateUserProcess(Startup, Process);
+  { The first program owns the console: Ctrl-C ends its group. }
+  if Error = ErrorNone then
+    SetConsoleForegroundGroup(Process^.GroupId);
   if Error <> ErrorNone then
   begin
     DebugBeginMessage;

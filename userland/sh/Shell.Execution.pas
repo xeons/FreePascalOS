@@ -11,6 +11,12 @@
   stages that run inside the shell, from left to right. Then the shell
   waits for the external programs. The status of a pipeline is the
   status of its last stage.
+
+  An interactive shell runs every pipeline in a process group of its own;
+  a foreground pipeline's group becomes the console's foreground group
+  while the shell waits, so Ctrl-C ends exactly that pipeline. When a
+  foreground program ends by Ctrl-C (status 130), the rest of the command
+  line is abandoned.
 }
 unit Shell.Execution;
 
@@ -33,6 +39,11 @@ var
   LoopControl: TLoopControl = LoopControlNone;
   LoopLevels: Integer = 0;
   LoopDepth: Integer = 0;
+  { Set by sh when it reads commands from the console. }
+  ShellIsInteractive: Boolean = False;
+  { Set when a foreground program was ended by Ctrl-C; cleared by sh
+    before each command line. }
+  InterruptRequested: Boolean = False;
 
 function ExecuteNode(Node: PNode): LongInt;
 { Parses and runs Text; syntax errors give status 2. }
@@ -49,6 +60,7 @@ uses
   Sys.Files,
   Sys.Format,
   Sys.Memory,
+  Sys.Console,
   Sys.Processes,
   Sys.Streams,
   Sys.Text,
@@ -61,6 +73,7 @@ const
   ProgramPathCapacity = 1024;
   StatusNotFound = 127;
   StatusCannotRun = 126;
+  StatusInterrupted = 130;
 
 type
   TStandardHandles = array[0..2] of Int64;
@@ -266,7 +279,7 @@ end;
 { Starts an external program; returns its process handle, or -1 after
   reporting a problem (Status tells which). }
 function StartExternal(var Prepared: TPreparedCommand; const Handles: TStandardHandles;
-  out Status: LongInt): Int64;
+  GroupId: Int64; out Status: LongInt): Int64;
 var
   ProgramPath: array[0..ProgramPathCapacity - 1] of Char;
   Effective: TStandardHandles;
@@ -296,6 +309,7 @@ begin
 
   Environment := BuildEnvironment(Prepared.Node);
   DefaultProcessOptions(Options);
+  Options.GroupId := GroupId;
   Options.Environment := Environment;
   Options.InputHandle := Effective[0];
   Options.OutputHandle := Effective[1];
@@ -381,6 +395,8 @@ var
   Handles: TStandardHandles;
   Saved: TStandardHandles;
   IsInShell: PBoolean;
+  PipelineGroup: Int64;
+  OwnsConsole: Boolean;
 begin
   Prepared := PPreparedCommand(AllocateZeroedMemory(QWord(Count) * SizeOf(TPreparedCommand)));
   Processes := PInt64(AllocateZeroedMemory(QWord(Count) * SizeOf(Int64)));
@@ -420,7 +436,11 @@ begin
     end;
   end;
 
-  { Pass 1: external programs. }
+  { Pass 1: external programs. In an interactive shell they form a new
+    process group, led by the first. }
+  PipelineGroup := GroupInherit;
+  if ShellIsInteractive then
+    PipelineGroup := GroupNew;
   for Index := 0 to Count - 1 do
   begin
     if IsInShell[Index] then
@@ -428,8 +448,14 @@ begin
     Handles[0] := Inputs[Index];
     Handles[1] := Outputs[Index];
     Handles[2] := StandardErrorHandle;
-    Processes[Index] := StartExternal(Prepared[Index], Handles, Statuses[Index]);
+    Processes[Index] := StartExternal(Prepared[Index], Handles, PipelineGroup, Statuses[Index]);
+    if (PipelineGroup = GroupNew) and (Processes[Index] >= 0) then
+      PipelineGroup := ProcessIdOf(Processes[Index]);
   end;
+  { Ctrl-C now belongs to the pipeline. }
+  OwnsConsole := Wait and ShellIsInteractive and (PipelineGroup > 0) and IsConsole(StandardInputHandle);
+  if OwnsConsole then
+    SetForegroundGroup(StandardInputHandle, PipelineGroup);
   { The shell keeps only the pipe ends that in-shell stages still need,
     so readers see the end of their input when the writers finish. }
   for Index := 0 to Count - 1 do
@@ -469,11 +495,17 @@ begin
     if Processes[Index] < 0 then
       Continue;
     if Wait then
-      Statuses[Index] := WaitForProgram(Processes[Index])
+    begin
+      Statuses[Index] := WaitForProgram(Processes[Index]);
+      if ShellIsInteractive and (Statuses[Index] = StatusInterrupted) then
+        InterruptRequested := True;
+    end
     else
       { A background program keeps running on its own. }
       CloseFile(Processes[Index]);
   end;
+  if OwnsConsole then
+    SetForegroundGroup(StandardInputHandle, CurrentProcessGroup);
 
   Result := Statuses[Count - 1];
   if Negate then
@@ -494,13 +526,13 @@ end;
 { True when a break or continue (or exit) ends the current loop body. }
 function LeaveLoopBody: Boolean;
 begin
-  Result := ExitRequested or (LoopControl <> LoopControlNone);
+  Result := ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone);
 end;
 
 { After a loop body: returns True if the loop itself must stop. }
 function LoopMustStop: Boolean;
 begin
-  if ExitRequested then
+  if ExitRequested or InterruptRequested then
     Exit(True);
   if LoopControl = LoopControlNone then
     Exit(False);
@@ -582,7 +614,7 @@ begin
     end
     else
       Result := ExecuteNode(Child);
-    if ExitRequested or (LoopControl <> LoopControlNone) then
+    if ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone) then
       Break;
   end;
 end;
@@ -599,7 +631,7 @@ begin
     NodeAndOr:
       begin
         Result := ExecuteNode(Node^.Left);
-        if not ExitRequested and (LoopControl = LoopControlNone) then
+        if not ExitRequested and not InterruptRequested and (LoopControl = LoopControlNone) then
         begin
           if (Node^.AndOrOperator = OperatorAnd) and (Result = 0) then
             Result := ExecuteNode(Node^.Right)
@@ -612,7 +644,7 @@ begin
     NodeIf:
       begin
         Result := ExecuteNode(Node^.Condition);
-        if ExitRequested or (LoopControl <> LoopControlNone) then
+        if ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone) then
           Exit;
         if Result = 0 then
           Result := ExecuteNode(Node^.Body)

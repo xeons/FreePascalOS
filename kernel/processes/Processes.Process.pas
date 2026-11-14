@@ -64,6 +64,12 @@ type
     TerminationRequested: Boolean;
     TerminationCode: LongInt;
 
+    { Processes started together (a shell pipeline) share a group, which
+      the console's Ctrl-C ends as a whole. }
+    GroupId: QWord;
+    { Ctrl-C does not end this process (an interactive shell). }
+    IgnoresInterrupt: Boolean;
+
     { Links running user processes, so they can be found by id. }
     RunningLink: TListEntry;
     IsRegistered: Boolean;
@@ -89,6 +95,12 @@ procedure LockProcessRegistry;
 procedure UnlockProcessRegistry;
 { Requires the registry lock. Returns nil if no such process runs. }
 function FindRunningProcessLocked(ProcessId: QWord): PProcess;
+
+type
+  TProcessVisitor = procedure(Process: PProcess; Context: Pointer);
+
+{ Calls Visit for every running process. Requires the registry lock. }
+procedure VisitRunningProcessesLocked(Visit: TProcessVisitor; Context: Pointer);
 
 implementation
 
@@ -194,6 +206,20 @@ end;
 procedure UnlockProcessRegistry;
 begin
   ReleaseMutex(RegistryLock);
+end;
+
+procedure VisitRunningProcessesLocked(Visit: TProcessVisitor; Context: Pointer);
+var
+  Entry: PListEntry;
+  Next: PListEntry;
+begin
+  Entry := RunningProcesses.Next;
+  while Entry <> @RunningProcesses do
+  begin
+    Next := Entry^.Next;
+    Visit(PProcess(ContainingRecord(Entry, FieldOffset(PProcess(nil)^.RunningLink))), Context);
+    Entry := Next;
+  end;
 end;
 
 function FindRunningProcessLocked(ProcessId: QWord): PProcess;
