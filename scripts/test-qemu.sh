@@ -87,8 +87,17 @@ RULES
     disk_arguments+=(-drive format=raw,file=blkdebug:"$fault_rules":"$fault_disk_image")
 fi
 
+# ACCEL=kvm runs on the real processor (faster, and with the processor's
+# own behaviour, such as SIMD floating point exceptions, which QEMU's
+# emulator does not raise).
+if [[ "${ACCEL:-}" == kvm ]]; then
+    cpu_arguments=(-accel kvm -cpu host)
+else
+    cpu_arguments=(-cpu max)
+fi
+
 timeout "$timeout_seconds" qemu-system-x86_64 \
-    -machine q35 -cpu max -m 512M -smp ${PROCESSORS:-4} \
+    -machine q35 "${cpu_arguments[@]}" -m 512M -smp ${PROCESSORS:-4} \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
     -drive if=pflash,format=raw,file="$firmware_variables" \
     "${disk_arguments[@]}" \

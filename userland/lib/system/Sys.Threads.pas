@@ -15,7 +15,9 @@
       if it was the last one, the process ends with its exit code, but
       without unit finalization or the output flush, so the main thread
       should wait for the others and end the process normally,
-    * a thread that crashes ends the whole process (exit code 139).
+    * a thread that crashes (an access violation, ...) raises the runtime
+      error in that thread; uncaught, it ends the whole process (with
+      runtime error 216 for an access violation).
 
   Threads are started through the runtime's thread manager (BeginThread
   in System), which gives each its threadvars, heap and exception state;

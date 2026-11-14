@@ -632,6 +632,37 @@ of -15 .. 15, kept when the nice value changes; only root may raise a
 thread above its process. The runtime's `SuspendThread`, `ResumeThread`,
 `KillThread`, `ThreadSetPriority` and `ThreadGetPriority` use these calls.
 
+### Processor exceptions
+
+A processor exception in user mode that the kernel does not resolve
+itself (demand paging and copy on write are resolved) is passed to the
+program, as Windows does with its user mode exception dispatcher. The
+runtime registers a dispatcher at startup (`CallSetExceptionDispatcher`).
+The kernel (`Processes.UserExceptions`) writes a `TAbiExceptionRecord` -
+the exception code (access violation, integer divide, invalid
+instruction, x87 or SIMD floating point, alignment, ...), the faulting
+instruction and address, the access kind, and every register - onto the
+thread's stack below the red zone, and lets the thread continue in the
+dispatcher with RDI pointing at the record, as if the faulting
+instruction had called it. System's `SysDispatchException` reports with
+`CallExceptionDispatched`, maps the exception to Free Pascal's runtime
+error (216 access violation, 200 integer division, 208 float division,
+205/206/207 float overflow, underflow and invalid operation, ...), resets
+the floating point unit for floating point exceptions, and raises the
+runtime error: with SysUtils an exception try/except can catch
+(`EAccessViolation`, `EDivByZero`, `EZeroDivide`, ...), without it the
+program ends with "Runtime error 216" and that status. TThread catches an
+exception escaping a thread (`FatalException`).
+
+The kernel ends the process instead (status 139, logged) when no
+dispatcher is registered, when the record does not fit on the stack (a
+stack overflow, which the log names) or when a thread raises an
+exception again before its dispatcher reported - the dispatcher itself
+failed. CR0.NE and CR4.OSXMMEXCPT are set, so unmasked x87 and SSE
+exceptions arrive as #MF and #XM; Free Pascal leaves invalid operation,
+division by zero and overflow unmasked. (QEMU's emulator does not raise
+SIMD floating point exceptions; under KVM they arrive.)
+
 ### Ending other programs
 
 A program cannot be stopped at an arbitrary point in the kernel, where it

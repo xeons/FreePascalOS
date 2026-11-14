@@ -126,7 +126,38 @@ const
     behind a handle (TAbiAttributeChanges). }
   CallSetHandleAttributes = 66;
 
+  { Processor exceptions in user mode (an access violation, a division by
+    zero, ...). (Address): the process's exception dispatcher, 0 for
+    none. With one, a thread that raises an exception continues at
+    Address with RDI pointing at a TAbiExceptionRecord on its stack
+    (below the 128 byte red zone), as if called; the dispatcher must not
+    return. Without one, or if the record does not fit on the stack, the
+    process ends with status ExitStatusException. }
+  CallSetExceptionDispatcher = 67;
+  { (): the dispatcher has taken over the record. A thread raising an
+    exception again before this ends the process: its dispatcher failed. }
+  CallExceptionDispatched = 68;
+
   CallCount = 70;
+
+  { Exit status of a process ended by an exception nobody dispatched. }
+  ExitStatusException = 139;
+
+  { TAbiExceptionRecord.Code }
+  ExceptionAccessViolation = 1;
+  ExceptionIntegerDivide = 2;
+  ExceptionIntegerOverflow = 3;
+  ExceptionBoundRange = 4;
+  ExceptionIllegalInstruction = 5;
+  ExceptionBreakpoint = 6;
+  ExceptionFloatingPoint = 7;
+  ExceptionSimdFloatingPoint = 8;
+  ExceptionAlignment = 9;
+  ExceptionPrivilegedOperation = 10;
+  { TAbiExceptionRecord.Access for access violations }
+  AccessKindRead = 0;
+  AccessKindWrite = 1;
+  AccessKindExecute = 8;
 
   { CallWaitForProcessChange: the process stopped instead of exiting. }
   WaitStatusStopped = 256;
@@ -403,3 +434,25 @@ type
     GroupId: Int64;
   end;
   PAbiProcessCreation = ^TAbiProcessCreation;
+
+  { The registers of a thread when it raised an exception. }
+  TAbiContext = record
+    Rax, Rbx, Rcx, Rdx, Rsi, Rdi, Rbp, Rsp: QWord;
+    R8, R9, R10, R11, R12, R13, R14, R15: QWord;
+    Rip: QWord;
+    Rflags: QWord;
+  end;
+  PAbiContext = ^TAbiContext;
+
+  { What the exception dispatcher gets (CallSetExceptionDispatcher). }
+  TAbiExceptionRecord = record
+    Code: LongWord;
+    { Access violations: AccessKind*. }
+    Access: LongWord;
+    { The instruction that raised it (for a breakpoint, the one after). }
+    Address: QWord;
+    { Access violations: the address that could not be accessed. }
+    FaultAddress: QWord;
+    Context: TAbiContext;
+  end;
+  PAbiExceptionRecord = ^TAbiExceptionRecord;

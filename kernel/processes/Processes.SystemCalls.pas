@@ -53,6 +53,7 @@ uses
   Processes.AffinityCalls,
   Processes.ThreadControl,
   Processes.FileAttributeCalls,
+  Processes.UserExceptions,
   { Job control. }
   Processes.Stopping;
 
@@ -586,6 +587,9 @@ begin
     { --- Attributes of open files and volumes (Processes.FileAttributeCalls) --- }
     CallSetHandleAttributes: Result := PerformSetHandleAttributes(Int64(Argument0), Argument1);
     CallGetVolumeInformation: Result := PerformGetVolumeInformation(Argument0, Argument1);
+    { --- Processor exceptions (Processes.UserExceptions) --- }
+    CallSetExceptionDispatcher: Result := PerformSetExceptionDispatcher(Argument0);
+    CallExceptionDispatched: Result := PerformExceptionDispatched;
   else
     Result := Failure(ErrorNotImplemented);
   end;

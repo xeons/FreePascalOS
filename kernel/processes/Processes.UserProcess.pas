@@ -27,9 +27,6 @@ uses
   Processes.Process,
   Processes.Handles;
 
-const
-  ExitCodeForException = 139;
-
 type
   TProcessStartup = record
     KernelPath: PChar;
@@ -96,6 +93,7 @@ uses
   Processes.ImageInitializers,
   Processes.Thread,
   Processes.UserThread,
+  Processes.UserExceptions,
   Debug.Output;
 
 const
@@ -119,10 +117,13 @@ begin
     ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
 end;
 
-procedure HandleUserException(Frame: PTrapFrame; Description: PChar);
+procedure HandleUserException(Frame: PTrapFrame; Description: PChar; FaultAddress: QWord);
 var
   Process: PProcess;
 begin
+  { Normally the program's exception dispatcher takes it. }
+  if DispatchUserException(Frame, FaultAddress) then
+    Exit;
   Process := CurrentProcess;
   DebugBeginMessage;
   DebugWriteTag('process');
@@ -136,14 +137,16 @@ begin
   if TrapFrameVector(Frame) = 14 then
   begin
     DebugWrite(' accessing ');
-    DebugWriteAddress(ReadControlRegister2);
+    DebugWriteAddress(FaultAddress);
+    if LooksLikeStackOverflow(Frame, FaultAddress) then
+      DebugWrite(' (stack overflow)');
   end;
   DebugWriteLine(', terminated');
   DebugEndMessage;
 
   { Exceptions arrive with interrupts off; ending the process may block. }
   EnableInterrupts;
-  ExitCurrentProcess(ExitCodeForException);
+  ExitCurrentProcess(ExitStatusException);
 end;
 
 procedure InitializeUserProcesses;

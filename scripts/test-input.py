@@ -46,7 +46,9 @@ serial_log = os.path.join(work, 'serial.log')
 for suffix in ('.in', '.out'):
     os.mkfifo(os.path.join(work, 'serial' + suffix))
 qemu = subprocess.Popen([
-    'qemu-system-x86_64', '-machine', 'q35', '-cpu', 'max', '-m', '512M', '-smp', os.environ.get('PROCESSORS', '4'),
+    'qemu-system-x86_64', '-machine', 'q35',
+    *(['-accel', 'kvm', '-cpu', 'host'] if os.environ.get('ACCEL') == 'kvm' else ['-cpu', 'max']),
+    '-m', '512M', '-smp', os.environ.get('PROCESSORS', '4'),
     '-drive', 'if=pflash,format=raw,readonly=on,file=' + firmware_code,
     '-drive', 'if=pflash,format=raw,file=' + os.path.join(work, 'vars.fd'),
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),

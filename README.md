@@ -51,7 +51,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - **The Free Pascal runtime library** for user programs: strings,
   dynamic arrays, exceptions, classes, generics, threads (TThread),
   SysUtils, Classes, StrUtils, DateUtils, Math, Variants and the rest of
-  the RTL, built from the compiler's sources with the operating system
+  the RTL; processor exceptions become catchable exceptions
+  (EAccessViolation, EDivByZero, EZeroDivide, ...); built from the
+  compiler's sources with the operating system
   parts on this kernel (`rtl/fpc`); ordinary Free Pascal programs build
   and run.
 - **User mode**: processes with their own address spaces (demand-zero
@@ -149,6 +151,10 @@ make test         # boot headless, run every self test and coretest,
 make image        # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
 ```
+
+`ACCEL=kvm make test` (or `make run`) uses KVM: much faster, and with the
+processor's own behaviour where QEMU's emulator differs (it does not raise
+SIMD floating point exceptions). `PROCESSORS=N` sets the processor count.
 
 Type into the QEMU window (PS/2 keyboard) or the terminal (serial port).
 After startup the kernel runs `/bin/sh` from the system volume (the volume

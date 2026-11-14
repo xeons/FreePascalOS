@@ -1,6 +1,9 @@
 {
-  Boot processor setup for x86-64: descriptor tables, interrupt table and
-  processor identification.
+  Boot processor setup for x86-64: descriptor tables, interrupt table,
+  floating point and SIMD control, and processor identification.
+
+  The secondary processors start with the boot processor's CR0 and CR4
+  (Kernel.Arch.ProcessorStartup), so what is set here holds for all.
 }
 unit Kernel.Arch.Processor;
 
@@ -49,10 +52,35 @@ begin
   Result := Registers.Ebx shr 24;
 end;
 
+const
+  { FXSAVE/FXRSTOR and SSE instructions are allowed; unmasked SIMD
+    floating point exceptions raise #XM (without this bit they would
+    raise #UD, so programs could not tell a division by zero from an
+    invalid instruction). }
+  Cr4OsFxsr = QWord(1) shl 9;
+  Cr4OsXmmExceptions = QWord(1) shl 10;
+  { x87: unmasked exceptions raise #MF (native error reporting) instead
+    of signalling the legacy FERR# line nobody listens to; WAIT checks
+    for them; no emulation. }
+  Cr0MonitorCoprocessor = QWord(1) shl 1;
+  Cr0Emulation = QWord(1) shl 2;
+  Cr0NumericError = QWord(1) shl 5;
+
+{ Floating point exceptions a program leaves unmasked reach it as #MF
+  (x87) and #XM (SSE), which the kernel passes on
+  (Processes.UserExceptions). }
+procedure EnableFloatingPointExceptions;
+begin
+  WriteControlRegister0((ReadControlRegister0 or Cr0MonitorCoprocessor or Cr0NumericError) and
+    not Cr0Emulation);
+  WriteControlRegister4(ReadControlRegister4 or Cr4OsFxsr or Cr4OsXmmExceptions);
+end;
+
 procedure InitializeBootProcessor;
 var
   Processor: PProcessor;
 begin
+  EnableFloatingPointExceptions;
   Processor := InitializeBootProcessorBlock(ReadInitialApicId);
   InitializeBootDescriptorTables(Processor^.DescriptorTables);
   { After the segment registers were reloaded (which clears GS). }

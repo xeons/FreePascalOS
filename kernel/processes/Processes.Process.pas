@@ -103,6 +103,9 @@ type
     StopLock: TSpinLock;
     { Asked to stop: each user thread waits at its next safe point. }
     StopRequested: Boolean;
+    { Where threads continue after a processor exception
+      (Processes.UserExceptions); 0 for none. }
+    ExceptionDispatcher: QWord;
     { Threads waiting to be continued. }
     StoppedThreads: Int64;
     { Every active user thread is waiting: the process has stopped. }

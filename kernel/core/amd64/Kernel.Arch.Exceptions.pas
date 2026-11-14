@@ -1,10 +1,12 @@
 {
   Handling of x86-64 processor exceptions.
 
-  There is no user mode yet, so any exception other than a breakpoint is a
-  kernel bug: the handler prints a description and a register dump, then
-  stops the system. Breakpoints are reported and execution continues,
-  which makes "int 3" a handy way to check that interrupts work.
+  Page faults go to the resolver first (demand paging, copy on write).
+  An exception raised by user mode code goes to the user exception
+  handler (Processes.UserProcess), which passes it to the program or ends
+  it. Any other exception in the kernel is a kernel bug: the handler
+  prints a description and a register dump, then stops the system;
+  breakpoints are reported and execution continues.
 }
 unit Kernel.Arch.Exceptions;
 
@@ -20,9 +22,12 @@ type
     providing a page on demand), so the instruction can be retried. }
   TPageFaultResolver = function(FaultAddress: QWord; ErrorCode: QWord): Boolean;
 
-  { Deals with an exception raised by user mode code; normally ends the
-    process. Must not return. }
-  TUserExceptionHandler = procedure(Frame: PTrapFrame; Description: PChar);
+  { Deals with an exception raised by user mode code: changes Frame so
+    the thread continues in the program's exception dispatcher, or ends
+    the process. FaultAddress is the address a page fault could not
+    access (0 for other exceptions). Called with interrupts disabled;
+    returns with them disabled. }
+  TUserExceptionHandler = procedure(Frame: PTrapFrame; Description: PChar; FaultAddress: QWord);
 
 procedure SetPageFaultResolver(Resolver: TPageFaultResolver);
 procedure SetUserExceptionHandler(Handler: TUserExceptionHandler);
@@ -230,7 +235,9 @@ begin
 
   if ArchFrameIsFromUserMode(Frame) and Assigned(UserExceptionHandler) then
   begin
-    UserExceptionHandler(Frame, ExceptionNames[Vector]);
+    if Vector <> VectorPageFault then
+      FaultAddress := 0;
+    UserExceptionHandler(Frame, ExceptionNames[Vector], FaultAddress);
     Exit;
   end;
 

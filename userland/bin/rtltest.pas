@@ -379,6 +379,145 @@ begin
   Check((DiskSize(0) > 0) and (DiskFree(0) >= 0) and (DiskSize(0) >= DiskFree(0)), 'DiskSize, DiskFree');
 end;
 
+{ --- Processor exceptions ------------------------------------------------- }
+
+type
+  TFaultingThread = class(TThread)
+  private
+    FCaught: string;
+    FCatch: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Catch: Boolean);
+    property Caught: string read FCaught;
+  end;
+
+{ Values the compiler cannot see through, so the faults happen at run time. }
+function Zero: Integer;
+begin
+  Result := StrToInt('0');
+end;
+
+function NilPointer: PInteger;
+begin
+  Result := PInteger(PtrUInt(Zero));
+end;
+
+procedure TouchNil;
+begin
+  NilPointer^ := 1;
+end;
+
+constructor TFaultingThread.Create(Catch: Boolean);
+begin
+  FCatch := Catch;
+  inherited Create(False);
+end;
+
+procedure TFaultingThread.Execute;
+begin
+  if not FCatch then
+    TouchNil;
+  try
+    TouchNil;
+  except
+    on E: EAccessViolation do
+      FCaught := E.ClassName;
+  end;
+end;
+
+{ The class of the exception Action raises, or ''. }
+function ExceptionClassOf(Action: TProcedure): string;
+begin
+  Result := '';
+  try
+    Action();
+  except
+    on E: Exception do
+      Result := E.ClassName;
+  end;
+end;
+
+procedure DivideIntegerByZero;
+var
+  Quotient: Integer;
+begin
+  Quotient := 10 div Zero;
+  if Quotient = 0 then
+    Exit;
+end;
+
+procedure DivideFloatByZero;
+var
+  Quotient: Double;
+begin
+  Quotient := 1.0 / Zero;
+  if Quotient = 0 then
+    Exit;
+end;
+
+{ Extended arithmetic is done by the x87 unit. }
+procedure DivideExtendedByZero;
+var
+  Quotient: Extended;
+begin
+  Quotient := 1;
+  Quotient := Quotient / Zero;
+  { x87 exceptions are reported at the next waiting instruction. }
+  asm
+    fwait
+  end;
+  if Quotient = 0 then
+    Exit;
+end;
+
+const
+  FloatZeroDivideFlag = $04;
+
+procedure ExecuteInvalidInstruction; assembler;
+asm
+  ud2
+end;
+
+procedure TestProcessorExceptions;
+var
+  Index: Integer;
+  AllCaught: Boolean;
+  Faulting: TFaultingThread;
+  Raised: string;
+begin
+  Check(ExceptionClassOf(@TouchNil) = 'EAccessViolation', 'a nil dereference raises EAccessViolation');
+  Check(ExceptionClassOf(@DivideIntegerByZero) = 'EDivByZero', 'integer division by zero raises EDivByZero');
+  Raised := ExceptionClassOf(@DivideFloatByZero);
+  if (Raised = '') and ((GetMXCSR and FloatZeroDivideFlag) <> 0) then
+  begin
+    { The processor set the flag instead of trapping (QEMU's emulator
+      does that); nothing the kernel could pass on. }
+    SetMXCSR(GetMXCSR and not FloatZeroDivideFlag);
+    Check(True, 'SSE division by zero: the processor does not trap, not checked');
+  end
+  else
+    Check(Raised = 'EZeroDivide', 'SSE division by zero raises EZeroDivide (got ' + Raised + ')');
+  Raised := ExceptionClassOf(@DivideExtendedByZero);
+  Check(Raised = 'EZeroDivide', 'x87 division by zero raises EZeroDivide (got ' + Raised + ')');
+  Check(Abs(1.0 / (Zero + 4) - 0.25) < 1e-12, 'floating point works after an exception');
+  Check(ExceptionClassOf(@ExecuteInvalidInstruction) = 'EAccessViolation', 'an invalid instruction raises EAccessViolation');
+  AllCaught := True;
+  for Index := 1 to 5 do
+    AllCaught := AllCaught and (ExceptionClassOf(@TouchNil) = 'EAccessViolation');
+  Check(AllCaught, 'exceptions one after another, without system calls between');
+
+  Faulting := TFaultingThread.Create(True);
+  Faulting.WaitFor;
+  Check(Faulting.Caught = 'EAccessViolation', 'an exception caught inside a thread');
+  Faulting.Free;
+  Faulting := TFaultingThread.Create(False);
+  Faulting.WaitFor;
+  Check(Faulting.FatalException is EAccessViolation, 'an uncaught exception ends a TThread (FatalException)');
+  Faulting.Free;
+end;
+
 procedure TestSystem;
 var
   Now1: TDateTime;
@@ -408,6 +547,7 @@ begin
   TestThreads;
   TestThreadControl;
   TestFileControl;
+  TestProcessorExceptions;
   TestSystem;
   RemoveDir(WorkDirectory);
   WriteLn('rtltest: ', Passed, ' passed, ', Failed, ' failed');

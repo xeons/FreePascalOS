@@ -23,7 +23,8 @@
   With an option it instead checks how a process ends with threads:
 
     --exit-with-threads-running   Halt(7) while threads spin and sleep
-    --crash-in-thread             a thread dereferences nil (status 139)
+    --crash-in-thread             a thread dereferences nil (runtime
+                                  error 216 ends the whole process)
     --last-thread-exits           the main thread exits first; the
                                   process ends with the last thread's
                                   exit code (5)

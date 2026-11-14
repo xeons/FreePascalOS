@@ -175,6 +175,13 @@ how the existing pieces fit together.
 - [ ] TThread.Suspend from another thread (the kernel supports it; Classes
       still uses the Unix TThread, which refuses)
 - [ ] Time zones (the runtime reports UTC)
+- [x] Processor exceptions passed to the program (exception record on the
+      user stack, runtime dispatcher); catchable EAccessViolation,
+      EDivByZero, EZeroDivide, ...; x87 and SIMD exceptions enabled
+- [ ] Continuing after an exception at a changed context (NtContinue style),
+      for debuggers and fault-tolerant code
+- [ ] Stack overflow as a catchable exception (needs a reserve below the
+      stack guard, so the record still fits)
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion

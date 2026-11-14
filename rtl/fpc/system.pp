@@ -17,6 +17,14 @@
     systhrd.inc   the thread manager
     sysdl.inc     libraries loaded at run time
 
+  Processor exceptions (an access violation, a division by zero, a
+  floating point exception) are passed to the program by the kernel: the
+  thread continues in SysDispatchException, which turns them into the
+  runtime errors Free Pascal uses everywhere (216, 200, 208, ...). With
+  SysUtils those become exceptions (EAccessViolation, EDivByZero,
+  EZeroDivide, ...) that try/except can catch; without it the program
+  ends with "Runtime error 216" as usual.
+
   The unit is part of libsystem.so, shared by every program, so one
   heap, one exception state per thread and one set of standard files
   serve the program and all its libraries. The compiler puts the unit
@@ -218,6 +226,73 @@ begin
 end;
 
 {*****************************************************************************
+                             Processor exceptions
+*****************************************************************************}
+
+const
+  { Exception flags of the x87 status word and of MXCSR (same order). }
+  FloatInvalid = $01;
+  FloatDenormal = $02;
+  FloatZeroDivide = $04;
+  FloatOverflow = $08;
+  FloatUnderflow = $10;
+
+function ReadX87StatusWord: Word; assembler; nostackframe;
+asm
+  fnstsw %ax
+end;
+
+{ The runtime error for a floating point exception with these flags. }
+function FloatRuntimeError(Flags: LongWord): LongInt;
+begin
+  if (Flags and FloatZeroDivide) <> 0 then
+    FloatRuntimeError := 208
+  else if (Flags and FloatOverflow) <> 0 then
+    FloatRuntimeError := 205
+  else if (Flags and FloatUnderflow) <> 0 then
+    FloatRuntimeError := 206
+  else
+    FloatRuntimeError := 207;
+end;
+
+{ The runtime error Free Pascal reports for an exception. }
+function RuntimeErrorFor(const ExceptionRecord: TAbiExceptionRecord): LongInt;
+begin
+  case ExceptionRecord.Code of
+    ExceptionAccessViolation, ExceptionIllegalInstruction: RuntimeErrorFor := 216;
+    ExceptionPrivilegedOperation: RuntimeErrorFor := 218;
+    ExceptionIntegerDivide: RuntimeErrorFor := 200;
+    ExceptionIntegerOverflow: RuntimeErrorFor := 215;
+    ExceptionBoundRange: RuntimeErrorFor := 201;
+    ExceptionAlignment: RuntimeErrorFor := 214;
+    ExceptionFloatingPoint: RuntimeErrorFor := FloatRuntimeError(ReadX87StatusWord);
+    ExceptionSimdFloatingPoint: RuntimeErrorFor := FloatRuntimeError(GetMXCSR);
+  else
+    RuntimeErrorFor := 212;
+  end;
+end;
+
+{ Where the kernel lets a thread continue after a processor exception,
+  with the record on the thread's stack. Raises the runtime error (an
+  exception with SysUtils) as if the faulting instruction had done so;
+  never returns. }
+procedure SysDispatchException(ExceptionRecord: PAbiExceptionRecord);
+var
+  Information: TAbiExceptionRecord;
+  Error: LongInt;
+begin
+  Information := ExceptionRecord^;
+  SystemCall(CallExceptionDispatched, 0, 0, 0, 0, 0, 0);
+  Error := RuntimeErrorFor(Information);
+  { Clear the floating point exception, or the next instruction using
+    the unit would raise it again. }
+  if Information.Code in [ExceptionFloatingPoint, ExceptionSimdFloatingPoint] then
+    SysResetFPU;
+  HandleErrorAddrFrame(Error, CodePointer(Information.Address), Pointer(Information.Context.Rbp));
+  Halt(Error);
+end;
+
+{*****************************************************************************
                        Misc. system dependent functions
 *****************************************************************************}
 
@@ -267,6 +342,7 @@ const
   MainStackSize = 8 * 1024 * 1024;
 
 begin
+  SystemCall(CallSetExceptionDispatcher, QWord(@SysDispatchException), 0, 0, 0, 0, 0);
   IsConsole := True;
   StackLength := CheckInitialStkLen(MainStackSize);
   StackBottom := InitialStackPointer - StackLength;

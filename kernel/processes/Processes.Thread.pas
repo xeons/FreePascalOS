@@ -55,6 +55,9 @@ type
     RequestedExitCode: LongInt;
     { Added to the priority its process's nice value gives. }
     PriorityOffset: LongInt;
+    { Sent to the exception dispatcher, which has not yet said it took
+      over (Processes.UserExceptions). }
+    IsDispatchingException: Boolean;
   end;
 
 var

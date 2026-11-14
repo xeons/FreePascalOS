@@ -43,7 +43,11 @@ case "$architecture" in
             /usr/share/edk2/x64/OVMF_VARS.4m.fd \
             /usr/share/OVMF/x64/OVMF_VARS.4m.fd \
             /usr/share/OVMF/OVMF_VARS.fd) || { echo "OVMF variable store not found"; exit 1; }
-        machine_arguments=(-machine q35 -cpu max)
+        if [[ "${ACCEL:-}" == kvm ]]; then
+            machine_arguments=(-machine q35 -accel kvm -cpu host)
+        else
+            machine_arguments=(-machine q35 -cpu max)
+        fi
         ;;
     *)
         echo "Unsupported architecture: $architecture"
