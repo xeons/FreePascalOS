@@ -63,6 +63,7 @@ uses
   Io.DeviceFiles,
   Kernel.IoSelfTest,
   Kernel.Timers,
+  Processes.ImageSections,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
   Drivers.DiskStatistics,
@@ -162,6 +163,7 @@ begin
   InitializeProcessManager;
   InitializeThreadManager;
   InitializeFileObjects;
+  InitializeImageSections;
   InitializeConsole;
   InitializeIoManager;
   InitializeDeviceFiles;

@@ -6,7 +6,10 @@
   section listing the libraries they need (DT_NEEDED), their symbols and
   their relocations. Loading a program means:
 
-    1. Map the program's loadable segments into the process.
+    1. Map the program's loadable segments into the process. The image
+       is read once and kept as a section (Processes.ImageSections): its
+       pages are shared by every process that maps it, writable ones
+       copy on write.
     2. For every needed library not loaded yet, find it in /lib of the
        system volume and map it at the next free library address; repeat
        for its own needs.
@@ -124,6 +127,7 @@ uses
   FileSystem.Types,
   FileSystem.Files,
   Processes.AddressSpace,
+  Processes.ImageSections,
   Processes.Paths;
 
 const
@@ -133,11 +137,13 @@ const
   LibraryDirectory = '/lib/';
 
 type
-  { An ELF file read into kernel memory while it is being loaded. }
+  { An ELF file in kernel memory while it is being loaded: the bytes of
+    its section, which the load holds a use of. }
   TImageFile = record
     Contents: PByte;
     Size: QWord;
     Header: PElf64FileHeader;
+    Section: PImageSection;
   end;
 
   TDynamicInformation = record
@@ -162,20 +168,25 @@ type
 
 { --- Files ----------------------------------------------------------- }
 
-function ReadWholeFile(KernelPath: PChar; out Image: TImageFile): LongInt;
+{ Reads the whole file into kernel memory, with its identity. }
+function ReadFileContents(KernelPath: PChar; out Contents: PByte; out Size: QWord;
+  out Identity: TImageIdentity): LongInt;
 var
   OpenedFile: POpenFile;
   Information: TNodeInformation;
   Status: TFileSystemStatus;
   BytesRead: QWord;
 begin
-  Image.Contents := nil;
-  Image.Size := 0;
+  Contents := nil;
+  Size := 0;
   Status := OpenPath(KernelPath, OpenedFile);
   if Status <> StatusSuccess then
     Exit(ErrorNotFound);
 
   GetFileInformation(OpenedFile, Information);
+  Identity.NodeNumber := Information.NodeNumber;
+  Identity.SizeInBytes := Information.SizeInBytes;
+  Identity.ModificationTime := Information.ModificationTime;
   if (Information.Kind <> NodeKindFile) or (Information.SizeInBytes < SizeOf(TElf64FileHeader)) or
      (Information.SizeInBytes > MaximumImageSize) then
   begin
@@ -183,24 +194,38 @@ begin
     Exit(ErrorBadExecutable);
   end;
 
-  Image.Contents := PByte(AllocateKernelMemory(Information.SizeInBytes));
-  if Image.Contents = nil then
+  Contents := PByte(AllocateKernelMemory(Information.SizeInBytes));
+  if Contents = nil then
   begin
     CloseFile(OpenedFile);
     Exit(ErrorOutOfMemory);
   end;
-  Status := ReadFromFile(OpenedFile, Image.Contents, Information.SizeInBytes, BytesRead);
+  Status := ReadFromFile(OpenedFile, Contents, Information.SizeInBytes, BytesRead);
   CloseFile(OpenedFile);
   if (Status <> StatusSuccess) or (BytesRead <> Information.SizeInBytes) then
   begin
-    FreeKernelMemory(Image.Contents);
-    Image.Contents := nil;
+    FreeKernelMemory(Contents);
+    Contents := nil;
     Exit(ErrorIo);
   end;
-
-  Image.Size := Information.SizeInBytes;
-  Image.Header := PElf64FileHeader(Image.Contents);
+  Size := Information.SizeInBytes;
   Result := ErrorNone;
+end;
+
+{ The identity of the file at KernelPath, without reading it. }
+function ReadIdentity(KernelPath: PChar; out Identity: TImageIdentity): Boolean;
+var
+  OpenedFile: POpenFile;
+  Information: TNodeInformation;
+begin
+  Result := OpenPath(KernelPath, OpenedFile) = StatusSuccess;
+  if not Result then
+    Exit;
+  GetFileInformation(OpenedFile, Information);
+  CloseFile(OpenedFile);
+  Identity.NodeNumber := Information.NodeNumber;
+  Identity.SizeInBytes := Information.SizeInBytes;
+  Identity.ModificationTime := Information.ModificationTime;
 end;
 
 function HeaderIsValid(const Image: TImageFile): Boolean;
@@ -266,6 +291,100 @@ begin
   Result := HighestPageEnd > LowestPage;
 end;
 
+procedure UseSection(Section: PImageSection; out Image: TImageFile);
+begin
+  Image.Section := Section;
+  Image.Contents := Section^.Contents;
+  Image.Size := Section^.Size;
+  Image.Header := PElf64FileHeader(Section^.Contents);
+end;
+
+{ Copies the file data of every loadable segment into the section's
+  pages (the rest of them stays zero, as bss must). }
+procedure FillSectionPages(const Image: TImageFile);
+var
+  Index: Integer;
+  ProgramHeader: PElf64ProgramHeader;
+  Offset: QWord;
+  Remaining: QWord;
+  Source: PByte;
+  Piece: QWord;
+begin
+  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+  begin
+    ProgramHeader := ProgramHeaderAt(Image, Index);
+    if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.FileSize = 0) then
+      Continue;
+    Offset := ProgramHeader^.VirtualAddress - Image.Section^.LowestPage;
+    Source := Image.Contents + ProgramHeader^.FileOffset;
+    Remaining := ProgramHeader^.FileSize;
+    while Remaining > 0 do
+    begin
+      Piece := PageSize - (Offset and PageOffsetMask);
+      if Piece > Remaining then
+        Piece := Remaining;
+      CopyMemory(SectionPage(Image.Section, Offset div PageSize) + (Offset and PageOffsetMask), Source, Piece);
+      Offset := Offset + Piece;
+      Source := Source + Piece;
+      Remaining := Remaining - Piece;
+    end;
+  end;
+end;
+
+{ Finds or builds the section of KernelPath; the image then refers to
+  it, with a use held (ReleaseImageSection when done). }
+function AcquireImage(KernelPath: PChar; out Image: TImageFile): LongInt;
+var
+  Identity: TImageIdentity;
+  Section: PImageSection;
+  Contents: PByte;
+  Size: QWord;
+  LowestPage: QWord;
+  HighestPageEnd: QWord;
+  Index: Integer;
+  ProgramHeader: PElf64ProgramHeader;
+begin
+  ZeroMemory(@Image, SizeOf(Image));
+  if not ReadIdentity(KernelPath, Identity) then
+    Exit(ErrorNotFound);
+  Section := FindImageSection(KernelPath, Identity);
+  if Section <> nil then
+  begin
+    UseSection(Section, Image);
+    Exit(ErrorNone);
+  end;
+
+  Result := ReadFileContents(KernelPath, Contents, Size, Identity);
+  if Result <> ErrorNone then
+    Exit;
+  Image.Contents := Contents;
+  Image.Size := Size;
+  Image.Header := PElf64FileHeader(Contents);
+  if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) then
+  begin
+    FreeKernelMemory(Contents);
+    Exit(ErrorBadExecutable);
+  end;
+  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+  begin
+    ProgramHeader := ProgramHeaderAt(Image, Index);
+    if (ProgramHeader^.SegmentType = ProgramHeaderTypeLoad) and
+       (ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Size) then
+    begin
+      FreeKernelMemory(Contents);
+      Exit(ErrorBadExecutable);
+    end;
+  end;
+
+  Section := CreateImageSection(KernelPath, Identity, Contents, Size, LowestPage,
+    (HighestPageEnd - LowestPage) div PageSize);
+  if Section = nil then
+    Exit(ErrorOutOfMemory);
+  UseSection(Section, Image);
+  FillSectionPages(Image);
+  Result := ErrorNone;
+end;
+
 function SegmentAttributes(Flags: LongWord): LongWord;
 begin
   Result := RegionReadable;
@@ -275,9 +394,9 @@ begin
     Result := Result or RegionExecutable;
 end;
 
-{ Maps every page of the image with exactly the attributes of the
-  segments covering it, creating one region per run of equal pages, and
-  copies the file contents in. }
+{ Maps every page of the image, from its section, with exactly the
+  attributes of the segments covering it, creating one region per run of
+  equal pages. }
 function MapSegments(Space: PAddressSpace; const Image: TImageFile; Bias: QWord;
   LowestPage, HighestPageEnd: QWord): LongInt;
 var
@@ -320,7 +439,8 @@ begin
     RunStart := PageIndex;
     while (PageIndex < PageCount) and (PageAttributes[PageIndex] = PageAttributes[RunStart]) do
     begin
-      Result := CommitPage(Space, Bias + LowestPage + PageIndex * PageSize, PageAttributes[PageIndex]);
+      Result := MapSharedPage(Space, Bias + LowestPage + PageIndex * PageSize,
+        Image.Section^.Pages[PageIndex], PageAttributes[PageIndex]);
       if Result <> ErrorNone then
         Break;
       Inc(PageIndex);
@@ -330,21 +450,6 @@ begin
         PageAttributes[RunStart], RegionKindImage, False);
   end;
   FreeKernelMemory(PageAttributes);
-  if Result <> ErrorNone then
-    Exit;
-
-  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
-  begin
-    ProgramHeader := ProgramHeaderAt(Image, Index);
-    if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.FileSize = 0) then
-      Continue;
-    if ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Image.Size then
-      Exit(ErrorBadExecutable);
-    Result := WriteIntoAddressSpace(Space, Bias + ProgramHeader^.VirtualAddress,
-      Image.Contents + ProgramHeader^.FileOffset, ProgramHeader^.FileSize);
-    if Result <> ErrorNone then
-      Exit;
-  end;
 end;
 
 { --- Thread-local storage -------------------------------------------- }
@@ -655,7 +760,7 @@ begin
   if List^.Count >= MaximumModules then
     Exit(ErrorOutOfMemory);
 
-  Result := ReadWholeFile(KernelPath, Image);
+  Result := AcquireImage(KernelPath, Image);
   if Result <> ErrorNone then
     Exit;
   Module := nil;
@@ -711,7 +816,7 @@ begin
   if (Result = ErrorNone) and (FindThreadLocalSegment(Image) <> nil) then
     Result := PlaceThreadLocalStorage(List, Module, FindThreadLocalSegment(Image), Bias);
 
-  FreeKernelMemory(Image.Contents);
+  ReleaseImageSection(Image.Section);
 
   if Result <> ErrorNone then
   begin
@@ -818,7 +923,45 @@ begin
   Result := ErrorNone;
 end;
 
-function ApplyRelocation(Process: PProcess; Module: PLoadedModule; const Relocation: TElf64Rela): LongInt;
+type
+  { Writes relocated values into the process, keeping a pointer to the
+    page last written: relocations come sorted by address, so most land
+    in the same page as the one before. }
+  TRelocationWriter = record
+    Space: PAddressSpace;
+    PageAddress: QWord;
+    Window: PByte;
+  end;
+
+procedure BeginRelocationWriting(out Writer: TRelocationWriter; Space: PAddressSpace);
+begin
+  Writer.Space := Space;
+  Writer.PageAddress := High(QWord);
+  Writer.Window := nil;
+end;
+
+function WriteRelocatedValue(var Writer: TRelocationWriter; Target: QWord; Data: Pointer;
+  Size: QWord): LongInt;
+begin
+  { A value across a page boundary takes the general path. }
+  if RoundDownToPage(Target) <> RoundDownToPage(Target + Size - 1) then
+    Exit(WriteIntoAddressSpace(Writer.Space, Target, Data, Size));
+  if RoundDownToPage(Target) <> Writer.PageAddress then
+  begin
+    Result := WritablePageWindow(Writer.Space, Target, Writer.Window);
+    if Result <> ErrorNone then
+    begin
+      Writer.PageAddress := High(QWord);
+      Exit;
+    end;
+    Writer.PageAddress := RoundDownToPage(Target);
+  end;
+  CopyMemory(Writer.Window + (Target - Writer.PageAddress), Data, Size);
+  Result := ErrorNone;
+end;
+
+function ApplyRelocation(Process: PProcess; Module: PLoadedModule; const Relocation: TElf64Rela;
+  var Writer: TRelocationWriter): LongInt;
 var
   List: PModuleList;
   Kind: LongWord;
@@ -885,7 +1028,7 @@ begin
         if Result <> ErrorNone then
           Exit;
         Value32 := LongWord(Value);
-        Exit(WriteIntoAddressSpace(Process^.AddressSpace, Target, @Value32, SizeOf(Value32)));
+        Exit(WriteRelocatedValue(Writer, Target, @Value32, SizeOf(Value32)));
       end;
     RelocationCopy:
       begin
@@ -902,7 +1045,7 @@ begin
     Exit(ErrorBadExecutable);
   end;
 
-  Result := WriteIntoAddressSpace(Process^.AddressSpace, Target, @Value, SizeOf(Value));
+  Result := WriteRelocatedValue(Writer, Target, @Value, SizeOf(Value));
 end;
 
 function RelocatePendingModules(Process: PProcess): LongInt;
@@ -911,6 +1054,7 @@ var
   ModuleIndex: Integer;
   Module: PLoadedModule;
   RelocationIndex: QWord;
+  Writer: TRelocationWriter;
 begin
   List := ModuleList(Process);
   for ModuleIndex := 0 to List^.Count - 1 do
@@ -919,9 +1063,10 @@ begin
     if Module^.IsRelocated then
       Continue;
     RelocationIndex := 0;
+    BeginRelocationWriting(Writer, Process^.AddressSpace);
     while RelocationIndex < Module^.RelocationCount do
     begin
-      Result := ApplyRelocation(Process, Module, PElf64Rela(Module^.Relocations)[RelocationIndex]);
+      Result := ApplyRelocation(Process, Module, PElf64Rela(Module^.Relocations)[RelocationIndex], Writer);
       if Result <> ErrorNone then
         Exit;
       Inc(RelocationIndex);

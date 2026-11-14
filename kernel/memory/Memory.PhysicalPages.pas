@@ -9,6 +9,12 @@
 
   The database itself is placed in the first usable memory region large
   enough to hold it, and is reached through the physical memory window.
+
+  A page can be shared, mapped in several address spaces at once (the
+  pages of program and library images, Processes.ImageSections). Every
+  extra holder takes a reference (ReferencePhysicalPage); freeing the
+  page drops one, and only the last holder's free returns it to the free
+  list.
 }
 unit Memory.PhysicalPages;
 
@@ -48,7 +54,13 @@ function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 { Like AllocatePhysicalPage, but the page is filled with zeros. }
 function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 
+{ Gives the page back, or drops one reference if it is shared. }
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
+
+{ One more holder of an allocated page. }
+procedure ReferencePhysicalPage(PhysicalAddress: TPhysicalAddress);
+{ True if more than one holder has the page. }
+function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;
 
 function PageUsageOf(PhysicalAddress: TPhysicalAddress): TPageUsage;
 
@@ -82,6 +94,8 @@ type
   TPageFrame = record
     NextFreeFrame: QWord;
     Usage: TPageUsage;
+    { Holders besides the first. }
+    ExtraReferences: LongWord;
   end;
   PPageFrame = ^TPageFrame;
 
@@ -173,6 +187,7 @@ begin
   while (Frame < FirstFrame + Count) and (Frame < FrameCount) do
   begin
     FrameDatabase[Frame].Usage := Usage;
+    FrameDatabase[Frame].ExtraReferences := 0;
     Inc(Frame);
   end;
 end;
@@ -281,6 +296,7 @@ begin
   FreeListHead := FrameDatabase[Frame].NextFreeFrame;
   FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
   FrameDatabase[Frame].Usage := Usage;
+  FrameDatabase[Frame].ExtraReferences := 0;
   Dec(FreePageCount);
 
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
@@ -322,8 +338,41 @@ begin
       end;
   end;
 
-  PushFreeFrame(Frame);
+  if FrameDatabase[Frame].ExtraReferences > 0 then
+    Dec(FrameDatabase[Frame].ExtraReferences)
+  else
+    PushFreeFrame(Frame);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function CheckedFrame(PhysicalAddress: TPhysicalAddress): QWord;
+begin
+  Result := PhysicalAddress shr PageShift;
+  if (Result >= FrameCount) or ((PhysicalAddress and PageOffsetMask) <> 0) then
+    KernelPanicWithCode(PanicOutOfPhysicalMemory,
+      'invalid physical page address', PhysicalAddress, 0, 0, 0);
+end;
+
+procedure ReferencePhysicalPage(PhysicalAddress: TPhysicalAddress);
+var
+  PreviousLevel: TPriorityLevel;
+  Frame: QWord;
+begin
+  Frame := CheckedFrame(PhysicalAddress);
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  if FrameDatabase[Frame].Usage = PageUsageFree then
+  begin
+    ReleaseSpinLock(DatabaseLock, PreviousLevel);
+    KernelPanicWithCode(PanicOutOfPhysicalMemory,
+      'referencing a free physical page', PhysicalAddress, 0, 0, 0);
+  end;
+  Inc(FrameDatabase[Frame].ExtraReferences);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;
+begin
+  Result := FrameDatabase[CheckedFrame(PhysicalAddress)].ExtraReferences > 0;
 end;
 
 function ClaimLowPhysicalPages(PageCount: QWord): TPhysicalAddress;

@@ -5,7 +5,11 @@
   ranges of user addresses with fixed attributes. Pages of most regions
   are provided on demand: the first touch of an address in such a region
   raises a page fault, and the fault resolver maps a fresh zero filled
-  page. Pages of program images are mapped eagerly by the loader.
+  page. Pages of program images are mapped eagerly by the loader, from
+  the image's shared pages (Processes.ImageSections): read-only pages are
+  simply shared, writable ones are copy on write - the first write, by
+  the program or by the kernel (relocations, WriteIntoAddressSpace),
+  gives the process its own copy of that page.
 
   Layout:
 
@@ -95,6 +99,10 @@ function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
 function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
+{ Maps the shared page Physical at Address (taking a reference to it):
+  read-only, or copy on write if Attributes include RegionWritable. }
+function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
+  Attributes: LongWord): LongInt;
 
 { Called on a page fault in user space; True if a page was provided. }
 function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
@@ -109,6 +117,11 @@ function WriteIntoAddressSpace(Space: PAddressSpace; Address: QWord; Source: Poi
   Length: QWord): LongInt;
 function ReadFromAddressSpace(Space: PAddressSpace; Address: QWord; Destination: Pointer;
   Length: QWord): LongInt;
+{ A kernel pointer to the page holding Address, made writable (provided
+  if not touched yet, copied if copy on write). For the loader, writing
+  many values into pages it just mapped: the pointer stays valid only as
+  long as nothing unmaps the page. }
+function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
 
 implementation
 
@@ -393,6 +406,94 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
+function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
+  Attributes: LongWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+  Mapping: LongWord;
+begin
+  Mapping := MappingAttributesFor(Attributes);
+  if (Attributes and RegionWritable) <> 0 then
+    Mapping := Mapping or MappingCopyOnWrite;
+  ReferencePhysicalPage(Physical);
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if MapPageInAddressSpace(Space^.Root, RoundDownToPage(Address), Physical, Mapping) then
+  begin
+    Inc(Space^.CommittedPages);
+    Result := ErrorNone;
+  end
+  else
+    Result := ErrorOutOfMemory;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if Result <> ErrorNone then
+    FreePhysicalPage(Physical);
+end;
+
+{ Gives the process its own, writable copy of a copy on write page
+  (or, if nobody else holds the page any more, just makes it writable). }
+function BreakCopyOnWriteLocked(Space: PAddressSpace; PageAddress: QWord;
+  Shared: TPhysicalAddress): LongInt;
+var
+  Index: Integer;
+  Attributes: LongWord;
+  Copy: TPhysicalAddress;
+begin
+  Index := FindRegionIndex(Space, PageAddress);
+  if Index < 0 then
+    Exit(ErrorBadAddress);
+  Attributes := Space^.Regions[Index].Attributes;
+  if PhysicalPageIsShared(Shared) then
+  begin
+    Copy := AllocatePhysicalPage(PageUsageGeneral);
+    if Copy = 0 then
+      Exit(ErrorOutOfMemory);
+    CopyMemory(PhysicalToVirtual(Copy), PhysicalToVirtual(Shared), PageSize);
+  end
+  else
+    Copy := Shared;
+  { Unmapping invalidates the old translation everywhere; the copy then
+    replaces this space's reference to the shared page. }
+  UnmapPageInAddressSpace(Space^.Root, PageAddress);
+  if Copy <> Shared then
+    FreePhysicalPage(Shared);
+  if not MapPageInAddressSpace(Space^.Root, PageAddress, Copy, MappingAttributesFor(Attributes)) then
+  begin
+    FreePhysicalPage(Copy);
+    Dec(Space^.CommittedPages);
+    Exit(ErrorOutOfMemory);
+  end;
+  Result := ErrorNone;
+end;
+
+function RegionIsWritableLocked(Space: PAddressSpace; Address: QWord): Boolean;
+var
+  Index: Integer;
+begin
+  Index := FindRegionIndex(Space, Address);
+  Result := (Index >= 0) and ((Space^.Regions[Index].Attributes and RegionWritable) <> 0);
+end;
+
+function ResolveCopyOnWriteFault(Space: PAddressSpace; Address: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Physical: TPhysicalAddress;
+  IsCopyOnWrite: Boolean;
+begin
+  Result := False;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if QueryPageInAddressSpace(Space^.Root, RoundDownToPage(Address), Physical, IsCopyOnWrite) then
+  begin
+    if not IsCopyOnWrite then
+      { Another thread of the process copied it meanwhile (the page of a
+        writable region is now writable): the write can be retried. }
+      Result := RegionIsWritableLocked(Space, Address)
+    else
+      Result := BreakCopyOnWriteLocked(Space, RoundDownToPage(Address),
+        RoundDownToPage(Physical)) = ErrorNone;
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
 function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
 var
   Index: Integer;
@@ -403,9 +504,14 @@ begin
   Result := False;
   if (Space = nil) or (Address >= UserSpaceLimit) then
     Exit;
-  { A fault on a present page is a protection violation, not a missing page. }
+  { A write to a present page is fine if it is a copy on write one; any
+    other fault on a present page is a protection violation. }
   if (ErrorCode and PageFaultWasPresent) <> 0 then
+  begin
+    if (ErrorCode and PageFaultWasWrite) <> 0 then
+      Result := ResolveCopyOnWriteFault(Space, Address);
     Exit;
+  end;
 
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   { Another thread of the process may have provided the page meanwhile. }
@@ -458,13 +564,23 @@ begin
 end;
 
 { Returns a kernel pointer to Address in Space, providing the page if it
-  is an on-demand page that has not been touched yet. }
-function PageInWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
+  is an on-demand page that has not been touched yet, and giving the
+  process its own copy first if it is to be written and copy on write. }
+function PageInWindow(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
+  out Window: PByte): LongInt;
 var
   PhysicalAddress: TPhysicalAddress;
   Index: Integer;
+  IsCopyOnWrite: Boolean;
 begin
   Window := nil;
+  if ForWrite and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) and
+     IsCopyOnWrite then
+  begin
+    Result := BreakCopyOnWriteLocked(Space, RoundDownToPage(Address), RoundDownToPage(PhysicalAddress));
+    if Result <> ErrorNone then
+      Exit;
+  end;
   if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
   begin
     Index := FindRegionIndex(Space, Address);
@@ -494,7 +610,7 @@ begin
       ChunkBytes := Length;
     { The page must not go away while it is being copied. }
     PreviousLevel := AcquireSpinLock(Space^.Lock);
-    Result := PageInWindow(Space, Address, Window);
+    Result := PageInWindow(Space, Address, IsWrite, Window);
     if Result = ErrorNone then
     begin
       if IsWrite then
@@ -528,6 +644,15 @@ function ReadFromAddressSpace(Space: PAddressSpace; Address: QWord; Destination:
   Length: QWord): LongInt;
 begin
   Result := TransferWithAddressSpace(Space, Address, PByte(Destination), Length, False);
+end;
+
+function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := PageInWindow(Space, RoundDownToPage(Address), True, Window);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 end.

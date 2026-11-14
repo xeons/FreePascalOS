@@ -28,6 +28,11 @@ const
   MappingExecutable = LongWord(1) shl 1;
   MappingUser = LongWord(1) shl 2;
   MappingUncached = LongWord(1) shl 3;
+  { A shared page that is copied on the first write: mapped read-only and
+    marked, so the page fault resolver knows to copy it
+    (Processes.AddressSpace). Combined with MappingWritable it means
+    "writable once copied". }
+  MappingCopyOnWrite = LongWord(1) shl 4;
 
   { First address above user space. }
   UserSpaceLimit = QWord($0000800000000000);
@@ -88,6 +93,10 @@ procedure UnmapPageRunInAddressSpace(Root: TPhysicalAddress; StartAddress: QWord
   PageCount: LongWord; out PhysicalPages: TPhysicalPageRun);
 function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
   out PhysicalAddress: TPhysicalAddress): Boolean;
+{ Like TranslateInAddressSpace, also telling whether the page is a copy
+  on write one. }
+function QueryPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  out PhysicalAddress: TPhysicalAddress; out IsCopyOnWrite: Boolean): Boolean;
 
 { Makes Root the active address space of this processor. }
 type
@@ -120,6 +129,8 @@ const
   EntryCacheDisable = QWord(1) shl 4;
   EntryLargePage = QWord(1) shl 7;
   EntryGlobal = QWord(1) shl 8;
+  { Available to software: the page is copied on the first write. }
+  EntryCopyOnWrite = QWord(1) shl 9;
   EntryNoExecute = QWord(1) shl 63;
 
   EntryAddressMask = QWord($000FFFFFFFFFF000);
@@ -221,7 +232,9 @@ end;
 function EncodeEntry(PhysicalAddress: TPhysicalAddress; Attributes: LongWord): QWord;
 begin
   Result := (PhysicalAddress and EntryAddressMask) or EntryPresent;
-  if (Attributes and MappingWritable) <> 0 then
+  if (Attributes and MappingCopyOnWrite) <> 0 then
+    Result := Result or EntryCopyOnWrite
+  else if (Attributes and MappingWritable) <> 0 then
     Result := Result or EntryWritable;
   if (Attributes and MappingUser) <> 0 then
     Result := Result or EntryUser;
@@ -334,6 +347,30 @@ begin
     Result := True;
   end;
   ReleaseSpinLock(PageTableLock, PreviousLevel);
+end;
+
+{ The entry mapping VirtualAddress (any level), or 0 if none. }
+function FindEntry(TopLevel: PPageTable; VirtualAddress: QWord; out EntryLevel: Integer): QWord;
+var
+  Table: PPageTable;
+  Level: Integer;
+  Entry: QWord;
+begin
+  Table := TopLevel;
+  EntryLevel := 0;
+  for Level := 4 downto 1 do
+  begin
+    Entry := Table^[TableIndex(VirtualAddress, Level)];
+    if (Entry and EntryPresent) = 0 then
+      Exit(0);
+    if (Level = 1) or ((Entry and EntryLargePage) <> 0) then
+    begin
+      EntryLevel := Level;
+      Exit(Entry);
+    end;
+    Table := TableFromEntry(Entry);
+  end;
+  Result := 0;
 end;
 
 function TranslateInTable(TopLevel: PPageTable; VirtualAddress: QWord;
@@ -495,6 +532,23 @@ var
 begin
   UnmapPageRunInAddressSpace(Root, VirtualAddress, 1, PhysicalPages);
   Result := PhysicalPages[0];
+end;
+
+function QueryPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  out PhysicalAddress: TPhysicalAddress; out IsCopyOnWrite: Boolean): Boolean;
+var
+  Entry: QWord;
+  Level: Integer;
+begin
+  PhysicalAddress := 0;
+  IsCopyOnWrite := False;
+  Entry := FindEntry(TableFromRoot(Root), VirtualAddress, Level);
+  { User pages are always 4 KiB pages. }
+  if (Entry = 0) or (Level <> 1) then
+    Exit(False);
+  PhysicalAddress := (Entry and EntryAddressMask) or (VirtualAddress and PageOffsetMask);
+  IsCopyOnWrite := (Entry and EntryCopyOnWrite) <> 0;
+  Result := True;
 end;
 
 function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
