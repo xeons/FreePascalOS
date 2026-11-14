@@ -1,0 +1,156 @@
+# FreePascalOS build
+#
+#   make            Build the loader and kernel into an EFI system partition tree
+#   make run        Boot it in QEMU with OVMF firmware (serial output on stdio)
+#   make debug      Like run, but wait for GDB on localhost:1234
+#   make image      Build a GPT disk image that can be written to a USB stick
+#   make font       Regenerate the console font include from a PSF font
+#   make clean      Remove all build output
+
+ARCH ?= amd64
+
+FPC ?= fpc
+LD ?= ld
+OBJCOPY ?= objcopy
+OBJDUMP ?= objdump
+
+BUILD_DIRECTORY := build/$(ARCH)
+ESP_DIRECTORY := $(BUILD_DIRECTORY)/esp
+
+ifeq ($(ARCH),amd64)
+  LOADER_TARGET := -Twin64
+  KERNEL_TARGET := -Tlinux
+  EFI_BOOT_FILE := BOOTX64.EFI
+else
+  $(error Architecture '$(ARCH)' is not supported yet)
+endif
+
+# -n      ignore the system wide fpc.cfg (it points at the hosted RTL)
+# -O2     optimize
+# -Si     support inline
+# -vewn   show errors, warnings and notes
+COMMON_FLAGS := -n -O2 -Si -vewn
+
+RTL_LOADER_DIRECTORY := $(BUILD_DIRECTORY)/rtl-loader
+RTL_KERNEL_DIRECTORY := $(BUILD_DIRECTORY)/rtl-kernel
+LOADER_OBJECT_DIRECTORY := $(BUILD_DIRECTORY)/loader
+KERNEL_OBJECT_DIRECTORY := $(BUILD_DIRECTORY)/kernel
+
+LOADER_UNIT_DIRECTORIES := \
+	shared shared/$(ARCH) \
+	boot/uefi boot/uefi/$(ARCH)
+
+KERNEL_UNIT_DIRECTORIES := \
+	shared shared/$(ARCH) \
+	kernel \
+	kernel/core kernel/core/$(ARCH) \
+	kernel/memory kernel/memory/$(ARCH) \
+	kernel/objects \
+	kernel/processes \
+	kernel/runtime kernel/runtime/$(ARCH) \
+	kernel/debug \
+	hal/$(ARCH)
+
+# -WR     emit base relocations so the firmware can load the image anywhere
+# -Xs     strip symbols
+LOADER_FLAGS := $(COMMON_FLAGS) $(LOADER_TARGET) -WR -Xs \
+	-Fu$(RTL_LOADER_DIRECTORY) $(addprefix -Fu,$(LOADER_UNIT_DIRECTORIES)) \
+	-FU$(LOADER_OBJECT_DIRECTORY) -FE$(BUILD_DIRECTORY)
+
+# -g      debug information (for GDB through QEMU)
+# -Cg-    no position independent code
+# -Cn     compile only, the kernel is linked with ld below
+KERNEL_FLAGS := $(COMMON_FLAGS) $(KERNEL_TARGET) -g -Cg- -Cn \
+	-Fu$(RTL_KERNEL_DIRECTORY) $(addprefix -Fu,$(KERNEL_UNIT_DIRECTORIES)) \
+	-FU$(KERNEL_OBJECT_DIRECTORY)
+
+KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
+
+LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
+KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
+
+.PHONY: all loader kernel esp run debug image font clean check-kernel
+
+all: esp
+
+# --- Runtime library -------------------------------------------------------
+
+define build-rtl
+	@mkdir -p $(1)
+	$(FPC) $(COMMON_FLAGS) $(2) -Us -FU$(1) rtl/system.pas
+	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/objpas.pas
+	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/sysinit.pas
+	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/fpintres.pas
+endef
+
+$(RTL_LOADER_DIRECTORY)/system.ppu: $(wildcard rtl/*.pas)
+	$(call build-rtl,$(RTL_LOADER_DIRECTORY),$(LOADER_TARGET))
+
+$(RTL_KERNEL_DIRECTORY)/system.ppu: $(wildcard rtl/*.pas)
+	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),$(KERNEL_TARGET))
+
+# --- Loader ----------------------------------------------------------------
+
+loader: $(LOADER_EFI)
+
+$(LOADER_EFI): $(RTL_LOADER_DIRECTORY)/system.ppu FORCE
+	@mkdir -p $(LOADER_OBJECT_DIRECTORY)
+	$(FPC) $(LOADER_FLAGS) boot/uefi/OsLoader.pas
+	$(OBJCOPY) --subsystem efi-app $(BUILD_DIRECTORY)/OsLoader.exe $@
+
+# --- Kernel ----------------------------------------------------------------
+
+kernel: $(KERNEL_ELF)
+
+$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu FORCE
+	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
+	$(FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+	$(LD) -nostdlib -static --gc-sections -z max-page-size=4096 \
+		-T $(KERNEL_LINKER_SCRIPT) -o $@ \
+		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o
+	@$(MAKE) --no-print-directory check-kernel
+
+# The kernel does not save floating point / SIMD registers on interrupts or
+# context switches, so the compiler must never have used them.
+check-kernel:
+	@if $(OBJDUMP) -d $(KERNEL_ELF) | grep -qE '%(x|y|z)mm[0-9]'; then \
+		echo "error: kernel code uses SSE registers, which the kernel does not preserve"; \
+		$(OBJDUMP) -d $(KERNEL_ELF) | grep -E '%(x|y|z)mm[0-9]' | head; \
+		exit 1; \
+	fi
+
+# --- EFI system partition --------------------------------------------------
+
+esp: $(LOADER_EFI) $(KERNEL_ELF)
+	@mkdir -p $(ESP_DIRECTORY)/EFI/BOOT $(ESP_DIRECTORY)/FreePascalOS
+	cp $(LOADER_EFI) $(ESP_DIRECTORY)/EFI/BOOT/$(EFI_BOOT_FILE)
+	cp $(KERNEL_ELF) $(ESP_DIRECTORY)/FreePascalOS/kernel.elf
+
+image: esp
+	scripts/make-disk-image.sh $(ESP_DIRECTORY) $(BUILD_DIRECTORY)/FreePascalOS.img
+
+run: esp
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY)
+
+debug: esp
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug
+
+# --- Tools -----------------------------------------------------------------
+
+FONT_SOURCE ?= /usr/share/kbd/consolefonts/ter-116n.psf.gz
+FONT_TOOL := build/tools/PsfToPascal
+
+$(FONT_TOOL): tools/PsfToPascal/PsfToPascal.pas
+	@mkdir -p build/tools
+	$(FPC) -O2 -FEbuild/tools -FUbuild/tools $<
+
+FONT_UNPACKED := build/tools/$(basename $(notdir $(FONT_SOURCE)))
+
+font: $(FONT_TOOL)
+	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)
+	$(FONT_TOOL) $(FONT_UNPACKED) kernel/debug/Debug.ConsoleFont.inc
+
+clean:
+	rm -rf build
+
+FORCE:

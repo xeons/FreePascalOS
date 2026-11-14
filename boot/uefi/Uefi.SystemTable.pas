@@ -1,0 +1,139 @@
+{
+  UEFI system table and boot services table (UEFI specification, chapter 4).
+
+  Boot services the loader does not call are declared as plain pointers so
+  that the record layout stays correct without describing every signature.
+}
+unit Uefi.SystemTable;
+
+{$mode objfpc}
+
+interface
+
+uses
+  Uefi.Base,
+  Uefi.TextOutput;
+
+type
+  TEfiAllocatePages = function(AllocationType: LongWord; MemoryType: LongWord;
+    PageCount: QWord; Memory: PEfiPhysicalAddress): TEfiStatus;
+  TEfiFreePages = function(Memory: TEfiPhysicalAddress; PageCount: QWord): TEfiStatus;
+  TEfiGetMemoryMap = function(MemoryMapSize: PQWord; MemoryMap: PEfiMemoryDescriptor;
+    MapKey: PQWord; DescriptorSize: PQWord; DescriptorVersion: PLongWord): TEfiStatus;
+  TEfiAllocatePool = function(PoolType: LongWord; Size: QWord; Buffer: Pointer): TEfiStatus;
+  TEfiFreePool = function(Buffer: Pointer): TEfiStatus;
+  TEfiHandleProtocol = function(Handle: TEfiHandle; Protocol: PEfiGuid;
+    ProtocolInterface: Pointer): TEfiStatus;
+  TEfiExitBootServices = function(ImageHandle: TEfiHandle; MapKey: QWord): TEfiStatus;
+  TEfiStall = function(Microseconds: QWord): TEfiStatus;
+  TEfiSetWatchdogTimer = function(Timeout: QWord; WatchdogCode: QWord;
+    DataSize: QWord; WatchdogData: PWideChar): TEfiStatus;
+  TEfiLocateProtocol = function(Protocol: PEfiGuid; Registration: Pointer;
+    ProtocolInterface: Pointer): TEfiStatus;
+
+  TEfiBootServices = record
+    Header: TEfiTableHeader;
+
+    { Task priority services }
+    RaiseTpl: Pointer;
+    RestoreTpl: Pointer;
+
+    { Memory services }
+    AllocatePages: TEfiAllocatePages;
+    FreePages: TEfiFreePages;
+    GetMemoryMap: TEfiGetMemoryMap;
+    AllocatePool: TEfiAllocatePool;
+    FreePool: TEfiFreePool;
+
+    { Event and timer services }
+    CreateEvent: Pointer;
+    SetTimer: Pointer;
+    WaitForEvent: Pointer;
+    SignalEvent: Pointer;
+    CloseEvent: Pointer;
+    CheckEvent: Pointer;
+
+    { Protocol handler services }
+    InstallProtocolInterface: Pointer;
+    ReinstallProtocolInterface: Pointer;
+    UninstallProtocolInterface: Pointer;
+    HandleProtocol: TEfiHandleProtocol;
+    Reserved: Pointer;
+    RegisterProtocolNotify: Pointer;
+    LocateHandle: Pointer;
+    LocateDevicePath: Pointer;
+    InstallConfigurationTable: Pointer;
+
+    { Image services }
+    LoadImage: Pointer;
+    StartImage: Pointer;
+    ExitImage: Pointer;
+    UnloadImage: Pointer;
+    ExitBootServices: TEfiExitBootServices;
+
+    { Miscellaneous services }
+    GetNextMonotonicCount: Pointer;
+    Stall: TEfiStall;
+    SetWatchdogTimer: TEfiSetWatchdogTimer;
+
+    { Driver support services }
+    ConnectController: Pointer;
+    DisconnectController: Pointer;
+
+    { Open and close protocol services }
+    OpenProtocol: Pointer;
+    CloseProtocol: Pointer;
+    OpenProtocolInformation: Pointer;
+
+    { Library services }
+    ProtocolsPerHandle: Pointer;
+    LocateHandleBuffer: Pointer;
+    LocateProtocol: TEfiLocateProtocol;
+    InstallMultipleProtocolInterfaces: Pointer;
+    UninstallMultipleProtocolInterfaces: Pointer;
+
+    { CRC services }
+    CalculateCrc32: Pointer;
+
+    { Miscellaneous services }
+    CopyMem: Pointer;
+    SetMem: Pointer;
+    CreateEventEx: Pointer;
+  end;
+  PEfiBootServices = ^TEfiBootServices;
+
+  TEfiConfigurationTable = record
+    VendorGuid: TEfiGuid;
+    VendorTable: Pointer;
+  end;
+  PEfiConfigurationTable = ^TEfiConfigurationTable;
+
+  TEfiSystemTable = record
+    Header: TEfiTableHeader;
+    FirmwareVendor: PWideChar;
+    FirmwareRevision: LongWord;
+    ConsoleInHandle: TEfiHandle;
+    ConsoleIn: Pointer;
+    ConsoleOutHandle: TEfiHandle;
+    ConsoleOut: PEfiSimpleTextOutputProtocol;
+    StandardErrorHandle: TEfiHandle;
+    StandardError: PEfiSimpleTextOutputProtocol;
+    RuntimeServices: Pointer;
+    BootServices: PEfiBootServices;
+    NumberOfTableEntries: QWord;
+    ConfigurationTable: PEfiConfigurationTable;
+  end;
+  PEfiSystemTable = ^TEfiSystemTable;
+
+const
+  Acpi20TableGuid: TEfiGuid = (
+    Data1: $8868E871; Data2: $E4F1; Data3: $11D3;
+    Data4: ($BC, $22, $00, $80, $C7, $3C, $88, $81));
+
+  Acpi10TableGuid: TEfiGuid = (
+    Data1: $EB9D2D30; Data2: $2D88; Data3: $11D3;
+    Data4: ($9A, $16, $00, $90, $27, $3F, $C1, $4D));
+
+implementation
+
+end.

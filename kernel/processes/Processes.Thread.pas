@@ -1,0 +1,190 @@
+{
+  Thread objects.
+
+  A thread object embeds the scheduler's thread control block and adds
+  what the rest of the system needs: the owning process, the kernel stack
+  allocation, and object manager bookkeeping (name, reference count).
+
+  Reference ownership: a running thread holds one reference to its own
+  object, which is dropped by ReapTerminatedThreads after the thread has
+  exited. CreateSystemThread can return an additional reference to the
+  caller, who must eventually dereference it.
+
+  Thread objects are not entered in the object namespace, since thread
+  names need not be unique; the name is kept in the control block.
+}
+unit Processes.Thread;
+
+{$mode objfpc}
+
+interface
+
+uses
+  Runtime.LinkedList,
+  Memory.KernelStacks,
+  Kernel.Threads,
+  Objects.Manager,
+  Processes.Process;
+
+type
+  PThread = ^TThread;
+  TThread = record
+    ControlBlock: TThreadControlBlock;
+    Process: PProcess;
+    ProcessLink: TListEntry;
+    KernelStack: TKernelStack;
+    OwnsKernelStack: Boolean;
+  end;
+
+var
+  ThreadObjectType: TObjectType;
+
+procedure InitializeThreadManager;
+
+{ Wraps the code that is currently running (the boot path) in a thread
+  object, so the idle thread looks like any other thread. }
+function CreateIdleThreadFromBootContext(BootStackBase, BootStackTop: QWord): PThread;
+
+{ Creates and starts a kernel thread in the system process. If
+  ReturnReference is True the caller receives a referenced pointer to the
+  thread object; otherwise the result must not be used after the thread
+  may have exited. Returns nil on failure. }
+function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
+  Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+
+{ Releases the resources of threads that have exited. Must be called at
+  PassiveLevel; the idle thread does this whenever it runs. }
+procedure ReapTerminatedThreads;
+
+function ThreadFromControlBlock(ControlBlock: PThreadControlBlock): PThread;
+
+implementation
+
+uses
+  Runtime.Text,
+  Kernel.SpinLock,
+  Kernel.PriorityLevel,
+  Kernel.Scheduler,
+  Kernel.Panic;
+
+function ThreadFromProcessLink(Entry: PListEntry): PThread;
+begin
+  Result := PThread(ContainingRecord(Entry, FieldOffset(PThread(nil)^.ProcessLink)));
+end;
+
+function ThreadFromControlBlock(ControlBlock: PThreadControlBlock): PThread;
+begin
+  Result := PThread(ControlBlock^.Owner);
+end;
+
+procedure DeleteThread(ObjectBody: Pointer);
+var
+  Thread: PThread;
+begin
+  Thread := PThread(ObjectBody);
+  if Thread^.OwnsKernelStack then
+    FreeKernelStack(Thread^.KernelStack);
+end;
+
+procedure InitializeThreadManager;
+begin
+  RegisterObjectType(ThreadObjectType, 'Thread', SizeOf(TThread), @DeleteThread);
+end;
+
+procedure AttachToProcess(Thread: PThread; Process: PProcess);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  ReferenceObject(Process);
+  Thread^.Process := Process;
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  InsertAtTail(Process^.Threads, @Thread^.ProcessLink);
+  Inc(Process^.ThreadCount);
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+end;
+
+procedure DetachFromProcess(Thread: PThread);
+var
+  PreviousLevel: TPriorityLevel;
+  Process: PProcess;
+begin
+  Process := Thread^.Process;
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  RemoveListEntry(@Thread^.ProcessLink);
+  Dec(Process^.ThreadCount);
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+  Thread^.Process := nil;
+  DereferenceObject(Process);
+end;
+
+function CreateIdleThreadFromBootContext(BootStackBase, BootStackTop: QWord): PThread;
+var
+  Thread: PThread;
+begin
+  Thread := PThread(CreateObject(ThreadObjectType, nil));
+  if Thread = nil then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the idle thread', 0, 0, 0, 0);
+
+  Thread^.OwnsKernelStack := False;
+  Thread^.KernelStack.Base := BootStackBase;
+  Thread^.KernelStack.Top := BootStackTop;
+
+  Thread^.ControlBlock.StackBase := BootStackBase;
+  Thread^.ControlBlock.StackTop := BootStackTop;
+  Thread^.ControlBlock.ThreadId := 0;
+  Thread^.ControlBlock.Owner := Thread;
+  CopyText(@Thread^.ControlBlock.Name[0], 'Idle', ThreadNameLength);
+  InitializeListHead(Thread^.ControlBlock.SchedulerLink);
+  InitializeListHead(Thread^.ControlBlock.TimerLink);
+
+  AttachToProcess(Thread, SystemProcess);
+  Result := Thread;
+end;
+
+function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
+  Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+var
+  Thread: PThread;
+begin
+  Thread := PThread(CreateObject(ThreadObjectType, nil));
+  if Thread = nil then
+    Exit(nil);
+
+  if not AllocateKernelStack(DefaultKernelStackSize, Thread^.KernelStack) then
+  begin
+    DereferenceObject(Thread);
+    Exit(nil);
+  end;
+  Thread^.OwnsKernelStack := True;
+
+  InitializeThreadControlBlock(@Thread^.ControlBlock, Thread^.KernelStack.Base,
+    Thread^.KernelStack.Top, StartRoutine, StartContext, Priority, Name);
+  Thread^.ControlBlock.ThreadId := AllocateProcessOrThreadId;
+  Thread^.ControlBlock.Owner := Thread;
+
+  AttachToProcess(Thread, SystemProcess);
+
+  { The creation reference becomes the thread's reference to itself. }
+  if ReturnReference then
+    ReferenceObject(Thread);
+
+  StartThread(@Thread^.ControlBlock);
+  Result := Thread;
+end;
+
+procedure ReapTerminatedThreads;
+var
+  ControlBlock: PThreadControlBlock;
+  Thread: PThread;
+begin
+  repeat
+    ControlBlock := TakeTerminatedThread;
+    if ControlBlock = nil then
+      Break;
+    Thread := ThreadFromControlBlock(ControlBlock);
+    DetachFromProcess(Thread);
+    DereferenceObject(Thread);
+  until False;
+end;
+
+end.
