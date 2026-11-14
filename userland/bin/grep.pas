@@ -478,7 +478,7 @@ procedure DropColorOptions;
 var
   Index: Integer;
 begin
-  for Index := 1 to ArgumentCount - 1 do
+  for Index := 1 to ArgumentTotal - 1 do
   begin
     if TextIsEqual(ArgumentValues[Index], '--') then
       Break;

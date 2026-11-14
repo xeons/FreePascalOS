@@ -87,7 +87,8 @@ all: esp
 # --- Runtime library -------------------------------------------------------
 
 # rtl/freestanding holds the System unit of the loader and the kernel,
-# rtl/user the one of user programs; rtl/common the units both need.
+# rtl/common the units both need. User programs get the Free Pascal RTL
+# (rtl/fpc, built by userland/userland.mk).
 # Arguments: output directory, System unit directory, compiler flags.
 define build-rtl
 	@mkdir -p $(1)

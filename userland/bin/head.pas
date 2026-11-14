@@ -13,6 +13,7 @@ program head;
 {$pointermath on}
 
 uses
+  Sys.Environment,
   Runtime.Text,
   Sys.Format,
   Sys.Memory,
@@ -144,7 +145,7 @@ begin
 
   { "head -5 file" is the old way of writing "head -n 5 file". }
   OldStyle := nil;
-  if (ArgumentCount > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
+  if (ArgumentTotal > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
   begin
     OldStyle := ArgumentValues[1] + 1;
     ArgumentValues[1] := '--';

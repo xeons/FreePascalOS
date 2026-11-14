@@ -8,8 +8,8 @@
   characters.
 
   StandardOutput, StandardError and StandardInput are created on first
-  use; the first use of an output stream also registers the flush that
-  runs when the program exits.
+  use; they are flushed when the program ends (this unit's finalization,
+  after the units that use it).
 
   As with the GNU tools, a program whose standard output could not be
   written (echo hello > /dev/full) does not end successfully: if it was
@@ -184,10 +184,10 @@ var
 begin
   NameLength := TextLength(Name);
   Index := 0;
-  while EnvironmentValues[Index] <> nil do
+  while envp[Index] <> nil do
   begin
-    if TextStartsWith(EnvironmentValues[Index], Name) and (EnvironmentValues[Index][NameLength] = '=') then
-      Exit(EnvironmentValues[Index] + NameLength + 1);
+    if TextStartsWith(envp[Index], Name) and (envp[Index][NameLength] = '=') then
+      Exit(envp[Index] + NameLength + 1);
     Inc(Index);
   end;
   Result := nil;
@@ -210,7 +210,6 @@ begin
   begin
     OutputStream := CreateOutputStream(StandardOutputHandle);
     ApplyBufferingRequest(OutputStream, '_STDBUF_O');
-    ExitProcedure := @FlushStandardStreams;
   end;
   Result := OutputStream;
 end;
@@ -223,7 +222,6 @@ begin
     { Errors should appear immediately. }
     ErrorStream^.FlushAtLineEnd := True;
     ApplyBufferingRequest(ErrorStream, '_STDBUF_E');
-    ExitProcedure := @FlushStandardStreams;
   end;
   Result := ErrorStream;
 end;
@@ -419,4 +417,6 @@ begin
   end;
 end;
 
+finalization
+  FlushStandardStreams;
 end.

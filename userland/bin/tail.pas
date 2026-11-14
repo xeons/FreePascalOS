@@ -13,6 +13,7 @@ program tail;
 {$pointermath on}
 
 uses
+  Sys.Environment,
   Runtime.Text,
   Sys.Format,
   Sys.Memory,
@@ -133,7 +134,7 @@ begin
   ShowHeaders := 0;
 
   OldStyle := nil;
-  if (ArgumentCount > 1) and (ArgumentValues[1][0] in ['-', '+']) and IsDigit(ArgumentValues[1][1]) then
+  if (ArgumentTotal > 1) and (ArgumentValues[1][0] in ['-', '+']) and IsDigit(ArgumentValues[1][1]) then
   begin
     OldStyle := ArgumentValues[1];
     ArgumentValues[1] := '--';

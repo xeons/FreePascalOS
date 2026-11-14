@@ -14,6 +14,7 @@ program fmt;
 {$pointermath on}
 
 uses
+  Sys.Environment,
   Runtime.Text,
   Sys.Format,
   Sys.Memory,
@@ -153,7 +154,7 @@ var
 begin
   Width := 75;
   { The old form "fmt -60". }
-  if (ArgumentCount > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
+  if (ArgumentTotal > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
   begin
     if not ParseInteger(ArgumentValues[1] + 1, Width) then
       Fail(1, 'invalid width', []);

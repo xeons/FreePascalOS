@@ -29,42 +29,11 @@ begin
     Result := 0;
 end;
 
+{$include Abi.ErrorMessages.inc}
+
 function ErrorMessage(Code: LongInt): PChar;
 begin
-  case Code of
-    ErrorNone: Result := 'Success';
-    ErrorNotPermitted: Result := 'Operation not permitted';
-    ErrorAccessDenied: Result := 'Permission denied';
-    ErrorNotFound: Result := 'No such file or directory';
-    ErrorNoSuchProcess: Result := 'No such process';
-    ErrorInterrupted: Result := 'Interrupted system call';
-    ErrorTimedOut: Result := 'Connection timed out';
-    ErrorIo: Result := 'Input/output error';
-    ErrorBadExecutable: Result := 'Exec format error';
-    ErrorBadHandle: Result := 'Bad file descriptor';
-    ErrorNoChildProcess: Result := 'No child processes';
-    ErrorOutOfMemory: Result := 'Cannot allocate memory';
-    ErrorBadAddress: Result := 'Bad address';
-    ErrorBusy: Result := 'Device or resource busy';
-    ErrorExists: Result := 'File exists';
-    ErrorCrossVolume: Result := 'Invalid cross-device link';
-    ErrorNotDirectory: Result := 'Not a directory';
-    ErrorIsDirectory: Result := 'Is a directory';
-    ErrorInvalidArgument: Result := 'Invalid argument';
-    ErrorTooManyHandles: Result := 'Too many open files';
-    ErrorNoSpace: Result := 'No space left on device';
-    ErrorIllegalSeek: Result := 'Illegal seek';
-    ErrorReadOnly: Result := 'Read-only file system';
-    ErrorBrokenPipe: Result := 'Broken pipe';
-    ErrorNameTooLong: Result := 'File name too long';
-    ErrorNotImplemented: Result := 'Function not implemented';
-    ErrorDirectoryNotEmpty: Result := 'Directory not empty';
-    ErrorTooManyLinks: Result := 'Too many levels of symbolic links';
-    ErrorUnsupported: Result := 'Operation not supported';
-    ErrorCorrupted: Result := 'Structure needs cleaning';
-  else
-    Result := 'Unknown error';
-  end;
+  Result := AbiErrorMessage(Code);
 end;
 
 end.

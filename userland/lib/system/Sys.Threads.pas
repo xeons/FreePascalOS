@@ -17,6 +17,10 @@
       should wait for the others and end the process normally,
     * a thread that crashes ends the whole process (exit code 139).
 
+  Threads are started through the runtime's thread manager (BeginThread
+  in System), which gives each its threadvars, heap and exception state;
+  TThread (Classes) works the same way.
+
   Locks for shared data are in Sys.Locks. The heap (Sys.Memory) may be
   used from every thread; buffered text output (Sys.Text) is not
   synchronized and should be written by one thread at a time.
@@ -69,36 +73,43 @@ type
 
 procedure ExitThread(ExitCode: LongInt);
 begin
-  ReleaseThreadVariables;
-  while True do
-    SystemCall(CallExitThread, QWord(LongWord(ExitCode)), 0, 0, 0, 0, 0);
+  EndThread(DWord(ExitCode));
+  { EndThread does not return. }
+  while True do ;
 end;
 
-{ The kernel starts every new thread here, with the start record as its
-  argument. }
-procedure ThreadEntry(Start: PThreadStart);
+{ Runs in the new thread (from BeginThread). }
+function ThreadEntry(Parameter: Pointer): PtrInt;
 var
+  Start: PThreadStart;
   Routine: TThreadRoutine;
   Argument: Pointer;
 begin
+  Start := PThreadStart(Parameter);
   Routine := Start^.Routine;
   Argument := Start^.Argument;
   FreeMemory(Start);
-  ExitThread(Routine(Argument));
+  Result := Routine(Argument);
 end;
 
 function CreateThread(Routine: TThreadRoutine; Argument: Pointer; StackSize: QWord): Int64;
 var
   Start: PThreadStart;
+  ThreadId: TThreadID;
+  Handle: TThreadID;
 begin
   Start := PThreadStart(AllocateMemory(SizeOf(TThreadStart)));
   if Start = nil then
     Exit(-ErrorOutOfMemory);
   Start^.Routine := Routine;
   Start^.Argument := Argument;
-  Result := SystemCall(CallCreateThread, QWord(@ThreadEntry), QWord(Start), StackSize, 0, 0, 0);
-  if Result < 0 then
+  Handle := BeginThread(nil, StackSize, @ThreadEntry, Start, 0, ThreadId);
+  if Handle = 0 then
+  begin
     FreeMemory(Start);
+    Exit(-GetLastSystemError);
+  end;
+  Result := Int64(Handle);
 end;
 
 function WaitForThread(Handle: Int64; TimeoutMilliseconds: Int64; out ExitCode: LongInt): Int64;

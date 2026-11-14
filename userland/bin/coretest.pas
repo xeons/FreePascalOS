@@ -48,7 +48,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..276] of TCommandTest = (
+  CommandTests: array[0..277] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -372,6 +372,7 @@ const
     (Command: 'dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; echo $?; dd if=/dev/disk3 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; dd if=/dev/disk3 bs=512 skip=99 count=1 2>/dev/null | wc -c'; ExpectedOutput: '1'#10'512'#10'512'#10; ExpectedStatus: 0),
     (Command: 'echo x > /dev/full; echo $?; echo x 2>&1 > /dev/full | cat; seq 1000 | head -n 1; echo ok > /dev/null; echo $?'; ExpectedOutput: '1'#10'echo: write error: No space left on device'#10'1'#10'0'#10; ExpectedStatus: 0),
     (Command: 'taskset 1 nproc; taskset -c 0 sh -c nproc; sh -c ''taskset -pc 0 $$ | tail -n 1 | cut -d: -f2''; taskset 0x10000000 true 2>/dev/null; echo $?'; ExpectedOutput: '1'#10'1'#10' 0'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'rtltest > rt.log; echo $?; grep FAIL rt.log; tail -n 1 rt.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

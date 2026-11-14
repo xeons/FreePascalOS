@@ -67,8 +67,11 @@ release 3.2.2, so two ordinary targets are borrowed:
 - The **kernel** is compiled for `linux` (System V calling convention, ELF
   objects) and linked by GNU `ld` with `kernel/link/amd64.ld`.
 
-Both are built against `rtl/system.pas`, a minimal System unit with only what
-the compiler insists on. Nothing in the kernel uses the stock runtime library.
+Both are built against `rtl/freestanding/system.pas`, a minimal System unit
+with only what the compiler insists on. Nothing in the kernel uses the stock
+runtime library. User programs are compiled for `linux` too (with `UNIX` and
+`LINUX` undefined) and get the full Free Pascal runtime library, ported to
+this kernel (see "The runtime library").
 Unit initialization sections are never used; every subsystem has an explicit
 `Initialize...` routine called in a defined order from `Kernel.Startup`.
 
@@ -551,11 +554,12 @@ Libraries opened with `LoadLibrary` after startup may not have a TLS
 segment or initializers (`ErrorUnsupported`): the layout is fixed by then.
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
-`FPC_THREADVAR_RELOCATE` with an offset stored in the variable. The System
-unit hands out the offsets at startup from the program's
+`FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
+first thread starts they are plain globals; then the runtime's thread
+manager (`rtl/fpc/systhrd.inc`) hands out the offsets from the program's
 `FPC_THREADVARTABLES` (which covers every unit the program uses, those in
-libraries included) and gives each thread a zeroed threadvar block on its
-first access, kept in the runtime word of its control block.
+libraries included) and gives each thread a zeroed threadvar block, kept
+in the runtime word of its control block.
 
 Initialization code runs in user mode. The kernel collects the
 initializers (DT_INIT, then DT_INIT_ARRAY) of the program and its
@@ -565,8 +569,8 @@ auxiliary vector (`AuxiliaryInitializers` and friends). The System unit
 runs the initializers, then the unit initialization sections listed in
 the program's `INITFINAL` table (the compiler orders it by unit
 dependencies, across libraries), then the main block; at exit it runs the
-unit finalization sections in reverse, the output flush hook and the
-finalizers. Symbols stay bound eagerly when the program is loaded; there
+exit procedures, the unit finalization sections in reverse (`Sys.Streams`
+flushes its buffers in its own) and the finalizers. Symbols stay bound eagerly when the program is loaded; there
 is no lazy PLT binding.
 
 ### System calls
@@ -722,6 +726,22 @@ Programs and libraries are position independent ELF files (`ld -pie` and
 segment, loads every `DT_NEEDED` library from `/lib` (once per process),
 and applies the relocations (RELATIVE, 64, GLOB_DAT, JUMP_SLOT and COPY),
 binding every symbol at load time by searching the modules in load order.
+Libraries are linked with `-Bsymbolic`, so references to their own
+symbols are bound when they are linked and need no lookup (libsystem has
+only RELATIVE relocations). Relocations are applied page by page.
+
+Images are read once and kept as **image sections**
+(`Processes.ImageSections`, up to 32, least recently used dropped first):
+the file's bytes for the loader, and its memory image in physical pages.
+A process maps a section's pages instead of copies: read-only pages are
+shared, writable ones are copy on write. Physical pages carry reference
+counts (`ReferencePhysicalPage`; freeing drops one); a copy on write page
+is mapped read-only with a software bit in its page table entry, and the
+first write - by the program, or by the kernel writing into the process
+(relocations, system call results) - gives the process its own copy, or
+simply makes the page writable if nobody else holds it. A section is
+checked against its file's node number, size and modification time on
+every use, so a replaced program is read again.
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
 
@@ -732,27 +752,28 @@ point, and the initializer and finalizer lists), as on Linux.
 ### The userland
 
 Everything in user mode is Free Pascal, compiled with `-Cg` (position
-independent) against `rtl/user/system.pas`:
+independent) against the Free Pascal runtime library:
 
-- **System unit** – the `syscall` instruction, program start (reads the
-  initial stack, runs library initializers, unit initialization and the
-  main block), exit (unit finalization, a hook so buffered output is
-  flushed, library finalizers), threadvars and `__tls_get_addr`.
+- **The runtime library** (in libsystem.so) – System, ObjPas, SysUtils,
+  Classes, Math, TypInfo, Types, StrUtils, DateUtils, Variants, fgl,
+  Contnrs, SyncObjs and the rest of the generic RTL, from the compiler's
+  sources, with the operating system parts in `rtl/fpc` (see "The runtime
+  library" below).
 - **si_prc** – the `_start` entry point linked into each program; it
-  passes the program's `INITFINAL` and threadvar tables to the System unit.
+  passes the program's unit tables and the initial stack to System.
 - **libcryptography.so** – digests (`Crypto.Md5`, `Crypto.Sha1`,
   `Crypto.Sha256`, `Crypto.Sha512`, `Crypto.Blake2b` behind
   `Crypto.Digests`), `Crypto.Hmac`, `Crypto.Checksums`, `Crypto.Aes`,
   `Crypto.ChaCha20` and `Crypto.Random`. Every algorithm is checked
   against its published test vectors.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
-  `Sys.Memory` (size class heap on top of AllocateMemory), `Sys.Streams`
+  `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
-  (creating, waiting for and ending threads). The heap is thread safe;
-  buffered output is not synchronized.
+  (creating, waiting for and ending threads, through the runtime's thread
+  manager). The heap is thread safe; buffered output is not synchronized.
 - **libtlstest.so** – a small library in assembly with TLS and
   initializer arrays, which Free Pascal does not emit; `threadtest` uses
   it to test the loader and the runtime.
@@ -786,6 +807,41 @@ independent) against `rtl/user/system.pas`:
 Units may have initialization and finalization sections and threadvars
 (see "Thread-local storage and initialization"); the libraries themselves
 have no initialization code of their own.
+
+### The runtime library
+
+User programs get the real Free Pascal runtime library: reference
+counted strings, dynamic arrays, exceptions, classes and interfaces,
+variants, generics, text and typed files, threads, SysUtils, Classes and
+the rest. The generic code comes from the compiler's source tree
+(`FPC_SOURCE`, `/usr/lib/fpc/src` by default: `rtl/inc`, `rtl/x86_64`,
+`rtl/objpas`, `packages/rtl-objpas`, `packages/rtl-unicode` and
+`packages/fcl-base`); `rtl/fpc` holds what depends on this kernel:
+
+- `system.pp` and its include files: `sysos.inc` (the system call and the
+  mapping of Abi errors to `InOutRes`), `sysheap.inc` (memory for the heap
+  manager), `sysfile.inc` and `sysdir.inc` (files and directories, for
+  `Assign`/`Reset`/`Rewrite`, `BlockRead`, `MkDir` and so on),
+  `systhrd.inc` (the thread manager: kernel threads, threadvars,
+  recursive critical sections and events on the wait-on-address call) and
+  `sysdl.inc` (`LoadLibrary`/`GetProcAddress` on the kernel's loader).
+- `si_prc.pas` – program startup.
+- `sysutils.pp` – files, directories, `FindFirst`, file dates, disks,
+  time, environment, `ExecuteProcess` and error messages on the system
+  calls; the Unicode string manager (`fpwidestring` with the root
+  collation) is installed with it, so `AnsiUpperCase`, `AnsiCompareText`
+  and friends handle every character.
+- `classes.pp` and `tthread.inc` – Classes with the portable TThread.
+
+System lives in libsystem.so, shared by the program and all its
+libraries, but the compiler puts the unit tables (`INITFINAL`, the
+threadvar and resource string tables) into the program. As for Free
+Pascal's Windows DLLs, System is built with
+`FPC_HAS_INDIRECT_ENTRY_INFORMATION`: `si_prc` collects the tables and the
+initial stack into a `TEntryInformation` and calls `SysEntry`. Text is
+UTF-8 everywhere (`DefaultSystemCodePage`, file names, the console).
+Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
+exceptions, classes, generics, files, searching, threads, processes).
 
 ## Coding conventions
 

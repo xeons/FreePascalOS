@@ -212,7 +212,7 @@ begin
   Indent := 0;
   Header := nil;
   { "-2" means two columns. }
-  for Index := 1 to ArgumentCount - 1 do
+  for Index := 1 to ArgumentTotal - 1 do
     if (ArgumentValues[Index][0] = '-') and IsDigit(ArgumentValues[Index][1]) then
     begin
       if not ParseInteger(ArgumentValues[Index] + 1, Columns) or (Columns < 1) then

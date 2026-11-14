@@ -48,6 +48,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   PS/2 keyboard and serial console input; interrupt handlers hand work to
   dispatch level through deferred calls. Keyboard layouts us, uk, de and
   fr (kernel option `keymap=`), AltGr, Num Lock and the lock lights.
+- **The Free Pascal runtime library** for user programs: strings,
+  dynamic arrays, exceptions, classes, generics, threads (TThread),
+  SysUtils, Classes, StrUtils, DateUtils, Math, Variants and the rest of
+  the RTL, built from the compiler's sources with the operating system
+  parts on this kernel (`rtl/fpc`); ordinary Free Pascal programs build
+  and run.
 - **User mode**: processes with their own address spaces (demand-zero
   memory, isolated crashes), system calls through `syscall`, per-process
   handle tables, pipes, devices under `/dev` (`null`, `zero`, `full`,
@@ -55,9 +61,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   disk and partition) served by an NT-style I/O manager with driver
   objects, device objects and request packets that complete
   asynchronously (AHCI by MSI interrupt) and can be cancelled, and an ELF
-  loader that
-  maps position independent programs and the shared libraries they need,
-  binding symbols at load time. Programs can also load libraries at run
+  loader that maps position independent programs and the shared
+  libraries they need, binding symbols at load time; images are kept as
+  sections whose pages every process shares (copy on write). Programs can also load libraries at run
   time (`LoadLibrary` / `FindSymbol`), end, stop and continue other
   programs (`kill`, `timeout`, Ctrl-C, Ctrl-Z), wait with timeouts, change permissions, owners and times,
   make hard links, and run in a `chroot`.
@@ -117,7 +123,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 
 ## Requirements
 
-- Free Pascal 3.2.2 (`fpc`, x86-64 compiler)
+- Free Pascal 3.2.2 (`fpc`, x86-64 compiler) and its sources (`fpc-src`,
+  expected in `/usr/lib/fpc/src`; set `FPC_SOURCE` otherwise): user
+  programs get the Free Pascal runtime library built from them
 - GNU binutils (`ld`, `objcopy`, `objdump`)
 - QEMU (`qemu-system-x86_64`) and OVMF UEFI firmware, for running it
 - `sfdisk` and mtools, for `make image`
@@ -125,7 +133,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   `make run` and `make test`
 
 On Arch based systems:
-`pacman -S fpc qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python`.
+`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python`.
 
 ## Building and running
 

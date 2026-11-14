@@ -16,8 +16,26 @@ USER_LIBRARY_OUTPUT := $(USER_BUILD_DIRECTORY)/lib
 USER_PROGRAM_OUTPUT := $(USER_BUILD_DIRECTORY)/bin
 USER_ROOT_DIRECTORY := $(USER_BUILD_DIRECTORY)/root
 
-USER_FLAGS := $(COMMON_FLAGS) -Tlinux -Cg -Cn
+# The compiler targets Linux for its ELF output and calling convention;
+# UNIX and LINUX are undefined so no code takes Linux specific paths.
+USER_FLAGS := $(COMMON_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
+
+# The user runtime library is the Free Pascal RTL: the FreePascalOS parts
+# in rtl/fpc, everything generic from the compiler's source tree.
+FPC_SOURCE ?= /usr/lib/fpc/src
+FPC_RTL_SOURCE := $(FPC_SOURCE)/rtl
+FPC_PACKAGE_SOURCE := $(FPC_SOURCE)/packages
+# Upstream sources warn a lot; only errors are shown for them.
+USER_RTL_FLAGS := -n -O2 -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
+	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/x86_64 \
+	-Fi$(FPC_RTL_SOURCE)/objpas -Fi$(FPC_RTL_SOURCE)/objpas/sysutils -Fi$(FPC_RTL_SOURCE)/objpas/classes \
+	-Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \
+	-Furtl/fpc -Fu$(FPC_RTL_SOURCE)/objpas -Fu$(FPC_RTL_SOURCE)/inc \
+	-Fu$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fu$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \
+	-Fu$(FPC_PACKAGE_SOURCE)/fcl-base/src -Fu$(FPC_PACKAGE_SOURCE)/rtl-unicode/src/inc
 USER_LINK_FLAGS := --hash-style=sysv -z max-page-size=4096 -z noexecstack
+# Libraries bind references to their own symbols when they are linked.
+USER_LIBRARY_LINK_FLAGS := $(USER_LINK_FLAGS) -Bsymbolic
 
 SYSTEM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/system
 CRYPTO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/cryptography
@@ -43,19 +61,26 @@ USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_P
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) \
 	$(USER_PROGRAMS)
 
-$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/common/*) rtl/user/system.pas rtl/user/startup/si_prc.pas
-	$(call build-rtl,$(RTL_USER_DIRECTORY),rtl/user,-Tlinux -Cg -Cn)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/user/startup/si_prc.pas
+$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
+	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
+		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
+	@rm -rf $(RTL_USER_DIRECTORY)
+	@mkdir -p $(RTL_USER_DIRECTORY)
+	$(FPC) $(USER_RTL_FLAGS) -Us -FU$(RTL_USER_DIRECTORY) rtl/fpc/system.pp
+	$(FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/buildrtl.pp
+	$(FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_prc.pas
+	@rm -f $(RTL_USER_DIRECTORY)/buildrtl.o
 
-# libsystem: the user System unit, the shared runtime units and Sys.*.
+# libsystem: the runtime library (System, SysUtils, Classes, ...), the
+# shared runtime units and Sys.*.
 $(SYSTEM_LIBRARY): $(RTL_USER_DIRECTORY)/si_prc.ppu $(wildcard userland/lib/system/*.pas) \
 		shared/Runtime.Memory.pas shared/Runtime.Text.pas shared/Runtime.Time.pas shared/Abi.SystemCalls.pas
 	@rm -rf $(SYSTEM_LIBRARY_OBJECTS)
 	@mkdir -p $(SYSTEM_LIBRARY_OBJECTS) $(USER_LIBRARY_OUTPUT)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fushared -Fuuserland/lib/system \
 		-FU$(SYSTEM_LIBRARY_OBJECTS) userland/lib/system/Sys.Contents.pas
-	$(LD) -shared $(USER_LINK_FLAGS) -soname libsystem.so -o $@ \
-		$(SYSTEM_LIBRARY_OBJECTS)/*.o $(RTL_USER_DIRECTORY)/system.o
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libsystem.so -o $@ \
+		$(SYSTEM_LIBRARY_OBJECTS)/*.o $(filter-out %/si_prc.o,$(wildcard $(RTL_USER_DIRECTORY)/*.o))
 
 # libcryptography: hashes, checksums, ciphers and random numbers.
 $(CRYPTO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/cryptography/*.pas)
@@ -63,7 +88,7 @@ $(CRYPTO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/cryptography/*.pas)
 	@mkdir -p $(CRYPTO_LIBRARY_OBJECTS)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/cryptography \
 		-FU$(CRYPTO_LIBRARY_OBJECTS) userland/lib/cryptography/Crypto.Contents.pas
-	$(LD) -shared $(USER_LINK_FLAGS) -soname libcryptography.so -o $@ \
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcryptography.so -o $@ \
 		$(CRYPTO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libcoreutils: helpers shared by the command line tools.
@@ -72,7 +97,7 @@ $(CORE_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/coreutils/*.pas)
 	@mkdir -p $(CORE_LIBRARY_OBJECTS)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/coreutils -FU$(CORE_LIBRARY_OBJECTS) userland/lib/coreutils/Util.Contents.pas
-	$(LD) -shared $(USER_LINK_FLAGS) -soname libcoreutils.so -o $@ \
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcoreutils.so -o $@ \
 		$(CORE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
 # A library loaded at run time by the tests.
@@ -81,7 +106,7 @@ $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 	@mkdir -p $(USER_BUILD_DIRECTORY)/plugin
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) \
 		-FU$(USER_BUILD_DIRECTORY)/plugin userland/lib/plugin/Plugin.pas
-	$(LD) -shared $(USER_LINK_FLAGS) -soname libplugin.so -o $@ \
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libplugin.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/plugin/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # A library in assembly with thread-local storage and initializers, which
@@ -89,7 +114,7 @@ $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 	@mkdir -p $(USER_BUILD_DIRECTORY)/tlstest
 	as --64 -o $(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o userland/lib/tlstest/TlsTest.s
-	$(LD) -shared $(USER_LINK_FLAGS) -soname libtlstest.so -o $@ \
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtlstest.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # Programs that need more libraries than the usual three.

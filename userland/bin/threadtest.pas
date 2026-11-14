@@ -36,6 +36,7 @@ program threadtest;
 {$pointermath on}
 
 uses
+  Sys.Environment,
   Abi.SystemCalls,
   Runtime.Text,
   Sys.Format,
@@ -472,7 +473,7 @@ begin
 end;
 
 begin
-  if ArgumentCount > 1 then
+  if ArgumentTotal > 1 then
   begin
     if TextIsEqual(ArgumentValues[1], '--exit-with-threads-running') then
       ExitWithThreadsRunning

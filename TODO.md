@@ -49,7 +49,10 @@ how the existing pieces fit together.
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
 - [ ] Demand paging from files (map executables instead of copying them in)
-- [ ] Copy-on-write sharing of library pages between processes
+- [x] Copy-on-write sharing of program and library pages between processes
+      (image sections, reference counted physical pages)
+- [ ] Keep relocated copies of image pages per load address, so loading a
+      library needs no relocation work at all
 
 ## Objects and processes
 
@@ -161,6 +164,13 @@ how the existing pieces fit together.
 - [x] Thread local storage (PT_TLS, static model) and FPC threadvars in user mode
 - [x] Unit initialization and finalization sections; DT_INIT / DT_INIT_ARRAY /
       DT_FINI_ARRAY run in dependency order by the user runtime
+- [x] The Free Pascal runtime library for user programs (System, SysUtils,
+      Classes, StrUtils, DateUtils, Math, Variants, fgl, Contnrs, SyncObjs, ...;
+      threads, Unicode string manager with the root collation); one heap
+- [ ] Kernel calls the runtime still lacks: volume information by path,
+      setting file times by handle, thread priorities, suspending, resuming
+      and ending other threads
+- [ ] Time zones (the runtime reports UTC)
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion

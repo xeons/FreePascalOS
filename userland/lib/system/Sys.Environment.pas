@@ -15,6 +15,8 @@ interface
 function ArgumentTotal: Integer;
 { Argument 0 is the program name. Returns '' past the end. }
 function Argument(Index: Integer): PChar;
+{ All arguments, nil terminated (for passing on to a new process). }
+function ArgumentValues: PPChar;
 
 { Returns nil if the variable is not set. }
 function GetVariable(Name: PChar): PChar;
@@ -44,21 +46,26 @@ var
 
 function ArgumentTotal: Integer;
 begin
-  Result := ArgumentCount;
+  Result := argc;
+end;
+
+function ArgumentValues: PPChar;
+begin
+  Result := argv;
 end;
 
 function Argument(Index: Integer): PChar;
 begin
-  if (Index < 0) or (Index >= ArgumentCount) then
+  if (Index < 0) or (Index >= argc) then
     Result := ''
   else
-    Result := ArgumentValues[Index];
+    Result := argv[Index];
 end;
 
 function OriginalCount: Integer;
 begin
   Result := 0;
-  while EnvironmentValues[Result] <> nil do
+  while envp[Result] <> nil do
     Inc(Result);
 end;
 
@@ -73,13 +80,13 @@ begin
   if VariableCount > MaximumVariables then
     VariableCount := MaximumVariables;
   for Index := 0 to VariableCount - 1 do
-    Variables[Index] := DuplicateText(EnvironmentValues[Index]);
+    Variables[Index] := DuplicateText(envp[Index]);
 end;
 
 function EnvironmentBlock: PPChar;
 begin
   if Variables = nil then
-    Result := EnvironmentValues
+    Result := envp
   else
     Result := Variables;
 end;
