@@ -198,6 +198,8 @@ begin
     KindDirectory: WriteCharacter(StandardOutput, 'd');
     KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
     KindFifo: WriteCharacter(StandardOutput, 'p');
+    KindCharacterDevice: WriteCharacter(StandardOutput, 'c');
+    KindBlockDevice: WriteCharacter(StandardOutput, 'b');
   else
     WriteCharacter(StandardOutput, '-');
   end;

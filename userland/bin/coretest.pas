@@ -48,7 +48,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..267] of TCommandTest = (
+  CommandTests: array[0..272] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -158,7 +158,7 @@ const
     (Command: 'ls -S -r big lines.txt newfile'; ExpectedOutput: 'newfile'#10'lines.txt'#10'big'#10; ExpectedStatus: 0),
     (Command: 'ls -l lines.txt | cut -d " " -f 1,5'; ExpectedOutput: '-rw-r--r-- 24'#10; ExpectedStatus: 0),
     (Command: 'ls -R tree | head -n 4'; ExpectedOutput: 'tree:'#10'a'#10#10'tree/a:'#10; ExpectedStatus: 0),
-    (Command: 'cd /; ls | head -n 3'; ExpectedOutput: 'bin'#10'etc'#10'home'#10; ExpectedStatus: 0),
+    (Command: 'cd /; ls | head -n 3'; ExpectedOutput: 'bin'#10'dev'#10'etc'#10; ExpectedStatus: 0),
     (Command: 'df | head -n 1 | cut -c 1-10'; ExpectedOutput: 'Filesystem'#10; ExpectedStatus: 0),
     (Command: 'ls /volumes > /dev/null && echo volumes-listed'; ExpectedOutput: 'volumes-listed'#10; ExpectedStatus: 0),
     (Command: 'sync && echo synced'; ExpectedOutput: 'synced'#10; ExpectedStatus: 0),
@@ -361,6 +361,13 @@ const
     (Command: 'sleep 1 & kill -STOP $!; sleep 1; jobs; ps -o s= -p $!; kill -CONT %1; wait; echo done $?'; ExpectedOutput: '[1]+  Stopped                 sleep 1'#10'T'#10'done 0'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 & kill -s STOP %1; sleep 1; bg; wait; echo $?'; ExpectedOutput: '[1]+ sleep 1 &'#10'0'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 | cat & sleep 0 & jobs; fg %1; echo fg $?; jobs %2 2>&1; fg 2>&1; echo $?'; ExpectedOutput: '[1]-  Running                 sleep 1 | cat &'#10'[2]+  Running                 sleep 0 &'#10'sleep 1 | cat'#10'fg 0'#10'[2]+  Done                    sleep 0'#10'sh: fg: current: no such job'#10'1'#10; ExpectedStatus: 0),
+
+    { --- devices ----------------------------------------------------- }
+    (Command: 'ls -l /dev/null | cut -c 1-10; stat -c "%F %a" /dev/zero; ls -ld /dev | cut -c 1; test -c /dev/console && echo console'; ExpectedOutput: 'crw-rw-rw-'#10'character special file 666'#10'd'#10'console'#10; ExpectedStatus: 0),
+    (Command: 'head -c 5 /dev/zero | od -An -tx1; head -c 4096 /dev/urandom | wc -c; cat /dev/null | wc -c; echo gone > /dev/null; echo $?'; ExpectedOutput: ' 00 00 00 00 00'#10'4096'#10'0'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'dd if=/dev/zero of=/dev/full count=1 2>/dev/null; echo $?; test "$(ls /dev | grep -c "^disk")" -gt 0 && echo disks; ls /dev | grep -x -e null -e tty -e random'; ExpectedOutput: '1'#10'disks'#10'null'#10'random'#10'tty'#10; ExpectedStatus: 0),
+    (Command: 'test -b /dev/disk1p1 && stat -c "%F %a" /dev/disk1p1; dd if=/dev/disk1p1 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk1p1 bs=1 skip=54 count=5 2>/dev/null'; ExpectedOutput: 'block special file 600'#10'512'#10'FAT12'; ExpectedStatus: 0),
+    (Command: 'dd if=/dev/zero of=/dev/disk1p1 count=1 2>/dev/null; echo $?; su user -c "head -c 1 /dev/disk1p1" 2>/dev/null; echo $?; find /dev -type b -name "disk1p1"'; ExpectedOutput: '1'#10'1'#10'/dev/disk1p1'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

@@ -52,7 +52,7 @@ uses
   FileSystem.Files,
   FileSystem.Volumes,
   Io.Console,
-  Io.NullDevice,
+  Io.Manager,
   Io.Pipes,
   Objects.Manager,
   Processes.Process,
@@ -93,15 +93,101 @@ begin
   end;
 end;
 
-{ True if the user path names the null device. }
-function IsNullDevicePath(PathAddress: QWord): Boolean;
+{ --- Devices -------------------------------------------------------- }
+
+{ Every device appears under /dev, whatever the program's root directory
+  is (Io.Manager). }
+
+const
+  DeviceDirectoryPath = '/dev';
+  DeviceDirectoryPrefix = '/dev/';
+
+type
+  TDevicePath = (NotADevicePath, DeviceDirectory, DeviceEntry);
+
+{ Whether the user path names /dev or a device in it; for a device, its
+  name goes to Name (DeviceNameLength bytes). }
+function ClassifyDevicePath(PathAddress: QWord; Name: PChar): TDevicePath;
 var
   UserPath: TPathBuffer;
   Normalized: TPathBuffer;
+  Rest: PChar;
+  Index: Integer;
 begin
-  Result := (CopyStringFromUser(PathAddress, @UserPath[0], PathCapacity) = ErrorNone) and
-    (NormalizeUserPath(CurrentProcess, @UserPath[0], @Normalized[0], PathCapacity) = ErrorNone) and
-    TextIsEqual(@Normalized[0], NullDeviceUserPath);
+  Result := NotADevicePath;
+  if (CopyStringFromUser(PathAddress, @UserPath[0], PathCapacity) <> ErrorNone) or
+     (NormalizeUserPath(CurrentProcess, @UserPath[0], @Normalized[0], PathCapacity) <> ErrorNone) then
+    Exit;
+  if TextIsEqual(@Normalized[0], DeviceDirectoryPath) then
+    Exit(DeviceDirectory);
+  for Index := 0 to Length(DeviceDirectoryPrefix) - 1 do
+    if Normalized[Index] <> DeviceDirectoryPrefix[Index + 1] then
+      Exit;
+  Rest := @Normalized[Length(DeviceDirectoryPrefix)];
+  if (Rest^ = #0) or (TextLength(Rest) >= DeviceNameLength) then
+    Exit;
+  Index := 0;
+  while Rest[Index] <> #0 do
+  begin
+    if Rest[Index] = '/' then
+      Exit;
+    Inc(Index);
+  end;
+  CopyText(Name, Rest, DeviceNameLength);
+  Result := DeviceEntry;
+end;
+
+procedure DescribeDeviceForUser(Device: PDeviceObject; out UserInformation: TAbiFileInformation);
+begin
+  FillMemory(@UserInformation, SizeOf(UserInformation), 0);
+  if Device^.Kind = DeviceKindBlock then
+    UserInformation.Kind := KindBlockDevice
+  else
+    UserInformation.Kind := KindCharacterDevice;
+  UserInformation.Mode := Device^.Mode;
+  UserInformation.OwnerId := Device^.OwnerId;
+  UserInformation.GroupId := Device^.GroupId;
+  UserInformation.SizeInBytes := Device^.SizeInBytes;
+  UserInformation.LinkCount := 1;
+end;
+
+procedure DescribeDeviceDirectoryForUser(out UserInformation: TAbiFileInformation);
+const
+  DirectoryMode = $1ED; { rwxr-xr-x }
+begin
+  FillMemory(@UserInformation, SizeOf(UserInformation), 0);
+  UserInformation.Kind := KindDirectory;
+  UserInformation.Mode := DirectoryMode;
+  UserInformation.LinkCount := 2;
+end;
+
+{ Checks the device's permission bits like a file's. }
+function MayOpenDevice(Device: PDeviceObject; Flags: LongWord): Boolean;
+var
+  Information: TNodeInformation;
+  Access: LongWord;
+begin
+  FillMemory(@Information, SizeOf(Information), 0);
+  Information.Mode := Device^.Mode;
+  Information.OwnerId := Device^.OwnerId;
+  Information.GroupId := Device^.GroupId;
+  Access := 0;
+  if (Flags and OpenWrite) <> 0 then
+    Access := Access or AccessWrite;
+  if ((Flags and OpenRead) <> 0) or (Access = 0) then
+    Access := Access or AccessRead;
+  Result := MayAccess(Information, Access);
+end;
+
+function DeviceOfHandle(ObjectBody: Pointer): PDeviceObject;
+begin
+  Result := PDeviceFile(ObjectBody)^.Device;
+end;
+
+function IsConsoleDeviceFile(ObjectBody: Pointer): Boolean;
+begin
+  Result := (DeviceOfHandle(ObjectBody) <> nil) and
+    (DeviceOfHandle(ObjectBody)^.ReportedHandleKind = HandleKindConsole);
 end;
 
 function Failure(Error: LongInt): Int64;
@@ -177,15 +263,53 @@ begin
   DereferenceObject(Pipe);
 end;
 
+{ Opens Device (nil: the /dev directory) and gives the caller a handle. }
+function OpenDeviceForHandle(Device: PDeviceObject; Flags: LongWord): Int64;
+var
+  OpenFile: PDeviceFile;
+  Error: LongInt;
+begin
+  if Device = nil then
+  begin
+    if (Flags and OpenWrite) <> 0 then
+      Exit(Failure(ErrorIsDirectory));
+    Error := OpenDeviceDirectory(OpenFile);
+  end
+  else
+  begin
+    if (Flags and (OpenCreate or OpenExclusive)) = (OpenCreate or OpenExclusive) then
+      Exit(Failure(ErrorExists));
+    if not MayOpenDevice(Device, Flags) then
+      Exit(Failure(ErrorAccessDenied));
+    Error := OpenDevice(Device, Flags, OpenFile);
+  end;
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := InsertCurrentHandle(HandleKindDevice, OpenFile);
+  { The handle holds its own reference. }
+  DereferenceObject(OpenFile);
+end;
+
 function PerformOpenFile(PathAddress: QWord; Flags: QWord): Int64;
 var
+  DeviceName: array[0..DeviceNameLength - 1] of Char;
+  Device: PDeviceObject;
   KernelPath: PPathBuffer;
   OpenedFile: POpenFile;
   Status: TFileSystemStatus;
   Error: LongInt;
 begin
-  if IsNullDevicePath(PathAddress) then
-    Exit(InsertCurrentHandle(HandleKindNull, NullDeviceObject));
+  case ClassifyDevicePath(PathAddress, @DeviceName[0]) of
+    DeviceDirectory:
+      Exit(OpenDeviceForHandle(nil, Flags));
+    DeviceEntry:
+      begin
+        Device := FindDevice(@DeviceName[0]);
+        if Device = nil then
+          Exit(Failure(ErrorNotFound));
+        Exit(OpenDeviceForHandle(Device, LongWord(Flags)));
+      end;
+  end;
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -272,6 +396,40 @@ begin
   Result := Int64(Total);
 end;
 
+{ Character devices answer one read with what they have; block devices
+  are read in pieces like files. An interrupted read reports
+  ErrorInterrupted (and is started again if a stop caused it). }
+function ReadDeviceInPieces(OpenFile: PDeviceFile; BufferAddress, ByteCount: QWord;
+  Buffer: PByte; BufferSize: QWord): Int64;
+var
+  Total: QWord;
+  Piece: QWord;
+  Count: Int64;
+begin
+  Total := 0;
+  repeat
+    Piece := ByteCount - Total;
+    if Piece > BufferSize then
+      Piece := BufferSize;
+    Count := ReadDevice(OpenFile, Buffer, Piece);
+    if Count < 0 then
+    begin
+      if Total = 0 then
+        Exit(Count);
+      Break;
+    end;
+    if (Count > 0) and (CopyToUser(BufferAddress + Total, Buffer, QWord(Count)) <> ErrorNone) then
+    begin
+      if Total = 0 then
+        Exit(Failure(ErrorBadAddress));
+      Break;
+    end;
+    Total := Total + QWord(Count);
+  until (OpenFile^.IsDirectory) or (OpenFile^.Device^.Kind <> DeviceKindBlock) or
+    (QWord(Count) < Piece) or (Total = ByteCount);
+  Result := Int64(Total);
+end;
+
 { After a device read into Buffer: copies Count (if positive) out. }
 function FinishDeviceRead(Count: Int64; BufferAddress: QWord; Buffer: PByte): Int64;
 begin
@@ -300,20 +458,12 @@ begin
   case Kind of
     HandleKindFile:
       Result := ReadFileInPieces(POpenFile(ObjectBody), BufferAddress, ByteCount, Buffer, BufferSize);
-    HandleKindConsole:
-      begin
-        if StopIfReadingInBackground then
-          Result := Failure(ErrorInterrupted)
-        else
-        begin
-          { Negative: cut short by an alert, so the call may be restarted. }
-          Result := ReadFromConsole(Buffer, BufferSize);
-          if Result < 0 then
-            Result := Failure(ErrorInterrupted)
-          else
-            Result := FinishDeviceRead(Result, BufferAddress, Buffer);
-        end;
-      end;
+    HandleKindDevice:
+      if IsConsoleDeviceFile(ObjectBody) and StopIfReadingInBackground then
+        Result := Failure(ErrorInterrupted)
+      else
+        Result := ReadDeviceInPieces(PDeviceFile(ObjectBody), BufferAddress, ByteCount, Buffer,
+          BufferSize);
     HandleKindPipeReadEnd:
       begin
         Result := ReadFromPipe(PPipe(ObjectBody), Buffer, BufferSize);
@@ -322,8 +472,6 @@ begin
         else
           Result := FinishDeviceRead(Result, BufferAddress, Buffer);
       end;
-    HandleKindNull:
-      Result := 0;
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -331,7 +479,7 @@ begin
 end;
 
 type
-  TWriteTarget = (WriteToFileTarget, WriteToConsoleTarget, WriteToPipeTarget);
+  TWriteTarget = (WriteToFileTarget, WriteToDeviceTarget, WriteToPipeTarget);
 
 { Writes one piece; returns the bytes written or a negative Abi error. }
 function WritePiece(Target: TWriteTarget; ObjectBody: Pointer; Buffer: PByte; Piece: QWord): Int64;
@@ -347,11 +495,8 @@ begin
           Exit(Failure(ErrorFromStatus(Status)));
         Result := Int64(Written);
       end;
-    WriteToConsoleTarget:
-      begin
-        WriteToConsole(Buffer, Piece);
-        Result := Int64(Piece);
-      end;
+    WriteToDeviceTarget:
+      Result := WriteDevice(PDeviceFile(ObjectBody), Buffer, Piece);
   else
     begin
       Result := WriteToPipe(PPipe(ObjectBody), Buffer, Piece);
@@ -415,12 +560,10 @@ begin
   case Kind of
     HandleKindFile:
       Result := WriteInPieces(WriteToFileTarget, ObjectBody, BufferAddress, ByteCount);
-    HandleKindConsole:
-      Result := WriteInPieces(WriteToConsoleTarget, ObjectBody, BufferAddress, ByteCount);
+    HandleKindDevice:
+      Result := WriteInPieces(WriteToDeviceTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindPipeWriteEnd:
       Result := WriteInPieces(WriteToPipeTarget, ObjectBody, BufferAddress, ByteCount);
-    HandleKindNull:
-      Result := Int64(ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -435,6 +578,9 @@ var
 begin
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
     Exit(Failure(ErrorBadHandle));
+  if (Kind = HandleKindDevice) and not PDeviceFile(ObjectBody)^.IsDirectory and
+     (DeviceOfHandle(ObjectBody)^.Kind = DeviceKindBlock) then
+    Exit(SeekDevice(PDeviceFile(ObjectBody), Offset, Origin));
   if Kind <> HandleKindFile then
     Exit(Failure(ErrorIllegalSeek));
 
@@ -479,6 +625,10 @@ begin
     GetFileInformation(POpenFile(ObjectBody), Information);
     DescribeNodeForUser(Information, UserInformation);
   end
+  else if (Kind = HandleKindDevice) and PDeviceFile(ObjectBody)^.IsDirectory then
+    DescribeDeviceDirectoryForUser(UserInformation)
+  else if Kind = HandleKindDevice then
+    DescribeDeviceForUser(DeviceOfHandle(ObjectBody), UserInformation)
   else
   begin
     FillMemory(@UserInformation, SizeOf(UserInformation), 0);
@@ -496,10 +646,13 @@ begin
     Exit(Failure(ErrorBadHandle));
   case Kind of
     HandleKindFile: Result := Abi.SystemCalls.HandleKindFile;
-    HandleKindConsole: Result := Abi.SystemCalls.HandleKindConsole;
+    HandleKindDevice:
+      if PDeviceFile(ObjectBody)^.IsDirectory then
+        Result := Abi.SystemCalls.HandleKindDevice
+      else
+        Result := DeviceOfHandle(ObjectBody)^.ReportedHandleKind;
     HandleKindPipeReadEnd, HandleKindPipeWriteEnd: Result := HandleKindPipe;
     HandleKindProcess: Result := Abi.SystemCalls.HandleKindProcess;
-    HandleKindNull: Result := HandleKindNullDevice;
     HandleKindThread: Result := Abi.SystemCalls.HandleKindThread;
   else
     Result := Failure(ErrorBadHandle);
@@ -510,19 +663,28 @@ end;
 
 function PerformGetPathInformation(PathAddress: QWord; InformationAddress: QWord; FollowLinks: QWord): Int64;
 var
+  DeviceName: array[0..DeviceNameLength - 1] of Char;
+  Device: PDeviceObject;
   KernelPath: PPathBuffer;
   Information: TNodeInformation;
   UserInformation: TAbiFileInformation;
   Status: TFileSystemStatus;
   Error: LongInt;
 begin
-  if IsNullDevicePath(PathAddress) then
-  begin
-    FillMemory(@UserInformation, SizeOf(UserInformation), 0);
-    UserInformation.Kind := KindOther;
-    UserInformation.Mode := $1B6; { rw-rw-rw- }
-    UserInformation.LinkCount := 1;
-    Exit(-Int64(CopyToUser(InformationAddress, @UserInformation, SizeOf(UserInformation))));
+  case ClassifyDevicePath(PathAddress, @DeviceName[0]) of
+    DeviceDirectory:
+      begin
+        DescribeDeviceDirectoryForUser(UserInformation);
+        Exit(-Int64(CopyToUser(InformationAddress, @UserInformation, SizeOf(UserInformation))));
+      end;
+    DeviceEntry:
+      begin
+        Device := FindDevice(@DeviceName[0]);
+        if Device = nil then
+          Exit(Failure(ErrorNotFound));
+        DescribeDeviceForUser(Device, UserInformation);
+        Exit(-Int64(CopyToUser(InformationAddress, @UserInformation, SizeOf(UserInformation))));
+      end;
   end;
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
@@ -538,6 +700,29 @@ begin
   Result := -Int64(CopyToUser(InformationAddress, @UserInformation, SizeOf(UserInformation)));
 end;
 
+{ The next entry of /dev; 0 at the end, else 1 (like PerformReadDirectory). }
+function ReadDeviceDirectory(Directory: PDeviceFile; EntryAddress: QWord): Int64;
+var
+  Device: PDeviceObject;
+  UserEntry: TAbiDirectoryEntry;
+  Error: LongInt;
+begin
+  Device := DeviceAt(Integer(Directory^.ReadDirectoryIndex));
+  if Device = nil then
+    Exit(0);
+  Inc(Directory^.ReadDirectoryIndex);
+  FillMemory(@UserEntry, SizeOf(UserEntry), 0);
+  if Device^.Kind = DeviceKindBlock then
+    UserEntry.Kind := KindBlockDevice
+  else
+    UserEntry.Kind := KindCharacterDevice;
+  CopyText(@UserEntry.Name[0], @Device^.Name[0], SizeOf(UserEntry.Name));
+  Error := CopyToUser(EntryAddress, @UserEntry, SizeOf(UserEntry));
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := 1;
+end;
+
 function PerformReadDirectory(Handle: Int64; EntryAddress: QWord): Int64;
 var
   Kind: THandleKind;
@@ -546,7 +731,11 @@ var
   UserEntry: TAbiDirectoryEntry;
   Status: TFileSystemStatus;
 begin
-  if not LookupCurrentHandle(Handle, Kind, ObjectBody) or (Kind <> HandleKindFile) then
+  if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
+    Exit(Failure(ErrorBadHandle));
+  if (Kind = HandleKindDevice) and PDeviceFile(ObjectBody)^.IsDirectory then
+    Exit(ReadDeviceDirectory(PDeviceFile(ObjectBody), EntryAddress));
+  if Kind <> HandleKindFile then
     Exit(Failure(ErrorBadHandle));
   Status := ReadDirectoryEntry(POpenFile(ObjectBody), Entry);
   if Status = StatusEndOfDirectory then
@@ -958,30 +1147,11 @@ var
 begin
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
     Exit(Failure(ErrorBadHandle));
-  if Kind <> HandleKindConsole then
+  if Kind <> HandleKindDevice then
     Exit(Failure(ErrorUnsupported));
-  case Request of
-    ControlGetConsoleMode: Result := GetConsoleMode;
-    ControlSetConsoleMode:
-      begin
-        SetConsoleMode(LongWord(Argument));
-        Result := 0;
-      end;
-    ControlGetConsoleSize: Result := (Int64(ConsoleRows) shl 16) or ConsoleColumns;
-    ControlSetForegroundGroup:
-      begin
-        SetConsoleForegroundGroup(Argument);
-        Result := 0;
-      end;
-    ControlGetForegroundGroup: Result := Int64(ConsoleForegroundGroup);
-    ControlTakePendingInterrupt:
-      if TakePendingInterrupt then
-        Result := 1
-      else
-        Result := 0;
-  else
-    Result := Failure(ErrorInvalidArgument);
-  end;
+  { The console's requests are handled by its driver
+    (Drivers.ConsoleDevice). }
+  Result := ControlDevice(PDeviceFile(ObjectBody), Request, Argument);
 end;
 
 end.

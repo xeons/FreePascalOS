@@ -50,7 +50,7 @@ uses
   Kernel.FileSystemWriteTest,
   Runtime.Checksums,
   Objects.Manager,
-  Io.Manager,
+  Io.Startup,
   Io.BlockCache,
   FileSystem.Files,
   Processes.Process,
@@ -59,7 +59,9 @@ uses
   Processes.Termination,
   Processes.Init,
   Io.Console,
-  Io.NullDevice,
+  Io.Manager,
+  Drivers.MemoryDevices,
+  Drivers.ConsoleDevice,
   Io.Pipes,
   Debug.Output,
   Debug.FramebufferConsole;
@@ -157,7 +159,9 @@ begin
   InitializeThreadManager;
   InitializeFileObjects;
   InitializeConsole;
-  InitializeNullDevice;
+  InitializeIoManager;
+  InitializeMemoryDevices;
+  InitializeConsoleDevice;
   InitializePipes;
   InitializeSystemCalls;
 end;

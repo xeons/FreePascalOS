@@ -248,6 +248,8 @@ const
   KindSymbolicLink = 2;
   KindOther = 3;
   KindFifo = 4;
+  KindCharacterDevice = 5;
+  KindBlockDevice = 6;
 
   { --- Handle kinds ---------------------------------------------------- }
 
@@ -257,6 +259,8 @@ const
   HandleKindProcess = 4;
   HandleKindNullDevice = 5;
   HandleKindThread = 6;
+  { Any other device under /dev (and the /dev directory). }
+  HandleKindDevice = 7;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;

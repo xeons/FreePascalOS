@@ -217,7 +217,7 @@ Rules that follow from this:
 
 ## I/O and storage
 
-Started from phase 1 by `Io.Manager`, in dependency order:
+Started from phase 1 by `Io.Startup`, in dependency order:
 
 1. **ACPI** (`Firmware.Acpi`) finds the system description tables through
    the RSDP the loader passed on.
@@ -229,13 +229,58 @@ Started from phase 1 by `Io.Manager`, in dependency order:
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
-5. **File systems** are mounted on every partition (and on disks without a
+5. **Device objects** for every disk and partition (`Drivers.DiskDevices`,
+   see below).
+6. **File systems** are mounted on every partition (and on disks without a
    partition table) by the first driver whose probe accepts it.
 
 Block devices are objects of type `BlockDevice`. All file system metadata
 and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
 device, evicts least recently used first, and lets callers read any byte
 range regardless of the device's block size.
+
+## The I/O manager: drivers, devices, requests
+
+`Io.Manager` keeps driver objects and device objects:
+
+- A **driver** has a name and a dispatch table, one routine per request
+  kind: open, close, read, write, control. A missing open or close means
+  nothing to do; any other missing routine makes that request
+  unsupported.
+- A **device** belongs to a driver and has a name, a kind (character or
+  block), an owner, a group and permission bits like a file, a size (block
+  devices), and an extension: memory for the driver's state of that device.
+  It also says what programs are told a handle to it is (`HandleKindConsole`
+  for the console, `HandleKindNullDevice` for `null`, otherwise
+  `HandleKindDevice`).
+- Opening a device makes a **device file** object: the device, the position
+  (block devices) and a context pointer for the driver's state of that
+  open. Closing its last handle sends the driver a close request.
+- Every operation is a **request** (`TIoRequest`: the kind, the device and
+  device file, a kernel buffer, length and offset, or a control code and
+  argument), handed to the driver by `CallDriver`. The driver returns an
+  Abi error code and puts the bytes moved or the control result in
+  `Information`. Requests complete synchronously; a driver may wait
+  alertably, so a program can be ended or stopped meanwhile (an
+  interrupted read returns `ErrorInterrupted` and is restarted after a
+  stop). Buffers are always kernel memory (system calls copy through
+  their transfer buffer), and devices are never removed.
+
+The drivers so far:
+
+| Driver | Devices |
+|---|---|
+| `memory` (`Drivers.MemoryDevices`) | `null`, `zero`, `full`, `random`, `urandom` (RDRAND, or a TSC-seeded xorshift without it), all `rw-rw-rw-` |
+| `console` (`Drivers.ConsoleDevice`) | `console` and `tty`: reads and writes go to `Io.Console`; control requests get and set the modes, the size and the foreground group and take a pending Ctrl-C |
+| `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, past the write-through cache); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
+
+Programs reach every device as `/dev/<name>`, whatever their root
+directory: `Processes.FileCalls` recognizes those paths (and `/dev`
+itself, which lists the devices), checks the permission bits on open and
+sends reads, writes, seeks (block devices) and control requests to the
+device. The first program's standard handles are opened on `console`.
+The keyboard and serial input drivers and the AHCI driver are not driver
+objects yet; they feed the console and the block devices directly.
 
 ## Device interrupts
 
@@ -586,7 +631,8 @@ reader is left.
 
 Programs see a Unix style tree: `/` is the root of the system volume (the
 one labelled `FPOSROOT`, or named by `root=`), and `/volumes/<name>`
-leads to every mounted volume. `/dev/null` is the null device.
+leads to every mounted volume. `/dev` holds the devices (see "The I/O
+manager").
 `Processes.Paths` normalizes a path against the current directory and
 translates it to the kernel's namespace.
 

@@ -27,7 +27,7 @@ staging_directory="$user_build_directory/root"
 partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
-mkdir -p "$staging_directory"/{bin,lib,etc,tmp,home/user}
+mkdir -p "$staging_directory"/{bin,lib,etc,tmp,dev,home/user}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then

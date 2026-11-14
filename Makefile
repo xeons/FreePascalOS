@@ -56,6 +56,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/io \
 	kernel/drivers/storage \
 	kernel/drivers/input \
+	kernel/drivers/devices \
 	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \

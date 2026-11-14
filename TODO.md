@@ -75,7 +75,11 @@ how the existing pieces fit together.
 
 ## I/O
 
-- [ ] I/O manager: driver objects, device objects, request packets
+- [x] I/O manager: driver objects, device objects, request packets; devices
+      under /dev (memory devices, console, disks and partitions)
+- [ ] Keyboard, serial and AHCI drivers as driver objects; asynchronous requests
+      with completion (today every request completes before CallDriver returns)
+- [ ] Programs report write errors on standard output at exit (echo > /dev/full)
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
 - [x] Keyboard layouts us/uk/de/fr (keymap= option), AltGr, lock lights, Num Lock keypad
 - [ ] Dead keys for de/fr accents; non-ASCII glyphs in the framebuffer font

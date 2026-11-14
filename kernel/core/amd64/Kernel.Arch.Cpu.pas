@@ -72,6 +72,13 @@ procedure ExecuteCpuid(Leaf: LongWord; Subleaf: LongWord; out Registers: TCpuidR
 procedure InvalidateTlbEntry(VirtualAddress: QWord);
 procedure FlushEntireTlb;
 
+{ The time stamp counter (cycles since reset). }
+function ReadTimeStampCounter: QWord;
+{ True if the processor has a hardware random number generator (RDRAND). }
+function HardwareRandomIsAvailable: Boolean;
+{ A random number from RDRAND; False if it failed (or is not there). }
+function ReadHardwareRandom(out Value: QWord): Boolean;
+
 function ReadStackPointer: QWord;
 function ReadFramePointer: QWord;
 
@@ -206,6 +213,46 @@ asm
   mov [r8 + 8], ecx
   mov [r8 + 12], edx
   pop rbx
+end;
+
+function ReadTimeStampCounter: QWord; assembler; nostackframe;
+asm
+  rdtsc
+  shl rdx, 32
+  or rax, rdx
+end;
+
+function HardwareRandomIsAvailable: Boolean;
+const
+  CpuidRdrandBit = LongWord(1) shl 30;
+var
+  Registers: TCpuidResult;
+begin
+  ExecuteCpuid(1, 0, Registers);
+  Result := (Registers.Ecx and CpuidRdrandBit) <> 0;
+end;
+
+{ RDI = where to store the value. RDRAND may fail for a moment when the
+  generator is drained, so it is tried a few times. }
+function RandomInstruction(Destination: PQWord): Boolean; assembler; nostackframe;
+asm
+  mov ecx, 10
+@Retry:
+  db $48, $0F, $C7, $F0 { rdrand rax }
+  jc @Got
+  dec ecx
+  jnz @Retry
+  xor eax, eax
+  ret
+@Got:
+  mov [rdi], rax
+  mov eax, 1
+end;
+
+function ReadHardwareRandom(out Value: QWord): Boolean;
+begin
+  Value := 0;
+  Result := HardwareRandomIsAvailable and RandomInstruction(@Value);
 end;
 
 procedure InvalidateTlbEntry(VirtualAddress: QWord); assembler; nostackframe;

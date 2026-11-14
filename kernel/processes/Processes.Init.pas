@@ -30,6 +30,7 @@ uses
   Kernel.Scheduler,
   Objects.Manager,
   Io.Console,
+  Io.Manager,
   FileSystem.Types,
   FileSystem.Files,
   Processes.Process,
@@ -83,6 +84,8 @@ var
   Process: PProcess;
   Error: LongInt;
   StandardIndex: Integer;
+  Console: PDeviceObject;
+  ConsoleFile: PDeviceFile;
 begin
   Result := InitialProgramNotStarted;
   if not SelectSystemVolume then
@@ -114,14 +117,22 @@ begin
   Startup.Environment := @DefaultEnvironment[0];
   Startup.EnvironmentCount := Length(DefaultEnvironment);
   Startup.WorkingDirectory := '/';
+  Console := FindDevice('console');
+  if (Console = nil) or (OpenDevice(Console, OpenRead or OpenWrite, ConsoleFile) <> ErrorNone) then
+  begin
+    Report('Cannot open the console for ', @ProgramPath[0]);
+    Exit;
+  end;
   for StandardIndex := 0 to 2 do
   begin
-    Startup.StandardKinds[StandardIndex] := HandleKindConsole;
-    Startup.StandardObjects[StandardIndex] := ConsoleObject;
+    Startup.StandardKinds[StandardIndex] := HandleKindDevice;
+    Startup.StandardObjects[StandardIndex] := ConsoleFile;
   end;
 
   Report('Starting ', @ProgramPath[0]);
   Error := CreateUserProcess(Startup, Process);
+  { The process's handles hold their own references. }
+  DereferenceObject(ConsoleFile);
   { The first program owns the console: Ctrl-C ends its group. }
   if Error = ErrorNone then
     SetConsoleForegroundGroup(Process^.GroupId);

@@ -53,6 +53,8 @@ begin
     KindDirectory: Result := 'directory';
     KindSymbolicLink: Result := 'symbolic link';
     KindFifo: Result := 'fifo';
+    KindCharacterDevice: Result := 'character special file';
+    KindBlockDevice: Result := 'block special file';
   else
     Result := 'unknown';
   end;
@@ -66,6 +68,8 @@ begin
     KindDirectory: WriteCharacter(StandardOutput, 'd');
     KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
     KindFifo: WriteCharacter(StandardOutput, 'p');
+    KindCharacterDevice: WriteCharacter(StandardOutput, 'c');
+    KindBlockDevice: WriteCharacter(StandardOutput, 'b');
   else
     WriteCharacter(StandardOutput, '-');
   end;

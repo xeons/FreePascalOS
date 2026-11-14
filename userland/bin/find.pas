@@ -8,7 +8,7 @@
 
   Options:     -maxdepth N  -mindepth N  -depth
   Tests:       -name PATTERN  -iname PATTERN  -path PATTERN  -ipath PATTERN
-               -type f|d|l  -size [+-]N[cbkMG]  -mtime [+-]N  -mmin [+-]N
+               -type f|d|l|c|b|p  -size [+-]N[cbkMG]  -mtime [+-]N  -mmin [+-]N
                -newer FILE  -empty  -user NAME  -group NAME
                -perm [-/]MODE  -links [+-]N  -true  -false
   Actions:     -print  -print0  -ls  -delete  -prune  -quit
@@ -293,7 +293,7 @@ begin
   begin
     Result := NewNode(NodeType);
     Text := TakeArgument(Option);
-    if not (Text[0] in ['f', 'd', 'l']) or (Text[1] <> #0) then
+    if not (Text[0] in ['f', 'd', 'l', 'c', 'b', 'p']) or (Text[1] <> #0) then
       Fail(1, 'Unknown argument to -type: %s', [ArgumentText(Text)]);
     Result^.TypeLetter := Text[0];
   end
@@ -572,6 +572,9 @@ begin
       case Node^.TypeLetter of
         'f': Result := Information.Kind = KindFile;
         'd': Result := Information.Kind = KindDirectory;
+        'c': Result := Information.Kind = KindCharacterDevice;
+        'b': Result := Information.Kind = KindBlockDevice;
+        'p': Result := Information.Kind = KindFifo;
       else
         Result := Information.Kind = KindSymbolicLink;
       end;

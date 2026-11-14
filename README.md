@@ -50,7 +50,10 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   fr (kernel option `keymap=`), AltGr, Num Lock and the lock lights.
 - **User mode**: processes with their own address spaces (demand-zero
   memory, isolated crashes), system calls through `syscall`, per-process
-  handle tables, pipes, a console and `/dev/null`, and an ELF loader that
+  handle tables, pipes, devices under `/dev` (`null`, `zero`, `full`,
+  `random`, `urandom`, `console`, `tty` and every disk and partition)
+  served by an NT-style I/O manager with driver objects, device objects
+  and request packets, and an ELF loader that
   maps position independent programs and the shared libraries they need,
   binding symbols at load time. Programs can also load libraries at run
   time (`LoadLibrary` / `FindSymbol`), end, stop and continue other

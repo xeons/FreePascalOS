@@ -20,11 +20,11 @@ type
   THandleKind = (
     HandleKindFree,
     HandleKindFile,
-    HandleKindConsole,
+    { An open device (Io.Manager), the console included, or /dev. }
+    HandleKindDevice,
     HandleKindPipeReadEnd,
     HandleKindPipeWriteEnd,
     HandleKindProcess,
-    HandleKindNull,
     { A thread of the same process (see Processes.ThreadCalls). }
     HandleKindThread
   );
