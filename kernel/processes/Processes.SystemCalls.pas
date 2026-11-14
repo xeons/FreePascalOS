@@ -50,6 +50,7 @@ uses
   FileSystem.Security,
   Processes.Security,
   Processes.SecurityCalls,
+  Processes.AffinityCalls,
   { Job control. }
   Processes.Stopping;
 
@@ -571,6 +572,9 @@ begin
     CallStopProcesses: Result := StopProcesses(Int64(Argument0));
     CallContinueProcesses: Result := ContinueProcesses(Int64(Argument0));
     CallWaitForProcessChange: Result := PerformWaitForProcessChange(Int64(Argument0), Int64(Argument1));
+    { --- Processor affinity (Processes.AffinityCalls) --- }
+    CallGetAffinity: Result := PerformGetAffinity(Argument0);
+    CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;

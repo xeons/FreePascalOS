@@ -78,6 +78,7 @@ procedure AlertProcessThreads(Process: PProcess);
 { --- Priority and accounting (used by Processes.Security) --- }
 
 procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+procedure SetProcessThreadAffinity(Process: PProcess; Mask: QWord);
 { Clock ticks used by the threads of Process. }
 function ProcessRunTicks(Process: PProcess): QWord;
 { True if a thread of Process is running or ready to run. }
@@ -217,6 +218,8 @@ begin
   Thread^.ControlBlock.ThreadId := AllocateProcessOrThreadId;
   Thread^.ControlBlock.Owner := Thread;
   Thread^.ControlBlock.AddressSpaceRoot := Process^.PageTableRoot;
+  { Set before it starts: once started it may run (and end) at once. }
+  Thread^.ControlBlock.AffinityMask := Process^.Credentials.AffinityMask;
 
   AttachToProcess(Thread, Process);
 
@@ -288,7 +291,11 @@ end;
 
 { Thread priorities cannot change under the thread list lock (the
   scheduler's lock is taken inside), so the threads are collected first. }
-procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+type
+  TThreadChange = (ChangePriority, ChangeAffinity);
+
+{ Changes the priority or affinity of every thread of Process. }
+procedure ChangeProcessThreads(Process: PProcess; Change: TThreadChange; Value: QWord);
 const
   MaximumThreads = 64;
 var
@@ -311,9 +318,22 @@ begin
   ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
   for Index := 0 to Count - 1 do
   begin
-    SetThreadPriority(@Threads[Index]^.ControlBlock, Priority);
+    if Change = ChangePriority then
+      SetThreadPriority(@Threads[Index]^.ControlBlock, LongWord(Value))
+    else
+      SetThreadAffinity(@Threads[Index]^.ControlBlock, Value);
     DereferenceObject(Threads[Index]);
   end;
+end;
+
+procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+begin
+  ChangeProcessThreads(Process, ChangePriority, Priority);
+end;
+
+procedure SetProcessThreadAffinity(Process: PProcess; Mask: QWord);
+begin
+  ChangeProcessThreads(Process, ChangeAffinity, Mask);
 end;
 
 procedure ReapTerminatedThreads;

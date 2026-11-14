@@ -26,6 +26,9 @@ const
 
   ThreadNameLength = 32;
 
+  { An affinity mask that allows every processor. }
+  AllProcessors = High(QWord);
+
   { The x87/SSE register image saved by FXSAVE, which needs 16-byte
     alignment; the field holds 15 spare bytes to align it in. }
   FpuStateSize = 512;
@@ -68,6 +71,14 @@ type
     State: TThreadState;
     Priority: LongWord;
     QuantumRemaining: LongInt;
+
+    { The processors the thread may run on, one bit per processor index;
+      AllProcessors for any (Kernel.ReadyQueues). }
+    AffinityMask: QWord;
+    { Where it last ran (it prefers to go back there, its data may still
+      be in that cache), and whose run queue it is in while ready. }
+    LastProcessorIndex: LongWord;
+    QueuedProcessorIndex: LongWord;
 
     { Links the thread into a run queue, a wait queue, or the list of
       terminated threads. A thread is on at most one of these at a time. }

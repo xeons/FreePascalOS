@@ -8,6 +8,9 @@ unit Processes.SecurityCalls;
 
 interface
 
+uses
+  Processes.Process;
+
 function PerformListProcesses(Index: QWord; InformationAddress: QWord): Int64;
 function PerformGetCredentials(CredentialsAddress: QWord): Int64;
 function PerformSetUserIds(RealId, EffectiveId, SavedId: Int64): Int64;
@@ -18,6 +21,10 @@ function PerformSetUmask(Mask: QWord): Int64;
 function PerformGetPriority(ProcessId: QWord): Int64;
 function PerformSetPriority(ProcessId: QWord; Nice: Int64): Int64;
 
+{ Finds a user process by id (0 means the caller) with a reference; nil
+  if there is none. }
+function ReferenceProcess(ProcessId: QWord): PProcess;
+
 implementation
 
 uses
@@ -26,7 +33,6 @@ uses
   Abi.SystemCalls,
   Kernel.Mutex,
   Kernel.Scheduler,
-  Processes.Process,
   Processes.Thread,
   Processes.UserProcess,
   Processes.UserThread,

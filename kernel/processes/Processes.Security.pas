@@ -43,6 +43,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Kernel.Threads,
   FileSystem.Security,
   Processes.Thread;
 
@@ -53,6 +54,7 @@ procedure GetRootCredentials(out Credentials: TProcessCredentials);
 begin
   FillMemory(@Credentials, SizeOf(Credentials), 0);
   Credentials.Umask := DefaultUmask;
+  Credentials.AffinityMask := AllProcessors;
 end;
 
 procedure InheritCredentials(Process: PProcess; out Credentials: TProcessCredentials);

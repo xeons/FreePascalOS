@@ -48,6 +48,9 @@ type
     Umask: LongWord;
     { -20 .. 19; lower runs at a higher thread priority. }
     Nice: LongInt;
+    { The processors the process's threads may run on (bit N: the
+      processor with index N), inherited like the rest. }
+    AffinityMask: QWord;
   end;
 
   PProcess = ^TProcess;
@@ -154,6 +157,7 @@ uses
   Runtime.Atomic,
   Runtime.Text,
   Kernel.Clock,
+  Kernel.Threads,
   Memory.Arch.PageTables,
   Kernel.Panic;
 
@@ -201,6 +205,7 @@ begin
   InitializeListHead(Process^.RunningLink);
   { Root until told otherwise; user processes get their creator's. }
   Process^.Credentials.Umask := DefaultUmask;
+  Process^.Credentials.AffinityMask := AllProcessors;
   Process^.StartTime := CurrentWallClockTime;
 end;
 

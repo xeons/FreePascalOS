@@ -33,6 +33,8 @@ uses
   Kernel.Clock,
   Kernel.DeferredCalls,
   Kernel.Timers,
+  Kernel.Processors,
+  Objects.Manager,
   Kernel.Panic,
   Processes.Thread,
   Kernel.Arch.UserCopy,
@@ -402,6 +404,79 @@ begin
   ReportPassed('timers');
 end;
 
+{ --- Processor affinity ------------------------------------------------ }
+
+var
+  PinnedWanted: Int64;
+  PinnedMisplaced: Int64;
+  PinnedChecks: Int64;
+  PinnedStop: Int64;
+  PinnedFinished: TEvent;
+
+{ Keeps checking that it runs where it is pinned (PinnedWanted, -1 while
+  the pin changes), giving the scheduler chances to move it. }
+procedure PinnedThreadMain(Context: Pointer);
+var
+  Wanted: Int64;
+begin
+  while PinnedStop = 0 do
+  begin
+    Wanted := PinnedWanted;
+    if Wanted >= 0 then
+    begin
+      if Int64(CurrentProcessorIndex) <> Wanted then
+        AtomicIncrement(PinnedMisplaced);
+      AtomicIncrement(PinnedChecks);
+    end;
+    if (PinnedChecks and 63) = 0 then
+      YieldExecution;
+  end;
+  SignalEvent(PinnedFinished);
+end;
+
+{ Pins a busy thread to the last processor, then moves it to the first
+  while it runs; it must never be seen anywhere else. }
+procedure TestAffinity;
+const
+  CheckMilliseconds = 100;
+var
+  Thread: PThread;
+  Last: LongWord;
+begin
+  if OnlineProcessorCount < 2 then
+  begin
+    ReportPassed('processor affinity (one processor: nothing to check)');
+    Exit;
+  end;
+  Last := ProcessorTotal - 1;
+  PinnedWanted := -1;
+  PinnedMisplaced := 0;
+  PinnedChecks := 0;
+  PinnedStop := 0;
+  InitializeEvent(PinnedFinished, EventKindNotification, False);
+  Thread := CreateSystemThread(@PinnedThreadMain, nil, DefaultThreadPriority, 'Pinned', True);
+  Check(Thread <> nil, 'could not create the pinned thread');
+
+  SetThreadAffinity(@Thread^.ControlBlock, QWord(1) shl Last);
+  { The move happens at its processor's next dispatch. }
+  SleepMilliseconds(20);
+  PinnedWanted := Last;
+  SleepMilliseconds(CheckMilliseconds);
+
+  PinnedWanted := -1;
+  SetThreadAffinity(@Thread^.ControlBlock, 1);
+  SleepMilliseconds(20);
+  PinnedWanted := 0;
+  SleepMilliseconds(CheckMilliseconds);
+
+  PinnedStop := 1;
+  WaitForEvent(PinnedFinished);
+  DereferenceObject(Thread);
+  Check(PinnedChecks > 0, 'the pinned thread never ran');
+  Check(PinnedMisplaced = 0, 'a pinned thread ran on another processor');
+  ReportPassed('processor affinity');
+end;
+
 procedure RunKernelSelfTests;
 begin
   TestKernelHeap;
@@ -412,6 +487,7 @@ begin
   TestThreadExitAndCleanup;
   TestUserCopyFault;
   TestTimers;
+  TestAffinity;
 end;
 
 end.

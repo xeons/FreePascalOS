@@ -23,10 +23,12 @@ how the existing pieces fit together.
 - [x] Inter-processor interrupts: TLB shootdown, reschedule, panic halt (NMI)
 - [x] Record the owning processor in the debug output lock
 - [x] Save and restore floating point / SSE registers at thread switches
-- [ ] Per-processor run queues and load balancing (one shared queue today)
+- [x] Per-processor run queues; placement by last processor, idle processors
+      take work from busy ones
+- [ ] Split the dispatcher lock (per-processor scheduling locks)
 - [x] Device interrupts spread over the processors (round robin, not the boot one)
 - [x] Batched TLB shootdowns for large unmaps (one interrupt per 32-page run)
-- [ ] Processor affinity for threads
+- [x] Processor affinity for threads and processes (taskset)
 
 ## Kernel core
 

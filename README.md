@@ -70,8 +70,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   check salted SHA-256 hashes in `/etc/shadow`.
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
   with CPU time counted per thread, nice values mapped to thread
-  priorities (`nice`, `renice`), and 1/5/15 minute load averages
-  (`uptime`). Named pipes on ext volumes (`mkfifo`, `mknod NAME p`), and
+  priorities (`nice`, `renice`), processor affinity (`taskset`), per
+  processor run queues, and 1/5/15 minute load averages (`uptime`). Named pipes on ext volumes (`mkfifo`, `mknod NAME p`), and
   the space files take on the volume (`du`, `ls -s`, `stat %b`).
 - **A userland written in Free Pascal**:
   - `libsystem.so`: system calls, heap, buffered streams, printf style
@@ -105,7 +105,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - everyday tools beyond the core utilities: `grep` (with `egrep` and
     `fgrep`), `sed`, `find`, `xargs`, `diff` (normal, unified and context
     output, recursive), the pager `less` (also started as `more`), `ps`,
-    `pgrep`, `pkill`, `renice`, `su` and `passwd`
+    `pgrep`, `pkill`, `renice`, `taskset`, `su` and `passwd`
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and

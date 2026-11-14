@@ -140,8 +140,24 @@ Rules that follow from this:
 
 ## Scheduling
 
-- 32 priorities, one run queue each; the idle thread (priority 0) runs only
-  when nothing else is ready and is never queued.
+- 32 priorities. Every processor has a run queue per priority
+  (`Kernel.ReadyQueues`); the idle thread (priority 0) runs only when
+  nothing else is ready and is never queued.
+- A thread that becomes ready goes to the processor it last ran on if that
+  one is idle (its data may still be cached there), else to an idle
+  processor, else to the one running the least important thread if that
+  is less important, else back to its last processor; that processor is
+  sent its dispatch interrupt if the thread should run there now. A
+  processor choosing its next thread takes from another processor's
+  queues a more important thread than its own best, or, with its own
+  queues empty, any thread - so no processor idles or runs something
+  less important while a thread it may run waits elsewhere.
+- **Affinity.** A thread's `AffinityMask` (bit N: processor N) limits
+  where it is queued and run; `SetThreadAffinity` moves a thread that is
+  queued or running where it may no longer be. A process has a mask in
+  its credentials, inherited by the processes it starts and applied to
+  all its threads (`CallGetAffinity`, `CallSetAffinity`; `taskset`, and
+  `nproc` counts only the processors it may use).
 - Time slices of `QuantumTicks` clock ticks (100 Hz clock) rotate threads of
   equal priority.
 - The clock interrupt never switches threads itself. It requests the dispatch
@@ -158,6 +174,7 @@ Rules that follow from this:
   ready and folds it into three exponentially decayed averages (1, 5 and
   15 minutes, fixed point with 11 fraction bits, as in Unix load
   averages). The run queues keep a count of their threads for this.
+  Only the dispatcher lock is still shared by all processors.
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
   priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
   ready thread to the run queue of its new priority.
@@ -191,7 +208,8 @@ Rules that follow from this:
   always swaps). The running thread is read with one GS-relative load, so
   `CurrentThread` cannot be torn by a move to another processor; anything
   else in a block is only used at DispatchLevel or above.
-- **Scheduling.** The run queues and the dispatcher lock are shared. Each
+- **Scheduling.** Each processor has its own run queues (see Scheduling);
+  the dispatcher lock is shared. Each
   processor has its own clock interrupt for its time slices (only the boot
   processor's advances the tick count). When a thread becomes ready, an
   idle processor (or the one running the least important thread, if that

@@ -72,6 +72,10 @@ function KernelSetUmask(Mask: LongWord): Int64;
   code below -40. }
 function KernelGetPriority(ProcessId: QWord; out Nice: LongInt): Int64;
 function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
+{ The processors process ProcessId (0: this one) may run on, bit N for
+  processor N; returns the mask or minus an Abi error. }
+function KernelGetAffinity(ProcessId: QWord): Int64;
+function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
@@ -327,6 +331,16 @@ end;
 function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
 begin
   Result := SystemCall(CallSetPriority, ProcessId, QWord(Int64(Nice)), 0, 0, 0, 0);
+end;
+
+function KernelGetAffinity(ProcessId: QWord): Int64;
+begin
+  Result := SystemCall(CallGetAffinity, ProcessId, 0, 0, 0, 0, 0);
+end;
+
+function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
+begin
+  Result := SystemCall(CallSetAffinity, ProcessId, Mask, 0, 0, 0, 0);
 end;
 
 function KernelCreateFifo(Path: PChar): Int64;
