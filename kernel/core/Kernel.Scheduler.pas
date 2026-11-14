@@ -2,10 +2,12 @@
   Thread scheduler.
 
   Scheduling is preemptive and priority based. There is one run queue per
-  priority level; the highest priority ready thread always runs, and
-  threads of equal priority take turns, each running for a time slice
-  (quantum) of a few clock ticks. When nothing is ready, the idle thread
-  runs; it is never placed on a run queue.
+  priority level, shared by all processors; the highest priority ready
+  threads run, and threads of equal priority take turns, each running for
+  a time slice (quantum) of a few clock ticks. When nothing is ready for
+  a processor, its idle thread runs; idle threads are never placed on a
+  run queue. When a thread becomes ready, a processor that is idle (or
+  runs something less important) is asked to reschedule.
 
   All scheduler state, including every wait queue, is protected by the
   dispatcher lock, held at DispatchLevel.
@@ -40,6 +42,9 @@ const
 { Turns the currently executing boot code into the idle thread, described
   by IdleThread, and enables scheduling. }
 procedure InitializeScheduler(IdleThread: PThreadControlBlock);
+{ The same for a secondary processor, whose start-up code becomes its
+  idle thread. }
+procedure StartSchedulingOnThisProcessor(IdleThread: PThreadControlBlock);
 
 { Prepares a thread control block to start running StartRoutine(Context)
   on the given stack. The thread does not run until StartThread. }
@@ -127,6 +132,9 @@ uses
   Kernel.Interrupts,
   Kernel.Clock,
   Kernel.DeferredCalls,
+  Kernel.Processors,
+  Kernel.InterProcessor,
+  Kernel.Arch.ProcessorBlock,
   Kernel.Panic;
 
 var
@@ -136,13 +144,6 @@ var
   ReadyPriorityMask: LongWord;
   SleepQueue: TListEntry;
   TerminatedThreads: TListEntry;
-
-  RunningThread: PThreadControlBlock;
-  IdleThreadBlock: PThreadControlBlock;
-
-  { Set by the clock interrupt; read and cleared under the dispatcher
-    lock by the dispatch interrupt. }
-  QuantumHasExpired: Boolean;
 
   { Tick at which the first sleeping thread wakes, or High(QWord). }
   NextWakeUpTick: QWord;
@@ -211,22 +212,27 @@ begin
   BestReady := HighestReadyPriority;
   if BestReady < 0 then
     Exit(False);
-  if RunningThread = IdleThreadBlock then
+  if CurrentProcessor^.RunningThread = CurrentProcessor^.IdleThread then
     Exit(True);
-  if BestReady > Integer(RunningThread^.Priority) then
+  if BestReady > Integer(CurrentProcessor^.RunningThread^.Priority) then
     Exit(True);
-  Result := QuantumHasExpired and (BestReady = Integer(RunningThread^.Priority));
+  Result := CurrentProcessor^.QuantumHasExpired and (BestReady = Integer(CurrentProcessor^.RunningThread^.Priority));
 end;
 
 procedure SwitchToThreadLocked(NextThread: PThreadControlBlock);
 var
+  Processor: PProcessor;
   PreviousThread: PThreadControlBlock;
 begin
-  PreviousThread := RunningThread;
+  Processor := CurrentProcessor;
+  PreviousThread := Processor^.RunningThread;
   NextThread^.State := ThreadStateRunning;
   NextThread^.QuantumRemaining := QuantumTicks;
-  RunningThread := NextThread;
+  Processor^.RunningThread := NextThread;
   Inc(SwitchCount);
+
+  ArchSaveFpuState(FpuStateArea(PreviousThread));
+  ArchRestoreFpuState(FpuStateArea(NextThread));
 
   ArchSetThreadInterruptStack(NextThread^.StackTop);
   if NextThread^.AddressSpaceRoot <> PreviousThread^.AddressSpaceRoot then
@@ -247,8 +253,45 @@ var
 begin
   NextThread := DequeueHighestReadyThread;
   if NextThread = nil then
-    NextThread := IdleThreadBlock;
+    NextThread := CurrentProcessor^.IdleThread;
   SwitchToThreadLocked(NextThread);
+end;
+
+{ Asks another processor to reschedule because Thread became ready: an
+  idle one if there is one, else the one running the least important
+  thread, if that is less important than Thread. Returns False if no
+  other processor should take it. }
+function OfferThreadToOtherProcessorLocked(Thread: PThreadControlBlock): Boolean;
+var
+  Self: PProcessor;
+  Other: PProcessor;
+  Target: PProcessor;
+  Index: LongWord;
+begin
+  Result := False;
+  if OnlineProcessorCount <= 1 then
+    Exit;
+  Self := CurrentProcessor;
+  Target := nil;
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Other := ProcessorByIndex(Index);
+    if (Other = Self) or not Other^.IsOnline then
+      Continue;
+    if Other^.RunningThread = Other^.IdleThread then
+    begin
+      Target := Other;
+      Break;
+    end;
+    if (Other^.RunningThread^.Priority < Thread^.Priority) and
+       ((Target = nil) or (Other^.RunningThread^.Priority < Target^.RunningThread^.Priority)) then
+      Target := Other;
+  end;
+  if Target <> nil then
+  begin
+    RequestDispatchOnProcessor(Target);
+    Result := True;
+  end;
 end;
 
 procedure PreemptIfNeededLocked;
@@ -257,16 +300,20 @@ var
 begin
   if not RunningThreadShouldBePreempted then
   begin
-    if QuantumHasExpired then
-      RunningThread^.QuantumRemaining := QuantumTicks;
-    QuantumHasExpired := False;
+    if CurrentProcessor^.QuantumHasExpired then
+      CurrentProcessor^.RunningThread^.QuantumRemaining := QuantumTicks;
+    CurrentProcessor^.QuantumHasExpired := False;
     Exit;
   end;
 
-  QuantumHasExpired := False;
+  CurrentProcessor^.QuantumHasExpired := False;
   NextThread := DequeueHighestReadyThread;
-  if RunningThread <> IdleThreadBlock then
-    EnqueueReadyThread(RunningThread);
+  if CurrentProcessor^.RunningThread <> CurrentProcessor^.IdleThread then
+  begin
+    EnqueueReadyThread(CurrentProcessor^.RunningThread);
+    { An idle processor may run the thread that gives way. }
+    OfferThreadToOtherProcessorLocked(CurrentProcessor^.RunningThread);
+  end;
   SwitchToThreadLocked(NextThread);
 end;
 
@@ -329,10 +376,17 @@ begin
 end;
 
 function RunnableThreadCount: LongWord;
+var
+  Index: LongWord;
+  Processor: PProcessor;
 begin
   Result := ReadyThreadCount;
-  if RunningThread <> IdleThreadBlock then
-    Inc(Result);
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Processor := ProcessorByIndex(Index);
+    if Processor^.IsOnline and (Processor^.RunningThread <> Processor^.IdleThread) then
+      Inc(Result);
+  end;
 end;
 
 { Runs at clock level every few seconds; only integer arithmetic. }
@@ -361,19 +415,19 @@ var
 begin
   DispatchNeeded := TickCount >= NextWakeUpTick;
 
-  Thread := RunningThread;
+  Thread := CurrentProcessor^.RunningThread;
   Inc(Thread^.RunTicks);
-  if TickCount >= NextLoadSampleTick then
+  if (CurrentProcessor^.Index = 0) and (TickCount >= NextLoadSampleTick) then
   begin
     SampleLoad;
     NextLoadSampleTick := TickCount + MillisecondsToTicks(LoadSampleMilliseconds);
   end;
-  if Thread <> IdleThreadBlock then
+  if Thread <> CurrentProcessor^.IdleThread then
   begin
     Dec(Thread^.QuantumRemaining);
     if Thread^.QuantumRemaining <= 0 then
     begin
-      QuantumHasExpired := True;
+      CurrentProcessor^.QuantumHasExpired := True;
       DispatchNeeded := True;
     end;
   end;
@@ -395,7 +449,7 @@ begin
   LowerPriorityLevel(PassiveLevel);
   EnableInterrupts;
 
-  Thread := RunningThread;
+  Thread := CurrentThread;
   Thread^.StartRoutine(Thread^.StartContext);
   TerminateCurrentThread;
 end;
@@ -405,8 +459,8 @@ var
   Thread: PThreadControlBlock;
 begin
   AcquireDispatcherLock;
-  Thread := RunningThread;
-  if Thread = IdleThreadBlock then
+  Thread := CurrentProcessor^.RunningThread;
+  if Thread = CurrentProcessor^.IdleThread then
     KernelPanic('the idle thread tried to terminate');
 
   Thread^.State := ThreadStateTerminated;
@@ -445,9 +499,15 @@ begin
 end;
 
 procedure ReadyThreadLocked(Thread: PThreadControlBlock);
+var
+  Processor: PProcessor;
 begin
   EnqueueReadyThread(Thread);
-  if (RunningThread = IdleThreadBlock) or (Thread^.Priority > RunningThread^.Priority) then
+  Processor := CurrentProcessor;
+  if Processor^.RunningThread = Processor^.IdleThread then
+    HalRequestSoftwareInterrupt(DispatchLevel)
+  else if not OfferThreadToOtherProcessorLocked(Thread) and
+     (Thread^.Priority > Processor^.RunningThread^.Priority) then
     HalRequestSoftwareInterrupt(DispatchLevel);
 end;
 
@@ -474,7 +534,7 @@ function WaitCurrentThreadWithOptionsLocked(TimeoutMilliseconds: QWord;
 var
   Thread: PThreadControlBlock;
 begin
-  Thread := RunningThread;
+  Thread := CurrentProcessor^.RunningThread;
   if (Alertable and Thread^.AlertPending) or (TimeoutMilliseconds = 0) then
   begin
     { The wait ends before it starts. }
@@ -544,15 +604,15 @@ var
   PreviousLevel: TPriorityLevel;
 begin
   PreviousLevel := AcquireDispatcherLock;
-  RunningThread^.AlertPending := False;
+  CurrentProcessor^.RunningThread^.AlertPending := False;
   ReleaseDispatcherLock(PreviousLevel);
 end;
 
 procedure WaitCurrentThreadLocked;
 begin
-  if RunningThread = IdleThreadBlock then
+  if CurrentProcessor^.RunningThread = CurrentProcessor^.IdleThread then
     KernelPanic('the idle thread tried to wait');
-  RunningThread^.State := ThreadStateWaiting;
+  CurrentProcessor^.RunningThread^.State := ThreadStateWaiting;
   SwitchAwayFromBlockedThreadLocked;
 end;
 
@@ -567,18 +627,34 @@ begin
   InitializeListHead(SleepQueue);
   InitializeListHead(TerminatedThreads);
   NextWakeUpTick := High(QWord);
-  QuantumHasExpired := False;
+  CurrentProcessor^.QuantumHasExpired := False;
   SwitchCount := 0;
 
   IdleThread^.State := ThreadStateRunning;
   IdleThread^.Priority := IdlePriority;
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
-  IdleThreadBlock := IdleThread;
-  RunningThread := IdleThread;
+  CurrentProcessor^.IdleThread := IdleThread;
+  CurrentProcessor^.RunningThread := IdleThread;
   ArchSetThreadInterruptStack(IdleThread^.StackTop);
+  MarkProcessorOnline(CurrentProcessor);
 
   if not RegisterInterruptHandler(HalDispatchInterruptVector, @HandleDispatchInterrupt, nil) then
     KernelPanic('dispatch interrupt vector is already in use');
+end;
+
+procedure StartSchedulingOnThisProcessor(IdleThread: PThreadControlBlock);
+var
+  Processor: PProcessor;
+begin
+  Processor := CurrentProcessor;
+  IdleThread^.State := ThreadStateRunning;
+  IdleThread^.Priority := IdlePriority;
+  IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
+  Processor^.QuantumHasExpired := False;
+  Processor^.IdleThread := IdleThread;
+  Processor^.RunningThread := IdleThread;
+  ArchSetThreadInterruptStack(IdleThread^.StackTop);
+  MarkProcessorOnline(Processor);
 end;
 
 procedure InitializeThreadControlBlock(Thread: PThreadControlBlock;
@@ -603,6 +679,7 @@ begin
     changes this for threads of user processes. }
   Thread^.AddressSpaceRoot := KernelPageTableRoot;
   Thread^.UserThreadPointer := 0;
+  ArchInitializeFpuState(FpuStateArea(Thread));
   Thread^.SavedStackPointer := ArchPrepareInitialStack(StackTop, @ThreadStartTrampoline);
 end;
 
@@ -620,7 +697,8 @@ end;
 
 function CurrentThread: PThreadControlBlock;
 begin
-  Result := RunningThread;
+  { One load: the thread cannot move to another processor halfway. }
+  Result := PThreadControlBlock(ArchCurrentThreadBlock);
 end;
 
 procedure YieldExecution;
@@ -629,11 +707,11 @@ var
   NextThread: PThreadControlBlock;
 begin
   PreviousLevel := AcquireDispatcherLock;
-  if (RunningThread <> IdleThreadBlock) and
-     (HighestReadyPriority >= Integer(RunningThread^.Priority)) then
+  if (CurrentProcessor^.RunningThread <> CurrentProcessor^.IdleThread) and
+     (HighestReadyPriority >= Integer(CurrentProcessor^.RunningThread^.Priority)) then
   begin
     NextThread := DequeueHighestReadyThread;
-    EnqueueReadyThread(RunningThread);
+    EnqueueReadyThread(CurrentProcessor^.RunningThread);
     SwitchToThreadLocked(NextThread);
   end;
   ReleaseDispatcherLock(PreviousLevel);

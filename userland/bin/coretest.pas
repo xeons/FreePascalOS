@@ -204,7 +204,7 @@ const
     (Command: 'id; id -un; id -g; whoami; groups; groups root'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root)'#10'root'#10'0'#10'root'#10'root'#10'root : root wheel'#10; ExpectedStatus: 0),
     (Command: 'id nobody; logname; users'; ExpectedOutput: 'uid=65534(nobody) gid=65534(nobody) groups=65534(nobody)'#10'root'#10'root'#10; ExpectedStatus: 0),
     (Command: 'who | cut -c 1-16; who -q'; ExpectedOutput: 'root     console'#10'root'#10'# users=1'#10; ExpectedStatus: 0),
-    (Command: 'nproc; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: '1'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
+    (Command: 'test "$(nproc)" -ge 1 && test "$(nproc --ignore=99)" = 1 && echo processors; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: 'processors'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
     (Command: 'printenv HOME; printenv NOPE; echo $?'; ExpectedOutput: '/'#10'1'#10; ExpectedStatus: 0),
     (Command: 'tty; tty < /dev/null; echo $?'; ExpectedOutput: '/dev/console'#10'not a tty'#10'1'#10; ExpectedStatus: 0),
     (Command: 'stty | tail -n 1; stty -echo; stty | tail -n 1; stty sane; stty | tail -n 1'; ExpectedOutput: 'isig icanon echo'#10'isig icanon -echo'#10'isig icanon echo'#10; ExpectedStatus: 0),
@@ -325,6 +325,7 @@ const
       'ok library TLS is per thread'#10 +
       'ok library TLS blocks are distinct'#10 +
       'ok many short-lived threads'#10 +
+      'ok floating point registers are per thread'#10 +
       'ok memory freed during a system call'#10 +
       'threadtest: unit finalization ran'#10 +
       'tlstest: library finalizer ran'#10; ExpectedStatus: 0),

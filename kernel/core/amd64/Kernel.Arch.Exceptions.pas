@@ -43,6 +43,7 @@ uses
   Kernel.Arch.UserCopy;
 
 const
+  VectorNonMaskableInterrupt = 2;
   VectorBreakpoint = 3;
   VectorPageFault = 14;
 
@@ -189,7 +190,10 @@ end;
 procedure HandleProcessorException(Frame: PTrapFrame);
 var
   Vector: Byte;
+  FaultAddress: QWord;
+  Resolved: Boolean;
 begin
+  FaultAddress := 0;
   Vector := TrapFrameVector(Frame);
 
   if Vector = VectorBreakpoint then
@@ -198,13 +202,30 @@ begin
     Exit;
   end;
 
-  if (Vector = VectorPageFault) and Assigned(PageFaultResolver) and
-     PageFaultResolver(ReadControlRegister2, Frame^.ErrorCode) then
-    Exit;
+  { Another processor panicked and stops this one (Kernel.Panic). }
+  if (Vector = VectorNonMaskableInterrupt) and PanicIsInProgress then
+    while True do
+    begin
+      DisableInterrupts;
+      HaltProcessor;
+    end;
+
+  if Vector = VectorPageFault then
+  begin
+    FaultAddress := ReadControlRegister2;
+    { Resolving may take spin locks whose holder waits for this
+      processor to answer a TLB shootdown, which needs interrupts. }
+    if (Frame^.Rflags and RflagsInterruptEnable) <> 0 then
+      EnableInterrupts;
+    Resolved := Assigned(PageFaultResolver) and PageFaultResolver(FaultAddress, Frame^.ErrorCode);
+    DisableInterrupts;
+    if Resolved then
+      Exit;
+  end;
 
   { A system call copying from or to memory another thread just freed. }
   if (Vector = VectorPageFault) and not ArchFrameIsFromUserMode(Frame) and
-     RecoverFromUserCopyFault(Frame, ReadControlRegister2) then
+     RecoverFromUserCopyFault(Frame, FaultAddress) then
     Exit;
 
   if ArchFrameIsFromUserMode(Frame) and Assigned(UserExceptionHandler) then

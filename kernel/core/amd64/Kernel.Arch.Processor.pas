@@ -11,6 +11,9 @@ interface
 procedure InitializeBootProcessor;
 procedure WriteProcessorDescription;
 
+{ The initial APIC id of the executing processor, from CPUID. }
+function ReadInitialApicId: LongWord;
+
 implementation
 
 uses
@@ -18,6 +21,8 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.DescriptorTables,
   Kernel.Arch.InterruptTable,
+  Kernel.Arch.ProcessorBlock,
+  Kernel.Processors,
   Debug.Output;
 
 const
@@ -28,9 +33,31 @@ const
 
   BrandStringLength = 48;
 
-procedure InitializeBootProcessor;
+function ReadInitialApicId: LongWord;
+var
+  Registers: TCpuidResult;
 begin
-  InitializeDescriptorTables;
+  ExecuteCpuid(0, 0, Registers);
+  if Registers.Eax >= $B then
+  begin
+    { Leaf 0Bh reports the full 32-bit (x2APIC) id. }
+    ExecuteCpuid($B, 0, Registers);
+    if Registers.Ebx <> 0 then
+      Exit(Registers.Edx);
+  end;
+  ExecuteCpuid(1, 0, Registers);
+  Result := Registers.Ebx shr 24;
+end;
+
+procedure InitializeBootProcessor;
+var
+  Processor: PProcessor;
+begin
+  Processor := InitializeBootProcessorBlock(ReadInitialApicId);
+  InitializeBootDescriptorTables(Processor^.DescriptorTables);
+  { After the segment registers were reloaded (which clears GS). }
+  ArchSetProcessorBlock(Processor);
+  MarkProcessorBlocksReady;
   InitializeInterruptTable;
 end;
 

@@ -59,12 +59,15 @@ uses
   Runtime.Text,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
+  Kernel.Processors,
   Hal.SerialPort;
 
 var
   OutputLock: TSpinLock;
   LockPreviousLevel: TPriorityLevel;
   LockNestingDepth: LongWord;
+  { The processor holding the lock (meaningful while it is held). }
+  LockOwner: LongInt;
 
 procedure InitializeDebugOutput;
 begin
@@ -80,25 +83,29 @@ begin
 end;
 
 { The lock is recursive on purpose: DebugBeginMessage takes it for a whole
-  message and the individual write calls inside take it again.
-
-  The kernel currently runs on a single processor. While the lock is held
-  the holder runs at HighLevel, so nothing else on that processor can get
-  here, and a non-zero nesting depth always means "held by the caller".
-  Once secondary processors are started this must also compare the owning
-  processor number. }
+  message and the individual write calls inside take it again. The holder
+  runs at HighLevel, so nothing else on its processor gets here; the
+  owner's processor number tells a nested call apart from another
+  processor, which must wait. }
 procedure DebugBeginMessage;
 var
   PreviousLevel: TPriorityLevel;
+  Number: LongInt;
 begin
-  if LockNestingDepth > 0 then
+  { At HighLevel first, so this cannot move to another processor between
+    reading its number and taking the lock. }
+  PreviousLevel := RaisePriorityLevel(HighLevel);
+  Number := LongInt(CurrentProcessorIndexOrZero);
+  if (LockNestingDepth > 0) and (LockOwner = Number) then
   begin
     Inc(LockNestingDepth);
+    LowerPriorityLevel(PreviousLevel);
     Exit;
   end;
 
-  PreviousLevel := AcquireSpinLockAtLevel(OutputLock, HighLevel);
+  AcquireSpinLockAtCurrentLevel(OutputLock);
   LockPreviousLevel := PreviousLevel;
+  LockOwner := Number;
   LockNestingDepth := 1;
 end;
 

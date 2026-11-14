@@ -161,6 +161,59 @@ Rules that follow from this:
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
   priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
   ready thread to the run queue of its new priority.
+- Floating point and SSE registers belong to threads: the switch saves the
+  old thread's (FXSAVE) and loads the new one's (FXRSTOR). The kernel
+  itself uses no such registers (the build checks), so interrupts and
+  system calls need not save them.
+
+## Several processors
+
+- **Finding and starting them.** The MADT lists every processor by local
+  APIC id. In phase 1 the boot processor gives each one a block
+  (`Kernel.Processors`), an idle thread with a kernel stack, and stacks for
+  double faults, NMIs and machine checks, then wakes it with INIT and two
+  STARTUP interrupts (`Kernel.SecondaryProcessors`). It starts in real mode
+  in a page below 1 MiB (the physical allocator keeps track of which low
+  pages were free RAM and hands them out with `ClaimLowPhysicalPages`),
+  running `ProcessorTrampoline.s`: protected mode, the boot processor's
+  CR4, a small page table that maps that page at its own address next to
+  the kernel half, EFER and CR0 (paging on), long mode, and a jump to
+  `SecondaryProcessorEntry` on the idle stack. There it loads the kernel's
+  page table, its own GDT and TSS, its block, the shared IDT, the boot
+  processor's PAT, its system call registers and its local APIC and clock,
+  and becomes its idle thread. `processors=N` limits how many start.
+- **Per-processor data.** Each block holds the running thread, the idle
+  thread, the scheduler's per-processor state, the loaded address space,
+  the descriptor tables and the kernel stack for system calls. Kernel code
+  reaches its own block through the GS base; user code may change GS, so
+  every entry from user mode and every return to it does SWAPGS (the
+  interrupt entry checks the saved code selector; the system call entry
+  always swaps). The running thread is read with one GS-relative load, so
+  `CurrentThread` cannot be torn by a move to another processor; anything
+  else in a block is only used at DispatchLevel or above.
+- **Scheduling.** The run queues and the dispatcher lock are shared. Each
+  processor has its own clock interrupt for its time slices (only the boot
+  processor's advances the tick count). When a thread becomes ready, an
+  idle processor (or the one running the least important thread, if that
+  is less important) is sent its dispatch interrupt as an IPI. The handoff
+  of the dispatcher lock across a switch also guarantees that a thread
+  which just switched away is not picked up elsewhere before its registers
+  are saved, and that a terminated thread's stack is not freed too early.
+- **TLB shootdown.** After removing a mapping, the page table code
+  invalidates it locally and, outside its lock, calls
+  `InvalidateRemoteTranslations` (`Kernel.InterProcessor`): every other
+  processor for a kernel address, only those with that address space
+  loaded for a user address. Each processor publishes the address space
+  it loads before switching CR3, so a processor either receives the
+  request or only ever sees the changed table. The sender waits at
+  DispatchLevel with interrupts on for all acknowledgements; page faults
+  are therefore resolved with interrupts on, so a processor spinning on a
+  lock in the fault path can still answer.
+- **Panic.** The panicking processor stops the others with an NMI before
+  printing; the debug output lock records its owner's processor number,
+  so nested messages on one processor and messages from different
+  processors are told apart.
+- **Devices** still interrupt only the boot processor.
 
 ## I/O and storage
 

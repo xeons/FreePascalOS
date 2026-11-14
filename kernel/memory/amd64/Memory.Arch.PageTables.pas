@@ -73,6 +73,14 @@ function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
   out PhysicalAddress: TPhysicalAddress): Boolean;
 
 { Makes Root the active address space of this processor. }
+type
+  { Invalidates Address in the other processors' translation caches:
+    all of them for Root = 0 (kernel), else where Root is loaded. }
+  TRemoteInvalidation = procedure(Root: QWord; Address: QWord);
+
+{ Installed once several processors run (Kernel.InterProcessor). }
+procedure SetRemoteInvalidation(Routine: TRemoteInvalidation);
+
 procedure ActivateAddressSpace(Root: TPhysicalAddress);
 function ActiveAddressSpace: TPhysicalAddress;
 
@@ -83,7 +91,8 @@ uses
   Kernel.Arch.Cpu,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
-  Kernel.Panic;
+  Kernel.Panic,
+  Kernel.Processors;
 
 const
   EntryPresent = QWord(1) shl 0;
@@ -171,6 +180,7 @@ begin
   InitializeSpinLock(PageTableLock);
   KernelTopLevelTablePhysical := ReadControlRegister3 and EntryAddressMask;
   KernelTopLevelTable := TableFromRoot(KernelTopLevelTablePhysical);
+  CurrentProcessor^.ActiveAddressSpace := KernelTopLevelTablePhysical;
 
   { Make the kernel honour read-only pages too. }
   WriteControlRegister0(ReadControlRegister0 or Cr0WriteProtect);
@@ -264,6 +274,14 @@ begin
   Result := True;
 end;
 
+var
+  RemoteInvalidation: TRemoteInvalidation = nil;
+
+procedure SetRemoteInvalidation(Routine: TRemoteInvalidation);
+begin
+  RemoteInvalidation := Routine;
+end;
+
 function UnmapPageInTable(TopLevel: PPageTable; VirtualAddress: QWord;
   FlushTlb: Boolean): TPhysicalAddress;
 var
@@ -331,6 +349,9 @@ end;
 function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
 begin
   Result := UnmapPageInTable(KernelTopLevelTable, VirtualAddress, True);
+  { After the page table lock is released (see Kernel.InterProcessor). }
+  if (Result <> 0) and Assigned(RemoteInvalidation) then
+    RemoteInvalidation(0, VirtualAddress);
 end;
 
 function TranslateVirtualAddress(VirtualAddress: QWord;
@@ -375,6 +396,20 @@ begin
   FreePhysicalPage(TablePhysical);
 end;
 
+function AddressSpaceIsLoadedAnywhere(Root: TPhysicalAddress): Boolean;
+var
+  Index: LongWord;
+  Processor: PProcessor;
+begin
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Processor := ProcessorByIndex(Index);
+    if Processor^.IsOnline and (Processor^.ActiveAddressSpace = Root) then
+      Exit(True);
+  end;
+  Result := ActiveAddressSpace = Root;
+end;
+
 procedure DestroyAddressSpaceRoot(Root: TPhysicalAddress);
 var
   Table: PPageTable;
@@ -382,7 +417,7 @@ var
 begin
   if (Root = 0) or (Root = KernelTopLevelTablePhysical) then
     Exit;
-  if ActiveAddressSpace = Root then
+  if AddressSpaceIsLoadedAnywhere(Root) then
     KernelPanicWithCode(PanicPageTableFailure, 'destroying the active address space', Root, 0, 0, 0);
 
   Table := TableFromRoot(Root);
@@ -407,8 +442,11 @@ function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord):
 begin
   if VirtualAddress >= UserSpaceLimit then
     Exit(0);
-  { Only the active address space can have stale TLB entries. }
+  { Here only the active address space can have stale TLB entries;
+    elsewhere, where the processors have Root loaded. }
   Result := UnmapPageInTable(TableFromRoot(Root), VirtualAddress, ActiveAddressSpace = Root);
+  if (Result <> 0) and Assigned(RemoteInvalidation) then
+    RemoteInvalidation(Root, VirtualAddress);
 end;
 
 function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
@@ -422,7 +460,13 @@ begin
   if Root = 0 then
     Root := KernelTopLevelTablePhysical;
   if (ReadControlRegister3 and EntryAddressMask) <> Root then
+  begin
+    { Published before the switch (which serializes), so a processor
+      removing a mapping of Root either sees it here or we see the
+      removal (Kernel.InterProcessor). }
+    CurrentProcessor^.ActiveAddressSpace := Root;
     WriteControlRegister3(Root);
+  end;
 end;
 
 function ActiveAddressSpace: TPhysicalAddress;

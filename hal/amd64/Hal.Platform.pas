@@ -32,6 +32,24 @@ procedure HalRequestSoftwareInterrupt(Level: TPriorityLevel);
 function HalClockInterruptVector: Byte;
 function HalDispatchInterruptVector: Byte;
 
+{ --- Several processors --- }
+
+{ The interrupt controller id of the executing processor. }
+function HalCurrentProcessorId: LongWord;
+{ Prepares the executing secondary processor's interrupt controller and
+  starts its clock (at the rate HalStartClock was given). }
+procedure HalInitializeSecondaryProcessor;
+{ Wakes the processor with interrupt controller id ProcessorId so that it
+  starts in real mode at physical page StartupPage (below 1 MiB). }
+procedure HalStartProcessor(ProcessorId: LongWord; StartupPage: Byte);
+{ Asks processor ProcessorId to run its dispatch interrupt (reschedule). }
+procedure HalRequestDispatchOn(ProcessorId: LongWord);
+{ Sends the inter-processor request interrupt to processor ProcessorId. }
+procedure HalSendRequestInterrupt(ProcessorId: LongWord);
+function HalRequestInterruptVector: Byte;
+{ Stops every other processor (used by the panic path). }
+procedure HalHaltOtherProcessors;
+
 procedure HalWriteDescription;
 
 type
@@ -46,6 +64,7 @@ implementation
 
 uses
   Hal.PortIo,
+  Hal.IntervalTimer,
   Hal.InterruptVectors,
   Hal.LegacyPic,
   Hal.LocalApic,
@@ -54,6 +73,7 @@ uses
 
 var
   TimerTicksPerSecond: QWord;
+  ClockInterruptsPerSecond: LongWord;
 
 procedure InitializeHal;
 begin
@@ -66,6 +86,7 @@ end;
 
 procedure HalStartClock(InterruptsPerSecond: LongWord);
 begin
+  ClockInterruptsPerSecond := InterruptsPerSecond;
   StartLocalApicPeriodicTimer(ClockInterruptVector,
     LongWord(TimerTicksPerSecond div InterruptsPerSecond));
 end;
@@ -91,6 +112,53 @@ end;
 function HalDispatchInterruptVector: Byte;
 begin
   Result := DispatchInterruptVector;
+end;
+
+function HalCurrentProcessorId: LongWord;
+begin
+  Result := LocalApicId;
+end;
+
+procedure HalInitializeSecondaryProcessor;
+begin
+  InitializeLocalApic(ApicSpuriousVector);
+  if ClockInterruptsPerSecond <> 0 then
+    StartLocalApicPeriodicTimer(ClockInterruptVector,
+      LongWord(TimerTicksPerSecond div ClockInterruptsPerSecond));
+end;
+
+procedure HalStartProcessor(ProcessorId: LongWord; StartupPage: Byte);
+const
+  { The waits of the usual INIT, STARTUP, STARTUP sequence. }
+  AfterInitMicroseconds = 10000;
+  AfterStartupMicroseconds = 200;
+begin
+  LocalApicSendInit(ProcessorId);
+  IntervalTimerBusyWait(AfterInitMicroseconds);
+  LocalApicSendStartup(ProcessorId, StartupPage);
+  IntervalTimerBusyWait(AfterStartupMicroseconds);
+  LocalApicSendStartup(ProcessorId, StartupPage);
+  IntervalTimerBusyWait(AfterStartupMicroseconds);
+end;
+
+procedure HalRequestDispatchOn(ProcessorId: LongWord);
+begin
+  LocalApicSendInterrupt(ProcessorId, DispatchInterruptVector);
+end;
+
+procedure HalSendRequestInterrupt(ProcessorId: LongWord);
+begin
+  LocalApicSendInterrupt(ProcessorId, InterProcessorInterruptVector);
+end;
+
+function HalRequestInterruptVector: Byte;
+begin
+  Result := InterProcessorInterruptVector;
+end;
+
+procedure HalHaltOtherProcessors;
+begin
+  LocalApicSendNmiToOthers;
 end;
 
 procedure HalWriteDescription;

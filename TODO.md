@@ -16,12 +16,17 @@ how the existing pieces fit together.
 
 ## Multiprocessor support
 
-- [ ] Per-processor data block (current thread, priority level, scheduler state)
-- [ ] Start application processors (INIT/SIPI trampoline below 1 MiB)
-- [ ] Per-processor GDT, TSS and interrupt stacks
-- [ ] Per-processor run queues and load balancing
-- [ ] Inter-processor interrupts: TLB shootdown, reschedule, panic halt
-- [ ] Record the owning processor in the debug output lock
+- [x] Per-processor data block (current thread, idle thread, scheduler state),
+      reached through GS with SWAPGS on every user/kernel transition
+- [x] Start application processors (INIT/SIPI trampoline below 1 MiB)
+- [x] Per-processor GDT, TSS and interrupt stacks
+- [x] Inter-processor interrupts: TLB shootdown, reschedule, panic halt (NMI)
+- [x] Record the owning processor in the debug output lock
+- [x] Save and restore floating point / SSE registers at thread switches
+- [ ] Per-processor run queues and load balancing (one shared queue today)
+- [ ] Device interrupts spread over the processors (all go to the boot one)
+- [ ] Batched TLB shootdowns for large unmaps (one interrupt per page today)
+- [ ] Processor affinity for threads
 
 ## Kernel core
 

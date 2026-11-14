@@ -41,6 +41,7 @@ uses
   Kernel.Arch.TrapFrame,
   Kernel.Interrupts,
   Kernel.Scheduler,
+  Kernel.Processors,
   Kernel.Panic;
 
 var
@@ -49,9 +50,12 @@ var
 
 procedure HandleClockInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
-  { Only this handler writes the tick count, and an aligned 64-bit store
-    is atomic, so readers never see a torn value. }
-  TickCount := TickCount + 1;
+  { Every processor has its own clock interrupt (for its time slices);
+    only the boot processor's counts time. Only it writes the tick count,
+    and an aligned 64-bit store is atomic, so readers never see a torn
+    value. }
+  if CurrentProcessor^.Index = 0 then
+    TickCount := TickCount + 1;
   SchedulerClockTick(TickCount);
 end;
 

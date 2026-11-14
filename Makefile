@@ -117,7 +117,15 @@ $(LOADER_EFI): $(RTL_LOADER_DIRECTORY)/system.ppu FORCE
 
 kernel: $(KERNEL_ELF)
 
-$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu FORCE
+# Code that cannot be written in Pascal (16-bit start-up code for the
+# secondary processors).
+KERNEL_ASSEMBLY_OBJECTS := $(KERNEL_OBJECT_DIRECTORY)/ProcessorTrampoline.o
+
+$(KERNEL_OBJECT_DIRECTORY)/%.o: kernel/core/$(ARCH)/%.s
+	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
+	$(AS) --64 -o $@ $<
+
+$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
 	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
 	$(FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
 	$(LD) -nostdlib -static --gc-sections -z max-page-size=4096 \

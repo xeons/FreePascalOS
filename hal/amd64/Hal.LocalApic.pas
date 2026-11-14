@@ -25,6 +25,15 @@ function LocalApicUsesX2ApicMode: Boolean;
 procedure LocalApicEndOfInterrupt;
 procedure LocalApicSendSelfInterrupt(Vector: Byte);
 
+{ Inter-processor interrupts, addressed by local APIC id. }
+procedure LocalApicSendInterrupt(DestinationId: LongWord; Vector: Byte);
+procedure LocalApicSendInit(DestinationId: LongWord);
+{ STARTUP: the processor starts in real mode at page StartupPage
+  (physical address StartupPage * 4096, below 1 MiB). }
+procedure LocalApicSendStartup(DestinationId: LongWord; StartupPage: Byte);
+{ A non-maskable interrupt to every processor but this one. }
+procedure LocalApicSendNmiToOthers;
+
 { Measures how many timer ticks (at the divider used by the periodic
   timer) elapse per second. }
 function MeasureLocalApicTimerFrequency: QWord;
@@ -69,6 +78,11 @@ const
 
   InterruptCommandDeliveryPending = LongWord(1) shl 12;
   InterruptCommandShorthandSelf = LongWord(1) shl 18;
+  InterruptCommandShorthandOthers = LongWord(3) shl 18;
+  InterruptCommandModeNmi = LongWord(4) shl 8;
+  InterruptCommandModeInit = LongWord(5) shl 8;
+  InterruptCommandModeStartup = LongWord(6) shl 8;
+  InterruptCommandLevelAssert = LongWord(1) shl 14;
 
   CalibrationMicroseconds = 10000;
   CalibrationsPerSecond = 1000000 div CalibrationMicroseconds;
@@ -150,6 +164,44 @@ begin
     CpuRelax;
   WriteApicRegister(RegisterInterruptCommandHigh, 0);
   WriteApicRegister(RegisterInterruptCommandLow, InterruptCommandShorthandSelf or Vector);
+end;
+
+{ Writes the interrupt command register: Command in the low half and
+  the destination in the high half. }
+procedure SendInterruptCommand(DestinationId: LongWord; Command: LongWord);
+begin
+  if UsesX2ApicMode then
+  begin
+    WriteModelSpecificRegister(X2ApicMsrBase + (RegisterInterruptCommandLow shr 4),
+      (QWord(DestinationId) shl 32) or Command);
+    Exit;
+  end;
+  while (ReadApicRegister(RegisterInterruptCommandLow) and InterruptCommandDeliveryPending) <> 0 do
+    CpuRelax;
+  WriteApicRegister(RegisterInterruptCommandHigh, DestinationId shl 24);
+  WriteApicRegister(RegisterInterruptCommandLow, Command);
+end;
+
+procedure LocalApicSendInterrupt(DestinationId: LongWord; Vector: Byte);
+begin
+  SendInterruptCommand(DestinationId, Vector);
+end;
+
+procedure LocalApicSendInit(DestinationId: LongWord);
+begin
+  SendInterruptCommand(DestinationId, InterruptCommandModeInit or InterruptCommandLevelAssert);
+end;
+
+procedure LocalApicSendStartup(DestinationId: LongWord; StartupPage: Byte);
+begin
+  SendInterruptCommand(DestinationId, InterruptCommandModeStartup or
+    InterruptCommandLevelAssert or StartupPage);
+end;
+
+procedure LocalApicSendNmiToOthers;
+begin
+  SendInterruptCommand(0, InterruptCommandShorthandOthers or InterruptCommandModeNmi or
+    InterruptCommandLevelAssert);
 end;
 
 function MeasureLocalApicTimerFrequency: QWord;

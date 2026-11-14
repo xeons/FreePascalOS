@@ -56,6 +56,8 @@ asm
   xor r13d, r13d
   xor r14d, r14d
   xor r15d, r15d
+  { Hand GS back to user mode (Kernel.Arch.ProcessorBlock). }
+  db $0F, $01, $F8 { swapgs }
   iretq
 end;
 

@@ -26,6 +26,10 @@ const
 
   ThreadNameLength = 32;
 
+  { The x87/SSE register image saved by FXSAVE, which needs 16-byte
+    alignment; the field holds 15 spare bytes to align it in. }
+  FpuStateSize = 512;
+
 type
   TThreadState = (
     ThreadStateInitialized,
@@ -91,6 +95,10 @@ type
       user addresses are survivable (Kernel.Arch.UserCopy). }
     UserCopyActive: Boolean;
 
+    { The thread's floating point and SSE registers while it does not
+      run (see FpuStateArea). }
+    FpuState: array[0..FpuStateSize + 15] of Byte;
+
     StartRoutine: TThreadStartRoutine;
     StartContext: Pointer;
 
@@ -101,12 +109,20 @@ type
     Owner: Pointer;
   end;
 
+{ The 16-byte aligned FXSAVE area inside Thread^.FpuState. }
+function FpuStateArea(Thread: PThreadControlBlock): Pointer;
+
 function ThreadFromSchedulerLink(Entry: PListEntry): PThreadControlBlock;
 function ThreadFromTimerLink(Entry: PListEntry): PThreadControlBlock;
 
 function ThreadStateName(State: TThreadState): PChar;
 
 implementation
+
+function FpuStateArea(Thread: PThreadControlBlock): Pointer;
+begin
+  Result := Pointer((PtrUInt(@Thread^.FpuState[0]) + 15) and not PtrUInt(15));
+end;
 
 function ThreadFromSchedulerLink(Entry: PListEntry): PThreadControlBlock;
 begin

@@ -45,6 +45,7 @@ uses
   Kernel.Options,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.SecondaryProcessors,
   Kernel.FileSystemTest,
   Kernel.FileSystemWriteTest,
   Runtime.Checksums,
@@ -161,6 +162,17 @@ begin
   InitializeSystemCalls;
 end;
 
+procedure RunIdleLoop; noreturn;
+begin
+  while True do
+  begin
+    ReapTerminatedThreads;
+    { Interrupts are enabled, so the next interrupt ends the halt. If it
+      made a thread ready, the dispatch interrupt switches to it. }
+    HaltProcessor;
+  end;
+end;
+
 procedure SystemInitializationPhaseOne(Context: Pointer);
 var
   InitialProgramExitCode: LongInt;
@@ -170,6 +182,8 @@ begin
   DebugWriteLine('Phase 1 started');
 
   InitializeIoSystem(PBootInformation(Context)^);
+  { The I/O system has read the firmware's processor list. }
+  StartSecondaryProcessors(@RunIdleLoop);
   StartConsoleInterruptHandler;
 
   RunKernelSelfTests;
@@ -212,17 +226,6 @@ begin
       HalExitEmulator(EmulatorExitSuccess)
     else
       HalExitEmulator(EmulatorExitTestFailure);
-  end;
-end;
-
-procedure RunIdleLoop; noreturn;
-begin
-  while True do
-  begin
-    ReapTerminatedThreads;
-    { Interrupts are enabled, so the next interrupt ends the halt. If it
-      made a thread ready, the dispatch interrupt switches to it. }
-    HaltProcessor;
   end;
 end;
 

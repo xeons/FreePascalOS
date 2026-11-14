@@ -14,6 +14,8 @@ unit Kernel.Arch.InterruptTable;
 interface
 
 procedure InitializeInterruptTable;
+{ Loads the (shared) table on a secondary processor. }
+procedure LoadInterruptTableOnThisProcessor;
 
 implementation
 
@@ -92,7 +94,6 @@ var
   Vector: Integer;
   Stub: Pointer;
   Privilege: Byte;
-  TablePointer: TDescriptorTablePointer;
 begin
   ZeroMemory(@InterruptGates, SizeOf(InterruptGates));
 
@@ -113,6 +114,13 @@ begin
       SetInterruptGate(Vector, Stub, 0, GatePrivilegeKernel);
   end;
 
+  LoadInterruptTableOnThisProcessor;
+end;
+
+procedure LoadInterruptTableOnThisProcessor;
+var
+  TablePointer: TDescriptorTablePointer;
+begin
   TablePointer.Limit := SizeOf(InterruptGates) - 1;
   TablePointer.Base := QWord(@InterruptGates[0]);
   LoadInterruptDescriptorTable(@TablePointer);

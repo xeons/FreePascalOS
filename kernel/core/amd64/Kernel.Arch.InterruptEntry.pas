@@ -7,6 +7,10 @@
   remaining registers to complete a TTrapFrame, calls the architecture
   independent dispatcher, restores the registers and returns from the
   interrupt.
+
+  An interrupt from user mode swaps in the kernel's GS base on the way in
+  and the user's on the way out (Kernel.Arch.ProcessorBlock); the saved
+  code selector says where the interrupt came from.
 }
 unit Kernel.Arch.InterruptEntry;
 
@@ -24,6 +28,11 @@ uses
 
 procedure CommonInterruptEntry; assembler; nostackframe;
 asm
+  { Stack: vector, error code, RIP, CS (+24), ... }
+  test byte ptr [rsp + 24], 3
+  jz @FromKernel
+  db $0F, $01, $F8 { swapgs }
+@FromKernel:
   push rax
   push rbx
   push rcx
@@ -65,6 +74,11 @@ asm
 
   { Discard the vector number and error code. }
   add rsp, 16
+  { Stack: RIP, CS (+8), ... }
+  test byte ptr [rsp + 8], 3
+  jz @ToKernel
+  db $0F, $01, $F8 { swapgs }
+@ToKernel:
   iretq
 end;
 

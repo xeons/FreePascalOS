@@ -69,7 +69,7 @@ fi
 exec "$qemu_binary" \
     "${machine_arguments[@]}" \
     -m 512M \
-    -smp 1 \
+    -smp ${PROCESSORS:-4} \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
     -drive if=pflash,format=raw,file="$firmware_variables" \
     -drive format=raw,file=fat:rw:"$esp_directory" \

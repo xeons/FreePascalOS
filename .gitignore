@@ -5,3 +5,4 @@ build/
 .claude/worktrees/
 # Hand-written assembly sources are kept.
 !userland/lib/tlstest/*.s
+!kernel/core/amd64/*.s

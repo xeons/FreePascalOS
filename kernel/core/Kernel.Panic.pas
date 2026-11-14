@@ -57,7 +57,9 @@ uses
   Kernel.Arch.PriorityLevel,
   Kernel.PriorityLevel,
   Debug.Output,
-  Debug.FramebufferConsole;
+  Debug.FramebufferConsole,
+  Hal.Platform,
+  Kernel.Processors;
 
 var
   PanicCount: Int64 = 0;
@@ -91,6 +93,11 @@ begin
     risk making things worse by printing again. }
   if AtomicIncrement(PanicCount) > 1 then
     HaltForever;
+
+  { The others may hold the output lock or keep changing what the
+    message is about to describe. }
+  if OnlineProcessorCount > 1 then
+    HalHaltOtherProcessors;
 
   DebugForceUnlockForPanic;
 

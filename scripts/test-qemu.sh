@@ -70,7 +70,7 @@ if [[ -n "$system_disk_image" ]]; then
 fi
 
 timeout "$timeout_seconds" qemu-system-x86_64 \
-    -machine q35 -cpu max -m 512M -smp 1 \
+    -machine q35 -cpu max -m 512M -smp ${PROCESSORS:-4} \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
     -drive if=pflash,format=raw,file="$firmware_variables" \
     "${disk_arguments[@]}" \

@@ -52,6 +52,11 @@ procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
 
 function PageUsageOf(PhysicalAddress: TPhysicalAddress): TPageUsage;
 
+{ Takes PageCount consecutive pages of RAM below 1 MiB (never handed out
+  otherwise; secondary processors start in such a page). Returns the
+  physical address of the first, or 0 if there is no such run. }
+function ClaimLowPhysicalPages(PageCount: QWord): TPhysicalAddress;
+
 procedure GetPhysicalMemoryStatistics(out Statistics: TPhysicalMemoryStatistics);
 
 procedure WritePhysicalMemorySummary;
@@ -69,8 +74,9 @@ const
   NoNextFrame = High(QWord);
 
   { Memory below 1 MiB is never handed out. It is where firmware tables
-    live on PCs and where secondary processors will start executing. }
+    live on PCs and where secondary processors start executing. }
   LowestAllocatableAddress = QWord($100000);
+  LowFrameCount = LowestAllocatableAddress shr PageShift;
 
 type
   TPageFrame = record
@@ -179,6 +185,10 @@ begin
   Inc(FreePageCount);
 end;
 
+var
+  { Which pages below 1 MiB were free RAM (ClaimLowPhysicalPages). }
+  LowFrameIsFree: array[0..LowFrameCount - 1] of Boolean;
+
 { Builds the free list from every page still marked free. Walking from
   the top down leaves the lowest addresses at the head of the list. }
 procedure BuildFreeList;
@@ -202,6 +212,8 @@ begin
   Frame := 0;
   while (Frame < LowestFrame) and (Frame < FrameCount) do
   begin
+    { Page 0 holds the real mode interrupt table; it is never used. }
+    LowFrameIsFree[Frame] := (Frame > 0) and (FrameDatabase[Frame].Usage = PageUsageFree);
     if FrameDatabase[Frame].Usage = PageUsageFree then
       FrameDatabase[Frame].Usage := PageUsageReserved;
     Inc(Frame);
@@ -311,6 +323,42 @@ begin
   end;
 
   PushFreeFrame(Frame);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function ClaimLowPhysicalPages(PageCount: QWord): TPhysicalAddress;
+var
+  PreviousLevel: TPriorityLevel;
+  First: QWord;
+  Length: QWord;
+  Frame: QWord;
+begin
+  Result := 0;
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  First := 0;
+  Length := 0;
+  Frame := 0;
+  while (Frame < LowFrameCount) and (Length < PageCount) do
+  begin
+    if LowFrameIsFree[Frame] then
+    begin
+      if Length = 0 then
+        First := Frame;
+      Inc(Length);
+    end
+    else
+      Length := 0;
+    Inc(Frame);
+  end;
+  if (PageCount > 0) and (Length = PageCount) then
+  begin
+    for Frame := First to First + PageCount - 1 do
+    begin
+      LowFrameIsFree[Frame] := False;
+      FrameDatabase[Frame].Usage := PageUsageGeneral;
+    end;
+    Result := First shl PageShift;
+  end;
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
 end;
 

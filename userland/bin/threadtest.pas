@@ -14,6 +14,8 @@
       initialization, a used unit before the unit using it (unit
       finalization and the library finalizer print at exit),
     * many short-lived threads, so leaks would show,
+    * floating point in several threads at once: each keeps its own
+      registers across thread switches and processors,
     * memory freed by one thread while another thread's system calls
       copy into it: the calls fail with ErrorBadAddress or succeed, and
       the kernel survives (Kernel.Arch.UserCopy).
@@ -284,6 +286,60 @@ begin
   Check(AllRight, 'many short-lived threads');
 end;
 
+{ --- Floating point in several threads -------------------------------- }
+
+const
+  FloatThreadCount = 4;
+  FloatTerms = 2000000;
+
+{ A sum of FloatTerms terms that depends on every step; any register
+  clobbered by another thread changes the result. }
+function HarmonicSum(Offset: LongInt): Double;
+var
+  Index: LongInt;
+begin
+  Result := 0.0;
+  for Index := 1 to FloatTerms do
+    Result := Result + 1.0 / (Index + Offset);
+end;
+
+var
+  ExpectedSums: array[0..FloatThreadCount - 1] of Double;
+
+function ComputeSum(Argument: Pointer): LongInt;
+var
+  Number: LongInt;
+begin
+  Number := LongInt(PtrInt(Argument));
+  if HarmonicSum(Number * 7) = ExpectedSums[Number] then
+    Result := 1
+  else
+    Result := 0;
+end;
+
+procedure TestFloatingPoint;
+var
+  Handles: array[0..FloatThreadCount - 1] of Int64;
+  Index: Integer;
+  ExitCode: LongInt;
+  AllRight: Boolean;
+begin
+  for Index := 0 to FloatThreadCount - 1 do
+    ExpectedSums[Index] := HarmonicSum(Index * 7);
+  AllRight := True;
+  for Index := 0 to FloatThreadCount - 1 do
+    Handles[Index] := CreateThread(@ComputeSum, Pointer(PtrInt(Index)), 0);
+  for Index := 0 to FloatThreadCount - 1 do
+  begin
+    if (Handles[Index] < 0) or (WaitForThread(Handles[Index], InfiniteWait, ExitCode) <> 0) or
+       (ExitCode <> 1) then
+      AllRight := False;
+    if Handles[Index] >= 0 then
+      CloseThreadHandle(Handles[Index]);
+  end;
+  Check(AllRight, 'floating point registers are per thread');
+end;
+
 { --- Memory freed during a system call -------------------------------- }
 
 const
@@ -434,6 +490,7 @@ begin
   TestIdsAndTimeouts;
   TestThreadLocalData;
   TestShortLivedThreads;
+  TestFloatingPoint;
   TestFreeWhileCopying;
   PrintFinalization := True;
   if FailureCount > 0 then

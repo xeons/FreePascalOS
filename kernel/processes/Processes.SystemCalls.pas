@@ -23,6 +23,7 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Kernel.Arch.UserCopy,
+  Kernel.Processors,
   Memory.Layout,
   Memory.KernelHeap,
   Memory.PhysicalPages,
@@ -59,7 +60,6 @@ const
   MachineName = 'x86_64';
   NodeName = 'freepascalos';
   MaximumArgumentBytes = 64 * 1024;
-  ProcessorCount = 1;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -496,7 +496,7 @@ begin
   Information.TotalMemory := Statistics.TotalUsablePages * PageSize;
   Information.FreeMemory := Statistics.FreePages * PageSize;
   Information.UptimeMilliseconds := UptimeMilliseconds;
-  Information.ProcessorCount := ProcessorCount;
+  Information.ProcessorCount := OnlineProcessorCount;
   GetLoadAverages(Information.LoadAverages[0], Information.LoadAverages[1],
     Information.LoadAverages[2]);
   Information.RunnableThreads := RunnableThreadCount;

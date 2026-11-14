@@ -37,9 +37,18 @@ procedure ArchSetThreadInterruptStack(StackTop: QWord);
   %fs:0 (thread-local storage). The kernel itself never uses FS. }
 procedure ArchSetUserThreadPointer(ThreadPointer: QWord);
 
+{ Floating point and SSE registers. The kernel itself uses none, so they
+  only change hands at a thread switch: the scheduler saves the old
+  thread's and loads the new thread's (FXSAVE / FXRSTOR, 512 bytes,
+  16-byte aligned). }
+procedure ArchInitializeFpuState(Area: Pointer);
+procedure ArchSaveFpuState(Area: Pointer);
+procedure ArchRestoreFpuState(Area: Pointer);
+
 implementation
 
 uses
+  Runtime.Memory,
   Kernel.Arch.Cpu,
   Kernel.Arch.DescriptorTables,
   Kernel.Arch.SystemCallEntry;
@@ -99,6 +108,30 @@ begin
   Slot^ := InitialFlags;       { RFLAGS }
 
   Result := QWord(Slot);
+end;
+
+procedure ArchInitializeFpuState(Area: Pointer);
+const
+  { All exceptions masked, 64-bit precision, round to nearest. }
+  DefaultControlWord = $037F;
+  { All SSE exceptions masked, round to nearest. }
+  DefaultMxcsr = $1F80;
+  ControlWordOffset = 0;
+  MxcsrOffset = 24;
+begin
+  ZeroMemory(Area, 512);
+  PWord(PByte(Area) + ControlWordOffset)^ := DefaultControlWord;
+  PLongWord(PByte(Area) + MxcsrOffset)^ := DefaultMxcsr;
+end;
+
+procedure ArchSaveFpuState(Area: Pointer); assembler; nostackframe;
+asm
+  fxsave [rdi]
+end;
+
+procedure ArchRestoreFpuState(Area: Pointer); assembler; nostackframe;
+asm
+  fxrstor [rdi]
 end;
 
 procedure ArchSetUserThreadPointer(ThreadPointer: QWord);

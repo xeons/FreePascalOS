@@ -12,9 +12,9 @@
   from the frame in one well defined step and avoids sysret's pitfalls
   with non-canonical return addresses.
 
-  This kernel runs on one processor, so the user stack pointer is parked
-  in a global while switching stacks; with several processors it would
-  live in per-processor data.
+  The kernel stack and a place to park the user stack pointer while
+  switching are in the processor's block, reached through GS after
+  SWAPGS (Kernel.Arch.ProcessorBlock).
 }
 unit Kernel.Arch.SystemCallEntry;
 
@@ -30,6 +30,9 @@ type
   TSystemCallHandler = procedure(Frame: PTrapFrame);
 
 procedure InitializeSystemCallEntry(Handler: TSystemCallHandler);
+{ Programs the executing processor's system call registers (each
+  processor has its own; InitializeSystemCallEntry does the boot one). }
+procedure EnableSystemCallsOnThisProcessor;
 
 { Sets the kernel stack the next system call switches to. }
 procedure SetSystemCallKernelStack(StackTop: QWord);
@@ -43,7 +46,9 @@ implementation
 
 uses
   Kernel.Arch.Cpu,
-  Kernel.Arch.DescriptorTables;
+  Kernel.Arch.DescriptorTables,
+  Kernel.Arch.ProcessorBlock,
+  Kernel.Processors;
 
 const
   MsrStar = $C0000081;
@@ -60,8 +65,6 @@ const
   UserSelectorBase = UserDataSelector - 8;
 
 var
-  SystemCallKernelStack: QWord;
-  UserStackScratch: QWord;
   RegisteredHandler: TSystemCallHandler;
 
 procedure DispatchSystemCall(Frame: PTrapFrame);
@@ -71,12 +74,13 @@ end;
 
 procedure SystemCallEntry; assembler; nostackframe;
 asm
-  mov [rip + UserStackScratch], rsp
-  mov rsp, [rip + SystemCallKernelStack]
+  db $0F, $01, $F8 { swapgs }
+  mov qword ptr gs:[ProcessorUserStackScratchOffset], rsp
+  mov rsp, qword ptr gs:[ProcessorSystemCallStackOffset]
 
   { The same frame shape an interrupt from user mode produces. }
   push qword UserDataSelector
-  push qword ptr [rip + UserStackScratch]
+  push qword ptr gs:[ProcessorUserStackScratchOffset]
   push r11
   push qword UserCodeSelector
   push rcx
@@ -121,12 +125,18 @@ asm
   pop rbx
   pop rax
   add rsp, 16
+  db $0F, $01, $F8 { swapgs }
   iretq
 end;
 
 procedure InitializeSystemCallEntry(Handler: TSystemCallHandler);
 begin
   RegisteredHandler := Handler;
+  EnableSystemCallsOnThisProcessor;
+end;
+
+procedure EnableSystemCallsOnThisProcessor;
+begin
   WriteModelSpecificRegister(MsrExtendedFeatureEnable,
     ReadModelSpecificRegister(MsrExtendedFeatureEnable) or EferSystemCallEnable);
   WriteModelSpecificRegister(MsrStar,
@@ -137,7 +147,7 @@ end;
 
 procedure SetSystemCallKernelStack(StackTop: QWord);
 begin
-  SystemCallKernelStack := StackTop;
+  CurrentProcessor^.SystemCallStack := StackTop;
 end;
 
 function SystemCallNumber(Frame: PTrapFrame): QWord;

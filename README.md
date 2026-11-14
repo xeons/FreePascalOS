@@ -25,7 +25,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - Memory management: a page frame database, four level page tables, a kernel
   virtual range allocator, a size class heap, and guard-paged kernel stacks.
 - A preemptive, priority based scheduler with time slices, sleeping, events
-  and thread exit and cleanup.
+  and thread exit and cleanup, on **several processors**: the secondary
+  processors are found in the ACPI MADT and started through a real mode
+  trampoline; each has its own data block (reached through GS), descriptor
+  tables, idle thread and clock, and they share the run queues. TLB
+  shootdowns, rescheduling and the panic halt go between them by
+  inter-processor interrupts. `processors=N` limits how many run.
 - Mutexes (sleeping, recursive locks) alongside spin locks and events.
 - An object manager with reference counting and named objects, plus process
   and thread objects.

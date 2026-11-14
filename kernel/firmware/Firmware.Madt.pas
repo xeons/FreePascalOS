@@ -1,8 +1,10 @@
 {
   The ACPI Multiple APIC Description Table ("APIC").
 
-  It lists the interrupt controllers: the I/O APICs (where each one's
-  registers are and which global system interrupts it serves) and the
+  It lists the interrupt controllers: the processors' local APICs (one
+  per processor, which is how the processors are found), the I/O APICs
+  (where each one's registers are and which global system interrupts it
+  serves) and the
   interrupt source overrides, which say where an ISA IRQ is really wired
   (on most PCs IRQ 0, the timer, arrives on global interrupt 2) and with
   what polarity and trigger mode.
@@ -19,6 +21,7 @@ uses
 
 const
   MaximumIoApics = 8;
+  MaximumListedProcessors = 64;
 
 type
   TIoApicDescription = record
@@ -42,14 +45,25 @@ function IoApicDescription(Index: Integer): TIoApicDescription;
   global interrupt Irq, active high and edge triggered. }
 function RoutingOfIsaInterrupt(Irq: Byte): TIsaInterruptRouting;
 
+{ The processors that can be started, by local APIC id (the boot
+  processor among them). }
+function ListedProcessorCount: Integer;
+function ListedProcessorApicId(Index: Integer): LongWord;
+
 implementation
 
 uses
   Firmware.Acpi;
 
 const
+  EntryTypeLocalApic = 0;
   EntryTypeIoApic = 1;
   EntryTypeSourceOverride = 2;
+  EntryTypeLocalX2Apic = 9;
+
+  { Flags of a processor: enabled, or "online capable" (may be enabled). }
+  ProcessorEnabled = 1;
+  ProcessorOnlineCapable = 2;
 
   { Flags of an override: bits 0-1 polarity, bits 2-3 trigger mode. }
   PolarityMask = $03;
@@ -72,6 +86,23 @@ type
     Length: Byte;
   end;
   PEntryHeader = ^TEntryHeader;
+
+  TLocalApicEntry = packed record
+    Header: TEntryHeader;
+    ProcessorUid: Byte;
+    ApicId: Byte;
+    Flags: LongWord;
+  end;
+  PLocalApicEntry = ^TLocalApicEntry;
+
+  TLocalX2ApicEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    ApicId: LongWord;
+    Flags: LongWord;
+    ProcessorUid: LongWord;
+  end;
+  PLocalX2ApicEntry = ^TLocalX2ApicEntry;
 
   TIoApicEntry = packed record
     Header: TEntryHeader;
@@ -101,6 +132,25 @@ var
   IoApicTotal: Integer;
   Overrides: array[0..MaximumOverrides - 1] of TOverride;
   OverrideTotal: Integer;
+  ProcessorApicIds: array[0..MaximumListedProcessors - 1] of LongWord;
+  ProcessorTotal: Integer;
+
+procedure AddProcessor(ApicId: LongWord; Flags: LongWord);
+var
+  Index: Integer;
+begin
+  if (Flags and (ProcessorEnabled or ProcessorOnlineCapable)) = 0 then
+    Exit;
+  { The same processor may be listed in both forms. }
+  for Index := 0 to ProcessorTotal - 1 do
+    if ProcessorApicIds[Index] = ApicId then
+      Exit;
+  if ProcessorTotal < MaximumListedProcessors then
+  begin
+    ProcessorApicIds[ProcessorTotal] := ApicId;
+    Inc(ProcessorTotal);
+  end;
+end;
 
 function ParseMadt: Boolean;
 var
@@ -113,6 +163,7 @@ var
 begin
   IoApicTotal := 0;
   OverrideTotal := 0;
+  ProcessorTotal := 0;
   Table := PMadtHeader(FindAcpiTable('APIC', 0));
   if Table = nil then
     Exit(False);
@@ -125,6 +176,12 @@ begin
     if (Entry^.Length < SizeOf(TEntryHeader)) or (Position + Entry^.Length > TableEnd) then
       Break;
     case Entry^.EntryType of
+      EntryTypeLocalApic:
+        if Entry^.Length >= SizeOf(TLocalApicEntry) then
+          AddProcessor(PLocalApicEntry(Entry)^.ApicId, PLocalApicEntry(Entry)^.Flags);
+      EntryTypeLocalX2Apic:
+        if Entry^.Length >= SizeOf(TLocalX2ApicEntry) then
+          AddProcessor(PLocalX2ApicEntry(Entry)^.ApicId, PLocalX2ApicEntry(Entry)^.Flags);
       EntryTypeIoApic:
         if (Entry^.Length >= SizeOf(TIoApicEntry)) and (IoApicTotal < MaximumIoApics) then
         begin
@@ -172,6 +229,16 @@ begin
   Result.GlobalInterrupt := Irq;
   Result.ActiveLow := False;
   Result.LevelTriggered := False;
+end;
+
+function ListedProcessorCount: Integer;
+begin
+  Result := ProcessorTotal;
+end;
+
+function ListedProcessorApicId(Index: Integer): LongWord;
+begin
+  Result := ProcessorApicIds[Index];
 end;
 
 end.
