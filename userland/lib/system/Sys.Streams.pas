@@ -11,6 +11,12 @@
   use; the first use of an output stream also registers the flush that
   runs when the program exits.
 
+  As with the GNU tools, a program whose standard output could not be
+  written (echo hello > /dev/full) does not end successfully: if it was
+  about to exit with status 0, the exit flush reports "write error" and
+  changes the status to 1. A reader that went away (a broken pipe, as in
+  seq 1000 | head -n 1) is not reported.
+
   The environment variables _STDBUF_O and _STDBUF_E (set by stdbuf)
   choose the buffering of standard output and error: "0" writes at once,
   "L" at every line end, anything else when the buffer is full.
@@ -35,6 +41,8 @@ type
     { Written out after every write call. }
     Unbuffered: Boolean;
     HadError: Boolean;
+    { The Abi error of the first failed write. }
+    ErrorCode: LongInt;
   end;
 
   PInputStream = ^TInputStream;
@@ -89,17 +97,51 @@ uses
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.Memory,
-  Sys.Text;
+  Sys.Text,
+  Sys.Errors,
+  Sys.Environment;
 
 var
   OutputStream: POutputStream = nil;
   ErrorStream: POutputStream = nil;
   InputStream: PInputStream = nil;
 
+{ "<program>: write error: <reason>" on standard error. }
+procedure ReportWriteError(ErrorCode: LongInt);
+var
+  ProgramPath: PChar;
+  Name: PChar;
+  Position: PChar;
+begin
+  ProgramPath := Argument(0);
+  Name := ProgramPath;
+  Position := ProgramPath;
+  while (Position <> nil) and (Position^ <> #0) do
+  begin
+    if Position^ = '/' then
+      Name := Position + 1;
+    Inc(Position);
+  end;
+  if (Name = nil) or (Name^ = #0) then
+    Name := 'program';
+  WriteText(StandardError, Name);
+  WriteText(StandardError, ': write error: ');
+  WriteText(StandardError, ErrorMessage(ErrorCode));
+  WriteCharacter(StandardError, #10);
+end;
+
 procedure FlushStandardStreams;
 begin
   if OutputStream <> nil then
+  begin
     FlushStream(OutputStream);
+    if OutputStream^.HadError and (OutputStream^.ErrorCode <> ErrorBrokenPipe) and
+       (ExitCode = 0) then
+    begin
+      ReportWriteError(OutputStream^.ErrorCode);
+      ExitCode := 1;
+    end;
+  end;
   if ErrorStream <> nil then
     FlushStream(ErrorStream);
 end;
@@ -208,6 +250,13 @@ begin
     WriteResult := KernelWrite(Stream^.Handle, @Stream^.Buffer[Written], Stream^.Count - Written);
     if WriteResult <= 0 then
     begin
+      if not Stream^.HadError then
+      begin
+        if WriteResult < 0 then
+          Stream^.ErrorCode := LongInt(-WriteResult)
+        else
+          Stream^.ErrorCode := ErrorIo;
+      end;
       Stream^.HadError := True;
       Break;
     end;

@@ -85,7 +85,7 @@ how the existing pieces fit together.
 - [ ] AHCI: several command slots per port (NCQ), DMA straight into page
       aligned buffers
 - [ ] Layered devices (filter drivers attached on top of a device)
-- [ ] Programs report write errors on standard output at exit (echo > /dev/full)
+- [x] Programs report write errors on standard output at exit (echo > /dev/full)
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
 - [x] Keyboard layouts us/uk/de/fr (keymap= option), AltGr, lock lights, Num Lock keypad
 - [ ] Dead keys for de/fr accents; non-ASCII glyphs in the framebuffer font
