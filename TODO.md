@@ -59,7 +59,8 @@ how the existing pieces fit together.
 - [ ] Thread priorities set by programs; thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
-- [ ] Signals that do not end a program (stop, continue, user signals)
+- [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
+- [ ] User signals and handlers (programs cannot yet catch anything)
 - [x] Users, groups and permission checks: real/effective/saved ids, supplementary
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
@@ -149,7 +150,10 @@ how the existing pieces fit together.
       eval, exec, command, type, wait, arithmetic assignment
 - [x] Ctrl-C for loops made only of builtins (pending-interrupt console request)
 - [x] Line editor: lines longer than the screen scroll sideways
-- [ ] Shell: job control (fg, bg, jobs, Ctrl-Z), background tracking for wait and $!
+- [x] Job control: stopping and continuing processes (kill -STOP/-CONT), Ctrl-Z,
+      background readers of the console stop; shell jobs, fg, bg, wait, $!, kill %N
+- [ ] Shell: background compound commands ("( ... ) &", "while ...; done &") still
+      run in the foreground; job text is rebuilt from the expanded words
 - [ ] Line editor: characters beyond ASCII (UTF-8) count as one column
 - [x] More programs outside coreutils: grep (egrep, fgrep), find, xargs, sed, diff, less (more)
 - [x] ps, pgrep, pkill

@@ -44,6 +44,17 @@ function WaitForProgram(ProcessHandle: Int64): LongInt;
   open. }
 function WaitForProgramWithTimeout(ProcessHandle: Int64; Milliseconds: QWord;
   out ExitCode: LongInt): LongInt;
+{ Job control. Waits at most Milliseconds (or InfiniteWait) for the
+  program to end or stop. Returns ErrorNone with Stopped set, or with
+  ExitCode set when it ended; else ErrorTimedOut or another error. A stop
+  is reported once. The handle stays open. }
+function WaitForProgramChange(ProcessHandle: Int64; Milliseconds: Int64;
+  out Stopped: Boolean; out ExitCode: LongInt): LongInt;
+{ Stop or continue a program (Target > 0), a process group (-group) or
+  this program's own group (0). Return 0 or an error code. }
+function StopPrograms(Target: Int64): LongInt;
+function ContinuePrograms(Target: Int64): LongInt;
+
 { The process id of a started program. }
 function ProcessIdOf(ProcessHandle: Int64): Int64;
 { Asks a running program to end with ExitCode (by convention 128 plus a
@@ -174,6 +185,43 @@ begin
   if WaitResult < 0 then
     Exit(ErrorCodeOf(WaitResult));
   ExitCode := LongInt(WaitResult);
+  Result := ErrorNone;
+end;
+
+function WaitForProgramChange(ProcessHandle: Int64; Milliseconds: Int64;
+  out Stopped: Boolean; out ExitCode: LongInt): LongInt;
+var
+  WaitResult: Int64;
+begin
+  Stopped := False;
+  ExitCode := 0;
+  WaitResult := KernelWaitForProcessChange(ProcessHandle, Milliseconds);
+  if WaitResult < 0 then
+    Exit(ErrorCodeOf(WaitResult));
+  if WaitResult = WaitStatusStopped then
+    Stopped := True
+  else
+    ExitCode := LongInt(WaitResult);
+  Result := ErrorNone;
+end;
+
+function StopPrograms(Target: Int64): LongInt;
+var
+  CallResult: Int64;
+begin
+  CallResult := KernelStopProcesses(Target);
+  if CallResult < 0 then
+    Exit(ErrorCodeOf(CallResult));
+  Result := ErrorNone;
+end;
+
+function ContinuePrograms(Target: Int64): LongInt;
+var
+  CallResult: Int64;
+begin
+  CallResult := KernelContinueProcesses(Target);
+  if CallResult < 0 then
+    Exit(ErrorCodeOf(CallResult));
   Result := ErrorNone;
 end;
 

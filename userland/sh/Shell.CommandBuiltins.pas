@@ -7,7 +7,6 @@
     command [-v] NAME... runs NAME skipping functions; -v tells what it is
     type NAME...         tells whether NAME is a keyword, function, builtin
                          or program
-    wait                 accepted; background programs are not tracked
     return [N]           leaves the current function with status N
     local NAME[=VALUE]... makes variables local to the current function
 }
@@ -165,11 +164,6 @@ begin
       Result := 1;
 end;
 
-function BuiltinWait(Arguments: PPChar; Count: Integer): LongInt;
-begin
-  Result := 0;
-end;
-
 function BuiltinReturn(Arguments: PPChar; Count: Integer): LongInt;
 var
   Status: Int64;
@@ -237,8 +231,6 @@ begin
     Result := @BuiltinCommand
   else if TextIsEqual(Name, 'type') then
     Result := @BuiltinType
-  else if TextIsEqual(Name, 'wait') then
-    Result := @BuiltinWait
   else if TextIsEqual(Name, 'return') then
     Result := @BuiltinReturn
   else if TextIsEqual(Name, 'local') then

@@ -7,7 +7,8 @@
   checks the local table first, then the environment.
 
   Special parameters: $? (status of the last command), $$ (process id),
-  $# (number of positional parameters), $0..$9 and $@ / $*.
+  $! (process id of the last background command), $# (number of
+  positional parameters), $0..$9 and $@ / $*.
 
   Functions get their own positional parameters, and "local" variables
   that are restored when the function returns (see BeginLocalScope).
@@ -28,6 +29,9 @@ var
   { Set by an expansion that failed (${NAME:?message}, a bad
     substitution); the command is then not run. }
   ExpansionFailed: Boolean = False;
+  { $!: the last program of the most recent background pipeline (0 if
+    none was started). }
+  LastBackgroundProcessId: Int64 = 0;
 
 { Returns nil if the variable is not set. }
 function LookupVariable(Name: PChar): PChar;

@@ -303,6 +303,11 @@ begin
   case Name of
     '?': Value := FormatSignedDecimal(LastStatus, Buffer);
     '$': Value := FormatSignedDecimal(CurrentProcessId, Buffer);
+    '!':
+      if LastBackgroundProcessId > 0 then
+        Value := FormatSignedDecimal(LastBackgroundProcessId, Buffer)
+      else
+        Value := '';
     '#': Value := FormatSignedDecimal(PositionalCount, Buffer);
     '0': Value := ScriptName;
     '1'..'9': Value := PositionalParameter(Ord(Name) - Ord('0'));

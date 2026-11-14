@@ -62,7 +62,8 @@ uses
   Processes.UserAccess,
   Processes.Security,
   FileSystem.Security,
-  Kernel.Clock;
+  Kernel.Clock,
+  Processes.Stopping;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -216,6 +217,22 @@ begin
     Result := Failure(ErrorBadHandle);
 end;
 
+{ A program outside the console's foreground group may not read the
+  console: its group is stopped instead (like SIGTTIN), and the read runs
+  again once a shell has continued it in the foreground. }
+function StopIfReadingInBackground: Boolean;
+var
+  Process: PProcess;
+  Foreground: QWord;
+begin
+  Process := CurrentProcess;
+  Foreground := ConsoleForegroundGroup;
+  Result := (Foreground <> 0) and Process^.IsUserProcess and
+    (Process^.GroupId <> Foreground) and not Process^.IgnoresInterrupt;
+  if Result then
+    SuspendProcessGroup(Process^.GroupId);
+end;
+
 function PerformReadHandle(Handle: Int64; BufferAddress: QWord; ByteCount: QWord): Int64;
 var
   Kind: THandleKind;
@@ -237,9 +254,20 @@ begin
         Result := Int64(BytesRead);
       end;
     HandleKindConsole:
-      Result := Int64(ReadFromConsole(PByte(BufferAddress), ByteCount));
+      begin
+        if StopIfReadingInBackground then
+          Exit(Failure(ErrorInterrupted));
+        { Negative: cut short by an alert, so the call may be restarted. }
+        Result := ReadFromConsole(PByte(BufferAddress), ByteCount);
+        if Result < 0 then
+          Result := Failure(ErrorInterrupted);
+      end;
     HandleKindPipeReadEnd:
-      Result := Int64(ReadFromPipe(PPipe(ObjectBody), PByte(BufferAddress), ByteCount));
+      begin
+        Result := ReadFromPipe(PPipe(ObjectBody), PByte(BufferAddress), ByteCount);
+        if Result = PipeInterrupted then
+          Result := Failure(ErrorInterrupted);
+      end;
     HandleKindNull:
       Result := 0;
   else
@@ -275,7 +303,9 @@ begin
     HandleKindPipeWriteEnd:
       begin
         Result := WriteToPipe(PPipe(ObjectBody), PByte(BufferAddress), ByteCount);
-        if Result < 0 then
+        if Result = PipeInterrupted then
+          Result := Failure(ErrorInterrupted)
+        else if Result < 0 then
           Result := Failure(ErrorBrokenPipe);
       end;
     HandleKindNull:

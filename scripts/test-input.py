@@ -4,7 +4,8 @@ Input test: boots the system with /bin/sh as the first program and types
 into it, on the emulated PS/2 keyboard (QEMU monitor "sendkey") and on the
 serial port, then checks what the shell printed. Covers both input
 drivers, the shell's line editing and history (also of a line longer
-than the screen), and Ctrl-C (also of a loop of shell builtins).
+than the screen), Ctrl-C (also of a loop of shell builtins), and job
+control (Ctrl-Z, jobs, fg, bg, a background program reading the console).
 
     test-input.py <esp-directory> <system-disk-image>
 
@@ -203,12 +204,67 @@ time.sleep(1.5)
 type_on_serial(b'\x03echo loop-ended\r')
 checks.append(('ctrl-c ends a loop', wait_for('\nloop-ended', 10) and b'\nnot-reached' not in received))
 
+# Job control: Ctrl-Z stops the foreground program, which bg continues
+# in the background and kill %1 ends.
+type_on_serial(b'sleep 30\r')
+time.sleep(1)
+type_on_serial(b'\x1a')
+checks.append(('ctrl-z stops a program', wait_for('[1]+  Stopped                 sleep 30', 10)))
+type_on_serial(b'ps -o stat= -o comm= | grep sleep\r')
+checks.append(('a stopped program shows as T', wait_for('T    sleep', 10)))
+type_on_serial(b'bg\r')
+checks.append(('bg continues a job', wait_for('[1]+ sleep 30 &', 10)))
+type_on_serial(b'kill %1\r')
+time.sleep(1)
+type_on_serial(b'\r')
+checks.append(('kill %1 ends a job, reported at the prompt',
+               wait_for('[1]+  Exit 143                sleep 30', 10)))
+
+# fg: a stopped reader gets the console back.
+type_on_serial(b'cat\r')
+time.sleep(1)
+type_on_serial(b'\x1a')
+checks.append(('ctrl-z stops a reader', wait_for('[1]+  Stopped                 cat', 10)))
+type_on_serial(b'jobs\r')
+time.sleep(0.5)
+type_on_serial(b'fg\r')
+time.sleep(1)
+type_on_serial(b'typed-to-cat\r')
+time.sleep(0.5)
+type_on_serial(b'\x04echo fg-status=$?\r')
+checks.append(('fg brings a job back', wait_for('fg-status=0', 10) and
+               received.count(b'typed-to-cat') >= 2))
+
+# A background program that reads the console stops until fg.
+type_on_serial(b'cat &\r')
+time.sleep(1)
+type_on_serial(b'jobs\r')
+checks.append(('a background reader stops', wait_for('[1]+  Stopped                 cat', 10)))
+type_on_serial(b'fg %1\r')
+time.sleep(1)
+type_on_serial(b'read-after-fg\r')
+time.sleep(0.5)
+type_on_serial(b'\x04echo reader-status=$?\r')
+checks.append(('the background reader reads after fg', wait_for('reader-status=0', 10) and
+               received.count(b'read-after-fg') >= 2))
+# A whole pipeline stops and comes back; Ctrl-C then ends it.
+type_on_serial(b'sleep 30 | cat\r')
+time.sleep(1)
+type_on_serial(b'\x1a')
+checks.append(('ctrl-z stops a pipeline', wait_for('[1]+  Stopped                 sleep 30 | cat', 10)))
+type_on_serial(b'fg\r')
+time.sleep(1)
+type_on_serial(b'\x03echo pipeline-status=$?\r')
+checks.append(('fg, then ctrl-c ends the pipeline', wait_for('pipeline-status=130', 10)))
+type_on_serial(b'sleep 1 & wait $!; echo waited=$?\r')
+checks.append(('wait for a background job', wait_for('waited=0', 10)))
+
 # History is shared through the file: a new shell recalls the last line.
 type_on_serial(b'sh\r')
 time.sleep(1)
 type_on_serial(b'\x1b[A\x1b[A\r')
 collect(1.5)
-checks.append(('history shared through the file', received.count(b'\nloop-ended') >= 2))
+checks.append(('history shared through the file', received.count(b'waited=0') >= 2))
 type_on_serial(b'exit\r')
 time.sleep(0.5)
 

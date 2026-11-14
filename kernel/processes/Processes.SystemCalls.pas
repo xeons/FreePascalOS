@@ -47,7 +47,9 @@ uses
   FileSystem.Files,
   FileSystem.Security,
   Processes.Security,
-  Processes.SecurityCalls;
+  Processes.SecurityCalls,
+  { Job control. }
+  Processes.Stopping;
 
 const
   SystemName = 'FreePascalOS';
@@ -329,6 +331,29 @@ begin
   Result := ExitCode and $FF;
 end;
 
+{ Like PerformWaitForProcess, but also returns WaitStatusStopped once
+  when the process stops. }
+function PerformWaitForProcessChange(Handle: Int64; Timeout: Int64): Int64;
+var
+  Process: PProcess;
+  KernelTimeout: QWord;
+  Status: LongInt;
+  Error: LongInt;
+begin
+  Process := ReferenceProcessHandle(Handle);
+  if Process = nil then
+    Exit(Failure(ErrorNoChildProcess));
+  if Timeout < 0 then
+    KernelTimeout := InfiniteTimeout
+  else
+    KernelTimeout := QWord(Timeout);
+  Error := WaitForProcessChange(Process, KernelTimeout, Status);
+  DereferenceObject(Process);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := Status;
+end;
+
 { The id of the process behind a handle, or of the caller for NoHandle. }
 function PerformGetProcessId(Handle: Int64): Int64;
 var
@@ -479,18 +504,10 @@ end;
 
 { --- Dispatcher ------------------------------------------------------ }
 
-procedure DispatchSystemCall(Frame: PTrapFrame);
-var
-  Argument0: QWord;
-  Argument1: QWord;
-  Argument2: QWord;
-  Result: Int64;
+function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2: QWord): Int64;
 begin
-  Argument0 := SystemCallArgument(Frame, 0);
-  Argument1 := SystemCallArgument(Frame, 1);
-  Argument2 := SystemCallArgument(Frame, 2);
-
-  case SystemCallNumber(Frame) of
+  Result := 0;
+  case Number of
     CallExit: ExitCurrentProcess(LongInt(Argument0));
     CallWrite: Result := PerformWriteHandle(Int64(Argument0), Argument1, Argument2);
     CallRead: Result := PerformReadHandle(Int64(Argument0), Argument1, Argument2);
@@ -549,9 +566,36 @@ begin
     CallGetPriority: Result := PerformGetPriority(Argument0);
     CallSetPriority: Result := PerformSetPriority(Argument0, Int64(Argument1));
     CallCreateFifo: Result := PerformCreateFifo(Argument0);
+    { --- Job control (Processes.Stopping) --- }
+    CallStopProcesses: Result := StopProcesses(Int64(Argument0));
+    CallContinueProcesses: Result := ContinueProcesses(Int64(Argument0));
+    CallWaitForProcessChange: Result := PerformWaitForProcessChange(Int64(Argument0), Int64(Argument1));
   else
     Result := Failure(ErrorNotImplemented);
   end;
+end;
+
+procedure DispatchSystemCall(Frame: PTrapFrame);
+var
+  Number: QWord;
+  Argument0: QWord;
+  Argument1: QWord;
+  Argument2: QWord;
+  Result: Int64;
+  MustRestart: Boolean;
+begin
+  Number := SystemCallNumber(Frame);
+  Argument0 := SystemCallArgument(Frame, 0);
+  Argument1 := SystemCallArgument(Frame, 1);
+  Argument2 := SystemCallArgument(Frame, 2);
+
+  repeat
+    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2);
+    { A call cut short because the program was asked to stop runs again
+      once the program is continued, so the program never sees the stop. }
+    MustRestart := (Result = Failure(ErrorInterrupted)) and CurrentStopIsPending;
+    StopCurrentThreadIfRequested;
+  until not MustRestart or CurrentProcess^.TerminationRequested;
 
   SetSystemCallResult(Frame, Result);
   { A program asked to end does so before it runs any further. }

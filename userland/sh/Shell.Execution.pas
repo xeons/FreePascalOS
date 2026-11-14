@@ -14,7 +14,9 @@
 
   An interactive shell runs every pipeline in a process group of its own;
   a foreground pipeline's group becomes the console's foreground group
-  while the shell waits, so Ctrl-C ends exactly that pipeline. When a
+  while the shell waits, so Ctrl-C ends exactly that pipeline, and Ctrl-Z
+  stops it: it then becomes a stopped job (Shell.Jobs) for fg and bg. A
+  pipeline ending in '&' becomes a running job. When a
   foreground program ends by Ctrl-C (status 130), the rest of the command
   line is abandoned. Ctrl-C pressed while the shell itself is busy (a loop
   of builtins) is noticed between commands.
@@ -82,6 +84,7 @@ uses
   Shell.Expansion,
   Shell.Functions,
   Shell.Patterns,
+  Shell.Jobs,
   Shell.Builtins;
 
 const
@@ -614,6 +617,150 @@ end;
 
 { --- Pipelines ------------------------------------------------------- }
 
+{ The command line of a pipeline as jobs shows it, rebuilt from the
+  expanded words. }
+function DescribePipeline(Prepared: PPreparedCommand; Count: Integer): PChar;
+var
+  Builder: TTextBuilder;
+  Stage: Integer;
+  Index: Integer;
+begin
+  BeginText(Builder);
+  for Stage := 0 to Count - 1 do
+  begin
+    if Stage > 0 then
+      AppendText(Builder, ' | ');
+    { Compound commands have no words of their own. }
+    if Prepared[Stage].Node = nil then
+      AppendText(Builder, '(...)');
+    for Index := 0 to Prepared[Stage].Fields.Count - 1 do
+    begin
+      if Index > 0 then
+        AppendCharacter(Builder, ' ');
+      AppendText(Builder, Prepared[Stage].Fields.Items[Index]);
+    end;
+  end;
+  Result := FinishText(Builder);
+end;
+
+{ A background pipeline becomes a job; its programs run on. }
+procedure StartBackgroundJob(Prepared: PPreparedCommand; Processes: PInt64; Count: Integer;
+  GroupId: Int64);
+var
+  Handles: array[0..MaximumJobProcesses - 1] of Int64;
+  HandleCount: Integer;
+  Index: Integer;
+  Command: PChar;
+  Job: PJob;
+begin
+  HandleCount := 0;
+  for Index := 0 to Count - 1 do
+  begin
+    if Processes[Index] < 0 then
+      Continue;
+    if HandleCount = MaximumJobProcesses then
+    begin
+      CloseFile(Processes[Index]);
+      Continue;
+    end;
+    Handles[HandleCount] := Processes[Index];
+    Inc(HandleCount);
+  end;
+  if HandleCount = 0 then
+    Exit;
+  LastBackgroundProcessId := ProcessIdOf(Handles[HandleCount - 1]);
+  if GroupId < 0 then
+    GroupId := 0;
+  Command := DescribePipeline(Prepared, Count);
+  Job := AddJob(@Handles[0], HandleCount, GroupId, Command, JobRunning);
+  FreeMemory(Command);
+  if ShellIsInteractive and (Job <> nil) then
+  begin
+    WriteFormatted(StandardError, '[%d] %d'#10, [ArgumentNumber(Job^.Number),
+      ArgumentNumber(LastBackgroundProcessId)]);
+    FlushStream(StandardError);
+  end;
+end;
+
+{ Waits for the external programs of a foreground pipeline. In an
+  interactive shell a stopped program (Ctrl-Z) turns the rest of the
+  pipeline into a stopped job and abandons the rest of the command line;
+  then the result is True. }
+function WaitForPipeline(Prepared: PPreparedCommand; Processes: PInt64; Statuses: PLongInt;
+  Count: Integer; GroupId: Int64): Boolean;
+var
+  StoppedHandles: array[0..MaximumJobProcesses - 1] of Int64;
+  StoppedCount: Integer;
+  Index: Integer;
+  Stopped: Boolean;
+  ExitCode: LongInt;
+  Command: PChar;
+  Job: PJob;
+begin
+  StoppedCount := 0;
+  for Index := 0 to Count - 1 do
+  begin
+    if Processes[Index] < 0 then
+      Continue;
+    if StoppedCount > 0 then
+    begin
+      { A later stage of a stopped pipeline belongs to the job too. }
+      if StoppedCount < MaximumJobProcesses then
+      begin
+        StoppedHandles[StoppedCount] := Processes[Index];
+        Inc(StoppedCount);
+      end
+      else
+        CloseFile(Processes[Index]);
+      Statuses[Index] := StatusStopped;
+      Continue;
+    end;
+    if ShellIsInteractive then
+    begin
+      if WaitForProgramChange(Processes[Index], InfiniteWait, Stopped, ExitCode) <> ErrorNone then
+      begin
+        Stopped := False;
+        ExitCode := 1;
+      end;
+      if Stopped then
+      begin
+        StoppedHandles[0] := Processes[Index];
+        StoppedCount := 1;
+        Statuses[Index] := StatusStopped;
+        Continue;
+      end;
+      CloseFile(Processes[Index]);
+      Statuses[Index] := ExitCode;
+    end
+    else
+      Statuses[Index] := WaitForProgram(Processes[Index]);
+    if ShellIsInteractive and (Statuses[Index] = StatusInterrupted) then
+      InterruptRequested := True;
+    if Prepared[Index].ExitAfterwards then
+    begin
+      ExitRequested := True;
+      RequestedExitCode := Statuses[Index];
+    end;
+  end;
+
+  Result := StoppedCount > 0;
+  if not Result then
+    Exit;
+  if GroupId < 0 then
+    GroupId := 0;
+  Command := DescribePipeline(Prepared, Count);
+  Job := AddJob(@StoppedHandles[0], StoppedCount, GroupId, Command, JobStopped);
+  FreeMemory(Command);
+  if Job <> nil then
+  begin
+    PrintJob(StandardError, Job, False);
+    FlushStream(StandardError);
+  end;
+  { Like Ctrl-C, Ctrl-Z abandons the rest of the command line (a loop
+    would otherwise start the next program at once). }
+  InterruptRequested := True;
+end;
+
 function ExecutePipeline(Children: PPNode; Count: Integer; Negate: Boolean; Wait: Boolean): LongInt;
 var
   Prepared: PPreparedCommand;
@@ -629,6 +776,7 @@ var
   IsInShell: PBoolean;
   PipelineGroup: Int64;
   OwnsConsole: Boolean;
+  PipelineStopped: Boolean;
 begin
   Prepared := PPreparedCommand(AllocateZeroedMemory(QWord(Count) * SizeOf(TPreparedCommand)));
   Processes := PInt64(AllocateZeroedMemory(QWord(Count) * SizeOf(Int64)));
@@ -722,29 +870,17 @@ begin
       CloseFile(Outputs[Index]);
   end;
 
-  for Index := 0 to Count - 1 do
-  begin
-    if Processes[Index] < 0 then
-      Continue;
-    if Wait then
-    begin
-      Statuses[Index] := WaitForProgram(Processes[Index]);
-      if ShellIsInteractive and (Statuses[Index] = StatusInterrupted) then
-        InterruptRequested := True;
-      if Prepared[Index].ExitAfterwards then
-      begin
-        ExitRequested := True;
-        RequestedExitCode := Statuses[Index];
-      end;
-    end
-    else
-      { A background program keeps running on its own. }
-      CloseFile(Processes[Index]);
-  end;
+  PipelineStopped := False;
+  if Wait then
+    PipelineStopped := WaitForPipeline(Prepared, Processes, Statuses, Count, PipelineGroup)
+  else
+    StartBackgroundJob(Prepared, Processes, Count, PipelineGroup);
   if OwnsConsole then
     SetForegroundGroup(StandardInputHandle, CurrentProcessGroup);
 
   Result := Statuses[Count - 1];
+  if PipelineStopped then
+    Result := StatusStopped;
   if Negate then
     Result := Ord(Result = 0);
 

@@ -65,10 +65,17 @@ procedure ClosePipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
   was cut short by an alert. }
 function OpenNamedPipe(Volume: Pointer; NodeNumber: QWord; ForWriting: Boolean): PPipe;
 
-{ Reads up to ByteCount bytes, waiting for some. Returns 0 at end of
-  file, or when the thread is alerted (its process is being ended). }
-function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): QWord;
-{ Returns the number of bytes written, or -1 if no reader is left. }
+const
+  { No reader is left (WriteToPipe). }
+  PipeBroken = -1;
+  { The wait was cut short by an alert (its process is being ended or
+    stopped) before anything was transferred. }
+  PipeInterrupted = -2;
+
+{ Reads up to ByteCount bytes, waiting for some. Returns the count, 0 at
+  end of file, or PipeInterrupted. }
+function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): Int64;
+{ Returns the number of bytes written, PipeBroken or PipeInterrupted. }
 function WriteToPipe(Pipe: PPipe; Source: PByte; ByteCount: QWord): Int64;
 
 implementation
@@ -211,7 +218,7 @@ begin
   ReleaseMutex(Pipe^.Lock);
 end;
 
-function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): QWord;
+function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): Int64;
 begin
   Result := 0;
   if ByteCount = 0 then
@@ -222,7 +229,7 @@ begin
   begin
     ReleaseMutex(Pipe^.Lock);
     if WaitForEventWithOptions(Pipe^.DataAvailable, InfiniteTimeout, True) = WaitAlerted then
-      Exit(0);
+      Exit(PipeInterrupted);
     AcquireMutex(Pipe^.Lock);
   end;
 
@@ -256,7 +263,7 @@ begin
       ReleaseMutex(Pipe^.Lock);
       if Written > 0 then
         Exit(Int64(Written));
-      Exit(-1);
+      Exit(PipeBroken);
     end;
 
     if Pipe^.ByteCount = PipeBufferSize then
@@ -266,7 +273,7 @@ begin
       begin
         if Written > 0 then
           Exit(Int64(Written));
-        Exit(-1);
+        Exit(PipeInterrupted);
       end;
       AcquireMutex(Pipe^.Lock);
       Continue;

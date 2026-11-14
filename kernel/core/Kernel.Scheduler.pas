@@ -64,6 +64,9 @@ function SleepAlertable(Milliseconds: QWord): Boolean;
 
 { Makes every alertable wait of Thread end, now and in the future. }
 procedure AlertThread(Thread: PThreadControlBlock);
+{ Forgets an alert of the current thread, so its alertable waits block
+  again (a stopped thread does this before it waits to be continued). }
+procedure ClearCurrentThreadAlert;
 
 { Changes the priority of a thread, moving it between run queues if it
   is ready. }
@@ -533,6 +536,15 @@ begin
   Thread^.AlertPending := True;
   if (Thread^.State = ThreadStateWaiting) and Thread^.WaitIsAlertable then
     WakeWaitingThreadLocked(Thread, WaitAlerted);
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+procedure ClearCurrentThreadAlert;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireDispatcherLock;
+  RunningThread^.AlertPending := False;
   ReleaseDispatcherLock(PreviousLevel);
 end;
 

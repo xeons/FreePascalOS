@@ -79,8 +79,9 @@ type
     IsOnSleepQueue: Boolean;
     WaitIsAlertable: Boolean;
     WaitResult: TWaitResult;
-    { Set by AlertThread and never cleared: from then on alertable waits
-      end at once. Used to stop threads of a process being terminated. }
+    { Set by AlertThread: from then on alertable waits end at once. Used
+      to get the threads of a process being ended or stopped out of their
+      waits; only a stopped thread clears it (ClearCurrentThreadAlert). }
     AlertPending: Boolean;
 
     { Clock ticks spent running. }

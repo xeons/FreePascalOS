@@ -4,7 +4,8 @@
   Output goes wherever the kernel log goes (serial port and framebuffer).
   Input comes from the keyboard and the serial port, with simple line
   editing: characters are echoed, backspace removes the last one, Ctrl-C
-  throws the line away, and a line is handed to the reader when Enter is
+  throws the line away (unless it ends programs, as does Ctrl-Z stop
+  them; see Processes.Termination), and a line is handed to the reader when Enter is
   pressed. Ctrl-D on an empty line reads as end of file. Escape sequences
   (arrow keys and the like) are ignored while editing a line.
 
@@ -26,9 +27,10 @@ procedure InitializeConsole;
 function ConsoleObject: Pointer;
 
 procedure WriteToConsole(Source: PByte; ByteCount: QWord);
-{ Returns the number of bytes read, 0 at end of file (or when the thread
-  is alerted because its process is being ended). }
-function ReadFromConsole(Destination: PByte; ByteCount: QWord): QWord;
+{ Returns the number of bytes read, 0 at end of file, or ReadInterrupted
+  when the thread was alerted (its process is being ended or stopped)
+  before anything was read. }
+function ReadFromConsole(Destination: PByte; ByteCount: QWord): Int64;
 
 const
   { Typed characters are shown. }
@@ -52,16 +54,21 @@ procedure DeliverConsoleInput(Character: Char);
   longer needs polling. }
 procedure SetSerialInputInterruptDriven;
 
-{ The process group that Ctrl-C ends (0 = none). }
+{ The process group that Ctrl-C ends and Ctrl-Z stops (0 = none). }
 procedure SetConsoleForegroundGroup(GroupId: QWord);
 function ConsoleForegroundGroup: QWord;
 
-{ Ctrl-C is handled by a thread outside this unit (Processes.Termination):
-  it waits for InterruptKeyPressed, which returns once the key was
-  pressed (or the thread was alerted). }
-procedure WaitForInterruptKey;
+type
+  TConsoleSignalKey = (SignalKeyInterrupt, SignalKeySuspend);
+
+{ Ctrl-C and Ctrl-Z (while ConsoleModeInterruptKey is on) are handled by
+  a thread outside this unit (Processes.Termination): it waits here until
+  one of them is pressed. }
+function WaitForSignalKey: TConsoleSignalKey;
 { After Ctrl-C ended programs: show "^C" and forget typed input. }
 procedure FinishInterrupt;
+{ After Ctrl-Z stopped programs: show "^Z". }
+procedure FinishSuspend;
 { When nobody was ended, the reader gets Ctrl-C as a character. }
 procedure PassInterruptToReader;
 { A program busy with something else than reading (the shell running a
@@ -93,6 +100,7 @@ const
   KeyCarriageReturn = #13;
   KeyLineFeed = #10;
   KeyInterrupt = #3;
+  KeySuspend = #26;
   KeyEscape = #27;
   RingCapacity = 1024;
 
@@ -118,6 +126,10 @@ type
     ForegroundGroup: QWord;
     { Ctrl-C was passed to the reader and not yet taken. }
     PendingInterrupt: Boolean;
+    { Ctrl-C / Ctrl-Z pressed and not yet seen by the handler thread
+      (set by interrupt handlers, under RingLock). }
+    InterruptKeyPressed: Boolean;
+    SuspendKeyPressed: Boolean;
     InterruptKey: TEvent;
     WakeInterruptHandler: TDeferredCall;
   end;
@@ -144,10 +156,19 @@ var
 begin
   if TheConsole = nil then
     Exit;
-  if (Character = KeyInterrupt) and ((TheConsole^.Mode and ConsoleModeInterruptKey) <> 0) then
+  if (Character in [KeyInterrupt, KeySuspend]) and
+     ((TheConsole^.Mode and ConsoleModeInterruptKey) <> 0) then
   begin
-    { Ending programs needs locks an interrupt handler cannot take; a
-      thread does it. }
+    { Ending or stopping programs needs locks an interrupt handler cannot
+      take; a thread does it. }
+    WereEnabled := SaveAndDisableInterrupts;
+    AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+    if Character = KeyInterrupt then
+      TheConsole^.InterruptKeyPressed := True
+    else
+      TheConsole^.SuspendKeyPressed := True;
+    ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+    RestoreInterrupts(WereEnabled);
     QueueDeferredCall(TheConsole^.WakeInterruptHandler);
     Exit;
   end;
@@ -216,9 +237,37 @@ begin
   Result := TheConsole^.ForegroundGroup;
 end;
 
-procedure WaitForInterruptKey;
+{ Takes one pressed signal key, Ctrl-C first. }
+function TakeSignalKey(out Key: TConsoleSignalKey): Boolean;
+var
+  WereEnabled: Boolean;
 begin
-  WaitForEvent(TheConsole^.InterruptKey);
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  Result := True;
+  if TheConsole^.InterruptKeyPressed then
+  begin
+    TheConsole^.InterruptKeyPressed := False;
+    Key := SignalKeyInterrupt;
+  end
+  else if TheConsole^.SuspendKeyPressed then
+  begin
+    TheConsole^.SuspendKeyPressed := False;
+    Key := SignalKeySuspend;
+  end
+  else
+  begin
+    Key := SignalKeyInterrupt;
+    Result := False;
+  end;
+  ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+function WaitForSignalKey: TConsoleSignalKey;
+begin
+  while not TakeSignalKey(Result) do
+    WaitForEvent(TheConsole^.InterruptKey);
 end;
 
 procedure AddToRing(Character: Char);
@@ -250,6 +299,13 @@ begin
   TheConsole^.RingCount := 0;
   ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
   RestoreInterrupts(WereEnabled);
+end;
+
+procedure FinishSuspend;
+begin
+  DebugBeginMessage;
+  DebugWrite('^Z'#10);
+  DebugEndMessage;
 end;
 
 procedure PassInterruptToReader;
@@ -330,6 +386,13 @@ begin
 end;
 
 { Returns False if the thread was alerted while waiting. }
+const
+  { ReadFromConsole: the wait was cut short by an alert. }
+  ReadInterrupted = -1;
+
+type
+  TLineResult = (LineReady, LineEndOfFile, LineInterrupted);
+
 function WaitForCharacter(out Character: Char): Boolean;
 var
   Timeout: QWord;
@@ -376,21 +439,21 @@ end;
 
 { Reads one edited line into the console's line buffer. Returns False
   for end of file. }
-function ReadLine: Boolean;
+function ReadLine: TLineResult;
 var
   Character: Char;
 begin
   TheConsole^.LineLength := 0;
   repeat
     if not WaitForCharacter(Character) then
-      Exit(False);
+      Exit(LineInterrupted);
     case Character of
       KeyCarriageReturn, KeyLineFeed:
         begin
           EchoCharacter(KeyLineFeed);
           TheConsole^.Line[TheConsole^.LineLength] := KeyLineFeed;
           Inc(TheConsole^.LineLength);
-          Exit(True);
+          Exit(LineReady);
         end;
       KeyBackspace, KeyDelete:
         if TheConsole^.LineLength > 0 then
@@ -400,9 +463,9 @@ begin
         end;
       KeyEndOfFile:
         if TheConsole^.LineLength = 0 then
-          Exit(False)
+          Exit(LineEndOfFile)
         else
-          Exit(True);
+          Exit(LineReady);
       KeyInterrupt:
         begin
           { Throw the line away and start again. }
@@ -411,7 +474,7 @@ begin
         end;
       KeyEscape:
         if not SkipEscapeSequence then
-          Exit(False);
+          Exit(LineInterrupted);
     else
       if (Character >= ' ') and (TheConsole^.LineLength < LineCapacity - 1) then
       begin
@@ -423,10 +486,11 @@ begin
   until False;
 end;
 
-function ReadFromConsole(Destination: PByte; ByteCount: QWord): QWord;
+function ReadFromConsole(Destination: PByte; ByteCount: QWord): Int64;
 var
   Index: QWord;
   Character: Char;
+  LineResult: TLineResult;
 begin
   Result := 0;
   if ByteCount = 0 then
@@ -442,7 +506,10 @@ begin
       if Result = 0 then
       begin
         if not WaitForCharacter(Character) then
+        begin
+          Result := ReadInterrupted;
           Break;
+        end;
       end
       else if not TryTakeCharacter(Character) then
         Break;
@@ -457,9 +524,12 @@ begin
   end;
   if TheConsole^.PendingLength = 0 then
   begin
-    if not ReadLine then
+    LineResult := ReadLine;
+    if LineResult <> LineReady then
     begin
       ReleaseMutex(TheConsole^.InputLock);
+      if LineResult = LineInterrupted then
+        Exit(ReadInterrupted);
       Exit(0);
     end;
     TheConsole^.PendingStart := 0;
@@ -475,7 +545,7 @@ begin
     Inc(Index);
   end;
   ReleaseMutex(TheConsole^.InputLock);
-  Result := Index;
+  Result := Int64(Index);
 end;
 
 end.

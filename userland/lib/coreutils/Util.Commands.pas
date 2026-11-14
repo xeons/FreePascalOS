@@ -9,6 +9,8 @@
   Also the signal names used by kill and timeout. Every signal that ends
   a program becomes a termination with exit status 128 + its number,
   which is what a shell reports for a program killed by that signal.
+  STOP, TSTP, TTIN and TTOU stop a program, CONT continues it (job
+  control); the rest (CHLD, URG, WINCH, ...) are ignored as on Unix.
 }
 unit Util.Commands;
 
@@ -25,6 +27,9 @@ const
   StatusCommandNotRunnable = 126;
   SignalTerminate = 15;
   SignalKill = 9;
+  SignalContinue = 18;
+  SignalStop = 19;
+  SignalTerminalStop = 20;
 
 { Starts Arguments[0] (looked up in PATH) with Options. Returns the
   process handle, or reports the problem and returns -1 with Status set
@@ -38,12 +43,22 @@ procedure RunCommandAndExit(Arguments: PPChar; const Options: TProcessOptions);
 function ParseSignal(Text: PChar): Integer;
 { "TERM" for 15; nil if the number has no name. }
 function SignalName(Number: Integer): PChar;
+
+type
+  TSignalAction = (SignalActionNone, SignalActionEnd, SignalActionStop, SignalActionContinue);
+
+function ActionOfSignal(Number: Integer): TSignalAction;
+{ Delivers a signal as described above. Target is a process id, or the
+  negated id of a process group (ending a whole group is not supported).
+  Returns 0 or an error code. }
+function SendSignal(Target: Int64; Number: Integer): LongInt;
 const
   HighestSignal = 31;
 
 implementation
 
 uses
+  Abi.SystemCalls,
   Runtime.Text,
   Sys.Errors,
   Sys.Format,
@@ -119,6 +134,34 @@ begin
   if (Number < 1) or (Number > HighestSignal) then
     Exit(nil);
   Result := SignalNames[Number];
+end;
+
+function ActionOfSignal(Number: Integer): TSignalAction;
+begin
+  case Number of
+    0, 17, 23, 28: Result := SignalActionNone;
+    SignalContinue: Result := SignalActionContinue;
+    SignalStop, SignalTerminalStop, 21, 22: Result := SignalActionStop;
+  else
+    Result := SignalActionEnd;
+  end;
+end;
+
+function SendSignal(Target: Int64; Number: Integer): LongInt;
+begin
+  case ActionOfSignal(Number) of
+    SignalActionStop: Result := StopPrograms(Target);
+    SignalActionContinue: Result := ContinuePrograms(Target);
+    SignalActionEnd:
+      if Target > 0 then
+        Result := TerminateProgram(QWord(Target), 128 + Number)
+      else
+        Result := ErrorUnsupported;
+  else
+    { Nothing happens, but the target must exist: continuing a running
+      program changes nothing. }
+    Result := ContinuePrograms(Target);
+  end;
 end;
 
 end.

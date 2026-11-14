@@ -283,6 +283,7 @@ begin
   case Information.State of
     ProcessStateRunning: Result := 'R';
     ProcessStateExiting: Result := 'Z';
+    ProcessStateStopped: Result := 'T';
   else
     Result := 'S';
   end;

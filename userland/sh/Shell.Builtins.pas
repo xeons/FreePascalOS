@@ -6,8 +6,9 @@
   umask);
   a few more (:, true, false) are builtins only to save starting a
   process. Everything else is a program in /bin. The builtins about
-  running commands and functions (eval, exec, command, type, wait,
-  return, local) are in Shell.CommandBuiltins.
+  running commands and functions (eval, exec, command, type, return,
+  local) are in Shell.CommandBuiltins, the job control ones (jobs, fg,
+  bg, wait, kill) in Shell.JobBuiltins.
 }
 unit Shell.Builtins;
 
@@ -39,6 +40,7 @@ uses
   Shell.Variables,
   Shell.Functions,
   Shell.CommandBuiltins,
+  Shell.JobBuiltins,
   Shell.Execution;
 
 procedure BuiltinError(Name: PChar; Format: PChar; const Arguments: array of TFormatArgument);
@@ -416,7 +418,11 @@ begin
   else if TextIsEqual(Name, 'umask') then
     Result := @BuiltinUmask
   else
+  begin
     Result := FindCommandBuiltin(Name);
+    if Result = nil then
+      Result := FindJobBuiltin(Name);
+  end;
 end;
 
 end.

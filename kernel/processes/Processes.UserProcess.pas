@@ -350,6 +350,7 @@ begin
 
   DestroyAddressSpace(Space);
   SignalEvent(Process^.ExitEvent);
+  SignalEvent(Process^.StateChangedEvent);
 end;
 
 procedure ExitCurrentThread(ExitCode: LongInt);

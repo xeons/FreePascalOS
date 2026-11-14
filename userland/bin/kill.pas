@@ -5,8 +5,10 @@
   kill -l [NUMBER]...
 
   The system has no signals yet. Every signal that would end a program
-  ends it, with exit status 128 + the signal number; signals that would
-  not (STOP, CONT, CHLD, ...) and signal 0 are not supported.
+  ends it, with exit status 128 + the signal number; STOP, TSTP, TTIN and
+  TTOU stop it and CONT continues it; the others (and signal 0) only
+  check that the process exists (Util.Commands.SendSignal). A negative
+  PID names a process group, for stopping and continuing.
 }
 program kill;
 
@@ -32,12 +34,6 @@ const
     '  -s, --signal=SIGNAL, -SIGNAL'#10 +
     '                   specify the name or number of the signal to be sent'#10 +
     '  -l, --list       list signal names, or convert signal names to/from numbers'#10;
-
-function SignalEndsProgram(Number: Integer): Boolean;
-begin
-  { These are ignored or stop a program rather than end it. }
-  Result := not (Number in [0, 17, 18, 19, 20, 21, 22, 23, 28]);
-end;
 
 procedure ListSignals(First: Integer);
 var
@@ -126,20 +122,17 @@ begin
     Fail(1, 'invalid signal', []);
   if First >= ArgumentTotal then
     Fail(1, 'no process ID specified', []);
-  if not SignalEndsProgram(Signal) then
-    Fail(1, 'signal %d: Operation not supported (only signals that end a program are)',
-      [ArgumentNumber(Signal)]);
 
   ExitStatus := 0;
   for Index := First to ArgumentTotal - 1 do
   begin
-    if not ParseInteger(Argument(Index), ProcessId) or (ProcessId <= 0) then
+    if not ParseInteger(Argument(Index), ProcessId) or (ProcessId = 0) then
     begin
       Report('failed to parse argument: ''%s''', [ArgumentText(Argument(Index))]);
       ExitStatus := 1;
       Continue;
     end;
-    Error := TerminateProgram(QWord(ProcessId), 128 + Signal);
+    Error := SendSignal(ProcessId, Signal);
     if Error <> ErrorNone then
     begin
       ReportError(Error, '(%d)', [ArgumentNumber(ProcessId)]);

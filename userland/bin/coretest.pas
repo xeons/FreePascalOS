@@ -48,7 +48,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..261] of TCommandTest = (
+  CommandTests: array[0..267] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -351,6 +351,14 @@ const
     (Command: 'mkfifo ff && ls -l ff | cut -c 1 && stat -c %F ff && test -p ff && echo isfifo; head -n 2 lines.txt | tee ff > /dev/null & cat ff; rm ff'; ExpectedOutput: 'p'#10'fifo'#10'isfifo'#10'one'#10'two'#10; ExpectedStatus: 0),
     (Command: 'rm -f /tmp/fifo-check; mknod /tmp/fifo-check p && stat -c %F /tmp/fifo-check; mknod nb b 1 2 2>/dev/null || echo noblock'; ExpectedOutput: 'fifo'#10'noblock'#10; ExpectedStatus: 0),
     (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '1'#9'a5'#10'14'#9's3k'#10' 1 a5'#10'14 s3k'#10'2 512'#10'2'#9'dutest'#10; ExpectedStatus: 0),
+
+    { --- job control ------------------------------------------------- }
+    (Command: 'sleep 5 & jobs; kill %1; wait %1; echo $?'; ExpectedOutput: '[1]+  Running                 sleep 5 &'#10'143'#10; ExpectedStatus: 0),
+    (Command: 'sleep 1 & jobs -p > jp; read p < jp; test "$p" = "$!" && echo same; wait; echo $?'; ExpectedOutput: 'same'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'sh -c "exit 3" & wait $!; echo $?; wait 99999 2>/dev/null; echo $?; wait; echo $?'; ExpectedOutput: '3'#10'127'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'sleep 1 & kill -STOP $!; sleep 1; jobs; ps -o s= -p $!; kill -CONT %1; wait; echo done $?'; ExpectedOutput: '[1]+  Stopped                 sleep 1'#10'T'#10'done 0'#10; ExpectedStatus: 0),
+    (Command: 'sleep 1 & kill -s STOP %1; sleep 1; bg; wait; echo $?'; ExpectedOutput: '[1]+ sleep 1 &'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'sleep 1 | cat & sleep 0 & jobs; fg %1; echo fg $?; jobs %2 2>&1; fg 2>&1; echo $?'; ExpectedOutput: '[1]-  Running                 sleep 1 | cat &'#10'[2]+  Running                 sleep 0 &'#10'sleep 1 | cat'#10'fg 0'#10'[2]+  Done                    sleep 0'#10'sh: fg: current: no such job'#10'1'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

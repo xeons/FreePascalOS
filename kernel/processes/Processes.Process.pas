@@ -91,8 +91,25 @@ type
     { Processes started together (a shell pipeline) share a group, which
       the console's Ctrl-C ends as a whole. }
     GroupId: QWord;
-    { Ctrl-C does not end this process (an interactive shell). }
+    { Ctrl-C does not end this process, nor Ctrl-Z stop it (an
+      interactive shell). }
     IgnoresInterrupt: Boolean;
+
+    { --- Stopping and continuing (Processes.Stopping) --- }
+    { Protects the fields below. }
+    StopLock: TSpinLock;
+    { Asked to stop: each user thread waits at its next safe point. }
+    StopRequested: Boolean;
+    { Threads waiting to be continued. }
+    StoppedThreads: Int64;
+    { Every active user thread is waiting: the process has stopped. }
+    IsStopped: Boolean;
+    { A WaitForProcessChange caller has been told about this stop. }
+    StopReported: Boolean;
+    { Signaled while the process may run; reset when it is asked to stop. }
+    ContinueEvent: TEvent;
+    { Signaled when the process stops or exits (see WaitForProcessChange). }
+    StateChangedEvent: TEvent;
 
     { --- Users, priority and accounting (Processes.Security) --- }
     Credentials: TProcessCredentials;
@@ -176,6 +193,9 @@ begin
   InitializeMutex(Process^.Lock);
   InitializeHandleTable(Process^.Handles);
   InitializeEvent(Process^.ExitEvent, EventKindNotification, False);
+  InitializeSpinLock(Process^.StopLock);
+  InitializeEvent(Process^.ContinueEvent, EventKindNotification, True);
+  InitializeEvent(Process^.StateChangedEvent, EventKindNotification, False);
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
   CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);
   InitializeListHead(Process^.RunningLink);

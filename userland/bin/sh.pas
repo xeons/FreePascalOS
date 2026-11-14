@@ -29,7 +29,12 @@ uses
   Util.LineEditor,
   Shell.Syntax,
   Shell.Variables,
-  Shell.Execution;
+  Shell.Execution,
+  Shell.Jobs;
+
+const
+  { 128 + SIGHUP. }
+  HangUpStatus = 129;
 
 function ReadWholeFile(Path: PChar; out Text: PChar): LongInt;
 var
@@ -86,6 +91,22 @@ begin
   Result := FinishText(Builder);
 end;
 
+{ Stopped jobs would wait forever once the shell is gone: they end as
+  if the terminal had hung up (status 129). Running ones carry on. }
+procedure EndStoppedJobs;
+var
+  Index: Integer;
+  Job: PJob;
+begin
+  UpdateJobs;
+  for Index := 0 to MaximumJobs - 1 do
+  begin
+    Job := JobInSlot(Index);
+    if (Job <> nil) and (Job^.State = JobStopped) then
+      TerminateJob(Job, HangUpStatus);
+  end;
+end;
+
 { Reads and runs commands line by line until end of input or exit. A
   command spanning several lines (an open quote or an unfinished if,
   while, ...) is collected before it runs. On the console, lines are read
@@ -116,6 +137,9 @@ begin
   begin
     if OnConsole then
     begin
+      { "[1]+  Done  sleep 5" for jobs that ended since the last prompt. }
+      if Pending.Length = 0 then
+        NotifyFinishedJobs;
       Prompt := MakePrompt(Pending.Length > 0);
       GotLine := EditLine(Editor, Prompt, Line) = EditLineReady;
       FreeMemory(Prompt);
@@ -156,7 +180,10 @@ begin
   end;
   DiscardText(Pending);
   if OnConsole then
+  begin
     SaveHistory(Editor);
+    EndStoppedJobs;
+  end;
 end;
 
 procedure SetDefaultVariables;

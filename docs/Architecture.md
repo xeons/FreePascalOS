@@ -214,6 +214,38 @@ interrupt is pending, and the shell asks for it between commands with
 the console control request `ControlTakePendingInterrupt`, which answers
 once per key press and removes the Ctrl-C from the input.
 
+### Job control
+
+Ctrl-Z goes the same way as Ctrl-C and stops the foreground group
+(sparing the same processes). Stopping works like ending a program
+(Processes.Stopping): `StopProcesses` marks the process and alerts its
+threads, and each user thread waits on the process's continue event at
+its next safe point (the same points as for termination). A stopped
+thread clears its alert first (`ClearCurrentThreadAlert`), so its wait
+blocks; a request to end the process sets its flag before alerting, so
+it still gets through. When the last active thread has stopped the
+process counts as stopped and `WaitForProcessChange` reports it once
+(`WaitStatusStopped`); `ContinueProcesses` signals the continue event.
+Targets are a process id, a process group (negated) or the caller's own
+group.
+
+A system call cut short by the stop's alert returns ErrorInterrupted;
+the dispatcher then waits at the safe point and runs the call again once
+the process is continued, so programs never see the stop (a timed wait
+starts its timeout again). Console and pipe transfers therefore report an
+alert as "interrupted", not as end of file or a broken pipe. A process
+outside the console's foreground group that reads the console stops its
+own group instead (like SIGTTIN); the restarted read succeeds once a
+shell has made it the foreground.
+
+The shell keeps a job table (`Shell.Jobs`): every background pipeline,
+and every foreground pipeline stopped by Ctrl-Z, with the process handles
+of its programs. `jobs`, `fg`, `bg`, `wait` and `kill` with `%N` are in
+`Shell.JobBuiltins`; `fg` hands the console's foreground group to the job
+while it waits. Finished jobs are reported before the next prompt, and
+stopped jobs are ended (status 129) when an interactive shell exits.
+`ps` shows stopped processes as `T`.
+
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
 (Drivers.SerialInput, IRQ 4) feed characters to the console's input ring
 (DeliverConsoleInput); a deferred call signals the event a reading thread
@@ -381,6 +413,7 @@ process's regions before the kernel touches it (`Processes.UserAccess`).
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
 | Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
+| Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
@@ -405,6 +438,8 @@ point:
   the alert comes first removes the thread from both the event's queue and
   the sleep queue (`WakeWaitingThreadLocked`). Pipe and console reads,
   pipe writes, sleeping and waiting for a process are alertable.
+
+Stopping a program uses the same safe points (see "Job control").
 
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
 shell reports a program killed by that signal. Running processes are kept
@@ -553,7 +588,8 @@ independent) against `rtl/user/system.pas`:
   (collected by the lexer; fed through a pipe, or a file in `/tmp` when
   larger than a pipe holds) and redirections on compound commands. The
   builtins about running commands (`eval`, `exec`, `command`, `type`,
-  `wait`, `return`, `local`) are in `Shell.CommandBuiltins`.
+  `return`, `local`) are in `Shell.CommandBuiltins`; job control (see
+  "Job control") in `Shell.Jobs` and `Shell.JobBuiltins`.
 - **coreutils** – one program per file in `userland/bin`.
 
 Units may have initialization and finalization sections and threadvars

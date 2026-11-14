@@ -19,6 +19,10 @@
   exit code 130 (128 + SIGINT), sparing processes that ignore it (an
   interactive shell). A system thread does this, woken by the console. If
   it ended nobody, the reader gets Ctrl-C as an ordinary character.
+  Ctrl-Z stops the foreground group the same way (Processes.Stopping).
+
+  The same safe points also let a thread wait while its process is
+  stopped (StopCurrentThreadIfRequested).
 }
 unit Processes.Termination;
 
@@ -52,6 +56,8 @@ uses
   Processes.Process,
   Processes.Thread,
   Processes.UserProcess,
+  Processes.Security,
+  Processes.Stopping,
   Io.Console;
 
 procedure EndProcessIfTerminationRequested;
@@ -68,6 +74,13 @@ var
   Process: PProcess;
 begin
   Process := CurrentProcess;
+  if (Process <> nil) and Process^.IsUserProcess and Process^.StopRequested then
+  begin
+    { Waiting blocks; interrupts must be on for that. }
+    EnableInterrupts;
+    StopCurrentThreadIfRequested;
+    DisableInterrupts;
+  end;
   if (Process <> nil) and Process^.IsUserProcess and Process^.TerminationRequested then
   begin
     { Ending the process may block; interrupts must be on for that. }
@@ -130,11 +143,17 @@ end;
 procedure HandleConsoleInterrupts(Context: Pointer);
 begin
   repeat
-    WaitForInterruptKey;
-    if InterruptProcessGroup(ConsoleForegroundGroup, InterruptExitCode) > 0 then
-      FinishInterrupt
-    else
-      PassInterruptToReader;
+    case WaitForSignalKey of
+      SignalKeyInterrupt:
+        if InterruptProcessGroup(ConsoleForegroundGroup, InterruptExitCode) > 0 then
+          FinishInterrupt
+        else
+          PassInterruptToReader;
+      SignalKeySuspend:
+        { With nobody to stop, Ctrl-Z does nothing. }
+        if SuspendProcessGroup(ConsoleForegroundGroup) > 0 then
+          FinishSuspend;
+    end;
   until False;
 end;
 
@@ -148,18 +167,6 @@ begin
   CreateSystemThread(@HandleConsoleInterrupts, nil, InterruptThreadPriority, 'console-interrupt', False);
 end;
 
-{ Users may end their own processes; root may end any. }
-function MayTerminate(Caller, Target: PProcess): Boolean;
-var
-  UserId: LongWord;
-begin
-  if not Caller^.IsUserProcess then
-    Exit(True);
-  UserId := Caller^.Credentials.EffectiveUserId;
-  Result := (UserId = RootUserId) or (UserId = Target^.Credentials.RealUserId) or
-    (Caller^.Credentials.RealUserId = Target^.Credentials.RealUserId);
-end;
-
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
 var
   Process: PProcess;
@@ -168,7 +175,7 @@ begin
   Process := FindRunningProcessLocked(ProcessId);
   if Process = nil then
     Result := ErrorNoSuchProcess
-  else if not Process^.IsUserProcess or not MayTerminate(CurrentProcess, Process) then
+  else if not Process^.IsUserProcess or not MayControlProcess(CurrentProcess, Process) then
     Result := ErrorNotPermitted
   else
   begin

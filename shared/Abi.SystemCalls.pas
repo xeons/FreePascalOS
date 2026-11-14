@@ -99,7 +99,20 @@ const
   CallGetPriority = 56;
   CallSetPriority = 57;
   CallCreateFifo = 58;
+
+  { Job control. A target is a process id (> 0), a process group (its
+    negation) or the caller's own group (0); the calls return how many
+    processes they stopped or continued. }
+  CallStopProcesses = 59;
+  CallContinueProcesses = 60;
+  { (Handle, TimeoutMilliseconds or InfiniteWait): like CallWaitForProcess,
+    but also returns WaitStatusStopped, once, when the process stops. }
+  CallWaitForProcessChange = 61;
+
   CallCount = 70;
+
+  { CallWaitForProcessChange: the process stopped instead of exiting. }
+  WaitStatusStopped = 256;
 
   { "Leave unchanged" for CallSetUserIds and CallSetGroupIds. }
   IdUnchanged = -1;
@@ -111,6 +124,7 @@ const
   ProcessStateRunning = 0;
   ProcessStateSleeping = 1;
   ProcessStateExiting = 2;
+  ProcessStateStopped = 3;
 
   { --- Arguments ------------------------------------------------------- }
 

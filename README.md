@@ -48,8 +48,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   handle tables, pipes, a console and `/dev/null`, and an ELF loader that
   maps position independent programs and the shared libraries they need,
   binding symbols at load time. Programs can also load libraries at run
-  time (`LoadLibrary` / `FindSymbol`), end other programs (`kill`,
-  `timeout`), wait with timeouts, change permissions, owners and times,
+  time (`LoadLibrary` / `FindSymbol`), end, stop and continue other
+  programs (`kill`, `timeout`, Ctrl-C, Ctrl-Z), wait with timeouts, change permissions, owners and times,
   make hard links, and run in a `chroot`.
 - **Users and permissions**: processes run as real, effective and saved
   user and group ids with supplementary groups and a umask, all inherited;
@@ -79,7 +79,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     with assignments, globbing, quoting, `eval`, `exec`, `command`,
     `type`, scripts), with line editing (long lines scroll sideways),
     history and Tab completion on the console; Ctrl-C ends the running
-    pipeline, or a loop of builtins
+    pipeline, or a loop of builtins; job control: Ctrl-Z stops it, `jobs`,
+    `fg`, `bg`, `wait`, `$!` and `kill %N`
   - recreations of the GNU core utilities, 104 commands: arch b2sum
     base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm
     cp csplit cut date dd df dir dirname du echo env expand expr factor

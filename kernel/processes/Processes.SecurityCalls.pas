@@ -62,6 +62,8 @@ begin
   Information.ThreadCount := Process^.ThreadCount;
   if Process^.HasExited or Process^.TerminationRequested then
     Information.State := ProcessStateExiting
+  else if Process^.IsStopped then
+    Information.State := ProcessStateStopped
   else if ProcessIsRunnable(Process) then
     Information.State := ProcessStateRunning
   else

@@ -73,6 +73,10 @@ function KernelSetUmask(Mask: LongWord): Int64;
 function KernelGetPriority(ProcessId: QWord; out Nice: LongInt): Int64;
 function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
+{ Job control: Target is a process id, -group, or 0 for the own group. }
+function KernelStopProcesses(Target: Int64): Int64;
+function KernelContinueProcesses(Target: Int64): Int64;
+function KernelWaitForProcessChange(Handle: Int64; Timeout: Int64): Int64;
 
 implementation
 
@@ -328,6 +332,21 @@ end;
 function KernelCreateFifo(Path: PChar): Int64;
 begin
   Result := SystemCall(CallCreateFifo, QWord(Path), 0, 0, 0, 0, 0);
+end;
+
+function KernelStopProcesses(Target: Int64): Int64;
+begin
+  Result := SystemCall(CallStopProcesses, QWord(Target), 0, 0, 0, 0, 0);
+end;
+
+function KernelContinueProcesses(Target: Int64): Int64;
+begin
+  Result := SystemCall(CallContinueProcesses, QWord(Target), 0, 0, 0, 0, 0);
+end;
+
+function KernelWaitForProcessChange(Handle: Int64; Timeout: Int64): Int64;
+begin
+  Result := SystemCall(CallWaitForProcessChange, QWord(Handle), QWord(Timeout), 0, 0, 0, 0);
 end;
 
 end.

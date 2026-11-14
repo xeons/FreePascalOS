@@ -35,6 +35,10 @@ function CredentialsMayAccess(const Credentials: TProcessCredentials;
 
 function IsInGroup(const Credentials: TProcessCredentials; GroupId: LongWord): Boolean;
 
+{ May Caller end, stop or continue Target? Users may control their own
+  processes; root and kernel threads may control any. }
+function MayControlProcess(Caller, Target: PProcess): Boolean;
+
 implementation
 
 uses
@@ -124,6 +128,17 @@ begin
   GroupId := Process^.Credentials.EffectiveGroupId;
   Mask := Process^.Credentials.Umask;
   Result := True;
+end;
+
+function MayControlProcess(Caller, Target: PProcess): Boolean;
+var
+  UserId: LongWord;
+begin
+  if not Caller^.IsUserProcess then
+    Exit(True);
+  UserId := Caller^.Credentials.EffectiveUserId;
+  Result := (UserId = RootUserId) or (UserId = Target^.Credentials.RealUserId) or
+    (Caller^.Credentials.RealUserId = Target^.Credentials.RealUserId);
 end;
 
 procedure InitializeProcessSecurity;
