@@ -184,6 +184,7 @@ begin
     Exit(ErrorNotFound);
 
   GetFileInformation(OpenedFile, Information);
+  Identity.Volume := OpenedFile^.Volume;
   Identity.NodeNumber := Information.NodeNumber;
   Identity.SizeInBytes := Information.SizeInBytes;
   Identity.ModificationTime := Information.ModificationTime;
@@ -222,6 +223,7 @@ begin
   if not Result then
     Exit;
   GetFileInformation(OpenedFile, Information);
+  Identity.Volume := OpenedFile^.Volume;
   CloseFile(OpenedFile);
   Identity.NodeNumber := Information.NodeNumber;
   Identity.SizeInBytes := Information.SizeInBytes;
@@ -382,6 +384,7 @@ begin
     Exit(ErrorOutOfMemory);
   UseSection(Section, Image);
   FillSectionPages(Image);
+  PublishImageSection(Section);
   Result := ErrorNone;
 end;
 

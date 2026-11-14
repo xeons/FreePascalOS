@@ -22,7 +22,8 @@
   Ctrl-Z stops the foreground group the same way (Processes.Stopping).
 
   The same safe points also let a thread wait while its process is
-  stopped (StopCurrentThreadIfRequested).
+  stopped (StopCurrentThreadIfRequested), and act on being suspended or
+  asked to end by another thread (Processes.ThreadControl).
 }
 unit Processes.Termination;
 
@@ -58,6 +59,7 @@ uses
   Processes.UserProcess,
   Processes.Security,
   Processes.Stopping,
+  Processes.ThreadControl,
   Io.Console;
 
 procedure EndProcessIfTerminationRequested;
@@ -79,6 +81,13 @@ begin
     { Waiting blocks; interrupts must be on for that. }
     EnableInterrupts;
     StopCurrentThreadIfRequested;
+    DisableInterrupts;
+  end;
+  { A thread suspended or asked to end by another (Processes.ThreadControl). }
+  if (Process <> nil) and Process^.IsUserProcess and CurrentThreadIsAsked then
+  begin
+    EnableInterrupts;
+    HoldCurrentThreadIfAsked;
     DisableInterrupts;
   end;
   if (Process <> nil) and Process^.IsUserProcess and Process^.TerminationRequested then

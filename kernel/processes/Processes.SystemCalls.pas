@@ -51,6 +51,8 @@ uses
   Processes.Security,
   Processes.SecurityCalls,
   Processes.AffinityCalls,
+  Processes.ThreadControl,
+  Processes.FileAttributeCalls,
   { Job control. }
   Processes.Stopping;
 
@@ -575,6 +577,15 @@ begin
     { --- Processor affinity (Processes.AffinityCalls) --- }
     CallGetAffinity: Result := PerformGetAffinity(Argument0);
     CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
+    { --- Thread control (Processes.ThreadControl) --- }
+    CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
+    CallResumeThread: Result := PerformResumeThread(Int64(Argument0));
+    CallTerminateThread: Result := PerformTerminateThread(Int64(Argument0), Argument1);
+    CallSetThreadPriority: Result := PerformSetThreadPriority(Int64(Argument0), Int64(Argument1));
+    CallGetThreadPriority: Result := PerformGetThreadPriority(Int64(Argument0));
+    { --- Attributes of open files and volumes (Processes.FileAttributeCalls) --- }
+    CallSetHandleAttributes: Result := PerformSetHandleAttributes(Int64(Argument0), Argument1);
+    CallGetVolumeInformation: Result := PerformGetVolumeInformation(Argument0, Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -598,8 +609,10 @@ begin
     Result := PerformSystemCall(Number, Argument0, Argument1, Argument2);
     { A call cut short because the program was asked to stop runs again
       once the program is continued, so the program never sees the stop. }
-    MustRestart := (Result = Failure(ErrorInterrupted)) and CurrentStopIsPending;
+    MustRestart := (Result = Failure(ErrorInterrupted)) and
+      (CurrentStopIsPending or CurrentThreadSuspendIsPending);
     StopCurrentThreadIfRequested;
+    HoldCurrentThreadIfAsked;
   until not MustRestart or CurrentProcess^.TerminationRequested;
 
   SetSystemCallResult(Frame, Result);

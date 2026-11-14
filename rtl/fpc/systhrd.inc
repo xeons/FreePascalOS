@@ -13,8 +13,10 @@
   BeginThread returns the thread's handle (what WaitForThreadTerminate
   and CloseThread take) and passes back its id (what GetCurrentThreadId
   returns in that thread). WaitForThreadTerminate returns the thread's
-  exit code. Suspending, resuming and killing other threads, and thread
-  priorities, are not supported.
+  exit code. SuspendThread and KillThread take effect at the thread's
+  next safe point in the kernel (a system call or interrupt returning to
+  it); thread priorities are offsets (-15 .. 15) from the process's, and
+  only root may raise one.
 
   Locks are one word: 0 free, 1 held, 2 held with sleepers. Critical
   sections add an owner and a depth, as they must be recursive.
@@ -200,19 +202,33 @@ begin
   SystemCall(CallSleep, 0, 0, 0, 0, 0, 0);
 end;
 
+{ The result of a call returning a count, or DWord(-1) on failure. }
+function CountOrFailure(CallResult: Int64): DWord;
+begin
+  if CallResult < 0 then
+  begin
+    SetLastSystemError(LongInt(-CallResult));
+    CountOrFailure := DWord(-1);
+  end
+  else
+    CountOrFailure := DWord(CallResult);
+end;
+
+{ Return the previous suspend count. }
 function SysSuspendThread(ThreadHandle: TThreadID): DWord;
 begin
-  SysSuspendThread := DWord(-1);
+  SysSuspendThread := CountOrFailure(SystemCall(CallSuspendThread, QWord(ThreadHandle), 0, 0, 0, 0, 0));
 end;
 
 function SysResumeThread(ThreadHandle: TThreadID): DWord;
 begin
-  SysResumeThread := DWord(-1);
+  SysResumeThread := CountOrFailure(SystemCall(CallResumeThread, QWord(ThreadHandle), 0, 0, 0, 0, 0));
 end;
 
+{ Ends the thread (exit code 0); returns 0. }
 function SysKillThread(ThreadHandle: TThreadID): DWord;
 begin
-  SysKillThread := DWord(-1);
+  SysKillThread := CountOrFailure(SystemCall(CallTerminateThread, QWord(ThreadHandle), 0, 0, 0, 0, 0));
 end;
 
 function SysCloseThread(ThreadHandle: TThreadID): DWord;
@@ -238,14 +254,26 @@ begin
     SysWaitForThreadTerminate := DWord(ExitCode);
 end;
 
+{ Prio is an offset from the process's priority, -15 .. 15 (0 normal). }
 function SysThreadSetPriority(ThreadHandle: TThreadID; Prio: LongInt): Boolean;
+var
+  CallResult: Int64;
 begin
-  SysThreadSetPriority := False;
+  CallResult := SystemCall(CallSetThreadPriority, QWord(ThreadHandle), QWord(Int64(Prio)), 0, 0, 0, 0);
+  if CallResult < 0 then
+    SetLastSystemError(LongInt(-CallResult));
+  SysThreadSetPriority := CallResult = 0;
 end;
 
 function SysThreadGetPriority(ThreadHandle: TThreadID): LongInt;
+var
+  CallResult: Int64;
 begin
-  SysThreadGetPriority := 0;
+  CallResult := SystemCall(CallGetThreadPriority, QWord(ThreadHandle), 0, 0, 0, 0, 0);
+  if CallResult < 0 then
+    SysThreadGetPriority := 0
+  else
+    SysThreadGetPriority := LongInt(CallResult) - ThreadPriorityOffsetBias;
 end;
 
 function SysGetCurrentThreadId: TThreadID;

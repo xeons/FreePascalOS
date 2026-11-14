@@ -616,6 +616,22 @@ There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory and the three handles
 that become the new program's standard input, output and error.
 
+### Controlling threads
+
+A thread can suspend, resume and end other threads of its process and
+set their priorities (`Processes.ThreadControl`; `CallSuspendThread`,
+`CallResumeThread`, `CallTerminateThread`, `CallSetThreadPriority`,
+`CallGetThreadPriority`). As with stopping or ending a process, a request
+only marks the thread and alerts it; the thread acts at its next safe
+point - a system call or interrupt returning to user mode: a suspended
+thread waits until it is resumed as often as it was suspended (a system
+call it was waiting in runs again), a thread asked to end exits as if it
+had called `CallExitThread`. A busy loop is caught by the clock interrupt.
+A thread's priority is its process's (from the nice value) plus an offset
+of -15 .. 15, kept when the nice value changes; only root may raise a
+thread above its process. The runtime's `SuspendThread`, `ResumeThread`,
+`KillThread`, `ThreadSetPriority` and `ThreadGetPriority` use these calls.
+
 ### Ending other programs
 
 A program cannot be stopped at an arbitrary point in the kernel, where it
@@ -739,9 +755,12 @@ counts (`ReferencePhysicalPage`; freeing drops one); a copy on write page
 is mapped read-only with a software bit in its page table entry, and the
 first write - by the program, or by the kernel writing into the process
 (relocations, system call results) - gives the process its own copy, or
-simply makes the page writable if nobody else holds it. A section is
-checked against its file's node number, size and modification time on
-every use, so a replaced program is read again.
+simply makes the page writable if nobody else holds it. A section enters
+the cache only once its pages are filled. The file system reports every
+write to or resize of a file (`SetFileChangedHook`), which drops that
+file's sections (one still in use by a load is marked stale and goes when
+the load is done); the volume, node number, size and modification time are
+also compared on every use.
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
 
@@ -842,6 +861,16 @@ initial stack into a `TEntryInformation` and calls `SysEntry`. Text is
 UTF-8 everywhere (`DefaultSystemCodePage`, file names, the console).
 Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
+
+## Diagnosing hangs
+
+With the kernel option `hangdump=SECONDS`, a system thread
+(`Processes.HangWatch`) notes when processes start and end. If neither
+happens for that long while user processes exist, it writes every user
+thread to the kernel log - process, state, whether it waits on a list or
+with a timeout, alertable, suspended, priority, last processor, run time
+- and what each processor runs. The tests set `hangdump=20`, so a hung
+test run leaves its explanation in the log.
 
 ## Coding conventions
 

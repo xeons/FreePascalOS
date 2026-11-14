@@ -63,6 +63,13 @@ type
 
 procedure InitializeFileObjects;
 
+type
+  { Told after the contents of a file changed (written to, resized), so
+    copies of it elsewhere (image sections) can be dropped. }
+  TFileChangedHook = procedure(Volume: PVolume; NodeNumber: QWord);
+
+procedure SetFileChangedHook(Hook: TFileChangedHook);
+
 { Called by the volume manager after a successful mount. }
 procedure RegisterRootNode(Volume: PVolume);
 
@@ -105,6 +112,8 @@ function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
   a final symbolic link is changed or what it points to. }
 function SetPathAttributes(Path: PChar; FollowLinks: Boolean;
   const Changes: TAttributeChanges): TFileSystemStatus;
+{ The same for the node of an open file. }
+function SetFileAttributes(OpenedFile: POpenFile; const Changes: TAttributeChanges): TFileSystemStatus;
 
 { Gives the file at ExistingPath the further name NewPath (same volume). }
 function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
@@ -596,6 +605,14 @@ begin
     Result := Result or AccessWrite;
 end;
 
+var
+  FileChangedHook: TFileChangedHook = nil;
+
+procedure SetFileChangedHook(Hook: TFileChangedHook);
+begin
+  FileChangedHook := Hook;
+end;
+
 function OpenFile(Path: PChar; Flags: LongWord; out OpenedFile: POpenFile): TFileSystemStatus;
 var
   Volume: PVolume;
@@ -639,6 +656,8 @@ begin
     ReleaseMutex(Volume^.Lock);
     if Result <> StatusSuccess then
       Exit;
+    if ((Flags and OpenTruncate) <> 0) and Assigned(FileChangedHook) then
+      FileChangedHook(Volume, Node^.Information.NodeNumber);
   end;
 
   OpenedFile := POpenFile(CreateObject(FileObjectType, nil));
@@ -693,6 +712,12 @@ begin
   ReleaseMutex(Volume^.Lock);
 end;
 
+procedure NoteFileChanged(OpenedFile: POpenFile);
+begin
+  if Assigned(FileChangedHook) then
+    FileChangedHook(OpenedFile^.Volume, OpenedFile^.Node^.Information.NodeNumber);
+end;
+
 function WriteToFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesWritten: QWord): TFileSystemStatus;
 var
@@ -714,6 +739,8 @@ begin
     BytesWritten);
   OpenedFile^.Position := OpenedFile^.Position + BytesWritten;
   ReleaseMutex(Volume^.Lock);
+  if BytesWritten > 0 then
+    NoteFileChanged(OpenedFile);
 end;
 
 function ChangeFileSize(OpenedFile: POpenFile; NewSize: QWord): TFileSystemStatus;
@@ -729,6 +756,7 @@ begin
   AcquireMutex(Volume^.Lock);
   Result := Volume^.Driver^.SetFileSize(OpenedFile^.Node, NewSize);
   ReleaseMutex(Volume^.Lock);
+  NoteFileChanged(OpenedFile);
 end;
 
 procedure SetFilePosition(OpenedFile: POpenFile; Position: QWord);
@@ -1076,6 +1104,22 @@ begin
     Result := Volume^.Driver^.SetAttributes(Node, Changes);
     ReleaseNodeReference(Volume, Node);
   end;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function SetFileAttributes(OpenedFile: POpenFile; const Changes: TAttributeChanges): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  Volume := OpenedFile^.Volume;
+  if Volume = nil then
+    Exit(StatusUnsupported);
+  if Volume^.IsReadOnly then
+    Exit(StatusReadOnly);
+  if not Assigned(Volume^.Driver^.SetAttributes) then
+    Exit(StatusUnsupported);
+  AcquireMutex(Volume^.Lock);
+  Result := Volume^.Driver^.SetAttributes(OpenedFile^.Node, Changes);
   ReleaseMutex(Volume^.Lock);
 end;
 

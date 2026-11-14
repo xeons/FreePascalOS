@@ -26,7 +26,8 @@ interface
 {$define HAS_SLEEP}
 {$define HAS_OSERROR}
 {$define HAS_GETTICKCOUNT64}
-{ The kernel sets file times by path. }
+{ FileSetDate by name sets the times by path (so a file's owner can set
+  them without write access, as with touch). }
 {$define OS_FILESETDATEBYNAME}
 {$modeswitch typehelpers}
 {$modeswitch advancedrecords}
@@ -252,15 +253,9 @@ begin
     Result := UnixTimeToFileDate(Information.ModificationTime);
 end;
 
-function FileSetDate(Handle: THandle; Age: LongInt): LongInt;
-begin
-  { The kernel sets times by path only. }
-  Result := -1;
-end;
-
-function FileSetDate(const FileName: RawByteString; Age: LongInt): LongInt;
+{ Changes setting both times to the file date Age. }
+procedure TimeChanges(Age: LongInt; out Changes: TAbiAttributeChanges);
 var
-  Changes: TAbiAttributeChanges;
   Seconds: Int64;
 begin
   Seconds := Round((FileDateToDateTime(Age) - UnixDateDelta) * SecondsPerDay);
@@ -268,10 +263,33 @@ begin
   Changes.Fields := ChangeFieldModificationTime or ChangeFieldAccessTime;
   Changes.ModificationTime := Seconds;
   Changes.AccessTime := Seconds;
-  if CallFailed(SystemCall(CallSetPathAttributes, QWord(PChar(FileName)), QWord(@Changes), 1, 0, 0, 0)) then
+end;
+
+{ 0, or the error of a failed call. }
+function ZeroOrError(CallResult: Int64): LongInt;
+begin
+  if CallFailed(CallResult) then
     Result := GetLastSystemError
   else
     Result := 0;
+end;
+
+function FileSetDate(Handle: THandle; Age: LongInt): LongInt;
+var
+  Changes: TAbiAttributeChanges;
+begin
+  TimeChanges(Age, Changes);
+  Result := ZeroOrError(SystemCall(CallSetHandleAttributes, QWord(Int64(Handle)), QWord(@Changes), 0, 0, 0, 0));
+end;
+
+{ By path, so it also works without write access to the file (for its
+  owner) and on directories. }
+function FileSetDate(const FileName: RawByteString; Age: LongInt): LongInt;
+var
+  Changes: TAbiAttributeChanges;
+begin
+  TimeChanges(Age, Changes);
+  Result := ZeroOrError(SystemCall(CallSetPathAttributes, QWord(PChar(FileName)), QWord(@Changes), 1, 0, 0, 0));
 end;
 
 function FileGetAttr(const FileName: RawByteString): LongInt;
@@ -284,9 +302,22 @@ begin
     Result := -1;
 end;
 
+{ Only faReadOnly can be set: it takes away every write permission;
+  clearing it gives the owner write permission back. }
 function FileSetAttr(const FileName: RawByteString; Attr: LongInt): LongInt;
+var
+  Information: TAbiFileInformation;
+  Changes: TAbiAttributeChanges;
 begin
-  Result := -1;
+  if not PathInformation(FileName, True, Information) then
+    Exit(GetLastSystemError);
+  FillChar(Changes, SizeOf(Changes), 0);
+  Changes.Fields := ChangeFieldMode;
+  if (Attr and faReadOnly) <> 0 then
+    Changes.Mode := Information.Mode and not (OwnerWrite or GroupWrite or OthersWrite)
+  else
+    Changes.Mode := Information.Mode or OwnerWrite;
+  Result := ZeroOrError(SystemCall(CallSetPathAttributes, QWord(PChar(FileName)), QWord(@Changes), 1, 0, 0, 0));
 end;
 
 function DeleteFile(const FileName: RawByteString): Boolean;
@@ -445,27 +476,25 @@ end;
 
 { --- Disks -------------------------------------------------------------------- }
 
-{ There are no drive letters: every drive number means the system
-  volume. }
+{ There are no drive letters: drive 0 means the volume of the current
+  directory, every other number the system volume. }
 function VolumeBytes(Drive: Byte; Free: Boolean): Int64;
 var
   Information: TAbiVolumeInformation;
-  Index: QWord;
+  Path: RawByteString;
 begin
-  Index := 0;
-  while SystemCall(CallListVolumes, Index, QWord(@Information), 0, 0, 0, 0) >= 0 do
-  begin
-    if Information.IsSystemVolume <> 0 then
-    begin
-      if not Free then
-        Exit(Information.TotalBytes);
-      if Information.HasFreeSpace <> 0 then
-        Exit(Information.FreeBytes);
-      Exit(-1);
-    end;
-    Inc(Index);
-  end;
-  Result := -1;
+  if Drive = 0 then
+    Path := '.'
+  else
+    Path := '/';
+  if CallFailed(SystemCall(CallGetVolumeInformation, QWord(PChar(Path)), QWord(@Information), 0, 0, 0, 0)) then
+    Exit(-1);
+  if not Free then
+    Result := Information.TotalBytes
+  else if Information.HasFreeSpace <> 0 then
+    Result := Information.FreeBytes
+  else
+    Result := -1;
 end;
 
 function DiskFree(Drive: Byte): Int64;

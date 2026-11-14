@@ -64,6 +64,7 @@ uses
   Kernel.IoSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
+  Processes.HangWatch,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
   Drivers.DiskStatistics,
@@ -198,6 +199,7 @@ begin
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeIoSystem;
   StartConsoleInterruptHandler;
+  StartHangWatch;
 
   RunKernelSelfTests;
   RunIoSelfTests;

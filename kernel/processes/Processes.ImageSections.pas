@@ -10,9 +10,12 @@
   (Processes.AddressSpace), so relocations and program writes give each
   process its own copies of only the pages they touch.
 
-  A section stays valid while its file does not change: the identity
-  (node number, size, modification time) is compared on every lookup,
-  and a changed file gets a fresh section. Up to MaximumSections are
+  A section stays valid while its file does not change: the file system
+  reports every write to a file (SetFileChangedHook), which drops the
+  file's sections, and the identity (volume, node number, size,
+  modification time) is also compared on every lookup. A section still
+  being loaded from when its file changes is marked stale and goes when
+  that load is done. Up to MaximumSections are
   kept; when the table is full, the least recently used one that is not
   being loaded right now goes. Pages mapped in processes hold references
   of their own, so dropping a section never takes pages from under a
@@ -38,6 +41,7 @@ const
 
 type
   TImageIdentity = record
+    Volume: Pointer;
     NodeNumber: QWord;
     SizeInBytes: QWord;
     ModificationTime: TUnixTime;
@@ -57,6 +61,8 @@ type
     Pages: PQWord;
     { Loads using it right now; it is not dropped while this is not 0. }
     Users: LongInt;
+    { Its file changed while it was in use; not handed out any more. }
+    IsStale: Boolean;
     LastUse: QWord;
   end;
 
@@ -67,9 +73,12 @@ procedure InitializeImageSections;
 function FindImageSection(KernelPath: PChar; const Identity: TImageIdentity): PImageSection;
 { Makes a section for KernelPath taking over Contents (kernel memory of
   Size bytes), with PageCount zeroed pages for its memory image, and
-  counts a use. Returns nil if memory is short (Contents is then freed). }
+  counts a use. Returns nil if memory is short (Contents is then freed).
+  Nobody else finds it until it is published, once its pages are filled. }
 function CreateImageSection(KernelPath: PChar; const Identity: TImageIdentity; Contents: PByte;
   Size: QWord; LowestPage, PageCount: QWord): PImageSection;
+{ Makes a filled section available to later loads. }
+procedure PublishImageSection(Section: PImageSection);
 { A kernel pointer to page Index of the section's memory image. }
 function SectionPage(Section: PImageSection; Index: QWord): PByte;
 { Ends a use. }
@@ -80,6 +89,8 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Text,
+  FileSystem.Types,
+  FileSystem.Files,
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Kernel.Mutex,
@@ -89,9 +100,12 @@ var
   Sections: array[0..MaximumSections - 1] of PImageSection;
   SectionsLock: TMutex;
 
+procedure FileChanged(Volume: PVolume; NodeNumber: QWord); forward;
+
 procedure InitializeImageSections;
 begin
   InitializeMutex(SectionsLock);
+  SetFileChangedHook(@FileChanged);
 end;
 
 procedure DestroySection(Section: PImageSection);
@@ -111,17 +125,33 @@ end;
 
 function IdentitiesMatch(const Left, Right: TImageIdentity): Boolean;
 begin
-  Result := (Left.NodeNumber = Right.NodeNumber) and (Left.SizeInBytes = Right.SizeInBytes) and
-    (Left.ModificationTime = Right.ModificationTime);
+  Result := (Left.Volume = Right.Volume) and (Left.NodeNumber = Right.NodeNumber) and
+    (Left.SizeInBytes = Right.SizeInBytes) and (Left.ModificationTime = Right.ModificationTime);
 end;
 
-{ Drops the section in slot Index if nobody uses it. }
+{ Takes the section in slot Index out of the table: destroyed now if
+  nobody uses it, else marked stale and destroyed by its last release. }
 procedure DropSlotLocked(Index: Integer);
 begin
-  if (Sections[Index] = nil) or (Sections[Index]^.Users > 0) then
+  if Sections[Index] = nil then
     Exit;
-  DestroySection(Sections[Index]);
+  if Sections[Index]^.Users > 0 then
+    Sections[Index]^.IsStale := True
+  else
+    DestroySection(Sections[Index]);
   Sections[Index] := nil;
+end;
+
+procedure FileChanged(Volume: PVolume; NodeNumber: QWord);
+var
+  Index: Integer;
+begin
+  AcquireMutex(SectionsLock);
+  for Index := 0 to MaximumSections - 1 do
+    if (Sections[Index] <> nil) and (Sections[Index]^.Identity.Volume = Pointer(Volume)) and
+       (Sections[Index]^.Identity.NodeNumber = NodeNumber) then
+      DropSlotLocked(Index);
+  ReleaseMutex(SectionsLock);
 end;
 
 function FindImageSection(KernelPath: PChar; const Identity: TImageIdentity): PImageSection;
@@ -165,7 +195,7 @@ begin
       Oldest := Index;
   end;
   if Oldest >= 0 then
-    DropSlotLocked(Oldest);
+    DropSlotLocked(Oldest); { unused, so destroyed }
   Result := Oldest;
 end;
 
@@ -173,7 +203,6 @@ function CreateImageSection(KernelPath: PChar; const Identity: TImageIdentity; C
   Size: QWord; LowestPage, PageCount: QWord): PImageSection;
 var
   Index: QWord;
-  Slot: Integer;
 begin
   Result := PImageSection(AllocateZeroedKernelMemory(SizeOf(TImageSection)));
   if Result = nil then
@@ -205,12 +234,18 @@ begin
     end;
   end;
 
+end;
+
+procedure PublishImageSection(Section: PImageSection);
+var
+  Slot: Integer;
+begin
   { Kept if there is room; otherwise it serves this load only and goes
     when the load releases it. }
   AcquireMutex(SectionsLock);
   Slot := FreeSlotLocked;
   if Slot >= 0 then
-    Sections[Slot] := Result;
+    Sections[Slot] := Section;
   ReleaseMutex(SectionsLock);
 end;
 

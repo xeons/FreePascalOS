@@ -13,6 +13,17 @@ unit Processes.FileCalls;
 
 interface
 
+uses
+  Processes.Process;
+
+type
+  TPathBuffer = array[0..ProcessPathCapacity - 1] of Char;
+  PPathBuffer = ^TPathBuffer;
+
+{ Copies a user path and translates it to a kernel path. The buffer
+  comes from the heap and must be freed by the caller. }
+function FetchKernelPath(PathAddress: QWord; out KernelPath: PPathBuffer): LongInt;
+
 function PerformOpenFile(PathAddress: QWord; Flags: QWord): Int64;
 function PerformCloseHandle(Handle: Int64): Int64;
 function PerformReadHandle(Handle: Int64; BufferAddress: QWord; ByteCount: QWord): Int64;
@@ -56,7 +67,6 @@ uses
   Io.DeviceFiles,
   Io.Pipes,
   Objects.Manager,
-  Processes.Process,
   Processes.Handles,
   Processes.Paths,
   Processes.Thread,
@@ -64,17 +74,12 @@ uses
   Processes.Security,
   FileSystem.Security,
   Kernel.Clock,
-  Processes.Stopping;
+  Processes.Stopping,
+  Processes.FileAttributeCalls;
 
 const
   PathCapacity = ProcessPathCapacity;
 
-type
-  TPathBuffer = array[0..PathCapacity - 1] of Char;
-  PPathBuffer = ^TPathBuffer;
-
-{ Copies a user path and translates it. The kernel path buffer comes from
-  the heap and must be freed by the caller. }
 function FetchKernelPath(PathAddress: QWord; out KernelPath: PPathBuffer): LongInt;
 var
   UserPath: TPathBuffer;
@@ -964,14 +969,7 @@ begin
   if Index >= QWord(VolumeCount) then
     Exit(0);
   Volume := VolumeAt(Integer(Index));
-  FillMemory(@Information, SizeOf(Information), 0);
-  CopyText(@Information.Name[0], @Volume^.Name[0], AbiTextCapacity);
-  CopyText(@Information.FileSystemType[0], @Volume^.TypeName[0], AbiTextCapacity);
-  CopyText(@Information.VolumeLabel[0], @Volume^.VolumeLabel[0], AbiTextCapacity);
-  Information.TotalBytes := Volume^.TotalBytes;
-  Information.HasFreeSpace := Ord(GetVolumeFreeSpace(Volume, Information.FreeBytes));
-  Information.IsReadOnly := Ord(Volume^.IsReadOnly);
-  Information.IsSystemVolume := Ord(TextIsEqual(@Volume^.Name[0], SystemVolumeName));
+  FillVolumeInformation(Volume, Information);
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
   if Result = 0 then
     Result := 1;
@@ -1006,34 +1004,15 @@ end;
 function CheckAttributeChanges(Path: PChar; FollowLinks: Boolean; Fields: LongWord;
   const Changes: TAttributeChanges): LongInt;
 var
-  Process: PProcess;
   Information: TNodeInformation;
   Status: TFileSystemStatus;
-  IsOwner: Boolean;
 begin
-  Process := CurrentProcess;
-  if not Process^.IsUserProcess or (Process^.Credentials.EffectiveUserId = RootUserId) then
+  if CallerMaySetAnyAttributes then
     Exit(ErrorNone);
   Status := DescribePath(Path, FollowLinks, Information);
   if Status <> StatusSuccess then
     Exit(ErrorFromStatus(Status));
-  IsOwner := Information.OwnerId = Process^.Credentials.EffectiveUserId;
-  Result := ErrorNone;
-  if ((Changes.Fields and AttributeChangeMode) <> 0) and not IsOwner then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and AttributeChangeOwner) <> 0) and (Changes.OwnerId <> Information.OwnerId) then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and AttributeChangeGroup) <> 0) and (Changes.GroupId <> Information.GroupId) and
-     (not IsOwner or not IsInGroup(Process^.Credentials, Changes.GroupId)) then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and (AttributeChangeModificationTime or AttributeChangeAccessTime)) <> 0) and
-     not IsOwner then
-  begin
-    if (Fields and ChangeFieldTimesAreNow) = 0 then
-      Exit(ErrorNotPermitted);
-    if not CredentialsMayAccess(Process^.Credentials, Information, AccessWrite) then
-      Exit(ErrorAccessDenied);
-  end;
+  Result := CheckAttributeChangesFor(Information, Fields, Changes);
 end;
 
 function PerformSetPathAttributes(PathAddress: QWord; ChangesAddress: QWord; FollowLinks: QWord): Int64;
@@ -1048,19 +1027,7 @@ begin
     Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  { The Abi field flags have the same values as the VFS ones. }
-  Changes.Fields := UserChanges.Fields;
-  Changes.Mode := UserChanges.Mode;
-  Changes.OwnerId := UserChanges.OwnerId;
-  Changes.GroupId := UserChanges.GroupId;
-  Changes.ModificationTime := UserChanges.ModificationTime;
-  Changes.AccessTime := UserChanges.AccessTime;
-  if (UserChanges.Fields and ChangeFieldTimesAreNow) <> 0 then
-  begin
-    Changes.Fields := Changes.Fields and not ChangeFieldTimesAreNow;
-    Changes.ModificationTime := CurrentWallClockTime;
-    Changes.AccessTime := Changes.ModificationTime;
-  end;
+  ConvertAttributeChanges(UserChanges, Changes);
   Error := CheckAttributeChanges(@KernelPath^[0], FollowLinks <> 0, UserChanges.Fields, Changes);
   if Error <> ErrorNone then
     Result := Failure(Error)

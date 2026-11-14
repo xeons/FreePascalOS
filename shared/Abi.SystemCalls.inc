@@ -37,6 +37,8 @@ const
   CallLoadLibrary = 26;
   CallFindSymbol = 27;
   CallGetSystemInformation = 28;
+  { (Path, InformationAddress): the volume Path is on
+    (TAbiVolumeInformation). }
   CallGetVolumeInformation = 29;
   CallSync = 30;
   CallGetHandleKind = 31;
@@ -74,6 +76,16 @@ const
   { (Address, Count): wakes up to Count threads waiting on Address;
     returns how many were woken. }
   CallWakeAddress = 46;
+  { (Handle or CurrentThreadHandle): suspends the thread at its next safe
+    point (a system call or interrupt returning to it) until it is
+    resumed as often as it was suspended; returns the previous suspend
+    count. A system call it was waiting in runs again afterwards. }
+  CallSuspendThread = 47;
+  { (Handle): undoes one suspension; returns the previous count. }
+  CallResumeThread = 48;
+  { (Handle, ExitCode): ends another thread of the process at its next
+    safe point, as if it had called CallExitThread. }
+  CallTerminateThread = 49;
 
   { Users, permissions, process information and priorities. }
   CallListProcesses = 50;
@@ -102,6 +114,18 @@ const
   CallGetAffinity = 62;
   CallSetAffinity = 63;
 
+  { Thread priorities: an offset (-15 .. 15) from the priority the
+    process's nice value gives. (Handle or CurrentThreadHandle, Offset);
+    only root may raise a thread above its process. CallGetThreadPriority
+    returns the offset plus ThreadPriorityOffsetBias, so it is never
+    negative. }
+  CallSetThreadPriority = 64;
+  CallGetThreadPriority = 65;
+
+  { (Handle, ChangesAddress): like CallSetPathAttributes, for the file
+    behind a handle (TAbiAttributeChanges). }
+  CallSetHandleAttributes = 66;
+
   CallCount = 70;
 
   { CallWaitForProcessChange: the process stopped instead of exiting. }
@@ -124,8 +148,11 @@ const
   { Timeout of CallWaitForProcess meaning "wait as long as it takes". }
   InfiniteWait = -1;
 
-  { Handle of CallGetThreadId meaning "the calling thread". }
+  { Handle of the thread calls meaning "the calling thread". }
   CurrentThreadHandle = -1;
+  ThreadPriorityOffsetLowest = -15;
+  ThreadPriorityOffsetHighest = 15;
+  ThreadPriorityOffsetBias = 15;
   { Stack size CallCreateThread uses when given 0, and its limit. }
   DefaultThreadStackSize = 1024 * 1024;
   MaximumThreadStackSize = 64 * 1024 * 1024;

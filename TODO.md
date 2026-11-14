@@ -167,9 +167,13 @@ how the existing pieces fit together.
 - [x] The Free Pascal runtime library for user programs (System, SysUtils,
       Classes, StrUtils, DateUtils, Math, Variants, fgl, Contnrs, SyncObjs, ...;
       threads, Unicode string manager with the root collation); one heap
-- [ ] Kernel calls the runtime still lacks: volume information by path,
-      setting file times by handle, thread priorities, suspending, resuming
-      and ending other threads
+- [x] Kernel calls the runtime needed: volume information by path, setting
+      attributes by handle, thread priorities, suspending, resuming and
+      ending other threads
+- [x] Hang watch (hangdump=SECONDS): dumps every user thread when no
+      process starts or ends for that long
+- [ ] TThread.Suspend from another thread (the kernel supports it; Classes
+      still uses the Unix TThread, which refuses)
 - [ ] Time zones (the runtime reports UTC)
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs

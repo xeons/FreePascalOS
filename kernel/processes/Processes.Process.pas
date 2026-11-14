@@ -139,6 +139,9 @@ function CreateProcessObject(Name: PChar): PProcess;
 { The registry of running user processes. A process is registered while
   its program runs; holding the registry lock keeps it from ending. }
 procedure RegisterRunningProcess(Process: PProcess);
+{ How often a process was registered or unregistered (a sign of
+  progress, for the hang watch). }
+function ProcessChangeCount: QWord;
 procedure UnregisterRunningProcess(Process: PProcess);
 procedure LockProcessRegistry;
 procedure UnlockProcessRegistry;
@@ -237,9 +240,18 @@ begin
   Result^.IsUserProcess := True;
 end;
 
+var
+  Changes: QWord = 0;
+
+function ProcessChangeCount: QWord;
+begin
+  Result := Changes;
+end;
+
 procedure RegisterRunningProcess(Process: PProcess);
 begin
   AcquireMutex(RegistryLock);
+  Inc(Changes);
   InsertAtTail(RunningProcesses, @Process^.RunningLink);
   Process^.IsRegistered := True;
   ReleaseMutex(RegistryLock);
@@ -248,6 +260,7 @@ end;
 procedure UnregisterRunningProcess(Process: PProcess);
 begin
   AcquireMutex(RegistryLock);
+  Inc(Changes);
   if Process^.IsRegistered then
   begin
     RemoveListEntry(@Process^.RunningLink);

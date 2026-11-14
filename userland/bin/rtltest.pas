@@ -323,6 +323,62 @@ begin
   end;
 end;
 
+var
+  SpinCount: LongInt = 0;
+
+{ Counts as fast as it can, without system calls, until it is killed. }
+function SpinForever(Parameter: Pointer): PtrInt;
+begin
+  while True do
+    InterlockedIncrement(SpinCount);
+  Result := 0;
+end;
+
+procedure TestThreadControl;
+var
+  Handle, Id: TThreadID;
+  BeforeWait, AfterWait: LongInt;
+begin
+  Handle := BeginThread(@SpinForever, nil, Id);
+  Check(Handle <> 0, 'BeginThread');
+  Sleep(30);
+  Check(SpinCount > 0, 'the spinning thread runs');
+  Check(ThreadSetPriority(Handle, -5) and (ThreadGetPriority(Handle) = -5), 'ThreadSetPriority, ThreadGetPriority');
+  Check(SuspendThread(Handle) = 0, 'SuspendThread returns the previous count');
+  { It stops at its next safe point (the next clock interrupt at the latest). }
+  Sleep(50);
+  BeforeWait := SpinCount;
+  Sleep(100);
+  AfterWait := SpinCount;
+  Check(BeforeWait = AfterWait, 'a suspended thread does not run');
+  Check(ResumeThread(Handle) = 1, 'ResumeThread returns the previous count');
+  Sleep(50);
+  Check(SpinCount > AfterWait, 'a resumed thread runs again');
+  Check(KillThread(Handle) = 0, 'KillThread');
+  Check(WaitForThreadTerminate(Handle, 0) = 0, 'a killed thread ends');
+  CloseThread(Handle);
+end;
+
+procedure TestFileControl;
+var
+  Path: string;
+  Handle: THandle;
+  Age: LongInt;
+begin
+  Path := WorkDirectory + '/dated.txt';
+  Handle := FileCreate(Path);
+  Check(Handle <> feInvalidHandle, 'FileCreate');
+  Age := DateTimeToFileDate(EncodeDate(2001, 2, 3) + EncodeTime(4, 5, 6, 0));
+  Check(FileSetDate(Handle, Age) = 0, 'FileSetDate through a handle');
+  Check(FileGetDate(Handle) = Age, 'FileGetDate gives the date back');
+  FileClose(Handle);
+  Check(FileSetAttr(Path, faReadOnly) = 0, 'FileSetAttr read-only');
+  Check((FileGetAttr(Path) and faReadOnly) <> 0, 'FileGetAttr shows read-only');
+  Check((FileSetAttr(Path, 0) = 0) and ((FileGetAttr(Path) and faReadOnly) = 0), 'FileSetAttr clears read-only');
+  DeleteFile(Path);
+  Check((DiskSize(0) > 0) and (DiskFree(0) >= 0) and (DiskSize(0) >= DiskFree(0)), 'DiskSize, DiskFree');
+end;
+
 procedure TestSystem;
 var
   Now1: TDateTime;
@@ -350,6 +406,8 @@ begin
   TestClasses;
   TestFiles;
   TestThreads;
+  TestThreadControl;
+  TestFileControl;
   TestSystem;
   RemoveDir(WorkDirectory);
   WriteLn('rtltest: ', Passed, ' passed, ', Failed, ' failed');

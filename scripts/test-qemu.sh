@@ -49,7 +49,8 @@ cp -r "$esp_directory" "$test_esp_directory"
 # With a system disk the user mode test program runs as the first
 # process; its exit code decides the result.
 if [[ -n "${system_disk_image:-}" ]]; then
-    echo "test-exit init=/bin/coretest" > "$test_esp_directory/FreePascalOS/options.txt"
+    # hangdump: if the tests stop making progress, the log shows why.
+    echo "test-exit init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
 else
     echo "test-exit" > "$test_esp_directory/FreePascalOS/options.txt"
 fi

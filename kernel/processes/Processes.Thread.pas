@@ -45,6 +45,16 @@ type
       for ExitEvent and then reads ExitCode. }
     ExitCode: LongInt;
     ExitEvent: TEvent;
+
+    { Suspending, ending and prioritizing it from another thread
+      (Processes.ThreadControl). Guarded by the process's StopLock. }
+    SuspendCount: LongInt;
+    { Signaled while the thread is not suspended. }
+    ResumeEvent: TEvent;
+    ExitRequested: Boolean;
+    RequestedExitCode: LongInt;
+    { Added to the priority its process's nice value gives. }
+    PriorityOffset: LongInt;
   end;
 
 var
@@ -78,6 +88,15 @@ procedure AlertProcessThreads(Process: PProcess);
 { --- Priority and accounting (used by Processes.Security) --- }
 
 procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
+
+type
+  TThreadVisitor = procedure(Thread: PThread; Context: Pointer);
+
+{ Calls Visit for every thread of Process, under its thread list lock
+  (Visit must not block). }
+procedure VisitProcessThreads(Process: PProcess; Visit: TThreadVisitor; Context: Pointer);
+{ Base moved by Offset, kept within the thread priorities. }
+function OffsetPriority(Base: LongWord; Offset: LongInt): LongWord;
 procedure SetProcessThreadAffinity(Process: PProcess; Mask: QWord);
 { Clock ticks used by the threads of Process. }
 function ProcessRunTicks(Process: PProcess): QWord;
@@ -205,6 +224,7 @@ begin
   if Thread = nil then
     Exit(nil);
   InitializeEvent(Thread^.ExitEvent, EventKindNotification, False);
+  InitializeEvent(Thread^.ResumeEvent, EventKindNotification, True);
 
   if not AllocateKernelStack(DefaultKernelStackSize, Thread^.KernelStack) then
   begin
@@ -247,9 +267,6 @@ begin
 end;
 
 { --- Priority and accounting ------------------------------------------ }
-
-type
-  TThreadVisitor = procedure(Thread: PThread; Context: Pointer);
 
 procedure VisitProcessThreads(Process: PProcess; Visit: TThreadVisitor; Context: Pointer);
 var
@@ -319,11 +336,24 @@ begin
   for Index := 0 to Count - 1 do
   begin
     if Change = ChangePriority then
-      SetThreadPriority(@Threads[Index]^.ControlBlock, LongWord(Value))
+      SetThreadPriority(@Threads[Index]^.ControlBlock,
+        OffsetPriority(LongWord(Value), Threads[Index]^.PriorityOffset))
     else
       SetThreadAffinity(@Threads[Index]^.ControlBlock, Value);
     DereferenceObject(Threads[Index]);
   end;
+end;
+
+function OffsetPriority(Base: LongWord; Offset: LongInt): LongWord;
+var
+  Priority: LongInt;
+begin
+  Priority := LongInt(Base) + Offset;
+  if Priority < LowestThreadPriority then
+    Priority := LowestThreadPriority;
+  if Priority > HighestThreadPriority then
+    Priority := HighestThreadPriority;
+  Result := LongWord(Priority);
 end;
 
 procedure SetProcessThreadPriorities(Process: PProcess; Priority: LongWord);
