@@ -4,8 +4,10 @@
   With the kernel option hangdump=SECONDS, a system thread watches how
   often processes start and end. If neither happens for that long while
   user processes exist, it writes every user thread to the kernel log -
-  its process, name, state, what it waits on and how long it has run -
-  and what every processor is running, then waits for progress again.
+  its process, name, state, what it waits on, how long it has run, where
+  in the program it last entered the kernel and the system call it is
+  in - and what every processor is running, then waits for progress
+  again.
   The tests turn it on, so a hang explains itself in the log.
 }
 unit Processes.HangWatch;
@@ -21,6 +23,7 @@ implementation
 
 uses
   Runtime.Text,
+  Kernel.Arch.TrapFrame,
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Processors,
@@ -47,6 +50,33 @@ begin
   else
     Result := '?';
   end;
+end;
+
+{ Where the thread last came from user mode: the frame at the top of its
+  kernel stack (for a thread running on another processor this is only
+  as fresh as its last interrupt or system call). }
+procedure DescribeUserState(Thread: PThread);
+var
+  UserFrame: PTrapFrame;
+  CallFrame: PTrapFrame;
+begin
+  UserFrame := PTrapFrame(Thread^.ControlBlock.StackTop - SizeOf(TTrapFrame));
+  CallFrame := PTrapFrame(Thread^.SystemCallFrame);
+  DebugBeginMessage;
+  DebugWriteTag('hang');
+  DebugWrite('      user rip 0x');
+  DebugWriteHex(UserFrame^.Rip, 1);
+  DebugWrite(', rsp 0x');
+  DebugWriteHex(UserFrame^.Rsp, 1);
+  if CallFrame <> nil then
+  begin
+    DebugWrite(', in system call ');
+    DebugWriteDecimal(CallFrame^.Rax);
+  end
+  else
+    DebugWrite(', not in a system call');
+  DebugWriteLine('');
+  DebugEndMessage;
 end;
 
 procedure DescribeThread(Thread: PThread; Context: Pointer);
@@ -80,6 +110,8 @@ begin
   DebugWriteDecimal(Block^.RunTicks);
   DebugWriteLine(' ticks');
   DebugEndMessage;
+  if Thread^.IsUserThread then
+    DescribeUserState(Thread);
 end;
 
 procedure DescribeProcess(Process: PProcess; Context: Pointer);
