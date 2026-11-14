@@ -236,6 +236,8 @@ begin
 
   if KernelOptionIsSet(OptionTestExit) then
   begin
+    { Leave the disks clean (journals empty) for the host's checks. }
+    SyncAllVolumes;
     { Without a system disk no program runs; that is only a failure if a
       test program was asked for. }
     if (InitialProgramExitCode = 0) or

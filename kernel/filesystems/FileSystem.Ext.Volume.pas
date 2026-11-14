@@ -23,7 +23,8 @@ interface
 
 uses
   FileSystem.Types,
-  FileSystem.Ext.Structures;
+  FileSystem.Ext.Structures,
+  FileSystem.Ext.Transactions;
 
 type
   PExtVolume = ^TExtVolume;
@@ -51,6 +52,8 @@ type
     FreeBlockCount: QWord;
     FreeInodeCount: LongWord;
     SuperblockNeedsWriting: Boolean;
+    { The journal being written, nil for volumes written in place. }
+    Journal: PExtJournal;
   end;
 
   PExtNode = ^TExtNode;
@@ -63,6 +66,14 @@ type
   end;
 
 function ExtVolumeOf(Node: PNode): PExtVolume;
+
+{ All of the driver's disk accesses go through these. Reads see the
+  running transaction; metadata writes go into it (on journaled
+  volumes); file data is written in place. A nil Buffer writes zeros. }
+function ExtRead(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+function ExtWriteMetadata(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+function ExtWriteData(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+
 function InodeRecord(Node: PExtNode): PInode;
 function HasIncompatibleFeature(Ext: PExtVolume; Feature: LongWord): Boolean;
 
@@ -115,6 +126,26 @@ uses
 function ExtVolumeOf(Node: PNode): PExtVolume;
 begin
   Result := PExtVolume(Node^.Volume^.DriverData);
+end;
+
+function JournalOf(Volume: PVolume): PExtJournal;
+begin
+  Result := PExtVolume(Volume^.DriverData)^.Journal;
+end;
+
+function ExtRead(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+begin
+  Result := JournalRead(JournalOf(Volume), Volume, Offset, ByteCount, Buffer);
+end;
+
+function ExtWriteMetadata(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+begin
+  Result := JournalWriteMetadata(JournalOf(Volume), Volume, Offset, ByteCount, Buffer);
+end;
+
+function ExtWriteData(Volume: PVolume; Offset, ByteCount: QWord; Buffer: Pointer): Boolean;
+begin
+  Result := JournalWriteData(JournalOf(Volume), Volume, Offset, ByteCount, Buffer);
 end;
 
 function InodeRecord(Node: PExtNode): PInode;
@@ -227,7 +258,7 @@ begin
   FillMemory(Descriptor, MaximumDescriptorSize, 0);
   if Group >= Ext^.GroupCount then
     Exit(StatusCorrupted);
-  if not VolumeRead(Volume, GroupDescriptorOffset(Ext, Group), Ext^.DescriptorSize, Descriptor) then
+  if not ExtRead(Volume, GroupDescriptorOffset(Ext, Group), Ext^.DescriptorSize, Descriptor) then
     Exit(StatusIoError);
   Result := StatusSuccess;
 end;
@@ -268,7 +299,7 @@ begin
   Ext := PExtVolume(Volume^.DriverData);
   if Ext^.HasMetadataChecksums or Ext^.HasGroupDescriptorChecksums then
     PWord(Descriptor + DescriptorOffsetChecksum)^ := GroupDescriptorChecksum(Ext, Group, Descriptor);
-  if not VolumeWrite(Volume, GroupDescriptorOffset(Ext, Group), Ext^.DescriptorSize, Descriptor) then
+  if not ExtWriteMetadata(Volume, GroupDescriptorOffset(Ext, Group), Ext^.DescriptorSize, Descriptor) then
     Exit(StatusIoError);
   Result := StatusSuccess;
 end;
@@ -395,7 +426,7 @@ begin
   Result := InodeOffset(Volume, InodeNumber, Offset);
   if Result <> StatusSuccess then
     Exit;
-  if not VolumeRead(Volume, Offset, Ext^.InodeSize, Destination) then
+  if not ExtRead(Volume, Offset, Ext^.InodeSize, Destination) then
     Result := StatusIoError;
 end;
 
@@ -409,7 +440,7 @@ begin
   if Result <> StatusSuccess then
     Exit;
   UpdateInodeChecksum(Ext, Node^.InodeNumber, @Node^.InodeBytes[0]);
-  if not VolumeWrite(Node^.Common.Volume, Offset, Ext^.InodeSize, @Node^.InodeBytes[0]) then
+  if not ExtWriteMetadata(Node^.Common.Volume, Offset, Ext^.InodeSize, @Node^.InodeBytes[0]) then
     Result := StatusIoError;
 end;
 
@@ -438,7 +469,7 @@ begin
   Bitmap := PByte(AllocateKernelMemory(Ext^.BlockSize));
   if Bitmap = nil then
     Exit(StatusOutOfMemory);
-  if not VolumeRead(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
+  if not ExtRead(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
   begin
     FreeKernelMemory(Bitmap);
     Bitmap := nil;
@@ -536,7 +567,7 @@ begin
 
   SetBit(Bitmap, Index, True);
   Block := QWord(Ext^.FirstDataBlock) + QWord(Group) * Ext^.BlocksPerGroup + Index;
-  if not VolumeWrite(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
+  if not ExtWriteMetadata(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
   begin
     FreeKernelMemory(Bitmap);
     Exit(StatusIoError);
@@ -576,7 +607,9 @@ begin
     begin
       Dec(Ext^.FreeBlockCount);
       Ext^.SuperblockNeedsWriting := True;
-      if not VolumeWriteZeros(Volume, Block * Ext^.BlockSize, Ext^.BlockSize) then
+      { A data write: the block may become file data, which is never
+        journaled; metadata written to it later is. }
+      if not ExtWriteData(Volume, Block * Ext^.BlockSize, Ext^.BlockSize, nil) then
         Exit(StatusIoError);
       Exit;
     end;
@@ -615,7 +648,7 @@ begin
   if BitIsSet(Bitmap, Index) then
   begin
     SetBit(Bitmap, Index, False);
-    if not VolumeWrite(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
+    if not ExtWriteMetadata(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
     begin
       FreeKernelMemory(Bitmap);
       Exit(StatusIoError);
@@ -624,6 +657,7 @@ begin
       DescriptorOffsetFreeBlocksHigh, False);
     SetDescriptorValue(Ext, @Descriptor[0], DescriptorOffsetFreeBlocksLow,
       DescriptorOffsetFreeBlocksHigh, False, FreeInGroup + 1);
+    JournalNoteFreedBlock(Ext^.Journal, Block);
     UpdateBitmapChecksum(Ext, @Descriptor[0], Bitmap, Ext^.BlocksPerGroup div 8,
       DescriptorOffsetBlockBitmapChecksumLow, DescriptorOffsetBlockBitmapChecksumHigh);
     Result := WriteGroupDescriptor(Volume, Group, @Descriptor[0]);
@@ -688,7 +722,7 @@ begin
   end;
 
   SetBit(Bitmap, Index, True);
-  if not VolumeWrite(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
+  if not ExtWriteMetadata(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
   begin
     FreeKernelMemory(Bitmap);
     Exit(StatusIoError);
@@ -778,7 +812,7 @@ begin
   if BitIsSet(Bitmap, Index) then
   begin
     SetBit(Bitmap, Index, False);
-    if not VolumeWrite(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
+    if not ExtWriteMetadata(Volume, BitmapBlock * Ext^.BlockSize, Ext^.BlockSize, Bitmap) then
     begin
       FreeKernelMemory(Bitmap);
       Exit(StatusIoError);
@@ -820,7 +854,7 @@ begin
   Buffer := PByte(AllocateKernelMemory(SuperblockSize));
   if Buffer = nil then
     Exit(StatusOutOfMemory);
-  if not VolumeRead(Volume, SuperblockOffset, SuperblockSize, Buffer) then
+  if not ExtRead(Volume, SuperblockOffset, SuperblockSize, Buffer) then
   begin
     FreeKernelMemory(Buffer);
     Exit(StatusIoError);
@@ -838,7 +872,7 @@ begin
     PLongWord(Buffer + SuperblockChecksumOffset)^ := Checksum;
   end;
 
-  if VolumeWrite(Volume, SuperblockOffset, SuperblockSize, Buffer) then
+  if ExtWriteMetadata(Volume, SuperblockOffset, SuperblockSize, Buffer) then
   begin
     Ext^.SuperblockNeedsWriting := False;
     Result := StatusSuccess;

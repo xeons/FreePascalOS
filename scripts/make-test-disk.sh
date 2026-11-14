@@ -20,6 +20,18 @@
 #   docs/up-link                        symbolic link using ".."
 #   absolute-link                       absolute symbolic link (volume relative)
 #
+# The ext3 and ext4 partitions are left needing journal recovery: their
+# journals hold committed transactions (written with debugfs; plain on
+# ext3, with v3 checksums and 64-bit block numbers on ext4) that the
+# kernel must replay when it mounts them:
+#   journal-replay.txt                  "journal: not replayed", replayed to
+#                                       "journal: was replayed"
+#   journal-revoked.txt                 "revoked: untouched"; its block is logged
+#                                       with garbage, then revoked
+#   journal-escaped.txt                 replayed with a block that starts with
+#                                       the journal's magic number (escaped in
+#                                       the log)
+#
 # Needs: sfdisk, mkfs.fat, mtools, mkfs.exfat, mke2fs, python3.
 
 set -euo pipefail
@@ -60,6 +72,44 @@ EOF
     ln -s /docs/nested/deep.txt "$directory/absolute-link"
 }
 
+create_journal_files() {
+    local directory="$1"
+    printf 'journal: not replayed\n' > "$directory/journal-replay.txt"
+    printf 'revoked: untouched\n' > "$directory/journal-revoked.txt"
+    printf 'not escaped yet\n' > "$directory/journal-escaped.txt"
+}
+
+# Leaves committed transactions in the journal of an ext image: the
+# replayed, revoked and escaped blocks described above.
+write_dirty_journal() {
+    local image="$1" open_options="$2" block_size replay_block revoked_block escaped_block
+    block_size=$(dumpe2fs -h "$image" 2>/dev/null | sed -n 's/^Block size: *//p')
+    replay_block=$(debugfs -R "bmap /journal-replay.txt 0" "$image" 2>/dev/null)
+    revoked_block=$(debugfs -R "bmap /journal-revoked.txt 0" "$image" 2>/dev/null)
+    escaped_block=$(debugfs -R "bmap /journal-escaped.txt 0" "$image" 2>/dev/null)
+    python3 - "$work_directory" "$block_size" <<'EOF'
+import sys
+directory, size = sys.argv[1], int(sys.argv[2])
+def block(data):
+    return data + bytes(size - len(data))
+open(f"{directory}/replayed.blk", "wb").write(block(b"journal: was replayed\n"))
+open(f"{directory}/garbage.blk", "wb").write(bytes([0x47]) * size)
+open(f"{directory}/escaped.blk", "wb").write(block(bytes([0xC0, 0x3B, 0x39, 0x98]) + b"journal esc\n"))
+EOF
+    debugfs -w -f - "$image" > /dev/null 2>&1 <<COMMANDS
+jo $open_options
+jw -b $replay_block $work_directory/replayed.blk
+jw -b $revoked_block $work_directory/garbage.blk
+jw -b $escaped_block $work_directory/escaped.blk
+jw -r $revoked_block
+jc
+COMMANDS
+    if ! dumpe2fs -h "$image" 2>/dev/null | grep -q needs_recovery; then
+        echo "could not leave a dirty journal in $image" >&2
+        exit 1
+    fi
+}
+
 make_fat() {
     local image="$1" size="$2" fat_bits="$3" label="$4" content="$5"
     rm -f "$image"
@@ -90,6 +140,9 @@ for index in "${!partition_names[@]}"; do
     case "$name" in
         ext*) create_ext_extras "$content" ;;
     esac
+    case "$name" in
+        ext3|ext4) create_journal_files "$content" ;;
+    esac
 done
 
 make_fat   "$work_directory/fat12.img" 8  12 FAT12TEST "$work_directory/content-fat12"
@@ -100,6 +153,8 @@ make_exfat "$work_directory/exfat.img" 32 "$work_directory/content-exfat"
 make_ext   "$work_directory/ext2.img"  16 ext2 EXT2TEST "$work_directory/content-ext2" -b 1024
 make_ext   "$work_directory/ext3.img"  16 ext3 EXT3TEST "$work_directory/content-ext3" -b 1024
 make_ext   "$work_directory/ext4.img"  32 ext4 EXT4TEST "$work_directory/content-ext4"
+write_dirty_journal "$work_directory/ext3.img" ""
+write_dirty_journal "$work_directory/ext4.img" "-c"
 
 fsck.exfat -n "$work_directory/exfat.img" > /dev/null
 

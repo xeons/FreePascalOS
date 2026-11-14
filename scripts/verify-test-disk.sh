@@ -10,6 +10,12 @@
 # kernel/Kernel.FileSystemWriteTest.pas) must read back with the expected
 # contents through an independent implementation (mtools, debugfs, or the
 # exFAT helper).
+#
+# The kernel leaves ext3 and ext4 in the state of a crash right after a
+# committed transaction (a rename): the change must be in the journal
+# only, and e2fsck must replay it - which checks the kernel's journal
+# format against e2fsprogs. The journals the test disk came with must
+# have been replayed by the kernel.
 
 set -uo pipefail
 
@@ -98,9 +104,45 @@ EOF
     fi
 }
 
+path_exists() {
+    local image="$1" path="$2"
+    debugfs -R "stat \"/$path\"" "$image" 2>&1 | grep -q '^Inode:'
+}
+
+# Replays the journal left by the kernel's simulated crash.
+check_crash_recovery() {
+    local type="$1" image="$2" output status
+    if ! dumpe2fs -h "$image" 2>/dev/null | grep -q needs_recovery; then
+        report_failure "$type: not left needing recovery by the simulated crash"
+        return
+    fi
+    if path_exists "$image" "written/journal-committed.txt" ||
+        ! path_exists "$image" "written/journal-pending.txt"; then
+        report_failure "$type: the crashed rename was written in place"
+    fi
+    output=$(e2fsck -fy "$image" 2>&1)
+    status=$?
+    if (( status != 0 )); then
+        report_failure "$type: replaying the journal reported problems (exit $status)"
+        echo "$output" | sed 's/^/    /' | head -30
+    fi
+    if path_exists "$image" "written/journal-pending.txt"; then
+        report_failure "$type: written/journal-pending.txt is still there after the replay"
+    fi
+    check_contents "$type" "$image" "written/journal-committed.txt" $'committed\n'
+}
+
 check_partition() {
     local type="$1" image="$2"
     echo "Checking $type"
+    case "$type" in
+        ext3|ext4)
+            check_crash_recovery "$type" "$image"
+            # The journals the disk came with, replayed by the kernel.
+            check_contents "$type" "$image" "journal-replay.txt" $'journal: was replayed\n'
+            check_contents "$type" "$image" "journal-revoked.txt" $'revoked: untouched\n'
+            ;;
+    esac
     check_consistency "$type" "$image"
     check_contents "$type" "$image" "written/final.txt" $'Final contents.\n'
     check_contents "$type" "$image" "written/append.txt" "one two"

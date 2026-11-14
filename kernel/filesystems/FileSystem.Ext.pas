@@ -5,8 +5,13 @@
   extents, 64-bit block numbers, flexible block groups, metadata
   checksums and more. This driver reads all of them and writes them as
   long as the volume uses no feature it cannot keep consistent; such
-  volumes (and volumes whose journal needs recovery, which is not
-  replayed) are mounted read-only.
+  volumes are mounted read-only.
+
+  ext3 and ext4 volumes are written through their journal: every driver
+  call that changes the volume is one transaction, committed to the
+  journal before anything is written in place. A volume whose journal
+  needs recovery (it was not unmounted cleanly) has its journal replayed
+  when it is mounted, unless it is to be mounted read-only.
 
   Name lookups are exact (case sensitive).
 
@@ -18,6 +23,10 @@
     FileSystem.Ext.Directories   directory records
     FileSystem.Ext.Write         creating, writing, removing, renaming
     FileSystem.Ext.Attributes    permissions, owners, times, hard links
+    FileSystem.Ext.JournalFormat the journal's on-disk format
+    FileSystem.Ext.Transactions  transactions: logging and checkpointing
+    FileSystem.Ext.JournalRecovery  replaying the journal
+    FileSystem.Ext.Journal       finding and checking the journal
     FileSystem.Ext               (this unit) probing, mounting, reading
 }
 unit FileSystem.Ext;
@@ -31,6 +40,12 @@ uses
   FileSystem.Types;
 
 function ExtFileSystemDriver: PFileSystemDriver;
+
+{ For tests: the next transaction committed on Volume stops before it is
+  written in place, as if the machine crashed right after the commit;
+  nothing more is written to the volume, which becomes read-only. False
+  if Volume has no journal being written. }
+function SimulateCrashAfterNextCommit(Volume: PVolume): Boolean;
 
 implementation
 
@@ -47,6 +62,9 @@ uses
   FileSystem.Ext.Directories,
   FileSystem.Ext.Write,
   FileSystem.Ext.Attributes,
+  FileSystem.Ext.Transactions,
+  FileSystem.Ext.JournalRecovery,
+  FileSystem.Ext.Journal,
   Debug.Output;
 
 const
@@ -248,7 +266,7 @@ begin
     Exit;
 
   if HasIncompatibleFeature(Ext, IncompatibleNeedsRecovery) then
-    ReportReadOnlyReason(Volume, 'the journal needs recovery, which is not supported')
+    ReportReadOnlyReason(Volume, 'the journal needs recovery')
   else if (Superblock.FeatureIncompatible and WriteBlockingIncompatibleFeatures) <> 0 then
     ReportReadOnlyReason(Volume, 'it uses features that cannot be written yet')
   else if (Superblock.FeatureReadOnlyCompatible and not WritableReadOnlyCompatibleFeatures) <> 0 then
@@ -290,6 +308,83 @@ begin
   Result := StatusSuccess;
 end;
 
+procedure ReportJournal(Volume: PVolume; Text: PChar; Count: QWord; Tail: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('ext');
+  DebugWrite(@Volume^.Name[0]);
+  DebugWrite(': ');
+  DebugWrite(Text);
+  DebugWriteDecimal(Count);
+  DebugWriteLine(Tail);
+  DebugEndMessage;
+end;
+
+{ Replays the journal of a volume that needs recovery, then clears the
+  mark; Replayed tells whether that happened (the volume must then be
+  mounted afresh, as its metadata may have changed). Leaves the volume
+  marked if it is to be mounted read-only or the journal cannot be
+  replayed. }
+function RecoverIfNeeded(Volume: PVolume; Ext: PExtVolume; const Superblock: TSuperblock;
+  out Replayed: Boolean): TFileSystemStatus;
+var
+  Journal: PExtJournal;
+  Reason: PChar;
+  ReplayedBlocks: QWord;
+begin
+  Replayed := False;
+  Result := StatusSuccess;
+  if not HasIncompatibleFeature(Ext, IncompatibleNeedsRecovery) or
+     ((Superblock.FeatureCompatible and CompatibleHasJournal) = 0) or Volume^.IsReadOnly then
+    Exit;
+  if LoadExtJournal(Volume, Superblock.JournalInode, Journal, Reason) <> StatusSuccess then
+  begin
+    ReportReadOnlyReason(Volume, Reason);
+    Exit;
+  end;
+  Result := RecoverJournal(Journal, ReplayedBlocks);
+  FreeJournal(Journal);
+  if Result <> StatusSuccess then
+    Exit;
+  if not SetNeedsRecovery(Volume, False, Ext^.HasMetadataChecksums) or
+     not FlushBlockDevice(Volume^.Device) then
+    Exit(StatusIoError);
+  ReportJournal(Volume, 'journal recovered, ', ReplayedBlocks, ' blocks replayed');
+  Replayed := True;
+end;
+
+{ Opens the journal of a writable ext3/ext4 volume for transactions, or
+  makes the volume read-only if it cannot be written. }
+procedure OpenJournalForWriting(Volume: PVolume; Ext: PExtVolume; const Superblock: TSuperblock);
+var
+  Journal: PExtJournal;
+  Reason: PChar;
+begin
+  if Volume^.IsReadOnly or ((Superblock.FeatureCompatible and CompatibleHasJournal) = 0) then
+    Exit;
+  if LoadExtJournal(Volume, Superblock.JournalInode, Journal, Reason) <> StatusSuccess then
+  begin
+    ReportReadOnlyReason(Volume, Reason);
+    Volume^.IsReadOnly := True;
+    Exit;
+  end;
+  if not JournalIsWritable(Journal, Reason) then
+  begin
+    ReportReadOnlyReason(Volume, Reason);
+    Volume^.IsReadOnly := True;
+    FreeJournal(Journal);
+    Exit;
+  end;
+  if not PrepareJournalForWriting(Journal, Ext) then
+  begin
+    ReportReadOnlyReason(Volume, 'out of memory for the journal');
+    Volume^.IsReadOnly := True;
+    FreeJournal(Journal);
+    Exit;
+  end;
+  Ext^.Journal := Journal;
+end;
+
 function ExtMount(Volume: PVolume): TFileSystemStatus;
 var
   Superblock: TSuperblock;
@@ -297,6 +392,7 @@ var
   Ext: PExtVolume;
   Root: PExtNode;
   UnsupportedFeatures: LongWord;
+  Replayed: Boolean;
 begin
   if not CachedRead(Volume^.Device, SuperblockOffset, SuperblockSize, @SuperblockBytes[0]) then
     Exit(StatusIoError);
@@ -375,9 +471,22 @@ begin
 
   Volume^.DriverData := Ext;
   Volume^.TotalBytes := Ext^.BlockCount * Ext^.BlockSize;
+
+  Result := RecoverIfNeeded(Volume, Ext, Superblock, Replayed);
+  if (Result <> StatusSuccess) or Replayed then
+  begin
+    FreeKernelMemory(Ext);
+    Volume^.DriverData := nil;
+    if Result <> StatusSuccess then
+      Exit;
+    { Everything may have changed, the superblock included. }
+    Exit(ExtMount(Volume));
+  end;
+
   DetermineVariantName(Volume, Superblock);
   CopyVolumeName(Volume, Superblock);
   CheckWritability(Volume, Ext, Superblock, @SuperblockBytes[0]);
+  OpenJournalForWriting(Volume, Ext, Superblock);
 
   { Allocation needs the free counters, and so does reporting free space;
     only writing depends on them being readable. }
@@ -393,6 +502,7 @@ begin
   end;
   if Result <> StatusSuccess then
   begin
+    FreeJournal(Ext^.Journal);
     FreeKernelMemory(Ext);
     Volume^.DriverData := nil;
     Exit;
@@ -402,11 +512,119 @@ begin
 end;
 
 procedure ExtUnmount(Volume: PVolume);
+var
+  Ext: PExtVolume;
 begin
+  Ext := PExtVolume(Volume^.DriverData);
+  if Ext <> nil then
+  begin
+    MarkJournalClean(Ext^.Journal);
+    FreeJournal(Ext^.Journal);
+  end;
   FreeKernelMemory(Volume^.RootNode);
   FreeKernelMemory(Volume^.DriverData);
   Volume^.RootNode := nil;
   Volume^.DriverData := nil;
+end;
+
+{ --- Transactions -------------------------------------------------------- }
+
+{ Every call that changes the volume is one transaction. }
+
+function JournalOfVolume(Volume: PVolume): PExtJournal;
+begin
+  Result := PExtVolume(Volume^.DriverData)^.Journal;
+end;
+
+{ Commits the transaction of a call that ended with Status. What the
+  call changed is committed even if it failed part way, as it was
+  written in place before there was a journal. }
+function FinishTransaction(Volume: PVolume; Status: TFileSystemStatus): TFileSystemStatus;
+var
+  CommitStatus: TFileSystemStatus;
+begin
+  { The superblock's free counters go with the transaction that changed
+    them, so that the committed state is consistent as a whole (without
+    a journal they are written when the volume is synced). }
+  if JournalOfVolume(Volume) <> nil then
+    SyncSuperblock(Volume);
+  CommitStatus := EndTransaction(JournalOfVolume(Volume));
+  if (JournalOfVolume(Volume) <> nil) and JournalOfVolume(Volume)^.Halted then
+    Volume^.IsReadOnly := True;
+  if (Status = StatusSuccess) and (CommitStatus <> StatusSuccess) then
+    Result := CommitStatus
+  else
+    Result := Status;
+end;
+
+function JournaledCreateNode(Directory: PNode; Name: PChar; Kind: TNodeKind; LinkTarget: PChar;
+  out Created: PNode): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Directory^.Volume));
+  Result := FinishTransaction(Directory^.Volume, ExtCreateNode(Directory, Name, Kind, LinkTarget, Created));
+end;
+
+function JournaledWriteFile(Node: PNode; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesWritten: QWord): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Node^.Volume));
+  Result := FinishTransaction(Node^.Volume, ExtWriteFile(Node, Offset, Buffer, ByteCount, BytesWritten));
+end;
+
+function JournaledSetFileSize(Node: PNode; NewSize: QWord): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Node^.Volume));
+  Result := FinishTransaction(Node^.Volume, ExtSetFileSize(Node, NewSize));
+end;
+
+function JournaledRemoveNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Directory^.Volume));
+  Result := FinishTransaction(Directory^.Volume, ExtRemoveNode(Directory, Name, Node));
+end;
+
+function JournaledRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;
+  TargetDirectory: PNode; TargetName: PChar): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(SourceDirectory^.Volume));
+  Result := FinishTransaction(SourceDirectory^.Volume,
+    ExtRenameNode(SourceDirectory, SourceName, Node, TargetDirectory, TargetName));
+end;
+
+function JournaledSetAttributes(Node: PNode; const Changes: TAttributeChanges): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Node^.Volume));
+  Result := FinishTransaction(Node^.Volume, ExtSetAttributes(Node, Changes));
+end;
+
+function JournaledCreateHardLink(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Directory^.Volume));
+  Result := FinishTransaction(Directory^.Volume, ExtCreateHardLink(Directory, Name, Node));
+end;
+
+{ Syncing also empties the journal: afterwards the volume needs no
+  recovery until it is changed again. }
+function JournaledSync(Volume: PVolume): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Volume));
+  Result := FinishTransaction(Volume, ExtSync(Volume));
+  if Result = StatusSuccess then
+    Result := MarkJournalClean(JournalOfVolume(Volume));
+end;
+
+function SimulateCrashAfterNextCommit(Volume: PVolume): Boolean;
+var
+  Journal: PExtJournal;
+begin
+  Result := False;
+  if (Volume^.Driver <> @Driver) or (Volume^.DriverData = nil) then
+    Exit;
+  Journal := JournalOfVolume(Volume);
+  if Journal = nil then
+    Exit;
+  Journal^.StopBeforeCheckpoint := True;
+  Result := True;
 end;
 
 function ExtFileSystemDriver: PFileSystemDriver;
@@ -420,14 +638,14 @@ begin
   Driver.ReadFile := @ExtReadFile;
   Driver.ReadSymbolicLink := @ExtReadSymbolicLink;
   Driver.ReleaseNode := @ExtReleaseNode;
-  Driver.CreateNode := @ExtCreateNode;
-  Driver.WriteFile := @ExtWriteFile;
-  Driver.SetFileSize := @ExtSetFileSize;
-  Driver.RemoveNode := @ExtRemoveNode;
-  Driver.RenameNode := @ExtRenameNode;
-  Driver.Sync := @ExtSync;
-  Driver.SetAttributes := @ExtSetAttributes;
-  Driver.CreateHardLink := @ExtCreateHardLink;
+  Driver.CreateNode := @JournaledCreateNode;
+  Driver.WriteFile := @JournaledWriteFile;
+  Driver.SetFileSize := @JournaledSetFileSize;
+  Driver.RemoveNode := @JournaledRemoveNode;
+  Driver.RenameNode := @JournaledRenameNode;
+  Driver.Sync := @JournaledSync;
+  Driver.SetAttributes := @JournaledSetAttributes;
+  Driver.CreateHardLink := @JournaledCreateHardLink;
   Driver.GetFreeSpace := @ExtGetFreeSpace;
   Result := @Driver;
 end;

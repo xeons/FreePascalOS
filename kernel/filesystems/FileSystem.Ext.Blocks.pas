@@ -114,7 +114,7 @@ end;
 
 function ReadExtentHeader(Volume: PVolume; Address: QWord; out Header: TExtentHeader): Boolean;
 begin
-  Result := VolumeRead(Volume, Address, SizeOf(Header), @Header) and (Header.Magic = ExtentMagic);
+  Result := ExtRead(Volume, Address, SizeOf(Header), @Header) and (Header.Magic = ExtentMagic);
 end;
 
 function MapThroughExtents(Node: PExtNode; LogicalBlock: LongWord; out PhysicalBlock: QWord): TFileSystemStatus;
@@ -141,7 +141,7 @@ var
       Result := True;
     end
     else
-      Result := VolumeRead(Volume, NodeAddress + ExtentHeaderSize + QWord(Index) * ExtentEntrySize,
+      Result := ExtRead(Volume, NodeAddress + ExtentHeaderSize + QWord(Index) * ExtentEntrySize,
         ExtentEntrySize, @Value);
   end;
 
@@ -214,7 +214,7 @@ var
   Ext: PExtVolume;
 begin
   Ext := PExtVolume(Volume^.DriverData);
-  Result := VolumeRead(Volume, TableBlock * Ext^.BlockSize + Index * 4, 4, @Value);
+  Result := ExtRead(Volume, TableBlock * Ext^.BlockSize + Index * 4, 4, @Value);
 end;
 
 function WriteBlockPointer(Volume: PVolume; TableBlock: QWord; Index: QWord; Value: LongWord): Boolean;
@@ -222,7 +222,7 @@ var
   Ext: PExtVolume;
 begin
   Ext := PExtVolume(Volume^.DriverData);
-  Result := VolumeWrite(Volume, TableBlock * Ext^.BlockSize + Index * 4, 4, @Value);
+  Result := ExtWriteMetadata(Volume, TableBlock * Ext^.BlockSize + Index * 4, 4, @Value);
 end;
 
 { Works out which inode slot and how many levels of tables lead to a
@@ -579,7 +579,7 @@ begin
       Exit(StatusCorrupted);
     for LeafIndex := 0 to Integer(Leaf.Entries) - 1 do
     begin
-      if not VolumeRead(Volume, LeafBlock * Ext^.BlockSize + ExtentHeaderSize +
+      if not ExtRead(Volume, LeafBlock * Ext^.BlockSize + ExtentHeaderSize +
         QWord(LeafIndex) * ExtentEntrySize, ExtentEntrySize, @Entry) then
         Exit(StatusIoError);
       if not AppendExtentRecord(List, Entry) then
@@ -634,7 +634,7 @@ begin
     PLongWord(Buffer + TailOffset)^ := NodeBlockChecksum(Node, Buffer, TailOffset);
   end;
 
-  if VolumeWrite(Node^.Common.Volume, Block * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
+  if ExtWriteMetadata(Node^.Common.Volume, Block * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
     Result := StatusSuccess
   else
     Result := StatusIoError;
@@ -971,9 +971,13 @@ var
   ChunkBytes: QWord;
   PhysicalBlock: QWord;
   Succeeded: Boolean;
+  IsFileData: Boolean;
 begin
   Ext := ExtVolumeOf(@Node^.Common);
   Volume := Node^.Common.Volume;
+  { Regular files' contents are data; directories' and symbolic links'
+    are metadata, journaled. }
+  IsFileData := (InodeRecord(Node)^.Mode and ModeTypeMask) = ModeTypeRegular;
 
   if (InodeRecord(Node)^.Flags and InodeFlagInlineData) <> 0 then
   begin
@@ -1008,11 +1012,12 @@ begin
     else
     begin
       if not IsWrite then
-        Succeeded := VolumeRead(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes, Buffer)
-      else if Buffer <> nil then
-        Succeeded := VolumeWrite(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes, Buffer)
+        Succeeded := ExtRead(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes, Buffer)
+      else if IsFileData then
+        Succeeded := ExtWriteData(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes, Buffer)
       else
-        Succeeded := VolumeWriteZeros(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes);
+        Succeeded := ExtWriteMetadata(Volume, PhysicalBlock * Ext^.BlockSize + OffsetInBlock, ChunkBytes,
+          Buffer);
       if not Succeeded then
         Exit(StatusIoError);
     end;

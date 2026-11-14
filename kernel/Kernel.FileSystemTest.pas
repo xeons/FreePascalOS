@@ -322,6 +322,22 @@ begin
   CloseFile(OpenedFile);
 end;
 
+{ ext3 and ext4 test volumes come with committed transactions in their
+  journals (scripts/make-test-disk.sh), replayed when they were mounted. }
+procedure CheckJournalReplay(Volume: PVolume);
+const
+  EscapedContents: PChar = #$C0#$3B#$39#$98'journal esc'#10;
+begin
+  CheckFileContents(Volume, 'journal-replay.txt', 'journal: was replayed'#10);
+  CheckFileContents(Volume, 'journal-revoked.txt', 'revoked: untouched'#10);
+  CheckFileContents(Volume, 'journal-escaped.txt', EscapedContents);
+end;
+
+function VolumeHasJournal(Volume: PVolume): Boolean;
+begin
+  Result := TextIsEqual(@Volume^.TypeName[0], 'ext3') or TextIsEqual(@Volume^.TypeName[0], 'ext4');
+end;
+
 procedure CheckSymbolicLinks(Volume: PVolume);
 begin
   CheckFileContents(Volume, 'link-to-hello', ExpectedHello);
@@ -378,6 +394,8 @@ begin
       CheckSparseFile(Volume);
       CheckSymbolicLinks(Volume);
     end;
+    if VolumeHasJournal(Volume) then
+      CheckJournalReplay(Volume);
     ReportPassed(Volume);
     Inc(Result);
   end;

@@ -124,10 +124,14 @@ how the existing pieces fit together.
 - [x] ext2 / ext3 / ext4 (read): block maps, extents, 64-bit, flex_bg, META_BG, htree
 - [x] Write support: FAT family (create, write, truncate, remove, rename, mkdir)
 - [x] Write support: exFAT
-- [x] Write support: ext2/ext3/ext4 with metadata checksums (unjournaled, journal kept clean)
+- [x] Write support: ext2/ext3/ext4 with metadata checksums
 - [x] Shared node cache, per-volume locking, open flags (create, exclusive, truncate, append)
 - [x] Host side verification of written volumes in `make test`
-- [ ] ext3/ext4: write through the journal (crash safety), and journal replay on mount
+- [x] ext3/ext4: write through the journal (ordered mode, revoke records, v3
+      checksums) and replay it on mount; disk flushes (AHCI FLUSH CACHE EXT)
+- [ ] ext3/ext4: writing journals with v1/v2 checksums, fast commits, external
+      journals (replayed if possible, but the volume stays read-only)
+- [ ] ext4: orphan processing after recovery (files removed while open)
 - [ ] ext4: modify htree indexed directories (currently read-only)
 - [ ] ext4: extent trees deeper than one index level when writing
 - [ ] ext4: allocate from block groups still marked uninitialized

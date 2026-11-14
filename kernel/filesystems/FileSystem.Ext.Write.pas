@@ -1,9 +1,10 @@
 {
   Write support for ext2, ext3 and ext4.
 
-  Changes are written in place without using the journal (the volume is
-  only mounted for writing when its journal is clean, so it stays clean).
-  Every change keeps the metadata consistent as e2fsck sees it: bitmaps,
+  On ext3 and ext4 every call here runs in a journal transaction
+  (FileSystem.Ext wraps them; see FileSystem.Ext.Transactions), so its
+  metadata changes reach the disk all together or not at all. Every
+  change keeps the metadata consistent as e2fsck sees it: bitmaps,
   free counters in the group descriptors and superblock, link counts,
   block counts and, on ext4, all metadata checksums.
 
@@ -116,8 +117,8 @@ begin
   Result := MapLogicalBlock(Node, LongWord(FileSize div Ext^.BlockSize), PhysicalBlock);
   if (Result <> StatusSuccess) or (PhysicalBlock = 0) then
     Exit;
-  if not VolumeWriteZeros(Node^.Common.Volume, PhysicalBlock * Ext^.BlockSize + BytesIntoBlock,
-    Ext^.BlockSize - BytesIntoBlock) then
+  if not ExtWriteData(Node^.Common.Volume, PhysicalBlock * Ext^.BlockSize + BytesIntoBlock,
+    Ext^.BlockSize - BytesIntoBlock, nil) then
     Result := StatusIoError;
 end;
 

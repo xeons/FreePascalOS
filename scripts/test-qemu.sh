@@ -58,16 +58,19 @@ fi
 firmware_variables="$build_directory/test-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
 
+# The run disks are copies thrown away afterwards: QEMU need not make
+# the guest's flushes durable on the host (cache=unsafe), which would
+# only slow the journal's commits down. The guest still sends them.
 disk_arguments=(-drive format=raw,file=fat:rw:"$test_esp_directory")
 run_disk_image="$build_directory/test-disk-run.img"
 if [[ -n "$test_disk_image" ]]; then
     cp -f "$test_disk_image" "$run_disk_image"
-    disk_arguments+=(-drive format=raw,file="$run_disk_image")
+    disk_arguments+=(-drive format=raw,cache=unsafe,file="$run_disk_image")
 fi
 run_system_disk_image="$build_directory/system-disk-run.img"
 if [[ -n "$system_disk_image" ]]; then
     cp -f "$system_disk_image" "$run_system_disk_image"
-    disk_arguments+=(-drive format=raw,file="$run_system_disk_image")
+    disk_arguments+=(-drive format=raw,cache=unsafe,file="$run_system_disk_image")
 fi
 
 # A blank disk whose sector 100 always fails to read (QEMU's blkdebug),
@@ -95,6 +98,22 @@ if [[ "${ACCEL:-}" == kvm ]]; then
 else
     cpu_arguments=(-cpu max)
 fi
+
+# Checks the first partition of a disk image with e2fsck.
+check_system_disk() {
+    local image="$1" partition="$build_directory/system-partition-check.img" start size output
+    read -r start size < <(sfdisk --json "$image" | python3 -I -c '
+import json, sys
+partition = json.load(sys.stdin)["partitiontable"]["partitions"][0]
+print(partition["start"], partition["size"])')
+    dd if="$image" of="$partition" bs=512 skip="$start" count="$size" status=none
+    if ! output=$(e2fsck -fn "$partition" 2>&1); then
+        echo "$output" | sed 's/^/    /' | head -30
+        rm -f "$partition"
+        return 1
+    fi
+    rm -f "$partition"
+}
 
 timeout "$timeout_seconds" qemu-system-x86_64 \
     -machine q35 "${cpu_arguments[@]}" -m 512M -smp ${PROCESSORS:-4} \
@@ -133,6 +152,18 @@ case "$qemu_status" in
                 echo "TEST FAILED: the written volumes did not pass the host side checks"
                 exit 1
             fi
+        fi
+        # The system disk was written by the user mode tests (through its
+        # journal); it must be consistent and its journal empty.
+        if [[ -n "$system_disk_image" ]] && ! check_system_disk "$run_system_disk_image"; then
+            echo "TEST FAILED: the system disk did not pass e2fsck"
+            exit 1
+        fi
+        # The disk statistics filter saw the journal's flushes.
+        if [[ -n "$system_disk_image" ]] &&
+           ! grep -q '\[diskstats\] disk2: .* [1-9][0-9]* flushes' "$serial_log"; then
+            echo "TEST FAILED: no flushes reached the system disk"
+            exit 1
         fi
         # The statistics filter on every disk saw the test disk's reads,
         # and the failed reads of the fault disk.

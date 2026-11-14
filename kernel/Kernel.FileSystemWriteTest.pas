@@ -18,6 +18,12 @@
     written/short-link                ext only: symbolic link to final.txt
     written/sparse-written.bin        SparseFinalSize bytes: 1000 bytes of 'S' at
                                       every multiple of SparseStride, zeros elsewhere
+
+  ext3 and ext4 volumes end with a simulated crash: the last change, the
+  rename of written/journal-pending.txt to written/journal-committed.txt
+  ("committed\n"), is committed to the journal but never written in
+  place, and the volume is left needing recovery. The host checks that
+  the change is only in the journal, then replays it with e2fsck.
 }
 unit Kernel.FileSystemWriteTest;
 
@@ -39,6 +45,7 @@ uses
   FileSystem.Types,
   FileSystem.Volumes,
   FileSystem.Files,
+  FileSystem.Ext,
   Debug.Output,
   Debug.FramebufferConsole;
 
@@ -443,6 +450,23 @@ begin
   CloseFile(OpenedFile);
 end;
 
+function VolumeHasJournal: Boolean;
+begin
+  Result := TextIsEqual(@CurrentVolume^.TypeName[0], 'ext3') or
+    TextIsEqual(@CurrentVolume^.TypeName[0], 'ext4');
+end;
+
+{ The last test on a journaled volume: a rename committed to the journal
+  and then "the machine crashes" before it is written in place. }
+procedure TestCrashAfterCommit;
+begin
+  WriteWholeFile('written/journal-pending.txt', 'committed'#10);
+  Check(SimulateCrashAfterNextCommit(CurrentVolume), 'the volume has no journal being written');
+  CheckStatus(RenameRelative('written/journal-pending.txt', 'written/journal-committed.txt'),
+    'renaming in the crashed transaction');
+  Check(CurrentVolume^.IsReadOnly, 'the volume still writes after the simulated crash');
+end;
+
 procedure ReportPassed(Volume: PVolume);
 begin
   DebugBeginMessage;
@@ -492,6 +516,8 @@ begin
     TestManyFiles;
     TestSymbolicLinks;
     TestSparseFile;
+    if VolumeHasJournal then
+      TestCrashAfterCommit;
     ReportPassed(Volume);
     Inc(Result);
   end;

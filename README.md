@@ -42,7 +42,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   remove / rename, with read-write drivers for **FAT12, FAT16, FAT32 (with
   long file names), exFAT, ext2, ext3 and ext4** (extents, 64-bit, flex_bg,
   metadata checksums, htree directories for reading, sparse files, fast and
-  slow symbolic links).
+  slow symbolic links). ext3 and ext4 are written through their journal
+  (ordered mode, with disk flushes), and replayed after a crash.
 - A real-time clock driver, so files get correct timestamps.
 - I/O APIC interrupt routing (from the ACPI MADT), with interrupt-driven
   PS/2 keyboard and serial console input; interrupt handlers hand work to

@@ -196,7 +196,7 @@ begin
   Buffer := PByte(AllocateKernelMemory(Ext^.BlockSize));
   if Buffer = nil then
     Exit(StatusOutOfMemory);
-  if not VolumeRead(Directory^.Common.Volume, PhysicalBlock * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
+  if not ExtRead(Directory^.Common.Volume, PhysicalBlock * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
   begin
     FreeKernelMemory(Buffer);
     Buffer := nil;
@@ -223,7 +223,7 @@ begin
     Tail^.FileType := DirectoryTailFileType;
     PLongWord(Buffer + TailOffset + 8)^ := NodeBlockChecksum(Directory, Buffer, TailOffset);
   end;
-  if VolumeWrite(Directory^.Common.Volume, PhysicalBlock * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
+  if ExtWriteMetadata(Directory^.Common.Volume, PhysicalBlock * Ext^.BlockSize, Ext^.BlockSize, Buffer) then
     Result := StatusSuccess
   else
     Result := StatusIoError;

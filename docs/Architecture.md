@@ -469,11 +469,58 @@ unit; ext also has Blocks and Directories):
 | `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees (writing up to depth 1), 64-bit, flex_bg, META_BG, all metadata checksums, fast and slow symlinks, holes |
 
 Writes are write-through (the block cache writes every change to disk
-immediately). ext volumes are written without the journal; they are only
-mounted read-write when the journal is clean, and are mounted read-only if
-they use features the driver cannot keep consistent (bigalloc, quota,
-encryption, case folding, multiple-mount protection). htree indexed
-directories are read but not modified.
+immediately). ext volumes are mounted read-only if they use features the
+driver cannot keep consistent (bigalloc, quota, encryption, case folding,
+multiple-mount protection). htree indexed directories are read but not
+modified.
+
+### The ext3/ext4 journal
+
+ext3 and ext4 volumes are written through their journal (JBD2, the file of
+inode 8), in "ordered" mode:
+
+- **Transactions.** Every driver call that changes the volume is one
+  transaction (`FileSystem.Ext` wraps the write entry points). All of the
+  driver's disk accesses go through `ExtRead`, `ExtWriteMetadata` and
+  `ExtWriteData`. While a call runs, metadata blocks (inodes, bitmaps,
+  group descriptors, the superblock and its free counters, directory,
+  extent and block pointer blocks, symbolic link targets) are not written
+  in place: each changed block is copied into the transaction, and reads
+  see the copy. File data is written in place right away.
+- **Commit.** When the call ends (`FileSystem.Ext.Transactions`) the
+  blocks go to the log after a descriptor block, followed by a revoke
+  block if needed. Then the disk is flushed, the commit block written and
+  flushed again; from then on the change survives a crash. Then the blocks
+  are written in place. Because data was written before the flush, a
+  committed file never points at stale data.
+- **The log** holds transactions one after another and is reset to its
+  start when the next one does not fit. Recovery replays everything since
+  the reset, so freeing a block that is in the log adds a revoke record:
+  the old metadata copy must not overwrite whatever the block holds now.
+  While the log holds anything, the superblock carries the needs-recovery
+  feature and the journal superblock names the log's start. Syncing or
+  unmounting empties the journal and clears the mark; the kernel syncs
+  every volume before `test-exit` leaves the emulator.
+- **Recovery** (`FileSystem.Ext.JournalRecovery`) runs when a writable
+  volume that needs it is mounted. It makes three passes: scan for the
+  last valid commit, collect revoke records, replay the logged blocks.
+  The volume is then mounted afresh. A volume mounted read-only is not
+  replayed.
+- **Formats** (`FileSystem.Ext.JournalFormat`): plain journals and
+  journals with v3 checksums (CRC32C on every descriptor, revoke and
+  commit block and on every logged block), 32 or 64-bit block numbers, and
+  escaped blocks that start with the journal's magic number.
+  `FileSystem.Ext.Journal` switches on the revoke feature, and 64-bit
+  block numbers on 64-bit volumes, as Linux does. Version 1 superblocks,
+  v1 and v2 checksums, fast commits and external journals are replayed
+  where possible, but the volume stays read-only.
+- **Limits.** A call that changes more blocks than a transaction holds (a
+  quarter of the log, at most 2048 blocks) commits part way, so a crash in
+  between can leave it half done (as Linux does for long truncates).
+
+The flush is a new I/O request, `IoFunctionFlush`. AHCI sends it as FLUSH
+CACHE EXT, and `FlushBlockDevice` sends it to the disk holding a
+partition. The disk statistics filter counts flushes.
 
 `make test` builds a GPT test disk (`scripts/make-test-disk.sh`) with one
 partition per format and the same files on each. The kernel reads every one
@@ -482,6 +529,18 @@ of them (`Kernel.FileSystemTest`), then writes to each one
 checks every partition on the host with the format's own consistency
 checker and reads the written files back through independent
 implementations.
+
+The ext3 and ext4 partitions are built needing journal recovery: debugfs
+leaves committed transactions in their journals (plain on ext3; v3
+checksums and 64-bit block numbers on ext4). These hold a replayed block,
+a block logged and then revoked, and an escaped block, which the kernel's
+read test checks after the replay at mount. Each write test ends with a
+simulated crash (`SimulateCrashAfterNextCommit`): its last rename is
+committed but never written in place. The host checks that the rename is
+only in the journal, replays it with `e2fsck`, and requires the result to
+be clean. That checks the kernel's journal format, revoke records
+included, against e2fsprogs. The system disk, written by the user mode
+tests, must pass `e2fsck` too.
 
 ## Objects
 
@@ -935,8 +994,10 @@ With the kernel option `hangdump=SECONDS`, a system thread
 (`Processes.HangWatch`) notes when processes start and end. If neither
 happens for that long while user processes exist, it writes every user
 thread to the kernel log - process, state, whether it waits on a list or
-with a timeout, alertable, suspended, priority, last processor, run time
-- and what each processor runs. The tests set `hangdump=20`, so a hung
+with a timeout, alertable, suspended, priority, last processor, run time,
+where in the program it last entered the kernel (from the register frame
+at the top of its kernel stack) and the system call it is in - and what
+each processor runs. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
 
 ## Coding conventions
