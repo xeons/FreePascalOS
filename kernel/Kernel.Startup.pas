@@ -189,9 +189,11 @@ begin
   DebugWriteTag('init');
   DebugWriteLine('Phase 1 started');
 
-  InitializeIoSystem(PBootInformation(Context)^);
-  { The I/O system has read the firmware's processor list. }
+  InitializePlatformTables(PBootInformation(Context)^);
+  { With the firmware's processor list read, the processors start before
+    the drivers, so device interrupts can go to all of them. }
   StartSecondaryProcessors(@RunIdleLoop);
+  InitializeIoSystem;
   StartConsoleInterruptHandler;
 
   RunKernelSelfTests;

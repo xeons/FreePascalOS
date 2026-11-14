@@ -1,9 +1,19 @@
 {
   I/O system startup.
 
-  Brings up device discovery and storage in dependency order:
+  Brings up device discovery and storage in dependency order, in two
+  steps. The first, InitializePlatformTables, reads what the firmware
+  describes:
 
-    1. ACPI tables (needed to find PCI configuration space)
+    1. ACPI tables (needed to find PCI configuration space and the
+       processors)
+    2. Interrupt routing (the I/O APICs from the MADT)
+
+  Then the other processors are started (Kernel.SecondaryProcessors), so
+  device interrupts can be spread over them, and InitializeIoSystem
+  continues:
+
+    1. Input devices (keyboard, serial port), attached to the console
     2. PCI enumeration
     3. Storage drivers, which register whole-disk block devices
     4. Partition tables, which register partition block devices
@@ -21,7 +31,8 @@ interface
 uses
   Boot.Information;
 
-procedure InitializeIoSystem(const BootInformation: TBootInformation);
+procedure InitializePlatformTables(const BootInformation: TBootInformation);
+procedure InitializeIoSystem;
 
 implementation
 
@@ -74,11 +85,15 @@ begin
   DebugEndMessage;
 end;
 
-procedure InitializeIoSystem(const BootInformation: TBootInformation);
+procedure InitializePlatformTables(const BootInformation: TBootInformation);
 begin
   InitializeAcpi(BootInformation.AcpiRootPointer);
   WriteAcpiSummary;
   InitializeInterruptRouting;
+end;
+
+procedure InitializeIoSystem;
+begin
   InitializeInputDevices;
 
   InitializePci;

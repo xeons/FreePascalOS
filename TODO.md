@@ -24,7 +24,7 @@ how the existing pieces fit together.
 - [x] Record the owning processor in the debug output lock
 - [x] Save and restore floating point / SSE registers at thread switches
 - [ ] Per-processor run queues and load balancing (one shared queue today)
-- [ ] Device interrupts spread over the processors (all go to the boot one)
+- [x] Device interrupts spread over the processors (round robin, not the boot one)
 - [x] Batched TLB shootdowns for large unmaps (one interrupt per 32-page run)
 - [ ] Processor affinity for threads
 

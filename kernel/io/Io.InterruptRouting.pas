@@ -5,7 +5,12 @@
   input masked (without a MADT, the standard single I/O APIC at
   0xFEC00000 is assumed). A driver then asks for its interrupt; it gets
   one of the device vectors (0x30-0x3F) and its handler runs there, at
-  device level, on the boot processor.
+  device level.
+
+  Interrupts are spread over the processors: each connection goes to the
+  next processor in turn, leaving out the boot processor (which also
+  keeps time) when there are others. Drivers connect after the other
+  processors were started, so they are all there to choose from.
 
   A PCI device can instead signal its interrupt by writing a message (a
   value to an address) that the processor's local APIC receives
@@ -48,8 +53,8 @@ uses
   Memory.DeviceMapping,
   Hal.InterruptVectors,
   Hal.IoApic,
-  Hal.LocalApic,
   Firmware.Madt,
+  Kernel.Processors,
   Debug.Output;
 
 const
@@ -62,6 +67,8 @@ const
 
 var
   Available: Boolean = False;
+  { The processor the last interrupt was given to. }
+  LastTargetIndex: LongWord = 0;
   NextVector: Integer = DeviceInterruptVectorFirst;
 
 procedure AddMappedIoApic(PhysicalAddress: TPhysicalAddress; GlobalInterruptBase: LongWord);
@@ -107,29 +114,44 @@ begin
   Result := Available;
 end;
 
-function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
+{ The next processor to take a device interrupt. }
+function ChooseTargetProcessor: PProcessor;
 var
-  Routing: TIsaInterruptRouting;
-  Vector: Byte;
+  Steps: LongWord;
 begin
-  if not Available or (NextVector >= DeviceInterruptVectorFirst + DeviceInterruptVectorCount) then
-    Exit(False);
-  Vector := Byte(NextVector);
-  if not RegisterInterruptHandler(Vector, Handler, Context) then
-    Exit(False);
-  Routing := RoutingOfIsaInterrupt(Irq);
-  if not RouteGlobalInterrupt(Routing.GlobalInterrupt, Vector, Byte(LocalApicId),
-    Routing.ActiveLow, Routing.LevelTriggered) then
+  if OnlineProcessorCount <= 1 then
+    Exit(CurrentProcessor);
+  Steps := 0;
+  repeat
+    LastTargetIndex := (LastTargetIndex + 1) mod ProcessorTotal;
+    Result := ProcessorByIndex(LastTargetIndex);
+    Inc(Steps);
+  until ((LastTargetIndex <> 0) and Result^.IsOnline) or (Steps > ProcessorTotal);
+  if not Result^.IsOnline then
+    Result := CurrentProcessor;
+end;
+
+procedure ReportConnection(Source: PChar; Number: LongInt; Vector: Byte; Target: PProcessor);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('interrupts');
+  DebugWrite(Source);
+  if Number >= 0 then
   begin
-    UnregisterInterruptHandler(Vector);
-    Exit(False);
+    DebugWrite(' ');
+    DebugWriteDecimal(Number);
   end;
-  Inc(NextVector);
-  Result := True;
+  DebugWrite(' on vector 0x');
+  DebugWriteHex(Vector, 2);
+  DebugWrite(', processor ');
+  DebugWriteDecimal(Target^.Index);
+  DebugWriteLine('');
+  DebugEndMessage;
 end;
 
 function AllocateVector(Handler: TInterruptHandler; Context: Pointer; out Vector: Byte): Boolean;
 begin
+  Vector := 0;
   if NextVector >= DeviceInterruptVectorFirst + DeviceInterruptVectorCount then
     Exit(False);
   Vector := Byte(NextVector);
@@ -139,17 +161,47 @@ begin
   Result := True;
 end;
 
+{ Gives back the vector just allocated. }
+procedure ReleaseLastVector(Vector: Byte);
+begin
+  UnregisterInterruptHandler(Vector);
+  Dec(NextVector);
+end;
+
+function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
+var
+  Routing: TIsaInterruptRouting;
+  Vector: Byte;
+  Target: PProcessor;
+begin
+  if not Available or not AllocateVector(Handler, Context, Vector) then
+    Exit(False);
+  Routing := RoutingOfIsaInterrupt(Irq);
+  Target := ChooseTargetProcessor;
+  if not RouteGlobalInterrupt(Routing.GlobalInterrupt, Vector, Byte(Target^.ApicId),
+    Routing.ActiveLow, Routing.LevelTriggered) then
+  begin
+    ReleaseLastVector(Vector);
+    Exit(False);
+  end;
+  ReportConnection('IRQ', Irq, Vector, Target);
+  Result := True;
+end;
+
 function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
   out Message: TInterruptMessage): Boolean;
 var
   Vector: Byte;
+  Target: PProcessor;
 begin
   Message.Address := 0;
   Message.Data := 0;
   if not AllocateVector(Handler, Context, Vector) then
     Exit(False);
-  Message.Address := MessageAddressBase or (QWord(LocalApicId and $FF) shl MessageDestinationShift);
+  Target := ChooseTargetProcessor;
+  Message.Address := MessageAddressBase or (QWord(Target^.ApicId and $FF) shl MessageDestinationShift);
   Message.Data := Vector;
+  ReportConnection('Message interrupt', -1, Vector, Target);
   Result := True;
 end;
 

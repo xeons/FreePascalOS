@@ -215,7 +215,11 @@ Rules that follow from this:
   printing; the debug output lock records its owner's processor number,
   so nested messages on one processor and messages from different
   processors are told apart.
-- **Devices** still interrupt only the boot processor.
+- **Devices** interrupt the processors in turn: each interrupt connection
+  (an I/O APIC route or an MSI address) goes to the next processor other
+  than the boot processor, which keeps time. For that the processors are
+  started in phase 1 right after the ACPI tables and interrupt routing
+  (`InitializePlatformTables`), before any driver connects.
 
 ## I/O and storage
 
@@ -332,7 +336,7 @@ so the routine checks whether its reason still holds.
 PCI devices with the MSI capability skip the I/O APIC:
 `ConnectPciMessageInterrupt` (Io.PciMessageInterrupts) takes a vector
 (`ConnectMessageInterrupt`), programs the device's message address (the
-boot processor's local APIC) and data (the vector), and turns its legacy
+chosen processor's local APIC) and data (the vector), and turns its legacy
 interrupt line off. The legacy PCI lines could only be routed with the
 ACPI namespace, which the kernel does not interpret.
 
