@@ -16,7 +16,19 @@
   record. A thread raising another exception before that - the
   dispatcher itself failed - ends the process, as does an exception with
   no dispatcher registered, one that is never passed on (a machine check)
-  or a record that does not fit on the stack (a stack overflow).
+  or a record that does not fit on the stack.
+
+  A stack overflow - a touch of the reserve at the bottom of a stack
+  (Processes.AddressSpace) - is passed on as ExceptionStackOverflow: the
+  reserve is opened, so the record and the handling fit. It is armed
+  again once the thread's stack pointer is well above it, which is
+  checked at every system call, interrupt return and exception
+  (RearmStackReserveIfClear). An overflow while the reserve is still
+  open runs past it and ends the process.
+
+  CallContinue (PerformContinue) lets a thread go on with a context of its
+  choosing - typically an exception's, changed by a filter that dealt with
+  the exception (skipped the instruction, fixed a register).
 }
 unit Processes.UserExceptions;
 
@@ -36,6 +48,17 @@ function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
 { True if a page fault at FaultAddress is most likely a stack overflow. }
 function LooksLikeStackOverflow(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
 
+{ Arms the current thread's opened stack reserve again if its user stack
+  pointer is far enough above it. Needs interrupts enabled. }
+procedure RearmStackReserveIfClear(UserStackPointer: QWord);
+{ True if the current thread has an opened stack reserve (a cheap test). }
+function StackReserveIsOpen: Boolean;
+
+{ CallContinue: replaces Frame (the system call's) with the context at
+  ContextAddress. Returns ErrorNone, or an Abi error with Frame
+  unchanged. }
+function PerformContinue(Frame: PTrapFrame; ContextAddress: QWord): LongInt;
+
 function PerformSetExceptionDispatcher(Address: QWord): Int64;
 function PerformExceptionDispatched: Int64;
 
@@ -49,6 +72,7 @@ uses
   Memory.Arch.PageTables,
   Processes.Process,
   Processes.Thread,
+  Processes.AddressSpace,
   Processes.UserAccess;
 
 const
@@ -76,6 +100,10 @@ const
   RflagsAlignmentCheck = QWord(1) shl 18;
   RflagsInterruptEnable = QWord(1) shl 9;
   StackOverflowDistance = 64 * 1024;
+  { The flags a context may set: carry, parity, adjust, zero, sign,
+    direction, overflow. Bit 1 is always set. }
+  RflagsUserSettable = $0CD5;
+  RflagsAlwaysOne = $0002;
 
 { The Abi code for an exception vector, 0 for one not passed on. }
 function ExceptionCode(Vector: Byte): LongWord;
@@ -153,6 +181,12 @@ begin
   ExceptionRecord.Code := ExceptionCode(TrapFrameVector(Frame));
   if ExceptionRecord.Code = 0 then
     Exit;
+  EnableInterrupts;
+  RearmStackReserveIfClear(Frame^.Rsp);
+  if (TrapFrameVector(Frame) = VectorPageFault) and (Thread^.OpenedStackReserve = 0) and
+     OpenStackReserve(Process^.AddressSpace, FaultAddress, Thread^.OpenedStackReserve) then
+    ExceptionRecord.Code := ExceptionStackOverflow;
+  DisableInterrupts;
   if TrapFrameVector(Frame) = VectorPageFault then
   begin
     ExceptionRecord.Access := AccessKindOf(Frame^.ErrorCode);
@@ -183,6 +217,56 @@ begin
     RflagsInterruptEnable;
   Thread^.IsDispatchingException := True;
   Result := True;
+end;
+
+function StackReserveIsOpen: Boolean;
+var
+  Thread: PThread;
+begin
+  Thread := CurrentThreadObject;
+  Result := (Thread <> nil) and (Thread^.OpenedStackReserve <> 0);
+end;
+
+procedure RearmStackReserveIfClear(UserStackPointer: QWord);
+var
+  Thread: PThread;
+begin
+  Thread := CurrentThreadObject;
+  if (Thread = nil) or (Thread^.OpenedStackReserve = 0) then
+    Exit;
+  if RearmStackReserve(CurrentProcess^.AddressSpace, Thread^.OpenedStackReserve, UserStackPointer) then
+    Thread^.OpenedStackReserve := 0;
+end;
+
+function PerformContinue(Frame: PTrapFrame; ContextAddress: QWord): LongInt;
+var
+  Context: TAbiContext;
+begin
+  Result := CopyFromUser(@Context, ContextAddress, SizeOf(Context));
+  if Result <> ErrorNone then
+    Exit;
+  if (Context.Rip >= UserSpaceLimit) or (Context.Rsp >= UserSpaceLimit) or (Context.Rsp = 0) then
+    Exit(ErrorInvalidArgument);
+  Frame^.Rax := Context.Rax;
+  Frame^.Rbx := Context.Rbx;
+  Frame^.Rcx := Context.Rcx;
+  Frame^.Rdx := Context.Rdx;
+  Frame^.Rsi := Context.Rsi;
+  Frame^.Rdi := Context.Rdi;
+  Frame^.Rbp := Context.Rbp;
+  Frame^.Rsp := Context.Rsp;
+  Frame^.R8 := Context.R8;
+  Frame^.R9 := Context.R9;
+  Frame^.R10 := Context.R10;
+  Frame^.R11 := Context.R11;
+  Frame^.R12 := Context.R12;
+  Frame^.R13 := Context.R13;
+  Frame^.R14 := Context.R14;
+  Frame^.R15 := Context.R15;
+  Frame^.Rip := Context.Rip;
+  Frame^.Rflags := (Context.Rflags and RflagsUserSettable) or RflagsAlwaysOne or RflagsInterruptEnable;
+  { The selectors stay the user ones the system call frame holds. }
+  Result := ErrorNone;
 end;
 
 function PerformSetExceptionDispatcher(Address: QWord): Int64;

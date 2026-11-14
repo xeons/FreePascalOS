@@ -12,8 +12,8 @@
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
     * that a crashing program (coretest --crash-on-purpose) only ends
-      itself, with runtime error 216, and that one whose stack overflows
-      (coretest --overflow-stack) is ended by the kernel (status 139).
+      itself, with runtime error 216 (202 for a stack overflow), and that
+      one without an exception dispatcher is ended by the kernel (139).
 
   Exits with status 0 when every test passed, 1 otherwise.
 }
@@ -375,10 +375,10 @@ const
     (Command: 'taskset 1 nproc; taskset -c 0 sh -c nproc; sh -c ''taskset -pc 0 $$ | tail -n 1 | cut -d: -f2''; taskset 0x10000000 true 2>/dev/null; echo $?'; ExpectedOutput: '1'#10'1'#10' 0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'rtltest > rt.log; echo $?; grep FAIL rt.log; tail -n 1 rt.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
 
-    { --- a crashing program ends alone: with runtime error 216, or with
-      status 139 when the kernel must end it (no room on its stack) ---- }
+    { --- a crashing program ends alone: with a runtime error, or with
+      status 139 when the kernel must end it (no dispatcher) ----------- }
     (Command: '/bin/coretest --crash-on-purpose 2>&1 | head -n 1 | cut -c 1-17; /bin/coretest --crash-on-purpose 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'Runtime error 216'#10'216'#10'still running'#10; ExpectedStatus: 0),
-    (Command: '/bin/coretest --overflow-stack; echo $?'; ExpectedOutput: '139'#10; ExpectedStatus: 0)
+    (Command: '/bin/coretest --overflow-stack 2>&1 | head -n 1 | cut -c 1-17; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'Runtime error 202'#10'139'#10; ExpectedStatus: 0)
   );
 
 var
@@ -582,6 +582,12 @@ begin
     CrashOnPurpose;
   if TextIsEqual(Argument(1), '--overflow-stack') then
     Halt(RecurseWithoutEnd(1));
+  if TextIsEqual(Argument(1), '--crash-without-dispatcher') then
+  begin
+    { Nobody to pass the exception to: the kernel ends the process. }
+    SystemCall(CallSetExceptionDispatcher, 0, 0, 0, 0, 0, 0);
+    CrashOnPurpose;
+  end;
   PassedCount := 0;
   FailedCount := 0;
   WriteLine(StandardOutput, '[coretest] user mode tests starting');

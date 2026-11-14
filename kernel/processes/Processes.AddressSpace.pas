@@ -18,6 +18,13 @@
     0000_7F00_0000_0000   shared libraries
     0000_7FFF_FF7F_F000   stack (8 MiB reserved, grows down from the top)
 
+  Stacks end in a reserve (StackReserveSize, less for small stacks) that
+  is not provided on demand: touching it is a stack overflow. The
+  exception dispatcher then opens the reserve (OpenStackReserve), so the
+  exception record and the program's handling of it still fit, and the
+  reserve is armed again (RearmStackReserve) once the thread's stack is
+  well clear of it.
+
   The kernel reads and writes user memory either directly (for the
   current process, after ValidateUserRange) or through the physical
   memory window (WriteIntoAddressSpace and friends), which works for any
@@ -43,6 +50,11 @@ const
   UserStackReserve = QWord(8) * 1024 * 1024;
   MaximumRegions = 1024;
 
+  { The reserve at the bottom of a stack, and how far above it the stack
+    pointer must be before a used reserve is armed again. }
+  StackReserveSize = 64 * 1024;
+  StackReserveRearmDistance = 64 * 1024;
+
   RegionReadable = LongWord(1) shl 0;
   RegionWritable = LongWord(1) shl 1;
   RegionExecutable = LongWord(1) shl 2;
@@ -58,6 +70,10 @@ type
     Attributes: LongWord;
     Kind: TRegionKind;
     CommitsOnDemand: Boolean;
+    { Stacks: the bottom ReserveBytes are only provided once a stack
+      overflow opened them (ReserveInUse). }
+    ReserveBytes: QWord;
+    ReserveInUse: Boolean;
   end;
   PUserRegion = ^TUserRegion;
 
@@ -99,6 +115,13 @@ function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
 function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
+{ If Address lies in the armed reserve of a stack, opens the reserve and
+  returns True and the stack region's start. }
+function OpenStackReserve(Space: PAddressSpace; Address: QWord; out RegionStart: QWord): Boolean;
+{ Arms the opened reserve of the stack starting at RegionStart again if
+  StackPointer is far enough above it, giving its pages back. Returns
+  True if the reserve is armed (again). }
+function RearmStackReserve(Space: PAddressSpace; RegionStart, StackPointer: QWord): Boolean;
 { Maps the shared page Physical at Address (taking a reference to it):
   read-only, or copy on write if Attributes include RegionWritable. }
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
@@ -188,6 +211,16 @@ begin
   Result := -1;
 end;
 
+{ A quarter of a small stack, at most StackReserveSize, at least a page. }
+function StackReserveFor(Length: QWord): QWord;
+begin
+  Result := RoundDownToPage(Length div 4);
+  if Result > StackReserveSize then
+    Result := StackReserveSize;
+  if Result < PageSize then
+    Result := PageSize;
+end;
+
 function AddRegionLocked(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
 var
@@ -221,6 +254,11 @@ begin
   Space^.Regions[InsertAt].Attributes := Attributes;
   Space^.Regions[InsertAt].Kind := Kind;
   Space^.Regions[InsertAt].CommitsOnDemand := CommitsOnDemand;
+  Space^.Regions[InsertAt].ReserveInUse := False;
+  if (Kind = RegionKindStack) and CommitsOnDemand then
+    Space^.Regions[InsertAt].ReserveBytes := StackReserveFor(Length)
+  else
+    Space^.Regions[InsertAt].ReserveBytes := 0;
   Inc(Space^.RegionCount);
   Result := ErrorNone;
 end;
@@ -523,8 +561,11 @@ begin
     if Index >= 0 then
     begin
       Region := @Space^.Regions[Index];
+      { An armed stack reserve is not provided: that is a stack overflow,
+        for the exception dispatcher. }
       if Region^.CommitsOnDemand and (((ErrorCode and PageFaultWasWrite) = 0) or
-         ((Region^.Attributes and RegionWritable) <> 0)) then
+         ((Region^.Attributes and RegionWritable) <> 0)) and
+         ((Address >= Region^.Start + Region^.ReserveBytes) or Region^.ReserveInUse) then
         Result := CommitPageLocked(Space, Address, Region^.Attributes) = ErrorNone;
     end;
   end;
@@ -652,6 +693,56 @@ var
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Result := PageInWindow(Space, RoundDownToPage(Address), True, Window);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function OpenStackReserve(Space: PAddressSpace; Address: QWord; out RegionStart: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+  Region: PUserRegion;
+begin
+  Result := False;
+  RegionStart := 0;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Index := FindRegionIndex(Space, Address);
+  if Index >= 0 then
+  begin
+    Region := @Space^.Regions[Index];
+    if (Region^.Kind = RegionKindStack) and not Region^.ReserveInUse and
+       (Address < Region^.Start + Region^.ReserveBytes) then
+    begin
+      Region^.ReserveInUse := True;
+      RegionStart := Region^.Start;
+      Result := True;
+    end;
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function RearmStackReserve(Space: PAddressSpace; RegionStart, StackPointer: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+  Region: PUserRegion;
+begin
+  Result := True;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Index := FindRegionIndex(Space, RegionStart);
+  if (Index >= 0) and (Space^.Regions[Index].Start = RegionStart) then
+  begin
+    Region := @Space^.Regions[Index];
+    if Region^.ReserveInUse then
+    begin
+      if StackPointer >= Region^.Start + Region^.ReserveBytes + StackReserveRearmDistance then
+      begin
+        ReleaseRegionPages(Space, Region^.Start, Region^.ReserveBytes);
+        Region^.ReserveInUse := False;
+      end
+      else
+        Result := False;
+    end;
+  end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 

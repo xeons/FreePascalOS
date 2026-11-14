@@ -58,6 +58,9 @@ type
     { Sent to the exception dispatcher, which has not yet said it took
       over (Processes.UserExceptions). }
     IsDispatchingException: Boolean;
+    { The start of the stack region whose reserve a stack overflow opened,
+      0 if none (Processes.UserExceptions). }
+    OpenedStackReserve: QWord;
   end;
 
 var

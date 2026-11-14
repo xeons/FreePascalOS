@@ -21,6 +21,7 @@ uses
   Sys.Locks,
   Sys.Memory,
   Sys.Threads,
+  Sys.Exceptions,
   Sys.Text,
   Sys.Streams,
   Sys.Format,

@@ -178,10 +178,12 @@ how the existing pieces fit together.
 - [x] Processor exceptions passed to the program (exception record on the
       user stack, runtime dispatcher); catchable EAccessViolation,
       EDivByZero, EZeroDivide, ...; x87 and SIMD exceptions enabled
-- [ ] Continuing after an exception at a changed context (NtContinue style),
-      for debuggers and fault-tolerant code
-- [ ] Stack overflow as a catchable exception (needs a reserve below the
-      stack guard, so the record still fits)
+- [x] Continuing after an exception at a changed context (CallContinue, like
+      NtContinue); exception filters (Sys.Exceptions)
+- [x] Stack overflow as a catchable exception (a reserve at the bottom of each
+      stack, armed again once the stack is clear)
+- [ ] A system call whose buffer lies in an armed stack reserve fails with
+      ErrorBadAddress instead of raising the stack overflow
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion

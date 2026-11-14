@@ -654,11 +654,30 @@ runtime error: with SysUtils an exception try/except can catch
 program ends with "Runtime error 216" and that status. TThread catches an
 exception escaping a thread (`FatalException`).
 
+A **stack overflow** is caught the same way. The bottom of every stack
+(64 KiB, a quarter of small stacks) is a reserve the page fault resolver
+does not provide on demand. Touching it opens the reserve (the region's
+`ReserveInUse`) and passes `ExceptionStackOverflow`, runtime error 202,
+`EStackOverflow`: the record and the runtime's handling fit in the
+reserve, and try/except blocks further up catch it. Once the thread's
+stack pointer is 64 KiB above the reserve again - checked at every system
+call, interrupt return and exception - its pages are given back and it is
+armed for the next overflow.
+
+**Continuing**: `CallContinue` (like NtContinue) loads a complete
+register context - validated to lead back into user memory; of RFLAGS
+only the arithmetic and direction flags are taken - and returns to user
+mode there, through the system call's `iretq`. The runtime offers an
+exception filter (`ExceptionFilter`, typed in `Sys.Exceptions`): it sees
+every exception record before it becomes a runtime error, and if it
+returns True the thread continues at the record's context, which the
+filter may have changed (skip the instruction, fix a register).
+
 The kernel ends the process instead (status 139, logged) when no
-dispatcher is registered, when the record does not fit on the stack (a
-stack overflow, which the log names) or when a thread raises an
-exception again before its dispatcher reported - the dispatcher itself
-failed. CR0.NE and CR4.OSXMMEXCPT are set, so unmasked x87 and SSE
+dispatcher is registered, when the record does not fit on the stack (an
+overflow while the reserve is still open, which the log names) or when a
+thread raises an exception again before its dispatcher reported - the
+dispatcher itself failed. CR0.NE and CR4.OSXMMEXCPT are set, so unmasked x87 and SSE
 exceptions arrive as #MF and #XM; Free Pascal leaves invalid operation,
 division by zero and overflow unmasked. (QEMU's emulator does not raise
 SIMD floating point exceptions; under KVM they arrive.)

@@ -23,7 +23,9 @@ uses
   DateUtils,
   Contnrs,
   SyncObjs,
-  fgl;
+  fgl,
+  Abi.SystemCalls,
+  Sys.Exceptions;
 
 type
   TIntegerList = specialize TFPGList<Integer>;
@@ -480,6 +482,82 @@ asm
   ud2
 end;
 
+{ --- Stack overflows and continuing ---------------------------------------- }
+
+function RecurseWithoutEnd(Depth: LongInt): LongInt;
+var
+  Padding: array[0..255] of Byte;
+begin
+  Padding[Depth and 255] := Byte(Depth);
+  Result := RecurseWithoutEnd(Depth + 1) + Padding[(Depth + 1) and 255];
+end;
+
+procedure OverflowStack;
+begin
+  RecurseWithoutEnd(1);
+end;
+
+type
+  TOverflowingThread = class(TThread)
+  private
+    FCaught: string;
+  protected
+    procedure Execute; override;
+  public
+    property Caught: string read FCaught;
+  end;
+
+procedure TOverflowingThread.Execute;
+begin
+  FCaught := ExceptionClassOf(@OverflowStack);
+end;
+
+{ Clears EAX, then runs an invalid instruction (at offset 2). }
+function ClearThenFault: QWord; assembler; nostackframe;
+asm
+  xorl %eax, %eax
+  ud2
+  ret
+end;
+
+const
+  { Where the invalid instruction is in ClearThenFault, and its length. }
+  InvalidInstructionOffset = 2;
+  InvalidInstructionLength = 2;
+  RepairedValue = 42;
+
+{ Deals with the invalid instruction in ClearThenFault only: skips it and
+  puts a value in RAX. }
+function RepairClearThenFault(var ExceptionRecord: TAbiExceptionRecord): Boolean;
+begin
+  Result := (ExceptionRecord.Code = ExceptionIllegalInstruction) and
+    (ExceptionRecord.Address = PtrUInt(@ClearThenFault) + InvalidInstructionOffset);
+  if not Result then
+    Exit;
+  ExceptionRecord.Context.Rip := ExceptionRecord.Context.Rip + InvalidInstructionLength;
+  ExceptionRecord.Context.Rax := RepairedValue;
+end;
+
+procedure TestStackOverflowAndContinuing;
+var
+  Overflowing: TOverflowingThread;
+begin
+  Check(ExceptionClassOf(@OverflowStack) = 'EStackOverflow', 'a stack overflow raises EStackOverflow');
+  { The reserve is armed again at the next system call. }
+  Sleep(1);
+  Check(ExceptionClassOf(@OverflowStack) = 'EStackOverflow', 'a second stack overflow is caught too');
+  Overflowing := TOverflowingThread.Create(False);
+  Overflowing.WaitFor;
+  Check(Overflowing.Caught = 'EStackOverflow', 'a stack overflow in a thread');
+  Overflowing.Free;
+
+  SetExceptionFilter(@RepairClearThenFault);
+  Check(ClearThenFault = RepairedValue, 'an exception filter continues at a changed context');
+  Check(ExceptionClassOf(@TouchNil) = 'EAccessViolation', 'exceptions a filter declines still raise');
+  SetExceptionFilter(nil);
+  Check(ExceptionClassOf(@ExecuteInvalidInstruction) = 'EAccessViolation', 'without the filter, exceptions raise');
+end;
+
 procedure TestProcessorExceptions;
 var
   Index: Integer;
@@ -548,6 +626,7 @@ begin
   TestThreadControl;
   TestFileControl;
   TestProcessorExceptions;
+  TestStackOverflowAndContinuing;
   TestSystem;
   RemoveDir(WorkDirectory);
   WriteLn('rtltest: ', Passed, ' passed, ', Failed, ' failed');

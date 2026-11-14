@@ -132,11 +132,18 @@ const
     Address with RDI pointing at a TAbiExceptionRecord on its stack
     (below the 128 byte red zone), as if called; the dispatcher must not
     return. Without one, or if the record does not fit on the stack, the
-    process ends with status ExitStatusException. }
+    process ends with status ExitStatusException. A stack overflow is
+    passed on like the others, as long as the stack's reserve is armed. }
   CallSetExceptionDispatcher = 67;
   { (): the dispatcher has taken over the record. A thread raising an
     exception again before this ends the process: its dispatcher failed. }
   CallExceptionDispatched = 68;
+  { (ContextAddress): continues the calling thread with the registers of
+    a TAbiContext (an exception's, possibly changed), like NtContinue.
+    Does not return; fails with ErrorInvalidArgument if the context does
+    not lead back into user memory. Of RFLAGS only the arithmetic flags
+    and the direction flag are taken. }
+  CallContinue = 69;
 
   CallCount = 70;
 
@@ -154,6 +161,9 @@ const
   ExceptionSimdFloatingPoint = 8;
   ExceptionAlignment = 9;
   ExceptionPrivilegedOperation = 10;
+  { The stack ran into its reserve; the reserve now holds the record and
+    is armed again once the stack is well clear of it. }
+  ExceptionStackOverflow = 11;
   { TAbiExceptionRecord.Access for access violations }
   AccessKindRead = 0;
   AccessKindWrite = 1;

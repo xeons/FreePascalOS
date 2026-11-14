@@ -608,6 +608,20 @@ begin
   Argument0 := SystemCallArgument(Frame, 0);
   Argument1 := SystemCallArgument(Frame, 1);
   Argument2 := SystemCallArgument(Frame, 2);
+  { A stack overflow's reserve is armed again once the stack is clear. }
+  if StackReserveIsOpen then
+    RearmStackReserveIfClear(Frame^.Rsp);
+
+  { Continuing at a context replaces the whole frame; on success there is
+    no result to return. }
+  if Number = CallContinue then
+  begin
+    Result := -Int64(PerformContinue(Frame, Argument0));
+    if Result <> 0 then
+      SetSystemCallResult(Frame, Result);
+    EndProcessIfTerminationRequested;
+    Exit;
+  end;
 
   repeat
     Result := PerformSystemCall(Number, Argument0, Argument1, Argument2);

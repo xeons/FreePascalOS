@@ -20,7 +20,9 @@
   Processor exceptions (an access violation, a division by zero, a
   floating point exception) are passed to the program by the kernel: the
   thread continues in SysDispatchException, which turns them into the
-  runtime errors Free Pascal uses everywhere (216, 200, 208, ...). With
+  runtime errors Free Pascal uses everywhere (216, 200, 208, 202 for a
+  stack overflow, ...), unless an ExceptionFilter deals with them and
+  continues the thread (ContinueAtContext). With
   SysUtils those become exceptions (EAccessViolation, EDivByZero,
   EZeroDivide, ...) that try/except can catch; without it the program
   ends with "Runtime error 216" as usual.
@@ -108,6 +110,22 @@ procedure SetLastSystemError(Error: LongInt);
 
 { Called by the startup code (si_prc). }
 procedure SysEntry(constref Information: TEntryInformation);
+
+type
+  { Sees every processor exception (with a PAbiExceptionRecord, see
+    Abi.SystemCalls) before it becomes a runtime error. Returning True
+    means the program dealt with it: the thread continues at the record's
+    context, which the filter may have changed (Sys.Exceptions has the
+    typed interface). }
+  TExceptionFilter = function(ExceptionRecord: Pointer): Boolean;
+
+var
+  ExceptionFilter: TExceptionFilter = nil;
+
+{ Continues the calling thread with the registers of a TAbiContext; does
+  not return (a context that does not lead back into the program ends it
+  with runtime error 216). }
+procedure ContinueAtContext(Context: Pointer); noreturn;
 
 {*****************************************************************************}
                                  implementation
@@ -267,9 +285,16 @@ begin
     ExceptionAlignment: RuntimeErrorFor := 214;
     ExceptionFloatingPoint: RuntimeErrorFor := FloatRuntimeError(ReadX87StatusWord);
     ExceptionSimdFloatingPoint: RuntimeErrorFor := FloatRuntimeError(GetMXCSR);
+    ExceptionStackOverflow: RuntimeErrorFor := 202;
   else
     RuntimeErrorFor := 212;
   end;
+end;
+
+procedure ContinueAtContext(Context: Pointer);
+begin
+  SystemCall(CallContinue, QWord(Context), 0, 0, 0, 0, 0);
+  RunError(216);
 end;
 
 { Where the kernel lets a thread continue after a processor exception,
@@ -283,6 +308,8 @@ var
 begin
   Information := ExceptionRecord^;
   SystemCall(CallExceptionDispatched, 0, 0, 0, 0, 0, 0);
+  if Assigned(ExceptionFilter) and ExceptionFilter(@Information) then
+    ContinueAtContext(@Information.Context);
   Error := RuntimeErrorFor(Information);
   { Clear the floating point exception, or the next instruction using
     the unit would raise it again. }

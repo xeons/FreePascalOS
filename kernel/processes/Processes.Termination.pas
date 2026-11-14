@@ -60,6 +60,7 @@ uses
   Processes.Security,
   Processes.Stopping,
   Processes.ThreadControl,
+  Processes.UserExceptions,
   Io.Console;
 
 procedure EndProcessIfTerminationRequested;
@@ -81,6 +82,13 @@ begin
     { Waiting blocks; interrupts must be on for that. }
     EnableInterrupts;
     StopCurrentThreadIfRequested;
+    DisableInterrupts;
+  end;
+  { A stack overflow's reserve is armed again once the stack is clear. }
+  if (Process <> nil) and Process^.IsUserProcess and StackReserveIsOpen then
+  begin
+    EnableInterrupts;
+    RearmStackReserveIfClear(Frame^.Rsp);
     DisableInterrupts;
   end;
   { A thread suspended or asked to end by another (Processes.ThreadControl). }
