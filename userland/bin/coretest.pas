@@ -325,6 +325,7 @@ const
       'ok library TLS is per thread'#10 +
       'ok library TLS blocks are distinct'#10 +
       'ok many short-lived threads'#10 +
+      'ok memory freed during a system call'#10 +
       'threadtest: unit finalization ran'#10 +
       'tlstest: library finalizer ran'#10; ExpectedStatus: 0),
     (Command: '/bin/threadtest --exit-with-threads-running; echo $?'; ExpectedOutput: 'tlstest: library finalizer ran'#10'7'#10; ExpectedStatus: 0),

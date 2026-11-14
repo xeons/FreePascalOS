@@ -233,81 +233,192 @@ begin
     SuspendProcessGroup(Process^.GroupId);
 end;
 
+{ Reads and writes never hand a user pointer to a driver or file system:
+  data goes through a kernel buffer, a piece at a time (see
+  Processes.UserAccess). A read or write that fails after some bytes were
+  moved returns that count; the error shows on the next call. }
+
+function ReadFileInPieces(OpenFile: POpenFile; BufferAddress, ByteCount: QWord;
+  Buffer: PByte; BufferSize: QWord): Int64;
+var
+  Total: QWord;
+  Piece: QWord;
+  BytesRead: QWord;
+  Status: TFileSystemStatus;
+begin
+  Total := 0;
+  while Total < ByteCount do
+  begin
+    Piece := ByteCount - Total;
+    if Piece > BufferSize then
+      Piece := BufferSize;
+    Status := ReadFromFile(OpenFile, Buffer, Piece, BytesRead);
+    if Status <> StatusSuccess then
+    begin
+      if Total = 0 then
+        Exit(Failure(ErrorFromStatus(Status)));
+      Break;
+    end;
+    if (BytesRead > 0) and (CopyToUser(BufferAddress + Total, Buffer, BytesRead) <> ErrorNone) then
+    begin
+      if Total = 0 then
+        Exit(Failure(ErrorBadAddress));
+      Break;
+    end;
+    Total := Total + BytesRead;
+    if BytesRead < Piece then
+      Break;
+  end;
+  Result := Int64(Total);
+end;
+
+{ After a device read into Buffer: copies Count (if positive) out. }
+function FinishDeviceRead(Count: Int64; BufferAddress: QWord; Buffer: PByte): Int64;
+begin
+  Result := Count;
+  if (Count > 0) and (CopyToUser(BufferAddress, Buffer, QWord(Count)) <> ErrorNone) then
+    Result := Failure(ErrorBadAddress);
+end;
+
 function PerformReadHandle(Handle: Int64; BufferAddress: QWord; ByteCount: QWord): Int64;
 var
   Kind: THandleKind;
   ObjectBody: Pointer;
-  BytesRead: QWord;
-  Status: TFileSystemStatus;
+  Buffer: PByte;
+  BufferSize: QWord;
 begin
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
     Exit(Failure(ErrorBadHandle));
   if not UserRangeIsValid(BufferAddress, ByteCount, True) then
     Exit(Failure(ErrorBadAddress));
+  if ByteCount = 0 then
+    Exit(0);
+  Buffer := PByte(AllocateTransferBuffer(ByteCount, BufferSize));
+  if Buffer = nil then
+    Exit(Failure(ErrorOutOfMemory));
 
   case Kind of
     HandleKindFile:
-      begin
-        Status := ReadFromFile(POpenFile(ObjectBody), Pointer(BufferAddress), ByteCount, BytesRead);
-        if Status <> StatusSuccess then
-          Exit(Failure(ErrorFromStatus(Status)));
-        Result := Int64(BytesRead);
-      end;
+      Result := ReadFileInPieces(POpenFile(ObjectBody), BufferAddress, ByteCount, Buffer, BufferSize);
     HandleKindConsole:
       begin
         if StopIfReadingInBackground then
-          Exit(Failure(ErrorInterrupted));
-        { Negative: cut short by an alert, so the call may be restarted. }
-        Result := ReadFromConsole(PByte(BufferAddress), ByteCount);
-        if Result < 0 then
-          Result := Failure(ErrorInterrupted);
+          Result := Failure(ErrorInterrupted)
+        else
+        begin
+          { Negative: cut short by an alert, so the call may be restarted. }
+          Result := ReadFromConsole(Buffer, BufferSize);
+          if Result < 0 then
+            Result := Failure(ErrorInterrupted)
+          else
+            Result := FinishDeviceRead(Result, BufferAddress, Buffer);
+        end;
       end;
     HandleKindPipeReadEnd:
       begin
-        Result := ReadFromPipe(PPipe(ObjectBody), PByte(BufferAddress), ByteCount);
+        Result := ReadFromPipe(PPipe(ObjectBody), Buffer, BufferSize);
         if Result = PipeInterrupted then
-          Result := Failure(ErrorInterrupted);
+          Result := Failure(ErrorInterrupted)
+        else
+          Result := FinishDeviceRead(Result, BufferAddress, Buffer);
       end;
     HandleKindNull:
       Result := 0;
   else
     Result := Failure(ErrorBadHandle);
   end;
+  FreeTransferBuffer(Buffer);
+end;
+
+type
+  TWriteTarget = (WriteToFileTarget, WriteToConsoleTarget, WriteToPipeTarget);
+
+{ Writes one piece; returns the bytes written or a negative Abi error. }
+function WritePiece(Target: TWriteTarget; ObjectBody: Pointer; Buffer: PByte; Piece: QWord): Int64;
+var
+  Written: QWord;
+  Status: TFileSystemStatus;
+begin
+  case Target of
+    WriteToFileTarget:
+      begin
+        Status := WriteToFile(POpenFile(ObjectBody), Buffer, Piece, Written);
+        if (Status <> StatusSuccess) and (Written = 0) then
+          Exit(Failure(ErrorFromStatus(Status)));
+        Result := Int64(Written);
+      end;
+    WriteToConsoleTarget:
+      begin
+        WriteToConsole(Buffer, Piece);
+        Result := Int64(Piece);
+      end;
+  else
+    begin
+      Result := WriteToPipe(PPipe(ObjectBody), Buffer, Piece);
+      if Result = PipeInterrupted then
+        Result := Failure(ErrorInterrupted)
+      else if Result < 0 then
+        Result := Failure(ErrorBrokenPipe);
+    end;
+  end;
+end;
+
+function WriteInPieces(Target: TWriteTarget; ObjectBody: Pointer; BufferAddress, ByteCount: QWord): Int64;
+var
+  Buffer: PByte;
+  BufferSize: QWord;
+  Total: QWord;
+  Piece: QWord;
+  Written: Int64;
+begin
+  Buffer := PByte(AllocateTransferBuffer(ByteCount, BufferSize));
+  if Buffer = nil then
+    Exit(Failure(ErrorOutOfMemory));
+  Total := 0;
+  Result := 0;
+  while Total < ByteCount do
+  begin
+    Piece := ByteCount - Total;
+    if Piece > BufferSize then
+      Piece := BufferSize;
+    if CopyFromUser(Buffer, BufferAddress + Total, Piece) <> ErrorNone then
+      Written := Failure(ErrorBadAddress)
+    else
+      Written := WritePiece(Target, ObjectBody, Buffer, Piece);
+    if Written < 0 then
+    begin
+      if Total = 0 then
+        Result := Written;
+      Break;
+    end;
+    Total := Total + QWord(Written);
+    if QWord(Written) < Piece then
+      Break;
+  end;
+  if Total > 0 then
+    Result := Int64(Total);
+  FreeTransferBuffer(Buffer);
 end;
 
 function PerformWriteHandle(Handle: Int64; BufferAddress: QWord; ByteCount: QWord): Int64;
 var
   Kind: THandleKind;
   ObjectBody: Pointer;
-  Written: QWord;
-  Status: TFileSystemStatus;
 begin
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
     Exit(Failure(ErrorBadHandle));
   if not UserRangeIsValid(BufferAddress, ByteCount, False) then
     Exit(Failure(ErrorBadAddress));
+  if ByteCount = 0 then
+    Exit(0);
 
   case Kind of
     HandleKindFile:
-      begin
-        Status := WriteToFile(POpenFile(ObjectBody), Pointer(BufferAddress), ByteCount, Written);
-        if (Status <> StatusSuccess) and (Written = 0) then
-          Exit(Failure(ErrorFromStatus(Status)));
-        Result := Int64(Written);
-      end;
+      Result := WriteInPieces(WriteToFileTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindConsole:
-      begin
-        WriteToConsole(PByte(BufferAddress), ByteCount);
-        Result := Int64(ByteCount);
-      end;
+      Result := WriteInPieces(WriteToConsoleTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindPipeWriteEnd:
-      begin
-        Result := WriteToPipe(PPipe(ObjectBody), PByte(BufferAddress), ByteCount);
-        if Result = PipeInterrupted then
-          Result := Failure(ErrorInterrupted)
-        else if Result < 0 then
-          Result := Failure(ErrorBrokenPipe);
-      end;
+      Result := WriteInPieces(WriteToPipeTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindNull:
       Result := Int64(ByteCount);
   else

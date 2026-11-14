@@ -39,7 +39,8 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.UserMode,
   Kernel.Panic,
-  Debug.Output;
+  Debug.Output,
+  Kernel.Arch.UserCopy;
 
 const
   VectorBreakpoint = 3;
@@ -199,6 +200,11 @@ begin
 
   if (Vector = VectorPageFault) and Assigned(PageFaultResolver) and
      PageFaultResolver(ReadControlRegister2, Frame^.ErrorCode) then
+    Exit;
+
+  { A system call copying from or to memory another thread just freed. }
+  if (Vector = VectorPageFault) and not ArchFrameIsFromUserMode(Frame) and
+     RecoverFromUserCopyFault(Frame, ReadControlRegister2) then
     Exit;
 
   if ArchFrameIsFromUserMode(Frame) and Assigned(UserExceptionHandler) then

@@ -22,6 +22,7 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
+  Kernel.Arch.UserCopy,
   Memory.Layout,
   Memory.KernelHeap,
   Memory.PhysicalPages,
@@ -607,6 +608,9 @@ begin
   InitializeUserProcesses;
   InitializeProcessTermination;
   InitializeThreadCalls;
+  { From here on the kernel touches user memory only through checked
+    copies, so SMAP can be turned on. }
+  InitializeUserCopy;
   InitializeSystemCallEntry(@DispatchSystemCall);
 end;
 

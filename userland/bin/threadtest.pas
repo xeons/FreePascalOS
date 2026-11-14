@@ -13,7 +13,10 @@
     * initialization order: library initializers before unit
       initialization, a used unit before the unit using it (unit
       finalization and the library finalizer print at exit),
-    * many short-lived threads, so leaks would show.
+    * many short-lived threads, so leaks would show,
+    * memory freed by one thread while another thread's system calls
+      copy into it: the calls fail with ErrorBadAddress or succeed, and
+      the kernel survives (Kernel.Arch.UserCopy).
 
   With an option it instead checks how a process ends with threads:
 
@@ -36,6 +39,8 @@ uses
   Sys.Format,
   Sys.Streams,
   Sys.Processes,
+  Sys.Kernel,
+  Sys.Files,
   Sys.Locks,
   Sys.Threads,
   ThreadTest.InitFirst,
@@ -279,6 +284,72 @@ begin
   Check(AllRight, 'many short-lived threads');
 end;
 
+{ --- Memory freed during a system call -------------------------------- }
+
+const
+  RaceRounds = 3000;
+  RaceBufferSize = 65536;
+
+var
+  { The buffer the main thread copies into; freed behind its back. }
+  RaceBuffer: QWord;
+  RaceFinished: Boolean;
+
+function FreeAndReallocate(Argument: Pointer): LongInt;
+var
+  Round: Integer;
+  Address: Int64;
+begin
+  for Round := 1 to RaceRounds do
+  begin
+    Address := KernelAllocateMemory(RaceBufferSize);
+    if Address > 0 then
+    begin
+      RaceBuffer := QWord(Address);
+      KernelFreeMemory(Pointer(Address));
+    end;
+  end;
+  RaceFinished := True;
+  Result := 0;
+end;
+
+procedure TestFreeWhileCopying;
+var
+  Handle: Int64;
+  FileHandle: Int64;
+  Outcome: Int64;
+  ExitCode: LongInt;
+  AllRight: Boolean;
+begin
+  AllRight := True;
+  RaceFinished := False;
+  RaceBuffer := 0;
+  FileHandle := OpenFile('/bin/sh', OpenRead);
+  Handle := CreateThread(@FreeAndReallocate, nil, 0);
+  if (Handle < 0) or (FileHandle < 0) then
+    AllRight := False
+  else
+  begin
+    while not RaceFinished do
+    begin
+      if RaceBuffer = 0 then
+        Continue;
+      SeekFile(FileHandle, 0, SeekFromStart);
+      Outcome := KernelRead(FileHandle, Pointer(RaceBuffer), RaceBufferSize);
+      if (Outcome < 0) and (Outcome <> -ErrorBadAddress) then
+        AllRight := False;
+      Outcome := KernelGetCurrentDirectory(PChar(RaceBuffer), RaceBufferSize);
+      if (Outcome < 0) and (Outcome <> -ErrorBadAddress) then
+        AllRight := False;
+    end;
+    WaitForThread(Handle, InfiniteWait, ExitCode);
+    CloseThreadHandle(Handle);
+  end;
+  if FileHandle >= 0 then
+    CloseFile(FileHandle);
+  Check(AllRight, 'memory freed during a system call');
+end;
+
 { --- How processes end ----------------------------------------------- }
 
 function SpinForever(Argument: Pointer): LongInt;
@@ -363,6 +434,7 @@ begin
   TestIdsAndTimeouts;
   TestThreadLocalData;
   TestShortLivedThreads;
+  TestFreeWhileCopying;
   PrintFinalization := True;
   if FailureCount > 0 then
     Halt(1);

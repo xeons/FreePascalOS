@@ -28,6 +28,7 @@ uses
   Kernel.Clock,
   Kernel.Panic,
   Processes.Thread,
+  Kernel.Arch.UserCopy,
   Debug.Output,
   Debug.FramebufferConsole;
 
@@ -332,6 +333,28 @@ begin
   ReportPassed('thread exit and cleanup');
 end;
 
+{ --- Copies to user memory that is not there --------------------------- }
+
+{ A kernel thread has no user mappings at all, so copying to or from a
+  user address faults; the copy must fail instead of stopping the
+  system. }
+procedure TestUserCopyFault;
+const
+  UnmappedUserAddress = QWord($10000);
+var
+  Buffer: array[0..63] of Char;
+begin
+  Buffer[0] := 'x';
+  Check(ArchCopyUserMemory(Pointer(UnmappedUserAddress), @Buffer[0], SizeOf(Buffer)) = UserCopyFaulted,
+    'a copy to unmapped user memory did not fail');
+  Check(ArchCopyUserMemory(@Buffer[0], Pointer(UnmappedUserAddress), SizeOf(Buffer)) = UserCopyFaulted,
+    'a copy from unmapped user memory did not fail');
+  Check(ArchCopyUserString(@Buffer[0], PChar(UnmappedUserAddress), SizeOf(Buffer)) = UserCopyFaulted,
+    'a string copy from unmapped user memory did not fail');
+  Check(not CurrentThread^.UserCopyActive, 'the copy mark was left set');
+  ReportPassed('copies to missing user memory fail safely');
+end;
+
 procedure RunKernelSelfTests;
 begin
   TestKernelHeap;
@@ -340,6 +363,7 @@ begin
   TestPreemption;
   TestMutualExclusion;
   TestThreadExitAndCleanup;
+  TestUserCopyFault;
 end;
 
 end.

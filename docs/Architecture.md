@@ -406,6 +406,20 @@ and calls `DispatchSystemCall` with interrupts enabled; it returns with
 `iretq`. Every user pointer is checked against the user half and the
 process's regions before the kernel touches it (`Processes.UserAccess`).
 
+Another thread of the process may free the memory between that check and
+the copy, so the kernel touches user memory only through two small leaf
+routines (`Kernel.Arch.UserCopy`: a byte copy and a string copy). While a
+thread is inside one it is marked (`UserCopyActive`); a page fault on a
+user address that the fault resolver cannot satisfy then does not panic:
+the exception handler makes the routine return -1 by setting RAX and
+popping its return address, and the call fails with `ErrorBadAddress`.
+Drivers and file systems never see user pointers: reads and writes go
+through a kernel transfer buffer of up to 16 KiB at a time. With that in
+place SMAP is switched on when the processor has it, and the copy routines
+allow user accesses only for their own duration (STAC/CLAC), so a stray
+direct access anywhere else in the kernel faults at once. A kernel self
+test copies to an unmapped user address.
+
 | Area | Calls |
 |---|---|
 | Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind, ControlHandle (console modes) |

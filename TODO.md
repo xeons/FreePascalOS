@@ -53,8 +53,8 @@ how the existing pieces fit together.
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
       thread handles; a crash or exit in one thread ends the whole process)
 - [x] User-mode locks: atomic fast path, CallWaitOnAddress / CallWakeAddress
-- [ ] Exception fixups for kernel accesses to user memory (today a thread
-      freeing memory another thread's system call is reading panics the kernel)
+- [x] Exception fixups for kernel accesses to user memory (fault-tolerant copy
+      routines, transfer buffers for reads and writes, SMAP when available)
 - [ ] Dynamic TLS for libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Thread priorities set by programs; thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)

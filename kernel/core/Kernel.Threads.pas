@@ -87,6 +87,10 @@ type
     { Clock ticks spent running. }
     RunTicks: QWord;
 
+    { Inside a routine copying to or from user memory, whose faults on
+      user addresses are survivable (Kernel.Arch.UserCopy). }
+    UserCopyActive: Boolean;
+
     StartRoutine: TThreadStartRoutine;
     StartContext: Pointer;
 
