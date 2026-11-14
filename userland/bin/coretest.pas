@@ -259,7 +259,7 @@ const
     (Command: 'realpath sub/dir/..; realpath -s dirlink; realpath --relative-to=sub/dir lines.txt'; ExpectedOutput: '/tmp/coretest/sub'#10'/tmp/coretest/dirlink'#10'../../lines.txt'#10; ExpectedStatus: 0),
     (Command: 'pathchk -p "a b" 2>/dev/null; echo $?; pathchk -p ok_name; echo $?'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
     (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'1029'#9'dutest'#10; ExpectedStatus: 0),
-    (Command: 'df / | tail -n 1 | cut -d " " -f 1'; ExpectedOutput: 'disk2p1'#10; ExpectedStatus: 0),
+    (Command: 'df | grep " /$" | cut -d " " -f 1'; ExpectedOutput: 'disk2p1'#10; ExpectedStatus: 0),
 
     { --- more text tools --------------------------------------------- }
     (Command: 'printf "a\nb\nc\n" > c1; printf "b\nc\nd\n" > c2; comm c1 c2; comm -12 c1 c2'; ExpectedOutput: 'a'#10#9#9'b'#10#9#9'c'#10#9'd'#10'b'#10'c'#10; ExpectedStatus: 0),

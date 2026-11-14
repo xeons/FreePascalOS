@@ -61,6 +61,7 @@ uses
   Io.BlockDevice,
   Io.Partitions,
   Drivers.Ahci,
+  Drivers.VirtioBlock,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -121,6 +122,7 @@ begin
 
   InitializeBlockDevices;
   InitializeAhciControllers;
+  InitializeVirtioBlockDevices;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;

@@ -41,15 +41,30 @@ uses
   Kernel.Interrupts,
   Io.Pci;
 
+type
+  TPciInterruptKind = (PciInterruptNone, PciInterruptMessage, PciInterruptExtendedMessage);
+
 { Connects Handler to Device's interrupt by MSI and turns its legacy
   interrupt line off. Returns False if the device has no MSI capability
   or no vector is free. }
 function ConnectPciMessageInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
   Context: Pointer): Boolean;
 
+{ Connects Handler to entry 0 of Device's MSI-X table (all other entries
+  stay masked) and turns MSI-X on. False if the device has no MSI-X
+  capability or no vector is free. A device then signals the interrupts
+  it is told to send through entry 0. }
+function ConnectPciExtendedMessageInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
+  Context: Pointer): Boolean;
+
+{ MSI-X if the device has it, else MSI. }
+function ConnectPciInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
+  Context: Pointer): TPciInterruptKind;
+
 implementation
 
 uses
+  Memory.DeviceMapping,
   Io.InterruptRouting;
 
 const
@@ -63,6 +78,19 @@ const
   MessageControlEnable = $0001;
   MessageControl64Bit = $0080;
   MessageControlVectorsInUse = $0070;
+
+  CapabilityExtendedMessageInterrupts = $11;
+  ExtendedControlTableSizeMask = $07FF;
+  ExtendedControlFunctionMask = $4000;
+  ExtendedControlEnable = $8000;
+  ExtendedTableOffset = 4;
+  ExtendedTableBarMask = $7;
+  ExtendedEntrySize = 16;
+  ExtendedEntryAddressLow = 0;
+  ExtendedEntryAddressHigh = 4;
+  ExtendedEntryData = 8;
+  ExtendedEntryVectorControl = 12;
+  ExtendedEntryMasked = 1;
 
 { The offset of capability CapabilityId in Device's configuration space,
   or 0. }
@@ -118,6 +146,69 @@ begin
   Control := (Control and not MessageControlVectorsInUse) or MessageControlEnable;
   PciWrite16(Device, Capability + MessageControlOffset, Control);
   Result := True;
+end;
+
+function ConnectPciExtendedMessageInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
+  Context: Pointer): Boolean;
+var
+  Capability: Word;
+  Control: Word;
+  TableLocation: LongWord;
+  Bar: TPciBar;
+  EntryCount: LongWord;
+  TableBytes: QWord;
+  MapStart: QWord;
+  MapOffset: QWord;
+  Table: PByte;
+  Entry: LongWord;
+  Message: TInterruptMessage;
+begin
+  Result := False;
+  Capability := FindCapability(Device, CapabilityExtendedMessageInterrupts);
+  if Capability = 0 then
+    Exit;
+  Control := PciRead16(Device, Capability + MessageControlOffset);
+  TableLocation := PciRead32(Device, Capability + ExtendedTableOffset);
+  if not PciReadBar(Device, Integer(TableLocation and ExtendedTableBarMask), Bar) or Bar.IsIoPort then
+    Exit;
+  EntryCount := (Control and ExtendedControlTableSizeMask) + 1;
+  TableBytes := QWord(EntryCount) * ExtendedEntrySize;
+  { Mapped from its page; the table stays mapped while the device lives. }
+  MapStart := (Bar.PhysicalAddress + (TableLocation and not ExtendedTableBarMask)) and not QWord($FFF);
+  MapOffset := (Bar.PhysicalAddress + (TableLocation and not ExtendedTableBarMask)) and QWord($FFF);
+  Table := PByte(MapDeviceMemory(MapStart, MapOffset + TableBytes));
+  if Table = nil then
+    Exit;
+  Table := Table + MapOffset;
+  if not ConnectMessageInterrupt(Handler, Context, Message) then
+    Exit;
+
+  { Masked as a whole while the table is filled in. }
+  PciWrite16(Device, Capability + MessageControlOffset,
+    Control or ExtendedControlFunctionMask or ExtendedControlEnable);
+  for Entry := 0 to EntryCount - 1 do
+    PLongWord(Table + Entry * ExtendedEntrySize + ExtendedEntryVectorControl)^ := ExtendedEntryMasked;
+  PLongWord(Table + ExtendedEntryAddressLow)^ := LongWord(Message.Address);
+  PLongWord(Table + ExtendedEntryAddressHigh)^ := LongWord(Message.Address shr 32);
+  PLongWord(Table + ExtendedEntryData)^ := Message.Data;
+  PLongWord(Table + ExtendedEntryVectorControl)^ := 0;
+
+  PciWrite16(Device, PciConfigurationCommand,
+    PciRead16(Device, PciConfigurationCommand) or PciCommandInterruptDisable);
+  PciWrite16(Device, Capability + MessageControlOffset,
+    (Control and not ExtendedControlFunctionMask) or ExtendedControlEnable);
+  Result := True;
+end;
+
+function ConnectPciInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
+  Context: Pointer): TPciInterruptKind;
+begin
+  if ConnectPciExtendedMessageInterrupt(Device, Handler, Context) then
+    Result := PciInterruptExtendedMessage
+  else if ConnectPciMessageInterrupt(Device, Handler, Context) then
+    Result := PciInterruptMessage
+  else
+    Result := PciInterruptNone;
 end;
 
 end.

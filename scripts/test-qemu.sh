@@ -83,6 +83,15 @@ if [[ -n "$test_disk_image" ]]; then
     cp -f "$test_disk_image" "$run_disk_image"
     disk_arguments+=(-drive format=raw,cache=unsafe,file="$run_disk_image")
 fi
+# The virtio disk make-test-disk.sh writes next to the test disk.
+run_virtio_disk_image="$build_directory/test-disk-virtio-run.img"
+if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-virtio.img" ]]; then
+    cp -f "${test_disk_image%.img}-virtio.img" "$run_virtio_disk_image"
+    disk_arguments+=(-drive if=none,id=virtio0,format=raw,cache=unsafe,file="$run_virtio_disk_image"
+        -device virtio-blk-pci,drive=virtio0)
+else
+    run_virtio_disk_image=""
+fi
 run_system_disk_image="$build_directory/system-disk-run.img"
 if [[ -n "$system_disk_image" ]]; then
     cp -f "$system_disk_image" "$run_system_disk_image"
@@ -166,6 +175,18 @@ case "$qemu_status" in
         if [[ -n "$test_disk_image" ]]; then
             if ! "$(dirname "$0")/verify-test-disk.sh" "$run_disk_image"; then
                 echo "TEST FAILED: the written volumes did not pass the host side checks"
+                exit 1
+            fi
+        fi
+        # The virtio disk: found, driven by interrupts, and its volume
+        # (tested like the others) consistent afterwards.
+        if [[ -n "$run_virtio_disk_image" ]]; then
+            if ! grep -q '\[virtio\] disk[0-9]*: interrupts by MSI-X' "$serial_log"; then
+                echo "TEST FAILED: the virtio disk was not started with MSI-X interrupts"
+                exit 1
+            fi
+            if ! "$(dirname "$0")/verify-test-disk.sh" "$run_virtio_disk_image"; then
+                echo "TEST FAILED: the volume on the virtio disk did not pass the host side checks"
                 exit 1
             fi
         fi

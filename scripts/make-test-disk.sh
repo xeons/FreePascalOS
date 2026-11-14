@@ -215,3 +215,13 @@ for index in "${!partition_names[@]}"; do
 done
 
 echo "Wrote $output_image (${total_mebibytes} MiB, partitions: ${partition_names[*]})"
+
+# A second disk for the virtio block driver: one partition holding a copy
+# of the ext4 partition (dirty journal and orphan included).
+virtio_image="${output_image%.img}-virtio.img"
+rm -f "$virtio_image"
+truncate -s 34M "$virtio_image"
+echo 'label: gpt
+size=32MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="ext4"' | sfdisk --quiet "$virtio_image"
+dd if="$work_directory/ext4.img" of="$virtio_image" bs=1M seek=1 conv=notrunc status=none
+echo "Wrote $virtio_image (34 MiB, partition: ext4)"

@@ -14,7 +14,7 @@ how the existing pieces fit together.
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
 - [ ] Legacy configuration access (ports 0xCF8/0xCFC) for machines without MCFG
 - [x] MSI interrupts for PCI devices (AHCI)
-- [ ] MSI-X
+- [x] MSI-X (one vector per device, through table entry 0)
 
 ## Multiprocessor support
 
@@ -111,7 +111,7 @@ how the existing pieces fit together.
 - [ ] AHCI: all 32 command slots, NCQ, direct DMA without the bounce buffer
 - [ ] ATAPI (optical drives) on AHCI
 - [ ] NVMe driver
-- [ ] virtio-blk driver (fast QEMU disks)
+- [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)
 - [ ] USB mass storage (needs an xHCI driver first)
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead

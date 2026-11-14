@@ -261,6 +261,14 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    the AHCI specification describes (stop, clear errors, COMRESET if the
    device is still busy, start). The tests attach a disk through QEMU's
    blkdebug that fails reads of one sector.
+
+   Virtio block devices (`Drivers.VirtioBlock`, on the virtio 1.0 PCI
+   transport in `Drivers.VirtioPci`) are disks too, of the `virtio-blk`
+   driver. A request is a descriptor chain on a split virtqueue: header,
+   data pages from the driver's bounce pages (128 KiB a command) and a
+   status byte. Requests complete by MSI-X interrupt (or are polled).
+   Flushes are sent when the device has a volatile write cache. The tests
+   attach a virtio disk holding a copy of the ext4 test partition.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
@@ -368,7 +376,10 @@ PCI devices with the MSI capability skip the I/O APIC:
 `ConnectPciMessageInterrupt` (Io.PciMessageInterrupts) takes a vector
 (`ConnectMessageInterrupt`), programs the device's message address (the
 chosen processor's local APIC) and data (the vector), and turns its legacy
-interrupt line off. The legacy PCI lines could only be routed with the
+interrupt line off. `ConnectPciExtendedMessageInterrupt` does the same
+through entry 0 of an MSI-X table (in device memory, found through the
+capability's BAR and offset), with every other entry masked;
+`ConnectPciInterrupt` prefers MSI-X and falls back to MSI. The legacy PCI lines could only be routed with the
 ACPI namespace, which the kernel does not interpret.
 
 ### Ctrl-C

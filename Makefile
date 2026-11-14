@@ -71,6 +71,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/firmware \
 	kernel/io \
 	kernel/drivers/storage \
+	kernel/drivers/virtio \
 	kernel/drivers/input \
 	kernel/drivers/devices \
 	kernel/filesystems \
