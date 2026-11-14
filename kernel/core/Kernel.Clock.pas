@@ -3,7 +3,8 @@
 
   The HAL raises a periodic clock interrupt. Each one advances the tick
   count (the kernel's notion of time) and lets the scheduler account for
-  time slices and sleeping threads.
+  time slices and sleeping threads; the boot processor's also expires
+  timers (Kernel.Timers).
 
   Wall clock time is the real-time clock reading taken at startup plus
   the time elapsed since, in whole seconds.
@@ -42,6 +43,7 @@ uses
   Kernel.Interrupts,
   Kernel.Scheduler,
   Kernel.Processors,
+  Kernel.Timers,
   Kernel.Panic;
 
 var
@@ -55,7 +57,10 @@ begin
     and an aligned 64-bit store is atomic, so readers never see a torn
     value. }
   if CurrentProcessor^.Index = 0 then
+  begin
     TickCount := TickCount + 1;
+    ExpireTimers(TickCount);
+  end;
   SchedulerClockTick(TickCount);
 end;
 

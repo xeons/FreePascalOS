@@ -69,6 +69,23 @@ if [[ -n "$system_disk_image" ]]; then
     disk_arguments+=(-drive format=raw,file="$run_system_disk_image")
 fi
 
+# A blank disk whose sector 100 always fails to read (QEMU's blkdebug),
+# so the tests see the AHCI driver fail a request and reset the port.
+# It comes after the other disks, so it is the last diskN.
+if [[ -n "$system_disk_image" ]]; then
+    fault_disk_image="$build_directory/test-fault-disk.img"
+    fault_rules="$build_directory/test-fault-disk.conf"
+    rm -f "$fault_disk_image"
+    truncate -s 1M "$fault_disk_image"
+    cat > "$fault_rules" <<'RULES'
+[inject-error]
+event = "read_aio"
+errno = "5"
+sector = "100"
+RULES
+    disk_arguments+=(-drive format=raw,file=blkdebug:"$fault_rules":"$fault_disk_image")
+fi
+
 timeout "$timeout_seconds" qemu-system-x86_64 \
     -machine q35 -cpu max -m 512M -smp ${PROCESSORS:-4} \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \

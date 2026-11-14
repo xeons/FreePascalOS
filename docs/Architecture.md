@@ -228,7 +228,12 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    driver, without a name; the block device sends it read and write
    requests. The AHCI driver uses one command slot per port, moves data
    through a 64 KiB bounce buffer and completes requests from its MSI
-   interrupt (polling while disks are identified, or without MSI).
+   interrupt (polling while disks are identified, or without MSI). Every
+   command has a 5 second timer (`Kernel.Timers`); a command that fails or
+   times out fails its request with `ErrorIo`, and the port is reset as
+   the AHCI specification describes (stop, clear errors, COMRESET if the
+   device is still busy, start). The tests attach a disk through QEMU's
+   blkdebug that fails reads of one sector.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
@@ -315,6 +320,12 @@ runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
 dispatch interrupt, before the scheduler picks the next thread.
+
+A **timer** (Kernel.Timers) queues a deferred call once a delay has
+passed; the boot processor's clock interrupt expires timers. Drivers use
+them to notice what does not happen in time (a disk command that never
+completes). Cancelling cannot take back a call that is already queued,
+so the routine checks whether its reason still holds.
 
 PCI devices with the MSI capability skip the I/O APIC:
 `ConnectPciMessageInterrupt` (Io.PciMessageInterrupts) takes a vector

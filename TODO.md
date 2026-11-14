@@ -79,9 +79,11 @@ how the existing pieces fit together.
       under /dev (memory devices, console, disks and partitions)
 - [x] Keyboard, serial and AHCI drivers as driver objects; asynchronous requests
       with completion routines and cancellation; AHCI completes by MSI
+- [x] Kernel timers (a deferred call after a delay)
+- [x] AHCI: a timeout for every command; port reset after a failed or hung
+      command (tested with a QEMU blkdebug disk that fails one sector)
 - [ ] AHCI: several command slots per port (NCQ), DMA straight into page
-      aligned buffers, recovery after a failed command, a timeout for lost
-      interrupts
+      aligned buffers
 - [ ] Layered devices (filter drivers attached on top of a device)
 - [ ] Programs report write errors on standard output at exit (echo > /dev/full)
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)

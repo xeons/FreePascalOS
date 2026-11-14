@@ -13,6 +13,10 @@
   of a large request (the bounce buffer holds 64 KiB) or completes it,
   and then starts the next waiting request.
 
+  Every command has a timer; a command still running after its timeout
+  (5 s), like one that failed, fails its request with ErrorIo, and the
+  port is reset (RecoverPort) before the next request starts.
+
   Before that (while disks are identified), or if the controller has no
   MSI, commands are polled and requests complete before the routine
   returns.
@@ -47,7 +51,10 @@ uses
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Mutex,
-  Kernel.DeferredCalls;
+  Kernel.DeferredCalls,
+  Kernel.Timers,
+  Kernel.Clock,
+  Debug.Output;
 
 const
   PortInterruptErrors = PortInterruptInterfaceFatal or PortInterruptHostBusData or
@@ -88,6 +95,21 @@ end;
 
 { --- Polled requests ------------------------------------------------------ }
 
+procedure ReportRecovery(Port: PAhciPort; Reason: PChar; Recovered: Boolean);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('ahci');
+  DebugWrite('Port ');
+  DebugWriteDecimal(Port^.PortNumber);
+  DebugWrite(': ');
+  DebugWrite(Reason);
+  if Recovered then
+    DebugWriteLine(', port reset')
+  else
+    DebugWriteLine(', the port did not come back');
+  DebugEndMessage;
+end;
+
 function TransferPolled(Port: PAhciPort; var Request: TIoRequest): LongInt;
 var
   Done: QWord;
@@ -106,6 +128,7 @@ begin
     if not ExecuteCommand(Port, AtaCommandFor(@Request), (Request.Offset + Done) div Port^.BlockSize,
       Word(Piece div Port^.BlockSize), Piece, IsWrite) then
     begin
+      ReportRecovery(Port, 'command failed', RecoverPort(Port));
       Result := ErrorIo;
       Break;
     end;
@@ -119,9 +142,9 @@ end;
 
 { --- Interrupt driven requests -------------------------------------------- }
 
-{ Starts the command for the next piece of Port^.Current. If it cannot
-  be started, the deferred call is asked to fail the request. The caller
-  holds StateLock. }
+{ Starts the command for the next piece of Port^.Current, with its
+  timeout. If it cannot be started, the deferred call is asked to fail
+  the request. The caller holds StateLock. }
 procedure StartPieceLocked(Port: PAhciPort);
 var
   Request: PIoRequest;
@@ -136,9 +159,12 @@ begin
     (Request^.Offset + Port^.CurrentDone) div Port^.BlockSize,
     Word(Port^.CurrentPiece div Port^.BlockSize), Port^.CurrentPiece, IsWrite) then
   begin
-    Port^.StartFailed := True;
+    Port^.CommandFailed := True;
     QueueDeferredCall(Port^.FinishCommand);
+    Exit;
   end;
+  Port^.CommandDeadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
+  SetTimer(Port^.Timeout, CommandTimeoutMilliseconds, Port^.TimeoutCall);
 end;
 
 { Makes Request the running one and starts it. Caller holds StateLock. }
@@ -146,7 +172,7 @@ procedure BeginRequestLocked(Port: PAhciPort; Request: PIoRequest);
 begin
   Port^.Current := Request;
   Port^.CurrentDone := 0;
-  Port^.StartFailed := False;
+  Port^.CommandFailed := False;
   StartPieceLocked(Port);
 end;
 
@@ -156,7 +182,8 @@ begin
   Result := LongWord(AtomicExchange(Port^.SeenInterruptStatus, 0));
 end;
 
-{ Deferred call, after the port interrupted (or a start failed). }
+{ Deferred call, after the port interrupted (or a command failed to
+  start or timed out). }
 procedure FinishPortCommand(Context: Pointer);
 var
   Port: PAhciPort;
@@ -175,7 +202,7 @@ begin
     Exit;
   end;
 
-  if Port^.StartFailed or ((Seen and PortInterruptErrors) <> 0) then
+  if Port^.CommandFailed or ((Seen and PortInterruptErrors) <> 0) then
     Status := ErrorIo
   else if (ReadRegister(Port^.Registers, PortCommandIssue) and 1) <> 0 then
   begin
@@ -187,6 +214,7 @@ begin
     Status := ErrorIo
   else
   begin
+    CancelTimer(Port^.Timeout);
     if Request^.Operation = IoFunctionRead then
       CopyFromBounceBuffer(Port, PByte(Request^.Buffer) + Port^.CurrentDone, Port^.CurrentPiece);
     Port^.CurrentDone := Port^.CurrentDone + Port^.CurrentPiece;
@@ -199,6 +227,15 @@ begin
     Status := ErrorNone;
   end;
 
+  if Status <> ErrorNone then
+  begin
+    CancelTimer(Port^.Timeout);
+    if Port^.CommandTimedOut then
+      ReportRecovery(Port, 'command timed out', RecoverPort(Port))
+    else
+      ReportRecovery(Port, 'command failed', RecoverPort(Port));
+    Port^.CommandTimedOut := False;
+  end;
   Request^.Information := Int64(Port^.CurrentDone);
   Port^.Current := TakeQueuedRequest(Port^.Waiting);
   if Port^.Current <> nil then
@@ -207,6 +244,34 @@ begin
   { Outside the lock: whoever waits for the request may send the next
     one at once. }
   CompleteRequest(Request^, Status);
+end;
+
+{ Timer call: fails the running command if it is past its deadline. }
+procedure HandleCommandTimeout(Context: Pointer);
+var
+  Port: PAhciPort;
+  PreviousLevel: TPriorityLevel;
+  Now: QWord;
+begin
+  Port := PAhciPort(Context);
+  PreviousLevel := AcquireSpinLock(Port^.StateLock);
+  Now := ClockTickCount;
+  if Port^.Current = nil then
+    { Finished meanwhile. }
+  else if (ReadRegister(Port^.Registers, PortCommandIssue) and 1) = 0 then
+    { Finished, and its interrupt is on the way (or was lost). }
+    QueueDeferredCall(Port^.FinishCommand)
+  else if Now < Port^.CommandDeadline then
+    { A late call for an earlier command. }
+    SetTimer(Port^.Timeout, (Port^.CommandDeadline - Now) * MillisecondsPerTick,
+      Port^.TimeoutCall)
+  else
+  begin
+    Port^.CommandFailed := True;
+    Port^.CommandTimedOut := True;
+    QueueDeferredCall(Port^.FinishCommand);
+  end;
+  ReleaseSpinLock(Port^.StateLock, PreviousLevel);
 end;
 
 function TransferWithInterrupts(Port: PAhciPort; var Request: TIoRequest): LongInt;
@@ -287,6 +352,8 @@ begin
   InitializeSpinLock(Port^.StateLock);
   InitializeRequestQueue(Port^.Waiting);
   InitializeDeferredCall(Port^.FinishCommand, @FinishPortCommand, Port);
+  InitializeTimer(Port^.Timeout);
+  InitializeDeferredCall(Port^.TimeoutCall, @HandleCommandTimeout, Port);
   Port^.Device := CreateDevice(AhciDriver, nil, DeviceKindBlock, NobodyMayOpen, 0);
   if Port^.Device = nil then
     Exit(False);

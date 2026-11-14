@@ -12,6 +12,11 @@
   no particular alignment or physical layout. When the command finishes
   the port raises an interrupt, if its interrupts are enabled; otherwise
   the driver polls (WaitForCommand).
+
+  A command that fails or never ends leaves the port stopped with the
+  error latched; RecoverPort brings it back as the AHCI specification
+  describes: stop the command list, clear the errors, reset the link if
+  the device is still busy, and start again.
 }
 unit Drivers.AhciPort;
 
@@ -25,6 +30,7 @@ uses
   Kernel.Mutex,
   Kernel.SpinLock,
   Kernel.DeferredCalls,
+  Kernel.Timers,
   Io.Manager;
 
 const
@@ -58,6 +64,7 @@ const
   PortTaskFileData = $20;
   PortSignature = $24;
   PortSataStatus = $28;
+  PortSataControl = $2C;
   PortSataError = $30;
   PortCommandIssue = $38;
 
@@ -122,15 +129,22 @@ type
     Current: PIoRequest;
     CurrentDone: QWord;
     CurrentPiece: QWord;
-    { The command for Current could not be started; the deferred call
-      fails the request. }
-    StartFailed: Boolean;
+    { The command for Current could not be started or timed out; the
+      deferred call fails the request. }
+    CommandFailed: Boolean;
+    CommandTimedOut: Boolean;
     Waiting: TRequestQueue;
     { Port interrupt status the interrupt handler saw (and cleared) and
       the deferred call has not looked at yet. }
     SeenInterruptStatus: PtrUInt;
     { Runs after the port interrupted. }
     FinishCommand: TDeferredCall;
+    { Set while a command runs; its call fails the request if the
+      command is still running at CommandDeadline (a clock tick). }
+    Timeout: TTimer;
+    TimeoutCall: TDeferredCall;
+    CommandDeadline: QWord;
+    RecoveryCount: QWord;
   end;
 
   PAhciController = ^TAhciController;
@@ -159,6 +173,11 @@ function WaitForCommand(Port: PAhciPort): Boolean;
 { IssueCommand and WaitForCommand. }
 function ExecuteCommand(Port: PAhciPort; Command: Byte; Lba: QWord; SectorCount: Word;
   ByteCount: QWord; IsWrite: Boolean): Boolean;
+
+{ Brings the port back after a failed or hung command; any command is
+  dropped. False if the device does not come back. Spins for up to a
+  few seconds, so it is for error paths only. }
+function RecoverPort(Port: PAhciPort): Boolean;
 
 procedure CopyFromBounceBuffer(Port: PAhciPort; Destination: PByte; ByteCount: QWord);
 procedure CopyToBounceBuffer(Port: PAhciPort; Source: PByte; ByteCount: QWord);
@@ -328,6 +347,59 @@ function ExecuteCommand(Port: PAhciPort; Command: Byte; Lba: QWord; SectorCount:
 begin
   Result := IssueCommand(Port, Command, Lba, SectorCount, ByteCount, IsWrite) and
     WaitForCommand(Port);
+end;
+
+const
+  SataControlDetectionMask = $0F;
+  SataControlResetLink = $01;
+  SataStatusDetectionMask = $0F;
+  SataStatusDevicePresent = $03;
+
+{ Spins until at least Ticks whole clock ticks have passed. }
+procedure SpinForTicks(Ticks: QWord);
+var
+  Deadline: QWord;
+begin
+  Deadline := ClockTickCount + Ticks + 1;
+  while ClockTickCount < Deadline do
+    CpuRelax;
+end;
+
+{ COMRESET: the link is reset and the device starts afresh. }
+procedure ResetLink(Port: PAhciPort);
+var
+  Control: LongWord;
+begin
+  Control := ReadRegister(Port^.Registers, PortSataControl) and not SataControlDetectionMask;
+  WriteRegister(Port^.Registers, PortSataControl, Control or SataControlResetLink);
+  { At least a millisecond. }
+  SpinForTicks(1);
+  WriteRegister(Port^.Registers, PortSataControl, Control);
+  WaitForRegister(Port^.Registers, PortSataStatus, SataStatusDetectionMask,
+    SataStatusDevicePresent, RegisterTimeoutMilliseconds);
+end;
+
+function RecoverPort(Port: PAhciPort): Boolean;
+begin
+  Inc(Port^.RecoveryCount);
+  WriteRegister(Port^.Registers, PortCommand,
+    ReadRegister(Port^.Registers, PortCommand) and not PortCommandStart);
+  WaitForRegister(Port^.Registers, PortCommand, PortCommandListRunning, 0,
+    RegisterTimeoutMilliseconds);
+  WriteRegister(Port^.Registers, PortSataError, $FFFFFFFF);
+  WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+
+  if (ReadRegister(Port^.Registers, PortTaskFileData) and (TaskFileBusy or TaskFileDataRequest)) <> 0 then
+  begin
+    ResetLink(Port);
+    WriteRegister(Port^.Registers, PortSataError, $FFFFFFFF);
+    WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+  end;
+  Result := WaitForRegister(Port^.Registers, PortTaskFileData, TaskFileBusy or TaskFileDataRequest, 0,
+    CommandTimeoutMilliseconds);
+  if Result then
+    WriteRegister(Port^.Registers, PortCommand,
+      ReadRegister(Port^.Registers, PortCommand) or PortCommandStart);
 end;
 
 procedure CopyFromBounceBuffer(Port: PAhciPort; Destination: PByte; ByteCount: QWord);

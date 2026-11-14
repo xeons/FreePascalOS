@@ -62,6 +62,7 @@ uses
   Io.Manager,
   Io.DeviceFiles,
   Kernel.IoSelfTest,
+  Kernel.Timers,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
   Io.Pipes,
@@ -280,6 +281,7 @@ begin
   IdleThread := CreateIdleThreadFromBootContext(BootStackBase,
     BootStackBase + BootInformation^.BootStackSizeInBytes);
   InitializeDeferredCalls;
+  InitializeTimers;
   InitializeScheduler(@IdleThread^.ControlBlock);
 
   StartPhaseOne(BootInformation);

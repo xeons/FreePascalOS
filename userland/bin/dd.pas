@@ -152,6 +152,8 @@ var
   FullIn, PartialIn, FullOut, PartialOut: QWord;
   TotalBytes: QWord;
   BlocksRead: Int64;
+  { Read errors end the program with status 1 (after the summary). }
+  ReadFailed: Boolean;
   Position: Int64;
   Take: QWord;
   Started: QWord;
@@ -243,12 +245,14 @@ begin
   TotalBytes := 0;
   OutputFill := 0;
   BlocksRead := 0;
+  ReadFailed := False;
   while (CountBlocks < 0) or (BlocksRead < CountBlocks) do
   begin
     Count := ReadFile(Input, InputBuffer, InputBlockSize);
     if Count < 0 then
     begin
       ReportError(ErrorCodeOf(Count), 'error reading ''%s''', [ArgumentText(InputPath)]);
+      ReadFailed := True;
       if not IgnoreErrors then
         Break;
       Count := 0;
@@ -310,4 +314,6 @@ begin
         ArgumentUnsigned(Elapsed div 1000), ArgumentUnsigned(Elapsed mod 1000)]);
     end;
   end;
+  if ReadFailed then
+    Halt(1);
 end.

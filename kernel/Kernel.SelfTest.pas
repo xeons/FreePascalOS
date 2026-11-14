@@ -31,6 +31,8 @@ uses
   Kernel.Events,
   Kernel.Mutex,
   Kernel.Clock,
+  Kernel.DeferredCalls,
+  Kernel.Timers,
   Kernel.Panic,
   Processes.Thread,
   Kernel.Arch.UserCopy,
@@ -360,6 +362,46 @@ begin
   ReportPassed('copies to missing user memory fail safely');
 end;
 
+{ --- Timers ------------------------------------------------------------ }
+
+var
+  TimerFiredTick: QWord;
+  TimerFiredCount: Int64;
+
+procedure NoteTimerFired(Context: Pointer);
+begin
+  TimerFiredTick := ClockTickCount;
+  AtomicIncrement(TimerFiredCount);
+end;
+
+{ A timer runs its call once, not before its time; a cancelled timer
+  does not run it. }
+procedure TestTimers;
+const
+  DelayMilliseconds = 50;
+var
+  Timer: TTimer;
+  CancelledTimer: TTimer;
+  Call: TDeferredCall;
+  SetTick: QWord;
+begin
+  TimerFiredCount := 0;
+  InitializeTimer(Timer);
+  InitializeTimer(CancelledTimer);
+  InitializeDeferredCall(Call, @NoteTimerFired, nil);
+  SetTick := ClockTickCount;
+  SetTimer(CancelledTimer, DelayMilliseconds div 2, Call);
+  SetTimer(Timer, DelayMilliseconds, Call);
+  Check(CancelTimer(CancelledTimer), 'a set timer could not be cancelled');
+  Check(not CancelTimer(CancelledTimer), 'a cancelled timer was still set');
+  SleepMilliseconds(DelayMilliseconds * 4);
+  Check(TimerFiredCount = 1, 'a timer did not run its call exactly once');
+  Check(TimerFiredTick - SetTick >= MillisecondsToTicks(DelayMilliseconds),
+    'a timer ran its call early');
+  Check(not CancelTimer(Timer), 'an expired timer was still set');
+  ReportPassed('timers');
+end;
+
 procedure RunKernelSelfTests;
 begin
   TestKernelHeap;
@@ -369,6 +411,7 @@ begin
   TestMutualExclusion;
   TestThreadExitAndCleanup;
   TestUserCopyFault;
+  TestTimers;
 end;
 
 end.
