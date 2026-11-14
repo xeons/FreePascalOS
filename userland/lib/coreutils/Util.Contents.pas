@@ -24,7 +24,8 @@ uses
   Util.Accounts,
   Util.Commands,
   Util.RegularExpressions,
-  Util.LineEditor;
+  Util.LineEditor,
+  Util.Globbing;
 
 implementation
 

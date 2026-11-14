@@ -70,6 +70,10 @@ procedure FreeExpression(var Expression: TExpression);
 function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
 { Matches only at the start of Subject (like expr's ':' operator). }
 function MatchExpressionAtStart(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+{ Finds the leftmost match starting at or after byte offset StartOffset;
+  "^" still means the start of Subject (as sed's s///g needs). }
+function SearchExpressionFrom(const Expression: TExpression; Subject: PChar; StartOffset: PtrInt;
+  out Match: TMatch): Boolean;
 
 implementation
 
@@ -712,6 +716,12 @@ begin
 end;
 
 function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+begin
+  Result := SearchExpressionFrom(Expression, Subject, 0, Match);
+end;
+
+function SearchExpressionFrom(const Expression: TExpression; Subject: PChar; StartOffset: PtrInt;
+  out Match: TMatch): Boolean;
 var
   Matcher: TMatcher;
   Position: PtrInt;
@@ -720,7 +730,12 @@ begin
   Matcher.Subject := Subject;
   Matcher.Length := PtrInt(TextLength(Subject));
   Matcher.Steps := 0;
-  Position := 0;
+  Position := StartOffset;
+  if Position > Matcher.Length then
+  begin
+    ResetMatch(Match);
+    Exit(False);
+  end;
   repeat
     if TryAt(Matcher, Position) then
     begin

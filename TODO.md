@@ -129,7 +129,8 @@ how the existing pieces fit together.
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
 - [ ] Shell: case, functions, here documents, job control (fg, bg, jobs, Ctrl-Z)
 - [ ] Ctrl-C for loops made only of builtins (needs a pending-interrupt check)
-- [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less, ps
+- [x] More programs outside coreutils: grep (egrep, fgrep), find, xargs, sed, diff, less (more)
+- [ ] ps
 - [x] Interrupt driven console input (keyboard and serial)
 
 ## ARM64 port

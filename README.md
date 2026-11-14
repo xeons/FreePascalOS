@@ -57,8 +57,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     CRC-32 / CRC-32C / cksum CRC / BSD and System V sums, AES (CBC, CTR),
     ChaCha20 and a random number generator seeded from RDRAND
   - `libcoreutils.so`: GNU style option parsing, messages, sorting, tree
-    walking and copying, POSIX regular expressions (BRE and ERE), chmod
-    modes, date parsing, base64/32/16/2/z85, accounts
+    walking and copying, POSIX regular expressions (BRE and ERE), shell
+    style wildcards, chmod modes, date parsing, base64/32/16/2/z85, accounts
   - a POSIX style shell `sh` (pipes, redirections, `&&` `||`, `if` /
     `while` / `until` / `for`, variables, `$( )` and `$(( ))`, globbing,
     quoting, scripts), with line editing, history and Tab completion on
@@ -74,6 +74,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     true truncate tsort tty uname unexpand uniq unlink uptime users vdir
     wc who whoami yes (not included: mkfifo and mknod, which need named
     pipes in the file systems, and the SELinux tools chcon and runcon)
+  - everyday tools beyond the core utilities: `grep` (with `egrep` and
+    `fgrep`), `sed`, `find`, `xargs`, `diff` (normal, unified and context
+    output, recursive) and the pager `less` (also started as `more`)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and

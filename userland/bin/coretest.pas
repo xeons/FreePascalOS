@@ -46,7 +46,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..191] of TCommandTest = (
+  CommandTests: array[0..219] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -259,6 +259,36 @@ const
     (Command: 'echo "hello big world" | ptx -w 30'; ExpectedOutput: '       hello   big world'#10'               hello big world'#10'   hello big   world'#10; ExpectedStatus: 0),
     (Command: 'expr abc : ''a\(.*\)c''; expr aaa : ''a*''; expr x : ''\(y\)'''; ExpectedOutput: 'b'#10'3'#10#10; ExpectedStatus: 1),
     (Command: 'ls /bin/dir /bin/vdir /bin/chgrp /bin/unexpand'; ExpectedOutput: '/bin/chgrp'#10'/bin/dir'#10'/bin/unexpand'#10'/bin/vdir'#10; ExpectedStatus: 0),
+
+    { --- everyday programs ------------------------------------------- }
+    (Command: 'grep -n t lines.txt; grep -c o lines.txt; grep -vi O lines.txt'; ExpectedOutput: '2:two'#10'3:three'#10'3'#10'three'#10'five'#10; ExpectedStatus: 0),
+    (Command: 'grep -q zzz lines.txt; echo $?; grep -s x nofile; echo $?; grep -H one lines.txt'; ExpectedOutput: '1'#10'2'#10'lines.txt:one'#10; ExpectedStatus: 0),
+    (Command: 'grep -E ''^(t|f)[a-z]{3}$'' lines.txt; grep -x -F two lines.txt; grep -w -o "f[a-z]*" lines.txt'; ExpectedOutput: 'four'#10'five'#10'two'#10'four'#10'five'#10; ExpectedStatus: 0),
+    (Command: 'echo "a+b" | fgrep "+"; echo aab | egrep "a+b"; echo "a+b" | grep "a+b"; echo xyz | grep -e q -e y'; ExpectedOutput: 'a+b'#10'aab'#10'a+b'#10'xyz'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p gr/x; echo needle > gr/x/f; echo hay > gr/g; grep -r needle gr; grep -rl hay gr; grep -L needle gr/g; grep -c e lines.txt gr/g'; ExpectedOutput: 'gr/x/f:needle'#10'gr/g'#10'gr/g'#10'lines.txt:3'#10'gr/g:0'#10; ExpectedStatus: 0),
+    (Command: 'sed -n 2,3p lines.txt; sed 3q lines.txt | sed -n ''$p''; sed -e /two/,/four/d lines.txt'; ExpectedOutput: 'two'#10'three'#10'three'#10'one'#10'five'#10; ExpectedStatus: 0),
+    (Command: 'echo hello world | sed s/o/0/g; echo hello world | sed s/o/0/2; echo abc | sed -E ''s/(a)(b)/\2\1&/''; echo aaa | sed s/a/b/2g'; ExpectedOutput: 'hell0 w0rld'#10'hello w0rld'#10'baabc'#10'abb'#10; ExpectedStatus: 0),
+    (Command: 'sed ''1!G;h;$!d'' lines.txt | head -n 2; seq 2 | sed ''1i top''; seq 2 | sed ''$a end''; seq 3 | sed ''2c mid'''; ExpectedOutput: 'five'#10'four'#10'top'#10'1'#10'2'#10'1'#10'2'#10'end'#10'1'#10'mid'#10'3'#10; ExpectedStatus: 0),
+    (Command: 'echo hello | sed y/abcdefghij/ABCDEFGHIJ/; seq 3 | sed -n ''$=''; seq 4 | sed ''N;s/\n/-/''; echo "a b c" | sed '':x;s/ /_/;tx'''; ExpectedOutput: 'HEllo'#10'3'#10'1-2'#10'3-4'#10'a_b_c'#10; ExpectedStatus: 0),
+    (Command: 'seq 6 | sed -n 0~3p; seq 5 | sed -n ''n;p''; printf "a\n\n\nb\n" | sed ''/^$/N;/\n$/D'''; ExpectedOutput: '3'#10'6'#10'2'#10'4'#10'a'#10#10'b'#10; ExpectedStatus: 0),
+    (Command: 'printf "x\ny\n" > si; sed -i.bak s/x/z/ si; cat si si.bak; printf "a\tb\n" | sed -n l; seq 3 | sed -n "/2/w sw"; cat sw'; ExpectedOutput: 'z'#10'y'#10'x'#10'y'#10'a\tb$'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'seq 5 | sed 2Q; seq 5 | sed 3q5; echo $?; echo AbC | sed s/b/x/I'; ExpectedOutput: '1'#10'1'#10'2'#10'3'#10'5'#10'AxC'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p ft/a/b; touch ft/a/x.txt ft/a/b/y.txt ft/z.log; find ft -name "*.txt" | sort; find ft -type d | sort'; ExpectedOutput: 'ft/a/b/y.txt'#10'ft/a/x.txt'#10'ft'#10'ft/a'#10'ft/a/b'#10; ExpectedStatus: 0),
+    (Command: 'find ft -maxdepth 1 | sort; find ft -mindepth 2 -type f -name "y*"; find ft \( -name "*.log" -o -iname "X*" \) -print | sort'; ExpectedOutput: 'ft'#10'ft/a'#10'ft/z.log'#10'ft/a/b/y.txt'#10'ft/a/x.txt'#10'ft/z.log'#10; ExpectedStatus: 0),
+    (Command: 'find ft ! -type d -path "*b*"; printf 12345 > ft/s5; find ft -size +3c -size -10c; find ft -empty -name "z*"'; ExpectedOutput: 'ft/a/b/y.txt'#10'ft/s5'#10'ft/z.log'#10; ExpectedStatus: 0),
+    (Command: 'touch -d @1000 ft/z.log; find ft -mtime +1; find ft -name s5 -newer ft/z.log; find ft -name a -prune -o -type f -print | sort'; ExpectedOutput: 'ft/z.log'#10'ft/s5'#10'ft/s5'#10'ft/z.log'#10; ExpectedStatus: 0),
+    (Command: 'find ft -name "*.log" -exec echo got {} \;; find ft -name "*.txt" -exec echo {} + | wc -w; find ft -type f -print -quit | wc -l'; ExpectedOutput: 'got ft/z.log'#10'2'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'find ft/a -name x.txt -delete; ls ft/a; find ft -name s5 -print0 | xargs -0 cat; echo; find nowhere 2>/dev/null; echo $?'; ExpectedOutput: 'b'#10'12345'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'echo a b c | xargs; echo a b c | xargs -n 2 echo x; printf "1\n2\n" | xargs -I {} echo "[{}]"; printf "a b\nc\n" | xargs -L 1 echo -'; ExpectedOutput: 'a b c'#10'x a b'#10'x c'#10'[1]'#10'[2]'#10'- a b'#10'- c'#10; ExpectedStatus: 0),
+    (Command: 'printf "a:b" | xargs -d : echo; echo "\"x y\" z" | xargs -n 1 echo; echo aaa bbb ccc | xargs -s 12 echo; echo q | xargs -P 1 echo'; ExpectedOutput: 'a b'#10'x y'#10'z'#10'aaa'#10'bbb'#10'ccc'#10'q'#10; ExpectedStatus: 0),
+    (Command: 'true | xargs -r echo none; true | xargs echo empty; echo x | xargs false; echo $?; echo x | xargs nosuchcmd 2>/dev/null; echo $?; echo a | xargs -t echo 2>&1'; ExpectedOutput: 'empty'#10'123'#10'127'#10'echo a'#10'a'#10; ExpectedStatus: 0),
+    (Command: 'printf "a\nb\nc\n" > d1; printf "a\nB\nc\nd\n" > d2; diff d1 d2; echo $?; diff -u d1 d2 | tail -n +3'; ExpectedOutput: '2c2'#10'< b'#10'---'#10'> B'#10'3a4'#10'> d'#10'1'#10'@@ -1,3 +1,4 @@'#10' a'#10'-b'#10'+B'#10' c'#10'+d'#10; ExpectedStatus: 0),
+    (Command: 'diff -i d1 d2; diff -q d1 d2; diff d1 d1; echo $?; diff - d1 < d2 | head -n 1; diff d1 nonexist 2>/dev/null; echo $?'; ExpectedOutput: '3a4'#10'> d'#10'Files d1 and d2 differ'#10'0'#10'2c2'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'printf "a  b\n" > w1; printf "a b \n" > w2; diff -b w1 w2 && echo same; printf "ab\n" > w3; diff -w w1 w3 && echo same2; diff w1 w3 > /dev/null; echo $?'; ExpectedOutput: 'same'#10'same2'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'diff -c d1 d2 | tail -n +3'; ExpectedOutput: '***************'#10'*** 1,3 ****'#10'  a'#10'! b'#10'  c'#10'--- 1,4 ----'#10'  a'#10'! B'#10'  c'#10'+ d'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p da db; echo 1 > da/f; echo 2 > db/f; echo only > da/g; diff -r da db; echo $?; diff -rN da db | tail -n 2'; ExpectedOutput: 'diff -r da/f db/f'#10'1c1'#10'< 1'#10'---'#10'> 2'#10'Only in da: g'#10'1'#10'1d0'#10'< only'#10; ExpectedStatus: 0),
+    (Command: 'less lines.txt | head -n 2; seq 3 | more; seq 2 | less -F; more nofile 2>/dev/null; echo $?'; ExpectedOutput: 'one'#10'two'#10'1'#10'2'#10'3'#10'1'#10'2'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'ls /bin/egrep /bin/fgrep /bin/more'; ExpectedOutput: '/bin/egrep'#10'/bin/fgrep'#10'/bin/more'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

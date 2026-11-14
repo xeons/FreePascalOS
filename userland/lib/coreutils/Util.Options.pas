@@ -53,6 +53,9 @@ type
     { Treat "-5" as an operand rather than option 5 (seq, and others
       that take negative numbers). }
     NegativeNumbersAreOperands: Boolean;
+    { Everything from the first operand on is an operand (xargs, and
+      others whose operands are a command with its own options). }
+    StopAtFirstOperand: Boolean;
   end;
 
 const
@@ -106,6 +109,7 @@ begin
   Parser.Operands := PPChar(AllocateZeroedMemory((ArgumentTotal + 1) * SizeOf(PChar)));
   Parser.OperandCount := 0;
   Parser.NegativeNumbersAreOperands := False;
+  Parser.StopAtFirstOperand := False;
 end;
 
 procedure ParseOperandsOnly(out Parser: TOptionParser; Usage: PChar);
@@ -277,6 +281,8 @@ begin
     begin
       { "-" alone conventionally means standard input: an operand. }
       AddOperand(Parser, Text);
+      if Parser.StopAtFirstOperand then
+        Parser.OnlyOperandsRemain := True;
       Continue;
     end;
 
