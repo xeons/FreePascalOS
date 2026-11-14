@@ -307,6 +307,8 @@ begin
       RegionReadable or RegionWritable, RegionKindStack, True);
   end;
   if Result = ErrorNone then
+    Result := AddStackGuard(Process^.AddressSpace, UserStackTop - UserStackReserve);
+  if Result = ErrorNone then
     Result := LoadProgramImage(Process, Startup.KernelPath, MainModule);
   if Result = ErrorNone then
     Result := CollectInitializers(Process, Lists);

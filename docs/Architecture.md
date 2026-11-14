@@ -666,13 +666,17 @@ raises the overflow as the call returns, with the call's result in the
 record's context. Only the thread's own stack reserve is opened this
 way. A frame larger than the reserve (Free Pascal emits no stack probes)
 can jump past it, so its first touch lands below the stack region; a
-fault there - in no region, at or above the stack pointer less the red
-zone, at most 256 MiB below the stack - is taken for a stack overflow
+fault there - in the stack's guard (or in no region), at or above the
+stack pointer less the red zone - is taken for a stack overflow
 too. The reserve is opened and the record goes at its top, as the stack
 pointer is outside the stack; a system call writing into such a frame
-fails (there is no memory) and raises the overflow as it returns. A huge
-frame that reaches into another region below the stack (a thread's stack
-next to other memory) cannot be told from a valid access. Once the thread's
+fails (there is no memory) and raises the overflow as it returns. So
+that such a frame never reaches other memory, every stack - the main
+thread's and each thread's - has a 256 MiB guard below it: address
+space recorded as a region of kind `RegionKindStackGuard`, so nothing is
+ever placed there, but never mapped, never valid for the kernel's
+accesses to user memory and free of cost. A thread's guard goes with its
+stack. Once the thread's
 stack pointer is 64 KiB above the reserve again - checked at every system
 call, interrupt return and exception - its pages are given back and it is
 armed for the next overflow.

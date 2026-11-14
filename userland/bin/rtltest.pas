@@ -588,6 +588,47 @@ begin
   FCaught := ExceptionClassOf(@OverflowStack);
 end;
 
+const
+  { A thread stack larger than any gap the earlier tests left, so it goes
+    at the end of the allocation area - right after NeighbourSize bytes
+    allocated just before - and a frame a little larger than the stack. }
+  GiantStackSize = 64 * 1024 * 1024;
+  GiantFrameSize = 65 * 1024 * 1024;
+  NeighbourSize = 32 * 1024 * 1024;
+
+{ Touches the bottom of a frame larger than a giant thread stack: 1 MiB
+  below the stack, where (without the guard below every stack) the
+  neighbouring allocation would be. }
+function UseGiantFrame(Value: LongInt): LongInt;
+var
+  Giant: array[0..GiantFrameSize - 1] of Byte;
+begin
+  Giant[0] := Byte(Value);
+  Result := Giant[0];
+end;
+
+procedure OverflowWithGiantFrame;
+begin
+  UseGiantFrame(1);
+end;
+
+type
+  { Runs a frame larger than its own stack: it lands in the guard below
+    the stack, never in the memory allocated just before the stack. }
+  THugeFrameThread = class(TThread)
+  private
+    FCaught: string;
+  protected
+    procedure Execute; override;
+  public
+    property Caught: string read FCaught;
+  end;
+
+procedure THugeFrameThread.Execute;
+begin
+  FCaught := ExceptionClassOf(@OverflowWithGiantFrame);
+end;
+
 { Clears EAX, then runs an invalid instruction (at offset 2). }
 function ClearThenFault: QWord; assembler; nostackframe;
 asm
@@ -617,6 +658,8 @@ end;
 procedure TestStackOverflowAndContinuing;
 var
   Overflowing: TOverflowingThread;
+  HugeFrame: THugeFrameThread;
+  Neighbour: Int64;
 begin
   Check(ExceptionClassOf(@OverflowStack) = 'EStackOverflow', 'a stack overflow raises EStackOverflow');
   { The reserve is armed again at the next system call. }
@@ -636,6 +679,13 @@ begin
     'a system call into a frame larger than the stack raises EStackOverflow');
   FileClose(ZeroDevice);
   Sleep(1);
+  Neighbour := SystemCall(CallAllocateMemory, NeighbourSize, 0, 0, 0, 0, 0);
+  HugeFrame := THugeFrameThread.Create(False, GiantStackSize);
+  HugeFrame.WaitFor;
+  Check(HugeFrame.Caught = 'EStackOverflow', 'a frame larger than a thread''s stack lands in its guard (got ' +
+    HugeFrame.Caught + ')');
+  HugeFrame.Free;
+  SystemCall(CallFreeMemory, QWord(Neighbour), 0, 0, 0, 0, 0);
   Overflowing := TOverflowingThread.Create(False);
   Overflowing.WaitFor;
   Check(Overflowing.Caught = 'EStackOverflow', 'a stack overflow in a thread');

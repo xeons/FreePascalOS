@@ -25,6 +25,12 @@
   reserve is armed again (RearmStackReserve) once the thread's stack is
   well clear of it.
 
+  Below every stack lies a guard (StackGuardSize of address space, a
+  region of kind RegionKindStackGuard that is never mapped and costs no
+  memory), so nothing else is ever placed there: a frame too large for
+  the reserve, up to the guard's size, lands in the guard - where it is
+  taken for a stack overflow - and never in other memory.
+
   The kernel reads and writes user memory either directly (for the
   current process, after ValidateUserRange) or through the physical
   memory window (WriteIntoAddressSpace and friends), which works for any
@@ -54,6 +60,7 @@ const
     pointer must be before a used reserve is armed again. }
   StackReserveSize = 64 * 1024;
   StackReserveRearmDistance = 64 * 1024;
+  StackGuardSize = QWord(256) * 1024 * 1024;
 
   RegionReadable = LongWord(1) shl 0;
   RegionWritable = LongWord(1) shl 1;
@@ -62,7 +69,9 @@ const
 type
   TRegionKind = (RegionKindImage, RegionKindStack, RegionKindAllocation,
     { A thread's thread control block and static thread-local storage. }
-    RegionKindThreadData);
+    RegionKindThreadData,
+    { Address space below a stack that is never mapped. }
+    RegionKindStackGuard);
 
   TUserRegion = record
     Start: QWord;
@@ -129,8 +138,12 @@ function OpenStackReserveOfRegion(Space: PAddressSpace; StackStart: QWord): Bool
 { The first address above the reserve of the stack region starting at
   StackStart, or 0 if there is no such region. }
 function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
-{ True if Address lies in any region. }
-function AddressIsInRegion(Space: PAddressSpace; Address: QWord): Boolean;
+{ True if Address lies in a region other than a stack guard. }
+function AddressIsInUsableRegion(Space: PAddressSpace; Address: QWord): Boolean;
+{ Adds the guard below the stack region starting at StackStart (the
+  main thread's; thread stacks get theirs with
+  AllocateGuardedUserMemory). }
+function AddStackGuard(Space: PAddressSpace; StackStart: QWord): LongInt;
 { Maps the shared page Physical at Address (taking a reference to it):
   read-only, or copy on write if Attributes include RegionWritable. }
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
@@ -330,6 +343,9 @@ end;
 
 { Finds room for GuardBytes + Length and adds a region for the upper
   Length bytes. }
+function AddStackGuardLocked(Space: PAddressSpace; StackStart: QWord): LongInt; forward;
+procedure RemoveRegionAtLocked(Space: PAddressSpace; Index: Integer); forward;
+
 function AllocateWithGuard(Space: PAddressSpace; Length, GuardBytes: QWord; Kind: TRegionKind;
   out Start: QWord): LongInt;
 var
@@ -346,6 +362,12 @@ begin
   begin
     Start := Start + GuardBytes;
     Result := AddRegionLocked(Space, Start, Length, RegionReadable or RegionWritable, Kind, True);
+    if (Result = ErrorNone) and (Kind = RegionKindStack) then
+    begin
+      Result := AddStackGuardLocked(Space, Start);
+      if Result <> ErrorNone then
+        RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+    end;
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
@@ -358,15 +380,33 @@ end;
 function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TRegionKind;
   out Start: QWord): LongInt;
 begin
-  Result := AllocateWithGuard(Space, Length, PageSize, Kind, Start);
+  if Kind = RegionKindStack then
+    Result := AllocateWithGuard(Space, Length, StackGuardSize, Kind, Start)
+  else
+    Result := AllocateWithGuard(Space, Length, PageSize, Kind, Start);
 end;
 
 { Removes the region starting at Start; AnyKind allows other kinds than
   run time allocations. }
+{ Gives back the pages of region Index and takes it out of the list. }
+procedure RemoveRegionAtLocked(Space: PAddressSpace; Index: Integer);
+begin
+  if Index < 0 then
+    Exit;
+  ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
+  while Index + 1 < Space^.RegionCount do
+  begin
+    Space^.Regions[Index] := Space^.Regions[Index + 1];
+    Inc(Index);
+  end;
+  Dec(Space^.RegionCount);
+end;
+
 function RemoveRegion(Space: PAddressSpace; Start: QWord; AnyKind: Boolean): LongInt;
 var
   Index: Integer;
   PreviousLevel: TPriorityLevel;
+  IsStack: Boolean;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Index := FindRegionIndex(Space, Start);
@@ -377,13 +417,16 @@ begin
     Exit(ErrorInvalidArgument);
   end;
 
-  ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
-  while Index + 1 < Space^.RegionCount do
+  IsStack := Space^.Regions[Index].Kind = RegionKindStack;
+  RemoveRegionAtLocked(Space, Index);
+  { A stack's guard goes with it. }
+  if IsStack and (Start >= StackGuardSize) then
   begin
-    Space^.Regions[Index] := Space^.Regions[Index + 1];
-    Inc(Index);
+    Index := FindRegionIndex(Space, Start - StackGuardSize);
+    if (Index >= 0) and (Space^.Regions[Index].Kind = RegionKindStackGuard) and
+       (Space^.Regions[Index].Start + Space^.Regions[Index].Length = Start) then
+      RemoveRegionAtLocked(Space, Index);
   end;
-  Dec(Space^.RegionCount);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
   Result := ErrorNone;
 end;
@@ -603,7 +646,8 @@ begin
   while Position < Finish do
   begin
     Index := FindRegionIndex(Space, Position);
-    if (Index < 0) or (NeedWrite and ((Space^.Regions[Index].Attributes and RegionWritable) = 0)) then
+    if (Index < 0) or (Space^.Regions[Index].Kind = RegionKindStackGuard) or
+       (NeedWrite and ((Space^.Regions[Index].Attributes and RegionWritable) = 0)) then
     begin
       Result := False;
       Break;
@@ -634,7 +678,7 @@ begin
   if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
   begin
     Index := FindRegionIndex(Space, Address);
-    if Index < 0 then
+    if (Index < 0) or (Space^.Regions[Index].Kind = RegionKindStackGuard) then
       Exit(ErrorBadAddress);
     Result := CommitPageLocked(Space, Address, Space^.Regions[Index].Attributes);
     if Result <> ErrorNone then
@@ -794,12 +838,31 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
-function AddressIsInRegion(Space: PAddressSpace; Address: QWord): Boolean;
+function AddressIsInUsableRegion(Space: PAddressSpace; Address: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Index := FindRegionIndex(Space, Address);
+  Result := (Index >= 0) and (Space^.Regions[Index].Kind <> RegionKindStackGuard);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function AddStackGuardLocked(Space: PAddressSpace; StackStart: QWord): LongInt;
+begin
+  if StackStart < StackGuardSize + PageSize then
+    Exit(ErrorInvalidArgument);
+  Result := AddRegionLocked(Space, StackStart - StackGuardSize, StackGuardSize, 0,
+    RegionKindStackGuard, False);
+end;
+
+function AddStackGuard(Space: PAddressSpace; StackStart: QWord): LongInt;
 var
   PreviousLevel: TPriorityLevel;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Result := FindRegionIndex(Space, Address) >= 0;
+  Result := AddStackGuardLocked(Space, StackStart);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 

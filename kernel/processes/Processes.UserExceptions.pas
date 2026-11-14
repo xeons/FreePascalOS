@@ -113,9 +113,9 @@ const
   PageFaultInstructionFetch = 16;
 
   RedZoneSize = 128;
-  { A stack access far below the stack (a huge frame) is still taken for
-    one if it is at most this far below the stack region. }
-  LargeFrameReach = QWord(256) * 1024 * 1024;
+  { A stack access below the stack (a huge frame) is taken for one if it
+    lands in the stack's guard. }
+  LargeFrameReach = StackGuardSize;
   { Flags the dispatcher must not start with: trap, direction, alignment
     check. Interrupts stay enabled. }
   RflagsTrap = QWord(1) shl 8;
@@ -279,7 +279,7 @@ begin
   Space := CurrentProcess^.AddressSpace;
   if (FaultAddress >= Thread^.UserStackStart) or
      (FaultAddress + LargeFrameReach < Thread^.UserStackStart) or
-     (FaultAddress + RedZoneSize < StackPointer) or AddressIsInRegion(Space, FaultAddress) then
+     (FaultAddress + RedZoneSize < StackPointer) or AddressIsInUsableRegion(Space, FaultAddress) then
     Exit;
   Result := OpenStackReserveOfRegion(Space, Thread^.UserStackStart);
   if Result then

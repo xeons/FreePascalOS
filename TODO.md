@@ -186,8 +186,8 @@ how the existing pieces fit together.
       stack overflow is raised as it returns
 - [x] Frames larger than the stack reserve: a stack access below the stack is
       taken for a stack overflow (record at the top of the opened reserve)
-- [ ] A guard gap below thread stacks large enough that a huge frame cannot
-      reach another region (or compiler emitted stack probes)
+- [x] A 256 MiB guard below every stack, so a huge frame never reaches other
+      memory (frames beyond that would need compiler emitted stack probes)
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
