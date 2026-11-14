@@ -4,7 +4,7 @@
   Used as the kernel debug output channel. It works from the very first
   instruction of the kernel, before memory management or interrupts exist.
   Output always polls the hardware; input can raise an interrupt once a
-  handler is connected (see Drivers.SerialInput).
+  handler is connected (see Drivers.SerialDevice).
 }
 unit Hal.SerialPort;
 

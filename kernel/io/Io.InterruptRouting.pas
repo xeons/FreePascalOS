@@ -6,6 +6,12 @@
   0xFEC00000 is assumed). A driver then asks for its interrupt; it gets
   one of the device vectors (0x30-0x3F) and its handler runs there, at
   device level, on the boot processor.
+
+  A PCI device can instead signal its interrupt by writing a message (a
+  value to an address) that the processor's local APIC receives
+  directly, with no I/O APIC in between. ConnectMessageInterrupt gives
+  the address and value to program into the device
+  (Io.PciMessageInterrupts).
 }
 unit Io.InterruptRouting;
 
@@ -16,12 +22,24 @@ interface
 uses
   Kernel.Interrupts;
 
+type
+  { What a device writes, and where, to raise its interrupt. }
+  TInterruptMessage = record
+    Address: QWord;
+    Data: LongWord;
+  end;
+
 procedure InitializeInterruptRouting;
 function InterruptRoutingIsAvailable: Boolean;
 
 { Connects ISA IRQ Irq (0-15) to Handler. Returns False if no vector is
   free or the IRQ cannot be routed. }
 function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
+
+{ Connects a message signalled interrupt to Handler. Returns False if no
+  vector is free. }
+function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
+  out Message: TInterruptMessage): Boolean;
 
 implementation
 
@@ -36,6 +54,10 @@ uses
 
 const
   StandardIoApicAddress = $FEC00000;
+  { Messages written into this window reach a local APIC; bits 12-19
+    pick which one. The data is the vector (fixed delivery, edge). }
+  MessageAddressBase = $FEE00000;
+  MessageDestinationShift = 12;
   IoApicRegisterWindowSize = $1000;
 
 var
@@ -103,6 +125,31 @@ begin
     Exit(False);
   end;
   Inc(NextVector);
+  Result := True;
+end;
+
+function AllocateVector(Handler: TInterruptHandler; Context: Pointer; out Vector: Byte): Boolean;
+begin
+  if NextVector >= DeviceInterruptVectorFirst + DeviceInterruptVectorCount then
+    Exit(False);
+  Vector := Byte(NextVector);
+  if not RegisterInterruptHandler(Vector, Handler, Context) then
+    Exit(False);
+  Inc(NextVector);
+  Result := True;
+end;
+
+function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
+  out Message: TInterruptMessage): Boolean;
+var
+  Vector: Byte;
+begin
+  Message.Address := 0;
+  Message.Data := 0;
+  if not AllocateVector(Handler, Context, Vector) then
+    Exit(False);
+  Message.Address := MessageAddressBase or (QWord(LocalApicId and $FF) shl MessageDestinationShift);
+  Message.Data := Vector;
   Result := True;
 end;
 

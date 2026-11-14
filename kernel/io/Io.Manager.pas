@@ -5,20 +5,41 @@
   kind of request (open, close, read, write, control). A driver creates
   device objects, each with a name, an owner and permission bits like a
   file, a kind (character or block) and an extension: memory the driver
-  uses for that device's own state. Programs see every device under
-  /dev, by name (Processes.FileCalls).
+  uses for that device's own state. Programs see every named device
+  under /dev (Processes.FileCalls); a device created without a name is
+  only reachable from inside the kernel, like the disk controller ports
+  below the disk devices.
 
-  Opening a device gives a device file object, which holds the device and
-  what belongs to that one open: the position (for block devices) and a
-  context pointer of the driver's. Every operation is described by a
-  request (TIoRequest) handed to the device's driver through CallDriver;
-  the driver fills in the result (Information: bytes moved, or the
-  control result) and returns an Abi error code. Buffers in requests are
-  always kernel memory.
+  Every operation is described by a request (TIoRequest) handed to the
+  device's driver through CallDriver. Buffers in requests are always
+  kernel memory. A dispatch routine either
 
-  Requests complete synchronously: the dispatch routine returns when the
-  work is done, and may wait (alertably, so a program can be ended or
-  stopped while it waits). Devices are never removed.
+    * finishes the request and returns its status (ErrorNone or an Abi
+      error code), having filled in Information (bytes moved, or the
+      result of a control request), or
+    * returns StatusPending, keeps the request, and finishes it later -
+      usually from a deferred call after its device interrupted - by
+      calling CompleteRequest.
+
+  Either way the request completes exactly once: CallDriver completes a
+  request whose dispatch routine returned anything but StatusPending.
+  Completing runs the request's completion routine, if it has one, or
+  signals its completion event. CallDriverAndWait does the usual thing:
+  it sends a request and waits until it completes.
+
+  A driver that holds requests until something happens (input arriving)
+  keeps them in a request queue (TRequestQueue). Requests waiting there
+  can be cancelled: CancelRequest takes a queued request out of its queue
+  and completes it with ErrorInterrupted. That is how a program blocked
+  reading a device is ended or stopped.
+
+  Dispatch routines are called at PassiveLevel, except that read
+  routines of input devices (Io.InputDevice) may also be called at
+  DispatchLevel, from completion routines. Completion routines run at
+  whatever level the request completed at, up to DispatchLevel, so they
+  may only take spin locks and queue deferred calls.
+
+  Devices are never removed.
 }
 unit Io.Manager;
 
@@ -28,11 +49,17 @@ unit Io.Manager;
 interface
 
 uses
-  Objects.Manager;
+  Runtime.LinkedList,
+  Objects.Manager,
+  Kernel.Events;
 
 const
   DeviceNameLength = 32;
   MaximumDevices = 128;
+
+  { Returned by a dispatch routine that will complete the request later.
+    Never seen outside the kernel; Abi error codes are all positive. }
+  StatusPending = -1;
 
 type
   TIoFunction = (IoFunctionOpen, IoFunctionClose, IoFunctionRead, IoFunctionWrite,
@@ -43,8 +70,11 @@ type
   PDriverObject = ^TDriverObject;
   PDeviceObject = ^TDeviceObject;
   PDeviceFile = ^TDeviceFile;
-
   PIoRequest = ^TIoRequest;
+
+  { Runs once when Request completes; see the unit comment for where. }
+  TCompletionRoutine = procedure(Request: PIoRequest);
+
   TIoRequest = record
     Operation: TIoFunction;
     Device: PDeviceObject;
@@ -60,9 +90,26 @@ type
     ControlArgument: QWord;
     { Set by the driver: bytes moved, or the result of a control request. }
     Information: Int64;
+
+    { Set when the request completes: ErrorNone or an Abi error code. }
+    Status: LongInt;
+    { Whoever sends the request sets one of these (or neither). }
+    CompletionRoutine: TCompletionRoutine;
+    CompletionContext: Pointer;
+    CompletionEvent: PEvent;
+
+    { Owned by the request queue the request waits in. }
+    QueueLink: TListEntry;
+    IsQueued: Boolean;
+    CancelRequested: Boolean;
   end;
 
-  { Returns ErrorNone or an Abi error code. }
+  { Requests a driver holds until it can finish them. }
+  TRequestQueue = record
+    Requests: TListEntry;
+  end;
+
+  { Returns ErrorNone, an Abi error code or StatusPending. }
   TDispatchRoutine = function(Device: PDeviceObject; var Request: TIoRequest): LongInt;
   TDispatchTable = array[TIoFunction] of TDispatchRoutine;
 
@@ -74,6 +121,7 @@ type
   end;
 
   TDeviceObject = record
+    { Empty for a device that is not listed under /dev. }
     Name: array[0..DeviceNameLength - 1] of Char;
     Driver: PDriverObject;
     Kind: TDeviceKind;
@@ -87,6 +135,10 @@ type
     Mode: LongWord;
     { Block devices: their size. }
     SizeInBytes: QWord;
+    { Only one open at a time (the input devices, which the console
+      holds open). }
+    IsExclusive: Boolean;
+    OpenCount: LongWord;
     { The driver's state for this device. }
     Extension: Pointer;
   end;
@@ -104,37 +156,43 @@ type
     ReadDirectoryIndex: LongWord;
   end;
 
-var
-  DeviceFileObjectType: TObjectType;
-
 procedure InitializeIoManager;
 
 function CreateDriver(Name: PChar; const Dispatch: TDispatchTable): PDriverObject;
 { Creates a device of Driver with ExtensionSize zeroed bytes of extension,
-  owned by root. Returns nil if the name is taken or memory is short. }
+  owned by root. A nil Name makes a device that is not listed under /dev.
+  Returns nil if the name is taken or memory is short. }
 function CreateDevice(Driver: PDriverObject; Name: PChar; Kind: TDeviceKind; Mode: LongWord;
   ExtensionSize: QWord): PDeviceObject;
 
+{ Named devices only. }
 function FindDevice(Name: PChar): PDeviceObject;
 function DeviceCount: Integer;
 { nil past the end. }
 function DeviceAt(Index: Integer): PDeviceObject;
 
-{ Sends Request to Device's driver. }
+{ Sends Request to Device's driver. Returns the request's status, or
+  StatusPending if it completes later. The completion routine or event
+  must be set beforehand. }
 function CallDriver(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+{ Sends Request and waits until it completes; returns its status. An
+  alertable wait that is alerted cancels the request (if it is still
+  queued) and then waits for it to complete. }
+function CallDriverAndWait(Device: PDeviceObject; var Request: TIoRequest;
+  Alertable: Boolean): LongInt;
+{ For drivers: finishes a request they returned StatusPending for. }
+procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
 
-{ Opens Device; the device file has one reference for the caller. }
-function OpenDevice(Device: PDeviceObject; Flags: LongWord; out OpenFile: PDeviceFile): LongInt;
-{ Opens the /dev directory for listing. }
-function OpenDeviceDirectory(out OpenFile: PDeviceFile): LongInt;
-
-{ Return the bytes moved or the control result, or minus an Abi error. }
-function ReadDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
-function WriteDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
-function ControlDevice(OpenFile: PDeviceFile; Code: QWord; Argument: QWord): Int64;
-{ Block devices only; Origin is an Abi Seek* value. Returns the new
-  position or minus an Abi error. }
-function SeekDevice(OpenFile: PDeviceFile; Offset: Int64; Origin: QWord): Int64;
+procedure InitializeRequestQueue(out Queue: TRequestQueue);
+{ Adds Request at the end of Queue. Returns False, and leaves it out, if
+  the request was already cancelled; the driver then fails it with
+  ErrorInterrupted. }
+function QueueRequest(var Queue: TRequestQueue; var Request: TIoRequest): Boolean;
+{ Takes the oldest request out of Queue; nil if it is empty. }
+function TakeQueuedRequest(var Queue: TRequestQueue): PIoRequest;
+{ Completes Request with ErrorInterrupted if it is waiting in a queue;
+  otherwise marks it, so that queueing it later fails. }
+procedure CancelRequest(var Request: TIoRequest);
 
 implementation
 
@@ -143,6 +201,8 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Memory.KernelHeap,
+  Kernel.Threads,
+  Kernel.Scheduler,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Panic;
@@ -153,29 +213,19 @@ var
   RegistryLock: TSpinLock;
   Devices: array[0..MaximumDevices - 1] of PDeviceObject;
   DeviceTotal: Integer = 0;
-
-{ Closing the last handle to an open device tells its driver. }
-procedure DeleteDeviceFile(ObjectBody: Pointer);
-var
-  OpenFile: PDeviceFile;
-  Request: TIoRequest;
-begin
-  OpenFile := PDeviceFile(ObjectBody);
-  if OpenFile^.Device = nil then
-    Exit;
-  FillMemory(@Request, SizeOf(Request), 0);
-  Request.Operation := IoFunctionClose;
-  Request.OpenFile := OpenFile;
-  CallDriver(OpenFile^.Device, Request);
-end;
+  { Guards every request queue, so that cancelling needs no knowledge
+    of which queue a request is in. }
+  QueueLock: TSpinLock;
 
 procedure InitializeIoManager;
 begin
   InitializeSpinLock(RegistryLock);
+  InitializeSpinLock(QueueLock);
   RegisterObjectType(DriverObjectType, 'Driver', SizeOf(TDriverObject), nil);
   RegisterObjectType(DeviceObjectType, 'Device', SizeOf(TDeviceObject), nil);
-  RegisterObjectType(DeviceFileObjectType, 'DeviceFile', SizeOf(TDeviceFile), @DeleteDeviceFile);
 end;
+
+{ --- Drivers and devices ------------------------------------------------ }
 
 function CreateDriver(Name: PChar; const Dispatch: TDispatchTable): PDriverObject;
 begin
@@ -196,15 +246,30 @@ begin
   Result := nil;
 end;
 
-function CreateDevice(Driver: PDriverObject; Name: PChar; Kind: TDeviceKind; Mode: LongWord;
-  ExtensionSize: QWord): PDeviceObject;
+{ Adds a named device to the list. False if the name is taken or the
+  list is full. }
+function RegisterDevice(Device: PDeviceObject): Boolean;
 var
   PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Result := (DeviceTotal < MaximumDevices) and (FindDeviceLocked(@Device^.Name[0]) = nil);
+  if Result then
+  begin
+    Devices[DeviceTotal] := Device;
+    Inc(DeviceTotal);
+  end;
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
+end;
+
+function CreateDevice(Driver: PDriverObject; Name: PChar; Kind: TDeviceKind; Mode: LongWord;
+  ExtensionSize: QWord): PDeviceObject;
 begin
   Result := PDeviceObject(CreateObject(DeviceObjectType, nil));
   if Result = nil then
     Exit;
-  CopyText(@Result^.Name[0], Name, DeviceNameLength);
+  if Name <> nil then
+    CopyText(@Result^.Name[0], Name, DeviceNameLength);
   Result^.Driver := Driver;
   Result^.Kind := Kind;
   Result^.ReportedHandleKind := HandleKindDevice;
@@ -219,17 +284,12 @@ begin
     end;
   end;
 
-  PreviousLevel := AcquireSpinLock(RegistryLock);
-  if (DeviceTotal = MaximumDevices) or (FindDeviceLocked(Name) <> nil) then
+  if (Name <> nil) and not RegisterDevice(Result) then
   begin
-    ReleaseSpinLock(RegistryLock, PreviousLevel);
     FreeKernelMemory(Result^.Extension);
     DereferenceObject(Result);
     Exit(nil);
   end;
-  Devices[DeviceTotal] := Result;
-  Inc(DeviceTotal);
-  ReleaseSpinLock(RegistryLock, PreviousLevel);
 end;
 
 function FindDevice(Name: PChar): PDeviceObject;
@@ -253,12 +313,28 @@ begin
   Result := Devices[Index];
 end;
 
+{ --- Sending and completing requests ------------------------------------- }
+
+procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
+begin
+  Request.Status := Status;
+  { The sender may reuse or free the request as soon as it learns of the
+    completion, so nothing touches it after that. }
+  if Assigned(Request.CompletionRoutine) then
+    Request.CompletionRoutine(@Request)
+  else if Request.CompletionEvent <> nil then
+    SignalEvent(Request.CompletionEvent^);
+end;
+
 function CallDriver(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Routine: TDispatchRoutine;
 begin
   Request.Device := Device;
   Request.Information := 0;
+  Request.Status := StatusPending;
+  Request.IsQueued := False;
+  Request.CancelRequested := False;
   Routine := Device^.Driver^.Dispatch[Request.Operation];
   if Assigned(Routine) then
     Result := Routine(Device, Request)
@@ -266,106 +342,87 @@ begin
     Result := ErrorNone
   else
     Result := ErrorUnsupported;
+  if Result <> StatusPending then
+    CompleteRequest(Request, Result);
 end;
 
-function OpenDevice(Device: PDeviceObject; Flags: LongWord; out OpenFile: PDeviceFile): LongInt;
+function CallDriverAndWait(Device: PDeviceObject; var Request: TIoRequest;
+  Alertable: Boolean): LongInt;
 var
-  Request: TIoRequest;
+  Completed: TEvent;
 begin
-  OpenFile := PDeviceFile(CreateObject(DeviceFileObjectType, nil));
-  if OpenFile = nil then
-    Exit(ErrorOutOfMemory);
-  OpenFile^.OpenFlags := Flags;
-  FillMemory(@Request, SizeOf(Request), 0);
-  Request.Operation := IoFunctionOpen;
-  Request.OpenFile := OpenFile;
-  Request.OpenFlags := Flags;
-  Result := CallDriver(Device, Request);
-  if Result <> ErrorNone then
+  InitializeEvent(Completed, EventKindNotification, False);
+  Request.CompletionRoutine := nil;
+  Request.CompletionEvent := @Completed;
+  if CallDriver(Device, Request) = StatusPending then
+    if WaitForEventWithOptions(Completed, InfiniteTimeout, Alertable) = WaitAlerted then
+    begin
+      CancelRequest(Request);
+      { Cancelled or not, the request completes; it lives on this stack. }
+      WaitForEvent(Completed);
+    end;
+  Result := Request.Status;
+end;
+
+{ --- Request queues ------------------------------------------------------- }
+
+function RequestOfQueueLink(Entry: PListEntry): PIoRequest;
+begin
+  Result := PIoRequest(ContainingRecord(Entry, FieldOffset(PIoRequest(nil)^.QueueLink)));
+end;
+
+procedure InitializeRequestQueue(out Queue: TRequestQueue);
+begin
+  InitializeListHead(Queue.Requests);
+end;
+
+function QueueRequest(var Queue: TRequestQueue; var Request: TIoRequest): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(QueueLock);
+  Result := not Request.CancelRequested;
+  if Result then
   begin
-    { Not opened, so the driver must not see a close. }
-    DereferenceObject(OpenFile);
-    OpenFile := nil;
-    Exit;
+    InsertAtTail(Queue.Requests, @Request.QueueLink);
+    Request.IsQueued := True;
   end;
-  OpenFile^.Device := Device;
+  ReleaseSpinLock(QueueLock, PreviousLevel);
 end;
 
-function OpenDeviceDirectory(out OpenFile: PDeviceFile): LongInt;
-begin
-  OpenFile := PDeviceFile(CreateObject(DeviceFileObjectType, nil));
-  if OpenFile = nil then
-    Exit(ErrorOutOfMemory);
-  OpenFile^.IsDirectory := True;
-  Result := ErrorNone;
-end;
-
-function Transfer(OpenFile: PDeviceFile; Operation: TIoFunction; Buffer: Pointer; Length: QWord): Int64;
+function TakeQueuedRequest(var Queue: TRequestQueue): PIoRequest;
 var
-  Request: TIoRequest;
-  Error: LongInt;
+  PreviousLevel: TPriorityLevel;
+  Entry: PListEntry;
 begin
-  if OpenFile^.IsDirectory then
-    Exit(-Int64(ErrorIsDirectory));
-  FillMemory(@Request, SizeOf(Request), 0);
-  Request.Operation := Operation;
-  Request.OpenFile := OpenFile;
-  Request.Buffer := Buffer;
-  Request.Length := Length;
-  Request.Offset := OpenFile^.Position;
-  Error := CallDriver(OpenFile^.Device, Request);
-  if Error <> ErrorNone then
-    Exit(-Int64(Error));
-  if OpenFile^.Device^.Kind = DeviceKindBlock then
-    OpenFile^.Position := OpenFile^.Position + QWord(Request.Information);
-  Result := Request.Information;
-end;
-
-function ReadDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
-begin
-  Result := Transfer(OpenFile, IoFunctionRead, Buffer, Length);
-end;
-
-function WriteDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
-begin
-  Result := Transfer(OpenFile, IoFunctionWrite, Buffer, Length);
-end;
-
-function ControlDevice(OpenFile: PDeviceFile; Code: QWord; Argument: QWord): Int64;
-var
-  Request: TIoRequest;
-  Error: LongInt;
-begin
-  if OpenFile^.IsDirectory then
-    Exit(-Int64(ErrorUnsupported));
-  FillMemory(@Request, SizeOf(Request), 0);
-  Request.Operation := IoFunctionControl;
-  Request.OpenFile := OpenFile;
-  Request.ControlCode := Code;
-  Request.ControlArgument := Argument;
-  Error := CallDriver(OpenFile^.Device, Request);
-  if Error <> ErrorNone then
-    Exit(-Int64(Error));
-  Result := Request.Information;
-end;
-
-function SeekDevice(OpenFile: PDeviceFile; Offset: Int64; Origin: QWord): Int64;
-var
-  Base: Int64;
-begin
-  if OpenFile^.IsDirectory or (OpenFile^.Device^.Kind <> DeviceKindBlock) then
-    Exit(-Int64(ErrorUnsupported));
-  case Origin of
-    SeekFromStart: Base := 0;
-    SeekFromCurrent: Base := Int64(OpenFile^.Position);
-    SeekFromEnd: Base := Int64(OpenFile^.Device^.SizeInBytes);
-  else
-    Exit(-Int64(ErrorInvalidArgument));
+  PreviousLevel := AcquireSpinLock(QueueLock);
+  Entry := RemoveHeadEntry(Queue.Requests);
+  Result := nil;
+  if Entry <> nil then
+  begin
+    Result := RequestOfQueueLink(Entry);
+    Result^.IsQueued := False;
   end;
-  if Base + Offset < 0 then
-    Exit(-Int64(ErrorInvalidArgument));
-  OpenFile^.Position := QWord(Base + Offset);
-  Result := Int64(OpenFile^.Position);
+  ReleaseSpinLock(QueueLock, PreviousLevel);
+end;
+
+procedure CancelRequest(var Request: TIoRequest);
+var
+  PreviousLevel: TPriorityLevel;
+  WasQueued: Boolean;
+begin
+  PreviousLevel := AcquireSpinLock(QueueLock);
+  Request.CancelRequested := True;
+  WasQueued := Request.IsQueued;
+  if WasQueued then
+  begin
+    RemoveListEntry(@Request.QueueLink);
+    Request.IsQueued := False;
+  end;
+  ReleaseSpinLock(QueueLock, PreviousLevel);
+  { Out of the queue, so the driver can no longer complete it. }
+  if WasQueued then
+    CompleteRequest(Request, ErrorInterrupted);
 end;
 
 end.

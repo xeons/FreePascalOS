@@ -48,7 +48,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..272] of TCommandTest = (
+  CommandTests: array[0..273] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -368,6 +368,7 @@ const
     (Command: 'dd if=/dev/zero of=/dev/full count=1 2>/dev/null; echo $?; test "$(ls /dev | grep -c "^disk")" -gt 0 && echo disks; ls /dev | grep -x -e null -e tty -e random'; ExpectedOutput: '1'#10'disks'#10'null'#10'random'#10'tty'#10; ExpectedStatus: 0),
     (Command: 'test -b /dev/disk1p1 && stat -c "%F %a" /dev/disk1p1; dd if=/dev/disk1p1 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk1p1 bs=1 skip=54 count=5 2>/dev/null'; ExpectedOutput: 'block special file 600'#10'512'#10'FAT12'; ExpectedStatus: 0),
     (Command: 'dd if=/dev/zero of=/dev/disk1p1 count=1 2>/dev/null; echo $?; su user -c "head -c 1 /dev/disk1p1" 2>/dev/null; echo $?; find /dev -type b -name "disk1p1"'; ExpectedOutput: '1'#10'1'#10'/dev/disk1p1'#10; ExpectedStatus: 0),
+    (Command: 'ls /dev | grep -x -e keyboard -e serial0; stat -c "%F %a" /dev/keyboard; cat /dev/keyboard 2>/dev/null; echo $?; ls /dev | grep ahci || echo hidden'; ExpectedOutput: 'keyboard'#10'serial0'#10'character special file 600'#10'1'#10'hidden'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

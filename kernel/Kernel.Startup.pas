@@ -60,6 +60,8 @@ uses
   Processes.Init,
   Io.Console,
   Io.Manager,
+  Io.DeviceFiles,
+  Kernel.IoSelfTest,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
   Io.Pipes,
@@ -160,6 +162,7 @@ begin
   InitializeFileObjects;
   InitializeConsole;
   InitializeIoManager;
+  InitializeDeviceFiles;
   InitializeMemoryDevices;
   InitializeConsoleDevice;
   InitializePipes;
@@ -191,6 +194,7 @@ begin
   StartConsoleInterruptHandler;
 
   RunKernelSelfTests;
+  RunIoSelfTests;
   RunFileSystemSelfTests;
   RunFileSystemWriteTests;
   WriteBlockCacheSummary;

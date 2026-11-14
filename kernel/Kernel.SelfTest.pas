@@ -14,6 +14,11 @@ interface
 
 procedure RunKernelSelfTests;
 
+{ For other self tests: report a passed test, or stop the system with a
+  panic naming the failed check. }
+procedure ReportPassed(TestName: PChar);
+procedure Check(Condition: Boolean; Description: PChar);
+
 implementation
 
 uses

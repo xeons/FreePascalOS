@@ -6,12 +6,17 @@
   Block devices are objects named "disk0", "disk0p1" and so on, and are
   also kept in a list so they can be enumerated.
 
-  A storage driver creates a device with CreateBlockDevice, fills in its
-  geometry and read/write routines, and calls RegisterBlockDevice. A
-  partition device has no routines of its own: its requests are shifted
-  by the partition start and passed to the parent device.
+  A storage driver creates a device object (Io.Manager) for each disk -
+  one without a name, since programs reach disks through the disk
+  devices (Drivers.DiskDevices) - then a block device with
+  CreateBlockDevice, fills in its geometry and that device object, and
+  calls RegisterBlockDevice. Reading and writing blocks sends read and
+  write requests to the device object, with Offset and Length in bytes
+  (always whole blocks), and waits for them to complete. A partition
+  device has no device object of its own: its requests are shifted by
+  the partition start and passed to the parent device.
 
-  ReadBlocks and WriteBlocks may block, so they must be called at
+  ReadBlocks and WriteBlocks wait, so they must be called at
   PassiveLevel.
 }
 unit Io.BlockDevice;
@@ -19,6 +24,9 @@ unit Io.BlockDevice;
 {$mode objfpc}
 
 interface
+
+uses
+  Io.Manager;
 
 const
   BlockDeviceNameLength = 32;
@@ -28,20 +36,15 @@ const
 type
   PBlockDevice = ^TBlockDevice;
 
-  TBlockTransfer = function(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
-    Buffer: Pointer): Boolean;
-
   TBlockDevice = record
     Name: array[0..BlockDeviceNameLength - 1] of Char;
     Model: array[0..BlockDeviceModelLength - 1] of Char;
     BlockSize: LongWord;
     BlockCount: QWord;
 
-    { Supplied by the driver for whole devices; nil for partitions. A nil
-      WriteBlocks routine makes the device read-only. }
-    ReadRoutine: TBlockTransfer;
-    WriteRoutine: TBlockTransfer;
-    DriverContext: Pointer;
+    { Supplied by the driver for whole devices; nil for partitions. }
+    StorageDevice: PDeviceObject;
+    WriteProtected: Boolean;
 
     { Partitions only. }
     Parent: PBlockDevice;
@@ -81,7 +84,9 @@ procedure WriteBlockDeviceDescription(Device: PBlockDevice);
 implementation
 
 uses
+  Runtime.Memory,
   Runtime.Text,
+  Abi.SystemCalls,
   Kernel.Mutex,
   Kernel.Panic,
   Objects.Manager,
@@ -169,6 +174,22 @@ begin
     (BlockCount <= Device^.BlockCount - FirstBlock);
 end;
 
+{ Sends one read or write request for whole blocks to the storage
+  device and waits for it. }
+function TransferBlocks(Device: PBlockDevice; Operation: TIoFunction; FirstBlock: QWord;
+  BlockCount: LongWord; Buffer: Pointer): Boolean;
+var
+  Request: TIoRequest;
+begin
+  FillMemory(@Request, SizeOf(Request), 0);
+  Request.Operation := Operation;
+  Request.Buffer := Buffer;
+  Request.Length := QWord(BlockCount) * Device^.BlockSize;
+  Request.Offset := FirstBlock * Device^.BlockSize;
+  Result := (CallDriverAndWait(Device^.StorageDevice, Request, False) = ErrorNone) and
+    (QWord(Request.Information) = Request.Length);
+end;
+
 function ReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
   Buffer: Pointer): Boolean;
 begin
@@ -178,7 +199,7 @@ begin
   if Device^.Parent <> nil then
     Result := ReadBlocks(Device^.Parent, Device^.FirstBlockOnParent + FirstBlock, BlockCount, Buffer)
   else
-    Result := Device^.ReadRoutine(Device, FirstBlock, BlockCount, Buffer);
+    Result := TransferBlocks(Device, IoFunctionRead, FirstBlock, BlockCount, Buffer);
 end;
 
 function WriteBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
@@ -190,7 +211,7 @@ begin
   if Device^.Parent <> nil then
     Result := WriteBlocks(Device^.Parent, Device^.FirstBlockOnParent + FirstBlock, BlockCount, Buffer)
   else
-    Result := Device^.WriteRoutine(Device, FirstBlock, BlockCount, Buffer);
+    Result := TransferBlocks(Device, IoFunctionWrite, FirstBlock, BlockCount, Buffer);
 end;
 
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;
@@ -203,7 +224,7 @@ begin
   if Device^.Parent <> nil then
     Result := BlockDeviceIsReadOnly(Device^.Parent)
   else
-    Result := not Assigned(Device^.WriteRoutine);
+    Result := Device^.WriteProtected;
 end;
 
 function BlockDeviceSizeInBytes(Device: PBlockDevice): QWord;

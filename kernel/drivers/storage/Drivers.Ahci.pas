@@ -1,20 +1,16 @@
 {
-  AHCI (Serial ATA) storage driver.
+  AHCI (Serial ATA) storage driver: finding controllers and disks.
 
   An AHCI controller is a PCI device whose registers (the "HBA memory")
-  live behind BAR 5. It has up to 32 ports, each of which may have a disk
-  attached. Commands are submitted by filling a command header and a
-  command table in memory and setting a bit in the port's command issue
-  register; the controller then moves data directly to and from memory
-  through the physical region descriptor table (PRDT).
+  live behind BAR 5. It has up to 32 ports, each of which may have a SATA
+  disk attached (ATAPI optical drives are not supported). For each disk
+  the driver sets up the port (Drivers.AhciPort), identifies the disk,
+  creates its device object (Drivers.AhciRequests) and a block device
+  "diskN" on top of it.
 
-  This first version:
-    * uses one command slot per port and polls for completion,
-    * transfers through a per-port bounce buffer of single pages, so the
-      caller's buffer needs no particular alignment or physical layout,
-    * supports SATA disks (not ATAPI optical drives).
-
-  Each disk becomes a block device named "diskN".
+  When all disks of a controller are known, the controller's interrupt
+  is connected by MSI and the ports switch from polling to interrupt
+  driven requests. A controller without MSI keeps polling.
 }
 unit Drivers.Ahci;
 
@@ -36,56 +32,15 @@ uses
   Memory.PhysicalPages,
   Memory.DeviceMapping,
   Memory.KernelHeap,
-  Kernel.Arch.Cpu,
-  Kernel.Mutex,
-  Kernel.Clock,
   Io.Pci,
+  Io.PciMessageInterrupts,
   Io.BlockDevice,
+  Drivers.AhciPort,
+  Drivers.AhciRequests,
   Debug.Output;
 
 const
   AhciBarIndex = 5;
-  MaximumPorts = 32;
-
-  { Generic host control registers. }
-  RegisterCapabilities = $00;
-  RegisterGlobalControl = $04;
-  RegisterPortsImplemented = $0C;
-  RegisterVersion = $10;
-  RegisterCapabilities2 = $24;
-  RegisterHandoffControl = $28;
-
-  GlobalControlAhciEnable = LongWord(1) shl 31;
-  Capabilities2BiosHandoff = LongWord(1) shl 0;
-  HandoffOsOwnership = LongWord(1) shl 1;
-  HandoffBiosOwnership = LongWord(1) shl 0;
-
-  { Port registers, relative to the port's register block. }
-  PortRegisterBase = $100;
-  PortRegisterStride = $80;
-  PortCommandListBase = $00;
-  PortCommandListBaseUpper = $04;
-  PortFisBase = $08;
-  PortFisBaseUpper = $0C;
-  PortInterruptStatus = $10;
-  PortInterruptEnable = $14;
-  PortCommand = $18;
-  PortTaskFileData = $20;
-  PortSignature = $24;
-  PortSataStatus = $28;
-  PortSataError = $30;
-  PortCommandIssue = $38;
-
-  PortCommandStart = LongWord(1) shl 0;
-  PortCommandFisReceiveEnable = LongWord(1) shl 4;
-  PortCommandFisReceiveRunning = LongWord(1) shl 14;
-  PortCommandListRunning = LongWord(1) shl 15;
-
-  PortInterruptTaskFileError = LongWord(1) shl 30;
-
-  TaskFileBusy = $80;
-  TaskFileDataRequest = $08;
-  TaskFileError = $01;
 
   SataStatusDetectionMask = $0F;
   SataStatusDevicePresent = $03;
@@ -93,87 +48,6 @@ const
   SataStatusPowerActive = $100;
 
   SignatureSataDisk = LongWord($00000101);
-
-  { ATA commands. }
-  AtaCommandIdentifyDevice = $EC;
-  AtaCommandReadDmaExtended = $25;
-  AtaCommandWriteDmaExtended = $35;
-
-  FisTypeRegisterHostToDevice = $27;
-  FisCommandBit = $80;
-  DeviceLbaMode = $40;
-
-  { Layout of the per-port control page. }
-  CommandListOffset = $000;  { 32 headers of 32 bytes, 1 KiB aligned }
-  ReceivedFisOffset = $400;  { 256 bytes, 256 byte aligned }
-  CommandTableOffset = $800; { 128 byte aligned }
-  PrdtOffsetInTable = $80;
-
-  BounceBufferPages = 16;
-  MaximumBytesPerCommand = BounceBufferPages * PageSize;
-
-  CommandTimeoutMilliseconds = 5000;
-  RegisterTimeoutMilliseconds = 1000;
-
-  CommandFisLengthInDoublewords = 5;
-  CommandHeaderWrite = LongWord(1) shl 6;
-
-type
-  TCommandHeader = record
-    Flags: LongWord;            { FIS length, write bit, PRDT length (high 16 bits) }
-    BytesTransferred: LongWord;
-    TableAddressLow: LongWord;
-    TableAddressHigh: LongWord;
-    Reserved: array[0..3] of LongWord;
-  end;
-  PCommandHeader = ^TCommandHeader;
-
-  TPrdtEntry = record
-    DataAddressLow: LongWord;
-    DataAddressHigh: LongWord;
-    Reserved: LongWord;
-    ByteCountMinusOne: LongWord;
-  end;
-  PPrdtEntry = ^TPrdtEntry;
-
-  PAhciPort = ^TAhciPort;
-  TAhciPort = record
-    Registers: PByte;
-    PortNumber: LongWord;
-    ControlPagePhysical: QWord;
-    ControlPage: PByte;
-    BouncePagesPhysical: array[0..BounceBufferPages - 1] of QWord;
-    Lock: TMutex;
-    Device: PBlockDevice;
-  end;
-
-{ --- Register access ------------------------------------------------- }
-
-function ReadRegister(Base: PByte; Offset: LongWord): LongWord;
-begin
-  Result := PLongWord(Base + Offset)^;
-end;
-
-procedure WriteRegister(Base: PByte; Offset: LongWord; Value: LongWord);
-begin
-  PLongWord(Base + Offset)^ := Value;
-end;
-
-{ Waits until (register and Mask) = Expected. Returns False on timeout. }
-function WaitForRegister(Base: PByte; Offset: LongWord; Mask: LongWord; Expected: LongWord;
-  TimeoutMilliseconds: QWord): Boolean;
-var
-  Deadline: QWord;
-begin
-  Deadline := ClockTickCount + MillisecondsToTicks(TimeoutMilliseconds);
-  while (ReadRegister(Base, Offset) and Mask) <> Expected do
-  begin
-    if ClockTickCount > Deadline then
-      Exit(False);
-    CpuRelax;
-  end;
-  Result := True;
-end;
 
 { --- Port setup ------------------------------------------------------ }
 
@@ -244,197 +118,13 @@ begin
   WriteRegister(Port^.Registers, PortFisBase, LongWord(FisPhysical));
   WriteRegister(Port^.Registers, PortFisBaseUpper, LongWord(FisPhysical shr 32));
 
-  { Polling only: no port interrupts, and clear any stale status. }
+  { Interrupts stay off until every disk is identified; clear any stale
+    status. }
   WriteRegister(Port^.Registers, PortInterruptEnable, 0);
   WriteRegister(Port^.Registers, PortSataError, $FFFFFFFF);
   WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
 
   Result := StartPort(Port);
-end;
-
-{ --- Command execution ----------------------------------------------- }
-
-procedure BuildRegisterFis(Fis: PByte; Command: Byte; Lba: QWord; SectorCount: Word);
-begin
-  ZeroMemory(Fis, 64);
-  Fis[0] := FisTypeRegisterHostToDevice;
-  Fis[1] := FisCommandBit;
-  Fis[2] := Command;
-  Fis[4] := Byte(Lba);
-  Fis[5] := Byte(Lba shr 8);
-  Fis[6] := Byte(Lba shr 16);
-  Fis[7] := DeviceLbaMode;
-  Fis[8] := Byte(Lba shr 24);
-  Fis[9] := Byte(Lba shr 32);
-  Fis[10] := Byte(Lba shr 40);
-  Fis[12] := Byte(SectorCount);
-  Fis[13] := Byte(SectorCount shr 8);
-end;
-
-{ Runs one command on slot 0, transferring ByteCount bytes through the
-  bounce buffer. The caller holds the port lock. }
-function ExecuteCommand(Port: PAhciPort; Command: Byte; Lba: QWord; SectorCount: Word;
-  ByteCount: QWord; IsWrite: Boolean): Boolean;
-var
-  Header: PCommandHeader;
-  Table: PByte;
-  Prdt: PPrdtEntry;
-  TablePhysical: QWord;
-  PrdtCount: LongWord;
-  RemainingBytes: QWord;
-  ChunkBytes: QWord;
-  Deadline: QWord;
-  Flags: LongWord;
-begin
-  Result := False;
-  if not WaitForRegister(Port^.Registers, PortTaskFileData, TaskFileBusy or TaskFileDataRequest, 0,
-    CommandTimeoutMilliseconds) then
-    Exit;
-
-  Table := Port^.ControlPage + CommandTableOffset;
-  TablePhysical := Port^.ControlPagePhysical + CommandTableOffset;
-  BuildRegisterFis(Table, Command, Lba, SectorCount);
-
-  Prdt := PPrdtEntry(Table + PrdtOffsetInTable);
-  PrdtCount := 0;
-  RemainingBytes := ByteCount;
-  while RemainingBytes > 0 do
-  begin
-    ChunkBytes := RemainingBytes;
-    if ChunkBytes > PageSize then
-      ChunkBytes := PageSize;
-    Prdt[PrdtCount].DataAddressLow := LongWord(Port^.BouncePagesPhysical[PrdtCount]);
-    Prdt[PrdtCount].DataAddressHigh := LongWord(Port^.BouncePagesPhysical[PrdtCount] shr 32);
-    Prdt[PrdtCount].Reserved := 0;
-    Prdt[PrdtCount].ByteCountMinusOne := LongWord(ChunkBytes - 1);
-    RemainingBytes := RemainingBytes - ChunkBytes;
-    Inc(PrdtCount);
-  end;
-
-  Flags := CommandFisLengthInDoublewords or (PrdtCount shl 16);
-  if IsWrite then
-    Flags := Flags or CommandHeaderWrite;
-
-  Header := PCommandHeader(Port^.ControlPage + CommandListOffset);
-  Header^.Flags := Flags;
-  Header^.BytesTransferred := 0;
-  Header^.TableAddressLow := LongWord(TablePhysical);
-  Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
-
-  WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
-  WriteRegister(Port^.Registers, PortCommandIssue, 1);
-
-  Deadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
-  while (ReadRegister(Port^.Registers, PortCommandIssue) and 1) <> 0 do
-  begin
-    if (ReadRegister(Port^.Registers, PortInterruptStatus) and PortInterruptTaskFileError) <> 0 then
-      Exit;
-    if ClockTickCount > Deadline then
-      Exit;
-    CpuRelax;
-  end;
-
-  if (ReadRegister(Port^.Registers, PortInterruptStatus) and PortInterruptTaskFileError) <> 0 then
-    Exit;
-  if (ReadRegister(Port^.Registers, PortTaskFileData) and TaskFileError) <> 0 then
-    Exit;
-  Result := True;
-end;
-
-procedure CopyFromBounceBuffer(Port: PAhciPort; Destination: PByte; ByteCount: QWord);
-var
-  PageIndex: Integer;
-  ChunkBytes: QWord;
-begin
-  PageIndex := 0;
-  while ByteCount > 0 do
-  begin
-    ChunkBytes := ByteCount;
-    if ChunkBytes > PageSize then
-      ChunkBytes := PageSize;
-    CopyMemory(Destination, PhysicalToVirtual(Port^.BouncePagesPhysical[PageIndex]), ChunkBytes);
-    Destination := Destination + ChunkBytes;
-    ByteCount := ByteCount - ChunkBytes;
-    Inc(PageIndex);
-  end;
-end;
-
-procedure CopyToBounceBuffer(Port: PAhciPort; Source: PByte; ByteCount: QWord);
-var
-  PageIndex: Integer;
-  ChunkBytes: QWord;
-begin
-  PageIndex := 0;
-  while ByteCount > 0 do
-  begin
-    ChunkBytes := ByteCount;
-    if ChunkBytes > PageSize then
-      ChunkBytes := PageSize;
-    CopyMemory(PhysicalToVirtual(Port^.BouncePagesPhysical[PageIndex]), Source, ChunkBytes);
-    Source := Source + ChunkBytes;
-    ByteCount := ByteCount - ChunkBytes;
-    Inc(PageIndex);
-  end;
-end;
-
-{ --- Block device interface ------------------------------------------ }
-
-function TransferBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
-  Buffer: Pointer; IsWrite: Boolean): Boolean;
-var
-  Port: PAhciPort;
-  BlocksPerCommand: LongWord;
-  ChunkBlocks: LongWord;
-  ChunkBytes: QWord;
-  Position: PByte;
-  Command: Byte;
-begin
-  Port := PAhciPort(Device^.DriverContext);
-  BlocksPerCommand := MaximumBytesPerCommand div Device^.BlockSize;
-  Position := PByte(Buffer);
-  if IsWrite then
-    Command := AtaCommandWriteDmaExtended
-  else
-    Command := AtaCommandReadDmaExtended;
-
-  Result := True;
-  AcquireMutex(Port^.Lock);
-  while BlockCount > 0 do
-  begin
-    ChunkBlocks := BlockCount;
-    if ChunkBlocks > BlocksPerCommand then
-      ChunkBlocks := BlocksPerCommand;
-    ChunkBytes := QWord(ChunkBlocks) * Device^.BlockSize;
-
-    if IsWrite then
-      CopyToBounceBuffer(Port, Position, ChunkBytes);
-
-    if not ExecuteCommand(Port, Command, FirstBlock, Word(ChunkBlocks), ChunkBytes, IsWrite) then
-    begin
-      Result := False;
-      Break;
-    end;
-
-    if not IsWrite then
-      CopyFromBounceBuffer(Port, Position, ChunkBytes);
-
-    Position := Position + ChunkBytes;
-    FirstBlock := FirstBlock + ChunkBlocks;
-    BlockCount := BlockCount - ChunkBlocks;
-  end;
-  ReleaseMutex(Port^.Lock);
-end;
-
-function AhciReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
-  Buffer: Pointer): Boolean;
-begin
-  Result := TransferBlocks(Device, FirstBlock, BlockCount, Buffer, False);
-end;
-
-function AhciWriteBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
-  Buffer: Pointer): Boolean;
-begin
-  Result := TransferBlocks(Device, FirstBlock, BlockCount, Buffer, True);
 end;
 
 { --- Device identification ------------------------------------------- }
@@ -514,70 +204,70 @@ begin
     (ReadRegister(PortRegisters, PortSignature) = SignatureSataDisk);
 end;
 
-function SetUpDisk(Registers: PByte; PortNumber: LongWord): Boolean;
+{ Sets up the disk on port PortNumber; returns its port, or nil. }
+function SetUpDisk(Registers: PByte; PortNumber: LongWord): PAhciPort;
 var
   Port: PAhciPort;
-  Device: PBlockDevice;
+  Disk: PBlockDevice;
   Name: array[0..BlockDeviceNameLength - 1] of Char;
 begin
-  Result := False;
+  Result := nil;
   Port := PAhciPort(AllocateZeroedKernelMemory(SizeOf(TAhciPort)));
   if Port = nil then
     Exit;
-
   Port^.Registers := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
   Port^.PortNumber := PortNumber;
-  InitializeMutex(Port^.Lock);
 
   if not AllocatePortMemory(Port) then
     Exit;
   if not ConfigurePort(Port) then
     Exit;
+  if not CreateAhciDevice(Port) then
+    Exit;
 
   GenerateDiskName(@Name[0]);
-  Device := CreateBlockDevice(@Name[0]);
-  if Device = nil then
+  Disk := CreateBlockDevice(@Name[0]);
+  if Disk = nil then
     Exit;
-  Device^.DriverContext := Port;
-  Port^.Device := Device;
-
-  AcquireMutex(Port^.Lock);
-  Result := IdentifyDisk(Port, Device);
-  ReleaseMutex(Port^.Lock);
-  if not Result then
+  { Nothing else uses the port yet, so no lock is needed. }
+  if not IdentifyDisk(Port, Disk) then
     Exit;
+  Port^.BlockSize := Disk^.BlockSize;
+  Port^.BlockCount := Disk^.BlockCount;
+  Port^.Device^.SizeInBytes := BlockDeviceSizeInBytes(Disk);
 
-  Device^.ReadRoutine := @AhciReadBlocks;
-  Device^.WriteRoutine := @AhciWriteBlocks;
-  RegisterBlockDevice(Device);
-  WriteBlockDeviceDescription(Device);
+  Disk^.StorageDevice := Port^.Device;
+  RegisterBlockDevice(Disk);
+  WriteBlockDeviceDescription(Disk);
+  Result := Port;
 end;
 
-function InitializeController(PciDevice: PPciDevice): Integer;
+{ Connects the controller's interrupt and switches its ports to it.
+  Returns False (the ports keep polling) if that is not possible. }
+function EnableControllerInterrupts(PciDevice: PPciDevice; Controller: PAhciController): Boolean;
 var
-  Bar: TPciBar;
-  Registers: PByte;
-  PortsImplemented: LongWord;
   PortNumber: LongWord;
-  PortRegisters: PByte;
-  Version: LongWord;
+  Port: PAhciPort;
 begin
-  Result := 0;
-  if (not PciReadBar(PciDevice, AhciBarIndex, Bar)) or Bar.IsIoPort then
+  Result := ConnectPciMessageInterrupt(PciDevice, @HandleAhciInterrupt, Controller);
+  if not Result then
     Exit;
+  for PortNumber := 0 to MaximumPorts - 1 do
+  begin
+    Port := Controller^.Ports[PortNumber];
+    if Port = nil then
+      Continue;
+    UseInterruptsForPort(Port);
+    WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+    WriteRegister(Port^.Registers, PortInterruptEnable, PortInterruptsWanted);
+  end;
+  WriteRegister(Controller^.Registers, RegisterInterruptStatus, $FFFFFFFF);
+  WriteRegister(Controller^.Registers, RegisterGlobalControl,
+    ReadRegister(Controller^.Registers, RegisterGlobalControl) or GlobalControlInterruptEnable);
+end;
 
-  PciEnableDevice(PciDevice, True);
-  Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
-  if Registers = nil then
-    Exit;
-
-  TakeOwnershipFromFirmware(Registers);
-  WriteRegister(Registers, RegisterGlobalControl,
-    ReadRegister(Registers, RegisterGlobalControl) or GlobalControlAhciEnable);
-
-  Version := ReadRegister(Registers, RegisterVersion);
-  PortsImplemented := ReadRegister(Registers, RegisterPortsImplemented);
-
+procedure WriteControllerDescription(PciDevice: PPciDevice; Version, PortsImplemented: LongWord);
+begin
   DebugBeginMessage;
   DebugWriteTag('ahci');
   DebugWrite('Controller ');
@@ -592,6 +282,46 @@ begin
   DebugWriteHex(PortsImplemented, 8);
   DebugWriteLine('');
   DebugEndMessage;
+end;
+
+procedure WriteInterruptMode(UsesInterrupts: Boolean);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('ahci');
+  if UsesInterrupts then
+    DebugWriteLine('Requests complete by interrupt (MSI)')
+  else
+    DebugWriteLine('No MSI; requests are polled');
+  DebugEndMessage;
+end;
+
+function InitializeController(PciDevice: PPciDevice): Integer;
+var
+  Bar: TPciBar;
+  Registers: PByte;
+  PortsImplemented: LongWord;
+  PortNumber: LongWord;
+  PortRegisters: PByte;
+  Controller: PAhciController;
+begin
+  Result := 0;
+  if (not PciReadBar(PciDevice, AhciBarIndex, Bar)) or Bar.IsIoPort then
+    Exit;
+  Controller := PAhciController(AllocateZeroedKernelMemory(SizeOf(TAhciController)));
+  if Controller = nil then
+    Exit;
+
+  PciEnableDevice(PciDevice, True);
+  Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
+  if Registers = nil then
+    Exit;
+  Controller^.Registers := Registers;
+
+  TakeOwnershipFromFirmware(Registers);
+  WriteRegister(Registers, RegisterGlobalControl,
+    ReadRegister(Registers, RegisterGlobalControl) or GlobalControlAhciEnable);
+  PortsImplemented := ReadRegister(Registers, RegisterPortsImplemented);
+  WriteControllerDescription(PciDevice, ReadRegister(Registers, RegisterVersion), PortsImplemented);
 
   for PortNumber := 0 to MaximumPorts - 1 do
   begin
@@ -600,9 +330,13 @@ begin
     PortRegisters := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
     if not PortHasSataDisk(PortRegisters) then
       Continue;
-    if SetUpDisk(Registers, PortNumber) then
+    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber);
+    if Controller^.Ports[PortNumber] <> nil then
       Inc(Result);
   end;
+
+  if Result > 0 then
+    WriteInterruptMode(EnableControllerInterrupts(PciDevice, Controller));
 end;
 
 function InitializeAhciControllers: Integer;
@@ -610,6 +344,7 @@ var
   DeviceIndex: Integer;
 begin
   Result := 0;
+  CreateAhciDriver;
   DeviceIndex := FindPciDeviceByClass(PciClassMassStorage, PciSubclassSata, PciInterfaceAhci, 0);
   while DeviceIndex >= 0 do
   begin

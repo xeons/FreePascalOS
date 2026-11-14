@@ -224,8 +224,11 @@ Started from phase 1 by `Io.Startup`, in dependency order:
 2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
    Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
 3. **Storage drivers** (`Drivers.Ahci`) register whole-disk block devices
-   named `disk0`, `disk1`, ... The AHCI driver currently polls one command
-   slot per port and moves data through a page-sized bounce buffer.
+   named `disk0`, `disk1`, ... Each disk has a device object of the `ahci`
+   driver, without a name; the block device sends it read and write
+   requests. The AHCI driver uses one command slot per port, moves data
+   through a 64 KiB bounce buffer and completes requests from its MSI
+   interrupt (polling while disks are identified, or without MSI).
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
@@ -256,15 +259,33 @@ range regardless of the device's block size.
 - Opening a device makes a **device file** object: the device, the position
   (block devices) and a context pointer for the driver's state of that
   open. Closing its last handle sends the driver a close request.
+- A device created without a name is not listed under `/dev`; only the
+  kernel reaches it (the AHCI disks below the block devices). A device
+  can be **exclusive**: one open at a time (the input devices, which the
+  console holds open).
 - Every operation is a **request** (`TIoRequest`: the kind, the device and
   device file, a kernel buffer, length and offset, or a control code and
-  argument), handed to the driver by `CallDriver`. The driver returns an
-  Abi error code and puts the bytes moved or the control result in
-  `Information`. Requests complete synchronously; a driver may wait
-  alertably, so a program can be ended or stopped meanwhile (an
-  interrupted read returns `ErrorInterrupted` and is restarted after a
-  stop). Buffers are always kernel memory (system calls copy through
-  their transfer buffer), and devices are never removed.
+  argument), handed to the driver by `CallDriver`. The driver either
+  finishes it and returns its status (an Abi error code, with the bytes
+  moved or the control result in `Information`), or returns
+  `StatusPending`, keeps it, and calls `CompleteRequest` later - usually
+  from a deferred call after its device interrupted. Every request
+  completes exactly once: completing runs the request's completion
+  routine, if it has one, or signals its completion event.
+  `CallDriverAndWait` sends a request and waits for it.
+- A driver holding requests until something happens keeps them in a
+  **request queue** (`QueueRequest`, `TakeQueuedRequest`). Programs wait
+  for their requests alertably (`Io.DeviceFiles`); when the thread is
+  alerted (ended, or stopped by job control), `CancelRequest` takes its
+  request out of the queue and completes it with `ErrorInterrupted`,
+  and the call is restarted after a stop. Drivers that wait themselves
+  (the console) wait alertably too. Buffers are always kernel memory
+  (system calls copy through their transfer buffer), and devices are
+  never removed.
+
+`Kernel.IoSelfTest` checks the asynchronous paths on every boot with a
+test driver that holds its reads: completion from a deferred call,
+completion routines, and cancelling the request of an alerted thread.
 
 The drivers so far:
 
@@ -273,14 +294,15 @@ The drivers so far:
 | `memory` (`Drivers.MemoryDevices`) | `null`, `zero`, `full`, `random`, `urandom` (RDRAND, or a TSC-seeded xorshift without it), all `rw-rw-rw-` |
 | `console` (`Drivers.ConsoleDevice`) | `console` and `tty`: reads and writes go to `Io.Console`; control requests get and set the modes, the size and the foreground group and take a pending Ctrl-C |
 | `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, past the write-through cache); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
+| `ps2keyboard` (`Drivers.Ps2Keyboard`) | `keyboard`, exclusive, `rw-------`: the characters typed (`Io.InputDevice`) |
+| `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
+| `ahci` (`Drivers.AhciRequests`) | one unnamed device per SATA disk, asynchronous |
 
 Programs reach every device as `/dev/<name>`, whatever their root
 directory: `Processes.FileCalls` recognizes those paths (and `/dev`
 itself, which lists the devices), checks the permission bits on open and
 sends reads, writes, seeks (block devices) and control requests to the
 device. The first program's standard handles are opened on `console`.
-The keyboard and serial input drivers and the AHCI driver are not driver
-objects yet; they feed the console and the block devices directly.
 
 ## Device interrupts
 
@@ -293,6 +315,13 @@ runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
 dispatch interrupt, before the scheduler picks the next thread.
+
+PCI devices with the MSI capability skip the I/O APIC:
+`ConnectPciMessageInterrupt` (Io.PciMessageInterrupts) takes a vector
+(`ConnectMessageInterrupt`), programs the device's message address (the
+boot processor's local APIC) and data (the vector), and turns its legacy
+interrupt line off. The legacy PCI lines could only be routed with the
+ACPI namespace, which the kernel does not interpret.
 
 ### Ctrl-C
 
@@ -345,9 +374,13 @@ stopped jobs are ended (status 129) when an interactive shell exits.
 `ps` shows stopped processes as `T`.
 
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
-(Drivers.SerialInput, IRQ 4) feed characters to the console's input ring
-(DeliverConsoleInput); a deferred call signals the event a reading thread
-waits on. Without an I/O APIC the console falls back to polling the serial
+(Drivers.SerialDevice, IRQ 4) are input devices (Io.InputDevice): their
+interrupt handlers put characters in a ring, and a deferred call hands
+them to waiting read requests. The console opens both devices and always
+keeps one read outstanding on each (Io.ConsoleInput); the completion
+routine passes the characters to the console's input ring
+(DeliverConsoleInput) and a deferred call sends the next read. Without an
+I/O APIC there is no serial device and the console polls the serial
 port. The keyboard's characters come from a layout
 (Drivers.KeyboardLayouts: us, uk, de or fr, chosen with the kernel option
 `keymap=`), written as the keys that differ from US, with a third level

@@ -15,6 +15,10 @@
   keys as the escape sequences a terminal sends (ESC [ A, ...).
   Characters beyond ASCII are sent in UTF-8.
 
+  The characters become input of the device /dev/keyboard (a driver
+  object "ps2keyboard" with one exclusive device, Io.InputDevice), which
+  the console keeps open and reads (Io.ConsoleInput).
+
   With Num Lock on the numeric keypad gives digits, with it off the
   cursor and editing keys printed on it. The Caps, Num and Scroll Lock
   lights follow the locks.
@@ -35,7 +39,9 @@ uses
   Kernel.Options,
   Hal.PortIo,
   Io.InterruptRouting,
-  Io.Console,
+  Runtime.Memory,
+  Io.Manager,
+  Io.InputDevice,
   Debug.Output,
   Drivers.KeyboardLayouts;
 
@@ -110,6 +116,7 @@ var
   LightsState: TLightsState;
   { The locks changed while the lights were being set. }
   LightsOutdated: Boolean;
+  KeyboardInput: PInputDevice;
 
 function WaitUntilWritable: Boolean;
 var
@@ -214,11 +221,16 @@ end;
 
 { --- Characters ------------------------------------------------------ }
 
+procedure DeliverCharacter(Character: Char);
+begin
+  AddInputByte(KeyboardInput^, Byte(Character));
+end;
+
 procedure DeliverText(Text: PChar);
 begin
   while Text^ <> #0 do
   begin
-    DeliverConsoleInput(Text^);
+    DeliverCharacter(Text^);
     Inc(Text);
   end;
 end;
@@ -227,17 +239,17 @@ end;
 procedure DeliverCodePoint(CodePoint: LongWord);
 begin
   if CodePoint < $80 then
-    DeliverConsoleInput(Char(CodePoint))
+    DeliverCharacter(Char(CodePoint))
   else if CodePoint < $800 then
   begin
-    DeliverConsoleInput(Char($C0 or (CodePoint shr 6)));
-    DeliverConsoleInput(Char($80 or (CodePoint and $3F)));
+    DeliverCharacter(Char($C0 or (CodePoint shr 6)));
+    DeliverCharacter(Char($80 or (CodePoint and $3F)));
   end
   else
   begin
-    DeliverConsoleInput(Char($E0 or (CodePoint shr 12)));
-    DeliverConsoleInput(Char($80 or ((CodePoint shr 6) and $3F)));
-    DeliverConsoleInput(Char($80 or (CodePoint and $3F)));
+    DeliverCharacter(Char($E0 or (CodePoint shr 12)));
+    DeliverCharacter(Char($80 or ((CodePoint shr 6) and $3F)));
+    DeliverCharacter(Char($80 or (CodePoint and $3F)));
   end;
 end;
 
@@ -262,8 +274,8 @@ end;
 procedure HandleExtendedKey(Code: Byte);
 begin
   case Code of
-    $1C: DeliverConsoleInput(#13);        { keypad enter }
-    $35: DeliverConsoleInput('/');        { keypad slash }
+    $1C: DeliverCharacter(#13);        { keypad enter }
+    $35: DeliverCharacter('/');        { keypad slash }
   else
     DeliverEditingKey(Code);
   end;
@@ -273,7 +285,7 @@ procedure HandleKeypadKey(Code: Byte);
 begin
   { Minus and plus are the same either way. }
   if NumLockOn or (KeypadDigits[Code] = '-') or (KeypadDigits[Code] = '+') then
-    DeliverConsoleInput(KeypadDigits[Code])
+    DeliverCharacter(KeypadDigits[Code])
   else
     DeliverEditingKey(Code);
 end;
@@ -414,6 +426,27 @@ begin
   end;
 end;
 
+function CreateKeyboardDevice: Boolean;
+const
+  OwnerReadWrite = $180; { rw------- }
+var
+  Dispatch: TDispatchTable;
+  Driver: PDriverObject;
+  Device: PDeviceObject;
+begin
+  FillMemory(@Dispatch, SizeOf(Dispatch), 0);
+  Dispatch[IoFunctionRead] := @ReadInputDevice;
+  Driver := CreateDriver('ps2keyboard', Dispatch);
+  Device := CreateDevice(Driver, 'keyboard', DeviceKindCharacter, OwnerReadWrite,
+    SizeOf(TInputDevice));
+  if Device = nil then
+    Exit(False);
+  Device^.IsExclusive := True;
+  KeyboardInput := PInputDevice(Device^.Extension);
+  InitializeInputDevice(KeyboardInput^);
+  Result := True;
+end;
+
 function InitializePs2Keyboard: Boolean;
 var
   Configuration: Byte;
@@ -438,6 +471,8 @@ begin
   WaitUntilWritable;
   WritePortByte(DataPort, Configuration);
 
+  if not CreateKeyboardDevice then
+    Exit;
   if not ConnectIsaInterrupt(KeyboardIrq, @HandleKeyboardInterrupt, nil) then
     Exit;
   SendCommand(CommandEnableFirstPort);

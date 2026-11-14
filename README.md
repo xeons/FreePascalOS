@@ -51,9 +51,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - **User mode**: processes with their own address spaces (demand-zero
   memory, isolated crashes), system calls through `syscall`, per-process
   handle tables, pipes, devices under `/dev` (`null`, `zero`, `full`,
-  `random`, `urandom`, `console`, `tty` and every disk and partition)
-  served by an NT-style I/O manager with driver objects, device objects
-  and request packets, and an ELF loader that
+  `random`, `urandom`, `console`, `tty`, `keyboard`, `serial0` and every
+  disk and partition) served by an NT-style I/O manager with driver
+  objects, device objects and request packets that complete
+  asynchronously (AHCI by MSI interrupt) and can be cancelled, and an ELF
+  loader that
   maps position independent programs and the shared libraries they need,
   binding symbols at load time. Programs can also load libraries at run
   time (`LoadLibrary` / `FindSymbol`), end, stop and continue other
@@ -186,10 +188,12 @@ kernel/
   processes/        Processes, threads, address spaces, handles, the ELF
                     image loader, system calls and the first user program
   firmware/         ACPI tables
-  io/               I/O startup, PCI, block devices, partitions, block cache,
-                    pipes, console and null device
+  io/               I/O manager, device files, I/O startup, PCI and MSI,
+                    block devices, partitions, block cache, pipes, console
+                    and its input, input devices
   drivers/storage/  AHCI SATA driver
-  drivers/input/    PS/2 keyboard and serial input drivers
+  drivers/input/    PS/2 keyboard and serial port drivers
+  drivers/devices/  Memory devices, console device, disk devices
   filesystems/      VFS (types, volumes, open files, attributes, hard links)
                     and the FAT, exFAT and ext2/3/4 drivers
   runtime/          Linked lists, atomics, checksums, Unicode
