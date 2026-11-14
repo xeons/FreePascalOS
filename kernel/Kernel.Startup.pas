@@ -72,6 +72,7 @@ uses
   Io.BlockCache,
   Drivers.Ps2Keyboard,
   Drivers.UsbKeyboard,
+  Kernel.DebugShell,
   FileSystem.Files,
   Processes.Process,
   Processes.Thread,
@@ -258,6 +259,9 @@ begin
   DebugWriteDecimal(ContextSwitchCount);
   DebugWriteLine(' context switches so far');
   DebugEndMessage;
+
+  if KernelOptionIsSet(OptionKernelShell) then
+    RunDebugShell;
 
   InitialProgramExitCode := RunInitialProgram;
   if InitialProgramExitCode <> InitialProgramNotStarted then

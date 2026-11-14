@@ -47,7 +47,7 @@ shutil.rmtree(work, ignore_errors=True)
 os.makedirs(work)
 shutil.copytree(esp_directory, os.path.join(work, 'esp'))
 with open(os.path.join(work, 'esp', 'FreePascalOS', 'options.txt'), 'w') as options:
-    options.write('test-exit\n')
+    options.write('test-exit kshell\n')
 shutil.copy(system_disk, os.path.join(work, 'system.img'))
 
 firmware_code = '/usr/share/edk2/x64/OVMF_CODE.4m.fd'
@@ -111,6 +111,28 @@ def wait_for(text, seconds):
     return False
 
 
+def type_on_serial(data):
+    for byte in data:
+        serial_in.write(bytes([byte]))
+        time.sleep(0.02)
+
+
+checks = []
+
+# The kernel debug shell runs first (kernel option kshell).
+kernel_shell_ok = wait_for('kshell> ', 90)
+if kernel_shell_ok:
+    type_on_serial(b'volumes\r')
+    kernel_shell_ok = wait_for('disk1p1  ext4  "FPOSROOT"', 10)
+    type_on_serial(b'cat /disk1p1/etc/passwd\r')
+    kernel_shell_ok = kernel_shell_ok and wait_for('root:x:0:0:', 10)
+    type_on_serial(b'ls /disk1p1/bin\r')
+    kernel_shell_ok = kernel_shell_ok and wait_for('coretest', 10)
+    type_on_serial(b'frobnicate\r')
+    kernel_shell_ok = kernel_shell_ok and wait_for('frobnicate: unknown command', 10)
+    type_on_serial(b'exit\r')
+checks.append(('kernel debug shell', kernel_shell_ok))
+
 if not wait_for('fpos:/$ ', 90):
     print('INPUT TEST FAILED: the shell did not start')
     qemu.kill()
@@ -142,8 +164,6 @@ def type_on_keyboard(text):
         else:
             press(character)
 
-
-checks = []
 
 # USB keyboard (QEMU's most recently started keyboard): letters, Shift,
 # Enter; then it is unplugged and the keys go to the PS/2 keyboard.
@@ -181,12 +201,6 @@ press('left')
 type_on_keyboard('x')
 press('ret')
 checks.append(('keyboard caps lock and cursor keys', wait_for('\nxcaps-ok', 10)))
-
-
-def type_on_serial(data):
-    for byte in data:
-        serial_in.write(bytes([byte]))
-        time.sleep(0.02)
 
 
 # Serial: a long line arrives complete, by interrupt.

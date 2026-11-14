@@ -101,7 +101,8 @@ how the existing pieces fit together.
       font, UTF-8 and escape sequences in the framebuffer console
 - [x] USB keyboards (HID boot protocol on the xHCI driver)
 - [ ] USB keyboards: key repeat, lock lights
-- [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
+- [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
+      ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
 

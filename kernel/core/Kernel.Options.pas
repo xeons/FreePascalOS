@@ -26,6 +26,8 @@
   Known options:
     test-exit   Exit the emulator when startup finishes or the kernel
                 panics, reporting success or failure (used by make test).
+    kshell      Run the kernel debug shell (Kernel.DebugShell) on the
+                console before the first program starts.
 }
 unit Kernel.Options;
 
@@ -38,6 +40,7 @@ uses
 
 const
   OptionTestExit = 'test-exit';
+  OptionKernelShell = 'kshell';
 
 procedure InitializeKernelOptions(const BootInformation: TBootInformation);
 

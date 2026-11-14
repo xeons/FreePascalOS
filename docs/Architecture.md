@@ -1111,6 +1111,16 @@ at the top of its kernel stack) and the system call it is in - and what
 each processor runs. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
 
+## The kernel debug shell
+
+With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
+once the system is up, before the first program: `help`, `echo`, `ls`,
+`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `uptime`, and `exit` to go
+on with the boot. It reads lines through the console like a program
+(with line editing) and writes through the kernel debug output, so it
+works on the serial port and the screen. The input test starts with a
+few of its commands.
+
 ## Coding conventions
 
 - Descriptive names for everything; no abbreviations or clever one-liners.
