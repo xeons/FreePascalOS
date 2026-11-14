@@ -36,7 +36,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   and thread objects.
 - Device discovery through ACPI tables and PCI Express (ECAM) enumeration.
 - An AHCI SATA driver, block devices, GPT and MBR (including logical)
-  partitions, and a block cache.
+  partitions, and a write-back block cache with read-ahead.
 - A virtual file system with path lookup, symbolic links, a shared node
   cache, open files, directory listings, and create / write / truncate /
   remove / rename, with read-write drivers for **FAT12, FAT16, FAT32 (with

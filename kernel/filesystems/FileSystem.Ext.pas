@@ -368,7 +368,7 @@ begin
   if Result <> StatusSuccess then
     Exit;
   if not SetNeedsRecovery(Volume, False, Ext^.HasMetadataChecksums) or
-     not FlushBlockDevice(Volume^.Device) then
+     not FlushCachedDevice(Volume^.Device) then
     Exit(StatusIoError);
   ReportJournal(Volume, 'journal recovered, ', ReplayedBlocks, ' blocks replayed');
   Replayed := True;

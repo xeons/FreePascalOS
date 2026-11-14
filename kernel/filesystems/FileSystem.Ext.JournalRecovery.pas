@@ -57,6 +57,7 @@ uses
   Runtime.Memory,
   Memory.KernelHeap,
   Io.BlockDevice,
+  Io.BlockCache,
   FileSystem.Ext.JournalFormat;
 
 type
@@ -348,11 +349,11 @@ begin
   ReplayedBlocks := Recovery.Replayed;
 
   { The replayed blocks must be on the disk before the log is given up. }
-  if not FlushBlockDevice(Journal^.Volume^.Device) then
+  if not FlushCachedDevice(Journal^.Volume^.Device) then
     Exit(StatusIoError);
   WriteBigEndian32(@Journal^.Superblock[JournalSuperblockStart], 0);
   WriteBigEndian32(@Journal^.Superblock[JournalSuperblockSequence], Recovery.EndSequence + 1);
-  if not WriteJournalSuperblock(Journal) or not FlushBlockDevice(Journal^.Volume^.Device) then
+  if not WriteJournalSuperblock(Journal) or not FlushCachedDevice(Journal^.Volume^.Device) then
     Exit(StatusIoError);
   Journal^.Sequence := Recovery.EndSequence + 1;
   Result := StatusSuccess;

@@ -66,6 +66,7 @@ uses
   Runtime.Unicode,
   Memory.KernelHeap,
   Kernel.Clock,
+  Io.BlockCache,
   FileSystem.ExFat.Structures,
   FileSystem.ExFat.Volume;
 
@@ -98,7 +99,9 @@ begin
     Exit(StatusSuccess);
   if not ReadVolumeFlags(Volume, Flags) then
     Exit(StatusIoError);
-  if not WriteVolumeFlags(Volume, Flags or VolumeFlagDirty) then
+  { On the disk before any change: the cache writes lines back in any
+    order. }
+  if not WriteVolumeFlags(Volume, Flags or VolumeFlagDirty) or not FlushCachedDevice(Volume^.Device) then
     Exit(StatusIoError);
   ExFat^.IsMarkedDirty := True;
   Result := StatusSuccess;

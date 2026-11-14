@@ -334,7 +334,7 @@ The drivers so far:
 |---|---|
 | `memory` (`Drivers.MemoryDevices`) | `null`, `zero`, `full`, `random`, `urandom` (RDRAND, or a TSC-seeded xorshift without it), all `rw-rw-rw-` |
 | `console` (`Drivers.ConsoleDevice`) | `console` and `tty`: reads and writes go to `Io.Console`; control requests get and set the modes, the size and the foreground group and take a pending Ctrl-C |
-| `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, past the write-through cache); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
+| `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, around the block cache: reads write the cache back first, writes drop what it holds of the disk); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
 | `ps2keyboard` (`Drivers.Ps2Keyboard`) | `keyboard`, exclusive, `rw-------`: the characters typed (`Io.InputDevice`) |
 | `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
 | `ahci` (`Drivers.AhciRequests`) | one unnamed device per SATA disk, asynchronous |
@@ -481,8 +481,25 @@ rename are one transaction (`BeginAtomicChange` / `EndAtomicChange`). In a
 directory with the sticky bit (`/tmp`), only the owner of a name, of the
 directory or root may remove or replace it.
 
-Writes are write-through (the block cache writes every change to disk
-immediately). ext volumes are mounted read-only if they use features the
+The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
+
+- **Writes** only dirty a line. Dirty lines reach the disk when
+  `FlushCachedDevice` is called (which then also sends the disk a flush),
+  when the background writer (the `CacheWriter` thread) finds them dirty
+  for more than a second, or before their line is reused. Everything
+  that needs data durable or ordered flushes: the ext journal around its
+  commit blocks, exFAT after marking the volume dirty, syncing (including
+  before `test-exit`), and raw disk access.
+- **Locking.** The cache lock only covers the hash table, the recency list
+  and which part of a device each line holds, and is never held across
+  I/O. Each line has its own mutex for its data and I/O, so different
+  disks (and different lines) are read and written in parallel. A line's
+  mutex is only taken while the line is pinned, so choosing a line to
+  reuse never waits.
+- **Reading ahead.** Read misses on consecutive lines of a device read up
+  to 16 more lines in the same request.
+
+ext volumes are mounted read-only if they use features the
 driver cannot keep consistent (bigalloc, quota, encryption, case folding,
 multiple-mount protection). htree indexed directories are read but not
 modified.

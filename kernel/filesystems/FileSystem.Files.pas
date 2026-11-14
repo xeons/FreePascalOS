@@ -149,6 +149,7 @@ uses
   Runtime.LinkedList,
   Memory.KernelHeap,
   Objects.Manager,
+  Io.BlockCache,
   FileSystem.Volumes,
   FileSystem.Security;
 
@@ -1265,6 +1266,8 @@ begin
     Volume^.Driver^.Sync(Volume);
     ReleaseMutex(Volume^.Lock);
   end;
+  { Everything written so far reaches the disks. }
+  FlushAllCachedDevices;
 end;
 
 end.

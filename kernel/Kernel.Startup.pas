@@ -216,6 +216,8 @@ begin
     the drivers, so device interrupts can go to all of them. }
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeIoSystem;
+  if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
   StartConsoleInterruptHandler;
   StartHangWatch;
 

@@ -48,6 +48,7 @@ uses
   Memory.KernelHeap,
   Io.Manager,
   Io.BlockDevice,
+  Io.BlockCache,
   FileSystem.Types,
   FileSystem.Volumes;
 
@@ -81,6 +82,9 @@ begin
   Block := PByte(AllocateKernelMemory(Disk^.BlockSize));
   if Block = nil then
     Exit(ErrorOutOfMemory);
+  { The device is read around the block cache, which may hold changes
+    to it (through its partitions too) not yet written back. }
+  FlushAllCachedDevices;
   Result := ErrorNone;
   Total := 0;
   Position := Request.Offset;
@@ -118,6 +122,18 @@ begin
       Exit(True);
   end;
   Result := False;
+end;
+
+{ Drops what the block cache holds of Disk and its partitions after it
+  was written around the cache. }
+procedure ForgetCachedContents(Disk: PBlockDevice);
+var
+  Index: Integer;
+begin
+  InvalidateCachedDevice(Disk);
+  for Index := 0 to BlockDeviceCount - 1 do
+    if BlockDeviceAt(Index)^.Parent = Disk then
+      InvalidateCachedDevice(BlockDeviceAt(Index));
 end;
 
 function WriteDiskDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
@@ -163,6 +179,7 @@ begin
     Remaining := Remaining - Piece;
   end;
   FreeKernelMemory(Block);
+  ForgetCachedContents(Disk);
   if (Total = 0) and (Remaining > 0) then
     Result := ErrorIo;
   Request.Information := Int64(Total);

@@ -113,8 +113,8 @@ how the existing pieces fit together.
 - [ ] NVMe driver
 - [ ] virtio-blk driver (fast QEMU disks)
 - [ ] USB mass storage (needs an xHCI driver first)
-- [x] Block cache (read, write-through)
-- [ ] Block cache: write-back with flush, per-device locks, read-ahead
+- [x] Block cache: write-back with flush and a background writer, a lock per line
+      (no lock held across I/O, devices work in parallel), read-ahead
 
 ## File systems
 

@@ -169,7 +169,7 @@ uses
   Runtime.Memory,
   Runtime.Checksums,
   Memory.KernelHeap,
-  Io.BlockDevice,
+  Io.BlockCache,
   Kernel.Clock,
   FileSystem.Ext.Structures;
 
@@ -217,7 +217,7 @@ end;
 
 function FlushVolume(Volume: PVolume): Boolean;
 begin
-  Result := FlushBlockDevice(Volume^.Device);
+  Result := FlushCachedDevice(Volume^.Device);
 end;
 
 { --- Logged block set -------------------------------------------------- }
