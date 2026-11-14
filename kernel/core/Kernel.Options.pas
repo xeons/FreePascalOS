@@ -1,0 +1,126 @@
+{
+  Kernel command line options.
+
+  The loader passes a line of space separated words (from the file
+  \FreePascalOS\options.txt on the boot volume). Options are either flags
+  ("test-exit") or name=value pairs ("root=disk0p2").
+
+  Known options:
+    test-exit   Exit the emulator when startup finishes or the kernel
+                panics, reporting success or failure (used by make test).
+}
+unit Kernel.Options;
+
+{$mode objfpc}
+
+interface
+
+uses
+  Boot.Information;
+
+const
+  OptionTestExit = 'test-exit';
+
+procedure InitializeKernelOptions(const BootInformation: TBootInformation);
+
+function KernelOptionIsSet(Name: PChar): Boolean;
+
+{ Copies the value of a name=value option into Value. Returns False if
+  the option is absent. }
+function GetKernelOptionValue(Name: PChar; Value: PChar; ValueCapacity: PtrUInt): Boolean;
+
+function KernelCommandLine: PChar;
+
+implementation
+
+uses
+  Runtime.Text;
+
+var
+  CommandLine: array[0..CommandLineCapacity - 1] of Char;
+
+procedure InitializeKernelOptions(const BootInformation: TBootInformation);
+begin
+  CopyText(@CommandLine[0], @BootInformation.CommandLine[0], CommandLineCapacity);
+end;
+
+function KernelCommandLine: PChar;
+begin
+  Result := @CommandLine[0];
+end;
+
+{ Finds the word that starts with Name, followed by Terminator or by the
+  end of the word. Returns a pointer just past the name, or nil. }
+function FindOption(Name: PChar; AllowValue: Boolean): PChar;
+var
+  WordStart: PChar;
+  NameLength: PtrUInt;
+  Index: PtrUInt;
+  Matches: Boolean;
+  AfterName: Char;
+begin
+  NameLength := TextLength(Name);
+  WordStart := @CommandLine[0];
+
+  while WordStart^ <> #0 do
+  begin
+    while WordStart^ = ' ' do
+      Inc(WordStart);
+    if WordStart^ = #0 then
+      Break;
+
+    Matches := True;
+    Index := 0;
+    while (Index < NameLength) and Matches do
+    begin
+      if WordStart[Index] <> Name[Index] then
+        Matches := False;
+      Inc(Index);
+    end;
+
+    if Matches then
+    begin
+      AfterName := WordStart[NameLength];
+      if (AfterName = #0) or (AfterName = ' ') then
+        Exit(@WordStart[NameLength]);
+      if AllowValue and (AfterName = '=') then
+        Exit(@WordStart[NameLength]);
+    end;
+
+    while (WordStart^ <> ' ') and (WordStart^ <> #0) do
+      Inc(WordStart);
+  end;
+
+  Result := nil;
+end;
+
+function KernelOptionIsSet(Name: PChar): Boolean;
+begin
+  Result := FindOption(Name, False) <> nil;
+end;
+
+function GetKernelOptionValue(Name: PChar; Value: PChar; ValueCapacity: PtrUInt): Boolean;
+var
+  AfterName: PChar;
+  Length: PtrUInt;
+begin
+  Result := False;
+  if ValueCapacity = 0 then
+    Exit;
+
+  AfterName := FindOption(Name, True);
+  if (AfterName = nil) or (AfterName^ <> '=') then
+    Exit;
+  Inc(AfterName);
+
+  Length := 0;
+  while (AfterName[Length] <> ' ') and (AfterName[Length] <> #0) and (Length + 1 < ValueCapacity) do
+  begin
+    Value[Length] := AfterName[Length];
+    Inc(Length);
+  end;
+  Value[Length] := #0;
+  Result := True;
+end;
+
+end.

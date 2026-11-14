@@ -32,6 +32,7 @@ uses
 
 const
   KernelFilePath = '\FreePascalOS\kernel.elf';
+  OptionsFilePath = '\FreePascalOS\options.txt';
   BootStackSizeInBytes = 64 * 1024;
   FailureDisplayMicroseconds = 10 * 1000 * 1000;
 
@@ -64,6 +65,41 @@ begin
   Coverage := MaximumOf(FindHighestMemoryAddress, MinimumPhysicalWindowCoverage);
   Coverage := MaximumOf(Coverage, Framebuffer.PhysicalBase + Framebuffer.SizeInBytes);
   Result := (Coverage + OneGibibyte - 1) and not (OneGibibyte - 1);
+end;
+
+{ Copies the options file (if there is one) into the command line,
+  turning line breaks and tabs into spaces. }
+procedure LoadKernelOptions(var BootInformation: TBootInformation);
+var
+  OptionsFile: TLoadedFile;
+  SourceBytes: PChar;
+  Index: QWord;
+  Length: QWord;
+  Character: Char;
+begin
+  BootInformation.CommandLine[0] := #0;
+  if EfiIsError(LoadFileFromBootVolume(OptionsFilePath, OptionsFile)) then
+    Exit;
+
+  SourceBytes := PChar(OptionsFile.Contents);
+  Length := OptionsFile.SizeInBytes;
+  if Length > CommandLineCapacity - 1 then
+    Length := CommandLineCapacity - 1;
+
+  Index := 0;
+  while Index < Length do
+  begin
+    Character := SourceBytes[Index];
+    if (Character = #10) or (Character = #13) or (Character = #9) then
+      Character := ' ';
+    BootInformation.CommandLine[Index] := Character;
+    Inc(Index);
+  end;
+  BootInformation.CommandLine[Length] := #0;
+  ReleaseLoadedFile(OptionsFile);
+
+  PrintText('Kernel options: ');
+  PrintLine(@BootInformation.CommandLine[0]);
 end;
 
 procedure PrintBanner;
@@ -117,6 +153,7 @@ begin
     PrintLine('Framebuffer: none (serial output only)');
 
   BootInformation^.AcpiRootPointer := FindAcpiRootPointer;
+  LoadKernelOptions(BootInformation^);
 
   PrintText('Loading ');
   PrintLine(KernelFilePath);

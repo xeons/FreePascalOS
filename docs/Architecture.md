@@ -125,6 +125,8 @@ their own level, so higher-priority interrupts nest naturally.
 
 Rules that follow from this:
 
+- Mutexes may only be used at `PassiveLevel`; they put the thread to
+  sleep instead of spinning.
 - Spin locks are acquired at `DispatchLevel` or above. A lock that an
   interrupt handler takes must be acquired at that handler's level.
 - Raising to a lower level, or acquiring a dispatch-level lock while at a
@@ -146,6 +148,57 @@ Rules that follow from this:
   held across a context switch and released by the thread that runs next.
 - Exited threads are put on a list and cleaned up by the idle thread
   (stack freed, object dereferenced).
+
+## I/O and storage
+
+Started from phase 1 by `Io.Manager`, in dependency order:
+
+1. **ACPI** (`Firmware.Acpi`) finds the system description tables through
+   the RSDP the loader passed on.
+2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
+   Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
+3. **Storage drivers** (`Drivers.Ahci`) register whole-disk block devices
+   named `disk0`, `disk1`, ... The AHCI driver currently polls one command
+   slot per port and moves data through a page-sized bounce buffer.
+4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
+   MBR (including logical partitions) and registered as `disk1p2` etc. A
+   partition device forwards requests to its disk with an offset.
+5. **File systems** are mounted on every partition (and on disks without a
+   partition table) by the first driver whose probe accepts it.
+
+Block devices are objects of type `BlockDevice`. All file system metadata
+and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
+device, evicts least recently used first, and lets callers read any byte
+range regardless of the device's block size.
+
+## File systems
+
+The VFS (`kernel/filesystems`) has three parts:
+
+- `FileSystem.Types` defines the driver contract: a `TFileSystemDriver`
+  record of routines (probe, mount, lookup, read directory, read file, read
+  symbolic link, release node) and the node, volume and status types.
+- `FileSystem.Volumes` keeps the driver list and the mounted volumes.
+- `FileSystem.Files` resolves paths and implements open files (objects of
+  type `File`).
+
+The namespace is a single tree. The root lists the mounted volumes, each a
+directory named after its block device: `/disk1p7/docs/readme.txt`. Paths
+are absolute; `.` and `..` are resolved textually first. Symbolic links are
+followed up to 8 deep, and an absolute link target is resolved from the
+root of the link's own volume.
+
+Drivers (all read-only for now):
+
+| Driver           | Formats               | Notes                                                  |
+|------------------|-----------------------|--------------------------------------------------------|
+| `FileSystem.Fat`   | FAT12, FAT16, FAT32 | VFAT long names, case-insensitive lookup               |
+| `FileSystem.ExFat` | exFAT               | contiguous and FAT-chained files, up-case table lookup |
+| `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees, 64-bit, flex_bg, META_BG, htree directories (read linearly), fast and slow symlinks; the journal is not replayed |
+
+`make test` builds a GPT test disk (`scripts/make-test-disk.sh`) with one
+partition per format and the same files on each, and the kernel's file
+system self test checks every one of them.
 
 ## Objects
 

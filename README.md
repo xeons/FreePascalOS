@@ -26,30 +26,48 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   virtual range allocator, a size class heap, and guard-paged kernel stacks.
 - A preemptive, priority based scheduler with time slices, sleeping, events
   and thread exit and cleanup.
+- Mutexes (sleeping, recursive locks) alongside spin locks and events.
 - An object manager with reference counting and named objects, plus process
   and thread objects.
+- Device discovery through ACPI tables and PCI Express (ECAM) enumeration.
+- An AHCI SATA driver, block devices, GPT and MBR (including logical)
+  partitions, and a block cache.
+- A virtual file system with path lookup, symbolic links, open files and
+  directory listings, and read-only drivers for **FAT12, FAT16, FAT32 (with
+  long file names), exFAT, ext2, ext3 and ext4** (extents, 64-bit, flex_bg,
+  htree directories, sparse files, fast and slow symbolic links).
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
-- Kernel self tests that run on every boot.
+- Kernel self tests that run on every boot, including a file system test
+  against a disk image with one partition of every supported format.
 
 ## Requirements
 
 - Free Pascal 3.2.2 (`fpc`, x86-64 compiler)
 - GNU binutils (`ld`, `objcopy`, `objdump`)
 - QEMU (`qemu-system-x86_64`) and OVMF UEFI firmware, for running it
-- `sfdisk` and mtools, only for `make image`
+- `sfdisk` and mtools, for `make image`
+- dosfstools, exfatprogs, e2fsprogs and Python 3, for the test disk used by
+  `make run` and `make test`
 
-On Arch based systems: `pacman -S fpc qemu-system-x86 edk2-ovmf mtools`.
+On Arch based systems:
+`pacman -S fpc qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python`.
 
 ## Building and running
 
 ```
 make            # build build/amd64/esp (loader + kernel)
-make run        # boot in QEMU; the kernel log appears on the terminal
-make debug      # boot in QEMU and wait for GDB on localhost:1234
+make run        # boot in QEMU with the test disk; the kernel log appears on the terminal
+make debug      # same, but wait for GDB on localhost:1234
+make test       # boot headless, run every self test, print TEST PASSED or TEST FAILED
 make image      # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
 ```
+
+Mounted volumes appear under the root as `/disk1p1`, `/disk1p2`, ...
+
+Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
+(see `kernel/core/Kernel.Options.pas`).
 
 The disk image can be written to a USB stick to boot real hardware, with
 Secure Boot disabled. Writing it erases the stick:
@@ -70,18 +88,24 @@ hal/amd64/          Hardware abstraction layer: APIC, PIT, PIC, serial, ports
 kernel/
   Kernel.Startup    Entry point and phase 0 / phase 1 initialization
   Kernel.SelfTest   Boot-time self tests
-  core/             Priority levels, spin locks, interrupts, scheduler,
-                    clock, events, panic
+  Kernel.FileSystemTest  File system self test
+  core/             Priority levels, spin locks, mutexes, interrupts,
+                    scheduler, clock, events, options, panic
   core/amd64/       Descriptor tables, interrupt stubs, context switch, CPU
   memory/           Physical pages, virtual ranges, heap, stacks
   memory/amd64/     Page tables
   objects/          Object manager
   processes/        Process and thread objects
-  runtime/          Linked lists, atomics
+  firmware/         ACPI tables
+  io/               I/O startup, PCI, block devices, partitions, block cache
+  drivers/storage/  AHCI SATA driver
+  filesystems/      VFS (types, volumes, open files) and the FAT, exFAT and
+                    ext2/3/4 drivers
+  runtime/          Linked lists, atomics, checksums, Unicode, time
   debug/            Debug log and framebuffer console (+ font)
   link/             Kernel linker scripts
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
-scripts/            QEMU launcher and disk image builder
+scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes
 ```
 

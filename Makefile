@@ -1,8 +1,9 @@
 # FreePascalOS build
 #
 #   make            Build the loader and kernel into an EFI system partition tree
-#   make run        Boot it in QEMU with OVMF firmware (serial output on stdio)
+#   make run        Boot it in QEMU with OVMF firmware and the test disk (log on stdio)
 #   make debug      Like run, but wait for GDB on localhost:1234
+#   make test       Boot headless with a test disk, run all self tests, report pass/fail
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make clean      Remove all build output
@@ -47,6 +48,10 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/memory kernel/memory/$(ARCH) \
 	kernel/objects \
 	kernel/processes \
+	kernel/firmware \
+	kernel/io \
+	kernel/drivers/storage \
+	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \
 	hal/$(ARCH)
@@ -69,7 +74,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug image font clean check-kernel
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel
 
 all: esp
 
@@ -129,11 +134,21 @@ esp: $(LOADER_EFI) $(KERNEL_ELF)
 image: esp
 	scripts/make-disk-image.sh $(ESP_DIRECTORY) $(BUILD_DIRECTORY)/FreePascalOS.img
 
-run: esp
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY)
+TEST_DISK := $(BUILD_DIRECTORY)/test-disk.img
 
-debug: esp
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug
+run: esp $(TEST_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK)
+
+debug: esp $(TEST_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug $(TEST_DISK)
+
+$(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-add-files.py
+	scripts/make-test-disk.sh $@
+
+test-disk: $(TEST_DISK)
+
+test: esp $(TEST_DISK)
+	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK)
 
 # --- Tools -----------------------------------------------------------------
 

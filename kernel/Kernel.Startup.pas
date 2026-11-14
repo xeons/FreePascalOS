@@ -41,9 +41,15 @@ uses
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Clock,
+  Kernel.Options,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.FileSystemTest,
+  Runtime.Checksums,
   Objects.Manager,
+  Io.Manager,
+  Io.BlockCache,
+  FileSystem.Files,
   Processes.Process,
   Processes.Thread,
   Debug.Output,
@@ -67,6 +73,18 @@ begin
       BootInformation^.Version, BootInformationVersion, 0, 0);
 end;
 
+procedure ExitEmulatorAfterPanic;
+begin
+  HalExitEmulator(False);
+end;
+
+procedure ApplyKernelOptions(BootInformation: PBootInformation);
+begin
+  InitializeKernelOptions(BootInformation^);
+  if KernelOptionIsSet(OptionTestExit) then
+    SetPanicHook(@ExitEmulatorAfterPanic);
+end;
+
 procedure WriteBanner;
 begin
   DebugBeginMessage;
@@ -76,6 +94,11 @@ begin
   DebugWrite(KernelVersion);
   DebugResetColor;
   DebugWriteLine(' - kernel starting');
+  if KernelCommandLine^ <> #0 then
+  begin
+    DebugWrite('Options: ');
+    DebugWriteLine(KernelCommandLine);
+  end;
   DebugWriteLine('');
   DebugEndMessage;
 end;
@@ -123,14 +146,19 @@ begin
   InitializeObjectManager;
   InitializeProcessManager;
   InitializeThreadManager;
+  InitializeFileObjects;
 end;
 
 procedure SystemInitializationPhaseOne(Context: Pointer);
 begin
   DebugWriteTag('init');
-  DebugWriteLine('Phase 1 started, running self tests');
+  DebugWriteLine('Phase 1 started');
+
+  InitializeIoSystem(PBootInformation(Context)^);
 
   RunKernelSelfTests;
+  RunFileSystemSelfTests;
+  WriteBlockCacheSummary;
 
   WriteKernelHeapSummary;
   WriteObjectManagerSummary;
@@ -144,6 +172,9 @@ begin
   DebugWriteDecimal(ContextSwitchCount);
   DebugWriteLine(' context switches so far');
   DebugEndMessage;
+
+  if KernelOptionIsSet(OptionTestExit) then
+    HalExitEmulator(True);
 end;
 
 procedure RunIdleLoop; noreturn;
@@ -179,11 +210,13 @@ begin
 
   InitializeDebugOutput;
   ValidateBootInformation(BootInformation);
+  ApplyKernelOptions(BootInformation);
   AttachFramebufferConsole(BootInformation^.Framebuffer,
     PhysicalToVirtual(BootInformation^.Framebuffer.PhysicalBase));
 
   WriteBanner;
   WriteBootSummary(BootInformation);
+  InitializeChecksums;
 
   InitializeBootProcessor;
   WriteProcessorDescription;

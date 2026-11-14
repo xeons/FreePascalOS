@@ -24,6 +24,7 @@ uses
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Events,
+  Kernel.Mutex,
   Kernel.Clock,
   Kernel.Panic,
   Processes.Thread,
@@ -237,6 +238,63 @@ begin
   ReportPassed('preemptive time slicing');
 end;
 
+{ --- Mutexes ---------------------------------------------------------- }
+
+const
+  MutexWorkerCount = 3;
+  MutexIterations = 200;
+
+var
+  TestMutex: TMutex;
+  ProtectedCounter: Int64;
+  MutexWorkersFinished: Int64;
+  AllMutexWorkersFinished: TEvent;
+
+{ Reads the counter, yields the processor, then writes it back. Without
+  mutual exclusion other workers would run in between and updates would
+  be lost. }
+procedure MutexWorkerMain(Context: Pointer);
+var
+  Iteration: Integer;
+  ValueRead: Int64;
+begin
+  for Iteration := 1 to MutexIterations do
+  begin
+    AcquireMutex(TestMutex);
+    AcquireMutex(TestMutex); { recursive acquisition by the owner }
+    ValueRead := ProtectedCounter;
+    YieldExecution;
+    ProtectedCounter := ValueRead + 1;
+    ReleaseMutex(TestMutex);
+    ReleaseMutex(TestMutex);
+  end;
+
+  if AtomicIncrement(MutexWorkersFinished) = MutexWorkerCount then
+    SignalEvent(AllMutexWorkersFinished);
+end;
+
+procedure TestMutualExclusion;
+var
+  Index: Integer;
+  Thread: PThread;
+begin
+  InitializeMutex(TestMutex);
+  InitializeEvent(AllMutexWorkersFinished, EventKindNotification, False);
+  ProtectedCounter := 0;
+  MutexWorkersFinished := 0;
+
+  for Index := 1 to MutexWorkerCount do
+  begin
+    Thread := CreateSystemThread(@MutexWorkerMain, nil, DefaultThreadPriority, 'MutexWorker', False);
+    Check(Thread <> nil, 'could not create a mutex worker thread');
+  end;
+
+  WaitForEvent(AllMutexWorkersFinished);
+  Check(ProtectedCounter = MutexWorkerCount * MutexIterations, 'mutex did not provide mutual exclusion');
+  Check(TestMutex.Owner = nil, 'mutex still has an owner after all releases');
+  ReportPassed('mutex mutual exclusion');
+end;
+
 { --- Thread exit ----------------------------------------------------- }
 
 procedure ShortLivedThreadMain(Context: Pointer);
@@ -280,6 +338,7 @@ begin
   TestEventPingPong;
   TestSleep;
   TestPreemption;
+  TestMutualExclusion;
   TestThreadExitAndCleanup;
 end;
 

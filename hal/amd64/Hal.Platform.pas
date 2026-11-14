@@ -34,9 +34,15 @@ function HalDispatchInterruptVector: Byte;
 
 procedure HalWriteDescription;
 
+{ Ends the emulator session with a result code, using QEMU's debug exit
+  device. Only call this when the kernel was told it runs under test:
+  on real hardware the port may belong to something else. }
+procedure HalExitEmulator(Success: Boolean);
+
 implementation
 
 uses
+  Hal.PortIo,
   Hal.InterruptVectors,
   Hal.LegacyPic,
   Hal.LocalApic,
@@ -98,6 +104,18 @@ begin
   DebugWriteDecimal(TimerTicksPerSecond div 1000);
   DebugWriteLine(' kHz');
   DebugEndMessage;
+end;
+
+procedure HalExitEmulator(Success: Boolean);
+const
+  { Matches "-device isa-debug-exit,iobase=0xf4,iosize=0x04". QEMU exits
+    with status (value * 2) + 1, so 0 gives 1 (success), 1 gives 3. }
+  DebugExitPort = $F4;
+begin
+  if Success then
+    WritePortLongWord(DebugExitPort, 0)
+  else
+    WritePortLongWord(DebugExitPort, 1);
 end;
 
 end.

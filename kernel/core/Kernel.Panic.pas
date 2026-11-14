@@ -40,6 +40,13 @@ procedure KernelAssert(Condition: Boolean; Description: PChar);
 procedure BeginKernelPanic(Code: QWord; Reason: PChar);
 procedure FinishKernelPanic; noreturn;
 
+type
+  TPanicHook = procedure;
+
+{ Registers a routine that runs at the very end of a panic, after the
+  message has been printed (used to leave the emulator during tests). }
+procedure SetPanicHook(Hook: TPanicHook);
+
 function PanicIsInProgress: Boolean;
 
 implementation
@@ -54,6 +61,12 @@ uses
 
 var
   PanicCount: Int64 = 0;
+  PanicHook: TPanicHook = nil;
+
+procedure SetPanicHook(Hook: TPanicHook);
+begin
+  PanicHook := Hook;
+end;
 
 function PanicIsInProgress: Boolean;
 begin
@@ -100,6 +113,8 @@ procedure FinishKernelPanic; noreturn;
 begin
   DebugWriteLine('');
   DebugWriteLine('System halted.');
+  if Assigned(PanicHook) then
+    PanicHook;
   HaltForever;
 end;
 

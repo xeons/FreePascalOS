@@ -5,11 +5,13 @@ how the existing pieces fit together.
 
 ## Hardware discovery
 
-- [ ] Parse ACPI tables (RSDP from the loader → XSDT → MADT, HPET, FADT)
+- [x] Parse ACPI tables (RSDP from the loader → XSDT/RSDT → table lookup)
+- [ ] Use the MADT (processor and I/O APIC list), HPET and FADT
 - [ ] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
-- [ ] Map MMIO with proper caching attributes instead of relying on the
-      physical memory window's write-back mapping
-- [ ] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
+- [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
+- [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
+- [ ] Legacy configuration access (ports 0xCF8/0xCFC) for machines without MCFG
+- [ ] MSI / MSI-X interrupts for PCI devices
 
 ## Multiprocessor support
 
@@ -23,7 +25,8 @@ how the existing pieces fit together.
 ## Kernel core
 
 - [ ] Timeouts on waits (`WaitForEvent` with a deadline)
-- [ ] Mutexes (owner tracking, recursion) and semaphores
+- [x] Mutexes (owner tracking, recursion)
+- [ ] Semaphores and reader/writer locks
 - [ ] Wait on multiple objects
 - [ ] Deferred work queue that runs at dispatch level (for device drivers)
 - [ ] Priority boosting for threads woken from waits
@@ -49,11 +52,38 @@ how the existing pieces fit together.
 
 - [ ] I/O manager: driver objects, device objects, request packets
 - [ ] PS/2 keyboard driver (first interrupt-driven device)
-- [ ] Interactive kernel debug console (simple command shell)
+- [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
 - [ ] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
-- [ ] Storage: AHCI and/or NVMe driver
-- [ ] FAT32 file system (read the EFI partition)
+
+## Storage
+
+- [x] Block device layer and partition devices
+- [x] GPT and MBR partition tables (with logical partitions)
+- [x] AHCI SATA driver (polled, one command slot)
+- [ ] AHCI: interrupts, all 32 command slots, NCQ, direct DMA without bounce buffer
+- [ ] ATAPI (optical drives) on AHCI
+- [ ] NVMe driver
+- [ ] virtio-blk driver (fast QEMU disks)
+- [ ] USB mass storage (needs an xHCI driver first)
+- [x] Block cache (read)
+- [ ] Block cache: write-back, per-device locks, read-ahead
+
+## File systems
+
+- [x] VFS: volumes, path resolution, symbolic links, open files, directory listing
+- [x] FAT12 / FAT16 / FAT32 with long file names (read)
+- [x] exFAT (read)
+- [x] ext2 / ext3 / ext4 (read): block maps, extents, 64-bit, flex_bg, META_BG, htree
+- [ ] Write support: FAT family
+- [ ] Write support: exFAT
+- [ ] Write support: ext2, then ext3/ext4 with journaling
+- [ ] ext3/ext4 journal replay on mount
+- [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
+      metadata checksum verification
+- [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
+- [ ] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
+- [ ] File timestamps beyond modification time; ext4 nanosecond timestamps
 
 ## User mode
 
@@ -75,6 +105,7 @@ how the existing pieces fit together.
 
 ## Tooling
 
-- [ ] `make test`: boot headless in QEMU, fail on panic or missing self-test results
+- [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results
+- [x] Test disk with one partition per supported file system
 - [ ] Continuous integration running `make test`
 - [ ] GDB helper script (load symbols, break on panic)

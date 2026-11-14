@@ -19,7 +19,7 @@ interface
 const
   { 'FPOSBOOT' in little endian ASCII. }
   BootInformationSignature = QWord($544F4F42534F5046);
-  BootInformationVersion = 1;
+  BootInformationVersion = 2;
 
   MaximumMemoryRegions = 512;
 
@@ -38,6 +38,9 @@ const
   PixelFormatBlueGreenRed = 2;
 
   PageSize = 4096;
+
+  { Room for the kernel command line, including the terminating zero. }
+  CommandLineCapacity = 256;
 
 type
   TMemoryRegion = record
@@ -83,6 +86,10 @@ type
 
     { Physical address of the ACPI RSDP structure, or zero if absent. }
     AcpiRootPointer: QWord;
+
+    { Options for the kernel, read by the loader from the optional file
+      \FreePascalOS\options.txt. Words are separated by spaces. }
+    CommandLine: array[0..CommandLineCapacity - 1] of Char;
 
     MemoryRegionCount: QWord;
     MemoryRegions: array[0..MaximumMemoryRegions - 1] of TMemoryRegion;
