@@ -62,6 +62,7 @@ uses
   Io.Partitions,
   Drivers.Ahci,
   Drivers.VirtioBlock,
+  Drivers.Nvme,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -123,6 +124,7 @@ begin
   InitializeBlockDevices;
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
+  InitializeNvmeControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;

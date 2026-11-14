@@ -269,6 +269,15 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    status byte. Requests complete by MSI-X interrupt (or are polled).
    Flushes are sent when the device has a volatile write cache. The tests
    attach a virtio disk holding a copy of the ext4 test partition.
+
+   NVMe controllers (`Drivers.Nvme`, queue pairs in `Drivers.NvmeQueues`)
+   are disabled, given an admin queue pair, enabled and identified; one
+   I/O queue pair is created, and every active namespace becomes a disk
+   of the `nvme` driver with its logical block size. Admin commands are
+   polled. I/O commands complete by MSI-X or MSI. Data goes through the
+   controller's bounce pages, up to 128 KiB (or the controller's largest
+   transfer) a command, described by PRP entries or a PRP list. The tests
+   attach an NVMe disk holding a copy of the FAT32 test partition.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.

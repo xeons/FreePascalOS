@@ -225,3 +225,12 @@ echo 'label: gpt
 size=32MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="ext4"' | sfdisk --quiet "$virtio_image"
 dd if="$work_directory/ext4.img" of="$virtio_image" bs=1M seek=1 conv=notrunc status=none
 echo "Wrote $virtio_image (34 MiB, partition: ext4)"
+
+# And one for the NVMe driver, with a copy of the FAT32 partition.
+nvme_image="${output_image%.img}-nvme.img"
+rm -f "$nvme_image"
+truncate -s 66M "$nvme_image"
+echo 'label: gpt
+size=64MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="fat32"' | sfdisk --quiet "$nvme_image"
+dd if="$work_directory/fat32.img" of="$nvme_image" bs=1M seek=1 conv=notrunc status=none
+echo "Wrote $nvme_image (66 MiB, partition: fat32)"

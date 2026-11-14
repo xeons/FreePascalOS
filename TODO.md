@@ -110,7 +110,7 @@ how the existing pieces fit together.
 - [x] AHCI SATA driver (interrupts by MSI, timeouts and port recovery)
 - [ ] AHCI: all 32 command slots, NCQ, direct DMA without the bounce buffer
 - [ ] ATAPI (optical drives) on AHCI
-- [ ] NVMe driver
+- [x] NVMe driver (admin and one I/O queue pair, MSI-X/MSI, PRP lists, namespaces)
 - [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)
 - [ ] USB mass storage (needs an xHCI driver first)
 - [x] Block cache: write-back with flush and a background writer, a lock per line

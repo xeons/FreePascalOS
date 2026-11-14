@@ -92,6 +92,14 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-virtio.img" ]]; then
 else
     run_virtio_disk_image=""
 fi
+run_nvme_disk_image="$build_directory/test-disk-nvme-run.img"
+if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-nvme.img" ]]; then
+    cp -f "${test_disk_image%.img}-nvme.img" "$run_nvme_disk_image"
+    disk_arguments+=(-drive if=none,id=nvme0,format=raw,cache=unsafe,file="$run_nvme_disk_image"
+        -device nvme,serial=fpostest,drive=nvme0)
+else
+    run_nvme_disk_image=""
+fi
 run_system_disk_image="$build_directory/system-disk-run.img"
 if [[ -n "$system_disk_image" ]]; then
     cp -f "$system_disk_image" "$run_system_disk_image"
@@ -175,6 +183,16 @@ case "$qemu_status" in
         if [[ -n "$test_disk_image" ]]; then
             if ! "$(dirname "$0")/verify-test-disk.sh" "$run_disk_image"; then
                 echo "TEST FAILED: the written volumes did not pass the host side checks"
+                exit 1
+            fi
+        fi
+        if [[ -n "$run_nvme_disk_image" ]]; then
+            if ! grep -q '\[nvme\] .*: 1 namespaces, .* interrupts' "$serial_log"; then
+                echo "TEST FAILED: the NVMe disk was not started with interrupts"
+                exit 1
+            fi
+            if ! "$(dirname "$0")/verify-test-disk.sh" "$run_nvme_disk_image"; then
+                echo "TEST FAILED: the volume on the NVMe disk did not pass the host side checks"
                 exit 1
             fi
         fi
