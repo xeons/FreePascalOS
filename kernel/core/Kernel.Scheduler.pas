@@ -202,6 +202,9 @@ begin
   ArchSetThreadInterruptStack(NextThread^.StackTop);
   if NextThread^.AddressSpaceRoot <> PreviousThread^.AddressSpaceRoot then
     ActivateAddressSpace(NextThread^.AddressSpaceRoot);
+  { Each user thread has its own thread pointer (FS base). }
+  if NextThread^.UserThreadPointer <> PreviousThread^.UserThreadPointer then
+    ArchSetUserThreadPointer(NextThread^.UserThreadPointer);
   ArchSwitchContext(@PreviousThread^.SavedStackPointer, NextThread^.SavedStackPointer);
 
   { Execution continues here when PreviousThread is scheduled again. }
@@ -500,6 +503,7 @@ begin
   { Kernel threads use the kernel address space; the process manager
     changes this for threads of user processes. }
   Thread^.AddressSpaceRoot := KernelPageTableRoot;
+  Thread^.UserThreadPointer := 0;
   Thread^.SavedStackPointer := ArchPrepareInitialStack(StackTop, @ThreadStartTrampoline);
 end;
 

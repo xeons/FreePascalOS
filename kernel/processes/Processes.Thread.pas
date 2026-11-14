@@ -23,6 +23,7 @@ uses
   Runtime.LinkedList,
   Memory.KernelStacks,
   Kernel.Threads,
+  Kernel.Events,
   Objects.Manager,
   Processes.Process;
 
@@ -34,6 +35,16 @@ type
     ProcessLink: TListEntry;
     KernelStack: TKernelStack;
     OwnsKernelStack: Boolean;
+
+    { Threads of user processes (see Processes.UserThread): the user
+      memory that belongs to this thread alone, released when it exits. }
+    IsUserThread: Boolean;
+    UserStackStart: QWord;
+    ThreadDataStart: QWord;
+    { Set when the thread has exited; waiting on a thread handle waits
+      for ExitEvent and then reads ExitCode. }
+    ExitCode: LongInt;
+    ExitEvent: TEvent;
   end;
 
 var
@@ -184,6 +195,7 @@ begin
   Thread := PThread(CreateObject(ThreadObjectType, nil));
   if Thread = nil then
     Exit(nil);
+  InitializeEvent(Thread^.ExitEvent, EventKindNotification, False);
 
   if not AllocateKernelStack(DefaultKernelStackSize, Thread^.KernelStack) then
   begin

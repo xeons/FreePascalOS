@@ -330,6 +330,7 @@ begin
     HandleKindPipeReadEnd, HandleKindPipeWriteEnd: Result := HandleKindPipe;
     HandleKindProcess: Result := Abi.SystemCalls.HandleKindProcess;
     HandleKindNull: Result := HandleKindNullDevice;
+    HandleKindThread: Result := Abi.SystemCalls.HandleKindThread;
   else
     Result := Failure(ErrorBadHandle);
   end;

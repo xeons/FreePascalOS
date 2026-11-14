@@ -62,12 +62,64 @@ const
   CallControlHandle = 37;
   CallSetInterruptIgnored = 38;
   CallGetProcessGroup = 39;
-  CallCount = 40;
+
+  { Threads and thread synchronization (40-49). }
+  { (Entry, Argument, StackSize): starts a thread of the calling process
+    at Entry with Argument in the first argument register and a stack of
+    StackSize bytes (0 = default). Returns a thread handle. }
+  CallCreateThread = 40;
+  { (ExitCode): ends the calling thread; the last thread to end ends the
+    process. Never returns. }
+  CallExitThread = 41;
+  { (Handle, TimeoutMilliseconds or InfiniteWait, ExitCodeAddress): waits
+    for the thread to end and stores its exit code (a LongInt). }
+  CallWaitForThread = 42;
+  { (Address): sets the calling thread's thread pointer (%fs base). }
+  CallSetThreadPointer = 43;
+  { (Handle): the id of the thread behind a thread handle, or of the
+    calling thread for CurrentThreadHandle. }
+  CallGetThreadId = 44;
+  { (Address, ExpectedValue, TimeoutMilliseconds or InfiniteWait): if the
+    32-bit value at Address still equals ExpectedValue, sleeps until
+    CallWakeAddress wakes it, the timeout passes (ErrorTimedOut) or the
+    process is asked to end (ErrorInterrupted). Returns ErrorBusy at once
+    if the value differs. }
+  CallWaitOnAddress = 45;
+  { (Address, Count): wakes up to Count threads waiting on Address;
+    returns how many were woken. }
+  CallWakeAddress = 46;
+
+  CallCount = 70;
 
   { --- Arguments ------------------------------------------------------- }
 
   { Timeout of CallWaitForProcess meaning "wait as long as it takes". }
   InfiniteWait = -1;
+
+  { Handle of CallGetThreadId meaning "the calling thread". }
+  CurrentThreadHandle = -1;
+  { Stack size CallCreateThread uses when given 0, and its limit. }
+  DefaultThreadStackSize = 1024 * 1024;
+  MaximumThreadStackSize = 64 * 1024 * 1024;
+
+  { The thread control block the thread pointer (%fs base) of every user
+    thread points at (x86-64 TLS variant II: static thread-local storage
+    lies just below it). The kernel fills in the self pointer and the
+    thread id; the runtime word belongs to the user runtime (libsystem
+    keeps the thread's threadvar block there). }
+  ThreadBlockSelfOffset = 0;
+  ThreadBlockRuntimeOffset = 8;
+  ThreadBlockIdOffset = 16;
+  ThreadBlockSize = 64;
+
+  { Auxiliary vector entries the kernel adds to the initial stack for
+    the user runtime: the initializers (DT_INIT, DT_INIT_ARRAY) and
+    finalizers (DT_FINI_ARRAY, DT_FINI) of the program and its libraries,
+    as arrays of code addresses in the order they must be called. }
+  AuxiliaryInitializers = $1000;
+  AuxiliaryInitializerCount = $1001;
+  AuxiliaryFinalizers = $1002;
+  AuxiliaryFinalizerCount = $1003;
 
   { Fields of TAbiAttributeChanges that apply. }
   ChangeFieldMode = $01;
@@ -161,6 +213,7 @@ const
   HandleKindPipe = 3;
   HandleKindProcess = 4;
   HandleKindNullDevice = 5;
+  HandleKindThread = 6;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;

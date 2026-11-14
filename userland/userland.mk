@@ -27,6 +27,7 @@ SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
 CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
+TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
 # Every userland/bin/<name>.pas becomes /bin/<name>. A program made of
 # several units keeps the others in userland/<name>/.
@@ -39,7 +40,8 @@ USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_P
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(PLUGIN_LIBRARY) $(USER_PROGRAMS)
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) \
+	$(USER_PROGRAMS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/common/*) rtl/user/system.pas rtl/user/startup/si_prc.pas
 	$(call build-rtl,$(RTL_USER_DIRECTORY),rtl/user,-Tlinux -Cg -Cn)
@@ -82,6 +84,18 @@ $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 	$(LD) -shared $(USER_LINK_FLAGS) -soname libplugin.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/plugin/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# A library in assembly with thread-local storage and initializers, which
+# Free Pascal does not produce; used by threadtest.
+$(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
+	@mkdir -p $(USER_BUILD_DIRECTORY)/tlstest
+	as --64 -o $(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o userland/lib/tlstest/TlsTest.s
+	$(LD) -shared $(USER_LINK_FLAGS) -soname libtlstest.so -o $@ \
+		$(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# Programs that need more libraries than the usual three.
+$(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
+$(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
+
 $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
 	@rm -rf $(USER_BUILD_DIRECTORY)/programs/$*
 	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(USER_PROGRAM_OUTPUT)
@@ -90,7 +104,7 @@ $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userlan
 		-FU$(USER_BUILD_DIRECTORY)/programs/$* -FE$(USER_BUILD_DIRECTORY)/programs/$* $<
 	$(LD) -pie --no-dynamic-linker $(USER_LINK_FLAGS) -e _start -o $@ \
 		$(USER_BUILD_DIRECTORY)/programs/$*/*.o $(RTL_USER_DIRECTORY)/si_prc.o \
-		-L$(USER_LIBRARY_OUTPUT) -lcoreutils -lcryptography -lsystem
+		-L$(USER_LIBRARY_OUTPUT) $(EXTRA_PROGRAM_LIBRARIES) -lcoreutils -lcryptography -lsystem
 
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)

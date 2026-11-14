@@ -9,6 +9,7 @@
     * a list of shell command lines: each runs through "sh -c" with its
       standard output captured through a pipe, and both the output and
       the exit status must match,
+    * threads, thread-local storage and initialization order (threadtest),
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself.
 
@@ -46,7 +47,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..191] of TCommandTest = (
+  CommandTests: array[0..195] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -259,6 +260,27 @@ const
     (Command: 'echo "hello big world" | ptx -w 30'; ExpectedOutput: '       hello   big world'#10'               hello big world'#10'   hello big   world'#10; ExpectedStatus: 0),
     (Command: 'expr abc : ''a\(.*\)c''; expr aaa : ''a*''; expr x : ''\(y\)'''; ExpectedOutput: 'b'#10'3'#10#10; ExpectedStatus: 1),
     (Command: 'ls /bin/dir /bin/vdir /bin/chgrp /bin/unexpand'; ExpectedOutput: '/bin/chgrp'#10'/bin/dir'#10'/bin/unexpand'#10'/bin/vdir'#10; ExpectedStatus: 0),
+
+    { --- threads --- }
+    (Command: '/bin/threadtest'; ExpectedOutput:
+      'ok units initialized in dependency order'#10 +
+      'ok library initializer ran before the units'#10 +
+      'ok threads start'#10 +
+      'ok thread exit codes'#10 +
+      'ok shared counter under a lock'#10 +
+      'ok thread ids'#10 +
+      'ok waiting for a thread times out'#10 +
+      'ok a thread waiting on a lock continues'#10 +
+      'ok threadvars are per thread'#10 +
+      'ok library TLS starts from its image in every thread'#10 +
+      'ok library TLS is per thread'#10 +
+      'ok library TLS blocks are distinct'#10 +
+      'ok many short-lived threads'#10 +
+      'threadtest: unit finalization ran'#10 +
+      'tlstest: library finalizer ran'#10; ExpectedStatus: 0),
+    (Command: '/bin/threadtest --exit-with-threads-running; echo $?'; ExpectedOutput: 'tlstest: library finalizer ran'#10'7'#10; ExpectedStatus: 0),
+    (Command: '/bin/threadtest --last-thread-exits; echo $?'; ExpectedOutput: '5'#10; ExpectedStatus: 0),
+    (Command: '/bin/threadtest --crash-in-thread; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

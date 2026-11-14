@@ -5,6 +5,11 @@
   provides the entry point "_start": the kernel starts a program there
   with the stack pointer at the argument count. The stack is aligned and
   control passes to System.StartProgram, which runs the main block.
+
+  The compiler emits the unit initialization table (INITFINAL) and the
+  threadvar tables (FPC_THREADVARTABLES) into the program itself; this
+  unit is the program side, so it hands their addresses to the System
+  unit in libsystem.
 }
 unit si_prc;
 
@@ -17,9 +22,17 @@ implementation
 
 procedure ProgramMainBlock; external name 'PASCALMAIN';
 
+var
+  InitFinalTable: Byte; external name 'INITFINAL';
+  ThreadVarTables: Byte; external name 'FPC_THREADVARTABLES';
+
 procedure EnterProgram(InitialStack: PQWord);
+var
+  Tables: TProgramTables;
 begin
-  StartProgram(InitialStack, @ProgramMainBlock);
+  Tables.InitFinalTable := @InitFinalTable;
+  Tables.ThreadVarTables := @ThreadVarTables;
+  StartProgram(InitialStack, @ProgramMainBlock, @Tables);
 end;
 
 procedure ProgramEntry; assembler; nostackframe; [public, alias: '_start'];

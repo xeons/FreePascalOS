@@ -27,7 +27,8 @@ unit Processes.AddressSpace;
 interface
 
 uses
-  Memory.Layout;
+  Memory.Layout,
+  Kernel.SpinLock;
 
 const
   UserImageBase = QWord($0000000000400000);
@@ -43,7 +44,9 @@ const
   RegionExecutable = LongWord(1) shl 2;
 
 type
-  TRegionKind = (RegionKindImage, RegionKindStack, RegionKindAllocation);
+  TRegionKind = (RegionKindImage, RegionKindStack, RegionKindAllocation,
+    { A thread's thread control block and static thread-local storage. }
+    RegionKindThreadData);
 
   TUserRegion = record
     Start: QWord;
@@ -61,6 +64,10 @@ type
     RegionCount: Integer;
     NextLibraryAddress: QWord;
     CommittedPages: QWord;
+    { The threads of a process share the space: region changes, page
+      commits and lookups happen under this lock (held briefly, at
+      dispatch level, so no thread is preempted halfway through). }
+    Lock: TSpinLock;
   end;
 
 { All routines returning LongInt return 0 on success or an Abi error code. }
@@ -77,6 +84,13 @@ function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
 { Run time allocations (backing for the user heap). }
 function AllocateUserMemory(Space: PAddressSpace; Length: QWord; out Start: QWord): LongInt;
 function FreeUserMemory(Space: PAddressSpace; Start: QWord): LongInt;
+
+{ Allocates Length bytes of on-demand memory of the given kind with an
+  unmapped guard page below it (thread stacks). }
+function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TRegionKind;
+  out Start: QWord): LongInt;
+{ Releases the region starting at Start, whatever its kind. }
+function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
 
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
@@ -101,6 +115,7 @@ implementation
 uses
   Runtime.Memory,
   Abi.SystemCalls,
+  Kernel.PriorityLevel,
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Memory.Arch.PageTables;
@@ -126,6 +141,7 @@ begin
     Exit(ErrorOutOfMemory);
   end;
   Space^.NextLibraryAddress := UserLibraryBase;
+  InitializeSpinLock(Space^.Lock);
   Result := ErrorNone;
 end;
 
@@ -159,7 +175,7 @@ begin
   Result := -1;
 end;
 
-function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
+function AddRegionLocked(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
 var
   Index: Integer;
@@ -194,6 +210,16 @@ begin
   Space^.Regions[InsertAt].CommitsOnDemand := CommitsOnDemand;
   Inc(Space^.RegionCount);
   Result := ErrorNone;
+end;
+
+function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
+  Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := AddRegionLocked(Space, Start, Length, Attributes, Kind, CommitsOnDemand);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
@@ -236,26 +262,54 @@ begin
   end;
 end;
 
-function AllocateUserMemory(Space: PAddressSpace; Length: QWord; out Start: QWord): LongInt;
+{ Finds room for GuardBytes + Length and adds a region for the upper
+  Length bytes. }
+function AllocateWithGuard(Space: PAddressSpace; Length, GuardBytes: QWord; Kind: TRegionKind;
+  out Start: QWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
 begin
   Start := 0;
   Length := RoundUpToPage(Length);
   if Length = 0 then
     Exit(ErrorInvalidArgument);
-  if not FindFreeRange(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
-    Exit(ErrorOutOfMemory);
-  Result := AddRegion(Space, Start, Length, RegionReadable or RegionWritable,
-    RegionKindAllocation, True);
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if not FindFreeRange(Space, GuardBytes + Length, UserAllocationBase, UserAllocationLimit, Start) then
+    Result := ErrorOutOfMemory
+  else
+  begin
+    Start := Start + GuardBytes;
+    Result := AddRegionLocked(Space, Start, Length, RegionReadable or RegionWritable, Kind, True);
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
-function FreeUserMemory(Space: PAddressSpace; Start: QWord): LongInt;
+function AllocateUserMemory(Space: PAddressSpace; Length: QWord; out Start: QWord): LongInt;
+begin
+  Result := AllocateWithGuard(Space, Length, 0, RegionKindAllocation, Start);
+end;
+
+function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TRegionKind;
+  out Start: QWord): LongInt;
+begin
+  Result := AllocateWithGuard(Space, Length, PageSize, Kind, Start);
+end;
+
+{ Removes the region starting at Start; AnyKind allows other kinds than
+  run time allocations. }
+function RemoveRegion(Space: PAddressSpace; Start: QWord; AnyKind: Boolean): LongInt;
 var
   Index: Integer;
+  PreviousLevel: TPriorityLevel;
 begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
   Index := FindRegionIndex(Space, Start);
   if (Index < 0) or (Space^.Regions[Index].Start <> Start) or
-     (Space^.Regions[Index].Kind <> RegionKindAllocation) then
+     (not AnyKind and (Space^.Regions[Index].Kind <> RegionKindAllocation)) then
+  begin
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
     Exit(ErrorInvalidArgument);
+  end;
 
   ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
   while Index + 1 < Space^.RegionCount do
@@ -264,7 +318,18 @@ begin
     Inc(Index);
   end;
   Dec(Space^.RegionCount);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
   Result := ErrorNone;
+end;
+
+function FreeUserMemory(Space: PAddressSpace; Start: QWord): LongInt;
+begin
+  Result := RemoveRegion(Space, Start, False);
+end;
+
+function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
+begin
+  Result := RemoveRegion(Space, Start, True);
 end;
 
 { --- Pages ----------------------------------------------------------- }
@@ -278,7 +343,7 @@ begin
     Result := Result or MappingExecutable;
 end;
 
-function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
+function CommitPageLocked(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
 var
   PageAddress: QWord;
   PhysicalAddress: TPhysicalAddress;
@@ -313,10 +378,21 @@ begin
   Result := ErrorNone;
 end;
 
+function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := CommitPageLocked(Space, Address, Attributes);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
 function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
 var
   Index: Integer;
   Region: PUserRegion;
+  PreviousLevel: TPriorityLevel;
+  PhysicalAddress: TPhysicalAddress;
 begin
   Result := False;
   if (Space = nil) or (Address >= UserSpaceLimit) then
@@ -325,16 +401,22 @@ begin
   if (ErrorCode and PageFaultWasPresent) <> 0 then
     Exit;
 
-  Index := FindRegionIndex(Space, Address);
-  if Index < 0 then
-    Exit;
-  Region := @Space^.Regions[Index];
-  if not Region^.CommitsOnDemand then
-    Exit;
-  if ((ErrorCode and PageFaultWasWrite) <> 0) and ((Region^.Attributes and RegionWritable) = 0) then
-    Exit;
-
-  Result := CommitPage(Space, Address, Region^.Attributes) = ErrorNone;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  { Another thread of the process may have provided the page meanwhile. }
+  if TranslateInAddressSpace(Space^.Root, RoundDownToPage(Address), PhysicalAddress) then
+    Result := True
+  else
+  begin
+    Index := FindRegionIndex(Space, Address);
+    if Index >= 0 then
+    begin
+      Region := @Space^.Regions[Index];
+      if Region^.CommitsOnDemand and (((ErrorCode and PageFaultWasWrite) = 0) or
+         ((Region^.Attributes and RegionWritable) <> 0)) then
+        Result := CommitPageLocked(Space, Address, Region^.Attributes) = ErrorNone;
+    end;
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function ValidateUserRange(Space: PAddressSpace; Address, Length: QWord; NeedWrite: Boolean): Boolean;
@@ -342,6 +424,7 @@ var
   Position: QWord;
   Finish: QWord;
   Index: Integer;
+  PreviousLevel: TPriorityLevel;
 begin
   Result := False;
   if Space = nil then
@@ -353,16 +436,19 @@ begin
 
   Position := Address;
   Finish := Address + Length;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := True;
   while Position < Finish do
   begin
     Index := FindRegionIndex(Space, Position);
-    if Index < 0 then
-      Exit;
-    if NeedWrite and ((Space^.Regions[Index].Attributes and RegionWritable) = 0) then
-      Exit;
+    if (Index < 0) or (NeedWrite and ((Space^.Regions[Index].Attributes and RegionWritable) = 0)) then
+    begin
+      Result := False;
+      Break;
+    end;
     Position := Space^.Regions[Index].Start + Space^.Regions[Index].Length;
   end;
-  Result := True;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 { Returns a kernel pointer to Address in Space, providing the page if it
@@ -378,7 +464,7 @@ begin
     Index := FindRegionIndex(Space, Address);
     if Index < 0 then
       Exit(ErrorBadAddress);
-    Result := CommitPage(Space, Address, Space^.Regions[Index].Attributes);
+    Result := CommitPageLocked(Space, Address, Space^.Regions[Index].Attributes);
     if Result <> ErrorNone then
       Exit;
     if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
@@ -393,24 +479,31 @@ function TransferWithAddressSpace(Space: PAddressSpace; Address: QWord; KernelBu
 var
   Window: PByte;
   ChunkBytes: QWord;
+  PreviousLevel: TPriorityLevel;
 begin
   while Length > 0 do
   begin
     ChunkBytes := PageSize - (Address and PageOffsetMask);
     if ChunkBytes > Length then
       ChunkBytes := Length;
+    { The page must not go away while it is being copied. }
+    PreviousLevel := AcquireSpinLock(Space^.Lock);
     Result := PageInWindow(Space, Address, Window);
+    if Result = ErrorNone then
+    begin
+      if IsWrite then
+      begin
+        if KernelBuffer <> nil then
+          CopyMemory(Window, KernelBuffer, ChunkBytes)
+        else
+          ZeroMemory(Window, ChunkBytes);
+      end
+      else
+        CopyMemory(KernelBuffer, Window, ChunkBytes);
+    end;
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
     if Result <> ErrorNone then
       Exit;
-    if IsWrite then
-    begin
-      if KernelBuffer <> nil then
-        CopyMemory(Window, KernelBuffer, ChunkBytes)
-      else
-        ZeroMemory(Window, ChunkBytes);
-    end
-    else
-      CopyMemory(KernelBuffer, Window, ChunkBytes);
     if KernelBuffer <> nil then
       KernelBuffer := KernelBuffer + ChunkBytes;
     Address := Address + ChunkBytes;

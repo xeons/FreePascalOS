@@ -24,7 +24,9 @@ type
     HandleKindPipeReadEnd,
     HandleKindPipeWriteEnd,
     HandleKindProcess,
-    HandleKindNull
+    HandleKindNull,
+    { A thread of the same process (see Processes.ThreadCalls). }
+    HandleKindThread
   );
 
   THandleEntry = record

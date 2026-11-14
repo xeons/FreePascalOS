@@ -7,8 +7,10 @@
   pages straight from the kernel and are given back when freed.
 
   Every block starts with a 16-byte header recording its size, so blocks
-  can be freed and resized with nothing but the pointer. Programs are
-  single threaded, so no locking is needed.
+  can be freed and resized with nothing but the pointer.
+
+  The heap is shared by all threads of the process; one lock (see
+  Sys.Locks) serializes its free lists.
 }
 unit Sys.Memory;
 
@@ -34,7 +36,8 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Text,
-  Sys.Kernel;
+  Sys.Kernel,
+  Sys.Locks;
 
 const
   SizeClassCount = 9;
@@ -60,6 +63,7 @@ type
 
 var
   FreeLists: array[0..SizeClassCount - 1] of PBlockHeader;
+  HeapLock: TLock;
 
 function ClassBytes(SizeClass: LongWord): QWord;
 begin
@@ -100,7 +104,9 @@ begin
   Result := True;
 end;
 
-function AllocateMemory(ByteCount: QWord): Pointer;
+{ The routines below named ...Locked expect the caller to hold HeapLock. }
+
+function AllocateMemoryLocked(ByteCount: QWord): Pointer;
 var
   TotalBytes: QWord;
   SizeClass: Integer;
@@ -134,6 +140,13 @@ begin
   Result := Pointer(PByte(Block) + HeaderSize);
 end;
 
+function AllocateMemory(ByteCount: QWord): Pointer;
+begin
+  AcquireLock(HeapLock);
+  Result := AllocateMemoryLocked(ByteCount);
+  ReleaseLock(HeapLock);
+end;
+
 function AllocateZeroedMemory(ByteCount: QWord): Pointer;
 begin
   Result := AllocateMemory(ByteCount);
@@ -146,7 +159,7 @@ begin
   Result := PBlockHeader(PByte(Block) - HeaderSize);
 end;
 
-procedure FreeMemory(Block: Pointer);
+procedure FreeMemoryLocked(Block: Pointer);
 var
   Header: PBlockHeader;
 begin
@@ -168,6 +181,15 @@ begin
   end;
   { Anything else is not a heap block (or freed twice); ignore it rather
     than corrupt the heap. }
+end;
+
+procedure FreeMemory(Block: Pointer);
+begin
+  if Block = nil then
+    Exit;
+  AcquireLock(HeapLock);
+  FreeMemoryLocked(Block);
+  ReleaseLock(HeapLock);
 end;
 
 function MemoryBlockSize(Block: Pointer): QWord;
@@ -194,11 +216,14 @@ begin
   OldSize := MemoryBlockSize(Block);
   if NewByteCount <= OldSize then
     Exit(Block);
-  Result := AllocateMemory(NewByteCount);
-  if Result = nil then
-    Exit;
-  CopyMemory(Result, Block, OldSize);
-  FreeMemory(Block);
+  AcquireLock(HeapLock);
+  Result := AllocateMemoryLocked(NewByteCount);
+  if Result <> nil then
+  begin
+    CopyMemory(Result, Block, OldSize);
+    FreeMemoryLocked(Block);
+  end;
+  ReleaseLock(HeapLock);
 end;
 
 function DuplicateText(Text: PChar): PChar;
