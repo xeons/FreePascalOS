@@ -123,6 +123,12 @@ RULES
     disk_arguments+=(-drive format=raw,file=blkdebug:"$fault_rules":"$fault_disk_image")
 fi
 
+# An optical drive on the fifth AHCI port (disk4), for the ATAPI driver.
+if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-cdrom.img" ]]; then
+    disk_arguments+=(-drive if=none,id=cdrom0,format=raw,media=cdrom,readonly=on,file="${test_disk_image%.img}-cdrom.img"
+        -device ide-cd,drive=cdrom0,bus=ide.4)
+fi
+
 # ACCEL=kvm runs on the real processor (faster, and with the processor's
 # own behaviour, such as SIMD floating point exceptions, which QEMU's
 # emulator does not raise).

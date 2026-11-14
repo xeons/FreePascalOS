@@ -66,6 +66,7 @@ const
   SataStatusPowerActive = $100;
 
   SignatureSataDisk = LongWord($00000101);
+  SignatureAtapi = LongWord($EB140101);
 
 { --- Port setup ------------------------------------------------------ }
 
@@ -230,18 +231,59 @@ begin
   WaitForRegister(Registers, RegisterHandoffControl, HandoffBiosOwnership, 0, 2000);
 end;
 
-function PortHasSataDisk(PortRegisters: PByte): Boolean;
+{ True if a disk or an ATAPI device is attached and talking; IsPacket
+  tells which. }
+function PortHasDevice(PortRegisters: PByte; out IsPacket: Boolean): Boolean;
 var
   SataStatus: LongWord;
+  Signature: LongWord;
 begin
   SataStatus := ReadRegister(PortRegisters, PortSataStatus);
+  Signature := ReadRegister(PortRegisters, PortSignature);
+  IsPacket := Signature = SignatureAtapi;
   Result := ((SataStatus and SataStatusDetectionMask) = SataStatusDevicePresent) and
     ((SataStatus and SataStatusPowerMask) = SataStatusPowerActive) and
-    (ReadRegister(PortRegisters, PortSignature) = SignatureSataDisk);
+    ((Signature = SignatureSataDisk) or IsPacket);
+end;
+
+{ An ATAPI device: its model, and the size of the medium in it (READ
+  CAPACITY). False if there is no readable medium. }
+function IdentifyPacketDevice(Port: PAhciPort; Device: PBlockDevice): Boolean;
+var
+  Identify: PWord;
+  Capacity: PByte;
+  Packet: TPacket;
+  LastBlock: LongWord;
+begin
+  Result := False;
+  if not ExecuteCommand(Port, AtaCommandIdentifyPacketDevice, 0, 0, 512, False) then
+    Exit;
+  Identify := PWord(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  DecodeAtaString(Identify, 27, 20, @Device^.Model[0], BlockDeviceModelLength);
+
+  FillMemory(@Packet[0], PacketSize, 0);
+  Packet[0] := ScsiReadCapacity10;
+  { A drive just started reports a unit attention first; ask again. }
+  if not ExecutePacketCommand(Port, Packet, 8) then
+  begin
+    RecoverPort(Port);
+    if not ExecutePacketCommand(Port, Packet, 8) then
+      Exit;
+  end;
+  Capacity := PByte(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  LastBlock := (LongWord(Capacity[0]) shl 24) or (LongWord(Capacity[1]) shl 16) or
+    (LongWord(Capacity[2]) shl 8) or Capacity[3];
+  Device^.BlockSize := (LongWord(Capacity[4]) shl 24) or (LongWord(Capacity[5]) shl 16) or
+    (LongWord(Capacity[6]) shl 8) or Capacity[7];
+  Device^.BlockCount := QWord(LastBlock) + 1;
+  Device^.WriteProtected := True;
+  Port^.IsPacketDevice := True;
+  Port^.QueueDepth := 0;
+  Result := (Device^.BlockSize >= 512) and (Device^.BlockSize <= 4096);
 end;
 
 { Sets up the disk on port PortNumber; returns its port, or nil. }
-function SetUpDisk(Registers: PByte; PortNumber: LongWord): PAhciPort;
+function SetUpDisk(Registers: PByte; PortNumber: LongWord; IsPacket: Boolean): PAhciPort;
 var
   Port: PAhciPort;
   Disk: PBlockDevice;
@@ -268,7 +310,20 @@ begin
   if Disk = nil then
     Exit;
   { Nothing else uses the port yet, so no lock is needed. }
-  if not IdentifyDisk(Port, Disk,
+  if IsPacket then
+  begin
+    if not IdentifyPacketDevice(Port, Disk) then
+    begin
+      DebugBeginMessage;
+      DebugWriteTag('ahci');
+      DebugWrite('Port ');
+      DebugWriteDecimal(PortNumber);
+      DebugWriteLine(': ATAPI device without a readable medium, left alone');
+      DebugEndMessage;
+      Exit;
+    end;
+  end
+  else if not IdentifyDisk(Port, Disk,
     (ReadRegister(Registers, RegisterCapabilities) and CapabilityNativeCommandQueuing) <> 0) then
     Exit;
   Port^.BlockSize := Disk^.BlockSize;
@@ -284,7 +339,9 @@ begin
   DebugWriteDecimal(PortNumber);
   DebugWrite(': ');
   DebugWriteDecimal(Port^.SlotCount);
-  if Port^.QueueDepth > 0 then
+  if Port^.IsPacketDevice then
+    DebugWriteLine(' command slots, ATAPI (read only)')
+  else if Port^.QueueDepth > 0 then
   begin
     DebugWrite(' command slots, native command queuing to depth ');
     DebugWriteDecimal(Port^.QueueDepth);
@@ -357,6 +414,7 @@ var
   PortNumber: LongWord;
   PortRegisters: PByte;
   Controller: PAhciController;
+  IsPacket: Boolean;
 begin
   Result := 0;
   if (not PciReadBar(PciDevice, AhciBarIndex, Bar)) or Bar.IsIoPort then
@@ -382,9 +440,9 @@ begin
     if (PortsImplemented and (LongWord(1) shl PortNumber)) = 0 then
       Continue;
     PortRegisters := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
-    if not PortHasSataDisk(PortRegisters) then
+    if not PortHasDevice(PortRegisters, IsPacket) then
       Continue;
-    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber);
+    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber, IsPacket);
     if Controller^.Ports[PortNumber] <> nil then
       Inc(Result);
   end;

@@ -44,6 +44,10 @@
   of several queued commands failed is not looked into), and the port is
   reset (RecoverPort) before anything else starts.
 
+  ATAPI devices (optical drives) are read with SCSI READ(10) commands in
+  ATAPI packets, one at a time; they cannot be written, and have nothing
+  to flush.
+
   Before the interrupt is connected (while disks are identified), or if
   the controller has no MSI, commands are polled one at a time on slot 0
   and requests complete before the routine returns.
@@ -142,11 +146,20 @@ begin
   end;
 end;
 
+function ExecuteReadPacket(Port: PAhciPort; Lba, BlockCount, ByteCount: QWord): Boolean;
+var
+  Packet: TPacket;
+begin
+  MakeRead10Packet(Packet, LongWord(Lba), Word(BlockCount));
+  Result := ExecutePacketCommand(Port, Packet, ByteCount);
+end;
+
 function TransferPolled(Port: PAhciPort; var Request: TIoRequest): LongInt;
 var
   Done: QWord;
   Piece: QWord;
   IsWrite: Boolean;
+  Succeeded: Boolean;
 begin
   IsWrite := Request.Operation = IoFunctionWrite;
   Result := ErrorNone;
@@ -163,8 +176,13 @@ begin
     Piece := PieceLength(Port, @Request, Done);
     if IsWrite then
       CopyToBounceBuffer(Port, PByte(Request.Buffer) + Done, Piece);
-    if not ExecuteCommand(Port, AtaCommandFor(@Request), (Request.Offset + Done) div Port^.BlockSize,
-      Word(Piece div Port^.BlockSize), Piece, IsWrite) then
+    if Port^.IsPacketDevice then
+      Succeeded := ExecuteReadPacket(Port, (Request.Offset + Done) div Port^.BlockSize,
+        Piece div Port^.BlockSize, Piece)
+    else
+      Succeeded := ExecuteCommand(Port, AtaCommandFor(@Request), (Request.Offset + Done) div Port^.BlockSize,
+        Word(Piece div Port^.BlockSize), Piece, IsWrite);
+    if not Succeeded then
     begin
       ReportRecovery(Port, 'command failed', RecoverPort(Port));
       Result := ErrorIo;
@@ -272,6 +290,7 @@ var
   SegmentCount: Integer;
   Command: Byte;
   IsWrite: Boolean;
+  Packet: TPacket;
 begin
   State := @Port^.Slots[Slot];
   Request := State^.Request;
@@ -290,17 +309,26 @@ begin
     SegmentCount := BounceSegments(Port, State^.Piece, Segments);
   end;
 
-  if State^.Queued then
+  if Port^.IsPacketDevice then
   begin
-    if IsWrite then
-      Command := AtaCommandWriteFpdmaQueued
-    else
-      Command := AtaCommandReadFpdmaQueued;
+    MakeRead10Packet(Packet, LongWord((Request^.Offset + State^.Done) div Port^.BlockSize),
+      Word(State^.Piece div Port^.BlockSize));
+    BuildPacketCommand(Port, Slot, Packet, Segments, SegmentCount);
   end
   else
-    Command := AtaCommandFor(Request);
-  BuildCommand(Port, Slot, Command, (Request^.Offset + State^.Done) div Port^.BlockSize,
-    Word(State^.Piece div Port^.BlockSize), Segments, SegmentCount, IsWrite, State^.Queued);
+  begin
+    if State^.Queued then
+    begin
+      if IsWrite then
+        Command := AtaCommandWriteFpdmaQueued
+      else
+        Command := AtaCommandReadFpdmaQueued;
+    end
+    else
+      Command := AtaCommandFor(Request);
+    BuildCommand(Port, Slot, Command, (Request^.Offset + State^.Done) div Port^.BlockSize,
+      Word(State^.Piece div Port^.BlockSize), Segments, SegmentCount, IsWrite, State^.Queued);
+  end;
   State^.Deadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
   IssueSlots(Port, LongWord(1) shl Slot, State^.Queued);
   Result := True;
@@ -567,6 +595,11 @@ begin
   Port := PortOf(Device);
   if not RequestIsValid(Port, Request) then
     Exit(ErrorInvalidArgument);
+  if Port^.IsPacketDevice then
+    case Request.Operation of
+      IoFunctionWrite: Exit(ErrorReadOnly);
+      IoFunctionFlush: Exit(ErrorNone);
+    end;
   if Port^.InterruptDriven then
     Result := TransferWithInterrupts(Port, Request)
   else

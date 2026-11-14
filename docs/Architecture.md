@@ -265,6 +265,11 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    that fails or times out fails every request running on the port with
    `ErrorIo`, and the port is reset as the AHCI specification describes
    (stop, clear errors, COMRESET if the device is still busy, start).
+   ATAPI devices (optical drives, signature EB140101h) are read-only disks
+   of their medium's block size: IDENTIFY PACKET DEVICE gives the model,
+   SCSI READ CAPACITY(10) the size, and reads are READ(10) commands in
+   ATAPI packets, never queued. A drive without a readable medium is left
+   alone. The tests put a 64-block medium in a drive on the fifth port.
    The block cache writes dirty lines back in batches
    (`WriteBlocksTogether` sends all requests before waiting), which is
    what keeps several commands in flight; the disk statistics filter

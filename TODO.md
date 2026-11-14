@@ -109,7 +109,7 @@ how the existing pieces fit together.
 - [x] GPT and MBR partition tables (with logical partitions)
 - [x] AHCI SATA driver (interrupts by MSI, timeouts and port recovery)
 - [x] AHCI: all command slots, NCQ, direct DMA into the request's pages
-- [ ] ATAPI (optical drives) on AHCI
+- [x] ATAPI (optical drives) on AHCI: read-only disks of the medium's block size
 - [x] NVMe driver (admin and one I/O queue pair, MSI-X/MSI, PRP lists, namespaces)
 - [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)
 - [ ] USB mass storage (needs an xHCI driver first)

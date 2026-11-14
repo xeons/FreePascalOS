@@ -124,6 +124,13 @@ const
   AtaCommandFlushCacheExtended = $EA;
   AtaCommandReadFpdmaQueued = $60;
   AtaCommandWriteFpdmaQueued = $61;
+  AtaCommandPacket = $A0;
+  AtaCommandIdentifyPacketDevice = $A1;
+
+  { SCSI commands sent in ATAPI packets. }
+  PacketSize = 12;
+  ScsiReadCapacity10 = $25;
+  ScsiRead10 = $28;
 
   { Layout of the per-port control page. }
   CommandListOffset = $000;  { 32 headers of 32 bytes, 1 KiB aligned }
@@ -172,6 +179,8 @@ type
       takes at once (0: no NCQ). }
     SlotCount: LongWord;
     QueueDepth: LongWord;
+    { An ATAPI device (an optical drive): SCSI commands in packets. }
+    IsPacketDevice: Boolean;
     BlockSize: LongWord;
     BlockCount: QWord;
     { The disk's device object (Drivers.AhciRequests). }
@@ -232,6 +241,19 @@ function WaitForRegister(Base: PByte; Offset: LongWord; Mask: LongWord; Expected
   slot number. }
 procedure BuildCommand(Port: PAhciPort; Slot: LongWord; Command: Byte; Lba: QWord; SectorCount: Word;
   const Segments: TDataSegments; SegmentCount: Integer; IsWrite, Queued: Boolean);
+type
+  TPacket = array[0..PacketSize - 1] of Byte;
+
+{ Fills in Slot with an ATAPI PACKET command carrying the SCSI command
+  Packet, reading its data into Segments. }
+procedure BuildPacketCommand(Port: PAhciPort; Slot: LongWord; const Packet: TPacket;
+  const Segments: TDataSegments; SegmentCount: Integer);
+{ A READ(10) packet for BlockCount blocks at Lba. }
+procedure MakeRead10Packet(out Packet: TPacket; Lba: LongWord; BlockCount: Word);
+{ Runs Packet on slot 0 (polled), its data (ByteCount bytes) read into
+  the bounce buffer. }
+function ExecutePacketCommand(Port: PAhciPort; const Packet: TPacket; ByteCount: QWord): Boolean;
+
 { Hands the commands built in the slots of SlotMask to the controller. }
 procedure IssueSlots(Port: PAhciPort; SlotMask: LongWord; Queued: Boolean);
 
@@ -382,6 +404,68 @@ begin
   Header^.BytesTransferred := 0;
   Header^.TableAddressLow := LongWord(TablePhysical);
   Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
+end;
+
+procedure BuildPacketCommand(Port: PAhciPort; Slot: LongWord; const Packet: TPacket;
+  const Segments: TDataSegments; SegmentCount: Integer);
+const
+  PacketOffsetInTable = $40;
+  CommandHeaderAtapi = LongWord(1) shl 5;
+  FeatureDma = 1;
+var
+  Header: PCommandHeader;
+  Table: PByte;
+begin
+  BuildCommand(Port, Slot, AtaCommandPacket, 0, 0, Segments, SegmentCount, False, False);
+  Table := PByte(PhysicalToVirtual(SlotTablePhysical(Port, Slot)));
+  if SegmentCount > 0 then
+    Table[3] := FeatureDma;
+  { The byte count limit (for PIO; harmless with DMA). }
+  Table[5] := $FE;
+  Table[6] := $FF;
+  ZeroMemory(Table + PacketOffsetInTable, 16);
+  CopyMemory(Table + PacketOffsetInTable, @Packet[0], PacketSize);
+  Header := PCommandHeader(Port^.ControlPage + CommandListOffset) + Slot;
+  Header^.Flags := Header^.Flags or CommandHeaderAtapi;
+end;
+
+procedure MakeRead10Packet(out Packet: TPacket; Lba: LongWord; BlockCount: Word);
+begin
+  FillMemory(@Packet[0], PacketSize, 0);
+  Packet[0] := ScsiRead10;
+  Packet[2] := Byte(Lba shr 24);
+  Packet[3] := Byte(Lba shr 16);
+  Packet[4] := Byte(Lba shr 8);
+  Packet[5] := Byte(Lba);
+  Packet[7] := Byte(BlockCount shr 8);
+  Packet[8] := Byte(BlockCount);
+end;
+
+function ExecutePacketCommand(Port: PAhciPort; const Packet: TPacket; ByteCount: QWord): Boolean;
+var
+  Segments: TDataSegments;
+  SegmentCount: Integer;
+  RemainingBytes: QWord;
+begin
+  Result := False;
+  if not WaitForRegister(Port^.Registers, PortTaskFileData, TaskFileBusy or TaskFileDataRequest, 0,
+    CommandTimeoutMilliseconds) then
+    Exit;
+  SegmentCount := 0;
+  RemainingBytes := ByteCount;
+  while RemainingBytes > 0 do
+  begin
+    Segments[SegmentCount].Physical := Port^.BouncePagesPhysical[SegmentCount];
+    Segments[SegmentCount].Length := RemainingBytes;
+    if Segments[SegmentCount].Length > PageSize then
+      Segments[SegmentCount].Length := PageSize;
+    RemainingBytes := RemainingBytes - Segments[SegmentCount].Length;
+    Inc(SegmentCount);
+  end;
+  BuildPacketCommand(Port, 0, Packet, Segments, SegmentCount);
+  WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+  IssueSlots(Port, 1, False);
+  Result := WaitForCommand(Port);
 end;
 
 procedure IssueSlots(Port: PAhciPort; SlotMask: LongWord; Queued: Boolean);

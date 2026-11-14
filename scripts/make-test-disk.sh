@@ -234,3 +234,14 @@ echo 'label: gpt
 size=64MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="fat32"' | sfdisk --quiet "$nvme_image"
 dd if="$work_directory/fat32.img" of="$nvme_image" bs=1M seek=1 conv=notrunc status=none
 echo "Wrote $nvme_image (66 MiB, partition: fat32)"
+
+# A medium for the ATAPI (CD) drive: 64 blocks of 2048 bytes, each
+# starting with "FreePascalOS CD block NNNN".
+cdrom_image="${output_image%.img}-cdrom.img"
+python3 -I - "$cdrom_image" <<'EOF'
+import sys
+with open(sys.argv[1], "wb") as image:
+    for block in range(64):
+        image.write(f"FreePascalOS CD block {block:04d}".encode().ljust(2048, b"."))
+EOF
+echo "Wrote $cdrom_image (128 KiB in 2048 byte blocks)"
