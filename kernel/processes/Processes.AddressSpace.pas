@@ -247,18 +247,24 @@ end;
 procedure ReleaseRegionPages(Space: PAddressSpace; Start, Length: QWord);
 var
   Offset: QWord;
-  PhysicalAddress: QWord;
+  RunLength: LongWord;
+  RunIndex: LongWord;
+  PhysicalPages: TPhysicalPageRun;
 begin
   Offset := 0;
   while Offset < Length do
   begin
-    PhysicalAddress := UnmapPageInAddressSpace(Space^.Root, Start + Offset);
-    if PhysicalAddress <> 0 then
-    begin
-      FreePhysicalPage(PhysicalAddress);
-      Dec(Space^.CommittedPages);
-    end;
-    Offset := Offset + PageSize;
+    RunLength := MaximumPagesPerRun;
+    if (Length - Offset + PageSize - 1) div PageSize < RunLength then
+      RunLength := LongWord((Length - Offset + PageSize - 1) div PageSize);
+    UnmapPageRunInAddressSpace(Space^.Root, Start + Offset, RunLength, PhysicalPages);
+    for RunIndex := 0 to RunLength - 1 do
+      if PhysicalPages[RunIndex] <> 0 then
+      begin
+        FreePhysicalPage(PhysicalPages[RunIndex]);
+        Dec(Space^.CommittedPages);
+      end;
+    Offset := Offset + QWord(RunLength) * PageSize;
   end;
 end;
 

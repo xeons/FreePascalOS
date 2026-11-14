@@ -57,15 +57,21 @@ end;
 procedure UnmapAndFreePages(StartAddress: QWord; PageCount: QWord);
 var
   PageIndex: QWord;
-  PhysicalAddress: QWord;
+  RunLength: LongWord;
+  RunIndex: LongWord;
+  PhysicalPages: TPhysicalPageRun;
 begin
   PageIndex := 0;
   while PageIndex < PageCount do
   begin
-    PhysicalAddress := UnmapKernelPage(StartAddress + PageIndex * PageSize);
-    if PhysicalAddress <> 0 then
-      FreePhysicalPage(PhysicalAddress);
-    Inc(PageIndex);
+    RunLength := MaximumPagesPerRun;
+    if PageCount - PageIndex < RunLength then
+      RunLength := LongWord(PageCount - PageIndex);
+    UnmapKernelPageRun(StartAddress + PageIndex * PageSize, RunLength, PhysicalPages);
+    for RunIndex := 0 to RunLength - 1 do
+      if PhysicalPages[RunIndex] <> 0 then
+        FreePhysicalPage(PhysicalPages[RunIndex]);
+    PageIndex := PageIndex + RunLength;
   end;
 end;
 

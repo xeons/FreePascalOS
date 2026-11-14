@@ -32,12 +32,17 @@ uses
 procedure UnmapPages(VirtualStart: QWord; PageCount: QWord);
 var
   PageIndex: QWord;
+  RunLength: LongWord;
+  PhysicalPages: TPhysicalPageRun;
 begin
   PageIndex := 0;
   while PageIndex < PageCount do
   begin
-    UnmapKernelPage(VirtualStart + PageIndex * PageSize);
-    Inc(PageIndex);
+    RunLength := MaximumPagesPerRun;
+    if PageCount - PageIndex < RunLength then
+      RunLength := LongWord(PageCount - PageIndex);
+    UnmapKernelPageRun(VirtualStart + PageIndex * PageSize, RunLength, PhysicalPages);
+    PageIndex := PageIndex + RunLength;
   end;
 end;
 

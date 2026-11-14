@@ -208,7 +208,9 @@ Rules that follow from this:
   request or only ever sees the changed table. The sender waits at
   DispatchLevel with interrupts on for all acknowledgements; page faults
   are therefore resolved with interrupts on, so a processor spinning on a
-  lock in the fault path can still answer.
+  lock in the fault path can still answer. Ranges are unmapped in runs of
+  up to 32 pages with one request per run; the physical pages are freed
+  only after the run's request was answered.
 - **Panic.** The panicking processor stops the others with an NMI before
   printing; the debug output lock records its owner's processor number,
   so nested messages on one processor and messages from different

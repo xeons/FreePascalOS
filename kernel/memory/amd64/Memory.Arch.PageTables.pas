@@ -32,6 +32,17 @@ const
   { First address above user space. }
   UserSpaceLimit = QWord($0000800000000000);
 
+  { Pages unmapped together, so the other processors are interrupted
+    once for all of them. }
+  MaximumPagesPerRun = 32;
+
+type
+  { The physical pages a run of unmapped pages pointed to (zero where
+    nothing was mapped). The caller frees them, if they are its to free,
+    only after the run was unmapped: until then another processor may
+    still reach them through a stale translation. }
+  TPhysicalPageRun = array[0..MaximumPagesPerRun - 1] of TPhysicalAddress;
+
 procedure InitializeKernelPageTables;
 
 { Removes the identity mapping of low memory the loader left behind. }
@@ -45,6 +56,10 @@ function MapKernelPage(VirtualAddress: QWord; PhysicalAddress: TPhysicalAddress;
 { Removes the mapping of one 4 KiB page and returns the physical address
   it pointed to (zero if nothing was mapped). }
 function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
+{ Unmaps PageCount (at most MaximumPagesPerRun) pages from StartAddress,
+  invalidating their translations on every processor once. }
+procedure UnmapKernelPageRun(StartAddress: QWord; PageCount: LongWord;
+  out PhysicalPages: TPhysicalPageRun);
 
 { Looks up the physical address behind a virtual address in the kernel
   address space. }
@@ -69,6 +84,8 @@ procedure DestroyAddressSpaceRoot(Root: TPhysicalAddress);
 function MapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
   PhysicalAddress: TPhysicalAddress; Attributes: LongWord): Boolean;
 function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord): TPhysicalAddress;
+procedure UnmapPageRunInAddressSpace(Root: TPhysicalAddress; StartAddress: QWord;
+  PageCount: LongWord; out PhysicalPages: TPhysicalPageRun);
 function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
   out PhysicalAddress: TPhysicalAddress): Boolean;
 
@@ -76,7 +93,7 @@ function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
 type
   { Invalidates Address in the other processors' translation caches:
     all of them for Root = 0 (kernel), else where Root is loaded. }
-  TRemoteInvalidation = procedure(Root: QWord; Address: QWord);
+  TRemoteInvalidation = procedure(Root: QWord; StartAddress: QWord; PageCount: LongWord);
 
 { Installed once several processors run (Kernel.InterProcessor). }
 procedure SetRemoteInvalidation(Routine: TRemoteInvalidation);
@@ -87,6 +104,7 @@ function ActiveAddressSpace: TPhysicalAddress;
 implementation
 
 uses
+  Runtime.Memory,
   Memory.PhysicalPages,
   Kernel.Arch.Cpu,
   Kernel.SpinLock,
@@ -282,29 +300,39 @@ begin
   RemoteInvalidation := Routine;
 end;
 
-function UnmapPageInTable(TopLevel: PPageTable; VirtualAddress: QWord;
-  FlushTlb: Boolean): TPhysicalAddress;
+{ Unmaps PageCount pages from StartAddress (at most MaximumPagesPerRun)
+  and, with FlushTlb, invalidates them on this processor. Returns True if
+  any page was mapped. Remote invalidation is the caller's, after the
+  page table lock is released (see Kernel.InterProcessor). }
+function UnmapRunInTable(TopLevel: PPageTable; StartAddress: QWord; PageCount: LongWord;
+  FlushTlb: Boolean; out PhysicalPages: TPhysicalPageRun): Boolean;
 var
   PreviousLevel: TPriorityLevel;
   Table: PPageTable;
   Index: Integer;
+  PageIndex: LongWord;
+  VirtualAddress: QWord;
 begin
-  Result := 0;
+  if PageCount > MaximumPagesPerRun then
+    KernelPanicWithCode(PanicPageTableFailure, 'too many pages in one unmap run', PageCount, 0, 0, 0);
+  ZeroMemory(@PhysicalPages, SizeOf(PhysicalPages));
+  Result := False;
   PreviousLevel := AcquireSpinLock(PageTableLock);
-
-  Table := FindPageTable(TopLevel, VirtualAddress, False);
-  if Table <> nil then
+  for PageIndex := 1 to PageCount do
   begin
+    VirtualAddress := StartAddress + QWord(PageIndex - 1) * PageSize;
+    Table := FindPageTable(TopLevel, VirtualAddress, False);
+    if Table = nil then
+      Continue;
     Index := TableIndex(VirtualAddress, 1);
-    if (Table^[Index] and EntryPresent) <> 0 then
-    begin
-      Result := Table^[Index] and EntryAddressMask;
-      Table^[Index] := 0;
-      if FlushTlb then
-        InvalidateTlbEntry(VirtualAddress);
-    end;
+    if (Table^[Index] and EntryPresent) = 0 then
+      Continue;
+    PhysicalPages[PageIndex - 1] := Table^[Index] and EntryAddressMask;
+    Table^[Index] := 0;
+    if FlushTlb then
+      InvalidateTlbEntry(VirtualAddress);
+    Result := True;
   end;
-
   ReleaseSpinLock(PageTableLock, PreviousLevel);
 end;
 
@@ -346,12 +374,20 @@ begin
   Result := MapPageInTable(KernelTopLevelTable, VirtualAddress, PhysicalAddress, Attributes);
 end;
 
-function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
+procedure UnmapKernelPageRun(StartAddress: QWord; PageCount: LongWord;
+  out PhysicalPages: TPhysicalPageRun);
 begin
-  Result := UnmapPageInTable(KernelTopLevelTable, VirtualAddress, True);
-  { After the page table lock is released (see Kernel.InterProcessor). }
-  if (Result <> 0) and Assigned(RemoteInvalidation) then
-    RemoteInvalidation(0, VirtualAddress);
+  if UnmapRunInTable(KernelTopLevelTable, StartAddress, PageCount, True, PhysicalPages) and
+     Assigned(RemoteInvalidation) then
+    RemoteInvalidation(0, StartAddress, PageCount);
+end;
+
+function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
+var
+  PhysicalPages: TPhysicalPageRun;
+begin
+  UnmapKernelPageRun(VirtualAddress, 1, PhysicalPages);
+  Result := PhysicalPages[0];
 end;
 
 function TranslateVirtualAddress(VirtualAddress: QWord;
@@ -438,15 +474,27 @@ begin
     Attributes or MappingUser);
 end;
 
-function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord): TPhysicalAddress;
+procedure UnmapPageRunInAddressSpace(Root: TPhysicalAddress; StartAddress: QWord;
+  PageCount: LongWord; out PhysicalPages: TPhysicalPageRun);
 begin
-  if VirtualAddress >= UserSpaceLimit then
-    Exit(0);
+  if StartAddress + QWord(PageCount) * PageSize > UserSpaceLimit then
+  begin
+    ZeroMemory(@PhysicalPages, SizeOf(PhysicalPages));
+    Exit;
+  end;
   { Here only the active address space can have stale TLB entries;
     elsewhere, where the processors have Root loaded. }
-  Result := UnmapPageInTable(TableFromRoot(Root), VirtualAddress, ActiveAddressSpace = Root);
-  if (Result <> 0) and Assigned(RemoteInvalidation) then
-    RemoteInvalidation(Root, VirtualAddress);
+  if UnmapRunInTable(TableFromRoot(Root), StartAddress, PageCount, ActiveAddressSpace = Root,
+     PhysicalPages) and Assigned(RemoteInvalidation) then
+    RemoteInvalidation(Root, StartAddress, PageCount);
+end;
+
+function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord): TPhysicalAddress;
+var
+  PhysicalPages: TPhysicalPageRun;
+begin
+  UnmapPageRunInAddressSpace(Root, VirtualAddress, 1, PhysicalPages);
+  Result := PhysicalPages[0];
 end;
 
 function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;

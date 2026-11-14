@@ -25,7 +25,7 @@ how the existing pieces fit together.
 - [x] Save and restore floating point / SSE registers at thread switches
 - [ ] Per-processor run queues and load balancing (one shared queue today)
 - [ ] Device interrupts spread over the processors (all go to the boot one)
-- [ ] Batched TLB shootdowns for large unmaps (one interrupt per page today)
+- [x] Batched TLB shootdowns for large unmaps (one interrupt per 32-page run)
 - [ ] Processor affinity for threads
 
 ## Kernel core
