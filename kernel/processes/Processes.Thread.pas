@@ -65,6 +65,9 @@ type
       stack overflow is raised as the call returns. }
     StackOverflowPending: Boolean;
     PendingOverflowAddress: QWord;
+    { The frame of the system call the thread is in (its user registers),
+      nil outside system calls. }
+    SystemCallFrame: Pointer;
   end;
 
 var

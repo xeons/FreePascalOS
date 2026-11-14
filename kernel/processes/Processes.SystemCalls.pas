@@ -608,6 +608,7 @@ begin
   Argument0 := SystemCallArgument(Frame, 0);
   Argument1 := SystemCallArgument(Frame, 1);
   Argument2 := SystemCallArgument(Frame, 2);
+  CurrentThreadObject^.SystemCallFrame := Frame;
   { A stack overflow's reserve is armed again once the stack is clear. }
   if StackReserveIsOpen then
     RearmStackReserveIfClear(Frame^.Rsp);
@@ -619,6 +620,7 @@ begin
     Result := -Int64(PerformContinue(Frame, Argument0));
     if Result <> 0 then
       SetSystemCallResult(Frame, Result);
+    CurrentThreadObject^.SystemCallFrame := nil;
     EndProcessIfTerminationRequested;
     Exit;
   end;
@@ -634,6 +636,7 @@ begin
   until not MustRestart or CurrentProcess^.TerminationRequested;
 
   SetSystemCallResult(Frame, Result);
+  CurrentThreadObject^.SystemCallFrame := nil;
   { A program asked to end does so before it runs any further. }
   EndProcessIfTerminationRequested;
   { The call's data ran into the stack's reserve: the program learns of

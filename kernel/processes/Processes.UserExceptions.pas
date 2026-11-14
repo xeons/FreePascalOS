@@ -21,7 +21,12 @@
   A stack overflow - a touch of the reserve at the bottom of the thread's
   stack (Processes.AddressSpace) - is passed on as ExceptionStackOverflow
   (when the kernel touches it, copying a system call's data, the call
-  completes and the overflow is raised as it returns): the
+  completes and the overflow is raised as it returns). A frame larger
+  than the reserve can jump past it; its first touch then lands below the
+  stack region. Such a fault - in no region, at or above the stack
+  pointer, not far below the stack - is a stack overflow too: the reserve
+  is opened and the record goes at its top, since the stack pointer is
+  outside the stack. The
   reserve is opened, so the record and the handling fit. It is armed
   again once the thread's stack pointer is well above it, which is
   checked at every system call, interrupt return and exception
@@ -59,8 +64,9 @@ function StackReserveIsOpen: Boolean;
 { For the page fault resolver: a fault of the kernel itself (copying a
   system call's data) at FaultAddress. If it lies in the armed reserve of
   the current thread's stack, opens the reserve - the call goes on - and
-  notes a stack overflow, which is raised when the call returns. Returns
-  True if it did. }
+  notes a stack overflow, which is raised when the call returns; returns
+  True. A buffer below the stack, in a frame that jumped past the
+  reserve, also gets the overflow noted, but the copy fails (False). }
 function NoteKernelAccessToStack(FaultAddress: QWord): Boolean;
 { At the end of a system call: raises a stack overflow noted during it,
   with the call's result in the context. }
@@ -107,6 +113,9 @@ const
   PageFaultInstructionFetch = 16;
 
   RedZoneSize = 128;
+  { A stack access far below the stack (a huge frame) is still taken for
+    one if it is at most this far below the stack region. }
+  LargeFrameReach = QWord(256) * 1024 * 1024;
   { Flags the dispatcher must not start with: trap, direction, alignment
     check. Interrupts stay enabled. }
   RflagsTrap = QWord(1) shl 8;
@@ -190,6 +199,8 @@ var
   NoReturnAddress: QWord;
   Written: Boolean;
   WereEnabled: Boolean;
+  RecordTop: QWord;
+  ReserveTop: QWord;
 begin
   Result := False;
   Process := CurrentProcess;
@@ -204,15 +215,25 @@ begin
   CaptureContext(Frame, ExceptionRecord.Context);
 
   { Below the red zone, 16-byte aligned, with a null return address under
-    it, so the dispatcher starts as if called. }
-  RecordAddress := (Frame^.Rsp - RedZoneSize - SizeOf(ExceptionRecord)) and not QWord(15);
+    it, so the dispatcher starts as if called. A stack overflow's record
+    goes no lower than the top of the opened reserve: a frame that jumped
+    past the reserve leaves the stack pointer outside the stack. }
+  RecordTop := Frame^.Rsp - RedZoneSize;
+  if (Code = ExceptionStackOverflow) and (Thread^.OpenedStackReserve <> 0) then
+  begin
+    ReserveTop := StackReserveTop(Process^.AddressSpace, Thread^.OpenedStackReserve);
+    if (ReserveTop <> 0) and
+       (Frame^.Rsp < Thread^.OpenedStackReserve + RedZoneSize + 2 * SizeOf(ExceptionRecord)) then
+      RecordTop := ReserveTop;
+  end;
+  RecordAddress := (RecordTop - SizeOf(ExceptionRecord)) and not QWord(15);
   ReturnSlot := RecordAddress - SizeOf(QWord);
   NoReturnAddress := 0;
   { Writing may fault (a stack page not yet touched), which needs
     interrupts. }
   WereEnabled := SaveAndDisableInterrupts;
   EnableInterrupts;
-  Written := (RecordAddress < Frame^.Rsp) and
+  Written := ((RecordAddress < Frame^.Rsp) or (Code = ExceptionStackOverflow)) and
     (CopyToUser(RecordAddress, @ExceptionRecord, SizeOf(ExceptionRecord)) = ErrorNone) and
     (CopyToUser(ReturnSlot, @NoReturnAddress, SizeOf(NoReturnAddress)) = ErrorNone);
   DisableInterrupts;
@@ -241,6 +262,30 @@ begin
       Thread^.OpenedStackReserve);
 end;
 
+{ True if a fault at FaultAddress, with the stack pointer at
+  StackPointer, is an access to a frame that jumped past the armed
+  reserve of the current thread's stack: below the stack region, in no
+  other region, and at or above the stack pointer (less the red zone), so
+  not a stray pointer. Opens the reserve if so. }
+function OpenReserveForLargeFrame(FaultAddress, StackPointer: QWord): Boolean;
+var
+  Thread: PThread;
+  Space: PAddressSpace;
+begin
+  Result := False;
+  Thread := CurrentThreadObject;
+  if not Thread^.IsUserThread or (Thread^.OpenedStackReserve <> 0) or (Thread^.UserStackStart = 0) then
+    Exit;
+  Space := CurrentProcess^.AddressSpace;
+  if (FaultAddress >= Thread^.UserStackStart) or
+     (FaultAddress + LargeFrameReach < Thread^.UserStackStart) or
+     (FaultAddress + RedZoneSize < StackPointer) or AddressIsInRegion(Space, FaultAddress) then
+    Exit;
+  Result := OpenStackReserveOfRegion(Space, Thread^.UserStackStart);
+  if Result then
+    Thread^.OpenedStackReserve := Thread^.UserStackStart;
+end;
+
 function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
 var
   Code: LongWord;
@@ -256,7 +301,7 @@ begin
   if TrapFrameVector(Frame) = VectorPageFault then
   begin
     Access := AccessKindOf(Frame^.ErrorCode);
-    if OpenOwnStackReserve(FaultAddress) then
+    if OpenOwnStackReserve(FaultAddress) or OpenReserveForLargeFrame(FaultAddress, Frame^.Rsp) then
       Code := ExceptionStackOverflow;
   end
   else
@@ -268,11 +313,21 @@ end;
 function NoteKernelAccessToStack(FaultAddress: QWord): Boolean;
 var
   Thread: PThread;
+  CallFrame: PTrapFrame;
 begin
+  Thread := CurrentThreadObject;
   Result := OpenOwnStackReserve(FaultAddress);
+  { A buffer in a frame that jumped past the reserve: there is no memory
+    there, so the copy fails, but the program learns why. }
+  CallFrame := PTrapFrame(Thread^.SystemCallFrame);
+  if not Result and (CallFrame <> nil) and OpenReserveForLargeFrame(FaultAddress, CallFrame^.Rsp) then
+  begin
+    Thread^.StackOverflowPending := True;
+    Thread^.PendingOverflowAddress := FaultAddress;
+    Exit(False);
+  end;
   if not Result then
     Exit;
-  Thread := CurrentThreadObject;
   Thread^.StackOverflowPending := True;
   Thread^.PendingOverflowAddress := FaultAddress;
 end;

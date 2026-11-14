@@ -664,7 +664,15 @@ the first to touch the reserve - copying a system call's data into a
 buffer on the stack - it opens the reserve, lets the call complete and
 raises the overflow as the call returns, with the call's result in the
 record's context. Only the thread's own stack reserve is opened this
-way. Once the thread's
+way. A frame larger than the reserve (Free Pascal emits no stack probes)
+can jump past it, so its first touch lands below the stack region; a
+fault there - in no region, at or above the stack pointer less the red
+zone, at most 256 MiB below the stack - is taken for a stack overflow
+too. The reserve is opened and the record goes at its top, as the stack
+pointer is outside the stack; a system call writing into such a frame
+fails (there is no memory) and raises the overflow as it returns. A huge
+frame that reaches into another region below the stack (a thread's stack
+next to other memory) cannot be told from a valid access. Once the thread's
 stack pointer is 64 KiB above the reserve again - checked at every system
 call, interrupt return and exception - its pages are given back and it is
 armed for the next overflow.

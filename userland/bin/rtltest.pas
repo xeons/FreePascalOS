@@ -525,6 +525,49 @@ begin
   Result := RecurseThroughSystemCalls(Depth + 1) + Buffer[Depth and 8191];
 end;
 
+const
+  { More than the whole main stack (8 MiB): the frame jumps past the
+    stack's reserve, its first touch lands below the stack. }
+  HugeFrameSize = 9 * 1024 * 1024;
+
+{ Touches the bottom of a frame larger than the stack. }
+function UseHugeFrame(Value: LongInt): LongInt;
+var
+  Huge: array[0..HugeFrameSize - 1] of Byte;
+begin
+  Huge[0] := Byte(Value);
+  Result := Huge[0];
+end;
+
+procedure OverflowWithHugeFrame;
+begin
+  UseHugeFrame(1);
+end;
+
+var
+  HugeFrameReadResult: Int64;
+
+{ A system call writing into the bottom of a frame larger than the stack. }
+procedure ReadIntoHugeFrame;
+var
+  Handle: Int64;
+  ReadResult: Int64;
+  Huge: array[0..HugeFrameSize - 1] of Byte;
+begin
+  Handle := ZeroDevice;
+  asm
+    movq $2, %rax           { CallRead }
+    movq Handle, %rdi
+    leaq Huge, %rsi
+    movq $4096, %rdx
+    syscall
+    movq %rax, ReadResult
+  end ['rax', 'rcx', 'rdx', 'rsi', 'rdi', 'r11'];
+  HugeFrameReadResult := ReadResult;
+  if Huge[0] <> 0 then
+    Exit;
+end;
+
 procedure OverflowStackInSystemCalls;
 begin
   RecurseThroughSystemCalls(1);
@@ -585,6 +628,12 @@ begin
   Check(ExceptionClassOf(@OverflowStackInSystemCalls) = 'EStackOverflow',
     'a stack overflow reached by a system call raises EStackOverflow');
   Check(FailedReads = 0, 'the system call into the reserve completed');
+  Sleep(1);
+  Check(ExceptionClassOf(@OverflowWithHugeFrame) = 'EStackOverflow',
+    'a frame larger than the stack raises EStackOverflow');
+  Sleep(1);
+  Check(ExceptionClassOf(@ReadIntoHugeFrame) = 'EStackOverflow',
+    'a system call into a frame larger than the stack raises EStackOverflow');
   FileClose(ZeroDevice);
   Sleep(1);
   Overflowing := TOverflowingThread.Create(False);

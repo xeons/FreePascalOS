@@ -184,6 +184,10 @@ how the existing pieces fit together.
       stack, armed again once the stack is clear)
 - [x] A system call whose buffer lies in the stack's reserve completes, and the
       stack overflow is raised as it returns
+- [x] Frames larger than the stack reserve: a stack access below the stack is
+      taken for a stack overflow (record at the top of the opened reserve)
+- [ ] A guard gap below thread stacks large enough that a huge frame cannot
+      reach another region (or compiler emitted stack probes)
 - [ ] Initializers of libraries loaded with LoadLibrary (now ErrorUnsupported)
 - [ ] Synchronized buffered output (Sys.Streams) for multi-threaded programs
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion

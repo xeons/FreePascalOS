@@ -123,6 +123,14 @@ function OpenStackReserve(Space: PAddressSpace; Address: QWord; StackStart: QWor
   StackPointer is far enough above it, giving its pages back. Returns
   True if the reserve is armed (again). }
 function RearmStackReserve(Space: PAddressSpace; RegionStart, StackPointer: QWord): Boolean;
+{ Opens the reserve of the stack region starting at StackStart if it is
+  armed (an overflow by a frame that jumped past it); True if it did. }
+function OpenStackReserveOfRegion(Space: PAddressSpace; StackStart: QWord): Boolean;
+{ The first address above the reserve of the stack region starting at
+  StackStart, or 0 if there is no such region. }
+function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
+{ True if Address lies in any region. }
+function AddressIsInRegion(Space: PAddressSpace; Address: QWord): Boolean;
 { Maps the shared page Physical at Address (taking a reference to it):
   read-only, or copy on write if Attributes include RegionWritable. }
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
@@ -745,6 +753,53 @@ begin
         Result := False;
     end;
   end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+{ The index of the stack region starting at StackStart, or -1. Caller
+  holds the lock. }
+function StackRegionIndexLocked(Space: PAddressSpace; StackStart: QWord): Integer;
+begin
+  Result := FindRegionIndex(Space, StackStart);
+  if (Result >= 0) and ((Space^.Regions[Result].Start <> StackStart) or
+     (Space^.Regions[Result].Kind <> RegionKindStack)) then
+    Result := -1;
+end;
+
+function OpenStackReserveOfRegion(Space: PAddressSpace; StackStart: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Index := StackRegionIndexLocked(Space, StackStart);
+  Result := (Index >= 0) and not Space^.Regions[Index].ReserveInUse and
+    (Space^.Regions[Index].ReserveBytes > 0);
+  if Result then
+    Space^.Regions[Index].ReserveInUse := True;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Index := StackRegionIndexLocked(Space, StackStart);
+  if Index >= 0 then
+    Result := Space^.Regions[Index].Start + Space^.Regions[Index].ReserveBytes
+  else
+    Result := 0;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function AddressIsInRegion(Space: PAddressSpace; Address: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := FindRegionIndex(Space, Address) >= 0;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
