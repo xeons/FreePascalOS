@@ -4,7 +4,9 @@
   Some commands have to run inside the shell because they change its
   state (cd, exit, export, unset, set, shift, read, ., break, continue);
   a few more (:, true, false) are builtins only to save starting a
-  process. Everything else is a program in /bin.
+  process. Everything else is a program in /bin. The builtins about
+  running commands and functions (eval, exec, command, type, wait,
+  return, local) are in Shell.CommandBuiltins.
 }
 unit Shell.Builtins;
 
@@ -33,6 +35,8 @@ uses
   Sys.Streams,
   Sys.Text,
   Shell.Variables,
+  Shell.Functions,
+  Shell.CommandBuiltins,
   Shell.Execution;
 
 procedure BuiltinError(Name: PChar; Format: PChar; const Arguments: array of TFormatArgument);
@@ -149,12 +153,27 @@ begin
   end;
 end;
 
+{ unset [-v] NAME... removes variables; unset -f NAME... functions. }
 function BuiltinUnset(Arguments: PPChar; Count: Integer): LongInt;
 var
   Index: Integer;
+  First: Integer;
+  RemoveFunctions: Boolean;
 begin
-  for Index := 1 to Count - 1 do
-    UnsetVariable(Arguments[Index]);
+  First := 1;
+  RemoveFunctions := False;
+  if (Count > 1) and TextIsEqual(Arguments[1], '-f') then
+  begin
+    RemoveFunctions := True;
+    First := 2;
+  end
+  else if (Count > 1) and TextIsEqual(Arguments[1], '-v') then
+    First := 2;
+  for Index := First to Count - 1 do
+    if RemoveFunctions then
+      UnsetFunction(Arguments[Index])
+    else
+      UnsetVariable(Arguments[Index]);
   Result := 0;
 end;
 
@@ -331,7 +350,7 @@ begin
   else if TextIsEqual(Name, 'continue') then
     Result := @BuiltinContinue
   else
-    Result := nil;
+    Result := FindCommandBuiltin(Name);
 end;
 
 end.

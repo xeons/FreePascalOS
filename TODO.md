@@ -60,7 +60,9 @@ how the existing pieces fit together.
 
 - [ ] I/O manager: driver objects, device objects, request packets
 - [x] PS/2 keyboard driver (interrupt driven, US layout, escape sequences for arrows)
-- [ ] Keyboard layouts other than US; keyboard LEDs; USB keyboards (needs xHCI)
+- [x] Keyboard layouts us/uk/de/fr (keymap= option), AltGr, lock lights, Num Lock keypad
+- [ ] Dead keys for de/fr accents; non-ASCII glyphs in the framebuffer font
+- [ ] USB keyboards (needs xHCI)
 - [ ] Interactive kernel debug console (simple command shell: ls, cat, ...)
 - [ ] Shadow buffer for the framebuffer console so scrolling never reads
       video memory
@@ -127,8 +129,12 @@ how the existing pieces fit together.
 - [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
 - [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
 - [x] Shell line editing (cursor keys, Ctrl-A/E/K/U/W), history file, Tab completion
-- [ ] Shell: case, functions, here documents, job control (fg, bg, jobs, Ctrl-Z)
-- [ ] Ctrl-C for loops made only of builtins (needs a pending-interrupt check)
+- [x] Shell: case, functions (local, return), here documents, ${...} forms,
+      eval, exec, command, type, wait, arithmetic assignment
+- [x] Ctrl-C for loops made only of builtins (pending-interrupt console request)
+- [x] Line editor: lines longer than the screen scroll sideways
+- [ ] Shell: job control (fg, bg, jobs, Ctrl-Z), background tracking for wait and $!
+- [ ] Line editor: characters beyond ASCII (UTF-8) count as one column
 - [x] More programs outside coreutils: grep (egrep, fgrep), find, xargs, sed, diff, less (more)
 - [ ] ps
 - [x] Interrupt driven console input (keyboard and serial)

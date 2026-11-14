@@ -84,6 +84,9 @@ const
   { The process group that Ctrl-C ends. }
   ControlSetForegroundGroup = 4;
   ControlGetForegroundGroup = 5;
+  { Returns 1 (and forgets it) if Ctrl-C was passed to the reader since
+    the last call, else 0. }
+  ControlTakePendingInterrupt = 10;
   ConsoleModeEcho = $01;
   ConsoleModeLineEditing = $02;
   { Ctrl-C ends the foreground process group instead of being read. }

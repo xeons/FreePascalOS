@@ -16,6 +16,9 @@ procedure GetConsoleSize(Handle: Int64; out Rows, Columns: LongInt);
 { The process group that Ctrl-C ends. }
 function SetForegroundGroup(Handle: Int64; GroupId: Int64): LongInt;
 function GetForegroundGroup(Handle: Int64): Int64;
+{ True once for each Ctrl-C that was passed to the console's reader
+  while it was not reading (see ControlTakePendingInterrupt). }
+function TakePendingInterrupt(Handle: Int64): Boolean;
 
 implementation
 
@@ -47,6 +50,11 @@ end;
 function GetForegroundGroup(Handle: Int64): Int64;
 begin
   Result := KernelControlHandle(Handle, ControlGetForegroundGroup, 0);
+end;
+
+function TakePendingInterrupt(Handle: Int64): Boolean;
+begin
+  Result := KernelControlHandle(Handle, ControlTakePendingInterrupt, 0) = 1;
 end;
 
 procedure GetConsoleSize(Handle: Int64; out Rows, Columns: LongInt);

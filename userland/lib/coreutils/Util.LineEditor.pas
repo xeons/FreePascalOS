@@ -15,8 +15,12 @@
     Ctrl-C                          throw the line away
     Ctrl-D                          end of input on an empty line
 
-  Redrawing only uses backspace, spaces and the characters themselves,
-  so it works on the framebuffer console and on serial terminals alike.
+  Redrawing only uses carriage return, backspace, spaces and the
+  characters themselves, so it works on the framebuffer console and on
+  serial terminals alike. A line longer than the screen is scrolled
+  sideways (as ksh does): the prompt and a window of the text always fit
+  on one row, so the terminal never wraps. The width is the console's,
+  or $COLUMNS when set (a serial terminal can be narrower).
 
   When standard input is not the console, EditLine just prints the prompt
   and reads a line.
@@ -73,6 +77,9 @@ uses
 const
   DefaultHistoryLimit = 500;
   OutputCapacity = 1024;
+  { The text window is never narrower than this, even after a long
+    prompt (the terminal then wraps, but editing still works). }
+  MinimumWindowWidth = 8;
 
   KeyControlA = #1;
   KeyControlB = #2;
@@ -102,8 +109,14 @@ type
     Cursor: PtrUInt;
     { Where the terminal cursor is, within the text. }
     ShownCursor: PtrUInt;
-    { How much of the text the terminal shows (for clearing leftovers). }
+    { Where the shown part of the text ends (for clearing leftovers). }
     ShownLength: PtrUInt;
+    { The first character of the text that is shown, and how many
+      characters fit after the prompt. }
+    WindowStart: PtrUInt;
+    WindowWidth: PtrUInt;
+    { The prompt's last line, redrawn after a carriage return. }
+    PromptTail: PChar;
     HistoryIndex: Integer;
     { The line being typed, kept while walking through the history. }
     Scratch: PChar;
@@ -137,8 +150,65 @@ begin
   end;
 end;
 
-{ Moves the terminal cursor to text position Target. }
-procedure MoveShownCursor(var State: TEditState; Target: PtrUInt);
+{ The end of the shown part of the text. }
+function WindowEnd(var State: TEditState): PtrUInt;
+begin
+  Result := State.WindowStart + State.WindowWidth;
+  if Result > State.Text.Length then
+    Result := State.Text.Length;
+end;
+
+function CursorIsInWindow(var State: TEditState; Target: PtrUInt): Boolean;
+begin
+  Result := (Target >= State.WindowStart) and (Target <= State.WindowStart + State.WindowWidth);
+end;
+
+{ Moves the window so that the cursor is in it, keeping some text
+  visible on the side it moved towards. }
+procedure PlaceWindow(var State: TEditState);
+begin
+  if State.Cursor < State.WindowStart then
+  begin
+    if State.Cursor > State.WindowWidth div 3 then
+      State.WindowStart := State.Cursor - State.WindowWidth div 3
+    else
+      State.WindowStart := 0;
+  end
+  else if State.Cursor > State.WindowStart + State.WindowWidth then
+    State.WindowStart := State.Cursor - (State.WindowWidth * 2) div 3;
+end;
+
+{ Writes the shown text from the terminal cursor to the window end,
+  blanks what is left of a longer older line, and goes back to the
+  window end. }
+procedure DrawToWindowEnd(var State: TEditState);
+var
+  Finish: PtrUInt;
+  Extra: PtrUInt;
+begin
+  Finish := WindowEnd(State);
+  while State.ShownCursor < Finish do
+  begin
+    Emit(State, State.Text.Text[State.ShownCursor]);
+    Inc(State.ShownCursor);
+  end;
+  Extra := 0;
+  while State.ShownLength > Finish + Extra do
+  begin
+    Emit(State, ' ');
+    Inc(Extra);
+  end;
+  while Extra > 0 do
+  begin
+    Emit(State, KeyBackspace);
+    Dec(Extra);
+  end;
+  State.ShownLength := Finish;
+end;
+
+{ Moves the terminal cursor to text position Target, which must be in
+  the window. }
+procedure StepShownCursor(var State: TEditState; Target: PtrUInt);
 begin
   while State.ShownCursor > Target do
   begin
@@ -152,49 +222,100 @@ begin
   end;
 end;
 
+{ Draws the row again from its start: prompt, then the window. }
+procedure RedrawRow(var State: TEditState);
+var
+  OldShownEnd: PtrUInt;
+  OldWidth: PtrUInt;
+begin
+  { What the row showed, measured from the window start, decides how
+    much has to be blanked. }
+  OldWidth := 0;
+  if State.ShownLength > State.WindowStart then
+    OldWidth := State.ShownLength - State.WindowStart;
+  PlaceWindow(State);
+  Emit(State, KeyReturn);
+  EmitText(State, State.PromptTail);
+  State.ShownCursor := State.WindowStart;
+  OldShownEnd := State.WindowStart + OldWidth;
+  if OldShownEnd < State.WindowStart + State.WindowWidth then
+    State.ShownLength := OldShownEnd
+  else
+    State.ShownLength := State.WindowStart + State.WindowWidth;
+  DrawToWindowEnd(State);
+  StepShownCursor(State, State.Cursor);
+end;
+
+{ Moves the terminal cursor to text position Target, scrolling the
+  window if needed. }
+procedure MoveShownCursor(var State: TEditState; Target: PtrUInt);
+var
+  SavedCursor: PtrUInt;
+begin
+  if CursorIsInWindow(State, Target) then
+    StepShownCursor(State, Target)
+  else
+  begin
+    SavedCursor := State.Cursor;
+    State.Cursor := Target;
+    RedrawRow(State);
+    State.Cursor := SavedCursor;
+  end;
+end;
+
 { Redraws the text from position From on, clears what is left of an
   older, longer line, and puts the terminal cursor at the cursor. }
 procedure RedrawFrom(var State: TEditState; From: PtrUInt);
-var
-  Index: PtrUInt;
-  Extra: PtrUInt;
 begin
-  if From > State.ShownCursor then
-    MoveShownCursor(State, From)
-  else
-    while State.ShownCursor > From do
-    begin
-      Emit(State, KeyBackspace);
-      Dec(State.ShownCursor);
-    end;
-  Index := From;
-  while Index < State.Text.Length do
+  if not CursorIsInWindow(State, State.Cursor) or (From < State.WindowStart) then
   begin
-    Emit(State, State.Text.Text[Index]);
-    Inc(Index);
+    RedrawRow(State);
+    Exit;
   end;
-  Extra := 0;
-  while State.ShownLength > State.Text.Length + Extra do
-  begin
-    Emit(State, ' ');
-    Inc(Extra);
-  end;
-  while Extra > 0 do
-  begin
-    Emit(State, KeyBackspace);
-    Dec(Extra);
-  end;
-  State.ShownCursor := State.Text.Length;
-  State.ShownLength := State.Text.Length;
-  MoveShownCursor(State, State.Cursor);
+  if State.ShownCursor > From then
+    StepShownCursor(State, From);
+  if State.ShownCursor < From then
+    StepShownCursor(State, From);
+  DrawToWindowEnd(State);
+  StepShownCursor(State, State.Cursor);
 end;
 
 procedure DrawPromptAndLine(var State: TEditState);
 begin
   EmitText(State, State.Prompt);
+  State.WindowStart := 0;
   State.ShownCursor := 0;
   State.ShownLength := 0;
-  RedrawFrom(State, 0);
+  PlaceWindow(State);
+  if State.WindowStart > 0 then
+    RedrawRow(State)
+  else
+    RedrawFrom(State, 0);
+end;
+
+{ How wide the text window is: the screen width less the prompt's last
+  line, keeping the last column free. }
+procedure MeasureWindow(var State: TEditState);
+var
+  Rows: LongInt;
+  Columns: LongInt;
+  ColumnsText: PChar;
+  Number: Int64;
+  LastLineEnd: PtrInt;
+  PromptWidth: PtrUInt;
+begin
+  GetConsoleSize(StandardInputHandle, Rows, Columns);
+  ColumnsText := GetVariable('COLUMNS');
+  if (ColumnsText <> nil) and ParseInteger(ColumnsText, Number) and (Number >= 2 * MinimumWindowWidth) and
+     (Number <= 1000) then
+    Columns := LongInt(Number);
+  LastLineEnd := FindLastCharacter(State.Prompt, KeyLineFeed);
+  State.PromptTail := State.Prompt + LastLineEnd + 1;
+  PromptWidth := TextLength(State.PromptTail);
+  if PtrUInt(Columns) > PromptWidth + 1 + MinimumWindowWidth then
+    State.WindowWidth := PtrUInt(Columns) - PromptWidth - 1
+  else
+    State.WindowWidth := MinimumWindowWidth;
 end;
 
 { --- Editing --------------------------------------------------------- }
@@ -530,6 +651,7 @@ begin
   BeginText(State.Text);
   State.HistoryIndex := Editor.History.Count;
   State.Scratch := DuplicateText('');
+  MeasureWindow(State);
   DrawPromptAndLine(State);
   FlushOutput(State);
 

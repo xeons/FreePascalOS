@@ -6,7 +6,11 @@
 
     1. tilde expansion        ~ at the start becomes $HOME
     2. parameter expansion    $NAME ${NAME} $? $$ $# $0..$9 $@ $*
-                              ${NAME:-default}
+                              ${#NAME} ${NAME:-word} ${NAME:=word}
+                              ${NAME:+word} ${NAME:?word} (also
+                              without ':', for unset only)
+                              ${NAME#pattern} ${NAME##pattern}
+                              ${NAME%pattern} ${NAME%%pattern}
     3. command substitution   $( command )  (its output, trailing
                               line ends removed)
     4. arithmetic expansion   $(( expression ))
@@ -40,6 +44,11 @@ procedure ExpandWords(Words: PPChar; Count: Integer; var Fields: TFieldList);
 { Expands one word into a single string, without splitting or patterns
   (assignments and redirection targets). }
 function ExpandToText(Word: PChar): PChar;
+{ Expands a word into a pattern for MatchPattern: quoted characters are
+  escaped, so only unquoted * ? [ match. }
+function ExpandToPattern(Word: PChar): PChar;
+{ Expands a here-document body like text in double quotes. }
+function ExpandHereDocument(Body: PChar): PChar;
 
 implementation
 
@@ -50,8 +59,10 @@ uses
   Sys.Files,
   Sys.Memory,
   Sys.Processes,
+  Sys.Streams,
   Sys.Text,
   Shell.Variables,
+  Shell.Functions,
   Shell.Arithmetic,
   Shell.Patterns;
 
@@ -67,6 +78,8 @@ type
     HasPattern: Boolean;
     { A field exists even if empty (e.g. after ""). }
     FieldStarted: Boolean;
+    { Expanding a pattern: unquoted expansion results stay patterns. }
+    PatternContext: Boolean;
   end;
 
 procedure BeginFieldList(out Fields: TFieldList);
@@ -160,8 +173,10 @@ begin
   Index := 0;
   while Value[Index] <> #0 do
   begin
-    if Quoted or not Expander.Splitting then
+    if Quoted or (not Expander.Splitting and not Expander.PatternContext) then
       AddQuoted(Expander, Value[Index])
+    else if not Expander.Splitting then
+      AddUnquoted(Expander, Value[Index])
     else if IsSpace(Value[Index]) then
       FinishField(Expander)
     else
@@ -183,17 +198,25 @@ var
   Builder: TTextBuilder;
   Buffer: array[0..1023] of Char;
   BytesRead: Int64;
+  Script: TTextBuilder;
 begin
   BeginText(Builder);
   if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
     Exit(FinishText(Builder));
+  { The child is a new shell; it gets this shell's variables, positional
+    parameters and functions first, as a subshell would have them. }
+  BeginText(Script);
+  AppendVariableState(Script);
+  AppendFunctionDefinitions(Script);
+  AppendText(Script, Command);
   Arguments[0] := 'sh';
   Arguments[1] := '-c';
-  Arguments[2] := Command;
+  Arguments[2] := Script.Text;
   Arguments[3] := nil;
   DefaultProcessOptions(Options);
   Options.OutputHandle := WriteHandle;
   Process := StartProgram('/bin/sh', @Arguments[0], Options);
+  DiscardText(Script);
   CloseFile(WriteHandle);
   if Process >= 0 then
   begin
@@ -313,6 +336,283 @@ begin
   end;
 end;
 
+{ --- ${...} ---------------------------------------------------------- }
+
+function ExpandWordFlat(Word: PChar; AsPattern: Boolean): PChar; forward;
+
+{ Finds the brace that closes the dollar-brace before Word[Start]; -1 if none.
+  Nested ${...}, quotes and backslashes are skipped. }
+function FindClosingBrace(Word: PChar; Start: PtrInt): PtrInt;
+var
+  Position: PtrInt;
+  Depth: Integer;
+  Quote: Char;
+begin
+  Depth := 1;
+  Position := Start;
+  while Word[Position] <> #0 do
+  begin
+    case Word[Position] of
+      '\':
+        if Word[Position + 1] <> #0 then
+          Inc(Position);
+      '''', '"':
+        begin
+          Quote := Word[Position];
+          Inc(Position);
+          while (Word[Position] <> #0) and (Word[Position] <> Quote) do
+          begin
+            if (Quote = '"') and (Word[Position] = '\') and (Word[Position + 1] <> #0) then
+              Inc(Position);
+            Inc(Position);
+          end;
+          if Word[Position] = #0 then
+            Exit(-1);
+        end;
+      '$':
+        if Word[Position + 1] = '{' then
+        begin
+          Inc(Depth);
+          Inc(Position);
+        end;
+      '}':
+        begin
+          Dec(Depth);
+          if Depth = 0 then
+            Exit(Position);
+        end;
+    end;
+    Inc(Position);
+  end;
+  Result := -1;
+end;
+
+{ The value of a parameter name inside braces (variable, positional or
+  special); nil when unset. }
+function ParameterValue(Name: PChar; var Buffer: TNumberText): PChar;
+var
+  Number: Int64;
+begin
+  if (Name[0] <> #0) and (Name[1] = #0) and SpecialParameter(Name[0], Result, Buffer) then
+    Exit;
+  if IsDigit(Name[0]) and ParseInteger(Name, Number) then
+    Exit(PositionalParameter(Integer(Number)));
+  Result := LookupVariable(Name);
+end;
+
+{ Removes the shortest or longest prefix or suffix matching Pattern. }
+function RemovePattern(Value, Pattern: PChar; FromEnd, Longest: Boolean): PChar;
+var
+  Length: PtrInt;
+  Cut: PtrInt;
+  Part: PChar;
+  Found: PtrInt;
+begin
+  Length := PtrInt(TextLength(Value));
+  Found := -1;
+  if not FromEnd then
+  begin
+    { Prefixes of length Cut. }
+    if Longest then
+      Cut := Length
+    else
+      Cut := 0;
+    while (Cut >= 0) and (Cut <= Length) do
+    begin
+      Part := CopyRange(Value, 0, Cut);
+      if MatchPattern(Pattern, Part) then
+        Found := Cut;
+      FreeMemory(Part);
+      if Found >= 0 then
+        Break;
+      if Longest then
+        Dec(Cut)
+      else
+        Inc(Cut);
+    end;
+    if Found < 0 then
+      Exit(DuplicateText(Value));
+    Exit(CopyRange(Value, Found, Length));
+  end;
+  { Suffixes starting at Cut. }
+  if Longest then
+    Cut := 0
+  else
+    Cut := Length;
+  while (Cut >= 0) and (Cut <= Length) do
+  begin
+    if MatchPattern(Pattern, Value + Cut) then
+    begin
+      Found := Cut;
+      Break;
+    end;
+    if Longest then
+      Inc(Cut)
+    else
+      Dec(Cut);
+  end;
+  if Found < 0 then
+    Exit(DuplicateText(Value));
+  Result := CopyRange(Value, 0, Found);
+end;
+
+procedure ExpandBraced(var Expander: TExpander; Word: PChar; var Position: PtrInt; Quoted: Boolean);
+var
+  Finish: PtrInt;
+  Inner: PChar;
+  NameEnd: PtrInt;
+  Name: PChar;
+  Operation: array[0..2] of Char;
+  Argument: PChar;
+  Value: PChar;
+  Buffer: TNumberText;
+  IsUnset: Boolean;
+  IsEmpty: Boolean;
+  UseColon: Boolean;
+  Expanded: PChar;
+  Pattern: PChar;
+  Result: PChar;
+  Message: PChar;
+begin
+  Finish := FindClosingBrace(Word, Position + 1);
+  if Finish < 0 then
+  begin
+    AddQuoted(Expander, '$');
+    Exit;
+  end;
+  Inner := CopyRange(Word, Position + 1, Finish);
+  Position := Finish + 1;
+
+  { ${#NAME}: the length. }
+  if (Inner[0] = '#') and (Inner[1] <> #0) then
+  begin
+    Value := ParameterValue(Inner + 1, Buffer);
+    if Value = nil then
+      Value := '';
+    AddExpansionResult(Expander, FormatDecimal(TextLength(Value), Buffer), Quoted);
+    FreeMemory(Inner);
+    Exit;
+  end;
+
+  { The name: letters, digits and _, or one special character. }
+  NameEnd := 0;
+  if IsLetter(Inner[0]) or (Inner[0] = '_') then
+    while IsAlphanumeric(Inner[NameEnd]) or (Inner[NameEnd] = '_') do
+      Inc(NameEnd)
+  else if IsDigit(Inner[0]) then
+    while IsDigit(Inner[NameEnd]) do
+      Inc(NameEnd)
+  else if Inner[0] in ['?', '$', '#', '@', '*', '!', '-'] then
+    NameEnd := 1;
+  if NameEnd = 0 then
+  begin
+    WriteText(StandardError, 'sh: ${');
+    WriteText(StandardError, Inner);
+    WriteLine(StandardError, '}: bad substitution');
+    ExpansionFailed := True;
+    FreeMemory(Inner);
+    Exit;
+  end;
+  Name := CopyRange(Inner, 0, NameEnd);
+
+  { The operation after the name, and its word. }
+  Operation[0] := #0;
+  Operation[1] := #0;
+  Operation[2] := #0;
+  Argument := Inner + NameEnd;
+  UseColon := Argument^ = ':';
+  if UseColon then
+    Inc(Argument);
+  if Argument^ in ['-', '=', '+', '?'] then
+  begin
+    Operation[0] := Argument^;
+    Inc(Argument);
+  end
+  else if (Argument^ in ['#', '%']) and not UseColon then
+  begin
+    Operation[0] := Argument^;
+    Inc(Argument);
+    if Argument^ = Operation[0] then
+    begin
+      Operation[1] := Argument^;
+      Inc(Argument);
+    end;
+  end
+  else if Argument^ <> #0 then
+  begin
+    WriteText(StandardError, 'sh: ${');
+    WriteText(StandardError, Inner);
+    WriteLine(StandardError, '}: bad substitution');
+    ExpansionFailed := True;
+    FreeMemory(Name);
+    FreeMemory(Inner);
+    Exit;
+  end;
+
+  Value := ParameterValue(Name, Buffer);
+  IsUnset := Value = nil;
+  IsEmpty := IsUnset or (Value^ = #0);
+
+  case Operation[0] of
+    #0:
+      AddExpansionResult(Expander, Value, Quoted);
+    '-':
+      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
+      begin
+        Expanded := ExpandWordFlat(Argument, False);
+        AddExpansionResult(Expander, Expanded, Quoted);
+        FreeMemory(Expanded);
+      end
+      else
+        AddExpansionResult(Expander, Value, Quoted);
+    '=':
+      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
+      begin
+        Expanded := ExpandWordFlat(Argument, False);
+        AssignVariable(Name, Expanded);
+        AddExpansionResult(Expander, Expanded, Quoted);
+        FreeMemory(Expanded);
+      end
+      else
+        AddExpansionResult(Expander, Value, Quoted);
+    '+':
+      if not ((UseColon and IsEmpty) or (not UseColon and IsUnset)) then
+      begin
+        Expanded := ExpandWordFlat(Argument, False);
+        AddExpansionResult(Expander, Expanded, Quoted);
+        FreeMemory(Expanded);
+      end;
+    '?':
+      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
+      begin
+        if Argument^ <> #0 then
+          Message := ExpandWordFlat(Argument, False)
+        else
+          Message := DuplicateText('parameter null or not set');
+        WriteText(StandardError, 'sh: ');
+        WriteText(StandardError, Name);
+        WriteText(StandardError, ': ');
+        WriteLine(StandardError, Message);
+        FreeMemory(Message);
+        ExpansionFailed := True;
+      end
+      else
+        AddExpansionResult(Expander, Value, Quoted);
+    '#', '%':
+      begin
+        if Value = nil then
+          Value := '';
+        Pattern := ExpandWordFlat(Argument, True);
+        Result := RemovePattern(Value, Pattern, Operation[0] = '%', Operation[1] <> #0);
+        AddExpansionResult(Expander, Result, Quoted);
+        FreeMemory(Result);
+        FreeMemory(Pattern);
+      end;
+  end;
+  FreeMemory(Name);
+  FreeMemory(Inner);
+end;
+
 { Expands the "$..." at Word[Position]; Position ends after it. }
 procedure ExpandDollar(var Expander: TExpander; Word: PChar; var Position: PtrInt; Quoted: Boolean);
 var
@@ -325,8 +625,6 @@ var
   Output: PChar;
   Number: Int64;
   NumberText: TNumberText;
-  DefaultPosition: PtrInt;
-  DefaultText: PChar;
 begin
   Inc(Position); { the '$' }
 
@@ -341,8 +639,11 @@ begin
     if (Word[Position + 1] = '(') and (Finish > Position + 1) and (Word[Finish - 1] = ')') then
     begin
       Inner := CopyRange(Word, Position + 2, Finish - 1);
-      if not EvaluateArithmetic(Inner, Number) then
+      { $1, ${...} and $( ) inside the expression are expanded first. }
+      Output := ExpandToText(Inner);
+      if not EvaluateArithmetic(Output, Number) then
         Number := 0;
+      FreeMemory(Output);
       FreeMemory(Inner);
       AddExpansionResult(Expander, FormatSignedDecimal(Number, NumberText), Quoted);
     end
@@ -360,38 +661,7 @@ begin
 
   if Word[Position] = '{' then
   begin
-    Start := Position + 1;
-    Finish := Start;
-    while (Word[Finish] <> '}') and (Word[Finish] <> #0) do
-      Inc(Finish);
-    if Word[Finish] = #0 then
-    begin
-      AddQuoted(Expander, '$');
-      Exit;
-    end;
-    Name := CopyRange(Word, Start, Finish);
-    Position := Finish + 1;
-    (* ${NAME:-default} *)
-    DefaultText := nil;
-    DefaultPosition := FindText(Name, ':-');
-    if DefaultPosition > 0 then
-    begin
-      DefaultText := Name + DefaultPosition + 2;
-      Name[DefaultPosition] := #0;
-    end;
-    if (Name[0] <> #0) and (Name[1] = #0) and SpecialParameter(Name[0], Value, Buffer) then
-      { a special parameter in braces }
-    else
-      Value := LookupVariable(Name);
-    if ((Value = nil) or (Value^ = #0)) and (DefaultText <> nil) then
-    begin
-      Output := ExpandToText(DefaultText);
-      AddExpansionResult(Expander, Output, Quoted);
-      FreeMemory(Output);
-    end
-    else
-      AddExpansionResult(Expander, Value, Quoted);
-    FreeMemory(Name);
+    ExpandBraced(Expander, Word, Position, Quoted);
     Exit;
   end;
 
@@ -505,6 +775,7 @@ begin
   begin
     Expander.Fields := @Fields;
     Expander.Splitting := True;
+    Expander.PatternContext := False;
     BeginText(Expander.Text);
     BeginText(Expander.Pattern);
     Expander.HasPattern := False;
@@ -516,17 +787,70 @@ begin
   end;
 end;
 
-function ExpandToText(Word: PChar): PChar;
+function ExpandWordFlat(Word: PChar; AsPattern: Boolean): PChar;
 var
   Expander: TExpander;
 begin
   Expander.Fields := nil;
   Expander.Splitting := False;
+  Expander.PatternContext := AsPattern;
   BeginText(Expander.Text);
   BeginText(Expander.Pattern);
   Expander.HasPattern := False;
   Expander.FieldStarted := False;
   ExpandWordInto(Expander, Word);
+  if AsPattern then
+  begin
+    Result := FinishText(Expander.Pattern);
+    DiscardText(Expander.Text);
+  end
+  else
+  begin
+    Result := FinishText(Expander.Text);
+    DiscardText(Expander.Pattern);
+  end;
+end;
+
+function ExpandToText(Word: PChar): PChar;
+begin
+  Result := ExpandWordFlat(Word, False);
+end;
+
+function ExpandToPattern(Word: PChar): PChar;
+begin
+  Result := ExpandWordFlat(Word, True);
+end;
+
+function ExpandHereDocument(Body: PChar): PChar;
+var
+  Expander: TExpander;
+  Position: PtrInt;
+begin
+  Expander.Fields := nil;
+  Expander.Splitting := False;
+  Expander.PatternContext := False;
+  BeginText(Expander.Text);
+  BeginText(Expander.Pattern);
+  Expander.HasPattern := False;
+  Expander.FieldStarted := False;
+  Position := 0;
+  while Body[Position] <> #0 do
+  begin
+    if (Body[Position] = '\') and (Body[Position + 1] in ['$', '`', '\']) then
+    begin
+      AddQuoted(Expander, Body[Position + 1]);
+      Inc(Position, 2);
+    end
+    else if (Body[Position] = '\') and (Body[Position + 1] = #10) then
+      Inc(Position, 2)
+    else if Body[Position] = '$' then
+      ExpandDollar(Expander, Body, Position, True)
+    else
+    begin
+      AddQuoted(Expander, Body[Position]);
+      Inc(Position);
+    end;
+  end;
   Result := FinishText(Expander.Text);
   DiscardText(Expander.Pattern);
 end;

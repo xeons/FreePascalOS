@@ -742,6 +742,11 @@ begin
         Result := 0;
       end;
     ControlGetForegroundGroup: Result := Int64(ConsoleForegroundGroup);
+    ControlTakePendingInterrupt:
+      if TakePendingInterrupt then
+        Result := 1
+      else
+        Result := 0;
   else
     Result := Failure(ErrorInvalidArgument);
   end;
