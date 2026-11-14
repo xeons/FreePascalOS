@@ -25,27 +25,25 @@
   one byte per key press, the same byte plus 0x80 on release, and a 0xE0
   prefix for the keys added after the original PC keyboard.
 
-  Key presses become characters for the console, by the layout chosen
-  with the kernel option keymap=us|uk|de|fr (Drivers.KeyboardLayouts):
-  Shift and Caps Lock for capitals, AltGr (the right Alt key) for the
-  third character of a key, Ctrl with a letter for control characters
-  (Ctrl-C is 3, Ctrl-D is 4), and the arrow, Home, End, Insert and Delete
-  keys as the escape sequences a terminal sends (ESC [ A, ...).
-  Characters beyond ASCII are sent in UTF-8.
+  Key presses become characters for the console by the layout chosen
+  with the kernel option keymap=us|uk|de|fr, as for every keyboard
+  (Drivers.KeyboardTranslation: modifiers, locks, dead keys, escape
+  sequences for the cursor keys).
 
   The characters become input of the device /dev/keyboard (a driver
   object "ps2keyboard" with one exclusive device, Io.InputDevice), which
   the console keeps open and reads (Io.ConsoleInput).
 
-  With Num Lock on the numeric keypad gives digits, with it off the
-  cursor and editing keys printed on it. The Caps, Num and Scroll Lock
-  lights follow the locks.
+  The Caps, Num and Scroll Lock lights follow the locks.
 }
 unit Drivers.Ps2Keyboard;
 
 {$mode objfpc}
 
 interface
+
+{ Keys pressed on the PS/2 keyboard so far. }
+function Ps2KeyboardKeyCount: QWord;
 
 { Returns False if there is no controller or no interrupt routing. }
 function InitializePs2Keyboard: Boolean;
@@ -61,7 +59,8 @@ uses
   Io.Manager,
   Io.InputDevice,
   Debug.Output,
-  Drivers.KeyboardLayouts;
+  Drivers.KeyboardLayouts,
+  Drivers.KeyboardTranslation;
 
 const
   KeyboardIrq = 1;
@@ -91,10 +90,6 @@ const
   KeyboardAcknowledge = $FA;
   KeyboardResend = $FE;
 
-  LightScrollLock = $01;
-  LightNumLock = $02;
-  LightCapsLock = $04;
-
   MaximumWaitIterations = 100000;
   MaximumFlushBytes = 32;
   LayoutNameCapacity = 16;
@@ -102,34 +97,13 @@ const
   ScanCodeExtended = $E0;
   ScanCodeReleased = $80;
 
-  ScanLeftShift = $2A;
-  ScanRightShift = $36;
-  ScanControl = $1D;
-  ScanAlt = $38;
-  ScanCapsLock = $3A;
-  ScanNumLock = $45;
-  ScanScrollLock = $46;
-  ScanFirstKeypad = $47;
-  ScanLastKeypad = $53;
-
-  KeyEscape = #27;
-
-  { The numeric keypad, 0x47-0x53, with Num Lock on. }
-  KeypadDigits: array[ScanFirstKeypad..ScanLastKeypad] of Char = (
-    '7', '8', '9', '-', '4', '5', '6', '+', '1', '2', '3', '0', '.');
-
 type
   { Setting the lights takes two bytes, each answered by the keyboard;
     the answers arrive as interrupts like key presses. }
   TLightsState = (LightsIdle, LightsAwaitingCommandAnswer, LightsAwaitingValueAnswer);
 
 var
-  ShiftPressed: Boolean;
-  ControlPressed: Boolean;
-  AltGrPressed: Boolean;
-  CapsLockOn: Boolean;
-  NumLockOn: Boolean;
-  ScrollLockOn: Boolean;
+  Keyboard: TKeyboardState;
   ExtendedPrefix: Boolean;
   LightsState: TLightsState;
   { The locks changed while the lights were being set. }
@@ -184,13 +158,7 @@ end;
 
 function LightsValue: Byte;
 begin
-  Result := 0;
-  if ScrollLockOn then
-    Result := Result or LightScrollLock;
-  if NumLockOn then
-    Result := Result or LightNumLock;
-  if CapsLockOn then
-    Result := Result or LightCapsLock;
+  Result := KeyboardLights(Keyboard);
 end;
 
 { Starts setting the lights; the rest happens as the keyboard answers. }
@@ -237,115 +205,9 @@ begin
   end;
 end;
 
-{ --- Characters ------------------------------------------------------ }
-
-procedure DeliverCharacter(Character: Char);
-begin
-  AddInputByte(KeyboardInput^, Byte(Character));
-end;
-
-procedure DeliverText(Text: PChar);
-begin
-  while Text^ <> #0 do
-  begin
-    DeliverCharacter(Text^);
-    Inc(Text);
-  end;
-end;
-
-{ Sends a code point to the console in UTF-8. }
-procedure DeliverCodePoint(CodePoint: LongWord);
-begin
-  if CodePoint < $80 then
-    DeliverCharacter(Char(CodePoint))
-  else if CodePoint < $800 then
-  begin
-    DeliverCharacter(Char($C0 or (CodePoint shr 6)));
-    DeliverCharacter(Char($80 or (CodePoint and $3F)));
-  end
-  else
-  begin
-    DeliverCharacter(Char($E0 or (CodePoint shr 12)));
-    DeliverCharacter(Char($80 or ((CodePoint shr 6) and $3F)));
-    DeliverCharacter(Char($80 or (CodePoint and $3F)));
-  end;
-end;
-
-{ The cursor and editing keys, from the separate block (after E0) or
-  from the keypad with Num Lock off. }
-procedure DeliverEditingKey(Code: Byte);
-begin
-  case Code of
-    $48: DeliverText(KeyEscape + '[A');   { up }
-    $50: DeliverText(KeyEscape + '[B');   { down }
-    $4D: DeliverText(KeyEscape + '[C');   { right }
-    $4B: DeliverText(KeyEscape + '[D');   { left }
-    $47: DeliverText(KeyEscape + '[H');   { home }
-    $4F: DeliverText(KeyEscape + '[F');   { end }
-    $52: DeliverText(KeyEscape + '[2~');  { insert }
-    $53: DeliverText(KeyEscape + '[3~');  { delete }
-    $49: DeliverText(KeyEscape + '[5~');  { page up }
-    $51: DeliverText(KeyEscape + '[6~');  { page down }
-  end;
-end;
-
-procedure HandleExtendedKey(Code: Byte);
-begin
-  case Code of
-    $1C: DeliverCharacter(#13);        { keypad enter }
-    $35: DeliverCharacter('/');        { keypad slash }
-  else
-    DeliverEditingKey(Code);
-  end;
-end;
-
-procedure HandleKeypadKey(Code: Byte);
-begin
-  { Minus and plus are the same either way. }
-  if NumLockOn or (KeypadDigits[Code] = '-') or (KeypadDigits[Code] = '+') then
-    DeliverCharacter(KeypadDigits[Code])
-  else
-    DeliverEditingKey(Code);
-end;
-
-procedure HandleCharacterKey(Code: Byte);
-var
-  CodePoint: LongWord;
-  UseShifted: Boolean;
-begin
-  CodePoint := 0;
-  if AltGrPressed then
-    CodePoint := LayoutCharacter(Code, LevelAltGr);
-  if CodePoint = 0 then
-  begin
-    { Caps Lock works like Shift, for letters only. }
-    UseShifted := ShiftPressed;
-    if CapsLockOn and KeyIsCapsLockable(Code) then
-      UseShifted := not UseShifted;
-    if UseShifted then
-      CodePoint := LayoutCharacter(Code, LevelShifted)
-    else
-      CodePoint := LayoutCharacter(Code, LevelPlain);
-  end;
-  if CodePoint = 0 then
-    Exit;
-  if ControlPressed then
-  begin
-    { Ctrl with a letter (or @[\]^_) gives the control character. }
-    if (CodePoint >= Ord('a')) and (CodePoint <= Ord('z')) then
-      CodePoint := CodePoint - Ord('a') + 1
-    else if (CodePoint >= Ord('@')) and (CodePoint <= Ord('_')) then
-      CodePoint := CodePoint - Ord('@')
-    else
-      Exit;
-  end;
-  DeliverCodePoint(CodePoint);
-end;
-
 procedure HandleScanCode(ScanCode: Byte);
 var
-  Released: Boolean;
-  Code: Byte;
+  Extended: Boolean;
 begin
   if HandleKeyboardAnswer(ScanCode) then
     Exit;
@@ -354,57 +216,11 @@ begin
     ExtendedPrefix := True;
     Exit;
   end;
-  Released := (ScanCode and ScanCodeReleased) <> 0;
-  Code := ScanCode and not ScanCodeReleased;
-
-  if ExtendedPrefix then
-  begin
-    ExtendedPrefix := False;
-    { Right Ctrl is E0 1D, AltGr E0 38; E0 2A/B6 are fake shifts some
-      keys send. }
-    if Code = ScanControl then
-      ControlPressed := not Released
-    else if Code = ScanAlt then
-      AltGrPressed := not Released
-    else if not Released and (Code <> ScanLeftShift) and (Code <> ScanRightShift) then
-      HandleExtendedKey(Code);
-    Exit;
-  end;
-
-  case Code of
-    ScanLeftShift, ScanRightShift:
-      begin
-        ShiftPressed := not Released;
-        Exit;
-      end;
-    ScanControl:
-      begin
-        ControlPressed := not Released;
-        Exit;
-      end;
-    ScanAlt:
-      Exit;
-    ScanCapsLock, ScanNumLock, ScanScrollLock:
-      begin
-        if Released then
-          Exit;
-        case Code of
-          ScanCapsLock: CapsLockOn := not CapsLockOn;
-          ScanNumLock: NumLockOn := not NumLockOn;
-        else
-          ScrollLockOn := not ScrollLockOn;
-        end;
-        UpdateLights;
-        Exit;
-      end;
-  end;
-  if Released then
-    Exit;
-
-  if (Code >= ScanFirstKeypad) and (Code <= ScanLastKeypad) then
-    HandleKeypadKey(Code)
-  else
-    HandleCharacterKey(Code);
+  Extended := ExtendedPrefix;
+  ExtendedPrefix := False;
+  if TranslateKey(Keyboard, ScanCode and not ScanCodeReleased, Extended,
+    (ScanCode and ScanCodeReleased) <> 0) then
+    UpdateLights;
 end;
 
 procedure HandleKeyboardInterrupt(Frame: PTrapFrame; Context: Pointer);
@@ -462,7 +278,13 @@ begin
   Device^.IsExclusive := True;
   KeyboardInput := PInputDevice(Device^.Extension);
   InitializeInputDevice(KeyboardInput^);
+  InitializeKeyboardState(Keyboard, KeyboardInput);
   Result := True;
+end;
+
+function Ps2KeyboardKeyCount: QWord;
+begin
+  Result := Keyboard.KeyCount;
 end;
 
 function InitializePs2Keyboard: Boolean;
@@ -496,8 +318,6 @@ begin
   SendCommand(CommandEnableFirstPort);
   FlushOutputBuffer;
 
-  { Num Lock starts on, as most firmware leaves it. }
-  NumLockOn := True;
   LightsState := LightsIdle;
   UpdateLights;
 

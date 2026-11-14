@@ -33,8 +33,11 @@
     de   German QWERTZ (umlauts, ß, AltGr for @ { [ ] } \ ~ | €)
     fr   French AZERTY (é è ç à ù, digits on Shift, AltGr for ~ # { [ | ` \ ^ @ ] } €)
 
-  The accent keys of de and fr give the accent itself; there are no
-  dead keys.
+  Accent keys of de (´ ` ^) and fr (^ ¨) are dead keys: they give
+  nothing at once, but put their accent on the next letter (é, è, ê,
+  ë, ...). Space, or the dead key again, gives the accent itself; any
+  other key gives the accent followed by that key. In the tables a dead
+  key's code point has DeadKeyFlag added.
 *)
 unit Drivers.KeyboardLayouts;
 
@@ -45,6 +48,9 @@ interface
 const
   FirstLayoutKey = $00;
   LastLayoutKey = $58;
+
+  { Added to the code point of a dead key. }
+  DeadKeyFlag = LongWord($80000000);
 
 type
   TKeyLevel = (LevelPlain, LevelShifted, LevelAltGr);
@@ -60,6 +66,10 @@ function LayoutCharacter(Code: Byte; Level: TKeyLevel): LongWord;
 { True when Caps Lock affects the key: its plain and shifted characters
   are a lower and upper case letter. }
 function KeyIsCapsLockable(Code: Byte): Boolean;
+
+{ Base with Accent (a dead key's code point, without the flag) on it, or
+  0 if there is no such character. }
+function ComposeAccent(Accent, Base: LongWord): LongWord;
 
 implementation
 
@@ -121,6 +131,31 @@ const
   SmallAGrave = $E0;
   SmallUGrave = $F9;
 
+  DeadAcute = AcuteAccent or DeadKeyFlag;
+  DeadGrave = Ord('`') or DeadKeyFlag;
+  DeadCircumflex = Ord('^') or DeadKeyFlag;
+  DeadDiaeresis = Diaeresis or DeadKeyFlag;
+
+  { Accented letters: the accent, the base letter, the result. }
+  CompositionCount = 44;
+  Compositions: array[0..CompositionCount - 1, 0..2] of LongWord = (
+    (AcuteAccent, Ord('a'), $E1), (AcuteAccent, Ord('e'), $E9), (AcuteAccent, Ord('i'), $ED),
+    (AcuteAccent, Ord('o'), $F3), (AcuteAccent, Ord('u'), $FA), (AcuteAccent, Ord('y'), $FD),
+    (AcuteAccent, Ord('A'), $C1), (AcuteAccent, Ord('E'), $C9), (AcuteAccent, Ord('I'), $CD),
+    (AcuteAccent, Ord('O'), $D3), (AcuteAccent, Ord('U'), $DA), (AcuteAccent, Ord('Y'), $DD),
+    (Ord('`'), Ord('a'), $E0), (Ord('`'), Ord('e'), $E8), (Ord('`'), Ord('i'), $EC),
+    (Ord('`'), Ord('o'), $F2), (Ord('`'), Ord('u'), $F9),
+    (Ord('`'), Ord('A'), $C0), (Ord('`'), Ord('E'), $C8), (Ord('`'), Ord('I'), $CC),
+    (Ord('`'), Ord('O'), $D2), (Ord('`'), Ord('U'), $D9),
+    (Ord('^'), Ord('a'), $E2), (Ord('^'), Ord('e'), $EA), (Ord('^'), Ord('i'), $EE),
+    (Ord('^'), Ord('o'), $F4), (Ord('^'), Ord('u'), $FB),
+    (Ord('^'), Ord('A'), $C2), (Ord('^'), Ord('E'), $CA), (Ord('^'), Ord('I'), $CE),
+    (Ord('^'), Ord('O'), $D4), (Ord('^'), Ord('U'), $DB),
+    (Diaeresis, Ord('a'), $E4), (Diaeresis, Ord('e'), $EB), (Diaeresis, Ord('i'), $EF),
+    (Diaeresis, Ord('o'), $F6), (Diaeresis, Ord('u'), $FC), (Diaeresis, Ord('y'), $FF),
+    (Diaeresis, Ord('A'), $C4), (Diaeresis, Ord('E'), $CB), (Diaeresis, Ord('I'), $CF),
+    (Diaeresis, Ord('O'), $D6), (Diaeresis, Ord('U'), $DC), (Diaeresis, Ord('Y'), $178));
+
   UkChanges: array[0..6] of TKeyChange = (
     (Code: $03; Plain: Ord('2'); Shifted: Ord('"'); AltGr: 0),
     (Code: $04; Plain: Ord('3'); Shifted: PoundSign; AltGr: 0),
@@ -139,7 +174,7 @@ const
     (Code: $0A; Plain: Ord('9'); Shifted: Ord(')'); AltGr: Ord(']')),
     (Code: $0B; Plain: Ord('0'); Shifted: Ord('='); AltGr: Ord('}')),
     (Code: $0C; Plain: SharpS; Shifted: Ord('?'); AltGr: Ord('\')),
-    (Code: $0D; Plain: AcuteAccent; Shifted: Ord('`'); AltGr: 0),
+    (Code: $0D; Plain: DeadAcute; Shifted: DeadGrave; AltGr: 0),
     (Code: $10; Plain: Ord('q'); Shifted: Ord('Q'); AltGr: Ord('@')),
     (Code: $12; Plain: Ord('e'); Shifted: Ord('E'); AltGr: EuroSign),
     (Code: $15; Plain: Ord('z'); Shifted: Ord('Z'); AltGr: 0),
@@ -147,7 +182,7 @@ const
     (Code: $1B; Plain: Ord('+'); Shifted: Ord('*'); AltGr: Ord('~')),
     (Code: $27; Plain: SmallOUmlaut; Shifted: CapitalOUmlaut; AltGr: 0),
     (Code: $28; Plain: SmallAUmlaut; Shifted: CapitalAUmlaut; AltGr: 0),
-    (Code: $29; Plain: Ord('^'); Shifted: DegreeSign; AltGr: 0),
+    (Code: $29; Plain: DeadCircumflex; Shifted: DegreeSign; AltGr: 0),
     (Code: $2B; Plain: Ord('#'); Shifted: Ord(''''); AltGr: 0),
     (Code: $2C; Plain: Ord('y'); Shifted: Ord('Y'); AltGr: 0),
     (Code: $32; Plain: Ord('m'); Shifted: Ord('M'); AltGr: MicroSign),
@@ -172,7 +207,7 @@ const
     (Code: $10; Plain: Ord('a'); Shifted: Ord('A'); AltGr: 0),
     (Code: $11; Plain: Ord('z'); Shifted: Ord('Z'); AltGr: 0),
     (Code: $12; Plain: Ord('e'); Shifted: Ord('E'); AltGr: EuroSign),
-    (Code: $1A; Plain: Ord('^'); Shifted: Diaeresis; AltGr: 0),
+    (Code: $1A; Plain: DeadCircumflex; Shifted: DeadDiaeresis; AltGr: 0),
     (Code: $1B; Plain: Ord('$'); Shifted: PoundSign; AltGr: CurrencySign),
     (Code: $1E; Plain: Ord('q'); Shifted: Ord('Q'); AltGr: 0),
     (Code: $27; Plain: Ord('m'); Shifted: Ord('M'); AltGr: 0),
@@ -281,6 +316,16 @@ begin
     Exit(False);
   Result := IsLowerCaseLetter(ActiveKeys[Code].Plain) and
     (ActiveKeys[Code].Shifted = ActiveKeys[Code].Plain - $20);
+end;
+
+function ComposeAccent(Accent, Base: LongWord): LongWord;
+var
+  Index: Integer;
+begin
+  for Index := 0 to CompositionCount - 1 do
+    if (Compositions[Index, 0] = Accent) and (Compositions[Index, 1] = Base) then
+      Exit(Compositions[Index, 2]);
+  Result := 0;
 end;
 
 end.

@@ -54,6 +54,9 @@ uses
   Kernel.DeferredCalls,
   Processes.Thread,
   Io.Manager,
+  Io.InputDevice,
+  Drivers.KeyboardLayouts,
+  Drivers.KeyboardTranslation,
   Kernel.SelfTest;
 
 const
@@ -256,6 +259,90 @@ begin
   ReportPassed('filter devices');
 end;
 
+{ --- Keyboard translation ---------------------------------------------- }
+
+var
+  TestInput: TInputDevice;
+  TestKeys: TKeyboardState;
+
+procedure PressKey(Code: Byte);
+begin
+  TranslateKey(TestKeys, Code, False, False);
+  TranslateKey(TestKeys, Code, False, True);
+end;
+
+procedure PressShifted(Code: Byte);
+begin
+  TranslateKey(TestKeys, $2A, False, False);
+  PressKey(Code);
+  TranslateKey(TestKeys, $2A, False, True);
+end;
+
+{ True if the keys typed since the last check gave Expected (UTF-8). }
+function TypedText(Expected: PChar): Boolean;
+var
+  Index: LongWord;
+begin
+  Result := True;
+  Index := 0;
+  while Expected[Index] <> #0 do
+  begin
+    if (Index >= TestInput.RingCount) or
+       (TestInput.Ring[(TestInput.RingStart + Index) mod InputRingCapacity] <> Byte(Expected[Index])) then
+      Result := False;
+    Inc(Index);
+  end;
+  Result := Result and (Index = TestInput.RingCount);
+  TestInput.RingStart := 0;
+  TestInput.RingCount := 0;
+end;
+
+{ Dead keys of the de and fr layouts, fed straight to the translation. }
+procedure TestDeadKeys;
+const
+  KeyAcute = $0D;       { de: ´, with Shift ` }
+  KeyCircumflexDe = $29;
+  KeyCircumflexFr = $1A; { fr: ^, with Shift ¨ }
+  KeyE = $12;
+  KeyU = $16;
+  KeyX = $2D;
+  KeySpace = $39;
+var
+  PreviousLayout: PChar;
+begin
+  PreviousLayout := CurrentKeyboardLayoutName;
+  InitializeInputDevice(TestInput);
+  InitializeKeyboardState(TestKeys, @TestInput);
+
+  SelectKeyboardLayout('de');
+  PressKey(KeyAcute);
+  PressKey(KeyE);
+  Check(TypedText(#$C3#$A9), 'de: dead acute then e gives e acute');
+  PressShifted(KeyAcute);
+  PressShifted(KeyE);
+  Check(TypedText(#$C3#$88), 'de: dead grave then E gives E grave');
+  PressKey(KeyCircumflexDe);
+  PressKey(KeySpace);
+  Check(TypedText('^'), 'de: dead circumflex then space gives the accent');
+  PressKey(KeyCircumflexDe);
+  PressKey(KeyCircumflexDe);
+  Check(TypedText('^'), 'de: the dead key twice gives the accent once');
+  PressKey(KeyAcute);
+  PressKey(KeyX);
+  Check(TypedText(#$C2#$B4'x'), 'de: dead acute then x gives both');
+
+  SelectKeyboardLayout('fr');
+  PressKey(KeyCircumflexFr);
+  PressKey(KeyE);
+  Check(TypedText(#$C3#$AA), 'fr: dead circumflex then e gives e circumflex');
+  PressShifted(KeyCircumflexFr);
+  PressKey(KeyU);
+  Check(TypedText(#$C3#$BC), 'fr: dead diaeresis then u gives u diaeresis');
+
+  SelectKeyboardLayout(PreviousLayout);
+  ReportPassed('dead keys');
+end;
+
 procedure RunIoSelfTests;
 begin
   CreateTestDevice;
@@ -263,6 +350,7 @@ begin
   TestCompletionRoutine;
   TestCancellation;
   TestFilter;
+  TestDeadKeys;
 end;
 
 end.
