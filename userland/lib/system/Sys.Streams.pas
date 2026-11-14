@@ -10,6 +10,10 @@
   StandardOutput, StandardError and StandardInput are created on first
   use; the first use of an output stream also registers the flush that
   runs when the program exits.
+
+  The environment variables _STDBUF_O and _STDBUF_E (set by stdbuf)
+  choose the buffering of standard output and error: "0" writes at once,
+  "L" at every line end, anything else when the buffer is full.
 }
 unit Sys.Streams;
 
@@ -28,6 +32,8 @@ type
     Buffer: array[0..StreamBufferSize - 1] of Char;
     Count: LongWord;
     FlushAtLineEnd: Boolean;
+    { Written out after every write call. }
+    Unbuffered: Boolean;
     HadError: Boolean;
   end;
 
@@ -127,11 +133,41 @@ begin
   FreeMemory(Stream);
 end;
 
+{ Looks for Name=value in the program's original environment (this unit
+  sits below Sys.Environment). }
+function FindStartupVariable(Name: PChar): PChar;
+var
+  Index: Integer;
+  NameLength: PtrUInt;
+begin
+  NameLength := TextLength(Name);
+  Index := 0;
+  while EnvironmentValues[Index] <> nil do
+  begin
+    if TextStartsWith(EnvironmentValues[Index], Name) and (EnvironmentValues[Index][NameLength] = '=') then
+      Exit(EnvironmentValues[Index] + NameLength + 1);
+    Inc(Index);
+  end;
+  Result := nil;
+end;
+
+procedure ApplyBufferingRequest(Stream: POutputStream; VariableName: PChar);
+var
+  Mode: PChar;
+begin
+  Mode := FindStartupVariable(VariableName);
+  if Mode = nil then
+    Exit;
+  Stream^.FlushAtLineEnd := (Mode^ = 'L') or (Mode^ = '0');
+  Stream^.Unbuffered := Mode^ = '0';
+end;
+
 function StandardOutput: POutputStream;
 begin
   if OutputStream = nil then
   begin
     OutputStream := CreateOutputStream(StandardOutputHandle);
+    ApplyBufferingRequest(OutputStream, '_STDBUF_O');
     ExitProcedure := @FlushStandardStreams;
   end;
   Result := OutputStream;
@@ -144,6 +180,7 @@ begin
     ErrorStream := CreateOutputStream(StandardErrorHandle);
     { Errors should appear immediately. }
     ErrorStream^.FlushAtLineEnd := True;
+    ApplyBufferingRequest(ErrorStream, '_STDBUF_E');
     ExitProcedure := @FlushStandardStreams;
   end;
   Result := ErrorStream;
@@ -198,7 +235,7 @@ begin
       SawLineEnd := True;
     Inc(Index);
   end;
-  if SawLineEnd and Stream^.FlushAtLineEnd then
+  if (SawLineEnd and Stream^.FlushAtLineEnd) or Stream^.Unbuffered then
     FlushStream(Stream);
 end;
 

@@ -1,7 +1,7 @@
 {
   date - print the system date and time
 
-  date [-u] [-d @SECONDS] [+FORMAT]
+  date [-u] [-d DATE | -r FILE] [+FORMAT]
 
   The system clock runs in UTC, so times are always shown in UTC.
   FORMAT conversions:
@@ -21,7 +21,9 @@ uses
   Sys.Format,
   Sys.Streams,
   Sys.Text,
+  Sys.Files,
   Sys.Time,
+  Util.Dates,
   Util.Messages,
   Util.Options;
 
@@ -29,7 +31,8 @@ const
   Usage: PChar = 'Usage: date [OPTION]... [+FORMAT]'#10 +
     'Display the current time in the given FORMAT.'#10 +
     #10 +
-    '  -d, --date=@SECONDS   display the time SECONDS after 1970-01-01 UTC'#10 +
+    '  -d, --date=STRING     display time described by STRING, not ''now'''#10 +
+    '  -r, --reference=FILE  display the last modification time of FILE'#10 +
     '  -u, --utc, --universal  print Coordinated Universal Time (the default)'#10 +
     #10 +
     'FORMAT: %Y %y %m %d %e %H %M %S %j %a %b %s %F %T %D %Z %n %t %%'#10;
@@ -38,6 +41,7 @@ const
 
   OptionDate = 1;
   OptionUniversal = 2;
+  OptionReference = 3;
 
 procedure WritePadded(Value: Int64; Width: Integer; Padding: Char);
 var
@@ -115,18 +119,26 @@ var
   Value: PChar;
   Time: TUnixTime;
   Format: PChar;
+  Information: TFileInformation;
 begin
   Time := CurrentTime;
   Format := DefaultFormat;
   BeginOptions(Parser, [
     OptionDefinition('d', 'date', True, OptionDate),
     OptionDefinition('u', 'utc', False, OptionUniversal),
-    OptionDefinition(#0, 'universal', False, OptionUniversal)], Usage);
+    OptionDefinition(#0, 'universal', False, OptionUniversal),
+    OptionDefinition('r', 'reference', True, OptionReference)], Usage);
   while NextOption(Parser, Code, Value) do
-    if Code = OptionDate then
-    begin
-      if (Value[0] <> '@') or not ParseInteger(Value + 1, Time) then
-        Fail(1, 'invalid date ''%s'' (only @SECONDS is supported)', [ArgumentText(Value)]);
+    case Code of
+      OptionDate:
+        if not ParseDateText(Value, Time) then
+          Fail(1, 'invalid date ''%s''', [ArgumentText(Value)]);
+      OptionReference:
+        begin
+          if GetFileInformation(Value, Information) <> 0 then
+            Fail(1, '%s: No such file or directory', [ArgumentText(Value)]);
+          Time := Information.ModificationTime;
+        end;
     end;
 
   if Parser.OperandCount > 1 then

@@ -1,0 +1,191 @@
+{
+  mktemp - create a temporary file or directory
+
+  mktemp [-dqtu] [-p DIR] [--suffix=SUFFIX] [TEMPLATE]
+
+  TEMPLATE ends in at least three X's, which are replaced by random
+  letters and digits (default tmp.XXXXXXXXXX). The file is created
+  exclusively, so it cannot be one that already existed; its name is
+  printed.
+}
+program mktemp;
+
+{$mode objfpc}
+{$pointermath on}
+
+uses
+  Abi.SystemCalls,
+  Runtime.Text,
+  Crypto.Random,
+  Sys.Environment,
+  Sys.Errors,
+  Sys.Files,
+  Sys.Format,
+  Sys.Memory,
+  Sys.Streams,
+  Sys.Text,
+  Util.Messages,
+  Util.Options,
+  Util.Paths;
+
+const
+  Usage: PChar = 'Usage: mktemp [OPTION]... [TEMPLATE]'#10 +
+    'Create a temporary file or directory, safely, and print its name.'#10 +
+    'TEMPLATE must contain at least 3 consecutive ''X''s in last component.'#10 +
+    'If TEMPLATE is not specified, use tmp.XXXXXXXXXX, and --tmpdir is implied.'#10#10 +
+    '  -d, --directory     create a directory, not a file'#10 +
+    '  -u, --dry-run       do not create anything; merely print a name (unsafe)'#10 +
+    '  -q, --quiet         suppress diagnostics about file/dir-creation failure'#10 +
+    '      --suffix=SUFF   append SUFF to TEMPLATE'#10 +
+    '  -p DIR, --tmpdir[=DIR]  interpret TEMPLATE relative to DIR; if DIR is not'#10 +
+    '                        specified, use $TMPDIR if set, else /tmp'#10 +
+    '  -t                  interpret TEMPLATE as a single file name component,'#10 +
+    '                        relative to a directory: $TMPDIR, if set; else'#10 +
+    '                        the directory specified via -p; else /tmp'#10;
+
+  OptionDirectory = 1;
+  OptionDryRun = 2;
+  OptionQuiet = 3;
+  OptionSuffix = 4;
+  OptionTemporaryDirectory = 5;
+  OptionRelativeToTemporary = 6;
+  MaximumAttempts = 100;
+  NameCharacters: PChar = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+var
+  Parser: TOptionParser;
+  Code: Integer;
+  Value: PChar;
+  MakeDirectory: Boolean;
+  DryRun: Boolean;
+  Quiet: Boolean;
+  Suffix: PChar;
+  Directory: PChar;
+  UseDirectory: Boolean;
+  Template: PChar;
+  Path: PChar;
+  Builder: TTextBuilder;
+  XStart: PtrInt;
+  XCount: PtrInt;
+  Attempt: Integer;
+  Index: PtrInt;
+  Handle: Int64;
+  Error: LongInt;
+  Created: Boolean;
+begin
+  MakeDirectory := False;
+  DryRun := False;
+  Quiet := False;
+  Suffix := '';
+  Directory := nil;
+  UseDirectory := False;
+  BeginOptions(Parser, [
+    OptionDefinition('d', 'directory', False, OptionDirectory),
+    OptionDefinition('u', 'dry-run', False, OptionDryRun),
+    OptionDefinition('q', 'quiet', False, OptionQuiet),
+    OptionDefinition(#0, 'suffix', True, OptionSuffix),
+    OptionDefinition('p', 'tmpdir', True, OptionTemporaryDirectory),
+    OptionDefinition('t', nil, False, OptionRelativeToTemporary)], Usage);
+  while NextOption(Parser, Code, Value) do
+    case Code of
+      OptionDirectory: MakeDirectory := True;
+      OptionDryRun: DryRun := True;
+      OptionQuiet: Quiet := True;
+      OptionSuffix: Suffix := Value;
+      OptionTemporaryDirectory:
+        begin
+          Directory := Value;
+          UseDirectory := True;
+        end;
+      OptionRelativeToTemporary: UseDirectory := True;
+    end;
+  if Parser.OperandCount > 1 then
+    FailWithUsageHint('too many templates', []);
+
+  if Parser.OperandCount = 1 then
+    Template := Parser.Operands[0]
+  else
+  begin
+    Template := 'tmp.XXXXXXXXXX';
+    UseDirectory := True;
+  end;
+  if UseDirectory and ((Directory = nil) or (Directory^ = #0)) then
+  begin
+    Directory := GetVariable('TMPDIR');
+    if (Directory = nil) or (Directory^ = #0) then
+      Directory := '/tmp';
+  end;
+
+  BeginText(Builder);
+  if UseDirectory then
+  begin
+    AppendText(Builder, Directory);
+    if (Builder.Length > 0) and (Builder.Text[Builder.Length - 1] <> '/') then
+      AppendCharacter(Builder, '/');
+  end;
+  AppendText(Builder, Template);
+  XStart := PtrInt(Builder.Length);
+  XCount := 0;
+  while (XStart > 0) and (Builder.Text[XStart - 1] = 'X') do
+  begin
+    Dec(XStart);
+    Inc(XCount);
+  end;
+  if XCount < 3 then
+    Fail(1, 'too few X''s in template ''%s''', [ArgumentText(Template)]);
+  AppendText(Builder, Suffix);
+  Path := FinishText(Builder);
+
+  Created := False;
+  Error := ErrorExists;
+  for Attempt := 1 to MaximumAttempts do
+  begin
+    for Index := XStart to XStart + XCount - 1 do
+      Path[Index] := NameCharacters[RandomBelow(TextLength(NameCharacters))];
+    if DryRun then
+    begin
+      if not PathExists(Path) then
+      begin
+        Created := True;
+        Break;
+      end;
+      Continue;
+    end;
+    if MakeDirectory then
+      Error := CreateDirectory(Path)
+    else
+    begin
+      Handle := OpenFile(Path, OpenWrite or OpenCreate or OpenExclusive);
+      if Handle >= 0 then
+      begin
+        CloseFile(Handle);
+        Error := ErrorNone;
+      end
+      else
+        Error := ErrorCodeOf(Handle);
+    end;
+    if Error = ErrorNone then
+    begin
+      if not MakeDirectory then
+        ChangeMode(Path, $180)   { rw------- }
+      else
+        ChangeMode(Path, $1C0);  { rwx------ }
+      Created := True;
+      Break;
+    end;
+    if Error <> ErrorExists then
+      Break;
+  end;
+  if not Created then
+  begin
+    if not Quiet then
+    begin
+      if MakeDirectory then
+        ReportError(Error, 'failed to create directory via template ''%s''', [ArgumentText(Template)])
+      else
+        ReportError(Error, 'failed to create file via template ''%s''', [ArgumentText(Template)]);
+    end;
+    Halt(1);
+  end;
+  PrintLine(Path);
+end.

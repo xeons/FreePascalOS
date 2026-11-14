@@ -33,6 +33,10 @@ function ExFatRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;
   TargetDirectory: PNode; TargetName: PChar): TFileSystemStatus;
 function ExFatSync(Volume: PVolume): TFileSystemStatus;
 
+{ Marks the volume dirty before its first change since mounting (the
+  flag is cleared again by ExFatSync). }
+function BeginModification(Volume: PVolume): TFileSystemStatus;
+
 implementation
 
 uses

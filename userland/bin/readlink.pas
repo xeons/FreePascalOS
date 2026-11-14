@@ -40,118 +40,33 @@ const
   OptionQuiet = 3;
   OptionVerbose = 4;
   OptionZero = 5;
-  MaximumLinkDepth = 40;
-
-{ Appends component Name to the absolute path in Builder, handling "."
-  and ".." and following symbolic links. }
-function AddComponent(var Builder: TTextBuilder; Name: PChar; Depth: Integer): LongInt; forward;
-
-function ResolveInto(var Builder: TTextBuilder; Path: PChar; Depth: Integer): LongInt;
-var
-  Copy: PChar;
-  Start: PtrUInt;
-  Position: PtrUInt;
-  Directory: array[0..PathCapacity - 1] of Char;
-begin
-  Result := ErrorNone;
-  if Path[0] = '/' then
-  begin
-    DiscardText(Builder);
-    BeginText(Builder);
-  end
-  else if Builder.Length = 0 then
-  begin
-    GetCurrentDirectory(@Directory[0], PathCapacity);
-    AppendText(Builder, @Directory[0]);
-    if TextIsEqual(Builder.Text, '/') then
-      Builder.Length := 0;
-  end;
-
-  Copy := DuplicateText(Path);
-  Position := 0;
-  while Copy[Position] <> #0 do
-  begin
-    while Copy[Position] = '/' do
-      Inc(Position);
-    Start := Position;
-    while (Copy[Position] <> '/') and (Copy[Position] <> #0) do
-      Inc(Position);
-    if Position = Start then
-      Break;
-    if Copy[Position] = '/' then
-    begin
-      Copy[Position] := #0;
-      Result := AddComponent(Builder, Copy + Start, Depth);
-      Copy[Position] := '/';
-    end
-    else
-      Result := AddComponent(Builder, Copy + Start, Depth);
-    if Result <> ErrorNone then
-      Break;
-  end;
-  FreeMemory(Copy);
-end;
-
-function AddComponent(var Builder: TTextBuilder; Name: PChar; Depth: Integer): LongInt;
-var
-  LastSlash: PtrInt;
-  Information: TFileInformation;
-  Target: array[0..PathCapacity - 1] of Char;
-  SavedLength: PtrUInt;
-begin
-  Result := ErrorNone;
-  if TextIsEqual(Name, '.') then
-    Exit;
-  if TextIsEqual(Name, '..') then
-  begin
-    LastSlash := FindLastCharacter(Builder.Text, '/');
-    if LastSlash >= 0 then
-    begin
-      Builder.Length := PtrUInt(LastSlash);
-      Builder.Text[Builder.Length] := #0;
-    end;
-    Exit;
-  end;
-  SavedLength := Builder.Length;
-  AppendCharacter(Builder, '/');
-  AppendText(Builder, Name);
-  if GetLinkInformation(Builder.Text, Information) <> ErrorNone then
-    { A missing last component is allowed, as with readlink -f. }
-    Exit;
-  if Information.Kind <> KindSymbolicLink then
-    Exit;
-  if Depth >= MaximumLinkDepth then
-    Exit(ErrorTooManyLinks);
-  Result := ReadSymbolicLink(Builder.Text, @Target[0], PathCapacity);
-  if Result <> ErrorNone then
-    Exit;
-  Builder.Length := SavedLength;
-  Builder.Text[Builder.Length] := #0;
-  Result := ResolveInto(Builder, @Target[0], Depth + 1);
-end;
+  OptionCanonicalizeExisting = 6;
+  OptionCanonicalizeMissing = 7;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
   Canonicalize: Boolean;
+  CanonicalMode: TCanonicalMode;
+  Canonical: PChar;
   NoNewline: Boolean;
   Quiet: Boolean;
   LineEnd: Char;
   Index: Integer;
   Target: array[0..PathCapacity - 1] of Char;
-  Builder: TTextBuilder;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
   Canonicalize := False;
+  CanonicalMode := CanonicalAllButLast;
   NoNewline := False;
   Quiet := True;
   LineEnd := #10;
   BeginOptions(Parser, [
     OptionDefinition('f', 'canonicalize', False, OptionCanonicalize),
-    OptionDefinition('e', 'canonicalize-existing', False, OptionCanonicalize),
-    OptionDefinition('m', 'canonicalize-missing', False, OptionCanonicalize),
+    OptionDefinition('e', 'canonicalize-existing', False, OptionCanonicalizeExisting),
+    OptionDefinition('m', 'canonicalize-missing', False, OptionCanonicalizeMissing),
     OptionDefinition('n', 'no-newline', False, OptionNoNewline),
     OptionDefinition('q', 'quiet', False, OptionQuiet),
     OptionDefinition('s', 'silent', False, OptionQuiet),
@@ -159,7 +74,21 @@ begin
     OptionDefinition('z', 'zero', False, OptionZero)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
-      OptionCanonicalize: Canonicalize := True;
+      OptionCanonicalize:
+        begin
+          Canonicalize := True;
+          CanonicalMode := CanonicalAllButLast;
+        end;
+      OptionCanonicalizeExisting:
+        begin
+          Canonicalize := True;
+          CanonicalMode := CanonicalExisting;
+        end;
+      OptionCanonicalizeMissing:
+        begin
+          Canonicalize := True;
+          CanonicalMode := CanonicalMissingAllowed;
+        end;
       OptionNoNewline: NoNewline := True;
       OptionQuiet: Quiet := True;
       OptionVerbose: Quiet := False;
@@ -173,13 +102,12 @@ begin
   begin
     if Canonicalize then
     begin
-      BeginText(Builder);
-      Error := ResolveInto(Builder, Parser.Operands[Index], 0);
-      if Builder.Length = 0 then
-        AppendCharacter(Builder, '/');
+      Error := CanonicalizePath(Parser.Operands[Index], CanonicalMode, True, Canonical);
       if Error = ErrorNone then
-        CopyText(@Target[0], Builder.Text, PathCapacity);
-      DiscardText(Builder);
+      begin
+        CopyText(@Target[0], Canonical, PathCapacity);
+        FreeMemory(Canonical);
+      end;
     end
     else
       Error := ReadSymbolicLink(Parser.Operands[Index], @Target[0], PathCapacity);

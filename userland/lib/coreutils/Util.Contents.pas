@@ -16,7 +16,14 @@ uses
   Util.Sorting,
   Util.Sizes,
   Util.Directories,
-  Util.FileTree;
+  Util.FileTree,
+  Util.DigestTool,
+  Util.BaseEncoding,
+  Util.Modes,
+  Util.Dates,
+  Util.Accounts,
+  Util.Commands,
+  Util.RegularExpressions;
 
 implementation
 

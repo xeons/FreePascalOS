@@ -35,6 +35,14 @@ type
     ThreadStateTerminated
   );
 
+  { How a wait ended. }
+  TWaitResult = (
+    WaitSignaled,
+    WaitTimedOut,
+    { An alertable wait was cut short by AlertThread. }
+    WaitAlerted
+  );
+
   TThreadStartRoutine = procedure(Context: Pointer);
 
   PThreadControlBlock = ^TThreadControlBlock;
@@ -60,6 +68,16 @@ type
     { Links the thread into the sleep queue, ordered by WakeUpTick. }
     TimerLink: TListEntry;
     WakeUpTick: QWord;
+
+    { Where a waiting thread is linked, so whatever ends the wait (a
+      signal, the timeout or an alert) can take it off both queues. }
+    IsOnWaitList: Boolean;
+    IsOnSleepQueue: Boolean;
+    WaitIsAlertable: Boolean;
+    WaitResult: TWaitResult;
+    { Set by AlertThread and never cleared: from then on alertable waits
+      end at once. Used to stop threads of a process being terminated. }
+    AlertPending: Boolean;
 
     StartRoutine: TThreadStartRoutine;
     StartContext: Pointer;

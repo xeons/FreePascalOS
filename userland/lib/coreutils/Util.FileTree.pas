@@ -21,12 +21,24 @@ type
     { Do not replace existing targets. }
     NoClobber: Boolean;
     Verbose: Boolean;
+    { Give copies the source's mode, owner, group and times. }
+    PreserveAttributes: Boolean;
   end;
 
 { Copies Source to Target (a file, link or, with Recursive, a tree). }
 function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
 { Removes Path and everything below it. }
 function RemoveTree(Path: PChar): Boolean;
+
+type
+  { Called for every path of a walk; returns False if it failed (the
+    walk continues, but reports failure). }
+  TVisitPath = function(Path: PChar; IsDirectory: Boolean; Context: Pointer): Boolean;
+
+{ Visits Path and, when it is a directory, everything below it (a
+  directory before its contents). Symbolic links are visited but not
+  followed. Returns False if any visit failed. }
+function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;
 
 implementation
 
@@ -149,6 +161,27 @@ begin
   FreeLineList(Names);
 end;
 
+{ Copies mode, owner, group and times; formats without owners keep
+  their own, which is not worth a message. }
+procedure PreserveAttributesOf(Target: PChar; const Information: TFileInformation);
+var
+  Changes: TAttributeChanges;
+begin
+  Changes.Fields := ChangeFieldModificationTime or ChangeFieldAccessTime or ChangeFieldOwner or ChangeFieldGroup;
+  Changes.ModificationTime := Information.ModificationTime;
+  Changes.AccessTime := Information.AccessTime;
+  Changes.OwnerId := Information.OwnerId;
+  Changes.GroupId := Information.GroupId;
+  Changes.Mode := Information.Mode;
+  if Information.Kind <> KindSymbolicLink then
+    Changes.Fields := Changes.Fields or ChangeFieldMode;
+  if SetPathAttributes(Target, Changes, False) <> ErrorNone then
+  begin
+    Changes.Fields := Changes.Fields and not (ChangeFieldOwner or ChangeFieldGroup);
+    SetPathAttributes(Target, Changes, False);
+  end;
+end;
+
 function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
 var
   Information: TFileInformation;
@@ -183,6 +216,45 @@ begin
   else
     Result := CopyFileContents(Source, Target);
   end;
+  if Result and Options.PreserveAttributes then
+    PreserveAttributesOf(Target, Information);
+end;
+
+function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;
+var
+  Information: TFileInformation;
+  Names: TLineList;
+  Index: Integer;
+  ChildPath: PChar;
+  Error: LongInt;
+  IsDirectoryPath: Boolean;
+begin
+  Error := GetLinkInformation(Path, Information);
+  if Error <> ErrorNone then
+  begin
+    ReportError(Error, 'cannot access ''%s''', [ArgumentText(Path)]);
+    Exit(False);
+  end;
+  IsDirectoryPath := Information.Kind = KindDirectory;
+  Result := Visit(Path, IsDirectoryPath, Context);
+  if not IsDirectoryPath then
+    Exit;
+  BeginLineList(Names);
+  Error := ListDirectory(Path, Names);
+  if Error <> ErrorNone then
+  begin
+    ReportError(Error, 'cannot read directory ''%s''', [ArgumentText(Path)]);
+    FreeLineList(Names);
+    Exit(False);
+  end;
+  for Index := 0 to Names.Count - 1 do
+  begin
+    ChildPath := JoinPath(Path, Names.Items[Index]);
+    if not WalkTree(ChildPath, Visit, Context) then
+      Result := False;
+    FreeMemory(ChildPath);
+  end;
+  FreeLineList(Names);
 end;
 
 function RemoveTree(Path: PChar): Boolean;

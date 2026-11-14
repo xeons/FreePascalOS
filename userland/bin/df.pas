@@ -3,8 +3,8 @@
 
   df [-hT] [FILE]...
 
-  Lists the mounted volumes. Free space is not tracked per volume yet,
-  so Used and Available are shown as "-".
+  Lists the mounted volumes with their size, used and available space.
+  A volume whose driver cannot tell its free space shows "-".
 }
 program df;
 
@@ -31,10 +31,35 @@ const
   OptionPrintType = 2;
 
 var
+  HumanReadable: Boolean;
+
+procedure WriteUsage(const Volume: TVolumeInformation);
+var
+  Used: QWord;
+  Percent: QWord;
+  SizeText: array[0..31] of Char;
+begin
+  Used := 0;
+  if Volume.TotalBytes > Volume.FreeBytes then
+    Used := Volume.TotalBytes - Volume.FreeBytes;
+  Percent := 0;
+  if Volume.TotalBytes > 0 then
+    Percent := (Used * 100 + Volume.TotalBytes - 1) div Volume.TotalBytes;
+  if HumanReadable then
+  begin
+    WriteFormatted(StandardOutput, ' %5s', [ArgumentText(FormatHumanSize(Used, @SizeText[0]))]);
+    WriteFormatted(StandardOutput, ' %9s', [ArgumentText(FormatHumanSize(Volume.FreeBytes, @SizeText[0]))]);
+  end
+  else
+    WriteFormatted(StandardOutput, ' %5u %9u', [ArgumentUnsigned(Used div 1024),
+      ArgumentUnsigned(Volume.FreeBytes div 1024)]);
+  WriteFormatted(StandardOutput, ' %3u%%', [ArgumentUnsigned(Percent)]);
+end;
+
+var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  HumanReadable: Boolean;
   PrintType: Boolean;
   Volume: TVolumeInformation;
   Index: Integer;
@@ -71,6 +96,10 @@ begin
       WriteFormatted(StandardOutput, '%5s', [ArgumentText(FormatHumanSize(Volume.TotalBytes, @SizeText[0]))])
     else
       WriteFormatted(StandardOutput, '%10u', [ArgumentUnsigned(Volume.TotalBytes div 1024)]);
+    if Volume.HasFreeSpace <> 0 then
+      WriteUsage(Volume)
+    else
+      WriteText(StandardOutput, '     -         -    -');
     if Volume.IsSystemVolume <> 0 then
       CopyText(@MountPoint[0], '/', SizeOf(MountPoint))
     else
@@ -78,7 +107,7 @@ begin
       CopyText(@MountPoint[0], '/volumes/', SizeOf(MountPoint));
       CopyText(@MountPoint[TextLength(@MountPoint[0])], @Volume.Name[0], SizeOf(MountPoint) - TextLength(@MountPoint[0]));
     end;
-    WriteFormatted(StandardOutput, '     -         -    - %s'#10, [ArgumentText(@MountPoint[0])]);
+    WriteFormatted(StandardOutput, ' %s'#10, [ArgumentText(@MountPoint[0])]);
     Inc(Index);
   end;
 end.

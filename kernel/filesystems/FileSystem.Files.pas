@@ -96,6 +96,17 @@ function RemovePath(Path: PChar): TFileSystemStatus;
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
 
 { Writes summary information of every writable volume to disk. }
+{ Changes permissions, owner, group or times. FollowLinks selects whether
+  a final symbolic link is changed or what it points to. }
+function SetPathAttributes(Path: PChar; FollowLinks: Boolean;
+  const Changes: TAttributeChanges): TFileSystemStatus;
+
+{ Gives the file at ExistingPath the further name NewPath (same volume). }
+function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
+
+{ False if the volume's driver cannot tell. }
+function GetVolumeFreeSpace(Volume: PVolume; out FreeBytes: QWord): Boolean;
+
 procedure SyncAllVolumes;
 
 implementation
@@ -968,6 +979,89 @@ begin
 
   FreeKernelMemory(Source);
   FreeKernelMemory(Target);
+end;
+
+function SetPathAttributes(Path: PChar; FollowLinks: Boolean;
+  const Changes: TAttributeChanges): TFileSystemStatus;
+var
+  Volume: PVolume;
+  RemainingPath: PChar;
+  Node: PNode;
+begin
+  Result := SelectVolume(Path, Volume, RemainingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if Volume = nil then
+    Exit(StatusUnsupported); { the namespace root is not a real directory }
+  if Volume^.IsReadOnly then
+    Exit(StatusReadOnly);
+  if not Assigned(Volume^.Driver^.SetAttributes) then
+    Exit(StatusUnsupported);
+
+  AcquireMutex(Volume^.Lock);
+  Result := ResolveInVolume(Volume, RemainingPath, FollowLinks, 0, Node);
+  if Result = StatusSuccess then
+  begin
+    Result := Volume^.Driver^.SetAttributes(Node, Changes);
+    ReleaseNodeReference(Volume, Node);
+  end;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
+var
+  Target: PParentAndName;
+  ExistingVolume: PVolume;
+  RemainingExistingPath: PChar;
+  Node: PNode;
+  Occupant: PNode;
+begin
+  Result := SelectVolume(ExistingPath, ExistingVolume, RemainingExistingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if ExistingVolume = nil then
+    Exit(StatusIsADirectory);
+
+  Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
+  if Target = nil then
+    Exit(StatusOutOfMemory);
+  Result := BeginNameOperation(NewPath, Target);
+  if Result = StatusSuccess then
+  begin
+    if Target^.Volume <> ExistingVolume then
+      Result := StatusUnsupported { links cannot cross volumes }
+    else if not Assigned(Target^.Volume^.Driver^.CreateHardLink) then
+      Result := StatusUnsupported
+    else
+    begin
+      Result := ResolveInVolume(ExistingVolume, RemainingExistingPath, False, 0, Node);
+      if Result = StatusSuccess then
+      begin
+        if Node^.Information.Kind = NodeKindDirectory then
+          Result := StatusIsADirectory
+        else if LookupAndIntern(Target^.Parent, @Target^.Name[0], Occupant) = StatusSuccess then
+        begin
+          ReleaseNodeReference(Target^.Volume, Occupant);
+          Result := StatusAlreadyExists;
+        end
+        else
+          Result := Target^.Volume^.Driver^.CreateHardLink(Target^.Parent, @Target^.Name[0], Node);
+        ReleaseNodeReference(ExistingVolume, Node);
+      end;
+    end;
+    FinishNameOperation(Target);
+  end;
+  FreeKernelMemory(Target);
+end;
+
+function GetVolumeFreeSpace(Volume: PVolume; out FreeBytes: QWord): Boolean;
+begin
+  FreeBytes := 0;
+  if not Assigned(Volume^.Driver^.GetFreeSpace) then
+    Exit(False);
+  AcquireMutex(Volume^.Lock);
+  Result := Volume^.Driver^.GetFreeSpace(Volume, FreeBytes) = StatusSuccess;
+  ReleaseMutex(Volume^.Lock);
 end;
 
 procedure SyncAllVolumes;

@@ -694,6 +694,8 @@ begin
   Result^.Common.Information.LinkCount := 1;
   Result^.Common.Information.ModificationTime :=
     TimestampToUnixTime(Entry.LastModifiedTimestamp, Entry.LastModifiedUtcOffset);
+  Result^.Common.Information.AccessTime := Result^.Common.Information.ModificationTime;
+  Result^.Common.Information.ChangeTime := Result^.Common.Information.ModificationTime;
   if (Entry.Attributes and AttributeReadOnly) <> 0 then
     Result^.Common.Information.Mode := $124
   else

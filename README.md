@@ -44,17 +44,32 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   handle tables, pipes, a console and `/dev/null`, and an ELF loader that
   maps position independent programs and the shared libraries they need,
   binding symbols at load time. Programs can also load libraries at run
-  time (`LoadLibrary` / `FindSymbol`).
-- **A userland written in Free Pascal**: `libsystem.so` (system calls,
-  heap, buffered streams, printf style formatting, files, processes,
-  environment, time), `libcoreutils.so` (GNU style option parsing,
-  messages, sorting, tree copying), a POSIX style shell `sh` (pipes,
-  redirections, `&&` `||`, `if` / `while` / `until` / `for`, variables,
-  `$( )` and `$(( ))`, globbing, quoting, scripts) and recreations of the
-  GNU core utilities: basename cat cp cut date df dirname echo env expr
-  false fold head ln ls mkdir mv nl paste printf pwd readlink rm rmdir
-  seq sleep sort stat sync tac tail tee test `[` touch tr true truncate
-  uname uniq wc yes.
+  time (`LoadLibrary` / `FindSymbol`), end other programs (`kill`,
+  `timeout`), wait with timeouts, change permissions, owners and times,
+  make hard links, and run in a `chroot`.
+- **A userland written in Free Pascal**:
+  - `libsystem.so`: system calls, heap, buffered streams, printf style
+    formatting, files, processes, environment, time, console settings
+  - `libcryptography.so`: MD5, SHA-1, SHA-224/256/384/512, BLAKE2b, HMAC,
+    CRC-32 / CRC-32C / cksum CRC / BSD and System V sums, AES (CBC, CTR),
+    ChaCha20 and a random number generator seeded from RDRAND
+  - `libcoreutils.so`: GNU style option parsing, messages, sorting, tree
+    walking and copying, POSIX regular expressions (BRE and ERE), chmod
+    modes, date parsing, base64/32/16/2/z85, accounts
+  - a POSIX style shell `sh` (pipes, redirections, `&&` `||`, `if` /
+    `while` / `until` / `for`, variables, `$( )` and `$(( ))`, globbing,
+    quoting, scripts)
+  - recreations of the GNU core utilities, 102 commands: arch b2sum
+    base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm
+    cp csplit cut date dd df dir dirname du echo env expand expr factor
+    false fmt fold groups head hostid id install join kill link ln logname
+    ls md5sum mkdir mktemp mv nice nl nohup nproc numfmt od paste pathchk
+    pinky pr printenv printf ptx pwd readlink realpath rm rmdir seq
+    sha1sum sha224sum sha256sum sha384sum sha512sum shred shuf sleep sort
+    split stat stdbuf stty sum sync tac tail tee test `[` timeout touch tr
+    true truncate tsort tty uname unexpand uniq unlink uptime users vdir
+    wc who whoami yes (not included: mkfifo and mknod, which need named
+    pipes in the file systems, and the SELinux tools chcon and runcon)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
@@ -62,7 +77,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   format. After a test run, `make test` checks every written partition with
   the format's own tools (fsck.fat, fsck.exfat, e2fsck, mtools, debugfs).
   `make test` then runs `coretest` in user mode, which drives the shell and
-  every utility through about 130 command lines and checks their output.
+  every utility through about 190 command lines and checks their output.
 
 ## Requirements
 
@@ -135,13 +150,14 @@ kernel/
   io/               I/O startup, PCI, block devices, partitions, block cache,
                     pipes, console and null device
   drivers/storage/  AHCI SATA driver
-  filesystems/      VFS (types, volumes, open files) and the FAT, exFAT and
-                    ext2/3/4 drivers
+  filesystems/      VFS (types, volumes, open files, attributes, hard links)
+                    and the FAT, exFAT and ext2/3/4 drivers
   runtime/          Linked lists, atomics, checksums, Unicode
   debug/            Debug log and framebuffer console (+ font)
   link/             Kernel linker scripts
 userland/
   lib/system/       libsystem.so: the Sys.* units
+  lib/cryptography/ libcryptography.so: the Crypto.* units
   lib/coreutils/    libcoreutils.so: the Util.* units shared by the tools
   lib/plugin/       libplugin.so, loaded at run time by coretest
   bin/              One file per program (/bin/<name>)

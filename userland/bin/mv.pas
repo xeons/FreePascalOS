@@ -73,6 +73,7 @@ begin
     CopyOptions.KeepLinks := True;
     CopyOptions.NoClobber := False;
     CopyOptions.Verbose := False;
+    CopyOptions.PreserveAttributes := True;
     if not CopyPath(Source, Target, CopyOptions) then
       Exit(False);
     if not RemoveTree(Source) then

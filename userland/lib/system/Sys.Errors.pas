@@ -35,6 +35,9 @@ begin
     ErrorNone: Result := 'Success';
     ErrorNotPermitted: Result := 'Operation not permitted';
     ErrorNotFound: Result := 'No such file or directory';
+    ErrorNoSuchProcess: Result := 'No such process';
+    ErrorInterrupted: Result := 'Interrupted system call';
+    ErrorTimedOut: Result := 'Connection timed out';
     ErrorIo: Result := 'Input/output error';
     ErrorBadExecutable: Result := 'Exec format error';
     ErrorBadHandle: Result := 'Bad file descriptor';

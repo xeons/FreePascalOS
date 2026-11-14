@@ -37,6 +37,18 @@ function StartProgram(Path: PChar; Arguments: PPChar; const Options: TProcessOpt
 { Waits for a started program and returns its exit code (or a negative
   error). The handle is closed. }
 function WaitForProgram(ProcessHandle: Int64): LongInt;
+{ Waits at most Milliseconds. Returns 0 with ExitCode set when the
+  program ended, else ErrorTimedOut (or another error). The handle stays
+  open. }
+function WaitForProgramWithTimeout(ProcessHandle: Int64; Milliseconds: QWord;
+  out ExitCode: LongInt): LongInt;
+{ The process id of a started program. }
+function ProcessIdOf(ProcessHandle: Int64): Int64;
+{ Asks a running program to end with ExitCode (by convention 128 plus a
+  signal number). Returns 0 or an error code. }
+function TerminateProgram(ProcessId: QWord; ExitCode: LongInt): LongInt;
+{ Makes Path this program's "/" (and current directory). }
+function ChangeRootDirectory(Path: PChar): LongInt;
 { Starts a program and waits for it. }
 function RunProgram(Path: PChar; Arguments: PPChar): LongInt;
 
@@ -127,7 +139,7 @@ function WaitForProgram(ProcessHandle: Int64): LongInt;
 var
   WaitResult: Int64;
 begin
-  WaitResult := KernelWaitForProcess(ProcessHandle);
+  WaitResult := KernelWaitForProcess(ProcessHandle, InfiniteWait);
   KernelClose(ProcessHandle);
   Result := LongInt(WaitResult);
 end;
@@ -144,9 +156,37 @@ begin
   Result := WaitForProgram(Handle);
 end;
 
+function WaitForProgramWithTimeout(ProcessHandle: Int64; Milliseconds: QWord;
+  out ExitCode: LongInt): LongInt;
+var
+  WaitResult: Int64;
+begin
+  ExitCode := 0;
+  WaitResult := KernelWaitForProcess(ProcessHandle, Int64(Milliseconds));
+  if WaitResult < 0 then
+    Exit(ErrorCodeOf(WaitResult));
+  ExitCode := LongInt(WaitResult);
+  Result := ErrorNone;
+end;
+
+function ProcessIdOf(ProcessHandle: Int64): Int64;
+begin
+  Result := KernelGetProcessId(ProcessHandle);
+end;
+
+function TerminateProgram(ProcessId: QWord; ExitCode: LongInt): LongInt;
+begin
+  Result := ErrorCodeOf(KernelTerminateProcess(ProcessId, ExitCode));
+end;
+
+function ChangeRootDirectory(Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelSetRootDirectory(Path));
+end;
+
 function CurrentProcessId: Int64;
 begin
-  Result := KernelGetProcessId;
+  Result := KernelGetProcessId(NoHandle);
 end;
 
 procedure SleepMilliseconds(Milliseconds: QWord);

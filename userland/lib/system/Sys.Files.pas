@@ -52,9 +52,24 @@ function ChangeDirectory(Path: PChar): LongInt;
 
 function SyncFileSystems: LongInt;
 
+type
+  TAttributeChanges = TAbiAttributeChanges;
+
+{ Applies Changes (see the Change* flags). FollowLinks decides whether a
+  final symbolic link or what it points to is changed. }
+function SetPathAttributes(Path: PChar; const Changes: TAttributeChanges;
+  FollowLinks: Boolean): LongInt;
+function ChangeMode(Path: PChar; Mode: LongWord): LongInt;
+function ChangeOwner(Path: PChar; OwnerId, GroupId: Int64; FollowLinks: Boolean): LongInt;
+{ Times in seconds since 1970; a negative value leaves that time alone. }
+function SetFileTimes(Path: PChar; ModificationTime, AccessTime: Int64;
+  FollowLinks: Boolean): LongInt;
+function CreateHardLink(ExistingPath, NewPath: PChar): LongInt;
+
 implementation
 
 uses
+  Runtime.Memory,
   Sys.Kernel,
   Sys.Errors;
 
@@ -178,6 +193,69 @@ end;
 function SyncFileSystems: LongInt;
 begin
   Result := ErrorCodeOf(KernelSync);
+end;
+
+function SetPathAttributes(Path: PChar; const Changes: TAttributeChanges;
+  FollowLinks: Boolean): LongInt;
+begin
+  Result := ErrorCodeOf(KernelSetPathAttributes(Path, Changes, FollowLinks));
+end;
+
+function ChangeMode(Path: PChar; Mode: LongWord): LongInt;
+var
+  Changes: TAttributeChanges;
+begin
+  ZeroMemory(@Changes, SizeOf(Changes));
+  Changes.Fields := ChangeFieldMode;
+  Changes.Mode := Mode;
+  Result := SetPathAttributes(Path, Changes, True);
+end;
+
+{ A negative id leaves that one alone. }
+function ChangeOwner(Path: PChar; OwnerId, GroupId: Int64; FollowLinks: Boolean): LongInt;
+var
+  Changes: TAttributeChanges;
+begin
+  ZeroMemory(@Changes, SizeOf(Changes));
+  if OwnerId >= 0 then
+  begin
+    Changes.Fields := Changes.Fields or ChangeFieldOwner;
+    Changes.OwnerId := LongWord(OwnerId);
+  end;
+  if GroupId >= 0 then
+  begin
+    Changes.Fields := Changes.Fields or ChangeFieldGroup;
+    Changes.GroupId := LongWord(GroupId);
+  end;
+  if Changes.Fields = 0 then
+    Exit(ErrorNone);
+  Result := SetPathAttributes(Path, Changes, FollowLinks);
+end;
+
+function SetFileTimes(Path: PChar; ModificationTime, AccessTime: Int64;
+  FollowLinks: Boolean): LongInt;
+var
+  Changes: TAttributeChanges;
+begin
+  ZeroMemory(@Changes, SizeOf(Changes));
+  if ModificationTime >= 0 then
+  begin
+    Changes.Fields := Changes.Fields or ChangeFieldModificationTime;
+    Changes.ModificationTime := ModificationTime;
+  end;
+  if AccessTime >= 0 then
+  begin
+    Changes.Fields := Changes.Fields or ChangeFieldAccessTime;
+    Changes.AccessTime := AccessTime;
+  end;
+  if Changes.Fields = 0 then
+    Exit(ErrorNone);
+  Result := SetPathAttributes(Path, Changes, FollowLinks);
+end;
+
+function CreateHardLink(ExistingPath, NewPath: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelCreateHardLink(ExistingPath, NewPath));
 end;
 
 end.

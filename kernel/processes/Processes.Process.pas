@@ -51,9 +51,22 @@ type
     { Loaded program and libraries, owned by Processes.ImageLoader. }
     Modules: Pointer;
 
+    { The directory the program sees as "/": an absolute path as seen
+      from the real root, normally "/" itself (see chroot). }
+    RootDirectory: array[0..ProcessPathCapacity - 1] of Char;
+
     ExitCode: LongInt;
     HasExited: Boolean;
     ExitEvent: TEvent;
+
+    { Set when another program asked for this one to end (see
+      Processes.Termination). }
+    TerminationRequested: Boolean;
+    TerminationCode: LongInt;
+
+    { Links running user processes, so they can be found by id. }
+    RunningLink: TListEntry;
+    IsRegistered: Boolean;
   end;
 
 var
@@ -68,6 +81,15 @@ function AllocateProcessOrThreadId: QWord;
 { Creates an empty user process object; the caller fills it in. }
 function CreateProcessObject(Name: PChar): PProcess;
 
+{ The registry of running user processes. A process is registered while
+  its program runs; holding the registry lock keeps it from ending. }
+procedure RegisterRunningProcess(Process: PProcess);
+procedure UnregisterRunningProcess(Process: PProcess);
+procedure LockProcessRegistry;
+procedure UnlockProcessRegistry;
+{ Requires the registry lock. Returns nil if no such process runs. }
+function FindRunningProcessLocked(ProcessId: QWord): PProcess;
+
 implementation
 
 uses
@@ -79,6 +101,8 @@ uses
 var
   TheSystemProcess: PProcess;
   NextId: Int64;
+  RegistryLock: TMutex;
+  RunningProcesses: TListEntry;
 
 procedure DeleteProcess(ObjectBody: Pointer);
 var
@@ -111,11 +135,15 @@ begin
   InitializeHandleTable(Process^.Handles);
   InitializeEvent(Process^.ExitEvent, EventKindNotification, False);
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
+  CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);
+  InitializeListHead(Process^.RunningLink);
 end;
 
 procedure InitializeProcessManager;
 begin
   NextId := 0;
+  InitializeMutex(RegistryLock);
+  InitializeListHead(RunningProcesses);
   RegisterObjectType(ProcessObjectType, 'Process', SizeOf(TProcess), @DeleteProcess);
 
   TheSystemProcess := PProcess(CreateObject(ProcessObjectType, 'System'));
@@ -137,6 +165,51 @@ begin
     Exit;
   InitializeCommonFields(Result, Name);
   Result^.IsUserProcess := True;
+end;
+
+procedure RegisterRunningProcess(Process: PProcess);
+begin
+  AcquireMutex(RegistryLock);
+  InsertAtTail(RunningProcesses, @Process^.RunningLink);
+  Process^.IsRegistered := True;
+  ReleaseMutex(RegistryLock);
+end;
+
+procedure UnregisterRunningProcess(Process: PProcess);
+begin
+  AcquireMutex(RegistryLock);
+  if Process^.IsRegistered then
+  begin
+    RemoveListEntry(@Process^.RunningLink);
+    Process^.IsRegistered := False;
+  end;
+  ReleaseMutex(RegistryLock);
+end;
+
+procedure LockProcessRegistry;
+begin
+  AcquireMutex(RegistryLock);
+end;
+
+procedure UnlockProcessRegistry;
+begin
+  ReleaseMutex(RegistryLock);
+end;
+
+function FindRunningProcessLocked(ProcessId: QWord): PProcess;
+var
+  Entry: PListEntry;
+  Process: PProcess;
+begin
+  Entry := RunningProcesses.Next;
+  while Entry <> @RunningProcesses do
+  begin
+    Process := PProcess(ContainingRecord(Entry, FieldOffset(PProcess(nil)^.RunningLink)));
+    if Process^.ProcessId = ProcessId then
+      Exit(Process);
+    Entry := Entry^.Next;
+  end;
+  Result := nil;
 end;
 
 end.

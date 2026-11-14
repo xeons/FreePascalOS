@@ -53,6 +53,13 @@ const
   FileSystemTypeNameLength = 16;
   VolumeLabelLength = 64;
 
+const
+  AttributeChangeMode = $01;
+  AttributeChangeOwner = $02;
+  AttributeChangeGroup = $04;
+  AttributeChangeModificationTime = $08;
+  AttributeChangeAccessTime = $10;
+
 type
   TFileSystemStatus = (
     StatusSuccess,
@@ -92,7 +99,23 @@ type
     LinkCount: LongWord;
     { Unix style permission bits where the format has them, else zero. }
     Mode: LongWord;
+    { Numeric owner and group; zero on formats without them. }
+    OwnerId: LongWord;
+    GroupId: LongWord;
     ModificationTime: TUnixTime;
+    AccessTime: TUnixTime;
+    { When the node's information last changed. }
+    ChangeTime: TUnixTime;
+  end;
+
+  { Which fields of TAttributeChanges apply. }
+  TAttributeChanges = record
+    Fields: LongWord;
+    Mode: LongWord;
+    OwnerId: LongWord;
+    GroupId: LongWord;
+    ModificationTime: TUnixTime;
+    AccessTime: TUnixTime;
   end;
 
   PVolume = ^TVolume;
@@ -176,6 +199,18 @@ type
     { Brings on-disk summary information (free space counters and the
       like) up to date. }
     Sync: function(Volume: PVolume): TFileSystemStatus;
+
+    { Optional: changes permissions, owner, group or times of Node. A
+      format that cannot store a requested change returns
+      StatusUnsupported. }
+    SetAttributes: function(Node: PNode; const Changes: TAttributeChanges): TFileSystemStatus;
+
+    { Optional: gives Node (not a directory) a further name, Name in
+      Directory. The VFS has checked that Name is free. }
+    CreateHardLink: function(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+
+    { Optional: the space available for new data. }
+    GetFreeSpace: function(Volume: PVolume; out FreeBytes: QWord): TFileSystemStatus;
   end;
 
   TVolume = record

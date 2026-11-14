@@ -30,6 +30,11 @@ uses
 
 type
   TInterruptHandler = procedure(Frame: PTrapFrame; Context: Pointer);
+  { Runs as an interrupt is about to return to user mode, with interrupts
+    disabled at PassiveLevel. It may end the current thread. }
+  TUserModeReturnHook = procedure(Frame: PTrapFrame);
+
+procedure SetUserModeReturnHook(Hook: TUserModeReturnHook);
 
 { Installs Handler for Vector. Returns False if the vector already has one. }
 function RegisterInterruptHandler(Vector: Byte; Handler: TInterruptHandler;
@@ -51,6 +56,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.PriorityLevel,
   Kernel.Arch.Exceptions,
+  Kernel.Arch.UserMode,
   Kernel.PriorityLevel,
   Kernel.Panic,
   Debug.Output;
@@ -64,6 +70,12 @@ type
 
 var
   Registrations: array[0..255] of TInterruptRegistration;
+  UserModeReturnHook: TUserModeReturnHook = nil;
+
+procedure SetUserModeReturnHook(Hook: TUserModeReturnHook);
+begin
+  UserModeReturnHook := Hook;
+end;
 
 function RegisterInterruptHandler(Vector: Byte; Handler: TInterruptHandler;
   Context: Pointer): Boolean;
@@ -147,6 +159,9 @@ begin
     HandleProcessorException(Frame)
   else
     DispatchHardwareInterrupt(Frame, Vector);
+
+  if ArchFrameIsFromUserMode(Frame) and Assigned(UserModeReturnHook) then
+    UserModeReturnHook(Frame);
 end;
 
 end.

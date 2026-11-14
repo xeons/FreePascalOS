@@ -26,10 +26,11 @@ const
     '  or:  cp [OPTION]... -t DIRECTORY SOURCE...'#10 +
     'Copy SOURCE to DEST, or multiple SOURCE(s) to DIRECTORY.'#10 +
     #10 +
-    '  -a, --archive                same as -dR'#10 +
+    '  -a, --archive                same as -dR --preserve'#10 +
     '  -d, -P, --no-dereference     never follow symbolic links in SOURCE'#10 +
     '  -f, --force                  overwrite existing files (the default)'#10 +
     '  -n, --no-clobber             do not overwrite an existing file'#10 +
+    '  -p, --preserve               keep mode, ownership and timestamps'#10 +
     '  -R, -r, --recursive          copy directories recursively'#10 +
     '  -t, --target-directory=DIRECTORY  copy all SOURCE arguments into DIRECTORY'#10 +
     '  -T, --no-target-directory    treat DEST as a normal file'#10 +
@@ -43,6 +44,7 @@ const
   OptionTargetDirectory = 6;
   OptionNoTargetDirectory = 7;
   OptionVerbose = 8;
+  OptionPreserve = 9;
 
 var
   Parser: TOptionParser;
@@ -61,6 +63,7 @@ begin
   Options.KeepLinks := False;
   Options.NoClobber := False;
   Options.Verbose := False;
+  Options.PreserveAttributes := False;
   TargetDirectory := nil;
   NoTargetDirectory := False;
   BeginOptions(Parser, [
@@ -73,14 +76,17 @@ begin
     OptionDefinition('r', nil, False, OptionRecursive),
     OptionDefinition('t', 'target-directory', True, OptionTargetDirectory),
     OptionDefinition('T', 'no-target-directory', False, OptionNoTargetDirectory),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
+    OptionDefinition('v', 'verbose', False, OptionVerbose),
+    OptionDefinition('p', 'preserve', False, OptionPreserve)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionArchive:
         begin
           Options.Recursive := True;
           Options.KeepLinks := True;
+          Options.PreserveAttributes := True;
         end;
+      OptionPreserve: Options.PreserveAttributes := True;
       OptionNoDereference: Options.KeepLinks := True;
       OptionForce: Options.NoClobber := False;
       OptionNoClobber: Options.NoClobber := True;

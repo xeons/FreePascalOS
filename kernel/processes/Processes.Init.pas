@@ -27,6 +27,7 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Kernel.Options,
+  Kernel.Scheduler,
   Objects.Manager,
   Io.Console,
   FileSystem.Types,
@@ -113,7 +114,7 @@ begin
     Exit;
   end;
 
-  Result := WaitForProcessExit(Process);
+  WaitForProcessExit(Process, InfiniteTimeout, Result);
   DereferenceObject(Process);
 
   DebugBeginMessage;

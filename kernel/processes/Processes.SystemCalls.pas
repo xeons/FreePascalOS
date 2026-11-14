@@ -39,6 +39,7 @@ uses
   Processes.ImageLoader,
   Processes.UserProcess,
   Processes.UserAccess,
+  Processes.Termination,
   Processes.FileCalls;
 
 const
@@ -146,6 +147,7 @@ var
   KernelPath: array[0..ProcessPathCapacity - 1] of Char;
   WorkingDirectory: array[0..ProcessPathCapacity - 1] of Char;
   RequestedDirectory: array[0..ProcessPathCapacity - 1] of Char;
+  RootDirectory: array[0..ProcessPathCapacity - 1] of Char;
   Arguments: TStringList;
   Environment: TStringList;
   StandardHandles: array[0..2] of Int64;
@@ -166,6 +168,7 @@ begin
 
   AcquireMutex(Caller^.Lock);
   CopyText(@WorkingDirectory[0], @Caller^.CurrentDirectory[0], ProcessPathCapacity);
+  CopyText(@RootDirectory[0], @Caller^.RootDirectory[0], ProcessPathCapacity);
   ReleaseMutex(Caller^.Lock);
   if Creation.WorkingDirectory <> nil then
   begin
@@ -195,6 +198,8 @@ begin
   Startup.EnvironmentCount := Environment.Count;
   Startup.WorkingDirectory := @WorkingDirectory[0];
   Startup.ParentProcessId := Caller^.ProcessId;
+  { A program started inside a chroot stays inside it. }
+  Startup.RootDirectory := @RootDirectory[0];
 
   StandardHandles[0] := Creation.InputHandle;
   StandardHandles[1] := Creation.OutputHandle;
@@ -231,7 +236,8 @@ begin
     Result := Failure(ErrorTooManyHandles);
 end;
 
-function PerformWaitForProcess(Handle: Int64): Int64;
+{ Looks up a process handle of the caller and takes a reference. }
+function ReferenceProcessHandle(Handle: Int64): PProcess;
 var
   Caller: PProcess;
   Kind: THandleKind;
@@ -244,13 +250,57 @@ begin
   else
     ObjectBody := nil;
   ReleaseMutex(Caller^.Lock);
-  if ObjectBody = nil then
-    Exit(Failure(ErrorNoChildProcess));
+  Result := PProcess(ObjectBody);
+end;
 
-  Result := WaitForProcessExit(PProcess(ObjectBody));
+{ Timeout in milliseconds, or InfiniteWait. }
+function PerformWaitForProcess(Handle: Int64; Timeout: Int64): Int64;
+var
+  Process: PProcess;
+  KernelTimeout: QWord;
+  ExitCode: LongInt;
+  Error: LongInt;
+begin
+  Process := ReferenceProcessHandle(Handle);
+  if Process = nil then
+    Exit(Failure(ErrorNoChildProcess));
+  if Timeout < 0 then
+    KernelTimeout := InfiniteTimeout
+  else
+    KernelTimeout := QWord(Timeout);
+  Error := WaitForProcessExit(Process, KernelTimeout, ExitCode);
+  DereferenceObject(Process);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
   { Exit codes are bytes, as on Unix. }
-  Result := Result and $FF;
-  DereferenceObject(ObjectBody);
+  Result := ExitCode and $FF;
+end;
+
+{ The id of the process behind a handle, or of the caller for NoHandle. }
+function PerformGetProcessId(Handle: Int64): Int64;
+var
+  Process: PProcess;
+begin
+  if Handle = NoHandle then
+    Exit(Int64(CurrentProcess^.ProcessId));
+  Process := ReferenceProcessHandle(Handle);
+  if Process = nil then
+    Exit(Failure(ErrorBadHandle));
+  Result := Int64(Process^.ProcessId);
+  DereferenceObject(Process);
+end;
+
+function PerformTerminateProcess(ProcessId: QWord; ExitCode: QWord): Int64;
+begin
+  Result := -Int64(TerminateProcessById(ProcessId, LongInt(ExitCode and $FF)));
+end;
+
+function PerformSleep(Milliseconds: QWord): Int64;
+begin
+  if SleepAlertable(Milliseconds) then
+    Result := 0
+  else
+    Result := Failure(ErrorInterrupted);
 end;
 
 { --- Memory ---------------------------------------------------------- }
@@ -399,15 +449,11 @@ begin
     CallAllocateMemory: Result := PerformAllocateMemory(Argument0);
     CallFreeMemory: Result := PerformFreeMemory(Argument0);
     CallCreateProcess: Result := PerformCreateProcess(Argument0);
-    CallWaitForProcess: Result := PerformWaitForProcess(Int64(Argument0));
-    CallGetProcessId: Result := Int64(CurrentProcess^.ProcessId);
+    CallWaitForProcess: Result := PerformWaitForProcess(Int64(Argument0), Int64(Argument1));
+    CallGetProcessId: Result := PerformGetProcessId(Int64(Argument0));
     CallCreatePipe: Result := PerformCreatePipe(Argument0);
     CallDuplicateHandle: Result := PerformDuplicateHandle(Int64(Argument0), Int64(Argument1));
-    CallSleep:
-      begin
-        SleepMilliseconds(Argument0);
-        Result := 0;
-      end;
+    CallSleep: Result := PerformSleep(Argument0);
     CallGetTime: Result := PerformGetTime(Argument0);
     CallLoadLibrary: Result := PerformLoadLibrary(Argument0);
     CallFindSymbol: Result := PerformFindSymbol(Int64(Argument0), Argument1);
@@ -415,16 +461,24 @@ begin
     CallSync: Result := PerformSync;
     CallGetHandleKind: Result := PerformGetHandleKind(Int64(Argument0));
     CallListVolumes: Result := PerformListVolumes(Argument0, Argument1);
+    CallSetPathAttributes: Result := PerformSetPathAttributes(Argument0, Argument1, Argument2);
+    CallCreateHardLink: Result := PerformCreateHardLink(Argument0, Argument1);
+    CallTerminateProcess: Result := PerformTerminateProcess(Argument0, Argument1);
+    CallSetRootDirectory: Result := PerformSetRootDirectory(Argument0);
+    CallControlHandle: Result := PerformControlHandle(Int64(Argument0), Argument1, Argument2);
   else
     Result := Failure(ErrorNotImplemented);
   end;
 
   SetSystemCallResult(Frame, Result);
+  { A program asked to end does so before it runs any further. }
+  EndProcessIfTerminationRequested;
 end;
 
 procedure InitializeSystemCalls;
 begin
   InitializeUserProcesses;
+  InitializeProcessTermination;
   InitializeSystemCallEntry(@DispatchSystemCall);
 end;
 

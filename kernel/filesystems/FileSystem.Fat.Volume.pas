@@ -553,6 +553,9 @@ begin
   Node^.Common.Information.LinkCount := 1;
   Node^.Common.Information.ModificationTime :=
     DosDateTimeToUnixTime(DirectoryRecord.WriteDate, DirectoryRecord.WriteTime);
+  { FAT keeps only the date of the last access, and no change time. }
+  Node^.Common.Information.AccessTime := DosDateTimeToUnixTime(DirectoryRecord.LastAccessDate, 0);
+  Node^.Common.Information.ChangeTime := Node^.Common.Information.ModificationTime;
   if (DirectoryRecord.Attributes and AttributeReadOnly) <> 0 then
     Node^.Common.Information.Mode := $124  { r--r--r-- }
   else

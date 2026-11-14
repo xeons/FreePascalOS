@@ -9,6 +9,11 @@
 
   The system volume is the one named by the kernel option "root=", or else
   the first volume labelled FPOSROOT.
+
+  A process may have its own root directory (chroot): its paths are then
+  taken relative to that directory, and ".." never leads above it.
+  Symbolic links with absolute targets are resolved by the file system and
+  still start at the volume's root.
 }
 unit Processes.Paths;
 
@@ -36,6 +41,11 @@ function NormalizeUserPath(Process: PProcess; UserPath: PChar; Normalized: PChar
 
 { Turns a user path into the kernel's form, ready for the VFS. }
 function TranslateUserPath(Process: PProcess; UserPath: PChar; KernelPath: PChar;
+  Capacity: PtrUInt): LongInt;
+
+{ The user path as seen from the real root, taking the process's root
+  directory into account. }
+function UnrootedUserPath(Process: PProcess; UserPath: PChar; Unrooted: PChar;
   Capacity: PtrUInt): LongInt;
 
 { The kernel path of a file in the system volume, e.g. "/lib/libsystem.so". }
@@ -181,13 +191,33 @@ begin
   FreeKernelMemory(Combined);
 end;
 
+function UnrootedUserPath(Process: PProcess; UserPath: PChar; Unrooted: PChar;
+  Capacity: PtrUInt): LongInt;
+var
+  Normalized: array[0..ProcessPathCapacity - 1] of Char;
+begin
+  Result := NormalizeUserPath(Process, UserPath, @Normalized[0], ProcessPathCapacity);
+  if Result <> ErrorNone then
+    Exit;
+  if TextIsEqual(@Process^.RootDirectory[0], '/') then
+  begin
+    CopyText(Unrooted, @Normalized[0], Capacity);
+    Exit;
+  end;
+  CopyText(Unrooted, @Process^.RootDirectory[0], Capacity);
+  if not TextIsEqual(@Normalized[0], '/') then
+    AppendText(Unrooted, Capacity, @Normalized[0]);
+  if TextLength(Unrooted) + 1 >= Capacity then
+    Result := ErrorNameTooLong;
+end;
+
 function TranslateUserPath(Process: PProcess; UserPath: PChar; KernelPath: PChar;
   Capacity: PtrUInt): LongInt;
 var
   Normalized: array[0..ProcessPathCapacity - 1] of Char;
   PrefixLength: PtrUInt;
 begin
-  Result := NormalizeUserPath(Process, UserPath, @Normalized[0], ProcessPathCapacity);
+  Result := UnrootedUserPath(Process, UserPath, @Normalized[0], ProcessPathCapacity);
   if Result <> ErrorNone then
     Exit;
 

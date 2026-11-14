@@ -33,10 +33,18 @@ cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
 fi
-# "[" is another name for test.
-if [[ -f "$staging_directory/bin/test" ]]; then
-    cp "$staging_directory/bin/test" "$staging_directory/bin/["
-fi
+# Programs that behave differently by the name they are started as:
+# "[" is test, chgrp is chown, dir and vdir are ls, unexpand is expand.
+copy_program() {
+    if [[ -f "$staging_directory/bin/$1" ]]; then
+        cp "$staging_directory/bin/$1" "$staging_directory/bin/$2"
+    fi
+}
+copy_program test "["
+copy_program chown chgrp
+copy_program ls dir
+copy_program ls vdir
+copy_program expand unexpand
 
 partition_size_mib=$((image_size_mib - 2))
 rm -f "$partition_image"

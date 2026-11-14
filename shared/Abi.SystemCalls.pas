@@ -55,11 +55,39 @@ const
   CallSync = 30;
   CallGetHandleKind = 31;
   CallListVolumes = 32;
-  CallCount = 33;
+  CallSetPathAttributes = 33;
+  CallCreateHardLink = 34;
+  CallTerminateProcess = 35;
+  CallSetRootDirectory = 36;
+  CallControlHandle = 37;
+  CallCount = 38;
+
+  { --- Arguments ------------------------------------------------------- }
+
+  { Timeout of CallWaitForProcess meaning "wait as long as it takes". }
+  InfiniteWait = -1;
+
+  { Fields of TAbiAttributeChanges that apply. }
+  ChangeFieldMode = $01;
+  ChangeFieldOwner = $02;
+  ChangeFieldGroup = $04;
+  ChangeFieldModificationTime = $08;
+  ChangeFieldAccessTime = $10;
+
+  { Requests of CallControlHandle (on a console handle). }
+  ControlGetConsoleMode = 1;
+  ControlSetConsoleMode = 2;
+  { Returns rows shl 16 or columns. }
+  ControlGetConsoleSize = 3;
+  ConsoleModeEcho = $01;
+  ConsoleModeLineEditing = $02;
 
   { --- Error codes (returned negated) ---------------------------------- }
 
   ErrorNone = 0;
+  ErrorInterrupted = 4;
+  ErrorTimedOut = 110;
+  ErrorNoSuchProcess = 3;
   ErrorNotPermitted = 1;
   ErrorNotFound = 2;
   ErrorIo = 5;
@@ -134,10 +162,25 @@ type
     SizeInBytes: QWord;
     NodeNumber: QWord;
     LinkCount: LongWord;
+    OwnerId: LongWord;
+    GroupId: LongWord;
     Reserved: LongWord;
     ModificationTime: Int64;
+    AccessTime: Int64;
+    ChangeTime: Int64;
   end;
   PAbiFileInformation = ^TAbiFileInformation;
+
+  { Arguments of CallSetPathAttributes, passed by address. }
+  TAbiAttributeChanges = record
+    Fields: LongWord;
+    Mode: LongWord;
+    OwnerId: LongWord;
+    GroupId: LongWord;
+    ModificationTime: Int64;
+    AccessTime: Int64;
+  end;
+  PAbiAttributeChanges = ^TAbiAttributeChanges;
 
   TAbiDirectoryEntry = record
     Kind: LongWord;
@@ -166,8 +209,12 @@ type
     FileSystemType: array[0..AbiTextCapacity - 1] of Char;
     VolumeLabel: array[0..AbiTextCapacity - 1] of Char;
     TotalBytes: QWord;
+    { Valid when HasFreeSpace is not zero. }
+    FreeBytes: QWord;
     IsReadOnly: LongWord;
     IsSystemVolume: LongWord;
+    HasFreeSpace: LongWord;
+    Reserved: LongWord;
   end;
   PAbiVolumeInformation = ^TAbiVolumeInformation;
 

@@ -19,13 +19,14 @@ uses
   Sys.Memory,
   Sys.Streams,
   Util.Messages,
+  Util.Modes,
   Util.Options;
 
 const
   Usage: PChar = 'Usage: mkdir [OPTION]... DIRECTORY...'#10 +
     'Create the DIRECTORY(ies), if they do not already exist.'#10 +
     #10 +
-    '  -m, --mode=MODE   accepted for compatibility; permissions are not used'#10 +
+    '  -m, --mode=MODE   set file mode (as in chmod), not a=rwx - umask'#10 +
     '  -p, --parents     no error if existing, make parent directories as needed'#10 +
     '  -v, --verbose     print a message for each created directory'#10;
 
@@ -35,6 +36,8 @@ const
 
 var
   Verbose: Boolean;
+  HasMode: Boolean;
+  ModeChange: TModeChange;
 
 function MakeOne(Path: PChar): LongInt;
 begin
@@ -93,6 +96,12 @@ begin
     OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
+      OptionMode:
+        begin
+          if not ParseModeChange(Value, ModeChange) then
+            Fail(1, 'invalid mode ''%s''', [ArgumentText(Value)]);
+          HasMode := True;
+        end;
       OptionParents: Parents := True;
       OptionVerbose: Verbose := True;
     end;
@@ -110,6 +119,16 @@ begin
     begin
       ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(Parser.Operands[Index])]);
       ExitStatus := 1;
+    end
+    else if HasMode then
+    begin
+      { The mode applies to the named directory, as in GNU mkdir. }
+      Error := ChangeMode(Parser.Operands[Index], ApplyModeChange(ModeChange, $1ED, True));
+      if Error <> ErrorNone then
+      begin
+        ReportError(Error, 'cannot set permissions of ''%s''', [ArgumentText(Parser.Operands[Index])]);
+        ExitStatus := 1;
+      end;
     end;
   end;
   Halt(ExitStatus);

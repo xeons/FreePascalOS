@@ -48,6 +48,8 @@ procedure OpenPipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
 procedure ClosePipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
 
 { Returns the number of bytes read (0 at end of file). }
+{ Reads up to ByteCount bytes, waiting for some. Returns 0 at end of
+  file, or when the thread is alerted (its process is being ended). }
 function ReadFromPipe(Pipe: PPipe; Destination: PByte; ByteCount: QWord): QWord;
 { Returns the number of bytes written, or -1 if no reader is left. }
 function WriteToPipe(Pipe: PPipe; Source: PByte; ByteCount: QWord): Int64;
@@ -55,6 +57,8 @@ function WriteToPipe(Pipe: PPipe; Source: PByte; ByteCount: QWord): Int64;
 implementation
 
 uses
+  Kernel.Threads,
+  Kernel.Scheduler,
   Objects.Manager;
 
 var
@@ -112,7 +116,8 @@ begin
   while (Pipe^.ByteCount = 0) and (Pipe^.OpenWriteEnds > 0) do
   begin
     ReleaseMutex(Pipe^.Lock);
-    WaitForEvent(Pipe^.DataAvailable);
+    if WaitForEventWithOptions(Pipe^.DataAvailable, InfiniteTimeout, True) = WaitAlerted then
+      Exit(0);
     AcquireMutex(Pipe^.Lock);
   end;
 
@@ -152,7 +157,12 @@ begin
     if Pipe^.ByteCount = PipeBufferSize then
     begin
       ReleaseMutex(Pipe^.Lock);
-      WaitForEvent(Pipe^.SpaceAvailable);
+      if WaitForEventWithOptions(Pipe^.SpaceAvailable, InfiniteTimeout, True) = WaitAlerted then
+      begin
+        if Written > 0 then
+          Exit(Int64(Written));
+        Exit(-1);
+      end;
       AcquireMutex(Pipe^.Lock);
       Continue;
     end;

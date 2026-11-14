@@ -41,6 +41,8 @@ type
     StandardKinds: array[0..2] of THandleKind;
     StandardObjects: array[0..2] of Pointer;
     ParentProcessId: QWord;
+    { The program's "/" (see TProcess.RootDirectory); nil means "/". }
+    RootDirectory: PChar;
   end;
 
 procedure InitializeUserProcesses;
@@ -51,8 +53,11 @@ function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess
 { Ends the calling user process. Never returns. }
 procedure ExitCurrentProcess(ExitCode: LongInt);
 
-{ Waits until Process has ended and returns its exit code. }
-function WaitForProcessExit(Process: PProcess): LongInt;
+{ Waits until Process has ended (or TimeoutMilliseconds pass, or the
+  waiting thread is alerted) and gives its exit code. Returns ErrorNone,
+  ErrorTimedOut or ErrorInterrupted. }
+function WaitForProcessExit(Process: PProcess; TimeoutMilliseconds: QWord;
+  out ExitCode: LongInt): LongInt;
 
 implementation
 
@@ -253,6 +258,8 @@ begin
     Exit(ErrorOutOfMemory);
   Process^.ParentProcessId := Startup.ParentProcessId;
   CopyText(@Process^.CurrentDirectory[0], Startup.WorkingDirectory, ProcessPathCapacity);
+  if Startup.RootDirectory <> nil then
+    CopyText(@Process^.RootDirectory[0], Startup.RootDirectory, ProcessPathCapacity);
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then
@@ -282,9 +289,13 @@ begin
     begin
       ThreadStart^.EntryPoint := MainModule^.EntryPoint;
       ThreadStart^.StackPointer := StackPointer;
+      { Registered before the thread starts, so it is always found
+        while it runs. }
+      RegisterRunningProcess(Process);
       if CreateThreadInProcess(Process, @UserThreadStart, ThreadStart, UserThreadPriority,
         Startup.Name, False) = nil then
       begin
+        UnregisterRunningProcess(Process);
         FreeKernelMemory(ThreadStart);
         Result := ErrorOutOfMemory;
       end;
@@ -311,6 +322,7 @@ begin
   if not Process^.IsUserProcess then
     KernelPanic('a kernel thread called ExitCurrentProcess');
 
+  UnregisterRunningProcess(Process);
   AcquireMutex(Process^.Lock);
   Process^.ExitCode := ExitCode;
   Process^.HasExited := True;
@@ -329,10 +341,20 @@ begin
   TerminateCurrentThread;
 end;
 
-function WaitForProcessExit(Process: PProcess): LongInt;
+function WaitForProcessExit(Process: PProcess; TimeoutMilliseconds: QWord;
+  out ExitCode: LongInt): LongInt;
 begin
-  WaitForEvent(Process^.ExitEvent);
-  Result := Process^.ExitCode;
+  ExitCode := 0;
+  case WaitForEventWithOptions(Process^.ExitEvent, TimeoutMilliseconds, True) of
+    WaitSignaled:
+      begin
+        ExitCode := Process^.ExitCode;
+        Result := ErrorNone;
+      end;
+    WaitTimedOut: Result := ErrorTimedOut;
+  else
+    Result := ErrorInterrupted;
+  end;
 end;
 
 end.

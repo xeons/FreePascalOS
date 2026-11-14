@@ -46,7 +46,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..124] of TCommandTest = (
+  CommandTests: array[0..191] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -182,6 +182,83 @@ const
     (Command: 'wc --version'; ExpectedOutput: 'wc (FreePascalOS coreutils) 0.2'#10; ExpectedStatus: 0),
     (Command: 'sort --rev < lines.txt | head -n 1'; ExpectedOutput: 'two'#10; ExpectedStatus: 0),
     (Command: 'mkdir /bin 2>&1; echo $?'; ExpectedOutput: 'mkdir: cannot create directory ''/bin'': File exists'#10'1'#10; ExpectedStatus: 0),
+
+    { --- digests, checksums and encodings ---------------------------- }
+    (Command: 'printf abc | md5sum; printf abc | sha1sum'; ExpectedOutput: '900150983cd24fb0d6963f7d28e17f72  -'#10'a9993e364706816aba3e25717850c26c9cd0d89d  -'#10; ExpectedStatus: 0),
+    (Command: 'printf abc | sha256sum; printf abc | sha224sum'; ExpectedOutput: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  -'#10'23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7  -'#10; ExpectedStatus: 0),
+    (Command: 'printf abc | sha384sum | cut -c 1-16; printf abc | sha512sum | cut -c 1-16; printf abc | b2sum | cut -c 1-16'; ExpectedOutput: 'cb00753f45a35e8b'#10'ddaf35a193617aba'#10'ba80a53f981c4d0d'#10; ExpectedStatus: 0),
+    (Command: 'printf abc | sha1sum --tag'; ExpectedOutput: 'SHA1 (-) = a9993e364706816aba3e25717850c26c9cd0d89d'#10; ExpectedStatus: 0),
+    (Command: 'printf abc > d.txt; sha256sum d.txt > sums; sha256sum -c sums; echo x > d.txt; sha256sum -c sums 2>/dev/null; echo $?'; ExpectedOutput: 'd.txt: OK'#10'd.txt: FAILED'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'printf 123456789 | cksum; printf 123456789 | cksum -a crc32b'; ExpectedOutput: '930766865 9'#10'3421780262 9'#10; ExpectedStatus: 0),
+    (Command: 'printf abc > d.txt; cksum -a md5 d.txt'; ExpectedOutput: 'MD5 (d.txt) = 900150983cd24fb0d6963f7d28e17f72'#10; ExpectedStatus: 0),
+    (Command: 'printf 123456789 | sum; printf 123456789 | sum -s'; ExpectedOutput: '53615     1'#10'477 1'#10; ExpectedStatus: 0),
+    (Command: 'printf hello | base64; echo aGVsbG8= | base64 -d; echo'; ExpectedOutput: 'aGVsbG8='#10'hello'#10; ExpectedStatus: 0),
+    (Command: 'printf hello | base32; printf hi | basenc --base16; printf hi | basenc --base2msbf'; ExpectedOutput: 'NBSWY3DP'#10'6869'#10'0110100001101001'#10; ExpectedStatus: 0),
+    (Command: 'printf "\206\117\322\157\265\131\367\133" | basenc --z85'; ExpectedOutput: 'HelloWorld'#10; ExpectedStatus: 0),
+    (Command: 'seq 100 | base64 -w 0 | base64 -d | tail -n 1'; ExpectedOutput: '100'#10; ExpectedStatus: 0),
+    (Command: 'echo "a!b" | base64 -d 2>&1; echo $?'; ExpectedOutput: 'base64: invalid input'#10'1'#10; ExpectedStatus: 0),
+
+    { --- users and the system ---------------------------------------- }
+    (Command: 'id; id -un; id -g; whoami; groups'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'root'#10'0'#10'root'#10'root wheel'#10; ExpectedStatus: 0),
+    (Command: 'id nobody; logname; users'; ExpectedOutput: 'uid=65534(nobody) gid=65534(nobody) groups=65534(nobody)'#10'root'#10'root'#10; ExpectedStatus: 0),
+    (Command: 'who | cut -c 1-16; who -q'; ExpectedOutput: 'root     console'#10'root'#10'# users=1'#10; ExpectedStatus: 0),
+    (Command: 'nproc; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: '1'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
+    (Command: 'printenv HOME; printenv NOPE; echo $?'; ExpectedOutput: '/'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'tty; tty < /dev/null; echo $?'; ExpectedOutput: '/dev/console'#10'not a tty'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'stty | tail -n 1; stty -echo; stty | tail -n 1; stty sane; stty | tail -n 1'; ExpectedOutput: 'icanon echo'#10'icanon -echo'#10'icanon echo'#10; ExpectedStatus: 0),
+
+    { --- running and ending programs --------------------------------- }
+    (Command: 'timeout 5 true; echo $?; timeout 0.2 sleep 5; echo $?'; ExpectedOutput: '0'#10'124'#10; ExpectedStatus: 0),
+    (Command: 'timeout 0.1 yes > /dev/null; echo $?'; ExpectedOutput: '124'#10; ExpectedStatus: 0),
+    (Command: 'timeout 0.2 sh -c ''while true; do :; done''; echo $?'; ExpectedOutput: '124'#10; ExpectedStatus: 0),
+    (Command: 'timeout --preserve-status 0.1 sleep 3; echo $?; timeout -s KILL --preserve-status 0.1 sleep 3; echo $?'; ExpectedOutput: '143'#10'137'#10; ExpectedStatus: 0),
+    (Command: 'yes | timeout 0.2 cat > /dev/null; echo $?'; ExpectedOutput: '124'#10; ExpectedStatus: 0),
+    (Command: 'kill -l 15; kill -l TERM; kill 99999 2>/dev/null; echo $?'; ExpectedOutput: 'TERM'#10'15'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'nice; nice -n 5 echo hi 2>/dev/null; nohup echo hi; stdbuf -oL echo hi'; ExpectedOutput: '0'#10'hi'#10'hi'#10'hi'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p jail/bin && cp /bin/echo jail/bin/ && chroot jail /bin/echo inside'; ExpectedOutput: 'inside'#10; ExpectedStatus: 0),
+    (Command: 'chroot jail /bin/ls 2>/dev/null; echo $?'; ExpectedOutput: '127'#10; ExpectedStatus: 0),
+
+    { --- attributes and links ---------------------------------------- }
+    (Command: 'touch -d "2020-01-02 03:04:05" t; stat -c %y t; touch -t 202101020304.05 t; stat -c %Y t'; ExpectedOutput: '2020-01-02 03:04:05 +0000'#10'1609556645'#10; ExpectedStatus: 0),
+    (Command: 'touch -m -d @1000 t; touch -a -d @2000 t; stat -c "%X %Y" t; touch -r t u; stat -c "%X %Y" u'; ExpectedOutput: '2000 1000'#10'2000 1000'#10; ExpectedStatus: 0),
+    (Command: 'date -d "2000-02-29 12:00" +%F_%T; date -r t +%s'; ExpectedOutput: '2000-02-29_12:00:00'#10'1000'#10; ExpectedStatus: 0),
+    (Command: 'touch m; chmod 640 m; stat -c %a m; chmod u+x,g-r m; stat -c %A m; chmod a=r m; stat -c %a m'; ExpectedOutput: '640'#10'-rwx------'#10'444'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p ct/d && touch ct/d/f && chmod -R go-rwx ct && stat -c "%a %n" ct ct/d/f'; ExpectedOutput: '700 ct'#10'600 ct/d/f'#10; ExpectedStatus: 0),
+    (Command: 'chmod 999 m 2>&1'; ExpectedOutput: 'chmod: invalid mode: ''999'''#10; ExpectedStatus: 1),
+    (Command: 'chown nobody:nobody m; stat -c "%U %G %u" m; chgrp wheel m; stat -c %G m; chown root: m; stat -c %U:%G m'; ExpectedOutput: 'nobody nobody 65534'#10'wheel'#10'root:root'#10; ExpectedStatus: 0),
+    (Command: 'chown bogus m 2>&1'; ExpectedOutput: 'chown: invalid user: ''bogus'''#10; ExpectedStatus: 1),
+    (Command: 'ls -l m | cut -d " " -f 3,4; ls -n m | cut -d " " -f 3,4'; ExpectedOutput: 'root root'#10'0 0'#10; ExpectedStatus: 0),
+    (Command: 'echo data > h1; link h1 h2; stat -c %h h1; cat h2; ln h1 h3; stat -c %h h1; rm h2 h3; stat -c %h h1'; ExpectedOutput: '2'#10'data'#10'3'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'unlink h1; [ ! -e h1 ] && echo gone; unlink sub 2>&1'; ExpectedOutput: 'gone'#10'unlink: cannot unlink ''sub'': Is a directory'#10; ExpectedStatus: 1),
+    (Command: 'echo k > keep; cp -p keep keep2; touch -d @5000 keep; cp -p keep keep3; stat -c %Y keep3'; ExpectedOutput: '5000'#10; ExpectedStatus: 0),
+    (Command: 'install -m 640 lines.txt inst.txt; stat -c %a inst.txt; install -d -m 700 ia/b/c; stat -c %a ia/b/c'; ExpectedOutput: '640'#10'700'#10; ExpectedStatus: 0),
+    (Command: 'install -D lines.txt deep/x/y.txt && head -n 1 deep/x/y.txt; mkdir -m 711 mm; stat -c %a mm'; ExpectedOutput: 'one'#10'711'#10; ExpectedStatus: 0),
+    (Command: 'f=$(mktemp); [ -f "$f" ] && echo file; d=$(mktemp -d); [ -d "$d" ] && echo dir; mktemp -p . demo.XXXX | cut -c 1-7'; ExpectedOutput: 'file'#10'dir'#10'./demo.'#10; ExpectedStatus: 0),
+    (Command: 'echo secret > s; shred -u s; [ ! -e s ] && echo shredded; printf 0123456789 > s2; shred -n 0 -z -x s2; od -A n -t x1 s2'; ExpectedOutput: 'shredded'#10' 00 00 00 00 00 00 00 00 00 00'#10; ExpectedStatus: 0),
+    (Command: 'realpath sub/dir/..; realpath -s dirlink; realpath --relative-to=sub/dir lines.txt'; ExpectedOutput: '/tmp/coretest/sub'#10'/tmp/coretest/dirlink'#10'../../lines.txt'#10; ExpectedStatus: 0),
+    (Command: 'pathchk -p "a b" 2>/dev/null; echo $?; pathchk -p ok_name; echo $?'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'1029'#9'dutest'#10; ExpectedStatus: 0),
+    (Command: 'df / | tail -n 1 | cut -d " " -f 1'; ExpectedOutput: 'disk2p1'#10; ExpectedStatus: 0),
+
+    { --- more text tools --------------------------------------------- }
+    (Command: 'printf "a\nb\nc\n" > c1; printf "b\nc\nd\n" > c2; comm c1 c2; comm -12 c1 c2'; ExpectedOutput: 'a'#10#9#9'b'#10#9#9'c'#10#9'd'#10'b'#10'c'#10; ExpectedStatus: 0),
+    (Command: 'printf "1 a\n2 b\n" > j1; printf "1 x\n3 y\n" > j2; join j1 j2; join -a1 j1 j2; join -v2 j1 j2'; ExpectedOutput: '1 a x'#10'1 a x'#10'2 b'#10'3 y'#10; ExpectedStatus: 0),
+    (Command: 'printf "a\tb\n" | expand; printf "a\tb\n" | expand -t 4; printf "        x\n" | unexpand | od -A n -c'; ExpectedOutput: 'a       b'#10'a   b'#10'  \t   x  \n'#10; ExpectedStatus: 0),
+    (Command: 'printf "one two\nthree four five\n" | fmt -w 10'; ExpectedOutput: 'one two'#10'three four'#10'five'#10; ExpectedStatus: 0),
+    (Command: 'shuf -i 1-5 | sort -n | tr "\n" " "; echo; shuf -n 2 -e a b c | wc -l; shuf -r -n 3 -e x'; ExpectedOutput: '1 2 3 4 5 '#10'2'#10'x'#10'x'#10'x'#10; ExpectedStatus: 0),
+    (Command: 'printf "a b\nb c\nx a\n" | tsort'; ExpectedOutput: 'x'#10'a'#10'b'#10'c'#10; ExpectedStatus: 0),
+    (Command: 'factor 12 97 1001; echo 18446744073709551615 | factor'; ExpectedOutput: '12: 2 2 3'#10'97: 97'#10'1001: 7 11 13'#10'18446744073709551615: 3 5 17 257 641 65537 6700417'#10; ExpectedStatus: 0),
+    (Command: 'seq 5 > sp; split -l 2 sp part; cat partaa partac; split -b 4 -d sp p_; ls p_*'; ExpectedOutput: '1'#10'2'#10'5'#10'p_00'#10'p_01'#10'p_02'#10; ExpectedStatus: 0),
+    (Command: 'seq 10 > cs; csplit cs /5/; head -n 1 xx01'; ExpectedOutput: '8'#10'13'#10'5'#10; ExpectedStatus: 0),
+    (Command: 'printf "a\n--\nb\n--\nc\n" > cs2; csplit -s -f q cs2 "/--/" "{*}"; cat q00 q02'; ExpectedOutput: 'a'#10'--'#10'c'#10; ExpectedStatus: 0),
+    (Command: 'numfmt --to=si 1500000; numfmt --to=iec 1048576; numfmt --from=iec 4K; numfmt --from=auto 1Ki'; ExpectedOutput: '1.5M'#10'1.0M'#10'4096'#10'1024'#10; ExpectedStatus: 0),
+    (Command: 'printf AB | od -A x -t x1; printf abc | od -c'; ExpectedOutput: '000000 41 42'#10'000002'#10'0000000   a   b   c'#10'0000003'#10; ExpectedStatus: 0),
+    (Command: 'printf 0123456789 | dd bs=4 count=2 2>/dev/null; echo; printf abc | dd conv=ucase 2>/dev/null; echo'; ExpectedOutput: '01234567'#10'ABC'#10; ExpectedStatus: 0),
+    (Command: 'dd if=lines.txt of=dd.out bs=1 skip=4 count=3 2>&1 | head -n 2; cat dd.out; echo'; ExpectedOutput: '3+0 records in'#10'3+0 records out'#10'two'#10; ExpectedStatus: 0),
+    (Command: 'seq 3 | pr -t; seq 4 | pr -2 -t -l 2 -w 20'; ExpectedOutput: '1'#10'2'#10'3'#10'1         3'#10'2         4'#10; ExpectedStatus: 0),
+    (Command: 'echo "hello big world" | ptx -w 30'; ExpectedOutput: '       hello   big world'#10'               hello big world'#10'   hello big   world'#10; ExpectedStatus: 0),
+    (Command: 'expr abc : ''a\(.*\)c''; expr aaa : ''a*''; expr x : ''\(y\)'''; ExpectedOutput: 'b'#10'3'#10#10; ExpectedStatus: 1),
+    (Command: 'ls /bin/dir /bin/vdir /bin/chgrp /bin/unexpand'; ExpectedOutput: '/bin/chgrp'#10'/bin/dir'#10'/bin/unexpand'#10'/bin/vdir'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

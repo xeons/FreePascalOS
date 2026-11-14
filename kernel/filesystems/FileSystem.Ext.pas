@@ -17,6 +17,7 @@
     FileSystem.Ext.Blocks        block pointers and extent trees
     FileSystem.Ext.Directories   directory records
     FileSystem.Ext.Write         creating, writing, removing, renaming
+    FileSystem.Ext.Attributes    permissions, owners, times, hard links
     FileSystem.Ext               (this unit) probing, mounting, reading
 }
 unit FileSystem.Ext;
@@ -45,6 +46,7 @@ uses
   FileSystem.Ext.Blocks,
   FileSystem.Ext.Directories,
   FileSystem.Ext.Write,
+  FileSystem.Ext.Attributes,
   Debug.Output;
 
 const
@@ -376,9 +378,11 @@ begin
   CopyVolumeName(Volume, Superblock);
   CheckWritability(Volume, Ext, Superblock, @SuperblockBytes[0]);
 
-  Result := StatusSuccess;
-  if not Volume^.IsReadOnly then
-    Result := SumFreeCounters(Volume);
+  { Allocation needs the free counters, and so does reporting free space;
+    only writing depends on them being readable. }
+  Result := SumFreeCounters(Volume);
+  if Volume^.IsReadOnly then
+    Result := StatusSuccess;
   if Result = StatusSuccess then
     Result := LoadNode(Volume, RootInodeNumber, Root);
   if (Result = StatusSuccess) and (Root^.Common.Information.Kind <> NodeKindDirectory) then
@@ -421,6 +425,9 @@ begin
   Driver.RemoveNode := @ExtRemoveNode;
   Driver.RenameNode := @ExtRenameNode;
   Driver.Sync := @ExtSync;
+  Driver.SetAttributes := @ExtSetAttributes;
+  Driver.CreateHardLink := @ExtCreateHardLink;
+  Driver.GetFreeSpace := @ExtGetFreeSpace;
   Result := @Driver;
 end;
 

@@ -54,7 +54,16 @@ function CurrentThread: PThreadControlBlock;
 { Gives up the rest of the time slice to other threads of equal priority. }
 procedure YieldExecution;
 
+const
+  InfiniteTimeout = High(QWord);
+
 procedure SleepMilliseconds(Milliseconds: QWord);
+{ Like SleepMilliseconds, but ends early (returning False) if the thread
+  is alerted. }
+function SleepAlertable(Milliseconds: QWord): Boolean;
+
+{ Makes every alertable wait of Thread end, now and in the future. }
+procedure AlertThread(Thread: PThreadControlBlock);
 
 procedure TerminateCurrentThread; noreturn;
 
@@ -76,6 +85,17 @@ procedure ReadyThreadLocked(Thread: PThreadControlBlock);
   (with the dispatcher lock held again) once the thread has been readied
   and scheduled. }
 procedure WaitCurrentThreadLocked;
+
+{ Waits with a timeout (in milliseconds, or InfiniteTimeout) and,
+  if Alertable, until alerted. If the caller put the thread on a wait
+  list it must have set IsOnWaitList; whoever ends the wait takes it off
+  every queue. }
+function WaitCurrentThreadWithOptionsLocked(TimeoutMilliseconds: QWord;
+  Alertable: Boolean): TWaitResult;
+
+{ Ends the wait of Thread with Result: takes it off its wait list and
+  the sleep queue and makes it ready. }
+procedure WakeWaitingThreadLocked(Thread: PThreadControlBlock; Result: TWaitResult);
 
 function ContextSwitchCount: QWord;
 
@@ -240,6 +260,7 @@ begin
         (ThreadFromTimerLink(Entry)^.WakeUpTick <= Thread^.WakeUpTick) do
     Entry := Entry^.Next;
   InsertBefore(Entry, @Thread^.TimerLink);
+  Thread^.IsOnSleepQueue := True;
   UpdateNextWakeUpTick;
 end;
 
@@ -256,8 +277,7 @@ begin
     Thread := ThreadFromTimerLink(Entry);
     if Thread^.WakeUpTick > Now then
       Break;
-    RemoveListEntry(Entry);
-    EnqueueReadyThread(Thread);
+    WakeWaitingThreadLocked(Thread, WaitTimedOut);
   end;
   UpdateNextWakeUpTick;
 end;
@@ -363,6 +383,65 @@ begin
     HalRequestSoftwareInterrupt(DispatchLevel);
 end;
 
+procedure WakeWaitingThreadLocked(Thread: PThreadControlBlock; Result: TWaitResult);
+begin
+  if Thread^.IsOnWaitList then
+  begin
+    RemoveListEntry(@Thread^.SchedulerLink);
+    Thread^.IsOnWaitList := False;
+  end;
+  if Thread^.IsOnSleepQueue then
+  begin
+    RemoveListEntry(@Thread^.TimerLink);
+    Thread^.IsOnSleepQueue := False;
+    UpdateNextWakeUpTick;
+  end;
+  Thread^.WaitResult := Result;
+  Thread^.WaitIsAlertable := False;
+  ReadyThreadLocked(Thread);
+end;
+
+function WaitCurrentThreadWithOptionsLocked(TimeoutMilliseconds: QWord;
+  Alertable: Boolean): TWaitResult;
+var
+  Thread: PThreadControlBlock;
+begin
+  Thread := RunningThread;
+  if (Alertable and Thread^.AlertPending) or (TimeoutMilliseconds = 0) then
+  begin
+    { The wait ends before it starts. }
+    if Thread^.IsOnWaitList then
+    begin
+      RemoveListEntry(@Thread^.SchedulerLink);
+      Thread^.IsOnWaitList := False;
+    end;
+    if TimeoutMilliseconds = 0 then
+      Exit(WaitTimedOut);
+    Exit(WaitAlerted);
+  end;
+
+  Thread^.WaitIsAlertable := Alertable;
+  Thread^.WaitResult := WaitSignaled;
+  if TimeoutMilliseconds <> InfiniteTimeout then
+  begin
+    Thread^.WakeUpTick := ClockTickCount + MillisecondsToTicks(TimeoutMilliseconds);
+    InsertIntoSleepQueue(Thread);
+  end;
+  WaitCurrentThreadLocked;
+  Result := Thread^.WaitResult;
+end;
+
+procedure AlertThread(Thread: PThreadControlBlock);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireDispatcherLock;
+  Thread^.AlertPending := True;
+  if (Thread^.State = ThreadStateWaiting) and Thread^.WaitIsAlertable then
+    WakeWaitingThreadLocked(Thread, WaitAlerted);
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
 procedure WaitCurrentThreadLocked;
 begin
   if RunningThread = IdleThreadBlock then
@@ -456,13 +535,18 @@ end;
 procedure SleepMilliseconds(Milliseconds: QWord);
 var
   PreviousLevel: TPriorityLevel;
-  Thread: PThreadControlBlock;
 begin
   PreviousLevel := AcquireDispatcherLock;
-  Thread := RunningThread;
-  Thread^.WakeUpTick := ClockTickCount + MillisecondsToTicks(Milliseconds);
-  InsertIntoSleepQueue(Thread);
-  WaitCurrentThreadLocked;
+  WaitCurrentThreadWithOptionsLocked(Milliseconds, False);
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+function SleepAlertable(Milliseconds: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireDispatcherLock;
+  Result := WaitCurrentThreadWithOptionsLocked(Milliseconds, True) <> WaitAlerted;
   ReleaseDispatcherLock(PreviousLevel);
 end;
 

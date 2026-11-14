@@ -362,7 +362,11 @@ begin
   Node^.Common.Information.NodeNumber := Node^.InodeNumber;
   Node^.Common.Information.LinkCount := Inode^.LinksCount;
   Node^.Common.Information.Mode := Inode^.Mode and ModePermissionMask;
+  Node^.Common.Information.OwnerId := Inode^.UserId or (LongWord(Inode^.UserIdHigh) shl 16);
+  Node^.Common.Information.GroupId := Inode^.GroupId or (LongWord(Inode^.GroupIdHigh) shl 16);
   Node^.Common.Information.ModificationTime := Inode^.ModificationTime;
+  Node^.Common.Information.AccessTime := Inode^.AccessTime;
+  Node^.Common.Information.ChangeTime := Inode^.ChangeTime;
 end;
 
 function ReadInodeBytes(Volume: PVolume; InodeNumber: LongWord; Destination: PByte): TFileSystemStatus;

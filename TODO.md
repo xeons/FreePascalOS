@@ -24,7 +24,7 @@ how the existing pieces fit together.
 
 ## Kernel core
 
-- [ ] Timeouts on waits (`WaitForEvent` with a deadline)
+- [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
 - [ ] Semaphores and reader/writer locks
 - [ ] Wait on multiple objects
@@ -50,7 +50,9 @@ how the existing pieces fit together.
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [ ] Multiple threads per user process (thread creation call, thread local storage)
-- [ ] Signals or another way to interrupt a running program (Ctrl-C)
+- [x] Ending another program (TerminateProcess; kill, timeout)
+- [ ] Ctrl-C on the console (needs a notion of the foreground program)
+- [ ] Signals that do not end a program (stop, continue, user signals)
 - [ ] Users, groups and permission checks
 
 ## I/O
@@ -90,7 +92,8 @@ how the existing pieces fit together.
 - [ ] ext4: extent trees deeper than one index level when writing
 - [ ] ext4: allocate from block groups still marked uninitialized
 - [ ] ext4: bigalloc, quota, encryption and case folding (currently force read-only)
-- [ ] Hard links (ext) and replacing an existing file on rename
+- [x] Hard links (ext), attributes (mode, owner, group, times) on all formats
+- [ ] Replacing an existing file on rename
 - [ ] Delete-on-last-close for files removed while open (currently refused)
 - [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
       metadata checksum verification
@@ -110,17 +113,19 @@ how the existing pieces fit together.
 - [x] User System unit and startup code; libsystem.so; libcoreutils.so
 - [x] Shell: pipes, redirections, && ||, if/while/until/for, variables,
       $( ), $(( )), globbing, quoting, scripts, builtins
-- [x] Core utilities: basename cat cp cut date df dirname echo env expr false
-      fold head ln ls mkdir mv nl paste printf pwd readlink rm rmdir seq sleep
-      sort stat sync tac tail tee test [ touch tr true truncate uname uniq wc yes
+- [x] Core utilities: all of GNU coreutils (102 commands) except mkfifo,
+      mknod, chcon and runcon
+- [x] libcryptography: MD5, SHA-1/2, BLAKE2b, HMAC, CRCs, AES, ChaCha20, random
+- [x] Regular expressions (POSIX BRE and ERE) in libcoreutils
+- [ ] Named pipes in the file systems (mkfifo, mknod)
+- [ ] Scheduling priorities for programs (nice), load averages (uptime)
+- [ ] Allocated block counts in file information (du, ls -s, stat %b)
 - [x] `coretest`: user mode tests run by `make test`
 - [ ] Lazy binding (PLT resolution on first call) and symbol versioning
 - [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
 - [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
 - [ ] Shell: case, functions, here documents, job control, history and line editing
-- [ ] More utilities: grep, find, xargs, od, md5sum/sha256sum, du, chmod, id, comm, split
-- [ ] touch: a system call to set file times; df: free space per volume
-- [ ] Hard links in ln (the ext driver supports them internally)
+- [ ] More programs outside coreutils: grep, find, xargs, sed, diff, less, ps
 - [ ] Interrupt driven console input (keyboard and serial) instead of polling
 
 ## ARM64 port

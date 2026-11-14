@@ -34,6 +34,9 @@ function ExtSync(Volume: PVolume): TFileSystemStatus;
 { True for symbolic links whose target is stored in the inode itself. }
 function IsFastSymbolicLink(Node: PNode): Boolean;
 
+{ The directory entry file type for a node kind. }
+function FileTypeOf(Kind: TNodeKind): Byte;
+
 implementation
 
 uses

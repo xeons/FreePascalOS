@@ -261,9 +261,9 @@ process's regions before the kernel touches it (`Processes.UserAccess`).
 
 | Area | Calls |
 |---|---|
-| Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind |
-| Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, Get/SetCurrentDirectory |
-| Processes | CreateProcess, WaitForProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
+| Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind, ControlHandle (console modes) |
+| Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
+| Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
@@ -271,6 +271,36 @@ process's regions before the kernel touches it (`Processes.UserAccess`).
 There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory and the three handles
 that become the new program's standard input, output and error.
+
+### Ending other programs
+
+A program cannot be stopped at an arbitrary point in the kernel, where it
+may hold locks. `TerminateProcess` (Processes.Termination) only marks the
+process and alerts its threads; the process ends itself at the next safe
+point:
+
+- before a system call returns to it,
+- when an interrupt (the clock at the latest) returns to it, through a hook
+  in the interrupt dispatcher, which also catches programs that make no
+  calls at all,
+- when an alertable wait is cut short. Waits in the kernel core take a
+  timeout and an "alertable" flag; whichever of the signal, the timeout or
+  the alert comes first removes the thread from both the event's queue and
+  the sleep queue (`WakeWaitingThreadLocked`). Pipe and console reads,
+  pipe writes, sleeping and waiting for a process are alertable.
+
+The exit code is chosen by the caller: 128 plus a signal number, as a Unix
+shell reports a program killed by that signal. Running processes are kept
+in a registry so they can be found by id.
+
+### File attributes
+
+Drivers may implement `SetAttributes` (mode, owner, group, modification and
+access time), `CreateHardLink` and `GetFreeSpace`. ext2/3/4 supports all of
+them. FAT and exFAT map the mode onto the read-only attribute, store times
+in their own resolution and refuse owners other than 0 and hard links.
+A per-process root directory implements `chroot`: paths are taken relative
+to it and ".." never leads above it.
 
 ### Handles
 
@@ -315,6 +345,11 @@ independent) against `rtl/user/system.pas`:
   initial stack and runs the main block) and exit (with a hook so buffered
   output is flushed).
 - **si_prc** – the `_start` entry point linked into each program.
+- **libcryptography.so** – digests (`Crypto.Md5`, `Crypto.Sha1`,
+  `Crypto.Sha256`, `Crypto.Sha512`, `Crypto.Blake2b` behind
+  `Crypto.Digests`), `Crypto.Hmac`, `Crypto.Checksums`, `Crypto.Aes`,
+  `Crypto.ChaCha20` and `Crypto.Random`. Every algorithm is checked
+  against its published test vectors.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (size class heap on top of AllocateMemory), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
@@ -324,7 +359,11 @@ independent) against `rtl/user/system.pas`:
   options, long options with abbreviations, `--help` and `--version`),
   `Util.Messages` ("program: message: error" diagnostics), `Util.Input`,
   `Util.Paths`, `Util.Sorting` (stable merge sort), `Util.Sizes`,
-  `Util.Directories`, `Util.FileTree` (copying and removing trees).
+  `Util.Directories`, `Util.FileTree` (copying, removing and walking
+  trees), `Util.RegularExpressions` (POSIX BRE and ERE with groups),
+  `Util.Modes` (chmod modes), `Util.Dates`, `Util.BaseEncoding`,
+  `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group) and
+  `Util.Commands` (running a command, signal names).
 - **sh** – lexer, parser to a syntax tree, word expansion and execution.
   Pipelines start their external programs first and then run builtins and
   compound commands inside the shell, so no stage waits for one that has

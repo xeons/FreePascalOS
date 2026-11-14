@@ -25,6 +25,7 @@ type
   PQWord = ^QWord;
   PInt64 = ^Int64;
   PLongInt = ^LongInt;
+  PInteger = ^Integer;
   PBoolean = ^Boolean;
   PPtrInt = ^PtrInt;
   PPtrUInt = ^PtrUInt;

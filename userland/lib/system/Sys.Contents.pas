@@ -27,7 +27,8 @@ uses
   Sys.Processes,
   Sys.Time,
   Sys.Libraries,
-  Sys.Information;
+  Sys.Information,
+  Sys.Console;
 
 implementation
 

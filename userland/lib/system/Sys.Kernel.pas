@@ -36,8 +36,10 @@ function KernelSetCurrentDirectory(Path: PChar): Int64;
 function KernelAllocateMemory(ByteCount: QWord): Int64;
 function KernelFreeMemory(Address: Pointer): Int64;
 function KernelCreateProcess(const Creation: TAbiProcessCreation): Int64;
-function KernelWaitForProcess(Handle: Int64): Int64;
-function KernelGetProcessId: Int64;
+{ Timeout in milliseconds, or InfiniteWait. }
+function KernelWaitForProcess(Handle: Int64; Timeout: Int64): Int64;
+{ The id of the process behind Handle, or of the caller for NoHandle. }
+function KernelGetProcessId(Handle: Int64): Int64;
 function KernelCreatePipe(out ReadHandle, WriteHandle: Int64): Int64;
 function KernelDuplicateHandle(Handle: Int64; NewHandle: Int64): Int64;
 function KernelSleep(Milliseconds: QWord): Int64;
@@ -48,6 +50,12 @@ function KernelGetSystemInformation(out Information: TAbiSystemInformation): Int
 function KernelSync: Int64;
 function KernelGetHandleKind(Handle: Int64): Int64;
 function KernelListVolumes(Index: QWord; out Information: TAbiVolumeInformation): Int64;
+function KernelSetPathAttributes(Path: PChar; const Changes: TAbiAttributeChanges;
+  FollowLinks: Boolean): Int64;
+function KernelCreateHardLink(ExistingPath, NewPath: PChar): Int64;
+function KernelTerminateProcess(ProcessId: QWord; ExitCode: LongInt): Int64;
+function KernelSetRootDirectory(Path: PChar): Int64;
+function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
 
 implementation
 
@@ -152,14 +160,14 @@ begin
   Result := SystemCall(CallCreateProcess, QWord(@Creation), 0, 0, 0, 0, 0);
 end;
 
-function KernelWaitForProcess(Handle: Int64): Int64;
+function KernelWaitForProcess(Handle: Int64; Timeout: Int64): Int64;
 begin
-  Result := SystemCall(CallWaitForProcess, QWord(Handle), 0, 0, 0, 0, 0);
+  Result := SystemCall(CallWaitForProcess, QWord(Handle), QWord(Timeout), 0, 0, 0, 0);
 end;
 
-function KernelGetProcessId: Int64;
+function KernelGetProcessId(Handle: Int64): Int64;
 begin
-  Result := SystemCall(CallGetProcessId, 0, 0, 0, 0, 0, 0);
+  Result := SystemCall(CallGetProcessId, QWord(Handle), 0, 0, 0, 0, 0);
 end;
 
 function KernelCreatePipe(out ReadHandle, WriteHandle: Int64): Int64;
@@ -214,6 +222,32 @@ end;
 function KernelListVolumes(Index: QWord; out Information: TAbiVolumeInformation): Int64;
 begin
   Result := SystemCall(CallListVolumes, Index, QWord(@Information), 0, 0, 0, 0);
+end;
+
+function KernelSetPathAttributes(Path: PChar; const Changes: TAbiAttributeChanges;
+  FollowLinks: Boolean): Int64;
+begin
+  Result := SystemCall(CallSetPathAttributes, QWord(Path), QWord(@Changes), Ord(FollowLinks), 0, 0, 0);
+end;
+
+function KernelCreateHardLink(ExistingPath, NewPath: PChar): Int64;
+begin
+  Result := SystemCall(CallCreateHardLink, QWord(ExistingPath), QWord(NewPath), 0, 0, 0, 0);
+end;
+
+function KernelTerminateProcess(ProcessId: QWord; ExitCode: LongInt): Int64;
+begin
+  Result := SystemCall(CallTerminateProcess, ProcessId, QWord(ExitCode), 0, 0, 0, 0);
+end;
+
+function KernelSetRootDirectory(Path: PChar): Int64;
+begin
+  Result := SystemCall(CallSetRootDirectory, QWord(Path), 0, 0, 0, 0, 0);
+end;
+
+function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
+begin
+  Result := SystemCall(CallControlHandle, QWord(Handle), Request, Argument, 0, 0, 0);
 end;
 
 end.

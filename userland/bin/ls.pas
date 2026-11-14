@@ -5,7 +5,9 @@
 
   Directories are listed by their contents, other files by name. On the
   console, names are arranged in columns; otherwise one per line.
-  The system is single-user, so owner and group are shown as root.
+  Owner and group names come from /etc/passwd and /etc/group.
+
+  Called as dir it always uses columns, as vdir the long format.
 }
 program ls;
 
@@ -21,7 +23,9 @@ uses
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Sys.Environment,
   Sys.Time,
+  Util.Accounts,
   Util.Directories,
   Util.Input,
   Util.Messages,
@@ -42,6 +46,7 @@ const
     '  -h, --human-readable       with -l, print sizes like 1K 234M 2G etc.'#10 +
     '  -i, --inode                print the index number of each file'#10 +
     '  -l                         use a long listing format'#10 +
+    '  -n, --numeric-uid-gid      like -l, but list numeric user and group IDs'#10 +
     '  -r, --reverse              reverse order while sorting'#10 +
     '  -R, --recursive            list subdirectories recursively'#10 +
     '  -S                         sort by file size, largest first'#10 +
@@ -60,6 +65,7 @@ const
   OptionSortSize = 10;
   OptionSortTime = 11;
   OptionOnePerLine = 12;
+  OptionNumeric = 13;
 
   ScreenWidth = 80;
   SecondsInHalfYear = 183 * 24 * 60 * 60;
@@ -87,6 +93,7 @@ var
   Recursive: Boolean;
   SortOrder: TSortOrder;
   OnePerLine: Boolean;
+  NumericIds: Boolean;
   Now: Int64;
   ExitStatus: LongInt;
 
@@ -208,6 +215,24 @@ begin
     WriteFormatted(StandardOutput, ' %4d', [ArgumentNumber(DateTime.Year)]);
 end;
 
+function OwnerText(Id: LongWord; var Buffer: TNumberText): PChar;
+begin
+  Result := nil;
+  if not NumericIds then
+    Result := UserNameOf(Id);
+  if Result = nil then
+    Result := FormatDecimal(Id, Buffer);
+end;
+
+function GroupText(Id: LongWord; var Buffer: TNumberText): PChar;
+begin
+  Result := nil;
+  if not NumericIds then
+    Result := GroupNameOf(Id);
+  if Result = nil then
+    Result := FormatDecimal(Id, Buffer);
+end;
+
 procedure WriteLong(Entries: PPointer; Count: Integer);
 var
   Index: Integer;
@@ -218,11 +243,15 @@ var
   SizeText: array[0..31] of Char;
   NumberText: TNumberText;
   Width: Integer;
+  OwnerWidth: Integer;
+  GroupWidth: Integer;
 begin
   { Column widths, so numbers line up. }
   SizeWidth := 1;
   LinkWidth := 1;
   NodeWidth := 1;
+  OwnerWidth := 1;
+  GroupWidth := 1;
   for Index := 0 to Count - 1 do
   begin
     Entry := PEntry(Entries[Index]);
@@ -238,6 +267,12 @@ begin
     Width := Integer(TextLength(FormatDecimal(Entry^.Information.NodeNumber, NumberText)));
     if Width > NodeWidth then
       NodeWidth := Width;
+    Width := Integer(TextLength(OwnerText(Entry^.Information.OwnerId, NumberText)));
+    if Width > OwnerWidth then
+      OwnerWidth := Width;
+    Width := Integer(TextLength(GroupText(Entry^.Information.GroupId, NumberText)));
+    if Width > GroupWidth then
+      GroupWidth := Width;
   end;
 
   for Index := 0 to Count - 1 do
@@ -246,8 +281,10 @@ begin
     if ShowNodeNumbers then
       WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(NodeWidth), ArgumentUnsigned(Entry^.Information.NodeNumber)]);
     WriteModeText(Entry^.Information);
-    WriteFormatted(StandardOutput, ' %*u root root ', [ArgumentNumber(LinkWidth),
-      ArgumentUnsigned(Entry^.Information.LinkCount)]);
+    WriteFormatted(StandardOutput, ' %*u %-*s %-*s ', [ArgumentNumber(LinkWidth),
+      ArgumentUnsigned(Entry^.Information.LinkCount), ArgumentNumber(OwnerWidth),
+      ArgumentText(OwnerText(Entry^.Information.OwnerId, NumberText)), ArgumentNumber(GroupWidth),
+      ArgumentText(GroupText(Entry^.Information.GroupId, NumberText))]);
     if HumanReadable then
       WriteFormatted(StandardOutput, '%*s ', [ArgumentNumber(SizeWidth),
         ArgumentText(FormatHumanSize(Entry^.Information.SizeInBytes, @SizeText[0]))])
@@ -410,9 +447,15 @@ var
   Entry: PEntry;
   Information: TFileInformation;
   IsDirectoryOperand: Boolean;
+  ProgramBase: PChar;
 begin
   SortOrder := SortByName;
   OnePerLine := KernelGetHandleKind(StandardOutputHandle) <> HandleKindConsole;
+  ProgramBase := BaseName(Argument(0));
+  if TextIsEqual(ProgramBase, 'dir') then
+    OnePerLine := False
+  else if TextIsEqual(ProgramBase, 'vdir') then
+    LongFormat := True;
   ExitStatus := 0;
   Now := CurrentTime;
   BeginOptions(Parser, [
@@ -427,7 +470,8 @@ begin
     OptionDefinition('R', 'recursive', False, OptionRecursive),
     OptionDefinition('S', nil, False, OptionSortSize),
     OptionDefinition('t', nil, False, OptionSortTime),
-    OptionDefinition('1', nil, False, OptionOnePerLine)], Usage);
+    OptionDefinition('1', nil, False, OptionOnePerLine),
+    OptionDefinition('n', 'numeric-uid-gid', False, OptionNumeric)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionAll: ShowAll := True;
@@ -442,6 +486,11 @@ begin
       OptionSortSize: SortOrder := SortBySize;
       OptionSortTime: SortOrder := SortByTime;
       OptionOnePerLine: OnePerLine := True;
+      OptionNumeric:
+        begin
+          NumericIds := True;
+          LongFormat := True;
+        end;
     end;
 
   if Parser.OperandCount = 0 then

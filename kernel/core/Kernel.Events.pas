@@ -19,7 +19,8 @@ unit Kernel.Events;
 interface
 
 uses
-  Runtime.LinkedList;
+  Runtime.LinkedList,
+  Kernel.Threads;
 
 type
   TEventKind = (EventKindNotification, EventKindSynchronization);
@@ -35,13 +36,16 @@ procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled
 procedure SignalEvent(var Event: TEvent);
 procedure ResetEvent(var Event: TEvent);
 procedure WaitForEvent(var Event: TEvent);
+{ Waits at most TimeoutMilliseconds (or InfiniteTimeout); an alertable
+  wait also ends when the thread is alerted (see AlertThread). }
+function WaitForEventWithOptions(var Event: TEvent; TimeoutMilliseconds: QWord;
+  Alertable: Boolean): TWaitResult;
 function EventIsSignaled(var Event: TEvent): Boolean;
 
 implementation
 
 uses
   Kernel.PriorityLevel,
-  Kernel.Threads,
   Kernel.Scheduler;
 
 procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled: Boolean);
@@ -55,9 +59,9 @@ procedure ReleaseOneWaiterLocked(var Event: TEvent);
 var
   Entry: PListEntry;
 begin
-  Entry := RemoveHeadEntry(Event.Waiters);
+  Entry := FirstListEntry(Event.Waiters);
   if Entry <> nil then
-    ReadyThreadLocked(ThreadFromSchedulerLink(Entry));
+    WakeWaitingThreadLocked(ThreadFromSchedulerLink(Entry), WaitSignaled);
 end;
 
 procedure SignalEvent(var Event: TEvent);
@@ -91,8 +95,15 @@ begin
 end;
 
 procedure WaitForEvent(var Event: TEvent);
+begin
+  WaitForEventWithOptions(Event, InfiniteTimeout, False);
+end;
+
+function WaitForEventWithOptions(var Event: TEvent; TimeoutMilliseconds: QWord;
+  Alertable: Boolean): TWaitResult;
 var
   PreviousLevel: TPriorityLevel;
+  Thread: PThreadControlBlock;
 begin
   PreviousLevel := AcquireDispatcherLock;
 
@@ -100,11 +111,14 @@ begin
   begin
     if Event.Kind = EventKindSynchronization then
       Event.IsSignaled := False;
+    Result := WaitSignaled;
   end
   else
   begin
-    InsertAtTail(Event.Waiters, @CurrentThread^.SchedulerLink);
-    WaitCurrentThreadLocked;
+    Thread := CurrentThread;
+    InsertAtTail(Event.Waiters, @Thread^.SchedulerLink);
+    Thread^.IsOnWaitList := True;
+    Result := WaitCurrentThreadWithOptionsLocked(TimeoutMilliseconds, Alertable);
   end;
 
   ReleaseDispatcherLock(PreviousLevel);

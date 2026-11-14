@@ -9,8 +9,8 @@
   and parentheses. Prints the result; exits 0 if it is neither empty nor
   0, 1 if it is, 2 for an invalid expression.
 
-  The ':' operator supports a subset of basic regular expressions:
-  . * ^ (implied) $ [...] and \( \) for the part to return.
+  The ':' operator matches a basic regular expression at the start of
+  the text (see Util.RegularExpressions); \( \) marks the part to return.
 }
 program expr;
 
@@ -25,7 +25,8 @@ uses
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
-  Util.Messages;
+  Util.Messages,
+  Util.RegularExpressions;
 
 var
   Position: Integer;
@@ -79,119 +80,39 @@ end;
 
 { --- Pattern matching for ':' ---------------------------------------- }
 
-function MatchHere(Pattern, Text: PChar; out MatchEnd: PChar; var GroupStart, GroupEnd: PChar): Boolean; forward;
-
-{ Matches one pattern element (., [set] or a literal) at Text. Returns
-  the element's length in the pattern, or 0 if Text does not match. }
-function MatchElement(Pattern, Text: PChar; out ElementLength: Integer): Boolean;
-var
-  Negate: Boolean;
-  Index: Integer;
-  Found: Boolean;
-begin
-  ElementLength := 1;
-  if Pattern[0] = '\' then
-  begin
-    ElementLength := 2;
-    Exit((Text^ <> #0) and (Text^ = Pattern[1]));
-  end;
-  if Pattern[0] = '[' then
-  begin
-    Index := 1;
-    Negate := Pattern[1] = '^';
-    if Negate then
-      Inc(Index);
-    Found := False;
-    while (Pattern[Index] <> #0) and ((Pattern[Index] <> ']') or (Index = 1) or (Negate and (Index = 2))) do
-    begin
-      if (Pattern[Index + 1] = '-') and (Pattern[Index + 2] <> ']') and (Pattern[Index + 2] <> #0) then
-      begin
-        if (Text^ >= Pattern[Index]) and (Text^ <= Pattern[Index + 2]) then
-          Found := True;
-        Inc(Index, 3);
-      end
-      else
-      begin
-        if Text^ = Pattern[Index] then
-          Found := True;
-        Inc(Index);
-      end;
-    end;
-    ElementLength := Index + 1;
-    Exit((Text^ <> #0) and (Found <> Negate));
-  end;
-  if Pattern[0] = '.' then
-    Exit(Text^ <> #0);
-  Result := (Text^ <> #0) and (Text^ = Pattern[0]);
-end;
-
-function MatchHere(Pattern, Text: PChar; out MatchEnd: PChar; var GroupStart, GroupEnd: PChar): Boolean;
-var
-  ElementLength: Integer;
-  Repeated: PChar;
-begin
-  MatchEnd := Text;
-  if Pattern^ = #0 then
-    Exit(True);
-  if (Pattern[0] = '$') and (Pattern[1] = #0) then
-    Exit(Text^ = #0);
-  if (Pattern[0] = '\') and (Pattern[1] = '(') then
-  begin
-    GroupStart := Text;
-    Exit(MatchHere(Pattern + 2, Text, MatchEnd, GroupStart, GroupEnd));
-  end;
-  if (Pattern[0] = '\') and (Pattern[1] = ')') then
-  begin
-    GroupEnd := Text;
-    Exit(MatchHere(Pattern + 2, Text, MatchEnd, GroupStart, GroupEnd));
-  end;
-
-  MatchElement(Pattern, Text, ElementLength);
-  if Pattern[ElementLength] = '*' then
-  begin
-    { Longest match first, then back off. }
-    Repeated := Text;
-    while MatchElement(Pattern, Repeated, ElementLength) do
-      Inc(Repeated);
-    while Repeated >= Text do
-    begin
-      if MatchHere(Pattern + ElementLength + 1, Repeated, MatchEnd, GroupStart, GroupEnd) then
-        Exit(True);
-      Dec(Repeated);
-    end;
-    Exit(False);
-  end;
-  if not MatchElement(Pattern, Text, ElementLength) then
-    Exit(False);
-  Result := MatchHere(Pattern + ElementLength, Text + 1, MatchEnd, GroupStart, GroupEnd);
-end;
-
+{ Anchored BRE match: the first group's text if the pattern has a group,
+  otherwise the length of the match. }
 function MatchPattern(Text, Pattern: PChar): PChar;
 var
-  MatchEnd: PChar;
-  GroupStart: PChar;
-  GroupEnd: PChar;
-  Length: PtrUInt;
+  Expression: TExpression;
+  Match: TMatch;
+  ErrorMessage: PChar;
+  Length: PtrInt;
 begin
-  GroupStart := nil;
-  GroupEnd := nil;
-  if Pattern^ = '^' then
-    Inc(Pattern);
-  if not MatchHere(Pattern, Text, MatchEnd, GroupStart, GroupEnd) then
+  if not CompileExpression(Pattern, SyntaxBasic, Expression, ErrorMessage) then
   begin
-    if FindText(Pattern, '\(') >= 0 then
-      Exit(DuplicateText(''));
-    Exit(MakeNumber(0));
+    Report('%s', [ArgumentText(ErrorMessage)]);
+    Halt(2);
   end;
-  if (GroupStart <> nil) and (GroupEnd <> nil) and (GroupEnd >= GroupStart) then
+  if not MatchExpressionAtStart(Expression, Text, Match) then
   begin
-    Length := GroupEnd - GroupStart;
+    if Expression.GroupCount > 0 then
+      Result := DuplicateText('')
+    else
+      Result := MakeNumber(0);
+  end
+  else if Expression.GroupCount > 0 then
+  begin
+    if Match.Starts[1] < 0 then
+      Exit(DuplicateText(''));
+    Length := Match.Ends[1] - Match.Starts[1];
     Result := PChar(AllocateMemory(Length + 1));
-    CopyMemory(Result, GroupStart, Length);
+    CopyMemory(Result, Text + Match.Starts[1], Length);
     Result[Length] := #0;
   end
   else
-    Result := MakeNumber(MatchEnd - Text);
+    Result := MakeNumber(Match.Ends[0]);
+  FreeExpression(Expression);
 end;
 
 { --- Grammar --------------------------------------------------------- }

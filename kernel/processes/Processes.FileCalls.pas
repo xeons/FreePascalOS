@@ -33,6 +33,10 @@ function PerformSetCurrentDirectory(PathAddress: QWord): Int64;
 function PerformCreatePipe(HandlesAddress: QWord): Int64;
 function PerformDuplicateHandle(Handle: Int64; NewHandle: Int64): Int64;
 function PerformListVolumes(Index: QWord; InformationAddress: QWord): Int64;
+function PerformSetPathAttributes(PathAddress: QWord; ChangesAddress: QWord; FollowLinks: QWord): Int64;
+function PerformCreateHardLink(ExistingAddress: QWord; NewAddress: QWord): Int64;
+function PerformSetRootDirectory(PathAddress: QWord): Int64;
+function PerformControlHandle(Handle: Int64; Request: QWord; Argument: QWord): Int64;
 function PerformSync: Int64;
 
 implementation
@@ -136,7 +140,11 @@ begin
   UserInformation.SizeInBytes := Information.SizeInBytes;
   UserInformation.NodeNumber := Information.NodeNumber;
   UserInformation.LinkCount := Information.LinkCount;
+  UserInformation.OwnerId := Information.OwnerId;
+  UserInformation.GroupId := Information.GroupId;
   UserInformation.ModificationTime := Information.ModificationTime;
+  UserInformation.AccessTime := Information.AccessTime;
+  UserInformation.ChangeTime := Information.ChangeTime;
 end;
 
 { --- Handles --------------------------------------------------------- }
@@ -600,6 +608,7 @@ begin
   CopyText(@Information.FileSystemType[0], @Volume^.TypeName[0], AbiTextCapacity);
   CopyText(@Information.VolumeLabel[0], @Volume^.VolumeLabel[0], AbiTextCapacity);
   Information.TotalBytes := Volume^.TotalBytes;
+  Information.HasFreeSpace := Ord(GetVolumeFreeSpace(Volume, Information.FreeBytes));
   Information.IsReadOnly := Ord(Volume^.IsReadOnly);
   Information.IsSystemVolume := Ord(TextIsEqual(@Volume^.Name[0], SystemVolumeName));
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
@@ -611,6 +620,125 @@ function PerformSync: Int64;
 begin
   SyncAllVolumes;
   Result := 0;
+end;
+
+{ --- Attributes and links -------------------------------------------- }
+
+function PerformSetPathAttributes(PathAddress: QWord; ChangesAddress: QWord; FollowLinks: QWord): Int64;
+var
+  UserChanges: TAbiAttributeChanges;
+  Changes: TAttributeChanges;
+  KernelPath: PPathBuffer;
+  Error: LongInt;
+begin
+  Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
+  if Error = ErrorNone then
+    Error := FetchKernelPath(PathAddress, KernelPath);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  { The Abi field flags have the same values as the VFS ones. }
+  Changes.Fields := UserChanges.Fields;
+  Changes.Mode := UserChanges.Mode;
+  Changes.OwnerId := UserChanges.OwnerId;
+  Changes.GroupId := UserChanges.GroupId;
+  Changes.ModificationTime := UserChanges.ModificationTime;
+  Changes.AccessTime := UserChanges.AccessTime;
+  Result := -Int64(ErrorFromStatus(SetPathAttributes(@KernelPath^[0], FollowLinks <> 0, Changes)));
+  FreeKernelMemory(KernelPath);
+end;
+
+{ True if two kernel paths start with the same volume name. }
+function OnSameVolume(First, Second: PChar): Boolean;
+var
+  Index: PtrUInt;
+begin
+  Index := 1;
+  while (First[Index] <> '/') and (First[Index] <> #0) do
+  begin
+    if First[Index] <> Second[Index] then
+      Exit(False);
+    Inc(Index);
+  end;
+  Result := (Second[Index] = '/') or (Second[Index] = #0);
+end;
+
+function PerformCreateHardLink(ExistingAddress: QWord; NewAddress: QWord): Int64;
+var
+  ExistingPath: PPathBuffer;
+  NewPath: PPathBuffer;
+  Error: LongInt;
+begin
+  Error := FetchKernelPath(ExistingAddress, ExistingPath);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Error := FetchKernelPath(NewAddress, NewPath);
+  if Error <> ErrorNone then
+  begin
+    FreeKernelMemory(ExistingPath);
+    Exit(Failure(Error));
+  end;
+  if not OnSameVolume(@ExistingPath^[0], @NewPath^[0]) then
+    Result := Failure(ErrorCrossVolume)
+  else
+    Result := -Int64(ErrorFromStatus(CreateHardLink(@ExistingPath^[0], @NewPath^[0])));
+  FreeKernelMemory(ExistingPath);
+  FreeKernelMemory(NewPath);
+end;
+
+{ chroot: Path becomes the process's "/", and its current directory. }
+function PerformSetRootDirectory(PathAddress: QWord): Int64;
+var
+  Process: PProcess;
+  UserPath: TPathBuffer;
+  NewRoot: TPathBuffer;
+  KernelPath: TPathBuffer;
+  Information: TNodeInformation;
+  Error: LongInt;
+  Status: TFileSystemStatus;
+begin
+  Process := CurrentProcess;
+  Error := CopyStringFromUser(PathAddress, @UserPath[0], PathCapacity);
+  if Error = ErrorNone then
+    Error := UnrootedUserPath(Process, @UserPath[0], @NewRoot[0], PathCapacity);
+  if Error = ErrorNone then
+    Error := TranslateUserPath(Process, @UserPath[0], @KernelPath[0], PathCapacity);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Status := GetPathInformation(@KernelPath[0], Information);
+  if Status <> StatusSuccess then
+    Exit(Failure(ErrorFromStatus(Status)));
+  if Information.Kind <> NodeKindDirectory then
+    Exit(Failure(ErrorNotDirectory));
+
+  AcquireMutex(Process^.Lock);
+  CopyText(@Process^.RootDirectory[0], @NewRoot[0], PathCapacity);
+  CopyText(@Process^.CurrentDirectory[0], '/', PathCapacity);
+  ReleaseMutex(Process^.Lock);
+  Result := 0;
+end;
+
+{ --- Device control -------------------------------------------------- }
+
+function PerformControlHandle(Handle: Int64; Request: QWord; Argument: QWord): Int64;
+var
+  Kind: THandleKind;
+  ObjectBody: Pointer;
+begin
+  if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
+    Exit(Failure(ErrorBadHandle));
+  if Kind <> HandleKindConsole then
+    Exit(Failure(ErrorUnsupported));
+  case Request of
+    ControlGetConsoleMode: Result := GetConsoleMode;
+    ControlSetConsoleMode:
+      begin
+        SetConsoleMode(LongWord(Argument));
+        Result := 0;
+      end;
+    ControlGetConsoleSize: Result := (Int64(ConsoleRows) shl 16) or ConsoleColumns;
+  else
+    Result := Failure(ErrorInvalidArgument);
+  end;
 end;
 
 end.

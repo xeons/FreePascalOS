@@ -1,11 +1,11 @@
 {
   ln - make links between files
 
-  ln -s [-fnTv] TARGET LINK_NAME
-  ln -s [-fnv] TARGET... DIRECTORY
+  ln [-sfnTv] TARGET LINK_NAME
+  ln [-sfnv] TARGET... DIRECTORY
 
-  Only symbolic links are supported (-s); the file systems' hard links
-  are not exposed to programs.
+  Makes hard links (other names for the same file; ext2/3/4 only, within
+  one volume), or symbolic links with -s.
 }
 program ln;
 
@@ -24,9 +24,9 @@ uses
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: ln -s [OPTION]... TARGET LINK_NAME'#10 +
-    '  or:  ln -s [OPTION]... TARGET... DIRECTORY'#10 +
-    'Create symbolic links to TARGET(s).'#10 +
+  Usage: PChar = 'Usage: ln [OPTION]... TARGET LINK_NAME'#10 +
+    '  or:  ln [OPTION]... TARGET... DIRECTORY'#10 +
+    'Create hard links by default, symbolic links with --symbolic.'#10 +
     #10 +
     '  -f, --force                remove existing destination files'#10 +
     '  -n, --no-dereference       treat LINK_NAME as a normal file if it is a'#10 +
@@ -44,6 +44,7 @@ const
 var
   Force: Boolean;
   Verbose: Boolean;
+  Symbolic: Boolean;
 
 function LinkOne(Target, LinkName: PChar): Boolean;
 var
@@ -51,14 +52,26 @@ var
 begin
   if Force and PathExists(LinkName) and not IsDirectory(LinkName) then
     RemovePath(LinkName);
-  Error := CreateSymbolicLink(Target, LinkName);
+  if Symbolic then
+    Error := CreateSymbolicLink(Target, LinkName)
+  else
+    Error := CreateHardLink(Target, LinkName);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'failed to create symbolic link ''%s''', [ArgumentText(LinkName)]);
+    if Symbolic then
+      ReportError(Error, 'failed to create symbolic link ''%s''', [ArgumentText(LinkName)])
+    else
+      ReportError(Error, 'failed to create hard link ''%s'' => ''%s''', [ArgumentText(LinkName),
+        ArgumentText(Target)]);
     Exit(False);
   end;
   if Verbose then
-    WriteFormatted(StandardOutput, '''%s'' -> ''%s'''#10, [ArgumentText(LinkName), ArgumentText(Target)]);
+  begin
+    if Symbolic then
+      WriteFormatted(StandardOutput, '''%s'' -> ''%s'''#10, [ArgumentText(LinkName), ArgumentText(Target)])
+    else
+      WriteFormatted(StandardOutput, '''%s'' => ''%s'''#10, [ArgumentText(LinkName), ArgumentText(Target)]);
+  end;
   Result := True;
 end;
 
@@ -66,7 +79,6 @@ var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Symbolic: Boolean;
   NoDereference: Boolean;
   NoTargetDirectory: Boolean;
   Destination: PChar;
@@ -96,8 +108,6 @@ begin
       OptionNoTargetDirectory: NoTargetDirectory := True;
       OptionVerbose: Verbose := True;
     end;
-  if not Symbolic then
-    Fail(1, 'hard links are not supported; use ln -s', []);
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing file operand', []);
 

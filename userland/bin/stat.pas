@@ -4,8 +4,9 @@
   stat [-L] [-c FORMAT] FILE...
 
   FORMAT conversions: %n name  %s size  %F file type  %i node number
-  %h link count  %a mode in octal  %A mode as text  %Y modification time
-  (seconds since 1970)  %y modification time  %%
+  %h link count  %a mode in octal  %A mode as text  %u %g owner and group
+  ids  %U %G their names  %x %y %z access, modification and change time
+  %X %Y %Z the same in seconds since 1970  %%
 }
 program stat;
 
@@ -19,6 +20,7 @@ uses
   Sys.Format,
   Sys.Streams,
   Sys.Time,
+  Util.Accounts,
   Util.Messages,
   Util.Options;
 
@@ -31,7 +33,7 @@ const
     '                        output a newline after each use of FORMAT'#10 +
     '  -t, --terse           print the information in terse form'#10 +
     #10 +
-    'FORMAT: %n %s %F %i %h %a %A %Y %y %%'#10;
+    'FORMAT: %n %s %F %i %h %a %A %u %U %g %G %x %X %y %Y %z %Z %%'#10;
 
   OptionDereference = 1;
   OptionFormat = 2;
@@ -84,6 +86,14 @@ begin
     ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute), ArgumentNumber(DateTime.Second)]);
 end;
 
+function NameOrUnknown(Name: PChar): PChar;
+begin
+  if Name = nil then
+    Result := 'UNKNOWN'
+  else
+    Result := Name;
+end;
+
 procedure WriteWithFormat(Format: PChar; Name: PChar; const Information: TFileInformation);
 var
   Position: Integer;
@@ -106,8 +116,16 @@ begin
       'h': WriteUnsigned(StandardOutput, Information.LinkCount);
       'a': WriteFormatted(StandardOutput, '%o', [ArgumentUnsigned(Information.Mode and $FFF)]);
       'A': WriteModeText(Information);
+      'u': WriteUnsigned(StandardOutput, Information.OwnerId);
+      'g': WriteUnsigned(StandardOutput, Information.GroupId);
+      'U': WriteText(StandardOutput, NameOrUnknown(UserNameOf(Information.OwnerId)));
+      'G': WriteText(StandardOutput, NameOrUnknown(GroupNameOf(Information.GroupId)));
+      'X': WriteDecimal(StandardOutput, Information.AccessTime);
+      'x': WriteTime(Information.AccessTime);
       'Y': WriteDecimal(StandardOutput, Information.ModificationTime);
       'y': WriteTime(Information.ModificationTime);
+      'Z': WriteDecimal(StandardOutput, Information.ChangeTime);
+      'z': WriteTime(Information.ChangeTime);
       '%': WriteCharacter(StandardOutput, '%');
     else
       begin
@@ -135,9 +153,17 @@ begin
     ArgumentUnsigned(Information.LinkCount)]);
   WriteFormatted(StandardOutput, 'Access: (%04o/', [ArgumentUnsigned(Information.Mode and $FFF)]);
   WriteModeText(Information);
-  WriteLine(StandardOutput, ')');
+  WriteFormatted(StandardOutput, ')  Uid: (%5u/%8s)   Gid: (%5u/%8s)'#10, [ArgumentUnsigned(Information.OwnerId),
+    ArgumentText(NameOrUnknown(UserNameOf(Information.OwnerId))), ArgumentUnsigned(Information.GroupId),
+    ArgumentText(NameOrUnknown(GroupNameOf(Information.GroupId)))]);
+  WriteText(StandardOutput, 'Access: ');
+  WriteTime(Information.AccessTime);
+  WriteCharacter(StandardOutput, #10);
   WriteText(StandardOutput, 'Modify: ');
   WriteTime(Information.ModificationTime);
+  WriteCharacter(StandardOutput, #10);
+  WriteText(StandardOutput, 'Change: ');
+  WriteTime(Information.ChangeTime);
   WriteCharacter(StandardOutput, #10);
 end;
 

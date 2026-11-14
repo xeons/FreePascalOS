@@ -61,6 +61,9 @@ function CreateThreadInProcess(Process: PProcess; StartRoutine: TThreadStartRout
 function CurrentThreadObject: PThread;
 function CurrentProcess: PProcess;
 
+{ Alerts every thread of Process, ending their alertable waits. }
+procedure AlertProcessThreads(Process: PProcess);
+
 { Releases the resources of threads that have exited. Must be called at
   PassiveLevel; the idle thread does this whenever it runs. }
 procedure ReapTerminatedThreads;
@@ -203,6 +206,21 @@ begin
 
   StartThread(@Thread^.ControlBlock);
   Result := Thread;
+end;
+
+procedure AlertProcessThreads(Process: PProcess);
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PListEntry;
+begin
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  Entry := Process^.Threads.Next;
+  while Entry <> @Process^.Threads do
+  begin
+    AlertThread(@ThreadFromProcessLink(Entry)^.ControlBlock);
+    Entry := Entry^.Next;
+  end;
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
 end;
 
 procedure ReapTerminatedThreads;

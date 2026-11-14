@@ -13,6 +13,7 @@
     FileSystem.ExFat.Structures   on-disk records
     FileSystem.ExFat.Volume       clusters, bitmap, entry sets, nodes
     FileSystem.ExFat.Write        creating, writing, removing, renaming
+    FileSystem.ExFat.Attributes   read-only flag, times, free space
     FileSystem.ExFat              (this unit) probing, mounting, reading
 }
 unit FileSystem.ExFat;
@@ -38,7 +39,8 @@ uses
   Io.BlockCache,
   FileSystem.ExFat.Structures,
   FileSystem.ExFat.Volume,
-  FileSystem.ExFat.Write;
+  FileSystem.ExFat.Write,
+  FileSystem.ExFat.Attributes;
 
 var
   Driver: TFileSystemDriver;
@@ -390,6 +392,8 @@ begin
   Driver.RemoveNode := @ExFatRemoveNode;
   Driver.RenameNode := @ExFatRenameNode;
   Driver.Sync := @ExFatSync;
+  Driver.SetAttributes := @ExFatSetAttributes;
+  Driver.GetFreeSpace := @ExFatGetFreeSpace;
   Result := @Driver;
 end;
 

@@ -14,6 +14,7 @@
     FileSystem.Fat.Names        short and long names
     FileSystem.Fat.Volume       allocation table, clusters, directories
     FileSystem.Fat.Write        creating, writing, removing, renaming
+    FileSystem.Fat.Attributes   read-only flag, times, free space
     FileSystem.Fat              (this unit) probing, mounting, reading
 }
 unit FileSystem.Fat;
@@ -40,7 +41,8 @@ uses
   FileSystem.Fat.Structures,
   FileSystem.Fat.Names,
   FileSystem.Fat.Volume,
-  FileSystem.Fat.Write;
+  FileSystem.Fat.Write,
+  FileSystem.Fat.Attributes;
 
 var
   Driver: TFileSystemDriver;
@@ -378,6 +380,8 @@ begin
   Driver.RemoveNode := @FatRemoveNode;
   Driver.RenameNode := @FatRenameNode;
   Driver.Sync := @FatSync;
+  Driver.SetAttributes := @FatSetAttributes;
+  Driver.GetFreeSpace := @FatGetFreeSpace;
   Result := @Driver;
 end;
 
