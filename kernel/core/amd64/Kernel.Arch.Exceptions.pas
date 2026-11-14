@@ -15,6 +15,18 @@ interface
 uses
   Kernel.Arch.TrapFrame;
 
+type
+  { Returns True if it made the faulting access valid (for example by
+    providing a page on demand), so the instruction can be retried. }
+  TPageFaultResolver = function(FaultAddress: QWord; ErrorCode: QWord): Boolean;
+
+  { Deals with an exception raised by user mode code; normally ends the
+    process. Must not return. }
+  TUserExceptionHandler = procedure(Frame: PTrapFrame; Description: PChar);
+
+procedure SetPageFaultResolver(Resolver: TPageFaultResolver);
+procedure SetUserExceptionHandler(Handler: TUserExceptionHandler);
+
 function IsProcessorException(Vector: Byte): Boolean;
 procedure HandleProcessorException(Frame: PTrapFrame);
 
@@ -25,6 +37,7 @@ implementation
 uses
   Hal.InterruptVectors,
   Kernel.Arch.Cpu,
+  Kernel.Arch.UserMode,
   Kernel.Panic,
   Debug.Output;
 
@@ -71,6 +84,20 @@ const
     'VMM communication',
     'security exception',
     'reserved (31)');
+
+var
+  PageFaultResolver: TPageFaultResolver = nil;
+  UserExceptionHandler: TUserExceptionHandler = nil;
+
+procedure SetPageFaultResolver(Resolver: TPageFaultResolver);
+begin
+  PageFaultResolver := Resolver;
+end;
+
+procedure SetUserExceptionHandler(Handler: TUserExceptionHandler);
+begin
+  UserExceptionHandler := Handler;
+end;
 
 function IsProcessorException(Vector: Byte): Boolean;
 begin
@@ -167,6 +194,16 @@ begin
   if Vector = VectorBreakpoint then
   begin
     ReportBreakpoint(Frame);
+    Exit;
+  end;
+
+  if (Vector = VectorPageFault) and Assigned(PageFaultResolver) and
+     PageFaultResolver(ReadControlRegister2, Frame^.ErrorCode) then
+    Exit;
+
+  if ArchFrameIsFromUserMode(Frame) and Assigned(UserExceptionHandler) then
+  begin
+    UserExceptionHandler(Frame, ExceptionNames[Vector]);
     Exit;
   end;
 

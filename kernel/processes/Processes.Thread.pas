@@ -52,6 +52,15 @@ function CreateIdleThreadFromBootContext(BootStackBase, BootStackTop: QWord): PT
 function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
   Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
 
+{ Creates and starts a thread in Process, running on the process's
+  address space. The thread starts in kernel mode at StartRoutine. }
+function CreateThreadInProcess(Process: PProcess; StartRoutine: TThreadStartRoutine;
+  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+
+{ The thread object and process of the running thread. }
+function CurrentThreadObject: PThread;
+function CurrentProcess: PProcess;
+
 { Releases the resources of threads that have exited. Must be called at
   PassiveLevel; the idle thread does this whenever it runs. }
 procedure ReapTerminatedThreads;
@@ -143,6 +152,29 @@ end;
 
 function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
   Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+begin
+  Result := CreateThreadInProcess(SystemProcess, StartRoutine, StartContext, Priority, Name,
+    ReturnReference);
+end;
+
+function CurrentThreadObject: PThread;
+begin
+  Result := ThreadFromControlBlock(CurrentThread);
+end;
+
+function CurrentProcess: PProcess;
+var
+  Thread: PThread;
+begin
+  Thread := CurrentThreadObject;
+  if Thread = nil then
+    Result := SystemProcess
+  else
+    Result := Thread^.Process;
+end;
+
+function CreateThreadInProcess(Process: PProcess; StartRoutine: TThreadStartRoutine;
+  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
 var
   Thread: PThread;
 begin
@@ -161,8 +193,9 @@ begin
     Thread^.KernelStack.Top, StartRoutine, StartContext, Priority, Name);
   Thread^.ControlBlock.ThreadId := AllocateProcessOrThreadId;
   Thread^.ControlBlock.Owner := Thread;
+  Thread^.ControlBlock.AddressSpaceRoot := Process^.PageTableRoot;
 
-  AttachToProcess(Thread, SystemProcess);
+  AttachToProcess(Thread, Process);
 
   { The creation reference becomes the thread's reference to itself. }
   if ReturnReference then

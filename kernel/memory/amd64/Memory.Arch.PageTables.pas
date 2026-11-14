@@ -1,14 +1,16 @@
 {
-  x86-64 four level page table management for the kernel address space.
+  x86-64 four level page table management.
 
   The kernel keeps running on the top level table built by the loader.
   Page tables are reached through the physical memory window, so no
   recursive mapping tricks are needed. Intermediate tables are allocated
   on demand when a mapping needs them.
 
-  Mappings in the kernel half are shared by all address spaces; once user
-  address spaces exist they will copy the kernel half of the top level
-  table, which is why every kernel top level entry is created up front.
+  Every user process has its own top level table. Its upper (kernel)
+  half is a copy of the kernel's, which never changes because every
+  kernel top level entry is created during startup; its lower half maps
+  the process's own memory. Switching address spaces is therefore just
+  loading a different top level table.
 }
 unit Memory.Arch.PageTables;
 
@@ -27,6 +29,9 @@ const
   MappingUser = LongWord(1) shl 2;
   MappingUncached = LongWord(1) shl 3;
 
+  { First address above user space. }
+  UserSpaceLimit = QWord($0000800000000000);
+
 procedure InitializeKernelPageTables;
 
 { Removes the identity mapping of low memory the loader left behind. }
@@ -41,13 +46,35 @@ function MapKernelPage(VirtualAddress: QWord; PhysicalAddress: TPhysicalAddress;
   it pointed to (zero if nothing was mapped). }
 function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
 
-{ Looks up the physical address behind a virtual address. }
+{ Looks up the physical address behind a virtual address in the kernel
+  address space. }
 function TranslateVirtualAddress(VirtualAddress: QWord;
   out PhysicalAddress: TPhysicalAddress): Boolean;
 
 function KernelPageTableRoot: TPhysicalAddress;
 
 function NoExecuteIsSupported: Boolean;
+
+{ --- User address spaces --- }
+
+{ Creates a top level table sharing the kernel half. Returns its
+  physical address, or zero if memory ran out. }
+function CreateAddressSpaceRoot: TPhysicalAddress;
+
+{ Frees every user page and page table of an address space, and the top
+  level table itself. It must not be the active address space. }
+procedure DestroyAddressSpaceRoot(Root: TPhysicalAddress);
+
+{ The same operations as above for a user address space. }
+function MapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  PhysicalAddress: TPhysicalAddress; Attributes: LongWord): Boolean;
+function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord): TPhysicalAddress;
+function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  out PhysicalAddress: TPhysicalAddress): Boolean;
+
+{ Makes Root the active address space of this processor. }
+procedure ActivateAddressSpace(Root: TPhysicalAddress);
+function ActiveAddressSpace: TPhysicalAddress;
 
 implementation
 
@@ -78,14 +105,14 @@ type
   PPageTable = ^TPageTable;
 
 var
-  TopLevelTable: PPageTable;
-  TopLevelTablePhysical: TPhysicalAddress;
+  KernelTopLevelTable: PPageTable;
+  KernelTopLevelTablePhysical: TPhysicalAddress;
   NoExecuteEnabled: Boolean;
   PageTableLock: TSpinLock;
 
 function KernelPageTableRoot: TPhysicalAddress;
 begin
-  Result := TopLevelTablePhysical;
+  Result := KernelTopLevelTablePhysical;
 end;
 
 function NoExecuteIsSupported: Boolean;
@@ -102,6 +129,11 @@ end;
 function TableFromEntry(Entry: QWord): PPageTable;
 begin
   Result := PPageTable(PhysicalToVirtual(Entry and EntryAddressMask));
+end;
+
+function TableFromRoot(Root: TPhysicalAddress): PPageTable;
+begin
+  Result := PPageTable(PhysicalToVirtual(Root));
 end;
 
 procedure EnableNoExecuteIfSupported;
@@ -124,21 +156,21 @@ var
 begin
   for Index := FirstKernelTopLevelEntry to EntriesPerTable - 1 do
   begin
-    if (TopLevelTable^[Index] and EntryPresent) <> 0 then
+    if (KernelTopLevelTable^[Index] and EntryPresent) <> 0 then
       Continue;
     TablePhysical := AllocateZeroedPhysicalPage(PageUsagePageTable);
     if TablePhysical = 0 then
       KernelPanicWithCode(PanicOutOfPhysicalMemory,
         'no memory for kernel page tables', Index, 0, 0, 0);
-    TopLevelTable^[Index] := TablePhysical or EntryPresent or EntryWritable;
+    KernelTopLevelTable^[Index] := TablePhysical or EntryPresent or EntryWritable;
   end;
 end;
 
 procedure InitializeKernelPageTables;
 begin
   InitializeSpinLock(PageTableLock);
-  TopLevelTablePhysical := ReadControlRegister3 and EntryAddressMask;
-  TopLevelTable := PPageTable(PhysicalToVirtual(TopLevelTablePhysical));
+  KernelTopLevelTablePhysical := ReadControlRegister3 and EntryAddressMask;
+  KernelTopLevelTable := TableFromRoot(KernelTopLevelTablePhysical);
 
   { Make the kernel honour read-only pages too. }
   WriteControlRegister0(ReadControlRegister0 or Cr0WriteProtect);
@@ -154,13 +186,13 @@ begin
   { The identity mapping shares its lower level tables with the physical
     memory window, so only the top level entries are cleared. }
   for Index := 0 to FirstKernelTopLevelEntry - 1 do
-    TopLevelTable^[Index] := 0;
+    KernelTopLevelTable^[Index] := 0;
   FlushEntireTlb;
 end;
 
 function EncodeEntry(PhysicalAddress: TPhysicalAddress; Attributes: LongWord): QWord;
 begin
-  Result := PhysicalAddress or EntryPresent;
+  Result := (PhysicalAddress and EntryAddressMask) or EntryPresent;
   if (Attributes and MappingWritable) <> 0 then
     Result := Result or EntryWritable;
   if (Attributes and MappingUser) <> 0 then
@@ -171,17 +203,17 @@ begin
     Result := Result or EntryNoExecute;
 end;
 
-{ Walks down to the level 1 table covering VirtualAddress. When
-  CreateMissing is set, absent intermediate tables are allocated.
+{ Walks down from TopLevel to the level 1 table covering VirtualAddress.
+  When CreateMissing is set, absent intermediate tables are allocated.
   Returns nil if a table is missing (or could not be allocated). }
-function FindPageTable(VirtualAddress: QWord; CreateMissing: Boolean): PPageTable;
+function FindPageTable(TopLevel: PPageTable; VirtualAddress: QWord; CreateMissing: Boolean): PPageTable;
 var
   Table: PPageTable;
   Level: Integer;
   Index: Integer;
   NewTable: TPhysicalAddress;
 begin
-  Table := TopLevelTable;
+  Table := TopLevel;
   for Level := 4 downto 2 do
   begin
     Index := TableIndex(VirtualAddress, Level);
@@ -205,8 +237,8 @@ begin
   Result := Table;
 end;
 
-function MapKernelPage(VirtualAddress: QWord; PhysicalAddress: TPhysicalAddress;
-  Attributes: LongWord): Boolean;
+function MapPageInTable(TopLevel: PPageTable; VirtualAddress: QWord;
+  PhysicalAddress: TPhysicalAddress; Attributes: LongWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
   Table: PPageTable;
@@ -214,7 +246,7 @@ var
 begin
   PreviousLevel := AcquireSpinLock(PageTableLock);
 
-  Table := FindPageTable(VirtualAddress, True);
+  Table := FindPageTable(TopLevel, VirtualAddress, True);
   if Table = nil then
   begin
     ReleaseSpinLock(PageTableLock, PreviousLevel);
@@ -226,13 +258,14 @@ begin
     KernelPanicWithCode(PanicPageTableFailure, 'virtual page is already mapped',
       VirtualAddress, Table^[Index], 0, 0);
 
-  Table^[Index] := EncodeEntry(PhysicalAddress and EntryAddressMask, Attributes);
+  Table^[Index] := EncodeEntry(PhysicalAddress, Attributes);
 
   ReleaseSpinLock(PageTableLock, PreviousLevel);
   Result := True;
 end;
 
-function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
+function UnmapPageInTable(TopLevel: PPageTable; VirtualAddress: QWord;
+  FlushTlb: Boolean): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
   Table: PPageTable;
@@ -241,7 +274,7 @@ begin
   Result := 0;
   PreviousLevel := AcquireSpinLock(PageTableLock);
 
-  Table := FindPageTable(VirtualAddress, False);
+  Table := FindPageTable(TopLevel, VirtualAddress, False);
   if Table <> nil then
   begin
     Index := TableIndex(VirtualAddress, 1);
@@ -249,14 +282,15 @@ begin
     begin
       Result := Table^[Index] and EntryAddressMask;
       Table^[Index] := 0;
-      InvalidateTlbEntry(VirtualAddress);
+      if FlushTlb then
+        InvalidateTlbEntry(VirtualAddress);
     end;
   end;
 
   ReleaseSpinLock(PageTableLock, PreviousLevel);
 end;
 
-function TranslateVirtualAddress(VirtualAddress: QWord;
+function TranslateInTable(TopLevel: PPageTable; VirtualAddress: QWord;
   out PhysicalAddress: TPhysicalAddress): Boolean;
 var
   Table: PPageTable;
@@ -265,7 +299,7 @@ var
   OffsetMask: QWord;
 begin
   PhysicalAddress := 0;
-  Table := TopLevelTable;
+  Table := TopLevel;
 
   for Level := 4 downto 1 do
   begin
@@ -284,6 +318,116 @@ begin
     Table := TableFromEntry(Entry);
   end;
   Result := False;
+end;
+
+{ --- Kernel address space -------------------------------------------- }
+
+function MapKernelPage(VirtualAddress: QWord; PhysicalAddress: TPhysicalAddress;
+  Attributes: LongWord): Boolean;
+begin
+  Result := MapPageInTable(KernelTopLevelTable, VirtualAddress, PhysicalAddress, Attributes);
+end;
+
+function UnmapKernelPage(VirtualAddress: QWord): TPhysicalAddress;
+begin
+  Result := UnmapPageInTable(KernelTopLevelTable, VirtualAddress, True);
+end;
+
+function TranslateVirtualAddress(VirtualAddress: QWord;
+  out PhysicalAddress: TPhysicalAddress): Boolean;
+begin
+  Result := TranslateInTable(KernelTopLevelTable, VirtualAddress, PhysicalAddress);
+end;
+
+{ --- User address spaces --------------------------------------------- }
+
+function CreateAddressSpaceRoot: TPhysicalAddress;
+var
+  Table: PPageTable;
+  Index: Integer;
+begin
+  Result := AllocateZeroedPhysicalPage(PageUsagePageTable);
+  if Result = 0 then
+    Exit;
+  Table := TableFromRoot(Result);
+  for Index := FirstKernelTopLevelEntry to EntriesPerTable - 1 do
+    Table^[Index] := KernelTopLevelTable^[Index];
+end;
+
+{ Frees a lower level table and everything below it. Level 1 tables point
+  at the user's pages, which belong to the address space and are freed
+  too. }
+procedure FreeTableTree(TablePhysical: TPhysicalAddress; Level: Integer);
+var
+  Table: PPageTable;
+  Index: Integer;
+begin
+  Table := TableFromRoot(TablePhysical);
+  for Index := 0 to EntriesPerTable - 1 do
+  begin
+    if (Table^[Index] and EntryPresent) = 0 then
+      Continue;
+    if Level = 1 then
+      FreePhysicalPage(Table^[Index] and EntryAddressMask)
+    else
+      FreeTableTree(Table^[Index] and EntryAddressMask, Level - 1);
+  end;
+  FreePhysicalPage(TablePhysical);
+end;
+
+procedure DestroyAddressSpaceRoot(Root: TPhysicalAddress);
+var
+  Table: PPageTable;
+  Index: Integer;
+begin
+  if (Root = 0) or (Root = KernelTopLevelTablePhysical) then
+    Exit;
+  if ActiveAddressSpace = Root then
+    KernelPanicWithCode(PanicPageTableFailure, 'destroying the active address space', Root, 0, 0, 0);
+
+  Table := TableFromRoot(Root);
+  for Index := 0 to FirstKernelTopLevelEntry - 1 do
+  begin
+    if (Table^[Index] and EntryPresent) <> 0 then
+      FreeTableTree(Table^[Index] and EntryAddressMask, 3);
+  end;
+  FreePhysicalPage(Root);
+end;
+
+function MapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  PhysicalAddress: TPhysicalAddress; Attributes: LongWord): Boolean;
+begin
+  if VirtualAddress >= UserSpaceLimit then
+    Exit(False);
+  Result := MapPageInTable(TableFromRoot(Root), VirtualAddress, PhysicalAddress,
+    Attributes or MappingUser);
+end;
+
+function UnmapPageInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord): TPhysicalAddress;
+begin
+  if VirtualAddress >= UserSpaceLimit then
+    Exit(0);
+  { Only the active address space can have stale TLB entries. }
+  Result := UnmapPageInTable(TableFromRoot(Root), VirtualAddress, ActiveAddressSpace = Root);
+end;
+
+function TranslateInAddressSpace(Root: TPhysicalAddress; VirtualAddress: QWord;
+  out PhysicalAddress: TPhysicalAddress): Boolean;
+begin
+  Result := TranslateInTable(TableFromRoot(Root), VirtualAddress, PhysicalAddress);
+end;
+
+procedure ActivateAddressSpace(Root: TPhysicalAddress);
+begin
+  if Root = 0 then
+    Root := KernelTopLevelTablePhysical;
+  if (ReadControlRegister3 and EntryAddressMask) <> Root then
+    WriteControlRegister3(Root);
+end;
+
+function ActiveAddressSpace: TPhysicalAddress;
+begin
+  Result := ReadControlRegister3 and EntryAddressMask;
 end;
 
 end.

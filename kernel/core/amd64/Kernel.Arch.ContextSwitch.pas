@@ -36,7 +36,8 @@ procedure ArchSetThreadInterruptStack(StackTop: QWord);
 implementation
 
 uses
-  Kernel.Arch.DescriptorTables;
+  Kernel.Arch.DescriptorTables,
+  Kernel.Arch.SystemCallEntry;
 
 const
   InitialFlags = QWord($2); { bit 1 is always set; interrupts disabled }
@@ -97,6 +98,7 @@ end;
 procedure ArchSetThreadInterruptStack(StackTop: QWord);
 begin
   SetInterruptKernelStack(StackTop);
+  SetSystemCallKernelStack(StackTop);
 end;
 
 end.

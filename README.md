@@ -39,12 +39,30 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   metadata checksums, htree directories for reading, sparse files, fast and
   slow symbolic links).
 - A real-time clock driver, so files get correct timestamps.
+- **User mode**: processes with their own address spaces (demand-zero
+  memory, isolated crashes), system calls through `syscall`, per-process
+  handle tables, pipes, a console and `/dev/null`, and an ELF loader that
+  maps position independent programs and the shared libraries they need,
+  binding symbols at load time. Programs can also load libraries at run
+  time (`LoadLibrary` / `FindSymbol`).
+- **A userland written in Free Pascal**: `libsystem.so` (system calls,
+  heap, buffered streams, printf style formatting, files, processes,
+  environment, time), `libcoreutils.so` (GNU style option parsing,
+  messages, sorting, tree copying), a POSIX style shell `sh` (pipes,
+  redirections, `&&` `||`, `if` / `while` / `until` / `for`, variables,
+  `$( )` and `$(( ))`, globbing, quoting, scripts) and recreations of the
+  GNU core utilities: basename cat cp cut date df dirname echo env expr
+  false fold head ln ls mkdir mv nl paste printf pwd readlink rm rmdir
+  seq sleep sort stat sync tac tail tee test `[` touch tr true truncate
+  uname uniq wc yes.
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
   write tests against a disk image with one partition of every supported
   format. After a test run, `make test` checks every written partition with
   the format's own tools (fsck.fat, fsck.exfat, e2fsck, mtools, debugfs).
+  `make test` then runs `coretest` in user mode, which drives the shell and
+  every utility through about 130 command lines and checks their output.
 
 ## Requirements
 
@@ -61,15 +79,23 @@ On Arch based systems:
 ## Building and running
 
 ```
-make            # build build/amd64/esp (loader + kernel)
-make run        # boot in QEMU with the test disk; the kernel log appears on the terminal
-make debug      # same, but wait for GDB on localhost:1234
-make test       # boot headless, run every self test, print TEST PASSED or TEST FAILED
-make image      # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
+make              # build build/amd64/esp (loader + kernel)
+make userland     # build the libraries and programs into build/amd64/user
+make system-disk  # build the ext4 system volume (/bin, /lib, /etc, /tmp, /home)
+make run          # boot in QEMU with the test and system disks; the kernel log
+                  # and then the shell appear on the terminal
+make debug        # same, but wait for GDB on localhost:1234
+make test         # boot headless, run every self test and coretest,
+                  # print TEST PASSED or TEST FAILED
+make image        # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
 ```
 
-Mounted volumes appear under the root as `/disk1p1`, `/disk1p2`, ...
+After startup the kernel runs `/bin/sh` from the system volume (the volume
+labelled `FPOSROOT`, or the one named by the `root=` option) on the serial
+console; `init=/bin/program` picks another first program. Programs see the
+system volume as `/`; every mounted volume is also reachable as
+`/volumes/disk1p1`, `/volumes/disk1p2`, ...
 
 Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
 (see `kernel/core/Kernel.Options.pas`).
@@ -86,9 +112,12 @@ sudo dd if=build/amd64/FreePascalOS.img of=/dev/sdX bs=1M conv=fsync
 ```
 boot/uefi/          UEFI loader (built as a PE32+ EFI application)
   amd64/            Page table setup and kernel hand-off for x86-64
-shared/             Code and definitions used by both loader and kernel
+shared/             Code and definitions used by more than one of loader,
+                    kernel and userland (system call ABI, ELF, text, memory)
   amd64/            Virtual address layout for x86-64
-rtl/                Minimal freestanding System unit for the compiler
+rtl/                System units for the compiler: freestanding/ (loader and
+                    kernel), user/ (user programs, with the si_prc startup
+                    unit), common/ (units both need)
 hal/amd64/          Hardware abstraction layer: APIC, PIT, PIC, serial, ports
 kernel/
   Kernel.Startup    Entry point and phase 0 / phase 1 initialization
@@ -100,15 +129,24 @@ kernel/
   memory/           Physical pages, virtual ranges, heap, stacks
   memory/amd64/     Page tables
   objects/          Object manager
-  processes/        Process and thread objects
+  processes/        Processes, threads, address spaces, handles, the ELF
+                    image loader, system calls and the first user program
   firmware/         ACPI tables
-  io/               I/O startup, PCI, block devices, partitions, block cache
+  io/               I/O startup, PCI, block devices, partitions, block cache,
+                    pipes, console and null device
   drivers/storage/  AHCI SATA driver
   filesystems/      VFS (types, volumes, open files) and the FAT, exFAT and
                     ext2/3/4 drivers
-  runtime/          Linked lists, atomics, checksums, Unicode, time
+  runtime/          Linked lists, atomics, checksums, Unicode
   debug/            Debug log and framebuffer console (+ font)
   link/             Kernel linker scripts
+userland/
+  lib/system/       libsystem.so: the Sys.* units
+  lib/coreutils/    libcoreutils.so: the Util.* units shared by the tools
+  lib/plugin/       libplugin.so, loaded at run time by coretest
+  bin/              One file per program (/bin/<name>)
+  sh/               The shell's units (lexer, parser, expansion, execution)
+  userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes

@@ -1,0 +1,183 @@
+{
+  Files and directories.
+
+  Thin, typed layer over the file system calls. Functions returning Int64
+  give a handle (or count) on success and a negative error code on
+  failure; functions returning LongInt give 0 or an error code.
+}
+unit Sys.Files;
+
+{$mode objfpc}
+{$pointermath on}
+
+interface
+
+uses
+  Abi.SystemCalls;
+
+type
+  TFileInformation = TAbiFileInformation;
+  TDirectoryEntry = TAbiDirectoryEntry;
+
+const
+  PathCapacity = 1024;
+
+function OpenFile(Path: PChar; Flags: LongWord): Int64;
+procedure CloseFile(Handle: Int64);
+function ReadFile(Handle: Int64; Buffer: Pointer; Count: QWord): Int64;
+function WriteFile(Handle: Int64; Buffer: Pointer; Count: QWord): Int64;
+{ Writes everything (retrying partial writes); 0 or an error code. }
+function WriteAll(Handle: Int64; Buffer: Pointer; Count: QWord): LongInt;
+function SeekFile(Handle: Int64; Offset: Int64; Origin: LongWord): Int64;
+function SetFileSize(Handle: Int64; Size: QWord): LongInt;
+
+function GetFileInformation(Path: PChar; out Information: TFileInformation): LongInt;
+{ Describes a symbolic link itself rather than what it points to. }
+function GetLinkInformation(Path: PChar; out Information: TFileInformation): LongInt;
+function GetHandleInformation(Handle: Int64; out Information: TFileInformation): LongInt;
+function PathExists(Path: PChar): Boolean;
+function IsDirectory(Path: PChar): Boolean;
+
+{ Reads the next entry; returns False at the end (or on an error). }
+function ReadDirectoryEntry(Handle: Int64; out Entry: TDirectoryEntry): Boolean;
+
+function CreateDirectory(Path: PChar): LongInt;
+function RemovePath(Path: PChar): LongInt;
+function RenamePath(SourcePath, TargetPath: PChar): LongInt;
+function CreateSymbolicLink(Target, Path: PChar): LongInt;
+function ReadSymbolicLink(Path: PChar; Buffer: PChar; Capacity: QWord): LongInt;
+
+function GetCurrentDirectory(Buffer: PChar; Capacity: QWord): LongInt;
+function ChangeDirectory(Path: PChar): LongInt;
+
+function SyncFileSystems: LongInt;
+
+implementation
+
+uses
+  Sys.Kernel,
+  Sys.Errors;
+
+function OpenFile(Path: PChar; Flags: LongWord): Int64;
+begin
+  Result := KernelOpen(Path, Flags);
+end;
+
+procedure CloseFile(Handle: Int64);
+begin
+  KernelClose(Handle);
+end;
+
+function ReadFile(Handle: Int64; Buffer: Pointer; Count: QWord): Int64;
+begin
+  Result := KernelRead(Handle, Buffer, Count);
+end;
+
+function WriteFile(Handle: Int64; Buffer: Pointer; Count: QWord): Int64;
+begin
+  Result := KernelWrite(Handle, Buffer, Count);
+end;
+
+function WriteAll(Handle: Int64; Buffer: Pointer; Count: QWord): LongInt;
+var
+  Written: QWord;
+  WriteResult: Int64;
+begin
+  Written := 0;
+  while Written < Count do
+  begin
+    WriteResult := KernelWrite(Handle, PByte(Buffer) + Written, Count - Written);
+    if WriteResult < 0 then
+      Exit(ErrorCodeOf(WriteResult));
+    if WriteResult = 0 then
+      Exit(ErrorIo);
+    Written := Written + QWord(WriteResult);
+  end;
+  Result := ErrorNone;
+end;
+
+function SeekFile(Handle: Int64; Offset: Int64; Origin: LongWord): Int64;
+begin
+  Result := KernelSeek(Handle, Offset, Origin);
+end;
+
+function SetFileSize(Handle: Int64; Size: QWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelSetFileSize(Handle, Size));
+end;
+
+function GetFileInformation(Path: PChar; out Information: TFileInformation): LongInt;
+begin
+  Result := ErrorCodeOf(KernelGetPathInformation(Path, Information, True));
+end;
+
+function GetLinkInformation(Path: PChar; out Information: TFileInformation): LongInt;
+begin
+  Result := ErrorCodeOf(KernelGetPathInformation(Path, Information, False));
+end;
+
+function GetHandleInformation(Handle: Int64; out Information: TFileInformation): LongInt;
+begin
+  Result := ErrorCodeOf(KernelGetHandleInformation(Handle, Information));
+end;
+
+function PathExists(Path: PChar): Boolean;
+var
+  Information: TFileInformation;
+begin
+  Result := GetLinkInformation(Path, Information) = ErrorNone;
+end;
+
+function IsDirectory(Path: PChar): Boolean;
+var
+  Information: TFileInformation;
+begin
+  Result := (GetFileInformation(Path, Information) = ErrorNone) and (Information.Kind = KindDirectory);
+end;
+
+function ReadDirectoryEntry(Handle: Int64; out Entry: TDirectoryEntry): Boolean;
+begin
+  Result := KernelReadDirectory(Handle, Entry) > 0;
+end;
+
+function CreateDirectory(Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelCreateDirectory(Path));
+end;
+
+function RemovePath(Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelRemove(Path));
+end;
+
+function RenamePath(SourcePath, TargetPath: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelRename(SourcePath, TargetPath));
+end;
+
+function CreateSymbolicLink(Target, Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelCreateSymbolicLink(Target, Path));
+end;
+
+function ReadSymbolicLink(Path: PChar; Buffer: PChar; Capacity: QWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelReadSymbolicLink(Path, Buffer, Capacity));
+end;
+
+function GetCurrentDirectory(Buffer: PChar; Capacity: QWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelGetCurrentDirectory(Buffer, Capacity));
+end;
+
+function ChangeDirectory(Path: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelSetCurrentDirectory(Path));
+end;
+
+function SyncFileSystems: LongInt;
+begin
+  Result := ErrorCodeOf(KernelSync);
+end;
+
+end.

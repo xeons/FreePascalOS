@@ -38,15 +38,20 @@ how the existing pieces fit together.
 - [ ] Unmap the kernel image's padding and map .text/.rodata with no-execute
       where appropriate (verify W^X across the whole kernel)
 - [ ] Contiguous physical allocations (for DMA buffers)
-- [ ] Per-process address spaces (copy the kernel half of the top level table)
-- [ ] Page fault handling for demand-zero and later demand-paged memory
+- [x] Per-process address spaces (copy the kernel half of the top level table)
+- [x] Page fault handling for demand-zero memory
+- [ ] Demand paging from files (map executables instead of copying them in)
+- [ ] Copy-on-write sharing of library pages between processes
 
 ## Objects and processes
 
 - [ ] Hierarchical object namespace (directories, e.g. `\Device\Keyboard`)
-- [ ] Per-process handle tables
-- [ ] Process creation and teardown
-- [ ] Waiting on thread and process objects (exit notification)
+- [x] Per-process handle tables
+- [x] Process creation and teardown
+- [x] Waiting on process objects (exit notification)
+- [ ] Multiple threads per user process (thread creation call, thread local storage)
+- [ ] Signals or another way to interrupt a running program (Ctrl-C)
+- [ ] Users, groups and permission checks
 
 ## I/O
 
@@ -96,10 +101,27 @@ how the existing pieces fit together.
 
 ## User mode
 
-- [ ] Ring 3 transition and system call entry (`syscall`/`sysret`)
-- [ ] System call table and argument validation
-- [ ] Executable loader for user programs (ELF)
-- [ ] First user mode program
+- [x] Ring 3 transition and system call entry (`syscall`, return with `iretq`)
+- [x] System call table and argument validation
+- [x] ELF loader for position independent programs and shared libraries
+      (DT_NEEDED, eager binding, run time LoadLibrary / FindSymbol)
+- [x] First user mode program (`init=`, default `/bin/sh`)
+- [x] Pipes, console, /dev/null, handle duplication
+- [x] User System unit and startup code; libsystem.so; libcoreutils.so
+- [x] Shell: pipes, redirections, && ||, if/while/until/for, variables,
+      $( ), $(( )), globbing, quoting, scripts, builtins
+- [x] Core utilities: basename cat cp cut date df dirname echo env expr false
+      fold head ln ls mkdir mv nl paste printf pwd readlink rm rmdir seq sleep
+      sort stat sync tac tail tee test [ touch tr true truncate uname uniq wc yes
+- [x] `coretest`: user mode tests run by `make test`
+- [ ] Lazy binding (PLT resolution on first call) and symbol versioning
+- [ ] Thread local storage (PT_TLS) so FPC threadvars work in user mode
+- [ ] Unit initialization sections in libraries (DT_INIT / DT_INIT_ARRAY)
+- [ ] Shell: case, functions, here documents, job control, history and line editing
+- [ ] More utilities: grep, find, xargs, od, md5sum/sha256sum, du, chmod, id, comm, split
+- [ ] touch: a system call to set file times; df: free space per volume
+- [ ] Hard links in ln (the ext driver supports them internally)
+- [ ] Interrupt driven console input (keyboard and serial) instead of polling
 
 ## ARM64 port
 
@@ -116,5 +138,6 @@ how the existing pieces fit together.
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results
 - [x] Test disk with one partition per supported file system
+- [x] System disk (ext4, FPOSROOT) built from the userland without root rights
 - [ ] Continuous integration running `make test`
 - [ ] GDB helper script (load symbols, break on panic)

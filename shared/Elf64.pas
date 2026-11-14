@@ -1,8 +1,9 @@
 {
   ELF64 file format structures.
 
-  Only the parts needed to load a statically linked executable are
-  described here: the file header and program headers.
+  Describes what is needed to load executables and shared objects: the
+  file header, program headers, and the dynamic section with its symbol
+  and relocation tables.
 }
 unit Elf64;
 
@@ -16,11 +17,42 @@ const
   ElfClass64 = 2;
   ElfDataLittleEndian = 1;
   ElfTypeExecutable = 2;
+  ElfTypeSharedObject = 3; { also position independent executables }
 
   ElfMachineAmd64 = 62;
   ElfMachineAarch64 = 183;
 
   ProgramHeaderTypeLoad = 1;
+  ProgramHeaderTypeDynamic = 2;
+  ProgramHeaderTypeInterpreter = 3;
+  ProgramHeaderTypeThreadLocal = 7;
+
+  { Dynamic section tags. }
+  DynamicNull = 0;
+  DynamicNeeded = 1;
+  DynamicPltRelocationSize = 2;
+  DynamicHash = 4;
+  DynamicStringTable = 5;
+  DynamicSymbolTable = 6;
+  DynamicRela = 7;
+  DynamicRelaSize = 8;
+  DynamicRelaEntrySize = 9;
+  DynamicStringTableSize = 10;
+  DynamicSymbolEntrySize = 11;
+  DynamicSharedObjectName = 14;
+  DynamicPltRelocationType = 20;
+  DynamicJumpRelocations = 23;
+
+  SymbolUndefinedSection = 0;
+  SymbolBindingWeak = 2;
+
+  { x86-64 relocation types. }
+  RelocationNone = 0;
+  Relocation64 = 1;
+  RelocationCopy = 5;
+  RelocationGlobalData = 6;
+  RelocationJumpSlot = 7;
+  RelocationRelative = 8;
 
   SegmentFlagExecute = 1;
   SegmentFlagWrite = 2;
@@ -63,6 +95,69 @@ type
   end;
   PElf64ProgramHeader = ^TElf64ProgramHeader;
 
+type
+  TElf64Dynamic = record
+    Tag: Int64;
+    Value: QWord;
+  end;
+  PElf64Dynamic = ^TElf64Dynamic;
+
+  TElf64Symbol = packed record
+    NameOffset: LongWord;
+    Information: Byte;
+    Other: Byte;
+    SectionIndex: Word;
+    Value: QWord;
+    Size: QWord;
+  end;
+  PElf64Symbol = ^TElf64Symbol;
+
+  TElf64Rela = record
+    Offset: QWord;
+    Information: QWord;
+    Addend: Int64;
+  end;
+  PElf64Rela = ^TElf64Rela;
+
+function RelocationSymbolIndex(const Relocation: TElf64Rela): LongWord;
+function RelocationType(const Relocation: TElf64Rela): LongWord;
+function SymbolBinding(const Symbol: TElf64Symbol): Byte;
+
+{ The classic System V ELF hash of a symbol name. }
+function ElfHash(Name: PChar): LongWord;
+
 implementation
+
+function RelocationSymbolIndex(const Relocation: TElf64Rela): LongWord;
+begin
+  Result := LongWord(Relocation.Information shr 32);
+end;
+
+function RelocationType(const Relocation: TElf64Rela): LongWord;
+begin
+  Result := LongWord(Relocation.Information and $FFFFFFFF);
+end;
+
+function SymbolBinding(const Symbol: TElf64Symbol): Byte;
+begin
+  Result := Symbol.Information shr 4;
+end;
+
+function ElfHash(Name: PChar): LongWord;
+var
+  HighBits: LongWord;
+begin
+  Result := 0;
+  while Name^ <> #0 do
+  begin
+    Result := (Result shl 4) + Byte(Name^);
+    HighBits := Result and $F0000000;
+    if HighBits <> 0 then
+      Result := Result xor (HighBits shr 24);
+    Result := Result and not HighBits;
+    Inc(Name);
+  end;
+end;
+
 
 end.

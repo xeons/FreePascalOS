@@ -7,7 +7,11 @@ instead of NT's terminology.
 
 ```
 +-----------------------------------------------------------+
-|  Processes (process and thread objects)                    |
+|  User mode: sh, coreutils -> libcoreutils, libsystem       |
++=================== system calls (syscall) ================+
+|  Processes (processes, threads, address spaces, handles,   |
+|             image loader, system calls)                    |
+|  I/O       (block devices, file systems, pipes, console)   |
 |  Objects   (object manager, reference counting, names)     |
 |  Memory    (page frames, page tables, heap, stacks)        |   "executive"
 +-----------------------------------------------------------+
@@ -97,7 +101,7 @@ pages hold the kernel image, boot data and page tables.
 ## Virtual address space (x86-64)
 
 ```
-0000_0000_0000_0000 - 0000_7FFF_FFFF_FFFF   user space (future)
+0000_0000_0000_0000 - 0000_7FFF_FFFF_FFFF   user space (one per process)
 FFFF_8000_0000_0000 - FFFF_BFFF_FFFF_FFFF   physical memory window
 FFFF_C000_0000_0000 - FFFF_C0FF_FFFF_FFFF   kernel dynamic region (heap, stacks)
 FFFF_FFFF_8000_0000 - FFFF_FFFF_FFFF_FFFF   kernel image
@@ -224,6 +228,111 @@ followed by its body; callers only ever see body pointers. An object is
 deleted, through its type's delete routine, when its last reference is
 dropped. Named objects live in a flat namespace (`LookupObjectByName`).
 Thread objects embed the scheduler's thread control block.
+
+## User mode
+
+### Processes and address spaces
+
+Each user process has its own top level page table. The kernel half is
+copied from the kernel's table when the process is created, so kernel
+addresses stay valid in every process; the scheduler loads a thread's
+`AddressSpaceRoot` into CR3 when it switches between processes.
+
+User memory is described by a sorted list of regions (`Processes.AddressSpace`):
+the program image (from 0x400000), shared libraries (from 0x7F00_0000_0000),
+heap allocations and an 8 MiB stack below 0x7FFF_FFFF_F000. Pages are only
+mapped when first touched: the page fault handler asks the address space
+whether the address belongs to a region and, if so, maps a zeroed page. A
+fault anywhere else in user mode ends just that process (exit status 139,
+as a segmentation fault on Unix).
+
+### System calls
+
+Programs enter the kernel with the `syscall` instruction. The number is in
+RAX and the arguments in RDI, RSI, RDX, R10, R8 and R9, as on Linux; the
+result comes back in RAX, with errors as negative values (`-ErrorNotFound`,
+...). The numbers, error codes and the records passed to the kernel are in
+`shared/Abi.SystemCalls.pas`, which the kernel and `libsystem` both compile.
+
+The entry code switches to the thread's kernel stack, builds a trap frame
+and calls `DispatchSystemCall` with interrupts enabled; it returns with
+`iretq`. Every user pointer is checked against the user half and the
+process's regions before the kernel touches it (`Processes.UserAccess`).
+
+| Area | Calls |
+|---|---|
+| Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind |
+| Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, Get/SetCurrentDirectory |
+| Processes | CreateProcess, WaitForProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
+| Memory | AllocateMemory, FreeMemory |
+| Libraries | LoadLibrary, FindSymbol |
+| System | GetTime, GetSystemInformation, ListVolumes, Sync |
+
+There is no fork: `CreateProcess` starts a program directly, with an
+argument list, an environment, a working directory and the three handles
+that become the new program's standard input, output and error.
+
+### Handles
+
+A process has a table of 64 handles, each naming a referenced object and
+its kind: file, console, pipe read end, pipe write end, process or the
+null device. Handles 0-2 are standard input, output and error.
+`DuplicateHandle` copies one onto another number, which is how the shell
+redirects its own output for builtins. A pipe counts its open ends
+separately from object references, so a reader sees end of file once the
+last write end is closed, and a writer gets a broken pipe error once no
+reader is left.
+
+### Paths
+
+Programs see a Unix style tree: `/` is the root of the system volume (the
+one labelled `FPOSROOT`, or named by `root=`), and `/volumes/<name>`
+leads to every mounted volume. `/dev/null` is the null device.
+`Processes.Paths` normalizes a path against the current directory and
+translates it to the kernel's namespace.
+
+### Executables and shared libraries
+
+Programs and libraries are position independent ELF files (`ld -pie` and
+`ld -shared`), linked with `--hash-style=sysv`. The kernel's loader
+(`Processes.ImageLoader`) does the work of a dynamic linker: it maps each
+segment, loads every `DT_NEEDED` library from `/lib` (once per process),
+and applies the relocations (RELATIVE, 64, GLOB_DAT, JUMP_SLOT and COPY),
+binding every symbol at load time by searching the modules in load order.
+`LoadLibrary` uses the same machinery for libraries opened at run time,
+and `FindSymbol` looks a name up in a library and the libraries it needs.
+
+The initial stack holds the argument count, the arguments, the
+environment and an auxiliary vector (program headers, page size, entry
+point), as on Linux.
+
+### The userland
+
+Everything in user mode is Free Pascal, compiled with `-Cg` (position
+independent) against `rtl/user/system.pas`:
+
+- **System unit** – the `syscall` instruction, program start (reads the
+  initial stack and runs the main block) and exit (with a hook so buffered
+  output is flushed).
+- **si_prc** – the `_start` entry point linked into each program.
+- **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
+  `Sys.Memory` (size class heap on top of AllocateMemory), `Sys.Streams`
+  (buffered standard input, output and error), `Sys.Format` (printf style),
+  `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
+  `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`.
+- **libcoreutils.so** – `Util.Options` (GNU style options: grouped short
+  options, long options with abbreviations, `--help` and `--version`),
+  `Util.Messages` ("program: message: error" diagnostics), `Util.Input`,
+  `Util.Paths`, `Util.Sorting` (stable merge sort), `Util.Sizes`,
+  `Util.Directories`, `Util.FileTree` (copying and removing trees).
+- **sh** – lexer, parser to a syntax tree, word expansion and execution.
+  Pipelines start their external programs first and then run builtins and
+  compound commands inside the shell, so no stage waits for one that has
+  not started.
+- **coreutils** – one program per file in `userland/bin`.
+
+Free Pascal units do not use initialization sections or threadvars in user
+mode; libraries are plain collections of routines and data.
 
 ## Coding conventions
 

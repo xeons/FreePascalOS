@@ -2,7 +2,7 @@
 #
 # Boots an EFI system partition directory in QEMU with OVMF firmware.
 #
-#   run-qemu.sh <arch> <esp-directory> [--debug] [extra-disk-image]
+#   run-qemu.sh <arch> <esp-directory> [--debug] [disk-image]...
 #
 # Serial output (the kernel debug log) appears on this terminal.
 # With --debug QEMU waits for GDB on localhost:1234.
@@ -12,12 +12,12 @@ set -euo pipefail
 architecture="$1"
 esp_directory="$2"
 debug_mode=""
-extra_disk_image=""
+extra_disk_images=()
 for argument in "${@:3}"; do
     if [[ "$argument" == "--debug" ]]; then
         debug_mode="--debug"
     else
-        extra_disk_image="$argument"
+        extra_disk_images+=("$argument")
     fi
 done
 
@@ -58,9 +58,9 @@ if [[ ! -f "$firmware_variables" ]]; then
 fi
 
 extra_arguments=()
-if [[ -n "$extra_disk_image" ]]; then
-    extra_arguments+=(-drive format=raw,file="$extra_disk_image")
-fi
+for disk_image in "${extra_disk_images[@]}"; do
+    extra_arguments+=(-drive format=raw,file="$disk_image")
+done
 if [[ "$debug_mode" == "--debug" ]]; then
     extra_arguments+=(-s -S)
     echo "Waiting for GDB: gdb $build_directory/kernel.elf -ex 'target remote :1234'"

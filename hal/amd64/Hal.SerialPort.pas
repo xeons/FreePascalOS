@@ -15,6 +15,9 @@ procedure InitializeSerialPort;
 procedure WriteSerialCharacter(Character: Char);
 function SerialPortIsPresent: Boolean;
 
+{ Returns True and the next received character if one is waiting. }
+function TryReadSerialCharacter(out Character: Char): Boolean;
+
 implementation
 
 uses
@@ -43,6 +46,7 @@ const
   ModemControlDataTerminalReadyAndRequestToSend = $0B;
 
   LineStatusTransmitterEmpty = $20;
+  LineStatusDataReady = $01;
 
   { 115200 / 1 = 115200 baud. }
   BaudDivisor = 1;
@@ -101,6 +105,15 @@ begin
 
   WaitUntilTransmitterIsEmpty;
   WritePortByte(Com1BasePort + RegisterData, Byte(Character));
+end;
+
+function TryReadSerialCharacter(out Character: Char): Boolean;
+begin
+  Character := #0;
+  Result := PortIsPresent and
+    ((ReadPortByte(Com1BasePort + RegisterLineStatus) and LineStatusDataReady) <> 0);
+  if Result then
+    Character := Char(ReadPortByte(Com1BasePort + RegisterData));
 end;
 
 end.

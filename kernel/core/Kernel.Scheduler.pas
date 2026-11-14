@@ -89,6 +89,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.ContextSwitch,
+  Memory.Arch.PageTables,
   Kernel.SpinLock,
   Kernel.Interrupts,
   Kernel.Clock,
@@ -178,6 +179,8 @@ begin
   Inc(SwitchCount);
 
   ArchSetThreadInterruptStack(NextThread^.StackTop);
+  if NextThread^.AddressSpaceRoot <> PreviousThread^.AddressSpaceRoot then
+    ActivateAddressSpace(NextThread^.AddressSpaceRoot);
   ArchSwitchContext(@PreviousThread^.SavedStackPointer, NextThread^.SavedStackPointer);
 
   { Execution continues here when PreviousThread is scheduled again. }
@@ -384,6 +387,7 @@ begin
 
   IdleThread^.State := ThreadStateRunning;
   IdleThread^.Priority := IdlePriority;
+  IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
   IdleThreadBlock := IdleThread;
   RunningThread := IdleThread;
   ArchSetThreadInterruptStack(IdleThread^.StackTop);
@@ -410,6 +414,9 @@ begin
   Thread^.StartRoutine := StartRoutine;
   Thread^.StartContext := StartContext;
   CopyText(@Thread^.Name[0], Name, ThreadNameLength);
+  { Kernel threads use the kernel address space; the process manager
+    changes this for threads of user processes. }
+  Thread^.AddressSpaceRoot := KernelPageTableRoot;
   Thread^.SavedStackPointer := ArchPrepareInitialStack(StackTop, @ThreadStartTrampoline);
 end;
 

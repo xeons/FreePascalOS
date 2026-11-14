@@ -3,7 +3,10 @@
 #   make            Build the loader and kernel into an EFI system partition tree
 #   make run        Boot it in QEMU with OVMF firmware and the test disk (log on stdio)
 #   make debug      Like run, but wait for GDB on localhost:1234
-#   make test       Boot headless with a test disk, run all self tests, report pass/fail
+#   make test       Boot headless with the test and system disks, run all self tests
+#                   and the user mode tests (coretest), report pass/fail
+#   make userland   Build the user mode libraries and programs
+#   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make clean      Remove all build output
@@ -80,19 +83,24 @@ all: esp
 
 # --- Runtime library -------------------------------------------------------
 
+# rtl/freestanding holds the System unit of the loader and the kernel,
+# rtl/user the one of user programs; rtl/common the units both need.
+# Arguments: output directory, System unit directory, compiler flags.
 define build-rtl
 	@mkdir -p $(1)
-	$(FPC) $(COMMON_FLAGS) $(2) -Us -FU$(1) rtl/system.pas
-	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/objpas.pas
-	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/sysinit.pas
-	$(FPC) $(COMMON_FLAGS) $(2) -Fu$(1) -FU$(1) rtl/fpintres.pas
+	$(FPC) $(COMMON_FLAGS) $(3) -Firtl/common -Us -FU$(1) $(2)/system.pas
+	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/objpas.pas
+	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/sysinit.pas
+	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/fpintres.pas
 endef
 
-$(RTL_LOADER_DIRECTORY)/system.ppu: $(wildcard rtl/*.pas)
-	$(call build-rtl,$(RTL_LOADER_DIRECTORY),$(LOADER_TARGET))
+RTL_SOURCES := $(wildcard rtl/common/*) $(wildcard rtl/freestanding/*.pas)
 
-$(RTL_KERNEL_DIRECTORY)/system.ppu: $(wildcard rtl/*.pas)
-	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),$(KERNEL_TARGET))
+$(RTL_LOADER_DIRECTORY)/system.ppu: $(RTL_SOURCES)
+	$(call build-rtl,$(RTL_LOADER_DIRECTORY),rtl/freestanding,$(LOADER_TARGET))
+
+$(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES)
+	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET))
 
 # --- Loader ----------------------------------------------------------------
 
@@ -135,20 +143,23 @@ image: esp
 	scripts/make-disk-image.sh $(ESP_DIRECTORY) $(BUILD_DIRECTORY)/FreePascalOS.img
 
 TEST_DISK := $(BUILD_DIRECTORY)/test-disk.img
+SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk.img
 
-run: esp $(TEST_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK)
+run: esp $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 
-debug: esp $(TEST_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug $(TEST_DISK)
+debug: esp $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug $(TEST_DISK) $(SYSTEM_DISK)
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@
 
 test-disk: $(TEST_DISK)
 
-test: esp $(TEST_DISK)
-	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK)
+test: esp $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
+
+include userland/userland.mk
 
 # --- Tools -----------------------------------------------------------------
 

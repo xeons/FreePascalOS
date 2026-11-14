@@ -45,6 +45,10 @@ type
     StackBase: QWord;
     StackTop: QWord;
 
+    { Physical address of the top level page table the thread runs on:
+      the kernel's for kernel threads, its process's for user threads. }
+    AddressSpaceRoot: QWord;
+
     State: TThreadState;
     Priority: LongWord;
     QuantumRemaining: LongInt;

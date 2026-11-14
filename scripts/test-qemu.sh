@@ -3,10 +3,10 @@
 # Boots the system headless in QEMU with the "test-exit" kernel option and
 # reports whether startup (including the kernel self tests) succeeded.
 #
-#   test-qemu.sh <arch> <esp-directory> [test-disk-image]
+#   test-qemu.sh <arch> <esp-directory> [test-disk-image] [system-disk-image]
 #
 # The kernel leaves QEMU through the isa-debug-exit device: exit status 1
-# means success, 3 means a panic. Anything else (for example the timeout)
+# means success, 3 means a panic, 5 that the user mode tests failed. Anything else (for example the timeout)
 # is a failure too. The serial log is printed and kept in the build
 # directory as test-serial.log.
 #
@@ -21,6 +21,7 @@ set -uo pipefail
 architecture="$1"
 esp_directory="$2"
 test_disk_image="${3:-}"
+system_disk_image="${4:-}"
 timeout_seconds=120
 expected_file_systems=(fat12 fat16 fat32 exfat ext2 ext3 ext4)
 
@@ -45,7 +46,13 @@ done
 # A private copy of the ESP with the test option added.
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
-echo "test-exit" > "$test_esp_directory/FreePascalOS/options.txt"
+# With a system disk the user mode test program runs as the first
+# process; its exit code decides the result.
+if [[ -n "${system_disk_image:-}" ]]; then
+    echo "test-exit init=/bin/coretest" > "$test_esp_directory/FreePascalOS/options.txt"
+else
+    echo "test-exit" > "$test_esp_directory/FreePascalOS/options.txt"
+fi
 
 firmware_variables="$build_directory/test-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
@@ -55,6 +62,11 @@ run_disk_image="$build_directory/test-disk-run.img"
 if [[ -n "$test_disk_image" ]]; then
     cp -f "$test_disk_image" "$run_disk_image"
     disk_arguments+=(-drive format=raw,file="$run_disk_image")
+fi
+run_system_disk_image="$build_directory/system-disk-run.img"
+if [[ -n "$system_disk_image" ]]; then
+    cp -f "$system_disk_image" "$run_system_disk_image"
+    disk_arguments+=(-drive format=raw,file="$run_system_disk_image")
 fi
 
 timeout "$timeout_seconds" qemu-system-x86_64 \
@@ -100,6 +112,9 @@ case "$qemu_status" in
         ;;
     3)
         echo "TEST FAILED: kernel panic"
+        ;;
+    5)
+        echo "TEST FAILED: the user mode tests (coretest) reported failures"
         ;;
     124)
         echo "TEST FAILED: timed out after ${timeout_seconds} seconds"

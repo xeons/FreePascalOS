@@ -83,6 +83,10 @@ function ReadDirectoryEntry(OpenedFile: POpenFile; out Entry: TDirectoryEntry): 
 
 function GetFileInformation(OpenedFile: POpenFile; out Information: TNodeInformation): TFileSystemStatus;
 function GetPathInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+{ Like GetPathInformation, but describes a final symbolic link itself. }
+function GetLinkInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+{ Copies the target of the symbolic link at Path (not followed). }
+function ReadSymbolicLinkTarget(Path: PChar; Target: PChar; Capacity: PtrUInt): TFileSystemStatus;
 
 function CreateDirectory(Path: PChar): TFileSystemStatus;
 function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
@@ -727,7 +731,8 @@ begin
   Result := StatusSuccess;
 end;
 
-function GetPathInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+function DescribePath(Path: PChar; FollowFinalLink: Boolean;
+  out Information: TNodeInformation): TFileSystemStatus;
 var
   Volume: PVolume;
   RemainingPath: PChar;
@@ -743,10 +748,47 @@ begin
   end;
 
   AcquireMutex(Volume^.Lock);
-  Result := ResolveInVolume(Volume, RemainingPath, True, 0, Node);
+  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, Node);
   if Result = StatusSuccess then
   begin
     Information := Node^.Information;
+    ReleaseNodeReference(Volume, Node);
+  end;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function GetPathInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+begin
+  Result := DescribePath(Path, True, Information);
+end;
+
+function GetLinkInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
+begin
+  Result := DescribePath(Path, False, Information);
+end;
+
+function ReadSymbolicLinkTarget(Path: PChar; Target: PChar; Capacity: PtrUInt): TFileSystemStatus;
+var
+  Volume: PVolume;
+  RemainingPath: PChar;
+  Node: PNode;
+begin
+  Result := SelectVolume(Path, Volume, RemainingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if Volume = nil then
+    Exit(StatusInvalidPath);
+
+  AcquireMutex(Volume^.Lock);
+  Result := ResolveInVolume(Volume, RemainingPath, False, 0, Node);
+  if Result = StatusSuccess then
+  begin
+    if Node^.Information.Kind <> NodeKindSymbolicLink then
+      Result := StatusInvalidPath
+    else if not Assigned(Volume^.Driver^.ReadSymbolicLink) then
+      Result := StatusUnsupported
+    else
+      Result := Volume^.Driver^.ReadSymbolicLink(Node, Target, Capacity);
     ReleaseNodeReference(Volume, Node);
   end;
   ReleaseMutex(Volume^.Lock);

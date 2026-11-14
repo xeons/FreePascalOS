@@ -1,0 +1,338 @@
+{
+  User processes: starting programs, ending them, and waiting for them.
+
+  Starting a program creates a process object with its own address space,
+  loads the program and its libraries, lays out the initial stack the
+  same way Unix systems do (argument count, argument and environment
+  pointers, auxiliary vector, then the strings), installs the standard
+  handles, and creates a thread that enters user mode at the program's
+  entry point.
+
+  A process ends when its program calls the exit system call or when it
+  raises an exception the kernel cannot resolve (such as an invalid
+  memory access). Either way its handles are closed, its address space
+  is freed and anyone waiting on it is woken.
+}
+unit Processes.UserProcess;
+
+{$mode objfpc}
+{$pointermath on}
+
+interface
+
+uses
+  Processes.Process,
+  Processes.Handles;
+
+const
+  ExitCodeForException = 139;
+
+type
+  TProcessStartup = record
+    KernelPath: PChar;
+    Name: PChar;
+    { Strings in kernel memory; copied onto the new process's stack. }
+    Arguments: PPChar;
+    ArgumentCount: Integer;
+    Environment: PPChar;
+    EnvironmentCount: Integer;
+    { Normalized user path. }
+    WorkingDirectory: PChar;
+    StandardKinds: array[0..2] of THandleKind;
+    StandardObjects: array[0..2] of Pointer;
+    ParentProcessId: QWord;
+  end;
+
+procedure InitializeUserProcesses;
+
+{ Starts a program. On success Process holds a reference for the caller. }
+function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess): LongInt;
+
+{ Ends the calling user process. Never returns. }
+procedure ExitCurrentProcess(ExitCode: LongInt);
+
+{ Waits until Process has ended and returns its exit code. }
+function WaitForProcessExit(Process: PProcess): LongInt;
+
+implementation
+
+uses
+  Runtime.Memory,
+  Runtime.Text,
+  Abi.SystemCalls,
+  Memory.Layout,
+  Memory.KernelHeap,
+  Memory.Arch.PageTables,
+  Kernel.Arch.TrapFrame,
+  Kernel.Arch.Cpu,
+  Kernel.Arch.Exceptions,
+  Kernel.Arch.UserMode,
+  Kernel.Threads,
+  Kernel.Scheduler,
+  Kernel.Events,
+  Kernel.Mutex,
+  Kernel.Panic,
+  Objects.Manager,
+  Processes.AddressSpace,
+  Processes.ImageLoader,
+  Processes.Thread,
+  Debug.Output;
+
+const
+  AuxiliaryNull = 0;
+  AuxiliaryProgramHeaders = 3;
+  AuxiliaryProgramHeaderSize = 4;
+  AuxiliaryProgramHeaderCount = 5;
+  AuxiliaryPageSize = 6;
+  AuxiliaryEntryPoint = 9;
+  AuxiliaryEntryCount = 6;
+  ProgramHeaderSize = 56;
+  UserThreadPriority = 8;
+
+type
+  TUserThreadStart = record
+    EntryPoint: QWord;
+    StackPointer: QWord;
+  end;
+  PUserThreadStart = ^TUserThreadStart;
+
+{ --- Faults ---------------------------------------------------------- }
+
+function ResolvePageFault(FaultAddress: QWord; ErrorCode: QWord): Boolean;
+var
+  Process: PProcess;
+begin
+  Process := CurrentProcess;
+  Result := (Process <> nil) and Process^.IsUserProcess and
+    ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
+end;
+
+procedure HandleUserException(Frame: PTrapFrame; Description: PChar);
+var
+  Process: PProcess;
+begin
+  Process := CurrentProcess;
+  DebugBeginMessage;
+  DebugWriteTag('process');
+  DebugWrite(@Process^.Name[0]);
+  DebugWrite(' (');
+  DebugWriteDecimal(Process^.ProcessId);
+  DebugWrite('): ');
+  DebugWrite(Description);
+  DebugWrite(' at ');
+  DebugWriteAddress(Frame^.Rip);
+  if TrapFrameVector(Frame) = 14 then
+  begin
+    DebugWrite(' accessing ');
+    DebugWriteAddress(ReadControlRegister2);
+  end;
+  DebugWriteLine(', terminated');
+  DebugEndMessage;
+
+  { Exceptions arrive with interrupts off; ending the process may block. }
+  EnableInterrupts;
+  ExitCurrentProcess(ExitCodeForException);
+end;
+
+procedure InitializeUserProcesses;
+begin
+  SetPageFaultResolver(@ResolvePageFault);
+  SetUserExceptionHandler(@HandleUserException);
+end;
+
+{ --- Starting -------------------------------------------------------- }
+
+function TotalStringBytes(Strings: PPChar; Count: Integer): QWord;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to Count - 1 do
+    Result := Result + TextLength(Strings[Index]) + 1;
+end;
+
+{ Builds the initial stack below UserStackTop and returns the stack
+  pointer the program starts with (pointing at the argument count). }
+function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
+  MainModule: PLoadedModule; out StackPointer: QWord): LongInt;
+var
+  StringBytes: QWord;
+  PointerSlots: QWord;
+  StringsStart: QWord;
+  Image: PByte;
+  ImageSize: QWord;
+  Slots: PQWord;
+  SlotIndex: QWord;
+  StringPosition: QWord;
+  Index: Integer;
+  Length: QWord;
+
+  procedure PutSlot(Value: QWord);
+  begin
+    Slots[SlotIndex] := Value;
+    Inc(SlotIndex);
+  end;
+
+  { Copies one string into the image and returns its user address. }
+  function PlaceString(Text: PChar): QWord;
+  begin
+    Length := TextLength(Text) + 1;
+    CopyMemory(Image + (StringPosition - StackPointer), Text, Length);
+    Result := StringPosition;
+    StringPosition := StringPosition + Length;
+  end;
+
+begin
+  StringBytes := TotalStringBytes(Startup.Arguments, Startup.ArgumentCount) +
+    TotalStringBytes(Startup.Environment, Startup.EnvironmentCount);
+  PointerSlots := 1 + QWord(Startup.ArgumentCount) + 1 + QWord(Startup.EnvironmentCount) + 1 +
+    2 * AuxiliaryEntryCount;
+
+  StringsStart := (UserStackTop - StringBytes) and not QWord(15);
+  StackPointer := (StringsStart - PointerSlots * SizeOf(QWord)) and not QWord(15);
+  ImageSize := UserStackTop - StackPointer;
+  if ImageSize > UserStackReserve div 2 then
+    Exit(ErrorNameTooLong); { arguments and environment are too large }
+
+  Image := PByte(AllocateZeroedKernelMemory(ImageSize));
+  if Image = nil then
+    Exit(ErrorOutOfMemory);
+
+  Slots := PQWord(Image);
+  SlotIndex := 0;
+  StringPosition := StringsStart;
+
+  PutSlot(QWord(Startup.ArgumentCount));
+  for Index := 0 to Startup.ArgumentCount - 1 do
+    PutSlot(PlaceString(Startup.Arguments[Index]));
+  PutSlot(0);
+  for Index := 0 to Startup.EnvironmentCount - 1 do
+    PutSlot(PlaceString(Startup.Environment[Index]));
+  PutSlot(0);
+
+  PutSlot(AuxiliaryProgramHeaders);
+  PutSlot(MainModule^.ProgramHeaderAddress);
+  PutSlot(AuxiliaryProgramHeaderSize);
+  PutSlot(ProgramHeaderSize);
+  PutSlot(AuxiliaryProgramHeaderCount);
+  PutSlot(MainModule^.ProgramHeaderCount);
+  PutSlot(AuxiliaryPageSize);
+  PutSlot(PageSize);
+  PutSlot(AuxiliaryEntryPoint);
+  PutSlot(MainModule^.EntryPoint);
+  PutSlot(AuxiliaryNull);
+  PutSlot(0);
+
+  Result := WriteIntoAddressSpace(Process^.AddressSpace, StackPointer, Image, ImageSize);
+  FreeKernelMemory(Image);
+end;
+
+procedure UserThreadStart(Context: Pointer);
+var
+  Start: TUserThreadStart;
+begin
+  Start := PUserThreadStart(Context)^;
+  FreeKernelMemory(Context);
+  ArchEnterUserMode(Start.EntryPoint, Start.StackPointer);
+end;
+
+function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess): LongInt;
+var
+  MainModule: PLoadedModule;
+  StackPointer: QWord;
+  StandardIndex: Integer;
+  ThreadStart: PUserThreadStart;
+begin
+  { The idle thread normally frees exited threads, but a busy system may
+    not go idle for a long time; starting a process is a good moment to
+    catch up, so finished processes do not pile up. }
+  ReapTerminatedThreads;
+
+  Process := CreateProcessObject(Startup.Name);
+  if Process = nil then
+    Exit(ErrorOutOfMemory);
+  Process^.ParentProcessId := Startup.ParentProcessId;
+  CopyText(@Process^.CurrentDirectory[0], Startup.WorkingDirectory, ProcessPathCapacity);
+
+  Result := CreateAddressSpace(Process^.AddressSpace);
+  if Result = ErrorNone then
+  begin
+    Process^.PageTableRoot := Process^.AddressSpace^.Root;
+    Result := AddRegion(Process^.AddressSpace, UserStackTop - UserStackReserve, UserStackReserve,
+      RegionReadable or RegionWritable, RegionKindStack, True);
+  end;
+  if Result = ErrorNone then
+    Result := LoadProgramImage(Process, Startup.KernelPath, MainModule);
+  if Result = ErrorNone then
+    Result := BuildInitialStack(Process, Startup, MainModule, StackPointer);
+
+  if Result = ErrorNone then
+  begin
+    for StandardIndex := 0 to 2 do
+    begin
+      if Startup.StandardObjects[StandardIndex] <> nil then
+        SetHandle(Process^.Handles, StandardIndex, Startup.StandardKinds[StandardIndex],
+          Startup.StandardObjects[StandardIndex]);
+    end;
+
+    ThreadStart := PUserThreadStart(AllocateKernelMemory(SizeOf(TUserThreadStart)));
+    if ThreadStart = nil then
+      Result := ErrorOutOfMemory
+    else
+    begin
+      ThreadStart^.EntryPoint := MainModule^.EntryPoint;
+      ThreadStart^.StackPointer := StackPointer;
+      if CreateThreadInProcess(Process, @UserThreadStart, ThreadStart, UserThreadPriority,
+        Startup.Name, False) = nil then
+      begin
+        FreeKernelMemory(ThreadStart);
+        Result := ErrorOutOfMemory;
+      end;
+    end;
+  end;
+
+  if Result <> ErrorNone then
+  begin
+    ReleaseModules(Process);
+    { The delete routine frees the address space and handles. }
+    DereferenceObject(Process);
+    Process := nil;
+  end;
+end;
+
+{ --- Ending ---------------------------------------------------------- }
+
+procedure ExitCurrentProcess(ExitCode: LongInt);
+var
+  Process: PProcess;
+  Space: PAddressSpace;
+begin
+  Process := CurrentProcess;
+  if not Process^.IsUserProcess then
+    KernelPanic('a kernel thread called ExitCurrentProcess');
+
+  AcquireMutex(Process^.Lock);
+  Process^.ExitCode := ExitCode;
+  Process^.HasExited := True;
+  CloseAllHandles(Process^.Handles);
+  ReleaseModules(Process);
+  Space := Process^.AddressSpace;
+  Process^.AddressSpace := nil;
+  ReleaseMutex(Process^.Lock);
+
+  { Leave the address space before freeing it. }
+  CurrentThread^.AddressSpaceRoot := KernelPageTableRoot;
+  ActivateAddressSpace(KernelPageTableRoot);
+  DestroyAddressSpace(Space);
+
+  SignalEvent(Process^.ExitEvent);
+  TerminateCurrentThread;
+end;
+
+function WaitForProcessExit(Process: PProcess): LongInt;
+begin
+  WaitForEvent(Process^.ExitEvent);
+  Result := Process^.ExitCode;
+end;
+
+end.

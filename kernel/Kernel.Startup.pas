@@ -53,6 +53,11 @@ uses
   FileSystem.Files,
   Processes.Process,
   Processes.Thread,
+  Processes.SystemCalls,
+  Processes.Init,
+  Io.Console,
+  Io.NullDevice,
+  Io.Pipes,
   Debug.Output,
   Debug.FramebufferConsole;
 
@@ -76,7 +81,7 @@ end;
 
 procedure ExitEmulatorAfterPanic;
 begin
-  HalExitEmulator(False);
+  HalExitEmulator(EmulatorExitPanic);
 end;
 
 procedure ApplyKernelOptions(BootInformation: PBootInformation);
@@ -148,9 +153,16 @@ begin
   InitializeProcessManager;
   InitializeThreadManager;
   InitializeFileObjects;
+  InitializeConsole;
+  InitializeNullDevice;
+  InitializePipes;
+  InitializeSystemCalls;
 end;
 
 procedure SystemInitializationPhaseOne(Context: Pointer);
+var
+  InitialProgramExitCode: LongInt;
+  OptionValue: array[0..63] of Char;
 begin
   DebugWriteTag('init');
   DebugWriteLine('Phase 1 started');
@@ -175,8 +187,29 @@ begin
   DebugWriteLine(' context switches so far');
   DebugEndMessage;
 
+  InitialProgramExitCode := RunInitialProgram;
+  if InitialProgramExitCode <> InitialProgramNotStarted then
+  begin
+    { Everything the user programs used should have been given back. The
+      last thread may still be finishing; give it a moment and free it. }
+    SleepMilliseconds(50);
+    ReapTerminatedThreads;
+    WriteKernelHeapSummary;
+    WriteObjectManagerSummary;
+    WritePhysicalMemorySummary;
+  end;
+
   if KernelOptionIsSet(OptionTestExit) then
-    HalExitEmulator(True);
+  begin
+    { Without a system disk no program runs; that is only a failure if a
+      test program was asked for. }
+    if (InitialProgramExitCode = 0) or
+       ((InitialProgramExitCode = InitialProgramNotStarted) and
+        not GetKernelOptionValue('init', @OptionValue[0], SizeOf(OptionValue))) then
+      HalExitEmulator(EmulatorExitSuccess)
+    else
+      HalExitEmulator(EmulatorExitTestFailure);
+  end;
 end;
 
 procedure RunIdleLoop; noreturn;
