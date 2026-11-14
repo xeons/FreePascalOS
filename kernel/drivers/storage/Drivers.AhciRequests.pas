@@ -20,24 +20,33 @@
   AHCI requests: the driver object "ahci" and its disk devices.
 
   Every disk gets a device object without a name; the block device layer
-  (Io.BlockDevice) sends it read and write requests for whole blocks.
+  (Io.BlockDevice) sends it read, write and flush requests.
 
   Once the controller's interrupt is connected, requests are handled
-  asynchronously. The read or write routine starts the request's first
-  command - or queues the request if the port is busy - and returns
-  StatusPending. When a command finishes the port interrupts; the
-  interrupt handler only notes the port's interrupt status and queues
-  the port's deferred call, which copies the data, starts the next piece
-  of a large request (the bounce buffer holds 64 KiB) or completes it,
-  and then starts the next waiting request.
+  asynchronously, several at once. A request gets a free command slot and
+  its first command is started; then the routine returns StatusPending.
+  On disks with native command queuing, reads and writes are queued
+  commands (READ/WRITE FPDMA QUEUED), up to the disk's queue depth at
+  once; everything else - flushes, and every command on disks without
+  NCQ - runs alone. Data moves straight to and from the request's pages;
+  a buffer the kernel cannot translate (or an odd address) goes through
+  the port's bounce buffer, which one command uses at a time. Requests
+  that find no slot wait in a queue.
 
-  Every command has a timer; a command still running after its timeout
-  (5 s), like one that failed, fails its request with ErrorIo, and the
-  port is reset (RecoverPort) before the next request starts.
+  When commands finish the port interrupts; the interrupt handler only
+  notes the port's interrupt status and queues the port's deferred call,
+  which looks at every running slot: a finished command's request gets
+  its next piece started (a command moves at most 64 KiB) or completes,
+  and waiting requests take the free slots.
 
-  Before that (while disks are identified), or if the controller has no
-  MSI, commands are polled and requests complete before the routine
-  returns.
+  Commands have a deadline (5 s). A command that failed or is past its
+  deadline fails every request running on the port with ErrorIo (which
+  of several queued commands failed is not looked into), and the port is
+  reset (RecoverPort) before anything else starts.
+
+  Before the interrupt is connected (while disks are identified), or if
+  the controller has no MSI, commands are polled one at a time on slot 0
+  and requests complete before the routine returns.
 }
 unit Drivers.AhciRequests;
 
@@ -66,6 +75,8 @@ uses
   Runtime.Atomic,
   Runtime.Memory,
   Abi.SystemCalls,
+  Memory.Layout,
+  Memory.Arch.PageTables,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Mutex,
@@ -86,18 +97,6 @@ begin
   Result := PAhciPort(Device^.Extension);
 end;
 
-function AtaCommandFor(Request: PIoRequest): Byte;
-begin
-  case Request^.Operation of
-    IoFunctionWrite: Result := AtaCommandWriteDmaExtended;
-    IoFunctionFlush: Result := AtaCommandFlushCacheExtended;
-  else
-    Result := AtaCommandReadDmaExtended;
-  end;
-end;
-
-{ The next piece of Request starting CurrentDone bytes in: how many
-  bytes, at which block. }
 function PieceLength(Port: PAhciPort; Request: PIoRequest; Done: QWord): QWord;
 begin
   Result := Request^.Length - Done;
@@ -116,8 +115,6 @@ begin
     (Request.Length div Port^.BlockSize <= Port^.BlockCount - Request.Offset div Port^.BlockSize);
 end;
 
-{ --- Polled requests ------------------------------------------------------ }
-
 procedure ReportRecovery(Port: PAhciPort; Reason: PChar; Recovered: Boolean);
 begin
   DebugBeginMessage;
@@ -131,6 +128,18 @@ begin
   else
     DebugWriteLine(', the port did not come back');
   DebugEndMessage;
+end;
+
+{ --- Polled requests ------------------------------------------------------ }
+
+function AtaCommandFor(Request: PIoRequest): Byte;
+begin
+  case Request^.Operation of
+    IoFunctionWrite: Result := AtaCommandWriteDmaExtended;
+    IoFunctionFlush: Result := AtaCommandFlushCacheExtended;
+  else
+    Result := AtaCommandReadDmaExtended;
+  end;
 end;
 
 function TransferPolled(Port: PAhciPort; var Request: TIoRequest): LongInt;
@@ -169,43 +178,270 @@ begin
   Request.Information := Int64(Done);
 end;
 
-{ --- Interrupt driven requests -------------------------------------------- }
+{ --- Building commands ----------------------------------------------------- }
 
-{ Starts the command for the next piece of Port^.Current, with its
-  timeout. If it cannot be started, the deferred call is asked to fail
-  the request. The caller holds StateLock. }
-procedure StartPieceLocked(Port: PAhciPort);
+{ The physical pieces of ByteCount bytes at Buffer: one segment per page,
+  pages that follow each other on the disk merged. False if a page
+  cannot be translated, the address is odd, or there are too many. }
+function DescribeBuffer(Buffer: PByte; ByteCount: QWord; out Segments: TDataSegments;
+  out SegmentCount: Integer): Boolean;
 var
+  Address: QWord;
+  Physical: TPhysicalAddress;
+  Chunk: QWord;
+begin
+  SegmentCount := 0;
+  Address := QWord(Buffer);
+  if (Address and 1) <> 0 then
+    Exit(False);
+  while ByteCount > 0 do
+  begin
+    Chunk := PageSize - (Address and (PageSize - 1));
+    if Chunk > ByteCount then
+      Chunk := ByteCount;
+    if not TranslateVirtualAddress(Address, Physical) then
+      Exit(False);
+    if (SegmentCount > 0) and
+       (Segments[SegmentCount - 1].Physical + Segments[SegmentCount - 1].Length = Physical) then
+      Segments[SegmentCount - 1].Length := Segments[SegmentCount - 1].Length + Chunk
+    else
+    begin
+      if SegmentCount = MaximumPrdtEntries then
+        Exit(False);
+      Segments[SegmentCount].Physical := Physical;
+      Segments[SegmentCount].Length := Chunk;
+      Inc(SegmentCount);
+    end;
+    Address := Address + Chunk;
+    ByteCount := ByteCount - Chunk;
+  end;
+  Result := True;
+end;
+
+function BounceSegments(Port: PAhciPort; ByteCount: QWord; out Segments: TDataSegments): Integer;
+begin
+  Result := 0;
+  while ByteCount > 0 do
+  begin
+    Segments[Result].Physical := Port^.BouncePagesPhysical[Result];
+    Segments[Result].Length := ByteCount;
+    if Segments[Result].Length > PageSize then
+      Segments[Result].Length := PageSize;
+    ByteCount := ByteCount - Segments[Result].Length;
+    Inc(Result);
+  end;
+end;
+
+{ True if Request can only run alone on Port. }
+function NeedsExclusiveUse(Port: PAhciPort; Request: PIoRequest): Boolean;
+begin
+  Result := (Port^.QueueDepth = 0) or (Request^.Operation = IoFunctionFlush);
+end;
+
+function ActiveCount(Port: PAhciPort): LongWord;
+var
+  Mask: LongWord;
+begin
+  Result := 0;
+  Mask := Port^.ActiveSlots;
+  while Mask <> 0 do
+  begin
+    Inc(Result);
+    Mask := Mask and (Mask - 1);
+  end;
+end;
+
+function FreeSlot(Port: PAhciPort): LongInt;
+var
+  Slot: LongWord;
+begin
+  for Slot := 0 to Port^.SlotCount - 1 do
+    if (Port^.ActiveSlots and (LongWord(1) shl Slot)) = 0 then
+      Exit(Slot);
+  Result := -1;
+end;
+
+{ Builds and issues the next piece of the request in Slot (Done and
+  Piece set). Caller holds StateLock. False if it needs the bounce buffer
+  and that is busy (nothing is issued then). }
+function IssuePieceLocked(Port: PAhciPort; Slot: LongWord): Boolean;
+var
+  State: ^TAhciSlot;
   Request: PIoRequest;
+  Segments: TDataSegments;
+  SegmentCount: Integer;
+  Command: Byte;
   IsWrite: Boolean;
 begin
-  Request := Port^.Current;
+  State := @Port^.Slots[Slot];
+  Request := State^.Request;
   IsWrite := Request^.Operation = IoFunctionWrite;
-  Port^.CurrentPiece := PieceLength(Port, Request, Port^.CurrentDone);
-  if IsWrite then
-    CopyToBounceBuffer(Port, PByte(Request^.Buffer) + Port^.CurrentDone, Port^.CurrentPiece);
-  if not IssueCommand(Port, AtaCommandFor(Request),
-    (Request^.Offset + Port^.CurrentDone) div Port^.BlockSize,
-    Word(Port^.CurrentPiece div Port^.BlockSize), Port^.CurrentPiece, IsWrite) then
+  State^.UsesBounce := False;
+  SegmentCount := 0;
+  if (State^.Piece > 0) and
+     not DescribeBuffer(PByte(Request^.Buffer) + State^.Done, State^.Piece, Segments, SegmentCount) then
   begin
-    Port^.CommandFailed := True;
-    QueueDeferredCall(Port^.FinishCommand);
-    Exit;
+    if Port^.BounceBusy then
+      Exit(False);
+    Port^.BounceBusy := True;
+    State^.UsesBounce := True;
+    if IsWrite then
+      CopyToBounceBuffer(Port, PByte(Request^.Buffer) + State^.Done, State^.Piece);
+    SegmentCount := BounceSegments(Port, State^.Piece, Segments);
   end;
-  Port^.CommandDeadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
-  SetTimer(Port^.Timeout, CommandTimeoutMilliseconds, Port^.TimeoutCall);
+
+  if State^.Queued then
+  begin
+    if IsWrite then
+      Command := AtaCommandWriteFpdmaQueued
+    else
+      Command := AtaCommandReadFpdmaQueued;
+  end
+  else
+    Command := AtaCommandFor(Request);
+  BuildCommand(Port, Slot, Command, (Request^.Offset + State^.Done) div Port^.BlockSize,
+    Word(State^.Piece div Port^.BlockSize), Segments, SegmentCount, IsWrite, State^.Queued);
+  State^.Deadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
+  IssueSlots(Port, LongWord(1) shl Slot, State^.Queued);
+  Result := True;
 end;
 
-{ Makes Request the running one and starts it. Caller holds StateLock. }
-procedure BeginRequestLocked(Port: PAhciPort; Request: PIoRequest);
+{ Starts Request in a free slot if the port's state allows it. Caller
+  holds StateLock. }
+function TryStartLocked(Port: PAhciPort; Request: PIoRequest): Boolean;
+var
+  Slot: LongInt;
+  Exclusive: Boolean;
 begin
-  Port^.Current := Request;
-  Port^.CurrentDone := 0;
-  Port^.CommandFailed := False;
-  StartPieceLocked(Port);
+  Result := False;
+  if Port^.ExclusiveActive or Port^.CommandFailed then
+    Exit;
+  Exclusive := NeedsExclusiveUse(Port, Request);
+  if Exclusive and (Port^.ActiveSlots <> 0) then
+    Exit;
+  if not Exclusive and (ActiveCount(Port) >= Port^.QueueDepth) then
+    Exit;
+  Slot := FreeSlot(Port);
+  if Slot < 0 then
+    Exit;
+  Port^.Slots[Slot].Request := Request;
+  Port^.Slots[Slot].Done := 0;
+  Port^.Slots[Slot].Piece := PieceLength(Port, Request, 0);
+  Port^.Slots[Slot].Queued := not Exclusive;
+  if not IssuePieceLocked(Port, Slot) then
+    Exit;
+  { The first running command arms the timer; it re-arms itself while
+    commands run. }
+  if Port^.ActiveSlots = 0 then
+    SetTimer(Port^.Timeout, CommandTimeoutMilliseconds div 5, Port^.TimeoutCall);
+  Port^.ActiveSlots := Port^.ActiveSlots or (LongWord(1) shl Slot);
+  Port^.ExclusiveActive := Exclusive;
+  if ActiveCount(Port) > Port^.MostActive then
+    Port^.MostActive := ActiveCount(Port);
+  Result := True;
 end;
 
-{ Takes the noted interrupt status of Port. }
+{ Starts waiting requests while slots allow. Caller holds StateLock. }
+procedure StartWaitingLocked(Port: PAhciPort);
+begin
+  repeat
+    if Port^.Held = nil then
+      Port^.Held := TakeQueuedRequest(Port^.Waiting);
+    if Port^.Held = nil then
+      Exit;
+    if not TryStartLocked(Port, Port^.Held) then
+      Exit;
+    Port^.Held := nil;
+  until False;
+end;
+
+{ --- Finishing commands ----------------------------------------------------- }
+
+type
+  TFinishedRequests = record
+    Requests: array[0..MaximumSlots - 1] of PIoRequest;
+    Statuses: array[0..MaximumSlots - 1] of LongInt;
+    Count: Integer;
+  end;
+
+procedure NoteFinished(var Finished: TFinishedRequests; Request: PIoRequest; Status: LongInt);
+begin
+  Finished.Requests[Finished.Count] := Request;
+  Finished.Statuses[Finished.Count] := Status;
+  Inc(Finished.Count);
+end;
+
+procedure ReleaseSlotLocked(Port: PAhciPort; Slot: LongWord);
+begin
+  if Port^.Slots[Slot].UsesBounce then
+    Port^.BounceBusy := False;
+  Port^.Slots[Slot].Request := nil;
+  Port^.ActiveSlots := Port^.ActiveSlots and not (LongWord(1) shl Slot);
+  if Port^.ActiveSlots = 0 then
+    Port^.ExclusiveActive := False;
+end;
+
+{ Fails every running request and resets the port. Caller holds
+  StateLock. }
+procedure FailAllLocked(Port: PAhciPort; var Finished: TFinishedRequests);
+var
+  Slot: LongWord;
+begin
+  if Port^.CommandTimedOut then
+    ReportRecovery(Port, 'command timed out', RecoverPort(Port))
+  else
+    ReportRecovery(Port, 'command failed', RecoverPort(Port));
+  Port^.CommandTimedOut := False;
+  Port^.CommandFailed := False;
+  for Slot := 0 to MaximumSlots - 1 do
+    if (Port^.ActiveSlots and (LongWord(1) shl Slot)) <> 0 then
+    begin
+      Port^.Slots[Slot].Request^.Information := Int64(Port^.Slots[Slot].Done);
+      NoteFinished(Finished, Port^.Slots[Slot].Request, ErrorIo);
+      ReleaseSlotLocked(Port, Slot);
+    end;
+end;
+
+{ Handles the slots whose commands the controller has finished. Caller
+  holds StateLock. }
+procedure CollectFinishedLocked(Port: PAhciPort; var Finished: TFinishedRequests);
+var
+  Running: LongWord;
+  Slot: LongWord;
+  State: ^TAhciSlot;
+begin
+  Running := ReadRegister(Port^.Registers, PortCommandIssue) or
+    ReadRegister(Port^.Registers, PortSataActive);
+  for Slot := 0 to MaximumSlots - 1 do
+  begin
+    if ((Port^.ActiveSlots and (LongWord(1) shl Slot)) = 0) or ((Running and (LongWord(1) shl Slot)) <> 0) then
+      Continue;
+    State := @Port^.Slots[Slot];
+    if State^.UsesBounce and (State^.Request^.Operation = IoFunctionRead) then
+      CopyFromBounceBuffer(Port, PByte(State^.Request^.Buffer) + State^.Done, State^.Piece);
+    if State^.UsesBounce then
+    begin
+      Port^.BounceBusy := False;
+      State^.UsesBounce := False;
+    end;
+    State^.Done := State^.Done + State^.Piece;
+    if State^.Done < State^.Request^.Length then
+    begin
+      State^.Piece := PieceLength(Port, State^.Request, State^.Done);
+      if IssuePieceLocked(Port, Slot) then
+        Continue;
+      { The bounce buffer is taken: this request fails rather than wait. }
+      State^.Request^.Information := Int64(State^.Done);
+      NoteFinished(Finished, State^.Request, ErrorIo);
+      ReleaseSlotLocked(Port, Slot);
+      Continue;
+    end;
+    State^.Request^.Information := Int64(State^.Done);
+    NoteFinished(Finished, State^.Request, ErrorNone);
+    ReleaseSlotLocked(Port, Slot);
+  end;
+end;
+
 function TakeSeenStatus(Port: PAhciPort): LongWord;
 begin
   Result := LongWord(AtomicExchange(Port^.SeenInterruptStatus, 0));
@@ -213,92 +449,69 @@ end;
 
 { Deferred call, after the port interrupted (or a command failed to
   start or timed out). }
-procedure FinishPortCommand(Context: Pointer);
+procedure FinishPortCommands(Context: Pointer);
 var
   Port: PAhciPort;
-  Request: PIoRequest;
   Seen: LongWord;
-  Status: LongInt;
   PreviousLevel: TPriorityLevel;
+  Finished: TFinishedRequests;
+  Index: Integer;
 begin
   Port := PAhciPort(Context);
+  Finished.Count := 0;
   Seen := TakeSeenStatus(Port);
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
-  Request := Port^.Current;
-  if Request = nil then
+  if Port^.ActiveSlots <> 0 then
   begin
-    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
-    Exit;
-  end;
-
-  if Port^.CommandFailed or ((Seen and PortInterruptErrors) <> 0) then
-    Status := ErrorIo
-  else if (ReadRegister(Port^.Registers, PortCommandIssue) and 1) <> 0 then
-  begin
-    { Not finished yet (a stray interrupt). }
-    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
-    Exit;
-  end
-  else if not CommandSucceeded(Port) then
-    Status := ErrorIo
-  else
-  begin
-    CancelTimer(Port^.Timeout);
-    if Request^.Operation = IoFunctionRead then
-      CopyFromBounceBuffer(Port, PByte(Request^.Buffer) + Port^.CurrentDone, Port^.CurrentPiece);
-    Port^.CurrentDone := Port^.CurrentDone + Port^.CurrentPiece;
-    if Port^.CurrentDone < Request^.Length then
-    begin
-      StartPieceLocked(Port);
-      ReleaseSpinLock(Port^.StateLock, PreviousLevel);
-      Exit;
-    end;
-    Status := ErrorNone;
-  end;
-
-  if Status <> ErrorNone then
-  begin
-    CancelTimer(Port^.Timeout);
-    if Port^.CommandTimedOut then
-      ReportRecovery(Port, 'command timed out', RecoverPort(Port))
+    if Port^.CommandFailed or ((Seen and PortInterruptErrors) <> 0) then
+      FailAllLocked(Port, Finished)
     else
-      ReportRecovery(Port, 'command failed', RecoverPort(Port));
-    Port^.CommandTimedOut := False;
+      CollectFinishedLocked(Port, Finished);
   end;
-  Request^.Information := Int64(Port^.CurrentDone);
-  Port^.Current := TakeQueuedRequest(Port^.Waiting);
-  if Port^.Current <> nil then
-    BeginRequestLocked(Port, Port^.Current);
+  Port^.CommandFailed := False;
+  if Port^.ActiveSlots = 0 then
+    CancelTimer(Port^.Timeout);
+  StartWaitingLocked(Port);
   ReleaseSpinLock(Port^.StateLock, PreviousLevel);
-  { Outside the lock: whoever waits for the request may send the next
-    one at once. }
-  CompleteRequest(Request^, Status);
+  { Outside the lock: whoever waits for a request may send the next one
+    at once. }
+  for Index := 0 to Finished.Count - 1 do
+    CompleteRequest(Finished.Requests[Index]^, Finished.Statuses[Index]);
 end;
 
-{ Timer call: fails the running command if it is past its deadline. }
+{ Timer call: fails the port's commands if one is past its deadline. }
 procedure HandleCommandTimeout(Context: Pointer);
 var
   Port: PAhciPort;
   PreviousLevel: TPriorityLevel;
   Now: QWord;
+  Slot: LongWord;
+  Overdue: Boolean;
+  Running: LongWord;
 begin
   Port := PAhciPort(Context);
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
   Now := ClockTickCount;
-  if Port^.Current = nil then
-    { Finished meanwhile. }
-  else if (ReadRegister(Port^.Registers, PortCommandIssue) and 1) = 0 then
-    { Finished, and its interrupt is on the way (or was lost). }
-    QueueDeferredCall(Port^.FinishCommand)
-  else if Now < Port^.CommandDeadline then
-    { A late call for an earlier command. }
-    SetTimer(Port^.Timeout, (Port^.CommandDeadline - Now) * MillisecondsPerTick,
-      Port^.TimeoutCall)
-  else
+  Overdue := False;
+  Running := ReadRegister(Port^.Registers, PortCommandIssue) or
+    ReadRegister(Port^.Registers, PortSataActive);
+  for Slot := 0 to MaximumSlots - 1 do
+    if ((Port^.ActiveSlots and Running and (LongWord(1) shl Slot)) <> 0) and
+       (Now >= Port^.Slots[Slot].Deadline) then
+      Overdue := True;
+  if Overdue then
   begin
     Port^.CommandFailed := True;
     Port^.CommandTimedOut := True;
     QueueDeferredCall(Port^.FinishCommand);
+  end
+  else if Port^.ActiveSlots <> 0 then
+  begin
+    { Finished ones (their interrupt is on the way, or was lost) are
+      collected too. }
+    if (Port^.ActiveSlots and not Running) <> 0 then
+      QueueDeferredCall(Port^.FinishCommand);
+    SetTimer(Port^.Timeout, CommandTimeoutMilliseconds div 5, Port^.TimeoutCall);
   end;
   ReleaseSpinLock(Port^.StateLock, PreviousLevel);
 end;
@@ -309,10 +522,9 @@ var
 begin
   Result := StatusPending;
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
-  if Port^.Current = nil then
-    BeginRequestLocked(Port, @Request)
-  else if not QueueRequest(Port^.Waiting, Request) then
-    Result := ErrorInterrupted;
+  if (Port^.Held <> nil) or not TryStartLocked(Port, @Request) then
+    if not QueueRequest(Port^.Waiting, Request) then
+      Result := ErrorInterrupted;
   ReleaseSpinLock(Port^.StateLock, PreviousLevel);
 end;
 
@@ -381,7 +593,7 @@ begin
   InitializeMutex(Port^.PollingLock);
   InitializeSpinLock(Port^.StateLock);
   InitializeRequestQueue(Port^.Waiting);
-  InitializeDeferredCall(Port^.FinishCommand, @FinishPortCommand, Port);
+  InitializeDeferredCall(Port^.FinishCommand, @FinishPortCommands, Port);
   InitializeTimer(Port^.Timeout);
   InitializeDeferredCall(Port^.TimeoutCall, @HandleCommandTimeout, Port);
   Port^.Device := CreateDevice(AhciDriver, nil, DeviceKindBlock, NobodyMayOpen, 0);

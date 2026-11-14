@@ -62,6 +62,9 @@ type
     BytesWritten: Int64;
     Flushes: Int64;
     Failures: Int64;
+    { Requests sent down and not completed yet, and the most at once. }
+    InFlight: Int64;
+    MostInFlight: PtrUInt;
   end;
 
 const
@@ -76,6 +79,7 @@ var
   Statistics: PDiskStatistics;
 begin
   Statistics := PDiskStatistics(Context);
+  AtomicDecrement(Statistics^.InFlight);
   if Request^.Status <> ErrorNone then
     AtomicIncrement(Statistics^.Failures)
   else if Request^.Operation = IoFunctionRead then
@@ -92,11 +96,23 @@ begin
   end;
 end;
 
+procedure NoteInFlight(Statistics: PDiskStatistics; Count: Int64);
+var
+  Most: PtrUInt;
+begin
+  repeat
+    Most := AtomicLoad(Statistics^.MostInFlight);
+    if PtrUInt(Count) <= Most then
+      Exit;
+  until AtomicCompareExchange(Statistics^.MostInFlight, PtrUInt(Count), Most) = Most;
+end;
+
 function TransferThroughFilter(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Statistics: PDiskStatistics;
 begin
   Statistics := PDiskStatistics(Device^.Extension);
+  NoteInFlight(Statistics, AtomicIncrement(Statistics^.InFlight));
   Result := ForwardRequest(Statistics^.Lower, Request, @CountCompletedRequest, Statistics);
 end;
 
@@ -153,7 +169,9 @@ begin
     DebugWriteDecimal(Statistics^.Flushes);
     DebugWrite(' flushes, ');
     DebugWriteDecimal(Statistics^.Failures);
-    DebugWriteLine(' failed');
+    DebugWrite(' failed, at most ');
+    DebugWriteDecimal(Statistics^.MostInFlight);
+    DebugWriteLine(' at once');
     DebugEndMessage;
   end;
 end;

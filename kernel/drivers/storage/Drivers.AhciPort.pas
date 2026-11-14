@@ -25,11 +25,15 @@
   command issue register; the controller then moves data directly to and
   from memory through the physical region descriptor table (PRDT).
 
-  One command slot per port is used, and data always goes through the
-  port's bounce buffer of single pages, so the buffers of requests need
-  no particular alignment or physical layout. When the command finishes
-  the port raises an interrupt, if its interrupts are enabled; otherwise
-  the driver polls (WaitForCommand).
+  Every command slot the controller has gets a command table of its own
+  (several to a page), so commands can run side by side: with native
+  command queuing (NCQ, READ/WRITE FPDMA QUEUED) the disk works on up to
+  its queue depth of them at once, in any order. Data moves straight
+  between the disk and the caller's pages (one PRDT entry per page);
+  only buffers the kernel cannot translate go through the port's bounce
+  buffer. When a command finishes the port raises an interrupt, if its
+  interrupts are enabled; otherwise the driver polls slot 0
+  (WaitForCommand).
 
   A command that fails or never ends leaves the port stopped with the
   error latched; RecoverPort brings it back as the AHCI specification
@@ -84,7 +88,12 @@ const
   PortSataStatus = $28;
   PortSataControl = $2C;
   PortSataError = $30;
+  PortSataActive = $34;
   PortCommandIssue = $38;
+
+  CapabilityCommandSlotsShift = 8;
+  CapabilityCommandSlotsMask = $1F;
+  CapabilityNativeCommandQueuing = LongWord(1) shl 30;
 
   PortCommandStart = LongWord(1) shl 0;
   PortCommandFisReceiveEnable = LongWord(1) shl 4;
@@ -94,11 +103,14 @@ const
   { Port interrupts: a register FIS from the device (how a DMA command
     ends), and the errors. }
   PortInterruptDeviceToHostRegister = LongWord(1) shl 0;
+  { How queued commands end. }
+  PortInterruptSetDeviceBits = LongWord(1) shl 3;
   PortInterruptInterfaceFatal = LongWord(1) shl 27;
   PortInterruptHostBusData = LongWord(1) shl 28;
   PortInterruptHostBusFatal = LongWord(1) shl 29;
   PortInterruptTaskFileError = LongWord(1) shl 30;
-  PortInterruptsWanted = PortInterruptDeviceToHostRegister or PortInterruptInterfaceFatal or
+  PortInterruptsWanted = PortInterruptDeviceToHostRegister or PortInterruptSetDeviceBits or
+    PortInterruptInterfaceFatal or
     PortInterruptHostBusData or PortInterruptHostBusFatal or PortInterruptTaskFileError;
 
   TaskFileBusy = $80;
@@ -110,11 +122,19 @@ const
   AtaCommandReadDmaExtended = $25;
   AtaCommandWriteDmaExtended = $35;
   AtaCommandFlushCacheExtended = $EA;
+  AtaCommandReadFpdmaQueued = $60;
+  AtaCommandWriteFpdmaQueued = $61;
 
   { Layout of the per-port control page. }
   CommandListOffset = $000;  { 32 headers of 32 bytes, 1 KiB aligned }
   ReceivedFisOffset = $400;  { 256 bytes, 256 byte aligned }
-  CommandTableOffset = $800; { 128 byte aligned }
+
+  MaximumSlots = 32;
+  { Command tables: 128 bytes of FIS and such, then the PRDT. }
+  CommandTableBytes = 512;
+  MaximumPrdtEntries = 24;
+  TablesPerPage = PageSize div CommandTableBytes;
+  TablePageCount = MaximumSlots div TablesPerPage;
 
   BounceBufferPages = 16;
   MaximumBytesPerCommand = BounceBufferPages * PageSize;
@@ -123,13 +143,35 @@ const
   RegisterTimeoutMilliseconds = 1000;
 
 type
+  { A physically contiguous piece of a command's data. }
+  TDataSegment = record
+    Physical: QWord;
+    Length: QWord;
+  end;
+  TDataSegments = array[0..MaximumPrdtEntries - 1] of TDataSegment;
+
+  { A command slot in use (interrupt driven requests). }
+  TAhciSlot = record
+    Request: PIoRequest;
+    Done: QWord;
+    Piece: QWord;
+    UsesBounce: Boolean;
+    Queued: Boolean;
+    Deadline: QWord;
+  end;
+
   PAhciPort = ^TAhciPort;
   TAhciPort = record
     Registers: PByte;
     PortNumber: LongWord;
     ControlPagePhysical: QWord;
     ControlPage: PByte;
+    TablePagesPhysical: array[0..TablePageCount - 1] of QWord;
     BouncePagesPhysical: array[0..BounceBufferPages - 1] of QWord;
+    { Slots the controller has, and how many queued commands the disk
+      takes at once (0: no NCQ). }
+    SlotCount: LongWord;
+    QueueDepth: LongWord;
     BlockSize: LongWord;
     BlockCount: QWord;
     { The disk's device object (Drivers.AhciRequests). }
@@ -141,18 +183,24 @@ type
     InterruptDriven: Boolean;
     PollingLock: TMutex;
 
-    { Interrupt driven: the request whose command is running, how much
-      of it is done and how big the running piece is; the requests
-      waiting for their turn. Guarded by StateLock. }
+    { Interrupt driven: the commands running, by slot; whether a command
+      that must run alone (not queued) is one of them; whether the bounce
+      buffer is in use; the requests waiting for a slot, the first of
+      them perhaps already taken from the queue (Held). Guarded by
+      StateLock. }
     StateLock: TSpinLock;
-    Current: PIoRequest;
-    CurrentDone: QWord;
-    CurrentPiece: QWord;
-    { The command for Current could not be started or timed out; the
-      deferred call fails the request. }
+    Slots: array[0..MaximumSlots - 1] of TAhciSlot;
+    ActiveSlots: LongWord;
+    ExclusiveActive: Boolean;
+    BounceBusy: Boolean;
+    Held: PIoRequest;
+    { A command could not be started, or one timed out; the deferred
+      call resets the port and fails what was running. }
     CommandFailed: Boolean;
     CommandTimedOut: Boolean;
     Waiting: TRequestQueue;
+    { Commands at once, at most (for the log). }
+    MostActive: LongWord;
     { Port interrupt status the interrupt handler saw (and cleared) and
       the deferred call has not looked at yet. }
     SeenInterruptStatus: PtrUInt;
@@ -177,6 +225,15 @@ procedure WriteRegister(Base: PByte; Offset: LongWord; Value: LongWord);
 { Waits until (register and Mask) = Expected. Returns False on timeout. }
 function WaitForRegister(Base: PByte; Offset: LongWord; Mask: LongWord; Expected: LongWord;
   TimeoutMilliseconds: QWord): Boolean;
+
+{ Fills in the command header and table of Slot: ATA command Command
+  for SectorCount sectors at Lba, with the data in Segments. Queued
+  builds an NCQ command (Command must be an FPDMA one), tagged with the
+  slot number. }
+procedure BuildCommand(Port: PAhciPort; Slot: LongWord; Command: Byte; Lba: QWord; SectorCount: Word;
+  const Segments: TDataSegments; SegmentCount: Integer; IsWrite, Queued: Boolean);
+{ Hands the commands built in the slots of SlotMask to the controller. }
+procedure IssueSlots(Port: PAhciPort; SlotMask: LongWord; Queued: Boolean);
 
 { Starts one command on slot 0 that moves ByteCount bytes through the
   bounce buffer (written to it beforehand, or read from it afterwards).
@@ -205,6 +262,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Runtime.Atomic,
   Kernel.Arch.Cpu,
   Kernel.Clock;
 
@@ -278,55 +336,87 @@ begin
   Fis[13] := Byte(SectorCount shr 8);
 end;
 
-function IssueCommand(Port: PAhciPort; Command: Byte; Lba: QWord; SectorCount: Word;
-  ByteCount: QWord; IsWrite: Boolean): Boolean;
+function SlotTablePhysical(Port: PAhciPort; Slot: LongWord): QWord;
+begin
+  Result := Port^.TablePagesPhysical[Slot div TablesPerPage] + (Slot mod TablesPerPage) * CommandTableBytes;
+end;
+
+procedure BuildCommand(Port: PAhciPort; Slot: LongWord; Command: Byte; Lba: QWord; SectorCount: Word;
+  const Segments: TDataSegments; SegmentCount: Integer; IsWrite, Queued: Boolean);
 var
   Header: PCommandHeader;
   Table: PByte;
   Prdt: PPrdtEntry;
   TablePhysical: QWord;
-  PrdtCount: LongWord;
-  RemainingBytes: QWord;
-  ChunkBytes: QWord;
+  Index: Integer;
   Flags: LongWord;
+begin
+  TablePhysical := SlotTablePhysical(Port, Slot);
+  Table := PByte(PhysicalToVirtual(TablePhysical));
+  if Queued then
+  begin
+    { NCQ: the count moves to the features field, the tag goes where the
+      count was. }
+    BuildRegisterFis(Table, Command, Lba, 0);
+    Table[3] := Byte(SectorCount);
+    Table[11] := Byte(SectorCount shr 8);
+    Table[12] := Byte(Slot shl 3);
+  end
+  else
+    BuildRegisterFis(Table, Command, Lba, SectorCount);
+
+  Prdt := PPrdtEntry(Table + PrdtOffsetInTable);
+  for Index := 0 to SegmentCount - 1 do
+  begin
+    Prdt[Index].DataAddressLow := LongWord(Segments[Index].Physical);
+    Prdt[Index].DataAddressHigh := LongWord(Segments[Index].Physical shr 32);
+    Prdt[Index].Reserved := 0;
+    Prdt[Index].ByteCountMinusOne := LongWord(Segments[Index].Length - 1);
+  end;
+
+  Flags := CommandFisLengthInDoublewords or (LongWord(SegmentCount) shl 16);
+  if IsWrite then
+    Flags := Flags or CommandHeaderWrite;
+  Header := PCommandHeader(Port^.ControlPage + CommandListOffset) + Slot;
+  Header^.Flags := Flags;
+  Header^.BytesTransferred := 0;
+  Header^.TableAddressLow := LongWord(TablePhysical);
+  Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
+end;
+
+procedure IssueSlots(Port: PAhciPort; SlotMask: LongWord; Queued: Boolean);
+begin
+  FullMemoryBarrier;
+  if Queued then
+    WriteRegister(Port^.Registers, PortSataActive, SlotMask);
+  WriteRegister(Port^.Registers, PortCommandIssue, SlotMask);
+end;
+
+function IssueCommand(Port: PAhciPort; Command: Byte; Lba: QWord; SectorCount: Word;
+  ByteCount: QWord; IsWrite: Boolean): Boolean;
+var
+  Segments: TDataSegments;
+  SegmentCount: Integer;
+  RemainingBytes: QWord;
 begin
   Result := False;
   if not WaitForRegister(Port^.Registers, PortTaskFileData, TaskFileBusy or TaskFileDataRequest, 0,
     CommandTimeoutMilliseconds) then
     Exit;
-
-  Table := Port^.ControlPage + CommandTableOffset;
-  TablePhysical := Port^.ControlPagePhysical + CommandTableOffset;
-  BuildRegisterFis(Table, Command, Lba, SectorCount);
-
-  Prdt := PPrdtEntry(Table + PrdtOffsetInTable);
-  PrdtCount := 0;
+  SegmentCount := 0;
   RemainingBytes := ByteCount;
   while RemainingBytes > 0 do
   begin
-    ChunkBytes := RemainingBytes;
-    if ChunkBytes > PageSize then
-      ChunkBytes := PageSize;
-    Prdt[PrdtCount].DataAddressLow := LongWord(Port^.BouncePagesPhysical[PrdtCount]);
-    Prdt[PrdtCount].DataAddressHigh := LongWord(Port^.BouncePagesPhysical[PrdtCount] shr 32);
-    Prdt[PrdtCount].Reserved := 0;
-    Prdt[PrdtCount].ByteCountMinusOne := LongWord(ChunkBytes - 1);
-    RemainingBytes := RemainingBytes - ChunkBytes;
-    Inc(PrdtCount);
+    Segments[SegmentCount].Physical := Port^.BouncePagesPhysical[SegmentCount];
+    Segments[SegmentCount].Length := RemainingBytes;
+    if Segments[SegmentCount].Length > PageSize then
+      Segments[SegmentCount].Length := PageSize;
+    RemainingBytes := RemainingBytes - Segments[SegmentCount].Length;
+    Inc(SegmentCount);
   end;
-
-  Flags := CommandFisLengthInDoublewords or (PrdtCount shl 16);
-  if IsWrite then
-    Flags := Flags or CommandHeaderWrite;
-
-  Header := PCommandHeader(Port^.ControlPage + CommandListOffset);
-  Header^.Flags := Flags;
-  Header^.BytesTransferred := 0;
-  Header^.TableAddressLow := LongWord(TablePhysical);
-  Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
-
+  BuildCommand(Port, 0, Command, Lba, SectorCount, Segments, SegmentCount, IsWrite, False);
   WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
-  WriteRegister(Port^.Registers, PortCommandIssue, 1);
+  IssueSlots(Port, 1, False);
   Result := True;
 end;
 

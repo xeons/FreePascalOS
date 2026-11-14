@@ -117,6 +117,12 @@ begin
     if Port^.BouncePagesPhysical[PageIndex] = 0 then
       Exit(False);
   end;
+  for PageIndex := 0 to TablePageCount - 1 do
+  begin
+    Port^.TablePagesPhysical[PageIndex] := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    if Port^.TablePagesPhysical[PageIndex] = 0 then
+      Exit(False);
+  end;
   Result := True;
 end;
 
@@ -168,8 +174,11 @@ begin
   Destination[Length] := #0;
 end;
 
-function IdentifyDisk(Port: PAhciPort; Device: PBlockDevice): Boolean;
+function IdentifyDisk(Port: PAhciPort; Device: PBlockDevice; ControllerQueues: Boolean): Boolean;
 const
+  WordQueueDepth = 75;
+  WordSataCapabilities = 76;
+  SataNativeCommandQueuing = Word(1) shl 8;
   WordCommandSetsSupported = 83;
   CommandSetLba48 = Word(1) shl 10;
   WordSectorSize = 106;
@@ -198,6 +207,15 @@ begin
   Device^.BlockSize := SectorSize;
 
   DecodeAtaString(Identify, 27, 20, @Device^.Model[0], BlockDeviceModelLength);
+
+  Port^.QueueDepth := 0;
+  if ControllerQueues and ((Identify[WordSataCapabilities] and SataNativeCommandQueuing) <> 0) and
+     (Identify[WordSataCapabilities] <> $FFFF) then
+  begin
+    Port^.QueueDepth := (Identify[WordQueueDepth] and $1F) + 1;
+    if Port^.QueueDepth > Port^.SlotCount then
+      Port^.QueueDepth := Port^.SlotCount;
+  end;
   Result := Device^.BlockCount > 0;
 end;
 
@@ -235,6 +253,8 @@ begin
     Exit;
   Port^.Registers := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
   Port^.PortNumber := PortNumber;
+  Port^.SlotCount := ((ReadRegister(Registers, RegisterCapabilities) shr CapabilityCommandSlotsShift) and
+    CapabilityCommandSlotsMask) + 1;
 
   if not AllocatePortMemory(Port) then
     Exit;
@@ -248,7 +268,8 @@ begin
   if Disk = nil then
     Exit;
   { Nothing else uses the port yet, so no lock is needed. }
-  if not IdentifyDisk(Port, Disk) then
+  if not IdentifyDisk(Port, Disk,
+    (ReadRegister(Registers, RegisterCapabilities) and CapabilityNativeCommandQueuing) <> 0) then
     Exit;
   Port^.BlockSize := Disk^.BlockSize;
   Port^.BlockCount := Disk^.BlockCount;
@@ -257,6 +278,21 @@ begin
   Disk^.StorageDevice := Port^.Device;
   RegisterBlockDevice(Disk);
   WriteBlockDeviceDescription(Disk);
+  DebugBeginMessage;
+  DebugWriteTag('ahci');
+  DebugWrite('Port ');
+  DebugWriteDecimal(PortNumber);
+  DebugWrite(': ');
+  DebugWriteDecimal(Port^.SlotCount);
+  if Port^.QueueDepth > 0 then
+  begin
+    DebugWrite(' command slots, native command queuing to depth ');
+    DebugWriteDecimal(Port^.QueueDepth);
+    DebugWriteLine('');
+  end
+  else
+    DebugWriteLine(' command slots, no native command queuing');
+  DebugEndMessage;
   Result := Port;
 end;
 

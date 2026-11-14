@@ -253,13 +253,22 @@ Started from phase 1 by `Io.Startup`, in dependency order:
 3. **Storage drivers** (`Drivers.Ahci`) register whole-disk block devices
    named `disk0`, `disk1`, ... Each disk has a device object of the `ahci`
    driver, without a name; the block device sends it read and write
-   requests. The AHCI driver uses one command slot per port, moves data
-   through a 64 KiB bounce buffer and completes requests from its MSI
-   interrupt (polling while disks are identified, or without MSI). Every
-   command has a 5 second timer (`Kernel.Timers`); a command that fails or
-   times out fails its request with `ErrorIo`, and the port is reset as
-   the AHCI specification describes (stop, clear errors, COMRESET if the
-   device is still busy, start). The tests attach a disk through QEMU's
+   requests. The AHCI driver uses every command slot of a port: on disks
+   with native command queuing, reads and writes are queued commands
+   (READ/WRITE FPDMA QUEUED, up to the disk's queue depth at once);
+   flushes, and everything on disks without NCQ, run alone. Data moves
+   straight to and from the request's pages (one PRDT entry per page,
+   translated with `TranslateVirtualAddress`); only buffers that cannot
+   be translated use the port's 64 KiB bounce buffer. Requests complete
+   from its MSI interrupt (polling while disks are identified, or without
+   MSI). Commands have a 5 second deadline (`Kernel.Timers`); a command
+   that fails or times out fails every request running on the port with
+   `ErrorIo`, and the port is reset as the AHCI specification describes
+   (stop, clear errors, COMRESET if the device is still busy, start).
+   The block cache writes dirty lines back in batches
+   (`WriteBlocksTogether` sends all requests before waiting), which is
+   what keeps several commands in flight; the disk statistics filter
+   reports the most requests in flight at once. The tests attach a disk through QEMU's
    blkdebug that fails reads of one sector.
 
    Virtio block devices (`Drivers.VirtioBlock`, on the virtio 1.0 PCI

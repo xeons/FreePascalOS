@@ -108,7 +108,7 @@ how the existing pieces fit together.
 - [x] Block device layer and partition devices
 - [x] GPT and MBR partition tables (with logical partitions)
 - [x] AHCI SATA driver (interrupts by MSI, timeouts and port recovery)
-- [ ] AHCI: all 32 command slots, NCQ, direct DMA without the bounce buffer
+- [x] AHCI: all command slots, NCQ, direct DMA into the request's pages
 - [ ] ATAPI (optical drives) on AHCI
 - [x] NVMe driver (admin and one I/O queue pair, MSI-X/MSI, PRP lists, namespaces)
 - [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)

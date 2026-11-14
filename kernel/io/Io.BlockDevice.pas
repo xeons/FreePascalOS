@@ -44,6 +44,7 @@ unit Io.BlockDevice;
 interface
 
 uses
+  Kernel.Events,
   Io.Manager;
 
 const
@@ -70,6 +71,17 @@ type
     PartitionNumber: LongWord;
   end;
 
+  { One run of blocks for WriteBlocksTogether; Request and Completed
+    belong to it while it runs. }
+  TBlockWrite = record
+    FirstBlock: QWord;
+    BlockCount: LongWord;
+    Buffer: Pointer;
+    Request: TIoRequest;
+    Completed: TEvent;
+  end;
+  PBlockWrite = ^TBlockWrite;
+
 procedure InitializeBlockDevices;
 
 { Creates an unregistered block device object; nil if out of memory or
@@ -89,6 +101,11 @@ function ReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWor
   Buffer: Pointer): Boolean;
 function WriteBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
   Buffer: Pointer): Boolean;
+
+{ Writes Count runs of blocks of Device at once: all requests are sent
+  before any is waited for, so a disk that queues commands works on them
+  together. True if every one of them worked. }
+function WriteBlocksTogether(Device: PBlockDevice; Writes: PBlockWrite; Count: Integer): Boolean;
 
 { Makes everything written so far durable: the disk writes its volatile
   cache to the medium. True also for disks that have no such cache. }
@@ -234,6 +251,48 @@ begin
     Result := WriteBlocks(Device^.Parent, Device^.FirstBlockOnParent + FirstBlock, BlockCount, Buffer)
   else
     Result := TransferBlocks(Device, IoFunctionWrite, FirstBlock, BlockCount, Buffer);
+end;
+
+function WriteBlocksTogether(Device: PBlockDevice; Writes: PBlockWrite; Count: Integer): Boolean;
+var
+  Disk: PBlockDevice;
+  Shift: QWord;
+  Index: Integer;
+  Write: PBlockWrite;
+begin
+  for Index := 0 to Count - 1 do
+    if not RangeIsValid(Device, Writes[Index].FirstBlock, Writes[Index].BlockCount) then
+      Exit(False);
+  if BlockDeviceIsReadOnly(Device) then
+    Exit(False);
+  { Partitions forward to their disk, shifted. }
+  Disk := Device;
+  Shift := 0;
+  while Disk^.Parent <> nil do
+  begin
+    Shift := Shift + Disk^.FirstBlockOnParent;
+    Disk := Disk^.Parent;
+  end;
+  for Index := 0 to Count - 1 do
+  begin
+    Write := @Writes[Index];
+    FillMemory(@Write^.Request, SizeOf(Write^.Request), 0);
+    InitializeEvent(Write^.Completed, EventKindNotification, False);
+    Write^.Request.Operation := IoFunctionWrite;
+    Write^.Request.Buffer := Write^.Buffer;
+    Write^.Request.Length := QWord(Write^.BlockCount) * Disk^.BlockSize;
+    Write^.Request.Offset := (Shift + Write^.FirstBlock) * Disk^.BlockSize;
+    Write^.Request.CompletionEvent := @Write^.Completed;
+    CallDriver(Disk^.StorageDevice, Write^.Request);
+  end;
+  Result := True;
+  for Index := 0 to Count - 1 do
+  begin
+    Write := @Writes[Index];
+    WaitForEvent(Write^.Completed);
+    if (Write^.Request.Status <> ErrorNone) or (QWord(Write^.Request.Information) <> Write^.Request.Length) then
+      Result := False;
+  end;
 end;
 
 function FlushBlockDevice(Device: PBlockDevice): Boolean;

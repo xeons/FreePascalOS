@@ -112,6 +112,7 @@ const
   WriterIntervalMilliseconds = 500;
   DirtyLifetimeMilliseconds = 1000;
   MaximumTrackedDevices = 64;
+  WriteBatchSize = 32;
 
 type
   PCacheLine = ^TCacheLine;
@@ -608,30 +609,95 @@ end;
 
 { --- Writing back -------------------------------------------------------- }
 
+type
+  { Dirty lines of one device, pinned and locked, written back together. }
+  TWriteBatch = record
+    Device: PBlockDevice;
+    Lines: array[0..WriteBatchSize - 1] of PCacheLine;
+    Count: Integer;
+  end;
+
+{ Writes the batch's lines back in one go and lets them go. }
+function WriteBatch(var Batch: TWriteBatch): Boolean;
+var
+  Writes: PBlockWrite;
+  Index: Integer;
+  Line: PCacheLine;
+begin
+  Result := True;
+  if Batch.Count = 0 then
+    Exit;
+  Writes := PBlockWrite(AllocateKernelMemory(Batch.Count * SizeOf(TBlockWrite)));
+  if Writes = nil then
+  begin
+    { One at a time instead. }
+    for Index := 0 to Batch.Count - 1 do
+      if not WriteBackLine(Batch.Lines[Index]) then
+        Result := False;
+  end
+  else
+  begin
+    for Index := 0 to Batch.Count - 1 do
+    begin
+      Line := Batch.Lines[Index];
+      Writes[Index].FirstBlock := Line^.LineNumber * BlocksPerLine(Line^.Device);
+      Writes[Index].BlockCount := LongWord(BlocksInLine(Line^.Device, Line^.LineNumber));
+      Writes[Index].Buffer := Line^.Data;
+    end;
+    Result := WriteBlocksTogether(Batch.Device, Writes, Batch.Count);
+    if Result then
+      for Index := 0 to Batch.Count - 1 do
+      begin
+        Batch.Lines[Index]^.IsDirty := False;
+        Inc(WriteBackCount);
+      end;
+    FreeKernelMemory(Writes);
+  end;
+  for Index := 0 to Batch.Count - 1 do
+    ReleaseLine(Batch.Lines[Index]);
+  Batch.Count := 0;
+end;
+
 { Writes back the dirty lines of Device (all devices if nil) that have
-  been dirty since at least DirtyBefore ticks. }
+  been dirty since at least DirtyBefore ticks, up to WriteBatchSize of a
+  device at once. }
 function WriteBackLines(Device: PBlockDevice; DirtyBefore: QWord): Boolean;
 var
   LineIndex: Integer;
   Line: PCacheLine;
   Wanted: Boolean;
+  Batch: TWriteBatch;
 begin
   Result := True;
+  Batch.Count := 0;
+  Batch.Device := nil;
   for LineIndex := 0 to LineCount - 1 do
   begin
     Line := @Lines[LineIndex];
     AcquireMutex(CacheLock);
-    Wanted := Line^.InHash and ((Device = nil) or (Line^.Device = Device));
+    { IsDirty is only a hint here; it is checked again under the line's
+      lock. Lines in the batch are pinned, so never reused meanwhile. }
+    Wanted := Line^.InHash and Line^.IsDirty and ((Device = nil) or (Line^.Device = Device));
     if Wanted then
       Inc(Line^.PinCount);
     ReleaseMutex(CacheLock);
     if not Wanted then
       Continue;
     AcquireMutex(Line^.Lock);
-    if Line^.IsDirty and (Line^.DirtySince <= DirtyBefore) and not WriteBackLine(Line) then
-      Result := False;
-    ReleaseLine(Line);
+    if not Line^.IsDirty or (Line^.DirtySince > DirtyBefore) then
+    begin
+      ReleaseLine(Line);
+      Continue;
+    end;
+    if (Batch.Count > 0) and ((Batch.Device <> Line^.Device) or (Batch.Count = WriteBatchSize)) then
+      if not WriteBatch(Batch) then
+        Result := False;
+    Batch.Device := Line^.Device;
+    Batch.Lines[Batch.Count] := Line;
+    Inc(Batch.Count);
   end;
+  if not WriteBatch(Batch) then
+    Result := False;
 end;
 
 function FlushCachedDevice(Device: PBlockDevice): Boolean;
