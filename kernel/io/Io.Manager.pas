@@ -27,6 +27,16 @@
   signals its completion event. CallDriverAndWait does the usual thing:
   it sends a request and waits until it completes.
 
+  Devices can be layered: a filter device attached on top of another
+  (AttachDevice) sees every request sent to that device first. Requests
+  sent to any device of such a stack start at its top. The filter
+  handles a request itself or passes it on to the device below with
+  ForwardRequest, optionally with a completion routine of its own; a
+  filter without a routine for some kind of request passes it on
+  unchanged. When the request completes, the routines of the layers run
+  innermost first, then the sender's completion. Devices are attached
+  while drivers start, before requests flow, and never detached.
+
   A driver that holds requests until something happens (input arriving)
   keeps them in a request queue (TRequestQueue). Requests waiting there
   can be cancelled: CancelRequest takes a queued request out of its queue
@@ -56,6 +66,8 @@ uses
 const
   DeviceNameLength = 32;
   MaximumDevices = 128;
+  { Filters a request may pass through with completion routines. }
+  MaximumRequestLayers = 4;
 
   { Returned by a dispatch routine that will complete the request later.
     Never seen outside the kernel; Abi error codes are all positive. }
@@ -74,6 +86,14 @@ type
 
   { Runs once when Request completes; see the unit comment for where. }
   TCompletionRoutine = procedure(Request: PIoRequest);
+  { A filter's routine for a request it passed down; it may look at and
+    change the status, Information and the data. }
+  TLayerCompletionRoutine = procedure(Request: PIoRequest; Context: Pointer);
+
+  TRequestLayer = record
+    Routine: TLayerCompletionRoutine;
+    Context: Pointer;
+  end;
 
   TIoRequest = record
     Operation: TIoFunction;
@@ -97,6 +117,10 @@ type
     CompletionRoutine: TCompletionRoutine;
     CompletionContext: Pointer;
     CompletionEvent: PEvent;
+
+    { The completion routines of the filters it passed through. }
+    Layers: array[0..MaximumRequestLayers - 1] of TRequestLayer;
+    LayerCount: LongWord;
 
     { Owned by the request queue the request waits in. }
     QueueLink: TListEntry;
@@ -139,6 +163,10 @@ type
       holds open). }
     IsExclusive: Boolean;
     OpenCount: LongWord;
+    { The device stack: the filter attached directly on top, and (for a
+      filter) the device it was attached to. }
+    AttachedAbove: PDeviceObject;
+    LowerDevice: PDeviceObject;
     { The driver's state for this device. }
     Extension: Pointer;
   end;
@@ -171,10 +199,22 @@ function DeviceCount: Integer;
 { nil past the end. }
 function DeviceAt(Index: Integer): PDeviceObject;
 
-{ Sends Request to Device's driver. Returns the request's status, or
-  StatusPending if it completes later. The completion routine or event
-  must be set beforehand. }
+{ Attaches Filter on top of Target's device stack and returns the device
+  it now sits on, which it forwards requests to (also in its
+  LowerDevice). }
+function AttachDevice(Filter, Target: PDeviceObject): PDeviceObject;
+{ The device at the top of Device's stack. }
+function TopOfStack(Device: PDeviceObject): PDeviceObject;
+
+{ Sends Request to the top of Device's stack. Returns the request's
+  status, or StatusPending if it completes later. The completion routine
+  or event must be set beforehand. }
 function CallDriver(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+{ For filters, from a dispatch routine: passes Request to Lower, with
+  Routine (if not nil) to run when it completes, and returns what the
+  lower driver returned - which the filter returns in turn. }
+function ForwardRequest(Lower: PDeviceObject; var Request: TIoRequest;
+  Routine: TLayerCompletionRoutine; Context: Pointer): LongInt;
 { Sends Request and waits until it completes; returns its status. An
   alertable wait that is alerted cancels the request (if it is still
   queued) and then waits for it to complete. }
@@ -318,6 +358,11 @@ end;
 procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
 begin
   Request.Status := Status;
+  while Request.LayerCount > 0 do
+  begin
+    Dec(Request.LayerCount);
+    Request.Layers[Request.LayerCount].Routine(@Request, Request.Layers[Request.LayerCount].Context);
+  end;
   { The sender may reuse or free the request as soon as it learns of the
     completion, so nothing touches it after that. }
   if Assigned(Request.CompletionRoutine) then
@@ -326,24 +371,68 @@ begin
     SignalEvent(Request.CompletionEvent^);
 end;
 
-function CallDriver(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+function AttachDevice(Filter, Target: PDeviceObject): PDeviceObject;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Result := Target;
+  while Result^.AttachedAbove <> nil do
+    Result := Result^.AttachedAbove;
+  Result^.AttachedAbove := Filter;
+  Filter^.LowerDevice := Result;
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
+end;
+
+function TopOfStack(Device: PDeviceObject): PDeviceObject;
+begin
+  Result := Device;
+  while Result^.AttachedAbove <> nil do
+    Result := Result^.AttachedAbove;
+end;
+
+{ Runs Device's routine for Request without completing it. }
+function DispatchRequest(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Routine: TDispatchRoutine;
 begin
   Request.Device := Device;
-  Request.Information := 0;
-  Request.Status := StatusPending;
-  Request.IsQueued := False;
-  Request.CancelRequested := False;
   Routine := Device^.Driver^.Dispatch[Request.Operation];
   if Assigned(Routine) then
     Result := Routine(Device, Request)
+  else if Device^.LowerDevice <> nil then
+    { A filter passes on what it does not handle. }
+    Result := DispatchRequest(Device^.LowerDevice, Request)
   else if Request.Operation in [IoFunctionOpen, IoFunctionClose] then
     Result := ErrorNone
   else
     Result := ErrorUnsupported;
+end;
+
+function CallDriver(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+begin
+  Request.Information := 0;
+  Request.Status := StatusPending;
+  Request.IsQueued := False;
+  Request.CancelRequested := False;
+  Request.LayerCount := 0;
+  Result := DispatchRequest(TopOfStack(Device), Request);
   if Result <> StatusPending then
     CompleteRequest(Request, Result);
+end;
+
+function ForwardRequest(Lower: PDeviceObject; var Request: TIoRequest;
+  Routine: TLayerCompletionRoutine; Context: Pointer): LongInt;
+begin
+  if Assigned(Routine) then
+  begin
+    if Request.LayerCount = MaximumRequestLayers then
+      KernelPanic('a request passed through too many filters');
+    Request.Layers[Request.LayerCount].Routine := Routine;
+    Request.Layers[Request.LayerCount].Context := Context;
+    Inc(Request.LayerCount);
+  end;
+  Result := DispatchRequest(Lower, Request);
 end;
 
 function CallDriverAndWait(Device: PDeviceObject; var Request: TIoRequest;

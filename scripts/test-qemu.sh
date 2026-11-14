@@ -124,6 +124,18 @@ case "$qemu_status" in
                 exit 1
             fi
         fi
+        # The statistics filter on every disk saw the test disk's reads,
+        # and the failed reads of the fault disk.
+        if [[ -n "$test_disk_image" ]] &&
+           ! grep -q '\[diskstats\] disk1: [1-9][0-9]* reads' "$serial_log"; then
+            echo "TEST FAILED: the disk statistics filter counted no reads"
+            exit 1
+        fi
+        if [[ -n "$system_disk_image" ]] &&
+           ! grep -q '\[diskstats\] disk3: .* [1-9][0-9]* failed' "$serial_log"; then
+            echo "TEST FAILED: the disk statistics filter counted no failed reads"
+            exit 1
+        fi
         echo "TEST PASSED"
         exit 0
         ;;

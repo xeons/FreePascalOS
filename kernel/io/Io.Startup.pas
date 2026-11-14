@@ -15,7 +15,8 @@
 
     1. Input devices (keyboard, serial port), attached to the console
     2. PCI enumeration
-    3. Storage drivers, which register whole-disk block devices
+    3. Storage drivers, which register whole-disk block devices, and
+       the statistics filter on each disk
     4. Partition tables, which register partition block devices
     5. Device objects for all of them (/dev/disk0, /dev/disk0p1, ...)
     6. File systems, which mount every recognizable volume
@@ -48,7 +49,8 @@ uses
   Drivers.SerialDevice,
   Drivers.Ps2Keyboard,
   Io.ConsoleInput,
-  Drivers.DiskDevices;
+  Drivers.DiskDevices,
+  Drivers.DiskStatistics;
 
 procedure ScanAllDisksForPartitions;
 var
@@ -101,6 +103,7 @@ begin
 
   InitializeBlockDevices;
   InitializeAhciControllers;
+  AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;
 

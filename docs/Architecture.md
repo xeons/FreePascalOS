@@ -302,6 +302,14 @@ range regardless of the device's block size.
   completes exactly once: completing runs the request's completion
   routine, if it has one, or signals its completion event.
   `CallDriverAndWait` sends a request and waits for it.
+- Devices can be **layered**: `AttachDevice` puts a filter device on top
+  of a device's stack, and requests sent to any device of the stack start
+  at its top. A filter passes a request down with `ForwardRequest`,
+  optionally with a completion routine of its own (at most four layers);
+  a filter without a routine for some request kind passes it on
+  unchanged. On completion the layers' routines run innermost first, then
+  the sender's completion - also for requests completed later from an
+  interrupt.
 - A driver holding requests until something happens keeps them in a
   **request queue** (`QueueRequest`, `TakeQueuedRequest`). Programs wait
   for their requests alertably (`Io.DeviceFiles`); when the thread is
@@ -314,7 +322,8 @@ range regardless of the device's block size.
 
 `Kernel.IoSelfTest` checks the asynchronous paths on every boot with a
 test driver that holds its reads: completion from a deferred call,
-completion routines, and cancelling the request of an alerted thread.
+completion routines, cancelling the request of an alerted thread, and a
+filter on top of the test device.
 
 The drivers so far:
 
@@ -326,6 +335,7 @@ The drivers so far:
 | `ps2keyboard` (`Drivers.Ps2Keyboard`) | `keyboard`, exclusive, `rw-------`: the characters typed (`Io.InputDevice`) |
 | `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
 | `ahci` (`Drivers.AhciRequests`) | one unnamed device per SATA disk, asynchronous |
+| `diskstats` (`Drivers.DiskStatistics`) | a filter on each disk's storage device counting completed reads and writes, their bytes, and failures; written to the kernel log after the self tests and at the end |
 
 Programs reach every device as `/dev/<name>`, whatever their root
 directory: `Processes.FileCalls` recognizes those paths (and `/dev`

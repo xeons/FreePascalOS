@@ -65,6 +65,7 @@ uses
   Kernel.Timers,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
+  Drivers.DiskStatistics,
   Io.Pipes,
   Debug.Output,
   Debug.FramebufferConsole;
@@ -201,6 +202,7 @@ begin
   RunFileSystemSelfTests;
   RunFileSystemWriteTests;
   WriteBlockCacheSummary;
+  WriteDiskStatistics;
 
   WriteKernelHeapSummary;
   WriteObjectManagerSummary;
@@ -222,6 +224,7 @@ begin
       last thread may still be finishing; give it a moment and free it. }
     SleepMilliseconds(50);
     ReapTerminatedThreads;
+    WriteDiskStatistics;
     WriteKernelHeapSummary;
     WriteObjectManagerSummary;
     WritePhysicalMemorySummary;

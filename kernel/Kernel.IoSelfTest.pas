@@ -9,7 +9,11 @@
       completed later, from DispatchLevel;
     * a completion routine runs exactly once, with the request's status;
     * alerting a thread that waits for a queued request cancels it, and
-      the sender gets ErrorInterrupted.
+      the sender gets ErrorInterrupted;
+    * a filter attached on top of the device sees the requests sent to
+      the device, its completion routine runs (also for a request
+      completed later) before the sender's completion, and requests it
+      has no routine for pass through it.
 }
 unit Kernel.IoSelfTest;
 
@@ -184,12 +188,63 @@ begin
   ReportPassed('cancelling a waiting request');
 end;
 
+const
+  FilterMarker = 1000;
+
+var
+  FilterCompletions: Int64;
+
+{ The filter's completion routine: marks the byte count. }
+procedure MarkFilteredRead(Request: PIoRequest; Context: Pointer);
+begin
+  AtomicIncrement(FilterCompletions);
+  Request^.Information := Request^.Information + FilterMarker;
+end;
+
+function FilterRead(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+begin
+  Result := ForwardRequest(Device^.LowerDevice, Request, @MarkFilteredRead, nil);
+end;
+
+procedure TestFilter;
+var
+  Dispatch: TDispatchTable;
+  Filter: PDeviceObject;
+  Request: TIoRequest;
+begin
+  FillMemory(@Dispatch, SizeOf(Dispatch), 0);
+  Dispatch[IoFunctionRead] := @FilterRead;
+  Filter := CreateDevice(CreateDriver('selftestfilter', Dispatch), nil, DeviceKindCharacter, 0, 0);
+  Check(Filter <> nil, 'could not create the I/O test filter');
+  Check(AttachDevice(Filter, TestDevice) = TestDevice, 'a filter was attached to the wrong device');
+  Check(TopOfStack(TestDevice) = Filter, 'a filter is not on top of its device');
+  FilterCompletions := 0;
+
+  { Sent to the device, through the filter, completed later. }
+  StartSender;
+  QueueDeferredCall(CompleteHeldRead);
+  WaitForEvent(SenderFinished);
+  Check(SenderStatus = ErrorNone, 'a filtered request did not report success');
+  Check(FilterCompletions = 1, 'a filter''s completion routine did not run once');
+  Check(SenderInformation = CompletedByteCount + FilterMarker,
+    'a filter''s completion routine did not run before the sender''s completion');
+
+  { The filter has no write routine: the request passes through. }
+  FillMemory(@Request, SizeOf(Request), 0);
+  Request.Operation := IoFunctionWrite;
+  Check(CallDriverAndWait(TestDevice, Request, False) = ErrorUnsupported,
+    'a request passed through a filter was not refused by the device');
+  Check(FilterCompletions = 1, 'a passed-through request ran the filter''s routine');
+  ReportPassed('filter devices');
+end;
+
 procedure RunIoSelfTests;
 begin
   CreateTestDevice;
   TestLaterCompletion;
   TestCompletionRoutine;
   TestCancellation;
+  TestFilter;
 end;
 
 end.
