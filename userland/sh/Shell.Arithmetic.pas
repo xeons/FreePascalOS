@@ -3,6 +3,7 @@
 
   Integers only. Operators, from lowest to highest precedence:
 
+    =  +=  -=  *=  /=  %=   (assignment to a variable, lowest)
     ||   &&   == !=   < <= > >=   + -   * / %   unary - + !   ( )
 
   A name (or $name) stands for the value of that variable; it counts as
@@ -205,6 +206,75 @@ begin
   end;
 end;
 
+{ NAME op= expression, or an ordinary expression. }
+function ParseAssignment(var Evaluator: TEvaluator): Int64;
+var
+  Saved: PtrUInt;
+  Start: PtrUInt;
+  Name: array[0..127] of Char;
+  Length: PtrUInt;
+  Operation: Char;
+  Current: Int64;
+  Right: Int64;
+  CurrentText: PChar;
+  NumberText: TNumberText;
+begin
+  Saved := Evaluator.Position;
+  SkipBlanks(Evaluator);
+  Start := Evaluator.Position;
+  while IsAlphanumeric(Evaluator.Text[Evaluator.Position]) or (Evaluator.Text[Evaluator.Position] = '_') do
+    Inc(Evaluator.Position);
+  Length := Evaluator.Position - Start;
+  if (Length > 0) and (Length < SizeOf(Name)) and not IsDigit(Evaluator.Text[Start]) then
+  begin
+    SkipBlanks(Evaluator);
+    Operation := #0;
+    if (Evaluator.Text[Evaluator.Position] = '=') and (Evaluator.Text[Evaluator.Position + 1] <> '=') then
+    begin
+      Operation := '=';
+      Inc(Evaluator.Position);
+    end
+    else if (Evaluator.Text[Evaluator.Position] in ['+', '-', '*', '/', '%']) and
+            (Evaluator.Text[Evaluator.Position + 1] = '=') then
+    begin
+      Operation := Evaluator.Text[Evaluator.Position];
+      Inc(Evaluator.Position, 2);
+    end;
+    if Operation <> #0 then
+    begin
+      CopyText(@Name[0], Evaluator.Text + Start, Length + 1);
+      Right := ParseAssignment(Evaluator);
+      if Evaluator.Failed then
+        Exit(0);
+      CurrentText := LookupVariable(@Name[0]);
+      if (CurrentText = nil) or not ParseInteger(CurrentText, Current) then
+        Current := 0;
+      case Operation of
+        '=': Current := Right;
+        '+': Current := Current + Right;
+        '-': Current := Current - Right;
+        '*': Current := Current * Right;
+      else
+        begin
+          if Right = 0 then
+          begin
+            Evaluator.Failed := True;
+            Exit(0);
+          end;
+          if Operation = '/' then
+            Current := Current div Right
+          else
+            Current := Current mod Right;
+        end;
+      end;
+      AssignVariable(@Name[0], FormatSignedDecimal(Current, NumberText));
+      Exit(Current);
+    end;
+  end;
+  Evaluator.Position := Saved;
+  Result := ParseOr(Evaluator);
+end;
+
 function EvaluateArithmetic(Text: PChar; out Value: Int64): Boolean;
 var
   Evaluator: TEvaluator;
@@ -212,7 +282,7 @@ begin
   Evaluator.Text := Text;
   Evaluator.Position := 0;
   Evaluator.Failed := False;
-  Value := ParseOr(Evaluator);
+  Value := ParseAssignment(Evaluator);
   SkipBlanks(Evaluator);
   Result := not Evaluator.Failed and (Evaluator.Text[Evaluator.Position] = #0);
 end;

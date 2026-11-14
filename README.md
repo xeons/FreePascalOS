@@ -41,7 +41,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - A real-time clock driver, so files get correct timestamps.
 - I/O APIC interrupt routing (from the ACPI MADT), with interrupt-driven
   PS/2 keyboard and serial console input; interrupt handlers hand work to
-  dispatch level through deferred calls.
+  dispatch level through deferred calls. Keyboard layouts us, uk, de and
+  fr (kernel option `keymap=`), AltGr, Num Lock and the lock lights.
 - **User mode**: processes with their own address spaces (demand-zero
   memory, isolated crashes), system calls through `syscall`, per-process
   handle tables, pipes, a console and `/dev/null`, and an ELF loader that
@@ -60,9 +61,13 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     walking and copying, POSIX regular expressions (BRE and ERE), chmod
     modes, date parsing, base64/32/16/2/z85, accounts
   - a POSIX style shell `sh` (pipes, redirections, `&&` `||`, `if` /
-    `while` / `until` / `for`, variables, `$( )` and `$(( ))`, globbing,
-    quoting, scripts), with line editing, history and Tab completion on
-    the console; Ctrl-C ends the running pipeline
+    `while` / `until` / `for` / `case`, functions with `local` and
+    `return`, here-documents, variables and `${...}` expansions (`:-`
+    `:=` `:+` `:?` `#` `##` `%` `%%` and lengths), `$( )` and `$(( ))`
+    with assignments, globbing, quoting, `eval`, `exec`, `command`,
+    `type`, scripts), with line editing (long lines scroll sideways),
+    history and Tab completion on the console; Ctrl-C ends the running
+    pipeline, or a loop of builtins
   - recreations of the GNU core utilities, 102 commands: arch b2sum
     base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm
     cp csplit cut date dd df dir dirname du echo env expand expr factor

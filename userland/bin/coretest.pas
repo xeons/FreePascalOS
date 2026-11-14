@@ -46,7 +46,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..191] of TCommandTest = (
+  CommandTests: array[0..209] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -259,6 +259,26 @@ const
     (Command: 'echo "hello big world" | ptx -w 30'; ExpectedOutput: '       hello   big world'#10'               hello big world'#10'   hello big   world'#10; ExpectedStatus: 0),
     (Command: 'expr abc : ''a\(.*\)c''; expr aaa : ''a*''; expr x : ''\(y\)'''; ExpectedOutput: 'b'#10'3'#10#10; ExpectedStatus: 1),
     (Command: 'ls /bin/dir /bin/vdir /bin/chgrp /bin/unexpand'; ExpectedOutput: '/bin/chgrp'#10'/bin/dir'#10'/bin/unexpand'#10'/bin/vdir'#10; ExpectedStatus: 0),
+
+    { --- shell language --------------------------------------------- }
+    (Command: 'for w in apple bob x.txt; do case $w in a*) echo A;; b*|c*) echo B;; *.txt) echo T;; esac; done'; ExpectedOutput: 'A'#10'B'#10'T'#10; ExpectedStatus: 0),
+    (Command: 'X=''*''; case abc in "$X") echo literal;; $X) echo pattern;; esac; case x in (y) ;; esac'; ExpectedOutput: 'pattern'#10; ExpectedStatus: 0),
+    (Command: 'greet() { echo "hi $1 ($#)"; }; greet bob x; greet'; ExpectedOutput: 'hi bob (2)'#10'hi  (0)'#10; ExpectedStatus: 0),
+    (Command: 'f() { local v=inner; X=changed; return 3; echo never; }; v=outer; f; echo $? $v $X'; ExpectedOutput: '3 outer changed'#10; ExpectedStatus: 0),
+    (Command: 'set -- a b; f() { echo $1 $#; }; f z; echo $1 $#'; ExpectedOutput: 'z 1'#10'a 2'#10; ExpectedStatus: 0),
+    (Command: 'function fact { if [ $1 -le 1 ]; then echo 1; else r=$(fact $(($1 - 1))); echo $(($1 * r)); fi; }; fact 5'; ExpectedOutput: '120'#10; ExpectedStatus: 0),
+    (Command: 'f() { echo in-f; }; f > f.out; cat f.out; f | tr a-z A-Z'; ExpectedOutput: 'in-f'#10'IN-F'#10; ExpectedStatus: 0),
+    (Command: 'X=world; cat <<EOF'#10'hello $X'#10'EOF'#10'echo after'; ExpectedOutput: 'hello world'#10'after'#10; ExpectedStatus: 0),
+    (Command: 'cat <<''EOF'''#10'$X'#10'EOF'#10'cat <<-END'#10#9'tabbed'#10#9'END'#10; ExpectedOutput: '$X'#10'tabbed'#10; ExpectedStatus: 0),
+    (Command: 'while read l; do echo "<$l>"; done <<EOF'#10'a'#10'b'#10'EOF'#10; ExpectedOutput: '<a>'#10'<b>'#10; ExpectedStatus: 0),
+    (Command: 'seq 2000 > big.txt; cat <<EOF | tail -n 1'#10'$(cat big.txt)'#10'EOF'#10; ExpectedOutput: '2000'#10; ExpectedStatus: 0),
+    (Command: 'P=/usr/lib/file.tar.gz; echo ${#P} ${P#*/} ${P##*/} ${P%.*} ${P%%.*}'; ExpectedOutput: '20 usr/lib/file.tar.gz file.tar.gz /usr/lib/file.tar /usr/lib/file'#10; ExpectedStatus: 0),
+    (Command: 'echo ${N:=set} $N ${N:+alt} ${E:+alt}.; sh -c ''echo ${E:?gone}; echo never'' 2>/dev/null; echo $?'; ExpectedOutput: 'set set alt .'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'i=1; : $((i += 4)); echo $i $((i == 5)) $((i < 3)) $((j = 2 * 3)) $j'; ExpectedOutput: '5 1 0 6 6'#10; ExpectedStatus: 0),
+    (Command: 'cmd="echo evaluated"; eval $cmd; eval "X=7; echo \$X"'; ExpectedOutput: 'evaluated'#10'7'#10; ExpectedStatus: 0),
+    (Command: 'sh -c ''exec >exec.out; echo into file''; cat exec.out; exec echo replaced; echo not reached'; ExpectedOutput: 'into file'#10'replaced'#10; ExpectedStatus: 0),
+    (Command: 'f() { :; }; type f cd if cat; command -v cat; command echo plain; wait'; ExpectedOutput: 'f is a shell function'#10'cd is a shell builtin'#10'if is a shell keyword'#10'cat is /bin/cat'#10'/bin/cat'#10'plain'#10; ExpectedStatus: 0),
+    (Command: 'f() { echo f; }; unset -f f; f 2>/dev/null; echo $?'; ExpectedOutput: '127'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone, with status 139 --------------- }
     (Command: '/bin/coretest --crash-on-purpose; echo $?; echo still running'; ExpectedOutput: '139'#10'still running'#10; ExpectedStatus: 0)

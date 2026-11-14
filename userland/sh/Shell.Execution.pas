@@ -16,7 +16,13 @@
   a foreground pipeline's group becomes the console's foreground group
   while the shell waits, so Ctrl-C ends exactly that pipeline. When a
   foreground program ends by Ctrl-C (status 130), the rest of the command
-  line is abandoned.
+  line is abandoned. Ctrl-C pressed while the shell itself is busy (a loop
+  of builtins) is noticed between commands.
+
+  Functions run inside the shell with their own positional parameters and
+  local variables; "return" unwinds to the call like "break" unwinds a
+  loop. Here-documents reach the command through a pipe, or through a
+  temporary file when they are larger than a pipe holds.
 }
 unit Shell.Execution;
 
@@ -44,6 +50,13 @@ var
   { Set when a foreground program was ended by Ctrl-C; cleared by sh
     before each command line. }
   InterruptRequested: Boolean = False;
+  { Set by the return builtin; unwinds to the function call. }
+  ReturnRequested: Boolean = False;
+  ReturnStatus: LongInt = 0;
+  FunctionDepth: Integer = 0;
+
+{ True while break, continue, return, exit or Ctrl-C unwinds execution. }
+function Unwinding: Boolean;
 
 function ExecuteNode(Node: PNode): LongInt;
 { Parses and runs Text; syntax errors give status 2. }
@@ -67,6 +80,8 @@ uses
   Shell.Lexer,
   Shell.Variables,
   Shell.Expansion,
+  Shell.Functions,
+  Shell.Patterns,
   Shell.Builtins;
 
 const
@@ -74,6 +89,10 @@ const
   StatusNotFound = 127;
   StatusCannotRun = 126;
   StatusInterrupted = 130;
+  { A here-document up to this size goes through a pipe (which holds
+    4 KiB), a larger one through a temporary file. }
+  HereDocumentPipeLimit = 4000;
+  MaximumTemporaryFiles = 16;
 
 type
   TStandardHandles = array[0..2] of Int64;
@@ -89,8 +108,48 @@ type
     Node: PNode;
     Fields: TFieldList;
     Builtin: TBuiltinRoutine;
+    { The body if the command names a shell function. }
+    FunctionBody: PNode;
+    { "exec program": the shell ends with the program's status. }
+    ExitAfterwards: Boolean;
+    { An expansion failed; the command is not run. }
+    Failed: Boolean;
   end;
   PPreparedCommand = ^TPreparedCommand;
+
+var
+  { Here-documents written to files, removed when the pipeline ends. }
+  TemporaryFiles: array[0..MaximumTemporaryFiles - 1] of PChar;
+  TemporaryFileCount: Integer = 0;
+  TemporaryFileNumber: Integer = 0;
+
+function Unwinding: Boolean;
+begin
+  Result := ExitRequested or InterruptRequested or ReturnRequested or (LoopControl <> LoopControlNone);
+end;
+
+{ Notices Ctrl-C pressed while the interactive shell runs builtins. }
+procedure CheckPendingInterrupt;
+begin
+  if ShellIsInteractive and not InterruptRequested and TakePendingInterrupt(StandardInputHandle) then
+  begin
+    InterruptRequested := True;
+    FlushStream(StandardOutput);
+    WriteText(StandardError, '^C'#10);
+  end;
+end;
+
+procedure RemoveTemporaryFiles;
+var
+  Index: Integer;
+begin
+  for Index := 0 to TemporaryFileCount - 1 do
+  begin
+    RemovePath(TemporaryFiles[Index]);
+    FreeMemory(TemporaryFiles[Index]);
+  end;
+  TemporaryFileCount := 0;
+end;
 
 procedure ShellError(Format: PChar; const Arguments: array of TFormatArgument);
 begin
@@ -136,6 +195,72 @@ end;
 
 { --- Redirections ---------------------------------------------------- }
 
+{ A handle from which the command reads the here-document's text. }
+function OpenHereDocument(Redirection: PRedirection): Int64;
+var
+  Body: PChar;
+  Length: PtrUInt;
+  ReadHandle: Int64;
+  WriteHandle: Int64;
+  Directory: PChar;
+  Builder: TTextBuilder;
+  Path: PChar;
+begin
+  Result := -1;
+  if Redirection^.HereBody = nil then
+    Body := DuplicateText('')
+  else if Redirection^.HereIsQuoted then
+    Body := DuplicateText(Redirection^.HereBody)
+  else
+    Body := ExpandHereDocument(Redirection^.HereBody);
+  Length := TextLength(Body);
+
+  if Length <= HereDocumentPipeLimit then
+  begin
+    if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
+    begin
+      ShellError('cannot create a pipe for a here-document', []);
+      FreeMemory(Body);
+      Exit;
+    end;
+    WriteAll(WriteHandle, Body, Length);
+    CloseFile(WriteHandle);
+    FreeMemory(Body);
+    Exit(ReadHandle);
+  end;
+
+  Directory := LookupVariable('TMPDIR');
+  if (Directory = nil) or (Directory^ = #0) then
+    Directory := '/tmp';
+  Inc(TemporaryFileNumber);
+  BeginText(Builder);
+  AppendText(Builder, Directory);
+  AppendText(Builder, '/sh-here-');
+  AppendDecimal(Builder, CurrentProcessId);
+  AppendCharacter(Builder, '-');
+  AppendDecimal(Builder, TemporaryFileNumber);
+  Path := FinishText(Builder);
+  WriteHandle := OpenFile(Path, OpenWrite or OpenCreate or OpenTruncate);
+  if WriteHandle < 0 then
+  begin
+    ShellError('cannot create a file for a here-document: %s', [ArgumentText(ErrorMessage(ErrorCodeOf(WriteHandle)))]);
+    FreeMemory(Path);
+    FreeMemory(Body);
+    Exit;
+  end;
+  WriteAll(WriteHandle, Body, Length);
+  CloseFile(WriteHandle);
+  FreeMemory(Body);
+  Result := OpenFile(Path, OpenRead);
+  if TemporaryFileCount < MaximumTemporaryFiles then
+  begin
+    TemporaryFiles[TemporaryFileCount] := Path;
+    Inc(TemporaryFileCount);
+  end
+  else
+    FreeMemory(Path);
+end;
+
 { Applies the redirections of Node on top of Handles. Files opened here
   are added to Opened so they can be closed later. Returns False (after
   reporting) when a file cannot be opened. }
@@ -156,6 +281,19 @@ begin
     begin
       ShellError('only handles 0, 1 and 2 can be redirected', []);
       Exit(False);
+    end;
+    if Redirection^.Kind = RedirectHereDocument then
+    begin
+      Handle := OpenHereDocument(Redirection);
+      if Handle < 0 then
+        Exit(False);
+      Handles[Redirection^.Handle] := Handle;
+      if Opened.Count < Length(Opened.Handles) then
+      begin
+        Opened.Handles[Opened.Count] := Handle;
+        Inc(Opened.Count);
+      end;
+      Continue;
     end;
     Target := ExpandToText(Redirection^.Target);
 
@@ -207,14 +345,90 @@ end;
 
 { --- Simple commands ------------------------------------------------- }
 
+{ Drops the first field (for "exec program" and "command program"). }
+procedure DropFirstField(var Fields: TFieldList);
+var
+  Index: Integer;
+begin
+  FreeMemory(Fields.Items[0]);
+  for Index := 1 to Fields.Count do
+    Fields.Items[Index - 1] := Fields.Items[Index];
+  Dec(Fields.Count);
+end;
+
 procedure PrepareCommand(Node: PNode; out Prepared: TPreparedCommand);
+var
+  SkipFunctions: Boolean;
 begin
   Prepared.Node := Node;
+  Prepared.FunctionBody := nil;
+  Prepared.ExitAfterwards := False;
   BeginFieldList(Prepared.Fields);
+  ExpansionFailed := False;
   ExpandWords(Node^.Words, Node^.WordCount, Prepared.Fields);
+  Prepared.Failed := ExpansionFailed;
   Prepared.Builtin := nil;
-  if Prepared.Fields.Count > 0 then
+  if Prepared.Fields.Count = 0 then
+    Exit;
+  SkipFunctions := False;
+  { "exec program ..." runs the program, then the shell ends. }
+  if TextIsEqual(Prepared.Fields.Items[0], 'exec') and (Prepared.Fields.Count > 1) then
+  begin
+    DropFirstField(Prepared.Fields);
+    Prepared.ExitAfterwards := True;
+    Exit;
+  end;
+  { "command name ..." skips functions; "command -v" is a builtin. }
+  if TextIsEqual(Prepared.Fields.Items[0], 'command') and (Prepared.Fields.Count > 1) and
+     (Prepared.Fields.Items[1][0] <> '-') then
+  begin
+    DropFirstField(Prepared.Fields);
+    SkipFunctions := True;
+  end;
+  if not SkipFunctions then
+    Prepared.FunctionBody := FindFunction(Prepared.Fields.Items[0]);
+  if Prepared.FunctionBody = nil then
     Prepared.Builtin := FindBuiltin(Prepared.Fields.Items[0]);
+end;
+
+{ After an expansion failed: an interactive shell drops the command line,
+  a script ends. }
+function HandleExpansionFailure: LongInt;
+begin
+  if ShellIsInteractive then
+    InterruptRequested := True
+  else
+  begin
+    ExitRequested := True;
+    RequestedExitCode := 1;
+  end;
+  Result := 1;
+end;
+
+{ Runs a shell function with Fields as its arguments. }
+function CallFunction(Body: PNode; const Fields: TFieldList): LongInt;
+var
+  SavedPositionals: TSavedPositionals;
+  SavedLoopDepth: Integer;
+begin
+  SavePositionalParameters(SavedPositionals);
+  SetPositionalParameters(Fields.Items + 1, Fields.Count - 1);
+  BeginLocalScope;
+  Inc(FunctionDepth);
+  { break and continue do not reach loops outside the function. }
+  SavedLoopDepth := LoopDepth;
+  LoopDepth := 0;
+  Result := ExecuteNode(Body);
+  if ReturnRequested then
+  begin
+    Result := ReturnStatus;
+    ReturnRequested := False;
+  end;
+  LoopControl := LoopControlNone;
+  LoopDepth := SavedLoopDepth;
+  Dec(FunctionDepth);
+  EndLocalScope;
+  RestorePositionalParameters(SavedPositionals);
 end;
 
 { The environment for a program started with "NAME=value command". }
@@ -351,7 +565,10 @@ var
   Effective: TStandardHandles;
   Saved: TStandardHandles;
   Opened: TOpenedHandles;
+  Index: Integer;
 begin
+  if Prepared.Failed then
+    Exit(HandleExpansionFailure);
   Effective := Handles;
   Opened.Count := 0;
   if not ApplyRedirections(Prepared.Node, Effective, Opened) then
@@ -368,16 +585,31 @@ begin
     Exit(LastStatus);
   end;
 
+  { "exec" with only redirections makes them permanent. }
+  if TextIsEqual(Prepared.Fields.Items[0], 'exec') then
+  begin
+    FlushStandardStreams;
+    for Index := 0 to 2 do
+      if Effective[Index] <> Index then
+        DuplicateHandle(Effective[Index], Index);
+    CloseOpenedHandles(Opened);
+    Exit(0);
+  end;
+
   PerformAssignments(Prepared.Node);
   SwitchStandardHandles(Effective, Saved);
-  Result := Prepared.Builtin(Prepared.Fields.Items, Prepared.Fields.Count);
+  if Prepared.FunctionBody <> nil then
+    Result := CallFunction(Prepared.FunctionBody, Prepared.Fields)
+  else
+    Result := Prepared.Builtin(Prepared.Fields.Items, Prepared.Fields.Count);
   RestoreStandardHandles(Saved);
   CloseOpenedHandles(Opened);
 end;
 
 function RunsInShell(const Prepared: TPreparedCommand): Boolean;
 begin
-  Result := (Prepared.Fields.Count = 0) or (Prepared.Builtin <> nil);
+  Result := (Prepared.Fields.Count = 0) or (Prepared.Builtin <> nil) or (Prepared.FunctionBody <> nil) or
+    Prepared.Failed;
 end;
 
 { --- Pipelines ------------------------------------------------------- }
@@ -499,6 +731,11 @@ begin
       Statuses[Index] := WaitForProgram(Processes[Index]);
       if ShellIsInteractive and (Statuses[Index] = StatusInterrupted) then
         InterruptRequested := True;
+      if Prepared[Index].ExitAfterwards then
+      begin
+        ExitRequested := True;
+        RequestedExitCode := Statuses[Index];
+      end;
     end
     else
       { A background program keeps running on its own. }
@@ -513,6 +750,8 @@ begin
 
   for Index := 0 to Count - 1 do
     FreeFieldList(Prepared[Index].Fields);
+  if Wait then
+    RemoveTemporaryFiles;
   FreeMemory(Prepared);
   FreeMemory(Processes);
   FreeMemory(Statuses);
@@ -526,13 +765,14 @@ end;
 { True when a break or continue (or exit) ends the current loop body. }
 function LeaveLoopBody: Boolean;
 begin
-  Result := ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone);
+  CheckPendingInterrupt;
+  Result := Unwinding;
 end;
 
 { After a loop body: returns True if the loop itself must stop. }
 function LoopMustStop: Boolean;
 begin
-  if ExitRequested or InterruptRequested then
+  if ExitRequested or InterruptRequested or ReturnRequested then
     Exit(True);
   if LoopControl = LoopControlNone then
     Exit(False);
@@ -595,6 +835,61 @@ begin
   FreeFieldList(Values);
 end;
 
+function ExecuteCase(Node: PNode): LongInt;
+var
+  Subject: PChar;
+  ItemIndex: Integer;
+  PatternIndex: Integer;
+  Item: PNode;
+  Pattern: PChar;
+  Matched: Boolean;
+begin
+  Result := 0;
+  Subject := ExpandToText(Node^.Words[0]);
+  for ItemIndex := 0 to Node^.ChildCount - 1 do
+  begin
+    Item := Node^.Children[ItemIndex];
+    Matched := False;
+    for PatternIndex := 0 to Item^.WordCount - 1 do
+    begin
+      Pattern := ExpandToPattern(Item^.Words[PatternIndex]);
+      Matched := MatchPattern(Pattern, Subject);
+      FreeMemory(Pattern);
+      if Matched then
+        Break;
+    end;
+    if Matched then
+    begin
+      Result := ExecuteNode(Item^.Body);
+      Break;
+    end;
+  end;
+  FreeMemory(Subject);
+end;
+
+{ A compound command with redirections: the shell's own handles point
+  at the files while it runs. }
+function ExecuteRedirected(Node: PNode): LongInt;
+var
+  Handles: TStandardHandles;
+  Saved: TStandardHandles;
+  Opened: TOpenedHandles;
+  Index: Integer;
+begin
+  for Index := 0 to 2 do
+    Handles[Index] := Index;
+  Opened.Count := 0;
+  if not ApplyRedirections(Node, Handles, Opened) then
+  begin
+    CloseOpenedHandles(Opened);
+    Exit(1);
+  end;
+  SwitchStandardHandles(Handles, Saved);
+  Result := ExecuteNode(Node^.Body);
+  RestoreStandardHandles(Saved);
+  CloseOpenedHandles(Opened);
+end;
+
 function ExecuteSequence(Node: PNode): LongInt;
 var
   Index: Integer;
@@ -614,7 +909,8 @@ begin
     end
     else
       Result := ExecuteNode(Child);
-    if ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone) then
+    CheckPendingInterrupt;
+    if Unwinding then
       Break;
   end;
 end;
@@ -631,7 +927,7 @@ begin
     NodeAndOr:
       begin
         Result := ExecuteNode(Node^.Left);
-        if not ExitRequested and not InterruptRequested and (LoopControl = LoopControlNone) then
+        if not Unwinding then
         begin
           if (Node^.AndOrOperator = OperatorAnd) and (Result = 0) then
             Result := ExecuteNode(Node^.Right)
@@ -644,7 +940,7 @@ begin
     NodeIf:
       begin
         Result := ExecuteNode(Node^.Condition);
-        if ExitRequested or InterruptRequested or (LoopControl <> LoopControlNone) then
+        if Unwinding then
           Exit;
         if Result = 0 then
           Result := ExecuteNode(Node^.Body)
@@ -657,6 +953,15 @@ begin
       Result := ExecuteLoop(Node);
     NodeFor:
       Result := ExecuteFor(Node);
+    NodeCase:
+      Result := ExecuteCase(Node);
+    NodeFunction:
+      begin
+        DefineFunction(Node);
+        Result := 0;
+      end;
+    NodeRedirected:
+      Result := ExecuteRedirected(Node);
   else
     Result := 1;
   end;

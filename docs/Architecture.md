@@ -199,13 +199,23 @@ ignore it. If it ended none (an interactive shell waiting at its prompt
 is the foreground), Ctrl-C is passed to the reader as a character, and
 the shell's line editor clears the line. The interactive shell runs each
 foreground pipeline in a new group and makes it the foreground group
-while it waits.
+while it waits. While the shell itself is busy (a loop made only of
+builtins) nobody reads the character; the console also remembers that an
+interrupt is pending, and the shell asks for it between commands with
+the console control request `ControlTakePendingInterrupt`, which answers
+once per key press and removes the Ctrl-C from the input.
 
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
 (Drivers.SerialInput, IRQ 4) feed characters to the console's input ring
 (DeliverConsoleInput); a deferred call signals the event a reading thread
 waits on. Without an I/O APIC the console falls back to polling the serial
-port.
+port. The keyboard's characters come from a layout
+(Drivers.KeyboardLayouts: us, uk, de or fr, chosen with the kernel option
+`keymap=`), written as the keys that differ from US, with a third level
+on AltGr; characters beyond ASCII are sent in UTF-8 (the framebuffer font
+only has ASCII). The driver sets the Caps, Num and Scroll Lock lights
+(keyboard command 0xED, answered by interrupts); with Num Lock off the
+keypad sends cursor and editing keys.
 
 ## File systems
 
@@ -398,10 +408,19 @@ independent) against `rtl/user/system.pas`:
   `Util.Commands` (running a command, signal names).
 - **sh** – lexer, parser to a syntax tree, word expansion and execution;
   on the console it reads lines through `Util.LineEditor` (cursor keys,
-  history in `$HOME/.sh_history`, Tab completion).
+  history in `$HOME/.sh_history`, Tab completion; a line longer than the
+  screen scrolls sideways, so redrawing needs only carriage return,
+  backspace and spaces and works on serial terminals too).
   Pipelines start their external programs first and then run builtins and
   compound commands inside the shell, so no stage waits for one that has
-  not started.
+  not started. The language has `case`, functions (`Shell.Functions`: a
+  copy of the body and its source text, so command substitutions, which
+  run as a new `sh`, are given the functions and variables first) with
+  per-call positional parameters, `local` and `return`, here-documents
+  (collected by the lexer; fed through a pipe, or a file in `/tmp` when
+  larger than a pipe holds) and redirections on compound commands. The
+  builtins about running commands (`eval`, `exec`, `command`, `type`,
+  `wait`, `return`, `local`) are in `Shell.CommandBuiltins`.
 - **coreutils** – one program per file in `userland/bin`.
 
 Free Pascal units do not use initialization sections or threadvars in user

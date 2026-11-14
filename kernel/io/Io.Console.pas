@@ -64,6 +64,10 @@ procedure WaitForInterruptKey;
 procedure FinishInterrupt;
 { When nobody was ended, the reader gets Ctrl-C as a character. }
 procedure PassInterruptToReader;
+{ A program busy with something else than reading (the shell running a
+  loop of builtins) asks whether Ctrl-C was passed to it: returns True
+  once per key press, and removes the Ctrl-C character from the input. }
+function TakePendingInterrupt: Boolean;
 
 implementation
 
@@ -112,6 +116,8 @@ type
     SerialIsInterruptDriven: Boolean;
 
     ForegroundGroup: QWord;
+    { Ctrl-C was passed to the reader and not yet taken. }
+    PendingInterrupt: Boolean;
     InterruptKey: TEvent;
     WakeInterruptHandler: TDeferredCall;
   end;
@@ -170,6 +176,9 @@ begin
     Character := TheConsole^.Ring[TheConsole^.RingStart];
     TheConsole^.RingStart := (TheConsole^.RingStart + 1) mod RingCapacity;
     Dec(TheConsole^.RingCount);
+    { The reader got the Ctrl-C itself; it is no longer pending. }
+    if Character = KeyInterrupt then
+      TheConsole^.PendingInterrupt := False;
   end
   else
     Character := #0;
@@ -245,8 +254,38 @@ end;
 
 procedure PassInterruptToReader;
 begin
+  TheConsole^.PendingInterrupt := True;
   AddToRing(KeyInterrupt);
   SignalEvent(TheConsole^.InputAvailable);
+end;
+
+function TakePendingInterrupt: Boolean;
+var
+  WereEnabled: Boolean;
+  Index: LongWord;
+  Kept: LongWord;
+  Character: Char;
+begin
+  if not TheConsole^.PendingInterrupt then
+    Exit(False);
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  TheConsole^.PendingInterrupt := False;
+  { Drop the Ctrl-C characters, keeping the rest in order. }
+  Kept := 0;
+  for Index := 0 to TheConsole^.RingCount - 1 do
+  begin
+    Character := TheConsole^.Ring[(TheConsole^.RingStart + Index) mod RingCapacity];
+    if Character <> KeyInterrupt then
+    begin
+      TheConsole^.Ring[(TheConsole^.RingStart + Kept) mod RingCapacity] := Character;
+      Inc(Kept);
+    end;
+  end;
+  TheConsole^.RingCount := Kept;
+  ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+  RestoreInterrupts(WereEnabled);
+  Result := True;
 end;
 
 function GetConsoleMode: LongWord;

@@ -3,7 +3,8 @@
 Input test: boots the system with /bin/sh as the first program and types
 into it, on the emulated PS/2 keyboard (QEMU monitor "sendkey") and on the
 serial port, then checks what the shell printed. Covers both input
-drivers, the shell's line editing and history, and Ctrl-C.
+drivers, the shell's line editing and history (also of a line longer
+than the screen), and Ctrl-C (also of a loop of shell builtins).
 
     test-input.py <esp-directory> <system-disk-image>
 
@@ -166,6 +167,19 @@ collect(0.5)
 type_on_serial(b'\r')
 checks.append(('editing: tab completion', wait_for('passwd', 10)))
 
+# A line longer than the screen scrolls sideways: edit at both ends, and
+# the terminal is never sent a row as long as the line.
+long_start = len(received)
+type_on_serial(b'echo ' + b'a' * 150 + b'END\x01' + b'\x1b[C' * 5 + b'S\x05Z\r')
+long_result = b'\nS' + b'a' * 150 + b'ENDZ'
+long_ok = wait_for(long_result.decode(), 15)
+if long_ok:
+    shown = bytes(received[long_start:received.index(long_result, long_start)])
+    for separator in (b'\r', b'\b'):
+        shown = shown.replace(separator, b'\n')
+    long_ok = max(len(row) for row in shown.split(b'\n')) < 150
+checks.append(('editing: a line longer than the screen', long_ok))
+
 # Ctrl-C: clears the line at the prompt, ends a sleeping program, a busy
 # program and a whole loop.
 type_on_serial(b'echo partial\x03echo cleared\r')
@@ -179,6 +193,11 @@ type_on_serial(b'yes > /dev/null\r')
 time.sleep(1)
 type_on_serial(b'\x03echo busy=$?\r')
 checks.append(('ctrl-c ends a busy program', wait_for('busy=130', 10)))
+type_on_serial(b'while true; do :; done; echo skipped-after-builtins\r')
+time.sleep(1.5)
+type_on_serial(b'\x03echo builtin-loop-ended\r')
+checks.append(('ctrl-c ends a loop of builtins',
+               wait_for('\nbuiltin-loop-ended', 10) and b'\nskipped-after-builtins' not in received))
 type_on_serial(b'while true; do sleep 1; done; echo not-reached\r')
 time.sleep(1.5)
 type_on_serial(b'\x03echo loop-ended\r')

@@ -6,11 +6,14 @@
     list       := and_or { (';' | '&' | newline) and_or }
     and_or     := pipeline { ('&&' | '||') pipeline }
     pipeline   := ['!'] command { '|' command }
-    command    := simple | if | while | until | for | '{' list '}' | '(' list ')'
+    command    := simple | compound [redirection...] | function
+    compound   := if | while | until | for | case | '{' list '}' | '(' list ')'
     simple     := { NAME=value } { word | redirection }
     if         := 'if' list 'then' list { 'elif' list 'then' list } ['else' list] 'fi'
     while      := 'while' list 'do' list 'done'      (until likewise)
     for        := 'for' NAME ['in' word...] (';' | newline) 'do' list 'done'
+    case       := 'case' word 'in' { ['('] pattern {'|' pattern} ')' list [';;'] } 'esac'
+    function   := NAME '(' ')' command  |  'function' NAME ['(' ')'] command
 
   Newlines are allowed after '|', '&&', '||' and inside compound
   commands. "( list )" runs in the same shell, like "{ list }".
@@ -26,7 +29,8 @@ uses
   Shell.Lexer;
 
 type
-  TNodeKind = (NodeSimple, NodePipeline, NodeAndOr, NodeSequence, NodeIf, NodeLoop, NodeFor);
+  TNodeKind = (NodeSimple, NodePipeline, NodeAndOr, NodeSequence, NodeIf, NodeLoop, NodeFor,
+    NodeCase, NodeCaseItem, NodeFunction, NodeRedirected);
   TAndOrOperator = (OperatorAnd, OperatorOr);
 
   PRedirection = ^TRedirection;
@@ -34,6 +38,9 @@ type
     Kind: TRedirectKind;
     Handle: Integer;
     Target: PChar;      { raw word }
+    { Here-documents: the body, and whether it is taken literally. }
+    HereBody: PChar;
+    HereIsQuoted: Boolean;
   end;
 
   PNode = ^TNode;
@@ -42,7 +49,9 @@ type
     Kind: TNodeKind;
 
     { NodeSimple: words and NAME=value assignments are raw text.
-      NodeFor: Words is the list after "in" (nil = "$@"). }
+      NodeFor: Words is the list after "in" (nil = "$@").
+      NodeCase: Words[0] is the subject; Children are NodeCaseItems,
+      whose Words are the patterns and Body the commands. }
     Words: PPChar;
     WordCount: Integer;
     Assignments: PPChar;
@@ -64,12 +73,16 @@ type
     AndOrOperator: TAndOrOperator;
 
     { NodeIf: Condition/Body/ElseBody (elif nests in ElseBody).
-      NodeLoop: Condition/Body, IsUntil. NodeFor: VariableName/Body. }
+      NodeLoop: Condition/Body, IsUntil. NodeFor: VariableName/Body.
+      NodeFunction: VariableName is the function's name, Body its body
+      and SourceText the definition as written.
+      NodeRedirected: a compound command (Body) with Redirections. }
     Condition: PNode;
     Body: PNode;
     ElseBody: PNode;
     IsUntil: Boolean;
     VariableName: PChar;
+    SourceText: PChar;
   end;
 
   TParseResult = (ParseSuccess, ParseIncomplete, ParseError);
@@ -78,6 +91,8 @@ type
   ErrorMessage describes the problem. }
 function ParseInput(Text: PChar; out Tree: PNode; out ErrorMessage: PChar): TParseResult;
 procedure FreeNode(Node: PNode);
+{ A deep copy (function bodies outlive the command line they came in). }
+function CopyNode(Node: PNode): PNode;
 
 implementation
 
@@ -89,6 +104,7 @@ uses
 
 type
   TParser = record
+    Source: PChar;
     Tokens: TTokenList;
     Position: Integer;
     Incomplete: Boolean;
@@ -152,7 +168,8 @@ begin
       Result := TextIsEqual(Token^.Text, 'then') or TextIsEqual(Token^.Text, 'else') or
         TextIsEqual(Token^.Text, 'elif') or TextIsEqual(Token^.Text, 'fi') or
         TextIsEqual(Token^.Text, 'do') or TextIsEqual(Token^.Text, 'done') or
-        TextIsEqual(Token^.Text, '}');
+        TextIsEqual(Token^.Text, '}') or TextIsEqual(Token^.Text, 'esac');
+    TokenDoubleSemicolon: Result := True;
   else
     Result := False;
   end;
@@ -205,10 +222,37 @@ begin
   Result := Word[Index] = '=';
 end;
 
-function ParseSimpleCommand(var Parser: TParser): PNode;
+{ Parses the redirection at the current token and adds it to Node. }
+function ParseRedirection(var Parser: TParser; Node: PNode): Boolean;
 var
   Token: PToken;
   Redirection: TRedirection;
+begin
+  Token := Current(Parser);
+  Redirection.Kind := Token^.RedirectKind;
+  Redirection.Handle := Token^.RedirectHandle;
+  Redirection.HereBody := nil;
+  Redirection.HereIsQuoted := Token^.HereIsQuoted;
+  Advance(Parser);
+  if Current(Parser)^.Kind <> TokenWord then
+  begin
+    SetError(Parser, 'syntax error: missing file name after redirection');
+    Exit(False);
+  end;
+  if Token^.HereBody <> nil then
+    Redirection.HereBody := DuplicateText(Token^.HereBody);
+  Redirection.Target := DuplicateText(Current(Parser)^.Text);
+  Advance(Parser);
+  Node^.Redirections := PRedirection(ReallocateMemory(Node^.Redirections,
+    QWord(Node^.RedirectionCount + 1) * SizeOf(TRedirection)));
+  Node^.Redirections[Node^.RedirectionCount] := Redirection;
+  Inc(Node^.RedirectionCount);
+  Result := True;
+end;
+
+function ParseSimpleCommand(var Parser: TParser): PNode;
+var
+  Token: PToken;
   Node: PNode;
 begin
   Node := NewNode(NodeSimple);
@@ -225,21 +269,11 @@ begin
     end
     else if Token^.Kind = TokenRedirect then
     begin
-      Redirection.Kind := Token^.RedirectKind;
-      Redirection.Handle := Token^.RedirectHandle;
-      Advance(Parser);
-      if Current(Parser)^.Kind <> TokenWord then
+      if not ParseRedirection(Parser, Node) then
       begin
-        SetError(Parser, 'syntax error: missing file name after redirection');
         FreeNode(Node);
         Exit(nil);
       end;
-      Redirection.Target := DuplicateText(Current(Parser)^.Text);
-      Advance(Parser);
-      Node^.Redirections := PRedirection(ReallocateMemory(Node^.Redirections,
-        QWord(Node^.RedirectionCount + 1) * SizeOf(TRedirection)));
-      Node^.Redirections[Node^.RedirectionCount] := Redirection;
-      Inc(Node^.RedirectionCount);
     end
     else
       Break;
@@ -327,8 +361,138 @@ begin
   Result := Node;
 end;
 
-function ParseCommand(var Parser: TParser): PNode;
+function ParseCase(var Parser: TParser): PNode;
+var
+  Node: PNode;
+  Item: PNode;
 begin
+  Advance(Parser); { 'case' }
+  Node := NewNode(NodeCase);
+  Result := Node;
+  if Current(Parser)^.Kind <> TokenWord then
+  begin
+    SetError(Parser, 'syntax error: word expected after "case"');
+    Exit;
+  end;
+  AppendText(Node^.Words, Node^.WordCount, DuplicateText(Current(Parser)^.Text));
+  Advance(Parser);
+  SkipNewlines(Parser);
+  if not IsReservedWord(Parser, 'in') then
+  begin
+    SetError(Parser, 'syntax error: "in" expected');
+    Exit;
+  end;
+  Advance(Parser);
+  SkipNewlines(Parser);
+  while not IsReservedWord(Parser, 'esac') do
+  begin
+    if Parser.Failed or Parser.Incomplete then
+      Exit;
+    if Current(Parser)^.Kind = TokenEnd then
+    begin
+      SetError(Parser, 'syntax error: "esac" expected');
+      Exit;
+    end;
+    Item := NewNode(NodeCaseItem);
+    AppendChild(Node, Item, False);
+    if Current(Parser)^.Kind = TokenLeftParenthesis then
+      Advance(Parser);
+    repeat
+      if Current(Parser)^.Kind <> TokenWord then
+      begin
+        SetError(Parser, 'syntax error: pattern expected');
+        Exit;
+      end;
+      AppendText(Item^.Words, Item^.WordCount, DuplicateText(Current(Parser)^.Text));
+      Advance(Parser);
+      if Current(Parser)^.Kind <> TokenPipe then
+        Break;
+      Advance(Parser);
+    until False;
+    if Current(Parser)^.Kind <> TokenRightParenthesis then
+    begin
+      SetError(Parser, 'syntax error: ")" expected after pattern');
+      Exit;
+    end;
+    Advance(Parser);
+    Item^.Body := ParseList(Parser);
+    SkipNewlines(Parser);
+    if Current(Parser)^.Kind = TokenDoubleSemicolon then
+    begin
+      Advance(Parser);
+      SkipNewlines(Parser);
+    end
+    else if not IsReservedWord(Parser, 'esac') then
+    begin
+      SetError(Parser, 'syntax error: ";;" or "esac" expected');
+      Exit;
+    end;
+  end;
+  Advance(Parser); { 'esac' }
+end;
+
+function ParseCommand(var Parser: TParser): PNode; forward;
+
+{ NAME ( ) command, or function NAME [( )] command; StartIndex is the
+  first token of the definition, for its source text. }
+function ParseFunction(var Parser: TParser; StartIndex: Integer): PNode;
+var
+  Node: PNode;
+  StartOffset: PtrUInt;
+  EndOffset: PtrUInt;
+  Length: PtrUInt;
+begin
+  Node := NewNode(NodeFunction);
+  Result := Node;
+  if IsReservedWord(Parser, 'function') then
+    Advance(Parser);
+  if Current(Parser)^.Kind <> TokenWord then
+  begin
+    SetError(Parser, 'syntax error: function name expected');
+    Exit;
+  end;
+  Node^.VariableName := DuplicateText(Current(Parser)^.Text);
+  Advance(Parser);
+  if Current(Parser)^.Kind = TokenLeftParenthesis then
+  begin
+    Advance(Parser);
+    if Current(Parser)^.Kind <> TokenRightParenthesis then
+    begin
+      SetError(Parser, 'syntax error: ")" expected');
+      Exit;
+    end;
+    Advance(Parser);
+  end;
+  SkipNewlines(Parser);
+  Node^.Body := ParseCommand(Parser);
+  if (Node^.Body = nil) or Parser.Failed or Parser.Incomplete then
+    Exit;
+  StartOffset := Parser.Tokens.Items[StartIndex].StartOffset;
+  EndOffset := Parser.Tokens.Items[Parser.Position - 1].EndOffset;
+  Length := EndOffset - StartOffset;
+  Node^.SourceText := PChar(AllocateMemory(Length + 1));
+  CopyMemory(Node^.SourceText, Parser.Source + StartOffset, Length);
+  Node^.SourceText[Length] := #0;
+end;
+
+function IsFunctionDefinition(var Parser: TParser): Boolean;
+var
+  Index: Integer;
+begin
+  if IsReservedWord(Parser, 'function') then
+    Exit(True);
+  Index := Parser.Position;
+  Result := (Parser.Tokens.Items[Index].Kind = TokenWord) and
+    (Index + 2 < Parser.Tokens.Count) and
+    (Parser.Tokens.Items[Index + 1].Kind = TokenLeftParenthesis) and
+    (Parser.Tokens.Items[Index + 2].Kind = TokenRightParenthesis);
+end;
+
+function ParseCompoundCommand(var Parser: TParser): PNode;
+begin
+  Result := nil;
+  if IsReservedWord(Parser, 'case') then
+    Exit(ParseCase(Parser));
   if IsReservedWord(Parser, 'if') then
     Exit(ParseIf(Parser));
   if IsReservedWord(Parser, 'while') or IsReservedWord(Parser, 'until') then
@@ -351,9 +515,35 @@ begin
       Advance(Parser)
     else
       SetError(Parser, 'syntax error: ")" expected');
-    Exit;
   end;
-  Result := ParseSimpleCommand(Parser);
+end;
+
+function IsCompoundStart(var Parser: TParser): Boolean;
+begin
+  Result := IsReservedWord(Parser, 'case') or IsReservedWord(Parser, 'if') or
+    IsReservedWord(Parser, 'while') or IsReservedWord(Parser, 'until') or
+    IsReservedWord(Parser, 'for') or IsReservedWord(Parser, '{') or
+    (Current(Parser)^.Kind = TokenLeftParenthesis);
+end;
+
+function ParseCommand(var Parser: TParser): PNode;
+var
+  Wrapper: PNode;
+begin
+  if IsFunctionDefinition(Parser) then
+    Exit(ParseFunction(Parser, Parser.Position));
+  if not IsCompoundStart(Parser) then
+    Exit(ParseSimpleCommand(Parser));
+  Result := ParseCompoundCommand(Parser);
+  if Parser.Failed or Parser.Incomplete or (Current(Parser)^.Kind <> TokenRedirect) then
+    Exit;
+  { Redirections after a compound command apply to all of it. }
+  Wrapper := NewNode(NodeRedirected);
+  Wrapper^.Body := Result;
+  Result := Wrapper;
+  while Current(Parser)^.Kind = TokenRedirect do
+    if not ParseRedirection(Parser, Wrapper) then
+      Exit;
 end;
 
 function ParsePipeline(var Parser: TParser): PNode;
@@ -459,6 +649,7 @@ begin
   Tree := nil;
   ErrorMessage := nil;
   FillMemory(@Parser, SizeOf(Parser), 0);
+  Parser.Source := Text;
   if Tokenize(Text, Parser.Tokens) = LexIncomplete then
   begin
     FreeTokens(Parser.Tokens);
@@ -515,6 +706,8 @@ begin
     FreeMemory(Node^.Redirections[Index].Target);
     Inc(Index);
   end;
+  for Index := 0 to Node^.RedirectionCount - 1 do
+    FreeMemory(Node^.Redirections[Index].HereBody);
   FreeMemory(Node^.Redirections);
   Index := 0;
   while Index < Node^.ChildCount do
@@ -530,7 +723,69 @@ begin
   FreeNode(Node^.Body);
   FreeNode(Node^.ElseBody);
   FreeMemory(Node^.VariableName);
+  FreeMemory(Node^.SourceText);
   FreeMemory(Node);
+end;
+
+function CopyTextList(Items: PPChar; Count: Integer): PPChar;
+var
+  Index: Integer;
+begin
+  if Items = nil then
+    Exit(nil);
+  Result := PPChar(AllocateZeroedMemory(QWord(Count + 1) * SizeOf(PChar)));
+  for Index := 0 to Count - 1 do
+    Result[Index] := DuplicateText(Items[Index]);
+end;
+
+function CopyOptionalText(Text: PChar): PChar;
+begin
+  if Text = nil then
+    Result := nil
+  else
+    Result := DuplicateText(Text);
+end;
+
+function CopyNode(Node: PNode): PNode;
+var
+  Index: Integer;
+begin
+  if Node = nil then
+    Exit(nil);
+  Result := PNode(AllocateMemory(SizeOf(TNode)));
+  Result^ := Node^;
+  Result^.Words := CopyTextList(Node^.Words, Node^.WordCount);
+  Result^.Assignments := CopyTextList(Node^.Assignments, Node^.AssignmentCount);
+  Result^.Redirections := nil;
+  if Node^.RedirectionCount > 0 then
+  begin
+    Result^.Redirections := PRedirection(AllocateMemory(QWord(Node^.RedirectionCount) * SizeOf(TRedirection)));
+    for Index := 0 to Node^.RedirectionCount - 1 do
+    begin
+      Result^.Redirections[Index] := Node^.Redirections[Index];
+      Result^.Redirections[Index].Target := CopyOptionalText(Node^.Redirections[Index].Target);
+      Result^.Redirections[Index].HereBody := CopyOptionalText(Node^.Redirections[Index].HereBody);
+    end;
+  end;
+  Result^.Children := nil;
+  Result^.RunInBackground := nil;
+  if Node^.ChildCount > 0 then
+  begin
+    Result^.Children := PPNode(AllocateMemory(QWord(Node^.ChildCount) * SizeOf(PNode)));
+    Result^.RunInBackground := PBoolean(AllocateMemory(QWord(Node^.ChildCount) * SizeOf(Boolean)));
+    for Index := 0 to Node^.ChildCount - 1 do
+    begin
+      Result^.Children[Index] := CopyNode(Node^.Children[Index]);
+      Result^.RunInBackground[Index] := Node^.RunInBackground[Index];
+    end;
+  end;
+  Result^.Left := CopyNode(Node^.Left);
+  Result^.Right := CopyNode(Node^.Right);
+  Result^.Condition := CopyNode(Node^.Condition);
+  Result^.Body := CopyNode(Node^.Body);
+  Result^.ElseBody := CopyNode(Node^.ElseBody);
+  Result^.VariableName := CopyOptionalText(Node^.VariableName);
+  Result^.SourceText := CopyOptionalText(Node^.SourceText);
 end;
 
 end.
