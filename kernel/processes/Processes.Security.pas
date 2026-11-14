@@ -150,6 +150,17 @@ begin
   Result := True;
 end;
 
+function CurrentIsOwnerOrRoot(OwnerId: LongWord): Boolean;
+var
+  Process: PProcess;
+begin
+  Process := CurrentProcess;
+  if not Process^.IsUserProcess then
+    Exit(True);
+  Result := (Process^.Credentials.EffectiveUserId = RootUserId) or
+    (Process^.Credentials.EffectiveUserId = OwnerId);
+end;
+
 function MayControlProcess(Caller, Target: PProcess): Boolean;
 var
   UserId: LongWord;
@@ -163,7 +174,7 @@ end;
 
 procedure InitializeProcessSecurity;
 begin
-  SetFileSecurityHooks(@CurrentMayAccess, @CurrentCreationAttributes);
+  SetFileSecurityHooks(@CurrentMayAccess, @CurrentCreationAttributes, @CurrentIsOwnerOrRoot);
 end;
 
 end.

@@ -86,6 +86,9 @@ type
     SetIndex: QWord;
     SetEntryCount: Integer;
     SetEntryOffsets: array[0..MaximumEntrySetSize - 1] of QWord;
+    { Removed while open: its entry set is gone, so it is no longer
+      written. }
+    IsDetached: Boolean;
   end;
 
   TExFatEntry = record
@@ -750,7 +753,7 @@ var
   Stream: PStreamEntry;
   Timestamp: LongWord;
 begin
-  if Node^.IsRoot then
+  if Node^.IsRoot or Node^.IsDetached then
     Exit(StatusSuccess);
   Volume := Node^.Common.Volume;
 

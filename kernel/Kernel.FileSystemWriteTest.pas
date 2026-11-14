@@ -36,6 +36,7 @@
     written/short-link                ext only: symbolic link to final.txt
     written/sparse-written.bin        SparseFinalSize bytes: 1000 bytes of 'S' at
                                       every multiple of SparseStride, zeros elsewhere
+    written/replaced.txt              "replacement\n" (renamed over an older file)
 
   ext3 and ext4 volumes end with a simulated crash: the last change, the
   rename of written/journal-pending.txt to written/journal-committed.txt
@@ -360,20 +361,22 @@ begin
 
   { Renaming files, including onto an existing name. }
   WriteWholeFile('written/temporary.txt', 'temporary');
-  CheckExpectedStatus(RenameRelative('written/temporary.txt', 'written/final.txt'),
-    StatusAlreadyExists, 'renaming onto an existing file');
-  CheckStatus(RenameRelative('written/temporary.txt', 'written/renamed with a long name.txt'),
+  WriteWholeFile('written/overwritten.txt', 'overwritten');
+  CheckStatus(RenameRelative('written/temporary.txt', 'written/overwritten.txt'),
+    'renaming onto an existing file');
+  CheckFileContents('written/overwritten.txt', 'temporary');
+  CheckStatus(RenameRelative('written/overwritten.txt', 'written/renamed with a long name.txt'),
     'renaming a file');
   CheckFileContents('written/renamed with a long name.txt', 'temporary');
   CheckExpectedStatus(PathStatus('written/temporary.txt'), StatusNotFound, 'old name still exists');
 
-  { An open file cannot be removed. }
+  { An open file can be removed (TestRemoveWhileOpen goes further). }
   CheckStatus(OpenRelative('written/renamed with a long name.txt', OpenForReading, OpenedFile),
     'opening the renamed file');
-  CheckExpectedStatus(RemoveRelative('written/renamed with a long name.txt'), StatusInUse,
-    'removing an open file');
+  CheckStatus(RemoveRelative('written/renamed with a long name.txt'), 'removing the open renamed file');
   CloseFile(OpenedFile);
-  CheckStatus(RemoveRelative('written/renamed with a long name.txt'), 'removing a closed file');
+  CheckExpectedStatus(PathStatus('written/renamed with a long name.txt'), StatusNotFound,
+    'the removed file stays removed after closing');
 
   CheckExpectedStatus(RemoveRelative('written/does-not-exist'), StatusNotFound,
     'removing a missing file');
@@ -468,6 +471,102 @@ begin
   CloseFile(OpenedFile);
 end;
 
+function FreeBytes: QWord;
+begin
+  Check(GetVolumeFreeSpace(CurrentVolume, Result), 'reading the free space');
+end;
+
+{ Writes Count bytes of Value at the current position of OpenedFile. }
+procedure WriteFilled(OpenedFile: POpenFile; Value: Byte; Count: QWord);
+var
+  Chunk: array[0..1023] of Byte;
+  Written: QWord;
+  Piece: QWord;
+begin
+  FillMemory(@Chunk[0], SizeOf(Chunk), Value);
+  while Count > 0 do
+  begin
+    Piece := Count;
+    if Piece > SizeOf(Chunk) then
+      Piece := SizeOf(Chunk);
+    CheckStatus(WriteToFile(OpenedFile, @Chunk[0], Piece, Written), 'writing filler');
+    Count := Count - Piece;
+  end;
+end;
+
+{ A file removed while open goes on working, and gives its space back
+  when it is closed. }
+procedure TestRemoveWhileOpen;
+const
+  FillerSize = 40 * 1024;
+var
+  OpenedFile: POpenFile;
+  Probe: array[0..3] of Byte;
+  BytesRead: QWord;
+  FreeBefore: QWord;
+  FreeWhileOpen: QWord;
+  FreeAfter: QWord;
+begin
+  FreeBefore := FreeBytes;
+  CheckStatus(OpenRelative('written/open-removed.bin', OpenForReading or OpenForWriting or OpenCreate,
+    OpenedFile), 'creating open-removed.bin');
+  WriteFilled(OpenedFile, Ord('A'), FillerSize);
+  CheckStatus(RemoveRelative('written/open-removed.bin'), 'removing an open file');
+  CheckExpectedStatus(PathStatus('written/open-removed.bin'), StatusNotFound, 'the removed name is gone');
+  { The name is free for a new file, which is not the old one. }
+  WriteWholeFile('written/open-removed.bin', 'new'#10);
+  CheckFileContents('written/open-removed.bin', 'new'#10);
+  CheckStatus(RemoveRelative('written/open-removed.bin'), 'removing the new file');
+  { The removed file still reads and grows. }
+  WriteFilled(OpenedFile, Ord('B'), FillerSize);
+  SetFilePosition(OpenedFile, FillerSize - 2);
+  CheckStatus(ReadFromFile(OpenedFile, @Probe[0], 4, BytesRead), 'reading a removed file');
+  Check((BytesRead = 4) and (Probe[0] = Ord('A')) and (Probe[1] = Ord('A')) and (Probe[2] = Ord('B')),
+    'a removed file reads back what was written');
+  FreeWhileOpen := FreeBytes;
+  CloseFile(OpenedFile);
+  FreeAfter := FreeBytes;
+  Check(FreeAfter >= FreeWhileOpen + 2 * FillerSize, 'closing a removed file frees its space');
+  { Directory blocks may have grown meanwhile. }
+  Check(FreeAfter + 16 * 1024 >= FreeBefore, 'all of a removed file''s space comes back');
+end;
+
+{ Renaming onto an existing name replaces it, as on Unix. }
+procedure TestRenameOverExisting;
+var
+  OpenedFile: POpenFile;
+  Contents: array[0..15] of Char;
+  BytesRead: QWord;
+begin
+  WriteWholeFile('written/replaced.txt', 'original'#10);
+  WriteWholeFile('written/replacement.txt', 'replacement'#10);
+  { The file being replaced is open: it goes on reading its contents. }
+  CheckStatus(OpenRelative('written/replaced.txt', OpenForReading, OpenedFile), 'opening replaced.txt');
+  CheckStatus(RenameRelative('written/replacement.txt', 'written/replaced.txt'),
+    'renaming over an existing file');
+  CheckExpectedStatus(PathStatus('written/replacement.txt'), StatusNotFound, 'the old name is gone');
+  CheckFileContents('written/replaced.txt', 'replacement'#10);
+  CheckStatus(ReadFromFile(OpenedFile, @Contents[0], 15, BytesRead), 'reading the replaced file');
+  Contents[BytesRead] := #0;
+  Check(TextIsEqual(@Contents[0], 'original'#10), 'the replaced file, still open, keeps its contents');
+  CloseFile(OpenedFile);
+
+  CheckStatus(MakeDirectory('written/directory-a'), 'mkdir directory-a');
+  CheckStatus(MakeDirectory('written/directory-b'), 'mkdir directory-b');
+  WriteWholeFile('written/directory-b/inside.txt', 'inside'#10);
+  CheckExpectedStatus(RenameRelative('written/replaced.txt', 'written/directory-a'), StatusIsADirectory,
+    'a file does not replace a directory');
+  CheckExpectedStatus(RenameRelative('written/directory-a', 'written/replaced.txt'), StatusNotADirectory,
+    'a directory does not replace a file');
+  CheckExpectedStatus(RenameRelative('written/directory-a', 'written/directory-b'), StatusDirectoryNotEmpty,
+    'a directory does not replace a directory with something in it');
+  CheckStatus(RemoveRelative('written/directory-b/inside.txt'), 'emptying directory-b');
+  CheckStatus(RenameRelative('written/directory-a', 'written/directory-b'),
+    'a directory replaces an empty directory');
+  CheckExpectedStatus(PathStatus('written/directory-a'), StatusNotFound, 'directory-a is gone');
+  CheckStatus(RemoveRelative('written/directory-b'), 'removing directory-b');
+end;
+
 function VolumeHasJournal: Boolean;
 begin
   Result := TextIsEqual(@CurrentVolume^.TypeName[0], 'ext3') or
@@ -477,12 +576,21 @@ end;
 { The last test on a journaled volume: a rename committed to the journal
   and then "the machine crashes" before it is written in place. }
 procedure TestCrashAfterCommit;
+var
+  Orphan: POpenFile;
 begin
+  { Left open across the crash after its removal: on the orphan list,
+    which e2fsck processes after replaying the journal. }
+  CheckStatus(OpenRelative('written/orphan.bin', OpenForWriting or OpenCreate, Orphan), 'creating orphan.bin');
+  WriteFilled(Orphan, Ord('O'), 30 * 1024);
+  CheckStatus(RemoveRelative('written/orphan.bin'), 'removing the open orphan.bin');
   WriteWholeFile('written/journal-pending.txt', 'committed'#10);
   Check(SimulateCrashAfterNextCommit(CurrentVolume), 'the volume has no journal being written');
   CheckStatus(RenameRelative('written/journal-pending.txt', 'written/journal-committed.txt'),
     'renaming in the crashed transaction');
   Check(CurrentVolume^.IsReadOnly, 'the volume still writes after the simulated crash');
+  { Closed after the "crash": nothing is written, it stays an orphan. }
+  CloseFile(Orphan);
 end;
 
 procedure ReportPassed(Volume: PVolume);
@@ -534,6 +642,8 @@ begin
     TestManyFiles;
     TestSymbolicLinks;
     TestSparseFile;
+    TestRemoveWhileOpen;
+    TestRenameOverExisting;
     if VolumeHasJournal then
       TestCrashAfterCommit;
     ReportPassed(Volume);

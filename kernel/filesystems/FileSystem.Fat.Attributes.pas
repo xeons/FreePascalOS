@@ -58,6 +58,8 @@ begin
   FatNode := PFatNode(Node);
   if FatNode^.IsRoot then
     Exit(StatusUnsupported);
+  if FatNode^.IsDetached then
+    Exit(StatusSuccess);
   if (((Changes.Fields and AttributeChangeOwner) <> 0) and (Changes.OwnerId <> 0)) or
      (((Changes.Fields and AttributeChangeGroup) <> 0) and (Changes.GroupId <> 0)) then
     Exit(StatusUnsupported);

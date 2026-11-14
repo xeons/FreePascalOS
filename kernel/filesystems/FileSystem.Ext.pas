@@ -45,6 +45,7 @@
     FileSystem.Ext.Transactions  transactions: logging and checkpointing
     FileSystem.Ext.JournalRecovery  replaying the journal
     FileSystem.Ext.Journal       finding and checking the journal
+    FileSystem.Ext.Orphans       files removed while open, the orphan list
     FileSystem.Ext               (this unit) probing, mounting, reading
 }
 unit FileSystem.Ext;
@@ -83,6 +84,7 @@ uses
   FileSystem.Ext.Transactions,
   FileSystem.Ext.JournalRecovery,
   FileSystem.Ext.Journal,
+  FileSystem.Ext.Orphans,
   Debug.Output;
 
 const
@@ -223,6 +225,7 @@ end;
 
 procedure ExtReleaseNode(Node: PNode);
 begin
+  ForgetOrphan(Node);
   FreeKernelMemory(Node);
 end;
 
@@ -403,6 +406,36 @@ begin
   Ext^.Journal := Journal;
 end;
 
+function JournalOfVolume(Volume: PVolume): PExtJournal; forward;
+function FinishTransaction(Volume: PVolume; Status: TFileSystemStatus): TFileSystemStatus; forward;
+
+{ Frees what files removed while open left behind when the volume was
+  last used (it was not unmounted cleanly). }
+procedure SettleOrphans(Volume: PVolume);
+var
+  Count: LongWord;
+  Status: TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Volume));
+  Status := FinishTransaction(Volume, ProcessOrphans(Volume, Count));
+  if (Count > 0) or (Status <> StatusSuccess) then
+  begin
+    DebugBeginMessage;
+    DebugWriteTag('ext');
+    DebugWrite(@Volume^.Name[0]);
+    DebugWrite(': ');
+    DebugWriteDecimal(Count);
+    DebugWrite(' orphaned inodes freed');
+    if Status <> StatusSuccess then
+    begin
+      DebugWrite(', then ');
+      DebugWrite(FileSystemStatusText(Status));
+    end;
+    DebugWriteLine('');
+    DebugEndMessage;
+  end;
+end;
+
 function ExtMount(Volume: PVolume): TFileSystemStatus;
 var
   Superblock: TSuperblock;
@@ -527,6 +560,8 @@ begin
   end;
 
   Volume^.RootNode := @Root^.Common;
+  if not Volume^.IsReadOnly then
+    SettleOrphans(Volume);
 end;
 
 procedure ExtUnmount(Volume: PVolume);
@@ -631,6 +666,28 @@ begin
     Result := MarkJournalClean(JournalOfVolume(Volume));
 end;
 
+function JournaledRemoveOpenNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Directory^.Volume));
+  Result := FinishTransaction(Directory^.Volume, ExtRemoveOpenNode(Directory, Name, Node));
+end;
+
+function JournaledFinishRemoval(Node: PNode): TFileSystemStatus;
+begin
+  BeginTransaction(JournalOfVolume(Node^.Volume));
+  Result := FinishTransaction(Node^.Volume, ExtFinishRemoval(Node));
+end;
+
+procedure BeginExtAtomicChange(Volume: PVolume);
+begin
+  BeginTransaction(JournalOfVolume(Volume));
+end;
+
+function EndExtAtomicChange(Volume: PVolume): TFileSystemStatus;
+begin
+  Result := FinishTransaction(Volume, StatusSuccess);
+end;
+
 function SimulateCrashAfterNextCommit(Volume: PVolume): Boolean;
 var
   Journal: PExtJournal;
@@ -665,6 +722,10 @@ begin
   Driver.SetAttributes := @JournaledSetAttributes;
   Driver.CreateHardLink := @JournaledCreateHardLink;
   Driver.GetFreeSpace := @ExtGetFreeSpace;
+  Driver.RemoveOpenNode := @JournaledRemoveOpenNode;
+  Driver.FinishRemoval := @JournaledFinishRemoval;
+  Driver.BeginAtomicChange := @BeginExtAtomicChange;
+  Driver.EndAtomicChange := @EndExtAtomicChange;
   Result := @Driver;
 end;
 

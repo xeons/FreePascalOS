@@ -53,8 +53,19 @@ type
   TAccessCheck = function(const Information: TNodeInformation; Access: LongWord): Boolean;
   { Returns False when created nodes should keep the driver's defaults. }
   TCreationAttributes = function(out OwnerId, GroupId, Mask: LongWord): Boolean;
+  { True if the caller is the user OwnerId or may act for anyone. }
+  TOwnerCheck = function(OwnerId: LongWord): Boolean;
 
-procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes);
+const
+  { The sticky bit: in such a directory only the owner of a name (or of
+    the directory) may remove or rename it, as in /tmp. }
+  StickyMode = $200;
+
+procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes;
+  OwnerCheck: TOwnerCheck);
+{ True if the caller may remove or rename Node in Directory as far as
+  the sticky bit goes (write access to Directory is checked apart). }
+function MayRemoveFromDirectory(Directory, Node: PNode): Boolean;
 
 function MayAccess(const Information: TNodeInformation; Access: LongWord): Boolean;
 
@@ -68,11 +79,21 @@ implementation
 var
   AccessHook: TAccessCheck = nil;
   CreationHook: TCreationAttributes = nil;
+  OwnerHook: TOwnerCheck = nil;
 
-procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes);
+procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes;
+  OwnerCheck: TOwnerCheck);
 begin
   AccessHook := AccessCheck;
   CreationHook := CreationAttributes;
+  OwnerHook := OwnerCheck;
+end;
+
+function MayRemoveFromDirectory(Directory, Node: PNode): Boolean;
+begin
+  if not Assigned(OwnerHook) or ((Directory^.Information.Mode and StickyMode) = 0) then
+    Exit(True);
+  Result := OwnerHook(Node^.Information.OwnerId) or OwnerHook(Directory^.Information.OwnerId);
 end;
 
 function MayAccess(const Information: TNodeInformation; Access: LongWord): Boolean;

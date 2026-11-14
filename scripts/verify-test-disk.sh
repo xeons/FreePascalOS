@@ -142,6 +142,11 @@ check_crash_recovery() {
         report_failure "$type: replaying the journal reported problems (exit $status)"
         echo "$output" | sed 's/^/    /' | head -30
     fi
+    # The file removed while open, left open across the crash, was on
+    # the orphan list.
+    if ! grep -q "Clearing orphaned inode" <<< "$output"; then
+        report_failure "$type: no orphan to clear after the crash"
+    fi
     if path_exists "$image" "written/journal-pending.txt"; then
         report_failure "$type: written/journal-pending.txt is still there after the replay"
     fi

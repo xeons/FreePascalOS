@@ -151,6 +151,9 @@ type
     { Owned by the VFS node cache; drivers leave these alone. }
     ReferenceCount: LongInt;
     CacheLink: TListEntry;
+    { Set by RemoveOpenNode when the node lost its last name while open:
+      its storage is freed (FinishRemoval) when the last reference goes. }
+    RemovalPending: Boolean;
   end;
 
   { Position within a directory listing. Its meaning belongs to the
@@ -234,6 +237,22 @@ type
 
     { Optional: the space available for new data. }
     GetFreeSpace: function(Volume: PVolume; out FreeBytes: QWord): TFileSystemStatus;
+
+    { Optional: removes the name Name of Node (not a directory), which is
+      still open. Reading and writing it go on working; if that was its
+      last name the driver sets Node^.RemovalPending and keeps the
+      storage until FinishRemoval. Without it, open files cannot be
+      removed (and not replaced by a rename). }
+    RemoveOpenNode: function(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+    { Frees the storage of a node removed while open, when it is closed
+      for the last time (before ReleaseNode). }
+    FinishRemoval: function(Node: PNode): TFileSystemStatus;
+
+    { Optional: the driver calls between these reach the disk as one
+      change (journaled formats), such as removing a file and renaming
+      another onto its name. }
+    BeginAtomicChange: procedure(Volume: PVolume);
+    EndAtomicChange: function(Volume: PVolume): TFileSystemStatus;
   end;
 
   TVolume = record

@@ -217,6 +217,8 @@ begin
   Inc(Node^.ReferenceCount);
 end;
 
+{ Called with the volume lock held. A node removed while it was open
+  gives its storage back with its last reference. }
 procedure ReleaseNodeReference(Volume: PVolume; Node: PNode);
 begin
   if Node = nil then
@@ -225,8 +227,20 @@ begin
   if Node^.ReferenceCount <= 0 then
   begin
     RemoveListEntry(@Node^.CacheLink);
+    { On a volume that became read-only meanwhile the storage stays
+      allocated (ext keeps it on its orphan list, freed when mounted). }
+    if Node^.RemovalPending and not Volume^.IsReadOnly then
+      Volume^.Driver^.FinishRemoval(Node);
     Volume^.Driver^.ReleaseNode(Node);
   end;
+end;
+
+{ Takes a node that lost its last name out of the cache, so that a new
+  file that gets the same node number is not mixed up with it. }
+procedure ForgetRemovedNode(Node: PNode);
+begin
+  RemoveListEntry(@Node^.CacheLink);
+  InitializeListHead(Node^.CacheLink);
 end;
 
 procedure RegisterRootNode(Volume: PVolume);
@@ -994,6 +1008,22 @@ begin
   Result := CreateNamedNode(Path, NodeKindSymbolicLink, Target);
 end;
 
+{ Removes the name Name of Node in Parent, which the caller has looked
+  up (holding one reference). A file that is open elsewhere keeps
+  working until it is closed, if the driver supports that. }
+function RemoveName(Volume: PVolume; Parent: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+begin
+  if not MayChangeDirectory(Parent) or not MayRemoveFromDirectory(Parent, Node) then
+    Exit(StatusAccessDenied);
+  if Node^.ReferenceCount <= 1 then
+    Exit(Volume^.Driver^.RemoveNode(Parent, Name, Node));
+  if (Node^.Information.Kind = NodeKindDirectory) or not Assigned(Volume^.Driver^.RemoveOpenNode) then
+    Exit(StatusInUse);
+  Result := Volume^.Driver^.RemoveOpenNode(Parent, Name, Node);
+  if (Result = StatusSuccess) and Node^.RemovalPending then
+    ForgetRemovedNode(Node);
+end;
+
 function RemovePath(Path: PChar): TFileSystemStatus;
 var
   Target: PParentAndName;
@@ -1009,13 +1039,7 @@ begin
     Result := LookupAndIntern(Target^.Parent, @Target^.Name[0], Node);
     if Result = StatusSuccess then
     begin
-      { Our own lookup holds one reference; any other means it is open. }
-      if not MayChangeDirectory(Target^.Parent) then
-        Result := StatusAccessDenied
-      else if Node^.ReferenceCount > 1 then
-        Result := StatusInUse
-      else
-        Result := Target^.Volume^.Driver^.RemoveNode(Target^.Parent, @Target^.Name[0], Node);
+      Result := RemoveName(Target^.Volume, Target^.Parent, @Target^.Name[0], Node);
       ReleaseNodeReference(Target^.Volume, Node);
     end;
     FinishNameOperation(Target);
@@ -1032,6 +1056,33 @@ begin
   OuterLength := TextLength(Outer);
   Result := MemoryIsEqual(Inner, Outer, OuterLength) and
     ((Inner[OuterLength] = #0) or (Inner[OuterLength] = '/'));
+end;
+
+{ Renames Node onto the name of Existing, which goes (as on Unix: a file
+  replaces a file, a directory an empty directory). On journaled formats
+  both happen in one change. }
+function ReplaceByRename(Source, Target: PParentAndName; Node, Existing: PNode): TFileSystemStatus;
+var
+  Volume: PVolume;
+  EndStatus: TFileSystemStatus;
+begin
+  Volume := Source^.Volume;
+  if (Node^.Information.Kind = NodeKindDirectory) and (Existing^.Information.Kind <> NodeKindDirectory) then
+    Exit(StatusNotADirectory);
+  if (Node^.Information.Kind <> NodeKindDirectory) and (Existing^.Information.Kind = NodeKindDirectory) then
+    Exit(StatusIsADirectory);
+  if Assigned(Volume^.Driver^.BeginAtomicChange) then
+    Volume^.Driver^.BeginAtomicChange(Volume);
+  Result := RemoveName(Volume, Target^.Parent, @Target^.Name[0], Existing);
+  if Result = StatusSuccess then
+    Result := Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node, Target^.Parent,
+      @Target^.Name[0]);
+  if Assigned(Volume^.Driver^.EndAtomicChange) then
+  begin
+    EndStatus := Volume^.Driver^.EndAtomicChange(Volume);
+    if Result = StatusSuccess then
+      Result := EndStatus;
+  end;
 end;
 
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
@@ -1071,15 +1122,16 @@ begin
         if LookupAndIntern(Target^.Parent, @Target^.Name[0], Existing) <> StatusSuccess then
           Existing := nil;
 
-        if not MayChangeDirectory(Source^.Parent) or not MayChangeDirectory(Target^.Parent) then
+        if not MayChangeDirectory(Source^.Parent) or not MayChangeDirectory(Target^.Parent) or
+           not MayRemoveFromDirectory(Source^.Parent, Node) then
           Result := StatusAccessDenied
-        else if (Existing <> nil) and (Existing <> Node) then
-          Result := StatusAlreadyExists
         else if (Existing = Node) and TextIsEqual(@Source^.Name[0], @Target^.Name[0]) then
           Result := StatusSuccess { renaming something onto itself }
-        else if (Node^.Information.Kind = NodeKindDirectory) and (Existing = nil) and
+        else if (Node^.Information.Kind = NodeKindDirectory) and
                 PathIsInside(@Target^.NormalizedPath[0], @Source^.NormalizedPath[0]) then
           Result := StatusInvalidPath
+        else if (Existing <> nil) and (Existing <> Node) then
+          Result := ReplaceByRename(Source, Target, Node, Existing)
         else
           { Includes changing only the letter case of a name on file
             systems that ignore case, where the lookup above finds Node. }

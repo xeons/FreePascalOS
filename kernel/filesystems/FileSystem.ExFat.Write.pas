@@ -47,6 +47,10 @@ function ExFatWriteFile(Node: PNode; Offset: QWord; Buffer: Pointer; ByteCount: 
   out BytesWritten: QWord): TFileSystemStatus;
 function ExFatSetFileSize(Node: PNode; NewSize: QWord): TFileSystemStatus;
 function ExFatRemoveNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+{ Marks the entry set of an open file unused; its clusters stay until it
+  is closed. }
+function ExFatRemoveOpenNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+function ExFatFinishRemoval(Node: PNode): TFileSystemStatus;
 function ExFatRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;
   TargetDirectory: PNode; TargetName: PChar): TFileSystemStatus;
 function ExFatSync(Volume: PVolume): TFileSystemStatus;
@@ -695,6 +699,30 @@ begin
     Result := MarkSetUnused(ExFatNode);
   if Result = StatusSuccess then
     Result := ShrinkNode(ExFatNode, 0);
+end;
+
+function ExFatRemoveOpenNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+var
+  ExFatNode: PExFatNode;
+begin
+  ExFatNode := PExFatNode(Node);
+  if Node^.Information.Kind = NodeKindDirectory then
+    Exit(StatusInUse);
+  Result := BeginModification(Node^.Volume);
+  if Result = StatusSuccess then
+    Result := MarkSetUnused(ExFatNode);
+  if Result <> StatusSuccess then
+    Exit;
+  ExFatNode^.IsDetached := True;
+  Node^.RemovalPending := True;
+end;
+
+function ExFatFinishRemoval(Node: PNode): TFileSystemStatus;
+begin
+  Node^.RemovalPending := False;
+  Result := BeginModification(Node^.Volume);
+  if Result = StatusSuccess then
+    Result := ShrinkNode(PExFatNode(Node), 0);
 end;
 
 function ExFatRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;

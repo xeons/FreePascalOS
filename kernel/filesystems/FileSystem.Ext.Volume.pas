@@ -72,6 +72,9 @@ type
     SuperblockNeedsWriting: Boolean;
     { The journal being written, nil for volumes written in place. }
     Journal: PExtJournal;
+    { Files removed while open, newest first: the in-memory copy of the
+      orphan list that starts at the superblock (FileSystem.Ext.Orphans). }
+    FirstOrphan: Pointer;
   end;
 
   PExtNode = ^TExtNode;
@@ -81,6 +84,9 @@ type
     { The complete on-disk inode (InodeSize bytes); its first part is
       reached through InodeRecord. }
     InodeBytes: array[0..MaximumInodeSize - 1] of Byte;
+    { On the orphan list: removed while open; the next one on it. }
+    IsOrphan: Boolean;
+    NextOrphan: PExtNode;
   end;
 
 function ExtVolumeOf(Node: PNode): PExtVolume;

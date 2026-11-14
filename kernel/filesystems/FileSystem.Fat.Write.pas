@@ -45,6 +45,10 @@ function FatWriteFile(Node: PNode; Offset: QWord; Buffer: Pointer; ByteCount: QW
   out BytesWritten: QWord): TFileSystemStatus;
 function FatSetFileSize(Node: PNode; NewSize: QWord): TFileSystemStatus;
 function FatRemoveNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+{ Removes the records of an open file; its clusters stay until it is
+  closed (a crash in between leaves them lost, for fsck to reclaim). }
+function FatRemoveOpenNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+function FatFinishRemoval(Node: PNode): TFileSystemStatus;
 function FatRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;
   TargetDirectory: PNode; TargetName: PChar): TFileSystemStatus;
 function FatSync(Volume: PVolume): TFileSystemStatus;
@@ -561,6 +565,32 @@ begin
   if FatNode^.FirstCluster <> 0 then
     Result := FreeClusterChain(Node^.Volume, FatNode^.FirstCluster);
   FatNode^.FirstCluster := 0;
+end;
+
+function FatRemoveOpenNode(Directory: PNode; Name: PChar; Node: PNode): TFileSystemStatus;
+var
+  FatNode: PFatNode;
+begin
+  FatNode := PFatNode(Node);
+  if Node^.Information.Kind = NodeKindDirectory then
+    Exit(StatusInUse);
+  Result := MarkRecordsDeleted(PFatNode(Directory), FatNode^.SetFirstIndex, FatNode^.ShortEntryIndex);
+  if Result <> StatusSuccess then
+    Exit;
+  FatNode^.IsDetached := True;
+  Node^.RemovalPending := True;
+end;
+
+function FatFinishRemoval(Node: PNode): TFileSystemStatus;
+var
+  FatNode: PFatNode;
+begin
+  FatNode := PFatNode(Node);
+  Result := StatusSuccess;
+  if FatNode^.FirstCluster <> 0 then
+    Result := FreeClusterChain(Node^.Volume, FatNode^.FirstCluster);
+  FatNode^.FirstCluster := 0;
+  Node^.RemovalPending := False;
 end;
 
 function FatRenameNode(SourceDirectory: PNode; SourceName: PChar; Node: PNode;

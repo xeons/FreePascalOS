@@ -169,6 +169,12 @@ case "$qemu_status" in
                 exit 1
             fi
         fi
+        # The orphans the ext3 and ext4 test partitions came with were freed.
+        if [[ -n "$test_disk_image" ]] &&
+           [[ $(grep -c 'disk1p[67]: 1 orphaned inodes freed' "$serial_log") != 2 ]]; then
+            echo "TEST FAILED: the orphans of the ext test partitions were not freed"
+            exit 1
+        fi
         # The system disk was written by the user mode tests (through its
         # journal); it must be consistent and its journal empty.
         if [[ -n "$system_disk_image" ]] && ! check_system_disk "$run_system_disk_image"; then

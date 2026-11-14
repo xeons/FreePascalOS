@@ -468,6 +468,19 @@ unit; ext also has Blocks and Directories):
 | `FileSystem.ExFat` | exFAT               | contiguous ("no FAT chain") and chained files, allocation bitmap, entry set checksums and name hashes, up-case table lookup, volume dirty flag |
 | `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees (writing up to depth 1), 64-bit, flex_bg, META_BG, all metadata checksums, fast and slow symlinks, holes |
 
+Removing a file that is still open removes only its name: the open file
+goes on reading and writing, and its storage is freed when it is closed
+for the last time (the driver routines `RemoveOpenNode` and
+`FinishRemoval`; the node leaves the node cache at once, so a new file
+with the same node number is not confused with it). On ext3/ext4 such a
+file goes on the orphan list in the superblock in the same transaction,
+and mounting frees orphans a crash left behind (`FileSystem.Ext.Orphans`).
+Renaming onto an existing name replaces it as on Unix (a file replaces a
+file, a directory an empty directory); on ext3/ext4 the removal and the
+rename are one transaction (`BeginAtomicChange` / `EndAtomicChange`). In a
+directory with the sticky bit (`/tmp`), only the owner of a name, of the
+directory or root may remove or replace it.
+
 Writes are write-through (the block cache writes every change to disk
 immediately). ext volumes are mounted read-only if they use features the
 driver cannot keep consistent (bigalloc, quota, encryption, case folding,

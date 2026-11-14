@@ -88,6 +88,9 @@ type
       64-bit field so that it never pairs an ordinal with the wrong
       cluster. }
     ChainHint: QWord;
+    { Removed while open: its records are gone (and may belong to another
+      file by now), so they are no longer written. }
+    IsDetached: Boolean;
   end;
 
   { One directory entry set, decoded. }
@@ -642,7 +645,7 @@ var
   DateWord: Word;
   TimeWord: Word;
 begin
-  if Node^.IsRoot then
+  if Node^.IsRoot or Node^.IsDetached then
     Exit(StatusSuccess);
 
   Volume := Node^.Common.Volume;

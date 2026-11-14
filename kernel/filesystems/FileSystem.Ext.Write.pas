@@ -38,7 +38,8 @@ unit FileSystem.Ext.Write;
 interface
 
 uses
-  FileSystem.Types;
+  FileSystem.Types,
+  FileSystem.Ext.Volume;
 
 function ExtCreateNode(Directory: PNode; Name: PChar; Kind: TNodeKind; LinkTarget: PChar;
   out Created: PNode): TFileSystemStatus;
@@ -56,6 +57,11 @@ function IsFastSymbolicLink(Node: PNode): Boolean;
 { The directory entry file type for a node kind. }
 function FileTypeOf(Kind: TNodeKind): Byte;
 
+{ Frees the blocks and the inode of a node that has no names left. }
+procedure DiscardInode(Node: PExtNode; IsDirectory: Boolean);
+{ Sets the change time (and the modification time if Modified) to now. }
+procedure StampTimes(Node: PExtNode; Modified: Boolean);
+
 implementation
 
 uses
@@ -64,7 +70,6 @@ uses
   Memory.KernelHeap,
   Kernel.Clock,
   FileSystem.Ext.Structures,
-  FileSystem.Ext.Volume,
   FileSystem.Ext.Blocks,
   FileSystem.Ext.Directories;
 

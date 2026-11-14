@@ -67,7 +67,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..278] of TCommandTest = (
+  CommandTests: array[0..280] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -355,6 +355,10 @@ const
     (Command: 'umask; umask 077; touch um1; mkdir um2; stat -c %a um1 um2; umask -S; umask 022'; ExpectedOutput: '0022'#10'600'#10'700'#10'u=rwx,g=,o='#10; ExpectedStatus: 0),
     (Command: 'su user -c "id; whoami; logname; cd; pwd; echo \$HOME"'; ExpectedOutput: 'uid=1000(user) gid=1000(user) groups=1000(user)'#10'user'#10'user'#10'/home/user'#10'/home/user'#10; ExpectedStatus: 0),
     (Command: 'su user -c "touch /etc/x" 2>&1; echo $?; [ -e /etc/x ] || echo absent'; ExpectedOutput: 'touch: cannot touch ''/etc/x'': Permission denied'#10'1'#10'absent'#10; ExpectedStatus: 0),
+    { /tmp is sticky: only the owner of a name may remove or replace it. }
+    (Command: 'echo root > /tmp/root-owned; su user -c "rm /tmp/root-owned; echo x > /tmp/mine; mv /tmp/mine /tmp/root-owned; mv /tmp/mine /tmp/mine2; rm /tmp/mine2" 2>&1; cat /tmp/root-owned; ls /tmp/mine* 2>&1; rm /tmp/root-owned'; ExpectedOutput: 'rm: cannot remove ''/tmp/root-owned'': Permission denied'#10'mv: cannot move ''/tmp/mine'' to ''/tmp/root-owned'': Permission denied'#10'root'#10'ls: cannot access ''/tmp/mine*'': No such file or directory'#10; ExpectedStatus: 0),
+    { A file removed while open stays readable; renaming replaces. }
+    (Command: 'echo kept > f; { rm f; [ -e f ] || echo removed; cat; } < f; echo a > x; echo b > y; mv y x; cat x; [ -e y ] || echo moved'; ExpectedOutput: 'removed'#10'kept'#10'b'#10'moved'#10; ExpectedStatus: 0),
     (Command: 'su user -c "cat /etc/shadow" >/dev/null 2>&1 || echo denied; su user -c "rm lines.txt" 2>/dev/null || echo kept'; ExpectedOutput: 'denied'#10'kept'#10; ExpectedStatus: 0),
     (Command: 'mkdir -m 700 priv && touch priv/f && su user -c "ls priv/f" >/dev/null 2>&1 || echo nosearch'; ExpectedOutput: 'nosearch'#10; ExpectedStatus: 0),
     (Command: 'su user -c "cd && echo hi > mine && ls -n mine | cut -d \" \" -f 3,4 && stat -c %a mine && rm mine"'; ExpectedOutput: '1000 1000'#10'644'#10; ExpectedStatus: 0),

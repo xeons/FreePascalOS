@@ -412,6 +412,8 @@ begin
   Driver.Sync := @ExFatSync;
   Driver.SetAttributes := @ExFatSetAttributes;
   Driver.GetFreeSpace := @ExFatGetFreeSpace;
+  Driver.RemoveOpenNode := @ExFatRemoveOpenNode;
+  Driver.FinishRemoval := @ExFatFinishRemoval;
   Result := @Driver;
 end;
 

@@ -47,6 +47,9 @@
 #   journal-escaped.txt                 replayed with a block that starts with
 #                                       the journal's magic number (escaped in
 #                                       the log)
+# They also come with an orphan (a file removed while open when the system
+# went down): an inode without names on the superblock's orphan list,
+# which the kernel frees when it mounts them.
 #
 # Needs: sfdisk, mkfs.fat, mtools, mkfs.exfat, mke2fs, python3.
 
@@ -93,6 +96,19 @@ create_journal_files() {
     printf 'journal: not replayed\n' > "$directory/journal-replay.txt"
     printf 'revoked: untouched\n' > "$directory/journal-revoked.txt"
     printf 'not escaped yet\n' > "$directory/journal-escaped.txt"
+    head -c 40000 /dev/zero | tr '\0' 'o' > "$directory/orphan.bin"
+}
+
+# Turns orphan.bin into an orphan: no name, no links, first on the list.
+make_orphan() {
+    local image="$1" inode
+    inode=$(debugfs -R "stat /orphan.bin" "$image" 2>/dev/null | sed -n 's/^Inode: \([0-9]*\).*/\1/p')
+    debugfs -w -f - "$image" > /dev/null 2>&1 <<COMMANDS
+unlink /orphan.bin
+sif <$inode> links_count 0
+sif <$inode> dtime 0
+ssv last_orphan $inode
+COMMANDS
 }
 
 # Leaves committed transactions in the journal of an ext image: the
@@ -169,6 +185,8 @@ make_exfat "$work_directory/exfat.img" 32 "$work_directory/content-exfat"
 make_ext   "$work_directory/ext2.img"  16 ext2 EXT2TEST "$work_directory/content-ext2" -b 1024
 make_ext   "$work_directory/ext3.img"  16 ext3 EXT3TEST "$work_directory/content-ext3" -b 1024
 make_ext   "$work_directory/ext4.img"  32 ext4 EXT4TEST "$work_directory/content-ext4"
+make_orphan "$work_directory/ext3.img"
+make_orphan "$work_directory/ext4.img"
 write_dirty_journal "$work_directory/ext3.img" ""
 write_dirty_journal "$work_directory/ext4.img" "-c"
 

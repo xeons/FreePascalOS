@@ -400,6 +400,8 @@ begin
   Driver.Sync := @FatSync;
   Driver.SetAttributes := @FatSetAttributes;
   Driver.GetFreeSpace := @FatGetFreeSpace;
+  Driver.RemoveOpenNode := @FatRemoveOpenNode;
+  Driver.FinishRemoval := @FatFinishRemoval;
   Result := @Driver;
 end;
 

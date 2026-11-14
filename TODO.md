@@ -79,7 +79,7 @@ how the existing pieces fit together.
 - [x] Users, groups and permission checks: real/effective/saved ids, supplementary
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
-- [ ] Sticky directories (/tmp: only the owner may remove a file)
+- [x] Sticky directories (/tmp: only the owner may remove or replace a name)
 - [ ] Permission checks on FAT and exFAT beyond their read-only attribute
 - [x] Process list (ps, pgrep, pkill), per-thread CPU time
 
@@ -131,14 +131,16 @@ how the existing pieces fit together.
       checksums) and replay it on mount; disk flushes (AHCI FLUSH CACHE EXT)
 - [ ] ext3/ext4: writing journals with v1/v2 checksums, fast commits, external
       journals (replayed if possible, but the volume stays read-only)
-- [ ] ext4: orphan processing after recovery (files removed while open)
+- [x] ext3/ext4 orphan list: files removed while open, freed at mount after a crash
+- [ ] ext4: the orphan file feature (orphans are kept on the classic list)
 - [ ] ext4: modify htree indexed directories (currently read-only)
 - [ ] ext4: extent trees deeper than one index level when writing
 - [ ] ext4: allocate from block groups still marked uninitialized
 - [ ] ext4: bigalloc, quota, encryption and case folding (currently force read-only)
 - [x] Hard links (ext), attributes (mode, owner, group, times) on all formats
-- [ ] Replacing an existing file on rename
-- [ ] Delete-on-last-close for files removed while open (currently refused)
+- [x] Replacing an existing file on rename (one journal transaction on ext3/ext4)
+- [x] Delete-on-last-close for files removed while open (FAT and exFAT lose the
+      clusters if the system goes down before the close; fsck reclaims them)
 - [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
       metadata checksum verification
 - [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
