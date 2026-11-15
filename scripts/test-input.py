@@ -557,8 +557,8 @@ checks.append(('display device: the console has the screen again', given_back an
 # Drawing with libdrawing and libfont: drawtest draws a window (at 100
 # DPI everything is its logical size: the window at 80,60, 400 wide). The
 # desktop, the window's face, the title bar's gradient and its white text
-# are on the screen; 9 point text picks the 12 pixel face (13 asked for),
-# the title the smallest bold one (14).
+# are on the screen; 9 point text (13 pixels at 100 DPI, rounded) picks
+# the 13 pixel faces of DejaVu Sans, regular and bold.
 type_on_serial(b'drawtest -s 3; m=DONE; echo DRAWN $m\r')
 time.sleep(1.5)
 pixel = take_screen()
@@ -566,7 +566,7 @@ title_text = any(pixel(x, y) == 'ffffff' for x in range(87, 190) for y in range(
 checks.append(('drawing: desktop, window, title bar and its text',
                pixel(5, 5) == '3a6ea5' and pixel(300, 250) == 'c8c4bc' and pixel(83, 63) == '1c3f6e' and title_text))
 checks.append(('drawing: fonts picked by point size and DPI',
-               wait_for('100 DPI: title 8x14 bold, text 6x12', 15) and wait_for('DRAWN DONE', 10)))
+               wait_for('100 DPI: title 13 px bold, text 13 px', 15) and wait_for('DRAWN DONE', 10)))
 
 def point_tablet_at(x, y):
     # The tablet at screen pixel (x, y): QEMU's range is 0-32767 across
@@ -861,7 +861,7 @@ checks.append(('controls tour: list view large icons',
 # Enter opens it, a click on passwd and OK takes it), the save dialog
 # (a name typed and Enter; then an existing file, whose replacement is
 # refused, and Escape), the colour dialog (a basic colour, OK) and the
-# font dialog (a size, Bold, OK).
+# font dialog (a size that shows in its list, Bold, OK).
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'dialogtour > /tmp/d.log &\r')
@@ -915,8 +915,8 @@ if dialogs_started:
     click_at(*place['font-button'])
     time.sleep(1)
     place = dialog_places('FONT')
-    if 'size-12' in place:
-        click_at(*place['size-12'])
+    if 'size-11' in place:
+        click_at(*place['size-11'])
         click_at(*place['bold'])
         click_at(*place['font-ok'])
     time.sleep(1)
@@ -929,7 +929,7 @@ checks.append(('common dialogs: save a file (a name typed; replacing refused)',
                dialogs_ok and b'saved /tmp/notes.txt' in log_from_here and b'cancelled save' in log_from_here and
                b'saved /etc/passwd' not in log_from_here))
 checks.append(('common dialogs: choose a colour and a font',
-               dialogs_ok and b'color 00FF00' in log_from_here and b'font 120 bold' in log_from_here))
+               dialogs_ok and b'color 00FF00' in log_from_here and b'font 110 bold' in log_from_here))
 
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back

@@ -52,7 +52,7 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Drawing.Bevels,
-  Font.Psf,
+  Font.Faces,
   Font.Text,
   Font.Files,
   Windowing.Protocol;
@@ -238,7 +238,7 @@ begin
       end;
     end;
   Connect;
-  if LoadSystemFonts(Fonts) then
+  if LoadFontFamily(DejaVuSansFamily, Fonts) then
     TextFace := SelectFace(Fonts, 90, Dpi, False);
   Section := DrawSurface(LogicalToPixels(Width, Scale), LogicalToPixels(Height, Scale));
   if Section < 0 then

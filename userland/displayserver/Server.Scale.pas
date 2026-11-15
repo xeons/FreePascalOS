@@ -84,7 +84,7 @@ begin
   NativeDpi := DisplayDpi;
   ScalePercent := DisplayScalePercent;
   Dpi := DisplayDpi;
-  FontsLoaded := LoadSystemFonts(Fonts);
+  FontsLoaded := LoadFontFamily(Theme.TextFamily, Fonts);
   PickTitleFace;
 end;
 

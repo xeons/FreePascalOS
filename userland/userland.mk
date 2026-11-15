@@ -91,6 +91,19 @@ TERMINUS_SIZES := 12 14 16 18 20 22 24 28 32
 SYSTEM_FONT_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/terminus
 SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 
+# The interface's proportional font (/lib/fonts/dejavu-sans): DejaVu Sans,
+# regular and bold, rendered on the host into coverage fonts at every
+# pixel size from 9 to 40 (tools/RenderFont, with Python's Pillow); with
+# its licence (Bitstream Vera and DejaVu's changes), which has to go with
+# it.
+DEJAVU_SANS_FONT ?= /usr/share/fonts/TTF/DejaVuSans.ttf
+DEJAVU_SANS_BOLD_FONT ?= /usr/share/fonts/TTF/DejaVuSans-Bold.ttf
+DEJAVU_LICENSE ?= /usr/share/licenses/ttf-dejavu/LICENSE
+DEJAVU_SANS_SIZES := 9-40
+DEJAVU_SANS_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/dejavu-sans
+DEJAVU_SANS_STAMP := $(DEJAVU_SANS_DIRECTORY)/.rendered
+FONT_RENDERER := tools/RenderFont/render-font.py
+
 
 
 .PHONY: userland system-disk
@@ -98,7 +111,7 @@ SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP)
+	$(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
@@ -195,6 +208,19 @@ $(SYSTEM_FONTS_STAMP):
 		if [ -f $$source ]; then zcat $$source > $(SYSTEM_FONT_DIRECTORY)/ter-v$$size$$weight.psf; fi; \
 	done; done
 	cp $(TERMINUS_LICENSE) $(SYSTEM_FONT_DIRECTORY)/LICENSE
+	@touch $@
+
+$(DEJAVU_SANS_STAMP): $(FONT_RENDERER)
+	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed to render the interface font (python-pillow)"; exit 1; }
+	@for font in $(DEJAVU_SANS_FONT) $(DEJAVU_SANS_BOLD_FONT) $(DEJAVU_LICENSE); do \
+		test -f $$font || { echo "DejaVu Sans is needed in $$font (set DEJAVU_SANS_FONT, DEJAVU_SANS_BOLD_FONT, DEJAVU_LICENSE)"; exit 1; }; \
+	done
+	@rm -rf $(DEJAVU_SANS_DIRECTORY)
+	python3 $(FONT_RENDERER) --font $(DEJAVU_SANS_FONT) --sizes $(DEJAVU_SANS_SIZES) --name dejavu-sans \
+		--output $(DEJAVU_SANS_DIRECTORY)
+	python3 $(FONT_RENDERER) --font $(DEJAVU_SANS_BOLD_FONT) --bold --sizes $(DEJAVU_SANS_SIZES) --name dejavu-sans-bold \
+		--output $(DEJAVU_SANS_DIRECTORY)
+	cp $(DEJAVU_LICENSE) $(DEJAVU_SANS_DIRECTORY)/LICENSE
 	@touch $@
 
 # A library loaded at run time by the tests.

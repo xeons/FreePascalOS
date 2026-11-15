@@ -29,7 +29,8 @@
   from their keys and from the context menu of a right click; the
   clipboard holds lines joined with line feeds. Tab moves to the next control unless AcceptTabs. A
   vertical scroll bar shows when the lines do not fit, and the text
-  scrolls sideways to keep the caret in view.
+  scrolls sideways to keep the caret in view. The text is in the theme's
+  monospaced face, so columns of text line up as typed.
 }
 unit Controls.TextEdit;
 
@@ -115,11 +116,19 @@ uses
   Abi.SystemCalls,
   Drawing.Rectangles,
   Drawing.Bevels,
+  Font.Faces,
   Windowing.Theme,
   Windowing.Connection,
+  Windowing.Fonts,
   Controls.Keys,
   Controls.Text,
   Controls.Clipboard;
+
+{ The face the text is in. }
+function EditFace: PFontFace;
+begin
+  Result := FixedTextFace;
+end;
 
 const
   TabCharacter = 9;
@@ -169,7 +178,7 @@ end;
 
 function TTextEdit.LineHeight: LongInt;
 begin
-  Result := TextHeight(ControlFace);
+  Result := TextHeight(EditFace);
   if Result < 1 then
     Result := 1;
 end;
@@ -193,7 +202,7 @@ end;
 
 function TTextEdit.ColumnX(Line, Column: LongInt): LongInt;
 begin
-  Result := TextLeft - FScrollX + TextWidth(ControlFace, CharactersOf(FLines[Line], 0, Column));
+  Result := TextLeft - FScrollX + TextWidth(EditFace, CharactersOf(FLines[Line], 0, Column));
 end;
 
 function TTextEdit.PositionAt(X, Y: LongInt): TTextPosition;
@@ -635,7 +644,7 @@ begin
   else
     FillRectangle(Canvas, Box, Theme.Face);
   DrawBevel(Canvas, Box, SunkenThemeBevel);
-  if ControlFace = nil then
+  if EditFace = nil then
     Exit;
   Right := RectangleWidth(Box) - 2;
   if FScrollBar.Visible then
@@ -649,7 +658,7 @@ begin
     Top := 2 + (Line - FTopLine) * LineHeight;
     if Top >= RectangleHeight(Box) then
       Break;
-    DrawTextInBox(Inner, ControlFace, FLines[Line], MakeRectangle(TextLeft - FScrollX, Top, 1 shl 20, LineHeight),
+    DrawTextInBox(Inner, EditFace, FLines[Line], MakeRectangle(TextLeft - FScrollX, Top, 1 shl 20, LineHeight),
       AlignTextLeft, Theme.FieldText);
     if Focused and HasSelection and (Line >= First.Line) and (Line <= Last.Line) then
     begin
@@ -665,7 +674,7 @@ begin
       if Line < Last.Line then
         Width := Width + Scaled(4);
       FillRectangle(Inner, MakeRectangle(Left, Top, Width, LineHeight), Theme.Selection);
-      DrawTextInBox(Inner, ControlFace, CharactersOf(FLines[Line], FromColumn, ToColumn - FromColumn),
+      DrawTextInBox(Inner, EditFace, CharactersOf(FLines[Line], FromColumn, ToColumn - FromColumn),
         MakeRectangle(Left, Top, 1 shl 20, LineHeight), AlignTextLeft, Theme.SelectionText);
     end;
   end;

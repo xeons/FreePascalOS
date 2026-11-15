@@ -292,8 +292,8 @@ normalized (0-65535), not pixels.
 - [x] libfont: bitmap fonts (Terminus PSF, 12 to 32 pixels, regular and bold),
       picked by point size and DPI; text measuring and drawing, UTF-8
 - [x] Host-side tests for libdrawing and libfont (pixel-exact)
-- [ ] Proportional fonts for the interface (bitmap, or TrueType in step 8); kerning
-- [ ] Anti-aliased lines and shapes; scaling surfaces (for icons at other sizes)
+- [x] Proportional fonts for the interface (bitmap, or TrueType in step 8); kerning
+- [x] Anti-aliased lines and shapes; scaling surfaces (for icons at other sizes)
 
 ### 3. Kernel infrastructure for a display server
 - [x] Shared memory sections (create, map into several processes, handle-based)

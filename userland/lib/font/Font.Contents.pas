@@ -31,7 +31,9 @@ unit Font.Contents;
 interface
 
 uses
+  Font.Faces,
   Font.Psf,
+  Font.Coverage,
   Font.Utf8,
   Font.Text,
   Font.Files;

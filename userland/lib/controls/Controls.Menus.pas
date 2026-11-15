@@ -176,6 +176,7 @@ uses
   Drawing.Colors,
   Drawing.Bevels,
   Drawing.Shapes,
+  Drawing.SmoothShapes,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
@@ -363,8 +364,8 @@ begin
     if not Item.Enabled then
       TextColor := Theme.DisabledText;
     if Item.Checked then
-      FillEllipse(Canvas, MakeRectangle(Row.Left + Scaled(7), Row.Top + RectangleHeight(Row) div 2 - Scaled(3), Scaled(6),
-        Scaled(6)), TextColor);
+      FillSmoothEllipse(Canvas, MakeRectangle(Row.Left + Scaled(7), Row.Top + RectangleHeight(Row) div 2 - Scaled(3),
+        Scaled(6), Scaled(6)), TextColor);
     DrawMnemonicTextInBox(Canvas, ControlFace, Item.Text, MakeRectangle(Row.Left + Scaled(CheckColumn), Row.Top,
       RectangleWidth(Row), RectangleHeight(Row)), AlignTextLeft, TextColor);
     DrawTextInBox(Canvas, ControlFace, Item.ShortcutText, MakeRectangle(Row.Left, Row.Top,

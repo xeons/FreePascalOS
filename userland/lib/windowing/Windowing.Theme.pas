@@ -71,6 +71,11 @@ type
     { Points, in tenths. }
     TitlePoints: LongWord;
     TextPoints: LongWord;
+    { The font families (directories in /lib/fonts): the interface's
+      text and title, and monospaced text (where columns must line up,
+      as in a multi-line edit box). }
+    TextFamily: PChar;
+    FixedFamily: PChar;
   end;
 
 var
@@ -114,6 +119,8 @@ begin
   Theme.MenuItemHeight := 18;
   Theme.TitlePoints := 90;
   Theme.TextPoints := 90;
+  Theme.TextFamily := 'dejavu-sans';
+  Theme.FixedFamily := 'terminus';
 end;
 
 function RaisedThemeBevel: TBevelColors;

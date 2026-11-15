@@ -22,12 +22,12 @@
   drawtest [-s SECONDS]
 
   Takes the screen and draws a desktop with a window on it, using
-  libdrawing and the system's fonts (libfont): a raised frame, a title
+  libdrawing and the interface's font (libfont): a raised frame, a title
   bar with a gradient and bold text, a sunken text box, a button with a
   focus frame. Everything is sized for the display: lengths are in
   logical units (1/96 inch) scaled by the display's scale, text in
   points at its DPI. Shows it SECONDS (default 2), then gives the
-  screen back. Prints the fonts it picked.
+  screen back. Prints the pixel sizes of the faces it picked.
 
   Only root may open the display.
 }
@@ -49,7 +49,7 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Drawing.Bevels,
-  Font.Psf,
+  Font.Faces,
   Font.Text,
   Font.Files;
 
@@ -140,8 +140,8 @@ begin
         FailWithUsageHint('the time must be a whole number of seconds', []);
   if Parser.OperandCount <> 0 then
     FailWithUsageHint('no operands are taken', []);
-  if not LoadSystemFonts(Fonts) then
-    Fail(1, 'no fonts in %s', [ArgumentText(SystemFontDirectory)]);
+  if not LoadFontFamily(DejaVuSansFamily, Fonts) then
+    Fail(1, 'no fonts in %s/%s', [ArgumentText(FontDirectory), ArgumentText(DejaVuSansFamily)]);
   Error := OpenDisplay(Display);
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/display', []);
@@ -163,7 +163,6 @@ begin
   end;
   KernelSleep(Seconds * 1000);
   CloseDisplay(Display);
-  WriteFormatted(StandardOutput, '%u DPI: title %ux%u bold, text %ux%u'#10, [ArgumentUnsigned(Display.Dpi),
-    ArgumentUnsigned(Title^.Width), ArgumentUnsigned(Title^.Height), ArgumentUnsigned(Text^.Width),
-    ArgumentUnsigned(Text^.Height)]);
+  WriteFormatted(StandardOutput, '%u DPI: title %u px bold, text %u px'#10, [ArgumentUnsigned(Display.Dpi),
+    ArgumentUnsigned(Title^.Size), ArgumentUnsigned(Text^.Size)]);
 end.

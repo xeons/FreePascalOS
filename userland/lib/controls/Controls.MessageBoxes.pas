@@ -51,7 +51,9 @@ uses
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Canvas,
-  Drawing.Shapes,
+  Drawing.Rasterizer,
+  Drawing.SmoothLines,
+  Drawing.SmoothShapes,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Base,
@@ -82,14 +84,18 @@ type
     procedure Paint(var Canvas: TCanvas); override;
   end;
 
+{ The signs are anti-aliased: round and slanted edges come out smooth at
+  any size; the marks' upright bars stay on whole pixels. }
 procedure TSignControl.Paint(var Canvas: TCanvas);
 var
   Size: LongInt;
   Box: TRectangle;
-  Triangle: array[0..2] of TPoint;
+  Triangle: array[0..2] of TPrecisePoint;
+  Outline: array[0..2] of TPrecisePoint;
   Middle: LongInt;
   Stroke: LongInt;
-  Offset: LongInt;
+  CrossStart: Double;
+  CrossEnd: Double;
 begin
   Size := RectangleHeight(PixelBounds);
   Box := MakeRectangle(0, 0, Size, Size);
@@ -99,14 +105,14 @@ begin
     SignInformation, SignQuestion:
       begin
         if FSign = SignInformation then
-          FillEllipse(Canvas, Box, InformationColor)
+          FillSmoothEllipse(Canvas, Box, InformationColor)
         else
-          FillEllipse(Canvas, Box, QuestionColor);
-        DrawEllipseOutline(Canvas, Box, Theme.DarkShadow);
+          FillSmoothEllipse(Canvas, Box, QuestionColor);
+        DrawSmoothEllipseOutline(Canvas, Box, 1, Theme.DarkShadow);
         if FSign = SignInformation then
         begin
           { An "i": a dot over a bar. }
-          FillRectangle(Canvas, MakeRectangle(Middle - Stroke div 2, Size div 5, Stroke, Stroke), MarkLight);
+          FillSmoothEllipse(Canvas, MakeRectangle(Middle - Stroke div 2, Size div 5, Stroke, Stroke), MarkLight);
           FillRectangle(Canvas, MakeRectangle(Middle - Stroke div 2, Size * 2 div 5, Stroke, Size * 2 div 5), MarkLight);
         end
         else
@@ -114,26 +120,29 @@ begin
       end;
     SignWarning:
       begin
-        Triangle[0] := MakePoint(Middle, 0);
-        Triangle[1] := MakePoint(Size, Size);
-        Triangle[2] := MakePoint(0, Size);
-        FillPolygon(Canvas, Triangle, WarningColor);
-        DrawPolygonOutline(Canvas, [MakePoint(Middle, 0), MakePoint(Size - 1, Size - 1), MakePoint(0, Size - 1)],
-          Theme.DarkShadow);
+        Triangle[0] := PrecisePoint(Size / 2, 0);
+        Triangle[1] := PrecisePoint(Size, Size);
+        Triangle[2] := PrecisePoint(0, Size);
+        FillSmoothPolygon(Canvas, Triangle, WarningColor);
+        { The outline through pixel centres just inside the triangle. }
+        Outline[0] := PrecisePoint((Size - 1) / 2, 0.5);
+        Outline[1] := PrecisePoint(Size - 1, Size - 1);
+        Outline[2] := PrecisePoint(0, Size - 1);
+        DrawSmoothPolygonOutline(Canvas, Outline, 1, Theme.DarkShadow);
         { A "!": a bar over a dot. }
         FillRectangle(Canvas, MakeRectangle(Middle - Stroke div 2, Size * 3 div 10, Stroke, Size * 2 div 5), MarkDark);
-        FillRectangle(Canvas, MakeRectangle(Middle - Stroke div 2, Size * 4 div 5, Stroke, Stroke), MarkDark);
+        FillSmoothEllipse(Canvas, MakeRectangle(Middle - Stroke div 2, Size * 4 div 5, Stroke, Stroke), MarkDark);
       end;
     SignError:
       begin
-        FillEllipse(Canvas, Box, ErrorColor);
-        DrawEllipseOutline(Canvas, Box, Theme.DarkShadow);
-        { A cross, Stroke pixels thick. }
-        for Offset := -(Stroke div 2) to Stroke div 2 do
-        begin
-          DrawLine(Canvas, Size * 3 div 10 + Offset, Size * 3 div 10, Size * 7 div 10 + Offset, Size * 7 div 10, MarkLight);
-          DrawLine(Canvas, Size * 7 div 10 + Offset, Size * 3 div 10, Size * 3 div 10 + Offset, Size * 7 div 10, MarkLight);
-        end;
+        FillSmoothEllipse(Canvas, Box, ErrorColor);
+        DrawSmoothEllipseOutline(Canvas, Box, 1, Theme.DarkShadow);
+        { A cross, Stroke pixels thick, from three tenths of the way to
+          seven tenths (as pixel centres). }
+        CrossStart := Size * 0.3;
+        CrossEnd := Size * 0.7 - 1;
+        DrawSmoothLine(Canvas, CrossStart, CrossStart, CrossEnd, CrossEnd, Stroke, MarkLight);
+        DrawSmoothLine(Canvas, CrossEnd, CrossStart, CrossStart, CrossEnd, Stroke, MarkLight);
       end;
   end;
 end;

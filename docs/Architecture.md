@@ -814,9 +814,10 @@ Positions on the screen travel in logical units, surfaces in pixels.
 
 The server keeps the windows in stacking order (topmost ones, such as a
 taskbar will be, stay above), draws their frames itself (a raised
-bevel, a title bar with a gradient, the title in a bold face picked by
-point size and DPI, minimize, maximize and close buttons; all sizes from
-the theme's metrics in logical units, `Server.Theme`), and composes in a
+bevel, a title bar with a gradient, the title in a bold face of the
+theme's text family picked by point size and DPI, minimize, maximize
+and close buttons; all sizes from the theme's metrics in logical units,
+`Server.Theme`), and composes in a
 back buffer: what needs drawing again is collected as a region (a window
 moved, a program drew, the pointer moved), and only that is drawn, the
 desktop, the windows from the bottom up and the pointer, clipped to it,
@@ -904,8 +905,19 @@ telling its parent something); programs number theirs from there. A
 receiver that is freed takes its queued messages with it.
 
 `Windowing.Theme` holds the colours and metrics (logical units), shared
-by the display server's frames and the controls; `Windowing.Fonts` the
-system's fonts and the theme's text face at the display's DPI.
+by the display server's frames and the controls, and the font families:
+the interface's text (`TextFamily`, DejaVu Sans, proportional) and a
+monospaced one (`FixedFamily`, Terminus). `Windowing.Fonts` lists each
+family once and picks faces from them at the display's DPI: the theme's
+text face (`TextFace`, `BoldTextFace`, `FontFace`) and the monospaced one
+(`FixedTextFace`, `FixedFontFace`). The display server picks its title
+face from the theme's text family too. Text is drawn anti-aliased;
+the multi-line edit box uses the monospaced face, so columns of text
+line up, and the console stays Terminus. The controls use anti-aliased
+shapes where curves and slants show (the radio button's circle, a
+checked menu item's dot, the message box signs, the list view's stock
+icons, whose straight edges still fall on whole pixels) and scale a
+program's own icons smoothly.
 
 **libcontrols** builds windows out of controls. `TControl`
 (`Controls.Base`) has a parent, children, bounds in logical units within
@@ -1017,12 +1029,12 @@ that exists; save wants the folder to exist and asks in a message box
 before replacing a file. `Controls.ColorDialog` (`ChooseColor`) has a
 grid of basic colours, a scroll bar and a number box for each of red,
 green and blue kept in step, and a swatch of the colour.
-`Controls.FontDialog` (`ChooseFont`) lists the sizes the system's fonts
-come in at this display's DPI (the bitmap faces have a few pixel
-heights; each is listed as the smallest whole, or else half, point size
-that picks it, so no two entries look the same), bold or regular, and a
-sample drawn with the face a program asking for that size gets
-(`Windowing.Fonts` lists the system's faces for it).
+`Controls.FontDialog` (`ChooseFont`) lists the sizes the theme's text
+font comes in at this display's DPI (the faces have some pixel sizes
+only; each is listed as the smallest whole, or else half, point size
+that picks it, so no two entries look the same, found without reading
+any face), bold or regular, and a sample drawn with the face a program
+asking for that size gets (`Windowing.Fonts` lists the faces for it).
 
 Mnemonics: an ampersand in a caption marks the next character as the
 control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
@@ -1875,23 +1887,83 @@ independent) against the Free Pascal runtime library:
   shape is drawn as horizontal spans through one routine (`FillSpan`),
   which clips them and blends translucent colours. It needs only the
   runtime library.
-- **libfont.so** – text: `Font.Psf` (PSF1 and PSF2 bitmap fonts with
-  their Unicode tables), `Font.Utf8` (decoding, one U+FFFD for every bad
-  sequence), `Font.Text` (font sets; a face picked by point size and DPI,
-  the tallest not taller than asked; measuring and drawing) and
-  `Font.Files` (reading the system's fonts, Terminus in heights 12 to 32,
-  regular and bold, from `/lib/fonts/terminus` with its licence). Sizes
-  are in points, so text is the same size on any display.
 
-  Both build on the host too, without `Font.Files`: `make drawing-test`
-  (part of `make test`) runs `tools/DrawingTest`, which checks colour
-  arithmetic, regions, clipped fills, the exact pixels of lines,
-  ellipses and polygons, copies, gradients, bevels, malformed UTF-8, a
-  PSF1 font built by the test, and Terminus glyphs drawn pixel for pixel
-  against their bitmaps, and writes a sample picture
-  (`build/tools/drawing-sample.ppm`). On the system, `drawtest` draws a
-  window on the display, everything sized by the display's scale and
-  DPI; the input test checks it in a screen dump.
+  Anti-aliased drawing sits beside the exact shapes, which the crisp
+  edges of the interface keep using. `Drawing.Rasterizer` covers each
+  pixel by exactly the area of it a shape covers: a shape is edges with
+  fractional ends (several outlines may make one; non-zero rule, so an
+  outline the other way round cuts a hole); each edge adds the signed
+  area to its right to the rows it crosses, summing along a row gives
+  every pixel's coverage, and runs of equal coverage go through
+  `FillSpan` with the colour faded by it. `Drawing.SmoothLines` draws
+  lines one pixel wide or thinner by Wu's algorithm and wider ones as
+  their outlines through the rasterizer (strokes and round joints add
+  up into one shape, so overlaps are not blended twice);
+  `Drawing.SmoothShapes` fills and outlines ellipses (outlines of enough
+  straight edges to stay within a hundredth of a pixel of the curve) and
+  polygons. `Drawing.Scaling` scales a surface smoothly: bilinear when
+  growing, area averaging when shrinking (each direction on its own,
+  whole number weights, colours weighted by alpha so transparent pixels
+  lend no colour), the same size an exact copy.
+- **libfont.so** – text: `Font.Faces` (a face: a line height, the
+  baseline and underline, and glyphs with their own advances, bearings
+  and bitmaps, as bits or as 8-bit coverage, and kerning pairs; a
+  monospaced face is one whose advances are equal), `Font.Psf` (PSF1
+  and PSF2 bitmap fonts with their Unicode tables), `Font.Coverage`
+  (coverage fonts, below), `Font.Utf8` (decoding, one U+FFFD for every
+  bad sequence), `Font.Text` (font sets of one family; a face picked by
+  point size and DPI, the largest pixel size not larger than asked;
+  measuring and drawing with advances and kerning, coverage glyphs
+  blending the text colour over what is there) and `Font.Files`
+  (families, one directory each in `/lib/fonts` with their licences:
+  `terminus`, Terminus in heights 12 to 32, regular and bold, the
+  console's font, monospaced, a face standing for an em six sevenths of
+  its height, so faces of both families picked for one size match;
+  `dejavu-sans`, DejaVu Sans in every pixel size from 9 to 40, regular
+  and bold, the interface's). Listing a
+  family reads only the start of each file, its size and weight; a
+  face's glyphs are read the first time it is picked, so a program does
+  not load every size. Sizes are in points, so text is the same size on
+  any display.
+
+  The system has no font rasterizer yet (TrueType comes later), so the
+  proportional font is rendered at build time: `tools/RenderFont`
+  (Python with Pillow, which uses FreeType) draws DejaVu Sans, hinted
+  and anti-aliased, into a coverage font (`.cvf`) per pixel size. The
+  format, little-endian: a 40 byte header (magic `CVF1`, flags with
+  bold, the pixel size, line height, ascent, underline top and
+  thickness, the glyph and kerning pair counts, and where the glyph
+  table, the kerning table and the coverage data are); glyphs by code
+  point (advance, left bearing, top, width, height, where the bitmap
+  is); kerning pairs by left then right code point (the adjustment in
+  pixels, measured from the font's own tables through Raqm and scaled
+  to each size); then the bitmaps, a byte a pixel. The characters are
+  Terminus's western ones (ASCII, Latin-1, Latin Extended-A), the
+  typographic punctuation, the euro and U+FFFD. `Font.Coverage` checks
+  every offset, size and order before using any of it; a bad file gives
+  no face. The build says so clearly if Pillow or DejaVu Sans is
+  missing (`DEJAVU_SANS_FONT`, `DEJAVU_SANS_BOLD_FONT` and
+  `DEJAVU_LICENSE` say where they are).
+
+  Both libraries build on the host too, without `Font.Files`: `make
+  drawing-test` (part of `make test`) runs `tools/DrawingTest`, which
+  checks colour arithmetic, regions, clipped fills, the exact pixels of
+  lines, ellipses and polygons, copies, gradients, bevels, malformed
+  UTF-8, a PSF1 font built by the test, and Terminus glyphs drawn pixel
+  for pixel against their bitmaps; the rasterizer's exact coverage on
+  squares, half pixels and diagonals, holes and joins, cutting at the
+  surface's side; smooth lines (whole rows, half rows, a whole pixel a
+  column, the same from either end, symmetric diagonals, wide lines),
+  ellipses and rings (symmetric, adding up to their areas), polygons
+  and smooth scaling (exact values for growing, shrinking, thin lines
+  and transparency); a coverage font built by the test (measured with
+  kerning, drawn pixel for pixel, every truncation and broken table
+  refused), DejaVu Sans as rendered (metrics, kerning, glyphs drawn
+  exactly, ASCII within the line) and a family read only when picked;
+  and writes a sample picture (`build/tools/drawing-sample.ppm`). On
+  the system, `drawtest` draws a window on the display in DejaVu Sans,
+  everything sized by the display's scale and DPI; the input test
+  checks it in a screen dump.
 - **libtlstest.so** – a small library in assembly with TLS and
   initializer arrays, which Free Pascal does not emit; `threadtest` uses
   it to test the loader and the runtime.

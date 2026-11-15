@@ -34,7 +34,7 @@ interface
 uses
   Drawing.Rectangles,
   Drawing.Canvas,
-  Font.Psf,
+  Font.Faces,
   Server.Windows;
 
 type
