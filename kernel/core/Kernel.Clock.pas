@@ -74,6 +74,7 @@ begin
     only the boot processor's counts time. Only it writes the tick count,
     and an aligned 64-bit store is atomic, so readers never see a torn
     value. }
+  CurrentProcessor^.InterruptedAddress := Frame^.Rip;
   if CurrentProcessor^.Index = 0 then
   begin
     TickCount := TickCount + 1;

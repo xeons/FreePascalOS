@@ -166,7 +166,14 @@ begin
     DebugWrite('  processor ');
     DebugWriteDecimal(Index);
     DebugWrite(' runs ');
-    DebugWriteLine(@Processor^.RunningThread^.Name[0]);
+    DebugWrite(@Processor^.RunningThread^.Name[0]);
+    DebugWrite(' (thread ');
+    DebugWriteDecimal(Processor^.RunningThread^.ThreadId);
+    DebugWrite(', ran ');
+    DebugWriteDecimal(Processor^.RunningThread^.RunTicks);
+    DebugWrite(' ticks), last at 0x');
+    DebugWriteHex(Processor^.InterruptedAddress, 1);
+    DebugWriteLine('');
   end;
 end;
 

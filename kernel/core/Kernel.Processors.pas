@@ -72,6 +72,9 @@ type
     ActiveAddressSpace: QWord;
     { Requests from other processors (Kernel.InterProcessor). }
     PendingRequests: LongWord;
+    { Where the clock interrupt last found the processor (for the hang
+      dump: a processor stuck in a loop shows where). }
+    InterruptedAddress: QWord;
     { The double fault, NMI and machine check stacks (a secondary
       processor's; the boot processor's are static). }
     InterruptStackArea: Pointer;
