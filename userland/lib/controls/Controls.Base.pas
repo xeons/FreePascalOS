@@ -36,6 +36,9 @@
   A control whose caption can carry a mnemonic ("&OK", Controls.Text)
   says whether a character picks it (MatchesMnemonic) and what picking
   it does (ActivateMnemonic); the window asks them on Alt and a letter.
+
+  The pointer takes a control's PointerShape over it (the arrow unless
+  it says otherwise: a text beam over the edit boxes).
 }
 unit Controls.Base;
 
@@ -90,6 +93,7 @@ type
     FCanFocus: Boolean;
     FText: string;
     FTag: PtrInt;
+    FPointerShape: LongWord;
     FOnClick: TControlEvent;
     FOnChange: TControlEvent;
     FOnPointerDown: TPointerEvent;
@@ -180,6 +184,9 @@ type
     property Text: string read FText write SetText;
     { The program's own, for anything. }
     property Tag: PtrInt read FTag write FTag;
+    { The pointer's shape over it (Pointer* in Windowing.Protocol; the
+      arrow unless set). }
+    property PointerShape: LongWord read FPointerShape write FPointerShape;
     property OnClick: TControlEvent read FOnClick write FOnClick;
     property OnChange: TControlEvent read FOnChange write FOnChange;
     property OnPointerDown: TPointerEvent read FOnPointerDown write FOnPointerDown;

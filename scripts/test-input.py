@@ -627,16 +627,32 @@ def drag(from_x, from_y, to_x, to_y):
 # screen back to the console. At 100 DPI logical units are pixels: the
 # client areas start at 100,100 and 250,200, 300x200; frames are 4
 # wide, title bars 18 high (their gradient starts 3 pixels into the frame).
-type_on_serial(b'displayserver &\r')
+# The second window has the text beam over its left half (a pointer
+# area). The server reads the pointer's shapes from /lib/pointers, and
+# checks every window move (copying what stays visible) against a full
+# redraw (--check-moves).
+type_on_serial(b'displayserver --check-moves &\r')
 server_ready = wait_for('displayserver: ready (1280x800, 100 DPI, scale 100%)', 20)
+checks.append(('display server: the pointer\'s shapes read from files',
+               wait_for('displayserver: 7 of 7 pointer shapes from /lib/pointers', 10)))
 type_on_serial(b'wintest -t First -x 100 -y 100 > /tmp/w1.log &\r')
 time.sleep(1.5)
-type_on_serial(b'wintest -t Second -x 250 -y 200 -c D0E8F0 > /tmp/w2.log &\r')
+type_on_serial(b'wintest -t Second -x 250 -y 200 -c D0E8F0 -b > /tmp/w2.log &\r')
 time.sleep(2)
 pixel = take_screen()
 checks.append(('display server: two windows, stacked, the top one active',
                server_ready and pixel(400, 300) == 'd0e8f0' and pixel(150, 150) == 'f0e8d0' and
                pixel(249, 185) == '17375e' and pixel(99, 85) == '7c7a76'))
+# The text beam's hotspot is in the middle of its stem: its top bar, 7
+# pixels up, is black either side of a white middle. The arrow's tip is
+# black, the pixel below and right of it white.
+point_tablet_at(320, 330)
+beam = take_screen()
+point_tablet_at(480, 330)
+arrow = take_screen()
+checks.append(('pointer shapes: the text beam over a window\'s pointer area, the arrow beside it',
+               beam(319, 323) == '000000' and beam(320, 323) == 'ffffff' and beam(321, 323) == '000000' and
+               arrow(480, 330) == '000000' and arrow(481, 332) == 'ffffff' and arrow(319, 323) == 'd0e8f0'))
 drag(300, 190, 400, 240)
 pixel = take_screen()
 checks.append(('display server: a window dragged by its title bar',
@@ -661,11 +677,125 @@ logs_ok = wait_for('LOGS DONE', 10)
 checks.append(('display server: the close button, then a key for the window left',
                logs_ok and received.count(b'\nclose') >= 1 and b'key 0x1E a' in received and
                take_screen()(500, 350) == '2f5f7a'))
+
+# The title buttons of the window left (First, active; its close button
+# at 383-398 x 83-96): hot under the pointer (a lighter face), pressed
+# while held (sunken: dark at its top left), back to normal when the
+# pointer goes off it with the button held; let go there, nothing
+# happens. The pointer is at the button's bottom right, clear of the
+# pixels looked at.
+closes_before = received.count(b'\nclose')
+point_tablet_at(397, 95)
+hot = take_screen()
+send_to_monitor('mouse_button 1\n')
+time.sleep(0.4)
+pressed = take_screen()
+point_tablet_at(250, 250)
+let_up = take_screen()
+send_to_monitor('mouse_button 0\n')
+time.sleep(0.5)
+checks.append(('title buttons: hot, pressed, and up again off the button',
+               hot(386, 86) == 'e2ded6' and hot(384, 84) == 'ffffff' and
+               pressed(386, 86) == 'cbc6bd' and pressed(383, 83) == '7e7a72' and pressed(384, 84) == '35322d' and
+               let_up(386, 86) == 'cbc6bd' and let_up(384, 84) == 'ffffff'))
+# Over the right border the pointer is the left-right resize arrow: its
+# hotspot in the middle of a white shaft (the arrow's tip is black).
+point_tablet_at(402, 150)
+resize_arrow = take_screen()
+checks.append(('pointer shapes: the resize arrow over a border',
+               resize_arrow(402, 150) == 'ffffff' and resize_arrow(396, 150) == 'ffffff' and
+               resize_arrow(408, 150) == 'ffffff' and resize_arrow(402, 148) == '000000'))
+
+
+def double_click_at(x, y):
+    point_tablet_at(x, y)
+    for state in ('1', '0', '1', '0'):
+        send_to_monitor('mouse_button ' + state + '\n')
+        time.sleep(0.05)
+    time.sleep(1)
+
+
+# A double click on the title bar maximizes the window, another (on the
+# maximized title bar, now at the top) restores it.
+type_on_serial(b'm=DONE; echo TITLE $m\r')
+wait_for('TITLE DONE', 10)
+double_click_at(250, 90)
+double_click_at(250, 9)
+type_on_serial(b'm=DONE; cat /tmp/w1.log; echo DOUBLE $m\r')
+wait_for('DOUBLE DONE', 10)
+log_from_here = bytes(received[received.rfind(b'TITLE DONE'):])
+checks.append(('title bar: a double click maximizes, another restores',
+               re.search(rb'resized 1280 782\r?\nresized 300 200', log_from_here) is not None and
+               received.count(b'\nclose') == closes_before))
+# Dragged partly off the screen and back: each move copies what stays
+# visible, and the picture is the same as drawing everything again.
+drag(250, 90, 100, 40)
+drag(100, 40, 250, 90)
+type_on_serial(b'm=DONE; echo DRAGGED $m\r')
+wait_for('DRAGGED DONE', 10)
+move_reports = re.findall(rb'(\d+) moves compared with a full redraw, (\d+) differed', bytes(received))
+checks.append(('window moves: copying what moved gives the picture a full redraw gives',
+               len(move_reports) >= 3 and int(move_reports[-1][0]) >= 3 and
+               all(differed == b'0' for compared, differed in move_reports) and
+               b'unlike a full redraw' not in received))
+# Left-handed: the right button acts as the left one (and back).
+type_on_serial(b'mousesettings --left-handed on\r')
+left_handed_on = wait_for('speed 10, acceleration 0, left-handed on', 10)
+right_click_at(250, 200)
+type_on_serial(b'mousesettings -l off\r')
+left_handed_off = wait_for('speed 10, acceleration 0, left-handed off', 10)
+right_click_at(250, 200)
+type_on_serial(b'm=DONE; cat /tmp/w1.log; echo HANDED $m\r')
+wait_for('HANDED DONE', 10)
+log_from_here = bytes(received[received.rfind(b'DRAGGED DONE'):])
+checks.append(('mouse settings: left-handed swaps the buttons',
+               left_handed_on and left_handed_off and
+               re.search(rb'button 1 press 150 100\r?\nbutton 2 press 150 100', log_from_here) is not None))
+# The speed doubles a mouse's movement (40 units: 80 pixels); a tablet's
+# positions stay where they are.
+type_on_serial(b'mousesettings --speed 20\r')
+speed_set = wait_for('speed 20, acceleration 0', 10)
+point_tablet_at(600, 500)
+move_ps2_mouse('mouse_move 40 0\n')
+time.sleep(0.5)
+pixel = take_screen()
+type_on_serial(b'mousesettings -s 10; m=DONE; echo SPEED $m\r')
+checks.append(('mouse settings: the speed multiplies relative motion',
+               speed_set and pixel(680, 500) == '000000' and pixel(681, 502) == 'ffffff' and
+               pixel(600, 500) == '2f5f7a' and wait_for('SPEED DONE', 10)))
 type_on_serial(b'kill %1; wait; m=DONE; echo SERVER $m\r')
 checks.append(('display server: ended, the console has the screen again',
                wait_for('SERVER DONE', 15) and screen_pixel(2, 400) == '101830'))
 type_on_serial(b'kill %2 2>/dev/null; wait\r')
 time.sleep(1)
+
+# Owned windows (ownertest: A at 100,100 400x300 green, B owned by A,
+# C at 300,250 300x200 blue overlapping A; a key takes each step):
+# hiding A hides B too and B's program is told (B is not Visible any
+# more); showing A shows B again; C and A come in front of each other
+# when activated, until C is given A as its owner: then C stays in front
+# of A; owned by nothing again, A covers it.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+point_tablet_at(900, 700)
+type_on_serial(b'ownertest > /tmp/o.log &\r')
+time.sleep(2.5)
+overlaps = []
+for step in range(7):
+    press('a')
+    time.sleep(0.8)
+    overlaps.append(take_screen()(400, 320))
+press('a')
+time.sleep(0.5)
+type_on_serial(b'm=DONE; cat /tmp/o.log; kill %1; wait; echo OWNERS $m\r')
+owners_ok = wait_for('OWNERS DONE', 15)
+log_from_here = bytes(received[received.rfind(b'ownertest >'):])
+checks.append(('owned windows: hidden with its owner, the program is told (Visible follows)',
+               owners_ok and b'visible B 0' in log_from_here and b'visible A 0 B 0 C 1' in log_from_here and
+               b'visible B 1' in log_from_here and b'visible A 1 B 1 C 1' in log_from_here))
+checks.append(('owned windows: the owner changed later, the window stays above its new owner',
+               owners_ok and b'step 7' in log_from_here and
+               overlaps == ['4040c0', '40c040', '4040c0', '40c040', '4040c0', '4040c0', '40c040']))
 
 # Controls (libcontrols, controlsdemo, client area at 120,80): keys to
 # the edit box, Tab to the check box and Space, a click on a radio
@@ -692,6 +822,13 @@ press('alt-r')
 press('alt-n')
 press('x')
 time.sleep(0.5)
+# Over the edit box (196-396 x 92-114) the pointer is the text beam: its
+# top bar, 7 pixels above the hotspot, black either side of the middle.
+point_tablet_at(350, 103)
+time.sleep(0.5)
+pixel = take_screen()
+checks.append(('pointer shapes: the text beam over an edit box',
+               pixel(349, 96) == '000000' and pixel(351, 96) == '000000'))
 type_on_serial(b'displayscale 150\r')
 time.sleep(2)
 # The client area at 150%: from 180,120, the swatch at 615,138 (84 square).

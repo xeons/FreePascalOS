@@ -305,10 +305,8 @@ begin
     Exit;
   Left := X + TextWidth(Face, Copy(Shown, 1, Position - 1));
   Width := TextWidth(Face, Copy(Shown, Position, CharacterBytes));
-  { Fonts carry no baseline: three sixteenths of the height up from the
-    bottom is just under the letters, where the font's own underscore
-    is. }
-  LineTop := Y + Face^.Height - (3 * Face^.Height) div 16;
+  { Right under the letters' feet, touching them, at every size. }
+  LineTop := Y + FaceBaseline(Face^);
   Thickness := Face^.Height div 16;
   if Thickness < 1 then
     Thickness := 1;

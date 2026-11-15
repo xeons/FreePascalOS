@@ -25,6 +25,7 @@
 #   /bin   programs (from <user-build-directory>/bin)
 #   /lib   shared libraries (from <user-build-directory>/lib)
 #   /etc   configuration (from userland/etc)
+#   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
 #   /tmp, /home
 #
 # The image is a whole disk with a GPT partition table and one partition,
@@ -50,6 +51,12 @@ cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 if [[ -d "$user_build_directory/fonts" ]]; then
     mkdir -p "$staging_directory/lib/fonts"
     cp -r "$user_build_directory"/fonts/* "$staging_directory/lib/fonts/"
+fi
+# The pointer's shapes, which the display server reads (it has built-in
+# ones for any that are missing).
+if compgen -G "$source_directory/userland/pointers/*.pointer" > /dev/null; then
+    mkdir -p "$staging_directory/lib/pointers"
+    cp "$source_directory"/userland/pointers/*.pointer "$staging_directory/lib/pointers/"
 fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"

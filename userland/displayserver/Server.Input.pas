@@ -26,9 +26,18 @@
   goes, a border or corner shows an outline of the new size and asks
   the program for it when the button is let go, and the title buttons
   act when let go over them (close asks the program, maximize toggles,
-  minimize hides). Keys go to the active window; Alt+F4 asks it to
-  close. Pointer events carry the modifiers held (as the last key event
-  said), so a program can tell a Ctrl+click or a Shift+click.
+  minimize hides). The title button under the pointer looks hot, and
+  pressed while held (Server.TitleButtons); a double click on a title
+  bar maximizes the window or restores it (Server.DoubleClicks). Keys
+  go to the active window; Alt+F4 asks it to close. Pointer events
+  carry the modifiers held (as the last key event said), so a program
+  can tell a Ctrl+click or a Shift+click.
+
+  A mouse's motion goes through its settings (speed, acceleration) and
+  its buttons may be swapped (left-handed: Server.MouseSettings). The
+  pointer's shape follows what it is over (RefreshPointerShape:
+  Server.PointerAreas), and a resize arrow stays while a border is
+  dragged.
 
   A disabled window (the owner of a modal dialog) gets nothing: the
   pointer over it is over no window, and pressing a button on it (its
@@ -57,6 +66,9 @@ procedure SetPointerCapture(Window: PServerWindow; Capture: Boolean);
 procedure ForgetWindowInInput(Window: PServerWindow);
 { Ends a drag of a frame, if one goes on (the scale changed). }
 procedure CancelDrag;
+{ Gives the pointer the shape for where it is now (call before
+  composing: windows may have moved or changed their shapes). }
+procedure RefreshPointerShape;
 
 implementation
 
@@ -72,7 +84,12 @@ uses
   Server.Cursor,
   Server.Frames,
   Server.Composer,
-  Server.Actions;
+  Server.Actions,
+  Server.MouseSettings,
+  Server.TitleButtons,
+  Server.DoubleClicks,
+  Server.PointerAreas,
+  Server.WindowMoves;
 
 const
   EventsPath: PChar = '/dev/events';
@@ -122,6 +139,7 @@ procedure CancelDrag;
 begin
   DragWindow := nil;
   Drag := DragNone;
+  TrackTitleButton(nil, HitNothing, False);
   if OutlineVisible then
   begin
     AddDamage(Outline);
@@ -137,6 +155,8 @@ begin
     Hovered := nil;
   if DragWindow = Window then
     CancelDrag;
+  ForgetWindowInTitleButtons(Window);
+  ForgetWindowInDoubleClicks(Window);
 end;
 
 procedure SendPointerEvent(Window: PServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt);
@@ -233,7 +253,10 @@ begin
       else
         Drag := DragMove;
     HitClose, HitMaximize, HitMinimize:
-      Drag := DragButton;
+      begin
+        Drag := DragButton;
+        TrackTitleButton(Window, Area, True);
+      end;
     HitLeft, HitRight, HitTop, HitBottom, HitTopLeft, HitTopRight, HitBottomLeft, HitBottomRight:
       begin
         Drag := DragResize;
@@ -250,7 +273,10 @@ var
   Message: TWindowMessage;
 begin
   Window := DragWindow;
+  TrackTitleButton(nil, HitNothing, False);
   case Drag of
+    DragMove:
+      ReportMoveChecks;
     DragResize:
       begin
         AddDamage(Outline);
@@ -275,6 +301,68 @@ begin
   DragWindow := nil;
 end;
 
+{ --- Looks and shapes under the pointer --------------------------------------------- }
+
+{ The title button under the pointer is hot (none while the pointer is
+  captured or a frame is dragged); the one held is pressed while the
+  pointer is over it. }
+procedure TrackButtonUnderPointer;
+var
+  Window: PServerWindow;
+begin
+  if Drag = DragButton then
+  begin
+    if HitTest(DragWindow, PointerX, PointerY) = DragArea then
+      TrackTitleButton(DragWindow, DragArea, True)
+    else
+      TrackTitleButton(nil, HitNothing, False);
+    Exit;
+  end;
+  Window := nil;
+  if (Drag = DragNone) and (Captured = nil) then
+    Window := WindowAt(PointerX, PointerY);
+  if (Window = nil) or Window^.Disabled then
+    TrackTitleButton(nil, HitNothing, False)
+  else
+    TrackTitleButton(Window, HitTest(Window, PointerX, PointerY), False);
+end;
+
+function PointerShapeHere: LongWord;
+var
+  Window: PServerWindow;
+  Area: THitArea;
+begin
+  case Drag of
+    DragResize:
+      Exit(FramePointerShape(DragArea));
+    DragMove, DragButton:
+      Exit(PointerArrow);
+  end;
+  Result := PointerArrow;
+  Window := Captured;
+  if Window = nil then
+    Window := WindowAt(PointerX, PointerY);
+  if (Window = nil) or Window^.Disabled then
+    Exit;
+  Area := HitTest(Window, PointerX, PointerY);
+  if Area = HitClient then
+    Result := ClientPointerShape(Window, PointerX - Window^.ClientLeft, PointerY - Window^.ClientTop)
+  else if Window <> Captured then
+    Result := FramePointerShape(Area);
+end;
+
+procedure RefreshPointerShape;
+var
+  Shape: LongWord;
+begin
+  Shape := PointerShapeHere;
+  if Shape = CursorShape then
+    Exit;
+  AddDamage(CursorRectangle);
+  SetCursorShape(Shape);
+  AddDamage(CursorRectangle);
+end;
+
 { --- Events ---------------------------------------------------------------------- }
 
 procedure PointerMoved(OldCursor: TRectangle);
@@ -283,6 +371,7 @@ var
 begin
   AddDamage(OldCursor);
   AddDamage(CursorRectangle);
+  TrackButtonUnderPointer;
   case Drag of
     DragMove:
       begin
@@ -306,11 +395,12 @@ begin
     SendPointerEvent(Target, EventPointerMove, ButtonsHeld, 0);
 end;
 
-procedure ButtonChanged(Button: LongWord; Pressed: Boolean);
+procedure ButtonChanged(Button: LongWord; Pressed: Boolean; Time: QWord);
 var
   Window: PServerWindow;
   Area: THitArea;
 begin
+  Button := ButtonActingAs(Button);
   if Pressed then
     ButtonsHeld := ButtonsHeld or (LongWord(1) shl Button)
   else
@@ -318,7 +408,10 @@ begin
   if Drag <> DragNone then
   begin
     if not Pressed and (Button = ButtonLeft) then
+    begin
       FinishDrag;
+      TrackButtonUnderPointer;
+    end;
     Exit;
   end;
   if Captured <> nil then
@@ -341,8 +434,23 @@ begin
   if Pressed then
     ActivateWindow(Window);
   if Area = HitClient then
-    SendPointerEvent(Window, EventPointerButton, Button, Ord(Pressed))
-  else if Pressed and (Button = ButtonLeft) then
+  begin
+    if Pressed then
+      TitlePressIsDoubleClick(nil, PointerX, PointerY, Time);
+    SendPointerEvent(Window, EventPointerButton, Button, Ord(Pressed));
+    Exit;
+  end;
+  if not Pressed or (Button <> ButtonLeft) then
+    Exit;
+  if Area <> HitTitle then
+  begin
+    TitlePressIsDoubleClick(nil, PointerX, PointerY, Time);
+    StartDrag(Window, Area);
+  end
+  else if TitlePressIsDoubleClick(Window, PointerX, PointerY, Time) and
+     ((Window^.Flags and WindowResizable) <> 0) then
+    ToggleMaximized(Window)
+  else
     StartDrag(Window, Area);
 end;
 
@@ -383,6 +491,8 @@ var
   Got: Int64;
   Index: LongInt;
   OldCursor: TRectangle;
+  DeltaX: LongInt;
+  DeltaY: LongInt;
 begin
   Got := KernelRead(InputHandle, @Events[0], SizeOf(Events));
   if Got <= 0 then
@@ -393,7 +503,10 @@ begin
     case Events[Index].Kind of
       InputEventMotion:
         begin
-          MovePointerBy(Events[Index].X, Events[Index].Y);
+          DeltaX := Events[Index].X;
+          DeltaY := Events[Index].Y;
+          AdjustMotion(DeltaX, DeltaY);
+          MovePointerBy(DeltaX, DeltaY);
           PointerMoved(OldCursor);
         end;
       InputEventPosition:
@@ -402,7 +515,7 @@ begin
           PointerMoved(OldCursor);
         end;
       InputEventButton:
-        ButtonChanged(Events[Index].Code, Events[Index].Value <> 0);
+        ButtonChanged(Events[Index].Code, Events[Index].Value <> 0, Events[Index].Time);
       InputEventWheel:
         WheelTurned(Events[Index].Value);
       InputEventKey:

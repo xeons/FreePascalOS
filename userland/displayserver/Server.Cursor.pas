@@ -17,13 +17,15 @@
 }
 
 {
-  The mouse pointer: where it is, and its arrow.
+  The mouse pointer: where it is, and its shape.
 
   Pointing devices move it by motion (relative) or position (absolute,
-  0-65535 across the screen) events; it stays on the screen. The arrow
-  is drawn from a small pattern, each of its pixels a square of
+  0-65535 across the screen) events; it stays on the screen. Its shape
+  (an arrow, resize arrows, a text beam... Server.PointerShapes) is
+  drawn from a small pattern, each of its pixels a square of
   PointerScale pixels (the display's scale rounded to a whole number),
-  so it is about the same size on every display.
+  so it is about the same size on every display; the pattern's hotspot
+  is where the pointer is.
 }
 unit Server.Cursor;
 
@@ -40,12 +42,16 @@ var
   PointerY: LongInt;
 
 procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: LongWord);
-{ The arrow's size for a new scale. }
+{ The pattern's size for a new scale. }
 procedure SetPointerScale(ScalePercent: LongWord);
 { Moves by (DeltaX, DeltaY), or to an absolute position. }
 procedure MovePointerBy(DeltaX, DeltaY: LongInt);
 procedure MovePointerToPosition(X, Y: LongInt);
-{ Where the arrow is drawn (its pixels), for knowing what to redraw. }
+{ The shape drawn (Pointer*); the caller damages the old and new
+  rectangles. }
+function CursorShape: LongWord;
+procedure SetCursorShape(Shape: LongWord);
+{ Where the pointer is drawn (its pixels), for knowing what to redraw. }
 function CursorRectangle: TRectangle;
 procedure DrawCursor(const Canvas: TCanvas);
 
@@ -53,39 +59,19 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Drawing.Colors;
+  Drawing.Colors,
+  Windowing.Protocol,
+  Server.PointerShapes;
 
 const
-  { '#' outline, '.' fill, ' ' transparent; the tip is the top left. }
-  ArrowWidth = 12;
-  ArrowHeight = 19;
-  Arrow: array[0..ArrowHeight - 1] of string[ArrowWidth] = (
-    '#           ',
-    '##          ',
-    '#.#         ',
-    '#..#        ',
-    '#...#       ',
-    '#....#      ',
-    '#.....#     ',
-    '#......#    ',
-    '#.......#   ',
-    '#........#  ',
-    '#.........# ',
-    '#......#####',
-    '#...#..#    ',
-    '#..# #..#   ',
-    '#.#  #..#   ',
-    '##    #..#  ',
-    '#     #..#  ',
-    '       #..# ',
-    '        ##  ');
-  OutlineColor = $FF000000;
-  FillColor = $FFFFFFFF;
+  BlackColor = $FF000000;
+  WhiteColor = $FFFFFFFF;
 
 var
   ScreenWidth: LongInt;
   ScreenHeight: LongInt;
   PointerScale: LongInt;
+  Shape: LongWord;
 
 procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: LongWord);
 begin
@@ -130,27 +116,47 @@ begin
   KeepOnScreen;
 end;
 
-function CursorRectangle: TRectangle;
+function CursorShape: LongWord;
 begin
-  Result := MakeRectangle(PointerX, PointerY, ArrowWidth * PointerScale, ArrowHeight * PointerScale);
+  Result := Shape;
+end;
+
+procedure SetCursorShape(Shape: LongWord);
+begin
+  if Shape >= PointerShapeCount then
+    Shape := PointerArrow;
+  Server.Cursor.Shape := Shape;
+end;
+
+function CursorRectangle: TRectangle;
+var
+  Pattern: ^TPointerPattern;
+begin
+  Pattern := @PointerPatterns[Shape];
+  Result := MakeRectangle(PointerX - Pattern^.HotspotX * PointerScale, PointerY - Pattern^.HotspotY * PointerScale,
+    Pattern^.Width * PointerScale, Pattern^.Height * PointerScale);
 end;
 
 procedure DrawCursor(const Canvas: TCanvas);
 var
+  Pattern: ^TPointerPattern;
+  Bounds: TRectangle;
   Row: LongInt;
   Column: LongInt;
   Color: TColor;
 begin
-  for Row := 0 to ArrowHeight - 1 do
-    for Column := 1 to ArrowWidth do
+  Pattern := @PointerPatterns[Shape];
+  Bounds := CursorRectangle;
+  for Row := 0 to Pattern^.Height - 1 do
+    for Column := 1 to Length(Pattern^.Rows[Row]) do
     begin
-      case Arrow[Row][Column] of
-        '#': Color := OutlineColor;
-        '.': Color := FillColor;
+      case Pattern^.Rows[Row][Column] of
+        PointerBlack: Color := BlackColor;
+        PointerWhite: Color := WhiteColor;
       else
         Continue;
       end;
-      FillRectangle(Canvas, MakeRectangle(PointerX + (Column - 1) * PointerScale, PointerY + Row * PointerScale,
+      FillRectangle(Canvas, MakeRectangle(Bounds.Left + (Column - 1) * PointerScale, Bounds.Top + Row * PointerScale,
         PointerScale, PointerScale), Color);
     end;
 end;

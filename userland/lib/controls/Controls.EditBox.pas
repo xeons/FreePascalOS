@@ -88,6 +88,7 @@ uses
   Abi.SystemCalls,
   Drawing.Rectangles,
   Drawing.Bevels,
+  Windowing.Protocol,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
@@ -98,6 +99,7 @@ constructor TEditBox.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   CanFocus := True;
+  PointerShape := PointerTextBeam;
 end;
 
 function TEditBox.TextLeft: LongInt;

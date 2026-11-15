@@ -830,18 +830,85 @@ the title bar moves the window live, a border or corner shows an outline
 of the new size and asks the program for it when let go (it answers
 with a new surface), the title buttons act when let go over them (close
 asks the program, maximize fills the screen below the title bar and
-back, minimize hides). Keys go to the active window; Alt+F4 asks it to
-close. Events for a program are sent without waiting, so one that stops
-reading cannot hold up the others; a program that ends loses its
+back, minimize hides). The title button under the pointer is drawn hot
+(a lighter face), and pressed (sunken, its glyph pushed a pixel in)
+while the button is held over it; moving off it lets it up, and letting
+go there does nothing (`Server.TitleButtons`). A double click on a title
+bar maximizes the window or restores it: two presses on the same title
+bar within 500 ms by the input events' own times, a few logical units
+apart (`Server.DoubleClicks`). Keys go to the active window; Alt+F4 asks
+it to close. Events for a program are sent without waiting, so one that
+stops reading cannot hold up the others; a program that ends loses its
 windows. Everything waits in one place: the input device, the port and
 every client's channel in one `CallWaitForHandles`.
 
+The mouse's settings (`Server.MouseSettings`): a speed (1 to 20; 10
+moves the pointer as far as the mouse says) multiplies a mouse's
+relative motion, and an acceleration (0 to 10) makes a fast movement go
+further still (beyond 4 device units in one report every further unit
+adds to the gain, up to four times the speed); what is left below a
+pixel is carried to the next movement, so a slow speed still moves
+smoothly. Left-handed swaps the left and right buttons of every pointing
+device. A tablet's absolute positions are never changed. Any program
+may read and change them (`RequestGetMouseSettings`,
+`RequestSetMouseSettings`, answered with `EventMouseSettings`), as it
+may the scale: they belong to whoever sits at the screen. They last
+until the server ends; keeping them in a file is for the configuration
+library (step 7). `mousesettings [-s SPEED] [-a ACCELERATION] [-l
+on|off]` changes them and prints them.
+
+Pointer shapes: the arrow, the four resize arrows (left-right, up-down
+and the two diagonals), a text beam and a busy hourglass
+(`Pointer*` in the protocol). Each is a small pattern of black, white
+and clear pixels with a hotspot (`Server.PointerShapes`), scaled by a
+whole number like the arrow always was. They are read at start from
+`/lib/pointers/NAME.pointer` (`Server.PointerFiles`): text files, so a
+shape can be changed without building anything:
+
+    ; comments start with a semicolon
+    hotspot 8 4
+        #       #
+       ##       ##
+      #.#########.#
+     #.............#
+
+Every line after the hotspot is a row: `#` black, `.` white, a space or
+`-` clear. A missing or malformed file leaves that shape built in (the
+built-in patterns are the same as the files `make-system-disk.sh`
+installs from `userland/pointers`); the server says how many it read.
+Which shape shows (`Server.PointerAreas`): over a frame the server's
+choice, a resize arrow on the borders and corners of a resizable window
+(and while one is dragged), the arrow elsewhere; over a client area the
+program's (`RequestSetPointerShape`): a shape for the whole client area
+(area 0) and up to 15 rectangles with their own (a higher area wins
+where they overlap). The shape is worked out again before every
+compose, so it follows windows that move under a still pointer.
+
+Moving a window (`Server.WindowMoves`) copies what stays visible instead
+of drawing it again: the old place's pixels that are up to date (not in
+the damage waiting to be drawn, not covered by a window above) and land
+where the window shows at the new place are copied within the back
+buffer (a line at a time, in the order that never reads a pixel already
+written: bottom up when moving down, from the right when moving right),
+and only the rest of the old and new places is damaged. The pointer and
+a resize outline are drawn over everything, so their places are damaged
+first and never copied. The copied pixels go to the screen with the
+next compose (`AddPresentOnly`). `displayserver --check-moves` draws the
+whole screen again after every compose that followed a move and compares
+it with what the copy left, printing any difference and, after each
+title bar drag, how many moves it compared.
+
 Owned windows: a window can be created with an owner, another window of
-the same program (the request's `Code`). An owned window is always above
-its owner: raising a window raises the windows it owns above it, in the
-order they had (`RaiseWindow`), and one owned by a topmost window counts
-as topmost. Hiding a window hides the windows it owns and showing it
-shows them again; destroying it leaves them without an owner. A window
+the same program (the request's `Code`), and given another one later
+(`RequestSetOwner`; never one it owns): if that leaves it below its new
+owner, or in the wrong layer, it is raised. An owned window is always
+above its owner: raising a window raises the windows it owns above it,
+in the order they had (`RaiseWindow`), and one owned by a topmost window
+counts as topmost. Hiding a window hides the windows it owns and showing
+it shows them again; destroying it leaves them without an owner. A
+program hears whenever one of its windows is shown or hidden
+(`EventVisibilityChanged`), whoever did it: along with its owner, or
+minimized by its title button. A window
 can be disabled (`RequestEnableWindow`): the server never activates it
 and sends it no input, the pointer over it being over no window; a press
 on it, frame included, brings it forward and activates its topmost
@@ -861,12 +928,23 @@ surfaces. There is one display, so one scale; with several, each display
 will have its own, and a window moved onto another display will be told
 in the same way.
 
-`wintest` shows a window and prints what happens to it. The input test
-starts the server and two of them, and with the USB tablet (exact
-positions) checks the stacking and the active title bar, a drag by the
-title bar, a resize by the corner, maximizing, the close button, a key
-going to the window left active, and the console getting the screen
-back when the server ends.
+`wintest` shows a window and prints what happens to it (`-b` sets a
+text beam over its left half, a pointer area). The input test starts
+the server (with `--check-moves`) and two of them, and with the USB
+tablet (exact positions) checks the stacking and the active title bar,
+the text beam over the pointer area, a drag by the title bar, a resize
+by the corner, maximizing, the close button, a key going to the window
+left active; then on that window the hot and pressed title button (and
+that letting go off it does nothing), the resize arrow over a border, a
+double click maximizing and another restoring, drags partly off the
+screen and back with every move's picture the same as a full redraw,
+left-handed buttons (a right click arriving as button 1) and the speed
+doubling a PS/2 mouse's motion; and the console getting the screen back
+when the server ends. `ownertest` shows three windows (one owned) and
+takes a step at each key: the input test checks that a window hidden
+with its owner is no longer `Visible` in its program and is shown again
+with it, and that a window given an owner later stays above it when the
+owner is activated, and not once it has none again.
 
 ### Windows and controls for programs
 
@@ -885,8 +963,14 @@ changed; a new size gets a new surface painted whole before the server
 sees it. The loop waits on the server's channel, the posted message
 event and the window timers (timer objects) at once.
 
-A window can be given an owner when it is made (`Owner`), which it then
-stays above, and can be disabled (`Enabled`). When the scale changes
+A window can be given an owner when it is made, or later (`Owner`),
+which it then stays above, and can be disabled (`Enabled`). `Visible`
+follows what the server says (`VisibilityChanged`), so a window hidden
+along with its owner, or minimized, is not `Visible`. `SetPointerShape`
+and `SetPointerShapeInArea` choose the pointer's shape over the client
+area; a control has a `PointerShape` (the edit boxes the text beam),
+which `TControlWindow` asks the server for as the pointer moves over
+controls. When the scale changes
 the connection takes the new DPI and scale (`DisplayScale`,
 `DisplayDpi`), and every window gets a surface of the logical size it
 had at the new scale: `ScaleChanged`, then `Resized`, then painted whole
@@ -925,7 +1009,8 @@ Escape. So far: label, panel, group box, button, check box, radio button
 characters, caret, selection, scrolling), progress bar, scroll bar and
 status bar (`Controls.Text` draws text fitted with "..."), list box,
 multi-line edit box (`Controls.TextEdit`: positions are a line and a
-character), combo box, menu bar and pop-up menus (`Controls.Menus`),
+character), combo box (its text always the chosen item's, also when the
+items change under it), menu bar and pop-up menus (`Controls.Menus`),
 toolbar, tab control, tree view (dotted lines joining nodes to their
 parents and siblings, drawn a row at a time, as thick as the display's
 scale makes a logical unit) and list view. Controls that own children
@@ -1027,7 +1112,9 @@ sample drawn with the face a program asking for that size gets
 Mnemonics: an ampersand in a caption marks the next character as the
 control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
 `Controls.Text` draws such captions without the marks and the mnemonic
-underlined, measures them without the marks, and gives the caption as
+underlined (right under the letter's feet at every size: the bitmap
+faces carry no baseline, so libfont's `FaceBaseline` finds it under the
+face's own H), measures them without the marks, and gives the caption as
 shown (`TextWithoutMnemonic`) and its mnemonic in lower case
 (`MnemonicOf`); buttons, check boxes, radio buttons, labels, group
 boxes, tabs, tool buttons, menu headings and menu items draw with it

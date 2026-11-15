@@ -24,6 +24,10 @@
   in it (or Enter) chooses and closes it, Escape or a click elsewhere
   closes it. With the list closed, the up and down arrows change the
   choice. A new choice is announced (OnChange, NotifyChanged).
+
+  The text shown is always the chosen item's: when the items change
+  (one renamed, inserted before it, or the list cleared), it follows,
+  and so does an open list.
 }
 unit Controls.ComboBox;
 
@@ -58,6 +62,7 @@ type
     FPopup: TPopupWindow;
     FList: TComboList;
     procedure SetItemIndex(Value: LongInt);
+    procedure ShowChosenItem;
     procedure ItemsChanged(Sender: TObject);
     procedure ListDismissed(Sender: TControl);
   protected
@@ -131,11 +136,26 @@ begin
   inherited Destroy;
 end;
 
+{ The text shown is the chosen item's (or nothing, with none chosen). }
+procedure TComboBox.ShowChosenItem;
+begin
+  if FItemIndex >= 0 then
+    Text := FItems[FItemIndex]
+  else
+    Text := '';
+  Invalidate;
+end;
+
 procedure TComboBox.ItemsChanged(Sender: TObject);
 begin
   if FItemIndex >= FItems.Count then
     FItemIndex := FItems.Count - 1;
-  Invalidate;
+  ShowChosenItem;
+  if FList <> nil then
+  begin
+    FList.Items.Assign(FItems);
+    FList.ItemIndex := FItemIndex;
+  end;
 end;
 
 procedure TComboBox.SetItemIndex(Value: LongInt);
@@ -145,13 +165,13 @@ begin
   if Value < -1 then
     Value := -1;
   if Value = FItemIndex then
+  begin
+    { The same choice: nothing to announce, but its text may be new. }
+    ShowChosenItem;
     Exit;
+  end;
   FItemIndex := Value;
-  if FItemIndex >= 0 then
-    Text := FItems[FItemIndex]
-  else
-    Text := '';
-  Invalidate;
+  ShowChosenItem;
   Changed;
 end;
 

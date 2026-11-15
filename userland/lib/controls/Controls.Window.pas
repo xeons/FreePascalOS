@@ -27,7 +27,9 @@
   control with the focus (passing them up to its parents while nobody
   uses them), moves the focus with Tab and Shift+Tab through the
   controls that take it, in the order they were made, and presses the
-  default button on Enter and the cancel button on Escape.
+  default button on Enter and the cancel button on Escape. The pointer
+  takes the shape of the control under it (or of the one pressed, while
+  a button is held).
 
   Accelerators (AddAccelerator) are keys with modifiers that run a
   handler wherever the focus is (Ctrl+S to save, say): they are looked
@@ -95,6 +97,9 @@ type
     FMenuBar: TWindowMenuBar;
     { Alt is down and no other key has been since it went down. }
     FAltPressedAlone: Boolean;
+    { The pointer shape the server was last asked for. }
+    FShownPointerShape: LongWord;
+    procedure ShowPointerShapeOf(Control: TControl);
     procedure MoveFocus(Forward: Boolean);
     function RunAccelerator(Code, Modifiers: LongWord): Boolean;
     function RunMnemonic(Character, Modifiers: LongWord): Boolean;
@@ -479,6 +484,21 @@ begin
     FFocused.HandleKeyUp(Code, Modifiers);
 end;
 
+{ Asks the server for the shape the pointer has over Control (nil: the
+  arrow), unless it has it already. }
+procedure TControlWindow.ShowPointerShapeOf(Control: TControl);
+var
+  Shape: LongWord;
+begin
+  Shape := PointerArrow;
+  if Control <> nil then
+    Shape := Control.PointerShape;
+  if Shape = FShownPointerShape then
+    Exit;
+  FShownPointerShape := Shape;
+  SetPointerShape(Shape);
+end;
+
 procedure TControlWindow.PointerMove(X, Y: LongInt; Buttons: LongWord);
 var
   Target: TControl;
@@ -489,6 +509,7 @@ begin
     Exit;
   end;
   Target := FRoot.ControlAt(X, Y);
+  ShowPointerShapeOf(Target);
   if Target <> FHovered then
   begin
     if FHovered <> nil then

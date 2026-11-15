@@ -29,6 +29,7 @@
   its owner: raising the owner raises the windows it owns above it, in
   the order they were in, so a dialog never disappears behind the window
   it belongs to. An owned window counts as topmost if its owner does.
+  The owner can change later (ChangeOwner), the same rule kept.
 }
 unit Server.Windows;
 
@@ -42,6 +43,13 @@ uses
   Windowing.Protocol;
 
 type
+  { A rectangle of a client area with a pointer shape of its own. }
+  TPointerArea = record
+    { Surface pixels; empty if the area is not used. }
+    Bounds: TRectangle;
+    Shape: LongWord;
+  end;
+
   PServerWindow = ^TServerWindow;
   TServerWindow = record
     Id: LongWord;
@@ -64,6 +72,10 @@ type
     Maximized: Boolean;
     { The client area before it was maximized. }
     RestoreBounds: TRectangle;
+    { The pointer's shape over the client area, and over the areas the
+      program set (Server.PointerAreas). }
+    PointerShape: LongWord;
+    PointerAreas: array[1..MaximumPointerAreas] of TPointerArea;
   end;
 
 const
@@ -84,6 +96,9 @@ procedure RemoveWindow(Window: PServerWindow);
 procedure RaiseWindow(Window: PServerWindow);
 { True if Window belongs to Owner, directly or through other windows. }
 function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
+{ Gives the window another owner (nil: none; never one it owns), and
+  raises it if that leaves it below its owner or in the wrong layer. }
+procedure ChangeOwner(Window, Owner: PServerWindow);
 function FindWindow(Id: LongWord): PServerWindow;
 
 function ClientRectangle(Window: PServerWindow): TRectangle;
@@ -222,6 +237,18 @@ begin
     end;
   for Index := 0 to OwnedCount - 1 do
     RaiseWindow(Owned[Index]);
+end;
+
+procedure ChangeOwner(Window, Owner: PServerWindow);
+var
+  WasTopmost: Boolean;
+begin
+  if (Owner = Window) or IsOwnedBy(Owner, Window) then
+    Exit;
+  WasTopmost := IsTopmost(Window);
+  Window^.OwnerWindow := Owner;
+  if (WasTopmost <> IsTopmost(Window)) or ((Owner <> nil) and (IndexOf(Window) < IndexOf(Owner))) then
+    RaiseWindow(Window);
 end;
 
 function FindWindow(Id: LongWord): PServerWindow;

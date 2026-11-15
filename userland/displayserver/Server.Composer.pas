@@ -24,7 +24,9 @@
   the back buffer: the desktop, then each visible window from the bottom
   up (its frame, then its surface), then the pointer, all clipped to the
   damage, so what lies under a window is covered by it; then the damaged
-  parts go to the screen.
+  parts go to the screen. Pixels put right in the back buffer some other
+  way (a moved window's, copied: Server.WindowMoves) go to the screen
+  with them (AddPresentOnly).
 }
 unit Server.Composer;
 
@@ -34,6 +36,7 @@ interface
 
 uses
   Drawing.Rectangles,
+  Drawing.Regions,
   Server.Windows;
 
 var
@@ -47,13 +50,17 @@ var
 procedure AddDamage(const Rectangle: TRectangle);
 procedure DamageWindow(Window: PServerWindow);
 function HasDamage: Boolean;
+{ What needs drawing again now (a copy of it). }
+procedure CopyDamage(out Region: TRegion);
+{ Pixels already right in the back buffer that the screen does not show
+  yet: Compose puts them on it. }
+procedure AddPresentOnly(const Region: TRegion);
 procedure Compose;
 
 implementation
 
 uses
   Windowing.Theme,
-  Drawing.Regions,
   Drawing.Canvas,
   Server.Theme,
   Server.Screen,
@@ -62,6 +69,7 @@ uses
 
 var
   Damage: TRegion;
+  PresentOnly: TRegion;
 
 procedure AddDamage(const Rectangle: TRectangle);
 var
@@ -81,12 +89,27 @@ begin
   Result := not RegionIsEmpty(Damage);
 end;
 
+procedure CopyDamage(out Region: TRegion);
+begin
+  CopyRegion(Damage, Region);
+end;
+
+procedure AddPresentOnly(const Region: TRegion);
+begin
+  AddRegionToRegion(PresentOnly, Region);
+end;
+
 procedure Compose;
 var
   Canvas: TCanvas;
   Index: LongInt;
   Window: PServerWindow;
 begin
+  if not RegionIsEmpty(PresentOnly) then
+  begin
+    PresentRegion(PresentOnly);
+    ClearRegion(PresentOnly);
+  end;
   if RegionIsEmpty(Damage) then
     Exit;
   BeginCanvas(Canvas, BackBuffer);

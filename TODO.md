@@ -275,7 +275,7 @@ normalized (0-65535), not pixels.
       (press/release, key code, character, relative motion, absolute position
       normalized to 0-65535, buttons, wheel)
 - [x] The text console keeps the keyboards until a program takes them
-- [ ] Mouse settings: acceleration, sensitivity and left-handed buttons (in the
+- [x] Mouse settings: acceleration, sensitivity and left-handed buttons (in the
       display server, step 4)
 
 ### 2. Drawing and fonts
@@ -318,9 +318,9 @@ normalized (0-65535), not pixels.
 - [x] System colours and metrics (the theme), metrics in logical units
 - [x] Scale per display: logical units to pixels, the cursor at that scale
 - [ ] Several displays, each with its own scale; moving a window between them
-- [ ] Pressed and hot looks for the title buttons; double-click on the title bar
-- [ ] Pointer shapes per window area (resize arrows, text beam), from files
-- [ ] Copying only what moved when a window is dragged (instead of redrawing)
+- [x] Pressed and hot looks for the title buttons; double-click on the title bar
+- [x] Pointer shapes per window area (resize arrows, text beam), from files
+- [x] Copying only what moved when a window is dragged (instead of redrawing)
 
 ### 5. Windowing and controls
 - [x] libwindowing: connecting, windows, the message loop (paint, keys, mouse,

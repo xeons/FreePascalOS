@@ -19,11 +19,13 @@
 {
   wintest - a window on the display server, for testing it
 
-  wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB]
+  wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b]
 
   Connects to the display server and shows a framed, resizable window
   (position and size in logical units, 1/96 inch) filled with a colour,
-  with its title written in it. Prints what happens to it, a line each:
+  with its title written in it. With -b the pointer is a text beam over
+  the left half of it (a pointer area). Prints what happens to it, a
+  line each:
 
     created N              shown as window N
     active 1 / active 0    got or lost the keyboard
@@ -58,14 +60,17 @@ uses
   Windowing.Protocol;
 
 const
-  Usage: PChar = 'Usage: wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB]'#10 +
-    'Show a window on the display server and print what happens to it.'#10;
+  Usage: PChar = 'Usage: wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b]'#10 +
+    'Show a window on the display server and print what happens to it.'#10 +
+    '  -b  the pointer is a text beam over the left half of the window'#10;
   OptionTitle = 1;
   OptionLeft = 2;
   OptionTop = 3;
   OptionWidth = 4;
   OptionHeight = 5;
   OptionColor = 6;
+  OptionBeam = 7;
+  BeamArea = 1;
   ConnectTries = 50;
   ReplyTimeout = 5000;
 
@@ -82,6 +87,7 @@ var
   Pixels: Pointer;
   SurfaceWidth: LongInt;
   SurfaceHeight: LongInt;
+  BeamOverLeftHalf: Boolean;
 
 procedure Say(Format: PChar; const Arguments: array of TFormatArgument);
 begin
@@ -153,6 +159,22 @@ begin
   Scale := Message.Code;
 end;
 
+{ The text beam over the left half of the surface (it follows a new
+  size). }
+procedure SetBeamArea;
+var
+  Request: TWindowMessage;
+begin
+  if not BeamOverLeftHalf then
+    Exit;
+  Request := NewMessage(RequestSetPointerShape, WindowId);
+  Request.Code := PointerTextBeam;
+  Request.Value := BeamArea;
+  Request.Width := SurfaceWidth div 2;
+  Request.Height := SurfaceHeight;
+  Send(Request, -1);
+end;
+
 procedure HandleEvents;
 var
   Message: TWindowMessage;
@@ -182,6 +204,7 @@ begin
           Send(Request, NewSection);
           CloseHandle(Section);
           Section := NewSection;
+          SetBeamArea;
           Say('resized %d %d'#10, [ArgumentNumber(SurfaceWidth), ArgumentNumber(SurfaceHeight)]);
         end;
       EventCloseRequested:
@@ -214,11 +237,14 @@ begin
   Color := $FFF0E8D0;
   BeginOptions(Parser, [OptionDefinition('t', 'title', True, OptionTitle), OptionDefinition('x', 'left', True, OptionLeft),
     OptionDefinition('y', 'top', True, OptionTop), OptionDefinition('w', 'width', True, OptionWidth),
-    OptionDefinition('h', 'height', True, OptionHeight), OptionDefinition('c', 'color', True, OptionColor)], Usage);
+    OptionDefinition('h', 'height', True, OptionHeight), OptionDefinition('c', 'color', True, OptionColor),
+    OptionDefinition('b', 'beam', False, OptionBeam)], Usage);
   while NextOption(Parser, Code, OptionValue) do
     case Code of
       OptionTitle:
         Title := OptionValue;
+      OptionBeam:
+        BeamOverLeftHalf := True;
       OptionColor:
         begin
           if not ParseHexadecimal(OptionValue, ColorValue) or (ColorValue > $FFFFFF) then
@@ -255,6 +281,7 @@ begin
     Fail(1, 'the window was not created', []);
   WindowId := Message.Window;
   Say('created %u'#10, [ArgumentUnsigned(WindowId)]);
+  SetBeamArea;
   Message := NewMessage(RequestShowWindow, WindowId);
   Message.Value := 1;
   Send(Message, -1);

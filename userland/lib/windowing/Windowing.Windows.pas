@@ -33,9 +33,16 @@
   sees it, so nothing half drawn shows.
 
   A window may have an owner, another window of the program (a dialog's
-  is the window it asks for): the server keeps it above its owner. A
-  disabled window (Enabled False) is never activated by the server and
-  gets no input; a click on it brings forward the window it owns.
+  is the window it asks for): the server keeps it above its owner. The
+  owner can be changed at any time (Owner). A disabled window (Enabled
+  False) is never activated by the server and gets no input; a click on
+  it brings forward the window it owns. Visible follows what the server
+  says, so a window hidden along with its owner, or minimized, is not
+  Visible (VisibilityChanged).
+
+  The pointer's shape over the client area is the window's to choose
+  (SetPointerShape for all of it, SetPointerShapeInArea for rectangles
+  of it).
 
   When the display's scale changes, every window gets a surface of the
   same logical size at the new scale (ScaleChanged, then Resized, then
@@ -89,6 +96,7 @@ type
     procedure TakeNewScale;
     procedure SetTitle(const Value: string);
     procedure SetEnabled(Value: Boolean);
+    procedure SetOwner(Value: TWindow);
     function GetClientWidth: LongInt;
     function GetClientHeight: LongInt;
   protected
@@ -110,6 +118,9 @@ type
       and painting follow. Anything kept in pixels is picked again here. }
     procedure ScaleChanged; virtual;
     procedure ActiveChanged; virtual;
+    { The server showed or hid the window (Visible says which): asked
+      for, or along with its owner, or minimized. }
+    procedure VisibilityChanged; virtual;
     { The close button (or Alt+F4). The default frees the window. }
     procedure CloseRequested; virtual;
     procedure TimerFired(Id: LongWord); virtual;
@@ -133,6 +144,13 @@ type
     { Paints what is invalid now (the loop does this before waiting). }
     procedure PaintNow;
     procedure SetCapture(Capture: Boolean);
+    { The pointer's shape (Pointer*) over the whole client area. }
+    procedure SetPointerShape(Shape: LongWord);
+    { The shape over Area (surface pixels) instead, where it lies; Number
+      1 to MaximumPointerAreas picks which of the window's areas this is
+      (a higher one wins where they overlap). An empty Area takes it
+      away. }
+    procedure SetPointerShapeInArea(Number: LongWord; const Area: TRectangle; Shape: LongWord);
     { Calls TimerFired(Id) every Milliseconds until StopTimer. }
     procedure StartTimer(Id: LongWord; Milliseconds: LongWord);
     procedure StopTimer(Id: LongWord);
@@ -146,7 +164,9 @@ type
     property ClientHeight: LongInt read GetClientHeight;
     property Visible: Boolean read FVisible;
     property Active: Boolean read FActive;
-    property Owner: TWindow read FOwner;
+    { The window it belongs to and stays above (nil: none); never one it
+      owns. }
+    property Owner: TWindow read FOwner write SetOwner;
     { A disabled window is not activated and gets no input (the server
       sees to it). }
     property Enabled: Boolean read FEnabled write SetEnabled;
@@ -406,6 +426,47 @@ begin
   SendRequest(Message, -1);
 end;
 
+procedure TWindow.SetOwner(Value: TWindow);
+var
+  Message: TWindowMessage;
+  Above: TWindow;
+begin
+  if Value = FOwner then
+    Exit;
+  { An owner it owns would make a loop: the server refuses it too. }
+  Above := Value;
+  while Above <> nil do
+  begin
+    if Above = Self then
+      Exit;
+    Above := Above.FOwner;
+  end;
+  FOwner := Value;
+  Message := NewMessage(RequestSetOwner, FId);
+  if Value <> nil then
+    Message.Code := Value.FId;
+  SendRequest(Message, -1);
+end;
+
+procedure TWindow.SetPointerShape(Shape: LongWord);
+begin
+  SetPointerShapeInArea(0, MakeRectangle(0, 0, 0, 0), Shape);
+end;
+
+procedure TWindow.SetPointerShapeInArea(Number: LongWord; const Area: TRectangle; Shape: LongWord);
+var
+  Message: TWindowMessage;
+begin
+  Message := NewMessage(RequestSetPointerShape, FId);
+  Message.Code := Shape;
+  Message.Value := Number;
+  Message.Left := Area.Left;
+  Message.Top := Area.Top;
+  Message.Width := RectangleWidth(Area);
+  Message.Height := RectangleHeight(Area);
+  SendRequest(Message, -1);
+end;
+
 procedure TWindow.Show;
 var
   Message: TWindowMessage;
@@ -567,6 +628,10 @@ procedure TWindow.ActiveChanged;
 begin
 end;
 
+procedure TWindow.VisibilityChanged;
+begin
+end;
+
 procedure TWindow.CloseRequested;
 begin
   Free;
@@ -652,6 +717,11 @@ begin
       end;
     EventCloseRequested:
       Window.CloseRequested;
+    EventVisibilityChanged:
+      begin
+        Window.FVisible := Message.Value <> 0;
+        Window.VisibilityChanged;
+      end;
     EventMoved:
       begin
         Window.FLeft := Message.Left;
