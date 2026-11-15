@@ -42,7 +42,7 @@ interface
 
 uses
   Sys.Display,
-  Font.Psf,
+  Font.Faces,
   Drawing.Rectangles,
   Drawing.Regions,
   Drawing.Surfaces;

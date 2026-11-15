@@ -21,9 +21,11 @@
 
   Stock icons (a document, a folder) are drawn for the box they are
   given, so they are sharp at any size and display scale; there are no
-  pictures of them to load. A program's own icon is a surface stretched
-  to the box (and blended by its alpha), so one picture serves the small
-  and the large size.
+  pictures of them to load. Their shapes are anti-aliased, so slanted
+  edges are smooth while straight ones stay on whole pixels. A
+  program's own icon is a surface scaled smoothly to the box (and
+  blended by its alpha), so one picture serves the small and the large
+  size.
 }
 unit Controls.Icons;
 
@@ -53,7 +55,9 @@ implementation
 
 uses
   Drawing.Colors,
-  Drawing.Shapes;
+  Drawing.Rasterizer,
+  Drawing.SmoothShapes,
+  Drawing.Scaling;
 
 const
   { The stock icons are designed on a grid this many steps across. }
@@ -73,6 +77,28 @@ begin
     Box.Top + Row * RectangleHeight(Box) div GridSize);
 end;
 
+{ A shape of grid points, filled and outlined: the outline one pixel
+  wide through the points as pixel centres, the fill out to the middle
+  of the outline (half a pixel on), so the two meet without a gap. }
+procedure DrawOutlinedShape(const Canvas: TCanvas; const Points: array of TPoint; FillColor, OutlineColor: TColor);
+var
+  Filled: array of TPrecisePoint;
+  Outline: array of TPrecisePoint;
+  Index: LongInt;
+begin
+  Filled := nil;
+  Outline := nil;
+  SetLength(Filled, Length(Points));
+  SetLength(Outline, Length(Points));
+  for Index := 0 to High(Points) do
+  begin
+    Filled[Index] := PrecisePoint(Points[Index].X + 0.5, Points[Index].Y + 0.5);
+    Outline[Index] := PrecisePoint(Points[Index].X, Points[Index].Y);
+  end;
+  FillSmoothPolygon(Canvas, Filled, FillColor);
+  DrawSmoothPolygonOutline(Canvas, Outline, 1, OutlineColor);
+end;
+
 procedure DrawDocument(const Canvas: TCanvas; const Box: TRectangle);
 var
   Page: array[0..4] of TPoint;
@@ -88,13 +114,11 @@ begin
   Page[2] := GridPoint(Box, 26, 8);
   Page[3] := GridPoint(Box, 26, 31);
   Page[4] := GridPoint(Box, 6, 31);
-  FillPolygon(Canvas, Page, PageColor);
-  DrawPolygonOutline(Canvas, Page, PageOutlineColor);
+  DrawOutlinedShape(Canvas, Page, PageColor, PageOutlineColor);
   Fold[0] := GridPoint(Box, 19, 1);
   Fold[1] := GridPoint(Box, 19, 8);
   Fold[2] := GridPoint(Box, 26, 8);
-  FillPolygon(Canvas, Fold, PageFoldColor);
-  DrawPolygonOutline(Canvas, Fold, PageOutlineColor);
+  DrawOutlinedShape(Canvas, Fold, PageFoldColor, PageOutlineColor);
   { Lines of text: fewer of them on a small page, so they stay apart. }
   Step := 4;
   if RectangleHeight(Box) < 24 then
@@ -119,14 +143,12 @@ begin
   Tab[1] := GridPoint(Box, 4, 5);
   Tab[2] := GridPoint(Box, 13, 5);
   Tab[3] := GridPoint(Box, 15, 9);
-  FillPolygon(Canvas, Tab, FolderTabColor);
-  DrawPolygonOutline(Canvas, Tab, FolderOutlineColor);
+  DrawOutlinedShape(Canvas, Tab, FolderTabColor, FolderOutlineColor);
   Body[0] := GridPoint(Box, 2, 9);
   Body[1] := GridPoint(Box, 30, 9);
   Body[2] := GridPoint(Box, 30, 27);
   Body[3] := GridPoint(Box, 2, 27);
-  FillPolygon(Canvas, Body, FolderColor);
-  DrawPolygonOutline(Canvas, Body, FolderOutlineColor);
+  DrawOutlinedShape(Canvas, Body, FolderColor, FolderOutlineColor);
 end;
 
 procedure DrawStockIcon(const Canvas: TCanvas; Icon: TStockIcon; const Box: TRectangle);
@@ -142,7 +164,7 @@ end;
 procedure DrawIcon(const Canvas: TCanvas; const Icon: TSurface; Fallback: TStockIcon; const Box: TRectangle);
 begin
   if (Icon.Pixels <> nil) and (Icon.Width > 0) and (Icon.Height > 0) then
-    DrawSurfaceStretched(Canvas, Icon, SurfaceBounds(Icon), Box, True)
+    DrawSurfaceScaled(Canvas, Icon, SurfaceBounds(Icon), Box, True)
   else
     DrawStockIcon(Canvas, Fallback, Box);
 end;

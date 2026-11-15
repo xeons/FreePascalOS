@@ -21,7 +21,7 @@
   seeing a sample of the text as it will look.
 
   The sizes listed are the ones the system's fonts come in, at this
-  display's DPI: the system has bitmap faces of a few pixel heights, so
+  display's DPI: the system has faces of some pixel sizes only, so
   each listed size is the smallest whole point size (or half, if no
   whole one fits) that picks that face. A size between two would only
   look like the smaller one. The sample is drawn with the very face a
@@ -92,7 +92,7 @@ uses
   SysUtils,
   Drawing.Rectangles,
   Drawing.Bevels,
-  Font.Psf,
+  Font.Faces,
   Font.Text,
   Windowing.Theme,
   Windowing.Fonts,
@@ -120,16 +120,11 @@ begin
     Result := Result + '.' + IntToStr(PointTenths mod 10);
 end;
 
-{ The height of the face a program gets for PointTenths. }
-function FaceHeightFor(PointTenths: LongWord): LongInt;
-var
-  Face: PFontFace;
+{ The pixel size of the face a program gets for PointTenths (known
+  without reading the face). }
+function FaceSizeFor(PointTenths: LongWord): LongInt;
 begin
-  Face := FontFace(PointTenths, False);
-  if Face = nil then
-    Result := 0
-  else
-    Result := Face^.Height;
+  Result := FontFaceSize(PointTenths, False);
 end;
 
 { The smallest size in steps of Step tenths that picks the face Height
@@ -142,7 +137,7 @@ begin
   Size := Step;
   while Size <= LargestPointTenths do
   begin
-    if (PixelHeightFor(Size, DisplayDpi) >= Height) and (FaceHeightFor(Size) = Height) then
+    if (PixelHeightFor(Size, DisplayDpi) >= Height) and (FaceSizeFor(Size) = Height) then
       Exit(Size);
     Size := Size + Step;
   end;
@@ -232,7 +227,7 @@ begin
   begin
     if SystemFace(Index)^.Bold then
       Continue;
-    Height := SystemFace(Index)^.Height;
+    Height := SystemFace(Index)^.Size;
     Size := SmallestSizeFor(Height, 10);
     if Size = 0 then
       Size := SmallestSizeFor(Height, 5);
@@ -271,9 +266,9 @@ var
   Index: LongInt;
   Wanted: LongInt;
 begin
-  Wanted := FaceHeightFor(Value);
+  Wanted := FaceSizeFor(Value);
   for Index := 0 to High(FSizes) do
-    if FaceHeightFor(FSizes[Index]) = Wanted then
+    if FaceSizeFor(FSizes[Index]) = Wanted then
     begin
       FSizeList.ItemIndex := Index;
       Exit;

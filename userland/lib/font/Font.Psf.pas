@@ -31,9 +31,12 @@
   bit. Its table gives each glyph UTF-8 code points ending in FF (FE
   starts sequences, skipped).
 
-  A face keeps its own copy of the glyphs and a table from code points
-  to glyphs, sorted for looking up. Without a Unicode table, glyph N is
-  code point N.
+  The face (Font.Faces) keeps its own copy of the glyphs, as bits, every
+  advance the font's width, and a table from code points to glyphs.
+  Without a Unicode table, glyph N is code point N. The fonts carry no
+  baseline: it is put three sixteenths of the height up from the bottom
+  less a pixel, with the underline just under it, where Terminus's own
+  underscore is.
 }
 unit Font.Psf;
 
@@ -42,36 +45,15 @@ unit Font.Psf;
 
 interface
 
-type
-  TCodePointGlyph = record
-    CodePoint: LongWord;
-    Glyph: LongWord;
-  end;
-
-  TFontFace = record
-    Width: LongInt;
-    Height: LongInt;
-    BytesPerRow: LongInt;
-    GlyphCount: LongWord;
-    { GlyphCount glyphs, Height * BytesPerRow bytes each. }
-    Glyphs: array of Byte;
-    { Sorted by code point. }
-    Map: array of TCodePointGlyph;
-    MapCount: LongInt;
-    { What is drawn for a character the face lacks. }
-    FallbackGlyph: LongWord;
-    Bold: Boolean;
-  end;
-  PFontFace = ^TFontFace;
+uses
+  Font.Faces;
 
 { Reads a PSF1 or PSF2 font from Data (Length bytes). }
 function ParsePsfFont(Data: PByte; Length: PtrUInt; out Face: TFontFace): Boolean;
-{ The glyph for CodePoint, or the fallback. }
-function GlyphFor(const Face: TFontFace; CodePoint: LongWord): LongWord;
-function HasGlyphFor(const Face: TFontFace; CodePoint: LongWord): Boolean;
-{ The glyph's row Row (0 at the top): BytesPerRow bytes, leftmost pixel
-  in the top bit of the first. }
-function GlyphRow(const Face: TFontFace; Glyph: LongWord; Row: LongInt): PByte;
+{ Only the header: the font's size (the em its height stands for, six
+  sevenths of it). Length may be just the start of the file (32 bytes
+  are enough). }
+function ReadPsfSize(Data: PByte; Length: PtrUInt; out Size: LongInt): Boolean;
 
 implementation
 
@@ -89,52 +71,12 @@ const
   Psf2HasTable = $01;
   Psf2TableEnd = $FF;
   Psf2SequenceStart = $FE;
-  ReplacementCharacter = $FFFD;
-  QuestionMark = Ord('?');
+  MaximumPsfDimension = 256;
+  MaximumPsfGlyphs = 65536;
 
 function ReadLongWord(Data: PByte): LongWord;
 begin
   Result := Data[0] or (LongWord(Data[1]) shl 8) or (LongWord(Data[2]) shl 16) or (LongWord(Data[3]) shl 24);
-end;
-
-procedure AddMapping(var Face: TFontFace; CodePoint, Glyph: LongWord);
-begin
-  if Face.MapCount = System.Length(Face.Map) then
-    SetLength(Face.Map, 2 * Face.MapCount + 256);
-  Face.Map[Face.MapCount].CodePoint := CodePoint;
-  Face.Map[Face.MapCount].Glyph := Glyph;
-  Inc(Face.MapCount);
-end;
-
-{ Sorts the map by code point (a font's table is nearly in order, so
-  insertion sort is quick) and drops repeated code points, keeping the
-  first glyph given. }
-procedure SortMap(var Face: TFontFace);
-var
-  Index: LongInt;
-  Sorted: LongInt;
-  Entry: TCodePointGlyph;
-  Kept: LongInt;
-begin
-  for Index := 1 to Face.MapCount - 1 do
-  begin
-    Entry := Face.Map[Index];
-    Sorted := Index - 1;
-    while (Sorted >= 0) and (Face.Map[Sorted].CodePoint > Entry.CodePoint) do
-    begin
-      Face.Map[Sorted + 1] := Face.Map[Sorted];
-      Dec(Sorted);
-    end;
-    Face.Map[Sorted + 1] := Entry;
-  end;
-  Kept := 0;
-  for Index := 0 to Face.MapCount - 1 do
-    if (Kept = 0) or (Face.Map[Kept - 1].CodePoint <> Face.Map[Index].CodePoint) then
-    begin
-      Face.Map[Kept] := Face.Map[Index];
-      Inc(Kept);
-    end;
-  Face.MapCount := Kept;
 end;
 
 procedure MapGlyphsToThemselves(var Face: TFontFace);
@@ -246,120 +188,123 @@ begin
   end;
 end;
 
-function ParsePsfFont(Data: PByte; Length: PtrUInt; out Face: TFontFace): Boolean;
+{ The header of a PSF1 or PSF2 font: where the glyphs start, how many,
+  their size and whether a Unicode table follows them. }
+type
+  TPsfHeader = record
+    IsPsf1: Boolean;
+    HeaderSize: PtrUInt;
+    GlyphCount: LongWord;
+    BytesPerGlyph: PtrUInt;
+    Width: LongInt;
+    Height: LongInt;
+    HasTable: Boolean;
+  end;
+
+function ReadPsfHeader(Data: PByte; Length: PtrUInt; out Header: TPsfHeader): Boolean;
 var
   Mode: Byte;
-  HeaderSize: PtrUInt;
-  BytesPerGlyph: PtrUInt;
-  GlyphBytes: PtrUInt;
-  HasTable: Boolean;
-  IsPsf1: Boolean;
 begin
   Result := False;
-  Face.Width := 0;
-  Face.Height := 0;
-  Face.BytesPerRow := 0;
-  Face.GlyphCount := 0;
-  Face.Glyphs := nil;
-  Face.Map := nil;
-  Face.MapCount := 0;
-  Face.FallbackGlyph := 0;
-  Face.Bold := False;
+  FillChar(Header, SizeOf(Header), 0);
   if (Data = nil) or (Length < Psf1HeaderSize) then
     Exit;
-  IsPsf1 := (Data[0] = Psf1Magic0) and (Data[1] = Psf1Magic1);
-  if IsPsf1 then
+  Header.IsPsf1 := (Data[0] = Psf1Magic0) and (Data[1] = Psf1Magic1);
+  if Header.IsPsf1 then
   begin
     Mode := Data[2];
-    Face.Height := Data[3];
-    Face.Width := 8;
-    Face.BytesPerRow := 1;
+    Header.Height := Data[3];
+    Header.Width := 8;
     if (Mode and Psf1Mode512) <> 0 then
-      Face.GlyphCount := 512
+      Header.GlyphCount := 512
     else
-      Face.GlyphCount := 256;
-    HeaderSize := Psf1HeaderSize;
-    BytesPerGlyph := PtrUInt(Face.Height);
-    HasTable := (Mode and (Psf1ModeHasTable or Psf1ModeHasSequences)) <> 0;
+      Header.GlyphCount := 256;
+    Header.HeaderSize := Psf1HeaderSize;
+    Header.BytesPerGlyph := PtrUInt(Header.Height);
+    Header.HasTable := (Mode and (Psf1ModeHasTable or Psf1ModeHasSequences)) <> 0;
   end
   else
   begin
     if (Length < Psf2HeaderSize) or (ReadLongWord(Data) <> Psf2Magic) then
       Exit;
-    HeaderSize := ReadLongWord(Data + 8);
-    HasTable := (ReadLongWord(Data + 12) and Psf2HasTable) <> 0;
-    Face.GlyphCount := ReadLongWord(Data + 16);
-    BytesPerGlyph := ReadLongWord(Data + 20);
-    Face.Height := LongInt(ReadLongWord(Data + 24));
-    Face.Width := LongInt(ReadLongWord(Data + 28));
-    Face.BytesPerRow := (Face.Width + 7) div 8;
-    if BytesPerGlyph <> PtrUInt(Face.BytesPerRow * Face.Height) then
+    Header.HeaderSize := ReadLongWord(Data + 8);
+    Header.HasTable := (ReadLongWord(Data + 12) and Psf2HasTable) <> 0;
+    Header.GlyphCount := ReadLongWord(Data + 16);
+    Header.BytesPerGlyph := ReadLongWord(Data + 20);
+    { Sizes past these are no font: they would only overflow below. }
+    if (ReadLongWord(Data + 24) > MaximumPsfDimension) or (ReadLongWord(Data + 28) > MaximumPsfDimension) or
+       (Header.GlyphCount > MaximumPsfGlyphs) then
+      Exit;
+    Header.Height := LongInt(ReadLongWord(Data + 24));
+    Header.Width := LongInt(ReadLongWord(Data + 28));
+    if Header.BytesPerGlyph <> PtrUInt(((Header.Width + 7) div 8) * Header.Height) then
       Exit;
   end;
-  if (Face.Width <= 0) or (Face.Height <= 0) or (Face.GlyphCount = 0) then
-    Exit;
-  GlyphBytes := Face.GlyphCount * BytesPerGlyph;
-  if (HeaderSize > Length) or (GlyphBytes > Length - HeaderSize) then
-    Exit;
-  SetLength(Face.Glyphs, GlyphBytes);
-  Move(Data[HeaderSize], Face.Glyphs[0], GlyphBytes);
-  if not HasTable then
-    MapGlyphsToThemselves(Face)
-  else if IsPsf1 then
-    ReadPsf1Table(Face, Data + HeaderSize + GlyphBytes, Length - HeaderSize - GlyphBytes)
-  else
-    ReadPsf2Table(Face, Data + HeaderSize + GlyphBytes, Length - HeaderSize - GlyphBytes);
-  SortMap(Face);
-  if HasGlyphFor(Face, ReplacementCharacter) then
-    Face.FallbackGlyph := GlyphFor(Face, ReplacementCharacter)
-  else if HasGlyphFor(Face, QuestionMark) then
-    Face.FallbackGlyph := GlyphFor(Face, QuestionMark);
-  Result := True;
+  Result := (Header.Width > 0) and (Header.Height > 0) and (Header.GlyphCount > 0);
 end;
 
-{ The map entry for CodePoint, or -1. }
-function FindMapping(const Face: TFontFace; CodePoint: LongWord): LongInt;
-var
-  Low: LongInt;
-  High: LongInt;
-  Middle: LongInt;
+{ The em a bitmap font's height stands for: its cell holds the ascent
+  and the descent, about seven sixths of the em (as a rendered font's
+  line does), so faces of both kinds picked for one size match. }
+function EmForHeight(Height: LongInt): LongInt;
 begin
-  Low := 0;
-  High := Face.MapCount - 1;
-  while Low <= High do
+  Result := (Height * 6 + 3) div 7;
+end;
+
+function ReadPsfSize(Data: PByte; Length: PtrUInt; out Size: LongInt): Boolean;
+var
+  Header: TPsfHeader;
+begin
+  Size := 0;
+  Result := ReadPsfHeader(Data, Length, Header);
+  if Result then
+    Size := EmForHeight(Header.Height);
+end;
+
+function ParsePsfFont(Data: PByte; Length: PtrUInt; out Face: TFontFace): Boolean;
+var
+  Header: TPsfHeader;
+  GlyphBytes: PtrUInt;
+  Glyph: LongWord;
+begin
+  Result := False;
+  ClearFace(Face);
+  if not ReadPsfHeader(Data, Length, Header) then
+    Exit;
+  GlyphBytes := Header.GlyphCount * Header.BytesPerGlyph;
+  if (Header.HeaderSize > Length) or (GlyphBytes > Length - Header.HeaderSize) then
+    Exit;
+  Face.Format := GlyphBits;
+  Face.Size := EmForHeight(Header.Height);
+  Face.Height := Header.Height;
+  Face.Width := Header.Width;
+  Face.UnderlineTop := Header.Height - (3 * Header.Height) div 16;
+  Face.UnderlineThickness := Header.Height div 16;
+  if Face.UnderlineThickness < 1 then
+    Face.UnderlineThickness := 1;
+  Face.Ascent := Face.UnderlineTop - 1;
+  Face.GlyphCount := Header.GlyphCount;
+  SetLength(Face.Bitmaps, GlyphBytes);
+  Move(Data[Header.HeaderSize], Face.Bitmaps[0], GlyphBytes);
+  SetLength(Face.Glyphs, Header.GlyphCount);
+  for Glyph := 0 to Header.GlyphCount - 1 do
   begin
-    Middle := (Low + High) div 2;
-    if Face.Map[Middle].CodePoint = CodePoint then
-      Exit(Middle);
-    if Face.Map[Middle].CodePoint < CodePoint then
-      Low := Middle + 1
-    else
-      High := Middle - 1;
+    Face.Glyphs[Glyph].Advance := Header.Width;
+    Face.Glyphs[Glyph].LeftBearing := 0;
+    Face.Glyphs[Glyph].Top := 0;
+    Face.Glyphs[Glyph].Width := Header.Width;
+    Face.Glyphs[Glyph].Height := Header.Height;
+    Face.Glyphs[Glyph].BitmapOffset := PtrUInt(Glyph) * Header.BytesPerGlyph;
   end;
-  Result := -1;
-end;
-
-function HasGlyphFor(const Face: TFontFace; CodePoint: LongWord): Boolean;
-begin
-  Result := FindMapping(Face, CodePoint) >= 0;
-end;
-
-function GlyphFor(const Face: TFontFace; CodePoint: LongWord): LongWord;
-var
-  Index: LongInt;
-begin
-  Index := FindMapping(Face, CodePoint);
-  if Index < 0 then
-    Result := Face.FallbackGlyph
+  if not Header.HasTable then
+    MapGlyphsToThemselves(Face)
+  else if Header.IsPsf1 then
+    ReadPsf1Table(Face, Data + Header.HeaderSize + GlyphBytes, Length - Header.HeaderSize - GlyphBytes)
   else
-    Result := Face.Map[Index].Glyph;
-end;
-
-function GlyphRow(const Face: TFontFace; Glyph: LongWord; Row: LongInt): PByte;
-begin
-  if Glyph >= Face.GlyphCount then
-    Glyph := Face.FallbackGlyph;
-  Result := @Face.Glyphs[(PtrUInt(Glyph) * PtrUInt(Face.Height) + PtrUInt(Row)) * PtrUInt(Face.BytesPerRow)];
+    ReadPsf2Table(Face, Data + Header.HeaderSize + GlyphBytes, Length - Header.HeaderSize - GlyphBytes);
+  FinishMap(Face);
+  Face.Loaded := True;
+  Result := True;
 end;
 
 end.

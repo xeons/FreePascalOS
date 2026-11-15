@@ -19,13 +19,16 @@
 {
   DrawingTest: libdrawing and libfont on the host, pixel by pixel.
 
-    DrawingTest <font-directory> [sample.ppm]
+    DrawingTest <terminus-directory> <dejavu-sans-directory> [sample.ppm]
 
-  The font directory holds Terminus PSF files (uncompressed): ter-v16n.psf
-  (PSF1, 8x16) and ter-v24n.psf (PSF2, 12x24) are drawn and compared with
-  their bitmaps, and the sizes 12 to 32 are used for picking faces. Every
-  check prints a line; the exit code is 1 if any failed. With a second
-  argument a sample picture is written there (a PPM), for looking at.
+  The first directory holds Terminus PSF files (uncompressed):
+  ter-v16n.psf (PSF1, 8x16) and ter-v24n.psf (PSF2, 12x24) are drawn and
+  compared with their bitmaps, and the sizes 12 to 32 are used for
+  picking faces. The second holds DejaVu Sans rendered into coverage
+  fonts (DrawingTest.CoverageFonts). The anti-aliased shapes and smooth
+  scaling are checked in DrawingTest.Smoothing. Every check prints a
+  line; the exit code is 1 if any failed. With a third argument a sample
+  picture is written there (a PPM), for looking at.
 
   This is a host tool, built with the normal Free Pascal runtime library.
 }
@@ -43,57 +46,18 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Drawing.Shapes,
+  Drawing.Rasterizer,
+  Drawing.SmoothLines,
+  Drawing.SmoothShapes,
+  Drawing.Scaling,
   Drawing.Bevels,
+  Font.Faces,
   Font.Psf,
   Font.Utf8,
-  Font.Text;
-
-var
-  Failures: Integer = 0;
-  Checks: Integer = 0;
-
-procedure Check(Name: string; Passed: Boolean);
-begin
-  Inc(Checks);
-  if Passed then
-    WriteLn('[drawing] pass: ', Name)
-  else
-  begin
-    WriteLn('[drawing] FAIL: ', Name);
-    Inc(Failures);
-  end;
-end;
-
-function ColorText(Color: TColor): string;
-begin
-  Result := '$' + IntToHex(Color, 8);
-end;
-
-procedure CheckColor(Name: string; Got, Expected: TColor);
-begin
-  if Got <> Expected then
-    Name := Name + ' (got ' + ColorText(Got) + ', expected ' + ColorText(Expected) + ')';
-  Check(Name, Got = Expected);
-end;
-
-{ Pixels of Surface equal to Color. }
-function CountPixels(const Surface: TSurface; Color: TColor): Integer;
-var
-  X: Integer;
-  Y: Integer;
-begin
-  Result := 0;
-  for Y := 0 to Surface.Height - 1 do
-    for X := 0 to Surface.Width - 1 do
-      if GetSurfacePixel(Surface, X, Y) = Color then
-        Inc(Result);
-end;
-
-function NewSurface(Width, Height: Integer; Fill: TColor): TSurface;
-begin
-  if not CreateSurface(Result, Width, Height, Fill) then
-    raise Exception.Create('out of memory');
-end;
+  Font.Text,
+  DrawingTest.Checks,
+  DrawingTest.Smoothing,
+  DrawingTest.CoverageFonts;
 
 { --- Colours ----------------------------------------------------------------- }
 
@@ -464,25 +428,6 @@ end;
 
 { --- Fonts --------------------------------------------------------------------- }
 
-function ReadFileBytes(Path: string; out Data: TBytes): Boolean;
-var
-  Stream: TFileStream;
-begin
-  Result := False;
-  Data := nil;
-  if not FileExists(Path) then
-    Exit;
-  Stream := TFileStream.Create(Path, fmOpenRead);
-  try
-    SetLength(Data, Stream.Size);
-    if Stream.Size > 0 then
-      Stream.ReadBuffer(Data[0], Stream.Size);
-    Result := True;
-  finally
-    Stream.Free;
-  end;
-end;
-
 function LoadFace(Directory, Name: string; out Face: TFontFace): Boolean;
 var
   Data: TBytes;
@@ -593,7 +538,7 @@ begin
   Check('12x24: W drawn exactly (two bytes a row)', GlyphDrawsExactly(Face, Ord('W')));
   Check('12x24: a missing character draws the fallback', GlyphFor(Face, $1F600) = Face.FallbackGlyph);
 
-  FontSet.Count := 0;
+  ClearFontSet(FontSet);
   for Height in [12, 14, 16, 18, 20, 22, 24, 28, 32] do
   begin
     for Name in ['n', 'b'] do
@@ -606,16 +551,19 @@ begin
   Check('font set: 17 faces (no bold 12)', FontSet.Count = 17);
   Check('pixel heights', (PixelHeightFor(90, 96) = 12) and (PixelHeightFor(120, 96) = 16) and
     (PixelHeightFor(120, 144) = 24) and (PixelHeightFor(100, 96) = 13));
+  { A bitmap face's size is the em its height stands for, six sevenths
+    of it: 12 pixels high is 10, 14 is 12, 28 is 24. }
+  Check('sizes from heights', (FontSet.Faces[0].Size = 10) and (FontSet.Faces[1].Size = 12));
   Selected := SelectFace(FontSet, 90, 96, False);
-  Check('9 points at 96 DPI: 12 pixels', (Selected <> nil) and (Selected^.Height = 12));
+  Check('9 points at 96 DPI: 12 pixel em, 14 high', (Selected <> nil) and (Selected^.Height = 14));
   Selected := SelectFace(FontSet, 100, 96, False);
-  Check('10 points at 96 DPI: 12 pixels (not taller than asked)', (Selected <> nil) and (Selected^.Height = 12));
+  Check('10 points at 96 DPI: 14 high (not larger than asked)', (Selected <> nil) and (Selected^.Height = 14));
   Selected := SelectFace(FontSet, 120, 144, False);
-  Check('12 points at 144 DPI: 24 pixels', (Selected <> nil) and (Selected^.Height = 24));
+  Check('12 points at 144 DPI: 24 pixel em, 28 high', (Selected <> nil) and (Selected^.Height = 28));
   Selected := SelectFace(FontSet, 60, 96, False);
   Check('too small: the smallest face', (Selected <> nil) and (Selected^.Height = 12));
   Selected := SelectFace(FontSet, 90, 96, True);
-  Check('bold 9 points: smallest bold (14)', (Selected <> nil) and Selected^.Bold and (Selected^.Height = 14));
+  Check('bold 9 points: 14 high', (Selected <> nil) and Selected^.Bold and (Selected^.Height = 14));
   Selected := SelectFace(FontSet, 240, 192, True);
   Check('bold 24 points at 192 DPI: 32 pixels', (Selected <> nil) and Selected^.Bold and (Selected^.Height = 32));
 end;
@@ -659,7 +607,7 @@ end;
 
 { --- A sample picture ------------------------------------------------------------ }
 
-procedure WriteSample(Directory, Path: string);
+procedure WriteSample(TerminusDirectory, DejaVuDirectory, Path: string);
 const
   Face3D = $FFC8C4BC;
   Highlight = $FFFFFFFF;
@@ -670,12 +618,15 @@ var
   Canvas: TCanvas;
   Face: TFontFace;
   Bold: TFontFace;
+  Fixed: TFontFace;
   Output: TFileStream;
   Header: string;
   X: Integer;
   Y: Integer;
   Pixel: TColor;
   Triangle: array[0..2] of TPoint;
+  SmoothTriangle: array[0..2] of TPrecisePoint;
+  Icon: TSurface;
   Line: array of Byte;
 begin
   Surface := NewSurface(320, 200, $FF3A6EA5);
@@ -683,22 +634,40 @@ begin
   FillRectangle(Canvas, MakeRectangle(20, 20, 280, 160), Face3D);
   DrawBevel(Canvas, MakeRectangle(20, 20, 280, 160), RaisedBevel(Highlight, Face3D, Shadow, DarkShadow));
   FillHorizontalGradient(Canvas, MakeRectangle(23, 23, 274, 18), $FF1C3F6E, $FF7FA6D6);
-  if LoadFace(Directory, 'ter-v16b.psf', Bold) then
+  if LoadCoverageFace(DejaVuDirectory, 'dejavu-sans-bold-12.cvf', Bold) then
     DrawText(Canvas, Bold, 28, 24, 'Sample window', ColorWhite);
   FillRectangle(Canvas, MakeRectangle(40, 60, 120, 24), ColorWhite);
   DrawBevel(Canvas, MakeRectangle(40, 60, 120, 24), SunkenBevel(Highlight, Face3D, Shadow, DarkShadow));
-  if LoadFace(Directory, 'ter-v16n.psf', Face) then
-    DrawText(Canvas, Face, 45, 64, 'caf'#$C3#$A9' '#$E2#$82#$AC'5', ColorBlack);
+  if LoadCoverageFace(DejaVuDirectory, 'dejavu-sans-12.cvf', Face) then
+  begin
+    DrawText(Canvas, Face, 45, 64, 'caf'#$C3#$A9' '#$E2#$82#$AC'5 AVATAR', ColorBlack);
+    DrawText(Canvas, Face, 224, 145, 'OK', ColorBlack);
+  end;
+  if LoadFace(TerminusDirectory, 'ter-v16n.psf', Fixed) then
+    DrawText(Canvas, Fixed, 40, 150, 'Terminus', ColorBlack);
   DrawBevel(Canvas, MakeRectangle(200, 140, 80, 26), RaisedBevel(Highlight, Face3D, Shadow, DarkShadow));
-  DrawText(Canvas, Face, 224, 145, 'OK', ColorBlack);
   DrawFocusFrame(Canvas, MakeRectangle(204, 144, 72, 18), ColorBlack);
   FillEllipse(Canvas, MakeRectangle(180, 60, 40, 30), $C0D04040);
   DrawEllipseOutline(Canvas, MakeRectangle(180, 60, 40, 30), ColorBlack);
+  FillSmoothEllipse(Canvas, MakeRectangle(180, 95, 40, 30), $C0D04040);
+  DrawSmoothEllipseOutline(Canvas, MakeRectangle(180, 95, 40, 30), 1, ColorBlack);
   Triangle[0] := MakePoint(240, 60);
   Triangle[1] := MakePoint(290, 70);
   Triangle[2] := MakePoint(250, 120);
   FillPolygon(Canvas, Triangle, $8040A040);
+  SmoothTriangle[0] := PrecisePoint(240, 125);
+  SmoothTriangle[1] := PrecisePoint(290, 132);
+  SmoothTriangle[2] := PrecisePoint(255, 138);
+  FillSmoothPolygon(Canvas, SmoothTriangle, $FF40A040);
   DrawLine(Canvas, 40, 100, 160, 130, ColorBlack);
+  DrawSmoothLine(Canvas, 40, 108, 160, 138, 1, ColorBlack);
+  DrawSmoothLine(Canvas, 40, 116, 160, 146, 2.5, $FF1C3F6E);
+  { A small icon grown smoothly. }
+  Icon := NewSurface(4, 4, $FFFFFFFF);
+  SetSurfacePixel(Icon, 1, 1, $FFD04040);
+  SetSurfacePixel(Icon, 2, 2, $FF4040D0);
+  DrawSurfaceScaled(Canvas, Icon, SurfaceBounds(Icon), MakeRectangle(160, 30, 24, 24), False);
+  FreeSurface(Icon);
   Output := TFileStream.Create(Path, fmCreate);
   try
     Header := 'P6' + #10 + IntToStr(Surface.Width) + ' ' + IntToStr(Surface.Height) + #10 + '255' + #10;
@@ -722,9 +691,9 @@ begin
 end;
 
 begin
-  if ParamCount < 1 then
+  if ParamCount < 2 then
   begin
-    WriteLn('usage: DrawingTest <font-directory> [sample.ppm]');
+    WriteLn('usage: DrawingTest <terminus-directory> <dejavu-sans-directory> [sample.ppm]');
     Halt(2);
   end;
   TestColors;
@@ -742,8 +711,10 @@ begin
   TestSyntheticFont;
   TestTerminus(ParamStr(1));
   TestUtf8;
-  if ParamCount >= 2 then
-    WriteSample(ParamStr(1), ParamStr(2));
+  TestSmoothing;
+  TestCoverageFonts(ParamStr(2));
+  if ParamCount >= 3 then
+    WriteSample(ParamStr(1), ParamStr(2), ParamStr(3));
   WriteLn('[drawing] ', Checks - Failures, ' of ', Checks, ' checks passed');
   if Failures > 0 then
     Halt(1);

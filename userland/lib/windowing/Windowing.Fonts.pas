@@ -17,8 +17,10 @@
 }
 
 {
-  The fonts programs draw with: the system's fonts, loaded once, and
-  faces picked by size in points at the display's DPI.
+  The fonts programs draw with: the theme's two families (the
+  interface's text, proportional, and a monospaced one), each listed
+  once, and faces picked by size in points at the display's DPI. A
+  face's glyphs are read the first time it is picked.
 }
 unit Windowing.Fonts;
 
@@ -27,16 +29,22 @@ unit Windowing.Fonts;
 interface
 
 uses
-  Font.Psf;
+  Font.Faces;
 
-{ The face for PointTenths tenths of a point (bold or not); nil if the
-  system has no fonts. }
+{ The face of the theme's text family for PointTenths tenths of a point
+  (bold or not); nil if the system has no such fonts. }
 function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
-{ The theme's text face, regular and bold. }
+{ The same from the theme's monospaced family. }
+function FixedFontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
+{ The theme's text face, regular and bold, and its monospaced one. }
 function TextFace: PFontFace;
 function BoldTextFace: PFontFace;
-{ How many faces the system has, and each of them (to list the sizes
-  there are, as a font dialog does). }
+function FixedTextFace: PFontFace;
+{ The pixel size of the face FontFace would give, without reading it
+  (0 if there is none): to list the sizes there are. }
+function FontFaceSize(PointTenths: LongWord; Bold: Boolean): LongInt;
+{ How many faces the text family has, and each of them, known by size
+  and weight (their glyphs may not have been read). }
 function SystemFaceCount: LongInt;
 function SystemFace(Index: LongInt): PFontFace;
 
@@ -48,27 +56,42 @@ uses
   Windowing.Theme,
   Windowing.Connection;
 
-var
-  Fonts: TFontSet;
-  Loaded: Boolean;
-  Available: Boolean;
+type
+  TFamily = record
+    Fonts: TFontSet;
+    Listed: Boolean;
+    Available: Boolean;
+  end;
 
-{ The fonts are read from disk the first time any is wanted. }
-procedure EnsureFontsLoaded;
+var
+  TextFamily: TFamily;
+  FixedFamily: TFamily;
+
+{ A family's directory is listed the first time any of its faces is
+  wanted. }
+procedure EnsureFamilyListed(var Family: TFamily; Name: PChar);
 begin
-  if not Loaded then
+  if not Family.Listed then
   begin
-    Available := LoadSystemFonts(Fonts);
-    Loaded := True;
+    Family.Available := LoadFontFamily(Name, Family.Fonts);
+    Family.Listed := True;
   end;
 end;
 
 function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
 begin
-  EnsureFontsLoaded;
-  if not Available then
+  EnsureFamilyListed(TextFamily, Theme.TextFamily);
+  if not TextFamily.Available then
     Exit(nil);
-  Result := SelectFace(Fonts, PointTenths, DisplayDpi, Bold);
+  Result := SelectFace(TextFamily.Fonts, PointTenths, DisplayDpi, Bold);
+end;
+
+function FixedFontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
+begin
+  EnsureFamilyListed(FixedFamily, Theme.FixedFamily);
+  if not FixedFamily.Available then
+    Exit(FontFace(PointTenths, Bold));
+  Result := SelectFace(FixedFamily.Fonts, PointTenths, DisplayDpi, Bold);
 end;
 
 function TextFace: PFontFace;
@@ -81,19 +104,32 @@ begin
   Result := FontFace(Theme.TextPoints, True);
 end;
 
+function FixedTextFace: PFontFace;
+begin
+  Result := FixedFontFace(Theme.TextPoints, False);
+end;
+
+function FontFaceSize(PointTenths: LongWord; Bold: Boolean): LongInt;
+begin
+  EnsureFamilyListed(TextFamily, Theme.TextFamily);
+  if not TextFamily.Available then
+    Exit(0);
+  Result := SelectedFaceSize(TextFamily.Fonts, PointTenths, DisplayDpi, Bold);
+end;
+
 function SystemFaceCount: LongInt;
 begin
-  EnsureFontsLoaded;
-  if Available then
-    Result := Fonts.Count
+  EnsureFamilyListed(TextFamily, Theme.TextFamily);
+  if TextFamily.Available then
+    Result := TextFamily.Fonts.Count
   else
     Result := 0;
 end;
 
 function SystemFace(Index: LongInt): PFontFace;
 begin
-  EnsureFontsLoaded;
-  Result := @Fonts.Faces[Index];
+  EnsureFamilyListed(TextFamily, Theme.TextFamily);
+  Result := @TextFamily.Fonts.Faces[Index];
 end;
 
 end.

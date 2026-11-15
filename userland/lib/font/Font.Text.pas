@@ -21,18 +21,20 @@
 
   Sizes are in points (a point is 1/72 inch), in tenths, so a size means
   the same on any display: at Dpi dots per inch a size of P points is
-  P * Dpi / 72 pixels high. A font set holds the faces of one family in
-  the pixel heights it comes in, regular and bold; SelectFace takes the
-  tallest that is not taller than the size asks for (the smallest if
+  P * Dpi / 72 pixels. A font set holds the faces of one family in the
+  pixel sizes it comes in, regular and bold; SelectFace takes the
+  largest that is not larger than the size asks for (the smallest if
   all are), so text never grows past the space laid out for it.
 
-  Text is UTF-8. Characters below U+0020 take no room and draw nothing.
-  Every face here is a bitmap face of one width, so a text's width is
-  its character count times the face's width; MeasureText is still the
-  way to ask, for when faces are not.
+  A set may know its faces before their glyphs are read (Font.Files
+  lists a family's files): the set's Loader reads a face the first time
+  it is picked, and a face that cannot be read is passed over.
 
-  PSF faces carry no baseline, so FaceBaseline finds it in the face's
-  own letters: the row under the feet of an H.
+  Text is UTF-8. Characters below U+0020 take no room and draw nothing.
+  Every character moves the pen by its glyph's advance, and by the
+  face's kerning between it and the character before. Bitmap glyphs
+  are drawn in the text colour; coverage glyphs blend it over what is
+  there by how much of each pixel they cover.
 }
 unit Font.Text;
 
@@ -43,35 +45,46 @@ interface
 uses
   Drawing.Colors,
   Drawing.Canvas,
-  Font.Psf;
+  Font.Faces;
 
 const
   PointsPerInch = 72;
-  MaximumFaces = 32;
+  MaximumFaces = 128;
 
 type
+  { Reads the glyphs of a face known only by its Source; False if it
+    cannot. }
+  TFaceLoader = function(var Face: TFontFace): Boolean;
+
   TFontSet = record
     Faces: array[0..MaximumFaces - 1] of TFontFace;
     Count: LongInt;
+    Loader: TFaceLoader;
   end;
 
+{ An empty set (with no loader). }
+procedure ClearFontSet(out FontSet: TFontSet);
 { Adds Face (its glyphs move into the set). False if the set is full. }
 function AddFace(var FontSet: TFontSet; const Face: TFontFace): Boolean;
-{ The pixel height PointTenths tenths of a point is at Dpi, rounded. }
+{ The pixel size PointTenths tenths of a point is at Dpi, rounded. }
 function PixelHeightFor(PointTenths, Dpi: LongWord): LongInt;
-{ The face for a size (see above); nil if the set has none of that
-  weight (then the other weight is tried) or none at all. }
-function SelectFace(const FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): PFontFace;
+{ The face for a size (see above), its glyphs read; nil if the set has
+  none of that weight (then the other weight is tried) or none at all. }
+function SelectFace(var FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): PFontFace;
+{ The pixel size of the face SelectFace would pick, without reading any
+  glyphs (0 if none): to list the sizes there are. }
+function SelectedFaceSize(const FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): LongInt;
 
+{ How far the pen moves for CodePoint alone (0 for a control character). }
+function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
 function MeasureText(const Face: TFontFace; Text: PChar): LongInt;
-{ Draws Text with its top left at (X, Y), in Color. Returns the width. }
+{ Draws Text with the top left of its line at (X, Y), in Color. Returns
+  the width. }
 function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; Text: PChar; Color: TColor): LongInt;
-{ One character; returns its width (0 for a control character). }
+{ One character with the pen at X and its line's top at Y; returns its
+  advance (0 for a control character). }
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
   Color: TColor): LongInt;
-{ The first row (from the top of a line) below the letters that stand on
-  the baseline: where an underline goes so it touches them. }
-function FaceBaseline(const Face: TFontFace): LongInt;
 
 implementation
 
@@ -80,6 +93,16 @@ uses
 
 const
   FirstPrintable = $20;
+
+procedure ClearFontSet(out FontSet: TFontSet);
+var
+  Index: LongInt;
+begin
+  for Index := 0 to MaximumFaces - 1 do
+    ClearFace(FontSet.Faces[Index]);
+  FontSet.Count := 0;
+  FontSet.Loader := nil;
+end;
 
 function AddFace(var FontSet: TFontSet; const Face: TFontFace): Boolean;
 begin
@@ -95,33 +118,50 @@ begin
   Result := LongInt((QWord(PointTenths) * Dpi + 10 * PointsPerInch div 2) div (10 * PointsPerInch));
 end;
 
-function SelectFaceOfWeight(const FontSet: TFontSet; Wanted: LongInt; Bold: Boolean): PFontFace;
+{ The index of the face to pick among the usable ones of a weight; -1
+  if there is none. }
+function SelectFaceIndex(const FontSet: TFontSet; Wanted: LongInt; Bold: Boolean): LongInt;
 var
   Index: LongInt;
-  Best: LongInt;
   Smallest: LongInt;
-  Height: LongInt;
+  Size: LongInt;
 begin
-  Best := -1;
+  Result := -1;
   Smallest := -1;
   for Index := 0 to FontSet.Count - 1 do
   begin
-    if FontSet.Faces[Index].Bold <> Bold then
+    if (FontSet.Faces[Index].Bold <> Bold) or FontSet.Faces[Index].Unusable then
       Continue;
-    Height := FontSet.Faces[Index].Height;
-    if (Height <= Wanted) and ((Best < 0) or (Height > FontSet.Faces[Best].Height)) then
-      Best := Index;
-    if (Smallest < 0) or (Height < FontSet.Faces[Smallest].Height) then
+    Size := FontSet.Faces[Index].Size;
+    if (Size <= Wanted) and ((Result < 0) or (Size > FontSet.Faces[Result].Size)) then
+      Result := Index;
+    if (Smallest < 0) or (Size < FontSet.Faces[Smallest].Size) then
       Smallest := Index;
   end;
-  if Best < 0 then
-    Best := Smallest;
-  if Best < 0 then
-    Exit(nil);
-  Result := @FontSet.Faces[Best];
+  if Result < 0 then
+    Result := Smallest;
 end;
 
-function SelectFace(const FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): PFontFace;
+{ The face to pick of a weight, read if it was not; faces that cannot be
+  read are marked and passed over. }
+function SelectFaceOfWeight(var FontSet: TFontSet; Wanted: LongInt; Bold: Boolean): PFontFace;
+var
+  Index: LongInt;
+begin
+  repeat
+    Index := SelectFaceIndex(FontSet, Wanted, Bold);
+    if Index < 0 then
+      Exit(nil);
+    Result := @FontSet.Faces[Index];
+    if Result^.Loaded then
+      Exit;
+    if (FontSet.Loader <> nil) and FontSet.Loader(Result^) and Result^.Loaded then
+      Exit;
+    Result^.Unusable := True;
+  until False;
+end;
+
+function SelectFace(var FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): PFontFace;
 var
   Wanted: LongInt;
 begin
@@ -131,35 +171,59 @@ begin
     Result := SelectFaceOfWeight(FontSet, Wanted, not Bold);
 end;
 
-function CharacterWidth(const Face: TFontFace; CodePoint: LongWord): LongInt;
+function SelectedFaceSize(const FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): LongInt;
+var
+  Wanted: LongInt;
+  Index: LongInt;
 begin
-  if CodePoint < FirstPrintable then
+  Wanted := PixelHeightFor(PointTenths, Dpi);
+  Index := SelectFaceIndex(FontSet, Wanted, Bold);
+  if Index < 0 then
+    Index := SelectFaceIndex(FontSet, Wanted, not Bold);
+  if Index < 0 then
     Result := 0
   else
-    Result := Face.Width;
+    Result := FontSet.Faces[Index].Size;
+end;
+
+function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
+begin
+  if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
+    Result := 0
+  else
+    Result := Face.Glyphs[GlyphFor(Face, CodePoint)].Advance;
+end;
+
+{ The kerning between two characters one after the other (none after a
+  control character or at the start, where Previous is 0). }
+function KerningStep(const Face: TFontFace; Previous, CodePoint: LongWord): LongInt;
+begin
+  Result := 0;
+  if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and (Face.KerningCount > 0) then
+    Result := KerningBetween(Face, Previous, CodePoint);
 end;
 
 function MeasureText(const Face: TFontFace; Text: PChar): LongInt;
 var
   CodePoint: LongWord;
+  Previous: LongWord;
 begin
   Result := 0;
   if Text = nil then
     Exit;
+  Previous := 0;
   while NextCharacter(Text, CodePoint) do
-    Result := Result + CharacterWidth(Face, CodePoint);
+  begin
+    Result := Result + KerningStep(Face, Previous, CodePoint) + CharacterAdvance(Face, CodePoint);
+    Previous := CodePoint;
+  end;
 end;
 
-function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
-  Color: TColor): LongInt;
+{ A bitmap glyph's row: each run of set pixels is one span. }
+procedure DrawBitsRow(const Canvas: TCanvas; Bits: PByte; Width, SurfaceX, SurfaceY: LongInt; Color: TColor);
 var
-  Glyph: LongWord;
-  Row: LongInt;
-  Bits: PByte;
   Column: LongInt;
   RunStart: LongInt;
-  SurfaceX: LongInt;
-  SurfaceY: LongInt;
 
   function PixelIsSet(Index: LongInt): Boolean;
   begin
@@ -167,65 +231,78 @@ var
   end;
 
 begin
-  Result := CharacterWidth(Face, CodePoint);
-  if Result = 0 then
-    Exit;
-  Glyph := GlyphFor(Face, CodePoint);
-  SurfaceX := X + Canvas.OriginX;
-  SurfaceY := Y + Canvas.OriginY;
-  for Row := 0 to Face.Height - 1 do
+  Column := 0;
+  while Column < Width do
   begin
-    Bits := GlyphRow(Face, Glyph, Row);
-    { Each run of set pixels is one span. }
-    Column := 0;
-    while Column < Face.Width do
+    if not PixelIsSet(Column) then
     begin
-      if not PixelIsSet(Column) then
-      begin
-        Inc(Column);
-        Continue;
-      end;
-      RunStart := Column;
-      while (Column < Face.Width) and PixelIsSet(Column) do
-        Inc(Column);
-      FillSpan(Canvas, SurfaceY + Row, SurfaceX + RunStart, SurfaceX + Column, Color);
+      Inc(Column);
+      Continue;
     end;
+    RunStart := Column;
+    while (Column < Width) and PixelIsSet(Column) do
+      Inc(Column);
+    FillSpan(Canvas, SurfaceY, SurfaceX + RunStart, SurfaceX + Column, Color);
   end;
 end;
 
-function FaceBaseline(const Face: TFontFace): LongInt;
-const
-  { A capital that has no part below the baseline. }
-  BaselineLetter = Ord('H');
+{ A coverage glyph's row: each run of pixels covered alike is one span
+  of the colour faded by that coverage. }
+procedure DrawCoverageRow(const Canvas: TCanvas; Coverage: PByte; Width, SurfaceX, SurfaceY: LongInt;
+  Color: TColor);
+var
+  Column: LongInt;
+  RunStart: LongInt;
+  Value: Byte;
+begin
+  Column := 0;
+  while Column < Width do
+  begin
+    Value := Coverage[Column];
+    RunStart := Column;
+    while (Column < Width) and (Coverage[Column] = Value) do
+      Inc(Column);
+    if Value <> 0 then
+      FillSpan(Canvas, SurfaceY, SurfaceX + RunStart, SurfaceX + Column, FadeColor(Color, Value));
+  end;
+end;
+
+function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
+  Color: TColor): LongInt;
 var
   Glyph: LongWord;
   Row: LongInt;
-  Bits: PByte;
-  ByteIndex: LongInt;
+  Left: LongInt;
+  Top: LongInt;
 begin
-  { Without the letter: where it usually is, three sixteenths up. }
-  Result := Face.Height - (3 * Face.Height) div 16;
-  if not HasGlyphFor(Face, BaselineLetter) then
+  Result := CharacterAdvance(Face, CodePoint);
+  if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
     Exit;
-  Glyph := GlyphFor(Face, BaselineLetter);
-  for Row := Face.Height - 1 downto 0 do
-  begin
-    Bits := GlyphRow(Face, Glyph, Row);
-    for ByteIndex := 0 to Face.BytesPerRow - 1 do
-      if Bits[ByteIndex] <> 0 then
-        Exit(Row + 1);
-  end;
+  Glyph := GlyphFor(Face, CodePoint);
+  Left := X + Face.Glyphs[Glyph].LeftBearing + Canvas.OriginX;
+  Top := Y + Face.Glyphs[Glyph].Top + Canvas.OriginY;
+  for Row := 0 to Face.Glyphs[Glyph].Height - 1 do
+    if Face.Format = GlyphBits then
+      DrawBitsRow(Canvas, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Left, Top + Row, Color)
+    else
+      DrawCoverageRow(Canvas, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Left, Top + Row, Color);
 end;
 
 function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; Text: PChar; Color: TColor): LongInt;
 var
   CodePoint: LongWord;
+  Previous: LongWord;
 begin
   Result := 0;
   if Text = nil then
     Exit;
+  Previous := 0;
   while NextCharacter(Text, CodePoint) do
+  begin
+    Result := Result + KerningStep(Face, Previous, CodePoint);
     Result := Result + DrawCharacter(Canvas, Face, X + Result, Y, CodePoint, Color);
+    Previous := CodePoint;
+  end;
 end;
 
 end.

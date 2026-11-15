@@ -119,7 +119,7 @@ procedure SetUpScales;
 var
   Index: LongInt;
 begin
-  FontsLoaded := LoadSystemFonts(Fonts);
+  FontsLoaded := LoadFontFamily(Theme.TextFamily, Fonts);
   for Index := 0 to ScreenCount - 1 do
     PickTitleFace(@Screens[Index]);
 end;

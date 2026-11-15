@@ -142,9 +142,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - `sfdisk` and mtools, for `make image`
 - dosfstools, exfatprogs, e2fsprogs and Python 3, for the test disk used by
   `make run` and `make test`
+- The system's fonts: Terminus (`terminus-font`), and DejaVu Sans
+  (`ttf-dejavu`) with Python's Pillow (`python-pillow`), which renders it
+  into the interface's anti-aliased bitmap fonts at build time
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python`.
+`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python terminus-font ttf-dejavu python-pillow`.
 
 ## Building and running
 
@@ -232,6 +235,8 @@ userland/
   sh/               The shell's units (lexer, parser, expansion, execution)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
+tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
+tools/DrawingTest/  Checks libdrawing and libfont on the host
 scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes
 ```
@@ -248,3 +253,8 @@ any later version. See `LICENSE` for the full text.
 The console font in `kernel/debug/Debug.ConsoleFont.inc` is generated from
 Terminus (ter-116n), distributed under the SIL Open Font License 1.1; the
 license is in `kernel/debug/Debug.ConsoleFont.LICENSE`.
+
+The system volume carries Terminus (`/lib/fonts/terminus`, SIL Open Font
+License 1.1) and DejaVu Sans rendered into bitmaps (`/lib/fonts/dejavu-sans`,
+the Bitstream Vera licence with DejaVu's changes, which are in the public
+domain), each with its licence in the same directory.

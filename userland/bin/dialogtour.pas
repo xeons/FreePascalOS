@@ -226,12 +226,19 @@ var
   FontDialog: TFontDialog;
   Index: LongInt;
   ItemHeight: LongInt;
+  Middle: LongInt;
 begin
+  { The sizes that show in the list (from its top row; one whose middle
+    is past the bottom cannot be clicked). }
   FontDialog := TFontDialog(Dialog);
   ItemHeight := FontDialog.SizeList.ItemHeight;
-  for Index := 0 to FontDialog.SizeList.Items.Count - 1 do
-    TellPlace('size-' + FontDialog.SizeList.Items[Index], Dialog, FontDialog.SizeList, Scaled(30),
-      2 + Index * ItemHeight + ItemHeight div 2);
+  for Index := FontDialog.SizeList.TopIndex to FontDialog.SizeList.Items.Count - 1 do
+  begin
+    Middle := 2 + (Index - FontDialog.SizeList.TopIndex) * ItemHeight + ItemHeight div 2;
+    if Middle >= RectangleHeight(FontDialog.SizeList.PixelBounds) - 2 then
+      Break;
+    TellPlace('size-' + FontDialog.SizeList.Items[Index], Dialog, FontDialog.SizeList, Scaled(30), Middle);
+  end;
   TellPlace('bold', Dialog, FontDialog.BoldBox, Scaled(8), RectangleHeight(FontDialog.BoldBox.PixelBounds) div 2);
   TellMiddle('font-ok', Dialog, Dialog.OkButton);
 end;

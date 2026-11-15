@@ -37,6 +37,10 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Drawing.Shapes,
+  Drawing.Rasterizer,
+  Drawing.SmoothLines,
+  Drawing.SmoothShapes,
+  Drawing.Scaling,
   Drawing.Bevels;
 
 implementation

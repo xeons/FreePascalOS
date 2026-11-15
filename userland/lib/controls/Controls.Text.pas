@@ -38,7 +38,7 @@ uses
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Canvas,
-  Font.Psf;
+  Font.Faces;
 
 type
   THorizontalAlignment = (AlignTextLeft, AlignTextCenter, AlignTextRight);
@@ -303,13 +303,12 @@ begin
   CharacterBytes := Cursor - (PChar(Shown) + Position - 1);
   if Position + CharacterBytes - 1 > VisibleLength then
     Exit;
-  Left := X + TextWidth(Face, Copy(Shown, 1, Position - 1));
+  { Measured with the character, so kerning before it counts. }
   Width := TextWidth(Face, Copy(Shown, Position, CharacterBytes));
-  { Right under the letters' feet, touching them, at every size. }
-  LineTop := Y + FaceBaseline(Face^);
-  Thickness := Face^.Height div 16;
-  if Thickness < 1 then
-    Thickness := 1;
+  Left := X + TextWidth(Face, Copy(Shown, 1, Position + CharacterBytes - 1)) - Width;
+  { Where the face puts its underline: just under the baseline. }
+  LineTop := Y + Face^.UnderlineTop;
+  Thickness := Face^.UnderlineThickness;
   FillRectangle(Canvas, MakeRectangle(Left, LineTop, Width, Thickness), Color);
 end;
 

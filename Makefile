@@ -230,18 +230,21 @@ font: $(FONT_TOOL)
 	$(FONT_TOOL) $(FONT_UNPACKED) kernel/debug/Debug.ConsoleFont.inc
 
 # libdrawing and libfont are plain Pascal: they build for the host too,
-# and are checked there pixel by pixel (with the system's fonts).
+# and are checked there pixel by pixel (with the system's fonts, Terminus
+# and the rendered DejaVu Sans).
 DRAWING_TEST := build/tools/DrawingTest
-DRAWING_TEST_SOURCES := tools/DrawingTest/DrawingTest.pas $(wildcard userland/lib/drawing/*.pas) \
+DRAWING_TEST_SOURCES := $(wildcard tools/DrawingTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
 	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
 
 $(DRAWING_TEST): $(DRAWING_TEST_SOURCES)
 	@mkdir -p build/tools/drawing-test-units
-	fpc -Mobjfpc -O2 -vew -Fuuserland/lib/drawing -Fuuserland/lib/font -FUbuild/tools/drawing-test-units \
+	fpc -Mobjfpc -O2 -vew -Futools/DrawingTest -Fuuserland/lib/drawing -Fuuserland/lib/font \
+		-FUbuild/tools/drawing-test-units \
 		-o$@ tools/DrawingTest/DrawingTest.pas
 
-drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP)
-	@$(DRAWING_TEST) $(SYSTEM_FONT_DIRECTORY) build/tools/drawing-sample.ppm > build/tools/drawing-test.out || \
+drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
+	@$(DRAWING_TEST) $(SYSTEM_FONT_DIRECTORY) $(DEJAVU_SANS_DIRECTORY) build/tools/drawing-sample.ppm \
+		> build/tools/drawing-test.out || \
 		{ grep FAIL build/tools/drawing-test.out; echo "DRAWING TEST FAILED (build/tools/drawing-test.out)"; exit 1; }
 	@echo "DRAWING TEST PASSED: $$(tail -n 1 build/tools/drawing-test.out | cut -d ' ' -f 2-)"
 

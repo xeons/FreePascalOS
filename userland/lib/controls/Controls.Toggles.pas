@@ -75,6 +75,7 @@ uses
   Drawing.Rectangles,
   Drawing.Bevels,
   Drawing.Shapes,
+  Drawing.SmoothShapes,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
@@ -214,11 +215,13 @@ var
 begin
   Size := MarkSize;
   Mark := MakeRectangle(0, (RectangleHeight(PixelBounds) - Size) div 2, Size, Size);
-  FillEllipse(Canvas, Mark, Theme.Shadow);
-  FillEllipse(Canvas, InflateRectangle(Mark, -1), Theme.DarkShadow);
-  FillEllipse(Canvas, InflateRectangle(Mark, -2), Theme.Field);
+  { Anti-aliased, each ring blended over the one outside it, so the
+    circle is round at any size. }
+  FillSmoothEllipse(Canvas, Mark, Theme.Shadow);
+  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -1), Theme.DarkShadow);
+  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -2), Theme.Field);
   if Checked then
-    FillEllipse(Canvas, InflateRectangle(Mark, -(Size div 3)), Theme.FieldText);
+    FillSmoothEllipse(Canvas, InflateRectangle(Mark, -(Size div 3)), Theme.FieldText);
   PaintText(Canvas);
 end;
 
