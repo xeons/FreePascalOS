@@ -63,6 +63,9 @@ procedure WriteKeyboardSummary;
 implementation
 
 uses
+  Drivers.UsbPointer,
+  Drivers.Ps2Mouse,
+  Io.InputEvents,
   Io.PciMessageInterrupts,
   Firmware.Acpi,
   Io.Pci,
@@ -108,11 +111,13 @@ procedure InitializeInputDevices;
 var
   SerialByInterrupt: Boolean;
 begin
+  InitializeInputEvents;
   SerialByInterrupt := InitializeSerialDevice;
   if SerialByInterrupt then
     AttachConsoleInput('serial0');
   if InitializePs2Keyboard then
     AttachConsoleInput('keyboard');
+  InitializePs2Mouse;
   DebugBeginMessage;
   DebugWriteTag('input');
   if SerialByInterrupt then
@@ -152,6 +157,7 @@ begin
   InitializeAc97Controllers;
   RegisterUsbStorageDriver;
   RegisterUsbKeyboardDriver;
+  RegisterUsbPointerDriver;
   RegisterUsbAudioDriver;
   InitializeXhciControllers;
   AttachDiskStatistics;

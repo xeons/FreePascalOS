@@ -8,7 +8,8 @@ how the existing pieces fit together.
 - [x] Parse ACPI tables (RSDP from the loader → XSDT/RSDT → table lookup)
 - [x] Use the MADT for I/O APICs and interrupt source overrides
 - [x] Use the MADT processor list (starting the other processors)
-- [ ] HPET and FADT (power off, reset, sleep states)
+- [x] FADT: power off, reset, sleep states (S3, S5)
+- [ ] HPET
 - [x] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
 - [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
@@ -144,7 +145,19 @@ how the existing pieces fit together.
 - [x] virtio-blk driver (virtio 1.0 PCI, MSI-X, flushes)
 - [x] xHCI (enumeration at start, control and bulk transfers, MSI-X/MSI) and USB mass
       storage (Bulk-Only Transport, SCSI)
-- [ ] USB hot plugging (port status change events), hubs
+- [ ] Full USB 1.x-3.x support:
+  - [ ] A USB core independent of the host controller (devices, configurations,
+        interfaces, endpoints, transfers; class drivers registered there, not
+        with the xHCI driver)
+  - [ ] Hubs: USB 2 hubs (transaction translators for low and full speed
+        devices behind them) and USB 3 hubs, nested to the five tiers allowed
+  - [ ] Hot plugging and removal (port status change events), on root ports and
+        hubs; class drivers told when their device goes
+  - [ ] Composite devices: a class driver per interface, several per device
+  - [ ] EHCI (USB 2.0) host controllers, with their companion controllers
+  - [ ] UHCI and OHCI (USB 1.x) host controllers
+  - [ ] Interrupt, bulk, control and isochronous transfers on every controller
+  - [ ] USB Attached SCSI (UAS) for USB 3 disks
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead
 
@@ -242,6 +255,97 @@ how the existing pieces fit together.
 - [x] More programs outside coreutils: grep (egrep, fgrep), find, xargs, sed, diff, less (more)
 - [x] ps, pgrep, pkill
 - [x] Interrupt driven console input (keyboard and serial)
+
+## Graphical user interface
+
+A desktop in the spirit of Windows 2000 (an original look, not a copy),
+built in this order; each step unblocks the next.
+
+DPI aware throughout: drawing is in device pixels, but sizes the user sees
+are not. Fonts are sized in points; window sizes, metrics and layout are in
+logical units (1/96 inch) that the display's scale turns into pixels;
+icons and cursors come in several sizes; absolute pointer positions are
+normalized (0-65535), not pixels.
+
+### 1. Pointing devices and input events
+- [x] PS/2 mouse (8042 second port, IntelliMouse wheel)
+- [x] USB HID mouse and USB tablet (report descriptor parsed; absolute
+      coordinates: QEMU's usb-tablet, for testing)
+- [x] Input event device (/dev/events): timestamped key and pointer events
+      (press/release, key code, character, relative motion, absolute position
+      normalized to 0-65535, buttons, wheel)
+- [x] The text console keeps the keyboards until a program takes them
+- [ ] Mouse settings: acceleration, sensitivity and left-handed buttons (in the
+      display server, step 4)
+
+### 2. Drawing and fonts
+- [ ] Display device (/dev/display): framebuffer information, mapping the
+      framebuffer into a process, taking the screen from the text console and
+      giving it back
+- [ ] Display DPI: from EDID (physical size) where it can be read, else a
+      configured value, else 96; a scale factor (1.0, 1.25, 1.5, 2.0...)
+- [ ] Mapping device memory into user processes (write-combining)
+- [ ] libdrawing: pixel buffers, rectangles, lines, shapes, blits, clipping
+      regions, alpha blending, gradients, 3D bevels
+- [ ] libfont: bitmap fonts (from the console's PSF font) in several pixel sizes,
+      picked by point size and DPI; text measuring and drawing, UTF-8
+- [ ] Host-side tests for libdrawing and libfont (pixel-exact)
+
+### 3. Kernel infrastructure for a display server
+- [ ] Shared memory sections (create, map into several processes, handle-based)
+- [ ] Wait on multiple objects (handles: events, processes, threads, pipes,
+      input devices, channels) with a timeout
+- [ ] Event objects for user mode (create, set, reset, wait)
+- [ ] Local message channels: request/reply messages that can carry handles
+- [ ] Waitable timers with millisecond resolution
+
+### 4. Display server
+- [ ] One process owns the screen and input; clients connect through a channel
+- [ ] Windows: create, destroy, move, resize, show, hide, z-order, focus,
+      activation, input routing, capture
+- [ ] Client surfaces in shared memory; damage tracking; compositing with
+      clipping; the mouse cursor
+- [ ] Window frames: title bar, borders, minimize/maximize/close, move and resize
+      by dragging
+- [ ] System colours and metrics (the theme), metrics in logical units
+- [ ] Scale per display: logical units to pixels, the cursor at that scale
+
+### 5. Windowing and controls
+- [ ] libwindowing: connecting, windows, the message loop (paint, keys, mouse,
+      resize, close, activate, timers), surfaces and invalidation; windows and
+      positions in logical units, told the scale (and when it changes)
+- [ ] libcontrols: button, check box, radio button, label, edit box (single and
+      multi-line), list box, combo box, scroll bar, menu bar and pop-up menus,
+      toolbar, status bar, tab control, progress bar, tree view, list view
+- [ ] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
+      accelerators; message boxes; layout in logical units, scaled
+
+### 6. Desktop shell
+- [ ] Pseudo-terminals (for terminal windows)
+- [ ] Taskbar: Start menu, buttons for open windows, clock, notification area
+- [ ] Desktop: wallpaper, icons
+- [ ] Terminal window running the shell
+- [ ] Notepad
+
+### 7. Applications and session
+- [ ] File manager: folders, icon and list views, copy, move, delete, rename,
+      properties
+- [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
+- [ ] Task Manager: processes, CPU and memory
+- [ ] Graphical login, locking, log off, shut down and suspend from the desktop
+- [ ] File change notifications (folders refresh), volume arrival
+- [ ] Per-user settings store (libconfiguration)
+
+### 8. Richer graphics
+- [ ] libcompression: deflate
+- [ ] libimage: BMP and ICO, then PNG (reading and writing), JPEG (reading)
+- [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
+      so any DPI)
+- [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
+      the scale is used, scaled when none fits
+- [ ] Clipboard (text and images) and drag and drop
+- [ ] Themes; Paint; image viewer; calculator; volume control
+- [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
 ## ARM64 port
 

@@ -388,6 +388,7 @@ The drivers so far:
 | `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, around the block cache: reads write the cache back first, writes drop what it holds of the disk); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
 | `ps2keyboard` (`Drivers.Ps2Keyboard`) | `keyboard`, exclusive, `rw-------`: the characters typed (`Io.InputDevice`) |
 | `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
+| `events` (`Io.InputEvents`) | `events`, one opener at a time, `rw-------`: every keyboard's and pointing device's input events (`TAbiInputEvent`); while open, the keyboards stop typing into the console |
 | `ahci` (`Drivers.AhciRequests`) | one unnamed device per SATA disk, asynchronous |
 | `diskstats` (`Drivers.DiskStatistics`) | a filter on each disk's storage device counting completed reads and writes, their bytes, and failures; written to the kernel log after the self tests and at the end |
 
@@ -688,6 +689,59 @@ input device `usbkeyboardN` that the console reads. Keys do not repeat
 while held, and the lights stay off. The input test types on a QEMU USB
 keyboard, then unplugs it and types on the PS/2 keyboard; the kernel
 logs how many keys each kind delivered, and the test checks both.
+
+Input events (Io.InputEvents) are the input for a graphical program:
+every keyboard and pointing device as one stream of `TAbiInputEvent`
+records (shared/Abi.SystemCalls.inc) read from `/dev/events`. An event
+has a time (milliseconds of uptime), a kind, the device it came from (a
+source number each driver takes with NewInputSource) and its values:
+
+| Kind | Values |
+|---|---|
+| key | Code: the set 1 scan code (plus KeyCodeExtended for E0 keys); Value 1 pressed, 0 released; Character: the character typed (0 for none or an escape sequence); Modifiers: Shift, Control, Alt, AltGr and the locks |
+| motion | X, Y: relative motion, right and down positive |
+| position | X, Y: an absolute position, 0 to 65535 across the screen whatever its resolution (InputPositionMaximum), so it scales to any display and DPI |
+| button | Code: 1 left, 2 right, 3 middle, 4 and 5 the side buttons; Value 1 pressed, 0 released |
+| wheel | Value: steps, positive away from the user |
+
+Drivers call AddInputEvent from any level (the ring of 256 events is
+under a spinlock with interrupts off; a deferred call completes waiting
+reads with whole events). One program opens the device at a time;
+events are only kept while it is open, and while it is, the keyboards'
+characters do not go to their input devices (the console): keyboards
+report key events from Drivers.KeyboardTranslation, which also tracks
+the left Alt key for the modifiers. The serial port still feeds the
+console.
+
+The PS/2 controller's code shared by the keyboard and the mouse is in
+Drivers.Ps2Controller. The PS/2 mouse (Drivers.Ps2Mouse, IRQ 12) is set
+up by polling with its interrupt off: the second port enabled, the mouse
+reset and given its defaults, then the IntelliMouse sample rate knock
+(200, 100, 80): id 3 means a wheel and four-byte packets. The first
+byte of every packet has bit 3 set, which keeps the packets in step.
+Waking from S3 sets it up again.
+
+USB pointing devices (Drivers.UsbPointer) are any HID interface the
+keyboard driver did not take whose report descriptor has X and Y. The
+descriptor (GET_DESCRIPTOR 22h on the interface) is parsed by
+Drivers.HidReports: global items (usage page, logical range, report
+size, count and id, push and pop), local items (usages and usage
+ranges, reset by each main item), and Input main items laying out their
+fields bit by bit. The report holding X and Y gives where X, Y, the
+wheel and buttons 1-5 are. Relative X and Y (a mouse) give motion
+events; absolute ones (a tablet, like QEMU's usb-tablet) give position
+events scaled from the logical range to 0-65535. Boot devices are put
+in report protocol, the format the descriptor describes, again after
+waking.
+
+`events [-n COUNT]` prints the events as text. The input test runs it
+and moves QEMU's PS/2 mouse (HMP mouse_move and mouse_button, a wheel
+step), places the USB tablet (QMP input-send-event: HMP's moves are
+relative) and presses a key, checking each event and that the key did
+not reach the shell; after waking from S3 it checks the mouse and the
+tablet again. The test's xHCI controller has eight ports of each kind:
+with four, QEMU would put the USB devices behind a hub, which the
+kernel does not drive yet.
 
 The framebuffer console (Debug.FramebufferConsole) decodes UTF-8 and
 draws from a font with ASCII, Latin-1, Œ œ Ÿ and € (generated from

@@ -18,20 +18,32 @@
 #
 # Boots an EFI system partition directory in QEMU with OVMF firmware.
 #
-#   run-qemu.sh <arch> <esp-directory> [--debug] [disk-image]...
+#   run-qemu.sh <arch> <esp-directory> [--debug] [[--copy] disk-image]...
 #
 # Serial output (the kernel debug log) appears on this terminal.
 # With --debug QEMU waits for GDB on localhost:1234.
+# A disk image after --copy is not booted itself but a fresh copy of it
+# (<name>-session.img), so the session leaves it as it was: the test
+# disk, which the tests expect as built (its orphans, its journals to
+# replay).
 
 set -euo pipefail
 
 architecture="$1"
 esp_directory="$2"
 debug_mode=""
+copy_next_image=""
 extra_disk_images=()
 for argument in "${@:3}"; do
     if [[ "$argument" == "--debug" ]]; then
         debug_mode="--debug"
+    elif [[ "$argument" == "--copy" ]]; then
+        copy_next_image="yes"
+    elif [[ -n "$copy_next_image" ]]; then
+        session_image="${argument%.img}-session.img"
+        cp -f "$argument" "$session_image"
+        extra_disk_images+=("$session_image")
+        copy_next_image=""
     else
         extra_disk_images+=("$argument")
     fi

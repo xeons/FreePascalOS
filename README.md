@@ -153,7 +153,8 @@ make              # build build/amd64/esp (loader + kernel)
 make userland     # build the libraries and programs into build/amd64/user
 make system-disk  # build the ext4 system volume (/bin, /lib, /etc, /tmp, /home)
 make run          # boot in QEMU with the test and system disks; the kernel log
-                  # and then the shell appear on the terminal
+                  # and then the shell appear on the terminal (the test disk
+                  # is a fresh copy each time; the system disk keeps changes)
 make debug        # same, but wait for GDB on localhost:1234
 make test         # boot headless, run every self test and coretest,
                   # print TEST PASSED or TEST FAILED

@@ -179,10 +179,10 @@ TEST_DISK := $(BUILD_DIRECTORY)/test-disk.img
 SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk.img
 
 run: esp $(TEST_DISK) $(SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(SYSTEM_DISK)
 
 debug: esp $(TEST_DISK) $(SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(SYSTEM_DISK)
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

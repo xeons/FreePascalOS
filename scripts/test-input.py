@@ -62,6 +62,7 @@ shutil.copy(firmware_variables, os.path.join(work, 'vars.fd'))
 
 # Unix socket paths are short; keep it relative to the build directory.
 monitor_path = os.path.relpath(os.path.join(work, 'monitor.sock'))
+control_path = os.path.relpath(os.path.join(work, 'control.sock'))
 screen_path = os.path.abspath(os.path.join(work, 'screen.ppm'))
 serial_log = os.path.join(work, 'serial.log')
 
@@ -91,7 +92,8 @@ qemu = subprocess.Popen([
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),
     '-drive', 'format=raw,file=' + os.path.join(work, 'system.img'),
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
-    '-device', 'qemu-xhci,id=xhci', '-device', 'usb-kbd,bus=xhci.0,id=usbkbd',
+    '-device', 'qemu-xhci,id=xhci,p2=8,p3=8', '-device', 'usb-kbd,bus=xhci.0,id=usbkbd',
+    '-device', 'usb-tablet,bus=xhci.0',
     '-drive', 'if=none,id=virtio0,format=raw,file=' + os.path.join(work, 'virtio.img'),
     '-device', 'virtio-blk-pci,drive=virtio0',
     '-drive', 'if=none,id=nvme0,format=raw,file=' + os.path.join(work, 'nvme.img'),
@@ -104,7 +106,8 @@ qemu = subprocess.Popen([
     '-audiodev', 'wav,id=sound2,path=' + recordings['usb'], '-device', 'usb-audio,bus=xhci.0,audiodev=sound2',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
-    '-monitor', 'unix:' + monitor_path + ',server,nowait'],
+    '-monitor', 'unix:' + monitor_path + ',server,nowait',
+    '-qmp', 'unix:' + control_path + ',server,nowait'],
     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
     stderr=open(os.path.join(work, 'qemu-errors.log'), 'wb'))
 
@@ -405,6 +408,86 @@ def send_to_monitor(command):
         pass
 
 
+def ask_monitor(command):
+    # What earlier commands answered is read away first.
+    answer = b''
+    try:
+        monitor.settimeout(0.2)
+        while True:
+            if not monitor.recv(65536):
+                break
+    except OSError:
+        pass
+    try:
+        monitor.sendall(command.encode())
+        time.sleep(0.5)
+        monitor.settimeout(1)
+        answer = monitor.recv(65536)
+    except OSError:
+        pass
+    return answer.decode(errors='replace')
+
+
+# Mouse commands go to one device at a time, chosen by its number.
+mice = {}
+for match in re.finditer(r'Mouse #(\d+): ([^\r\n(]*)', ask_monitor('info mice\n')):
+    mice[match.group(2).strip()] = match.group(1)
+
+control = None
+try:
+    control = socket.socket(socket.AF_UNIX)
+    control.connect(control_path)
+    control.settimeout(1)
+    control.recv(65536)
+    control.sendall(b'{"execute": "qmp_capabilities"}\n')
+    control.recv(65536)
+except OSError:
+    pass
+
+
+def move_ps2_mouse(command):
+    send_to_monitor('mouse_set ' + mice.get('QEMU PS/2 Mouse', '0') + '\n')
+    time.sleep(0.2)
+    send_to_monitor(command)
+    time.sleep(0.2)
+
+
+def place_tablet(x, y):
+    # Absolute positions need QMP (HMP's mouse_move is relative). QEMU's
+    # range is 0-32767; the kernel's 0-65535.
+    send_to_monitor('mouse_set ' + mice.get('QEMU HID Tablet', '0') + '\n')
+    time.sleep(0.2)
+    try:
+        control.sendall(json.dumps({'execute': 'input-send-event', 'arguments': {'events': [
+            {'type': 'abs', 'data': {'axis': 'x', 'value': x}},
+            {'type': 'abs', 'data': {'axis': 'y', 'value': y}}]}}).encode() + b'\n')
+        control.recv(65536)
+    except (OSError, AttributeError):
+        pass
+    time.sleep(0.2)
+
+
+# Input events: the PS/2 mouse (motion, a click, the wheel), the USB
+# tablet (an absolute position) and a key, read from /dev/events. The
+# key does not reach the console meanwhile (the next line would start
+# with it otherwise).
+type_on_serial(b'events -n 7; m=DONE; echo EVENTS $m\r')
+time.sleep(1.5)
+move_ps2_mouse('mouse_move 4 2\n')
+move_ps2_mouse('mouse_button 1\n')
+move_ps2_mouse('mouse_button 0\n')
+move_ps2_mouse('mouse_move 0 0 1\n')
+place_tablet(16384, 8192)
+press('a')
+events_ok = wait_for('EVENTS DONE', 20)
+checks.append(('input events: PS/2 mouse motion, button and wheel',
+               events_ok and b'motion 4 2' in received and b'button 1 press' in received and
+               b'button 1 release' in received and b'wheel 1' in received))
+checks.append(('input events: USB tablet position (0-65535)', events_ok and b'position 32768 16384' in received))
+checks.append(('input events: a key with its character', events_ok and b'key 0x1E press a' in received))
+type_on_serial(b'm=CLEAN; echo CONSOLE $m\r')
+checks.append(('input events: the key did not reach the console', wait_for('CONSOLE CLEAN', 10)))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.
@@ -457,6 +540,13 @@ try:
 except (OSError, AttributeError):
     pass
 checks.append(('suspend to RAM: the display came back', display_ok))
+type_on_serial(b'events -n 2; m=DONE; echo WOKEN-EVENTS $m\r')
+time.sleep(1.5)
+move_ps2_mouse('mouse_move -3 5\n')
+place_tablet(8192, 16384)
+checks.append(('suspend to RAM: the PS/2 mouse and USB tablet work after waking',
+               wait_for('WOKEN-EVENTS DONE', 20) and b'motion -3 5' in received and
+               b'position 16384 32768' in received))
 
 # Plugging a processor in raises a GPE; its method (\_GPE._E02) tells
 # the processor's device to check itself, which the kernel logs.

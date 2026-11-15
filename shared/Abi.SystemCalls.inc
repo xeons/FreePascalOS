@@ -523,3 +523,58 @@ type
     Context: TAbiContext;
   end;
   PAbiExceptionRecord = ^TAbiExceptionRecord;
+
+  { Input events (/dev/events): what keyboards and pointing devices do,
+    for programs that take the input (a display server). Reads return
+    whole events. }
+  TAbiInputEvent = record
+    { Milliseconds since the system started. }
+    Time: QWord;
+    { InputEvent*. }
+    Kind: Word;
+    { Which device (a number per keyboard or pointing device). }
+    Source: Word;
+    { Keys: the key code (scan code set 1, KeyCodeExtended added for the
+      keys after an E0 prefix). Buttons: Button*. }
+    Code: LongWord;
+    { Keys and buttons: 1 pressed, 0 released. Wheels: steps, positive
+      away from the user. }
+    Value: LongInt;
+    { Motion: how far it moved (device units, right and down positive).
+      Position: where it is, 0 to InputPositionMaximum across the whole
+      screen (not pixels: the screen may be any size or scale). }
+    X: LongInt;
+    Y: LongInt;
+    { Key presses: the character typed (Unicode), 0 if none (dead keys,
+      modifiers, keys that send sequences). }
+    Character: LongWord;
+    { Modifier* held or on when it happened. }
+    Modifiers: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiInputEvent = ^TAbiInputEvent;
+
+const
+  InputEventKey = 1;
+  InputEventMotion = 2;
+  InputEventPosition = 3;
+  InputEventButton = 4;
+  InputEventWheel = 5;
+
+  KeyCodeExtended = $100;
+  ButtonLeft = 1;
+  ButtonRight = 2;
+  ButtonMiddle = 3;
+  ButtonFourth = 4;
+  ButtonFifth = 5;
+
+  InputPositionMaximum = 65535;
+
+  ModifierShift = $01;
+  ModifierControl = $02;
+  ModifierAlt = $04;
+  ModifierAltGr = $08;
+  ModifierCapsLock = $10;
+  ModifierNumLock = $20;
+  ModifierScrollLock = $40;
+

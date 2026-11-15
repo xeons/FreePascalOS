@@ -61,29 +61,11 @@ uses
   Io.InputDevice,
   Debug.Output,
   Drivers.KeyboardLayouts,
-  Drivers.KeyboardTranslation;
+  Drivers.KeyboardTranslation,
+  Drivers.Ps2Controller;
 
 const
   KeyboardIrq = 1;
-
-  DataPort = $60;
-  StatusPort = $64;
-  CommandPort = $64;
-
-  StatusOutputFull = $01;
-  StatusInputFull = $02;
-  { The byte in the output buffer came from the mouse port. }
-  StatusFromAuxiliary = $20;
-
-  CommandReadConfiguration = $20;
-  CommandWriteConfiguration = $60;
-  CommandDisableSecondPort = $A7;
-  CommandDisableFirstPort = $AD;
-  CommandEnableFirstPort = $AE;
-
-  ConfigurationFirstPortInterrupt = $01;
-  ConfigurationSecondPortInterrupt = $02;
-  ConfigurationTranslation = $40;
 
   { Commands to the keyboard itself (through the data port), and its
     answers. }
@@ -91,7 +73,6 @@ const
   KeyboardAcknowledge = $FA;
   KeyboardResend = $FE;
 
-  MaximumWaitIterations = 100000;
   MaximumFlushBytes = 32;
   LayoutNameCapacity = 16;
 
@@ -111,48 +92,9 @@ var
   LightsOutdated: Boolean;
   KeyboardInput: PInputDevice;
 
-function WaitUntilWritable: Boolean;
-var
-  Iteration: LongWord;
-begin
-  for Iteration := 1 to MaximumWaitIterations do
-    if (ReadPortByte(StatusPort) and StatusInputFull) = 0 then
-      Exit(True);
-  Result := False;
-end;
-
-function WaitUntilReadable: Boolean;
-var
-  Iteration: LongWord;
-begin
-  for Iteration := 1 to MaximumWaitIterations do
-    if (ReadPortByte(StatusPort) and StatusOutputFull) <> 0 then
-      Exit(True);
-  Result := False;
-end;
-
-procedure SendCommand(Command: Byte);
-begin
-  WaitUntilWritable;
-  WritePortByte(CommandPort, Command);
-end;
-
 procedure SendToKeyboard(Value: Byte);
 begin
-  WaitUntilWritable;
-  WritePortByte(DataPort, Value);
-end;
-
-procedure FlushOutputBuffer;
-var
-  Count: Integer;
-begin
-  Count := 0;
-  while ((ReadPortByte(StatusPort) and StatusOutputFull) <> 0) and (Count < MaximumFlushBytes) do
-  begin
-    ReadPortByte(DataPort);
-    Inc(Count);
-  end;
+  Ps2WriteData(Value);
 end;
 
 { --- Lock lights ----------------------------------------------------- }
@@ -231,13 +173,13 @@ var
 begin
   Count := 0;
   repeat
-    Status := ReadPortByte(StatusPort);
-    if (Status and StatusOutputFull) = 0 then
+    Status := ReadPortByte(Ps2StatusPort);
+    if (Status and Ps2StatusOutputFull) = 0 then
       Break;
-    if (Status and StatusFromAuxiliary) <> 0 then
-      ReadPortByte(DataPort) { mouse data: not ours }
-    else
-      HandleScanCode(ReadPortByte(DataPort));
+    { A mouse byte is left for the mouse's interrupt. }
+    if (Status and Ps2StatusFromAuxiliary) <> 0 then
+      Break;
+    HandleScanCode(ReadPortByte(Ps2DataPort));
     Inc(Count);
   until Count >= MaximumFlushBytes;
 end;
@@ -295,26 +237,22 @@ var
   Configuration: Byte;
 begin
   Result := False;
-  SendCommand(CommandDisableFirstPort);
-  SendCommand(CommandDisableSecondPort);
-  FlushOutputBuffer;
-  SendCommand(CommandReadConfiguration);
-  if not WaitUntilReadable then
+  Ps2SendCommand(Ps2CommandDisableFirstPort);
+  Ps2SendCommand(Ps2CommandDisableSecondPort);
+  Ps2FlushOutputBuffer;
+  if not Ps2ReadConfiguration(Configuration) then
     Exit;
-  Configuration := ReadPortByte(DataPort);
-  Configuration := (Configuration or ConfigurationFirstPortInterrupt or ConfigurationTranslation) and
-    not ConfigurationSecondPortInterrupt;
-  SendCommand(CommandWriteConfiguration);
-  WaitUntilWritable;
-  WritePortByte(DataPort, Configuration);
+  Configuration := (Configuration or Ps2ConfigurationFirstPortInterrupt or Ps2ConfigurationTranslation) and
+    not Ps2ConfigurationSecondPortInterrupt;
+  Ps2WriteConfiguration(Configuration);
   Result := True;
 end;
 
 { The first port on, and the lights as they should be. }
 procedure StartKeyboard;
 begin
-  SendCommand(CommandEnableFirstPort);
-  FlushOutputBuffer;
+  Ps2SendCommand(Ps2CommandEnableFirstPort);
+  Ps2FlushOutputBuffer;
   LightsState := LightsIdle;
   UpdateLights;
 end;
@@ -329,8 +267,7 @@ end;
 function InitializePs2Keyboard: Boolean;
 begin
   Result := False;
-  { No controller: the status port floats high. }
-  if ReadPortByte(StatusPort) = $FF then
+  if not Ps2ControllerIsPresent then
     Exit;
   ChooseLayout;
 

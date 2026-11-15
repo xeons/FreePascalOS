@@ -33,6 +33,11 @@
   (ESC [ A, ...). With Num Lock on the numeric keypad gives digits, with
   it off the cursor and editing keys printed on it. Characters beyond
   ASCII go out in UTF-8, as bytes of the keyboard's input device.
+
+  Every press and release is also an input event (Io.InputEvents): its
+  key code, the modifiers, and the character it typed. While a program
+  has taken the input, the characters do not go to the input device (the
+  console) at all.
 }
 unit Drivers.KeyboardTranslation;
 
@@ -61,6 +66,13 @@ type
     { A dead key's accent waiting for the next character, 0 if none. }
     PendingAccent: LongWord;
     KeyCount: QWord;
+    { Left Alt (AltGr is the right one). }
+    AltPressed: Boolean;
+    { The keyboard's number in input events, and what the key being
+      handled typed (0 if nothing, or a sequence). }
+    Source: Word;
+    TypedCharacter: LongWord;
+    SendingSequence: Boolean;
   end;
 
 procedure InitializeKeyboardState(out State: TKeyboardState; Input: PInputDevice);
@@ -73,6 +85,8 @@ implementation
 
 uses
   Runtime.Memory,
+  Abi.SystemCalls,
+  Io.InputEvents,
   Drivers.KeyboardLayouts;
 
 const
@@ -96,6 +110,7 @@ procedure InitializeKeyboardState(out State: TKeyboardState; Input: PInputDevice
 begin
   FillMemory(@State, SizeOf(State), 0);
   State.Input := Input;
+  State.Source := NewInputSource;
   { Num Lock starts on, as most firmware leaves it. }
   State.NumLockOn := True;
 end;
@@ -115,19 +130,34 @@ end;
 
 procedure DeliverCharacter(var State: TKeyboardState; Character: Char);
 begin
-  AddInputByte(State.Input^, Byte(Character));
+  if not State.SendingSequence and (Byte(Character) < $80) then
+    State.TypedCharacter := Byte(Character);
+  if not InputIsTaken then
+    AddInputByte(State.Input^, Byte(Character));
 end;
 
+{ A sequence (the escape sequence of an arrow key, say): no character
+  for the event. }
 procedure DeliverText(var State: TKeyboardState; Text: PChar);
 begin
+  State.SendingSequence := True;
   while Text^ <> #0 do
   begin
     DeliverCharacter(State, Text^);
     Inc(Text);
   end;
+  State.SendingSequence := False;
 end;
 
+procedure DeliverUtf8(var State: TKeyboardState; CodePoint: LongWord); forward;
+
 procedure DeliverCodePoint(var State: TKeyboardState; CodePoint: LongWord);
+begin
+  DeliverUtf8(State, CodePoint);
+  State.TypedCharacter := CodePoint;
+end;
+
+procedure DeliverUtf8(var State: TKeyboardState; CodePoint: LongWord);
 begin
   if CodePoint < $80 then
     DeliverCharacter(State, Char(CodePoint))
@@ -278,7 +308,57 @@ begin
   DeliverCodePoint(State, CodePoint);
 end;
 
+function ModifiersOf(const State: TKeyboardState): LongWord;
+begin
+  Result := 0;
+  if State.ShiftPressed then
+    Result := Result or ModifierShift;
+  if State.ControlPressed then
+    Result := Result or ModifierControl;
+  if State.AltPressed then
+    Result := Result or ModifierAlt;
+  if State.AltGrPressed then
+    Result := Result or ModifierAltGr;
+  if State.CapsLockOn then
+    Result := Result or ModifierCapsLock;
+  if State.NumLockOn then
+    Result := Result or ModifierNumLock;
+  if State.ScrollLockOn then
+    Result := Result or ModifierScrollLock;
+end;
+
+procedure ReportKeyEvent(var State: TKeyboardState; Code: Byte; Extended, Released: Boolean);
+var
+  Event: TAbiInputEvent;
+begin
+  FillMemory(@Event, SizeOf(Event), 0);
+  Event.Kind := InputEventKey;
+  Event.Source := State.Source;
+  Event.Code := Code;
+  if Extended then
+    Event.Code := Event.Code or KeyCodeExtended;
+  if not Released then
+  begin
+    Event.Value := 1;
+    Event.Character := State.TypedCharacter;
+  end;
+  Event.Modifiers := ModifiersOf(State);
+  AddInputEvent(Event);
+end;
+
+function TranslateKeyCharacters(var State: TKeyboardState; Code: Byte; Extended, Released: Boolean): Boolean;
+forward;
+
 function TranslateKey(var State: TKeyboardState; Code: Byte; Extended, Released: Boolean): Boolean;
+begin
+  State.TypedCharacter := 0;
+  Result := TranslateKeyCharacters(State, Code, Extended, Released);
+  { E0 2A and E0 B6 are fake shifts some keys send, not keys. }
+  if not (Extended and ((Code = ScanLeftShift) or (Code = ScanRightShift))) then
+    ReportKeyEvent(State, Code, Extended, Released);
+end;
+
+function TranslateKeyCharacters(var State: TKeyboardState; Code: Byte; Extended, Released: Boolean): Boolean;
 begin
   Result := False;
   if Extended then
@@ -309,7 +389,10 @@ begin
         Exit;
       end;
     ScanAlt:
-      Exit;
+      begin
+        State.AltPressed := not Released;
+        Exit;
+      end;
     ScanCapsLock, ScanNumLock, ScanScrollLock:
       begin
         if Released then
