@@ -253,6 +253,11 @@ destructor TControlWindow.Destroy;
 begin
   FRoot.Free;
   FRoot := nil;
+  { A pop-up still open (a context menu: the menu bar closed its own
+    menus as it went) goes with the window rather than staying on the
+    screen with nothing behind it. }
+  if FPopup <> nil then
+    FPopup.CloseRequested;
   inherited Destroy;
   FHost.Free;
 end;

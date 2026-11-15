@@ -126,13 +126,14 @@ type
     procedure CloseSubmenu;
     procedure Choose(Item: TMenuItem);
     function PassOn(X, Y: LongInt; Pressed: Boolean): Boolean;
+    function PressedOutside(X, Y: LongInt; Button: LongWord): Boolean;
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
-    procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
   public
+    destructor Destroy; override;
     { Closes this menu and every one it came from. }
     procedure CloseAll;
     property Menu: TMenuItem read FMenu;
@@ -324,6 +325,7 @@ begin
   Result.FMenu := Menu;
   Result.FPopup := Popup;
   Result.FHighlighted := -1;
+  Popup.OnPressedOutside := @Result.PressedOutside;
   Result.SetFocus;
   Popup.Popup;
 end;
@@ -461,6 +463,7 @@ begin
   FSubmenu := nil;
   Submenu.CloseSubmenu;
   Submenu.FParentList := nil;
+  Submenu.FMenuBar := nil;
   Submenu.FPopup.Dismiss;
   { This menu has the pointer again. }
   FPopup.Popup;
@@ -531,7 +534,11 @@ begin
   LocalY := ScreenY - Scaled(BarWindow.ScreenTop) - Bar.PixelBounds.Top;
   if (LocalY >= 0) and (LocalY < RectangleHeight(Bar.PixelBounds)) and (Bar.HeadingAt(LocalX) >= 0) then
   begin
-    if Pressed or (Bar.HeadingAt(LocalX) <> Bar.FOpenIndex) then
+    { A press on the open menu's own heading closes it, as a press on
+      a closed heading would open it. }
+    if Pressed and (Bar.HeadingAt(LocalX) = Bar.FOpenIndex) then
+      Bar.OpenMenu(-1)
+    else if Pressed or (Bar.HeadingAt(LocalX) <> Bar.FOpenIndex) then
       Bar.OpenMenu(Bar.HeadingAt(LocalX));
     Exit(True);
   end;
@@ -545,10 +552,39 @@ begin
     PassOn(X, Y, False);
 end;
 
-procedure TMenuList.PointerDown(X, Y: LongInt; Button: LongWord);
+{ A press outside the menu: on a menu it came from or a heading of its
+  menu bar it goes there, anywhere else it closes every menu. Either
+  way the menus close through the menu bar or the menu that opened
+  them, which forget them; left to itself the pop-up would be freed
+  while they still pointed at it. }
+function TMenuList.PressedOutside(X, Y: LongInt; Button: LongWord): Boolean;
 begin
-  if not FPopup.ContainsPixel(X, Y) and not PassOn(X, Y, True) then
+  if not PassOn(X, Y, True) then
     CloseAll;
+  Result := True;
+end;
+
+destructor TMenuList.Destroy;
+begin
+  { However the menu went, nothing may go on pointing at it, and a menu
+  opened from it goes too. (A menu closed the usual way was already
+  forgotten by the menu bar or menu that opened it.) }
+  if FSubmenu <> nil then
+  begin
+    FSubmenu.FParentList := nil;
+    FSubmenu.FMenuBar := nil;
+    FSubmenu.FPopup.Dismiss;
+    FSubmenu := nil;
+  end;
+  if (FParentList <> nil) and (FParentList.FSubmenu = Self) then
+    FParentList.FSubmenu := nil;
+  if (FMenuBar <> nil) and (FMenuBar.FOpenList = Self) then
+  begin
+    FMenuBar.FOpenList := nil;
+    FMenuBar.FOpenIndex := -1;
+    FMenuBar.Invalidate;
+  end;
+  inherited Destroy;
 end;
 
 procedure TMenuList.PointerUp(X, Y: LongInt; Button: LongWord);
@@ -724,6 +760,8 @@ begin
   if FOpenList <> nil then
   begin
     FOpenList.CloseSubmenu;
+    { Freed later (posted): by then it must not point back here. }
+    FOpenList.FMenuBar := nil;
     FOpenList.FPopup.Dismiss;
     FOpenList := nil;
   end;

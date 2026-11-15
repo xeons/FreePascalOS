@@ -999,6 +999,7 @@ def client_area_of_tour(pixel):
 
 
 owned_box_above = False
+menus_survived = False
 def places():
     return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
             for match in re.finditer(rb'place (\S+) (\d+) (\d+)', bytes(received))}
@@ -1019,6 +1020,19 @@ if tour_started:
     click_at(*place['list-item-3'])
     click_at(*place['combo'])
     click_at(*place['combo-second'])
+    # Moving between the menu bar's menus with the mouse: File, then
+    # Help, then File again (each press on another heading switches),
+    # File's own heading closes it, File opens again and a press outside
+    # every menu (the title bar) closes it. A menu closed by a press
+    # outside it was once freed while the menu bar still pointed at it,
+    # so the next press on a heading crashed the program.
+    menus_from = len(received)
+    file_heading = (place['help'][0] - 35, place['help'][1])
+    for heading in (file_heading, place['help'], file_heading, file_heading, file_heading):
+        click_at(*heading)
+        time.sleep(0.3)
+    click_at(80, 30)
+    time.sleep(0.5)
     click_at(*place['help'])
     click_at(place['help'][0] - 8, place['help'][1] + 21)
     time.sleep(1)
@@ -1029,6 +1043,7 @@ if tour_started:
     click_at(80, 30)
     pixel = take_screen()
     owned_box_above = before == client_area_of_tour(pixel) and pixel(59, 30) == '7c7a76'
+    menus_survived = b'unhandled exception' not in bytes(received[menus_from:])
     press('ret')
     time.sleep(0.8)
     press('ctrl-m')
@@ -1102,6 +1117,8 @@ checks.append(('controls tour: toolbar, list box, combo box', tour_ok and b'tool
                b'list Item 3' in log_from_here and b'combo Second' in log_from_here))
 checks.append(('controls tour: menu, message box, accelerator', tour_ok and b'menu About' in log_from_here and
                b'answer 1' in log_from_here and b'answer 2' in log_from_here))
+checks.append(('controls tour: switching menus with the mouse, closing one by a press outside',
+               tour_ok and menus_survived and b'menu About' in log_from_here))
 checks.append(('controls tour: menus from the keyboard (Alt+H, a mnemonic letter, F10, Alt alone)',
                tour_ok and log_from_here.count(b'menu About') == 5 and log_from_here.count(b'answer 1') == 5))
 checks.append(('owned windows: a message box stays above its disabled owner and keeps the keyboard',

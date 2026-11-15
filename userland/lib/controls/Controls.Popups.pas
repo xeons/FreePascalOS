@@ -39,10 +39,14 @@ uses
   Controls.Window;
 
 type
+  { Answers a press outside the pop-up: True when the answer is taken
+    care of, False to have the pop-up simply dismissed. }
+  TPressedOutsideEvent = function(X, Y: LongInt; Button: LongWord): Boolean of object;
+
   TPopupWindow = class(TControlWindow)
   private
-    FOwnerWindow: TControlWindow;
     FOnDismiss: TControlEvent;
+    FOnPressedOutside: TPressedOutsideEvent;
     FClosing: Boolean;
   protected
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
@@ -59,8 +63,15 @@ type
       (posted), so a handler may close it from within its own events. }
     procedure Dismiss;
     function ContainsPixel(X, Y: LongInt): Boolean;
-    property OwnerWindow: TControlWindow read FOwnerWindow;
+    { The window it opened from; nil once that window is gone. (It is the
+      window system's owner link, which forgets a freed owner, so it can
+      never point at a freed window.) }
+    function OwnerWindow: TControlWindow;
     property OnDismiss: TControlEvent read FOnDismiss write FOnDismiss;
+    { Lets what the pop-up shows decide what a press outside it means (a
+      menu passes a press on its menu bar's headings on, and closes the
+      menus it came from too). }
+    property OnPressedOutside: TPressedOutsideEvent read FOnPressedOutside write FOnPressedOutside;
   end;
 
 implementation
@@ -90,16 +101,20 @@ end;
 
 constructor TPopupWindow.CreatePopup(AOwner: TControlWindow; Left, Top, Width, Height: LongInt);
 begin
-  FOwnerWindow := AOwner;
   { Owned by the window it pops up from, which it stays above. }
   inherited Create('', Left, Top, Width, Height, WindowTopmost or WindowNoActivate, AOwner);
 end;
 
 destructor TPopupWindow.Destroy;
 begin
-  if (FOwnerWindow <> nil) and (FOwnerWindow.Popup = Self) then
-    FOwnerWindow.Popup := nil;
+  if (OwnerWindow <> nil) and (OwnerWindow.Popup = Self) then
+    OwnerWindow.Popup := nil;
   inherited Destroy;
+end;
+
+function TPopupWindow.OwnerWindow: TControlWindow;
+begin
+  Result := TControlWindow(Owner);
 end;
 
 function TPopupWindow.ContainsPixel(X, Y: LongInt): Boolean;
@@ -109,8 +124,8 @@ end;
 
 procedure TPopupWindow.Popup;
 begin
-  if FOwnerWindow <> nil then
-    FOwnerWindow.Popup := Self;
+  if OwnerWindow <> nil then
+    OwnerWindow.Popup := Self;
   Show;
   SetCapture(True);
 end;
@@ -122,8 +137,8 @@ begin
   FClosing := True;
   SetCapture(False);
   Hide;
-  if (FOwnerWindow <> nil) and (FOwnerWindow.Popup = Self) then
-    FOwnerWindow.Popup := nil;
+  if (OwnerWindow <> nil) and (OwnerWindow.Popup = Self) then
+    OwnerWindow.Popup := nil;
   if Assigned(FOnDismiss) then
     FOnDismiss(Root);
   if Reaper = nil then
@@ -135,6 +150,8 @@ procedure TPopupWindow.PointerDown(X, Y: LongInt; Button: LongWord);
 begin
   if not ContainsPixel(X, Y) then
   begin
+    if Assigned(FOnPressedOutside) and FOnPressedOutside(X, Y, Button) then
+      Exit;
     Dismiss;
     Exit;
   end;
