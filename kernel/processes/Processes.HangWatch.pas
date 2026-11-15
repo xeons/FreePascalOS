@@ -152,6 +152,32 @@ begin
   VisitProcessThreads(Process, @DescribeThread, nil);
 end;
 
+var
+  KernelTextEnd: Byte; external name 'KernelTextEnd';
+
+{ The words on the interrupted stack that point into the kernel's code:
+  mostly return addresses, so a rough call chain. }
+procedure WriteLikelyCallers(Processor: PProcessor);
+const
+  KernelTextStart = QWord($FFFFFFFF80000000);
+var
+  Index: LongWord;
+  Value: QWord;
+begin
+  if Processor^.InterruptedStackWords = 0 then
+    Exit;
+  DebugWrite(', called from');
+  for Index := 0 to Processor^.InterruptedStackWords - 1 do
+  begin
+    Value := Processor^.InterruptedStack[Index];
+    if (Value >= KernelTextStart) and (Value < QWord(@KernelTextEnd)) then
+    begin
+      DebugWrite(' 0x');
+      DebugWriteHex(Value, 1);
+    end;
+  end;
+end;
+
 procedure DescribeProcessors;
 var
   Index: LongWord;
@@ -173,6 +199,7 @@ begin
     DebugWriteDecimal(Processor^.RunningThread^.RunTicks);
     DebugWrite(' ticks), last at 0x');
     DebugWriteHex(Processor^.InterruptedAddress, 1);
+    WriteLikelyCallers(Processor);
     DebugWriteLine('');
   end;
 end;

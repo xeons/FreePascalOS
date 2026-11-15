@@ -71,13 +71,41 @@ var
   TickCount: QWord;
   WallClockAtStart: TUnixTime;
 
+{ Where the clock found the processor, for the hang dump: the address,
+  and in kernel mode the top of the stack (within the running thread's
+  stack). }
+procedure RecordInterruptedPlace(Frame: PTrapFrame);
+const
+  KernelModeMask = 3;
+var
+  Processor: PProcessor;
+  Words: QWord;
+  StackTop: QWord;
+  Index: LongWord;
+begin
+  Processor := CurrentProcessor;
+  Processor^.InterruptedAddress := Frame^.Rip;
+  Processor^.InterruptedStackWords := 0;
+  if (Frame^.Cs and KernelModeMask) <> 0 then
+    Exit;
+  StackTop := Processor^.RunningThread^.StackTop;
+  if (Frame^.Rsp >= StackTop) or (Frame^.Rsp < Processor^.RunningThread^.StackBase) then
+    Exit;
+  Words := (StackTop - Frame^.Rsp) div 8;
+  if Words > Length(Processor^.InterruptedStack) then
+    Words := Length(Processor^.InterruptedStack);
+  for Index := 0 to Words - 1 do
+    Processor^.InterruptedStack[Index] := PQWord(Frame^.Rsp + Index * 8)^;
+  Processor^.InterruptedStackWords := Words;
+end;
+
 procedure HandleClockInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
   { Every processor has its own clock interrupt (for its time slices);
     only the boot processor's counts time. Only it writes the tick count,
     and an aligned 64-bit store is atomic, so readers never see a torn
     value. }
-  CurrentProcessor^.InterruptedAddress := Frame^.Rip;
+  RecordInterruptedPlace(Frame);
   if CurrentProcessor^.Index = 0 then
   begin
     TickCount := TickCount + 1;

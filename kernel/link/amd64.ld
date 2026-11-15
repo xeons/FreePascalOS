@@ -43,6 +43,7 @@ SECTIONS
     .text ALIGN(4K) :
     {
         *(.text .text.*)
+        KernelTextEnd = .;
     } :text
 
     .rodata ALIGN(4K) :

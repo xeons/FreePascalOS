@@ -124,7 +124,6 @@ how the existing pieces fit together.
       trampoline, interrupt controllers, PCI configuration and MSI-X restored,
       every driver brought back (AHCI, NVMe, virtio, xHCI and its USB devices,
       HD Audio, AC'97, serial, PS/2, display)
-- [ ] The virtio test volume (ext4) is read-only before any suspend: find out why
 - [ ] Wake sources beyond the power button (RTC alarm, USB, network); MTRRs on
       secondary processors after waking
 - [ ] More from the ACPI namespace: embedded controller regions, battery and
@@ -262,3 +261,8 @@ how the existing pieces fit together.
 - [x] System disk (ext4, FPOSROOT) built from the userland without root rights
 - [ ] Continuous integration running `make test`
 - [ ] GDB helper script (load symbols, break on panic)
+- [ ] Rare hang under TCG (about 1 run in 10, seen twice): during the sound tests
+      two threads (sh creating a process, tone writing to /dev/audio) spin in
+      CpuRelax with the other processors idle. The hang dump now prints the
+      kernel return addresses on the spinning stack: catch it again and follow
+      them
