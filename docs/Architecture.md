@@ -917,8 +917,10 @@ the request that creates the window (or, after a resize, gives it a new
 surface); after drawing, the program names the rectangle it changed.
 Positions on the screen travel in logical units, surfaces in pixels.
 
-The server keeps the windows in stacking order (topmost ones, such as a
-taskbar will be, stay above), draws their frames itself (a raised
+The server keeps the windows in stacking order, in three layers:
+desktop windows (`WindowDesktop`, the shell's) at the bottom, then
+ordinary windows, then topmost ones (the taskbar, pop-ups); raising a
+window brings it to the top of its layer only. It draws their frames itself (a raised
 bevel, a title bar with a gradient, the title in a bold face of the
 theme's text family picked by point size and DPI, minimize, maximize
 and close buttons; all sizes from the theme's metrics in logical units,
@@ -935,8 +937,8 @@ Pressing a button activates a window; on its frame it starts a drag:
 the title bar moves the window live, a border or corner shows an outline
 of the new size and asks the program for it when let go (it answers
 with a new surface), the title buttons act when let go over them (close
-asks the program, maximize fills the screen below the title bar and
-back, minimize hides). A window dropped on another display takes its
+asks the program, maximize fills the display's work area below the
+title bar and back, minimize minimizes: see the shell below). A window dropped on another display takes its
 scale. The title button under the pointer is drawn hot (a lighter
 face), and pressed (sunken, its glyph pushed a pixel in) while the
 button is held over it; moving off it lets it up, and letting go there
@@ -1088,16 +1090,66 @@ tells a display's size, scale, DPI and place on the desktop
 change a display); `displaymode` alone prints every display.
 `Windowing.Displays` in libwindowing wraps these requests.
 
-The protocol's numbers: requests 1 to 19 (hello to the window requests
+The shell (`Server.Shell`): one program may register as the shell
+(`RequestRegisterShell`, answered by `EventShellRegistered`; a second is
+refused while the first lives). It hears about every top-level window
+of the other programs (framed, owned by no window, not a desktop):
+`EventShellWindowChanged` with its title, display and state (shown,
+minimized, active, which counts its dialog having the keyboard,
+maximized, resizable), `EventShellWindowGone` when it goes or is given
+an owner. Rather than every place that changes a window telling the
+shell, the server compares each window with what the shell last heard
+of it (kept in the window) once per turn of its loop and sends what
+differs. `RequestManageWindow` activates, minimizes, restores,
+maximizes or asks to close a window (`Manage*`): the shell's for any
+window, any program's for its own (`TWindow.Minimize`, `Maximize`,
+`Restore`). Minimizing is a state (`Server.WindowStates`): the window
+is hidden with the windows it owns, its program hears it
+(`EventVisibilityChanged`), and it stays in the shell's list as
+minimized until shown again, by its program or the shell (activating a
+minimized window restores it); a program hiding its window itself is
+not minimizing. The shell hears `EventDisplaysChanged` when the
+displays are laid out again.
+
+Work areas (`Server.WorkAreas`): the shell keeps strips of a display
+for itself (`RequestSetWorkArea` with the display's number and the
+rectangle left, in logical units of the desktop). Each display keeps
+them as the widths of the strips at its four edges, in logical units at
+its scale, so they stay the same logical size when the scale or the
+mode changes, as a taskbar does. Maximized windows fill the work area
+(and are maximized again when it changes), a new framed window is moved
+into it as far as it fits (only on a display with strips kept), and any
+program can ask for it (`RequestDescribeWorkArea`, answered by
+`EventWorkArea`; `DescribeWorkArea` in `Windowing.Displays`). Without a
+shell, or when it ends, every display is whole.
+
+Notification icons (`Server.Notifications`): any program may show a
+small icon with a tooltip in the shell's notification area
+(`RequestSetNotificationIcon`: its own number for the icon, shown or
+taken away, a picture and the tooltip; `Windowing.Notifications`). The
+picture is one the shell draws (`NotificationPicture*`: information, a
+warning, the volume, the network), so no pixels travel. The server
+keeps the icons, numbered its own way since programs' numbers may
+clash, passes them to the shell (`EventNotificationIconChanged`, all of
+them when a shell registers) and drops a program's icons when it ends.
+
+The protocol's numbers: requests 1 to 24 (hello to the window requests
 up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestSetOwner` = 16, `RequestSetPointerShape` = 17,
-`RequestGetMouseSettings` = 18, `RequestSetMouseSettings` = 19), events
-101 to 116 (up to `EventScaleChanged` = 112; `EventDisplayDescribed` =
-113, `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
-`EventMouseSettings` = 116).
+`RequestGetMouseSettings` = 18, `RequestSetMouseSettings` = 19,
+`RequestRegisterShell` = 20, `RequestSetWorkArea` = 21,
+`RequestDescribeWorkArea` = 22, `RequestManageWindow` = 23,
+`RequestSetNotificationIcon` = 24), events 101 to 122 (up to
+`EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
+`EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
+`EventMouseSettings` = 116, `EventShellRegistered` = 117,
+`EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
+`EventWorkArea` = 120, `EventDisplaysChanged` = 121,
+`EventNotificationIconChanged` = 122).
 
 `wintest` shows a window and prints what happens to it (its place, a
-new scale; `-b` sets a text beam over its left half, a pointer area).
+new scale, being shown or hidden; `-b` sets a text beam over its left
+half, a pointer area; `-n` puts an icon in the notification area).
 The input test starts the server (with `--check-moves`) and two of
 them, and with the USB tablet (exact positions) checks the stacking and
 the active title bar, the text beam over the pointer area, a drag by
@@ -1142,7 +1194,10 @@ sees it. The loop waits on the server's channel, the posted message
 event and the window timers (timer objects) at once.
 
 A window can be given an owner when it is made, or later (`Owner`),
-which it then stays above, and can be disabled (`Enabled`). `Visible`
+which it then stays above, and can be disabled (`Enabled`). A program
+can change its window's size itself (`SetClientSize`: a new surface,
+`Resized`, painted whole before the server shows it) and minimize,
+maximize or restore it (`Minimize`, `Maximize`, `Restore`). `Visible`
 follows what the server says (`VisibilityChanged`), so a window hidden
 along with its owner, or minimized, is not `Visible`. `SetPointerShape`
 and `SetPointerShapeInArea` choose the pointer's shape over the client
@@ -1264,7 +1319,16 @@ its window is whenever it moves (`EventMoved`, `ScreenLeft` and
 pointer and passes what happens over its parents and the menu bar to
 them.
 
-Pop-ups are owned by the window they open from.
+Pop-ups are owned by the window they open from. Opening one ends the
+press that opened it in the owner (`TControlWindow.Popup`): the pop-up
+holds the pointer, so that press never sees its release, and the
+owner's moves after the pop-up closes go to the control under the
+pointer again. `MeasurePopupMenu` and `PopupMenuItemTop` tell how big a
+pop-up menu will be and where its items are, so it can be opened where
+it fits (above a taskbar). Tooltips (`Controls.Tooltips`): a line of
+text in a small box (`Theme.Tooltip`) without a frame, owned by the
+window it describes and placed above the point it is about, kept on the
+display; when to show and hide it is the caller's.
 
 Dialogs (`Controls.Dialogs`): a dialog takes an owner, the window it asks
 for: it is centred on it (on the screen without one) and stays above it.
@@ -1369,6 +1433,83 @@ Its message boxes are owned by its window: the test clicks the window's
 title bar while one is open and checks that nothing in the window's
 client area changed (the box is still above it), that its title bar
 stayed inactive, and that Enter still went to the box.
+
+### The desktop shell
+
+`desktop` (units in `userland/desktop`) is the display server's shell:
+it registers for the role through `Windowing.Shell` (`RegisterAsShell`;
+the server's events about other programs' windows, the displays and the
+notification icons reach `OnShellEvent` from the message loop, since
+they are about no window of its own) and refuses to start while another
+shell runs.
+
+The desktop (`Desktop.DesktopWindow`): a desktop window (`WindowDesktop`)
+covers each display, so it stays below everything else and is never
+raised over a window, though clicking it gives it the keyboard. Its
+wallpaper (`Desktop.Wallpaper`) is a drawn design: a night-blue sky
+lightening downwards, a pale moon with a halo and three translucent
+bands of rolling water, all anti-aliased, drawn once per size into a
+surface of its own and copied from when the window paints. `-w IMAGE`
+names a wallpaper image, kept for when libimage can read one (step 8).
+On the first display the programs' icons (`Desktop.Programs`: Terminal,
+Notepad, Controls tour, Controls demo, Dialogs) stand in a grid of
+equal cells in columns from the top left, all in logical units: a
+picture above a caption, the selected one tinted with its caption on
+the selection colour. A click selects, a double click (two presses
+within 500 ms) or Enter starts the program, the arrow keys move the
+selection. A program is started with `StartProgram` in a process group
+of its own; one that is not installed, or cannot start, is reported in
+a message box. The pictures (`Desktop.ProgramPictures`,
+`Desktop.SmallPictures`) are the shell's own designs on a 32-step grid
+(`Desktop.Shapes`: rounded boxes, polygons, lines, discs and rings in
+design units, scaled to the box with libdrawing's anti-aliased shapes).
+
+The taskbar (`Desktop.Taskbar`): a topmost window that never takes the
+keyboard, 30 logical units high along the bottom of the first display,
+which the shell keeps out of that display's work area
+(`SetWorkArea`), so maximized windows stop above it. It is placed again
+(and the desktops too) when the server says the displays changed. The
+Start button (`Desktop.StartButton`: a sunrise mark and a bold caption,
+pressed in while its menu is open) opens the Start menu on the press
+(`Desktop.StartMenu`: the programs, then Shut down, opened just above
+the taskbar); Shut down asks in a message box, then calls the system's
+shutdown; logging off comes with sessions (step 7). The window list
+(`Desktop.WindowList`) follows the server's events; each window shown or
+minimized has a button (`Desktop.TaskButtons`: a small window mark and
+the title; pressed in on a lighter face, its title bold, for the active
+window; the title greyed when minimized), the buttons sharing the room
+between the Start button and the notification area, at most 160
+logical units each. Since the taskbar never has the keyboard, a click
+leaves the active window active: on its button it minimizes it, on
+another's it activates that window (restoring it if minimized). A right
+click, when let go, opens Restore, Minimize, Maximize and Close for that
+window (each greyed when it cannot be done). The notification area
+(`Desktop.NotificationArea`) is a sunken panel with the icons, left to
+right in the order they came, and the clock (`Desktop.Clock`: HH:MM in
+UTC, since the system has no time zone setting yet), checked every
+second; a tooltip shows when the pointer has rested on an icon for half
+a second. The shell shows one icon of its own through the same
+interface as any program: a volume placeholder until there is a mixer
+to open.
+
+`desktop` prints what happens (`task N STATE TITLE` and `task-gone N`
+for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
+HH:MM`, `notification N TEXT`, `tooltip TEXT`) and where things are
+(`place NAME X Y`: the Start button and menu items, the icons, the task
+buttons and their menu's items, the clock, the notification icons). The
+input test starts the server and the shell and checks the wallpaper on
+both displays, the taskbar, the Start button, the clock and the volume
+icon in screen dumps, that a second shell is refused; that a `wintest`
+window gets a button (and its `-n` icon), that a click on the wallpaper
+takes the keyboard from it and its button gives it back, that its
+button then minimizes it (hidden, the program told) and restores it;
+that maximized it is 1280x752 (the work area less its title bar) with
+the taskbar still showing, and that its button's menu restores it; that
+a new window low on the screen is moved up into the work area; that a
+double click on an icon starts controlstour, whose button's menu closes
+it; that the Start menu starts dialogtour and that Shut down asks first
+(Escape says no); and that wintest's icon shows its tooltip and goes
+when wintest ends.
 
 ## Sound
 

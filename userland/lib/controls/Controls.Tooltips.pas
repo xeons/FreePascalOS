@@ -1,0 +1,124 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  Tooltips: a line of text in a small box that shows what something is
+  while the pointer rests on it.
+
+  A tooltip is a window without a frame that never takes the keyboard,
+  owned by the window it describes (so above it, and topmost with a
+  topmost one such as a taskbar). It is placed above the point it is
+  about, centred on it and kept on the display, so it does not come
+  between the pointer and the thing pointed at. A program has one
+  tooltip at a time: showing another replaces it. When to show and hide
+  it (after the pointer has rested a moment, when it leaves) is the
+  caller's.
+}
+unit Controls.Tooltips;
+
+{$mode objfpc}
+{$H+}
+
+interface
+
+uses
+  Windowing.Windows;
+
+{ Shows Text for Owner, centred on X with its bottom just above Y
+  (screen positions, logical units). }
+procedure ShowTooltip(Owner: TWindow; const Text: string; X, Y: LongInt);
+procedure HideTooltip;
+function TooltipShown: Boolean;
+
+implementation
+
+uses
+  Drawing.Rectangles,
+  Drawing.Canvas,
+  Windowing.Protocol,
+  Windowing.Theme,
+  Windowing.Connection,
+  Windowing.Displays,
+  Controls.Text;
+
+const
+  { Logical units: around the text, and between the box and the point. }
+  Padding = 4;
+  Gap = 2;
+
+type
+  TTooltipWindow = class(TWindow)
+  private
+    FText: string;
+  protected
+    procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
+  public
+    constructor CreateTooltip(Described: TWindow; const AText: string; Left, Top, Width, Height: LongInt);
+  end;
+
+var
+  Tooltip: TTooltipWindow;
+
+constructor TTooltipWindow.CreateTooltip(Described: TWindow; const AText: string; Left, Top, Width, Height: LongInt);
+begin
+  FText := AText;
+  inherited Create('', Left, Top, Width, Height, WindowTopmost or WindowNoActivate, Described);
+end;
+
+procedure TTooltipWindow.Paint(var Canvas: TCanvas; const Area: TRectangle);
+var
+  Box: TRectangle;
+begin
+  Box := MakeRectangle(0, 0, PixelWidth, PixelHeight);
+  FillRectangle(Canvas, Box, Theme.Tooltip);
+  DrawRectangleOutline(Canvas, Box, Theme.DarkShadow);
+  DrawTextInBox(Canvas, ControlFace, FText, InflateRectangle(Box, -Scaled(Padding)), AlignTextCenter,
+    Theme.TooltipText);
+end;
+
+procedure ShowTooltip(Owner: TWindow; const Text: string; X, Y: LongInt);
+var
+  Width: LongInt;
+  Height: LongInt;
+  Left: LongInt;
+  Top: LongInt;
+begin
+  HideTooltip;
+  if Owner <> nil then
+    Owner.PrepareToReceive;
+  Width := Unscaled(TextWidth(ControlFace, Text)) + 2 * Padding;
+  Height := Unscaled(TextHeight(ControlFace)) + 2 * Padding;
+  Left := X - Width div 2;
+  Top := Y - Gap - Height;
+  KeepOnDisplay(Left, Top, Width, Height);
+  Tooltip := TTooltipWindow.CreateTooltip(Owner, Text, Left, Top, Width, Height);
+  Tooltip.Show;
+end;
+
+procedure HideTooltip;
+begin
+  Tooltip.Free;
+  Tooltip := nil;
+end;
+
+function TooltipShown: Boolean;
+begin
+  Result := Tooltip <> nil;
+end;
+
+end.

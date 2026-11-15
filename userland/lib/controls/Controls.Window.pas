@@ -104,6 +104,7 @@ type
     function RunAccelerator(Code, Modifiers: LongWord): Boolean;
     function RunMnemonic(Character, Modifiers: LongWord): Boolean;
     procedure ToggleMenuMode;
+    procedure SetPopup(Value: TControlWindow);
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
@@ -133,7 +134,7 @@ type
     property CancelControl: TControl read FCancelControl write FCancelControl;
     { An open pop-up (a menu, a dropped list): it gets this window's keys
       (Controls.Popups sets it). }
-    property Popup: TControlWindow read FPopup write FPopup;
+    property Popup: TControlWindow read FPopup write SetPopup;
     { The window's menu bar, if it has one (it sets this itself). }
     property MenuBar: TWindowMenuBar read FMenuBar write FMenuBar;
   end;
@@ -267,6 +268,17 @@ begin
   { In pixels exactly: through logical units a pixel might be lost. }
   FRoot.SetPixelBounds(MakeRectangle(0, 0, PixelWidth, PixelHeight));
   inherited Resized;
+end;
+
+procedure TControlWindow.SetPopup(Value: TControlWindow);
+begin
+  FPopup := Value;
+  { The pop-up holds the pointer from now on, so the press that opened it
+    (a menu heading, a Start button) never sees its release here: it ends
+    now, or the moves after the pop-up closes would still go to that
+    control rather than to the one under the pointer. }
+  if Value <> nil then
+    FPressed := nil;
 end;
 
 procedure TControlWindow.FocusControl(Control: TControl);

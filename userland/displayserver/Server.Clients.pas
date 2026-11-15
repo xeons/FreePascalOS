@@ -26,9 +26,12 @@
   are dropped rather than holding up everyone else.
 
   Besides their windows, programs ask about the displays (each one's
-  place, size, scale and modes) and change a display's scale or mode;
-  places they give and are told are logical units of the desktop
-  (Server.Desktop).
+  place, size, scale, modes and work area) and change a display's scale
+  or mode; places they give and are told are logical units of the
+  desktop (Server.Desktop). One of them may be the shell
+  (Server.Shell), which alone sets work areas and manages other
+  programs' windows; any program may put icons in its notification area
+  (Server.Notifications).
 }
 unit Server.Clients;
 
@@ -75,7 +78,11 @@ uses
   Server.Scale,
   Server.Modes,
   Server.MouseSettings,
-  Server.PointerAreas;
+  Server.PointerAreas,
+  Server.WorkAreas,
+  Server.WindowStates,
+  Server.Shell,
+  Server.Notifications;
 
 procedure SendToClient(Client: PClient; var Message: TWindowMessage);
 begin
@@ -111,6 +118,8 @@ begin
   for Index := WindowCount - 1 downto 0 do
     if (Index < WindowCount) and (Windows[Index]^.Client = Client) then
       DestroyWindow(Windows[Index]);
+  ForgetClientNotificationIcons(Client);
+  ForgetClientInShell(Client);
   CloseHandle(Client^.Channel);
   for Index := 0 to ClientCount - 1 do
     if Clients[Index] = Client then
@@ -179,8 +188,11 @@ begin
   Reply := NewMessage(EventWindowCreated, Window^.Id);
   SendToClient(Client, Reply);
   { The program drew it at display 0's scale (what it was welcomed with);
-    on another display it is told that one's. }
+    on another display it is told that one's. Then it is kept out of the
+    shell's taskbar. }
   Window^.ScreenNumber := 0;
+  SettleWindowOnScreen(Window);
+  PlaceWindowInWorkArea(Window);
   SettleWindowOnScreen(Window);
 end;
 
@@ -225,6 +237,40 @@ begin
   SendToClient(Client, Reply);
 end;
 
+procedure DescribeWorkArea(Client: PClient; Number: LongInt);
+var
+  Reply: TWindowMessage;
+  Screen: PScreen;
+  Area: TRectangle;
+begin
+  Reply := NewMessage(EventWorkArea, 0);
+  Reply.Code := LongWord(Number);
+  Screen := ScreenByNumber(Number);
+  if Screen <> nil then
+  begin
+    Area := LogicalWorkArea(Screen);
+    Reply.Flags := DisplayExists;
+    Reply.Left := Area.Left;
+    Reply.Top := Area.Top;
+    Reply.Width := RectangleWidth(Area);
+    Reply.Height := RectangleHeight(Area);
+  end;
+  SendToClient(Client, Reply);
+end;
+
+procedure AnswerShellRegistration(Client: PClient);
+var
+  Reply: TWindowMessage;
+begin
+  Reply := NewMessage(EventShellRegistered, 0);
+  Reply.Value := Ord(RegisterShell(Client));
+  SendToClient(Client, Reply);
+  { Its windows' list follows from the server's loop (Server.Shell);
+    the icons there are already are told now. }
+  if Reply.Value <> 0 then
+    TellShellAllNotificationIcons;
+end;
+
 procedure SendWelcome(Client: PClient);
 var
   Reply: TWindowMessage;
@@ -250,8 +296,9 @@ begin
 end;
 
 { The requests about no window in particular (Window 0): the greeting,
-  the displays and the mouse's settings; False if Message is not one. }
-function CarryOutDisplayRequest(Client: PClient; const Message: TWindowMessage): Boolean;
+  the displays, the mouse's settings, the shell and notification icons;
+  False if Message is not one. }
+function CarryOutDisplayRequest(Client: PClient; var Message: TWindowMessage): Boolean;
 var
   Screen: PScreen;
 begin
@@ -285,6 +332,21 @@ begin
           (Message.Flags and MouseLeftHanded) <> 0);
         SendMouseSettings(Client);
       end;
+    RequestRegisterShell:
+      AnswerShellRegistration(Client);
+    RequestSetWorkArea:
+      begin
+        Screen := ScreenByNumber(LongInt(Message.Code));
+        if (Screen <> nil) and IsShell(Client) then
+          SetWorkArea(Screen, MakeRectangle(Message.Left, Message.Top, Message.Width, Message.Height));
+      end;
+    RequestDescribeWorkArea:
+      DescribeWorkArea(Client, LongInt(Message.Code));
+    RequestSetNotificationIcon:
+      begin
+        Message.Text[TitleCapacity - 1] := #0;
+        SetNotificationIcon(Client, Message.Code, Message.Value <> 0, Message.Flags, @Message.Text[0]);
+      end;
   else
     Result := False;
   end;
@@ -308,6 +370,16 @@ begin
     if Handle < 0 then
       Exit;
     CreateWindowFor(Client, Message, Handle);
+    Exit;
+  end;
+  if Message.Kind = RequestManageWindow then
+  begin
+    if Handle >= 0 then
+      CloseHandle(Handle);
+    { The shell manages any window; a program its own. }
+    Window := FindWindow(Message.Window);
+    if (Window <> nil) and ((Window^.Client = Pointer(Client)) or IsShell(Client)) then
+      ManageWindow(Window, Message.Code);
     Exit;
   end;
   Window := OwnWindow(Client, Message);

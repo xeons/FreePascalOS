@@ -1195,6 +1195,185 @@ checks.append(('common dialogs: save a file (a name typed; replacing refused)',
 checks.append(('common dialogs: choose a colour and a font',
                dialogs_ok and b'color 00FF00' in log_from_here and b'font 110 bold' in log_from_here))
 
+# The desktop shell (desktop): a wallpaper on both displays (its sky
+# starts 0f2c42 at the top), the taskbar along the bottom of the first (30 high: 770-799) with the
+# Start button, the clock and the shell's own notification icon (a
+# loudspeaker); a second shell is refused. A window (wintest First,
+# with a notification icon of its own) gets a taskbar button: a click
+# on the wallpaper takes the keyboard from it, a click on its button
+# gives it back, another minimizes it (it is hidden, the program told)
+# and a third restores it. Maximized, it stops above the taskbar
+# (1280x752: the work area less the title bar), and its button's menu
+# restores it. A new window low on the screen is moved into the work
+# area. A double click on an icon starts controlstour, whose button's
+# menu closes it; the Start menu starts dialogtour, and its Shut down
+# asks first (Escape says no). The pointer resting on wintest's icon
+# shows its tooltip; when wintest ends, its icon and button go.
+def colour_near(colour, expected, tolerance):
+    if len(colour) != 6:
+        return False
+    return all(abs(int(colour[i:i + 2], 16) - int(expected[i:i + 2], 16)) <= tolerance for i in (0, 2, 4))
+
+
+def near_pixels(pixel, x, y, reach):
+    return [pixel(px, py) for px in range(x - reach, x + reach + 1) for py in range(y - reach, y + reach + 1)]
+
+
+def shell_places(marker):
+    type_on_serial(b'm=DONE; cat /tmp/s.log; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 10)
+    return places()
+
+
+def log_since(marker):
+    return bytes(received[received.rfind(marker.encode()):])
+
+
+def wait_for_shell_log(texts, seconds):
+    # The shell's log (with what the programs it started print) until it
+    # has every text since the last look: a started program may take a
+    # while to show its window.
+    start = len(received)
+    deadline = time.time() + seconds
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        shell_places('LOOK' + str(attempt))
+        if all(text.encode() in received[start:] for text in texts):
+            return True
+        time.sleep(1)
+    return False
+
+
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'desktop > /tmp/s.log &\r')
+time.sleep(8)
+first = take_screen()
+second = take_screen('video1')
+place = shell_places('SHELL')
+shell_log = log_since('SHELL $m')
+shell_started = all(name in place for name in ('start', 'icon-controlstour', 'clock', 'notification-1'))
+checks.append(('desktop: wallpaper on both displays, the taskbar along the bottom of the first',
+               shell_started and colour_near(first(640, 4), '0f2c42', 4) and colour_near(second(500, 4), '0f2c42', 4) and
+               first(640, 785) == 'cbc6bd' and second(500, 785) != 'cbc6bd'))
+clock_shown = re.search(rb'clock (\d\d):(\d\d)', shell_log)
+checks.append(('desktop: the clock shows the time',
+               shell_started and clock_shown is not None and int(clock_shown.group(1)) < 24 and
+               '000000' in near_pixels(first, place['clock'][0], place['clock'][1], 8)))
+checks.append(('desktop: the Start button and the shell\'s notification icon',
+               shell_started and '4a5360' in near_pixels(first, place['notification-1'][0],
+                                                          place['notification-1'][1], 7) and
+               first(place['start'][0], place['start'][1] - 9) == 'cbc6bd'))
+type_on_serial(b'desktop 2>&1; echo REFUSED-$?\r')
+checks.append(('desktop: a second shell is refused',
+               wait_for('another shell is running', 10) and wait_for('REFUSED-1', 10)))
+type_on_serial(b'wintest -t First -x 100 -y 100 -n Hello > /tmp/w5.log &\r')
+time.sleep(2)
+place = shell_places('FIRST')
+first_log = log_since('FIRST $m')
+first_listed = 'task-First' in place and re.search(rb'task \d+ active First', first_log) is not None
+checks.append(('desktop: a window gets a taskbar button, a notification icon its own',
+               first_listed and b'notification 2 Hello' in first_log))
+type_on_serial(b'm=DONE; echo BUTTONS $m\r')
+wait_for('BUTTONS DONE', 10)
+if first_listed:
+    click_at(640, 400)
+    click_at(*place['task-First'])
+    click_at(*place['task-First'])
+    minimized = take_screen()
+    click_at(*place['task-First'])
+    restored = take_screen()
+type_on_serial(b'm=DONE; cat /tmp/w5.log; echo MINIMIZED $m\r')
+wait_for('MINIMIZED DONE', 10)
+buttons_log = log_since('BUTTONS DONE')
+checks.append(('desktop: a taskbar button activates, minimizes and restores its window',
+               first_listed and re.search(rb'active 0\r?\nactive 1\r?\nvisible 0\r?\nactive 0\r?\nvisible 1\r?\n'
+                                          rb'active 1', buttons_log) is not None and
+               minimized(250, 200) != 'f0e8d0' and restored(250, 200) == 'f0e8d0'))
+click_at(373, 90)
+time.sleep(0.5)
+maximized = take_screen()
+type_on_serial(b'm=DONE; cat /tmp/w5.log; echo MAXIMIZED $m\r')
+wait_for('MAXIMIZED DONE', 10)
+checks.append(('desktop: a maximized window stops above the taskbar',
+               b'resized 1280 752' in log_since('BUTTONS DONE') and maximized(640, 765) == 'f0e8d0' and
+               maximized(640, 785) == 'cbc6bd'))
+place = shell_places('MENU')
+if 'task-First' in place:
+    right_click_at(*place['task-First'])
+    place = shell_places('CONTEXT')
+    if 'context-restore' in place:
+        click_at(*place['context-restore'])
+type_on_serial(b'm=DONE; cat /tmp/w5.log; echo RESTORED $m\r')
+wait_for('RESTORED DONE', 10)
+checks.append(('desktop: a taskbar button\'s menu restores its window',
+               re.search(rb'resized 1280 752\r?\n(moved 100 100\r?\n)?resized 300 200', log_since('MAXIMIZED DONE'))
+               is not None))
+type_on_serial(b'wintest -t Low -x 600 -y 700 > /tmp/w6.log &\r')
+time.sleep(2)
+type_on_serial(b'm=DONE; cat /tmp/w6.log; echo LOW $m\r')
+checks.append(('desktop: a new window is placed inside the work area',
+               wait_for('LOW DONE', 10) and b'moved 600 566' in log_since('w6.log; echo LOW')))
+place = shell_places('ICONS')
+if 'icon-controlstour' in place:
+    double_click_at(*place['icon-controlstour'])
+    wait_for_shell_log(['place help', 'place task-Controls-tour'], 30)
+place = shell_places('TOUR')
+tour_log = log_since('ICONS $m')
+checks.append(('desktop: a double click on an icon starts its program',
+               b'started controlstour' in tour_log and b'place help' in tour_log and
+               re.search(rb'task \d+ active Controls tour', tour_log) is not None))
+if 'task-Controls-tour' in place:
+    right_click_at(*place['task-Controls-tour'])
+    place = shell_places('TOURMENU')
+    if 'context-close' in place:
+        click_at(*place['context-close'])
+        wait_for_shell_log(['task-gone'], 20)
+place = shell_places('CLOSED')
+checks.append(('desktop: a taskbar button\'s menu closes its window',
+               b'context close' in log_since('TOUR $m') and
+               re.search(rb'task-gone \d+', log_since('TOURMENU $m')) is not None))
+if 'start' in place:
+    click_at(*place['start'])
+    place = shell_places('START')
+    if 'start-dialogtour' in place:
+        click_at(*place['start-dialogtour'])
+        wait_for_shell_log(['place open-button', 'place task-Dialog-tour'], 30)
+place = shell_places('STARTED')
+checks.append(('desktop: the Start menu starts a program',
+               b'menu Dialogs' in log_since('CLOSED $m') and b'started dialogtour' in log_since('CLOSED $m') and
+               b'place open-button' in log_since('CLOSED $m')))
+if 'start' in place:
+    click_at(*place['start'])
+    place = shell_places('SHUTDOWN')
+    if 'start-shutdown' in place:
+        click_at(*place['start-shutdown'])
+        time.sleep(1)
+        press('esc')
+        time.sleep(1)
+place = shell_places('ASKED')
+checks.append(('desktop: Shut down asks first, and No leaves everything running',
+               b'asking shut down' in log_since('STARTED $m') and b'shut down cancelled' in log_since('STARTED $m')))
+if 'notification-2' in place:
+    point_tablet_at(*place['notification-2'])
+    time.sleep(1.5)
+    tooltip = take_screen()
+    point_tablet_at(640, 400)
+    tooltip_x = place['notification-2'][0]
+    tooltip_shown = 'f4efd8' in [tooltip(tooltip_x, y) for y in range(745, 769)]
+else:
+    tooltip_shown = False
+type_on_serial(b'kill %3; m=DONE; echo ENDED $m\r')
+time.sleep(1.5)
+shell_places('GONE')
+checks.append(('desktop: a notification icon\'s tooltip; the icon goes with its program',
+               tooltip_shown and b'tooltip Hello' in log_since('ASKED $m') and
+               b'notification-gone 2' in log_since('ENDED $m')))
+type_on_serial(b'kill %4 %2; kill %1; wait; m=DONE; echo DESKTOP $m\r')
+checks.append(('desktop: the server ended, the console has the screen again',
+               wait_for('DESKTOP DONE', 20) and screen_pixel(2, 400) == '101830'))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

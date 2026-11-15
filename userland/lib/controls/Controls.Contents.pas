@@ -58,6 +58,7 @@ uses
   Controls.ListView,
   Controls.Dialogs,
   Controls.MessageBoxes,
+  Controls.Tooltips,
   Controls.CommonDialogs,
   Controls.FileNames,
   Controls.FolderListing,

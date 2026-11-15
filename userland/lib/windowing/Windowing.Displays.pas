@@ -59,6 +59,10 @@ function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information
 { The display's mode numbered Index (from 0, smallest first); False past
   the end. Current: the display has it now. }
 function DescribeDisplayMode(Number, Index: LongInt; out Width, Height: LongInt; out Current: Boolean): Boolean;
+{ The display's work area: what the shell's taskbar leaves of it (all
+  of it without a shell), in logical units of the desktop; False if
+  there is no such display. }
+function DescribeWorkArea(Number: LongInt; out Left, Top, Width, Height: LongInt): Boolean;
 { Moves a box Width x Height whose top left is (Left, Top), logical
   units, onto the display that point is on (or the nearest): all of it
   if it fits, its top left first. For placing dialogs and pop-ups. }
@@ -100,6 +104,27 @@ begin
   Request := NewMessage(RequestDescribeDisplay, 0);
   Request.Code := LongWord(Number);
   Result := AskForDescription(Request, Information);
+end;
+
+function DescribeWorkArea(Number: LongInt; out Left, Top, Width, Height: LongInt): Boolean;
+var
+  Request: TWindowMessage;
+  Reply: TWindowMessage;
+begin
+  Left := 0;
+  Top := 0;
+  Width := 0;
+  Height := 0;
+  Request := NewMessage(RequestDescribeWorkArea, 0);
+  Request.Code := LongWord(Number);
+  SendRequest(Request, -1);
+  if not WaitForEvent(EventWorkArea, ReplyTimeout, Reply) or ((Reply.Flags and DisplayExists) = 0) then
+    Exit(False);
+  Left := Reply.Left;
+  Top := Reply.Top;
+  Width := Reply.Width;
+  Height := Reply.Height;
+  Result := True;
 end;
 
 function CountDisplays: LongInt;

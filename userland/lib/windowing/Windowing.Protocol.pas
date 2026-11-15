@@ -60,6 +60,20 @@
   it (resize arrows on the borders). The mouse's settings (speed,
   acceleration, left-handed buttons) are the server's, read and changed
   with RequestGetMouseSettings and RequestSetMouseSettings.
+
+  One program may be the shell (RequestRegisterShell; a second is
+  refused while the first lives): it hears about the top-level windows
+  of every other program (EventShellWindowChanged, EventShellWindowGone)
+  and may activate, minimize, restore, maximize or ask to close any of
+  them (RequestManageWindow, which other programs may use on their own
+  windows). It reserves strips of the displays for itself (a taskbar:
+  RequestSetWorkArea); what is left is a display's work area, which
+  maximized windows fill and new windows are placed in
+  (RequestDescribeWorkArea). A window can be a desktop (WindowDesktop):
+  it stays below every other window. Any program may put a small icon
+  with a tooltip in the shell's notification area
+  (RequestSetNotificationIcon); the shell hears of it
+  (EventNotificationIconChanged) and draws it.
 }
 unit Windowing.Protocol;
 
@@ -133,6 +147,26 @@ const
     would be; they last until the server ends). Answered by
     EventMouseSettings with what they are now. }
   RequestSetMouseSettings = 19;
+  { Window 0: this program asks to be the shell. Answered by
+    EventShellRegistered; then the program hears about every other
+    program's top-level windows (EventShellWindowChanged for each one
+    there is, and as they change) and the notification icons. }
+  RequestRegisterShell = 20;
+  { Window 0, from the shell only; Code: a display's number; Left, Top,
+    Width, Height: its work area from now on (logical units of the
+    desktop): the rest is the shell's (a taskbar). Kept as the strips
+    left at each edge, in logical units, so it follows a new scale or
+    mode. Maximized windows on it are maximized again. Not answered. }
+  RequestSetWorkArea = 21;
+  { Window 0; Code: a display's number. Answered by EventWorkArea. }
+  RequestDescribeWorkArea = 22;
+  { Window: a window of this program, or for the shell any top-level
+    window of another; Code: Manage*, what to do with it. }
+  RequestManageWindow = 23;
+  { Window 0; Code: a number this program picks for the icon; Value: 1
+    shows it (or changes it), 0 takes it away; Flags: NotificationPicture*,
+    what it shows; Text: its tooltip. A program's icons go when it ends. }
+  RequestSetNotificationIcon = 24;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -190,6 +224,27 @@ const
     Value: the acceleration, 0 (none) to MaximumMouseAcceleration;
     Flags: MouseLeftHanded if the left and right buttons are swapped. }
   EventMouseSettings = 116;
+  { The answer to RequestRegisterShell. Value: 1 this program is the
+    shell now, 0 another program is. }
+  EventShellRegistered = 117;
+  { To the shell. Window: a top-level window (framed, owned by no window)
+    of another program, which is new or changed; Text: its title; Flags:
+    ShellWindow*; Code: the display it is on. }
+  EventShellWindowChanged = 118;
+  { To the shell. Window: a window it was told about is gone (or is no
+    longer a top-level window: it was given an owner). }
+  EventShellWindowGone = 119;
+  { The answer to RequestDescribeWorkArea. Flags: DisplayExists, or 0 if
+    there is no such display; Code: the display's number; Left, Top,
+    Width, Height: its work area (logical units of the desktop). }
+  EventWorkArea = 120;
+  { Window 0, to the shell: the displays were laid out again (a scale or
+    a mode changed); their places, sizes and work areas may be new. }
+  EventDisplaysChanged = 121;
+  { Window 0, to the shell. Code: the icon's number (the server's, the
+    same for as long as the icon lives); Value: 1 shown or changed, 0
+    gone; Flags: NotificationPicture*; Text: its tooltip. }
+  EventNotificationIconChanged = 122;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -204,6 +259,38 @@ const
   WindowTopmost = $04;
   { Showing it, or clicking it, does not take the keyboard. }
   WindowNoActivate = $08;
+  { Below every other window, always (the shell's desktop). It can have
+    the keyboard but is never raised over other windows. }
+  WindowDesktop = $10;
+
+  { --- The shell ---------------------------------------------------------- }
+
+  { What RequestManageWindow does. Activate brings the window forward
+    and gives it the keyboard (restoring it if minimized); Minimize hides
+    it, the shell keeping it in its list; Restore shows a minimized
+    window again, or else gives a maximized one its size back; Maximize
+    shows it if minimized and fills its display's work area; Close asks
+    its program to close it (EventCloseRequested). }
+  ManageActivate = 1;
+  ManageMinimize = 2;
+  ManageRestore = 3;
+  ManageMaximize = 4;
+  ManageClose = 5;
+
+  { EventShellWindowChanged's Flags. Visible: on the screen; Minimized:
+    hidden by minimizing (it comes back from the taskbar); Active: it or
+    a window it owns has the keyboard. }
+  ShellWindowVisible = $01;
+  ShellWindowMinimized = $02;
+  ShellWindowActive = $04;
+  ShellWindowMaximized = $08;
+  ShellWindowResizable = $10;
+
+  { What a notification icon shows (drawn by the shell). }
+  NotificationPictureInformation = 1;
+  NotificationPictureWarning = 2;
+  NotificationPictureVolume = 3;
+  NotificationPictureNetwork = 4;
 
   { --- Pointer shapes ---------------------------------------------------- }
 

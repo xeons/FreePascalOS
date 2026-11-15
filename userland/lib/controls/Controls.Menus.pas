@@ -164,6 +164,10 @@ type
     property OnChoose: TMenuItemEvent read FOnChoose write FOnChoose;
   end;
 
+{ The size Menu's items take in a pop-up, and where item Index starts
+  in it (logical units): to open one where it fits, above a taskbar. }
+procedure MeasurePopupMenu(Menu: TMenuItem; out Width, Height: LongInt);
+function PopupMenuItemTop(Menu: TMenuItem; Index: LongInt): LongInt;
 { Opens Menu's items at (Left, Top) of the screen (logical units) for
   Owner: a context menu. }
 function ShowPopupMenu(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt;
@@ -253,7 +257,7 @@ begin
     Result := Theme.MenuItemHeight;
 end;
 
-procedure MeasureMenu(Menu: TMenuItem; out Width, Height: LongInt);
+procedure MeasurePopupMenu(Menu: TMenuItem; out Width, Height: LongInt);
 var
   Index: LongInt;
   TextPart: LongInt;
@@ -276,6 +280,15 @@ begin
   Width := 4 + CheckColumn + TextPart + ColumnGap + ShortcutPart + ArrowColumn;
 end;
 
+function PopupMenuItemTop(Menu: TMenuItem; Index: LongInt): LongInt;
+var
+  Position: LongInt;
+begin
+  Result := 2;
+  for Position := 0 to Index - 1 do
+    Result := Result + ItemHeightOf(Menu[Position]);
+end;
+
 { A menu list in a new pop-up at (Left, Top) of the screen, logical. }
 function OpenMenuList(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt): TMenuList;
 var
@@ -283,7 +296,7 @@ var
   Height: LongInt;
   Popup: TPopupWindow;
 begin
-  MeasureMenu(Menu, Width, Height);
+  MeasurePopupMenu(Menu, Width, Height);
   { Kept on the display it opens on. }
   KeepOnDisplay(Left, Top, Width, Height);
   Popup := TPopupWindow.CreatePopup(Owner, Left, Top, Width, Height);

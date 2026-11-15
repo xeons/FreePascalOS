@@ -19,16 +19,18 @@
 {
   wintest - a window on the display server, for testing it
 
-  wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b]
+  wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b] [-n TOOLTIP]
 
   Connects to the display server and shows a framed, resizable window
   (position and size in logical units, 1/96 inch) filled with a colour,
   with its title written in it. With -b the pointer is a text beam over
-  the left half of it (a pointer area). Prints what happens to it, a
-  line each:
+  the left half of it (a pointer area). With -n it puts an icon in the
+  shell's notification area with that tooltip (it goes when wintest
+  ends). Prints what happens to it, a line each:
 
     created N              shown as window N
     active 1 / active 0    got or lost the keyboard
+    visible 1 / visible 0  shown or hidden (minimized, say)
     button B press X Y     a button on it (surface pixels)
     key 0xCODE C           a key pressed (its character, if any)
     resized W H            given a new size (it draws itself again)
@@ -64,9 +66,10 @@ uses
   Windowing.Protocol;
 
 const
-  Usage: PChar = 'Usage: wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b]'#10 +
+  Usage: PChar = 'Usage: wintest [-t TITLE] [-x LEFT] [-y TOP] [-w WIDTH] [-h HEIGHT] [-c RRGGBB] [-b] [-n TOOLTIP]'#10 +
     'Show a window on the display server and print what happens to it.'#10 +
-    '  -b  the pointer is a text beam over the left half of the window'#10;
+    '  -b  the pointer is a text beam over the left half of the window'#10 +
+    '  -n  an icon in the notification area with this tooltip'#10;
   OptionTitle = 1;
   OptionLeft = 2;
   OptionTop = 3;
@@ -74,6 +77,7 @@ const
   OptionHeight = 5;
   OptionColor = 6;
   OptionBeam = 7;
+  OptionNotification = 8;
   BeamArea = 1;
   ConnectTries = 50;
   ReplyTimeout = 5000;
@@ -93,6 +97,7 @@ var
   SurfaceWidth: LongInt;
   SurfaceHeight: LongInt;
   BeamOverLeftHalf: Boolean;
+  NotificationTooltip: PChar;
 
 procedure Say(Format: PChar; const Arguments: array of TFormatArgument);
 begin
@@ -221,6 +226,8 @@ begin
     case Message.Kind of
       EventActivated:
         Say('active %d'#10, [ArgumentNumber(Message.Value)]);
+      EventVisibilityChanged:
+        Say('visible %d'#10, [ArgumentNumber(Message.Value)]);
       EventPointerButton:
         if Message.Value <> 0 then
           Say('button %u press %d %d'#10, [ArgumentUnsigned(Message.Code), ArgumentNumber(Message.Left),
@@ -273,13 +280,16 @@ begin
   BeginOptions(Parser, [OptionDefinition('t', 'title', True, OptionTitle), OptionDefinition('x', 'left', True, OptionLeft),
     OptionDefinition('y', 'top', True, OptionTop), OptionDefinition('w', 'width', True, OptionWidth),
     OptionDefinition('h', 'height', True, OptionHeight), OptionDefinition('c', 'color', True, OptionColor),
-    OptionDefinition('b', 'beam', False, OptionBeam)], Usage);
+    OptionDefinition('b', 'beam', False, OptionBeam), OptionDefinition('n', 'notify', True, OptionNotification)],
+    Usage);
   while NextOption(Parser, Code, OptionValue) do
     case Code of
       OptionTitle:
         Title := OptionValue;
       OptionBeam:
         BeamOverLeftHalf := True;
+      OptionNotification:
+        NotificationTooltip := OptionValue;
       OptionColor:
         begin
           if not ParseHexadecimal(OptionValue, ColorValue) or (ColorValue > $FFFFFF) then
@@ -321,5 +331,14 @@ begin
   Message := NewMessage(RequestShowWindow, WindowId);
   Message.Value := 1;
   Send(Message, -1);
+  if NotificationTooltip <> nil then
+  begin
+    Message := NewMessage(RequestSetNotificationIcon, 0);
+    Message.Code := 1;
+    Message.Value := 1;
+    Message.Flags := NotificationPictureInformation;
+    SetMessageText(Message, NotificationTooltip);
+    Send(Message, -1);
+  end;
   HandleEvents;
 end.

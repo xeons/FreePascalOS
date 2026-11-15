@@ -22,7 +22,10 @@
   A window is its client area (the program's surface, mapped from the
   section the program gave, at a place on the screen in pixels) and,
   if framed, the frame around it (Server.Frames draws it). The list is
-  in stacking order, bottom first; topmost windows stay above the rest.
+  in stacking order, bottom first, in three layers: desktop windows
+  (the shell's, WindowDesktop) at the bottom, then ordinary windows, and
+  topmost windows above the rest. Raising a window brings it to the top
+  of its layer only, so a desktop never covers anything.
 
   A window is on one screen at a time (Server.Desktop: the one holding
   the middle of its frame); its frame is drawn at that screen's scale,
@@ -32,7 +35,9 @@
   dialog's is the window it asks for). An owned window is always above
   its owner: raising the owner raises the windows it owns above it, in
   the order they were in, so a dialog never disappears behind the window
-  it belongs to. An owned window counts as topmost if its owner does.
+  it belongs to. An owned window counts as topmost if its owner does;
+  one owned by a desktop window is an ordinary window (a dialog of the
+  desktop must not stay under everything).
   The owner can change later (ChangeOwner), the same rule kept.
 }
 unit Server.Windows;
@@ -77,6 +82,14 @@ type
     { It is never activated and gets no input (a modal dialog's owner). }
     Disabled: Boolean;
     Maximized: Boolean;
+    { Hidden by minimizing: the shell keeps it in its list, to restore. }
+    Minimized: Boolean;
+    { What the shell was last told about it (Server.Shell): whether it
+      was told at all, and the flags, display and title it heard. }
+    ToldShell: Boolean;
+    ToldFlags: LongWord;
+    ToldScreen: LongInt;
+    ToldTitle: array[0..TitleCapacity - 1] of Char;
     { The client area before it was maximized. }
     RestoreBounds: TRectangle;
     { The pointer's shape over the client area, and over the areas the
@@ -129,6 +142,9 @@ uses
 var
   NextWindowId: LongWord = 1;
 
+type
+  TLayer = (LayerDesktop, LayerOrdinary, LayerTopmost);
+
 { Topmost itself, or owned by a topmost window (it must stay above it). }
 function IsTopmost(Window: PServerWindow): Boolean;
 begin
@@ -139,6 +155,16 @@ begin
       Exit(True);
     Window := Window^.OwnerWindow;
   end;
+end;
+
+function LayerOf(Window: PServerWindow): TLayer;
+begin
+  if IsTopmost(Window) then
+    Result := LayerTopmost
+  else if (Window^.Flags and WindowDesktop) <> 0 then
+    Result := LayerDesktop
+  else
+    Result := LayerOrdinary;
 end;
 
 function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
@@ -165,14 +191,16 @@ begin
   Result := -1;
 end;
 
-{ Where a window goes when it is raised: the top, or below the topmost
-  windows if it is not one. }
+{ Where a window goes when it is raised: the top of its layer, below
+  every window of a higher layer. }
 function TopPlaceFor(Window: PServerWindow): LongInt;
+var
+  Layer: TLayer;
 begin
+  Layer := LayerOf(Window);
   Result := WindowCount;
-  if not IsTopmost(Window) then
-    while (Result > 0) and IsTopmost(Windows[Result - 1]) do
-      Dec(Result);
+  while (Result > 0) and (LayerOf(Windows[Result - 1]) > Layer) do
+    Dec(Result);
 end;
 
 procedure InsertAt(Window: PServerWindow; Place: LongInt);
@@ -253,13 +281,13 @@ end;
 
 procedure ChangeOwner(Window, Owner: PServerWindow);
 var
-  WasTopmost: Boolean;
+  OldLayer: TLayer;
 begin
   if (Owner = Window) or IsOwnedBy(Owner, Window) then
     Exit;
-  WasTopmost := IsTopmost(Window);
+  OldLayer := LayerOf(Window);
   Window^.OwnerWindow := Owner;
-  if (WasTopmost <> IsTopmost(Window)) or ((Owner <> nil) and (IndexOf(Window) < IndexOf(Owner))) then
+  if (OldLayer <> LayerOf(Window)) or ((Owner <> nil) and (IndexOf(Window) < IndexOf(Owner))) then
     RaiseWindow(Window);
 end;
 

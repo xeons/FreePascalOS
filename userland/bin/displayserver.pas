@@ -47,7 +47,10 @@
   Server.WindowMoves (copying a moved window), Server.TitleButtons and
   Server.DoubleClicks (title bars), Server.MouseSettings,
   Server.PointerShapes, Server.PointerFiles and Server.PointerAreas
-  (the pointer's shapes).
+  (the pointer's shapes); Server.WindowStates (minimizing and the
+  shell's commands), Server.Shell (the shell's list of windows),
+  Server.WorkAreas (what the taskbar leaves) and Server.Notifications
+  (the notification area's icons).
 }
 program DisplayServer;
 
@@ -68,6 +71,7 @@ uses
   Server.Clients,
   Server.Input,
   Server.Scale,
+  Server.Shell,
   Server.PointerFiles,
   Server.WindowMoves;
 
@@ -106,6 +110,7 @@ begin
       ServeClient(Clients[Ready - 2])
     else if Ready = -ErrorInterrupted then
       Break;
+    TellShellAboutWindows;
     RefreshPointerShape;
     Compose;
     CheckMovesAgainstFullRedraw;

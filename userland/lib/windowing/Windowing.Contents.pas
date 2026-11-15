@@ -33,6 +33,8 @@ uses
   Windowing.Displays,
   Windowing.Fonts,
   Windowing.Messages,
+  Windowing.Shell,
+  Windowing.Notifications,
   Windowing.Windows;
 
 implementation

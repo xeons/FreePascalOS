@@ -69,6 +69,10 @@ type
     NativeDpi: LongWord;
     { The title bars' font at its DPI. }
     TitleFace: PFontFace;
+    { The strips the shell keeps for itself at each edge (Left, Top,
+      Right and Bottom hold their widths), in logical units at this
+      screen's scale: the rest is its work area (Server.WorkAreas). }
+    Reserved: TRectangle;
   end;
 
 var
