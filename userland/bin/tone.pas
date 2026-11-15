@@ -19,10 +19,11 @@
 {
   tone - play a sine tone, or write it to a WAV file
 
-  tone [-o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] FREQUENCY SECONDS
+  tone [-d DEVICE | -o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] FREQUENCY SECONDS
 
   Plays FREQUENCY Hz for SECONDS seconds (a fraction is allowed) on the
-  audio device, or with -o writes it as a WAV file. RATE is 8000 to
+  audio device (DEVICE, by default /dev/audio), or with -o writes it as a
+  WAV file. RATE is 8000 to
   192000 (default 48000), FORMAT u8, s16 (the default), s24, s32 or
   float, CHANNELS 1 to 8 (default 2, all get the tone); AMPLITUDE is in
   percent (default 50).
@@ -47,9 +48,11 @@ uses
   Audio.Synthesis;
 
 const
-  Usage: PChar = 'Usage: tone [-o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] FREQUENCY SECONDS'#10 +
+  Usage: PChar = 'Usage: tone [-d DEVICE | -o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] ' +
+    'FREQUENCY SECONDS'#10 +
     'Play a sine tone of FREQUENCY Hz for SECONDS seconds, or write it to FILE'#10 +
     'as a WAV file.'#10 +
+    '  -d DEVICE     the audio device to play on (default /dev/audio)'#10 +
     '  -o FILE       write a WAV file instead of playing'#10 +
     '  -r RATE       8000 to 192000 samples a second (default 48000)'#10 +
     '  -f FORMAT     u8, s16 (default), s24, s32 or float samples'#10 +
@@ -60,6 +63,7 @@ const
   OptionAmplitude = 3;
   OptionFormat = 4;
   OptionChannels = 5;
+  OptionDevice = 6;
   ChunkFrames = 1024;
 
 { "1.5" into thousandths. }
@@ -97,6 +101,7 @@ var
   Code: Integer;
   OptionValue: PChar;
   OutputPath: PChar;
+  DevicePath: PChar;
   Rate: QWord;
   Amplitude: QWord;
   Frequency: QWord;
@@ -117,11 +122,13 @@ var
   Error: LongInt;
 begin
   OutputPath := nil;
+  DevicePath := DefaultAudioDevice;
   Rate := 48000;
   Amplitude := 50;
   Kind := SampleSigned16;
   Channels := 2;
   BeginOptions(Parser, [OptionDefinition('o', 'output', True, OptionOutput),
+    OptionDefinition('d', 'device', True, OptionDevice),
     OptionDefinition('r', 'rate', True, OptionRate),
     OptionDefinition('f', 'format', True, OptionFormat),
     OptionDefinition('c', 'channels', True, OptionChannels),
@@ -129,6 +136,7 @@ begin
   while NextOption(Parser, Code, OptionValue) do
     case Code of
       OptionOutput: OutputPath := OptionValue;
+      OptionDevice: DevicePath := OptionValue;
       OptionRate:
         if not ParseUnsigned(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
           FailWithUsageHint('the rate must be 8000 to 192000', []);
@@ -168,9 +176,9 @@ begin
   end
   else
   begin
-    Handle := OpenAudioOutput(nil);
+    Handle := OpenAudioOutput(DevicePath);
     if Handle < 0 then
-      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(DefaultAudioDevice)]);
+      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(DevicePath)]);
     Format.Rate := LongWord(Rate);
     Format.Channels := LongWord(Channels);
     Format.Kind := Kind;

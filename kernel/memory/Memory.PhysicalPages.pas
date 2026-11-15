@@ -72,6 +72,11 @@ function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 { Like AllocatePhysicalPage, but the page is filled with zeros. }
 function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 
+{ A zeroed page that ends at or below Limit (for devices that only take
+  32-bit addresses, say), or zero if there is none. Slower: it searches
+  the free list. }
+function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUsage): TPhysicalAddress;
+
 { Gives the page back, or drops one reference if it is shared. }
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
 
@@ -324,6 +329,39 @@ end;
 function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 begin
   Result := AllocatePhysicalPage(Usage);
+  if Result <> 0 then
+    ZeroMemory(PhysicalToVirtual(Result), PageSize);
+end;
+
+function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUsage): TPhysicalAddress;
+var
+  PreviousLevel: TPriorityLevel;
+  Frame: QWord;
+  Previous: QWord;
+begin
+  Result := 0;
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  Previous := NoNextFrame;
+  Frame := FreeListHead;
+  { Compared by the page's last byte, so Limit can be the top of memory. }
+  while (Frame <> NoNextFrame) and ((Frame shl PageShift) + (PageSize - 1) > Limit) do
+  begin
+    Previous := Frame;
+    Frame := FrameDatabase[Frame].NextFreeFrame;
+  end;
+  if Frame <> NoNextFrame then
+  begin
+    if Previous = NoNextFrame then
+      FreeListHead := FrameDatabase[Frame].NextFreeFrame
+    else
+      FrameDatabase[Previous].NextFreeFrame := FrameDatabase[Frame].NextFreeFrame;
+    FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
+    FrameDatabase[Frame].Usage := Usage;
+    FrameDatabase[Frame].ExtraReferences := 0;
+    Dec(FreePageCount);
+    Result := Frame shl PageShift;
+  end;
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
   if Result <> 0 then
     ZeroMemory(PhysicalToVirtual(Result), PageSize);
 end;

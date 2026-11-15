@@ -110,7 +110,10 @@ how the existing pieces fit together.
       effect chains, offline rendering)
 - [x] Sound: built-in effects (reverb, echo, equalizer, volume meter, limiter) and
       3D audio (panning, distance curves, cones, Doppler)
-- [ ] Sound: recording, AC'97, USB audio
+- [x] Sound: AC'97 output (polled)
+- [ ] Sound: recording, USB audio
+- [ ] PCI line interrupts (INTx): routing them needs the ACPI _PRT (an AML
+      interpreter); AC'97 is polled until then
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads

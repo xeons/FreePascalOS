@@ -17,17 +17,21 @@
 
 """
 Checks the sound QEMU recorded during the tests (its wav audio backend).
-The recording must hold, in order: 1000 Hz for a second, 440 Hz for half
-a second (a WAV file), 600 and 1500 Hz together for a second (two
-programs mixed), then 800, 2000 and 300 Hz for half a second each, then 1200 Hz
-# for half a second from the voice engine (voicetest play)
-(played at other rates, sample formats and channel counts).
+
+The recording must hold the tones of EXPECTED in order: stretches like
+"600+1500:1.0" (tones together, and how many seconds), separated by
+commas. Without EXPECTED, what coretest plays on the HD Audio output:
+1000 Hz for a second, 440 Hz for half a second (a WAV file), 600 and
+1500 Hz together for a second (two programs mixed), then 800, 2000 and
+300 Hz for half a second each (played at other rates, sample formats and
+channel counts), then 1200 Hz for half a second from the voice engine
+(voicetest play).
 
 Each 50 ms window is measured at the expected frequencies (Goertzel's
 algorithm); the tones clearly there make the window's set, and
 neighbouring windows with the same set make one stretch.
 
-    check-audio.py <recording.wav>
+    check-audio.py <recording.wav> [EXPECTED]
 """
 import struct
 import sys
@@ -44,7 +48,19 @@ samples = struct.unpack('<%dh' % (len(frames) // 2), frames)[::channels]
 
 import math
 
-CANDIDATES = [300, 440, 600, 800, 1000, 1200, 1500, 2000]
+DEFAULT_EXPECTED = '1000:1.0,440:0.5,600+1500:1.0,800:0.5,2000:0.5,300:0.5,1200:0.5'
+
+
+def parse_expected(text):
+    stretches = []
+    for part in text.split(','):
+        tones, seconds = part.split(':')
+        stretches.append((sorted(int(hertz) for hertz in tones.split('+')), float(seconds)))
+    return stretches
+
+
+expected = parse_expected(sys.argv[2] if len(sys.argv) > 2 else DEFAULT_EXPECTED)
+CANDIDATES = sorted({hertz for tones, _ in expected for hertz in tones})
 
 
 def amplitude(part, hertz):
@@ -71,7 +87,6 @@ for start in range(0, len(samples) - window + 1, window):
 found = [(sorted(tones), count * window / rate) for tones, count in stretches if tones and count >= 3]
 print('sound recorded: ' + ', '.join('+'.join('%d' % hertz for hertz in tones) + ' Hz for %.2f s' % seconds
                                      for tones, seconds in found))
-expected = [([1000], 1.0), ([440], 0.5), ([600, 1500], 1.0), ([800], 0.5), ([2000], 0.5), ([300], 0.5), ([1200], 0.5)]
 if len(found) != len(expected):
     sys.exit('expected %d stretches of sound' % len(expected))
 for (tones, seconds), (wanted_tones, wanted_seconds) in zip(found, expected):

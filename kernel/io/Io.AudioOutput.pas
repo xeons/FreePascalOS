@@ -81,8 +81,11 @@ type
   end;
 
 { Creates an output with its ring and device file (/dev/audio for the
-  first, audio1, ... after that). nil if memory is short. }
-function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer): PAudioOutput;
+  first, audio1, ... after that). The ring's pages end at or below
+  HighestAddress (for hardware with short addresses). nil if memory is
+  short. }
+function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer;
+  HighestAddress: QWord = High(QWord)): PAudioOutput;
 { For the driver, at dispatch level or below: the hardware went on (it
   interrupted). }
 procedure AudioPeriodsElapsed(Output: PAudioOutput);
@@ -439,7 +442,8 @@ begin
   end;
 end;
 
-function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer): PAudioOutput;
+function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer;
+  HighestAddress: QWord): PAudioOutput;
 const
   EveryoneReadWrite = $1B6; { rw-rw-rw- }
 var
@@ -476,7 +480,7 @@ begin
     Exit(nil);
   for Index := 0 to AudioPeriodCount - 1 do
   begin
-    Result^.PeriodsPhysical[Index] := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    Result^.PeriodsPhysical[Index] := AllocateZeroedPhysicalPageBelow(HighestAddress, PageUsageGeneral);
     if Result^.PeriodsPhysical[Index] = 0 then
       Exit(nil);
     Result^.Periods[Index] := PByte(PhysicalToVirtual(Result^.PeriodsPhysical[Index]));

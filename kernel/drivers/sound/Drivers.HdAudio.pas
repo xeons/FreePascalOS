@@ -449,11 +449,14 @@ end;
 procedure StopStream(Context: Pointer);
 var
   Controller: PHdAudioController;
+  Deadline: QWord;
 begin
   Controller := PHdAudioController(Context);
   Controller^.IsRunning := False;
   Write8(Controller^.Stream, StreamControl, Read8(Controller^.Stream, StreamControl) and not StreamControlRun);
-  while (Read8(Controller^.Stream, StreamControl) and StreamControlRun) <> 0 do
+  { The run bit reads back clear once the DMA engine has stopped. }
+  Deadline := ClockTickCount + MillisecondsToTicks(100);
+  while ((Read8(Controller^.Stream, StreamControl) and StreamControlRun) <> 0) and (ClockTickCount < Deadline) do
     CpuRelax;
   { The next start begins at the start of the ring. }
   SetUpStreamRegisters(Controller);

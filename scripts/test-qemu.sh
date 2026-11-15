@@ -138,13 +138,17 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-cdrom.img" ]]; then
         -device ide-cd,drive=cdrom0,bus=ide.4)
 fi
 
-# Sound: an HD Audio controller with an output codec, recorded into a WAV
-# file that the host checks afterwards.
+# Sound: an HD Audio controller with an output codec (/dev/audio) and an
+# AC'97 controller (/dev/audio1), each recorded into a WAV file that the
+# host checks afterwards.
 audio_recording="$build_directory/test-audio.wav"
-rm -f "$audio_recording"
+ac97_recording="$build_directory/test-audio-ac97.wav"
+rm -f "$audio_recording" "$ac97_recording"
 if [[ -n "$system_disk_image" ]]; then
     disk_arguments+=(-audiodev wav,id=sound0,path="$audio_recording"
-        -device intel-hda -device hda-output,audiodev=sound0)
+        -device intel-hda -device hda-output,audiodev=sound0
+        -audiodev wav,id=sound1,path="$ac97_recording"
+        -device AC97,audiodev=sound1)
 fi
 
 # ACCEL=kvm runs on the real processor (faster, and with the processor's
@@ -231,12 +235,17 @@ case "$qemu_status" in
                 exit 1
             fi
         fi
-        # The tones coretest played: 1000 Hz for a second, then 440 Hz for
-        # half a second (from a WAV file).
+        # The tones coretest played (check-audio.py lists them) on the HD
+        # Audio output, and 700 Hz for half a second on the AC'97 one.
         if [[ -n "$system_disk_image" ]]; then
             if ! grep -q '\[audio\] HD Audio .*interrupts by MSI' "$serial_log" ||
                ! python3 -I "$(dirname "$0")/check-audio.py" "$audio_recording"; then
                 echo "TEST FAILED: the sound played was not right"
+                exit 1
+            fi
+            if ! grep -q "\[audio\] AC'97" "$serial_log" ||
+               ! python3 -I "$(dirname "$0")/check-audio.py" "$ac97_recording" 700:0.5; then
+                echo "TEST FAILED: the sound played on the AC'97 output was not right"
                 exit 1
             fi
         fi

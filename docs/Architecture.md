@@ -555,6 +555,15 @@ descriptor list has an entry per period, each interrupting when played
 (by MSI; otherwise a timer polls the position). The volume is the
 converter's output amplifier.
 
+The AC'97 driver (`Drivers.Ac97`) drives Intel ICH-style controllers:
+the codec's mixer and the bus master are I/O ports, and the PCM out box
+plays a list of 32 buffer descriptors that describes the ring twice
+over. The box stops at its last valid entry, so the driver keeps moving
+that entry to just before the current one. Descriptors take 32-bit
+addresses, so the ring comes from `AllocateZeroedPhysicalPageBelow`.
+The controller only has a PCI interrupt line, which the kernel cannot
+route yet (that needs the ACPI `_PRT`), so a 10 ms timer follows it.
+
 In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
 draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
 from a quarter-sine table and a fixed point phase).
@@ -640,7 +649,8 @@ engine's tests) and `effecttest` (the effects' and 3D audio's). The tests record
 600 and 1500 Hz from two programs at once, then 800, 2000 and 300 Hz at
 22.05, 96 and 11.025 kHz as u8, float mono and s24 six-channel samples,
 then `voicetest play`: one cycle of 600 Hz at 24 kHz looped 600 times at
-twice its pitch, 1200 Hz for half a second. `scripts/check-audio.py`
+twice its pitch, 1200 Hz for half a second. Last, 700 Hz on the AC'97
+output (`/dev/audio1`), recorded into a second file. `scripts/check-audio.py`
 measures each 50 ms of the recording at the expected frequencies
 (Goertzel's algorithm) and checks the order, the tones together and the
 lengths. `voicetest` on its own renders graphs offline and checks them:
