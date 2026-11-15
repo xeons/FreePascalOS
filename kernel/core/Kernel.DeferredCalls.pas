@@ -50,6 +50,8 @@ type
     Routine: TDeferredRoutine;
     Context: Pointer;
     IsQueued: Boolean;
+    { Processors running it now (it may be queued again while it runs). }
+    RunningCount: LongInt;
   end;
 
 procedure InitializeDeferredCalls;
@@ -57,6 +59,10 @@ procedure InitializeDeferredCall(out Call: TDeferredCall; Routine: TDeferredRout
 
 { May be called at any priority level, from interrupt handlers too. }
 procedure QueueDeferredCall(var Call: TDeferredCall);
+{ Takes Call off the queue if it is there and waits until no processor
+  runs it, so its memory may go. Below DispatchLevel, and not from the
+  call itself; whoever might queue it again must be stopped first. }
+procedure CancelDeferredCall(var Call: TDeferredCall);
 
 { Runs every queued call. Called by the dispatch interrupt at
   DispatchLevel. }
@@ -86,6 +92,7 @@ begin
   Call.Routine := Routine;
   Call.Context := Context;
   Call.IsQueued := False;
+  Call.RunningCount := 0;
 end;
 
 { The queue is touched at any level, so its lock is taken with
@@ -119,7 +126,19 @@ begin
   begin
     Result := PDeferredCall(ContainingRecord(Entry, FieldOffset(PDeferredCall(nil)^.Link)));
     Result^.IsQueued := False;
+    Inc(Result^.RunningCount);
   end;
+  ReleaseSpinLockAtCurrentLevel(QueueLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure FinishCall(var Call: TDeferredCall);
+var
+  WereEnabled: Boolean;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(QueueLock);
+  Dec(Call.RunningCount);
   ReleaseSpinLockAtCurrentLevel(QueueLock);
   RestoreInterrupts(WereEnabled);
 end;
@@ -133,7 +152,29 @@ begin
     if Call = nil then
       Break;
     Call^.Routine(Call^.Context);
+    FinishCall(Call^);
   until False;
+end;
+
+procedure CancelDeferredCall(var Call: TDeferredCall);
+var
+  WereEnabled: Boolean;
+  Running: Boolean;
+begin
+  repeat
+    WereEnabled := SaveAndDisableInterrupts;
+    AcquireSpinLockAtCurrentLevel(QueueLock);
+    if Call.IsQueued then
+    begin
+      RemoveListEntry(@Call.Link);
+      Call.IsQueued := False;
+    end;
+    Running := Call.RunningCount > 0;
+    ReleaseSpinLockAtCurrentLevel(QueueLock);
+    RestoreInterrupts(WereEnabled);
+    if Running then
+      CpuRelax;
+  until not Running;
 end;
 
 end.

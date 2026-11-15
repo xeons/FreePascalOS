@@ -29,6 +29,8 @@
       the exit status must match (those using su run commands as the
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
+    * events, timers, waiting on several handles, channels, ports and a
+      section shared between two processes (ipctest),
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself, with runtime error 216 (202 for a stack overflow), and that
       one without an exception dispatcher is ended by the kernel (139).
@@ -67,7 +69,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..287] of TCommandTest = (
+  CommandTests: array[0..288] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -410,6 +412,7 @@ const
     (Command: 'echo x > /dev/full; echo $?; echo x 2>&1 > /dev/full | cat; seq 1000 | head -n 1; echo ok > /dev/null; echo $?'; ExpectedOutput: '1'#10'echo: write error: No space left on device'#10'1'#10'0'#10; ExpectedStatus: 0),
     (Command: 'taskset 1 nproc; taskset -c 0 sh -c nproc; sh -c ''taskset -pc 0 $$ | tail -n 1 | cut -d: -f2''; taskset 0x10000000 true 2>/dev/null; echo $?'; ExpectedOutput: '1'#10'1'#10' 0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'rtltest > rt.log; echo $?; grep FAIL rt.log; tail -n 1 rt.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
+    (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone: with a runtime error, or with
       status 139 when the kernel must end it (no dispatcher) ----------- }

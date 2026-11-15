@@ -48,6 +48,11 @@
   (MappingDevice): unmapping it frees nothing. The program frees it like
   memory it allocated.
 
+  A section (memory shared between processes, Objects.Sections) is
+  mapped the same way, its pages mapped at once, each with a reference
+  of its own: unmapping gives the references back, and the pages go once
+  nothing maps them and the section is gone.
+
   Below every stack lies a guard (StackGuardSize of address space, a
   region of kind RegionKindStackGuard that is never mapped and costs no
   memory), so nothing else is ever placed there: a frame too large for
@@ -96,7 +101,9 @@ type
     { Address space below a stack that is never mapped. }
     RegionKindStackGuard,
     { Device memory, mapped when the region was made. }
-    RegionKindDevice);
+    RegionKindDevice,
+    { A section's pages, mapped when the region was made. }
+    RegionKindSection);
 
   TUserRegion = record
     Start: QWord;
@@ -150,6 +157,10 @@ function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
   combined if WriteCombining (else uncached). }
 function MapDeviceIntoAddressSpace(Space: PAddressSpace; Physical: TPhysicalAddress; Length: QWord;
   Writable, WriteCombining: Boolean; out Start: QWord): LongInt;
+{ Maps PageCount pages (Pages[0..PageCount-1], each referenced again)
+  into the run time allocation area, writable if Writable. }
+function MapPagesIntoAddressSpace(Space: PAddressSpace; Pages: PPhysicalAddress; PageCount: QWord;
+  Writable: Boolean; out Start: QWord): LongInt;
 
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
@@ -441,7 +452,8 @@ begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Index := FindRegionIndex(Space, Start);
   if (Index < 0) or (Space^.Regions[Index].Start <> Start) or
-     (not AnyKind and not (Space^.Regions[Index].Kind in [RegionKindAllocation, RegionKindDevice])) then
+     (not AnyKind and not (Space^.Regions[Index].Kind in [RegionKindAllocation, RegionKindDevice,
+       RegionKindSection])) then
   begin
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
     Exit(ErrorInvalidArgument);
@@ -509,6 +521,52 @@ begin
         Break;
       end;
       Offset := Offset + PageSize;
+    end;
+    if Result <> ErrorNone then
+      RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if Result <> ErrorNone then
+    Start := 0;
+end;
+
+function MapPagesIntoAddressSpace(Space: PAddressSpace; Pages: PPhysicalAddress; PageCount: QWord;
+  Writable: Boolean; out Start: QWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+  Attributes: LongWord;
+  Mapping: LongWord;
+  Index: QWord;
+  Length: QWord;
+begin
+  Start := 0;
+  if PageCount = 0 then
+    Exit(ErrorInvalidArgument);
+  Length := PageCount shl PageShift;
+  Attributes := RegionReadable;
+  Mapping := MappingUser;
+  if Writable then
+  begin
+    Attributes := Attributes or RegionWritable;
+    Mapping := Mapping or MappingWritable;
+  end;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if not FindFreeRange(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+    Result := ErrorOutOfMemory
+  else
+    Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindSection, False);
+  if Result = ErrorNone then
+  begin
+    for Index := 0 to PageCount - 1 do
+    begin
+      if not MapPageInAddressSpace(Space^.Root, Start + (Index shl PageShift), Pages[Index], Mapping) then
+      begin
+        Result := ErrorOutOfMemory;
+        Break;
+      end;
+      { Released (as an ordinary page) when the region goes. }
+      ReferencePhysicalPage(Pages[Index]);
+      Inc(Space^.CommittedPages);
     end;
     if Result <> ErrorNone then
       RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));

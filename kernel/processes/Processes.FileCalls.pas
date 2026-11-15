@@ -678,6 +678,11 @@ begin
     HandleKindPipeReadEnd, HandleKindPipeWriteEnd: Result := HandleKindPipe;
     HandleKindProcess: Result := Abi.SystemCalls.HandleKindProcess;
     HandleKindThread: Result := Abi.SystemCalls.HandleKindThread;
+    HandleKindEvent: Result := Abi.SystemCalls.HandleKindEvent;
+    HandleKindTimer: Result := Abi.SystemCalls.HandleKindTimer;
+    HandleKindSection: Result := Abi.SystemCalls.HandleKindSection;
+    HandleKindPort: Result := Abi.SystemCalls.HandleKindPort;
+    HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
   else
     Result := Failure(ErrorBadHandle);
   end;

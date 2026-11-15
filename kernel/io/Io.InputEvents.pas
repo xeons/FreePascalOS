@@ -52,6 +52,8 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Atomic,
+  Kernel.Events,
+  Kernel.PriorityLevel,
   Kernel.Arch.Cpu,
   Kernel.SpinLock,
   Kernel.DeferredCalls,
@@ -74,6 +76,8 @@ var
   CompleteReads: TDeferredCall;
   Taken: Boolean;
   NextSource: Int64;
+  { Signaled while events wait to be read. }
+  Ready: TEvent;
 
 { Moves whole events into Request; Lock held. }
 function TakeEventsLocked(var Request: TIoRequest): QWord;
@@ -90,6 +94,8 @@ begin
     Dec(RingCount);
     Inc(Count);
   end;
+  if RingCount = 0 then
+    ResetEvent(Ready);
   Result := Count * SizeOf(TAbiInputEvent);
 end;
 
@@ -114,6 +120,15 @@ begin
       Break;
     CompleteRequest(Request^, ErrorNone);
   until False;
+  { Interrupt handlers add events but cannot signal (above dispatch
+    level): it is done here, and reset by the reader that empties the
+    ring, both under the lock, so a reset never undoes a newer signal. }
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(Lock);
+  if RingCount > 0 then
+    SignalEvent(Ready);
+  ReleaseSpinLockAtCurrentLevel(Lock);
+  RestoreInterrupts(WereEnabled);
 end;
 
 procedure AddInputEvent(var Event: TAbiInputEvent);
@@ -152,16 +167,22 @@ end;
 function OpenEvents(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   WereEnabled: Boolean;
+  PreviousLevel: TPriorityLevel;
 begin
   if Taken then
     Exit(ErrorBusy);
+  { At dispatch level, so resetting the event (which takes the
+    dispatcher lock) cannot switch threads with the lock held. }
+  PreviousLevel := RaisePriorityLevel(DispatchLevel);
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(Lock);
   RingStart := 0;
   RingCount := 0;
+  ResetEvent(Ready);
   Taken := True;
   ReleaseSpinLockAtCurrentLevel(Lock);
   RestoreInterrupts(WereEnabled);
+  LowerPriorityLevel(PreviousLevel);
   Result := ErrorNone;
 end;
 
@@ -174,14 +195,18 @@ end;
 function ReadEvents(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   WereEnabled: Boolean;
+  PreviousLevel: TPriorityLevel;
 begin
   if Request.Length < SizeOf(TAbiInputEvent) then
     Exit(ErrorInvalidArgument);
+  { (At dispatch level for the same reason as in OpenEvents.) }
+  PreviousLevel := RaisePriorityLevel(DispatchLevel);
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(Lock);
   Request.Information := Int64(TakeEventsLocked(Request));
   ReleaseSpinLockAtCurrentLevel(Lock);
   RestoreInterrupts(WereEnabled);
+  LowerPriorityLevel(PreviousLevel);
   if Request.Information > 0 then
     Exit(ErrorNone);
   if not QueueRequest(WaitingReads, Request) then
@@ -193,8 +218,10 @@ end;
 procedure InitializeInputEvents;
 var
   Dispatch: TDispatchTable;
+  Device: PDeviceObject;
 begin
   InitializeSpinLock(Lock);
+  InitializeEvent(Ready, EventKindNotification, False);
   InitializeRequestQueue(WaitingReads);
   InitializeDeferredCall(CompleteReads, @CompleteWaitingReads, nil);
   FillMemory(@Dispatch, SizeOf(Dispatch), 0);
@@ -202,7 +229,10 @@ begin
   Dispatch[IoFunctionClose] := @CloseEvents;
   Dispatch[IoFunctionRead] := @ReadEvents;
   Driver := CreateDriver('events', Dispatch);
-  if CreateDevice(Driver, 'events', DeviceKindCharacter, OwnerOnly, 0) = nil then
+  Device := CreateDevice(Driver, 'events', DeviceKindCharacter, OwnerOnly, 0);
+  if Device <> nil then
+    Device^.ReadyEvent := @Ready
+  else
   begin
     DebugBeginMessage;
     DebugWriteTag('input');

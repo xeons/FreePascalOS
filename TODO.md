@@ -296,12 +296,16 @@ normalized (0-65535), not pixels.
 - [ ] Anti-aliased lines and shapes; scaling surfaces (for icons at other sizes)
 
 ### 3. Kernel infrastructure for a display server
-- [ ] Shared memory sections (create, map into several processes, handle-based)
-- [ ] Wait on multiple objects (handles: events, processes, threads, pipes,
+- [x] Shared memory sections (create, map into several processes, handle-based)
+- [x] Wait on multiple objects (handles: events, processes, threads, pipes,
       input devices, channels) with a timeout
-- [ ] Event objects for user mode (create, set, reset, wait)
-- [ ] Local message channels: request/reply messages that can carry handles
-- [ ] Waitable timers with millisecond resolution
+- [x] Event objects for user mode (create, set, reset, wait)
+- [x] Local message channels: request/reply messages that can carry handles
+- [x] Waitable timers (in milliseconds, on the clock's 10 ms ticks)
+- [ ] Finer timers: a one-shot local APIC timer or HPET instead of the 100 Hz
+      tick (a tickless clock)
+- [ ] Waiting on the console and pipe write ends (room to write) through handles
+- [ ] Waiting for all of several handles at once
 
 ### 4. Display server
 - [ ] One process owns the screen and input; clients connect through a channel

@@ -112,6 +112,8 @@ begin
   DebugWrite(StateName(Block^.State));
   if Block^.IsOnWaitList then
     DebugWrite(', on a wait list');
+  if Block^.WaitBlockCount > 0 then
+    DebugWrite(', waiting on events');
   if Block^.IsOnSleepQueue then
     DebugWrite(', with a timeout');
   if Block^.WaitIsAlertable then

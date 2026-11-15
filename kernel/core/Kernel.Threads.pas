@@ -29,6 +29,7 @@
 unit Kernel.Threads;
 
 {$mode objfpc}
+{$pointermath on}
 
 interface
 
@@ -71,6 +72,20 @@ type
   TThreadStartRoutine = procedure(Context: Pointer);
 
   PThreadControlBlock = ^TThreadControlBlock;
+
+  { A thread waiting on an event is linked into the event's waiters by a
+    wait block, one per event it waits on (Kernel.Events), so it can wait
+    on several at once; the blocks live on its stack for the wait. Link
+    comes first: a waiter list entry is the block. }
+  PWaitBlock = ^TWaitBlock;
+  TWaitBlock = record
+    Link: TListEntry;
+    Thread: PThreadControlBlock;
+    { Which of the thread's events this is. }
+    Index: LongInt;
+    IsLinked: Boolean;
+  end;
+
   TThreadControlBlock = record
     { Stack pointer saved by the context switch while not running. }
     SavedStackPointer: QWord;
@@ -109,6 +124,10 @@ type
     { Where a waiting thread is linked, so whatever ends the wait (a
       signal, the timeout or an alert) can take it off both queues. }
     IsOnWaitList: Boolean;
+    { The wait blocks of a wait on events, and which one ended it. }
+    WaitBlocks: PWaitBlock;
+    WaitBlockCount: LongInt;
+    SatisfiedWaitIndex: LongInt;
     IsOnSleepQueue: Boolean;
     WaitIsAlertable: Boolean;
     WaitResult: TWaitResult;
@@ -145,8 +164,29 @@ function ThreadFromSchedulerLink(Entry: PListEntry): PThreadControlBlock;
 function ThreadFromTimerLink(Entry: PListEntry): PThreadControlBlock;
 
 function ThreadStateName(State: TThreadState): PChar;
+{ Takes the thread's wait blocks off their events' lists (dispatcher
+  lock held). }
+procedure UnlinkWaitBlocksLocked(Thread: PThreadControlBlock);
 
 implementation
+
+procedure UnlinkWaitBlocksLocked(Thread: PThreadControlBlock);
+var
+  Index: LongInt;
+  Block: PWaitBlock;
+begin
+  for Index := 0 to Thread^.WaitBlockCount - 1 do
+  begin
+    Block := Thread^.WaitBlocks + Index;
+    if Block^.IsLinked then
+    begin
+      RemoveListEntry(@Block^.Link);
+      Block^.IsLinked := False;
+    end;
+  end;
+  Thread^.WaitBlockCount := 0;
+  Thread^.WaitBlocks := nil;
+end;
 
 function FpuStateArea(Thread: PThreadControlBlock): Pointer;
 begin

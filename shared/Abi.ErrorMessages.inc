@@ -55,6 +55,8 @@ begin
     ErrorDirectoryNotEmpty: AbiErrorMessage := 'Directory not empty';
     ErrorTooManyLinks: AbiErrorMessage := 'Too many levels of symbolic links';
     ErrorUnsupported: AbiErrorMessage := 'Operation not supported';
+    ErrorWouldBlock: AbiErrorMessage := 'Resource temporarily unavailable';
+    ErrorMessageTooLong: AbiErrorMessage := 'Message too long';
     ErrorCorrupted: AbiErrorMessage := 'Structure needs cleaning';
   else
     AbiErrorMessage := 'Unknown error';

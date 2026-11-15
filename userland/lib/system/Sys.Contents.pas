@@ -50,7 +50,8 @@ uses
   Sys.Libraries,
   Sys.Information,
   Sys.Console,
-  Sys.Display;
+  Sys.Display,
+  Sys.Objects;
 
 implementation
 

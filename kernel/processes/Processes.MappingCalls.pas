@@ -20,11 +20,13 @@
   Mapping a handle's memory into the program.
 
   CallMapHandle maps Length bytes at Offset of what a handle stands for:
-  for now a device that offers memory (the display's framebuffer). The
-  driver says which physical memory that is and whether writes may be
-  combined (Io.DeviceFiles.QueryDeviceMapping); the pages go into a
-  device region of the address space (Processes.AddressSpace), writable
-  if the handle was opened for writing. The program unmaps it with
+  a device that offers memory (the display's framebuffer), or a section.
+  For a device, the driver says which physical memory that is and
+  whether writes may be combined (Io.DeviceFiles.QueryDeviceMapping);
+  the pages go into a device region of the address space
+  (Processes.AddressSpace), writable if the handle was opened for
+  writing. A section's pages are mapped writable, each with a reference
+  of its own. The program unmaps it with
   CallFreeMemory, and it goes with the address space otherwise; the
   device's memory is never freed by either.
 }
@@ -48,7 +50,9 @@ uses
   Processes.Handles,
   Processes.Process,
   Processes.Thread,
-  Processes.AddressSpace;
+  Processes.AddressSpace,
+  Processes.ObjectCalls,
+  Objects.Sections;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -73,6 +77,28 @@ begin
   ReleaseMutex(Process^.Lock);
 end;
 
+function MapSection(Handle: Int64; Offset, Length: QWord): Int64;
+var
+  Section: PSectionObject;
+  Error: LongInt;
+  Start: QWord;
+  FirstPage: QWord;
+begin
+  Section := PSectionObject(ReferenceHandleOfKind(Handle, HandleKindSection));
+  if Section = nil then
+    Exit(Failure(ErrorBadHandle));
+  FirstPage := Offset shr PageShift;
+  if (FirstPage >= Section^.PageCount) or ((Length shr PageShift) > Section^.PageCount - FirstPage) then
+    Error := ErrorInvalidArgument
+  else
+    Error := MapPagesIntoAddressSpace(CurrentProcess^.AddressSpace, Section^.Pages + FirstPage,
+      Length shr PageShift, True, Start);
+  DereferenceObject(Section);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := Int64(Start);
+end;
+
 function PerformMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
 var
   OpenFile: PDeviceFile;
@@ -86,7 +112,7 @@ begin
   Length := RoundUpToPage(Length);
   OpenFile := ReferenceDeviceFile(Handle);
   if OpenFile = nil then
-    Exit(Failure(ErrorBadHandle));
+    Exit(MapSection(Handle, Offset, Length));
   Error := QueryDeviceMapping(OpenFile, Offset, Length, Physical, WriteCombining);
   if Error = ErrorNone then
     Error := MapDeviceIntoAddressSpace(CurrentProcess^.AddressSpace, Physical, Length,

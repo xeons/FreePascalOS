@@ -177,7 +177,71 @@ const
     ErrorUnsupported if the handle has no memory to map. }
   CallMapHandle = 72;
 
-  CallCount = 73;
+  { --- Objects for programs that work together ---------------------------
+    Events, timers, sections, ports and channels are objects behind
+    handles, like files: closed with CallClose, passed to children and in
+    messages. }
+
+  { (Flags: EventManualReset, EventSignaled): a new event. A manual reset
+    event stays signaled until reset and releases every waiter; an
+    automatic reset one releases one waiter and resets itself. }
+  CallCreateEvent = 73;
+  { (Handle): signals or resets an event. }
+  CallSetEvent = 74;
+  CallResetEvent = 75;
+  { (Flags: TimerManualReset): a new timer, not armed. }
+  CallCreateTimer = 76;
+  { (Handle, DueMilliseconds, PeriodMilliseconds): arms the timer: its
+    event is signaled once due, then every Period (0: once). Due 0 stops
+    it. The clock ticks every 10 ms. }
+  CallSetTimer = 77;
+  { (HandlesAddress, Count, TimeoutMilliseconds or InfiniteWait): waits
+    until one of Count handles (Int64s) is signaled and returns its place
+    in the list. Signaled means: an event or timer signaled (an automatic
+    reset one is consumed), a process or thread ended, a pipe's read end
+    or a channel has something to read (or its other end is gone), a port
+    has a connection waiting, a device has input (/dev/events).
+    ErrorTimedOut, ErrorInterrupted, ErrorUnsupported (a handle that
+    cannot be waited on). At most MaximumWaitHandles. }
+  CallWaitForHandles = 78;
+  { (Length): a new section: Length bytes of zeroed memory to share,
+    mapped with CallMapHandle (offset and length within it, page
+    aligned) into every process holding a handle to it. }
+  CallCreateSection = 79;
+  { (NameAddress): a port others connect to by its name (up to
+    MaximumPortNameLength characters). ErrorExists if the name is taken. }
+  CallCreatePort = 80;
+  { (NameAddress): connects to a port: one end of a new channel, whose
+    other end waits at the port to be accepted. ErrorNotFound. }
+  CallConnectPort = 81;
+  { (PortHandle): the end of the oldest connection waiting at the port,
+    or ErrorWouldBlock. }
+  CallAcceptConnection = 82;
+  { (HandlesAddress): two connected channel ends, as two Int64s. }
+  CallCreateChannel = 83;
+  { (Channel, MessageAddress): sends a TAbiMessage: Length bytes at Data
+    and HandleCount handles at Handles (they stay the sender's too).
+    ErrorWouldBlock if the other end has MaximumQueuedMessages waiting,
+    ErrorBrokenPipe if it is gone. }
+  CallSendMessage = 84;
+  { (Channel, MessageAddress): receives the oldest message into a
+    TAbiMessage's buffers (Length and HandleCount are their capacities on
+    the way in, what arrived on the way out; the handles are new handles
+    of the receiver). Returns the length. ErrorWouldBlock if there is
+    none, ErrorBrokenPipe if none will come, ErrorMessageTooLong if it
+    does not fit (Length and HandleCount then say what it needs). }
+  CallReceiveMessage = 85;
+
+  CallCount = 86;
+
+  EventManualReset = $01;
+  EventSignaled = $02;
+  TimerManualReset = $01;
+  MaximumWaitHandles = 64;
+  MaximumPortNameLength = 24;
+  MaximumMessageBytes = 16 * 1024;
+  MaximumMessageHandles = 8;
+  MaximumQueuedMessages = 64;
 
   ShutdownPowerOff = 0;
   ShutdownReboot = 1;
@@ -364,6 +428,11 @@ const
   ErrorBadExecutable = 8;
   ErrorCorrupted = 117;
   ErrorUnsupported = 95;
+  { Nothing to take now (an empty channel, no pending connection), or no
+    room (a full channel). }
+  ErrorWouldBlock = 11;
+  { A message larger than the buffer given for it. }
+  ErrorMessageTooLong = 90;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -407,6 +476,11 @@ const
   HandleKindThread = 6;
   { Any other device under /dev (and the /dev directory). }
   HandleKindDevice = 7;
+  HandleKindEvent = 8;
+  HandleKindTimer = 9;
+  HandleKindSection = 10;
+  HandleKindPort = 11;
+  HandleKindChannel = 12;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -581,6 +655,16 @@ type
     Reserved: LongWord;
   end;
   PAbiInputEvent = ^TAbiInputEvent;
+
+  { A message on a channel (CallSendMessage, CallReceiveMessage). }
+  TAbiMessage = record
+    Data: QWord;
+    Length: QWord;
+    { The address of HandleCount Int64 handles. }
+    Handles: QWord;
+    HandleCount: QWord;
+  end;
+  PAbiMessage = ^TAbiMessage;
 
 const
   InputEventKey = 1;

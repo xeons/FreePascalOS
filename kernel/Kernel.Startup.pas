@@ -46,6 +46,10 @@ procedure KernelEntryPoint(BootInformation: PBootInformation);
 implementation
 
 uses
+  Objects.Events,
+  Objects.Timers,
+  Objects.Sections,
+  Processes.Channels,
   Drivers.DisplayDevice,
   Memory.Layout,
   Memory.PhysicalPages,
@@ -202,6 +206,10 @@ begin
   InitializeMemoryDevices;
   InitializeConsoleDevice;
   InitializePipes;
+  InitializeEventObjects;
+  InitializeTimerObjects;
+  InitializeSectionObjects;
+  InitializeChannels;
   InitializeSystemCalls;
 end;
 

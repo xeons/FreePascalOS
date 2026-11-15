@@ -509,6 +509,7 @@ begin
     RemoveListEntry(@Thread^.SchedulerLink);
     Thread^.IsOnWaitList := False;
   end;
+  UnlinkWaitBlocksLocked(Thread);
   if Thread^.IsOnSleepQueue then
   begin
     RemoveListEntry(@Thread^.TimerLink);
@@ -534,6 +535,7 @@ begin
       RemoveListEntry(@Thread^.SchedulerLink);
       Thread^.IsOnWaitList := False;
     end;
+    UnlinkWaitBlocksLocked(Thread);
     if TimeoutMilliseconds = 0 then
       Exit(WaitTimedOut);
     Exit(WaitAlerted);

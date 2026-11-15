@@ -37,6 +37,8 @@ procedure InitializeSystemCalls;
 implementation
 
 uses
+  Processes.ObjectCalls,
+  Processes.WaitCalls,
   Processes.MappingCalls,
   Runtime.Memory,
   Runtime.Text,
@@ -602,6 +604,22 @@ begin
     CallShutdown: Result := PerformShutdown(Argument0);
     CallSuspend: Result := PerformSuspend;
     CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2);
+
+    { Objects for programs that work together (Processes.ObjectCalls,
+      Processes.WaitCalls). }
+    CallCreateEvent: Result := PerformCreateEvent(Argument0);
+    CallSetEvent: Result := PerformSetEvent(Int64(Argument0), True);
+    CallResetEvent: Result := PerformSetEvent(Int64(Argument0), False);
+    CallCreateTimer: Result := PerformCreateTimer(Argument0);
+    CallSetTimer: Result := PerformSetTimer(Int64(Argument0), Argument1, Argument2);
+    CallWaitForHandles: Result := PerformWaitForHandles(Argument0, Argument1, Int64(Argument2));
+    CallCreateSection: Result := PerformCreateSection(Argument0);
+    CallCreatePort: Result := PerformCreatePort(Argument0);
+    CallConnectPort: Result := PerformConnectPort(Argument0);
+    CallAcceptConnection: Result := PerformAcceptConnection(Int64(Argument0));
+    CallCreateChannel: Result := PerformCreateChannel(Argument0);
+    CallSendMessage: Result := PerformSendMessage(Int64(Argument0), Argument1);
+    CallReceiveMessage: Result := PerformReceiveMessage(Int64(Argument0), Argument1);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

@@ -44,7 +44,13 @@ type
     HandleKindPipeWriteEnd,
     HandleKindProcess,
     { A thread of the same process (see Processes.ThreadCalls). }
-    HandleKindThread
+    HandleKindThread,
+    { Objects for programs that work together (Processes.ObjectCalls). }
+    HandleKindEvent,
+    HandleKindTimer,
+    HandleKindSection,
+    HandleKindPort,
+    HandleKindChannel
   );
 
   THandleEntry = record
@@ -72,6 +78,12 @@ function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleK
 
 function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
 procedure CloseAllHandles(var Table: THandleTable);
+
+{ What a handle holds on its object, taken and given back outside a
+  handle table: by a message carrying the handle (Processes.Channels). A
+  reference, and for pipe ends an open end. }
+procedure TakeHandleReference(Kind: THandleKind; ObjectBody: Pointer);
+procedure DropHandleReference(Kind: THandleKind; ObjectBody: Pointer);
 
 implementation
 
@@ -106,6 +118,18 @@ begin
     HandleKindPipeReadEnd: ClosePipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: ClosePipeEnd(PPipe(ObjectBody), True);
   end;
+end;
+
+procedure TakeHandleReference(Kind: THandleKind; ObjectBody: Pointer);
+begin
+  ReferenceObject(ObjectBody);
+  NoteHandleOpened(Kind, ObjectBody);
+end;
+
+procedure DropHandleReference(Kind: THandleKind; ObjectBody: Pointer);
+begin
+  NoteHandleClosed(Kind, ObjectBody);
+  DereferenceObject(ObjectBody);
 end;
 
 function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;

@@ -419,6 +419,8 @@ begin
   Check(TimerFiredTick - SetTick >= MillisecondsToTicks(DelayMilliseconds),
     'a timer ran its call early');
   Check(not CancelTimer(Timer), 'an expired timer was still set');
+  { The call lives on this stack: no processor may still be in it. }
+  CancelDeferredCall(Call);
   ReportPassed('timers');
 end;
 

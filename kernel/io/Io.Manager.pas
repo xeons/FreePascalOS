@@ -196,6 +196,10 @@ type
     LowerDevice: PDeviceObject;
     { The driver's state for this device. }
     Extension: Pointer;
+    { A notification event the driver keeps signaled while a read would
+      not wait, for programs waiting on several handles; nil if the
+      device offers none. }
+    ReadyEvent: Pointer;
   end;
 
   TDeviceFile = record

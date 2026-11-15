@@ -1430,6 +1430,55 @@ pipe object, and the handle is a pipe read or write end. Opening one end
 waits (alertably) until the other end is opened too, so a reader does not
 see end of file before the first writer arrives.
 
+### Objects for programs that work together
+
+What a display server and its clients need from the kernel, as objects
+behind handles (closed with `CallClose`, inherited, passed in messages):
+
+- **Events** (`Objects.Events`): kernel events a program creates
+  (`CallCreateEvent`, manual or automatic reset), sets and resets.
+- **Timers** (`Objects.Timers`): an event signaled when a time comes,
+  once or periodically (`CallSetTimer`), on the clock's 10 ms ticks.
+  Deleting or re-arming one stops it safely: it is marked first, so its
+  call does not arm it again, taken off the timer queue, and its
+  deferred call taken off its queue or waited for if a processor is
+  running it (`CancelDeferredCall`), twice.
+- **Sections** (`Objects.Sections`): zeroed pages to share, mapped with
+  `CallMapHandle` into each process that holds a handle (each mapping
+  takes a reference to every page, so the pages outlive the section's
+  last handle while mapped).
+- **Ports and channels** (`Processes.Channels`): a channel is a pair of
+  connected ends; a message (up to 16 KiB and 8 handles) sent on one is
+  queued at the other, at most 64 (then sending fails with
+  `ErrorWouldBlock`: a server never waits for a slow client). The
+  handles travel as references of their own (`TakeHandleReference`,
+  which also counts a pipe end as open) and become handles of the
+  receiver; a message never received gives them back. A server creates
+  a named port (`CallCreatePort`); `CallConnectPort` makes a channel and
+  leaves the other end waiting at the port for `CallAcceptConnection`.
+  Receiving never waits: programs wait on the channel's handle.
+
+`CallWaitForHandles` waits for the first of up to 64 handles to be ready,
+with a timeout: an event or timer signaled, a process or thread ended, a
+pipe's read end or a channel readable (data, or the other end gone), a
+port with a connection waiting, a device with input (a driver may keep a
+`ReadyEvent`: `/dev/events` does). Each stands for a notification event
+kept in step with the object (pipes gained a `Readable` event for this,
+apart from the synchronization event their readers wait on). The wait is
+alertable, so ending or stopping the process ends it.
+
+Underneath is waiting on several kernel events (`WaitForAnyEvent`): a
+waiting thread is linked into each event's waiters by a wait block (on
+its stack), and the first event to release it takes all its blocks off
+and records which one it was; timeouts and alerts take them off the same
+way. A single wait is the same with one block.
+
+`Sys.Objects` in libsystem wraps all of it, with `CallChannel` for a
+request and its reply. `ipctest` (run by coretest) checks every object,
+the waits and timeouts, and a section shared with a second process: it
+starts itself as a child that connects to its port, receives the section
+and an event in a message, changes the section and signals the event.
+
 ### Handles
 
 A process has a table of 64 handles, each naming a referenced object and

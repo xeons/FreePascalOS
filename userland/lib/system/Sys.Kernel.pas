@@ -101,6 +101,20 @@ function KernelShutdown(Action: QWord): Int64;
 function KernelSuspend: Int64;
 { The address of Length bytes at Offset of Handle's memory, mapped. }
 function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
+function KernelCreateEvent(Flags: LongWord): Int64;
+function KernelSetEvent(Handle: Int64): Int64;
+function KernelResetEvent(Handle: Int64): Int64;
+function KernelCreateTimer(Flags: LongWord): Int64;
+function KernelSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
+{ Timeout in milliseconds, or InfiniteWait. }
+function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64): Int64;
+function KernelCreateSection(Length: QWord): Int64;
+function KernelCreatePort(Name: PChar): Int64;
+function KernelConnectPort(Name: PChar): Int64;
+function KernelAcceptConnection(PortHandle: Int64): Int64;
+function KernelCreateChannel(out First, Second: Int64): Int64;
+function KernelSendMessage(Channel: Int64; var Message: TAbiMessage): Int64;
+function KernelReceiveMessage(Channel: Int64; var Message: TAbiMessage): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
@@ -401,6 +415,75 @@ end;
 function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
 begin
   Result := SystemCall(CallMapHandle, QWord(Handle), Offset, Length, 0, 0, 0);
+end;
+
+function KernelCreateEvent(Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallCreateEvent, Flags, 0, 0, 0, 0, 0);
+end;
+
+function KernelSetEvent(Handle: Int64): Int64;
+begin
+  Result := SystemCall(CallSetEvent, QWord(Handle), 0, 0, 0, 0, 0);
+end;
+
+function KernelResetEvent(Handle: Int64): Int64;
+begin
+  Result := SystemCall(CallResetEvent, QWord(Handle), 0, 0, 0, 0, 0);
+end;
+
+function KernelCreateTimer(Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallCreateTimer, Flags, 0, 0, 0, 0, 0);
+end;
+
+function KernelSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
+begin
+  Result := SystemCall(CallSetTimer, QWord(Handle), DueMilliseconds, PeriodMilliseconds, 0, 0, 0);
+end;
+
+function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64): Int64;
+begin
+  Result := SystemCall(CallWaitForHandles, QWord(Handles), Count, QWord(Timeout), 0, 0, 0);
+end;
+
+function KernelCreateSection(Length: QWord): Int64;
+begin
+  Result := SystemCall(CallCreateSection, Length, 0, 0, 0, 0, 0);
+end;
+
+function KernelCreatePort(Name: PChar): Int64;
+begin
+  Result := SystemCall(CallCreatePort, QWord(Name), 0, 0, 0, 0, 0);
+end;
+
+function KernelConnectPort(Name: PChar): Int64;
+begin
+  Result := SystemCall(CallConnectPort, QWord(Name), 0, 0, 0, 0, 0);
+end;
+
+function KernelAcceptConnection(PortHandle: Int64): Int64;
+begin
+  Result := SystemCall(CallAcceptConnection, QWord(PortHandle), 0, 0, 0, 0, 0);
+end;
+
+function KernelCreateChannel(out First, Second: Int64): Int64;
+var
+  Handles: array[0..1] of Int64;
+begin
+  Result := SystemCall(CallCreateChannel, QWord(@Handles[0]), 0, 0, 0, 0, 0);
+  First := Handles[0];
+  Second := Handles[1];
+end;
+
+function KernelSendMessage(Channel: Int64; var Message: TAbiMessage): Int64;
+begin
+  Result := SystemCall(CallSendMessage, QWord(Channel), QWord(@Message), 0, 0, 0, 0);
+end;
+
+function KernelReceiveMessage(Channel: Int64; var Message: TAbiMessage): Int64;
+begin
+  Result := SystemCall(CallReceiveMessage, QWord(Channel), QWord(@Message), 0, 0, 0, 0);
 end;
 
 end.

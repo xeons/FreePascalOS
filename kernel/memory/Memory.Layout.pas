@@ -43,6 +43,7 @@ const
 
 type
   TPhysicalAddress = QWord;
+  PPhysicalAddress = ^TPhysicalAddress;
 
 function PhysicalToVirtual(PhysicalAddress: TPhysicalAddress): Pointer;
 function WindowVirtualToPhysical(VirtualAddress: Pointer): TPhysicalAddress;
