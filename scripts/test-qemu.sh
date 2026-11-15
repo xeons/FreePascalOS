@@ -252,7 +252,7 @@ case "$qemu_status" in
                 echo "TEST FAILED: the sound played was not right"
                 exit 1
             fi
-            if ! grep -q "\[audio\] AC'97" "$serial_log" ||
+            if ! grep -q "\[audio\] AC'97 .*interrupts by line" "$serial_log" ||
                ! python3 -I "$(dirname "$0")/check-audio.py" "$ac97_recording" 700:0.5; then
                 echo "TEST FAILED: the sound played on the AC'97 output was not right"
                 exit 1

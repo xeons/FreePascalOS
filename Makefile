@@ -22,6 +22,8 @@
 #   make test       Boot headless with the test and system disks, run all self tests
 #                   and the user mode tests (coretest), then type into the shell on
 #                   the emulated keyboard and serial port; report pass/fail
+#   make aml-test   Run the kernel's AML interpreter on the host against captured
+#                   QEMU DSDTs and compare what it finds with the expected output
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -99,7 +101,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test
 
 all: esp
 
@@ -187,7 +189,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
@@ -203,6 +205,24 @@ $(FONT_TOOL): tools/PsfToPascal/PsfToPascal.pas
 	$(FPC) -O2 -FEbuild/tools -FUbuild/tools $<
 
 FONT_UNPACKED := build/tools/$(basename $(notdir $(FONT_SOURCE)))
+
+# The AML interpreter (kernel/firmware) is plain Pascal: it builds for the
+# host too, and runs there against tables captured from QEMU's machines.
+AML_TEST := build/tools/AmlTest
+AML_TEST_SOURCES := tools/AmlTest/AmlTest.pas $(wildcard kernel/firmware/Firmware.Aml*.pas) \
+	$(wildcard kernel/firmware/Firmware.Acpi*.pas) shared/Runtime.Memory.pas
+AML_TEST_MACHINES := q35 pc
+
+$(AML_TEST): $(AML_TEST_SOURCES)
+	@mkdir -p build/tools/aml-units
+	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/aml-units $<
+
+aml-test: $(AML_TEST)
+	@for machine in $(AML_TEST_MACHINES); do \
+		$(AML_TEST) tools/AmlTest/qemu-$$machine-dsdt.aml > build/tools/aml-$$machine.out && \
+		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
+		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
+	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)

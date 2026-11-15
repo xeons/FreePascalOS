@@ -30,6 +30,10 @@
   keeps time) when there are others. Drivers connect after the other
   processors were started, so they are all there to choose from.
 
+  Global system interrupts (ConnectGlobalInterrupt), as PCI interrupt
+  lines arrive on, can be shared: the vector's handler then calls every
+  handler connected to the line.
+
   A PCI device can instead signal its interrupt by writing a message (a
   value to an address) that the processor's local APIC receives
   directly, with no I/O APIC in between. ConnectMessageInterrupt gives
@@ -59,6 +63,17 @@ function InterruptRoutingIsAvailable: Boolean;
   free or the IRQ cannot be routed. }
 function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
 
+{ Connects global system interrupt Gsi (an I/O APIC input) to Handler,
+  triggered and polarized as given. A line may be shared: several
+  handlers on one interrupt are all called each time it fires (each
+  must check whether its device raised it). False if no vector is free,
+  the interrupt cannot be routed, or a sharer wants it triggered
+  differently. }
+function ConnectGlobalInterrupt(Gsi: LongWord; LevelTriggered, ActiveLow: Boolean; Handler: TInterruptHandler;
+  Context: Pointer): Boolean;
+{ The global system interrupt ISA IRQ Irq arrives on. }
+function GlobalInterruptOfIsaIrq(Irq: Byte): LongWord;
+
 { Connects a message signalled interrupt to Handler. Returns False if no
   vector is free. }
 function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
@@ -67,6 +82,8 @@ function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
 implementation
 
 uses
+  Runtime.Atomic,
+  Kernel.Arch.TrapFrame,
   Memory.Layout,
   Memory.DeviceMapping,
   Hal.InterruptVectors,
@@ -203,6 +220,89 @@ begin
     Exit(False);
   end;
   ReportConnection('IRQ', Irq, Vector, Target);
+  Result := True;
+end;
+
+const
+  MaximumSharedLines = 16;
+  MaximumSharers = 8;
+
+type
+  PSharedLine = ^TSharedLine;
+  TSharedLine = record
+    Gsi: LongWord;
+    LevelTriggered: Boolean;
+    ActiveLow: Boolean;
+    Count: Integer;
+    Handlers: array[0..MaximumSharers - 1] of TInterruptHandler;
+    Contexts: array[0..MaximumSharers - 1] of Pointer;
+  end;
+
+var
+  SharedLines: array[0..MaximumSharedLines - 1] of TSharedLine;
+  SharedLineCount: Integer;
+
+{ The vector's handler for a line: every handler on it. }
+procedure DispatchSharedLine(Frame: PTrapFrame; Context: Pointer);
+var
+  Line: PSharedLine;
+  Index: Integer;
+begin
+  Line := PSharedLine(Context);
+  for Index := 0 to Line^.Count - 1 do
+    Line^.Handlers[Index](Frame, Line^.Contexts[Index]);
+end;
+
+function GlobalInterruptOfIsaIrq(Irq: Byte): LongWord;
+begin
+  Result := RoutingOfIsaInterrupt(Irq).GlobalInterrupt;
+end;
+
+function ConnectGlobalInterrupt(Gsi: LongWord; LevelTriggered, ActiveLow: Boolean; Handler: TInterruptHandler;
+  Context: Pointer): Boolean;
+var
+  Index: Integer;
+  Line: PSharedLine;
+  Vector: Byte;
+  Target: PProcessor;
+begin
+  Result := False;
+  if not Available then
+    Exit;
+  for Index := 0 to SharedLineCount - 1 do
+    if SharedLines[Index].Gsi = Gsi then
+    begin
+      Line := @SharedLines[Index];
+      if (Line^.Count = MaximumSharers) or (Line^.LevelTriggered <> LevelTriggered) or
+         (Line^.ActiveLow <> ActiveLow) then
+        Exit;
+      { The handler before the count, so the dispatcher never calls an
+        empty slot. }
+      Line^.Handlers[Line^.Count] := Handler;
+      Line^.Contexts[Line^.Count] := Context;
+      FullMemoryBarrier;
+      Inc(Line^.Count);
+      Exit(True);
+    end;
+  if SharedLineCount = MaximumSharedLines then
+    Exit;
+  Line := @SharedLines[SharedLineCount];
+  Line^.Gsi := Gsi;
+  Line^.LevelTriggered := LevelTriggered;
+  Line^.ActiveLow := ActiveLow;
+  Line^.Handlers[0] := Handler;
+  Line^.Contexts[0] := Context;
+  Line^.Count := 1;
+  if not AllocateVector(@DispatchSharedLine, Line, Vector) then
+    Exit;
+  Target := ChooseTargetProcessor;
+  if not RouteGlobalInterrupt(Gsi, Vector, Byte(Target^.ApicId), ActiveLow, LevelTriggered) then
+  begin
+    ReleaseLastVector(Vector);
+    Exit;
+  end;
+  Inc(SharedLineCount);
+  ReportConnection('GSI', Gsi, Vector, Target);
   Result := True;
 end;
 

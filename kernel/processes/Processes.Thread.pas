@@ -63,6 +63,10 @@ type
       for ExitEvent and then reads ExitCode. }
     ExitCode: LongInt;
     ExitEvent: TEvent;
+    { Kernel threads: what they run (started through RunSystemThread,
+      which signals ExitEvent when it returns). }
+    SystemStartRoutine: TThreadStartRoutine;
+    SystemStartContext: Pointer;
 
     { Suspending, ending and prioritizing it from another thread
       (Processes.ThreadControl). Guarded by the process's StopLock. }
@@ -100,14 +104,17 @@ function CreateIdleThreadFromBootContext(BootStackBase, BootStackTop: QWord): PT
 { Creates and starts a kernel thread in the system process. If
   ReturnReference is True the caller receives a referenced pointer to the
   thread object; otherwise the result must not be used after the thread
-  may have exited. Returns nil on failure. }
+  may have exited. StackSize is its kernel stack's size (for work that
+  recurses deeply). Returns nil on failure. }
 function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
-  Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+  Priority: LongWord; Name: PChar; ReturnReference: Boolean;
+  StackSize: QWord = DefaultKernelStackSize): PThread;
 
 { Creates and starts a thread in Process, running on the process's
   address space. The thread starts in kernel mode at StartRoutine. }
 function CreateThreadInProcess(Process: PProcess; StartRoutine: TThreadStartRoutine;
-  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean;
+  StackSize: QWord = DefaultKernelStackSize): PThread;
 
 { The thread object and process of the running thread. }
 function CurrentThreadObject: PThread;
@@ -224,10 +231,10 @@ begin
 end;
 
 function CreateSystemThread(StartRoutine: TThreadStartRoutine; StartContext: Pointer;
-  Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+  Priority: LongWord; Name: PChar; ReturnReference: Boolean; StackSize: QWord): PThread;
 begin
   Result := CreateThreadInProcess(SystemProcess, StartRoutine, StartContext, Priority, Name,
-    ReturnReference);
+    ReturnReference, StackSize);
 end;
 
 function CurrentThreadObject: PThread;
@@ -246,8 +253,19 @@ begin
     Result := Thread^.Process;
 end;
 
+{ A kernel thread's routine, then its exit event (the thread holds a
+  reference to itself until it ends). }
+procedure RunSystemThread(Context: Pointer);
+var
+  Thread: PThread;
+begin
+  Thread := PThread(Context);
+  Thread^.SystemStartRoutine(Thread^.SystemStartContext);
+  SignalEvent(Thread^.ExitEvent);
+end;
+
 function CreateThreadInProcess(Process: PProcess; StartRoutine: TThreadStartRoutine;
-  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean): PThread;
+  StartContext: Pointer; Priority: LongWord; Name: PChar; ReturnReference: Boolean; StackSize: QWord): PThread;
 var
   Thread: PThread;
 begin
@@ -257,15 +275,24 @@ begin
   InitializeEvent(Thread^.ExitEvent, EventKindNotification, False);
   InitializeEvent(Thread^.ResumeEvent, EventKindNotification, True);
 
-  if not AllocateKernelStack(DefaultKernelStackSize, Thread^.KernelStack) then
+  if not AllocateKernelStack(StackSize, Thread^.KernelStack) then
   begin
     DereferenceObject(Thread);
     Exit(nil);
   end;
   Thread^.OwnsKernelStack := True;
 
-  InitializeThreadControlBlock(@Thread^.ControlBlock, Thread^.KernelStack.Base,
-    Thread^.KernelStack.Top, StartRoutine, StartContext, Priority, Name);
+  if Process = SystemProcess then
+  begin
+    { Started through RunSystemThread, so whoever waits hears the end. }
+    Thread^.SystemStartRoutine := StartRoutine;
+    Thread^.SystemStartContext := StartContext;
+    InitializeThreadControlBlock(@Thread^.ControlBlock, Thread^.KernelStack.Base,
+      Thread^.KernelStack.Top, @RunSystemThread, Thread, Priority, Name);
+  end
+  else
+    InitializeThreadControlBlock(@Thread^.ControlBlock, Thread^.KernelStack.Base,
+      Thread^.KernelStack.Top, StartRoutine, StartContext, Priority, Name);
   Thread^.ControlBlock.ThreadId := AllocateProcessOrThreadId;
   Thread^.ControlBlock.Owner := Thread;
   Thread^.ControlBlock.AddressSpaceRoot := Process^.PageTableRoot;

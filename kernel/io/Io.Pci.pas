@@ -90,6 +90,9 @@ function PciDeviceAt(Index: Integer): PPciDevice;
 
 { Finds the next device (starting at StartIndex) with the given class,
   subclass and programming interface. Returns its index or -1. }
+{ The function at Segment, Bus, Device, FunctionNumber, or nil if there
+  is none. }
+function FindPciFunction(Segment: Word; Bus, Device, FunctionNumber: Byte): PPciDevice;
 function FindPciDeviceByClass(ClassCode, Subclass, ProgrammingInterface: Byte;
   StartIndex: Integer): Integer;
 
@@ -279,6 +282,20 @@ begin
     Inc(Allocation);
     Inc(AllocationIndex);
   end;
+end;
+
+function FindPciFunction(Segment: Word; Bus, Device, FunctionNumber: Byte): PPciDevice;
+var
+  Index: Integer;
+begin
+  for Index := 0 to DeviceCount - 1 do
+  begin
+    Result := @Devices[Index];
+    if (Result^.Segment = Segment) and (Result^.Bus = Bus) and (Result^.Device = Device) and
+       (Result^.FunctionNumber = FunctionNumber) then
+      Exit;
+  end;
+  Result := nil;
 end;
 
 function FindPciDeviceByClass(ClassCode, Subclass, ProgrammingInterface: Byte;

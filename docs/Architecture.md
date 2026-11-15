@@ -250,6 +250,8 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    the RSDP the loader passed on.
 2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
    Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
+   Then the **ACPI namespace** is loaded (see below), which needs PCI
+   configuration space and gives the routing of PCI interrupt lines.
 3. **Storage drivers** (`Drivers.Ahci`) register whole-disk block devices
    named `disk0`, `disk1`, ... Each disk has a device object of the `ahci`
    driver, without a name; the block device sends it read and write
@@ -420,8 +422,76 @@ chosen processor's local APIC) and data (the vector), and turns its legacy
 interrupt line off. `ConnectPciExtendedMessageInterrupt` does the same
 through entry 0 of an MSI-X table (in device memory, found through the
 capability's BAR and offset), with every other entry masked;
-`ConnectPciInterrupt` prefers MSI-X and falls back to MSI. The legacy PCI lines could only be routed with the
-ACPI namespace, which the kernel does not interpret.
+`ConnectPciInterrupt` prefers MSI-X and falls back to MSI.
+
+Devices without either use their PCI interrupt line (INTA to INTD):
+`ConnectPciLineInterrupt` (Io.PciLineInterrupts) reads the device's pin
+and looks it up in the routing tables built from the ACPI namespace.
+Behind a bridge without a table of its own, the line is swizzled to the
+bridge's slot ((pin + device) mod 4), and so on up. It connects the
+global system interrupt the line arrives on, level triggered with the
+table's polarity (`ConnectGlobalInterrupt`; an ISA IRQ goes through the
+MADT's overrides first), and clears the device's interrupt disable bit.
+Lines can be shared: a line's vector calls every handler on it, and each
+handler checks and quiets its own device.
+
+### The ACPI namespace and its AML
+
+The DSDT and SSDTs hold the ACPI namespace as AML bytecode: devices,
+their methods and the operation regions those methods use. The kernel
+interprets it (`Firmware.Aml*`) to learn what only the namespace says,
+for now the routing of PCI interrupt lines.
+- **The interpreter is plain Pascal.** It reaches the machine only
+  through `AmlHost` (allocation, system memory, port I/O, PCI
+  configuration space, sleeping, the time and a log), so it builds for
+  the host too. `make aml-test` (run first by `make test`) loads DSDTs
+  captured from QEMU's q35 and i440fx machines (`tools/AmlTest`), with a
+  fake configuration space, and compares the namespace size, the routing
+  and the PIC-mode link interrupts with the expected output.
+- **Values** (`Firmware.AmlValues`) are integers (32-bit for revision 1
+  tables), strings, buffers and packages in counted shared storage,
+  references (to a node, or to a package element or buffer byte) and
+  name paths kept for later lookup.
+- **The namespace** (`Firmware.AmlNamespace`) is a tree of four character
+  names, looked up with AML's rules (the root, parent prefixes, multi
+  name paths, the upward search for single names).
+- **Running** (`Firmware.AmlInterpreter`): a table body runs like a
+  method at the root, its named object opcodes building the namespace.
+  Methods run from the table bytes in a frame of their own (locals,
+  arguments, return value), covering:
+  - control flow (`If`, `Else`, `While`, `Break`, `Continue`, `Return`);
+  - arithmetic, logic and comparisons;
+  - strings, buffers, packages, `Index`, `RefOf`, `DerefOf`, `CondRefOf`;
+  - conversions, `Concatenate`, `Mid`, `Match`;
+  - buffer fields;
+  - `Notify`, `Sleep`, `Stall`, mutexes and events (always acquired);
+  - `\_OSI` answers for the Windows versions firmware asks about.
+
+  Stores follow ACPI's implicit conversions; a store into a named buffer
+  keeps its length and storage, so buffer fields over it stay valid.
+  Errors end the evaluation cleanly. So do loops that run too long and
+  calls nested too deep.
+- **Fields** (`Firmware.AmlFields`) read and write bits a unit at a time
+  (the access width), following the update rule for the bits around
+  them. Plain fields go to their region; bank fields set the bank
+  first; index fields go through their index and data fields; buffer
+  fields go into a buffer. A PCI configuration region finds its device
+  from the `_ADR` above it and its bus from `_BBN`.
+- **Loading** (`Io.AcpiNamespace`) gives the interpreter the kernel as
+  its host and loads the DSDT (through the FADT) and every SSDT. It then
+  runs the devices' `_STA` and `_INI` and builds the routing. The
+  interpreter recurses as the AML nests, so it runs on a thread with a
+  256 KiB stack (`CreateSystemThread` takes a stack size; a kernel
+  thread's exit event is signalled when its routine returns, so it can
+  be waited for).
+- **Routing** (`Firmware.AcpiPciRouting`): `\_PIC(1)` (I/O APIC mode),
+  then the `_PRT` of every PCI root bridge (`PNP0A03`/`PNP0A08`) and of
+  the bridges below it that have one (their bus read from their
+  configuration space). Each entry names a global system interrupt or a
+  link device, whose `_CRS` (`Firmware.AcpiResources`: IRQ and extended
+  interrupt descriptors) gives the interrupt, trigger and polarity. A
+  link not yet connected gets the first interrupt its `_PRS` offers,
+  through `_SRS`.
 
 ### Ctrl-C
 
@@ -583,8 +653,9 @@ plays a list of 32 buffer descriptors that describes the ring twice
 over. The box stops at its last valid entry, so the driver keeps moving
 that entry to just before the current one. Descriptors take 32-bit
 addresses, so the ring comes from `AllocateZeroedPhysicalPageBelow`.
-The controller only has a PCI interrupt line, which the kernel cannot
-route yet (that needs the ACPI `_PRT`), so a 10 ms timer follows it.
+It signals on its PCI interrupt line as each buffer completes; the
+handler clears the box's status (the line is level triggered and may be
+shared). Without routing tables, a 10 ms timer follows the box instead.
 
 The USB audio driver (`Drivers.UsbAudio`, audio class 1.0) looks
 through a device's configuration for an audio streaming setting that

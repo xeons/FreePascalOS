@@ -21,10 +21,9 @@
 
   A device that has the MSI capability in its configuration space can
   raise its interrupt by writing a value to an address, instead of
-  asserting an interrupt line. That needs no routing tables (the legacy
-  lines of PCI devices could only be routed with the ACPI namespace,
-  which this kernel does not interpret), and the interrupt is never
-  shared with another device.
+  asserting an interrupt line. That needs no routing tables (lines are
+  routed with the ACPI namespace: Io.PciLineInterrupts), and the
+  interrupt is never shared with another device, so drivers prefer it.
 
   The capability: a message control word at offset 2 (bit 0 enables
   MSI, bit 7 means 64-bit addresses, bits 4-6 how many vectors are in

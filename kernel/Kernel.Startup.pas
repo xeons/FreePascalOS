@@ -72,12 +72,14 @@ uses
   Io.BlockCache,
   Io.AudioOutput,
   Io.AudioInput,
+  Io.AcpiNamespace,
   Drivers.Ps2Keyboard,
   Drivers.UsbKeyboard,
   Kernel.DebugShell,
   FileSystem.Files,
   Processes.Process,
   Processes.Thread,
+  Kernel.Events,
   Processes.SystemCalls,
   Processes.Termination,
   Processes.Init,
@@ -224,6 +226,22 @@ begin
   DebugEndMessage;
 end;
 
+{ The AML interpreter recurses as the AML nests: it runs on a thread
+  with a large stack, waited for. }
+procedure LoadAcpiNamespaceOnLargeStack;
+const
+  InterpreterStackSize = 256 * 1024;
+var
+  Thread: PThread;
+begin
+  Thread := CreateSystemThread(@LoadAcpiNamespace, nil, PhaseOneThreadPriority, 'AcpiInterpreter', True,
+    InterpreterStackSize);
+  if Thread = nil then
+    Exit;
+  WaitForEvent(Thread^.ExitEvent);
+  DereferenceObject(Thread);
+end;
+
 { The mixer and the capture thread, only where there are outputs and
   inputs: a thread that ended at once would free its stack under the
   self tests' feet. }
@@ -249,6 +267,8 @@ begin
   { With the firmware's processor list read, the processors start before
     the drivers, so device interrupts can go to all of them. }
   StartSecondaryProcessors(@RunIdleLoop);
+  InitializeBuses;
+  LoadAcpiNamespaceOnLargeStack;
   InitializeIoSystem;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);

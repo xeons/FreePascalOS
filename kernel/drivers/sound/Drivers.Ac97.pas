@@ -30,8 +30,11 @@
   the framework mixes.
 
   Descriptors hold 32-bit addresses, so the list and the ring are kept
-  below 4 GiB. The controller only signals on its PCI interrupt line,
-  which the kernel cannot route yet, so a timer asks where it is.
+  below 4 GiB. The controller signals on its PCI interrupt line (routed
+  by the ACPI namespace, Io.PciLineInterrupts) as each buffer completes;
+  the line is level triggered and may be shared, so the handler checks
+  the box's status and clears it. Without routing, a timer asks where
+  the box is.
 }
 unit Drivers.Ac97;
 
@@ -53,8 +56,10 @@ uses
   Kernel.DeferredCalls,
   Kernel.Timers,
   Kernel.Clock,
+  Kernel.Arch.TrapFrame,
   Hal.PortIo,
   Io.Pci,
+  Io.PciLineInterrupts,
   Io.AudioOutput,
   Debug.Output;
 
@@ -85,6 +90,8 @@ const
 
   ControlRun = $01;
   ControlResetRegisters = $02;
+  ControlInterruptOnCompletion = $10;
+  GlobalControlInterruptEnable = $01;
   StatusHalted = $01;
   { Written back to clear: last valid entry, completion, FIFO error. }
   StatusClearBits = $1C;
@@ -114,6 +121,7 @@ type
     DescriptorsPhysical: QWord;
     Output: PAudioOutput;
     IsRunning: Boolean;
+    UsesInterrupts: Boolean;
     PeriodCall: TDeferredCall;
     PollTimer: TTimer;
   end;
@@ -161,8 +169,13 @@ begin
   ResetBox(Controller);
   WritePortByte(BoxPort(Controller, BoxLastValidIndex), DescriptorCount - 1);
   Controller^.IsRunning := True;
-  WritePortByte(BoxPort(Controller, BoxControl), ControlRun);
-  SetTimer(Controller^.PollTimer, PollIntervalMilliseconds, Controller^.PeriodCall);
+  if Controller^.UsesInterrupts then
+    WritePortByte(BoxPort(Controller, BoxControl), ControlRun or ControlInterruptOnCompletion)
+  else
+  begin
+    WritePortByte(BoxPort(Controller, BoxControl), ControlRun);
+    SetTimer(Controller^.PollTimer, PollIntervalMilliseconds, Controller^.PeriodCall);
+  end;
 end;
 
 procedure StopPlaying(Context: Pointer);
@@ -205,7 +218,22 @@ begin
   WritePortWord(Controller^.MixerPorts + MixerMasterVolume, Word((Attenuation shl 8) or Attenuation));
 end;
 
-{ Deferred call from the poll timer. }
+{ The line fired: if the box finished a buffer, the status is cleared
+  (the line is level triggered) and the rest is deferred. }
+procedure HandleAc97Interrupt(Frame: PTrapFrame; Context: Pointer);
+var
+  Controller: PAc97Controller;
+  Status: Word;
+begin
+  Controller := PAc97Controller(Context);
+  Status := ReadPortWord(BoxPort(Controller, BoxStatus)) and StatusClearBits;
+  if Status = 0 then
+    Exit;
+  WritePortWord(BoxPort(Controller, BoxStatus), Status);
+  QueueDeferredCall(Controller^.PeriodCall);
+end;
+
+{ Deferred call from the interrupt or the poll timer. }
 procedure PeriodsElapsed(Context: Pointer);
 var
   Controller: PAc97Controller;
@@ -215,7 +243,7 @@ begin
     Exit;
   MoveLastValid(Controller);
   AudioPeriodsElapsed(Controller^.Output);
-  if Controller^.IsRunning then
+  if Controller^.IsRunning and not Controller^.UsesInterrupts then
     SetTimer(Controller^.PollTimer, PollIntervalMilliseconds, Controller^.PeriodCall);
 end;
 
@@ -283,6 +311,10 @@ begin
     Exit;
   DescribeRing(Controller);
   ResetBox(Controller);
+  Controller^.UsesInterrupts := ConnectPciLineInterrupt(Pci, @HandleAc97Interrupt, Controller);
+  if Controller^.UsesInterrupts then
+    WritePortLongWord(Controller^.BusMasterPorts + GlobalControl,
+      ReadPortLongWord(Controller^.BusMasterPorts + GlobalControl) or GlobalControlInterruptEnable);
 
   DebugBeginMessage;
   DebugWriteTag('audio');
@@ -290,7 +322,10 @@ begin
   DebugWriteHex(Pci^.VendorId, 4);
   DebugWrite(':');
   DebugWriteHex(Pci^.DeviceId, 4);
-  DebugWriteLine(', polled');
+  if Controller^.UsesInterrupts then
+    DebugWriteLine(', interrupts by line')
+  else
+    DebugWriteLine(', polled');
   DebugEndMessage;
   Result := True;
 end;

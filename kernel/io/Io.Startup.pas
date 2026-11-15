@@ -28,16 +28,20 @@
     2. Interrupt routing (the I/O APICs from the MADT)
 
   Then the other processors are started (Kernel.SecondaryProcessors), so
-  device interrupts can be spread over them, and InitializeIoSystem
-  continues:
+  device interrupts can be spread over them, and InitializeBuses goes on:
 
     1. Input devices (keyboard, serial port), attached to the console
     2. PCI enumeration
-    3. Storage drivers, which register whole-disk block devices, and
-       the statistics filter on each disk
-    4. Partition tables, which register partition block devices
-    5. Device objects for all of them (/dev/disk0, /dev/disk0p1, ...)
-    6. File systems, which mount every recognizable volume
+
+  Kernel.Startup then loads the ACPI namespace (Io.AcpiNamespace: the
+  AML, and with it PCI interrupt routing), which needs PCI configuration
+  space, and InitializeIoSystem finishes:
+
+    1. Storage, sound and USB drivers; storage registers whole-disk
+       block devices, with the statistics filter on each disk
+    2. Partition tables, which register partition block devices
+    3. Device objects for all of them (/dev/disk0, /dev/disk0p1, ...)
+    4. File systems, which mount every recognizable volume
 
   Runs in phase 1 because drivers sleep, wait and take mutexes.
 }
@@ -51,6 +55,7 @@ uses
   Boot.Information;
 
 procedure InitializePlatformTables(const BootInformation: TBootInformation);
+procedure InitializeBuses;
 procedure InitializeIoSystem;
 
 implementation
@@ -120,13 +125,15 @@ begin
   InitializeInterruptRouting;
 end;
 
-procedure InitializeIoSystem;
+procedure InitializeBuses;
 begin
   InitializeInputDevices;
-
   InitializePci;
   WritePciSummary;
+end;
 
+procedure InitializeIoSystem;
+begin
   InitializeBlockDevices;
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
