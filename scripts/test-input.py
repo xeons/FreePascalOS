@@ -74,8 +74,12 @@ for suffix in ('.in', '.out'):
 # and USB audio, each recorded into a WAV file).
 for name in ('virtio', 'nvme', 'usb'):
     source = os.path.join(build_directory, 'test-disk-' + name + '.img')
-    if os.path.exists(source):
-        shutil.copyfile(source, os.path.join(work, name + '.img'))
+    if not os.path.exists(source):
+        # QEMU would not start without it (and nothing would read the
+        # serial pipe): say so now rather than wait.
+        print('INPUT TEST FAILED: ' + source + ' is missing (make test-disk, or make test, builds it)')
+        sys.exit(1)
+    shutil.copyfile(source, os.path.join(work, name + '.img'))
 recordings = {name: os.path.join(work, 'audio-' + name + '.wav') for name in ('hda', 'ac97', 'usb')}
 
 # One processor slot is left free, to plug a processor in later (ACPI
@@ -112,7 +116,30 @@ qemu = subprocess.Popen([
     stderr=open(os.path.join(work, 'qemu-errors.log'), 'wb'))
 
 serial_out = os.open(os.path.join(work, 'serial.out'), os.O_RDONLY | os.O_NONBLOCK)
-serial_in = open(os.path.join(work, 'serial.in'), 'wb', buffering=0)
+
+
+def open_serial_input():
+    # Opening a FIFO to write waits until someone reads it: QEMU, once it
+    # runs. If QEMU ended instead (it could not start), that wait would
+    # never end, so the open does not wait and is tried while QEMU lives.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if qemu.poll() is not None:
+            break
+        try:
+            descriptor = os.open(os.path.join(work, 'serial.in'), os.O_WRONLY | os.O_NONBLOCK)
+            os.set_blocking(descriptor, True)
+            return os.fdopen(descriptor, 'wb', buffering=0)
+        except OSError:
+            time.sleep(0.1)
+    print('INPUT TEST FAILED: QEMU did not start (errors in ' + os.path.join(work, 'qemu-errors.log') + ')')
+    with open(os.path.join(work, 'qemu-errors.log'), 'rb') as errors:
+        sys.stdout.write(errors.read().decode(errors='replace'))
+    qemu.kill()
+    sys.exit(1)
+
+
+serial_in = open_serial_input()
 received = bytearray()
 
 
