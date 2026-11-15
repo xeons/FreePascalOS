@@ -287,11 +287,13 @@ normalized (0-65535), not pixels.
 - [x] Mapping device memory into user processes (write-combining)
 - [ ] Display modes: changing the resolution (Bochs DISPI, later native
       drivers), EDID's list of modes, and the DPI following the mode
-- [ ] libdrawing: pixel buffers, rectangles, lines, shapes, blits, clipping
+- [x] libdrawing: pixel buffers, rectangles, lines, shapes, blits, clipping
       regions, alpha blending, gradients, 3D bevels
-- [ ] libfont: bitmap fonts (from the console's PSF font) in several pixel sizes,
+- [x] libfont: bitmap fonts (Terminus PSF, 12 to 32 pixels, regular and bold),
       picked by point size and DPI; text measuring and drawing, UTF-8
-- [ ] Host-side tests for libdrawing and libfont (pixel-exact)
+- [x] Host-side tests for libdrawing and libfont (pixel-exact)
+- [ ] Proportional fonts for the interface (bitmap, or TrueType in step 8); kerning
+- [ ] Anti-aliased lines and shapes; scaling surfaces (for icons at other sizes)
 
 ### 3. Kernel infrastructure for a display server
 - [ ] Shared memory sections (create, map into several processes, handle-based)

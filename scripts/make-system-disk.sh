@@ -46,6 +46,11 @@ rm -rf "$staging_directory"
 mkdir -p "$staging_directory"/{bin,lib,etc,tmp,dev,home/user}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
+# The fonts graphical programs draw with (libfont).
+if [[ -d "$user_build_directory/fonts" ]]; then
+    mkdir -p "$staging_directory/lib/fonts"
+    cp -r "$user_build_directory"/fonts/* "$staging_directory/lib/fonts/"
+fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
 fi

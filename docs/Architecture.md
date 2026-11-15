@@ -1506,9 +1506,41 @@ independent) against the Free Pascal runtime library:
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
+  `Sys.Display` (the display device: its framebuffer mapped, its size,
+  format and DPI),
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
   (creating, waiting for and ending threads, through the runtime's thread
   manager). The heap is thread safe; buffered output is not synchronized.
+- **libdrawing.so** – drawing in memory: `Drawing.Colors` ($AARRGGBB,
+  blending in exact integer arithmetic), `Drawing.Rectangles`,
+  `Drawing.Regions` (areas of rectangles that do not overlap: adding,
+  subtracting and intersecting, for clipping and for what needs
+  drawing again), `Drawing.Surfaces` (pixels of one's own or someone
+  else's, such as a framebuffer), `Drawing.Canvas` (a surface, a clip
+  region and an origin; fills, outlines, copies and blends of surfaces,
+  gradients), `Drawing.Shapes` (Bresenham lines with both ends, ellipses
+  and polygons filling the pixels whose centres are inside) and
+  `Drawing.Bevels` (raised and sunken edges, the focus frame). Every
+  shape is drawn as horizontal spans through one routine (`FillSpan`),
+  which clips them and blends translucent colours. It needs only the
+  runtime library.
+- **libfont.so** – text: `Font.Psf` (PSF1 and PSF2 bitmap fonts with
+  their Unicode tables), `Font.Utf8` (decoding, one U+FFFD for every bad
+  sequence), `Font.Text` (font sets; a face picked by point size and DPI,
+  the tallest not taller than asked; measuring and drawing) and
+  `Font.Files` (reading the system's fonts, Terminus in heights 12 to 32,
+  regular and bold, from `/lib/fonts/terminus` with its licence). Sizes
+  are in points, so text is the same size on any display.
+
+  Both build on the host too, without `Font.Files`: `make drawing-test`
+  (part of `make test`) runs `tools/DrawingTest`, which checks colour
+  arithmetic, regions, clipped fills, the exact pixels of lines,
+  ellipses and polygons, copies, gradients, bevels, malformed UTF-8, a
+  PSF1 font built by the test, and Terminus glyphs drawn pixel for pixel
+  against their bitmaps, and writes a sample picture
+  (`build/tools/drawing-sample.ppm`). On the system, `drawtest` draws a
+  window on the display, everything sized by the display's scale and
+  DPI; the input test checks it in a screen dump.
 - **libtlstest.so** – a small library in assembly with TLS and
   initializer arrays, which Free Pascal does not emit; `threadtest` uses
   it to test the loader and the runtime.

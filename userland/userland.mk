@@ -21,6 +21,7 @@
 #   lib<name>.so   ld -shared over the object files of a library's units:
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
+#                  libsystem <- libdrawing <- libfont (for graphical programs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -58,11 +59,15 @@ SYSTEM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/system
 CRYPTO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/cryptography
 CORE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/coreutils
 AUDIO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/audio
+DRAWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/drawing
+FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
 CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
 AUDIO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libaudio.so
+DRAWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdrawing.so
+FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -71,14 +76,23 @@ TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 USER_PROGRAM_SOURCES := $(wildcard userland/bin/*.pas)
 USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_PROGRAM_SOURCES))
 
+# The system's fonts (/lib/fonts/terminus): Terminus in the sizes it comes
+# in, regular and bold, unpacked; with its licence (SIL Open Font
+# License), which has to go with it.
+TERMINUS_DIRECTORY ?= $(dir $(FONT_SOURCE))
+TERMINUS_LICENSE ?= /usr/share/licenses/terminus-font/LICENSE
+TERMINUS_SIZES := 12 14 16 18 20 22 24 28 32
+SYSTEM_FONT_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/terminus
+SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
+
 
 
 .PHONY: userland system-disk
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) \
-	$(USER_PROGRAMS)
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) \
+	$(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
@@ -128,6 +142,35 @@ $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
 		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# libdrawing: surfaces, clipping regions and drawing on them.
+$(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
+	@rm -rf $(DRAWING_LIBRARY_OBJECTS)
+	@mkdir -p $(DRAWING_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fuuserland/lib/drawing \
+		-FU$(DRAWING_LIBRARY_OBJECTS) userland/lib/drawing/Drawing.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdrawing.so -o $@ \
+		$(DRAWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libfont: bitmap fonts, picked by point size and DPI; measuring and
+# drawing UTF-8 text.
+$(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
+	@rm -rf $(FONT_LIBRARY_OBJECTS)
+	@mkdir -p $(FONT_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/font -FU$(FONT_LIBRARY_OBJECTS) userland/lib/font/Font.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libfont.so -o $@ \
+		$(FONT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ldrawing -lsystem
+
+$(SYSTEM_FONTS_STAMP):
+	@test -f $(TERMINUS_LICENSE) || { echo "The Terminus licence is needed in $(TERMINUS_LICENSE) (set TERMINUS_LICENSE)"; exit 1; }
+	@mkdir -p $(SYSTEM_FONT_DIRECTORY)
+	@for size in $(TERMINUS_SIZES); do for weight in n b; do \
+		source=$(TERMINUS_DIRECTORY)ter-v$$size$$weight.psf.gz; \
+		if [ -f $$source ]; then zcat $$source > $(SYSTEM_FONT_DIRECTORY)/ter-v$$size$$weight.psf; fi; \
+	done; done
+	cp $(TERMINUS_LICENSE) $(SYSTEM_FONT_DIRECTORY)/LICENSE
+	@touch $@
+
 # A library loaded at run time by the tests.
 $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 	@rm -rf $(USER_BUILD_DIRECTORY)/plugin
@@ -148,6 +191,10 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest)
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lfont -ldrawing
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS)
+$(GRAPHICAL_PROGRAMS): $(FONT_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)

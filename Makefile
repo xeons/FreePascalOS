@@ -24,6 +24,7 @@
 #                   the emulated keyboard and serial port; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
+#   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -101,7 +102,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test
 
 all: esp
 
@@ -189,7 +190,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test drawing-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
@@ -227,6 +228,22 @@ aml-test: $(AML_TEST)
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)
 	$(FONT_TOOL) $(FONT_UNPACKED) kernel/debug/Debug.ConsoleFont.inc
+
+# libdrawing and libfont are plain Pascal: they build for the host too,
+# and are checked there pixel by pixel (with the system's fonts).
+DRAWING_TEST := build/tools/DrawingTest
+DRAWING_TEST_SOURCES := tools/DrawingTest/DrawingTest.pas $(wildcard userland/lib/drawing/*.pas) \
+	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+
+$(DRAWING_TEST): $(DRAWING_TEST_SOURCES)
+	@mkdir -p build/tools/drawing-test-units
+	fpc -Mobjfpc -O2 -vew -Fuuserland/lib/drawing -Fuuserland/lib/font -FUbuild/tools/drawing-test-units \
+		-o$@ tools/DrawingTest/DrawingTest.pas
+
+drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP)
+	@$(DRAWING_TEST) $(SYSTEM_FONT_DIRECTORY) build/tools/drawing-sample.ppm > build/tools/drawing-test.out || \
+		{ grep FAIL build/tools/drawing-test.out; echo "DRAWING TEST FAILED (build/tools/drawing-test.out)"; exit 1; }
+	@echo "DRAWING TEST PASSED: $$(tail -n 1 build/tools/drawing-test.out | cut -d ' ' -f 2-)"
 
 clean:
 	rm -rf build

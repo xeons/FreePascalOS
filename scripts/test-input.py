@@ -488,17 +488,27 @@ checks.append(('input events: a key with its character', events_ok and b'key 0x1
 type_on_serial(b'm=CLEAN; echo CONSOLE $m\r')
 checks.append(('input events: the key did not reach the console', wait_for('CONSOLE CLEAN', 10)))
 
-def screen_pixel(x, y):
-    # The colour at (x, y) of a fresh screen dump, as 'rrggbb'; '' if none.
+def take_screen():
+    # A fresh screen dump: a function giving the colour at (x, y) as
+    # 'rrggbb' ('' if there is no dump or the point is off it).
     send_to_monitor('screendump ' + screen_path + '\n')
     time.sleep(1)
     try:
         data = open(screen_path, 'rb').read()
         header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data)
-        offset = header.end() + (y * int(header.group(1)) + x) * 3
-        return data[offset:offset + 3].hex()
+        width = int(header.group(1))
+        start = header.end()
     except (OSError, AttributeError):
-        return ''
+        return lambda x, y: ''
+
+    def pixel(x, y):
+        offset = start + (y * width + x) * 3
+        return data[offset:offset + 3].hex()
+    return pixel
+
+
+def screen_pixel(x, y):
+    return take_screen()(x, y)
 
 
 # The display device: QEMU's EDID says 325x203 mm, which at 1280 pixels
@@ -516,6 +526,20 @@ given_back = wait_for('FILLED DONE', 15)
 time.sleep(0.5)
 # (In the margin, where no text is.)
 checks.append(('display device: the console has the screen again', given_back and screen_pixel(2, 400) == '101830'))
+
+# Drawing with libdrawing and libfont: drawtest draws a window (at 100
+# DPI everything is its logical size: the window at 80,60, 400 wide). The
+# desktop, the window's face, the title bar's gradient and its white text
+# are on the screen; 9 point text picks the 12 pixel face (13 asked for),
+# the title the smallest bold one (14).
+type_on_serial(b'drawtest -s 3; m=DONE; echo DRAWN $m\r')
+time.sleep(1.5)
+pixel = take_screen()
+title_text = any(pixel(x, y) == 'ffffff' for x in range(87, 190) for y in range(64, 80))
+checks.append(('drawing: desktop, window, title bar and its text',
+               pixel(5, 5) == '3a6ea5' and pixel(300, 250) == 'c8c4bc' and pixel(83, 63) == '1c3f6e' and title_text))
+checks.append(('drawing: fonts picked by point size and DPI',
+               wait_for('100 DPI: title 8x14 bold, text 6x12', 15) and wait_for('DRAWN DONE', 10)))
 
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
