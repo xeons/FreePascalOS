@@ -355,6 +355,15 @@ normalized (0-65535), not pixels.
 - [ ] Notepad
 
 ### 7. Applications and session
+- [ ] Service manager (the first user process): service definitions in
+      /etc/services (program, arguments, user, dependencies, restart policy),
+      started in dependency order, restarted when they fail (with a limit),
+      their output logged; a `service` command (start, stop, restart, status)
+- [ ] Boot modes: text (shells on the console) and graphical (the display
+      server, then the session); chosen by a kernel option, graphical by default
+      once it works; shutdown and reboot stop services in reverse order first
+- [ ] The graphical session starts by itself: login, then the desktop shell for
+      that user; a text console stays available for debugging
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
 - [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
