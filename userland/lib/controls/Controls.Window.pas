@@ -237,9 +237,15 @@ constructor TControlWindow.Create(const ATitle: string; Left, Top, Width, Height
 begin
   FHost := TWindowHost.Create(Self);
   FRoot := CreateRootControl(FHost);
-  { The same size the window's surface will have. }
+  { Connected first: until then the scale is not known, and the controls
+    would be laid out for a surface of the wrong size (a program started
+    at 150% filled only two thirds of its window). }
+  ConnectToDisplay;
   FRoot.SetPixelBounds(MakeRectangle(0, 0, Scaled(Width), Scaled(Height)));
   inherited Create(ATitle, Left, Top, Width, Height, AFlags, AOwner);
+  { The surface as made (at the scale of the display the window is on),
+    exactly; painted whole before it is shown. }
+  FRoot.SetPixelBounds(MakeRectangle(0, 0, PixelWidth, PixelHeight));
 end;
 
 destructor TControlWindow.Destroy;

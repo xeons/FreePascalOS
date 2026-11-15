@@ -966,6 +966,18 @@ checks.append(('display server: the scale changed to 150% and back, the window l
                b'scale 150%, 150 DPI' in received and b'scale 150 540 450' in received and
                b'scale 100 360 300' in received and swatch_at_150 == '30a040' and swatch_at_100 == '30a040'))
 
+# A program started while the scale is 150% lays its controls out for
+# its whole client area (180,120, 540x450 pixels): the status bar runs
+# along its bottom, in the face colour, not black.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'displayscale 150; controlsdemo > /tmp/c150.log &\r')
+time.sleep(3)
+pixel = take_screen()
+checks.append(('controls: a program started at 150% fills its window', pixel(700, 556) == 'cbc6bd'))
+type_on_serial(b'kill %2 %1 2>/dev/null; wait; m=DONE; echo STARTED-AT-150 $m\r')
+wait_for('STARTED-AT-150 DONE', 15)
+
 # The rest of the controls (controlstour), which prints where its
 # controls are: a toolbar toggle, a list box, a combo box's dropped
 # list, a menu bar's menu and a message box (Help > About, Enter), an
