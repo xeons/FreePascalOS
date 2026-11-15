@@ -78,6 +78,7 @@ function WindowAt(X, Y: LongInt): PServerWindow;
 implementation
 
 uses
+  Windowing.Theme,
   Server.Theme;
 
 var

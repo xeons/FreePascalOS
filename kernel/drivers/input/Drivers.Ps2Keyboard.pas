@@ -167,21 +167,9 @@ begin
 end;
 
 procedure HandleKeyboardInterrupt(Frame: PTrapFrame; Context: Pointer);
-var
-  Status: Byte;
-  Count: Integer;
 begin
-  Count := 0;
-  repeat
-    Status := ReadPortByte(Ps2StatusPort);
-    if (Status and Ps2StatusOutputFull) = 0 then
-      Break;
-    { A mouse byte is left for the mouse's interrupt. }
-    if (Status and Ps2StatusFromAuxiliary) <> 0 then
-      Break;
-    HandleScanCode(ReadPortByte(Ps2DataPort));
-    Inc(Count);
-  until Count >= MaximumFlushBytes;
+  { Mouse bytes waiting are taken too, for the mouse's driver. }
+  Ps2ServiceController;
 end;
 
 { The layout from the keymap option; US if none or unknown. }
@@ -275,6 +263,7 @@ begin
     Exit;
   if not CreateKeyboardDevice then
     Exit;
+  SetPs2KeyboardRoutine(@HandleScanCode);
   if not ConnectIsaInterrupt(KeyboardIrq, @HandleKeyboardInterrupt, nil) then
     Exit;
   StartKeyboard;

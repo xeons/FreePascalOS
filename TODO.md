@@ -323,12 +323,20 @@ normalized (0-65535), not pixels.
 - [ ] Copying only what moved when a window is dragged (instead of redrawing)
 
 ### 5. Windowing and controls
-- [ ] libwindowing: connecting, windows, the message loop (paint, keys, mouse,
+- [x] libwindowing: connecting, windows, the message loop (paint, keys, mouse,
       resize, close, activate, timers), surfaces and invalidation; windows and
-      positions in logical units, told the scale (and when it changes)
-- [ ] libcontrols: button, check box, radio button, label, edit box (single and
-      multi-line), list box, combo box, scroll bar, menu bar and pop-up menus,
-      toolbar, status bar, tab control, progress bar, tree view, list view
+      positions in logical units, told the scale
+- [x] Messages between a program's parts: delivered at once or posted to the
+      message loop (from any thread), program-defined codes
+- [ ] Told when the scale changes (a window moved to another display)
+- [x] libcontrols base: controls in a tree, docking, painting with clipping,
+      pointer capture, focus and Tab order, default and cancel buttons; new
+      controls by subclassing, On... events, notifications to the parent
+- [x] libcontrols: button, check box, radio button, label, edit box (one line),
+      scroll bar, status bar, progress bar, panel, group box
+- [ ] libcontrols: multi-line edit box, list box, combo box, menu bar and pop-up
+      menus, toolbar, tab control, tree view, list view
+- [ ] Clipboard for the edit boxes (step 8 has the system clipboard)
 - [ ] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
       accelerators; message boxes; layout in logical units, scaled
 

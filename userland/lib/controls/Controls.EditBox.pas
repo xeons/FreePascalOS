@@ -1,0 +1,322 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  Edit boxes: one line of text to type.
+
+  The caret and the selection are character positions (the text is
+  UTF-8). Typing replaces the selection; Backspace and Delete remove a
+  character or the selection; the arrows, Home and End move the caret
+  (with Shift they extend the selection); Ctrl+A selects everything. A
+  click puts the caret at the nearest character boundary, dragging
+  selects. The text scrolls sideways to keep the caret in view. Enter
+  is left for the window (its default button). Every change of the text
+  is announced (OnChange, NotifyChanged).
+}
+unit Controls.EditBox;
+
+{$mode objfpc}
+{$H+}
+
+interface
+
+uses
+  Drawing.Canvas,
+  Controls.Base;
+
+type
+  TEditBox = class(TControl)
+  private
+    FCaret: LongInt;
+    FAnchor: LongInt;
+    FScroll: LongInt;
+    FSelecting: Boolean;
+    FMaximumLength: LongInt;
+    FReadOnly: Boolean;
+    function TextLeft: LongInt;
+    function CaretX(Position: LongInt): LongInt;
+    function PositionAt(X: LongInt): LongInt;
+    procedure MoveCaret(Position: LongInt; Extend: Boolean);
+    procedure ReplaceSelection(const Inserted: string);
+    procedure ScrollToCaret;
+    function SelectionStart: LongInt;
+    function SelectionEnd: LongInt;
+  protected
+    procedure Paint(var Canvas: TCanvas); override;
+    procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
+    procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
+    procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
+    function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    procedure TextChanged; override;
+  public
+    constructor Create(AParent: TControl); override;
+    procedure SelectAll;
+    function SelectedText: string;
+    property CaretPosition: LongInt read FCaret;
+    { 0: no limit (characters). }
+    property MaximumLength: LongInt read FMaximumLength write FMaximumLength;
+    property ReadOnly: Boolean read FReadOnly write FReadOnly;
+  end;
+
+implementation
+
+uses
+  Abi.SystemCalls,
+  Drawing.Rectangles,
+  Drawing.Bevels,
+  Windowing.Theme,
+  Windowing.Connection,
+  Controls.Keys,
+  Controls.Text;
+
+const
+  CharacterA = $1E;
+
+constructor TEditBox.Create(AParent: TControl);
+begin
+  inherited Create(AParent);
+  CanFocus := True;
+end;
+
+function TEditBox.TextLeft: LongInt;
+begin
+  Result := Scaled(4);
+end;
+
+function TEditBox.CaretX(Position: LongInt): LongInt;
+begin
+  Result := TextLeft - FScroll + TextWidth(ControlFace, CharactersOf(Text, 0, Position));
+end;
+
+function TEditBox.PositionAt(X: LongInt): LongInt;
+var
+  Count: LongInt;
+  Position: LongInt;
+begin
+  Count := CharacterCountOf(Text);
+  for Position := 0 to Count - 1 do
+    { Past the middle of the character: after it. }
+    if X < (CaretX(Position) + CaretX(Position + 1)) div 2 then
+      Exit(Position);
+  Result := Count;
+end;
+
+function TEditBox.SelectionStart: LongInt;
+begin
+  if FAnchor < FCaret then
+    Result := FAnchor
+  else
+    Result := FCaret;
+end;
+
+function TEditBox.SelectionEnd: LongInt;
+begin
+  if FAnchor > FCaret then
+    Result := FAnchor
+  else
+    Result := FCaret;
+end;
+
+function TEditBox.SelectedText: string;
+begin
+  Result := CharactersOf(Text, SelectionStart, SelectionEnd - SelectionStart);
+end;
+
+procedure TEditBox.SelectAll;
+begin
+  FAnchor := 0;
+  FCaret := CharacterCountOf(Text);
+  ScrollToCaret;
+  Invalidate;
+end;
+
+procedure TEditBox.ScrollToCaret;
+var
+  X: LongInt;
+  Width: LongInt;
+begin
+  Width := RectangleWidth(PixelBounds);
+  X := CaretX(FCaret);
+  if X < TextLeft then
+    FScroll := FScroll - (TextLeft - X)
+  else if X > Width - TextLeft then
+    FScroll := FScroll + (X - (Width - TextLeft));
+  if FScroll < 0 then
+    FScroll := 0;
+end;
+
+procedure TEditBox.MoveCaret(Position: LongInt; Extend: Boolean);
+begin
+  if Position < 0 then
+    Position := 0;
+  if Position > CharacterCountOf(Text) then
+    Position := CharacterCountOf(Text);
+  FCaret := Position;
+  if not Extend then
+    FAnchor := Position;
+  ScrollToCaret;
+  Invalidate;
+end;
+
+procedure TEditBox.ReplaceSelection(const Inserted: string);
+var
+  Count: LongInt;
+  NewText: string;
+  Start: LongInt;
+begin
+  if FReadOnly then
+    Exit;
+  Count := CharacterCountOf(Text);
+  Start := SelectionStart;
+  if (FMaximumLength > 0) and (Count - (SelectionEnd - Start) + CharacterCountOf(Inserted) > FMaximumLength) then
+    Exit;
+  NewText := CharactersOf(Text, 0, Start) + Inserted + CharactersOf(Text, SelectionEnd, Count);
+  FCaret := Start + CharacterCountOf(Inserted);
+  FAnchor := FCaret;
+  { Text's setter announces the change; the caret is set already. }
+  Text := NewText;
+  ScrollToCaret;
+end;
+
+procedure TEditBox.TextChanged;
+var
+  Count: LongInt;
+begin
+  Count := CharacterCountOf(Text);
+  if FCaret > Count then
+    FCaret := Count;
+  if FAnchor > Count then
+    FAnchor := Count;
+  Changed;
+end;
+
+{ A code point as UTF-8. }
+function Utf8Of(CodePoint: LongWord): string;
+begin
+  if CodePoint < $80 then
+    Result := Char(CodePoint)
+  else if CodePoint < $800 then
+    Result := Char($C0 or (CodePoint shr 6)) + Char($80 or (CodePoint and $3F))
+  else if CodePoint < $10000 then
+    Result := Char($E0 or (CodePoint shr 12)) + Char($80 or ((CodePoint shr 6) and $3F)) +
+      Char($80 or (CodePoint and $3F))
+  else
+    Result := Char($F0 or (CodePoint shr 18)) + Char($80 or ((CodePoint shr 12) and $3F)) +
+      Char($80 or ((CodePoint shr 6) and $3F)) + Char($80 or (CodePoint and $3F));
+end;
+
+function TEditBox.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
+var
+  Extend: Boolean;
+begin
+  Result := True;
+  Extend := (Modifiers and ModifierShift) <> 0;
+  if ((Modifiers and ModifierControl) <> 0) and (Code = CharacterA) then
+  begin
+    SelectAll;
+    Exit;
+  end;
+  case Code of
+    KeyArrowLeft: MoveCaret(FCaret - 1, Extend);
+    KeyArrowRight: MoveCaret(FCaret + 1, Extend);
+    KeyHome: MoveCaret(0, Extend);
+    KeyEnd: MoveCaret(CharacterCountOf(Text), Extend);
+    KeyBackspace:
+      begin
+        if FAnchor = FCaret then
+          FAnchor := FCaret - 1;
+        if FAnchor < 0 then
+          FAnchor := 0;
+        ReplaceSelection('');
+      end;
+    KeyDelete:
+      begin
+        if FAnchor = FCaret then
+          FAnchor := FCaret + 1;
+        if FAnchor > CharacterCountOf(Text) then
+          FAnchor := CharacterCountOf(Text);
+        ReplaceSelection('');
+      end;
+  else
+    if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierControl) = 0) then
+      ReplaceSelection(Utf8Of(Character))
+    else
+      Result := False;
+  end;
+end;
+
+procedure TEditBox.PointerDown(X, Y: LongInt; Button: LongWord);
+begin
+  if Button <> ButtonLeft then
+    Exit;
+  FSelecting := True;
+  MoveCaret(PositionAt(X), False);
+end;
+
+procedure TEditBox.PointerMove(X, Y: LongInt; Buttons: LongWord);
+begin
+  if FSelecting then
+    MoveCaret(PositionAt(X), True);
+end;
+
+procedure TEditBox.PointerUp(X, Y: LongInt; Button: LongWord);
+begin
+  FSelecting := False;
+end;
+
+procedure TEditBox.Paint(var Canvas: TCanvas);
+var
+  Box: TRectangle;
+  Inner: TCanvas;
+  Face: TRectangle;
+  TextTop: LongInt;
+  SelectionLeft: LongInt;
+  SelectionRight: LongInt;
+begin
+  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
+  if Enabled and not FReadOnly then
+    FillRectangle(Canvas, Box, Theme.Field)
+  else
+    FillRectangle(Canvas, Box, Theme.Face);
+  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  if ControlFace = nil then
+    Exit;
+  { Text stays inside the bevel. }
+  Inner := Canvas;
+  Face := InflateRectangle(Box, -2);
+  NarrowCanvasClip(Inner, Face);
+  TextTop := (RectangleHeight(Box) - TextHeight(ControlFace)) div 2;
+  if Enabled then
+    DrawTextInBox(Inner, ControlFace, Text, MakeRectangle(TextLeft - FScroll, TextTop, 1 shl 20,
+      TextHeight(ControlFace)), AlignTextLeft, Theme.FieldText)
+  else
+    DrawDisabledText(Inner, ControlFace, Text, TextLeft - FScroll, TextTop);
+  if Focused and (SelectionStart <> SelectionEnd) then
+  begin
+    SelectionLeft := CaretX(SelectionStart);
+    SelectionRight := CaretX(SelectionEnd);
+    FillRectangle(Inner, MakeRectangle(SelectionLeft, TextTop, SelectionRight - SelectionLeft, TextHeight(ControlFace)),
+      Theme.Selection);
+    DrawTextInBox(Inner, ControlFace, SelectedText, MakeRectangle(SelectionLeft, TextTop, 1 shl 20,
+      TextHeight(ControlFace)), AlignTextLeft, Theme.SelectionText);
+  end;
+  if Focused then
+    FillRectangle(Inner, MakeRectangle(CaretX(FCaret), TextTop, Scaled(1), TextHeight(ControlFace)), Theme.FieldText);
+end;
+
+end.

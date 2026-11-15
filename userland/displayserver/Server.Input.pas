@@ -54,6 +54,7 @@ procedure ForgetWindowInInput(Window: PServerWindow);
 implementation
 
 uses
+  Windowing.Theme,
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.Errors,

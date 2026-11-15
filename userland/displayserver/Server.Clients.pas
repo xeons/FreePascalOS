@@ -55,6 +55,7 @@ procedure SendToClient(Client: PClient; var Message: TWindowMessage);
 implementation
 
 uses
+  Windowing.Theme,
   Abi.SystemCalls,
   Sys.Objects,
   Drawing.Rectangles,

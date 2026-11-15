@@ -377,6 +377,11 @@ begin
   OpenStdIO(ErrOutput, fmOutput, StdErrorHandle);
   OpenStdIO(StdOut, fmOutput, StdOutputHandle);
   OpenStdIO(StdErr, fmOutput, StdErrorHandle);
+  { Error output is written line by line wherever it goes (a file, a
+    pipe), not only on the console: diagnostics of a program that hangs
+    or crashes are not lost in a buffer. }
+  TextRec(ErrOutput).FlushFunc := TextRec(ErrOutput).InOutFunc;
+  TextRec(StdErr).FlushFunc := TextRec(StdErr).InOutFunc;
 end;
 
 {*****************************************************************************

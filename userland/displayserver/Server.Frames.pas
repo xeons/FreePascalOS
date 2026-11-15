@@ -53,6 +53,7 @@ function HitTest(Window: PServerWindow; X, Y: LongInt): THitArea;
 implementation
 
 uses
+  Windowing.Theme,
   Drawing.Colors,
   Drawing.Bevels,
   Drawing.Shapes,
@@ -107,7 +108,7 @@ var
 begin
   for Offset := 0 to Thickness - 1 do
     DrawLine(Canvas, Box.Left + FromX + Offset, Box.Top + FromY, Box.Left + ToX + Offset, Box.Top + ToY,
-      Theme.ButtonText);
+      Theme.FaceText);
 end;
 
 procedure DrawTitleButton(const Canvas: TCanvas; Window: PServerWindow; Button: THitArea);
@@ -135,12 +136,12 @@ begin
       end;
     HitMaximize:
       begin
-        DrawRectangleOutline(Canvas, Glyph, Theme.ButtonText);
-        FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Top, Size, 2 * Thickness), Theme.ButtonText);
+        DrawRectangleOutline(Canvas, Glyph, Theme.FaceText);
+        FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Top, Size, 2 * Thickness), Theme.FaceText);
       end;
     HitMinimize:
       FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Bottom - 2 * Thickness, Size - Size div 4, 2 * Thickness),
-        Theme.ButtonText);
+        Theme.FaceText);
   end;
 end;
 

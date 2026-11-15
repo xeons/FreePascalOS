@@ -27,7 +27,12 @@ unit Windowing.Contents;
 interface
 
 uses
-  Windowing.Protocol;
+  Windowing.Protocol,
+  Windowing.Theme,
+  Windowing.Connection,
+  Windowing.Fonts,
+  Windowing.Messages,
+  Windowing.Windows;
 
 implementation
 

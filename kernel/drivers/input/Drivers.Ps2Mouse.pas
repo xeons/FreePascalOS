@@ -159,18 +159,9 @@ begin
 end;
 
 procedure HandleMouseInterrupt(Frame: PTrapFrame; Context: Pointer);
-var
-  Status: Byte;
-  Count: Integer;
 begin
-  Count := 0;
-  repeat
-    Status := ReadPortByte(Ps2StatusPort);
-    if ((Status and Ps2StatusOutputFull) = 0) or ((Status and Ps2StatusFromAuxiliary) = 0) then
-      Break;
-    HandleMouseByte(ReadPortByte(Ps2DataPort));
-    Inc(Count);
-  until Count >= MaximumBytesPerInterrupt;
+  { Keyboard bytes waiting are taken too, for the keyboard's driver. }
+  Ps2ServiceController;
 end;
 
 { --- Setting up ---------------------------------------------------------- }
@@ -181,7 +172,7 @@ begin
 end;
 
 { The port on, the mouse reset, the wheel asked for, reporting on. }
-function SetUpMouse: Boolean;
+function SetUpMouseByPolling: Boolean;
 var
   Configuration: Byte;
   Answer: Byte;
@@ -215,6 +206,13 @@ begin
   Result := True;
 end;
 
+function SetUpMouse: Boolean;
+begin
+  SetPs2MousePolled(True);
+  Result := SetUpMouseByPolling;
+  SetPs2MousePolled(False);
+end;
+
 { Waking from suspend to RAM reset the mouse (the keyboard's resume, run
   before, turned the port off again). }
 procedure ResumeMouse(Context: Pointer);
@@ -228,6 +226,7 @@ begin
   if not Ps2ControllerIsPresent or not SetUpMouse then
     Exit;
   Source := NewInputSource;
+  SetPs2MouseRoutine(@HandleMouseByte);
   if not ConnectIsaInterrupt(MouseIrq, @HandleMouseInterrupt, nil) then
     Exit;
   RegisterPowerHandler('PS/2 mouse', PowerStageDevices, nil, @ResumeMouse, nil);

@@ -679,6 +679,14 @@ Characters beyond ASCII are sent in UTF-8; with Num Lock off the keypad
 sends cursor and editing keys. The PS/2 driver sets the Caps, Num and
 Scroll Lock lights (keyboard command 0xED, answered by interrupts).
 
+The PS/2 keyboard and mouse share the controller's one output byte:
+whichever interrupt comes takes every waiting byte and hands each to its
+device by the status bit (Ps2ServiceController, under a lock), as an
+interrupt that finds the other device's byte first cannot count on the
+other interrupt coming (the line may stay raised, and both can run on
+two processors at once); while the mouse is set up by polling, its
+bytes are left for the poller.
+
 USB keyboards (Drivers.UsbKeyboard, on the xHCI driver) use the HID boot
 protocol. Their interrupt IN endpoint is read over and over (a report
 handler called from the xHCI event processing, which queues the next
@@ -834,6 +842,57 @@ positions) checks the stacking and the active title bar, a drag by the
 title bar, a resize by the corner, maximizing, the close button, a key
 going to the window left active, and the console getting the screen
 back when the server ends.
+
+### Windows and controls for programs
+
+**libwindowing** is what a program uses to have windows. One connection
+per program (`Windowing.Connection`: hello, the screen's size, DPI and
+scale; `Scaled` and `Unscaled` between logical units and pixels;
+replies waited for while other events are kept in order). A `TWindow`
+(`Windowing.Windows`) is a class whose handlers a program overrides:
+`Paint` (on its surface, clipped to what is invalid), keys, the pointer,
+the wheel, `Resized`, `ActiveChanged`, `CloseRequested`, `TimerFired`.
+Positions given to it are logical units; what it is told is pixels.
+`Invalidate` marks what needs painting; the message loop
+(`RunMessageLoop`) paints before it waits and tells the server what
+changed; a new size gets a new surface painted whole before the server
+sees it. The loop waits on the server's channel, the posted message
+event and the window timers (timer objects) at once.
+
+`Windowing.Messages`: every window and control is a `TMessageReceiver`.
+`DeliverMessage` calls its `ReceiveMessage` at once; `PostMessage`
+queues the message for the loop from any thread (an event wakes it).
+Codes below `MessageUser` are the libraries' (`MessageNotify`: a control
+telling its parent something); programs number theirs from there. A
+receiver that is freed takes its queued messages with it.
+
+`Windowing.Theme` holds the colours and metrics (logical units), shared
+by the display server's frames and the controls; `Windowing.Fonts` the
+system's fonts and the theme's text face at the display's DPI.
+
+**libcontrols** builds windows out of controls. `TControl`
+(`Controls.Base`) has a parent, children, bounds in logical units within
+the parent (or a side to dock to), and virtual handlers (paint on a
+canvas whose origin is its own top left, clipped to it; pointer, wheel,
+keys, focus, size); the `On...` events let code hook any control without
+making a new class, and a control tells its parent what happened through
+a `MessageNotify` message (also `OnNotify`). New controls are made the
+same way as the library's. `TControlWindow` (`Controls.Window`) hosts a
+tree of them: it paints them, sends the pointer to the control under it
+(and to the one pressed until the button is let go: the server captures
+the pointer for the window meanwhile), keys to the focused one (and up
+to its parents until one uses them), moves the focus with Tab and
+Shift+Tab, and presses the default and cancel buttons on Enter and
+Escape. So far: label, panel, group box, button, check box, radio button
+(one checked among its siblings), edit box (one line, UTF-8 by
+characters, caret, selection, scrolling), progress bar, scroll bar and
+status bar (`Controls.Text` draws text fitted with "...").
+
+`controlsdemo` has one of each, and a swatch made in the program (a
+`TControl` subclass that posts a message of the program's own when
+clicked). The input test types into it, tabs, clicks a radio button,
+the scroll bar and the swatch with the USB tablet, presses Enter, and
+checks what it printed and the swatch's colour.
 
 ## Sound
 
@@ -1703,7 +1762,10 @@ Pascal's Windows DLLs, System is built with
 `FPC_HAS_INDIRECT_ENTRY_INFORMATION`: `si_prc` collects the tables and the
 initial stack into a `TEntryInformation` and calls `SysEntry`. Text is
 UTF-8 everywhere (`DefaultSystemCodePage`, file names, the console).
-Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
+Standard output is written line by line on the console and in buffers
+otherwise; error output (`StdErr`, `ErrOutput`) line by line wherever it
+goes, so a program that hangs or crashes does not lose its diagnostics
+(coretest checks the order through a pipe). Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
 
 ## Diagnosing hangs

@@ -25,6 +25,14 @@
   interrupt (IRQ 1 and IRQ 12) and clock. A byte for the mouse is sent
   by writing D4h to the command port first; bytes from the mouse are
   marked in the status.
+
+  Both ports share the one output byte, so whichever interrupt comes
+  takes every byte waiting (Ps2ServiceController) and hands each to the
+  keyboard's or the mouse's routine by the status bit: an interrupt for
+  one device that finds the other's byte first does not leave it for an
+  interrupt that may never come (the line can stay raised, and the two
+  interrupts can run on two processors at once; a lock keeps them in
+  turn).
 }
 unit Drivers.Ps2Controller;
 
@@ -70,10 +78,23 @@ function Ps2SendToMouse(Value: Byte): Boolean;
 { The next byte the mouse sends (polled); False if none came. }
 function Ps2ReadFromMouse(out Value: Byte): Boolean;
 
+type
+  TPs2ByteRoutine = procedure(Value: Byte);
+
+{ Where the keyboard's and the mouse's bytes go (nil: dropped). }
+procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
+procedure SetPs2MouseRoutine(Routine: TPs2ByteRoutine);
+{ While the mouse is set up by polling (its answers read with
+  Ps2ReadFromMouse), the interrupts leave its bytes alone. }
+procedure SetPs2MousePolled(Polled: Boolean);
+{ Takes every waiting byte to its routine: both interrupts call this. }
+procedure Ps2ServiceController;
+
 implementation
 
 uses
-  Hal.PortIo;
+  Hal.PortIo,
+  Kernel.SpinLock;
 
 const
   MaximumWaitIterations = 100000;
@@ -82,6 +103,61 @@ const
   { Waits for a mouse answer: the mouse may take a while (a reset takes
     hundreds of milliseconds). }
   MouseAnswerIterations = 2000000;
+
+var
+  KeyboardRoutine: TPs2ByteRoutine;
+  MouseRoutine: TPs2ByteRoutine;
+  MousePolled: Boolean;
+  ServiceLock: TSpinLock;
+  ServiceLockReady: Boolean;
+
+procedure SetPs2MousePolled(Polled: Boolean);
+begin
+  MousePolled := Polled;
+end;
+
+procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
+begin
+  if not ServiceLockReady then
+  begin
+    InitializeSpinLock(ServiceLock);
+    ServiceLockReady := True;
+  end;
+  KeyboardRoutine := Routine;
+end;
+
+procedure SetPs2MouseRoutine(Routine: TPs2ByteRoutine);
+begin
+  MouseRoutine := Routine;
+end;
+
+procedure Ps2ServiceController;
+var
+  Status: Byte;
+  Value: Byte;
+  Count: Integer;
+begin
+  AcquireSpinLockAtCurrentLevel(ServiceLock);
+  Count := 0;
+  repeat
+    Status := ReadPortByte(Ps2StatusPort);
+    if (Status and Ps2StatusOutputFull) = 0 then
+      Break;
+    { The mouse's answers while it is being set up are for the poller. }
+    if ((Status and Ps2StatusFromAuxiliary) <> 0) and (MousePolled or not Assigned(MouseRoutine)) then
+      Break;
+    Value := ReadPortByte(Ps2DataPort);
+    if (Status and Ps2StatusFromAuxiliary) <> 0 then
+    begin
+      if Assigned(MouseRoutine) then
+        MouseRoutine(Value);
+    end
+    else if Assigned(KeyboardRoutine) then
+      KeyboardRoutine(Value);
+    Inc(Count);
+  until Count >= MaximumFlushBytes;
+  ReleaseSpinLockAtCurrentLevel(ServiceLock);
+end;
 
 function Ps2ControllerIsPresent: Boolean;
 begin

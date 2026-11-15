@@ -49,6 +49,7 @@ uses
   Font.Text,
   Font.Files,
   Windowing.Protocol,
+  Windowing.Theme,
   Server.Theme,
   Server.Screen,
   Server.Cursor,
@@ -92,7 +93,6 @@ begin
 end;
 
 begin
-  LoadDefaultTheme;
   Error := OpenScreen;
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/display', []);

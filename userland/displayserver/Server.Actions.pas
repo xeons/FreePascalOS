@@ -49,6 +49,7 @@ procedure DestroyWindow(Window: PServerWindow);
 implementation
 
 uses
+  Windowing.Theme,
   Sys.Objects,
   Server.Theme,
   Server.Screen,

@@ -614,6 +614,33 @@ checks.append(('display server: ended, the console has the screen again',
 type_on_serial(b'kill %2 2>/dev/null; wait\r')
 time.sleep(1)
 
+# Controls (libcontrols, controlsdemo, client area at 120,80): keys to
+# the edit box, Tab to the check box and Space, a click on a radio
+# button, three on the scroll bar's arrow, one on the swatch (a control
+# the program made itself, which posts a message of its own); Enter
+# presses the default button.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'controlsdemo > /tmp/c.log &\r')
+time.sleep(2.5)
+for key in ('h', 'i', 'tab', 'spc'):
+    press(key)
+time.sleep(0.5)
+click_at(147, 204)
+for step in range(3):
+    click_at(384, 242)
+click_at(438, 120)
+swatch = take_screen()(430, 110)
+press('ret')
+time.sleep(1)
+type_on_serial(b'cat /tmp/c.log; kill %1; wait; m=DONE; echo CONTROLS $m\r')
+controls_ok = wait_for('CONTROLS DONE', 15)
+checks.append(('controls: edit box, check box, radio button, scroll bar, default button',
+               controls_ok and b'edit hi' in received and b'check 1' in received and
+               b'radio Large' in received and b'scroll 3' in received and b'clicked OK' in received))
+checks.append(('controls: a control of the program\'s own, and its posted message',
+               b'swatch 1' in received and swatch == '30a040'))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

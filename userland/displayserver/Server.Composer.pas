@@ -52,6 +52,7 @@ procedure Compose;
 implementation
 
 uses
+  Windowing.Theme,
   Drawing.Regions,
   Drawing.Canvas,
   Server.Theme,
