@@ -198,7 +198,7 @@ how the existing pieces fit together.
 - [x] System call table and argument validation
 - [x] ELF loader for position independent programs and shared libraries
       (DT_NEEDED, eager binding, run time LoadLibrary / FindSymbol)
-- [x] First user mode program (`init=`, default `/bin/sh`)
+- [x] First user mode program (`init=`; by default the service manager)
 - [x] Pipes, console, /dev/null, handle duplication
 - [x] User runtime and startup code; libsystem.so; libcoreutils.so
 - [x] Shell: pipes, redirections, && ||, if/while/until/for, variables,
@@ -210,7 +210,8 @@ how the existing pieces fit together.
 - [x] Scheduling priorities for programs (nice, renice), load averages (uptime)
 - [x] Allocated block counts in file information (du, ls -s, stat %b)
 - [x] su and passwd (salted SHA-256 hashes in /etc/shadow), user "user"
-- [ ] login, and initializing supplementary groups for the first program
+- [x] login, and initializing supplementary groups (from /etc/group) for every
+      program started as a user (login, the session manager, services)
 - [x] `coretest`: user mode tests run by `make test`
 - [ ] Lazy binding (PLT resolution on first call) and symbol versioning;
       binding stays eager, which is simpler and costs little with few libraries
@@ -355,20 +356,23 @@ normalized (0-65535), not pixels.
 - [x] Notepad
 
 ### 7. Applications and session
-- [ ] Service manager (the first user process): service definitions in
+- [x] Service manager (the first user process): service definitions in
       /etc/services (program, arguments, user, dependencies, restart policy),
       started in dependency order, restarted when they fail (with a limit),
       their output logged; a `service` command (start, stop, restart, status)
-- [ ] Boot modes: text (shells on the console) and graphical (the display
+- [x] Boot modes: text (shells on the console) and graphical (the display
       server, then the session); chosen by a kernel option, graphical by default
       once it works; shutdown and reboot stop services in reverse order first
-- [ ] The graphical session starts by itself: login, then the desktop shell for
+- [x] The graphical session starts by itself: login, then the desktop shell for
       that user; a text console stays available for debugging
+- [ ] Asking a service to stop before ending it (needs asynchronous
+      notifications; a stop ends the service's session now)
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
 - [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
 - [ ] Task Manager: processes, CPU and memory
 - [ ] Graphical login, locking, log off, shut down and suspend from the desktop
+      (login, log off and shut down are done; locking and suspend remain)
 - [ ] File change notifications (folders refresh), volume arrival
 - [ ] Per-user settings store (libconfiguration)
 

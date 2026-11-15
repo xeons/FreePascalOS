@@ -63,6 +63,9 @@ type
     RootDirectory: PChar;
     { The group to join; 0 starts a new group led by the new process. }
     GroupId: QWord;
+    { The session to join; 0 starts a new session led by the new
+      process. }
+    SessionId: QWord;
     { Who the program runs as, and its nice value. }
     Credentials: TProcessCredentials;
     { Its controlling terminal (a PDeviceObject; see TProcess). }
@@ -317,6 +320,10 @@ begin
     Process^.GroupId := Startup.GroupId
   else
     Process^.GroupId := Process^.ProcessId;
+  if Startup.SessionId <> 0 then
+    Process^.SessionId := Startup.SessionId
+  else
+    Process^.SessionId := Process^.ProcessId;
   Process^.Credentials := Startup.Credentials;
   Process^.ControllingTerminal := Startup.ControllingTerminal;
 

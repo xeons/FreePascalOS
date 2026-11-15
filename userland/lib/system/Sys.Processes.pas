@@ -43,6 +43,12 @@ type
     ErrorHandle: Int64;
     { GroupInherit, GroupNew or the id of a group to join. }
     GroupId: Int64;
+    { nil: this program's user. Otherwise the user to start it as (root
+      only; see TAbiProcessIdentity). }
+    Identity: PAbiProcessIdentity;
+    { The program leads a session of its own (ProcessNewSession), which
+      EndSession ends as a whole. }
+    NewSession: Boolean;
   end;
 
 { Options with the standard handles and environment of this program. }
@@ -94,6 +100,16 @@ procedure ExitProgram(Code: LongInt);
 function CreatePipe(out ReadHandle, WriteHandle: Int64): LongInt;
 function DuplicateHandle(Handle: Int64; NewHandle: Int64): Int64;
 
+{ Asks every process of session SessionId (the id of the process that
+  leads it) but this one to end with ExitCode; returns how many were
+  asked, or minus an error. }
+function EndSession(SessionId: QWord; ExitCode: LongInt): Int64;
+{ The session process ProcessId belongs to; False if there is no such
+  process. }
+function SessionOfProcess(ProcessId: QWord; out SessionId: QWord): Boolean;
+{ True while a process of session SessionId runs (other than this one). }
+function SessionHasProcesses(SessionId: QWord): Boolean;
+
 implementation
 
 uses
@@ -113,6 +129,8 @@ begin
   Options.OutputHandle := StandardOutputHandle;
   Options.ErrorHandle := StandardErrorHandle;
   Options.GroupId := GroupInherit;
+  Options.Identity := nil;
+  Options.NewSession := False;
 end;
 
 function FindProgram(Name: PChar; FullPath: PChar; Capacity: PtrUInt): Boolean;
@@ -169,6 +187,11 @@ begin
   Creation.OutputHandle := Options.OutputHandle;
   Creation.ErrorHandle := Options.ErrorHandle;
   Creation.GroupId := Options.GroupId;
+  Creation.Identity := Options.Identity;
+  if Options.NewSession then
+    Creation.Flags := ProcessNewSession
+  else
+    Creation.Flags := 0;
   Result := KernelCreateProcess(Creation);
 end;
 
@@ -291,6 +314,48 @@ end;
 function DuplicateHandle(Handle: Int64; NewHandle: Int64): Int64;
 begin
   Result := KernelDuplicateHandle(Handle, NewHandle);
+end;
+
+function EndSession(SessionId: QWord; ExitCode: LongInt): Int64;
+begin
+  Result := KernelTerminateSession(SessionId, ExitCode);
+end;
+
+function SessionOfProcess(ProcessId: QWord; out SessionId: QWord): Boolean;
+var
+  Information: TAbiProcessInformation;
+  Index: QWord;
+begin
+  SessionId := 0;
+  Index := 0;
+  while KernelListProcesses(Index, Information) >= 0 do
+  begin
+    if Information.ProcessId = ProcessId then
+    begin
+      SessionId := Information.SessionId;
+      Exit(True);
+    end;
+    Inc(Index);
+  end;
+  Result := False;
+end;
+
+function SessionHasProcesses(SessionId: QWord): Boolean;
+var
+  Information: TAbiProcessInformation;
+  Index: QWord;
+  Own: QWord;
+begin
+  Own := QWord(CurrentProcessId);
+  Index := 0;
+  while KernelListProcesses(Index, Information) >= 0 do
+  begin
+    if (Information.SessionId = SessionId) and (Information.ProcessId <> Own) and
+       (Information.State <> ProcessStateExiting) then
+      Exit(True);
+    Inc(Index);
+  end;
+  Result := False;
 end;
 
 end.

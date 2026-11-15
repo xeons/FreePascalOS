@@ -52,7 +52,9 @@ uses
   Sys.Console,
   Sys.PseudoTerminals,
   Sys.Display,
-  Sys.Objects;
+  Sys.Objects,
+  Sys.KernelOptions,
+  Sys.ServiceControl;
 
 implementation
 

@@ -121,6 +121,11 @@ function KernelCreateFifo(Path: PChar): Int64;
 function KernelStopProcesses(Target: Int64): Int64;
 function KernelContinueProcesses(Target: Int64): Int64;
 function KernelWaitForProcessChange(Handle: Int64; Timeout: Int64): Int64;
+{ Startup, services and sessions. }
+function KernelGetKernelOptions(Buffer: PChar; Capacity: QWord): Int64;
+function KernelGetChannelPeer(Channel: Int64; out Peer: TAbiChannelPeer): Int64;
+function KernelTerminateSession(SessionId: QWord; ExitCode: LongInt): Int64;
+function KernelWatchShutdown: Int64;
 
 implementation
 
@@ -490,6 +495,26 @@ end;
 function KernelReceiveMessage(Channel: Int64; var Message: TAbiMessage): Int64;
 begin
   Result := SystemCall(CallReceiveMessage, QWord(Channel), QWord(@Message), 0, 0, 0, 0);
+end;
+
+function KernelGetKernelOptions(Buffer: PChar; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallGetKernelOptions, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelGetChannelPeer(Channel: Int64; out Peer: TAbiChannelPeer): Int64;
+begin
+  Result := SystemCall(CallGetChannelPeer, QWord(Channel), QWord(@Peer), 0, 0, 0, 0);
+end;
+
+function KernelTerminateSession(SessionId: QWord; ExitCode: LongInt): Int64;
+begin
+  Result := SystemCall(CallTerminateSession, SessionId, QWord(ExitCode), 0, 0, 0, 0);
+end;
+
+function KernelWatchShutdown: Int64;
+begin
+  Result := SystemCall(CallWatchShutdown, 0, 0, 0, 0, 0, 0);
 end;
 
 end.

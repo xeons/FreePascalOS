@@ -1,0 +1,8 @@
+# The graphical session: the login window, then the user's desktop.
+description   = Login and the desktop on the screen
+program       = /bin/sessionmanager
+needs         = displayserver
+modes         = graphical
+restart       = on-failure
+restart-limit = 5
+restart-delay = 2

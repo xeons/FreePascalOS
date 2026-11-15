@@ -16,7 +16,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Input test: boots the system with /bin/sh as the first program and types
+Input test: boots the system in text mode (kernel option mode=text) with
+root logged in automatically on the console (autologin=root: the service
+manager's console service runs login -a, which starts /bin/sh) and types
 into it, on a USB keyboard and the emulated PS/2 keyboard (QEMU monitor
 "sendkey": keys go to the USB keyboard until it is unplugged, then to
 the PS/2 one) and on the serial port, then checks
@@ -47,7 +49,7 @@ shutil.rmtree(work, ignore_errors=True)
 os.makedirs(work)
 shutil.copytree(esp_directory, os.path.join(work, 'esp'))
 with open(os.path.join(work, 'esp', 'FreePascalOS', 'options.txt'), 'w') as options:
-    options.write('test-exit kshell\n')
+    options.write('test-exit kshell mode=text autologin=root\n')
 shutil.copy(system_disk, os.path.join(work, 'system.img'))
 
 firmware_code = '/usr/share/edk2/x64/OVMF_CODE.4m.fd'

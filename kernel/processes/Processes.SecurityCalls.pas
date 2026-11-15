@@ -80,6 +80,7 @@ begin
   Information.ProcessId := Process^.ProcessId;
   Information.ParentProcessId := Process^.ParentProcessId;
   Information.GroupId := Process^.GroupId;
+  Information.SessionId := Process^.SessionId;
   Information.RealUserId := Process^.Credentials.RealUserId;
   Information.EffectiveUserId := Process^.Credentials.EffectiveUserId;
   Information.Nice := Process^.Credentials.Nice;

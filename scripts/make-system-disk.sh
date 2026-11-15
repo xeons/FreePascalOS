@@ -24,7 +24,9 @@
 # Layout:
 #   /bin   programs (from <user-build-directory>/bin)
 #   /lib   shared libraries (from <user-build-directory>/lib)
-#   /etc   configuration (from userland/etc)
+#   /etc   configuration (from userland/etc), with the service
+#          definitions in /etc/services
+#   /var/log  the services' logs (the service manager writes them)
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
 #   /tmp, /home
 #
@@ -44,7 +46,7 @@ staging_directory="$user_build_directory/root"
 partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
-mkdir -p "$staging_directory"/{bin,lib,etc,tmp,dev,home/user}
+mkdir -p "$staging_directory"/{bin,lib,etc,tmp,dev,home/user,var/log}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 # The fonts graphical programs draw with (libfont).

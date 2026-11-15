@@ -21,7 +21,8 @@
 #   make debug      Like run, but wait for GDB on localhost:1234
 #   make test       Boot headless with the test and system disks, run all self tests
 #                   and the user mode tests (coretest), then type into the shell on
-#                   the emulated keyboard and serial port; report pass/fail
+#                   the emulated keyboard and serial port, then boot the graphical
+#                   session as it normally starts; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
@@ -195,6 +196,7 @@ test-disk: $(TEST_DISK)
 test: aml-test drawing-test text-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 include userland/userland.mk
 

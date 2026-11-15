@@ -29,7 +29,9 @@
   line. A click puts the caret at the nearest character boundary,
   dragging selects. The text scrolls sideways to keep the caret in view.
   Enter is left for the window (its default button). Every change of
-  the text is announced (OnChange, NotifyChanged).
+  the text is announced (OnChange, NotifyChanged). A box that hides its
+  text (HidesText: a password) shows a dot for each character and never
+  lets it be copied or cut.
 }
 unit Controls.EditBox;
 
@@ -52,7 +54,10 @@ type
     FSelecting: Boolean;
     FMaximumLength: LongInt;
     FReadOnly: Boolean;
+    FHidesText: Boolean;
     function TextLeft: LongInt;
+    function ShownText: string;
+    procedure SetHidesText(Value: Boolean);
     function CaretX(Position: LongInt): LongInt;
     function PositionAt(X: LongInt): LongInt;
     procedure MoveCaret(Position: LongInt; Extend: Boolean);
@@ -80,6 +85,8 @@ type
     { 0: no limit (characters). }
     property MaximumLength: LongInt read FMaximumLength write FMaximumLength;
     property ReadOnly: Boolean read FReadOnly write FReadOnly;
+    { Shows dots instead of the characters (a password box). }
+    property HidesText: Boolean read FHidesText write SetHidesText;
   end;
 
 implementation
@@ -107,9 +114,30 @@ begin
   Result := Scaled(4);
 end;
 
+const
+  { U+2022, the bullet, in UTF-8. }
+  HiddenCharacter = #$E2#$80#$A2;
+
+function TEditBox.ShownText: string;
+var
+  Index: LongInt;
+begin
+  if not FHidesText then
+    Exit(Text);
+  Result := '';
+  for Index := 1 to CharacterCountOf(Text) do
+    Result := Result + HiddenCharacter;
+end;
+
+procedure TEditBox.SetHidesText(Value: Boolean);
+begin
+  FHidesText := Value;
+  Invalidate;
+end;
+
 function TEditBox.CaretX(Position: LongInt): LongInt;
 begin
-  Result := TextLeft - FScroll + TextWidth(ControlFace, CharactersOf(Text, 0, Position));
+  Result := TextLeft - FScroll + TextWidth(ControlFace, CharactersOf(ShownText, 0, Position));
 end;
 
 function TEditBox.PositionAt(X: LongInt): LongInt;
@@ -153,13 +181,13 @@ end;
 
 procedure TEditBox.CopyToClipboard;
 begin
-  if HasSelection then
+  if HasSelection and not FHidesText then
     SetClipboardText(SelectedText);
 end;
 
 procedure TEditBox.CutToClipboard;
 begin
-  if not HasSelection or FReadOnly then
+  if not HasSelection or FReadOnly or FHidesText then
     Exit;
   SetClipboardText(SelectedText);
   ReplaceSelection('');
@@ -337,7 +365,7 @@ begin
   { The context menu opens as the button is let go, so the release does
     not land on the menu. }
   if Button = ButtonRight then
-    ShowEditMenu(Self, X, Y, AvailableEditCommands(HasSelection, FReadOnly), @RunEditCommand);
+    ShowEditMenu(Self, X, Y, AvailableEditCommands(HasSelection and not FHidesText, FReadOnly), @RunEditCommand);
 end;
 
 procedure TEditBox.Paint(var Canvas: TCanvas);
@@ -363,17 +391,18 @@ begin
   NarrowCanvasClip(Inner, Face);
   TextTop := (RectangleHeight(Box) - TextHeight(ControlFace)) div 2;
   if Enabled then
-    DrawTextInBox(Inner, ControlFace, Text, MakeRectangle(TextLeft - FScroll, TextTop, 1 shl 20,
+    DrawTextInBox(Inner, ControlFace, ShownText, MakeRectangle(TextLeft - FScroll, TextTop, 1 shl 20,
       TextHeight(ControlFace)), AlignTextLeft, Theme.FieldText)
   else
-    DrawDisabledText(Inner, ControlFace, Text, TextLeft - FScroll, TextTop);
+    DrawDisabledText(Inner, ControlFace, ShownText, TextLeft - FScroll, TextTop);
   if Focused and (SelectionStart <> SelectionEnd) then
   begin
     SelectionLeft := CaretX(SelectionStart);
     SelectionRight := CaretX(SelectionEnd);
     FillRectangle(Inner, MakeRectangle(SelectionLeft, TextTop, SelectionRight - SelectionLeft, TextHeight(ControlFace)),
       Theme.Selection);
-    DrawTextInBox(Inner, ControlFace, SelectedText, MakeRectangle(SelectionLeft, TextTop, 1 shl 20,
+    DrawTextInBox(Inner, ControlFace, CharactersOf(ShownText, SelectionStart, SelectionEnd - SelectionStart),
+      MakeRectangle(SelectionLeft, TextTop, 1 shl 20,
       TextHeight(ControlFace)), AlignTextLeft, Theme.SelectionText);
   end;
   if Focused then

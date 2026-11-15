@@ -33,6 +33,9 @@
       section shared between two processes (ipctest),
     * pseudo-terminals: a shell on one, typed into through the master
       side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
+    * the service manager: definitions, the start order, readiness,
+      restarts, logs, the service command (servicetest), and login with
+      a right and a wrong password,
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself, with runtime error 216 (202 for a stack overflow), and that
       one without an exception dispatcher is ended by the kernel (139).
@@ -71,7 +74,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..290] of TCommandTest = (
+  CommandTests: array[0..293] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -417,6 +420,13 @@ const
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'ptytest > pty.log; echo $?; grep -E ''FAIL|received'' pty.log; tail -n 1 pty.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { The service manager and the service command (a second manager). }
+    (Command: 'servicetest > svc.log; echo $?; grep -E ''FAIL|received'' svc.log; tail -n 1 svc.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { login: a right and a wrong password (read from a pipe), root only,
+      the user's groups (supplementary ones from /etc/group), home and
+      environment. }
+    (Command: 'printf ''user\nuser\n'' | login -e /bin/id 2>/dev/null; printf ''user\nwrong\n'' | login -e /bin/id 2>/dev/null; echo $?'; ExpectedOutput: 'fpos login: uid=1000(user) gid=1000(user) groups=1000(user)'#10'fpos login: Login incorrect'#10'fpos login: 1'#10; ExpectedStatus: 0),
+    (Command: 'login -f root -e /bin/id; login -f user -e /bin/pwd; login -f user -e /bin/printenv; su user -c "login -f root -e /bin/id" 2>&1; echo $?'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'/home/user'#10'HOME=/home/user'#10'SHELL=/bin/sh'#10'USER=user'#10'LOGNAME=user'#10'PATH=/bin'#10'TERM=console'#10'login: only root may log users in'#10'1'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone: with a runtime error, or with
       status 139 when the kernel must end it (no dispatcher) ----------- }

@@ -22,6 +22,10 @@
   Asked for by the power button (Io.AcpiEvents), a program
   (CallShutdown, root only) or the kernel debug shell; the first request
   wins. A thread of its own then:
+  0. if a process watches for shutdowns (CallWatchShutdown: the service
+     manager), signals its event and waits for it to end (up to
+     ShutdownCoordinatorSeconds), so it can stop the services in the
+     reverse of the order they started in;
   1. asks every user process to end, and waits for them (a few seconds
      at most);
   2. writes everything cached out (SyncAllVolumes);
@@ -46,12 +50,20 @@ function RequestShutdown(Action: TShutdownAction): Boolean;
 function ShutdownIsInProgress: Boolean;
 { CallShutdown: root only. }
 function PerformShutdown(Action: QWord): Int64;
+{ CallWatchShutdown: root only; an event handle, or minus an error. }
+function PerformWatchShutdown: Int64;
 
 implementation
 
 uses
   Abi.SystemCalls,
   Runtime.Atomic,
+  Kernel.Mutex,
+  Kernel.Events,
+  Objects.Manager,
+  Objects.Events,
+  Processes.Handles,
+  Processes.UserProcess,
   Processes.Process,
   Kernel.Arch.Cpu,
   Kernel.Scheduler,
@@ -75,6 +87,26 @@ const
 var
   Started: PtrUInt;
   RequestedAction: TShutdownAction;
+  { The process watching for shutdowns and the event it waits on, each
+    with a reference of ours; nil for none. Under CoordinatorLock, made
+    when first needed. }
+  Coordinator: PProcess;
+  CoordinatorEvent: PEventObject;
+  CoordinatorLock: TMutex;
+  CoordinatorLockReady: PtrUInt;
+
+procedure EnsureCoordinatorLock;
+begin
+  { Only system calls and the shutdown thread get here, all after
+    startup; the first one sets the lock up. }
+  if AtomicCompareExchange(CoordinatorLockReady, 1, 0) = 0 then
+  begin
+    InitializeMutex(CoordinatorLock);
+    CoordinatorLockReady := 2;
+  end;
+  while CoordinatorLockReady <> 2 do
+    SleepMilliseconds(1);
+end;
 
 procedure Report(Text: PChar);
 begin
@@ -98,6 +130,34 @@ begin
     Report('some processes did not end in time');
 end;
 
+{ The service manager stops the services in order; everything after
+  that is ours. A watcher that is gone, or never came, costs nothing. }
+procedure LetCoordinatorFinish;
+var
+  Watcher: PProcess;
+  Event: PEventObject;
+  ExitCode: LongInt;
+begin
+  EnsureCoordinatorLock;
+  AcquireMutex(CoordinatorLock);
+  Watcher := Coordinator;
+  Event := CoordinatorEvent;
+  Coordinator := nil;
+  CoordinatorEvent := nil;
+  ReleaseMutex(CoordinatorLock);
+  if Watcher = nil then
+    Exit;
+  SignalEvent(Event^.Event);
+  if not Watcher^.HasExited then
+  begin
+    Report('waiting for the services to stop');
+    if WaitForProcessExit(Watcher, ShutdownCoordinatorSeconds * 1000, ExitCode) <> ErrorNone then
+      Report('the services did not stop in time');
+  end;
+  DereferenceObject(Event);
+  DereferenceObject(Watcher);
+end;
+
 procedure HaltForever;
 begin
   HalHaltOtherProcessors;
@@ -114,6 +174,7 @@ begin
   else
     Report('halting');
   end;
+  LetCoordinatorFinish;
   EndUserProcesses;
   SyncAllVolumes;
   WriteDiskStatistics;
@@ -158,6 +219,51 @@ begin
     Exit(-Int64(ErrorInvalidArgument));
   end;
   Result := 0;
+end;
+
+function PerformWatchShutdown: Int64;
+var
+  Process: PProcess;
+  Event: PEventObject;
+  Handle: Int64;
+begin
+  Process := CurrentProcess;
+  if Process^.Credentials.EffectiveUserId <> RootUserId then
+    Exit(-Int64(ErrorNotPermitted));
+  EnsureCoordinatorLock;
+  AcquireMutex(CoordinatorLock);
+  if (Coordinator <> nil) and not Coordinator^.HasExited then
+  begin
+    ReleaseMutex(CoordinatorLock);
+    Exit(-Int64(ErrorBusy));
+  end;
+  Event := CreateEventObject(True, Started <> 0);
+  if Event = nil then
+  begin
+    ReleaseMutex(CoordinatorLock);
+    Exit(-Int64(ErrorOutOfMemory));
+  end;
+  AcquireMutex(Process^.Lock);
+  Handle := InsertHandle(Process^.Handles, HandleKindEvent, Event, 0);
+  ReleaseMutex(Process^.Lock);
+  if Handle < 0 then
+  begin
+    ReleaseMutex(CoordinatorLock);
+    DereferenceObject(Event);
+    Exit(-Int64(ErrorTooManyHandles));
+  end;
+  { A watcher that ended is replaced. }
+  if Coordinator <> nil then
+  begin
+    DereferenceObject(Coordinator);
+    DereferenceObject(CoordinatorEvent);
+  end;
+  ReferenceObject(Process);
+  Coordinator := Process;
+  { The creation reference stays ours; the handle has its own. }
+  CoordinatorEvent := Event;
+  ReleaseMutex(CoordinatorLock);
+  Result := Handle;
 end;
 
 end.

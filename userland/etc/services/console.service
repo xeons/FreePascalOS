@@ -1,0 +1,11 @@
+# The text mode's console: a login on the screen and the serial port.
+# -a logs in the user the kernel option autologin= names, without asking.
+# A new login follows every logout.
+description   = Login on the console
+program       = /bin/login
+arguments     = -a
+console       = yes
+modes         = text
+restart       = always
+restart-limit = 0
+restart-delay = 0.5

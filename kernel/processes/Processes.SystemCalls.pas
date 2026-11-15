@@ -81,7 +81,9 @@ uses
   Processes.FileAttributeCalls,
   Processes.UserExceptions,
   { Job control. }
-  Processes.Stopping;
+  Processes.Stopping,
+  { The kernel's command line, for the service manager. }
+  Kernel.Options;
 
 const
   SystemName = 'FreePascalOS';
@@ -196,7 +198,7 @@ begin
   if DescribePath(KernelPath, True, Information) <> StatusSuccess then
     Exit;
   if (Information.Kind <> NodeKindFile) or
-     not CredentialsMayAccess(Caller^.Credentials, Information, AccessExecute) then
+     not CredentialsMayAccess(Credentials, Information, AccessExecute) then
     Exit(ErrorAccessDenied);
   if (Information.Mode and ModeSetUserId) <> 0 then
   begin
@@ -208,6 +210,41 @@ begin
     Credentials.EffectiveGroupId := Information.GroupId;
     Credentials.SavedGroupId := Information.GroupId;
   end;
+end;
+
+{ The user a program is started as, when its creator names one
+  (TAbiProcessCreation.Identity): only root may. Its real, effective and
+  saved ids all become the user's, and its groups the ones given. }
+function ApplyStartIdentity(Caller: PProcess; IdentityAddress: QWord;
+  var Credentials: TProcessCredentials): LongInt;
+var
+  Identity: TAbiProcessIdentity;
+  Index: LongWord;
+begin
+  if IdentityAddress = 0 then
+    Exit(ErrorNone);
+  if Credentials.EffectiveUserId <> RootUserId then
+    Exit(ErrorNotPermitted);
+  Result := CopyFromUser(@Identity, IdentityAddress, SizeOf(Identity));
+  if Result <> ErrorNone then
+    Exit;
+  if (Identity.GroupCount > MaximumProcessGroups) or (Identity.UserId > $7FFFFFFF) or
+     (Identity.GroupId > $7FFFFFFF) then
+    Exit(ErrorInvalidArgument);
+  Credentials.RealUserId := Identity.UserId;
+  Credentials.EffectiveUserId := Identity.UserId;
+  Credentials.SavedUserId := Identity.UserId;
+  Credentials.RealGroupId := Identity.GroupId;
+  Credentials.EffectiveGroupId := Identity.GroupId;
+  Credentials.SavedGroupId := Identity.GroupId;
+  Credentials.GroupCount := Identity.GroupCount;
+  Index := 0;
+  while Index < Identity.GroupCount do
+  begin
+    Credentials.Groups[Index] := Identity.Groups[Index];
+    Inc(Index);
+  end;
+  Result := ErrorNone;
 end;
 
 function PerformCreateProcess(CreationAddress: QWord): Int64;
@@ -240,6 +277,9 @@ begin
   if Error <> ErrorNone then
     Exit(Failure(Error));
   InheritCredentials(Caller, Credentials);
+  Error := ApplyStartIdentity(Caller, QWord(Creation.Identity), Credentials);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
   Error := CheckMayExecute(Caller, @KernelPath[0], Credentials);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -280,6 +320,11 @@ begin
   { A program started inside a chroot stays inside it. }
   Startup.RootDirectory := @RootDirectory[0];
   Startup.ControllingTerminal := Caller^.ControllingTerminal;
+  { 0 makes the child lead a session of its own. }
+  if (Creation.Flags and ProcessNewSession) <> 0 then
+    Startup.SessionId := 0
+  else
+    Startup.SessionId := Caller^.SessionId;
   case Creation.GroupId of
     GroupInherit: Startup.GroupId := Caller^.GroupId;
     GroupNew, GroupNewInForeground: Startup.GroupId := 0;
@@ -548,6 +593,37 @@ begin
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
 end;
 
+{ The options the system started with: the service manager reads its
+  boot mode there, login the user to log in automatically. }
+function PerformGetKernelOptions(BufferAddress, Capacity: QWord): Int64;
+var
+  Line: PChar;
+  Length: QWord;
+  Copied: QWord;
+  Terminator: Char;
+  Error: LongInt;
+begin
+  Line := KernelCommandLine;
+  Length := TextLength(Line);
+  if Capacity = 0 then
+    Exit(Int64(Length));
+  Copied := Length;
+  if Copied > Capacity - 1 then
+    Copied := Capacity - 1;
+  Error := CopyToUser(BufferAddress, Line, Copied);
+  Terminator := #0;
+  if Error = ErrorNone then
+    Error := CopyToUser(BufferAddress + Copied, @Terminator, 1);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Result := Int64(Length);
+end;
+
+function PerformTerminateSession(SessionId: QWord; ExitCode: QWord): Int64;
+begin
+  Result := TerminateSession(SessionId, LongInt(ExitCode and $FF));
+end;
+
 { --- Dispatcher ------------------------------------------------------ }
 
 function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3: QWord): Int64;
@@ -640,6 +716,11 @@ begin
     CallReceiveMessage: Result := PerformReceiveMessage(Int64(Argument0), Argument1);
     { Pseudo-terminals (Processes.TerminalCalls). }
     CallCreatePseudoTerminal: Result := PerformCreatePseudoTerminal(Argument0, Argument1);
+    { Startup, services and sessions. }
+    CallGetKernelOptions: Result := PerformGetKernelOptions(Argument0, Argument1);
+    CallGetChannelPeer: Result := PerformGetChannelPeer(Int64(Argument0), Argument1);
+    CallTerminateSession: Result := PerformTerminateSession(Argument0, Argument1);
+    CallWatchShutdown: Result := PerformWatchShutdown;
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

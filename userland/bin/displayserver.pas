@@ -29,7 +29,8 @@
   Prints a line for each display after the first, then
   "displayserver: ready" (with the first display's size, DPI and scale)
   once it serves, then how many of the pointer's shapes it read from
-  /lib/pointers. Ends when told to (killed); the console gets the
+  /lib/pointers; started by the service manager, it tells it it is
+  ready then (Sys.ServiceControl). Ends when told to (killed); the console gets the
   screen and keyboards back, and each display the mode it had.
 
   --check-moves (for testing) draws every screen again after every
@@ -60,6 +61,7 @@ uses
   Abi.SystemCalls,
   Sys.Format,
   Sys.Objects,
+  Sys.ServiceControl,
   Sys.Streams,
   Util.Messages,
   Util.Options,
@@ -166,6 +168,9 @@ begin
   WriteFormatted(StandardOutput, 'displayserver: %d of %d pointer shapes from %s'#10,
     [ArgumentNumber(PointerFilesRead), ArgumentNumber(PointerShapeCount), ArgumentText(PointerDirectory)]);
   FlushStream(StandardOutput);
+  { Clients can connect now: the session waits for this (when the
+    service manager started the server). }
+  NotifyServiceReady;
   ServeForever;
   CloseInput;
   CloseScreens;

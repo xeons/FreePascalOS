@@ -1,0 +1,10 @@
+# The display server: the screens, the keyboards and the pointing
+# devices. Ready once its port takes clients.
+description   = The display server
+program       = /bin/displayserver
+modes         = graphical
+ready         = notify
+ready-timeout = 30
+restart       = on-failure
+restart-limit = 3
+restart-delay = 2

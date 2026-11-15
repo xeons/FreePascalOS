@@ -83,8 +83,16 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   opening, creating, removing, renaming, searching directories, chmod,
   chown, setting times and running programs are checked against the
   Unix mode bits (root passes everything but needs one execute bit to run
-  a file). Set-user-ID programs run as their owner; `su` and `passwd`
-  check salted SHA-256 hashes in `/etc/shadow`.
+  a file). Set-user-ID programs run as their owner; `su`, `passwd` and
+  `login` check salted SHA-256 hashes in `/etc/shadow`.
+- **Startup, services and sessions**: the first program is a service
+  manager that starts the services of the boot mode (text or graphical)
+  from definitions in `/etc/services` in the order of what they need,
+  waits for each to be ready, starts failed ones again within limits,
+  logs their output to `/var/log`, and stops them in reverse order when
+  the system shuts down; `service list|status|start|stop|restart`. A
+  login on the console, and a login window on the screen that starts
+  the user's desktop in a session of its own (Log off ends it).
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
   with CPU time counted per thread, nice values mapped to thread
   priorities (`nice`, `renice`), processor affinity (`taskset`), per
@@ -159,8 +167,9 @@ make run          # boot in QEMU with the test and system disks; the kernel log
                   # and then the shell appear on the terminal (the test disk
                   # is a fresh copy each time; the system disk keeps changes)
 make debug        # same, but wait for GDB on localhost:1234
-make test         # boot headless, run every self test and coretest,
-                  # print TEST PASSED or TEST FAILED
+make test         # boot headless, run every self test and coretest, type
+                  # into the console, boot the graphical session; print
+                  # TEST PASSED, INPUT TEST PASSED and SESSION TEST PASSED
 make image        # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
 ```
@@ -169,19 +178,35 @@ make clean
 processor's own behaviour where QEMU's emulator differs (it does not raise
 SIMD floating point exceptions). `PROCESSORS=N` sets the processor count.
 
-Type into the QEMU window (PS/2 keyboard) or the terminal (serial port).
-After startup the kernel runs `/bin/sh` from the system volume (the volume
-labelled `FPOSROOT`, or the one named by the `root=` option) on the serial
-console, as root; `init=/bin/program` picks another first program. Programs see the
-system volume as `/`; every mounted volume is also reachable as
-`/volumes/disk1p1`, `/volumes/disk1p2`, ...
+After startup the kernel runs the service manager (`/bin/servicemanager`)
+from the system volume (the volume labelled `FPOSROOT`, or the one named by
+the `root=` option). It starts the services of the boot mode, defined in
+`/etc/services` (`service list` shows them):
+
+- **Graphical** (the default): the display server, then the login window;
+  logging in starts the desktop as that user. The Start menu has Log off
+  (back to the login window) and Shut down. The serial port (the terminal
+  `make run` starts in) keeps a text login for debugging.
+- **Text** (kernel option `mode=text`): a login on the console, the screen
+  and the serial port.
+
+`autologin=USER` logs USER in without asking: the first session on the
+screen in graphical mode, every console login in text mode. So
+`autologin=user` boots straight to the desktop, and `mode=text
+autologin=root` to a root shell. `init=/bin/program` runs another first
+program instead of the service manager (the tests use `init=/bin/coretest`);
+`init=/bin/sh` gives a root shell on the console with no services. Programs
+see the system volume as `/`; every mounted volume is also reachable as
+`/volumes/disk1p1`, `/volumes/disk1p2`, ... The services' output is in
+`/var/log/NAME.log`.
 
 The system volume has two accounts: `root` (password `root`) and `user`
 (uid 1000, home `/home/user`, password `user`). `su user` becomes the
 ordinary user, `passwd` changes a password.
 
 Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
-(see `kernel/core/Kernel.Options.pas`).
+(one line, words separated by spaces, e.g. `mode=text autologin=root`; see
+`kernel/core/Kernel.Options.pas`).
 
 The disk image can be written to a USB stick to boot real hardware, with
 Secure Boot disabled. Writing it erases the stick:

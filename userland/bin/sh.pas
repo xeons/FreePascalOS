@@ -21,6 +21,7 @@
 
   sh                      read commands from standard input (with a
                           prompt when it is the console)
+  sh -i                   the same (su and login start the shell so)
   sh -c COMMAND [NAME [ARG]...]
                           run COMMAND; NAME becomes $0, ARGs $1...
   sh FILE [ARG]...        run the script FILE
@@ -236,6 +237,11 @@ begin
   begin
     WriteLine(StandardError, 'sh: -c: option requires an argument');
     Halt(2);
+  end
+  else if (ArgumentTotal = 2) and TextIsEqual(Argument(1), '-i') then
+  begin
+    SetPositionalParameters(nil, 0);
+    RunInteractive(KernelGetHandleKind(StandardInputHandle) = HandleKindConsole);
   end
   else if ArgumentTotal >= 2 then
   begin

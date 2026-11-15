@@ -45,7 +45,8 @@ uses
   Util.LineEditor,
   Util.Globbing,
   Util.Passwords,
-  Util.Power;
+  Util.Power,
+  Util.Logins;
 
 implementation
 
