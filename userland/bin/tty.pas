@@ -21,7 +21,8 @@
 
   tty [-s]
 
-  The only terminal is the console, /dev/console.
+  The console is /dev/console; a pseudo-terminal (a terminal window's)
+  is /dev/ptsN.
 }
 program tty;
 
@@ -30,6 +31,7 @@ program tty;
 uses
   Abi.SystemCalls,
   Sys.Console,
+  Sys.PseudoTerminals,
   Sys.Streams,
   Util.Options;
 
@@ -41,6 +43,7 @@ const
   OptionSilent = 1;
 
 var
+  Path: array[0..15] of Char;
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
@@ -54,7 +57,14 @@ begin
     Silent := True;
   if IsConsole(StandardInputHandle) then
   begin
-    if not Silent then
+    if Silent then
+      Halt(0);
+    if TerminalNumber(StandardInputHandle) >= 0 then
+    begin
+      PseudoTerminalPath(TerminalNumber(StandardInputHandle), @Path[0]);
+      PrintLine(@Path[0]);
+    end
+    else
       PrintLine('/dev/console');
     Halt(0);
   end;

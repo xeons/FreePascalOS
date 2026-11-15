@@ -200,6 +200,13 @@ type
       not wait, for programs waiting on several handles; nil if the
       device offers none. }
     ReadyEvent: Pointer;
+    { The same for writing: waited on for a handle opened only for
+      writing. }
+    WritableEvent: Pointer;
+    { For a terminal (the console, a pseudo-terminal's either side): its
+      line discipline (a PLineDiscipline, Io.LineDiscipline); nil for
+      other devices. }
+    Terminal: Pointer;
   end;
 
   TDeviceFile = record

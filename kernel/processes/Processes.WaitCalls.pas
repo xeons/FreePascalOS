@@ -23,7 +23,9 @@
   timer object's own event, a process's or thread's exit event, a pipe
   read end's or channel end's Readable event, a pipe write end's
   Writable event, a port's Pending event, a device's ReadyEvent (if its
-  driver keeps one: the console's says a read would not wait). The
+  driver keeps one: a terminal's says a read would not wait), or for a
+  device opened only for writing its WritableEvent (a pseudo-terminal's
+  master side: room to type). The
   objects are held for the wait, which is alertable: ending or stopping
   the process ends it (ErrorInterrupted).
 
@@ -64,6 +66,18 @@ begin
   Result := -Int64(Error);
 end;
 
+{ A device opened only for writing is ready when a write would not
+  wait; otherwise when a read would not wait. }
+function DeviceReadinessEvent(OpenFile: PDeviceFile): PEvent;
+begin
+  if OpenFile^.IsDirectory then
+    Exit(nil);
+  if ((OpenFile^.OpenFlags and OpenRead) = 0) and ((OpenFile^.OpenFlags and OpenWrite) <> 0) then
+    Result := PEvent(OpenFile^.Device^.WritableEvent)
+  else
+    Result := PEvent(OpenFile^.Device^.ReadyEvent);
+end;
+
 { The event that says the object is ready; nil if it cannot be waited on. }
 function ReadinessEvent(Kind: THandleKind; ObjectBody: Pointer): PEvent;
 begin
@@ -77,10 +91,7 @@ begin
     HandleKindChannel: Result := @PChannelEnd(ObjectBody)^.Readable;
     HandleKindPort: Result := @PPort(ObjectBody)^.Pending;
     HandleKindDevice:
-      if PDeviceFile(ObjectBody)^.IsDirectory then
-        Result := nil
-      else
-        Result := PEvent(PDeviceFile(ObjectBody)^.Device^.ReadyEvent);
+      Result := DeviceReadinessEvent(PDeviceFile(ObjectBody));
   else
     Result := nil;
   end;

@@ -48,6 +48,7 @@ uses
   Kernel.Scheduler,
   Objects.Manager,
   Io.Console,
+  Io.LineDiscipline,
   Io.Manager,
   Io.DeviceFiles,
   FileSystem.Types,
@@ -147,6 +148,9 @@ begin
     Startup.StandardKinds[StandardIndex] := HandleKindDevice;
     Startup.StandardObjects[StandardIndex] := ConsoleFile;
   end;
+  { Every program runs on the console unless started on another
+    terminal. }
+  Startup.ControllingTerminal := Console;
 
   Report('Starting ', @ProgramPath[0]);
   Error := CreateUserProcess(Startup, Process);
@@ -154,7 +158,7 @@ begin
   DereferenceObject(ConsoleFile);
   { The first program owns the console: Ctrl-C ends its group. }
   if Error = ErrorNone then
-    SetConsoleForegroundGroup(Process^.GroupId);
+    SetTerminalForegroundGroup(ConsoleTerminal^, Process^.GroupId);
   if Error <> ErrorNone then
   begin
     DebugBeginMessage;

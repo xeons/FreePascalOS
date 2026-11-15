@@ -50,6 +50,7 @@ uses
   Sys.Libraries,
   Sys.Information,
   Sys.Console,
+  Sys.PseudoTerminals,
   Sys.Display,
   Sys.Objects;
 

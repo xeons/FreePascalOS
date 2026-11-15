@@ -33,11 +33,11 @@
   The exit code is the one given by the caller; by Unix convention 128
   plus a signal number (143 for "terminate").
 
-  Ctrl-C on the console ends the console's foreground process group with
+  Ctrl-C on a terminal ends the terminal's foreground process group with
   exit code 130 (128 + SIGINT), sparing processes that ignore it (an
-  interactive shell). A system thread does this, woken by the console. If
-  it ended nobody, the reader gets Ctrl-C as an ordinary character.
-  Ctrl-Z stops the foreground group the same way (Processes.Stopping).
+  interactive shell), and a terminal hanging up ends the processes it
+  controls with 129 (128 + SIGHUP); a system thread does this
+  (Processes.TerminalSignals) with the routines here.
 
   The same safe points also let a thread wait while its process is
   stopped (StopCurrentThreadIfRequested), and act on being suspended or
@@ -51,9 +51,6 @@ interface
 
 procedure InitializeProcessTermination;
 
-{ Starts the thread that handles Ctrl-C (needs a running scheduler). }
-procedure StartConsoleInterruptHandler;
-
 { Returns ErrorNone, ErrorNoSuchProcess or ErrorNotPermitted. }
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
 { Asks every user process to end (shutting down); returns how many
@@ -63,6 +60,10 @@ function TerminateAllUserProcesses(ExitCode: LongInt): Integer;
 { Ends every process of group GroupId that does not ignore interrupts;
   returns how many. }
 function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
+{ Ends every process whose controlling terminal has the line discipline
+  Terminal (a PLineDiscipline), ignoring interrupts or not; returns how
+  many. }
+function TerminateProcessesOfTerminal(Terminal: Pointer; ExitCode: LongInt): Integer;
 
 { Ends the current process if termination was requested. Called before
   returning from a system call (PassiveLevel, interrupts enabled). }
@@ -82,7 +83,7 @@ uses
   Processes.Stopping,
   Processes.ThreadControl,
   Processes.UserExceptions,
-  Io.Console;
+  Io.Manager;
 
 procedure EndProcessIfTerminationRequested;
 var
@@ -126,10 +127,6 @@ begin
     ExitCurrentProcess(Process^.TerminationCode);
   end;
 end;
-
-const
-  InterruptExitCode = 130;
-  InterruptThreadPriority = 20;
 
 procedure RequestTerminationLocked(Process: PProcess; ExitCode: LongInt);
 begin
@@ -178,31 +175,43 @@ begin
   Result := Request.Count;
 end;
 
-procedure HandleConsoleInterrupts(Context: Pointer);
+type
+  TTerminalRequest = record
+    Terminal: Pointer;
+    ExitCode: LongInt;
+    Count: Integer;
+  end;
+  PTerminalRequest = ^TTerminalRequest;
+
+procedure TerminateIfOnTerminal(Process: PProcess; Context: Pointer);
+var
+  Request: PTerminalRequest;
 begin
-  repeat
-    case WaitForSignalKey of
-      SignalKeyInterrupt:
-        if InterruptProcessGroup(ConsoleForegroundGroup, InterruptExitCode) > 0 then
-          FinishInterrupt
-        else
-          PassInterruptToReader;
-      SignalKeySuspend:
-        { With nobody to stop, Ctrl-Z does nothing. }
-        if SuspendProcessGroup(ConsoleForegroundGroup) > 0 then
-          FinishSuspend;
-    end;
-  until False;
+  Request := PTerminalRequest(Context);
+  if not Process^.IsUserProcess or (Process^.ControllingTerminal = nil) then
+    Exit;
+  if PDeviceObject(Process^.ControllingTerminal)^.Terminal <> Request^.Terminal then
+    Exit;
+  RequestTerminationLocked(Process, Request^.ExitCode);
+  Inc(Request^.Count);
+end;
+
+function TerminateProcessesOfTerminal(Terminal: Pointer; ExitCode: LongInt): Integer;
+var
+  Request: TTerminalRequest;
+begin
+  Request.Terminal := Terminal;
+  Request.ExitCode := ExitCode;
+  Request.Count := 0;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@TerminateIfOnTerminal, @Request);
+  UnlockProcessRegistry;
+  Result := Request.Count;
 end;
 
 procedure InitializeProcessTermination;
 begin
   SetUserModeReturnHook(@CheckTerminationOnReturn);
-end;
-
-procedure StartConsoleInterruptHandler;
-begin
-  CreateSystemThread(@HandleConsoleInterrupts, nil, InterruptThreadPriority, 'console-interrupt', False);
 end;
 
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;

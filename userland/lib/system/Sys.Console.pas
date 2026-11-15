@@ -17,7 +17,10 @@
 }
 
 {
-  Console settings: echo and line editing, and the screen size.
+  Console settings: echo and line editing, and the screen size. They
+  work the same on every terminal: the console and pseudo-terminals
+  (/dev/ptsN, a terminal window's), which programs are told are
+  consoles too.
 }
 unit Sys.Console;
 
@@ -31,6 +34,12 @@ function IsConsole(Handle: Int64): Boolean;
 function GetConsoleMode(Handle: Int64): Int64;
 function SetConsoleMode(Handle: Int64; Mode: LongWord): LongInt;
 procedure GetConsoleSize(Handle: Int64; out Rows, Columns: LongInt);
+{ What the terminal's window shows (a terminal window tells its
+  pseudo-terminal when it is resized). }
+function SetConsoleSize(Handle: Int64; Rows, Columns: LongInt): LongInt;
+{ N for the pseudo-terminal /dev/ptsN, -1 for the console (or a handle
+  that is no terminal). }
+function TerminalNumber(Handle: Int64): Int64;
 { The process group that Ctrl-C ends. }
 function SetForegroundGroup(Handle: Int64; GroupId: Int64): LongInt;
 function GetForegroundGroup(Handle: Int64): Int64;
@@ -88,6 +97,19 @@ begin
   end;
   Rows := LongInt(Size shr 16);
   Columns := LongInt(Size and $FFFF);
+end;
+
+function SetConsoleSize(Handle: Int64; Rows, Columns: LongInt): LongInt;
+begin
+  Result := ErrorCodeOf(KernelControlHandle(Handle, ControlSetConsoleSize,
+    (QWord(Rows) shl 16) or QWord(Columns)));
+end;
+
+function TerminalNumber(Handle: Int64): Int64;
+begin
+  Result := KernelControlHandle(Handle, ControlGetTerminalNumber, 0);
+  if Result < 0 then
+    Result := -1;
 end;
 
 end.

@@ -76,6 +76,7 @@ function KernelSetRootDirectory(Path: PChar): Int64;
 function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
 function KernelSetInterruptIgnored(Ignored: Boolean): Int64;
 function KernelGetProcessGroup: Int64;
+function KernelCreatePseudoTerminal(Terminal: PAbiPseudoTerminal; Size: QWord): Int64;
 
 { Users, permissions, process information and priorities. }
 function KernelListProcesses(Index: QWord; out Information: TAbiProcessInformation): Int64;
@@ -322,6 +323,11 @@ end;
 function KernelControlHandle(Handle: Int64; Request: LongWord; Argument: QWord): Int64;
 begin
   Result := SystemCall(CallControlHandle, QWord(Handle), Request, Argument, 0, 0, 0);
+end;
+
+function KernelCreatePseudoTerminal(Terminal: PAbiPseudoTerminal; Size: QWord): Int64;
+begin
+  Result := SystemCall(CallCreatePseudoTerminal, QWord(Terminal), Size, 0, 0, 0, 0);
 end;
 
 { --- Users, permissions, process information and priorities --- }

@@ -835,9 +835,13 @@ begin
   end;
 
   { Pass 1: external programs. In an interactive shell they form a new
-    process group, led by the first. }
+    process group, led by the first; a foreground pipeline's group is
+    the terminal's foreground group from the start, so its programs can
+    read the terminal at once. }
   PipelineGroup := GroupInherit;
-  if ShellIsInteractive then
+  if ShellIsInteractive and Wait and IsConsole(StandardInputHandle) then
+    PipelineGroup := GroupNewInForeground
+  else if ShellIsInteractive then
     PipelineGroup := GroupNew;
   for Index := 0 to Count - 1 do
   begin
@@ -847,7 +851,7 @@ begin
     Handles[1] := Outputs[Index];
     Handles[2] := StandardErrorHandle;
     Processes[Index] := StartExternal(Prepared[Index], Handles, PipelineGroup, Statuses[Index]);
-    if (PipelineGroup = GroupNew) and (Processes[Index] >= 0) then
+    if (PipelineGroup < 0) and (Processes[Index] >= 0) then
       PipelineGroup := ProcessIdOf(Processes[Index]);
   end;
   { Ctrl-C now belongs to the pipeline. }

@@ -54,7 +54,8 @@
   in logical units looks the same.
 
   RunMessageLoop serves every window until QuitMessageLoop, or until the
-  last window is gone (if QuitWhenLastWindowCloses). RunModal serves
+  last window is gone (if QuitWhenLastWindowCloses), and the program's
+  own handles it watches (Windowing.HandleWatches). RunModal serves
   them until a flag is set, with one window modal: the program's other
   windows are disabled meanwhile, except for windows that take input
   anyway (pop-ups of the modal window). It also delivers messages posted
@@ -214,7 +215,8 @@ uses
   Abi.SystemCalls,
   Sys.Objects,
   Windowing.Theme,
-  Windowing.Connection;
+  Windowing.Connection,
+  Windowing.HandleWatches;
 
 const
   MaximumProgramWindows = 64;
@@ -768,10 +770,11 @@ end;
 { Delivers what has come, paints, and waits for more (once). }
 procedure ServeOnce;
 var
-  Handles: array[0..MaximumTimers + 1] of Int64;
+  Handles: array[0..MaximumTimers + MaximumHandleWatches + 1] of Int64;
   Count: LongInt;
   Index: LongInt;
   Ready: Int64;
+  FirstWatch: LongInt;
   Message: TWindowMessage;
   Window: TWindow;
   TimerId: LongWord;
@@ -793,14 +796,23 @@ begin
     Handles[Count] := Timers[Index].Handle;
     Inc(Count);
   end;
+  { The program's own handles (Windowing.HandleWatches) come last. }
+  FirstWatch := Count;
+  for Index := 0 to WatchedHandleCount - 1 do
+  begin
+    Handles[Count] := WatchedHandle(Index);
+    Inc(Count);
+  end;
   Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);
-  if (Ready >= 2) and (Ready < Count) then
+  if (Ready >= 2) and (Ready < FirstWatch) then
   begin
     Window := Timers[Ready - 2].Window;
     TimerId := Timers[Ready - 2].Id;
     Window.PrepareToReceive;
     Window.TimerFired(TimerId);
-  end;
+  end
+  else if (Ready >= FirstWatch) and (Ready < Count) then
+    ReportHandleReady(Ready - FirstWatch);
 end;
 
 function RunMessageLoop: LongInt;

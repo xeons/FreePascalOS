@@ -22,10 +22,11 @@
   stty [-a | -g]
   stty SETTING...
 
-  The console supports: echo / -echo, icanon / -icanon (line editing),
-  isig / -isig (Ctrl-C ends the foreground programs), raw (all off),
-  cooked and sane (all on), size, and a saved state from stty -g.
-  Speeds and control characters are fixed.
+  Every terminal (the console, a pseudo-terminal) supports: echo /
+  -echo, icanon / -icanon (line editing), isig / -isig (Ctrl-C ends the
+  foreground programs), raw (all off), cooked and sane (all on), size,
+  rows N and cols N (columns N), and a saved state from stty -g. Speeds
+  and control characters are fixed.
 }
 program stty;
 
@@ -49,7 +50,7 @@ const
     'Print or change terminal characteristics.'#10#10 +
     '  -a, --all          print all current settings in human-readable form'#10 +
     '  -g, --save         print all current settings in a stty-readable form'#10#10 +
-    'Settings: [-]echo [-]icanon [-]isig raw cooked sane size'#10;
+    'Settings: [-]echo [-]icanon [-]isig raw cooked sane size rows N cols N'#10;
 
   SavedPrefix = 'fpos:';
 
@@ -63,6 +64,7 @@ var
   Setting: PChar;
   Rows, Columns: LongInt;
   SavedValue: Int64;
+  SizeValue: Int64;
 
 procedure ShowFlag(Name: PChar; Bit: LongWord);
 begin
@@ -124,7 +126,8 @@ begin
   end;
 
   NewMode := LongWord(Mode);
-  for Index := 0 to Parser.OperandCount - 1 do
+  Index := 0;
+  while Index < Parser.OperandCount do
   begin
     Setting := Parser.Operands[Index];
     if TextIsEqual(Setting, 'echo') then
@@ -143,6 +146,20 @@ begin
       NewMode := 0
     else if TextIsEqual(Setting, 'cooked') or TextIsEqual(Setting, '-raw') or TextIsEqual(Setting, 'sane') then
       NewMode := ConsoleModeEcho or ConsoleModeLineEditing or ConsoleModeInterruptKey
+    else if TextIsEqual(Setting, 'rows') or TextIsEqual(Setting, 'cols') or TextIsEqual(Setting, 'columns') then
+    begin
+      Inc(Index);
+      if (Index >= Parser.OperandCount) or not ParseInteger(Parser.Operands[Index], SizeValue) or
+         (SizeValue < 1) or (SizeValue > $FFFF) then
+        Fail(1, 'invalid argument for ''%s''', [ArgumentText(Setting)]);
+      GetConsoleSize(StandardInputHandle, Rows, Columns);
+      if TextIsEqual(Setting, 'rows') then
+        Rows := LongInt(SizeValue)
+      else
+        Columns := LongInt(SizeValue);
+      if SetConsoleSize(StandardInputHandle, Rows, Columns) <> 0 then
+        Fail(1, 'standard input: cannot set the size', []);
+    end
     else if TextIsEqual(Setting, 'size') then
     begin
       GetConsoleSize(StandardInputHandle, Rows, Columns);
@@ -166,6 +183,7 @@ begin
     end
     else
       Fail(1, 'invalid argument ''%s''', [ArgumentText(Setting)]);
+    Inc(Index);
   end;
   if NewMode <> LongWord(Mode) then
     SetConsoleMode(StandardInputHandle, NewMode);

@@ -80,7 +80,7 @@ uses
   FileSystem.Types,
   FileSystem.Files,
   FileSystem.Volumes,
-  Io.Console,
+  Io.LineDiscipline,
   Io.Manager,
   Io.DeviceFiles,
   Io.Pipes,
@@ -93,6 +93,7 @@ uses
   FileSystem.Security,
   Kernel.Clock,
   Processes.Stopping,
+  Processes.TerminalCalls,
   Processes.FileAttributeCalls;
 
 const
@@ -125,6 +126,7 @@ end;
 const
   DeviceDirectoryPath = '/dev';
   DeviceDirectoryPrefix = '/dev/';
+  ControllingTerminalName = 'tty';
 
 type
   TDevicePath = (NotADevicePath, DeviceDirectory, DeviceEntry);
@@ -208,10 +210,15 @@ begin
   Result := PDeviceFile(ObjectBody)^.Device;
 end;
 
-function IsConsoleDeviceFile(ObjectBody: Pointer): Boolean;
+{ The line discipline of the terminal a device handle is, or nil. }
+function TerminalOfHandle(ObjectBody: Pointer): PLineDiscipline;
+var
+  Device: PDeviceObject;
 begin
-  Result := (DeviceOfHandle(ObjectBody) <> nil) and
-    (DeviceOfHandle(ObjectBody)^.ReportedHandleKind = HandleKindConsole);
+  Device := PDeviceObject(TerminalDeviceOf(HandleKindDevice, ObjectBody));
+  if Device = nil then
+    Exit(nil);
+  Result := PLineDiscipline(Device^.Terminal);
 end;
 
 function Failure(Error: LongInt): Int64;
@@ -329,6 +336,9 @@ begin
     DeviceEntry:
       begin
         Device := FindDevice(@DeviceName[0]);
+        { /dev/tty is the program's own terminal. }
+        if TextIsEqual(@DeviceName[0], ControllingTerminalName) then
+          Device := PDeviceObject(CurrentProcess^.ControllingTerminal);
         if Device = nil then
           Exit(Failure(ErrorNotFound));
         Exit(OpenDeviceForHandle(Device, LongWord(Flags)));
@@ -365,18 +375,22 @@ begin
     Result := Failure(ErrorBadHandle);
 end;
 
-{ A program outside the console's foreground group may not read the
-  console: its group is stopped instead (like SIGTTIN), and the read runs
-  again once a shell has continued it in the foreground. }
-function StopIfReadingInBackground: Boolean;
+{ A program outside the foreground group of its controlling terminal
+  may not read that terminal: its group is stopped instead (like
+  SIGTTIN), and the read runs again once a shell has continued it in the
+  foreground. Reading another terminal is not checked. }
+function StopIfReadingInBackground(Terminal: PLineDiscipline): Boolean;
 var
   Process: PProcess;
   Foreground: QWord;
 begin
+  Result := False;
   Process := CurrentProcess;
-  Foreground := ConsoleForegroundGroup;
-  Result := (Foreground <> 0) and Process^.IsUserProcess and
-    (Process^.GroupId <> Foreground) and not Process^.IgnoresInterrupt;
+  if (Terminal = nil) or not Process^.IsUserProcess or (Process^.ControllingTerminal = nil) or
+     (PDeviceObject(Process^.ControllingTerminal)^.Terminal <> Terminal) then
+    Exit;
+  Foreground := Terminal^.ForegroundGroup;
+  Result := (Foreground <> 0) and (Process^.GroupId <> Foreground) and not Process^.IgnoresInterrupt;
   if Result then
     SuspendProcessGroup(Process^.GroupId);
 end;
@@ -483,7 +497,7 @@ begin
     HandleKindFile:
       Result := ReadFileInPieces(POpenFile(ObjectBody), BufferAddress, ByteCount, Buffer, BufferSize);
     HandleKindDevice:
-      if IsConsoleDeviceFile(ObjectBody) and StopIfReadingInBackground then
+      if StopIfReadingInBackground(TerminalOfHandle(ObjectBody)) then
         Result := Failure(ErrorInterrupted)
       else
         Result := ReadDeviceInPieces(PDeviceFile(ObjectBody), BufferAddress, ByteCount, Buffer,
@@ -709,6 +723,9 @@ begin
     DeviceEntry:
       begin
         Device := FindDevice(@DeviceName[0]);
+        { /dev/tty is the program's own terminal. }
+        if TextIsEqual(@DeviceName[0], ControllingTerminalName) then
+          Device := PDeviceObject(CurrentProcess^.ControllingTerminal);
         if Device = nil then
           Exit(Failure(ErrorNotFound));
         DescribeDeviceForUser(Device, UserInformation);

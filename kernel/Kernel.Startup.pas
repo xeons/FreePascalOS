@@ -89,8 +89,10 @@ uses
   Kernel.Events,
   Processes.SystemCalls,
   Processes.Termination,
+  Processes.TerminalSignals,
   Processes.Init,
   Io.Console,
+  Io.TerminalSignals,
   Io.Manager,
   Io.DeviceFiles,
   Kernel.IoSelfTest,
@@ -99,6 +101,7 @@ uses
   Processes.HangWatch,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
+  Drivers.PseudoTerminalDevices,
   Drivers.DiskStatistics,
   Io.Pipes,
   Debug.Output,
@@ -200,11 +203,13 @@ begin
   InitializeThreadManager;
   InitializeFileObjects;
   InitializeImageSections;
+  InitializeTerminalSignals;
   InitializeConsole;
   InitializeIoManager;
   InitializeDeviceFiles;
   InitializeMemoryDevices;
   InitializeConsoleDevice;
+  InitializePseudoTerminalDevices;
   InitializePipes;
   InitializeEventObjects;
   InitializeTimerObjects;
@@ -299,7 +304,7 @@ begin
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
   StartAudioThreads;
-  StartConsoleInterruptHandler;
+  StartTerminalSignalHandler;
   StartHangWatch;
 
   RunKernelSelfTests;

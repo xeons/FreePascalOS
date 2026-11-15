@@ -206,7 +206,8 @@ for attempt in range(50):
     except OSError:
         time.sleep(0.1)
 
-KEY_NAMES = {' ': 'spc', '-': 'minus', '|': 'shift-backslash', '.': 'dot', '=': 'equal'}
+KEY_NAMES = {' ': 'spc', '-': 'minus', '|': 'shift-backslash', '.': 'dot', '=': 'equal', '>': 'shift-dot',
+             '/': 'slash'}
 
 
 def press(name):
@@ -1194,6 +1195,87 @@ checks.append(('common dialogs: save a file (a name typed; replacing refused)',
                b'saved /etc/passwd' not in log_from_here))
 checks.append(('common dialogs: choose a colour and a font',
                dialogs_ok and b'color 00FF00' in log_from_here and b'font 110 bold' in log_from_here))
+
+# The terminal window (terminal: the shell on a pseudo-terminal, drawn
+# in Terminus at 11 points: 10x18 cells at 100 DPI). Keys typed on the PS/2 keyboard
+# go to the active window, so a command typed there writes a file the
+# serial shell reads; the window shows text (in the terminal's text
+# colour); text selected with the mouse is copied (Ctrl+Shift+C) and
+# pasted (Ctrl+Shift+V) into the next command; dragging the window's
+# corner 160x96 pixels further gives the shell the rows and columns that
+# fit (stty size); exit closes the window. A second terminal closed
+# with Alt+F4 hangs its shell up (status 129).
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+terminal_from = len(received)
+type_on_serial(b'terminal > /tmp/t.log &\r')
+time.sleep(3)
+type_on_serial(b'm=DONE; cat /tmp/t.log; echo TERMINAL $m\r')
+terminal_started = wait_for('TERMINAL DONE', 10)
+place = re.search(rb'terminal: /dev/pts(\d+), 25 rows, 80 columns, window at (\d+),(\d+), (\d+)x(\d+) pixels, '
+                  rb'cells (\d+)x(\d+)', bytes(received[terminal_from:]))
+checks.append(('terminal: started on a pseudo-terminal, 25 rows of 80 columns', terminal_started and place is not None))
+left, top, width, height, cell_width, cell_height = \
+    (int(place.group(n)) for n in range(2, 8)) if place else (100, 80, 820, 454, 10, 18)
+type_on_keyboard('echo terminal-ok > /tmp/term.txt')
+press('ret')
+type_on_keyboard('echo copied-text')
+press('ret')
+time.sleep(1.5)
+pixel = take_screen()
+text_pixels = sum(1 for x in range(left, left + width - 20, 2) for y in range(top, top + height, 2)
+                  if pixel(x, y) == 'd0d0d0')
+background_pixels = sum(1 for x in range(left, left + width - 20, 8) for y in range(top, top + height, 8)
+                        if pixel(x, y) == '101010')
+checks.append(('terminal: draws its text', text_pixels > 100 and background_pixels > 1000))
+# Rows 0 and 1 are the two commands, row 2 what the second printed.
+row_middle = top + 2 + 2 * cell_height + cell_height // 2
+drag(left + 2 + 1, row_middle, left + 2 + 11 * cell_width - 1, row_middle)
+press('ctrl-shift-c')
+type_on_keyboard('echo ')
+press('ctrl-shift-v')
+type_on_keyboard(' > /tmp/paste.txt')
+press('ret')
+time.sleep(1)
+typed_from = len(received)
+type_on_serial(b'm=DONE; cat /tmp/term.txt /tmp/paste.txt; echo TYPED $m\r')
+typed_ok = wait_for('TYPED DONE', 10)
+typed_log = bytes(received[typed_from:])
+checks.append(('terminal: keys typed in the window reach its shell', typed_ok and b'\nterminal-ok' in typed_log))
+checks.append(('terminal: text selected with the mouse, copied and pasted',
+               typed_ok and b'\ncopied-text' in typed_log))
+drag(left + width + 2, top + height + 2, left + width + 2 + 160, top + height + 2 + 96)
+time.sleep(1)
+type_on_keyboard('stty size > /tmp/size.txt')
+press('ret')
+time.sleep(1)
+sized_from = len(received)
+type_on_serial(b'm=DONE; cat /tmp/size.txt /tmp/t.log; echo SIZED $m\r')
+sized_ok = wait_for('SIZED DONE', 10)
+sized_log = bytes(received[sized_from:])
+# The grid inside a 2 pixel margin, beside a 16 pixel scroll bar.
+new_rows, new_columns = (height + 96 - 4) // cell_height, (width + 160 - 4 - 16) // cell_width
+checks.append(('terminal: resized by its corner, the shell sees the new size',
+               sized_ok and ('\n%d %d' % (new_rows, new_columns)).encode() in sized_log and
+               ('terminal: %d rows, %d columns' % (new_rows, new_columns)).encode() in sized_log))
+type_on_keyboard('exit')
+press('ret')
+time.sleep(1.5)
+ended_from = len(received)
+type_on_serial(b'm=DONE; cat /tmp/t.log; echo ENDED $m\r')
+ended_ok = wait_for('ENDED DONE', 10)
+checks.append(('terminal: the shell exits, the window closes',
+               ended_ok and b'terminal: the shell ended with status 0' in bytes(received[ended_from:]) and
+               take_screen()(left + 100, top + 100) != '101010'))
+type_on_serial(b'terminal -x 200 -y 120 > /tmp/t2.log &\r')
+time.sleep(3)
+press('alt-f4')
+time.sleep(2)
+closed_from = len(received)
+type_on_serial(b'm=DONE; cat /tmp/t2.log; kill %1; wait; echo CLOSED $m\r')
+closed_ok = wait_for('CLOSED DONE', 15)
+checks.append(('terminal: closing the window hangs the shell up',
+               closed_ok and b'terminal: closed; the shell ended with status 129' in bytes(received[closed_from:])))
 
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back

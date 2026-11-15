@@ -115,6 +115,10 @@ type
     { Ctrl-C does not end this process, nor Ctrl-Z stop it (an
       interactive shell). }
     IgnoresInterrupt: Boolean;
+    { The terminal device (a PDeviceObject) the process runs on: what
+      /dev/tty opens, whose foreground group may read it, and whose
+      hang-up ends it (Processes.TerminalCalls). nil for none. }
+    ControllingTerminal: Pointer;
 
     { --- Stopping and continuing (Processes.Stopping) --- }
     { Protects the fields below. }
