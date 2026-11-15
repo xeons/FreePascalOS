@@ -889,12 +889,51 @@ characters, caret, selection, scrolling), progress bar, scroll bar and
 status bar (`Controls.Text` draws text fitted with "..."), list box,
 multi-line edit box (`Controls.TextEdit`: positions are a line and a
 character), combo box, menu bar and pop-up menus (`Controls.Menus`),
-toolbar, tab control, tree view and list view (details: columns with a
-header that can be clicked and resized). Controls that own children
+toolbar, tab control, tree view (dotted lines joining nodes to their
+parents and siblings, drawn a row at a time, as thick as the display's
+scale makes a logical unit) and list view. Controls that own children
 place them in their `Layout` with `AssignBounds` (which, unlike
 `SetBounds`, does not ask the parent to lay out again) and keep their
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
+
+The list view shows its items (`Controls.ListItems`: texts by column,
+an icon, selected or not, a pointer for the program) in four views:
+details (columns under a header that can be clicked and resized), list
+(names in columns flowing down, then across), small and large icons.
+Every view is a grid of equal cells (`Controls.ListViewLayout`): one
+per line in details; filled across, then down, for icons; down, then
+across, in the list, which scrolls sideways. A "line" is a row of cells
+or a column of them, so scrolling, the arrow keys and hit testing are
+the same code in every view; `Controls.ListViewPainting` draws the
+header and an item in each view. Icons (`Controls.Icons`) are the
+program's own surface, stretched to the size the view and the display
+scale need, or a stock document or folder drawn as shapes at that size.
+With `MultiSelect` several items are selected (Ctrl+click toggles one,
+Shift+click and Shift with the moving keys select from the anchor,
+Ctrl+A all; `Selected[Row]`, `SelectedCount`); `ItemIndex` is the item
+with the focus. `SortByColumn` sorts by a column's texts, as numbers
+(the number a text starts with) or by `OnCompare`, and puts an arrow on
+that column's header; `SortWith` takes any comparison. The sort is a
+stable merge sort (`Controls.ListSorting`), so ties keep their order.
+With `SortOnHeaderClick` a header click sorts (again: the other way).
+
+A click with Ctrl or Shift is told by the modifiers: the display server
+puts the keyboard's modifiers (from the newest key event) in every
+pointer event, and libwindowing keeps those of the newest event
+(`HeldModifiers`).
+
+The edit boxes share the edit commands (`Controls.EditCommands`): Ctrl+X
+or Shift+Delete cuts, Ctrl+C or Ctrl+Insert copies, Ctrl+V or
+Shift+Insert pastes, Ctrl+A selects all, and a right click shows the
+same in a context menu (when the button is let go, so the release does
+not choose an item), greyed when they cannot be done. They go through
+`Controls.Clipboard`: text in a store behind `ClipboardText` and
+`SetClipboardText`. For now the store keeps the text in the program;
+the system clipboard (step 8) will be a store that asks the display
+server, set with `SetClipboardStore`, and the controls stay as they are.
+A one line box pastes up to the first line break; the multi-line box
+splits what it pastes into lines.
 
 Pop-ups (`Controls.Popups`: menus, a combo box's list) are windows
 without a frame, topmost and never activated: the owner keeps the
@@ -948,14 +987,20 @@ clicked). The input test types into it, tabs, clicks a radio button,
 the scroll bar and the swatch with the USB tablet, presses Enter, and
 checks what it printed and the swatch's colour. `controlstour` has the
 rest (a menu bar, a toolbar, a tab control with a list box and combo
-box, a multi-line edit box, a tree view and a list view, message boxes);
+box, a multi-line edit box and edit boxes to copy and paste between, a
+tree view and a list view with buttons for its views, message boxes);
 it prints where its controls are on the screen, and the input test
-clicks them there and checks what it printed. `dialogtour` opens each
-common dialog from a button and prints the choice, and where the
-dialog's controls are when it appears (and the file dialogs' rows for
-each folder shown); the input test opens /etc and takes passwd in the
-open dialog, types a name in the save dialog, refuses to replace an
-existing file there, and picks a basic colour, a size and bold.
+clicks them there and checks what it printed: text copied with Ctrl+C
+and pasted with Ctrl+V and from the context menu, the list view sorted
+by a header click (as numbers), a Ctrl+click and a Shift+click
+selection, and large icons (the stock document's lines on the screen;
+a Ctrl+click needs a key held, so the test holds it through QMP).
+`dialogtour` opens each common dialog from a button and prints the
+choice, and where the dialog's controls are when it appears (and the
+file dialogs' rows for each folder shown); the input test opens /etc
+and takes passwd in the open dialog, types a name in the save dialog,
+refuses to replace an existing file there, and picks a basic colour, a
+size and bold.
 
 ## Sound
 
@@ -1736,8 +1781,11 @@ independent) against the Free Pascal runtime library:
   drawing again), `Drawing.Surfaces` (pixels of one's own or someone
   else's, such as a framebuffer), `Drawing.Canvas` (a surface, a clip
   region and an origin; fills, outlines, copies and blends of surfaces,
-  gradients), `Drawing.Shapes` (Bresenham lines with both ends, ellipses
-  and polygons filling the pixels whose centres are inside) and
+  stretched copies by nearest neighbour, gradients), `Drawing.Shapes`
+  (Bresenham lines with both ends, ellipses and polygons filling the
+  pixels whose centres are inside, dotted lines of any thickness whose
+  dots lie on a checkerboard of the surface, so pieces drawn apart
+  meet without a seam) and
   `Drawing.Bevels` (raised and sunken edges, the focus frame). Every
   shape is drawn as horizontal spans through one routine (`FillSpan`),
   which clips them and blends translucent colours. It needs only the

@@ -120,9 +120,14 @@ begin
     First := 0;
   if First > High(Offsets) then
     First := High(Offsets);
-  Last := First + Count;
-  if Last > High(Offsets) then
-    Last := High(Offsets);
+  if Count < 0 then
+    Count := 0;
+  { Compared before adding: callers pass MaxInt for "to the end", and
+    First + MaxInt would wrap round. }
+  if Count > High(Offsets) - First then
+    Last := High(Offsets)
+  else
+    Last := First + Count;
   Result := Copy(Text, Offsets[First] + 1, Offsets[Last] - Offsets[First]);
 end;
 

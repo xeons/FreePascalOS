@@ -74,6 +74,12 @@ procedure DrawVerticalLine(const Canvas: TCanvas; X, Top, Bottom: LongInt; Color
   pixels replace the canvas's. }
 procedure DrawSurface(const Canvas: TCanvas; const Source: TSurface; const SourceRectangle: TRectangle;
   X, Y: LongInt; Blend: Boolean; Opacity: Byte);
+{ SourceRectangle of Source stretched or shrunk to fill Destination: each
+  pixel takes the source pixel under its centre (nearest neighbour), so
+  an icon drawn for one size can be shown at the display's scale. Blend
+  as in DrawSurface. }
+procedure DrawSurfaceStretched(const Canvas: TCanvas; const Source: TSurface; const SourceRectangle,
+  Destination: TRectangle; Blend: Boolean);
 
 { From FromColor at the top (or left) to ToColor at the bottom (right). }
 procedure FillVerticalGradient(const Canvas: TCanvas; const Rectangle: TRectangle; FromColor, ToColor: TColor);
@@ -220,6 +226,54 @@ begin
       else
         for Column := Piece.Left to Piece.Right - 1 do
           TargetLine[Column] := BlendColors(TargetLine[Column], FadeColor(SourceLine[Column - ShiftX], Opacity));
+    end;
+  end;
+end;
+
+procedure DrawSurfaceStretched(const Canvas: TCanvas; const Source: TSurface; const SourceRectangle,
+  Destination: TRectangle; Blend: Boolean);
+var
+  From: TRectangle;
+  Target: TRectangle;
+  Piece: TRectangle;
+  Index: LongInt;
+  Row: LongInt;
+  Column: LongInt;
+  SourceRow: LongInt;
+  SourceColumn: LongInt;
+  SourceLine: PLongWord;
+  TargetLine: PLongWord;
+  FromWidth: Int64;
+  FromHeight: Int64;
+  TargetWidth: Int64;
+  TargetHeight: Int64;
+begin
+  if not IntersectRectangles(SourceRectangle, SurfaceBounds(Source), From) or RectangleIsEmpty(Destination) then
+    Exit;
+  FromWidth := RectangleWidth(From);
+  FromHeight := RectangleHeight(From);
+  Target := OffsetRectangle(Destination, Canvas.OriginX, Canvas.OriginY);
+  TargetWidth := RectangleWidth(Target);
+  TargetHeight := RectangleHeight(Target);
+  for Index := 0 to Canvas.Clip.Count - 1 do
+  begin
+    if not IntersectRectangles(Target, Canvas.Clip.Rectangles[Index], Piece) then
+      Continue;
+    for Row := Piece.Top to Piece.Bottom - 1 do
+    begin
+      { The centre of the target pixel, (Row - Top + 1/2), in source
+        pixels; worked doubled so it stays whole. }
+      SourceRow := From.Top + ((2 * Int64(Row - Target.Top) + 1) * FromHeight) div (2 * TargetHeight);
+      SourceLine := SurfaceLine(Source, SourceRow);
+      TargetLine := SurfaceLine(Canvas.Surface, Row);
+      for Column := Piece.Left to Piece.Right - 1 do
+      begin
+        SourceColumn := From.Left + ((2 * Int64(Column - Target.Left) + 1) * FromWidth) div (2 * TargetWidth);
+        if Blend then
+          TargetLine[Column] := BlendColors(TargetLine[Column], SourceLine[SourceColumn])
+        else
+          TargetLine[Column] := SourceLine[SourceColumn];
+      end;
     end;
   end;
 end;

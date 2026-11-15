@@ -26,6 +26,13 @@
   collapses it (or goes to its parent); a click on a box, a double
   click or Enter toggles. A new choice is announced (OnChange,
   NotifyChanged); expanding or collapsing as OnExpandChanged.
+
+  Dotted lines (ShowLines) join each node to its parent and to its
+  siblings above and below: a line runs down a level's column for as
+  long as the level has more nodes to come, and across to each node's
+  text. They are drawn a row at a time, with a dot pattern fixed to the
+  window's pixels, so the pieces meet without a seam; their thickness
+  follows the display's scale.
 }
 unit Controls.TreeView;
 
@@ -61,6 +68,8 @@ type
     destructor Destroy; override;
     function Add(const AText: string): TTreeNode;
     function Depth: LongInt;
+    { Whether another node follows it under the same parent. }
+    function HasNextSibling: Boolean;
     property Text: string read FText write SetText;
     property Parent: TTreeNode read FParent;
     property Count: LongInt read GetCount;
@@ -80,12 +89,16 @@ type
     FScrollBar: TScrollBar;
     FLastClickTime: QWord;
     FLastClickNode: TTreeNode;
+    FShowLines: Boolean;
     FOnExpandChanged: TTreeNodeEvent;
     procedure Rebuild;
     procedure AddVisible(Node: TTreeNode);
     function RowHeight: LongInt;
     function VisibleRows: LongInt;
     function BoxRectangleLeft(Node: TTreeNode): LongInt;
+    function LevelLineX(Depth: LongInt): LongInt;
+    procedure PaintLines(const Canvas: TCanvas; Node: TTreeNode; Top: LongInt);
+    procedure SetShowLines(Value: Boolean);
     procedure SetSelected(Value: TTreeNode);
     procedure SetTopIndex(Value: LongInt);
     procedure UpdateScrollBar;
@@ -112,6 +125,7 @@ type
       control's pixels. }
     function RowMiddle(Index: LongInt): LongInt;
     property Selected: TTreeNode read FSelected write SetSelected;
+    property ShowLines: Boolean read FShowLines write SetShowLines;
     property OnExpandChanged: TTreeNodeEvent read FOnExpandChanged write FOnExpandChanged;
   end;
 
@@ -121,6 +135,7 @@ uses
   Abi.SystemCalls,
   Sys.Time,
   Drawing.Rectangles,
+  Drawing.Shapes,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
@@ -184,6 +199,11 @@ begin
   end;
 end;
 
+function TTreeNode.HasNextSibling: Boolean;
+begin
+  Result := (FParent <> nil) and (FParent.FChildren.IndexOf(Self) < FParent.FChildren.Count - 1);
+end;
+
 procedure TTreeNode.SetExpanded(Value: Boolean);
 begin
   if FExpanded = Value then
@@ -208,6 +228,7 @@ begin
   CanFocus := True;
   FRoots := TTreeNode.Create(Self, nil, '');
   FRoots.FExpanded := True;
+  FShowLines := True;
   FVisible := TList.Create;
   FScrollBar := TScrollBar.Create(Self);
   FScrollBar.Visible := False;
@@ -312,6 +333,54 @@ end;
 function TTreeView.BoxRectangleLeft(Node: TTreeNode): LongInt;
 begin
   Result := Scaled(4 + Node.Depth * IndentStep);
+end;
+
+{ The column a level's line runs down: through the middle of its boxes. }
+function TTreeView.LevelLineX(Depth: LongInt): LongInt;
+begin
+  Result := Scaled(4 + Depth * IndentStep) + Scaled(BoxSize) div 2;
+end;
+
+procedure TTreeView.SetShowLines(Value: Boolean);
+begin
+  if Value = FShowLines then
+    Exit;
+  FShowLines := Value;
+  Invalidate;
+end;
+
+{ The lines on Node's row (Top its top): across to its text, up to the
+  node before it, down to the next sibling, and down the columns of the
+  ancestors that have more nodes to come. }
+procedure TTreeView.PaintLines(const Canvas: TCanvas; Node: TTreeNode; Top: LongInt);
+var
+  Thickness: LongInt;
+  Middle: LongInt;
+  Bottom: LongInt;
+  X: LongInt;
+  Ancestor: TTreeNode;
+  TextLeft: LongInt;
+begin
+  Thickness := Scaled(1);
+  if Thickness < 1 then
+    Thickness := 1;
+  Middle := Top + RowHeight div 2;
+  Bottom := Top + RowHeight;
+  X := LevelLineX(Node.Depth);
+  TextLeft := BoxRectangleLeft(Node) + Scaled(BoxSize) + Scaled(3);
+  DrawDottedHorizontalLine(Canvas, X, TextLeft, Middle, Thickness, Theme.Shadow);
+  { Up to the sibling or parent above; the very first node has neither. }
+  if (Node.Parent <> FRoots) or (FRoots[0] <> Node) then
+    DrawDottedVerticalLine(Canvas, X, Top, Middle, Thickness, Theme.Shadow);
+  if Node.HasNextSibling then
+    DrawDottedVerticalLine(Canvas, X, Middle, Bottom, Thickness, Theme.Shadow);
+  Ancestor := Node.Parent;
+  while (Ancestor <> nil) and (Ancestor <> FRoots) do
+  begin
+    if Ancestor.HasNextSibling then
+      DrawDottedVerticalLine(Canvas, LevelLineX(Ancestor.Depth), Top, Bottom, Thickness, Theme.Shadow);
+    Ancestor := Ancestor.Parent;
+  end;
 end;
 
 procedure TTreeView.Layout;
@@ -424,6 +493,9 @@ begin
     if Top >= RectangleHeight(Box) then
       Break;
     Left := BoxRectangleLeft(Node);
+    { The lines first: a node's box is drawn over where they meet. }
+    if FShowLines then
+      PaintLines(Inner, Node, Top);
     if Node.Count > 0 then
     begin
       Toggle := MakeRectangle(Left, Top + (RowHeight - Size) div 2, Size, Size);

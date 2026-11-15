@@ -23,9 +23,11 @@
   keys of the one line edit box work across lines: the arrows (up and
   down keep the column as near as they can), Home and End within the
   line, Page Up and Down by a screenful, Shift with any of them to
-  select, Ctrl+A for everything; Enter splits the line (so the window's
-  default button is not pressed), Backspace and Delete join lines at
-  their ends. Tab moves to the next control unless AcceptTabs. A
+  select; Enter splits the line (so the window's default button is not
+  pressed), Backspace and Delete join lines at their ends. The edit
+  commands (Controls.EditCommands: cut, copy, paste, select all) work
+  from their keys and from the context menu of a right click; the
+  clipboard holds lines joined with line feeds. Tab moves to the next control unless AcceptTabs. A
   vertical scroll bar shows when the lines do not fit, and the text
   scrolls sideways to keep the caret in view.
 }
@@ -41,7 +43,8 @@ uses
   Drawing.Canvas,
   Windowing.Messages,
   Controls.Base,
-  Controls.ScrollBar;
+  Controls.ScrollBar,
+  Controls.EditCommands;
 
 type
   TTextPosition = record
@@ -92,6 +95,10 @@ type
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     procedure SelectAll;
     function SelectedText: string;
+    procedure CutToClipboard;
+    procedure CopyToClipboard;
+    procedure PasteFromClipboard;
+    procedure RunEditCommand(Command: TEditCommand);
     { The whole text, lines joined with line feeds. }
     function AllText: string;
     procedure SetAllText(const Value: string);
@@ -111,10 +118,10 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
+  Controls.Text,
+  Controls.Clipboard;
 
 const
-  KeyA = $1E;
   TabCharacter = 9;
 
 function MakePosition(Line, Column: LongInt): TTextPosition;
@@ -426,11 +433,32 @@ begin
   FAnchor := First;
 end;
 
+{ Inserted split at its line feeds (carriage returns are dropped). }
+procedure SplitLines(const Inserted: string; Pieces: TStringList);
+var
+  Piece: string;
+  Index: LongInt;
+begin
+  Piece := '';
+  for Index := 1 to Length(Inserted) do
+    if Inserted[Index] = #10 then
+    begin
+      Pieces.Add(Piece);
+      Piece := '';
+    end
+    else if Inserted[Index] <> #13 then
+      Piece := Piece + Inserted[Index];
+  Pieces.Add(Piece);
+end;
+
 procedure TTextEdit.InsertText(const Inserted: string);
 var
   Line: string;
   Before: string;
   After: string;
+  Pieces: TStringList;
+  Index: LongInt;
+  LastPiece: LongInt;
 begin
   if FReadOnly then
     Exit;
@@ -439,31 +467,72 @@ begin
   Line := FLines[FCaret.Line];
   Before := CharactersOf(Line, 0, FCaret.Column);
   After := CharactersOf(Line, FCaret.Column, MaxInt);
-  if Inserted = #10 then
+  Pieces := TStringList.Create;
+  SplitLines(Inserted, Pieces);
+  { The first piece ends the caret's line; the last starts what was
+    after the caret; any between are lines of their own. }
+  LastPiece := Pieces.Count - 1;
+  if LastPiece = 0 then
   begin
-    FLines[FCaret.Line] := Before;
-    FLines.Insert(FCaret.Line + 1, After);
-    FCaret := MakePosition(FCaret.Line + 1, 0);
+    FLines[FCaret.Line] := Before + Pieces[0] + After;
+    FCaret.Column := FCaret.Column + CharacterCountOf(Pieces[0]);
   end
   else
   begin
-    FLines[FCaret.Line] := Before + Inserted + After;
-    FCaret.Column := FCaret.Column + CharacterCountOf(Inserted);
+    FLines[FCaret.Line] := Before + Pieces[0];
+    for Index := 1 to LastPiece - 1 do
+      FLines.Insert(FCaret.Line + Index, Pieces[Index]);
+    FLines.Insert(FCaret.Line + LastPiece, Pieces[LastPiece] + After);
+    FCaret := MakePosition(FCaret.Line + LastPiece, CharacterCountOf(Pieces[LastPiece]));
   end;
+  Pieces.Free;
   FChanging := False;
   FAnchor := FCaret;
   TextEdited;
 end;
 
+procedure TTextEdit.CopyToClipboard;
+begin
+  if HasSelection then
+    SetClipboardText(SelectedText);
+end;
+
+procedure TTextEdit.CutToClipboard;
+begin
+  if not HasSelection or FReadOnly then
+    Exit;
+  SetClipboardText(SelectedText);
+  DeleteSelection;
+  TextEdited;
+end;
+
+procedure TTextEdit.PasteFromClipboard;
+begin
+  if FReadOnly or not ClipboardHasText then
+    Exit;
+  InsertText(ClipboardText);
+end;
+
+procedure TTextEdit.RunEditCommand(Command: TEditCommand);
+begin
+  case Command of
+    EditCommandCut: CutToClipboard;
+    EditCommandCopy: CopyToClipboard;
+    EditCommandPaste: PasteFromClipboard;
+    EditCommandSelectAll: SelectAll;
+  end;
+end;
+
 function TTextEdit.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Extend: Boolean;
+  Command: TEditCommand;
 begin
   Result := True;
   Extend := (Modifiers and ModifierShift) <> 0;
-  if ((Modifiers and ModifierControl) <> 0) and (Code = KeyA) then
+  if EditCommandOfKey(Code, Modifiers, Command) then
   begin
-    SelectAll;
+    RunEditCommand(Command);
     Exit;
   end;
   case Code of
@@ -535,6 +604,10 @@ end;
 procedure TTextEdit.PointerUp(X, Y: LongInt; Button: LongWord);
 begin
   FSelecting := False;
+  { Opened as the button is let go, so the release does not land on the
+    menu. }
+  if Button = ButtonRight then
+    ShowEditMenu(Self, X, Y, AvailableEditCommands(HasSelection, FReadOnly), @RunEditCommand);
 end;
 
 procedure TTextEdit.Wheel(Steps: LongInt);
