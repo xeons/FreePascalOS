@@ -233,10 +233,12 @@ userland/
   lib/plugin/       libplugin.so, loaded at run time by coretest
   bin/              One file per program (/bin/<name>)
   sh/               The shell's units (lexer, parser, expansion, execution)
+  notepad/          Notepad's units (files, the document, menus, Go To)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
 tools/DrawingTest/  Checks libdrawing and libfont on the host
+tools/TextTest/     Checks the multi-line edit box's logic on the host
 scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes
 ```

@@ -25,6 +25,8 @@
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
+#   make text-test  Check the multi-line edit box's plain logic on the host (undo,
+#                   word wrap, search)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -102,7 +104,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test
 
 all: esp
 
@@ -190,7 +192,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test drawing-test text-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
@@ -247,6 +249,24 @@ drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
 		> build/tools/drawing-test.out || \
 		{ grep FAIL build/tools/drawing-test.out; echo "DRAWING TEST FAILED (build/tools/drawing-test.out)"; exit 1; }
 	@echo "DRAWING TEST PASSED: $$(tail -n 1 build/tools/drawing-test.out | cut -d ' ' -f 2-)"
+
+# The plain logic behind the multi-line edit box (positions, the undo
+# history, word wrap, search) builds for the host too, and is checked
+# there.
+TEXT_TEST := build/tools/TextTest
+TEXT_TEST_SOURCES := tools/TextTest/TextTest.pas userland/lib/controls/Controls.TextPositions.pas \
+	userland/lib/controls/Controls.TextUndo.pas userland/lib/controls/Controls.TextWrap.pas \
+	userland/lib/controls/Controls.TextSearch.pas userland/lib/font/Font.Utf8.pas
+
+$(TEXT_TEST): $(TEXT_TEST_SOURCES)
+	@mkdir -p build/tools/text-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/TextTest -Fuuserland/lib/controls -Fuuserland/lib/font \
+		-FUbuild/tools/text-test-units -o$@ tools/TextTest/TextTest.pas
+
+text-test: $(TEXT_TEST)
+	@$(TEXT_TEST) > build/tools/text-test.out || \
+		{ grep FAIL build/tools/text-test.out; echo "TEXT TEST FAILED (build/tools/text-test.out)"; exit 1; }
+	@echo "TEXT TEST PASSED: $$(tail -n 1 build/tools/text-test.out | cut -d ' ' -f 2-)"
 
 clean:
 	rm -rf build

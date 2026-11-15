@@ -42,6 +42,12 @@ uses
   Controls.ScrollBar,
   Controls.StatusBar,
   Controls.ListBox,
+  Controls.TextPositions,
+  Controls.TextUndo,
+  Controls.TextWrap,
+  Controls.TextSearch,
+  Controls.TextLayout,
+  Controls.TextView,
   Controls.TextEdit,
   Controls.Popups,
   Controls.ComboBox,
@@ -63,7 +69,8 @@ uses
   Controls.FolderListing,
   Controls.FileDialog,
   Controls.ColorDialog,
-  Controls.FontDialog;
+  Controls.FontDialog,
+  Controls.FindDialog;
 
 implementation
 

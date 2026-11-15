@@ -352,7 +352,7 @@ normalized (0-65535), not pixels.
 - [ ] Taskbar: Start menu, buttons for open windows, clock, notification area
 - [ ] Desktop: wallpaper, icons
 - [ ] Terminal window running the shell
-- [ ] Notepad
+- [x] Notepad
 
 ### 7. Applications and session
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,

@@ -20,7 +20,9 @@
   The fonts programs draw with: the theme's two families (the
   interface's text, proportional, and a monospaced one), each listed
   once, and faces picked by size in points at the display's DPI. A
-  face's glyphs are read the first time it is picked.
+  face's glyphs are read the first time it is picked. Either family can
+  be asked for by name (TFontFamily: what a font dialog offers); a
+  system without the monospaced fonts gets the text family's instead.
 }
 unit Windowing.Fonts;
 
@@ -30,6 +32,9 @@ interface
 
 uses
   Font.Faces;
+
+type
+  TFontFamily = (FontFamilyText, FontFamilyFixed);
 
 { The face of the theme's text family for PointTenths tenths of a point
   (bold or not); nil if the system has no such fonts. }
@@ -47,6 +52,13 @@ function FontFaceSize(PointTenths: LongWord; Bold: Boolean): LongInt;
   and weight (their glyphs may not have been read). }
 function SystemFaceCount: LongInt;
 function SystemFace(Index: LongInt): PFontFace;
+{ The same for either family. }
+function FamilyFontFace(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean): PFontFace;
+function FamilyFaceSize(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean): LongInt;
+function FamilyFaceCount(Family: TFontFamily): LongInt;
+function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
+{ The family's name, to show ("DejaVu Sans"). }
+function FamilyCaption(Family: TFontFamily): PChar;
 
 implementation
 
@@ -57,6 +69,8 @@ uses
   Windowing.Connection;
 
 type
+  PFontSet = ^TFontSet;
+
   TFamily = record
     Fonts: TFontSet;
     Listed: Boolean;
@@ -76,6 +90,65 @@ begin
     Family.Available := LoadFontFamily(Name, Family.Fonts);
     Family.Listed := True;
   end;
+end;
+
+{ The family's fonts: the text family's when the monospaced one is not
+  there. Nil if neither is. }
+function FontsOf(Family: TFontFamily): PFontSet;
+begin
+  Result := nil;
+  if Family = FontFamilyFixed then
+  begin
+    EnsureFamilyListed(FixedFamily, Theme.FixedFamily);
+    if FixedFamily.Available then
+      Exit(@FixedFamily.Fonts);
+  end;
+  EnsureFamilyListed(TextFamily, Theme.TextFamily);
+  if TextFamily.Available then
+    Result := @TextFamily.Fonts;
+end;
+
+function FamilyFontFace(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean): PFontFace;
+var
+  Fonts: PFontSet;
+begin
+  Fonts := FontsOf(Family);
+  if Fonts = nil then
+    Exit(nil);
+  Result := SelectFace(Fonts^, PointTenths, DisplayDpi, Bold);
+end;
+
+function FamilyFaceSize(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean): LongInt;
+var
+  Fonts: PFontSet;
+begin
+  Fonts := FontsOf(Family);
+  if Fonts = nil then
+    Exit(0);
+  Result := SelectedFaceSize(Fonts^, PointTenths, DisplayDpi, Bold);
+end;
+
+function FamilyFaceCount(Family: TFontFamily): LongInt;
+var
+  Fonts: PFontSet;
+begin
+  Fonts := FontsOf(Family);
+  if Fonts = nil then
+    Exit(0);
+  Result := Fonts^.Count;
+end;
+
+function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
+begin
+  Result := @FontsOf(Family)^.Faces[Index];
+end;
+
+function FamilyCaption(Family: TFontFamily): PChar;
+begin
+  if Family = FontFamilyFixed then
+    Result := 'Terminus'
+  else
+    Result := 'DejaVu Sans';
 end;
 
 function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;

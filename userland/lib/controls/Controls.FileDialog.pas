@@ -116,8 +116,10 @@ type
   chosen. }
 function ChooseFileToOpen(const Title, StartFolder, Filter: string; out Path: string): Boolean;
 { The same for saving: the file may be new; replacing one is asked
-  first. }
-function ChooseFileToSave(const Title, StartFolder, Filter: string; out Path: string): Boolean;
+  first. InitialName starts in the name box (selected, so typing
+  replaces it). }
+function ChooseFileToSave(const Title, StartFolder, Filter: string; out Path: string;
+  const InitialName: string = ''): Boolean;
 
 implementation
 
@@ -263,6 +265,7 @@ end;
 procedure TFileDialog.Showing;
 begin
   FocusControl(FNameEdit);
+  FNameEdit.SelectAll;
   inherited Showing;
 end;
 
@@ -402,12 +405,14 @@ begin
   end;
 end;
 
-function ChooseFileToSave(const Title, StartFolder, Filter: string; out Path: string): Boolean;
+function ChooseFileToSave(const Title, StartFolder, Filter: string; out Path: string;
+  const InitialName: string): Boolean;
 var
   Dialog: TSaveFileDialog;
 begin
   Path := '';
   Dialog := TSaveFileDialog.CreateFileDialog(Title, StartFolder, Filter);
+  Dialog.NameEdit.Text := InitialName;
   try
     Result := Dialog.Execute;
     if Result then

@@ -21,16 +21,23 @@
 
   Positions are a line and a character in it (UTF-8 by characters). The
   keys of the one line edit box work across lines: the arrows (up and
-  down keep the column as near as they can), Home and End within the
-  line, Page Up and Down by a screenful, Shift with any of them to
-  select; Enter splits the line (so the window's default button is not
+  down keep to the same X), Home and End within the row, Ctrl+Home and
+  Ctrl+End to the ends of the text, Ctrl with Left and Right by words,
+  Page Up and Down by a screenful, Shift with any of them to select;
+  Enter splits the line (so the window's default button is not
   pressed), Backspace and Delete join lines at their ends. The edit
   commands (Controls.EditCommands: cut, copy, paste, select all) work
   from their keys and from the context menu of a right click; the
-  clipboard holds lines joined with line feeds. Tab moves to the next control unless AcceptTabs. A
-  vertical scroll bar shows when the lines do not fit, and the text
-  scrolls sideways to keep the caret in view. The text is in the theme's
-  monospaced face, so columns of text line up as typed.
+  clipboard holds lines joined with line feeds. Tab moves to the next
+  control unless AcceptTabs.
+
+  Every change goes through one place (ReplaceRange), which remembers it
+  for Undo (Ctrl+Z) and Redo (Ctrl+Y), grouped as Controls.TextUndo
+  says, and marks the text Modified. Find selects the next match (the
+  view does that), Replace replaces the match selected and finds the
+  next, ReplaceAll replaces every one as one change to undo. The view
+  under it (Controls.TextView) shows the text: word wrap, the face, the
+  scrolling, the caret.
 }
 unit Controls.TextEdit;
 
@@ -41,109 +48,88 @@ interface
 
 uses
   Classes,
-  Drawing.Canvas,
   Windowing.Messages,
   Controls.Base,
-  Controls.ScrollBar,
-  Controls.EditCommands;
+  Controls.EditCommands,
+  Controls.TextPositions,
+  Controls.TextUndo,
+  Controls.TextSearch,
+  Controls.TextView;
 
 type
-  TTextPosition = record
-    Line: LongInt;
-    Column: LongInt;
-  end;
+  { (Declared again so programs need not name Controls.TextPositions.) }
+  TTextPosition = Controls.TextPositions.TTextPosition;
 
-  TTextEdit = class(TControl)
+  TTextEdit = class(TTextView)
   private
-    FLines: TStringList;
-    FCaret: TTextPosition;
-    FAnchor: TTextPosition;
-    FTopLine: LongInt;
-    FScrollX: LongInt;
-    FScrollBar: TScrollBar;
+    FUndo: TTextUndoHistory;
     FSelecting: Boolean;
     FAcceptTabs: Boolean;
     FReadOnly: Boolean;
-    FChanging: Boolean;
-    function LineHeight: LongInt;
-    function VisibleLines: LongInt;
-    function TextLeft: LongInt;
-    function ColumnX(Line, Column: LongInt): LongInt;
-    function PositionAt(X, Y: LongInt): TTextPosition;
-    function LineLength(Line: LongInt): LongInt;
-    procedure MoveCaret(Line, Column: LongInt; Extend: Boolean);
-    procedure ScrollToCaret;
-    procedure SetTopLine(Value: LongInt);
-    procedure UpdateScrollBar;
-    function SelectionStart: TTextPosition;
-    function SelectionEnd: TTextPosition;
-    function HasSelection: Boolean;
-    procedure DeleteSelection;
-    procedure InsertText(const Inserted: string);
-    procedure LinesChanged(Sender: TObject);
+    FModified: Boolean;
+    { ReplaceAll's changes are shown once, at the end. }
+    FBatchDepth: LongInt;
+    FBatchEdited: Boolean;
+    procedure ReplaceRange(const Start, Finish: TTextPosition; const Inserted: string; Kind: TTextChangeKind);
     procedure TextEdited;
+    procedure TypeText(const Typed: string);
+    procedure DeleteBackward;
+    procedure DeleteForward;
+    function PositionBeforeCaret: TTextPosition;
+    function PositionAfterCaret: TTextPosition;
+    function WordStartBefore(const Position: TTextPosition): TTextPosition;
+    function WordStartAfter(const Position: TTextPosition): TTextPosition;
+    procedure MoveHorizontally(Forward, ByWord, Extend: Boolean);
   protected
-    procedure Paint(var Canvas: TCanvas); override;
+    procedure UserMovedCaret; override;
+    function ShowsAsField: Boolean; override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
-    procedure Wheel(Steps: LongInt); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
-    procedure Layout; override;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
-    procedure ReceiveMessage(var Message: TPostedMessage); override;
-    procedure SelectAll;
-    function SelectedText: string;
+    { Replaces the whole text: nothing to undo, not modified. }
+    procedure SetAllText(const Value: string); override;
     procedure CutToClipboard;
     procedure CopyToClipboard;
     procedure PasteFromClipboard;
     procedure RunEditCommand(Command: TEditCommand);
-    { The whole text, lines joined with line feeds. }
-    function AllText: string;
-    procedure SetAllText(const Value: string);
-    property Lines: TStringList read FLines;
-    property CaretLine: LongInt read FCaret.Line;
-    property CaretColumn: LongInt read FCaret.Column;
+    { The selection replaced by NewText (inserted at the caret if there
+      is none), as one change. }
+    procedure ReplaceSelection(const NewText: string);
+    procedure DeleteSelectedText;
+    procedure Undo;
+    procedure Redo;
+    function CanUndo: Boolean;
+    function CanRedo: Boolean;
+    { Forgets what could be undone and redone. }
+    procedure ClearUndo;
+    { If the selection is Pattern, replaces it with Replacement; then
+      finds the next match (True if there is one). }
+    function ReplaceNext(const Pattern, Replacement: string; MatchCase: Boolean): Boolean;
+    { Replaces every match of Pattern in the text; how many. }
+    function ReplaceAll(const Pattern, Replacement: string; MatchCase: Boolean): LongInt;
     property AcceptTabs: Boolean read FAcceptTabs write FAcceptTabs;
     property ReadOnly: Boolean read FReadOnly write FReadOnly;
+    { The text was changed by the user since SetAllText (or since the
+      program said otherwise). }
+    property Modified: Boolean read FModified write FModified;
   end;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Drawing.Rectangles,
-  Drawing.Bevels,
   Windowing.Protocol,
-  Font.Faces,
-  Windowing.Theme,
-  Windowing.Connection,
-  Windowing.Fonts,
+  Windowing.Windows,
   Controls.Keys,
-  Controls.Text,
   Controls.Clipboard;
-
-{ The face the text is in. }
-function EditFace: PFontFace;
-begin
-  Result := FixedTextFace;
-end;
 
 const
   TabCharacter = 9;
-
-function MakePosition(Line, Column: LongInt): TTextPosition;
-begin
-  Result.Line := Line;
-  Result.Column := Column;
-end;
-
-function PositionBefore(const First, Second: TTextPosition): Boolean;
-begin
-  Result := (First.Line < Second.Line) or ((First.Line = Second.Line) and (First.Column < Second.Column));
-end;
 
 { A code point as UTF-8. }
 function Utf8Of(CodePoint: LongWord): string;
@@ -160,347 +146,228 @@ begin
       Char($80 or ((CodePoint shr 6) and $3F)) + Char($80 or (CodePoint and $3F));
 end;
 
+{ Whether the character at Column of Text is part of a word (anything but
+  spaces, tabs and punctuation). }
+function IsWordCharacter(const Text: string; Column: LongInt): Boolean;
+var
+  Piece: string;
+begin
+  Piece := CharacterRange(Text, Column, 1);
+  if Piece = '' then
+    Exit(False);
+  Result := (Length(Piece) > 1) or (Piece[1] in ['0'..'9', 'A'..'Z', 'a'..'z', '_']);
+end;
+
 constructor TTextEdit.Create(AParent: TControl);
 begin
   inherited Create(AParent);
-  CanFocus := True;
-  PointerShape := PointerTextBeam;
-  FLines := TStringList.Create;
-  FLines.Add('');
-  FLines.OnChange := @LinesChanged;
-  FScrollBar := TScrollBar.Create(Self);
-  FScrollBar.Visible := False;
+  FUndo := TTextUndoHistory.Create;
 end;
 
 destructor TTextEdit.Destroy;
 begin
-  FLines.Free;
+  FUndo.Free;
   inherited Destroy;
 end;
 
-function TTextEdit.LineHeight: LongInt;
+procedure TTextEdit.UserMovedCaret;
 begin
-  Result := TextHeight(EditFace);
-  if Result < 1 then
-    Result := 1;
+  { Typing somewhere else is a new change to undo. }
+  FUndo.BreakGroup;
 end;
 
-function TTextEdit.VisibleLines: LongInt;
+function TTextEdit.ShowsAsField: Boolean;
 begin
-  Result := (RectangleHeight(PixelBounds) - 4) div LineHeight;
-  if Result < 1 then
-    Result := 1;
+  Result := Enabled and not FReadOnly;
 end;
 
-function TTextEdit.TextLeft: LongInt;
+procedure TTextEdit.SetAllText(const Value: string);
 begin
-  Result := Scaled(4);
+  inherited SetAllText(Value);
+  FUndo.Clear;
+  FModified := False;
 end;
 
-function TTextEdit.LineLength(Line: LongInt): LongInt;
-begin
-  Result := CharacterCountOf(FLines[Line]);
-end;
+{ --- Changes ---------------------------------------------------------------------------- }
 
-function TTextEdit.ColumnX(Line, Column: LongInt): LongInt;
+procedure TTextEdit.TextEdited;
 begin
-  Result := TextLeft - FScrollX + TextWidth(EditFace, CharactersOf(FLines[Line], 0, Column));
-end;
-
-function TTextEdit.PositionAt(X, Y: LongInt): TTextPosition;
-var
-  Column: LongInt;
-  Count: LongInt;
-begin
-  Result.Line := FTopLine + (Y - 2) div LineHeight;
-  if Y < 2 then
-    Result.Line := FTopLine - 1;
-  if Result.Line < 0 then
-    Result.Line := 0;
-  if Result.Line >= FLines.Count then
-    Result.Line := FLines.Count - 1;
-  Count := LineLength(Result.Line);
-  Result.Column := Count;
-  for Column := 0 to Count - 1 do
-    if X < (ColumnX(Result.Line, Column) + ColumnX(Result.Line, Column + 1)) div 2 then
-    begin
-      Result.Column := Column;
-      Exit;
-    end;
-end;
-
-procedure TTextEdit.Layout;
-var
-  Width: LongInt;
-begin
-  Width := Scaled(Theme.ScrollBarWidth);
-  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - 2 - Width), Unscaled(2), Unscaled(Width),
-    Unscaled(RectangleHeight(PixelBounds) - 4));
-  UpdateScrollBar;
-  inherited Layout;
-end;
-
-procedure TTextEdit.UpdateScrollBar;
-var
-  Needed: Boolean;
-begin
-  Needed := FLines.Count > VisibleLines;
-  FScrollBar.SetRange(0, FLines.Count, VisibleLines);
-  FScrollBar.Position := FTopLine;
-  if FScrollBar.Visible <> Needed then
-    FScrollBar.Visible := Needed;
-end;
-
-procedure TTextEdit.ReceiveMessage(var Message: TPostedMessage);
-begin
-  if (Message.Code = MessageNotify) and (TControl(Message.Parameter1) = FScrollBar) then
+  if FBatchDepth > 0 then
   begin
-    if (Message.Parameter2 = NotifyChanged) and (FScrollBar.Position <> FTopLine) then
-    begin
-      FTopLine := FScrollBar.Position;
-      Invalidate;
-    end;
+    FBatchEdited := True;
     Exit;
   end;
-  inherited ReceiveMessage(Message);
-end;
-
-procedure TTextEdit.SetTopLine(Value: LongInt);
-begin
-  if Value > FLines.Count - VisibleLines then
-    Value := FLines.Count - VisibleLines;
-  if Value < 0 then
-    Value := 0;
-  if Value = FTopLine then
-    Exit;
-  FTopLine := Value;
-  FScrollBar.Position := Value;
-  Invalidate;
-end;
-
-procedure TTextEdit.ScrollToCaret;
-var
-  X: LongInt;
-  Right: LongInt;
-begin
-  if FCaret.Line < FTopLine then
-    SetTopLine(FCaret.Line)
-  else if FCaret.Line >= FTopLine + VisibleLines then
-    SetTopLine(FCaret.Line - VisibleLines + 1);
-  Right := RectangleWidth(PixelBounds) - TextLeft;
-  if FScrollBar.Visible then
-    Right := Right - RectangleWidth(FScrollBar.PixelBounds);
-  X := ColumnX(FCaret.Line, FCaret.Column);
-  if X < TextLeft then
-    FScrollX := FScrollX - (TextLeft - X)
-  else if X > Right then
-    FScrollX := FScrollX + (X - Right);
-  if FScrollX < 0 then
-    FScrollX := 0;
-end;
-
-procedure TTextEdit.MoveCaret(Line, Column: LongInt; Extend: Boolean);
-begin
-  if Line < 0 then
-    Line := 0;
-  if Line >= FLines.Count then
-    Line := FLines.Count - 1;
-  if Column < 0 then
-    Column := 0;
-  if Column > LineLength(Line) then
-    Column := LineLength(Line);
-  FCaret := MakePosition(Line, Column);
-  if not Extend then
-    FAnchor := FCaret;
+  FDesiredX := -1;
+  UpdateScrollBar;
   ScrollToCaret;
   Invalidate;
+  ReportCaret;
+  Changed;
 end;
 
-function TTextEdit.SelectionStart: TTextPosition;
+procedure TTextEdit.ReplaceRange(const Start, Finish: TTextPosition; const Inserted: string;
+  Kind: TTextChangeKind);
+var
+  Removed: string;
 begin
-  if PositionBefore(FAnchor, FCaret) then
-    Result := FAnchor
+  if FReadOnly then
+    Exit;
+  Removed := TextBetween(Start, Finish);
+  if (Removed = '') and (Inserted = '') then
+    Exit;
+  FUndo.AddChange(Start, Removed, Inserted, Kind);
+  FCaret := ReplaceLines(Start, Finish, Inserted);
+  FAnchor := FCaret;
+  FModified := True;
+  TextEdited;
+end;
+
+procedure TTextEdit.ReplaceSelection(const NewText: string);
+begin
+  ReplaceRange(SelectionStart, SelectionEnd, NewText, ChangeOther);
+end;
+
+procedure TTextEdit.DeleteSelectedText;
+begin
+  if HasSelection then
+    ReplaceSelection('');
+end;
+
+procedure TTextEdit.TypeText(const Typed: string);
+begin
+  ReplaceRange(SelectionStart, SelectionEnd, Typed, ChangeTyping);
+end;
+
+function TTextEdit.PositionBeforeCaret: TTextPosition;
+begin
+  if FCaret.Column > 0 then
+    Result := MakePosition(FCaret.Line, FCaret.Column - 1)
+  else if FCaret.Line > 0 then
+    Result := MakePosition(FCaret.Line - 1, LineLength(FCaret.Line - 1))
   else
     Result := FCaret;
 end;
 
-function TTextEdit.SelectionEnd: TTextPosition;
+function TTextEdit.PositionAfterCaret: TTextPosition;
 begin
-  if PositionBefore(FAnchor, FCaret) then
-    Result := FCaret
+  if FCaret.Column < LineLength(FCaret.Line) then
+    Result := MakePosition(FCaret.Line, FCaret.Column + 1)
+  else if FCaret.Line < FLines.Count - 1 then
+    Result := MakePosition(FCaret.Line + 1, 0)
   else
-    Result := FAnchor;
+    Result := FCaret;
 end;
 
-function TTextEdit.HasSelection: Boolean;
+procedure TTextEdit.DeleteBackward;
 begin
-  Result := (FAnchor.Line <> FCaret.Line) or (FAnchor.Column <> FCaret.Column);
+  if HasSelection then
+    ReplaceSelection('')
+  else
+    ReplaceRange(PositionBeforeCaret, FCaret, '', ChangeDeletingBackward);
 end;
 
-function TTextEdit.SelectedText: string;
+procedure TTextEdit.DeleteForward;
+begin
+  if HasSelection then
+    ReplaceSelection('')
+  else
+    ReplaceRange(FCaret, PositionAfterCaret, '', ChangeDeletingForward);
+end;
+
+procedure TTextEdit.Undo;
 var
-  First: TTextPosition;
-  Last: TTextPosition;
-  Line: LongInt;
-begin
-  First := SelectionStart;
-  Last := SelectionEnd;
-  if First.Line = Last.Line then
-    Exit(CharactersOf(FLines[First.Line], First.Column, Last.Column - First.Column));
-  Result := CharactersOf(FLines[First.Line], First.Column, MaxInt);
-  for Line := First.Line + 1 to Last.Line - 1 do
-    Result := Result + #10 + FLines[Line];
-  Result := Result + #10 + CharactersOf(FLines[Last.Line], 0, Last.Column);
-end;
-
-procedure TTextEdit.SelectAll;
-begin
-  FAnchor := MakePosition(0, 0);
-  FCaret := MakePosition(FLines.Count - 1, LineLength(FLines.Count - 1));
-  ScrollToCaret;
-  Invalidate;
-end;
-
-function TTextEdit.AllText: string;
-var
-  Line: LongInt;
-begin
-  Result := '';
-  for Line := 0 to FLines.Count - 1 do
-  begin
-    if Line > 0 then
-      Result := Result + #10;
-    Result := Result + FLines[Line];
-  end;
-end;
-
-procedure TTextEdit.SetAllText(const Value: string);
-var
-  Start: LongInt;
+  Changes: TTextChanges;
   Index: LongInt;
-begin
-  FChanging := True;
-  FLines.Clear;
-  Start := 1;
-  for Index := 1 to Length(Value) do
-    if Value[Index] = #10 then
-    begin
-      FLines.Add(Copy(Value, Start, Index - Start));
-      Start := Index + 1;
-    end;
-  FLines.Add(Copy(Value, Start, Length(Value) - Start + 1));
-  FChanging := False;
-  FCaret := MakePosition(0, 0);
-  FAnchor := FCaret;
-  FTopLine := 0;
-  FScrollX := 0;
-  LinesChanged(nil);
-end;
-
-procedure TTextEdit.LinesChanged(Sender: TObject);
-begin
-  if FChanging then
-    Exit;
-  if FLines.Count = 0 then
-  begin
-    FChanging := True;
-    FLines.Add('');
-    FChanging := False;
-  end;
-  if FCaret.Line >= FLines.Count then
-    FCaret := MakePosition(FLines.Count - 1, 0);
-  if FAnchor.Line >= FLines.Count then
-    FAnchor := FCaret;
-  UpdateScrollBar;
-  Invalidate;
-end;
-
-procedure TTextEdit.TextEdited;
-begin
-  UpdateScrollBar;
-  ScrollToCaret;
-  Invalidate;
-  Changed;
-end;
-
-procedure TTextEdit.DeleteSelection;
-var
-  First: TTextPosition;
-  Last: TTextPosition;
-  Joined: string;
-  Line: LongInt;
-begin
-  if not HasSelection then
-    Exit;
-  First := SelectionStart;
-  Last := SelectionEnd;
-  FChanging := True;
-  Joined := CharactersOf(FLines[First.Line], 0, First.Column) + CharactersOf(FLines[Last.Line], Last.Column, MaxInt);
-  for Line := Last.Line downto First.Line + 1 do
-    FLines.Delete(Line);
-  FLines[First.Line] := Joined;
-  FChanging := False;
-  FCaret := First;
-  FAnchor := First;
-end;
-
-{ Inserted split at its line feeds (carriage returns are dropped). }
-procedure SplitLines(const Inserted: string; Pieces: TStringList);
-var
-  Piece: string;
-  Index: LongInt;
-begin
-  Piece := '';
-  for Index := 1 to Length(Inserted) do
-    if Inserted[Index] = #10 then
-    begin
-      Pieces.Add(Piece);
-      Piece := '';
-    end
-    else if Inserted[Index] <> #13 then
-      Piece := Piece + Inserted[Index];
-  Pieces.Add(Piece);
-end;
-
-procedure TTextEdit.InsertText(const Inserted: string);
-var
-  Line: string;
-  Before: string;
-  After: string;
-  Pieces: TStringList;
-  Index: LongInt;
-  LastPiece: LongInt;
+  Change: TTextChange;
 begin
   if FReadOnly then
     Exit;
-  DeleteSelection;
-  FChanging := True;
-  Line := FLines[FCaret.Line];
-  Before := CharactersOf(Line, 0, FCaret.Column);
-  After := CharactersOf(Line, FCaret.Column, MaxInt);
-  Pieces := TStringList.Create;
-  SplitLines(Inserted, Pieces);
-  { The first piece ends the caret's line; the last starts what was
-    after the caret; any between are lines of their own. }
-  LastPiece := Pieces.Count - 1;
-  if LastPiece = 0 then
+  Changes := FUndo.TakeUndoGroup;
+  if Length(Changes) = 0 then
+    Exit;
+  for Index := 0 to High(Changes) do
   begin
-    FLines[FCaret.Line] := Before + Pieces[0] + After;
-    FCaret.Column := FCaret.Column + CharacterCountOf(Pieces[0]);
-  end
-  else
-  begin
-    FLines[FCaret.Line] := Before + Pieces[0];
-    for Index := 1 to LastPiece - 1 do
-      FLines.Insert(FCaret.Line + Index, Pieces[Index]);
-    FLines.Insert(FCaret.Line + LastPiece, Pieces[LastPiece] + After);
-    FCaret := MakePosition(FCaret.Line + LastPiece, CharacterCountOf(Pieces[LastPiece]));
+    Change := Changes[Index];
+    FCaret := ReplaceLines(Change.Start, PositionAfterText(Change.Start, Change.Inserted), Change.Removed);
   end;
-  Pieces.Free;
-  FChanging := False;
   FAnchor := FCaret;
+  FModified := True;
   TextEdited;
 end;
+
+procedure TTextEdit.Redo;
+var
+  Changes: TTextChanges;
+  Index: LongInt;
+  Change: TTextChange;
+begin
+  if FReadOnly then
+    Exit;
+  Changes := FUndo.TakeRedoGroup;
+  if Length(Changes) = 0 then
+    Exit;
+  for Index := 0 to High(Changes) do
+  begin
+    Change := Changes[Index];
+    FCaret := ReplaceLines(Change.Start, PositionAfterText(Change.Start, Change.Removed), Change.Inserted);
+  end;
+  FAnchor := FCaret;
+  FModified := True;
+  TextEdited;
+end;
+
+function TTextEdit.CanUndo: Boolean;
+begin
+  Result := FUndo.CanUndo and not FReadOnly;
+end;
+
+function TTextEdit.CanRedo: Boolean;
+begin
+  Result := FUndo.CanRedo and not FReadOnly;
+end;
+
+procedure TTextEdit.ClearUndo;
+begin
+  FUndo.Clear;
+end;
+
+function TTextEdit.ReplaceNext(const Pattern, Replacement: string; MatchCase: Boolean): Boolean;
+begin
+  if HasSelection and (Pattern <> '') and TextMatches(SelectedText, Pattern, MatchCase) then
+    ReplaceSelection(Replacement);
+  Result := FindText(Pattern, MakeSearchOptions(MatchCase, SearchDown));
+end;
+
+function TTextEdit.ReplaceAll(const Pattern, Replacement: string; MatchCase: Boolean): LongInt;
+var
+  From: TTextPosition;
+  MatchStart: TTextPosition;
+  MatchEnd: TTextPosition;
+  Options: TSearchOptions;
+begin
+  Result := 0;
+  if FReadOnly then
+    Exit;
+  Options := MakeSearchOptions(MatchCase, SearchDown);
+  From := MakePosition(0, 0);
+  FUndo.BeginGroup;
+  Inc(FBatchDepth);
+  FBatchEdited := False;
+  while FindInLines(FLines, Pattern, From, Options, MatchStart, MatchEnd) do
+  begin
+    ReplaceRange(MatchStart, MatchEnd, Replacement, ChangeOther);
+    { Searching goes on after the replacement, so a replacement holding
+      the pattern is not replaced again. }
+    From := FCaret;
+    Inc(Result);
+  end;
+  Dec(FBatchDepth);
+  FUndo.EndGroup;
+  if FBatchEdited then
+    TextEdited;
+end;
+
+{ --- The clipboard --------------------------------------------------------------------- }
 
 procedure TTextEdit.CopyToClipboard;
 begin
@@ -513,15 +380,15 @@ begin
   if not HasSelection or FReadOnly then
     Exit;
   SetClipboardText(SelectedText);
-  DeleteSelection;
-  TextEdited;
+  ReplaceSelection('');
 end;
 
 procedure TTextEdit.PasteFromClipboard;
 begin
   if FReadOnly or not ClipboardHasText then
     Exit;
-  InsertText(ClipboardText);
+  { Lines as this box keeps them: carriage returns are dropped. }
+  ReplaceSelection(StringReplace(ClipboardText, #13, '', [rfReplaceAll]));
 end;
 
 procedure TTextEdit.RunEditCommand(Command: TEditCommand);
@@ -534,62 +401,138 @@ begin
   end;
 end;
 
+{ --- Keys -------------------------------------------------------------------------------- }
+
+function TTextEdit.WordStartBefore(const Position: TTextPosition): TTextPosition;
+var
+  LineText: string;
+  Column: LongInt;
+begin
+  if Position.Column = 0 then
+  begin
+    if Position.Line = 0 then
+      Exit(Position);
+    Exit(MakePosition(Position.Line - 1, LineLength(Position.Line - 1)));
+  end;
+  LineText := FLines[Position.Line];
+  Column := Position.Column;
+  while (Column > 0) and not IsWordCharacter(LineText, Column - 1) do
+    Dec(Column);
+  while (Column > 0) and IsWordCharacter(LineText, Column - 1) do
+    Dec(Column);
+  Result := MakePosition(Position.Line, Column);
+end;
+
+function TTextEdit.WordStartAfter(const Position: TTextPosition): TTextPosition;
+var
+  LineText: string;
+  Column: LongInt;
+  Count: LongInt;
+begin
+  Count := LineLength(Position.Line);
+  if Position.Column >= Count then
+  begin
+    if Position.Line >= FLines.Count - 1 then
+      Exit(Position);
+    Exit(MakePosition(Position.Line + 1, 0));
+  end;
+  LineText := FLines[Position.Line];
+  Column := Position.Column;
+  while (Column < Count) and IsWordCharacter(LineText, Column) do
+    Inc(Column);
+  while (Column < Count) and not IsWordCharacter(LineText, Column) do
+    Inc(Column);
+  Result := MakePosition(Position.Line, Column);
+end;
+
+procedure TTextEdit.MoveHorizontally(Forward, ByWord, Extend: Boolean);
+var
+  Target: TTextPosition;
+begin
+  { An arrow without Shift leaves a selection at its end. }
+  if HasSelection and not Extend and not ByWord then
+  begin
+    if Forward then
+      Target := SelectionEnd
+    else
+      Target := SelectionStart;
+  end
+  else if ByWord and Forward then
+    Target := WordStartAfter(FCaret)
+  else if ByWord then
+    Target := WordStartBefore(FCaret)
+  else if Forward then
+    Target := PositionAfterCaret
+  else
+    Target := PositionBeforeCaret;
+  MoveCaret(Target.Line, Target.Column, Extend);
+end;
+
 function TTextEdit.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Extend: Boolean;
+  Control: Boolean;
   Command: TEditCommand;
+  Held: LongWord;
+  LastLine: LongInt;
 begin
   Result := True;
   Extend := (Modifiers and ModifierShift) <> 0;
+  Control := (Modifiers and ModifierControl) <> 0;
+  Held := Modifiers and (ModifierShift or ModifierControl or ModifierAlt);
+  { Moving up and down keeps to one X; anything else starts again. }
+  if (Code <> KeyArrowUp) and (Code <> KeyArrowDown) and (Code <> KeyPageUp) and (Code <> KeyPageDown) then
+    FDesiredX := -1;
   if EditCommandOfKey(Code, Modifiers, Command) then
   begin
     RunEditCommand(Command);
     Exit;
   end;
+  if (Code = KeyZ) and (Held = ModifierControl) then
+  begin
+    Undo;
+    Exit;
+  end;
+  if ((Code = KeyY) and (Held = ModifierControl)) or ((Code = KeyZ) and (Held = ModifierControl or ModifierShift)) then
+  begin
+    Redo;
+    Exit;
+  end;
+  LastLine := FLines.Count - 1;
   case Code of
-    KeyArrowLeft:
-      if FCaret.Column > 0 then
-        MoveCaret(FCaret.Line, FCaret.Column - 1, Extend)
-      else if FCaret.Line > 0 then
-        MoveCaret(FCaret.Line - 1, LineLength(FCaret.Line - 1), Extend);
-    KeyArrowRight:
-      if FCaret.Column < LineLength(FCaret.Line) then
-        MoveCaret(FCaret.Line, FCaret.Column + 1, Extend)
-      else if FCaret.Line < FLines.Count - 1 then
-        MoveCaret(FCaret.Line + 1, 0, Extend);
-    KeyArrowUp: MoveCaret(FCaret.Line - 1, FCaret.Column, Extend);
-    KeyArrowDown: MoveCaret(FCaret.Line + 1, FCaret.Column, Extend);
-    KeyPageUp: MoveCaret(FCaret.Line - VisibleLines, FCaret.Column, Extend);
-    KeyPageDown: MoveCaret(FCaret.Line + VisibleLines, FCaret.Column, Extend);
-    KeyHome: MoveCaret(FCaret.Line, 0, Extend);
-    KeyEnd: MoveCaret(FCaret.Line, LineLength(FCaret.Line), Extend);
+    KeyArrowLeft: MoveHorizontally(False, Control, Extend);
+    KeyArrowRight: MoveHorizontally(True, Control, Extend);
+    KeyArrowUp: MoveCaretByRows(-1, Extend);
+    KeyArrowDown: MoveCaretByRows(1, Extend);
+    KeyPageUp: MoveCaretByRows(-VisibleRows, Extend);
+    KeyPageDown: MoveCaretByRows(VisibleRows, Extend);
+    KeyHome:
+      if Control then
+        MoveCaret(0, 0, Extend)
+      else
+        MoveCaretToRowStart(Extend);
+    KeyEnd:
+      if Control then
+        MoveCaret(LastLine, LineLength(LastLine), Extend)
+      else
+        MoveCaretToRowEnd(Extend);
     KeyBackspace:
-      if not FReadOnly then
-      begin
-        if not HasSelection then
-          KeyDown(KeyArrowLeft, 0, ModifierShift);
-        DeleteSelection;
-        TextEdited;
-      end;
+      DeleteBackward;
     KeyDelete:
-      if not FReadOnly then
-      begin
-        if not HasSelection then
-          KeyDown(KeyArrowRight, 0, ModifierShift);
-        DeleteSelection;
-        TextEdited;
-      end;
+      DeleteForward;
   else
     if IsEnterKey(Code) then
-      InsertText(#10)
+      ReplaceSelection(#10)
     else if (Character = TabCharacter) and FAcceptTabs then
-      InsertText(#9)
-    else if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierControl) = 0) then
-      InsertText(Utf8Of(Character))
+      TypeText(#9)
+    else if (Character >= 32) and (Character <> 127) and not Control then
+      TypeText(Utf8Of(Character))
     else
       Result := False;
   end;
 end;
+
+{ --- The pointer --------------------------------------------------------------------------- }
 
 procedure TTextEdit.PointerDown(X, Y: LongInt; Button: LongWord);
 var
@@ -598,8 +541,10 @@ begin
   if Button <> ButtonLeft then
     Exit;
   FSelecting := True;
+  FDesiredX := -1;
   Position := PositionAt(X, Y);
-  MoveCaret(Position.Line, Position.Column, False);
+  { Shift+click selects from where the caret was. }
+  MoveCaret(Position.Line, Position.Column, (HeldModifiers and ModifierShift) <> 0);
 end;
 
 procedure TTextEdit.PointerMove(X, Y: LongInt; Buttons: LongWord);
@@ -619,70 +564,6 @@ begin
     menu. }
   if Button = ButtonRight then
     ShowEditMenu(Self, X, Y, AvailableEditCommands(HasSelection, FReadOnly), @RunEditCommand);
-end;
-
-procedure TTextEdit.Wheel(Steps: LongInt);
-begin
-  SetTopLine(FTopLine - Steps * 3);
-end;
-
-procedure TTextEdit.Paint(var Canvas: TCanvas);
-var
-  Box: TRectangle;
-  Inner: TCanvas;
-  Line: LongInt;
-  Top: LongInt;
-  Right: LongInt;
-  First: TTextPosition;
-  Last: TTextPosition;
-  FromColumn: LongInt;
-  ToColumn: LongInt;
-  Left: LongInt;
-  Width: LongInt;
-begin
-  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  if Enabled and not FReadOnly then
-    FillRectangle(Canvas, Box, Theme.Field)
-  else
-    FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
-  if EditFace = nil then
-    Exit;
-  Right := RectangleWidth(Box) - 2;
-  if FScrollBar.Visible then
-    Right := Right - RectangleWidth(FScrollBar.PixelBounds);
-  Inner := Canvas;
-  NarrowCanvasClip(Inner, MakeRectangle(2, 2, Right - 2, RectangleHeight(Box) - 4));
-  First := SelectionStart;
-  Last := SelectionEnd;
-  for Line := FTopLine to FLines.Count - 1 do
-  begin
-    Top := 2 + (Line - FTopLine) * LineHeight;
-    if Top >= RectangleHeight(Box) then
-      Break;
-    DrawTextInBox(Inner, EditFace, FLines[Line], MakeRectangle(TextLeft - FScrollX, Top, 1 shl 20, LineHeight),
-      AlignTextLeft, Theme.FieldText);
-    if Focused and HasSelection and (Line >= First.Line) and (Line <= Last.Line) then
-    begin
-      FromColumn := 0;
-      ToColumn := LineLength(Line);
-      if Line = First.Line then
-        FromColumn := First.Column;
-      if Line = Last.Line then
-        ToColumn := Last.Column;
-      Left := ColumnX(Line, FromColumn);
-      Width := ColumnX(Line, ToColumn) - Left;
-      { A line break selected shows as a little space. }
-      if Line < Last.Line then
-        Width := Width + Scaled(4);
-      FillRectangle(Inner, MakeRectangle(Left, Top, Width, LineHeight), Theme.Selection);
-      DrawTextInBox(Inner, EditFace, CharactersOf(FLines[Line], FromColumn, ToColumn - FromColumn),
-        MakeRectangle(Left, Top, 1 shl 20, LineHeight), AlignTextLeft, Theme.SelectionText);
-    end;
-  end;
-  if Focused then
-    FillRectangle(Inner, MakeRectangle(ColumnX(FCaret.Line, FCaret.Column), 2 + (FCaret.Line - FTopLine) * LineHeight,
-      Scaled(1), LineHeight), Theme.FieldText);
 end;
 
 end.

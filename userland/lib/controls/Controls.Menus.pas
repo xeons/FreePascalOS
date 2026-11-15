@@ -21,10 +21,14 @@
   it, submenus, and pop-up (context) menus.
 
   A TMenuItem is a line of a menu: its text, a shortcut shown at the
-  right (shown only: the window's accelerators do the work), whether it
-  is enabled or checked, a separator, or the head of a submenu (its own
+  right (shown only: the window's accelerators do the work, and
+  AddItemAccelerator makes one that chooses the item), whether it is
+  enabled or checked, a separator, or the head of a submenu (its own
   items). Choosing one closes every open menu, then runs its OnClick
-  and the OnChoose of whoever opened the menu.
+  and the OnChoose of whoever opened the menu. A menu's OnOpening runs
+  just before it opens (and before an accelerator chooses one of its
+  items), for the program to enable and check its items as things are
+  now.
 
   An open menu is a pop-up window holding a TMenuList. Clicking a
   heading of the menu bar opens its menu below it; while one is open,
@@ -73,7 +77,9 @@ type
     FIsSeparator: Boolean;
     FItems: TList;
     FTag: PtrInt;
+    FParent: TMenuItem;
     FOnClick: TMenuItemEvent;
+    FOnOpening: TMenuItemEvent;
     function GetItem(Index: LongInt): TMenuItem;
     function GetCount: LongInt;
   public
@@ -92,7 +98,11 @@ type
     property Count: LongInt read GetCount;
     property Items[Index: LongInt]: TMenuItem read GetItem; default;
     property Tag: PtrInt read FTag write FTag;
+    { The menu it is in (nil for the top of a menu bar or pop-up). }
+    property Parent: TMenuItem read FParent;
     property OnClick: TMenuItemEvent read FOnClick write FOnClick;
+    { Its items are about to show (it is a menu, or a submenu's head). }
+    property OnOpening: TMenuItemEvent read FOnOpening write FOnOpening;
   end;
 
   TMenuBar = class;
@@ -168,6 +178,10 @@ type
   Owner: a context menu. }
 function ShowPopupMenu(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt;
   OnChoose: TMenuItemEvent = nil): TMenuList;
+{ Code with Modifiers (an accelerator of Window) chooses Item, as a click
+  on it would, if it is enabled once its menu's OnOpening has run. The
+  item must last as long as the window. }
+procedure AddItemAccelerator(Window: TControlWindow; Item: TMenuItem; Code, Modifiers: LongWord);
 
 implementation
 
@@ -225,6 +239,7 @@ begin
   Result := TMenuItem.Create(AText);
   Result.FOnClick := AOnClick;
   Result.FShortcutText := AShortcutText;
+  Result.FParent := Self;
   FItems.Add(Result);
 end;
 
@@ -239,6 +254,7 @@ var
 begin
   Separator := TMenuItem.Create('');
   Separator.FIsSeparator := True;
+  Separator.FParent := Self;
   FItems.Add(Separator);
 end;
 
@@ -283,6 +299,8 @@ var
   Height: LongInt;
   Popup: TPopupWindow;
 begin
+  if Assigned(Menu.OnOpening) then
+    Menu.OnOpening(Menu);
   MeasureMenu(Menu, Width, Height);
   { Kept on the display it opens on. }
   KeepOnDisplay(Left, Top, Width, Height);
@@ -833,4 +851,52 @@ begin
     OpenMenu(Index);
 end;
 
+{ --- Accelerators for items ------------------------------------------------------------ }
+
+type
+  { What an accelerator made by AddItemAccelerator runs. }
+  TItemAccelerator = class
+  public
+    Item: TMenuItem;
+    procedure Run(Sender: TControlWindow);
+  end;
+
+var
+  { Every one made, freed when the program ends (an accelerator stays
+    with its window for good). }
+  ItemAccelerators: TList;
+
+procedure TItemAccelerator.Run(Sender: TControlWindow);
+begin
+  if (Item.Parent <> nil) and Assigned(Item.Parent.OnOpening) then
+    Item.Parent.OnOpening(Item.Parent);
+  if Item.Enabled and not Item.IsSeparator and Assigned(Item.OnClick) then
+    Item.OnClick(Item);
+end;
+
+procedure AddItemAccelerator(Window: TControlWindow; Item: TMenuItem; Code, Modifiers: LongWord);
+var
+  Accelerator: TItemAccelerator;
+begin
+  if ItemAccelerators = nil then
+    ItemAccelerators := TList.Create;
+  Accelerator := TItemAccelerator.Create;
+  Accelerator.Item := Item;
+  ItemAccelerators.Add(Accelerator);
+  Window.AddAccelerator(Code, Modifiers, @Accelerator.Run);
+end;
+
+procedure FreeItemAccelerators;
+var
+  Index: LongInt;
+begin
+  if ItemAccelerators = nil then
+    Exit;
+  for Index := 0 to ItemAccelerators.Count - 1 do
+    TItemAccelerator(ItemAccelerators[Index]).Free;
+  ItemAccelerators.Free;
+end;
+
+finalization
+  FreeItemAccelerators;
 end.

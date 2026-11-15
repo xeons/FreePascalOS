@@ -1178,10 +1178,12 @@ the interface's text (`TextFamily`, DejaVu Sans, proportional) and a
 monospaced one (`FixedFamily`, Terminus). `Windowing.Fonts` lists each
 family once and picks faces from them at the display's DPI: the theme's
 text face (`TextFace`, `BoldTextFace`, `FontFace`) and the monospaced one
-(`FixedTextFace`, `FixedFontFace`). The display server picks its title
-face from the theme's text family too. Text is drawn anti-aliased;
-the multi-line edit box uses the monospaced face, so columns of text
-line up, and the console stays Terminus. The controls use anti-aliased
+(`FixedTextFace`, `FixedFontFace`), or either family by name
+(`TFontFamily`: `FamilyFontFace`, `FamilyFaceSize`, `FamilyCaption`; a
+system without the monospaced fonts gets the text family's). The
+display server picks its title face from the theme's text family too. Text is drawn anti-aliased;
+the multi-line edit box uses the monospaced face unless told otherwise,
+so columns of text line up, and the console stays Terminus. The controls use anti-aliased
 shapes where curves and slants show (the radio button's circle, a
 checked menu item's dot, the message box signs, the list view's stock
 icons, whose straight edges still fall on whole pixels) and scale a
@@ -1189,7 +1191,9 @@ program's own icons smoothly.
 
 **libcontrols** builds windows out of controls. `TControl`
 (`Controls.Base`) has a parent, children, bounds in logical units within
-the parent (or a side to dock to), and virtual handlers (paint on a
+the parent (or a side to dock to, in the order they were made; one
+docked to the client area fills what the others leave, whenever it was
+made), and virtual handlers (paint on a
 canvas whose origin is its own top left, clipped to it; pointer, wheel,
 keys, focus, size); the `On...` events let code hook any control without
 making a new class, and a control tells its parent what happened through
@@ -1253,6 +1257,38 @@ server, set with `SetClipboardStore`, and the controls stay as they are.
 A one line box pastes up to the first line break; the multi-line box
 splits what it pastes into lines.
 
+The multi-line edit box is three layers. `Controls.TextView` shows the
+lines: in rows, one per line or, with `WordWrap`, as many as a line
+breaks into at the box's width (soft breaks after the last space that
+fits, a word wider than the box broken where it stops fitting:
+`Controls.TextWrap`), scrolled by rows (the scroll bar, the wheel,
+moving up and down keeping to one X; Home and End go to the ends of
+the row), sideways without word wrap; in the face `SetFont` picks (a
+family, a size in points, bold or not; the monospaced one at the
+theme's size by default). `Controls.TextLayout` lays a line out as
+libfont measures it, with tabs to stops every eight spaces' widths, and
+draws a range of it; the view remembers how many rows each line takes
+(laid out again only when the line, the width or the face changes) and
+the line laid out last, and draws only what shows of a long line, so a
+text of hundreds of kilobytes scrolls, finds and wraps at once.
+`Controls.TextEdit` edits: every change goes through one place, which
+records it (`Controls.TextUndo`: the text removed at a position and the
+text put there) and sets `Modified`; `Undo` (Ctrl+Z) and `Redo`
+(Ctrl+Y) go by groups: characters typed one after another (a word at a
+time), Backspaces in a row, Deletes in a row, and anything else (a
+paste, a line break, a replacement, every replacement of a "replace
+all") alone; moving the caret starts a new group. `FindText` selects
+the next match after the selection or the one before it, with or
+without matching case (`Controls.TextSearch`; within a line, A to Z
+matched to their small letters), `ReplaceNext` replaces the selected
+match and finds the next, `ReplaceAll` replaces every one as one change
+to undo, `GoToLine` moves there, `ReplaceSelection` inserts at the
+caret, and `OnCaretMoved` tells where the caret went. Ctrl+Home and
+Ctrl+End go to the ends, Ctrl with the arrows by words. Positions,
+undo, wrapping and search are plain logic: `make text-test` (part of
+`make test`) builds them on the host (`tools/TextTest`) and checks
+UTF-8 positions, how changes group, where lines break and what is found.
+
 Pop-ups (`Controls.Popups`: menus, a combo box's list) are windows
 without a frame, topmost and never activated: the owner keeps the
 keyboard and hands its keys to the open pop-up (`TControlWindow.Popup`);
@@ -1295,11 +1331,19 @@ name box says: a folder is opened, a pattern becomes the filter, and
 anything else is the file, relative to the folder or absolute
 (`Controls.FileNames` cleans the path up as text). Open wants a file
 that exists; save wants the folder to exist and asks in a message box
-before replacing a file. `Controls.ColorDialog` (`ChooseColor`) has a
+before replacing a file, and can start with a name in its box, selected
+so typing replaces it. `Controls.FindDialog` has the find dialog (what
+to find, match case, up or down) and the replace dialog (what to put
+instead, Replace and Replace All): it stays open while the user finds
+one match after another, its buttons telling the program (`OnFindNext`,
+`OnReplace`, `OnReplaceAll`), which searches its own text and can say
+it found nothing in a message box owned by the dialog. `Controls.ColorDialog` (`ChooseColor`) has a
 grid of basic colours, a scroll bar and a number box for each of red,
 green and blue kept in step, and a swatch of the colour.
-`Controls.FontDialog` (`ChooseFont`) lists the sizes the theme's text
-font comes in at this display's DPI (the faces have some pixel sizes
+`Controls.FontDialog` (`ChooseFont`; `ChooseFontOfFamily` also lets
+the user pick the family, the proportional DejaVu Sans or the
+monospaced Terminus) lists the sizes the family comes in at this
+display's DPI (the faces have some pixel sizes
 only; each is listed as the smallest whole, or else half, point size
 that picks it, so no two entries look the same, found without reading
 any face), bold or regular, and a sample drawn with the face a program
@@ -1335,7 +1379,10 @@ heading, Down, Up and Enter open its menu, a heading's letter opens
 that one, Escape, F10, Alt again, a click or the window going inactive
 leave. Escape in a menu opened from the bar closes it back to its
 heading; Left and Right in a menu open the next heading's menu with its
-first item highlighted.
+first item highlighted. A menu's `OnOpening` runs just before it opens,
+for the program to enable and check its items as things are now;
+`AddItemAccelerator` makes a window accelerator that chooses an item
+(after its menu's `OnOpening`, and only if the item is enabled then).
 
 `controlsdemo` has one of each, and a swatch made in the program (a
 `TControl` subclass that posts a message of the program's own when
@@ -1369,6 +1416,29 @@ Its message boxes are owned by its window: the test clicks the window's
 title bar while one is open and checks that nothing in the window's
 client area changed (the box is still above it), that its title bar
 stayed inactive, and that Enter still went to the box.
+
+`notepad` is the plain text editor (its units in `userland/notepad`): a
+`TTextEdit` filling the window, titled with the file's name
+("Untitled" for a new one), a menu bar (File: New, Open, Save, Save As,
+Exit; Edit: Undo, Redo, Cut, Copy, Paste, Delete, Find, Find Next,
+Replace, Go To, Select All, Time/Date; Format: Word Wrap, Font; View:
+Status Bar; Help: About) with accelerators for the usual keys, and a
+status bar with the caret's line and column. New, Open, Exit and the
+close button ask first whether to save changes (Yes, No, Cancel). Files
+are UTF-8 with lines ending in line feeds; a file whose first line ends
+with a carriage return and a line feed is read with every such pair a
+line feed and written back with them, so saving keeps its style (a byte
+order mark is kept the same way); a file named on the command line that
+does not exist yet is made when saved. It prints what happens (the
+title, the file opened and its first line, saves, the caret's place,
+undo and redo, matches, word wrap's rows, the answer to saving), and
+the input test drives it from the keyboard: it opens /etc/passwd from
+the command line, types at its end, undoes the last word and redoes it,
+saves as /tmp/note.txt through the save dialog (reading the file back
+over the serial shell), finds a word and finds it again with F3, wraps
+a long line of a new document into rows (Home going to the start of
+the caret's row), and on Exit cancels the question to save, then
+answers No.
 
 ## Sound
 
