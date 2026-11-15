@@ -595,12 +595,47 @@ does:
   tests do. `GetPerformanceData` counts voices, passes and frames, and
   the frames queued in the device.
 
+### Effects and 3D audio
+
+The built-in effects implement the effect interface, so they go in any
+voice's chain like a program's own:
+- **Reverb** (`Audio.Effects.Reverb`): Freeverb's eight comb filters
+  (damped feedback: the room's echoes) and four all-pass filters (the
+  wash) for each channel, the right a little longer than the left. Room
+  size, damping, wet and dry levels and width; its tail lasts until the
+  longest comb falls to -60 dB.
+- **Echo** (`Audio.Effects.Echo`): a delay line of up to two seconds with
+  feedback and a wet/dry mix.
+- **Equalizer** (`Audio.Effects.Equalizer`): four peaking bands
+  (Bristow-Johnson biquads), each a centre, a gain and a width in
+  octaves.
+- **Volume meter and limiter** (`Audio.Effects.Dynamics`): the meter
+  reports each pass's peak and RMS level per channel; the limiter holds
+  the peak under a threshold, its gain dropping at once and recovering
+  over the release time, shared by the channels.
+
+`Audio.Spatial` works out what X3DAudio does for an emitter and a
+listener (left-handed space: X right, Y up, Z forward):
+- **Panning.** Each emitter channel is panned by its direction from the
+  listener, with equal power between the two speakers on either side of
+  it, over mono, stereo, quad, 5.1 or 7.1 (the LFE gets nothing). The
+  channels of a multi-channel emitter sit at their azimuths round it;
+  inside its inner radius the sound spreads over every speaker.
+- **Distance and cones.** The volume follows a curve of distance (by
+  default 1 / distance past the curve's scale), and a cone fades from
+  its inner to its outer volume between its angles. Curves also give a
+  low-pass coefficient and a reverb send level by distance.
+- **Doppler.** The factor comes from the speeds of emitter and listener
+  along the line between them, against the speed of sound.
+- `ApplySpatial` puts the result on a voice: the output matrix, the
+  frequency ratio and the filter.
+
 ### Programs and tests
 
 The programs are `tone` (plays a tone, or writes it as a WAV file, in
 any format), `play` (WAV files: integer, float and extensible, any of the
-formats streams take), `mixer` (the master volume) and `voicetest` (the
-engine's tests). The tests record what QEMU's HD Audio device plays (its
+formats streams take), `mixer` (the master volume), `voicetest` (the
+engine's tests) and `effecttest` (the effects' and 3D audio's). The tests record what QEMU's HD Audio device plays (its
 `wav` audio backend). coretest plays a 1000 Hz tone, a 440 Hz WAV file,
 600 and 1500 Hz from two programs at once, then 800, 2000 and 300 Hz at
 22.05, 96 and 11.025 kHz as u8, float mono and s24 six-channel samples,
@@ -612,7 +647,13 @@ lengths. `voicetest` on its own renders graphs offline and checks them:
 resampling, pitch, volumes, matrices, every filter, the callbacks' order
 and the frames played, loops, flushing, 8-bit samples, submix stages and
 several sends, send filters, operation sets, a custom effect with its
-parameters and tail, and the performance data.
+parameters and tail, and the performance data. `effecttest` measures
+each built-in effect (the meter's readings, the limiter's ceiling, the
+echo's delays and levels from an impulse, the equalizer's gain in and
+out of its band, the reverb's answer, decay and width), tails after
+stopping, and the 3D calculations: panning in stereo, 5.1 and 7.1,
+distance, curves, cones, emitter channels, the inner radius, Doppler,
+and a voice placed and moving to one side.
 
 ## File systems
 

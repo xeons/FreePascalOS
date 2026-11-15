@@ -108,8 +108,9 @@ how the existing pieces fit together.
 - [x] Sound: voice engine in libaudio (source, submix and mastering voices, buffer
       loops and callbacks, pitch, matrices, filters, sends, operation sets,
       effect chains, offline rendering)
-- [ ] Sound: built-in effects (reverb, echo, EQ, meter, limiter), 3D audio,
-      recording, AC'97, USB audio
+- [x] Sound: built-in effects (reverb, echo, equalizer, volume meter, limiter) and
+      3D audio (panning, distance curves, cones, Doppler)
+- [ ] Sound: recording, AC'97, USB audio
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads

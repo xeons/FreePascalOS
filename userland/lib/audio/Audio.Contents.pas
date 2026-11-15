@@ -33,6 +33,9 @@
     Audio.Voices     source, submix and mastering voices; buffer queues
     Audio.Engine     the voice graph, processed on a thread of its own
                      or rendered offline
+    Audio.Effects.*  built-in effects: Reverb, Echo, Equalizer, Dynamics
+                     (volume meter and limiter)
+    Audio.Spatial    3D audio: listener, emitters, panning, Doppler
 }
 unit Audio.Contents;
 
@@ -48,7 +51,12 @@ uses
   Audio.Filters,
   Audio.EffectChain,
   Audio.Voices,
-  Audio.Engine;
+  Audio.Engine,
+  Audio.Effects.Dynamics,
+  Audio.Effects.Echo,
+  Audio.Effects.Equalizer,
+  Audio.Effects.Reverb,
+  Audio.Spatial;
 
 implementation
 

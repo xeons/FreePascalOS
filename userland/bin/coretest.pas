@@ -67,7 +67,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..284] of TCommandTest = (
+  CommandTests: array[0..285] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -396,6 +396,7 @@ const
     { Sound (HD Audio, recorded by QEMU and checked by the host): the
       mixer, a tone, and a WAV file written by tone and played by play. }
     (Command: 'voicetest'; ExpectedOutput: 'voicetest: 44 checks passed'#10; ExpectedStatus: 0),
+    (Command: 'effecttest'; ExpectedOutput: 'effecttest: 41 checks passed'#10; ExpectedStatus: 0),
     (Command: 'mixer; mixer 90; mixer; mixer 80'; ExpectedOutput: 'volume 80%'#10'volume 90%'#10; ExpectedStatus: 0),
     { The order and lengths are what check-audio.py expects: a tone, a WAV
       file, two programs at once (mixed), then other rates, sample
