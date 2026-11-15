@@ -61,9 +61,12 @@ type
       and when room (or a closed reader) appears. }
     DataAvailable: TEvent;
     SpaceAvailable: TEvent;
-    { A notification event signaled while a read would not wait (there is
-      data, or no writer is left), for waiting on several handles. }
+    { Notification events for waiting on several handles: signaled while
+      a read would not wait (there is data, or no writer is left), and
+      while a write would not wait (there is room, or no reader is left:
+      the write fails at once). }
     Readable: TEvent;
+    Writable: TEvent;
     { Named pipes only: the node it belongs to, and its registry link. }
     NamedVolume: Pointer;
     NamedNode: QWord;
@@ -145,6 +148,7 @@ begin
   InitializeMutex(Result^.Lock);
   InitializeEvent(Result^.DataAvailable, EventKindSynchronization, False);
   InitializeEvent(Result^.Readable, EventKindNotification, False);
+  InitializeEvent(Result^.Writable, EventKindNotification, True);
   InitializeEvent(Result^.SpaceAvailable, EventKindSynchronization, False);
 end;
 
@@ -213,13 +217,17 @@ begin
   Result := Pipe;
 end;
 
-{ Readable follows the pipe's state; Lock held. }
-procedure UpdateReadableLocked(Pipe: PPipe);
+{ Readable and Writable follow the pipe's state; Lock held. }
+procedure UpdateReadinessLocked(Pipe: PPipe);
 begin
   if (Pipe^.ByteCount > 0) or (Pipe^.OpenWriteEnds <= 0) then
     SignalEvent(Pipe^.Readable)
   else
     ResetEvent(Pipe^.Readable);
+  if (Pipe^.ByteCount < PipeBufferSize) or (Pipe^.OpenReadEnds <= 0) then
+    SignalEvent(Pipe^.Writable)
+  else
+    ResetEvent(Pipe^.Writable);
 end;
 
 procedure OpenPipeEnd(Pipe: PPipe; IsWriteEnd: Boolean);
@@ -229,7 +237,7 @@ begin
     Inc(Pipe^.OpenWriteEnds)
   else
     Inc(Pipe^.OpenReadEnds);
-  UpdateReadableLocked(Pipe);
+  UpdateReadinessLocked(Pipe);
   ReleaseMutex(Pipe^.Lock);
 end;
 
@@ -247,7 +255,7 @@ begin
     Dec(Pipe^.OpenReadEnds);
     SignalEvent(Pipe^.SpaceAvailable);
   end;
-  UpdateReadableLocked(Pipe);
+  UpdateReadinessLocked(Pipe);
   ReleaseMutex(Pipe^.Lock);
 end;
 
@@ -279,7 +287,7 @@ begin
   { Leave the signal for another reader if data remains. }
   if Pipe^.ByteCount > 0 then
     SignalEvent(Pipe^.DataAvailable);
-  UpdateReadableLocked(Pipe);
+  UpdateReadinessLocked(Pipe);
   ReleaseMutex(Pipe^.Lock);
 end;
 
@@ -302,7 +310,7 @@ begin
 
     if Pipe^.ByteCount = PipeBufferSize then
     begin
-      UpdateReadableLocked(Pipe);
+      UpdateReadinessLocked(Pipe);
       ReleaseMutex(Pipe^.Lock);
       if WaitForEventWithOptions(Pipe^.SpaceAvailable, InfiniteTimeout, True) = WaitAlerted then
       begin
@@ -320,7 +328,7 @@ begin
     Inc(Written);
     SignalEvent(Pipe^.DataAvailable);
   end;
-  UpdateReadableLocked(Pipe);
+  UpdateReadinessLocked(Pipe);
   ReleaseMutex(Pipe^.Lock);
   Result := Int64(Written);
 end;

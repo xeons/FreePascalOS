@@ -30,11 +30,18 @@
     ...
     CancelTimer(Port^.Timeout);
 
-  When the time has passed, the clock interrupt of the boot processor
-  queues the timer's deferred call, which then runs at DispatchLevel.
-  Cancelling cannot take back a call that is already queued, so the
-  routine must check whether its reason still holds. Timers have the
-  resolution of the clock tick (10 ms) and never expire early.
+  A timer goes on the queue of the processor that sets it, which asks
+  for its clock interrupt to come when the first timer is due
+  (Kernel.Clock); that interrupt queues the call, which then runs at
+  DispatchLevel. Timers are as fine as the clock (well under a
+  millisecond) and never expire early. Cancelling cannot take back a
+  call that is already queued, so the routine must check whether its
+  reason still holds.
+
+  Each queue has a lock of its own, taken by its processor's clock
+  interrupt. Setting and cancelling also take one lock shared by all
+  timers, so that two of them changing the same timer at once (from
+  different processors) cannot put it on two queues.
 }
 unit Kernel.Timers;
 
@@ -44,27 +51,38 @@ interface
 
 uses
   Runtime.LinkedList,
-  Kernel.DeferredCalls;
+  Kernel.DeferredCalls,
+  Kernel.Processors;
 
 type
   PTimer = ^TTimer;
   TTimer = record
     Link: TListEntry;
-    DueTick: QWord;
+    { In clock nanoseconds (Kernel.Clock). }
+    DueTime: QWord;
     Call: PDeferredCall;
+    { The processor whose queue it is on while set. }
+    Processor: PProcessor;
     IsSet: Boolean;
   end;
 
+{ On the boot processor at startup; InitializeProcessorTimers for each
+  other processor before it runs. }
 procedure InitializeTimers;
+procedure InitializeProcessorTimers(Processor: PProcessor);
 procedure InitializeTimer(out Timer: TTimer);
 { Sets Timer to queue Call after Milliseconds; a timer that is already
   set is moved to the new time. Any level up to DispatchLevel. }
 procedure SetTimer(var Timer: TTimer; Milliseconds: QWord; var Call: TDeferredCall);
+{ The same, due at DueTime (a ClockNanoseconds time; one already past
+  is due at once). }
+procedure SetTimerAt(var Timer: TTimer; DueTime: QWord; var Call: TDeferredCall);
 { Returns True if the timer was set (and now is not). }
 function CancelTimer(var Timer: TTimer): Boolean;
 
-{ Called by the clock interrupt with the new tick count. }
-procedure ExpireTimers(TickCount: QWord);
+{ Called by the executing processor's clock interrupt: queues the calls
+  of its timers due by Now. }
+procedure ExpireTimers(Now: QWord);
 
 implementation
 
@@ -74,68 +92,98 @@ uses
   Kernel.Clock;
 
 var
-  { Ordered by due tick. Taken with interrupts disabled: the clock
-    interrupt expires timers. }
-  TimerQueue: TListEntry;
-  TimerLock: TSpinLock;
-  { The first due tick, so most clock ticks need no lock. }
-  NextDueTick: QWord = High(QWord);
+  { Serializes setting and cancelling (taken before a queue's lock). }
+  TimerChangeLock: TSpinLock;
 
 function TimerOfLink(Entry: PListEntry): PTimer;
 begin
   Result := PTimer(ContainingRecord(Entry, FieldOffset(PTimer(nil)^.Link)));
 end;
 
-procedure UpdateNextDueTickLocked;
+{ The processor's queue lock held. }
+procedure UpdateNextDueTimeLocked(Processor: PProcessor);
 var
   First: PListEntry;
 begin
-  First := FirstListEntry(TimerQueue);
+  First := FirstListEntry(Processor^.TimerQueue);
   if First = nil then
-    NextDueTick := High(QWord)
+    Processor^.NextTimerDueTime := NeverDue
   else
-    NextDueTick := TimerOfLink(First)^.DueTick;
+    Processor^.NextTimerDueTime := TimerOfLink(First)^.DueTime;
 end;
 
-procedure RemoveTimerLocked(var Timer: TTimer);
+{ Takes the timer off its queue if it is set; the change lock held. A
+  timer that went off meanwhile is no longer set. }
+function RemoveSetTimer(var Timer: TTimer): Boolean;
+var
+  Processor: PProcessor;
 begin
-  RemoveListEntry(@Timer.Link);
-  Timer.IsSet := False;
+  Result := False;
+  Processor := Timer.Processor;
+  if Processor = nil then
+    Exit;
+  AcquireSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
+  if Timer.IsSet then
+  begin
+    RemoveListEntry(@Timer.Link);
+    Timer.IsSet := False;
+    UpdateNextDueTimeLocked(Processor);
+    Result := True;
+  end;
+  ReleaseSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
+end;
+
+procedure InitializeProcessorTimers(Processor: PProcessor);
+begin
+  InitializeListHead(Processor^.TimerQueue);
+  InitializeSpinLock(Processor^.TimerQueueLock);
+  Processor^.NextTimerDueTime := NeverDue;
 end;
 
 procedure InitializeTimers;
 begin
-  InitializeListHead(TimerQueue);
-  InitializeSpinLock(TimerLock);
+  InitializeSpinLock(TimerChangeLock);
+  InitializeProcessorTimers(CurrentProcessor);
 end;
 
 procedure InitializeTimer(out Timer: TTimer);
 begin
   InitializeListHead(Timer.Link);
-  Timer.DueTick := 0;
+  Timer.DueTime := 0;
   Timer.Call := nil;
+  Timer.Processor := nil;
   Timer.IsSet := False;
 end;
 
 procedure SetTimer(var Timer: TTimer; Milliseconds: QWord; var Call: TDeferredCall);
+begin
+  SetTimerAt(Timer, DeadlineAfterMilliseconds(Milliseconds), Call);
+end;
+
+procedure SetTimerAt(var Timer: TTimer; DueTime: QWord; var Call: TDeferredCall);
 var
   WereEnabled: Boolean;
+  Processor: PProcessor;
   Entry: PListEntry;
 begin
   WereEnabled := SaveAndDisableInterrupts;
-  AcquireSpinLockAtCurrentLevel(TimerLock);
-  if Timer.IsSet then
-    RemoveTimerLocked(Timer);
-  { One tick more: the current tick may be nearly over. }
-  Timer.DueTick := ClockTickCount + MillisecondsToTicks(Milliseconds) + 1;
+  AcquireSpinLockAtCurrentLevel(TimerChangeLock);
+  RemoveSetTimer(Timer);
+  Processor := CurrentProcessor;
+  AcquireSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
+  Timer.DueTime := DueTime;
   Timer.Call := @Call;
-  Entry := TimerQueue.Next;
-  while (Entry <> @TimerQueue) and (TimerOfLink(Entry)^.DueTick <= Timer.DueTick) do
+  Timer.Processor := Processor;
+  Entry := Processor^.TimerQueue.Next;
+  while (Entry <> @Processor^.TimerQueue) and (TimerOfLink(Entry)^.DueTime <= DueTime) do
     Entry := Entry^.Next;
   InsertBefore(Entry, @Timer.Link);
   Timer.IsSet := True;
-  UpdateNextDueTickLocked;
-  ReleaseSpinLockAtCurrentLevel(TimerLock);
+  UpdateNextDueTimeLocked(Processor);
+  ReleaseSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
+  ReleaseSpinLockAtCurrentLevel(TimerChangeLock);
+  { Interrupts are still off: this processor is the one to ask. }
+  RequestClockInterruptBy(DueTime);
   RestoreInterrupts(WereEnabled);
 end;
 
@@ -144,36 +192,35 @@ var
   WereEnabled: Boolean;
 begin
   WereEnabled := SaveAndDisableInterrupts;
-  AcquireSpinLockAtCurrentLevel(TimerLock);
-  Result := Timer.IsSet;
-  if Result then
-  begin
-    RemoveTimerLocked(Timer);
-    UpdateNextDueTickLocked;
-  end;
-  ReleaseSpinLockAtCurrentLevel(TimerLock);
+  AcquireSpinLockAtCurrentLevel(TimerChangeLock);
+  Result := RemoveSetTimer(Timer);
+  ReleaseSpinLockAtCurrentLevel(TimerChangeLock);
   RestoreInterrupts(WereEnabled);
 end;
 
-procedure ExpireTimers(TickCount: QWord);
+procedure ExpireTimers(Now: QWord);
 var
   WereEnabled: Boolean;
+  Processor: PProcessor;
   Timer: PTimer;
 begin
-  if TickCount < NextDueTick then
+  Processor := CurrentProcessor;
+  { Most interrupts find nothing due and need no lock. }
+  if Now < Processor^.NextTimerDueTime then
     Exit;
   WereEnabled := SaveAndDisableInterrupts;
-  AcquireSpinLockAtCurrentLevel(TimerLock);
-  while not ListIsEmpty(TimerQueue) do
+  AcquireSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
+  while not ListIsEmpty(Processor^.TimerQueue) do
   begin
-    Timer := TimerOfLink(TimerQueue.Next);
-    if Timer^.DueTick > TickCount then
+    Timer := TimerOfLink(Processor^.TimerQueue.Next);
+    if Timer^.DueTime > Now then
       Break;
-    RemoveTimerLocked(Timer^);
+    RemoveListEntry(@Timer^.Link);
+    Timer^.IsSet := False;
     QueueDeferredCall(Timer^.Call^);
   end;
-  UpdateNextDueTickLocked;
-  ReleaseSpinLockAtCurrentLevel(TimerLock);
+  UpdateNextDueTimeLocked(Processor);
+  ReleaseSpinLockAtCurrentLevel(Processor^.TimerQueueLock);
   RestoreInterrupts(WereEnabled);
 end;
 

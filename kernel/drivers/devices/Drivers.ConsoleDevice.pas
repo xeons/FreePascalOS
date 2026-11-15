@@ -19,7 +19,8 @@
 {
   The console as a device: /dev/console, and /dev/tty for the same thing.
 
-  Reads and writes go to the console (Io.Console). Control requests (the
+  Reads and writes go to the console (Io.Console), and a handle to it
+  can be waited on until a read would not wait (its ReadyEvent). Control requests (the
   Abi Control* values) get and set its modes, report its size, set and
   get the foreground process group and take a pending Ctrl-C.
 
@@ -95,6 +96,8 @@ begin
   if Device = nil then
     KernelPanic('could not create the console device');
   Device^.ReportedHandleKind := HandleKindConsole;
+  { Waiting on a console handle waits until a read would not wait. }
+  Device^.ReadyEvent := ConsoleReadableEvent;
 end;
 
 procedure InitializeConsoleDevice;

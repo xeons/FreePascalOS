@@ -23,8 +23,11 @@
   SetTimerObject arms it: due in DueMilliseconds, then (if Period is not
   zero) every Period milliseconds. Each time the timer's event is
   signaled: a manual reset timer stays signaled until reset (or armed
-  again), an automatic reset one releases one waiter. The kernel's clock
-  ticks every 10 ms, which is how close to its time a timer is.
+  again), an automatic reset one releases one waiter. A timer is as
+  close to its time as the clock interrupt gets (well under a
+  millisecond, Kernel.Clock), and a periodic one keeps to its schedule:
+  each time is counted from when the last one was due, not from when it
+  went off, so lateness does not add up.
 
   Deleting a timer stops it first: marked as going (so its call does not
   arm it again), taken off the timer queue, its call taken off the
@@ -61,7 +64,26 @@ procedure SetTimerObject(Timer: PTimerObject; DueMilliseconds, PeriodMillisecond
 implementation
 
 uses
+  Kernel.Clock,
   Objects.Manager;
+
+{ The first time on the timer's schedule that is still to come: one
+  period after the last due time, or later ones if the timer went off so
+  late that whole periods passed. }
+function NextPeriodicDueTime(Timer: PTimerObject): QWord;
+var
+  Period: QWord;
+  Now: QWord;
+begin
+  { A period beyond what the clock counts never comes. }
+  if Timer^.PeriodMilliseconds >= (NeverDue - Timer^.Timer.DueTime) div NanosecondsPerMillisecond then
+    Exit(NeverDue);
+  Period := Timer^.PeriodMilliseconds * NanosecondsPerMillisecond;
+  Result := Timer^.Timer.DueTime + Period;
+  Now := ClockNanoseconds;
+  if Result <= Now then
+    Result := Result + ((Now - Result) div Period + 1) * Period;
+end;
 
 var
   TimerObjectType: TObjectType;
@@ -73,7 +95,7 @@ begin
   Timer := PTimerObject(Context);
   SignalEvent(Timer^.Event);
   if (Timer^.PeriodMilliseconds <> 0) and not Timer^.Deleting then
-    SetTimer(Timer^.Timer, Timer^.PeriodMilliseconds, Timer^.Call);
+    SetTimerAt(Timer^.Timer, NextPeriodicDueTime(Timer), Timer^.Call);
 end;
 
 procedure StopTimer(Timer: PTimerObject);

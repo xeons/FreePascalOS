@@ -52,19 +52,25 @@ procedure LocalApicSendStartup(DestinationId: LongWord; StartupPage: Byte);
 { A non-maskable interrupt to every processor but this one. }
 procedure LocalApicSendNmiToOthers;
 
-{ Measures how many timer ticks (at the divider used by the periodic
-  timer) elapse per second. }
-function MeasureLocalApicTimerFrequency: QWord;
+{ Measuring the timer's speed: StartLocalApicTimerCountdown starts it
+  counting down (masked, at the divider the clock uses), and
+  StopLocalApicTimerCountdown stops it and returns how many ticks it
+  counted meanwhile. }
+procedure StartLocalApicTimerCountdown;
+function StopLocalApicTimerCountdown: LongWord;
 
-procedure StartLocalApicPeriodicTimer(Vector: Byte; TicksPerInterrupt: LongWord);
+{ Puts the timer in one-shot mode on Vector, with its first interrupt
+  right away; SetLocalApicTimerCount then sets when the next one comes
+  (after Count timer ticks, counted again from now). }
+procedure StartLocalApicOneShotTimer(Vector: Byte);
+procedure SetLocalApicTimerCount(Count: LongWord);
 procedure StopLocalApicTimer;
 
 implementation
 
 uses
   Memory.Layout,
-  Kernel.Arch.Cpu,
-  Hal.IntervalTimer;
+  Kernel.Arch.Cpu;
 
 const
   MsrApicBase = $1B;
@@ -91,8 +97,8 @@ const
 
   SpuriousVectorApicEnable = $100;
   LvtMasked = LongWord(1) shl 16;
-  LvtTimerPeriodic = LongWord(1) shl 17;
   TimerDivideBy16 = $3;
+  CountdownStart = High(LongWord);
 
   InterruptCommandDeliveryPending = LongWord(1) shl 12;
   InterruptCommandShorthandSelf = LongWord(1) shl 18;
@@ -101,9 +107,6 @@ const
   InterruptCommandModeInit = LongWord(5) shl 8;
   InterruptCommandModeStartup = LongWord(6) shl 8;
   InterruptCommandLevelAssert = LongWord(1) shl 14;
-
-  CalibrationMicroseconds = 10000;
-  CalibrationsPerSecond = 1000000 div CalibrationMicroseconds;
 
 var
   RegisterBase: PtrUInt;
@@ -222,29 +225,34 @@ begin
     InterruptCommandLevelAssert);
 end;
 
-function MeasureLocalApicTimerFrequency: QWord;
-const
-  StartingCount = High(LongWord);
-var
-  RemainingCount: LongWord;
+procedure StartLocalApicTimerCountdown;
 begin
   WriteApicRegister(RegisterTimerDivide, TimerDivideBy16);
   WriteApicRegister(RegisterLvtTimer, LvtMasked);
-  WriteApicRegister(RegisterTimerInitialCount, StartingCount);
-
-  IntervalTimerBusyWait(CalibrationMicroseconds);
-
-  RemainingCount := ReadApicRegister(RegisterTimerCurrentCount);
-  WriteApicRegister(RegisterTimerInitialCount, 0);
-
-  Result := QWord(StartingCount - RemainingCount) * CalibrationsPerSecond;
+  WriteApicRegister(RegisterTimerInitialCount, CountdownStart);
 end;
 
-procedure StartLocalApicPeriodicTimer(Vector: Byte; TicksPerInterrupt: LongWord);
+function StopLocalApicTimerCountdown: LongWord;
+begin
+  Result := CountdownStart - ReadApicRegister(RegisterTimerCurrentCount);
+  WriteApicRegister(RegisterTimerInitialCount, 0);
+end;
+
+procedure StartLocalApicOneShotTimer(Vector: Byte);
 begin
   WriteApicRegister(RegisterTimerDivide, TimerDivideBy16);
-  WriteApicRegister(RegisterLvtTimer, LvtTimerPeriodic or Vector);
-  WriteApicRegister(RegisterTimerInitialCount, TicksPerInterrupt);
+  { One-shot is the timer mode 0, so the entry is only the vector. }
+  WriteApicRegister(RegisterLvtTimer, Vector);
+  WriteApicRegister(RegisterTimerInitialCount, 1);
+end;
+
+procedure SetLocalApicTimerCount(Count: LongWord);
+begin
+  { Writing the initial count starts the countdown again; 0 would stop
+    the timer instead. }
+  if Count = 0 then
+    Count := 1;
+  WriteApicRegister(RegisterTimerInitialCount, Count);
 end;
 
 procedure StopLocalApicTimer;

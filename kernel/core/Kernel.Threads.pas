@@ -81,8 +81,9 @@ type
   TWaitBlock = record
     Link: TListEntry;
     Thread: PThreadControlBlock;
-    { Which of the thread's events this is. }
+    { Which of the thread's events this is, and the event (a PEvent). }
     Index: LongInt;
+    Event: Pointer;
     IsLinked: Boolean;
   end;
 
@@ -117,17 +118,23 @@ type
       terminated threads. A thread is on at most one of these at a time. }
     SchedulerLink: TListEntry;
 
-    { Links the thread into the sleep queue, ordered by WakeUpTick. }
+    { Links the thread into the sleep queue of the processor it began a
+      timed wait on (SleepProcessorIndex), ordered by WakeUpTime (in
+      clock nanoseconds). }
     TimerLink: TListEntry;
-    WakeUpTick: QWord;
+    WakeUpTime: QWord;
+    SleepProcessorIndex: LongWord;
 
     { Where a waiting thread is linked, so whatever ends the wait (a
       signal, the timeout or an alert) can take it off both queues. }
     IsOnWaitList: Boolean;
-    { The wait blocks of a wait on events, and which one ended it. }
+    { The wait blocks of a wait on events, and which one ended it. A wait
+      for all of them (WaitsForAll) ends only when every one is signaled
+      at the same time. }
     WaitBlocks: PWaitBlock;
     WaitBlockCount: LongInt;
     SatisfiedWaitIndex: LongInt;
+    WaitsForAll: Boolean;
     IsOnSleepQueue: Boolean;
     WaitIsAlertable: Boolean;
     WaitResult: TWaitResult;

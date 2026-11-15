@@ -31,6 +31,12 @@
   interrupt handlers; they go into a ring buffer, and a deferred call wakes
   the reader. Until a serial interrupt handler is connected, the serial
   port is also polled every few milliseconds.
+
+  For waiting on handles, the console keeps a notification event that
+  is signaled while a read would not wait (ConsoleReadableEvent): a line
+  read but not yet handed out, or typed input - in line editing mode a
+  whole line (or Ctrl-D). Input the serial port has while it is still
+  polled is only seen by a read.
 }
 unit Io.Console;
 
@@ -43,6 +49,8 @@ procedure InitializeConsole;
 
 { The console object that handles refer to. }
 function ConsoleObject: Pointer;
+{ The console's readiness for reading (a PEvent; see above). }
+function ConsoleReadableEvent: Pointer;
 
 procedure WriteToConsole(Source: PByte; ByteCount: QWord);
 { Returns the number of bytes read, 0 at end of file, or ReadInterrupted
@@ -99,6 +107,7 @@ implementation
 uses
   Hal.SerialPort,
   Kernel.Arch.Cpu,
+  Kernel.PriorityLevel,
   Kernel.Threads,
   Kernel.SpinLock,
   Kernel.Events,
@@ -150,6 +159,12 @@ type
     SuspendKeyPressed: Boolean;
     InterruptKey: TEvent;
     WakeInterruptHandler: TDeferredCall;
+
+    { Signaled while a read would not wait. Kept in step under
+      ReadinessLock, so that two updates at once cannot leave it set
+      the wrong way. }
+    Readable: TEvent;
+    ReadinessLock: TSpinLock;
   end;
   PConsole = ^TConsole;
 
@@ -157,10 +172,57 @@ var
   ConsoleObjectType: TObjectType;
   TheConsole: PConsole;
 
+{ Whether the typed input holds something a read hands out without
+  waiting: any character, or in line editing mode a whole line (or
+  Ctrl-D). RingLock held. }
+function RingHoldsReadableInputLocked: Boolean;
+var
+  Index: LongWord;
+  Character: Char;
+begin
+  if (TheConsole^.Mode and ConsoleModeLineEditing) = 0 then
+    Exit(TheConsole^.RingCount > 0);
+  Index := 0;
+  while Index < TheConsole^.RingCount do
+  begin
+    Character := TheConsole^.Ring[(TheConsole^.RingStart + Index) mod RingCapacity];
+    if (Character = KeyCarriageReturn) or (Character = KeyLineFeed) or (Character = KeyEndOfFile) then
+      Exit(True);
+    Inc(Index);
+  end;
+  Result := False;
+end;
+
+{ Brings Readable in step with the input. At PassiveLevel or
+  DispatchLevel, after the input changed. }
+procedure UpdateConsoleReadiness;
+var
+  PreviousLevel: TPriorityLevel;
+  WereEnabled: Boolean;
+  IsReadable: Boolean;
+begin
+  PreviousLevel := AcquireSpinLock(TheConsole^.ReadinessLock);
+  IsReadable := TheConsole^.PendingLength > 0;
+  if not IsReadable then
+  begin
+    WereEnabled := SaveAndDisableInterrupts;
+    AcquireSpinLockAtCurrentLevel(TheConsole^.RingLock);
+    IsReadable := RingHoldsReadableInputLocked;
+    ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
+    RestoreInterrupts(WereEnabled);
+  end;
+  if IsReadable then
+    SignalEvent(TheConsole^.Readable)
+  else
+    ResetEvent(TheConsole^.Readable);
+  ReleaseSpinLock(TheConsole^.ReadinessLock, PreviousLevel);
+end;
+
 { Runs at DispatchLevel, after an interrupt handler delivered input. }
 procedure SignalInputAvailable(Context: Pointer);
 begin
   SignalEvent(TheConsole^.InputAvailable);
+  UpdateConsoleReadiness;
 end;
 
 procedure SignalInterruptKey(Context: Pointer);
@@ -243,6 +305,8 @@ begin
   InitializeDeferredCall(TheConsole^.WakeReader, @SignalInputAvailable, nil);
   InitializeEvent(TheConsole^.InterruptKey, EventKindSynchronization, False);
   InitializeDeferredCall(TheConsole^.WakeInterruptHandler, @SignalInterruptKey, nil);
+  InitializeEvent(TheConsole^.Readable, EventKindNotification, False);
+  InitializeSpinLock(TheConsole^.ReadinessLock);
 end;
 
 procedure SetConsoleForegroundGroup(GroupId: QWord);
@@ -317,6 +381,7 @@ begin
   TheConsole^.RingCount := 0;
   ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
   RestoreInterrupts(WereEnabled);
+  UpdateConsoleReadiness;
 end;
 
 procedure FinishSuspend;
@@ -331,6 +396,7 @@ begin
   TheConsole^.PendingInterrupt := True;
   AddToRing(KeyInterrupt);
   SignalEvent(TheConsole^.InputAvailable);
+  UpdateConsoleReadiness;
 end;
 
 function TakePendingInterrupt: Boolean;
@@ -359,6 +425,7 @@ begin
   TheConsole^.RingCount := Kept;
   ReleaseSpinLockAtCurrentLevel(TheConsole^.RingLock);
   RestoreInterrupts(WereEnabled);
+  UpdateConsoleReadiness;
   Result := True;
 end;
 
@@ -370,6 +437,8 @@ end;
 procedure SetConsoleMode(Mode: LongWord);
 begin
   TheConsole^.Mode := Mode and ConsoleDefaultMode;
+  { Whether a part of a line is enough to read depends on the mode. }
+  UpdateConsoleReadiness;
 end;
 
 procedure EchoCharacter(Character: Char);
@@ -387,6 +456,11 @@ end;
 function ConsoleObject: Pointer;
 begin
   Result := TheConsole;
+end;
+
+function ConsoleReadableEvent: Pointer;
+begin
+  Result := @TheConsole^.Readable;
 end;
 
 procedure WriteToConsole(Source: PByte; ByteCount: QWord);
@@ -538,6 +612,7 @@ begin
       Inc(Result);
     end;
     ReleaseMutex(TheConsole^.InputLock);
+    UpdateConsoleReadiness;
     Exit;
   end;
   if TheConsole^.PendingLength = 0 then
@@ -546,6 +621,7 @@ begin
     if LineResult <> LineReady then
     begin
       ReleaseMutex(TheConsole^.InputLock);
+      UpdateConsoleReadiness;
       if LineResult = LineInterrupted then
         Exit(ReadInterrupted);
       Exit(0);
@@ -563,6 +639,7 @@ begin
     Inc(Index);
   end;
   ReleaseMutex(TheConsole^.InputLock);
+  UpdateConsoleReadiness;
   Result := Int64(Index);
 end;
 

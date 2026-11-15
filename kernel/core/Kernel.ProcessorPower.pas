@@ -31,7 +31,8 @@
   the start-up page (Kernel.Arch.ProcessorStartup), which takes it to
   64-bit mode and WakeEntry on a stack of its own. There it sets itself
   up again (descriptor tables, processor block, interrupt table, system
-  call registers, interrupt controllers and clock) and resumes its
+  call registers, interrupt controllers, the clock continued from where
+  it paused, and its clock interrupt) and resumes its
   saved state: the saving call returns once more. Then each frozen
   processor is started again the same way (INIT, STARTUP) and resumes
   where it froze, inside its dispatch interrupt.
@@ -72,6 +73,7 @@ uses
   Kernel.Arch.Suspend,
   Kernel.Arch.ProcessorStartup,
   Kernel.Processors,
+  Kernel.Clock,
   Hal.Platform,
   Debug.Output;
 
@@ -152,6 +154,9 @@ begin
     HalResumeBootProcessor
   else
     HalInitializeSecondaryProcessor;
+  { The clock continues where it paused (the boot processor resumes
+    first), so each processor's next tick and due times still hold. }
+  StartClockOnThisProcessor;
   ArchResumeSuspendContext(Processor^.SuspendContext);
 end;
 
@@ -184,7 +189,7 @@ var
   WakeVector: QWord;
 begin
   Processor := CurrentProcessor;
-  HalSaveInterruptRouting;
+  HalPrepareForSleep;
   WakeVector := PrepareWakeEntry(Processor, WakeStackTop, @WakeEntry);
   DisableInterrupts;
   if ArchSaveSuspendContext(Processor^.SuspendContext) = 0 then

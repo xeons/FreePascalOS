@@ -115,8 +115,12 @@ procedure TerminateCurrentThread; noreturn;
   or returns nil. Its stack is no longer in use and may be freed. }
 function TakeTerminatedThread: PThreadControlBlock;
 
-{ Called by the clock interrupt handler at ClockLevel. }
-procedure SchedulerClockTick(TickCount: QWord);
+{ Called by the executing processor's clock interrupt at ClockLevel, at
+  clock time Now, with the number of 10 ms ticks that passed since the
+  last tick (usually 0 or 1): charges them to the running thread and its
+  time slice, and asks the dispatch interrupt to wake the threads whose
+  timeout is due. }
+procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord);
 
 { Building blocks for synchronization objects. All "Locked" routines
   require the dispatcher lock to be held. }
@@ -167,11 +171,7 @@ uses
 
 var
   DispatcherLock: TSpinLock;
-  SleepQueue: TListEntry;
   TerminatedThreads: TListEntry;
-
-  { Tick at which the first sleeping thread wakes, or High(QWord). }
-  NextWakeUpTick: QWord;
 
   SwitchCount: QWord;
 
@@ -315,47 +315,72 @@ end;
 
 { --- Sleeping -------------------------------------------------------- }
 
-procedure UpdateNextWakeUpTick;
+{ A thread waiting with a timeout is on the sleep queue of the processor
+  it began the wait on, whose clock interrupt comes when the first one is
+  due (Kernel.Clock); whoever ends the wait first takes it off. }
+
+procedure InitializeSleepQueue(Processor: PProcessor);
+begin
+  InitializeListHead(Processor^.SleepQueue);
+  Processor^.NextWakeUpTime := NeverDue;
+end;
+
+procedure UpdateNextWakeUpTime(Processor: PProcessor);
 var
   First: PListEntry;
 begin
-  First := FirstListEntry(SleepQueue);
+  First := FirstListEntry(Processor^.SleepQueue);
   if First = nil then
-    NextWakeUpTick := High(QWord)
+    Processor^.NextWakeUpTime := NeverDue
   else
-    NextWakeUpTick := ThreadFromTimerLink(First)^.WakeUpTick;
+    Processor^.NextWakeUpTime := ThreadFromTimerLink(First)^.WakeUpTime;
 end;
 
 procedure InsertIntoSleepQueue(Thread: PThreadControlBlock);
 var
+  Processor: PProcessor;
   Entry: PListEntry;
 begin
+  Processor := CurrentProcessor;
   { Keep the queue ordered by wake-up time; equal times stay in order. }
-  Entry := SleepQueue.Next;
-  while (Entry <> @SleepQueue) and
-        (ThreadFromTimerLink(Entry)^.WakeUpTick <= Thread^.WakeUpTick) do
+  Entry := Processor^.SleepQueue.Next;
+  while (Entry <> @Processor^.SleepQueue) and
+        (ThreadFromTimerLink(Entry)^.WakeUpTime <= Thread^.WakeUpTime) do
     Entry := Entry^.Next;
   InsertBefore(Entry, @Thread^.TimerLink);
   Thread^.IsOnSleepQueue := True;
-  UpdateNextWakeUpTick;
+  Thread^.SleepProcessorIndex := Processor^.Index;
+  UpdateNextWakeUpTime(Processor);
+  RequestClockInterruptBy(Thread^.WakeUpTime);
 end;
 
+procedure RemoveFromSleepQueue(Thread: PThreadControlBlock);
+begin
+  RemoveListEntry(@Thread^.TimerLink);
+  Thread^.IsOnSleepQueue := False;
+  UpdateNextWakeUpTime(ProcessorByIndex(Thread^.SleepProcessorIndex));
+end;
+
+{ Wakes the threads on this processor's sleep queue whose time has come,
+  and asks for the clock interrupt of the next one. }
 procedure WakeExpiredSleepersLocked;
 var
+  Processor: PProcessor;
   Now: QWord;
-  Entry: PListEntry;
   Thread: PThreadControlBlock;
 begin
-  Now := ClockTickCount;
-  while not ListIsEmpty(SleepQueue) do
+  Processor := CurrentProcessor;
+  if ListIsEmpty(Processor^.SleepQueue) then
+    Exit;
+  Now := ClockNanoseconds;
+  while not ListIsEmpty(Processor^.SleepQueue) do
   begin
-    Entry := SleepQueue.Next;
-    Thread := ThreadFromTimerLink(Entry);
-    if Thread^.WakeUpTick > Now then
+    Thread := ThreadFromTimerLink(Processor^.SleepQueue.Next);
+    if Thread^.WakeUpTime > Now then
       Break;
     WakeWaitingThreadLocked(Thread, WaitTimedOut);
   end;
-  UpdateNextWakeUpTick;
+  RequestClockInterruptBy(Processor^.NextWakeUpTime);
 end;
 
 { --- Interrupt handlers ---------------------------------------------- }
@@ -407,27 +432,32 @@ begin
   FifteenMinutes := LongWord((LoadAverage[2] * 100 + LoadOne div 2) shr LoadFractionBits);
 end;
 
-procedure SchedulerClockTick(TickCount: QWord);
+procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord);
 var
+  Processor: PProcessor;
   Thread: PThreadControlBlock;
   DispatchNeeded: Boolean;
 begin
-  DispatchNeeded := TickCount >= NextWakeUpTick;
+  Processor := CurrentProcessor;
+  DispatchNeeded := Now >= Processor^.NextWakeUpTime;
 
-  Thread := CurrentProcessor^.RunningThread;
-  Inc(Thread^.RunTicks);
-  if (CurrentProcessor^.Index = 0) and (TickCount >= NextLoadSampleTick) then
+  if ElapsedTicks > 0 then
   begin
-    SampleLoad;
-    NextLoadSampleTick := TickCount + MillisecondsToTicks(LoadSampleMilliseconds);
-  end;
-  if Thread <> CurrentProcessor^.IdleThread then
-  begin
-    Dec(Thread^.QuantumRemaining);
-    if Thread^.QuantumRemaining <= 0 then
+    Thread := Processor^.RunningThread;
+    Thread^.RunTicks := Thread^.RunTicks + ElapsedTicks;
+    if (Processor^.Index = 0) and (ClockTickCount >= NextLoadSampleTick) then
     begin
-      CurrentProcessor^.QuantumHasExpired := True;
-      DispatchNeeded := True;
+      SampleLoad;
+      NextLoadSampleTick := ClockTickCount + MillisecondsToTicks(LoadSampleMilliseconds);
+    end;
+    if Thread <> Processor^.IdleThread then
+    begin
+      Thread^.QuantumRemaining := Thread^.QuantumRemaining - LongInt(ElapsedTicks);
+      if Thread^.QuantumRemaining <= 0 then
+      begin
+        Processor^.QuantumHasExpired := True;
+        DispatchNeeded := True;
+      end;
     end;
   end;
 
@@ -511,11 +541,7 @@ begin
   end;
   UnlinkWaitBlocksLocked(Thread);
   if Thread^.IsOnSleepQueue then
-  begin
-    RemoveListEntry(@Thread^.TimerLink);
-    Thread^.IsOnSleepQueue := False;
-    UpdateNextWakeUpTick;
-  end;
+    RemoveFromSleepQueue(Thread);
   Thread^.WaitResult := Result;
   Thread^.WaitIsAlertable := False;
   ReadyThreadLocked(Thread);
@@ -545,8 +571,9 @@ begin
   Thread^.WaitResult := WaitSignaled;
   if TimeoutMilliseconds <> InfiniteTimeout then
   begin
-    Thread^.WakeUpTick := ClockTickCount + MillisecondsToTicks(TimeoutMilliseconds);
-    InsertIntoSleepQueue(Thread);
+    Thread^.WakeUpTime := DeadlineAfterMilliseconds(TimeoutMilliseconds);
+    if Thread^.WakeUpTime <> NeverDue then
+      InsertIntoSleepQueue(Thread);
   end;
   WaitCurrentThreadLocked;
   Result := Thread^.WaitResult;
@@ -656,9 +683,8 @@ procedure InitializeScheduler(IdleThread: PThreadControlBlock);
 begin
   InitializeSpinLock(DispatcherLock);
   InitializeReadyQueues;
-  InitializeListHead(SleepQueue);
+  InitializeSleepQueue(CurrentProcessor);
   InitializeListHead(TerminatedThreads);
-  NextWakeUpTick := High(QWord);
   CurrentProcessor^.QuantumHasExpired := False;
   SwitchCount := 0;
 
@@ -679,6 +705,7 @@ var
   Processor: PProcessor;
 begin
   Processor := CurrentProcessor;
+  InitializeSleepQueue(Processor);
   IdleThread^.State := ThreadStateRunning;
   IdleThread^.Priority := IdlePriority;
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
@@ -706,7 +733,7 @@ begin
   Thread^.QueuedProcessorIndex := 0;
   InitializeListHead(Thread^.SchedulerLink);
   InitializeListHead(Thread^.TimerLink);
-  Thread^.WakeUpTick := 0;
+  Thread^.WakeUpTime := 0;
   Thread^.StartRoutine := StartRoutine;
   Thread^.StartContext := StartContext;
   CopyText(@Thread^.Name[0], Name, ThreadNameLength);

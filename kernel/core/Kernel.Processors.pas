@@ -40,6 +40,8 @@ unit Kernel.Processors;
 interface
 
 uses
+  Runtime.LinkedList,
+  Kernel.SpinLock,
   Kernel.Threads,
   Kernel.Arch.DescriptorTables,
   Kernel.Arch.Suspend;
@@ -68,6 +70,22 @@ type
     { Set by the clock interrupt; read and cleared under the dispatcher
       lock by the dispatch interrupt (Kernel.Scheduler). }
     QuantumHasExpired: Boolean;
+    { Its clock (Kernel.Clock): when its next 10 ms tick is due and when
+      its clock interrupt is set to come (High(QWord): not set), in
+      clock nanoseconds. }
+    NextTickTime: QWord;
+    ClockInterruptTime: QWord;
+    { The timers set on it (Kernel.Timers), ordered by due time, the lock
+      that protects them (taken with interrupts disabled) and the first
+      due time (High(QWord): none). }
+    TimerQueue: TListEntry;
+    TimerQueueLock: TSpinLock;
+    NextTimerDueTime: QWord;
+    { The threads that began a wait with a timeout on it (Kernel.Scheduler,
+      under the dispatcher lock), ordered by wake-up time, and the first
+      wake-up time (High(QWord): none). }
+    SleepQueue: TListEntry;
+    NextWakeUpTime: QWord;
     { The address space this processor has loaded (TLB shootdowns are
       only sent where it matters). }
     ActiveAddressSpace: QWord;

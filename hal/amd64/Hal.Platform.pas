@@ -36,8 +36,23 @@ uses
 { Prepares the interrupt controllers. Interrupts must still be disabled. }
 procedure InitializeHal;
 
-{ Starts the periodic clock interrupt on the clock vector. }
-procedure HalStartClock(InterruptsPerSecond: LongWord);
+{ --- The clock ---
+
+  Every processor has a one-shot clock interrupt (on the clock vector):
+  the kernel asks for each one when it wants it (Kernel.Clock), and a
+  counter tells the time in nanoseconds in between. }
+
+{ Nanoseconds since InitializeHal, not counting time spent in suspend to
+  RAM. Any processor, any level. }
+function HalClockNanoseconds: QWord;
+{ Starts the executing processor's clock interrupt, its first one right
+  away (at start and after waking). }
+procedure HalStartClockOnThisProcessor;
+{ Sets the executing processor's next clock interrupt to come in
+  Nanoseconds (0: right away), replacing the one set before. It comes
+  no earlier; a very long time is cut to what the timer can count. Call
+  with interrupts disabled. }
+procedure HalSetClockInterruptIn(Nanoseconds: QWord);
 
 { Signals the end of the interrupt currently being serviced. }
 procedure HalEndOfInterrupt;
@@ -54,13 +69,15 @@ function HalDispatchInterruptVector: Byte;
 
 { The interrupt controller id of the executing processor. }
 function HalCurrentProcessorId: LongWord;
-{ Prepares the executing secondary processor's interrupt controller and
-  starts its clock (at the rate HalStartClock was given). }
+{ Prepares the executing secondary processor's interrupt controller (its
+  clock is started with HalStartClockOnThisProcessor). }
 procedure HalInitializeSecondaryProcessor;
-{ Before suspend to RAM: keeps the interrupt routing. }
-procedure HalSaveInterruptRouting;
+{ Before suspend to RAM: keeps the interrupt routing and pauses the
+  clock. }
+procedure HalPrepareForSleep;
 { After waking, on the boot processor: the legacy PICs masked again, its
-  local APIC and clock as before, the interrupt routing put back. }
+  local APIC as before, the interrupt routing put back and the clock
+  continued from where it paused. }
 procedure HalResumeBootProcessor;
 { Wakes the processor with interrupt controller id ProcessorId so that it
   starts in real mode at physical page StartupPage (below 1 MiB). }
@@ -96,28 +113,80 @@ uses
   Hal.InterruptVectors,
   Hal.LegacyPic,
   Hal.LocalApic,
+  Hal.TimeStampClock,
   Kernel.Arch.Cpu,
   Kernel.Panic,
   Debug.Output;
 
+const
+  { The interval timer can count at most about 54 ms; the longer the
+    measurement, the closer the clock keeps to real time. }
+  CalibrationMicroseconds = 50000;
+  MicrosecondsPerSecond = 1000000;
+  NanosecondsPerSecond = 1000000000;
+  { The longest wait the clock interrupt is set for at once (the kernel
+    asks again when it comes). }
+  LongestClockWaitNanoseconds = NanosecondsPerSecond;
+
 var
   TimerTicksPerSecond: QWord;
-  ClockInterruptsPerSecond: LongWord;
+  CyclesPerSecond: QWord;
+
+{ Measures the local APIC timer and the time stamp counter over the same
+  stretch of the interval timer, so that the ratio between the two (which
+  decides whether a clock interrupt comes early by the counter) is close
+  even if the stretch itself is a little off. }
+procedure MeasureTimerFrequencies;
+var
+  StartCycles: QWord;
+  Cycles: QWord;
+  TimerTicks: QWord;
+begin
+  StartLocalApicTimerCountdown;
+  StartCycles := ReadTimeStampCounter;
+  IntervalTimerBusyWait(CalibrationMicroseconds);
+  TimerTicks := StopLocalApicTimerCountdown;
+  Cycles := ReadTimeStampCounter - StartCycles;
+  TimerTicksPerSecond := TimerTicks * MicrosecondsPerSecond div CalibrationMicroseconds;
+  CyclesPerSecond := Cycles * MicrosecondsPerSecond div CalibrationMicroseconds;
+  if TimerTicksPerSecond = 0 then
+    KernelPanicWithCode(PanicHardwareMissing, 'local APIC timer does not count', 0, 0, 0, 0);
+  if CyclesPerSecond = 0 then
+    KernelPanicWithCode(PanicHardwareMissing, 'time stamp counter does not count', 0, 0, 0, 0);
+  StartTimeStampClock(CyclesPerSecond);
+end;
 
 procedure InitializeHal;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
-  TimerTicksPerSecond := MeasureLocalApicTimerFrequency;
-  if TimerTicksPerSecond = 0 then
-    KernelPanicWithCode(PanicHardwareMissing, 'local APIC timer does not count', 0, 0, 0, 0);
+  MeasureTimerFrequencies;
 end;
 
-procedure HalStartClock(InterruptsPerSecond: LongWord);
+function HalClockNanoseconds: QWord;
 begin
-  ClockInterruptsPerSecond := InterruptsPerSecond;
-  StartLocalApicPeriodicTimer(ClockInterruptVector,
-    LongWord(TimerTicksPerSecond div InterruptsPerSecond));
+  Result := TimeStampClockNanoseconds;
+end;
+
+procedure HalStartClockOnThisProcessor;
+begin
+  StartLocalApicOneShotTimer(ClockInterruptVector);
+end;
+
+procedure HalSetClockInterruptIn(Nanoseconds: QWord);
+var
+  Count: QWord;
+begin
+  if Nanoseconds > LongestClockWaitNanoseconds then
+    Nanoseconds := LongestClockWaitNanoseconds;
+  { Rounded up, and a little more: the timer and the counter were
+    measured against each other only so closely, and an interrupt that
+    comes early by the counter has to be set again. }
+  Count := (Nanoseconds * TimerTicksPerSecond + NanosecondsPerSecond - 1) div NanosecondsPerSecond;
+  Count := Count + Count shr 10 + 1;
+  if Count > High(LongWord) then
+    Count := High(LongWord);
+  SetLocalApicTimerCount(LongWord(Count));
 end;
 
 procedure HalEndOfInterrupt;
@@ -148,27 +217,23 @@ begin
   Result := LocalApicId;
 end;
 
-procedure HalSaveInterruptRouting;
+procedure HalPrepareForSleep;
 begin
   SaveIoApicEntries;
+  PauseTimeStampClock;
 end;
 
 procedure HalResumeBootProcessor;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
-  if ClockInterruptsPerSecond <> 0 then
-    StartLocalApicPeriodicTimer(ClockInterruptVector,
-      LongWord(TimerTicksPerSecond div ClockInterruptsPerSecond));
+  ContinueTimeStampClock;
   RestoreIoApicEntries;
 end;
 
 procedure HalInitializeSecondaryProcessor;
 begin
   InitializeLocalApic(ApicSpuriousVector);
-  if ClockInterruptsPerSecond <> 0 then
-    StartLocalApicPeriodicTimer(ClockInterruptVector,
-      LongWord(TimerTicksPerSecond div ClockInterruptsPerSecond));
 end;
 
 procedure HalStartProcessor(ProcessorId: LongWord; StartupPage: Byte);
@@ -238,7 +303,9 @@ begin
     DebugWrite(' (xAPIC mode)');
   DebugWrite(', timer ');
   DebugWriteDecimal(TimerTicksPerSecond div 1000);
-  DebugWriteLine(' kHz');
+  DebugWrite(' kHz, time stamp counter ');
+  DebugWriteDecimal(CyclesPerSecond div 1000000);
+  DebugWriteLine(' MHz');
   DebugEndMessage;
 end;
 

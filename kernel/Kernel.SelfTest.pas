@@ -195,19 +195,35 @@ end;
 
 { --- Sleeping -------------------------------------------------------- }
 
+procedure CheckSleep(Milliseconds: QWord; Slack: QWord);
+var
+  Start: QWord;
+  Elapsed: QWord;
+begin
+  Start := ClockNanoseconds;
+  SleepMilliseconds(Milliseconds);
+  Elapsed := ClockNanoseconds - Start;
+  Check(Elapsed >= Milliseconds * NanosecondsPerMillisecond, 'sleep returned early');
+  Check(Elapsed <= (Milliseconds + Slack) * NanosecondsPerMillisecond, 'sleep took far too long');
+end;
+
+{ Sleeps end when due, not at the next 10 ms tick: a sleep of 3 ms
+  takes no 10 ms (with room for a slow emulator over many tries). }
 procedure TestSleep;
 const
-  SleepDuration = 200;
+  ShortSleeps = 20;
+  ShortSleepMilliseconds = 3;
 var
-  StartTicks: QWord;
-  ElapsedMilliseconds: QWord;
+  Round: Integer;
+  Start: QWord;
 begin
-  StartTicks := ClockTickCount;
-  SleepMilliseconds(SleepDuration);
-  ElapsedMilliseconds := (ClockTickCount - StartTicks) * MillisecondsPerTick;
-
-  Check(ElapsedMilliseconds >= SleepDuration, 'sleep returned early');
-  Check(ElapsedMilliseconds <= SleepDuration + 50, 'sleep took far too long');
+  CheckSleep(200, 50);
+  CheckSleep(1, 50);
+  Start := ClockNanoseconds;
+  for Round := 1 to ShortSleeps do
+    SleepMilliseconds(ShortSleepMilliseconds);
+  Check(ClockNanoseconds - Start < ShortSleeps * 8 * NanosecondsPerMillisecond,
+    'short sleeps last a clock tick');
   ReportPassed('timed sleep');
 end;
 
@@ -385,12 +401,12 @@ end;
 { --- Timers ------------------------------------------------------------ }
 
 var
-  TimerFiredTick: QWord;
+  TimerFiredTime: QWord;
   TimerFiredCount: Int64;
 
 procedure NoteTimerFired(Context: Pointer);
 begin
-  TimerFiredTick := ClockTickCount;
+  TimerFiredTime := ClockNanoseconds;
   AtomicIncrement(TimerFiredCount);
 end;
 
@@ -403,20 +419,20 @@ var
   Timer: TTimer;
   CancelledTimer: TTimer;
   Call: TDeferredCall;
-  SetTick: QWord;
+  SetTime: QWord;
 begin
   TimerFiredCount := 0;
   InitializeTimer(Timer);
   InitializeTimer(CancelledTimer);
   InitializeDeferredCall(Call, @NoteTimerFired, nil);
-  SetTick := ClockTickCount;
+  SetTime := ClockNanoseconds;
   SetTimer(CancelledTimer, DelayMilliseconds div 2, Call);
   SetTimer(Timer, DelayMilliseconds, Call);
   Check(CancelTimer(CancelledTimer), 'a set timer could not be cancelled');
   Check(not CancelTimer(CancelledTimer), 'a cancelled timer was still set');
   SleepMilliseconds(DelayMilliseconds * 4);
   Check(TimerFiredCount = 1, 'a timer did not run its call exactly once');
-  Check(TimerFiredTick - SetTick >= MillisecondsToTicks(DelayMilliseconds),
+  Check(TimerFiredTime - SetTime >= DelayMilliseconds * NanosecondsPerMillisecond,
     'a timer ran its call early');
   Check(not CancelTimer(Timer), 'an expired timer was still set');
   { The call lives on this stack: no processor may still be in it. }

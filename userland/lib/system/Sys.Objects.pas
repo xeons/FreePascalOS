@@ -51,6 +51,10 @@ function SetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Lo
   Timeout milliseconds (InfiniteWait: no limit). }
 function WaitForHandles(const Handles: array of Int64; Timeout: Int64): Int64;
 function WaitForHandle(Handle: Int64; Timeout: Int64): LongInt;
+{ Waits until every one of Handles is signaled at the same time
+  (ErrorNone); the automatic reset events and timers among them are
+  consumed only then, all together. ErrorTimedOut after Timeout. }
+function WaitForAllHandles(const Handles: array of Int64; Timeout: Int64): LongInt;
 
 function CreateSection(Length: QWord): Int64;
 { Maps Length bytes of the section from Offset (page aligned); nil if
@@ -125,12 +129,19 @@ function WaitForHandles(const Handles: array of Int64; Timeout: Int64): Int64;
 begin
   if Length(Handles) = 0 then
     Exit(-ErrorInvalidArgument);
-  Result := KernelWaitForHandles(@Handles[0], Length(Handles), Timeout);
+  Result := KernelWaitForHandles(@Handles[0], Length(Handles), Timeout, 0);
 end;
 
 function WaitForHandle(Handle: Int64; Timeout: Int64): LongInt;
 begin
-  Result := ErrorCodeOf(KernelWaitForHandles(@Handle, 1, Timeout));
+  Result := ErrorCodeOf(KernelWaitForHandles(@Handle, 1, Timeout, 0));
+end;
+
+function WaitForAllHandles(const Handles: array of Int64; Timeout: Int64): LongInt;
+begin
+  if Length(Handles) = 0 then
+    Exit(ErrorInvalidArgument);
+  Result := ErrorCodeOf(KernelWaitForHandles(@Handles[0], Length(Handles), Timeout, WaitForAll));
 end;
 
 function CreateSection(Length: QWord): Int64;

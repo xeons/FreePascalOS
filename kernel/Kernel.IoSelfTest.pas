@@ -61,7 +61,8 @@ uses
 
 const
   CompletedByteCount = 7;
-  MaximumWaitRounds = 1000;
+  { Rounds of a 1 ms sleep: ten seconds, enough in a slow emulator. }
+  MaximumWaitRounds = 10000;
 
 var
   TestDevice: PDeviceObject;

@@ -106,8 +106,8 @@ function KernelSetEvent(Handle: Int64): Int64;
 function KernelResetEvent(Handle: Int64): Int64;
 function KernelCreateTimer(Flags: LongWord): Int64;
 function KernelSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
-{ Timeout in milliseconds, or InfiniteWait. }
-function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64): Int64;
+{ Timeout in milliseconds, or InfiniteWait; Flags 0 or WaitForAll. }
+function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 function KernelCreateSection(Length: QWord): Int64;
 function KernelCreatePort(Name: PChar): Int64;
 function KernelConnectPort(Name: PChar): Int64;
@@ -442,9 +442,9 @@ begin
   Result := SystemCall(CallSetTimer, QWord(Handle), DueMilliseconds, PeriodMilliseconds, 0, 0, 0);
 end;
 
-function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64): Int64;
+function KernelWaitForHandles(Handles: PInt64; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 begin
-  Result := SystemCall(CallWaitForHandles, QWord(Handles), Count, QWord(Timeout), 0, 0, 0);
+  Result := SystemCall(CallWaitForHandles, QWord(Handles), Count, QWord(Timeout), Flags, 0, 0);
 end;
 
 function KernelCreateSection(Length: QWord): Int64;

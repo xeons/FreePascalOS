@@ -121,7 +121,7 @@ device registers are reached through it with `PhysicalToVirtual`.
 | 0     | `PassiveLevel`        | normal thread execution; may block           |
 | 2     | `DispatchLevel`       | scheduler; no thread switches; may not block |
 | 3-12  | `DeviceLevel*`        | device interrupts                            |
-| 13    | `ClockLevel`          | periodic clock                               |
+| 13    | `ClockLevel`          | clock (one-shot, per processor)              |
 | 14    | `InterProcessorLevel` | inter-processor interrupts                   |
 | 15    | `HighLevel`           | everything masked (panic, debug output)      |
 
@@ -161,8 +161,9 @@ Rules that follow from this:
   its credentials, inherited by the processes it starts and applied to
   all its threads (`CallGetAffinity`, `CallSetAffinity`; `taskset`, and
   `nproc` counts only the processors it may use).
-- Time slices of `QuantumTicks` clock ticks (100 Hz clock) rotate threads of
-  equal priority.
+- Time slices of `QuantumTicks` clock ticks (100 Hz) rotate threads of
+  equal priority. Timeouts and sleeps end when due, to well under a
+  millisecond (see The clock and timers).
 - The clock interrupt never switches threads itself. It requests the dispatch
   software interrupt (a self-IPI on the dispatch vector), which the APIC
   delivers as soon as the processor drops below `DispatchLevel`. The same
@@ -185,6 +186,58 @@ Rules that follow from this:
   old thread's (FXSAVE) and loads the new one's (FXRSTOR). The kernel
   itself uses no such registers (the build checks), so interrupts and
   system calls need not save them.
+
+## The clock and timers
+
+- **Time.** The kernel measures time with a fine clock from the HAL
+  (`HalClockNanoseconds`): on x86-64 the time stamp counter, read on any
+  processor without a lock (`Hal.TimeStampClock`). Its rate is measured
+  at start against the interval timer, over 50 ms and together with the
+  local APIC timer, so the two agree closely. Uptime, timers, timeouts
+  and the tick count (`ClockTickCount`, in 10 ms ticks, which drivers
+  still use for coarse deadlines) all come from it, in nanoseconds
+  (`ClockNanoseconds`).
+- **One-shot clock interrupts.** Each processor's local APIC timer runs
+  in one-shot mode (`Kernel.Clock`). Every time it interrupts, it is set
+  again for the first of three things on that processor: its next 10 ms
+  tick, its first timer, and the first wake-up of the threads that began
+  a timed wait there. Whoever adds an earlier due time on a processor
+  asks for an earlier interrupt (`RequestClockInterruptBy`, interrupts
+  disabled). A late interrupt counts every tick it missed, and the ticks
+  keep to their schedule (each is due 10 ms after the last was due).
+- **Why the tick stays.** A fully tickless clock would also have to
+  stop the tick on idle processors and account time slices and CPU time
+  from timestamps at every switch. The tick is kept for exactly those -
+  time slices (`QuantumTicks`), the time charged to the running thread
+  (`RunTicks`), the load averages - while everything that waits for a
+  time is taken off the tick: it costs one extra interrupt per due time,
+  is simple to get right, and gives timers and sleeps the precision of
+  the APIC timer.
+- **Timers** (`Kernel.Timers`) go on the queue of the processor that
+  sets them; each queue has a lock its clock interrupt takes, and
+  setting or cancelling also takes one shared lock, so that two
+  processors changing the same timer cannot put it on two queues. The
+  clock interrupt queues the expired timers' deferred calls.
+- **Timeouts.** A thread waiting with a timeout goes on the sleep queue
+  of the processor it began the wait on (under the dispatcher lock).
+  That processor's clock interrupt requests the dispatch interrupt when
+  the first is due, which wakes the threads due and asks for the next
+  wake-up's interrupt. A wake-up already due is left out when the
+  interrupt is set again, so a processor kept above dispatch level for a
+  while is not interrupted over and over.
+- **Never early.** A timer or timeout due at T ends at T or later by the
+  counter: the APIC timer is set a little long (rounded up, plus 1/1024),
+  and an interrupt that still comes early only sets itself again.
+- **Suspend to RAM** turns the counter off and may restart it from zero:
+  the HAL pauses the clock before sleeping (`HalPrepareForSleep`) and
+  continues it from the same time after waking, before any other
+  processor runs, so the uptime leaves out the time asleep and every due
+  time still holds. Each processor starts its clock interrupt again as
+  it wakes (`StartClockOnThisProcessor` in `WakeEntry`).
+- The counters of all processors are taken to run together, as they do
+  on machines with an invariant counter and in virtual machines; under
+  emulation (TCG) both the counter and the APIC timer follow the host's
+  real time.
 
 ## Several processors
 
@@ -213,8 +266,9 @@ Rules that follow from this:
   else in a block is only used at DispatchLevel or above.
 - **Scheduling.** Each processor has its own run queues (see Scheduling);
   the dispatcher lock is shared. Each
-  processor has its own clock interrupt for its time slices (only the boot
-  processor's advances the tick count). When a thread becomes ready, an
+  processor has its own one-shot clock interrupt for its time slices, its
+  timers and its threads' timeouts (see The clock and timers). When a
+  thread becomes ready, an
   idle processor (or the one running the least important thread, if that
   is less important) is sent its dispatch interrupt as an IPI. The handoff
   of the dispatcher lock across a switch also guarantees that a thread
@@ -411,7 +465,8 @@ handler that needs to wake a thread queues a deferred call
 dispatch interrupt, before the scheduler picks the next thread.
 
 A **timer** (Kernel.Timers) queues a deferred call once a delay has
-passed; the boot processor's clock interrupt expires timers. Drivers use
+passed; the clock interrupt of the processor that set it expires it, as
+soon as it is due (see The clock and timers). Drivers use
 them to notice what does not happen in time (a disk command that never
 completes). Cancelling cannot take back a call that is already queued,
 so the routine checks whether its reason still holds.
@@ -558,7 +613,8 @@ runs it on a thread pinned to the boot processor:
      holds no spin lock: it saves its state (`Kernel.Arch.Suspend`:
      callee-saved registers, stack, flags, FS and swapped GS bases, FPU
      state, like `setjmp`) and halts.
-   - The boot processor saves the I/O APIC entries and its own state,
+   - The boot processor saves the I/O APIC entries, pauses the clock and
+     saves its own state,
      points the waking vector at the start-up page (the trampoline that
      starts secondary processors) and writes the sleep registers.
 4. Waking, the trampoline takes the boot processor to 64-bit mode and
@@ -567,7 +623,9 @@ runs it on a thread pinned to the boot processor:
      TSS made available again), processor block, interrupt table, PAT
      and system call registers.
    - Its interrupt hardware comes back: the legacy PICs masked, the
-     local APIC and clock, the I/O APIC entries.
+     local APIC, the I/O APIC entries; the clock continues from where it
+     paused and its clock interrupt starts again (each other processor
+     starts its own as it wakes).
    - It resumes its saved state, then starts each frozen processor
      again (INIT, STARTUP), which resumes inside its dispatch interrupt.
 5. The wall clock is read again (the uptime leaves the sleep out), and
@@ -1737,7 +1795,9 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
 - **Events** (`Objects.Events`): kernel events a program creates
   (`CallCreateEvent`, manual or automatic reset), sets and resets.
 - **Timers** (`Objects.Timers`): an event signaled when a time comes,
-  once or periodically (`CallSetTimer`), on the clock's 10 ms ticks.
+  once or periodically (`CallSetTimer`), to well under a millisecond; a
+  periodic timer counts each time from when the last was due, so
+  lateness does not add up.
   Deleting or re-arming one stops it safely: it is marked first, so its
   call does not arm it again, taken off the timer queue, and its
   deferred call taken off its queue or waited for if a processor is
@@ -1760,21 +1820,43 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
 `CallWaitForHandles` waits for the first of up to 64 handles to be ready,
 with a timeout: an event or timer signaled, a process or thread ended, a
 pipe's read end or a channel readable (data, or the other end gone), a
-port with a connection waiting, a device with input (a driver may keep a
-`ReadyEvent`: `/dev/events` does). Each stands for a notification event
-kept in step with the object (pipes gained a `Readable` event for this,
-apart from the synchronization event their readers wait on). The wait is
+pipe's write end writable (room, or no reader left), a port with a
+connection waiting, a device with input (a driver may keep a
+`ReadyEvent`: `/dev/events` does, and the console's says a read would
+not wait - a line read but not handed out, or typed input, in line
+editing mode a whole line). Each stands for a notification event kept
+in step with the object (pipes gained `Readable` and `Writable` events
+for this, apart from the synchronization events their readers and
+writers wait on; the console updates its event under a lock of its own,
+so two updates at once cannot leave it set the wrong way). The wait is
 alertable, so ending or stopping the process ends it.
 
-Underneath is waiting on several kernel events (`WaitForAnyEvent`): a
-waiting thread is linked into each event's waiters by a wait block (on
-its stack), and the first event to release it takes all its blocks off
-and records which one it was; timeouts and alerts take them off the same
-way. A single wait is the same with one block.
+With the `WaitForAll` flag it waits until all of the handles are ready
+at the same time, with the same timeout and alerts. As in other systems
+with this kind of wait, the wait is satisfied atomically: a signaled
+automatic reset event or timer is not consumed while the others are not
+ready (another waiter may take it meanwhile), and once all are, they are
+all consumed together, in one step.
 
-`Sys.Objects` in libsystem wraps all of it, with `CallChannel` for a
-request and its reply. `ipctest` (run by coretest) checks every object,
-the waits and timeouts, and a section shared with a second process: it
+Underneath is waiting on several kernel events (`WaitForAnyEvent`,
+`WaitForAllEvents`): a waiting thread is linked into each event's
+waiters by a wait block (on its stack, naming its event), and the first
+event to release it takes all its blocks off and records which one it
+was; timeouts and alerts take them off the same way. A single wait is
+the same with one block. Signaling an event releases its waiters in
+order while it stays signaled: one waiting for any is released at once;
+one waiting for all only if every one of its events is signaled, which
+then consumes the synchronization events among them; the others stay
+queued.
+
+`Sys.Objects` in libsystem wraps all of it (`WaitForAllHandles` for
+the wait for all), with `CallChannel` for a request and its reply.
+`ipctest` (run by coretest) checks every object, the waits and timeouts,
+the wait for all (an automatic reset event consumed only once all are
+ready, two timers due at different times), timers at 5 and 15 ms
+periods and short sleeps against the uptime, a pipe's write end
+becoming writable once the reader drains it, waiting on the console,
+and a section shared with a second process: it
 starts itself as a child that connects to its port, receives the section
 and an event in a message, changes the section and signals the event.
 

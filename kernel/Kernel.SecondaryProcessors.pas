@@ -57,11 +57,14 @@ uses
   Kernel.Processors,
   Kernel.InterProcessor,
   Kernel.Scheduler,
+  Kernel.Clock,
+  Kernel.Timers,
   Processes.Thread,
   Debug.Output;
 
 const
-  StartTimeoutMilliseconds = 1000;
+  { Generous: starting a processor is slow in an emulator. }
+  StartTimeoutMilliseconds = 10000;
 
 var
   SecondaryIdleRoutine: TIdleRoutine;
@@ -69,7 +72,9 @@ var
 procedure SecondaryProcessorEntry(Processor: PProcessor);
 begin
   InitializeThisSecondaryProcessor(Processor);
+  InitializeProcessorTimers(Processor);
   StartSchedulingOnThisProcessor(Processor^.IdleThread);
+  StartClockOnThisProcessor;
   EnableInterrupts;
   SecondaryIdleRoutine;
 end;
@@ -90,7 +95,7 @@ var
   Processor: PProcessor;
   Stack: TKernelStack;
   IdleThread: PThread;
-  Waited: LongWord;
+  Deadline: QWord;
 begin
   Result := False;
   Processor := AllocateProcessorBlock(ApicId);
@@ -104,12 +109,9 @@ begin
   Processor^.IdleThread := @IdleThread^.ControlBlock;
 
   StartProcessor(Processor, Stack.Top, @SecondaryProcessorEntry);
-  Waited := 0;
-  while not Processor^.IsOnline and (Waited < StartTimeoutMilliseconds) do
-  begin
+  Deadline := DeadlineAfterMilliseconds(StartTimeoutMilliseconds);
+  while not Processor^.IsOnline and (ClockNanoseconds < Deadline) do
     SleepMilliseconds(1);
-    Inc(Waited);
-  end;
   Result := Processor^.IsOnline;
 end;
 

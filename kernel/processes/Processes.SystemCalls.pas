@@ -532,7 +532,7 @@ end;
 
 { --- Dispatcher ------------------------------------------------------ }
 
-function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2: QWord): Int64;
+function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3: QWord): Int64;
 begin
   Result := 0;
   case Number of
@@ -612,7 +612,7 @@ begin
     CallResetEvent: Result := PerformSetEvent(Int64(Argument0), False);
     CallCreateTimer: Result := PerformCreateTimer(Argument0);
     CallSetTimer: Result := PerformSetTimer(Int64(Argument0), Argument1, Argument2);
-    CallWaitForHandles: Result := PerformWaitForHandles(Argument0, Argument1, Int64(Argument2));
+    CallWaitForHandles: Result := PerformWaitForHandles(Argument0, Argument1, Int64(Argument2), Argument3);
     CallCreateSection: Result := PerformCreateSection(Argument0);
     CallCreatePort: Result := PerformCreatePort(Argument0);
     CallConnectPort: Result := PerformConnectPort(Argument0);
@@ -643,6 +643,7 @@ var
   Argument0: QWord;
   Argument1: QWord;
   Argument2: QWord;
+  Argument3: QWord;
   Result: Int64;
   MustRestart: Boolean;
 begin
@@ -650,6 +651,7 @@ begin
   Argument0 := SystemCallArgument(Frame, 0);
   Argument1 := SystemCallArgument(Frame, 1);
   Argument2 := SystemCallArgument(Frame, 2);
+  Argument3 := SystemCallArgument(Frame, 3);
   CurrentThreadObject^.SystemCallFrame := Frame;
   { A stack overflow's reserve is armed again once the stack is clear. }
   if StackReserveIsOpen then
@@ -668,7 +670,7 @@ begin
   end;
 
   repeat
-    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2);
+    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2, Argument3);
     { A call cut short because the program was asked to stop runs again
       once the program is continued, so the program never sees the stop. }
     MustRestart := (Result = Failure(ErrorInterrupted)) and

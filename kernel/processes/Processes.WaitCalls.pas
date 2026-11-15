@@ -21,10 +21,15 @@
 
   Each handle stands for an event that says it is ready: an event or
   timer object's own event, a process's or thread's exit event, a pipe
-  read end's or channel end's Readable event, a port's Pending event, a
-  device's ReadyEvent (if its driver keeps one). The objects are held
-  for the wait, which is alertable: ending or stopping the process ends
-  it (ErrorInterrupted).
+  read end's or channel end's Readable event, a pipe write end's
+  Writable event, a port's Pending event, a device's ReadyEvent (if its
+  driver keeps one: the console's says a read would not wait). The
+  objects are held for the wait, which is alertable: ending or stopping
+  the process ends it (ErrorInterrupted).
+
+  With WaitForAll the wait lasts until every handle is ready at the same
+  time, and the automatic reset events and timers among them are
+  consumed only then, together (Kernel.Events).
 }
 unit Processes.WaitCalls;
 
@@ -33,7 +38,7 @@ unit Processes.WaitCalls;
 
 interface
 
-function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64): Int64;
+function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 
 implementation
 
@@ -68,6 +73,7 @@ begin
     HandleKindProcess: Result := @PProcess(ObjectBody)^.ExitEvent;
     HandleKindThread: Result := @PThread(ObjectBody)^.ExitEvent;
     HandleKindPipeReadEnd: Result := @PPipe(ObjectBody)^.Readable;
+    HandleKindPipeWriteEnd: Result := @PPipe(ObjectBody)^.Writable;
     HandleKindChannel: Result := @PChannelEnd(ObjectBody)^.Readable;
     HandleKindPort: Result := @PPort(ObjectBody)^.Pending;
     HandleKindDevice:
@@ -80,7 +86,26 @@ begin
   end;
 end;
 
-function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64): Int64;
+{ Waits on the events of the handles; the result as the call returns it. }
+function WaitForEvents(Events: PPEvent; Count: LongInt; TimeoutMilliseconds: QWord; WaitForAll: Boolean): Int64;
+var
+  WaitResult: TWaitResult;
+  Signaled: LongInt;
+begin
+  Signaled := 0;
+  if WaitForAll then
+    WaitResult := WaitForAllEvents(Events, Count, TimeoutMilliseconds, True)
+  else
+    WaitResult := WaitForAnyEvent(Events, Count, TimeoutMilliseconds, True, Signaled);
+  case WaitResult of
+    WaitSignaled: Result := Signaled;
+    WaitTimedOut: Result := Failure(ErrorTimedOut);
+  else
+    Result := Failure(ErrorInterrupted);
+  end;
+end;
+
+function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 var
   Handles: array[0..MaximumWaitHandles - 1] of Int64;
   Bodies: array[0..MaximumWaitHandles - 1] of Pointer;
@@ -90,9 +115,8 @@ var
   Kind: THandleKind;
   Error: LongInt;
   TimeoutMilliseconds: QWord;
-  Signaled: LongInt;
 begin
-  if (Count = 0) or (Count > MaximumWaitHandles) then
+  if (Count = 0) or (Count > MaximumWaitHandles) or ((Flags and not WaitForAll) <> 0) then
     Exit(Failure(ErrorInvalidArgument));
   Error := CopyFromUser(@Handles[0], HandlesAddress, Count * SizeOf(Int64));
   if Error <> ErrorNone then
@@ -117,12 +141,8 @@ begin
       TimeoutMilliseconds := InfiniteTimeout
     else
       TimeoutMilliseconds := QWord(Timeout);
-    case WaitForAnyEvent(@Events[0], LongInt(Count), TimeoutMilliseconds, True, Signaled) of
-      WaitSignaled: Result := Signaled;
-      WaitTimedOut: Result := Failure(ErrorTimedOut);
-    else
-      Result := Failure(ErrorInterrupted);
-    end;
+    Result := WaitForEvents(@Events[0], LongInt(Count), TimeoutMilliseconds,
+      (Flags and WaitForAll) <> 0);
   end
   else
     Result := Failure(Error);

@@ -22,8 +22,10 @@
   ipctest
 
   Events (automatic and manual reset), waiting on several handles and
-  timeouts, timers (once and periodic), a pipe's read end as a waitable
-  handle, channels (data, a handle carried in a message, a message too
+  timeouts, waiting for all of several handles (automatic reset ones
+  consumed only once all are ready), timers (once and periodic, and how
+  close to their time they keep at 5 and 15 ms), short sleeps, a pipe's
+  read and write ends and the console as waitable handles, channels (data, a handle carried in a message, a message too
   large for the buffer, a full queue, the other end closing), ports, and
   a section shared with a second process: this program starts itself
   with --child, which connects to its port, receives the section and an
@@ -54,6 +56,8 @@ const
   PatternCount = SectionBytes div SizeOf(LongWord);
   ChildMark = $C0FFEE;
   ChildTimeout = 10000;
+  { Io.Pipes.PipeBufferSize. }
+  PipeCapacity = 4096;
 
 var
   Failures: Integer = 0;
@@ -82,6 +86,7 @@ var
   Automatic: Int64;
   Manual: Int64;
   Third: Int64;
+  NotWaitable: Int64;
 begin
   Automatic := CreateEvent(False, False);
   Manual := CreateEvent(True, False);
@@ -97,7 +102,9 @@ begin
   Check('manual reset: reset', TimedOut(WaitForHandles([Manual], 20)));
   SetEvent(Third);
   Check('several handles: the signaled one', WaitForHandles([Automatic, Manual, Third], 1000) = 2);
-  Check('a handle that cannot be waited on', WaitForHandles([StandardOutputHandle], 0) = -ErrorUnsupported);
+  NotWaitable := KernelOpen('/bin/ipctest', OpenRead);
+  Check('a handle that cannot be waited on', WaitForHandles([NotWaitable], 0) = -ErrorUnsupported);
+  KernelClose(NotWaitable);
   Check('a bad handle', WaitForHandles([60], 0) = -ErrorBadHandle);
   CloseHandle(Automatic);
   CloseHandle(Manual);
@@ -133,6 +140,97 @@ begin
   CloseHandle(Timer);
 end;
 
+{ Waiting for all: satisfied only when every handle is signaled at once,
+  and only then are the automatic reset ones consumed. }
+procedure TestWaitForAll;
+var
+  Automatic: Int64;
+  Manual: Int64;
+  Early: Int64;
+  Late: Int64;
+  Start: Int64;
+  Handles: array[0..1] of Int64;
+begin
+  Automatic := CreateEvent(False, False);
+  Manual := CreateEvent(True, False);
+  Check('all: none signaled', WaitForAllHandles([Automatic, Manual], 0) = ErrorTimedOut);
+  SetEvent(Automatic);
+  Check('all: one of two signaled is not enough', WaitForAllHandles([Automatic, Manual], 0) = ErrorTimedOut);
+  Check('all: the automatic reset one was not consumed', WaitForHandles([Automatic], 0) = 0);
+  SetEvent(Automatic);
+  SetEvent(Manual);
+  Check('all: both signaled', WaitForAllHandles([Automatic, Manual], 0) = ErrorNone);
+  Check('all: then the automatic reset one is consumed', TimedOut(WaitForHandles([Automatic], 0)));
+  Check('all: and the manual reset one stays signaled', WaitForHandles([Manual], 0) = 0);
+  Start := Int64(UptimeMilliseconds);
+  Check('all: a timeout', WaitForAllHandles([Automatic, Manual], 30) = ErrorTimedOut);
+  Check('all: after its time', Int64(UptimeMilliseconds) - Start >= 29);
+  Check('all: a manual reset one is left as it was', WaitForHandles([Manual], 0) = 0);
+
+  { Two timers due at different times: the wait ends with the later one,
+    and the earlier one's signal waited for it. }
+  Early := CreateTimer(False);
+  Late := CreateTimer(False);
+  Start := Int64(UptimeMilliseconds);
+  SetTimer(Early, 20, 0);
+  SetTimer(Late, 60, 0);
+  Check('all: two timers', WaitForAllHandles([Early, Late], 5000) = ErrorNone);
+  Check('all: not before the later one', Int64(UptimeMilliseconds) - Start >= 59);
+  Check('all: both timers consumed together', TimedOut(WaitForHandles([Early], 0)) and
+    TimedOut(WaitForHandles([Late], 0)));
+  SetTimer(Early, 10, 0);
+  Check('all: a timer and an event', WaitForAllHandles([Early, Manual], 5000) = ErrorNone);
+  Handles[0] := Automatic;
+  Check('all: an unknown flag', KernelWaitForHandles(@Handles[0], 1, 0, $80) = -ErrorInvalidArgument);
+  CloseHandle(Early);
+  CloseHandle(Late);
+  CloseHandle(Automatic);
+  CloseHandle(Manual);
+end;
+
+{ Timers and sleeps keep to the millisecond rather than to a 10 ms
+  clock tick. The bounds leave room for a slow emulator; a tick-bound
+  clock would take twice as long or more. }
+procedure TestTimerAccuracy;
+var
+  Timer: Int64;
+  Start: Int64;
+  Elapsed: Int64;
+  Count: Integer;
+begin
+  Timer := CreateTimer(False);
+  Start := Int64(UptimeMilliseconds);
+  SetTimer(Timer, 5, 0);
+  Check('5 ms timer: goes off', WaitForHandles([Timer], 2000) = 0);
+  Elapsed := Int64(UptimeMilliseconds) - Start;
+  Check('5 ms timer: in about 5 ms', (Elapsed >= 4) and (Elapsed < 50));
+
+  Start := Int64(UptimeMilliseconds);
+  SetTimer(Timer, 5, 5);
+  Count := 0;
+  while (Count < 20) and (WaitForHandles([Timer], 2000) = 0) do
+    Inc(Count);
+  Elapsed := Int64(UptimeMilliseconds) - Start;
+  SetTimer(Timer, 0, 0);
+  Check('5 ms periodic timer: twenty times in about 100 ms', (Count = 20) and (Elapsed >= 99) and (Elapsed < 250));
+
+  Start := Int64(UptimeMilliseconds);
+  SetTimer(Timer, 15, 15);
+  Count := 0;
+  while (Count < 10) and (WaitForHandles([Timer], 2000) = 0) do
+    Inc(Count);
+  Elapsed := Int64(UptimeMilliseconds) - Start;
+  SetTimer(Timer, 0, 0);
+  Check('15 ms periodic timer: ten times in about 150 ms', (Count = 10) and (Elapsed >= 149) and (Elapsed < 300));
+  CloseHandle(Timer);
+
+  Start := Int64(UptimeMilliseconds);
+  for Count := 1 to 10 do
+    SleepMilliseconds(2);
+  Elapsed := Int64(UptimeMilliseconds) - Start;
+  Check('ten sleeps of 2 ms: about 20 ms', (Elapsed >= 19) and (Elapsed < 90));
+end;
+
 procedure TestPipe;
 var
   ReadEnd: Int64;
@@ -149,6 +247,44 @@ begin
   KernelClose(WriteEnd);
   Check('writer gone: readable (end of file)', WaitForHandles([ReadEnd], 0) = 0);
   KernelClose(ReadEnd);
+end;
+
+{ A pipe's write end is ready while there is room, or no reader. }
+procedure TestPipeWriteEnd;
+var
+  ReadEnd: Int64;
+  WriteEnd: Int64;
+  Buffer: array[0..PipeCapacity - 1] of Byte;
+begin
+  Check('pipe for writing created', CreatePipe(ReadEnd, WriteEnd) = ErrorNone);
+  Check('empty pipe: writable', WaitForHandles([WriteEnd], 0) = 0);
+  FillChar(Buffer, SizeOf(Buffer), 1);
+  Check('filled', KernelWrite(WriteEnd, @Buffer[0], PipeCapacity) = PipeCapacity);
+  Check('full pipe: not writable', TimedOut(WaitForHandles([WriteEnd], 0)));
+  Check('full pipe: readable and not writable at once',
+    WaitForAllHandles([ReadEnd, WriteEnd], 0) = ErrorTimedOut);
+  KernelRead(ReadEnd, @Buffer[0], 100);
+  Check('drained a little: writable again', WaitForHandles([WriteEnd], 0) = 0);
+  Check('readable and writable at once', WaitForAllHandles([ReadEnd, WriteEnd], 0) = ErrorNone);
+  KernelWrite(WriteEnd, @Buffer[0], 100);
+  Check('full again: not writable', TimedOut(WaitForHandles([WriteEnd], 0)));
+  KernelClose(ReadEnd);
+  Check('reader gone: writable (the write fails at once)', WaitForHandles([WriteEnd], 0) = 0);
+  KernelClose(WriteEnd);
+end;
+
+{ The console can be waited on (whether input is there depends on who
+  runs the test). }
+procedure TestConsole;
+var
+  Console: Int64;
+  Result_: Int64;
+begin
+  Console := KernelOpen('/dev/console', OpenRead);
+  Check('console opened', Console >= 0);
+  Result_ := WaitForHandles([Console], 0);
+  Check('the console can be waited on', (Result_ = 0) or TimedOut(Result_));
+  KernelClose(Console);
 end;
 
 procedure TestChannels;
@@ -287,8 +423,12 @@ begin
   if (ParamCount = 1) and TextIsEqual(PChar(ParamStr(1)), '--child') then
     Halt(RunChild);
   TestEvents;
+  TestWaitForAll;
   TestTimers;
+  TestTimerAccuracy;
   TestPipe;
+  TestPipeWriteEnd;
+  TestConsole;
   TestChannels;
   TestSharedSection;
   WriteFormatted(StandardOutput, 'ipctest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),

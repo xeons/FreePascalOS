@@ -301,11 +301,12 @@ normalized (0-65535), not pixels.
       input devices, channels) with a timeout
 - [x] Event objects for user mode (create, set, reset, wait)
 - [x] Local message channels: request/reply messages that can carry handles
-- [x] Waitable timers (in milliseconds, on the clock's 10 ms ticks)
-- [ ] Finer timers: a one-shot local APIC timer or HPET instead of the 100 Hz
-      tick (a tickless clock)
-- [ ] Waiting on the console and pipe write ends (room to write) through handles
-- [ ] Waiting for all of several handles at once
+- [x] Waitable timers (in milliseconds)
+- [x] Finer timers: one-shot local APIC timer interrupts for the first timer
+      or timeout due, timed by the time stamp counter (the 100 Hz tick stays
+      for time slices and CPU time)
+- [x] Waiting on the console and pipe write ends (room to write) through handles
+- [x] Waiting for all of several handles at once
 
 ### 4. Display server
 - [x] One process owns the screen and input; clients connect through a channel

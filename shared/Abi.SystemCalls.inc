@@ -192,15 +192,20 @@ const
   { (Flags: TimerManualReset): a new timer, not armed. }
   CallCreateTimer = 76;
   { (Handle, DueMilliseconds, PeriodMilliseconds): arms the timer: its
-    event is signaled once due, then every Period (0: once). Due 0 stops
-    it. The clock ticks every 10 ms. }
+    event is signaled once due, then every Period (0: once), each time
+    counted from the last due time. Due 0 stops it. Timers keep to well
+    under a millisecond. }
   CallSetTimer = 77;
-  { (HandlesAddress, Count, TimeoutMilliseconds or InfiniteWait): waits
-    until one of Count handles (Int64s) is signaled and returns its place
-    in the list. Signaled means: an event or timer signaled (an automatic
-    reset one is consumed), a process or thread ended, a pipe's read end
-    or a channel has something to read (or its other end is gone), a port
-    has a connection waiting, a device has input (/dev/events).
+  { (HandlesAddress, Count, TimeoutMilliseconds or InfiniteWait, Flags):
+    waits until one of Count handles (Int64s) is signaled and returns its
+    place in the list. Signaled means: an event or timer signaled (an
+    automatic reset one is consumed), a process or thread ended, a pipe's
+    read end or a channel has something to read (or its other end is
+    gone), a pipe's write end has room (or no reader is left), a port
+    has a connection waiting, a device has input (/dev/events, and the
+    console when a read would not wait). With WaitForAll in Flags, waits
+    until all of them are signaled at the same time and returns 0; the
+    automatic reset ones are consumed only then, all together.
     ErrorTimedOut, ErrorInterrupted, ErrorUnsupported (a handle that
     cannot be waited on). At most MaximumWaitHandles. }
   CallWaitForHandles = 78;
@@ -238,6 +243,8 @@ const
   EventSignaled = $02;
   TimerManualReset = $01;
   MaximumWaitHandles = 64;
+  { CallWaitForHandles: every handle at once. }
+  WaitForAll = $01;
   MaximumPortNameLength = 24;
   MaximumMessageBytes = 16 * 1024;
   MaximumMessageHandles = 8;
