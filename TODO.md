@@ -349,8 +349,8 @@ normalized (0-65535), not pixels.
 
 ### 6. Desktop shell
 - [x] Pseudo-terminals (for terminal windows)
-- [ ] Taskbar: Start menu, buttons for open windows, clock, notification area
-- [ ] Desktop: wallpaper, icons
+- [x] Taskbar: Start menu, buttons for open windows, clock, notification area
+- [x] Desktop: wallpaper, icons
 - [x] Terminal window running the shell
 - [x] Notepad
 

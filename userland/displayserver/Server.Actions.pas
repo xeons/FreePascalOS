@@ -60,7 +60,12 @@ procedure TellWindowScale(Window: PServerWindow);
 { Asks the program for a surface of a new size (it answers with
   RequestSetSurface), moving the client area to Bounds' top left. }
 procedure RequestResize(Window: PServerWindow; const Bounds: TRectangle);
+{ Maximizes the window (filling its screen's work area below the title
+  bar) or gives it its size back. }
 procedure ToggleMaximized(Window: PServerWindow);
+{ Fills the work area again, keeping the size to go back to (the screen,
+  its scale or its work area changed). }
+procedure MaximizeAgain(Window: PServerWindow);
 { Unmaps and closes the window's surface section. }
 procedure ReleaseSurface(Window: PServerWindow);
 procedure DestroyWindow(Window: PServerWindow);
@@ -76,6 +81,8 @@ uses
   Server.Composer,
   Server.Clients,
   Server.Input,
+  Server.WorkAreas,
+  Server.Shell,
   Server.WindowMoves;
 
 procedure SendToProgram(Window: PServerWindow; var Message: TWindowMessage);
@@ -217,8 +224,10 @@ end;
 
 procedure ShowWindow(Window: PServerWindow; Show: Boolean);
 begin
-  { Shown or hidden on purpose now, not along with its owner. }
+  { Shown or hidden on purpose now, not along with its owner, and not
+    minimized any more (MinimizeWindow marks it after hiding it). }
   Window^.HiddenWithOwner := False;
+  Window^.Minimized := False;
   if Window^.Visible = Show then
     Exit;
   Window^.Visible := Show;
@@ -332,12 +341,23 @@ begin
   end;
   Window^.RestoreBounds := ClientRectangle(Window);
   Window^.Maximized := True;
-  { The client area fills its screen below the title bar; the frame's
-    borders lie just off the screen. }
+  { The client area fills its screen's work area (what the shell's
+    taskbar leaves) below the title bar; the frame's borders lie just
+    off it. }
   Title := WindowMetric(Window, Theme.TitleHeight);
-  Bounds := WindowScreen(Window)^.Bounds;
+  Bounds := WorkArea(WindowScreen(Window));
   RequestResize(Window, MakeRectangle(Bounds.Left, Bounds.Top + Title, RectangleWidth(Bounds),
     RectangleHeight(Bounds) - Title));
+end;
+
+procedure MaximizeAgain(Window: PServerWindow);
+var
+  Restore: TRectangle;
+begin
+  Window^.Maximized := False;
+  Restore := Window^.RestoreBounds;
+  ToggleMaximized(Window);
+  Window^.RestoreBounds := Restore;
 end;
 
 procedure ReleaseSurface(Window: PServerWindow);
@@ -360,6 +380,7 @@ begin
   if WasActive then
     ActiveWindow := nil;
   ForgetWindowInInput(Window);
+  ForgetWindowInShell(Window);
   ReleaseSurface(Window);
   RemoveWindow(Window);
   if WasActive then

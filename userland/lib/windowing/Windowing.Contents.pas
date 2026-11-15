@@ -34,6 +34,8 @@ uses
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,
+  Windowing.Shell,
+  Windowing.Notifications,
   Windowing.Windows;
 
 implementation

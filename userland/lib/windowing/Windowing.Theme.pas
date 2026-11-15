@@ -51,6 +51,9 @@ type
     { The selection (in lists, edits, menus). }
     Selection: TColor;
     SelectionText: TColor;
+    { A tooltip's background and text. }
+    Tooltip: TColor;
+    TooltipText: TColor;
     ActiveTitleStart: TColor;
     ActiveTitleEnd: TColor;
     InactiveTitleStart: TColor;
@@ -101,6 +104,8 @@ begin
   Theme.FieldText := $FF000000;
   Theme.Selection := $FF17375E;
   Theme.SelectionText := $FFFFFFFF;
+  Theme.Tooltip := $FFF4EFD8;
+  Theme.TooltipText := $FF000000;
   Theme.ActiveTitleStart := $FF17375E;
   Theme.ActiveTitleEnd := $FF6A97C9;
   Theme.InactiveTitleStart := $FF7C7A76;

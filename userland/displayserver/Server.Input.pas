@@ -26,7 +26,7 @@
   goes, a border or corner shows an outline of the new size and asks
   the program for it when the button is let go, and the title buttons
   act when let go over them (close asks the program, maximize toggles,
-  minimize hides). The title button under the pointer looks hot, and
+  minimize hides the window as minimized: Server.WindowStates). The title button under the pointer looks hot, and
   pressed while held (Server.TitleButtons); a double click on a title
   bar maximizes the window or restores it (Server.DoubleClicks). A
   window dropped on another screen takes its scale. Keys go to the
@@ -91,6 +91,7 @@ uses
   Server.TitleButtons,
   Server.DoubleClicks,
   Server.PointerAreas,
+  Server.WindowStates,
   Server.WindowMoves;
 
 const
@@ -301,7 +302,7 @@ begin
           HitMaximize:
             ToggleMaximized(Window);
           HitMinimize:
-            ShowWindow(Window, False);
+            MinimizeWindow(Window);
         end;
   end;
   Drag := DragNone;

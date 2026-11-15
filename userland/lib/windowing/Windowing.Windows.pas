@@ -44,6 +44,11 @@
   (SetPointerShape for all of it, SetPointerShapeInArea for rectangles
   of it).
 
+  A program can change its window's size itself (SetClientSize), and
+  minimize, maximize or restore it as its title buttons would. What the
+  server tells the shell about other programs' windows goes to
+  Windowing.Shell, not to a window.
+
   Each window is at the scale (and DPI) of the display it is on, which
   is selected for Scaled and Unscaled (Windowing.Connection) whenever
   the window is served: its handlers, its painting, messages queued for
@@ -149,6 +154,15 @@ type
     procedure Activate;
     { Moves the client area to (Left, Top), logical units. }
     procedure MoveTo(Left, Top: LongInt);
+    { Gives the client area a new size (logical units): a new surface,
+      Resized, painted whole before the server shows it. }
+    procedure SetClientSize(Width, Height: LongInt);
+    { As the title buttons do: hidden as minimized (the shell's taskbar
+      brings it back), filling the display's work area, or back from
+      either. }
+    procedure Minimize;
+    procedure Maximize;
+    procedure Restore;
     procedure Invalidate;
     procedure InvalidateRectangle(const Area: TRectangle);
     { Paints what is invalid now (the loop does this before waiting). }
@@ -216,7 +230,8 @@ uses
   Sys.Objects,
   Windowing.Theme,
   Windowing.Connection,
-  Windowing.HandleWatches;
+  Windowing.HandleWatches,
+  Windowing.Shell;
 
 const
   MaximumProgramWindows = 64;
@@ -538,6 +553,27 @@ begin
   SendRequest(Message, -1);
 end;
 
+procedure TWindow.SetClientSize(Width, Height: LongInt);
+begin
+  PrepareToReceive;
+  TakeNewSize(Scaled(Width), Scaled(Height), False);
+end;
+
+procedure TWindow.Minimize;
+begin
+  ManageWindow(FId, ManageMinimize);
+end;
+
+procedure TWindow.Maximize;
+begin
+  ManageWindow(FId, ManageMaximize);
+end;
+
+procedure TWindow.Restore;
+begin
+  ManageWindow(FId, ManageRestore);
+end;
+
 procedure TWindow.Invalidate;
 begin
   InvalidateRectangle(SurfaceBounds(FSurface));
@@ -695,6 +731,13 @@ begin
   if (Message.Kind = EventScaleChanged) and (Message.Window = 0) then
   begin
     TakeScaleChange(Message);
+    Exit;
+  end;
+  { About other programs' windows, the displays, notification icons:
+    for the shell. }
+  if IsShellEvent(Message.Kind) then
+  begin
+    DeliverShellEvent(Message);
     Exit;
   end;
   if (Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) then

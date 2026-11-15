@@ -103,6 +103,7 @@ uses
   Server.Composer,
   Server.Actions,
   Server.Clients,
+  Server.Shell,
   Server.Input;
 
 var
@@ -212,17 +213,6 @@ begin
   MoveWindowTo(Window, Window^.ClientLeft + DeltaX, Window^.ClientTop + DeltaY);
 end;
 
-procedure MaximizeAgain(Window: PServerWindow);
-var
-  Restore: TRectangle;
-begin
-  { The screen or the title bar is another size now. }
-  Window^.Maximized := False;
-  Restore := Window^.RestoreBounds;
-  ToggleMaximized(Window);
-  Window^.RestoreBounds := Restore;
-end;
-
 procedure TellEveryProgramAboutFirstScreen;
 var
   Message: TWindowMessage;
@@ -291,6 +281,8 @@ begin
   for Index := 0 to WindowCount - 1 do
     PlaceWindowAgain(Windows[Index], Places[Index], Changed, Before, ModeChanged);
   FollowPointerScreen;
+  { The shell lays its desktop and taskbar out again. }
+  TellShellDisplaysChanged;
 end;
 
 procedure ChangeScale(Screen: PScreen; NewPercent: LongWord);
