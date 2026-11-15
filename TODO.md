@@ -285,7 +285,7 @@ normalized (0-65535), not pixels.
 - [x] Display DPI: from EDID (physical size) where it can be read, else a
       configured value, else 96; a scale factor (1.0, 1.25, 1.5, 2.0...)
 - [x] Mapping device memory into user processes (write-combining)
-- [ ] Display modes: changing the resolution (Bochs DISPI, later native
+- [x] Display modes: changing the resolution (Bochs DISPI, later native
       drivers), EDID's list of modes, and the DPI following the mode
 - [x] libdrawing: pixel buffers, rectangles, lines, shapes, blits, clipping
       regions, alpha blending, gradients, 3D bevels
@@ -317,7 +317,7 @@ normalized (0-65535), not pixels.
       by dragging
 - [x] System colours and metrics (the theme), metrics in logical units
 - [x] Scale per display: logical units to pixels, the cursor at that scale
-- [ ] Several displays, each with its own scale; moving a window between them
+- [x] Several displays, each with its own scale; moving a window between them
 - [ ] Pressed and hot looks for the title buttons; double-click on the title bar
 - [ ] Pointer shapes per window area (resize arrows, text beam), from files
 - [ ] Copying only what moved when a window is dragged (instead of redrawing)

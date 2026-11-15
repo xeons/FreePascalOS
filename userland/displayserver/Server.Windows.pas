@@ -24,6 +24,10 @@
   if framed, the frame around it (Server.Frames draws it). The list is
   in stacking order, bottom first; topmost windows stay above the rest.
 
+  A window is on one screen at a time (Server.Desktop: the one holding
+  the middle of its frame); its frame is drawn at that screen's scale,
+  and its program draws its surface at it.
+
   A window may have an owner, another window of the same program (a
   dialog's is the window it asks for). An owned window is always above
   its owner: raising the owner raises the windows it owns above it, in
@@ -39,7 +43,8 @@ interface
 uses
   Drawing.Rectangles,
   Drawing.Surfaces,
-  Windowing.Protocol;
+  Windowing.Protocol,
+  Server.Screen;
 
 type
   PServerWindow = ^TServerWindow;
@@ -51,7 +56,9 @@ type
     OwnerWindow: PServerWindow;
     Flags: LongWord;
     Title: array[0..TitleCapacity - 1] of Char;
-    { The client area's top left on the screen, in pixels. }
+    { The screen it is on (its number). }
+    ScreenNumber: LongInt;
+    { The client area's top left on the desktop, in pixels. }
     ClientLeft: LongInt;
     ClientTop: LongInt;
     Surface: TSurface;
@@ -86,6 +93,11 @@ procedure RaiseWindow(Window: PServerWindow);
 function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
 function FindWindow(Id: LongWord): PServerWindow;
 
+{ The screen it is on, and that screen's scale. }
+function WindowScreen(Window: PServerWindow): PScreen;
+function WindowScale(Window: PServerWindow): LongWord;
+{ A metric (logical units) in pixels at the window's scale. }
+function WindowMetric(Window: PServerWindow; Value: LongInt): LongInt;
 function ClientRectangle(Window: PServerWindow): TRectangle;
 { The whole window, frame included. }
 function FrameRectangle(Window: PServerWindow): TRectangle;
@@ -239,6 +251,23 @@ begin
   Result := (Window^.Flags and WindowFramed) <> 0;
 end;
 
+function WindowScreen(Window: PServerWindow): PScreen;
+begin
+  Result := ScreenByNumber(Window^.ScreenNumber);
+  if Result = nil then
+    Result := @Screens[0];
+end;
+
+function WindowScale(Window: PServerWindow): LongWord;
+begin
+  Result := WindowScreen(Window)^.ScalePercent;
+end;
+
+function WindowMetric(Window: PServerWindow; Value: LongInt): LongInt;
+begin
+  Result := ScaledMetric(Value, WindowScale(Window));
+end;
+
 function ClientRectangle(Window: PServerWindow): TRectangle;
 begin
   Result := MakeRectangle(Window^.ClientLeft, Window^.ClientTop, Window^.Surface.Width, Window^.Surface.Height);
@@ -251,11 +280,11 @@ begin
   Result := ClientRectangle(Window);
   if not IsFramed(Window) then
     Exit;
-  Border := ScaledMetric(Theme.BorderWidth);
+  Border := WindowMetric(Window, Theme.BorderWidth);
   Result.Left := Result.Left - Border;
   Result.Right := Result.Right + Border;
   Result.Bottom := Result.Bottom + Border;
-  Result.Top := Result.Top - Border - ScaledMetric(Theme.TitleHeight);
+  Result.Top := Result.Top - Border - WindowMetric(Window, Theme.TitleHeight);
 end;
 
 function WindowAt(X, Y: LongInt): PServerWindow;

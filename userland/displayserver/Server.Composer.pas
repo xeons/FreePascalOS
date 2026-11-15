@@ -24,7 +24,10 @@
   the back buffer: the desktop, then each visible window from the bottom
   up (its frame, then its surface), then the pointer, all clipped to the
   damage, so what lies under a window is covered by it; then the damaged
-  parts go to the screen.
+  parts go to the screen. Each screen is composed in its own back
+  buffer, as much of the damage as is on it: the canvas's origin puts
+  desktop pixels where they fall in that buffer, so a window across the
+  edge between two screens is drawn on both.
 }
 unit Server.Composer;
 
@@ -67,7 +70,7 @@ procedure AddDamage(const Rectangle: TRectangle);
 var
   Visible: TRectangle;
 begin
-  if IntersectRectangles(Rectangle, ScreenBounds, Visible) then
+  if IntersectRectangles(Rectangle, DesktopBounds, Visible) then
     AddRectangleToRegion(Damage, Visible);
 end;
 
@@ -81,17 +84,21 @@ begin
   Result := not RegionIsEmpty(Damage);
 end;
 
-procedure Compose;
+procedure ComposeScreen(Screen: PScreen);
 var
   Canvas: TCanvas;
   Index: LongInt;
   Window: PServerWindow;
+  ScreenDamage: TRegion;
 begin
-  if RegionIsEmpty(Damage) then
+  CopyRegion(Damage, ScreenDamage);
+  IntersectRegionWithRectangle(ScreenDamage, Screen^.Bounds);
+  if RegionIsEmpty(ScreenDamage) then
     Exit;
-  BeginCanvas(Canvas, BackBuffer);
-  SetCanvasClip(Canvas, Damage);
-  FillRectangle(Canvas, ScreenBounds, Theme.Desktop);
+  BeginCanvas(Canvas, Screen^.BackBuffer);
+  SetCanvasOrigin(Canvas, -Screen^.Bounds.Left, -Screen^.Bounds.Top);
+  SetCanvasClip(Canvas, ScreenDamage);
+  FillRectangle(Canvas, Screen^.Bounds, Theme.Desktop);
   for Index := 0 to WindowCount - 1 do
   begin
     Window := Windows[Index];
@@ -109,7 +116,17 @@ begin
     DrawRectangleOutline(Canvas, InflateRectangle(Outline, -1), Theme.Highlight);
   end;
   DrawCursor(Canvas);
-  PresentRegion(Damage);
+  PresentScreenRegion(Screen, ScreenDamage);
+end;
+
+procedure Compose;
+var
+  Index: LongInt;
+begin
+  if RegionIsEmpty(Damage) then
+    Exit;
+  for Index := 0 to ScreenCount - 1 do
+    ComposeScreen(@Screens[Index]);
   ClearRegion(Damage);
 end;
 

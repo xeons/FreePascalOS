@@ -57,6 +57,10 @@ type
     destructor Destroy; override;
     { The default does nothing with any code. }
     procedure ReceiveMessage(var Message: TPostedMessage); virtual;
+    { Called before a queued message is delivered: a window (and a
+      control, through its window) selects its display's scale, as the
+      receiver may lay out or draw in pixels. The default does nothing. }
+    procedure PrepareToReceive; virtual;
   end;
 
 procedure DeliverMessage(Receiver: TMessageReceiver; Code: LongWord; Parameter1: PtrInt = 0; Parameter2: PtrInt = 0);
@@ -116,6 +120,10 @@ procedure TMessageReceiver.ReceiveMessage(var Message: TPostedMessage);
 begin
 end;
 
+procedure TMessageReceiver.PrepareToReceive;
+begin
+end;
+
 procedure DeliverMessage(Receiver: TMessageReceiver; Code: LongWord; Parameter1: PtrInt; Parameter2: PtrInt);
 var
   Message: TPostedMessage;
@@ -167,7 +175,10 @@ begin
     ReleaseLock(QueueLock);
     { Delivered outside the lock: the receiver may post more. }
     if Taken and (Entry.Receiver <> nil) then
+    begin
+      Entry.Receiver.PrepareToReceive;
       Entry.Receiver.ReceiveMessage(Entry.Message);
+    end;
   until not Taken;
 end;
 

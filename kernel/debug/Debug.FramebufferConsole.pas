@@ -52,6 +52,8 @@ type
     Blue: Byte;
   end;
 
+  TConsoleModeRestorer = procedure;
+
 const
   ColorBlack: TColor = (Red: $00; Green: $00; Blue: $00);
   ColorLightGray: TColor = (Red: $C0; Green: $C0; Blue: $C0);
@@ -89,6 +91,10 @@ procedure ConsoleRedraw;
 procedure SuspendConsoleDrawing;
 procedure ResumeConsoleDrawing;
 function ConsoleDrawingIsSuspended: Boolean;
+{ Called by ResumeConsoleDrawing before drawing again: the display
+  driver sets the boot mode back if the program changed it, as the
+  console draws at that size. }
+procedure SetConsoleModeRestorer(Restorer: TConsoleModeRestorer);
 { The bytes of a shadow for this framebuffer; 0 without a console. }
 function FramebufferShadowSize: QWord;
 
@@ -140,6 +146,7 @@ type
 
 var
   Console: TConsoleState;
+  ModeRestorer: TConsoleModeRestorer;
 
 { --- Pixels ------------------------------------------------------------------ }
 
@@ -259,10 +266,17 @@ begin
   Console.DrawingSuspended := True;
 end;
 
+procedure SetConsoleModeRestorer(Restorer: TConsoleModeRestorer);
+begin
+  ModeRestorer := Restorer;
+end;
+
 procedure ResumeConsoleDrawing;
 begin
   if not Console.DrawingSuspended then
     Exit;
+  if ModeRestorer <> nil then
+    ModeRestorer;
   Console.DrawingSuspended := False;
   ConsoleRedraw;
 end;

@@ -17,18 +17,22 @@
 }
 
 {
-  display - show what the display is like, or fill it
+  display - show what a display is like, list its modes, or fill it
 
-  display
-  display -f RRGGBB [-s SECONDS]
+  display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]
 
   Without options: the display's size, pixel format, physical size, DPI
-  and scale. With -f: takes the screen from the text console, fills it
-  with the colour (hexadecimal red, green, blue) with a white frame a
-  quarter inch in from the edges (so it is the same size on any
-  display), waits SECONDS (default 2) and gives the screen back.
+  and scale. -d picks a display (0, the console's, by default; 1 is
+  /dev/display1). -l lists the modes it can be set to, one a line
+  ("1024x768", the one it has marked with *). -m sets a mode for as long
+  as the program has the display (what it says and draws is at that
+  mode; closing gives back the mode there was). With -f: takes the
+  screen (from the text console, for display 0), fills it with the
+  colour (hexadecimal red, green, blue) with a white frame a quarter
+  inch in from the edges (so it is the same size on any display), waits
+  SECONDS (default 2) and gives the screen back.
 
-  Only root may open the display.
+  Only root may open a display.
 }
 program ShowDisplay;
 
@@ -45,12 +49,18 @@ uses
   Util.Options;
 
 const
-  Usage: PChar = 'Usage: display [-f RRGGBB [-s SECONDS]]'#10 +
-    'Show what the display is like, or fill it with a colour.'#10 +
-    '  -f RRGGBB   fill the screen with this colour'#10 +
-    '  -s SECONDS  how long to show it (default 2)'#10;
+  Usage: PChar = 'Usage: display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]'#10 +
+    'Show what a display is like, list its modes, or fill it with a colour.'#10 +
+    '  -d NUMBER         the display (0, the first, by default)'#10 +
+    '  -l                list the modes it can be set to'#10 +
+    '  -m WIDTHxHEIGHT   set this mode while the program runs'#10 +
+    '  -f RRGGBB         fill the screen with this colour'#10 +
+    '  -s SECONDS        how long to show it (default 2)'#10;
   OptionFill = 1;
   OptionSeconds = 2;
+  OptionNumber = 3;
+  OptionList = 4;
+  OptionMode = 5;
   DefaultSeconds = 2;
   FrameColor = $FFFFFF;
   { A quarter inch, and the frame one point thick. }
@@ -75,6 +85,24 @@ begin
       ArgumentUnsigned(Display.HeightMillimetres)]);
   WriteFormatted(StandardOutput, '%u DPI, scale %u%%'#10, [ArgumentUnsigned(Display.Dpi),
     ArgumentUnsigned(Display.ScalePercent)]);
+end;
+
+procedure ListModes(const Display: TDisplay);
+var
+  Index: LongInt;
+  Width: LongWord;
+  Height: LongWord;
+  Mark: PChar;
+begin
+  for Index := 0 to DisplayModeCount(Display) - 1 do
+    if DisplayModeAt(Display, Index, Width, Height) then
+    begin
+      Mark := '';
+      if (Width = Display.Width) and (Height = Display.Height) then
+        Mark := ' *';
+      WriteFormatted(StandardOutput, '%ux%u%s'#10, [ArgumentUnsigned(Width), ArgumentUnsigned(Height),
+        ArgumentText(Mark)]);
+    end;
 end;
 
 procedure FillRectangle(const Display: TDisplay; Left, Top, Width, Height: LongWord; Pixel: LongWord);
@@ -120,12 +148,21 @@ var
   Seconds: QWord;
   Display: TDisplay;
   Error: LongInt;
+  Number: QWord;
+  List: Boolean;
+  ModeWidth: LongWord;
+  ModeHeight: LongWord;
 begin
   Fill := False;
   Color := 0;
   Seconds := DefaultSeconds;
+  Number := 0;
+  List := False;
+  ModeWidth := 0;
+  ModeHeight := 0;
   BeginOptions(Parser, [OptionDefinition('f', 'fill', True, OptionFill),
-    OptionDefinition('s', 'seconds', True, OptionSeconds)], Usage);
+    OptionDefinition('s', 'seconds', True, OptionSeconds), OptionDefinition('d', 'display', True, OptionNumber),
+    OptionDefinition('l', 'list', False, OptionList), OptionDefinition('m', 'mode', True, OptionMode)], Usage);
   while NextOption(Parser, Code, OptionValue) do
     case Code of
       OptionFill:
@@ -137,18 +174,37 @@ begin
       OptionSeconds:
         if not ParseUnsigned(OptionValue, Seconds) then
           FailWithUsageHint('the time must be a whole number of seconds', []);
+      OptionNumber:
+        if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
+          FailWithUsageHint('the display must be a number', []);
+      OptionList:
+        List := True;
+      OptionMode:
+        if not ParseSize(OptionValue, ModeWidth, ModeHeight) then
+          FailWithUsageHint('the mode must be WIDTHxHEIGHT', []);
     end;
   if Parser.OperandCount <> 0 then
     FailWithUsageHint('no operands are taken', []);
-  Error := OpenDisplay(Display);
+  Error := OpenDisplay(Display, LongInt(Number));
   if Error <> ErrorNone then
-    FailWithError(1, Error, '/dev/display', []);
+    FailWithError(1, Error, 'display %u', [ArgumentUnsigned(Number)]);
+  if ModeWidth > 0 then
+  begin
+    Error := SetDisplayMode(Display, ModeWidth, ModeHeight);
+    if Error <> ErrorNone then
+    begin
+      CloseDisplay(Display);
+      FailWithError(1, Error, 'the mode %ux%u', [ArgumentUnsigned(ModeWidth), ArgumentUnsigned(ModeHeight)]);
+    end;
+  end;
   if Fill then
   begin
     FillDisplay(Display, LongWord(Color));
     KernelSleep(Seconds * 1000);
   end;
+  if List then
+    ListModes(Display);
   CloseDisplay(Display);
-  if not Fill then
+  if not Fill and not List then
     DescribeDisplay(Display);
 end.

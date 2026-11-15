@@ -26,9 +26,10 @@
   goes, a border or corner shows an outline of the new size and asks
   the program for it when the button is let go, and the title buttons
   act when let go over them (close asks the program, maximize toggles,
-  minimize hides). Keys go to the active window; Alt+F4 asks it to
-  close. Pointer events carry the modifiers held (as the last key event
-  said), so a program can tell a Ctrl+click or a Shift+click.
+  minimize hides). A window dropped on another screen takes its scale.
+  Keys go to the active window; Alt+F4 asks it to close. Pointer events
+  carry the modifiers held (as the last key event said), so a program
+  can tell a Ctrl+click or a Shift+click.
 
   A disabled window (the owner of a modal dialog) gets nothing: the
   pointer over it is over no window, and pressing a button on it (its
@@ -72,7 +73,8 @@ uses
   Server.Cursor,
   Server.Frames,
   Server.Composer,
-  Server.Actions;
+  Server.Actions,
+  Server.Scale;
 
 const
   EventsPath: PChar = '/dev/events';
@@ -188,8 +190,8 @@ begin
     Result.Top := Result.Top + DeltaY;
   if DragArea in [HitBottom, HitBottomLeft, HitBottomRight] then
     Result.Bottom := Result.Bottom + DeltaY;
-  MinimumWidth := ScaledMetric(Theme.MinimumWidth);
-  MinimumHeight := ScaledMetric(Theme.MinimumHeight);
+  MinimumWidth := WindowMetric(DragWindow, Theme.MinimumWidth);
+  MinimumHeight := WindowMetric(DragWindow, Theme.MinimumHeight);
   if RectangleWidth(Result) < MinimumWidth then
     if DragArea in [HitLeft, HitTopLeft, HitBottomLeft] then
       Result.Left := Result.Right - MinimumWidth
@@ -209,12 +211,12 @@ var
 begin
   if OutlineVisible then
     AddDamage(Outline);
-  Border := ScaledMetric(Theme.BorderWidth);
+  Border := WindowMetric(DragWindow, Theme.BorderWidth);
   Outline := Bounds;
   Outline.Left := Outline.Left - Border;
   Outline.Right := Outline.Right + Border;
   Outline.Bottom := Outline.Bottom + Border;
-  Outline.Top := Outline.Top - Border - ScaledMetric(Theme.TitleHeight);
+  Outline.Top := Outline.Top - Border - WindowMetric(DragWindow, Theme.TitleHeight);
   OutlineVisible := True;
   AddDamage(Outline);
 end;
@@ -251,11 +253,15 @@ var
 begin
   Window := DragWindow;
   case Drag of
+    DragMove:
+      { Dropped on another screen: it takes that screen's scale. }
+      SettleWindowOnScreen(Window);
     DragResize:
       begin
         AddDamage(Outline);
         OutlineVisible := False;
         RequestResize(Window, ResizedBounds);
+        SettleWindowOnScreen(Window);
       end;
     DragButton:
       if HitTest(Window, PointerX, PointerY) = DragArea then

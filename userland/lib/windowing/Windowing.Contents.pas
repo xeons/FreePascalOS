@@ -30,6 +30,7 @@ uses
   Windowing.Protocol,
   Windowing.Theme,
   Windowing.Connection,
+  Windowing.Displays,
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.Windows;

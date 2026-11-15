@@ -23,7 +23,7 @@
   title bar (a gradient, the title, and the minimize, maximize and close
   buttons at its right end) above the client area. Sizes come from the
   theme in logical units; the title's font from its size in points at
-  the display's DPI.
+  the DPI of the screen the window is on.
 }
 unit Server.Frames;
 
@@ -41,10 +41,6 @@ type
   THitArea = (HitNothing, HitClient, HitTitle, HitMinimize, HitMaximize, HitClose,
     HitLeft, HitRight, HitTop, HitBottom, HitTopLeft, HitTopRight, HitBottomLeft, HitBottomRight);
 
-var
-  { The title's font, picked at start. }
-  TitleFace: PFontFace;
-
 function TitleBarRectangle(Window: PServerWindow): TRectangle;
 function TitleButtonRectangle(Window: PServerWindow; Button: THitArea): TRectangle;
 procedure DrawFrame(const Canvas: TCanvas; Window: PServerWindow; Active: Boolean);
@@ -59,7 +55,8 @@ uses
   Drawing.Shapes,
   Font.Text,
   Windowing.Protocol,
-  Server.Theme;
+  Server.Theme,
+  Server.Screen;
 
 function TitleBarRectangle(Window: PServerWindow): TRectangle;
 var
@@ -67,7 +64,7 @@ var
   Border: LongInt;
 begin
   Frame := FrameRectangle(Window);
-  Border := ScaledMetric(Theme.BorderWidth) - 1;
+  Border := WindowMetric(Window, Theme.BorderWidth) - 1;
   Result.Left := Frame.Left + Border;
   Result.Right := Frame.Right - Border;
   Result.Top := Frame.Top + Border;
@@ -83,9 +80,9 @@ var
   Gap: LongInt;
 begin
   Bar := TitleBarRectangle(Window);
-  Width := ScaledMetric(Theme.TitleButtonWidth);
-  Height := ScaledMetric(Theme.TitleButtonHeight);
-  Gap := ScaledMetric(2);
+  Width := WindowMetric(Window, Theme.TitleButtonWidth);
+  Height := WindowMetric(Window, Theme.TitleButtonHeight);
+  Gap := WindowMetric(Window, 2);
   Right := Bar.Right - Gap;
   if Button <> HitClose then
   begin
@@ -121,11 +118,11 @@ begin
   Box := TitleButtonRectangle(Window, Button);
   FillRectangle(Canvas, Box, Theme.Face);
   DrawBevel(Canvas, Box, RaisedBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
-  Thickness := ScaledMetric(1);
+  Thickness := WindowMetric(Window, 1);
   if Thickness < 1 then
     Thickness := 1;
   { The glyph in a square in the middle. }
-  Size := RectangleHeight(Box) - 2 * ScaledMetric(4);
+  Size := RectangleHeight(Box) - 2 * WindowMetric(Window, 4);
   Glyph := MakeRectangle(Box.Left + (RectangleWidth(Box) - Size) div 2, Box.Top + (RectangleHeight(Box) - Size) div 2,
     Size, Size);
   case Button of
@@ -152,6 +149,7 @@ var
   TextColor: TColor;
   Client: TRectangle;
   TextClip: TCanvas;
+  TitleFace: PFontFace;
 begin
   Frame := FrameRectangle(Window);
   Client := ClientRectangle(Window);
@@ -174,13 +172,14 @@ begin
     FillHorizontalGradient(Canvas, Bar, Theme.InactiveTitleStart, Theme.InactiveTitleEnd);
     TextColor := Theme.InactiveTitleText;
   end;
+  TitleFace := WindowScreen(Window)^.TitleFace;
   if TitleFace <> nil then
   begin
     { The title stops before the buttons. }
     TextClip := Canvas;
     NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top,
-      TitleButtonRectangle(Window, HitMinimize).Left - Bar.Left - ScaledMetric(2), RectangleHeight(Bar)));
-    DrawText(TextClip, TitleFace^, Bar.Left + ScaledMetric(Theme.TitleTextIndent),
+      TitleButtonRectangle(Window, HitMinimize).Left - Bar.Left - WindowMetric(Window, 2), RectangleHeight(Bar)));
+    DrawText(TextClip, TitleFace^, Bar.Left + WindowMetric(Window, Theme.TitleTextIndent),
       Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, @Window^.Title[0], TextColor);
   end;
   DrawTitleButton(Canvas, Window, HitClose);
@@ -217,11 +216,11 @@ begin
     if RectangleContainsPoint(TitleButtonRectangle(Window, HitMinimize), X, Y) then
       Exit(HitMinimize);
   end;
-  Border := ScaledMetric(Theme.BorderWidth);
+  Border := WindowMetric(Window, Theme.BorderWidth);
   if HasSizeButtons(Window) and not Window^.Maximized then
   begin
     { The corners reach a title bar's height along each edge. }
-    Corner := ScaledMetric(Theme.TitleHeight);
+    Corner := WindowMetric(Window, Theme.TitleHeight);
     Left := X < Frame.Left + Border;
     Right := X >= Frame.Right - Border;
     Top := Y < Frame.Top + Border;

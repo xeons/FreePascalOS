@@ -30,6 +30,10 @@
     button B press X Y     a button on it (surface pixels)
     key 0xCODE C           a key pressed (its character, if any)
     resized W H            given a new size (it draws itself again)
+    moved L T              its place on the desktop (logical units)
+    scale P D              its scale (percent) and DPI changed (it moved
+                           to another display, or its display changed):
+                           it draws itself again at the same logical size
     close                  its close button was pressed: it ends
 
   Talks the protocol directly (Windowing.Protocol).
@@ -78,6 +82,7 @@ var
   Color: TColor;
   Fonts: TFontSet;
   TextFace: PFontFace;
+  FontsLoaded: Boolean;
   Section: Int64;
   Pixels: Pointer;
   SurfaceWidth: LongInt;
@@ -153,11 +158,41 @@ begin
   Scale := Message.Code;
 end;
 
+{ Gives the window a new surface of Width x Height pixels. }
+procedure ReplaceSurface(Width, Height: LongInt);
+var
+  Request: TWindowMessage;
+  NewSection: Int64;
+begin
+  NewSection := DrawSurface(Width, Height);
+  Request := NewMessage(RequestSetSurface, WindowId);
+  Request.SurfaceWidth := SurfaceWidth;
+  Request.SurfaceHeight := SurfaceHeight;
+  Send(Request, NewSection);
+  CloseHandle(Section);
+  Section := NewSection;
+end;
+
+{ The same logical size at the new scale; the text at the new DPI. }
+procedure TakeNewScale(NewScale, NewDpi: LongWord);
+var
+  LogicalWidth: LongInt;
+  LogicalHeight: LongInt;
+begin
+  LogicalWidth := PixelsToLogical(SurfaceWidth, Scale);
+  LogicalHeight := PixelsToLogical(SurfaceHeight, Scale);
+  Scale := NewScale;
+  Dpi := NewDpi;
+  if FontsLoaded then
+    TextFace := SelectFace(Fonts, 90, Dpi, False);
+  ReplaceSurface(LogicalToPixels(LogicalWidth, Scale), LogicalToPixels(LogicalHeight, Scale));
+  Say('scale %u %u'#10, [ArgumentUnsigned(Scale), ArgumentUnsigned(Dpi)]);
+end;
+
 procedure HandleEvents;
 var
   Message: TWindowMessage;
   Request: TWindowMessage;
-  NewSection: Int64;
 begin
   while Receive(Message, InfiniteWait) do
     case Message.Kind of
@@ -175,15 +210,15 @@ begin
             Say('key 0x%X'#10, [ArgumentUnsigned(Message.Code)]);
       EventResized:
         begin
-          NewSection := DrawSurface(Message.SurfaceWidth, Message.SurfaceHeight);
-          Request := NewMessage(RequestSetSurface, WindowId);
-          Request.SurfaceWidth := SurfaceWidth;
-          Request.SurfaceHeight := SurfaceHeight;
-          Send(Request, NewSection);
-          CloseHandle(Section);
-          Section := NewSection;
+          ReplaceSurface(Message.SurfaceWidth, Message.SurfaceHeight);
           Say('resized %d %d'#10, [ArgumentNumber(SurfaceWidth), ArgumentNumber(SurfaceHeight)]);
         end;
+      EventMoved:
+        Say('moved %d %d'#10, [ArgumentNumber(Message.Left), ArgumentNumber(Message.Top)]);
+      EventScaleChanged:
+        { For window 0 it is about the first display, not this window. }
+        if Message.Window = WindowId then
+          TakeNewScale(Message.Code, LongWord(Message.Value));
       EventCloseRequested:
         begin
           Say('close'#10, []);
@@ -238,7 +273,8 @@ begin
       end;
     end;
   Connect;
-  if LoadSystemFonts(Fonts) then
+  FontsLoaded := LoadSystemFonts(Fonts);
+  if FontsLoaded then
     TextFace := SelectFace(Fonts, 90, Dpi, False);
   Section := DrawSurface(LogicalToPixels(Width, Scale), LogicalToPixels(Height, Scale));
   if Section < 0 then

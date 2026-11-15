@@ -46,6 +46,11 @@ procedure ShowWindow(Window: PServerWindow; Show: Boolean);
 { A disabled window is not activated and gets no input. }
 procedure EnableWindow(Window: PServerWindow; Enable: Boolean);
 procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
+{ Tells the program where its window is (logical units: EventMoved). }
+procedure TellWindowPlace(Window: PServerWindow);
+{ Tells the program the scale and DPI its window is at (EventScaleChanged
+  for the window), so it gives it a surface for them. }
+procedure TellWindowScale(Window: PServerWindow);
 { Asks the program for a surface of a new size (it answers with
   RequestSetSurface), moving the client area to Bounds' top left. }
 procedure RequestResize(Window: PServerWindow; const Bounds: TRectangle);
@@ -61,6 +66,7 @@ uses
   Sys.Objects,
   Server.Theme,
   Server.Screen,
+  Server.Desktop,
   Server.Composer,
   Server.Clients,
   Server.Input;
@@ -225,9 +231,30 @@ begin
     ActivateWindow(EnabledOwnedWindow(Window));
 end;
 
-procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
+procedure TellWindowPlace(Window: PServerWindow);
 var
   Message: TWindowMessage;
+begin
+  Message := NewMessage(EventMoved, Window^.Id);
+  DesktopToLogical(Window^.ClientLeft, Window^.ClientTop, Message.Left, Message.Top);
+  SendToProgram(Window, Message);
+end;
+
+procedure TellWindowScale(Window: PServerWindow);
+var
+  Message: TWindowMessage;
+  Screen: PScreen;
+begin
+  Screen := WindowScreen(Window);
+  Message := NewMessage(EventScaleChanged, Window^.Id);
+  Message.Width := Screen^.Device.Width;
+  Message.Height := Screen^.Device.Height;
+  Message.Value := Screen^.Dpi;
+  Message.Code := Screen^.ScalePercent;
+  SendToProgram(Window, Message);
+end;
+
+procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
 begin
   if (Window^.ClientLeft = ClientLeft) and (Window^.ClientTop = ClientTop) then
     Exit;
@@ -238,10 +265,7 @@ begin
   if Window^.Visible then
     DamageWindow(Window);
   { The program knows where its window is (to place pop-ups). }
-  Message := NewMessage(EventMoved, Window^.Id);
-  Message.Left := PixelsToLogical(ClientLeft, ScalePercent);
-  Message.Top := PixelsToLogical(ClientTop, ScalePercent);
-  SendToProgram(Window, Message);
+  TellWindowPlace(Window);
 end;
 
 procedure RequestResize(Window: PServerWindow; const Bounds: TRectangle);
@@ -258,6 +282,7 @@ end;
 procedure ToggleMaximized(Window: PServerWindow);
 var
   Title: LongInt;
+  Bounds: TRectangle;
 begin
   if Window^.Maximized then
   begin
@@ -267,10 +292,12 @@ begin
   end;
   Window^.RestoreBounds := ClientRectangle(Window);
   Window^.Maximized := True;
-  { The client area fills the screen below the title bar; the frame's
+  { The client area fills its screen below the title bar; the frame's
     borders lie just off the screen. }
-  Title := ScaledMetric(Theme.TitleHeight);
-  RequestResize(Window, MakeRectangle(0, Title, RectangleWidth(ScreenBounds), RectangleHeight(ScreenBounds) - Title));
+  Title := WindowMetric(Window, Theme.TitleHeight);
+  Bounds := WindowScreen(Window)^.Bounds;
+  RequestResize(Window, MakeRectangle(Bounds.Left, Bounds.Top + Title, RectangleWidth(Bounds),
+    RectangleHeight(Bounds) - Title));
 end;
 
 procedure ReleaseSurface(Window: PServerWindow);

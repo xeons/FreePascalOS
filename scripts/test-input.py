@@ -108,6 +108,9 @@ qemu = subprocess.Popen([
     '-device', 'intel-hda', '-device', 'hda-output,audiodev=sound0',
     '-audiodev', 'wav,id=sound1,path=' + recordings['ac97'], '-device', 'AC97,audiodev=sound1',
     '-audiodev', 'wav,id=sound2,path=' + recordings['usb'], '-device', 'usb-audio,bus=xhci.0,audiodev=sound2',
+    # A second display (its own device, with no firmware picture): the
+    # first stays the console's at 1280x800; this one starts at 1024x768.
+    '-device', 'bochs-display,id=video1,xres=1024,yres=768',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
     '-monitor', 'unix:' + monitor_path + ',server,nowait',
@@ -515,22 +518,32 @@ checks.append(('input events: a key with its character', events_ok and b'key 0x1
 type_on_serial(b'm=CLEAN; echo CONSOLE $m\r')
 checks.append(('input events: the key did not reach the console', wait_for('CONSOLE CLEAN', 10)))
 
-def take_screen():
-    # A fresh screen dump: a function giving the colour at (x, y) as
-    # 'rrggbb' ('' if there is no dump or the point is off it).
-    send_to_monitor('screendump ' + screen_path + '\n')
+def take_screen(device=''):
+    # A fresh screen dump (of the first display, or of the QEMU device
+    # named): a function giving the colour at (x, y) as 'rrggbb' ('' if
+    # there is no dump or the point is off it); its size is pixel.size.
+    try:
+        os.remove(screen_path)
+    except OSError:
+        pass
+    send_to_monitor('screendump ' + screen_path + ((' ' + device) if device else '') + '\n')
     time.sleep(1)
     try:
         data = open(screen_path, 'rb').read()
         header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data)
-        width = int(header.group(1))
+        width, height = int(header.group(1)), int(header.group(2))
         start = header.end()
     except (OSError, AttributeError):
-        return lambda x, y: ''
+        missing = lambda x, y: ''
+        missing.size = (0, 0)
+        return missing
 
     def pixel(x, y):
+        if not (0 <= x < width and 0 <= y < height):
+            return ''
         offset = start + (y * width + x) * 3
         return data[offset:offset + 3].hex()
+    pixel.size = (width, height)
     return pixel
 
 
@@ -554,6 +567,31 @@ time.sleep(0.5)
 # (In the margin, where no text is.)
 checks.append(('display device: the console has the screen again', given_back and screen_pixel(2, 400) == '101830'))
 
+# Display modes: the list (from QEMU's EDID and the common sizes), a
+# program setting 1024x768 for as long as it has the display (the screen
+# dump is that size, the frame a quarter inch in at 80 DPI: 20 pixels),
+# then the boot mode and the console back. The second display is its own
+# device, set to the mode its EDID prefers.
+type_on_serial(b'display -l; m=DONE; echo MODES $m\r')
+modes_ok = wait_for('MODES DONE', 10)
+checks.append(('display modes: listed',
+               modes_ok and re.search(rb'\n1024x768\r?\n', received) is not None and b'1280x800 *' in received))
+type_on_serial(b'display -m 1024x768 -f 663399 -s 3; m=DONE; echo MODE $m\r')
+time.sleep(1.5)
+pixel = take_screen()
+checks.append(('display modes: a program sets 1024x768',
+               pixel.size == (1024, 768) and pixel(512, 400) == '663399' and pixel(21, 400) == 'ffffff'))
+mode_given_back = wait_for('MODE DONE', 15)
+time.sleep(0.5)
+pixel = take_screen()
+checks.append(('display modes: the boot mode and the console back after it',
+               mode_given_back and pixel.size == (1280, 800) and pixel(2, 400) == '101830'))
+type_on_serial(b'display -d 1; m=DONE; echo SECOND $m\r')
+second_ok = wait_for('SECOND DONE', 10)
+checks.append(('display modes: a second display, driven natively',
+               second_ok and b'1024x768 pixels, 4096 bytes a line' in received and
+               take_screen('video1').size == (1024, 768)))
+
 # Drawing with libdrawing and libfont: drawtest draws a window (at 100
 # DPI everything is its logical size: the window at 80,60, 400 wide). The
 # desktop, the window's face, the title bar's gradient and its white text
@@ -568,10 +606,16 @@ checks.append(('drawing: desktop, window, title bar and its text',
 checks.append(('drawing: fonts picked by point size and DPI',
                wait_for('100 DPI: title 8x14 bold, text 6x12', 15) and wait_for('DRAWN DONE', 10)))
 
+# The display server's desktop: the first display (1280x800) and the
+# second (1024x768) to its right. The tablet spans all of it.
+desktop = {'width': 2304, 'height': 800}
+
+
 def point_tablet_at(x, y):
-    # The tablet at screen pixel (x, y): QEMU's range is 0-32767 across
-    # the 1280x800 screen.
-    place_tablet((x * 32767 + 639) // 1279, (y * 32767 + 399) // 799)
+    # The tablet at desktop pixel (x, y): QEMU's range is 0-32767 across
+    # the whole desktop.
+    width, height = desktop['width'], desktop['height']
+    place_tablet((x * 32767 + (width - 1) // 2) // (width - 1), (y * 32767 + (height - 1) // 2) // (height - 1))
 
 
 def click_at(x, y):
@@ -666,6 +710,68 @@ checks.append(('display server: ended, the console has the screen again',
                wait_for('SERVER DONE', 15) and screen_pixel(2, 400) == '101830'))
 type_on_serial(b'kill %2 2>/dev/null; wait\r')
 time.sleep(1)
+
+
+def wait_for_count(text, count, seconds):
+    # The text seen at least count times (it may have come before).
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        collect(0.2)
+        if received.count(text.encode()) >= count:
+            return True
+    return False
+
+
+# Two displays: the second (1024x768) to the right of the first, at 150%
+# (displayscale -d 1). A window dragged by its title bar across the edge
+# shows on the second display (its own screen dump) and is told its new
+# scale (wintest prints it, and draws its 300x200 logical units as
+# 450x300 pixels: from 220,210 there). Then the first display set to
+# 1024x768 (displaymode) with a window near its right edge: the screen
+# dump is that size, the window is moved onto it (its frame ends at the
+# edge: the client area at 720) and told the new DPI (80), the second
+# display's window stays; then back to 1280x800.
+servers_before = received.count(b'displayserver: display 1: 1024x768 at 1280,0')
+type_on_serial(b'displayserver &\r')
+two_displays = wait_for_count('displayserver: display 1: 1024x768 at 1280,0', servers_before + 1, 20)
+time.sleep(1)
+type_on_serial(b'displayscale -d 1 150\r')
+second_scaled = wait_for('scale 150%, 150 DPI', 10)
+type_on_serial(b'wintest -t Travel -x 100 -y 100 -c 80C0F0 > /tmp/w3.log &\r')
+time.sleep(2)
+drag(300, 90, 1700, 200)
+time.sleep(1)
+second = take_screen('video1')
+first = take_screen()
+type_on_serial(b'm=DONE; cat /tmp/w3.log; echo TRAVEL $m\r')
+travelled = wait_for('TRAVEL DONE', 10)
+checks.append(('several displays: a window dragged onto the second display',
+               two_displays and second.size == (1024, 768) and second(400, 400) == '80c0f0' and
+               first(250, 200) == '2f5f7a'))
+checks.append(('several displays: the window told the second display\'s scale',
+               second_scaled and travelled and b'scale 150 150' in received and second(660, 500) == '80c0f0'))
+type_on_serial(b'wintest -t Edge -x 900 -y 300 -c F0C080 > /tmp/w4.log &\r')
+time.sleep(2)
+type_on_serial(b'displaymode 1024x768\r')
+mode_set = wait_for('display 0: 1024x768, at 0,0 size 1024x768, scale 100%, 80 DPI', 10)
+time.sleep(1.5)
+first = take_screen()
+second = take_screen('video1')
+type_on_serial(b'm=DONE; cat /tmp/w4.log; echo EDGE $m\r')
+edge_logged = wait_for('EDGE DONE', 10)
+checks.append(('display modes: the server sets 1024x768, windows kept on the screen',
+               mode_set and first.size == (1024, 768) and first(900, 400) == 'f0c080' and
+               first(1018, 400) == 'f0c080' and edge_logged and b'moved 720 300' in received and
+               b'scale 100 80' in received and second(400, 400) == '80c0f0'))
+type_on_serial(b'displaymode 1280x800\r')
+mode_back = wait_for('display 0: 1280x800, at 0,0 size 1280x800, scale 100%, 100 DPI', 10)
+time.sleep(1.5)
+first = take_screen()
+checks.append(('display modes: the server sets 1280x800 again',
+               mode_back and first.size == (1280, 800) and first(900, 400) == 'f0c080' and first(1100, 400) == '2f5f7a'))
+type_on_serial(b'kill %2 %3; kill %1; wait; m=DONE; echo DISPLAYS $m\r')
+checks.append(('several displays: the server ended, the console has the screen again',
+               wait_for('DISPLAYS DONE', 15) and screen_pixel(2, 400) == '101830'))
 
 # Controls (libcontrols, controlsdemo, client area at 120,80): keys to
 # the edit box, Tab to the check box and Space, a click on a radio
