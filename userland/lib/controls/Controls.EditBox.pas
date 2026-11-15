@@ -22,11 +22,14 @@
   The caret and the selection are character positions (the text is
   UTF-8). Typing replaces the selection; Backspace and Delete remove a
   character or the selection; the arrows, Home and End move the caret
-  (with Shift they extend the selection); Ctrl+A selects everything. A
-  click puts the caret at the nearest character boundary, dragging
-  selects. The text scrolls sideways to keep the caret in view. Enter
-  is left for the window (its default button). Every change of the text
-  is announced (OnChange, NotifyChanged).
+  (with Shift they extend the selection). The edit commands
+  (Controls.EditCommands) cut, copy and paste through the clipboard and
+  select everything, from their keys or the context menu a right click
+  shows; pasted text stops at its first line break, as the box has one
+  line. A click puts the caret at the nearest character boundary,
+  dragging selects. The text scrolls sideways to keep the caret in view.
+  Enter is left for the window (its default button). Every change of
+  the text is announced (OnChange, NotifyChanged).
 }
 unit Controls.EditBox;
 
@@ -37,7 +40,8 @@ interface
 
 uses
   Drawing.Canvas,
-  Controls.Base;
+  Controls.Base,
+  Controls.EditCommands;
 
 type
   TEditBox = class(TControl)
@@ -56,6 +60,7 @@ type
     procedure ScrollToCaret;
     function SelectionStart: LongInt;
     function SelectionEnd: LongInt;
+    function HasSelection: Boolean;
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
@@ -67,6 +72,10 @@ type
     constructor Create(AParent: TControl); override;
     procedure SelectAll;
     function SelectedText: string;
+    procedure CutToClipboard;
+    procedure CopyToClipboard;
+    procedure PasteFromClipboard;
+    procedure RunEditCommand(Command: TEditCommand);
     property CaretPosition: LongInt read FCaret;
     { 0: no limit (characters). }
     property MaximumLength: LongInt read FMaximumLength write FMaximumLength;
@@ -82,10 +91,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
-
-const
-  CharacterA = $1E;
+  Controls.Text,
+  Controls.Clipboard;
 
 constructor TEditBox.Create(AParent: TControl);
 begin
@@ -135,6 +142,53 @@ end;
 function TEditBox.SelectedText: string;
 begin
   Result := CharactersOf(Text, SelectionStart, SelectionEnd - SelectionStart);
+end;
+
+function TEditBox.HasSelection: Boolean;
+begin
+  Result := FAnchor <> FCaret;
+end;
+
+procedure TEditBox.CopyToClipboard;
+begin
+  if HasSelection then
+    SetClipboardText(SelectedText);
+end;
+
+procedure TEditBox.CutToClipboard;
+begin
+  if not HasSelection or FReadOnly then
+    Exit;
+  SetClipboardText(SelectedText);
+  ReplaceSelection('');
+end;
+
+{ The clipboard's text up to its first line break: a line of it. }
+function FirstLineOf(const Text: string): string;
+var
+  Index: LongInt;
+begin
+  for Index := 1 to Length(Text) do
+    if (Text[Index] = #10) or (Text[Index] = #13) then
+      Exit(Copy(Text, 1, Index - 1));
+  Result := Text;
+end;
+
+procedure TEditBox.PasteFromClipboard;
+begin
+  if FReadOnly or not ClipboardHasText then
+    Exit;
+  ReplaceSelection(FirstLineOf(ClipboardText));
+end;
+
+procedure TEditBox.RunEditCommand(Command: TEditCommand);
+begin
+  case Command of
+    EditCommandCut: CutToClipboard;
+    EditCommandCopy: CopyToClipboard;
+    EditCommandPaste: PasteFromClipboard;
+    EditCommandSelectAll: SelectAll;
+  end;
 end;
 
 procedure TEditBox.SelectAll;
@@ -223,12 +277,13 @@ end;
 function TEditBox.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Extend: Boolean;
+  Command: TEditCommand;
 begin
   Result := True;
   Extend := (Modifiers and ModifierShift) <> 0;
-  if ((Modifiers and ModifierControl) <> 0) and (Code = CharacterA) then
+  if EditCommandOfKey(Code, Modifiers, Command) then
   begin
-    SelectAll;
+    RunEditCommand(Command);
     Exit;
   end;
   case Code of
@@ -277,6 +332,10 @@ end;
 procedure TEditBox.PointerUp(X, Y: LongInt; Button: LongWord);
 begin
   FSelecting := False;
+  { The context menu opens as the button is let go, so the release does
+    not land on the menu. }
+  if Button = ButtonRight then
+    ShowEditMenu(Self, X, Y, AvailableEditCommands(HasSelection, FReadOnly), @RunEditCommand);
 end;
 
 procedure TEditBox.Paint(var Canvas: TCanvas);

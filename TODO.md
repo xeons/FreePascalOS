@@ -336,8 +336,8 @@ normalized (0-65535), not pixels.
       scroll bar, status bar, progress bar, panel, group box
 - [x] libcontrols: multi-line edit box, list box, combo box, menu bar and pop-up
       menus, toolbar, tab control, tree view, list view (details)
-- [ ] List view: icon views, several selected, sorting helpers; tree view lines
-- [ ] Clipboard for the edit boxes (step 8 has the system clipboard)
+- [x] List view: icon views, several selected, sorting helpers; tree view lines
+- [x] Clipboard for the edit boxes (step 8 has the system clipboard)
 - [x] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
       accelerators; message boxes; layout in logical units, scaled
 - [ ] Mnemonics (Alt+underlined letter) for menus, buttons and labels; F10 and Alt

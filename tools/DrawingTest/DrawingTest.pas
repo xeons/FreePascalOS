@@ -331,6 +331,84 @@ begin
   FreeSurface(Surface);
 end;
 
+procedure TestStretchedCopies;
+var
+  Surface: TSurface;
+  Source: TSurface;
+  Canvas: TCanvas;
+begin
+  { A 2x2 source of four colours doubled to 4x4: each a 2x2 block. }
+  Source := NewSurface(2, 2, $FFFF0000);
+  SetSurfacePixel(Source, 1, 0, $FF00FF00);
+  SetSurfacePixel(Source, 0, 1, $FF0000FF);
+  SetSurfacePixel(Source, 1, 1, $80FFFFFF);
+  Surface := NewSurface(8, 8, ColorBlack);
+  BeginCanvas(Canvas, Surface);
+  DrawSurfaceStretched(Canvas, Source, SurfaceBounds(Source), MakeRectangle(2, 2, 4, 4), False);
+  Check('stretch: blocks', (GetSurfacePixel(Surface, 2, 2) = $FFFF0000) and (GetSurfacePixel(Surface, 3, 3) = $FFFF0000) and
+    (GetSurfacePixel(Surface, 4, 2) = $FF00FF00) and (GetSurfacePixel(Surface, 5, 3) = $FF00FF00) and
+    (GetSurfacePixel(Surface, 2, 5) = $FF0000FF) and (GetSurfacePixel(Surface, 5, 5) = $80FFFFFF));
+  Check('stretch: nothing outside', (CountPixels(Surface, ColorBlack) = 48) and (GetSurfacePixel(Surface, 6, 6) = ColorBlack));
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawSurfaceStretched(Canvas, Source, SurfaceBounds(Source), MakeRectangle(0, 0, 4, 4), True);
+  CheckColor('stretch: blended', GetSurfacePixel(Surface, 3, 3), $FF808080);
+  { Shrunk: 2x2 to one pixel takes the pixel under the centre, (1, 1). }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawSurfaceStretched(Canvas, Source, SurfaceBounds(Source), MakeRectangle(7, 7, 1, 1), False);
+  Check('shrink: the pixel under the centre', (GetSurfacePixel(Surface, 7, 7) = $80FFFFFF) and
+    (CountPixels(Surface, ColorBlack) = 63));
+  { Clipped by the canvas: only the clip's pixels change. }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  NarrowCanvasClip(Canvas, MakeRectangle(0, 0, 3, 8));
+  DrawSurfaceStretched(Canvas, Source, SurfaceBounds(Source), MakeRectangle(0, 0, 8, 8), False);
+  Check('stretch: clipped', (GetSurfacePixel(Surface, 2, 0) = $FFFF0000) and (GetSurfacePixel(Surface, 3, 0) = ColorBlack) and
+    (CountPixels(Surface, ColorBlack) = 40));
+  FreeSurface(Source);
+  FreeSurface(Surface);
+end;
+
+procedure TestDottedLines;
+var
+  Surface: TSurface;
+  Canvas: TCanvas;
+begin
+  Surface := NewSurface(10, 10, ColorBlack);
+  BeginCanvas(Canvas, Surface);
+  DrawDottedHorizontalLine(Canvas, 0, 10, 0, 1, ColorWhite);
+  Check('dotted horizontal: every other pixel', (GetSurfacePixel(Surface, 0, 0) = ColorWhite) and
+    (GetSurfacePixel(Surface, 1, 0) = ColorBlack) and (GetSurfacePixel(Surface, 8, 0) = ColorWhite) and
+    (CountPixels(Surface, ColorWhite) = 5));
+  { On an odd row the dots are on odd columns: one checkerboard. }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawDottedHorizontalLine(Canvas, 2, 7, 3, 1, ColorWhite);
+  Check('dotted horizontal: placed by the surface, not the start', (GetSurfacePixel(Surface, 2, 3) = ColorBlack) and
+    (GetSurfacePixel(Surface, 3, 3) = ColorWhite) and (GetSurfacePixel(Surface, 5, 3) = ColorWhite) and
+    (CountPixels(Surface, ColorWhite) = 2));
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawDottedVerticalLine(Canvas, 1, 0, 10, 1, ColorWhite);
+  Check('dotted vertical', (GetSurfacePixel(Surface, 1, 0) = ColorBlack) and (GetSurfacePixel(Surface, 1, 1) = ColorWhite) and
+    (CountPixels(Surface, ColorWhite) = 5));
+  { The same line drawn in two pieces is the same line. }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawDottedVerticalLine(Canvas, 1, 0, 3, 1, ColorWhite);
+  DrawDottedVerticalLine(Canvas, 1, 3, 10, 1, ColorWhite);
+  Check('dotted vertical: in pieces', (GetSurfacePixel(Surface, 1, 3) = ColorWhite) and
+    (GetSurfacePixel(Surface, 1, 4) = ColorBlack) and (CountPixels(Surface, ColorWhite) = 5));
+  { Two pixels thick (a display at 200%): dots of 2x2. }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  DrawDottedHorizontalLine(Canvas, 0, 8, 4, 2, ColorWhite);
+  Check('dotted thick: 2x2 dots', (GetSurfacePixel(Surface, 0, 4) = ColorWhite) and
+    (GetSurfacePixel(Surface, 1, 5) = ColorWhite) and (GetSurfacePixel(Surface, 2, 4) = ColorBlack) and
+    (GetSurfacePixel(Surface, 4, 5) = ColorWhite) and (CountPixels(Surface, ColorWhite) = 8));
+  { The origin moves the line, and the pattern stays the surface's. }
+  FillRectangle(Canvas, SurfaceBounds(Surface), ColorBlack);
+  SetCanvasOrigin(Canvas, 1, 0);
+  DrawDottedHorizontalLine(Canvas, 0, 4, 0, 1, ColorWhite);
+  Check('dotted: origin', (GetSurfacePixel(Surface, 1, 0) = ColorBlack) and (GetSurfacePixel(Surface, 2, 0) = ColorWhite) and
+    (CountPixels(Surface, ColorWhite) = 2));
+  FreeSurface(Surface);
+end;
+
 procedure TestGradients;
 var
   Surface: TSurface;
@@ -657,6 +735,8 @@ begin
   TestEllipses;
   TestPolygons;
   TestCopies;
+  TestStretchedCopies;
+  TestDottedLines;
   TestGradients;
   TestBevels;
   TestSyntheticFont;

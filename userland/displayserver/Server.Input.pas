@@ -27,7 +27,8 @@
   the program for it when the button is let go, and the title buttons
   act when let go over them (close asks the program, maximize toggles,
   minimize hides). Keys go to the active window; Alt+F4 asks it to
-  close.
+  close. Pointer events carry the modifiers held (as the last key event
+  said), so a program can tell a Ctrl+click or a Shift+click.
 }
 unit Server.Input;
 
@@ -78,6 +79,8 @@ var
   Captured: PServerWindow;
   Hovered: PServerWindow;
   ButtonsHeld: LongWord;
+  { Shift, Ctrl, Alt and the locks, from the newest key event. }
+  KeyboardModifiers: LongWord;
   Drag: TDrag;
   DragWindow: PServerWindow;
   DragArea: THitArea;
@@ -136,6 +139,7 @@ begin
   Message.Top := PointerY - Window^.ClientTop;
   Message.Code := Code;
   Message.Value := Value;
+  Message.Modifiers := KeyboardModifiers;
   SendToOwner(Window, Message);
 end;
 
@@ -324,6 +328,8 @@ procedure KeyChanged(const Event: TAbiInputEvent);
 var
   Message: TWindowMessage;
 begin
+  { Kept whichever window has the keyboard, for the pointer's events. }
+  KeyboardModifiers := Event.Modifiers;
   if ActiveWindow = nil then
     Exit;
   if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then

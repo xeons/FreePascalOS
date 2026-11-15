@@ -142,6 +142,9 @@ function WindowById(Id: LongWord): TWindow;
 { Serves the windows until Done is set (or the window or the server is
   gone), Window modal meanwhile. }
 procedure RunModal(Window: TWindow; var Done: Boolean);
+{ The modifiers (ModifierShift, ModifierControl, ...) held at the newest
+  key or pointer event: what a click was made with (a Ctrl+click). }
+function HeldModifiers: LongWord;
 
 implementation
 
@@ -171,6 +174,12 @@ var
   TimerCount: LongInt;
   QuitRequested: Boolean;
   QuitCode: LongInt;
+  NewestModifiers: LongWord;
+
+function HeldModifiers: LongWord;
+begin
+  Result := NewestModifiers;
+end;
 
 function WindowById(Id: LongWord): TWindow;
 var
@@ -514,6 +523,8 @@ procedure Dispatch(const Message: TWindowMessage);
 var
   Window: TWindow;
 begin
+  if (Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) then
+    NewestModifiers := Message.Modifiers;
   Window := WindowById(Message.Window);
   if Window = nil then
     Exit;

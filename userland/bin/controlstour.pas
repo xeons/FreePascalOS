@@ -23,9 +23,11 @@
   controlstour
 
   A menu bar (File, Help), a toolbar, a tab control with four pages
-  (a list box and a combo box; a multi-line edit box; a tree view; a
-  list view) and a status bar; Ctrl+M asks a question in a message box,
-  Help > About shows one. Prints what happens, a line each:
+  (a list box and a combo box; a multi-line edit box and two edit boxes
+  to copy and paste between; a tree view; a list view, several items
+  selectable and sorted by a header click, with buttons for its views)
+  and a status bar; Ctrl+M asks a question in a message box, Help >
+  About shows one. Prints what happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels), at start
     menu TEXT             a menu item was chosen
@@ -34,9 +36,13 @@
     list TEXT             the list box's choice
     combo TEXT            the combo box's choice
     edit LINES            the multi-line edit box changed (its line count)
+    pasted TEXT           the second edit box changed (its text)
     tree TEXT             the tree view's choice
-    row TEXT              the list view's choice
+    row TEXT              the list view's focused item
+    selected A,B,...      the list view's selected items
     column N              a list view column header was clicked
+    order A,B,...         the list view's items, after sorting
+    view N                the list view's view (0 details to 3 large icons)
     answer N              a message box's result
   File > Exit ends it.
 }
@@ -57,6 +63,8 @@ uses
   Controls.Keys,
   Controls.Base,
   Controls.Window,
+  Controls.Buttons,
+  Controls.EditBox,
   Controls.StatusBar,
   Controls.ListBox,
   Controls.ComboBox,
@@ -82,8 +90,11 @@ type
     FList: TListBox;
     FCombo: TComboBox;
     FEdit: TTextEdit;
+    FCopyBox: TEditBox;
+    FPasteBox: TEditBox;
     FTree: TTreeView;
     FDetails: TListView;
+    FLargeIconsButton: TButton;
     FStatus: TStatusBar;
     procedure MenuChosen(Item: TMenuItem);
     procedure ExitChosen(Item: TMenuItem);
@@ -91,6 +102,10 @@ type
     procedure ToolClicked(Sender: TControl);
     procedure ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);
     procedure ColumnClicked(Sender: TListView; Column: LongInt);
+    procedure ViewClicked(Sender: TControl);
+    function DetailsTexts(SelectedOnly: Boolean): string;
+    procedure AddViewButton(Page: TControl; const Caption: string; Mode: TListViewMode);
+    procedure TellPagePlaces(Page: LongInt);
     procedure AskQuestion(Sender: TControlWindow);
     procedure BuildPages;
     procedure TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
@@ -160,6 +175,11 @@ begin
   FEdit := TTextEdit.Create(Page);
   FEdit.SetBounds(8, 8, 300, 150);
   FEdit.SetAllText('Lines of text'#10'to edit'#10'here');
+  FCopyBox := TEditBox.Create(Page);
+  FCopyBox.SetBounds(8, 166, 140, 22);
+  FCopyBox.Text := 'copy me';
+  FPasteBox := TEditBox.Create(Page);
+  FPasteBox.SetBounds(160, 166, 140, 22);
   Page := FTabs.AddPage('Tree');
   Page.OnNotify := @ChildNotified;
   FTree := TTreeView.Create(Page);
@@ -180,7 +200,27 @@ begin
   FDetails.AddRow(['notes.txt', '2 KiB', 'Text']);
   FDetails.AddRow(['picture.bmp', '300 KiB', 'Picture']);
   FDetails.AddRow(['tour', '40 KiB', 'Program']);
+  FDetails.MultiSelect := True;
+  FDetails.SortOnHeaderClick := True;
+  FDetails.ColumnNumeric[1] := True;
   FDetails.OnColumnClick := @ColumnClicked;
+  AddViewButton(Page, 'Details', ViewDetails);
+  AddViewButton(Page, 'List', ViewList);
+  AddViewButton(Page, 'Small', ViewSmallIcons);
+  AddViewButton(Page, 'Large', ViewLargeIcons);
+end;
+
+procedure TTourWindow.AddViewButton(Page: TControl; const Caption: string; Mode: TListViewMode);
+var
+  Button: TButton;
+begin
+  Button := TButton.Create(Page);
+  Button.SetBounds(8 + Ord(Mode) * 72, 196, 64, 22);
+  Button.Text := Caption;
+  Button.Tag := Ord(Mode);
+  Button.OnClick := @ViewClicked;
+  if Mode = ViewLargeIcons then
+    FLargeIconsButton := Button;
 end;
 
 procedure TTourWindow.TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
@@ -199,6 +239,7 @@ begin
     first column header. }
   TellPlace('help', FMenuBar, Scaled(50), RectangleHeight(FMenuBar.PixelBounds) div 2);
   TellPlace('bold', FBold, RectangleWidth(FBold.PixelBounds) div 2, RectangleHeight(FBold.PixelBounds) div 2);
+  TellPlace('text-tab', FTabs, Scaled(68), Scaled(8));
   TellPlace('tree-tab', FTabs, Scaled(120), Scaled(8));
   TellPlace('details-tab', FTabs, Scaled(170), Scaled(8));
   RowHeight := FList.ItemHeight;
@@ -233,9 +274,61 @@ begin
   Say('toolbar ' + Sender.Text + ' ' + IntToStr(Ord(TToolButton(Sender).Down)));
 end;
 
+{ The list view's first column, every item or the selected ones, in
+  order, with commas between. }
+function TTourWindow.DetailsTexts(SelectedOnly: Boolean): string;
+var
+  Row: LongInt;
+begin
+  Result := '';
+  for Row := 0 to FDetails.RowCount - 1 do
+    if not SelectedOnly or FDetails.Selected[Row] then
+    begin
+      if Result <> '' then
+        Result := Result + ',';
+      Result := Result + FDetails.Cells[Row, 0];
+    end;
+end;
+
 procedure TTourWindow.ColumnClicked(Sender: TListView; Column: LongInt);
 begin
   Say('column ' + IntToStr(Column));
+  Say('order ' + DetailsTexts(False));
+end;
+
+procedure TTourWindow.ViewClicked(Sender: TControl);
+var
+  Icon: TRectangle;
+begin
+  FDetails.ViewMode := TListViewMode(Sender.Tag);
+  Say('view ' + IntToStr(Sender.Tag));
+  { Where the first item's icon is now, to look at. }
+  Icon := FDetails.IconBounds(0);
+  if not RectangleIsEmpty(Icon) then
+    TellPlace('details-icon-1', FDetails, (Icon.Left + Icon.Right) div 2, (Icon.Top + Icon.Bottom) div 2);
+end;
+
+{ Where the controls of a page just shown are. }
+procedure TTourWindow.TellPagePlaces(Page: LongInt);
+begin
+  if Page = 1 then
+  begin
+    TellPlace('copy-box', FCopyBox, Scaled(30), RectangleHeight(FCopyBox.PixelBounds) div 2);
+    TellPlace('paste-box', FPasteBox, Scaled(30), RectangleHeight(FPasteBox.PixelBounds) div 2);
+    TellPlace('text-edit', FEdit, Scaled(60), Scaled(10));
+  end;
+  if Page = 2 then
+    TellPlace('tree-line-1', FTree, Scaled(40), FTree.RowMiddle(0));
+  if Page = 3 then
+  begin
+    TellPlace('details-row-1', FDetails, Scaled(40), FDetails.RowMiddle(0));
+    TellPlace('details-row-2', FDetails, Scaled(40), FDetails.RowMiddle(1));
+    TellPlace('details-row-3', FDetails, Scaled(40), FDetails.RowMiddle(2));
+    TellPlace('details-header-1', FDetails, Scaled(20), FDetails.HeaderMiddle);
+    TellPlace('details-header-2', FDetails, Scaled(140), FDetails.HeaderMiddle);
+    TellPlace('large-icons', FLargeIconsButton, RectangleWidth(FLargeIconsButton.PixelBounds) div 2,
+      RectangleHeight(FLargeIconsButton.PixelBounds) div 2);
+  end;
 end;
 
 procedure TTourWindow.ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);
@@ -245,14 +338,7 @@ begin
   if Child = FTabs then
   begin
     Say('page ' + IntToStr(FTabs.PageIndex));
-    { Where the newly shown page's controls are. }
-    if FTabs.PageIndex = 2 then
-      TellPlace('tree-line-1', FTree, Scaled(40), FTree.RowMiddle(0));
-    if FTabs.PageIndex = 3 then
-    begin
-      TellPlace('details-row-2', FDetails, Scaled(40), FDetails.RowMiddle(1));
-      TellPlace('details-header-1', FDetails, Scaled(20), FDetails.HeaderMiddle);
-    end;
+    TellPagePlaces(FTabs.PageIndex);
   end
   else if (Child = FList) and (FList.ItemIndex >= 0) then
     Say('list ' + FList.Items[FList.ItemIndex])
@@ -260,10 +346,16 @@ begin
     Say('combo ' + FCombo.Text)
   else if Child = FEdit then
     Say('edit ' + IntToStr(FEdit.Lines.Count))
+  else if Child = FPasteBox then
+    Say('pasted ' + FPasteBox.Text)
   else if (Child = FTree) and (FTree.Selected <> nil) then
     Say('tree ' + FTree.Selected.Text)
-  else if (Child = FDetails) and (FDetails.ItemIndex >= 0) then
-    Say('row ' + FDetails.Cells[FDetails.ItemIndex, 0]);
+  else if Child = FDetails then
+  begin
+    if FDetails.ItemIndex >= 0 then
+      Say('row ' + FDetails.Cells[FDetails.ItemIndex, 0]);
+    Say('selected ' + DetailsTexts(True));
+  end;
 end;
 
 var

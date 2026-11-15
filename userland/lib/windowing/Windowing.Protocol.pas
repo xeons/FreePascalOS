@@ -85,7 +85,8 @@ const
     pressed, 0 released; Character, Modifiers as in input events. }
   EventKey = 103;
   { Left, Top: the pointer in the window's surface (pixels); Code: the
-    buttons held (bit N for button N). }
+    buttons held (bit N for button N); Modifiers: the keyboard's (as in
+    input events), for every pointer event. }
   EventPointerMove = 104;
   { Left, Top as above; Code: the button; Value: 1 pressed, 0 released. }
   EventPointerButton = 105;

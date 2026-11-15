@@ -555,6 +555,32 @@ def click_at(x, y):
     time.sleep(0.5)
 
 
+def hold_key(name, down):
+    # A key held down (or let go) through QMP: sendkey presses and
+    # releases at once, which cannot make a Ctrl+click.
+    try:
+        control.sendall(json.dumps({'execute': 'input-send-event', 'arguments': {'events': [
+            {'type': 'key', 'data': {'down': down, 'key': {'type': 'qcode', 'data': name}}}]}}).encode() + b'\n')
+        control.recv(65536)
+    except (OSError, AttributeError):
+        pass
+    time.sleep(0.2)
+
+
+def click_holding(key, x, y):
+    hold_key(key, True)
+    click_at(x, y)
+    hold_key(key, False)
+
+
+def right_click_at(x, y):
+    point_tablet_at(x, y)
+    send_to_monitor('mouse_button 2\n')
+    time.sleep(0.3)
+    send_to_monitor('mouse_button 0\n')
+    time.sleep(0.8)
+
+
 def drag(from_x, from_y, to_x, to_y):
     point_tablet_at(from_x, from_y)
     send_to_monitor('mouse_button 1\n')
@@ -644,8 +670,12 @@ checks.append(('controls: a control of the program\'s own, and its posted messag
 # The rest of the controls (controlstour), which prints where its
 # controls are: a toolbar toggle, a list box, a combo box's dropped
 # list, a menu bar's menu and a message box (Help > About, Enter), an
-# accelerator's message box (Ctrl+M, Escape), the tab control, the tree
-# view (a click, Right, Down) and the list view (a row, a header).
+# accelerator's message box (Ctrl+M, Escape), the tab control, the
+# clipboard (Ctrl+A and Ctrl+C in one edit box, Ctrl+V in another, Paste
+# from the context menu, lines pasted into the multi-line edit box), the
+# tree view (a click, Right, Down) and the list view (a row, a header,
+# sorting by a header as numbers, a click, a Ctrl+click and a
+# Shift+click, then large icons).
 def places():
     return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
             for match in re.finditer(rb'place (\S+) (\d+) (\d+)', bytes(received))}
@@ -658,8 +688,9 @@ time.sleep(3)
 type_on_serial(b'm=DONE; cat /tmp/t.log; echo PLACES $m\r')
 wait_for('PLACES DONE', 10)
 place = places()
-tour_started = all(name in place for name in ('help', 'bold', 'tree-tab', 'details-tab', 'list-item-3', 'combo',
-                                               'combo-second'))
+tour_started = all(name in place for name in ('help', 'bold', 'text-tab', 'tree-tab', 'details-tab', 'list-item-3',
+                                               'combo', 'combo-second'))
+icon_pixels = []
 if tour_started:
     click_at(*place['bold'])
     click_at(*place['list-item-3'])
@@ -674,6 +705,29 @@ if tour_started:
     time.sleep(1)
     press('esc')
     time.sleep(0.8)
+    click_at(*place['text-tab'])
+    type_on_serial(b'm=DONE; cat /tmp/t.log; echo TEXT $m\r')
+    wait_for('TEXT DONE', 10)
+    place = places()
+    if all(name in place for name in ('copy-box', 'paste-box', 'text-edit')):
+        click_at(*place['copy-box'])
+        press('ctrl-a')
+        press('ctrl-c')
+        click_at(*place['paste-box'])
+        press('ctrl-v')
+        time.sleep(0.5)
+        # The context menu opens where the button was let go; Paste is its
+        # third item (18 pixels each, 2 in).
+        right_click_at(*place['paste-box'])
+        click_at(place['paste-box'][0] + 30, place['paste-box'][1] + 2 + 2 * 18 + 9)
+        # Three lines copied from the multi-line edit box and pasted at
+        # the end of its last line: five lines.
+        click_at(*place['text-edit'])
+        press('ctrl-a')
+        press('ctrl-c')
+        press('end')
+        press('ctrl-v')
+        time.sleep(0.5)
     click_at(*place['tree-tab'])
     type_on_serial(b'm=DONE; cat /tmp/t.log; echo TREE $m\r')
     wait_for('TREE DONE', 10)
@@ -690,6 +744,19 @@ if tour_started:
         click_at(*place['details-row-2'])
     if 'details-header-1' in place:
         click_at(*place['details-header-1'])
+    if all(name in place for name in ('details-row-1', 'details-row-3', 'details-header-2', 'large-icons')):
+        click_at(*place['details-header-2'])
+        click_at(*place['details-row-1'])
+        click_holding('ctrl', *place['details-row-3'])
+        click_holding('shift', *place['details-row-2'])
+        click_at(*place['large-icons'])
+        type_on_serial(b'm=DONE; cat /tmp/t.log; echo ICONS $m\r')
+        wait_for('ICONS DONE', 10)
+        place = places()
+        if 'details-icon-1' in place:
+            icon_x, icon_y = place['details-icon-1']
+            pixel = take_screen()
+            icon_pixels = [pixel(x, y) for x in range(icon_x - 8, icon_x + 9) for y in range(icon_y - 8, icon_y + 9)]
 type_on_serial(b'm=DONE; cat /tmp/t.log; kill %1; wait; echo TOUR $m\r')
 tour_ok = tour_started and wait_for('TOUR DONE', 15)
 log_from_here = bytes(received[received.rfind(b'TOUR $m'):])
@@ -700,6 +767,17 @@ checks.append(('controls tour: menu, message box, accelerator', tour_ok and b'me
 checks.append(('controls tour: tabs, tree view, list view', tour_ok and b'page 2' in log_from_here and
                b'tree System' in log_from_here and b'tree lib' in log_from_here and b'page 3' in log_from_here and
                b'row picture.bmp' in log_from_here and b'column 0' in log_from_here))
+checks.append(('controls tour: clipboard keys and context menu in edit boxes',
+               tour_ok and re.search(rb'pasted copy me\r?\n', log_from_here) is not None and
+               b'pasted copy mecopy me' in log_from_here and b'edit 5' in log_from_here))
+checks.append(('controls tour: list view sorted by a header (as numbers)',
+               tour_ok and b'column 1' in log_from_here and b'order notes.txt,tour,picture.bmp' in log_from_here))
+checks.append(('controls tour: list view selection with Ctrl+click and Shift+click',
+               tour_ok and b'selected notes.txt,picture.bmp' in log_from_here and
+               b'selected tour,picture.bmp' in log_from_here))
+# The document icon's lines of text are this blue.
+checks.append(('controls tour: list view large icons',
+               tour_ok and b'view 3' in log_from_here and '5b87c0' in icon_pixels))
 
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back

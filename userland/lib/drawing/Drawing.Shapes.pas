@@ -25,6 +25,12 @@
   centres lie in the ellipse that touches its bounding rectangle's
   edges; its outline is those of them next to a pixel outside. A polygon
   fills the pixels whose centres are inside it, by the even-odd rule.
+
+  Dotted lines (a tree view's, say) are dots as long as the line is
+  thick with gaps as long between them. Which pixels are dots depends
+  on where they are on the surface, not on where the line starts: lines
+  that meet, and a line drawn a piece at a time (a row at a time), keep
+  one even pattern.
 }
 unit Drawing.Shapes;
 
@@ -43,6 +49,11 @@ procedure DrawEllipseOutline(const Canvas: TCanvas; const Bounds: TRectangle; Co
 procedure FillPolygon(const Canvas: TCanvas; const Points: array of TPoint; Color: TColor);
 { The polygon's edges as lines, closing back to the first point. }
 procedure DrawPolygonOutline(const Canvas: TCanvas; const Points: array of TPoint; Color: TColor);
+{ Dotted lines Thickness pixels thick: from Left to Right (just outside)
+  with its top row at Top, and from Top to Bottom (just outside) with its
+  left column at Left. }
+procedure DrawDottedHorizontalLine(const Canvas: TCanvas; Left, Right, Top, Thickness: LongInt; Color: TColor);
+procedure DrawDottedVerticalLine(const Canvas: TCanvas; Left, Top, Bottom, Thickness: LongInt; Color: TColor);
 
 implementation
 
@@ -306,6 +317,49 @@ begin
     Next := (Index + 1) mod Length(Points);
     DrawLine(Canvas, Points[Index].X, Points[Index].Y, Points[Next].X, Points[Next].Y, Color);
   end;
+end;
+
+{ Value / Divisor rounded down, negative values too (Divisor positive). }
+function FloorDivide(Value, Divisor: LongInt): LongInt;
+begin
+  if Value >= 0 then
+    Result := Value div Divisor
+  else
+    Result := -((-Value + Divisor - 1) div Divisor);
+end;
+
+{ Whether the square of the dot pattern holding surface pixel (X, Y) is
+  a dot: the squares are Size wide and alternate like a checkerboard. }
+function IsDotSquare(X, Y, Size: LongInt): Boolean;
+begin
+  Result := ((FloorDivide(X, Size) + FloorDivide(Y, Size)) and 1) = 0;
+end;
+
+procedure DrawDottedHorizontalLine(const Canvas: TCanvas; Left, Right, Top, Thickness: LongInt; Color: TColor);
+var
+  X: LongInt;
+  SurfaceTop: LongInt;
+begin
+  if Thickness < 1 then
+    Thickness := 1;
+  { The whole thickness is one row of squares: the one its top row is in. }
+  SurfaceTop := Top + Canvas.OriginY;
+  for X := Left to Right - 1 do
+    if IsDotSquare(X + Canvas.OriginX, SurfaceTop, Thickness) then
+      FillRectangle(Canvas, MakeRectangle(X, Top, 1, Thickness), Color);
+end;
+
+procedure DrawDottedVerticalLine(const Canvas: TCanvas; Left, Top, Bottom, Thickness: LongInt; Color: TColor);
+var
+  Y: LongInt;
+  SurfaceLeft: LongInt;
+begin
+  if Thickness < 1 then
+    Thickness := 1;
+  SurfaceLeft := Left + Canvas.OriginX;
+  for Y := Top to Bottom - 1 do
+    if IsDotSquare(SurfaceLeft, Y + Canvas.OriginY, Thickness) then
+      FillRectangle(Canvas, MakeRectangle(Left, Y, Thickness, 1), Color);
 end;
 
 end.

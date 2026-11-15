@@ -35,6 +35,10 @@ const
   KeyTab = $0F;
   KeyEnter = $1C;
   KeySpace = $39;
+  KeyA = $1E;
+  KeyC = $2E;
+  KeyV = $2F;
+  KeyX = $2D;
   KeyF4 = $3E;
   KeyNumpadEnter = $1C or KeyCodeExtended;
   KeyHome = $47 or KeyCodeExtended;
@@ -45,6 +49,7 @@ const
   KeyEnd = $4F or KeyCodeExtended;
   KeyArrowDown = $50 or KeyCodeExtended;
   KeyPageDown = $51 or KeyCodeExtended;
+  KeyInsert = $52 or KeyCodeExtended;
   KeyDelete = $53 or KeyCodeExtended;
 
 function IsEnterKey(Code: LongWord): Boolean;
