@@ -87,6 +87,10 @@ type
 function AllocateQueuePair(Identifier: Word; Registers: PByte; DoorbellStride: LongWord;
   out Pair: TNvmeQueuePair): Boolean;
 
+{ Empties the queues (as a controller that was reset expects them):
+  zeroed, at their first entries, expecting phase 1. }
+procedure ResetQueuePair(var Pair: TNvmeQueuePair);
+
 { Copies Command into the next submission slot (setting its identifier)
   and rings the doorbell. }
 procedure SubmitCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand);
@@ -125,6 +129,15 @@ begin
   Pair.Completions := PNvmeCompletion(PhysicalToVirtual(Pair.CompletionsPhysical));
   Pair.SubmissionDoorbell := PLongWord(Registers + DoorbellBase + (2 * Identifier) * DoorbellStride);
   Pair.CompletionDoorbell := PLongWord(Registers + DoorbellBase + (2 * Identifier + 1) * DoorbellStride);
+  Pair.ExpectedPhase := CompletionPhaseBit;
+end;
+
+procedure ResetQueuePair(var Pair: TNvmeQueuePair);
+begin
+  FillMemory(Pair.Submissions, 4096, 0);
+  FillMemory(Pair.Completions, 4096, 0);
+  Pair.SubmissionTail := 0;
+  Pair.CompletionHead := 0;
   Pair.ExpectedPhase := CompletionPhaseBit;
 end;
 

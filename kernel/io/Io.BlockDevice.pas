@@ -36,6 +36,10 @@
 
   ReadBlocks and WriteBlocks wait, so they must be called at
   PassiveLevel.
+
+  Every request passes a gate counting those in flight: suspending to
+  RAM closes it (new requests wait for resume) once the last one is
+  done, so the storage drivers are idle when they are suspended.
 }
 unit Io.BlockDevice;
 
@@ -119,6 +123,10 @@ function BlockDeviceCount: Integer;
 function BlockDeviceAt(Index: Integer): PBlockDevice;
 
 procedure WriteBlockDeviceDescription(Device: PBlockDevice);
+{ Registers the block I/O gate with power management: while the system
+  suspends, new requests wait and the gate closes once none is in
+  flight. }
+procedure RegisterBlockIoPowerHandler;
 
 implementation
 
@@ -127,6 +135,7 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Kernel.Mutex,
+  Io.PowerManagement,
   Kernel.Panic,
   Objects.Manager,
   Debug.Output;
@@ -138,8 +147,11 @@ var
   DeviceCount: Integer;
   NextDiskNumber: LongWord;
 
+procedure InitializeGate; forward;
+
 procedure InitializeBlockDevices;
 begin
+  InitializeGate;
   RegisterObjectType(BlockDeviceObjectType, 'BlockDevice', SizeOf(TBlockDevice), nil);
   InitializeMutex(DeviceListLock);
   DeviceCount := 0;
@@ -207,6 +219,76 @@ begin
   RegisterBlockDevice(Result);
 end;
 
+{ --- The gate ------------------------------------------------------------ }
+
+var
+  GateLock: TMutex;
+  GateOpen: TEvent;
+  GateIdle: TEvent;
+  InFlight: Integer;
+  GateClosed: Boolean;
+  GateReady: Boolean;
+
+procedure InitializeGate;
+begin
+  InitializeMutex(GateLock);
+  InitializeEvent(GateOpen, EventKindNotification, True);
+  InitializeEvent(GateIdle, EventKindNotification, True);
+  GateReady := True;
+end;
+
+{ Waits while the gate is closed, then counts one request in flight. }
+procedure EnterGate;
+begin
+  if not GateReady then
+    Exit;
+  repeat
+    WaitForEvent(GateOpen);
+    AcquireMutex(GateLock);
+    if not GateClosed then
+    begin
+      Inc(InFlight);
+      ResetEvent(GateIdle);
+      ReleaseMutex(GateLock);
+      Exit;
+    end;
+    ReleaseMutex(GateLock);
+  until False;
+end;
+
+procedure LeaveGate;
+begin
+  if not GateReady then
+    Exit;
+  AcquireMutex(GateLock);
+  Dec(InFlight);
+  if InFlight = 0 then
+    SignalEvent(GateIdle);
+  ReleaseMutex(GateLock);
+end;
+
+procedure CloseGate(Context: Pointer);
+begin
+  AcquireMutex(GateLock);
+  GateClosed := True;
+  ResetEvent(GateOpen);
+  ReleaseMutex(GateLock);
+  WaitForEvent(GateIdle);
+end;
+
+procedure OpenGate(Context: Pointer);
+begin
+  AcquireMutex(GateLock);
+  GateClosed := False;
+  SignalEvent(GateOpen);
+  ReleaseMutex(GateLock);
+end;
+
+procedure RegisterBlockIoPowerHandler;
+begin
+  RegisterPowerHandler('block I/O', PowerStageServices, @CloseGate, @OpenGate, nil);
+end;
+
 function RangeIsValid(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord): Boolean;
 begin
   Result := (BlockCount > 0) and (FirstBlock < Device^.BlockCount) and
@@ -225,8 +307,10 @@ begin
   Request.Buffer := Buffer;
   Request.Length := QWord(BlockCount) * Device^.BlockSize;
   Request.Offset := FirstBlock * Device^.BlockSize;
+  EnterGate;
   Result := (CallDriverAndWait(Device^.StorageDevice, Request, False) = ErrorNone) and
     (QWord(Request.Information) = Request.Length);
+  LeaveGate;
 end;
 
 function ReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
@@ -273,6 +357,7 @@ begin
     Shift := Shift + Disk^.FirstBlockOnParent;
     Disk := Disk^.Parent;
   end;
+  EnterGate;
   for Index := 0 to Count - 1 do
   begin
     Write := @Writes[Index];
@@ -293,6 +378,7 @@ begin
     if (Write^.Request.Status <> ErrorNone) or (QWord(Write^.Request.Information) <> Write^.Request.Length) then
       Result := False;
   end;
+  LeaveGate;
 end;
 
 function FlushBlockDevice(Device: PBlockDevice): Boolean;
@@ -306,7 +392,9 @@ begin
     Exit(True);
   FillMemory(@Request, SizeOf(Request), 0);
   Request.Operation := IoFunctionFlush;
+  EnterGate;
   Status := CallDriverAndWait(Device^.StorageDevice, Request, False);
+  LeaveGate;
   Result := (Status = ErrorNone) or (Status = ErrorUnsupported);
 end;
 

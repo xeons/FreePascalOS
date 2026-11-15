@@ -81,6 +81,8 @@ function ConsoleRowCount: LongWord;
   Width x Height pixels), once the kernel heap can provide one; from then
   on scrolling moves the copy and only writes the framebuffer. }
 procedure StartFramebufferShadow(Shadow: PLongWord);
+{ Draws the whole screen again from the shadow (the display lost it). }
+procedure ConsoleRedraw;
 { The bytes of a shadow for this framebuffer; 0 without a console. }
 function FramebufferShadowSize: QWord;
 
@@ -227,6 +229,17 @@ begin
     CopyMemory(Shadow + QWord(PixelRow) * Console.WidthInPixels, ScanLineAddress(PixelRow),
       Console.WidthInPixels * SizeOf(LongWord));
   Console.Shadow := Shadow;
+end;
+
+procedure ConsoleRedraw;
+var
+  PixelRow: LongWord;
+begin
+  if not Console.IsAvailable or (Console.Shadow = nil) then
+    Exit;
+  for PixelRow := 0 to Console.HeightInPixels - 1 do
+    CopyMemory(ScanLineAddress(PixelRow), Console.Shadow + QWord(PixelRow) * Console.WidthInPixels,
+      Console.WidthInPixels * SizeOf(LongWord));
 end;
 
 function FramebufferConsoleIsAvailable: Boolean;

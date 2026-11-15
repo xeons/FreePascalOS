@@ -24,10 +24,14 @@
   turned off and the wake status cleared; then the types and SLP_EN go
   into the PM1 control registers and the hardware does the rest.
 
-  Only S5, soft off, is entered: the sleeping states S1 to S4 would need
-  the machine brought back afterwards (the processors' state, and every
-  device re-initialized after S3), which the kernel cannot do yet, so
-  they are refused.
+  S5, soft off, ends here. S3, suspend to RAM, is entered in parts, as
+  the rest of the kernel brings the machine down and back
+  (Processes.Suspend): PrepareSuspendToRam reads the types and runs
+  \_PTS(3); EnterSuspendToRam, with every other processor frozen and
+  interrupts off, sets the firmware waking vector and writes the
+  registers; FinishResumeFromRam, once the processors run again, puts
+  the machine back in ACPI mode and runs \_WAK(3). S1, S2 and S4 are not
+  entered.
 
   Resetting tries the FADT's reset register, then the legacy ways.
 }
@@ -44,6 +48,12 @@ function SleepStateIsSupported(State: Integer): Boolean;
 function EnterSleepState(State: Integer): Boolean;
 procedure ResetMachine;
 
+{ S3. Prepare (AML) before freezing the processors; Enter is a
+  Kernel.ProcessorPower sleep routine; Finish after waking. }
+function PrepareSuspendToRam: Boolean;
+procedure EnterSuspendToRam(WakeVector: QWord);
+procedure FinishResumeFromRam;
+
 implementation
 
 uses
@@ -59,8 +69,14 @@ uses
   Debug.Output;
 
 const
+  SuspendToRam = 3;
   SoftOff = 5;
   WaitForPowerOffMilliseconds = 3000;
+
+var
+  { S3's types, read before the processors are frozen. }
+  SuspendTypeA: Byte;
+  SuspendTypeB: Byte;
 
 function SleepStateIsSupported(State: Integer): Boolean;
 var
@@ -135,6 +151,51 @@ begin
   while ClockTickCount < Deadline do
     CpuRelax;
   Report('the machine did not turn off');
+end;
+
+{ --- S3 ---------------------------------------------------------------------- }
+
+function PrepareSuspendToRam: Boolean;
+begin
+  Result := False;
+  if not AcpiNamespaceIsLoaded or not AcpiHardware.Present then
+    Exit;
+  LockAmlInterpreter;
+  if SleepTypeOf(SuspendToRam, SuspendTypeA, SuspendTypeB) then
+  begin
+    PrepareToSleep(SuspendToRam);
+    Result := True;
+  end
+  else
+    Report('the firmware has no S3');
+  UnlockAmlInterpreter;
+end;
+
+procedure EnterSuspendToRam(WakeVector: QWord);
+begin
+  if not SetFirmwareWakingVector(LongWord(WakeVector)) then
+    Exit;
+  { The wake status cleared; the power button stays a wake source. }
+  ClearPm1Status(Pm1StatusBits);
+  WriteSleepControl(SuspendTypeA, SuspendTypeB);
+  { The machine sleeps within a moment; waking comes back through the
+    waking vector, not here. }
+  while True do
+    HaltProcessor;
+end;
+
+procedure FinishResumeFromRam;
+var
+  Argument: TAmlValue;
+  Ignored: TAmlValue;
+begin
+  EnableAcpiMode;
+  ClearPm1Status(Pm1StatusBits);
+  LockAmlInterpreter;
+  Argument := MakeInteger(SuspendToRam);
+  if EvaluatePath(nil, '\_WAK', @Argument, 1, Ignored) then
+    ReleaseValue(Ignored);
+  UnlockAmlInterpreter;
 end;
 
 procedure ResetMachine;

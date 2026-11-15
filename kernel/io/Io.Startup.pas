@@ -63,6 +63,7 @@ procedure WriteKeyboardSummary;
 implementation
 
 uses
+  Io.PciMessageInterrupts,
   Firmware.Acpi,
   Io.Pci,
   Io.BlockDevice,
@@ -75,6 +76,7 @@ uses
   Drivers.UsbKeyboard,
   Drivers.HdAudio,
   Drivers.Ac97,
+  Drivers.BochsDisplay,
   Drivers.UsbAudio,
   FileSystem.Volumes,
   Debug.Output,
@@ -132,11 +134,16 @@ begin
   InitializeInputDevices;
   InitializePci;
   WritePciSummary;
+  { Suspend to RAM: configuration space first, then the MSI-X tables. }
+  RegisterPciPowerHandler;
+  RegisterMessageInterruptPowerHandler;
 end;
 
 procedure InitializeIoSystem;
 begin
   InitializeBlockDevices;
+  RegisterBlockIoPowerHandler;
+  InitializeBochsDisplay;
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;

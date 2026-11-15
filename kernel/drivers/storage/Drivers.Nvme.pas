@@ -48,6 +48,7 @@ function InitializeNvmeControllers: Integer;
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Text,
   Runtime.Atomic,
@@ -489,17 +490,11 @@ begin
   end;
 end;
 
-function EnableController(Controller: PNvmeController): Boolean;
-var
-  Capabilities: QWord;
+{ Disables the controller, gives it the admin queue and enables it. }
+function ProgramAdminQueue(Controller: PNvmeController): Boolean;
 begin
-  Capabilities := ReadCapabilities(Controller);
-  Controller^.DoorbellStride := LongWord(4) shl ((Capabilities shr 32) and $F);
   WriteRegister32(Controller, RegisterConfiguration, 0);
   if not WaitForReady(Controller, False) then
-    Exit(False);
-  if not AllocateQueuePair(0, Controller^.Registers, Controller^.DoorbellStride, Controller^.Admin) or
-     not AllocateQueuePair(1, Controller^.Registers, Controller^.DoorbellStride, Controller^.Io) then
     Exit(False);
   WriteRegister32(Controller, RegisterAdminQueueAttributes,
     (LongWord(NvmeQueueEntries - 1) shl 16) or (NvmeQueueEntries - 1));
@@ -507,6 +502,55 @@ begin
   WriteRegister64(Controller, RegisterAdminCompletionQueue, Controller^.Admin.CompletionsPhysical);
   WriteRegister32(Controller, RegisterConfiguration, ConfigurationQueueEntrySizes or ConfigurationEnable);
   Result := WaitForReady(Controller, True);
+end;
+
+function EnableController(Controller: PNvmeController): Boolean;
+var
+  Capabilities: QWord;
+begin
+  Capabilities := ReadCapabilities(Controller);
+  Controller^.DoorbellStride := LongWord(4) shl ((Capabilities shr 32) and $F);
+  if not AllocateQueuePair(0, Controller^.Registers, Controller^.DoorbellStride, Controller^.Admin) or
+     not AllocateQueuePair(1, Controller^.Registers, Controller^.DoorbellStride, Controller^.Io) then
+    Exit(False);
+  Result := ProgramAdminQueue(Controller);
+end;
+
+{ --- Suspend to RAM ---------------------------------------------------------- }
+
+const
+  ConfigurationShutdownNormal = LongWord(1) shl 14;
+  StatusShutdownMask = LongWord(3) shl 2;
+  StatusShutdownComplete = LongWord(2) shl 2;
+  ShutdownTimeoutMilliseconds = 2000;
+
+{ Block I/O is stopped (nothing in flight): the controller is told it is
+  being turned off, so it writes out what it caches. }
+procedure SuspendController(Context: Pointer);
+var
+  Controller: PNvmeController;
+  Deadline: QWord;
+begin
+  Controller := PNvmeController(Context);
+  WriteRegister32(Controller, RegisterConfiguration,
+    ReadRegister32(Controller, RegisterConfiguration) or ConfigurationShutdownNormal);
+  Deadline := ClockTickCount + MillisecondsToTicks(ShutdownTimeoutMilliseconds);
+  while ((ReadRegister32(Controller, RegisterStatus) and StatusShutdownMask) <> StatusShutdownComplete) and
+        (ClockTickCount < Deadline) do
+    CpuRelax;
+end;
+
+{ Waking reset it: empty queues, the admin queue, then the I/O queues
+  again (the namespaces and everything else are still known). }
+procedure ResumeController(Context: Pointer);
+var
+  Controller: PNvmeController;
+begin
+  Controller := PNvmeController(Context);
+  ResetQueuePair(Controller^.Admin);
+  ResetQueuePair(Controller^.Io);
+  if ProgramAdminQueue(Controller) then
+    CreateIoQueues(Controller);
 end;
 
 procedure ReadControllerIdentity(Controller: PNvmeController);
@@ -636,6 +680,7 @@ begin
     if (NamespaceList[Index] <> 0) and AddNamespace(Controller, NamespaceList[Index]) then
       Inc(Result);
   ReportController(Controller, Result);
+  RegisterPowerHandler('NVMe', PowerStageDevices, @SuspendController, @ResumeController, Controller);
 end;
 
 function InitializeNvmeControllers: Integer;

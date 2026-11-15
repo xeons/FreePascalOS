@@ -69,6 +69,8 @@ uses
   Io.AcpiHardware,
   Io.AcpiNamespace,
   Io.InterruptRouting,
+  Io.PowerManagement,
+  Io.AcpiSleep,
   Debug.Output;
 
 const
@@ -277,6 +279,35 @@ begin
   DebugEndMessage;
 end;
 
+{ The enables of the buttons and handled GPEs, as set up. }
+var
+  EnabledFixed: Word;
+
+procedure WriteEnables;
+var
+  Number: LongWord;
+begin
+  WritePm1Enable(0);
+  ClearPm1Status(Pm1StatusBits);
+  if GpeCount > 0 then
+    for Number := 0 to GpeCount - 1 do
+    begin
+      EnableGpe(Number, False);
+      ClearGpe(Number);
+      if (HandledGpes[Number div 32] and (LongWord(1) shl (Number mod 32))) <> 0 then
+        EnableGpe(Number, True);
+    end;
+  WritePm1Enable(EnabledFixed);
+end;
+
+{ After suspend to RAM: ACPI mode and \_WAK, then the enables again
+  (the hardware was reset). }
+procedure ResumeAcpi(Context: Pointer);
+begin
+  FinishResumeFromRam;
+  WriteEnables;
+end;
+
 function InitializeAcpiEvents(Handler: TPowerEventHandler): Boolean;
 var
   Enabled: Word;
@@ -303,6 +334,8 @@ begin
   if AcpiHardware.FixedSleepButton then
     Enabled := Enabled or Pm1SleepButton;
   WritePm1Enable(Enabled);
+  EnabledFixed := Enabled;
+  RegisterPowerHandler('ACPI', PowerStageFirmware, nil, @ResumeAcpi, nil);
   ReportEvents(Gpes);
   Result := True;
 end;

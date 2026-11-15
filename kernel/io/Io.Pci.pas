@@ -108,10 +108,15 @@ function PciReadBar(Device: PPciDevice; BarIndex: Integer; out Bar: TPciBar): Bo
 procedure PciEnableDevice(Device: PPciDevice; EnableBusMastering: Boolean);
 
 procedure WritePciSummary;
+{ Keeps every function's configuration space across suspend to RAM
+  (waking resets the devices: their BARs, command register and
+  capabilities are written back). }
+procedure RegisterPciPowerHandler;
 
 implementation
 
 uses
+  Io.PowerManagement,
   Memory.Layout,
   Memory.DeviceMapping,
   Firmware.Acpi,
@@ -452,6 +457,47 @@ begin
     DebugWriteLine(ClassDescription(Device));
   end;
   DebugEndMessage;
+end;
+
+{ --- Suspend to RAM ------------------------------------------------------ }
+
+const
+  { The standard header and the capabilities after it. }
+  SavedConfigurationBytes = 256;
+  CommandRegister = $04;
+
+var
+  SavedConfiguration: array[0..MaximumPciDevices - 1, 0..SavedConfigurationBytes div 4 - 1] of LongWord;
+
+procedure SaveConfigurations(Context: Pointer);
+var
+  Index: Integer;
+  Slot: Integer;
+begin
+  for Index := 0 to DeviceCount - 1 do
+    for Slot := 0 to SavedConfigurationBytes div 4 - 1 do
+      SavedConfiguration[Index, Slot] := PLongWord(Devices[Index].Configuration + Slot * 4)^;
+end;
+
+procedure RestoreConfigurations(Context: Pointer);
+var
+  Index: Integer;
+  Slot: Integer;
+begin
+  for Index := 0 to DeviceCount - 1 do
+  begin
+    { Everything after the identification and command/status words
+      (BARs, bus numbers of bridges, interrupt line, capabilities); then
+      the command register, which turns decoding and bus mastering on. }
+    for Slot := 3 to SavedConfigurationBytes div 4 - 1 do
+      PLongWord(Devices[Index].Configuration + Slot * 4)^ := SavedConfiguration[Index, Slot];
+    PWord(Devices[Index].Configuration + CommandRegister)^ := Word(SavedConfiguration[Index, 1]);
+  end;
+end;
+
+procedure RegisterPciPowerHandler;
+begin
+  RegisterPowerHandler('PCI configuration', PowerStagePlatform, @SaveConfigurations, @RestoreConfigurations, nil);
 end;
 
 end.

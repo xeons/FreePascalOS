@@ -98,6 +98,7 @@ procedure RunAudioMixer(Context: Pointer);
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -148,6 +149,8 @@ var
   Outputs: array[0..MaximumOutputs - 1] of PAudioOutput;
   OutputCount: Integer;
   MixerWake: TEvent;
+  { Suspend to RAM: the mixer leaves the hardware alone meanwhile. }
+  MixingSuspended: Boolean;
 
 function StateOf(Output: PAudioOutput): POutputState;
 begin
@@ -292,9 +295,47 @@ begin
   while True do
   begin
     WaitForEventWithOptions(MixerWake, MixerIntervalMilliseconds, False);
-    for Index := 0 to OutputCount - 1 do
-      ServiceOutput(Outputs[Index]);
+    if not MixingSuspended then
+      for Index := 0 to OutputCount - 1 do
+        ServiceOutput(Outputs[Index]);
   end;
+end;
+
+{ --- Suspend to RAM ------------------------------------------------------- }
+
+{ Every output stops (each takes the streams lock, so the mixer is not
+  in the middle of one); the mixer stays away until resume. }
+procedure SuspendOutputs(Context: Pointer);
+var
+  Index: Integer;
+  State: POutputState;
+begin
+  for Index := 0 to OutputCount - 1 do
+  begin
+    State := StateOf(Outputs[Index]);
+    AcquireMutex(State^.StreamsLock);
+    if Index = 0 then
+      MixingSuspended := True;
+    if State^.IsPlaying then
+    begin
+      Outputs[Index]^.Routines.Stop(Outputs[Index]^.Context);
+      SetPlaying(State, False);
+      SignalEvent(State^.PeriodDone);
+    end;
+    ReleaseMutex(State^.StreamsLock);
+  end;
+end;
+
+{ The drivers set their hardware up again: the volumes go back, and the
+  mixer starts each output again when a stream has something. }
+procedure ResumeOutputs(Context: Pointer);
+var
+  Index: Integer;
+begin
+  for Index := 0 to OutputCount - 1 do
+    Outputs[Index]^.Routines.SetVolume(Outputs[Index]^.Context, StateOf(Outputs[Index])^.MasterVolume);
+  MixingSuspended := False;
+  SignalEvent(MixerWake);
 end;
 
 function AudioOutputCount: Integer;
@@ -506,6 +547,8 @@ begin
   Result^.Device^.Extension := Result;
   Routines.SetVolume(Context, DefaultMasterVolume);
   State^.Monitor := RegisterAudioMonitor;
+  if OutputCount = 0 then
+    RegisterPowerHandler('audio outputs', PowerStageServices, @SuspendOutputs, @ResumeOutputs, nil);
   Outputs[OutputCount] := Result;
   Inc(OutputCount);
 end;

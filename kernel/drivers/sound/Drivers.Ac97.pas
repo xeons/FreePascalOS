@@ -49,6 +49,7 @@ function InitializeAc97Controllers: Integer;
 implementation
 
 uses
+  Io.PowerManagement,
   Memory.Layout,
   Memory.PhysicalPages,
   Memory.KernelHeap,
@@ -275,6 +276,24 @@ begin
   end;
 end;
 
+{ --- Suspend to RAM ---------------------------------------------------------- }
+
+{ Waking reset the controller and codec: the codec out of reset, the
+  box given its list again, and the interrupts as they were. }
+procedure ResumeController(Context: Pointer);
+var
+  Controller: PAc97Controller;
+begin
+  Controller := PAc97Controller(Context);
+  Controller^.IsRunning := False;
+  if not ResetCodec(Controller) then
+    Exit;
+  ResetBox(Controller);
+  if Controller^.UsesInterrupts then
+    WritePortLongWord(Controller^.BusMasterPorts + GlobalControl,
+      ReadPortLongWord(Controller^.BusMasterPorts + GlobalControl) or GlobalControlInterruptEnable);
+end;
+
 function StartController(Pci: PPciDevice): Boolean;
 var
   Controller: PAc97Controller;
@@ -315,6 +334,7 @@ begin
   if Controller^.UsesInterrupts then
     WritePortLongWord(Controller^.BusMasterPorts + GlobalControl,
       ReadPortLongWord(Controller^.BusMasterPorts + GlobalControl) or GlobalControlInterruptEnable);
+  RegisterPowerHandler('AC''97', PowerStageDevices, nil, @ResumeController, Controller);
 
   DebugBeginMessage;
   DebugWriteTag('audio');

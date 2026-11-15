@@ -120,8 +120,13 @@ how the existing pieces fit together.
 - [x] ACPI events: SCI, power and sleep buttons (fixed and control method), GPEs
       with their _Lxx/_Exx methods, Notify; S5 power off; reset; orderly
       shutdown (poweroff, reboot, halt)
-- [ ] Sleeping (S3 suspend to RAM): wake vector, processor state, devices
-      re-initialized on resume
+- [x] Suspend to RAM (S3): processors frozen and restarted through the start-up
+      trampoline, interrupt controllers, PCI configuration and MSI-X restored,
+      every driver brought back (AHCI, NVMe, virtio, xHCI and its USB devices,
+      HD Audio, AC'97, serial, PS/2, display)
+- [ ] The virtio test volume (ext4) is read-only before any suspend: find out why
+- [ ] Wake sources beyond the power button (RTC alarm, USB, network); MTRRs on
+      secondary processors after waking
 - [ ] More from the ACPI namespace: embedded controller regions, battery and
       thermal zones, processor hotplug (bringing a plugged processor online)
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,

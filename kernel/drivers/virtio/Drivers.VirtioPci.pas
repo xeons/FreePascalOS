@@ -82,6 +82,9 @@ type
     Used: PByte;
     NotifyAddress: PWord;
     LastSeenUsed: Word;
+    DescriptorsPhysical: QWord;
+    AvailablePhysical: QWord;
+    UsedPhysical: QWord;
   end;
 
   PVirtioDevice = ^TVirtioDevice;
@@ -93,6 +96,8 @@ type
     InterruptStatus: PByte;
     DeviceConfiguration: PByte;
     UsesInterrupts: Boolean;
+    { The features agreed on (for resetting the device again). }
+    AcceptedFeatures: QWord;
   end;
 
 { Finds the register areas of a virtio PCI device and resets it.
@@ -110,6 +115,10 @@ procedure ConnectVirtioInterrupt(var Device: TVirtioDevice; var Queue: TVirtqueu
   Handler: TInterruptHandler; Context: Pointer);
 { Tells the device the driver is ready. }
 procedure StartVirtioDevice(var Device: TVirtioDevice);
+{ After waking from suspend to RAM reset the device: resets it, agrees
+  on the same features, gives it Queue again (emptied) with its
+  interrupt vector, and starts it. False if the device refuses. }
+function RestartVirtioDevice(var Device: TVirtioDevice; var Queue: TVirtqueue): Boolean;
 procedure FailVirtioDevice(var Device: TVirtioDevice);
 
 { Makes the descriptor chain starting at descriptor 0 available and
@@ -307,6 +316,7 @@ begin
   Write8(Device.Common, CommonDeviceStatus,
     Read8(Device.Common, CommonDeviceStatus) or StatusFeaturesAccepted);
   Result := (Read8(Device.Common, CommonDeviceStatus) and StatusFeaturesAccepted) <> 0;
+  Device.AcceptedFeatures := Accepted;
 end;
 
 { --- Queues --------------------------------------------------------------- }
@@ -317,6 +327,20 @@ begin
   if Physical = 0 then
     Exit(nil);
   Result := PhysicalToVirtual(Physical);
+end;
+
+{ Gives the device Queue's pages and enables it. }
+procedure ProgramVirtqueue(var Device: TVirtioDevice; var Queue: TVirtqueue);
+begin
+  Write16(Device.Common, CommonQueueSelect, Queue.Index);
+  Write16(Device.Common, CommonQueueSize, Queue.Size);
+  Write16(Device.Common, CommonQueueVector, NoVector);
+  Write64(Device.Common, CommonQueueDescriptors, Queue.DescriptorsPhysical);
+  Write64(Device.Common, CommonQueueAvailable, Queue.AvailablePhysical);
+  Write64(Device.Common, CommonQueueUsed, Queue.UsedPhysical);
+  Queue.NotifyAddress := PWord(Device.NotifyBase +
+    QWord(Read16(Device.Common, CommonQueueNotifyOffset)) * Device.NotifyMultiplier);
+  Write16(Device.Common, CommonQueueEnable, 1);
 end;
 
 function SetUpVirtqueue(var Device: TVirtioDevice; Index: Word; out Queue: TVirtqueue): Boolean;
@@ -341,14 +365,10 @@ begin
   Queue.Used := PByte(AllocateQueuePage(UsedPhysical));
   if (Queue.Descriptors = nil) or (Queue.Available = nil) or (Queue.Used = nil) then
     Exit;
-  Write16(Device.Common, CommonQueueSize, Size);
-  Write16(Device.Common, CommonQueueVector, NoVector);
-  Write64(Device.Common, CommonQueueDescriptors, DescriptorsPhysical);
-  Write64(Device.Common, CommonQueueAvailable, AvailablePhysical);
-  Write64(Device.Common, CommonQueueUsed, UsedPhysical);
-  Queue.NotifyAddress := PWord(Device.NotifyBase +
-    QWord(Read16(Device.Common, CommonQueueNotifyOffset)) * Device.NotifyMultiplier);
-  Write16(Device.Common, CommonQueueEnable, 1);
+  Queue.DescriptorsPhysical := DescriptorsPhysical;
+  Queue.AvailablePhysical := AvailablePhysical;
+  Queue.UsedPhysical := UsedPhysical;
+  ProgramVirtqueue(Device, Queue);
   Result := True;
 end;
 
@@ -369,6 +389,33 @@ procedure StartVirtioDevice(var Device: TVirtioDevice);
 begin
   Write8(Device.Common, CommonDeviceStatus,
     Read8(Device.Common, CommonDeviceStatus) or StatusDriverReady);
+end;
+
+function RestartVirtioDevice(var Device: TVirtioDevice; var Queue: TVirtqueue): Boolean;
+var
+  Accepted: QWord;
+begin
+  Write8(Device.Common, CommonDeviceStatus, 0);
+  while Read8(Device.Common, CommonDeviceStatus) <> 0 do
+    CpuRelax;
+  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge);
+  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge or StatusDriver);
+  Result := NegotiateVirtioFeatures(Device, Device.AcceptedFeatures, Accepted);
+  if not Result then
+    Exit;
+  { Empty rings, counted from the start again. }
+  FillMemory(Queue.Descriptors, 4096, 0);
+  FillMemory(Queue.Available, 4096, 0);
+  FillMemory(Queue.Used, 4096, 0);
+  Queue.LastSeenUsed := 0;
+  ProgramVirtqueue(Device, Queue);
+  if Device.UsesInterrupts then
+  begin
+    Write16(Device.Common, CommonConfigurationVector, NoVector);
+    Write16(Device.Common, CommonQueueSelect, Queue.Index);
+    Write16(Device.Common, CommonQueueVector, 0);
+  end;
+  StartVirtioDevice(Device);
 end;
 
 procedure FailVirtioDevice(var Device: TVirtioDevice);

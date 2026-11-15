@@ -316,10 +316,33 @@ end;
 
 { --- Taking a device ------------------------------------------------------------ }
 
+{ The streaming setting chosen and the endpoint's rate. }
+function ChooseStreamingSetting(Audio: PUsbAudio): Boolean;
+var
+  Rate: array[0..2] of Byte;
+begin
+  Result := UsbControlTransfer(Audio^.Device, StandardToInterface, RequestSetInterface, Audio^.Alternate,
+    Audio^.StreamingInterface, nil, 0);
+  if not Result then
+    Exit;
+  { Endpoints with one rate may not have the control: it can fail. }
+  Rate[0] := Byte(SampleRate);
+  Rate[1] := Byte(SampleRate shr 8);
+  Rate[2] := Byte(SampleRate shr 16);
+  UsbControlTransfer(Audio^.Device, ClassToEndpoint, RequestSetCurrent, SamplingFrequencyControl shl 8,
+    Audio^.Endpoint, @Rate[0], 3);
+end;
+
+{ After waking from suspend to RAM the device is back in its first
+  setting: the streaming one again (the framework sets the volume). }
+procedure ResumeAudioDevice(Device: PUsbDevice; Context: Pointer);
+begin
+  ChooseStreamingSetting(PUsbAudio(Context));
+end;
+
 function ProbeUsbAudio(Device: PUsbDevice): Boolean;
 var
   Audio: PUsbAudio;
-  Rate: array[0..2] of Byte;
   Packets: TIsochronousRoutines;
   Routines: TAudioDriverRoutines;
 begin
@@ -335,18 +358,12 @@ begin
   end;
   Audio^.PacketBytes := PacketBytesFor(Audio);
   if (Audio^.PacketBytes = 0) or (Audio^.PacketBytes > Audio^.MaximumPacket) or
-     not UsbControlTransfer(Device, StandardToInterface, RequestSetInterface, Audio^.Alternate,
-       Audio^.StreamingInterface, nil, 0) then
+     not ChooseStreamingSetting(Audio) then
   begin
     FreeKernelMemory(Audio);
     Exit;
   end;
-  { Endpoints with one rate may not have the control: it can fail. }
-  Rate[0] := Byte(SampleRate);
-  Rate[1] := Byte(SampleRate shr 8);
-  Rate[2] := Byte(SampleRate shr 16);
-  UsbControlTransfer(Device, ClassToEndpoint, RequestSetCurrent, SamplingFrequencyControl shl 8, Audio^.Endpoint,
-    @Rate[0], 3);
+  UsbSetResumeHandler(Device, @ResumeAudioDevice, Audio);
   Packets.NextPacket := @NextPacket;
   Packets.PacketDone := @PacketDone;
   if not UsbOpenIsochronousOut(Device, Audio^.Endpoint, Audio^.MaximumPacket, Audio^.Interval, Packets, Audio) then

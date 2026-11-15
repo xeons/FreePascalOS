@@ -90,12 +90,15 @@ type
   end;
 
 function AllocateProducerRing(out Ring: TProducerRing): Boolean;
+{ Empties a ring in its page (as a controller that was reset expects it). }
+procedure ResetProducerRing(var Ring: TProducerRing);
 { Puts a TRB on Ring (its cycle bit set for the ring) and returns its
   physical address. }
 function EnqueueTrb(var Ring: TProducerRing; Parameter: QWord; Status: LongWord;
   Control: LongWord): QWord;
 
 function AllocateEventRing(out Ring: TEventRing): Boolean;
+procedure ResetEventRing(var Ring: TEventRing);
 { The next event, if the controller has written one. }
 function NextEvent(var Ring: TEventRing; out Event: TTrb): Boolean;
 { The physical address of the event ring's dequeue position. }
@@ -107,6 +110,7 @@ function CompletionCode(const Trb: TTrb): LongWord;
 implementation
 
 uses
+  Runtime.Memory,
   Runtime.Atomic,
   Memory.Layout,
   Memory.PhysicalPages;
@@ -119,17 +123,22 @@ begin
   Result := PTrb(PhysicalToVirtual(Physical));
 end;
 
-function AllocateProducerRing(out Ring: TProducerRing): Boolean;
+procedure ResetProducerRing(var Ring: TProducerRing);
 begin
-  Ring.Trbs := AllocateRingPage(Ring.Physical);
+  FillMemory(Ring.Trbs, TrbsPerRing * SizeOf(TTrb), 0);
   Ring.Enqueue := 0;
   Ring.Cycle := TrbCycle;
-  Result := Ring.Trbs <> nil;
-  if not Result then
-    Exit;
   { The last TRB links back to the first and flips the cycle bit. }
   Ring.Trbs[TrbsPerRing - 1].Parameter := Ring.Physical;
   Ring.Trbs[TrbsPerRing - 1].Control := (TrbTypeLink shl TrbTypeShift) or TrbToggleCycle;
+end;
+
+function AllocateProducerRing(out Ring: TProducerRing): Boolean;
+begin
+  Ring.Trbs := AllocateRingPage(Ring.Physical);
+  Result := Ring.Trbs <> nil;
+  if Result then
+    ResetProducerRing(Ring);
 end;
 
 function EnqueueTrb(var Ring: TProducerRing; Parameter: QWord; Status: LongWord;
@@ -170,6 +179,13 @@ begin
   Ring.SegmentTable := PQWord(PhysicalToVirtual(Ring.SegmentTablePhysical));
   Ring.SegmentTable[0] := Ring.Physical;
   Ring.SegmentTable[1] := TrbsPerRing;
+  Ring.Dequeue := 0;
+  Ring.Cycle := TrbCycle;
+end;
+
+procedure ResetEventRing(var Ring: TEventRing);
+begin
+  FillMemory(Ring.Trbs, TrbsPerRing * SizeOf(TTrb), 0);
   Ring.Dequeue := 0;
   Ring.Cycle := TrbCycle;
 end;

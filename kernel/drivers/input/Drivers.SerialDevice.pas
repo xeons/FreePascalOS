@@ -40,6 +40,7 @@ function InitializeSerialDevice: Boolean;
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Kernel.Arch.TrapFrame,
   Hal.SerialPort,
@@ -90,6 +91,14 @@ begin
   Result := True;
 end;
 
+{ Waking from suspend to RAM reset the port: its line settings and the
+  receive interrupt again. }
+procedure ResumeSerialPort(Context: Pointer);
+begin
+  InitializeSerialPort;
+  EnableSerialReceiveInterrupt;
+end;
+
 function InitializeSerialDevice: Boolean;
 begin
   Result := False;
@@ -103,6 +112,7 @@ begin
   EnableSerialReceiveInterrupt;
   { Anything typed before the interrupt was enabled. }
   HandleSerialInterrupt(nil, nil);
+  RegisterPowerHandler('serial port', PowerStageDevices, nil, @ResumeSerialPort, nil);
   Result := True;
 end;
 

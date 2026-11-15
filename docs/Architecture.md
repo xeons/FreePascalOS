@@ -518,13 +518,11 @@ for now the routing of PCI interrupt lines.
   interpreter is not reentrant, so all AML after loading runs under one
   lock (`LockAmlInterpreter`).
 - **Sleep states** (`Io.AcpiSleep`). A state's SLP_TYP values come from
-  `\_Sx`. Entering one evaluates `\_PTS`, turns every wake event off,
-  clears the status and writes the types, then SLP_EN, into the PM1
-  control registers. Only S5 (soft off) is entered. S1 to S4 would need
-  the machine brought back afterwards (processor state, and every device
-  initialized again after S3), so they are refused. Resetting uses the
-  FADT's reset register, then `HalResetMachine` (the keyboard
-  controller, then port 0CF9h).
+  `\_Sx`. Entering one evaluates `\_PTS`, clears the status and writes
+  the types, then SLP_EN, into the PM1 control registers. S5 (soft off)
+  and S3 (suspend to RAM, below) are entered; S1, S2 and S4 are not.
+  Resetting uses the FADT's reset register, then `HalResetMachine` (the
+  keyboard controller, then port 0CF9h).
 - **Shutting down** (`Processes.Shutdown`). The power button,
   `CallShutdown` (root only: `poweroff`, `reboot`, `halt`) and the
   kernel debug shell (`poweroff`, `reboot`) can start it; the first
@@ -537,6 +535,67 @@ for now the routing of PCI interrupt lines.
 
   The phase 1 thread, seeing init end during a shutdown, leaves the rest
   to it.
+
+### Suspend to RAM
+
+S3 turns every processor and device off; only memory keeps its
+contents. Waking, the firmware starts the boot processor at the FACS's
+waking vector, and every device starts from its reset state: the kernel
+brings everything back from what memory still holds. `Processes.Suspend`
+runs it on a thread pinned to the boot processor:
+1. `\_PTS(3)` and the S3 types; the volumes are synced.
+2. Every power handler suspends (`Io.PowerManagement`, by stage, last
+   first).
+   - **Services:** the block I/O gate in `Io.BlockDevice` stops new
+     requests and waits for those in flight; the audio framework stops
+     its outputs and inputs and pauses its threads.
+   - **Devices:** drivers quiet their hardware (AHCI stops its ports,
+     NVMe is told to shut down).
+   - **Platform:** PCI configuration space is saved.
+3. Processors (`Kernel.ProcessorPower`).
+   - Every other processor freezes in its dispatch interrupt, where it
+     holds no spin lock: it saves its state (`Kernel.Arch.Suspend`:
+     callee-saved registers, stack, flags, FS and swapped GS bases, FPU
+     state, like `setjmp`) and halts.
+   - The boot processor saves the I/O APIC entries and its own state,
+     points the waking vector at the start-up page (the trampoline that
+     starts secondary processors) and writes the sleep registers.
+4. Waking, the trampoline takes the boot processor to 64-bit mode and
+   `WakeEntry`.
+   - It reloads its page tables, descriptor tables (kept in memory; the
+     TSS made available again), processor block, interrupt table, PAT
+     and system call registers.
+   - Its interrupt hardware comes back: the legacy PICs masked, the
+     local APIC and clock, the I/O APIC entries.
+   - It resumes its saved state, then starts each frozen processor
+     again (INIT, STARTUP), which resumes inside its dispatch interrupt.
+5. The wall clock is read again (the uptime leaves the sleep out), and
+   every power handler resumes, first stage first:
+   - **Platform:** PCI configuration (BARs, bridges, capabilities, then
+     the command register) and the MSI-X tables, which live in device
+     memory.
+   - **Firmware:** ACPI mode, `\_WAK(3)`, the button and GPE enables.
+   - **Buses:** xHCI's rings are emptied in their pages and the
+     controller runs again. Each device is set up again on its port: a
+     slot, its address, its configuration, every endpoint it had open
+     (recorded when opened), then the class driver's part (boot
+     protocol, the streaming setting, clearing a disk's "unit
+     attention"), then the interrupt reads.
+   - **Devices:** AHCI ports pointed at their command lists again; NVMe
+     queues emptied and recreated; virtio reset, its features and queue
+     given again; HD Audio's controller reset and codec paths set up;
+     AC'97's codec and list; the serial port; the PS/2 controller; the
+     Bochs display's mode registers (the firmware set the mode at boot)
+     and the console redrawn from its copy.
+   - **Services:** block I/O open again; audio volumes set again and
+     capturing restarted.
+
+`suspend` (root only, `CallSuspend`) and the kernel debug shell's
+`suspend` start it. The input test suspends a machine with AHCI,
+virtio, NVMe and USB disks and HD Audio, AC'97 and USB audio, wakes it
+(`system_wakeup`), then reads every disk raw, writes and reads back
+files on three volumes, plays a tone on each sound output (recorded and
+checked) and checks the display.
 
 `make aml-test` also checks the sleep states (S3, S4, S5 on both QEMU
 machines) and the GPE methods the tables have. The input test plugs a

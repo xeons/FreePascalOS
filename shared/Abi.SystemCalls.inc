@@ -167,8 +167,11 @@ const
     to end, the file systems are written out, then the machine powers
     off (ACPI S5), resets or halts. Returns 0 once it has started. }
   CallShutdown = 70;
+  { (): suspends to RAM (ACPI S3) and returns once the machine woke: 0,
+    or ErrorUnsupported (no S3), ErrorBusy. Root only. }
+  CallSuspend = 71;
 
-  CallCount = 71;
+  CallCount = 72;
 
   ShutdownPowerOff = 0;
   ShutdownReboot = 1;

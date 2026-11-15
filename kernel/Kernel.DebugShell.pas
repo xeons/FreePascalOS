@@ -36,6 +36,7 @@
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
+    suspend           suspends to RAM (ACPI S3) until woken
     poweroff          shuts down and powers off (ACPI S5)
     reboot            shuts down and resets the machine
     exit              leaves the shell
@@ -67,6 +68,7 @@ uses
   FileSystem.Files,
   Processes.Process,
   Processes.Shutdown,
+  Processes.Suspend,
   Drivers.DiskStatistics,
   Debug.Output;
 
@@ -119,7 +121,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('uptime, poweroff, reboot, exit');
+  WriteLine('uptime, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -290,6 +292,11 @@ begin
   end
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
+  else if TextIsEqual(@Command[0], 'suspend') then
+  begin
+    if SuspendToRam <> 0 then
+      WriteLine('suspend: the machine could not be suspended');
+  end
   else if TextIsEqual(@Command[0], 'poweroff') then
   begin
     RequestShutdown(PowerActionOff);

@@ -44,6 +44,10 @@ function IoApicInputCount: LongWord;
 function RouteGlobalInterrupt(Gsi: LongWord; Vector: Byte; DestinationApicId: Byte;
   ActiveLow: Boolean; LevelTriggered: Boolean): Boolean;
 procedure MaskGlobalInterrupt(Gsi: LongWord);
+{ Suspend to RAM resets the I/O APICs: every redirection entry is kept
+  before, and written back after. }
+procedure SaveIoApicEntries;
+procedure RestoreIoApicEntries;
 
 implementation
 
@@ -69,9 +73,13 @@ type
     InputCount: LongWord;
   end;
 
+const
+  MaximumInputs = 240;
+
 var
   IoApics: array[0..MaximumIoApics - 1] of TIoApic;
   IoApicTotal: Integer = 0;
+  SavedEntries: array[0..MaximumIoApics - 1, 0..MaximumInputs - 1] of QWord;
 
 function ReadRegister(const IoApic: TIoApic; Register: LongWord): LongWord;
 begin
@@ -162,6 +170,35 @@ var
 begin
   if FindIoApic(Gsi, Index, Input) then
     WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, EntryMasked);
+end;
+
+procedure SaveIoApicEntries;
+var
+  Index: Integer;
+  Input: LongWord;
+begin
+  for Index := 0 to IoApicTotal - 1 do
+    for Input := 0 to IoApics[Index].InputCount - 1 do
+      if Input < MaximumInputs then
+        SavedEntries[Index, Input] := ReadRegister(IoApics[Index], RedirectionTableBase + 2 * Input) or
+          (QWord(ReadRegister(IoApics[Index], RedirectionTableBase + 2 * Input + 1)) shl 32);
+end;
+
+procedure RestoreIoApicEntries;
+var
+  Index: Integer;
+  Input: LongWord;
+begin
+  for Index := 0 to IoApicTotal - 1 do
+    for Input := 0 to IoApics[Index].InputCount - 1 do
+      if Input < MaximumInputs then
+      begin
+        { Masked while the destination goes in, then the entry itself. }
+        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, EntryMasked);
+        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input + 1,
+          LongWord(SavedEntries[Index, Input] shr 32));
+        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, LongWord(SavedEntries[Index, Input]));
+      end;
 end;
 
 end.

@@ -60,11 +60,17 @@ function ConnectPciExtendedMessageInterrupt(Device: PPciDevice; Handler: TInterr
 function ConnectPciInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
   Context: Pointer): TPciInterruptKind;
 
+{ MSI-X tables are in device memory, which waking from suspend to RAM
+  resets (MSI lives in configuration space, which Io.Pci restores):
+  every table entry programmed is written again. }
+procedure RegisterMessageInterruptPowerHandler;
+
 implementation
 
 uses
   Memory.DeviceMapping,
-  Io.InterruptRouting;
+  Io.InterruptRouting,
+  Io.PowerManagement;
 
 const
   PciConfigurationCapabilitiesPointer = $34;
@@ -147,6 +153,60 @@ begin
   Result := True;
 end;
 
+type
+  { An MSI-X table this unit programmed. }
+  TProgrammedTable = record
+    Device: PPciDevice;
+    Capability: Word;
+    Table: PByte;
+    EntryCount: LongWord;
+    Message: TInterruptMessage;
+  end;
+
+const
+  MaximumProgrammedTables = 32;
+
+var
+  ProgrammedTables: array[0..MaximumProgrammedTables - 1] of TProgrammedTable;
+  ProgrammedTableCount: Integer;
+
+{ Fills Table: every entry masked but the first, which sends Message;
+  then MSI-X on (the legacy line off). }
+procedure ProgramExtendedTable(const Programmed: TProgrammedTable);
+var
+  Control: Word;
+  Entry: LongWord;
+begin
+  Control := PciRead16(Programmed.Device, Programmed.Capability + MessageControlOffset);
+  { Masked as a whole while the table is filled in. }
+  PciWrite16(Programmed.Device, Programmed.Capability + MessageControlOffset,
+    Control or ExtendedControlFunctionMask or ExtendedControlEnable);
+  for Entry := 0 to Programmed.EntryCount - 1 do
+    PLongWord(Programmed.Table + Entry * ExtendedEntrySize + ExtendedEntryVectorControl)^ := ExtendedEntryMasked;
+  PLongWord(Programmed.Table + ExtendedEntryAddressLow)^ := LongWord(Programmed.Message.Address);
+  PLongWord(Programmed.Table + ExtendedEntryAddressHigh)^ := LongWord(Programmed.Message.Address shr 32);
+  PLongWord(Programmed.Table + ExtendedEntryData)^ := Programmed.Message.Data;
+  PLongWord(Programmed.Table + ExtendedEntryVectorControl)^ := 0;
+  PciWrite16(Programmed.Device, PciConfigurationCommand,
+    PciRead16(Programmed.Device, PciConfigurationCommand) or PciCommandInterruptDisable);
+  PciWrite16(Programmed.Device, Programmed.Capability + MessageControlOffset,
+    (Control and not ExtendedControlFunctionMask) or ExtendedControlEnable);
+end;
+
+procedure ReprogramTables(Context: Pointer);
+var
+  Index: Integer;
+begin
+  for Index := 0 to ProgrammedTableCount - 1 do
+    ProgramExtendedTable(ProgrammedTables[Index]);
+end;
+
+procedure RegisterMessageInterruptPowerHandler;
+begin
+  { After Io.PCI's handler (registered earlier, same stage). }
+  RegisterPowerHandler('MSI-X tables', PowerStagePlatform, nil, @ReprogramTables, nil);
+end;
+
 function ConnectPciExtendedMessageInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
   Context: Pointer): Boolean;
 var
@@ -159,8 +219,8 @@ var
   MapStart: QWord;
   MapOffset: QWord;
   Table: PByte;
-  Entry: LongWord;
   Message: TInterruptMessage;
+  Programmed: TProgrammedTable;
 begin
   Result := False;
   Capability := FindCapability(Device, CapabilityExtendedMessageInterrupts);
@@ -182,20 +242,17 @@ begin
   if not ConnectMessageInterrupt(Handler, Context, Message) then
     Exit;
 
-  { Masked as a whole while the table is filled in. }
-  PciWrite16(Device, Capability + MessageControlOffset,
-    Control or ExtendedControlFunctionMask or ExtendedControlEnable);
-  for Entry := 0 to EntryCount - 1 do
-    PLongWord(Table + Entry * ExtendedEntrySize + ExtendedEntryVectorControl)^ := ExtendedEntryMasked;
-  PLongWord(Table + ExtendedEntryAddressLow)^ := LongWord(Message.Address);
-  PLongWord(Table + ExtendedEntryAddressHigh)^ := LongWord(Message.Address shr 32);
-  PLongWord(Table + ExtendedEntryData)^ := Message.Data;
-  PLongWord(Table + ExtendedEntryVectorControl)^ := 0;
-
-  PciWrite16(Device, PciConfigurationCommand,
-    PciRead16(Device, PciConfigurationCommand) or PciCommandInterruptDisable);
-  PciWrite16(Device, Capability + MessageControlOffset,
-    (Control and not ExtendedControlFunctionMask) or ExtendedControlEnable);
+  Programmed.Device := Device;
+  Programmed.Capability := Capability;
+  Programmed.Table := Table;
+  Programmed.EntryCount := EntryCount;
+  Programmed.Message := Message;
+  ProgramExtendedTable(Programmed);
+  if ProgrammedTableCount < MaximumProgrammedTables then
+  begin
+    ProgrammedTables[ProgrammedTableCount] := Programmed;
+    Inc(ProgrammedTableCount);
+  end;
   Result := True;
 end;
 

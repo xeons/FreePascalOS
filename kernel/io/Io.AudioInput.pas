@@ -98,6 +98,7 @@ procedure RunAudioCapture(Context: Pointer);
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -135,6 +136,7 @@ var
   HardwareInputCount: Integer;
   MonitorCount: Integer;
   CaptureWake: TEvent;
+  CaptureSuspended: Boolean;
 
 function StateOf(Input: PAudioInput): PInputState;
 begin
@@ -201,10 +203,54 @@ begin
   while True do
   begin
     WaitForEventWithOptions(CaptureWake, CaptureIntervalMilliseconds, False);
-    for Index := 0 to InputCount - 1 do
-      if not StateOf(Inputs[Index])^.IsMonitor then
-        ServiceInput(Inputs[Index]);
+    if not CaptureSuspended then
+      for Index := 0 to InputCount - 1 do
+        if not StateOf(Inputs[Index])^.IsMonitor then
+          ServiceInput(Inputs[Index]);
   end;
+end;
+
+{ --- Suspend to RAM ------------------------------------------------------- }
+
+{ Capturing hardware stops (and starts again on resume, from the start
+  of its ring, if a reader is still there). }
+procedure SuspendInputs(Context: Pointer);
+var
+  Index: Integer;
+  State: PInputState;
+begin
+  CaptureSuspended := True;
+  for Index := 0 to InputCount - 1 do
+  begin
+    State := StateOf(Inputs[Index]);
+    AcquireMutex(State^.StreamsLock);
+    if State^.IsCapturing then
+      Inputs[Index]^.Routines.Stop(Inputs[Index]^.Context);
+    ReleaseMutex(State^.StreamsLock);
+  end;
+end;
+
+procedure ResumeInputs(Context: Pointer);
+var
+  Index: Integer;
+  State: PInputState;
+begin
+  for Index := 0 to InputCount - 1 do
+  begin
+    State := StateOf(Inputs[Index]);
+    if State^.IsMonitor then
+      Continue;
+    AcquireMutex(State^.StreamsLock);
+    if Assigned(Inputs[Index]^.Routines.SetGain) then
+      Inputs[Index]^.Routines.SetGain(Inputs[Index]^.Context, State^.Gain);
+    if State^.IsCapturing then
+    begin
+      State^.Consumed := 0;
+      Inputs[Index]^.Routines.Start(Inputs[Index]^.Context);
+    end;
+    ReleaseMutex(State^.StreamsLock);
+  end;
+  CaptureSuspended := False;
 end;
 
 function AudioInputCount: Integer;
@@ -429,6 +475,8 @@ begin
   Result^.Context := Context;
   if Assigned(Routines.SetGain) then
     Routines.SetGain(Context, DefaultGain);
+  if HardwareInputCount = 0 then
+    RegisterPowerHandler('audio inputs', PowerStageServices, @SuspendInputs, @ResumeInputs, nil);
   Inc(HardwareInputCount);
 end;
 

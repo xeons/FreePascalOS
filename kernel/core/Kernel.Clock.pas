@@ -44,6 +44,9 @@ procedure StartSystemClock;
 
 function ClockTickCount: QWord;
 function UptimeMilliseconds: QWord;
+{ After suspend to RAM: the wall clock is read again (the uptime does
+  not count the time asleep). }
+procedure ResynchronizeWallClock;
 
 { Current date and time as Unix time (UTC). }
 function CurrentWallClockTime: TUnixTime;
@@ -90,6 +93,11 @@ begin
   if not RegisterInterruptHandler(HalClockInterruptVector, @HandleClockInterrupt, nil) then
     KernelPanic('clock interrupt vector is already in use');
   HalStartClock(ClockTicksPerSecond);
+end;
+
+procedure ResynchronizeWallClock;
+begin
+  WallClockAtStart := ReadRealTimeClock - TUnixTime(TickCount div ClockTicksPerSecond);
 end;
 
 function ClockTickCount: QWord;

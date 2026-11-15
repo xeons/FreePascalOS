@@ -398,7 +398,7 @@ const
     (Command: 'voicetest'; ExpectedOutput: 'voicetest: 44 checks passed'#10; ExpectedStatus: 0),
     (Command: 'effecttest'; ExpectedOutput: 'effecttest: 41 checks passed'#10; ExpectedStatus: 0),
     (Command: 'record -r 16000 -c 1 i.wav 0.5 && soundinfo i.wav; tone -o s.wav -r 22050 -c 1 -f u8 440 0.25 && soundinfo s.wav'; ExpectedOutput: 'i.wav: 16000 Hz, 1 channel, s16, 0.50 s, peak 0%, silent'#10's.wav: 22050 Hz, 1 channel, u8, 0.25 s, peak 49%, 440 Hz'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "poweroff; reboot; halt" 2>&1; poweroff now 2>&1 | head -n 1'; ExpectedOutput: 'poweroff: cannot shut down: Operation not permitted'#10'reboot: cannot shut down: Operation not permitted'#10'halt: cannot shut down: Operation not permitted'#10'poweroff: no arguments are taken'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "poweroff; reboot; halt; suspend" 2>&1; poweroff now 2>&1 | head -n 1'; ExpectedOutput: 'poweroff: cannot shut down: Operation not permitted'#10'reboot: cannot shut down: Operation not permitted'#10'halt: cannot shut down: Operation not permitted'#10'suspend: cannot suspend: Operation not permitted'#10'poweroff: no arguments are taken'#10; ExpectedStatus: 0),
     (Command: 'mixer; mixer 90; mixer; mixer 80'; ExpectedOutput: 'volume 80%'#10'volume 90%'#10; ExpectedStatus: 0),
     { The order and lengths are what check-audio.py expects: a tone, a WAV
       file, two programs at once (mixed), then other rates, sample

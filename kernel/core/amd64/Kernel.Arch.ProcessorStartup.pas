@@ -52,6 +52,15 @@ procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Poi
 { Called by a secondary processor first thing at its entry point. }
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 
+{ Waking from suspend to RAM: the firmware starts the boot processor at
+  the start-up page (in real mode, like a secondary processor), which
+  then runs EntryPoint(Processor) on the stack ending at StackTop. Sets
+  that up and returns the page's physical address (the waking vector). }
+function PrepareWakeEntry(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): QWord;
+{ A processor woken from suspend to RAM sets itself up again (as at
+  start-up, but keeping its descriptor tables' contents). }
+procedure ReinitializeThisProcessor(Processor: PProcessor);
+
 implementation
 
 uses
@@ -161,6 +170,17 @@ begin
   Result := True;
 end;
 
+function PrepareWakeEntry(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): QWord;
+begin
+  { The kernel half may have grown new top level entries since start-up. }
+  BuildStartupPageTables;
+  StartupField(StackTopOffset)^ := StackTop;
+  StartupField(ProcessorBlockOffset)^ := QWord(Processor);
+  StartupField(EntryPointOffset)^ := QWord(EntryPoint);
+  StartupField(StartedOffset)^ := 0;
+  Result := StartupPhysical;
+end;
+
 procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
 begin
   StartupField(StackTopOffset)^ := StackTop;
@@ -181,6 +201,16 @@ begin
   WriteModelSpecificRegister(MsrPageAttributeTable, BootPageAttributes);
   EnableSystemCallsOnThisProcessor;
   HalInitializeSecondaryProcessor;
+end;
+
+procedure ReinitializeThisProcessor(Processor: PProcessor);
+begin
+  WriteControlRegister3(Processor^.ActiveAddressSpace);
+  ReloadDescriptorTables(Processor^.DescriptorTables);
+  ArchSetProcessorBlock(Processor);
+  LoadInterruptTableOnThisProcessor;
+  WriteModelSpecificRegister(MsrPageAttributeTable, BootPageAttributes);
+  EnableSystemCallsOnThisProcessor;
 end;
 
 end.

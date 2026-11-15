@@ -51,6 +51,7 @@ function InitializePs2Keyboard: Boolean;
 implementation
 
 uses
+  Io.PowerManagement,
   Kernel.Arch.TrapFrame,
   Kernel.Options,
   Hal.PortIo,
@@ -287,20 +288,16 @@ begin
   Result := Keyboard.KeyCount;
 end;
 
-function InitializePs2Keyboard: Boolean;
+{ Both ports off, then the first port's interrupt and scan code
+  translation on (the second port's off). }
+function ConfigureController: Boolean;
 var
   Configuration: Byte;
 begin
   Result := False;
-  { No controller: the status port floats high. }
-  if ReadPortByte(StatusPort) = $FF then
-    Exit;
-  ChooseLayout;
-
   SendCommand(CommandDisableFirstPort);
   SendCommand(CommandDisableSecondPort);
   FlushOutputBuffer;
-
   SendCommand(CommandReadConfiguration);
   if not WaitUntilReadable then
     Exit;
@@ -310,16 +307,41 @@ begin
   SendCommand(CommandWriteConfiguration);
   WaitUntilWritable;
   WritePortByte(DataPort, Configuration);
+  Result := True;
+end;
 
+{ The first port on, and the lights as they should be. }
+procedure StartKeyboard;
+begin
+  SendCommand(CommandEnableFirstPort);
+  FlushOutputBuffer;
+  LightsState := LightsIdle;
+  UpdateLights;
+end;
+
+{ Waking from suspend to RAM reset the controller. }
+procedure ResumeKeyboard(Context: Pointer);
+begin
+  if ConfigureController then
+    StartKeyboard;
+end;
+
+function InitializePs2Keyboard: Boolean;
+begin
+  Result := False;
+  { No controller: the status port floats high. }
+  if ReadPortByte(StatusPort) = $FF then
+    Exit;
+  ChooseLayout;
+
+  if not ConfigureController then
+    Exit;
   if not CreateKeyboardDevice then
     Exit;
   if not ConnectIsaInterrupt(KeyboardIrq, @HandleKeyboardInterrupt, nil) then
     Exit;
-  SendCommand(CommandEnableFirstPort);
-  FlushOutputBuffer;
-
-  LightsState := LightsIdle;
-  UpdateLights;
+  StartKeyboard;
+  RegisterPowerHandler('PS/2 keyboard', PowerStageDevices, nil, @ResumeKeyboard, nil);
 
   DebugBeginMessage;
   DebugWriteTag('input');

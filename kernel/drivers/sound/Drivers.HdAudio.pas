@@ -44,6 +44,7 @@ function InitializeHdAudioControllers: Integer;
 implementation
 
 uses
+  Io.PowerManagement,
   Memory.KernelHeap,
   Memory.DeviceMapping,
   Kernel.Arch.TrapFrame,
@@ -308,11 +309,48 @@ begin
   DebugEndMessage;
 end;
 
+{ The interrupt enables for the streams in use. }
+procedure EnableStreamInterrupts(Controller: PHdAudioController);
+var
+  Enabled: LongWord;
+begin
+  if not Controller^.UsesInterrupts then
+    Exit;
+  Enabled := InterruptGlobalEnable or (LongWord(1) shl Controller^.Playback.Stream.Index);
+  if Controller^.HasCapture then
+    Enabled := Enabled or (LongWord(1) shl Controller^.Capture.Stream.Index);
+  Write32(Controller^.Registers, RegisterInterruptControl, Enabled);
+end;
+
+{ --- Suspend to RAM --------------------------------------------------------- }
+
+{ Waking reset the controller and the codecs (the framework stopped the
+  streams before): the controller is reset again, the codec paths set
+  up again, the streams given their lists, and the interrupts enabled.
+  The framework sets the volume and starts the streams again. }
+procedure ResumeController(Context: Pointer);
+var
+  Controller: PHdAudioController;
+begin
+  Controller := PHdAudioController(Context);
+  if not ResetController(Controller) then
+    Exit;
+  if FindOutputPath(Controller^.Registers, OutputTag, Controller^.Playback.Path) then
+    ApplyFormat(Controller, Controller^.Playback.Path);
+  ResetStream(Controller^.Playback.Stream);
+  if Controller^.HasCapture then
+  begin
+    if FindInputPath(Controller^.Registers, InputTag, Controller^.Capture.Path) then
+      ApplyFormat(Controller, Controller^.Capture.Path);
+    ResetStream(Controller^.Capture.Stream);
+  end;
+  EnableStreamInterrupts(Controller);
+end;
+
 function StartController(Pci: PPciDevice): Boolean;
 var
   Controller: PHdAudioController;
   Bar: TPciBar;
-  Enabled: LongWord;
 begin
   Result := False;
   if not PciReadBar(Pci, 0, Bar) or Bar.IsIoPort then
@@ -328,13 +366,8 @@ begin
   Controller^.HasCapture := StartCapture(Controller);
 
   Controller^.UsesInterrupts := ConnectPciMessageInterrupt(Pci, @HandleHdAudioInterrupt, Controller);
-  if Controller^.UsesInterrupts then
-  begin
-    Enabled := InterruptGlobalEnable or (LongWord(1) shl Controller^.Playback.Stream.Index);
-    if Controller^.HasCapture then
-      Enabled := Enabled or (LongWord(1) shl Controller^.Capture.Stream.Index);
-    Write32(Controller^.Registers, RegisterInterruptControl, Enabled);
-  end;
+  EnableStreamInterrupts(Controller);
+  RegisterPowerHandler('HD Audio', PowerStageDevices, nil, @ResumeController, Controller);
   DescribeController(Controller);
   Result := True;
 end;

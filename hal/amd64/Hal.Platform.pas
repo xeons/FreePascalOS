@@ -57,6 +57,11 @@ function HalCurrentProcessorId: LongWord;
 { Prepares the executing secondary processor's interrupt controller and
   starts its clock (at the rate HalStartClock was given). }
 procedure HalInitializeSecondaryProcessor;
+{ Before suspend to RAM: keeps the interrupt routing. }
+procedure HalSaveInterruptRouting;
+{ After waking, on the boot processor: the legacy PICs masked again, its
+  local APIC and clock as before, the interrupt routing put back. }
+procedure HalResumeBootProcessor;
 { Wakes the processor with interrupt controller id ProcessorId so that it
   starts in real mode at physical page StartupPage (below 1 MiB). }
 procedure HalStartProcessor(ProcessorId: LongWord; StartupPage: Byte);
@@ -86,6 +91,7 @@ implementation
 
 uses
   Hal.PortIo,
+  Hal.IoApic,
   Hal.IntervalTimer,
   Hal.InterruptVectors,
   Hal.LegacyPic,
@@ -140,6 +146,21 @@ end;
 function HalCurrentProcessorId: LongWord;
 begin
   Result := LocalApicId;
+end;
+
+procedure HalSaveInterruptRouting;
+begin
+  SaveIoApicEntries;
+end;
+
+procedure HalResumeBootProcessor;
+begin
+  RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
+  InitializeLocalApic(ApicSpuriousVector);
+  if ClockInterruptsPerSecond <> 0 then
+    StartLocalApicPeriodicTimer(ClockInterruptVector,
+      LongWord(TimerTicksPerSecond div ClockInterruptsPerSecond));
+  RestoreIoApicEntries;
 end;
 
 procedure HalInitializeSecondaryProcessor;

@@ -44,6 +44,7 @@ function InitializeVirtioBlockDevices: Integer;
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -372,6 +373,16 @@ begin
   Result := True;
 end;
 
+{ Waking from suspend to RAM reset the device (block I/O was stopped
+  before, so nothing was in flight). }
+procedure ResumeDisk(Context: Pointer);
+var
+  Disk: PVirtioDisk;
+begin
+  Disk := PVirtioDisk(Context);
+  RestartVirtioDevice(Disk^.Virtio, Disk^.Queue);
+end;
+
 function StartDisk(Pci: PPciDevice): Boolean;
 var
   Disk: PVirtioDisk;
@@ -431,6 +442,7 @@ begin
     DebugWrite(', write cache flushed on request');
   DebugWriteLine('');
   DebugEndMessage;
+  RegisterPowerHandler('virtio block', PowerStageDevices, nil, @ResumeDisk, Disk);
   Result := True;
 end;
 

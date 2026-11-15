@@ -44,6 +44,7 @@ function InitializeAhciControllers: Integer;
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Text,
   Memory.Layout,
@@ -406,6 +407,54 @@ begin
   DebugEndMessage;
 end;
 
+{ --- Suspend to RAM -------------------------------------------------------- }
+
+{ Block I/O is stopped before (no command is in flight): the ports stop. }
+procedure SuspendController(Context: Pointer);
+var
+  Controller: PAhciController;
+  PortNumber: LongWord;
+begin
+  Controller := PAhciController(Context);
+  for PortNumber := 0 to MaximumPorts - 1 do
+    if Controller^.Ports[PortNumber] <> nil then
+      StopPort(Controller^.Ports[PortNumber]);
+end;
+
+{ Waking reset the controller: AHCI mode, then each port pointed at its
+  command list and FIS area again (still in memory) and started, then
+  the interrupts as they were. }
+procedure ResumeController(Context: Pointer);
+var
+  Controller: PAhciController;
+  PortNumber: LongWord;
+  Port: PAhciPort;
+begin
+  Controller := PAhciController(Context);
+  WriteRegister(Controller^.Registers, RegisterGlobalControl,
+    ReadRegister(Controller^.Registers, RegisterGlobalControl) or GlobalControlAhciEnable);
+  for PortNumber := 0 to MaximumPorts - 1 do
+  begin
+    Port := Controller^.Ports[PortNumber];
+    if Port = nil then
+      Continue;
+    WaitForRegister(Port^.Registers, PortSataStatus, SataStatusDetectionMask, SataStatusDevicePresent,
+      RegisterTimeoutMilliseconds);
+    ConfigurePort(Port);
+    if Controller^.UsesInterrupts then
+    begin
+      WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+      WriteRegister(Port^.Registers, PortInterruptEnable, PortInterruptsWanted);
+    end;
+  end;
+  if Controller^.UsesInterrupts then
+  begin
+    WriteRegister(Controller^.Registers, RegisterInterruptStatus, $FFFFFFFF);
+    WriteRegister(Controller^.Registers, RegisterGlobalControl,
+      ReadRegister(Controller^.Registers, RegisterGlobalControl) or GlobalControlInterruptEnable);
+  end;
+end;
+
 function InitializeController(PciDevice: PPciDevice): Integer;
 var
   Bar: TPciBar;
@@ -448,7 +497,11 @@ begin
   end;
 
   if Result > 0 then
-    WriteInterruptMode(EnableControllerInterrupts(PciDevice, Controller));
+  begin
+    Controller^.UsesInterrupts := EnableControllerInterrupts(PciDevice, Controller);
+    WriteInterruptMode(Controller^.UsesInterrupts);
+    RegisterPowerHandler('AHCI', PowerStageDevices, @SuspendController, @ResumeController, Controller);
+  end;
 end;
 
 function InitializeAhciControllers: Integer;

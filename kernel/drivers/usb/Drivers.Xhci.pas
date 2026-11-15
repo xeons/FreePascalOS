@@ -72,6 +72,10 @@ type
   { Called with each report of an interrupt IN endpoint, at dispatch
     level (it must not wait). }
   TUsbReportHandler = procedure(Device: PUsbDevice; Data: PByte; Length: LongWord; Context: Pointer);
+  { Called after waking from suspend to RAM, once the device has its
+    address, configuration and endpoints again: the class driver's own
+    setup (an interface's alternate setting, say). }
+  TUsbResumeHandler = procedure(Device: PUsbDevice; Context: Pointer);
   TUsbDevice = record
     Controller: Pointer;
     SlotId: LongWord;
@@ -114,6 +118,15 @@ type
     { An isochronous OUT stream: its endpoint context (0 if none). }
     IsochronousContext: LongWord;
     Isochronous: TIsochronousStream;
+    { What suspend to RAM needs to set the device up again: the
+      configuration chosen, each endpoint opened (its type, 0 if none;
+      interval exponent; average length) and the class driver's part. }
+    ConfigurationValue: Byte;
+    EndpointTypes: array[1..MaximumEndpointContexts - 1] of LongWord;
+    EndpointIntervals: array[1..MaximumEndpointContexts - 1] of LongWord;
+    EndpointAverages: array[1..MaximumEndpointContexts - 1] of Word;
+    ResumeHandler: TUsbResumeHandler;
+    ResumeContext: Pointer;
   end;
 
   { Returns True if it took the device. }
@@ -144,6 +157,8 @@ function UsbOpenIsochronousOut(Device: PUsbDevice; Address: Byte; MaximumPacket:
 { Starts and stops queueing the stream's packets (callable at dispatch
   level). }
 procedure UsbStartIsochronous(Device: PUsbDevice);
+{ The class driver's part of setting the device up after waking. }
+procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
 procedure UsbStopIsochronous(Device: PUsbDevice);
 { Moves up to Length (at most UsbMaximumTransfer) bytes on the bulk
   endpoint EndpointAddress; Transferred says how many moved. }
@@ -153,6 +168,7 @@ function UsbBulkTransfer(Device: PUsbDevice; EndpointAddress: Byte; Buffer: Poin
 implementation
 
 uses
+  Io.PowerManagement,
   Runtime.Memory,
   Runtime.Atomic,
   Memory.Layout,
@@ -669,19 +685,18 @@ begin
   ReleaseMutex(Device^.TransferLock);
 end;
 
-{ Adds endpoint Address (of EndpointType) with a fresh transfer ring:
-  a Configure Endpoint command with the slot (for its context entries)
-  and that endpoint. IntervalExponent: 125 us units, as a power of two. }
-function ConfigureEndpoint(Device: PUsbDevice; Address: Byte; EndpointType: LongWord; MaximumPacket: Word;
-  IntervalExponent: LongWord; AverageLength: Word): Boolean;
+{ Gives the controller endpoint context ContextIndex as recorded in
+  Device (its ring emptied): a Configure Endpoint command with the slot
+  (for its context entries) and that endpoint. }
+function ProgramEndpoint(Device: PUsbDevice; ContextIndex: LongWord): Boolean;
 var
-  ContextIndex: LongWord;
   Context: PLongWord;
   Slot: LongWord;
+  EndpointType: LongWord;
+  MaximumPacket: Word;
 begin
-  ContextIndex := ContextIndexOf(Address);
-  if (ContextIndex >= MaximumEndpointContexts) or not AllocateProducerRing(Device^.Rings[ContextIndex]) then
-    Exit(False);
+  EndpointType := Device^.EndpointTypes[ContextIndex];
+  MaximumPacket := Device^.EndpointMaximumPacket[ContextIndex];
   if ContextIndex > Device^.HighestContext then
     Device^.HighestContext := ContextIndex;
   FillMemory(Device^.InputContext, 4096, 0);
@@ -690,17 +705,34 @@ begin
   InputSlotContext(Device)[0] := (InputSlotContext(Device)[0] and not (LongWord($1F) shl 27)) or
     (Device^.HighestContext shl 27);
   Context := InputEndpointContext(Device, ContextIndex);
-  FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].Physical, AverageLength);
-  Context[0] := IntervalExponent shl 16;
+  FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].Physical,
+    Device^.EndpointAverages[ContextIndex]);
+  Context[0] := Device^.EndpointIntervals[ContextIndex] shl 16;
   if EndpointType in [EndpointTypeInterruptIn, EndpointTypeIsochronousOut] then
     { The most bytes per service interval. }
     Context[4] := Context[4] or (LongWord(MaximumPacket) shl 16);
   if EndpointType = EndpointTypeIsochronousOut then
     { Isochronous transfers are not retried: the error count is 0. }
     Context[1] := Context[1] and not (LongWord(3) shl 1);
-  Device^.EndpointMaximumPacket[ContextIndex] := MaximumPacket;
   Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
     (TrbTypeConfigureEndpoint shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
+end;
+
+{ Adds endpoint Address (of EndpointType) with a fresh transfer ring,
+  and records it. IntervalExponent: 125 us units, as a power of two. }
+function ConfigureEndpoint(Device: PUsbDevice; Address: Byte; EndpointType: LongWord; MaximumPacket: Word;
+  IntervalExponent: LongWord; AverageLength: Word): Boolean;
+var
+  ContextIndex: LongWord;
+begin
+  ContextIndex := ContextIndexOf(Address);
+  if (ContextIndex >= MaximumEndpointContexts) or not AllocateProducerRing(Device^.Rings[ContextIndex]) then
+    Exit(False);
+  Device^.EndpointTypes[ContextIndex] := EndpointType;
+  Device^.EndpointMaximumPacket[ContextIndex] := MaximumPacket;
+  Device^.EndpointIntervals[ContextIndex] := IntervalExponent;
+  Device^.EndpointAverages[ContextIndex] := AverageLength;
+  Result := ProgramEndpoint(Device, ContextIndex);
 end;
 
 function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
@@ -863,6 +895,7 @@ begin
      not GetDescriptor(Device, UsbDescriptorConfiguration, Device^.Configuration, TotalLength) then
     Exit;
   Device^.ConfigurationLength := TotalLength;
+  Device^.ConfigurationValue := Header[5];
   Result := UsbControlTransfer(Device, 0, RequestSetConfiguration, Header[5], 0, nil, 0);
 end;
 
@@ -883,6 +916,32 @@ begin
   InputEndpointContext(Device, 1)[1] := (InputEndpointContext(Device, 1)[1] and $FFFF) or (LongWord(Start[7]) shl 16);
   Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
     (TrbTypeEvaluateContext shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
+end;
+
+{ Puts Device (its port reset, slot Slot enabled) in the slot: the slot
+  context (one context entry, its port and speed) and the default
+  control endpoint, Address Device, and the control endpoint's packet
+  size. }
+function AddressDevice(Controller: PXhciController; Device: PUsbDevice; Slot: LongWord): Boolean;
+var
+  Ignored: LongWord;
+begin
+  Device^.SlotId := Slot;
+  Controller^.ContextArray[Slot] := Device^.OutputContextPhysical;
+  Controller^.Devices[Slot] := Device;
+  FillMemory(Device^.InputContext, 4096, 0);
+  InputControlContext(Device)[1] := 3;
+  InputSlotContext(Device)[0] := (LongWord(1) shl 27) or (Device^.Speed shl 20);
+  InputSlotContext(Device)[1] := Device^.PortNumber shl 16;
+  FillEndpointContext(InputEndpointContext(Device, 1), EndpointTypeControl,
+    DefaultControlPacketSize(Device^.Speed), Device^.Rings[1].Physical, 8);
+  Result := RunCommand(Controller, Device^.InputContextPhysical,
+    (TrbTypeAddressDevice shl TrbTypeShift) or (Slot shl 24), Ignored);
+  if not Result then
+    Exit;
+  Device^.HighestContext := 1;
+  if Device^.Speed = UsbSpeedFull then
+    Result := CorrectControlPacketSize(Device);
 end;
 
 { Gives the device on PortNumber a slot and an address, reads its
@@ -921,21 +980,7 @@ begin
     if Device^.DmaPages[Index] = nil then
       Exit;
   end;
-  Controller^.ContextArray[Slot] := Device^.OutputContextPhysical;
-  Controller^.Devices[Slot] := Device;
-
-  { Address Device: the slot (one context entry, its port and speed) and
-    the default control endpoint. }
-  InputControlContext(Device)[1] := 3;
-  InputSlotContext(Device)[0] := (LongWord(1) shl 27) or (Device^.Speed shl 20);
-  InputSlotContext(Device)[1] := PortNumber shl 16;
-  FillEndpointContext(InputEndpointContext(Device, 1), EndpointTypeControl,
-    DefaultControlPacketSize(Device^.Speed), Device^.Rings[1].Physical, 8);
-  if not RunCommand(Controller, Device^.InputContextPhysical,
-    (TrbTypeAddressDevice shl TrbTypeShift) or (Slot shl 24), Slot) then
-    Exit;
-  Device^.HighestContext := 1;
-  if (Device^.Speed = UsbSpeedFull) and not CorrectControlPacketSize(Device) then
+  if not AddressDevice(Controller, Device, Slot) then
     Exit;
   if not GetDescriptor(Device, UsbDescriptorDevice, @Device^.DeviceDescriptor[0], 18) or
      not SetFirstConfiguration(Device) then
@@ -1011,6 +1056,141 @@ begin
   Result := True;
 end;
 
+{ Stops the controller and resets it. }
+function ResetHostController(Controller: PXhciController): Boolean;
+begin
+  Write32(Controller^.Operational, UsbCommand, Read32(Controller^.Operational, UsbCommand) and not CommandRun);
+  Result := WaitForBits(Controller^.Operational, UsbStatus, StatusHalted, StatusHalted, 1000);
+  if not Result then
+    Exit;
+  Write32(Controller^.Operational, UsbCommand, CommandReset);
+  Result := WaitForBits(Controller^.Operational, UsbCommand, CommandReset, 0, 1000) and
+    WaitForBits(Controller^.Operational, UsbStatus, StatusNotReady, 0, 1000);
+end;
+
+{ Gives the controller (just reset) its slots, device context array,
+  command and event rings, enables its interrupter and runs it. }
+function RunHostController(Controller: PXhciController): Boolean;
+begin
+  Write32(Controller^.Operational, ConfigureRegister, Controller^.MaximumSlots);
+  Write64(Controller^.Operational, ContextArrayPointer, Controller^.ContextArrayPhysical);
+  Write64(Controller^.Operational, CommandRingControl, Controller^.CommandRing.Physical or 1);
+  Write32(Interrupter(Controller), InterrupterSegmentTableSize, 1);
+  Write64(Interrupter(Controller), InterrupterDequeuePointer, Controller^.EventRing.Physical);
+  Write64(Interrupter(Controller), InterrupterSegmentTableBase, Controller^.EventRing.SegmentTablePhysical);
+  Write32(Interrupter(Controller), InterrupterManagement, ManagementEnable or ManagementPending);
+  Write32(Controller^.Operational, UsbCommand, CommandRun or CommandInterrupterEnable);
+  Result := WaitForBits(Controller^.Operational, UsbStatus, StatusHalted, 0, 1000);
+end;
+
+{ --- Suspend to RAM -------------------------------------------------------------- }
+
+const
+  PortReturnMilliseconds = 2000;
+
+procedure ReportResumeFailure(Device: PUsbDevice; Reason: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('usb');
+  DebugWrite('Port ');
+  DebugWriteDecimal(Device^.PortNumber);
+  DebugWrite(': not set up again after waking: ');
+  DebugWriteLine(Reason);
+  DebugEndMessage;
+end;
+
+{ Sets a device up again after waking: the port reset, a slot (maybe
+  another), its address, its configuration, every endpoint it had open
+  (rings emptied), the class driver's own part, then the interrupt
+  reads and isochronous state. }
+procedure ResumeDevice(Controller: PXhciController; Device: PUsbDevice);
+const
+  RequestSetConfiguration = 9;
+var
+  Slot: LongWord;
+  ContextIndex: LongWord;
+  PreviousLevel: TPriorityLevel;
+begin
+  { The port comes back after the controller's reset (a USB 3 link takes
+    a while to train). }
+  if not WaitForBits(Controller^.Operational, PortRegisterBase + (Device^.PortNumber - 1) * PortRegisterStride,
+       PortConnected, PortConnected, PortReturnMilliseconds) or
+     not ResetPort(Controller, Device^.PortNumber) then
+  begin
+    ReportResumeFailure(Device, 'its port did not come back');
+    Exit;
+  end;
+  if not RunCommand(Controller, 0, TrbTypeEnableSlot shl TrbTypeShift, Slot) or
+     (Slot = 0) or (Slot > MaximumEnabledSlots) then
+  begin
+    ReportResumeFailure(Device, 'no slot');
+    Exit;
+  end;
+  FillMemory(Device^.OutputContext, 4096, 0);
+  ResetProducerRing(Device^.Rings[1]);
+  if not AddressDevice(Controller, Device, Slot) or
+     not UsbControlTransfer(Device, 0, RequestSetConfiguration, Device^.ConfigurationValue, 0, nil, 0) then
+  begin
+    ReportResumeFailure(Device, 'it did not take its address and configuration');
+    Exit;
+  end;
+  for ContextIndex := 2 to MaximumEndpointContexts - 1 do
+    if Device^.EndpointTypes[ContextIndex] <> 0 then
+    begin
+      ResetProducerRing(Device^.Rings[ContextIndex]);
+      ProgramEndpoint(Device, ContextIndex);
+    end;
+  { The class driver's settings before reports flow again. }
+  if Assigned(Device^.ResumeHandler) then
+    Device^.ResumeHandler(Device, Device^.ResumeContext);
+  PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  Device^.Isochronous.Oldest := 0;
+  Device^.Isochronous.InFlight := 0;
+  Device^.Isochronous.Streaming := False;
+  if Device^.InterruptContext <> 0 then
+    QueueInterruptRead(Device);
+  ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+end;
+
+{ Waking reset the controller and every device on it (the transfers
+  were finished before: block I/O and audio stopped). The controller
+  gets its rings again, emptied, in the same pages; then each device is
+  set up again on its port. }
+procedure ResumeController(Context: Pointer);
+var
+  Controller: PXhciController;
+  Known: array[0..MaximumEnabledSlots] of PUsbDevice;
+  Slot: LongWord;
+begin
+  Controller := PXhciController(Context);
+  TakeOverFromFirmware(Controller);
+  if not ResetHostController(Controller) then
+    Exit;
+  for Slot := 0 to MaximumEnabledSlots do
+  begin
+    Known[Slot] := Controller^.Devices[Slot];
+    Controller^.Devices[Slot] := nil;
+    if Slot > 0 then
+      Controller^.ContextArray[Slot] := 0;
+  end;
+  ResetProducerRing(Controller^.CommandRing);
+  ResetEventRing(Controller^.EventRing);
+  Controller^.PendingCommandTrb := 0;
+  if not RunHostController(Controller) then
+    Exit;
+  { Devices need a moment after the ports power up. }
+  SleepMilliseconds(100);
+  for Slot := 1 to MaximumEnabledSlots do
+    if Known[Slot] <> nil then
+      ResumeDevice(Controller, Known[Slot]);
+end;
+
+procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
+begin
+  Device^.ResumeContext := Context;
+  Device^.ResumeHandler := Handler;
+end;
+
 function StartController(Pci: PPciDevice): Integer;
 var
   Controller: PXhciController;
@@ -1048,31 +1228,15 @@ begin
   InitializeDeferredCall(Controller^.ProcessEventsCall, @ProcessEvents, Controller);
 
   TakeOverFromFirmware(Controller);
-  { Stop, then reset. }
-  Write32(Controller^.Operational, UsbCommand, Read32(Controller^.Operational, UsbCommand) and not CommandRun);
-  if not WaitForBits(Controller^.Operational, UsbStatus, StatusHalted, StatusHalted, 1000) then
+  if not ResetHostController(Controller) then
     Exit;
-  Write32(Controller^.Operational, UsbCommand, CommandReset);
-  if not WaitForBits(Controller^.Operational, UsbCommand, CommandReset, 0, 1000) or
-     not WaitForBits(Controller^.Operational, UsbStatus, StatusNotReady, 0, 1000) then
-    Exit;
-
   Controller^.ContextArray := PQWord(AllocatePage(Controller^.ContextArrayPhysical));
   if (Controller^.ContextArray = nil) or not AllocateScratchpads(Controller) or
      not AllocateProducerRing(Controller^.CommandRing) or not AllocateEventRing(Controller^.EventRing) then
     Exit;
-  Write32(Controller^.Operational, ConfigureRegister, Controller^.MaximumSlots);
-  Write64(Controller^.Operational, ContextArrayPointer, Controller^.ContextArrayPhysical);
-  Write64(Controller^.Operational, CommandRingControl, Controller^.CommandRing.Physical or 1);
-  Write32(Interrupter(Controller), InterrupterSegmentTableSize, 1);
-  Write64(Interrupter(Controller), InterrupterDequeuePointer, Controller^.EventRing.Physical);
-  Write64(Interrupter(Controller), InterrupterSegmentTableBase, Controller^.EventRing.SegmentTablePhysical);
-
   Controller^.UsesInterrupts :=
     ConnectPciInterrupt(Pci, @HandleXhciInterrupt, Controller) <> PciInterruptNone;
-  Write32(Interrupter(Controller), InterrupterManagement, ManagementEnable or ManagementPending);
-  Write32(Controller^.Operational, UsbCommand, CommandRun or CommandInterrupterEnable);
-  if not WaitForBits(Controller^.Operational, UsbStatus, StatusHalted, 0, 1000) then
+  if not RunHostController(Controller) then
     Exit;
 
   DebugBeginMessage;
@@ -1089,6 +1253,7 @@ begin
     DebugWriteLine(' ports, polled');
   DebugEndMessage;
 
+  RegisterPowerHandler('xHCI', PowerStageBuses, nil, @ResumeController, Controller);
   { Devices need a moment after the ports power up. }
   SleepMilliseconds(100);
   for PortNumber := 1 to Controller^.MaximumPorts do

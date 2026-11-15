@@ -80,6 +80,10 @@ procedure InitializeBootDescriptorTables(var Tables: TProcessorDescriptorTables)
   InterruptStackAreaSize bytes for its interrupt stacks. }
 procedure InitializeDescriptorTables(var Tables: TProcessorDescriptorTables; StackArea: Pointer);
 
+{ Loads Tables (built before) again on this processor, after it was
+  reset by suspend to RAM: the task state segment keeps its stacks. }
+procedure ReloadDescriptorTables(var Tables: TProcessorDescriptorTables);
+
 { Sets the stack the current processor switches to when an interrupt
   arrives while running in user mode. }
 procedure SetInterruptKernelStack(StackTop: QWord);
@@ -207,6 +211,24 @@ begin
     AlignedStackTop(StackArea, InterruptStackSize),
     AlignedStackTop(PByte(StackArea) + InterruptStackSize, InterruptStackSize),
     AlignedStackTop(PByte(StackArea) + 2 * InterruptStackSize, InterruptStackSize));
+end;
+
+procedure ReloadDescriptorTables(var Tables: TProcessorDescriptorTables);
+var
+  TablePointer: TDescriptorTablePointer;
+  TaskStateLow: QWord;
+  TaskStateHigh: QWord;
+begin
+  { Marked available again: LTR refuses a busy one. }
+  EncodeTaskStateDescriptor(QWord(@Tables.TaskState), SizeOf(TTaskStateSegment) - 1,
+    TaskStateLow, TaskStateHigh);
+  Tables.GlobalDescriptors[TaskStateSelector shr 3] := TaskStateLow;
+  Tables.GlobalDescriptors[(TaskStateSelector shr 3) + 1] := TaskStateHigh;
+  TablePointer.Limit := SizeOf(Tables.GlobalDescriptors) - 1;
+  TablePointer.Base := QWord(@Tables.GlobalDescriptors[0]);
+  LoadGlobalDescriptorTable(@TablePointer);
+  ReloadSegmentRegisters(KernelCodeSelector, KernelDataSelector);
+  LoadTaskRegister(TaskStateSelector);
 end;
 
 procedure SetInterruptKernelStack(StackTop: QWord);

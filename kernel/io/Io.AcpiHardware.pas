@@ -84,6 +84,11 @@ function GpeIsEnabled(Number: LongWord): Boolean;
 procedure ClearGpe(Number: LongWord);
 procedure EnableGpe(Number: LongWord; Enabled: Boolean);
 
+{ Where the firmware jumps when the machine wakes from a sleeping state
+  (the FACS's waking vector: real mode, below 1 MiB). False if there is
+  no FACS. }
+function SetFirmwareWakingVector(Address: LongWord): Boolean;
+
 { Writes the reset value into the reset register; returns if it did not
   reset the machine. }
 procedure ResetThroughAcpi;
@@ -104,6 +109,10 @@ const
   AddressSpaceMemory = 0;
   AddressSpaceIo = 1;
 
+  OffsetFirmwareControl = 36;
+  OffsetExtendedFirmwareControl = 132;
+  FacsWakingVector = 12;
+  FacsExtendedWakingVector = 24;
   OffsetSciInterrupt = 46;
   OffsetSmiCommand = 48;
   OffsetAcpiEnable = 52;
@@ -430,6 +439,26 @@ begin
     CpuRelax;
   end;
   Result := True;
+end;
+
+function SetFirmwareWakingVector(Address: LongWord): Boolean;
+var
+  Physical: QWord;
+  Facs: PByte;
+begin
+  Physical := 0;
+  if FadtLength >= OffsetExtendedFirmwareControl + 8 then
+    Physical := PQWord(Fadt + OffsetExtendedFirmwareControl)^;
+  if Physical = 0 then
+    Physical := PLongWord(Fadt + OffsetFirmwareControl)^;
+  Result := Physical <> 0;
+  if not Result then
+    Exit;
+  Facs := PByte(PhysicalToVirtual(Physical));
+  { The 32-bit vector, in real mode; the 64-bit one cleared so the
+    firmware uses it. }
+  PLongWord(Facs + FacsWakingVector)^ := Address;
+  PQWord(Facs + FacsExtendedWakingVector)^ := 0;
 end;
 
 procedure ResetThroughAcpi;

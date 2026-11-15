@@ -374,6 +374,14 @@ begin
   Result := (BulkIn <> 0) and (BulkOut <> 0);
 end;
 
+{ After waking from suspend to RAM: the disk was reset, and answers its
+  first command with "unit attention"; it is asked until it is ready
+  (the sense read clears that). }
+procedure ResumeStorage(Usb: PUsbDevice; Context: Pointer);
+begin
+  WaitUntilReady(PUsbDisk(Context));
+end;
+
 function ProbeUsbStorage(Usb: PUsbDevice): Boolean;
 var
   Disk: PUsbDisk;
@@ -419,6 +427,7 @@ begin
   BlockDevice^.StorageDevice := Disk^.Device;
   RegisterBlockDevice(BlockDevice);
   WriteBlockDeviceDescription(BlockDevice);
+  UsbSetResumeHandler(Usb, @ResumeStorage, Disk);
 end;
 
 procedure RegisterUsbStorageDriver;

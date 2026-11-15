@@ -68,6 +68,15 @@ serial_log = os.path.join(work, 'serial.log')
 # A FIFO pair carries the serial port: QEMU writes serial.out, reads serial.in.
 for suffix in ('.in', '.out'):
     os.mkfifo(os.path.join(work, 'serial' + suffix))
+# Disks and sound devices for suspend to RAM: every driver must bring its
+# hardware back after waking (virtio, NVMe and USB disks; HD Audio, AC'97
+# and USB audio, each recorded into a WAV file).
+for name in ('virtio', 'nvme', 'usb'):
+    source = os.path.join(build_directory, 'test-disk-' + name + '.img')
+    if os.path.exists(source):
+        shutil.copyfile(source, os.path.join(work, name + '.img'))
+recordings = {name: os.path.join(work, 'audio-' + name + '.wav') for name in ('hda', 'ac97', 'usb')}
+
 # One processor slot is left free, to plug a processor in later (ACPI
 # hotplug: a general purpose event, its AML method and a Notify).
 processors = os.environ.get('PROCESSORS', '4')
@@ -83,6 +92,16 @@ qemu = subprocess.Popen([
     '-drive', 'format=raw,file=' + os.path.join(work, 'system.img'),
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
     '-device', 'qemu-xhci,id=xhci', '-device', 'usb-kbd,bus=xhci.0,id=usbkbd',
+    '-drive', 'if=none,id=virtio0,format=raw,file=' + os.path.join(work, 'virtio.img'),
+    '-device', 'virtio-blk-pci,drive=virtio0',
+    '-drive', 'if=none,id=nvme0,format=raw,file=' + os.path.join(work, 'nvme.img'),
+    '-device', 'nvme,serial=fpostest,drive=nvme0',
+    '-drive', 'if=none,id=usbdisk0,format=raw,file=' + os.path.join(work, 'usb.img'),
+    '-device', 'usb-storage,bus=xhci.0,drive=usbdisk0',
+    '-audiodev', 'wav,id=sound0,path=' + recordings['hda'],
+    '-device', 'intel-hda', '-device', 'hda-output,audiodev=sound0',
+    '-audiodev', 'wav,id=sound1,path=' + recordings['ac97'], '-device', 'AC97,audiodev=sound1',
+    '-audiodev', 'wav,id=sound2,path=' + recordings['usb'], '-device', 'usb-audio,bus=xhci.0,audiodev=sound2',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
     '-monitor', 'unix:' + monitor_path + ',server,nowait'],
@@ -377,8 +396,6 @@ except (OSError, AttributeError, KeyError):
 checks.append(('framebuffer console: UTF-8 and colour after scrolling', screen_ok))
 time.sleep(2)
 
-# Plugging a processor in raises a GPE; its method (\_GPE._E02) tells
-# the processor's device to check itself, which the kernel logs.
 def send_to_monitor(command):
     # QEMU may be gone already (the guest crashed or powered off): the
     # checks after this then fail, and the log is still written.
@@ -388,6 +405,61 @@ def send_to_monitor(command):
         pass
 
 
+# Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
+# and every device works again: the disks (a file written and read back
+# on each), the three sound outputs (recorded), and the display.
+type_on_serial(b'suspend; echo RESUMED $?\r')
+asleep = wait_for('suspending to RAM', 20)
+time.sleep(2)
+status = b''
+try:
+    # What earlier commands answered is still waiting: read it away first.
+    monitor.settimeout(0.2)
+    while True:
+        monitor.recv(65536)
+except OSError:
+    pass
+try:
+    monitor.sendall(b'info status\n')
+    time.sleep(0.5)
+    monitor.settimeout(1)
+    status = monitor.recv(65536)
+except OSError:
+    pass
+checks.append(('suspend to RAM: the machine went to sleep', asleep and b'suspended' in status))
+send_to_monitor('system_wakeup\n')
+checks.append(('suspend to RAM: woke and the program went on', wait_for('RESUMED 0', 90)))
+# (The markers are built from a variable: the shell echoes the command
+# line, which must not already hold them.)
+# Every disk read raw past what was read so far (the system disk on AHCI
+# is disk1, then the virtio, NVMe and USB disks), then a file written,
+# synced and read back on the system volume and the NVMe (FAT32) and USB
+# (exFAT) volumes.
+type_on_serial(b'for n in 1 3 4 5; do dd if=/dev/disk$n bs=4096 skip=2000 count=16 2>/dev/null | wc -c; done; '
+               b'm=DONE; echo READS $m\r')
+reads_ok = wait_for('READS DONE', 90)
+checks.append(('suspend to RAM: AHCI, virtio, NVMe and USB disks read after waking',
+               reads_ok and received.count(b'65536') >= 4))
+type_on_serial(b'for d in / /volumes/disk4p1 /volumes/disk5p1; do '
+               b'echo s3 > $d/s3.txt && cat $d/s3.txt; done; sync; m=DONE; echo WRITES $m\r')
+writes_ok = wait_for('WRITES DONE', 90)
+checks.append(('suspend to RAM: files written on AHCI, NVMe and USB volumes after waking',
+               writes_ok and received.count(b's3\r\n') + received.count(b's3\n') >= 3))
+type_on_serial(b'tone 1000 0.5; tone -d /dev/audio1 700 0.5; tone -d /dev/audio2 500 0.5; m=DONE; echo TONES $m\r')
+checks.append(('suspend to RAM: the sound outputs played after waking', wait_for('TONES DONE', 90)))
+monitor.sendall(('screendump ' + screen_path + '\n').encode())
+time.sleep(1)
+display_ok = False
+try:
+    data = open(screen_path, 'rb').read()
+    header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data)
+    display_ok = int(header.group(1)) > 640 and bytes((0x10, 0x18, 0x30)) in data[header.end():]
+except (OSError, AttributeError):
+    pass
+checks.append(('suspend to RAM: the display came back', display_ok))
+
+# Plugging a processor in raises a GPE; its method (\_GPE._E02) tells
+# the processor's device to check itself, which the kernel logs.
 send_to_monitor('device_add ' + cpu_model + ',id=hotcpu,socket-id=0,core-id=' + processors + ',thread-id=0\n')
 checks.append(('a processor plugged in: GPE, its AML method and the Notify',
                wait_for('notify \\_SB_.CPUS.C00' + processors + ' 0x01', 20)))
@@ -404,6 +476,14 @@ collect(0.5)
 checks.append(('the power button shut down and powered off (S5)',
                qemu.returncode == 0 and b'power button pressed' in received and
                b'entering S5' in received))
+
+# What the sound outputs played after waking.
+check_audio = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'check-audio.py')
+for name, expected in (('hda', '1000:0.5'), ('ac97', '700:0.5'), ('usb', '500:0.5')):
+    played = subprocess.run([sys.executable, '-I', check_audio, recordings[name], expected],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    checks.append(('suspend to RAM: ' + name + ' sound after waking (' + played.stdout.decode().strip() + ')',
+                   played.returncode == 0))
 
 # Both keyboards delivered keys (QEMU sent them where the test meant).
 counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)

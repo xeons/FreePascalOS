@@ -95,6 +95,7 @@ type
   PUsbKeyboard = ^TUsbKeyboard;
   TUsbKeyboard = record
     Usb: PUsbDevice;
+    InterfaceNumber: Byte;
     Keys: TKeyboardState;
     Previous: array[0..ReportSize - 1] of Byte;
   end;
@@ -225,6 +226,25 @@ begin
   InitializeInputDevice(Result^);
 end;
 
+{ Boot reports, and only when something changes. }
+procedure ChooseBootReports(Usb: PUsbDevice; Keyboard: PUsbKeyboard);
+begin
+  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetProtocol, BootProtocol, Keyboard^.InterfaceNumber,
+    nil, 0);
+  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetIdle, 0, Keyboard^.InterfaceNumber, nil, 0);
+end;
+
+{ After waking from suspend to RAM: the keyboard forgot its protocol;
+  every key counts as released. }
+procedure ResumeKeyboard(Usb: PUsbDevice; Context: Pointer);
+var
+  Keyboard: PUsbKeyboard;
+begin
+  Keyboard := PUsbKeyboard(Context);
+  FillMemory(@Keyboard^.Previous[0], SizeOf(Keyboard^.Previous), 0);
+  ChooseBootReports(Usb, Keyboard);
+end;
+
 function ProbeUsbKeyboard(Usb: PUsbDevice): Boolean;
 var
   Keyboard: PUsbKeyboard;
@@ -251,9 +271,9 @@ begin
   if Input = nil then
     Exit;
   InitializeKeyboardState(Keyboard^.Keys, Input);
-  { Boot reports, and only when something changes. }
-  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetProtocol, BootProtocol, InterfaceNumber, nil, 0);
-  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetIdle, 0, InterfaceNumber, nil, 0);
+  Keyboard^.InterfaceNumber := InterfaceNumber;
+  ChooseBootReports(Usb, Keyboard);
+  UsbSetResumeHandler(Usb, @ResumeKeyboard, Keyboard);
   if not UsbStartInterruptIn(Usb, Endpoint, MaximumPacket, Interval, @HandleReport, Keyboard) then
     Exit;
   Keyboards[KeyboardCount] := Keyboard;

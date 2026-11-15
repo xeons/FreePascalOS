@@ -227,6 +227,7 @@ type
   TAhciController = record
     Registers: PByte;
     Ports: array[0..MaximumPorts - 1] of PAhciPort;
+    UsesInterrupts: Boolean;
   end;
 
 function ReadRegister(Base: PByte; Offset: LongWord): LongWord;

@@ -97,6 +97,8 @@ function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
 { Shuts the system down (Action: ShutdownPowerOff, ShutdownReboot or
   ShutdownHalt); root only. }
 function KernelShutdown(Action: QWord): Int64;
+{ Suspends to RAM; returns after waking (root only). }
+function KernelSuspend: Int64;
 function KernelCreateFifo(Path: PChar): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
@@ -367,6 +369,11 @@ end;
 function KernelShutdown(Action: QWord): Int64;
 begin
   Result := SystemCall(CallShutdown, Action, 0, 0, 0, 0, 0);
+end;
+
+function KernelSuspend: Int64;
+begin
+  Result := SystemCall(CallSuspend, 0, 0, 0, 0, 0, 0);
 end;
 
 function KernelCreateFifo(Path: PChar): Int64;

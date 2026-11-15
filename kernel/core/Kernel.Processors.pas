@@ -41,7 +41,8 @@ interface
 
 uses
   Kernel.Threads,
-  Kernel.Arch.DescriptorTables;
+  Kernel.Arch.DescriptorTables,
+  Kernel.Arch.Suspend;
 
 const
   MaximumProcessors = 32;
@@ -79,6 +80,11 @@ type
       processor's; the boot processor's are static). }
     InterruptStackArea: Pointer;
     DescriptorTables: TProcessorDescriptorTables;
+    { Suspend to RAM (Kernel.ProcessorPower): asked to freeze, frozen,
+      and the state it froze in. }
+    FreezeRequested: Boolean;
+    Frozen: Boolean;
+    SuspendContext: TArchSuspendContext;
   end;
 
 { Sets up the boot processor's block. The caller makes it current

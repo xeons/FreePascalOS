@@ -146,6 +146,7 @@ function ContextSwitchCount: QWord;
 implementation
 
 uses
+  Kernel.ProcessorPower,
   Runtime.LinkedList,
   Runtime.Memory,
   Runtime.Text,
@@ -361,6 +362,9 @@ end;
 
 procedure HandleDispatchInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
+  { Suspend to RAM freezes processors here, where they hold no spin lock
+    (the dispatch interrupt only runs below dispatch level). }
+  FreezeThisProcessorIfRequested;
   { Work handed over by interrupt handlers may ready threads, so it runs
     before the next thread is chosen. }
   RunDeferredCalls;
