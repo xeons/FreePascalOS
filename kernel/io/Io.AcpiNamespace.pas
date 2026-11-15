@@ -43,6 +43,10 @@ interface
 procedure LoadAcpiNamespace(Context: Pointer);
 { True once the namespace is loaded. }
 function AcpiNamespaceIsLoaded: Boolean;
+{ The interpreter is not reentrant: everyone running AML after loading
+  holds this. }
+procedure LockAmlInterpreter;
+procedure UnlockAmlInterpreter;
 
 implementation
 
@@ -54,6 +58,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Clock,
   Kernel.Scheduler,
+  Kernel.Mutex,
   Hal.PortIo,
   Firmware.Acpi,
   Firmware.AmlHost,
@@ -75,6 +80,7 @@ var
   MappedCount: Integer;
   NextMappingSlot: Integer;
   Loaded: Boolean;
+  InterpreterLock: TMutex;
 
 { --- The host ------------------------------------------------------------------ }
 
@@ -365,6 +371,7 @@ var
   Tables: Integer;
   Failures: Integer;
 begin
+  InitializeMutex(InterpreterLock);
   if not AcpiIsAvailable then
     Exit;
   InstallHost;
@@ -400,6 +407,16 @@ end;
 function AcpiNamespaceIsLoaded: Boolean;
 begin
   Result := Loaded;
+end;
+
+procedure LockAmlInterpreter;
+begin
+  AcquireMutex(InterpreterLock);
+end;
+
+procedure UnlockAmlInterpreter;
+begin
+  ReleaseMutex(InterpreterLock);
 end;
 
 end.

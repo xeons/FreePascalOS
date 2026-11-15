@@ -67,6 +67,10 @@ procedure HalSendRequestInterrupt(ProcessorId: LongWord);
 function HalRequestInterruptVector: Byte;
 { Stops every other processor (used by the panic path). }
 procedure HalHaltOtherProcessors;
+{ Resets the machine the legacy ways: the keyboard controller's reset
+  line, then the chipset's reset control register (port 0CF9h). Returns
+  if neither worked. }
+procedure HalResetMachine;
 
 procedure HalWriteDescription;
 
@@ -86,6 +90,7 @@ uses
   Hal.InterruptVectors,
   Hal.LegacyPic,
   Hal.LocalApic,
+  Kernel.Arch.Cpu,
   Kernel.Panic,
   Debug.Output;
 
@@ -172,6 +177,27 @@ end;
 function HalRequestInterruptVector: Byte;
 begin
   Result := InterProcessorInterruptVector;
+end;
+
+procedure HalResetMachine;
+const
+  KeyboardStatusPort = $64;
+  KeyboardInputFull = $02;
+  KeyboardPulseReset = $FE;
+  ResetControlPort = $CF9;
+  ResetControlHardReset = $06;
+var
+  Tries: Integer;
+begin
+  for Tries := 1 to 100000 do
+    if (ReadPortByte(KeyboardStatusPort) and KeyboardInputFull) = 0 then
+      Break;
+  WritePortByte(KeyboardStatusPort, KeyboardPulseReset);
+  for Tries := 1 to 1000000 do
+    CpuRelax;
+  WritePortByte(ResetControlPort, ResetControlHardReset);
+  for Tries := 1 to 1000000 do
+    CpuRelax;
 end;
 
 procedure HalHaltOtherProcessors;

@@ -77,6 +77,7 @@ uses
   Firmware.AmlValues,
   Firmware.AmlNamespace,
   Firmware.AmlInterpreter,
+  Firmware.AcpiDeviceIds,
   Firmware.AcpiResources;
 
 const
@@ -87,73 +88,9 @@ var
   Routes: array[0..MaximumRoutes - 1] of TPciRoute;
   RouteCount: Integer;
 
-{ --- Device identities ------------------------------------------------------- }
-
-{ An EISA id as its seven characters ("PNP0A08"). }
-procedure EisaIdText(Id: LongWord; Text: PChar);
-const
-  HexDigits: array[0..15] of Char = '0123456789ABCDEF';
-var
-  Vendor: LongWord;
-begin
-  Vendor := ((Id and $FF) shl 8) or ((Id shr 8) and $FF);
-  Text[0] := Char(((Vendor shr 10) and $1F) + $40);
-  Text[1] := Char(((Vendor shr 5) and $1F) + $40);
-  Text[2] := Char((Vendor and $1F) + $40);
-  Text[3] := HexDigits[(Id shr 20) and $F];
-  Text[4] := HexDigits[(Id shr 16) and $F];
-  Text[5] := HexDigits[(Id shr 28) and $F];
-  Text[6] := HexDigits[(Id shr 24) and $F];
-  Text[7] := #0;
-end;
-
-function IdIsPciRoot(const Value: TAmlValue): Boolean;
-var
-  Text: array[0..7] of Char;
-  Data: PByte;
-begin
-  Result := False;
-  case Value.Kind of
-    AmlInteger:
-      EisaIdText(LongWord(Value.Integer), @Text[0]);
-    AmlString:
-      begin
-        if Value.Bytes^.Length <> 7 then
-          Exit;
-        CopyMemory(@Text[0], Value.Bytes^.Data, 8);
-      end;
-  else
-    Exit;
-  end;
-  Data := @Text[0];
-  Result := MemoryIsEqual(Data, PChar('PNP0A03'), 7) or MemoryIsEqual(Data, PChar('PNP0A08'), 7);
-end;
-
 function IsPciRootBridge(Node: PAmlNode): Boolean;
-var
-  Value: TAmlValue;
-  Index: LongWord;
 begin
-  Result := False;
-  if Node^.Kind <> NodeDevice then
-    Exit;
-  if EvaluatePath(Node, '_HID', nil, 0, Value) then
-  begin
-    Result := IdIsPciRoot(Value);
-    ReleaseValue(Value);
-  end;
-  if not Result and EvaluatePath(Node, '_CID', nil, 0, Value) then
-  begin
-    if Value.Kind = AmlPackage then
-    begin
-      for Index := 1 to Value.Package^.Count do
-        if IdIsPciRoot(Value.Package^.Elements[Index - 1]) then
-          Result := True;
-    end
-    else
-      Result := IdIsPciRoot(Value);
-    ReleaseValue(Value);
-  end;
+  Result := DeviceHasId(Node, 'PNP0A03') or DeviceHasId(Node, 'PNP0A08');
 end;
 
 { --- Links ------------------------------------------------------------------- }

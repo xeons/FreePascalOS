@@ -94,6 +94,9 @@ function KernelSetPriority(ProcessId: QWord; Nice: LongInt): Int64;
   processor N; returns the mask or minus an Abi error. }
 function KernelGetAffinity(ProcessId: QWord): Int64;
 function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
+{ Shuts the system down (Action: ShutdownPowerOff, ShutdownReboot or
+  ShutdownHalt); root only. }
+function KernelShutdown(Action: QWord): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
@@ -359,6 +362,11 @@ end;
 function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
 begin
   Result := SystemCall(CallSetAffinity, ProcessId, Mask, 0, 0, 0, 0);
+end;
+
+function KernelShutdown(Action: QWord): Int64;
+begin
+  Result := SystemCall(CallShutdown, Action, 0, 0, 0, 0, 0);
 end;
 
 function KernelCreateFifo(Path: PChar): Int64;

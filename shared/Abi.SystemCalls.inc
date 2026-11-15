@@ -162,8 +162,17 @@ const
     not lead back into user memory. Of RFLAGS only the arithmetic flags
     and the direction flag are taken. }
   CallContinue = 69;
+  { (Action): shuts the system down: ShutdownPowerOff, ShutdownReboot or
+    ShutdownHalt. Root only (ErrorNotPermitted). Every process is asked
+    to end, the file systems are written out, then the machine powers
+    off (ACPI S5), resets or halts. Returns 0 once it has started. }
+  CallShutdown = 70;
 
-  CallCount = 70;
+  CallCount = 71;
+
+  ShutdownPowerOff = 0;
+  ShutdownReboot = 1;
+  ShutdownHalt = 2;
 
   { Exit status of a process ended by an exception nobody dispatched. }
   ExitStatusException = 139;

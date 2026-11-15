@@ -58,6 +58,9 @@ type
     Timer: function: QWord;
     { One line of the interpreter's own messages, and of Debug stores. }
     Log: procedure(Text: PChar);
+    { AML's Notify: Node (a PAmlNode) told Value (0x80 on a power button:
+      pressed; 1: check the device; ...). May be nil. }
+    Notify: procedure(Node: Pointer; Value: QWord);
   end;
 
 var

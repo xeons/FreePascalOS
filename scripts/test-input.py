@@ -68,10 +68,15 @@ serial_log = os.path.join(work, 'serial.log')
 # A FIFO pair carries the serial port: QEMU writes serial.out, reads serial.in.
 for suffix in ('.in', '.out'):
     os.mkfifo(os.path.join(work, 'serial' + suffix))
+# One processor slot is left free, to plug a processor in later (ACPI
+# hotplug: a general purpose event, its AML method and a Notify).
+processors = os.environ.get('PROCESSORS', '4')
+# QEMU lays the processors out as cores of one socket.
+cpu_model = 'host-x86_64-cpu' if os.environ.get('ACCEL') == 'kvm' else 'max-x86_64-cpu'
 qemu = subprocess.Popen([
     'qemu-system-x86_64', '-machine', 'q35',
     *(['-accel', 'kvm', '-cpu', 'host'] if os.environ.get('ACCEL') == 'kvm' else ['-cpu', 'max']),
-    '-m', '512M', '-smp', os.environ.get('PROCESSORS', '4'),
+    '-m', '512M', '-smp', processors + ',maxcpus=' + str(int(processors) + 1),
     '-drive', 'if=pflash,format=raw,readonly=on,file=' + firmware_code,
     '-drive', 'if=pflash,format=raw,file=' + os.path.join(work, 'vars.fd'),
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),
@@ -372,12 +377,33 @@ except (OSError, AttributeError, KeyError):
 checks.append(('framebuffer console: UTF-8 and colour after scrolling', screen_ok))
 time.sleep(2)
 
-serial_in.write(b'exit 0\r')
+# Plugging a processor in raises a GPE; its method (\_GPE._E02) tells
+# the processor's device to check itself, which the kernel logs.
+def send_to_monitor(command):
+    # QEMU may be gone already (the guest crashed or powered off): the
+    # checks after this then fail, and the log is still written.
+    try:
+        monitor.sendall(command.encode())
+    except OSError:
+        pass
+
+
+send_to_monitor('device_add ' + cpu_model + ',id=hotcpu,socket-id=0,core-id=' + processors + ',thread-id=0\n')
+checks.append(('a processor plugged in: GPE, its AML method and the Notify',
+               wait_for('notify \\_SB_.CPUS.C00' + processors + ' 0x01', 20)))
+
+# The power button: every program ends, the disks are written out, and
+# the machine powers itself off (ACPI S5): QEMU exits on its own.
+send_to_monitor('system_powerdown\n')
 try:
-    qemu.wait(timeout=30)
+    qemu.wait(timeout=60)
 except subprocess.TimeoutExpired:
     qemu.kill()
+    qemu.wait()
 collect(0.5)
+checks.append(('the power button shut down and powered off (S5)',
+               qemu.returncode == 0 and b'power button pressed' in received and
+               b'entering S5' in received))
 
 # Both keyboards delivered keys (QEMU sent them where the test meant).
 counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)

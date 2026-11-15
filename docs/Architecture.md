@@ -493,6 +493,59 @@ for now the routing of PCI interrupt lines.
   link not yet connected gets the first interrupt its `_PRS` offers,
   through `_SRS`.
 
+### ACPI events, sleep states and shutting down
+
+- **Fixed hardware** (`Io.AcpiHardware`). The FADT names the PM1 event
+  and control blocks, the GPE blocks, the SCI, the SMI command port and
+  the reset register. Registers come from their generic address where
+  given, else from the older I/O port fields. Entering ACPI mode writes
+  ACPI_ENABLE to the SMI command port and waits for SCI_EN.
+- **Events** (`Io.AcpiEvents`). The SCI (its ISA IRQ through the MADT's
+  overrides, else level triggered and active low; shareable) is handled
+  in two halves.
+  - The interrupt handler clears and notes the power and sleep button
+    statuses, and disables each GPE that fired (it may be level
+    triggered).
+  - A deferred call then wakes the event thread, which runs AML on a
+    256 KiB stack. A GPE runs `\_GPE._Lnn` (then its status is cleared)
+    or `_Enn` (cleared first), and is enabled again.
+
+  Only GPEs with a method are ever enabled. The AML's `Notify` reaches
+  the kernel through `AmlHost.Notify`. 0x80 to a power or sleep button
+  device (`PNP0C0C`, `PNP0C0E`: buttons with control methods) is a
+  press; other notifications are logged. Button presses go to the power
+  policy `Kernel.Startup` gives: the power button powers off. The
+  interpreter is not reentrant, so all AML after loading runs under one
+  lock (`LockAmlInterpreter`).
+- **Sleep states** (`Io.AcpiSleep`). A state's SLP_TYP values come from
+  `\_Sx`. Entering one evaluates `\_PTS`, turns every wake event off,
+  clears the status and writes the types, then SLP_EN, into the PM1
+  control registers. Only S5 (soft off) is entered. S1 to S4 would need
+  the machine brought back afterwards (processor state, and every device
+  initialized again after S3), so they are refused. Resetting uses the
+  FADT's reset register, then `HalResetMachine` (the keyboard
+  controller, then port 0CF9h).
+- **Shutting down** (`Processes.Shutdown`). The power button,
+  `CallShutdown` (root only: `poweroff`, `reboot`, `halt`) and the
+  kernel debug shell (`poweroff`, `reboot`) can start it; the first
+  request wins. A thread of its own:
+  1. asks every user process to end (status 143) and waits up to five
+     seconds;
+  2. syncs the volumes;
+  3. writes the closing summaries;
+  4. enters S5, resets or halts.
+
+  The phase 1 thread, seeing init end during a shutdown, leaves the rest
+  to it.
+
+`make aml-test` also checks the sleep states (S3, S4, S5 on both QEMU
+machines) and the GPE methods the tables have. The input test plugs a
+processor in, which raises GPE 2: the `_E02` method notifies the new
+processor's device, which the kernel logs. It then presses the power
+button (`system_powerdown`) and expects the programs to end, S5, and
+QEMU exiting by itself with status 0. coretest checks that `poweroff`,
+`reboot` and `halt` refuse anyone but root.
+
 ### Ctrl-C
 
 Processes belong to process groups (inherited, or a new group led by the

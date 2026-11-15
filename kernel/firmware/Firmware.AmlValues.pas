@@ -79,7 +79,8 @@ function AmlMask(Value: QWord): QWord;
 function AmlOnes: QWord;
 
 function MakeInteger(Value: QWord): TAmlValue;
-{ Nil on failure leaves the result AmlNone. }
+{ Out of memory leaves the result AmlNone. MakeString with Text nil
+  makes a string of zeros to fill in. }
 function MakeString(Text: PByte; Length: LongWord): TAmlValue;
 function MakeStringFromText(Text: PChar): TAmlValue;
 function MakeBuffer(Length: LongWord): TAmlValue;
@@ -197,7 +198,8 @@ begin
   if Result.Bytes = nil then
     Exit;
   Result.Kind := AmlString;
-  if Length > 0 then
+  { Without Text, the caller fills it in (it starts as zeros). }
+  if (Text <> nil) and (Length > 0) then
     CopyMemory(Result.Bytes^.Data, Text, Length);
 end;
 

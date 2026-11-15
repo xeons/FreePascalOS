@@ -62,6 +62,8 @@ function IoApicDescription(Index: Integer): TIoApicDescription;
 { Where ISA IRQ Irq arrives: the override if there is one, otherwise
   global interrupt Irq, active high and edge triggered. }
 function RoutingOfIsaInterrupt(Irq: Byte): TIsaInterruptRouting;
+{ True if the MADT has an interrupt source override for Irq. }
+function IsaInterruptIsOverridden(Irq: Byte): Boolean;
 
 { The processors that can be started, by local APIC id (the boot
   processor among them). }
@@ -247,6 +249,16 @@ begin
   Result.GlobalInterrupt := Irq;
   Result.ActiveLow := False;
   Result.LevelTriggered := False;
+end;
+
+function IsaInterruptIsOverridden(Irq: Byte): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to OverrideTotal - 1 do
+    if Overrides[Index].Source = Irq then
+      Exit(True);
+  Result := False;
 end;
 
 function ListedProcessorCount: Integer;

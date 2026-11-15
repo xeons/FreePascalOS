@@ -51,6 +51,8 @@ function AtomicCompareExchange(var Target: PtrUInt; NewValue: PtrUInt;
   ExpectedValue: PtrUInt): PtrUInt;
 
 { Reads Target with acquire semantics. }
+{ Sets Bits in Target, atomically. }
+procedure AtomicOr(var Target: PtrUInt; Bits: PtrUInt);
 function AtomicLoad(var Target: PtrUInt): PtrUInt;
 
 { Writes Target with release semantics. }
@@ -92,6 +94,11 @@ function AtomicCompareExchange(var Target: PtrUInt; NewValue: PtrUInt;
 asm
   mov rax, rdx
   lock cmpxchg [rdi], rsi
+end;
+
+procedure AtomicOr(var Target: PtrUInt; Bits: PtrUInt); assembler; nostackframe;
+asm
+  lock or [rdi], rsi
 end;
 
 function AtomicLoad(var Target: PtrUInt): PtrUInt; assembler; nostackframe;

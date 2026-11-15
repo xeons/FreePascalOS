@@ -73,6 +73,8 @@ uses
   Io.AudioOutput,
   Io.AudioInput,
   Io.AcpiNamespace,
+  Io.AcpiEvents,
+  Processes.Shutdown,
   Drivers.Ps2Keyboard,
   Drivers.UsbKeyboard,
   Kernel.DebugShell,
@@ -213,17 +215,30 @@ begin
   end;
 end;
 
-{ Which keyboards the keys came from (the input test checks both). }
-procedure WriteKeyboardSummary;
+{ The power policy: the power button powers off. Only S5 can be
+  entered, so the sleep button only says so. }
+procedure HandlePowerEvent(Event: TPowerEvent);
 begin
-  DebugBeginMessage;
-  DebugWriteTag('input');
-  DebugWrite('keys pressed: PS/2 ');
-  DebugWriteDecimal(Ps2KeyboardKeyCount);
-  DebugWrite(', USB ');
-  DebugWriteDecimal(UsbKeyboardKeyCount);
-  DebugWriteLine('');
-  DebugEndMessage;
+  case Event of
+    PowerEventPowerButton:
+      RequestShutdown(PowerActionOff);
+    PowerEventSleepButton:
+      begin
+        DebugBeginMessage;
+        DebugWriteTag('power');
+        DebugWriteLine('sleeping is not supported; the sleep button does nothing');
+        DebugEndMessage;
+      end;
+  end;
+end;
+
+{ ACPI events (buttons, GPEs), handled by a thread that runs AML. }
+procedure StartAcpiEvents;
+const
+  EventStackSize = 256 * 1024;
+begin
+  if InitializeAcpiEvents(@HandlePowerEvent) then
+    CreateSystemThread(@RunAcpiEvents, nil, PhaseOneThreadPriority, 'AcpiEvents', False, EventStackSize);
 end;
 
 { The AML interpreter recurses as the AML nests: it runs on a thread
@@ -270,6 +285,7 @@ begin
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
   InitializeIoSystem;
+  StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
   StartAudioThreads;
@@ -300,6 +316,9 @@ begin
     RunDebugShell;
 
   InitialProgramExitCode := RunInitialProgram;
+  { Shutting down ended the programs: the shutdown thread finishes. }
+  if ShutdownIsInProgress then
+    Exit;
   if InitialProgramExitCode <> InitialProgramNotStarted then
   begin
     { Everything the user programs used should have been given back. The

@@ -133,3 +133,11 @@ pic \_SB_.LNKB -> IRQ 10
 pic \_SB_.LNKC -> IRQ 11
 pic \_SB_.LNKD -> IRQ 11
 pic _PRT entries: 128
+sleep S3: SLP_TYP 1 1
+sleep S4: SLP_TYP 2 2
+sleep S5: SLP_TYP 0 0
+gpe 1 level FALSE
+gpe 2 level FALSE
+operators: ab0x01,0x02
+log: AML debug: hi
+operators: TST2 1

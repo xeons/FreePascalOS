@@ -69,6 +69,7 @@ uses
   Processes.Security,
   Processes.SecurityCalls,
   Processes.AffinityCalls,
+  Processes.Shutdown,
   Processes.ThreadControl,
   Processes.FileAttributeCalls,
   Processes.UserExceptions,
@@ -596,6 +597,7 @@ begin
     { --- Processor affinity (Processes.AffinityCalls) --- }
     CallGetAffinity: Result := PerformGetAffinity(Argument0);
     CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
+    CallShutdown: Result := PerformShutdown(Argument0);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

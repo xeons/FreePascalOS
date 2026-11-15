@@ -36,7 +36,8 @@
 
   Errors (an unknown opcode, a name that is not there, dividing by zero,
   a loop that runs too long, calls nested too deep) end the evaluation:
-  it returns False and says why through AmlHost.Log. Operating system
+  it returns False and says why through AmlHost.Log. Notify is passed
+  on to AmlHost.Notify. Operating system
   interface queries (\_OSI) are answered for the Windows versions and
   features firmware commonly asks about.
 }
@@ -325,6 +326,8 @@ function Evaluate(var Frame: TAmlFrame; var Position: PByte; Limit: PByte; out V
 function ExecuteTermList(var Frame: TAmlFrame; Position, Limit: PByte): Boolean; forward;
 function InvokeMethod(Node: PAmlNode; Arguments: PAmlValue; Count: Integer; out Value: TAmlValue): Boolean; forward;
 
+function Concatenate(const First, Second: TAmlValue; out Value: TAmlValue): Boolean; forward;
+
 function NoValue: TAmlValue;
 begin
   ZeroMemory(@Result, SizeOf(Result));
@@ -526,21 +529,24 @@ begin
   ReleaseValue(Target.Element);
 end;
 
+{ A store to the Debug object: logged, marked as the firmware's. }
 procedure LogValue(const Value: TAmlValue);
 var
+  Prefix: TAmlValue;
   Text: TAmlValue;
+  Line: TAmlValue;
 begin
   if not Assigned(AmlHost.Log) then
     Exit;
-  if Value.Kind = AmlString then
-    AmlHost.Log(PChar(Value.Bytes^.Data))
-  else
+  Prefix := MakeStringFromText('AML debug: ');
+  Text := ValueToHexString(Value);
+  if (Prefix.Kind = AmlString) and (Text.Kind = AmlString) and Concatenate(Prefix, Text, Line) then
   begin
-    Text := ValueToHexString(Value);
-    if Text.Kind = AmlString then
-      AmlHost.Log(PChar(Text.Bytes^.Data));
-    ReleaseValue(Text);
+    AmlHost.Log(PChar(Line.Bytes^.Data));
+    ReleaseValue(Line);
   end;
+  ReleaseValue(Prefix);
+  ReleaseValue(Text);
 end;
 
 { Stores into a named object, converting to its type. }
@@ -1751,6 +1757,8 @@ begin
     OpNotify:
       begin
         Result := ParseTarget(Frame, Position, Limit, Target) and EvaluateNumber(Frame, Position, Limit, Number);
+        if Result and (Target.Kind = TargetNode) and Assigned(AmlHost.Notify) then
+          AmlHost.Notify(Target.Node, Number);
         ReleaseTarget(Target);
       end;
 

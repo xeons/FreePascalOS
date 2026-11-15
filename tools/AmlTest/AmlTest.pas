@@ -31,6 +31,14 @@
   device 31: A-D 10, 10, 11, 11 and E-H 5, 7, 9, 11; i440fx's PIIX,
   device 1: A-D 10, 10, 11, 11) and everything else reading as all ones.
 
+  Then the sleep states the table offers (their SLP_TYP values), the
+  general purpose events that have handler methods, and the power
+  button devices; and Notify is logged as the interpreter makes it.
+
+  Last, a small table of its own (hand assembled) runs operators the
+  QEMU tables do not reach at boot: string concatenation, a buffer in
+  hexadecimal, a store to the Debug object.
+
   The output is compared with the expected one by "make aml-test".
 }
 program AmlTest;
@@ -44,6 +52,8 @@ uses
   Firmware.AmlNamespace,
   Firmware.AmlInterpreter,
   Firmware.AcpiResources,
+  Firmware.AcpiDeviceIds,
+  Firmware.AcpiSleepStates,
   Firmware.AcpiPciRouting;
 
 var
@@ -125,6 +135,14 @@ begin
   WriteLn('log: ', Text);
 end;
 
+procedure HostNotify(Node: Pointer; Value: QWord);
+var
+  Path: array[0..79] of Char;
+begin
+  NodePathText(PAmlNode(Node), @Path[0], SizeOf(Path));
+  WriteLn('notify ', PChar(@Path[0]), ' ', Value);
+end;
+
 procedure SetUpHost;
 const
   { The PIRQ routing registers of the q35 LPC bridge and the PIIX. }
@@ -150,6 +168,7 @@ begin
   AmlHost.Stall := @HostStall;
   AmlHost.Timer := @HostTimer;
   AmlHost.Log := @HostLog;
+  AmlHost.Notify := @HostNotify;
 end;
 
 { --- The checks -------------------------------------------------------------------- }
@@ -217,6 +236,68 @@ begin
   ReleaseValue(Resources);
 end;
 
+procedure ShowSleepStates;
+var
+  State: Integer;
+  TypeA: Byte;
+  TypeB: Byte;
+begin
+  for State := 0 to 5 do
+    if SleepTypeOf(State, TypeA, TypeB) then
+      WriteLn('sleep S', State, ': SLP_TYP ', TypeA, ' ', TypeB);
+end;
+
+procedure ShowGpes;
+var
+  Number: LongWord;
+  Level: Boolean;
+begin
+  for Number := 0 to 255 do
+    if GpeMethodOf(Number, Level) <> nil then
+      WriteLn('gpe ', Number, ' level ', Level);
+end;
+
+procedure ShowButton(Node: PAmlNode; Context: Pointer);
+var
+  Path: array[0..79] of Char;
+begin
+  if DeviceHasId(Node, 'PNP0C0C') or DeviceHasId(Node, 'PNP0C0E') then
+  begin
+    NodePathText(Node, @Path[0], SizeOf(Path));
+    WriteLn('button ', PChar(@Path[0]));
+  end;
+end;
+
+const
+  { An SSDT: Method (TST1) { Return (Concatenate ("ab", ToHexString
+    (Buffer (2) {1, 2}))) } and Method (TST2) { Store ("hi", Debug)
+    Return (One) }. Integers are 64-bit (revision 2). }
+  OperatorTable: array[0..36 + 22 + 16 - 1] of Byte = (
+    Ord('S'), Ord('S'), Ord('D'), Ord('T'), 74, 0, 0, 0, 2, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    $14, $15, Ord('T'), Ord('S'), Ord('T'), Ord('1'), $00,
+    $A4, $73, $0D, Ord('a'), Ord('b'), $00, $98, $11, $05, $0A, $02, $01, $02, $00, $00,
+    $14, $0F, Ord('T'), Ord('S'), Ord('T'), Ord('2'), $00,
+    $70, $0D, Ord('h'), Ord('i'), $00, $5B, $31, $A4, $01);
+
+procedure RunOperatorTable;
+var
+  Value: TAmlValue;
+begin
+  if not LoadAmlTable(@OperatorTable[0]) then
+    WriteLn('operators: load failed');
+  if EvaluatePath(nil, '\TST1', nil, 0, Value) and (Value.Kind = AmlString) then
+    WriteLn('operators: ', PChar(Value.Bytes^.Data))
+  else
+    WriteLn('operators: TST1 failed');
+  ReleaseValue(Value);
+  if EvaluatePath(nil, '\TST2', nil, 0, Value) and (Value.Kind = AmlInteger) then
+    WriteLn('operators: TST2 ', Value.Integer)
+  else
+    WriteLn('operators: TST2 failed');
+  ReleaseValue(Value);
+end;
+
 var
   Table: PByte;
 begin
@@ -234,4 +315,8 @@ begin
   WriteLn('routes: ', BuildPciRouting);
   ShowRoutes;
   ShowLinksInPicMode;
+  ShowSleepStates;
+  ShowGpes;
+  VisitNodes(NamespaceRoot, @ShowButton, nil);
+  RunOperatorTable;
 end.

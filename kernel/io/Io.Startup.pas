@@ -57,6 +57,8 @@ uses
 procedure InitializePlatformTables(const BootInformation: TBootInformation);
 procedure InitializeBuses;
 procedure InitializeIoSystem;
+{ Which keyboards the keys came from (the input test checks both). }
+procedure WriteKeyboardSummary;
 
 implementation
 
@@ -151,6 +153,18 @@ begin
 
   InitializeFileSystems;
   MountAllVolumes;
+end;
+
+procedure WriteKeyboardSummary;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('input');
+  DebugWrite('keys pressed: PS/2 ');
+  DebugWriteDecimal(Ps2KeyboardKeyCount);
+  DebugWrite(', USB ');
+  DebugWriteDecimal(UsbKeyboardKeyCount);
+  DebugWriteLine('');
+  DebugEndMessage;
 end;
 
 end.

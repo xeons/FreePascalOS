@@ -44,7 +44,8 @@ uses
   Util.RegularExpressions,
   Util.LineEditor,
   Util.Globbing,
-  Util.Passwords;
+  Util.Passwords,
+  Util.Power;
 
 implementation
 

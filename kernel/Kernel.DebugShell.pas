@@ -36,6 +36,8 @@
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
+    poweroff          shuts down and powers off (ACPI S5)
+    reboot            shuts down and resets the machine
     exit              leaves the shell
 }
 unit Kernel.DebugShell;
@@ -64,6 +66,7 @@ uses
   FileSystem.Volumes,
   FileSystem.Files,
   Processes.Process,
+  Processes.Shutdown,
   Drivers.DiskStatistics,
   Debug.Output;
 
@@ -116,7 +119,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('uptime, exit');
+  WriteLine('uptime, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -287,6 +290,16 @@ begin
   end
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
+  else if TextIsEqual(@Command[0], 'poweroff') then
+  begin
+    RequestShutdown(PowerActionOff);
+    Result := False;
+  end
+  else if TextIsEqual(@Command[0], 'reboot') then
+  begin
+    RequestShutdown(PowerActionReboot);
+    Result := False;
+  end
   else if TextIsEqual(@Command[0], 'exit') then
     Result := False
   else

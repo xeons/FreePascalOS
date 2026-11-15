@@ -56,6 +56,9 @@ procedure StartConsoleInterruptHandler;
 
 { Returns ErrorNone, ErrorNoSuchProcess or ErrorNotPermitted. }
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
+{ Asks every user process to end (shutting down); returns how many
+  were still running. }
+function TerminateAllUserProcesses(ExitCode: LongInt): Integer;
 
 { Ends every process of group GroupId that does not ignore interrupts;
   returns how many. }
@@ -217,6 +220,28 @@ begin
     RequestTerminationLocked(Process, ExitCode);
     Result := ErrorNone;
   end;
+  UnlockProcessRegistry;
+end;
+
+procedure TerminateIfUserProcess(Process: PProcess; Context: Pointer);
+begin
+  if not Process^.IsUserProcess then
+    Exit;
+  RequestTerminationLocked(Process, PLongInt(Context)^);
+end;
+
+procedure CountUserProcess(Process: PProcess; Context: Pointer);
+begin
+  if Process^.IsUserProcess then
+    Inc(PInteger(Context)^);
+end;
+
+function TerminateAllUserProcesses(ExitCode: LongInt): Integer;
+begin
+  Result := 0;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@CountUserProcess, @Result);
+  VisitRunningProcessesLocked(@TerminateIfUserProcess, @ExitCode);
   UnlockProcessRegistry;
 end;
 
