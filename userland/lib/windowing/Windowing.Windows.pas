@@ -33,7 +33,10 @@
   sees it, so nothing half drawn shows.
 
   RunMessageLoop serves every window until QuitMessageLoop, or until the
-  last window is gone (if QuitWhenLastWindowCloses). It also delivers
+  last window is gone (if QuitWhenLastWindowCloses). RunModal serves
+  them until a flag is set, with one window modal: input for the others
+  is dropped (a click on one brings the modal window forward), except
+  for windows that accept it anyway (pop-ups of the modal window). It also delivers
   messages posted to any receiver (Windowing.Messages): a window is one,
   and so is every control.
 }
@@ -89,6 +92,8 @@ type
     { The close button (or Alt+F4). The default frees the window. }
     procedure CloseRequested; virtual;
     procedure TimerFired(Id: LongWord); virtual;
+    { True if it takes input while another window is modal (pop-ups). }
+    function AcceptsInputWhileModal: Boolean; virtual;
   public
     { Left, Top: where the client area goes; Width, Height: its size; all
       in logical units. Flags: Window* (framed and resizable by default).
@@ -119,16 +124,24 @@ type
     property ClientHeight: LongInt read GetClientHeight;
     property Visible: Boolean read FVisible;
     property Active: Boolean read FActive;
+    { Where the client area is on the screen (logical units). }
+    property ScreenLeft: LongInt read FLeft;
+    property ScreenTop: LongInt read FTop;
   end;
 
 var
   QuitWhenLastWindowCloses: Boolean = True;
+  { The window whose modal loop runs (RunModal), or nil. }
+  ModalWindow: TWindow;
 
 { Serves the windows; returns the code given to QuitMessageLoop (0 when
   the last window closed, 1 if the display server went away). }
 function RunMessageLoop: LongInt;
 procedure QuitMessageLoop(Code: LongInt);
 function WindowById(Id: LongWord): TWindow;
+{ Serves the windows until Done is set (or the window or the server is
+  gone), Window modal meanwhile. }
+procedure RunModal(Window: TWindow; var Done: Boolean);
 
 implementation
 
@@ -484,6 +497,11 @@ procedure TWindow.TimerFired(Id: LongWord);
 begin
 end;
 
+function TWindow.AcceptsInputWhileModal: Boolean;
+begin
+  Result := Self = ModalWindow;
+end;
+
 { --- The message loop ------------------------------------------------------------ }
 
 procedure QuitMessageLoop(Code: LongInt);
@@ -499,6 +517,14 @@ begin
   Window := WindowById(Message.Window);
   if Window = nil then
     Exit;
+  if (ModalWindow <> nil) and not Window.AcceptsInputWhileModal and
+     ((Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) or
+      (Message.Kind = EventWheel)) then
+  begin
+    if (Message.Kind = EventPointerButton) and (Message.Value <> 0) then
+      ModalWindow.Activate;
+    Exit;
+  end;
   case Message.Kind of
     EventKey:
       if Message.Value <> 0 then
@@ -525,6 +551,11 @@ begin
       end;
     EventCloseRequested:
       Window.CloseRequested;
+    EventMoved:
+      begin
+        Window.FLeft := Message.Left;
+        Window.FTop := Message.Top;
+      end;
   end;
 end;
 
@@ -536,7 +567,8 @@ begin
     WindowList[Index].PaintNow;
 end;
 
-function RunMessageLoop: LongInt;
+{ Delivers what has come, paints, and waits for more (once). }
+procedure ServeOnce;
 var
   Handles: array[0..MaximumTimers + 1] of Int64;
   Count: LongInt;
@@ -546,36 +578,55 @@ var
   Window: TWindow;
   TimerId: LongWord;
 begin
+  DeliverPostedMessages;
+  while NextEvent(Message) do
+    Dispatch(Message);
+  DeliverPostedMessages;
+  if ConnectionBroken then
+    Exit;
+  PaintInvalidWindows;
+  Handles[0] := DisplayChannel;
+  Handles[1] := PostedMessageEvent;
+  Count := 2;
+  for Index := 0 to TimerCount - 1 do
+  begin
+    Handles[Count] := Timers[Index].Handle;
+    Inc(Count);
+  end;
+  Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);
+  if (Ready >= 2) and (Ready < Count) then
+  begin
+    Window := Timers[Ready - 2].Window;
+    TimerId := Timers[Ready - 2].Id;
+    Window.TimerFired(TimerId);
+  end;
+end;
+
+function RunMessageLoop: LongInt;
+begin
   QuitRequested := False;
   QuitCode := 0;
   repeat
-    DeliverPostedMessages;
-    while NextEvent(Message) do
-      Dispatch(Message);
     if ConnectionBroken then
       QuitMessageLoop(1);
     if QuitWhenLastWindowCloses and (WindowListCount = 0) then
       QuitRequested := True;
     if QuitRequested then
       Break;
-    PaintInvalidWindows;
-    Handles[0] := DisplayChannel;
-    Handles[1] := PostedMessageEvent;
-    Count := 2;
-    for Index := 0 to TimerCount - 1 do
-    begin
-      Handles[Count] := Timers[Index].Handle;
-      Inc(Count);
-    end;
-    Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);
-    if (Ready >= 2) and (Ready < Count) then
-    begin
-      Window := Timers[Ready - 2].Window;
-      TimerId := Timers[Ready - 2].Id;
-      Window.TimerFired(TimerId);
-    end;
+    ServeOnce;
   until False;
   Result := QuitCode;
+end;
+
+procedure RunModal(Window: TWindow; var Done: Boolean);
+var
+  Previous: TWindow;
+begin
+  Previous := ModalWindow;
+  ModalWindow := Window;
+  while not Done and not ConnectionBroken and not QuitRequested and (WindowById(Window.Id) = Window) do
+    ServeOnce;
+  ModalWindow := Previous;
 end;
 
 end.

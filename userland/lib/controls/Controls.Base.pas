@@ -82,6 +82,7 @@ type
     FEnabled: Boolean;
     FCanFocus: Boolean;
     FText: string;
+    FTag: PtrInt;
     FOnClick: TControlEvent;
     FOnChange: TControlEvent;
     FOnPointerDown: TPointerEvent;
@@ -124,6 +125,9 @@ type
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Logical units, within the parent. }
     procedure SetBounds(Left, Top, Width, Height: LongInt);
+    { The same without asking the parent to lay out again: for a parent's
+      own Layout, placing its children (which it then lays out). }
+    procedure AssignBounds(Left, Top, Width, Height: LongInt);
     { The root's place, in pixels (the window's whole surface). }
     procedure SetPixelBounds(const Area: TRectangle);
     procedure Invalidate;
@@ -159,6 +163,8 @@ type
     property CanFocus: Boolean read FCanFocus write FCanFocus;
     property Focused: Boolean read GetFocused;
     property Text: string read FText write SetText;
+    { The program's own, for anything. }
+    property Tag: PtrInt read FTag write FTag;
     property OnClick: TControlEvent read FOnClick write FOnClick;
     property OnChange: TControlEvent read FOnChange write FOnChange;
     property OnPointerDown: TPointerEvent read FOnPointerDown write FOnPointerDown;
@@ -237,6 +243,11 @@ begin
   if FParent <> nil then
     FParent.UpdatePixelBounds;
   Invalidate;
+end;
+
+procedure TControl.AssignBounds(Left, Top, Width, Height: LongInt);
+begin
+  FBounds := MakeRectangle(Left, Top, Width, Height);
 end;
 
 procedure TControl.SetPixelBounds(const Area: TRectangle);

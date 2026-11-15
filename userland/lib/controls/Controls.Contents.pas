@@ -38,7 +38,18 @@ uses
   Controls.EditBox,
   Controls.ProgressBar,
   Controls.ScrollBar,
-  Controls.StatusBar;
+  Controls.StatusBar,
+  Controls.ListBox,
+  Controls.TextEdit,
+  Controls.Popups,
+  Controls.ComboBox,
+  Controls.Menus,
+  Controls.ToolBar,
+  Controls.TabControl,
+  Controls.TreeView,
+  Controls.ListView,
+  Controls.Dialogs,
+  Controls.MessageBoxes;
 
 implementation
 

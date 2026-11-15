@@ -334,11 +334,17 @@ normalized (0-65535), not pixels.
       controls by subclassing, On... events, notifications to the parent
 - [x] libcontrols: button, check box, radio button, label, edit box (one line),
       scroll bar, status bar, progress bar, panel, group box
-- [ ] libcontrols: multi-line edit box, list box, combo box, menu bar and pop-up
-      menus, toolbar, tab control, tree view, list view
+- [x] libcontrols: multi-line edit box, list box, combo box, menu bar and pop-up
+      menus, toolbar, tab control, tree view, list view (details)
+- [ ] List view: icon views, several selected, sorting helpers; tree view lines
 - [ ] Clipboard for the edit boxes (step 8 has the system clipboard)
-- [ ] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
+- [x] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
       accelerators; message boxes; layout in logical units, scaled
+- [ ] Mnemonics (Alt+underlined letter) for menus, buttons and labels; F10 and Alt
+      for the menu bar
+- [ ] Owned windows: a dialog stays above its owner; the owner disabled for real
+      (the server refuses to activate it)
+- [ ] Common dialogs: open and save a file, choose a colour, choose a font
 
 ### 6. Desktop shell
 - [ ] Pseudo-terminals (for terminal windows)

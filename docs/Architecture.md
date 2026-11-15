@@ -886,13 +886,47 @@ Shift+Tab, and presses the default and cancel buttons on Enter and
 Escape. So far: label, panel, group box, button, check box, radio button
 (one checked among its siblings), edit box (one line, UTF-8 by
 characters, caret, selection, scrolling), progress bar, scroll bar and
-status bar (`Controls.Text` draws text fitted with "...").
+status bar (`Controls.Text` draws text fitted with "..."), list box,
+multi-line edit box (`Controls.TextEdit`: positions are a line and a
+character), combo box, menu bar and pop-up menus (`Controls.Menus`),
+toolbar, tab control, tree view and list view (details: columns with a
+header that can be clicked and resized). Controls that own children
+place them in their `Layout` with `AssignBounds` (which, unlike
+`SetBounds`, does not ask the parent to lay out again) and keep their
+own children's notifications (a scroll bar's) out of `OnNotify` by
+overriding `ReceiveMessage`.
+
+Pop-ups (`Controls.Popups`: menus, a combo box's list) are windows
+without a frame, topmost and never activated: the owner keeps the
+keyboard and hands its keys to the open pop-up (`TControlWindow.Popup`);
+the pop-up captures the pointer, so a press anywhere else dismisses it;
+a pop-up is freed through a posted message, once its own events are
+over. They are placed in screen units: the server tells a program where
+its window is whenever it moves (`EventMoved`, `ScreenLeft` and
+`ScreenTop`). In a chain of menus only the newest pop-up holds the
+pointer and passes what happens over its parents and the menu bar to
+them.
+
+Dialogs (`Controls.Dialogs`): `ShowModal` serves the program's windows in
+a nested loop (`RunModal` in libwindowing) until the dialog ends, with
+it modal: input for the program's other windows is dropped and a click
+on one brings the dialog forward, while pop-ups (a combo box in the
+dialog) still work. Buttons made with `AddButton` end it with their
+result; Enter and Escape press the default and cancel buttons.
+Accelerators (`AddAccelerator`, Ctrl+M say) run before the focused
+control sees the key. `ShowMessageBox` lays a message box out for its
+text with a sign (information, warning, error, question: shapes drawn
+at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel.
 
 `controlsdemo` has one of each, and a swatch made in the program (a
 `TControl` subclass that posts a message of the program's own when
 clicked). The input test types into it, tabs, clicks a radio button,
 the scroll bar and the swatch with the USB tablet, presses Enter, and
-checks what it printed and the swatch's colour.
+checks what it printed and the swatch's colour. `controlstour` has the
+rest (a menu bar, a toolbar, a tab control with a list box and combo
+box, a multi-line edit box, a tree view and a list view, message boxes);
+it prints where its controls are on the screen, and the input test
+clicks them there and checks what it printed.
 
 ## Sound
 

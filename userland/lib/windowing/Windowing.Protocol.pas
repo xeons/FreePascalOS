@@ -100,6 +100,9 @@ const
   EventActivated = 109;
   { The close button was pressed: the program decides. }
   EventCloseRequested = 110;
+  { Left, Top: where the client area is now (logical units): the window
+    was moved (by the user, or maximized). }
+  EventMoved = 111;
 
   { --- Window flags ----------------------------------------------------- }
 

@@ -121,13 +121,22 @@ begin
 end;
 
 procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
+var
+  Message: TWindowMessage;
 begin
+  if (Window^.ClientLeft = ClientLeft) and (Window^.ClientTop = ClientTop) then
+    Exit;
   if Window^.Visible then
     DamageWindow(Window);
   Window^.ClientLeft := ClientLeft;
   Window^.ClientTop := ClientTop;
   if Window^.Visible then
     DamageWindow(Window);
+  { The program knows where its window is (to place pop-ups). }
+  Message := NewMessage(EventMoved, Window^.Id);
+  Message.Left := PixelsToLogical(ClientLeft, ScalePercent);
+  Message.Top := PixelsToLogical(ClientTop, ScalePercent);
+  SendToOwner(Window, Message);
 end;
 
 procedure RequestResize(Window: PServerWindow; const Bounds: TRectangle);

@@ -28,6 +28,10 @@
   uses them), moves the focus with Tab and Shift+Tab through the
   controls that take it, in the order they were made, and presses the
   default button on Enter and the cancel button on Escape.
+
+  Accelerators (AddAccelerator) are keys with modifiers that run a
+  handler wherever the focus is (Ctrl+S to save, say): they are looked
+  at before the focused control gets the key.
 }
 unit Controls.Window;
 
@@ -45,8 +49,19 @@ uses
   Controls.Base;
 
 type
+  TControlWindow = class;
+  TAcceleratorEvent = procedure(Sender: TControlWindow) of object;
+
+  TAccelerator = record
+    Code: LongWord;
+    { Exactly these of Shift, Control and Alt held. }
+    Modifiers: LongWord;
+    Handler: TAcceleratorEvent;
+  end;
+
   TControlWindow = class(TWindow)
   private
+    FAccelerators: array of TAccelerator;
     FRoot: TControl;
     FHost: TControlHost;
     FFocused: TControl;
@@ -54,7 +69,9 @@ type
     FPressed: TControl;
     FDefaultControl: TControl;
     FCancelControl: TControl;
+    FPopup: TControlWindow;
     procedure MoveFocus(Forward: Boolean);
+    function RunAccelerator(Code, Modifiers: LongWord): Boolean;
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
@@ -71,12 +88,18 @@ type
       AFlags: LongWord = WindowFramed or WindowResizable);
     destructor Destroy; override;
     procedure FocusControl(Control: TControl);
+    { Code (a key code, Controls.Keys) with Modifiers (ModifierShift,
+      ModifierControl, ModifierAlt) runs Handler. }
+    procedure AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
     { The controls' parent. }
     property Root: TControl read FRoot;
     property FocusedControl: TControl read FFocused;
     { Clicked by Enter and Escape (buttons, usually). }
     property DefaultControl: TControl read FDefaultControl write FDefaultControl;
     property CancelControl: TControl read FCancelControl write FCancelControl;
+    { An open pop-up (a menu, a dropped list): it gets this window's keys
+      (Controls.Popups sets it). }
+    property Popup: TControlWindow read FPopup write FPopup;
   end;
 
 implementation
@@ -239,10 +262,40 @@ begin
   FocusControl(List[Current]);
 end;
 
+procedure TControlWindow.AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
+begin
+  SetLength(FAccelerators, Length(FAccelerators) + 1);
+  FAccelerators[High(FAccelerators)].Code := Code;
+  FAccelerators[High(FAccelerators)].Modifiers := Modifiers and (ModifierShift or ModifierControl or ModifierAlt);
+  FAccelerators[High(FAccelerators)].Handler := Handler;
+end;
+
+function TControlWindow.RunAccelerator(Code, Modifiers: LongWord): Boolean;
+var
+  Index: LongInt;
+  Held: LongWord;
+begin
+  Held := Modifiers and (ModifierShift or ModifierControl or ModifierAlt);
+  for Index := 0 to High(FAccelerators) do
+    if (FAccelerators[Index].Code = Code) and (FAccelerators[Index].Modifiers = Held) then
+    begin
+      FAccelerators[Index].Handler(Self);
+      Exit(True);
+    end;
+  Result := False;
+end;
+
 procedure TControlWindow.KeyDown(Code, Character, Modifiers: LongWord);
 var
   Control: TControl;
 begin
+  if FPopup <> nil then
+  begin
+    FPopup.KeyDown(Code, Character, Modifiers);
+    Exit;
+  end;
+  if RunAccelerator(Code, Modifiers) then
+    Exit;
   Control := FFocused;
   while Control <> nil do
   begin

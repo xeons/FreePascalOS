@@ -641,6 +641,66 @@ checks.append(('controls: edit box, check box, radio button, scroll bar, default
 checks.append(('controls: a control of the program\'s own, and its posted message',
                b'swatch 1' in received and swatch == '30a040'))
 
+# The rest of the controls (controlstour), which prints where its
+# controls are: a toolbar toggle, a list box, a combo box's dropped
+# list, a menu bar's menu and a message box (Help > About, Enter), an
+# accelerator's message box (Ctrl+M, Escape), the tab control, the tree
+# view (a click, Right, Down) and the list view (a row, a header).
+def places():
+    return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
+            for match in re.finditer(rb'place (\S+) (\d+) (\d+)', bytes(received))}
+
+
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'controlstour > /tmp/t.log &\r')
+time.sleep(3)
+type_on_serial(b'm=DONE; cat /tmp/t.log; echo PLACES $m\r')
+wait_for('PLACES DONE', 10)
+place = places()
+tour_started = all(name in place for name in ('help', 'bold', 'tree-tab', 'details-tab', 'list-item-3', 'combo',
+                                               'combo-second'))
+if tour_started:
+    click_at(*place['bold'])
+    click_at(*place['list-item-3'])
+    click_at(*place['combo'])
+    click_at(*place['combo-second'])
+    click_at(*place['help'])
+    click_at(place['help'][0] - 8, place['help'][1] + 21)
+    time.sleep(1)
+    press('ret')
+    time.sleep(0.8)
+    press('ctrl-m')
+    time.sleep(1)
+    press('esc')
+    time.sleep(0.8)
+    click_at(*place['tree-tab'])
+    type_on_serial(b'm=DONE; cat /tmp/t.log; echo TREE $m\r')
+    wait_for('TREE DONE', 10)
+    place = places()
+    if 'tree-line-1' in place:
+        click_at(*place['tree-line-1'])
+    press('right')
+    press('down')
+    click_at(*place['details-tab'])
+    type_on_serial(b'm=DONE; cat /tmp/t.log; echo DETAILS $m\r')
+    wait_for('DETAILS DONE', 10)
+    place = places()
+    if 'details-row-2' in place:
+        click_at(*place['details-row-2'])
+    if 'details-header-1' in place:
+        click_at(*place['details-header-1'])
+type_on_serial(b'm=DONE; cat /tmp/t.log; kill %1; wait; echo TOUR $m\r')
+tour_ok = tour_started and wait_for('TOUR DONE', 15)
+log_from_here = bytes(received[received.rfind(b'TOUR $m'):])
+checks.append(('controls tour: toolbar, list box, combo box', tour_ok and b'toolbar Bold 1' in log_from_here and
+               b'list Item 3' in log_from_here and b'combo Second' in log_from_here))
+checks.append(('controls tour: menu, message box, accelerator', tour_ok and b'menu About' in log_from_here and
+               b'answer 1' in log_from_here and b'answer 2' in log_from_here))
+checks.append(('controls tour: tabs, tree view, list view', tour_ok and b'page 2' in log_from_here and
+               b'tree System' in log_from_here and b'tree lib' in log_from_here and b'page 3' in log_from_here and
+               b'row picture.bmp' in log_from_here and b'column 0' in log_from_here))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.
