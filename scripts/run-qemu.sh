@@ -20,7 +20,9 @@
 #
 #   run-qemu.sh <arch> <esp-directory> [--debug] [[--copy] disk-image]...
 #
-# Serial output (the kernel debug log) appears on this terminal.
+# Serial output (the kernel debug log) appears on this terminal. A USB
+# tablet is attached, so the pointer moves in and out of the window
+# without being captured (the display server takes absolute positions).
 # With --debug QEMU waits for GDB on localhost:1234.
 # A disk image after --copy is not booted itself but a fresh copy of it
 # (<name>-session.img), so the session leaves it as it was: the test
@@ -107,4 +109,6 @@ exec "$qemu_binary" \
     -drive format=raw,file=fat:rw:"$esp_directory" \
     -serial stdio \
     -no-reboot \
+    -device qemu-xhci,id=xhci \
+    -device usb-tablet,bus=xhci.0 \
     "${extra_arguments[@]}"
