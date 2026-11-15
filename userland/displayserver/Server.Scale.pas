@@ -283,10 +283,14 @@ begin
   ArrangeScreens;
   if Changed^.Number = 0 then
     TellEveryProgramAboutFirstScreen;
+  { Everything is drawn again. Damaged before the windows are placed
+    again, so their moves copy none of the old pictures
+    (Server.WindowMoves copies only pixels that are not waiting to be
+    drawn). }
+  AddDamage(DesktopBounds);
   for Index := 0 to WindowCount - 1 do
     PlaceWindowAgain(Windows[Index], Places[Index], Changed, Before, ModeChanged);
   FollowPointerScreen;
-  AddDamage(DesktopBounds);
 end;
 
 procedure ChangeScale(Screen: PScreen; NewPercent: LongWord);

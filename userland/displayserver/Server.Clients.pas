@@ -73,7 +73,9 @@ uses
   Server.Actions,
   Server.Input,
   Server.Scale,
-  Server.Modes;
+  Server.Modes,
+  Server.MouseSettings,
+  Server.PointerAreas;
 
 procedure SendToClient(Client: PClient; var Message: TWindowMessage);
 begin
@@ -137,12 +139,18 @@ begin
   Result := True;
 end;
 
+{ Window number Id, if it is this client's. }
+function OwnWindowNumbered(Client: PClient; Id: LongWord): PServerWindow;
+begin
+  Result := FindWindow(Id);
+  if (Result <> nil) and (Result^.Client <> Client) then
+    Result := nil;
+end;
+
 { The window Message names, if it is this client's. }
 function OwnWindow(Client: PClient; const Message: TWindowMessage): PServerWindow;
 begin
-  Result := FindWindow(Message.Window);
-  if (Result <> nil) and (Result^.Client <> Client) then
-    Result := nil;
+  Result := OwnWindowNumbered(Client, Message.Window);
 end;
 
 procedure CreateWindowFor(Client: PClient; var Message: TWindowMessage; Section: Int64);
@@ -152,9 +160,7 @@ var
   Reply: TWindowMessage;
 begin
   { Only a window of the same program can own it. }
-  OwnerWindow := FindWindow(Message.Code);
-  if (OwnerWindow <> nil) and (OwnerWindow^.Client <> Client) then
-    OwnerWindow := nil;
+  OwnerWindow := OwnWindowNumbered(Client, Message.Code);
   Window := AddWindow(Client, Message.Flags, OwnerWindow);
   if Window = nil then
   begin
@@ -219,14 +225,40 @@ begin
   SendToClient(Client, Reply);
 end;
 
-{ The requests about the displays (Window 0); False if Message is not
-  one. }
+procedure SendWelcome(Client: PClient);
+var
+  Reply: TWindowMessage;
+begin
+  Reply := NewMessage(EventWelcome, 0);
+  Reply.Width := Screens[0].Device.Width;
+  Reply.Height := Screens[0].Device.Height;
+  Reply.Value := Screens[0].Dpi;
+  Reply.Code := Screens[0].ScalePercent;
+  SendToClient(Client, Reply);
+end;
+
+procedure SendMouseSettings(Client: PClient);
+var
+  Reply: TWindowMessage;
+begin
+  Reply := NewMessage(EventMouseSettings, 0);
+  Reply.Code := MouseSpeed;
+  Reply.Value := MouseAcceleration;
+  if LeftHandedButtons then
+    Reply.Flags := MouseLeftHanded;
+  SendToClient(Client, Reply);
+end;
+
+{ The requests about no window in particular (Window 0): the greeting,
+  the displays and the mouse's settings; False if Message is not one. }
 function CarryOutDisplayRequest(Client: PClient; const Message: TWindowMessage): Boolean;
 var
   Screen: PScreen;
 begin
   Result := True;
   case Message.Kind of
+    RequestHello:
+      SendWelcome(Client);
     RequestSetScale:
       begin
         Screen := ScreenByNumber(Message.Value);
@@ -245,6 +277,14 @@ begin
       end;
     RequestDescribeDisplayMode:
       DescribeScreenMode(Client, LongInt(Message.Code), Message.Value);
+    RequestGetMouseSettings:
+      SendMouseSettings(Client);
+    RequestSetMouseSettings:
+      begin
+        ChangeMouseSettings(Message.Code, LongWord(Message.Value),
+          (Message.Flags and MouseLeftHanded) <> 0);
+        SendMouseSettings(Client);
+      end;
   else
     Result := False;
   end;
@@ -253,23 +293,10 @@ end;
 procedure CarryOut(Client: PClient; var Message: TWindowMessage; Handle: Int64);
 var
   Window: PServerWindow;
-  Reply: TWindowMessage;
   Changed: TRectangle;
   Left: LongInt;
   Top: LongInt;
 begin
-  if Message.Kind = RequestHello then
-  begin
-    if Handle >= 0 then
-      CloseHandle(Handle);
-    Reply := NewMessage(EventWelcome, 0);
-    Reply.Width := Screens[0].Device.Width;
-    Reply.Height := Screens[0].Device.Height;
-    Reply.Value := Screens[0].Dpi;
-    Reply.Code := Screens[0].ScalePercent;
-    SendToClient(Client, Reply);
-    Exit;
-  end;
   if CarryOutDisplayRequest(Client, Message) then
   begin
     if Handle >= 0 then
@@ -328,6 +355,13 @@ begin
       SetPointerCapture(Window, Message.Value <> 0);
     RequestEnableWindow:
       EnableWindow(Window, Message.Value <> 0);
+    RequestSetOwner:
+      { A window that is not this program's cannot own it: refused. }
+      if (Message.Code = 0) or (OwnWindowNumbered(Client, Message.Code) <> nil) then
+        SetWindowOwner(Window, OwnWindowNumbered(Client, Message.Code));
+    RequestSetPointerShape:
+      SetPointerArea(Window, LongWord(Message.Value), MakeRectangle(Message.Left, Message.Top, Message.Width,
+        Message.Height), Message.Code);
   end;
 end;
 

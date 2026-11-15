@@ -27,7 +27,9 @@
   parts go to the screen. Each screen is composed in its own back
   buffer, as much of the damage as is on it: the canvas's origin puts
   desktop pixels where they fall in that buffer, so a window across the
-  edge between two screens is drawn on both.
+  edge between two screens is drawn on both. Pixels put right in a back
+  buffer some other way (a moved window's, copied: Server.WindowMoves)
+  go to the screen with them (AddPresentOnly).
 }
 unit Server.Composer;
 
@@ -37,6 +39,7 @@ interface
 
 uses
   Drawing.Rectangles,
+  Drawing.Regions,
   Server.Windows;
 
 var
@@ -50,13 +53,17 @@ var
 procedure AddDamage(const Rectangle: TRectangle);
 procedure DamageWindow(Window: PServerWindow);
 function HasDamage: Boolean;
+{ What needs drawing again now (a copy of it). }
+procedure CopyDamage(out Region: TRegion);
+{ Pixels already right in the back buffer that the screen does not show
+  yet: Compose puts them on it. }
+procedure AddPresentOnly(const Region: TRegion);
 procedure Compose;
 
 implementation
 
 uses
   Windowing.Theme,
-  Drawing.Regions,
   Drawing.Canvas,
   Server.Theme,
   Server.Screen,
@@ -65,6 +72,7 @@ uses
 
 var
   Damage: TRegion;
+  PresentOnly: TRegion;
 
 procedure AddDamage(const Rectangle: TRectangle);
 var
@@ -82,6 +90,16 @@ end;
 function HasDamage: Boolean;
 begin
   Result := not RegionIsEmpty(Damage);
+end;
+
+procedure CopyDamage(out Region: TRegion);
+begin
+  CopyRegion(Damage, Region);
+end;
+
+procedure AddPresentOnly(const Region: TRegion);
+begin
+  AddRegionToRegion(PresentOnly, Region);
 end;
 
 procedure ComposeScreen(Screen: PScreen);
@@ -123,6 +141,12 @@ procedure Compose;
 var
   Index: LongInt;
 begin
+  if not RegionIsEmpty(PresentOnly) then
+  begin
+    for Index := 0 to ScreenCount - 1 do
+      PresentScreenRegion(@Screens[Index], PresentOnly);
+    ClearRegion(PresentOnly);
+  end;
   if RegionIsEmpty(Damage) then
     Exit;
   for Index := 0 to ScreenCount - 1 do

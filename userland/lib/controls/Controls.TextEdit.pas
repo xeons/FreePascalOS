@@ -115,6 +115,7 @@ uses
   Abi.SystemCalls,
   Drawing.Rectangles,
   Drawing.Bevels,
+  Windowing.Protocol,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
@@ -154,6 +155,7 @@ constructor TTextEdit.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   CanFocus := True;
+  PointerShape := PointerTextBeam;
   FLines := TStringList.Create;
   FLines.Add('');
   FLines.OnChange := @LinesChanged;

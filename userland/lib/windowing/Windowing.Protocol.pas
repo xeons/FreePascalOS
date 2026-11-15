@@ -47,9 +47,19 @@
   A window can have an owner, another window of the same program: it
   stays above it. A disabled window (RequestEnableWindow) is never
   activated and gets no input; a click on it activates the window it
-  owns instead (a modal dialog). When a display's scale or mode changes
-  each window on it hears EventScaleChanged and gives itself a new
-  surface; every program hears when display 0 changes.
+  owns instead (a modal dialog). The owner can be changed later
+  (RequestSetOwner). When a display's scale or mode changes each window
+  on it hears EventScaleChanged and gives itself a new surface; every
+  program hears when display 0 changes. A program hears when its window
+  is shown or hidden, whoever did it (EventVisibilityChanged: its owner
+  was hidden, or it was minimized).
+
+  The pointer's shape over a window's client area is the program's to
+  choose (RequestSetPointerShape: for the whole client area, or for up to
+  MaximumPointerAreas rectangles of it); over the frame the server picks
+  it (resize arrows on the borders). The mouse's settings (speed,
+  acceleration, left-handed buttons) are the server's, read and changed
+  with RequestGetMouseSettings and RequestSetMouseSettings.
 }
 unit Windowing.Protocol;
 
@@ -106,6 +116,23 @@ const
   { Window 0; Code: a display's number; Value: the number of one of its
     modes (from 0, smallest first). Answered by EventDisplayMode. }
   RequestDescribeDisplayMode = 15;
+  { Code: the window that owns it from now on (0: none), another window
+    of the same program that is not owned by it. The server raises the
+    window above its new owner if it was below. }
+  RequestSetOwner = 16;
+  { Code: Pointer*, the shape; Value: the area (0: the whole client
+    area, 1 to MaximumPointerAreas: a rectangle of it, which wins over
+    area 0 where it lies, a higher number over a lower); Left, Top,
+    Width, Height: that rectangle in surface pixels (an empty one takes
+    the area away). }
+  RequestSetPointerShape = 17;
+  { Window 0. Answered by EventMouseSettings. }
+  RequestGetMouseSettings = 18;
+  { Window 0; Code, Value, Flags as in EventMouseSettings: the new
+    settings (any program may change them, as the display's settings
+    would be; they last until the server ends). Answered by
+    EventMouseSettings with what they are now. }
+  RequestSetMouseSettings = 19;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -155,6 +182,14 @@ const
     pixels, 0 if there is no such mode; Flags: DisplayModeCurrent if the
     display has it now. }
   EventDisplayMode = 114;
+  { Value: 1 the window is shown now, 0 hidden: by the program, or by the
+    server (hidden or shown with its owner, minimized). }
+  EventVisibilityChanged = 115;
+  { Window 0. Code: the speed, MinimumMouseSpeed to MaximumMouseSpeed
+    (NormalMouseSpeed moves the pointer as far as the mouse says);
+    Value: the acceleration, 0 (none) to MaximumMouseAcceleration;
+    Flags: MouseLeftHanded if the left and right buttons are swapped. }
+  EventMouseSettings = 116;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -169,6 +204,33 @@ const
   WindowTopmost = $04;
   { Showing it, or clicking it, does not take the keyboard. }
   WindowNoActivate = $08;
+
+  { --- Pointer shapes ---------------------------------------------------- }
+
+  PointerArrow = 0;
+  { Left and right (a vertical border). }
+  PointerResizeHorizontal = 1;
+  { Up and down (a horizontal border). }
+  PointerResizeVertical = 2;
+  { Top left and bottom right. }
+  PointerResizeDiagonalDown = 3;
+  { Top right and bottom left. }
+  PointerResizeDiagonalUp = 4;
+  { Where text is typed or selected. }
+  PointerTextBeam = 5;
+  { The program is busy. }
+  PointerBusy = 6;
+  PointerShapeCount = 7;
+  { Areas of a window with a shape of their own (RequestSetPointerShape). }
+  MaximumPointerAreas = 15;
+
+  { --- Mouse settings ---------------------------------------------------- }
+
+  MinimumMouseSpeed = 1;
+  NormalMouseSpeed = 10;
+  MaximumMouseSpeed = 20;
+  MaximumMouseAcceleration = 10;
+  MouseLeftHanded = $01;
 
 type
   TWindowMessage = record

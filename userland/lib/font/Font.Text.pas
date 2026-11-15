@@ -30,6 +30,9 @@
   Every face here is a bitmap face of one width, so a text's width is
   its character count times the face's width; MeasureText is still the
   way to ask, for when faces are not.
+
+  PSF faces carry no baseline, so FaceBaseline finds it in the face's
+  own letters: the row under the feet of an H.
 }
 unit Font.Text;
 
@@ -66,6 +69,9 @@ function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; T
 { One character; returns its width (0 for a control character). }
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
   Color: TColor): LongInt;
+{ The first row (from the top of a line) below the letters that stand on
+  the baseline: where an underline goes so it touches them. }
+function FaceBaseline(const Face: TFontFace): LongInt;
 
 implementation
 
@@ -184,6 +190,30 @@ begin
         Inc(Column);
       FillSpan(Canvas, SurfaceY + Row, SurfaceX + RunStart, SurfaceX + Column, Color);
     end;
+  end;
+end;
+
+function FaceBaseline(const Face: TFontFace): LongInt;
+const
+  { A capital that has no part below the baseline. }
+  BaselineLetter = Ord('H');
+var
+  Glyph: LongWord;
+  Row: LongInt;
+  Bits: PByte;
+  ByteIndex: LongInt;
+begin
+  { Without the letter: where it usually is, three sixteenths up. }
+  Result := Face.Height - (3 * Face.Height) div 16;
+  if not HasGlyphFor(Face, BaselineLetter) then
+    Exit;
+  Glyph := GlyphFor(Face, BaselineLetter);
+  for Row := Face.Height - 1 downto 0 do
+  begin
+    Bits := GlyphRow(Face, Glyph, Row);
+    for ByteIndex := 0 to Face.BytesPerRow - 1 do
+      if Bits[ByteIndex] <> 0 then
+        Exit(Row + 1);
   end;
 end;
 

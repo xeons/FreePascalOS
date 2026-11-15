@@ -217,7 +217,7 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
-GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode wintest controlsdemo controlstour dialogtour)
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings wintest ownertest controlsdemo controlstour dialogtour)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lfont -ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
 	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS)
@@ -240,5 +240,5 @@ $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userlan
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*)
+$(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/pointers/*)
 	scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@

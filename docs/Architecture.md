@@ -936,17 +936,90 @@ of the new size and asks the program for it when let go (it answers
 with a new surface), the title buttons act when let go over them (close
 asks the program, maximize fills the screen below the title bar and
 back, minimize hides). A window dropped on another display takes its
-scale. Keys go to the active window; Alt+F4 asks it to close. Events for a program are sent without waiting, so one that stops
-reading cannot hold up the others; a program that ends loses its
+scale. The title button under the pointer is drawn hot (a lighter
+face), and pressed (sunken, its glyph pushed a pixel in) while the
+button is held over it; moving off it lets it up, and letting go there
+does nothing (`Server.TitleButtons`). A double click on a title bar
+maximizes the window or restores it: two presses on the same title bar
+within 500 ms by the input events' own times, a few logical units apart
+at the window's scale (`Server.DoubleClicks`). Keys go to the active
+window; Alt+F4 asks it to close. Events for a program are sent without
+waiting, so one that stops reading cannot hold up the others; a program
+that ends loses its
 windows. Everything waits in one place: the input device, the port and
 every client's channel in one `CallWaitForHandles`.
 
+The mouse's settings (`Server.MouseSettings`): a speed (1 to 20; 10
+moves the pointer as far as the mouse says) multiplies a mouse's
+relative motion, and an acceleration (0 to 10) makes a fast movement go
+further still (beyond 4 device units in one report every further unit
+adds to the gain, up to four times the speed); what is left below a
+pixel is carried to the next movement, so a slow speed still moves
+smoothly. Left-handed swaps the left and right buttons of every pointing
+device. A tablet's absolute positions are never changed. Any program
+may read and change them (`RequestGetMouseSettings`,
+`RequestSetMouseSettings`, answered with `EventMouseSettings`), as it
+may the scale: they belong to whoever sits at the screen. They last
+until the server ends; keeping them in a file is for the configuration
+library (step 7). `mousesettings [-s SPEED] [-a ACCELERATION] [-l
+on|off]` changes them and prints them.
+
+Pointer shapes: the arrow, the four resize arrows (left-right, up-down
+and the two diagonals), a text beam and a busy hourglass
+(`Pointer*` in the protocol). Each is a small pattern of black, white
+and clear pixels with a hotspot (`Server.PointerShapes`), scaled by a
+whole number like the arrow always was: the scale of the display the
+pointer is on, rounded. They are read at start from
+`/lib/pointers/NAME.pointer` (`Server.PointerFiles`): text files, so a
+shape can be changed without building anything:
+
+    ; comments start with a semicolon
+    hotspot 8 4
+        #       #
+       ##       ##
+      #.#########.#
+     #.............#
+
+Every line after the hotspot is a row: `#` black, `.` white, a space or
+`-` clear. A missing or malformed file leaves that shape built in (the
+built-in patterns are the same as the files `make-system-disk.sh`
+installs from `userland/pointers`); the server says how many it read.
+Which shape shows (`Server.PointerAreas`): over a frame the server's
+choice, a resize arrow on the borders and corners of a resizable window
+(and while one is dragged), the arrow elsewhere; over a client area the
+program's (`RequestSetPointerShape`): a shape for the whole client area
+(area 0) and up to 15 rectangles with their own (a higher area wins
+where they overlap). The shape is worked out again before every
+compose, so it follows windows that move under a still pointer.
+
+Moving a window (`Server.WindowMoves`) copies what stays visible instead
+of drawing it again: the old place's pixels that are up to date (not in
+the damage waiting to be drawn, not covered by a window above) and land
+where the window shows at the new place are copied within the back
+buffer (a line at a time, in the order that never reads a pixel already
+written: bottom up when moving down, from the right when moving right),
+and only the rest of the old and new places is damaged. Each display
+has its own back buffer, so this is done display by display, and only
+for pixels that stay on the same display: what crosses from one display
+to the other is drawn again. The pointer and a resize outline are drawn
+over everything, so their places are damaged first and never copied.
+The copied pixels go to the screen with the next compose
+(`AddPresentOnly`). `displayserver --check-moves` draws every display
+again after every compose that followed a move and compares it with
+what the copy left, printing any difference and, after each title bar
+drag, how many moves it compared.
+
 Owned windows: a window can be created with an owner, another window of
-the same program (the request's `Code`). An owned window is always above
-its owner: raising a window raises the windows it owns above it, in the
-order they had (`RaiseWindow`), and one owned by a topmost window counts
-as topmost. Hiding a window hides the windows it owns and showing it
-shows them again; destroying it leaves them without an owner. A window
+the same program (the request's `Code`), and given another one later
+(`RequestSetOwner`; never one it owns): if that leaves it below its new
+owner, or in the wrong layer, it is raised. An owned window is always
+above its owner: raising a window raises the windows it owns above it,
+in the order they had (`RaiseWindow`), and one owned by a topmost window
+counts as topmost. Hiding a window hides the windows it owns and showing
+it shows them again; destroying it leaves them without an owner. A
+program hears whenever one of its windows is shown or hidden
+(`EventVisibilityChanged`), whoever did it: along with its owner, or
+minimized by its title button. A window
 can be disabled (`RequestEnableWindow`): the server never activates it
 and sends it no input, the pointer over it being over no window; a press
 on it, frame included, brings it forward and activates its topmost
@@ -976,7 +1049,7 @@ frame: its frame and title font are at that display's scale and DPI,
 and so is the surface its program draws, even while part of it shows on
 another display. Absolute pointing devices span the whole desktop (the
 rectangle around every display); the pointer stays on the displays,
-going from one to the next across their shared edge, and its arrow is
+going from one to the next across their shared edge, and its shape is
 at the scale of the display it is on.
 
 The scale (`Server.Scale`): each display's starts as its own. A program
@@ -988,12 +1061,14 @@ scale over its own). The server picks that display's title font again,
 ends a drag, and lays the displays out again: every window keeps its
 place on its own display, its offset from the display's top left in
 that display's logical units (on the changed display its pixels move;
-on displays to its right it moves with its display). Each window on the
-changed display is told its new scale (`EventScaleChanged` for that
-window, with the display's size, the DPI and the scale) and its program
-gives it a surface of the same logical size; a maximized window is
-maximized again; every program hears where its windows are
-(`EventMoved`), and when display 0 changed, every program hears that too
+on displays to its right it moves with its display). The whole desktop
+is damaged before the windows are placed again, so none of those moves
+copies pixels drawn at the old scale. Each window on the changed
+display is told its new scale (`EventScaleChanged` for that window,
+with the display's size, the DPI and the scale) and its program gives
+it a surface of the same logical size; a maximized window is maximized
+again; every program hears where its windows are (`EventMoved`), and
+when display 0 changed, every program hears that too
 (`EventScaleChanged` for window 0: what new windows start at). A window
 dragged onto another display, or moved there by its program, takes that
 display's scale: its frame at once, and its program is told the same
@@ -1012,20 +1087,41 @@ tells a display's size, scale, DPI and place on the desktop
 change a display); `displaymode` alone prints every display.
 `Windowing.Displays` in libwindowing wraps these requests.
 
+The protocol's numbers: requests 1 to 19 (hello to the window requests
+up to `RequestSetScale` = 12; the display requests 13 to 15; then
+`RequestSetOwner` = 16, `RequestSetPointerShape` = 17,
+`RequestGetMouseSettings` = 18, `RequestSetMouseSettings` = 19), events
+101 to 116 (up to `EventScaleChanged` = 112; `EventDisplayDescribed` =
+113, `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
+`EventMouseSettings` = 116).
+
 `wintest` shows a window and prints what happens to it (its place, a
-new scale). The input test starts the server and two of them, and with
-the USB tablet (exact positions) checks the stacking and the active
-title bar, a drag by the title bar, a resize by the corner, maximizing,
-the close button, a key going to the window left active, and the
-console getting the screen back when the server ends. QEMU there has a
-second display (bochs-display, 1024x768) to the right of the first: the
-test sets it to 150%, drags a window across the edge and checks it in a
-screen dump of that display (HMP `screendump FILE video1`, the device's
-id) at 1.5 times its pixels, and that the program printed its new
-scale; then it sets the first display to 1024x768 with a window near its
-right edge (the screen dump is that size, the window moved onto it and
-told the new DPI, the other display's window still there) and back to
-1280x800.
+new scale; `-b` sets a text beam over its left half, a pointer area).
+The input test starts the server (with `--check-moves`) and two of
+them, and with the USB tablet (exact positions) checks the stacking and
+the active title bar, the text beam over the pointer area, a drag by
+the title bar, a resize by the corner, maximizing, the close button, a
+key going to the window left active; then on that window the hot and
+pressed title button (and that letting go off it does nothing), the
+resize arrow over a border, a double click maximizing and another
+restoring, drags partly off the screen and back with every move's
+picture the same as a full redraw, left-handed buttons (a right click
+arriving as button 1) and the speed doubling a PS/2 mouse's motion; and
+the console getting the screen back when the server ends. QEMU there
+has a second display (bochs-display, 1024x768) to the right of the
+first, and the tablet spans both: the test sets the second to 150%,
+drags a window across the edge (still checking every move against a
+full redraw) and checks it in a screen dump of that display (HMP
+`screendump FILE video1`, the device's id) at 1.5 times its pixels, and
+that the program printed its new scale; then it sets the first display
+to 1024x768 with a window near its right edge (the screen dump is that
+size, the window moved onto it and told the new DPI, the other
+display's window still there) and back to 1280x800. `ownertest` shows
+three windows (one owned) and takes a step at each key: the input test
+checks that a window hidden with its owner is no longer `Visible` in
+its program and is shown again with it, and that a window given an
+owner later stays above it when the owner is activated, and not once it
+has none again.
 
 ### Windows and controls for programs
 
@@ -1044,18 +1140,25 @@ changed; a new size gets a new surface painted whole before the server
 sees it. The loop waits on the server's channel, the posted message
 event and the window timers (timer objects) at once.
 
-A window can be given an owner when it is made (`Owner`), which it then
-stays above, and can be disabled (`Enabled`). Each window is at the
-scale and DPI of the display it is on (`Scale`, `Dpi`); the scale used
-for converting (`DisplayScale`, `DisplayDpi`, `Scaled`, `Unscaled`) is
-the one of the window being served: libwindowing selects it before a
-window's handlers run, before it paints, and before a queued message
-reaches it or one of its controls (`TMessageReceiver.PrepareToReceive`,
-which a control passes to its window). A new window starts at display
-0's (`DefaultScale`). When a window's scale changes (it moved to
-another display, or its display's scale or mode changed) it gets a
-surface of the logical size it had at the new scale: `ScaleChanged`,
-then `Resized`, then painted whole before the server sees it. A control window lays its controls out again
+A window can be given an owner when it is made, or later (`Owner`),
+which it then stays above, and can be disabled (`Enabled`). `Visible`
+follows what the server says (`VisibilityChanged`), so a window hidden
+along with its owner, or minimized, is not `Visible`. `SetPointerShape`
+and `SetPointerShapeInArea` choose the pointer's shape over the client
+area (in its surface's pixels); a control has a `PointerShape` (the
+edit boxes the text beam), which `TControlWindow` asks the server for
+as the pointer moves over controls. Each window is at the scale and DPI
+of the display it is on (`Scale`, `Dpi`); the scale used for converting
+(`DisplayScale`, `DisplayDpi`, `Scaled`, `Unscaled`) is the one of the
+window being served: libwindowing selects it before a window's handlers
+run, before it paints, and before a queued message reaches it or one of
+its controls (`TMessageReceiver.PrepareToReceive`, which a control
+passes to its window). A new window starts at display 0's
+(`DefaultScale`). When a window's scale changes (it moved to another
+display, or its display's scale or mode changed) it gets a surface of
+the logical size it had at the new scale: `ScaleChanged`, then
+`Resized`, then painted whole before the server sees it. A control
+window lays its controls out again
 from their logical bounds in `Resized`, and fonts are picked by point
 size at the DPI each time they are used, so nothing else needs doing;
 a window that keeps something in pixels picks it again in
@@ -1090,7 +1193,8 @@ Escape. So far: label, panel, group box, button, check box, radio button
 characters, caret, selection, scrolling), progress bar, scroll bar and
 status bar (`Controls.Text` draws text fitted with "..."), list box,
 multi-line edit box (`Controls.TextEdit`: positions are a line and a
-character), combo box, menu bar and pop-up menus (`Controls.Menus`),
+character), combo box (its text always the chosen item's, also when the
+items change under it), menu bar and pop-up menus (`Controls.Menus`),
 toolbar, tab control, tree view (dotted lines joining nodes to their
 parents and siblings, drawn a row at a time, as thick as the display's
 scale makes a logical unit) and list view. Controls that own children
@@ -1192,7 +1296,9 @@ sample drawn with the face a program asking for that size gets
 Mnemonics: an ampersand in a caption marks the next character as the
 control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
 `Controls.Text` draws such captions without the marks and the mnemonic
-underlined, measures them without the marks, and gives the caption as
+underlined (right under the letter's feet at every size: the bitmap
+faces carry no baseline, so libfont's `FaceBaseline` finds it under the
+face's own H), measures them without the marks, and gives the caption as
 shown (`TextWithoutMnemonic`) and its mnemonic in lower case
 (`MnemonicOf`); buttons, check boxes, radio buttons, labels, group
 boxes, tabs, tool buttons, menu headings and menu items draw with it

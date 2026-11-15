@@ -25,6 +25,10 @@
   whatever would activate it activates the topmost enabled window it
   owns instead (the dialog), after bringing both forward. Hiding a
   window hides the windows it owns, and showing it shows them again.
+  The program hears whenever one of its windows is shown or hidden
+  (EventVisibilityChanged), whoever did it, so it knows what is on the
+  screen. A window moved keeps what of it stays visible on the screen:
+  those pixels are copied to the new place (Server.WindowMoves).
 }
 unit Server.Actions;
 
@@ -45,6 +49,8 @@ procedure ActivateWindow(Window: PServerWindow);
 procedure ShowWindow(Window: PServerWindow; Show: Boolean);
 { A disabled window is not activated and gets no input. }
 procedure EnableWindow(Window: PServerWindow; Enable: Boolean);
+{ Gives the window another owner (nil: none); see ChangeOwner. }
+procedure SetWindowOwner(Window, Owner: PServerWindow);
 procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
 { Tells the program where its window is (logical units: EventMoved). }
 procedure TellWindowPlace(Window: PServerWindow);
@@ -69,12 +75,22 @@ uses
   Server.Desktop,
   Server.Composer,
   Server.Clients,
-  Server.Input;
+  Server.Input,
+  Server.WindowMoves;
 
 procedure SendToProgram(Window: PServerWindow; var Message: TWindowMessage);
 begin
   Message.Window := Window^.Id;
   SendToClient(PClient(Window^.Client), Message);
+end;
+
+procedure SendVisibilityChanged(Window: PServerWindow);
+var
+  Message: TWindowMessage;
+begin
+  Message := NewMessage(EventVisibilityChanged, Window^.Id);
+  Message.Value := Ord(Window^.Visible);
+  SendToProgram(Window, Message);
 end;
 
 procedure SendActivated(Window: PServerWindow; Active: Boolean);
@@ -194,6 +210,7 @@ begin
       Owned[Index]^.HiddenWithOwner := False;
       Owned[Index]^.Visible := True;
       DamageWindow(Owned[Index]);
+      SendVisibilityChanged(Owned[Index]);
       ShowOwnedWindows(Owned[Index]);
     end;
 end;
@@ -206,6 +223,7 @@ begin
     Exit;
   Window^.Visible := Show;
   DamageWindow(Window);
+  SendVisibilityChanged(Window);
   if Show then
   begin
     ShowOwnedWindows(Window);
@@ -254,16 +272,38 @@ begin
   SendToProgram(Window, Message);
 end;
 
-procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
+procedure SetWindowOwner(Window, Owner: PServerWindow);
 begin
-  if (Window^.ClientLeft = ClientLeft) and (Window^.ClientTop = ClientTop) then
+  if Window^.OwnerWindow = Owner then
+    Exit;
+  ChangeOwner(Window, Owner);
+  if Window^.OwnerWindow <> Owner then
     Exit;
   if Window^.Visible then
     DamageWindow(Window);
+  { Hidden along with its old owner: it comes back now, unless the new
+    owner is hidden too (then it comes back with that one). }
+  if Window^.HiddenWithOwner and ((Owner = nil) or Owner^.Visible) then
+  begin
+    Window^.HiddenWithOwner := False;
+    Window^.Visible := True;
+    DamageWindow(Window);
+    SendVisibilityChanged(Window);
+    ShowOwnedWindows(Window);
+  end;
+end;
+
+procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
+var
+  OldFrame: TRectangle;
+begin
+  if (Window^.ClientLeft = ClientLeft) and (Window^.ClientTop = ClientTop) then
+    Exit;
+  OldFrame := FrameRectangle(Window);
   Window^.ClientLeft := ClientLeft;
   Window^.ClientTop := ClientTop;
   if Window^.Visible then
-    DamageWindow(Window);
+    MoveWindowPixels(Window, OldFrame);
   { The program knows where its window is (to place pop-ups). }
   TellWindowPlace(Window);
 end;

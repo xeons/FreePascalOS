@@ -23,7 +23,9 @@
   title bar (a gradient, the title, and the minimize, maximize and close
   buttons at its right end) above the client area. Sizes come from the
   theme in logical units; the title's font from its size in points at
-  the DPI of the screen the window is on.
+  the DPI of the screen the window is on. A title button under the
+  pointer is drawn hot (a lighter face), and pressed (sunken, its glyph
+  a pixel down and right) while held (Server.TitleButtons).
 }
 unit Server.Frames;
 
@@ -56,7 +58,8 @@ uses
   Font.Text,
   Windowing.Protocol,
   Server.Theme,
-  Server.Screen;
+  Server.Screen,
+  Server.TitleButtons;
 
 function TitleBarRectangle(Window: PServerWindow): TRectangle;
 var
@@ -114,17 +117,28 @@ var
   Glyph: TRectangle;
   Thickness: LongInt;
   Size: LongInt;
+  Pressed: Boolean;
 begin
   Box := TitleButtonRectangle(Window, Button);
-  FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, RaisedBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
+  Pressed := TitleButtonIsPressed(Window, Button);
+  if TitleButtonIsHot(Window, Button) then
+    FillRectangle(Canvas, Box, Theme.Light)
+  else
+    FillRectangle(Canvas, Box, Theme.Face);
+  if Pressed then
+    DrawBevel(Canvas, Box, SunkenBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow))
+  else
+    DrawBevel(Canvas, Box, RaisedBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
   Thickness := WindowMetric(Window, 1);
   if Thickness < 1 then
     Thickness := 1;
-  { The glyph in a square in the middle. }
+  { The glyph in a square in the middle; pressed, it moves as if pushed
+    in. }
   Size := RectangleHeight(Box) - 2 * WindowMetric(Window, 4);
   Glyph := MakeRectangle(Box.Left + (RectangleWidth(Box) - Size) div 2, Box.Top + (RectangleHeight(Box) - Size) div 2,
     Size, Size);
+  if Pressed then
+    Glyph := OffsetRectangle(Glyph, Thickness, Thickness);
   case Button of
     HitClose:
       begin
