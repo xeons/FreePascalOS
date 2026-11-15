@@ -33,6 +33,7 @@ uses
   Windowing.Displays,
   Windowing.Fonts,
   Windowing.Messages,
+  Windowing.HandleWatches,
   Windowing.Windows;
 
 implementation

@@ -31,6 +31,8 @@
     * threads, thread-local storage and initialization order (threadtest),
     * events, timers, waiting on several handles, channels, ports and a
       section shared between two processes (ipctest),
+    * pseudo-terminals: a shell on one, typed into through the master
+      side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself, with runtime error 216 (202 for a stack overflow), and that
       one without an exception dispatcher is ended by the kernel (139).
@@ -69,7 +71,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..289] of TCommandTest = (
+  CommandTests: array[0..290] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -414,6 +416,7 @@ const
     (Command: 'rtltest > rt.log; echo $?; grep FAIL rt.log; tail -n 1 rt.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'ptytest > pty.log; echo $?; grep -E ''FAIL|received'' pty.log; tail -n 1 pty.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone: with a runtime error, or with
       status 139 when the kernel must end it (no dispatcher) ----------- }

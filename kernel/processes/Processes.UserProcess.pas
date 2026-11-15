@@ -65,6 +65,8 @@ type
     GroupId: QWord;
     { Who the program runs as, and its nice value. }
     Credentials: TProcessCredentials;
+    { Its controlling terminal (a PDeviceObject; see TProcess). }
+    ControllingTerminal: Pointer;
   end;
 
 procedure InitializeUserProcesses;
@@ -316,6 +318,7 @@ begin
   else
     Process^.GroupId := Process^.ProcessId;
   Process^.Credentials := Startup.Credentials;
+  Process^.ControllingTerminal := Startup.ControllingTerminal;
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then

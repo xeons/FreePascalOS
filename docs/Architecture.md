@@ -438,7 +438,8 @@ The drivers so far:
 | Driver | Devices |
 |---|---|
 | `memory` (`Drivers.MemoryDevices`) | `null`, `zero`, `full`, `random`, `urandom` (RDRAND, or a TSC-seeded xorshift without it), all `rw-rw-rw-` |
-| `console` (`Drivers.ConsoleDevice`) | `console` and `tty`: reads and writes go to `Io.Console`; control requests get and set the modes, the size and the foreground group and take a pending Ctrl-C |
+| `console` (`Drivers.ConsoleDevice`) | `console` and `tty` (which opens the program's controlling terminal, see "Pseudo-terminals"): reads and control requests go through the console's line discipline, writes to `Io.Console`; control requests get and set the modes, the size and the foreground group and take a pending Ctrl-C |
+| `pts` and `ptmaster` (`Drivers.PseudoTerminalDevices`) | `ptsN`, `rw-rw-rw-`, made as pseudo-terminals are first needed: a terminal like the console; and an unnamed master device for each, opened only by `CallCreatePseudoTerminal` |
 | `disk` (`Drivers.DiskDevices`) | one block device per disk and partition, `rw-------` for root; any offset and length (through a one-block buffer, around the block cache: reads write the cache back first, writes drop what it holds of the disk); writing to a device that holds a mounted volume, or to a disk with a mounted partition, is refused |
 | `ps2keyboard` (`Drivers.Ps2Keyboard`) | `keyboard`, exclusive, `rw-------`: the characters typed (`Io.InputDevice`) |
 | `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
@@ -667,17 +668,19 @@ QEMU exiting by itself with status 0. coretest checks that `poweroff`,
 ### Ctrl-C
 
 Processes belong to process groups (inherited, or a new group led by the
-new process). The console has a foreground group. When the console's
-interrupt key mode is on (the default; `stty -isig` turns it off), Ctrl-C
-does not reach the input buffer: a deferred call wakes the
-`console-interrupt` system thread, which ends every process of the
-foreground group with exit status 130, except processes that asked to
-ignore it. If it ended none (an interactive shell waiting at its prompt
+new process). Every terminal - the console and each pseudo-terminal -
+has a foreground group. When a terminal's interrupt key mode is on (the
+default; `stty -isig` turns it off), Ctrl-C does not reach the input
+buffer: the terminal notes it (`Io.LineDiscipline`) and a deferred call
+wakes the `terminal-signals` system thread (`Io.TerminalSignals`,
+`Processes.TerminalSignals`), which ends every process of that
+terminal's foreground group with exit status 130, except processes that
+asked to ignore it. If it ended none (an interactive shell waiting at its prompt
 is the foreground), Ctrl-C is passed to the reader as a character, and
 the shell's line editor clears the line. The interactive shell runs each
 foreground pipeline in a new group and makes it the foreground group
 while it waits. While the shell itself is busy (a loop made only of
-builtins) nobody reads the character; the console also remembers that an
+builtins) nobody reads the character; the terminal also remembers that an
 interrupt is pending, and the shell asks for it between commands with
 the console control request `ControlTakePendingInterrupt`, which answers
 once per key press and removes the Ctrl-C from the input.
@@ -700,19 +703,106 @@ group.
 A system call cut short by the stop's alert returns ErrorInterrupted;
 the dispatcher then waits at the safe point and runs the call again once
 the process is continued, so programs never see the stop (a timed wait
-starts its timeout again). Console and pipe transfers therefore report an
+starts its timeout again). Terminal and pipe transfers therefore report an
 alert as "interrupted", not as end of file or a broken pipe. A process
-outside the console's foreground group that reads the console stops its
-own group instead (like SIGTTIN); the restarted read succeeds once a
-shell has made it the foreground.
+outside the foreground group of its controlling terminal that reads that
+terminal stops its own group instead (like SIGTTIN); the restarted read
+succeeds once a shell has made it the foreground. The interactive shell
+starts each foreground pipeline with `GroupNewInForeground`, so the new
+group is the terminal's foreground group before its first program runs
+(handing it over afterwards would let a quick reader stop itself).
 
 The shell keeps a job table (`Shell.Jobs`): every background pipeline,
 and every foreground pipeline stopped by Ctrl-Z, with the process handles
 of its programs. `jobs`, `fg`, `bg`, `wait` and `kill` with `%N` are in
-`Shell.JobBuiltins`; `fg` hands the console's foreground group to the job
+`Shell.JobBuiltins`; `fg` hands the terminal's foreground group to the job
 while it waits. Finished jobs are reported before the next prompt, and
 stopped jobs are ended (status 129) when an interactive shell exits.
 `ps` shows stopped processes as `T`.
+
+### Pseudo-terminals
+
+A pseudo-terminal is a terminal that a program shows (a terminal window)
+instead of the screen. What makes a device a terminal is its **line
+discipline** (`Io.LineDiscipline`), shared by the console and every
+pseudo-terminal: the input ring (filled from any level, dropping what
+does not fit, or from a thread that waits while there is no room), line
+editing with echo (Backspace takes back a whole UTF-8 character),
+character-at-a-time reading, Ctrl-D as end of file, the interrupt key
+mode (Ctrl-C and Ctrl-Z noted for the signal thread, see "Ctrl-C"), the
+pending interrupt, the modes, the window size and the foreground group,
+readiness events for waiting (`Readable`: a read would not wait;
+`InputRoom`: typing would not wait) and the hang-up. Echo goes to the
+terminal's output routine: the kernel log's outputs for the console
+(`Io.Console`), the master's output buffer for a pseudo-terminal.
+`Io.TerminalRequests` handles reads and the console control requests
+for any terminal device (`ControlGetConsoleMode` to
+`ControlSetConsoleSize`, and `ControlGetTerminalNumber`); every terminal
+device points at its line discipline (`TDeviceObject.Terminal`).
+
+`CallCreatePseudoTerminal(TerminalAddress, Size)` takes a pair from the
+pool (`Io.PseudoTerminals`: up to 16, made as first needed, reused once
+both sides are closed; devices are never removed) and fills a
+`TAbiPseudoTerminal`:
+
+- `OutputHandle` and `InputHandle`: the master side (an unnamed device
+  of the `ptmaster` driver) opened for reading and for writing, so each
+  can be waited on for what it is for. Reading gives what programs
+  wrote to the terminal, echo included, as written (a line feed stays a
+  line feed: the program showing it goes to the start of the next line,
+  as the console does); it waits for some, and gives end of file once
+  every handle to the terminal side is closed. Writing types into the
+  terminal through its line discipline, so Ctrl-C written there
+  interrupts its foreground group; a write waits only while nothing
+  fits, then stops where the ring is full, so a writer that waits for
+  the handle to be ready never blocks. (A device handle opened only for
+  writing is ready when its device's `WritableEvent` is signaled.)
+- `TerminalHandle`: the terminal side, `/dev/ptsN` (rw-rw-rw-), told to
+  programs as a console (`HandleKindConsole`), so the shell, its line
+  editor, `stty`, `less` and the rest treat it exactly like the console.
+  Programs' writes wait while the master's 16 KiB buffer is full (a
+  window that stops reading holds its programs up, as a slow screen
+  would); echo that does not fit is dropped.
+- `Number`: N.
+
+`Size` is the window size (rows shl 16 or columns; 0 for 25 by 80). The
+program showing the terminal sets the size with `ControlSetConsoleSize`
+on either side when its window changes; programs ask with
+`ControlGetConsoleSize` (`stty size`). There is no notification:
+programs ask when they lay something out (the shell's line editor does
+before every line).
+
+Closing the last master handle hangs the terminal up: readers of the
+terminal get end of file, writers `ErrorIo`, it cannot be opened again,
+and the signal thread ends every process whose controlling terminal it
+is with status 129 (128 + SIGHUP), interactive shells included.
+
+**Controlling terminals.** A process has one (`TProcess.ControllingTerminal`,
+a terminal device), inherited from its parent; the first program's is
+the console. `CreateProcess` with `GroupNewInForeground` starts the
+child in a new group that is the foreground group of its controlling
+terminal from the start: if the child's standard input is a terminal,
+that terminal becomes its controlling terminal (and its children's).
+That is how a terminal window starts its shell (`StartOnTerminal` in
+`Sys.PseudoTerminals`), and how the interactive shell starts its
+foreground pipelines. The controlling terminal is what `/dev/tty`
+opens, whose foreground group decides whether reading it stops a
+process (reading another terminal never does), and whose hang-up ends
+the process. Userland never assumed the console: the shell and job
+control use the terminal on standard input; `tty` prints `/dev/ptsN`
+there (`ControlGetTerminalNumber`), and `stty rows N cols N` sets the
+size.
+
+`ptytest` (run by coretest) checks the two sides (a console and not,
+the number, the size set on the master and seen on the terminal,
+readiness for reading and for typing, a program writing through
+`/dev/ptsN`, an edited line read in line editing mode with its echo),
+then an interactive shell on the terminal typed into through the
+master: the echo and output of a command, `tty` and `stty size`,
+`/dev/tty`, `cat` in line editing mode ended by Ctrl-D, Ctrl-C ending a
+`sleep` (status 130), the hang-up ending the shell (129), and a second
+pseudo-terminal reusing the first whose master reads end of file once
+its program is gone.
 
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
 (Drivers.SerialDevice, IRQ 4) are input devices (Io.InputDevice): their
@@ -1139,7 +1229,10 @@ Positions given to it are logical units; what it is told is pixels.
 (`RunMessageLoop`) paints before it waits and tells the server what
 changed; a new size gets a new surface painted whole before the server
 sees it. The loop waits on the server's channel, the posted message
-event and the window timers (timer objects) at once.
+event, the window timers (timer objects) and the program's own handles
+(`Windowing.HandleWatches`: a pipe, a pseudo-terminal's master side, a
+process; `WatchHandle` calls a handler whenever one is ready, after the
+server's events are served) at once.
 
 A window can be given an owner when it is made, or later (`Owner`),
 which it then stays above, and can be disabled (`Enabled`). `Visible`
@@ -1439,6 +1532,69 @@ over the serial shell), finds a word and finds it again with F3, wraps
 a long line of a new document into rows (Home going to the start of
 the caret's row), and on Exit cancels the question to save, then
 answers No.
+
+### The terminal window
+
+`terminal` (`userland/bin/terminal.pas`, units in `userland/terminal`)
+is a window running the shell on a pseudo-terminal of its own;
+`terminal` with no arguments opens one (`-x`, `-y` place it, `-e` runs
+another program). Its parts:
+
+- `Terminal.Session`: creates the pseudo-terminal, starts `/bin/sh` on
+  it (`StartOnTerminal`: the shell's own group, its controlling
+  terminal) and closes its own terminal handle. The message loop
+  watches the master's output handle and the shell's process handle;
+  what is typed waits in a buffer and goes to the input handle whenever
+  it is ready, so a busy shell never holds the window up. When the
+  shell ends, the output left is read and the window closes; closing
+  the window closes the master side, which hangs the terminal up and
+  ends the shell (status 129).
+- `Terminal.Emulator`: a VT100/ANSI parser over UTF-8
+  (`Terminal.Utf8Stream`, one U+FFFD for a broken sequence, also one
+  split between two reads): bell, backspace, tab, carriage return, line
+  feed as a new line; ESC 7/8, D, E, M, c; CSI cursor movement and
+  positioning (A-H, a, d, e, f, `), erase in line and screen (K, J,
+  J 3 for the scrollback), insert and delete lines and characters (L, M,
+  @, P, X), scrolling (S, T) and scrolling regions (r), save and restore
+  (s, u), SGR (`Terminal.Rendition`: bold, underline, reverse, the 8 and
+  16 colours, 256-colour and RGB ones taken to the nearest of the
+  sixteen), cursor position and status reports and the device
+  attributes (answered through the session), `?25` (cursor shown),
+  `?7` (wrap), `?47`/`?1047`/`?1049` (the alternate screen), and OSC 0
+  and 2 for the window's title. Unknown sequences are read and dropped.
+- `Terminal.Screen`: the cells (`Terminal.Cells`: a code point, palette
+  colours or the defaults, bold, underline, reverse), the cursor with
+  the VT100's pending wrap at the right edge, the scrolling region, and
+  a scrollback of 2000 lines; resizing keeps the cursor's line on the
+  screen (lines above it go to the scrollback, and come back when it
+  grows).
+- `Terminal.View`: a control drawing the cells in Terminus
+  (`FixedFontFace`) at 11 points at the window's DPI (10x18 pixels at
+  100 DPI), a block cursor (an outline without the focus), with a
+  scroll bar; its size gives the rows and columns, which go to the
+  pseudo-terminal (`ControlSetConsoleSize`). Keys become what a
+  terminal sends (`Terminal.Keys`: characters as UTF-8, Ctrl+letters as
+  control characters, Enter as CR, Backspace as DEL, the cursor and
+  editing keys and F1-F12 as the console keyboard's escape sequences,
+  Alt as an ESC first). The mouse selects (`Terminal.Selection`, kept on
+  its text while output scrolls); Ctrl+Shift+C copies, Ctrl+Shift+V or
+  Shift+Insert pastes (line ends sent as CR), and a right click offers
+  Copy, Paste and Select All (`Controls.EditCommands`'s menu); the
+  wheel and Shift+Page Up/Down scroll back, and typing goes back to the
+  bottom. A bell flashes the view.
+- `Terminal.Window`: the window holding them, 80 by 25 cells to start
+  with; it prints its terminal, size and place, each new size, and how
+  the shell ended.
+
+The input test starts it under the display server, types
+`echo terminal-ok > /tmp/term.txt` and Enter on the PS/2 keyboard (keys
+go to the active window) and reads the file from the serial shell,
+checks the window shows text in the terminal's colours, selects a word
+of output with the tablet and copies and pastes it into a command,
+resizes the window by its corner and checks that `stty size` in it
+gives the rows and columns that fit, types `exit` (the window closes),
+and closes a second terminal with Alt+F4 (its shell hung up, status
+129).
 
 ## Sound
 
@@ -1903,7 +2059,8 @@ test copies to an unmapped user address.
 
 | Area | Calls |
 |---|---|
-| Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind, ControlHandle (console modes) |
+| Files | Open, Close, Read, Write, Seek, SetFileSize, GetHandleInformation, GetHandleKind, ControlHandle (terminal modes and size) |
+| Terminals | CreatePseudoTerminal (see "Pseudo-terminals") |
 | Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
 | Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
@@ -1914,8 +2071,10 @@ test copies to an unmapped user address.
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
 
 There is no fork: `CreateProcess` starts a program directly, with an
-argument list, an environment, a working directory and the three handles
-that become the new program's standard input, output and error.
+argument list, an environment, a working directory, the three handles
+that become the new program's standard input, output and error, and its
+group (the caller's, a new one, one to join, or a new one in the
+foreground of its terminal: `GroupNewInForeground`).
 
 ### Controlling threads
 
@@ -2117,12 +2276,14 @@ with a timeout: an event or timer signaled, a process or thread ended, a
 pipe's read end or a channel readable (data, or the other end gone), a
 pipe's write end writable (room, or no reader left), a port with a
 connection waiting, a device with input (a driver may keep a
-`ReadyEvent`: `/dev/events` does, and the console's says a read would
+`ReadyEvent`: `/dev/events` does, and a terminal's says a read would
 not wait - a line read but not handed out, or typed input, in line
-editing mode a whole line). Each stands for a notification event kept
+editing mode a whole line), or a device opened only for writing with
+room (its `WritableEvent`: a pseudo-terminal's master side, with room
+to type). Each stands for a notification event kept
 in step with the object (pipes gained `Readable` and `Writable` events
 for this, apart from the synchronization events their readers and
-writers wait on; the console updates its event under a lock of its own,
+writers wait on; a terminal updates its events under a lock of its own,
 so two updates at once cannot leave it set the wrong way). The wait is
 alertable, so ending or stopping the process ends it.
 
@@ -2158,7 +2319,7 @@ and an event in a message, changes the section and signals the event.
 ### Handles
 
 A process has a table of 64 handles, each naming a referenced object and
-its kind: file, console, pipe read end, pipe write end, process, thread
+its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread
 or the null device. Handles 0-2 are standard input, output and error.
 `DuplicateHandle` copies one onto another number, which is how the shell
 redirects its own output for builtins. A pipe counts its open ends
@@ -2232,7 +2393,9 @@ independent) against the Free Pascal runtime library:
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
   `Sys.Display` (the display devices: a framebuffer mapped, its size,
-  format, DPI and modes),
+  format, DPI and modes), `Sys.Console` (terminal modes and size, on
+  any terminal), `Sys.PseudoTerminals` (creating one, starting a
+  program on it),
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
   (creating, waiting for and ending threads, through the runtime's thread
   manager). The heap is thread safe; buffered output is not synchronized.
@@ -2342,7 +2505,7 @@ independent) against the Free Pascal runtime library:
   `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group) and
   `Util.Commands` (running a command, signal names).
 - **sh** – lexer, parser to a syntax tree, word expansion and execution;
-  on the console it reads lines through `Util.LineEditor` (cursor keys,
+  on a terminal (the console or a pseudo-terminal) it reads lines through `Util.LineEditor` (cursor keys,
   history in `$HOME/.sh_history`, Tab completion; a line longer than the
   screen scrolls sideways, so redrawing needs only carriage return,
   backspace and spaces and works on serial terminals too).

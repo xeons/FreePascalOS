@@ -237,7 +237,20 @@ const
     does not fit (Length and HandleCount then say what it needs). }
   CallReceiveMessage = 85;
 
-  CallCount = 86;
+  { (TerminalAddress, Size): a new pseudo-terminal: a terminal like the
+    console (/dev/ptsN) for programs, and its master side for the
+    program that shows it (a terminal window). Fills a
+    TAbiPseudoTerminal with two handles to the master side - one to read
+    what programs write to the terminal, one to write what is typed -
+    a handle to the terminal itself (to give a child as its standard
+    handles) and N. Size is the window size, rows shl 16 or columns (0
+    for 25 by 80). Closing every handle to the master side hangs the
+    terminal up: its readers get end of file and the processes it
+    controls are ended (status 129). ErrorBusy when every
+    pseudo-terminal is taken. }
+  CallCreatePseudoTerminal = 86;
+
+  CallCount = 87;
 
   EventManualReset = $01;
   EventSignaled = $02;
@@ -342,6 +355,13 @@ const
   { The process group that Ctrl-C ends. }
   ControlSetForegroundGroup = 4;
   ControlGetForegroundGroup = 5;
+  { Sets the size (rows shl 16 or columns): what the terminal's window
+    shows. Programs are not told; they ask with ControlGetConsoleSize
+    when they lay something out. }
+  ControlSetConsoleSize = 6;
+  { N for the pseudo-terminal /dev/ptsN (either side); ErrorUnsupported
+    for the console. }
+  ControlGetTerminalNumber = 7;
   { Returns 1 (and forgets it) if Ctrl-C was passed to the reader since
     the last call, else 0. }
   ControlTakePendingInterrupt = 10;
@@ -415,6 +435,15 @@ const
   { GroupId of TAbiProcessCreation. }
   GroupInherit = 0;
   GroupNew = -1;
+  { A new group led by the new process, which is the foreground group of
+    its controlling terminal from the start (so it never reads it from
+    the background, as it could if the group were handed over after it
+    started): if its standard input is a terminal, that terminal becomes
+    its controlling terminal (and its children's: a terminal window's
+    shell); otherwise it keeps the caller's. The controlling terminal is
+    the one /dev/tty opens, whose hang-up ends the process, and whose
+    foreground group decides whether reading it stops the process. }
+  GroupNewInForeground = -2;
 
   { --- Error codes (returned negated) ---------------------------------- }
 
@@ -623,6 +652,20 @@ type
     GroupId: Int64;
   end;
   PAbiProcessCreation = ^TAbiProcessCreation;
+
+  { What CallCreatePseudoTerminal gives. }
+  TAbiPseudoTerminal = record
+    { The master side: reading gives what programs wrote to the
+      terminal (ready to wait on when there is some); writing types into
+      the terminal (ready when there is room). }
+    OutputHandle: Int64;
+    InputHandle: Int64;
+    { The terminal itself, read and write: a console for programs. }
+    TerminalHandle: Int64;
+    { The terminal is /dev/ptsN. }
+    Number: Int64;
+  end;
+  PAbiPseudoTerminal = ^TAbiPseudoTerminal;
 
   { The registers of a thread when it raised an exception. }
   TAbiContext = record

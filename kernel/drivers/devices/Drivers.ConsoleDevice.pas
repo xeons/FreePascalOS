@@ -17,12 +17,15 @@
 }
 
 {
-  The console as a device: /dev/console, and /dev/tty for the same thing.
+  The console as a device: /dev/console, and /dev/tty, which opens a
+  program's controlling terminal (Processes.FileCalls) - the console,
+  unless the program runs on a pseudo-terminal.
 
-  Reads and writes go to the console (Io.Console), and a handle to it
-  can be waited on until a read would not wait (its ReadyEvent). Control requests (the
-  Abi Control* values) get and set its modes, report its size, set and
-  get the foreground process group and take a pending Ctrl-C.
+  Reads and control requests go through the console's line discipline
+  (Io.TerminalRequests), writes to the console's output (Io.Console). A
+  handle to it can be waited on until a read would not wait (its
+  ReadyEvent), or, opened only for writing, until a write would not wait
+  (always).
 
   Programs outside the console's foreground group are stopped when they
   read it; that check needs the process layer and is made before the
@@ -43,18 +46,12 @@ uses
   Abi.SystemCalls,
   Io.Manager,
   Io.Console,
+  Io.TerminalRequests,
   Kernel.Panic;
 
 function ReadConsoleDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
-var
-  Count: Int64;
 begin
-  Count := ReadFromConsole(PByte(Request.Buffer), Request.Length);
-  { Negative: the wait was cut short; the call may be started again. }
-  if Count < 0 then
-    Exit(ErrorInterrupted);
-  Request.Information := Count;
-  Result := ErrorNone;
+  Result := ReadTerminalRequest(ConsoleTerminal^, Request);
 end;
 
 function WriteConsoleDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
@@ -66,24 +63,7 @@ end;
 
 function ControlConsoleDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 begin
-  Result := ErrorNone;
-  case Request.ControlCode of
-    ControlGetConsoleMode:
-      Request.Information := GetConsoleMode;
-    ControlSetConsoleMode:
-      SetConsoleMode(LongWord(Request.ControlArgument));
-    ControlGetConsoleSize:
-      Request.Information := (Int64(ConsoleRows) shl 16) or ConsoleColumns;
-    ControlSetForegroundGroup:
-      SetConsoleForegroundGroup(Request.ControlArgument);
-    ControlGetForegroundGroup:
-      Request.Information := Int64(ConsoleForegroundGroup);
-    ControlTakePendingInterrupt:
-      if TakePendingInterrupt then
-        Request.Information := 1;
-  else
-    Result := ErrorInvalidArgument;
-  end;
+  Result := ControlTerminalRequest(ConsoleTerminal^, Request);
 end;
 
 procedure AddConsoleDevice(Driver: PDriverObject; Name: PChar);
@@ -96,8 +76,9 @@ begin
   if Device = nil then
     KernelPanic('could not create the console device');
   Device^.ReportedHandleKind := HandleKindConsole;
-  { Waiting on a console handle waits until a read would not wait. }
+  Device^.Terminal := ConsoleTerminal;
   Device^.ReadyEvent := ConsoleReadableEvent;
+  Device^.WritableEvent := ConsoleWritableEvent;
 end;
 
 procedure InitializeConsoleDevice;

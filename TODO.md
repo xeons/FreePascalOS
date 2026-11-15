@@ -348,10 +348,10 @@ normalized (0-65535), not pixels.
 - [x] Common dialogs: open and save a file, choose a colour, choose a font
 
 ### 6. Desktop shell
-- [ ] Pseudo-terminals (for terminal windows)
+- [x] Pseudo-terminals (for terminal windows)
 - [ ] Taskbar: Start menu, buttons for open windows, clock, notification area
 - [ ] Desktop: wallpaper, icons
-- [ ] Terminal window running the shell
+- [x] Terminal window running the shell
 - [x] Notepad
 
 ### 7. Applications and session

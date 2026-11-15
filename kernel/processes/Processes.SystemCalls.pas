@@ -65,6 +65,9 @@ uses
   Processes.Termination,
   Processes.FileCalls,
   Processes.ThreadCalls,
+  Processes.TerminalCalls,
+  Io.Manager,
+  Io.LineDiscipline,
   { Users, permissions, process information and priorities. }
   FileSystem.Types,
   FileSystem.Files,
@@ -224,6 +227,7 @@ var
   StandardIndex: Integer;
   Child: PProcess;
   Error: LongInt;
+  NewTerminal: Pointer;
 begin
   Error := CopyFromUser(@Creation, CreationAddress, SizeOf(Creation));
   if Error = ErrorNone then
@@ -275,9 +279,10 @@ begin
   Startup.Credentials := Credentials;
   { A program started inside a chroot stays inside it. }
   Startup.RootDirectory := @RootDirectory[0];
+  Startup.ControllingTerminal := Caller^.ControllingTerminal;
   case Creation.GroupId of
     GroupInherit: Startup.GroupId := Caller^.GroupId;
-    GroupNew: Startup.GroupId := 0;
+    GroupNew, GroupNewInForeground: Startup.GroupId := 0;
   else
     if Creation.GroupId < 0 then
       Exit(Failure(ErrorInvalidArgument));
@@ -298,8 +303,21 @@ begin
       ReferenceObject(Startup.StandardObjects[StandardIndex]);
   end;
   ReleaseMutex(Caller^.Lock);
+  { A group for the foreground: of the terminal that is its standard
+    input, which becomes its controlling terminal (a terminal window's
+    shell), or else of the one it inherits. }
+  NewTerminal := nil;
+  if Creation.GroupId = GroupNewInForeground then
+  begin
+    NewTerminal := TerminalDeviceOf(Startup.StandardKinds[0], Startup.StandardObjects[0]);
+    if NewTerminal = nil then
+      NewTerminal := Startup.ControllingTerminal;
+    Startup.ControllingTerminal := NewTerminal;
+  end;
 
   Error := CreateUserProcess(Startup, Child);
+  if (Error = ErrorNone) and (NewTerminal <> nil) then
+    SetTerminalForegroundGroup(PLineDiscipline(PDeviceObject(NewTerminal)^.Terminal)^, Child^.GroupId);
 
   for StandardIndex := 0 to 2 do
   begin
@@ -620,6 +638,8 @@ begin
     CallCreateChannel: Result := PerformCreateChannel(Argument0);
     CallSendMessage: Result := PerformSendMessage(Int64(Argument0), Argument1);
     CallReceiveMessage: Result := PerformReceiveMessage(Int64(Argument0), Argument1);
+    { Pseudo-terminals (Processes.TerminalCalls). }
+    CallCreatePseudoTerminal: Result := PerformCreatePseudoTerminal(Argument0, Argument1);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));
