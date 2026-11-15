@@ -1,0 +1,10 @@
+# The graphical mode's text console, for debugging: the display server
+# has the screen and the keyboards, so the console is the serial port.
+# It always asks for a password.
+description   = Login on the serial console
+program       = /bin/login
+console       = yes
+modes         = graphical
+restart       = always
+restart-limit = 0
+restart-delay = 0.5

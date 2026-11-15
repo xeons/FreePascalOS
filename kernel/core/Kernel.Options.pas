@@ -28,6 +28,12 @@
                 panics, reporting success or failure (used by make test).
     kshell      Run the kernel debug shell (Kernel.DebugShell) on the
                 console before the first program starts.
+    init=PATH   The first program (default: the service manager).
+    fstest, hangdump=SECONDS, keymap=LAYOUT, root=VOLUME: see their units.
+
+  User mode reads the line too (CallGetKernelOptions): the service
+  manager takes mode=text or mode=graphical (the boot mode, graphical by
+  default), and login and the session manager autologin=USER.
 }
 unit Kernel.Options;
 

@@ -20,10 +20,13 @@
   Starting the first user program.
 
   After startup the kernel runs one program in user mode: the one named
-  by the kernel option "init=" (a path in the system volume), or /bin/sh
-  when no option is given. It gets the console as its standard input,
-  output and error, a small default environment, and "/" as its current
-  directory. The kernel waits for it to finish.
+  by the kernel option "init=" (a path in the system volume), or else
+  the service manager (/bin/servicemanager), which starts everything
+  else by the boot mode (see docs/Architecture.md, "Startup, services
+  and sessions"); a system volume without it gets /bin/sh. The program
+  gets the console as its standard input, output and error, a small
+  default environment, and "/" as its current directory. The kernel
+  waits for it to finish.
 }
 unit Processes.Init;
 
@@ -61,7 +64,8 @@ uses
   Debug.Output;
 
 const
-  DefaultInitialProgram = '/bin/sh';
+  ServiceManagerProgram = '/bin/servicemanager';
+  FallbackInitialProgram = '/bin/sh';
   ProgramPathCapacity = 256;
 
   DefaultEnvironment: array[0..3] of PChar = (
@@ -116,7 +120,12 @@ begin
   Report('System volume: /', SystemVolumeName);
 
   if not GetKernelOptionValue('init', @ProgramPath[0], ProgramPathCapacity) then
-    CopyText(@ProgramPath[0], DefaultInitialProgram, ProgramPathCapacity);
+  begin
+    CopyText(@ProgramPath[0], ServiceManagerProgram, ProgramPathCapacity);
+    SystemVolumePath(@ProgramPath[0], @KernelPath[0], ProcessPathCapacity);
+    if GetPathInformation(@KernelPath[0], Information) <> StatusSuccess then
+      CopyText(@ProgramPath[0], FallbackInitialProgram, ProgramPathCapacity);
+  end;
 
   SystemVolumePath(@ProgramPath[0], @KernelPath[0], ProcessPathCapacity);
   if GetPathInformation(@KernelPath[0], Information) <> StatusSuccess then

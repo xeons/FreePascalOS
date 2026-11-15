@@ -43,6 +43,7 @@ function PerformAcceptConnection(PortHandle: Int64): Int64;
 function PerformCreateChannel(HandlesAddress: QWord): Int64;
 function PerformSendMessage(Channel: Int64; MessageAddress: QWord): Int64;
 function PerformReceiveMessage(Channel: Int64; MessageAddress: QWord): Int64;
+function PerformGetChannelPeer(Channel: Int64; PeerAddress: QWord): Int64;
 
 { The object behind Handle of the current process, referenced, and its
   kind; nil if the handle is not open. }
@@ -182,15 +183,30 @@ begin
   Result := HandleForNewObject(Processes.Handles.HandleKindPort, Port);
 end;
 
+{ The calling process, as the holder of a channel's end. }
+procedure DescribeCaller(out Holder: TAbiChannelPeer);
+var
+  Process: PProcess;
+begin
+  Process := CurrentProcess;
+  Holder.ProcessId := Process^.ProcessId;
+  AcquireMutex(Process^.Lock);
+  Holder.UserId := Process^.Credentials.EffectiveUserId;
+  Holder.GroupId := Process^.Credentials.EffectiveGroupId;
+  ReleaseMutex(Process^.Lock);
+end;
+
 function PerformConnectPort(NameAddress: QWord): Int64;
 var
+  Holder: TAbiChannelPeer;
   Name: array[0..MaximumPortNameLength] of Char;
   Channel: PChannelEnd;
   Error: LongInt;
 begin
   Error := FetchPortName(NameAddress, @Name[0]);
+  DescribeCaller(Holder);
   if Error = ErrorNone then
-    Error := ConnectToPort(@Name[0], Channel);
+    Error := ConnectToPort(@Name[0], Holder, Channel);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := HandleForNewObject(Processes.Handles.HandleKindChannel, Channel);
@@ -198,6 +214,7 @@ end;
 
 function PerformAcceptConnection(PortHandle: Int64): Int64;
 var
+  Holder: TAbiChannelPeer;
   Port: PPort;
   Channel: PChannelEnd;
   Error: LongInt;
@@ -205,7 +222,8 @@ begin
   Port := PPort(ReferenceHandleOfKind(PortHandle, Processes.Handles.HandleKindPort));
   if Port = nil then
     Exit(Failure(ErrorBadHandle));
-  Error := AcceptConnection(Port, Channel);
+  DescribeCaller(Holder);
+  Error := AcceptConnection(Port, Holder, Channel);
   DereferenceObject(Port);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -219,12 +237,16 @@ var
   Handles: array[0..1] of Int64;
   Error: LongInt;
   Process: PProcess;
+  Holder: TAbiChannelPeer;
 begin
   if not UserRangeIsValid(HandlesAddress, SizeOf(Handles), True) then
     Exit(Failure(ErrorBadAddress));
   Error := CreateChannel(First, Second);
   if Error <> ErrorNone then
     Exit(Failure(Error));
+  DescribeCaller(Holder);
+  SetChannelPeer(First, Holder);
+  SetChannelPeer(Second, Holder);
   Handles[0] := HandleForNewObject(Processes.Handles.HandleKindChannel, First);
   Handles[1] := HandleForNewObject(Processes.Handles.HandleKindChannel, Second);
   if (Handles[0] < 0) or (Handles[1] < 0) then
@@ -357,6 +379,22 @@ begin
   FreeMessage(Message);
   if Error <> ErrorNone then
     Result := Failure(Error);
+end;
+
+function PerformGetChannelPeer(Channel: Int64; PeerAddress: QWord): Int64;
+var
+  ChannelEnd: PChannelEnd;
+  Holder: TAbiChannelPeer;
+  Known: Boolean;
+begin
+  ChannelEnd := PChannelEnd(ReferenceHandleOfKind(Channel, Processes.Handles.HandleKindChannel));
+  if ChannelEnd = nil then
+    Exit(Failure(ErrorBadHandle));
+  Known := GetChannelPeer(ChannelEnd, Holder);
+  DereferenceObject(ChannelEnd);
+  if not Known then
+    Exit(Failure(ErrorNotFound));
+  Result := -Int64(CopyToUser(PeerAddress, @Holder, SizeOf(Holder)));
 end;
 
 end.

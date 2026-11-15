@@ -24,8 +24,9 @@
   Becomes the display server's shell (one runs at a time) and shows a
   desktop on every display (a drawn wallpaper; on the first, an icon for
   each program: a double click or Enter starts it) and a taskbar along
-  the bottom of the first display: the Start menu (the programs, Shut
-  down), a button for each window of the other programs (a click
+  the bottom of the first display: the Start menu (the programs, Log
+  off and Shut down, through the session manager that started it), a
+  button for each window of the other programs (a click
   activates it, or minimizes it if it is active; a right click offers
   Restore, Minimize, Maximize and Close), the notification area and a
   clock (HH:MM, UTC: the system has no time zone yet). Maximized windows
@@ -35,8 +36,8 @@
   Prints what happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels): start,
-                          start-COMMAND and start-shutdown (when the
-                          menu opens), icon-COMMAND, task-TITLE,
+                          start-COMMAND, start-logoff and start-shutdown
+                          (when the menu opens), icon-COMMAND, task-TITLE,
                           context-ITEM (a button's menu), clock,
                           notification-N
     task N STATE TITLE    a window of another program is new or changed
@@ -51,6 +52,8 @@
     tooltip TEXT          a notification icon's tooltip is shown
     asking shut down      Shut down asks first (then shut down cancelled,
                           or shutting down)
+    asking log off        Log off asks first (then log off cancelled, or
+                          logging off)
 
   The units are in userland/desktop: Desktop.Shell (putting it
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),

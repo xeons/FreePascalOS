@@ -95,7 +95,17 @@ the compiler ever emits SSE instructions in kernel code (`check-kernel`).
 3. **Kernel phase 0** (`KernelEntryPoint`, interrupts disabled): debug
    output, processor tables, memory management, object and process managers,
    HAL, scheduler. The boot code becomes the idle thread.
-4. **Kernel phase 1** (a system thread): runs the self tests, then exits.
+4. **Kernel phase 1** (a system thread): starts the drivers and the
+   system threads, runs the self tests (and the debug shell with
+   `kshell`), then starts the first user program and waits for it.
+5. **The first program** is the service manager (`/bin/servicemanager`),
+   unless `init=` names another (the tests' `init=/bin/coretest`; a
+   system volume without the manager gets `/bin/sh`). It starts the
+   services of the boot mode: in graphical mode (the default) the
+   display server, then the session (the login window, then the user's
+   desktop) and a login on the serial console; in text mode
+   (`mode=text`) a login on the console. See "Startup, services and
+   sessions".
 
 The loader tags its own allocations with OS-reserved UEFI memory types
 (`0x80000001`-`0x80000003`), so the memory map tells the kernel exactly which
@@ -584,6 +594,10 @@ for now the routing of PCI interrupt lines.
   `CallShutdown` (root only: `poweroff`, `reboot`, `halt`) and the
   kernel debug shell (`poweroff`, `reboot`) can start it; the first
   request wins. A thread of its own:
+  0. if a process watches for shutdowns (`CallWatchShutdown`: the
+     service manager), signals its event and waits up to 30 seconds for
+     it to end, so the services stop in the reverse of their start
+     order (see "Startup, services and sessions");
   1. asks every user process to end (status 143) and waits up to five
      seconds;
   2. syncs the volumes;
@@ -1697,9 +1711,13 @@ which the shell keeps out of that display's work area
 (and the desktops too) when the server says the displays changed. The
 Start button (`Desktop.StartButton`: a sunrise mark and a bold caption,
 pressed in while its menu is open) opens the Start menu on the press
-(`Desktop.StartMenu`: the programs, then Shut down, opened just above
-the taskbar); Shut down asks in a message box, then calls the system's
-shutdown; logging off comes with sessions (step 7). The window list
+(`Desktop.StartMenu`: the programs, then Log off and Shut down, opened
+just above the taskbar). Both ask in a message box, then ask the
+session manager (`Windowing.Sessions`, see "Startup, services and
+sessions"): Log off ends the session, Shut down turns the computer off
+(the session manager is root; the user is not). A desktop started by
+hand, with no session manager, ends itself to log off and calls the
+system's shutdown itself. The window list
 (`Desktop.WindowList`) follows the server's events; each window shown or
 minimized has a button (`Desktop.TaskButtons`: a small window mark and
 the title; pressed in on a lighter face, its title bold, for the active
@@ -1718,7 +1736,7 @@ a second. The shell shows one icon of its own through the same
 interface as any program: a volume placeholder until there is a mixer
 to open.
 
-`desktop` prints what happens (`task N STATE TITLE` and `task-gone N`
+`desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
 HH:MM`, `notification N TEXT`, `tooltip TEXT`) and where things are
 (`place NAME X Y`: the Start button and menu items, the icons, the task
@@ -2349,6 +2367,14 @@ runs with its owner (group) as effective and saved id; `su` and `passwd`
 are installed that way and check passwords against salted SHA-256 hashes
 in `/etc/shadow` (`Util.Passwords`).
 
+Root may start a program as another user: `TAbiProcessCreation.Identity`
+names its user and group (real, effective and saved) and its
+supplementary groups, which the kernel checks the program's execute
+permission against. That is how `login`, the session manager and the
+service manager start a user's programs while staying root themselves
+(`Util.Logins` reads the account: the ids, the groups the user belongs
+to in `/etc/group`, the home and the shell).
+
 The VFS does not know about processes. `FileSystem.Security` holds two
 hooks, installed by `Processes.Security` when the first program starts:
 "may the caller have this access to a node with this owner, group and
@@ -2410,7 +2436,10 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
   receiver; a message never received gives them back. A server creates
   a named port (`CallCreatePort`); `CallConnectPort` makes a channel and
   leaves the other end waiting at the port for `CallAcceptConnection`.
-  Receiving never waits: programs wait on the channel's handle.
+  Receiving never waits: programs wait on the channel's handle. Each
+  end knows who holds the other one (`CallGetChannelPeer`: the process,
+  and its effective user and group, that connected, accepted, or made
+  the pair), so a server can decide what a client may ask for.
 
 `CallWaitForHandles` waits for the first of up to 64 handles to be ready,
 with a timeout: an event or timer signaled, a process or thread ended, a
@@ -2456,6 +2485,137 @@ becoming writable once the reader drains it, waiting on the console,
 and a section shared with a second process: it
 starts itself as a child that connects to its port, receives the section
 and an event in a message, changes the section and signals the event.
+
+### Startup, services and sessions
+
+**Boot modes.** Without `init=`, the first program is the service
+manager (`servicemanager`, units in `userland/servicemanager`). It
+reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
+`Sys.KernelOptions`: anyone may read it): `mode=text` or `mode=graphical`
+(the default). Each service lists the modes it belongs to:
+
+| Service | Modes | What it is |
+|---|---|---|
+| `console` | text | `login -a` on the console (the screen and the serial port) |
+| `serialconsole` | graphical | `login` on the console, which is only the serial port while the display server has the screen and the keyboards: a text console for debugging |
+| `displayserver` | graphical | the display server; ready once its port takes clients |
+| `session` | graphical | the session manager (needs `displayserver`) |
+
+**Service definitions** are `/etc/services/NAME.service` (installed from
+`userland/etc/services`), lines of `key = value` (`Services.Definitions`):
+`description`, `program` (required), `arguments` (double quotes keep
+spaces), `user` (root), `needs` (services that must be running and
+ready first), `modes`, `restart` (`never`, `on-failure`, `always`),
+`restart-limit` (restarts in a row before it is left failed; 0: none),
+`restart-delay` and `ready-timeout` (seconds, fractions allowed),
+`ready` (`started`, or `notify`: once it says so) and `console` (`yes`:
+the console as its standard handles and its foreground; otherwise its
+output goes to `/var/log/NAME.log`, its input is `/dev/null`). A wrong
+line is reported with its number and the service never starts, nor does
+one that needs a missing service, one that needs one that cannot start,
+or one whose needs go round in a circle (`Services.Catalog`).
+`servicemanager --check` prints the definitions read, their problems
+and the start order of a mode.
+
+**Starting.** The services of the boot mode are wanted, and with them
+everything they need (in any mode). A wanted service starts as soon as
+every service it needs is running and ready, so independent ones start
+together (`Services.Supervisor`). Each runs as its user, in a session of
+its own (below), in `/`, with PATH, HOME, USER, LOGNAME, SHELL, TERM and
+`SERVICE_NAME`, `SERVICE_PORT` (`Services.Launch`). With `ready =
+notify` it is "starting" until it tells the manager it is ready
+(`NotifyServiceReady` in `Sys.ServiceControl`, or `service ready` from a
+script): a request on the manager's port that is accepted only from a
+process of the service's own session (the kernel says who connected).
+The display server tells it once its port exists, so the session never
+starts before it can connect. A service not ready within its
+`ready-timeout` is ended, which counts as a failure.
+
+**Restarts.** When a service's program ends, the rest of its session is
+ended too, and its policy decides: started again after `restart-delay`
+("restarting"), up to `restart-limit` times in a row (a run of half a
+minute starts the count again), then "failed"; or "stopped". Every
+start writes a line into the service's log, and the manager's own
+lines (started, ready, ended, given up, stopped) go to the console and
+`/var/log/servicemanager.log`.
+
+**The `service` command** talks to the manager's port `servicemanager`
+(`Sys.ServiceControl`: a `TServiceRequest`, answered with the status of
+the services concerned): `service list`, `service status NAME`, and,
+for root only (`CallGetChannelPeer`), `service start|stop|restart NAME`.
+Starting wants the service and what it needs; stopping ends its
+session; restarting stops it and starts it again once it has ended.
+
+**Shutting down.** The manager, as the first program, takes the
+kernel's shutdown event (`CallWatchShutdown`, root only, one process at a
+time). Whatever starts a shutdown - the power button, `poweroff` and
+`reboot`, the debug shell, the desktop's Shut down - the kernel signals
+the event and waits up to 30 seconds for the manager to end. The
+manager stops every service that no running service needs, waits for
+them to end, and repeats (`Services.Shutdown`): the reverse of the
+start order, services that do not depend on each other together (the
+session and the serial console, then the display server). Then it
+ends, and the kernel ends what is left (the users' programs), writes
+the disks out and powers off. There is no way yet to ask a program to
+end and let it tidy up (asynchronous notifications are a later step),
+so stopping a service ends it, as the kernel's shutdown always did.
+
+**Sessions.** Every process belongs to a session, inherited from its
+parent; `ProcessNewSession` in `TAbiProcessCreation` makes the new
+process lead a new one, whose id is its process id (`SessionId` in the
+process list). `CallTerminateSession` asks every process of a session
+(that the caller may end) to end. A service's session holds what it
+started; a user's session on the screen holds the desktop and every
+program started from it, the shells in its terminals included.
+
+**Logging in.** `login` (root only) asks for a user name and a password
+on its standard input (no echo on a terminal), up to three times, and
+starts the user's shell (or `-e PROGRAM`) as the user (`Util.Logins`:
+the ids, the supplementary groups from `/etc/group`, a fresh
+environment, the home directory); on a terminal the shell is
+interactive and has the foreground, and login waits for it while
+ignoring Ctrl-C. `-f USER` logs a user in without a password; `-a`
+logs in the user the kernel option `autologin=` names, which the text
+mode's console service uses (every console login is then automatic).
+
+**The graphical session.** The session manager (`sessionmanager`,
+units in `userland/sessionmanager`, root) connects to the display
+server and shows the login window (`Session.LoginWindow`: a user name, a
+password box that shows dots - `TEditBox.HidesText` in libcontrols - and
+OK). Right ones start `/bin/desktop` as the user, in a new session
+(`Session.UserSession`). When the desktop ends, the rest of the session
+is ended and the login window comes back. `autologin=USER` logs USER in
+without the window for the first session of a boot. The session
+manager serves the port `session` (`Windowing.Sessions`,
+`Session.Requests`), listened to only from the session's user or root:
+log off (it answers, then ends the session), shut down and restart (it
+calls `CallShutdown`, which a user may not). Its output, with the
+desktop's (the desktop inherits it), is in `/var/log/session.log`:
+`session: login window shown`, the places of the window's boxes, `login
+refused for NAME`, `NAME logged in (session N)`, `logging off NAME`,
+`session of NAME ended (status S)`.
+
+**Tests.** coretest runs `servicetest`: `servicemanager --check` on good
+and wrong definitions and on needs across modes (the order), then a
+second manager (its own directory, logs and port; only the first
+program watches for shutdowns) with services that become ready late,
+need each other, fail every time (left failed after two restarts, three
+starts in the log), log a line and end, are not ready in time, run as
+the ordinary user, or wait to be started; then `service` list, status,
+start, stop, restart, refusals for an ordinary user and for readiness
+from outside a service, and a stop ending a service's whole session.
+coretest also runs `login` with a right and a wrong password through a
+pipe, `-f`, the user's environment and groups, and refuses it to a
+user. The input test boots in text mode with `autologin=root`. The
+session test (`scripts/test-session.py`, run by `make test`) boots the
+default graphical mode with `autologin=user` and checks, without
+typing, that the display server and the session start in order and
+the desktop comes up as the user (the taskbar and wallpaper in a screen
+dump, its lines in the log, read from a root shell on the serial
+console after a wrong and a right password); then Log off brings the
+login window back, which refuses a wrong password and starts the
+desktop again with the right one; and Shut down on the Start menu stops
+the services in order and powers off (QEMU exits).
 
 ### Handles
 
@@ -2536,7 +2696,8 @@ independent) against the Free Pascal runtime library:
   `Sys.Display` (the display devices: a framebuffer mapped, its size,
   format, DPI and modes), `Sys.Console` (terminal modes and size, on
   any terminal), `Sys.PseudoTerminals` (creating one, starting a
-  program on it),
+  program on it), `Sys.KernelOptions` (the kernel's command line),
+  `Sys.ServiceControl` (talking to the service manager),
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
   (creating, waiting for and ending threads, through the runtime's thread
   manager). The heap is thread safe; buffered output is not synchronized.
@@ -2643,8 +2804,10 @@ independent) against the Free Pascal runtime library:
   `Util.Directories`, `Util.FileTree` (copying, removing and walking
   trees), `Util.RegularExpressions` (POSIX BRE and ERE with groups),
   `Util.Modes` (chmod modes), `Util.Dates`, `Util.BaseEncoding`,
-  `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group) and
-  `Util.Commands` (running a command, signal names).
+  `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group),
+  `Util.Logins` (logging a user in: the account, the password, starting
+  a program as the user) and `Util.Commands` (running a command, signal
+  names).
 - **sh** – lexer, parser to a syntax tree, word expansion and execution;
   on a terminal (the console or a pseudo-terminal) it reads lines through `Util.LineEditor` (cursor keys,
   history in `$HOME/.sh_history`, Tab completion; a line longer than the

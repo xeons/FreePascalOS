@@ -75,6 +75,9 @@ function ReceiveMessage(Channel: Int64; Buffer: Pointer; Capacity: QWord; out Le
 { Waits up to Timeout for a message, then receives it. }
 function WaitForMessage(Channel: Int64; Buffer: Pointer; Capacity: QWord; out Length: QWord;
   var Handles: array of Int64; out HandleCount: QWord; Timeout: Int64): LongInt;
+{ Who holds the other end of Channel (process, user and group); an
+  error while not known. }
+function GetChannelPeer(Channel: Int64; out Peer: TAbiChannelPeer): LongInt;
 { Sends Request and waits up to Timeout for the reply. }
 function CallChannel(Channel: Int64; Request: Pointer; RequestLength: QWord; Reply: Pointer; ReplyCapacity: QWord;
   out ReplyLength: QWord; Timeout: Int64): LongInt;
@@ -236,6 +239,11 @@ begin
   Result := SendMessage(Channel, Request, RequestLength, []);
   if Result = ErrorNone then
     Result := WaitForMessage(Channel, Reply, ReplyCapacity, ReplyLength, NoHandles, HandleCount, Timeout);
+end;
+
+function GetChannelPeer(Channel: Int64; out Peer: TAbiChannelPeer): LongInt;
+begin
+  Result := ErrorCodeOf(KernelGetChannelPeer(Channel, Peer));
 end;
 
 end.

@@ -112,6 +112,10 @@ type
     { Processes started together (a shell pipeline) share a group, which
       the console's Ctrl-C ends as a whole. }
     GroupId: QWord;
+    { The session: the processes started from one service or one logon,
+      ended together (CallTerminateSession). Its id is the id of the
+      process that leads it. }
+    SessionId: QWord;
     { Ctrl-C does not end this process, nor Ctrl-Z stop it (an
       interactive shell). }
     IgnoresInterrupt: Boolean;

@@ -57,6 +57,10 @@ function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
   were still running. }
 function TerminateAllUserProcesses(ExitCode: LongInt): Integer;
 
+{ Asks every process of session SessionId, except the caller and those
+  it may not control, to end; returns how many were asked. }
+function TerminateSession(SessionId: QWord; ExitCode: LongInt): Integer;
+
 { Ends every process of group GroupId that does not ignore interrupts;
   returns how many. }
 function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
@@ -243,6 +247,43 @@ procedure CountUserProcess(Process: PProcess; Context: Pointer);
 begin
   if Process^.IsUserProcess then
     Inc(PInteger(Context)^);
+end;
+
+type
+  TSessionRequest = record
+    SessionId: QWord;
+    ExitCode: LongInt;
+    Caller: PProcess;
+    Count: Integer;
+  end;
+  PSessionRequest = ^TSessionRequest;
+
+procedure TerminateIfInSession(Process: PProcess; Context: Pointer);
+var
+  Request: PSessionRequest;
+begin
+  Request := PSessionRequest(Context);
+  if not Process^.IsUserProcess or (Process^.SessionId <> Request^.SessionId) or
+     (Process = Request^.Caller) or Process^.HasExited then
+    Exit;
+  if not MayControlProcess(Request^.Caller, Process) then
+    Exit;
+  RequestTerminationLocked(Process, Request^.ExitCode);
+  Inc(Request^.Count);
+end;
+
+function TerminateSession(SessionId: QWord; ExitCode: LongInt): Integer;
+var
+  Request: TSessionRequest;
+begin
+  Request.SessionId := SessionId;
+  Request.ExitCode := ExitCode;
+  Request.Caller := CurrentProcess;
+  Request.Count := 0;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@TerminateIfInSession, @Request);
+  UnlockProcessRegistry;
+  Result := Request.Count;
 end;
 
 function TerminateAllUserProcesses(ExitCode: LongInt): Integer;

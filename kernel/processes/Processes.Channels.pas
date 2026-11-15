@@ -40,6 +40,12 @@
   other end waits at the port until the server accepts it. A port's
   Pending event is signaled while connections wait.
 
+  Each end remembers who holds the other one (TAbiChannelPeer): the
+  process that connected, for the server's end, and the one that
+  accepted, for the client's (the maker of a pair, for both of its
+  ends), so a server can tell who asks (the service manager lets only
+  root stop services).
+
   Both ends of a channel share a lock (in a pair record, freed with the
   second end). The names of ports are kept apart from other objects'
   with a prefix.
@@ -84,6 +90,9 @@ type
     Readable: TEvent;
     { Waiting at a port to be accepted. }
     PendingLink: TListEntry;
+    { Who holds the other end, once known. }
+    Peer: TAbiChannelPeer;
+    HasPeer: Boolean;
   end;
 
   TChannelPair = record
@@ -103,6 +112,11 @@ procedure InitializeChannels;
 
 { Two connected ends, each with one reference (the caller's). }
 function CreateChannel(out First, Second: PChannelEnd): LongInt;
+{ Records Holder as the one holding the other end of Channel. }
+procedure SetChannelPeer(Channel: PChannelEnd; const Holder: TAbiChannelPeer);
+{ Who holds the other end of Channel; False while it is not known (a
+  connection not yet accepted). }
+function GetChannelPeer(Channel: PChannelEnd; out Holder: TAbiChannelPeer): Boolean;
 { A message of Length bytes with HandleCount handles (whose references
   the caller has taken; on failure they are the caller's still). }
 function NewMessage(Length, HandleCount: LongWord): PChannelMessage;
@@ -118,12 +132,12 @@ function ReceiveMessage(Channel: PChannelEnd; Capacity, HandleCapacity: LongWord
 
 { A port named Name (the caller's reference); ErrorExists if taken. }
 function CreatePort(Name: PChar; out Port: PPort): LongInt;
-{ Connects to the port named Name: the client's end (the caller's
-  reference). ErrorNotFound, ErrorBusy (too many waiting). }
-function ConnectToPort(Name: PChar; out Channel: PChannelEnd): LongInt;
-{ The oldest waiting connection's end (the caller's reference), or
-  ErrorWouldBlock. }
-function AcceptConnection(Port: PPort; out Channel: PChannelEnd): LongInt;
+{ Connects Client to the port named Name: the client's end (the
+  caller's reference). ErrorNotFound, ErrorBusy (too many waiting). }
+function ConnectToPort(Name: PChar; const Client: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
+{ The oldest waiting connection's end (the caller's reference), whose
+  client learns that Server accepted it; or ErrorWouldBlock. }
+function AcceptConnection(Port: PPort; const Server: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
 
 implementation
 
@@ -266,6 +280,23 @@ begin
   InitializeListHead(Result^.Incoming);
   InitializeListHead(Result^.PendingLink);
   InitializeEvent(Result^.Readable, EventKindNotification, False);
+  Result^.HasPeer := False;
+end;
+
+procedure SetChannelPeer(Channel: PChannelEnd; const Holder: TAbiChannelPeer);
+begin
+  AcquireMutex(Channel^.Pair^.Lock);
+  Channel^.Peer := Holder;
+  Channel^.HasPeer := True;
+  ReleaseMutex(Channel^.Pair^.Lock);
+end;
+
+function GetChannelPeer(Channel: PChannelEnd; out Holder: TAbiChannelPeer): Boolean;
+begin
+  AcquireMutex(Channel^.Pair^.Lock);
+  Holder := Channel^.Peer;
+  Result := Channel^.HasPeer;
+  ReleaseMutex(Channel^.Pair^.Lock);
 end;
 
 function CreateChannel(out First, Second: PChannelEnd): LongInt;
@@ -390,7 +421,7 @@ begin
   Result := ErrorNone;
 end;
 
-function ConnectToPort(Name: PChar; out Channel: PChannelEnd): LongInt;
+function ConnectToPort(Name: PChar; const Client: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
 var
   ObjectName: array[0..ObjectNameLength - 1] of Char;
   Port: PPort;
@@ -408,6 +439,9 @@ begin
     DereferenceObject(Port);
     Exit;
   end;
+  { Known before the server can accept it. }
+  ServerEnd^.Peer := Client;
+  ServerEnd^.HasPeer := True;
   AcquireMutex(Port^.Lock);
   if Port^.PendingCount >= MaximumPendingConnections then
     Result := ErrorBusy
@@ -428,9 +462,10 @@ begin
   DereferenceObject(Port);
 end;
 
-function AcceptConnection(Port: PPort; out Channel: PChannelEnd): LongInt;
+function AcceptConnection(Port: PPort; const Server: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
 var
   Entry: PListEntry;
+  ClientEnd: PChannelEnd;
 begin
   Channel := nil;
   AcquireMutex(Port^.Lock);
@@ -445,6 +480,14 @@ begin
   ReleaseMutex(Port^.Lock);
   if Channel = nil then
     Exit(ErrorWouldBlock);
+  AcquireMutex(Channel^.Pair^.Lock);
+  ClientEnd := PeerOf(Channel);
+  if ClientEnd <> nil then
+  begin
+    ClientEnd^.Peer := Server;
+    ClientEnd^.HasPeer := True;
+  end;
+  ReleaseMutex(Channel^.Pair^.Lock);
   Result := ErrorNone;
 end;
 

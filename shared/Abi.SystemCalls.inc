@@ -250,7 +250,37 @@ const
     pseudo-terminal is taken. }
   CallCreatePseudoTerminal = 86;
 
-  CallCount = 87;
+  { --- Startup, services and sessions ------------------------------------ }
+
+  { (BufferAddress, Capacity): copies the kernel's command line (the
+    options the loader read from options.txt) into the buffer, at most
+    Capacity - 1 characters ended by a zero, and returns the whole
+    line's length (more than was copied when it did not fit). Anyone
+    may read it. }
+  CallGetKernelOptions = 87;
+  { (Channel, PeerAddress): who holds the other end of a channel: fills
+    a TAbiChannelPeer with the process (and its user and group, as they
+    were) that connected to the caller's port, or that accepted the
+    caller's connection, or that made the pair. ErrorNotFound while a
+    connection waits to be accepted. }
+  CallGetChannelPeer = 88;
+  { (SessionId, ExitCode): asks every process of a session (see
+    ProcessNewSession) but the caller to end, as CallTerminateProcess
+    would each; returns how many were asked. A process the caller may
+    not end is skipped. }
+  CallTerminateSession = 89;
+  { (): makes the caller the process a shutdown waits for (the service
+    manager): returns an event handle signaled when a shutdown starts
+    (the power button, CallShutdown, the debug shell). The shutdown then
+    waits up to ShutdownCoordinatorSeconds for the caller to end before
+    it asks every other process to end. Root only; ErrorBusy while
+    another living process has taken it. }
+  CallWatchShutdown = 90;
+
+  CallCount = 91;
+
+  { How long a shutdown waits for the process watching it. }
+  ShutdownCoordinatorSeconds = 30;
 
   EventManualReset = $01;
   EventSignaled = $02;
@@ -445,6 +475,13 @@ const
     foreground group decides whether reading it stops the process. }
   GroupNewInForeground = -2;
 
+  { Flags of TAbiProcessCreation. }
+  { The new process leads a new session: it and the processes it starts
+    (unless they start sessions of their own) can be ended together with
+    CallTerminateSession (a service and its helpers, a user's logon).
+    Without it a process belongs to its parent's session. }
+  ProcessNewSession = $01;
+
   { --- Error codes (returned negated) ---------------------------------- }
 
   ErrorNone = 0;
@@ -572,6 +609,8 @@ type
     ProcessId: QWord;
     ParentProcessId: QWord;
     GroupId: QWord;
+    { The session it belongs to: the id of the process that leads it. }
+    SessionId: QWord;
     RealUserId: LongWord;
     EffectiveUserId: LongWord;
     State: LongWord;
@@ -638,6 +677,16 @@ type
   end;
   PAbiVolumeInformation = ^TAbiVolumeInformation;
 
+  { A user to start a program as (TAbiProcessCreation.Identity). }
+  TAbiProcessIdentity = record
+    UserId: LongWord;
+    GroupId: LongWord;
+    GroupCount: LongWord;
+    Reserved: LongWord;
+    Groups: array[0..MaximumSupplementaryGroups - 1] of LongWord;
+  end;
+  PAbiProcessIdentity = ^TAbiProcessIdentity;
+
   { Arguments of CallCreateProcess, passed by address. }
   TAbiProcessCreation = record
     Path: PChar;
@@ -650,8 +699,24 @@ type
     { GroupInherit, GroupNew (a group led by the new process) or the id
       of an existing group to join. }
     GroupId: Int64;
+    { nil: the caller's user and groups. Otherwise who the new process
+      runs as (its real, effective and saved ids and its supplementary
+      groups); root only (ErrorNotPermitted), for starting a user's
+      programs (login, the session manager, services). }
+    Identity: ^TAbiProcessIdentity;
+    { ProcessNewSession, or 0. }
+    Flags: QWord;
   end;
   PAbiProcessCreation = ^TAbiProcessCreation;
+
+  { Who the other end of a channel is (CallGetChannelPeer). }
+  TAbiChannelPeer = record
+    ProcessId: QWord;
+    { The effective ids when it connected or accepted. }
+    UserId: LongWord;
+    GroupId: LongWord;
+  end;
+  PAbiChannelPeer = ^TAbiChannelPeer;
 
   { What CallCreatePseudoTerminal gives. }
   TAbiPseudoTerminal = record
