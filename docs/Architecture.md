@@ -788,6 +788,53 @@ checks the DPI QEMU's EDID gives (325x203 mm at 1280 pixels: 100 DPI),
 the colour and the frame in a screen dump while it runs, and the
 console's screen after it ends.
 
+### The display server
+
+`displayserver` is an ordinary program that owns the display and the
+input devices (the text console gives them up while it runs) and draws
+the windows of the programs that connect to it. Its units are in
+`userland/displayserver`; the protocol is `Windowing.Protocol` in
+libwindowing.
+
+A program connects to the port `display` and says hello; the server
+answers with the screen's size, DPI and scale. Every message either way
+is one fixed record (`TWindowMessage`). A window's client area is the
+program's: a section of pixels it draws into, whose handle goes with
+the request that creates the window (or, after a resize, gives it a new
+surface); after drawing, the program names the rectangle it changed.
+Positions on the screen travel in logical units, surfaces in pixels.
+
+The server keeps the windows in stacking order (topmost ones, such as a
+taskbar will be, stay above), draws their frames itself (a raised
+bevel, a title bar with a gradient, the title in a bold face picked by
+point size and DPI, minimize, maximize and close buttons; all sizes from
+the theme's metrics in logical units, `Server.Theme`), and composes in a
+back buffer: what needs drawing again is collected as a region (a window
+moved, a program drew, the pointer moved), and only that is drawn, the
+desktop, the windows from the bottom up and the pointer, clipped to it,
+then copied to the framebuffer (`Server.Composer`, `Server.Screen`).
+
+Input (`Server.Input`): the pointer moves the arrow (drawn at the
+display's scale rounded to a whole number) and goes to the window under
+it, in its surface's pixels, or to the window that captured it.
+Pressing a button activates a window; on its frame it starts a drag:
+the title bar moves the window live, a border or corner shows an outline
+of the new size and asks the program for it when let go (it answers
+with a new surface), the title buttons act when let go over them (close
+asks the program, maximize fills the screen below the title bar and
+back, minimize hides). Keys go to the active window; Alt+F4 asks it to
+close. Events for a program are sent without waiting, so one that stops
+reading cannot hold up the others; a program that ends loses its
+windows. Everything waits in one place: the input device, the port and
+every client's channel in one `CallWaitForHandles`.
+
+`wintest` shows a window and prints what happens to it. The input test
+starts the server and two of them, and with the USB tablet (exact
+positions) checks the stacking and the active title bar, a drag by the
+title bar, a resize by the corner, maximizing, the close button, a key
+going to the window left active, and the console getting the screen
+back when the server ends.
+
 ## Sound
 
 The audio framework (`Io.AudioOutput`, `Io.AudioStreams`) is the part of

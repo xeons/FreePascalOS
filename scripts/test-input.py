@@ -541,6 +541,79 @@ checks.append(('drawing: desktop, window, title bar and its text',
 checks.append(('drawing: fonts picked by point size and DPI',
                wait_for('100 DPI: title 8x14 bold, text 6x12', 15) and wait_for('DRAWN DONE', 10)))
 
+def point_tablet_at(x, y):
+    # The tablet at screen pixel (x, y): QEMU's range is 0-32767 across
+    # the 1280x800 screen.
+    place_tablet((x * 32767 + 639) // 1279, (y * 32767 + 399) // 799)
+
+
+def click_at(x, y):
+    point_tablet_at(x, y)
+    send_to_monitor('mouse_button 1\n')
+    time.sleep(0.3)
+    send_to_monitor('mouse_button 0\n')
+    time.sleep(0.5)
+
+
+def drag(from_x, from_y, to_x, to_y):
+    point_tablet_at(from_x, from_y)
+    send_to_monitor('mouse_button 1\n')
+    time.sleep(0.3)
+    point_tablet_at((from_x + to_x) // 2, (from_y + to_y) // 2)
+    point_tablet_at(to_x, to_y)
+    send_to_monitor('mouse_button 0\n')
+    time.sleep(0.8)
+
+
+# The display server with two windows (wintest): the second over the
+# first and active (its title bar's gradient starts dark), the first's
+# inactive (grey). Dragging the second's title bar moves it (the first
+# shows where it was); dragging its corner resizes it (the program is
+# told the new size); its close button asks it to close (it ends); the
+# first is active again and gets a key. Ending the server gives the
+# screen back to the console. At 100 DPI logical units are pixels: the
+# client areas start at 100,100 and 250,200, 300x200; frames are 4
+# wide, title bars 18 high (their gradient starts 3 pixels into the frame).
+type_on_serial(b'displayserver &\r')
+server_ready = wait_for('displayserver: ready (1280x800, 100 DPI, scale 100%)', 20)
+type_on_serial(b'wintest -t First -x 100 -y 100 > /tmp/w1.log &\r')
+time.sleep(1.5)
+type_on_serial(b'wintest -t Second -x 250 -y 200 -c D0E8F0 > /tmp/w2.log &\r')
+time.sleep(2)
+pixel = take_screen()
+checks.append(('display server: two windows, stacked, the top one active',
+               server_ready and pixel(400, 300) == 'd0e8f0' and pixel(150, 150) == 'f0e8d0' and
+               pixel(249, 185) == '17375e' and pixel(99, 85) == '7c7a76'))
+drag(300, 190, 400, 240)
+pixel = take_screen()
+checks.append(('display server: a window dragged by its title bar',
+               pixel(600, 400) == 'd0e8f0' and pixel(260, 210) == 'f0e8d0' and pixel(300, 330) == '2f5f7a'))
+drag(652, 452, 702, 502)
+time.sleep(0.5)
+pixel = take_screen()
+type_on_serial(b'm=DONE; cat /tmp/w2.log; echo W2 $m\r')
+checks.append(('display server: a window resized by its corner',
+               wait_for('resized 350 250', 10) and pixel(690, 490) == 'd0e8f0'))
+# Maximized: the client area fills the screen below the title bar.
+click_at(673, 240)
+type_on_serial(b'm=DONE; cat /tmp/w2.log; echo MAXIMIZED $m\r')
+checks.append(('display server: maximized', wait_for('resized 1280 782', 10) and wait_for('MAXIMIZED DONE', 5)))
+# Its close button is now at the top right corner.
+click_at(1271, 8)
+time.sleep(0.5)
+send_to_monitor('sendkey a\n')
+time.sleep(0.8)
+type_on_serial(b'm=DONE; cat /tmp/w1.log /tmp/w2.log; echo LOGS $m\r')
+logs_ok = wait_for('LOGS DONE', 10)
+checks.append(('display server: the close button, then a key for the window left',
+               logs_ok and received.count(b'\nclose') >= 1 and b'key 0x1E a' in received and
+               take_screen()(500, 350) == '2f5f7a'))
+type_on_serial(b'kill %1; wait; m=DONE; echo SERVER $m\r')
+checks.append(('display server: ended, the console has the screen again',
+               wait_for('SERVER DONE', 15) and screen_pixel(2, 400) == '101830'))
+type_on_serial(b'kill %2 2>/dev/null; wait\r')
+time.sleep(1)
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

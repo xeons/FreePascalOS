@@ -22,6 +22,7 @@
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
+#                  libsystem <- libdrawing <- libwindowing (programs with windows)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -61,6 +62,7 @@ CORE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/coreutils
 AUDIO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/audio
 DRAWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/drawing
 FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
+WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -68,6 +70,7 @@ CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
 AUDIO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libaudio.so
 DRAWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdrawing.so
 FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
+WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -91,7 +94,7 @@ SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) \
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) \
 	$(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
@@ -161,6 +164,16 @@ $(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libfont.so -o $@ \
 		$(FONT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ldrawing -lsystem
 
+# libwindowing: the display server's protocol and windows for programs.
+$(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
+	@rm -rf $(WINDOWING_LIBRARY_OBJECTS)
+	@mkdir -p $(WINDOWING_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fu$(FONT_LIBRARY_OBJECTS) -Fuuserland/lib/windowing -FU$(WINDOWING_LIBRARY_OBJECTS) \
+		userland/lib/windowing/Windowing.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwindowing.so -o $@ \
+		$(WINDOWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lfont -ldrawing -lsystem
+
 $(SYSTEM_FONTS_STAMP):
 	@test -f $(TERMINUS_LICENSE) || { echo "The Terminus licence is needed in $(TERMINUS_LICENSE) (set TERMINUS_LICENSE)"; exit 1; }
 	@mkdir -p $(SYSTEM_FONT_DIRECTORY)
@@ -191,10 +204,11 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
-GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest)
-$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lfont -ldrawing
-$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS)
-$(GRAPHICAL_PROGRAMS): $(FONT_LIBRARY)
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver wintest)
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwindowing -lfont -ldrawing
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
+	-Fu$(WINDOWING_LIBRARY_OBJECTS)
+$(GRAPHICAL_PROGRAMS): $(WINDOWING_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)

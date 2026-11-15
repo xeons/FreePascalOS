@@ -308,15 +308,19 @@ normalized (0-65535), not pixels.
 - [ ] Waiting for all of several handles at once
 
 ### 4. Display server
-- [ ] One process owns the screen and input; clients connect through a channel
-- [ ] Windows: create, destroy, move, resize, show, hide, z-order, focus,
+- [x] One process owns the screen and input; clients connect through a channel
+- [x] Windows: create, destroy, move, resize, show, hide, z-order, focus,
       activation, input routing, capture
-- [ ] Client surfaces in shared memory; damage tracking; compositing with
+- [x] Client surfaces in shared memory; damage tracking; compositing with
       clipping; the mouse cursor
-- [ ] Window frames: title bar, borders, minimize/maximize/close, move and resize
+- [x] Window frames: title bar, borders, minimize/maximize/close, move and resize
       by dragging
-- [ ] System colours and metrics (the theme), metrics in logical units
-- [ ] Scale per display: logical units to pixels, the cursor at that scale
+- [x] System colours and metrics (the theme), metrics in logical units
+- [x] Scale per display: logical units to pixels, the cursor at that scale
+- [ ] Several displays, each with its own scale; moving a window between them
+- [ ] Pressed and hot looks for the title buttons; double-click on the title bar
+- [ ] Pointer shapes per window area (resize arrows, text beam), from files
+- [ ] Copying only what moved when a window is dragged (instead of redrawing)
 
 ### 5. Windowing and controls
 - [ ] libwindowing: connecting, windows, the message loop (paint, keys, mouse,
