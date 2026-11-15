@@ -33,7 +33,7 @@
   metrics), Server.Screen (display and back buffer), Server.Cursor,
   Server.Windows (the window list), Server.Frames, Server.Composer,
   Server.Actions (what is done to windows), Server.Clients (the
-  protocol) and Server.Input.
+  protocol), Server.Input and Server.Scale (changing the scale).
 }
 program DisplayServer;
 
@@ -46,21 +46,17 @@ uses
   Sys.Streams,
   Util.Messages,
   Drawing.Rectangles,
-  Font.Text,
-  Font.Files,
   Windowing.Protocol,
-  Windowing.Theme,
   Server.Theme,
   Server.Screen,
   Server.Cursor,
-  Server.Frames,
   Server.Composer,
   Server.Clients,
-  Server.Input;
+  Server.Input,
+  Server.Scale;
 
 var
   Port: Int64;
-  Fonts: TFontSet;
   Error: LongInt;
 
 procedure ServeForever;
@@ -96,10 +92,7 @@ begin
   Error := OpenScreen;
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/display', []);
-  ScalePercent := Display.ScalePercent;
-  Dpi := Display.Dpi;
-  if LoadSystemFonts(Fonts) then
-    TitleFace := SelectFace(Fonts, Theme.TitlePoints, Dpi, True);
+  SetUpScale(Display.ScalePercent, Display.Dpi);
   Error := OpenInput;
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/events', []);

@@ -65,7 +65,8 @@ uses
   Server.Windows,
   Server.Composer,
   Server.Actions,
-  Server.Input;
+  Server.Input,
+  Server.Scale;
 
 procedure SendToClient(Client: PClient; var Message: TWindowMessage);
 begin
@@ -99,7 +100,7 @@ var
   Index: LongInt;
 begin
   for Index := WindowCount - 1 downto 0 do
-    if (Index < WindowCount) and (Windows[Index]^.Owner = Client) then
+    if (Index < WindowCount) and (Windows[Index]^.Client = Client) then
       DestroyWindow(Windows[Index]);
   CloseHandle(Client^.Channel);
   for Index := 0 to ClientCount - 1 do
@@ -133,16 +134,21 @@ end;
 function OwnWindow(Client: PClient; const Message: TWindowMessage): PServerWindow;
 begin
   Result := FindWindow(Message.Window);
-  if (Result <> nil) and (Result^.Owner <> Client) then
+  if (Result <> nil) and (Result^.Client <> Client) then
     Result := nil;
 end;
 
 procedure CreateWindowFor(Client: PClient; var Message: TWindowMessage; Section: Int64);
 var
   Window: PServerWindow;
+  OwnerWindow: PServerWindow;
   Reply: TWindowMessage;
 begin
-  Window := AddWindow(Client, Message.Flags);
+  { Only a window of the same program can own it. }
+  OwnerWindow := FindWindow(Message.Code);
+  if (OwnerWindow <> nil) and (OwnerWindow^.Client <> Client) then
+    OwnerWindow := nil;
+  Window := AddWindow(Client, Message.Flags, OwnerWindow);
   if Window = nil then
   begin
     CloseHandle(Section);
@@ -178,6 +184,13 @@ begin
     Reply.Value := Dpi;
     Reply.Code := ScalePercent;
     SendToClient(Client, Reply);
+    Exit;
+  end;
+  if Message.Kind = RequestSetScale then
+  begin
+    if Handle >= 0 then
+      CloseHandle(Handle);
+    ChangeScale(Message.Code);
     Exit;
   end;
   if Message.Kind = RequestCreateWindow then
@@ -226,6 +239,8 @@ begin
       ActivateWindow(Window);
     RequestSetCapture:
       SetPointerCapture(Window, Message.Value <> 0);
+    RequestEnableWindow:
+      EnableWindow(Window, Message.Value <> 0);
   end;
 end;
 

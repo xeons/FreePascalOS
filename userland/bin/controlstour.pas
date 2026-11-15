@@ -264,12 +264,13 @@ end;
 procedure TTourWindow.AboutChosen(Item: TMenuItem);
 begin
   Say('answer ' + IntToStr(ShowMessageBox('About', 'Controls tour'#10'libcontrols on FreePascalOS', MessageOk,
-    SignInformation)));
+    SignInformation, Self)));
 end;
 
 procedure TTourWindow.AskQuestion(Sender: TControlWindow);
 begin
-  Say('answer ' + IntToStr(ShowMessageBox('Question', 'Save the changes?', MessageYesNoCancel, SignQuestion)));
+  Say('answer ' + IntToStr(ShowMessageBox('Question', 'Save the changes?', MessageYesNoCancel, SignQuestion,
+    Self)));
 end;
 
 procedure TTourWindow.ToolClicked(Sender: TControl);

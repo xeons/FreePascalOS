@@ -35,6 +35,8 @@
     scroll N               the scroll bar moved to N
     swatch N               the swatch was clicked (its colour number)
     clicked NAME           a button
+    scale P W H            the display's scale is now P percent: the
+                           window's client area is W x H pixels
   and ends on OK, Cancel or closing the window.
 }
 program ControlsDemo;
@@ -52,6 +54,7 @@ uses
   Drawing.Canvas,
   Drawing.Bevels,
   Windowing.Protocol,
+  Windowing.Connection,
   Windowing.Messages,
   Windowing.Windows,
   Controls.Base,
@@ -97,6 +100,8 @@ type
     FCancel: TButton;
     FStatus: TStatusBar;
     procedure ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);
+  protected
+    procedure ScaleChanged; override;
   public
     constructor Create;
     procedure ReceiveMessage(var Message: TPostedMessage); override;
@@ -194,6 +199,12 @@ begin
     Say('clicked ' + TextWithoutMnemonic(Child.Text));
     QuitMessageLoop(0);
   end;
+end;
+
+procedure TDemoWindow.ScaleChanged;
+begin
+  inherited ScaleChanged;
+  Say('scale ' + IntToStr(DisplayScale) + ' ' + IntToStr(PixelWidth) + ' ' + IntToStr(PixelHeight));
 end;
 
 procedure TDemoWindow.ReceiveMessage(var Message: TPostedMessage);

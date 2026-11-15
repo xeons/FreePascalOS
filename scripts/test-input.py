@@ -672,7 +672,10 @@ time.sleep(1)
 # button, three on the scroll bar's arrow, one on the swatch (a control
 # the program made itself, which posts a message of its own); mnemonics:
 # Alt+R toggles the check box back, Alt+N (the label's) goes back to the
-# edit box for an x; Enter presses the default button.
+# edit box for an x; the display's scale changed to 150% and back (the
+# window is told, and gets a client area of the same logical size: 1.5
+# times the pixels, the swatch where its logical place is now); Enter
+# presses the default button.
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'controlsdemo > /tmp/c.log &\r')
@@ -689,6 +692,13 @@ press('alt-r')
 press('alt-n')
 press('x')
 time.sleep(0.5)
+type_on_serial(b'displayscale 150\r')
+time.sleep(2)
+# The client area at 150%: from 180,120, the swatch at 615,138 (84 square).
+swatch_at_150 = take_screen()(645, 165)
+type_on_serial(b'displayscale 100\r')
+time.sleep(2)
+swatch_at_100 = take_screen()(430, 110)
 press('ret')
 time.sleep(1)
 type_on_serial(b'cat /tmp/c.log; kill %1; wait; m=DONE; echo CONTROLS $m\r')
@@ -700,6 +710,9 @@ checks.append(('controls: mnemonics (Alt+R on the check box, Alt+N on the label)
                controls_ok and b'check 0' in received and b'edit hix' in received))
 checks.append(('controls: a control of the program\'s own, and its posted message',
                b'swatch 1' in received and swatch == '30a040'))
+checks.append(('display server: the scale changed to 150% and back, the window laid out again',
+               b'scale 150%, 150 DPI' in received and b'scale 150 540 450' in received and
+               b'scale 100 360 300' in received and swatch_at_150 == '30a040' and swatch_at_100 == '30a040'))
 
 # The rest of the controls (controlstour), which prints where its
 # controls are: a toolbar toggle, a list box, a combo box's dropped
@@ -711,7 +724,16 @@ checks.append(('controls: a control of the program\'s own, and its posted messag
 # from the context menu, lines pasted into the multi-line edit box), the
 # tree view (a click, Right, Down) and the list view (a row, a header,
 # sorting by a header as numbers, a click, a Ctrl+click and a
-# Shift+click, then large icons).
+# Shift+click, then large icons). The message boxes are owned by the
+# window: a click on its title bar while one is open changes nothing in
+# its client area (the box stays above it) and leaves its title bar
+# inactive (it is disabled), and Enter still goes to the box.
+def client_area_of_tour(pixel):
+    # Every fourth pixel of the window's client area (60,40, 480x360).
+    return [pixel(x, y) for x in range(60, 540, 4) for y in range(40, 400, 4)]
+
+
+owned_box_above = False
 def places():
     return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
             for match in re.finditer(rb'place (\S+) (\d+) (\d+)', bytes(received))}
@@ -735,6 +757,13 @@ if tour_started:
     click_at(*place['help'])
     click_at(place['help'][0] - 8, place['help'][1] + 21)
     time.sleep(1)
+    # The pointer where it will click (the window's title bar, y 21-39),
+    # so it is drawn in the same place on both screens.
+    point_tablet_at(80, 30)
+    before = client_area_of_tour(take_screen())
+    click_at(80, 30)
+    pixel = take_screen()
+    owned_box_above = before == client_area_of_tour(pixel) and pixel(59, 30) == '7c7a76'
     press('ret')
     time.sleep(0.8)
     press('ctrl-m')
@@ -810,6 +839,8 @@ checks.append(('controls tour: menu, message box, accelerator', tour_ok and b'me
                b'answer 1' in log_from_here and b'answer 2' in log_from_here))
 checks.append(('controls tour: menus from the keyboard (Alt+H, a mnemonic letter, F10, Alt alone)',
                tour_ok and log_from_here.count(b'menu About') == 5 and log_from_here.count(b'answer 1') == 5))
+checks.append(('owned windows: a message box stays above its disabled owner and keeps the keyboard',
+               tour_ok and owned_box_above and b'answer 1' in log_from_here))
 checks.append(('controls tour: tabs, tree view, list view', tour_ok and b'page 2' in log_from_here and
                b'tree System' in log_from_here and b'tree lib' in log_from_here and b'page 3' in log_from_here and
                b'row picture.bmp' in log_from_here and b'column 0' in log_from_here))

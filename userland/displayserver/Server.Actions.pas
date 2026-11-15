@@ -18,8 +18,13 @@
 
 {
   What can be done to a window, by its program (Server.Clients) or by
-  the user (Server.Input): activating, showing, moving, resizing and
-  destroying it, and telling its program what happened.
+  the user (Server.Input): activating, showing, enabling, moving,
+  resizing and destroying it, and telling its program what happened.
+
+  A disabled window (the owner of a modal dialog) is never activated:
+  whatever would activate it activates the topmost enabled window it
+  owns instead (the dialog), after bringing both forward. Hiding a
+  window hides the windows it owns, and showing it shows them again.
 }
 unit Server.Actions;
 
@@ -33,10 +38,13 @@ uses
   Server.Windows;
 
 { Sends Message (its Window set to Window's) to the window's program. }
-procedure SendToOwner(Window: PServerWindow; var Message: TWindowMessage);
-{ Brings the window to the front and gives it the keyboard (nil: none). }
+procedure SendToProgram(Window: PServerWindow; var Message: TWindowMessage);
+{ Brings the window to the front and gives it the keyboard (nil: none).
+  A disabled window gives it to its topmost enabled owned window. }
 procedure ActivateWindow(Window: PServerWindow);
 procedure ShowWindow(Window: PServerWindow; Show: Boolean);
+{ A disabled window is not activated and gets no input. }
+procedure EnableWindow(Window: PServerWindow; Enable: Boolean);
 procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
 { Asks the program for a surface of a new size (it answers with
   RequestSetSurface), moving the client area to Bounds' top left. }
@@ -57,10 +65,10 @@ uses
   Server.Clients,
   Server.Input;
 
-procedure SendToOwner(Window: PServerWindow; var Message: TWindowMessage);
+procedure SendToProgram(Window: PServerWindow; var Message: TWindowMessage);
 begin
   Message.Window := Window^.Id;
-  SendToClient(PClient(Window^.Owner), Message);
+  SendToClient(PClient(Window^.Client), Message);
 end;
 
 procedure SendActivated(Window: PServerWindow; Active: Boolean);
@@ -69,13 +77,40 @@ var
 begin
   Message := NewMessage(EventActivated, Window^.Id);
   Message.Value := Ord(Active);
-  SendToOwner(Window, Message);
+  SendToProgram(Window, Message);
+end;
+
+function TakesKeyboard(Window: PServerWindow): Boolean;
+begin
+  Result := Window^.Visible and not Window^.Disabled and ((Window^.Flags and WindowNoActivate) = 0);
+end;
+
+{ The topmost window owned by Owner (directly or not) that can take the
+  keyboard, or nil. }
+function EnabledOwnedWindow(Owner: PServerWindow): PServerWindow;
+var
+  Index: LongInt;
+begin
+  for Index := WindowCount - 1 downto 0 do
+    if IsOwnedBy(Windows[Index], Owner) and TakesKeyboard(Windows[Index]) then
+      Exit(Windows[Index]);
+  Result := nil;
 end;
 
 procedure ActivateWindow(Window: PServerWindow);
 var
   Previous: PServerWindow;
 begin
+  if (Window <> nil) and Window^.Disabled then
+  begin
+    { It comes forward with what it owns; the keyboard goes to its
+      dialog, or stays where it is if it has none. }
+    RaiseWindow(Window);
+    DamageWindow(Window);
+    Window := EnabledOwnedWindow(Window);
+    if Window = nil then
+      Exit;
+  end;
   if Window <> nil then
   begin
     RaiseWindow(Window);
@@ -102,22 +137,92 @@ var
   Index: LongInt;
 begin
   for Index := WindowCount - 1 downto 0 do
-    if (Windows[Index] <> Excluded) and Windows[Index]^.Visible and
-       ((Windows[Index]^.Flags and WindowNoActivate) = 0) then
+    if (Windows[Index] <> Excluded) and TakesKeyboard(Windows[Index]) then
       Exit(Windows[Index]);
   Result := nil;
 end;
 
+{ The windows Owner owns directly, bottom first. Taken as a list first:
+  hiding and showing them may change the stacking order. }
+procedure CollectOwnedWindows(Owner: PServerWindow; var Owned: array of PServerWindow; out Count: LongInt);
+var
+  Index: LongInt;
+begin
+  Count := 0;
+  for Index := 0 to WindowCount - 1 do
+    if Windows[Index]^.OwnerWindow = Owner then
+    begin
+      Owned[Count] := Windows[Index];
+      Inc(Count);
+    end;
+end;
+
+{ Hides the windows Owner owns (and so theirs), marked to come back
+  with it. }
+procedure HideOwnedWindows(Owner: PServerWindow);
+var
+  Owned: array[0..MaximumWindows - 1] of PServerWindow;
+  Count: LongInt;
+  Index: LongInt;
+begin
+  CollectOwnedWindows(Owner, Owned, Count);
+  for Index := 0 to Count - 1 do
+    if Owned[Index]^.Visible then
+    begin
+      ShowWindow(Owned[Index], False);
+      Owned[Index]^.HiddenWithOwner := True;
+    end;
+end;
+
+{ Shows again what HideOwnedWindows hid (they are raised with Owner). }
+procedure ShowOwnedWindows(Owner: PServerWindow);
+var
+  Owned: array[0..MaximumWindows - 1] of PServerWindow;
+  Count: LongInt;
+  Index: LongInt;
+begin
+  CollectOwnedWindows(Owner, Owned, Count);
+  for Index := 0 to Count - 1 do
+    if Owned[Index]^.HiddenWithOwner then
+    begin
+      Owned[Index]^.HiddenWithOwner := False;
+      Owned[Index]^.Visible := True;
+      DamageWindow(Owned[Index]);
+      ShowOwnedWindows(Owned[Index]);
+    end;
+end;
+
 procedure ShowWindow(Window: PServerWindow; Show: Boolean);
 begin
+  { Shown or hidden on purpose now, not along with its owner. }
+  Window^.HiddenWithOwner := False;
   if Window^.Visible = Show then
     Exit;
   Window^.Visible := Show;
   DamageWindow(Window);
   if Show then
-    ActivateWindow(Window)
-  else if ActiveWindow = Window then
+  begin
+    ShowOwnedWindows(Window);
+    ActivateWindow(Window);
+    Exit;
+  end;
+  HideOwnedWindows(Window);
+  if (ActiveWindow = Window) or ((ActiveWindow <> nil) and not ActiveWindow^.Visible) then
     ActivateWindow(NextActivatable(Window));
+end;
+
+procedure EnableWindow(Window: PServerWindow; Enable: Boolean);
+begin
+  if Window^.Disabled = not Enable then
+    Exit;
+  Window^.Disabled := not Enable;
+  if Enable then
+    Exit;
+  { No drag, capture or hover goes on with it; the keyboard goes to its
+    dialog, or nowhere. }
+  ForgetWindowInInput(Window);
+  if ActiveWindow = Window then
+    ActivateWindow(EnabledOwnedWindow(Window));
 end;
 
 procedure MoveWindowTo(Window: PServerWindow; ClientLeft, ClientTop: LongInt);
@@ -136,7 +241,7 @@ begin
   Message := NewMessage(EventMoved, Window^.Id);
   Message.Left := PixelsToLogical(ClientLeft, ScalePercent);
   Message.Top := PixelsToLogical(ClientTop, ScalePercent);
-  SendToOwner(Window, Message);
+  SendToProgram(Window, Message);
 end;
 
 procedure RequestResize(Window: PServerWindow; const Bounds: TRectangle);
@@ -147,7 +252,7 @@ begin
   Message := NewMessage(EventResized, Window^.Id);
   Message.SurfaceWidth := RectangleWidth(Bounds);
   Message.SurfaceHeight := RectangleHeight(Bounds);
-  SendToOwner(Window, Message);
+  SendToProgram(Window, Message);
 end;
 
 procedure ToggleMaximized(Window: PServerWindow);

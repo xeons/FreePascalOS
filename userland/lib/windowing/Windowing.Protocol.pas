@@ -35,6 +35,12 @@
   Positions on the screen are in logical units (1/96 inch), turned into
   pixels with the scale (LogicalToPixels); sizes of surfaces and
   positions within a window are in pixels, which is what is drawn.
+
+  A window can have an owner, another window of the same program: it
+  stays above it. A disabled window (RequestEnableWindow) is never
+  activated and gets no input; a click on it activates the window it
+  owns instead (a modal dialog). When the scale changes every program
+  hears EventScaleChanged and gives its windows new surfaces.
 }
 unit Windowing.Protocol;
 
@@ -53,7 +59,8 @@ const
   RequestHello = 1;
   { Left, Top: where (logical units, the client area's top left);
     SurfaceWidth, SurfaceHeight: the client area's size in pixels; Flags:
-    Window*; Text: the title. Handle: the surface's section. Answered by
+    Window*; Text: the title; Code: the window that owns it (0: none),
+    which it stays above. Handle: the surface's section. Answered by
     EventWindowCreated (Window: its number). It starts hidden. }
   RequestCreateWindow = 2;
   RequestDestroyWindow = 3;
@@ -73,6 +80,12 @@ const
   { Value 1: the window gets every pointer event until Value 0 (while a
     button is held on a control, say). }
   RequestSetCapture = 10;
+  { Value 0: the window is disabled (not activated, no input: the owner
+    of a modal dialog); 1: enabled again. }
+  RequestEnableWindow = 11;
+  { Window 0; Code: a new scale for the display in percent (100 to 400).
+    Every program is told (EventScaleChanged). }
+  RequestSetScale = 12;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -104,6 +117,11 @@ const
   { Left, Top: where the client area is now (logical units): the window
     was moved (by the user, or maximized). }
   EventMoved = 111;
+  { Window 0. The display's scale changed: Width, Height: the screen in
+    pixels; Value: its DPI now; Code: its scale in percent. Windows kept
+    their places in logical units; each wants a new surface of its
+    logical size at the new scale (RequestSetSurface). }
+  EventScaleChanged = 112;
 
   { --- Window flags ----------------------------------------------------- }
 

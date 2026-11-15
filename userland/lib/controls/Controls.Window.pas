@@ -111,8 +111,9 @@ type
     procedure Resized; override;
     procedure ActiveChanged; override;
   public
+    { As TWindow.Create; AOwner: the window it belongs to (nil: none). }
     constructor Create(const ATitle: string; Left, Top, Width, Height: LongInt;
-      AFlags: LongWord = WindowFramed or WindowResizable);
+      AFlags: LongWord = WindowFramed or WindowResizable; AOwner: TWindow = nil);
     destructor Destroy; override;
     procedure FocusControl(Control: TControl);
     procedure FocusControlAfter(Control: TControl);
@@ -226,13 +227,14 @@ end;
 
 { --- TControlWindow --------------------------------------------------------- }
 
-constructor TControlWindow.Create(const ATitle: string; Left, Top, Width, Height: LongInt; AFlags: LongWord);
+constructor TControlWindow.Create(const ATitle: string; Left, Top, Width, Height: LongInt; AFlags: LongWord;
+  AOwner: TWindow);
 begin
   FHost := TWindowHost.Create(Self);
   FRoot := CreateRootControl(FHost);
   { The same size the window's surface will have. }
   FRoot.SetPixelBounds(MakeRectangle(0, 0, Scaled(Width), Scaled(Height)));
-  inherited Create(ATitle, Left, Top, Width, Height, AFlags);
+  inherited Create(ATitle, Left, Top, Width, Height, AFlags, AOwner);
 end;
 
 destructor TControlWindow.Destroy;

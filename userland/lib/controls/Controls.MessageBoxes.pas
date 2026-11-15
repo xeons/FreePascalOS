@@ -24,7 +24,8 @@
   the sign at the left, the text beside it, the buttons centred below.
   It returns the button pressed (Controls.Dialogs' Result values);
   Escape and the close button give the cancelling one (Cancel, No, or
-  OK when it is the only button).
+  OK when it is the only button). Given an owner, the box is centred on
+  it and stays above it; the owner is disabled while the box is open.
 }
 unit Controls.MessageBoxes;
 
@@ -33,12 +34,15 @@ unit Controls.MessageBoxes;
 
 interface
 
+uses
+  Windowing.Windows;
+
 type
   TMessageButtons = (MessageOk, MessageOkCancel, MessageYesNo, MessageYesNoCancel);
   TMessageSign = (SignNone, SignInformation, SignWarning, SignError, SignQuestion);
 
 function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons = MessageOk;
-  Sign: TMessageSign = SignInformation): LongInt;
+  Sign: TMessageSign = SignInformation; Owner: TWindow = nil): LongInt;
 
 implementation
 
@@ -149,7 +153,8 @@ begin
   Lines.Add(Copy(Text, Start, Length(Text) - Start + 1));
 end;
 
-function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons; Sign: TMessageSign): LongInt;
+function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons; Sign: TMessageSign;
+  Owner: TWindow): LongInt;
 const
   { OK and Cancel need no mnemonic: Enter and Escape press them. }
   Captions: array[TMessageButtons, 0..2] of string = (('OK', '', ''), ('OK', 'Cancel', ''), ('&Yes', '&No', ''),
@@ -194,7 +199,7 @@ begin
     if Width < ButtonsWidth + 2 * Margin then
       Width := ButtonsWidth + 2 * Margin;
     Height := Margin + ContentHeight + Margin + ButtonHeight + Margin;
-    Dialog := TDialog.CreateDialog(Title, Width, Height);
+    Dialog := TDialog.CreateDialog(Title, Width, Height, Owner);
     try
       if Sign <> SignNone then
       begin

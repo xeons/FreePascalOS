@@ -24,7 +24,8 @@
   (and the conversions between logical units and pixels). Messages are
   sent with SendRequest; WaitForEvent waits for one of a kind (a reply)
   and keeps whatever else arrives meanwhile for NextEvent, so nothing is
-  lost or taken out of order.
+  lost or taken out of order. The scale can change while the program
+  runs (EventScaleChanged; Windowing.Windows passes it here).
 }
 unit Windowing.Connection;
 
@@ -62,6 +63,8 @@ function WaitForEvent(Kind: LongWord; Timeout: Int64; out Message: TWindowMessag
 function NextEvent(out Message: TWindowMessage): Boolean;
 { True once the server is gone. }
 function ConnectionBroken: Boolean;
+{ Takes the screen's size, DPI and scale from EventScaleChanged. }
+procedure TakeScaleChange(const Message: TWindowMessage);
 
 implementation
 
@@ -209,6 +212,14 @@ begin
   DisplayDpi := LongWord(Message.Value);
   DisplayScale := Message.Code;
   Result := ErrorNone;
+end;
+
+procedure TakeScaleChange(const Message: TWindowMessage);
+begin
+  ScreenWidth := Message.Width;
+  ScreenHeight := Message.Height;
+  DisplayDpi := LongWord(Message.Value);
+  DisplayScale := Message.Code;
 end;
 
 procedure DisconnectFromDisplay;

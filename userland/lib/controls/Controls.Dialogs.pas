@@ -19,11 +19,12 @@
 {
   Dialogs: windows that ask something and wait for the answer.
 
-  A TDialog is a framed window of a fixed size, centred on the screen.
-  ShowModal shows it and serves the program's windows until it ends
-  (EndModal, or a button made with AddButton and a result, or its close
-  button: ResultCancel), with the dialog modal meanwhile; it returns the
-  result. Controls go on Root as in any control window; sizes are
+  A TDialog is a framed window of a fixed size, centred on its owner (the
+  window it asks for, which it stays above), or on the screen if it has
+  none. ShowModal shows it and serves the program's windows until it
+  ends (EndModal, or a button made with AddButton and a result, or its
+  close button: ResultCancel), with the dialog modal meanwhile (the
+  program's other windows disabled); it returns the result. Controls go on Root as in any control window; sizes are
   logical units, so the dialog's layout is the same on every display.
 }
 unit Controls.Dialogs;
@@ -34,6 +35,7 @@ unit Controls.Dialogs;
 interface
 
 uses
+  Windowing.Windows,
   Controls.Base,
   Controls.Window,
   Controls.Buttons;
@@ -54,8 +56,9 @@ type
   protected
     procedure CloseRequested; override;
   public
-    { Width and Height of the client area, logical units. }
-    constructor CreateDialog(const ATitle: string; Width, Height: LongInt);
+    { Width and Height of the client area, logical units; AOwner: the
+      window it belongs to and is centred on (nil: the screen). }
+    constructor CreateDialog(const ATitle: string; Width, Height: LongInt; AOwner: TWindow = nil);
     function ShowModal: LongInt;
     procedure EndModal(AResult: LongInt);
     { A button ending the dialog with AResult; Default and Cancel make it
@@ -69,10 +72,9 @@ implementation
 
 uses
   Windowing.Protocol,
-  Windowing.Connection,
-  Windowing.Windows;
+  Windowing.Connection;
 
-constructor TDialog.CreateDialog(const ATitle: string; Width, Height: LongInt);
+constructor TDialog.CreateDialog(const ATitle: string; Width, Height: LongInt; AOwner: TWindow);
 var
   Left: LongInt;
   Top: LongInt;
@@ -80,13 +82,26 @@ begin
   { Connected first, for the screen's size (creating the window fails
     if there is no display server). }
   ConnectToDisplay;
-  Left := (Unscaled(ScreenWidth) - Width) div 2;
-  Top := (Unscaled(ScreenHeight) - Height) div 3;
+  if AOwner <> nil then
+  begin
+    Left := AOwner.ScreenLeft + (AOwner.ClientWidth - Width) div 2;
+    Top := AOwner.ScreenTop + (AOwner.ClientHeight - Height) div 2;
+  end
+  else
+  begin
+    Left := (Unscaled(ScreenWidth) - Width) div 2;
+    Top := (Unscaled(ScreenHeight) - Height) div 3;
+  end;
+  { All of it on the screen, the title bar first. }
+  if Left + Width > Unscaled(ScreenWidth) then
+    Left := Unscaled(ScreenWidth) - Width;
+  if Top + Height > Unscaled(ScreenHeight) then
+    Top := Unscaled(ScreenHeight) - Height;
   if Left < 0 then
     Left := 0;
   if Top < 0 then
     Top := 0;
-  inherited Create(ATitle, Left, Top, Width, Height, WindowFramed);
+  inherited Create(ATitle, Left, Top, Width, Height, WindowFramed, AOwner);
 end;
 
 procedure TDialog.ButtonClicked(Sender: TControl);
