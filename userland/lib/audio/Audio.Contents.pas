@@ -22,6 +22,7 @@
   Compiling this unit compiles every unit of the library. Programs use
   the individual units:
 
+    Audio.Formats    sample kinds and converting samples
     Audio.Device     the audio output device (/dev/audio): format,
                      volume, writing samples, draining
     Audio.Wave       reading and writing PCM WAV files
@@ -34,6 +35,7 @@ unit Audio.Contents;
 interface
 
 uses
+  Audio.Formats,
   Audio.Device,
   Audio.Wave,
   Audio.Synthesis;

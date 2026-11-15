@@ -41,6 +41,8 @@ procedure StartTone(out Generator: TToneGenerator; Frequency, Rate: LongWord; Am
 { Fills Frames frames of Channels samples each (the same on every
   channel). }
 procedure FillTone(var Generator: TToneGenerator; Samples: PSmallInt; Frames, Channels: LongWord);
+{ The next sample, -1 to 1 (times the amplitude out of 32767). }
+function NextToneSample(var Generator: TToneGenerator): Single;
 
 implementation
 
@@ -106,6 +108,12 @@ begin
   Generator.Phase := 0;
   Generator.Step := LongWord((QWord(Frequency) shl 32) div Rate);
   Generator.Amplitude := Amplitude;
+end;
+
+function NextToneSample(var Generator: TToneGenerator): Single;
+begin
+  Result := (Int64(SineOfPhase(Generator.Phase)) * Generator.Amplitude) / (65536.0 * 32768.0);
+  Generator.Phase := Generator.Phase + Generator.Step;
 end;
 
 procedure FillTone(var Generator: TToneGenerator; Samples: PSmallInt; Frames, Channels: LongWord);

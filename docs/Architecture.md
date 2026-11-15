@@ -520,21 +520,31 @@ scrolling.
 
 ## Sound
 
-The audio framework (`Io.AudioOutput`) is the part of sound that does
-not depend on the hardware:
-- **Registration.** A sound driver registers each output with routines to
+The audio framework (`Io.AudioOutput`, `Io.AudioStreams`) is the part of
+sound that does not depend on the hardware:
+- **Outputs.** A sound driver registers each output with routines to
   start and stop playing, report where the hardware is in the ring, and
-  set the volume and rate. The framework gives the output a ring of 16
-  page-sized periods and a device file: the first output is `/dev/audio`.
-- **Writing.** Programs write 16-bit samples, stereo or mono (widened to
-  stereo), at 44100 or 48000 Hz (`ControlAudioSetFormat`). A write fills
-  the periods after the one playing and waits while all are full.
-  Playing starts when two periods are full.
-- **Playing.** Each period the hardware finishes (it interrupts, and the
-  driver calls `AudioPeriodsElapsed`) is cleared, so a program that falls
-  behind gives silence rather than old sound. Draining (on request, and
-  on close) pads the last period, waits for it to be played and stops
-  the hardware.
+  set the volume. The output gets a ring of 16 page-sized periods, played
+  as 16-bit stereo at 48 kHz, and a device file: the first output is
+  `/dev/audio`.
+- **Streams.** Every open of the device is a stream of its own, so any
+  number of programs play at once. A stream's format is 8, 16, 24 or
+  32-bit integer or 32-bit float samples, 1 to 8 channels (WAVE order)
+  and 8 to 192 kHz (`ControlAudioSetFormat`). Its samples wait in a 64 KiB
+  queue; a write waits while the queue is full.
+- **Mixing.** The mixer thread (`RunAudioMixer`) keeps four periods ahead
+  of the hardware. For each it takes every stream's next frames: it
+  folds other channel counts into stereo (centre and surround at 1/√2,
+  LFE left out), converts the rate by linear interpolation, applies the
+  stream's volume, sums the streams and clips to 16 bits. All of it is
+  integer arithmetic; float samples are decoded from their bits. The
+  hardware starts when a stream has data and stops after half a second of
+  silence; each period it finishes (the driver calls
+  `AudioPeriodsElapsed`) wakes the mixer.
+- **Draining and controls.** Draining (on request, and on close) waits
+  until the stream's last sound has been played. A stream has its own
+  volume; the master volume (the hardware's) applies to all. The queue's
+  fill and the frames mixed so far can be asked for.
 
 The Intel HD Audio driver (`Drivers.HdAudio`) resets the controller and
 talks to its codecs through the immediate command interface. In the
@@ -548,11 +558,15 @@ converter's output amplifier.
 In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
 draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
 from a quarter-sine table and a fixed point phase). The programs are
-`tone` (plays a tone or writes it as a WAV file), `play` (WAV files) and
-`mixer` (volume and format). The tests record what QEMU's HD Audio
-device plays (its `wav` audio backend). coretest plays a 1000 Hz tone,
-then a 440 Hz WAV file written by `tone`, and `scripts/check-audio.py`
-finds both tones, with their frequency and length, in the recording.
+`tone` (plays a tone, or writes it as a WAV file, in any format), `play`
+(WAV files: integer, float and extensible, any of the formats streams
+take) and `mixer` (the master volume). The tests record what QEMU's HD
+Audio device plays (its `wav` audio backend). coretest plays a 1000 Hz
+tone, a 440 Hz WAV file, 600 and 1500 Hz from two programs at once, then
+800, 2000 and 300 Hz at 22.05, 96 and 11.025 kHz as u8, float mono and
+s24 six-channel samples. `scripts/check-audio.py` measures each 50 ms of
+the recording at the expected frequencies (Goertzel's algorithm) and
+checks the order, the tones together and the lengths.
 
 ## File systems
 

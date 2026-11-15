@@ -20,11 +20,13 @@
   The audio output device.
 
   The kernel's audio framework (Io.AudioOutput) gives every sound
-  output a device file; the first is /dev/audio. It takes 16-bit
-  little-endian samples, mono or stereo, at 44100 or 48000 Hz; writing
-  waits while the device's buffer is full, so sound plays at its own
-  pace. Draining waits until everything written has been heard; closing
-  the device drains it too.
+  output a device file; the first is /dev/audio. Each open is a stream
+  of its own, mixed with what other programs play: its format is any
+  sample kind of Audio.Formats, 1 to 8 channels and 8000 to 192000 Hz
+  (the kernel converts). Writing waits while the stream's queue is full,
+  so sound plays at its own pace. Draining waits until everything
+  written has been heard; closing the device drains it too. A stream
+  has its own volume; the master volume is the output's, for all.
 }
 unit Audio.Device;
 
@@ -39,6 +41,8 @@ type
   TAudioFormat = record
     Rate: LongWord;
     Channels: LongWord;
+    { One of the Sample* kinds of Audio.Formats. }
+    Kind: LongWord;
   end;
 
 { Opens Path (DefaultAudioDevice if nil); returns the handle, or a
@@ -49,9 +53,14 @@ procedure CloseAudioOutput(Handle: Int64);
   not take). }
 function SetAudioFormat(Handle: Int64; const Format: TAudioFormat): LongInt;
 function GetAudioFormat(Handle: Int64; out Format: TAudioFormat): LongInt;
-{ Percent, 0-100. }
+{ The stream's volume, percent (0-100). }
 function SetAudioVolume(Handle: Int64; Percent: LongWord): LongInt;
 function GetAudioVolume(Handle: Int64; out Percent: LongWord): LongInt;
+{ The output's volume, percent. }
+function SetMasterVolume(Handle: Int64; Percent: LongWord): LongInt;
+function GetMasterVolume(Handle: Int64; out Percent: LongWord): LongInt;
+{ Bytes written and not yet mixed. }
+function QueuedAudioBytes(Handle: Int64): Int64;
 { Writes all of Buffer (whole samples); 0 or an error code. }
 function WriteAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): LongInt;
 function DrainAudio(Handle: Int64): LongInt;
@@ -63,9 +72,6 @@ uses
   Sys.Kernel,
   Sys.Errors,
   Sys.Files;
-
-const
-  BitsPerSample = 16;
 
 function OpenAudioOutput(Path: PChar): Int64;
 begin
@@ -93,7 +99,7 @@ var
   Answer: Int64;
 begin
   Result := Control(Handle, ControlAudioSetFormat,
-    (QWord(Format.Rate) shl 16) or (QWord(Format.Channels) shl 8) or BitsPerSample, Answer);
+    (QWord(Format.Rate) shl 16) or (QWord(Format.Channels) shl 8) or Format.Kind, Answer);
 end;
 
 function GetAudioFormat(Handle: Int64; out Format: TAudioFormat): LongInt;
@@ -103,6 +109,7 @@ begin
   Result := Control(Handle, ControlAudioGetFormat, 0, Answer);
   Format.Rate := LongWord(Answer shr 16);
   Format.Channels := LongWord((Answer shr 8) and $FF);
+  Format.Kind := LongWord(Answer and $FF);
 end;
 
 function SetAudioVolume(Handle: Int64; Percent: LongWord): LongInt;
@@ -118,6 +125,26 @@ var
 begin
   Result := Control(Handle, ControlAudioGetVolume, 0, Answer);
   Percent := LongWord(Answer);
+end;
+
+function SetMasterVolume(Handle: Int64; Percent: LongWord): LongInt;
+var
+  Answer: Int64;
+begin
+  Result := Control(Handle, ControlAudioSetMasterVolume, Percent, Answer);
+end;
+
+function GetMasterVolume(Handle: Int64; out Percent: LongWord): LongInt;
+var
+  Answer: Int64;
+begin
+  Result := Control(Handle, ControlAudioGetMasterVolume, 0, Answer);
+  Percent := LongWord(Answer);
+end;
+
+function QueuedAudioBytes(Handle: Int64): Int64;
+begin
+  Result := KernelControlHandle(Handle, ControlAudioGetQueued, 0);
 end;
 
 function WriteAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): LongInt;

@@ -21,8 +21,9 @@
 
   play FILE...
 
-  Plays each 16-bit PCM WAV file (mono or stereo, 44100 or 48000 Hz) on
-  the audio device, one after the other.
+  Plays each WAV file (8, 16, 24 or 32-bit PCM or float, 1 to 8
+  channels, 8000 to 192000 Hz) on the audio device, one after the
+  other; the kernel converts it to what the hardware plays.
 }
 program play;
 
@@ -40,7 +41,7 @@ uses
 
 const
   Usage: PChar = 'Usage: play FILE...'#10 +
-    'Play 16-bit PCM WAV files (mono or stereo, 44100 or 48000 Hz).'#10;
+    'Play WAV files (8 to 32-bit PCM or float, 1 to 8 channels, 8000 to 192000 Hz).'#10;
   ChunkBytes = 16384;
 
 var
@@ -75,6 +76,7 @@ begin
     end;
     Format.Rate := Wave.Rate;
     Format.Channels := Wave.Channels;
+    Format.Kind := Wave.Kind;
     Error := SetAudioFormat(Device, Format);
     if Error <> 0 then
     begin

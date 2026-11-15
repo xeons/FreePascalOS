@@ -134,7 +134,9 @@ if kernel_shell_ok:
 checks.append(('kernel debug shell', kernel_shell_ok))
 
 if not wait_for('fpos:/$ ', 90):
-    print('INPUT TEST FAILED: the shell did not start')
+    print('INPUT TEST FAILED: the shell did not start (serial log in ' + serial_log + ')')
+    with open(serial_log, 'wb') as log:
+        log.write(received)
     qemu.kill()
     sys.exit(1)
 

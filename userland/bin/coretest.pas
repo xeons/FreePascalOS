@@ -395,8 +395,11 @@ const
     (Command: 'dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; echo $?; dd if=/dev/disk3 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; dd if=/dev/disk3 bs=512 skip=99 count=1 2>/dev/null | wc -c'; ExpectedOutput: '1'#10'512'#10'512'#10; ExpectedStatus: 0),
     { Sound (HD Audio, recorded by QEMU and checked by the host): the
       mixer, a tone, and a WAV file written by tone and played by play. }
-    (Command: 'mixer; mixer 90; mixer | cut -d , -f 1; mixer 80'; ExpectedOutput: 'volume 80%, 48000 Hz, 2 channels'#10'volume 90%'#10; ExpectedStatus: 0),
-    (Command: 'tone 1000 1 && tone -o t.wav -r 44100 440 0.5 && wc -c < t.wav && play t.wav; echo $?; play /etc/passwd 2>&1'; ExpectedOutput: '88244'#10'0'#10'play: /etc/passwd: not a WAV file'#10; ExpectedStatus: 1),
+    (Command: 'mixer; mixer 90; mixer; mixer 80'; ExpectedOutput: 'volume 80%'#10'volume 90%'#10; ExpectedStatus: 0),
+    { The order and lengths are what check-audio.py expects: a tone, a WAV
+      file, two programs at once (mixed), then other rates, sample
+      formats and channel counts (converted). }
+    (Command: 'tone 1000 1 && tone -o t.wav -r 44100 440 0.5 && wc -c < t.wav && play t.wav; echo $?; play /etc/passwd 2>&1; tone 600 1 & tone 1500 1; wait; tone -r 22050 -f u8 800 0.5; tone -r 96000 -f float -c 1 2000 0.5; tone -r 11025 -f s24 -c 6 300 0.5'; ExpectedOutput: '88244'#10'0'#10'play: /etc/passwd: not a WAV file'#10; ExpectedStatus: 0),
     { The optical drive (ATAPI) on the fifth AHCI port: 2048-byte blocks,
       read only. }
     (Command: 'dd if=/dev/disk4 bs=2048 skip=37 count=1 2>/dev/null | head -c 26; echo; dd if=/dev/disk4 bs=2048 skip=10 count=3 2>/dev/null | tail -c 2048 | head -c 26; echo; echo x | dd of=/dev/disk4 2>&1 | head -n 1'; ExpectedOutput: 'FreePascalOS CD block 0037'#10'FreePascalOS CD block 0012'#10'dd: error writing ''/dev/disk4'': Read-only file system'#10; ExpectedStatus: 0),

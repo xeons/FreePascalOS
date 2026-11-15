@@ -256,16 +256,31 @@ const
   { Returns 1 (and forgets it) if Ctrl-C was passed to the reader since
     the last call, else 0. }
   ControlTakePendingInterrupt = 10;
-  { Requests of CallControlHandle on an audio output (/dev/audio). A
-    format is the sample rate shl 16 or the channels shl 8 or the bits
-    per sample (16). }
+  { Requests of CallControlHandle on an audio output (/dev/audio). Each
+    open of the device is a stream of its own, mixed with the others. A
+    format is the sample rate shl 16 or the channels shl 8 or the sample
+    kind (AudioSample*): rates 8000 to 192000, 1 to 8 channels (in the
+    WAVE order: front left, front right, centre, LFE, back left, back
+    right, side left, side right). }
   ControlAudioGetFormat = 100;
   ControlAudioSetFormat = 101;
-  { The volume in percent (0-100). }
+  { The stream's volume in percent (0-100). }
   ControlAudioGetVolume = 102;
   ControlAudioSetVolume = 103;
-  { Waits until everything written has been played. }
+  { Waits until everything written to the stream has been played. }
   ControlAudioDrain = 104;
+  { The output's volume (for every stream), percent. }
+  ControlAudioGetMasterVolume = 105;
+  ControlAudioSetMasterVolume = 106;
+  { Bytes written to the stream and not yet mixed. }
+  ControlAudioGetQueued = 107;
+  { Frames of the stream mixed so far. }
+  ControlAudioGetPosition = 108;
+  AudioSampleUnsigned8 = 1;
+  AudioSampleSigned16 = 2;
+  AudioSampleSigned24 = 3;
+  AudioSampleSigned32 = 4;
+  AudioSampleFloat32 = 5;
   ConsoleModeEcho = $01;
   ConsoleModeLineEditing = $02;
   { Ctrl-C ends the foreground process group instead of being read. }

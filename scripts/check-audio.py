@@ -16,9 +16,15 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Checks the sound QEMU recorded during the tests (its wav audio backend):
-the stretches of sound in it must be a 1000 Hz tone of about a second
-and then a 440 Hz tone of about half a second.
+Checks the sound QEMU recorded during the tests (its wav audio backend).
+The recording must hold, in order: 1000 Hz for a second, 440 Hz for half
+a second (a WAV file), 600 and 1500 Hz together for a second (two
+programs mixed), then 800, 2000 and 300 Hz for half a second each
+(played at other rates, sample formats and channel counts).
+
+Each 50 ms window is measured at the expected frequencies (Goertzel's
+algorithm); the tones clearly there make the window's set, and
+neighbouring windows with the same set make one stretch.
 
     check-audio.py <recording.wav>
 """
@@ -35,28 +41,38 @@ channels, rate = struct.unpack('<HI', data[22:28])
 frames = data[44:len(data) - (len(data) - 44) % 2]
 samples = struct.unpack('<%dh' % (len(frames) // 2), frames)[::channels]
 
-# Stretches of sound: 50 ms windows that are loud, each with its
-# frequency (from the zero crossings); neighbouring windows of about the
-# same frequency make one tone.
+import math
+
+CANDIDATES = [300, 440, 600, 800, 1000, 1500, 2000]
+
+
+def amplitude(part, hertz):
+    coefficient = 2 * math.cos(2 * math.pi * hertz / rate)
+    previous = before = 0.0
+    for value in part:
+        previous, before = value + coefficient * previous - before, previous
+    power = previous * previous + before * before - coefficient * previous * before
+    return 2 * math.sqrt(max(power, 0)) / len(part)
+
+
 window = rate // 20
-found = []
+stretches = []
 for start in range(0, len(samples) - window + 1, window):
     part = samples[start:start + window]
-    if max(abs(value) for value in part) < 2000:
-        continue
-    crossings = sum(1 for a, b in zip(part, part[1:]) if a < 0 <= b)
-    hertz = crossings * rate / window
-    if found and abs(found[-1][2] / found[-1][1] - hertz) < hertz * 0.1:
-        found[-1][1] += 1
-        found[-1][2] += hertz
+    levels = {hertz: amplitude(part, hertz) for hertz in CANDIDATES}
+    loudest = max(levels.values())
+    tones = frozenset(hertz for hertz, level in levels.items()
+                      if level > 1000 and level > loudest * 0.3) if loudest > 1000 else frozenset()
+    if stretches and stretches[-1][0] == tones:
+        stretches[-1][1] += 1
     else:
-        found.append([start, 1, hertz])
-found = [(total / count, count * window / rate) for start, count, total in found
-         if count > 1]
-print('sound recorded: ' + ', '.join('%.0f Hz for %.2f s' % item for item in found))
-expected = [(1000, 1.0), (440, 0.5)]
+        stretches.append([tones, 1])
+found = [(sorted(tones), count * window / rate) for tones, count in stretches if tones and count >= 3]
+print('sound recorded: ' + ', '.join('+'.join('%d' % hertz for hertz in tones) + ' Hz for %.2f s' % seconds
+                                     for tones, seconds in found))
+expected = [([1000], 1.0), ([440], 0.5), ([600, 1500], 1.0), ([800], 0.5), ([2000], 0.5), ([300], 0.5)]
 if len(found) != len(expected):
-    sys.exit('expected %d tones' % len(expected))
-for (hertz, seconds), (wanted_hertz, wanted_seconds) in zip(found, expected):
-    if abs(hertz - wanted_hertz) > wanted_hertz * 0.02 or abs(seconds - wanted_seconds) > 0.15:
-        sys.exit('expected %d Hz for %.1f s' % (wanted_hertz, wanted_seconds))
+    sys.exit('expected %d stretches of sound' % len(expected))
+for (tones, seconds), (wanted_tones, wanted_seconds) in zip(found, expected):
+    if tones != wanted_tones or abs(seconds - wanted_seconds) > 0.2:
+        sys.exit('expected %s Hz for %.1f s' % ('+'.join(map(str, wanted_tones)), wanted_seconds))

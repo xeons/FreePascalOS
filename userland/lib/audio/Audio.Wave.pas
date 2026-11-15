@@ -17,9 +17,10 @@
 }
 
 {
-  PCM WAV files: a RIFF file with a "fmt " chunk (format 1, PCM) and a
-  "data" chunk holding the samples. Only 16-bit samples are read; other
-  chunks are skipped.
+  WAV files: a RIFF file with a "fmt " chunk and a "data" chunk holding
+  the samples; other chunks are skipped. Read: integer PCM (8, 16, 24 or
+  32 bits), 32-bit float, and the extensible format (more channels,
+  integer or float). Written: integer PCM or float.
 }
 unit Audio.Wave;
 
@@ -34,6 +35,8 @@ type
     Rate: LongWord;
     Channels: LongWord;
     BitsPerSample: LongWord;
+    { One of the Sample* kinds of Audio.Formats. }
+    Kind: LongWord;
     { Bytes of samples left to read. }
     DataBytes: QWord;
   end;
@@ -47,8 +50,8 @@ function ReadWaveSamples(var Wave: TWaveFile; Buffer: Pointer; Capacity: QWord):
 procedure CloseWaveFile(var Wave: TWaveFile);
 function WaveStatusText(Status: TWaveStatus): PChar;
 
-{ The 44-byte header of a 16-bit PCM WAV file with DataBytes of samples. }
-procedure MakeWaveHeader(Header: PByte; Rate, Channels: LongWord; DataBytes: LongWord);
+{ The 44-byte header of a WAV file of samples of Kind, DataBytes of them. }
+procedure MakeWaveHeader(Header: PByte; Rate, Channels, Kind: LongWord; DataBytes: LongWord);
 
 const
   WaveHeaderSize = 44;
@@ -58,10 +61,31 @@ implementation
 uses
   Runtime.Memory,
   Abi.SystemCalls,
-  Sys.Files;
+  Sys.Files,
+  Audio.Formats;
 
 const
   FormatPcm = 1;
+  FormatFloat = 3;
+  FormatExtensible = $FFFE;
+
+{ The sample kind of a format tag and sample size; 0 if not supported. }
+function KindOf(Tag, Bits: LongWord): LongWord;
+begin
+  Result := 0;
+  if Tag = FormatFloat then
+  begin
+    if Bits = 32 then
+      Result := SampleFloat32;
+  end
+  else if Tag = FormatPcm then
+    case Bits of
+      8: Result := SampleUnsigned8;
+      16: Result := SampleSigned16;
+      24: Result := SampleSigned24;
+      32: Result := SampleSigned32;
+    end;
+end;
 
 function ReadExactly(Handle: Int64; Buffer: Pointer; Count: QWord): Boolean;
 begin
@@ -77,9 +101,11 @@ function OpenWaveFile(Path: PChar; out Wave: TWaveFile): TWaveStatus;
 var
   Riff: array[0..11] of Byte;
   ChunkHeader: array[0..7] of Byte;
-  Format: array[0..15] of Byte;
+  Format: array[0..39] of Byte;
   ChunkSize: LongWord;
   HaveFormat: Boolean;
+  Tag: LongWord;
+  FormatSize: LongWord;
 begin
   FillMemory(@Wave, SizeOf(Wave), 0);
   Wave.Handle := OpenFile(Path, OpenRead);
@@ -95,23 +121,29 @@ begin
     ChunkSize := PLongWord(@ChunkHeader[4])^;
     if TagIs(@ChunkHeader[0], 'fmt ') and (ChunkSize >= 16) then
     begin
-      if not ReadExactly(Wave.Handle, @Format[0], 16) then
+      FormatSize := ChunkSize;
+      if FormatSize > SizeOf(Format) then
+        FormatSize := SizeOf(Format);
+      if not ReadExactly(Wave.Handle, @Format[0], FormatSize) then
         Exit;
-      if PWord(@Format[0])^ <> FormatPcm then
-        Exit(WaveUnsupported);
+      Tag := PWord(@Format[0])^;
+      { The extensible format names the real one in its sub-format. }
+      if (Tag = FormatExtensible) and (FormatSize >= 26) then
+        Tag := PWord(@Format[24])^;
       Wave.Channels := PWord(@Format[2])^;
       Wave.Rate := PLongWord(@Format[4])^;
       Wave.BitsPerSample := PWord(@Format[14])^;
+      Wave.Kind := KindOf(Tag, Wave.BitsPerSample);
+      if Wave.Kind = 0 then
+        Exit(WaveUnsupported);
       HaveFormat := True;
       { Chunks are padded to an even size. }
-      SeekFile(Wave.Handle, (ChunkSize - 16) + (ChunkSize and 1), SeekFromCurrent);
+      SeekFile(Wave.Handle, (ChunkSize - FormatSize) + (ChunkSize and 1), SeekFromCurrent);
     end
     else if TagIs(@ChunkHeader[0], 'data') then
     begin
       if not HaveFormat then
         Exit;
-      if Wave.BitsPerSample <> 16 then
-        Exit(WaveUnsupported);
       Wave.DataBytes := ChunkSize;
       Exit(WaveOk);
     end
@@ -147,22 +179,28 @@ begin
     WaveCannotOpen: Result := 'cannot open';
     WaveNotWave: Result := 'not a WAV file';
   else
-    Result := 'not 16-bit PCM';
+    Result := 'an unsupported sample format';
   end;
 end;
 
-procedure MakeWaveHeader(Header: PByte; Rate, Channels: LongWord; DataBytes: LongWord);
+procedure MakeWaveHeader(Header: PByte; Rate, Channels, Kind: LongWord; DataBytes: LongWord);
+var
+  SampleBytes: LongWord;
 begin
+  SampleBytes := BytesPerSample(Kind);
   CopyMemory(Header, PChar('RIFF'), 4);
   PLongWord(Header + 4)^ := 36 + DataBytes;
   CopyMemory(Header + 8, PChar('WAVEfmt '), 8);
   PLongWord(Header + 16)^ := 16;
-  PWord(Header + 20)^ := FormatPcm;
+  if Kind = SampleFloat32 then
+    PWord(Header + 20)^ := FormatFloat
+  else
+    PWord(Header + 20)^ := FormatPcm;
   PWord(Header + 22)^ := Channels;
   PLongWord(Header + 24)^ := Rate;
-  PLongWord(Header + 28)^ := Rate * Channels * 2;
-  PWord(Header + 32)^ := Channels * 2;
-  PWord(Header + 34)^ := 16;
+  PLongWord(Header + 28)^ := Rate * Channels * SampleBytes;
+  PWord(Header + 32)^ := Channels * SampleBytes;
+  PWord(Header + 34)^ := SampleBytes * 8;
   CopyMemory(Header + 36, PChar('data'), 4);
   PLongWord(Header + 40)^ := DataBytes;
 end;

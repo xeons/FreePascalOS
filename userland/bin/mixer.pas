@@ -21,8 +21,8 @@
 
   mixer [VOLUME]
 
-  Without an argument shows the volume (in percent) and the format; with
-  one sets the volume.
+  Without an argument shows the output's volume (in percent); with one
+  sets it. The volume applies to everything played on the output.
 }
 program mixer;
 
@@ -40,14 +40,13 @@ uses
 
 const
   Usage: PChar = 'Usage: mixer [VOLUME]'#10 +
-    'Show the volume (percent) and format of the audio device, or set the volume.'#10;
+    'Show the volume (percent) of the audio output, or set it.'#10;
 
 var
   Parser: TOptionParser;
   Device: Int64;
   Volume: QWord;
   Percent: LongWord;
-  Format: TAudioFormat;
   Error: LongInt;
 begin
   ParseOperandsOnly(Parser, Usage);
@@ -60,16 +59,14 @@ begin
   begin
     if not ParseUnsigned(Parser.Operands[0], Volume) or (Volume > 100) then
       FailWithUsageHint('the volume must be 0 to 100', []);
-    Error := SetAudioVolume(Device, LongWord(Volume));
+    Error := SetMasterVolume(Device, LongWord(Volume));
     if Error <> 0 then
       FailWithError(1, Error, 'setting the volume', []);
   end
   else
   begin
-    GetAudioVolume(Device, Percent);
-    GetAudioFormat(Device, Format);
-    WriteFormatted(StandardOutput, 'volume %u%%, %u Hz, %u channels'#10,
-      [ArgumentUnsigned(Percent), ArgumentUnsigned(Format.Rate), ArgumentUnsigned(Format.Channels)]);
+    GetMasterVolume(Device, Percent);
+    WriteFormatted(StandardOutput, 'volume %u%%'#10, [ArgumentUnsigned(Percent)]);
   end;
   CloseAudioOutput(Device);
 end.

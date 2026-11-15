@@ -103,8 +103,10 @@ how the existing pieces fit together.
 - [ ] USB keyboards: key repeat, lock lights
 - [x] Sound: audio framework (/dev/audio, periods ring, formats, volume, drain),
       Intel HD Audio driver, libaudio, tone, play and mixer
-- [ ] Sound: recording, several programs playing at once (mixing), other rates
-      (resampling), AC'97
+- [x] Sound: streams mixed in the kernel (any number of programs), per-stream and
+      master volume, 8-32 bit integer and float samples, 1-8 channels, 8-192 kHz
+- [ ] Sound: voice engine (source/submix/mastering voices), effects, 3D audio,
+      recording, AC'97, USB audio
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads

@@ -19,11 +19,13 @@
 {
   tone - play a sine tone, or write it to a WAV file
 
-  tone [-o FILE] [-r RATE] [-a AMPLITUDE] FREQUENCY SECONDS
+  tone [-o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] FREQUENCY SECONDS
 
   Plays FREQUENCY Hz for SECONDS seconds (a fraction is allowed) on the
-  audio device, or with -o writes it as a 16-bit stereo WAV file. RATE is
-  44100 or 48000 (the default); AMPLITUDE is in percent (default 50).
+  audio device, or with -o writes it as a WAV file. RATE is 8000 to
+  192000 (default 48000), FORMAT u8, s16 (the default), s24, s32 or
+  float, CHANNELS 1 to 8 (default 2, all get the tone); AMPLITUDE is in
+  percent (default 50).
 }
 program tone;
 
@@ -39,21 +41,25 @@ uses
   Sys.Text,
   Util.Messages,
   Util.Options,
+  Audio.Formats,
   Audio.Device,
   Audio.Wave,
   Audio.Synthesis;
 
 const
-  Usage: PChar = 'Usage: tone [-o FILE] [-r RATE] [-a AMPLITUDE] FREQUENCY SECONDS'#10 +
+  Usage: PChar = 'Usage: tone [-o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] FREQUENCY SECONDS'#10 +
     'Play a sine tone of FREQUENCY Hz for SECONDS seconds, or write it to FILE'#10 +
     'as a WAV file.'#10 +
     '  -o FILE       write a WAV file instead of playing'#10 +
-    '  -r RATE       44100 or 48000 samples a second (default 48000)'#10 +
+    '  -r RATE       8000 to 192000 samples a second (default 48000)'#10 +
+    '  -f FORMAT     u8, s16 (default), s24, s32 or float samples'#10 +
+    '  -c CHANNELS   1 to 8 channels (default 2)'#10 +
     '  -a AMPLITUDE  loudness in percent of full scale (default 50)'#10;
   OptionOutput = 1;
   OptionRate = 2;
   OptionAmplitude = 3;
-  Channels = 2;
+  OptionFormat = 4;
+  OptionChannels = 5;
   ChunkFrames = 1024;
 
 { "1.5" into thousandths. }
@@ -89,7 +95,7 @@ end;
 var
   Parser: TOptionParser;
   Code: Integer;
-  Value: PChar;
+  OptionValue: PChar;
   OutputPath: PChar;
   Rate: QWord;
   Amplitude: QWord;
@@ -98,7 +104,13 @@ var
   FramesLeft: QWord;
   Frames: QWord;
   Generator: TToneGenerator;
-  Samples: PSmallInt;
+  Samples: PByte;
+  Kind: LongWord;
+  Channels: QWord;
+  SampleBytes: LongWord;
+  Frame: QWord;
+  Channel: QWord;
+  Value: Single;
   Handle: Int64;
   Format: TAudioFormat;
   Header: array[0..WaveHeaderSize - 1] of Byte;
@@ -107,17 +119,30 @@ begin
   OutputPath := nil;
   Rate := 48000;
   Amplitude := 50;
+  Kind := SampleSigned16;
+  Channels := 2;
   BeginOptions(Parser, [OptionDefinition('o', 'output', True, OptionOutput),
     OptionDefinition('r', 'rate', True, OptionRate),
+    OptionDefinition('f', 'format', True, OptionFormat),
+    OptionDefinition('c', 'channels', True, OptionChannels),
     OptionDefinition('a', 'amplitude', True, OptionAmplitude)], Usage);
-  while NextOption(Parser, Code, Value) do
+  while NextOption(Parser, Code, OptionValue) do
     case Code of
-      OptionOutput: OutputPath := Value;
+      OptionOutput: OutputPath := OptionValue;
       OptionRate:
-        if not ParseUnsigned(Value, Rate) or ((Rate <> 44100) and (Rate <> 48000)) then
-          FailWithUsageHint('the rate must be 44100 or 48000', []);
+        if not ParseUnsigned(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
+          FailWithUsageHint('the rate must be 8000 to 192000', []);
+      OptionFormat:
+        begin
+          Kind := SampleKindOfName(OptionValue);
+          if Kind = 0 then
+            FailWithUsageHint('unknown sample format ''%s''', [ArgumentText(OptionValue)]);
+        end;
+      OptionChannels:
+        if not ParseUnsigned(OptionValue, Channels) or (Channels < 1) or (Channels > 8) then
+          FailWithUsageHint('there can be 1 to 8 channels', []);
       OptionAmplitude:
-        if not ParseUnsigned(Value, Amplitude) or (Amplitude > 100) then
+        if not ParseUnsigned(OptionValue, Amplitude) or (Amplitude > 100) then
           FailWithUsageHint('the amplitude must be 0 to 100', []);
     end;
   if Parser.OperandCount <> 2 then
@@ -129,14 +154,16 @@ begin
 
   FramesLeft := Rate * Thousandths div 1000;
   StartTone(Generator, LongWord(Frequency), LongWord(Rate), LongInt(Amplitude * 32767 div 100));
-  Samples := PSmallInt(AllocateMemory(ChunkFrames * Channels * SizeOf(SmallInt)));
+  SampleBytes := BytesPerSample(Kind);
+  Samples := PByte(AllocateMemory(ChunkFrames * Channels * SampleBytes));
 
   if OutputPath <> nil then
   begin
     Handle := OpenFile(OutputPath, OpenWrite or OpenCreate or OpenTruncate);
     if Handle < 0 then
       FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(OutputPath)]);
-    MakeWaveHeader(@Header[0], LongWord(Rate), Channels, LongWord(FramesLeft * Channels * 2));
+    MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind,
+      LongWord(FramesLeft * Channels * SampleBytes));
     WriteAll(Handle, @Header[0], WaveHeaderSize);
   end
   else
@@ -145,7 +172,8 @@ begin
     if Handle < 0 then
       FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(DefaultAudioDevice)]);
     Format.Rate := LongWord(Rate);
-    Format.Channels := Channels;
+    Format.Channels := LongWord(Channels);
+    Format.Kind := Kind;
     Error := SetAudioFormat(Handle, Format);
     if Error <> 0 then
       FailWithError(1, Error, 'setting the format', []);
@@ -156,8 +184,13 @@ begin
     Frames := FramesLeft;
     if Frames > ChunkFrames then
       Frames := ChunkFrames;
-    FillTone(Generator, Samples, LongWord(Frames), Channels);
-    Error := WriteAll(Handle, Samples, Frames * Channels * SizeOf(SmallInt));
+    for Frame := 0 to Frames - 1 do
+    begin
+      Value := NextToneSample(Generator);
+      for Channel := 0 to Channels - 1 do
+        EncodeSample(Value, Kind, Samples + (Frame * Channels + Channel) * SampleBytes);
+    end;
+    Error := WriteAll(Handle, Samples, Frames * Channels * SampleBytes);
     if Error <> 0 then
       FailWithError(1, Error, 'writing', []);
     FramesLeft := FramesLeft - Frames;

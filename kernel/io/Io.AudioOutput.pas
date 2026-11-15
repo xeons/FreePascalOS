@@ -21,21 +21,25 @@
 
   A sound driver registers each output it has (RegisterAudioOutput) with
   the routines that start and stop playing, report where the hardware is
-  in the ring, and set the volume and sample rate. This unit gives the
-  output its ring - PeriodCount pages ("periods") the hardware plays
-  round and round - and a device file: the first output is /dev/audio.
+  in the ring, and set the volume. The output gets a ring of
+  AudioPeriodCount pages ("periods") that the hardware plays round and
+  round, 16-bit stereo at AudioOutputRate, and a device file: the first
+  output is /dev/audio.
 
-  Programs write 16-bit little-endian samples (stereo, or mono, which is
-  widened to stereo here) at the rate they chose with
-  ControlAudioSetFormat (44100 or 48000 Hz). A write copies the samples
-  into the periods after the one playing, waiting while all of them are
-  full; playing starts once two periods are full. Each time the hardware
-  finishes a period (it interrupts, and the driver calls
-  AudioPeriodsElapsed) the period is cleared, so that if programs fall
-  behind the hardware plays silence rather than old sound. Draining (on
-  request, and when the file is closed) pads the last period with
-  silence, waits until everything has been played and stops the
-  hardware.
+  Mixing. Every open of the device is a stream of its own
+  (Io.AudioStreams), with its own format and volume, so any number of
+  programs play at once. The mixer thread (RunAudioMixer) keeps
+  MixAheadPeriods periods ahead of the hardware: for each it adds up
+  every stream's next frames (converted to the output's format and
+  rate), clips the sum to 16 bits and writes the period. The hardware
+  starts when a stream has something to play and stops after a while of
+  silence. Each period the hardware finishes (it interrupts, and the
+  driver calls AudioPeriodsElapsed) wakes the mixer.
+
+  A write waits while its stream's queue is full; draining (on request,
+  and when the file is closed) waits until everything the stream wrote
+  has been played. The output's volume (the hardware's) applies to every
+  stream; each stream also has its own.
 }
 unit Io.AudioOutput;
 
@@ -50,7 +54,8 @@ uses
 const
   AudioPeriodCount = 16;
   AudioPeriodBytes = 4096;
-  AudioDefaultRate = 48000;
+  AudioPeriodFrames = AudioPeriodBytes div 4;
+  AudioOutputRate = 48000;
 
 type
   TAudioDriverRoutines = record
@@ -61,8 +66,6 @@ type
     Position: function(Context: Pointer): LongWord;
     { 0-100 percent. }
     SetVolume: procedure(Context: Pointer; Percent: LongWord);
-    { False if the hardware cannot play at Rate. Called while stopped. }
-    SetRate: function(Context: Pointer; Rate: LongWord): Boolean;
   end;
 
   PAudioOutput = ^TAudioOutput;
@@ -78,12 +81,14 @@ type
   end;
 
 { Creates an output with its ring and device file (/dev/audio for the
-  first, audio1, ... after that); the driver fills in nothing more. nil
-  if memory is short. }
+  first, audio1, ... after that). nil if memory is short. }
 function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer): PAudioOutput;
 { For the driver, at dispatch level or below: the hardware went on (it
   interrupted). }
 procedure AudioPeriodsElapsed(Output: PAudioOutput);
+{ The mixer: a system thread runs this; it returns at once if there are
+  no outputs, else never. }
+procedure RunAudioMixer(Context: Pointer);
 
 implementation
 
@@ -99,36 +104,215 @@ uses
   Kernel.Threads,
   Kernel.Events,
   Kernel.Mutex,
+  Io.AudioStreams,
   Debug.Output;
 
+type
+  PSmallInt = ^SmallInt;
+
 const
-  StartAfterPeriods = 2;
-  BytesPerFrame = 4; { 16-bit stereo }
-  DefaultVolume = 80;
+  MaximumOutputs = 4;
+  MixAheadPeriods = 4;
+  { Silent periods after which the hardware stops. }
+  StopAfterSilentPeriods = 24;
+  DefaultMasterVolume = 80;
+  MixerIntervalMilliseconds = 50;
 
 type
   POutputState = ^TOutputState;
   TOutputState = record
+    { The streams; taken by the mixer while it mixes. }
+    StreamsLock: TMutex;
+    Streams: PAudioStream;
+    { Guards Played and IsPlaying against the driver's deferred call. }
     Lock: TSpinLock;
-    { Serializes writers, format changes and draining. }
-    WriterLock: TMutex;
-    Played: QWord;      { periods the hardware finished }
-    Written: QWord;     { periods filled }
-    WriteOffset: LongWord; { bytes in the period being filled }
+    Played: QWord;      { periods the hardware moved past }
+    Mixed: QWord;       { periods written }
     IsPlaying: Boolean;
+    SilentPeriods: LongWord;
     PeriodDone: TEvent;
-    Rate: LongWord;
-    Channels: LongWord;
-    Volume: LongWord;
+    MasterVolume: LongWord;
+    Mix: PInt64;
   end;
 
 var
   AudioDriver: PDriverObject;
+  Outputs: array[0..MaximumOutputs - 1] of PAudioOutput;
   OutputCount: Integer;
+  MixerWake: TEvent;
 
 function StateOf(Output: PAudioOutput): POutputState;
 begin
   Result := POutputState(Output^.State);
+end;
+
+{ --- The hardware ring --------------------------------------------------- }
+
+procedure AudioPeriodsElapsed(Output: PAudioOutput);
+var
+  State: POutputState;
+  PreviousLevel: TPriorityLevel;
+  Playing: LongWord;
+begin
+  State := StateOf(Output);
+  PreviousLevel := AcquireSpinLock(State^.Lock);
+  if State^.IsPlaying then
+  begin
+    Playing := (Output^.Routines.Position(Output^.Context) div AudioPeriodBytes) mod AudioPeriodCount;
+    while (State^.Played mod AudioPeriodCount) <> Playing do
+      Inc(State^.Played);
+  end;
+  ReleaseSpinLock(State^.Lock, PreviousLevel);
+  SignalEvent(State^.PeriodDone);
+  SignalEvent(MixerWake);
+end;
+
+{ Mixes every stream into period Index of the ring. Caller holds the
+  streams lock. }
+procedure MixPeriod(Output: PAudioOutput; Index: QWord);
+var
+  State: POutputState;
+  Stream: PAudioStream;
+  Samples: PSmallInt;
+  Position: LongWord;
+  Value: Int64;
+  HadSound: Boolean;
+begin
+  State := StateOf(Output);
+  FillMemory(State^.Mix, AudioPeriodFrames * 2 * SizeOf(Int64), 0);
+  HadSound := False;
+  Stream := State^.Streams;
+  while Stream <> nil do
+  begin
+    if MixStream(Stream, State^.Mix, AudioPeriodFrames) then
+    begin
+      HadSound := True;
+      Stream^.LastSoundPeriod := Index;
+    end;
+    SignalEvent(Stream^.SpaceFreed);
+    Stream := Stream^.Next;
+  end;
+  Samples := PSmallInt(Output^.Periods[Index mod AudioPeriodCount]);
+  for Position := 0 to AudioPeriodFrames * 2 - 1 do
+  begin
+    Value := State^.Mix[Position] div 65536;
+    if Value > High(SmallInt) then
+      Value := High(SmallInt)
+    else if Value < Low(SmallInt) then
+      Value := Low(SmallInt);
+    Samples[Position] := SmallInt(Value);
+  end;
+  if HadSound then
+    State^.SilentPeriods := 0
+  else
+    Inc(State^.SilentPeriods);
+end;
+
+function AnyStreamHasData(State: POutputState): Boolean;
+var
+  Stream: PAudioStream;
+begin
+  Stream := State^.Streams;
+  while Stream <> nil do
+  begin
+    if StreamQueuedBytes(Stream) > 0 then
+      Exit(True);
+    Stream := Stream^.Next;
+  end;
+  Result := False;
+end;
+
+procedure SetPlaying(State: POutputState; Playing: Boolean);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(State^.Lock);
+  State^.IsPlaying := Playing;
+  ReleaseSpinLock(State^.Lock, PreviousLevel);
+end;
+
+{ Keeps the ring ahead of the hardware; starts and stops it. }
+procedure ServiceOutput(Output: PAudioOutput);
+var
+  State: POutputState;
+  Played: QWord;
+begin
+  State := StateOf(Output);
+  AcquireMutex(State^.StreamsLock);
+  if not State^.IsPlaying then
+  begin
+    if AnyStreamHasData(State) then
+    begin
+      State^.Played := 0;
+      State^.Mixed := 0;
+      State^.SilentPeriods := 0;
+      while State^.Mixed < MixAheadPeriods do
+      begin
+        MixPeriod(Output, State^.Mixed);
+        Inc(State^.Mixed);
+      end;
+      SetPlaying(State, True);
+      Output^.Routines.Start(Output^.Context);
+    end;
+    ReleaseMutex(State^.StreamsLock);
+    Exit;
+  end;
+  Played := State^.Played;
+  { Fell behind: the hardware is past what was mixed. }
+  if State^.Mixed <= Played then
+    State^.Mixed := Played + 1;
+  while State^.Mixed < Played + MixAheadPeriods do
+  begin
+    MixPeriod(Output, State^.Mixed);
+    Inc(State^.Mixed);
+  end;
+  if (State^.SilentPeriods >= StopAfterSilentPeriods) and not AnyStreamHasData(State) then
+  begin
+    Output^.Routines.Stop(Output^.Context);
+    SetPlaying(State, False);
+    SignalEvent(State^.PeriodDone);
+  end;
+  ReleaseMutex(State^.StreamsLock);
+end;
+
+procedure RunAudioMixer(Context: Pointer);
+var
+  Index: Integer;
+begin
+  { Outputs register while the system starts, before the mixer runs;
+    without any there is nothing to mix. }
+  if OutputCount = 0 then
+    Exit;
+  while True do
+  begin
+    WaitForEventWithOptions(MixerWake, MixerIntervalMilliseconds, False);
+    for Index := 0 to OutputCount - 1 do
+      ServiceOutput(Outputs[Index]);
+  end;
+end;
+
+{ --- Streams ---------------------------------------------------------------- }
+
+{ Waits until everything Stream wrote has been played. }
+procedure DrainStream(Output: PAudioOutput; Stream: PAudioStream);
+var
+  State: POutputState;
+begin
+  State := StateOf(Output);
+  SignalEvent(MixerWake);
+  repeat
+    ResetEvent(State^.PeriodDone);
+    if (StreamQueuedBytes(Stream) = 0) and
+       (not State^.IsPlaying or (State^.Played > Stream^.LastSoundPeriod)) then
+      Exit;
+    if WaitForEventWithOptions(State^.PeriodDone, 1000, True) = WaitAlerted then
+      Exit;
+  until False;
+end;
+
+function StreamOf(var Request: TIoRequest): PAudioStream;
+begin
+  Result := PAudioStream(Request.OpenFile^.Context);
 end;
 
 function OutputOfDevice(Device: PDeviceObject): PAudioOutput;
@@ -136,241 +320,123 @@ begin
   Result := PAudioOutput(Device^.Extension);
 end;
 
-{ --- The ring ---------------------------------------------------------------- }
-
-procedure AudioPeriodsElapsed(Output: PAudioOutput);
+function OpenAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   State: POutputState;
-  PreviousLevel: TPriorityLevel;
-  Playing: LongWord;
-  Moved: Boolean;
+  Stream: PAudioStream;
 begin
-  State := StateOf(Output);
-  PreviousLevel := AcquireSpinLock(State^.Lock);
-  Moved := False;
-  if State^.IsPlaying then
-  begin
-    Playing := (Output^.Routines.Position(Output^.Context) div AudioPeriodBytes) mod AudioPeriodCount;
-    { Every period before the one playing now is done: cleared, so that
-      it plays silence if nothing new comes. }
-    while (State^.Played mod AudioPeriodCount) <> Playing do
-    begin
-      ZeroMemory(Output^.Periods[State^.Played mod AudioPeriodCount], AudioPeriodBytes);
-      Inc(State^.Played);
-      Moved := True;
-    end;
-  end;
-  ReleaseSpinLock(State^.Lock, PreviousLevel);
-  if Moved then
-    SignalEvent(State^.PeriodDone);
+  State := StateOf(OutputOfDevice(Device));
+  Stream := CreateAudioStream(AudioOutputRate);
+  if Stream = nil then
+    Exit(ErrorOutOfMemory);
+  AcquireMutex(State^.StreamsLock);
+  Stream^.Next := State^.Streams;
+  State^.Streams := Stream;
+  ReleaseMutex(State^.StreamsLock);
+  Request.OpenFile^.Context := Stream;
+  Result := ErrorNone;
 end;
 
-{ Clears the ring and the counts (while not playing). }
-procedure ResetRing(Output: PAudioOutput);
-var
-  Index: Integer;
-  State: POutputState;
-begin
-  State := StateOf(Output);
-  for Index := 0 to AudioPeriodCount - 1 do
-    ZeroMemory(Output^.Periods[Index], AudioPeriodBytes);
-  State^.Played := 0;
-  State^.Written := 0;
-  State^.WriteOffset := 0;
-end;
-
-procedure StartIfReady(Output: PAudioOutput; Force: Boolean);
-var
-  State: POutputState;
-begin
-  State := StateOf(Output);
-  if State^.IsPlaying or ((State^.Written < StartAfterPeriods) and not Force) then
-    Exit;
-  State^.IsPlaying := True;
-  Output^.Routines.Start(Output^.Context);
-end;
-
-{ Waits until a period after the one playing is free for writing; False
-  if the wait was interrupted. }
-function WaitForFreePeriod(Output: PAudioOutput): Boolean;
-var
-  State: POutputState;
-  PreviousLevel: TPriorityLevel;
-  Free: Boolean;
-begin
-  State := StateOf(Output);
-  repeat
-    PreviousLevel := AcquireSpinLock(State^.Lock);
-    { Fell behind: the hardware played past what was written. }
-    if State^.IsPlaying and (State^.Written <= State^.Played) then
-    begin
-      State^.Written := State^.Played + 1;
-      State^.WriteOffset := 0;
-    end;
-    Free := State^.Written < State^.Played + AudioPeriodCount - 1;
-    if not Free then
-      ResetEvent(State^.PeriodDone);
-    ReleaseSpinLock(State^.Lock, PreviousLevel);
-    if Free then
-      Exit(True);
-    if not State^.IsPlaying then
-      StartIfReady(Output, True);
-    if WaitForEventWithOptions(State^.PeriodDone, 1000, True) = WaitAlerted then
-      Exit(False);
-  until False;
-end;
-
-{ Copies Count frames of stereo samples into the ring. }
-function WriteFrames(Output: PAudioOutput; Source: PByte; ByteCount: QWord; Mono: Boolean): QWord;
-var
-  State: POutputState;
-  Period: PByte;
-  Room: LongWord;
-  Frames: LongWord;
-  Frame: LongWord;
-  SourceStep: LongWord;
-begin
-  State := StateOf(Output);
-  Result := 0;
-  if Mono then
-    SourceStep := 2
-  else
-    SourceStep := BytesPerFrame;
-  while ByteCount - Result >= SourceStep do
-  begin
-    if not WaitForFreePeriod(Output) then
-      Exit;
-    Period := Output^.Periods[State^.Written mod AudioPeriodCount];
-    Room := (AudioPeriodBytes - State^.WriteOffset) div BytesPerFrame;
-    Frames := LongWord((ByteCount - Result) div SourceStep);
-    if Frames > Room then
-      Frames := Room;
-    if Mono then
-      for Frame := 0 to Frames - 1 do
-      begin
-        PWord(Period + State^.WriteOffset + Frame * BytesPerFrame)^ := PWord(Source + Result + Frame * 2)^;
-        PWord(Period + State^.WriteOffset + Frame * BytesPerFrame + 2)^ := PWord(Source + Result + Frame * 2)^;
-      end
-    else
-      CopyMemory(Period + State^.WriteOffset, Source + Result, Frames * BytesPerFrame);
-    State^.WriteOffset := State^.WriteOffset + Frames * BytesPerFrame;
-    Result := Result + Frames * SourceStep;
-    if State^.WriteOffset = AudioPeriodBytes then
-    begin
-      State^.WriteOffset := 0;
-      Inc(State^.Written);
-      StartIfReady(Output, False);
-    end;
-  end;
-end;
-
-{ Plays out what was written (the last period padded with silence),
-  then stops the hardware. }
-procedure Drain(Output: PAudioOutput);
-var
-  State: POutputState;
-begin
-  State := StateOf(Output);
-  if State^.WriteOffset > 0 then
-  begin
-    State^.WriteOffset := 0;
-    Inc(State^.Written);
-  end;
-  if State^.Written > 0 then
-  begin
-    StartIfReady(Output, True);
-    { Played counts the periods the hardware has moved past. }
-    while State^.IsPlaying and (State^.Played < State^.Written) do
-      if WaitForEventWithOptions(State^.PeriodDone, 1000, False) <> WaitSignaled then
-        Break;
-  end;
-  if State^.IsPlaying then
-  begin
-    Output^.Routines.Stop(Output^.Context);
-    State^.IsPlaying := False;
-  end;
-  ResetRing(Output);
-end;
-
-{ --- The device file ---------------------------------------------------------- }
-
-function WriteAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
+function CloseAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Output: PAudioOutput;
   State: POutputState;
+  Stream: PAudioStream;
+  Link: ^PAudioStream;
 begin
   Output := OutputOfDevice(Device);
   State := StateOf(Output);
-  AcquireMutex(State^.WriterLock);
-  Request.Information := Int64(WriteFrames(Output, PByte(Request.Buffer), Request.Length,
-    State^.Channels = 1));
-  ReleaseMutex(State^.WriterLock);
-  if (Request.Information = 0) and (Request.Length >= 2) then
-    Result := ErrorInterrupted
-  else
-    Result := ErrorNone;
+  Stream := StreamOf(Request);
+  Result := ErrorNone;
+  if Stream = nil then
+    Exit;
+  DrainStream(Output, Stream);
+  AcquireMutex(State^.StreamsLock);
+  Link := @State^.Streams;
+  while (Link^ <> nil) and (Link^ <> Stream) do
+    Link := @Link^^.Next;
+  if Link^ = Stream then
+    Link^ := Stream^.Next;
+  ReleaseMutex(State^.StreamsLock);
+  DestroyAudioStream(Stream);
+  Request.OpenFile^.Context := nil;
 end;
 
-function SetFormat(Output: PAudioOutput; Format: QWord): LongInt;
+function WriteAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
-  State: POutputState;
-  Rate: LongWord;
-  Channels: LongWord;
+  Stream: PAudioStream;
+  Done: QWord;
+  Taken: QWord;
 begin
-  State := StateOf(Output);
-  Rate := LongWord(Format shr 16);
-  Channels := LongWord((Format shr 8) and $FF);
-  if ((Format and $FF) <> 16) or not (Channels in [1, 2]) or ((Rate <> 44100) and (Rate <> 48000)) then
-    Exit(ErrorInvalidArgument);
-  Drain(Output);
-  if not Output^.Routines.SetRate(Output^.Context, Rate) then
-    Exit(ErrorUnsupported);
-  State^.Rate := Rate;
-  State^.Channels := Channels;
+  Stream := StreamOf(Request);
+  Done := 0;
   Result := ErrorNone;
+  while Done + Stream^.BytesPerFrame <= Request.Length do
+  begin
+    ResetEvent(Stream^.SpaceFreed);
+    Taken := QueueStreamData(Stream, PByte(Request.Buffer) + Done, Request.Length - Done);
+    Done := Done + Taken;
+    SignalEvent(MixerWake);
+    if (Taken = 0) and (WaitForEventWithOptions(Stream^.SpaceFreed, 1000, True) = WaitAlerted) then
+    begin
+      if Done = 0 then
+        Result := ErrorInterrupted;
+      Break;
+    end;
+  end;
+  Request.Information := Int64(Done);
 end;
 
 function ControlAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Output: PAudioOutput;
   State: POutputState;
+  Stream: PAudioStream;
+  Argument: QWord;
 begin
   Output := OutputOfDevice(Device);
   State := StateOf(Output);
+  Stream := StreamOf(Request);
+  Argument := Request.ControlArgument;
   Result := ErrorNone;
-  AcquireMutex(State^.WriterLock);
   case Request.ControlCode of
     ControlAudioGetFormat:
-      Request.Information := (Int64(State^.Rate) shl 16) or (Int64(State^.Channels) shl 8) or 16;
+      Request.Information := (Int64(Stream^.Rate) shl 16) or (Int64(Stream^.Channels) shl 8) or Stream^.Kind;
     ControlAudioSetFormat:
-      Result := SetFormat(Output, Request.ControlArgument);
+      begin
+        DrainStream(Output, Stream);
+        AcquireMutex(State^.StreamsLock);
+        if not SetStreamFormat(Stream, LongWord(Argument shr 16), LongWord((Argument shr 8) and $FF),
+          LongWord(Argument and $FF), AudioOutputRate) then
+          Result := ErrorInvalidArgument;
+        ReleaseMutex(State^.StreamsLock);
+      end;
     ControlAudioGetVolume:
-      Request.Information := State^.Volume;
+      Request.Information := Stream^.Volume;
     ControlAudioSetVolume:
-      if Request.ControlArgument > 100 then
+      if Argument > 100 then
+        Result := ErrorInvalidArgument
+      else
+        SetStreamVolume(Stream, LongWord(Argument));
+    ControlAudioDrain:
+      DrainStream(Output, Stream);
+    ControlAudioGetMasterVolume:
+      Request.Information := State^.MasterVolume;
+    ControlAudioSetMasterVolume:
+      if Argument > 100 then
         Result := ErrorInvalidArgument
       else
       begin
-        State^.Volume := LongWord(Request.ControlArgument);
-        Output^.Routines.SetVolume(Output^.Context, State^.Volume);
+        State^.MasterVolume := LongWord(Argument);
+        Output^.Routines.SetVolume(Output^.Context, State^.MasterVolume);
       end;
-    ControlAudioDrain:
-      Drain(Output);
+    ControlAudioGetQueued:
+      Request.Information := StreamQueuedBytes(Stream);
+    ControlAudioGetPosition:
+      Request.Information := Int64(Stream^.FramesTaken);
   else
     Result := ErrorInvalidArgument;
   end;
-  ReleaseMutex(State^.WriterLock);
-end;
-
-function CloseAudioDevice(Device: PDeviceObject; var Request: TIoRequest): LongInt;
-var
-  Output: PAudioOutput;
-begin
-  Output := OutputOfDevice(Device);
-  AcquireMutex(StateOf(Output)^.WriterLock);
-  Drain(Output);
-  ReleaseMutex(StateOf(Output)^.WriterLock);
-  Result := ErrorNone;
 end;
 
 function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer): PAudioOutput;
@@ -383,28 +449,31 @@ var
   Name: array[0..15] of Char;
 begin
   Result := nil;
+  if OutputCount = MaximumOutputs then
+    Exit;
   if AudioDriver = nil then
   begin
     FillMemory(@Dispatch, SizeOf(Dispatch), 0);
+    Dispatch[IoFunctionOpen] := @OpenAudioDevice;
+    Dispatch[IoFunctionClose] := @CloseAudioDevice;
     Dispatch[IoFunctionWrite] := @WriteAudioDevice;
     Dispatch[IoFunctionControl] := @ControlAudioDevice;
-    Dispatch[IoFunctionClose] := @CloseAudioDevice;
     AudioDriver := CreateDriver('audio', Dispatch);
+    InitializeEvent(MixerWake, EventKindSynchronization, False);
   end;
-  if OutputCount = 0 then
-    CopyText(@Name[0], 'audio', SizeOf(Name))
-  else
+  CopyText(@Name[0], 'audio', SizeOf(Name));
+  if OutputCount > 0 then
   begin
-    CopyText(@Name[0], 'audio', SizeOf(Name));
     Name[5] := Char(Ord('0') + OutputCount);
     Name[6] := #0;
   end;
   State := POutputState(AllocateZeroedKernelMemory(SizeOf(TOutputState)));
-  if State = nil then
-    Exit;
   Result := PAudioOutput(AllocateZeroedKernelMemory(SizeOf(TAudioOutput)));
-  if Result = nil then
-    Exit;
+  if (State = nil) or (Result = nil) then
+    Exit(nil);
+  State^.Mix := PInt64(AllocateKernelMemory(AudioPeriodFrames * 2 * SizeOf(Int64)));
+  if State^.Mix = nil then
+    Exit(nil);
   for Index := 0 to AudioPeriodCount - 1 do
   begin
     Result^.PeriodsPhysical[Index] := AllocateZeroedPhysicalPage(PageUsageGeneral);
@@ -415,17 +484,16 @@ begin
   Result^.Routines := Routines;
   Result^.Context := Context;
   Result^.State := State;
+  InitializeMutex(State^.StreamsLock);
   InitializeSpinLock(State^.Lock);
-  InitializeMutex(State^.WriterLock);
   InitializeEvent(State^.PeriodDone, EventKindNotification, False);
-  State^.Rate := AudioDefaultRate;
-  State^.Channels := 2;
-  State^.Volume := DefaultVolume;
+  State^.MasterVolume := DefaultMasterVolume;
   Result^.Device := CreateDevice(AudioDriver, @Name[0], DeviceKindCharacter, EveryoneReadWrite, 0);
   if Result^.Device = nil then
     Exit(nil);
   Result^.Device^.Extension := Result;
-  Routines.SetVolume(Context, DefaultVolume);
+  Routines.SetVolume(Context, DefaultMasterVolume);
+  Outputs[OutputCount] := Result;
   Inc(OutputCount);
 end;
 

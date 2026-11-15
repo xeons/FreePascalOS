@@ -70,6 +70,7 @@ uses
   Objects.Manager,
   Io.Startup,
   Io.BlockCache,
+  Io.AudioOutput,
   Drivers.Ps2Keyboard,
   Drivers.UsbKeyboard,
   Kernel.DebugShell,
@@ -237,6 +238,8 @@ begin
   InitializeIoSystem;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
+  if CreateSystemThread(@RunAudioMixer, nil, PhaseOneThreadPriority, 'AudioMixer', False) = nil then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the audio mixer', 0, 0, 0, 0);
   StartConsoleInterruptHandler;
   StartHangWatch;
 

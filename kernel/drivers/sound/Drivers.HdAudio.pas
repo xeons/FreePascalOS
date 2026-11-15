@@ -30,8 +30,9 @@
   Sound comes from the audio framework's ring (Io.AudioOutput): the
   first output stream's buffer descriptor list has one entry per period,
   each raising an interrupt when played (by MSI; without it a timer asks
-  where the stream is). Formats are 16-bit stereo at 44.1 or 48 kHz; the
-  volume is the converter's output amplifier.
+  where the stream is). The stream plays 16-bit stereo at 48 kHz (the
+  framework mixes everything into that); the volume is the converter's
+  output amplifier.
 }
 unit Drivers.HdAudio;
 
@@ -126,7 +127,6 @@ const
   WidgetTypePin = 4;
   PinCanOutput = $10;
   PinControlOutput = $40;
-  RateBit44100 = $20;
   RateBit48000 = $40;
 
   AmplifierOutput = $8000;
@@ -135,7 +135,6 @@ const
   AmplifierMute = $80;
 
   FormatStereo16Bit48000 = $0011;
-  FormatStereo16Bit44100 = $4011;
   CommandTimeoutMilliseconds = 100;
   PollIntervalMilliseconds = 10;
 
@@ -430,6 +429,8 @@ begin
     List[Index * 2 + 1] := AudioPeriodBytes or (QWord(1) shl 32);
   end;
   Controller^.Format := FormatStereo16Bit48000;
+  if (Controller^.SupportedRates and RateBit48000) = 0 then
+    Exit(False);
   SetUpStreamRegisters(Controller);
   Result := True;
 end;
@@ -473,21 +474,6 @@ begin
   if Percent = 0 then
     Gain := AmplifierMute;
   ShortVerb(Controller, Controller^.Converter, VerbSetAmplifier, AmplifierOutput or AmplifierBothSides or Gain);
-end;
-
-function SetRate(Context: Pointer; Rate: LongWord): Boolean;
-var
-  Controller: PHdAudioController;
-begin
-  Controller := PHdAudioController(Context);
-  if (Rate = 48000) and ((Controller^.SupportedRates and RateBit48000) <> 0) then
-    Controller^.Format := FormatStereo16Bit48000
-  else if (Rate = 44100) and ((Controller^.SupportedRates and RateBit44100) <> 0) then
-    Controller^.Format := FormatStereo16Bit44100
-  else
-    Exit(False);
-  ApplyFormat(Controller);
-  Result := True;
 end;
 
 { Deferred call: after the stream's interrupt, or the poll timer. }
@@ -556,7 +542,6 @@ begin
   Routines.Stop := @StopStream;
   Routines.Position := @StreamPositionOf;
   Routines.SetVolume := @SetVolume;
-  Routines.SetRate := @SetRate;
   Controller^.Output := RegisterAudioOutput(Routines, Controller);
   if (Controller^.Output = nil) or not SetUpStream(Controller) then
     Exit;
