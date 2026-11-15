@@ -1195,6 +1195,119 @@ checks.append(('common dialogs: save a file (a name typed; replacing refused)',
 checks.append(('common dialogs: choose a colour and a font',
                dialogs_ok and b'color 00FF00' in log_from_here and b'font 110 bold' in log_from_here))
 
+# Notepad, from the keyboard: /etc/passwd opened from the command line
+# (its name in the title, its first line shown); words typed at its end,
+# the last undone (Ctrl+Z) and done again (Ctrl+Y); saved as
+# /tmp/note.txt through the save dialog (File > Save As from the
+# keyboard, the name typed, Enter) and read back over the serial shell;
+# a word found (Ctrl+F, typed, Enter) and found again (F3); a new
+# document (Ctrl+N: nothing to save) with a line too long for the
+# window, broken into rows by word wrap (Format > Word Wrap), where Home
+# goes to the start of the caret's row, and joined again; then File >
+# Exit asks to save the changes: Cancel keeps it open, No ends it.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'notepad /etc/passwd > /tmp/n.log &\r')
+time.sleep(3)
+
+
+def notepad_log(marker):
+    type_on_serial(b'm=DONE; cat /tmp/n.log; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 15)
+    return bytes(received[received.rfind(marker.encode() + b' $m'):])
+
+
+def last_status(log):
+    found = re.findall(rb'status (\d+) (\d+)', log)
+    return (int(found[-1][0]), int(found[-1][1])) if found else (0, 0)
+
+
+log_from_here = notepad_log('NOTEPAD-OPENED')
+notepad_started = b'title passwd - Notepad' in log_from_here
+checks.append(('notepad: a file opened from the command line (title, first line)',
+               notepad_started and b'opened /etc/passwd' in log_from_here and
+               b'first-line root:x:0:0:Administrator:/:/bin/sh' in log_from_here))
+long_line = 'the quick brown fox jumps over the lazy dog ' * 3
+wrapped_status = (0, 0)
+file_ok = False
+if notepad_started:
+    press('ctrl-end')
+    type_on_keyboard('hello world')
+    press('ctrl-z')
+    time.sleep(0.5)
+    press('ctrl-y')
+    time.sleep(0.5)
+    press('alt-f')
+    time.sleep(0.5)
+    press('a')
+    time.sleep(1.5)
+    for key in ('slash', 't', 'm', 'p', 'slash', 'n', 'o', 't', 'e', 'dot', 't', 'x', 't', 'ret'):
+        press(key)
+    time.sleep(1.5)
+    # (The file ends without a line feed: the echo follows on its line.)
+    type_on_serial(b'cat /tmp/note.txt; m=DONE; echo NOTE $m\r')
+    file_ok = wait_for('NOTE DONE', 10)
+    file_output = bytes(received[received.rfind(b'NOTE $m'):])
+    file_ok = file_ok and re.search(rb'\nroot:x:0:0:Administrator:/:/bin/sh\r?\nuser:x:1000:.*\r?\n'
+                                    rb'nobody:x:65534:65534:Nobody:/:/bin/false\r?\nhello worldNOTE DONE',
+                                    file_output) is not None
+    press('ctrl-home')
+    press('ctrl-f')
+    time.sleep(1)
+    type_on_keyboard('user')
+    press('ret')
+    time.sleep(0.8)
+    press('esc')
+    time.sleep(0.8)
+    press('f3')
+    time.sleep(0.5)
+    press('ctrl-n')
+    time.sleep(0.8)
+    type_on_keyboard(long_line.strip())
+    press('alt-o')
+    time.sleep(0.5)
+    press('w')
+    time.sleep(0.8)
+    press('home')
+    time.sleep(0.5)
+    wrapped_status = last_status(notepad_log('NOTEPAD-WRAPPED'))
+    press('alt-o')
+    time.sleep(0.5)
+    press('w')
+    time.sleep(0.8)
+    press('alt-f')
+    time.sleep(0.5)
+    press('x')
+    time.sleep(1)
+    press('esc')
+    time.sleep(0.8)
+    press('alt-f')
+    time.sleep(0.5)
+    press('x')
+    time.sleep(1)
+    press('alt-n')
+    time.sleep(1)
+log_from_here = notepad_log('NOTEPAD-ENDED')
+type_on_serial(b'kill %1; wait; m=DONE; echo NOTEPAD-SERVER $m\r')
+wait_for('NOTEPAD-SERVER DONE', 15)
+wrap_rows = re.search(rb'wrap on (\d+)', log_from_here)
+checks.append(('notepad: undo a word, redo it', notepad_started and
+               re.search(rb'undone hello \r?\n', log_from_here) is not None and
+               b'redone hello world' in log_from_here))
+checks.append(('notepad: saved as a new file through the save dialog (its text read back)',
+               notepad_started and b'saved /tmp/note.txt' in log_from_here and
+               b'title note.txt - Notepad' in log_from_here and file_ok))
+checks.append(('notepad: find (Ctrl+F) and find next (F3)',
+               notepad_started and b'found 2 1' in log_from_here and b'found 2 27' in log_from_here))
+checks.append(('notepad: word wrap breaks a long line into rows; Home goes to the row\'s start',
+               notepad_started and b'title Untitled - Notepad' in log_from_here and wrap_rows is not None and
+               int(wrap_rows.group(1)) >= 2 and b'wrap off 1' in log_from_here and wrapped_status[0] == 1 and
+               1 < wrapped_status[1] < len(long_line.strip()) + 1))
+checks.append(('notepad: Exit asks to save the changes (Cancel stays, No ends it)',
+               notepad_started and b'answer cancel' in log_from_here and b'answer no' in log_from_here and
+               log_from_here.count(b'\nexit') == 1 and
+               log_from_here.find(b'answer cancel') < log_from_here.find(b'answer no')))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

@@ -124,7 +124,8 @@ type
     procedure EnabledChanged; virtual;
     procedure TextChanged; virtual;
     { The size changed: place the children (the default docks those with
-      an Align, in order). }
+      an Align to a side, in order, then gives what is left to those
+      aligned to the client area, whenever they were made). }
     procedure Layout; virtual;
     { Tells the parent (MessageNotify) and OnNotify listeners. }
     procedure Notify(Code: LongWord);
@@ -343,9 +344,13 @@ begin
           Child.FPixelBounds := MakeRectangle(Remaining.Right - Size, Remaining.Top, Size, RectangleHeight(Remaining));
           Remaining.Right := Remaining.Right - Size;
         end;
-      AlignClient:
-        Child.FPixelBounds := Remaining;
     end;
+  end;
+  for Index := 0 to FChildren.Count - 1 do
+  begin
+    Child := TControl(FChildren[Index]);
+    if Child.FVisible and (Child.FAlign = AlignClient) then
+      Child.FPixelBounds := Remaining;
   end;
   for Index := 0 to FChildren.Count - 1 do
     TControl(FChildren[Index]).UpdatePixelBounds;
