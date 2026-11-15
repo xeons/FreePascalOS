@@ -21,8 +21,9 @@
 
   A tool button shows its text (or whatever its OnPaint draws); it looks
   raised while the pointer is over it, pressed while held, and clicks
-  when let go on it. A toggle button stays down until clicked again
-  (Down). Separators are gaps with an etched line.
+  when let go on it, or on Alt and its mnemonic ("&Bold"). A toggle
+  button stays down until clicked again (Down). Separators are gaps
+  with an etched line.
 }
 unit Controls.ToolBar;
 
@@ -51,6 +52,8 @@ type
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
   public
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
     property IsToggle: Boolean read FIsToggle write FIsToggle;
     property Down: Boolean read FDown write SetDown;
     property IsSeparator: Boolean read FIsSeparator;
@@ -115,11 +118,23 @@ begin
   else if FHovered and Enabled then
     DrawEdge(Canvas, Box, Theme.Highlight, Theme.Shadow);
   if Enabled then
-    DrawTextInBox(Canvas, ControlFace, Text, OffsetRectangle(InflateRectangle(Box, -Scaled(3)), Shift, Shift),
+    DrawMnemonicTextInBox(Canvas, ControlFace, Text, OffsetRectangle(InflateRectangle(Box, -Scaled(3)), Shift, Shift),
       AlignTextCenter, Theme.FaceText)
   else
-    DrawDisabledText(Canvas, ControlFace, Text, (RectangleWidth(Box) - TextWidth(ControlFace, Text)) div 2,
+    DrawDisabledMnemonicText(Canvas, ControlFace, Text, (RectangleWidth(Box) - MnemonicTextWidth(ControlFace, Text)) div 2,
       (RectangleHeight(Box) - TextHeight(ControlFace)) div 2);
+end;
+
+function TToolButton.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := not FIsSeparator and TextMatchesMnemonic(Character);
+end;
+
+procedure TToolButton.ActivateMnemonic(Character: LongWord);
+begin
+  if FIsToggle then
+    Down := not FDown;
+  Click;
 end;
 
 procedure TToolButton.PointerEnter;

@@ -25,7 +25,9 @@
   A menu bar (File, Help), a toolbar, a tab control with four pages
   (a list box and a combo box; a multi-line edit box; a tree view; a
   list view) and a status bar; Ctrl+M asks a question in a message box,
-  Help > About shows one. Prints what happens, a line each:
+  Help > About shows one. Menus, items and tabs have mnemonics (Alt+H
+  opens Help; F10 or Alt alone picks the menu bar). Prints what
+  happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels), at start
     menu TEXT             a menu item was chosen
@@ -67,7 +69,8 @@ uses
   Controls.TreeView,
   Controls.ListView,
   Controls.Dialogs,
-  Controls.MessageBoxes;
+  Controls.MessageBoxes,
+  Controls.Text;
 
 const
   KeyM = $32;
@@ -112,15 +115,15 @@ var
 begin
   inherited Create('Controls tour', 60, 40, 480, 360);
   FMenuBar := TMenuBar.Create(Root);
-  FileMenu := FMenuBar.Menu.Add('File');
-  FileMenu.Add('New', nil, 'Ctrl+N');
-  FileMenu.Add('Open...', nil, 'Ctrl+O');
+  FileMenu := FMenuBar.Menu.Add('&File');
+  FileMenu.Add('&New', nil, 'Ctrl+N');
+  FileMenu.Add('&Open...', nil, 'Ctrl+O');
   FileMenu.AddSeparator;
-  FileMenu.Add('Recent').Add('notes.txt');
+  FileMenu.Add('&Recent').Add('&notes.txt');
   FileMenu.AddSeparator;
-  FileMenu.Add('Exit', @ExitChosen);
-  HelpMenu := FMenuBar.Menu.Add('Help');
-  HelpMenu.Add('About', @AboutChosen);
+  FileMenu.Add('E&xit', @ExitChosen);
+  HelpMenu := FMenuBar.Menu.Add('&Help');
+  HelpMenu.Add('&About', @AboutChosen);
   FMenuBar.OnChoose := @MenuChosen;
   FToolBar := TToolBar.Create(Root);
   FToolBar.AddButton('New', 40, @ToolClicked);
@@ -143,7 +146,7 @@ var
   Node: TTreeNode;
   Index: LongInt;
 begin
-  Page := FTabs.AddPage('Lists');
+  Page := FTabs.AddPage('&Lists');
   Page.OnNotify := @ChildNotified;
   FList := TListBox.Create(Page);
   FList.SetBounds(8, 8, 160, 120);
@@ -155,12 +158,12 @@ begin
   FCombo.Items.Add('Second');
   FCombo.Items.Add('Third');
   FCombo.ItemIndex := 0;
-  Page := FTabs.AddPage('Text');
+  Page := FTabs.AddPage('&Text');
   Page.OnNotify := @ChildNotified;
   FEdit := TTextEdit.Create(Page);
   FEdit.SetBounds(8, 8, 300, 150);
   FEdit.SetAllText('Lines of text'#10'to edit'#10'here');
-  Page := FTabs.AddPage('Tree');
+  Page := FTabs.AddPage('T&ree');
   Page.OnNotify := @ChildNotified;
   FTree := TTreeView.Create(Page);
   FTree.SetBounds(8, 8, 220, 180);
@@ -170,7 +173,7 @@ begin
   Node.Add('etc');
   Node.Expanded := True;
   FTree.AddRoot('Home').Add('user');
-  Page := FTabs.AddPage('Details');
+  Page := FTabs.AddPage('&Details');
   Page.OnNotify := @ChildNotified;
   FDetails := TListView.Create(Page);
   FDetails.SetBounds(8, 8, 360, 180);
@@ -209,7 +212,7 @@ end;
 
 procedure TTourWindow.MenuChosen(Item: TMenuItem);
 begin
-  Say('menu ' + Item.Text);
+  Say('menu ' + Item.Caption);
 end;
 
 procedure TTourWindow.ExitChosen(Item: TMenuItem);

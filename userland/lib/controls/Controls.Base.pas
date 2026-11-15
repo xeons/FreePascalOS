@@ -32,6 +32,10 @@
 
   Sizes in pixels come from the display's scale (Scaled), so controls
   are the same size on every display.
+
+  A control whose caption can carry a mnemonic ("&OK", Controls.Text)
+  says whether a character picks it (MatchesMnemonic) and what picking
+  it does (ActivateMnemonic); the window asks them on Alt and a letter.
 }
 unit Controls.Base;
 
@@ -66,6 +70,9 @@ type
     function FocusedControl: TControl; virtual; abstract;
     procedure CapturePointer(Control: TControl); virtual; abstract;
     procedure ControlRemoved(Control: TControl); virtual; abstract;
+    { Focuses the first control after Control (in the order they were
+      made) that takes the focus: what a label's mnemonic does. }
+    procedure FocusControlAfter(Control: TControl); virtual; abstract;
     { The window the controls are in (to post messages to, say). }
     function OwnerWindow: TMessageReceiver; virtual; abstract;
   end;
@@ -119,6 +126,9 @@ type
     procedure Notify(Code: LongWord);
     procedure Click; virtual;
     procedure Changed; virtual;
+    { Whether Character is the mnemonic in this control's Text: for the
+      controls whose text is a caption to override MatchesMnemonic with. }
+    function TextMatchesMnemonic(Character: LongWord): Boolean;
   public
     constructor Create(AParent: TControl); virtual;
     destructor Destroy; override;
@@ -148,6 +158,11 @@ type
     procedure HandlePointerLeave;
     procedure HandleWheel(Steps: LongInt);
     function HandleKeyDown(Code, Character, Modifiers: LongWord): Boolean;
+    { Whether Character (typed with Alt) picks this control; none does
+      unless it says so. }
+    function MatchesMnemonic(Character: LongWord): Boolean; virtual;
+    { Picked by its mnemonic: the default focuses it. }
+    procedure ActivateMnemonic(Character: LongWord); virtual;
     procedure HandleKeyUp(Code, Modifiers: LongWord);
     procedure HandleFocusChanged;
     property Parent: TControl read FParent;
@@ -192,7 +207,8 @@ implementation
 
 uses
   Windowing.Theme,
-  Windowing.Connection;
+  Windowing.Connection,
+  Controls.Text;
 
 { --- TControl ----------------------------------------------------------------- }
 
@@ -550,6 +566,21 @@ begin
     FOnKeyDown(Self, Code, Character, Modifiers, Result);
   if not Result and FEnabled then
     Result := KeyDown(Code, Character, Modifiers);
+end;
+
+function TControl.TextMatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := MnemonicMatches(FText, Character);
+end;
+
+function TControl.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TControl.ActivateMnemonic(Character: LongWord);
+begin
+  SetFocus;
 end;
 
 procedure TControl.HandleKeyUp(Code, Modifiers: LongWord);

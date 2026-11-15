@@ -34,6 +34,16 @@
   closes one level, Left and Right go between submenus and the bar's
   menus. Only the newest pop-up holds the pointer, so it passes what
   happens over the others (its parents, the menu bar) on to them.
+
+  Items and headings may have mnemonics ("&File", Controls.Text): Alt
+  and a heading's letter opens its menu (the window asks the bar like
+  any other control), and in an open menu an item's letter, with or
+  without Alt, chooses it (or opens its submenu). F10, or Alt pressed
+  and let go alone, puts the bar in keyboard mode (the window starts
+  it): a heading is picked, Left and Right pick another, Down, Up or
+  Enter open its menu with the first item highlighted, a heading's
+  letter opens that one, and Escape or Alt again leave. Escape in a
+  menu opened from the bar goes back to its heading.
 }
 unit Controls.Menus;
 
@@ -71,6 +81,9 @@ type
     destructor Destroy; override;
     function Add(const AText: string; AOnClick: TMenuItemEvent = nil; const AShortcutText: string = ''): TMenuItem;
     procedure AddSeparator;
+    { The text as shown ("Open..." for "&Open..."). }
+    function Caption: string;
+    { The text with its mnemonic mark ("&Open..."). }
     property Text: string read FText write FText;
     property ShortcutText: string read FShortcutText write FShortcutText;
     property Enabled: Boolean read FEnabled write FEnabled;
@@ -97,7 +110,9 @@ type
     function ItemTop(Index: LongInt): LongInt;
     function ItemAt(Y: LongInt): LongInt;
     procedure Highlight(Index: LongInt);
+    procedure HighlightFirst;
     procedure OpenSubmenu;
+    function ChooseByMnemonic(Character: LongWord): Boolean;
     procedure CloseSubmenu;
     procedure Choose(Item: TMenuItem);
     function PassOn(X, Y: LongInt; Pressed: Boolean): Boolean;
@@ -113,23 +128,37 @@ type
     property Menu: TMenuItem read FMenu;
   end;
 
-  TMenuBar = class(TControl)
+  TMenuBar = class(TWindowMenuBar)
   private
     FMenu: TMenuItem;
     FOpenIndex: LongInt;
+    { The heading picked in keyboard mode while no menu is open; -1 when
+      not in keyboard mode. }
+    FPickedIndex: LongInt;
     FOpenList: TMenuList;
     FOnChoose: TMenuItemEvent;
     function HeadingLeft(Index: LongInt): LongInt;
     function HeadingWidth(Index: LongInt): LongInt;
     function HeadingAt(X: LongInt): LongInt;
+    function HeadingWithMnemonic(Character: LongWord): LongInt;
+    function NextHeading(Index, Step: LongInt): LongInt;
+    procedure ReturnToHeading;
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
+    function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
     { Opens heading Index's menu (closing any other); -1 closes. }
     procedure OpenMenu(Index: LongInt);
+    { The same with its first item highlighted, as the keyboard opens it. }
+    procedure OpenMenuWithKeyboard(Index: LongInt);
+    procedure EnterMenuMode; override;
+    procedure LeaveMenuMode; override;
+    function InMenuMode: Boolean; override;
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
     { The headings; each heading's items are its menu. }
     property Menu: TMenuItem read FMenu;
     property OnChoose: TMenuItemEvent read FOnChoose write FOnChoose;
@@ -197,6 +226,11 @@ begin
   FItems.Add(Result);
 end;
 
+function TMenuItem.Caption: string;
+begin
+  Result := TextWithoutMnemonic(FText);
+end;
+
 procedure TMenuItem.AddSeparator;
 var
   Separator: TMenuItem;
@@ -230,7 +264,7 @@ begin
   for Index := 0 to Menu.Count - 1 do
   begin
     Height := Height + ItemHeightOf(Menu[Index]);
-    Measured := Unscaled(TextWidth(ControlFace, Menu[Index].Text));
+    Measured := Unscaled(MnemonicTextWidth(ControlFace, Menu[Index].Text));
     if Measured > TextPart then
       TextPart := Measured;
     Measured := Unscaled(TextWidth(ControlFace, Menu[Index].ShortcutText));
@@ -331,7 +365,7 @@ begin
     if Item.Checked then
       FillEllipse(Canvas, MakeRectangle(Row.Left + Scaled(7), Row.Top + RectangleHeight(Row) div 2 - Scaled(3), Scaled(6),
         Scaled(6)), TextColor);
-    DrawTextInBox(Canvas, ControlFace, Item.Text, MakeRectangle(Row.Left + Scaled(CheckColumn), Row.Top,
+    DrawMnemonicTextInBox(Canvas, ControlFace, Item.Text, MakeRectangle(Row.Left + Scaled(CheckColumn), Row.Top,
       RectangleWidth(Row), RectangleHeight(Row)), AlignTextLeft, TextColor);
     DrawTextInBox(Canvas, ControlFace, Item.ShortcutText, MakeRectangle(Row.Left, Row.Top,
       RectangleWidth(Row) - Scaled(ArrowColumn), RectangleHeight(Row)), AlignTextRight, TextColor);
@@ -355,6 +389,25 @@ begin
   Invalidate;
   if (Index >= 0) and FMenu[Index].Enabled and (FMenu[Index].Count > 0) then
     OpenSubmenu;
+end;
+
+{ The first item that can be chosen (or the first that is not a line). }
+procedure TMenuList.HighlightFirst;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to FMenu.Count - 1 do
+    if not FMenu[Index].IsSeparator and FMenu[Index].Enabled then
+    begin
+      Highlight(Index);
+      Exit;
+    end;
+  for Index := 0 to FMenu.Count - 1 do
+    if not FMenu[Index].IsSeparator then
+    begin
+      Highlight(Index);
+      Exit;
+    end;
 end;
 
 procedure TMenuList.OpenSubmenu;
@@ -483,11 +536,38 @@ begin
     Choose(FMenu[Index]);
 end;
 
+{ The first enabled item whose mnemonic is Character: chosen, or its
+  submenu opened with its first item highlighted. False if none. }
+function TMenuList.ChooseByMnemonic(Character: LongWord): Boolean;
+var
+  Index: LongInt;
+  Item: TMenuItem;
+begin
+  for Index := 0 to FMenu.Count - 1 do
+  begin
+    Item := FMenu[Index];
+    if Item.IsSeparator or not Item.Enabled or not MnemonicMatches(Item.Text, Character) then
+      Continue;
+    if Item.Count > 0 then
+    begin
+      Highlight(Index);
+      OpenSubmenu;
+      if FSubmenu <> nil then
+        FSubmenu.HighlightFirst;
+    end
+    else
+      Choose(Item);
+    Exit(True);
+  end;
+  Result := False;
+end;
+
 function TMenuList.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Index: LongInt;
   Step: LongInt;
   Tries: LongInt;
+  Heading: LongInt;
 begin
   Result := True;
   Step := 0;
@@ -497,6 +577,8 @@ begin
     KeyEscape:
       if FParentList <> nil then
         FParentList.CloseSubmenu
+      else if FMenuBar <> nil then
+        FMenuBar.ReturnToHeading
       else
         CloseAll;
     KeyArrowRight:
@@ -504,20 +586,30 @@ begin
       begin
         OpenSubmenu;
         if FSubmenu <> nil then
-          FSubmenu.Highlight(0);
+          FSubmenu.HighlightFirst;
       end
       else if FMenuBar <> nil then
-        FMenuBar.OpenMenu((FMenuBar.FOpenIndex + 1) mod FMenuBar.FMenu.Count);
+        FMenuBar.OpenMenuWithKeyboard(FMenuBar.NextHeading(FMenuBar.FOpenIndex, 1));
     KeyArrowLeft:
       if FParentList <> nil then
         FParentList.CloseSubmenu
       else if FMenuBar <> nil then
-        FMenuBar.OpenMenu((FMenuBar.FOpenIndex + FMenuBar.FMenu.Count - 1) mod FMenuBar.FMenu.Count);
+        FMenuBar.OpenMenuWithKeyboard(FMenuBar.NextHeading(FMenuBar.FOpenIndex, -1));
   else
     if IsEnterKey(Code) and (FHighlighted >= 0) then
       Choose(FMenu[FHighlighted])
     else
-      Result := False;
+    begin
+      { Alt and a heading's letter goes to that heading's menu; a letter
+        otherwise picks an item here. }
+      Heading := -1;
+      if (FMenuBar <> nil) and ((Modifiers and ModifierAlt) <> 0) then
+        Heading := FMenuBar.HeadingWithMnemonic(Character);
+      if Heading >= 0 then
+        FMenuBar.OpenMenuWithKeyboard(Heading)
+      else
+        Result := ChooseByMnemonic(Character);
+    end;
   end;
   if Step = 0 then
     Exit;
@@ -539,6 +631,7 @@ begin
   inherited Create(AParent);
   FMenu := TMenuItem.Create('');
   FOpenIndex := -1;
+  FPickedIndex := -1;
   SetBounds(0, 0, 0, Theme.MenuBarHeight);
   Align := AlignTop;
 end;
@@ -552,7 +645,7 @@ end;
 
 function TMenuBar.HeadingWidth(Index: LongInt): LongInt;
 begin
-  Result := TextWidth(ControlFace, FMenu[Index].Text) + Scaled(14);
+  Result := MnemonicTextWidth(ControlFace, FMenu[Index].Text) + Scaled(14);
 end;
 
 function TMenuBar.HeadingLeft(Index: LongInt): LongInt;
@@ -587,14 +680,14 @@ begin
   begin
     Heading := MakeRectangle(HeadingLeft(Index), 1, HeadingWidth(Index), RectangleHeight(Box) - 2);
     TextColor := Theme.FaceText;
-    if Index = FOpenIndex then
+    if (Index = FOpenIndex) or (Index = FPickedIndex) then
     begin
       FillRectangle(Canvas, Heading, Theme.Selection);
       TextColor := Theme.SelectionText;
     end;
     if not FMenu[Index].Enabled then
       TextColor := Theme.DisabledText;
-    DrawTextInBox(Canvas, ControlFace, FMenu[Index].Text, Heading, AlignTextCenter, TextColor);
+    DrawMnemonicTextInBox(Canvas, ControlFace, FMenu[Index].Text, Heading, AlignTextCenter, TextColor);
   end;
 end;
 
@@ -609,6 +702,7 @@ begin
     FOpenList := nil;
   end;
   FOpenIndex := -1;
+  FPickedIndex := -1;
   if (Index >= 0) and (Index < FMenu.Count) and FMenu[Index].Enabled and (FMenu[Index].Count > 0) then
   begin
     Window := TControlWindow(Host.OwnerWindow);
@@ -618,6 +712,115 @@ begin
       Window.ScreenTop + Unscaled(PixelBounds.Bottom));
     FOpenList.FMenuBar := Self;
     FOpenList.FOnChoose := FOnChoose;
+  end;
+  Invalidate;
+end;
+
+procedure TMenuBar.OpenMenuWithKeyboard(Index: LongInt);
+begin
+  OpenMenu(Index);
+  if FOpenList <> nil then
+    FOpenList.HighlightFirst;
+end;
+
+{ The heading Step (1 or -1) along from Index, round the ends, skipping
+  disabled ones; Index itself if no other will do. }
+function TMenuBar.NextHeading(Index, Step: LongInt): LongInt;
+var
+  Tries: LongInt;
+begin
+  Result := Index;
+  if FMenu.Count = 0 then
+    Exit;
+  for Tries := 1 to FMenu.Count do
+  begin
+    Result := (Result + Step + FMenu.Count) mod FMenu.Count;
+    if FMenu[Result].Enabled then
+      Exit;
+  end;
+  Result := Index;
+end;
+
+function TMenuBar.HeadingWithMnemonic(Character: LongWord): LongInt;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to FMenu.Count - 1 do
+    if FMenu[Index].Enabled and MnemonicMatches(FMenu[Index].Text, Character) then
+      Exit(Index);
+  Result := -1;
+end;
+
+{ Escape in a menu opened from the bar: the menu closes, its heading
+  stays picked. }
+procedure TMenuBar.ReturnToHeading;
+var
+  Index: LongInt;
+begin
+  Index := FOpenIndex;
+  OpenMenu(-1);
+  FPickedIndex := Index;
+  Invalidate;
+end;
+
+procedure TMenuBar.EnterMenuMode;
+begin
+  if FMenu.Count = 0 then
+    Exit;
+  OpenMenu(-1);
+  { The first enabled heading: the one after the last. }
+  FPickedIndex := NextHeading(FMenu.Count - 1, 1);
+  Invalidate;
+end;
+
+procedure TMenuBar.LeaveMenuMode;
+begin
+  OpenMenu(-1);
+end;
+
+function TMenuBar.InMenuMode: Boolean;
+begin
+  Result := (FPickedIndex >= 0) or (FOpenIndex >= 0);
+end;
+
+function TMenuBar.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := HeadingWithMnemonic(Character) >= 0;
+end;
+
+procedure TMenuBar.ActivateMnemonic(Character: LongWord);
+begin
+  OpenMenuWithKeyboard(HeadingWithMnemonic(Character));
+end;
+
+{ Keys in keyboard mode with no menu open (the window sends them here;
+  an open menu gets them itself). Every key is used: one that means
+  nothing here does nothing, as it would in an open menu. }
+function TMenuBar.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
+var
+  Heading: LongInt;
+begin
+  if FPickedIndex < 0 then
+    Exit(False);
+  Result := True;
+  case Code of
+    KeyArrowLeft:
+      FPickedIndex := NextHeading(FPickedIndex, -1);
+    KeyArrowRight:
+      FPickedIndex := NextHeading(FPickedIndex, 1);
+    KeyArrowDown, KeyArrowUp:
+      OpenMenuWithKeyboard(FPickedIndex);
+    KeyEscape:
+      LeaveMenuMode;
+  else
+    if IsEnterKey(Code) then
+      OpenMenuWithKeyboard(FPickedIndex)
+    else
+    begin
+      Heading := HeadingWithMnemonic(Character);
+      if Heading >= 0 then
+        OpenMenuWithKeyboard(Heading);
+    end;
   end;
   Invalidate;
 end;

@@ -918,15 +918,49 @@ control sees the key. `ShowMessageBox` lays a message box out for its
 text with a sign (information, warning, error, question: shapes drawn
 at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel.
 
+Mnemonics: an ampersand in a caption marks the next character as the
+control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
+`Controls.Text` draws such captions without the marks and the mnemonic
+underlined, measures them without the marks, and gives the caption as
+shown (`TextWithoutMnemonic`) and its mnemonic in lower case
+(`MnemonicOf`); buttons, check boxes, radio buttons, labels, group
+boxes, tabs, tool buttons, menu headings and menu items draw with it
+(a label of plain text, such as a message box's, turns it off with
+`ShowsMnemonic`). Alt and a character (not with Ctrl or AltGr, which
+type characters on some layouts), after the accelerators have had their
+chance, picks the first visible, enabled control in tree order whose
+`MatchesMnemonic` says yes; its `ActivateMnemonic` acts: a button
+clicks, a check box or radio button is focused and toggled or checked,
+a label or group box focuses the next control after it that takes the
+focus (`FocusControlAfter`: a label "&Name:" made just before its edit
+box), a tab control shows the page, and the menu bar opens that
+heading's menu with its first item highlighted. In an open menu an
+item's letter, with or without Alt, chooses it (or opens its submenu),
+and Alt with a heading's letter moves to that menu. A window's menu bar
+registers itself (`TControlWindow.MenuBar`, through `TWindowMenuBar`, so
+the window need not know menus); F10, or Alt pressed and let go with no
+key or click between (Alt+F4 does not count: the display server keeps
+the F4 press, but its release still reaches the window), puts the bar in keyboard mode: the first heading is picked
+and the bar takes the window's keys: Left and Right pick another
+heading, Down, Up and Enter open its menu, a heading's letter opens
+that one, Escape, F10, Alt again, a click or the window going inactive
+leave. Escape in a menu opened from the bar closes it back to its
+heading; Left and Right in a menu open the next heading's menu with its
+first item highlighted.
+
 `controlsdemo` has one of each, and a swatch made in the program (a
 `TControl` subclass that posts a message of the program's own when
 clicked). The input test types into it, tabs, clicks a radio button,
-the scroll bar and the swatch with the USB tablet, presses Enter, and
-checks what it printed and the swatch's colour. `controlstour` has the
+the scroll bar and the swatch with the USB tablet, toggles the check box
+with Alt+R and goes back to the edit box with the label's Alt+N, presses
+Enter, and checks what it printed and the swatch's colour. `controlstour` has the
 rest (a menu bar, a toolbar, a tab control with a list box and combo
 box, a multi-line edit box, a tree view and a list view, message boxes);
 it prints where its controls are on the screen, and the input test
-clicks them there and checks what it printed.
+clicks them there and checks what it printed; it also chooses Help >
+About from the keyboard four ways (Alt+H and Enter, Alt+H and the
+item's letter, F10 then Right and Down, Alt alone then Right and
+Down).
 
 ## Sound
 

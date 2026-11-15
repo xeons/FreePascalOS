@@ -21,7 +21,8 @@
 
   A check box toggles when clicked (or with Space). A radio button is
   one of the radio buttons that share its parent: checking it unchecks
-  the others. Both announce a change (OnChange, NotifyChanged).
+  the others. Both announce a change (OnChange, NotifyChanged). Alt and
+  the mnemonic ("&Remember") focuses one and toggles or checks it.
 }
 unit Controls.Toggles;
 
@@ -49,6 +50,8 @@ type
     procedure PaintText(var Canvas: TCanvas);
   public
     constructor Create(AParent: TControl); override;
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
     property Checked: Boolean read FChecked write SetChecked;
   end;
 
@@ -117,6 +120,18 @@ begin
   end;
 end;
 
+function TToggle.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := TextMatchesMnemonic(Character);
+end;
+
+procedure TToggle.ActivateMnemonic(Character: LongWord);
+begin
+  SetFocus;
+  Toggle;
+  Click;
+end;
+
 function TToggle.MarkSize: LongInt;
 begin
   Result := Scaled(13);
@@ -130,12 +145,12 @@ begin
   TextLeft := MarkSize + Scaled(5);
   Box := MakeRectangle(TextLeft, 0, RectangleWidth(PixelBounds) - TextLeft, RectangleHeight(PixelBounds));
   if Enabled then
-    DrawTextInBox(Canvas, ControlFace, Text, Box, AlignTextLeft, Theme.FaceText)
+    DrawMnemonicTextInBox(Canvas, ControlFace, Text, Box, AlignTextLeft, Theme.FaceText)
   else
-    DrawDisabledText(Canvas, ControlFace, Text, Box.Left, (RectangleHeight(Box) - TextHeight(ControlFace)) div 2);
+    DrawDisabledMnemonicText(Canvas, ControlFace, Text, Box.Left, (RectangleHeight(Box) - TextHeight(ControlFace)) div 2);
   if Focused then
     DrawFocusFrame(Canvas, MakeRectangle(TextLeft - Scaled(2), (RectangleHeight(Box) - TextHeight(ControlFace)) div 2 - 1,
-      TextWidth(ControlFace, Text) + Scaled(4), TextHeight(ControlFace) + 2), Theme.FaceText);
+      MnemonicTextWidth(ControlFace, Text) + Scaled(4), TextHeight(ControlFace) + 2), Theme.FaceText);
 end;
 
 procedure TCheckBox.Toggle;

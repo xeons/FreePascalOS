@@ -21,7 +21,8 @@
 
   Pressed with the left button (it looks pressed while the pointer
   stays on it; let go there and it clicks) or with Space while it has
-  the focus. The window's default button (Enter) has a dark outline.
+  the focus, or with Alt and its mnemonic ("&OK"). The window's default
+  button (Enter) has a dark outline.
 }
 unit Controls.Buttons;
 
@@ -50,6 +51,8 @@ type
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
   public
     constructor Create(AParent: TControl); override;
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
     { Drawn with the default outline (whether Enter presses it is the
       window's DefaultControl). }
     property IsDefault: Boolean read FIsDefault write SetIsDefault;
@@ -114,10 +117,10 @@ begin
     Shift := 1;
   TextBox := OffsetRectangle(InflateRectangle(Box, -Scaled(4)), Shift, Shift);
   if Enabled then
-    DrawTextInBox(Canvas, ControlFace, Text, TextBox, AlignTextCenter, Theme.FaceText)
+    DrawMnemonicTextInBox(Canvas, ControlFace, Text, TextBox, AlignTextCenter, Theme.FaceText)
   else
-    DrawDisabledText(Canvas, ControlFace, Text, TextBox.Left + (RectangleWidth(TextBox) -
-      TextWidth(ControlFace, Text)) div 2, TextBox.Top + (RectangleHeight(TextBox) - TextHeight(ControlFace)) div 2);
+    DrawDisabledMnemonicText(Canvas, ControlFace, Text, TextBox.Left + (RectangleWidth(TextBox) -
+      MnemonicTextWidth(ControlFace, Text)) div 2, TextBox.Top + (RectangleHeight(TextBox) - TextHeight(ControlFace)) div 2);
   if Focused then
     DrawFocusFrame(Canvas, InflateRectangle(Box, -Scaled(4)), Theme.FaceText);
 end;
@@ -153,6 +156,16 @@ begin
   Invalidate;
   if (X >= 0) and (Y >= 0) and (X < RectangleWidth(PixelBounds)) and (Y < RectangleHeight(PixelBounds)) then
     Click;
+end;
+
+function TButton.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := TextMatchesMnemonic(Character);
+end;
+
+procedure TButton.ActivateMnemonic(Character: LongWord);
+begin
+  Click;
 end;
 
 function TButton.KeyDown(Code, Character, Modifiers: LongWord): Boolean;

@@ -21,7 +21,9 @@
 
   A panel fills itself with the face colour and may have a raised or
   sunken edge; a group box draws an etched frame with its text in the
-  top edge (its children go inside: Inset is how far).
+  top edge (its children go inside: Inset is how far). A group box's
+  mnemonic focuses the first control in it (or after it) that takes
+  the focus.
 }
 unit Controls.Panels;
 
@@ -50,6 +52,9 @@ type
   TGroupBox = class(TControl)
   protected
     procedure Paint(var Canvas: TCanvas); override;
+  public
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
   end;
 
 implementation
@@ -79,6 +84,17 @@ begin
   end;
 end;
 
+function TGroupBox.MatchesMnemonic(Character: LongWord): Boolean;
+begin
+  Result := TextMatchesMnemonic(Character);
+end;
+
+procedure TGroupBox.ActivateMnemonic(Character: LongWord);
+begin
+  if Host <> nil then
+    Host.FocusControlAfter(Self);
+end;
+
 procedure TGroupBox.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
@@ -99,9 +115,9 @@ begin
   if Text = '' then
     Exit;
   Indent := Scaled(8);
-  Width := TextWidth(ControlFace, Text) + Scaled(4);
+  Width := MnemonicTextWidth(ControlFace, Text) + Scaled(4);
   FillRectangle(Canvas, MakeRectangle(Indent, 0, Width, TextHeight(ControlFace)), Theme.Face);
-  DrawTextInBox(Canvas, ControlFace, Text, MakeRectangle(Indent + Scaled(2), 0, Width, TextHeight(ControlFace)),
+  DrawMnemonicTextInBox(Canvas, ControlFace, Text, MakeRectangle(Indent + Scaled(2), 0, Width, TextHeight(ControlFace)),
     AlignTextLeft, Theme.FaceText);
 end;
 

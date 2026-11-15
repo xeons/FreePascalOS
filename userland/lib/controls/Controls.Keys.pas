@@ -34,8 +34,11 @@ const
   KeyBackspace = $0E;
   KeyTab = $0F;
   KeyEnter = $1C;
+  { The left Alt key (the right one, AltGr, is $38 with KeyCodeExtended). }
+  KeyAlt = $38;
   KeySpace = $39;
   KeyF4 = $3E;
+  KeyF10 = $44;
   KeyNumpadEnter = $1C or KeyCodeExtended;
   KeyHome = $47 or KeyCodeExtended;
   KeyArrowUp = $48 or KeyCodeExtended;
