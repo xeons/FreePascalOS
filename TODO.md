@@ -328,7 +328,7 @@ normalized (0-65535), not pixels.
       positions in logical units, told the scale
 - [x] Messages between a program's parts: delivered at once or posted to the
       message loop (from any thread), program-defined codes
-- [ ] Told when the scale changes (a window moved to another display)
+- [x] Told when the scale changes (a window moved to another display)
 - [x] libcontrols base: controls in a tree, docking, painting with clipping,
       pointer capture, focus and Tab order, default and cancel buttons; new
       controls by subclassing, On... events, notifications to the parent
@@ -342,7 +342,7 @@ normalized (0-65535), not pixels.
       accelerators; message boxes; layout in logical units, scaled
 - [ ] Mnemonics (Alt+underlined letter) for menus, buttons and labels; F10 and Alt
       for the menu bar
-- [ ] Owned windows: a dialog stays above its owner; the owner disabled for real
+- [x] Owned windows: a dialog stays above its owner; the owner disabled for real
       (the server refuses to activate it)
 - [ ] Common dialogs: open and save a file, choose a colour, choose a font
 

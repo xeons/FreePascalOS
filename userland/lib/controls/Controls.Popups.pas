@@ -91,7 +91,8 @@ end;
 constructor TPopupWindow.CreatePopup(AOwner: TControlWindow; Left, Top, Width, Height: LongInt);
 begin
   FOwnerWindow := AOwner;
-  inherited Create('', Left, Top, Width, Height, WindowTopmost or WindowNoActivate);
+  { Owned by the window it pops up from, which it stays above. }
+  inherited Create('', Left, Top, Width, Height, WindowTopmost or WindowNoActivate, AOwner);
 end;
 
 destructor TPopupWindow.Destroy;

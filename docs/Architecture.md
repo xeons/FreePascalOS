@@ -836,6 +836,31 @@ reading cannot hold up the others; a program that ends loses its
 windows. Everything waits in one place: the input device, the port and
 every client's channel in one `CallWaitForHandles`.
 
+Owned windows: a window can be created with an owner, another window of
+the same program (the request's `Code`). An owned window is always above
+its owner: raising a window raises the windows it owns above it, in the
+order they had (`RaiseWindow`), and one owned by a topmost window counts
+as topmost. Hiding a window hides the windows it owns and showing it
+shows them again; destroying it leaves them without an owner. A window
+can be disabled (`RequestEnableWindow`): the server never activates it
+and sends it no input, the pointer over it being over no window; a press
+on it, frame included, brings it forward and activates its topmost
+enabled owned window instead (the dialog), and no drag starts. Disabling
+the active window gives the keyboard to that window too, or to none.
+
+The scale (`Server.Scale`) starts as the display's own. A program can
+ask for another, 100% to 400% (`RequestSetScale`; any program may, as a
+display's settings would; `displayscale PERCENT`): as if the display
+were that much denser, the DPI goes with it (the display's DPI times the
+new scale over its own). The server picks the title's font again, sizes
+the arrow, ends a drag, keeps every window's place in logical units
+(its pixels move; the program hears `EventMoved`), maximizes a maximized
+window again, and tells every program (`EventScaleChanged`, with the
+screen's size, the DPI and the scale), which gives its windows new
+surfaces. There is one display, so one scale; with several, each display
+will have its own, and a window moved onto another display will be told
+in the same way.
+
 `wintest` shows a window and prints what happens to it. The input test
 starts the server and two of them, and with the USB tablet (exact
 positions) checks the stacking and the active title bar, a drag by the
@@ -851,13 +876,25 @@ scale; `Scaled` and `Unscaled` between logical units and pixels;
 replies waited for while other events are kept in order). A `TWindow`
 (`Windowing.Windows`) is a class whose handlers a program overrides:
 `Paint` (on its surface, clipped to what is invalid), keys, the pointer,
-the wheel, `Resized`, `ActiveChanged`, `CloseRequested`, `TimerFired`.
+the wheel, `Resized`, `ScaleChanged`, `ActiveChanged`, `CloseRequested`,
+`TimerFired`.
 Positions given to it are logical units; what it is told is pixels.
 `Invalidate` marks what needs painting; the message loop
 (`RunMessageLoop`) paints before it waits and tells the server what
 changed; a new size gets a new surface painted whole before the server
 sees it. The loop waits on the server's channel, the posted message
 event and the window timers (timer objects) at once.
+
+A window can be given an owner when it is made (`Owner`), which it then
+stays above, and can be disabled (`Enabled`). When the scale changes
+the connection takes the new DPI and scale (`DisplayScale`,
+`DisplayDpi`), and every window gets a surface of the logical size it
+had at the new scale: `ScaleChanged`, then `Resized`, then painted whole
+before the server sees it. A control window lays its controls out again
+from their logical bounds in `Resized`, and fonts are picked by point
+size at the DPI each time they are used, so nothing else needs doing;
+a window that keeps something in pixels picks it again in
+`ScaleChanged`.
 
 `Windowing.Messages`: every window and control is a `TMessageReceiver`.
 `DeliverMessage` calls its `ReceiveMessage` at once; `PostMessage`
@@ -907,26 +944,40 @@ its window is whenever it moves (`EventMoved`, `ScreenLeft` and
 pointer and passes what happens over its parents and the menu bar to
 them.
 
-Dialogs (`Controls.Dialogs`): `ShowModal` serves the program's windows in
-a nested loop (`RunModal` in libwindowing) until the dialog ends, with
-it modal: input for the program's other windows is dropped and a click
-on one brings the dialog forward, while pop-ups (a combo box in the
-dialog) still work. Buttons made with `AddButton` end it with their
+Pop-ups are owned by the window they open from.
+
+Dialogs (`Controls.Dialogs`): a dialog takes an owner, the window it asks
+for: it is centred on it (on the screen without one) and stays above it.
+`ShowModal` serves the program's windows in a nested loop (`RunModal` in
+libwindowing) until the dialog ends, with it modal: the program's other
+windows are disabled meanwhile (and enabled again after, before the
+dialog is hidden, so the keyboard goes back to the owner), so the
+server sends them nothing and a click on one brings the dialog forward,
+while pop-ups (a combo box in the dialog) still work. Buttons made with `AddButton` end it with their
 result; Enter and Escape press the default and cancel buttons.
 Accelerators (`AddAccelerator`, Ctrl+M say) run before the focused
 control sees the key. `ShowMessageBox` lays a message box out for its
 text with a sign (information, warning, error, question: shapes drawn
-at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel.
+at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel, with an
+optional owner.
 
 `controlsdemo` has one of each, and a swatch made in the program (a
 `TControl` subclass that posts a message of the program's own when
 clicked). The input test types into it, tabs, clicks a radio button,
 the scroll bar and the swatch with the USB tablet, presses Enter, and
-checks what it printed and the swatch's colour. `controlstour` has the
+checks what it printed and the swatch's colour; it changes the scale to
+150% and back with `displayscale` and checks that the window's client
+area became 1.5 times as many pixels (`controlsdemo` prints its size in
+`ScaleChanged`) and the swatch is where its logical place is at each
+scale. `controlstour` has the
 rest (a menu bar, a toolbar, a tab control with a list box and combo
 box, a multi-line edit box, a tree view and a list view, message boxes);
 it prints where its controls are on the screen, and the input test
-clicks them there and checks what it printed.
+clicks them there and checks what it printed. Its message boxes are
+owned by its window: the test clicks the window's title bar while one is
+open and checks that nothing in the window's client area changed (the
+box is still above it), that its title bar stayed inactive, and that
+Enter still went to the box.
 
 ## Sound
 

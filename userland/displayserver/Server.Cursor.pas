@@ -40,6 +40,8 @@ var
   PointerY: LongInt;
 
 procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: LongWord);
+{ The arrow's size for a new scale. }
+procedure SetPointerScale(ScalePercent: LongWord);
 { Moves by (DeltaX, DeltaY), or to an absolute position. }
 procedure MovePointerBy(DeltaX, DeltaY: LongInt);
 procedure MovePointerToPosition(X, Y: LongInt);
@@ -89,11 +91,16 @@ procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: Lon
 begin
   Server.Cursor.ScreenWidth := ScreenWidth;
   Server.Cursor.ScreenHeight := ScreenHeight;
+  SetPointerScale(ScalePercent);
+  PointerX := ScreenWidth div 2;
+  PointerY := ScreenHeight div 2;
+end;
+
+procedure SetPointerScale(ScalePercent: LongWord);
+begin
   PointerScale := (LongInt(ScalePercent) + 50) div 100;
   if PointerScale < 1 then
     PointerScale := 1;
-  PointerX := ScreenWidth div 2;
-  PointerY := ScreenHeight div 2;
 end;
 
 procedure KeepOnScreen;

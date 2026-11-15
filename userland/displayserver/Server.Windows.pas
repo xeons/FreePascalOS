@@ -23,6 +23,12 @@
   section the program gave, at a place on the screen in pixels) and,
   if framed, the frame around it (Server.Frames draws it). The list is
   in stacking order, bottom first; topmost windows stay above the rest.
+
+  A window may have an owner, another window of the same program (a
+  dialog's is the window it asks for). An owned window is always above
+  its owner: raising the owner raises the windows it owns above it, in
+  the order they were in, so a dialog never disappears behind the window
+  it belongs to. An owned window counts as topmost if its owner does.
 }
 unit Server.Windows;
 
@@ -39,8 +45,10 @@ type
   PServerWindow = ^TServerWindow;
   TServerWindow = record
     Id: LongWord;
-    { The client that made it (Server.Clients). }
-    Owner: Pointer;
+    { The program that made it (a PClient, Server.Clients). }
+    Client: Pointer;
+    { The window it belongs to, kept above (nil: none). }
+    OwnerWindow: PServerWindow;
     Flags: LongWord;
     Title: array[0..TitleCapacity - 1] of Char;
     { The client area's top left on the screen, in pixels. }
@@ -49,6 +57,10 @@ type
     Surface: TSurface;
     Section: Int64;
     Visible: Boolean;
+    { Hidden because its owner was; shown again with it. }
+    HiddenWithOwner: Boolean;
+    { It is never activated and gets no input (a modal dialog's owner). }
+    Disabled: Boolean;
     Maximized: Boolean;
     { The client area before it was maximized. }
     RestoreBounds: TRectangle;
@@ -61,11 +73,17 @@ var
   Windows: array[0..MaximumWindows - 1] of PServerWindow;
   WindowCount: LongInt;
 
-{ A new window record at the top (below topmost ones), or nil. }
-function AddWindow(Owner: Pointer; Flags: LongWord): PServerWindow;
-{ Takes it out of the list and frees it (its surface already unmapped). }
+{ A new window record of Client's at the top (below topmost ones; owned
+  by OwnerWindow if not nil), or nil. }
+function AddWindow(Client: Pointer; Flags: LongWord; OwnerWindow: PServerWindow): PServerWindow;
+{ Takes it out of the list and frees it (its surface already unmapped);
+  the windows it owned have no owner any more. }
 procedure RemoveWindow(Window: PServerWindow);
+{ Brings the window to the top of its layer, and the windows it owns
+  (and theirs) above it. }
 procedure RaiseWindow(Window: PServerWindow);
+{ True if Window belongs to Owner, directly or through other windows. }
+function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
 function FindWindow(Id: LongWord): PServerWindow;
 
 function ClientRectangle(Window: PServerWindow): TRectangle;
@@ -84,9 +102,30 @@ uses
 var
   NextWindowId: LongWord = 1;
 
+{ Topmost itself, or owned by a topmost window (it must stay above it). }
 function IsTopmost(Window: PServerWindow): Boolean;
 begin
-  Result := (Window^.Flags and WindowTopmost) <> 0;
+  Result := False;
+  while Window <> nil do
+  begin
+    if (Window^.Flags and WindowTopmost) <> 0 then
+      Exit(True);
+    Window := Window^.OwnerWindow;
+  end;
+end;
+
+function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
+begin
+  Result := False;
+  if Window = nil then
+    Exit;
+  Window := Window^.OwnerWindow;
+  while Window <> nil do
+  begin
+    if Window = Owner then
+      Exit(True);
+    Window := Window^.OwnerWindow;
+  end;
 end;
 
 function IndexOf(Window: PServerWindow): LongInt;
@@ -138,7 +177,7 @@ begin
   Dec(WindowCount);
 end;
 
-function AddWindow(Owner: Pointer; Flags: LongWord): PServerWindow;
+function AddWindow(Client: Pointer; Flags: LongWord; OwnerWindow: PServerWindow): PServerWindow;
 begin
   if WindowCount = MaximumWindows then
     Exit(nil);
@@ -146,22 +185,43 @@ begin
   FillChar(Result^, SizeOf(Result^), 0);
   Result^.Id := NextWindowId;
   Inc(NextWindowId);
-  Result^.Owner := Owner;
+  Result^.Client := Client;
+  Result^.OwnerWindow := OwnerWindow;
   Result^.Flags := Flags;
   Result^.Section := -1;
   InsertAt(Result, TopPlaceFor(Result));
 end;
 
 procedure RemoveWindow(Window: PServerWindow);
+var
+  Index: LongInt;
 begin
   TakeOut(Window);
+  for Index := 0 to WindowCount - 1 do
+    if Windows[Index]^.OwnerWindow = Window then
+      Windows[Index]^.OwnerWindow := nil;
   Dispose(Window);
 end;
 
 procedure RaiseWindow(Window: PServerWindow);
+var
+  Owned: array[0..MaximumWindows - 1] of PServerWindow;
+  OwnedCount: LongInt;
+  Index: LongInt;
 begin
   TakeOut(Window);
   InsertAt(Window, TopPlaceFor(Window));
+  { The windows it owns directly, bottom first, each raised in turn (with
+    the ones they own), so they end above it in the order they had. }
+  OwnedCount := 0;
+  for Index := 0 to WindowCount - 1 do
+    if Windows[Index]^.OwnerWindow = Window then
+    begin
+      Owned[OwnedCount] := Windows[Index];
+      Inc(OwnedCount);
+    end;
+  for Index := 0 to OwnedCount - 1 do
+    RaiseWindow(Owned[Index]);
 end;
 
 function FindWindow(Id: LongWord): PServerWindow;

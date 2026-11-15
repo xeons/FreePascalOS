@@ -28,6 +28,10 @@
   act when let go over them (close asks the program, maximize toggles,
   minimize hides). Keys go to the active window; Alt+F4 asks it to
   close.
+
+  A disabled window (the owner of a modal dialog) gets nothing: the
+  pointer over it is over no window, and pressing a button on it (its
+  frame too) brings its dialog forward instead (ActivateWindow).
 }
 unit Server.Input;
 
@@ -50,6 +54,8 @@ procedure ProcessInput;
 procedure SetPointerCapture(Window: PServerWindow; Capture: Boolean);
 { The window is going: no hover, capture or drag refers to it. }
 procedure ForgetWindowInInput(Window: PServerWindow);
+{ Ends a drag of a frame, if one goes on (the scale changed). }
+procedure CancelDrag;
 
 implementation
 
@@ -109,6 +115,17 @@ begin
     Captured := nil;
 end;
 
+procedure CancelDrag;
+begin
+  DragWindow := nil;
+  Drag := DragNone;
+  if OutlineVisible then
+  begin
+    AddDamage(Outline);
+    OutlineVisible := False;
+  end;
+end;
+
 procedure ForgetWindowInInput(Window: PServerWindow);
 begin
   if Captured = Window then
@@ -116,15 +133,7 @@ begin
   if Hovered = Window then
     Hovered := nil;
   if DragWindow = Window then
-  begin
-    DragWindow := nil;
-    Drag := DragNone;
-    if OutlineVisible then
-    begin
-      AddDamage(Outline);
-      OutlineVisible := False;
-    end;
-  end;
+    CancelDrag;
 end;
 
 procedure SendPointerEvent(Window: PServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt);
@@ -136,16 +145,21 @@ begin
   Message.Top := PointerY - Window^.ClientTop;
   Message.Code := Code;
   Message.Value := Value;
-  SendToOwner(Window, Message);
+  SendToProgram(Window, Message);
 end;
 
 { The window whose client area the pointer is over (or the captor). }
 function PointerTarget: PServerWindow;
 begin
   if Captured <> nil then
-    Exit(Captured);
-  Result := WindowAt(PointerX, PointerY);
-  if (Result <> nil) and (HitTest(Result, PointerX, PointerY) <> HitClient) then
+    Result := Captured
+  else
+  begin
+    Result := WindowAt(PointerX, PointerY);
+    if (Result <> nil) and (HitTest(Result, PointerX, PointerY) <> HitClient) then
+      Result := nil;
+  end;
+  if (Result <> nil) and Result^.Disabled then
     Result := nil;
 end;
 
@@ -245,7 +259,7 @@ begin
           HitClose:
             begin
               Message := NewMessage(EventCloseRequested, Window^.Id);
-              SendToOwner(Window, Message);
+              SendToProgram(Window, Message);
             end;
           HitMaximize:
             ToggleMaximized(Window);
@@ -305,12 +319,20 @@ begin
   end;
   if Captured <> nil then
   begin
-    SendPointerEvent(Captured, EventPointerButton, Button, Ord(Pressed));
+    if not Captured^.Disabled then
+      SendPointerEvent(Captured, EventPointerButton, Button, Ord(Pressed));
     Exit;
   end;
   Window := WindowAt(PointerX, PointerY);
   if Window = nil then
     Exit;
+  if Window^.Disabled then
+  begin
+    { Its dialog comes forward instead; it is not moved or resized. }
+    if Pressed then
+      ActivateWindow(Window);
+    Exit;
+  end;
   Area := HitTest(Window, PointerX, PointerY);
   if Pressed then
     ActivateWindow(Window);
@@ -324,12 +346,12 @@ procedure KeyChanged(const Event: TAbiInputEvent);
 var
   Message: TWindowMessage;
 begin
-  if ActiveWindow = nil then
+  if (ActiveWindow = nil) or ActiveWindow^.Disabled then
     Exit;
   if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then
   begin
     Message := NewMessage(EventCloseRequested, ActiveWindow^.Id);
-    SendToOwner(ActiveWindow, Message);
+    SendToProgram(ActiveWindow, Message);
     Exit;
   end;
   Message := NewMessage(EventKey, ActiveWindow^.Id);
@@ -337,7 +359,7 @@ begin
   Message.Value := Event.Value;
   Message.Character := Event.Character;
   Message.Modifiers := Event.Modifiers;
-  SendToOwner(ActiveWindow, Message);
+  SendToProgram(ActiveWindow, Message);
 end;
 
 procedure WheelTurned(Steps: LongInt);

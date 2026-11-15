@@ -32,13 +32,22 @@
   from the server gets a new surface: painted whole before the server
   sees it, so nothing half drawn shows.
 
+  A window may have an owner, another window of the program (a dialog's
+  is the window it asks for): the server keeps it above its owner. A
+  disabled window (Enabled False) is never activated by the server and
+  gets no input; a click on it brings forward the window it owns.
+
+  When the display's scale changes, every window gets a surface of the
+  same logical size at the new scale (ScaleChanged, then Resized, then
+  painted whole), so what is laid out in logical units looks the same.
+
   RunMessageLoop serves every window until QuitMessageLoop, or until the
   last window is gone (if QuitWhenLastWindowCloses). RunModal serves
-  them until a flag is set, with one window modal: input for the others
-  is dropped (a click on one brings the modal window forward), except
-  for windows that accept it anyway (pop-ups of the modal window). It also delivers
-  messages posted to any receiver (Windowing.Messages): a window is one,
-  and so is every control.
+  them until a flag is set, with one window modal: the program's other
+  windows are disabled meanwhile, except for windows that take input
+  anyway (pop-ups of the modal window). It also delivers messages posted
+  to any receiver (Windowing.Messages): a window is one, and so is every
+  control.
 }
 unit Windowing.Windows;
 
@@ -68,10 +77,18 @@ type
     FActive: Boolean;
     FLeft: LongInt;
     FTop: LongInt;
+    FOwner: TWindow;
+    FEnabled: Boolean;
+    { The client area's size in logical units: what it keeps when the
+      scale changes. }
+    FLogicalWidth: LongInt;
+    FLogicalHeight: LongInt;
     function CreateSurface(Width, Height: LongInt; out Section: Int64; out Surface: TSurface): Boolean;
     procedure ReleaseSurface;
-    procedure TakeNewSize(Width, Height: LongInt);
+    procedure TakeNewSize(Width, Height: LongInt; ScaleWasChanged: Boolean);
+    procedure TakeNewScale;
     procedure SetTitle(const Value: string);
+    procedure SetEnabled(Value: Boolean);
     function GetClientWidth: LongInt;
     function GetClientHeight: LongInt;
   protected
@@ -88,6 +105,10 @@ type
     { The surface has a new size (Width x Height pixels): lay out again.
       Everything is invalid already. }
     procedure Resized; virtual;
+    { The display's scale changed (DisplayScale and DisplayDpi are the new
+      ones) and the window has a new surface for its logical size; Resized
+      and painting follow. Anything kept in pixels is picked again here. }
+    procedure ScaleChanged; virtual;
     procedure ActiveChanged; virtual;
     { The close button (or Alt+F4). The default frees the window. }
     procedure CloseRequested; virtual;
@@ -97,9 +118,10 @@ type
   public
     { Left, Top: where the client area goes; Width, Height: its size; all
       in logical units. Flags: Window* (framed and resizable by default).
+      AOwner: the window it belongs to and stays above (nil: none).
       Hidden until Show. }
     constructor Create(const ATitle: string; Left, Top, Width, Height: LongInt;
-      AFlags: LongWord = WindowFramed or WindowResizable);
+      AFlags: LongWord = WindowFramed or WindowResizable; AOwner: TWindow = nil);
     destructor Destroy; override;
     procedure Show;
     procedure Hide;
@@ -124,6 +146,10 @@ type
     property ClientHeight: LongInt read GetClientHeight;
     property Visible: Boolean read FVisible;
     property Active: Boolean read FActive;
+    property Owner: TWindow read FOwner;
+    { A disabled window is not activated and gets no input (the server
+      sees to it). }
+    property Enabled: Boolean read FEnabled write SetEnabled;
     { Where the client area is on the screen (logical units). }
     property ScreenLeft: LongInt read FLeft;
     property ScreenTop: LongInt read FTop;
@@ -140,7 +166,8 @@ function RunMessageLoop: LongInt;
 procedure QuitMessageLoop(Code: LongInt);
 function WindowById(Id: LongWord): TWindow;
 { Serves the windows until Done is set (or the window or the server is
-  gone), Window modal meanwhile. }
+  gone), Window modal meanwhile: the program's other windows are disabled
+  until it ends. }
 procedure RunModal(Window: TWindow; var Done: Boolean);
 
 implementation
@@ -206,7 +233,8 @@ end;
 
 { --- TWindow ------------------------------------------------------------------ }
 
-constructor TWindow.Create(const ATitle: string; Left, Top, Width, Height: LongInt; AFlags: LongWord);
+constructor TWindow.Create(const ATitle: string; Left, Top, Width, Height: LongInt; AFlags: LongWord;
+  AOwner: TWindow);
 var
   Message: TWindowMessage;
 begin
@@ -216,6 +244,10 @@ begin
   FSection := -1;
   FLeft := Left;
   FTop := Top;
+  FOwner := AOwner;
+  FEnabled := True;
+  FLogicalWidth := Width;
+  FLogicalHeight := Height;
   ClearRegion(FInvalid);
   if ConnectToDisplay <> ErrorNone then
     raise EInOutError.Create('no display server');
@@ -229,6 +261,8 @@ begin
   Message.SurfaceWidth := FSurface.Width;
   Message.SurfaceHeight := FSurface.Height;
   Message.Flags := FFlags;
+  if FOwner <> nil then
+    Message.Code := FOwner.FId;
   SetMessageText(Message, PChar(FTitle));
   SendRequest(Message, FSection);
   if not WaitForEvent(EventWindowCreated, ReplyTimeout, Message) then
@@ -251,6 +285,10 @@ begin
     SendRequest(Message, -1);
   end;
   RemoveFromList(Self);
+  { The server forgets the owner too; the windows it owned stay. }
+  for Index := 0 to WindowListCount - 1 do
+    if WindowList[Index].FOwner = Self then
+      WindowList[Index].FOwner := nil;
   ReleaseSurface;
   inherited Destroy;
 end;
@@ -288,7 +326,7 @@ begin
   FSection := -1;
 end;
 
-procedure TWindow.TakeNewSize(Width, Height: LongInt);
+procedure TWindow.TakeNewSize(Width, Height: LongInt; ScaleWasChanged: Boolean);
 var
   NewSection: Int64;
   NewSurface: TSurface;
@@ -299,7 +337,16 @@ begin
   ReleaseSurface;
   FSection := NewSection;
   FSurface := NewSurface;
+  { A size the server gave (the frame dragged) is the logical size from
+    now on; a new scale keeps the one there was. }
+  if not ScaleWasChanged then
+  begin
+    FLogicalWidth := Unscaled(Width);
+    FLogicalHeight := Unscaled(Height);
+  end;
   Invalidate;
+  if ScaleWasChanged then
+    ScaleChanged;
   Resized;
   { Painted whole before the server shows it; then no damage is due. }
   PaintNow;
@@ -307,6 +354,11 @@ begin
   Message.SurfaceWidth := FSurface.Width;
   Message.SurfaceHeight := FSurface.Height;
   SendRequest(Message, FSection);
+end;
+
+procedure TWindow.TakeNewScale;
+begin
+  TakeNewSize(Scaled(FLogicalWidth), Scaled(FLogicalHeight), True);
 end;
 
 function TWindow.GetClientWidth: LongInt;
@@ -328,6 +380,18 @@ begin
     Exit;
   Message := NewMessage(RequestSetTitle, FId);
   SetMessageText(Message, PChar(FTitle));
+  SendRequest(Message, -1);
+end;
+
+procedure TWindow.SetEnabled(Value: Boolean);
+var
+  Message: TWindowMessage;
+begin
+  if FEnabled = Value then
+    Exit;
+  FEnabled := Value;
+  Message := NewMessage(RequestEnableWindow, FId);
+  Message.Value := Ord(Value);
   SendRequest(Message, -1);
 end;
 
@@ -484,6 +548,10 @@ procedure TWindow.Resized;
 begin
 end;
 
+procedure TWindow.ScaleChanged;
+begin
+end;
+
 procedure TWindow.ActiveChanged;
 begin
 end;
@@ -510,21 +578,41 @@ begin
   QuitCode := Code;
 end;
 
+{ Every window takes the new scale (from a list taken first: a handler
+  might close a window). }
+procedure ChangeScale(const Message: TWindowMessage);
+var
+  Snapshot: array[0..MaximumProgramWindows - 1] of TWindow;
+  Count: LongInt;
+  Index: LongInt;
+begin
+  TakeScaleChange(Message);
+  Count := WindowListCount;
+  for Index := 0 to Count - 1 do
+    Snapshot[Index] := WindowList[Index];
+  for Index := 0 to Count - 1 do
+    if WindowById(Snapshot[Index].FId) = Snapshot[Index] then
+      Snapshot[Index].TakeNewScale;
+end;
+
 procedure Dispatch(const Message: TWindowMessage);
 var
   Window: TWindow;
 begin
+  if Message.Kind = EventScaleChanged then
+  begin
+    ChangeScale(Message);
+    Exit;
+  end;
   Window := WindowById(Message.Window);
   if Window = nil then
     Exit;
+  { The server sends nothing to a disabled window; this drops what was
+    already on its way when the modal window started. }
   if (ModalWindow <> nil) and not Window.AcceptsInputWhileModal and
      ((Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) or
       (Message.Kind = EventWheel)) then
-  begin
-    if (Message.Kind = EventPointerButton) and (Message.Value <> 0) then
-      ModalWindow.Activate;
     Exit;
-  end;
   case Message.Kind of
     EventKey:
       if Message.Value <> 0 then
@@ -543,7 +631,7 @@ begin
     EventWheel:
       Window.Wheel(Message.Value);
     EventResized:
-      Window.TakeNewSize(Message.SurfaceWidth, Message.SurfaceHeight);
+      Window.TakeNewSize(Message.SurfaceWidth, Message.SurfaceHeight, False);
     EventActivated:
       begin
         Window.FActive := Message.Value <> 0;
@@ -618,14 +706,43 @@ begin
   Result := QuitCode;
 end;
 
+function IsListed(Window: TWindow): Boolean;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to WindowListCount - 1 do
+    if WindowList[Index] = Window then
+      Exit(True);
+  Result := False;
+end;
+
 procedure RunModal(Window: TWindow; var Done: Boolean);
 var
   Previous: TWindow;
+  Disabled: array[0..MaximumProgramWindows - 1] of TWindow;
+  DisabledCount: LongInt;
+  Index: LongInt;
 begin
   Previous := ModalWindow;
   ModalWindow := Window;
+  { The others are disabled for real: the server will not activate them
+    or send them input, and a click on one brings this one forward. Only
+    the ones disabled here are enabled again afterwards (an outer modal
+    window's stay as they were). }
+  DisabledCount := 0;
+  for Index := 0 to WindowListCount - 1 do
+    if WindowList[Index].Enabled and not WindowList[Index].AcceptsInputWhileModal then
+    begin
+      Disabled[DisabledCount] := WindowList[Index];
+      Inc(DisabledCount);
+    end;
+  for Index := 0 to DisabledCount - 1 do
+    Disabled[Index].Enabled := False;
   while not Done and not ConnectionBroken and not QuitRequested and (WindowById(Window.Id) = Window) do
     ServeOnce;
+  for Index := 0 to DisabledCount - 1 do
+    if IsListed(Disabled[Index]) then
+      Disabled[Index].Enabled := True;
   ModalWindow := Previous;
 end;
 
