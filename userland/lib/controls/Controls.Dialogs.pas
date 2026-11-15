@@ -72,14 +72,15 @@ implementation
 
 uses
   Windowing.Protocol,
-  Windowing.Connection;
+  Windowing.Connection,
+  Windowing.Displays;
 
 constructor TDialog.CreateDialog(const ATitle: string; Width, Height: LongInt; AOwner: TWindow);
 var
   Left: LongInt;
   Top: LongInt;
 begin
-  { Connected first, for the screen's size (creating the window fails
+  { Connected first, for the display's size (creating the window fails
     if there is no display server). }
   ConnectToDisplay;
   if AOwner <> nil then
@@ -89,18 +90,12 @@ begin
   end
   else
   begin
-    Left := (Unscaled(ScreenWidth) - Width) div 2;
-    Top := (Unscaled(ScreenHeight) - Height) div 3;
+    { The first display, whose scale the window starts at. }
+    Left := (PixelsToLogical(ScreenWidth, DefaultScale) - Width) div 2;
+    Top := (PixelsToLogical(ScreenHeight, DefaultScale) - Height) div 3;
   end;
-  { All of it on the screen, the title bar first. }
-  if Left + Width > Unscaled(ScreenWidth) then
-    Left := Unscaled(ScreenWidth) - Width;
-  if Top + Height > Unscaled(ScreenHeight) then
-    Top := Unscaled(ScreenHeight) - Height;
-  if Left < 0 then
-    Left := 0;
-  if Top < 0 then
-    Top := 0;
+  { All of it on the display it is on, the title bar first. }
+  KeepOnDisplay(Left, Top, Width, Height);
   inherited Create(ATitle, Left, Top, Width, Height, WindowFramed, AOwner);
 end;
 

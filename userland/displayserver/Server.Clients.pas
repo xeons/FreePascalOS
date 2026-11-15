@@ -24,6 +24,11 @@
   breaks (the program ended) its windows go. Events for a program are
   sent without waiting: if its queue is full (it stopped reading) they
   are dropped rather than holding up everyone else.
+
+  Besides their windows, programs ask about the displays (each one's
+  place, size, scale and modes) and change a display's scale or mode;
+  places they give and are told are logical units of the desktop
+  (Server.Desktop).
 }
 unit Server.Clients;
 
@@ -60,13 +65,15 @@ uses
   Sys.Objects,
   Drawing.Rectangles,
   Drawing.Surfaces,
-  Server.Theme,
+  Sys.Display,
   Server.Screen,
+  Server.Desktop,
   Server.Windows,
   Server.Composer,
   Server.Actions,
   Server.Input,
-  Server.Scale;
+  Server.Scale,
+  Server.Modes;
 
 procedure SendToClient(Client: PClient; var Message: TWindowMessage);
 begin
@@ -160,12 +167,87 @@ begin
     RemoveWindow(Window);
     Exit;
   end;
-  Window^.ClientLeft := LogicalToPixels(Message.Left, ScalePercent);
-  Window^.ClientTop := LogicalToPixels(Message.Top, ScalePercent);
+  LogicalToDesktop(Message.Left, Message.Top, Window^.ClientLeft, Window^.ClientTop);
   Message.Text[TitleCapacity - 1] := #0;
   Move(Message.Text, Window^.Title, SizeOf(Window^.Title));
   Reply := NewMessage(EventWindowCreated, Window^.Id);
   SendToClient(Client, Reply);
+  { The program drew it at display 0's scale (what it was welcomed with);
+    on another display it is told that one's. }
+  Window^.ScreenNumber := 0;
+  SettleWindowOnScreen(Window);
+end;
+
+procedure DescribeScreen(Client: PClient; Number: LongInt);
+var
+  Reply: TWindowMessage;
+  Screen: PScreen;
+begin
+  Reply := NewMessage(EventDisplayDescribed, 0);
+  Screen := ScreenByNumber(Number);
+  if Screen <> nil then
+  begin
+    Reply.Flags := DisplayExists;
+    Reply.Width := Screen^.Device.Width;
+    Reply.Height := Screen^.Device.Height;
+    Reply.Value := Screen^.Dpi;
+    Reply.Code := Screen^.ScalePercent;
+    Reply.Left := Screen^.LogicalBounds.Left;
+    Reply.Top := Screen^.LogicalBounds.Top;
+    Reply.SurfaceWidth := RectangleWidth(Screen^.LogicalBounds);
+    Reply.SurfaceHeight := RectangleHeight(Screen^.LogicalBounds);
+  end;
+  SendToClient(Client, Reply);
+end;
+
+procedure DescribeScreenMode(Client: PClient; Number, Index: LongInt);
+var
+  Reply: TWindowMessage;
+  Screen: PScreen;
+  Width: LongWord;
+  Height: LongWord;
+begin
+  Reply := NewMessage(EventDisplayMode, 0);
+  Screen := ScreenByNumber(Number);
+  if (Screen <> nil) and DisplayModeAt(Screen^.Device, Index, Width, Height) then
+  begin
+    Reply.Width := Width;
+    Reply.Height := Height;
+    if (Width = Screen^.Device.Width) and (Height = Screen^.Device.Height) then
+      Reply.Flags := DisplayModeCurrent;
+  end;
+  SendToClient(Client, Reply);
+end;
+
+{ The requests about the displays (Window 0); False if Message is not
+  one. }
+function CarryOutDisplayRequest(Client: PClient; const Message: TWindowMessage): Boolean;
+var
+  Screen: PScreen;
+begin
+  Result := True;
+  case Message.Kind of
+    RequestSetScale:
+      begin
+        Screen := ScreenByNumber(Message.Value);
+        if Screen <> nil then
+          ChangeScale(Screen, Message.Code);
+        DescribeScreen(Client, Message.Value);
+      end;
+    RequestDescribeDisplay:
+      DescribeScreen(Client, LongInt(Message.Code));
+    RequestSetDisplayMode:
+      begin
+        Screen := ScreenByNumber(LongInt(Message.Code));
+        if Screen <> nil then
+          ChangeMode(Screen, Message.Width, Message.Height);
+        DescribeScreen(Client, LongInt(Message.Code));
+      end;
+    RequestDescribeDisplayMode:
+      DescribeScreenMode(Client, LongInt(Message.Code), Message.Value);
+  else
+    Result := False;
+  end;
 end;
 
 procedure CarryOut(Client: PClient; var Message: TWindowMessage; Handle: Int64);
@@ -173,24 +255,25 @@ var
   Window: PServerWindow;
   Reply: TWindowMessage;
   Changed: TRectangle;
+  Left: LongInt;
+  Top: LongInt;
 begin
   if Message.Kind = RequestHello then
   begin
     if Handle >= 0 then
       CloseHandle(Handle);
     Reply := NewMessage(EventWelcome, 0);
-    Reply.Width := Display.Width;
-    Reply.Height := Display.Height;
-    Reply.Value := Dpi;
-    Reply.Code := ScalePercent;
+    Reply.Width := Screens[0].Device.Width;
+    Reply.Height := Screens[0].Device.Height;
+    Reply.Value := Screens[0].Dpi;
+    Reply.Code := Screens[0].ScalePercent;
     SendToClient(Client, Reply);
     Exit;
   end;
-  if Message.Kind = RequestSetScale then
+  if CarryOutDisplayRequest(Client, Message) then
   begin
     if Handle >= 0 then
       CloseHandle(Handle);
-    ChangeScale(Message.Code);
     Exit;
   end;
   if Message.Kind = RequestCreateWindow then
@@ -213,7 +296,11 @@ begin
     RequestShowWindow:
       ShowWindow(Window, Message.Value <> 0);
     RequestMoveWindow:
-      MoveWindowTo(Window, LogicalToPixels(Message.Left, ScalePercent), LogicalToPixels(Message.Top, ScalePercent));
+      begin
+        LogicalToDesktop(Message.Left, Message.Top, Left, Top);
+        MoveWindowTo(Window, Left, Top);
+        SettleWindowOnScreen(Window);
+      end;
     RequestSetTitle:
       begin
         Message.Text[TitleCapacity - 1] := #0;

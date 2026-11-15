@@ -17,19 +17,20 @@
 }
 
 {
-  displayscale - show or change the display server's scale
+  displayscale - show or change a display's scale in the display server
 
-  displayscale [PERCENT]
+  displayscale [-d NUMBER] [PERCENT]
 
   Without an operand: the display's scale and DPI. With one: asks the
   display server for that scale (100 to 400 percent) while windows are
-  open; the server draws its frames and pointer at it, and every program
-  lays its windows out again at the same logical size. Prints the scale
-  it is then:
+  open; the server draws its frames and pointer on that display at it,
+  and every window on it is laid out again at the same logical size. -d
+  picks the display (0, the first, by default). Prints the scale it is
+  then:
 
     scale P%, D DPI
 }
-program SetDisplayScale;
+program ShowDisplayScale;
 
 {$mode objfpc}
 
@@ -40,44 +41,40 @@ uses
   Sys.Text,
   Util.Messages,
   Util.Options,
-  Windowing.Protocol,
-  Windowing.Connection;
+  Windowing.Connection,
+  Windowing.Displays;
 
 const
-  Usage: PChar = 'Usage: displayscale [PERCENT]'#10 +
-    'Show the display server''s scale, or change it (100 to 400 percent).'#10;
+  Usage: PChar = 'Usage: displayscale [-d NUMBER] [PERCENT]'#10 +
+    'Show a display''s scale in the display server, or change it (100 to 400 percent).'#10 +
+    '  -d NUMBER  the display (0, the first, by default)'#10;
+  OptionNumber = 1;
   MinimumPercent = 100;
   MaximumPercent = 400;
-  ReplyTimeout = 5000;
 
-procedure SayScale;
+procedure SayScale(const Information: TDisplayInformation);
 begin
-  WriteFormatted(StandardOutput, 'scale %u%%, %u DPI'#10, [ArgumentUnsigned(Windowing.Connection.DisplayScale),
-    ArgumentUnsigned(DisplayDpi)]);
+  WriteFormatted(StandardOutput, 'scale %u%%, %u DPI'#10, [ArgumentUnsigned(Information.ScalePercent),
+    ArgumentUnsigned(Information.Dpi)]);
   FlushStream(StandardOutput);
-end;
-
-procedure ChangeScaleTo(Percent: LongWord);
-var
-  Message: TWindowMessage;
-begin
-  { The server says nothing when nothing changes. }
-  if Percent = Windowing.Connection.DisplayScale then
-    Exit;
-  Message := NewMessage(RequestSetScale, 0);
-  Message.Code := Percent;
-  SendRequest(Message, -1);
-  if not WaitForEvent(EventScaleChanged, ReplyTimeout, Message) then
-    Fail(1, 'the display server did not change the scale', []);
-  TakeScaleChange(Message);
 end;
 
 var
   Parser: TOptionParser;
+  Code: Integer;
+  OptionValue: PChar;
   Percent: Int64;
+  Number: QWord;
   Error: LongInt;
+  Information: TDisplayInformation;
+  Answered: Boolean;
 begin
-  ParseOperandsOnly(Parser, Usage);
+  Number := 0;
+  BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber)], Usage);
+  while NextOption(Parser, Code, OptionValue) do
+    if Code = OptionNumber then
+      if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
+        FailWithUsageHint('the display must be a number', []);
   if Parser.OperandCount > 1 then
     FailWithUsageHint('one scale at most', []);
   Percent := 0;
@@ -89,7 +86,11 @@ begin
   if Error <> ErrorNone then
     FailWithError(1, Error, 'the display server', []);
   if Percent <> 0 then
-    ChangeScaleTo(Percent);
-  SayScale;
+    Answered := SetDisplayScale(LongInt(Number), LongWord(Percent), Information)
+  else
+    Answered := DescribeDisplay(LongInt(Number), Information);
+  if not Answered then
+    Fail(1, 'there is no display %u', [ArgumentUnsigned(Number)]);
+  SayScale(Information);
   DisconnectFromDisplay;
 end.

@@ -368,9 +368,11 @@ const
   { Audio inputs: frames dropped because the reader fell behind. }
   ControlAudioGetDropped = 109;
 
-  { The display (/dev/display). Opening it takes the screen from the text
-    console, closing it gives it back; its framebuffer is mapped with
-    CallMapHandle at offset 0 (pitch times height bytes). }
+  { The displays (/dev/display, then /dev/display1, /dev/display2...: the
+    first is the one the firmware showed the boot on). Opening one takes
+    it for the program (the first from the text console, which gets it
+    back on closing); its framebuffer is mapped with CallMapHandle at
+    offset 0 (pitch times height bytes). }
   { Width or (height shl 32), in pixels. }
   ControlDisplayGetSize = 200;
   { Bytes from one line of the framebuffer to the next. }
@@ -383,6 +385,17 @@ const
   ControlDisplayGetScale = 204;
   { Width or (height shl 32) in millimetres; 0 if not known. }
   ControlDisplayGetPhysicalSize = 205;
+  { The modes the display can be set to: how many, and the one the
+    argument numbers (from 0, largest last) as width or (height shl 32)
+    in pixels. Every mode has 4 bytes a pixel. }
+  ControlDisplayGetModeCount = 206;
+  ControlDisplayGetMode = 207;
+  { Sets the mode the argument gives (width or (height shl 32)), one of
+    the list. The size, pitch, DPI and scale follow; the framebuffer must
+    be mapped again. Closing the display gives back the mode it had when
+    it was opened. ErrorUnsupported if the display's mode cannot be
+    changed (a firmware framebuffer without a driver). }
+  ControlDisplaySetMode = 208;
   { Blue, green, red, unused (a little-endian LongWord $00RRGGBB). }
   DisplayFormatBlueGreenRed = 1;
   { Red, green, blue, unused ($00BBGGRR). }

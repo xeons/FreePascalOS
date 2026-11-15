@@ -36,11 +36,20 @@
   pixels with the scale (LogicalToPixels); sizes of surfaces and
   positions within a window are in pixels, which is what is drawn.
 
+  There may be several displays, side by side in one desktop: display 0
+  (the first, whose size, DPI and scale EventWelcome gives) at the left,
+  then the others. Each has its own scale, and a place on the desktop
+  in logical units is on the display it falls on, at that display's
+  scale (RequestDescribeDisplay tells where each is). A window is at the
+  scale of the display it is on: moved onto another it is told
+  (EventScaleChanged for it) and gives itself a surface for that scale.
+
   A window can have an owner, another window of the same program: it
   stays above it. A disabled window (RequestEnableWindow) is never
   activated and gets no input; a click on it activates the window it
-  owns instead (a modal dialog). When the scale changes every program
-  hears EventScaleChanged and gives its windows new surfaces.
+  owns instead (a modal dialog). When a display's scale or mode changes
+  each window on it hears EventScaleChanged and gives itself a new
+  surface; every program hears when display 0 changes.
 }
 unit Windowing.Protocol;
 
@@ -83,9 +92,20 @@ const
   { Value 0: the window is disabled (not activated, no input: the owner
     of a modal dialog); 1: enabled again. }
   RequestEnableWindow = 11;
-  { Window 0; Code: a new scale for the display in percent (100 to 400).
-    Every program is told (EventScaleChanged). }
+  { Window 0; Code: a new scale in percent (100 to 400) for the display
+    numbered Value. Its windows are told (EventScaleChanged); answered by
+    EventDisplayDescribed for that display. }
   RequestSetScale = 12;
+  { Window 0; Code: a display's number. Answered by EventDisplayDescribed. }
+  RequestDescribeDisplay = 13;
+  { Window 0; Code: a display's number; Width, Height: a mode from its
+    list, in pixels. Windows on it keep their places (moved onto it if it
+    shrank) and hear if their scale changes; answered by
+    EventDisplayDescribed (the size it has then). }
+  RequestSetDisplayMode = 14;
+  { Window 0; Code: a display's number; Value: the number of one of its
+    modes (from 0, smallest first). Answered by EventDisplayMode. }
+  RequestDescribeDisplayMode = 15;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -117,11 +137,27 @@ const
   { Left, Top: where the client area is now (logical units): the window
     was moved (by the user, or maximized). }
   EventMoved = 111;
-  { Window 0. The display's scale changed: Width, Height: the screen in
-    pixels; Value: its DPI now; Code: its scale in percent. Windows kept
-    their places in logical units; each wants a new surface of its
-    logical size at the new scale (RequestSetSurface). }
+  { Width, Height: a display in pixels; Value: its DPI now; Code: its
+    scale in percent. Window 0: display 0 changed (its scale or its mode;
+    what new windows start at). Otherwise that window is at this scale
+    and DPI now (it moved to another display, or its display's scale or
+    mode changed): it wants a new surface of its logical size at the new
+    scale (RequestSetSurface). }
   EventScaleChanged = 112;
+  { The answer to RequestDescribeDisplay, RequestSetScale and
+    RequestSetDisplayMode. Flags: DisplayExists, or 0 if there is no
+    such display (nothing else is filled in). Width, Height: its size in
+    pixels; Value: its DPI; Code: its scale in percent; Left, Top,
+    SurfaceWidth, SurfaceHeight: its place and size on the desktop in
+    logical units. }
+  EventDisplayDescribed = 113;
+  { The answer to RequestDescribeDisplayMode. Width, Height: the mode in
+    pixels, 0 if there is no such mode; Flags: DisplayModeCurrent if the
+    display has it now. }
+  EventDisplayMode = 114;
+
+  DisplayExists = $01;
+  DisplayModeCurrent = $01;
 
   { --- Window flags ----------------------------------------------------- }
 

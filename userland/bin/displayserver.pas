@@ -22,15 +22,19 @@
 
   displayserver
 
-  Takes the display and the input devices (the text console gives them
-  up meanwhile), creates the port "display" (Windowing.Protocol) and
+  Takes every display and the input devices (the text console gives
+  them up meanwhile), creates the port "display" (Windowing.Protocol) and
   serves the programs that connect: their windows, framed and stacked,
   composed with the pointer on the desktop, the input routed to them.
-  Prints "displayserver: ready" once it serves. Ends when told to
-  (killed); the console gets the screen and keyboards back.
+  Prints a line for each display after the first, then
+  "displayserver: ready" (with the first display's size, DPI and scale)
+  once it serves. Ends when told to (killed); the console gets the
+  screen and keyboards back, and each display the mode it had.
 
   The units are in userland/displayserver: Server.Theme (colours and
-  metrics), Server.Screen (display and back buffer), Server.Cursor,
+  metrics), Server.Screen (the displays and their back buffers),
+  Server.Desktop (where they are, logical units and pixels),
+  Server.Cursor,
   Server.Windows (the window list), Server.Frames, Server.Composer,
   Server.Actions (what is done to windows), Server.Clients (the
   protocol), Server.Input and Server.Scale (changing the scale).
@@ -47,7 +51,6 @@ uses
   Util.Messages,
   Drawing.Rectangles,
   Windowing.Protocol,
-  Server.Theme,
   Server.Screen,
   Server.Cursor,
   Server.Composer,
@@ -88,25 +91,38 @@ begin
   until False;
 end;
 
+procedure SayOtherScreens;
+var
+  Index: LongInt;
 begin
-  Error := OpenScreen;
+  for Index := 1 to ScreenCount - 1 do
+    WriteFormatted(StandardOutput, 'displayserver: display %d: %ux%u at %d,%d, %u DPI, scale %u%%'#10,
+      [ArgumentNumber(Index), ArgumentUnsigned(Screens[Index].Device.Width),
+       ArgumentUnsigned(Screens[Index].Device.Height), ArgumentNumber(Screens[Index].Bounds.Left),
+       ArgumentNumber(Screens[Index].Bounds.Top), ArgumentUnsigned(Screens[Index].Dpi),
+       ArgumentUnsigned(Screens[Index].ScalePercent)]);
+end;
+
+begin
+  Error := OpenScreens;
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/display', []);
-  SetUpScale(Display.ScalePercent, Display.Dpi);
+  SetUpScales;
   Error := OpenInput;
   if Error <> ErrorNone then
     FailWithError(1, Error, '/dev/events', []);
   Port := CreatePort(WindowingPortName);
   if Port < 0 then
     FailWithError(1, LongInt(-Port), 'the port %s', [ArgumentText(WindowingPortName)]);
-  InitializeCursor(Display.Width, Display.Height, ScalePercent);
-  AddDamage(ScreenBounds);
+  InitializeCursor;
+  AddDamage(DesktopBounds);
   Compose;
+  SayOtherScreens;
   WriteFormatted(StandardOutput, 'displayserver: ready (%ux%u, %u DPI, scale %u%%)'#10,
-    [ArgumentUnsigned(Display.Width), ArgumentUnsigned(Display.Height), ArgumentUnsigned(Dpi),
-     ArgumentUnsigned(ScalePercent)]);
+    [ArgumentUnsigned(Screens[0].Device.Width), ArgumentUnsigned(Screens[0].Device.Height),
+     ArgumentUnsigned(Screens[0].Dpi), ArgumentUnsigned(Screens[0].ScalePercent)]);
   FlushStream(StandardOutput);
   ServeForever;
   CloseInput;
-  CloseScreen;
+  CloseScreens;
 end.

@@ -20,12 +20,19 @@
   The connection to the display server: one per program.
 
   ConnectToDisplay connects to the server's port and says hello; the
-  answer tells the screen's size, DPI and scale, kept here for everyone
-  (and the conversions between logical units and pixels). Messages are
-  sent with SendRequest; WaitForEvent waits for one of a kind (a reply)
-  and keeps whatever else arrives meanwhile for NextEvent, so nothing is
-  lost or taken out of order. The scale can change while the program
-  runs (EventScaleChanged; Windowing.Windows passes it here).
+  answer tells the first display's size, DPI and scale, kept here for
+  everyone. Messages are sent with SendRequest; WaitForEvent waits for
+  one of a kind (a reply) and keeps whatever else arrives meanwhile for
+  NextEvent, so nothing is lost or taken out of order.
+
+  Each window is at the scale of the display it is on, so the scale
+  used for converting between logical units and pixels (DisplayScale,
+  DisplayDpi, Scaled, Unscaled) is the one of the window being served:
+  Windowing.Windows selects it (UseScale) before a window's handlers
+  run, before it paints and before a queued message reaches it or its
+  controls. DefaultScale and DefaultDpi are the first display's, which a
+  new window starts at; they change with it (EventScaleChanged for
+  window 0, TakeScaleChange).
 }
 unit Windowing.Connection;
 
@@ -40,8 +47,12 @@ var
   DisplayChannel: Int64 = -1;
   ScreenWidth: LongInt;
   ScreenHeight: LongInt;
+  { The scale and DPI in use: the window being served's. }
   DisplayDpi: LongWord = 96;
   DisplayScale: LongWord = 100;
+  { The first display's: where new windows start. }
+  DefaultDpi: LongWord = 96;
+  DefaultScale: LongWord = 100;
 
 { ErrorNone, or an error code (no display server: ErrorNotFound). Waits a
   little for the server, as it may still be starting. }
@@ -63,8 +74,11 @@ function WaitForEvent(Kind: LongWord; Timeout: Int64; out Message: TWindowMessag
 function NextEvent(out Message: TWindowMessage): Boolean;
 { True once the server is gone. }
 function ConnectionBroken: Boolean;
-{ Takes the screen's size, DPI and scale from EventScaleChanged. }
+{ Takes the first display's size, DPI and scale from EventScaleChanged
+  for window 0. }
 procedure TakeScaleChange(const Message: TWindowMessage);
+{ Converts at ScalePercent and Dpi from now on (a window's). }
+procedure UseScale(ScalePercent, Dpi: LongWord);
 
 implementation
 
@@ -207,10 +221,8 @@ begin
     DisconnectFromDisplay;
     Exit(ErrorTimedOut);
   end;
-  ScreenWidth := Message.Width;
-  ScreenHeight := Message.Height;
-  DisplayDpi := LongWord(Message.Value);
-  DisplayScale := Message.Code;
+  TakeScaleChange(Message);
+  UseScale(DefaultScale, DefaultDpi);
   Result := ErrorNone;
 end;
 
@@ -218,8 +230,16 @@ procedure TakeScaleChange(const Message: TWindowMessage);
 begin
   ScreenWidth := Message.Width;
   ScreenHeight := Message.Height;
-  DisplayDpi := LongWord(Message.Value);
-  DisplayScale := Message.Code;
+  DefaultDpi := LongWord(Message.Value);
+  DefaultScale := Message.Code;
+end;
+
+procedure UseScale(ScalePercent, Dpi: LongWord);
+begin
+  if ScalePercent = 0 then
+    Exit;
+  DisplayScale := ScalePercent;
+  DisplayDpi := Dpi;
 end;
 
 procedure DisconnectFromDisplay;

@@ -178,6 +178,7 @@ uses
   Drawing.Shapes,
   Windowing.Theme,
   Windowing.Connection,
+  Windowing.Displays,
   Controls.Keys,
   Controls.Text;
 
@@ -282,15 +283,8 @@ var
   Popup: TPopupWindow;
 begin
   MeasureMenu(Menu, Width, Height);
-  { Kept on the screen. }
-  if Left + Width > Unscaled(ScreenWidth) then
-    Left := Unscaled(ScreenWidth) - Width;
-  if Top + Height > Unscaled(ScreenHeight) then
-    Top := Unscaled(ScreenHeight) - Height;
-  if Left < 0 then
-    Left := 0;
-  if Top < 0 then
-    Top := 0;
+  { Kept on the display it opens on. }
+  KeepOnDisplay(Left, Top, Width, Height);
   Popup := TPopupWindow.CreatePopup(Owner, Left, Top, Width, Height);
   Result := TMenuList.Create(Popup.Root);
   Result.Align := AlignClient;

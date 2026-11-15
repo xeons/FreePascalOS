@@ -133,6 +133,8 @@ type
     constructor Create(AParent: TControl); virtual;
     destructor Destroy; override;
     procedure ReceiveMessage(var Message: TPostedMessage); override;
+    { Selects the scale of the window it is in. }
+    procedure PrepareToReceive; override;
     { Logical units, within the parent. }
     procedure SetBounds(Left, Top, Width, Height: LongInt);
     { The same without asking the parent to lay out again: for a parent's
@@ -441,6 +443,12 @@ procedure TControl.ReceiveMessage(var Message: TPostedMessage);
 begin
   if (Message.Code = MessageNotify) and Assigned(FOnNotify) then
     FOnNotify(Self, TControl(Message.Parameter1), LongWord(Message.Parameter2));
+end;
+
+procedure TControl.PrepareToReceive;
+begin
+  if (FHost <> nil) and (FHost.OwnerWindow <> nil) then
+    FHost.OwnerWindow.PrepareToReceive;
 end;
 
 procedure TControl.Notify(Code: LongWord);

@@ -79,7 +79,6 @@ uses
   Drivers.UsbKeyboard,
   Drivers.HdAudio,
   Drivers.Ac97,
-  Drivers.BochsDisplay,
   Drivers.UsbAudio,
   FileSystem.Volumes,
   Debug.Output,
@@ -148,7 +147,6 @@ procedure InitializeIoSystem;
 begin
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
-  InitializeBochsDisplay;
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;

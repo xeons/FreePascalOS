@@ -17,7 +17,7 @@
 }
 
 {
-  The display's scale and DPI, and the theme's metrics in pixels.
+  The theme's metrics in pixels, at a screen's scale.
 
   The theme itself (colours and metrics in logical units) is
   Windowing.Theme, shared with the programs' controls, so frames and
@@ -32,20 +32,15 @@ interface
 uses
   Windowing.Theme;
 
-var
-  { The display's scale in percent. }
-  ScalePercent: LongWord;
-  Dpi: LongWord;
-
-{ A metric (logical units) in pixels. }
-function ScaledMetric(Value: LongInt): LongInt;
+{ A metric (logical units) in pixels at ScalePercent. }
+function ScaledMetric(Value: LongInt; ScalePercent: LongWord): LongInt;
 
 implementation
 
 uses
   Windowing.Protocol;
 
-function ScaledMetric(Value: LongInt): LongInt;
+function ScaledMetric(Value: LongInt; ScalePercent: LongWord): LongInt;
 begin
   Result := LogicalToPixels(Value, ScalePercent);
 end;

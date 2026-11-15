@@ -20,10 +20,12 @@
   The mouse pointer: where it is, and its arrow.
 
   Pointing devices move it by motion (relative) or position (absolute,
-  0-65535 across the screen) events; it stays on the screen. The arrow
-  is drawn from a small pattern, each of its pixels a square of
-  PointerScale pixels (the display's scale rounded to a whole number),
-  so it is about the same size on every display.
+  0-65535 across the whole desktop, every screen side by side) events;
+  it is in desktop pixels and stays on the screens, going from one to
+  the next across their shared edge. The arrow is drawn from a small
+  pattern, each of its pixels a square of PointerScale pixels (the scale
+  of the screen it is on, rounded to a whole number), so it is about the
+  same size on every display.
 }
 unit Server.Cursor;
 
@@ -39,9 +41,11 @@ var
   PointerX: LongInt;
   PointerY: LongInt;
 
-procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: LongWord);
-{ The arrow's size for a new scale. }
-procedure SetPointerScale(ScalePercent: LongWord);
+{ In the middle of the first screen. }
+procedure InitializeCursor;
+{ The arrow's size for the scale of the screen it is on now (after a
+  scale changed, or the screens moved: it is kept on them too). }
+procedure FollowPointerScreen;
 { Moves by (DeltaX, DeltaY), or to an absolute position. }
 procedure MovePointerBy(DeltaX, DeltaY: LongInt);
 procedure MovePointerToPosition(X, Y: LongInt);
@@ -53,7 +57,9 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Drawing.Colors;
+  Drawing.Colors,
+  Server.Screen,
+  Server.Desktop;
 
 const
   { '#' outline, '.' fill, ' ' transparent; the tip is the top left. }
@@ -83,51 +89,38 @@ const
   FillColor = $FFFFFFFF;
 
 var
-  ScreenWidth: LongInt;
-  ScreenHeight: LongInt;
   PointerScale: LongInt;
 
-procedure InitializeCursor(ScreenWidth, ScreenHeight: LongInt; ScalePercent: LongWord);
+procedure FollowPointerScreen;
 begin
-  Server.Cursor.ScreenWidth := ScreenWidth;
-  Server.Cursor.ScreenHeight := ScreenHeight;
-  SetPointerScale(ScalePercent);
-  PointerX := ScreenWidth div 2;
-  PointerY := ScreenHeight div 2;
-end;
-
-procedure SetPointerScale(ScalePercent: LongWord);
-begin
-  PointerScale := (LongInt(ScalePercent) + 50) div 100;
+  KeepPointOnScreens(PointerX, PointerY);
+  PointerScale := (LongInt(NearestScreen(PointerX, PointerY)^.ScalePercent) + 50) div 100;
   if PointerScale < 1 then
     PointerScale := 1;
 end;
 
-procedure KeepOnScreen;
+procedure InitializeCursor;
 begin
-  if PointerX < 0 then
-    PointerX := 0;
-  if PointerY < 0 then
-    PointerY := 0;
-  if PointerX >= ScreenWidth then
-    PointerX := ScreenWidth - 1;
-  if PointerY >= ScreenHeight then
-    PointerY := ScreenHeight - 1;
+  PointerX := (Screens[0].Bounds.Left + Screens[0].Bounds.Right) div 2;
+  PointerY := (Screens[0].Bounds.Top + Screens[0].Bounds.Bottom) div 2;
+  FollowPointerScreen;
 end;
 
 procedure MovePointerBy(DeltaX, DeltaY: LongInt);
 begin
   PointerX := PointerX + DeltaX;
   PointerY := PointerY + DeltaY;
-  KeepOnScreen;
+  FollowPointerScreen;
 end;
 
 procedure MovePointerToPosition(X, Y: LongInt);
 begin
   { Rounded to the nearest pixel. }
-  PointerX := LongInt((Int64(X) * (ScreenWidth - 1) + InputPositionMaximum div 2) div InputPositionMaximum);
-  PointerY := LongInt((Int64(Y) * (ScreenHeight - 1) + InputPositionMaximum div 2) div InputPositionMaximum);
-  KeepOnScreen;
+  PointerX := DesktopBounds.Left + LongInt((Int64(X) * (RectangleWidth(DesktopBounds) - 1) + InputPositionMaximum div 2) div
+    InputPositionMaximum);
+  PointerY := DesktopBounds.Top + LongInt((Int64(Y) * (RectangleHeight(DesktopBounds) - 1) + InputPositionMaximum div 2) div
+    InputPositionMaximum);
+  FollowPointerScreen;
 end;
 
 function CursorRectangle: TRectangle;

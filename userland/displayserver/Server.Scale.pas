@@ -17,20 +17,30 @@
 }
 
 {
-  The display's scale, and changing it while windows are open.
+  Each screen's scale, and changing it (or the screen's size) while
+  windows are open; windows moving from one screen to another.
 
-  The scale starts as the display's own (from its DPI). A program may
-  ask for another (RequestSetScale, `displayscale`): as if the display
-  were that much denser, the DPI goes with it. Everything the server
-  draws in logical units follows: the frames and their title font, the
-  pointer's arrow. Windows keep their places in logical units (their
-  pixels move), and every program is told (EventScaleChanged) so it can
-  give its windows surfaces of the same logical size, laid out and
-  drawn again at the new scale. A maximized window is maximized again.
+  A screen's scale starts as the display's own (from its DPI). A program
+  may ask for another (RequestSetScale, `displayscale`): as if the
+  display were that much denser, the DPI goes with it. Everything the
+  server draws on that screen in logical units follows: the frames and
+  their title font, the pointer's arrow.
 
-  With one display there is one scale. With several, each display will
-  have its own, and a window moved onto another display will be told the
-  same way.
+  When a screen changes (its scale here, its mode in Server.Modes) the
+  screens are laid out again. Every window keeps its place on its own
+  screen: its offset from the screen's top left, in that screen's
+  logical units (so on the changed screen its pixels move if the scale
+  did, and on the screens to its right it moves with its screen). Each
+  window on the changed screen is told its new scale (EventScaleChanged
+  for it) so its program gives it a surface of the same logical size,
+  laid out and drawn again; a maximized one is maximized again, and
+  after a new mode the others are moved onto the screen if they would
+  hang off it. Every program is told where its windows are now (their
+  logical places may have moved with the screens' logical layout), and
+  when display 0 changed, about that (EventScaleChanged for window 0).
+
+  A window dragged (or moved by its program) onto another screen takes
+  that screen's scale: its frame at once, its program when told.
 }
 unit Server.Scale;
 
@@ -38,28 +48,58 @@ unit Server.Scale;
 
 interface
 
+uses
+  Drawing.Rectangles,
+  Server.Screen,
+  Server.Windows;
+
 const
   MinimumScalePercent = 100;
   MaximumScalePercent = 400;
 
-{ The display's own scale and DPI, at start (loads the title's font). }
-procedure SetUpScale(DisplayScalePercent, DisplayDpi: LongWord);
-{ Changes the scale to NewPercent (between the limits; else ignored). }
-procedure ChangeScale(NewPercent: LongWord);
+{ Loads the title's font and picks it for every screen's DPI. }
+procedure SetUpScales;
+{ Changes Screen's scale to NewPercent (between the limits; else
+  ignored). }
+procedure ChangeScale(Screen: PScreen; NewPercent: LongWord);
+{ Puts the window on the screen the middle of its frame is on, telling
+  its program if that changes its scale. }
+procedure SettleWindowOnScreen(Window: PServerWindow);
+
+{ For Server.Modes: what a change to a screen needs. Places are taken
+  before the change and given back after it. }
+type
+  TWindowPlace = record
+    ScreenNumber: LongInt;
+    { The client area's and its restored bounds' offsets from the
+      screen's top left, in pixels. }
+    OffsetX: LongInt;
+    OffsetY: LongInt;
+    RestoreOffset: TRectangle;
+  end;
+  TWindowPlaces = array[0..MaximumWindows - 1] of TWindowPlace;
+
+  TScreenState = record
+    ScalePercent: LongWord;
+    Dpi: LongWord;
+  end;
+
+procedure RememberWindowPlaces(out Places: TWindowPlaces);
+function RememberScreenState(Screen: PScreen): TScreenState;
+{ Lays everything out again after Changed changed (from Before), and
+  tells the programs. ModeChanged: its size changed too. }
+procedure FinishScreenChange(Changed: PScreen; const Before: TScreenState; const Places: TWindowPlaces;
+  ModeChanged: Boolean);
 
 implementation
 
 uses
-  Drawing.Rectangles,
   Font.Text,
   Font.Files,
   Windowing.Protocol,
   Windowing.Theme,
-  Server.Theme,
-  Server.Screen,
+  Server.Desktop,
   Server.Cursor,
-  Server.Windows,
-  Server.Frames,
   Server.Composer,
   Server.Actions,
   Server.Clients,
@@ -68,86 +108,200 @@ uses
 var
   Fonts: TFontSet;
   FontsLoaded: Boolean;
-  { What the display itself has: other scales are against these. }
-  NativeScalePercent: LongWord;
-  NativeDpi: LongWord;
 
-procedure PickTitleFace;
+procedure PickTitleFace(Screen: PScreen);
 begin
   if FontsLoaded then
-    TitleFace := SelectFace(Fonts, Theme.TitlePoints, Dpi, True);
+    Screen^.TitleFace := SelectFace(Fonts, Theme.TitlePoints, Screen^.Dpi, True);
 end;
 
-procedure SetUpScale(DisplayScalePercent, DisplayDpi: LongWord);
+procedure SetUpScales;
+var
+  Index: LongInt;
 begin
-  NativeScalePercent := DisplayScalePercent;
-  NativeDpi := DisplayDpi;
-  ScalePercent := DisplayScalePercent;
-  Dpi := DisplayDpi;
   FontsLoaded := LoadSystemFonts(Fonts);
-  PickTitleFace;
+  for Index := 0 to ScreenCount - 1 do
+    PickTitleFace(@Screens[Index]);
 end;
 
-{ A length in pixels at OldPercent, the same in logical units at the
-  current scale. }
-function Rescaled(Pixels: LongInt; OldPercent: LongWord): LongInt;
+{ --- Windows on screens ----------------------------------------------------- }
+
+function ScaleDiffers(Window: PServerWindow; ScalePercent, Dpi: LongWord): Boolean;
+var
+  Screen: PScreen;
 begin
-  Result := LogicalToPixels(PixelsToLogical(Pixels, OldPercent), ScalePercent);
+  Screen := WindowScreen(Window);
+  Result := (Screen^.ScalePercent <> ScalePercent) or (Screen^.Dpi <> Dpi);
 end;
 
-procedure RescaleWindow(Window: PServerWindow; OldPercent: LongWord);
+procedure SettleWindowOnScreen(Window: PServerWindow);
+var
+  Target: PScreen;
+  Previous: PScreen;
+begin
+  Target := ScreenUnderWindow(Window);
+  if Target^.Number = Window^.ScreenNumber then
+    Exit;
+  Previous := WindowScreen(Window);
+  if Window^.Visible then
+    DamageWindow(Window);
+  Window^.ScreenNumber := Target^.Number;
+  if Window^.Visible then
+    DamageWindow(Window);
+  if ScaleDiffers(Window, Previous^.ScalePercent, Previous^.Dpi) then
+    TellWindowScale(Window);
+end;
+
+{ --- A screen changing -------------------------------------------------------- }
+
+procedure RememberWindowPlaces(out Places: TWindowPlaces);
+var
+  Index: LongInt;
+  Window: PServerWindow;
+  Origin: TRectangle;
+begin
+  for Index := 0 to WindowCount - 1 do
+  begin
+    Window := Windows[Index];
+    Origin := WindowScreen(Window)^.Bounds;
+    Places[Index].ScreenNumber := WindowScreen(Window)^.Number;
+    Places[Index].OffsetX := Window^.ClientLeft - Origin.Left;
+    Places[Index].OffsetY := Window^.ClientTop - Origin.Top;
+    Places[Index].RestoreOffset := OffsetRectangle(Window^.RestoreBounds, -Origin.Left, -Origin.Top);
+  end;
+end;
+
+function RememberScreenState(Screen: PScreen): TScreenState;
+begin
+  Result.ScalePercent := Screen^.ScalePercent;
+  Result.Dpi := Screen^.Dpi;
+end;
+
+{ A length in pixels at OldPercent, the same in logical units at
+  NewPercent. }
+function Rescaled(Pixels: LongInt; OldPercent, NewPercent: LongWord): LongInt;
+begin
+  Result := LogicalToPixels(PixelsToLogical(Pixels, OldPercent), NewPercent);
+end;
+
+function RescaledRectangle(const Rectangle: TRectangle; OldPercent, NewPercent: LongWord): TRectangle;
+begin
+  Result := MakeRectangle(Rescaled(Rectangle.Left, OldPercent, NewPercent),
+    Rescaled(Rectangle.Top, OldPercent, NewPercent), Rescaled(RectangleWidth(Rectangle), OldPercent, NewPercent),
+    Rescaled(RectangleHeight(Rectangle), OldPercent, NewPercent));
+end;
+
+{ Moves the window so its frame is on Screen, as far as it fits. }
+procedure KeepWindowOnScreen(Window: PServerWindow; Screen: PScreen);
+var
+  Frame: TRectangle;
+  DeltaX: LongInt;
+  DeltaY: LongInt;
+begin
+  Frame := FrameRectangle(Window);
+  DeltaX := 0;
+  DeltaY := 0;
+  if Frame.Right > Screen^.Bounds.Right then
+    DeltaX := Screen^.Bounds.Right - Frame.Right;
+  if Frame.Left + DeltaX < Screen^.Bounds.Left then
+    DeltaX := Screen^.Bounds.Left - Frame.Left;
+  if Frame.Bottom > Screen^.Bounds.Bottom then
+    DeltaY := Screen^.Bounds.Bottom - Frame.Bottom;
+  if Frame.Top + DeltaY < Screen^.Bounds.Top then
+    DeltaY := Screen^.Bounds.Top - Frame.Top;
+  MoveWindowTo(Window, Window^.ClientLeft + DeltaX, Window^.ClientTop + DeltaY);
+end;
+
+procedure MaximizeAgain(Window: PServerWindow);
 var
   Restore: TRectangle;
 begin
+  { The screen or the title bar is another size now. }
+  Window^.Maximized := False;
   Restore := Window^.RestoreBounds;
-  Window^.RestoreBounds := MakeRectangle(Rescaled(Restore.Left, OldPercent), Rescaled(Restore.Top, OldPercent),
-    Rescaled(RectangleWidth(Restore), OldPercent), Rescaled(RectangleHeight(Restore), OldPercent));
-  if Window^.Maximized then
-  begin
-    { Maximized again: the screen is the same, the title bar is not. }
-    Window^.Maximized := False;
-    Restore := Window^.RestoreBounds;
-    ToggleMaximized(Window);
-    Window^.RestoreBounds := Restore;
-  end
-  else
-    MoveWindowTo(Window, Rescaled(Window^.ClientLeft, OldPercent), Rescaled(Window^.ClientTop, OldPercent));
+  ToggleMaximized(Window);
+  Window^.RestoreBounds := Restore;
 end;
 
-procedure TellEveryProgram;
+procedure TellEveryProgramAboutFirstScreen;
 var
   Message: TWindowMessage;
   Index: LongInt;
 begin
   Message := NewMessage(EventScaleChanged, 0);
-  Message.Width := Display.Width;
-  Message.Height := Display.Height;
-  Message.Value := Dpi;
-  Message.Code := ScalePercent;
+  Message.Width := Screens[0].Device.Width;
+  Message.Height := Screens[0].Device.Height;
+  Message.Value := Screens[0].Dpi;
+  Message.Code := Screens[0].ScalePercent;
   for Index := 0 to ClientCount - 1 do
     SendToClient(Clients[Index], Message);
 end;
 
-procedure ChangeScale(NewPercent: LongWord);
+procedure PlaceWindowAgain(Window: PServerWindow; const Place: TWindowPlace; Changed: PScreen;
+  const Before: TScreenState; ModeChanged: Boolean);
 var
-  OldPercent: LongWord;
+  Screen: PScreen;
+  OffsetX: LongInt;
+  OffsetY: LongInt;
+  Restore: TRectangle;
+begin
+  Screen := ScreenByNumber(Place.ScreenNumber);
+  OffsetX := Place.OffsetX;
+  OffsetY := Place.OffsetY;
+  Restore := Place.RestoreOffset;
+  if (Screen = Changed) and (Before.ScalePercent <> Changed^.ScalePercent) then
+  begin
+    OffsetX := Rescaled(OffsetX, Before.ScalePercent, Changed^.ScalePercent);
+    OffsetY := Rescaled(OffsetY, Before.ScalePercent, Changed^.ScalePercent);
+    Restore := RescaledRectangle(Restore, Before.ScalePercent, Changed^.ScalePercent);
+  end;
+  Window^.RestoreBounds := OffsetRectangle(Restore, Screen^.Bounds.Left, Screen^.Bounds.Top);
+  MoveWindowTo(Window, Screen^.Bounds.Left + OffsetX, Screen^.Bounds.Top + OffsetY);
+  if Screen = Changed then
+  begin
+    { The program hears its scale first, so a maximized window's new size
+      comes after it. }
+    if (Before.ScalePercent <> Changed^.ScalePercent) or (Before.Dpi <> Changed^.Dpi) then
+      TellWindowScale(Window);
+    if Window^.Maximized then
+      MaximizeAgain(Window)
+    else if ModeChanged then
+      KeepWindowOnScreen(Window, Changed);
+  end;
+  { Its logical place may have moved with the screens' layout. }
+  TellWindowPlace(Window);
+end;
+
+procedure FinishScreenChange(Changed: PScreen; const Before: TScreenState; const Places: TWindowPlaces;
+  ModeChanged: Boolean);
+var
   Index: LongInt;
 begin
-  if (NewPercent < MinimumScalePercent) or (NewPercent > MaximumScalePercent) or (NewPercent = ScalePercent) then
-    Exit;
-  OldPercent := ScalePercent;
-  ScalePercent := NewPercent;
-  Dpi := (NativeDpi * NewPercent + NativeScalePercent div 2) div NativeScalePercent;
-  PickTitleFace;
-  SetPointerScale(ScalePercent);
+  PickTitleFace(Changed);
   { A drag's outline and starting point were in the old pixels. }
   CancelDrag;
-  { The programs hear first, so a maximized window's new size comes
-    after the new scale. }
-  TellEveryProgram;
+  ArrangeScreens;
+  if Changed^.Number = 0 then
+    TellEveryProgramAboutFirstScreen;
   for Index := 0 to WindowCount - 1 do
-    RescaleWindow(Windows[Index], OldPercent);
-  AddDamage(ScreenBounds);
+    PlaceWindowAgain(Windows[Index], Places[Index], Changed, Before, ModeChanged);
+  FollowPointerScreen;
+  AddDamage(DesktopBounds);
+end;
+
+procedure ChangeScale(Screen: PScreen; NewPercent: LongWord);
+var
+  Places: TWindowPlaces;
+  Before: TScreenState;
+begin
+  if (NewPercent < MinimumScalePercent) or (NewPercent > MaximumScalePercent) or
+     (NewPercent = Screen^.ScalePercent) then
+    Exit;
+  RememberWindowPlaces(Places);
+  Before := RememberScreenState(Screen);
+  Screen^.ScalePercent := NewPercent;
+  Screen^.Dpi := (Screen^.NativeDpi * NewPercent + Screen^.NativeScalePercent div 2) div Screen^.NativeScalePercent;
+  FinishScreenChange(Screen, Before, Places, False);
 end;
 
 end.

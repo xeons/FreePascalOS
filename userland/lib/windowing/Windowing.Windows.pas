@@ -37,9 +37,14 @@
   disabled window (Enabled False) is never activated by the server and
   gets no input; a click on it brings forward the window it owns.
 
-  When the display's scale changes, every window gets a surface of the
-  same logical size at the new scale (ScaleChanged, then Resized, then
-  painted whole), so what is laid out in logical units looks the same.
+  Each window is at the scale (and DPI) of the display it is on, which
+  is selected for Scaled and Unscaled (Windowing.Connection) whenever
+  the window is served: its handlers, its painting, messages queued for
+  it or its controls. When that scale changes (the window moved to
+  another display, or its display's scale or mode changed) the window
+  gets a surface of the same logical size at the new scale
+  (ScaleChanged, then Resized, then painted whole), so what is laid out
+  in logical units looks the same.
 
   RunMessageLoop serves every window until QuitMessageLoop, or until the
   last window is gone (if QuitWhenLastWindowCloses). RunModal serves
@@ -83,10 +88,13 @@ type
       scale changes. }
     FLogicalWidth: LongInt;
     FLogicalHeight: LongInt;
+    { The scale and DPI of the display it is on. }
+    FScale: LongWord;
+    FDpi: LongWord;
     function CreateSurface(Width, Height: LongInt; out Section: Int64; out Surface: TSurface): Boolean;
     procedure ReleaseSurface;
     procedure TakeNewSize(Width, Height: LongInt; ScaleWasChanged: Boolean);
-    procedure TakeNewScale;
+    procedure TakeNewScale(NewScale, NewDpi: LongWord);
     procedure SetTitle(const Value: string);
     procedure SetEnabled(Value: Boolean);
     function GetClientWidth: LongInt;
@@ -105,9 +113,10 @@ type
     { The surface has a new size (Width x Height pixels): lay out again.
       Everything is invalid already. }
     procedure Resized; virtual;
-    { The display's scale changed (DisplayScale and DisplayDpi are the new
-      ones) and the window has a new surface for its logical size; Resized
-      and painting follow. Anything kept in pixels is picked again here. }
+    { The window's scale changed (DisplayScale and DisplayDpi are the new
+      ones: it moved to another display, or its display changed) and it
+      has a new surface for its logical size; Resized and painting
+      follow. Anything kept in pixels is picked again here. }
     procedure ScaleChanged; virtual;
     procedure ActiveChanged; virtual;
     { The close button (or Alt+F4). The default frees the window. }
@@ -136,7 +145,12 @@ type
     { Calls TimerFired(Id) every Milliseconds until StopTimer. }
     procedure StartTimer(Id: LongWord; Milliseconds: LongWord);
     procedure StopTimer(Id: LongWord);
+    { Makes the window's scale the one Scaled and Unscaled use. }
+    procedure PrepareToReceive; override;
     property Id: LongWord read FId;
+    { The scale and DPI of the display it is on. }
+    property Scale: LongWord read FScale;
+    property Dpi: LongWord read FDpi;
     property Title: string read FTitle write SetTitle;
     property Surface: TSurface read FSurface;
     { The client area in pixels, and in logical units. }
@@ -262,6 +276,11 @@ begin
   ClearRegion(FInvalid);
   if ConnectToDisplay <> ErrorNone then
     raise EInOutError.Create('no display server');
+  { It starts at the first display's scale; the server says if it is on
+    another display with another. }
+  FScale := DefaultScale;
+  FDpi := DefaultDpi;
+  PrepareToReceive;
   if not CreateSurface(Scaled(Width), Scaled(Height), FSection, FSurface) then
     raise EOutOfMemory.Create('no memory for a window surface');
   Invalidate;
@@ -367,9 +386,19 @@ begin
   SendRequest(Message, FSection);
 end;
 
-procedure TWindow.TakeNewScale;
+procedure TWindow.TakeNewScale(NewScale, NewDpi: LongWord);
 begin
+  if NewScale = 0 then
+    Exit;
+  FScale := NewScale;
+  FDpi := NewDpi;
+  PrepareToReceive;
   TakeNewSize(Scaled(FLogicalWidth), Scaled(FLogicalHeight), True);
+end;
+
+procedure TWindow.PrepareToReceive;
+begin
+  UseScale(FScale, FDpi);
 end;
 
 function TWindow.GetClientWidth: LongInt;
@@ -467,6 +496,7 @@ var
 begin
   if RegionIsEmpty(FInvalid) or (FSurface.Pixels = nil) then
     Exit;
+  PrepareToReceive;
   Bounds := RegionBounds(FInvalid);
   BeginCanvas(Canvas, FSurface);
   SetCanvasClip(Canvas, FInvalid);
@@ -589,30 +619,15 @@ begin
   QuitCode := Code;
 end;
 
-{ Every window takes the new scale (from a list taken first: a handler
-  might close a window). }
-procedure ChangeScale(const Message: TWindowMessage);
-var
-  Snapshot: array[0..MaximumProgramWindows - 1] of TWindow;
-  Count: LongInt;
-  Index: LongInt;
-begin
-  TakeScaleChange(Message);
-  Count := WindowListCount;
-  for Index := 0 to Count - 1 do
-    Snapshot[Index] := WindowList[Index];
-  for Index := 0 to Count - 1 do
-    if WindowById(Snapshot[Index].FId) = Snapshot[Index] then
-      Snapshot[Index].TakeNewScale;
-end;
-
 procedure Dispatch(const Message: TWindowMessage);
 var
   Window: TWindow;
 begin
-  if Message.Kind = EventScaleChanged then
+  { For window 0: the first display changed (new windows' scale); each
+    window on it hears for itself. }
+  if (Message.Kind = EventScaleChanged) and (Message.Window = 0) then
   begin
-    ChangeScale(Message);
+    TakeScaleChange(Message);
     Exit;
   end;
   if (Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) then
@@ -620,6 +635,7 @@ begin
   Window := WindowById(Message.Window);
   if Window = nil then
     Exit;
+  Window.PrepareToReceive;
   { The server sends nothing to a disabled window; this drops what was
     already on its way when the modal window started. }
   if (ModalWindow <> nil) and not Window.AcceptsInputWhileModal and
@@ -657,6 +673,8 @@ begin
         Window.FLeft := Message.Left;
         Window.FTop := Message.Top;
       end;
+    EventScaleChanged:
+      Window.TakeNewScale(Message.Code, LongWord(Message.Value));
   end;
 end;
 
@@ -710,6 +728,7 @@ begin
   begin
     Window := Timers[Ready - 2].Window;
     TimerId := Timers[Ready - 2].Id;
+    Window.PrepareToReceive;
     Window.TimerFired(TimerId);
   end;
 end;

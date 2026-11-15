@@ -643,9 +643,9 @@ runs it on a thread pinned to the boot processor:
    - **Devices:** AHCI ports pointed at their command lists again; NVMe
      queues emptied and recreated; virtio reset, its features and queue
      given again; HD Audio's controller reset and codec paths set up;
-     AC'97's codec and list; the serial port; the PS/2 controller; the
-     Bochs display's mode registers (the firmware set the mode at boot)
-     and the console redrawn from its copy.
+     AC'97's codec and list; the serial port; the PS/2 controller; each
+     Bochs display's mode registers (the mode it had, the firmware's or
+     one a program set) and the console redrawn from its copy.
    - **Services:** block I/O open again; audio volumes set again and
      capturing restarted.
 
@@ -823,36 +823,83 @@ scrolling.
 ### The display device
 
 `/dev/display` (Drivers.DisplayDevice) is the screen for a graphical
-program: the framebuffer the firmware set up, which the loader passes
-on. One program opens it at a time. Opening it takes the screen from
-the text console, which goes on drawing into its copy of the screen
-only (SuspendConsoleDrawing); closing it, however the program ends,
-gives the screen back and the console draws itself again from the copy.
+program: the display the firmware showed the boot on. Other displays
+are `/dev/display1`, `/dev/display2` and so on. One program opens a
+display at a time. Opening the first takes the screen from the text
+console, which goes on drawing into its copy of the screen only
+(SuspendConsoleDrawing); closing it, however the program ends, gives
+the screen back and the console draws itself again from the copy.
 A kernel panic takes it back too.
 
 Control requests give the size, the pitch (bytes per line), the pixel
 format (blue-green-red or red-green-blue in a LongWord), the physical
-size in millimetres, the DPI and the scale. The framebuffer is mapped
-into the program with `CallMapHandle` (offset 0), its writes combined.
-`Sys.Display` in libsystem wraps all of it (OpenDisplay, CloseDisplay,
-DisplayPixel).
+size in millimetres, the DPI and the scale; they list the display's
+modes (`ControlDisplayGetModeCount`, `ControlDisplayGetMode`, each a
+width and height at 4 bytes a pixel, smallest first) and set one
+(`ControlDisplaySetMode`). The framebuffer is mapped into the program
+with `CallMapHandle` (offset 0), its writes combined; after a new mode
+it is mapped again. `Sys.Display` in libsystem wraps all of it
+(OpenDisplay with a display's number, CloseDisplay, DisplayModeCount,
+DisplayModeAt, SetDisplayMode, DisplayPixel).
 
-The DPI comes from the kernel option `dpi=N` if given; else from the
-display's EDID: the one the firmware has (the loader copies the base
-block from the EDID active or discovered protocol into the boot
-information), else the one QEMU's Bochs display keeps at the start of
-its register BAR; else 96. Drivers.Edid takes the physical size from
-the first detailed timing descriptor (in millimetres) or, without one,
-from bytes 21 and 22 (centimetres); the DPI is the framebuffer's width
-in pixels against that. The scale is the DPI against 96, to the nearest
-quarter, at least 100%: 96 DPI is 100%, 144 is 150%. Programs size what
-they draw in points and logical units with them.
+A display driver describes each display it has (a `TDisplayAdapter`:
+the framebuffer and its memory, the mode it has, its EDID, the largest
+mode and a routine to set one) and `RegisterDisplay` makes a device of
+it. Drivers.Displays finds them at start: the first is the firmware's
+framebuffer, driven natively if a driver knows its adapter, else used
+as it is in the one mode the firmware set; then every other adapter a
+native driver finds.
 
-`display` prints what the display is like; `display -f RRGGBB` fills
+The native driver is Drivers.BochsDisplay: QEMU's standard VGA,
+secondary-vga and bochs-display (PCI 1234:1111). Each device is a
+display of its own: its framebuffer is BAR 0 (the video memory), and
+BAR 2 has its EDID at the start and its "DISPI" mode registers from
+0x500 (reached there rather than through the old I/O ports, which
+bochs-display lacks and two devices could not share). A mode is set
+with the display off: 32 bits a pixel, the size, a virtual width the
+same (so the pitch is the width times 4), no offsets, then on with the
+linear framebuffer. The largest mode is read with the "capabilities"
+bit set. The device holding the firmware's framebuffer keeps the
+firmware's mode; another starts in the mode its EDID prefers (else
+1024x768).
+
+The mode list (Drivers.DisplayModes) is the EDID's modes (detailed
+timing descriptors, standard timings and established timings,
+Drivers.Edid), the common sizes from 640x480 to 2560x1440 and the mode
+the display has, each only if the adapter can make it (within its
+largest width and height and its video memory). A display without a
+driver lists only its mode.
+
+A program may set any mode of the list while it has the display;
+closing the display gives back the mode it had when opened. So the
+console, which draws at the boot mode's size, finds that mode again
+whenever it gets the screen back: resuming the console's drawing first
+asks the display driver to set the boot mode if it was changed (a
+routine Drivers.DisplayDevice gives Debug.FramebufferConsole), which
+covers a panic too. The console never has to cope with another size.
+
+The DPI follows the mode: the display's physical width from its EDID
+(the device's own, else the one the firmware has: the loader copies the
+base block from the EDID active or discovered protocol into the boot
+information) against the mode's width in pixels; else 96. Drivers.Edid
+takes the physical size from the first detailed timing descriptor (in
+millimetres) or, without one, from bytes 21 and 22 (centimetres). The
+kernel option `dpi=N` gives the first display's DPI at its boot mode
+instead (other modes have it in proportion to their width). The scale
+is the DPI against 96, to the nearest quarter, at least 100%: 96 DPI is
+100%, 144 is 150%. Programs size what they draw in points and logical
+units with them.
+
+`display` prints what a display is like (`-d` picks one); `-l` lists
+its modes; `-m WIDTHxHEIGHT` sets one while it runs; `-f RRGGBB` fills
 the screen with a colour and a frame a quarter inch in. The input test
 checks the DPI QEMU's EDID gives (325x203 mm at 1280 pixels: 100 DPI),
 the colour and the frame in a screen dump while it runs, and the
-console's screen after it ends.
+console's screen after it ends; the mode list, a program setting
+1024x768 (the screen dump is that size, the frame 20 pixels in at 80
+DPI), the boot mode and the console back after it; and a second display
+(QEMU's bochs-display, which has no firmware picture) driven natively
+in the mode its EDID prefers.
 
 ### The display server
 
@@ -888,8 +935,8 @@ the title bar moves the window live, a border or corner shows an outline
 of the new size and asks the program for it when let go (it answers
 with a new surface), the title buttons act when let go over them (close
 asks the program, maximize fills the screen below the title bar and
-back, minimize hides). Keys go to the active window; Alt+F4 asks it to
-close. Events for a program are sent without waiting, so one that stops
+back, minimize hides). A window dropped on another display takes its
+scale. Keys go to the active window; Alt+F4 asks it to close. Events for a program are sent without waiting, so one that stops
 reading cannot hold up the others; a program that ends loses its
 windows. Everything waits in one place: the input device, the port and
 every client's channel in one `CallWaitForHandles`.
@@ -906,25 +953,79 @@ on it, frame included, brings it forward and activates its topmost
 enabled owned window instead (the dialog), and no drag starts. Disabling
 the active window gives the keyboard to that window too, or to none.
 
-The scale (`Server.Scale`) starts as the display's own. A program can
-ask for another, 100% to 400% (`RequestSetScale`; any program may, as a
-display's settings would; `displayscale PERCENT`): as if the display
-were that much denser, the DPI goes with it (the display's DPI times the
-new scale over its own). The server picks the title's font again, sizes
-the arrow, ends a drag, keeps every window's place in logical units
-(its pixels move; the program hears `EventMoved`), maximizes a maximized
-window again, and tells every program (`EventScaleChanged`, with the
-screen's size, the DPI and the scale), which gives its windows new
-surfaces. There is one display, so one scale; with several, each display
-will have its own, and a window moved onto another display will be told
-in the same way.
+Several displays (`Server.Screen`): the server opens every display
+device (`/dev/display`, then `/dev/display1`...) and lays them out side
+by side, left to right in their order, tops in line (other layouts can
+come later). Each is composed in its own back buffer: the canvas's
+origin puts desktop pixels where they fall in it, and each display gets
+the part of the damage on it, so a window across the edge is drawn on
+both.
 
-`wintest` shows a window and prints what happens to it. The input test
-starts the server and two of them, and with the USB tablet (exact
-positions) checks the stacking and the active title bar, a drag by the
-title bar, a resize by the corner, maximizing, the close button, a key
-going to the window left active, and the console getting the screen
-back when the server ends.
+The coordinate model (`Server.Desktop`): inside the server everything
+(windows, the pointer, the damage) is in desktop pixels, where each
+display has its rectangle. Programs give and are told places in logical
+units of one desktop, where each display has its pixel size at its own
+scale, laid out the same way: display 0 at 0,0, display 1 at display
+0's logical width, and so on. A point is turned from one space to the
+other by the display it is on (or the nearest, for a point off every
+display): its offset from that display's top left is scaled by that
+display's scale. So a place means the same spot on the same display
+whatever the other displays do, and on one display it is the plain
+conversion. A window is on the display that holds the middle of its
+frame: its frame and title font are at that display's scale and DPI,
+and so is the surface its program draws, even while part of it shows on
+another display. Absolute pointing devices span the whole desktop (the
+rectangle around every display); the pointer stays on the displays,
+going from one to the next across their shared edge, and its arrow is
+at the scale of the display it is on.
+
+The scale (`Server.Scale`): each display's starts as its own. A program
+can ask for another, 100% to 400%, for any display (`RequestSetScale`
+with the display's number; any program may, as a display's settings
+would; `displayscale [-d NUMBER] PERCENT`): as if the display were that
+much denser, the DPI goes with it (the display's DPI times the new
+scale over its own). The server picks that display's title font again,
+ends a drag, and lays the displays out again: every window keeps its
+place on its own display, its offset from the display's top left in
+that display's logical units (on the changed display its pixels move;
+on displays to its right it moves with its display). Each window on the
+changed display is told its new scale (`EventScaleChanged` for that
+window, with the display's size, the DPI and the scale) and its program
+gives it a surface of the same logical size; a maximized window is
+maximized again; every program hears where its windows are
+(`EventMoved`), and when display 0 changed, every program hears that too
+(`EventScaleChanged` for window 0: what new windows start at). A window
+dragged onto another display, or moved there by its program, takes that
+display's scale: its frame at once, and its program is told the same
+way.
+
+Modes (`Server.Modes`): a program can ask for one of a display's modes
+(`RequestSetDisplayMode`; `displaymode [-d NUMBER] WIDTHxHEIGHT`; the
+list with `RequestDescribeDisplayMode`, `displaymode -l`). The device
+sets it, the display gets a back buffer of the new size and takes the
+display's own scale and DPI at it (the DPI follows the mode), and
+everything is laid out again as for a new scale; windows that would
+hang off the display are moved onto it as far as they fit. The device
+gives back the boot mode when the server ends. `RequestDescribeDisplay`
+tells a display's size, scale, DPI and place on the desktop
+(`EventDisplayDescribed`, which also answers the two requests that
+change a display); `displaymode` alone prints every display.
+`Windowing.Displays` in libwindowing wraps these requests.
+
+`wintest` shows a window and prints what happens to it (its place, a
+new scale). The input test starts the server and two of them, and with
+the USB tablet (exact positions) checks the stacking and the active
+title bar, a drag by the title bar, a resize by the corner, maximizing,
+the close button, a key going to the window left active, and the
+console getting the screen back when the server ends. QEMU there has a
+second display (bochs-display, 1024x768) to the right of the first: the
+test sets it to 150%, drags a window across the edge and checks it in a
+screen dump of that display (HMP `screendump FILE video1`, the device's
+id) at 1.5 times its pixels, and that the program printed its new
+scale; then it sets the first display to 1024x768 with a window near its
+right edge (the screen dump is that size, the window moved onto it and
+told the new DPI, the other display's window still there) and back to
+1280x800.
 
 ### Windows and controls for programs
 
@@ -944,11 +1045,17 @@ sees it. The loop waits on the server's channel, the posted message
 event and the window timers (timer objects) at once.
 
 A window can be given an owner when it is made (`Owner`), which it then
-stays above, and can be disabled (`Enabled`). When the scale changes
-the connection takes the new DPI and scale (`DisplayScale`,
-`DisplayDpi`), and every window gets a surface of the logical size it
-had at the new scale: `ScaleChanged`, then `Resized`, then painted whole
-before the server sees it. A control window lays its controls out again
+stays above, and can be disabled (`Enabled`). Each window is at the
+scale and DPI of the display it is on (`Scale`, `Dpi`); the scale used
+for converting (`DisplayScale`, `DisplayDpi`, `Scaled`, `Unscaled`) is
+the one of the window being served: libwindowing selects it before a
+window's handlers run, before it paints, and before a queued message
+reaches it or one of its controls (`TMessageReceiver.PrepareToReceive`,
+which a control passes to its window). A new window starts at display
+0's (`DefaultScale`). When a window's scale changes (it moved to
+another display, or its display's scale or mode changed) it gets a
+surface of the logical size it had at the new scale: `ScaleChanged`,
+then `Resized`, then painted whole before the server sees it. A control window lays its controls out again
 from their logical bounds in `Resized`, and fonts are picked by point
 size at the DPI each time they are used, so nothing else needs doing;
 a window that keeps something in pixels picks it again in
@@ -1936,8 +2043,8 @@ independent) against the Free Pascal runtime library:
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
-  `Sys.Display` (the display device: its framebuffer mapped, its size,
-  format and DPI),
+  `Sys.Display` (the display devices: a framebuffer mapped, its size,
+  format, DPI and modes),
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
   (creating, waiting for and ending threads, through the runtime's thread
   manager). The heap is thread safe; buffered output is not synchronized.

@@ -50,7 +50,7 @@ uses
   Objects.Timers,
   Objects.Sections,
   Processes.Channels,
-  Drivers.DisplayDevice,
+  Drivers.Displays,
   Memory.Layout,
   Memory.PhysicalPages,
   Memory.Arch.PageTables,
@@ -294,7 +294,7 @@ begin
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
   InitializeIoSystem;
-  InitializeDisplayDevice(PBootInformation(Context)^.Framebuffer);
+  InitializeDisplays(PBootInformation(Context)^.Framebuffer);
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);

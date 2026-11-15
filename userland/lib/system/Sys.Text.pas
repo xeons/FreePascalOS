@@ -69,6 +69,8 @@ function ParseInteger(Text: PChar; out Value: Int64): Boolean;
 function ParseUnsigned(Text: PChar; out Value: QWord): Boolean;
 { Hexadecimal digits (no prefix), the whole text. }
 function ParseHexadecimal(Text: PChar; out Value: QWord): Boolean;
+{ A size written WIDTHxHEIGHT ("1024x768"), both above 0. }
+function ParseSize(Text: PChar; out Width, Height: LongWord): Boolean;
 { A decimal number with up to three places after the point ("1.5"), in
   thousandths. }
 function ParseThousandths(Text: PChar; out Value: QWord): Boolean;
@@ -282,6 +284,41 @@ begin
   while IsSpace(Text[Index]) do
     Inc(Index);
   Result := SawDigit and (Text[Index] = #0);
+end;
+
+{ Digits from Text[Index] on, at least one, up to a value of High
+  (LongWord); Index ends after them. }
+function ParseDimension(Text: PChar; var Index: PtrUInt; out Value: LongWord): Boolean;
+var
+  Number: QWord;
+  SawDigit: Boolean;
+begin
+  Value := 0;
+  Number := 0;
+  SawDigit := False;
+  while IsDigit(Text[Index]) do
+  begin
+    Number := Number * 10 + QWord(Ord(Text[Index]) - Ord('0'));
+    if Number > High(LongWord) then
+      Exit(False);
+    SawDigit := True;
+    Inc(Index);
+  end;
+  Value := LongWord(Number);
+  Result := SawDigit and (Value > 0);
+end;
+
+function ParseSize(Text: PChar; out Width, Height: LongWord): Boolean;
+var
+  Index: PtrUInt;
+begin
+  Width := 0;
+  Height := 0;
+  Index := 0;
+  if not ParseDimension(Text, Index, Width) or ((Text[Index] <> 'x') and (Text[Index] <> 'X')) then
+    Exit(False);
+  Inc(Index);
+  Result := ParseDimension(Text, Index, Height) and (Text[Index] = #0);
 end;
 
 function HexadecimalDigit(Character: Char; out Digit: QWord): Boolean;
