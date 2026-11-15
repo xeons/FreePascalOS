@@ -49,7 +49,13 @@ uses
   Controls.TreeView,
   Controls.ListView,
   Controls.Dialogs,
-  Controls.MessageBoxes;
+  Controls.MessageBoxes,
+  Controls.CommonDialogs,
+  Controls.FileNames,
+  Controls.FolderListing,
+  Controls.FileDialog,
+  Controls.ColorDialog,
+  Controls.FontDialog;
 
 implementation
 

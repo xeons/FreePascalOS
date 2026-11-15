@@ -35,6 +35,10 @@ function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
 { The theme's text face, regular and bold. }
 function TextFace: PFontFace;
 function BoldTextFace: PFontFace;
+{ How many faces the system has, and each of them (to list the sizes
+  there are, as a font dialog does). }
+function SystemFaceCount: LongInt;
+function SystemFace(Index: LongInt): PFontFace;
 
 implementation
 
@@ -49,13 +53,19 @@ var
   Loaded: Boolean;
   Available: Boolean;
 
-function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
+{ The fonts are read from disk the first time any is wanted. }
+procedure EnsureFontsLoaded;
 begin
   if not Loaded then
   begin
     Available := LoadSystemFonts(Fonts);
     Loaded := True;
   end;
+end;
+
+function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;
+begin
+  EnsureFontsLoaded;
   if not Available then
     Exit(nil);
   Result := SelectFace(Fonts, PointTenths, DisplayDpi, Bold);
@@ -69,6 +79,21 @@ end;
 function BoldTextFace: PFontFace;
 begin
   Result := FontFace(Theme.TextPoints, True);
+end;
+
+function SystemFaceCount: LongInt;
+begin
+  EnsureFontsLoaded;
+  if Available then
+    Result := Fonts.Count
+  else
+    Result := 0;
+end;
+
+function SystemFace(Index: LongInt): PFontFace;
+begin
+  EnsureFontsLoaded;
+  Result := @Fonts.Faces[Index];
 end;
 
 end.

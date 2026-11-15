@@ -918,6 +918,30 @@ control sees the key. `ShowMessageBox` lays a message box out for its
 text with a sign (information, warning, error, question: shapes drawn
 at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel.
 
+The common dialogs are built from the same controls, on a
+`TCommonDialog` (`Controls.CommonDialogs`: OK and Cancel at the bottom
+right, `Execute`, and `OnShowing` just before it appears; OK ends it only
+if the dialog's `Accept` agrees). `Controls.FileDialog` has the open and
+save dialogs (`ChooseFileToOpen`, `ChooseFileToSave`): the folder shown
+(type another one and press Enter to go there), a list view of it
+(`Controls.FolderListing`: "..", folders first, then the files that fit
+the filter, with size and kind; a link shows as what it points to), the
+file name box and a filter box ("*.txt;*.md", and "*"). A double click
+or Enter on a row opens a folder or takes the file; OK takes what the
+name box says: a folder is opened, a pattern becomes the filter, and
+anything else is the file, relative to the folder or absolute
+(`Controls.FileNames` cleans the path up as text). Open wants a file
+that exists; save wants the folder to exist and asks in a message box
+before replacing a file. `Controls.ColorDialog` (`ChooseColor`) has a
+grid of basic colours, a scroll bar and a number box for each of red,
+green and blue kept in step, and a swatch of the colour.
+`Controls.FontDialog` (`ChooseFont`) lists the sizes the system's fonts
+come in at this display's DPI (the bitmap faces have a few pixel
+heights; each is listed as the smallest whole, or else half, point size
+that picks it, so no two entries look the same), bold or regular, and a
+sample drawn with the face a program asking for that size gets
+(`Windowing.Fonts` lists the system's faces for it).
+
 `controlsdemo` has one of each, and a swatch made in the program (a
 `TControl` subclass that posts a message of the program's own when
 clicked). The input test types into it, tabs, clicks a radio button,
@@ -926,7 +950,12 @@ checks what it printed and the swatch's colour. `controlstour` has the
 rest (a menu bar, a toolbar, a tab control with a list box and combo
 box, a multi-line edit box, a tree view and a list view, message boxes);
 it prints where its controls are on the screen, and the input test
-clicks them there and checks what it printed.
+clicks them there and checks what it printed. `dialogtour` opens each
+common dialog from a button and prints the choice, and where the
+dialog's controls are when it appears (and the file dialogs' rows for
+each folder shown); the input test opens /etc and takes passwd in the
+open dialog, types a name in the save dialog, refuses to replace an
+existing file there, and picks a basic colour, a size and bold.
 
 ## Sound
 

@@ -701,6 +701,81 @@ checks.append(('controls tour: tabs, tree view, list view', tour_ok and b'page 2
                b'tree System' in log_from_here and b'tree lib' in log_from_here and b'page 3' in log_from_here and
                b'row picture.bmp' in log_from_here and b'column 0' in log_from_here))
 
+# The common dialogs (dialogtour), which prints where the controls of
+# each dialog are when it appears: the open dialog (a click on /etc and
+# Enter opens it, a click on passwd and OK takes it), the save dialog
+# (a name typed and Enter; then an existing file, whose replacement is
+# refused, and Escape), the colour dialog (a basic colour, OK) and the
+# font dialog (a size, Bold, OK).
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'dialogtour > /tmp/d.log &\r')
+time.sleep(3)
+
+
+def dialog_places(marker):
+    type_on_serial(b'm=DONE; cat /tmp/d.log; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 10)
+    return places()
+
+
+place = dialog_places('DIALOGS')
+dialogs_started = all(name in place for name in ('open-button', 'save-button', 'color-button', 'font-button'))
+if dialogs_started:
+    click_at(*place['open-button'])
+    time.sleep(1)
+    place = dialog_places('OPEN')
+    if 'file-etc' in place:
+        click_at(*place['file-etc'])
+        press('ret')
+        time.sleep(1)
+        place = dialog_places('ETC')
+    if 'file-passwd' in place:
+        click_at(*place['file-passwd'])
+        click_at(*place['file-ok'])
+    time.sleep(1)
+    click_at(*place['save-button'])
+    time.sleep(1)
+    type_on_keyboard('notes.txt')
+    press('ret')
+    time.sleep(1)
+    click_at(*place['save-button'])
+    time.sleep(1)
+    for key in ('slash', 'e', 't', 'c', 'slash', 'p', 'a', 's', 's', 'w', 'd', 'ret'):
+        press(key)
+    time.sleep(1)
+    # The question whether to replace it: Escape says no; Escape again
+    # cancels the dialog.
+    press('esc')
+    time.sleep(0.8)
+    press('esc')
+    time.sleep(0.8)
+    click_at(*place['color-button'])
+    time.sleep(1)
+    place = dialog_places('COLOR')
+    if 'color-3' in place:
+        click_at(*place['color-3'])
+        click_at(*place['color-ok'])
+    time.sleep(1)
+    click_at(*place['font-button'])
+    time.sleep(1)
+    place = dialog_places('FONT')
+    if 'size-12' in place:
+        click_at(*place['size-12'])
+        click_at(*place['bold'])
+        click_at(*place['font-ok'])
+    time.sleep(1)
+type_on_serial(b'm=DONE; cat /tmp/d.log; kill %1; wait; echo DIALOGS $m\r')
+dialogs_ok = dialogs_started and wait_for('DIALOGS DONE', 15)
+log_from_here = bytes(received[received.rfind(b'DIALOGS $m'):])
+checks.append(('common dialogs: open a file (a folder opened, a file chosen)',
+               dialogs_ok and b'opened /etc/passwd' in log_from_here))
+checks.append(('common dialogs: save a file (a name typed; replacing refused)',
+               dialogs_ok and b'saved /tmp/notes.txt' in log_from_here and b'cancelled save' in log_from_here and
+               b'saved /etc/passwd' not in log_from_here))
+checks.append(('common dialogs: choose a colour and a font',
+               dialogs_ok and b'color 00FF00' in log_from_here and b'font 120 bold' in log_from_here))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

@@ -171,6 +171,8 @@ var
   TimerCount: LongInt;
   QuitRequested: Boolean;
   QuitCode: LongInt;
+  { The flag that ends the innermost modal loop (RunModal), or nil. }
+  ModalDone: ^Boolean;
 
 function WindowById(Id: LongWord): TWindow;
 var
@@ -567,6 +569,15 @@ begin
     WindowList[Index].PaintNow;
 end;
 
+{ True once what was just handled ended the loop being run: then it
+  must not wait for more, as nothing more may ever come (OK clicked in a
+  dialog is the last thing that happens to it). }
+function LoopEnding: Boolean;
+begin
+  Result := QuitRequested or ((ModalDone <> nil) and ModalDone^) or
+    (QuitWhenLastWindowCloses and (WindowListCount = 0));
+end;
+
 { Delivers what has come, paints, and waits for more (once). }
 procedure ServeOnce;
 var
@@ -585,6 +596,8 @@ begin
   if ConnectionBroken then
     Exit;
   PaintInvalidWindows;
+  if LoopEnding then
+    Exit;
   Handles[0] := DisplayChannel;
   Handles[1] := PostedMessageEvent;
   Count := 2;
@@ -621,12 +634,16 @@ end;
 procedure RunModal(Window: TWindow; var Done: Boolean);
 var
   Previous: TWindow;
+  PreviousDone: ^Boolean;
 begin
   Previous := ModalWindow;
+  PreviousDone := ModalDone;
   ModalWindow := Window;
+  ModalDone := @Done;
   while not Done and not ConnectionBroken and not QuitRequested and (WindowById(Window.Id) = Window) do
     ServeOnce;
   ModalWindow := Previous;
+  ModalDone := PreviousDone;
 end;
 
 end.

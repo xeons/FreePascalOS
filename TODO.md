@@ -344,7 +344,7 @@ normalized (0-65535), not pixels.
       for the menu bar
 - [ ] Owned windows: a dialog stays above its owner; the owner disabled for real
       (the server refuses to activate it)
-- [ ] Common dialogs: open and save a file, choose a colour, choose a font
+- [x] Common dialogs: open and save a file, choose a colour, choose a font
 
 ### 6. Desktop shell
 - [ ] Pseudo-terminals (for terminal windows)
