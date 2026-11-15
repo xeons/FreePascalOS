@@ -99,6 +99,8 @@ function KernelSetAffinity(ProcessId: QWord; Mask: QWord): Int64;
 function KernelShutdown(Action: QWord): Int64;
 { Suspends to RAM; returns after waking (root only). }
 function KernelSuspend: Int64;
+{ The address of Length bytes at Offset of Handle's memory, mapped. }
+function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
@@ -394,6 +396,11 @@ end;
 function KernelWaitForProcessChange(Handle: Int64; Timeout: Int64): Int64;
 begin
   Result := SystemCall(CallWaitForProcessChange, QWord(Handle), QWord(Timeout), 0, 0, 0, 0);
+end;
+
+function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
+begin
+  Result := SystemCall(CallMapHandle, QWord(Handle), Offset, Length, 0, 0, 0);
 end;
 
 end.

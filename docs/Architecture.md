@@ -754,6 +754,40 @@ reading video memory. The input test checks UTF-8 text and a colour,
 pixel by pixel against the font, in a screen dump taken after
 scrolling.
 
+### The display device
+
+`/dev/display` (Drivers.DisplayDevice) is the screen for a graphical
+program: the framebuffer the firmware set up, which the loader passes
+on. One program opens it at a time. Opening it takes the screen from
+the text console, which goes on drawing into its copy of the screen
+only (SuspendConsoleDrawing); closing it, however the program ends,
+gives the screen back and the console draws itself again from the copy.
+A kernel panic takes it back too.
+
+Control requests give the size, the pitch (bytes per line), the pixel
+format (blue-green-red or red-green-blue in a LongWord), the physical
+size in millimetres, the DPI and the scale. The framebuffer is mapped
+into the program with `CallMapHandle` (offset 0), its writes combined.
+`Sys.Display` in libsystem wraps all of it (OpenDisplay, CloseDisplay,
+DisplayPixel).
+
+The DPI comes from the kernel option `dpi=N` if given; else from the
+display's EDID: the one the firmware has (the loader copies the base
+block from the EDID active or discovered protocol into the boot
+information), else the one QEMU's Bochs display keeps at the start of
+its register BAR; else 96. Drivers.Edid takes the physical size from
+the first detailed timing descriptor (in millimetres) or, without one,
+from bytes 21 and 22 (centimetres); the DPI is the framebuffer's width
+in pixels against that. The scale is the DPI against 96, to the nearest
+quarter, at least 100%: 96 DPI is 100%, 144 is 150%. Programs size what
+they draw in points and logical units with them.
+
+`display` prints what the display is like; `display -f RRGGBB` fills
+the screen with a colour and a frame a quarter inch in. The input test
+checks the DPI QEMU's EDID gives (325x203 mm at 1280 pixels: 100 DPI),
+the colour and the frame in a screen dump while it runs, and the
+console's screen after it ends.
+
 ## Sound
 
 The audio framework (`Io.AudioOutput`, `Io.AudioStreams`) is the part of
@@ -1112,6 +1146,18 @@ fault anywhere else in user mode ends just that process (exit status 139,
 as a segmentation fault on Unix). The threads of a process share its
 address space; region changes, page commits and the copies the kernel
 makes in and out of it are serialized by a spin lock in the address space.
+
+Device memory is mapped into a process with `CallMapHandle(Handle,
+Offset, Length)`: the handle's driver says which physical memory that is
+and whether writes may be combined (the I/O function IoFunctionMap), and
+the pages go into a region of their own, mapped at once, writable if the
+handle was opened for writing. The program unmaps it with
+`CallFreeMemory`. The page table entries of device pages carry a
+software bit (MappingDevice), so neither unmapping nor destroying the
+address space hands them to the page allocator, and the kernel never
+reaches them through its physical memory window. Write-combining is the
+page attribute table's entry 4, which the kernel sets at start (and
+every processor takes on as it starts or wakes).
 
 ### Threads
 

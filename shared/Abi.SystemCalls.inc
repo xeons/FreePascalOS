@@ -170,8 +170,14 @@ const
   { (): suspends to RAM (ACPI S3) and returns once the machine woke: 0,
     or ErrorUnsupported (no S3), ErrorBusy. Root only. }
   CallSuspend = 71;
+  { (Handle, Offset, Length): maps Length bytes at Offset (page aligned)
+    of what Handle stands for into the program: a device offering memory
+    (/dev/display: the framebuffer). Returns the address; writable if the
+    handle was opened for writing. Unmapped with CallFreeMemory.
+    ErrorUnsupported if the handle has no memory to map. }
+  CallMapHandle = 72;
 
-  CallCount = 72;
+  CallCount = 73;
 
   ShutdownPowerOff = 0;
   ShutdownReboot = 1;
@@ -290,6 +296,28 @@ const
   ControlAudioGetPosition = 108;
   { Audio inputs: frames dropped because the reader fell behind. }
   ControlAudioGetDropped = 109;
+
+  { The display (/dev/display). Opening it takes the screen from the text
+    console, closing it gives it back; its framebuffer is mapped with
+    CallMapHandle at offset 0 (pitch times height bytes). }
+  { Width or (height shl 32), in pixels. }
+  ControlDisplayGetSize = 200;
+  { Bytes from one line of the framebuffer to the next. }
+  ControlDisplayGetPitch = 201;
+  { DisplayFormat*: how a pixel's four bytes hold its colour. }
+  ControlDisplayGetFormat = 202;
+  { Dots per inch (from the display's EDID, the dpi kernel option, else
+    96), and the scale it gives in percent: 100, 125, 150, 175, 200... }
+  ControlDisplayGetDpi = 203;
+  ControlDisplayGetScale = 204;
+  { Width or (height shl 32) in millimetres; 0 if not known. }
+  ControlDisplayGetPhysicalSize = 205;
+  { Blue, green, red, unused (a little-endian LongWord $00RRGGBB). }
+  DisplayFormatBlueGreenRed = 1;
+  { Red, green, blue, unused ($00BBGGRR). }
+  DisplayFormatRedGreenBlue = 2;
+  { The DPI that is scale 100%. }
+  DisplayBaseDpi = 96;
   AudioSampleUnsigned8 = 1;
   AudioSampleSigned16 = 2;
   AudioSampleSigned24 = 3;

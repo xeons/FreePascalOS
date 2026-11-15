@@ -29,6 +29,14 @@
   kernel top level entry is created during startup; its lower half maps
   the process's own memory. Switching address spaces is therefore just
   loading a different top level table.
+
+  Memory types: the page attribute table's entry 4 (chosen by the PAT
+  bit of an entry) is set to write-combining at start, for framebuffers
+  mapped into programs; entries 0-3 stay as the firmware left them
+  (write-back, write-through, uncached minus, uncached). Device pages
+  mapped into a process (MappingDevice) are marked in a software bit:
+  they belong to the device, so unmapping them and destroying the
+  address space leave them alone.
 }
 unit Memory.Arch.PageTables;
 
@@ -51,6 +59,11 @@ const
     (Processes.AddressSpace). Combined with MappingWritable it means
     "writable once copied". }
   MappingCopyOnWrite = LongWord(1) shl 4;
+  { Writes may be combined and delayed (framebuffers). }
+  MappingWriteCombining = LongWord(1) shl 5;
+  { Device memory, not a page of the page allocator: never freed with
+    the mapping, and not returned by unmapping. }
+  MappingDevice = LongWord(1) shl 6;
 
   { First address above user space. }
   UserSpaceLimit = QWord($0000800000000000);
@@ -149,6 +162,14 @@ const
   EntryGlobal = QWord(1) shl 8;
   { Available to software: the page is copied on the first write. }
   EntryCopyOnWrite = QWord(1) shl 9;
+  { Available to software: device memory, not owned by the address space. }
+  EntryDevicePage = QWord(1) shl 10;
+  { The PAT bit of a 4 KiB page's entry (with PCD and PWT clear: PAT
+    entry 4, write-combining). }
+  EntryPageAttribute = QWord(1) shl 7;
+  MsrPageAttributeTable = $277;
+  PatEntryFourShift = 32;
+  PatWriteCombining = 1;
   EntryNoExecute = QWord(1) shl 63;
 
   EntryAddressMask = QWord($000FFFFFFFFFF000);
@@ -222,6 +243,18 @@ begin
   end;
 end;
 
+{ PAT entry 4 becomes write-combining. The other processors copy the
+  boot processor's table when they start (and after waking). }
+procedure ChooseWriteCombiningPageAttribute;
+var
+  Table: QWord;
+begin
+  Table := ReadModelSpecificRegister(MsrPageAttributeTable);
+  Table := (Table and not (QWord($FF) shl PatEntryFourShift)) or (QWord(PatWriteCombining) shl PatEntryFourShift);
+  WriteModelSpecificRegister(MsrPageAttributeTable, Table);
+  FlushEntireTlb;
+end;
+
 procedure InitializeKernelPageTables;
 begin
   InitializeSpinLock(PageTableLock);
@@ -232,6 +265,7 @@ begin
   { Make the kernel honour read-only pages too. }
   WriteControlRegister0(ReadControlRegister0 or Cr0WriteProtect);
   EnableNoExecuteIfSupported;
+  ChooseWriteCombiningPageAttribute;
 
   PopulateKernelTopLevelEntries;
 end;
@@ -257,7 +291,11 @@ begin
   if (Attributes and MappingUser) <> 0 then
     Result := Result or EntryUser;
   if (Attributes and MappingUncached) <> 0 then
-    Result := Result or EntryCacheDisable or EntryWriteThrough;
+    Result := Result or EntryCacheDisable or EntryWriteThrough
+  else if (Attributes and MappingWriteCombining) <> 0 then
+    Result := Result or EntryPageAttribute;
+  if (Attributes and MappingDevice) <> 0 then
+    Result := Result or EntryDevicePage;
   if ((Attributes and MappingExecutable) = 0) and NoExecuteEnabled then
     Result := Result or EntryNoExecute;
 end;
@@ -358,7 +396,8 @@ begin
     Index := TableIndex(VirtualAddress, 1);
     if (Table^[Index] and EntryPresent) = 0 then
       Continue;
-    PhysicalPages[PageIndex - 1] := Table^[Index] and EntryAddressMask;
+    if (Table^[Index] and EntryDevicePage) = 0 then
+      PhysicalPages[PageIndex - 1] := Table^[Index] and EntryAddressMask;
     Table^[Index] := 0;
     if FlushTlb then
       InvalidateTlbEntry(VirtualAddress);
@@ -480,7 +519,10 @@ begin
     if (Table^[Index] and EntryPresent) = 0 then
       Continue;
     if Level = 1 then
-      FreePhysicalPage(Table^[Index] and EntryAddressMask)
+    begin
+      if (Table^[Index] and EntryDevicePage) = 0 then
+        FreePhysicalPage(Table^[Index] and EntryAddressMask);
+    end
     else
       FreeTableTree(Table^[Index] and EntryAddressMask, Level - 1);
   end;

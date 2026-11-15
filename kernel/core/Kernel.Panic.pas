@@ -119,6 +119,8 @@ begin
 
   DebugForceUnlockForPanic;
 
+  { A program may have had the screen: the console takes it back. }
+  ResumeConsoleDrawing;
   ConsoleSetBackgroundColor(ColorDarkRed);
   ConsoleClearScreen;
   DebugSetColor(ColorWhite);

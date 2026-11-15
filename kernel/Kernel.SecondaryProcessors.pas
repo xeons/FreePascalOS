@@ -74,34 +74,13 @@ begin
   SecondaryIdleRoutine;
 end;
 
-{ The decimal number in Text, or 0 if Text is not one. }
-function DecimalValue(Text: PChar): QWord;
-var
-  Index: Integer;
-begin
-  Result := 0;
-  Index := 0;
-  while Text[Index] in ['0'..'9'] do
-  begin
-    Result := Result * 10 + QWord(Ord(Text[Index]) - Ord('0'));
-    Inc(Index);
-  end;
-  if (Index = 0) or (Text[Index] <> #0) then
-    Result := 0;
-end;
-
 function ProcessorLimit: LongWord;
 var
-  Value: array[0..15] of Char;
   Number: QWord;
 begin
   Result := MaximumProcessors;
-  if GetKernelOptionValue('processors', @Value[0], SizeOf(Value)) then
-  begin
-    Number := DecimalValue(@Value[0]);
-    if (Number >= 1) and (Number < MaximumProcessors) then
-      Result := LongWord(Number);
-  end;
+  if GetKernelOptionNumber('processors', Number) and (Number >= 1) and (Number < MaximumProcessors) then
+    Result := LongWord(Number);
 end;
 
 { Creates what processor ApicId needs and wakes it. Returns True once it

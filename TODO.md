@@ -279,12 +279,14 @@ normalized (0-65535), not pixels.
       display server, step 4)
 
 ### 2. Drawing and fonts
-- [ ] Display device (/dev/display): framebuffer information, mapping the
+- [x] Display device (/dev/display): framebuffer information, mapping the
       framebuffer into a process, taking the screen from the text console and
       giving it back
-- [ ] Display DPI: from EDID (physical size) where it can be read, else a
+- [x] Display DPI: from EDID (physical size) where it can be read, else a
       configured value, else 96; a scale factor (1.0, 1.25, 1.5, 2.0...)
-- [ ] Mapping device memory into user processes (write-combining)
+- [x] Mapping device memory into user processes (write-combining)
+- [ ] Display modes: changing the resolution (Bochs DISPI, later native
+      drivers), EDID's list of modes, and the DPI following the mode
 - [ ] libdrawing: pixel buffers, rectangles, lines, shapes, blits, clipping
       regions, alpha blending, gradients, 3D bevels
 - [ ] libfont: bitmap fonts (from the console's PSF font) in several pixel sizes,

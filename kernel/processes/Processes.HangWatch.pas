@@ -247,24 +247,13 @@ begin
   end;
 end;
 
-{ The decimal number in Text, or 0. }
-function DecimalValue(Text: PChar): QWord;
-begin
-  Result := 0;
-  while Text^ in ['0'..'9'] do
-  begin
-    Result := Result * 10 + QWord(Ord(Text^) - Ord('0'));
-    Inc(Text);
-  end;
-end;
-
 procedure StartHangWatch;
 var
-  Value: array[0..15] of Char;
+  Seconds: QWord;
 begin
-  if not GetKernelOptionValue('hangdump', @Value[0], SizeOf(Value)) then
+  if not GetKernelOptionNumber('hangdump', Seconds) then
     Exit;
-  LimitSeconds := DecimalValue(@Value[0]);
+  LimitSeconds := Seconds;
   if LimitSeconds = 0 then
     Exit;
   CreateSystemThread(@WatchMain, nil, WatchThreadPriority, 'HangWatch', False);

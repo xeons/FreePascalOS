@@ -54,6 +54,10 @@ function OpenDeviceDirectory(out OpenFile: PDeviceFile): LongInt;
 function ReadDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
 function WriteDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
 function ControlDevice(OpenFile: PDeviceFile; Code: QWord; Argument: QWord): Int64;
+{ Asks the driver for the device memory a program may map: Length bytes
+  at Offset (page aligned). Returns ErrorNone or an Abi error code. }
+function QueryDeviceMapping(OpenFile: PDeviceFile; Offset, Length: QWord; out Physical: QWord;
+  out WriteCombining: Boolean): LongInt;
 { Block devices only; Origin is an Abi Seek* value. Returns the new
   position or minus an Abi error. }
 function SeekDevice(OpenFile: PDeviceFile; Offset: Int64; Origin: QWord): Int64;
@@ -198,6 +202,29 @@ begin
   if Error <> ErrorNone then
     Exit(-Int64(Error));
   Result := Request.Information;
+end;
+
+function QueryDeviceMapping(OpenFile: PDeviceFile; Offset, Length: QWord; out Physical: QWord;
+  out WriteCombining: Boolean): LongInt;
+var
+  Request: TIoRequest;
+begin
+  Physical := 0;
+  WriteCombining := False;
+  if OpenFile^.IsDirectory then
+    Exit(ErrorUnsupported);
+  if OpenFile^.Device^.Driver^.Dispatch[IoFunctionMap] = nil then
+    Exit(ErrorUnsupported);
+  FillMemory(@Request, SizeOf(Request), 0);
+  Request.Operation := IoFunctionMap;
+  Request.OpenFile := OpenFile;
+  Request.Offset := Offset;
+  Request.Length := Length;
+  Result := CallDriverAndWait(OpenFile^.Device, Request, True);
+  if Result <> ErrorNone then
+    Exit;
+  Physical := Request.MapPhysical;
+  WriteCombining := Request.MapWriteCombining;
 end;
 
 function SeekDevice(OpenFile: PDeviceFile; Offset: Int64; Origin: QWord): Int64;

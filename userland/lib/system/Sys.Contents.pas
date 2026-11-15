@@ -49,7 +49,8 @@ uses
   Sys.Time,
   Sys.Libraries,
   Sys.Information,
-  Sys.Console;
+  Sys.Console,
+  Sys.Display;
 
 implementation
 

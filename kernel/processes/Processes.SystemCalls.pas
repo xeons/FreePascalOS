@@ -37,6 +37,7 @@ procedure InitializeSystemCalls;
 implementation
 
 uses
+  Processes.MappingCalls,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -600,6 +601,7 @@ begin
     CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
     CallShutdown: Result := PerformShutdown(Argument0);
     CallSuspend: Result := PerformSuspend;
+    CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

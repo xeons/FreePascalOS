@@ -41,6 +41,20 @@ uses
   Uefi.GraphicsOutput,
   Loader.Firmware;
 
+{ Copies the display's EDID base block, active one first. }
+procedure CopyEdid(var Framebuffer: TFramebufferInformation);
+var
+  Edid: PEfiEdidProtocol;
+begin
+  if EfiIsError(FirmwareBootServices^.LocateProtocol(@EdidActiveProtocolGuid, nil, @Edid)) and
+     EfiIsError(FirmwareBootServices^.LocateProtocol(@EdidDiscoveredProtocolGuid, nil, @Edid)) then
+    Exit;
+  if (Edid = nil) or (Edid^.Edid = nil) or (Edid^.SizeOfEdid < EdidBlockSize) then
+    Exit;
+  CopyMemory(@Framebuffer.Edid[0], Edid^.Edid, EdidBlockSize);
+  Framebuffer.HasEdid := 1;
+end;
+
 function DescribeFramebuffer(out Framebuffer: TFramebufferInformation): Boolean;
 var
   Status: TEfiStatus;
@@ -72,6 +86,7 @@ begin
   Framebuffer.Width := ModeInformation^.HorizontalResolution;
   Framebuffer.Height := ModeInformation^.VerticalResolution;
   Framebuffer.PixelsPerScanLine := ModeInformation^.PixelsPerScanLine;
+  CopyEdid(Framebuffer);
   Result := True;
 end;
 

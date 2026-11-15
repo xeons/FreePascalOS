@@ -27,6 +27,10 @@
   are read before suspending and written back after, the VGA attribute
   controller is told to show the picture again, and the console draws
   the screen again from its copy.
+
+  QEMU also puts the display's EDID at the start of the device's
+  register BAR (BAR 2), which gives the display's DPI when the firmware
+  did not pass one on.
 }
 unit Drivers.BochsDisplay;
 
@@ -36,10 +40,14 @@ interface
 
 { Registers the power handler if there is such a display. }
 procedure InitializeBochsDisplay;
+{ Copies the display's EDID base block (128 bytes) into Block; False if
+  there is no such display or it has no EDID. }
+function ReadBochsEdid(Block: PByte): Boolean;
 
 implementation
 
 uses
+  Memory.DeviceMapping,
   Hal.PortIo,
   Io.Pci,
   Io.PowerManagement,
@@ -105,6 +113,44 @@ begin
   DebugBeginMessage;
   ConsoleRedraw;
   DebugEndMessage;
+end;
+
+function FindBochsDevice: PPciDevice;
+var
+  Index: Integer;
+begin
+  for Index := 0 to PciDeviceCount - 1 do
+  begin
+    Result := PciDeviceAt(Index);
+    if (Result^.VendorId = BochsVendor) and (Result^.DeviceId = BochsDevice) then
+      Exit;
+  end;
+  Result := nil;
+end;
+
+function ReadBochsEdid(Block: PByte): Boolean;
+const
+  RegisterBar = 2;
+  EdidBytes = 128;
+var
+  Device: PPciDevice;
+  Bar: TPciBar;
+  Registers: PByte;
+  Index: Integer;
+begin
+  Result := False;
+  Device := FindBochsDevice;
+  if (Device = nil) or not PciReadBar(Device, RegisterBar, Bar) or Bar.IsIoPort or
+     (Bar.PhysicalAddress = 0) or (Bar.SizeInBytes < EdidBytes) then
+    Exit;
+  Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, EdidBytes));
+  if Registers = nil then
+    Exit;
+  { A byte at a time, as device registers are read. }
+  for Index := 0 to EdidBytes - 1 do
+    Block[Index] := PByte(Registers + Index)^;
+  UnmapDeviceMemory(Registers, EdidBytes);
+  Result := True;
 end;
 
 procedure InitializeBochsDisplay;

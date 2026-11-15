@@ -67,6 +67,8 @@ function FindText(Text, Pattern: PChar): PtrInt;
   number (surrounding spaces are allowed). }
 function ParseInteger(Text: PChar; out Value: Int64): Boolean;
 function ParseUnsigned(Text: PChar; out Value: QWord): Boolean;
+{ Hexadecimal digits (no prefix), the whole text. }
+function ParseHexadecimal(Text: PChar; out Value: QWord): Boolean;
 { A decimal number with up to three places after the point ("1.5"), in
   thousandths. }
 function ParseThousandths(Text: PChar; out Value: QWord): Boolean;
@@ -280,6 +282,36 @@ begin
   while IsSpace(Text[Index]) do
     Inc(Index);
   Result := SawDigit and (Text[Index] = #0);
+end;
+
+function HexadecimalDigit(Character: Char; out Digit: QWord): Boolean;
+begin
+  Result := True;
+  case Character of
+    '0'..'9': Digit := Ord(Character) - Ord('0');
+    'a'..'f': Digit := Ord(Character) - Ord('a') + 10;
+    'A'..'F': Digit := Ord(Character) - Ord('A') + 10;
+  else
+    Digit := 0;
+    Result := False;
+  end;
+end;
+
+function ParseHexadecimal(Text: PChar; out Value: QWord): Boolean;
+var
+  Index: PtrUInt;
+  Digit: QWord;
+begin
+  Value := 0;
+  Index := 0;
+  while HexadecimalDigit(Text[Index], Digit) do
+  begin
+    if (Value shr 60) <> 0 then
+      Exit(False); { overflow }
+    Value := (Value shl 4) or Digit;
+    Inc(Index);
+  end;
+  Result := (Index > 0) and (Text[Index] = #0);
 end;
 
 function ParseInteger(Text: PChar; out Value: Int64): Boolean;

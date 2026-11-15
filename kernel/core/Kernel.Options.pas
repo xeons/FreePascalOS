@@ -52,6 +52,9 @@ function KernelOptionIsSet(Name: PChar): Boolean;
 { Copies the value of a name=value option into Value. Returns False if
   the option is absent. }
 function GetKernelOptionValue(Name: PChar; Value: PChar; ValueCapacity: PtrUInt): Boolean;
+{ The value of option Name as a decimal number; False if the option is
+  missing or its value is not a number. }
+function GetKernelOptionNumber(Name: PChar; out Number: QWord): Boolean;
 
 function KernelCommandLine: PChar;
 
@@ -116,6 +119,28 @@ begin
   end;
 
   Result := nil;
+end;
+
+function GetKernelOptionNumber(Name: PChar; out Number: QWord): Boolean;
+const
+  NumberCapacity = 21;
+var
+  Value: array[0..NumberCapacity - 1] of Char;
+  Index: Integer;
+begin
+  Number := 0;
+  Result := False;
+  if not GetKernelOptionValue(Name, @Value[0], NumberCapacity) then
+    Exit;
+  Index := 0;
+  while Value[Index] in ['0'..'9'] do
+  begin
+    Number := Number * 10 + QWord(Ord(Value[Index]) - Ord('0'));
+    Inc(Index);
+  end;
+  Result := (Index > 0) and (Value[Index] = #0);
+  if not Result then
+    Number := 0;
 end;
 
 function KernelOptionIsSet(Name: PChar): Boolean;

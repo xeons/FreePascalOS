@@ -37,7 +37,7 @@ interface
 const
   { 'FPOSBOOT' in little endian ASCII. }
   BootInformationSignature = QWord($544F4F42534F5046);
-  BootInformationVersion = 2;
+  BootInformationVersion = 3;
 
   MaximumMemoryRegions = 512;
 
@@ -57,6 +57,8 @@ const
 
   PageSize = 4096;
 
+  { The display's EDID (its base block): what the firmware read. }
+  EdidBlockSize = 128;
   { Room for the kernel command line, including the terminating zero. }
   CommandLineCapacity = 256;
 
@@ -76,6 +78,11 @@ type
     Height: LongWord;
     PixelsPerScanLine: LongWord;
     PixelFormat: LongWord;
+    { The display's EDID base block, if the firmware offered it
+      (HasEdid): its physical size gives the display's DPI. }
+    HasEdid: LongWord;
+    Padding: LongWord;
+    Edid: array[0..EdidBlockSize - 1] of Byte;
   end;
 
   TKernelImageInformation = record

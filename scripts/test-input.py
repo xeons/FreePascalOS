@@ -488,6 +488,35 @@ checks.append(('input events: a key with its character', events_ok and b'key 0x1
 type_on_serial(b'm=CLEAN; echo CONSOLE $m\r')
 checks.append(('input events: the key did not reach the console', wait_for('CONSOLE CLEAN', 10)))
 
+def screen_pixel(x, y):
+    # The colour at (x, y) of a fresh screen dump, as 'rrggbb'; '' if none.
+    send_to_monitor('screendump ' + screen_path + '\n')
+    time.sleep(1)
+    try:
+        data = open(screen_path, 'rb').read()
+        header = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data)
+        offset = header.end() + (y * int(header.group(1)) + x) * 3
+        return data[offset:offset + 3].hex()
+    except (OSError, AttributeError):
+        return ''
+
+
+# The display device: QEMU's EDID says 325x203 mm, which at 1280 pixels
+# across is 100 DPI. A program filling it shows on the screen, with its
+# frame a quarter inch (25 pixels) in; once it ends the console's screen
+# (dark blue) is back.
+type_on_serial(b'display\r')
+checks.append(('display device: size, physical size and DPI',
+               wait_for('325x203 mm', 10) and wait_for('100 DPI, scale 100%', 10)))
+type_on_serial(b'display -f 336699 -s 3; m=DONE; echo FILLED $m\r')
+time.sleep(1.5)
+filled = screen_pixel(640, 400) == '336699' and screen_pixel(26, 400) == 'ffffff'
+checks.append(('display device: a program draws on the screen', filled))
+given_back = wait_for('FILLED DONE', 15)
+time.sleep(0.5)
+# (In the margin, where no text is.)
+checks.append(('display device: the console has the screen again', given_back and screen_pixel(2, 400) == '101830'))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.

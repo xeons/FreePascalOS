@@ -74,6 +74,21 @@ const
   GraphicsOutputProtocolGuid: TEfiGuid = (
     Data1: $9042A9DE; Data2: $23DC; Data3: $4A38;
     Data4: ($96, $FB, $7A, $DE, $D0, $80, $51, $6A));
+  { The EDID of the display as in use (active) or as read (discovered):
+    a size and a pointer to the data. }
+  EdidActiveProtocolGuid: TEfiGuid = (
+    Data1: $BD8C1056; Data2: $9F36; Data3: $44EC;
+    Data4: ($92, $A8, $A6, $33, $7F, $81, $79, $86));
+  EdidDiscoveredProtocolGuid: TEfiGuid = (
+    Data1: $1C0C34F6; Data2: $D380; Data3: $41FA;
+    Data4: ($A0, $49, $8A, $D0, $6C, $1A, $66, $AA));
+
+type
+  TEfiEdidProtocol = record
+    SizeOfEdid: LongWord;
+    Edid: PByte;
+  end;
+  PEfiEdidProtocol = ^TEfiEdidProtocol;
 
 implementation
 

@@ -83,6 +83,12 @@ function ConsoleRowCount: LongWord;
 procedure StartFramebufferShadow(Shadow: PLongWord);
 { Draws the whole screen again from the shadow (the display lost it). }
 procedure ConsoleRedraw;
+{ A program has the screen (the display device): the console goes on
+  drawing into its shadow only, until ResumeConsoleDrawing, which draws
+  the screen again from it. }
+procedure SuspendConsoleDrawing;
+procedure ResumeConsoleDrawing;
+function ConsoleDrawingIsSuspended: Boolean;
 { The bytes of a shadow for this framebuffer; 0 without a console. }
 function FramebufferShadowSize: QWord;
 
@@ -112,6 +118,8 @@ type
     { The copy of the screen, WidthInPixels pixels per line; nil before
       StartFramebufferShadow. }
     Shadow: PLongWord;
+    { A program has the screen: only the shadow is drawn. }
+    DrawingSuspended: Boolean;
     Columns: LongWord;
     Rows: LongWord;
     CursorColumn: LongWord;
@@ -159,7 +167,8 @@ procedure PutPixels(PixelRow, Left: LongWord; Source: PLongWord; Count: LongWord
 begin
   if Console.Shadow <> nil then
     CopyMemory(ShadowLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
-  CopyMemory(ScanLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
+  if not Console.DrawingSuspended then
+    CopyMemory(ScanLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
 end;
 
 procedure FillRectangle(Left, Top, Width, Height: LongWord; Pixel: LongWord);
@@ -171,9 +180,12 @@ begin
   RowOffset := 0;
   while RowOffset < Height do
   begin
-    Line := ScanLineAddress(Top + RowOffset);
-    for ColumnOffset := 0 to Width - 1 do
-      Line[Left + ColumnOffset] := Pixel;
+    if not Console.DrawingSuspended then
+    begin
+      Line := ScanLineAddress(Top + RowOffset);
+      for ColumnOffset := 0 to Width - 1 do
+        Line[Left + ColumnOffset] := Pixel;
+    end;
     if Console.Shadow <> nil then
     begin
       Line := ShadowLineAddress(Top + RowOffset);
@@ -235,11 +247,29 @@ procedure ConsoleRedraw;
 var
   PixelRow: LongWord;
 begin
-  if not Console.IsAvailable or (Console.Shadow = nil) then
+  if not Console.IsAvailable or (Console.Shadow = nil) or Console.DrawingSuspended then
     Exit;
   for PixelRow := 0 to Console.HeightInPixels - 1 do
     CopyMemory(ScanLineAddress(PixelRow), Console.Shadow + QWord(PixelRow) * Console.WidthInPixels,
       Console.WidthInPixels * SizeOf(LongWord));
+end;
+
+procedure SuspendConsoleDrawing;
+begin
+  Console.DrawingSuspended := True;
+end;
+
+procedure ResumeConsoleDrawing;
+begin
+  if not Console.DrawingSuspended then
+    Exit;
+  Console.DrawingSuspended := False;
+  ConsoleRedraw;
+end;
+
+function ConsoleDrawingIsSuspended: Boolean;
+begin
+  Result := Console.DrawingSuspended;
 end;
 
 function FramebufferConsoleIsAvailable: Boolean;
@@ -349,11 +379,12 @@ begin
       read. }
     MoveMemory(ShadowLineAddress(TextAreaTop), ShadowLineAddress(TextAreaTop + ConsoleFontHeight),
       QWord(ScanLinesToMove) * Console.WidthInPixels * SizeOf(LongWord));
-    for PixelRow := TextAreaTop to TextAreaTop + ScanLinesToMove - 1 do
-      CopyMemory(ScanLineAddress(PixelRow), ShadowLineAddress(PixelRow),
-        Console.WidthInPixels * SizeOf(LongWord));
+    if not Console.DrawingSuspended then
+      for PixelRow := TextAreaTop to TextAreaTop + ScanLinesToMove - 1 do
+        CopyMemory(ScanLineAddress(PixelRow), ShadowLineAddress(PixelRow),
+          Console.WidthInPixels * SizeOf(LongWord));
   end
-  else
+  else if not Console.DrawingSuspended then
     MoveMemory(ScanLineAddress(TextAreaTop), ScanLineAddress(TextAreaTop + ConsoleFontHeight),
       QWord(ScanLinesToMove) * Console.PixelsPerScanLine * SizeOf(LongWord));
   FillRectangle(0, TextAreaTop + ScanLinesToMove, Console.WidthInPixels,

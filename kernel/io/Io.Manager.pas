@@ -96,7 +96,10 @@ type
     to the medium (no buffer, Length 0); devices without such a cache
     need not handle it. }
   TIoFunction = (IoFunctionOpen, IoFunctionClose, IoFunctionRead, IoFunctionWrite,
-    IoFunctionControl, IoFunctionFlush);
+    IoFunctionControl, IoFunctionFlush,
+    { Which memory of the device a program may map: Offset and Length
+      (page aligned) in, MapPhysical and MapWriteCombining out. }
+    IoFunctionMap);
 
   TDeviceKind = (DeviceKindCharacter, DeviceKindBlock);
 
@@ -131,6 +134,9 @@ type
     ControlArgument: QWord;
     { Set by the driver: bytes moved, or the result of a control request. }
     Information: Int64;
+    { Map: set by the driver. }
+    MapPhysical: QWord;
+    MapWriteCombining: Boolean;
 
     { Set when the request completes: ErrorNone or an Abi error code. }
     Status: LongInt;

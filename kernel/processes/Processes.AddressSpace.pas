@@ -43,6 +43,11 @@
   reserve is armed again (RearmStackReserve) once the thread's stack is
   well clear of it.
 
+  Device memory (a framebuffer) is mapped into a process as a region of
+  its own, all its pages mapped at once and marked as the device's
+  (MappingDevice): unmapping it frees nothing. The program frees it like
+  memory it allocated.
+
   Below every stack lies a guard (StackGuardSize of address space, a
   region of kind RegionKindStackGuard that is never mapped and costs no
   memory), so nothing else is ever placed there: a frame too large for
@@ -89,7 +94,9 @@ type
     { A thread's thread control block and static thread-local storage. }
     RegionKindThreadData,
     { Address space below a stack that is never mapped. }
-    RegionKindStackGuard);
+    RegionKindStackGuard,
+    { Device memory, mapped when the region was made. }
+    RegionKindDevice);
 
   TUserRegion = record
     Start: QWord;
@@ -138,6 +145,11 @@ function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TR
   out Start: QWord): LongInt;
 { Releases the region starting at Start, whatever its kind. }
 function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
+{ Maps Length bytes of device memory at Physical (both page aligned)
+  into the run time allocation area, writable if Writable, with writes
+  combined if WriteCombining (else uncached). }
+function MapDeviceIntoAddressSpace(Space: PAddressSpace; Physical: TPhysicalAddress; Length: QWord;
+  Writable, WriteCombining: Boolean; out Start: QWord): LongInt;
 
 { Maps a zero filled page at Address with the given attributes. If a page
   is already there its attributes are combined with Attributes. }
@@ -429,7 +441,7 @@ begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Index := FindRegionIndex(Space, Start);
   if (Index < 0) or (Space^.Regions[Index].Start <> Start) or
-     (not AnyKind and (Space^.Regions[Index].Kind <> RegionKindAllocation)) then
+     (not AnyKind and not (Space^.Regions[Index].Kind in [RegionKindAllocation, RegionKindDevice])) then
   begin
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
     Exit(ErrorInvalidArgument);
@@ -457,6 +469,53 @@ end;
 function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
 begin
   Result := RemoveRegion(Space, Start, True);
+end;
+
+function MapDeviceIntoAddressSpace(Space: PAddressSpace; Physical: TPhysicalAddress; Length: QWord;
+  Writable, WriteCombining: Boolean; out Start: QWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+  Attributes: LongWord;
+  Mapping: LongWord;
+  Offset: QWord;
+begin
+  Start := 0;
+  if (Length = 0) or ((Length and PageOffsetMask) <> 0) or ((Physical and PageOffsetMask) <> 0) then
+    Exit(ErrorInvalidArgument);
+  Attributes := RegionReadable;
+  Mapping := MappingUser or MappingDevice;
+  if Writable then
+  begin
+    Attributes := Attributes or RegionWritable;
+    Mapping := Mapping or MappingWritable;
+  end;
+  if WriteCombining then
+    Mapping := Mapping or MappingWriteCombining
+  else
+    Mapping := Mapping or MappingUncached;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if not FindFreeRange(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+    Result := ErrorOutOfMemory
+  else
+    Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindDevice, False);
+  if Result = ErrorNone then
+  begin
+    Offset := 0;
+    while Offset < Length do
+    begin
+      if not MapPageInAddressSpace(Space^.Root, Start + Offset, Physical + Offset, Mapping) then
+      begin
+        Result := ErrorOutOfMemory;
+        Break;
+      end;
+      Offset := Offset + PageSize;
+    end;
+    if Result <> ErrorNone then
+      RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if Result <> ErrorNone then
+    Start := 0;
 end;
 
 { --- Pages ----------------------------------------------------------- }
@@ -686,6 +745,10 @@ var
   IsCopyOnWrite: Boolean;
 begin
   Window := nil;
+  { Device memory is not reached through the physical memory window. }
+  Index := FindRegionIndex(Space, Address);
+  if (Index >= 0) and (Space^.Regions[Index].Kind = RegionKindDevice) then
+    Exit(ErrorBadAddress);
   if ForWrite and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) and
      IsCopyOnWrite then
   begin
