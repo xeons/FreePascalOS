@@ -138,15 +138,17 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-cdrom.img" ]]; then
         -device ide-cd,drive=cdrom0,bus=ide.4)
 fi
 
-# Sound: an HD Audio controller with an output codec (/dev/audio) and an
-# AC'97 controller (/dev/audio1), each recorded into a WAV file that the
-# host checks afterwards.
+# Sound: an HD Audio controller with an output codec (/dev/audio) and a
+# microphone codec (/dev/audioin, fed silence by the "none" backend), and
+# an AC'97 controller (/dev/audio1); each output is recorded into a WAV
+# file that the host checks afterwards.
 audio_recording="$build_directory/test-audio.wav"
 ac97_recording="$build_directory/test-audio-ac97.wav"
 rm -f "$audio_recording" "$ac97_recording"
 if [[ -n "$system_disk_image" ]]; then
     disk_arguments+=(-audiodev wav,id=sound0,path="$audio_recording"
         -device intel-hda -device hda-output,audiodev=sound0
+        -audiodev none,id=microphone0 -device hda-micro,audiodev=microphone0
         -audiodev wav,id=sound1,path="$ac97_recording"
         -device AC97,audiodev=sound1)
 fi

@@ -546,14 +546,36 @@ sound that does not depend on the hardware:
   volume; the master volume (the hardware's) applies to all. The queue's
   fill and the frames mixed so far can be asked for.
 
-The Intel HD Audio driver (`Drivers.HdAudio`) resets the controller and
-talks to its codecs through the immediate command interface. In the
-codec's audio function group it finds an output pin fed by an output
-converter, directly or through one mixer or selector, then powers the
-path up, enables the pin and unmutes it. The first output stream's buffer
-descriptor list has an entry per period, each interrupting when played
-(by MSI; otherwise a timer polls the position). The volume is the
-converter's output amplifier.
+Recording (`Io.AudioInput`, `Io.CaptureStreams`) mirrors playing:
+- **Inputs.** A driver registers each input with routines to start and
+  stop capturing, report where the hardware is in its ring and set the
+  gain. The input gets a ring like an output's and a device file: the
+  first input is `/dev/audioin`.
+- **Capture streams.** Every open is a capture stream with its own
+  format, any of those streams take, and its own volume. The hardware
+  captures while any stream is open. As periods fill, the capture thread
+  (`RunAudioCapture`) hands each one to every stream. The stream converts
+  the rate, spreads stereo over its channels (mono gets the average) and
+  queues the result. Its samples wait in a 64 KiB queue until read; what
+  doesn't fit is dropped and counted (`ControlAudioGetDropped`). A read
+  waits for at least one frame.
+- **Monitors.** Each output also has a monitor input
+  (`/dev/audiomonitor` for `/dev/audio`). It has no hardware: the mixer
+  feeds it every period it mixes, so what plays can be recorded. Like
+  loopback capture elsewhere, it only delivers while the output plays.
+
+The Intel HD Audio driver resets the controller and talks to its codecs
+through the immediate command interface (`Drivers.HdAudio.Codecs`). In
+each codec's audio function group it looks for an output path (an output
+converter feeding an output pin) and an input path (an input pin feeding
+an input converter). Either may run directly or through one mixer or
+selector, and each may be on a different codec. The driver powers the
+path up, enables the pin and unmutes it.
+`Drivers.HdAudio.Streams` programs the first output stream and the first
+input stream: a buffer descriptor list with an entry per period, each
+interrupting when done (by MSI; otherwise a timer polls the positions).
+The output's volume and the input's gain are their converters'
+amplifiers (`Drivers.HdAudio`).
 
 The AC'97 driver (`Drivers.Ac97`) drives Intel ICH-style controllers:
 the codec's mixer and the bus master are I/O ports, and the PCM out box
@@ -643,14 +665,21 @@ listener (left-handed space: X right, Y up, Z forward):
 
 The programs are `tone` (plays a tone, or writes it as a WAV file, in
 any format), `play` (WAV files: integer, float and extensible, any of the
-formats streams take), `mixer` (the master volume), `voicetest` (the
-engine's tests) and `effecttest` (the effects' and 3D audio's). The tests record what QEMU's HD Audio device plays (its
+formats streams take), `record` (records an input into a WAV file),
+`soundinfo` (a WAV file's format, length, peak and frequency), `mixer`
+(the master volume), `voicetest` (the engine's tests) and `effecttest`
+(the effects' and 3D audio's). The tests record what QEMU's HD Audio device plays (its
 `wav` audio backend). coretest plays a 1000 Hz tone, a 440 Hz WAV file,
 600 and 1500 Hz from two programs at once, then 800, 2000 and 300 Hz at
 22.05, 96 and 11.025 kHz as u8, float mono and s24 six-channel samples,
 then `voicetest play`: one cycle of 600 Hz at 24 kHz looped 600 times at
-twice its pitch, 1200 Hz for half a second. Last, 700 Hz on the AC'97
-output (`/dev/audio1`), recorded into a second file. `scripts/check-audio.py`
+twice its pitch, 1200 Hz for half a second. Then two programs record the monitor
+(16 kHz mono s16 and 96 kHz six-channel float) while 900 Hz plays, and
+`soundinfo` checks both recordings in the guest. Last, 700 Hz on the
+AC'97 output (`/dev/audio1`), recorded into a second file. Another test
+records half a second from `/dev/audioin`: QEMU's microphone codec
+(`hda-micro` on the `none` backend) gives silence, at the right rate and
+length. `scripts/check-audio.py`
 measures each 50 ms of the recording at the expected frequencies
 (Goertzel's algorithm) and checks the order, the tones together and the
 lengths. `voicetest` on its own renders graphs offline and checks them:

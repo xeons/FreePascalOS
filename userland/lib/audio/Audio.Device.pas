@@ -17,7 +17,7 @@
 }
 
 {
-  The audio output device.
+  The audio devices: outputs and inputs.
 
   The kernel's audio framework (Io.AudioOutput) gives every sound
   output a device file; the first is /dev/audio. Each open is a stream
@@ -27,6 +27,13 @@
   so sound plays at its own pace. Draining waits until everything
   written has been heard; closing the device drains it too. A stream
   has its own volume; the master volume is the output's, for all.
+
+  Inputs (Io.AudioInput) work the same way the other way round: the
+  first is /dev/audioin, and each output has a monitor input
+  (/dev/audiomonitor for /dev/audio) that records what it plays. Each
+  open is a capture stream of its own format; reading waits until there
+  is something to read. A stream has its own volume; the master volume
+  is the input's gain.
 }
 unit Audio.Device;
 
@@ -36,6 +43,7 @@ interface
 
 const
   DefaultAudioDevice: PChar = '/dev/audio';
+  DefaultAudioInput: PChar = '/dev/audioin';
 
 type
   TAudioFormat = record
@@ -64,6 +72,16 @@ function QueuedAudioBytes(Handle: Int64): Int64;
 { Writes all of Buffer (whole samples); 0 or an error code. }
 function WriteAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): LongInt;
 function DrainAudio(Handle: Int64): LongInt;
+
+{ Opens the input Path (DefaultAudioInput if nil); returns the handle,
+  or a negative error. The format, volumes and queue calls above work on
+  it too. }
+function OpenAudioInput(Path: PChar): Int64;
+{ Reads up to ByteCount bytes (whole frames), waiting for at least one
+  frame; returns how many, or a negative error. }
+function ReadAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): Int64;
+{ Frames the input dropped because they were not read in time. }
+function DroppedAudioFrames(Handle: Int64): Int64;
 
 implementation
 
@@ -157,6 +175,23 @@ var
   Answer: Int64;
 begin
   Result := Control(Handle, ControlAudioDrain, 0, Answer);
+end;
+
+function OpenAudioInput(Path: PChar): Int64;
+begin
+  if Path = nil then
+    Path := DefaultAudioInput;
+  Result := OpenFile(Path, OpenRead);
+end;
+
+function ReadAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): Int64;
+begin
+  Result := ReadFile(Handle, Buffer, ByteCount);
+end;
+
+function DroppedAudioFrames(Handle: Int64): Int64;
+begin
+  Result := KernelControlHandle(Handle, ControlAudioGetDropped, 0);
 end;
 
 end.

@@ -71,6 +71,7 @@ uses
   Io.Startup,
   Io.BlockCache,
   Io.AudioOutput,
+  Io.AudioInput,
   Drivers.Ps2Keyboard,
   Drivers.UsbKeyboard,
   Kernel.DebugShell,
@@ -223,6 +224,19 @@ begin
   DebugEndMessage;
 end;
 
+{ The mixer and the capture thread, only where there are outputs and
+  inputs: a thread that ended at once would free its stack under the
+  self tests' feet. }
+procedure StartAudioThreads;
+begin
+  if (AudioOutputCount > 0) and
+     (CreateSystemThread(@RunAudioMixer, nil, PhaseOneThreadPriority, 'AudioMixer', False) = nil) then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the audio mixer', 0, 0, 0, 0);
+  if (AudioInputCount > 0) and
+     (CreateSystemThread(@RunAudioCapture, nil, PhaseOneThreadPriority, 'AudioCapture', False) = nil) then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the audio capture thread', 0, 0, 0, 0);
+end;
+
 procedure SystemInitializationPhaseOne(Context: Pointer);
 var
   InitialProgramExitCode: LongInt;
@@ -238,8 +252,7 @@ begin
   InitializeIoSystem;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
-  if CreateSystemThread(@RunAudioMixer, nil, PhaseOneThreadPriority, 'AudioMixer', False) = nil then
-    KernelPanicWithCode(PanicInitializationFailed, 'could not create the audio mixer', 0, 0, 0, 0);
+  StartAudioThreads;
   StartConsoleInterruptHandler;
   StartHangWatch;
 

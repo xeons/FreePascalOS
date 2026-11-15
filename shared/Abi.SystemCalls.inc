@@ -276,6 +276,8 @@ const
   ControlAudioGetQueued = 107;
   { Frames of the stream mixed so far. }
   ControlAudioGetPosition = 108;
+  { Audio inputs: frames dropped because the reader fell behind. }
+  ControlAudioGetDropped = 109;
   AudioSampleUnsigned8 = 1;
   AudioSampleSigned16 = 2;
   AudioSampleSigned24 = 3;

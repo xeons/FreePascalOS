@@ -111,7 +111,9 @@ how the existing pieces fit together.
 - [x] Sound: built-in effects (reverb, echo, equalizer, volume meter, limiter) and
       3D audio (panning, distance curves, cones, Doppler)
 - [x] Sound: AC'97 output (polled)
-- [ ] Sound: recording, USB audio
+- [x] Sound: recording (HD Audio input, capture streams in any format, monitor
+      inputs for what is played)
+- [ ] Sound: USB audio
 - [ ] PCI line interrupts (INTx): routing them needs the ACPI _PRT (an AML
       interpreter); AC'97 is polled until then
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,

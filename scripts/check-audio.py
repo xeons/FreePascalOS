@@ -25,7 +25,8 @@ commas. Without EXPECTED, what coretest plays on the HD Audio output:
 1500 Hz together for a second (two programs mixed), then 800, 2000 and
 300 Hz for half a second each (played at other rates, sample formats and
 channel counts), then 1200 Hz for half a second from the voice engine
-(voicetest play).
+(voicetest play), then 900 Hz for a second (recorded meanwhile from the
+monitor input).
 
 Each 50 ms window is measured at the expected frequencies (Goertzel's
 algorithm); the tones clearly there make the window's set, and
@@ -48,7 +49,7 @@ samples = struct.unpack('<%dh' % (len(frames) // 2), frames)[::channels]
 
 import math
 
-DEFAULT_EXPECTED = '1000:1.0,440:0.5,600+1500:1.0,800:0.5,2000:0.5,300:0.5,1200:0.5'
+DEFAULT_EXPECTED = '1000:1.0,440:0.5,600+1500:1.0,800:0.5,2000:0.5,300:0.5,1200:0.5,900:1.0'
 
 
 def parse_expected(text):

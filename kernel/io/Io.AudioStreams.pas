@@ -81,6 +81,8 @@ type
     Next: PAudioStream;
   end;
 
+{ Bytes in one sample of Kind (an AudioSample* kind). }
+function BytesPerSample(Kind: LongWord): LongWord;
 { A stream (16-bit stereo at OutputRate), or nil if memory is short. }
 function CreateAudioStream(OutputRate: LongWord): PAudioStream;
 procedure DestroyAudioStream(Stream: PAudioStream);

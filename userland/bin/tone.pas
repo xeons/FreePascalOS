@@ -66,36 +66,6 @@ const
   OptionDevice = 6;
   ChunkFrames = 1024;
 
-{ "1.5" into thousandths. }
-function ParseThousandths(Text: PChar; out Value: QWord): Boolean;
-var
-  Position: Integer;
-  Scale: QWord;
-begin
-  Value := 0;
-  Position := 0;
-  if not IsDigit(Text[0]) then
-    Exit(False);
-  while IsDigit(Text[Position]) do
-  begin
-    Value := Value * 10 + QWord(Ord(Text[Position]) - Ord('0'));
-    Inc(Position);
-  end;
-  Value := Value * 1000;
-  if Text[Position] = '.' then
-  begin
-    Inc(Position);
-    Scale := 100;
-    while IsDigit(Text[Position]) do
-    begin
-      Value := Value + QWord(Ord(Text[Position]) - Ord('0')) * Scale;
-      Scale := Scale div 10;
-      Inc(Position);
-    end;
-  end;
-  Result := Text[Position] = #0;
-end;
-
 var
   Parser: TOptionParser;
   Code: Integer;

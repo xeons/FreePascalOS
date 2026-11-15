@@ -89,8 +89,10 @@ function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Poin
 { For the driver, at dispatch level or below: the hardware went on (it
   interrupted). }
 procedure AudioPeriodsElapsed(Output: PAudioOutput);
-{ The mixer: a system thread runs this; it returns at once if there are
-  no outputs, else never. }
+{ How many outputs registered (they do while the system starts). }
+function AudioOutputCount: Integer;
+{ The mixer: a system thread runs this, if there are outputs; it never
+  returns. }
 procedure RunAudioMixer(Context: Pointer);
 
 implementation
@@ -108,6 +110,7 @@ uses
   Kernel.Events,
   Kernel.Mutex,
   Io.AudioStreams,
+  Io.AudioInput,
   Debug.Output;
 
 type
@@ -136,6 +139,8 @@ type
     PeriodDone: TEvent;
     MasterVolume: LongWord;
     Mix: PInt64;
+    { Recording what is played (/dev/audiomonitor). }
+    Monitor: PAudioInput;
   end;
 
 var
@@ -205,6 +210,8 @@ begin
       Value := Low(SmallInt);
     Samples[Position] := SmallInt(Value);
   end;
+  if State^.Monitor <> nil then
+    FeedAudioMonitor(State^.Monitor, Samples, AudioPeriodFrames);
   if HadSound then
     State^.SilentPeriods := 0
   else
@@ -282,16 +289,17 @@ procedure RunAudioMixer(Context: Pointer);
 var
   Index: Integer;
 begin
-  { Outputs register while the system starts, before the mixer runs;
-    without any there is nothing to mix. }
-  if OutputCount = 0 then
-    Exit;
   while True do
   begin
     WaitForEventWithOptions(MixerWake, MixerIntervalMilliseconds, False);
     for Index := 0 to OutputCount - 1 do
       ServiceOutput(Outputs[Index]);
   end;
+end;
+
+function AudioOutputCount: Integer;
+begin
+  Result := OutputCount;
 end;
 
 { --- Streams ---------------------------------------------------------------- }
@@ -497,6 +505,7 @@ begin
     Exit(nil);
   Result^.Device^.Extension := Result;
   Routines.SetVolume(Context, DefaultMasterVolume);
+  State^.Monitor := RegisterAudioMonitor;
   Outputs[OutputCount] := Result;
   Inc(OutputCount);
 end;
