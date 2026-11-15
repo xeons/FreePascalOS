@@ -41,6 +41,9 @@ uses
 const
   OptionTestExit = 'test-exit';
   OptionKernelShell = 'kshell';
+  { Run the file system write tests on the test volumes (they change
+    them, and leave journaled ones read-only after a simulated crash). }
+  OptionFileSystemWriteTests = 'fstest';
 
 procedure InitializeKernelOptions(const BootInformation: TBootInformation);
 

@@ -295,7 +295,10 @@ begin
   RunKernelSelfTests;
   RunIoSelfTests;
   RunFileSystemSelfTests;
-  RunFileSystemWriteTests;
+  { Only when asked: the write tests change the test volumes, and end
+    journaled ones with a simulated crash that leaves them read-only. }
+  if KernelOptionIsSet(OptionFileSystemWriteTests) then
+    RunFileSystemWriteTests;
   WriteBlockCacheSummary;
   WriteDiskStatistics;
 

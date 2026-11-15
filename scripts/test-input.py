@@ -433,18 +433,18 @@ checks.append(('suspend to RAM: woke and the program went on', wait_for('RESUMED
 # line, which must not already hold them.)
 # Every disk read raw past what was read so far (the system disk on AHCI
 # is disk1, then the virtio, NVMe and USB disks), then a file written,
-# synced and read back on the system volume and the NVMe (FAT32) and USB
-# (exFAT) volumes.
+# synced and read back on the system volume and the virtio (ext4), NVMe
+# (FAT32) and USB (exFAT) volumes.
 type_on_serial(b'for n in 1 3 4 5; do dd if=/dev/disk$n bs=4096 skip=2000 count=16 2>/dev/null | wc -c; done; '
                b'm=DONE; echo READS $m\r')
 reads_ok = wait_for('READS DONE', 90)
 checks.append(('suspend to RAM: AHCI, virtio, NVMe and USB disks read after waking',
                reads_ok and received.count(b'65536') >= 4))
-type_on_serial(b'for d in / /volumes/disk4p1 /volumes/disk5p1; do '
+type_on_serial(b'for d in / /volumes/disk3p1 /volumes/disk4p1 /volumes/disk5p1; do '
                b'echo s3 > $d/s3.txt && cat $d/s3.txt; done; sync; m=DONE; echo WRITES $m\r')
 writes_ok = wait_for('WRITES DONE', 90)
-checks.append(('suspend to RAM: files written on AHCI, NVMe and USB volumes after waking',
-               writes_ok and received.count(b's3\r\n') + received.count(b's3\n') >= 3))
+checks.append(('suspend to RAM: files written on AHCI, virtio, NVMe and USB volumes after waking',
+               writes_ok and received.count(b's3\r\n') + received.count(b's3\n') >= 4))
 type_on_serial(b'tone 1000 0.5; tone -d /dev/audio1 700 0.5; tone -d /dev/audio2 500 0.5; m=DONE; echo TONES $m\r')
 checks.append(('suspend to RAM: the sound outputs played after waking', wait_for('TONES DONE', 90)))
 monitor.sendall(('screendump ' + screen_path + '\n').encode())

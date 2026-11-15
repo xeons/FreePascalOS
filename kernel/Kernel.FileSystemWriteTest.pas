@@ -19,8 +19,8 @@
 {
   File system write self test.
 
-  Runs on every writable test volume (those with fstype.txt, see
-  Kernel.FileSystemTest) and exercises every write operation through the
+  Runs, with the kernel option "fstest", on every writable test volume
+  (those with fstype.txt, see Kernel.FileSystemTest) and exercises every write operation through the
   normal path based interface, checking each result by reading it back.
 
   It leaves a known set of files behind so the host can check the volume
@@ -41,8 +41,9 @@
   ext3 and ext4 volumes end with a simulated crash: the last change, the
   rename of written/journal-pending.txt to written/journal-committed.txt
   ("committed\n"), is committed to the journal but never written in
-  place, and the volume is left needing recovery. The host checks that
-  the change is only in the journal, then replays it with e2fsck.
+  place, and the volume is left needing recovery (and read-only until
+  the next boot). The host checks that the change is only in the
+  journal, then replays it with e2fsck.
 }
 unit Kernel.FileSystemWriteTest;
 

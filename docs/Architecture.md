@@ -1011,7 +1011,11 @@ partition. The disk statistics filter counts flushes.
 `make test` builds a GPT test disk (`scripts/make-test-disk.sh`) with one
 partition per format and the same files on each. The kernel reads every one
 of them (`Kernel.FileSystemTest`), then writes to each one
-(`Kernel.FileSystemWriteTest`). Afterwards `scripts/verify-test-disk.sh`
+(`Kernel.FileSystemWriteTest`). The writing only happens with the kernel
+option `fstest`, which the main test passes; other boots leave test
+volumes alone, since the write test changes them and leaves journaled
+ones read-only until the next boot (the simulated crash below).
+Afterwards `scripts/verify-test-disk.sh`
 checks every partition on the host with the format's own consistency
 checker and reads the written files back through independent
 implementations.

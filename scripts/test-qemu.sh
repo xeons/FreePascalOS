@@ -66,9 +66,9 @@ cp -r "$esp_directory" "$test_esp_directory"
 # process; its exit code decides the result.
 if [[ -n "${system_disk_image:-}" ]]; then
     # hangdump: if the tests stop making progress, the log shows why.
-    echo "test-exit init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
 else
-    echo "test-exit" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest" > "$test_esp_directory/FreePascalOS/options.txt"
 fi
 
 firmware_variables="$build_directory/test-OVMF_VARS.fd"
