@@ -586,6 +586,21 @@ addresses, so the ring comes from `AllocateZeroedPhysicalPageBelow`.
 The controller only has a PCI interrupt line, which the kernel cannot
 route yet (that needs the ACPI `_PRT`), so a 10 ms timer follows it.
 
+The USB audio driver (`Drivers.UsbAudio`, audio class 1.0) looks
+through a device's configuration for an audio streaming setting that
+takes 16-bit stereo at 48 kHz over an isochronous OUT endpoint. It also
+looks for the control interface's feature unit, whose mute and volume
+controls give the output volume. It selects the setting, sets the
+endpoint's rate and registers an output. Isochronous transfers are a
+stream in the xHCI driver (`Drivers.XhciIsochronous`): the class driver
+supplies packets and hears when each has gone. The stream keeps 24 on the
+endpoint's ring, each a transfer descriptor of an isochronous TRB
+started as soon as possible, plus a chained normal TRB when the packet
+crosses a page. Packets come straight from the output's ring, 48 frames
+a millisecond, and the bytes completed are the output's position.
+Built-in sound starts before the USB controllers, so it keeps the first
+device names.
+
 In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
 draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
 from a quarter-sine table and a fixed point phase).
@@ -676,7 +691,8 @@ then `voicetest play`: one cycle of 600 Hz at 24 kHz looped 600 times at
 twice its pitch, 1200 Hz for half a second. Then two programs record the monitor
 (16 kHz mono s16 and 96 kHz six-channel float) while 900 Hz plays, and
 `soundinfo` checks both recordings in the guest. Last, 700 Hz on the
-AC'97 output (`/dev/audio1`), recorded into a second file. Another test
+AC'97 output (`/dev/audio1`) and 500 Hz on a USB audio device
+(`/dev/audio2`), each recorded into a file of its own. Another test
 records half a second from `/dev/audioin`: QEMU's microphone codec
 (`hda-micro` on the `none` backend) gives silence, at the right rate and
 length. `scripts/check-audio.py`

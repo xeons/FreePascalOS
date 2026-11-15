@@ -139,18 +139,24 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-cdrom.img" ]]; then
 fi
 
 # Sound: an HD Audio controller with an output codec (/dev/audio) and a
-# microphone codec (/dev/audioin, fed silence by the "none" backend), and
-# an AC'97 controller (/dev/audio1); each output is recorded into a WAV
-# file that the host checks afterwards.
+# microphone codec (/dev/audioin, fed silence by the "none" backend), an
+# AC'97 controller (/dev/audio1) and a USB audio device on the xHCI
+# controller (/dev/audio2); each output is recorded into a WAV file that
+# the host checks afterwards.
 audio_recording="$build_directory/test-audio.wav"
 ac97_recording="$build_directory/test-audio-ac97.wav"
-rm -f "$audio_recording" "$ac97_recording"
+usb_audio_recording="$build_directory/test-audio-usb.wav"
+rm -f "$audio_recording" "$ac97_recording" "$usb_audio_recording"
 if [[ -n "$system_disk_image" ]]; then
     disk_arguments+=(-audiodev wav,id=sound0,path="$audio_recording"
         -device intel-hda -device hda-output,audiodev=sound0
         -audiodev none,id=microphone0 -device hda-micro,audiodev=microphone0
         -audiodev wav,id=sound1,path="$ac97_recording"
         -device AC97,audiodev=sound1)
+    if [[ -n "$run_usb_disk_image" ]]; then
+        disk_arguments+=(-audiodev wav,id=sound2,path="$usb_audio_recording"
+            -device usb-audio,bus=xhci.0,audiodev=sound2)
+    fi
 fi
 
 # ACCEL=kvm runs on the real processor (faster, and with the processor's
@@ -238,7 +244,8 @@ case "$qemu_status" in
             fi
         fi
         # The tones coretest played (check-audio.py lists them) on the HD
-        # Audio output, and 700 Hz for half a second on the AC'97 one.
+        # Audio output, 700 Hz for half a second on the AC'97 one and 500 Hz
+        # on the USB one.
         if [[ -n "$system_disk_image" ]]; then
             if ! grep -q '\[audio\] HD Audio .*interrupts by MSI' "$serial_log" ||
                ! python3 -I "$(dirname "$0")/check-audio.py" "$audio_recording"; then
@@ -248,6 +255,11 @@ case "$qemu_status" in
             if ! grep -q "\[audio\] AC'97" "$serial_log" ||
                ! python3 -I "$(dirname "$0")/check-audio.py" "$ac97_recording" 700:0.5; then
                 echo "TEST FAILED: the sound played on the AC'97 output was not right"
+                exit 1
+            fi
+            if [[ -n "$run_usb_disk_image" ]] && { ! grep -q '\[audio\] USB audio' "$serial_log" ||
+               ! python3 -I "$(dirname "$0")/check-audio.py" "$usb_audio_recording" 500:0.5; }; then
+                echo "TEST FAILED: the sound played on the USB audio output was not right"
                 exit 1
             fi
         fi

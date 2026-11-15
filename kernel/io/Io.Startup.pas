@@ -68,6 +68,7 @@ uses
   Drivers.UsbKeyboard,
   Drivers.HdAudio,
   Drivers.Ac97,
+  Drivers.UsbAudio,
   FileSystem.Volumes,
   Debug.Output,
   Io.InterruptRouting,
@@ -130,11 +131,13 @@ begin
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;
-  RegisterUsbStorageDriver;
-  RegisterUsbKeyboardDriver;
-  InitializeXhciControllers;
+  { Built-in sound first, so it keeps the first device names. }
   InitializeHdAudioControllers;
   InitializeAc97Controllers;
+  RegisterUsbStorageDriver;
+  RegisterUsbKeyboardDriver;
+  RegisterUsbAudioDriver;
+  InitializeXhciControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;

@@ -32,6 +32,9 @@
 
   Commands and transfers are waited for: the interrupt's deferred call
   takes the events off the event ring and wakes whoever waits for them.
+  A device may also have one repeating interrupt IN endpoint (reports
+  handed to a routine) and one isochronous OUT stream
+  (Drivers.XhciIsochronous: packets fed by the class driver).
   A device does one transfer at a time; its data goes through DMA pages
   of its own (up to UsbMaximumTransfer bytes per transfer), so callers'
   buffers can be anywhere.
@@ -46,7 +49,8 @@ interface
 uses
   Kernel.Mutex,
   Kernel.Events,
-  Drivers.XhciRings;
+  Drivers.XhciRings,
+  Drivers.XhciIsochronous;
 
 const
   UsbMaximumTransfer = 64 * 1024;
@@ -107,6 +111,9 @@ type
     InterruptTrb: QWord;
     InterruptHandler: TUsbReportHandler;
     InterruptHandlerContext: Pointer;
+    { An isochronous OUT stream: its endpoint context (0 if none). }
+    IsochronousContext: LongWord;
+    Isochronous: TIsochronousStream;
   end;
 
   { Returns True if it took the device. }
@@ -129,6 +136,15 @@ function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
   such endpoint per device. }
 function UsbStartInterruptIn(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
   Handler: TUsbReportHandler; Context: Pointer): Boolean;
+{ Makes the isochronous OUT endpoint Address (Interval as in its
+  endpoint descriptor) usable for a stream fed by Routines. One per
+  device. }
+function UsbOpenIsochronousOut(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
+  const Routines: TIsochronousRoutines; Context: Pointer): Boolean;
+{ Starts and stops queueing the stream's packets (callable at dispatch
+  level). }
+procedure UsbStartIsochronous(Device: PUsbDevice);
+procedure UsbStopIsochronous(Device: PUsbDevice);
 { Moves up to Length (at most UsbMaximumTransfer) bytes on the bulk
   endpoint EndpointAddress; Transferred says how many moved. }
 function UsbBulkTransfer(Device: PUsbDevice; EndpointAddress: Byte; Buffer: Pointer; Length: LongWord;
@@ -213,6 +229,7 @@ const
   LegacyOsOwned = LongWord(1) shl 24;
 
   EndpointTypeControl = 4;
+  EndpointTypeIsochronousOut = 1;
   EndpointTypeBulkOut = 2;
   EndpointTypeBulkIn = 6;
   EndpointTypeInterruptIn = 7;
@@ -296,6 +313,8 @@ begin
   Result := Controller^.Runtime + InterrupterBase;
 end;
 
+procedure RingDoorbell(Device: PUsbDevice; ContextIndex: LongWord); forward;
+
 { --- Events ----------------------------------------------------------------- }
 
 { True if Trb is one of the device's pending transfer's TRBs; Index says
@@ -369,6 +388,13 @@ begin
         if (Device^.InterruptTrb <> 0) and (Event.Parameter = Device^.InterruptTrb) then
         begin
           HandleInterruptReport(Controller, Device, Event);
+          Exit;
+        end;
+        if (Device^.IsochronousContext <> 0) and
+           (((Event.Control shr 16) and $1F) = Device^.IsochronousContext) then
+        begin
+          if IsochronousEventArrived(Device^.Isochronous, Event) then
+            RingDoorbell(Device, Device^.IsochronousContext);
           Exit;
         end;
         { Only an event for a TRB of the transfer waited for counts. }
@@ -666,9 +692,12 @@ begin
   Context := InputEndpointContext(Device, ContextIndex);
   FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].Physical, AverageLength);
   Context[0] := IntervalExponent shl 16;
-  if EndpointType = EndpointTypeInterruptIn then
+  if EndpointType in [EndpointTypeInterruptIn, EndpointTypeIsochronousOut] then
     { The most bytes per service interval. }
     Context[4] := Context[4] or (LongWord(MaximumPacket) shl 16);
+  if EndpointType = EndpointTypeIsochronousOut then
+    { Isochronous transfers are not retried: the error count is 0. }
+    Context[1] := Context[1] and not (LongWord(3) shl 1);
   Device^.EndpointMaximumPacket[ContextIndex] := MaximumPacket;
   Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
     (TrbTypeConfigureEndpoint shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
@@ -720,6 +749,46 @@ begin
   QueueInterruptRead(Device);
   ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
   Result := True;
+end;
+
+function UsbOpenIsochronousOut(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
+  const Routines: TIsochronousRoutines; Context: Pointer): Boolean;
+var
+  ContextIndex: LongWord;
+begin
+  if (Device^.IsochronousContext <> 0) or (MaximumPacket = 0) or ((Address and $80) <> 0) then
+    Exit(False);
+  Result := ConfigureEndpoint(Device, Address, EndpointTypeIsochronousOut, MaximumPacket,
+    IntervalExponentFor(Device, Interval), MaximumPacket);
+  if not Result then
+    Exit;
+  ContextIndex := ContextIndexOf(Address);
+  InitializeIsochronousStream(Device^.Isochronous, Device^.Rings[ContextIndex], Routines, Context);
+  Device^.IsochronousContext := ContextIndex;
+end;
+
+procedure UsbStartIsochronous(Device: PUsbDevice);
+var
+  Controller: PXhciController;
+  PreviousLevel: TPriorityLevel;
+begin
+  Controller := PXhciController(Device^.Controller);
+  PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  Device^.Isochronous.Streaming := True;
+  if FillIsochronousStream(Device^.Isochronous) then
+    RingDoorbell(Device, Device^.IsochronousContext);
+  ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+end;
+
+procedure UsbStopIsochronous(Device: PUsbDevice);
+var
+  Controller: PXhciController;
+  PreviousLevel: TPriorityLevel;
+begin
+  Controller := PXhciController(Device^.Controller);
+  PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  Device^.Isochronous.Streaming := False;
+  ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
 end;
 
 { --- Enumeration ---------------------------------------------------------------- }

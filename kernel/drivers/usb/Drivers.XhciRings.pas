@@ -42,6 +42,7 @@ const
   TrbTypeSetupStage = 2;
   TrbTypeDataStage = 3;
   TrbTypeStatusStage = 4;
+  TrbTypeIsochronous = 5;
   TrbTypeLink = 6;
   TrbTypeEnableSlot = 9;
   TrbTypeAddressDevice = 11;

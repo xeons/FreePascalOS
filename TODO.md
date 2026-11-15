@@ -113,7 +113,7 @@ how the existing pieces fit together.
 - [x] Sound: AC'97 output (polled)
 - [x] Sound: recording (HD Audio input, capture streams in any format, monitor
       inputs for what is played)
-- [ ] Sound: USB audio
+- [x] Sound: USB audio output (audio class 1.0, xHCI isochronous transfers)
 - [ ] PCI line interrupts (INTx): routing them needs the ACPI _PRT (an AML
       interpreter); AC'97 is polled until then
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
