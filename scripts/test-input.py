@@ -670,8 +670,9 @@ time.sleep(1)
 # Controls (libcontrols, controlsdemo, client area at 120,80): keys to
 # the edit box, Tab to the check box and Space, a click on a radio
 # button, three on the scroll bar's arrow, one on the swatch (a control
-# the program made itself, which posts a message of its own); Enter
-# presses the default button.
+# the program made itself, which posts a message of its own); mnemonics:
+# Alt+R toggles the check box back, Alt+N (the label's) goes back to the
+# edit box for an x; Enter presses the default button.
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'controlsdemo > /tmp/c.log &\r')
@@ -684,6 +685,10 @@ for step in range(3):
     click_at(384, 242)
 click_at(438, 120)
 swatch = take_screen()(430, 110)
+press('alt-r')
+press('alt-n')
+press('x')
+time.sleep(0.5)
 press('ret')
 time.sleep(1)
 type_on_serial(b'cat /tmp/c.log; kill %1; wait; m=DONE; echo CONTROLS $m\r')
@@ -691,13 +696,17 @@ controls_ok = wait_for('CONTROLS DONE', 15)
 checks.append(('controls: edit box, check box, radio button, scroll bar, default button',
                controls_ok and b'edit hi' in received and b'check 1' in received and
                b'radio Large' in received and b'scroll 3' in received and b'clicked OK' in received))
+checks.append(('controls: mnemonics (Alt+R on the check box, Alt+N on the label)',
+               controls_ok and b'check 0' in received and b'edit hix' in received))
 checks.append(('controls: a control of the program\'s own, and its posted message',
                b'swatch 1' in received and swatch == '30a040'))
 
 # The rest of the controls (controlstour), which prints where its
 # controls are: a toolbar toggle, a list box, a combo box's dropped
 # list, a menu bar's menu and a message box (Help > About, Enter), an
-# accelerator's message box (Ctrl+M, Escape), the tab control, the
+# accelerator's message box (Ctrl+M, Escape), the menus from the
+# keyboard (Alt+H then Enter; Alt+H then A; F10, Right, Down, Enter;
+# Alt alone, Right, Down, Enter: About each time), the tab control, the
 # clipboard (Ctrl+A and Ctrl+C in one edit box, Ctrl+V in another, Paste
 # from the context menu, lines pasted into the multi-line edit box), the
 # tree view (a click, Right, Down) and the list view (a row, a header,
@@ -755,6 +764,14 @@ if tour_started:
         press('end')
         press('ctrl-v')
         time.sleep(0.5)
+    for keys in (('alt-h', 'ret'), ('alt-h', 'a'), ('f10', 'right', 'down', 'ret'),
+                 ('alt', 'right', 'down', 'ret')):
+        for key in keys:
+            press(key)
+            time.sleep(0.3)
+        time.sleep(1)
+        press('ret')
+        time.sleep(0.8)
     click_at(*place['tree-tab'])
     type_on_serial(b'm=DONE; cat /tmp/t.log; echo TREE $m\r')
     wait_for('TREE DONE', 10)
@@ -791,6 +808,8 @@ checks.append(('controls tour: toolbar, list box, combo box', tour_ok and b'tool
                b'list Item 3' in log_from_here and b'combo Second' in log_from_here))
 checks.append(('controls tour: menu, message box, accelerator', tour_ok and b'menu About' in log_from_here and
                b'answer 1' in log_from_here and b'answer 2' in log_from_here))
+checks.append(('controls tour: menus from the keyboard (Alt+H, a mnemonic letter, F10, Alt alone)',
+               tour_ok and log_from_here.count(b'menu About') == 5 and log_from_here.count(b'answer 1') == 5))
 checks.append(('controls tour: tabs, tree view, list view', tour_ok and b'page 2' in log_from_here and
                b'tree System' in log_from_here and b'tree lib' in log_from_here and b'page 3' in log_from_here and
                b'row picture.bmp' in log_from_here and b'column 0' in log_from_here))

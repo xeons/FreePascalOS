@@ -20,6 +20,12 @@
   Text in controls: the theme's face, measuring, drawing within a
   rectangle (aligned, cut short with "..." if it does not fit), and the
   characters of a UTF-8 string (where each starts), for editing.
+
+  Captions may mark a mnemonic: an ampersand before a character ("&File",
+  "Save &as...") makes that character the one Alt picks the control or
+  menu item with, and it is drawn underlined; "&&" is an ampersand
+  itself. The mnemonic functions draw and measure such captions without
+  the ampersands.
 }
 unit Controls.Text;
 
@@ -54,6 +60,22 @@ function CharacterOffsets(const Text: string): TCharacterOffsets;
 function CharacterCountOf(const Text: string): LongInt;
 { Characters First to First + Count - 1. }
 function CharactersOf(const Text: string; First, Count: LongInt): string;
+
+{ A caption without its mnemonic marks: what is shown ("&Save" gives
+  "Save", "&&" gives "&"). }
+function TextWithoutMnemonic(const Text: string): string;
+{ The caption's mnemonic, a code point in lower case; 0 if it has none. }
+function MnemonicOf(const Text: string): LongWord;
+{ Whether Character (typed with Alt, say) picks the caption: the same
+  letter in either case. }
+function MnemonicMatches(const Text: string; Character: LongWord): Boolean;
+function LowerCaseCharacter(CodePoint: LongWord): LongWord;
+function MnemonicTextWidth(Face: PFontFace; const Text: string): LongInt;
+{ DrawTextInBox and DrawDisabledText for captions: shown without the
+  marks, the mnemonic underlined. }
+procedure DrawMnemonicTextInBox(const Canvas: TCanvas; Face: PFontFace; const Text: string; const Box: TRectangle;
+  Alignment: THorizontalAlignment; Color: TColor);
+procedure DrawDisabledMnemonicText(const Canvas: TCanvas; Face: PFontFace; const Text: string; X, Y: LongInt);
 
 implementation
 
@@ -170,6 +192,163 @@ begin
     Exit;
   DrawText(Canvas, Face^, X + 1, Y + 1, PChar(Text), Theme.Highlight);
   DrawText(Canvas, Face^, X, Y, PChar(Text), Theme.DisabledText);
+end;
+
+{ --- Mnemonics ------------------------------------------------------------------ }
+
+const
+  MnemonicMark = '&';
+
+{ Where the mnemonic character starts in the shown text (bytes, from 1),
+  0 if none: only the first single ampersand counts. }
+function MnemonicPosition(const Text: string): LongInt;
+var
+  Index: LongInt;
+  Shown: LongInt;
+begin
+  Result := 0;
+  Index := 1;
+  Shown := 0;
+  while Index <= Length(Text) do
+  begin
+    if (Text[Index] = MnemonicMark) and (Index < Length(Text)) then
+    begin
+      Inc(Index);
+      if Text[Index] <> MnemonicMark then
+        Exit(Shown + 1);
+    end;
+    Inc(Shown);
+    Inc(Index);
+  end;
+end;
+
+function TextWithoutMnemonic(const Text: string): string;
+var
+  Index: LongInt;
+begin
+  Result := '';
+  Index := 1;
+  while Index <= Length(Text) do
+  begin
+    { A mark is dropped; the character after it stays (an ampersand too,
+      for "&&"). }
+    if (Text[Index] = MnemonicMark) and (Index < Length(Text)) then
+      Inc(Index);
+    Result := Result + Text[Index];
+    Inc(Index);
+  end;
+end;
+
+function LowerCaseCharacter(CodePoint: LongWord): LongWord;
+begin
+  Result := CodePoint;
+  if (CodePoint >= Ord('A')) and (CodePoint <= Ord('Z')) then
+    Result := CodePoint + (Ord('a') - Ord('A'));
+end;
+
+function MnemonicOf(const Text: string): LongWord;
+var
+  Shown: string;
+  Position: LongInt;
+  Cursor: PChar;
+  CodePoint: LongWord;
+begin
+  Result := 0;
+  Position := MnemonicPosition(Text);
+  if Position = 0 then
+    Exit;
+  Shown := TextWithoutMnemonic(Text);
+  Cursor := PChar(Shown) + Position - 1;
+  if NextCharacter(Cursor, CodePoint) then
+    Result := LowerCaseCharacter(CodePoint);
+end;
+
+function MnemonicMatches(const Text: string; Character: LongWord): Boolean;
+begin
+  Result := (Character <> 0) and (MnemonicOf(Text) = LowerCaseCharacter(Character));
+end;
+
+function MnemonicTextWidth(Face: PFontFace; const Text: string): LongInt;
+begin
+  Result := TextWidth(Face, TextWithoutMnemonic(Text));
+end;
+
+{ A line under the mnemonic of Text, which is drawn without its marks
+  at (X, Y) as Shown. Shown may have been cut short with "...": then the
+  line goes only if the mnemonic is still before the dots. }
+procedure UnderlineMnemonic(const Canvas: TCanvas; Face: PFontFace; const Text, Shown: string; X, Y: LongInt;
+  Color: TColor);
+var
+  Position: LongInt;
+  VisibleLength: LongInt;
+  Cursor: PChar;
+  CodePoint: LongWord;
+  CharacterBytes: LongInt;
+  Left: LongInt;
+  Width: LongInt;
+  LineTop: LongInt;
+  Thickness: LongInt;
+begin
+  Position := MnemonicPosition(Text);
+  if Position = 0 then
+    Exit;
+  VisibleLength := Length(Shown);
+  if Shown <> TextWithoutMnemonic(Text) then
+    VisibleLength := Length(Shown) - Length('...');
+  if Position > VisibleLength then
+    Exit;
+  Cursor := PChar(Shown) + Position - 1;
+  if not NextCharacter(Cursor, CodePoint) then
+    Exit;
+  CharacterBytes := Cursor - (PChar(Shown) + Position - 1);
+  if Position + CharacterBytes - 1 > VisibleLength then
+    Exit;
+  Left := X + TextWidth(Face, Copy(Shown, 1, Position - 1));
+  Width := TextWidth(Face, Copy(Shown, Position, CharacterBytes));
+  { Fonts carry no baseline: three sixteenths of the height up from the
+    bottom is just under the letters, where the font's own underscore
+    is. }
+  LineTop := Y + Face^.Height - (3 * Face^.Height) div 16;
+  Thickness := Face^.Height div 16;
+  if Thickness < 1 then
+    Thickness := 1;
+  FillRectangle(Canvas, MakeRectangle(Left, LineTop, Width, Thickness), Color);
+end;
+
+procedure DrawMnemonicTextInBox(const Canvas: TCanvas; Face: PFontFace; const Text: string; const Box: TRectangle;
+  Alignment: THorizontalAlignment; Color: TColor);
+var
+  Shown: string;
+  Width: LongInt;
+  X: LongInt;
+  Y: LongInt;
+begin
+  if Face = nil then
+    Exit;
+  Shown := FittedText(Face, TextWithoutMnemonic(Text), RectangleWidth(Box));
+  Width := TextWidth(Face, Shown);
+  case Alignment of
+    AlignTextCenter: X := Box.Left + (RectangleWidth(Box) - Width) div 2;
+    AlignTextRight: X := Box.Right - Width;
+  else
+    X := Box.Left;
+  end;
+  Y := Box.Top + (RectangleHeight(Box) - Face^.Height) div 2;
+  DrawText(Canvas, Face^, X, Y, PChar(Shown), Color);
+  UnderlineMnemonic(Canvas, Face, Text, Shown, X, Y, Color);
+end;
+
+procedure DrawDisabledMnemonicText(const Canvas: TCanvas; Face: PFontFace; const Text: string; X, Y: LongInt);
+var
+  Shown: string;
+begin
+  if Face = nil then
+    Exit;
+  Shown := TextWithoutMnemonic(Text);
+  DrawText(Canvas, Face^, X + 1, Y + 1, PChar(Shown), Theme.Highlight);
+  UnderlineMnemonic(Canvas, Face, Text, Shown, X + 1, Y + 1, Theme.Highlight);
+  DrawText(Canvas, Face^, X, Y, PChar(Shown), Theme.DisabledText);
+  UnderlineMnemonic(Canvas, Face, Text, Shown, X, Y, Theme.DisabledText);
 end;
 
 end.

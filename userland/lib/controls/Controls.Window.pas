@@ -32,6 +32,13 @@
   Accelerators (AddAccelerator) are keys with modifiers that run a
   handler wherever the focus is (Ctrl+S to save, say): they are looked
   at before the focused control gets the key.
+
+  Mnemonics come next: Alt with a character picks the first visible,
+  enabled control (in the order they were made) whose caption has that
+  mnemonic, a menu bar heading among them. A window with a menu bar
+  (Controls.Menus) gives it the keyboard on F10, or on Alt pressed and
+  let go with no other key between: the bar then has a heading picked
+  and takes the keys until it lets go of them.
 }
 unit Controls.Window;
 
@@ -50,6 +57,21 @@ uses
 
 type
   TControlWindow = class;
+
+  { What a window needs of its menu bar (Controls.Menus has the real one):
+    the keyboard mode that F10 and Alt start. }
+  TWindowMenuBar = class(TControl)
+  public
+    constructor Create(AParent: TControl); override;
+    destructor Destroy; override;
+    { Picks the first heading; the bar takes the keys. }
+    procedure EnterMenuMode; virtual; abstract;
+    { Closes any open menu and picks no heading. }
+    procedure LeaveMenuMode; virtual; abstract;
+    { A heading picked or its menu open. }
+    function InMenuMode: Boolean; virtual; abstract;
+  end;
+
   TAcceleratorEvent = procedure(Sender: TControlWindow) of object;
 
   TAccelerator = record
@@ -70,8 +92,13 @@ type
     FDefaultControl: TControl;
     FCancelControl: TControl;
     FPopup: TControlWindow;
+    FMenuBar: TWindowMenuBar;
+    { Alt is down and no other key has been since it went down. }
+    FAltPressedAlone: Boolean;
     procedure MoveFocus(Forward: Boolean);
     function RunAccelerator(Code, Modifiers: LongWord): Boolean;
+    function RunMnemonic(Character, Modifiers: LongWord): Boolean;
+    procedure ToggleMenuMode;
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
@@ -88,6 +115,7 @@ type
       AFlags: LongWord = WindowFramed or WindowResizable);
     destructor Destroy; override;
     procedure FocusControl(Control: TControl);
+    procedure FocusControlAfter(Control: TControl);
     { Code (a key code, Controls.Keys) with Modifiers (ModifierShift,
       ModifierControl, ModifierAlt) runs Handler. }
     procedure AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
@@ -100,6 +128,8 @@ type
     { An open pop-up (a menu, a dropped list): it gets this window's keys
       (Controls.Popups sets it). }
     property Popup: TControlWindow read FPopup write FPopup;
+    { The window's menu bar, if it has one (it sets this itself). }
+    property MenuBar: TWindowMenuBar read FMenuBar write FMenuBar;
   end;
 
 implementation
@@ -121,6 +151,7 @@ type
     function FocusedControl: TControl; override;
     procedure CapturePointer(Control: TControl); override;
     procedure ControlRemoved(Control: TControl); override;
+    procedure FocusControlAfter(Control: TControl); override;
     function OwnerWindow: TMessageReceiver; override;
   end;
 
@@ -156,6 +187,11 @@ begin
   Result := FWindow;
 end;
 
+procedure TWindowHost.FocusControlAfter(Control: TControl);
+begin
+  FWindow.FocusControlAfter(Control);
+end;
+
 procedure TWindowHost.ControlRemoved(Control: TControl);
 begin
   if FWindow.FFocused = Control then
@@ -168,6 +204,24 @@ begin
     FWindow.FDefaultControl := nil;
   if FWindow.FCancelControl = Control then
     FWindow.FCancelControl := nil;
+  if FWindow.FMenuBar = Control then
+    FWindow.FMenuBar := nil;
+end;
+
+{ --- TWindowMenuBar ---------------------------------------------------------- }
+
+constructor TWindowMenuBar.Create(AParent: TControl);
+begin
+  inherited Create(AParent);
+  if (Host <> nil) and (Host.OwnerWindow is TControlWindow) then
+    TControlWindow(Host.OwnerWindow).FMenuBar := Self;
+end;
+
+destructor TWindowMenuBar.Destroy;
+begin
+  if (Host <> nil) and (Host.OwnerWindow is TControlWindow) and (TControlWindow(Host.OwnerWindow).FMenuBar = Self) then
+    TControlWindow(Host.OwnerWindow).FMenuBar := nil;
+  inherited Destroy;
 end;
 
 { --- TControlWindow --------------------------------------------------------- }
@@ -220,6 +274,10 @@ procedure TControlWindow.ActiveChanged;
 begin
   if FFocused <> nil then
     FFocused.Invalidate;
+  { Keys that went to another window in between do not count. }
+  FAltPressedAlone := False;
+  if (FMenuBar <> nil) and FMenuBar.InMenuMode then
+    FMenuBar.LeaveMenuMode;
 end;
 
 { Every visible, enabled control that takes the focus, in tree order. }
@@ -262,6 +320,82 @@ begin
   FocusControl(List[Current]);
 end;
 
+{ The first control that takes the focus after Marker in tree order;
+  Passed says whether Marker has been seen. }
+function FindFocusableAfter(Control, Marker: TControl; var Passed: Boolean): TControl;
+var
+  Index: LongInt;
+begin
+  Result := nil;
+  if not Control.Visible or not Control.Enabled then
+    Exit;
+  if Passed and Control.CanFocus then
+    Exit(Control);
+  if Control = Marker then
+    Passed := True;
+  for Index := 0 to Control.ChildCount - 1 do
+  begin
+    Result := FindFocusableAfter(Control.Children[Index], Marker, Passed);
+    if Result <> nil then
+      Exit;
+  end;
+end;
+
+procedure TControlWindow.FocusControlAfter(Control: TControl);
+var
+  Passed: Boolean;
+  Found: TControl;
+begin
+  Passed := False;
+  Found := FindFocusableAfter(FRoot, Control, Passed);
+  if Found <> nil then
+    FocusControl(Found);
+end;
+
+{ The first visible, enabled control in tree order that Character picks. }
+function FindMnemonicControl(Control: TControl; Character: LongWord): TControl;
+var
+  Index: LongInt;
+begin
+  Result := nil;
+  if not Control.Visible or not Control.Enabled then
+    Exit;
+  if Control.MatchesMnemonic(Character) then
+    Exit(Control);
+  for Index := 0 to Control.ChildCount - 1 do
+  begin
+    Result := FindMnemonicControl(Control.Children[Index], Character);
+    if Result <> nil then
+      Exit;
+  end;
+end;
+
+function TControlWindow.RunMnemonic(Character, Modifiers: LongWord): Boolean;
+var
+  Control: TControl;
+begin
+  Result := False;
+  { Alt alone: Ctrl+Alt is how some layouts type characters (AltGr). }
+  if (Character = 0) or ((Modifiers and ModifierAlt) = 0) or
+     ((Modifiers and (ModifierControl or ModifierAltGr)) <> 0) then
+    Exit;
+  Control := FindMnemonicControl(FRoot, Character);
+  if Control = nil then
+    Exit;
+  Control.ActivateMnemonic(Character);
+  Result := True;
+end;
+
+procedure TControlWindow.ToggleMenuMode;
+begin
+  if FMenuBar = nil then
+    Exit;
+  if FMenuBar.InMenuMode then
+    FMenuBar.LeaveMenuMode
+  else if (FPopup = nil) and FMenuBar.Visible and FMenuBar.Enabled then
+    FMenuBar.EnterMenuMode;
+end;
+
 procedure TControlWindow.AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
 begin
   SetLength(FAccelerators, Length(FAccelerators) + 1);
@@ -289,12 +423,27 @@ procedure TControlWindow.KeyDown(Code, Character, Modifiers: LongWord);
 var
   Control: TControl;
 begin
+  { (Alt repeats while held: still alone.) }
+  FAltPressedAlone := Code = KeyAlt;
+  if (Code = KeyF10) and ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = 0) and
+     (FMenuBar <> nil) then
+  begin
+    ToggleMenuMode;
+    Exit;
+  end;
   if FPopup <> nil then
   begin
     FPopup.KeyDown(Code, Character, Modifiers);
     Exit;
   end;
+  if (FMenuBar <> nil) and FMenuBar.InMenuMode then
+  begin
+    FMenuBar.HandleKeyDown(Code, Character, Modifiers);
+    Exit;
+  end;
   if RunAccelerator(Code, Modifiers) then
+    Exit;
+  if RunMnemonic(Character, Modifiers) then
     Exit;
   Control := FFocused;
   while Control <> nil do
@@ -312,7 +461,18 @@ begin
 end;
 
 procedure TControlWindow.KeyUp(Code, Modifiers: LongWord);
+var
+  AltAlone: Boolean;
 begin
+  { Alt let go with nothing pressed since it went down; a key let go
+    in between (one the display server kept, Alt+F4's F4) spoils it. }
+  AltAlone := FAltPressedAlone and (Code = KeyAlt);
+  FAltPressedAlone := False;
+  if AltAlone then
+  begin
+    ToggleMenuMode;
+    Exit;
+  end;
   if FFocused <> nil then
     FFocused.HandleKeyUp(Code, Modifiers);
 end;
@@ -343,6 +503,11 @@ procedure TControlWindow.PointerDown(X, Y: LongInt; Button: LongWord);
 var
   Target: TControl;
 begin
+  { A click is not a key: Alt held while clicking is not Alt alone, and
+    a click ends the menu bar's keyboard mode. }
+  FAltPressedAlone := False;
+  if (FMenuBar <> nil) and FMenuBar.InMenuMode and (FPopup = nil) then
+    FMenuBar.LeaveMenuMode;
   Target := FRoot.ControlAt(X, Y);
   if Target = nil then
     Exit;

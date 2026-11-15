@@ -340,7 +340,7 @@ normalized (0-65535), not pixels.
 - [x] Clipboard for the edit boxes (step 8 has the system clipboard)
 - [x] Dialogs: layout, keyboard focus, tab order, default and cancel buttons,
       accelerators; message boxes; layout in logical units, scaled
-- [ ] Mnemonics (Alt+underlined letter) for menus, buttons and labels; F10 and Alt
+- [x] Mnemonics (Alt+underlined letter) for menus, buttons and labels; F10 and Alt
       for the menu bar
 - [ ] Owned windows: a dialog stays above its owner; the owner disabled for real
       (the server refuses to activate it)

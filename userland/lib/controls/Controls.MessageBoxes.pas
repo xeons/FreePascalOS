@@ -151,8 +151,9 @@ end;
 
 function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons; Sign: TMessageSign): LongInt;
 const
-  Captions: array[TMessageButtons, 0..2] of string = (('OK', '', ''), ('OK', 'Cancel', ''), ('Yes', 'No', ''),
-    ('Yes', 'No', 'Cancel'));
+  { OK and Cancel need no mnemonic: Enter and Escape press them. }
+  Captions: array[TMessageButtons, 0..2] of string = (('OK', '', ''), ('OK', 'Cancel', ''), ('&Yes', '&No', ''),
+    ('&Yes', '&No', 'Cancel'));
   Results: array[TMessageButtons, 0..2] of LongInt = ((ResultOk, 0, 0), (ResultOk, ResultCancel, 0),
     (ResultYes, ResultNo, 0), (ResultYes, ResultNo, ResultCancel));
   Counts: array[TMessageButtons] of LongInt = (1, 2, 2, 3);
@@ -204,6 +205,7 @@ begin
       for Index := 0 to Lines.Count - 1 do
       begin
         LineLabel := TLabel.Create(Dialog.Root);
+        LineLabel.ShowsMnemonic := False;
         LineLabel.Text := Lines[Index];
         LineLabel.SetBounds(TextLeft, Margin + (ContentHeight - TextHeightLogical) div 2 + Index * LineHeight,
           TextWidthLogical, LineHeight);

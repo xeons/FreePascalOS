@@ -25,7 +25,9 @@
   A label and an edit box, a check box, two radio buttons in a group
   box, a scroll bar driving a progress bar, a colour swatch (a control
   made here, from the base every control uses), OK and Cancel (Enter
-  and Escape), and a status bar. Prints what happens, a line each:
+  and Escape), and a status bar. The captions have mnemonics: Alt+N
+  goes to the edit box, Alt+R toggles the check box, Alt+S and Alt+L
+  choose a size, Alt+O presses OK. Prints what happens, a line each:
 
     edit TEXT              the edit box's text changed
     check 1 / check 0      the check box
@@ -61,7 +63,8 @@ uses
   Controls.EditBox,
   Controls.ProgressBar,
   Controls.ScrollBar,
-  Controls.StatusBar;
+  Controls.StatusBar,
+  Controls.Text;
 
 const
   { The swatch tells the window it changed with a message of the
@@ -129,22 +132,22 @@ var
 begin
   inherited Create('Controls', 120, 80, 360, 300);
   Caption := TLabel.Create(Root);
-  Caption.Text := 'Name:';
+  Caption.Text := '&Name:';
   Caption.SetBounds(12, 14, 60, 20);
   FEdit := TEditBox.Create(Root);
   FEdit.SetBounds(76, 12, 200, 22);
   FCheck := TCheckBox.Create(Root);
-  FCheck.Text := 'Remember';
+  FCheck.Text := '&Remember';
   FCheck.SetBounds(12, 44, 120, 20);
   Group := TGroupBox.Create(Root);
-  Group.Text := 'Size';
+  Group.Text := 'Si&ze';
   Group.SetBounds(12, 72, 160, 70);
   FFirst := TRadioButton.Create(Group);
-  FFirst.Text := 'Small';
+  FFirst.Text := '&Small';
   FFirst.SetBounds(10, 20, 120, 20);
   FFirst.Checked := True;
   FSecond := TRadioButton.Create(Group);
-  FSecond.Text := 'Large';
+  FSecond.Text := '&Large';
   FSecond.SetBounds(10, 42, 120, 20);
   FScroll := TScrollBar.Create(Root);
   FScroll.Kind := ScrollHorizontal;
@@ -155,7 +158,7 @@ begin
   FSwatch := TSwatch.Create(Root);
   FSwatch.SetBounds(290, 12, 56, 56);
   FOk := TButton.Create(Root);
-  FOk.Text := 'OK';
+  FOk.Text := '&OK';
   FOk.IsDefault := True;
   FOk.SetBounds(190, 220, 75, 23);
   FCancel := TButton.Create(Root);
@@ -179,7 +182,7 @@ begin
   else if (Child = FCheck) and (Code = NotifyChanged) then
     Say('check ' + IntToStr(Ord(FCheck.Checked)))
   else if (Child is TRadioButton) and (Code = NotifyChanged) and TRadioButton(Child).Checked then
-    Say('radio ' + Child.Text)
+    Say('radio ' + TextWithoutMnemonic(Child.Text))
   else if (Child = FScroll) and (Code = NotifyChanged) then
   begin
     FProgress.Position := FScroll.Position;
@@ -188,7 +191,7 @@ begin
   end
   else if (Child is TButton) and (Code = NotifyClicked) then
   begin
-    Say('clicked ' + Child.Text);
+    Say('clicked ' + TextWithoutMnemonic(Child.Text));
     QuitMessageLoop(0);
   end;
 end;

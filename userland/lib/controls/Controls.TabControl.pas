@@ -22,7 +22,8 @@
 
   AddPage gives a new page (a control to put others on) under a tab;
   clicking a tab, or Ctrl+Tab and the Left and Right arrows while the
-  tab control has the focus, shows another page. A new page shown is
+  tab control has the focus, shows another page, as does Alt and the
+  mnemonic in a page's caption ("&Lists"). A new page shown is
   announced (OnChange, NotifyChanged).
 }
 unit Controls.TabControl;
@@ -57,6 +58,8 @@ type
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
     function AddPage(const Caption: string): TControl;
+    function MatchesMnemonic(Character: LongWord): Boolean; override;
+    procedure ActivateMnemonic(Character: LongWord); override;
     property PageCount: LongInt read GetPageCount;
     property Pages[Index: LongInt]: TControl read GetPage;
     property PageIndex: LongInt read FPageIndex write SetPageIndex;
@@ -105,7 +108,7 @@ end;
 
 function TTabControl.TabWidth(Index: LongInt): LongInt;
 begin
-  Result := TextWidth(ControlFace, Pages[Index].Text) + Scaled(16);
+  Result := MnemonicTextWidth(ControlFace, Pages[Index].Text) + Scaled(16);
 end;
 
 function TTabControl.TabLeft(Index: LongInt): LongInt;
@@ -127,6 +130,28 @@ begin
     FPageIndex := 0;
   Layout;
   Invalidate;
+end;
+
+function TTabControl.MatchesMnemonic(Character: LongWord): Boolean;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to FPages.Count - 1 do
+    if MnemonicMatches(Pages[Index].Text, Character) then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TTabControl.ActivateMnemonic(Character: LongWord);
+var
+  Index: LongInt;
+begin
+  for Index := 0 to FPages.Count - 1 do
+    if MnemonicMatches(Pages[Index].Text, Character) then
+    begin
+      PageIndex := Index;
+      Exit;
+    end;
 end;
 
 procedure TTabControl.Layout;
@@ -178,7 +203,7 @@ begin
     DrawPixel(Canvas, Tab.Left + 1, Tab.Top + 1, Theme.Highlight);
     DrawVerticalLine(Canvas, Tab.Right - 1, Tab.Top + 2, Tab.Bottom, Theme.DarkShadow);
     DrawVerticalLine(Canvas, Tab.Right - 2, Tab.Top + 1, Tab.Bottom, Theme.Shadow);
-    DrawTextInBox(Canvas, ControlFace, Pages[Index].Text, Tab, AlignTextCenter, Theme.FaceText);
+    DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Tab, AlignTextCenter, Theme.FaceText);
     if (Index = FPageIndex) and Focused then
       DrawFocusFrame(Canvas, InflateRectangle(Tab, -Scaled(3)), Theme.FaceText);
   end;
