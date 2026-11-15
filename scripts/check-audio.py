@@ -19,7 +19,8 @@
 Checks the sound QEMU recorded during the tests (its wav audio backend).
 The recording must hold, in order: 1000 Hz for a second, 440 Hz for half
 a second (a WAV file), 600 and 1500 Hz together for a second (two
-programs mixed), then 800, 2000 and 300 Hz for half a second each
+programs mixed), then 800, 2000 and 300 Hz for half a second each, then 1200 Hz
+# for half a second from the voice engine (voicetest play)
 (played at other rates, sample formats and channel counts).
 
 Each 50 ms window is measured at the expected frequencies (Goertzel's
@@ -43,7 +44,7 @@ samples = struct.unpack('<%dh' % (len(frames) // 2), frames)[::channels]
 
 import math
 
-CANDIDATES = [300, 440, 600, 800, 1000, 1500, 2000]
+CANDIDATES = [300, 440, 600, 800, 1000, 1200, 1500, 2000]
 
 
 def amplitude(part, hertz):
@@ -70,7 +71,7 @@ for start in range(0, len(samples) - window + 1, window):
 found = [(sorted(tones), count * window / rate) for tones, count in stretches if tones and count >= 3]
 print('sound recorded: ' + ', '.join('+'.join('%d' % hertz for hertz in tones) + ' Hz for %.2f s' % seconds
                                      for tones, seconds in found))
-expected = [([1000], 1.0), ([440], 0.5), ([600, 1500], 1.0), ([800], 0.5), ([2000], 0.5), ([300], 0.5)]
+expected = [([1000], 1.0), ([440], 0.5), ([600, 1500], 1.0), ([800], 0.5), ([2000], 0.5), ([300], 0.5), ([1200], 0.5)]
 if len(found) != len(expected):
     sys.exit('expected %d stretches of sound' % len(expected))
 for (tones, seconds), (wanted_tones, wanted_seconds) in zip(found, expected):

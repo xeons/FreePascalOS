@@ -17,7 +17,8 @@
 }
 
 {
-  The contents of libaudio.so: playing sound and the WAV file format.
+  The contents of libaudio.so: playing sound, the WAV file format and the
+  voice engine.
 
   Compiling this unit compiles every unit of the library. Programs use
   the individual units:
@@ -27,6 +28,11 @@
                      volume, writing samples, draining
     Audio.Wave       reading and writing PCM WAV files
     Audio.Synthesis  generating tones
+    Audio.Filters    state variable and one-pole filters
+    Audio.EffectChain  the effect interface and a voice's chain of them
+    Audio.Voices     source, submix and mastering voices; buffer queues
+    Audio.Engine     the voice graph, processed on a thread of its own
+                     or rendered offline
 }
 unit Audio.Contents;
 
@@ -38,7 +44,11 @@ uses
   Audio.Formats,
   Audio.Device,
   Audio.Wave,
-  Audio.Synthesis;
+  Audio.Synthesis,
+  Audio.Filters,
+  Audio.EffectChain,
+  Audio.Voices,
+  Audio.Engine;
 
 implementation
 

@@ -105,7 +105,10 @@ how the existing pieces fit together.
       Intel HD Audio driver, libaudio, tone, play and mixer
 - [x] Sound: streams mixed in the kernel (any number of programs), per-stream and
       master volume, 8-32 bit integer and float samples, 1-8 channels, 8-192 kHz
-- [ ] Sound: voice engine (source/submix/mastering voices), effects, 3D audio,
+- [x] Sound: voice engine in libaudio (source, submix and mastering voices, buffer
+      loops and callbacks, pitch, matrices, filters, sends, operation sets,
+      effect chains, offline rendering)
+- [ ] Sound: built-in effects (reverb, echo, EQ, meter, limiter), 3D audio,
       recording, AC'97, USB audio
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)

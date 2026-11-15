@@ -557,16 +557,62 @@ converter's output amplifier.
 
 In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
 draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
-from a quarter-sine table and a fixed point phase). The programs are
-`tone` (plays a tone, or writes it as a WAV file, in any format), `play`
-(WAV files: integer, float and extensible, any of the formats streams
-take) and `mixer` (the master volume). The tests record what QEMU's HD
-Audio device plays (its `wav` audio backend). coretest plays a 1000 Hz
-tone, a 440 Hz WAV file, 600 and 1500 Hz from two programs at once, then
-800, 2000 and 300 Hz at 22.05, 96 and 11.025 kHz as u8, float mono and
-s24 six-channel samples. `scripts/check-audio.py` measures each 50 ms of
-the recording at the expected frequencies (Goertzel's algorithm) and
-checks the order, the tones together and the lengths.
+from a quarter-sine table and a fixed point phase).
+
+### The voice engine
+
+`Audio.Engine` mixes voices in a graph, in 32-bit float, the way XAudio2
+does:
+- **Voices.** A source voice plays the buffers queued on it, in any
+  sample kind and rate. Submix voices take what others send them and pass
+  it on, in the order of their processing stage. The one mastering voice
+  ends the graph. Sound only flows down: to the mastering voice or to a
+  submix voice of a later stage.
+- **Buffers** (`Audio.Voices`). A buffer plays from its play start to
+  its play end, jumping back round its loop region as often as it says
+  (or until `ExitLoop`). Callbacks tell when buffers start and end, loops
+  come round, the stream ends (the buffer flagged as its end) and passes
+  start and end. The rate, times the voice's frequency ratio (its pitch),
+  is converted by cubic Hermite interpolation.
+- **Shaping.** Every voice has a volume, a volume per channel, a filter
+  (`Audio.Filters`: state variable low, band and high-pass and notch, and
+  one-pole low and high-pass) and a chain of effects. Each send to a
+  destination has an output matrix (how the channels go into the
+  destination's) and a filter of its own.
+- **Effects** (`Audio.EffectChain`). An effect is a record of routines
+  (process in place, parameters, reset, release, the length of its tail)
+  and a state, so programs can write their own. A voice stopped with
+  `StopPlayTails` keeps processing until its effects' tails have played.
+- **Operation sets.** A change made with an operation set waits for
+  `CommitChanges` with that set, so several changes land in the same
+  pass; set 0 changes at once.
+- **Running.** Passes of 10 ms run on the engine's own thread, which
+  writes the mastering voice's float samples to `/dev/audio`; the kernel
+  mixes them with other programs. Writing waits while the device's queue
+  is full, and that paces the engine. Callbacks run on the engine's
+  thread and may call back into the engine. An offline engine has no
+  device or thread: `RenderAudio` processes passes for its caller, as the
+  tests do. `GetPerformanceData` counts voices, passes and frames, and
+  the frames queued in the device.
+
+### Programs and tests
+
+The programs are `tone` (plays a tone, or writes it as a WAV file, in
+any format), `play` (WAV files: integer, float and extensible, any of the
+formats streams take), `mixer` (the master volume) and `voicetest` (the
+engine's tests). The tests record what QEMU's HD Audio device plays (its
+`wav` audio backend). coretest plays a 1000 Hz tone, a 440 Hz WAV file,
+600 and 1500 Hz from two programs at once, then 800, 2000 and 300 Hz at
+22.05, 96 and 11.025 kHz as u8, float mono and s24 six-channel samples,
+then `voicetest play`: one cycle of 600 Hz at 24 kHz looped 600 times at
+twice its pitch, 1200 Hz for half a second. `scripts/check-audio.py`
+measures each 50 ms of the recording at the expected frequencies
+(Goertzel's algorithm) and checks the order, the tones together and the
+lengths. `voicetest` on its own renders graphs offline and checks them:
+resampling, pitch, volumes, matrices, every filter, the callbacks' order
+and the frames played, loops, flushing, 8-bit samples, submix stages and
+several sends, send filters, operation sets, a custom effect with its
+parameters and tail, and the performance data.
 
 ## File systems
 
