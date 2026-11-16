@@ -36,6 +36,9 @@
     * notifications and requests to end: taken or left to the system,
       groups, sessions, a handler thread, permissions, Ctrl-C taken by a
       program and a terminal's new size (notifytest),
+    * settings: file locks and the settings files, several programs
+      writing at once (settingstest), the settings tool, who may change
+      which settings and the modes of their files,
     * the service manager: definitions, the start order, readiness,
       restarts, logs, the service command (servicetest), and login with
       a right and a wrong password,
@@ -80,7 +83,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..302] of TCommandTest = (
+  CommandTests: array[0..308] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -445,6 +448,16 @@ const
     { Notifications: end requests taken or not, groups, sessions, a
       handler thread, permissions, Ctrl-C and a new size on a terminal. }
     (Command: 'notifytest > notify.log; echo $?; grep -E ''FAIL|received'' notify.log; tail -n 1 notify.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { Settings (libconfiguration): file locks, the files, several
+      writers at once (settingstest); the settings tool in both scopes,
+      the user's over the system's, fixed values, who may write what and
+      the modes of what is made, damaged files. }
+    (Command: 'settingstest > st.log; echo $?; grep FAIL st.log; tail -n 1 st.log | cut -d " " -f 5-; rm -r /tmp/settingstest'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'settings set Test/Name "two words"; settings set Test/Count 7; settings set -t list Test/List a "b c"; settings get Test/Name; settings get Test/Count; settings get Test/List; settings list Test'; ExpectedOutput: 'two words'#10'7'#10'a'#10'b c'#10'Name = "two words"'#10'Count = 7'#10'List = ["a", "b c"]'#10; ExpectedStatus: 0),
+    (Command: 'settings set -s Test/Count 3; settings set -s -f Test/Fixed true; settings set Test/Fixed false; settings get Test/Count; settings get Test/Fixed; settings get -s Test/Count; settings list -s Test; stat -c %a /etc/settings /etc/settings/Test.settings /.settings /.settings/Test.settings'; ExpectedOutput: '7'#10'true'#10'3'#10'Count = 3'#10'fixed Fixed = true'#10'755'#10'644'#10'700'#10'600'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "settings set -s Test/Count 1" 2>&1; echo $?; su user -c "settings get Test/Count; settings set Test/Count 9; settings get Test/Count; stat -c %a /home/user/.settings /home/user/.settings/Test.settings; settings delete Test"; su user -c "cat /.settings/Test.settings" > /dev/null 2>&1; echo $?'; ExpectedOutput: 'settings: /etc/settings: Permission denied'#10'1'#10'3'#10'9'#10'700'#10'600'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'settings delete Test/Count; settings get Test/Count; settings delete -s Test; settings get Test/Count 2>&1; echo $?; ls /etc/settings; settings get Bad 2>&1; echo $?'; ExpectedOutput: '3'#10'settings: Test/Count is not set'#10'1'#10'settings: Bad: not the path of a setting (GROUP/KEY)'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'printf ''Good = 1\nbroken line\n'' > /.settings/Damaged.settings; settings get Damaged/Good; settings check Damaged; echo $?; settings set Damaged/More 2; cat /.settings/Damaged.settings; settings delete Damaged; settings delete Test; ls /.settings | wc -l'; ExpectedOutput: '1'#10'line 2: broken line'#10'1'#10'Good = 1'#10'More = 2'#10'broken line'#10'0'#10; ExpectedStatus: 0),
     { The service manager and the service command (a second manager). }
     (Command: 'servicetest > svc.log; echo $?; grep -E ''FAIL|received'' svc.log; tail -n 1 svc.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
     { login: a right and a wrong password (read from a pipe), root only,

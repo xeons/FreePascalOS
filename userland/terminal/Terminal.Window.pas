@@ -20,7 +20,9 @@
   The terminal window: the view (Terminal.View) filling a window, and
   the shell's session (Terminal.Session) behind it.
 
-  The window starts the size of 25 rows of 80 columns. Output goes to
+  The window starts the size of the grid it is given (the size the
+  last terminal window had when it closed, Terminal.Settings), and the
+  size it has when it closes is kept for the next one. Output goes to
   the view, typing and pasting to the session, and a new size of the
   view's grid to the pseudo-terminal. Programs set the window's title
   (OSC 0 and 2); a bell flashes the view for a moment. Closing the
@@ -56,11 +58,12 @@ type
     procedure TitleChanged(const NewTitle: string);
     procedure Reply(const Text: string);
     procedure Bell;
+    procedure RememberSize;
   protected
     procedure CloseRequested; override;
     procedure TimerFired(TimerId: LongWord); override;
   public
-    constructor Create(Left, Top: LongInt);
+    constructor Create(Left, Top, Rows, Columns: LongInt);
     destructor Destroy; override;
     { Starts ShellPath on a new pseudo-terminal; False if it could not. }
     function StartShell(ShellPath: PChar): Boolean;
@@ -73,18 +76,17 @@ uses
   Sys.Streams,
   Sys.Format,
   Windowing.Connection,
-  Controls.Base;
+  Controls.Base,
+  Terminal.Settings;
 
 const
-  InitialRows = 25;
-  InitialColumns = 80;
   FlashTimer = 1;
   FlashMilliseconds = 100;
   { How long a hung-up shell is given to end. }
   HangUpWaitMilliseconds = 2000;
   DefaultTitle = 'Terminal';
 
-constructor TTerminalWindow.Create(Left, Top: LongInt);
+constructor TTerminalWindow.Create(Left, Top, Rows, Columns: LongInt);
 var
   Measure: TTerminalView;
   Width: LongInt;
@@ -93,7 +95,7 @@ begin
   { The window's size comes from the view's cells: measured with a view
     that is not shown, at the scale new windows start at. }
   Measure := TTerminalView.Create(nil);
-  Measure.SizeForGrid(InitialRows, InitialColumns, Width, Height);
+  Measure.SizeForGrid(Rows, Columns, Width, Height);
   Measure.Free;
   inherited Create(DefaultTitle, Left, Top, Unscaled(Width), Unscaled(Height));
   FLeft := Left;
@@ -185,8 +187,14 @@ begin
   FView.Flash(False);
 end;
 
+procedure TTerminalWindow.RememberSize;
+begin
+  RememberGridSize(FView.Emulator.Screen.Rows, FView.Emulator.Screen.Columns);
+end;
+
 procedure TTerminalWindow.SessionEnded(ExitCode: LongInt);
 begin
+  RememberSize;
   WriteFormatted(StandardOutput, 'terminal: the shell ended with status %d'#10, [ArgumentNumber(ExitCode)]);
   FlushStream(StandardOutput);
   Free;
@@ -196,6 +204,7 @@ procedure TTerminalWindow.CloseRequested;
 var
   ExitCode: LongInt;
 begin
+  RememberSize;
   ExitCode := FSession.Close(HangUpWaitMilliseconds);
   WriteFormatted(StandardOutput, 'terminal: closed; the shell ended with status %d'#10, [ArgumentNumber(ExitCode)]);
   FlushStream(StandardOutput);

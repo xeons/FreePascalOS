@@ -1,0 +1,352 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  settings - read and change settings (libconfiguration)
+
+  settings get [-s | -u] PATH
+  settings set [-s [-f]] [-t KIND] PATH VALUE...
+  settings delete [-s] PATH
+  settings list [-s | -u] [PATH]
+  settings check [-s | -u] GROUP
+
+  PATH names a setting: GROUP/KEY or GROUP/SECTION.../KEY, such as
+  Notepad/WordWrap or Display/0/Scale; for delete and list it may name a
+  section or a whole group too. Without -s or -u, get and list show what
+  programs see: the user's settings ($HOME/.settings) over the system's
+  (/etc/settings); set and delete change the user's.
+
+    get      prints the value: a string as it is, a list an item a line;
+             status 1 if it has none
+    set      VALUE is read as in a settings file ("text", 150, true,
+             [a, b]; anything else is a string), or as -t KIND says:
+             string, integer, boolean, or list (each VALUE an item)
+    delete   a key, or a section or group with everything in it
+    list     the groups (no PATH), or a group's or section's sections
+             (NAME/) and keys (KEY = VALUE, "fixed" before fixed ones)
+    check    the lines of a group's file that cannot be read
+
+  -s, --system   the system's settings (only root may change them)
+  -u, --user     the user's alone
+  -f, --fixed    with set -s: users cannot change it
+}
+program settings;
+
+{$mode objfpc}
+{$H+}
+
+uses
+  SysUtils,
+  Abi.SystemCalls,
+  Sys.Format,
+  Util.Messages,
+  Util.Options,
+  Configuration.Names,
+  Configuration.Values,
+  Configuration.Scopes,
+  Configuration.Settings,
+  Configuration.Locations;
+
+const
+  Usage: PChar = 'Usage: settings get [-s | -u] PATH'#10 +
+    '       settings set [-s [-f]] [-t KIND] PATH VALUE...'#10 +
+    '       settings delete [-s] PATH'#10 +
+    '       settings list [-s | -u] [PATH]'#10 +
+    '       settings check [-s | -u] GROUP'#10 +
+    'Read and change settings: the user''s ($HOME/.settings) over the system''s (/etc/settings).'#10 +
+    '  -s, --system      the system''s settings (only root may change them)'#10 +
+    '  -u, --user        the user''s alone'#10 +
+    '  -f, --fixed       with set -s: users cannot change it'#10 +
+    '  -t, --type KIND   read VALUE as a string, integer, boolean or list'#10;
+  OptionSystem = 1;
+  OptionUser = 2;
+  OptionFixed = 3;
+  OptionType = 4;
+
+type
+  TScopeChoice = (ChoiceBoth, ChoiceUser, ChoiceSystem);
+
+var
+  Choice: TScopeChoice;
+  Fixed: Boolean;
+  KindName: string;
+  Operands: TStringArray;
+  Store: TSettings;
+
+procedure ReadOptions;
+var
+  Parser: TOptionParser;
+  Code: Integer;
+  OptionValue: PChar;
+  Index: Integer;
+begin
+  Choice := ChoiceBoth;
+  Fixed := False;
+  KindName := '';
+  BeginOptions(Parser, [OptionDefinition('s', 'system', False, OptionSystem),
+    OptionDefinition('u', 'user', False, OptionUser),
+    OptionDefinition('f', 'fixed', False, OptionFixed),
+    OptionDefinition('t', 'type', True, OptionType)], Usage);
+  Parser.NegativeNumbersAreOperands := True;
+  while NextOption(Parser, Code, OptionValue) do
+    case Code of
+      OptionSystem: Choice := ChoiceSystem;
+      OptionUser: Choice := ChoiceUser;
+      OptionFixed: Fixed := True;
+      OptionType: KindName := LowerCase(string(OptionValue));
+    end;
+  SetLength(Operands, Parser.OperandCount);
+  for Index := 0 to Parser.OperandCount - 1 do
+    Operands[Index] := string(Parser.Operands[Index]);
+  if Length(Operands) = 0 then
+    FailWithUsageHint('a command is needed: get, set, delete, list or check', []);
+  if Fixed and (Choice <> ChoiceSystem) then
+    FailWithUsageHint('--fixed is for the system''s settings (-s)', []);
+end;
+
+{ The scope set and delete change. }
+function WrittenScope: TSettingsScopeKind;
+begin
+  if Choice = ChoiceSystem then
+    Result := ScopeSystem
+  else
+    Result := ScopeUser;
+end;
+
+function ChosenScope: TSettingsScope;
+begin
+  Result := Store.Scopes[WrittenScope];
+  if Result = nil then
+    Fail(1, 'there are no user settings here (HOME is not set)', []);
+end;
+
+procedure NeedOperands(Lowest, Highest: Integer);
+begin
+  if (Length(Operands) - 1 < Lowest) or (Length(Operands) - 1 > Highest) then
+    FailWithUsageHint('wrong number of operands for %s', [ArgumentText(PChar(Operands[0]))]);
+end;
+
+procedure NeedKeyPath(const Path: string);
+var
+  Parsed: TSettingsPath;
+begin
+  if not ParseKeyPath(Path, Parsed) then
+    Fail(2, '%s: not the path of a setting (GROUP/KEY)', [ArgumentText(PChar(Path))]);
+end;
+
+procedure NeedSectionPath(const Path: string);
+var
+  Parsed: TSettingsPath;
+begin
+  if not ParseSectionPath(Path, Parsed) then
+    Fail(2, '%s: not a settings path', [ArgumentText(PChar(Path))]);
+end;
+
+procedure FlushOrFail;
+var
+  Error: LongInt;
+begin
+  Error := Store.Flush;
+  if Error <> ErrorNone then
+    FailWithError(1, Error, '%s', [ArgumentText(PChar(ChosenScope.Storage.Location))]);
+end;
+
+procedure PrintValue(const Value: TSettingValue);
+var
+  Index: Integer;
+begin
+  case Value.Kind of
+    SettingString: WriteLn(Value.Text);
+    SettingList:
+      for Index := 0 to High(Value.Items) do
+        WriteLn(Value.Items[Index]);
+  else
+    WriteLn(FormatSettingValue(Value));
+  end;
+end;
+
+procedure GetCommand;
+var
+  Value: TSettingValue;
+  Source: TSettingsScopeKind;
+  Found: Boolean;
+begin
+  NeedOperands(1, 1);
+  NeedKeyPath(Operands[1]);
+  case Choice of
+    ChoiceUser: Found := Store.LookupIn(ScopeUser, Operands[1], Value);
+    ChoiceSystem: Found := Store.LookupIn(ScopeSystem, Operands[1], Value);
+  else
+    Found := Store.Lookup(Operands[1], Value, Source);
+  end;
+  if not Found then
+  begin
+    Report('%s is not set', [ArgumentText(PChar(Operands[1]))]);
+    Halt(1);
+  end;
+  PrintValue(Value);
+end;
+
+function ValueToSet: TSettingValue;
+var
+  Items: TStringArray;
+  Index: Integer;
+  Text: string;
+begin
+  Text := Operands[2];
+  if KindName = 'list' then
+  begin
+    Items := nil;
+    SetLength(Items, Length(Operands) - 2);
+    for Index := 2 to High(Operands) do
+      Items[Index - 2] := Operands[Index];
+    Exit(ListSetting(Items));
+  end;
+  if Length(Operands) > 3 then
+    FailWithUsageHint('one VALUE (or -t list for several)', []);
+  if KindName = 'string' then
+    Exit(StringSetting(Text));
+  if not ParseSettingValue(Text, Result) then
+    Fail(2, '%s: not a value (a string in quotes must end with one)', [ArgumentText(PChar(Text))]);
+  if (KindName = 'integer') and (Result.Kind <> SettingInteger) then
+    Fail(2, '%s: not an integer', [ArgumentText(PChar(Text))]);
+  if (KindName = 'boolean') and (Result.Kind <> SettingBoolean) then
+    Fail(2, '%s: not a boolean (true or false)', [ArgumentText(PChar(Text))]);
+  if (KindName <> '') and (KindName <> 'integer') and (KindName <> 'boolean') then
+    FailWithUsageHint('the kind must be string, integer, boolean or list', []);
+end;
+
+procedure SetCommand;
+begin
+  NeedOperands(2, MaxInt);
+  NeedKeyPath(Operands[1]);
+  ChosenScope;
+  Store.WriteValue(Operands[1], ValueToSet, WrittenScope, Fixed);
+  FlushOrFail;
+end;
+
+procedure DeleteCommand;
+begin
+  NeedOperands(1, 1);
+  NeedSectionPath(Operands[1]);
+  if Operands[1] = '' then
+    Fail(2, 'deleting every group is not done', []);
+  ChosenScope;
+  Store.Delete(Operands[1], WrittenScope);
+  FlushOrFail;
+end;
+
+procedure ListValuesOf(const Path: string; const Keys: TStringArray);
+var
+  Index: Integer;
+  KeyPath: string;
+  Value: TSettingValue;
+  Source: TSettingsScopeKind;
+  Found: Boolean;
+  FixedMark: string;
+begin
+  for Index := 0 to High(Keys) do
+  begin
+    KeyPath := Path + SettingsPathSeparator + Keys[Index];
+    case Choice of
+      ChoiceUser: Found := Store.LookupIn(ScopeUser, KeyPath, Value);
+      ChoiceSystem: Found := Store.LookupIn(ScopeSystem, KeyPath, Value);
+    else
+      Found := Store.Lookup(KeyPath, Value, Source);
+    end;
+    FixedMark := '';
+    if (Choice <> ChoiceUser) and Store.IsFixed(KeyPath) then
+      FixedMark := 'fixed ';
+    if Found then
+      WriteLn(FixedMark, Keys[Index], ' = ', FormatSettingValue(Value));
+  end;
+end;
+
+procedure ListCommand;
+var
+  Path: string;
+  Sections: TStringArray;
+  Keys: TStringArray;
+  Index: Integer;
+begin
+  NeedOperands(0, 1);
+  Path := '';
+  if Length(Operands) > 1 then
+    Path := Operands[1];
+  NeedSectionPath(Path);
+  case Choice of
+    ChoiceUser:
+      begin
+        Sections := Store.ListSectionsIn(ScopeUser, Path);
+        Keys := Store.ListKeysIn(ScopeUser, Path);
+      end;
+    ChoiceSystem:
+      begin
+        Sections := Store.ListSectionsIn(ScopeSystem, Path);
+        Keys := Store.ListKeysIn(ScopeSystem, Path);
+      end;
+  else
+    Sections := Store.ListSections(Path);
+    Keys := Store.ListKeys(Path);
+  end;
+  for Index := 0 to High(Sections) do
+    WriteLn(Sections[Index], SettingsPathSeparator);
+  ListValuesOf(Path, Keys);
+end;
+
+procedure CheckCommand;
+var
+  Problems: TStringArray;
+  Scope: TSettingsScope;
+  Index: Integer;
+  Error: LongInt;
+begin
+  NeedOperands(1, 1);
+  if not IsSettingsName(Operands[1]) then
+    Fail(2, '%s: not the name of a group', [ArgumentText(PChar(Operands[1]))]);
+  Scope := ChosenScope;
+  Error := Scope.ReadError(Operands[1]);
+  if Error <> ErrorNone then
+    FailWithError(1, Error, '%s/%s', [ArgumentText(PChar(Scope.Storage.Location)), ArgumentText(PChar(Operands[1]))]);
+  Problems := Scope.Problems(Operands[1]);
+  for Index := 0 to High(Problems) do
+    WriteLn(Problems[Index]);
+  if Length(Problems) > 0 then
+    Halt(1);
+end;
+
+begin
+  ReadOptions;
+  if Choice = ChoiceSystem then
+    Store := OpenSystemSettings
+  else
+    Store := OpenSettings;
+  if Operands[0] = 'get' then
+    GetCommand
+  else if Operands[0] = 'set' then
+    SetCommand
+  else if Operands[0] = 'delete' then
+    DeleteCommand
+  else if Operands[0] = 'list' then
+    ListCommand
+  else if Operands[0] = 'check' then
+    CheckCommand
+  else
+    FailWithUsageHint('%s: not a command (get, set, delete, list or check)', [ArgumentText(PChar(Operands[0]))]);
+  Store.Free;
+end.

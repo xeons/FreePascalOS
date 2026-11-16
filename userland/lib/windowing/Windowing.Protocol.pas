@@ -117,13 +117,14 @@ const
     of a modal dialog); 1: enabled again. }
   RequestEnableWindow = 11;
   { Window 0; Code: a new scale in percent (100 to 400) for the display
-    numbered Value. Its windows are told (EventScaleChanged); answered by
-    EventDisplayDescribed for that display. }
+    numbered Value; Flags: DisplayRemember to keep it. Its windows are
+    told (EventScaleChanged); answered by EventDisplayDescribed for that
+    display. }
   RequestSetScale = 12;
   { Window 0; Code: a display's number. Answered by EventDisplayDescribed. }
   RequestDescribeDisplay = 13;
   { Window 0; Code: a display's number; Width, Height: a mode from its
-    list, in pixels. Windows on it keep their places (moved onto it if it
+    list, in pixels; Flags: DisplayRemember to keep it. Windows on it keep their places (moved onto it if it
     shrank) and hear if their scale changes; answered by
     EventDisplayDescribed (the size it has then). }
   RequestSetDisplayMode = 14;
@@ -144,8 +145,9 @@ const
   RequestGetMouseSettings = 18;
   { Window 0; Code, Value, Flags as in EventMouseSettings: the new
     settings (any program may change them, as the display's settings
-    would be; they last until the server ends). Answered by
-    EventMouseSettings with what they are now. }
+    would be; they last until the server ends: they are the user's, and
+    the user's own settings keep them, Windowing.MouseSettings).
+    Answered by EventMouseSettings with what they are now. }
   RequestSetMouseSettings = 19;
   { Window 0: this program asks to be the shell. Answered by
     EventShellRegistered; then the program hears about every other
@@ -248,6 +250,11 @@ const
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
+  { Flags of RequestSetScale and RequestSetDisplayMode: the server keeps
+    the new scale or mode in the system's settings (Display/N/Scale,
+    Display/N/Mode) and gives the display it the next time it starts.
+    Without it the change lasts until the server ends. }
+  DisplayRemember = $01;
 
   { --- Window flags ----------------------------------------------------- }
 

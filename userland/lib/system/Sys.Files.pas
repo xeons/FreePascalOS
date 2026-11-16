@@ -92,6 +92,14 @@ function CreateFifo(Path: PChar): LongInt;
 function CurrentUmask: LongWord;
 function CreateHardLink(ExistingPath, NewPath: PChar): LongInt;
 
+{ An advisory lock on the whole file or directory behind Handle
+  (FileLockShared or FileLockExclusive, with FileLockNoWait not to wait;
+  see ControlLockFile). It lasts until UnlockFile or until the handle
+  (and every copy of it) is closed. 0 or an error code: ErrorWouldBlock
+  when FileLockNoWait is given and the lock is taken. }
+function LockFile(Handle: Int64; Flags: LongWord): LongInt;
+function UnlockFile(Handle: Int64): LongInt;
+
 implementation
 
 uses
@@ -308,6 +316,16 @@ end;
 function CreateHardLink(ExistingPath, NewPath: PChar): LongInt;
 begin
   Result := ErrorCodeOf(KernelCreateHardLink(ExistingPath, NewPath));
+end;
+
+function LockFile(Handle: Int64; Flags: LongWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelControlHandle(Handle, ControlLockFile, Flags));
+end;
+
+function UnlockFile(Handle: Int64): LongInt;
+begin
+  Result := ErrorCodeOf(KernelControlHandle(Handle, ControlUnlockFile, 0));
 end;
 
 end.

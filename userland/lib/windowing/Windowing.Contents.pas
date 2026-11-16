@@ -31,6 +31,7 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Windowing.Displays,
+  Windowing.MouseSettings,
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,

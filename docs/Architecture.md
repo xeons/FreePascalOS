@@ -1098,10 +1098,23 @@ smoothly. Left-handed swaps the left and right buttons of every pointing
 device. A tablet's absolute positions are never changed. Any program
 may read and change them (`RequestGetMouseSettings`,
 `RequestSetMouseSettings`, answered with `EventMouseSettings`), as it
-may the scale: they belong to whoever sits at the screen. They last
-until the server ends; keeping them in a file is for the configuration
-library (step 7). `mousesettings [-s SPEED] [-a ACCELERATION] [-l
-on|off]` changes them and prints them.
+may the scale: they belong to whoever sits at the screen. They are a
+user's settings (see "Settings" below): the server starts with the
+system's, the session manager gives it a user's own when they log in and
+the system's again when the session ends. `mousesettings [-r] [-s SPEED]
+[-a ACCELERATION] [-l on|off]` changes them and prints them; `-r`
+(`--remember`) also keeps them in the user's settings.
+
+Remembered display settings (`Server.RememberedSettings`): a request to
+change a display's scale or mode with the flag `DisplayRemember`
+(`displayscale -r`, `displaymode -r`) has the server keep it in the
+system's settings (`Display/N/Scale`, `Display/N/Mode`; a display's mode
+and scale belong to the machine, whoever logs in). At start the server
+sets each display's remembered mode, then its scale (a new mode brings
+the display's own scale back, so keeping a mode forgets the scale kept
+for that display), printing a line for each. Without the flag a change
+lasts until the server ends, so the tests' many changes leave nothing
+behind.
 
 Pointer shapes: the arrow, the four resize arrows (left-right, up-down
 and the two diagonals), a text beam and a busy hourglass
@@ -1650,7 +1663,11 @@ saves as /tmp/note.txt through the save dialog (reading the file back
 over the serial shell), finds a word and finds it again with F3, wraps
 a long line of a new document into rows (Home going to the start of
 the caret's row), and on Exit cancels the question to save, then
-answers No.
+answers No. Word wrap, the status bar and the font are kept in the
+user's settings (`Notepad.Settings`, group `Notepad`) as soon as they
+are chosen, and Notepad starts with them (it prints `settings word-wrap
+on|off, status-bar on|off, font ...`); the input test turns word wrap on,
+ends Notepad and checks that the next one starts with it on.
 
 ### The terminal window
 
@@ -1713,7 +1730,11 @@ of output with the tablet and copies and pastes it into a command,
 resizes the window by its corner and checks that `stty size` in it
 gives the rows and columns that fit, types `exit` (the window closes),
 and closes a second terminal with Alt+F4 (its shell hung up, status
-129).
+129). The size a terminal window has when it closes is kept in the
+user's settings (`Terminal.Settings`: `Terminal/Rows`,
+`Terminal/Columns`), and the next one starts at it (the second terminal
+of the input test starts at the size the first was dragged to); the
+text's size is `Terminal/FontSize` (tenths of a point, 110 by default).
 
 ### The desktop shell
 
@@ -2032,6 +2053,28 @@ file, a directory an empty directory); on ext3/ext4 the removal and the
 rename are one transaction (`BeginAtomicChange` / `EndAtomicChange`). In a
 directory with the sticky bit (`/tmp`), only the owner of a name, of the
 directory or root may remove or replace it.
+
+**Advisory locks** (`FileSystem.Locks`), as flock gives them: a shared
+or an exclusive lock on a whole file or directory, asked for with
+`CallControlHandle` (`ControlLockFile` with `FileLockShared` or
+`FileLockExclusive`, and `FileLockNoWait` not to wait;
+`ControlUnlockFile`; `LockFile` and `UnlockFile` in `Sys.Files`). A
+lock belongs to the open file - every handle duplicated from it - and
+lasts until it is given up or the open file's last handle is closed, so
+a program that ends gives its locks up. Any number of shared locks or
+one exclusive lock; asking for the other kind first gives up the one
+held. Locks only hold back other lock requests, not reads or writes. A
+shared lock needs read permission on the node, an exclusive one write
+permission, so programs that may only read cannot hold writers up. The
+state lives with the node (shared by every open of it through the node
+cache), made with the first lock and freed when nobody holds or waits
+for one; one mutex covers every lock state. Waiting is alertable (an
+ended program stops waiting, `ErrorInterrupted`); each release signals
+a synchronization event that wakes one waiter, which looks again; one
+let in to a shared lock passes the signal on. The request references
+the open file while it runs, since another thread may close the handle
+during a long wait. The settings library takes its writers' lock this
+way (see "Settings").
 
 The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
 
@@ -2783,6 +2826,149 @@ manager ends Notepad once its time is up, within the session's
 stop-timeout) and powers off (QEMU exits). The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
 
+### Settings
+
+Programs keep what they want to remember from one run to the next in
+**settings** (libconfiguration), in two scopes:
+
+| Scope | Where | Who | Modes |
+|---|---|---|---|
+| system | `/etc/settings/GROUP.settings` | read by everyone, written by root | files 0644, folder 0755 |
+| user | `$HOME/.settings/GROUP.settings` | the user alone (root's home is `/`: `/.settings`) | files 0600, folder 0700 |
+
+**Names.** A setting is a path of names: `GROUP/KEY` or
+`GROUP/SECTION.../KEY` (`Notepad/WordWrap`, `Display/0/Scale`). The
+group is a file of its own in each scope, usually one per program; the
+names between it and the key are a section (sections nest). A name is
+letters, digits, `_`, `-` and `.` (64 at most, not starting with `.` or
+`-`), case-sensitive like file names (`Configuration.Names`).
+
+**Files** are text, to be read and changed by hand
+(`Configuration.Documents`):
+
+    # Notepad's settings
+    WordWrap = true
+    Font = "DejaVu Sans Mono"
+
+    [Window]
+    Width = 640
+    fixed Height = 480
+
+Keys before the first `[SECTION]` header are the group's own. A value
+is a string in double quotes (escapes `\"`, `\\`, `\n`, `\r`, `\t` and
+`\xHH`; UTF-8 kept as it is), an integer (decimal or `0x` hexadecimal),
+a boolean (`true`/`false`; `yes`/`no` and `on`/`off` are read too), a
+list of strings (`["a", "b c"]`), or anything else as a bare string
+(`/home/user/sky.bmp`), so hand-written files need no quotes; the
+library always writes strings quoted, so `"true"` stays a string
+(`Configuration.Values`). Comments take whole lines (`#` or `;`).
+Changing a file changes only the lines it must: comments, order, blank
+lines and lines that cannot be read survive. A broken line is ignored
+when reading (`settings check` lists them), and keys under a broken
+section header are not taken for the previous section's; a key that
+appears twice is read from its first line. A file larger than 1 MiB is
+taken for damaged: not read, and never written over.
+
+**Layering** (`Configuration.Settings`): a program reads through a
+`TSettings`, which looks in the user's scope, then the system's, then
+gives the caller's default (`ReadString`, `ReadInteger`,
+`ReadIntegerWithin`, `ReadBoolean`, `ReadList`, `Lookup` for the value
+and its scope). A value of another kind than the one asked for counts as
+none, so a hand-edited `Speed = fast` is not taken for a speed. A value
+marked `fixed` in the system's scope wins over the user's (an
+administrator deciding for everyone; `fixed` means nothing in a user's
+file). Writes go to one scope, the user's unless told
+(`WriteString`, ..., `WriteValue` with `Fixed`, `Delete` for a key, a
+section or a whole group); they are seen by the program at once and
+written by `Flush` (freeing the object flushes). `ListKeys` and
+`ListSections` list both scopes (`''` lists the groups). Opening:
+`OpenSettings` (the current user, from `HOME`, over the system's; the
+system's alone without a home), `OpenSystemSettings`, and
+`OpenSettingsOfHome` for root acting for a user
+(`Configuration.Locations`). A `TSettings` is not thread-safe.
+
+**Reading what is current** (`Configuration.Scopes`): a group is read
+when first wanted and kept; every later read looks at the file's
+version (node number, size and time: each write makes a new file, so
+the node number changes) and reads it again if it changed, so a program
+sees what anyone wrote last without being told.
+
+**Writing safely** (`Configuration.FileStorage`): the new text goes to
+`GROUP.settings.new` (its mode set before the text is written), which
+is then renamed over `GROUP.settings`. Other programs see the old file
+or the new one: a rename holds the volume's lock throughout. After a
+crash: on ext3/ext4 the removal of the old file and the new name are
+one journal transaction, committed after the new file's data reached
+the disk (the commit flushes the disk first), so there is the old file
+or the new one. On FAT, exFAT and ext2 the removal and the rename are
+two steps, and a crash between them can leave only
+`GROUP.settings.new`; it is complete (it was written before the rename
+began), so the library reads it in place of the missing file, and the
+next write puts things right. The system disk is ext4.
+
+**Several writers.** A flush takes the scope's writers' lock, reads
+the group's latest text, makes this program's changes to it and writes
+the result, then gives the lock up. Two programs changing the same
+group at once thus keep both changes; a failed write is not retried
+(the changes are dropped and the group read again). The lock is an
+exclusive advisory lock on the scope's folder (`ControlLockFile`, see
+"File systems"), which needs write permission on the folder - that is,
+permission to change those settings at all - so readers cannot hold
+writers up. It goes with its handle, so a writer that crashes leaves no
+stale lock. Readers take no lock. A group whose last key goes is
+removed.
+
+**Change notification.** `TSettings.CheckForChanges` calls `OnChanged`
+for each group someone else changed since the program read it (it
+compares versions). Today a program calls it when it wants; once the
+kernel can watch folders, a watch on both scopes' folders will call it
+as soon as a file changes, and programs need no change.
+
+**Who keeps what.**
+
+| Program | Scope | Settings |
+|---|---|---|
+| display server | system | `Display/N/Mode`, `Display/N/Scale` when a change asks to be remembered (`displaymode -r`, `displayscale -r`); starts with the system's `Mouse/*` |
+| mousesettings `-r`, session manager | user | `Mouse/Speed`, `Mouse/Acceleration`, `Mouse/LeftHanded`: the session manager gives the display server the user's at login and the system's after the session (`Session.UserSettings`) |
+| notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
+| terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
+| desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+
+A display's mode and scale are the machine's (the screen in front of
+it, whoever logs in), so the display server, which runs as root, keeps
+them in the system's settings itself. How the pointer moves is a matter
+of taste, so the mouse's settings are the user's: written by the user's
+own programs, applied by the session manager, which knows who sits at
+the screen.
+
+**The `settings` tool**: `settings get [-s|-u] PATH`, `settings set
+[-s [-f]] [-t string|integer|boolean|list] PATH VALUE...`, `settings
+delete [-s] PATH`, `settings list [-s|-u] [PATH]` and `settings check
+[-s|-u] GROUP`. Without `-s` or `-u` it shows what programs see and
+changes the user's; `-s` is the system's (only root may change them),
+`-f` makes a system value fixed.
+
+**Tests.** `make settings-test` checks names, values and escaping,
+files (changes keeping comments and broken lines, damaged and binary
+files), scopes over a storage in memory (changes seen before a flush,
+two writers keeping both changes, others' changes noticed, an unreadable
+group not written over) and layering (user over system over default,
+fixed values, values of the wrong kind). coretest runs `settingstest`
+(the locks: shared and exclusive, refused without waiting, a program
+waiting until a lock is given up, a waiting program ended, a lock given
+up by a program that ends; the files' and folder's modes, no file left
+half-written, a crash's `.new` file read back, a damaged file, and three
+programs writing 25 keys each into one group at once, every change
+kept) and the `settings` tool: both scopes, a fixed value, an ordinary
+user refused the system's settings but writing their own (0700 and
+0600), unable to read root's, a damaged file. The input test keeps a
+mode and a scale with `-r` and checks the next display server gives
+them back (and the displays' own once deleted), and checks Notepad's
+word wrap and the terminal's size survive a restart; the session test
+keeps a user's mouse speed with `mousesettings -r` and checks the
+session manager gives the system's back after Log off and the user's at
+the next login.
+
 ### Handles
 
 A process has a table of 64 handles, each naming a referenced object and
@@ -2960,6 +3146,14 @@ independent) against the Free Pascal runtime library:
   the system, `drawtest` draws a window on the display in DejaVu Sans,
   everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
+- **libconfiguration.so** – settings, the user's over the system's (see
+  "Settings" below): `Configuration.Names`, `Configuration.Values`,
+  `Configuration.Documents`, `Configuration.Storage`,
+  `Configuration.Scopes`, `Configuration.Settings`,
+  `Configuration.FileStorage` and `Configuration.Locations`. It needs
+  only libsystem; libwindowing uses it (`Windowing.MouseSettings`). All
+  but the last two build on the host too: `make settings-test` (part of
+  `make test`) runs `tools/SettingsTest` over a storage in memory.
 - **libtlstest.so** – a small library in assembly with TLS and
   initializer arrays, which Free Pascal does not emit; `threadtest` uses
   it to test the loader and the runtime.

@@ -25,7 +25,8 @@
 #   /bin   programs (from <user-build-directory>/bin)
 #   /lib   shared libraries (from <user-build-directory>/lib)
 #   /etc   configuration (from userland/etc), with the service
-#          definitions in /etc/services
+#          definitions in /etc/services and the system's settings in
+#          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
 #   /tmp, /home
@@ -46,7 +47,7 @@ staging_directory="$user_build_directory/root"
 partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
-mkdir -p "$staging_directory"/{bin,lib,etc,tmp,dev,home/user,var/log}
+mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 # The fonts graphical programs draw with (libfont).
@@ -99,6 +100,7 @@ ownership_script="$partition_image.debugfs"
     echo 'set_inode_field /home/user gid 1000'
     echo 'set_inode_field /home/user mode 040755'
     echo 'set_inode_field /tmp mode 041777'
+    echo 'set_inode_field /etc/settings mode 040755'
     echo 'set_inode_field /etc/shadow mode 0100600'
     echo 'set_inode_field /bin/su mode 0104755'
     echo 'set_inode_field /bin/passwd mode 0104755'

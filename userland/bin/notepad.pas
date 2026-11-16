@@ -38,8 +38,12 @@
   carriage returns and line feeds keeps them when saved (Notepad.Files).
   New, Open, Exit and closing the window ask first whether to save
   changes. FILE is opened at start; one that does not exist yet is
-  made when saved. Prints what happens, a line each:
+  made when saved. Word wrap, the status bar and the font are kept in
+  the user's settings (group Notepad) when chosen, and the next Notepad
+  starts with them. Prints what happens, a line each:
 
+    settings word-wrap on|off, status-bar on|off, font TENTHS WEIGHT FAMILY
+                          the format it starts with (from the settings)
     title TEXT            the window's title changed
     opened PATH           a file was opened (or a new one named)
     first-line TEXT       the first line of the file just opened
@@ -57,7 +61,8 @@
   The units are in userland/notepad: Notepad.Files (reading and
   writing), Notepad.DocumentWindow (the file: New, Open, Save, the
   title, asking to save), Notepad.MainWindow (menus, status bar, find
-  and replace, the format), Notepad.GoToDialog and Notepad.Output.
+  and replace, the format), Notepad.Settings (what it remembers),
+  Notepad.GoToDialog and Notepad.Output.
 }
 program Notepad;
 

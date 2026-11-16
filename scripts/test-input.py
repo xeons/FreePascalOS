@@ -914,6 +914,41 @@ type_on_serial(b'kill %2 %3; kill %1; wait; m=DONE; echo DISPLAYS $m\r')
 checks.append(('several displays: the server ended, the console has the screen again',
                wait_for('DISPLAYS DONE', 15) and screen_pixel(2, 400) == '101830'))
 
+# Remembered display settings (the system's settings, libconfiguration):
+# a mode and a scale changed with --remember are kept in
+# /etc/settings/Display.settings and given back by the next display
+# server; deleting them (settings delete -s Display) brings the displays'
+# own back for the checks that follow.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+remember_from = len(received)
+type_on_serial(b'displaymode -r 1024x768; displayscale -d 1 -r 125; m=DONE; echo REMEMBER $m\r')
+wait_for('REMEMBER DONE', 15)
+type_on_serial(b'kill %1; wait; settings list -s Display/0; settings list -s Display/1; m=DONE; echo KEPT $m\r')
+kept = wait_for('KEPT DONE', 15)
+kept_log = bytes(received[remember_from:])
+type_on_serial(b'displayserver &\r')
+restarted = wait_for('displayserver: ready (1024x768, 80 DPI, scale 100%)', 20)
+restarted_log = bytes(received[remember_from:])
+type_on_serial(b'kill %1; wait; settings delete -s Display; ls /etc/settings | wc -l; m=DONE; echo FORGOTTEN $m\r')
+forgotten = wait_for('FORGOTTEN DONE', 15)
+type_on_serial(b'displayserver &\r')
+defaults_back = wait_for_count('displayserver: ready (1280x800, 100 DPI, scale 100%)',
+                               received.count(b'displayserver: ready (1280x800, 100 DPI, scale 100%)') + 1, 20)
+type_on_serial(b'kill %1; wait; m=DONE; echo DEFAULTS $m\r')
+wait_for('DEFAULTS DONE', 15)
+checks.append(('remembered display settings: a mode and a scale kept in the system\'s settings',
+               kept and b'remembered display 0: mode 1024x768' in kept_log and
+               b'remembered display 1: scale 125%' in kept_log and
+               re.search(rb'Mode = "1024x768"\r?\n', kept_log) is not None and
+               re.search(rb'Scale = 125\r?\n', kept_log) is not None))
+checks.append(('remembered display settings: the next display server gives them back',
+               restarted and b'display 0: remembered mode 1024x768' in restarted_log and
+               b'display 1: remembered scale 125%' in restarted_log and
+               re.search(rb'display 1: 1024x768 at 1024,0, \d+ DPI, scale 125%', restarted_log) is not None))
+checks.append(('remembered display settings: deleted, the displays\' own come back',
+               forgotten and re.search(rb'\n0\r?\nFORGOTTEN DONE', bytes(received)) is not None and defaults_back))
+
 # Owned windows (ownertest: A at 100,100 400x300 green, B owned by A,
 # C at 300,250 300x200 blue overlapping A; a key takes each step):
 # hiding A hides B too and B's program is told (B is not Visible any
@@ -1365,6 +1400,33 @@ checks.append(('notepad: Exit asks to save the changes (Cancel stays, No ends it
                log_from_here.count(b'\nexit') == 1 and
                log_from_here.find(b'answer cancel') < log_from_here.find(b'answer no')))
 
+# Notepad remembers its format in the user's settings (root's here, in
+# /.settings): word wrap, turned off last above, is off when it starts;
+# turned on and Notepad ended, the next Notepad starts with it on. The
+# settings are deleted afterwards.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'notepad > /tmp/n2.log &\r')
+time.sleep(3)
+press('alt-o')
+time.sleep(0.5)
+press('w')
+time.sleep(0.8)
+press('alt-f')
+time.sleep(0.5)
+press('x')
+time.sleep(1)
+remembered_from = len(received)
+type_on_serial(b'cat /tmp/n2.log; settings get Notepad/WordWrap; notepad > /tmp/n3.log & sleep 3; cat /tmp/n3.log; '
+               b'kill $!; wait $!; settings delete Notepad; kill %1; wait; m=DONE; echo NOTEPAD-AGAIN $m\r')
+again_ok = wait_for('NOTEPAD-AGAIN DONE', 30)
+again_log = bytes(received[remembered_from:])
+checks.append(('notepad: word wrap is remembered for the next Notepad (the user\'s settings)',
+               again_ok and b'settings word-wrap off, status-bar on' in again_log and
+               re.search(rb'wrap on \d+', again_log) is not None and
+               re.search(rb'\ntrue\r?\n', again_log) is not None and
+               b'settings word-wrap on, status-bar on' in again_log))
+
 # The terminal window (terminal: the shell on a pseudo-terminal, drawn
 # in Terminus at 11 points: 10x18 cells at 100 DPI). Keys typed on the PS/2 keyboard
 # go to the active window, so a command typed there writes a file the
@@ -1441,10 +1503,17 @@ time.sleep(3)
 press('alt-f4')
 time.sleep(2)
 closed_from = len(received)
-type_on_serial(b'm=DONE; cat /tmp/t2.log; kill %1; wait; echo CLOSED $m\r')
+type_on_serial(b'm=DONE; cat /tmp/t2.log; settings get Terminal/Rows; settings delete Terminal; kill %1; wait; '
+               b'echo CLOSED $m\r')
 closed_ok = wait_for('CLOSED DONE', 15)
 checks.append(('terminal: closing the window hangs the shell up',
                closed_ok and b'terminal: closed; the shell ended with status 129' in bytes(received[closed_from:])))
+# The first window's size when it closed is kept in the user's settings
+# (Terminal/Rows, Terminal/Columns): the second starts at it.
+checks.append(('terminal: the next window starts at the size the last one closed at',
+               closed_ok and re.search(('terminal: /dev/pts\\d+, %d rows, %d columns, window at 200,120' %
+                          (new_rows, new_columns)).encode(), bytes(received[closed_from:])) is not None and
+               re.search(('\n%d\r?\n' % new_rows).encode(), bytes(received[closed_from:])) is not None))
 
 # The desktop shell (desktop): a wallpaper on both displays (its sky
 # starts 0f2c42 at the top), the taskbar along the bottom of the first (30 high: 770-799) with the

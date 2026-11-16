@@ -97,6 +97,19 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   screen that starts the user's desktop in a session of its own (Log off
   asks its programs to end - Notepad asks to save - then ends what is
   left).
+- **Settings**: programs remember what the user chose in plain text
+  files, the user's (`~/.settings/GROUP.settings`, theirs alone) over the
+  system's (`/etc/settings/GROUP.settings`, written by root, which may
+  fix a value for everyone) over the program's defaults: typed values
+  (strings, integers, booleans, lists), written safely (a new file
+  renamed into place) under a file lock, so several programs writing at
+  once keep every change. The display server remembers each display's
+  mode and scale (`displaymode -r`, `displayscale -r`), the session
+  manager gives it the user's mouse settings at login (`mousesettings
+  -r`), Notepad remembers word wrap, the status bar and the font, the
+  terminal its size. The `settings` tool reads and changes them:
+  `settings get|set|delete|list|check [-s] PATH [VALUE]`, e.g.
+  `settings set Terminal/FontSize 140`, `settings list -s Display`.
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
   with CPU time counted per thread, nice values mapped to thread
   priorities (`nice`, `renice`), processor affinity (`taskset`), per
@@ -111,6 +124,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - `libcoreutils.so`: GNU style option parsing, messages, sorting, tree
     walking and copying, POSIX regular expressions (BRE and ERE), shell
     style wildcards, chmod modes, date parsing, base64/32/16/2/z85, accounts
+  - `libconfiguration.so`: settings per user and for the system (see
+    above), with the `settings` tool
   - a POSIX style shell `sh` (pipes, redirections, `&&` `||`, `if` /
     `while` / `until` / `for` / `case`, functions with `local` and
     `return`, here-documents, variables and `${...}` expansions (`:-`
@@ -211,6 +226,14 @@ The system volume has two accounts: `root` (password `root`) and `user`
 (uid 1000, home `/home/user`, password `user`). `su user` becomes the
 ordinary user, `passwd` changes a password.
 
+Settings live in `/etc/settings` (the system's) and in `.settings` in each
+user's home (`/home/user/.settings`; root's home is `/`, so `/.settings`),
+one text file per group (`Notepad.settings`, `Display.settings`, ...),
+which may be edited by hand. `settings list` shows the groups, `settings
+list Notepad` a group's keys, `settings get -s Display/0/Scale` one value
+of the system's; `settings delete -s Display` forgets the remembered
+display modes and scales.
+
 Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
 (one line, words separated by spaces, e.g. `mode=text autologin=root`; see
 `kernel/core/Kernel.Options.pas`).
@@ -272,6 +295,7 @@ userland/
   lib/system/       libsystem.so: the Sys.* units
   lib/cryptography/ libcryptography.so: the Crypto.* units
   lib/coreutils/    libcoreutils.so: the Util.* units shared by the tools
+  lib/configuration/ libconfiguration.so: the Configuration.* units (settings)
   lib/plugin/       libplugin.so, loaded at run time by coretest
   bin/              One file per program (/bin/<name>)
   sh/               The shell's units (lexer, parser, expansion, execution)
@@ -281,6 +305,7 @@ tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
 tools/DrawingTest/  Checks libdrawing and libfont on the host
 tools/TextTest/     Checks the multi-line edit box's logic on the host
+tools/SettingsTest/ Checks the settings library on the host
 scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes
 ```

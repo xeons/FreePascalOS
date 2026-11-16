@@ -38,6 +38,9 @@
   it ends the user's session the same way first (telling the programs
   the reason: shutdown, or log off), then ends.
 
+  The display server is given the user's mouse settings before their
+  desktop starts, and the system's once the session has ended.
+
   It serves the port "session" for the desktop: log off, shut down and
   restart (see Session.Requests). Runs as root, as it starts programs as
   other users and may turn the computer off.
@@ -49,10 +52,13 @@
   (session N)", "session: logging off NAME", "session: asking session N
   to end (REASON)", "session: C programs of session N did not end in
   time: ending them", "session: session of NAME ended (status S)",
-  "session: shutting down", "session: asked to end (REASON)".
+  "session: mouse settings of NAME (or the system): speed S,
+  acceleration A, left-handed on|off", "session: shutting down",
+  "session: asked to end (REASON)".
 
   Its units are in userland/sessionmanager: Session.LoginWindow,
-  Session.UserSession, Session.Requests and Session.Report.
+  Session.UserSession, Session.UserSettings, Session.Requests and
+  Session.Report.
 }
 program sessionmanager;
 

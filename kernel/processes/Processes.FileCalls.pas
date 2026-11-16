@@ -94,7 +94,8 @@ uses
   Kernel.Clock,
   Processes.Stopping,
   Processes.TerminalCalls,
-  Processes.FileAttributeCalls;
+  Processes.FileAttributeCalls,
+  Processes.FileLockCalls;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -1155,6 +1156,8 @@ var
 begin
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) then
     Exit(Failure(ErrorBadHandle));
+  if (Kind = HandleKindFile) and ((Request = ControlLockFile) or (Request = ControlUnlockFile)) then
+    Exit(PerformFileLockRequest(Handle, Request, Argument));
   if Kind <> HandleKindDevice then
     Exit(Failure(ErrorUnsupported));
   { The console's requests are handled by its driver

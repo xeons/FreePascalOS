@@ -26,7 +26,9 @@
   them up meanwhile), creates the port "display" (Windowing.Protocol) and
   serves the programs that connect: their windows, framed and stacked,
   composed with the pointer on the desktop, the input routed to them.
-  Prints a line for each display after the first, then
+  Gives each display the mode and scale the system's settings keep for
+  it, and the mouse the system's settings (Server.RememberedSettings),
+  with a line for each. Prints a line for each display after the first, then
   "displayserver: ready" (with the first display's size, DPI and scale)
   once it serves, then how many of the pointer's shapes it read from
   /lib/pointers; started by the service manager, it tells it it is
@@ -50,8 +52,9 @@
   Server.PointerShapes, Server.PointerFiles and Server.PointerAreas
   (the pointer's shapes); Server.WindowStates (minimizing and the
   shell's commands), Server.Shell (the shell's list of windows),
-  Server.WorkAreas (what the taskbar leaves) and Server.Notifications
-  (the notification area's icons).
+  Server.WorkAreas (what the taskbar leaves), Server.Notifications
+  (the notification area's icons) and Server.RememberedSettings (what
+  it keeps in the system's settings).
 }
 program DisplayServer;
 
@@ -75,6 +78,7 @@ uses
   Server.Scale,
   Server.Shell,
   Server.PointerFiles,
+  Server.RememberedSettings,
   Server.WindowMoves;
 
 const
@@ -159,6 +163,7 @@ begin
     FailWithError(1, LongInt(-Port), 'the port %s', [ArgumentText(WindowingPortName)]);
   InitializeCursor;
   PointerFilesRead := LoadPointerFiles;
+  ApplyRememberedSettings;
   AddDamage(DesktopBounds);
   Compose;
   SayOtherScreens;

@@ -22,7 +22,9 @@
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
-#                  libsystem <- libdrawing <- libwindowing (programs with windows)
+#                  libsystem <- libconfiguration (settings, per user and system)
+#                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
+#                  (programs with windows)
 #                  libwindowing <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -70,6 +72,7 @@ DRAWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/drawing
 FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
 WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
 CONTROLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/controls
+CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -79,6 +82,7 @@ DRAWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdrawing.so
 FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
 WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
 CONTROLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcontrols.so
+CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -116,7 +120,7 @@ FONT_RENDERER := tools/RenderFont/render-font.py
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
+	$(CONFIGURATION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
@@ -185,25 +189,34 @@ $(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libfont.so -o $@ \
 		$(FONT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ldrawing -lsystem
 
+# libconfiguration: settings, the user's over the system's, in files.
+$(CONFIGURATION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/configuration/*.pas)
+	@rm -rf $(CONFIGURATION_LIBRARY_OBJECTS)
+	@mkdir -p $(CONFIGURATION_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/configuration \
+		-FU$(CONFIGURATION_LIBRARY_OBJECTS) userland/lib/configuration/Configuration.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libconfiguration.so -o $@ \
+		$(CONFIGURATION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # libwindowing: the display server's protocol and windows for programs.
-$(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
+$(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
 	@rm -rf $(WINDOWING_LIBRARY_OBJECTS)
 	@mkdir -p $(WINDOWING_LIBRARY_OBJECTS)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
-		-Fu$(FONT_LIBRARY_OBJECTS) -Fuuserland/lib/windowing -FU$(WINDOWING_LIBRARY_OBJECTS) \
-		userland/lib/windowing/Windowing.Contents.pas
+		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fuuserland/lib/windowing \
+		-FU$(WINDOWING_LIBRARY_OBJECTS) userland/lib/windowing/Windowing.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwindowing.so -o $@ \
-		$(WINDOWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lfont -ldrawing -lsystem
+		$(WINDOWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lconfiguration -lfont -ldrawing -lsystem
 
 # libcontrols: controls, control windows and dialogs.
 $(CONTROLS_LIBRARY): $(WINDOWING_LIBRARY) $(wildcard userland/lib/controls/*.pas)
 	@rm -rf $(CONTROLS_LIBRARY_OBJECTS)
 	@mkdir -p $(CONTROLS_LIBRARY_OBJECTS)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
-		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fuuserland/lib/controls \
-		-FU$(CONTROLS_LIBRARY_OBJECTS) userland/lib/controls/Controls.Contents.pas
+		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/controls -FU$(CONTROLS_LIBRARY_OBJECTS) userland/lib/controls/Controls.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcontrols.so -o $@ \
-		$(CONTROLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lwindowing -lfont -ldrawing -lsystem
+		$(CONTROLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lwindowing -lconfiguration -lfont -ldrawing -lsystem
 
 $(SYSTEM_FONTS_STAMP):
 	@test -f $(TERMINUS_LICENSE) || { echo "The Terminus licence is needed in $(TERMINUS_LICENSE) (set TERMINUS_LICENSE)"; exit 1; }
@@ -249,10 +262,14 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
 GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings wintest ownertest controlsdemo controlstour dialogtour notepad terminal desktop sessionmanager)
-$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lfont -ldrawing
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
-	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS)
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS)
 $(GRAPHICAL_PROGRAMS): $(CONTROLS_LIBRARY)
+SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest)
+$(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
+$(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
+$(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)

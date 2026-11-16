@@ -19,14 +19,15 @@
 {
   displayscale - show or change a display's scale in the display server
 
-  displayscale [-d NUMBER] [PERCENT]
+  displayscale [-d NUMBER] [-r] [PERCENT]
 
   Without an operand: the display's scale and DPI. With one: asks the
   display server for that scale (100 to 400 percent) while windows are
   open; the server draws its frames and pointer on that display at it,
   and every window on it is laid out again at the same logical size. -d
-  picks the display (0, the first, by default). Prints the scale it is
-  then:
+  picks the display (0, the first, by default); -r (--remember) has the
+  server keep the scale in the system's settings (Display/N/Scale) for
+  the next time it starts. Prints the scale it is then:
 
     scale P%, D DPI
 }
@@ -45,10 +46,12 @@ uses
   Windowing.Displays;
 
 const
-  Usage: PChar = 'Usage: displayscale [-d NUMBER] [PERCENT]'#10 +
+  Usage: PChar = 'Usage: displayscale [-d NUMBER] [-r] [PERCENT]'#10 +
     'Show a display''s scale in the display server, or change it (100 to 400 percent).'#10 +
-    '  -d NUMBER  the display (0, the first, by default)'#10;
+    '  -d NUMBER       the display (0, the first, by default)'#10 +
+    '  -r, --remember  keep the scale for the next time the server starts'#10;
   OptionNumber = 1;
+  OptionRemember = 2;
   MinimumPercent = 100;
   MaximumPercent = 400;
 
@@ -68,11 +71,16 @@ var
   Error: LongInt;
   Information: TDisplayInformation;
   Answered: Boolean;
+  Remember: Boolean;
 begin
   Number := 0;
-  BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber)], Usage);
+  Remember := False;
+  BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber),
+    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
   while NextOption(Parser, Code, OptionValue) do
-    if Code = OptionNumber then
+    if Code = OptionRemember then
+      Remember := True
+    else if Code = OptionNumber then
       if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
         FailWithUsageHint('the display must be a number', []);
   if Parser.OperandCount > 1 then
@@ -86,7 +94,7 @@ begin
   if Error <> ErrorNone then
     FailWithError(1, Error, 'the display server', []);
   if Percent <> 0 then
-    Answered := SetDisplayScale(LongInt(Number), LongWord(Percent), Information)
+    Answered := SetDisplayScale(LongInt(Number), LongWord(Percent), Information, Remember)
   else
     Answered := DescribeDisplay(LongInt(Number), Information);
   if not Answered then

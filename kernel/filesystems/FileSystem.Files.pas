@@ -42,7 +42,8 @@
     duration, which also protects that volume's node cache.
 
   An open file is an object of type "File" holding a reference to its node
-  and the current position. Closing it drops the reference.
+  and the current position. Closing it gives up its advisory lock, if it
+  holds one, and drops the reference.
 }
 unit FileSystem.Files;
 
@@ -77,6 +78,8 @@ type
     Flags: LongWord;
     Position: QWord;
     Cursor: TDirectoryCursor;
+    { The advisory lock this open file holds (FileSystem.Locks). }
+    HeldLock: TFileLockKind;
   end;
 
 procedure InitializeFileObjects;
@@ -151,7 +154,8 @@ uses
   Objects.Manager,
   Io.BlockCache,
   FileSystem.Volumes,
-  FileSystem.Security;
+  FileSystem.Security,
+  FileSystem.Locks;
 
 const
   MaximumComponents = 128;
@@ -552,6 +556,7 @@ var
   Volume: PVolume;
 begin
   OpenedFile := POpenFile(ObjectBody);
+  UnlockOpenFile(OpenedFile);
   Volume := OpenedFile^.Volume;
   if Volume <> nil then
   begin
@@ -564,6 +569,7 @@ end;
 procedure InitializeFileObjects;
 begin
   RegisterObjectType(FileObjectType, 'File', SizeOf(TOpenFile), @DeleteOpenFile);
+  InitializeFileLocks;
 end;
 
 function WantsWriteAccess(Flags: LongWord): Boolean;

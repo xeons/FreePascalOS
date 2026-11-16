@@ -22,7 +22,7 @@
 
   displaymode
   displaymode [-d NUMBER] -l
-  displaymode [-d NUMBER] WIDTHxHEIGHT
+  displaymode [-d NUMBER] [-r] WIDTHxHEIGHT
 
   Without an operand: every display, a line each, with its size in
   pixels, its place and size on the desktop in logical units, its scale
@@ -33,7 +33,8 @@
   -l lists the modes of the display -d picks (0, the first, by default),
   the one it has marked with *. With a size: asks the display server to
   set that mode (one of the list) while windows are open, and prints the
-  display's line then. The server keeps the windows on it in their
+  display's line then; -r (--remember) has the server keep it in the
+  system's settings (Display/N/Mode) for the next time it starts. The server keeps the windows on it in their
   places, moved onto it if it shrank, and the DPI follows the mode.
 }
 program ShowDisplayModes;
@@ -51,12 +52,14 @@ uses
   Windowing.Displays;
 
 const
-  Usage: PChar = 'Usage: displaymode [-d NUMBER] [-l | WIDTHxHEIGHT]'#10 +
+  Usage: PChar = 'Usage: displaymode [-d NUMBER] [-l | [-r] WIDTHxHEIGHT]'#10 +
     'Show the displays, list a display''s modes, or set one, in the display server.'#10 +
-    '  -d NUMBER  the display (0, the first, by default)'#10 +
-    '  -l         list its modes'#10;
+    '  -d NUMBER       the display (0, the first, by default)'#10 +
+    '  -l              list its modes'#10 +
+    '  -r, --remember  keep the mode for the next time the server starts'#10;
   OptionNumber = 1;
   OptionList = 2;
+  OptionRemember = 3;
 
 procedure SayDisplay(Number: LongInt; const Information: TDisplayInformation);
 begin
@@ -100,11 +103,11 @@ begin
   end;
 end;
 
-procedure ChangeMode(Number: LongInt; Width, Height: LongWord);
+procedure ChangeMode(Number: LongInt; Width, Height: LongWord; Remember: Boolean);
 var
   Information: TDisplayInformation;
 begin
-  if not SetDisplayMode(Number, Width, Height, Information) then
+  if not SetDisplayMode(Number, Width, Height, Information, Remember) then
     Fail(1, 'there is no display %d', [ArgumentNumber(Number)]);
   SayDisplay(Number, Information);
   if (Information.Width <> LongInt(Width)) or (Information.Height <> LongInt(Height)) then
@@ -121,11 +124,14 @@ var
   Width: LongWord;
   Height: LongWord;
   Error: LongInt;
+  Remember: Boolean;
 begin
   Number := 0;
   List := False;
+  Remember := False;
   BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber),
-    OptionDefinition('l', 'list', False, OptionList)], Usage);
+    OptionDefinition('l', 'list', False, OptionList),
+    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
   while NextOption(Parser, Code, OptionValue) do
     case Code of
       OptionNumber:
@@ -133,6 +139,8 @@ begin
           FailWithUsageHint('the display must be a number', []);
       OptionList:
         List := True;
+      OptionRemember:
+        Remember := True;
     end;
   if Parser.OperandCount > 1 then
     FailWithUsageHint('one mode at most', []);
@@ -144,7 +152,7 @@ begin
   if Error <> ErrorNone then
     FailWithError(1, Error, 'the display server', []);
   if Width > 0 then
-    ChangeMode(LongInt(Number), Width, Height)
+    ChangeMode(LongInt(Number), Width, Height, Remember)
   else if List then
     ListModes(LongInt(Number))
   else
