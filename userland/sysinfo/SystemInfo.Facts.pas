@@ -194,17 +194,15 @@ function TimeZoneText: string;
 var
   Zone: PTimeZone;
   Local: TLocalTime;
-  Offset: array[0..7] of Char;
 begin
   Zone := CurrentTimeZone;
   if Zone = nil then
     Exit('UTC');
   DecodeTimeInZone(Zone, CurrentTime, Local);
-  FormatUtcOffset(Local.Offset, @Offset[0]);
   if string(Zone^.Name) = string(Local.Abbreviation) then
     Result := string(Zone^.Name)
   else
-    Result := string(Zone^.Name) + ' (' + string(Local.Abbreviation) + ', UTC' + string(PChar(@Offset[0])) + ')';
+    Result := string(Zone^.Name) + ' (' + string(Local.Abbreviation) + ', UTC' + FormatUtcOffset(Local.Offset) + ')';
 end;
 
 { One fact for each display, if the display server is running (asked

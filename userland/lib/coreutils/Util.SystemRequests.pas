@@ -24,7 +24,7 @@
 }
 unit Util.SystemRequests;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -39,9 +39,7 @@ function SendSystemRequest(var Request: TSystemSettingsRequest; NeedsPassword: B
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Memory,
+  SysUtils,
   Util.Accounts,
   Util.Passwords;
 
@@ -54,7 +52,8 @@ begin
     Password := ReadPassword('Administrator password: ');
     if Password <> nil then
     begin
-      SetRequestText(@Request.Authorization[0], SystemPasswordCapacity, Password);
+      { Straight into the request: no string copy of the password is left behind. }
+      StrLCopy(@Request.Authorization[0], Password, High(Request.Authorization));
       ForgetPassword(Password);
     end;
   end;

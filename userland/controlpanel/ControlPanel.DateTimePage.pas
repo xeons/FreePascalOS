@@ -88,11 +88,11 @@ const
 
 function OffsetText(Offset: LongInt): string;
 var
-  Buffer: array[0..7] of Char;
+  Digits: string;
 begin
-  FormatUtcOffset(Offset, @Buffer[0]);
+  Digits := FormatUtcOffset(Offset);
   { +0100 as UTC+01:00, as people read it. }
-  Result := 'UTC' + Buffer[0] + Buffer[1] + Buffer[2] + ':' + Buffer[3] + Buffer[4];
+  Result := 'UTC' + Copy(Digits, 1, 3) + ':' + Copy(Digits, 4, 2);
 end;
 
 constructor TDateTimePage.CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string);
@@ -203,7 +203,7 @@ var
   Error: LongInt;
 begin
   Request := NewSystemSettingsRequest(SystemRequestSetTimeZone);
-  SetRequestText(@Request.Text[0], SystemTextCapacity, Zone^.Name);
+  SetRequestText(Request.Text, Zone^.Name);
   Error := SendAsAdministrator(Window, Request);
   Result := Error = ErrorNone;
   if Result then

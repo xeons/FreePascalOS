@@ -64,7 +64,7 @@ var
 begin
   Address := AnyIpv6Address;
   PrefixLength := 0;
-  if (Text = '') or not ParseAddressWithPrefix(PChar(Text), Address, PrefixLength, HasPrefix) or
+  if (Text = '') or not TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix) or
      (Address.Family <> AddressFamilyIPv6) then
     Exit(Ipv6AddressNotIpv6);
   if not HasPrefix then
@@ -78,14 +78,14 @@ end;
 
 function IsIpv6GatewayAddress(const Text: string; out Address: TInternetAddress): Boolean;
 begin
-  Result := (Text <> '') and ParseIpv6Address(PChar(Text), Address) and IsUnicastIpv6(Address);
+  Result := (Text <> '') and TextToIpv6Address(Text, Address) and IsUnicastIpv6(Address);
 end;
 
 function IsDnsServerAddress(const Text: string): Boolean;
 var
   Address: TInternetAddress;
 begin
-  if (Text = '') or not ParseInternetAddress(PChar(Text), Address) then
+  if (Text = '') or not TextToAddress(Text, Address) then
     Exit(False);
   if Address.Family = AddressFamilyIPv4 then
     Result := not AddressIsUnspecified(Address) and (Address.Bytes[0] < 224)

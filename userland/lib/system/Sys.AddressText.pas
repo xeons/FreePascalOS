@@ -17,11 +17,12 @@
 }
 
 {
-  Internet addresses as strings, for programs that work with string
-  rather than character buffers: an address and back, an address with
-  its prefix, a socket address ("10.0.2.15:80", "[fec0::2]:80"), an
-  IPv6 address with its zone ("fe80::2%eth0"), and a host and port
-  given together ("example.org:80", "[::1]:8080").
+  Internet addresses as text where the network interfaces come in, or
+  more than an address: an interface's address with its prefix, a
+  socket address ("10.0.2.15:80", "[fec0::2]:80"), an IPv6 address with
+  its zone ("fe80::2%eth0"), and a host and port given together
+  ("example.org:80", "[::1]:8080"). Plain addresses, prefixes and
+  netmasks are Sys.InternetAddresses'.
 }
 unit Sys.AddressText;
 
@@ -34,7 +35,6 @@ uses
   Abi.SystemCalls,
   Sys.InternetAddresses;
 
-function AddressToText(constref Address: TInternetAddress): string;
 { "10.0.2.15/24", "fec0::5054:ff:fe12:3456/64". }
 function InterfaceAddressToText(constref Address: TAbiInterfaceAddress): string;
 { "10.0.2.15:80", "[fec0::2]:80". }
@@ -43,19 +43,6 @@ function SocketAddressToText(constref Address: TAbiSocketAddress): string;
   IPv6 address ("fe80::2%eth0"). }
 function SocketHostToText(constref Address: TAbiSocketAddress): string;
 
-{ An IPv4 or IPv6 address, nothing else. }
-function TextToAddress(const Text: string; out Address: TInternetAddress): Boolean;
-{ A dotted quad only. }
-function TextToIpv4Address(const Text: string; out Address: TInternetAddress): Boolean;
-{ "255.255.255.0" for 24. }
-function NetmaskToText(PrefixLength: LongWord): string;
-{ A netmask (255.255.255.0) as a prefix length; False if its ones are
-  not all in front. }
-function TextToNetmask(const Text: string; out PrefixLength: LongWord): Boolean;
-{ "A.B.C.D/N" or "IPv6/N"; without "/N" HasPrefix is False and the
-  prefix the whole address. }
-function TextToAddressWithPrefix(const Text: string; out Address: TInternetAddress; out PrefixLength: LongWord;
-  out HasPrefix: Boolean): Boolean;
 { An address with an optional zone: "fe80::2%eth0" or "fe80::2%2" (an
   interface name or index). ScopeId is the interface's index, 0 without
   a zone. False for an unknown interface. }
@@ -72,13 +59,6 @@ implementation
 uses
   SysUtils,
   Sys.NetworkInterfaces;
-
-function AddressToText(constref Address: TInternetAddress): string;
-var
-  Buffer: array[0..InternetAddressTextCapacity - 1] of Char;
-begin
-  Result := StrPas(FormatInternetAddress(Address, @Buffer[0], SizeOf(Buffer)));
-end;
 
 function InterfaceAddressToText(constref Address: TAbiInterfaceAddress): string;
 begin
@@ -115,34 +95,6 @@ begin
   Result := AddressToText(Host);
   if (Address.Family = AddressFamilyIPv6) and (Address.ScopeId <> 0) and AddressIsLinkLocal(Host) then
     Result := Result + '%' + InterfaceNameOfIndex(Address.ScopeId);
-end;
-
-function TextToAddress(const Text: string; out Address: TInternetAddress): Boolean;
-begin
-  Result := ParseInternetAddress(PChar(Text), Address);
-end;
-
-function TextToIpv4Address(const Text: string; out Address: TInternetAddress): Boolean;
-begin
-  Result := ParseIpv4Address(PChar(Text), Address);
-end;
-
-function NetmaskToText(PrefixLength: LongWord): string;
-var
-  Buffer: array[0..Ipv4AddressTextCapacity - 1] of Char;
-begin
-  Result := StrPas(FormatNetmask(PrefixLength, @Buffer[0], SizeOf(Buffer)));
-end;
-
-function TextToNetmask(const Text: string; out PrefixLength: LongWord): Boolean;
-begin
-  Result := ParseNetmask(PChar(Text), PrefixLength);
-end;
-
-function TextToAddressWithPrefix(const Text: string; out Address: TInternetAddress; out PrefixLength: LongWord;
-  out HasPrefix: Boolean): Boolean;
-begin
-  Result := ParseAddressWithPrefix(PChar(Text), Address, PrefixLength, HasPrefix);
 end;
 
 { The index of the interface named Name (or written as a number). }

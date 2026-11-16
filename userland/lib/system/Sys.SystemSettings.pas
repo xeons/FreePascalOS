@@ -50,7 +50,7 @@
 }
 unit Sys.SystemSettings;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -157,7 +157,7 @@ type
 { A request of Code, every other field empty. }
 function NewSystemSettingsRequest(Code: LongWord): TSystemSettingsRequest;
 { Copies Text into one of the request's text fields (cut to fit). }
-procedure SetRequestText(Destination: PChar; Capacity: Integer; Text: PChar);
+procedure SetRequestText(var Field: array of Char; const Text: string);
 { Sends Request and waits for the answer: the service's ErrorNone or
   refusal, or an error reaching it (ErrorNotFound: it does not run).
   The request's passwords are wiped afterwards. }
@@ -181,18 +181,16 @@ begin
   Result.Code := Code;
 end;
 
-procedure SetRequestText(Destination: PChar; Capacity: Integer; Text: PChar);
+procedure SetRequestText(var Field: array of Char; const Text: string);
 var
-  Index: Integer;
+  Count: Integer;
 begin
-  Index := 0;
-  if Text <> nil then
-    while (Text[Index] <> #0) and (Index < Capacity - 1) do
-    begin
-      Destination[Index] := Text[Index];
-      Inc(Index);
-    end;
-  Destination[Index] := #0;
+  Count := Length(Text);
+  if Count > High(Field) then
+    Count := High(Field);
+  if Count > 0 then
+    Move(Text[1], Field[0], Count);
+  Field[Count] := #0;
 end;
 
 function AskSystemSettings(var Request: TSystemSettingsRequest): LongInt;

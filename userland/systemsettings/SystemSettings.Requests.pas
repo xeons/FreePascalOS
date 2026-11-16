@@ -62,7 +62,7 @@ var
   Name: string;
 begin
   Name := TextOf(Request.Text);
-  Result := SetSystemTimeZone(PChar(Name));
+  Result := SetSystemTimeZone(Name);
   if Result = ErrorNone then
     Result := RememberTimeZone(Name);
   if Result = ErrorNone then

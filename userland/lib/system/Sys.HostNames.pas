@@ -214,7 +214,7 @@ begin
   Found := Default(THostAddresses);
   if Host = '' then
     Exit(ErrorNotFound);
-  if ParseInternetAddress(PChar(Host), Address) then
+  if TextToAddress(Host, Address) then
   begin
     Found.CanonicalName := Host;
     if not FamilyIsWanted(Address, Families) then

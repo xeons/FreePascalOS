@@ -192,9 +192,9 @@ begin
   if not AskForNewUser(Window, User) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestAddUser);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(User.Name));
-  SetRequestText(@Request.FullName[0], SystemTextCapacity, PChar(User.FullName));
-  SetRequestText(@Request.Password[0], SystemPasswordCapacity, PChar(User.Password));
+  SetRequestText(Request.UserName, User.Name);
+  SetRequestText(Request.FullName, User.FullName);
+  SetRequestText(Request.Password, User.Password);
   if User.Administrator then
     Request.Flags := SystemFlagAdministrator;
   SayDone('user-added', SendAsAdministrator(Window, Request), User.Name);
@@ -212,7 +212,7 @@ begin
   if not AskToRemoveUser(Window, Name, UserHomeDirectory(UserId), RemoveHome) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestRemoveUser);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
+  SetRequestText(Request.UserName, Name);
   if RemoveHome then
     Request.Flags := SystemFlagRemoveHome;
   SayDone('user-removed', SendAsAdministrator(Window, Request), Name);
@@ -235,8 +235,8 @@ begin
   if not AskForNewPassword(Window, Name, Own, Current, NewPassword) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestSetPassword);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-  SetRequestText(@Request.Password[0], SystemPasswordCapacity, PChar(NewPassword));
+  SetRequestText(Request.UserName, Name);
+  SetRequestText(Request.Password, NewPassword);
   if Own then
     Error := SendWithPassword(Request, Current)
   else
@@ -280,15 +280,15 @@ begin
   if Properties.FullName <> OldFullName then
   begin
     Request := NewSystemSettingsRequest(SystemRequestSetFullName);
-    SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-    SetRequestText(@Request.FullName[0], SystemTextCapacity, PChar(Properties.FullName));
+    SetRequestText(Request.UserName, Name);
+    SetRequestText(Request.FullName, Properties.FullName);
     Error := SendAsAdministrator(Window, Request);
   end;
   if Error = ErrorNone then
   begin
     Request := NewSystemSettingsRequest(SystemRequestSetGroups);
-    SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-    SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(JoinGroupList(Properties.Groups)));
+    SetRequestText(Request.UserName, Name);
+    SetRequestText(Request.Text, JoinGroupList(Properties.Groups));
     Error := SendAsAdministrator(Window, Request);
   end;
   SayDone('user-changed', Error, Name);
