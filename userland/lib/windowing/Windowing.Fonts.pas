@@ -27,6 +27,7 @@
 unit Windowing.Fonts;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -58,6 +59,8 @@ function FamilyFaceSize(Family: TFontFamily; PointTenths: LongWord; Bold: Boolea
 function FamilyFaceCount(Family: TFontFamily): LongInt;
 function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
 { The family's name, to show ("DejaVu Sans"). }
+function FamilyName(Family: TFontFamily): string;
+{ The same as a PChar (for older callers). }
 function FamilyCaption(Family: TFontFamily): PChar;
 
 implementation
@@ -141,6 +144,11 @@ end;
 function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
 begin
   Result := @FontsOf(Family)^.Faces[Index];
+end;
+
+function FamilyName(Family: TFontFamily): string;
+begin
+  Result := string(FamilyCaption(Family));
 end;
 
 function FamilyCaption(Family: TFontFamily): PChar;

@@ -88,6 +88,7 @@
 unit Windowing.Protocol;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -413,6 +414,10 @@ function PixelsToLogical(Value: LongInt; ScalePercent: LongWord): LongInt;
 function NewMessage(Kind, Window: LongWord): TWindowMessage;
 { Copies Text into the message (cut short if it does not fit). }
 procedure SetMessageText(var Message: TWindowMessage; Text: PChar);
+procedure SetMessageText(var Message: TWindowMessage; const Text: string);
+{ The message's text, up to its terminating zero (at most
+  TitleCapacity - 1 characters). }
+function MessageText(const Message: TWindowMessage): string;
 
 implementation
 
@@ -453,6 +458,28 @@ begin
       Inc(Index);
     end;
   Message.Text[Index] := #0;
+end;
+
+procedure SetMessageText(var Message: TWindowMessage; const Text: string);
+var
+  Count: Integer;
+begin
+  Count := Length(Text);
+  if Count > TitleCapacity - 1 then
+    Count := TitleCapacity - 1;
+  if Count > 0 then
+    Move(Text[1], Message.Text[0], Count);
+  Message.Text[Count] := #0;
+end;
+
+function MessageText(const Message: TWindowMessage): string;
+var
+  Count: Integer;
+begin
+  Count := 0;
+  while (Count < TitleCapacity - 1) and (Message.Text[Count] <> #0) do
+    Inc(Count);
+  SetString(Result, PChar(@Message.Text[0]), Count);
 end;
 
 end.

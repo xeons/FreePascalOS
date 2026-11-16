@@ -93,11 +93,10 @@ const
   ConnectAttempts = 50;
   ConnectPause = 100;
   ReplyTimeout = 5000;
-  MaximumKept = 256;
 
 var
-  Kept: array[0..MaximumKept - 1] of TWindowMessage;
-  KeptCount: LongInt;
+  { Events that came while waiting for a reply, oldest first. }
+  Kept: array of TWindowMessage;
   Broken: Boolean;
 
 function IsConnected: Boolean;
@@ -154,23 +153,15 @@ end;
 
 procedure Keep(const Message: TWindowMessage);
 begin
-  if KeptCount < MaximumKept then
-  begin
-    Kept[KeptCount] := Message;
-    Inc(KeptCount);
-  end;
+  Insert(Message, Kept, Length(Kept));
 end;
 
 function NextEvent(out Message: TWindowMessage): Boolean;
-var
-  Index: LongInt;
 begin
-  if KeptCount > 0 then
+  if Length(Kept) > 0 then
   begin
     Message := Kept[0];
-    for Index := 1 to KeptCount - 1 do
-      Kept[Index - 1] := Kept[Index];
-    Dec(KeptCount);
+    Delete(Kept, 0, 1);
     Exit(True);
   end;
   if DisplayChannel < 0 then
@@ -202,7 +193,7 @@ begin
   if IsConnected then
     Exit(ErrorNone);
   Broken := False;
-  KeptCount := 0;
+  Kept := nil;
   if WaitForServer then
     AttemptCount := ConnectAttempts
   else
@@ -254,7 +245,7 @@ begin
   if DisplayChannel >= 0 then
     CloseHandle(DisplayChannel);
   DisplayChannel := -1;
-  KeptCount := 0;
+  Kept := nil;
 end;
 
 end.

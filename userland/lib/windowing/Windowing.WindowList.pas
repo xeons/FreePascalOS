@@ -81,8 +81,7 @@ begin
     Windows[Count].ProcessId := QWord(LongWord(Message.Value));
     Windows[Count].Flags := Message.Flags;
     Windows[Count].Display := LongInt(Message.Code);
-    Message.Text[TitleCapacity - 1] := #0;
-    Windows[Count].Title := StrPas(@Message.Text[0]);
+    Windows[Count].Title := MessageText(Message);
     Inc(Count);
   until False;
   Result := True;

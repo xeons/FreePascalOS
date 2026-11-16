@@ -244,11 +244,14 @@ uses
   Windowing.Shell;
 
 const
-  MaximumProgramWindows = 64;
+  { The message loop waits on every timer's handle at once, so their
+    number stays within the kernel's MaximumWaitHandles. }
   MaximumTimers = 32;
   ReplyTimeout = 5000;
 
 type
+  TWindowArray = array of TWindow;
+
   TTimerEntry = record
     Window: TWindow;
     Id: LongWord;
@@ -256,8 +259,7 @@ type
   end;
 
 var
-  WindowList: array[0..MaximumProgramWindows - 1] of TWindow;
-  WindowListCount: LongInt;
+  WindowList: TWindowArray;
   Timers: array[0..MaximumTimers - 1] of TTimerEntry;
   TimerCount: LongInt;
   QuitRequested: Boolean;
@@ -275,7 +277,7 @@ function WindowById(Id: LongWord): TWindow;
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowListCount - 1 do
+  for Index := 0 to High(WindowList) do
     if WindowList[Index].FId = Id then
       Exit(WindowList[Index]);
   Result := nil;
@@ -283,22 +285,18 @@ end;
 
 procedure AddToList(Window: TWindow);
 begin
-  if WindowListCount < MaximumProgramWindows then
-  begin
-    WindowList[WindowListCount] := Window;
-    Inc(WindowListCount);
-  end;
+  Insert(Window, WindowList, Length(WindowList));
 end;
 
 procedure RemoveFromList(Window: TWindow);
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowListCount - 1 do
+  for Index := 0 to High(WindowList) do
     if WindowList[Index] = Window then
     begin
-      WindowList[Index] := WindowList[WindowListCount - 1];
-      Dec(WindowListCount);
+      WindowList[Index] := WindowList[High(WindowList)];
+      SetLength(WindowList, Length(WindowList) - 1);
       Exit;
     end;
 end;
@@ -340,7 +338,7 @@ begin
   Message.Flags := FFlags;
   if FOwner <> nil then
     Message.Code := FOwner.FId;
-  SetMessageText(Message, PChar(FTitle));
+  SetMessageText(Message, FTitle);
   SendRequest(Message, FSection);
   if not WaitForEvent(EventWindowCreated, ReplyTimeout, Message) then
     raise EInOutError.Create('the display server did not create the window');
@@ -363,7 +361,7 @@ begin
   end;
   RemoveFromList(Self);
   { The server forgets the owner too; the windows it owned stay. }
-  for Index := 0 to WindowListCount - 1 do
+  for Index := 0 to High(WindowList) do
     if WindowList[Index].FOwner = Self then
       WindowList[Index].FOwner := nil;
   ReleaseSurface;
@@ -466,7 +464,7 @@ begin
   if FId = 0 then
     Exit;
   Message := NewMessage(RequestSetTitle, FId);
-  SetMessageText(Message, PChar(FTitle));
+  SetMessageText(Message, FTitle);
   SendRequest(Message, -1);
 end;
 
@@ -812,7 +810,7 @@ procedure PaintInvalidWindows;
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowListCount - 1 do
+  for Index := 0 to High(WindowList) do
     WindowList[Index].PaintNow;
 end;
 
@@ -822,24 +820,20 @@ end;
 function LoopEnding: Boolean;
 begin
   Result := QuitRequested or ((ModalDone <> nil) and ModalDone^) or
-    (QuitWhenLastWindowCloses and (WindowListCount = 0));
+    (QuitWhenLastWindowCloses and (Length(WindowList) = 0));
 end;
 
 procedure AskWindowsToClose;
 var
-  Unowned: array[0..MaximumProgramWindows - 1] of TWindow;
-  UnownedCount: LongInt;
+  Unowned: TWindowArray;
   Index: LongInt;
 begin
   { A copy: each window may free itself, or others, as it closes. }
-  UnownedCount := 0;
-  for Index := 0 to WindowListCount - 1 do
+  Unowned := nil;
+  for Index := 0 to High(WindowList) do
     if WindowList[Index].Owner = nil then
-    begin
-      Unowned[UnownedCount] := WindowList[Index];
-      Inc(UnownedCount);
-    end;
-  for Index := 0 to UnownedCount - 1 do
+      Insert(WindowList[Index], Unowned, Length(Unowned));
+  for Index := 0 to High(Unowned) do
     if WindowById(Unowned[Index].Id) = Unowned[Index] then
     begin
       Unowned[Index].PrepareToReceive;
@@ -913,7 +907,7 @@ begin
   repeat
     if ConnectionBroken then
       QuitMessageLoop(1);
-    if QuitWhenLastWindowCloses and (WindowListCount = 0) then
+    if QuitWhenLastWindowCloses and (Length(WindowList) = 0) then
       QuitRequested := True;
     if QuitRequested then
       Break;
@@ -926,7 +920,7 @@ function IsListed(Window: TWindow): Boolean;
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowListCount - 1 do
+  for Index := 0 to High(WindowList) do
     if WindowList[Index] = Window then
       Exit(True);
   Result := False;
@@ -936,8 +930,7 @@ procedure RunModal(Window: TWindow; var Done: Boolean);
 var
   Previous: TWindow;
   PreviousDone: ^Boolean;
-  Disabled: array[0..MaximumProgramWindows - 1] of TWindow;
-  DisabledCount: LongInt;
+  Disabled: TWindowArray;
   Index: LongInt;
 begin
   Previous := ModalWindow;
@@ -948,18 +941,15 @@ begin
     or send them input, and a click on one brings this one forward. Only
     the ones disabled here are enabled again afterwards (an outer modal
     window's stay as they were). }
-  DisabledCount := 0;
-  for Index := 0 to WindowListCount - 1 do
+  Disabled := nil;
+  for Index := 0 to High(WindowList) do
     if WindowList[Index].Enabled and not WindowList[Index].AcceptsInputWhileModal then
-    begin
-      Disabled[DisabledCount] := WindowList[Index];
-      Inc(DisabledCount);
-    end;
-  for Index := 0 to DisabledCount - 1 do
+      Insert(WindowList[Index], Disabled, Length(Disabled));
+  for Index := 0 to High(Disabled) do
     Disabled[Index].Enabled := False;
   while not Done and not ConnectionBroken and not QuitRequested and (WindowById(Window.Id) = Window) do
     ServeOnce;
-  for Index := 0 to DisabledCount - 1 do
+  for Index := 0 to High(Disabled) do
     if IsListed(Disabled[Index]) then
       Disabled[Index].Enabled := True;
   ModalWindow := Previous;

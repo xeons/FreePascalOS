@@ -72,7 +72,6 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.KernelOptions,
   Windowing.Protocol,
   Windowing.Connection;
@@ -81,9 +80,22 @@ const
   ReplyTimeout = 5000;
   BootLayoutOption = 'keymap';
 
+function LayoutOf(const Settings: TKeyboardSettings): string;
+begin
+  Result := string(PChar(@Settings.Layout[0]));
+end;
+
+{ Settings with another layout, the same repeat. }
+function WithLayout(const Settings: TKeyboardSettings; const Layout: string): TKeyboardSettings;
+begin
+  Result := NewKeyboardSettings(PChar(Layout));
+  Result.RepeatDelay := Settings.RepeatDelay;
+  Result.RepeatRate := Settings.RepeatRate;
+end;
+
 function SettingsFromEvent(const Event: TWindowMessage): TKeyboardSettings;
 begin
-  Result := NewKeyboardSettings(@Event.Text[0]);
+  Result := NewKeyboardSettings(PChar(MessageText(Event)));
   Result.RepeatDelay := Event.Code;
   Result.RepeatRate := LongWord(Event.Value);
 end;
@@ -108,7 +120,7 @@ var
 begin
   Applied := Settings;
   Request := NewMessage(RequestSetKeyboardSettings, 0);
-  SetMessageText(Request, @Settings.Layout[0]);
+  SetMessageText(Request, LayoutOf(Settings));
   Request.Code := Settings.RepeatDelay;
   Request.Value := LongInt(Settings.RepeatRate);
   SendRequest(Request, -1);
@@ -132,14 +144,25 @@ begin
   Result := False;
 end;
 
+{ The layout the kernel option keymap= names, or ''. }
+function BootLayout: string;
+var
+  Buffer: array[0..KeyboardLayoutNameCapacity - 1] of Char;
+begin
+  if GetKernelOption(BootLayoutOption, @Buffer[0], KeyboardLayoutNameCapacity) then
+    Result := string(PChar(@Buffer[0]))
+  else
+    Result := '';
+end;
+
 function DefaultKeyboardSettings: TKeyboardSettings;
 var
-  BootLayout: array[0..KeyboardLayoutNameCapacity - 1] of Char;
+  Layout: string;
 begin
   Result := NewKeyboardSettings(DefaultKeyboardLayout);
-  if GetKernelOption(BootLayoutOption, @BootLayout[0], KeyboardLayoutNameCapacity) and
-     IsKnownLayout(PChar(@BootLayout[0])) then
-    CopyText(@Result.Layout[0], @BootLayout[0], KeyboardLayoutNameCapacity);
+  Layout := BootLayout;
+  if (Layout <> '') and IsKnownLayout(Layout) then
+    Result := WithLayout(Result, Layout);
 end;
 
 function RememberedKeyboardSettings(Store: TSettings): TKeyboardSettings;
@@ -149,7 +172,7 @@ begin
   Result := DefaultKeyboardSettings;
   Layout := Store.ReadString(KeyboardLayoutSetting, '');
   if (Layout <> '') and IsKnownLayout(Layout) then
-    CopyText(@Result.Layout[0], PChar(Layout), KeyboardLayoutNameCapacity);
+    Result := WithLayout(Result, Layout);
   Result.RepeatDelay := Store.ReadIntegerWithin(KeyRepeatDelaySetting, Result.RepeatDelay,
     MinimumKeyRepeatDelay, MaximumKeyRepeatDelay);
   Result.RepeatRate := Store.ReadIntegerWithin(KeyRepeatRateSetting, Result.RepeatRate,
@@ -158,7 +181,7 @@ end;
 
 procedure RememberKeyboardSettings(Store: TSettings; const Settings: TKeyboardSettings; Scope: TSettingsScopeKind);
 begin
-  Store.WriteString(KeyboardLayoutSetting, string(PChar(@Settings.Layout[0])), Scope);
+  Store.WriteString(KeyboardLayoutSetting, LayoutOf(Settings), Scope);
   Store.WriteInteger(KeyRepeatDelaySetting, Settings.RepeatDelay, Scope);
   Store.WriteInteger(KeyRepeatRateSetting, Settings.RepeatRate, Scope);
 end;
