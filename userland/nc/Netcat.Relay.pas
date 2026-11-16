@@ -33,6 +33,7 @@
 unit Netcat.Relay;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -136,7 +137,7 @@ begin
   Error := SendToPeer(State.Socket, @Buffer[0], QWord(Count));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'write failed', []);
+    ReportError(Error, 'write failed');
     Exit(RelayFailed);
   end;
   Result := RelayGoesOn;
@@ -149,7 +150,7 @@ begin
   Count := ReceiveOnSocket(State.Socket, @Buffer[0], TransferBytes, 0);
   if Count < 0 then
   begin
-    ReportError(ErrorCodeOf(Count), 'read failed', []);
+    ReportError(ErrorCodeOf(Count), 'read failed');
     Exit(RelayFailed);
   end;
   { The end of a stream; for UDP an empty datagram, which is nothing to
@@ -230,7 +231,7 @@ begin
   end;
   if Ready < 0 then
   begin
-    ReportError(ErrorCodeOf(Ready), 'cannot wait for the connection', []);
+    ReportError(ErrorCodeOf(Ready), 'cannot wait for the connection');
     Exit(RelayFailed);
   end;
   if Ready = InputPosition then

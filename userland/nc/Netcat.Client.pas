@@ -31,20 +31,22 @@
 unit Netcat.Client;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
 { Ports are operands as given ("80", "20-30"); returns the exit
   status: 0 if a port took the connection. }
-function RunClient(Host: PChar; Ports: PPChar; PortCount: Integer): Integer;
+function RunClient(const Host: string; const Ports: array of string): Integer;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
-  Sys.Format,
   Sys.InternetAddresses,
+  Sys.AddressText,
   Sys.Objects,
   Sys.Sockets,
   Util.Messages,
@@ -57,19 +59,17 @@ const
   UdpProbeMilliseconds = 1000;
 
 var
-  HostAddressText: array[0..InternetAddressTextCapacity - 1] of Char;
+  HostAddressText: string;
 
 procedure ReportConnected(Port: Word);
 begin
-  ReportProgress('Connection to %s %u port [%s/*] succeeded!', [ArgumentText(@HostAddressText[0]),
-    ArgumentUnsigned(Port), ArgumentText(TransportName)]);
+  ReportProgress(Format('Connection to %s %u port [%s/*] succeeded!', [HostAddressText, Port, TransportName]));
 end;
 
 procedure ReportFailure(Port: Word; Error: LongInt);
 begin
   if Settings.Verbose then
-    ReportError(Error, 'connect to %s port %u (%s) failed', [ArgumentText(@HostAddressText[0]),
-      ArgumentUnsigned(Port), ArgumentText(TransportName)]);
+    ReportError(Error, Format('connect to %s port %u (%s) failed', [HostAddressText, Port, TransportName]));
 end;
 
 { Connects Socket, within -w if it was given. }
@@ -131,10 +131,10 @@ end;
 
 { Every port of every range in turn: -z tries them all, otherwise the
   first that connects is relayed. Returns the exit status. }
-function RunClient(Host: PChar; Ports: PPChar; PortCount: Integer): Integer;
+function RunClient(const Host: string; const Ports: array of string): Integer;
 var
   Address: TInternetAddress;
-  Operand: Integer;
+  Operand: string;
   First: Word;
   Last: Word;
   Port: LongWord;
@@ -142,12 +142,12 @@ var
   Error: LongInt;
 begin
   Address := ResolveHost(Host);
-  FormatInternetAddress(Address, @HostAddressText[0], SizeOf(HostAddressText));
+  HostAddressText := AddressToText(Address);
   Result := 1;
-  for Operand := 0 to PortCount - 1 do
+  for Operand in Ports do
   begin
-    if not ParsePortRange(Ports[Operand], First, Last) then
-      Fail(1, '%s: bad port or port range', [ArgumentText(Ports[Operand])]);
+    if not ParsePortRange(Operand, First, Last) then
+      Fail(1, Operand + ': bad port or port range');
     { A LongWord, so that a range ending at 65535 ends. }
     Port := First;
     while Port <= Last do

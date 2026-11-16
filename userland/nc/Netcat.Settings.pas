@@ -22,11 +22,9 @@
 unit Netcat.Settings;
 
 {$mode objfpc}
+{$H+}
 
 interface
-
-uses
-  Sys.Format;
 
 const
   { -w and -q not given. }
@@ -66,29 +64,29 @@ var
 procedure InitializeSettings;
 { A message on the standard error when -v was given (no "nc:" before
   it, as OpenBSD's nc writes "Listening on ..."). }
-procedure ReportProgress(Format: PChar; const Arguments: array of TFormatArgument);
+procedure ReportProgress(const Message: string);
 
 implementation
 
 uses
   Sys.Streams,
-  Sys.HostNames;
+  Sys.HostNames,
+  Util.Output;
 
 procedure InitializeSettings;
 begin
-  FillChar(Settings, SizeOf(Settings), 0);
+  Settings := Default(TNetcatSettings);
   Settings.TimeoutMilliseconds := NoTimeLimit;
   Settings.QuitAfterInputMilliseconds := NoTimeLimit;
   Settings.Families := HostFamilyAny;
 end;
 
-procedure ReportProgress(Format: PChar; const Arguments: array of TFormatArgument);
+procedure ReportProgress(const Message: string);
 begin
   if not Settings.Verbose then
     Exit;
   FlushStream(StandardOutput);
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteCharacter(StandardError, #10);
+  PrintErrorStringLine(Message);
   FlushStream(StandardError);
 end;
 

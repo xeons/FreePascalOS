@@ -22,52 +22,46 @@
 unit Netcat.Ports;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
 { A port from 1 to 65535. }
-function ParsePort(Text: PChar; out Port: Word): Boolean;
+function ParsePort(const Text: string; out Port: Word): Boolean;
 { "PORT" (First = Last) or "FIRST-LAST" with First <= Last. }
-function ParsePortRange(Text: PChar; out First, Last: Word): Boolean;
+function ParsePortRange(const Text: string; out First, Last: Word): Boolean;
 
 implementation
 
 uses
-  Runtime.Text,
-  Sys.Text;
+  Util.Numbers;
 
-const
-  RangeTextCapacity = 16;
-
-function ParsePort(Text: PChar; out Port: Word): Boolean;
+function ParsePort(const Text: string; out Port: Word): Boolean;
 var
   Value: QWord;
 begin
   Port := 0;
-  if not ParseUnsigned(Text, Value) or (Value = 0) or (Value > 65535) then
+  if not ParseUnsignedDecimal(Text, Value) or (Value = 0) or (Value > 65535) then
     Exit(False);
   Port := Word(Value);
   Result := True;
 end;
 
-function ParsePortRange(Text: PChar; out First, Last: Word): Boolean;
+function ParsePortRange(const Text: string; out First, Last: Word): Boolean;
 var
-  Dash: PtrInt;
-  FirstText: array[0..RangeTextCapacity - 1] of Char;
+  Dash: Integer;
 begin
   First := 0;
   Last := 0;
-  Dash := FindCharacter(Text, '-');
-  if Dash < 0 then
+  Dash := Pos('-', Text);
+  if Dash = 0 then
   begin
     Result := ParsePort(Text, First);
     Last := First;
     Exit;
   end;
-  if Dash >= RangeTextCapacity then
-    Exit(False);
-  CopyText(@FirstText[0], Text, Dash + 1);
-  Result := ParsePort(@FirstText[0], First) and ParsePort(Text + Dash + 1, Last) and (First <= Last);
+  Result := ParsePort(Copy(Text, 1, Dash - 1), First) and ParsePort(Copy(Text, Dash + 1, MaxInt), Last) and
+    (First <= Last);
 end;
 
 end.
