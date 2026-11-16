@@ -36,6 +36,11 @@
   spinning on a lock still answers. Processors must therefore not spin
   with interrupts disabled on a lock whose holder may shoot down, which is
   why page faults are handled with interrupts on (Kernel.Arch.Exceptions).
+  InvalidateRemoteTranslations panics when called with interrupts
+  disabled or above DispatchLevel. Every request must also arrive: the
+  HAL sends inter-processor interrupts with interrupts disabled, since
+  an interrupt in the middle of an xAPIC send could redirect it
+  (Hal.LocalApic).
 
   Rescheduling: RequestDispatchOnProcessor makes another processor run its
   dispatch interrupt, for example to pick up a thread that just became
@@ -115,6 +120,15 @@ var
 begin
   if OnlineProcessorCount <= 1 then
     Exit;
+  { A sender that cannot take interrupts never answers the request of a
+    processor that started its shootdown first: both would wait forever.
+    Catch such a caller here, not as a hang. }
+  if not InterruptsAreEnabled then
+    KernelPanicWithCode(PanicSchedulerFailure, 'TLB shootdown with interrupts disabled',
+      StartAddress, Root, PageCount, 0);
+  if CurrentPriorityLevel > DispatchLevel then
+    KernelPanicWithCode(PanicInvalidPriorityLevel, 'TLB shootdown above dispatch level',
+      StartAddress, Root, CurrentPriorityLevel, 0);
   PreviousLevel := AcquireSpinLock(ShootdownLock);
   Self := CurrentProcessor;
   ShootdownRoot := Root;

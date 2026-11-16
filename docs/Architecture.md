@@ -295,7 +295,14 @@ Rules that follow from this:
   are therefore resolved with interrupts on, so a processor spinning on a
   lock in the fault path can still answer. Ranges are unmapped in runs of
   up to 32 pages with one request per run; the physical pages are freed
-  only after the run's request was answered.
+  only after the run's request was answered. Calling it with interrupts
+  disabled or above DispatchLevel is a panic, since such a sender could
+  never answer a shootdown that started first. A request must also never
+  get lost: in xAPIC mode an IPI is sent by writing the destination
+  register and then the command register, and an interrupt in between
+  that sends an IPI of its own (the clock asking for a dispatch
+  interrupt) would redirect it, so `Hal.LocalApic` sends with interrupts
+  disabled.
 - **Panic.** The panicking processor stops the others with an NMI before
   printing; the debug output lock records its owner's processor number,
   so nested messages on one processor and messages from different
