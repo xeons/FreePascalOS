@@ -53,7 +53,8 @@ type
     Kind: LongWord;
   end;
 
-{ Opens Path (DefaultAudioDevice if nil); returns the handle, or a
+{ Opens Path (nil: the default output, which is DefaultAudioDevice
+  unless another was chosen, Audio.Outputs); returns the handle, or a
   negative error. }
 function OpenAudioOutput(Path: PChar): Int64;
 procedure CloseAudioOutput(Handle: Int64);
@@ -89,10 +90,13 @@ uses
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.Errors,
-  Sys.Files;
+  Sys.Files,
+  Audio.Outputs;
 
 function OpenAudioOutput(Path: PChar): Int64;
 begin
+  if Path = nil then
+    Path := AudioOutputPath(DefaultAudioOutput);
   if Path = nil then
     Path := DefaultAudioDevice;
   Result := OpenFile(Path, OpenWrite);

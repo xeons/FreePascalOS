@@ -391,7 +391,48 @@ const
     TAbiSystemUsage. }
   CallGetSystemUsage = 97;
 
-  CallCount = 98;
+  { --- The clock, the time zone and the keyboard ----------------------------
+    Settings of the machine that the kernel keeps for everyone: anyone
+    may read them, only root may change them (ErrorNotPermitted). The
+    system settings service (userland/systemsettings) gives the kernel
+    the remembered ones at start. }
+
+  { (UnixTime): sets the wall clock to UnixTime (seconds since
+    1970-01-01 00:00:00 UTC) and writes it to the battery backed clock,
+    which holds UTC. Root only. }
+  CallSetWallClock = 98;
+  { (BufferAddress, Capacity): copies the name of the system's time zone
+    (TimeZoneNameCapacity at most, with its #0; "UTC" until one is set):
+    the zone local times are shown in, by the time zone database of
+    libsystem (Sys.TimeZones). Returns the name's length. }
+  CallGetTimeZone = 99;
+  { (NameAddress): the system's time zone from now on. The kernel does
+    not know the zones; it keeps the name for programs to read. Root
+    only; ErrorInvalidArgument for an empty or too long name. }
+  CallSetTimeZone = 100;
+  { (SettingsAddress): the keyboards' layout and key repeat, as a
+    TAbiKeyboardSettings. }
+  CallGetKeyboardSettings = 101;
+  { (SettingsAddress): a new layout and key repeat for every keyboard
+    (the console's and the display server's input alike). Root only;
+    ErrorNotFound for a layout the kernel does not have, the repeat
+    kept within its range. }
+  CallSetKeyboardSettings = 102;
+  { (Index, LayoutAddress): the layout numbered Index (from 0) as a
+    TAbiKeyboardLayout; ErrorNotFound after the last. }
+  CallDescribeKeyboardLayout = 103;
+
+  CallCount = 104;
+
+  TimeZoneNameCapacity = 48;
+  KeyboardLayoutNameCapacity = 16;
+  KeyboardLayoutDescriptionCapacity = 48;
+  { The key repeat: the delay before a held key repeats, and the rate it
+    then repeats at (what PS/2 keyboards can do). }
+  MinimumKeyRepeatDelay = 250;
+  MaximumKeyRepeatDelay = 1000;
+  MinimumKeyRepeatRate = 2;
+  MaximumKeyRepeatRate = 30;
 
   { How long a shutdown waits for the process watching it. }
   ShutdownCoordinatorSeconds = 30;
@@ -537,6 +578,21 @@ const
   ControlAudioGetPosition = 108;
   { Audio inputs: frames dropped because the reader fell behind. }
   ControlAudioGetDropped = 109;
+  { The output is muted (1) or not (0): it plays silence, its volume
+    kept for when it is unmuted. }
+  ControlAudioGetMute = 110;
+  ControlAudioSetMute = 111;
+  { The default output's number (0 for /dev/audio, 1 for /dev/audio1...):
+    where programs play when they name no output (libaudio's
+    OpenAudioOutput). Asked of, or set on, any output. }
+  ControlAudioGetDefaultOutput = 112;
+  ControlAudioSetDefaultOutput = 113;
+  { What the output is: AudioOutputKind*. }
+  ControlAudioGetKind = 114;
+
+  AudioOutputKindHdAudio = 1;
+  AudioOutputKindAc97 = 2;
+  AudioOutputKindUsb = 3;
 
   { The displays (/dev/display, then /dev/display1, /dev/display2...: the
     first is the one the firmware showed the boot on). Opening one takes
@@ -1016,6 +1072,27 @@ type
     Value: QWord;
   end;
   PAbiNotification = ^TAbiNotification;
+
+  { CallGetKeyboardSettings and CallSetKeyboardSettings. }
+  TAbiKeyboardSettings = record
+    { us, uk, de, fr: see CallDescribeKeyboardLayout. }
+    Layout: array[0..KeyboardLayoutNameCapacity - 1] of Char;
+    { Milliseconds before a held key repeats (MinimumKeyRepeatDelay to
+      MaximumKeyRepeatDelay). }
+    RepeatDelay: LongWord;
+    { Characters a second while it repeats (MinimumKeyRepeatRate to
+      MaximumKeyRepeatRate). }
+    RepeatRate: LongWord;
+  end;
+  PAbiKeyboardSettings = ^TAbiKeyboardSettings;
+
+  { CallDescribeKeyboardLayout. }
+  TAbiKeyboardLayout = record
+    Name: array[0..KeyboardLayoutNameCapacity - 1] of Char;
+    { In English: "German (QWERTZ)". }
+    Description: array[0..KeyboardLayoutDescriptionCapacity - 1] of Char;
+  end;
+  PAbiKeyboardLayout = ^TAbiKeyboardLayout;
 
   TAbiChannelPeer = record
     ProcessId: QWord;

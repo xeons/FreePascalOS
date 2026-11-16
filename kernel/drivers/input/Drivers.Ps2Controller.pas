@@ -103,6 +103,15 @@ procedure Ps2EndPolling;
 { Takes every waiting byte to its routine: both interrupts call this. }
 procedure Ps2ServiceController;
 
+type
+  TPs2Routine = procedure;
+
+{ Calls Routine with interrupts off and the bytes' lock held, in turn
+  with the keyboard's and the mouse's routines: for a driver starting a
+  command from outside its interrupt (the keyboard's repeat settings)
+  whose answers its interrupt routine follows. }
+procedure Ps2RunInTurnWithInterrupts(Routine: TPs2Routine);
+
 implementation
 
 uses
@@ -186,6 +195,18 @@ begin
     lock held here. }
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(ServiceLock);
+  ReleaseSpinLockAtCurrentLevel(ServiceLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure Ps2RunInTurnWithInterrupts(Routine: TPs2Routine);
+var
+  WereEnabled: Boolean;
+begin
+  PrepareServiceLock;
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(ServiceLock);
+  Routine();
   ReleaseSpinLockAtCurrentLevel(ServiceLock);
   RestoreInterrupts(WereEnabled);
 end;

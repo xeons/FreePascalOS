@@ -1,0 +1,12 @@
+# The system settings service: gives the kernel the remembered time
+# zone, volumes and default sound output at start, then makes the
+# changes only root may make (the clock, the zone, the accounts) for
+# the users who may ask (the Control Panel, timezone, date -s).
+description   = Changes to the machine's settings for users who may
+program       = /bin/systemsettings
+modes         = text graphical
+ready         = notify
+ready-timeout = 15
+restart       = on-failure
+restart-limit = 3
+restart-delay = 1

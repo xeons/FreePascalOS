@@ -41,6 +41,7 @@ uses
   Controls.EditBox,
   Controls.ProgressBar,
   Controls.ScrollBar,
+  Controls.Slider,
   Controls.StatusBar,
   Controls.ListBox,
   Controls.TextPositions,

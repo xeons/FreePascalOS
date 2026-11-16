@@ -24,13 +24,15 @@
     Display/N/Mode     "WIDTHxHEIGHT"
     Display/N/Scale    percent
     Mouse/...          the system's mouse settings (Windowing.MouseSettings)
+    Keyboard/...       the system's keyboard layout and repeat
+                       (Windowing.KeyboardSettings)
 
   A display's mode and scale belong to the machine - the screen in front
   of it, whoever logs in - so they are the system's, and the server (which
   runs as root) writes them itself when a program asks it to keep a
-  change (DisplayRemember). The mouse's settings are each user's; the
-  session manager hands the server a user's when they log in, so the
-  server only starts from the system's.
+  change (DisplayRemember). The mouse's and keyboards' settings are each
+  user's; the session manager hands the server a user's when they log
+  in, so the server only starts from the system's.
 
   At start the remembered mode is set first, then the scale, since a new
   mode brings the display's own scale back; for the same reason keeping
@@ -46,8 +48,8 @@ interface
 uses
   Server.Screen;
 
-{ Gives every display its remembered mode and scale, and the mouse the
-  system's settings. }
+{ Gives every display its remembered mode and scale, and the mouse and
+  the keyboards the system's settings. }
 procedure ApplyRememberedSettings;
 { Keeps the screen's present scale, or mode, for the next start. }
 procedure RememberScreenScale(Screen: PScreen);
@@ -63,9 +65,12 @@ uses
   Configuration.Settings,
   Configuration.Locations,
   Windowing.MouseSettings,
+  Windowing.KeyboardSettings,
+  Sys.Keyboard,
   Server.Modes,
   Server.Scale,
-  Server.MouseSettings;
+  Server.MouseSettings,
+  Server.KeyboardSettings;
 
 function ScreenPath(Screen: PScreen; const Key: string): string;
 begin
@@ -115,6 +120,7 @@ var
   Store: TSettings;
   Index: LongInt;
   Mouse: TMouseSettings;
+  Keyboard: TKeyboardSettings;
 begin
   Store := OpenSystemSettings;
   for Index := 0 to ScreenCount - 1 do
@@ -122,6 +128,8 @@ begin
   Mouse := RememberedMouseSettings(Store);
   { The server's own (Windowing.MouseSettings has one that asks it). }
   Server.MouseSettings.ChangeMouseSettings(Mouse.Speed, Mouse.Acceleration, Mouse.LeftHanded);
+  Keyboard := RememberedKeyboardSettings(Store);
+  Server.KeyboardSettings.ChangeKeyboardSettings(Keyboard);
   Store.Free;
 end;
 

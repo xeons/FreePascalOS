@@ -21,7 +21,8 @@
   the file manager (an open folder with papers in it), a terminal (a screen with a prompt), a notepad (a ruled page with a
   pencil), the controls (a small window with a check box, a button and
   a slider), swatches (a window with colour samples), the dialogs (a
-  window with a folder and colour discs) and the task manager (a window
+  window with a folder and colour discs), the Control Panel (a window of
+  three sliders, as on a mixing desk) and the task manager (a window
   with a graph of how busy the processors are). Each is drawn with shapes on
   the design grid (Controls.PictureGrid), at any size.
 }
@@ -141,6 +142,23 @@ begin
   DrawGridDisc(Canvas, Grid, 19.5, 22, 3, WithAlpha($FF3B73C4, 220));
 end;
 
+procedure DrawControlPanel(const Canvas: TCanvas; const Grid: TPictureGrid);
+const
+  KnobRows: array[0..2] of Double = (16, 22.5, 18.5);
+var
+  Index: LongInt;
+  Column: Double;
+begin
+  DrawLittleWindow(Canvas, Grid);
+  for Index := 0 to 2 do
+  begin
+    Column := 9.5 + Index * 6.5;
+    DrawGridLine(Canvas, Grid, Column, 13.5, Column, 25.5, 1.2, $FF7E7A72);
+    DrawRoundedBox(Canvas, Grid, Column - 2.6, KnobRows[Index] - 1.6, Column + 2.6, KnobRows[Index] + 1.6, 0.6,
+      WindowTitleColor, OutlineColor, 0.7);
+  end;
+end;
+
 procedure DrawTaskManager(const Canvas: TCanvas; const Grid: TPictureGrid);
 begin
   DrawLittleWindow(Canvas, Grid);
@@ -174,6 +192,8 @@ begin
       DrawDialogs(Canvas, Grid);
     PictureTaskManager:
       DrawTaskManager(Canvas, Grid);
+    PictureControlPanel:
+      DrawControlPanel(Canvas, Grid);
   end;
 end;
 

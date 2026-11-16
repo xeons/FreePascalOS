@@ -26,9 +26,9 @@
   it. What the server tells the shell (Windowing.Shell) goes to the
   window list, which the taskbar follows, and to the notification area;
   when the displays are laid out again (a new scale or mode) the
-  desktops and the taskbar are placed again. The shell shows one
-  notification icon of its own, a volume placeholder until there is a
-  mixer to open, through the same interface as any program.
+  desktops and the taskbar are placed again. The taskbar shows the
+  volume's notification icon (Desktop.VolumeIndicator) through the same
+  interface as any program.
 
   Ctrl+Shift+Escape is the shell's for the whole desktop (a key it takes
   from the display server): it opens the task manager, or brings the
@@ -79,16 +79,11 @@ uses
   Sys.Notifications,
   Windowing.Displays,
   Windowing.Shell,
-  Windowing.Notifications,
   Windowing.EndRequests,
   Windowing.Windows,
   Controls.Keys,
   Desktop.Programs,
   Desktop.Report;
-
-const
-  VolumeIconNumber = 1;
-  VolumeTooltip: PChar = 'Volume: no mixer yet';
 
 procedure TShell.EndRequested(Reason: LongWord);
 begin
@@ -106,7 +101,6 @@ begin
   RegisterHotkey(KeyEscape, ModifierControl or ModifierShift, True);
   LayOut;
   FTaskbar.OnTaskManagerChosen := @OpenTaskManager;
-  ShowNotificationIcon(VolumeIconNumber, NotificationPictureVolume, VolumeTooltip);
 end;
 
 destructor TShell.Destroy;

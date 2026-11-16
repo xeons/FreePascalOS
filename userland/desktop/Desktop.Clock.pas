@@ -17,11 +17,9 @@
 }
 
 {
-  The taskbar clock's time: hours and minutes, HH:MM.
-
-  The system clock runs in UTC and the system has no time zone setting
-  yet (that comes with the configuration library), so the time shown is
-  UTC, as date shows it.
+  The taskbar clock's time: hours and minutes, HH:MM, in the local time
+  of the system's time zone (Sys.LocalTime), as date shows it. The zone
+  is asked for every time, so a new one shows within a second.
 }
 unit Desktop.Clock;
 
@@ -37,14 +35,15 @@ implementation
 
 uses
   SysUtils,
-  Sys.Time;
+  Sys.Time,
+  Sys.LocalTime;
 
 function ClockText: string;
 var
-  Now: TDateTime;
+  Local: TLocalTime;
 begin
-  DecodeTime(CurrentTime, Now);
-  Result := Format('%.2d:%.2d', [Now.Hour, Now.Minute]);
+  DecodeLocalTime(CurrentTime, Local);
+  Result := Format('%.2d:%.2d', [Local.DateTime.Hour, Local.DateTime.Minute]);
 end;
 
 end.

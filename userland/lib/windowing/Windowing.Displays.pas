@@ -81,7 +81,7 @@ const
   ReplyTimeout = 5000;
 
 { Sends Request and takes the EventDisplayDescribed that answers it. }
-function AskForDescription(var Request: TWindowMessage; out Information: TDisplayInformation): Boolean;
+function AskForDescription(var Request: TWindowMessage; Number: LongInt; out Information: TDisplayInformation): Boolean;
 var
   Reply: TWindowMessage;
 begin
@@ -97,6 +97,17 @@ begin
   Information.Top := Reply.Top;
   Information.LogicalWidth := Reply.SurfaceWidth;
   Information.LogicalHeight := Reply.SurfaceHeight;
+  { The first display's scale is what a new window starts at: taken at
+    once, so a window made right after a change (a dialog asking to keep
+    it) starts at the new scale, before the server's own word of the
+    change (EventScaleChanged for window 0) is read from the queue. }
+  if Number = 0 then
+  begin
+    ScreenWidth := Information.Width;
+    ScreenHeight := Information.Height;
+    DefaultDpi := Information.Dpi;
+    DefaultScale := Information.ScalePercent;
+  end;
   Result := True;
 end;
 
@@ -106,7 +117,7 @@ var
 begin
   Request := NewMessage(RequestDescribeDisplay, 0);
   Request.Code := LongWord(Number);
-  Result := AskForDescription(Request, Information);
+  Result := AskForDescription(Request, Number, Information);
 end;
 
 function DescribeWorkArea(Number: LongInt; out Left, Top, Width, Height: LongInt): Boolean;
@@ -149,7 +160,7 @@ begin
   Request.Value := Number;
   if Remember then
     Request.Flags := DisplayRemember;
-  Result := AskForDescription(Request, Information);
+  Result := AskForDescription(Request, Number, Information);
 end;
 
 function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information: TDisplayInformation;
@@ -163,7 +174,7 @@ begin
   Request.Height := Height;
   if Remember then
     Request.Flags := DisplayRemember;
-  Result := AskForDescription(Request, Information);
+  Result := AskForDescription(Request, Number, Information);
 end;
 
 function DescribeDisplayMode(Number, Index: LongInt; out Width, Height: LongInt; out Current: Boolean): Boolean;

@@ -20,7 +20,7 @@
   The taskbar's small pictures: the Start button's mark (a sunrise over
   a hill), the window shown on a task button, and the notification
   icons' pictures (information, a warning, a loudspeaker for the volume,
-  two linked screens for the network). Drawn with shapes on the design
+  crossed out when it is muted, two linked screens for the network). Drawn with shapes on the design
   grid (Controls.PictureGrid), usually 16 logical units square.
 }
 unit Desktop.SmallPictures;
@@ -56,6 +56,7 @@ const
   WarningColor = $FFF2C230;
   SpeakerColor = $FF4A5360;
   WaveColor = $FF2F6DB5;
+  MutedColor = $FFC8323C;
   ScreenColor = $FF5B9BD5;
 
 procedure DrawStartMark(const Canvas: TCanvas; const Box: TRectangle);
@@ -106,6 +107,15 @@ begin
   DrawGridLine(Canvas, Grid, 27, 16, 24, 24.5, 2.2, WaveColor);
 end;
 
+procedure DrawVolumeMuted(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(3, 11), PrecisePoint(9, 11), PrecisePoint(16, 4),
+    PrecisePoint(16, 28), PrecisePoint(9, 21), PrecisePoint(3, 21)], SpeakerColor, OutlineColor, 1.2);
+  { No sound: a red cross where the waves were. }
+  DrawGridLine(Canvas, Grid, 20, 11, 29, 21, 2.6, MutedColor);
+  DrawGridLine(Canvas, Grid, 29, 11, 20, 21, 2.6, MutedColor);
+end;
+
 procedure DrawNetwork(const Canvas: TCanvas; const Grid: TPictureGrid);
 begin
   DrawGridLine(Canvas, Grid, 10, 20, 22, 11, 2, OutlineColor);
@@ -123,6 +133,8 @@ begin
       DrawWarning(Canvas, Grid);
     NotificationPictureVolume:
       DrawVolume(Canvas, Grid);
+    NotificationPictureVolumeMuted:
+      DrawVolumeMuted(Canvas, Grid);
     NotificationPictureNetwork:
       DrawNetwork(Canvas, Grid);
   else

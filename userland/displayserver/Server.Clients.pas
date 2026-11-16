@@ -85,6 +85,8 @@ uses
   Server.Scale,
   Server.Modes,
   Server.MouseSettings,
+  Server.KeyboardSettings,
+  Sys.Keyboard,
   Server.RememberedSettings,
   Server.PointerAreas,
   Server.WorkAreas,
@@ -317,8 +319,32 @@ begin
   SendToClient(Client, Reply);
 end;
 
+procedure SendKeyboardSettings(Client: PClient);
+var
+  Reply: TWindowMessage;
+  Settings: TKeyboardSettings;
+begin
+  Settings := CurrentKeyboardSettings;
+  Reply := NewMessage(EventKeyboardSettings, 0);
+  SetMessageText(Reply, @Settings.Layout[0]);
+  Reply.Code := Settings.RepeatDelay;
+  Reply.Value := LongInt(Settings.RepeatRate);
+  SendToClient(Client, Reply);
+end;
+
+procedure TakeKeyboardSettings(const Message: TWindowMessage);
+var
+  Settings: TKeyboardSettings;
+begin
+  Settings := NewKeyboardSettings(@Message.Text[0]);
+  Settings.RepeatDelay := Message.Code;
+  Settings.RepeatRate := LongWord(Message.Value);
+  ChangeKeyboardSettings(Settings);
+end;
+
 { The requests about no window in particular (Window 0): the greeting,
-  the displays, the mouse's settings, the shell and notification icons;
+  the displays, the mouse's and keyboards' settings, the shell and
+  notification icons;
   False if Message is not one. }
 function CarryOutDisplayRequest(Client: PClient; var Message: TWindowMessage): Boolean;
 var
@@ -358,6 +384,13 @@ begin
         ChangeMouseSettings(Message.Code, LongWord(Message.Value),
           (Message.Flags and MouseLeftHanded) <> 0);
         SendMouseSettings(Client);
+      end;
+    RequestGetKeyboardSettings:
+      SendKeyboardSettings(Client);
+    RequestSetKeyboardSettings:
+      begin
+        TakeKeyboardSettings(Message);
+        SendKeyboardSettings(Client);
       end;
     RequestRegisterShell:
       AnswerShellRegistration(Client);

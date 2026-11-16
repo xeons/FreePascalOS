@@ -38,6 +38,15 @@
   ë, ...). Space, or the dead key again, gives the accent itself; any
   other key gives the accent followed by that key. In the tables a dead
   key's code point has DeadKeyFlag added.
+
+  These are the system's only keyboard tables: every keyboard, the
+  console's and the display server's input alike, types through them.
+  The layout is chosen at boot (the kernel option keymap=) and changed
+  while the system runs (CallSetKeyboardSettings: the session manager
+  gives the display server a user's layout at login, and the server
+  asks the kernel). A new layout is built in a spare table and then
+  made the active one, so a key being typed meanwhile sees one whole
+  layout or the other.
 *)
 unit Drivers.KeyboardLayouts;
 
@@ -60,6 +69,10 @@ type
 function SelectKeyboardLayout(Name: PChar): Boolean;
 function CurrentKeyboardLayoutName: PChar;
 
+{ The layouts there are, numbered from 0; nil past the last. }
+function KeyboardLayoutName(Index: Integer): PChar;
+function KeyboardLayoutDescription(Index: Integer): PChar;
+
 { The code point of key Code at Level; 0 if it gives nothing. }
 function LayoutCharacter(Code: Byte; Level: TKeyLevel): LongWord;
 
@@ -74,7 +87,9 @@ function ComposeAccent(Accent, Base: LongWord): LongWord;
 implementation
 
 uses
-  Runtime.Text;
+  Runtime.Text,
+  Kernel.SpinLock,
+  Kernel.PriorityLevel;
 
 type
   TKeyCharacters = record
@@ -221,70 +236,95 @@ const
     (Code: $35; Plain: Ord('!'); Shifted: SectionSign; AltGr: 0),
     (Code: ScanIsoExtraKey; Plain: Ord('<'); Shifted: Ord('>'); AltGr: 0));
 
-var
-  ActiveKeys: array[FirstLayoutKey..LastLayoutKey] of TKeyCharacters;
-  ActiveName: PChar = 'us';
+type
+  TLayoutTable = array[FirstLayoutKey..LastLayoutKey] of TKeyCharacters;
+  PLayoutTable = ^TLayoutTable;
 
-procedure LoadUsLayout;
+const
+  LayoutCount = 4;
+  LayoutNames: array[0..LayoutCount - 1] of PChar = ('us', 'uk', 'de', 'fr');
+  LayoutDescriptions: array[0..LayoutCount - 1] of PChar = (
+    'English (US)', 'English (UK)', 'German (QWERTZ)', 'French (AZERTY)');
+
+var
+  { Two tables: the active one, and a spare to build the next in. }
+  Tables: array[0..1] of TLayoutTable;
+  ActiveKeys: PLayoutTable = @Tables[0];
+  ActiveName: PChar = 'us';
+  { Two programs changing the layout at once take turns. }
+  SelectLock: TSpinLock;
+
+procedure LoadUsLayout(var Table: TLayoutTable);
 var
   Code: Integer;
 begin
   for Code := FirstLayoutKey to LastLayoutKey do
   begin
-    ActiveKeys[Code].Plain := 0;
-    ActiveKeys[Code].Shifted := 0;
-    ActiveKeys[Code].AltGr := 0;
+    Table[Code].Plain := 0;
+    Table[Code].Shifted := 0;
+    Table[Code].AltGr := 0;
   end;
   for Code := Low(UsPlain) to High(UsPlain) do
   begin
-    ActiveKeys[Code].Plain := Ord(UsPlain[Code]);
-    ActiveKeys[Code].Shifted := Ord(UsShifted[Code]);
+    Table[Code].Plain := Ord(UsPlain[Code]);
+    Table[Code].Shifted := Ord(UsShifted[Code]);
   end;
   { On a US keyboard the ISO key repeats the backslash key. }
-  ActiveKeys[ScanIsoExtraKey].Plain := Ord('\');
-  ActiveKeys[ScanIsoExtraKey].Shifted := Ord('|');
+  Table[ScanIsoExtraKey].Plain := Ord('\');
+  Table[ScanIsoExtraKey].Shifted := Ord('|');
 end;
 
-procedure ApplyChanges(const Changes: array of TKeyChange);
+procedure ApplyChanges(var Table: TLayoutTable; const Changes: array of TKeyChange);
 var
   Index: Integer;
 begin
   for Index := Low(Changes) to High(Changes) do
   begin
-    ActiveKeys[Changes[Index].Code].Plain := Changes[Index].Plain;
-    ActiveKeys[Changes[Index].Code].Shifted := Changes[Index].Shifted;
-    ActiveKeys[Changes[Index].Code].AltGr := Changes[Index].AltGr;
+    Table[Changes[Index].Code].Plain := Changes[Index].Plain;
+    Table[Changes[Index].Code].Shifted := Changes[Index].Shifted;
+    Table[Changes[Index].Code].AltGr := Changes[Index].AltGr;
+  end;
+end;
+
+function FindLayout(Name: PChar): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to LayoutCount - 1 do
+    if TextIsEqual(Name, LayoutNames[Index]) then
+      Exit(Index);
+  Result := -1;
+end;
+
+procedure BuildLayout(Index: Integer; var Table: TLayoutTable);
+begin
+  LoadUsLayout(Table);
+  case Index of
+    1: ApplyChanges(Table, UkChanges);
+    2: ApplyChanges(Table, GermanChanges);
+    3: ApplyChanges(Table, FrenchChanges);
   end;
 end;
 
 function SelectKeyboardLayout(Name: PChar): Boolean;
+var
+  Index: Integer;
+  Spare: PLayoutTable;
+  PreviousLevel: TPriorityLevel;
 begin
-  Result := True;
-  if TextIsEqual(Name, 'us') then
-  begin
-    LoadUsLayout;
-    ActiveName := 'us';
-  end
-  else if TextIsEqual(Name, 'uk') then
-  begin
-    LoadUsLayout;
-    ApplyChanges(UkChanges);
-    ActiveName := 'uk';
-  end
-  else if TextIsEqual(Name, 'de') then
-  begin
-    LoadUsLayout;
-    ApplyChanges(GermanChanges);
-    ActiveName := 'de';
-  end
-  else if TextIsEqual(Name, 'fr') then
-  begin
-    LoadUsLayout;
-    ApplyChanges(FrenchChanges);
-    ActiveName := 'fr';
-  end
+  Index := FindLayout(Name);
+  if Index < 0 then
+    Exit(False);
+  PreviousLevel := AcquireSpinLock(SelectLock);
+  if ActiveKeys = @Tables[0] then
+    Spare := @Tables[1]
   else
-    Result := False;
+    Spare := @Tables[0];
+  BuildLayout(Index, Spare^);
+  ActiveKeys := Spare;
+  ActiveName := LayoutNames[Index];
+  ReleaseSpinLock(SelectLock, PreviousLevel);
+  Result := True;
 end;
 
 function CurrentKeyboardLayoutName: PChar;
@@ -292,15 +332,29 @@ begin
   Result := ActiveName;
 end;
 
+function KeyboardLayoutName(Index: Integer): PChar;
+begin
+  if (Index < 0) or (Index >= LayoutCount) then
+    Exit(nil);
+  Result := LayoutNames[Index];
+end;
+
+function KeyboardLayoutDescription(Index: Integer): PChar;
+begin
+  if (Index < 0) or (Index >= LayoutCount) then
+    Exit(nil);
+  Result := LayoutDescriptions[Index];
+end;
+
 function LayoutCharacter(Code: Byte; Level: TKeyLevel): LongWord;
 begin
   if Code > LastLayoutKey then
     Exit(0);
   case Level of
-    LevelPlain: Result := ActiveKeys[Code].Plain;
-    LevelShifted: Result := ActiveKeys[Code].Shifted;
+    LevelPlain: Result := ActiveKeys^[Code].Plain;
+    LevelShifted: Result := ActiveKeys^[Code].Shifted;
   else
-    Result := ActiveKeys[Code].AltGr;
+    Result := ActiveKeys^[Code].AltGr;
   end;
 end;
 
@@ -314,8 +368,8 @@ function KeyIsCapsLockable(Code: Byte): Boolean;
 begin
   if Code > LastLayoutKey then
     Exit(False);
-  Result := IsLowerCaseLetter(ActiveKeys[Code].Plain) and
-    (ActiveKeys[Code].Shifted = ActiveKeys[Code].Plain - $20);
+  Result := IsLowerCaseLetter(ActiveKeys^[Code].Plain) and
+    (ActiveKeys^[Code].Shifted = ActiveKeys^[Code].Plain - $20);
 end;
 
 function ComposeAccent(Accent, Base: LongWord): LongWord;

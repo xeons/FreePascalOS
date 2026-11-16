@@ -384,7 +384,7 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
-- [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
+- [x] Control Panel: display, mouse, keyboard layout, sound, date and time, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,

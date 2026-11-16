@@ -34,7 +34,12 @@
   object "ps2keyboard" with one exclusive device, Io.InputDevice), which
   the console keeps open and reads (Io.ConsoleInput).
 
-  The Caps, Num and Scroll Lock lights follow the locks.
+  The Caps, Num and Scroll Lock lights follow the locks, and the
+  keyboard repeats held keys at the delay and rate the system asks for
+  (Drivers.KeyboardRepeat), the nearest its typematic setting has. Both
+  are commands of two bytes, each answered by the keyboard as an
+  interrupt; one is sent at a time, and a change that comes meanwhile
+  waits for it.
 }
 unit Drivers.Ps2Keyboard;
 
@@ -62,6 +67,7 @@ uses
   Debug.Output,
   Drivers.KeyboardLayouts,
   Drivers.KeyboardTranslation,
+  Drivers.KeyboardRepeat,
   Drivers.Ps2Controller;
 
 const
@@ -70,6 +76,7 @@ const
   { Commands to the keyboard itself (through the data port), and its
     answers. }
   KeyboardSetLights = $ED;
+  KeyboardSetTypematic = $F3;
   KeyboardAcknowledge = $FA;
   KeyboardResend = $FE;
 
@@ -80,16 +87,19 @@ const
   ScanCodeReleased = $80;
 
 type
-  { Setting the lights takes two bytes, each answered by the keyboard;
-    the answers arrive as interrupts like key presses. }
-  TLightsState = (LightsIdle, LightsAwaitingCommandAnswer, LightsAwaitingValueAnswer);
+  { Setting the lights or the repeat takes two bytes, each answered by
+    the keyboard; the answers arrive as interrupts like key presses. }
+  TCommandState = (CommandIdle, CommandAwaitingCommandAnswer, CommandAwaitingValueAnswer);
+  TKeyboardCommand = (CommandLights, CommandTypematic);
 
 var
   Keyboard: TKeyboardState;
   ExtendedPrefix: Boolean;
-  LightsState: TLightsState;
-  { The locks changed while the lights were being set. }
+  CommandState: TCommandState;
+  CommandBeingSent: TKeyboardCommand;
+  { Commands to send once the one under way is answered. }
   LightsOutdated: Boolean;
+  TypematicOutdated: Boolean;
   KeyboardInput: PInputDevice;
 
 procedure SendToKeyboard(Value: Byte);
@@ -97,24 +107,94 @@ begin
   Ps2WriteData(Value);
 end;
 
-{ --- Lock lights ----------------------------------------------------- }
+{ --- Commands: the lock lights and the repeat ------------------------- }
 
-function LightsValue: Byte;
+{ The typematic byte nearest the repeat settings: bits 5-6 the delay
+  (250 ms steps from 250), bits 0-4 the rate, whose period is
+  (8 + bits 0-2) * 2 ^ bits 3-4 * 4.17 ms (30 to 2 repeats a second). }
+function TypematicValue: Byte;
+var
+  Delay: LongWord;
+  Code: LongWord;
+  BestCode: LongWord;
+  PeriodTimes100: LongWord;
+  RateTimes100: LongWord;
+  Difference: LongWord;
+  BestDifference: LongWord;
+  Wanted: LongWord;
 begin
-  Result := KeyboardLights(Keyboard);
+  Delay := (KeyRepeatDelay + 125) div 250;
+  if Delay < 1 then
+    Delay := 1;
+  if Delay > 4 then
+    Delay := 4;
+  Wanted := KeyRepeatRate * 100;
+  BestCode := 0;
+  BestDifference := High(LongWord);
+  for Code := 0 to 31 do
+  begin
+    PeriodTimes100 := (8 + (Code and 7)) * (LongWord(1) shl ((Code shr 3) and 3)) * 417;
+    RateTimes100 := 10000000 div PeriodTimes100;
+    if RateTimes100 > Wanted then
+      Difference := RateTimes100 - Wanted
+    else
+      Difference := Wanted - RateTimes100;
+    if Difference < BestDifference then
+    begin
+      BestDifference := Difference;
+      BestCode := Code;
+    end;
+  end;
+  Result := Byte(((Delay - 1) shl 5) or BestCode);
 end;
 
-{ Starts setting the lights; the rest happens as the keyboard answers. }
+function CommandValue: Byte;
+begin
+  if CommandBeingSent = CommandLights then
+    Result := KeyboardLights(Keyboard)
+  else
+    Result := TypematicValue;
+end;
+
+{ Sends the next outdated command if none is under way; the rest happens
+  as the keyboard answers. }
+procedure SendNextCommand;
+begin
+  if CommandState <> CommandIdle then
+    Exit;
+  if LightsOutdated then
+  begin
+    LightsOutdated := False;
+    CommandBeingSent := CommandLights;
+    CommandState := CommandAwaitingCommandAnswer;
+    SendToKeyboard(KeyboardSetLights);
+  end
+  else if TypematicOutdated then
+  begin
+    TypematicOutdated := False;
+    CommandBeingSent := CommandTypematic;
+    CommandState := CommandAwaitingCommandAnswer;
+    SendToKeyboard(KeyboardSetTypematic);
+  end;
+end;
+
 procedure UpdateLights;
 begin
-  if LightsState <> LightsIdle then
-  begin
-    LightsOutdated := True;
-    Exit;
-  end;
-  LightsOutdated := False;
-  LightsState := LightsAwaitingCommandAnswer;
-  SendToKeyboard(KeyboardSetLights);
+  LightsOutdated := True;
+  SendNextCommand;
+end;
+
+procedure UpdateTypematic;
+begin
+  TypematicOutdated := True;
+  SendNextCommand;
+end;
+
+{ Drivers.KeyboardRepeat's routine, at passive level: in turn with the
+  interrupt, which follows the answers. }
+procedure KeyRepeatChanged;
+begin
+  Ps2RunInTurnWithInterrupts(@UpdateTypematic);
 end;
 
 { Handles an answer of the keyboard; returns False if Value is not one
@@ -122,28 +202,31 @@ end;
 function HandleKeyboardAnswer(Value: Byte): Boolean;
 begin
   Result := False;
-  if LightsState = LightsIdle then
+  if CommandState = CommandIdle then
     Exit;
   if Value = KeyboardAcknowledge then
   begin
-    if LightsState = LightsAwaitingCommandAnswer then
+    if CommandState = CommandAwaitingCommandAnswer then
     begin
-      LightsState := LightsAwaitingValueAnswer;
-      SendToKeyboard(LightsValue);
+      CommandState := CommandAwaitingValueAnswer;
+      SendToKeyboard(CommandValue);
     end
     else
     begin
-      LightsState := LightsIdle;
-      if LightsOutdated then
-        UpdateLights;
+      CommandState := CommandIdle;
+      SendNextCommand;
     end;
     Exit(True);
   end;
   if Value = KeyboardResend then
   begin
-    { The keyboard did not take the byte: start over. }
-    LightsState := LightsIdle;
-    UpdateLights;
+    { The keyboard did not take the byte: start that command over. }
+    CommandState := CommandIdle;
+    if CommandBeingSent = CommandLights then
+      LightsOutdated := True
+    else
+      TypematicOutdated := True;
+    SendNextCommand;
     Exit(True);
   end;
 end;
@@ -248,8 +331,10 @@ procedure StartKeyboard;
 begin
   Ps2SendCommand(Ps2CommandEnableFirstPort);
   Ps2FlushOutputBuffer;
-  LightsState := LightsIdle;
-  UpdateLights;
+  CommandState := CommandIdle;
+  LightsOutdated := True;
+  TypematicOutdated := True;
+  Ps2RunInTurnWithInterrupts(@SendNextCommand);
 end;
 
 { Waking from suspend to RAM reset the controller. }
@@ -271,6 +356,7 @@ begin
   if not CreateKeyboardDevice then
     Exit;
   SetPs2KeyboardRoutine(@HandleScanCode);
+  SetKeyRepeatChangedRoutine(@KeyRepeatChanged);
   if not ConnectIsaInterrupt(KeyboardIrq, @HandleKeyboardInterrupt, nil) then
     Exit;
   StartKeyboard;

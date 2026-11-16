@@ -43,6 +43,8 @@ uses
   Sys.Text,
   Sys.Environment,
   Sys.Time,
+  Sys.TimeZones,
+  Sys.LocalTime,
   Util.Accounts,
   Util.Directories,
   Util.Input,
@@ -237,11 +239,19 @@ begin
       ArgumentUnsigned(BlocksOf(Entry^.Information))]);
 end;
 
+var
+  ShownZone: PTimeZone = nil;
+
 procedure WriteTimestamp(Time: Int64);
 var
+  Local: TLocalTime;
   DateTime: TDateTime;
 begin
-  DecodeTime(Time, DateTime);
+  { Local time, in the zone found once for all the files. }
+  if ShownZone = nil then
+    ShownZone := CurrentTimeZone;
+  DecodeTimeInZone(ShownZone, Time, Local);
+  DateTime := Local.DateTime;
   WriteFormatted(StandardOutput, '%s %2d ', [ArgumentText(MonthName(DateTime.Month)), ArgumentNumber(DateTime.Day)]);
   if (Time > Now - SecondsInHalfYear) and (Time <= Now + 3600) then
     WriteFormatted(StandardOutput, '%02d:%02d', [ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute)])

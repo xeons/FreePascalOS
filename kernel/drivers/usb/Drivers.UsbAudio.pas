@@ -45,6 +45,7 @@ procedure RegisterUsbAudioDriver;
 implementation
 
 uses
+  Abi.SystemCalls,
   Memory.KernelHeap,
   Io.AudioOutput,
   Drivers.Xhci,
@@ -372,6 +373,7 @@ begin
   Routines.Stop := @StopPlaying;
   Routines.Position := @PlayingPosition;
   Routines.SetVolume := @SetVolume;
+  Routines.Kind := AudioOutputKindUsb;
   Audio^.Output := RegisterAudioOutput(Routines, Audio);
   if Audio^.Output = nil then
     Exit;

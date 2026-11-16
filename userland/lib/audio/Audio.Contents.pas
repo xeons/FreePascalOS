@@ -26,6 +26,8 @@
     Audio.Formats    sample kinds and converting samples
     Audio.Device     the audio output device (/dev/audio): format,
                      volume, writing samples, draining
+    Audio.Outputs    the outputs there are, their volumes and mutes,
+                     and the default one
     Audio.Wave       reading and writing PCM WAV files
     Audio.Synthesis  generating tones
     Audio.Filters    state variable and one-pole filters
@@ -46,6 +48,7 @@ interface
 uses
   Audio.Formats,
   Audio.Device,
+  Audio.Outputs,
   Audio.Wave,
   Audio.Synthesis,
   Audio.Filters,

@@ -21,6 +21,8 @@
 
   Read once at startup to find the current date and time; the kernel then
   keeps time by counting clock ticks. The clock is assumed to hold UTC.
+  Setting the date and time (CallSetWallClock) writes it back, so the
+  next boot starts from it.
 }
 unit Hal.RealTimeClock;
 
@@ -33,6 +35,9 @@ uses
 
 { Returns the current time, or zero if the clock could not be read. }
 function ReadRealTimeClock: TUnixTime;
+{ Sets the clock to Time (whole seconds, UTC), in the clock's own
+  format (BCD or binary, 12 or 24 hours, as status register B says). }
+procedure WriteRealTimeClock(Time: TUnixTime);
 
 implementation
 
@@ -56,6 +61,8 @@ const
   RegisterCentury = $32;
 
   StatusAUpdateInProgress = $80;
+  { Holds the clock still while it is being set. }
+  StatusBSetClock = $80;
   StatusBBinaryMode = $04;
   StatusB24HourMode = $02;
   HourPmFlag = $80;
@@ -77,6 +84,12 @@ function ReadCmosRegister(Register: Byte): Byte;
 begin
   WritePortByte(CmosAddressPort, Register and NmiEnabledMask);
   Result := ReadPortByte(CmosDataPort);
+end;
+
+procedure WriteCmosRegister(Register: Byte; Value: Byte);
+begin
+  WritePortByte(CmosAddressPort, Register and NmiEnabledMask);
+  WritePortByte(CmosDataPort, Value);
 end;
 
 procedure WaitWhileUpdating;
@@ -113,6 +126,11 @@ end;
 function BcdToBinary(Value: Byte): Byte;
 begin
   Result := (Value shr 4) * 10 + (Value and $0F);
+end;
+
+function BinaryToBcd(Value: Byte): Byte;
+begin
+  Result := ((Value div 10) shl 4) or (Value mod 10);
 end;
 
 function ReadRealTimeClock: TUnixTime;
@@ -169,6 +187,59 @@ begin
 
   Result := CalendarToUnixTime(Year, Reading.Month, Reading.Day,
     Reading.Hour, Reading.Minute, Reading.Second);
+end;
+
+procedure WriteRealTimeClock(Time: TUnixTime);
+var
+  Year, Month, Day, Hour, Minute, Second: LongInt;
+  Reading: TClockReading;
+  StatusB: Byte;
+  IsPm: Boolean;
+begin
+  UnixTimeToCalendar(Time, Year, Month, Day, Hour, Minute, Second);
+  if (Year < 2000) or (Year > 2099) then
+    Exit;
+  Reading.Second := Second;
+  Reading.Minute := Minute;
+  Reading.Day := Day;
+  Reading.Month := Month;
+  Reading.Year := Year mod 100;
+  Reading.Century := Year div 100;
+  StatusB := ReadCmosRegister(RegisterStatusB);
+  { In 12 hour mode the hours are 1-12 with the top bit for PM. }
+  IsPm := False;
+  if (StatusB and StatusB24HourMode) = 0 then
+  begin
+    IsPm := Hour >= 12;
+    Hour := Hour mod 12;
+    if Hour = 0 then
+      Hour := 12;
+  end;
+  Reading.Hour := Hour;
+  if (StatusB and StatusBBinaryMode) = 0 then
+  begin
+    Reading.Second := BinaryToBcd(Reading.Second);
+    Reading.Minute := BinaryToBcd(Reading.Minute);
+    Reading.Hour := BinaryToBcd(Reading.Hour);
+    Reading.Day := BinaryToBcd(Reading.Day);
+    Reading.Month := BinaryToBcd(Reading.Month);
+    Reading.Year := BinaryToBcd(Reading.Year);
+    Reading.Century := BinaryToBcd(Reading.Century);
+  end;
+  if IsPm then
+    Reading.Hour := Reading.Hour or HourPmFlag;
+
+  { The clock stops counting while SET is on, so no update lands
+    between two of the registers. }
+  WriteCmosRegister(RegisterStatusB, StatusB or StatusBSetClock);
+  WriteCmosRegister(RegisterSeconds, Reading.Second);
+  WriteCmosRegister(RegisterMinutes, Reading.Minute);
+  WriteCmosRegister(RegisterHours, Reading.Hour);
+  WriteCmosRegister(RegisterDayOfMonth, Reading.Day);
+  WriteCmosRegister(RegisterMonth, Reading.Month);
+  WriteCmosRegister(RegisterYear, Reading.Year);
+  WriteCmosRegister(RegisterCentury, Reading.Century);
+  WriteCmosRegister(RegisterStatusB, StatusB and not StatusBSetClock);
 end;
 
 end.

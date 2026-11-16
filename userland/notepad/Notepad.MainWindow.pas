@@ -115,6 +115,7 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Time,
+  Sys.LocalTime,
   Windowing.Windows,
   Controls.Keys,
   Controls.Clipboard,
@@ -320,12 +321,12 @@ end;
 
 procedure TNotepadWindow.TimeDateChosen(Item: TMenuItem);
 var
-  Moment: Sys.Time.TDateTime;
+  Local: TLocalTime;
 begin
-  { (The clock keeps universal time; there are no time zones yet.) }
-  DecodeTime(CurrentTime, Moment);
-  FEditor.ReplaceSelection(Format('%.2d:%.2d %.4d-%.2d-%.2d', [Moment.Hour, Moment.Minute, Moment.Year,
-    Moment.Month, Moment.Day]));
+  { Local time, in the system's time zone. }
+  DecodeLocalTime(CurrentTime, Local);
+  FEditor.ReplaceSelection(Format('%.2d:%.2d %.4d-%.2d-%.2d', [Local.DateTime.Hour, Local.DateTime.Minute,
+    Local.DateTime.Year, Local.DateTime.Month, Local.DateTime.Day]));
 end;
 
 procedure TNotepadWindow.GoToChosen(Item: TMenuItem);

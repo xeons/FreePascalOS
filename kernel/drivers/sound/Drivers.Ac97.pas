@@ -49,6 +49,7 @@ function InitializeAc97Controllers: Integer;
 implementation
 
 uses
+  Abi.SystemCalls,
   Io.PowerManagement,
   Memory.Layout,
   Memory.PhysicalPages,
@@ -323,6 +324,7 @@ begin
   Routines.Stop := @StopPlaying;
   Routines.Position := @PlayingPosition;
   Routines.SetVolume := @SetVolume;
+  Routines.Kind := AudioOutputKindAc97;
   InitializeDeferredCall(Controller^.PeriodCall, @PeriodsElapsed, Controller);
   InitializeTimer(Controller^.PollTimer);
   Controller^.Output := RegisterAudioOutput(Routines, Controller, FourGibibytes - 1);

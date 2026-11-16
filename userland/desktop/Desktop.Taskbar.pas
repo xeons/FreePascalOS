@@ -29,8 +29,10 @@
   with the Task Manager. The buttons share what is left
   between the Start button and the notification area, each at most
   MaximumButtonWidth wide. The clock is checked every second and drawn
-  when the minute changes; a notification icon's tooltip shows when the
-  pointer has rested on it for a moment.
+  when the minute changes, and the volume icon with it
+  (Desktop.VolumeIndicator); a notification icon's tooltip shows when
+  the pointer has rested on it for a moment, and a click on a volume
+  icon opens the volume control (Desktop.VolumePopup).
 }
 unit Desktop.Taskbar;
 
@@ -51,6 +53,7 @@ uses
   Desktop.StartButton,
   Desktop.TaskButtons,
   Desktop.NotificationArea,
+  Desktop.VolumeIndicator,
   Desktop.StartMenu;
 
 const
@@ -71,6 +74,8 @@ type
     FContextWindowId: LongWord;
     FTaskbarMenu: TMenuItem;
     FOnTaskManagerChosen: TTaskbarEvent;
+    FVolumeIndicator: TVolumeIndicator;
+    procedure IconClicked(Sender: TControl);
     function ButtonCount: LongInt;
     function Button(Index: LongInt): TTaskButton;
     function ButtonFor(WindowId: LongWord): TTaskButton;
@@ -118,6 +123,7 @@ uses
   Controls.Popups,
   Controls.Tooltips,
   Desktop.Clock,
+  Desktop.VolumePopup,
   Desktop.Report;
 
 const
@@ -145,7 +151,10 @@ begin
   FStartMenu.OnClosed := @StartMenuClosed;
   FNotificationArea := TNotificationArea.Create(Root);
   FNotificationArea.OnHoverChanged := @HoverChanged;
+  FNotificationArea.OnIconClicked := @IconClicked;
   FNotificationArea.SetClock(ClockText);
+  FVolumeIndicator := TVolumeIndicator.Create;
+  FVolumeIndicator.Refresh;
   ArrangeControls;
   StartTimer(ClockTimer, ClockCheckMilliseconds);
 end;
@@ -157,6 +166,7 @@ begin
   FContextMenu.Free;
   FTaskbarMenu.Free;
   FButtons.Free;
+  FVolumeIndicator.Free;
   inherited Destroy;
 end;
 
@@ -431,12 +441,32 @@ end;
 procedure TTaskbarWindow.TimerFired(TimerId: LongWord);
 begin
   if TimerId = ClockTimer then
-    FNotificationArea.SetClock(ClockText)
+  begin
+    FNotificationArea.SetClock(ClockText);
+    FVolumeIndicator.Refresh;
+  end
   else if TimerId = TooltipTimer then
   begin
     StopTimer(TooltipTimer);
     ShowHoveredTooltip;
   end;
+end;
+
+procedure TTaskbarWindow.IconClicked(Sender: TControl);
+var
+  Index: LongInt;
+  Icon: TRectangle;
+  VolumeControl: TVolumePopup;
+begin
+  Index := FNotificationArea.Clicked;
+  if (Index < 0) or not (FNotificationArea.Icons[Index].Picture in [NotificationPictureVolume,
+     NotificationPictureVolumeMuted]) then
+    Exit;
+  HideTooltip;
+  Icon := OffsetRectangle(FNotificationArea.IconBounds(Index), FNotificationArea.PixelBounds.Left,
+    FNotificationArea.PixelBounds.Top);
+  VolumeControl := TVolumePopup.CreateVolumePopup(Self, ScreenLeft + Unscaled((Icon.Left + Icon.Right) div 2), ScreenTop);
+  VolumeControl.Open;
 end;
 
 procedure TTaskbarWindow.CloseRequested;

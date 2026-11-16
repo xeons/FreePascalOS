@@ -44,6 +44,7 @@ function InitializeHdAudioControllers: Integer;
 implementation
 
 uses
+  Abi.SystemCalls,
   Io.PowerManagement,
   Memory.KernelHeap,
   Memory.DeviceMapping,
@@ -243,6 +244,7 @@ begin
   Routines.Stop := @StopDirection;
   Routines.Position := @DirectionPosition;
   Routines.SetVolume := @SetPlaybackVolume;
+  Routines.Kind := AudioOutputKindHdAudio;
   Direction^.Output := RegisterAudioOutput(Routines, Direction);
   if (Direction^.Output = nil) or not PrepareStream(Direction^.Stream, Controller^.Registers,
     FirstOutputStream(Controller^.Registers), OutputTag, Direction^.Output^.PeriodsPhysical) then

@@ -26,6 +26,12 @@
 
   /etc/passwd lines: name:password:uid:gid:comment:home:shell
   /etc/group lines:  name:password:gid:member,member,...
+
+  The files are read when first wanted and read again whenever they
+  changed since (their node, size or time differ: Util.AccountFiles
+  writes a new file each time), so a program that runs for long, like
+  the session manager, sees an account added after it started. A name
+  returned earlier stays valid until the files change.
 }
 unit Util.Accounts;
 
@@ -36,6 +42,8 @@ interface
 
 const
   RootId = 0;
+  PasswordFilePath = '/etc/passwd';
+  GroupFilePath = '/etc/group';
 
 { The running program's effective user and group. }
 function CurrentUserId: LongWord;
@@ -60,6 +68,18 @@ function HomeDirectoryOf(UserId: LongWord): PChar;
 { Number of groups listing UserName as a member, or with it as primary
   group; their ids go to Groups (up to Capacity). }
 function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): Integer;
+{ The comment field of a user's account (their full name); '' if none. }
+function FullNameOf(UserId: LongWord): PChar;
+{ The accounts in the order of the files: Index from 0; False past the
+  last. }
+function UserAt(Index: Integer; out UserId: LongWord): Boolean;
+function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
+{ True if the group lists user Name as a member (its primary members are
+  not listed there). }
+function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean;
+{ The files are looked at again on the next question, however soon (the
+  account editing calls this after writing them). }
+procedure RecheckAccountFiles;
 
 implementation
 
@@ -67,6 +87,7 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Sys.Files,
+  Sys.Time,
   Sys.Memory,
   Sys.Streams,
   Sys.Text,
@@ -81,9 +102,22 @@ type
     GroupId: LongWord;   { users: primary group }
     Home: PChar;         { users }
     Shell: PChar;        { users }
+    FullName: PChar;     { users: the comment field }
     Members: PChar;      { groups: comma separated }
   end;
   PAccount = ^TAccount;
+
+const
+  RecheckMilliseconds = 1000;
+
+type
+  { What a file was when it was read, to tell when it changed. }
+  TFileVersion = record
+    Exists: Boolean;
+    NodeNumber: QWord;
+    Size: QWord;
+    ModificationTime: Int64;
+  end;
 
 var
   Users: PAccount = nil;
@@ -91,6 +125,15 @@ var
   Groups: PAccount = nil;
   GroupCount: Integer = 0;
   Loaded: Boolean = False;
+  { The lines the tables point into. }
+  UserLines: TLineList;
+  GroupLines: TLineList;
+  UserFileVersion: TFileVersion;
+  GroupFileVersion: TFileVersion;
+  { Looking at the files costs two calls, so it is done at most once a
+    second (a program asking for many names at once, ls -l, asks once). }
+  LastCheck: QWord;
+  CheckDue: Boolean = True;
 
 { Splits Line at ':' in place into at most Capacity fields. }
 function SplitFields(Line: PChar; Fields: PPChar; Capacity: Integer): Integer;
@@ -115,10 +158,10 @@ begin
   end;
 end;
 
-procedure LoadFile(Path: PChar; IsGroupFile: Boolean; var Table: PAccount; var Count: Integer);
+procedure LoadFile(Path: PChar; IsGroupFile: Boolean; var Table: PAccount; var Count: Integer;
+  var Lines: TLineList);
 var
   Stream: PInputStream;
-  Lines: TLineList;
   Index: Integer;
   Fields: array[0..6] of PChar;
   FieldCount: Integer;
@@ -131,7 +174,6 @@ begin
   Stream := OpenInput(Path);
   if Stream = nil then
     Exit;
-  BeginLineList(Lines);
   ReadAllLines(Stream, Lines);
   CloseInput(Stream);
   Table := PAccount(AllocateZeroedMemory(QWord(Lines.Count + 1) * SizeOf(TAccount)));
@@ -157,6 +199,10 @@ begin
     begin
       if (FieldCount >= 4) and ParseInteger(Fields[3], Number) then
         Entry^.GroupId := LongWord(Number);
+      if FieldCount >= 5 then
+        Entry^.FullName := Fields[4]
+      else
+        Entry^.FullName := '';
       if FieldCount >= 6 then
         Entry^.Home := Fields[5]
       else
@@ -168,17 +214,65 @@ begin
     end;
     Inc(Count);
   end;
-  { The line texts stay in use by the table; only the list goes. }
-  FreeMemory(Lines.Items);
+  { The line texts stay in use by the table until the next reading. }
+end;
+
+function VersionOf(Path: PChar): TFileVersion;
+var
+  Information: TFileInformation;
+begin
+  FillMemory(@Result, SizeOf(Result), 0);
+  if GetFileInformation(Path, Information) <> ErrorNone then
+    Exit;
+  Result.Exists := True;
+  Result.NodeNumber := Information.NodeNumber;
+  Result.Size := Information.SizeInBytes;
+  Result.ModificationTime := Information.ModificationTime;
+end;
+
+function SameVersion(const First, Second: TFileVersion): Boolean;
+begin
+  Result := (First.Exists = Second.Exists) and (First.NodeNumber = Second.NodeNumber) and
+    (First.Size = Second.Size) and (First.ModificationTime = Second.ModificationTime);
+end;
+
+procedure ForgetTables;
+begin
+  FreeMemory(Users);
+  FreeMemory(Groups);
+  Users := nil;
+  Groups := nil;
+  UserCount := 0;
+  GroupCount := 0;
+  FreeLineList(UserLines);
+  FreeLineList(GroupLines);
 end;
 
 procedure EnsureLoaded;
+var
+  UserVersion: TFileVersion;
+  GroupVersion: TFileVersion;
 begin
-  if Loaded then
+  if Loaded and not CheckDue and (UptimeMilliseconds - LastCheck < RecheckMilliseconds) then
     Exit;
+  CheckDue := False;
+  LastCheck := UptimeMilliseconds;
+  UserVersion := VersionOf(PasswordFilePath);
+  GroupVersion := VersionOf(GroupFilePath);
+  if Loaded and SameVersion(UserVersion, UserFileVersion) and SameVersion(GroupVersion, GroupFileVersion) then
+    Exit;
+  if Loaded then
+    ForgetTables
+  else
+  begin
+    BeginLineList(UserLines);
+    BeginLineList(GroupLines);
+  end;
   Loaded := True;
-  LoadFile('/etc/passwd', False, Users, UserCount);
-  LoadFile('/etc/group', True, Groups, GroupCount);
+  UserFileVersion := UserVersion;
+  GroupFileVersion := GroupVersion;
+  LoadFile(PasswordFilePath, False, Users, UserCount, UserLines);
+  LoadFile(GroupFilePath, True, Groups, GroupCount, GroupLines);
 end;
 
 var
@@ -404,6 +498,49 @@ begin
       Inc(Result);
     end;
   end;
+end;
+
+procedure RecheckAccountFiles;
+begin
+  CheckDue := True;
+end;
+
+function FullNameOf(UserId: LongWord): PChar;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Users, UserCount, UserId);
+  if (Entry = nil) or (Entry^.FullName = nil) then
+    Exit('');
+  Result := Entry^.FullName;
+end;
+
+function UserAt(Index: Integer; out UserId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  UserId := 0;
+  Result := (Index >= 0) and (Index < UserCount);
+  if Result then
+    UserId := Users[Index].Id;
+end;
+
+function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  GroupId := 0;
+  Result := (Index >= 0) and (Index < GroupCount);
+  if Result then
+    GroupId := Groups[Index].Id;
+end;
+
+function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Groups, GroupCount, GroupId);
+  Result := (Entry <> nil) and IsMember(Entry^.Members, Name);
 end;
 
 end.

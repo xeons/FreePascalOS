@@ -41,6 +41,8 @@ uses
   Processes.WatchCalls,
   Processes.ProcessDetails,
   Processes.SystemUsage,
+  Processes.ClockCalls,
+  Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
   Processes.MappingCalls,
@@ -736,6 +738,14 @@ begin
       Processes.SystemUsage). }
     CallListProcessDetails: Result := PerformListProcessDetails(Argument0, Argument1);
     CallGetSystemUsage: Result := PerformGetSystemUsage(Argument0);
+    { The clock and the time zone (Processes.ClockCalls), the keyboards
+      (Processes.KeyboardCalls). }
+    CallSetWallClock: Result := PerformSetWallClock(Int64(Argument0));
+    CallGetTimeZone: Result := PerformGetTimeZone(Argument0, Argument1);
+    CallSetTimeZone: Result := PerformSetTimeZone(Argument0);
+    CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
+    CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
+    CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

@@ -141,6 +141,9 @@ type
     { The close button (or Alt+F4). The default frees the window. }
     procedure CloseRequested; virtual;
     procedure TimerFired(Id: LongWord); virtual;
+    { The server moved the window, or told where it is after the displays
+      changed (ScreenLeft and ScreenTop are the new place). }
+    procedure Moved; virtual;
     { True if it takes input while another window is modal (pop-ups). }
     function AcceptsInputWhileModal: Boolean; virtual;
   public
@@ -716,6 +719,10 @@ procedure TWindow.TimerFired(Id: LongWord);
 begin
 end;
 
+procedure TWindow.Moved;
+begin
+end;
+
 function TWindow.AcceptsInputWhileModal: Boolean;
 begin
   Result := Self = ModalWindow;
@@ -794,6 +801,7 @@ begin
       begin
         Window.FLeft := Message.Left;
         Window.FTop := Message.Top;
+        Window.Moved;
       end;
     EventScaleChanged:
       Window.TakeNewScale(Message.Code, LongWord(Message.Value));
