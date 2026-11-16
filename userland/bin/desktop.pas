@@ -29,14 +29,17 @@
   button for each window of the other programs (a click
   activates it, or minimizes it if it is active; a right click offers
   Restore, Minimize, Maximize and Close; on the taskbar itself, the Task
-  Manager), the notification area and a clock (HH:MM, UTC: the system
-  has no time zone yet). Ctrl+Shift+Escape, a key the desktop takes for
+  Manager), the notification area and a clock (HH:MM in the system's
+  time zone, or H:MM AM/PM when the user's Desktop/ClockFormat is
+  "12-hour"). Ctrl+Shift+Escape, a key the desktop takes for
   the whole desktop, opens the task manager (or brings the one it
   opened forward). Maximized windows
   stop above the taskbar. -w names a wallpaper image, kept for when
   images can be read (libimage); until then the drawn design shows. The
   image is kept in the user's settings (Desktop/Wallpaper), so a desktop
-  started without -w shows the one chosen last.
+  started without -w shows the one chosen last. Its settings are taken
+  at once when they change while it runs (Desktop.Settings): the
+  clock's format, the wallpaper, and a new time zone.
 
   Prints what happens, a line each:
 
@@ -57,7 +60,8 @@
     context ITEM          a task button's menu item was chosen (context
                           task manager: the taskbar's menu's)
     hotkey task manager   Ctrl+Shift+Escape was pressed
-    clock HH:MM           the time the clock shows now
+    clock HH:MM           the time the clock shows now (clock H:MM AM
+                          in twelve hours)
     notification N TEXT   a notification icon is shown (notification-gone N)
     tooltip TEXT          a notification icon's tooltip is shown
                           (the network's: "eth0: 10.0.2.15 - connected",
@@ -71,7 +75,8 @@
     desktop: asked to end (REASON)
                           the desktop was asked to end (log-off,
                           shutdown, ...) and ends
-    wallpaper IMAGE       the wallpaper image chosen (-w, or kept)
+    wallpaper IMAGE       the wallpaper image chosen (-w, or kept, or
+                          changed in the settings)
 
   The units are in userland/desktop: Desktop.Shell (putting it
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),
@@ -97,15 +102,13 @@ uses
   Desktop.Wallpaper,
   Desktop.Report,
   Desktop.Shell,
-  Configuration.Settings,
-  Configuration.Locations;
+  Desktop.Settings;
 
 const
   Usage = 'Usage: desktop [-w IMAGE]'#10 +
     'Show the desktop and the taskbar (the display server''s shell).'#10 +
     '  -w IMAGE  a wallpaper image (shown once images can be read)'#10;
   OptionWallpaper = 1;
-  WallpaperSetting = 'Desktop/Wallpaper';
 
 procedure ReadOptions;
 var
@@ -127,16 +130,12 @@ end;
 
 { A wallpaper named with -w is kept for the next time; without one, the
   one kept last is shown. }
-procedure RememberWallpaper;
-var
-  Store: TSettings;
+procedure KeepOrTakeWallpaper;
 begin
-  Store := OpenSettings;
   if WallpaperImagePath <> '' then
-    Store.WriteString(WallpaperSetting, WallpaperImagePath)
+    RememberWallpaper(WallpaperImagePath)
   else
-    WallpaperImagePath := Store.ReadString(WallpaperSetting, '');
-  Store.Free;
+    WallpaperImagePath := RememberedWallpaper;
   if WallpaperImagePath <> '' then
     Say('wallpaper ' + WallpaperImagePath);
 end;
@@ -151,7 +150,7 @@ begin
     FailWithError(1, Error, 'the display server');
   if not RegisterAsShell then
     Fail(1, 'another shell is running');
-  RememberWallpaper;
+  KeepOrTakeWallpaper;
   { The desktop's windows never close by themselves; it runs until the
     display server goes. }
   QuitWhenLastWindowCloses := False;
