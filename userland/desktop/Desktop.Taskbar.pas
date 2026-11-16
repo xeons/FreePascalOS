@@ -34,6 +34,8 @@
   icon's tooltip shows when the pointer has rested on it for a moment, a
   click on a volume icon opens the volume control (Desktop.VolumePopup)
   and on a network icon the list of interfaces (Desktop.NetworkPopup).
+  The clock follows the user's settings as they change (its format,
+  Desktop.Settings) and a new time zone at once.
 }
 unit Desktop.Taskbar;
 
@@ -44,6 +46,7 @@ interface
 
 uses
   Classes,
+  Configuration.Changes,
   Drawing.Rectangles,
   Drawing.Canvas,
   Windowing.Protocol,
@@ -96,6 +99,7 @@ type
     procedure HoverChanged(Sender: TControl);
     procedure ShowHoveredTooltip;
     procedure TellPlaces;
+    procedure ClockSettingsChanged(const Group: string; const Changes: TSettingChanges);
   protected
     procedure Resized; override;
     procedure PointerUp(X, Y: LongInt; ReleasedButton: LongWord); override;
@@ -125,9 +129,11 @@ uses
   Windowing.Connection,
   Windowing.Windows,
   Windowing.Shell,
+  Windowing.SettingsChanges,
   Controls.Popups,
   Controls.Tooltips,
   Desktop.Clock,
+  Desktop.Settings,
   Desktop.VolumePopup,
   Desktop.NetworkPopup,
   Desktop.Report;
@@ -158,7 +164,10 @@ begin
   FNotificationArea := TNotificationArea.Create(Root);
   FNotificationArea.OnHoverChanged := @HoverChanged;
   FNotificationArea.OnIconClicked := @IconClicked;
+  ClockFormat := RememberedClockFormat;
   FNotificationArea.SetClock(ClockText);
+  SubscribeToSettings(DesktopSettingsGroup, @ClockSettingsChanged);
+  SubscribeToSettings(TimeSettingsGroup, @ClockSettingsChanged);
   FVolumeIndicator := TVolumeIndicator.Create;
   FVolumeIndicator.Refresh;
   FNetworkIndicator := TNetworkIndicator.Create;
@@ -169,6 +178,7 @@ end;
 
 destructor TTaskbarWindow.Destroy;
 begin
+  UnsubscribeFromSettings(@ClockSettingsChanged);
   HideTooltip;
   FStartMenu.Free;
   FContextMenu.Free;
@@ -460,6 +470,17 @@ begin
     StopTimer(TooltipTimer);
     ShowHoveredTooltip;
   end;
+end;
+
+{ The clock's format, or the time zone: shown at once, with the room the
+  clock now needs. }
+procedure TTaskbarWindow.ClockSettingsChanged(const Group: string; const Changes: TSettingChanges);
+begin
+  if (Group = DesktopSettingsGroup) and not ChangesInclude(Changes, ClockFormatSetting) then
+    Exit;
+  ClockFormat := RememberedClockFormat;
+  FNotificationArea.SetClock(ClockText);
+  ArrangeControls;
 end;
 
 procedure TTaskbarWindow.OpenVolumePopup(Left: LongInt);

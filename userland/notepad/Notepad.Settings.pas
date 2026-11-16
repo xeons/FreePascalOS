@@ -40,6 +40,9 @@ interface
 uses
   Controls.TextEdit;
 
+const
+  NotepadSettingsGroup = 'Notepad';
+
 type
   TNotepadFormat = record
     WordWrap: Boolean;

@@ -31,7 +31,8 @@ user, keeps a display scale of 150% and 100% again, lets a smaller mode
 go back by itself, sets the mouse's speed, types German characters with
 the German layout (in its own box and in a terminal), sets the volume,
 the time zone (root's password asked; date and the taskbar clock
-follow), adds a user and gives them a new password, shows eth0's
+follow); settings the user changes with the settings tool are taken at
+once (the clock's format, the mouse's speed); it adds a user and gives them a new password, shows eth0's
 address from DHCP on the Network page and gives eth1 a static address
 (kept in the settings and applied: ifconfig shows it) and then what it
 had again; the taskbar's network icon names eth0's address in its
@@ -706,6 +707,28 @@ times_now = re.findall(rb'\n(\d\d:\d\d)\r?\n', before + after)
 checks.append(('Date and Time: a new time zone (root\'s password asked) reaches date and the taskbar clock',
                b'password-asked Administrator' in part and b'applied time-zone Europe/Berlin' in part and
                b'Europe/Berlin +0' in before and bool(clocks) and clocks[-1] in times_now))
+
+# Settings changed while the session runs are taken at once
+# (libconfiguration's change notification): the user switches the
+# taskbar clock to twelve hours with the settings tool and the clock
+# shows it; a mouse speed set the same way reaches the display server
+# through the session manager. Then both go back as they were.
+type_on_serial(b'su user -c "settings set Desktop/ClockFormat 12-hour; settings set Mouse/Speed 12"; '
+               b'm=DONE; echo LIVE $m\r')
+wait_for('LIVE DONE', 15)
+log = wait_for_session_log(['user changed the mouse settings: speed 12'], 20)
+twelve_hours = re.findall(rb'clock (\d{1,2}:\d\d [AP]M)', log)
+mouse_live = run_and_read('mousesettings')
+type_on_serial(b'su user -c "settings delete Desktop/ClockFormat; settings set Mouse/Speed 15"; m=DONE; echo UNLIVE $m\r')
+wait_for('UNLIVE DONE', 15)
+log = wait_for_session_log(['user changed the mouse settings: speed 15'], 20)
+last_twelve = list(re.finditer(rb'clock \d{1,2}:\d\d [AP]M', log))
+after_twelve = log[last_twelve[-1].end():] if last_twelve else b''
+checks.append(('settings changed with the settings tool reach the running desktop (a 12-hour clock) and the '
+               'display server (the mouse speed), and go back',
+               bool(twelve_hours) and b'speed 12, acceleration 0' in mouse_live and
+               re.search(rb'clock \d\d:\d\d\r?\n', after_twelve) is not None and
+               b'user changed the mouse settings: speed 15' in log))
 
 # Users: alice added (the password given before is not asked again),
 # then a new password for her.

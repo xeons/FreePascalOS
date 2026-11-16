@@ -38,6 +38,7 @@ uses
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,
+  Windowing.SettingsChanges,
   Windowing.Shell,
   Windowing.WindowList,
   Windowing.Sessions,

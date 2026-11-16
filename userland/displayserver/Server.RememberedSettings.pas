@@ -46,6 +46,7 @@ unit Server.RememberedSettings;
 interface
 
 uses
+  Configuration.Settings,
   Server.Screen;
 
 { Gives every display its remembered mode and scale, and the mouse and
@@ -54,6 +55,9 @@ procedure ApplyRememberedSettings;
 { Keeps the screen's present scale, or mode, for the next start. }
 procedure RememberScreenScale(Screen: PScreen);
 procedure RememberScreenMode(Screen: PScreen);
+{ Gives Screen the mode and scale Store keeps for it (what it has
+  already is left as it is). }
+procedure ApplyScreenSettings(Store: TSettings; Screen: PScreen);
 
 implementation
 
@@ -61,7 +65,6 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Streams,
-  Configuration.Settings,
   Configuration.Locations,
   Windowing.MouseSettings,
   Windowing.KeyboardSettings,

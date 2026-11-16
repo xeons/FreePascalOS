@@ -32,6 +32,8 @@ unit ControlPanel.KeyboardPage;
 interface
 
 uses
+  SysUtils,
+  Sys.Keyboard,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -53,11 +55,14 @@ type
     procedure SliderChanged(Sender: TControl);
     procedure TryBoxChanged(Sender: TControl);
     procedure ShowValues;
+    procedure ShowSettings(const Settings: TKeyboardSettings);
   protected
     procedure LoadSettings; override;
+    procedure ReloadSettings(const Group: string); override;
   public
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
   end;
@@ -65,9 +70,7 @@ type
 implementation
 
 uses
-  SysUtils,
   Abi.SystemCalls,
-  Sys.Keyboard,
   Windowing.Connection,
   Windowing.KeyboardSettings,
   Configuration.Settings,
@@ -138,6 +141,13 @@ begin
   Say('typed ' + FTryBox.Text);
 end;
 
+function TKeyboardPage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Keyboard';
+end;
+
 function TKeyboardPage.PageName: string;
 begin
   Result := 'keyboard';
@@ -158,9 +168,26 @@ end;
 procedure TKeyboardPage.LoadSettings;
 var
   Settings: TKeyboardSettings;
-  Index: Integer;
 begin
   AskKeyboardSettings(Settings);
+  ShowSettings(Settings);
+end;
+
+{ Changed elsewhere: what the user's settings say now, which the session
+  manager gives the display server (it may not have them yet). }
+procedure TKeyboardPage.ReloadSettings(const Group: string);
+var
+  Store: TSettings;
+begin
+  Store := OpenSettings;
+  ShowSettings(RememberedKeyboardSettings(Store));
+  Store.Free;
+end;
+
+procedure TKeyboardPage.ShowSettings(const Settings: TKeyboardSettings);
+var
+  Index: Integer;
+begin
   for Index := 0 to High(FLayoutNames) do
     if FLayoutNames[Index] = Settings.Layout then
       FLayouts.ItemIndex := Index;

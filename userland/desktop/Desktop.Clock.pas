@@ -17,9 +17,11 @@
 }
 
 {
-  The taskbar clock's time: hours and minutes, HH:MM, in the local time
-  of the system's time zone (Sys.LocalTime), as date shows it. The zone
-  is asked for every time, so a new one shows within a second.
+  The taskbar clock's time: hours and minutes in the local time of the
+  system's time zone (Sys.LocalTime), as date shows it - HH:MM, or
+  H:MM AM/PM when ClockFormat says twelve hours (the user's setting
+  Desktop/ClockFormat, Desktop.Settings). The zone is asked for every
+  time, so a new one shows within a second.
 }
 unit Desktop.Clock;
 
@@ -28,8 +30,16 @@ unit Desktop.Clock;
 
 interface
 
+type
+  TClockFormat = (ClockTwentyFourHours, ClockTwelveHours);
+
+var
+  ClockFormat: TClockFormat = ClockTwentyFourHours;
+
 { The time now, as the clock shows it. }
 function ClockText: string;
+{ The widest text the clock shows in its format, for its room. }
+function WidestClockText: string;
 
 implementation
 
@@ -41,9 +51,26 @@ uses
 function ClockText: string;
 var
   Local: TLocalTime;
+  Hour: LongInt;
 begin
   DecodeLocalTime(CurrentTime, Local);
-  Result := Format('%.2d:%.2d', [Local.DateTime.Hour, Local.DateTime.Minute]);
+  if ClockFormat = ClockTwentyFourHours then
+    Exit(Format('%.2d:%.2d', [Local.DateTime.Hour, Local.DateTime.Minute]));
+  Hour := Local.DateTime.Hour mod 12;
+  if Hour = 0 then
+    Hour := 12;
+  if Local.DateTime.Hour < 12 then
+    Result := Format('%d:%.2d AM', [Hour, Local.DateTime.Minute])
+  else
+    Result := Format('%d:%.2d PM', [Hour, Local.DateTime.Minute]);
+end;
+
+function WidestClockText: string;
+begin
+  if ClockFormat = ClockTwentyFourHours then
+    Result := '00:00'
+  else
+    Result := '00:00 PM';
 end;
 
 end.

@@ -28,7 +28,8 @@
   Find Next (F3) looks again. Word wrap, the status bar and the face
   chosen with Format > Font are kept in the user's settings
   (Notepad.Settings) as soon as they are chosen, and the next Notepad
-  starts with them.
+  starts with them. When they change while it runs (another Notepad,
+  the settings tool), it takes them at once (Windowing.SettingsChanges).
 }
 unit Notepad.MainWindow;
 
@@ -39,6 +40,7 @@ interface
 
 uses
   Windowing.Fonts,
+  Configuration.Changes,
   Controls.Base,
   Controls.StatusBar,
   Controls.Menus,
@@ -96,6 +98,7 @@ type
     procedure FontChosen(Item: TMenuItem);
     procedure StatusBarChosen(Item: TMenuItem);
     procedure ApplyRememberedFormat;
+    procedure NotepadSettingsChanged(const Group: string; const Changes: TSettingChanges);
     procedure AboutChosen(Item: TMenuItem);
     procedure ShowFindDialog(Replacing: Boolean);
     procedure RememberSearch(Dialog: TFindDialog);
@@ -107,6 +110,7 @@ type
     procedure Resized; override;
   public
     constructor Create;
+    destructor Destroy; override;
   end;
 
 implementation
@@ -117,6 +121,7 @@ uses
   Sys.Time,
   Sys.LocalTime,
   Windowing.Windows,
+  Windowing.SettingsChanges,
   Controls.Keys,
   Controls.Clipboard,
   Controls.MessageBoxes,
@@ -138,9 +143,16 @@ begin
   PlaceStatusPanels;
   FEditor.OnCaretMoved := @CaretMoved;
   ApplyRememberedFormat;
+  SubscribeToSettings(NotepadSettingsGroup, @NotepadSettingsChanged);
   FDirection := SearchDown;
   ShowCaretPlace;
   UpdateTitle;
+end;
+
+destructor TNotepadWindow.Destroy;
+begin
+  UnsubscribeFromSettings(@NotepadSettingsChanged);
+  inherited Destroy;
 end;
 
 function TNotepadWindow.AddItem(Menu: TMenuItem; const Text: string; Handler: TMenuItemEvent;
@@ -465,6 +477,20 @@ begin
     FEditor.SetFont(Family, Format.FontPointTenths, Format.FontBold);
   Say('settings word-wrap ' + OnOff[Format.WordWrap] + ', status-bar ' + OnOff[Format.StatusBar] + ', font ' +
     IntToStr(Format.FontPointTenths) + ' ' + Weights[Format.FontBold] + ' ' + FamilyName(Family));
+end;
+
+{ Changed elsewhere: taken if it differs from what the window shows (its
+  own changes are heard too, and need nothing). }
+procedure TNotepadWindow.NotepadSettingsChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Format: TNotepadFormat;
+begin
+  Format := RememberedFormat(FEditor);
+  if (Format.WordWrap = FEditor.WordWrap) and (Format.StatusBar = FStatusBar.Visible) and
+     (Format.FontFamilyIsFixed = (FEditor.FontFamily = FontFamilyFixed)) and
+     (Format.FontPointTenths = FEditor.FontPointTenths) and (Format.FontBold = FEditor.FontBold) then
+    Exit;
+  ApplyRememberedFormat;
 end;
 
 procedure TNotepadWindow.WordWrapChosen(Item: TMenuItem);

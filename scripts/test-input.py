@@ -1705,6 +1705,24 @@ text_pixels = sum(1 for x in range(left, left + width - 20, 2) for y in range(to
 background_pixels = sum(1 for x in range(left, left + width - 20, 8) for y in range(top, top + height, 8)
                         if pixel(x, y) == '101010')
 checks.append(('terminal: draws its text', text_pixels > 100 and background_pixels > 1000))
+# Settings changed while it runs are taken at once (libconfiguration's
+# change notification): a background colour set with the settings tool
+# from the serial shell repaints the window, and deleting it brings the
+# terminal's own back.
+type_on_serial(b'settings set Terminal/BackgroundColor "#203040"; m=DONE; echo RECOLOURED $m\r')
+wait_for('RECOLOURED DONE', 10)
+time.sleep(1.5)
+pixel = take_screen()
+recoloured_pixels = sum(1 for x in range(left, left + width - 20, 8) for y in range(top, top + height, 8)
+                        if pixel(x, y) == '203040')
+type_on_serial(b'settings delete Terminal/BackgroundColor; m=DONE; echo UNCOLOURED $m\r')
+wait_for('UNCOLOURED DONE', 10)
+time.sleep(1.5)
+pixel = take_screen()
+restored_pixels = sum(1 for x in range(left, left + width - 20, 8) for y in range(top, top + height, 8)
+                      if pixel(x, y) == '101010')
+checks.append(('terminal: a colour changed with the settings tool shows at once, and goes again',
+               recoloured_pixels > 1000 and restored_pixels > 1000))
 # Rows 0 and 1 are the two commands, row 2 what the second printed.
 row_middle = top + 2 + 2 * cell_height + cell_height // 2
 drag(left + 2 + 1, row_middle, left + 2 + 11 * cell_width - 1, row_middle)

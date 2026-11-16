@@ -49,6 +49,7 @@ uses
   Util.Messages,
   Windowing.Connection,
   Windowing.Windows,
+  Terminal.Cells,
   Terminal.View,
   Terminal.Settings,
   Terminal.Window;
@@ -93,6 +94,8 @@ begin
     Fail(1, 'no display server');
   Remembered := RememberedTerminalSettings;
   TerminalPointTenths := Remembered.FontPointTenths;
+  DefaultTextColor := Remembered.TextColor;
+  DefaultBackgroundColor := Remembered.BackgroundColor;
   Window := TTerminalWindow.Create(Left, Top, Remembered.Rows, Remembered.Columns);
   Window.Show;
   if not Window.StartShell(ProgramPath) then

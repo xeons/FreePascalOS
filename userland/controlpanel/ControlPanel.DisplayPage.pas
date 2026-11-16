@@ -35,6 +35,7 @@ unit ControlPanel.DisplayPage;
 interface
 
 uses
+  SysUtils,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -65,6 +66,7 @@ type
   public
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
   end;
@@ -72,7 +74,6 @@ type
 implementation
 
 uses
-  SysUtils,
   Windowing.Connection,
   Windowing.Displays,
   ControlPanel.KeepSettingsDialog,
@@ -112,6 +113,13 @@ begin
   FDetails := TLabel.Create(Self);
   FDetails.ShowsMnemonic := False;
   FDetails.SetBounds(ControlLeft, 146, PageWidth - ControlLeft - PageMargin, 18);
+end;
+
+function TDisplayPage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Display';
 end;
 
 function TDisplayPage.PageName: string;

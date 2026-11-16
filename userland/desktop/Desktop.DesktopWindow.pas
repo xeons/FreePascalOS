@@ -39,7 +39,8 @@ uses
   Drawing.Rectangles,
   Drawing.Surfaces,
   Drawing.Canvas,
-  Windowing.Windows;
+  Windowing.Windows,
+  Configuration.Changes;
 
 type
   TDesktopWindow = class(TWindow)
@@ -60,6 +61,7 @@ type
     procedure Select(Index: LongInt);
     procedure MoveSelection(Rows, Columns: LongInt);
     procedure PaintIcon(var Canvas: TCanvas; Index: LongInt);
+    procedure DesktopSettingsChanged(const Group: string; const Changes: TSettingChanges);
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
     procedure Resized; override;
@@ -85,11 +87,13 @@ uses
   Windowing.Protocol,
   Windowing.Theme,
   Windowing.Connection,
+  Windowing.SettingsChanges,
   Controls.Keys,
   Controls.Text,
   Desktop.Programs,
   Desktop.ProgramPictures,
   Desktop.Wallpaper,
+  Desktop.Settings,
   Desktop.Report;
 
 const
@@ -116,10 +120,12 @@ begin
   FSelected := -1;
   FLastClickIndex := -1;
   inherited Create('Desktop', Left, Top, Width, Height, WindowDesktop);
+  SubscribeToSettings(DesktopSettingsGroup, @DesktopSettingsChanged);
 end;
 
 destructor TDesktopWindow.Destroy;
 begin
+  UnsubscribeFromSettings(@DesktopSettingsChanged);
   FreeSurface(FWallpaper);
   inherited Destroy;
 end;
@@ -240,6 +246,24 @@ begin
     FillRectangle(Canvas, Area, Theme.Desktop);
   for Index := 0 to IconCount - 1 do
     PaintIcon(Canvas, Index);
+end;
+
+{ A new wallpaper chosen elsewhere: drawn again (said once, by the
+  first desktop window to hear of it). }
+procedure TDesktopWindow.DesktopSettingsChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Path: string;
+begin
+  if not ChangesInclude(Changes, WallpaperSetting) then
+    Exit;
+  Path := RememberedWallpaper;
+  if Path <> WallpaperImagePath then
+  begin
+    WallpaperImagePath := Path;
+    Say('wallpaper ' + Path);
+  end;
+  FreeSurface(FWallpaper);
+  Invalidate;
 end;
 
 procedure TDesktopWindow.Resized;

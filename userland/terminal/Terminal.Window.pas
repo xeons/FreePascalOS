@@ -28,7 +28,9 @@
   (OSC 0 and 2); a bell flashes the view for a moment. Closing the
   window hangs the terminal up, which ends the shell; the shell ending
   closes the window. Each step is written to standard output, for the
-  tests.
+  tests. The font's size and the colours follow the user's settings
+  while it runs (Windowing.SettingsChanges): a new size keeps the rows
+  and columns, the window growing or shrinking around them.
 }
 unit Terminal.Window;
 
@@ -39,6 +41,7 @@ interface
 
 uses
   Windowing.Windows,
+  Configuration.Changes,
   Controls.Window,
   Terminal.View,
   Terminal.Session;
@@ -59,6 +62,7 @@ type
     procedure Reply(const Text: string);
     procedure Bell;
     procedure RememberSize;
+    procedure TerminalSettingsChanged(const Group: string; const Changes: TSettingChanges);
   protected
     procedure CloseRequested; override;
     procedure TimerFired(TimerId: LongWord); override;
@@ -75,7 +79,9 @@ uses
   SysUtils,
   Sys.Streams,
   Windowing.Connection,
+  Windowing.SettingsChanges,
   Controls.Base,
+  Terminal.Cells,
   Terminal.Settings;
 
 const
@@ -111,10 +117,12 @@ begin
   FView.Emulator.OnReply := @Reply;
   FView.Emulator.OnBell := @Bell;
   FocusControl(FView);
+  SubscribeToSettings(TerminalSettingsGroup, @TerminalSettingsChanged);
 end;
 
 destructor TTerminalWindow.Destroy;
 begin
+  UnsubscribeFromSettings(@TerminalSettingsChanged);
   FSession.Free;
   inherited Destroy;
 end;
@@ -180,6 +188,29 @@ begin
     Exit;
   StopTimer(FlashTimer);
   FView.Flash(False);
+end;
+
+procedure TTerminalWindow.TerminalSettingsChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Settings: TTerminalSettings;
+  Width: LongInt;
+  Height: LongInt;
+begin
+  if not AppearanceChanged(Changes) then
+    Exit;
+  Settings := RememberedTerminalSettings;
+  DefaultTextColor := Settings.TextColor;
+  DefaultBackgroundColor := Settings.BackgroundColor;
+  if Settings.FontPointTenths <> TerminalPointTenths then
+  begin
+    TerminalPointTenths := Settings.FontPointTenths;
+    FView.SizeForGrid(FView.Emulator.Screen.Rows, FView.Emulator.Screen.Columns, Width, Height);
+    SetClientSize(Unscaled(Width), Unscaled(Height));
+  end;
+  FView.Invalidate;
+  PrintStringLine(Format('terminal: settings: font %d, text #%.6x, background #%.6x',
+    [TerminalPointTenths, DefaultTextColor and $FFFFFF, DefaultBackgroundColor and $FFFFFF]));
+  FlushStream(StandardOutput);
 end;
 
 procedure TTerminalWindow.RememberSize;

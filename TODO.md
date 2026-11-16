@@ -454,8 +454,14 @@ normalized (0-65535), not pixels.
       writes under an advisory file lock (new kernel feature); the display
       server, the session manager (mouse), Notepad, the terminal and the
       desktop use it; the `settings` tool
-- [ ] Settings changed notifications (on top of folder watches:
-      `TSettings.CheckForChanges` is the hook)
+- [x] Settings changed notifications (on top of folder watches): per
+      group, the keys that changed (snapshots compared, so a rewrite
+      that changes nothing is silent), bursts and safe writes' renames
+      coalesced (`Configuration.Watcher`, `Windowing.SettingsChanges`,
+      `settings watch`); the display server, session manager, desktop
+      (clock format, wallpaper, time zone), terminal (font size,
+      colours), Notepad, Control Panel pages and the network service
+      apply changes live
 
 ### 8. Richer graphics
 - [x] libcompression: deflate (inflate: stored, fixed and dynamic blocks,

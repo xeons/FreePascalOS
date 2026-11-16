@@ -1884,7 +1884,8 @@ the caret's row), and on Exit cancels the question to save, then
 answers No. Word wrap, the status bar and the font are kept in the
 user's settings (`Notepad.Settings`, group `Notepad`) as soon as they
 are chosen, and Notepad starts with them (it prints `settings word-wrap
-on|off, status-bar on|off, font ...`); the input test turns word wrap on,
+on|off, status-bar on|off, font ...`, and again when the settings
+change while it runs and differ from the window's); the input test turns word wrap on,
 ends Notepad and checks that the next one starts with it on.
 
 ### The file manager
@@ -2063,7 +2064,10 @@ and closes a second terminal with Alt+F4 (its shell hung up, status
 user's settings (`Terminal.Settings`: `Terminal/Rows`,
 `Terminal/Columns`), and the next one starts at it (the second terminal
 of the input test starts at the size the first was dragged to); the
-text's size is `Terminal/FontSize` (tenths of a point, 110 by default).
+text's size is `Terminal/FontSize` (tenths of a point, 110 by default),
+its colours `Terminal/TextColor` and `Terminal/BackgroundColor`
+(`#RRGGBB`); those three are taken at once when they change while it
+runs (see "Settings").
 
 ### The desktop shell
 
@@ -2987,11 +2991,12 @@ layer); waking resets it, gives it its queues and receive buffers again
 `/etc/services/network.service` in both boot modes (root, `ready =
 notify`, restarted on failure up to three times), runs as long as the
 system does. Its main loop (`NetworkService.Supervisor`) waits at once
-for its notifications (an end request ends it), a watch on
-`/etc/settings` (Network.settings written, created or renamed into
-place - the settings library and the system settings service write a
-`.new` file and rename it - is read again whole and applied), the
-kernel's network changes, and the DHCP clients' sockets, and wakes at
+for its notifications (an end request ends it), the system's settings
+watcher (`Configuration.Watcher` on `/etc/settings`, group `Network`:
+when a value in Network.settings changes - the settings library's and
+the system settings service's `.new` file renamed into place included -
+it is read again whole and applied; a rewrite that changes nothing is
+not), the kernel's network changes, and the DHCP clients' sockets, and wakes at
 the clients' next deadline (at least every 5 s).
 
 **Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
@@ -4988,11 +4993,58 @@ writers up. It goes with its handle, so a writer that crashes leaves no
 stale lock. Readers take no lock. A group whose last key goes is
 removed.
 
-**Change notification.** `TSettings.CheckForChanges` calls `OnChanged`
-for each group someone else changed since the program read it (it
-compares versions). Today a program calls it when it wants; once the
-kernel can watch folders, a watch on both scopes' folders will call it
-as soon as a file changes, and programs need no change.
+**Change notification.** Programs hear when settings change and apply
+them at once, without restarting. A snapshot of a group
+(`Configuration.Changes`) holds every key as a program sees it: the
+value that wins and whether it is fixed. A settings watcher
+(`Configuration.Watcher`, `TSettingsWatcher`) has a `TSettings` of its
+own (`OpenSettingsWatcher`, `OpenSystemSettingsWatcher`,
+`OpenSettingsWatcherOfHome`) and watches each scope's folder with a
+file watch (`Sys.FileWatches`): two handles at most; while a user's
+`.settings` folder does not exist yet its parent (the home) is watched
+until it appears, and a folder removed is watched again. What the
+watches report goes to a change tracker
+(`Configuration.ChangeTracker`, no kernel needed, tested on the host):
+`GROUP.settings` and `GROUP.settings.new` are a group's, so the burst a
+safe write makes (the `.new` file created, written and renamed over
+the old) marks the group once; a burst is waited out (60 ms without a
+change, at most 300 ms after its first), then each marked group is
+read again and its snapshot compared with the one before. `OnChanged`
+gets the group and the keys that changed (`TSettingChange`: added,
+removed or modified, old and new value and fixedness;
+`DescribeSettingChange` writes `PATH = 5 (was 3)`). A rewrite that
+changes nothing a program sees - the same values, a comment, a user's
+value equal to the system's, a user's value under a fixed one - is
+silent; a value the system fixes, or a fixed value going, counts.
+Overflowed watches make every watched group be read again; without
+watches at all the folders are looked at every 5 seconds.
+
+Two ways to use a watcher: a service's own loop waits on its `Handles`
+with its other handles for at most `WaitTime`, calls `HandleReady` with
+one that was ready and `DeliverChanges` after every wait (the display
+server and the network service); `WaitForChanges` blocks until a group
+is reported or a time is up (`settings watch`). A window program calls
+`SubscribeToSettings(GROUP, Handler)` (`Windowing.SettingsChanges`):
+all of a program's subscriptions share one watcher of the user's
+settings over the system's, which takes at most three of the message
+loop's sixteen handle watches (the two folders and a timer of its own
+that is due when a burst is over); `TLoopSettingsWatcher` puts any
+other watcher into the loop (the session manager's). A program hears
+its own writes too, so a handler applies what the settings say and
+finds nothing to do. `TSettings.CheckForChanges` is still there for a
+program that only wants to know which groups were rewritten.
+
+Who follows what:
+
+| Program | Settings followed | What happens |
+|---|---|---|
+| display server | system `Display/N/Mode`, `Display/N/Scale`, `Mouse/*`, `Keyboard/*` (`Server.LiveSettings`) | the display gets its mode and scale again (what it has already is left alone, so its own remembering changes nothing); each mouse and keyboard value it still has from the system's settings takes the new one, a value someone set since (a user's, from the session manager) stays |
+| session manager | the logged-in user's `Mouse/*`, `Keyboard/*` over the system's; the system's after a session (`Session.UserSettings`) | gives them to the display server again (`user changed the mouse settings: speed 12, ...`) |
+| desktop | `Desktop/ClockFormat`, `Desktop/Wallpaper`, the system's `Time` | the clock in its format at once (and its room on the taskbar), the wallpaper drawn again, the clock again for a new zone |
+| terminal | `Terminal/FontSize`, `Terminal/TextColor`, `Terminal/BackgroundColor` | new colours repaint; a new size keeps the rows and columns and the window follows (`terminal: settings: font 110, text #d0d0d0, background #203040`) |
+| notepad | `Notepad/*` | word wrap, the status bar and the font as the settings say, if they differ from the window's |
+| Control Panel | each page's group (`Display`, `Mouse`, `Keyboard`, `Sound`, `Time`, `Network`) | the page shown is loaded again unless the user changed something on it (`refreshed PAGE`); the Mouse and Keyboard pages show what the user's settings say (the session manager passes them on) |
+| network service | system `Network` | read again and applied (`Network.settings changed`) |
 
 **Who keeps what.**
 
@@ -5001,8 +5053,8 @@ as soon as a file changes, and programs need no change.
 | display server | system | `Display/N/Mode`, `Display/N/Scale` when a change asks to be remembered (`displaymode -r`, `displayscale -r`); starts with the system's `Mouse/*` |
 | mousesettings `-r`, session manager | user | `Mouse/Speed`, `Mouse/Acceleration`, `Mouse/LeftHanded`: the session manager gives the display server the user's at login and the system's after the session (`Session.UserSettings`) |
 | notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
-| terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
-| desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+| terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize`, `Terminal/TextColor`, `Terminal/BackgroundColor` (`#RRGGBB`) |
+| desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read), `Desktop/ClockFormat` (`24-hour` or `12-hour`) |
 | Control Panel (writes), session manager (reads) | user | `ScreenLock/AfterMinutes` (0: never), `ScreenLock/OnResume` (`Windowing.LockSettings`) |
 | files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 | keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
@@ -5018,8 +5070,12 @@ the screen.
 
 **The `settings` tool**: `settings get [-s|-u] PATH`, `settings set
 [-s [-f]] [-t string|integer|boolean|list] PATH VALUE...`, `settings
-delete [-s] PATH`, `settings list [-s|-u] [PATH]` and `settings check
-[-s|-u] GROUP`. Without `-s` or `-u` it shows what programs see and
+delete [-s] PATH`, `settings list [-s|-u] [PATH]`, `settings check
+[-s|-u] GROUP` and `settings watch [-s|-u] [-n COUNT] [-T SECONDS]
+GROUP...`, which prints `watching GROUP...` and then a line for every
+key that changes (`Test/A = fixed 5 (was 1)`), until COUNT keys
+changed, SECONDS passed (status 1 if COUNT was not reached) or it is
+killed. Without `-s` or `-u` it shows what programs see and
 changes the user's; `-s` is the system's (only root may change them),
 `-f` makes a system value fixed.
 
@@ -5028,7 +5084,13 @@ files (changes keeping comments and broken lines, damaged and binary
 files), scopes over a storage in memory (changes seen before a flush,
 two writers keeping both changes, others' changes noticed, an unreadable
 group not written over), layering (user over system over default,
-fixed values, values of the wrong kind), and the network's settings
+fixed values, values of the wrong kind), change notification
+(`SettingsTest.Changes`: snapshots compared - keys added, removed and
+changed, a value becoming fixed, comments and the other scope's equal
+value not counting; the tracker told of file changes as the watches
+tell them: a safe write's files heard as one change, bursts coalesced
+but not waited out for ever, rewrites that change nothing silent,
+other files and groups ignored, a group removed), and the network's settings
 and state files (`SettingsTest.Network`: reading and writing
 `Network.settings`, every check the system settings service makes, the
 address and prefix boxes, a state file). coretest runs `settingstest`
@@ -5039,10 +5101,19 @@ half-written, a crash's `.new` file read back, a damaged file, and three
 programs writing 25 keys each into one group at once, every change
 kept) and the `settings` tool: both scopes, a fixed value, an ordinary
 user refused the system's settings but writing their own (0700 and
-0600), unable to read root's, a damaged file. The input test keeps a
+0600), unable to read root's, a damaged file; and `settings watch`
+printing the changes another command makes (a comment and a system
+value under the user's printing nothing, a value fixed and unfixed by
+the system), for a user whose settings folder does not exist yet too.
+The input test keeps a
 mode and a scale with `-r` and checks the next display server gives
 them back (and the displays' own once deleted), and checks Notepad's
-word wrap and the terminal's size survive a restart; the session test
+word wrap and the terminal's size survive a restart, and that a
+terminal's background colour set with `settings set` repaints the
+running terminal (and deleting it brings its own back); the session
+test sets the user's clock format to 12 hours and a mouse speed with
+the settings tool and sees the running desktop's clock and the display
+server follow; it also
 keeps a user's mouse speed with `mousesettings -r` and checks the
 session manager gives the system's back after Log off and the user's at
 the next login.
