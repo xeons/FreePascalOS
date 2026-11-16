@@ -22,7 +22,8 @@
   A variable is either local to the shell or exported. Exported
   variables live in the process environment (Sys.Environment), so new
   programs inherit them; local ones are kept here. Looking a name up
-  checks the local table first, then the environment.
+  checks the local table first, then the environment. A value ends at
+  its first NUL, as it would in the environment.
 
   Special parameters: $? (status of the last command), $$ (process id),
   $! (process id of the last background command), $# (number of
@@ -34,274 +35,272 @@
 unit Shell.Variables;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Sys.Text;
+  SysUtils,
+  Classes;
 
 var
   LastStatus: LongInt = 0;
-  ScriptName: PChar = 'sh';
-  { Set by an expansion that failed (${NAME:?message}, a bad
-    substitution); the command is then not run. }
+  ScriptName: string = 'sh';
+  (* Set by an expansion that failed (${NAME:?message}, a bad
+     substitution); the command is then not run. *)
   ExpansionFailed: Boolean = False;
   { $!: the last program of the most recent background pipeline (0 if
     none was started). }
   LastBackgroundProcessId: Int64 = 0;
 
-{ Returns nil if the variable is not set. }
-function LookupVariable(Name: PChar): PChar;
-procedure AssignVariable(Name, Value: PChar);
-procedure ExportVariable(Name: PChar);
-procedure UnsetVariable(Name: PChar);
+{ False if the variable is not set. }
+function FindVariable(const Name: string; out Value: string): Boolean;
+{ The value, or '' if the variable is not set. }
+function VariableValue(const Name: string): string;
+procedure AssignVariable(const Name, Value: string);
+procedure ExportVariable(const Name: string);
+procedure UnsetVariable(const Name: string);
 { Handles "NAME=value"; False if Text is not an assignment. }
-function AssignFromText(Text: PChar; MakeExported: Boolean): Boolean;
+function AssignFromText(const Text: string; MakeExported: Boolean): Boolean;
 
-procedure SetPositionalParameters(Values: PPChar; Count: Integer);
+procedure SetPositionalParameters(const Values: TStringArray);
 function PositionalCount: Integer;
-{ Index 1 is $1. Returns nil past the end. }
-function PositionalParameter(Index: Integer): PChar;
+{ Index 1 is $1. False past the end. }
+function FindPositionalParameter(Index: Integer; out Value: string): Boolean;
+{ The same with '' past the end. }
+function PositionalParameter(Index: Integer): string;
 procedure ShiftPositionalParameters(Count: Integer);
+{ For a function call: the caller's parameters, to be put back. }
+function SavePositionalParameters: TStringArray;
+procedure RestorePositionalParameters(const Saved: TStringArray);
 
-function IsValidName(Name: PChar): Boolean;
-
-type
-  TSavedPositionals = record
-    Items: PPChar;
-    Count: Integer;
-    Block: PPChar;
-    BlockCount: Integer;
-  end;
-
-procedure SavePositionalParameters(out Saved: TSavedPositionals);
-procedure RestorePositionalParameters(const Saved: TSavedPositionals);
+function IsValidName(const Name: string): Boolean;
 
 { Function calls: variables declared local after BeginLocalScope get
   their old values back at EndLocalScope. }
 procedure BeginLocalScope;
 procedure EndLocalScope;
 { Declares Name local to the current function (False outside one). }
-function DeclareLocal(Name: PChar): Boolean;
+function DeclareLocal(const Name: string): Boolean;
 
-{ Appends shell commands that recreate the non-exported variables and
-  the positional parameters (for a subshell started as a new process). }
-procedure AppendVariableState(var Builder: TTextBuilder);
-{ Appends Text in single quotes, quoting it for the shell. }
-procedure AppendQuoted(var Builder: TTextBuilder; Text: PChar);
+{ Shell commands that recreate the non-exported variables and the
+  positional parameters (for a subshell started as a new process). }
+function VariableStateScript: string;
+{ Text in single quotes, quoted for the shell. }
+function QuoteForShell(const Text: string): string;
 
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
-  Sys.Memory;
-
-const
-  MaximumLocals = 256;
-  MaximumSavedLocals = 256;
+  Shell.Text;
 
 type
-  TLocalVariable = record
-    Name: PChar;
-    Value: PChar;
+  TShellVariable = record
+    Name: string;
+    Value: string;
   end;
 
-type
   { A variable's state before a function made it local. }
   TSavedLocal = record
     Scope: Integer;
-    Name: PChar;
-    Value: PChar;       { nil if it was unset }
+    Name: string;
+    Value: string;
+    WasSet: Boolean;
     WasExported: Boolean;
   end;
 
 var
-  SavedLocals: array[0..MaximumSavedLocals - 1] of TSavedLocal;
-  SavedLocalCount: Integer = 0;
+  { The shell's own variables, in the order they were made. }
+  ShellVariables: array of TShellVariable;
+  SavedLocals: array of TSavedLocal;
   ScopeDepth: Integer = 0;
-  Locals: array[0..MaximumLocals - 1] of TLocalVariable;
-  LocalCount: Integer = 0;
-  Positionals: PPChar = nil;
-  PositionalTotal: Integer = 0;
-  { The allocation Positionals points into (shift moves the pointer). }
-  PositionalBlock: PPChar = nil;
-  PositionalBlockCount: Integer = 0;
+  Positionals: TStringArray;
 
-function IsValidName(Name: PChar): Boolean;
+function IsValidName(const Name: string): Boolean;
 var
   Index: Integer;
 begin
   Result := False;
-  if (Name = nil) or not (IsLetter(Name[0]) or (Name[0] = '_')) then
+  if not IsNameStart(CharAt(Name, 1)) then
     Exit;
-  Index := 1;
-  while Name[Index] <> #0 do
-  begin
-    if not (IsAlphanumeric(Name[Index]) or (Name[Index] = '_')) then
+  for Index := 2 to Length(Name) do
+    if not IsNameCharacter(Name[Index]) then
       Exit;
-    Inc(Index);
-  end;
   Result := True;
 end;
 
-function FindLocal(Name: PChar): Integer;
+{ --- The environment (exported variables) ------------------------------ }
+
+function FindEnvironmentVariable(const Name: string; out Value: string): Boolean;
+var
+  Found: PChar;
+begin
+  Found := GetVariable(PChar(Name));
+  Result := Found <> nil;
+  if Result then
+    Value := string(Found)
+  else
+    Value := '';
+end;
+
+function IsEnvironmentVariable(const Name: string): Boolean;
+begin
+  Result := GetVariable(PChar(Name)) <> nil;
+end;
+
+{ --- The shell's own variables ------------------------------------------ }
+
+function FindShellVariable(const Name: string): Integer;
 var
   Index: Integer;
 begin
-  for Index := 0 to LocalCount - 1 do
-  begin
-    if TextIsEqual(Locals[Index].Name, Name) then
+  for Index := 0 to High(ShellVariables) do
+    if ShellVariables[Index].Name = Name then
       Exit(Index);
-  end;
   Result := -1;
 end;
 
-procedure RemoveLocal(Index: Integer);
+procedure AddShellVariable(const Name, Value: string);
+var
+  Count: Integer;
 begin
-  FreeMemory(Locals[Index].Name);
-  FreeMemory(Locals[Index].Value);
-  while Index < LocalCount - 1 do
-  begin
-    Locals[Index] := Locals[Index + 1];
-    Inc(Index);
-  end;
-  Dec(LocalCount);
+  Count := Length(ShellVariables);
+  SetLength(ShellVariables, Count + 1);
+  ShellVariables[Count].Name := Name;
+  ShellVariables[Count].Value := Value;
 end;
 
-function LookupVariable(Name: PChar): PChar;
+procedure DeleteShellVariable(Index: Integer);
+begin
+  Delete(ShellVariables, Index, 1);
+end;
+
+{ --- Variables --------------------------------------------------------- }
+
+function FindVariable(const Name: string; out Value: string): Boolean;
 var
   Index: Integer;
 begin
-  Index := FindLocal(Name);
+  Index := FindShellVariable(Name);
   if Index >= 0 then
-    Exit(Locals[Index].Value);
-  Result := GetVariable(Name);
+  begin
+    Value := ShellVariables[Index].Value;
+    Exit(True);
+  end;
+  Result := FindEnvironmentVariable(Name, Value);
 end;
 
-procedure AssignVariable(Name, Value: PChar);
+function VariableValue(const Name: string): string;
+begin
+  FindVariable(Name, Result);
+end;
+
+procedure AssignVariable(const Name, Value: string);
 var
   Index: Integer;
+  StoredValue: string;
 begin
+  StoredValue := TextBeforeNull(Value);
+  Index := FindShellVariable(Name);
   { An exported variable stays exported when it changes. }
-  if (FindLocal(Name) < 0) and (GetVariable(Name) <> nil) then
+  if (Index < 0) and IsEnvironmentVariable(Name) then
   begin
-    SetVariable(Name, Value);
+    SetVariable(PChar(Name), PChar(StoredValue));
     Exit;
   end;
-  Index := FindLocal(Name);
   if Index >= 0 then
-  begin
-    FreeMemory(Locals[Index].Value);
-    Locals[Index].Value := DuplicateText(Value);
-    Exit;
-  end;
-  if LocalCount = MaximumLocals then
-    Exit;
-  Locals[LocalCount].Name := DuplicateText(Name);
-  Locals[LocalCount].Value := DuplicateText(Value);
-  Inc(LocalCount);
+    ShellVariables[Index].Value := StoredValue
+  else
+    AddShellVariable(Name, StoredValue);
 end;
 
-procedure ExportVariable(Name: PChar);
+procedure ExportVariable(const Name: string);
 var
   Index: Integer;
 begin
-  Index := FindLocal(Name);
+  Index := FindShellVariable(Name);
   if Index >= 0 then
   begin
-    SetVariable(Name, Locals[Index].Value);
-    RemoveLocal(Index);
+    SetVariable(PChar(Name), PChar(ShellVariables[Index].Value));
+    DeleteShellVariable(Index);
   end
-  else if GetVariable(Name) = nil then
-    SetVariable(Name, '');
+  else if not IsEnvironmentVariable(Name) then
+    SetVariable(PChar(Name), '');
 end;
 
-procedure UnsetVariable(Name: PChar);
+procedure UnsetVariable(const Name: string);
 var
   Index: Integer;
 begin
-  Index := FindLocal(Name);
+  Index := FindShellVariable(Name);
   if Index >= 0 then
-    RemoveLocal(Index);
-  RemoveVariable(Name);
+    DeleteShellVariable(Index);
+  RemoveVariable(PChar(Name));
 end;
 
-function AssignFromText(Text: PChar; MakeExported: Boolean): Boolean;
+function AssignFromText(const Text: string; MakeExported: Boolean): Boolean;
 var
-  EqualsPosition: PtrInt;
-  Name: array[0..255] of Char;
+  EqualsPosition: Integer;
+  Name: string;
 begin
-  EqualsPosition := FindCharacter(Text, '=');
-  if (EqualsPosition <= 0) or (EqualsPosition >= Length(Name)) then
+  EqualsPosition := Pos('=', Text);
+  if EqualsPosition <= 1 then
     Exit(False);
-  CopyText(@Name[0], Text, PtrUInt(EqualsPosition) + 1);
-  if not IsValidName(@Name[0]) then
+  Name := Copy(Text, 1, EqualsPosition - 1);
+  if not IsValidName(Name) then
     Exit(False);
-  AssignVariable(@Name[0], Text + EqualsPosition + 1);
+  AssignVariable(Name, Copy(Text, EqualsPosition + 1, MaxInt));
   if MakeExported then
-    ExportVariable(@Name[0]);
+    ExportVariable(Name);
   Result := True;
 end;
 
-procedure SetPositionalParameters(Values: PPChar; Count: Integer);
-var
-  Index: Integer;
+{ --- Positional parameters --------------------------------------------- }
+
+procedure SetPositionalParameters(const Values: TStringArray);
 begin
-  Positionals := PPChar(AllocateZeroedMemory(QWord(Count + 1) * SizeOf(PChar)));
-  for Index := 0 to Count - 1 do
-    Positionals[Index] := DuplicateText(Values[Index]);
-  PositionalTotal := Count;
-  PositionalBlock := Positionals;
-  PositionalBlockCount := Count;
+  Positionals := Copy(Values);
 end;
 
 function PositionalCount: Integer;
 begin
-  Result := PositionalTotal;
+  Result := Length(Positionals);
 end;
 
-function PositionalParameter(Index: Integer): PChar;
+function FindPositionalParameter(Index: Integer; out Value: string): Boolean;
 begin
-  if (Index < 1) or (Index > PositionalTotal) then
-    Exit(nil);
-  Result := Positionals[Index - 1];
+  Result := (Index >= 1) and (Index <= Length(Positionals));
+  if Result then
+    Value := Positionals[Index - 1]
+  else
+    Value := '';
+end;
+
+function PositionalParameter(Index: Integer): string;
+begin
+  FindPositionalParameter(Index, Result);
 end;
 
 procedure ShiftPositionalParameters(Count: Integer);
 begin
-  if Count > PositionalTotal then
-    Count := PositionalTotal;
-  Positionals := Positionals + Count;
-  PositionalTotal := PositionalTotal - Count;
+  if Count > Length(Positionals) then
+    Count := Length(Positionals);
+  { A new array: a caller's saved parameters stay as they were. }
+  Positionals := Copy(Positionals, Count, MaxInt);
 end;
 
-procedure SavePositionalParameters(out Saved: TSavedPositionals);
+function SavePositionalParameters: TStringArray;
 begin
-  Saved.Items := Positionals;
-  Saved.Count := PositionalTotal;
-  Saved.Block := PositionalBlock;
-  Saved.BlockCount := PositionalBlockCount;
+  Result := Positionals;
 end;
 
-{ Frees the function's parameters and puts the caller's back. }
-procedure RestorePositionalParameters(const Saved: TSavedPositionals);
-var
-  Index: Integer;
+procedure RestorePositionalParameters(const Saved: TStringArray);
 begin
-  if (PositionalBlock <> nil) and (PositionalBlock <> Saved.Block) then
-  begin
-    for Index := 0 to PositionalBlockCount - 1 do
-      FreeMemory(PositionalBlock[Index]);
-    FreeMemory(PositionalBlock);
-  end;
-  Positionals := Saved.Items;
-  PositionalTotal := Saved.Count;
-  PositionalBlock := Saved.Block;
-  PositionalBlockCount := Saved.BlockCount;
+  Positionals := Saved;
 end;
+
+{ --- Local variables of functions -------------------------------------- }
 
 procedure BeginLocalScope;
 begin
@@ -310,90 +309,70 @@ end;
 
 procedure EndLocalScope;
 var
-  Saved: ^TSavedLocal;
+  Last: Integer;
+  Saved: TSavedLocal;
 begin
-  while (SavedLocalCount > 0) and (SavedLocals[SavedLocalCount - 1].Scope = ScopeDepth) do
+  Last := High(SavedLocals);
+  while (Last >= 0) and (SavedLocals[Last].Scope = ScopeDepth) do
   begin
-    Saved := @SavedLocals[SavedLocalCount - 1];
-    UnsetVariable(Saved^.Name);
-    if Saved^.Value <> nil then
+    Saved := SavedLocals[Last];
+    UnsetVariable(Saved.Name);
+    if Saved.WasSet then
     begin
-      AssignVariable(Saved^.Name, Saved^.Value);
-      if Saved^.WasExported then
-        ExportVariable(Saved^.Name);
+      AssignVariable(Saved.Name, Saved.Value);
+      if Saved.WasExported then
+        ExportVariable(Saved.Name);
     end;
-    FreeMemory(Saved^.Name);
-    FreeMemory(Saved^.Value);
-    Dec(SavedLocalCount);
+    SetLength(SavedLocals, Last);
+    Dec(Last);
   end;
   if ScopeDepth > 0 then
     Dec(ScopeDepth);
 end;
 
-function DeclareLocal(Name: PChar): Boolean;
+function DeclareLocal(const Name: string): Boolean;
 var
   Index: Integer;
-  Value: PChar;
+  Saved: TSavedLocal;
 begin
   if (ScopeDepth = 0) or not IsValidName(Name) then
     Exit(False);
   { Declared twice in one function: the first saved value counts. }
-  for Index := SavedLocalCount - 1 downto 0 do
+  for Index := High(SavedLocals) downto 0 do
   begin
     if SavedLocals[Index].Scope <> ScopeDepth then
       Break;
-    if TextIsEqual(SavedLocals[Index].Name, Name) then
+    if SavedLocals[Index].Name = Name then
       Exit(True);
   end;
-  if SavedLocalCount = MaximumSavedLocals then
-    Exit(False);
-  Value := LookupVariable(Name);
-  SavedLocals[SavedLocalCount].Scope := ScopeDepth;
-  SavedLocals[SavedLocalCount].Name := DuplicateText(Name);
-  SavedLocals[SavedLocalCount].WasExported := (FindLocal(Name) < 0) and (GetVariable(Name) <> nil);
-  if Value <> nil then
-    SavedLocals[SavedLocalCount].Value := DuplicateText(Value)
-  else
-    SavedLocals[SavedLocalCount].Value := nil;
-  Inc(SavedLocalCount);
+  Saved.Scope := ScopeDepth;
+  Saved.Name := Name;
+  Saved.WasSet := FindVariable(Name, Saved.Value);
+  Saved.WasExported := (FindShellVariable(Name) < 0) and IsEnvironmentVariable(Name);
+  Index := Length(SavedLocals);
+  SetLength(SavedLocals, Index + 1);
+  SavedLocals[Index] := Saved;
   Result := True;
 end;
 
-procedure AppendQuoted(var Builder: TTextBuilder; Text: PChar);
-var
-  Index: PtrUInt;
+{ --- Subshells --------------------------------------------------------- }
+
+function QuoteForShell(const Text: string): string;
 begin
-  AppendCharacter(Builder, '''');
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    if Text[Index] = '''' then
-      AppendText(Builder, '''\''''')
-    else
-      AppendCharacter(Builder, Text[Index]);
-    Inc(Index);
-  end;
-  AppendCharacter(Builder, '''');
+  Result := '''' + StringReplace(Text, '''', '''\''''', [rfReplaceAll]) + '''';
 end;
 
-procedure AppendVariableState(var Builder: TTextBuilder);
+function VariableStateScript: string;
 var
   Index: Integer;
 begin
-  for Index := 0 to LocalCount - 1 do
-  begin
-    AppendText(Builder, Locals[Index].Name);
-    AppendCharacter(Builder, '=');
-    AppendQuoted(Builder, Locals[Index].Value);
-    AppendCharacter(Builder, #10);
-  end;
-  AppendText(Builder, 'set --');
-  for Index := 1 to PositionalTotal do
-  begin
-    AppendCharacter(Builder, ' ');
-    AppendQuoted(Builder, Positionals[Index - 1]);
-  end;
-  AppendCharacter(Builder, #10);
+  Result := '';
+  for Index := 0 to High(ShellVariables) do
+    Result := Result + ShellVariables[Index].Name + '=' + QuoteForShell(ShellVariables[Index].Value) + #10;
+  Result := Result + 'set --';
+  for Index := 0 to High(Positionals) do
+    Result := Result + ' ' + QuoteForShell(Positionals[Index]);
+  Result := Result + #10;
 end;
 
 end.

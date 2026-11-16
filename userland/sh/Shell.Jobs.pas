@@ -30,81 +30,97 @@
   foreground; the previous job ("%-") is the one before it.
 
   The table learns about changes by asking the kernel without waiting
-  (UpdateJobs) or by waiting (WaitForJob). A stop is reported once per
-  process; a job continued by someone else (kill -CONT) keeps showing as
-  stopped until it changes again.
+  (UpdateJobs) or by waiting (TJob.WaitUntilDone). A stop is reported
+  once per process; a job continued by someone else (kill -CONT) keeps
+  showing as stopped until it changes again.
 }
 unit Shell.Jobs;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
+  SysUtils,
   Sys.Streams;
 
 const
   MaximumJobs = 32;
-  MaximumJobProcesses = 16;
   { The status of a pipeline that was stopped: 128 + SIGTSTP. }
   StatusStopped = 148;
 
 type
   TJobState = (JobRunning, JobStopped, JobDone);
 
-  PJob = ^TJob;
-  TJob = record
+  TJobProcess = record
+    Handle: Int64;
+    ProcessId: Int64;
+    Finished: Boolean;
+    Status: LongInt;
+  end;
+
+  TJob = class
+  private
+    procedure Poll(Index: Integer);
+    procedure Settle;
+  public
     Number: Integer;
     { The process group, or 0 when the programs share the shell's. }
     GroupId: Int64;
-    Count: Integer;
-    Handles: array[0..MaximumJobProcesses - 1] of Int64;
-    ProcessIds: array[0..MaximumJobProcesses - 1] of Int64;
-    Finished: array[0..MaximumJobProcesses - 1] of Boolean;
-    Statuses: array[0..MaximumJobProcesses - 1] of LongInt;
+    Processes: array of TJobProcess;
     State: TJobState;
     { The command line as shown by jobs, fg and bg. }
-    Command: PChar;
+    Command: string;
     { Larger is more recent; decides the current and previous job. }
     Recency: QWord;
+    destructor Destroy; override;
+    { Asks the kernel, without waiting, whether programs ended or
+      stopped. }
+    procedure Update;
+    { Waits until every program has ended, or (with ReportStops) until
+      one stops. Returns the status of the last program, or
+      StatusStopped. }
+    function WaitUntilDone(ReportStops: Boolean): LongInt;
+    { The status of the last program. }
+    function Status: LongInt;
+    { Lets the stopped programs run again; the job counts as running. }
+    procedure Continue;
+    { Ends every program with ExitCode. }
+    procedure Terminate(ExitCode: LongInt);
+    { Makes the job the current job. }
+    procedure Touch;
+    { "Running", "Stopped", "Done" or "Exit 3". }
+    function StateText: string;
   end;
+
+  THandleArray = array of Int64;
 
 { Adds a job for the given process handles, which it takes over (when
   the table is full they are closed and nil is returned). }
-function AddJob(Handles: PInt64; Count: Integer; GroupId: Int64; Command: PChar;
-  State: TJobState): PJob;
+function AddJob(const Handles: THandleArray; GroupId: Int64; const Command: string;
+  State: TJobState): TJob;
 { Closes the job's handles and forgets it. }
-procedure RemoveJob(Job: PJob);
+procedure RemoveJob(Job: TJob);
 
 { The job in slot Index (0 .. MaximumJobs - 1), or nil. }
-function JobInSlot(Index: Integer): PJob;
+function JobInSlot(Index: Integer): TJob;
 { Finds a job by specification: %N, N, %%, %+, %-, %text (command starts
-  with text) or %?text (command contains text); nil means the current
-  job. Returns nil if there is no such job. }
-function FindJob(Specification: PChar): PJob;
-function FindJobByProcessId(ProcessId: Int64): PJob;
+  with text) or %?text (command contains text). Returns nil if there is
+  no such job. }
+function FindJob(const Specification: string): TJob;
+{ The current job, or nil if there are none. }
+function CurrentJob: TJob;
+function FindJobByProcessId(ProcessId: Int64): TJob;
 { '+' for the current job, '-' for the previous one, else ' '. }
-function JobMark(Job: PJob): Char;
-{ Makes Job the current job. }
-procedure TouchJob(Job: PJob);
+function JobMark(Job: TJob): Char;
 
 { Asks the kernel, without waiting, whether programs ended or stopped. }
 procedure UpdateJobs;
-{ Waits until every program of the job has ended, or (with ReportStops)
-  until one stops. Returns the status of the job's last program, or
-  StatusStopped. }
-function WaitForJob(Job: PJob; ReportStops: Boolean): LongInt;
-{ The status of the job's last program. }
-function JobStatus(Job: PJob): LongInt;
-{ Lets the job's stopped programs run again; it counts as running. }
-procedure ContinueJob(Job: PJob);
-{ Ends every program of the job with ExitCode. }
-procedure TerminateJob(Job: PJob; ExitCode: LongInt);
 
 { "[1]+  Stopped                 sleep 30" (with " &" for a running
   job when ShowAmpersand). }
-procedure PrintJob(Stream: POutputStream; Job: PJob; ShowAmpersand: Boolean);
+procedure PrintJob(Stream: POutputStream; Job: TJob; ShowAmpersand: Boolean);
 { Prints finished jobs ("Done", "Exit 3") on standard error and removes
   them; an interactive shell does this before each prompt. }
 procedure NotifyFinishedJobs;
@@ -113,93 +129,175 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Errors,
+  StrUtils,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Processes,
-  Sys.Text;
+  Shell.Text,
+  Shell.Output;
 
 var
-  Jobs: array[0..MaximumJobs - 1] of PJob;
+  Jobs: array[0..MaximumJobs - 1] of TJob;
   RecencyCounter: QWord = 0;
 
-function JobInSlot(Index: Integer): PJob;
+{ --- TJob -------------------------------------------------------------- }
+
+destructor TJob.Destroy;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Processes) do
+    CloseFile(Processes[Index].Handle);
+  inherited Destroy;
+end;
+
+procedure TJob.Touch;
+begin
+  Inc(RecencyCounter);
+  Recency := RecencyCounter;
+end;
+
+{ Asks about one program without waiting. }
+procedure TJob.Poll(Index: Integer);
+var
+  Stopped: Boolean;
+  ExitCode: LongInt;
+begin
+  if Processes[Index].Finished then
+    Exit;
+  if WaitForProgramChange(Processes[Index].Handle, 0, Stopped, ExitCode) <> ErrorNone then
+    Exit;
+  if Stopped then
+    State := JobStopped
+  else
+  begin
+    Processes[Index].Finished := True;
+    Processes[Index].Status := ExitCode;
+  end;
+end;
+
+procedure TJob.Settle;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Processes) do
+    if not Processes[Index].Finished then
+      Exit;
+  State := JobDone;
+end;
+
+procedure TJob.Update;
+var
+  Index: Integer;
+begin
+  if State = JobDone then
+    Exit;
+  for Index := 0 to High(Processes) do
+    Poll(Index);
+  Settle;
+end;
+
+function TJob.Status: LongInt;
+begin
+  if State = JobStopped then
+    Exit(StatusStopped);
+  Result := Processes[High(Processes)].Status;
+end;
+
+function TJob.WaitUntilDone(ReportStops: Boolean): LongInt;
+var
+  Index: Integer;
+  Stopped: Boolean;
+  ExitCode: LongInt;
+begin
+  for Index := 0 to High(Processes) do
+  begin
+    while not Processes[Index].Finished do
+    begin
+      if WaitForProgramChange(Processes[Index].Handle, InfiniteWait, Stopped, ExitCode) <> ErrorNone then
+      begin
+        { The handle is unusable; count the program as failed. }
+        Processes[Index].Finished := True;
+        Processes[Index].Status := 1;
+      end
+      else if not Stopped then
+      begin
+        Processes[Index].Finished := True;
+        Processes[Index].Status := ExitCode;
+      end
+      else if ReportStops then
+      begin
+        State := JobStopped;
+        Touch;
+        Exit(StatusStopped);
+      end;
+    end;
+  end;
+  State := JobDone;
+  Result := Status;
+end;
+
+procedure TJob.Continue;
+var
+  Index: Integer;
+begin
+  if GroupId > 0 then
+    ContinuePrograms(-GroupId)
+  else
+    for Index := 0 to High(Processes) do
+      if not Processes[Index].Finished then
+        ContinuePrograms(Processes[Index].ProcessId);
+  if State = JobStopped then
+    State := JobRunning;
+end;
+
+procedure TJob.Terminate(ExitCode: LongInt);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Processes) do
+    if not Processes[Index].Finished then
+      TerminateProgram(QWord(Processes[Index].ProcessId), ExitCode);
+end;
+
+function TJob.StateText: string;
+begin
+  case State of
+    JobRunning: Result := 'Running';
+    JobStopped: Result := 'Stopped';
+  else
+    if Status = 0 then
+      Result := 'Done'
+    else
+      Result := 'Exit ' + IntToStr(Status);
+  end;
+end;
+
+{ --- The table --------------------------------------------------------- }
+
+function JobInSlot(Index: Integer): TJob;
 begin
   if (Index < 0) or (Index >= MaximumJobs) then
     Exit(nil);
   Result := Jobs[Index];
 end;
 
-procedure TouchJob(Job: PJob);
-begin
-  Inc(RecencyCounter);
-  Job^.Recency := RecencyCounter;
-end;
-
-procedure RemoveJob(Job: PJob);
+procedure RemoveJob(Job: TJob);
 var
   Index: Integer;
 begin
-  for Index := 0 to Job^.Count - 1 do
-    CloseFile(Job^.Handles[Index]);
   for Index := 0 to MaximumJobs - 1 do
-  begin
     if Jobs[Index] = Job then
       Jobs[Index] := nil;
-  end;
-  FreeMemory(Job^.Command);
-  FreeMemory(Job);
-end;
-
-{ Asks about one program without waiting. }
-procedure PollProcess(Job: PJob; Index: Integer);
-var
-  Stopped: Boolean;
-  ExitCode: LongInt;
-begin
-  if Job^.Finished[Index] then
-    Exit;
-  if WaitForProgramChange(Job^.Handles[Index], 0, Stopped, ExitCode) <> ErrorNone then
-    Exit;
-  if Stopped then
-    Job^.State := JobStopped
-  else
-  begin
-    Job^.Finished[Index] := True;
-    Job^.Statuses[Index] := ExitCode;
-  end;
-end;
-
-procedure SettleJobState(Job: PJob);
-var
-  Index: Integer;
-begin
-  for Index := 0 to Job^.Count - 1 do
-  begin
-    if not Job^.Finished[Index] then
-      Exit;
-  end;
-  Job^.State := JobDone;
+  Job.Free;
 end;
 
 procedure UpdateJobs;
 var
   Slot: Integer;
-  Index: Integer;
-  Job: PJob;
 begin
   for Slot := 0 to MaximumJobs - 1 do
-  begin
-    Job := Jobs[Slot];
-    if (Job = nil) or (Job^.State = JobDone) then
-      Continue;
-    for Index := 0 to Job^.Count - 1 do
-      PollProcess(Job, Index);
-    SettleJobState(Job);
-  end;
+    if Jobs[Slot] <> nil then
+      Jobs[Slot].Update;
 end;
 
 { Makes room in a full table by dropping finished jobs. }
@@ -209,10 +307,8 @@ var
 begin
   UpdateJobs;
   for Slot := 0 to MaximumJobs - 1 do
-  begin
-    if (Jobs[Slot] <> nil) and (Jobs[Slot]^.State = JobDone) then
+    if (Jobs[Slot] <> nil) and (Jobs[Slot].State = JobDone) then
       RemoveJob(Jobs[Slot]);
-  end;
 end;
 
 function FreeSlot: Integer;
@@ -220,15 +316,13 @@ var
   Slot: Integer;
 begin
   for Slot := 0 to MaximumJobs - 1 do
-  begin
     if Jobs[Slot] = nil then
       Exit(Slot);
-  end;
   Result := -1;
 end;
 
-function AddJob(Handles: PInt64; Count: Integer; GroupId: Int64; Command: PChar;
-  State: TJobState): PJob;
+function AddJob(const Handles: THandleArray; GroupId: Int64; const Command: string;
+  State: TJobState): TJob;
 var
   Slot: Integer;
   Index: Integer;
@@ -240,29 +334,29 @@ begin
     DropFinishedJobs;
     Slot := FreeSlot;
   end;
-  if (Slot < 0) or (Count > MaximumJobProcesses) or (Count = 0) then
+  if (Slot < 0) or (Length(Handles) = 0) then
   begin
-    for Index := 0 to Count - 1 do
+    for Index := 0 to High(Handles) do
       CloseFile(Handles[Index]);
     Exit;
   end;
-  Result := PJob(AllocateZeroedMemory(SizeOf(TJob)));
-  Result^.Number := Slot + 1;
-  Result^.GroupId := GroupId;
-  Result^.Count := Count;
-  for Index := 0 to Count - 1 do
+  Result := TJob.Create;
+  Result.Number := Slot + 1;
+  Result.GroupId := GroupId;
+  SetLength(Result.Processes, Length(Handles));
+  for Index := 0 to High(Handles) do
   begin
-    Result^.Handles[Index] := Handles[Index];
-    Result^.ProcessIds[Index] := ProcessIdOf(Handles[Index]);
+    Result.Processes[Index].Handle := Handles[Index];
+    Result.Processes[Index].ProcessId := ProcessIdOf(Handles[Index]);
   end;
-  Result^.State := State;
-  Result^.Command := DuplicateText(Command);
-  TouchJob(Result);
+  Result.State := State;
+  Result.Command := Command;
+  Result.Touch;
   Jobs[Slot] := Result;
 end;
 
 { The most recent job, skipping Excluded. }
-function MostRecentJob(Excluded: PJob): PJob;
+function MostRecentJob(Excluded: TJob): TJob;
 var
   Slot: Integer;
 begin
@@ -271,14 +365,14 @@ begin
   begin
     if (Jobs[Slot] = nil) or (Jobs[Slot] = Excluded) then
       Continue;
-    if (Result = nil) or (Jobs[Slot]^.Recency > Result^.Recency) then
+    if (Result = nil) or (Jobs[Slot].Recency > Result.Recency) then
       Result := Jobs[Slot];
   end;
 end;
 
-function JobMark(Job: PJob): Char;
+function JobMark(Job: TJob): Char;
 var
-  Current: PJob;
+  Current: TJob;
 begin
   Current := MostRecentJob(nil);
   if Job = Current then
@@ -289,41 +383,51 @@ begin
     Result := ' ';
 end;
 
-function FindJob(Specification: PChar): PJob;
+function CurrentJob: TJob;
+begin
+  Result := MostRecentJob(nil);
+end;
+
+{ An empty Part is in every text. }
+function TextContains(const Text, Part: string): Boolean;
+begin
+  Result := (Part = '') or (Pos(Part, Text) > 0);
+end;
+
+function FindJob(const Specification: string): TJob;
 var
   Number: Int64;
   Slot: Integer;
-  Text: PChar;
+  Text: string;
 begin
   Result := nil;
-  if (Specification = nil) or TextIsEqual(Specification, '%%') or
-     TextIsEqual(Specification, '%+') or TextIsEqual(Specification, '%') then
-    Exit(MostRecentJob(nil));
-  if TextIsEqual(Specification, '%-') then
-    Exit(MostRecentJob(MostRecentJob(nil)));
+  if (Specification = '%%') or (Specification = '%+') or (Specification = '%') then
+    Exit(CurrentJob);
+  if Specification = '%-' then
+    Exit(MostRecentJob(CurrentJob));
   Text := Specification;
-  if Text[0] = '%' then
-    Inc(Text);
-  if ParseInteger(Text, Number) then
+  if CharAt(Text, 1) = '%' then
+    Delete(Text, 1, 1);
+  if TryParseInteger(Text, Number) then
   begin
     if (Number >= 1) and (Number <= MaximumJobs) then
       Result := Jobs[Number - 1];
     Exit;
   end;
-  if Specification[0] <> '%' then
+  if CharAt(Specification, 1) <> '%' then
     Exit;
   for Slot := 0 to MaximumJobs - 1 do
   begin
     if Jobs[Slot] = nil then
       Continue;
-    if (Text[0] = '?') and (FindText(Jobs[Slot]^.Command, Text + 1) >= 0) then
+    if (CharAt(Text, 1) = '?') and TextContains(Jobs[Slot].Command, Copy(Text, 2, MaxInt)) then
       Exit(Jobs[Slot]);
-    if (Text[0] <> '?') and TextStartsWith(Jobs[Slot]^.Command, Text) then
+    if (CharAt(Text, 1) <> '?') and StartsStr(Text, Jobs[Slot].Command) then
       Exit(Jobs[Slot]);
   end;
 end;
 
-function FindJobByProcessId(ProcessId: Int64): PJob;
+function FindJobByProcessId(ProcessId: Int64): TJob;
 var
   Slot: Integer;
   Index: Integer;
@@ -332,111 +436,21 @@ begin
   begin
     if Jobs[Slot] = nil then
       Continue;
-    for Index := 0 to Jobs[Slot]^.Count - 1 do
-    begin
-      if Jobs[Slot]^.ProcessIds[Index] = ProcessId then
+    for Index := 0 to High(Jobs[Slot].Processes) do
+      if Jobs[Slot].Processes[Index].ProcessId = ProcessId then
         Exit(Jobs[Slot]);
-    end;
   end;
   Result := nil;
 end;
 
-function JobStatus(Job: PJob): LongInt;
-begin
-  if Job^.State = JobStopped then
-    Exit(StatusStopped);
-  Result := Job^.Statuses[Job^.Count - 1];
-end;
-
-function WaitForJob(Job: PJob; ReportStops: Boolean): LongInt;
+procedure PrintJob(Stream: POutputStream; Job: TJob; ShowAmpersand: Boolean);
 var
-  Index: Integer;
-  Stopped: Boolean;
-  ExitCode: LongInt;
+  Line: string;
 begin
-  for Index := 0 to Job^.Count - 1 do
-  begin
-    while not Job^.Finished[Index] do
-    begin
-      if WaitForProgramChange(Job^.Handles[Index], InfiniteWait, Stopped, ExitCode) <> ErrorNone then
-      begin
-        { The handle is unusable; count the program as failed. }
-        Job^.Finished[Index] := True;
-        Job^.Statuses[Index] := 1;
-      end
-      else if not Stopped then
-      begin
-        Job^.Finished[Index] := True;
-        Job^.Statuses[Index] := ExitCode;
-      end
-      else if ReportStops then
-      begin
-        Job^.State := JobStopped;
-        TouchJob(Job);
-        Exit(StatusStopped);
-      end;
-    end;
-  end;
-  Job^.State := JobDone;
-  Result := JobStatus(Job);
-end;
-
-procedure ContinueJob(Job: PJob);
-var
-  Index: Integer;
-begin
-  if Job^.GroupId > 0 then
-    ContinuePrograms(-Job^.GroupId)
-  else
-  begin
-    for Index := 0 to Job^.Count - 1 do
-    begin
-      if not Job^.Finished[Index] then
-        ContinuePrograms(Job^.ProcessIds[Index]);
-    end;
-  end;
-  if Job^.State = JobStopped then
-    Job^.State := JobRunning;
-end;
-
-procedure TerminateJob(Job: PJob; ExitCode: LongInt);
-var
-  Index: Integer;
-begin
-  for Index := 0 to Job^.Count - 1 do
-  begin
-    if not Job^.Finished[Index] then
-      TerminateProgram(QWord(Job^.ProcessIds[Index]), ExitCode);
-  end;
-end;
-
-procedure PrintJob(Stream: POutputStream; Job: PJob; ShowAmpersand: Boolean);
-var
-  StateText: array[0..31] of Char;
-  Status: LongInt;
-  Formatted: PChar;
-begin
-  case Job^.State of
-    JobRunning: CopyText(@StateText[0], 'Running', SizeOf(StateText));
-    JobStopped: CopyText(@StateText[0], 'Stopped', SizeOf(StateText));
-  else
-    begin
-      Status := JobStatus(Job);
-      if Status = 0 then
-        CopyText(@StateText[0], 'Done', SizeOf(StateText))
-      else
-      begin
-        Formatted := FormatText('Exit %d', [ArgumentNumber(Status)]);
-        CopyText(@StateText[0], Formatted, SizeOf(StateText));
-        FreeMemory(Formatted);
-      end;
-    end;
-  end;
-  WriteFormatted(Stream, '[%d]%c  %-24s%s', [ArgumentNumber(Job^.Number),
-    ArgumentCharacter(JobMark(Job)), ArgumentText(@StateText[0]), ArgumentText(Job^.Command)]);
-  if ShowAmpersand and (Job^.State = JobRunning) then
-    WriteText(Stream, ' &');
-  WriteCharacter(Stream, #10);
+  Line := Format('[%d]', [Job.Number]) + JobMark(Job) + Format('  %-24s%s', [Job.StateText, Job.Command]);
+  if ShowAmpersand and (Job.State = JobRunning) then
+    Line := Line + ' &';
+  WriteStringLine(Stream, Line);
 end;
 
 procedure NotifyFinishedJobs;
@@ -445,13 +459,11 @@ var
 begin
   UpdateJobs;
   for Slot := 0 to MaximumJobs - 1 do
-  begin
-    if (Jobs[Slot] <> nil) and (Jobs[Slot]^.State = JobDone) then
+    if (Jobs[Slot] <> nil) and (Jobs[Slot].State = JobDone) then
     begin
       PrintJob(StandardError, Jobs[Slot], False);
       RemoveJob(Jobs[Slot]);
     end;
-  end;
   FlushStream(StandardError);
 end;
 

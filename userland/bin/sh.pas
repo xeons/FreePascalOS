@@ -39,21 +39,22 @@
 program sh;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
-  Sys.Files,
   Sys.Kernel,
   Sys.Memory,
   Sys.Notifications,
-  Sys.Streams,
-  Sys.Text,
   Sys.Processes,
+  Sys.Streams,
   Util.LineEditor,
+  Shell.Output,
+  Shell.Host,
+  Shell.Nodes,
   Shell.Syntax,
   Shell.Variables,
   Shell.Execution,
@@ -62,60 +63,47 @@ uses
 const
   { 128 + SIGHUP. }
   HangUpStatus = 129;
+  StatusSyntaxError = 2;
+  StatusScriptUnreadable = 127;
 
-function ReadWholeFile(Path: PChar; out Text: PChar): LongInt;
-var
-  Handle: Int64;
-  Builder: TTextBuilder;
-  Buffer: array[0..4095] of Char;
-  BytesRead: Int64;
-begin
-  Text := nil;
-  Handle := OpenFile(Path, OpenRead);
-  if Handle < 0 then
-    Exit(ErrorCodeOf(Handle));
-  BeginText(Builder);
-  repeat
-    BytesRead := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
-    if BytesRead > 0 then
-      AppendBytes(Builder, @Buffer[0], BytesRead);
-  until BytesRead <= 0;
-  CloseFile(Handle);
-  Text := FinishText(Builder);
-  Result := ErrorNone;
-end;
+type
+  { Reads command lines: from the console with editing and history, or
+    plainly from standard input. }
+  TCommandReader = class
+  private
+    FOnConsole: Boolean;
+    FEditor: TLineEditor;
+    function ReadFromConsole(Continuation: Boolean; out Line: string): Boolean;
+    function ReadFromInput(out Line: string): Boolean;
+  public
+    constructor Create(OnConsole: Boolean);
+    destructor Destroy; override;
+    { False at the end of input, or when a request to end the shell came
+      (then ExitRequested is set). Continuation: the line goes on with a
+      command already begun. }
+    function ReadCommandLine(Continuation: Boolean; out Line: string): Boolean;
+  end;
 
 { "fpos:/current/directory$ ", or "> " while a command continues. }
-function MakePrompt(Continuation: Boolean): PChar;
+function MakePrompt(Continuation: Boolean): string;
 var
-  Directory: array[0..PathCapacity - 1] of Char;
-  Builder: TTextBuilder;
+  Directory: string;
 begin
   if Continuation then
-    Exit(DuplicateText('> '));
-  if GetCurrentDirectory(@Directory[0], PathCapacity) <> ErrorNone then
-    CopyText(@Directory[0], '?', PathCapacity);
-  BeginText(Builder);
-  AppendText(Builder, 'fpos:');
-  AppendText(Builder, @Directory[0]);
-  AppendText(Builder, '$ ');
-  Result := FinishText(Builder);
+    Exit('> ');
+  if not CurrentDirectory(Directory) then
+    Directory := '?';
+  Result := 'fpos:' + Directory + '$ ';
 end;
 
-function HistoryFilePath: PChar;
-var
-  Home: PChar;
-  Builder: TTextBuilder;
+function HistoryFilePath: string;
 begin
-  Home := LookupVariable('HOME');
-  if (Home = nil) or (Home^ = #0) then
-    Home := '/';
-  BeginText(Builder);
-  AppendText(Builder, Home);
-  if Builder.Text[Builder.Length - 1] <> '/' then
-    AppendCharacter(Builder, '/');
-  AppendText(Builder, '.sh_history');
-  Result := FinishText(Builder);
+  Result := VariableValue('HOME');
+  if Result = '' then
+    Result := '/';
+  if Result[Length(Result)] <> '/' then
+    Result := Result + '/';
+  Result := Result + '.sh_history';
 end;
 
 { Stopped jobs would wait forever once the shell is gone: they end as
@@ -123,14 +111,14 @@ end;
 procedure EndStoppedJobs;
 var
   Index: Integer;
-  Job: PJob;
+  Job: TJob;
 begin
   UpdateJobs;
   for Index := 0 to MaximumJobs - 1 do
   begin
     Job := JobInSlot(Index);
-    if (Job <> nil) and (Job^.State = JobStopped) then
-      TerminateJob(Job, HangUpStatus);
+    if (Job <> nil) and (Job.State = JobStopped) then
+      Job.Terminate(HangUpStatus);
   end;
 end;
 
@@ -150,159 +138,212 @@ begin
     end;
 end;
 
+{ --- TCommandReader ---------------------------------------------------- }
+
+constructor TCommandReader.Create(OnConsole: Boolean);
+begin
+  inherited Create;
+  FOnConsole := OnConsole;
+  if not OnConsole then
+    Exit;
+  BeginLineEditor(FEditor, PChar(HistoryFilePath), StandardErrorHandle);
+  { The prompt wakes for a request to end; one that comes while a
+    command runs waits in the queue until the prompt. }
+  TakeNotifications(NotifyEndRequests);
+  FEditor.WakeHandle := NotificationsHandle;
+end;
+
+destructor TCommandReader.Destroy;
+begin
+  if FOnConsole then
+    SaveHistory(FEditor);
+  inherited Destroy;
+end;
+
+function TCommandReader.ReadFromInput(out Line: string): Boolean;
+var
+  Text: PChar;
+  HadLineEnd: Boolean;
+begin
+  Line := '';
+  Result := ReadLine(StandardInput, Text, HadLineEnd);
+  if Result then
+  begin
+    Line := string(Text);
+    FreeMemory(Text);
+  end;
+end;
+
+function TCommandReader.ReadFromConsole(Continuation: Boolean; out Line: string): Boolean;
+var
+  Text: PChar;
+  EditResult: TEditResult;
+  EndStatus: LongInt;
+begin
+  Line := '';
+  repeat
+    { "[1]+  Done  sleep 5" for jobs that ended since the last prompt. }
+    if not Continuation then
+      NotifyFinishedJobs;
+    EditResult := EditLine(FEditor, PChar(MakePrompt(Continuation)), Text);
+    if EditResult = EditLineReady then
+    begin
+      AddHistoryLine(FEditor, Text);
+      Line := string(Text);
+      FreeMemory(Text);
+      Exit(True);
+    end;
+    if (EditResult = EditWoken) and TakeEndRequest(EndStatus) then
+    begin
+      ExitRequested := True;
+      RequestedExitCode := EndStatus;
+      Exit(False);
+    end;
+  until EditResult <> EditWoken;
+  Result := False;
+end;
+
+function TCommandReader.ReadCommandLine(Continuation: Boolean; out Line: string): Boolean;
+begin
+  if FOnConsole then
+    Result := ReadFromConsole(Continuation, Line)
+  else
+    Result := ReadFromInput(Line);
+end;
+
+{ --- Running ----------------------------------------------------------- }
+
 { Reads and runs commands line by line until end of input or exit. A
   command spanning several lines (an open quote or an unfinished if,
   while, ...) is collected before it runs. On the console, lines are read
   with editing and history, and Ctrl-C does not end the shell. }
 procedure RunInteractive(OnConsole: Boolean);
 var
-  Pending: TTextBuilder;
-  Line: PChar;
-  HadLineEnd: Boolean;
-  Tree: PNode;
-  Message: PChar;
-  Editor: TLineEditor;
-  Prompt: PChar;
-  HistoryPath: PChar;
-  GotLine: Boolean;
-  EditResult: TEditResult;
-  EndStatus: LongInt;
+  Reader: TCommandReader;
+  Pending: string;
+  Line: string;
+  Tree: TShellNode;
+  Message: string;
 begin
   if OnConsole then
   begin
     ShellIsInteractive := True;
     IgnoreInterrupts(True);
-    HistoryPath := HistoryFilePath;
-    BeginLineEditor(Editor, HistoryPath, StandardErrorHandle);
-    FreeMemory(HistoryPath);
-    { The prompt wakes for a request to end; one that comes while a
-      command runs waits in the queue until the prompt. }
-    TakeNotifications(NotifyEndRequests);
-    Editor.WakeHandle := NotificationsHandle;
   end;
-
-  BeginText(Pending);
-  while not ExitRequested do
-  begin
-    if OnConsole then
+  Pending := '';
+  Reader := TCommandReader.Create(OnConsole);
+  try
+    while not ExitRequested do
     begin
-      { "[1]+  Done  sleep 5" for jobs that ended since the last prompt. }
-      if Pending.Length = 0 then
-        NotifyFinishedJobs;
-      Prompt := MakePrompt(Pending.Length > 0);
-      EditResult := EditLine(Editor, Prompt, Line);
-      FreeMemory(Prompt);
-      GotLine := EditResult = EditLineReady;
-      if GotLine then
-        AddHistoryLine(Editor, Line);
-      if (EditResult = EditWoken) and TakeEndRequest(EndStatus) then
-      begin
-        ExitRequested := True;
-        RequestedExitCode := EndStatus;
+      if not Reader.ReadCommandLine(Pending <> '', Line) then
         Break;
-      end;
-      if EditResult = EditWoken then
-        Continue;
-    end
-    else
-      GotLine := ReadLine(StandardInput, Line, HadLineEnd);
-    if not GotLine then
-      Break;
-    AppendText(Pending, Line);
-    AppendCharacter(Pending, #10);
-    FreeMemory(Line);
+      Pending := Pending + Line + #10;
 
-    case ParseInput(Pending.Text, Tree, Message) of
-      ParseIncomplete:
-        Continue;
-      ParseSuccess:
+      case ParseInput(Pending, Tree, Message) of
+        ParseIncomplete:
+          Continue;
+        ParseSuccess:
+          begin
+            InterruptRequested := False;
+            try
+              ExecuteNode(Tree);
+            finally
+              Tree.Free;
+            end;
+          end;
+      else
         begin
-          InterruptRequested := False;
-          ExecuteNode(Tree);
-          FreeNode(Tree);
+          ShellErrorWithoutFlush(Message);
+          LastStatus := StatusSyntaxError;
         end;
-    else
-      begin
-        WriteText(StandardError, 'sh: ');
-        WriteLine(StandardError, Message);
-        LastStatus := 2;
       end;
+      Pending := '';
     end;
-    DiscardText(Pending);
-    BeginText(Pending);
+    if (Pending <> '') and not ExitRequested then
+    begin
+      ShellErrorWithoutFlush('syntax error: unexpected end of input');
+      LastStatus := StatusSyntaxError;
+    end;
+  finally
+    Reader.Free;
   end;
-  if (Pending.Length > 0) and not ExitRequested then
-  begin
-    WriteLine(StandardError, 'sh: syntax error: unexpected end of input');
-    LastStatus := 2;
-  end;
-  DiscardText(Pending);
   if OnConsole then
-  begin
-    SaveHistory(Editor);
     EndStoppedJobs;
+end;
+
+procedure RunScriptFile(const Path: string);
+var
+  Text: string;
+  Error: LongInt;
+begin
+  Error := ReadTextFile(Path, Text);
+  if Error <> ErrorNone then
+  begin
+    WriteStringLine(StandardError, 'sh: ' + Path + ': ' + ErrorMessage(Error));
+    Halt(StatusScriptUnreadable);
   end;
+  ExecuteText(Text);
 end;
 
 procedure SetDefaultVariables;
 var
-  Directory: array[0..PathCapacity - 1] of Char;
+  Directory: string;
 begin
-  if GetCurrentDirectory(@Directory[0], PathCapacity) = ErrorNone then
-    AssignVariable('PWD', @Directory[0]);
+  if CurrentDirectory(Directory) then
+    AssignVariable('PWD', Directory);
   if GetVariable('PATH') = nil then
     SetVariable('PATH', '/bin');
 end;
 
+{ The program's arguments from First on. }
+function ArgumentsFrom(First: Integer): TStringArray;
 var
-  Text: PChar;
-  Error: LongInt;
+  Index: Integer;
+begin
+  Result := nil;
+  if First >= ArgumentTotal then
+    Exit;
+  SetLength(Result, ArgumentTotal - First);
+  for Index := First to ArgumentTotal - 1 do
+    Result[Index - First] := string(Argument(Index));
+end;
+
+function StandardInputIsConsole: Boolean;
+begin
+  Result := KernelGetHandleKind(StandardInputHandle) = HandleKindConsole;
+end;
+
+var
+  FirstArgument: string;
 begin
   SetDefaultVariables;
-  ScriptName := Argument(0);
+  ScriptName := string(Argument(0));
+  FirstArgument := '';
+  if ArgumentTotal >= 2 then
+    FirstArgument := string(Argument(1));
 
-  if (ArgumentTotal >= 3) and TextIsEqual(Argument(1), '-c') then
+  if (ArgumentTotal >= 3) and (FirstArgument = '-c') then
   begin
     if ArgumentTotal >= 4 then
-    begin
-      ScriptName := Argument(3);
-      SetPositionalParameters(ArgumentValues + 4, ArgumentTotal - 4);
-    end
-    else
-      SetPositionalParameters(nil, 0);
-    ExecuteText(Argument(2));
+      ScriptName := string(Argument(3));
+    SetPositionalParameters(ArgumentsFrom(4));
+    ExecuteText(string(Argument(2)));
   end
-  else if (ArgumentTotal = 2) and TextIsEqual(Argument(1), '-c') then
+  else if (ArgumentTotal = 2) and (FirstArgument = '-c') then
   begin
-    WriteLine(StandardError, 'sh: -c: option requires an argument');
-    Halt(2);
+    WriteStringLine(StandardError, 'sh: -c: option requires an argument');
+    Halt(StatusSyntaxError);
   end
-  else if (ArgumentTotal = 2) and TextIsEqual(Argument(1), '-i') then
-  begin
-    SetPositionalParameters(nil, 0);
-    RunInteractive(KernelGetHandleKind(StandardInputHandle) = HandleKindConsole);
-  end
+  else if (ArgumentTotal = 2) and (FirstArgument = '-i') then
+    RunInteractive(StandardInputIsConsole)
   else if ArgumentTotal >= 2 then
   begin
-    ScriptName := Argument(1);
-    SetPositionalParameters(ArgumentValues + 2, ArgumentTotal - 2);
-    Error := ReadWholeFile(Argument(1), Text);
-    if Error <> ErrorNone then
-    begin
-      WriteText(StandardError, 'sh: ');
-      WriteText(StandardError, Argument(1));
-      WriteText(StandardError, ': ');
-      WriteLine(StandardError, ErrorMessage(Error));
-      Halt(127);
-    end;
-    ExecuteText(Text);
-    FreeMemory(Text);
+    ScriptName := FirstArgument;
+    SetPositionalParameters(ArgumentsFrom(2));
+    RunScriptFile(FirstArgument);
   end
   else
-  begin
-    SetPositionalParameters(nil, 0);
-    RunInteractive(KernelGetHandleKind(StandardInputHandle) = HandleKindConsole);
-  end;
+    RunInteractive(StandardInputIsConsole);
 
   if ExitRequested then
     Halt(RequestedExitCode);

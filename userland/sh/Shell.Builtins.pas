@@ -27,110 +27,100 @@
   running commands and functions (eval, exec, command, type, return,
   local) are in Shell.CommandBuiltins, the job control ones (jobs, fg,
   bg, wait, kill) in Shell.JobBuiltins.
+
+  A builtin gets its command line as a list: Arguments[0] is its name.
 }
 unit Shell.Builtins;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
+uses
+  Classes;
+
 type
-  TBuiltinRoutine = function(Arguments: PPChar; Count: Integer): LongInt;
+  TBuiltinRoutine = function(Arguments: TStrings): LongInt;
 
 { Returns nil if Name is not a builtin. }
-function FindBuiltin(Name: PChar): TBuiltinRoutine;
+function FindBuiltin(const Name: string): TBuiltinRoutine;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Shell.Text,
+  Shell.Output,
+  Shell.Host,
   Shell.Variables,
   Shell.Functions,
   Shell.CommandBuiltins,
   Shell.JobBuiltins,
   Shell.Execution;
 
-procedure BuiltinError(Name: PChar; Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, 'sh: ');
-  WriteText(StandardError, Name);
-  WriteText(StandardError, ': ');
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteCharacter(StandardError, #10);
-end;
-
-function BuiltinColon(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinColon(Arguments: TStrings): LongInt;
 begin
   Result := 0;
 end;
 
-function BuiltinFalse(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinFalse(Arguments: TStrings): LongInt;
 begin
   Result := 1;
 end;
 
-function BuiltinChangeDirectory(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinChangeDirectory(Arguments: TStrings): LongInt;
 var
-  Target: PChar;
-  Directory: array[0..PathCapacity - 1] of Char;
+  Target: string;
+  Directory: string;
   Error: LongInt;
 begin
-  if Count > 2 then
+  if Arguments.Count > 2 then
   begin
-    BuiltinError('cd', 'too many arguments', []);
+    CommandError('cd', 'too many arguments');
     Exit(1);
   end;
-  if Count = 2 then
+  if Arguments.Count = 2 then
     Target := Arguments[1]
-  else
+  else if not FindVariable('HOME', Target) then
+    Target := '/';
+  if Target = '-' then
   begin
-    Target := LookupVariable('HOME');
-    if Target = nil then
-      Target := '/';
-  end;
-  if TextIsEqual(Target, '-') then
-  begin
-    Target := LookupVariable('OLDPWD');
-    if Target = nil then
+    if not FindVariable('OLDPWD', Target) then
     begin
-      BuiltinError('cd', 'OLDPWD not set', []);
+      CommandError('cd', 'OLDPWD not set');
       Exit(1);
     end;
   end;
 
-  if GetCurrentDirectory(@Directory[0], PathCapacity) = ErrorNone then
-    AssignVariable('OLDPWD', @Directory[0]);
-  Error := ChangeDirectory(Target);
+  if CurrentDirectory(Directory) then
+    AssignVariable('OLDPWD', Directory);
+  Error := ChangeDirectory(PChar(Target));
   if Error <> ErrorNone then
   begin
-    BuiltinError('cd', '%s: %s', [ArgumentText(Target), ArgumentText(ErrorMessage(Error))]);
+    CommandError('cd', Target + ': ' + ErrorMessage(Error));
     Exit(1);
   end;
-  if GetCurrentDirectory(@Directory[0], PathCapacity) = ErrorNone then
-    AssignVariable('PWD', @Directory[0]);
+  if CurrentDirectory(Directory) then
+    AssignVariable('PWD', Directory);
   Result := 0;
 end;
 
-function BuiltinExit(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinExit(Arguments: TStrings): LongInt;
 var
   Code: Int64;
 begin
   Code := LastStatus;
-  if (Count >= 2) and not ParseInteger(Arguments[1], Code) then
+  if (Arguments.Count >= 2) and not TryParseInteger(Arguments[1], Code) then
   begin
-    BuiltinError('exit', '%s: numeric argument required', [ArgumentText(Arguments[1])]);
+    CommandError('exit', Arguments[1] + ': numeric argument required');
     Code := 2;
   end;
   ExitRequested := True;
@@ -138,45 +128,53 @@ begin
   Result := RequestedExitCode;
 end;
 
-function BuiltinExport(Arguments: PPChar; Count: Integer): LongInt;
+procedure ListExportedVariables;
+var
+  Block: PPChar;
+  Index: Integer;
+begin
+  Block := EnvironmentBlock;
+  Index := 0;
+  while Block[Index] <> nil do
+  begin
+    WriteStringLine(StandardOutput, 'export ' + string(Block[Index]));
+    Inc(Index);
+  end;
+end;
+
+function BuiltinExport(Arguments: TStrings): LongInt;
 var
   Index: Integer;
-  Block: PPChar;
+  Argument: string;
+  Valid: Boolean;
 begin
   Result := 0;
-  if Count = 1 then
+  if Arguments.Count = 1 then
   begin
-    Block := EnvironmentBlock;
-    Index := 0;
-    while Block[Index] <> nil do
-    begin
-      WriteFormatted(StandardOutput, 'export %s'#10, [ArgumentText(Block[Index])]);
-      Inc(Index);
-    end;
+    ListExportedVariables;
     Exit;
   end;
-  for Index := 1 to Count - 1 do
+  for Index := 1 to Arguments.Count - 1 do
   begin
-    if FindCharacter(Arguments[Index], '=') >= 0 then
-    begin
-      if not AssignFromText(Arguments[Index], True) then
-      begin
-        BuiltinError('export', '''%s'': not a valid identifier', [ArgumentText(Arguments[Index])]);
-        Result := 1;
-      end;
-    end
-    else if IsValidName(Arguments[Index]) then
-      ExportVariable(Arguments[Index])
+    Argument := Arguments[Index];
+    if Pos('=', Argument) > 0 then
+      Valid := AssignFromText(Argument, True)
     else
     begin
-      BuiltinError('export', '''%s'': not a valid identifier', [ArgumentText(Arguments[Index])]);
+      Valid := IsValidName(Argument);
+      if Valid then
+        ExportVariable(Argument);
+    end;
+    if not Valid then
+    begin
+      CommandError('export', '''' + Argument + ''': not a valid identifier');
       Result := 1;
     end;
   end;
 end;
 
 { unset [-v] NAME... removes variables; unset -f NAME... functions. }
-function BuiltinUnset(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinUnset(Arguments: TStrings): LongInt;
 var
   Index: Integer;
   First: Integer;
@@ -184,14 +182,14 @@ var
 begin
   First := 1;
   RemoveFunctions := False;
-  if (Count > 1) and TextIsEqual(Arguments[1], '-f') then
+  if (Arguments.Count > 1) and (Arguments[1] = '-f') then
   begin
     RemoveFunctions := True;
     First := 2;
   end
-  else if (Count > 1) and TextIsEqual(Arguments[1], '-v') then
+  else if (Arguments.Count > 1) and (Arguments[1] = '-v') then
     First := 2;
-  for Index := First to Count - 1 do
+  for Index := First to Arguments.Count - 1 do
     if RemoveFunctions then
       UnsetFunction(Arguments[Index])
     else
@@ -200,25 +198,25 @@ begin
 end;
 
 { set -- ARG... replaces the positional parameters. }
-function BuiltinSet(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinSet(Arguments: TStrings): LongInt;
 var
   First: Integer;
 begin
   First := 1;
-  if (Count > 1) and TextIsEqual(Arguments[1], '--') then
+  if (Arguments.Count > 1) and (Arguments[1] = '--') then
     First := 2;
-  SetPositionalParameters(Arguments + First, Count - First);
+  SetPositionalParameters(StringsFrom(Arguments, First));
   Result := 0;
 end;
 
-function BuiltinShift(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinShift(Arguments: TStrings): LongInt;
 var
   Amount: Int64;
 begin
   Amount := 1;
-  if (Count >= 2) and (not ParseInteger(Arguments[1], Amount) or (Amount < 0)) then
+  if (Arguments.Count >= 2) and (not TryParseInteger(Arguments[1], Amount) or (Amount < 0)) then
   begin
-    BuiltinError('shift', '%s: numeric argument required', [ArgumentText(Arguments[1])]);
+    CommandError('shift', Arguments[1] + ': numeric argument required');
     Exit(1);
   end;
   if Amount > PositionalCount then
@@ -227,103 +225,94 @@ begin
   Result := 0;
 end;
 
-{ read NAME... reads one line from standard input and assigns its words
-  to the names, the last name getting the rest of the line. It reads a
-  byte at a time so it never consumes input beyond the line. }
-function BuiltinRead(Arguments: PPChar; Count: Integer): LongInt;
+{ One line of standard input, a byte at a time so that nothing beyond
+  the line is consumed. }
+function ReadInputLine(out SawLineEnd: Boolean): string;
 var
-  Line: TTextBuilder;
+  Line: TTextBuffer;
   Character: Char;
-  BytesRead: Int64;
-  SawLineEnd: Boolean;
-  Position: PtrUInt;
-  Start: PtrUInt;
-  NameIndex: Integer;
-  Word: PChar;
 begin
-  FlushStandardStreams;
-  BeginText(Line);
+  Line.Clear;
   SawLineEnd := False;
-  repeat
-    BytesRead := ReadFile(StandardInputHandle, @Character, 1);
-    if BytesRead <= 0 then
-      Break;
+  while ReadFile(StandardInputHandle, @Character, 1) > 0 do
+  begin
     if Character = #10 then
     begin
       SawLineEnd := True;
       Break;
     end;
-    AppendCharacter(Line, Character);
-  until False;
+    Line.Append(Character);
+  end;
+  Result := Line.Value;
+end;
 
-  Position := 0;
-  for NameIndex := 1 to Count - 1 do
+{ read NAME... reads one line from standard input and assigns its words
+  to the names, the last name getting the rest of the line. }
+function BuiltinRead(Arguments: TStrings): LongInt;
+var
+  Line: string;
+  SawLineEnd: Boolean;
+  Position: Integer;
+  Start: Integer;
+  NameIndex: Integer;
+  LastName: Integer;
+begin
+  FlushStandardStreams;
+  Line := ReadInputLine(SawLineEnd);
+
+  Position := 1;
+  LastName := Arguments.Count - 1;
+  for NameIndex := 1 to LastName do
   begin
-    while IsSpace(Line.Text[Position]) do
+    while IsSpace(CharAt(Line, Position)) do
       Inc(Position);
     Start := Position;
-    if NameIndex = Count - 1 then
+    if NameIndex = LastName then
     begin
-      Position := Line.Length;
-      while (Position > Start) and IsSpace(Line.Text[Position - 1]) do
+      Position := Length(Line) + 1;
+      while (Position > Start) and IsSpace(Line[Position - 1]) do
         Dec(Position);
     end
     else
-      while (Line.Text[Position] <> #0) and not IsSpace(Line.Text[Position]) do
+      while (CharAt(Line, Position) <> #0) and not IsSpace(Line[Position]) do
         Inc(Position);
-    Word := PChar(AllocateMemory(Position - Start + 1));
-    CopyMemory(Word, Line.Text + Start, Position - Start);
-    Word[Position - Start] := #0;
-    AssignVariable(Arguments[NameIndex], Word);
-    FreeMemory(Word);
+    AssignVariable(Arguments[NameIndex], Copy(Line, Start, Position - Start));
   end;
 
-  if SawLineEnd or (Line.Length > 0) then
+  if SawLineEnd or (Line <> '') then
     Result := 0
   else
     Result := 1;
-  DiscardText(Line);
 end;
 
 { . FILE runs the commands in FILE in this shell. }
-function BuiltinSource(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinSource(Arguments: TStrings): LongInt;
 var
-  Handle: Int64;
-  Builder: TTextBuilder;
-  Buffer: array[0..1023] of Char;
-  BytesRead: Int64;
+  Text: string;
+  Error: LongInt;
 begin
-  if Count < 2 then
+  if Arguments.Count < 2 then
   begin
-    BuiltinError('.', 'file name argument required', []);
+    CommandError('.', 'file name argument required');
     Exit(2);
   end;
-  Handle := OpenFile(Arguments[1], OpenRead);
-  if Handle < 0 then
+  Error := ReadTextFile(Arguments[1], Text);
+  if Error <> ErrorNone then
   begin
-    BuiltinError('.', '%s: %s', [ArgumentText(Arguments[1]), ArgumentText(ErrorMessage(ErrorCodeOf(Handle)))]);
+    CommandError('.', Arguments[1] + ': ' + ErrorMessage(Error));
     Exit(1);
   end;
-  BeginText(Builder);
-  repeat
-    BytesRead := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
-    if BytesRead > 0 then
-      AppendBytes(Builder, @Buffer[0], BytesRead);
-  until BytesRead <= 0;
-  CloseFile(Handle);
-  Result := ExecuteText(Builder.Text);
-  DiscardText(Builder);
+  Result := ExecuteText(Text);
 end;
 
-function LoopControlBuiltin(Name: PChar; Arguments: PPChar; Count: Integer;
-  Control: TLoopControl): LongInt;
+function LoopControlBuiltin(const Name: string; Arguments: TStrings; Control: TLoopControl): LongInt;
 var
   Levels: Int64;
 begin
   Levels := 1;
-  if (Count >= 2) and (not ParseInteger(Arguments[1], Levels) or (Levels < 1)) then
+  if (Arguments.Count >= 2) and (not TryParseInteger(Arguments[1], Levels) or (Levels < 1)) then
   begin
-    BuiltinError(Name, '%s: loop count out of range', [ArgumentText(Arguments[1])]);
+    CommandError(Name, Arguments[1] + ': loop count out of range');
     Exit(1);
   end;
   if LoopDepth = 0 then
@@ -335,45 +324,72 @@ begin
   Result := 0;
 end;
 
-function BuiltinBreak(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinBreak(Arguments: TStrings): LongInt;
 begin
-  Result := LoopControlBuiltin('break', Arguments, Count, LoopControlBreak);
+  Result := LoopControlBuiltin('break', Arguments, LoopControlBreak);
 end;
 
-function BuiltinContinue(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinContinue(Arguments: TStrings): LongInt;
 begin
-  Result := LoopControlBuiltin('continue', Arguments, Count, LoopControlContinue);
+  Result := LoopControlBuiltin('continue', Arguments, LoopControlContinue);
+end;
+
+{ The mask as umask -S shows it: "u=rwx,g=rx,o=rx". }
+function SymbolicMask(Mask: LongWord): string;
+const
+  ClassLetters: array[0..2] of Char = ('u', 'g', 'o');
+var
+  ClassIndex: Integer;
+  Allowed: LongWord;
+begin
+  Result := '';
+  for ClassIndex := 0 to 2 do
+  begin
+    if ClassIndex > 0 then
+      Result := Result + ',';
+    Result := Result + ClassLetters[ClassIndex] + '=';
+    Allowed := (not Mask shr (3 * (2 - ClassIndex))) and 7;
+    if (Allowed and 4) <> 0 then
+      Result := Result + 'r';
+    if (Allowed and 2) <> 0 then
+      Result := Result + 'w';
+    if (Allowed and 1) <> 0 then
+      Result := Result + 'x';
+  end;
+end;
+
+{ An octal mask of up to 0777; False if Text is not one. }
+function ParseMask(const Text: string; out Mask: LongWord): Boolean;
+var
+  Position: Integer;
+begin
+  Mask := 0;
+  Position := 1;
+  while CharAt(Text, Position) in ['0'..'7'] do
+  begin
+    Mask := Mask * 8 + LongWord(Ord(Text[Position]) - Ord('0'));
+    Inc(Position);
+  end;
+  Result := (Position > 1) and (Position > Length(Text)) and (Mask <= $1FF);
 end;
 
 { umask [-S] [MODE]: shows or sets the permission bits taken away from
   new files. MODE is octal. }
-function BuiltinUmask(Arguments: PPChar; Count: Integer): LongInt;
-const
-  Classes: array[0..2] of Char = ('u', 'g', 'o');
+function BuiltinUmask(Arguments: TStrings): LongInt;
 var
   Mask: LongWord;
   Symbolic: Boolean;
   First: Integer;
-  Position: Integer;
-  ClassIndex: Integer;
-  Allowed: LongWord;
 begin
-  Symbolic := (Count >= 2) and TextIsEqual(Arguments[1], '-S');
+  Symbolic := (Arguments.Count >= 2) and (Arguments[1] = '-S');
   First := 1;
   if Symbolic then
     First := 2;
-  if First < Count then
+  if First < Arguments.Count then
   begin
-    Mask := 0;
-    Position := 0;
-    while Arguments[First][Position] in ['0'..'7'] do
+    if not ParseMask(Arguments[First], Mask) then
     begin
-      Mask := Mask * 8 + LongWord(Ord(Arguments[First][Position]) - Ord('0'));
-      Inc(Position);
-    end;
-    if (Position = 0) or (Arguments[First][Position] <> #0) or (Mask > $1FF) then
-    begin
-      BuiltinError('umask', '%s: octal number out of range', [ArgumentText(Arguments[First])]);
+      CommandError('umask', Arguments[First] + ': octal number out of range');
       Exit(1);
     end;
     KernelSetUmask(Mask);
@@ -383,57 +399,40 @@ begin
   Mask := LongWord(KernelSetUmask(0));
   KernelSetUmask(Mask);
   if Symbolic then
-  begin
-    for ClassIndex := 0 to 2 do
-    begin
-      if ClassIndex > 0 then
-        WriteCharacter(StandardOutput, ',');
-      WriteCharacter(StandardOutput, Classes[ClassIndex]);
-      WriteCharacter(StandardOutput, '=');
-      Allowed := (not Mask shr (3 * (2 - ClassIndex))) and 7;
-      if (Allowed and 4) <> 0 then WriteCharacter(StandardOutput, 'r');
-      if (Allowed and 2) <> 0 then WriteCharacter(StandardOutput, 'w');
-      if (Allowed and 1) <> 0 then WriteCharacter(StandardOutput, 'x');
-    end;
-  end
+    WriteStringLine(StandardOutput, SymbolicMask(Mask))
   else
-  begin
-    WriteCharacter(StandardOutput, '0');
-    WriteCharacter(StandardOutput, Char(Ord('0') + (Mask shr 6) and 7));
-    WriteCharacter(StandardOutput, Char(Ord('0') + (Mask shr 3) and 7));
-    WriteCharacter(StandardOutput, Char(Ord('0') + Mask and 7));
-  end;
-  WriteCharacter(StandardOutput, #10);
+    WriteStringLine(StandardOutput, '0' + IntToStr((Mask shr 6) and 7) + IntToStr((Mask shr 3) and 7) +
+      IntToStr(Mask and 7));
   Result := 0;
 end;
 
-function FindBuiltin(Name: PChar): TBuiltinRoutine;
+function FindBuiltin(const Name: string): TBuiltinRoutine;
 begin
-  if TextIsEqual(Name, ':') or TextIsEqual(Name, 'true') then
+  if (Name = ':') or (Name = 'true') then
     Result := @BuiltinColon
-  else if TextIsEqual(Name, 'false') then
+  else if Name = 'false' then
     Result := @BuiltinFalse
-  else if TextIsEqual(Name, 'cd') then
+  else if Name = 'cd' then
     Result := @BuiltinChangeDirectory
-  else if TextIsEqual(Name, 'exit') then
+  else if Name = 'exit' then
     Result := @BuiltinExit
-  else if TextIsEqual(Name, 'export') then
+  else if Name = 'export' then
     Result := @BuiltinExport
-  else if TextIsEqual(Name, 'unset') then
+  else if Name = 'unset' then
     Result := @BuiltinUnset
-  else if TextIsEqual(Name, 'set') then
+  else if Name = 'set' then
     Result := @BuiltinSet
-  else if TextIsEqual(Name, 'shift') then
+  else if Name = 'shift' then
     Result := @BuiltinShift
-  else if TextIsEqual(Name, 'read') then
+  else if Name = 'read' then
     Result := @BuiltinRead
-  else if TextIsEqual(Name, '.') or TextIsEqual(Name, 'source') then
+  else if (Name = '.') or (Name = 'source') then
     Result := @BuiltinSource
-  else if TextIsEqual(Name, 'break') then
+  else if Name = 'break' then
     Result := @BuiltinBreak
-  else if TextIsEqual(Name, 'continue') then
+  else if Name = 'continue' then
     Result := @BuiltinContinue
-  else if TextIsEqual(Name, 'umask') then
+  else if Name = 'umask' then
     Result := @BuiltinUmask
   else
   begin

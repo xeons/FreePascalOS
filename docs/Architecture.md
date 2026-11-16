@@ -4940,6 +4940,10 @@ independent) against the Free Pascal runtime library:
   history in `$HOME/.sh_history`, Tab completion; a line longer than the
   screen scrolls sideways, so redrawing needs only carriage return,
   backspace and spaces and works on serial terminals too).
+  The syntax tree has a class per kind of command (`Shell.Nodes`);
+  simple commands run through `Shell.Commands`, pipelines through
+  `Shell.Pipelines`, redirections and here-documents through
+  `Shell.Redirections`.
   Pipelines start their external programs first and then run builtins and
   compound commands inside the shell, so no stage waits for one that has
   not started. The language has `case`, functions (`Shell.Functions`: a

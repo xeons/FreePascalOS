@@ -19,40 +19,21 @@
 {
   Running parsed commands.
 
-  External programs are started as new processes with the standard
-  handles they should have (pipe ends, redirected files). Builtins and
-  compound commands run inside the shell itself; for them the shell
-  temporarily points its own standard handles at the right place.
-
-  A pipeline is started in two passes so that no stage waits for one
-  that has not started yet: first every external program, then the
-  stages that run inside the shell, from left to right. Then the shell
-  waits for the external programs. The status of a pipeline is the
-  status of its last stage.
-
-  An interactive shell runs every pipeline in a process group of its own;
-  a foreground pipeline's group becomes the console's foreground group
-  while the shell waits, so Ctrl-C ends exactly that pipeline, and Ctrl-Z
-  stops it: it then becomes a stopped job (Shell.Jobs) for fg and bg. A
-  pipeline ending in '&' becomes a running job. When a
-  foreground program ends by Ctrl-C (status 130), the rest of the command
-  line is abandoned. Ctrl-C pressed while the shell itself is busy (a loop
-  of builtins) is noticed between commands.
-
-  Functions run inside the shell with their own positional parameters and
-  local variables; "return" unwinds to the call like "break" unwinds a
-  loop. Here-documents reach the command through a pipe, or through a
-  temporary file when they are larger than a pipe holds.
+  Simple commands and pipelines are run by Shell.Pipelines (with
+  Shell.Commands); this unit runs the lists and compound commands around
+  them, inside the shell, and keeps the state that unwinds them: exit,
+  break and continue, return, and Ctrl-C. Ctrl-C pressed while the shell
+  itself is busy (a loop of builtins) is noticed between commands.
 }
 unit Shell.Execution;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Shell.Syntax;
+  Shell.Nodes;
 
 type
   TLoopControl = (LoopControlNone, LoopControlBreak, LoopControlContinue);
@@ -78,71 +59,25 @@ var
 { True while break, continue, return, exit or Ctrl-C unwinds execution. }
 function Unwinding: Boolean;
 
-function ExecuteNode(Node: PNode): LongInt;
+function ExecuteNode(Node: TShellNode): LongInt;
 { Parses and runs Text; syntax errors give status 2. }
-function ExecuteText(Text: PChar): LongInt;
+function ExecuteText(const Text: string): LongInt;
 
 implementation
 
 uses
+  Classes,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Environment,
-  Sys.Errors,
-  Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Console,
-  Sys.Processes,
   Sys.Streams,
-  Sys.Text,
-  Shell.Lexer,
+  Shell.Output,
+  Shell.Syntax,
   Shell.Variables,
   Shell.Expansion,
   Shell.Functions,
   Shell.Patterns,
-  Shell.Jobs,
-  Shell.Builtins;
-
-const
-  ProgramPathCapacity = 1024;
-  StatusNotFound = 127;
-  StatusCannotRun = 126;
-  StatusInterrupted = 130;
-  { A here-document up to this size goes through a pipe (which holds
-    4 KiB), a larger one through a temporary file. }
-  HereDocumentPipeLimit = 4000;
-  MaximumTemporaryFiles = 16;
-
-type
-  TStandardHandles = array[0..2] of Int64;
-
-  { Files opened for the redirections of one command. }
-  TOpenedHandles = record
-    Handles: array[0..15] of Int64;
-    Count: Integer;
-  end;
-
-  { A simple command after expansion. }
-  TPreparedCommand = record
-    Node: PNode;
-    Fields: TFieldList;
-    Builtin: TBuiltinRoutine;
-    { The body if the command names a shell function. }
-    FunctionBody: PNode;
-    { "exec program": the shell ends with the program's status. }
-    ExitAfterwards: Boolean;
-    { An expansion failed; the command is not run. }
-    Failed: Boolean;
-  end;
-  PPreparedCommand = ^TPreparedCommand;
-
-var
-  { Here-documents written to files, removed when the pipeline ends. }
-  TemporaryFiles: array[0..MaximumTemporaryFiles - 1] of PChar;
-  TemporaryFileCount: Integer = 0;
-  TemporaryFileNumber: Integer = 0;
+  Shell.Redirections,
+  Shell.Pipelines;
 
 function Unwinding: Boolean;
 begin
@@ -156,769 +91,11 @@ begin
   begin
     InterruptRequested := True;
     FlushStream(StandardOutput);
-    WriteText(StandardError, '^C'#10);
+    WriteString(StandardError, '^C'#10);
   end;
 end;
 
-procedure RemoveTemporaryFiles;
-var
-  Index: Integer;
-begin
-  for Index := 0 to TemporaryFileCount - 1 do
-  begin
-    RemovePath(TemporaryFiles[Index]);
-    FreeMemory(TemporaryFiles[Index]);
-  end;
-  TemporaryFileCount := 0;
-end;
-
-procedure ShellError(Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, 'sh: ');
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteCharacter(StandardError, #10);
-end;
-
-{ --- Standard handle switching --------------------------------------- }
-
-{ Points the shell's handles 0-2 at Handles, remembering the old ones. }
-procedure SwitchStandardHandles(const Handles: TStandardHandles; out Saved: TStandardHandles);
-var
-  Index: Integer;
-begin
-  FlushStandardStreams;
-  for Index := 0 to 2 do
-  begin
-    Saved[Index] := NoHandle;
-    if Handles[Index] <> Index then
-    begin
-      Saved[Index] := DuplicateHandle(Index, NoHandle);
-      DuplicateHandle(Handles[Index], Index);
-    end;
-  end;
-end;
-
-procedure RestoreStandardHandles(const Saved: TStandardHandles);
-var
-  Index: Integer;
-begin
-  FlushStandardStreams;
-  for Index := 0 to 2 do
-  begin
-    if Saved[Index] >= 0 then
-    begin
-      DuplicateHandle(Saved[Index], Index);
-      CloseFile(Saved[Index]);
-    end;
-  end;
-end;
-
-{ --- Redirections ---------------------------------------------------- }
-
-{ A handle from which the command reads the here-document's text. }
-function OpenHereDocument(Redirection: PRedirection): Int64;
-var
-  Body: PChar;
-  Length: PtrUInt;
-  ReadHandle: Int64;
-  WriteHandle: Int64;
-  Directory: PChar;
-  Builder: TTextBuilder;
-  Path: PChar;
-begin
-  Result := -1;
-  if Redirection^.HereBody = nil then
-    Body := DuplicateText('')
-  else if Redirection^.HereIsQuoted then
-    Body := DuplicateText(Redirection^.HereBody)
-  else
-    Body := ExpandHereDocument(Redirection^.HereBody);
-  Length := TextLength(Body);
-
-  if Length <= HereDocumentPipeLimit then
-  begin
-    if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
-    begin
-      ShellError('cannot create a pipe for a here-document', []);
-      FreeMemory(Body);
-      Exit;
-    end;
-    WriteAll(WriteHandle, Body, Length);
-    CloseFile(WriteHandle);
-    FreeMemory(Body);
-    Exit(ReadHandle);
-  end;
-
-  Directory := LookupVariable('TMPDIR');
-  if (Directory = nil) or (Directory^ = #0) then
-    Directory := '/tmp';
-  Inc(TemporaryFileNumber);
-  BeginText(Builder);
-  AppendText(Builder, Directory);
-  AppendText(Builder, '/sh-here-');
-  AppendDecimal(Builder, CurrentProcessId);
-  AppendCharacter(Builder, '-');
-  AppendDecimal(Builder, TemporaryFileNumber);
-  Path := FinishText(Builder);
-  WriteHandle := OpenFile(Path, OpenWrite or OpenCreate or OpenTruncate);
-  if WriteHandle < 0 then
-  begin
-    ShellError('cannot create a file for a here-document: %s', [ArgumentText(ErrorMessage(ErrorCodeOf(WriteHandle)))]);
-    FreeMemory(Path);
-    FreeMemory(Body);
-    Exit;
-  end;
-  WriteAll(WriteHandle, Body, Length);
-  CloseFile(WriteHandle);
-  FreeMemory(Body);
-  Result := OpenFile(Path, OpenRead);
-  if TemporaryFileCount < MaximumTemporaryFiles then
-  begin
-    TemporaryFiles[TemporaryFileCount] := Path;
-    Inc(TemporaryFileCount);
-  end
-  else
-    FreeMemory(Path);
-end;
-
-{ Applies the redirections of Node on top of Handles. Files opened here
-  are added to Opened so they can be closed later. Returns False (after
-  reporting) when a file cannot be opened. }
-function ApplyRedirections(Node: PNode; var Handles: TStandardHandles; var Opened: TOpenedHandles): Boolean;
-var
-  Index: Integer;
-  Redirection: PRedirection;
-  Target: PChar;
-  Flags: LongWord;
-  Handle: Int64;
-  SourceNumber: Int64;
-begin
-  Result := True;
-  for Index := 0 to Node^.RedirectionCount - 1 do
-  begin
-    Redirection := @Node^.Redirections[Index];
-    if (Redirection^.Handle < 0) or (Redirection^.Handle > 2) then
-    begin
-      ShellError('only handles 0, 1 and 2 can be redirected', []);
-      Exit(False);
-    end;
-    if Redirection^.Kind = RedirectHereDocument then
-    begin
-      Handle := OpenHereDocument(Redirection);
-      if Handle < 0 then
-        Exit(False);
-      Handles[Redirection^.Handle] := Handle;
-      if Opened.Count < Length(Opened.Handles) then
-      begin
-        Opened.Handles[Opened.Count] := Handle;
-        Inc(Opened.Count);
-      end;
-      Continue;
-    end;
-    Target := ExpandToText(Redirection^.Target);
-
-    if Redirection^.Kind = RedirectDuplicate then
-    begin
-      if ParseInteger(Target, SourceNumber) and (SourceNumber >= 0) and (SourceNumber <= 2) then
-        Handles[Redirection^.Handle] := Handles[SourceNumber]
-      else
-      begin
-        ShellError('%s: bad redirection', [ArgumentText(Target)]);
-        FreeMemory(Target);
-        Exit(False);
-      end;
-      FreeMemory(Target);
-      Continue;
-    end;
-
-    case Redirection^.Kind of
-      RedirectInput: Flags := OpenRead;
-      RedirectOutput: Flags := OpenWrite or OpenCreate or OpenTruncate;
-    else
-      Flags := OpenWrite or OpenCreate or OpenAppend;
-    end;
-    Handle := OpenFile(Target, Flags);
-    if Handle < 0 then
-    begin
-      ShellError('%s: %s', [ArgumentText(Target), ArgumentText(ErrorMessage(ErrorCodeOf(Handle)))]);
-      FreeMemory(Target);
-      Exit(False);
-    end;
-    FreeMemory(Target);
-    Handles[Redirection^.Handle] := Handle;
-    if Opened.Count < Length(Opened.Handles) then
-    begin
-      Opened.Handles[Opened.Count] := Handle;
-      Inc(Opened.Count);
-    end;
-  end;
-end;
-
-procedure CloseOpenedHandles(var Opened: TOpenedHandles);
-var
-  Index: Integer;
-begin
-  for Index := 0 to Opened.Count - 1 do
-    CloseFile(Opened.Handles[Index]);
-  Opened.Count := 0;
-end;
-
-{ --- Simple commands ------------------------------------------------- }
-
-{ Drops the first field (for "exec program" and "command program"). }
-procedure DropFirstField(var Fields: TFieldList);
-var
-  Index: Integer;
-begin
-  FreeMemory(Fields.Items[0]);
-  for Index := 1 to Fields.Count do
-    Fields.Items[Index - 1] := Fields.Items[Index];
-  Dec(Fields.Count);
-end;
-
-procedure PrepareCommand(Node: PNode; out Prepared: TPreparedCommand);
-var
-  SkipFunctions: Boolean;
-begin
-  Prepared.Node := Node;
-  Prepared.FunctionBody := nil;
-  Prepared.ExitAfterwards := False;
-  BeginFieldList(Prepared.Fields);
-  ExpansionFailed := False;
-  ExpandWords(Node^.Words, Node^.WordCount, Prepared.Fields);
-  Prepared.Failed := ExpansionFailed;
-  Prepared.Builtin := nil;
-  if Prepared.Fields.Count = 0 then
-    Exit;
-  SkipFunctions := False;
-  { "exec program ..." runs the program, then the shell ends. }
-  if TextIsEqual(Prepared.Fields.Items[0], 'exec') and (Prepared.Fields.Count > 1) then
-  begin
-    DropFirstField(Prepared.Fields);
-    Prepared.ExitAfterwards := True;
-    Exit;
-  end;
-  { "command name ..." skips functions; "command -v" is a builtin. }
-  if TextIsEqual(Prepared.Fields.Items[0], 'command') and (Prepared.Fields.Count > 1) and
-     (Prepared.Fields.Items[1][0] <> '-') then
-  begin
-    DropFirstField(Prepared.Fields);
-    SkipFunctions := True;
-  end;
-  if not SkipFunctions then
-    Prepared.FunctionBody := FindFunction(Prepared.Fields.Items[0]);
-  if Prepared.FunctionBody = nil then
-    Prepared.Builtin := FindBuiltin(Prepared.Fields.Items[0]);
-end;
-
-{ After an expansion failed: an interactive shell drops the command line,
-  a script ends. }
-function HandleExpansionFailure: LongInt;
-begin
-  if ShellIsInteractive then
-    InterruptRequested := True
-  else
-  begin
-    ExitRequested := True;
-    RequestedExitCode := 1;
-  end;
-  Result := 1;
-end;
-
-{ Runs a shell function with Fields as its arguments. }
-function CallFunction(Body: PNode; const Fields: TFieldList): LongInt;
-var
-  SavedPositionals: TSavedPositionals;
-  SavedLoopDepth: Integer;
-begin
-  SavePositionalParameters(SavedPositionals);
-  SetPositionalParameters(Fields.Items + 1, Fields.Count - 1);
-  BeginLocalScope;
-  Inc(FunctionDepth);
-  { break and continue do not reach loops outside the function. }
-  SavedLoopDepth := LoopDepth;
-  LoopDepth := 0;
-  Result := ExecuteNode(Body);
-  if ReturnRequested then
-  begin
-    Result := ReturnStatus;
-    ReturnRequested := False;
-  end;
-  LoopControl := LoopControlNone;
-  LoopDepth := SavedLoopDepth;
-  Dec(FunctionDepth);
-  EndLocalScope;
-  RestorePositionalParameters(SavedPositionals);
-end;
-
-{ The environment for a program started with "NAME=value command". }
-function BuildEnvironment(Node: PNode): PPChar;
-var
-  Block: PPChar;
-  Count: Integer;
-  Index: Integer;
-  Value: PChar;
-  Builder: TTextBuilder;
-  EqualsPosition: PtrInt;
-  Name: array[0..255] of Char;
-  Existing: Integer;
-begin
-  if Node^.AssignmentCount = 0 then
-    Exit(nil);
-  Block := EnvironmentBlock;
-  Count := EnvironmentCount;
-  Result := PPChar(AllocateZeroedMemory(QWord(Count + Node^.AssignmentCount + 1) * SizeOf(PChar)));
-  for Index := 0 to Count - 1 do
-    Result[Index] := DuplicateText(Block[Index]);
-
-  for Index := 0 to Node^.AssignmentCount - 1 do
-  begin
-    EqualsPosition := FindCharacter(Node^.Assignments[Index], '=');
-    CopyText(@Name[0], Node^.Assignments[Index], PtrUInt(EqualsPosition) + 1);
-    Value := ExpandToText(Node^.Assignments[Index] + EqualsPosition + 1);
-    BeginText(Builder);
-    AppendText(Builder, @Name[0]);
-    AppendCharacter(Builder, '=');
-    AppendText(Builder, Value);
-    FreeMemory(Value);
-
-    { Replace an existing entry of the same name. }
-    Existing := 0;
-    while (Existing < Count) and not (TextStartsWith(Result[Existing], @Name[0]) and
-      (Result[Existing][EqualsPosition] = '=')) do
-      Inc(Existing);
-    if Existing < Count then
-      FreeMemory(Result[Existing])
-    else
-      Inc(Count);
-    Result[Existing] := FinishText(Builder);
-  end;
-end;
-
-procedure FreeEnvironment(Environment: PPChar);
-var
-  Index: Integer;
-begin
-  if Environment = nil then
-    Exit;
-  Index := 0;
-  while Environment[Index] <> nil do
-  begin
-    FreeMemory(Environment[Index]);
-    Inc(Index);
-  end;
-  FreeMemory(Environment);
-end;
-
-{ Starts an external program; returns its process handle, or -1 after
-  reporting a problem (Status tells which). }
-function StartExternal(var Prepared: TPreparedCommand; const Handles: TStandardHandles;
-  GroupId: Int64; out Status: LongInt): Int64;
-var
-  ProgramPath: array[0..ProgramPathCapacity - 1] of Char;
-  Effective: TStandardHandles;
-  Opened: TOpenedHandles;
-  Options: TProcessOptions;
-  Environment: PPChar;
-  Name: PChar;
-begin
-  Result := -1;
-  Status := 0;
-  Name := Prepared.Fields.Items[0];
-  if not FindProgram(Name, @ProgramPath[0], ProgramPathCapacity) then
-  begin
-    ShellError('%s: command not found', [ArgumentText(Name)]);
-    Status := StatusNotFound;
-    Exit;
-  end;
-
-  Effective := Handles;
-  Opened.Count := 0;
-  if not ApplyRedirections(Prepared.Node, Effective, Opened) then
-  begin
-    CloseOpenedHandles(Opened);
-    Status := 1;
-    Exit;
-  end;
-
-  Environment := BuildEnvironment(Prepared.Node);
-  DefaultProcessOptions(Options);
-  Options.GroupId := GroupId;
-  Options.Environment := Environment;
-  Options.InputHandle := Effective[0];
-  Options.OutputHandle := Effective[1];
-  Options.ErrorHandle := Effective[2];
-  FlushStandardStreams;
-  Result := StartProgram(@ProgramPath[0], Prepared.Fields.Items, Options);
-  FreeEnvironment(Environment);
-  CloseOpenedHandles(Opened);
-
-  if Result < 0 then
-  begin
-    ShellError('%s: %s', [ArgumentText(Name), ArgumentText(ErrorMessage(ErrorCodeOf(Result)))]);
-    Status := StatusCannotRun;
-    Result := -1;
-  end;
-end;
-
-procedure PerformAssignments(Node: PNode);
-var
-  Index: Integer;
-  EqualsPosition: PtrInt;
-  Name: array[0..255] of Char;
-  Value: PChar;
-begin
-  for Index := 0 to Node^.AssignmentCount - 1 do
-  begin
-    EqualsPosition := FindCharacter(Node^.Assignments[Index], '=');
-    CopyText(@Name[0], Node^.Assignments[Index], PtrUInt(EqualsPosition) + 1);
-    Value := ExpandToText(Node^.Assignments[Index] + EqualsPosition + 1);
-    AssignVariable(@Name[0], Value);
-    FreeMemory(Value);
-  end;
-end;
-
-{ Runs a builtin, or a command consisting only of assignments and
-  redirections, inside the shell. }
-function RunInShell(var Prepared: TPreparedCommand; const Handles: TStandardHandles): LongInt;
-var
-  Effective: TStandardHandles;
-  Saved: TStandardHandles;
-  Opened: TOpenedHandles;
-  Index: Integer;
-begin
-  if Prepared.Failed then
-    Exit(HandleExpansionFailure);
-  Effective := Handles;
-  Opened.Count := 0;
-  if not ApplyRedirections(Prepared.Node, Effective, Opened) then
-  begin
-    CloseOpenedHandles(Opened);
-    Exit(1);
-  end;
-
-  if Prepared.Fields.Count = 0 then
-  begin
-    PerformAssignments(Prepared.Node);
-    CloseOpenedHandles(Opened);
-    { The status of the last command substitution, if any. }
-    Exit(LastStatus);
-  end;
-
-  { "exec" with only redirections makes them permanent. }
-  if TextIsEqual(Prepared.Fields.Items[0], 'exec') then
-  begin
-    FlushStandardStreams;
-    for Index := 0 to 2 do
-      if Effective[Index] <> Index then
-        DuplicateHandle(Effective[Index], Index);
-    CloseOpenedHandles(Opened);
-    Exit(0);
-  end;
-
-  PerformAssignments(Prepared.Node);
-  SwitchStandardHandles(Effective, Saved);
-  if Prepared.FunctionBody <> nil then
-    Result := CallFunction(Prepared.FunctionBody, Prepared.Fields)
-  else
-    Result := Prepared.Builtin(Prepared.Fields.Items, Prepared.Fields.Count);
-  RestoreStandardHandles(Saved);
-  CloseOpenedHandles(Opened);
-end;
-
-function RunsInShell(const Prepared: TPreparedCommand): Boolean;
-begin
-  Result := (Prepared.Fields.Count = 0) or (Prepared.Builtin <> nil) or (Prepared.FunctionBody <> nil) or
-    Prepared.Failed;
-end;
-
-{ --- Pipelines ------------------------------------------------------- }
-
-{ The command line of a pipeline as jobs shows it, rebuilt from the
-  expanded words. }
-function DescribePipeline(Prepared: PPreparedCommand; Count: Integer): PChar;
-var
-  Builder: TTextBuilder;
-  Stage: Integer;
-  Index: Integer;
-begin
-  BeginText(Builder);
-  for Stage := 0 to Count - 1 do
-  begin
-    if Stage > 0 then
-      AppendText(Builder, ' | ');
-    { Compound commands have no words of their own. }
-    if Prepared[Stage].Node = nil then
-      AppendText(Builder, '(...)');
-    for Index := 0 to Prepared[Stage].Fields.Count - 1 do
-    begin
-      if Index > 0 then
-        AppendCharacter(Builder, ' ');
-      AppendText(Builder, Prepared[Stage].Fields.Items[Index]);
-    end;
-  end;
-  Result := FinishText(Builder);
-end;
-
-{ A background pipeline becomes a job; its programs run on. }
-procedure StartBackgroundJob(Prepared: PPreparedCommand; Processes: PInt64; Count: Integer;
-  GroupId: Int64);
-var
-  Handles: array[0..MaximumJobProcesses - 1] of Int64;
-  HandleCount: Integer;
-  Index: Integer;
-  Command: PChar;
-  Job: PJob;
-begin
-  HandleCount := 0;
-  for Index := 0 to Count - 1 do
-  begin
-    if Processes[Index] < 0 then
-      Continue;
-    if HandleCount = MaximumJobProcesses then
-    begin
-      CloseFile(Processes[Index]);
-      Continue;
-    end;
-    Handles[HandleCount] := Processes[Index];
-    Inc(HandleCount);
-  end;
-  if HandleCount = 0 then
-    Exit;
-  LastBackgroundProcessId := ProcessIdOf(Handles[HandleCount - 1]);
-  if GroupId < 0 then
-    GroupId := 0;
-  Command := DescribePipeline(Prepared, Count);
-  Job := AddJob(@Handles[0], HandleCount, GroupId, Command, JobRunning);
-  FreeMemory(Command);
-  if ShellIsInteractive and (Job <> nil) then
-  begin
-    WriteFormatted(StandardError, '[%d] %d'#10, [ArgumentNumber(Job^.Number),
-      ArgumentNumber(LastBackgroundProcessId)]);
-    FlushStream(StandardError);
-  end;
-end;
-
-{ Waits for the external programs of a foreground pipeline. In an
-  interactive shell a stopped program (Ctrl-Z) turns the rest of the
-  pipeline into a stopped job and abandons the rest of the command line;
-  then the result is True. }
-function WaitForPipeline(Prepared: PPreparedCommand; Processes: PInt64; Statuses: PLongInt;
-  Count: Integer; GroupId: Int64): Boolean;
-var
-  StoppedHandles: array[0..MaximumJobProcesses - 1] of Int64;
-  StoppedCount: Integer;
-  Index: Integer;
-  Stopped: Boolean;
-  ExitCode: LongInt;
-  Command: PChar;
-  Job: PJob;
-begin
-  StoppedCount := 0;
-  for Index := 0 to Count - 1 do
-  begin
-    if Processes[Index] < 0 then
-      Continue;
-    if StoppedCount > 0 then
-    begin
-      { A later stage of a stopped pipeline belongs to the job too. }
-      if StoppedCount < MaximumJobProcesses then
-      begin
-        StoppedHandles[StoppedCount] := Processes[Index];
-        Inc(StoppedCount);
-      end
-      else
-        CloseFile(Processes[Index]);
-      Statuses[Index] := StatusStopped;
-      Continue;
-    end;
-    if ShellIsInteractive then
-    begin
-      if WaitForProgramChange(Processes[Index], InfiniteWait, Stopped, ExitCode) <> ErrorNone then
-      begin
-        Stopped := False;
-        ExitCode := 1;
-      end;
-      if Stopped then
-      begin
-        StoppedHandles[0] := Processes[Index];
-        StoppedCount := 1;
-        Statuses[Index] := StatusStopped;
-        Continue;
-      end;
-      CloseFile(Processes[Index]);
-      Statuses[Index] := ExitCode;
-    end
-    else
-      Statuses[Index] := WaitForProgram(Processes[Index]);
-    if ShellIsInteractive and (Statuses[Index] = StatusInterrupted) then
-      InterruptRequested := True;
-    if Prepared[Index].ExitAfterwards then
-    begin
-      ExitRequested := True;
-      RequestedExitCode := Statuses[Index];
-    end;
-  end;
-
-  Result := StoppedCount > 0;
-  if not Result then
-    Exit;
-  if GroupId < 0 then
-    GroupId := 0;
-  Command := DescribePipeline(Prepared, Count);
-  Job := AddJob(@StoppedHandles[0], StoppedCount, GroupId, Command, JobStopped);
-  FreeMemory(Command);
-  if Job <> nil then
-  begin
-    PrintJob(StandardError, Job, False);
-    FlushStream(StandardError);
-  end;
-  { Like Ctrl-C, Ctrl-Z abandons the rest of the command line (a loop
-    would otherwise start the next program at once). }
-  InterruptRequested := True;
-end;
-
-function ExecutePipeline(Children: PPNode; Count: Integer; Negate: Boolean; Wait: Boolean): LongInt;
-var
-  Prepared: PPreparedCommand;
-  Processes: PInt64;
-  Statuses: PLongInt;
-  Inputs: PInt64;
-  Outputs: PInt64;
-  Index: Integer;
-  ReadHandle: Int64;
-  WriteHandle: Int64;
-  Handles: TStandardHandles;
-  Saved: TStandardHandles;
-  IsInShell: PBoolean;
-  PipelineGroup: Int64;
-  OwnsConsole: Boolean;
-  PipelineStopped: Boolean;
-begin
-  Prepared := PPreparedCommand(AllocateZeroedMemory(QWord(Count) * SizeOf(TPreparedCommand)));
-  Processes := PInt64(AllocateZeroedMemory(QWord(Count) * SizeOf(Int64)));
-  Statuses := PLongInt(AllocateZeroedMemory(QWord(Count) * SizeOf(LongInt)));
-  Inputs := PInt64(AllocateZeroedMemory(QWord(Count) * SizeOf(Int64)));
-  Outputs := PInt64(AllocateZeroedMemory(QWord(Count) * SizeOf(Int64)));
-  IsInShell := PBoolean(AllocateZeroedMemory(QWord(Count) * SizeOf(Boolean)));
-
-  { Connect the stages. }
-  Inputs[0] := StandardInputHandle;
-  Outputs[Count - 1] := StandardOutputHandle;
-  for Index := 0 to Count - 2 do
-  begin
-    if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
-    begin
-      ShellError('cannot create a pipe', []);
-      ReadHandle := StandardInputHandle;
-      WriteHandle := StandardOutputHandle;
-    end;
-    Outputs[Index] := WriteHandle;
-    Inputs[Index + 1] := ReadHandle;
-  end;
-
-  { Expand every simple command; anything else runs in the shell. }
-  for Index := 0 to Count - 1 do
-  begin
-    Processes[Index] := -1;
-    if Children[Index]^.Kind = NodeSimple then
-    begin
-      PrepareCommand(Children[Index], Prepared[Index]);
-      IsInShell[Index] := RunsInShell(Prepared[Index]);
-    end
-    else
-    begin
-      BeginFieldList(Prepared[Index].Fields);
-      IsInShell[Index] := True;
-    end;
-  end;
-
-  { Pass 1: external programs. In an interactive shell they form a new
-    process group, led by the first; a foreground pipeline's group is
-    the terminal's foreground group from the start, so its programs can
-    read the terminal at once. }
-  PipelineGroup := GroupInherit;
-  if ShellIsInteractive and Wait and IsConsole(StandardInputHandle) then
-    PipelineGroup := GroupNewInForeground
-  else if ShellIsInteractive then
-    PipelineGroup := GroupNew;
-  for Index := 0 to Count - 1 do
-  begin
-    if IsInShell[Index] then
-      Continue;
-    Handles[0] := Inputs[Index];
-    Handles[1] := Outputs[Index];
-    Handles[2] := StandardErrorHandle;
-    Processes[Index] := StartExternal(Prepared[Index], Handles, PipelineGroup, Statuses[Index]);
-    if (PipelineGroup < 0) and (Processes[Index] >= 0) then
-      PipelineGroup := ProcessIdOf(Processes[Index]);
-  end;
-  { Ctrl-C now belongs to the pipeline. }
-  OwnsConsole := Wait and ShellIsInteractive and (PipelineGroup > 0) and IsConsole(StandardInputHandle);
-  if OwnsConsole then
-    SetForegroundGroup(StandardInputHandle, PipelineGroup);
-  { The shell keeps only the pipe ends that in-shell stages still need,
-    so readers see the end of their input when the writers finish. }
-  for Index := 0 to Count - 1 do
-  begin
-    if IsInShell[Index] then
-      Continue;
-    if Inputs[Index] <> StandardInputHandle then
-      CloseFile(Inputs[Index]);
-    if Outputs[Index] <> StandardOutputHandle then
-      CloseFile(Outputs[Index]);
-  end;
-
-  { Pass 2: stages inside the shell, left to right. }
-  for Index := 0 to Count - 1 do
-  begin
-    if not IsInShell[Index] then
-      Continue;
-    Handles[0] := Inputs[Index];
-    Handles[1] := Outputs[Index];
-    Handles[2] := StandardErrorHandle;
-    if Children[Index]^.Kind = NodeSimple then
-      Statuses[Index] := RunInShell(Prepared[Index], Handles)
-    else
-    begin
-      SwitchStandardHandles(Handles, Saved);
-      Statuses[Index] := ExecuteNode(Children[Index]);
-      RestoreStandardHandles(Saved);
-    end;
-    if Inputs[Index] <> StandardInputHandle then
-      CloseFile(Inputs[Index]);
-    if Outputs[Index] <> StandardOutputHandle then
-      CloseFile(Outputs[Index]);
-  end;
-
-  PipelineStopped := False;
-  if Wait then
-    PipelineStopped := WaitForPipeline(Prepared, Processes, Statuses, Count, PipelineGroup)
-  else
-    StartBackgroundJob(Prepared, Processes, Count, PipelineGroup);
-  if OwnsConsole then
-    SetForegroundGroup(StandardInputHandle, CurrentProcessGroup);
-
-  Result := Statuses[Count - 1];
-  if PipelineStopped then
-    Result := StatusStopped;
-  if Negate then
-    Result := Ord(Result = 0);
-
-  for Index := 0 to Count - 1 do
-    FreeFieldList(Prepared[Index].Fields);
-  if Wait then
-    RemoveTemporaryFiles;
-  FreeMemory(Prepared);
-  FreeMemory(Processes);
-  FreeMemory(Statuses);
-  FreeMemory(Inputs);
-  FreeMemory(Outputs);
-  FreeMemory(IsInShell);
-end;
-
-{ --- Compound commands ----------------------------------------------- }
+{ --- Loops ------------------------------------------------------------- }
 
 { True when a break or continue (or exit) ends the current loop body. }
 function LeaveLoopBody: Boolean;
@@ -942,7 +119,7 @@ begin
   LoopControl := LoopControlNone;
 end;
 
-function ExecuteLoop(Node: PNode): LongInt;
+function ExecuteLoop(Node: TLoopNode): LongInt;
 var
   ConditionStatus: LongInt;
 begin
@@ -950,84 +127,106 @@ begin
   Inc(LoopDepth);
   while True do
   begin
-    ConditionStatus := ExecuteNode(Node^.Condition);
+    ConditionStatus := ExecuteNode(Node.Condition);
     if LeaveLoopBody then
     begin
       if LoopMustStop then
         Break;
       Continue;
     end;
-    if (ConditionStatus = 0) = Node^.IsUntil then
+    if (ConditionStatus = 0) = Node.IsUntil then
       Break;
-    Result := ExecuteNode(Node^.Body);
+    Result := ExecuteNode(Node.Body);
     if LeaveLoopBody and LoopMustStop then
       Break;
   end;
   Dec(LoopDepth);
 end;
 
-function ExecuteFor(Node: PNode): LongInt;
+function ExecuteFor(Node: TForNode): LongInt;
 var
-  Values: TFieldList;
+  Values: TStringList;
   Index: Integer;
 begin
   Result := 0;
-  BeginFieldList(Values);
-  if Node^.Words = nil then
-  begin
-    for Index := 1 to PositionalCount do
-      AddField(Values, PositionalParameter(Index));
-  end
-  else
-    ExpandWords(Node^.Words, Node^.WordCount, Values);
+  Values := TStringList.Create;
+  try
+    if Node.HasWordList then
+      ExpandWords(Node.Words, Values)
+    else
+      for Index := 1 to PositionalCount do
+        Values.Add(PositionalParameter(Index));
 
-  Inc(LoopDepth);
-  for Index := 0 to Values.Count - 1 do
-  begin
-    AssignVariable(Node^.VariableName, Values.Items[Index]);
-    Result := ExecuteNode(Node^.Body);
-    if LeaveLoopBody and LoopMustStop then
-      Break;
-  end;
-  Dec(LoopDepth);
-  FreeFieldList(Values);
-end;
-
-function ExecuteCase(Node: PNode): LongInt;
-var
-  Subject: PChar;
-  ItemIndex: Integer;
-  PatternIndex: Integer;
-  Item: PNode;
-  Pattern: PChar;
-  Matched: Boolean;
-begin
-  Result := 0;
-  Subject := ExpandToText(Node^.Words[0]);
-  for ItemIndex := 0 to Node^.ChildCount - 1 do
-  begin
-    Item := Node^.Children[ItemIndex];
-    Matched := False;
-    for PatternIndex := 0 to Item^.WordCount - 1 do
+    Inc(LoopDepth);
+    for Index := 0 to Values.Count - 1 do
     begin
-      Pattern := ExpandToPattern(Item^.Words[PatternIndex]);
-      Matched := MatchPattern(Pattern, Subject);
-      FreeMemory(Pattern);
-      if Matched then
+      AssignVariable(Node.VariableName, Values[Index]);
+      Result := ExecuteNode(Node.Body);
+      if LeaveLoopBody and LoopMustStop then
         Break;
     end;
-    if Matched then
+    Dec(LoopDepth);
+  finally
+    Values.Free;
+  end;
+end;
+
+{ --- Other compound commands ------------------------------------------- }
+
+function CaseItemMatches(Item: TCaseItem; const Subject: string): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Item.Patterns) do
+    if MatchPattern(ExpandToPattern(Item.Patterns[Index]), Subject) then
+      Exit(True);
+  Result := False;
+end;
+
+function ExecuteCase(Node: TCaseNode): LongInt;
+var
+  Subject: string;
+  Index: Integer;
+begin
+  Result := 0;
+  Subject := ExpandToText(Node.Subject);
+  for Index := 0 to High(Node.Items) do
+    if CaseItemMatches(Node.Items[Index], Subject) then
     begin
-      Result := ExecuteNode(Item^.Body);
+      Result := ExecuteNode(Node.Items[Index].Body);
       Break;
     end;
-  end;
-  FreeMemory(Subject);
+end;
+
+{ ConditionUnwound: the condition started unwinding, so no branch ran. }
+function ExecuteIf(Node: TIfNode; out ConditionUnwound: Boolean): LongInt;
+begin
+  Result := ExecuteNode(Node.Condition);
+  ConditionUnwound := Unwinding;
+  if ConditionUnwound then
+    Exit;
+  if Result = 0 then
+    Result := ExecuteNode(Node.Body)
+  else if Node.ElseBody <> nil then
+    Result := ExecuteNode(Node.ElseBody)
+  else
+    Result := 0;
+end;
+
+function ExecuteAndOr(Node: TAndOrNode): LongInt;
+begin
+  Result := ExecuteNode(Node.Left);
+  if Unwinding then
+    Exit;
+  if (Node.Operation = OperatorAnd) and (Result = 0) then
+    Result := ExecuteNode(Node.Right)
+  else if (Node.Operation = OperatorOr) and (Result <> 0) then
+    Result := ExecuteNode(Node.Right);
 end;
 
 { A compound command with redirections: the shell's own handles point
   at the files while it runs. }
-function ExecuteRedirected(Node: PNode): LongInt;
+function ExecuteRedirected(Node: TRedirectedNode): LongInt;
 var
   Handles: TStandardHandles;
   Saved: TStandardHandles;
@@ -1036,115 +235,106 @@ var
 begin
   for Index := 0 to 2 do
     Handles[Index] := Index;
-  Opened.Count := 0;
-  if not ApplyRedirections(Node, Handles, Opened) then
+  Opened := nil;
+  if not ApplyRedirections(Node.Redirections, Handles, Opened) then
   begin
     CloseOpenedHandles(Opened);
     Exit(1);
   end;
   SwitchStandardHandles(Handles, Saved);
-  Result := ExecuteNode(Node^.Body);
+  Result := ExecuteNode(Node.Body);
   RestoreStandardHandles(Saved);
   CloseOpenedHandles(Opened);
 end;
 
-function ExecuteSequence(Node: PNode): LongInt;
+{ A list item ending in '&' runs as a background job. }
+function ExecuteInBackground(Item: TShellNode): LongInt;
+begin
+  if Item.Kind = NodePipeline then
+    Result := ExecutePipeline(TPipelineNode(Item).Commands, False, False)
+  else
+    Result := ExecutePipeline([Item], False, False);
+  LastStatus := 0;
+end;
+
+function ExecuteSequence(Node: TSequenceNode): LongInt;
 var
   Index: Integer;
-  Child: PNode;
 begin
   Result := 0;
-  for Index := 0 to Node^.ChildCount - 1 do
+  for Index := 0 to High(Node.Items) do
   begin
-    Child := Node^.Children[Index];
-    if Node^.RunInBackground[Index] then
-    begin
-      if Child^.Kind = NodePipeline then
-        Result := ExecutePipeline(Child^.Children, Child^.ChildCount, False, False)
-      else
-        Result := ExecutePipeline(@Node^.Children[Index], 1, False, False);
-      LastStatus := 0;
-    end
+    if Node.RunInBackground[Index] then
+      Result := ExecuteInBackground(Node.Items[Index])
     else
-      Result := ExecuteNode(Child);
+      Result := ExecuteNode(Node.Items[Index]);
     CheckPendingInterrupt;
     if Unwinding then
       Break;
   end;
 end;
 
-function ExecuteNode(Node: PNode): LongInt;
+function ExecuteNode(Node: TShellNode): LongInt;
+var
+  ConditionUnwound: Boolean;
 begin
   if Node = nil then
     Exit(0);
-  case Node^.Kind of
+  case Node.Kind of
     NodeSimple:
-      Result := ExecutePipeline(@Node, 1, False, True);
+      Result := ExecutePipeline([Node], False, True);
     NodePipeline:
-      Result := ExecutePipeline(Node^.Children, Node^.ChildCount, Node^.Negate, True);
+      Result := ExecutePipeline(TPipelineNode(Node).Commands, TPipelineNode(Node).Negate, True);
     NodeAndOr:
-      begin
-        Result := ExecuteNode(Node^.Left);
-        if not Unwinding then
-        begin
-          if (Node^.AndOrOperator = OperatorAnd) and (Result = 0) then
-            Result := ExecuteNode(Node^.Right)
-          else if (Node^.AndOrOperator = OperatorOr) and (Result <> 0) then
-            Result := ExecuteNode(Node^.Right);
-        end;
-      end;
+      Result := ExecuteAndOr(TAndOrNode(Node));
     NodeSequence:
-      Result := ExecuteSequence(Node);
+      Result := ExecuteSequence(TSequenceNode(Node));
     NodeIf:
       begin
-        Result := ExecuteNode(Node^.Condition);
-        if Unwinding then
+        Result := ExecuteIf(TIfNode(Node), ConditionUnwound);
+        { An unwinding condition leaves $? as the condition set it. }
+        if ConditionUnwound then
           Exit;
-        if Result = 0 then
-          Result := ExecuteNode(Node^.Body)
-        else if Node^.ElseBody <> nil then
-          Result := ExecuteNode(Node^.ElseBody)
-        else
-          Result := 0;
       end;
     NodeLoop:
-      Result := ExecuteLoop(Node);
+      Result := ExecuteLoop(TLoopNode(Node));
     NodeFor:
-      Result := ExecuteFor(Node);
+      Result := ExecuteFor(TForNode(Node));
     NodeCase:
-      Result := ExecuteCase(Node);
+      Result := ExecuteCase(TCaseNode(Node));
     NodeFunction:
       begin
-        DefineFunction(Node);
+        DefineFunction(TFunctionNode(Node));
         Result := 0;
       end;
     NodeRedirected:
-      Result := ExecuteRedirected(Node);
+      Result := ExecuteRedirected(TRedirectedNode(Node));
   else
     Result := 1;
   end;
   LastStatus := Result;
 end;
 
-function ExecuteText(Text: PChar): LongInt;
+function ExecuteText(const Text: string): LongInt;
 var
-  Tree: PNode;
-  Message: PChar;
+  Tree: TShellNode;
+  Message: string;
 begin
   case ParseInput(Text, Tree, Message) of
     ParseSuccess:
-      begin
+      try
         Result := ExecuteNode(Tree);
-        FreeNode(Tree);
+      finally
+        Tree.Free;
       end;
     ParseIncomplete:
       begin
-        ShellError('syntax error: unexpected end of input', []);
+        ShellError('syntax error: unexpected end of input');
         Result := 2;
       end;
   else
     begin
-      ShellError('%s', [ArgumentText(Message)]);
+      ShellError(Message);
       Result := 2;
     end;
   end;

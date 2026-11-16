@@ -23,120 +23,133 @@
   came in is freed after it runs) and its source text, so that a
   subshell started as a new process (command substitution) can be given
   the same functions.
+
+  A function may redefine or unset itself while it runs, so a body that
+  is replaced or unset is not freed under the running code: it is
+  retired, and freed with the table when the shell ends.
 }
 unit Shell.Functions;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Sys.Text,
-  Shell.Syntax;
+  Shell.Nodes;
 
-{ Defines (or redefines) a function from a NodeFunction. }
-procedure DefineFunction(Definition: PNode);
+{ Defines (or redefines) a function. }
+procedure DefineFunction(Definition: TFunctionNode);
 { The body of a function, or nil. }
-function FindFunction(Name: PChar): PNode;
-function UnsetFunction(Name: PChar): Boolean;
-{ Appends every definition's source text, one per line. }
-procedure AppendFunctionDefinitions(var Builder: TTextBuilder);
+function FindFunction(const Name: string): TShellNode;
+function UnsetFunction(const Name: string): Boolean;
+{ Every definition's source text, one per line. }
+function FunctionDefinitionsScript: string;
 
 implementation
 
 uses
-  Runtime.Text,
-  Sys.Memory;
-
-const
-  MaximumFunctions = 256;
+  Classes,
+  Contnrs;
 
 type
-  TFunction = record
-    Name: PChar;
-    Body: PNode;
-    SourceText: PChar;
+  TShellFunction = class
+  public
+    Body: TShellNode;
+    SourceText: string;
   end;
 
 var
-  Functions: array[0..MaximumFunctions - 1] of TFunction;
-  FunctionCount: Integer = 0;
+  { Names, in the order they were defined, with their TShellFunction. }
+  Functions: TStringList;
+  RetiredBodies: TObjectList;
 
-function FindIndex(Name: PChar): Integer;
-var
-  Index: Integer;
+procedure RetireBody(ShellFunction: TShellFunction);
 begin
-  for Index := 0 to FunctionCount - 1 do
-    if TextIsEqual(Functions[Index].Name, Name) then
-      Exit(Index);
-  Result := -1;
+  if ShellFunction.Body <> nil then
+    RetiredBodies.Add(ShellFunction.Body);
+  ShellFunction.Body := nil;
 end;
 
-procedure DefineFunction(Definition: PNode);
+procedure DefineFunction(Definition: TFunctionNode);
 var
   Index: Integer;
+  ShellFunction: TShellFunction;
 begin
-  Index := FindIndex(Definition^.VariableName);
+  Index := Functions.IndexOf(Definition.Name);
   if Index < 0 then
   begin
-    if FunctionCount = MaximumFunctions then
-      Exit;
-    Index := FunctionCount;
-    Inc(FunctionCount);
-    Functions[Index].Name := DuplicateText(Definition^.VariableName);
+    ShellFunction := TShellFunction.Create;
+    Functions.AddObject(Definition.Name, ShellFunction);
   end
   else
   begin
-    { A function may redefine itself while it runs; the old body is kept
-      (leaked) rather than freed under the running code. }
-    FreeMemory(Functions[Index].SourceText);
+    ShellFunction := TShellFunction(Functions.Objects[Index]);
+    RetireBody(ShellFunction);
   end;
-  Functions[Index].Body := CopyNode(Definition^.Body);
-  if Definition^.SourceText <> nil then
-    Functions[Index].SourceText := DuplicateText(Definition^.SourceText)
-  else
-    Functions[Index].SourceText := nil;
+  ShellFunction.Body := CloneNode(Definition.Body);
+  ShellFunction.SourceText := Definition.SourceText;
 end;
 
-function FindFunction(Name: PChar): PNode;
+function FindFunction(const Name: string): TShellNode;
 var
   Index: Integer;
 begin
-  Index := FindIndex(Name);
+  Index := Functions.IndexOf(Name);
   if Index < 0 then
     Exit(nil);
-  Result := Functions[Index].Body;
+  Result := TShellFunction(Functions.Objects[Index]).Body;
 end;
 
-function UnsetFunction(Name: PChar): Boolean;
+function UnsetFunction(const Name: string): Boolean;
 var
   Index: Integer;
+  ShellFunction: TShellFunction;
 begin
-  Index := FindIndex(Name);
+  Index := Functions.IndexOf(Name);
   if Index < 0 then
     Exit(False);
-  FreeMemory(Functions[Index].Name);
-  FreeMemory(Functions[Index].SourceText);
-  while Index < FunctionCount - 1 do
-  begin
-    Functions[Index] := Functions[Index + 1];
-    Inc(Index);
-  end;
-  Dec(FunctionCount);
+  ShellFunction := TShellFunction(Functions.Objects[Index]);
+  RetireBody(ShellFunction);
+  ShellFunction.Free;
+  Functions.Delete(Index);
   Result := True;
 end;
 
-procedure AppendFunctionDefinitions(var Builder: TTextBuilder);
+function FunctionDefinitionsScript: string;
 var
   Index: Integer;
+  ShellFunction: TShellFunction;
 begin
-  for Index := 0 to FunctionCount - 1 do
-    if Functions[Index].SourceText <> nil then
-    begin
-      AppendText(Builder, Functions[Index].SourceText);
-      AppendCharacter(Builder, #10);
-    end;
+  Result := '';
+  for Index := 0 to Functions.Count - 1 do
+  begin
+    ShellFunction := TShellFunction(Functions.Objects[Index]);
+    if ShellFunction.SourceText <> '' then
+      Result := Result + ShellFunction.SourceText + #10;
+  end;
 end;
 
+procedure FreeFunctions;
+var
+  Index: Integer;
+  ShellFunction: TShellFunction;
+begin
+  for Index := 0 to Functions.Count - 1 do
+  begin
+    ShellFunction := TShellFunction(Functions.Objects[Index]);
+    ShellFunction.Body.Free;
+    ShellFunction.Free;
+  end;
+  Functions.Free;
+end;
+
+initialization
+  Functions := TStringList.Create;
+  Functions.CaseSensitive := True;
+  Functions.UseLocale := False;
+  RetiredBodies := TObjectList.Create(True);
+finalization
+  FreeFunctions;
+  RetiredBodies.Free;
 end.

@@ -29,6 +29,7 @@
                               without ':', for unset only)
                               ${NAME#pattern} ${NAME##pattern}
                               ${NAME%pattern} ${NAME%%pattern}
+                              (Shell.Parameters)
     3. command substitution   $( command )  (its output, trailing
                               line ends removed)
     4. arithmetic expansion   $(( expression ))
@@ -42,250 +43,114 @@
 unit Shell.Expansion;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
+uses
+  SysUtils,
+  Classes,
+  Shell.Text;
+
 type
-  TFieldList = record
-    Items: PPChar;     { nil terminated }
-    Count: Integer;
-    Capacity: Integer;
+  { The state of the word being expanded. }
+  TWordExpander = class
+  private
+    { Where finished fields go; nil when the word becomes one text. }
+    FFields: TStrings;
+    FSplitting: Boolean;
+    { Expanding a pattern: unquoted expansion results stay patterns. }
+    FPatternContext: Boolean;
+    { The current field: literal text and the same text as a pattern, in
+      which quoted pattern characters are escaped. }
+    FText: TTextBuffer;
+    FPattern: TTextBuffer;
+    FHasPattern: Boolean;
+    { A field exists even if empty (e.g. after ""). }
+    FFieldStarted: Boolean;
+    procedure ExpandSingleQuoted(const Word: string; var Position: Integer);
+    procedure ExpandDoubleQuoted(const Word: string; var Position: Integer);
+    procedure ExpandParenthesized(const Word: string; var Position: Integer; Quoted: Boolean);
+    procedure ExpandAllParameters(AsSeparateFields, Quoted: Boolean);
+  public
+    constructor Create(Fields: TStrings; Splitting, PatternContext: Boolean);
+    { Ends the current field: adds it (or the file names its pattern
+      matches) to the fields. }
+    procedure FinishField;
+    { A character that came from quoted text (or is literal). }
+    procedure AddQuoted(Character: Char);
+    { An unquoted character of the word itself. }
+    procedure AddUnquoted(Character: Char);
+    { The result of an expansion. Unquoted results are split at blanks
+      and may contain patterns. }
+    procedure AddExpansionResult(const Value: string; Quoted: Boolean);
+    { The "$..." at Word[Position]; Position ends after it. }
+    procedure ExpandDollar(const Word: string; var Position: Integer; Quoted: Boolean);
+    procedure ExpandWord(const Word: string);
+    procedure ExpandHereDocumentBody(const Body: string);
+    procedure MarkFieldStarted;
+    function Text: string;
+    function Pattern: string;
   end;
 
-procedure BeginFieldList(out Fields: TFieldList);
-procedure AddField(var Fields: TFieldList; Text: PChar);
-procedure FreeFieldList(var Fields: TFieldList);
-
 { Expands words into fields (with splitting and patterns). }
-procedure ExpandWords(Words: PPChar; Count: Integer; var Fields: TFieldList);
+procedure ExpandWords(const Words: TStringArray; Fields: TStrings);
 { Expands one word into a single string, without splitting or patterns
   (assignments and redirection targets). }
-function ExpandToText(Word: PChar): PChar;
+function ExpandToText(const Word: string): string;
 { Expands a word into a pattern for MatchPattern: quoted characters are
   escaped, so only unquoted * ? [ match. }
-function ExpandToPattern(Word: PChar): PChar;
+function ExpandToPattern(const Word: string): string;
 { Expands a here-document body like text in double quotes. }
-function ExpandHereDocument(Body: PChar): PChar;
+function ExpandHereDocument(const Body: string): string;
+
+{ Finds the parenthesis that closes the one at Word[Start], skipping
+  quotes and backslashes; 0 if there is none. }
+function FindClosingParenthesis(const Word: string; Start: Integer): Integer;
 
 implementation
 
 uses
-  Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Files,
-  Sys.Memory,
-  Sys.Processes,
-  Sys.Streams,
   Sys.Text,
   Shell.Variables,
-  Shell.Functions,
   Shell.Arithmetic,
-  Shell.Patterns;
+  Shell.Patterns,
+  Shell.Parameters,
+  Shell.Substitution;
 
-type
-  { The state of the word being expanded. }
-  TExpander = record
-    Fields: ^TFieldList;
-    Splitting: Boolean;       { False for ExpandToText }
-    { Current field: literal text and the same text as a pattern, in
-      which quoted pattern characters are escaped. }
-    Text: TTextBuilder;
-    Pattern: TTextBuilder;
-    HasPattern: Boolean;
-    { A field exists even if empty (e.g. after ""). }
-    FieldStarted: Boolean;
-    { Expanding a pattern: unquoted expansion results stay patterns. }
-    PatternContext: Boolean;
-  end;
-
-procedure BeginFieldList(out Fields: TFieldList);
-begin
-  Fields.Capacity := 8;
-  Fields.Items := PPChar(AllocateZeroedMemory(QWord(Fields.Capacity + 1) * SizeOf(PChar)));
-  Fields.Count := 0;
-end;
-
-procedure AddField(var Fields: TFieldList; Text: PChar);
-begin
-  if Fields.Count = Fields.Capacity then
-  begin
-    Fields.Capacity := Fields.Capacity * 2;
-    Fields.Items := PPChar(ReallocateMemory(Fields.Items, QWord(Fields.Capacity + 1) * SizeOf(PChar)));
-  end;
-  Fields.Items[Fields.Count] := DuplicateText(Text);
-  Inc(Fields.Count);
-  Fields.Items[Fields.Count] := nil;
-end;
-
-procedure FreeFieldList(var Fields: TFieldList);
+{ Skips the quoted text whose opening quote is at Word[Position]; then
+  Position is at the closing quote. False if it is not closed. }
+function SkipQuotedText(const Word: string; var Position: Integer): Boolean;
 var
-  Index: Integer;
+  Quote: Char;
 begin
-  Index := 0;
-  while Index < Fields.Count do
+  Quote := Word[Position];
+  Inc(Position);
+  while not (CharAt(Word, Position) in [Quote, #0]) do
   begin
-    FreeMemory(Fields.Items[Index]);
-    Inc(Index);
+    if (Quote = '"') and (Word[Position] = '\') and (CharAt(Word, Position + 1) <> #0) then
+      Inc(Position);
+    Inc(Position);
   end;
-  FreeMemory(Fields.Items);
-  Fields.Items := nil;
-  Fields.Count := 0;
-  Fields.Capacity := 0;
+  Result := CharAt(Word, Position) <> #0;
 end;
 
-{ --- Building fields ------------------------------------------------- }
-
-procedure AddPatternMatch(Path: PChar; Context: Pointer);
-begin
-  AddField(TFieldList(Context^), Path);
-end;
-
-procedure FinishField(var Expander: TExpander);
-begin
-  if Expander.FieldStarted then
-  begin
-    if Expander.HasPattern and Expander.Splitting and
-       (ExpandPattern(Expander.Pattern.Text, @AddPatternMatch, Expander.Fields) > 0) then
-      { The matches replace the word. }
-    else
-      AddField(Expander.Fields^, Expander.Text.Text);
-  end;
-  DiscardText(Expander.Text);
-  DiscardText(Expander.Pattern);
-  BeginText(Expander.Text);
-  BeginText(Expander.Pattern);
-  Expander.HasPattern := False;
-  Expander.FieldStarted := False;
-end;
-
-{ Appends a character that came from quoted text (or is literal). }
-procedure AddQuoted(var Expander: TExpander; Character: Char);
-begin
-  AppendCharacter(Expander.Text, Character);
-  if Character in ['*', '?', '[', '\'] then
-    AppendCharacter(Expander.Pattern, '\');
-  AppendCharacter(Expander.Pattern, Character);
-  Expander.FieldStarted := True;
-end;
-
-{ Appends an unquoted character of the word itself. }
-procedure AddUnquoted(var Expander: TExpander; Character: Char);
-begin
-  AppendCharacter(Expander.Text, Character);
-  AppendCharacter(Expander.Pattern, Character);
-  if Character in ['*', '?', '['] then
-    Expander.HasPattern := True;
-  Expander.FieldStarted := True;
-end;
-
-{ Appends the result of an expansion. Unquoted results are split at
-  blanks and may contain patterns. }
-procedure AddExpansionResult(var Expander: TExpander; Value: PChar; Quoted: Boolean);
-var
-  Index: Integer;
-begin
-  if Value = nil then
-    Exit;
-  Index := 0;
-  while Value[Index] <> #0 do
-  begin
-    if Quoted or (not Expander.Splitting and not Expander.PatternContext) then
-      AddQuoted(Expander, Value[Index])
-    else if not Expander.Splitting then
-      AddUnquoted(Expander, Value[Index])
-    else if IsSpace(Value[Index]) then
-      FinishField(Expander)
-    else
-      AddUnquoted(Expander, Value[Index]);
-    Inc(Index);
-  end;
-end;
-
-{ --- Command substitution -------------------------------------------- }
-
-{ Runs Command in a new shell and returns its output (heap string). }
-function RunCommandSubstitution(Command: PChar): PChar;
-var
-  ReadHandle: Int64;
-  WriteHandle: Int64;
-  Arguments: array[0..3] of PChar;
-  Options: TProcessOptions;
-  Process: Int64;
-  Builder: TTextBuilder;
-  Buffer: array[0..1023] of Char;
-  BytesRead: Int64;
-  Script: TTextBuilder;
-begin
-  BeginText(Builder);
-  if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
-    Exit(FinishText(Builder));
-  { The child is a new shell; it gets this shell's variables, positional
-    parameters and functions first, as a subshell would have them. }
-  BeginText(Script);
-  AppendVariableState(Script);
-  AppendFunctionDefinitions(Script);
-  AppendText(Script, Command);
-  Arguments[0] := 'sh';
-  Arguments[1] := '-c';
-  Arguments[2] := Script.Text;
-  Arguments[3] := nil;
-  DefaultProcessOptions(Options);
-  Options.OutputHandle := WriteHandle;
-  Process := StartProgram('/bin/sh', @Arguments[0], Options);
-  DiscardText(Script);
-  CloseFile(WriteHandle);
-  if Process >= 0 then
-  begin
-    repeat
-      BytesRead := ReadFile(ReadHandle, @Buffer[0], SizeOf(Buffer));
-      if BytesRead > 0 then
-        AppendBytes(Builder, @Buffer[0], BytesRead);
-    until BytesRead <= 0;
-    LastStatus := WaitForProgram(Process);
-  end
-  else
-    LastStatus := 127;
-  CloseFile(ReadHandle);
-
-  while (Builder.Length > 0) and (Builder.Text[Builder.Length - 1] = #10) do
-  begin
-    Dec(Builder.Length);
-    Builder.Text[Builder.Length] := #0;
-  end;
-  Result := FinishText(Builder);
-end;
-
-{ Finds the end of $( ... ) or $(( ... )) starting at the '(' after
-  '$'. Returns the index of the matching ')'. }
-function FindClosingParenthesis(Word: PChar; Start: PtrInt): PtrInt;
+function FindClosingParenthesis(const Word: string; Start: Integer): Integer;
 var
   Depth: Integer;
-  Position: PtrInt;
-  Quote: Char;
+  Position: Integer;
 begin
   Depth := 0;
   Position := Start;
-  while Word[Position] <> #0 do
+  while Position <= Length(Word) do
   begin
     case Word[Position] of
       '\':
-        if Word[Position + 1] <> #0 then
+        if Position < Length(Word) then
           Inc(Position);
       '''', '"':
-        begin
-          Quote := Word[Position];
-          Inc(Position);
-          while (Word[Position] <> #0) and (Word[Position] <> Quote) do
-          begin
-            if (Quote = '"') and (Word[Position] = '\') and (Word[Position + 1] <> #0) then
-              Inc(Position);
-            Inc(Position);
-          end;
-          if Word[Position] = #0 then
-            Exit(-1);
-        end;
+        if not SkipQuotedText(Word, Position) then
+          Exit(0);
       '(':
         Inc(Depth);
       ')':
@@ -297,49 +162,89 @@ begin
     end;
     Inc(Position);
   end;
-  Result := -1;
+  Result := 0;
 end;
 
-function CopyRange(Text: PChar; Start, Finish: PtrInt): PChar;
+{ --- TWordExpander ----------------------------------------------------- }
+
+constructor TWordExpander.Create(Fields: TStrings; Splitting, PatternContext: Boolean);
+begin
+  inherited Create;
+  FFields := Fields;
+  FSplitting := Splitting;
+  FPatternContext := PatternContext;
+  FText.Clear;
+  FPattern.Clear;
+end;
+
+function TWordExpander.Text: string;
+begin
+  Result := FText.Value;
+end;
+
+function TWordExpander.Pattern: string;
+begin
+  Result := FPattern.Value;
+end;
+
+procedure TWordExpander.MarkFieldStarted;
+begin
+  FFieldStarted := True;
+end;
+
+procedure TWordExpander.FinishField;
+begin
+  if FFieldStarted then
+  begin
+    if FHasPattern and FSplitting and (ExpandPattern(FPattern.Value, FFields) > 0) then
+      { The matches replace the word. }
+    else
+      FFields.Add(FText.Value);
+  end;
+  FText.Clear;
+  FPattern.Clear;
+  FHasPattern := False;
+  FFieldStarted := False;
+end;
+
+procedure TWordExpander.AddQuoted(Character: Char);
+begin
+  FText.Append(Character);
+  if Character in ['*', '?', '[', '\'] then
+    FPattern.Append('\');
+  FPattern.Append(Character);
+  FFieldStarted := True;
+end;
+
+procedure TWordExpander.AddUnquoted(Character: Char);
+begin
+  FText.Append(Character);
+  FPattern.Append(Character);
+  if Character in ['*', '?', '['] then
+    FHasPattern := True;
+  FFieldStarted := True;
+end;
+
+procedure TWordExpander.AddExpansionResult(const Value: string; Quoted: Boolean);
 var
-  Length: PtrInt;
+  Index: Integer;
 begin
-  Length := Finish - Start;
-  if Length < 0 then
-    Length := 0;
-  Result := PChar(AllocateMemory(Length + 1));
-  CopyMemory(Result, Text + Start, Length);
-  Result[Length] := #0;
-end;
-
-{ --- Parameters ------------------------------------------------------ }
-
-{ Value may point into Buffer, so Buffer must outlive its use. }
-function SpecialParameter(Name: Char; out Value: PChar; var Buffer: TNumberText): Boolean;
-begin
-  Result := True;
-  case Name of
-    '?': Value := FormatSignedDecimal(LastStatus, Buffer);
-    '$': Value := FormatSignedDecimal(CurrentProcessId, Buffer);
-    '!':
-      if LastBackgroundProcessId > 0 then
-        Value := FormatSignedDecimal(LastBackgroundProcessId, Buffer)
-      else
-        Value := '';
-    '#': Value := FormatSignedDecimal(PositionalCount, Buffer);
-    '0': Value := ScriptName;
-    '1'..'9': Value := PositionalParameter(Ord(Name) - Ord('0'));
-  else
-    begin
-      Value := nil;
-      Result := False;
-    end;
+  for Index := 1 to Length(Value) do
+  begin
+    if Quoted or (not FSplitting and not FPatternContext) then
+      AddQuoted(Value[Index])
+    else if not FSplitting then
+      AddUnquoted(Value[Index])
+    else if IsSpace(Value[Index]) then
+      FinishField
+    else
+      AddUnquoted(Value[Index]);
   end;
 end;
 
-{ Expands $@ or $*. Inside double quotes "$@" gives one field per
-  parameter; everything else joins them with spaces. }
-procedure ExpandAllParameters(var Expander: TExpander; AsSeparateFields: Boolean; Quoted: Boolean);
+{ $@ or $*. Inside double quotes "$@" gives one field per parameter;
+  everything else joins them with spaces. }
+procedure TWordExpander.ExpandAllParameters(AsSeparateFields, Quoted: Boolean);
 var
   Index: Integer;
 begin
@@ -347,535 +252,247 @@ begin
   begin
     if Index > 1 then
     begin
-      if AsSeparateFields and Quoted and Expander.Splitting then
+      if AsSeparateFields and Quoted and FSplitting then
       begin
-        FinishField(Expander);
-        Expander.FieldStarted := True;
+        FinishField;
+        FFieldStarted := True;
       end
       else
-        AddExpansionResult(Expander, ' ', Quoted);
+        AddExpansionResult(' ', Quoted);
     end;
-    AddExpansionResult(Expander, PositionalParameter(Index), Quoted);
+    AddExpansionResult(PositionalParameter(Index), Quoted);
   end;
 end;
 
-{ --- ${...} ---------------------------------------------------------- }
-
-function ExpandWordFlat(Word: PChar; AsPattern: Boolean): PChar; forward;
-
-{ Finds the brace that closes the dollar-brace before Word[Start]; -1 if none.
-  Nested ${...}, quotes and backslashes are skipped. }
-function FindClosingBrace(Word: PChar; Start: PtrInt): PtrInt;
+{ $( command ) or $(( expression )); Position is at the '(' and ends
+  after the closing parenthesis. }
+procedure TWordExpander.ExpandParenthesized(const Word: string; var Position: Integer; Quoted: Boolean);
 var
-  Position: PtrInt;
-  Depth: Integer;
-  Quote: Char;
-begin
-  Depth := 1;
-  Position := Start;
-  while Word[Position] <> #0 do
-  begin
-    case Word[Position] of
-      '\':
-        if Word[Position + 1] <> #0 then
-          Inc(Position);
-      '''', '"':
-        begin
-          Quote := Word[Position];
-          Inc(Position);
-          while (Word[Position] <> #0) and (Word[Position] <> Quote) do
-          begin
-            if (Quote = '"') and (Word[Position] = '\') and (Word[Position + 1] <> #0) then
-              Inc(Position);
-            Inc(Position);
-          end;
-          if Word[Position] = #0 then
-            Exit(-1);
-        end;
-      '$':
-        if Word[Position + 1] = '{' then
-        begin
-          Inc(Depth);
-          Inc(Position);
-        end;
-      '}':
-        begin
-          Dec(Depth);
-          if Depth = 0 then
-            Exit(Position);
-        end;
-    end;
-    Inc(Position);
-  end;
-  Result := -1;
-end;
-
-{ The value of a parameter name inside braces (variable, positional or
-  special); nil when unset. }
-function ParameterValue(Name: PChar; var Buffer: TNumberText): PChar;
-var
+  Finish: Integer;
+  Expression: string;
   Number: Int64;
 begin
-  if (Name[0] <> #0) and (Name[1] = #0) and SpecialParameter(Name[0], Result, Buffer) then
-    Exit;
-  if IsDigit(Name[0]) and ParseInteger(Name, Number) then
-    Exit(PositionalParameter(Integer(Number)));
-  Result := LookupVariable(Name);
-end;
-
-{ Removes the shortest or longest prefix or suffix matching Pattern. }
-function RemovePattern(Value, Pattern: PChar; FromEnd, Longest: Boolean): PChar;
-var
-  Length: PtrInt;
-  Cut: PtrInt;
-  Part: PChar;
-  Found: PtrInt;
-begin
-  Length := PtrInt(TextLength(Value));
-  Found := -1;
-  if not FromEnd then
+  Finish := FindClosingParenthesis(Word, Position);
+  if Finish = 0 then
   begin
-    { Prefixes of length Cut. }
-    if Longest then
-      Cut := Length
-    else
-      Cut := 0;
-    while (Cut >= 0) and (Cut <= Length) do
-    begin
-      Part := CopyRange(Value, 0, Cut);
-      if MatchPattern(Pattern, Part) then
-        Found := Cut;
-      FreeMemory(Part);
-      if Found >= 0 then
-        Break;
-      if Longest then
-        Dec(Cut)
-      else
-        Inc(Cut);
-    end;
-    if Found < 0 then
-      Exit(DuplicateText(Value));
-    Exit(CopyRange(Value, Found, Length));
+    AddQuoted('$');
+    Exit;
   end;
-  { Suffixes starting at Cut. }
-  if Longest then
-    Cut := 0
+  if (CharAt(Word, Position + 1) = '(') and (Finish > Position + 1) and (CharAt(Word, Finish - 1) = ')') then
+  begin
+    (* $1, ${...} and $( ) inside the expression are expanded first. *)
+    Expression := ExpandToText(Copy(Word, Position + 2, Finish - 1 - (Position + 2)));
+    if not EvaluateArithmetic(Expression, Number) then
+      Number := 0;
+    AddExpansionResult(IntToStr(Number), Quoted);
+  end
   else
-    Cut := Length;
-  while (Cut >= 0) and (Cut <= Length) do
-  begin
-    if MatchPattern(Pattern, Value + Cut) then
-    begin
-      Found := Cut;
-      Break;
-    end;
-    if Longest then
-      Inc(Cut)
-    else
-      Dec(Cut);
-  end;
-  if Found < 0 then
-    Exit(DuplicateText(Value));
-  Result := CopyRange(Value, 0, Found);
-end;
-
-procedure ExpandBraced(var Expander: TExpander; Word: PChar; var Position: PtrInt; Quoted: Boolean);
-var
-  Finish: PtrInt;
-  Inner: PChar;
-  NameEnd: PtrInt;
-  Name: PChar;
-  Operation: array[0..2] of Char;
-  Argument: PChar;
-  Value: PChar;
-  Buffer: TNumberText;
-  IsUnset: Boolean;
-  IsEmpty: Boolean;
-  UseColon: Boolean;
-  Expanded: PChar;
-  Pattern: PChar;
-  Result: PChar;
-  Message: PChar;
-begin
-  Finish := FindClosingBrace(Word, Position + 1);
-  if Finish < 0 then
-  begin
-    AddQuoted(Expander, '$');
-    Exit;
-  end;
-  Inner := CopyRange(Word, Position + 1, Finish);
+    AddExpansionResult(RunCommandSubstitution(Copy(Word, Position + 1, Finish - (Position + 1))), Quoted);
   Position := Finish + 1;
-
-  { ${#NAME}: the length. }
-  if (Inner[0] = '#') and (Inner[1] <> #0) then
-  begin
-    Value := ParameterValue(Inner + 1, Buffer);
-    if Value = nil then
-      Value := '';
-    AddExpansionResult(Expander, FormatDecimal(TextLength(Value), Buffer), Quoted);
-    FreeMemory(Inner);
-    Exit;
-  end;
-
-  { The name: letters, digits and _, or one special character. }
-  NameEnd := 0;
-  if IsLetter(Inner[0]) or (Inner[0] = '_') then
-    while IsAlphanumeric(Inner[NameEnd]) or (Inner[NameEnd] = '_') do
-      Inc(NameEnd)
-  else if IsDigit(Inner[0]) then
-    while IsDigit(Inner[NameEnd]) do
-      Inc(NameEnd)
-  else if Inner[0] in ['?', '$', '#', '@', '*', '!', '-'] then
-    NameEnd := 1;
-  if NameEnd = 0 then
-  begin
-    WriteText(StandardError, 'sh: ${');
-    WriteText(StandardError, Inner);
-    WriteLine(StandardError, '}: bad substitution');
-    ExpansionFailed := True;
-    FreeMemory(Inner);
-    Exit;
-  end;
-  Name := CopyRange(Inner, 0, NameEnd);
-
-  { The operation after the name, and its word. }
-  Operation[0] := #0;
-  Operation[1] := #0;
-  Operation[2] := #0;
-  Argument := Inner + NameEnd;
-  UseColon := Argument^ = ':';
-  if UseColon then
-    Inc(Argument);
-  if Argument^ in ['-', '=', '+', '?'] then
-  begin
-    Operation[0] := Argument^;
-    Inc(Argument);
-  end
-  else if (Argument^ in ['#', '%']) and not UseColon then
-  begin
-    Operation[0] := Argument^;
-    Inc(Argument);
-    if Argument^ = Operation[0] then
-    begin
-      Operation[1] := Argument^;
-      Inc(Argument);
-    end;
-  end
-  else if Argument^ <> #0 then
-  begin
-    WriteText(StandardError, 'sh: ${');
-    WriteText(StandardError, Inner);
-    WriteLine(StandardError, '}: bad substitution');
-    ExpansionFailed := True;
-    FreeMemory(Name);
-    FreeMemory(Inner);
-    Exit;
-  end;
-
-  Value := ParameterValue(Name, Buffer);
-  IsUnset := Value = nil;
-  IsEmpty := IsUnset or (Value^ = #0);
-
-  case Operation[0] of
-    #0:
-      AddExpansionResult(Expander, Value, Quoted);
-    '-':
-      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
-      begin
-        Expanded := ExpandWordFlat(Argument, False);
-        AddExpansionResult(Expander, Expanded, Quoted);
-        FreeMemory(Expanded);
-      end
-      else
-        AddExpansionResult(Expander, Value, Quoted);
-    '=':
-      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
-      begin
-        Expanded := ExpandWordFlat(Argument, False);
-        AssignVariable(Name, Expanded);
-        AddExpansionResult(Expander, Expanded, Quoted);
-        FreeMemory(Expanded);
-      end
-      else
-        AddExpansionResult(Expander, Value, Quoted);
-    '+':
-      if not ((UseColon and IsEmpty) or (not UseColon and IsUnset)) then
-      begin
-        Expanded := ExpandWordFlat(Argument, False);
-        AddExpansionResult(Expander, Expanded, Quoted);
-        FreeMemory(Expanded);
-      end;
-    '?':
-      if (UseColon and IsEmpty) or (not UseColon and IsUnset) then
-      begin
-        if Argument^ <> #0 then
-          Message := ExpandWordFlat(Argument, False)
-        else
-          Message := DuplicateText('parameter null or not set');
-        WriteText(StandardError, 'sh: ');
-        WriteText(StandardError, Name);
-        WriteText(StandardError, ': ');
-        WriteLine(StandardError, Message);
-        FreeMemory(Message);
-        ExpansionFailed := True;
-      end
-      else
-        AddExpansionResult(Expander, Value, Quoted);
-    '#', '%':
-      begin
-        if Value = nil then
-          Value := '';
-        Pattern := ExpandWordFlat(Argument, True);
-        Result := RemovePattern(Value, Pattern, Operation[0] = '%', Operation[1] <> #0);
-        AddExpansionResult(Expander, Result, Quoted);
-        FreeMemory(Result);
-        FreeMemory(Pattern);
-      end;
-  end;
-  FreeMemory(Name);
-  FreeMemory(Inner);
 end;
 
-{ Expands the "$..." at Word[Position]; Position ends after it. }
-procedure ExpandDollar(var Expander: TExpander; Word: PChar; var Position: PtrInt; Quoted: Boolean);
+procedure TWordExpander.ExpandDollar(const Word: string; var Position: Integer; Quoted: Boolean);
 var
-  Start: PtrInt;
-  Finish: PtrInt;
-  Name: PChar;
-  Value: PChar;
-  Buffer: TNumberText;
-  Inner: PChar;
-  Output: PChar;
-  Number: Int64;
-  NumberText: TNumberText;
+  Start: Integer;
+  Value: string;
+  IsSet: Boolean;
 begin
   Inc(Position); { the '$' }
 
-  if Word[Position] = '(' then
-  begin
-    Finish := FindClosingParenthesis(Word, Position);
-    if Finish < 0 then
-    begin
-      AddQuoted(Expander, '$');
-      Exit;
-    end;
-    if (Word[Position + 1] = '(') and (Finish > Position + 1) and (Word[Finish - 1] = ')') then
-    begin
-      Inner := CopyRange(Word, Position + 2, Finish - 1);
-      { $1, ${...} and $( ) inside the expression are expanded first. }
-      Output := ExpandToText(Inner);
-      if not EvaluateArithmetic(Output, Number) then
-        Number := 0;
-      FreeMemory(Output);
-      FreeMemory(Inner);
-      AddExpansionResult(Expander, FormatSignedDecimal(Number, NumberText), Quoted);
-    end
-    else
-    begin
-      Inner := CopyRange(Word, Position + 1, Finish);
-      Output := RunCommandSubstitution(Inner);
-      FreeMemory(Inner);
-      AddExpansionResult(Expander, Output, Quoted);
-      FreeMemory(Output);
-    end;
-    Position := Finish + 1;
-    Exit;
+  case CharAt(Word, Position) of
+    '(':
+      begin
+        ExpandParenthesized(Word, Position, Quoted);
+        Exit;
+      end;
+    '{':
+      begin
+        ExpandBracedParameter(Self, Word, Position, Quoted);
+        Exit;
+      end;
+    '@', '*':
+      begin
+        ExpandAllParameters(Word[Position] = '@', Quoted);
+        Inc(Position);
+        Exit;
+      end;
   end;
 
-  if Word[Position] = '{' then
+  if SpecialParameter(CharAt(Word, Position), Value, IsSet) then
   begin
-    ExpandBraced(Expander, Word, Position, Quoted);
-    Exit;
-  end;
-
-  if (Word[Position] = '@') or (Word[Position] = '*') then
-  begin
-    ExpandAllParameters(Expander, Word[Position] = '@', Quoted);
-    Inc(Position);
-    Exit;
-  end;
-
-  if SpecialParameter(Word[Position], Value, Buffer) then
-  begin
-    AddExpansionResult(Expander, Value, Quoted);
+    AddExpansionResult(Value, Quoted);
     Inc(Position);
     Exit;
   end;
 
   Start := Position;
-  while IsAlphanumeric(Word[Position]) or (Word[Position] = '_') do
+  while IsNameCharacter(CharAt(Word, Position)) do
     Inc(Position);
   if Position = Start then
   begin
     { A lone '$' is literal. }
-    AddQuoted(Expander, '$');
+    AddQuoted('$');
     Exit;
   end;
-  Name := CopyRange(Word, Start, Position);
-  AddExpansionResult(Expander, LookupVariable(Name), Quoted);
-  FreeMemory(Name);
+  AddExpansionResult(VariableValue(Copy(Word, Start, Position - Start)), Quoted);
 end;
 
-{ --- The word -------------------------------------------------------- }
-
-procedure ExpandWordInto(var Expander: TExpander; Word: PChar);
-var
-  Position: PtrInt;
-  Home: PChar;
+procedure TWordExpander.ExpandSingleQuoted(const Word: string; var Position: Integer);
 begin
-  Position := 0;
-
-  if (Word[0] = '~') and ((Word[1] = '/') or (Word[1] = #0)) then
+  Inc(Position);
+  FFieldStarted := True;
+  while not (CharAt(Word, Position) in ['''', #0]) do
   begin
-    Home := LookupVariable('HOME');
-    if Home = nil then
+    AddQuoted(Word[Position]);
+    Inc(Position);
+  end;
+  if CharAt(Word, Position) = '''' then
+    Inc(Position);
+end;
+
+procedure TWordExpander.ExpandDoubleQuoted(const Word: string; var Position: Integer);
+begin
+  Inc(Position);
+  FFieldStarted := True;
+  while not (CharAt(Word, Position) in ['"', #0]) do
+  begin
+    if (Word[Position] = '\') and (CharAt(Word, Position + 1) in ['$', '`', '"', '\', #10]) then
+    begin
+      AddQuoted(Word[Position + 1]);
+      Inc(Position, 2);
+    end
+    else if Word[Position] = '$' then
+      ExpandDollar(Word, Position, True)
+    else
+    begin
+      AddQuoted(Word[Position]);
+      Inc(Position);
+    end;
+  end;
+  if CharAt(Word, Position) = '"' then
+    Inc(Position);
+end;
+
+procedure TWordExpander.ExpandWord(const Word: string);
+var
+  Position: Integer;
+  Home: string;
+begin
+  Position := 1;
+
+  if (CharAt(Word, 1) = '~') and (CharAt(Word, 2) in ['/', #0]) then
+  begin
+    if not FindVariable('HOME', Home) then
       Home := '/';
-    AddExpansionResult(Expander, Home, True);
-    Position := 1;
+    AddExpansionResult(Home, True);
+    Position := 2;
   end;
 
-  while Word[Position] <> #0 do
+  while Position <= Length(Word) do
   begin
     case Word[Position] of
       '''':
-        begin
-          Inc(Position);
-          Expander.FieldStarted := True;
-          while (Word[Position] <> '''') and (Word[Position] <> #0) do
-          begin
-            AddQuoted(Expander, Word[Position]);
-            Inc(Position);
-          end;
-          if Word[Position] = '''' then
-            Inc(Position);
-        end;
+        ExpandSingleQuoted(Word, Position);
       '"':
-        begin
-          Inc(Position);
-          Expander.FieldStarted := True;
-          while (Word[Position] <> '"') and (Word[Position] <> #0) do
-          begin
-            if (Word[Position] = '\') and (Word[Position + 1] in ['$', '`', '"', '\', #10]) then
-            begin
-              AddQuoted(Expander, Word[Position + 1]);
-              Inc(Position, 2);
-            end
-            else if Word[Position] = '$' then
-              ExpandDollar(Expander, Word, Position, True)
-            else
-            begin
-              AddQuoted(Expander, Word[Position]);
-              Inc(Position);
-            end;
-          end;
-          if Word[Position] = '"' then
-            Inc(Position);
-        end;
+        ExpandDoubleQuoted(Word, Position);
       '\':
         begin
-          if Word[Position + 1] <> #0 then
+          if Position < Length(Word) then
             Inc(Position);
-          AddQuoted(Expander, Word[Position]);
+          AddQuoted(Word[Position]);
           Inc(Position);
         end;
       '$':
-        ExpandDollar(Expander, Word, Position, False);
+        ExpandDollar(Word, Position, False);
     else
       begin
-        AddUnquoted(Expander, Word[Position]);
+        AddUnquoted(Word[Position]);
         Inc(Position);
       end;
     end;
   end;
 end;
 
-procedure ExpandWords(Words: PPChar; Count: Integer; var Fields: TFieldList);
+procedure TWordExpander.ExpandHereDocumentBody(const Body: string);
 var
-  Expander: TExpander;
+  Position: Integer;
+begin
+  Position := 1;
+  while Position <= Length(Body) do
+  begin
+    if (Body[Position] = '\') and (CharAt(Body, Position + 1) in ['$', '`', '\']) then
+    begin
+      AddQuoted(Body[Position + 1]);
+      Inc(Position, 2);
+    end
+    else if (Body[Position] = '\') and (CharAt(Body, Position + 1) = #10) then
+      Inc(Position, 2)
+    else if Body[Position] = '$' then
+      ExpandDollar(Body, Position, True)
+    else
+    begin
+      AddQuoted(Body[Position]);
+      Inc(Position);
+    end;
+  end;
+end;
+
+{ --- Entry points ------------------------------------------------------ }
+
+procedure ExpandWords(const Words: TStringArray; Fields: TStrings);
+var
+  Expander: TWordExpander;
   Index: Integer;
 begin
-  for Index := 0 to Count - 1 do
-  begin
-    Expander.Fields := @Fields;
-    Expander.Splitting := True;
-    Expander.PatternContext := False;
-    BeginText(Expander.Text);
-    BeginText(Expander.Pattern);
-    Expander.HasPattern := False;
-    Expander.FieldStarted := False;
-    ExpandWordInto(Expander, Words[Index]);
-    FinishField(Expander);
-    DiscardText(Expander.Text);
-    DiscardText(Expander.Pattern);
+  Expander := TWordExpander.Create(Fields, True, False);
+  try
+    for Index := 0 to High(Words) do
+    begin
+      Expander.ExpandWord(Words[Index]);
+      Expander.FinishField;
+    end;
+  finally
+    Expander.Free;
   end;
 end;
 
-function ExpandWordFlat(Word: PChar; AsPattern: Boolean): PChar;
+function ExpandWordFlat(const Word: string; AsPattern: Boolean): string;
 var
-  Expander: TExpander;
+  Expander: TWordExpander;
 begin
-  Expander.Fields := nil;
-  Expander.Splitting := False;
-  Expander.PatternContext := AsPattern;
-  BeginText(Expander.Text);
-  BeginText(Expander.Pattern);
-  Expander.HasPattern := False;
-  Expander.FieldStarted := False;
-  ExpandWordInto(Expander, Word);
-  if AsPattern then
-  begin
-    Result := FinishText(Expander.Pattern);
-    DiscardText(Expander.Text);
-  end
-  else
-  begin
-    Result := FinishText(Expander.Text);
-    DiscardText(Expander.Pattern);
+  Expander := TWordExpander.Create(nil, False, AsPattern);
+  try
+    Expander.ExpandWord(Word);
+    if AsPattern then
+      Result := Expander.Pattern
+    else
+      Result := Expander.Text;
+  finally
+    Expander.Free;
   end;
 end;
 
-function ExpandToText(Word: PChar): PChar;
+function ExpandToText(const Word: string): string;
 begin
   Result := ExpandWordFlat(Word, False);
 end;
 
-function ExpandToPattern(Word: PChar): PChar;
+function ExpandToPattern(const Word: string): string;
 begin
   Result := ExpandWordFlat(Word, True);
 end;
 
-function ExpandHereDocument(Body: PChar): PChar;
+function ExpandHereDocument(const Body: string): string;
 var
-  Expander: TExpander;
-  Position: PtrInt;
+  Expander: TWordExpander;
 begin
-  Expander.Fields := nil;
-  Expander.Splitting := False;
-  Expander.PatternContext := False;
-  BeginText(Expander.Text);
-  BeginText(Expander.Pattern);
-  Expander.HasPattern := False;
-  Expander.FieldStarted := False;
-  Position := 0;
-  while Body[Position] <> #0 do
-  begin
-    if (Body[Position] = '\') and (Body[Position + 1] in ['$', '`', '\']) then
-    begin
-      AddQuoted(Expander, Body[Position + 1]);
-      Inc(Position, 2);
-    end
-    else if (Body[Position] = '\') and (Body[Position + 1] = #10) then
-      Inc(Position, 2)
-    else if Body[Position] = '$' then
-      ExpandDollar(Expander, Body, Position, True)
-    else
-    begin
-      AddQuoted(Expander, Body[Position]);
-      Inc(Position);
-    end;
+  Expander := TWordExpander.Create(nil, False, False);
+  try
+    Expander.ExpandHereDocumentBody(Body);
+    Result := Expander.Text;
+  finally
+    Expander.Free;
   end;
-  Result := FinishText(Expander.Text);
-  DiscardText(Expander.Pattern);
 end;
 
 end.
