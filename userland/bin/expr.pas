@@ -32,66 +32,62 @@
 }
 program expr;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Environment,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
+  SysUtils,
+  Util.CommandLine,
   Util.Messages,
+  Util.Numbers,
+  Util.Output,
   Util.RegularExpressions;
 
-var
-  Position: Integer;
+type
+  { A recursive descent evaluator over the tokens (one per argument);
+    every value is a string, numbers in decimal. }
+  TExpressionEvaluator = class
+  private
+    FTokens: TStringArray;
+    FPosition: Integer;
+    function HasToken(Offset: Integer): Boolean;
+    function TokenAt(Offset: Integer): string;
+    function TokenIs(const Text: string): Boolean;
+    function ParsePrimary: string;
+    function ParseMatch: string;
+    function ParseProduct: string;
+    function ParseSum: string;
+    function ParseComparison: string;
+    function ParseAnd: string;
+    function ParseOr: string;
+  public
+    constructor Create(const Tokens: TStringArray);
+    { The value of the whole expression; a syntax error ends the program. }
+    function Evaluate: string;
+  end;
 
 procedure SyntaxError;
 begin
-  Report('syntax error', []);
+  Report('syntax error');
   Halt(2);
 end;
 
-function Token(Offset: Integer): PChar;
+function IsNumber(const Text: string; out Value: Int64): Boolean;
 begin
-  if Position + Offset < ArgumentTotal then
-    Result := Argument(Position + Offset)
-  else
-    Result := nil;
+  Result := (Text <> '') and ParseDecimal(Text, Value);
 end;
 
-function TokenIs(Text: PChar): Boolean;
-begin
-  Result := (Token(0) <> nil) and TextIsEqual(Token(0), Text);
-end;
-
-function IsNumber(Text: PChar; out Value: Int64): Boolean;
-begin
-  Result := (Text <> nil) and (Text^ <> #0) and ParseInteger(Text, Value);
-end;
-
-function MakeNumber(Value: Int64): PChar;
-var
-  NumberText: TNumberText;
-begin
-  Result := DuplicateText(FormatSignedDecimal(Value, NumberText));
-end;
-
-function IsNullOrZero(Text: PChar): Boolean;
+function IsNullOrZero(const Text: string): Boolean;
 var
   Value: Int64;
 begin
-  Result := (Text^ = #0) or (IsNumber(Text, Value) and (Value = 0));
+  Result := (Text = '') or (IsNumber(Text, Value) and (Value = 0));
 end;
 
-function RequireNumber(Text: PChar): Int64;
+function RequireNumber(const Text: string): Int64;
 begin
   if not IsNumber(Text, Result) then
   begin
-    Report('non-integer argument', []);
+    Report('non-integer argument');
     Halt(2);
   end;
 end;
@@ -100,188 +96,204 @@ end;
 
 { Anchored BRE match: the first group's text if the pattern has a group,
   otherwise the length of the match. }
-function MatchPattern(Text, Pattern: PChar): PChar;
+function MatchPattern(const Text, Pattern: string): string;
 var
   Expression: TExpression;
   Match: TMatch;
-  ErrorMessage: PChar;
-  Length: PtrInt;
+  ErrorMessage: string;
 begin
   if not CompileExpression(Pattern, SyntaxBasic, Expression, ErrorMessage) then
   begin
-    Report('%s', [ArgumentText(ErrorMessage)]);
+    Report(ErrorMessage);
     Halt(2);
   end;
   if not MatchExpressionAtStart(Expression, Text, Match) then
   begin
     if Expression.GroupCount > 0 then
-      Result := DuplicateText('')
+      Result := ''
     else
-      Result := MakeNumber(0);
+      Result := '0';
   end
   else if Expression.GroupCount > 0 then
-  begin
-    if Match.Starts[1] < 0 then
-      Exit(DuplicateText(''));
-    Length := Match.Ends[1] - Match.Starts[1];
-    Result := PChar(AllocateMemory(Length + 1));
-    CopyMemory(Result, Text + Match.Starts[1], Length);
-    Result[Length] := #0;
-  end
+    Result := MatchedText(Text, Match, 1)
   else
-    Result := MakeNumber(Match.Ends[0]);
+    Result := IntToStr(Match.Ends[0]);
   FreeExpression(Expression);
 end;
 
 { --- Grammar --------------------------------------------------------- }
 
-function ParseOr: PChar; forward;
+constructor TExpressionEvaluator.Create(const Tokens: TStringArray);
+begin
+  inherited Create;
+  FTokens := Tokens;
+  FPosition := 0;
+end;
 
-function ParsePrimary: PChar;
+function TExpressionEvaluator.HasToken(Offset: Integer): Boolean;
+begin
+  Result := FPosition + Offset < Length(FTokens);
+end;
+
+function TExpressionEvaluator.TokenAt(Offset: Integer): string;
+begin
+  if HasToken(Offset) then
+    Result := FTokens[FPosition + Offset]
+  else
+    Result := '';
+end;
+
+function TExpressionEvaluator.TokenIs(const Text: string): Boolean;
+begin
+  Result := HasToken(0) and (FTokens[FPosition] = Text);
+end;
+
+function TExpressionEvaluator.Evaluate: string;
+begin
+  if TokenIs('--') then
+    Inc(FPosition);
+  Result := ParseOr;
+  if HasToken(0) then
+    SyntaxError;
+end;
+
+function TExpressionEvaluator.ParsePrimary: string;
 var
-  Text: PChar;
+  Text: string;
   Start: Int64;
   Count: Int64;
-  Length: Int64;
-  Index: PtrInt;
-  Characters: PChar;
-  Found: Int64;
+  Index: Integer;
+  Found: Integer;
 begin
-  if Token(0) = nil then
+  if not HasToken(0) then
     SyntaxError;
   if TokenIs('(') then
   begin
-    Inc(Position);
+    Inc(FPosition);
     Result := ParseOr;
     if not TokenIs(')') then
       SyntaxError;
-    Inc(Position);
+    Inc(FPosition);
     Exit;
   end;
-  if TokenIs('length') and (Token(1) <> nil) then
+  if TokenIs('length') and HasToken(1) then
   begin
-    Result := MakeNumber(TextLength(Token(1)));
-    Inc(Position, 2);
+    Result := IntToStr(Length(TokenAt(1)));
+    Inc(FPosition, 2);
     Exit;
   end;
-  if TokenIs('substr') and (Token(3) <> nil) then
+  if TokenIs('substr') and HasToken(3) then
   begin
-    Text := Token(1);
-    Length := TextLength(Text);
-    Start := RequireNumber(Token(2));
-    Count := RequireNumber(Token(3));
-    Inc(Position, 4);
-    if (Start < 1) or (Start > Length) or (Count < 1) then
-      Exit(DuplicateText(''));
-    if Start - 1 + Count > Length then
-      Count := Length - Start + 1;
-    Result := PChar(AllocateMemory(Count + 1));
-    CopyMemory(Result, Text + Start - 1, Count);
-    Result[Count] := #0;
-    Exit;
+    Text := TokenAt(1);
+    Start := RequireNumber(TokenAt(2));
+    Count := RequireNumber(TokenAt(3));
+    Inc(FPosition, 4);
+    if (Start < 1) or (Start > Length(Text)) or (Count < 1) then
+      Exit('');
+    Exit(Copy(Text, Start, Count));
   end;
-  if TokenIs('index') and (Token(2) <> nil) then
+  if TokenIs('index') and HasToken(2) then
   begin
-    Text := Token(1);
-    Characters := Token(2);
+    Text := TokenAt(1);
     Found := 0;
-    Index := 0;
-    while Text[Index] <> #0 do
-    begin
-      if FindCharacter(Characters, Text[Index]) >= 0 then
+    for Index := 1 to Length(Text) do
+      if Pos(Text[Index], TokenAt(2)) > 0 then
       begin
-        Found := Index + 1;
+        Found := Index;
         Break;
       end;
-      Inc(Index);
-    end;
-    Inc(Position, 3);
-    Exit(MakeNumber(Found));
+    Inc(FPosition, 3);
+    Exit(IntToStr(Found));
   end;
-  if TokenIs('+') and (Token(1) <> nil) then
-    Inc(Position);
-  Result := DuplicateText(Token(0));
-  Inc(Position);
+  if TokenIs('+') and HasToken(1) then
+    Inc(FPosition);
+  Result := TokenAt(0);
+  Inc(FPosition);
 end;
 
-function ParseMatch: PChar;
-var
-  Right: PChar;
-  Matched: PChar;
+function TExpressionEvaluator.ParseMatch: string;
 begin
   Result := ParsePrimary;
   while TokenIs(':') do
   begin
-    Inc(Position);
-    Right := ParsePrimary;
-    Matched := MatchPattern(Result, Right);
-    FreeMemory(Result);
-    FreeMemory(Right);
-    Result := Matched;
+    Inc(FPosition);
+    Result := MatchPattern(Result, ParsePrimary);
   end;
 end;
 
-function ParseProduct: PChar;
+function TExpressionEvaluator.ParseProduct: string;
 var
-  Operation: PChar;
+  Operation: string;
   Left: Int64;
   Right: Int64;
-  RightText: PChar;
+  RightText: string;
 begin
   Result := ParseMatch;
   while TokenIs('*') or TokenIs('/') or TokenIs('%') do
   begin
-    Operation := Token(0);
-    Inc(Position);
+    Operation := TokenAt(0);
+    Inc(FPosition);
     RightText := ParseMatch;
     Left := RequireNumber(Result);
     Right := RequireNumber(RightText);
-    FreeMemory(Result);
-    FreeMemory(RightText);
-    if (Operation[0] <> '*') and (Right = 0) then
+    if (Operation <> '*') and (Right = 0) then
     begin
-      Report('division by zero', []);
+      Report('division by zero');
       Halt(2);
     end;
-    case Operation[0] of
-      '*': Result := MakeNumber(Left * Right);
-      '/': Result := MakeNumber(Left div Right);
+    if Operation = '*' then
+      Result := IntToStr(Left * Right)
+    else if Operation = '/' then
+      Result := IntToStr(Left div Right)
     else
-      Result := MakeNumber(Left mod Right);
-    end;
+      Result := IntToStr(Left mod Right);
   end;
 end;
 
-function ParseSum: PChar;
+function TExpressionEvaluator.ParseSum: string;
 var
   IsAddition: Boolean;
   Left: Int64;
   Right: Int64;
-  RightText: PChar;
+  RightText: string;
 begin
   Result := ParseProduct;
   while TokenIs('+') or TokenIs('-') do
   begin
     IsAddition := TokenIs('+');
-    Inc(Position);
+    Inc(FPosition);
     RightText := ParseProduct;
     Left := RequireNumber(Result);
     Right := RequireNumber(RightText);
-    FreeMemory(Result);
-    FreeMemory(RightText);
     if IsAddition then
-      Result := MakeNumber(Left + Right)
+      Result := IntToStr(Left + Right)
     else
-      Result := MakeNumber(Left - Right);
+      Result := IntToStr(Left - Right);
   end;
 end;
 
-function ParseComparison: PChar;
+{ Numbers compare as numbers, anything else as text. }
+function CompareValues(const Left, Right: string): Integer;
 var
-  Operation: PChar;
-  RightText: PChar;
-  Left: Int64;
-  Right: Int64;
+  LeftNumber: Int64;
+  RightNumber: Int64;
+begin
+  if IsNumber(Left, LeftNumber) and IsNumber(Right, RightNumber) then
+  begin
+    if LeftNumber < RightNumber then
+      Result := -1
+    else if LeftNumber > RightNumber then
+      Result := 1
+    else
+      Result := 0;
+  end
+  else
+    Result := CompareStr(Left, Right);
+end;
+
+function TExpressionEvaluator.ParseComparison: string;
+var
+  Operation: string;
   Order: Integer;
   Outcome: Boolean;
 begin
@@ -289,102 +301,78 @@ begin
   while TokenIs('<') or TokenIs('<=') or TokenIs('=') or TokenIs('==') or
         TokenIs('!=') or TokenIs('>=') or TokenIs('>') do
   begin
-    Operation := Token(0);
-    Inc(Position);
-    RightText := ParseSum;
-    { Numbers compare as numbers, anything else as text. }
-    if IsNumber(Result, Left) and IsNumber(RightText, Right) then
-    begin
-      if Left < Right then
-        Order := -1
-      else if Left > Right then
-        Order := 1
-      else
-        Order := 0;
-    end
-    else
-      Order := CompareText(Result, RightText);
-    if TextIsEqual(Operation, '<') then
+    Operation := TokenAt(0);
+    Inc(FPosition);
+    Order := CompareValues(Result, ParseSum);
+    if Operation = '<' then
       Outcome := Order < 0
-    else if TextIsEqual(Operation, '<=') then
+    else if Operation = '<=' then
       Outcome := Order <= 0
-    else if TextIsEqual(Operation, '=') or TextIsEqual(Operation, '==') then
+    else if (Operation = '=') or (Operation = '==') then
       Outcome := Order = 0
-    else if TextIsEqual(Operation, '!=') then
+    else if Operation = '!=' then
       Outcome := Order <> 0
-    else if TextIsEqual(Operation, '>=') then
+    else if Operation = '>=' then
       Outcome := Order >= 0
     else
       Outcome := Order > 0;
-    FreeMemory(Result);
-    FreeMemory(RightText);
-    Result := MakeNumber(Ord(Outcome));
+    Result := IntToStr(Ord(Outcome));
   end;
 end;
 
-function ParseAnd: PChar;
+function TExpressionEvaluator.ParseAnd: string;
 var
-  Right: PChar;
+  Right: string;
 begin
   Result := ParseComparison;
   while TokenIs('&') do
   begin
-    Inc(Position);
+    Inc(FPosition);
     Right := ParseComparison;
     if IsNullOrZero(Result) or IsNullOrZero(Right) then
-    begin
-      FreeMemory(Result);
-      Result := MakeNumber(0);
-    end;
-    FreeMemory(Right);
+      Result := '0';
   end;
 end;
 
-function ParseOr: PChar;
+function TExpressionEvaluator.ParseOr: string;
 var
-  Right: PChar;
+  Right: string;
 begin
   Result := ParseAnd;
   while TokenIs('|') do
   begin
-    Inc(Position);
+    Inc(FPosition);
     Right := ParseAnd;
     if IsNullOrZero(Result) then
     begin
-      FreeMemory(Result);
       if IsNullOrZero(Right) then
-      begin
-        Result := MakeNumber(0);
-        FreeMemory(Right);
-      end
+        Result := '0'
       else
         Result := Right;
-    end
-    else
-      FreeMemory(Right);
+    end;
   end;
 end;
 
 var
-  Outcome: PChar;
+  Arguments: TStringArray;
+  Evaluator: TExpressionEvaluator;
+  Outcome: string;
 begin
-  if ArgumentTotal < 2 then
+  Arguments := ProgramArguments;
+  if Length(Arguments) = 0 then
   begin
-    Report('missing operand', []);
+    Report('missing operand');
     Halt(2);
   end;
-  if (ArgumentTotal = 2) and TextIsEqual(Argument(1), '--help') then
+  if (Length(Arguments) = 1) and (Arguments[0] = '--help') then
   begin
-    PrintLine('Usage: expr EXPRESSION');
+    PrintStringLine('Usage: expr EXPRESSION');
     Halt(0);
   end;
-  Position := 1;
-  if TokenIs('--') then
-    Inc(Position);
-  Outcome := ParseOr;
-  if Position < ArgumentTotal then
-    SyntaxError;
-  PrintLine(Outcome);
+  Evaluator := TExpressionEvaluator.Create(Arguments);
+  Outcome := Evaluator.Evaluate;
+  Evaluator.Free;
+  PrintStringLine(Outcome);
   if IsNullOrZero(Outcome) then
     Halt(1);
   Halt(0);

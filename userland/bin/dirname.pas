@@ -26,17 +26,16 @@
 }
 program dirname;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: dirname [OPTION] NAME...'#10 +
+  Usage = 'Usage: dirname [OPTION] NAME...'#10 +
     'Output each NAME with its last non-slash component and trailing slashes'#10 +
     'removed; if NAME contains no /''s, output ''.'' (meaning the current directory).'#10 +
     #10 +
@@ -45,22 +44,20 @@ const
   OptionZero = 1;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   LineEnd: Char;
-  Index: Integer;
+  Operand: string;
 begin
   LineEnd := #10;
-  BeginOptions(Parser, [OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionZero then
       LineEnd := #0;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
-  for Index := 0 to Parser.OperandCount - 1 do
-  begin
-    WriteText(StandardOutput, DirectoryName(Parser.Operands[Index]));
-    WriteCharacter(StandardOutput, LineEnd);
-  end;
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
+  for Operand in CommandLine.Operands do
+    PrintString(DirectoryName(Operand) + LineEnd);
+  CommandLine.Free;
 end.

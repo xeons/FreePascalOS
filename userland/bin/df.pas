@@ -26,20 +26,17 @@
 }
 program df;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
+  SysUtils,
   Sys.Information,
-  Sys.Streams,
-  Util.Messages,
-  Util.Options,
+  Util.CommandLine,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: df [OPTION]...'#10 +
+  Usage = 'Usage: df [OPTION]...'#10 +
     'Show information about the mounted volumes.'#10 +
     #10 +
     '  -h, --human-readable  print sizes in powers of 1024 (e.g., 1023M)'#10 +
@@ -51,11 +48,10 @@ const
 var
   HumanReadable: Boolean;
 
-procedure WriteUsage(const Volume: TVolumeInformation);
+function UsageColumns(const Volume: TVolumeInformation): string;
 var
   Used: QWord;
   Percent: QWord;
-  SizeText: array[0..31] of Char;
 begin
   Used := 0;
   if Volume.TotalBytes > Volume.FreeBytes then
@@ -64,68 +60,68 @@ begin
   if Volume.TotalBytes > 0 then
     Percent := (Used * 100 + Volume.TotalBytes - 1) div Volume.TotalBytes;
   if HumanReadable then
-  begin
-    WriteFormatted(StandardOutput, ' %5s', [ArgumentText(FormatHumanSize(Used, @SizeText[0]))]);
-    WriteFormatted(StandardOutput, ' %9s', [ArgumentText(FormatHumanSize(Volume.FreeBytes, @SizeText[0]))]);
-  end
+    Result := Format(' %5s %9s', [FormatHumanSize(Used), FormatHumanSize(Volume.FreeBytes)])
   else
-    WriteFormatted(StandardOutput, ' %5u %9u', [ArgumentUnsigned(Used div 1024),
-      ArgumentUnsigned(Volume.FreeBytes div 1024)]);
-  WriteFormatted(StandardOutput, ' %3u%%', [ArgumentUnsigned(Percent)]);
+    Result := Format(' %5d %9d', [Used div 1024, Volume.FreeBytes div 1024]);
+  Result := Result + Format(' %3d%%', [Percent]);
+end;
+
+function VolumeLine(const Volume: TVolumeInformation; PrintType: Boolean): string;
+var
+  MountPoint: string;
+begin
+  Result := Format('%-15s ', [PChar(@Volume.Name[0])]);
+  if PrintType then
+    Result := Result + Format('%-6s ', [PChar(@Volume.FileSystemType[0])]);
+  if HumanReadable then
+    Result := Result + Format('%5s', [FormatHumanSize(Volume.TotalBytes)])
+  else
+    Result := Result + Format('%10d', [Volume.TotalBytes div 1024]);
+  if Volume.HasFreeSpace <> 0 then
+    Result := Result + UsageColumns(Volume)
+  else
+    Result := Result + '     -         -    -';
+  if Volume.IsSystemVolume <> 0 then
+    MountPoint := '/'
+  else
+    MountPoint := '/volumes/' + PChar(@Volume.Name[0]);
+  Result := Result + ' ' + MountPoint;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   PrintType: Boolean;
   Volume: TVolumeInformation;
   Index: Integer;
-  SizeText: array[0..31] of Char;
-  MountPoint: array[0..127] of Char;
+  Header: string;
 begin
   HumanReadable := False;
   PrintType := False;
-  BeginOptions(Parser, [
-    OptionDefinition('h', 'human-readable', False, OptionHumanReadable),
-    OptionDefinition('T', 'print-type', False, OptionPrintType)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('h', 'human-readable', False, OptionHumanReadable),
+    CommandOption('T', 'print-type', False, OptionPrintType)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionHumanReadable: HumanReadable := True;
       OptionPrintType: PrintType := True;
     end;
 
-  WriteText(StandardOutput, 'Filesystem      ');
+  Header := 'Filesystem      ';
   if PrintType then
-    WriteText(StandardOutput, 'Type   ');
+    Header := Header + 'Type   ';
   if HumanReadable then
-    WriteText(StandardOutput, ' Size')
+    Header := Header + ' Size'
   else
-    WriteText(StandardOutput, ' 1K-blocks');
-  WriteLine(StandardOutput, '  Used Available Use% Mounted on');
+    Header := Header + ' 1K-blocks';
+  PrintStringLine(Header + '  Used Available Use% Mounted on');
 
   Index := 0;
   while GetVolume(Index, Volume) do
   begin
-    WriteFormatted(StandardOutput, '%-15s ', [ArgumentText(@Volume.Name[0])]);
-    if PrintType then
-      WriteFormatted(StandardOutput, '%-6s ', [ArgumentText(@Volume.FileSystemType[0])]);
-    if HumanReadable then
-      WriteFormatted(StandardOutput, '%5s', [ArgumentText(FormatHumanSize(Volume.TotalBytes, @SizeText[0]))])
-    else
-      WriteFormatted(StandardOutput, '%10u', [ArgumentUnsigned(Volume.TotalBytes div 1024)]);
-    if Volume.HasFreeSpace <> 0 then
-      WriteUsage(Volume)
-    else
-      WriteText(StandardOutput, '     -         -    -');
-    if Volume.IsSystemVolume <> 0 then
-      CopyText(@MountPoint[0], '/', SizeOf(MountPoint))
-    else
-    begin
-      CopyText(@MountPoint[0], '/volumes/', SizeOf(MountPoint));
-      CopyText(@MountPoint[TextLength(@MountPoint[0])], @Volume.Name[0], SizeOf(MountPoint) - TextLength(@MountPoint[0]));
-    end;
-    WriteFormatted(StandardOutput, ' %s'#10, [ArgumentText(@MountPoint[0])]);
+    PrintStringLine(VolumeLine(Volume, PrintType));
     Inc(Index);
   end;
+  CommandLine.Free;
 end.

@@ -28,28 +28,25 @@
 }
 program expand;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Environment,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  ExpandUsage: PChar = 'Usage: expand [OPTION]... [FILE]...'#10 +
+  ExpandUsage = 'Usage: expand [OPTION]... [FILE]...'#10 +
     'Convert tabs in each FILE to spaces, writing to standard output.'#10#10 +
     '  -i, --initial    do not convert tabs after non blanks'#10 +
     '  -t, --tabs=N     have tabs N characters apart, not 8'#10 +
     '  -t, --tabs=LIST  use comma separated list of tab positions'#10;
-  UnexpandUsage: PChar = 'Usage: unexpand [OPTION]... [FILE]...'#10 +
+  UnexpandUsage = 'Usage: unexpand [OPTION]... [FILE]...'#10 +
     'Convert blanks in each FILE to tabs, writing to standard output.'#10#10 +
     '  -a, --all        convert all blanks, instead of just initial blanks'#10 +
     '      --first-only  convert only leading sequences of blanks (overrides -a)'#10 +
@@ -60,100 +57,90 @@ const
   OptionTabs = 2;
   OptionAll = 3;
   OptionFirstOnly = 4;
-  MaximumStops = 64;
 
 var
-  Stops: array[0..MaximumStops - 1] of Integer;
-  StopCount: Integer;
+  Stops: array of Integer;
   TabWidth: Integer;
 
 { The column of the next tab stop after Column. }
 function NextStop(Column: Integer): Integer;
 var
-  Index: Integer;
+  Stop: Integer;
 begin
-  if StopCount <= 1 then
+  if Length(Stops) <= 1 then
     Exit((Column div TabWidth + 1) * TabWidth);
-  for Index := 0 to StopCount - 1 do
-    if Stops[Index] > Column then
-      Exit(Stops[Index]);
+  for Stop in Stops do
+    if Stop > Column then
+      Exit(Stop);
   { Past the last stop: one column at a time. }
   Result := Column + 1;
 end;
 
-procedure ParseStops(Text: PChar);
+procedure ParseStops(const Text: string);
 var
   Position: Integer;
   Value: Integer;
 begin
-  StopCount := 0;
-  Position := 0;
-  while Text[Position] <> #0 do
+  Stops := nil;
+  Position := 1;
+  while Position <= Length(Text) do
   begin
-    if not IsDigit(Text[Position]) then
-      Fail(1, 'tab size contains invalid character(s): ''%s''', [ArgumentText(Text + Position)]);
+    if not (Text[Position] in ['0'..'9']) then
+      Fail(1, Format('tab size contains invalid character(s): ''%s''', [Copy(Text, Position, MaxInt)]));
     Value := 0;
-    while IsDigit(Text[Position]) do
+    while (Position <= Length(Text)) and (Text[Position] in ['0'..'9']) do
     begin
       Value := Value * 10 + Ord(Text[Position]) - Ord('0');
       Inc(Position);
     end;
-    if (Value = 0) or ((StopCount > 0) and (Value <= Stops[StopCount - 1])) then
-      Fail(1, 'tab sizes must be ascending', []);
-    if StopCount < MaximumStops then
-    begin
-      Stops[StopCount] := Value;
-      Inc(StopCount);
-    end;
-    if (Text[Position] = ',') or (Text[Position] = ' ') then
+    if (Value = 0) or ((Length(Stops) > 0) and (Value <= Stops[High(Stops)])) then
+      Fail(1, 'tab sizes must be ascending');
+    SetLength(Stops, Length(Stops) + 1);
+    Stops[High(Stops)] := Value;
+    if (Position <= Length(Text)) and (Text[Position] in [',', ' ']) then
       Inc(Position);
   end;
-  if StopCount = 1 then
+  if Length(Stops) = 1 then
     TabWidth := Stops[0];
 end;
 
-procedure ExpandLine(Line: PChar; InitialOnly: Boolean);
+function ExpandLine(const Line: string; InitialOnly: Boolean): string;
 var
-  Index: Integer;
+  Character: Char;
   Column: Integer;
   Target: Integer;
   SeenNonBlank: Boolean;
 begin
+  Result := '';
   Column := 0;
   SeenNonBlank := False;
-  Index := 0;
-  while Line[Index] <> #0 do
+  for Character in Line do
   begin
-    if (Line[Index] = #9) and not (InitialOnly and SeenNonBlank) then
+    if (Character = #9) and not (InitialOnly and SeenNonBlank) then
     begin
       Target := NextStop(Column);
-      while Column < Target do
-      begin
-        WriteCharacter(StandardOutput, ' ');
-        Inc(Column);
-      end;
+      Result := Result + StringOfChar(' ', Target - Column);
+      Column := Target;
     end
     else
     begin
-      if Line[Index] = #8 then
+      if Character = #8 then
       begin
         if Column > 0 then
           Dec(Column);
       end
       else
         Inc(Column);
-      if (Line[Index] <> ' ') and (Line[Index] <> #9) then
+      if (Character <> ' ') and (Character <> #9) then
         SeenNonBlank := True;
-      WriteCharacter(StandardOutput, Line[Index]);
+      Result := Result + Character;
     end;
-    Inc(Index);
   end;
-  WriteCharacter(StandardOutput, #10);
 end;
 
-procedure UnexpandLine(Line: PChar; AllBlanks: Boolean);
+function UnexpandLine(const Line: string; AllBlanks: Boolean): string;
 var
-  Index: Integer;
+  Character: Char;
   Column: Integer;
   PendingSpaces: Integer;
   PendingStart: Integer;
@@ -162,22 +149,19 @@ var
 
   procedure FlushPending;
   begin
-    while PendingSpaces > 0 do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Dec(PendingSpaces);
-    end;
+    Result := Result + StringOfChar(' ', PendingSpaces);
+    PendingSpaces := 0;
   end;
 
 begin
+  Result := '';
   Column := 0;
   PendingSpaces := 0;
   PendingStart := 0;
   SeenNonBlank := False;
-  Index := 0;
-  while Line[Index] <> #0 do
+  for Character in Line do
   begin
-    if (Line[Index] = ' ') and (AllBlanks or not SeenNonBlank) then
+    if (Character = ' ') and (AllBlanks or not SeenNonBlank) then
     begin
       if PendingSpaces = 0 then
         PendingStart := Column;
@@ -187,63 +171,58 @@ begin
       Stop := NextStop(PendingStart);
       if (Column = Stop) and (PendingSpaces > 1) then
       begin
-        WriteCharacter(StandardOutput, #9);
+        Result := Result + #9;
         PendingSpaces := 0;
       end
       else if Column = Stop then
-      begin
         FlushPending;
-      end;
     end
-    else if (Line[Index] = #9) and (AllBlanks or not SeenNonBlank) then
+    else if (Character = #9) and (AllBlanks or not SeenNonBlank) then
     begin
       PendingSpaces := 0;
-      WriteCharacter(StandardOutput, #9);
+      Result := Result + #9;
       Column := NextStop(Column);
     end
     else
     begin
       FlushPending;
       SeenNonBlank := True;
-      WriteCharacter(StandardOutput, Line[Index]);
+      Result := Result + Character;
       Inc(Column);
     end;
-    Inc(Index);
   end;
   FlushPending;
-  WriteCharacter(StandardOutput, #10);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   IsUnexpand: Boolean;
   InitialOnly: Boolean;
   AllBlanks: Boolean;
   FirstOnly: Boolean;
-  Index: Integer;
+  Operand: string;
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   ExitStatus: LongInt;
 begin
-  IsUnexpand := TextIsEqual(BaseName(Argument(0)), 'unexpand');
+  IsUnexpand := BaseName(string(Argument(0))) = 'unexpand';
   TabWidth := 8;
-  StopCount := 0;
   InitialOnly := False;
   AllBlanks := False;
   FirstOnly := False;
   if IsUnexpand then
-    BeginOptions(Parser, [
-      OptionDefinition('a', 'all', False, OptionAll),
-      OptionDefinition(#0, 'first-only', False, OptionFirstOnly),
-      OptionDefinition('t', 'tabs', True, OptionTabs)], UnexpandUsage)
+    CommandLine := TCommandLine.Create([
+      CommandOption('a', 'all', False, OptionAll),
+      CommandOption(#0, 'first-only', False, OptionFirstOnly),
+      CommandOption('t', 'tabs', True, OptionTabs)], UnexpandUsage)
   else
-    BeginOptions(Parser, [
-      OptionDefinition('i', 'initial', False, OptionInitial),
-      OptionDefinition('t', 'tabs', True, OptionTabs)], ExpandUsage);
-  while NextOption(Parser, Code, Value) do
+    CommandLine := TCommandLine.Create([
+      CommandOption('i', 'initial', False, OptionInitial),
+      CommandOption('t', 'tabs', True, OptionTabs)], ExpandUsage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionInitial: InitialOnly := True;
       OptionAll: AllBlanks := True;
@@ -256,28 +235,22 @@ begin
     end;
   if FirstOnly then
     AllBlanks := False;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    while ReadLine(Stream, Line, HadLineEnd) do
-    begin
+    while ReadTextLine(Stream, Line, HadLineEnd) do
       if IsUnexpand then
-        UnexpandLine(Line, AllBlanks)
+        PrintStringLine(UnexpandLine(Line, AllBlanks))
       else
-        ExpandLine(Line, InitialOnly);
-      FreeMemory(Line);
-    end;
+        PrintStringLine(ExpandLine(Line, InitialOnly));
     CloseInput(Stream);
   end;
   Halt(ExitStatus);

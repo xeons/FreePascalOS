@@ -25,22 +25,22 @@
 }
 program env;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Environment,
   Sys.Errors,
-  Sys.Format,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
+  Util.Commands,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]'#10 +
+  Usage = 'Usage: env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]'#10 +
     'Set each NAME to VALUE in the environment and run COMMAND.'#10 +
     #10 +
     '  -i, --ignore-environment  start with an empty environment'#10 +
@@ -52,105 +52,129 @@ const
   OptionNull = 3;
   ProgramPathCapacity = 1024;
 
+procedure ClearEnvironment;
 var
-  Parser: TOptionParser;
+  Entry: string;
+begin
+  while EnvironmentCount > 0 do
+  begin
+    Entry := EnvironmentBlock[0];
+    RemoveVariable(PChar(Copy(Entry, 1, Pos('=', Entry) - 1)));
+  end;
+end;
+
+{ Lets the option parser handle --help, --version and errors. }
+procedure RejectOption(const Text: string);
+var
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
+begin
+  CommandLine := TCommandLine.Create([
+    CommandOption('i', 'ignore-environment', False, OptionIgnore),
+    CommandOption('u', 'unset', True, OptionUnset),
+    CommandOption('0', 'null', False, OptionNull)], Usage);
+  CommandLine.NextOption(Code, Value);
+  FailWithUsageHint(Format('invalid option ''%s''', [Text]));
+end;
+
+procedure PrintEnvironment(LineEnd: Char);
+var
+  Block: PPChar;
+  Index: Integer;
+begin
+  Block := EnvironmentBlock;
+  Index := 0;
+  while Block[Index] <> nil do
+  begin
+    PrintString(string(Block[Index]) + LineEnd);
+    Inc(Index);
+  end;
+end;
+
+function FindProgramPath(const Name: string; out Path: string): Boolean;
+var
+  Buffer: array[0..ProgramPathCapacity - 1] of Char;
+begin
+  Result := FindProgram(PChar(Name), @Buffer[0], ProgramPathCapacity);
+  if Result then
+    Path := PChar(@Buffer[0])
+  else
+    Path := '';
+end;
+
+var
+  Arguments: TStringArray;
+  CommandVector: TTextVector;
   LineEnd: Char;
   First: Integer;
-  Index: Integer;
-  Block: PPChar;
-  EqualsPosition: PtrInt;
-  Name: array[0..255] of Char;
-  ProgramPath: array[0..ProgramPathCapacity - 1] of Char;
+  Text: string;
+  EqualsPosition: Integer;
+  ProgramPath: string;
   Status: LongInt;
 begin
   LineEnd := #10;
+  Arguments := ProgramArguments;
   { Options end at the first operand, so the command's own options are
     left alone: parse by hand up to it. }
-  First := 1;
-  while (First < ArgumentTotal) and (Argument(First)[0] = '-') and (Argument(First)[1] <> #0) do
+  First := 0;
+  while (First < Length(Arguments)) and (Length(Arguments[First]) >= 2) and (Arguments[First][1] = '-') do
   begin
-    if TextIsEqual(Argument(First), '--') then
+    Text := Arguments[First];
+    if Text = '--' then
     begin
       Inc(First);
       Break;
     end;
-    if TextIsEqual(Argument(First), '-i') or TextIsEqual(Argument(First), '--ignore-environment') then
-    begin
-      while EnvironmentCount > 0 do
-      begin
-        EqualsPosition := FindCharacter(EnvironmentBlock[0], '=');
-        CopyText(@Name[0], EnvironmentBlock[0], PtrUInt(EqualsPosition) + 1);
-        RemoveVariable(@Name[0]);
-      end;
-    end
-    else if TextIsEqual(Argument(First), '-u') and (First + 1 < ArgumentTotal) then
+    if (Text = '-i') or (Text = '--ignore-environment') then
+      ClearEnvironment
+    else if (Text = '-u') and (First + 1 < Length(Arguments)) then
     begin
       Inc(First);
-      RemoveVariable(Argument(First));
+      RemoveVariable(PChar(Arguments[First]));
     end
-    else if TextStartsWith(Argument(First), '--unset=') then
-      RemoveVariable(Argument(First) + 8)
-    else if TextIsEqual(Argument(First), '-0') or TextIsEqual(Argument(First), '--null') then
+    else if StartsStr('--unset=', Text) then
+      RemoveVariable(PChar(Copy(Text, 9, MaxInt)))
+    else if (Text = '-0') or (Text = '--null') then
       LineEnd := #0
     else
-    begin
-      { Let the option parser handle --help, --version and errors. }
-      BeginOptions(Parser, [
-        OptionDefinition('i', 'ignore-environment', False, OptionIgnore),
-        OptionDefinition('u', 'unset', True, OptionUnset),
-        OptionDefinition('0', 'null', False, OptionNull)], Usage);
-      NextOption(Parser, Code, Value);
-      FailWithUsageHint('invalid option ''%s''', [ArgumentText(Argument(First))]);
-    end;
+      RejectOption(Text);
     Inc(First);
   end;
-  if (First < ArgumentTotal) and TextIsEqual(Argument(First), '-') then
+  if (First < Length(Arguments)) and (Arguments[First] = '-') then
   begin
-    while EnvironmentCount > 0 do
-    begin
-      EqualsPosition := FindCharacter(EnvironmentBlock[0], '=');
-      CopyText(@Name[0], EnvironmentBlock[0], PtrUInt(EqualsPosition) + 1);
-      RemoveVariable(@Name[0]);
-    end;
+    ClearEnvironment;
     Inc(First);
   end;
 
-  while (First < ArgumentTotal) and (FindCharacter(Argument(First), '=') > 0) do
+  while First < Length(Arguments) do
   begin
-    EqualsPosition := FindCharacter(Argument(First), '=');
-    if EqualsPosition < Length(Name) then
-    begin
-      CopyText(@Name[0], Argument(First), PtrUInt(EqualsPosition) + 1);
-      SetVariable(@Name[0], Argument(First) + EqualsPosition + 1);
-    end;
+    EqualsPosition := Pos('=', Arguments[First]);
+    if EqualsPosition <= 1 then
+      Break;
+    SetVariable(PChar(Copy(Arguments[First], 1, EqualsPosition - 1)),
+      PChar(Copy(Arguments[First], EqualsPosition + 1, MaxInt)));
     Inc(First);
   end;
 
-  if First >= ArgumentTotal then
+  if First >= Length(Arguments) then
   begin
-    Block := EnvironmentBlock;
-    Index := 0;
-    while Block[Index] <> nil do
-    begin
-      WriteText(StandardOutput, Block[Index]);
-      WriteCharacter(StandardOutput, LineEnd);
-      Inc(Index);
-    end;
+    PrintEnvironment(LineEnd);
     Halt(0);
   end;
 
-  if not FindProgram(Argument(First), @ProgramPath[0], ProgramPathCapacity) then
+  if not FindProgramPath(Arguments[First], ProgramPath) then
   begin
-    Report('''%s'': No such file or directory', [ArgumentText(Argument(First))]);
+    Report(Format('''%s'': No such file or directory', [Arguments[First]]));
     Halt(127);
   end;
   FlushStandardStreams;
-  Status := RunProgram(@ProgramPath[0], ArgumentValues + First);
+  Arguments := Copy(Arguments, First, MaxInt);
+  CommandVector := TextVector(Arguments);
+  Status := RunProgram(PChar(ProgramPath), PPChar(@CommandVector[0]));
   if Status < 0 then
   begin
-    ReportError(ErrorCodeOf(Status), '''%s''', [ArgumentText(Argument(First))]);
+    ReportError(ErrorCodeOf(Status), Format('''%s''', [Arguments[0]]));
     Halt(126);
   end;
   Halt(Status);

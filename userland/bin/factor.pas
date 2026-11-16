@@ -27,28 +27,23 @@
 }
 program factor;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
+  Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: factor [NUMBER]...'#10 +
+  Usage = 'Usage: factor [NUMBER]...'#10 +
     'Print the prime factors of each specified integer NUMBER.  If none'#10 +
     'are specified on the command line, read them from standard input.'#10;
 
-procedure PrintFactor(Value: QWord);
-begin
-  WriteCharacter(StandardOutput, ' ');
-  WriteUnsigned(StandardOutput, Value);
-end;
+  Spaces = [' ', #9, #10, #11, #12, #13];
 
 { True if Divisor * Divisor <= Value, without overflowing. }
 function SquareFits(Divisor, Value: QWord): Boolean;
@@ -56,28 +51,21 @@ begin
   Result := Divisor <= Value div Divisor;
 end;
 
-procedure Factor(Text: PChar; var ExitStatus: LongInt);
+{ " 2 2 3" for 12. }
+function PrimeFactors(Value: QWord): string;
 var
-  Value: QWord;
   Divisor: QWord;
   Step: QWord;
 begin
-  if not ParseUnsigned(Text, Value) then
-  begin
-    Report('''%s'' is not a valid positive integer', [ArgumentText(Text)]);
-    ExitStatus := 1;
-    Exit;
-  end;
-  WriteUnsigned(StandardOutput, Value);
-  WriteCharacter(StandardOutput, ':');
+  Result := '';
   while (Value > 1) and (Value mod 2 = 0) do
   begin
-    PrintFactor(2);
+    Result := Result + ' 2';
     Value := Value div 2;
   end;
   while (Value > 1) and (Value mod 3 = 0) do
   begin
-    PrintFactor(3);
+    Result := Result + ' 3';
     Value := Value div 3;
   end;
   { Candidates 5, 7, 11, 13, ...: steps of 2 and 4 skip multiples of 2 and 3. }
@@ -87,52 +75,64 @@ begin
   begin
     while Value mod Divisor = 0 do
     begin
-      PrintFactor(Divisor);
+      Result := Result + ' ' + IntToStr(Divisor);
       Value := Value div Divisor;
     end;
     Divisor := Divisor + Step;
     Step := 6 - Step;
   end;
   if Value > 1 then
-    PrintFactor(Value);
-  WriteCharacter(StandardOutput, #10);
+    Result := Result + ' ' + IntToStr(Value);
+end;
+
+procedure Factor(const Text: string; var ExitStatus: LongInt);
+var
+  Value: QWord;
+begin
+  if not ParseUnsignedDecimal(Text, Value) then
+  begin
+    Report(Format('''%s'' is not a valid positive integer', [Text]));
+    ExitStatus := 1;
+    Exit;
+  end;
+  PrintString(IntToStr(Value) + ':' + PrimeFactors(Value) + #10);
+end;
+
+{ Factors every number on Line (separated by white space). }
+procedure FactorLine(const Line: string; var ExitStatus: LongInt);
+var
+  Position: Integer;
+  Start: Integer;
+begin
+  Position := 1;
+  while Position <= Length(Line) do
+  begin
+    while (Position <= Length(Line)) and (Line[Position] in Spaces) do
+      Inc(Position);
+    if Position > Length(Line) then
+      Break;
+    Start := Position;
+    while (Position <= Length(Line)) and not (Line[Position] in Spaces) do
+      Inc(Position);
+    Factor(Copy(Line, Start, Position - Start), ExitStatus);
+  end;
 end;
 
 var
-  Parser: TOptionParser;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Operand: string;
   ExitStatus: LongInt;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
-  Position: PtrUInt;
-  Start: PtrUInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
   ExitStatus := 0;
-  if Parser.OperandCount > 0 then
-    for Index := 0 to Parser.OperandCount - 1 do
-      Factor(Parser.Operands[Index], ExitStatus)
+  if CommandLine.OperandCount > 0 then
+    for Operand in CommandLine.Operands do
+      Factor(Operand, ExitStatus)
   else
-    while ReadLine(StandardInput, Line, HadLineEnd) do
-    begin
-      Position := 0;
-      while Line[Position] <> #0 do
-      begin
-        while IsSpace(Line[Position]) do
-          Inc(Position);
-        if Line[Position] = #0 then
-          Break;
-        Start := Position;
-        while (Line[Position] <> #0) and not IsSpace(Line[Position]) do
-          Inc(Position);
-        if Line[Position] <> #0 then
-        begin
-          Line[Position] := #0;
-          Inc(Position);
-        end;
-        Factor(Line + Start, ExitStatus);
-      end;
-      FreeMemory(Line);
-    end;
+    while ReadTextLine(StandardInput, Line, HadLineEnd) do
+      FactorLine(Line, ExitStatus);
   Halt(ExitStatus);
 end.

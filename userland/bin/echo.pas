@@ -29,130 +29,128 @@
 }
 program echo;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Environment,
-  Sys.Streams;
+  SysUtils,
+  Util.CommandLine,
+  Util.Output;
 
 var
   PrintLineEnd: Boolean;
   InterpretEscapes: Boolean;
 
-function IsEchoOption(Text: PChar): Boolean;
+function IsEchoOption(const Text: string): Boolean;
 var
   Index: Integer;
 begin
   Result := False;
-  if (Text[0] <> '-') or (Text[1] = #0) then
+  if (Length(Text) < 2) or (Text[1] <> '-') then
     Exit;
-  Index := 1;
-  while Text[Index] <> #0 do
-  begin
+  for Index := 2 to Length(Text) do
     if not (Text[Index] in ['n', 'e', 'E']) then
       Exit;
-    Inc(Index);
-  end;
   Result := True;
 end;
 
-procedure ApplyOption(Text: PChar);
+procedure ApplyOption(const Text: string);
 var
   Index: Integer;
 begin
-  Index := 1;
-  while Text[Index] <> #0 do
-  begin
+  for Index := 2 to Length(Text) do
     case Text[Index] of
       'n': PrintLineEnd := False;
       'e': InterpretEscapes := True;
       'E': InterpretEscapes := False;
     end;
-    Inc(Index);
-  end;
 end;
 
-{ Writes Text with escapes interpreted; returns False after \c, which
-  ends all output. }
-function WriteEscaped(Text: PChar): Boolean;
+{ Text with escapes interpreted. Stopped becomes True at \c, which ends
+  all output (Result holds what came before it). }
+function InterpretText(const Text: string; out Stopped: Boolean): string;
 var
   Index: Integer;
   Value: Integer;
   DigitCount: Integer;
 begin
-  Index := 0;
-  while Text[Index] <> #0 do
+  Result := '';
+  Stopped := False;
+  Index := 1;
+  while Index <= Length(Text) do
   begin
-    if (Text[Index] <> '\') or (Text[Index + 1] = #0) then
+    if (Text[Index] <> '\') or (Index = Length(Text)) then
     begin
-      WriteCharacter(StandardOutput, Text[Index]);
+      Result := Result + Text[Index];
       Inc(Index);
       Continue;
     end;
     Inc(Index);
     case Text[Index] of
-      'n': WriteCharacter(StandardOutput, #10);
-      't': WriteCharacter(StandardOutput, #9);
-      'r': WriteCharacter(StandardOutput, #13);
-      'a': WriteCharacter(StandardOutput, #7);
-      'b': WriteCharacter(StandardOutput, #8);
-      'v': WriteCharacter(StandardOutput, #11);
-      'f': WriteCharacter(StandardOutput, #12);
-      'e': WriteCharacter(StandardOutput, #27);
-      '\': WriteCharacter(StandardOutput, '\');
-      'c': Exit(False);
+      'n': Result := Result + #10;
+      't': Result := Result + #9;
+      'r': Result := Result + #13;
+      'a': Result := Result + #7;
+      'b': Result := Result + #8;
+      'v': Result := Result + #11;
+      'f': Result := Result + #12;
+      'e': Result := Result + #27;
+      '\': Result := Result + '\';
+      'c':
+        begin
+          Stopped := True;
+          Exit;
+        end;
       '0':
         begin
           Value := 0;
           DigitCount := 0;
-          while (DigitCount < 3) and (Text[Index + 1] in ['0'..'7']) do
+          while (DigitCount < 3) and (Index < Length(Text)) and (Text[Index + 1] in ['0'..'7']) do
           begin
             Inc(Index);
             Value := Value * 8 + Ord(Text[Index]) - Ord('0');
             Inc(DigitCount);
           end;
-          WriteCharacter(StandardOutput, Char(Value and $FF));
+          Result := Result + Char(Value and $FF);
         end;
     else
-      begin
-        WriteCharacter(StandardOutput, '\');
-        WriteCharacter(StandardOutput, Text[Index]);
-      end;
+      Result := Result + '\' + Text[Index];
     end;
     Inc(Index);
   end;
-  Result := True;
 end;
 
 var
+  Arguments: TStringArray;
   ArgumentIndex: Integer;
   FirstString: Integer;
+  Stopped: Boolean;
 begin
   PrintLineEnd := True;
   InterpretEscapes := False;
+  Arguments := ProgramArguments;
 
-  ArgumentIndex := 1;
-  while (ArgumentIndex < ArgumentTotal) and IsEchoOption(Argument(ArgumentIndex)) do
+  ArgumentIndex := 0;
+  while (ArgumentIndex < Length(Arguments)) and IsEchoOption(Arguments[ArgumentIndex]) do
   begin
-    ApplyOption(Argument(ArgumentIndex));
+    ApplyOption(Arguments[ArgumentIndex]);
     Inc(ArgumentIndex);
   end;
 
   FirstString := ArgumentIndex;
-  while ArgumentIndex < ArgumentTotal do
+  while ArgumentIndex < Length(Arguments) do
   begin
     if ArgumentIndex > FirstString then
-      WriteCharacter(StandardOutput, ' ');
+      PrintString(' ');
     if InterpretEscapes then
     begin
-      if not WriteEscaped(Argument(ArgumentIndex)) then
+      PrintString(InterpretText(Arguments[ArgumentIndex], Stopped));
+      if Stopped then
         Halt(0);
     end
     else
-      WriteText(StandardOutput, Argument(ArgumentIndex));
+      PrintString(Arguments[ArgumentIndex]);
     Inc(ArgumentIndex);
   end;
   if PrintLineEnd then
-    WriteCharacter(StandardOutput, #10);
+    PrintString(#10);
 end.
