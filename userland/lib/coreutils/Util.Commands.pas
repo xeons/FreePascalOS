@@ -42,12 +42,13 @@
 }
 unit Util.Commands;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
 uses
+  SysUtils,
   Sys.Processes;
 
 const
@@ -64,15 +65,28 @@ const
 { Starts Arguments[0] (looked up in PATH) with Options. Returns the
   process handle, or reports the problem and returns -1 with Status set
   to 126 or 127. }
-function StartCommand(Arguments: PPChar; const Options: TProcessOptions; out Status: LongInt): Int64;
+function StartCommand(Arguments: PPChar; const Options: TProcessOptions; out Status: LongInt): Int64; overload;
+function StartCommand(const Arguments: array of string; const Options: TProcessOptions;
+  out Status: LongInt): Int64; overload;
 { Starts the command, waits for it, and ends this program with its
   status. }
-procedure RunCommandAndExit(Arguments: PPChar; const Options: TProcessOptions);
+procedure RunCommandAndExit(Arguments: PPChar; const Options: TProcessOptions); overload;
+procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions); overload;
+
+type
+  { A nil terminated list of PChar for the system calls (arguments, an
+    environment); it points into strings the caller keeps alive. }
+  TTextVector = array of PChar;
+
+function TextVector(const Items: array of string): TTextVector;
 
 { Parses "TERM", "SIGTERM" or "15"; returns -1 if unknown. }
-function ParseSignal(Text: PChar): Integer;
+function ParseSignal(Text: PChar): Integer; overload;
+function ParseSignal(const Text: string): Integer; overload;
 { "TERM" for 15; nil if the number has no name. }
 function SignalName(Number: Integer): PChar;
+{ The same as a string; '' if the number has no name. }
+function SignalNameText(Number: Integer): string;
 
 type
   TSignalAction = (SignalActionNone, SignalActionAskToEnd, SignalActionEnd, SignalActionStop,
@@ -220,6 +234,44 @@ begin
       program changes nothing. }
     Result := ContinuePrograms(Target);
   end;
+end;
+
+function TextVector(const Items: array of string): TTextVector;
+var
+  Index: Integer;
+begin
+  Result := nil;
+  SetLength(Result, Length(Items) + 1);
+  for Index := 0 to High(Items) do
+    Result[Index] := PChar(Items[Index]);
+  Result[Length(Items)] := nil;
+end;
+
+function StartCommand(const Arguments: array of string; const Options: TProcessOptions;
+  out Status: LongInt): Int64;
+var
+  Vector: TTextVector;
+begin
+  Vector := TextVector(Arguments);
+  Result := StartCommand(PPChar(@Vector[0]), Options, Status);
+end;
+
+procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions);
+var
+  Vector: TTextVector;
+begin
+  Vector := TextVector(Arguments);
+  RunCommandAndExit(PPChar(@Vector[0]), Options);
+end;
+
+function ParseSignal(const Text: string): Integer;
+begin
+  Result := ParseSignal(PChar(Text));
+end;
+
+function SignalNameText(Number: Integer): string;
+begin
+  Result := SignalName(Number);
 end;
 
 end.

@@ -49,7 +49,10 @@ uses
   Util.AccountChanges,
   Util.SystemRequests,
   Util.Power,
-  Util.Logins;
+  Util.Logins,
+  Util.Output,
+  Util.CommandLine,
+  Util.Numbers;
 
 implementation
 

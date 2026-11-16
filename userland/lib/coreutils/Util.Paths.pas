@@ -19,24 +19,30 @@
 {
   Path names. BaseName, DirectoryName and JoinPath are purely textual;
   CanonicalizePath consults the file system to resolve symbolic links.
-  Results are new heap strings.
+
+  Every routine works on strings; the PChar forms (whose results are new
+  heap strings) are kept for the tools not yet moved to strings.
 }
 unit Util.Paths;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
 { The last component: "/usr/lib/" -> "lib", "/" -> "/". }
-function BaseName(Path: PChar): PChar;
+function BaseName(const Path: string): string; overload;
+function BaseName(Path: PChar): PChar; overload;
 { Everything before the last component: "/usr/lib" -> "/usr",
   "file" -> ".", "/" -> "/". }
-function DirectoryName(Path: PChar): PChar;
+function DirectoryName(const Path: string): string; overload;
+function DirectoryName(Path: PChar): PChar; overload;
 { Directory + '/' + Name, without doubling the slash. }
-function JoinPath(Directory, Name: PChar): PChar;
+function JoinPath(const Directory, Name: string): string; overload;
+function JoinPath(Directory, Name: PChar): PChar; overload;
 { True for "." and "..". }
-function IsDotEntry(Name: PChar): Boolean;
+function IsDotEntry(const Name: string): Boolean; overload;
+function IsDotEntry(Name: PChar): Boolean; overload;
 
 type
   TCanonicalMode = (
@@ -48,84 +54,115 @@ type
     CanonicalMissingAllowed);
 
 { The absolute path with "." and ".." resolved and, if FollowLinks, every
-  symbolic link replaced by its target. Returns 0 and a new heap string,
-  or an error code. }
+  symbolic link replaced by its target. Returns 0, or an error code (and
+  an empty Canonical). }
+function CanonicalizePath(const Path: string; Mode: TCanonicalMode; FollowLinks: Boolean;
+  out Canonical: string): LongInt; overload;
+{ The same with a new heap string (nil on an error). }
 function CanonicalizePath(Path: PChar; Mode: TCanonicalMode; FollowLinks: Boolean;
-  out Canonical: PChar): LongInt;
+  out Canonical: PChar): LongInt; overload;
+
+{ The current directory; 0 or an error code. }
+function CurrentDirectoryPath(out Path: string): LongInt;
+{ What the symbolic link Path points to; 0 or an error code. }
+function ReadLinkTarget(const Path: string; out Target: string): LongInt;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
   Runtime.Text,
   Sys.Files,
-  Sys.Memory,
-  Sys.Text;
+  Sys.Memory;
 
-function CopyRange(Text: PChar; Start, Finish: PtrInt): PChar;
+function BaseName(const Path: string): string;
 var
-  Length: PtrInt;
+  Finish: Integer;
+  Start: Integer;
 begin
-  Length := Finish - Start;
-  if Length < 0 then
-    Length := 0;
-  Result := PChar(AllocateMemory(Length + 1));
-  CopyMemory(Result, Text + Start, Length);
-  Result[Length] := #0;
+  Finish := Length(Path);
+  if Finish = 0 then
+    Exit('');
+  while (Finish > 1) and (Path[Finish] = '/') do
+    Dec(Finish);
+  if (Finish = 1) and (Path[1] = '/') then
+    Exit('/');
+  Start := Finish;
+  while (Start > 0) and (Path[Start] <> '/') do
+    Dec(Start);
+  Result := Copy(Path, Start + 1, Finish - Start);
+end;
+
+function DirectoryName(const Path: string): string;
+var
+  Finish: Integer;
+begin
+  Finish := Length(Path);
+  { Drop trailing slashes, then the last component, then the slashes
+    separating it. }
+  while (Finish > 1) and (Path[Finish] = '/') do
+    Dec(Finish);
+  while (Finish > 0) and (Path[Finish] <> '/') do
+    Dec(Finish);
+  if Finish = 0 then
+    Exit('.');
+  while (Finish > 1) and (Path[Finish] = '/') do
+    Dec(Finish);
+  Result := Copy(Path, 1, Finish);
+end;
+
+function JoinPath(const Directory, Name: string): string;
+begin
+  if (Directory <> '') and (Directory[Length(Directory)] <> '/') then
+    Result := Directory + '/' + Name
+  else
+    Result := Directory + Name;
+end;
+
+function IsDotEntry(const Name: string): Boolean;
+begin
+  Result := (Name = '.') or (Name = '..');
 end;
 
 function BaseName(Path: PChar): PChar;
-var
-  Finish: PtrInt;
-  Start: PtrInt;
 begin
-  Finish := PtrInt(TextLength(Path));
-  if Finish = 0 then
-    Exit(DuplicateText(''));
-  while (Finish > 1) and (Path[Finish - 1] = '/') do
-    Dec(Finish);
-  if (Finish = 1) and (Path[0] = '/') then
-    Exit(DuplicateText('/'));
-  Start := Finish;
-  while (Start > 0) and (Path[Start - 1] <> '/') do
-    Dec(Start);
-  Result := CopyRange(Path, Start, Finish);
+  Result := DuplicateText(PChar(BaseName(string(Path))));
 end;
 
 function DirectoryName(Path: PChar): PChar;
-var
-  Finish: PtrInt;
 begin
-  Finish := PtrInt(TextLength(Path));
-  { Drop trailing slashes, then the last component, then the slashes
-    separating it. }
-  while (Finish > 1) and (Path[Finish - 1] = '/') do
-    Dec(Finish);
-  while (Finish > 0) and (Path[Finish - 1] <> '/') do
-    Dec(Finish);
-  if Finish = 0 then
-    Exit(DuplicateText('.'));
-  while (Finish > 1) and (Path[Finish - 1] = '/') do
-    Dec(Finish);
-  Result := CopyRange(Path, 0, Finish);
+  Result := DuplicateText(PChar(DirectoryName(string(Path))));
 end;
 
 function JoinPath(Directory, Name: PChar): PChar;
-var
-  Builder: TTextBuilder;
 begin
-  BeginText(Builder);
-  AppendText(Builder, Directory);
-  if (Builder.Length > 0) and (Builder.Text[Builder.Length - 1] <> '/') then
-    AppendCharacter(Builder, '/');
-  AppendText(Builder, Name);
-  Result := FinishText(Builder);
+  Result := DuplicateText(PChar(JoinPath(string(Directory), string(Name))));
 end;
 
 function IsDotEntry(Name: PChar): Boolean;
 begin
-  Result := TextIsEqual(Name, '.') or TextIsEqual(Name, '..');
+  Result := IsDotEntry(string(Name));
+end;
+
+function CurrentDirectoryPath(out Path: string): LongInt;
+var
+  Buffer: array[0..PathCapacity - 1] of Char;
+begin
+  Path := '';
+  Result := GetCurrentDirectory(@Buffer[0], PathCapacity);
+  if Result = ErrorNone then
+    Path := PChar(@Buffer[0]);
+end;
+
+function ReadLinkTarget(const Path: string; out Target: string): LongInt;
+var
+  Buffer: array[0..PathCapacity - 1] of Char;
+begin
+  Target := '';
+  Result := ReadSymbolicLink(PChar(Path), @Buffer[0], PathCapacity);
+  if Result = ErrorNone then
+    Target := PChar(@Buffer[0]);
 end;
 
 { --- Canonical names ------------------------------------------------- }
@@ -137,37 +174,35 @@ type
   TCanonicalizer = record
     Mode: TCanonicalMode;
     FollowLinks: Boolean;
-    Path: TTextBuilder;
+    Path: string;
   end;
 
-function AddComponents(var State: TCanonicalizer; Text: PChar; Depth: Integer; IsLastPart: Boolean): LongInt; forward;
+function AddComponents(var State: TCanonicalizer; const Text: string; Depth: Integer;
+  IsLastPart: Boolean): LongInt; forward;
 
 { Appends one component to the absolute path being built. }
-function AddComponent(var State: TCanonicalizer; Name: PChar; Depth: Integer; IsLast: Boolean): LongInt;
+function AddComponent(var State: TCanonicalizer; const Name: string; Depth: Integer;
+  IsLast: Boolean): LongInt;
 var
-  LastSlash: PtrInt;
-  SavedLength: PtrUInt;
+  LastSlash: Integer;
+  SavedPath: string;
   Information: TFileInformation;
-  Target: array[0..PathCapacity - 1] of Char;
+  Target: string;
 begin
   Result := ErrorNone;
-  if TextIsEqual(Name, '.') then
+  if Name = '.' then
     Exit;
-  if TextIsEqual(Name, '..') then
+  if Name = '..' then
   begin
-    LastSlash := FindLastCharacter(State.Path.Text, '/');
-    if LastSlash >= 0 then
-    begin
-      State.Path.Length := PtrUInt(LastSlash);
-      State.Path.Text[State.Path.Length] := #0;
-    end;
+    LastSlash := LastDelimiter('/', State.Path);
+    if LastSlash > 0 then
+      SetLength(State.Path, LastSlash - 1);
     Exit;
   end;
-  SavedLength := State.Path.Length;
-  AppendCharacter(State.Path, '/');
-  AppendText(State.Path, Name);
+  SavedPath := State.Path;
+  State.Path := State.Path + '/' + Name;
 
-  if GetLinkInformation(State.Path.Text, Information) <> ErrorNone then
+  if GetLinkInformation(PChar(State.Path), Information) <> ErrorNone then
   begin
     if (State.Mode = CanonicalMissingAllowed) or ((State.Mode = CanonicalAllButLast) and IsLast) then
       Exit(ErrorNone);
@@ -181,84 +216,84 @@ begin
   end;
   if Depth >= MaximumLinkDepth then
     Exit(ErrorTooManyLinks);
-  Result := ReadSymbolicLink(State.Path.Text, @Target[0], PathCapacity);
+  Result := ReadLinkTarget(State.Path, Target);
   if Result <> ErrorNone then
     Exit;
   { The link is replaced by its target, relative to the link's directory. }
-  State.Path.Length := SavedLength;
-  State.Path.Text[State.Path.Length] := #0;
-  if Target[0] = '/' then
-  begin
-    State.Path.Length := 0;
-    State.Path.Text[0] := #0;
-  end;
-  Result := AddComponents(State, @Target[0], Depth + 1, IsLast);
+  State.Path := SavedPath;
+  if (Target <> '') and (Target[1] = '/') then
+    State.Path := '';
+  Result := AddComponents(State, Target, Depth + 1, IsLast);
 end;
 
-function AddComponents(var State: TCanonicalizer; Text: PChar; Depth: Integer; IsLastPart: Boolean): LongInt;
+function AddComponents(var State: TCanonicalizer; const Text: string; Depth: Integer;
+  IsLastPart: Boolean): LongInt;
 var
-  Copy: PChar;
-  Start: PtrUInt;
-  Position: PtrUInt;
+  Start: Integer;
+  Position: Integer;
+  TextLength: Integer;
+  Name: string;
   IsLast: Boolean;
 begin
   Result := ErrorNone;
-  Copy := DuplicateText(Text);
-  Position := 0;
+  TextLength := Length(Text);
+  Position := 1;
   while True do
   begin
-    while Copy[Position] = '/' do
+    while (Position <= TextLength) and (Text[Position] = '/') do
       Inc(Position);
-    if Copy[Position] = #0 then
+    if Position > TextLength then
       Break;
     Start := Position;
-    while (Copy[Position] <> '/') and (Copy[Position] <> #0) do
+    while (Position <= TextLength) and (Text[Position] <> '/') do
       Inc(Position);
-    if Copy[Position] = '/' then
-    begin
-      Copy[Position] := #0;
+    Name := Copy(Text, Start, Position - Start);
+    if Position <= TextLength then
       Inc(Position);
-    end;
     { The last component of the whole name (trailing slashes included),
       not of a link target inside it. }
-    IsLast := IsLastPart and (Copy[Position] = #0);
-    Result := AddComponent(State, Copy + Start, Depth, IsLast);
+    IsLast := IsLastPart and (Position > TextLength);
+    Result := AddComponent(State, Name, Depth, IsLast);
     if Result <> ErrorNone then
       Break;
   end;
-  FreeMemory(Copy);
+end;
+
+function CanonicalizePath(const Path: string; Mode: TCanonicalMode; FollowLinks: Boolean;
+  out Canonical: string): LongInt;
+var
+  State: TCanonicalizer;
+  Directory: string;
+begin
+  Canonical := '';
+  State.Mode := Mode;
+  State.FollowLinks := FollowLinks;
+  State.Path := '';
+  if (Path = '') or (Path[1] <> '/') then
+  begin
+    Result := CurrentDirectoryPath(Directory);
+    if Result <> ErrorNone then
+      Exit;
+    if Directory <> '/' then
+      State.Path := Directory;
+  end;
+  Result := AddComponents(State, Path, 0, True);
+  if Result <> ErrorNone then
+    Exit;
+  if State.Path = '' then
+    State.Path := '/';
+  Canonical := State.Path;
 end;
 
 function CanonicalizePath(Path: PChar; Mode: TCanonicalMode; FollowLinks: Boolean;
   out Canonical: PChar): LongInt;
 var
-  State: TCanonicalizer;
-  Directory: array[0..PathCapacity - 1] of Char;
+  CanonicalText: string;
 begin
   Canonical := nil;
-  State.Mode := Mode;
-  State.FollowLinks := FollowLinks;
-  BeginText(State.Path);
-  if Path[0] <> '/' then
-  begin
-    Result := GetCurrentDirectory(@Directory[0], PathCapacity);
-    if Result <> ErrorNone then
-    begin
-      DiscardText(State.Path);
-      Exit;
-    end;
-    if not TextIsEqual(@Directory[0], '/') then
-      AppendText(State.Path, @Directory[0]);
-  end;
-  Result := AddComponents(State, Path, 0, True);
-  if Result <> ErrorNone then
-  begin
-    DiscardText(State.Path);
-    Exit;
-  end;
-  if State.Path.Length = 0 then
-    AppendCharacter(State.Path, '/');
-  Canonical := FinishText(State.Path);
+  Result := CanonicalizePath(string(Path), Mode, FollowLinks, CanonicalText);
+  if Result = ErrorNone then
+    Canonical := DuplicateText(PChar(CanonicalText));
 end;
 
 end.

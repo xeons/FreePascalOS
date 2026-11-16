@@ -29,7 +29,7 @@
 }
 unit Util.Modes;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -37,17 +37,21 @@ interface
 type
   { A parsed mode, applied later to each file's current mode. }
   TModeChange = record
+    { The symbolic form; Text points into it. }
+    Symbolic: string;
     Text: PChar;
     IsOctal: Boolean;
     OctalValue: LongWord;
   end;
 
 { Returns False if Text is not a valid mode. }
-function ParseModeChange(Text: PChar; out Change: TModeChange): Boolean;
+function ParseModeChange(Text: PChar; out Change: TModeChange): Boolean; overload;
+function ParseModeChange(const Text: string; out Change: TModeChange): Boolean; overload;
 { The new mode for a file with CurrentMode. }
 function ApplyModeChange(const Change: TModeChange; CurrentMode: LongWord; IsDirectory: Boolean): LongWord;
 { "rwxr-xr-x" (9 characters; Buffer needs 10). }
-function FormatModeText(Mode: LongWord; Buffer: PChar): PChar;
+function FormatModeText(Mode: LongWord; Buffer: PChar): PChar; overload;
+function FormatModeText(Mode: LongWord): string; overload;
 
 implementation
 
@@ -61,9 +65,10 @@ function ParseModeChange(Text: PChar; out Change: TModeChange): Boolean;
 var
   Position: Integer;
   Value: LongWord;
-  Mode: LongWord;
 begin
-  Change.Text := Text;
+  Change.Symbolic := Text;
+  Change.Text := PChar(Change.Symbolic);
+  Text := Change.Text;
   Change.IsOctal := False;
   Change.OctalValue := 0;
   if Text^ = #0 then
@@ -104,8 +109,12 @@ begin
     else if Text[Position] <> #0 then
       Exit(False);
   end;
-  Mode := 0;
   Result := True;
+end;
+
+function ParseModeChange(const Text: string; out Change: TModeChange): Boolean;
+begin
+  Result := ParseModeChange(PChar(Text), Change);
 end;
 
 { The rwx bits (in "user" position 0o700 scale 0..7) for who letters. }
@@ -238,6 +247,13 @@ begin
     if Buffer[8] = 'x' then Buffer[8] := 't' else Buffer[8] := 'T';
   Buffer[9] := #0;
   Result := Buffer;
+end;
+
+function FormatModeText(Mode: LongWord): string;
+var
+  Buffer: array[0..9] of Char;
+begin
+  Result := FormatModeText(Mode, @Buffer[0]);
 end;
 
 end.

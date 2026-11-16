@@ -38,7 +38,7 @@
 }
 unit Util.RegularExpressions;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -81,17 +81,29 @@ type
 
 { Returns False with ErrorMessage set if Text is not a valid expression. }
 function CompileExpression(Text: PChar; Syntax: TExpressionSyntax; out Expression: TExpression;
-  out ErrorMessage: PChar): Boolean;
+  out ErrorMessage: PChar): Boolean; overload;
+function CompileExpression(const Text: string; Syntax: TExpressionSyntax; out Expression: TExpression;
+  out ErrorMessage: string): Boolean; overload;
 procedure FreeExpression(var Expression: TExpression);
 
 { Finds the leftmost match anywhere in Subject. }
-function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean; overload;
+function SearchExpression(const Expression: TExpression; const Subject: string;
+  out Match: TMatch): Boolean; overload;
 { Matches only at the start of Subject (like expr's ':' operator). }
-function MatchExpressionAtStart(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+function MatchExpressionAtStart(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean; overload;
+function MatchExpressionAtStart(const Expression: TExpression; const Subject: string;
+  out Match: TMatch): Boolean; overload;
 { Finds the leftmost match starting at or after byte offset StartOffset;
   "^" still means the start of Subject (as sed's s///g needs). }
 function SearchExpressionFrom(const Expression: TExpression; Subject: PChar; StartOffset: PtrInt;
-  out Match: TMatch): Boolean;
+  out Match: TMatch): Boolean; overload;
+function SearchExpressionFrom(const Expression: TExpression; const Subject: string; StartOffset: PtrInt;
+  out Match: TMatch): Boolean; overload;
+
+{ The text group Group matched (Match from a search of Subject); '' when
+  it did not take part. }
+function MatchedText(const Subject: string; const Match: TMatch; Group: Integer): string;
 
 implementation
 
@@ -764,6 +776,45 @@ begin
   until Position > Matcher.Length;
   ResetMatch(Match);
   Result := False;
+end;
+
+{ --- Strings ----------------------------------------------------------- }
+
+function CompileExpression(const Text: string; Syntax: TExpressionSyntax; out Expression: TExpression;
+  out ErrorMessage: string): Boolean;
+var
+  MessageText: PChar;
+begin
+  Result := CompileExpression(PChar(Text), Syntax, Expression, MessageText);
+  if Result then
+    ErrorMessage := ''
+  else
+    ErrorMessage := MessageText;
+end;
+
+function SearchExpression(const Expression: TExpression; const Subject: string;
+  out Match: TMatch): Boolean;
+begin
+  Result := SearchExpression(Expression, PChar(Subject), Match);
+end;
+
+function MatchExpressionAtStart(const Expression: TExpression; const Subject: string;
+  out Match: TMatch): Boolean;
+begin
+  Result := MatchExpressionAtStart(Expression, PChar(Subject), Match);
+end;
+
+function SearchExpressionFrom(const Expression: TExpression; const Subject: string; StartOffset: PtrInt;
+  out Match: TMatch): Boolean;
+begin
+  Result := SearchExpressionFrom(Expression, PChar(Subject), StartOffset, Match);
+end;
+
+function MatchedText(const Subject: string; const Match: TMatch; Group: Integer): string;
+begin
+  if (Match.Starts[Group] < 0) or (Match.Ends[Group] < Match.Starts[Group]) then
+    Exit('');
+  Result := Copy(Subject, Match.Starts[Group] + 1, Match.Ends[Group] - Match.Starts[Group]);
 end;
 
 end.

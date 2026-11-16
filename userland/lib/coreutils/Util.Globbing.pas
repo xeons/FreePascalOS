@@ -27,12 +27,13 @@
 }
 unit Util.Globbing;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
-function MatchWildcards(Pattern, Text: PChar; IgnoreCase: Boolean): Boolean;
+function MatchWildcards(Pattern, Text: PChar; IgnoreCase: Boolean): Boolean; overload;
+function MatchWildcards(const Pattern, Text: string; IgnoreCase: Boolean): Boolean; overload;
 
 implementation
 
@@ -156,6 +157,11 @@ begin
     end;
   end;
   Result := Text^ = #0;
+end;
+
+function MatchWildcards(const Pattern, Text: string; IgnoreCase: Boolean): Boolean;
+begin
+  Result := MatchWildcards(PChar(Pattern), PChar(Text), IgnoreCase);
 end;
 
 end.

@@ -20,21 +20,25 @@
   Reading whole directories.
 
   ListDirectory returns the names in a directory (without "." and "..")
-  in a line list, so tools can sort them or walk a tree recursively.
+  in a TStrings (or, for the tools not yet moved to strings, a line
+  list), so tools can sort them or walk a tree recursively.
 }
 unit Util.Directories;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
 uses
+  Classes,
   Util.Input;
 
+{ Returns 0 or an error code. Names are added to Names. }
+function ListDirectory(const Path: string; Names: TStrings): LongInt; overload;
 { Returns 0 or an error code. Names are added to List (which the caller
   has begun and must free). }
-function ListDirectory(Path: PChar; var List: TLineList): LongInt;
+function ListDirectory(Path: PChar; var List: TLineList): LongInt; overload;
 
 implementation
 
@@ -44,6 +48,31 @@ uses
   Sys.Files,
   Sys.Memory,
   Util.Paths;
+
+function ListDirectory(const Path: string; Names: TStrings): LongInt;
+var
+  Handle: Int64;
+  Entry: TDirectoryEntry;
+  Information: TFileInformation;
+  Name: string;
+begin
+  Handle := OpenFile(PChar(Path), OpenRead);
+  if Handle < 0 then
+    Exit(ErrorCodeOf(Handle));
+  if (GetHandleInformation(Handle, Information) = ErrorNone) and (Information.Kind <> KindDirectory) then
+  begin
+    CloseFile(Handle);
+    Exit(ErrorNotDirectory);
+  end;
+  while ReadDirectoryEntry(Handle, Entry) do
+  begin
+    Name := PChar(@Entry.Name[0]);
+    if not IsDotEntry(Name) then
+      Names.Add(Name);
+  end;
+  CloseFile(Handle);
+  Result := ErrorNone;
+end;
 
 function ListDirectory(Path: PChar; var List: TLineList): LongInt;
 var

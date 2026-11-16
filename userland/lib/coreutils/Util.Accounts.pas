@@ -35,7 +35,7 @@
 }
 unit Util.Accounts;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -54,20 +54,35 @@ function CurrentRealUserId: LongWord;
 function CurrentRealGroupId: LongWord;
 { The effective group followed by the supplementary groups, without
   duplicates. Returns the count. }
-function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer;
+function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer; overload;
+
+type
+  TIdArray = array of LongWord;
+
+function CurrentGroups: TIdArray; overload;
 function ShellOf(UserId: LongWord): PChar;
 
 { Returns nil if there is no such account. }
 function UserNameOf(UserId: LongWord): PChar;
 function GroupNameOf(GroupId: LongWord): PChar;
+{ The same as strings; False if there is no such account. }
+function FindUserName(UserId: LongWord; out Name: string): Boolean;
+function FindGroupName(GroupId: LongWord; out Name: string): Boolean;
 { Accept names and decimal numbers. }
-function FindUserId(Name: PChar; out UserId: LongWord): Boolean;
-function FindGroupId(Name: PChar; out GroupId: LongWord): Boolean;
+function FindUserId(Name: PChar; out UserId: LongWord): Boolean; overload;
+function FindUserId(const Name: string; out UserId: LongWord): Boolean; overload;
+function FindGroupId(Name: PChar; out GroupId: LongWord): Boolean; overload;
+function FindGroupId(const Name: string; out GroupId: LongWord): Boolean; overload;
 function PrimaryGroupOf(UserId: LongWord; out GroupId: LongWord): Boolean;
 function HomeDirectoryOf(UserId: LongWord): PChar;
+{ ShellOf, HomeDirectoryOf and FullNameOf as strings. }
+function UserShell(UserId: LongWord): string;
+function UserHomeDirectory(UserId: LongWord): string;
+function UserFullName(UserId: LongWord): string;
 { Number of groups listing UserName as a member, or with it as primary
   group; their ids go to Groups (up to Capacity). }
-function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): Integer;
+function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): Integer; overload;
+function GroupsOfUser(UserId: LongWord): TIdArray; overload;
 { The comment field of a user's account (their full name); '' if none. }
 function FullNameOf(UserId: LongWord): PChar;
 { The accounts in the order of the files: Index from 0; False past the
@@ -76,7 +91,8 @@ function UserAt(Index: Integer; out UserId: LongWord): Boolean;
 function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
 { True if the group lists user Name as a member (its primary members are
   not listed there). }
-function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean;
+function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean; overload;
+function GroupListsMember(GroupId: LongWord; const Name: string): Boolean; overload;
 { The files are looked at again on the next question, however soon (the
   account editing calls this after writing them). }
 procedure RecheckAccountFiles;
@@ -541,6 +557,80 @@ begin
   EnsureLoaded;
   Entry := FindById(Groups, GroupCount, GroupId);
   Result := (Entry <> nil) and IsMember(Entry^.Members, Name);
+end;
+
+{ --- Strings ----------------------------------------------------------- }
+
+const
+  { More groups than any account is in. }
+  GroupListCapacity = 1024;
+
+function CurrentGroups: TIdArray;
+begin
+  Result := nil;
+  SetLength(Result, GroupListCapacity);
+  SetLength(Result, CurrentGroups(@Result[0], GroupListCapacity));
+end;
+
+function GroupsOfUser(UserId: LongWord): TIdArray;
+begin
+  Result := nil;
+  SetLength(Result, GroupListCapacity);
+  SetLength(Result, GroupsOfUser(UserId, @Result[0], GroupListCapacity));
+end;
+
+function FindUserName(UserId: LongWord; out Name: string): Boolean;
+var
+  Text: PChar;
+begin
+  Text := UserNameOf(UserId);
+  Result := Text <> nil;
+  if Result then
+    Name := Text
+  else
+    Name := '';
+end;
+
+function FindGroupName(GroupId: LongWord; out Name: string): Boolean;
+var
+  Text: PChar;
+begin
+  Text := GroupNameOf(GroupId);
+  Result := Text <> nil;
+  if Result then
+    Name := Text
+  else
+    Name := '';
+end;
+
+function FindUserId(const Name: string; out UserId: LongWord): Boolean;
+begin
+  Result := FindUserId(PChar(Name), UserId);
+end;
+
+function FindGroupId(const Name: string; out GroupId: LongWord): Boolean;
+begin
+  Result := FindGroupId(PChar(Name), GroupId);
+end;
+
+function UserShell(UserId: LongWord): string;
+begin
+  Result := ShellOf(UserId);
+end;
+
+function UserHomeDirectory(UserId: LongWord): string;
+begin
+  Result := HomeDirectoryOf(UserId);
+end;
+
+function UserFullName(UserId: LongWord): string;
+begin
+  Result := FullNameOf(UserId);
+end;
+
+function GroupListsMember(GroupId: LongWord; const Name: string): Boolean;
+begin
+  Result := GroupListsMember(GroupId, PChar(Name));
 end;
 
 end.

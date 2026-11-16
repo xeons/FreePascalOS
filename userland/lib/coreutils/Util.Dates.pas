@@ -34,7 +34,7 @@
 }
 unit Util.Dates;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -42,8 +42,10 @@ interface
 uses
   Runtime.Time;
 
-function ParseDateText(Text: PChar; out Time: TUnixTime): Boolean;
-function ParseTouchStamp(Text: PChar; out Time: TUnixTime): Boolean;
+function ParseDateText(Text: PChar; out Time: TUnixTime): Boolean; overload;
+function ParseDateText(const Text: string; out Time: TUnixTime): Boolean; overload;
+function ParseTouchStamp(Text: PChar; out Time: TUnixTime): Boolean; overload;
+function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean; overload;
 
 implementation
 
@@ -300,6 +302,16 @@ begin
     Exit(False);
   Time := LocalTimeToUnixTime(Year, Month, Day, Hour, Minute, Second);
   Result := True;
+end;
+
+function ParseDateText(const Text: string; out Time: TUnixTime): Boolean;
+begin
+  Result := ParseDateText(PChar(Text), Time);
+end;
+
+function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean;
+begin
+  Result := ParseTouchStamp(PChar(Text), Time);
 end;
 
 end.

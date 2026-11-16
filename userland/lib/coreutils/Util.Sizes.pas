@@ -23,16 +23,18 @@
 }
 unit Util.Sizes;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
+function FormatHumanSize(Size: QWord): string; overload;
 { Writes into Buffer (at least 16 characters) and returns it. }
-function FormatHumanSize(Size: QWord; Buffer: PChar): PChar;
+function FormatHumanSize(Size: QWord; Buffer: PChar): PChar; overload;
 { Accepts a decimal number with an optional suffix K, M, G, T (powers of
   1024) or KB, MB, GB, TB (powers of 1000). }
-function ParseSize(Text: PChar; out Size: QWord): Boolean;
+function ParseSize(const Text: string; out Size: QWord): Boolean; overload;
+function ParseSize(Text: PChar; out Size: QWord): Boolean; overload;
 
 implementation
 
@@ -82,6 +84,18 @@ begin
   Buffer[Position] := Units[UnitIndex];
   Buffer[Position + 1] := #0;
   Result := Buffer;
+end;
+
+function FormatHumanSize(Size: QWord): string;
+var
+  Buffer: array[0..15] of Char;
+begin
+  Result := FormatHumanSize(Size, @Buffer[0]);
+end;
+
+function ParseSize(const Text: string; out Size: QWord): Boolean;
+begin
+  Result := ParseSize(PChar(Text), Size);
 end;
 
 function ParseSize(Text: PChar; out Size: QWord): Boolean;

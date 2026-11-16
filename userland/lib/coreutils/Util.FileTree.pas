@@ -23,11 +23,13 @@
   cannot cross volumes, so mv copies and then removes). Errors are
   reported as they happen; the functions return False if anything
   failed but carry on with the rest of the tree.
+
+  The routines work on strings; the PChar forms are kept for the tools
+  not yet moved to strings.
 }
 unit Util.FileTree;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -44,123 +46,118 @@ type
   end;
 
 { Copies Source to Target (a file, link or, with Recursive, a tree). }
-function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
+function CopyPath(const Source, Target: string; const Options: TCopyOptions): Boolean; overload;
+function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean; overload;
 { Removes Path and everything below it. }
-function RemoveTree(Path: PChar): Boolean;
+function RemoveTree(const Path: string): Boolean; overload;
+function RemoveTree(Path: PChar): Boolean; overload;
 
 type
   { Called for every path of a walk; returns False if it failed (the
     walk continues, but reports failure). }
+  TVisitPathMethod = function(const Path: string; IsDirectory: Boolean): Boolean of object;
   TVisitPath = function(Path: PChar; IsDirectory: Boolean; Context: Pointer): Boolean;
 
 { Visits Path and, when it is a directory, everything below it (a
   directory before its contents). Symbolic links are visited but not
   followed. Returns False if any visit failed. }
-function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;
+function WalkTree(const Path: string; Visit: TVisitPathMethod): Boolean; overload;
+function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean; overload;
 
 implementation
 
 uses
+  SysUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
   Sys.Files,
   Sys.FileCopies,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
   Util.Directories,
-  Util.Input,
   Util.Messages,
+  Util.Output,
   Util.Paths;
 
-function CopyFileContents(Source, Target: PChar): Boolean;
+function CopyFileContents(const Source, Target: string): Boolean;
 var
   Failure: TCopyFailure;
 begin
-  Failure := CopyFileData(Source, Target, CopyReplace, nil, nil);
+  Failure := CopyFileData(PChar(Source), PChar(Target), CopyReplace, nil, nil);
   Result := Failure.Error = ErrorNone;
   if Result then
     Exit;
   if not Failure.AtTarget then
-    ReportError(Failure.Error, 'error reading ''%s''', [ArgumentText(Source)])
+    ReportError(Failure.Error, Format('error reading ''%s''', [Source]))
   else
-    ReportError(Failure.Error, 'error writing ''%s''', [ArgumentText(Target)]);
+    ReportError(Failure.Error, Format('error writing ''%s''', [Target]));
 end;
 
-function CopyLink(Source, Target: PChar): Boolean;
+function CopyLink(const Source, Target: string): Boolean;
 var
   Failure: TCopyFailure;
 begin
-  Failure := CopySymbolicLink(Source, Target, CopyReplace);
+  Failure := CopySymbolicLink(PChar(Source), PChar(Target), CopyReplace);
   if Failure.Error <> ErrorNone then
-    ReportError(Failure.Error, 'cannot create symbolic link ''%s''', [ArgumentText(Target)]);
+    ReportError(Failure.Error, Format('cannot create symbolic link ''%s''', [Target]));
   Result := Failure.Error = ErrorNone;
 end;
 
-function CopyDirectory(Source, Target: PChar; const Options: TCopyOptions): Boolean;
+function CopyDirectory(const Source, Target: string; const Options: TCopyOptions): Boolean;
 var
-  Names: TLineList;
-  Index: Integer;
-  ChildSource: PChar;
-  ChildTarget: PChar;
+  Names: TStringList;
+  Name: string;
   Error: LongInt;
 begin
-  if not IsDirectory(Target) then
+  if not IsDirectory(PChar(Target)) then
   begin
-    Error := CreateDirectory(Target);
+    Error := CreateDirectory(PChar(Target));
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(Target)]);
+      ReportError(Error, Format('cannot create directory ''%s''', [Target]));
       Exit(False);
     end;
   end;
-  BeginLineList(Names);
-  Error := ListDirectory(Source, Names);
-  if Error <> ErrorNone then
-  begin
-    ReportError(Error, 'cannot access ''%s''', [ArgumentText(Source)]);
-    FreeLineList(Names);
-    Exit(False);
+  Names := TStringList.Create;
+  try
+    Error := ListDirectory(Source, Names);
+    if Error <> ErrorNone then
+    begin
+      ReportError(Error, Format('cannot access ''%s''', [Source]));
+      Exit(False);
+    end;
+    Result := True;
+    for Name in Names do
+      if not CopyPath(JoinPath(Source, Name), JoinPath(Target, Name), Options) then
+        Result := False;
+  finally
+    Names.Free;
   end;
-  Result := True;
-  for Index := 0 to Names.Count - 1 do
-  begin
-    ChildSource := JoinPath(Source, Names.Items[Index]);
-    ChildTarget := JoinPath(Target, Names.Items[Index]);
-    if not CopyPath(ChildSource, ChildTarget, Options) then
-      Result := False;
-    FreeMemory(ChildSource);
-    FreeMemory(ChildTarget);
-  end;
-  FreeLineList(Names);
 end;
 
-function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
+function CopyPath(const Source, Target: string; const Options: TCopyOptions): Boolean;
 var
   Information: TFileInformation;
   Error: LongInt;
 begin
   if Options.KeepLinks then
-    Error := GetLinkInformation(Source, Information)
+    Error := GetLinkInformation(PChar(Source), Information)
   else
-    Error := GetFileInformation(Source, Information);
+    Error := GetFileInformation(PChar(Source), Information);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot stat ''%s''', [ArgumentText(Source)]);
+    ReportError(Error, Format('cannot stat ''%s''', [Source]));
     Exit(False);
   end;
-  if Options.NoClobber and PathExists(Target) and (Information.Kind <> KindDirectory) then
+  if Options.NoClobber and PathExists(PChar(Target)) and (Information.Kind <> KindDirectory) then
     Exit(True);
   if Options.Verbose then
-    WriteFormatted(StandardOutput, '''%s'' -> ''%s'''#10, [ArgumentText(Source), ArgumentText(Target)]);
+    PrintString(Format('''%s'' -> ''%s'''#10, [Source, Target]));
 
   case Information.Kind of
     KindDirectory:
       begin
         if not Options.Recursive then
         begin
-          Report('-r not specified; omitting directory ''%s''', [ArgumentText(Source)]);
+          Report(Format('-r not specified; omitting directory ''%s''', [Source]));
           Exit(False);
         end;
         Result := CopyDirectory(Source, Target, Options);
@@ -174,76 +171,116 @@ begin
     end;
   end;
   if Result and Options.PreserveAttributes then
-    CopyAttributes(Target, Information);
+    CopyAttributes(PChar(Target), Information);
+end;
+
+function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
+begin
+  Result := CopyPath(string(Source), string(Target), Options);
+end;
+
+function WalkTree(const Path: string; Visit: TVisitPathMethod): Boolean;
+var
+  Information: TFileInformation;
+  Names: TStringList;
+  Name: string;
+  Error: LongInt;
+  IsDirectoryPath: Boolean;
+begin
+  Error := GetLinkInformation(PChar(Path), Information);
+  if Error <> ErrorNone then
+  begin
+    ReportError(Error, Format('cannot access ''%s''', [Path]));
+    Exit(False);
+  end;
+  IsDirectoryPath := Information.Kind = KindDirectory;
+  Result := Visit(Path, IsDirectoryPath);
+  if not IsDirectoryPath then
+    Exit;
+  Names := TStringList.Create;
+  try
+    Error := ListDirectory(Path, Names);
+    if Error <> ErrorNone then
+    begin
+      ReportError(Error, Format('cannot read directory ''%s''', [Path]));
+      Exit(False);
+    end;
+    for Name in Names do
+      if not WalkTree(JoinPath(Path, Name), Visit) then
+        Result := False;
+  finally
+    Names.Free;
+  end;
+end;
+
+type
+  { Carries a PChar visitor through a walk of the string form. }
+  TPathVisitorAdapter = class
+  private
+    FVisit: TVisitPath;
+    FContext: Pointer;
+  public
+    constructor Create(Visit: TVisitPath; Context: Pointer);
+    function VisitPath(const Path: string; IsDirectory: Boolean): Boolean;
+  end;
+
+constructor TPathVisitorAdapter.Create(Visit: TVisitPath; Context: Pointer);
+begin
+  inherited Create;
+  FVisit := Visit;
+  FContext := Context;
+end;
+
+function TPathVisitorAdapter.VisitPath(const Path: string; IsDirectory: Boolean): Boolean;
+begin
+  Result := FVisit(PChar(Path), IsDirectory, FContext);
 end;
 
 function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;
 var
-  Information: TFileInformation;
-  Names: TLineList;
-  Index: Integer;
-  ChildPath: PChar;
-  Error: LongInt;
-  IsDirectoryPath: Boolean;
+  Adapter: TPathVisitorAdapter;
 begin
-  Error := GetLinkInformation(Path, Information);
-  if Error <> ErrorNone then
-  begin
-    ReportError(Error, 'cannot access ''%s''', [ArgumentText(Path)]);
-    Exit(False);
+  Adapter := TPathVisitorAdapter.Create(Visit, Context);
+  try
+    Result := WalkTree(string(Path), @Adapter.VisitPath);
+  finally
+    Adapter.Free;
   end;
-  IsDirectoryPath := Information.Kind = KindDirectory;
-  Result := Visit(Path, IsDirectoryPath, Context);
-  if not IsDirectoryPath then
-    Exit;
-  BeginLineList(Names);
-  Error := ListDirectory(Path, Names);
-  if Error <> ErrorNone then
-  begin
-    ReportError(Error, 'cannot read directory ''%s''', [ArgumentText(Path)]);
-    FreeLineList(Names);
-    Exit(False);
-  end;
-  for Index := 0 to Names.Count - 1 do
-  begin
-    ChildPath := JoinPath(Path, Names.Items[Index]);
-    if not WalkTree(ChildPath, Visit, Context) then
-      Result := False;
-    FreeMemory(ChildPath);
-  end;
-  FreeLineList(Names);
 end;
 
-function RemoveTree(Path: PChar): Boolean;
+function RemoveTree(const Path: string): Boolean;
 var
   Information: TFileInformation;
-  Names: TLineList;
-  Index: Integer;
-  ChildPath: PChar;
+  Names: TStringList;
+  Name: string;
   Error: LongInt;
 begin
   Result := True;
-  Error := GetLinkInformation(Path, Information);
+  Error := GetLinkInformation(PChar(Path), Information);
   if (Error = ErrorNone) and (Information.Kind = KindDirectory) then
   begin
-    BeginLineList(Names);
-    ListDirectory(Path, Names);
-    for Index := 0 to Names.Count - 1 do
-    begin
-      ChildPath := JoinPath(Path, Names.Items[Index]);
-      if not RemoveTree(ChildPath) then
-        Result := False;
-      FreeMemory(ChildPath);
+    Names := TStringList.Create;
+    try
+      ListDirectory(Path, Names);
+      for Name in Names do
+        if not RemoveTree(JoinPath(Path, Name)) then
+          Result := False;
+    finally
+      Names.Free;
     end;
-    FreeLineList(Names);
   end;
   if Error = ErrorNone then
-    Error := RemovePath(Path);
+    Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, Format('cannot remove ''%s''', [Path]));
     Result := False;
   end;
+end;
+
+function RemoveTree(Path: PChar): Boolean;
+begin
+  Result := RemoveTree(string(Path));
 end;
 
 end.

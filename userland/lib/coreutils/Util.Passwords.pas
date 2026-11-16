@@ -31,7 +31,7 @@
 }
 unit Util.Passwords;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -46,9 +46,11 @@ type
   TPasswordCheck = (PasswordAccepted, PasswordRejected, PasswordLocked, PasswordUnknownUser);
 
 { Checks Password against the hash stored for user Name. }
-function CheckPassword(Name: PChar; Password: PChar): TPasswordCheck;
+function CheckPassword(Name: PChar; Password: PChar): TPasswordCheck; overload;
+function CheckPassword(const Name, Password: string): TPasswordCheck; overload;
 { True if user Name needs no password. }
-function HasEmptyPassword(Name: PChar): Boolean;
+function HasEmptyPassword(Name: PChar): Boolean; overload;
+function HasEmptyPassword(const Name: string): Boolean; overload;
 { Stores a new password for user Name (adding a line if there is none),
   replacing /etc/shadow as Util.AccountFiles does, under the account
   files' lock. Returns an error code (0 on success). }
@@ -63,7 +65,9 @@ procedure PutPasswordInLines(var Lines: TAccountLines; Name: PChar; Password: PC
 { Prints Prompt to the console (or standard error) and reads a line from
   standard input, without echo when it is the console. Returns nil at end
   of input; the caller frees the text. }
-function ReadPassword(Prompt: PChar): PChar;
+function ReadPassword(Prompt: PChar): PChar; overload;
+{ The same into a string; False at end of input. }
+function ReadPassword(const Prompt: string; out Password: string): Boolean; overload;
 
 implementation
 
@@ -284,6 +288,30 @@ begin
     FlushStream(StandardError);
   end;
   Result := Line;
+end;
+
+function CheckPassword(const Name, Password: string): TPasswordCheck;
+begin
+  Result := CheckPassword(PChar(Name), PChar(Password));
+end;
+
+function HasEmptyPassword(const Name: string): Boolean;
+begin
+  Result := HasEmptyPassword(PChar(Name));
+end;
+
+function ReadPassword(const Prompt: string; out Password: string): Boolean;
+var
+  Text: PChar;
+begin
+  Password := '';
+  Text := ReadPassword(PChar(Prompt));
+  Result := Text <> nil;
+  if Result then
+  begin
+    Password := Text;
+    FreeMemory(Text);
+  end;
 end;
 
 end.

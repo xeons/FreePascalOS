@@ -23,15 +23,19 @@
   FILE is given". OpenInput handles the '-' convention; the line list
   collects a whole input for tools that need to see all of it at once
   (sort, tail, tac and others).
+
+  The string forms read lines into strings and TStrings; the PChar forms
+  and TLineList are kept for the tools not yet moved to strings.
 }
 unit Util.Input;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
 
 uses
+  Classes,
   Sys.Streams;
 
 type
@@ -45,8 +49,19 @@ type
 
 { Opens Path for reading ('-' is standard input). Reports the error and
   returns nil when the file cannot be opened. }
-function OpenInput(Path: PChar): PInputStream;
+function OpenInput(Path: PChar): PInputStream; overload;
+function OpenInput(const Path: string): PInputStream; overload;
 procedure CloseInput(Stream: PInputStream);
+
+{ Reads the next line without its line end. Returns False at end of input
+  with nothing read. HadLineEnd tells whether the line was terminated
+  (the last line may not be). }
+function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
+{ Appends every line of Stream to Lines. Returns False if the last line
+  had no line end. }
+function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;
+{ Everything left in Stream. }
+function ReadAllText(Stream: PInputStream): string;
 
 procedure BeginLineList(out List: TLineList);
 procedure AddLine(var List: TLineList; Line: PChar);
@@ -65,26 +80,74 @@ uses
   Sys.Memory,
   Util.Messages;
 
-function OpenInput(Path: PChar): PInputStream;
+function OpenInput(const Path: string): PInputStream;
 var
   Handle: Int64;
   Information: TFileInformation;
 begin
-  if TextIsEqual(Path, '-') then
+  if Path = '-' then
     Exit(StandardInput);
-  Handle := OpenFile(Path, OpenRead);
+  Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
   begin
-    ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Path)]);
+    ReportError(ErrorCodeOf(Handle), Path);
     Exit(nil);
   end;
   if (GetHandleInformation(Handle, Information) = ErrorNone) and (Information.Kind = KindDirectory) then
   begin
     CloseFile(Handle);
-    ReportError(ErrorIsDirectory, '%s', [ArgumentText(Path)]);
+    ReportError(ErrorIsDirectory, Path);
     Exit(nil);
   end;
   Result := CreateInputStream(Handle);
+end;
+
+function OpenInput(Path: PChar): PInputStream;
+begin
+  Result := OpenInput(string(Path));
+end;
+
+function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
+var
+  Text: PChar;
+begin
+  Line := '';
+  Result := ReadLine(Stream, Text, HadLineEnd);
+  if not Result then
+    Exit;
+  Line := Text;
+  FreeMemory(Text);
+end;
+
+function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;
+var
+  Line: string;
+  HadLineEnd: Boolean;
+begin
+  Result := True;
+  while ReadTextLine(Stream, Line, HadLineEnd) do
+  begin
+    Lines.Add(Line);
+    Result := HadLineEnd;
+  end;
+end;
+
+function ReadAllText(Stream: PInputStream): string;
+var
+  Buffer: array[0..4095] of Byte;
+  Count: QWord;
+  OldLength: SizeInt;
+begin
+  Result := '';
+  repeat
+    Count := ReadBytes(Stream, @Buffer[0], SizeOf(Buffer));
+    if Count > 0 then
+    begin
+      OldLength := Length(Result);
+      SetLength(Result, OldLength + SizeInt(Count));
+      Move(Buffer[0], Result[OldLength + 1], Count);
+    end;
+  until Count = 0;
 end;
 
 procedure CloseInput(Stream: PInputStream);
