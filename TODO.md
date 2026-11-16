@@ -176,6 +176,21 @@ how the existing pieces fit together.
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead
 
+## Network cards
+
+- [x] Intel e1000/e1000e (8254x, 8257x, I217/I218/I219): legacy descriptor rings,
+      MSI or line interrupts, link changes, statistics, suspend to RAM
+- [x] Realtek RTL8139
+- [x] Realtek RTL8168/8111 and RTL8125/8126 (untested: QEMU has no model), with the
+      RTL8125/8126 PHY firmware patches from /lib/firmware
+- [ ] I217/I218/I219 quirks: PHY ultra low power exit and LANPHYPC toggle, the I219
+      descriptor ring flush before a reset, K1/EEE workarounds, reading the flash NVM
+- [ ] RTL8168 per-version PHY tuning and firmware patches; RTL8125/8126 PHY tuning
+      tables and EPHY values; RTL8169 (PCI)
+- [ ] Multicast filter lists (cards accept every multicast now), checksum and
+      segmentation offload, several queues, MSI-X on the 82574L, jumbo frames
+- [ ] Network cards plugged in while the system runs (USB, Thunderbolt)
+
 ## File systems
 
 - [x] VFS: volumes, path resolution, symbolic links, open files, directory listing

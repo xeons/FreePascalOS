@@ -707,7 +707,9 @@ runs it on a thread pinned to the boot processor:
    - **Devices:** AHCI ports pointed at their command lists again; NVMe
      queues emptied and recreated; virtio reset, its features and queue
      given again; HD Audio's controller reset and codec paths set up;
-     AC'97's codec and list; the serial port; the PS/2 controller; each
+     AC'97's codec and list; the network cards reset and set up again
+     (same adapters; the link coming back is announced); the serial
+     port; the PS/2 controller; each
      Bochs display's mode registers (the mode it had, the firmware's or
      one a program set) and the console redrawn from its copy.
    - **Services:** block I/O open again; audio volumes set again and
@@ -718,7 +720,8 @@ runs it on a thread pinned to the boot processor:
 virtio, NVMe and USB disks and HD Audio, AC'97 and USB audio, wakes it
 (`system_wakeup`), then reads every disk raw, writes and reads back
 files on three volumes, plays a tone on each sound output (recorded and
-checked) and checks the display. `make suspend-stress`
+checked), checks the display, and waits for the e1000e, e1000 and
+RTL8139 to announce their links up again. `make suspend-stress`
 (scripts/stress-suspend.py, not part of `make test`) suspends and wakes
 the same machine over and over (ROUNDS, 30 by default), waking it at
 once, after a moment or after two seconds, and with POINTERS=1 checks
@@ -2435,6 +2438,211 @@ stopping, and the 3D calculations: panning in stereo, 5.1 and 7.1,
 distance, curves, cones, emitter channels, the inner radius, Doppler,
 and a voice placed and moving to one side.
 
+## Network drivers
+
+Network card drivers (`kernel/drivers/network`) register each card as a
+network adapter (`Io.NetworkAdapters`: `RegisterNetworkAdapter` with
+the routines that send a frame and say whether the link is up; the
+driver calls `NetworkFrameReceived`, `NetworkLinkChanged` and
+`NetworkTransmitReady`). Frames are Ethernet II without the check
+sequence; adapters are named `eth0`, `eth1`, ... in the order they
+register. What the drivers share is in `Drivers.NetworkCards`: it
+registers the adapter, follows the link (a change is logged and the
+network layer told), keeps the statistics, and writes the lines the
+tests look for:
+
+    [net] eth1: Intel 82574L, address 52:54:00:12:34:56, link down, interrupts by MSI
+    [net] eth1 (Intel 82574L): link up, 1000 Mbit/s full duplex
+    [net] eth1 (Intel 82574L): link up after waking
+
+The kernel debug shell's `netcards` writes every card's link and
+statistics (frames and bytes each way, damaged and missed frames,
+failed sends, collisions, link changes).
+
+**Probing.** `Io.Startup` starts the drivers after sound
+(`InitializeE1000Adapters`, `InitializeRtl8139Adapters`,
+`InitializeRtl8168Adapters`, `InitializeRtl8125Adapters`); each walks
+the PCI functions for its IDs, maps the registers, resets the card,
+reads its station address, takes its DMA memory, connects its
+interrupt, registers the adapter and its power handler, and only then
+enables receiving and the interrupt mask, so nothing arrives for an
+adapter that does not exist yet.
+
+**DMA memory** (`Drivers.NetworkBuffers`) is kept below 4 GiB for every
+card: descriptor rings are one page; frame buffers are 2 KiB, two to a
+page, so none crosses a page. The RTL8139's receive ring is one 32 KiB
+buffer, from `AllocateZeroedContiguousPhysicalPages` (`Memory.PhysicalPages`:
+a run of free frames below a limit, taken off the free list in one
+walk).
+
+**Rings.** Receive and transmit rings of 128 descriptors with a buffer
+each. Received frames are handed to the network layer from the buffer
+(it copies them) and the descriptor given straight back; frames bigger
+than one buffer are dropped whole. A frame to send is copied into the
+next descriptor's buffer and padded to 60 bytes; when the ring is full
+`Transmit` returns False and the driver calls `NetworkTransmitReady` once
+it reclaimed descriptors. A receive lock and a transmit lock keep the
+two sides apart (the deferred routine can run on two processors at
+once).
+
+**Interrupts.** MSI where the card has it (the PCI Express parts), else
+the PCI interrupt line (shared: the handler checks and clears the
+card's cause register), else a 10 ms polling timer. The handler only
+records the causes and queues the deferred routine, which takes the
+received frames, reclaims sent ones, and reads the link after a link
+change interrupt. A second timer reads the statistics and the link
+every two seconds, so a lost link interrupt is caught too.
+
+**Suspend to RAM.** Each driver's power handler (devices stage) stops
+its rings (frames offered meanwhile are refused, and the network layer
+told when there is room again), masks the interrupts, turns receive and
+transmit off and cancels its timers and deferred calls. Waking, the card
+is reset and set up again from what memory holds, with the same adapter
+record, and `NetworkCardWoke` makes the next link-up be announced as
+"link up after waking".
+
+The tests run QEMU with an e1000e, an e1000 and an RTL8139, each on its
+own user-mode network (`-netdev user`); `make test` checks each card's
+boot line (its interrupts: MSI on the e1000e, the line on the others)
+and that its link came up, and the input test that each link is up
+again after waking from suspend to RAM.
+
+### Intel e1000 and e1000e
+
+`Drivers.E1000` (with `.Registers`, `.Models`, `.Hardware`, `.Rings`)
+drives Intel's gigabit family with one queue of legacy descriptors:
+reset (CTRL.RST), the station address from receive address register 0
+(loaded from the EEPROM/NVM by the reset) or else the EEPROM read
+register (two layouts: 82540/82545/82546, and the later parts), "set
+link up" with automatic speed detection (the PHY negotiates), receive
+with broadcasts and every multicast (adapters keep no filter list; the
+network layer filters), the check sequence stripped, 2 KiB buffers;
+transmit with short packets padded, the copper inter-packet gap, at most
+8000 interrupts a second. Statistics come from the clear-on-read
+counters (CRC, alignment, receive and length errors, missed packets,
+collisions, excessive and late collisions).
+
+| Family | Parts (PCI device IDs, vendor 8086) |
+|---|---|
+| 8254x | 82540EM/EP (100E, 1015, 1016, 1017, 101E: QEMU `e1000`), 82545EM/GM (100F, 1026), 82546EB/GB (1010, 101D, 1079, 1099, 10B5), 82541EI/ER/GI/PI (1013, 1018, 1014, 1078, 1076, 1077, 107C), 82547EI/GI (1019, 101A, 1075) |
+| 8257x | 82571EB (105E, 10A4, 10BC), 82572EI (107D, 10B9), 82573E/V/L (108B, 108C, 109A), 82574L (10D3, 10F6: QEMU `e1000e`), 82583V (150C) |
+| I217/I218/I219 | I217 (153A, 153B), I218 (155A, 1559, 15A0-15A3), I219 (156F, 1570, 15B7-15BE, 15D6-15E3, 0D4C-0D4F, 0D53, 0D55, 15F4, 15F5, 15F9-15FC, 1A1C-1A1F, 550A-5511, 57A0, 57A1) |
+
+The 8257x parts get bit 22 of the transmit descriptor control their
+manuals require. The I217/I218/I219 sit in the platform controller hub:
+the reset is taken under the software flag (which keeps the management
+engine off the MAC), the driver waits for "LAN init done", reads the
+address only from the receive address registers (their NVM is the
+platform's flash) and leaves the PHY as the firmware set it up; their
+transmit arbitration and NFS filter bits are set as their
+initialisation sets them. Not done for those parts: leaving the PHY's
+ultra low power mode and the LANPHYPC toggle, the I219's descriptor
+ring flush before a reset, K1/EEE workarounds, the management engine
+handshake, and reading the flash. Fibre and SerDes parts, the
+82543/82544, 80003ES2LAN, ICH8-ICH10 and 82577-82579 are not taken. The
+82574L is driven by MSI, not MSI-X. Only the 82540EM and 82574L run in
+the tests (QEMU); the rest is untested.
+
+### Realtek RTL8139
+
+`Drivers.Rtl8139` (with `.Registers`) drives the 10/100 RTL8139 (QEMU
+`rtl8139`; also the Accton, D-Link, Planex, AboCom, Allied Telesyn,
+Delta and Addtron cards built on it) through its I/O ports. The card
+writes received frames one after another into the 32 KiB ring, each
+behind a status/length header; "wrap" mode lets a frame run on past the
+end, so frames are never split. The driver reads while the card says
+the ring is not empty and writes back how far it read (minus 16, as the
+card wants); a broken header restarts the receiver. Four transmit slots
+are used strictly in turn, each with its own buffer; writing a slot's
+length starts it. Interrupts come on the PCI line; the link is the
+PHY's basic mode status (read twice: it latches a loss), and a link
+change raises the "packet underrun / link change" interrupt. The
+missed-packet counter feeds the statistics.
+
+### Realtek RTL8168/8111 and RTL8125/8126
+
+The Realtek gigabit (RTL8168/8111) and multi-gigabit (RTL8125, RTL8126)
+chips share the descriptor format (an "owned by the card" bit and an
+"end of ring" bit, no head or tail registers), the station address,
+command, configuration and descriptor address registers, and the tally
+counters. `Drivers.RealtekGigabit` (with `.Registers` and `.Rings`)
+holds that: the card record, the rings, interrupts by MSI or line, the
+deferred routine, the statistics (the chip dumps its tally counters to
+a page when asked; the driver asks every two seconds and reads the
+answer on the next round, so nothing waits), and suspend to RAM. A chip
+unit gives it a `TRealtekChip`: where its interrupt registers are and
+how wide, how to ring its transmit poll register, how to bring the chip
+from any state to running, and how to read its link. QEMU emulates
+none of these chips: they are untested.
+
+`Drivers.Rtl8168` (10EC:8168, 10EC:8161): 16-bit interrupt registers at
+3Ch/3Eh, transmit poll at 38h; reset, the station address (or its
+power-on copy at 19E0h), the largest frame, the rings, receive and
+transmit configuration; the link from the PHY status register. Not
+done: the per-version PHY tuning and PHY firmware patches Linux applies
+to some RTL8168 versions, and the RTL8169 (PCI) parts.
+
+`Drivers.Rtl8125` (10EC:8125 RTL8125, 10EC:3000 Killer E3000, 10EC:8126
+RTL8126, 10EC:5000 Killer E5000): 32-bit interrupt registers at
+38h/3Ch, transmit poll at 90h (only the first of the chip's queues is
+used), and the MAC's and PHY's internal registers reached through the
+OCP windows (`Drivers.RealtekOcp`: B0h for the MAC, B8h for the PHY,
+each access under a spin lock and with a bounded wait). The version is
+read from the XID bits of the transmit configuration
+(`Drivers.Rtl8125.Versions`), as the reference drivers do:
+
+| XID | Version | PHY firmware patch |
+|---|---|---|
+| 609 | RTL8125A | rtl_nic/rtl8125a-3.fw |
+| 641 | RTL8125B | rtl_nic/rtl8125b-2.fw |
+| 688, 689 | RTL8125D | rtl_nic/rtl8125d-1.fw, rtl8125d-2.fw |
+| 681 | RTL8125BP | rtl_nic/rtl8125bp-2.fw |
+| 649, 64A | RTL8126A | rtl_nic/rtl8126a-2.fw, rtl8126a-3.fw |
+
+A chip with another XID is logged and set up as the RTL8125B (or, on an
+RTL8126 ID, the RTL8126A). `Drivers.Rtl8125.Setup` brings the chip up
+in the order and with the values of Linux's r8169 (`rtl_hw_init_8125`,
+`rtl_hw_start_8125`, `rtl_hw_start_8125_common`): receive gated off,
+out-of-band mode left, the link list FIFO, a reset; the PLL and PHY
+powered up and waited for ("LAN on"); with the configuration unlocked,
+ASPM and clock requests off in the chip and on its PCI Express link
+(those link states cause drops and stalls on these chips), interrupt
+coalescing, receive side scaling and the extra queues off, the legacy
+transmit descriptor format, the MAC's FIFO and timing values, EEE off
+in the MAC, receive ungated; the largest frame, the station address
+(from the power-on copy at 19E0h, else the address registers), the
+rings, receive and transmit on. Then the PHY: the firmware patch if one
+was loaded, advanced link-down power saving and EEE off, 10/100/1000
+and 2.5G (5G on the RTL8126) advertised, autonegotiation restarted. The
+link (up to 5000 Mbit/s, duplex) comes from the MAC's PHY status
+register; while it stays down, the PHY status, BMCR, BMSR, the
+PHY-specific status and the PHY state are logged after 10 and 60
+seconds. The boot log names the version, its XID and the PCI revision.
+Not done: the per-version PHY tuning tables and the PCI Express PHY
+(EPHY) values Linux writes.
+
+**Firmware patches.** Linux loads a PHY patch for every RTL8125/8126
+version but treats it as optional (it carries on without the file);
+this driver does the same: every version is set up without one, and
+the patch, when it arrives, is applied on top. The driver asks for the
+file through `Io.Firmware` (`RequestFirmware`); drivers start before any
+volume is mounted, so `Io.Startup` calls `DeliverRequestedFirmware`
+once the volumes are, which reads `/lib/firmware/<name>` from the
+system volume (`make system-disk` installs `firmware/` there) and calls
+each driver back at passive level with the contents (or nil: the
+missing file is logged and the driver goes on without it); later
+requests are answered at once. `Drivers.RealtekFirmware` reads the file
+in Linux's rtl_fw format (r8169_firmware.c): an optional header (zero
+magic, version string, the operations' offset and count, a checksum
+making the bytes add to zero), then 32-bit operations that read and
+write PHY registers - or, after "change to MAC", MAC registers through
+the MCU window - in MDIO-style pages, keep the last value read,
+compare, skip, jump back, and wait. Every operation and jump is checked
+before anything runs, and a run stops after a million steps. The patch
+is applied with the card's configuration lock held (the PHY is set up
+again, and autonegotiation restarted, right after), and again on every
+set-up after that (waking from suspend to RAM).
+
 ## File systems
 
 The VFS (`kernel/filesystems`) has three parts:
@@ -4108,7 +4316,7 @@ test run leaves its explanation in the log.
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
 once the system is up, before the first program: `help`, `echo`, `ls`,
-`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `uptime`, and `exit` to go
+`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `uptime`, and `exit` to go
 on with the boot. It reads lines through the console like a program
 (with line editing) and writes through the kernel debug output, so it
 works on the serial port and the screen. The input test starts with a

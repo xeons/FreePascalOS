@@ -91,6 +91,14 @@ function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
   the free list. }
 function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUsage): TPhysicalAddress;
 
+{ PageCount zeroed pages one after the other in physical memory, the last
+  ending at or below Limit, for devices that need one buffer bigger than
+  a page. Returns the first page's address, or zero if there is no such
+  run. Slow (it searches the database and the free list): for drivers
+  starting up. Each page is freed on its own with FreePhysicalPage. }
+function AllocateZeroedContiguousPhysicalPages(PageCount: QWord; Limit: TPhysicalAddress;
+  Usage: TPageUsage): TPhysicalAddress;
+
 { Gives the page back, or drops one reference if it is shared. }
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
 
@@ -409,6 +417,89 @@ begin
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
   if Result <> 0 then
     ZeroMemory(PhysicalToVirtual(Result), PageSize);
+end;
+
+{ The first frame of PageCount free frames in a row, the last ending at or
+  below Limit, or NoNextFrame (database lock held). }
+function FindFreeFrameRun(PageCount: QWord; Limit: TPhysicalAddress): QWord;
+var
+  Frame: QWord;
+  RunStart: QWord;
+  RunLength: QWord;
+begin
+  Result := NoNextFrame;
+  RunStart := LowFrameCount;
+  RunLength := 0;
+  Frame := LowFrameCount;
+  while (Frame < FrameCount) and ((Frame shl PageShift) + (PageSize - 1) <= Limit) do
+  begin
+    if FrameDatabase[Frame].Usage = PageUsageFree then
+    begin
+      if RunLength = 0 then
+        RunStart := Frame;
+      Inc(RunLength);
+      if RunLength = PageCount then
+        Exit(RunStart);
+    end
+    else
+      RunLength := 0;
+    Inc(Frame);
+  end;
+end;
+
+{ Takes every frame from First to Last off the free list, in one walk
+  (database lock held; they are all free). }
+procedure UnlinkFreeFrames(First, Last: QWord);
+var
+  Frame: QWord;
+  Previous: QWord;
+  Next: QWord;
+begin
+  Previous := NoNextFrame;
+  Frame := FreeListHead;
+  while Frame <> NoNextFrame do
+  begin
+    Next := FrameDatabase[Frame].NextFreeFrame;
+    if (Frame >= First) and (Frame <= Last) then
+    begin
+      if Previous = NoNextFrame then
+        FreeListHead := Next
+      else
+        FrameDatabase[Previous].NextFreeFrame := Next;
+      FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
+      Dec(FreePageCount);
+    end
+    else
+      Previous := Frame;
+    Frame := Next;
+  end;
+end;
+
+function AllocateZeroedContiguousPhysicalPages(PageCount: QWord; Limit: TPhysicalAddress;
+  Usage: TPageUsage): TPhysicalAddress;
+var
+  PreviousLevel: TPriorityLevel;
+  First: QWord;
+  Frame: QWord;
+begin
+  Result := 0;
+  if PageCount = 0 then
+    Exit;
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  First := FindFreeFrameRun(PageCount, Limit);
+  if First <> NoNextFrame then
+  begin
+    UnlinkFreeFrames(First, First + PageCount - 1);
+    for Frame := First to First + PageCount - 1 do
+    begin
+      ChangeFrameUsage(Frame, Usage);
+      FrameDatabase[Frame].ExtraReferences := 0;
+    end;
+    Result := First shl PageShift;
+  end;
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if Result <> 0 then
+    ZeroMemory(PhysicalToVirtual(Result), PageCount * PageSize);
 end;
 
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);

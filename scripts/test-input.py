@@ -113,6 +113,11 @@ qemu = subprocess.Popen([
     # A second display (its own device, with no firmware picture): the
     # first stays the console's at 1280x800; this one starts at 1024x768.
     '-device', 'bochs-display,id=video1,xres=1024,yres=768',
+    # Network cards, each on its own user-mode network: their links must
+    # come back after waking.
+    '-netdev', 'user,id=net1', '-device', 'e1000e,netdev=net1',
+    '-netdev', 'user,id=net2', '-device', 'e1000,netdev=net2',
+    '-netdev', 'user,id=net3', '-device', 'rtl8139,netdev=net3',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
     '-monitor', 'unix:' + monitor_path + ',server,nowait',
@@ -2212,6 +2217,11 @@ try:
 except (OSError, AttributeError):
     pass
 checks.append(('suspend to RAM: the display came back', display_ok))
+# Each network card is set up again and announces its link once it is
+# up (the kernel logs it on the serial port).
+links_ok = all(wait_for('(' + card + '): link up after waking', 30)
+               for card in ('Intel 82574L', 'Intel 82540EM', 'Realtek RTL8139'))
+checks.append(('suspend to RAM: the e1000e, e1000 and RTL8139 links are up after waking', links_ok))
 type_on_serial(b'events -n 2; m=DONE; echo WOKEN-EVENTS $m\r')
 time.sleep(1.5)
 move_ps2_mouse('mouse_move -3 5\n')

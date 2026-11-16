@@ -82,6 +82,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/drivers/virtio \
 	kernel/drivers/usb \
 	kernel/drivers/sound \
+	kernel/drivers/network \
 	kernel/drivers/input \
 	kernel/drivers/devices \
 	kernel/filesystems \

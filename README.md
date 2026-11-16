@@ -53,6 +53,16 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   (`watch PATH`); USB disks plugged in while the system runs are mounted
   under `/volumes` at once and announced, and unplugging one takes its
   volumes away cleanly (`volumes`, `volumes -w`).
+- Network card drivers (the network stack itself is still to come):
+  Intel's gigabit family - the 82540EM of QEMU's `e1000` and the 82574L
+  of its `e1000e`, the other 8254x and 8257x copper parts and the
+  I217/I218/I219 built into Intel chipsets - the Realtek RTL8139 (QEMU's
+  `rtl8139`), and, untested because QEMU has no model of them, the
+  Realtek RTL8168/8111 and the 2.5 and 5 Gbit/s RTL8125 (also the Killer
+  E3000) and RTL8126, with their PHY firmware patches loaded from
+  `/lib/firmware`. Interrupts by MSI or line, link changes, statistics
+  (`netcards` in the kernel debug shell), and suspend to RAM. See
+  docs/Architecture.md, "Network drivers", for the device IDs and gaps.
 - Sound: an audio framework (`/dev/audio`) with an Intel HD Audio driver,
   `libaudio`, and the `tone`, `play` and `mixer` programs; each output's
   volume and mute and the default output, remembered for the next boot

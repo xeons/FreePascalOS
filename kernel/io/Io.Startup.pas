@@ -37,11 +37,13 @@
   AML, and with it PCI interrupt routing), which needs PCI configuration
   space, and InitializeIoSystem finishes:
 
-    1. Storage, sound and USB drivers; storage registers whole-disk
+    1. Storage, sound, network and USB drivers; storage registers whole-disk
        block devices, with the statistics filter on each disk
     2. Partition tables, which register partition block devices
     3. Device objects for all of them (/dev/disk0, /dev/disk0p1, ...)
     4. File systems, which mount every recognizable volume
+    5. Firmware files the drivers asked for (Io.Firmware), now that the
+       system volume is there
 
   Runs in phase 1 because drivers sleep, wait and take mutexes.
 }
@@ -80,6 +82,11 @@ uses
   Drivers.HdAudio,
   Drivers.Ac97,
   Drivers.UsbAudio,
+  Drivers.E1000,
+  Drivers.Rtl8139,
+  Drivers.Rtl8168,
+  Drivers.Rtl8125,
+  Io.Firmware,
   FileSystem.Volumes,
   Io.DiskArrival,
   Debug.Output,
@@ -154,6 +161,11 @@ begin
   { Built-in sound first, so it keeps the first device names. }
   InitializeHdAudioControllers;
   InitializeAc97Controllers;
+  { Network cards register their adapters (eth0, eth1, ...). }
+  InitializeE1000Adapters;
+  InitializeRtl8139Adapters;
+  InitializeRtl8168Adapters;
+  InitializeRtl8125Adapters;
   RegisterUsbStorageDriver;
   RegisterUsbKeyboardDriver;
   RegisterUsbPointerDriver;
@@ -165,6 +177,9 @@ begin
 
   InitializeFileSystems;
   MountAllVolumes;
+  { Firmware drivers asked for comes from /lib/firmware on the system
+    volume, now mounted. }
+  DeliverRequestedFirmware;
   { Disks found from now on (USB disks plugged in) are brought up one by
     one as they come. }
   EnableDiskArrival;

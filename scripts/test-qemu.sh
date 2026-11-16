@@ -191,6 +191,9 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     -drive if=pflash,format=raw,file="$firmware_variables" \
     "${disk_arguments[@]}" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+    -netdev user,id=net1 -device e1000e,netdev=net1 \
+    -netdev user,id=net2 -device e1000,netdev=net2 \
+    -netdev user,id=net3 -device rtl8139,netdev=net3 \
     -serial file:"$serial_log" \
     -display none -no-reboot \
     < /dev/null > /dev/null 2>&1
@@ -320,6 +323,20 @@ case "$qemu_status" in
             echo "TEST FAILED: the disk statistics filter counted no failed reads"
             exit 1
         fi
+        # The network cards: each registered as an adapter with its address
+        # and interrupts (MSI on the PCI Express e1000e, the PCI line on
+        # the others), and its link came up.
+        for network_card in "Intel 82574L:MSI" "Intel 82540EM:line" "Realtek RTL8139:line"; do
+            card_name="${network_card%%:*}"
+            card_interrupts="${network_card##*:}"
+            # (Up already when it registered, or later.)
+            if ! grep -q "\[net\] eth[0-9]*: $card_name, address [0-9A-F:]*, .*interrupts by $card_interrupts" "$serial_log" ||
+               { ! grep -q "\[net\] eth[0-9]*: $card_name, address [0-9A-F:]*, link up" "$serial_log" &&
+                 ! grep -q "\[net\] eth[0-9]* ($card_name): link up" "$serial_log"; }; then
+                echo "TEST FAILED: the $card_name network card was not started, or its link did not come up"
+                exit 1
+            fi
+        done
         echo "TEST PASSED"
         exit 0
         ;;
