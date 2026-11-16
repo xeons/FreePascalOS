@@ -39,7 +39,17 @@
   A write waits while its stream's queue is full; draining (on request,
   and when the file is closed) waits until everything the stream wrote
   has been played. The output's volume (the hardware's) applies to every
-  stream; each stream also has its own.
+  stream; each stream also has its own. A muted output plays silence
+  (the mixer writes zeros, so it is silent whatever the hardware's
+  amplifier can do) and keeps its volume for when it is unmuted.
+
+  One output is the default (the first, until someone chooses another):
+  where programs play that name no output. The kernel only keeps the
+  number (ControlAudioGetDefaultOutput and ...Set on any output);
+  libaudio opens that output for them. Everyone may change the volumes,
+  the mute and the default, as anyone at the machine could turn its
+  knobs; the system settings service gives the remembered ones at
+  start.
 }
 unit Io.AudioOutput;
 
@@ -66,6 +76,8 @@ type
     Position: function(Context: Pointer): LongWord;
     { 0-100 percent. }
     SetVolume: procedure(Context: Pointer; Percent: LongWord);
+    { What the output is (AudioOutputKind*), for programs to name it. }
+    Kind: LongWord;
   end;
 
   PAudioOutput = ^TAudioOutput;
@@ -139,6 +151,7 @@ type
     SilentPeriods: LongWord;
     PeriodDone: TEvent;
     MasterVolume: LongWord;
+    Muted: Boolean;
     Mix: PInt64;
     { Recording what is played (/dev/audiomonitor). }
     Monitor: PAudioInput;
@@ -151,6 +164,7 @@ var
   MixerWake: TEvent;
   { Suspend to RAM: the mixer leaves the hardware alone meanwhile. }
   MixingSuspended: Boolean;
+  DefaultOutput: Integer;
 
 function StateOf(Output: PAudioOutput): POutputState;
 begin
@@ -207,6 +221,8 @@ begin
   for Position := 0 to AudioPeriodFrames * 2 - 1 do
   begin
     Value := State^.Mix[Position] div 65536;
+    if State^.Muted then
+      Value := 0;
     if Value > High(SmallInt) then
       Value := High(SmallInt)
     else if Value < Low(SmallInt) then
@@ -482,6 +498,22 @@ begin
         State^.MasterVolume := LongWord(Argument);
         Output^.Routines.SetVolume(Output^.Context, State^.MasterVolume);
       end;
+    ControlAudioGetMute:
+      Request.Information := Ord(State^.Muted);
+    ControlAudioSetMute:
+      if Argument > 1 then
+        Result := ErrorInvalidArgument
+      else
+        State^.Muted := Argument = 1;
+    ControlAudioGetDefaultOutput:
+      Request.Information := DefaultOutput;
+    ControlAudioSetDefaultOutput:
+      if Argument >= QWord(OutputCount) then
+        Result := ErrorNotFound
+      else
+        DefaultOutput := Integer(Argument);
+    ControlAudioGetKind:
+      Request.Information := Output^.Routines.Kind;
     ControlAudioGetQueued:
       Request.Information := StreamQueuedBytes(Stream);
     ControlAudioGetPosition:

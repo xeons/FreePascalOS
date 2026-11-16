@@ -68,6 +68,9 @@ function UptimeMilliseconds: QWord;
 { After suspend to RAM: the wall clock is read again (the uptime does
   not count the time asleep). }
 procedure ResynchronizeWallClock;
+{ Sets the date and time (CallSetWallClock) and writes it to the battery
+  backed clock for the next boot. }
+procedure SetWallClockTime(Time: TUnixTime);
 
 { Current date and time as Unix time (UTC). }
 function CurrentWallClockTime: TUnixTime;
@@ -231,6 +234,12 @@ end;
 procedure ResynchronizeWallClock;
 begin
   WallClockAtStart := ReadRealTimeClock - TUnixTime(UptimeSeconds);
+end;
+
+procedure SetWallClockTime(Time: TUnixTime);
+begin
+  WallClockAtStart := Time - TUnixTime(UptimeSeconds);
+  WriteRealTimeClock(Time);
 end;
 
 function ClockTickCount: QWord;

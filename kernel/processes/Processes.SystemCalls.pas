@@ -39,6 +39,8 @@ implementation
 uses
   Processes.ObjectCalls,
   Processes.WatchCalls,
+  Processes.ClockCalls,
+  Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
   Processes.MappingCalls,
@@ -730,6 +732,14 @@ begin
     { Watching files and folders (Processes.WatchCalls). }
     CallCreateWatch: Result := PerformCreateWatch(Argument0, Argument1);
     CallReadWatch: Result := PerformReadWatch(Int64(Argument0), Argument1, Argument2);
+    { The clock and the time zone (Processes.ClockCalls), the keyboards
+      (Processes.KeyboardCalls). }
+    CallSetWallClock: Result := PerformSetWallClock(Int64(Argument0));
+    CallGetTimeZone: Result := PerformGetTimeZone(Argument0, Argument1);
+    CallSetTimeZone: Result := PerformSetTimeZone(Argument0);
+    CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
+    CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
+    CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));
