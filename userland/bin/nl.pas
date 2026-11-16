@@ -30,16 +30,15 @@ program nl;
 
 uses
   SysUtils,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: nl [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: nl [OPTION]... [FILE]...'#10 +
     'Write each FILE to standard output, with line numbers added.'#10 +
     #10 +
     '  -b, --body-numbering=STYLE      use STYLE for numbering body lines'#10 +
@@ -66,22 +65,8 @@ var
 
 function ParseNumber(const Text: string): Int64;
 begin
-  if not ParseInteger(PChar(Text), Result) then
-    Fail(1, 'invalid number: ''%s''', [ArgumentText(PChar(Text))]);
-end;
-
-function ReadTextLine(Stream: PInputStream; out Line: string): Boolean;
-var
-  Text: PChar;
-  HadLineEnd: Boolean;
-begin
-  Result := ReadLine(Stream, Text, HadLineEnd);
-  Line := '';
-  if Result then
-  begin
-    Line := Text;
-    FreeMemory(Text);
-  end;
+  if not ParseDecimal(Text, Result) then
+    Fail(1, Format('invalid number: ''%s''', [Text]));
 end;
 
 { Pads Text with spaces to Width columns: on the left, or on the right
@@ -107,9 +92,10 @@ end;
 procedure NumberLines(Stream: PInputStream);
 var
   Line: string;
+  HadLineEnd: Boolean;
   Prefix: string;
 begin
-  while ReadTextLine(Stream, Line) do
+  while ReadTextLine(Stream, Line, HadLineEnd) do
   begin
     if IsNumbered(Line) then
     begin
@@ -118,16 +104,15 @@ begin
     end
     else
       Prefix := Aligned('', Width + 1);
-    WriteLine(StandardOutput, PChar(Prefix + Line));
+    PrintStringLine(Prefix + Line);
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Files: array of string;
-  Index: Integer;
+  Value: string;
+  FileName: string;
   Stream: PInputStream;
   ExitStatus: LongInt;
 begin
@@ -136,19 +121,19 @@ begin
   Separator := #9;
   LineNumber := 1;
   Width := 6;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'body-numbering', True, OptionStyle),
-    OptionDefinition('i', 'line-increment', True, OptionIncrement),
-    OptionDefinition('s', 'number-separator', True, OptionSeparator),
-    OptionDefinition('v', 'starting-line-number', True, OptionStart),
-    OptionDefinition('w', 'number-width', True, OptionWidth)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'body-numbering', True, OptionStyle),
+    CommandOption('i', 'line-increment', True, OptionIncrement),
+    CommandOption('s', 'number-separator', True, OptionSeparator),
+    CommandOption('v', 'starting-line-number', True, OptionStart),
+    CommandOption('w', 'number-width', True, OptionWidth)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionStyle:
         begin
-          if (StrLen(Value) <> 1) or not (Value[0] in ['a', 't', 'n']) then
-            Fail(1, 'invalid body numbering style: ''%s''', [ArgumentText(Value)]);
-          Style := Value[0];
+          if (Length(Value) <> 1) or not (Value[1] in ['a', 't', 'n']) then
+            Fail(1, Format('invalid body numbering style: ''%s''', [Value]));
+          Style := Value[1];
         end;
       OptionIncrement: Increment := ParseNumber(Value);
       OptionSeparator: Separator := Value;
@@ -156,18 +141,12 @@ begin
       OptionWidth: Width := ParseNumber(Value);
     end;
 
-  if Parser.OperandCount = 0 then
-    Files := ['-']
-  else
-  begin
-    SetLength(Files, Parser.OperandCount);
-    for Index := 0 to Parser.OperandCount - 1 do
-      Files[Index] := Parser.Operands[Index];
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to High(Files) do
+  for FileName in CommandLine.Operands do
   begin
-    Stream := OpenInput(PChar(Files[Index]));
+    Stream := OpenInput(FileName);
     if Stream = nil then
     begin
       ExitStatus := 1;

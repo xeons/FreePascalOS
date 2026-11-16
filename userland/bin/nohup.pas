@@ -37,14 +37,15 @@ uses
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Processes,
   Sys.Streams,
+  Util.CommandLine,
   Util.Commands,
-  Util.Messages;
+  Util.Messages,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: nohup COMMAND [ARG]...'#10 +
+  Usage = 'Usage: nohup COMMAND [ARG]...'#10 +
     'Run COMMAND, ignoring hangup signals.'#10#10 +
     'If standard output is a terminal, append output to ''nohup.out'' if possible,'#10 +
     '''$HOME/nohup.out'' otherwise.'#10;
@@ -68,22 +69,24 @@ begin
 end;
 
 var
+  Arguments: TStringArray;
   First: Integer;
   Options: TProcessOptions;
   OutputHandle: Int64;
   Path: string;
 begin
-  First := 1;
-  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
+  Arguments := ProgramArguments;
+  First := 0;
+  if (Length(Arguments) > 0) and (Arguments[0] = '--help') then
   begin
-    Print(Usage);
+    PrintString(Usage);
     Halt(0);
   end;
-  if (ArgumentTotal > 1) and (string(Argument(1)) = '--') then
+  if (Length(Arguments) > 0) and (Arguments[0] = '--') then
     Inc(First);
-  if First >= ArgumentTotal then
+  if First >= Length(Arguments) then
   begin
-    Report('missing operand', []);
+    Report('missing operand');
     Halt(StatusNohupFailed);
   end;
 
@@ -98,11 +101,11 @@ begin
       OutputHandle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenAppend);
     end;
     if OutputHandle < 0 then
-      FailWithError(StatusNohupFailed, ErrorCodeOf(OutputHandle), 'failed to open ''nohup.out''', []);
-    Report('ignoring input and appending output to ''%s''', [ArgumentText(PChar(Path))]);
+      FailWithError(StatusNohupFailed, ErrorCodeOf(OutputHandle), 'failed to open ''nohup.out''');
+    Report(Format('ignoring input and appending output to ''%s''', [Path]));
     Options.OutputHandle := OutputHandle;
     if IsConsole(StandardErrorHandle) then
       Options.ErrorHandle := OutputHandle;
   end;
-  RunCommandAndExit(ArgumentValues + First, Options);
+  RunCommandAndExit(Copy(Arguments, First, MaxInt), Options);
 end.

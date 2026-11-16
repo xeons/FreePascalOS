@@ -31,54 +31,48 @@ program mkfifo;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
+  Util.CommandLine,
   Util.Messages,
-  Util.Modes,
-  Util.Options;
+  Util.Modes;
 
 const
-  Usage: PChar = 'Usage: mkfifo [OPTION]... NAME...'#10 +
+  Usage = 'Usage: mkfifo [OPTION]... NAME...'#10 +
     'Create named pipes (FIFOs) with the given NAMEs.'#10#10 +
     '  -m, --mode=MODE   set file permission bits to MODE, not a=rw - umask'#10;
 
   OptionMode = 1;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  ModeText: string;
+  Value: string;
   HasMode: Boolean;
   ModeChange: TModeChange;
-  Index: Integer;
+  Name: string;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
-  ModeText := '';
-  HasMode := False;
-  BeginOptions(Parser, [OptionDefinition('m', 'mode', True, OptionMode)], Usage);
-  while NextOption(Parser, Code, Value) do
-    if Code = OptionMode then
-    begin
-      ModeText := Value;
-      HasMode := True;
-    end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
-  if HasMode and not ParseModeChange(PChar(ModeText), ModeChange) then
-    Fail(1, 'invalid mode ''%s''', [ArgumentText(PChar(ModeText))]);
+  CommandLine := TCommandLine.Create([CommandOption('m', 'mode', True, OptionMode)], Usage);
+  while CommandLine.NextOption(Code, Value) do
+    ;
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
+  HasMode := CommandLine.OptionGiven(OptionMode);
+  if HasMode and not ParseModeChange(CommandLine.OptionValue(OptionMode), ModeChange) then
+    Fail(1, Format('invalid mode ''%s''', [CommandLine.OptionValue(OptionMode)]));
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Name in CommandLine.Operands do
   begin
-    Error := CreateFifo(Parser.Operands[Index]);
+    Error := CreateFifo(PChar(Name));
     if (Error = ErrorNone) and HasMode then
-      Error := ChangeMode(Parser.Operands[Index], ApplyModeChange(ModeChange, $1B6, False));
+      Error := ChangeMode(PChar(Name), ApplyModeChange(ModeChange, $1B6, False));
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'cannot create fifo ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(Error, Format('cannot create fifo ''%s''', [Name]));
       ExitStatus := 1;
     end;
   end;

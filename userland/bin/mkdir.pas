@@ -33,14 +33,13 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
   Util.Modes,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: mkdir [OPTION]... DIRECTORY...'#10 +
+  Usage = 'Usage: mkdir [OPTION]... DIRECTORY...'#10 +
     'Create the DIRECTORY(ies), if they do not already exist.'#10 +
     #10 +
     '  -m, --mode=MODE   set file mode (as in chmod), not a=rwx - umask'#10 +
@@ -53,15 +52,13 @@ const
 
 var
   Verbose: Boolean;
-  HasMode: Boolean;
   ModeChange: TModeChange;
 
 function MakeOne(const Path: string): LongInt;
 begin
   Result := CreateDirectory(PChar(Path));
   if (Result = ErrorNone) and Verbose then
-    WriteFormatted(StandardOutput, '%s: created directory ''%s'''#10, [ArgumentText(ProgramName),
-      ArgumentText(PChar(Path))]);
+    PrintString(Format('%s: created directory ''%s'''#10, [ProgramNameText, Path]));
 end;
 
 { Creates every missing directory along Path. }
@@ -88,55 +85,52 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Parents: Boolean;
-  Index: Integer;
   Path: string;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
   Parents := False;
   Verbose := False;
-  BeginOptions(Parser, [
-    OptionDefinition('m', 'mode', True, OptionMode),
-    OptionDefinition('p', 'parents', False, OptionParents),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('m', 'mode', True, OptionMode),
+    CommandOption('p', 'parents', False, OptionParents),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionMode:
         begin
           if not ParseModeChange(Value, ModeChange) then
-            Fail(1, 'invalid mode ''%s''', [ArgumentText(Value)]);
-          HasMode := True;
+            Fail(1, Format('invalid mode ''%s''', [Value]));
         end;
       OptionParents: Parents := True;
       OptionVerbose: Verbose := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Path in CommandLine.Operands do
   begin
-    Path := Parser.Operands[Index];
     if Parents then
       Error := MakeWithParents(Path)
     else
       Error := MakeOne(Path);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(PChar(Path))]);
+      ReportError(Error, Format('cannot create directory ''%s''', [Path]));
       ExitStatus := 1;
     end
-    else if HasMode then
+    else if CommandLine.OptionGiven(OptionMode) then
     begin
       { The mode applies to the named directory, as in GNU mkdir. }
       Error := ChangeMode(PChar(Path), ApplyModeChange(ModeChange, $1ED, True));
       if Error <> ErrorNone then
       begin
-        ReportError(Error, 'cannot set permissions of ''%s''', [ArgumentText(PChar(Path))]);
+        ReportError(Error, Format('cannot set permissions of ''%s''', [Path]));
         ExitStatus := 1;
       end;
     end;

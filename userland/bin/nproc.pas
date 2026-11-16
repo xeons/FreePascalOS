@@ -27,18 +27,19 @@
 program nproc;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Information,
   Sys.Kernel,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: nproc [OPTION]...'#10 +
+  Usage = 'Usage: nproc [OPTION]...'#10 +
     'Print the number of processing units available to the current process.'#10#10 +
     '      --all       print the number of installed processors'#10 +
     '      --ignore=N  if possible, exclude N processing units'#10;
@@ -47,9 +48,9 @@ const
   OptionIgnore = 2;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Ignore: Int64;
   Information: TSystemInformation;
   Count: Int64;
@@ -58,15 +59,15 @@ var
 begin
   CountAll := False;
   Ignore := 0;
-  BeginOptions(Parser, [
-    OptionDefinition(#0, 'all', False, OptionAll),
-    OptionDefinition(#0, 'ignore', True, OptionIgnore)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption(#0, 'all', False, OptionAll),
+    CommandOption(#0, 'ignore', True, OptionIgnore)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionAll then
       CountAll := True
     else if Code = OptionIgnore then
-      if not ParseInteger(Value, Ignore) or (Ignore < 0) then
-        Fail(1, 'invalid number: ''%s''', [ArgumentText(Value)]);
+      if not ParseDecimal(Value, Ignore) or (Ignore < 0) then
+        Fail(1, Format('invalid number: ''%s''', [Value]));
   GetSystemInformation(Information);
   Count := Information.ProcessorCount;
   Mask := KernelGetAffinity(0);
@@ -82,6 +83,5 @@ begin
   Count := Count - Ignore;
   if Count < 1 then
     Count := 1;
-  WriteDecimal(StandardOutput, Count);
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine(IntToStr(Count));
 end.

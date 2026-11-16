@@ -35,16 +35,14 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
+  Util.CommandLine,
   Util.FileTree,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: mv [OPTION]... [-T] SOURCE DEST'#10 +
+  Usage = 'Usage: mv [OPTION]... [-T] SOURCE DEST'#10 +
     '  or:  mv [OPTION]... SOURCE... DIRECTORY'#10 +
     '  or:  mv [OPTION]... -t DIRECTORY SOURCE...'#10 +
     'Rename SOURCE to DEST, or move SOURCE(s) to DIRECTORY.'#10 +
@@ -65,20 +63,6 @@ var
   NoClobber: Boolean;
   Verbose: Boolean;
 
-{ Directory/(last component of Source), the target of moving Source
-  into Directory. }
-function TargetInDirectory(const Directory, Source: string): string;
-var
-  Base: PChar;
-  Joined: PChar;
-begin
-  Base := BaseName(PChar(Source));
-  Joined := JoinPath(PChar(Directory), Base);
-  Result := Joined;
-  FreeMemory(Base);
-  FreeMemory(Joined);
-end;
-
 { Copies Source to Target and removes Source: moving between volumes. }
 function CopyAndRemove(const Source, Target: string): Boolean;
 var
@@ -89,7 +73,7 @@ begin
   CopyOptions.NoClobber := False;
   CopyOptions.Verbose := False;
   CopyOptions.PreserveAttributes := True;
-  Result := CopyPath(PChar(Source), PChar(Target), CopyOptions) and RemoveTree(PChar(Source));
+  Result := CopyPath(Source, Target, CopyOptions) and RemoveTree(Source);
 end;
 
 function MoveOne(const Source, Target: string): Boolean;
@@ -100,7 +84,7 @@ begin
   Error := GetLinkInformation(PChar(Source), Information);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot stat ''%s''', [ArgumentText(PChar(Source))]);
+    ReportError(Error, Format('cannot stat ''%s''', [Source]));
     Exit(False);
   end;
   if NoClobber and PathExists(PChar(Target)) then
@@ -119,20 +103,18 @@ begin
   end;
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot move ''%s'' to ''%s''', [ArgumentText(PChar(Source)), ArgumentText(PChar(Target))]);
+    ReportError(Error, Format('cannot move ''%s'' to ''%s''', [Source, Target]));
     Exit(False);
   end;
   if Verbose then
-    WriteFormatted(StandardOutput, 'renamed ''%s'' -> ''%s'''#10, [ArgumentText(PChar(Source)),
-      ArgumentText(PChar(Target))]);
+    PrintString(Format('renamed ''%s'' -> ''%s'''#10, [Source, Target]));
   Result := True;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  HasTargetDirectory: Boolean;
+  Value: string;
   TargetDirectory: string;
   NoTargetDirectory: Boolean;
   SourceCount: Integer;
@@ -142,42 +124,37 @@ var
 begin
   NoClobber := False;
   Verbose := False;
-  HasTargetDirectory := False;
   NoTargetDirectory := False;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'force', False, OptionForce),
-    OptionDefinition('i', 'interactive', False, OptionForce),
-    OptionDefinition('n', 'no-clobber', False, OptionNoClobber),
-    OptionDefinition('t', 'target-directory', True, OptionTargetDirectory),
-    OptionDefinition('T', 'no-target-directory', False, OptionNoTargetDirectory),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'force', False, OptionForce),
+    CommandOption('i', 'interactive', False, OptionForce),
+    CommandOption('n', 'no-clobber', False, OptionNoClobber),
+    CommandOption('t', 'target-directory', True, OptionTargetDirectory),
+    CommandOption('T', 'no-target-directory', False, OptionNoTargetDirectory),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionForce: NoClobber := False;
       OptionNoClobber: NoClobber := True;
-      OptionTargetDirectory:
-        begin
-          TargetDirectory := Value;
-          HasTargetDirectory := True;
-        end;
+      OptionTargetDirectory: TargetDirectory := Value;
       OptionNoTargetDirectory: NoTargetDirectory := True;
       OptionVerbose: Verbose := True;
     end;
 
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
-  SourceCount := Parser.OperandCount;
-  if not HasTargetDirectory then
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
+  SourceCount := CommandLine.OperandCount;
+  if not CommandLine.OptionGiven(OptionTargetDirectory) then
   begin
-    if Parser.OperandCount = 1 then
-      FailWithUsageHint('missing destination file operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
-    SourceCount := Parser.OperandCount - 1;
-    Target := Parser.Operands[SourceCount];
+    if CommandLine.OperandCount = 1 then
+      FailWithUsageHint(Format('missing destination file operand after ''%s''', [CommandLine.Operands[0]]));
+    SourceCount := CommandLine.OperandCount - 1;
+    Target := CommandLine.Operands[SourceCount];
     if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(PChar(Target))) then
     begin
       if SourceCount > 1 then
-        FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-      if MoveOne(Parser.Operands[0], Target) then
+        FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+      if MoveOne(CommandLine.Operands[0], Target) then
         Halt(0);
       Halt(1);
     end;
@@ -185,10 +162,11 @@ begin
   end;
 
   if not IsDirectory(PChar(TargetDirectory)) then
-    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(PChar(TargetDirectory))]);
+    Fail(1, Format('target ''%s'' is not a directory', [TargetDirectory]));
   ExitStatus := 0;
   for Index := 0 to SourceCount - 1 do
-    if not MoveOne(Parser.Operands[Index], TargetInDirectory(TargetDirectory, Parser.Operands[Index])) then
+    if not MoveOne(CommandLine.Operands[Index],
+      JoinPath(TargetDirectory, BaseName(CommandLine.Operands[Index]))) then
       ExitStatus := 1;
   Halt(ExitStatus);
 end.

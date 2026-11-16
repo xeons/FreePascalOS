@@ -36,24 +36,24 @@ uses
   StrUtils,
   Sys.Kernel,
   Sys.Errors,
-  Sys.Environment,
-  Sys.Format,
   Sys.Processes,
-  Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Commands,
-  Util.Messages;
+  Util.Messages,
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: nice [OPTION] [COMMAND [ARG]...]'#10 +
+  Usage = 'Usage: nice [OPTION] [COMMAND [ARG]...]'#10 +
     'Run COMMAND with an adjusted niceness, which affects process scheduling.'#10 +
     'With no COMMAND, print the current niceness.'#10#10 +
     '  -n, --adjustment=N   add integer N to the niceness (default 10)'#10;
 
 function ParseAdjustment(const Text: string): Int64;
 begin
-  if not ParseInteger(PChar(Text), Result) then
-    Fail(125, 'invalid adjustment ''%s''', [ArgumentText(PChar(Text))]);
+  if not ParseDecimal(Text, Result) then
+    Fail(125, Format('invalid adjustment ''%s''', [Text]));
 end;
 
 { The old form "nice -5 command" (or "nice --5 command"). }
@@ -64,6 +64,7 @@ begin
 end;
 
 var
+  Arguments: TStringArray;
   First: Integer;
   Adjustment: Int64;
   Options: TProcessOptions;
@@ -72,19 +73,20 @@ var
   Wanted: Int64;
   Error: Int64;
 begin
-  First := 1;
+  Arguments := ProgramArguments;
+  First := 0;
   Adjustment := 10;
-  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
+  if (Length(Arguments) > 0) and (Arguments[0] = '--help') then
   begin
-    Print(Usage);
+    PrintString(Usage);
     Halt(0);
   end;
-  if First < ArgumentTotal then
+  if First < Length(Arguments) then
   begin
-    Text := Argument(First);
-    if ((Text = '-n') or (Text = '--adjustment')) and (First + 1 < ArgumentTotal) then
+    Text := Arguments[First];
+    if ((Text = '-n') or (Text = '--adjustment')) and (First + 1 < Length(Arguments)) then
     begin
-      Adjustment := ParseAdjustment(Argument(First + 1));
+      Adjustment := ParseAdjustment(Arguments[First + 1]);
       First := First + 2;
     end
     else if StartsStr('--adjustment=', Text) then
@@ -98,13 +100,13 @@ begin
       Inc(First);
     end;
   end;
-  if (First < ArgumentTotal) and (string(Argument(First)) = '--') then
+  if (First < Length(Arguments)) and (Arguments[First] = '--') then
     Inc(First);
 
   KernelGetPriority(0, Current);
-  if First >= ArgumentTotal then
+  if First >= Length(Arguments) then
   begin
-    WriteLine(StandardOutput, PChar(IntToStr(Current)));
+    PrintStringLine(IntToStr(Current));
     Halt(0);
   end;
   Wanted := Current + Adjustment;
@@ -114,7 +116,7 @@ begin
     Wanted := 19;
   Error := KernelSetPriority(0, LongInt(Wanted));
   if Error < 0 then
-    Report('cannot set niceness: %s', [ArgumentText(ErrorMessage(ErrorCodeOf(Error)))]);
+    Report(Format('cannot set niceness: %s', [ErrorText(ErrorCodeOf(Error))]));
   DefaultProcessOptions(Options);
-  RunCommandAndExit(ArgumentValues + First, Options);
+  RunCommandAndExit(Copy(Arguments, First, MaxInt), Options);
 end.
