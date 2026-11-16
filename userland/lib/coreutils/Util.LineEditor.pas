@@ -99,8 +99,7 @@ uses
   Sys.Kernel,
   Sys.Objects,
   Sys.Streams,
-  Util.Input,
-  Util.Output;
+  Util.Input;
 
 const
   DefaultHistoryLimit = 500;

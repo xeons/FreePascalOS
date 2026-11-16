@@ -72,32 +72,26 @@ begin
   Result := ErrorMessage(ErrorCode);
 end;
 
-procedure WriteMessageText(const Message: string);
-begin
-  if Message <> '' then
-    WriteBytes(StandardError, PChar(Message), Length(Message));
-end;
-
 procedure WriteMessageStart;
 begin
   FlushStream(StandardOutput);
-  WriteMessageText(ProgramName);
-  WriteText(StandardError, ': ');
+  WriteString(StandardError, ProgramName);
+  WriteString(StandardError, ': ');
 end;
 
 procedure Report(const Message: string);
 begin
   WriteMessageStart;
-  WriteMessageText(Message);
+  WriteString(StandardError, Message);
   WriteCharacter(StandardError, #10);
 end;
 
 procedure ReportError(ErrorCode: LongInt; const Message: string);
 begin
   WriteMessageStart;
-  WriteMessageText(Message);
-  WriteText(StandardError, ': ');
-  WriteText(StandardError, ErrorMessage(ErrorCode));
+  WriteString(StandardError, Message);
+  WriteString(StandardError, ': ');
+  WriteString(StandardError, ErrorMessage(ErrorCode));
   WriteCharacter(StandardError, #10);
 end;
 
@@ -116,9 +110,9 @@ end;
 procedure FailWithUsageHint(const Message: string);
 begin
   Report(Message);
-  WriteText(StandardError, 'Try ''');
-  WriteMessageText(ProgramName);
-  WriteText(StandardError, ''' --help'' for more information.'#10);
+  WriteString(StandardError, 'Try ''');
+  WriteString(StandardError, ProgramName);
+  WriteString(StandardError, ''' --help'' for more information.'#10);
   Halt(1);
 end;
 

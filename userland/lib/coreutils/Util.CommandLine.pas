@@ -139,7 +139,7 @@ uses
   StrUtils,
   Sys.Environment,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 function CommandOption(ShortName: Char; const LongName: string; TakesValue: Boolean;
   Code: Integer): TCommandOption;

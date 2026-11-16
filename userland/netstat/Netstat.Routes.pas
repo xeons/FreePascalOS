@@ -44,7 +44,7 @@ uses
   Sys.AddressText,
   Sys.InterfaceText,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 procedure WriteRoute(constref Route: TAbiRoute);
 begin

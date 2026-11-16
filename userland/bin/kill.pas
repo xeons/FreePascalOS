@@ -46,7 +46,7 @@ uses
   Util.Commands,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: kill [-s SIGNAL | -SIGNAL] PID...'#10 +

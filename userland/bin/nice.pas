@@ -42,7 +42,7 @@ uses
   Util.Commands,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: nice [OPTION] [COMMAND [ARG]...]'#10 +

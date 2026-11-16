@@ -43,7 +43,6 @@ uses
   Sys.Text,
   Util.Messages,
   Util.CommandLine,
-  Util.Output,
   Audio.Formats,
   Audio.Device,
   Audio.Filters,

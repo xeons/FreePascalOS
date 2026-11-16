@@ -52,8 +52,7 @@ uses
   Sys.Time,
   Util.Accounts,
   Util.CommandLine,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: ps [OPTION]...'#10 +

@@ -108,7 +108,7 @@ begin
   until UptimeMilliseconds >= Deadline;
   { Keeps the loop from being optimized away. }
   if Sum = 1 then
-    WriteLine(StandardOutput, '');
+    WriteStringLine(StandardOutput, '');
 end;
 
 function SpinningThread(Argument: Pointer): LongInt;
@@ -354,7 +354,7 @@ begin
     TestShortList;
   end
   else
-    WriteLine(StandardOutput, 'usagetest: run as "usagetest --own-details" (its command line is checked)');
+    WriteStringLine(StandardOutput, 'usagetest: run as "usagetest --own-details" (its command line is checked)');
   WriteFormatted(StandardOutput, 'usagetest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
     ArgumentNumber(Checks)]);
   if (Failures > 0) or (Checks = 0) then

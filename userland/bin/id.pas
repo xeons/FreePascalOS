@@ -33,7 +33,7 @@ uses
   Util.Accounts,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: id [OPTION]... [USER]'#10 +

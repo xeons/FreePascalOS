@@ -47,7 +47,7 @@ uses
   Util.Directories,
   Util.Modes,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Paths,
   Util.Sizes;
 

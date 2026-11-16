@@ -44,7 +44,7 @@ uses
   Sys.SystemSettings,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.SystemRequests;
 
 const

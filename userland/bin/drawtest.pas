@@ -44,7 +44,6 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Surfaces,

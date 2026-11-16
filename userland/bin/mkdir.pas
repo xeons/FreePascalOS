@@ -36,7 +36,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Modes,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: mkdir [OPTION]... DIRECTORY...'#10 +

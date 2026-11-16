@@ -35,7 +35,6 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
   Util.Paths;
 
 const

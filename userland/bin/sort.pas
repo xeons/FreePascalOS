@@ -41,7 +41,6 @@ uses
   Util.Input,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Util.Sorting;
 
 const

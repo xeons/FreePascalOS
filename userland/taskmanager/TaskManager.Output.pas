@@ -44,7 +44,6 @@ implementation
 uses
   SysUtils,
   Sys.Streams,
-  Util.Output,
   Drawing.Rectangles,
   Windowing.Connection;
 

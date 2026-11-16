@@ -62,7 +62,6 @@ uses
   Sys.HostNames,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
   DnsTest.Zone,
   DnsTest.Server;
 

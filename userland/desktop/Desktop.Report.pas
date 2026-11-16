@@ -42,7 +42,6 @@ implementation
 uses
   SysUtils,
   Sys.Streams,
-  Util.Output,
   Windowing.Connection;
 
 procedure Say(const Text: string);

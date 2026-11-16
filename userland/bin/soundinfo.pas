@@ -37,7 +37,7 @@ uses
   SysUtils,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Audio.Formats,
   Audio.Wave;
 

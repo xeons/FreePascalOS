@@ -42,7 +42,7 @@ uses
   Sys.InterfaceText,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage ='Usage: ndp [-a] [-n] [-i INTERFACE] [ADDRESS]'#10 +

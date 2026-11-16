@@ -75,7 +75,6 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
   Services.Definitions,
   Services.Catalog,
   Services.Control,

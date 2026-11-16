@@ -68,7 +68,6 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
   Drawing.Rectangles,
   Windowing.Protocol,
   Server.Screen,

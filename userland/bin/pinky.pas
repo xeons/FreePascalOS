@@ -34,7 +34,7 @@ uses
   Util.Accounts,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: pinky [OPTION]... [USER]...'#10 +

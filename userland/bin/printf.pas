@@ -39,8 +39,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 var
   Arguments: TStringArray;

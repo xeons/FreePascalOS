@@ -52,8 +52,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   OptionBinary = 1;

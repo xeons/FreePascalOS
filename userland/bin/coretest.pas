@@ -611,8 +611,8 @@ begin
   while Text[Index] <> #0 do
   begin
     case Text[Index] of
-      #10: WriteText(StandardOutput, '\n');
-      #9: WriteText(StandardOutput, '\t');
+      #10: WriteString(StandardOutput, '\n');
+      #9: WriteString(StandardOutput, '\t');
     else
       WriteCharacter(StandardOutput, Text[Index]);
     end;
@@ -678,10 +678,10 @@ begin
   begin
     WriteFormatted(StandardOutput, '[coretest]   expected status %d, output "', [ArgumentNumber(Test.ExpectedStatus)]);
     WriteVisible(Test.ExpectedOutput);
-    WriteLine(StandardOutput, '"');
+    WriteStringLine(StandardOutput, '"');
     WriteFormatted(StandardOutput, '[coretest]   got      status %d, output "', [ArgumentNumber(Status)]);
     WriteVisible(Output);
-    WriteLine(StandardOutput, '"');
+    WriteStringLine(StandardOutput, '"');
   end;
   FreeMemory(Output);
 end;
@@ -801,7 +801,7 @@ begin
   end;
   PassedCount := 0;
   FailedCount := 0;
-  WriteLine(StandardOutput, '[coretest] user mode tests starting');
+  WriteStringLine(StandardOutput, '[coretest] user mode tests starting');
   PrepareWorkDirectory;
   TestRunTimeLoading;
   TestHeap;

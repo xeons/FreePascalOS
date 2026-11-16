@@ -38,7 +38,7 @@ uses
   Util.CommandLine,
   Util.FileTree,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Paths;
 
 const

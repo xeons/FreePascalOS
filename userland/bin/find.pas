@@ -57,7 +57,6 @@ uses
   Util.Messages,
   Util.Modes,
   Util.Numbers,
-  Util.Output,
   Util.Paths;
 
 const

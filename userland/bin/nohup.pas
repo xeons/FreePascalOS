@@ -41,8 +41,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Commands,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: nohup COMMAND [ARG]...'#10 +

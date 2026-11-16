@@ -33,8 +33,7 @@ program paste;
 uses
   Sys.Streams,
   Util.CommandLine,
-  Util.Input,
-  Util.Output;
+  Util.Input;
 
 const
   Usage = 'Usage: paste [OPTION]... [FILE]...'#10 +

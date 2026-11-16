@@ -26,7 +26,7 @@ program pwd;
 uses
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Sys.Files;
 
 const

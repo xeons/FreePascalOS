@@ -36,7 +36,7 @@ uses
   Sys.Memory,
   Util.Messages,
   Util.CommandLine,
-  Util.Output,
+  Sys.Streams,
   Audio.Formats,
   Audio.Device,
   Audio.EffectChain,

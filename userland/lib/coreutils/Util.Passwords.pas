@@ -236,7 +236,7 @@ var
   HadLineEnd: Boolean;
 begin
   OnConsole := IsConsole(StandardInputHandle);
-  WriteText(StandardError, PChar(Prompt));
+  WriteString(StandardError, Prompt);
   FlushStream(StandardError);
   OldMode := 0;
   if OnConsole then

@@ -51,7 +51,7 @@ uses
   Util.SystemRequests,
   Util.Power,
   Util.Logins,
-  Util.Output,
+  Sys.Streams,
   Util.CommandLine,
   Util.Numbers;
 

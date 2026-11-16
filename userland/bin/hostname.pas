@@ -46,8 +46,7 @@ uses
   Sys.NetworkInterfaces,
   Sys.HostNames,
   Util.CommandLine,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: hostname [-s | -i | -I] | hostname NAME'#10 +

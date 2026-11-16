@@ -49,7 +49,6 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Windowing.Connection,
   Windowing.Displays;
 

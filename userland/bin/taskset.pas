@@ -41,7 +41,7 @@ uses
   Util.Commands,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: taskset [OPTION] [MASK | LIST] [PID | COMMAND [ARG]...]'#10 +

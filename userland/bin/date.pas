@@ -51,7 +51,7 @@ uses
   Util.Dates,
   Util.SystemRequests,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: date [OPTION]... [+FORMAT]'#10 +

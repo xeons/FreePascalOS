@@ -34,8 +34,7 @@ uses
   Sys.Console,
   Sys.PseudoTerminals,
   Sys.Streams,
-  Util.CommandLine,
-  Util.Output;
+  Util.CommandLine;
 
 const
   Usage = 'Usage: tty [OPTION]...'#10 +

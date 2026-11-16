@@ -51,7 +51,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
+  Sys.Streams,
   Util.SystemRequests,
   Audio.Outputs;
 

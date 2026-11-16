@@ -31,7 +31,7 @@ program printenv;
 uses
   Sys.Environment,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: printenv [OPTION]... [VARIABLE]...'#10 +

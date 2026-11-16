@@ -67,7 +67,7 @@ uses
   Sys.FileCopies,
   Util.Directories,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Paths;
 
 function CopyFileContents(const Source, Target: string): Boolean;

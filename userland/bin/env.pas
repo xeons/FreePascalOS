@@ -36,8 +36,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Commands,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]'#10 +

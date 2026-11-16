@@ -39,10 +39,6 @@ uses
 function OpenInput(const Path: string): PInputStream;
 procedure CloseInput(Stream: PInputStream);
 
-{ Reads the next line without its line end. Returns False at end of input
-  with nothing read. HadLineEnd tells whether the line was terminated
-  (the last line may not be). }
-function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
 { Appends every line of Stream to Lines. Returns False if the last line
   had no line end. }
 function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;
@@ -78,18 +74,6 @@ begin
     Exit(nil);
   end;
   Result := CreateInputStream(Handle);
-end;
-
-function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
-var
-  Text: PChar;
-begin
-  Line := '';
-  Result := ReadLine(Stream, Text, HadLineEnd);
-  if not Result then
-    Exit;
-  Line := Text;
-  FreeMemory(Text);
 end;
 
 function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;

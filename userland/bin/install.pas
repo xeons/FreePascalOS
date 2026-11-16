@@ -40,7 +40,7 @@ uses
   Util.FileTree,
   Util.Messages,
   Util.Modes,
-  Util.Output,
+  Sys.Streams,
   Util.Paths;
 
 const

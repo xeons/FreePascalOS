@@ -40,7 +40,7 @@ uses
   Sys.Environment,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   SystemInfo.Facts,
   SystemInfo.Logo;
 

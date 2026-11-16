@@ -48,8 +48,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: watch [OPTION]... PATH...'#10 +

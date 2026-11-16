@@ -57,7 +57,6 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Streams,
-  Util.Output,
   Drawing.Rectangles,
   Windowing.Protocol,
   Windowing.Connection,

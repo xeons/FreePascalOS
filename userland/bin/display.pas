@@ -47,7 +47,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]'#10 +

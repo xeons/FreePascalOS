@@ -91,12 +91,12 @@ begin
   while Text[Index] <> #0 do
   begin
     if Text[Index] = #10 then
-      WriteText(StandardOutput, '|')
+      WriteString(StandardOutput, '|')
     else
       WriteFormatted(StandardOutput, '%c', [ArgumentCharacter(Text[Index])]);
     Inc(Index);
   end;
-  WriteText(StandardOutput, #10);
+  WriteString(StandardOutput, #10);
 end;
 
 { Compares the changes that came with what should have; says both when

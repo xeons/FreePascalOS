@@ -60,7 +60,7 @@ uses
   Sys.Processes,
   Sys.Time,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Wget.Bodies,
   Wget.Connections,
   Wget.Files,

@@ -50,7 +50,7 @@ uses
   Sys.ProcessList,
   Sys.Sockets,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Netstat.Names;
 
 function IsServer(constref Entry: TAbiSocketInformation): Boolean;

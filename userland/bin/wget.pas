@@ -47,7 +47,6 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Wget.Settings,
   Wget.Transfer,
   Wget.Urls;

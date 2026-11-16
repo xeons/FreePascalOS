@@ -500,7 +500,7 @@ begin
       CrashInThread
     else if TextIsEqual(ArgumentValues[1], '--last-thread-exits') then
       LastThreadExits;
-    PrintLine('threadtest: unknown option');
+    PrintStringLine('threadtest: unknown option');
     Halt(2);
   end;
 

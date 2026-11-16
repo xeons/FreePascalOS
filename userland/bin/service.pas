@@ -44,8 +44,7 @@ uses
   Sys.ServiceControl,
   Sys.Streams,
   Util.CommandLine,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: service [-p PORT] list'#10 +

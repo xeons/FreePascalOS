@@ -34,7 +34,7 @@ uses
   Sys.Processes,
   Util.Commands,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: chroot [OPTION] NEWROOT [COMMAND [ARG]...]'#10 +

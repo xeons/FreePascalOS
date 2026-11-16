@@ -26,7 +26,7 @@ program arch;
 uses
   Sys.Information,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: arch'#10 +

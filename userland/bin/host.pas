@@ -49,8 +49,7 @@ uses
   Sys.HostNames,
   Util.CommandLine,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: host [OPTION]... NAME [SERVER]'#10 +

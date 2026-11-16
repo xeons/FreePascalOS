@@ -32,7 +32,7 @@ uses
   Sys.Files,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: rmdir [OPTION]... DIRECTORY...'#10 +

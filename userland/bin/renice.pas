@@ -36,7 +36,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: renice [-n] PRIORITY [-p] PID...'#10 +
