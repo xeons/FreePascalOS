@@ -68,6 +68,7 @@ uses
   Kernel.Options,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.HeapCheckTest,
   Kernel.SecondaryProcessors,
   Kernel.FileSystemTest,
   Kernel.FileSystemWriteTest,
@@ -308,6 +309,7 @@ begin
   StartHangWatch;
 
   RunKernelSelfTests;
+  RunHeapCheckSelfTest;
   RunIoSelfTests;
   RunFileSystemSelfTests;
   { Only when asked: the write tests change the test volumes, and end

@@ -211,6 +211,16 @@ Kernel options can be put in `\FreePascalOS\options.txt` on the boot volume
 (one line, words separated by spaces, e.g. `mode=text autologin=root`; see
 `kernel/core/Kernel.Options.pas`).
 
+Heap checking catches use after free, writes after free, writes past the end
+of a block, double frees and reads of memory that was never set, in the
+kernel heap and in every program: the kernel option `heapchecks` turns it on
+for both (`make test` always does), `heapchecks=fill` without the quarantine.
+For one program, the environment variable overrides the option:
+`HEAP_CHECKS=all program`, `HEAP_CHECKS=fill program` or `HEAP_CHECKS=off
+program`. A failed check ends the program with a report on standard error
+and the console (exit status 204); in the kernel it is a panic. See "Heap
+checking" in `docs/Architecture.md`.
+
 The disk image can be written to a USB stick to boot real hardware, with
 Secure Boot disabled. Writing it erases the stick:
 
