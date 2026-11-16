@@ -23,24 +23,25 @@
 }
 program logname;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Streams,
   Util.Accounts,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: logname'#10 +
+  Usage = 'Usage: logname'#10 +
     'Print the user''s login name.'#10;
 
 var
-  Parser: TOptionParser;
-  Name: PChar;
+  CommandLine: TCommandLine;
+  Name: string;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  Name := UserNameOf(CurrentRealUserId);
-  if Name = nil then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if not FindUserName(CurrentRealUserId, Name) then
     Name := 'root';
-  PrintLine(Name);
+  PrintStringLine(Name);
+  CommandLine.Free;
 end.

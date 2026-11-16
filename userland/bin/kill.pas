@@ -36,23 +36,20 @@
 }
 program kill;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
-  Sys.Environment,
-  Sys.Processes,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Commands,
-  Util.Messages;
+  Util.Messages,
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: kill [-s SIGNAL | -SIGNAL] PID...'#10 +
+  Usage = 'Usage: kill [-s SIGNAL | -SIGNAL] PID...'#10 +
     '  or:  kill -l [SIGNAL]...'#10 +
     'Send signals to processes, or list signals. TERM (the default), HUP and INT'#10 +
     'ask a process to end and let it tidy up first; KILL (-9) ends it at once.'#10#10 +
@@ -60,42 +57,55 @@ const
     '                   specify the name or number of the signal to be sent'#10 +
     '  -l, --list       list signal names, or convert signal names to/from numbers'#10;
 
-procedure ListSignals(First: Integer);
+var
+  Arguments: TStringArray;
+
+procedure ListAllSignals;
+var
+  Index: Integer;
+begin
+  for Index := 1 to HighestSignal do
+  begin
+    PrintString(Format('%2d) SIG%-8s', [Index, SignalNameText(Index)]));
+    if Index mod 5 = 0 then
+      PrintString(#10);
+  end;
+  PrintString(#10);
+end;
+
+{ Names for numbers and numbers for names, from argument First on. }
+procedure TranslateSignals(First: Integer);
 var
   Index: Integer;
   Number: Int64;
 begin
-  if First >= ArgumentTotal then
+  for Index := First to High(Arguments) do
   begin
-    for Index := 1 to HighestSignal do
-    begin
-      WriteFormatted(StandardOutput, '%2d) SIG%-8s', [ArgumentNumber(Index), ArgumentText(SignalName(Index))]);
-      if Index mod 5 = 0 then
-        WriteCharacter(StandardOutput, #10);
-    end;
-    WriteCharacter(StandardOutput, #10);
-    Halt(0);
-  end;
-  for Index := First to ArgumentTotal - 1 do
-  begin
-    if ParseInteger(Argument(Index), Number) then
+    if ParseDecimal(Arguments[Index], Number) then
     begin
       { Exit statuses above 128 name the signal that ended a program. }
       if Number > 128 then
         Number := Number - 128;
-      if SignalName(Integer(Number)) = nil then
-        Fail(1, '%s: invalid signal', [ArgumentText(Argument(Index))]);
-      PrintLine(SignalName(Integer(Number)));
+      if SignalNameText(Integer(Number)) = '' then
+        Fail(1, Format('%s: invalid signal', [Arguments[Index]]));
+      PrintStringLine(SignalNameText(Integer(Number)));
     end
     else
     begin
-      Number := ParseSignal(Argument(Index));
+      Number := ParseSignal(Arguments[Index]);
       if Number < 0 then
-        Fail(1, '%s: invalid signal', [ArgumentText(Argument(Index))]);
-      WriteDecimal(StandardOutput, Number);
-      WriteCharacter(StandardOutput, #10);
+        Fail(1, Format('%s: invalid signal', [Arguments[Index]]));
+      PrintStringLine(IntToStr(Number));
     end;
   end;
+end;
+
+procedure ListSignals(First: Integer);
+begin
+  if First > High(Arguments) then
+    ListAllSignals
+  else
+    TranslateSignals(First);
   Halt(0);
 end;
 
@@ -103,64 +113,65 @@ var
   Signal: Integer;
   First: Integer;
   Index: Integer;
+  Option: string;
   ProcessId: Int64;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
+  Arguments := ProgramArguments;
   Signal := SignalTerminate;
-  First := 1;
-  if ArgumentTotal < 2 then
+  First := 0;
+  if Length(Arguments) < 1 then
   begin
-    Report('not enough arguments', []);
+    Report('not enough arguments');
     Halt(1);
   end;
-  if TextIsEqual(Argument(1), '--help') then
+  Option := Arguments[0];
+  if Option = '--help' then
   begin
-    Print(Usage);
+    PrintString(Usage);
     Halt(0);
   end;
-  if TextIsEqual(Argument(1), '-l') or TextIsEqual(Argument(1), '--list') or
-     TextIsEqual(Argument(1), '-L') or TextIsEqual(Argument(1), '--table') then
-    ListSignals(2);
+  if (Option = '-l') or (Option = '--list') or (Option = '-L') or (Option = '--table') then
+    ListSignals(1);
 
-  if TextIsEqual(Argument(1), '-s') or TextIsEqual(Argument(1), '--signal') or
-     TextIsEqual(Argument(1), '-n') then
+  if (Option = '-s') or (Option = '--signal') or (Option = '-n') then
   begin
-    if ArgumentTotal < 3 then
-      Fail(1, 'option requires an argument -- ''s''', []);
-    Signal := ParseSignal(Argument(2));
-    First := 3;
-  end
-  else if TextStartsWith(Argument(1), '--signal=') then
-  begin
-    Signal := ParseSignal(Argument(1) + 9);
+    if Length(Arguments) < 2 then
+      Fail(1, 'option requires an argument -- ''s''');
+    Signal := ParseSignal(Arguments[1]);
     First := 2;
   end
-  else if (Argument(1)[0] = '-') and (Argument(1)[1] <> #0) and (Argument(1)[1] <> '-') then
+  else if StartsStr('--signal=', Option) then
   begin
-    Signal := ParseSignal(Argument(1) + 1);
-    First := 2;
+    Signal := ParseSignal(Copy(Option, 10, MaxInt));
+    First := 1;
+  end
+  else if (Length(Option) >= 2) and (Option[1] = '-') and (Option[2] <> '-') then
+  begin
+    Signal := ParseSignal(Copy(Option, 2, MaxInt));
+    First := 1;
   end;
-  if (First < ArgumentTotal) and TextIsEqual(Argument(First), '--') then
+  if (First <= High(Arguments)) and (Arguments[First] = '--') then
     Inc(First);
   if Signal < 0 then
-    Fail(1, 'invalid signal', []);
-  if First >= ArgumentTotal then
-    Fail(1, 'no process ID specified', []);
+    Fail(1, 'invalid signal');
+  if First > High(Arguments) then
+    Fail(1, 'no process ID specified');
 
   ExitStatus := 0;
-  for Index := First to ArgumentTotal - 1 do
+  for Index := First to High(Arguments) do
   begin
-    if not ParseInteger(Argument(Index), ProcessId) or (ProcessId = 0) then
+    if not ParseDecimal(Arguments[Index], ProcessId) or (ProcessId = 0) then
     begin
-      Report('failed to parse argument: ''%s''', [ArgumentText(Argument(Index))]);
+      Report(Format('failed to parse argument: ''%s''', [Arguments[Index]]));
       ExitStatus := 1;
       Continue;
     end;
     Error := SendSignal(ProcessId, Signal);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, '(%d)', [ArgumentNumber(ProcessId)]);
+      ReportError(Error, Format('(%d)', [ProcessId]));
       ExitStatus := 1;
     end;
   end;

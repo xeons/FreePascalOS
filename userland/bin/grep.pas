@@ -31,29 +31,28 @@
 }
 program grep;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 uses
+  SysUtils,
+  Classes,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Directories,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths,
   Util.RegularExpressions;
 
 const
-  Usage: PChar = 'Usage: grep [OPTION]... PATTERNS [FILE]...'#10 +
+  Usage = 'Usage: grep [OPTION]... PATTERNS [FILE]...'#10 +
     'Search for PATTERNS in each FILE.'#10 +
     'Example: grep -i ''hello world'' menu.h main.c'#10 +
     'PATTERNS can contain multiple patterns separated by newlines.'#10#10 +
@@ -107,20 +106,46 @@ const
   StatusNothingSelected = 1;
   StatusTrouble = 2;
 
+  WordCharacters = ['A'..'Z', 'a'..'z', '0'..'9', '_'];
+
 type
   TPatternKind = (PatternBasic, PatternExtended, PatternFixed);
 
-  TPattern = record
-    Text: PChar;
-    Expression: TExpression;
+  { The patterns, and how lines are matched against them. }
+  TLineMatcher = class
+  private
+    FKind: TPatternKind;
+    FIgnoreCase: Boolean;
+    FWholeWords: Boolean;
+    FWholeLines: Boolean;
+    FTexts: TStringList;
+    FExpressions: array of TExpression;
+    function AnchoredPattern(const Text: string): string;
+    function IsWholeWord(const Line: string; Start, Finish: PtrInt): Boolean;
+    function SameTextAt(const Line: string; Position: PtrInt; const Pattern: string): Boolean;
+    function FindFixed(const Pattern, Line: string; From: PtrInt; out Start, Finish: PtrInt): Boolean;
+    function FindExpression(const Expression: TExpression; const Line: string; From: PtrInt;
+      out Start, Finish: PtrInt): Boolean;
+    function FindMatch(Index: Integer; const Line: string; From: PtrInt; out Start, Finish: PtrInt): Boolean;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    { Adds every line of Text as a pattern. }
+    procedure AddPatternLines(const Text: string);
+    procedure AddPatternFile(const Path: string);
+    { Compiles the patterns; reports a bad one and ends the program. }
+    procedure Compile;
+    { The earliest match of any pattern at or after byte offset From
+      (the longest of those starting there). }
+    function FindAnyMatch(const Line: string; From: PtrInt; out Start, Finish: PtrInt): Boolean;
+    property Kind: TPatternKind read FKind write FKind;
+    property IgnoreCase: Boolean read FIgnoreCase write FIgnoreCase;
+    property WholeWords: Boolean read FWholeWords write FWholeWords;
+    property WholeLines: Boolean read FWholeLines write FWholeLines;
   end;
-  PPattern = ^TPattern;
 
 var
-  Kind: TPatternKind;
-  IgnoreCase: Boolean;
-  WholeWords: Boolean;
-  WholeLines: Boolean;
+  Matcher: TLineMatcher;
   NoMessages: Boolean;
   Invert: Boolean;
   ShowLineNumbers: Boolean;
@@ -132,9 +157,6 @@ var
   ListFilesWith: Boolean;
   CountOnly: Boolean;
 
-  PatternTexts: TLineList;
-  Patterns: PPattern;
-  PatternCount: Integer;
   AnySelected: Boolean;
   HadTrouble: Boolean;
   { With -r and no FILE, names are shown without a leading "./". }
@@ -142,165 +164,156 @@ var
 
 { --- Patterns -------------------------------------------------------- }
 
-{ Adds every line of Text as a pattern. }
-procedure AddPatternLines(Text: PChar);
-var
-  Start: PChar;
-  Position: PChar;
-  Line: PChar;
+constructor TLineMatcher.Create;
 begin
-  Start := Text;
-  Position := Text;
-  repeat
-    if (Position^ = #10) or (Position^ = #0) then
-    begin
-      Line := PChar(AllocateMemory(Position - Start + 1));
-      CopyMemory(Line, Start, Position - Start);
-      Line[Position - Start] := #0;
-      AddLine(PatternTexts, Line);
-      if Position^ = #0 then
-        Break;
-      Start := Position + 1;
-    end;
-    Inc(Position);
-  until False;
+  inherited Create;
+  FTexts := TStringList.Create;
 end;
 
-procedure AddPatternFile(Path: PChar);
+destructor TLineMatcher.Destroy;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FExpressions) do
+    if FExpressions[Index].Root <> nil then
+      FreeExpression(FExpressions[Index]);
+  FTexts.Free;
+  inherited Destroy;
+end;
+
+procedure TLineMatcher.AddPatternLines(const Text: string);
+var
+  Start: Integer;
+  Position: Integer;
+begin
+  Start := 1;
+  for Position := 1 to Length(Text) do
+    if Text[Position] = #10 then
+    begin
+      FTexts.Add(Copy(Text, Start, Position - Start));
+      Start := Position + 1;
+    end;
+  FTexts.Add(Copy(Text, Start, MaxInt));
+end;
+
+procedure TLineMatcher.AddPatternFile(const Path: string);
 var
   Stream: PInputStream;
 begin
   Stream := OpenInput(Path);
   if Stream = nil then
     Halt(StatusTrouble);
-  ReadAllLines(Stream, PatternTexts);
+  ReadLinesInto(Stream, FTexts);
   CloseInput(Stream);
 end;
 
 { For -x the pattern is anchored at both ends; a group keeps
   alternatives together. }
-function AnchoredPattern(Text: PChar): PChar;
-var
-  Builder: TTextBuilder;
+function TLineMatcher.AnchoredPattern(const Text: string): string;
 begin
-  BeginText(Builder);
-  if Kind = PatternExtended then
-    AppendText(Builder, '^(')
+  if FKind = PatternExtended then
+    Result := '^(' + Text + ')$'
   else
-    AppendText(Builder, '^\(');
-  AppendText(Builder, Text);
-  if Kind = PatternExtended then
-    AppendText(Builder, ')$')
-  else
-    AppendText(Builder, '\)$');
-  Result := FinishText(Builder);
+    Result := '^\(' + Text + '\)$';
 end;
 
-procedure CompilePatterns;
+procedure TLineMatcher.Compile;
 var
   Index: Integer;
-  Source: PChar;
-  ErrorMessage: PChar;
+  Source: string;
+  ErrorMessage: string;
   Syntax: TExpressionSyntax;
 begin
-  PatternCount := PatternTexts.Count;
-  Patterns := PPattern(AllocateZeroedMemory(QWord(PatternCount + 1) * SizeOf(TPattern)));
-  if Kind = PatternExtended then
+  SetLength(FExpressions, FTexts.Count);
+  if FKind = PatternFixed then
+    Exit;
+  if FKind = PatternExtended then
     Syntax := SyntaxExtended
   else
     Syntax := SyntaxBasic;
-  for Index := 0 to PatternCount - 1 do
+  for Index := 0 to FTexts.Count - 1 do
   begin
-    Patterns[Index].Text := PatternTexts.Items[Index];
-    if Kind = PatternFixed then
-      Continue;
-    if WholeLines then
-      Source := AnchoredPattern(PatternTexts.Items[Index])
+    if FWholeLines then
+      Source := AnchoredPattern(FTexts[Index])
     else
-      Source := PatternTexts.Items[Index];
-    if not CompileExpression(Source, Syntax, Patterns[Index].Expression, ErrorMessage) then
+      Source := FTexts[Index];
+    if not CompileExpression(Source, Syntax, FExpressions[Index], ErrorMessage) then
     begin
-      Report('%s', [ArgumentText(ErrorMessage)]);
+      Report(ErrorMessage);
       Halt(StatusTrouble);
     end;
-    Patterns[Index].Expression.IgnoreCase := IgnoreCase;
+    FExpressions[Index].IgnoreCase := FIgnoreCase;
   end;
 end;
 
 { --- Matching -------------------------------------------------------- }
 
-function IsWordCharacter(Character: Char): Boolean;
+{ Start and Finish are byte offsets from 0, Finish just past the match. }
+function TLineMatcher.IsWholeWord(const Line: string; Start, Finish: PtrInt): Boolean;
 begin
-  Result := IsAlphanumeric(Character) or (Character = '_');
+  Result := ((Start = 0) or not (Line[Start] in WordCharacters)) and
+    ((Finish >= Length(Line)) or not (Line[Finish + 1] in WordCharacters));
 end;
 
-function IsWholeWord(Line: PChar; LineLength, Start, Finish: PtrInt): Boolean;
-begin
-  Result := ((Start = 0) or not IsWordCharacter(Line[Start - 1])) and
-    ((Finish >= LineLength) or not IsWordCharacter(Line[Finish]));
-end;
-
-function SameText(First, Second: PChar; Count: PtrInt): Boolean;
+{ True if Pattern is at byte offset Position of Line (which has room). }
+function TLineMatcher.SameTextAt(const Line: string; Position: PtrInt; const Pattern: string): Boolean;
 var
-  Index: PtrInt;
+  Index: Integer;
 begin
-  for Index := 0 to Count - 1 do
+  for Index := 1 to Length(Pattern) do
   begin
-    if IgnoreCase then
+    if FIgnoreCase then
     begin
-      if ToLowerCase(First[Index]) <> ToLowerCase(Second[Index]) then
+      if LowerCase(Line[Position + Index]) <> LowerCase(Pattern[Index]) then
         Exit(False);
     end
-    else if First[Index] <> Second[Index] then
+    else if Line[Position + Index] <> Pattern[Index] then
       Exit(False);
   end;
   Result := True;
 end;
 
-{ Finds the first acceptable match of one pattern at or after From. }
-function FindMatch(const Pattern: TPattern; Line: PChar; LineLength: PtrInt; From: PtrInt;
+function TLineMatcher.FindFixed(const Pattern, Line: string; From: PtrInt; out Start, Finish: PtrInt): Boolean;
+var
+  Position: PtrInt;
+begin
+  if FWholeLines then
+  begin
+    Result := (From = 0) and (Length(Pattern) = Length(Line)) and SameTextAt(Line, 0, Pattern);
+    if Result then
+    begin
+      Start := 0;
+      Finish := Length(Line);
+    end;
+    Exit;
+  end;
+  Position := From;
+  while Position + Length(Pattern) <= Length(Line) do
+  begin
+    if SameTextAt(Line, Position, Pattern) and
+       (not FWholeWords or IsWholeWord(Line, Position, Position + Length(Pattern))) then
+    begin
+      Start := Position;
+      Finish := Position + Length(Pattern);
+      Exit(True);
+    end;
+    Inc(Position);
+  end;
+  Result := False;
+end;
+
+function TLineMatcher.FindExpression(const Expression: TExpression; const Line: string; From: PtrInt;
   out Start, Finish: PtrInt): Boolean;
 var
-  PatternLength: PtrInt;
   Position: PtrInt;
   Match: TMatch;
 begin
-  Start := -1;
-  Finish := -1;
-  if Kind = PatternFixed then
-  begin
-    PatternLength := PtrInt(TextLength(Pattern.Text));
-    if WholeLines then
-    begin
-      Result := (From = 0) and (PatternLength = LineLength) and SameText(Line, Pattern.Text, LineLength);
-      if Result then
-      begin
-        Start := 0;
-        Finish := LineLength;
-      end;
-      Exit;
-    end;
-    Position := From;
-    while Position + PatternLength <= LineLength do
-    begin
-      if SameText(Line + Position, Pattern.Text, PatternLength) and
-         (not WholeWords or IsWholeWord(Line, LineLength, Position, Position + PatternLength)) then
-      begin
-        Start := Position;
-        Finish := Position + PatternLength;
-        Exit(True);
-      end;
-      Inc(Position);
-    end;
-    Exit(False);
-  end;
-
   Position := From;
-  while Position <= LineLength do
+  while Position <= Length(Line) do
   begin
-    if not SearchExpressionFrom(Pattern.Expression, Line, Position, Match) then
+    if not SearchExpressionFrom(Expression, Line, Position, Match) then
       Exit(False);
-    if not WholeWords or IsWholeWord(Line, LineLength, Match.Starts[0], Match.Ends[0]) then
+    if not FWholeWords or IsWholeWord(Line, Match.Starts[0], Match.Ends[0]) then
     begin
       Start := Match.Starts[0];
       Finish := Match.Ends[0];
@@ -311,8 +324,19 @@ begin
   Result := False;
 end;
 
-{ The earliest match of any pattern at or after From. }
-function FindAnyMatch(Line: PChar; LineLength: PtrInt; From: PtrInt; out Start, Finish: PtrInt): Boolean;
+{ The first acceptable match of pattern Index at or after From. }
+function TLineMatcher.FindMatch(Index: Integer; const Line: string; From: PtrInt;
+  out Start, Finish: PtrInt): Boolean;
+begin
+  Start := -1;
+  Finish := -1;
+  if FKind = PatternFixed then
+    Result := FindFixed(FTexts[Index], Line, From, Start, Finish)
+  else
+    Result := FindExpression(FExpressions[Index], Line, From, Start, Finish);
+end;
+
+function TLineMatcher.FindAnyMatch(const Line: string; From: PtrInt; out Start, Finish: PtrInt): Boolean;
 var
   Index: Integer;
   CandidateStart: PtrInt;
@@ -321,8 +345,8 @@ begin
   Result := False;
   Start := -1;
   Finish := -1;
-  for Index := 0 to PatternCount - 1 do
-    if FindMatch(Patterns[Index], Line, LineLength, From, CandidateStart, CandidateFinish) then
+  for Index := 0 to FTexts.Count - 1 do
+    if FindMatch(Index, Line, From, CandidateStart, CandidateFinish) then
       if not Result or (CandidateStart < Start) or
          ((CandidateStart = Start) and (CandidateFinish > Finish)) then
       begin
@@ -334,153 +358,146 @@ end;
 
 { --- Searching files ------------------------------------------------- }
 
-procedure WritePrefix(Name: PChar; LineNumber: Int64);
+function LinePrefix(const Name: string; LineNumber: Int64): string;
 begin
+  Result := '';
   if ShowFileNames then
-  begin
-    WriteText(StandardOutput, Name);
-    WriteCharacter(StandardOutput, ':');
-  end;
+    Result := Name + ':';
   if ShowLineNumbers then
+    Result := Result + IntToStr(LineNumber) + ':';
+end;
+
+{ -o: every nonempty match of Line on a line of its own. }
+procedure PrintMatches(const Line, Name: string; LineNumber: Int64);
+var
+  From: PtrInt;
+  Start: PtrInt;
+  Finish: PtrInt;
+begin
+  From := 0;
+  while Matcher.FindAnyMatch(Line, From, Start, Finish) do
   begin
-    WriteDecimal(StandardOutput, LineNumber);
-    WriteCharacter(StandardOutput, ':');
+    if Finish > Start then
+    begin
+      PrintStringLine(LinePrefix(Name, LineNumber) + Copy(Line, Start + 1, Finish - Start));
+      From := Finish;
+    end
+    else
+      From := Start + 1;
+    if From > Length(Line) then
+      Break;
   end;
 end;
 
 { Searches one stream; Name is how it is shown. }
-procedure SearchStream(Stream: PInputStream; Name: PChar);
+procedure SearchStream(Stream: PInputStream; const Name: string);
 var
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   LineNumber: Int64;
   Count: Int64;
-  LineLength: PtrInt;
   Start: PtrInt;
   Finish: PtrInt;
-  Selected: Boolean;
-  From: PtrInt;
 begin
   LineNumber := 0;
   Count := 0;
-  while ReadLine(Stream, Line, HadLineEnd) do
+  while ReadTextLine(Stream, Line, HadLineEnd) do
   begin
     Inc(LineNumber);
-    LineLength := PtrInt(TextLength(Line));
-    Selected := FindAnyMatch(Line, LineLength, 0, Start, Finish) <> Invert;
-    if Selected then
+    if Matcher.FindAnyMatch(Line, 0, Start, Finish) = Invert then
+      Continue;
+    Inc(Count);
+    AnySelected := True;
+    if Quiet then
+      Halt(StatusSelected);
+    if not CountOnly and not ListFilesWith and not ListFilesWithout then
     begin
-      Inc(Count);
-      AnySelected := True;
-      if Quiet then
-        Halt(StatusSelected);
-      if not CountOnly and not ListFilesWith and not ListFilesWithout then
-      begin
-        if OnlyMatching then
-        begin
-          if not Invert then
-          begin
-            From := 0;
-            while FindAnyMatch(Line, LineLength, From, Start, Finish) do
-            begin
-              if Finish > Start then
-              begin
-                WritePrefix(Name, LineNumber);
-                WriteBytes(StandardOutput, Line + Start, QWord(Finish - Start));
-                WriteCharacter(StandardOutput, #10);
-                From := Finish;
-              end
-              else
-                From := Start + 1;
-              if From > LineLength then
-                Break;
-            end;
-          end;
-        end
-        else
-        begin
-          WritePrefix(Name, LineNumber);
-          WriteLine(StandardOutput, Line);
-        end;
-      end;
-      if ListFilesWith then
-      begin
-        FreeMemory(Line);
-        Break;
-      end;
+      if not OnlyMatching then
+        PrintStringLine(LinePrefix(Name, LineNumber) + Line)
+      else if not Invert then
+        PrintMatches(Line, Name, LineNumber);
     end;
-    FreeMemory(Line);
+    if ListFilesWith then
+      Break;
   end;
 
   if CountOnly then
   begin
     if ShowFileNames then
-    begin
-      WriteText(StandardOutput, Name);
-      WriteCharacter(StandardOutput, ':');
-    end;
-    WriteDecimal(StandardOutput, Count);
-    WriteCharacter(StandardOutput, #10);
+      PrintString(Name + ':');
+    PrintStringLine(IntToStr(Count));
   end;
   if ListFilesWith and (Count > 0) then
-    WriteLine(StandardOutput, Name);
+    PrintStringLine(Name);
   if ListFilesWithout and (Count = 0) then
-    WriteLine(StandardOutput, Name);
+    PrintStringLine(Name);
 end;
 
-procedure SearchPath(Path: PChar);
+procedure SearchPath(const Path: string); forward;
+
+procedure SearchDirectory(const Path: string);
+var
+  Names: TStringList;
+  Name: string;
+  Child: string;
+  Information: TFileInformation;
+begin
+  Names := TStringList.Create;
+  try
+    ListDirectory(Path, Names);
+    for Name in Names do
+    begin
+      if ImplicitCurrentDirectory and (Path = '.') then
+        Child := Name
+      else
+        Child := JoinPath(Path, Name);
+      { Symbolic links inside the tree are not followed. }
+      if (GetLinkInformation(PChar(Child), Information) = ErrorNone) and
+         (Information.Kind <> KindSymbolicLink) then
+        SearchPath(Child);
+    end;
+  finally
+    Names.Free;
+  end;
+end;
+
+procedure SearchPath(const Path: string);
 var
   Information: TFileInformation;
   Error: LongInt;
   Handle: Int64;
   Stream: PInputStream;
-  Names: TLineList;
-  Index: Integer;
-  Child: PChar;
 begin
-  if TextIsEqual(Path, '-') then
+  if Path = '-' then
   begin
     SearchStream(StandardInput, '(standard input)');
     Exit;
   end;
-  Error := GetFileInformation(Path, Information);
+  Error := GetFileInformation(PChar(Path), Information);
   if Error <> ErrorNone then
   begin
     if not NoMessages then
-      ReportError(Error, '%s', [ArgumentText(Path)]);
+      ReportError(Error, Path);
     HadTrouble := True;
     Exit;
   end;
   if Information.Kind = KindDirectory then
   begin
-    if not Recursive then
+    if Recursive then
+      SearchDirectory(Path)
+    else
     begin
       if not NoMessages then
-        Report('%s: Is a directory', [ArgumentText(Path)]);
+        Report(Path + ': Is a directory');
       HadTrouble := True;
-      Exit;
     end;
-    BeginLineList(Names);
-    ListDirectory(Path, Names);
-    for Index := 0 to Names.Count - 1 do
-    begin
-      if ImplicitCurrentDirectory and TextIsEqual(Path, '.') then
-        Child := DuplicateText(Names.Items[Index])
-      else
-        Child := JoinPath(Path, Names.Items[Index]);
-      { Symbolic links inside the tree are not followed. }
-      if (GetLinkInformation(Child, Information) = ErrorNone) and (Information.Kind <> KindSymbolicLink) then
-        SearchPath(Child);
-      FreeMemory(Child);
-    end;
-    FreeLineList(Names);
     Exit;
   end;
-  Handle := OpenFile(Path, OpenRead);
+  Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
   begin
     if not NoMessages then
-      ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Path)]);
+      ReportError(ErrorCodeOf(Handle), Path);
     HadTrouble := True;
     Exit;
   end;
@@ -491,83 +508,85 @@ begin
 end;
 
 { --color takes an optional value, which the option parser does not
-  know; such arguments are simply dropped. }
+  know; such arguments are made plain "--color" in the program's own
+  argument list, which the parser reads. }
 procedure DropColorOptions;
 var
   Index: Integer;
+  Arguments: PPChar;
 begin
+  Arguments := ArgumentValues;
   for Index := 1 to ArgumentTotal - 1 do
   begin
-    if TextIsEqual(ArgumentValues[Index], '--') then
+    if string(Arguments[Index]) = '--' then
       Break;
-    if TextStartsWith(ArgumentValues[Index], '--color') or TextStartsWith(ArgumentValues[Index], '--colour') then
-      ArgumentValues[Index] := '--color';
+    if StartsStr('--color', Arguments[Index]) or StartsStr('--colour', Arguments[Index]) then
+      Arguments[Index] := '--color';
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  ProgramBase: PChar;
+  Value: string;
+  ProgramBase: string;
   HavePatterns: Boolean;
-  FirstOperand: Integer;
-  Index: Integer;
+  Paths: TStringArray;
+  Path: string;
   ForceFileNames: Integer; { -1 never, 0 automatic, 1 always }
 begin
-  ProgramBase := BaseName(Argument(0));
-  Kind := PatternBasic;
-  if TextIsEqual(ProgramBase, 'egrep') then
-    Kind := PatternExtended
-  else if TextIsEqual(ProgramBase, 'fgrep') then
-    Kind := PatternFixed;
+  Matcher := TLineMatcher.Create;
+  ProgramBase := BaseName(string(Argument(0)));
+  if ProgramBase = 'egrep' then
+    Matcher.Kind := PatternExtended
+  else if ProgramBase = 'fgrep' then
+    Matcher.Kind := PatternFixed;
   ForceFileNames := 0;
-  BeginLineList(PatternTexts);
   HavePatterns := False;
   DropColorOptions;
-  BeginOptions(Parser, [
-    OptionDefinition('E', 'extended-regexp', False, OptionExtended),
-    OptionDefinition('F', 'fixed-strings', False, OptionFixed),
-    OptionDefinition('G', 'basic-regexp', False, OptionBasic),
-    OptionDefinition('e', 'regexp', True, OptionPattern),
-    OptionDefinition('f', 'file', True, OptionPatternFile),
-    OptionDefinition('i', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('y', nil, False, OptionIgnoreCase),
-    OptionDefinition('w', 'word-regexp', False, OptionWord),
-    OptionDefinition('x', 'line-regexp', False, OptionLine),
-    OptionDefinition('s', 'no-messages', False, OptionNoMessages),
-    OptionDefinition('v', 'invert-match', False, OptionInvert),
-    OptionDefinition('n', 'line-number', False, OptionLineNumber),
-    OptionDefinition('H', 'with-filename', False, OptionWithFileName),
-    OptionDefinition('h', 'no-filename', False, OptionNoFileName),
-    OptionDefinition('o', 'only-matching', False, OptionOnlyMatching),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'silent', False, OptionQuiet),
-    OptionDefinition('r', 'recursive', False, OptionRecursive),
-    OptionDefinition('R', 'dereference-recursive', False, OptionRecursive),
-    OptionDefinition('L', 'files-without-match', False, OptionFilesWithout),
-    OptionDefinition('l', 'files-with-matches', False, OptionFilesWith),
-    OptionDefinition('c', 'count', False, OptionCount),
-    OptionDefinition(#0, 'color', False, OptionColor),
-    OptionDefinition(#0, 'colour', False, OptionColor)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('E', 'extended-regexp', False, OptionExtended),
+    CommandOption('F', 'fixed-strings', False, OptionFixed),
+    CommandOption('G', 'basic-regexp', False, OptionBasic),
+    CommandOption('e', 'regexp', True, OptionPattern),
+    CommandOption('f', 'file', True, OptionPatternFile),
+    CommandOption('i', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('y', '', False, OptionIgnoreCase),
+    CommandOption('w', 'word-regexp', False, OptionWord),
+    CommandOption('x', 'line-regexp', False, OptionLine),
+    CommandOption('s', 'no-messages', False, OptionNoMessages),
+    CommandOption('v', 'invert-match', False, OptionInvert),
+    CommandOption('n', 'line-number', False, OptionLineNumber),
+    CommandOption('H', 'with-filename', False, OptionWithFileName),
+    CommandOption('h', 'no-filename', False, OptionNoFileName),
+    CommandOption('o', 'only-matching', False, OptionOnlyMatching),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'silent', False, OptionQuiet),
+    CommandOption('r', 'recursive', False, OptionRecursive),
+    CommandOption('R', 'dereference-recursive', False, OptionRecursive),
+    CommandOption('L', 'files-without-match', False, OptionFilesWithout),
+    CommandOption('l', 'files-with-matches', False, OptionFilesWith),
+    CommandOption('c', 'count', False, OptionCount),
+    CommandOption(#0, 'color', False, OptionColor),
+    CommandOption(#0, 'colour', False, OptionColor)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
-      OptionExtended: Kind := PatternExtended;
-      OptionFixed: Kind := PatternFixed;
-      OptionBasic: Kind := PatternBasic;
+      OptionExtended: Matcher.Kind := PatternExtended;
+      OptionFixed: Matcher.Kind := PatternFixed;
+      OptionBasic: Matcher.Kind := PatternBasic;
       OptionPattern:
         begin
-          AddPatternLines(Value);
+          Matcher.AddPatternLines(Value);
           HavePatterns := True;
         end;
       OptionPatternFile:
         begin
-          AddPatternFile(Value);
+          Matcher.AddPatternFile(Value);
           HavePatterns := True;
         end;
-      OptionIgnoreCase: IgnoreCase := True;
-      OptionWord: WholeWords := True;
-      OptionLine: WholeLines := True;
+      OptionIgnoreCase: Matcher.IgnoreCase := True;
+      OptionWord: Matcher.WholeWords := True;
+      OptionLine: Matcher.WholeLines := True;
       OptionNoMessages: NoMessages := True;
       OptionInvert: Invert := True;
       OptionLineNumber: ShowLineNumbers := True;
@@ -581,36 +600,35 @@ begin
       OptionCount: CountOnly := True;
     end;
 
-  FirstOperand := 0;
+  Paths := CommandLine.Operands;
   if not HavePatterns then
   begin
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('no pattern given', []);
-    AddPatternLines(Parser.Operands[0]);
-    FirstOperand := 1;
+    if Length(Paths) = 0 then
+      FailWithUsageHint('no pattern given');
+    Matcher.AddPatternLines(Paths[0]);
+    Paths := Copy(Paths, 1, MaxInt);
   end;
-  CompilePatterns;
+  Matcher.Compile;
 
-  if FirstOperand >= Parser.OperandCount then
+  if Length(Paths) = 0 then
   begin
     if Recursive then
     begin
-      Parser.Operands[Parser.OperandCount] := '.';
+      Paths := ['.'];
       ImplicitCurrentDirectory := True;
     end
     else
-      Parser.Operands[Parser.OperandCount] := '-';
-    Inc(Parser.OperandCount);
+      Paths := ['-'];
   end;
   case ForceFileNames of
     1: ShowFileNames := True;
     -1: ShowFileNames := False;
   else
-    ShowFileNames := Recursive or (Parser.OperandCount - FirstOperand > 1);
+    ShowFileNames := Recursive or (Length(Paths) > 1);
   end;
 
-  for Index := FirstOperand to Parser.OperandCount - 1 do
-    SearchPath(Parser.Operands[Index]);
+  for Path in Paths do
+    SearchPath(Path);
 
   if HadTrouble and not (Quiet and AnySelected) then
     Halt(StatusTrouble);

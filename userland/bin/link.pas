@@ -25,29 +25,31 @@
 }
 program link;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Sys.Files,
-  Sys.Format,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: link FILE1 FILE2'#10 +
+  Usage = 'Usage: link FILE1 FILE2'#10 +
     'Call the link function to create a link named FILE2 to an existing FILE1.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Error: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount < 2 then
-    FailWithUsageHint('missing operand', []);
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-  Error := CreateHardLink(Parser.Operands[0], Parser.Operands[1]);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount < 2 then
+    FailWithUsageHint('missing operand');
+  if CommandLine.OperandCount > 2 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+  Error := CreateHardLink(PChar(CommandLine.Operands[0]), PChar(CommandLine.Operands[1]));
   if Error <> 0 then
-    FailWithError(1, Error, 'cannot create link ''%s'' to ''%s''', [ArgumentText(Parser.Operands[1]),
-      ArgumentText(Parser.Operands[0])]);
+    FailWithError(1, Error, Format('cannot create link ''%s'' to ''%s''',
+      [CommandLine.Operands[1], CommandLine.Operands[0]]));
+  CommandLine.Free;
 end.

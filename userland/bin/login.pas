@@ -41,31 +41,30 @@
 }
 program login;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Console,
-  Sys.Format,
-  Sys.Memory,
   Sys.Processes,
   Sys.Streams,
   Util.Accounts,
+  Util.CommandLine,
+  Util.Commands,
+  Util.Input,
   Util.Logins,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Passwords;
 
 const
-  Usage: PChar = 'Usage: login [-a] [-f USER] [-e PROGRAM]'#10 +
+  Usage = 'Usage: login [-a] [-f USER] [-e PROGRAM]'#10 +
     'Log a user in and run their shell.'#10#10 +
     '  -a          log in the user the kernel option autologin= names'#10 +
     '  -f USER     log USER in without a password'#10 +
     '  -e PROGRAM  run PROGRAM instead of the user''s shell'#10;
-  Prompt: PChar = 'fpos login: ';
+  Prompt = 'fpos login: ';
   OptionAutomatic = 1;
   OptionUser = 2;
   OptionProgram = 3;
@@ -75,41 +74,64 @@ const
 
 var
   Automatic: Boolean;
-  GivenUser: PChar;
-  ProgramPath: PChar;
+  GivenUser: string;
+  HasGivenUser: Boolean;
+  ProgramPath: string;
+  HasProgramPath: Boolean;
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   Automatic := False;
-  GivenUser := nil;
-  ProgramPath := nil;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'automatic', False, OptionAutomatic),
-    OptionDefinition('f', nil, True, OptionUser),
-    OptionDefinition('e', 'program', True, OptionProgram)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionAutomatic: Automatic := True;
-      OptionUser: GivenUser := Value;
-      OptionProgram: ProgramPath := Value;
-    end;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('no operands are taken', []);
+  HasGivenUser := False;
+  HasProgramPath := False;
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'automatic', False, OptionAutomatic),
+    CommandOption('f', '', True, OptionUser),
+    CommandOption('e', 'program', True, OptionProgram)], Usage);
+  try
+    while CommandLine.NextOption(Code, Value) do
+      case Code of
+        OptionAutomatic: Automatic := True;
+        OptionUser:
+          begin
+            GivenUser := Value;
+            HasGivenUser := True;
+          end;
+        OptionProgram:
+          begin
+            ProgramPath := Value;
+            HasProgramPath := True;
+          end;
+      end;
+    if CommandLine.OperandCount > 0 then
+      FailWithUsageHint('no operands are taken');
+  finally
+    CommandLine.Free;
+  end;
 end;
 
-{ A line typed for Prompt; nil at the end of input. The caller frees it. }
-function AskForName: PChar;
+{ A line typed for Prompt; False at the end of input. }
+function AskForName(out Name: string): Boolean;
 var
   HadLineEnd: Boolean;
 begin
-  WriteText(StandardOutput, Prompt);
+  PrintString(Prompt);
   FlushStream(StandardOutput);
-  if not ReadLine(StandardInput, Result, HadLineEnd) then
-    Result := nil;
+  Result := ReadTextLine(StandardInput, Name, HadLineEnd);
+end;
+
+{ Overwrites a password in memory once it has been checked. }
+procedure ErasePassword(var Password: string);
+begin
+  if Password = '' then
+    Exit;
+  UniqueString(Password);
+  FillChar(Password[1], Length(Password), 0);
+  Password := '';
 end;
 
 { Asks until someone gives a right name and password. False at the end
@@ -117,62 +139,68 @@ end;
 function AskForAccount(out Account: TLoginAccount): Boolean;
 var
   Attempt: Integer;
-  Name: PChar;
-  Password: PChar;
+  Name: string;
+  Password: string;
   Known: Boolean;
   Right: Boolean;
 begin
   Result := False;
   for Attempt := 1 to MaximumTries do
   begin
-    Name := AskForName;
-    if Name = nil then
+    if not AskForName(Name) then
       Exit;
-    if Name^ = #0 then
-    begin
-      { An empty line asks again, and is not a wrong try. }
-      FreeMemory(Name);
+    { An empty line asks again, and is not a wrong try. }
+    if Name = '' then
       Continue;
-    end;
-    Known := FindLoginAccount(Name, Account);
-    FreeMemory(Name);
-    Password := ReadPassword('Password: ');
-    if Password = nil then
+    Known := FindLoginAccount(PChar(Name), Account);
+    if not ReadPassword('Password: ', Password) then
       Exit;
-    Right := Known and PasswordIsRight(Account, Password);
-    ZeroMemory(Password, TextLength(Password));
-    FreeMemory(Password);
+    Right := Known and PasswordIsRight(Account, PChar(Password));
+    ErasePassword(Password);
     if Right then
       Exit(True);
-    WriteLine(StandardOutput, 'Login incorrect');
+    PrintStringLine('Login incorrect');
     FlushStream(StandardOutput);
     SleepMilliseconds(PauseAfterWrongMilliseconds);
   end;
 end;
 
+{ The user the kernel option autologin= names; False when none is named. }
+function AutomaticLoginName(out Name: string): Boolean;
+var
+  Buffer: array[0..LoginNameCapacity - 1] of Char;
+begin
+  Result := AutomaticLoginUser(@Buffer[0], LoginNameCapacity);
+  if Result then
+    Name := PChar(@Buffer[0])
+  else
+    Name := '';
+end;
+
 { The account to log in: given, automatic, or asked for. }
 function ChooseAccount(out Account: TLoginAccount): Boolean;
 var
-  AutomaticName: array[0..LoginNameCapacity - 1] of Char;
+  AutomaticName: string;
 begin
-  if GivenUser <> nil then
+  if HasGivenUser then
   begin
-    if not FindLoginAccount(GivenUser, Account) then
-      Fail(StatusNobodyLoggedIn, 'user %s does not exist', [ArgumentText(GivenUser)]);
+    if not FindLoginAccount(PChar(GivenUser), Account) then
+      Fail(StatusNobodyLoggedIn, Format('user %s does not exist', [GivenUser]));
     Exit(True);
   end;
-  if Automatic and AutomaticLoginUser(@AutomaticName[0], LoginNameCapacity) then
+  if Automatic and AutomaticLoginName(AutomaticName) then
   begin
-    if FindLoginAccount(@AutomaticName[0], Account) then
+    if FindLoginAccount(PChar(AutomaticName), Account) then
       Exit(True);
-    Report('automatic login: user %s does not exist', [ArgumentText(@AutomaticName[0])]);
+    Report(Format('automatic login: user %s does not exist', [AutomaticName]));
   end;
   Result := AskForAccount(Account);
 end;
 
 function RunUserProgram(const Account: TLoginAccount): LongInt;
 var
-  Arguments: array[0..2] of PChar;
+  Arguments: TTextVector;
+  Shell: string;
   Options: TProcessOptions;
   Environment: TLoginEnvironment;
   OnTerminal: Boolean;
@@ -180,30 +208,21 @@ var
 begin
   OnTerminal := IsConsole(StandardInputHandle);
   DefaultProcessOptions(Options);
-  if ProgramPath <> nil then
-  begin
-    Arguments[0] := ProgramPath;
-    Arguments[1] := nil;
-  end
+  Shell := PChar(@Account.Shell[0]);
+  if HasProgramPath then
+    Arguments := TextVector([ProgramPath])
+  else if OnTerminal then
+    Arguments := TextVector([Shell, '-i'])
   else
-  begin
-    Arguments[0] := @Account.Shell[0];
-    if OnTerminal then
-    begin
-      Arguments[1] := '-i';
-      Arguments[2] := nil;
-    end
-    else
-      Arguments[1] := nil;
-  end;
+    Arguments := TextVector([Shell]);
   { On a terminal the user's program has its foreground; Ctrl-C there
     must not end login, which waits for it. }
   if OnTerminal then
     Options.GroupId := GroupNewInForeground;
   IgnoreInterrupts(True);
-  Process := StartAsUser(Account, Arguments[0], @Arguments[0], Options, Environment);
+  Process := StartAsUser(Account, Arguments[0], PPChar(@Arguments[0]), Options, Environment);
   if Process < 0 then
-    FailWithError(StatusNobodyLoggedIn, LongInt(-Process), 'cannot run %s', [ArgumentText(Arguments[0])]);
+    FailWithError(StatusNobodyLoggedIn, LongInt(-Process), Format('cannot run %s', [string(Arguments[0])]));
   Result := WaitForProgram(Process);
 end;
 
@@ -212,7 +231,7 @@ var
 begin
   ReadOptions;
   if CurrentUserId <> RootId then
-    Fail(StatusNobodyLoggedIn, 'only root may log users in', []);
+    Fail(StatusNobodyLoggedIn, 'only root may log users in');
   if not ChooseAccount(Account) then
     Halt(StatusNobodyLoggedIn);
   Halt(RunUserProgram(Account));

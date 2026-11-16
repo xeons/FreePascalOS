@@ -39,29 +39,24 @@
 }
 program less;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Console,
   Sys.Environment,
-  Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths,
   Util.RegularExpressions;
 
 const
-  Usage: PChar = 'Usage: less [-FRSX] [FILE]...'#10 +
+  Usage = 'Usage: less [-FRSX] [FILE]...'#10 +
     '       more [FILE]...'#10 +
     'Page through FILEs (or standard input) on the console.'#10#10 +
     '  -F, --quit-if-one-screen   quit if the text fits on one screen'#10 +
@@ -79,33 +74,54 @@ const
   KeyInterrupt = #3;
 
   TabWidth = 8;
+  HeaderLine = '::::::::::::::';
 
 type
   TKey = (KeyNone, KeyQuit, KeyNextPage, KeyPreviousPage, KeyNextLine, KeyPreviousLine,
     KeyHalfDown, KeyHalfUp, KeyFirst, KeyLast, KeySearch, KeyNextMatch, KeyPreviousMatch, KeyRedraw);
 
-var
-  IsMore: Boolean;
-  QuitIfOneScreen: Boolean;
-  KeyHandle: Int64;
-  ScreenRows: LongInt;
-  ScreenColumns: LongInt;
-  PageRows: Integer;
-
-  { The text, cut into screen rows. }
-  Rows: TLineList;
-  Top: Integer;
-
-  SearchPattern: PChar;
-  SearchExpressionReady: Boolean;
-  Search: TExpression;
+  { The text cut into screen rows, and the screen showing part of it. }
+  TPager = class
+  private
+    FIsMore: Boolean;
+    FKeyHandle: Int64;
+    FScreenColumns: LongInt;
+    FPageRows: Integer;
+    FRows: TStringList;
+    FTop: Integer;
+    FSearchReady: Boolean;
+    FSearch: TExpression;
+    procedure AddRows(const Line: string);
+    function LastTop: Integer;
+    procedure ClampTop;
+    procedure ClearPrompt;
+    procedure DrawPrompt;
+    procedure DrawPage;
+    procedure ShowMessage(const Message: string);
+    function ReadKeyCharacter(out Character: Char): Boolean;
+    function ReadEscapeSequence: TKey;
+    function ReadKey: TKey;
+    function ReadPattern(out Pattern: string): Boolean;
+    function RowMatches(Index: Integer): Boolean;
+    procedure FindMatch(Forward: Boolean);
+    procedure StartSearch;
+  public
+    constructor Create(IsMore: Boolean; KeyHandle: Int64);
+    destructor Destroy; override;
+    { Adds a file's rows (with a header naming it when ShowHeader). }
+    function LoadInput(const Path: string; ShowHeader: Boolean): Boolean;
+    { True if every row fits on one screen. }
+    function FitsOnScreen: Boolean;
+    procedure PrintAllRows;
+    procedure Page;
+  end;
 
 { --- Copying through ------------------------------------------------- }
 
-function CopyThrough(Path: PChar): Boolean;
+function CopyThrough(const Path: string): Boolean;
 var
   Stream: PInputStream;
-  Buffer: array[0..4095] of Char;
+  Buffer: array[0..4095] of Byte;
   Count: QWord;
 begin
   Stream := OpenInput(Path);
@@ -121,66 +137,92 @@ end;
 
 { --- Building rows --------------------------------------------------- }
 
-{ Expands tabs and cuts Line into rows of at most Width characters. }
-procedure AddRows(Line: PChar; Width: Integer);
+constructor TPager.Create(IsMore: Boolean; KeyHandle: Int64);
 var
-  Builder: TTextBuilder;
-  Position: PChar;
-  Column: Integer;
+  ScreenRows: LongInt;
 begin
-  BeginText(Builder);
-  Column := 0;
-  Position := Line;
-  while Position^ <> #0 do
-  begin
-    if Position^ = #9 then
-    begin
-      repeat
-        AppendCharacter(Builder, ' ');
-        Inc(Column);
-      until (Column mod TabWidth = 0) or (Column >= Width);
-    end
-    else if Position^ = #13 then
-      { Carriage returns would move the console cursor. }
-    else if (Position^ < ' ') and (Position^ <> #0) then
-    begin
-      AppendCharacter(Builder, '^');
-      Inc(Column);
-      if Column >= Width then
-      begin
-        AddLine(Rows, FinishText(Builder));
-        BeginText(Builder);
-        Column := 0;
-      end;
-      AppendCharacter(Builder, Char(Ord(Position^) + 64));
-      Inc(Column);
-    end
-    else
-    begin
-      AppendCharacter(Builder, Position^);
-      Inc(Column);
-    end;
-    if Column >= Width then
-    begin
-      AddLine(Rows, FinishText(Builder));
-      BeginText(Builder);
-      Column := 0;
-      if Position[1] = #0 then
-      begin
-        { The line filled its last row exactly. }
-        DiscardText(Builder);
-        Exit;
-      end;
-    end;
-    Inc(Position);
-  end;
-  AddLine(Rows, FinishText(Builder));
+  inherited Create;
+  FIsMore := IsMore;
+  FKeyHandle := KeyHandle;
+  FRows := TStringList.Create;
+  GetConsoleSize(StandardOutputHandle, ScreenRows, FScreenColumns);
+  if ScreenRows < 2 then
+    ScreenRows := 2;
+  if FScreenColumns < 10 then
+    FScreenColumns := 10;
+  FPageRows := ScreenRows - 1;
 end;
 
-function LoadInput(Path: PChar; ShowHeader: Boolean; Width: Integer): Boolean;
+destructor TPager.Destroy;
+begin
+  if FSearchReady then
+    FreeExpression(FSearch);
+  FRows.Free;
+  inherited Destroy;
+end;
+
+{ Expands tabs and cuts Line into rows of at most a screen width less
+  one. }
+procedure TPager.AddRows(const Line: string);
+var
+  Width: Integer;
+  Row: string;
+  Column: Integer;
+  Index: Integer;
+  Character: Char;
+
+  procedure FinishRow;
+  begin
+    FRows.Add(Row);
+    Row := '';
+    Column := 0;
+  end;
+
+  procedure AddCharacter(Added: Char);
+  begin
+    Row := Row + Added;
+    Inc(Column);
+  end;
+
+begin
+  Width := FScreenColumns - 1;
+  Row := '';
+  Column := 0;
+  for Index := 1 to Length(Line) do
+  begin
+    Character := Line[Index];
+    if Character = #9 then
+    begin
+      repeat
+        AddCharacter(' ');
+      until (Column mod TabWidth = 0) or (Column >= Width);
+    end
+    else if Character = #13 then
+      { Carriage returns would move the console cursor. }
+    else if Character < ' ' then
+    begin
+      AddCharacter('^');
+      if Column >= Width then
+        FinishRow;
+      AddCharacter(Char(Ord(Character) + 64));
+    end
+    else
+      AddCharacter(Character);
+    if Column >= Width then
+    begin
+      FinishRow;
+      { The line filled its last row exactly. }
+      if Index = Length(Line) then
+        Exit;
+    end;
+  end;
+  FRows.Add(Row);
+end;
+
+function TPager.LoadInput(const Path: string; ShowHeader: Boolean): Boolean;
 var
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
 begin
   Stream := OpenInput(Path);
@@ -188,102 +230,139 @@ begin
     Exit(False);
   if ShowHeader then
   begin
-    AddLine(Rows, DuplicateText('::::::::::::::'));
-    AddRows(Path, Width);
-    AddLine(Rows, DuplicateText('::::::::::::::'));
+    FRows.Add(HeaderLine);
+    AddRows(Path);
+    FRows.Add(HeaderLine);
   end;
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
-    AddRows(Line, Width);
-    FreeMemory(Line);
-  end;
+  while ReadTextLine(Stream, Line, HadLineEnd) do
+    AddRows(Line);
   CloseInput(Stream);
   Result := True;
 end;
 
+function TPager.FitsOnScreen: Boolean;
+begin
+  Result := FRows.Count <= FPageRows;
+end;
+
+procedure TPager.PrintAllRows;
+var
+  Row: string;
+begin
+  for Row in FRows do
+    PrintStringLine(Row);
+end;
+
 { --- Drawing --------------------------------------------------------- }
 
-function LastTop: Integer;
+function TPager.LastTop: Integer;
 begin
-  Result := Rows.Count - PageRows;
+  Result := FRows.Count - FPageRows;
   if Result < 0 then
     Result := 0;
 end;
 
-procedure ClampTop;
+procedure TPager.ClampTop;
 begin
-  if Top > LastTop then
-    Top := LastTop;
-  if Top < 0 then
-    Top := 0;
+  if FTop > LastTop then
+    FTop := LastTop;
+  if FTop < 0 then
+    FTop := 0;
 end;
 
-procedure ClearPrompt;
-var
-  Index: Integer;
+procedure TPager.ClearPrompt;
 begin
-  WriteCharacter(StandardOutput, #13);
-  for Index := 1 to ScreenColumns - 1 do
-    WriteCharacter(StandardOutput, ' ');
-  WriteCharacter(StandardOutput, #13);
+  PrintString(#13 + StringOfChar(' ', FScreenColumns - 1) + #13);
 end;
 
-procedure DrawPrompt;
+procedure TPager.DrawPrompt;
 var
   Percent: Int64;
 begin
-  if IsMore then
+  if FIsMore then
   begin
-    if Rows.Count = 0 then
+    if FRows.Count = 0 then
       Percent := 100
     else
-      Percent := (Int64(Top + PageRows) * 100) div Rows.Count;
+      Percent := (Int64(FTop + FPageRows) * 100) div FRows.Count;
     if Percent > 100 then
       Percent := 100;
-    WriteFormatted(StandardOutput, '--More--(%d%%)', [ArgumentNumber(Percent)]);
+    PrintString(Format('--More--(%d%%)', [Percent]));
   end
-  else if Top >= LastTop then
-    WriteText(StandardOutput, '(END)')
+  else if FTop >= LastTop then
+    PrintString('(END)')
   else
-    WriteCharacter(StandardOutput, ':');
+    PrintString(':');
   FlushStream(StandardOutput);
 end;
 
-procedure DrawPage;
+procedure TPager.DrawPage;
 var
   Index: Integer;
 begin
   ClearPrompt;
-  for Index := Top to Top + PageRows - 1 do
+  for Index := FTop to FTop + FPageRows - 1 do
   begin
-    if Index < Rows.Count then
-      WriteText(StandardOutput, Rows.Items[Index])
-    else if not IsMore then
-      WriteCharacter(StandardOutput, '~');
-    WriteCharacter(StandardOutput, #10);
+    if Index < FRows.Count then
+      PrintStringLine(FRows[Index])
+    else if not FIsMore then
+      PrintStringLine('~')
+    else
+      PrintStringLine('');
   end;
   DrawPrompt;
 end;
 
-procedure ShowMessage(Message: PChar);
+procedure TPager.ShowMessage(const Message: string);
 begin
   ClearPrompt;
-  WriteText(StandardOutput, Message);
-  WriteText(StandardOutput, '  (press a key)');
+  PrintString(Message + '  (press a key)');
   FlushStream(StandardOutput);
 end;
 
 { --- Keys ------------------------------------------------------------ }
 
-function ReadKeyCharacter(out Character: Char): Boolean;
+function TPager.ReadKeyCharacter(out Character: Char): Boolean;
 begin
-  Result := KernelRead(KeyHandle, @Character, 1) = 1;
+  Result := KernelRead(FKeyHandle, @Character, 1) = 1;
 end;
 
-function ReadKey: TKey;
+{ The rest of a key that sends an escape sequence. }
+function TPager.ReadEscapeSequence: TKey;
 var
   Character: Char;
   Parameter: Integer;
+begin
+  Result := KeyNone;
+  if not ReadKeyCharacter(Character) then
+    Exit;
+  if (Character <> '[') and (Character <> 'O') then
+    Exit;
+  Parameter := 0;
+  repeat
+    if not ReadKeyCharacter(Character) then
+      Exit;
+    if Character in ['0'..'9'] then
+      Parameter := Parameter * 10 + Ord(Character) - Ord('0');
+  until (Character >= '@') and (Character <= '~');
+  case Character of
+    'A': Result := KeyPreviousLine;
+    'B': Result := KeyNextLine;
+    'H': Result := KeyFirst;
+    'F': Result := KeyLast;
+    '~':
+      case Parameter of
+        1, 7: Result := KeyFirst;
+        4, 8: Result := KeyLast;
+        5: Result := KeyPreviousPage;
+        6: Result := KeyNextPage;
+      end;
+  end;
+end;
+
+function TPager.ReadKey: TKey;
+var
+  Character: Char;
 begin
   if not ReadKeyCharacter(Character) then
     Exit(KeyQuit);
@@ -301,34 +380,7 @@ begin
     'n': Result := KeyNextMatch;
     'N': Result := KeyPreviousMatch;
     'r', 'R', #12: Result := KeyRedraw;
-    KeyEscape:
-      begin
-        Result := KeyNone;
-        if not ReadKeyCharacter(Character) then
-          Exit;
-        if (Character <> '[') and (Character <> 'O') then
-          Exit;
-        Parameter := 0;
-        repeat
-          if not ReadKeyCharacter(Character) then
-            Exit;
-          if IsDigit(Character) then
-            Parameter := Parameter * 10 + Ord(Character) - Ord('0');
-        until (Character >= '@') and (Character <= '~');
-        case Character of
-          'A': Result := KeyPreviousLine;
-          'B': Result := KeyNextLine;
-          'H': Result := KeyFirst;
-          'F': Result := KeyLast;
-          '~':
-            case Parameter of
-              1, 7: Result := KeyFirst;
-              4, 8: Result := KeyLast;
-              5: Result := KeyPreviousPage;
-              6: Result := KeyNextPage;
-            end;
-        end;
-      end;
+    KeyEscape: Result := ReadEscapeSequence;
   else
     Result := KeyNone;
   end;
@@ -336,64 +388,51 @@ end;
 
 { Reads the search pattern after "/", echoing it. Returns False if it
   was abandoned (Escape, or erasing past the start). }
-function ReadPattern(out Pattern: PChar): Boolean;
+function TPager.ReadPattern(out Pattern: string): Boolean;
 var
-  Builder: TTextBuilder;
   Character: Char;
 begin
   ClearPrompt;
-  WriteCharacter(StandardOutput, '/');
+  PrintString('/');
   FlushStream(StandardOutput);
-  BeginText(Builder);
+  Pattern := '';
   repeat
     if not ReadKeyCharacter(Character) then
       Character := KeyEscape;
     case Character of
-      #10, #13:
-        begin
-          Pattern := FinishText(Builder);
-          Exit(True);
-        end;
-      KeyEscape, KeyInterrupt:
-        begin
-          DiscardText(Builder);
-          Exit(False);
-        end;
+      #10, #13: Exit(True);
+      KeyEscape, KeyInterrupt: Exit(False);
       KeyBackspace, KeyDelete:
         begin
-          if Builder.Length = 0 then
-          begin
-            DiscardText(Builder);
+          if Pattern = '' then
             Exit(False);
-          end;
-          Dec(Builder.Length);
-          Builder.Text[Builder.Length] := #0;
-          WriteText(StandardOutput, #8' '#8);
+          SetLength(Pattern, Length(Pattern) - 1);
+          PrintString(#8' '#8);
         end;
     else
       if Character >= ' ' then
       begin
-        AppendCharacter(Builder, Character);
-        WriteCharacter(StandardOutput, Character);
+        Pattern := Pattern + Character;
+        PrintString(Character);
       end;
     end;
     FlushStream(StandardOutput);
   until False;
 end;
 
-function RowMatches(Index: Integer): Boolean;
+function TPager.RowMatches(Index: Integer): Boolean;
 var
   Match: TMatch;
 begin
-  Result := SearchExpression(Search, Rows.Items[Index], Match);
+  Result := SearchExpression(FSearch, FRows[Index], Match);
 end;
 
-{ Moves Top to the next (or previous) row that matches. }
-procedure FindMatch(Forward: Boolean);
+{ Moves the top to the next (or previous) row that matches. }
+procedure TPager.FindMatch(Forward: Boolean);
 var
   Index: Integer;
 begin
-  if not SearchExpressionReady then
+  if not FSearchReady then
   begin
     ShowMessage('No previous regular expression');
     ReadKey;
@@ -401,90 +440,81 @@ begin
   end;
   if Forward then
   begin
-    Index := Top + 1;
-    while Index < Rows.Count do
-    begin
+    for Index := FTop + 1 to FRows.Count - 1 do
       if RowMatches(Index) then
       begin
-        Top := Index;
+        FTop := Index;
         Exit;
       end;
-      Inc(Index);
-    end;
   end
   else
   begin
-    Index := Top - 1;
-    while Index >= 0 do
-    begin
+    for Index := FTop - 1 downto 0 do
       if RowMatches(Index) then
       begin
-        Top := Index;
+        FTop := Index;
         Exit;
       end;
-      Dec(Index);
-    end;
   end;
   ShowMessage('Pattern not found');
   ReadKey;
 end;
 
-procedure StartSearch;
+procedure TPager.StartSearch;
 var
-  Pattern: PChar;
-  ErrorMessage: PChar;
+  Pattern: string;
+  ErrorMessage: string;
 begin
   if not ReadPattern(Pattern) then
     Exit;
-  if Pattern^ <> #0 then
+  if Pattern <> '' then
   begin
-    if SearchExpressionReady then
-      FreeExpression(Search);
-    SearchExpressionReady := CompileExpression(Pattern, SyntaxExtended, Search, ErrorMessage);
-    if not SearchExpressionReady then
+    if FSearchReady then
+      FreeExpression(FSearch);
+    FSearchReady := CompileExpression(Pattern, SyntaxExtended, FSearch, ErrorMessage);
+    if not FSearchReady then
     begin
       ShowMessage(ErrorMessage);
       ReadKey;
       Exit;
     end;
-    SearchPattern := Pattern;
   end;
   { The search starts on the first row shown. }
-  Dec(Top);
+  Dec(FTop);
   FindMatch(True);
-  if (Top < 0) or not RowMatches(Top) then
-    Inc(Top);
+  if (FTop < 0) or not RowMatches(FTop) then
+    Inc(FTop);
 end;
 
-procedure Page;
+procedure TPager.Page;
 var
   Key: TKey;
   SavedMode: Int64;
 begin
-  SavedMode := GetConsoleMode(KeyHandle);
+  SavedMode := GetConsoleMode(FKeyHandle);
   { One key at a time, without echo; Ctrl-C still interrupts. }
-  SetConsoleMode(KeyHandle, ConsoleModeInterruptKey);
-  Top := 0;
+  SetConsoleMode(FKeyHandle, ConsoleModeInterruptKey);
+  FTop := 0;
   repeat
     ClampTop;
     DrawPage;
-    if IsMore and (Top >= LastTop) then
+    if FIsMore and (FTop >= LastTop) then
       Break;
     Key := ReadKey;
     case Key of
       KeyQuit: Break;
       KeyNextPage:
         begin
-          if IsMore or (Top < LastTop) then
-            Top := Top + PageRows;
+          if FIsMore or (FTop < LastTop) then
+            FTop := FTop + FPageRows;
         end;
-      KeyPreviousPage: Top := Top - PageRows;
-      KeyNextLine: Inc(Top);
-      KeyPreviousLine: Dec(Top);
-      KeyHalfDown: Top := Top + PageRows div 2;
-      KeyHalfUp: Top := Top - PageRows div 2;
-      KeyFirst: Top := 0;
-      KeyLast: Top := LastTop;
+      KeyPreviousPage: FTop := FTop - FPageRows;
+      KeyNextLine: Inc(FTop);
+      KeyPreviousLine: Dec(FTop);
+      KeyHalfDown: FTop := FTop + FPageRows div 2;
+      KeyHalfUp: FTop := FTop - FPageRows div 2;
+      KeyFirst: FTop := 0;
+      KeyLast: FTop := LastTop;
       KeySearch: StartSearch;
       KeyNextMatch: FindMatch(True);
       KeyPreviousMatch: FindMatch(False);
@@ -493,72 +523,79 @@ begin
   ClearPrompt;
   FlushStream(StandardOutput);
   if SavedMode >= 0 then
-    SetConsoleMode(KeyHandle, LongWord(SavedMode));
+    SetConsoleMode(FKeyHandle, LongWord(SavedMode));
+end;
+
+{ --- The program ----------------------------------------------------- }
+
+{ Where keys come from: the console on standard input or standard
+  error, when standard output is the console too; -1 for none. }
+function ChooseKeyHandle(const Paths: TStringArray): Int64;
+var
+  Path: string;
+begin
+  if IsConsole(StandardInputHandle) and IsConsole(StandardOutputHandle) then
+    Result := StandardInputHandle
+  else if IsConsole(StandardErrorHandle) and IsConsole(StandardOutputHandle) then
+    Result := StandardErrorHandle
+  else
+    Result := -1;
+  { Reading the text from the console that also gives the keys makes no
+    sense; behave like cat then. }
+  if Result = StandardInputHandle then
+    for Path in Paths do
+      if Path = '-' then
+        Result := -1;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  QuitIfOneScreen: Boolean;
+  IsMore: Boolean;
+  Paths: TStringArray;
+  Path: string;
+  KeyHandle: Int64;
+  Pager: TPager;
   Status: LongInt;
-  Standard: PChar;
 begin
-  IsMore := TextIsEqual(BaseName(Argument(0)), 'more');
+  IsMore := BaseName(string(Argument(0))) = 'more';
+  QuitIfOneScreen := False;
   Status := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('F', 'quit-if-one-screen', False, OptionQuitIfOneScreen),
-    OptionDefinition('R', 'RAW-CONTROL-CHARS', False, OptionIgnored),
-    OptionDefinition('S', 'chop-long-lines', False, OptionIgnored),
-    OptionDefinition('X', 'no-init', False, OptionIgnored)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('F', 'quit-if-one-screen', False, OptionQuitIfOneScreen),
+    CommandOption('R', 'RAW-CONTROL-CHARS', False, OptionIgnored),
+    CommandOption('S', 'chop-long-lines', False, OptionIgnored),
+    CommandOption('X', 'no-init', False, OptionIgnored)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionQuitIfOneScreen then
       QuitIfOneScreen := True;
-  if Parser.OperandCount = 0 then
-  begin
-    Standard := '-';
-    Parser.Operands[0] := Standard;
-    Parser.OperandCount := 1;
-  end;
+  Paths := CommandLine.Operands;
+  CommandLine.Free;
+  if Length(Paths) = 0 then
+    Paths := ['-'];
 
-  if IsConsole(StandardInputHandle) and IsConsole(StandardOutputHandle) then
-    KeyHandle := StandardInputHandle
-  else if IsConsole(StandardErrorHandle) and IsConsole(StandardOutputHandle) then
-    KeyHandle := StandardErrorHandle
-  else
-    KeyHandle := -1;
-  { Reading the text from the console that also gives the keys makes no
-    sense; behave like cat then. }
-  if (KeyHandle = StandardInputHandle) then
-    for Index := 0 to Parser.OperandCount - 1 do
-      if TextIsEqual(Parser.Operands[Index], '-') then
-        KeyHandle := -1;
-
+  KeyHandle := ChooseKeyHandle(Paths);
   if KeyHandle < 0 then
   begin
-    for Index := 0 to Parser.OperandCount - 1 do
-      if not CopyThrough(Parser.Operands[Index]) then
+    for Path in Paths do
+      if not CopyThrough(Path) then
         Status := 1;
     Halt(Status);
   end;
 
-  GetConsoleSize(StandardOutputHandle, ScreenRows, ScreenColumns);
-  if ScreenRows < 2 then
-    ScreenRows := 2;
-  if ScreenColumns < 10 then
-    ScreenColumns := 10;
-  PageRows := ScreenRows - 1;
-  BeginLineList(Rows);
-  for Index := 0 to Parser.OperandCount - 1 do
-    if not LoadInput(Parser.Operands[Index], Parser.OperandCount > 1, ScreenColumns - 1) then
+  Pager := TPager.Create(IsMore, KeyHandle);
+  for Path in Paths do
+    if not Pager.LoadInput(Path, Length(Paths) > 1) then
       Status := 1;
   FlushStandardStreams;
-  if (Rows.Count <= PageRows) and (IsMore or QuitIfOneScreen) then
+  if Pager.FitsOnScreen and (IsMore or QuitIfOneScreen) then
   begin
-    for Index := 0 to Rows.Count - 1 do
-      WriteLine(StandardOutput, Rows.Items[Index]);
+    Pager.PrintAllRows;
     Halt(Status);
   end;
-  Page;
+  Pager.Page;
+  Pager.Free;
   Halt(Status);
 end.

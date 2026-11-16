@@ -27,22 +27,19 @@
 }
 program ln;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: ln [OPTION]... TARGET LINK_NAME'#10 +
+  Usage = 'Usage: ln [OPTION]... TARGET LINK_NAME'#10 +
     '  or:  ln [OPTION]... TARGET... DIRECTORY'#10 +
     'Create hard links by default, symbolic links with --symbolic.'#10 +
     #10 +
@@ -64,47 +61,55 @@ var
   Verbose: Boolean;
   Symbolic: Boolean;
 
-function LinkOne(Target, LinkName: PChar): Boolean;
+function LinkOne(const Target, LinkName: string): Boolean;
 var
   Error: LongInt;
 begin
-  if Force and PathExists(LinkName) and not IsDirectory(LinkName) then
-    RemovePath(LinkName);
+  if Force and PathExists(PChar(LinkName)) and not IsDirectory(PChar(LinkName)) then
+    RemovePath(PChar(LinkName));
   if Symbolic then
-    Error := CreateSymbolicLink(Target, LinkName)
+    Error := CreateSymbolicLink(PChar(Target), PChar(LinkName))
   else
-    Error := CreateHardLink(Target, LinkName);
+    Error := CreateHardLink(PChar(Target), PChar(LinkName));
   if Error <> ErrorNone then
   begin
     if Symbolic then
-      ReportError(Error, 'failed to create symbolic link ''%s''', [ArgumentText(LinkName)])
+      ReportError(Error, Format('failed to create symbolic link ''%s''', [LinkName]))
     else
-      ReportError(Error, 'failed to create hard link ''%s'' => ''%s''', [ArgumentText(LinkName),
-        ArgumentText(Target)]);
+      ReportError(Error, Format('failed to create hard link ''%s'' => ''%s''', [LinkName, Target]));
     Exit(False);
   end;
   if Verbose then
   begin
     if Symbolic then
-      WriteFormatted(StandardOutput, '''%s'' -> ''%s'''#10, [ArgumentText(LinkName), ArgumentText(Target)])
+      PrintString(Format('''%s'' -> ''%s'''#10, [LinkName, Target]))
     else
-      WriteFormatted(StandardOutput, '''%s'' => ''%s'''#10, [ArgumentText(LinkName), ArgumentText(Target)]);
+      PrintString(Format('''%s'' => ''%s'''#10, [LinkName, Target]));
   end;
   Result := True;
 end;
 
+{ True if Destination names a directory to link into. }
+function IsDestinationDirectory(const Destination: string; NoDereference: Boolean): Boolean;
 var
-  Parser: TOptionParser;
+  Information: TFileInformation;
+begin
+  Result := IsDirectory(PChar(Destination));
+  if Result and NoDereference and
+     (GetLinkInformation(PChar(Destination), Information) = ErrorNone) and
+     (Information.Kind = KindSymbolicLink) then
+    Result := False;
+end;
+
+var
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   NoDereference: Boolean;
   NoTargetDirectory: Boolean;
-  Destination: PChar;
+  Destination: string;
   Index: Integer;
-  Base: PChar;
-  LinkName: PChar;
   ExitStatus: LongInt;
-  Information: TFileInformation;
   DestinationIsDirectory: Boolean;
 begin
   Force := False;
@@ -112,13 +117,13 @@ begin
   Symbolic := False;
   NoDereference := False;
   NoTargetDirectory := False;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'force', False, OptionForce),
-    OptionDefinition('n', 'no-dereference', False, OptionNoDereference),
-    OptionDefinition('s', 'symbolic', False, OptionSymbolic),
-    OptionDefinition('T', 'no-target-directory', False, OptionNoTargetDirectory),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'force', False, OptionForce),
+    CommandOption('n', 'no-dereference', False, OptionNoDereference),
+    CommandOption('s', 'symbolic', False, OptionSymbolic),
+    CommandOption('T', 'no-target-directory', False, OptionNoTargetDirectory),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionForce: Force := True;
       OptionNoDereference: NoDereference := True;
@@ -126,43 +131,34 @@ begin
       OptionNoTargetDirectory: NoTargetDirectory := True;
       OptionVerbose: Verbose := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
 
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount = 1 then
   begin
     { "ln -s TARGET" links into the current directory. }
-    Base := BaseName(Parser.Operands[0]);
-    if LinkOne(Parser.Operands[0], Base) then
+    if LinkOne(CommandLine.Operands[0], BaseName(CommandLine.Operands[0])) then
       Halt(0);
     Halt(1);
   end;
 
-  Destination := Parser.Operands[Parser.OperandCount - 1];
-  DestinationIsDirectory := IsDirectory(Destination);
-  if DestinationIsDirectory and NoDereference and
-     (GetLinkInformation(Destination, Information) = ErrorNone) and (Information.Kind = KindSymbolicLink) then
-    DestinationIsDirectory := False;
-  if NoTargetDirectory or ((Parser.OperandCount = 2) and not DestinationIsDirectory) then
+  Destination := CommandLine.Operands[CommandLine.OperandCount - 1];
+  DestinationIsDirectory := IsDestinationDirectory(Destination, NoDereference);
+  if NoTargetDirectory or ((CommandLine.OperandCount = 2) and not DestinationIsDirectory) then
   begin
-    if Parser.OperandCount > 2 then
-      FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-    if LinkOne(Parser.Operands[0], Destination) then
+    if CommandLine.OperandCount > 2 then
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+    if LinkOne(CommandLine.Operands[0], Destination) then
       Halt(0);
     Halt(1);
   end;
   if not DestinationIsDirectory then
-    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(Destination)]);
+    Fail(1, Format('target ''%s'' is not a directory', [Destination]));
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 2 do
-  begin
-    Base := BaseName(Parser.Operands[Index]);
-    LinkName := JoinPath(Destination, Base);
-    if not LinkOne(Parser.Operands[Index], LinkName) then
+  for Index := 0 to CommandLine.OperandCount - 2 do
+    if not LinkOne(CommandLine.Operands[Index],
+                   JoinPath(Destination, BaseName(CommandLine.Operands[Index]))) then
       ExitStatus := 1;
-    FreeMemory(Base);
-    FreeMemory(LinkName);
-  end;
   Halt(ExitStatus);
 end.

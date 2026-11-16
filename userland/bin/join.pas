@@ -29,21 +29,19 @@
 }
 program join;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: join [OPTION]... FILE1 FILE2'#10 +
+  Usage = 'Usage: join [OPTION]... FILE1 FILE2'#10 +
     'For each pair of input lines with identical join fields, write a line to'#10 +
     'standard output.  The default join field is the first, delimited by blanks.'#10#10 +
     '  -a FILENUM        also print unpairable lines from file FILENUM'#10 +
@@ -65,21 +63,21 @@ const
   OptionOnlyUnpaired = 7;
   OptionFieldOne = 8;
   OptionFieldTwo = 9;
-  MaximumFields = 128;
-  MaximumFormatItems = 64;
+  { The highest field number -1, -2 and -j accept. }
+  MaximumFieldNumber = 128;
+
+  Blanks = [' ', #9, #10, #11, #12, #13];
 
 type
-  TFields = record
-    Items: array[0..MaximumFields - 1] of PChar;
-    Count: Integer;
-    Storage: PChar;
-  end;
-
-  PFields = ^TFields;
-
   TFormatItem = record
     FileNumber: Integer;  { 0 = the join field }
     Field: Integer;
+  end;
+
+  { One input line split into fields, or none (an unpaired side). }
+  TLineFields = record
+    Present: Boolean;
+    Fields: TStringArray;
   end;
 
 var
@@ -88,154 +86,159 @@ var
   JoinField: array[1..2] of Integer;
   PrintUnpaired: array[1..2] of Boolean;
   PrintPaired: Boolean;
-  Empty: PChar;
-  FormatItems: array[0..MaximumFormatItems - 1] of TFormatItem;
-  FormatCount: Integer;
+  Empty: string;
+  FormatItems: array of TFormatItem;
 
-procedure SplitLine(Line: PChar; out Fields: TFields);
+function SplitAtBlanks(const Line: string): TStringArray;
 var
-  Position: PtrUInt;
+  Position: Integer;
+  Start: Integer;
 begin
-  Fields.Storage := DuplicateText(Line);
-  Fields.Count := 0;
-  Position := 0;
+  Result := nil;
+  Position := 1;
+  while Position <= Length(Line) do
+  begin
+    while (Position <= Length(Line)) and (Line[Position] in Blanks) do
+      Inc(Position);
+    if Position > Length(Line) then
+      Break;
+    Start := Position;
+    while (Position <= Length(Line)) and not (Line[Position] in Blanks) do
+      Inc(Position);
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := Copy(Line, Start, Position - Start);
+  end;
+end;
+
+{ Every separator starts a new field, so a line without text still has
+  one (empty) field. }
+function SplitAtSeparator(const Line: string): TStringArray;
+var
+  Position: Integer;
+  Start: Integer;
+begin
+  Result := nil;
+  Start := 1;
+  for Position := 1 to Length(Line) do
+    if Line[Position] = Separator then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Copy(Line, Start, Position - Start);
+      Start := Position + 1;
+    end;
+  SetLength(Result, Length(Result) + 1);
+  Result[High(Result)] := Copy(Line, Start, MaxInt);
+end;
+
+function SplitLine(const Line: string): TLineFields;
+begin
+  Result.Present := True;
   if Separator = #0 then
-  begin
-    while Fields.Storage[Position] <> #0 do
-    begin
-      while IsSpace(Fields.Storage[Position]) do
-        Inc(Position);
-      if Fields.Storage[Position] = #0 then
-        Break;
-      if Fields.Count < MaximumFields then
-      begin
-        Fields.Items[Fields.Count] := Fields.Storage + Position;
-        Inc(Fields.Count);
-      end;
-      while (Fields.Storage[Position] <> #0) and not IsSpace(Fields.Storage[Position]) do
-        Inc(Position);
-      if Fields.Storage[Position] <> #0 then
-      begin
-        Fields.Storage[Position] := #0;
-        Inc(Position);
-      end;
-    end;
-    Exit;
-  end;
-  Fields.Items[0] := Fields.Storage;
-  Fields.Count := 1;
-  while Fields.Storage[Position] <> #0 do
-  begin
-    if (Fields.Storage[Position] = Separator) and (Fields.Count < MaximumFields) then
-    begin
-      Fields.Storage[Position] := #0;
-      Fields.Items[Fields.Count] := Fields.Storage + Position + 1;
-      Inc(Fields.Count);
-    end;
-    Inc(Position);
-  end;
-end;
-
-function FieldOf(const Fields: TFields; Number: Integer): PChar;
-begin
-  if (Number >= 1) and (Number <= Fields.Count) then
-    Result := Fields.Items[Number - 1]
+    Result.Fields := SplitAtBlanks(Line)
   else
-    Result := nil;
+    Result.Fields := SplitAtSeparator(Line);
 end;
 
-function CompareKeys(First, Second: PChar): Integer;
+function NoLine: TLineFields;
 begin
-  if First = nil then
-    First := '';
-  if Second = nil then
-    Second := '';
+  Result.Present := False;
+  Result.Fields := nil;
+end;
+
+{ Field Number (from 1); '' when the line has no such field. }
+function FieldOf(const Line: TLineFields; Number: Integer): string;
+begin
+  if (Number >= 1) and (Number <= Length(Line.Fields)) then
+    Result := Line.Fields[Number - 1]
+  else
+    Result := '';
+end;
+
+function CompareKeys(const First, Second: string): Integer;
+begin
   if IgnoreCase then
-    Result := CompareTextIgnoringCase(First, Second)
+    Result := CompareStr(LowerCase(First), LowerCase(Second))
   else
-    Result := CompareText(First, Second);
+    Result := CompareStr(First, Second);
 end;
 
-procedure WriteSeparator;
+function OutputSeparator: string;
 begin
   if Separator = #0 then
-    WriteCharacter(StandardOutput, ' ')
+    Result := ' '
   else
-    WriteCharacter(StandardOutput, Separator);
+    Result := Separator;
 end;
 
-procedure WriteField(Text: PChar);
+{ A field as printed: missing and empty fields become the -e text. }
+function ShownField(const Text: string): string;
 begin
-  if (Text = nil) or ((Text^ = #0) and (Empty <> nil)) then
-    Text := Empty;
-  if Text <> nil then
-    WriteText(StandardOutput, Text);
+  if Text = '' then
+    Result := Empty
+  else
+    Result := Text;
+end;
+
+function FormattedLine(const One, Two: TLineFields; const Key: string): string;
+var
+  Index: Integer;
+  Item: TFormatItem;
+begin
+  Result := '';
+  for Index := 0 to High(FormatItems) do
+  begin
+    if Index > 0 then
+      Result := Result + OutputSeparator;
+    Item := FormatItems[Index];
+    if Item.FileNumber = 0 then
+      Result := Result + ShownField(Key)
+    else if Item.FileNumber = 1 then
+      Result := Result + ShownField(FieldOf(One, Item.Field))
+    else
+      Result := Result + ShownField(FieldOf(Two, Item.Field));
+  end;
+end;
+
+{ The fields of Line other than its join field, each after a separator. }
+function OtherFields(const Line: TLineFields; Join: Integer): string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  for Index := 1 to Length(Line.Fields) do
+    if Index <> Join then
+      Result := Result + OutputSeparator + ShownField(Line.Fields[Index - 1]);
 end;
 
 { One output line; either side may be missing (unpaired lines). }
-procedure WriteJoined(One, Two: PFields);
+procedure WriteJoined(const One, Two: TLineFields);
 var
-  Key: PChar;
-  Index: Integer;
-  Item: TFormatItem;
-  Source: PFields;
+  Key: string;
 begin
-  if One <> nil then
-    Key := FieldOf(One^, JoinField[1])
+  if One.Present then
+    Key := FieldOf(One, JoinField[1])
   else
-    Key := FieldOf(Two^, JoinField[2]);
+    Key := FieldOf(Two, JoinField[2]);
 
-  if FormatCount > 0 then
-  begin
-    for Index := 0 to FormatCount - 1 do
-    begin
-      if Index > 0 then
-        WriteSeparator;
-      Item := FormatItems[Index];
-      if Item.FileNumber = 0 then
-        WriteField(Key)
-      else
-      begin
-        if Item.FileNumber = 1 then
-          Source := One
-        else
-          Source := Two;
-        if Source = nil then
-          WriteField(nil)
-        else
-          WriteField(FieldOf(Source^, Item.Field));
-      end;
-    end;
-    WriteCharacter(StandardOutput, #10);
-    Exit;
-  end;
-
-  WriteField(Key);
-  if One <> nil then
-    for Index := 1 to One^.Count do
-      if Index <> JoinField[1] then
-      begin
-        WriteSeparator;
-        WriteField(One^.Items[Index - 1]);
-      end;
-  if Two <> nil then
-    for Index := 1 to Two^.Count do
-      if Index <> JoinField[2] then
-      begin
-        WriteSeparator;
-        WriteField(Two^.Items[Index - 1]);
-      end;
-  WriteCharacter(StandardOutput, #10);
+  if Length(FormatItems) > 0 then
+    PrintStringLine(FormattedLine(One, Two, Key))
+  else
+    PrintStringLine(ShownField(Key) + OtherFields(One, JoinField[1]) + OtherFields(Two, JoinField[2]));
 end;
 
-procedure ParseFormat(Text: PChar);
+procedure FailOnFieldSpecifier(const Text: string);
+begin
+  Fail(1, Format('invalid field specifier: ''%s''', [Text]));
+end;
+
+procedure ParseFormat(const Text: string);
 var
   Position: Integer;
   Item: TFormatItem;
 begin
-  Position := 0;
-  FormatCount := 0;
-  while Text[Position] <> #0 do
+  Position := 1;
+  FormatItems := nil;
+  while Position <= Length(Text) do
   begin
     if Text[Position] = '0' then
     begin
@@ -243,127 +246,129 @@ begin
       Item.Field := 0;
       Inc(Position);
     end
-    else if (Text[Position] in ['1', '2']) and (Text[Position + 1] = '.') then
+    else if (Text[Position] in ['1', '2']) and (Position < Length(Text)) and (Text[Position + 1] = '.') then
     begin
       Item.FileNumber := Ord(Text[Position]) - Ord('0');
       Position := Position + 2;
       Item.Field := 0;
-      while IsDigit(Text[Position]) do
+      while (Position <= Length(Text)) and (Text[Position] in ['0'..'9']) do
       begin
         Item.Field := Item.Field * 10 + Ord(Text[Position]) - Ord('0');
         Inc(Position);
       end;
       if Item.Field = 0 then
-        Fail(1, 'invalid field specifier: ''%s''', [ArgumentText(Text)]);
+        FailOnFieldSpecifier(Text);
     end
     else
-      Fail(1, 'invalid field specifier: ''%s''', [ArgumentText(Text)]);
-    if FormatCount < MaximumFormatItems then
-    begin
-      FormatItems[FormatCount] := Item;
-      Inc(FormatCount);
-    end;
-    if (Text[Position] = ',') or (Text[Position] = ' ') then
+      FailOnFieldSpecifier(Text);
+    SetLength(FormatItems, Length(FormatItems) + 1);
+    FormatItems[High(FormatItems)] := Item;
+    if (Position <= Length(Text)) and (Text[Position] in [',', ' ']) then
       Inc(Position);
   end;
 end;
 
-function ParseFieldNumber(Text: PChar): Integer;
+function ParseFieldNumber(const Text: string): Integer;
 var
   Value: Int64;
 begin
-  if not ParseInteger(Text, Value) or (Value < 1) or (Value > MaximumFields) then
-    Fail(1, 'invalid field number: ''%s''', [ArgumentText(Text)]);
+  if not ParseDecimal(Text, Value) or (Value < 1) or (Value > MaximumFieldNumber) then
+    Fail(1, Format('invalid field number: ''%s''', [Text]));
   Result := Integer(Value);
 end;
 
-function ParseFileNumber(Text: PChar): Integer;
+function ParseFileNumber(const Text: string): Integer;
 begin
-  if TextIsEqual(Text, '1') then
+  if Text = '1' then
     Result := 1
-  else if TextIsEqual(Text, '2') then
+  else if Text = '2' then
     Result := 2
   else
   begin
-    Fail(1, 'invalid file number: ''%s''', [ArgumentText(Text)]);
+    Fail(1, Format('invalid file number: ''%s''', [Text]));
     Result := 1;
   end;
 end;
 
+procedure ReadOptions(out FirstPath, SecondPath: string);
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Streams: array[1..2] of PInputStream;
-  Lines: array[1..2] of PChar;
-  Has: array[1..2] of Boolean;
-  Fields: array[1..2] of TFields;
-  HadLineEnd: Boolean;
-  Order: Integer;
-  Group: TLineList;
-  GroupIndex: Integer;
-  GroupFields: TFields;
-  Key: PChar;
+  Value: string;
 begin
-  Separator := #0;
-  JoinField[1] := 1;
-  JoinField[2] := 1;
-  PrintPaired := True;
-  Empty := nil;
-  FormatCount := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('a', nil, True, OptionUnpaired),
-    OptionDefinition('e', nil, True, OptionEmpty),
-    OptionDefinition('i', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('j', nil, True, OptionBothFields),
-    OptionDefinition('o', nil, True, OptionFormat),
-    OptionDefinition('t', nil, True, OptionSeparator),
-    OptionDefinition('v', nil, True, OptionOnlyUnpaired),
-    OptionDefinition('1', nil, True, OptionFieldOne),
-    OptionDefinition('2', nil, True, OptionFieldTwo)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionUnpaired: PrintUnpaired[ParseFileNumber(Value)] := True;
-      OptionEmpty: Empty := Value;
-      OptionIgnoreCase: IgnoreCase := True;
-      OptionBothFields:
-        begin
-          JoinField[1] := ParseFieldNumber(Value);
-          JoinField[2] := JoinField[1];
-        end;
-      OptionFormat: ParseFormat(Value);
-      OptionSeparator:
-        begin
-          if (Value[0] = #0) or (Value[1] <> #0) then
-            Fail(1, 'multi-character tab ''%s''', [ArgumentText(Value)]);
-          Separator := Value[0];
-        end;
-      OptionOnlyUnpaired:
-        begin
-          PrintUnpaired[ParseFileNumber(Value)] := True;
-          PrintPaired := False;
-        end;
-      OptionFieldOne: JoinField[1] := ParseFieldNumber(Value);
-      OptionFieldTwo: JoinField[2] := ParseFieldNumber(Value);
-    end;
-  if Parser.OperandCount <> 2 then
-    FailWithUsageHint('missing operand', []);
-  Streams[1] := OpenInput(Parser.Operands[0]);
-  Streams[2] := OpenInput(Parser.Operands[1]);
-  if (Streams[1] = nil) or (Streams[2] = nil) then
-    Halt(1);
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', '', True, OptionUnpaired),
+    CommandOption('e', '', True, OptionEmpty),
+    CommandOption('i', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('j', '', True, OptionBothFields),
+    CommandOption('o', '', True, OptionFormat),
+    CommandOption('t', '', True, OptionSeparator),
+    CommandOption('v', '', True, OptionOnlyUnpaired),
+    CommandOption('1', '', True, OptionFieldOne),
+    CommandOption('2', '', True, OptionFieldTwo)], Usage);
+  try
+    while CommandLine.NextOption(Code, Value) do
+      case Code of
+        OptionUnpaired: PrintUnpaired[ParseFileNumber(Value)] := True;
+        OptionEmpty: Empty := Value;
+        OptionIgnoreCase: IgnoreCase := True;
+        OptionBothFields:
+          begin
+            JoinField[1] := ParseFieldNumber(Value);
+            JoinField[2] := JoinField[1];
+          end;
+        OptionFormat: ParseFormat(Value);
+        OptionSeparator:
+          begin
+            if Length(Value) <> 1 then
+              Fail(1, Format('multi-character tab ''%s''', [Value]));
+            Separator := Value[1];
+          end;
+        OptionOnlyUnpaired:
+          begin
+            PrintUnpaired[ParseFileNumber(Value)] := True;
+            PrintPaired := False;
+          end;
+        OptionFieldOne: JoinField[1] := ParseFieldNumber(Value);
+        OptionFieldTwo: JoinField[2] := ParseFieldNumber(Value);
+      end;
+    if CommandLine.OperandCount <> 2 then
+      FailWithUsageHint('missing operand');
+    FirstPath := CommandLine.Operands[0];
+    SecondPath := CommandLine.Operands[1];
+  finally
+    CommandLine.Free;
+  end;
+end;
 
-  Has[1] := ReadLine(Streams[1], Lines[1], HadLineEnd);
-  Has[2] := ReadLine(Streams[2], Lines[2], HadLineEnd);
-  while Has[1] or Has[2] do
+{ The next line of Stream split into fields; not Present at the end. }
+function NextLine(Stream: PInputStream): TLineFields;
+var
+  Line: string;
+  HadLineEnd: Boolean;
+begin
+  if ReadTextLine(Stream, Line, HadLineEnd) then
+    Result := SplitLine(Line)
+  else
+    Result := NoLine;
+end;
+
+procedure JoinStreams(FirstStream, SecondStream: PInputStream);
+var
+  One: TLineFields;
+  Two: TLineFields;
+  Order: Integer;
+  Key: string;
+  Group: array of TLineFields;
+  Member: TLineFields;
+begin
+  One := NextLine(FirstStream);
+  Two := NextLine(SecondStream);
+  while One.Present or Two.Present do
   begin
-    if Has[1] then
-      SplitLine(Lines[1], Fields[1]);
-    if Has[2] then
-      SplitLine(Lines[2], Fields[2]);
-    if Has[1] and Has[2] then
-      Order := CompareKeys(FieldOf(Fields[1], JoinField[1]), FieldOf(Fields[2], JoinField[2]))
-    else if Has[1] then
+    if One.Present and Two.Present then
+      Order := CompareKeys(FieldOf(One, JoinField[1]), FieldOf(Two, JoinField[2]))
+    else if One.Present then
       Order := -1
     else
       Order := 1;
@@ -371,67 +376,54 @@ begin
     if Order < 0 then
     begin
       if PrintUnpaired[1] then
-        WriteJoined(@Fields[1], nil);
-      FreeMemory(Fields[1].Storage);
-      if Has[2] then
-        FreeMemory(Fields[2].Storage);
-      FreeMemory(Lines[1]);
-      Has[1] := ReadLine(Streams[1], Lines[1], HadLineEnd);
+        WriteJoined(One, NoLine);
+      One := NextLine(FirstStream);
       Continue;
     end;
     if Order > 0 then
     begin
       if PrintUnpaired[2] then
-        WriteJoined(nil, @Fields[2]);
-      FreeMemory(Fields[2].Storage);
-      if Has[1] then
-        FreeMemory(Fields[1].Storage);
-      FreeMemory(Lines[2]);
-      Has[2] := ReadLine(Streams[2], Lines[2], HadLineEnd);
+        WriteJoined(NoLine, Two);
+      Two := NextLine(SecondStream);
       Continue;
     end;
 
     { Equal keys: every line of file 2 with this key pairs with every
       line of file 1 with this key. Collect file 2's group first. }
-    Key := DuplicateText(FieldOf(Fields[2], JoinField[2]));
-    BeginLineList(Group);
-    AddLine(Group, Lines[2]);
-    FreeMemory(Fields[2].Storage);
+    Key := FieldOf(Two, JoinField[2]);
+    Group := nil;
     repeat
-      Has[2] := ReadLine(Streams[2], Lines[2], HadLineEnd);
-      if not Has[2] then
-        Break;
-      SplitLine(Lines[2], Fields[2]);
-      Order := CompareKeys(FieldOf(Fields[2], JoinField[2]), Key);
-      FreeMemory(Fields[2].Storage);
-      if Order <> 0 then
-        Break;
-      AddLine(Group, Lines[2]);
-    until False;
+      SetLength(Group, Length(Group) + 1);
+      Group[High(Group)] := Two;
+      Two := NextLine(SecondStream);
+    until not Two.Present or (CompareKeys(FieldOf(Two, JoinField[2]), Key) <> 0);
 
     repeat
       if PrintPaired then
-        for GroupIndex := 0 to Group.Count - 1 do
-        begin
-          SplitLine(Group.Items[GroupIndex], GroupFields);
-          WriteJoined(@Fields[1], @GroupFields);
-          FreeMemory(GroupFields.Storage);
-        end;
-      FreeMemory(Fields[1].Storage);
-      FreeMemory(Lines[1]);
-      Has[1] := ReadLine(Streams[1], Lines[1], HadLineEnd);
-      if not Has[1] then
-        Break;
-      SplitLine(Lines[1], Fields[1]);
-      if CompareKeys(FieldOf(Fields[1], JoinField[1]), Key) <> 0 then
-      begin
-        FreeMemory(Fields[1].Storage);
-        Break;
-      end;
-    until False;
-    FreeLineList(Group);
-    FreeMemory(Key);
+        for Member in Group do
+          WriteJoined(One, Member);
+      One := NextLine(FirstStream);
+    until not One.Present or (CompareKeys(FieldOf(One, JoinField[1]), Key) <> 0);
   end;
-  CloseInput(Streams[1]);
-  CloseInput(Streams[2]);
+end;
+
+var
+  FirstPath: string;
+  SecondPath: string;
+  FirstStream: PInputStream;
+  SecondStream: PInputStream;
+begin
+  Separator := #0;
+  JoinField[1] := 1;
+  JoinField[2] := 1;
+  PrintPaired := True;
+  Empty := '';
+  ReadOptions(FirstPath, SecondPath);
+  FirstStream := OpenInput(FirstPath);
+  SecondStream := OpenInput(SecondPath);
+  if (FirstStream = nil) or (SecondStream = nil) then
+    Halt(1);
+  JoinStreams(FirstStream, SecondStream);
+  CloseInput(FirstStream);
+  CloseInput(SecondStream);
 end.
