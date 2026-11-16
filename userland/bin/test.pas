@@ -37,14 +37,11 @@ program test;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Environment,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Paths;
+  Util.Numbers,
+  Util.Output;
 
 const
   StatusTrue = 0;
@@ -71,16 +68,16 @@ type
     function Evaluate: Boolean;
   end;
 
-procedure SyntaxError(Format: PChar; const Arguments: array of TFormatArgument);
+procedure SyntaxError(const Message: string);
 begin
-  Report(Format, Arguments);
+  Report(Message);
   Halt(StatusError);
 end;
 
 function ParseNumber(const Text: string): Int64;
 begin
-  if not ParseInteger(PChar(Text), Result) then
-    SyntaxError('invalid integer ''%s''', [ArgumentText(PChar(Text))]);
+  if not ParseDecimal(Text, Result) then
+    SyntaxError(Format('invalid integer ''%s''', [Text]));
 end;
 
 function IsBinaryOperator(const Text: string): Boolean;
@@ -157,7 +154,7 @@ begin
     'x': Result := Exists and ((Information.Kind = KindDirectory) or ((Information.Mode and $49) <> 0));
   else
     begin
-      SyntaxError('''%s'': unary operator expected', [ArgumentText(PChar(Operation))]);
+      SyntaxError(Format('''%s'': unary operator expected', [Operation]));
       Result := False;
     end;
   end;
@@ -205,7 +202,7 @@ end;
 function TExpressionEvaluator.ParsePrimary: Boolean;
 begin
   if not HasWord(0) then
-    SyntaxError('argument expected', []);
+    SyntaxError('argument expected');
 
   if PeekIs(0, '!') and not PeekIsBinaryOperator(1) then
   begin
@@ -217,7 +214,7 @@ begin
     Inc(FPosition);
     Result := ParseOr;
     if not PeekIs(0, ')') then
-      SyntaxError('missing '')''', []);
+      SyntaxError('missing '')''');
     Inc(FPosition);
     Exit;
   end;
@@ -269,36 +266,26 @@ begin
   FPosition := 0;
   Result := ParseOr;
   if FPosition < Length(FWords) then
-    SyntaxError('extra argument ''%s''', [ArgumentText(PChar(FWords[FPosition]))]);
-end;
-
-{ Copies a heap string from the libraries and frees it. }
-function TakeText(Text: PChar): string;
-begin
-  Result := Text;
-  FreeMemory(Text);
+    SyntaxError(Format('extra argument ''%s''', [FWords[FPosition]]));
 end;
 
 var
   Name: string;
-  Words: array of string;
-  Index: Integer;
+  Words: TStringArray;
   Evaluator: TExpressionEvaluator;
   Outcome: Boolean;
 begin
-  Name := TakeText(BaseName(Argument(0)));
-  SetLength(Words, ArgumentTotal - 1);
-  for Index := 1 to ArgumentTotal - 1 do
-    Words[Index - 1] := Argument(Index);
+  Name := ProgramNameText;
+  Words := ProgramArguments;
   if Name = '[' then
   begin
     if (Length(Words) = 1) and (Words[0] = '--help') then
     begin
-      PrintLine('Usage: [ EXPRESSION ]');
+      PrintStringLine('Usage: [ EXPRESSION ]');
       Halt(0);
     end;
     if (Length(Words) = 0) or (Words[High(Words)] <> ']') then
-      SyntaxError('missing '']''', []);
+      SyntaxError('missing '']''');
     SetLength(Words, Length(Words) - 1);
   end;
 

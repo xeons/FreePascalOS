@@ -36,15 +36,14 @@ program timeout;
 uses
   SysUtils,
   StrUtils,
-  Sys.Environment,
-  Sys.Format,
   Sys.Processes,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Commands,
-  Util.Messages;
+  Util.Messages,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: timeout [OPTION] DURATION COMMAND [ARG]...'#10 +
+  Usage = 'Usage: timeout [OPTION] DURATION COMMAND [ARG]...'#10 +
     'Start COMMAND, and kill it if still running after DURATION.'#10#10 +
     '      --preserve-status'#10 +
     '                 exit with the same status as COMMAND, even when the'#10 +
@@ -117,17 +116,13 @@ end;
 
 procedure FailUsage(const Message: string);
 begin
-  Report('%s', [ArgumentText(PChar(Message))]);
-  WriteFormatted(StandardError, 'Try ''%s --help'' for more information.'#10, [ArgumentText(ProgramName)]);
+  Report(Message);
+  PrintErrorString(Format('Try ''%s --help'' for more information.'#10, [ProgramNameText]));
   Halt(StatusTimeoutFailed);
 end;
 
-function ParseSignalText(const Text: string): Integer;
-begin
-  Result := ParseSignal(PChar(Text));
-end;
-
 var
+  Arguments: TStringArray;
   First: Integer;
   Signal: Integer;
   PreserveStatus: Boolean;
@@ -143,33 +138,34 @@ begin
   Signal := SignalTerminate;
   PreserveStatus := False;
   KillAfter := 0;
-  First := 1;
+  Arguments := ProgramArguments;
+  First := 0;
   { Options end at the duration, so the command keeps its own options. }
-  while (First < ArgumentTotal) and (Length(string(Argument(First))) > 1) and (Argument(First)[0] = '-') do
+  while (First < Length(Arguments)) and (Length(Arguments[First]) > 1) and (Arguments[First][1] = '-') do
   begin
-    Text := Argument(First);
+    Text := Arguments[First];
     if Text = '--help' then
     begin
-      Print(Usage);
+      PrintString(Usage);
       Halt(0);
     end
     else if Text = '--preserve-status' then
       PreserveStatus := True
     else if (Text = '--foreground') or (Text = '-v') or (Text = '--verbose') then
       { accepted; there are no process groups to leave }
-    else if ((Text = '-s') or (Text = '--signal')) and (First + 1 < ArgumentTotal) then
+    else if ((Text = '-s') or (Text = '--signal')) and (First + 1 < Length(Arguments)) then
     begin
       Inc(First);
-      Signal := ParseSignal(Argument(First));
+      Signal := ParseSignal(Arguments[First]);
     end
     else if StartsStr('--signal=', Text) then
-      Signal := ParseSignalText(Copy(Text, 10, MaxInt))
+      Signal := ParseSignal(Copy(Text, 10, MaxInt))
     else if StartsStr('-s', Text) then
-      Signal := ParseSignalText(Copy(Text, 3, MaxInt))
-    else if ((Text = '-k') or (Text = '--kill-after')) and (First + 1 < ArgumentTotal) then
+      Signal := ParseSignal(Copy(Text, 3, MaxInt))
+    else if ((Text = '-k') or (Text = '--kill-after')) and (First + 1 < Length(Arguments)) then
     begin
       Inc(First);
-      if not ParseDuration(Argument(First), KillAfter) then
+      if not ParseDuration(Arguments[First], KillAfter) then
         FailUsage('invalid time interval');
     end
     else if StartsStr('--kill-after=', Text) then
@@ -188,13 +184,13 @@ begin
   end;
   if Signal < 0 then
     FailUsage('invalid signal');
-  if First + 1 >= ArgumentTotal then
+  if First + 1 >= Length(Arguments) then
     FailUsage('missing operand');
-  if not ParseDuration(Argument(First), Limit) then
+  if not ParseDuration(Arguments[First], Limit) then
     FailUsage('invalid time interval');
 
   DefaultProcessOptions(Options);
-  Handle := StartCommand(ArgumentValues + First + 1, Options, Status);
+  Handle := StartCommand(Copy(Arguments, First + 1, MaxInt), Options, Status);
   if Handle < 0 then
     Halt(Status);
   if Limit = 0 then

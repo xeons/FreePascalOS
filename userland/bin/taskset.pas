@@ -35,16 +35,16 @@ uses
   SysUtils,
   Sys.Kernel,
   Sys.Errors,
-  Sys.Environment,
-  Sys.Format,
   Sys.Processes,
-  Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Commands,
-  Util.Messages;
+  Util.Messages,
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: taskset [OPTION] [MASK | LIST] [PID | COMMAND [ARG]...]'#10 +
+  Usage = 'Usage: taskset [OPTION] [MASK | LIST] [PID | COMMAND [ARG]...]'#10 +
     'Show or change the processor affinity of a process, or run COMMAND'#10 +
     'with the given affinity.'#10#10 +
     '  -p, --pid        operate on the existing process PID'#10 +
@@ -53,6 +53,7 @@ const
   MaximumProcessors = 64;
 
 var
+  Arguments: TStringArray;
   ForProcess: Boolean;
   UseList: Boolean;
   First: Integer;
@@ -180,7 +181,7 @@ begin
     Line := Format('pid %d''s %s affinity list: %s', [ProcessId, Which, ListText(Mask)])
   else
     Line := Format('pid %d''s %s affinity mask: %s', [ProcessId, Which, LowerCase(IntToHex(Mask, 1))]);
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
 end;
 
 function GetAffinityOrFail(ProcessId: Int64): QWord;
@@ -189,8 +190,7 @@ var
 begin
   CallResult := KernelGetAffinity(QWord(ProcessId));
   if CallResult < 0 then
-    FailWithError(1, ErrorCodeOf(CallResult), 'failed to get pid %d''s affinity',
-      [ArgumentNumber(ProcessId)]);
+    FailWithError(1, ErrorCodeOf(CallResult), Format('failed to get pid %d''s affinity', [ProcessId]));
   Result := QWord(CallResult);
 end;
 
@@ -200,8 +200,7 @@ var
 begin
   CallResult := KernelSetAffinity(QWord(ProcessId), Mask);
   if CallResult < 0 then
-    FailWithError(1, ErrorCodeOf(CallResult), 'failed to set pid %d''s affinity',
-      [ArgumentNumber(ProcessId)]);
+    FailWithError(1, ErrorCodeOf(CallResult), Format('failed to set pid %d''s affinity', [ProcessId]));
 end;
 
 procedure ParseOptions;
@@ -211,13 +210,14 @@ var
 begin
   ForProcess := False;
   UseList := False;
-  First := 1;
-  while First < ArgumentTotal do
+  Arguments := ProgramArguments;
+  First := 0;
+  while First < Length(Arguments) do
   begin
-    Text := Argument(First);
+    Text := Arguments[First];
     if Text = '--help' then
     begin
-      Print(Usage);
+      PrintString(Usage);
       Halt(0);
     end
     else if Text = '--pid' then
@@ -236,7 +236,7 @@ begin
           'p': ForProcess := True;
           'c': UseList := True;
         else
-          FailWithUsageHint('invalid option -- ''%c''', [ArgumentCharacter(Text[Position])]);
+          FailWithUsageHint('invalid option -- ''' + Text[Position] + '''');
         end;
     end
     else
@@ -249,16 +249,18 @@ procedure HandleProcess;
 var
   ProcessId: Int64;
   Mask: QWord;
+  Remaining: Integer;
 begin
-  if (ArgumentTotal - First < 1) or (ArgumentTotal - First > 2) then
-    FailWithUsageHint('wrong number of arguments', []);
-  if not ParseInteger(Argument(ArgumentTotal - 1), ProcessId) or (ProcessId < 0) then
-    Fail(1, 'invalid PID argument: ''%s''', [ArgumentText(Argument(ArgumentTotal - 1))]);
+  Remaining := Length(Arguments) - First;
+  if (Remaining < 1) or (Remaining > 2) then
+    FailWithUsageHint('wrong number of arguments');
+  if not ParseDecimal(Arguments[High(Arguments)], ProcessId) or (ProcessId < 0) then
+    Fail(1, Format('invalid PID argument: ''%s''', [Arguments[High(Arguments)]]));
   WriteAffinity(ProcessId, 'current', GetAffinityOrFail(ProcessId));
-  if ArgumentTotal - First = 2 then
+  if Remaining = 2 then
   begin
-    if not ParseAffinity(Argument(First), Mask) then
-      Fail(1, 'failed to parse affinity ''%s''', [ArgumentText(Argument(First))]);
+    if not ParseAffinity(Arguments[First], Mask) then
+      Fail(1, Format('failed to parse affinity ''%s''', [Arguments[First]]));
     SetAffinityOrFail(ProcessId, Mask);
     WriteAffinity(ProcessId, 'new', GetAffinityOrFail(ProcessId));
   end;
@@ -269,14 +271,14 @@ var
   Mask: QWord;
   Options: TProcessOptions;
 begin
-  if ArgumentTotal - First < 2 then
-    FailWithUsageHint('missing command', []);
-  if not ParseAffinity(Argument(First), Mask) then
-    Fail(1, 'failed to parse affinity ''%s''', [ArgumentText(Argument(First))]);
+  if Length(Arguments) - First < 2 then
+    FailWithUsageHint('missing command');
+  if not ParseAffinity(Arguments[First], Mask) then
+    Fail(1, Format('failed to parse affinity ''%s''', [Arguments[First]]));
   { Set on this process; the command inherits it. }
   SetAffinityOrFail(0, Mask);
   DefaultProcessOptions(Options);
-  RunCommandAndExit(ArgumentValues + First + 1, Options);
+  RunCommandAndExit(Copy(Arguments, First + 1, MaxInt), Options);
 end;
 
 begin

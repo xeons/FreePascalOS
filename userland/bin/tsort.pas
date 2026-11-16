@@ -33,15 +33,14 @@ program tsort;
 uses
   SysUtils,
   Classes,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: tsort [OPTION] [FILE]'#10 +
+  Usage = 'Usage: tsort [OPTION] [FILE]'#10 +
     'Write totally ordered list consistent with the partial ordering in FILE.'#10;
 
   WhiteSpace = [' ', #9, #10, #11, #12, #13];
@@ -88,7 +87,7 @@ procedure Release(Index: Integer);
 var
   Successor: Integer;
 begin
-  PrintLine(PChar(Nodes[Index].Name));
+  PrintStringLine(Nodes[Index].Name);
   Nodes[Index].Done := True;
   for Successor in Nodes[Index].Successors do
     Dec(Nodes[Successor].Predecessors);
@@ -116,18 +115,15 @@ end;
 
 procedure ReadWords(Stream: PInputStream; Words: TStrings);
 var
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
 begin
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
+  while ReadTextLine(Stream, Line, HadLineEnd) do
     SplitWords(Line, Words);
-    FreeMemory(Line);
-  end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Stream: PInputStream;
   Words: TStringList;
   Index: Integer;
@@ -136,13 +132,14 @@ var
   SourceName: string;
   ExitStatus: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
   SourceName := '-';
-  if Parser.OperandCount = 1 then
-    SourceName := Parser.Operands[0];
-  Stream := OpenInput(PChar(SourceName));
+  if CommandLine.OperandCount = 1 then
+    SourceName := CommandLine.Operands[0];
+  Stream := OpenInput(SourceName);
   if Stream = nil then
     Halt(1);
 
@@ -150,7 +147,7 @@ begin
   ReadWords(Stream, Words);
   CloseInput(Stream);
   if Words.Count mod 2 <> 0 then
-    Fail(1, '%s: input contains an odd number of tokens', [ArgumentText(PChar(SourceName))]);
+    Fail(1, SourceName + ': input contains an odd number of tokens');
 
   Index := 0;
   while Index < Words.Count do
@@ -179,8 +176,8 @@ begin
       for Index := 0 to High(Nodes) do
         if not Nodes[Index].Done then
         begin
-          Report('%s: input contains a loop:', [ArgumentText(PChar(SourceName))]);
-          Report('%s', [ArgumentText(PChar(Nodes[Index].Name))]);
+          Report(SourceName + ': input contains a loop:');
+          Report(Nodes[Index].Name);
           Release(Index);
           Dec(Remaining);
           Break;

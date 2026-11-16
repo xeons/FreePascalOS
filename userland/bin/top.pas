@@ -39,18 +39,19 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Console,
-  Sys.Format,
   Sys.Processes,
   Sys.ProcessList,
   Sys.Streams,
   Sys.SystemUsage,
   Sys.Text,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: top [-b] [-d SECONDS] [-n COUNT]'#10 +
+  Usage = 'Usage: top [-b] [-d SECONDS] [-n COUNT]'#10 +
     'Show the busiest processes every SECONDS (2), COUNT times (for ever).'#10#10 +
     '  -b  batch: no clearing of the screen'#10;
 
@@ -153,11 +154,6 @@ begin
   end;
 end;
 
-procedure OutputLine(const Line: string);
-begin
-  WriteLine(StandardOutput, PChar(Line));
-end;
-
 procedure WriteSummary;
 var
   Seconds: QWord;
@@ -165,13 +161,13 @@ var
 begin
   Seconds := Usages[Newest].UptimeNanoseconds div 1000000000;
   Busy := AllProcessorsBusyTenths(Usages[1 - Newest], Usages[Newest]);
-  OutputLine(Format('top - up %d:%.2d:%.2d, %d processes, %d threads', [Seconds div 3600,
+  PrintStringLine(Format('top - up %d:%.2d:%.2d, %d processes, %d threads', [Seconds div 3600,
     (Seconds div 60) mod 60, Seconds mod 60, Usages[Newest].ProcessCount, Usages[Newest].ThreadCount]));
-  OutputLine(Format('CPU: %d.%d%% busy on %d processors', [Busy div 10, Busy mod 10,
+  PrintStringLine(Format('CPU: %d.%d%% busy on %d processors', [Busy div 10, Busy mod 10,
     OnlineProcessors(Usages[Newest])]));
-  OutputLine(Format('Memory: %d KiB total, %d KiB used, %d KiB free', [Usages[Newest].TotalMemory div 1024,
+  PrintStringLine(Format('Memory: %d KiB total, %d KiB used, %d KiB free', [Usages[Newest].TotalMemory div 1024,
     UsedMemory(Usages[Newest]) div 1024, Usages[Newest].FreeMemory div 1024]));
-  OutputLine('');
+  PrintStringLine('');
 end;
 
 procedure WriteRows;
@@ -181,15 +177,14 @@ var
   Seconds: QWord;
   User: string;
 begin
-  WriteLine(StandardOutput, '    PID USER      NI    RES S  %CPU     TIME COMMAND');
+  PrintStringLine('    PID USER      NI    RES S  %CPU     TIME COMMAND');
   for Index := 0 to High(Rows) do
   begin
     Details := Rows[Index].Details;
     Seconds := Details^.ProcessorNanoseconds div 1000000000;
-    User := UserNameOf(Details^.EffectiveUserId);
-    if User = '' then
+    if not FindUserName(Details^.EffectiveUserId, User) or (User = '') then
       User := '?';
-    OutputLine(Format('%7d %-8s %3d %6d %s %3d.%d %3d:%.2d.%.2d %s', [Details^.ProcessId, User, Details^.Nice,
+    PrintStringLine(Format('%7d %-8s %3d %6d %s %3d.%d %3d:%.2d.%.2d %s', [Details^.ProcessId, User, Details^.Nice,
       Details^.ResidentBytes div 1024, StateLetter(Details^.State), Rows[Index].Share div 10,
       Rows[Index].Share mod 10, Seconds div 60, Seconds mod 60,
       (Details^.ProcessorNanoseconds div 10000000) mod 100, string(PChar(@Details^.Name[0]))]));
@@ -201,14 +196,14 @@ procedure Look;
 begin
   Newest := 1 - Newest;
   if TakeProcessSnapshot(Snapshots[Newest]) <> ErrorNone then
-    Fail(1, 'cannot list the processes', []);
+    Fail(1, 'cannot list the processes');
   GetSystemUsage(Usages[Newest]);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Batch: Boolean;
   DelayMilliseconds: QWord;
   Count: QWord;
@@ -217,19 +212,19 @@ begin
   Batch := False;
   DelayMilliseconds := 2000;
   Count := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'batch', False, OptionBatch),
-    OptionDefinition('d', 'delay', True, OptionDelay),
-    OptionDefinition('n', 'iterations', True, OptionCount)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'batch', False, OptionBatch),
+    CommandOption('d', 'delay', True, OptionDelay),
+    CommandOption('n', 'iterations', True, OptionCount)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBatch: Batch := True;
       OptionDelay:
         if not ParseSeconds(Value, DelayMilliseconds) then
-          FailWithUsageHint('invalid delay ''%s''', [ArgumentText(Value)]);
+          FailWithUsageHint(Format('invalid delay ''%s''', [Value]));
       OptionCount:
-        if not ParseUnsigned(Value, Count) or (Count = 0) then
-          FailWithUsageHint('invalid count ''%s''', [ArgumentText(Value)]);
+        if not ParseUnsignedDecimal(Value, Count) or (Count = 0) then
+          FailWithUsageHint(Format('invalid count ''%s''', [Value]));
     end;
   if not Batch and not IsConsole(StandardOutputHandle) then
     Batch := True;
@@ -245,11 +240,11 @@ begin
     FillRows;
     SortRows;
     if not Batch then
-      WriteText(StandardOutput, ClearScreen);
+      PrintString(ClearScreen);
     WriteSummary;
     WriteRows;
     if Batch then
-      WriteLine(StandardOutput, '');
+      PrintStringLine('');
     FlushStream(StandardOutput);
     Inc(Looks);
   until (Count > 0) and (Looks >= Count);

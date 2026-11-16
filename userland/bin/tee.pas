@@ -27,16 +27,15 @@ program tee;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: tee [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: tee [OPTION]... [FILE]...'#10 +
     'Copy standard input to each FILE, and also to standard output.'#10 +
     #10 +
     '  -a, --append              append to the given FILEs, do not overwrite'#10 +
@@ -46,11 +45,11 @@ const
   OptionIgnore = 2;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Append: Boolean;
-  Paths: array of string;
+  Paths: TStringArray;
   Handles: array of Int64;
   Index: Integer;
   Flags: LongWord;
@@ -60,15 +59,13 @@ var
   Error: LongInt;
 begin
   Append := False;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'append', False, OptionAppend),
-    OptionDefinition('i', 'ignore-interrupts', False, OptionIgnore)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'append', False, OptionAppend),
+    CommandOption('i', 'ignore-interrupts', False, OptionIgnore)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionAppend then
       Append := True;
-  SetLength(Paths, Parser.OperandCount);
-  for Index := 0 to High(Paths) do
-    Paths[Index] := Parser.Operands[Index];
+  Paths := CommandLine.Operands;
   SetLength(Handles, Length(Paths));
 
   if Append then
@@ -81,7 +78,7 @@ begin
     Handles[Index] := OpenFile(PChar(Paths[Index]), Flags);
     if Handles[Index] < 0 then
     begin
-      ReportError(ErrorCodeOf(Handles[Index]), '%s', [ArgumentText(PChar(Paths[Index]))]);
+      ReportError(ErrorCodeOf(Handles[Index]), Paths[Index]);
       ExitStatus := 1;
     end;
   end;
@@ -98,7 +95,7 @@ begin
       Error := WriteAll(Handles[Index], @Buffer[0], QWord(Count));
       if Error <> ErrorNone then
       begin
-        ReportError(Error, '%s', [ArgumentText(PChar(Paths[Index]))]);
+        ReportError(Error, Paths[Index]);
         CloseFile(Handles[Index]);
         Handles[Index] := -1;
         ExitStatus := 1;

@@ -27,16 +27,16 @@ program truncate;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: truncate OPTION... FILE...'#10 +
+  Usage = 'Usage: truncate OPTION... FILE...'#10 +
     'Shrink or extend the size of each FILE to the specified size.'#10 +
     #10 +
     '  -c, --no-create        do not create any files'#10 +
@@ -49,15 +49,14 @@ const
   OptionSize = 2;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   NoCreate: Boolean;
   SizeText: string;
-  HasSize: Boolean;
   Adjustment: Char;
   Size: QWord;
-  Index: Integer;
+  Operand: string;
   Handle: Int64;
   Flags: LongWord;
   Information: TFileInformation;
@@ -66,24 +65,17 @@ var
   ExitStatus: LongInt;
 begin
   NoCreate := False;
-  SizeText := '';
-  HasSize := False;
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'no-create', False, OptionNoCreate),
-    OptionDefinition('s', 'size', True, OptionSize)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionNoCreate: NoCreate := True;
-      OptionSize:
-        begin
-          SizeText := Value;
-          HasSize := True;
-        end;
-    end;
-  if not HasSize then
-    FailWithUsageHint('you must specify ''--size''', []);
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'no-create', False, OptionNoCreate),
+    CommandOption('s', 'size', True, OptionSize)], Usage);
+  while CommandLine.NextOption(Code, Value) do
+    if Code = OptionNoCreate then
+      NoCreate := True;
+  if not CommandLine.OptionGiven(OptionSize) then
+    FailWithUsageHint('you must specify ''--size''');
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
+  SizeText := CommandLine.OptionValue(OptionSize);
 
   Adjustment := ' ';
   if (SizeText <> '') and (SizeText[1] in ['+', '-', '<', '>']) then
@@ -91,21 +83,21 @@ begin
     Adjustment := SizeText[1];
     Delete(SizeText, 1, 1);
   end;
-  if not ParseSize(PChar(SizeText), Size) then
-    Fail(1, 'Invalid number: ''%s''', [ArgumentText(PChar(SizeText))]);
+  if not ParseSize(SizeText, Size) then
+    Fail(1, Format('Invalid number: ''%s''', [SizeText]));
 
   Flags := OpenWrite;
   if not NoCreate then
     Flags := Flags or OpenCreate;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    if NoCreate and not PathExists(Parser.Operands[Index]) then
+    if NoCreate and not PathExists(PChar(Operand)) then
       Continue;
-    Handle := OpenFile(Parser.Operands[Index], Flags);
+    Handle := OpenFile(PChar(Operand), Flags);
     if Handle < 0 then
     begin
-      ReportError(ErrorCodeOf(Handle), 'cannot open ''%s'' for writing', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(ErrorCodeOf(Handle), Format('cannot open ''%s'' for writing', [Operand]));
       ExitStatus := 1;
       Continue;
     end;
@@ -133,7 +125,7 @@ begin
     Error := SetFileSize(Handle, NewSize);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'failed to truncate ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(Error, Format('failed to truncate ''%s''', [Operand]));
       ExitStatus := 1;
     end;
     CloseFile(Handle);
