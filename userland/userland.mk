@@ -38,7 +38,12 @@ USER_ROOT_DIRECTORY := $(USER_BUILD_DIRECTORY)/root
 
 # The compiler targets Linux for its ELF output and calling convention;
 # UNIX and LINUX are undefined so no code takes Linux specific paths.
-USER_FLAGS := $(COMMON_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
+# -OoNOSTACKFRAME: every procedure keeps a frame (the RBP chain), which
+# -O2 would leave out, so that the runtime can find the calling code:
+# the addresses after a runtime error, and where a block was freed in a
+# heap check report.
+USER_FRAME_FLAGS := -OoNOSTACKFRAME
+USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
 
 # The user runtime library is the Free Pascal RTL: the FreePascalOS parts
 # in rtl/fpc, everything generic from the compiler's source tree.
@@ -46,7 +51,7 @@ FPC_SOURCE ?= /usr/lib/fpc/src
 FPC_RTL_SOURCE := $(FPC_SOURCE)/rtl
 FPC_PACKAGE_SOURCE := $(FPC_SOURCE)/packages
 # Upstream sources warn a lot; only errors are shown for them.
-USER_RTL_FLAGS := -n -O2 -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
+USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
 	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/x86_64 \
 	-Fi$(FPC_RTL_SOURCE)/objpas -Fi$(FPC_RTL_SOURCE)/objpas/sysutils -Fi$(FPC_RTL_SOURCE)/objpas/classes \
 	-Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \
