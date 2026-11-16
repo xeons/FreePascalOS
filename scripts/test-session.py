@@ -35,8 +35,13 @@ follow), adds a user and gives them a new password, shows eth0's
 address from DHCP on the Network page and gives eth1 a static address
 (kept in the settings and applied: ifconfig shows it) and then what it
 had again; the taskbar's network icon names eth0's address in its
-tooltip and lists the interfaces when clicked. Then from the
-screen: Log off on the Start menu ends the
+tooltip and lists the interfaces when clicked. The screen is locked
+with Ctrl+Alt+L, Super+L and the Start menu's Lock: only the lock
+screen shows, keys, clicks and the shell's keys reach nothing behind
+it (Notepad, active behind it, gets none), a wrong password is refused
+and the right one unlocks; Suspend on the Start menu locks the screen,
+sleeps and wakes with the lock screen, and the desktop comes back. Then
+from the screen: Log off on the Start menu ends the
 session and brings the login window back (with the system's mouse
 settings); a wrong password there is refused, the new user logs in
 with the password the Control Panel gave them and logs off, the right
@@ -522,9 +527,9 @@ def log_in_through_window(name, password):
     press('ret')
 
 
-def open_notepad_with_text(after):
-    """Starts Notepad from the Start menu and types into it, so it has
-    unsaved text; `after` counts the logins before this session."""
+def open_notepad(after):
+    """Starts Notepad from the Start menu; `after` counts the Notepads
+    started before. True once it has its window."""
     log = session_log()
     found = places(log[log.rfind(b'session: user logged in'):])
     if 'start' in found:
@@ -536,9 +541,44 @@ def open_notepad_with_text(after):
         click_at(*found['start-notepad'])
     log = wait_for_session_log(['title Untitled - Notepad'], 30, after=after)
     time.sleep(1)
+    return log.count(b'title Untitled - Notepad') > after
+
+
+def open_notepad_with_text(after):
+    """Starts Notepad from the Start menu and types into it, so it has
+    unsaved text; `after` counts the Notepads started before."""
+    started = open_notepad(after)
     type_on_keyboard('hello')
     time.sleep(1)
-    return log.count(b'title Untitled - Notepad') > after
+    return started
+
+
+def choose_from_start_menu(name):
+    """Opens the Start menu of the session the user logged in to last and
+    clicks the item `name` (start-NAME)."""
+    log = session_log()
+    found = places(log[log.rfind(b'session: user logged in'):])
+    click_place(found, 'start')
+    time.sleep(1)
+    log = session_log()
+    found = places(log[log.rfind(b'session: user logged in'):])
+    click_place(found, 'start-' + name)
+
+
+def lock_screen_shows(screen):
+    """The lock screen covers the display: its night sky at the top, no
+    taskbar at the bottom."""
+    return colour_near(screen(640, 4), '0e2236', 6) and screen(640, 785) != 'cbc6bd'
+
+
+def unlock_with(password):
+    """Types password into the lock screen shown last and presses Enter."""
+    log = session_log()
+    found = places(log[log.rfind(b'session: screen locked'):])
+    click_place(found, 'lock-password')
+    press('ctrl-a')
+    type_on_keyboard(password)
+    press('ret')
 
 
 # The Control Panel, from the Start menu, as the user (an ordinary one:
@@ -770,11 +810,117 @@ checks.append(('the taskbar\'s network icon: its tooltip names eth0\'s address, 
                'tooltip eth0: 10.0.2.15 \u2014 connected'.encode() in desktop_part and
                b'network-popup' in desktop_part and b'network-popup-row eth0 eth0: 10.0.2.15' in desktop_part))
 
+# Locking the screen (the session manager's lock screen, enforced by the
+# display server). Notepad, with no text, is active behind it. Ctrl+Alt+L
+# locks: the screen shows only the lock screen; keys typed, a click on
+# the Start button and the task manager's key reach nothing behind it; a
+# wrong password is refused (after a pause), the right one unlocks.
+# Then Super+L and the Start menu's Lock lock it again. Notepad has the
+# keyboard back after each unlock and, never having been typed into,
+# closes on Alt+F4 without asking anything.
+notepads = session_log().count(b'title Untitled - Notepad')
+lock_notepad = open_notepad(notepads)
+log = session_log()
+notepad_status_lines = log.count(b'\nstatus ')
+start_menus_opened = log.count(b'place start-shutdown')
+task_manager_keys = log.count(b'hotkey task manager')
+press('ctrl-alt-l')
+log = wait_for_session_log(['screen locked (asked)'], 20)
+time.sleep(1.5)
+screen = take_screen()
+locked_by_key = b'hotkey lock' in log and b'screen locked (asked)' in log and lock_screen_shows(screen)
+type_on_keyboard('abc')
+click_place(places(log[log.rfind(b'session: user logged in'):]), 'start')
+press('ctrl-shift-esc')
+time.sleep(1.5)
+screen = take_screen()
+log = session_log()
+nothing_behind = (log.count(b'\nstatus ') == notepad_status_lines and
+                  log.count(b'place start-shutdown') == start_menus_opened and
+                  log.count(b'hotkey task manager') == task_manager_keys and lock_screen_shows(screen))
+checks.append(('Ctrl+Alt+L locks the screen: only the lock screen shows (its clock: ' +
+               ' '.join(re.findall(r'lock clock (\d\d:\d\d)', log.decode(errors='replace'))[-1:]) + ')',
+               lock_notepad and locked_by_key))
+checks.append(('the lock screen: keys, clicks and the shell\'s keys reach nothing behind it', nothing_behind))
+unlock_with('wrong')
+log = wait_for_session_log(['lock password refused'], 20)
+screen = take_screen()
+checks.append(('the lock screen refuses a wrong password (after a pause) and stays',
+               b'unlock refused for user' in log and b'lock password refused' in log and
+               b'screen unlocked' not in log and lock_screen_shows(screen)))
+unlock_with('user')
+log = wait_for_session_log(['screen unlocked by user'], 20)
+time.sleep(1.5)
+screen = take_screen()
+checks.append(('the right password unlocks the screen: the desktop is back',
+               b'screen unlocked by user' in log and screen(640, 785) == 'cbc6bd'))
+press('meta_l-l')
+log = wait_for_session_log(['screen locked (asked)'], 20, after=1)
+time.sleep(1.5)
+screen = take_screen()
+locked_by_super = log.count(b'hotkey lock') >= 2 and log.count(b'screen locked (asked)') >= 2 and \
+    lock_screen_shows(screen)
+unlock_with('user')
+log = wait_for_session_log(['screen unlocked by user'], 20, after=1)
+checks.append(('Super+L locks the screen, and the password unlocks it',
+               locked_by_super and log.count(b'screen unlocked by user') >= 2))
+choose_from_start_menu('lock')
+log = wait_for_session_log(['screen locked (asked)'], 20, after=2)
+time.sleep(1.5)
+screen = take_screen()
+locked_from_menu = b'menu Lock' in log and log.count(b'screen locked (asked)') >= 3 and lock_screen_shows(screen)
+unlock_with('user')
+log = wait_for_session_log(['screen unlocked by user'], 20, after=2)
+time.sleep(1.5)
+screen = take_screen()
+checks.append(('the Start menu\'s Lock locks the screen, and the password unlocks it',
+               locked_from_menu and log.count(b'screen unlocked by user') >= 3 and screen(640, 785) == 'cbc6bd'))
+exits = log.count(b'\nexit')
+answers = log.count(b'answer ')
+press('alt-f4')
+log = wait_for_session_log(['\nexit'], 20, after=exits)
+checks.append(('after unlocking Notepad has the keyboard back, and got none of the keys typed while locked',
+               log.count(b'\nexit') > exits and log.count(b'answer ') == answers and
+               log.count(b'\nstatus ') == notepad_status_lines))
+
+# Suspend from the Start menu: the screen is locked first (the user's
+# settings lock it on resume by default), the machine sleeps (QEMU says
+# so) and wakes on request; the lock screen is there, the password
+# unlocks it and the desktop is back, its clock showing the time.
+choose_from_start_menu('suspend')
+asleep = False
+for attempt in range(30):
+    if 'suspended' in ask_monitor('info status\n'):
+        asleep = True
+        break
+    time.sleep(1)
+send_to_monitor('system_wakeup\n')
+log = wait_for_session_log(['session: resumed'], 90)
+time.sleep(2)
+screen = take_screen()
+checks.append(('Suspend on the Start menu locks the screen, sleeps and wakes with the lock screen',
+               asleep and b'menu Suspend' in log and
+               re.search(rb'screen locked \(suspend\).*session: suspending.*session: resumed', log, re.S) is not None and
+               lock_screen_shows(screen)))
+unlock_with('user')
+log = wait_for_session_log(['screen unlocked by user'], 20, after=3)
+time.sleep(2)
+screen = take_screen()
+before = run_and_read('date +%H:%M')
+log = session_log()
+after = run_and_read('date +%H:%M')
+# The desktop's clock lines (not the lock screen's, "session: lock clock").
+all_clocks = re.findall(rb'\nclock (\d\d:\d\d)', log)
+times_now = re.findall(rb'\n(\d\d:\d\d)\r?\n', before + after)
+checks.append(('after waking the desktop is back and its clock shows the time',
+               log.count(b'screen unlocked by user') >= 4 and screen(640, 785) == 'cbc6bd' and
+               bool(all_clocks) and all_clocks[-1] in times_now))
+
 # Log off with Notepad holding unsaved text: the session's programs are
 # asked to end, so Notepad asks whether to save (No is answered), and
 # the session ends without anything being ended outright; the login
 # window comes back.
-notepad_open = open_notepad_with_text(0)
+notepad_open = open_notepad_with_text(session_log().count(b'title Untitled - Notepad'))
 log = session_log()
 place = places(log[log.rfind(b'session: user logged in'):])
 if 'start' in place:
@@ -873,7 +1019,7 @@ wait_for_control_panel('closed', 20)
 # Notepad holds unsaved text again and nobody answers its question: the
 # session manager ends it once its programs' time is up, well within
 # the session service's stop-timeout.
-open_notepad_with_text(1)
+open_notepad_with_text(session_log().count(b'title Untitled - Notepad'))
 log = wait_for_session_log(['place start'], 10, after=1)
 place = places(log[log.rfind(b'session: user logged in'):])
 if 'start' in place:

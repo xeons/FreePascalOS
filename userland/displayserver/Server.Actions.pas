@@ -21,6 +21,9 @@
   the user (Server.Input): activating, showing, enabling, moving,
   resizing and destroying it, and telling its program what happened.
 
+  While the screen is locked only the lock screen's windows can be
+  activated (Server.ScreenLock).
+
   A disabled window (the owner of a modal dialog) is never activated:
   whatever would activate it activates the topmost enabled window it
   owns instead (the dialog), after bringing both forward. Hiding a
@@ -47,6 +50,8 @@ procedure SendToProgram(Window: TServerWindow; var Message: TWindowMessage);
 { Brings the window to the front and gives it the keyboard (nil: none).
   A disabled window gives it to its topmost enabled owned window. }
 procedure ActivateWindow(Window: TServerWindow);
+{ Gives the keyboard to the topmost window that can take it (nil: none). }
+procedure ActivateTopWindow;
 procedure ShowWindow(Window: TServerWindow; Show: Boolean);
 { A disabled window is not activated and gets no input. }
 procedure EnableWindow(Window: TServerWindow; Enable: Boolean);
@@ -84,7 +89,8 @@ uses
   Server.Input,
   Server.WorkAreas,
   Server.Shell,
-  Server.WindowMoves;
+  Server.WindowMoves,
+  Server.ScreenLock;
 
 procedure SendToProgram(Window: TServerWindow; var Message: TWindowMessage);
 begin
@@ -112,7 +118,8 @@ end;
 
 function TakesKeyboard(Window: TServerWindow): Boolean;
 begin
-  Result := Window.Visible and not Window.Disabled and ((Window.Flags and WindowNoActivate) = 0);
+  Result := Window.Visible and not Window.Disabled and ((Window.Flags and WindowNoActivate) = 0) and
+    WindowUsable(Window);
 end;
 
 { The topmost window owned by Owner (directly or not) that can take the
@@ -131,6 +138,9 @@ procedure ActivateWindow(Window: TServerWindow);
 var
   Previous: TServerWindow;
 begin
+  { Behind the lock screen: nothing comes forward. }
+  if (Window <> nil) and not WindowUsable(Window) then
+    Exit;
   if (Window <> nil) and Window.Disabled then
   begin
     { It comes forward with what it owns; the keyboard goes to its
@@ -170,6 +180,11 @@ begin
     if (Windows[Index] <> Excluded) and TakesKeyboard(Windows[Index]) then
       Exit(Windows[Index]);
   Result := nil;
+end;
+
+procedure ActivateTopWindow;
+begin
+  ActivateWindow(NextActivatable(nil));
 end;
 
 { The windows Owner owns directly, bottom first. Taken as a list first:
@@ -307,7 +322,8 @@ begin
   OldFrame := FrameRectangle(Window);
   Window.ClientLeft := ClientLeft;
   Window.ClientTop := ClientTop;
-  if Window.Visible then
+  { Behind the lock screen it shows nowhere: nothing to copy or draw. }
+  if Window.Visible and WindowUsable(Window) then
     MoveWindowPixels(Window, OldFrame);
   { The program knows where its window is (to place pop-ups). }
   TellWindowPlace(Window);

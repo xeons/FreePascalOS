@@ -23,9 +23,10 @@
   The session manager logs a user in on the screen and runs their
   desktop. It serves the port "session"; the desktop's Start menu asks
   it to log off (every program of the session is ended, and the login
-  window comes back) or to shut down or restart (the session manager
-  runs as root, so a user at the screen may turn the computer off, as
-  they could with its power button). Only the session's own user (or
+  window comes back), to lock the screen (it shows the lock screen and
+  checks the password), or to shut down, restart or suspend (the
+  session manager runs as root, so a user at the screen may turn the
+  computer off or put it to sleep, as they could with its power button). Only the session's own user (or
   root) is listened to. Each request is one TSessionRequest answered by
   one TSessionReply.
 }
@@ -41,6 +42,11 @@ const
   SessionRequestLogOff = 1;
   SessionRequestPowerOff = 2;
   SessionRequestReboot = 3;
+  { Locks the screen: the lock screen asks for the user's password. }
+  SessionRequestLock = 4;
+  { Suspends the computer to RAM (the screen locked first if the user's
+    settings say so, Windowing.LockSettings). }
+  SessionRequestSuspend = 5;
 
 type
   TSessionRequest = record

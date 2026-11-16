@@ -39,6 +39,7 @@ uses
   Controls.Clipboard,
   Controls.EditCommands,
   Controls.EditBox,
+  Controls.PasswordBox,
   Controls.ProgressBar,
   Controls.ScrollBar,
   Controls.Slider,

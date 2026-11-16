@@ -133,14 +133,17 @@ function ClientRectangle(Window: TServerWindow): TRectangle;
 { The whole window, frame included. }
 function FrameRectangle(Window: TServerWindow): TRectangle;
 function IsFramed(Window: TServerWindow): Boolean;
-{ The topmost visible window whose frame holds (X, Y), or nil. }
+{ The topmost visible window whose frame holds (X, Y), or nil; while the
+  screen is locked, only the lock screen's windows count
+  (Server.ScreenLock). }
 function WindowAt(X, Y: LongInt): TServerWindow;
 
 implementation
 
 uses
   Windowing.Theme,
-  Server.Theme;
+  Server.Theme,
+  Server.ScreenLock;
 
 var
   NextWindowId: LongWord = 1;
@@ -335,7 +338,8 @@ var
   Index: LongInt;
 begin
   for Index := WindowCount - 1 downto 0 do
-    if Windows[Index].Visible and RectangleContainsPoint(FrameRectangle(Windows[Index]), X, Y) then
+    if Windows[Index].Visible and WindowUsable(Windows[Index]) and
+       RectangleContainsPoint(FrameRectangle(Windows[Index]), X, Y) then
       Exit(Windows[Index]);
   Result := nil;
 end;

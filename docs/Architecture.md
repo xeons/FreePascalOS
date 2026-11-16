@@ -727,8 +727,9 @@ runs it on a thread pinned to the boot processor:
    - **Services:** block I/O open again; audio volumes set again and
      capturing restarted.
 
-`suspend` (root only, `CallSuspend`) and the kernel debug shell's
-`suspend` start it. The input test suspends a machine with AHCI,
+`suspend` (root only, `CallSuspend`), the kernel debug shell's
+`suspend` and the desktop's Suspend (through the session manager, which
+is root) start it. The input test suspends a machine with AHCI,
 virtio, NVMe and USB disks and HD Audio, AC'97 and USB audio, wakes it
 (`system_wakeup`), then reads every disk raw, writes and reads back
 files on three volumes, plays a tone on each sound output (recorded and
@@ -1384,11 +1385,35 @@ the list (`ListOtherWindows` in `Windowing.WindowList`).
 Keys for the whole desktop (`Server.Hotkeys`): the shell may take a key
 with the modifiers that must be held with it (`RequestRegisterHotkey`;
 `RegisterHotkey` in `Windowing.Shell`). Pressed with exactly those
-(Shift, Ctrl, Alt and AltGr compared, the locks not), it goes to the
+(Shift, Ctrl, Alt, AltGr and Super compared, the locks not), it goes to the
 shell as `EventHotkey` whatever window is active, and neither it nor
 its release reaches a window, so no program sees half a key. The keys
 go when the shell does. The desktop takes Ctrl+Shift+Escape for the
-task manager.
+task manager, and Super+L and Ctrl+Alt+L to lock the screen. (The
+kernel reports either Super key, E0 5B and E0 5C, or a USB keyboard's
+GUI modifier bits, as `ModifierSuper`; it types nothing.)
+
+The screen lock (`Server.ScreenLock`): a state the server owns, so no
+program can show itself over the lock screen however it misbehaves. A
+program running as root (the session manager) locks the screen
+(`RequestLockScreen`, answered by `EventScreenLock`; `LockScreen` in
+`Windowing.ScreenLock`). While it is locked only that program's windows
+are composed, over a plain dark background; every other window is left
+out of composing, is never the window under the pointer
+(`WindowAt`), cannot be activated or capture the pointer, and gets no
+keys; the shell's keys are swallowed (neither the shell nor a window
+hears them) and Alt+F4 does nothing. A window moved behind the lock
+copies no pixels. Locking ends any drag, capture and hover and takes
+the keyboard from the window that had it; unlocking gives it back to
+that window. A program that ends while holding the lock leaves the
+screen locked, with nothing but the background, until a root program
+takes the lock over or unlocks it. Locking a screen another live
+program holds is refused. The server also keeps the time of the last
+input: `RequestDescribeIdle` (`EventIdleDescribed`, milliseconds;
+`IdleMilliseconds`) is how the session manager locks after a while,
+and `RequestRepaintDisplays` (`RepaintDisplays`) draws every display
+again from the windows, which the session manager asks after waking
+from suspend (a display's memory may not keep its picture).
 
 Notification icons (`Server.Notifications`): any program may show a
 small icon with a tooltip in the shell's notification area
@@ -1409,14 +1434,17 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestDescribeWorkArea` = 22, `RequestManageWindow` = 23,
 `RequestSetNotificationIcon` = 24, `RequestListWindows` = 25,
 `RequestRegisterHotkey` = 26, `RequestGetKeyboardSettings` = 27,
-`RequestSetKeyboardSettings` = 28), events 101 to 125 (up to
+`RequestSetKeyboardSettings` = 28; the screen lock's in a range of
+their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
+`RequestRepaintDisplays` = 42), events 101 to 125 (up to
 `EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
 `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
 `EventMouseSettings` = 116, `EventShellRegistered` = 117,
 `EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
 `EventWorkArea` = 120, `EventDisplaysChanged` = 121,
 `EventNotificationIconChanged` = 122, `EventWindowListed` = 123,
-`EventHotkey` = 124, `EventKeyboardSettings` = 125).
+`EventHotkey` = 124, `EventKeyboardSettings` = 125; `EventScreenLock`
+= 140, `EventIdleDescribed` = 141).
 
 `wintest` shows a window and prints what happens to it (its place, a
 new scale, being shown or hidden; `-b` sets a text beam over its left
@@ -2074,13 +2102,17 @@ which the shell keeps out of that display's work area
 (and the desktops too) when the server says the displays changed. The
 Start button (`Desktop.StartButton`: a sunrise mark and a bold caption,
 pressed in while its menu is open) opens the Start menu on the press
-(`Desktop.StartMenu`: the programs, then Log off and Shut down, opened
+(`Desktop.StartMenu`: the programs, then Lock, Log off, Suspend and Shut down, opened
 just above the taskbar). Both ask in a message box, then ask the
 session manager (`Windowing.Sessions`, see "Startup, services and
 sessions"): Log off ends the session, Shut down turns the computer off
-(the session manager is root; the user is not). A desktop started by
-hand, with no session manager, ends itself to log off and calls the
-system's shutdown itself. The window list
+(the session manager is root; the user is not). Lock and Suspend, next
+to them, act at once (`Desktop.Locking`): the session manager shows the
+lock screen, or suspends the computer (locking it first when the user
+wants it locked on resume); Super+L and Ctrl+Alt+L, keys the shell
+takes for the whole desktop, lock it too. A desktop started by hand,
+with no session manager, ends itself to log off, calls the system's
+shutdown and suspend itself (root only) and cannot lock. The window list
 (`Desktop.WindowList`) follows the server's events; each window shown or
 minimized has a button (`Desktop.TaskButtons`: a small window mark and
 the title; pressed in on a lighter face, its title bold, for the active
@@ -2124,7 +2156,8 @@ and Network settings..., which opens the Control
 Panel's Network page. The desktop has no notification balloons yet, so
 a link going down or up is only shown by the icon.
 
-`desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
+`desktop` prints what happens (`asking log off`, `logging off`, `menu Lock`, `menu Suspend`, `hotkey lock`,
+`locking`, `suspending`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
 HH:MM`, `notification N TEXT`, `tooltip TEXT`, `hotkey task manager`,
 `context task manager`, `volume-popup`, `volume N`, `mute on|off`,
@@ -2228,7 +2261,7 @@ Apply along the bottom. Apply can be
 pressed once a page was changed, and applies every page that was; OK
 does the same and closes the window unless a change failed; Cancel and
 the close button forget what was not applied. PAGE (`display`, `mouse`,
-`keyboard`, `sound`, `datetime`, `network`, `users`) opens that page
+`keyboard`, `sound`, `datetime`, `network`, `users`, `lock`) opens that page
 first; the Start menu and a desktop icon open it, the volume control
 its Sound page, the network icon's pop-up its Network page. Everything is in logical units and points, so it looks the same
 at every scale.
@@ -2242,6 +2275,7 @@ at every scale.
 | Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
 | Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
+| Screen Lock | locking by itself after 1 to 60 minutes without input (off at first), locking before suspending (on at first) | kept in the user's settings (`Windowing.LockSettings`), which the session manager reads |
 
 **Root's changes from a user's Control Panel.** The Control Panel runs
 as whoever started it. What only root may change goes to the system
@@ -4699,14 +4733,44 @@ same way (telling the programs "shutdown", or "log off") and then ends.
 without the window for the first session of a boot. The session
 manager serves the port `session` (`Windowing.Sessions`,
 `Session.Requests`), listened to only from the session's user or root:
-log off (it answers, then ends the session as above), shut down and restart (it
-calls `CallShutdown`, which a user may not). Its output, with the
+log off (it answers, then ends the session as above), lock (with a user
+logged in), shut down and restart (it calls `CallShutdown`, which a user
+may not) and suspend (`CallSuspend`, likewise; `Session.Suspend`).
+
+**Locking.** The session manager locks the user's session
+(`Session.ScreenLock`) when the desktop asks (the Start menu's Lock,
+Super+L, Ctrl+Alt+L), after the minutes without input the user's
+settings name (`ScreenLock/AfterMinutes`, 0 - never - by default; the
+display server's idle time is asked every 5 seconds), and before
+suspending when `ScreenLock/OnResume` (true by default) says so
+(`Windowing.LockSettings`; the Control Panel's Screen Lock page). It
+asks the display server for the lock first, then shows the lock screen
+(`Session.LockWindow`): a window without a frame over the first
+display, a night sky with the clock (looked at every second), the
+date, the user's name and a password box with Unlock. The password is
+typed into a `TPasswordBox` (libcontrols, `Controls.PasswordBox`: the
+characters in one buffer of its own, overwritten as they leave it and
+before it is freed, never a string; the login window uses it too) and
+checked from that buffer against `/etc/shadow` as at login
+(`PasswordIsRight`). A wrong one empties the box, which stays disabled
+for 1.5 seconds before the refusal shows, so passwords cannot be tried
+quickly. The right one hides the lock screen and unlocks the server,
+which gives the keyboard back to the window that had it. When the
+session ends while locked (the power button, a desktop that crashed)
+the screen is unlocked for the login window. Suspending locks first
+(when wanted) and asks the kernel half a second later, once the lock
+screen shows; after waking it has the display server draw every display
+again, and the desktop's clock catches up by itself. Its output, with the
 desktop's (the desktop inherits it), is in `/var/log/session.log`:
 `session: login window shown`, the places of the window's boxes, `login
 refused for NAME`, `NAME logged in (session N)`, `logging off NAME`,
 `asking session N to end (REASON)`, `C programs of session N did not
 end in time: ending them`, `session of NAME ended (status S)`, `asked
-to end (REASON)`.
+to end (REASON)`, `screen locked (asked|idle|suspend)` with the places
+of the lock screen's box and button (`lock-password`, `lock-unlock`),
+`lock clock HH:MM`, `unlock refused for NAME`, `lock password refused`
+(when the refusal shows), `screen unlocked by NAME`, `suspending`,
+`resumed`.
 
 **The system settings service.** `systemsettings` (units in
 `userland/systemsettings`, root) makes the changes to the machine that
@@ -4763,7 +4827,18 @@ refuses a wrong password and starts the desktop again with the right
 one; and Shut down on the Start menu, with Notepad holding unsaved text
 again and nobody answering, stops the services in order (the session
 manager ends Notepad once its time is up, within the session's
-stop-timeout) and powers off (QEMU exits). The input test checks that
+stop-timeout) and powers off (QEMU exits). Before logging off it locks
+the screen with Ctrl+Alt+L, Notepad active behind it: a screen dump
+shows only the lock screen; keys typed, a click on the Start button
+and Ctrl+Shift+Escape reach nothing (Notepad prints no caret move, the
+Start menu does not open, the task manager's key is not heard); a
+wrong password is refused after the pause and the right one unlocks
+(the taskbar back); Super+L and the Start menu's Lock lock it again;
+then Alt+F4 closes Notepad at once, having had the keyboard back and
+none of the keys typed while locked. Then Suspend on the Start menu
+locks the screen, the machine sleeps (QEMU says so) and wakes
+(`system_wakeup`) with the lock screen showing; the password unlocks
+it and the desktop and its clock are back. The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
 
 ### Time zones
@@ -4928,6 +5003,7 @@ as soon as a file changes, and programs need no change.
 | notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
 | terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
 | desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+| Control Panel (writes), session manager (reads) | user | `ScreenLock/AfterMinutes` (0: never), `ScreenLock/OnResume` (`Windowing.LockSettings`) |
 | files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 | keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
 | system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start; `Network/Interfaces/NAME/*`, `Network/DnsServers`, `Network/SearchDomain` for an administrator (the network service applies them) |

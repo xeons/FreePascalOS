@@ -53,8 +53,9 @@
   (the pointer's shapes); Server.WindowStates (minimizing and the
   shell's commands), Server.Shell (the shell's list of windows),
   Server.WorkAreas (what the taskbar leaves), Server.Notifications
-  (the notification area's icons) and Server.RememberedSettings (what
-  it keeps in the system's settings).
+  (the notification area's icons), Server.ScreenLock (the screen lock
+  and the idle time) and Server.RememberedSettings (what it keeps in
+  the system's settings).
 }
 program DisplayServer;
 

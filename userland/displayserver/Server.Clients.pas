@@ -99,7 +99,8 @@ uses
   Server.Shell,
   Server.Hotkeys,
   Server.WindowList,
-  Server.Notifications;
+  Server.Notifications,
+  Server.ScreenLock;
 
 constructor TClient.Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
 begin
@@ -156,6 +157,7 @@ begin
   if IsShell(Client) then
     ForgetHotkeys;
   ForgetClientInShell(Client);
+  ForgetClientInLock(Client);
   CloseHandle(Client.Channel);
   { The last client takes its place, as it always has. }
   for Index := 0 to High(Clients) do
@@ -433,7 +435,7 @@ var
   Left: LongInt;
   Top: LongInt;
 begin
-  if CarryOutDisplayRequest(Client, Message) then
+  if CarryOutDisplayRequest(Client, Message) or CarryOutLockRequest(Client, Message) then
   begin
     if Handle >= 0 then
       CloseHandle(Handle);

@@ -20,7 +20,8 @@
   The login window: a user name, a password (shown as dots) and OK, in
   the middle of the first display, before anyone has logged in.
 
-  OK (or Enter) hands the name and password to OnLogin, which says
+  OK (or Enter) hands the name and the password (the password box's own
+  buffer, Controls.PasswordBox: never a string) to OnLogin, which says
   whether they were right; when they were not, the window says so,
   empties the password and puts the keyboard there. The window cannot
   be closed: there is nothing behind it to go back to.
@@ -37,16 +38,17 @@ uses
   Controls.Window,
   Controls.Labels,
   Controls.EditBox,
+  Controls.PasswordBox,
   Controls.Buttons;
 
 type
   { True if Name and Password let the user in. }
-  TLoginEvent = function(const Name, Password: string): Boolean of object;
+  TLoginEvent = function(const Name: string; Password: PChar): Boolean of object;
 
   TLoginWindow = class(TControlWindow)
   private
     FNameBox: TEditBox;
-    FPasswordBox: TEditBox;
+    FPasswordBox: TPasswordBox;
     FMessage: TLabel;
     FOk: TButton;
     FOnLogin: TLoginEvent;
@@ -90,10 +92,8 @@ begin
   Caption := TLabel.Create(Root);
   Caption.Text := '&Password:';
   Caption.SetBounds(16, 78, 90, 20);
-  FPasswordBox := TEditBox.Create(Root);
+  FPasswordBox := TPasswordBox.Create(Root);
   FPasswordBox.SetBounds(112, 76, 230, 22);
-  FPasswordBox.HidesText := True;
-  FPasswordBox.MaximumLength := 64;
   FMessage := TLabel.Create(Root);
   FMessage.SetBounds(16, 108, 328, 20);
   FOk := TButton.Create(Root);
@@ -114,7 +114,7 @@ end;
 procedure TLoginWindow.Present;
 begin
   FNameBox.Text := '';
-  FPasswordBox.Text := '';
+  FPasswordBox.Clear;
   FMessage.Text := '';
   Show;
   Activate;
@@ -126,17 +126,18 @@ end;
 procedure TLoginWindow.OkClicked(Sender: TControl);
 var
   Name: string;
-  Password: string;
+  Accepted: Boolean;
 begin
   Name := FNameBox.Text;
-  Password := FPasswordBox.Text;
-  FPasswordBox.Text := '';
   if Name = '' then
   begin
+    FPasswordBox.Clear;
     FNameBox.SetFocus;
     Exit;
   end;
-  if Assigned(FOnLogin) and FOnLogin(Name, Password) then
+  Accepted := Assigned(FOnLogin) and FOnLogin(Name, FPasswordBox.Password);
+  FPasswordBox.Clear;
+  if Accepted then
     Exit;
   FMessage.Text := 'The user name or password is not right.';
   FPasswordBox.SetFocus;

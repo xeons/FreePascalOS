@@ -606,8 +606,10 @@ var
 begin
   if HandleDragKey(Code) then
     Exit;
-  { (Alt repeats while held: still alone.) }
-  FAltPressedAlone := Code = KeyAlt;
+  { (Alt repeats while held: still alone.) Alt pressed with Ctrl or
+    Shift held is not alone: Ctrl+Alt+L's L may never come here (a key
+    the shell takes). }
+  FAltPressedAlone := (Code = KeyAlt) and ((Modifiers and (ModifierControl or ModifierShift)) = 0);
   if (Code = KeyF10) and ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = 0) and
      (FMenuBar <> nil) then
   begin
