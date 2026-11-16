@@ -36,6 +36,7 @@ program voicetest;
 
 uses
   SysUtils,
+  StrUtils,
   Runtime.Text,
   Sys.Memory,
   Sys.Processes,
@@ -437,7 +438,7 @@ begin
   Render(Engine);
   GetVoiceState(Voice, State);
   Check('exit loop', State.BuffersQueued = 0, 'the buffer is still looping');
-  Check('exit loop (callbacks)', TextEndsWith(@Events[0], 'loop L, end L, '), PChar(@Events[0]));
+  Check('exit loop (callbacks)', EndsStr('loop L, end L, ', PChar(@Events[0])), PChar(@Events[0]));
   DestroyAudioEngine(Engine);
 end;
 

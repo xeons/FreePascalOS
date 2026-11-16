@@ -115,6 +115,7 @@ procedure FlushStandardStreams;
 implementation
 
 uses
+  SysUtils,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -209,7 +210,7 @@ begin
   Index := 0;
   while envp[Index] <> nil do
   begin
-    if TextStartsWith(envp[Index], Name) and (envp[Index][NameLength] = '=') then
+    if (StrLComp(envp[Index], Name, NameLength) = 0) and (envp[Index][NameLength] = '=') then
       Exit(envp[Index] + NameLength + 1);
     Inc(Index);
   end;

@@ -120,8 +120,7 @@ uses
   Sys.Kernel,
   Sys.Errors,
   Sys.Files,
-  Sys.Environment,
-  Sys.Text;
+  Sys.Environment;
 
 procedure DefaultProcessOptions(out Options: TProcessOptions);
 begin

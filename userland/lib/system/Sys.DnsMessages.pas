@@ -153,7 +153,6 @@ uses
   SysUtils,
   StrUtils,
   Abi.SystemCalls,
-  Sys.Text,
   Sys.DnsNames;
 
 function ReadWord(Data: PByte; Position: LongWord): Word;

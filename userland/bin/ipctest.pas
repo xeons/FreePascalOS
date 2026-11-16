@@ -47,7 +47,6 @@ uses
   Sys.Objects,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
   Sys.Time;
 
 const

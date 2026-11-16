@@ -17,13 +17,11 @@
 }
 
 {
-  Text handling for programs: character classes, comparison, searching,
-  number parsing and a growable text buffer.
-
-  Strings are zero terminated UTF-8 (PChar); numbers in text are
-  Util.Numbers'. The basic routines
-  (TextLength, TextIsEqual, CopyText, number formatting) come from
-  Runtime.Text, which this library also contains.
+  Character classes (ASCII) and a growable buffer of zero terminated
+  text, the one ReadLine builds a line in (Sys.Streams). The basic
+  PChar routines (TextLength, TextIsEqual, CopyText, number formatting)
+  come from Runtime.Text, which this library also contains; numbers in
+  text are Util.Numbers'.
 }
 unit Sys.Text;
 
@@ -52,17 +50,6 @@ function IsLowerCase(Character: Char): Boolean;
 function IsPrintable(Character: Char): Boolean;
 function ToUpperCase(Character: Char): Char;
 function ToLowerCase(Character: Char): Char;
-
-{ Byte-wise ordering: negative, zero or positive. }
-function CompareText(First, Second: PChar): Integer;
-function CompareTextIgnoringCase(First, Second: PChar): Integer;
-function TextStartsWith(Text, Prefix: PChar): Boolean;
-function TextEndsWith(Text, Suffix: PChar): Boolean;
-{ Index of the first occurrence of Character, or -1. }
-function FindCharacter(Text: PChar; Character: Char): PtrInt;
-function FindLastCharacter(Text: PChar; Character: Char): PtrInt;
-{ Index of the first occurrence of Pattern, or -1. }
-function FindText(Text, Pattern: PChar): PtrInt;
 
 procedure BeginText(out Builder: TTextBuilder);
 procedure AppendText(var Builder: TTextBuilder; Text: PChar);
@@ -129,94 +116,6 @@ begin
     Result := Char(Ord(Character) + 32)
   else
     Result := Character;
-end;
-
-function CompareText(First, Second: PChar): Integer;
-var
-  Index: PtrUInt;
-begin
-  Index := 0;
-  while (First[Index] <> #0) and (First[Index] = Second[Index]) do
-    Inc(Index);
-  Result := Integer(Byte(First[Index])) - Integer(Byte(Second[Index]));
-end;
-
-function CompareTextIgnoringCase(First, Second: PChar): Integer;
-var
-  Index: PtrUInt;
-begin
-  Index := 0;
-  while (First[Index] <> #0) and (ToLowerCase(First[Index]) = ToLowerCase(Second[Index])) do
-    Inc(Index);
-  Result := Integer(Byte(ToLowerCase(First[Index]))) - Integer(Byte(ToLowerCase(Second[Index])));
-end;
-
-function TextStartsWith(Text, Prefix: PChar): Boolean;
-var
-  Index: PtrUInt;
-begin
-  Index := 0;
-  while Prefix[Index] <> #0 do
-  begin
-    if Text[Index] <> Prefix[Index] then
-      Exit(False);
-    Inc(Index);
-  end;
-  Result := True;
-end;
-
-function TextEndsWith(Text, Suffix: PChar): Boolean;
-var
-  TextSize: PtrUInt;
-  SuffixSize: PtrUInt;
-begin
-  TextSize := TextLength(Text);
-  SuffixSize := TextLength(Suffix);
-  Result := (SuffixSize <= TextSize) and TextIsEqual(Text + (TextSize - SuffixSize), Suffix);
-end;
-
-function FindCharacter(Text: PChar; Character: Char): PtrInt;
-var
-  Index: PtrInt;
-begin
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    if Text[Index] = Character then
-      Exit(Index);
-    Inc(Index);
-  end;
-  Result := -1;
-end;
-
-function FindLastCharacter(Text: PChar; Character: Char): PtrInt;
-var
-  Index: PtrInt;
-begin
-  Result := -1;
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    if Text[Index] = Character then
-      Result := Index;
-    Inc(Index);
-  end;
-end;
-
-function FindText(Text, Pattern: PChar): PtrInt;
-var
-  Index: PtrInt;
-begin
-  if Pattern^ = #0 then
-    Exit(0);
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    if TextStartsWith(Text + Index, Pattern) then
-      Exit(Index);
-    Inc(Index);
-  end;
-  Result := -1;
 end;
 
 { --- Builder --------------------------------------------------------- }
