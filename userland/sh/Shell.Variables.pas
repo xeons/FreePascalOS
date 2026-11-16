@@ -134,7 +134,9 @@ end;
 
 function FindEnvironmentVariable(const Name: string; out Value: string): Boolean;
 begin
-  Result := FindVariable(Name, Value);
+  { Qualified: this unit has a FindVariable of its own (shell variables
+    first), which would call back here without end. }
+  Result := Sys.Environment.FindVariable(Name, Value);
 end;
 
 function IsEnvironmentVariable(const Name: string): Boolean;

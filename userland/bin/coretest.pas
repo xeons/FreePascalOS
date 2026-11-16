@@ -391,7 +391,9 @@ const
       'tlstest: library finalizer ran'#10; ExpectedStatus: 0),
     (Command: '/bin/threadtest --exit-with-threads-running; echo $?'; ExpectedOutput: 'tlstest: library finalizer ran'#10'7'#10; ExpectedStatus: 0),
     (Command: '/bin/threadtest --last-thread-exits; echo $?'; ExpectedOutput: '5'#10; ExpectedStatus: 0),
-    (Command: '/bin/threadtest --crash-in-thread 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'tlstest: library finalizer ran'#10'216'#10'still running'#10; ExpectedStatus: 0),
+    { threadtest has SysUtils (through libcoreutils), so the crash ends
+      as an unhandled exception: status 217. }
+    (Command: '/bin/threadtest --crash-in-thread 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'tlstest: library finalizer ran'#10'217'#10'still running'#10; ExpectedStatus: 0),
     { --- users and processes ----------------------------------------- }
     (Command: 'umask; umask 077; touch um1; mkdir um2; stat -c %a um1 um2; umask -S; umask 022'; ExpectedOutput: '0022'#10'600'#10'700'#10'u=rwx,g=,o='#10; ExpectedStatus: 0),
     (Command: 'su user -c "id; whoami; logname; cd; pwd; echo \$HOME"'; ExpectedOutput: 'uid=1000(user) gid=1000(user) groups=1000(user)'#10'user'#10'user'#10'/home/user'#10'/home/user'#10; ExpectedStatus: 0),

@@ -726,8 +726,10 @@ begin
 end;
 
 { The subject as matching sees it: up to its first #0, as the tools have
-  always treated a line. }
-procedure BeginMatcher(out Matcher: TMatcher; const Expression: TExpression; const Subject: string);
+  always treated a line. Expression is constref: the matcher keeps its
+  address, and a small const record may be passed as a copy that is gone
+  once this returns. }
+procedure BeginMatcher(out Matcher: TMatcher; constref Expression: TExpression; const Subject: string);
 var
   Terminator: Integer;
 begin
