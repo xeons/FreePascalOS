@@ -35,11 +35,16 @@ uses
 const
   ZlibHeaderSize = 2;
   ZlibTrailerSize = 4;
+  ZlibDictionaryIdSize = 4;
 
-{ Checks a zlib header. }
-function CheckZlibHeader(MethodByte: Byte; FlagsByte: Byte): TCompressionError;
-{ The header for data compressed at Level (0 to 9). }
-procedure MakeZlibHeader(Level: Integer; out MethodByte: Byte; out FlagsByte: Byte);
+{ Checks a zlib header; one with a preset dictionary is refused unless
+  AllowDictionary. }
+function CheckZlibHeader(MethodByte: Byte; FlagsByte: Byte; AllowDictionary: Boolean = False): TCompressionError;
+{ True if the header says a dictionary id follows. }
+function ZlibHeaderHasDictionary(FlagsByte: Byte): Boolean;
+{ The header for data compressed at Level (0 to 9), with or without a
+  preset dictionary. }
+procedure MakeZlibHeader(Level: Integer; out MethodByte: Byte; out FlagsByte: Byte; WithDictionary: Boolean = False);
 
 implementation
 
@@ -48,7 +53,7 @@ const
   LargestWindowInfo = 7;
   PresetDictionaryFlag = $20;
 
-function CheckZlibHeader(MethodByte: Byte; FlagsByte: Byte): TCompressionError;
+function CheckZlibHeader(MethodByte: Byte; FlagsByte: Byte; AllowDictionary: Boolean): TCompressionError;
 begin
   if ((Word(MethodByte) shl 8) or FlagsByte) mod 31 <> 0 then
     Result := CompressionErrorInvalidZlibHeader
@@ -56,13 +61,18 @@ begin
     Result := CompressionErrorUnsupportedMethod
   else if (MethodByte shr 4) > LargestWindowInfo then
     Result := CompressionErrorInvalidZlibHeader
-  else if (FlagsByte and PresetDictionaryFlag) <> 0 then
+  else if ((FlagsByte and PresetDictionaryFlag) <> 0) and not AllowDictionary then
     Result := CompressionErrorPresetDictionary
   else
     Result := CompressionErrorNone;
 end;
 
-procedure MakeZlibHeader(Level: Integer; out MethodByte: Byte; out FlagsByte: Byte);
+function ZlibHeaderHasDictionary(FlagsByte: Byte): Boolean;
+begin
+  Result := (FlagsByte and PresetDictionaryFlag) <> 0;
+end;
+
+procedure MakeZlibHeader(Level: Integer; out MethodByte: Byte; out FlagsByte: Byte; WithDictionary: Boolean);
 var
   LevelHint: Integer;
   Remainder: Integer;
@@ -77,6 +87,8 @@ begin
   else
     LevelHint := 3;
   FlagsByte := LevelHint shl 6;
+  if WithDictionary then
+    FlagsByte := FlagsByte or PresetDictionaryFlag;
   Remainder := ((Word(MethodByte) shl 8) or FlagsByte) mod 31;
   if Remainder <> 0 then
     FlagsByte := FlagsByte + (31 - Remainder);

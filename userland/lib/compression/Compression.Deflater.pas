@@ -36,6 +36,21 @@
 
   Set GzipHeader before the first Compress to give a gzip member a file
   name, time or comment.
+
+  SetDictionary before the first Compress gives raw or zlib data a
+  preset dictionary: data seen as coming just before the input, which
+  matches may refer back into (zlib data says so in its header, with
+  the dictionary's Adler-32; the decompressor must be given the same
+  dictionary). Only its last 32 KiB or so matter.
+
+  Compress with a TDeflateFlush says how far to go once all input is
+  taken: FlushNone (as Finish = False), FlushSync (everything so far
+  goes out, ending on a byte with an empty stored block, so that the
+  receiver can decompress all of it now), FlushFull (as FlushSync, and
+  nothing before is referred to after it, so decompression can start
+  again from there) or FlushFinish (as Finish = True). A flush ends with
+  DeflateNeedsInput once all of it is out; asking for it again without
+  new input adds nothing.
 }
 unit Compression.Deflater;
 
@@ -47,6 +62,7 @@ interface
 
 uses
   SysUtils,
+  Compression.Errors,
   Compression.Formats,
   Compression.Checksums,
   Compression.ZlibFormat,
@@ -58,6 +74,8 @@ type
   TDeflateResult = (DeflateNeedsInput, DeflateOutputFull, DeflateFinished);
 
   TDeflaterStage = (DeflaterStart, DeflaterBody, DeflaterDone);
+
+  TDeflateFlush = (FlushNone, FlushSync, FlushFull, FlushFinish);
 
   TDeflater = class
   private
@@ -72,6 +90,8 @@ type
     FTotalInput: Int64;
     FTotalOutput: Int64;
     FGzipHeader: TGzipHeader;
+    FDictionary: TBytes;
+    FFlushedSinceInput: Boolean;
     procedure WriteHeader;
     procedure WriteTrailer;
     procedure TakeInput;
@@ -82,7 +102,13 @@ type
     { Ready for a new stream, with the same format and level. }
     procedure Reset;
     procedure SetInput(Data: Pointer; Count: SizeInt);
+    { Raw and zlib only, before the first Compress (else
+      ECompressionError, CompressionErrorInvalidArgument). Kept across
+      Reset. }
+    procedure SetDictionary(Data: Pointer; Count: SizeInt);
     function Compress(Output: Pointer; Capacity: SizeInt; out Written: SizeInt; Finish: Boolean): TDeflateResult;
+    function Compress(Output: Pointer; Capacity: SizeInt; out Written: SizeInt;
+      Flush: TDeflateFlush): TDeflateResult;
 
     property Format: TCompressionFormat read FFormat;
     property Level: Integer read FLevel;
@@ -127,10 +153,26 @@ begin
   FInputRemaining := 0;
   FTotalInput := 0;
   FTotalOutput := 0;
+  FFlushedSinceInput := False;
   if FFormat = FormatGzip then
     FChecksum := Crc32Initial
   else
     FChecksum := Adler32Initial;
+  if Length(FDictionary) > 0 then
+    FEngine.SetDictionary(@FDictionary[0], Length(FDictionary));
+end;
+
+procedure TDeflater.SetDictionary(Data: Pointer; Count: SizeInt);
+begin
+  if (FFormat = FormatGzip) or (FStage <> DeflaterStart) or (FTotalInput > 0) or (Count < 0) then
+    raise ECompressionError.CreateCode(CompressionErrorInvalidArgument);
+  FDictionary := nil;
+  SetLength(FDictionary, Count);
+  if Count > 0 then
+    Move(Data^, FDictionary[0], Count);
+  FEngine.Reset;
+  if Count > 0 then
+    FEngine.SetDictionary(@FDictionary[0], Count);
 end;
 
 procedure TDeflater.SetInput(Data: Pointer; Count: SizeInt);
@@ -146,13 +188,22 @@ var
   MethodByte: Byte;
   FlagsByte: Byte;
   Header: TBytes;
+  DictionaryId: LongWord;
 begin
   case FFormat of
     FormatZlib:
       begin
-        MakeZlibHeader(FLevel, MethodByte, FlagsByte);
+        MakeZlibHeader(FLevel, MethodByte, FlagsByte, Length(FDictionary) > 0);
         FWriter.WriteBits(MethodByte, 8);
         FWriter.WriteBits(FlagsByte, 8);
+        if Length(FDictionary) > 0 then
+        begin
+          DictionaryId := Adler32OfBytes(FDictionary);
+          FWriter.WriteBits(DictionaryId shr 24, 8);
+          FWriter.WriteBits((DictionaryId shr 16) and $FF, 8);
+          FWriter.WriteBits((DictionaryId shr 8) and $FF, 8);
+          FWriter.WriteBits(DictionaryId and $FF, 8);
+        end;
       end;
     FormatGzip:
       begin
@@ -196,11 +247,21 @@ begin
     Inc(FInput, Count);
     Dec(FInputRemaining, Count);
     Inc(FTotalInput, Count);
+    FFlushedSinceInput := False;
   end;
   FEngine.Process(False);
 end;
 
 function TDeflater.Compress(Output: Pointer; Capacity: SizeInt; out Written: SizeInt; Finish: Boolean): TDeflateResult;
+begin
+  if Finish then
+    Result := Compress(Output, Capacity, Written, FlushFinish)
+  else
+    Result := Compress(Output, Capacity, Written, FlushNone);
+end;
+
+function TDeflater.Compress(Output: Pointer; Capacity: SizeInt; out Written: SizeInt;
+  Flush: TDeflateFlush): TDeflateResult;
 var
   Count: SizeInt;
 begin
@@ -225,7 +286,12 @@ begin
       DeflaterBody:
         if FInputRemaining > 0 then
           TakeInput
-        else if not Finish then
+        else if (Flush in [FlushSync, FlushFull]) and not FFlushedSinceInput then
+        begin
+          FEngine.Flush(Flush = FlushFull);
+          FFlushedSinceInput := True;
+        end
+        else if Flush <> FlushFinish then
         begin
           Result := DeflateNeedsInput;
           Exit;

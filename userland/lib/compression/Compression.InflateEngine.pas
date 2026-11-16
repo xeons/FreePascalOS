@@ -153,6 +153,10 @@ type
       gzip member): keeps the input and the bytes read ahead. }
     procedure StartStream;
     procedure SetInput(Data: PByte; Count: SizeInt);
+    { Right after StartStream: the data seen as decoded just before the
+      stream (a preset dictionary), which matches may refer back into.
+      It is not output. }
+    procedure SetDictionary(Data: PByte; Count: SizeInt);
     { Decodes until the input runs out, the buffer is full, the last
       block ends or an error is found. }
     function Decode: TEngineOutcome;
@@ -205,6 +209,20 @@ procedure TInflateEngine.SetInput(Data: PByte; Count: SizeInt);
 begin
   FInput := Data;
   FInputRemaining := Count;
+end;
+
+procedure TInflateEngine.SetDictionary(Data: PByte; Count: SizeInt);
+begin
+  if (FWritePosition <> 0) or (Count <= 0) then
+    Exit;
+  if Count > WindowSize then
+  begin
+    Inc(Data, Count - WindowSize);
+    Count := WindowSize;
+  end;
+  Move(Data^, FHistory[0], Count);
+  FWritePosition := Count;
+  FTakenPosition := Count;
 end;
 
 function TInflateEngine.Fail(Error: TCompressionError): TEngineOutcome;

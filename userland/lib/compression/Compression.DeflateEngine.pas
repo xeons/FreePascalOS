@@ -77,6 +77,15 @@ type
     procedure Process(Flushing: Boolean);
     { Codes the rest and sends the last block (not padded to a byte). }
     procedure Finish;
+    { Before any input: the data seen as coming just before it (a preset
+      dictionary), which matches may refer back into. }
+    procedure SetDictionary(Data: PByte; Count: SizeInt);
+    { Codes everything taken so far and ends it with an empty stored
+      block, so that the output so far is whole bytes that decompress to
+      all of the input so far (a sync flush). With Full, nothing before
+      is referred to after it either, so decompression may start again
+      from here (a full flush). }
+    procedure Flush(Full: Boolean);
     property Level: Integer read FLevel;
   end;
 
@@ -309,6 +318,39 @@ begin
       Dec(Finder.Lookahead);
     end;
   end;
+end;
+
+procedure TDeflateEngine.SetDictionary(Data: PByte; Count: SizeInt);
+begin
+  if FLevel > 0 then
+    FFinder.Preload(Data, Count);
+end;
+
+procedure TDeflateEngine.Flush(Full: Boolean);
+begin
+  if FLevel = 0 then
+  begin
+    if FFinder.Lookahead > 0 then
+      WriteStoredBlocks(FWriter, FFinder.AddressOf(FFinder.Position), FFinder.Lookahead, False);
+    Inc(FFinder.Position, FFinder.Lookahead);
+    FFinder.Lookahead := 0;
+    FFinder.BlockStart := FFinder.Position;
+  end
+  else
+  begin
+    Process(True);
+    if FMatchAvailable then
+    begin
+      FBlock.AddLiteral(FFinder.ByteAt(FFinder.Position - 1));
+      FMatchAvailable := False;
+    end;
+    FMatchLength := MinimumMatch - 1;
+    if FBlock.Count > 0 then
+      EmitBlock(False);
+  end;
+  WriteStoredBlocks(FWriter, nil, 0, False);
+  if Full then
+    FFinder.ForgetHistory;
 end;
 
 procedure TDeflateEngine.Finish;

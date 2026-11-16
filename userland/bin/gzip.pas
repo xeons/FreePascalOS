@@ -25,6 +25,9 @@
   -k keeps it or -c writes to standard output instead. With no FILE,
   or "-", standard input goes to standard output. The original name is
   kept in the header; several members in one file decompress as one.
+
+  Started as gunzip it decompresses (as gzip -d); started as zcat it
+  decompresses to standard output (as gzip -dc).
 }
 program gzip;
 
@@ -228,12 +231,27 @@ begin
     DeleteFile(Name);
 end;
 
+procedure TakeDefaultsFromProgramName;
+var
+  Name: string;
+begin
+  Name := ProgramName;
+  if Name = 'gunzip' then
+    Decompressing := True
+  else if Name = 'zcat' then
+  begin
+    Decompressing := True;
+    ToStandardOutput := True;
+  end;
+end;
+
 var
   CommandLine: TCommandLine;
   Code: Integer;
   Value: string;
   Operand: string;
 begin
+  TakeDefaultsFromProgramName;
   CommandLine := TCommandLine.Create([
     CommandOption('c', 'stdout', False, OptionStandardOutput),
     CommandOption('d', 'decompress', False, OptionDecompress),
