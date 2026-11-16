@@ -40,6 +40,7 @@ procedure TestTiff;
 implementation
 
 uses
+  ImageTest.Random,
   SysUtils,
   Image.Errors,
   Image.Model,
@@ -306,13 +307,7 @@ begin
 end;
 
 var
-  RandomState: LongWord = 24680;
-
-function NextRandom(Limit: LongWord): LongWord;
-begin
-  RandomState := RandomState * 1103515245 + 12345;
-  Result := (RandomState shr 8) mod Limit;
-end;
+  DamageRandom: TTestRandom = (State: 24680);
 
 { An empty string when Data loads or is refused properly. }
 function TryDamaged(const Data: TBytes): string;
@@ -360,8 +355,8 @@ begin
     if Problem <> '' then
       Break;
     Damaged := Copy(Good);
-    for Change := 0 to NextRandom(8) do
-      Damaged[NextRandom(Length(Damaged))] := NextRandom(256);
+    for Change := 0 to NextRandom(DamageRandom, 8) do
+      Damaged[NextRandom(DamageRandom, Length(Damaged))] := NextRandom(DamageRandom, 256);
     Problem := TryDamaged(Damaged);
     Description := 'damage ' + IntToStr(Index);
   end;

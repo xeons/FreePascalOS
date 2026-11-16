@@ -42,6 +42,7 @@ implementation
 uses
   Classes,
   SysUtils,
+  Math,
   TestChecks,
   Compression.Errors,
   Compression.Formats,
@@ -242,10 +243,12 @@ begin
       Output := nil;
       SetLength(Output, Length(Expected) + 100);
       Used := 0;
+      { Pieces of 777 bytes, each no larger than the room left, until the
+        stream ends (or the buffer, larger than the data, would overflow). }
       repeat
-        Count := Reader.Read(Output[Used], 777);
+        Count := Reader.Read(Output[Used], Min(777, Length(Output) - Used));
         Inc(Used, Count);
-      until (Count = 0) or (Used + 777 > Length(Output));
+      until (Count = 0) or (Used = Length(Output));
       SetLength(Output, Used);
       Check(SameData(Output, Expected), 'decompression stream over two gzip members');
       Check(Reader.Seek(0, soCurrent) = Length(Expected), 'decompression stream position');

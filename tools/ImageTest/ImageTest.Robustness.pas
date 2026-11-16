@@ -35,6 +35,7 @@ procedure TestRobustness;
 implementation
 
 uses
+  ImageTest.Random,
   SysUtils,
   Image.Errors,
   Image.Model,
@@ -53,13 +54,7 @@ const
   DamagesPerFile = 40;
 
 var
-  RandomState: LongWord = 12345;
-
-function NextRandom(Limit: LongWord): LongWord;
-begin
-  RandomState := RandomState * 1103515245 + 12345;
-  Result := (RandomState shr 8) mod Limit;
-end;
+  DamageRandom: TTestRandom = (State: 12345);
 
 { An empty string when Data loads or is refused properly; what went
   wrong otherwise. }
@@ -106,9 +101,9 @@ begin
     if Problem <> '' then
       Break;
     Damaged := Copy(Good);
-    Changes := 1 + NextRandom(8);
+    Changes := 1 + NextRandom(DamageRandom, 8);
     for Change := 1 to Changes do
-      Damaged[NextRandom(Length(Damaged))] := NextRandom(256);
+      Damaged[NextRandom(DamageRandom, Length(Damaged))] := NextRandom(DamageRandom, 256);
     Problem := TryDamaged(Damaged);
     Description := 'damage ' + IntToStr(Index);
   end;

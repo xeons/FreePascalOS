@@ -40,6 +40,7 @@ procedure TestPng;
 implementation
 
 uses
+  ImageTest.Random,
   SysUtils,
   DateUtils,
   StrUtils,
@@ -180,17 +181,17 @@ var
   Started: TDateTime;
   Image: TImage;
 begin
-  CheckPng('pillow-rgb.png');
-  CheckPng('pillow-palette.png');
-  CheckPng('pillow-grey.png', 8);
-  CheckPng('pillow-grey-alpha.png', 16);
-  CheckPng('pillow-bilevel.png', 1);
-  CheckPng('pillow-rgba.png', 32);
+  CheckPng('png-pillow-rgb.png');
+  CheckPng('png-pillow-palette.png');
+  CheckPng('png-pillow-grey.png', 8);
+  CheckPng('png-pillow-grey-alpha.png', 16);
+  CheckPng('png-pillow-bilevel.png', 1);
+  CheckPng('png-pillow-rgba.png', 32);
   Started := Now;
-  Image := LoadImage(FixtureBytes('pillow-large.png'));
+  Image := LoadImage(FixtureBytes('png-pillow-large.png'));
   try
     Note(Format('1600 x 1200 RGB decoded in %d ms', [MilliSecondsBetween(Now, Started)]));
-    CheckImageMatchesReference('a large picture', Image, 'pillow-large.rgba', 0);
+    CheckImageMatchesReference('a large picture', Image, 'png-pillow-large.rgba', 0);
   finally
     Image.Free;
   end;
@@ -280,13 +281,7 @@ end;
 { --- Damage behind correct CRCs ------------------------------------- }
 
 var
-  RandomState: LongWord = 271828;
-
-function NextRandom(Limit: LongWord): LongWord;
-begin
-  RandomState := RandomState * 1103515245 + 12345;
-  Result := (RandomState shr 8) mod Limit;
-end;
+  DamageRandom: TTestRandom = (State: 271828);
 
 function BigLongAt(const Data: TBytes; Offset: PtrInt): LongWord;
 begin
@@ -318,10 +313,10 @@ begin
       Break;
     if (ChunkLength > 0) and (Position > 8) then
     begin
-      Changes := NextRandom(3);
+      Changes := NextRandom(DamageRandom, 3);
       while Changes > 0 do
       begin
-        Data[Position + 8 + NextRandom(ChunkLength)] := NextRandom(256);
+        Data[Position + 8 + NextRandom(DamageRandom, ChunkLength)] := NextRandom(DamageRandom, 256);
         Dec(Changes);
       end;
     end;

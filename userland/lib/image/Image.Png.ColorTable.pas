@@ -92,8 +92,12 @@ begin
 end;
 
 function HashColor(Color: TColor): LongWord; inline;
+var
+  Product: QWord;
 begin
-  Result := (Color * LongWord(2654435761)) shr 22;
+  { Fibonacci hashing modulo 2^32: the top 10 bits of the low word. }
+  Product := QWord(Color) * 2654435761;
+  Result := LongWord(Product and $FFFFFFFF) shr 22;
 end;
 
 function TPngColorTable.SlotOf(Color: TColor): LongInt;

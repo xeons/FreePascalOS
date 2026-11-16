@@ -322,7 +322,7 @@ begin
   Check(ImageFormatFromName('xyz') = ImageFormatUnknown, 'an unknown name');
   Image := nil;
   Check(not TryLoadImage(TBytes.Create($89, $50, $4E, $47, $0D, $0A, $1A, $0A, 0, 0, 0, 13), Image, Reason) and
-    (Reason = ImageErrorNeedsPng), 'a PNG needs PNG');
+    (Reason in [ImageErrorTruncated, ImageErrorMalformed]), 'a cut-off PNG refused');
   Check(not TryLoadImage(TBytes.Create(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), Image, Reason) and
     (Reason = ImageErrorUnknownFormat), 'unknown content refused');
   Check(not TryLoadImage(TBytes(nil), Image, Reason) and (Reason = ImageErrorUnknownFormat),
@@ -362,12 +362,12 @@ begin
   try
     Reason := ImageErrorNone;
     try
-      EncodeImage(Image, ImageFormatPng);
+      Check(Length(EncodeImage(Image, ImageFormatPng)) > 0, 'a PNG encoded');
     except
       on Error: EImageError do
         Reason := Error.Reason;
     end;
-    Check(Reason = ImageErrorNoEncoder, 'no encoder for PNG yet');
+    Check(Reason = ImageErrorNone, 'PNG has an encoder');
   finally
     Image.Free;
   end;

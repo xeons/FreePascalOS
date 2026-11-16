@@ -101,13 +101,19 @@ begin
   end;
 end;
 
+{ A mask of the lowest Count bits (Count from 0 to 63). }
+function LowBitsMask(Count: LongInt): QWord;
+begin
+  Result := (QWord(1) shl Count) - 1;
+end;
+
 procedure PutBits(var Bits: TJpegBitWriter; Value: LongWord; Size: LongInt);
 var
   OutputByte: Byte;
 begin
   if Size <= 0 then
     Exit;
-  Bits.Accumulator := (Bits.Accumulator shl Size) or (Value and ((LongWord(1) shl Size) - 1));
+  Bits.Accumulator := (Bits.Accumulator shl Size) or (QWord(Value) and LowBitsMask(Size));
   Inc(Bits.BitCount, Size);
   while Bits.BitCount >= 8 do
   begin
@@ -117,6 +123,8 @@ begin
       Bits.Writer.WriteByte(0);
     Dec(Bits.BitCount, 8);
   end;
+  { Only the bits not yet written stay, so the accumulator never fills. }
+  Bits.Accumulator := Bits.Accumulator and LowBitsMask(Bits.BitCount);
 end;
 
 procedure FlushBits(var Bits: TJpegBitWriter);

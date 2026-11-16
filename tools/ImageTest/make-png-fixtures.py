@@ -391,19 +391,19 @@ def make_metadata():
 
 def make_pillow_files():
     picture = fixturecommon.test_picture(160, 120, seed=40)
-    picture.save(path("pillow-rgb.png"), optimize=True)
-    picture.quantize(colors=200).save(path("pillow-palette.png"))
-    picture.convert("L").save(path("pillow-grey.png"))
-    fixturecommon.test_picture(64, 48, seed=41, alpha=True).convert("LA").save(path("pillow-grey-alpha.png"))
-    picture.convert("1").save(path("pillow-bilevel.png"))
-    fixturecommon.test_picture(90, 70, seed=42, alpha=True).save(path("pillow-rgba.png"), compress_level=1)
-    for name in ("pillow-rgb", "pillow-palette", "pillow-grey", "pillow-grey-alpha", "pillow-bilevel", "pillow-rgba"):
+    picture.save(path("png-pillow-rgb.png"), optimize=True)
+    picture.quantize(colors=200).save(path("png-pillow-palette.png"))
+    picture.convert("L").save(path("png-pillow-grey.png"))
+    fixturecommon.test_picture(64, 48, seed=41, alpha=True).convert("LA").save(path("png-pillow-grey-alpha.png"))
+    picture.convert("1").save(path("png-pillow-bilevel.png"))
+    fixturecommon.test_picture(90, 70, seed=42, alpha=True).save(path("png-pillow-rgba.png"), compress_level=1)
+    for name in ("png-pillow-rgb", "png-pillow-palette", "png-pillow-grey", "png-pillow-grey-alpha", "png-pillow-bilevel", "png-pillow-rgba"):
         with Image.open(path(name + ".png")) as image:
             fixturecommon.write_reference(path(name + ".rgba"), image)
     # A large picture, for the time it takes.
-    fixturecommon.smooth_picture(1600, 1200).save(path("pillow-large.png"))
-    with Image.open(path("pillow-large.png")) as image:
-        fixturecommon.write_reference(path("pillow-large.rgba"), image)
+    fixturecommon.smooth_picture(1600, 1200).save(path("png-pillow-large.png"))
+    with Image.open(path("png-pillow-large.png")) as image:
+        fixturecommon.write_reference(path("png-pillow-large.rgba"), image)
 
 
 # --- Broken files ------------------------------------------------------------
