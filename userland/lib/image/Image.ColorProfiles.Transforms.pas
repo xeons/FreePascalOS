@@ -116,6 +116,8 @@ const
   FractionBits = 8;
   FractionOne = 1 shl FractionBits;
   SameMatrixTolerance = 0.003;
+  { Far beyond any real matrix, and small enough for 64-bit sums. }
+  LargestCoefficient = 1000000.0;
   SameCurveTolerance = 0.5 / 255;
 
 function ClampValue(Value, Low, High: Int64): Int64; inline;
@@ -185,11 +187,12 @@ begin
   FKind := SrgbTransformMatrixShaper;
   for Channel := 0 to 2 do
     for Value := 0 to 255 do
-      FLinear[Channel, Value] := ClampValue(Round(EvaluateToneCurve(Curves[Channel], Value / 255) * LinearOne), 0,
+      FLinear[Channel, Value] := Round(EnsureRange(EvaluateToneCurve(Curves[Channel], Value / 255), 0, 1) *
         LinearOne);
   for Channel := 0 to 2 do
     for Column := 0 to 2 do
-      FMatrix[Channel, Column] := Round(Total[Channel, Column] * (1 shl MatrixShift));
+      FMatrix[Channel, Column] := Round(EnsureRange(Total[Channel, Column], -LargestCoefficient, LargestCoefficient) *
+        (1 shl MatrixShift));
   BuildEncodeTable;
 end;
 

@@ -21,8 +21,12 @@
   new and old style, deflate, JPEG with and without JPEGTables), both
   byte orders, BigTIFF, strips and tiles, separate planes, the
   horizontal predictor, 1- to 16-bit samples, white and black is zero,
-  palettes, alpha associated and not, CMYK, YCbCr subsampled; lossless
-  files exactly as their references, JPEG within 2. Several pages, the
+  palettes, alpha associated and not, CMYK, YCbCr subsampled; fax
+  compression (CCITT RLE, Group 3 one- and two-dimensional, with fill
+  bits, Group 4, fill order 2, white is zero), floating point samples
+  (16 and 32 bits, the floating point predictor, high dynamic range);
+  lossless files exactly as their references, JPEG within 2 (old-style
+  JPEG too). Several pages, the
   metadata, a directory linking to itself; writing (uncompressed, LZW,
   deflate, with and without the predictor, several pages) read back
   here and by Pillow (check-with-pillow.py); malformed files refused
@@ -63,13 +67,27 @@ const
     'tiff-grey4-white-be', 'tiff-palette4-be', 'tiff-planar-rgba-be', 'tiff-associated', 'tiff-grey-alpha',
     'tiff-cmyk', 'tiff-ycbcr22', 'tiff-ycbcr21-lzw', 'tiff-loop');
 
-  JpegFixtures: array[0..3] of string = (
-    'tiff-jpeg-rgb', 'tiff-jpeg-ycbcr', 'tiff-jpeg-strips', 'tiff-jpeg-tiles');
+  JpegFixtures: array[0..5] of string = (
+    'tiff-jpeg-rgb', 'tiff-jpeg-ycbcr', 'tiff-jpeg-strips', 'tiff-jpeg-tiles', 'tiff-old-jpeg',
+    'tiff-old-jpeg-strips');
+
+  FaxFixtures: array[0..9] of string = (
+    'tiff-g4', 'tiff-g3', 'tiff-g3-2d', 'tiff-g3-fill', 'tiff-ccitt-rle', 'tiff-g4-strips', 'tiff-g4-fill-order',
+    'tiff-g3-2d-fill-order', 'tiff-g3-2d-fax-width', 'tiff-g4-white-is-zero');
+
+  FloatFixtures: array[0..6] of string = (
+    'tiff-float-predictor-deflate', 'tiff-float-predictor-lzw', 'tiff-float-rgb-be-predictor',
+    'tiff-float-rgb-le-predictor', 'tiff-half-grey', 'tiff-half-grey-be-predictor', 'tiff-float-hdr');
 
   DamagedFixtures: array[0..11] of string = (
     'tiff-lzw', 'tiff-be-lzw-predictor', 'tiff-tiles', 'tiff-planar-rgba-be', 'tiff-ycbcr21-lzw',
     'tiff-jpeg-strips', 'tiff-palette4-be', 'tiff-old-lzw', 'tiff-grey16-predictor', 'tiff-bigtiff', 'tiff-pages',
     'tiff-metadata');
+
+  { Damaged after the others, so that their damage stays as it was. }
+  MoreDamagedFixtures: array[0..5] of string = (
+    'tiff-g4', 'tiff-g3-2d', 'tiff-ccitt-rle', 'tiff-float-rgb-be-predictor', 'tiff-half-grey-be-predictor',
+    'tiff-old-jpeg');
 
 function LoadFixture(const Name: string): TImage;
 begin
@@ -107,6 +125,10 @@ begin
     CheckFixture(LosslessFixtures[Index], 0, -1);
   for Index := 0 to High(JpegFixtures) do
     CheckFixture(JpegFixtures[Index], JpegTolerance, JpegMeanTolerance);
+  for Index := 0 to High(FaxFixtures) do
+    CheckFixture(FaxFixtures[Index], 0, -1);
+  for Index := 0 to High(FloatFixtures) do
+    CheckFixture(FloatFixtures[Index], 0, -1);
 end;
 
 procedure TestPages;
@@ -304,6 +326,7 @@ begin
   CheckRefused('bad-tiff-ccitt.tif', ImageErrorUnsupported);
   CheckRefused('bad-tiff-photometric.tif', ImageErrorUnsupported);
   CheckRefused('bad-tiff-strip-offset.tif', ImageErrorTruncated);
+  CheckRefused('bad-tiff-old-jpeg.tif', ImageErrorUnsupported);
 end;
 
 var
@@ -376,6 +399,8 @@ begin
   TestMalformed;
   for Index := 0 to High(DamagedFixtures) do
     TestDamaged(DamagedFixtures[Index]);
+  for Index := 0 to High(MoreDamagedFixtures) do
+    TestDamaged(MoreDamagedFixtures[Index]);
 end;
 
 end.

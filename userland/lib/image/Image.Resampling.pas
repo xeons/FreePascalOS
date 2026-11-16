@@ -117,7 +117,7 @@ function ResamplingKernel(Filter: TResamplingFilter; X: Double): Double;
 begin
   case Filter of
     ResamplingBox:
-      if (X >= -0.5) and (X < 0.5) then
+      if (X > -0.5) and (X <= 0.5) then
         Result := 1
       else
         Result := 0;

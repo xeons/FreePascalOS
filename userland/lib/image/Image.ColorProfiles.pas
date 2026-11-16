@@ -254,32 +254,49 @@ begin
     Image.Metadata.SetValue(MetadataKeyOriginalColorProfile, OriginalName);
 end;
 
-function ConvertImageToSrgb(Image: TImage): TColorConversionResult;
+{ The transform for the image, nil when there is none (Outcome says
+  why); Name names where it came from. }
+function TransformForImage(Image: TImage; out Outcome: TColorConversionResult; out Name: string): TSrgbTransform;
 var
   Profile: TIccProfile;
+begin
+  Name := '';
+  if Length(Image.IccProfile) > 0 then
+  begin
+    Profile := ReadIccProfile(Image.IccProfile);
+    Result := TransformForProfile(Profile, Outcome);
+    Name := Profile.Description;
+    if Name = '' then
+      Name := 'ICC profile';
+    Exit;
+  end;
+  Outcome := ColorConversionNotNeeded;
+  Result := nil;
+  if SameText(Image.Metadata.GetValue(MetadataKeyColorSpace), 'sRGB') then
+    Exit;
+  Result := TransformForPngChunks(Image);
+  if Result <> nil then
+    Outcome := ColorConversionDone;
+  Name := 'PNG gAMA/cHRM';
+end;
+
+function ConvertImageToSrgb(Image: TImage): TColorConversionResult;
+var
   Transform: TSrgbTransform;
   Name: string;
 begin
   Transform := nil;
-  if Length(Image.IccProfile) > 0 then
+  try
+    Transform := TransformForImage(Image, Result, Name);
+  except
+    { Numbers in a damaged profile that no arithmetic can use. }
+    on EMathError do
+      Exit(ColorConversionUnsupported);
+  end;
+  if Result in [ColorConversionUnsupported, ColorConversionNotNeeded] then
   begin
-    Profile := ReadIccProfile(Image.IccProfile);
-    Transform := TransformForProfile(Profile, Result);
-    if Result = ColorConversionUnsupported then
-      Exit;
-    Name := Profile.Description;
-    if Name = '' then
-      Name := 'ICC profile';
-  end
-  else
-  begin
-    if SameText(Image.Metadata.GetValue(MetadataKeyColorSpace), 'sRGB') then
-      Exit(ColorConversionNotNeeded);
-    Transform := TransformForPngChunks(Image);
-    if Transform = nil then
-      Exit(ColorConversionNotNeeded);
-    Result := ColorConversionDone;
-    Name := 'PNG gAMA/cHRM';
+    Transform.Free;
+    Exit;
   end;
   try
     if (Transform <> nil) and (Transform.Kind <> SrgbTransformNone) then

@@ -58,7 +58,8 @@ type
 
 function IdentityCurve: TToneCurve;
 function GammaCurve(Gamma: Double): TToneCurve;
-{ The curve at Value (0 to 1; the result is not clamped). }
+{ The curve at Value (0 to 1; the result is not clamped, but always a
+  finite number). }
 function EvaluateToneCurve(constref Curve: TToneCurve; Value: Double): Double;
 { The curve of the curv or para tag at Offset of Profile (Limit is
   where the tag ends); Size is the bytes it took, rounded up to four.
@@ -92,12 +93,25 @@ begin
   Result.Gamma := Gamma;
 end;
 
+{ Base ^ Exponent for any numbers a profile can hold: 0 for a base not
+  above 0, and kept within e^40 (far beyond any light a curve can
+  mean), so that a damaged profile cannot overflow. }
 function SafePower(Base, Exponent: Double): Double;
+const
+  LargestLogarithm = 40;
+  SmallestLogarithm = -700;
+var
+  Logarithm: Double;
 begin
   if Base <= 0 then
+    Exit(0);
+  Logarithm := Exponent * Ln(Base);
+  if Logarithm > LargestLogarithm then
+    Result := Exp(LargestLogarithm)
+  else if Logarithm < SmallestLogarithm then
     Result := 0
   else
-    Result := Power(Base, Exponent);
+    Result := Exp(Logarithm);
 end;
 
 function EvaluateTable(const Table: array of Double; Value: Double): Double;
