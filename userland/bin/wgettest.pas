@@ -44,28 +44,25 @@
 program wgettest;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Processes,
-  Sys.Streams,
-  Sys.Text,
-  Util.FileTree;
+  Util.FileTree,
+  Util.Output;
 
 type
   TCommandTest = record
-    Command: PChar;
-    ExpectedOutput: PChar;
+    Command: string;
+    ExpectedOutput: string;
     ExpectedStatus: LongInt;
   end;
 
 const
-  WorkDirectory = '/tmp/wgettest';
+  WorkDirectory: string = '/tmp/wgettest';
   DataHash = 'df0f6306fcfb22cadc19e9868af0728ea9444c363c55ac205c4782a827176d9e';
   Hello = 'Hello from the FreePascalOS test server'#10;
   Trust = '--ca-certificate=ca.pem ';
@@ -145,43 +142,29 @@ var
   PassedCount: Integer;
   FailedCount: Integer;
 
-procedure WriteVisible(Text: PChar);
-var
-  Index: Integer;
+{ Text with its line feeds and tabs written as \n and \t. }
+function VisibleText(const Text: string): string;
 begin
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    case Text[Index] of
-      #10: WriteText(StandardOutput, '\n');
-      #9: WriteText(StandardOutput, '\t');
-    else
-      WriteCharacter(StandardOutput, Text[Index]);
-    end;
-    Inc(Index);
-  end;
+  Result := StringReplace(StringReplace(Text, #10, '\n', [rfReplaceAll]), #9, '\t', [rfReplaceAll]);
 end;
 
 { Runs Command through the shell; returns its exit status and output. }
-function RunShellCommand(Command: PChar; out Output: PChar): LongInt;
+function RunShellCommand(const Command: string; out Output: string): LongInt;
 var
   ReadHandle, WriteHandle: Int64;
   Arguments: array[0..3] of PChar;
   Options: TProcessOptions;
   Process: Int64;
-  Builder: TTextBuilder;
   Buffer: array[0..1023] of Char;
+  Chunk: string;
   Count: Int64;
 begin
-  BeginText(Builder);
+  Output := '';
   if CreatePipe(ReadHandle, WriteHandle) <> ErrorNone then
-  begin
-    Output := FinishText(Builder);
     Exit(-1);
-  end;
   Arguments[0] := 'sh';
   Arguments[1] := '-c';
-  Arguments[2] := Command;
+  Arguments[2] := PChar(Command);
   Arguments[3] := nil;
   DefaultProcessOptions(Options);
   Options.OutputHandle := WriteHandle;
@@ -190,63 +173,60 @@ begin
   if Process < 0 then
   begin
     CloseFile(ReadHandle);
-    Output := FinishText(Builder);
     Exit(LongInt(Process));
   end;
   repeat
     Count := ReadFile(ReadHandle, @Buffer[0], SizeOf(Buffer));
     if Count > 0 then
-      AppendBytes(Builder, @Buffer[0], Count);
+    begin
+      SetString(Chunk, PChar(@Buffer[0]), Count);
+      Output := Output + Chunk;
+    end;
   until Count <= 0;
   CloseFile(ReadHandle);
   Result := WaitForProgram(Process);
-  Output := FinishText(Builder);
 end;
 
 procedure RunCommandTest(const Test: TCommandTest);
 var
-  Output: PChar;
+  Output: string;
   Status: LongInt;
 begin
-  ChangeDirectory(WorkDirectory);
+  ChangeDirectory(PChar(WorkDirectory));
   Status := RunShellCommand(Test.Command, Output);
-  if (Status = Test.ExpectedStatus) and TextIsEqual(Output, Test.ExpectedOutput) then
+  if (Status = Test.ExpectedStatus) and (Output = Test.ExpectedOutput) then
   begin
     Inc(PassedCount);
-    WriteFormatted(StandardOutput, 'pass: %s'#10, [ArgumentText(Test.Command)]);
+    PrintStringLine('pass: ' + Test.Command);
   end
   else
   begin
     Inc(FailedCount);
-    WriteFormatted(StandardOutput, 'FAIL: %s'#10'  expected status %d, output "', [ArgumentText(Test.Command),
-      ArgumentNumber(Test.ExpectedStatus)]);
-    WriteVisible(Test.ExpectedOutput);
-    WriteFormatted(StandardOutput, '"'#10'  got      status %d, output "', [ArgumentNumber(Status)]);
-    WriteVisible(Output);
-    WriteLine(StandardOutput, '"');
+    PrintString(Format('FAIL: %s'#10'  expected status %d, output "', [Test.Command, Test.ExpectedStatus]));
+    PrintString(VisibleText(Test.ExpectedOutput));
+    PrintString(Format('"'#10'  got      status %d, output "', [Status]));
+    PrintString(VisibleText(Output));
+    PrintStringLine('"');
   end;
-  FreeMemory(Output);
 end;
 
 var
-  Index: Integer;
+  Test: TCommandTest;
 begin
   PassedCount := 0;
   FailedCount := 0;
-  if PathExists(WorkDirectory) then
+  if PathExists(PChar(WorkDirectory)) then
     RemoveTree(WorkDirectory);
-  CreateDirectory(WorkDirectory);
-  for Index := 0 to High(CommandTests) do
-    RunCommandTest(CommandTests[Index]);
+  CreateDirectory(PChar(WorkDirectory));
+  for Test in CommandTests do
+    RunCommandTest(Test);
   ChangeDirectory('/');
   RemoveTree(WorkDirectory);
   if FailedCount > 0 then
   begin
-    WriteFormatted(StandardOutput, 'wgettest: %d of %d checks failed'#10, [ArgumentNumber(FailedCount),
-      ArgumentNumber(PassedCount + FailedCount)]);
+    PrintString(Format('wgettest: %d of %d checks failed'#10, [FailedCount, PassedCount + FailedCount]));
     Halt(1);
   end;
-  WriteFormatted(StandardOutput, 'wgettest: %d of %d checks passed'#10, [ArgumentNumber(PassedCount),
-    ArgumentNumber(PassedCount + FailedCount)]);
+  PrintString(Format('wgettest: %d of %d checks passed'#10, [PassedCount, PassedCount + FailedCount]));
   Halt(0);
 end.

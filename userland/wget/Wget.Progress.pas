@@ -30,14 +30,14 @@
 unit Wget.Progress;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 type
   TProgress = record
     Enabled: Boolean;
-    Name: array[0..63] of Char;
+    Name: string;
     { -1 when not known. }
     ExpectedTotal: Int64;
     { Bytes there before this transfer (-c). }
@@ -48,47 +48,40 @@ type
     Columns: Integer;
   end;
 
-procedure BeginProgress(out Progress: TProgress; Name: PChar; ExpectedTotal, StartingBytes: Int64; Quiet: Boolean);
+procedure BeginProgress(out Progress: TProgress; const Name: string; ExpectedTotal, StartingBytes: Int64;
+  Quiet: Boolean);
 procedure AdvanceProgress(var Progress: TProgress; Count: Int64);
 procedure FinishProgress(var Progress: TProgress);
 { "1.23M", "456K", "789". }
-procedure FormatSize(Bytes: Int64; Buffer: PChar);
+function FormatSize(Bytes: Int64): string;
 { Bytes per second as "456KB/s" or "1.23MB/s". }
-procedure FormatSpeed(BytesPerSecond: Int64; Buffer: PChar);
+function FormatSpeed(BytesPerSecond: Int64): string;
 
 implementation
 
 uses
+  SysUtils,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Console,
   Sys.Streams,
-  Sys.Time;
+  Sys.Time,
+  Util.Output;
 
 const
   RedrawInterval = 200;
+  { The most of the file's name the line shows. }
+  MaximumShownNameLength = 63;
 
-procedure CopyName(Destination: PChar; Capacity: Integer; Source: PChar);
-var
-  Index: Integer;
-begin
-  Index := 0;
-  while (Source[Index] <> #0) and (Index < Capacity - 1) do
-  begin
-    Destination[Index] := Source[Index];
-    Inc(Index);
-  end;
-  Destination[Index] := #0;
-end;
-
-procedure BeginProgress(out Progress: TProgress; Name: PChar; ExpectedTotal, StartingBytes: Int64; Quiet: Boolean);
+procedure BeginProgress(out Progress: TProgress; const Name: string; ExpectedTotal, StartingBytes: Int64;
+  Quiet: Boolean);
 var
   Rows: LongInt;
   Columns: LongInt;
 begin
-  FillChar(Progress, SizeOf(Progress), 0);
+  Progress := Default(TProgress);
   Progress.Enabled := not Quiet and IsConsole(StandardErrorHandle);
-  CopyName(@Progress.Name[0], SizeOf(Progress.Name), Name);
+  Progress.Name := Copy(Name, 1, MaximumShownNameLength);
   Progress.ExpectedTotal := ExpectedTotal;
   Progress.StartingBytes := StartingBytes;
   Progress.StartTime := UptimeMilliseconds;
@@ -101,87 +94,78 @@ begin
   end;
 end;
 
-{ One decimal digit after the point for values below 100. }
-procedure FormatScaled(Value: Int64; Divisor: Int64; UnitText: PChar; Buffer: PChar);
+{ Two decimal digits after the point for values below 100. }
+function FormatScaled(Value: Int64; Divisor: Int64; const UnitText: string): string;
 var
   Whole, Fraction: Int64;
-  Number: TNumberText;
-  Position: Integer;
-
-  procedure Append(Text: PChar);
-  var
-    Index: Integer;
-  begin
-    Index := 0;
-    while Text[Index] <> #0 do
-    begin
-      Buffer[Position] := Text[Index];
-      Inc(Position);
-      Inc(Index);
-    end;
-    Buffer[Position] := #0;
-  end;
-
 begin
-  Position := 0;
-  Buffer[0] := #0;
   Whole := Value div Divisor;
   Fraction := ((Value mod Divisor) * 100) div Divisor;
-  Append(FormatDecimal(Whole, Number));
+  Result := IntToStr(Whole);
   if Whole < 100 then
-  begin
-    Append('.');
-    if Fraction < 10 then
-      Append('0');
-    Append(FormatDecimal(Fraction, Number));
-  end;
-  Append(UnitText);
+    Result := Result + '.' + Format('%.2d', [Fraction]);
+  Result := Result + UnitText;
 end;
 
-procedure FormatSize(Bytes: Int64; Buffer: PChar);
-var
-  Number: TNumberText;
+function FormatSize(Bytes: Int64): string;
 begin
   if Bytes < 1024 then
-  begin
-    CopyName(Buffer, 16, FormatDecimal(Bytes, Number));
-    Exit;
-  end;
-  if Bytes < 1024 * 1024 then
-    FormatScaled(Bytes, 1024, 'K', Buffer)
+    Result := IntToStr(Bytes)
+  else if Bytes < 1024 * 1024 then
+    Result := FormatScaled(Bytes, 1024, 'K')
   else if Bytes < 1024 * 1024 * 1024 then
-    FormatScaled(Bytes, 1024 * 1024, 'M', Buffer)
+    Result := FormatScaled(Bytes, 1024 * 1024, 'M')
   else
-    FormatScaled(Bytes, 1024 * 1024 * 1024, 'G', Buffer);
+    Result := FormatScaled(Bytes, 1024 * 1024 * 1024, 'G');
 end;
 
-procedure FormatSpeed(BytesPerSecond: Int64; Buffer: PChar);
+function FormatSpeed(BytesPerSecond: Int64): string;
 begin
   if BytesPerSecond < 1024 * 1024 then
-    FormatScaled(BytesPerSecond, 1024, 'KB/s', Buffer)
+    Result := FormatScaled(BytesPerSecond, 1024, 'KB/s')
   else
-    FormatScaled(BytesPerSecond, 1024 * 1024, 'MB/s', Buffer);
+    Result := FormatScaled(BytesPerSecond, 1024 * 1024, 'MB/s');
 end;
 
-procedure WritePadded(Text: PChar; Width: Integer; AlignRight: Boolean);
+{ The bar of a known length: Percent filled, ">" at its tip. }
+function FilledBar(BarWidth: Integer; Percent: Int64): string;
 var
-  Length: Integer;
+  Filled, Index: Integer;
 begin
-  Length := 0;
-  while Text[Length] <> #0 do
-    Inc(Length);
-  if AlignRight then
-    while Length < Width do
+  Result := '';
+  Filled := Integer((Int64(BarWidth) * Percent) div 100);
+  for Index := 1 to BarWidth do
+    if Index < Filled then
+      Result := Result + '='
+    else if (Index = Filled) and (Percent < 100) then
+      Result := Result + '>'
+    else if Index <= Filled then
+      Result := Result + '='
+    else
+      Result := Result + ' ';
+end;
+
+{ The bar of an unknown length: a three character marker moving back
+  and forth. }
+function MovingBar(BarWidth: Integer; Elapsed: QWord; Finished: Boolean): string;
+var
+  Marker, Index: Integer;
+begin
+  Result := '';
+  Marker := Integer((Elapsed div RedrawInterval) mod QWord(2 * (BarWidth - 3)));
+  if Marker > BarWidth - 3 then
+    Marker := 2 * (BarWidth - 3) - Marker;
+  Index := 0;
+  while Index < BarWidth do
+    if (Index = Marker) and not Finished then
     begin
-      WriteCharacter(StandardError, ' ');
-      Inc(Length);
-    end;
-  WriteText(StandardError, Text);
-  if not AlignRight then
-    while Length < Width do
+      Result := Result + '<=>';
+      Index := Index + 3;
+    end
+    else
     begin
-      WriteCharacter(StandardError, ' ');
-      Inc(Length);
+      Result := Result + ' ';
+      Inc(Index);
     end;
 end;
 
@@ -190,18 +174,14 @@ var
   Elapsed: QWord;
   Total, Done: Int64;
   Percent: Int64;
-  BarWidth, Filled, Index, Marker: Integer;
-  SizeText: array[0..31] of Char;
-  SpeedText: array[0..31] of Char;
-  Number: TNumberText;
+  BarWidth: Integer;
   Speed: Int64;
-  Remaining: Int64;
+  Line: string;
 begin
   Elapsed := UptimeMilliseconds - Progress.StartTime;
   Done := Progress.StartingBytes + Progress.Received;
   Total := Progress.ExpectedTotal;
-  WriteCharacter(StandardError, #13);
-  WritePadded(@Progress.Name[0], 20, False);
+  Line := #13 + PadRight(Progress.Name, 20);
   BarWidth := Progress.Columns - 20 - 5 - 2 - 8 - 11 - 12;
   if BarWidth < 10 then
     BarWidth := 10;
@@ -210,66 +190,23 @@ begin
     Percent := (Done * 100) div Total;
     if Percent > 100 then
       Percent := 100;
-    WritePadded(FormatDecimal(Percent, Number), 3, True);
-    WriteText(StandardError, '%[');
-    Filled := Integer((Int64(BarWidth) * Percent) div 100);
-    for Index := 1 to BarWidth do
-      if Index < Filled then
-        WriteCharacter(StandardError, '=')
-      else if (Index = Filled) and (Percent < 100) then
-        WriteCharacter(StandardError, '>')
-      else if Index <= Filled then
-        WriteCharacter(StandardError, '=')
-      else
-        WriteCharacter(StandardError, ' ');
+    Line := Line + PadLeft(IntToStr(Percent), 3) + '%[' + FilledBar(BarWidth, Percent);
   end
   else
-  begin
-    WriteText(StandardError, '    [');
-    { A three character marker moving back and forth. }
-    Marker := Integer((Elapsed div RedrawInterval) mod QWord(2 * (BarWidth - 3)));
-    if Marker > BarWidth - 3 then
-      Marker := 2 * (BarWidth - 3) - Marker;
-    Index := 0;
-    while Index < BarWidth do
-      if (Index = Marker) and not Finished then
-      begin
-        WriteText(StandardError, '<=>');
-        Index := Index + 3;
-      end
-      else
-      begin
-        WriteCharacter(StandardError, ' ');
-        Inc(Index);
-      end;
-  end;
-  WriteText(StandardError, '] ');
-  FormatSize(Done, @SizeText[0]);
-  WritePadded(@SizeText[0], 8, True);
+    Line := Line + '    [' + MovingBar(BarWidth, Elapsed, Finished);
+  Line := Line + '] ' + PadLeft(FormatSize(Done), 8);
   if Elapsed > 0 then
     Speed := (Progress.Received * 1000) div Int64(Elapsed)
   else
     Speed := 0;
-  FormatSpeed(Speed, @SpeedText[0]);
-  WriteText(StandardError, '  ');
-  WritePadded(@SpeedText[0], 9, True);
+  Line := Line + '  ' + PadLeft(FormatSpeed(Speed), 9);
   if Finished then
-  begin
-    WriteText(StandardError, '    in ');
-    WriteText(StandardError, FormatDecimal(Elapsed div 1000, Number));
-    WriteText(StandardError, '.');
-    WriteText(StandardError, FormatDecimal((Elapsed mod 1000) div 100, Number));
-    WriteText(StandardError, 's');
-  end
+    Line := Line + '    in ' + IntToStr(Elapsed div 1000) + '.' + IntToStr((Elapsed mod 1000) div 100) + 's'
   else if (Total > 0) and (Speed > 0) and (Total > Done) then
-  begin
-    Remaining := (Total - Done) div Speed;
-    WriteText(StandardError, '    eta ');
-    WriteText(StandardError, FormatDecimal(Remaining, Number));
-    WriteText(StandardError, 's   ');
-  end
+    Line := Line + '    eta ' + IntToStr((Total - Done) div Speed) + 's   '
   else
-    WriteText(StandardError, '           ');
+    Line := Line + '           ';
+  PrintErrorString(Line);
   FlushStream(StandardError);
   Progress.LastDrawTime := UptimeMilliseconds;
 end;
@@ -288,8 +225,7 @@ begin
   if not Progress.Enabled then
     Exit;
   DrawLine(Progress, True);
-  WriteCharacter(StandardError, #10);
-  WriteCharacter(StandardError, #10);
+  PrintErrorString(#10#10);
   FlushStream(StandardError);
 end;
 

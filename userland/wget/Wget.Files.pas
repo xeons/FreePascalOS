@@ -25,26 +25,22 @@
 unit Wget.Files;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
-const
-  FileNameCapacity = 1024;
-
 type
   TOutputTarget = record
-    Name: array[0..FileNameCapacity - 1] of Char;
+    Name: string;
     IsStandardOutput: Boolean;
     Handle: Int64;
     IsOpen: Boolean;
   end;
 
-procedure SetOutputName(var Target: TOutputTarget; Name: PChar);
 { Name, or the first of Name.1, Name.2 ... that does not exist. }
-procedure ChooseUniqueName(Name: PChar; Buffer: PChar; Capacity: PtrUInt);
+function ChooseUniqueName(const Name: string): string;
 { The size of an existing regular file, else 0. }
-function ExistingFileSize(Name: PChar): Int64;
+function ExistingFileSize(const Name: string): Int64;
 { Opens the target: appending when Append, else emptied. Standard
   output needs no opening. Returns a system error code. }
 function OpenOutput(var Target: TOutputTarget; Append: Boolean): LongInt;
@@ -54,52 +50,29 @@ procedure CloseOutput(var Target: TOutputTarget);
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files;
 
-procedure SetOutputName(var Target: TOutputTarget; Name: PChar);
-begin
-  CopyText(@Target.Name[0], Name, SizeOf(Target.Name));
-end;
-
-procedure ChooseUniqueName(Name: PChar; Buffer: PChar; Capacity: PtrUInt);
+function ChooseUniqueName(const Name: string): string;
 var
   Suffix: LongWord;
-  Number: TNumberText;
-  Position, Index: PtrUInt;
-  Digits: PChar;
 begin
-  CopyText(Buffer, Name, Capacity);
-  if not PathExists(Buffer) then
-    Exit;
+  Result := Name;
   Suffix := 1;
-  repeat
-    CopyText(Buffer, Name, Capacity);
-    Position := TextLength(Buffer);
-    Digits := FormatDecimal(Suffix, Number);
-    if Position + 1 + TextLength(Digits) + 1 > Capacity then
-      Exit;
-    Buffer[Position] := '.';
-    Inc(Position);
-    Index := 0;
-    while Digits[Index] <> #0 do
-    begin
-      Buffer[Position] := Digits[Index];
-      Inc(Position);
-      Inc(Index);
-    end;
-    Buffer[Position] := #0;
+  while PathExists(PChar(Result)) do
+  begin
+    Result := Name + '.' + IntToStr(Suffix);
     Inc(Suffix);
-  until not PathExists(Buffer);
+  end;
 end;
 
-function ExistingFileSize(Name: PChar): Int64;
+function ExistingFileSize(const Name: string): Int64;
 var
   Information: TFileInformation;
 begin
   Result := 0;
-  if GetFileInformation(Name, Information) <> ErrorNone then
+  if GetFileInformation(PChar(Name), Information) <> ErrorNone then
     Exit;
   if Information.Kind <> KindFile then
     Exit;
@@ -123,7 +96,7 @@ begin
     Flags := Flags or OpenAppend
   else
     Flags := Flags or OpenTruncate;
-  Target.Handle := OpenFile(@Target.Name[0], Flags);
+  Target.Handle := OpenFile(PChar(Target.Name), Flags);
   if Target.Handle < 0 then
     Exit(LongInt(-Target.Handle));
   Target.IsOpen := True;

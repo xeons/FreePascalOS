@@ -34,11 +34,8 @@ uses
   Wget.Urls;
 
 function UrlText(constref Url: TUrl): string;
-var
-  Buffer: array[0..8191] of Char;
 begin
-  FormatUrl(Url, @Buffer[0], SizeOf(Buffer));
-  Result := PChar(@Buffer[0]);
+  Result := FormatUrl(Url);
 end;
 
 procedure CheckParse(const Text, Expected: string);
@@ -46,9 +43,9 @@ var
   Url: TUrl;
 begin
   if Expected = '' then
-    Check(not ParseUrl(PChar(Text), Url), 'URL refused: ' + Text)
+    Check(not ParseUrl(Text, Url), 'URL refused: ' + Text)
   else
-    Check(ParseUrl(PChar(Text), Url) and (UrlText(Url) = Expected), 'URL ' + Text + ' -> ' + Expected);
+    Check(ParseUrl(Text, Url) and (UrlText(Url) = Expected), 'URL ' + Text + ' -> ' + Expected);
 end;
 
 procedure CheckResolve(const Base, Reference, Expected: string);
@@ -56,8 +53,8 @@ var
   BaseUrl, Resolved: TUrl;
   Worked: Boolean;
 begin
-  ParseUrl(PChar(Base), BaseUrl);
-  Worked := ResolveUrl(BaseUrl, PChar(Reference), Resolved);
+  ParseUrl(Base, BaseUrl);
+  Worked := ResolveUrl(BaseUrl, Reference, Resolved);
   if Expected = '' then
     Check(not Worked, 'resolve refused: ' + Reference)
   else
@@ -71,17 +68,14 @@ end;
 procedure CheckFileName(const Text, Expected: string);
 var
   Url: TUrl;
-  Buffer: array[0..1023] of Char;
 begin
-  ParseUrl(PChar(Text), Url);
-  DefaultFileName(Url, @Buffer[0], SizeOf(Buffer));
-  Check(string(PChar(@Buffer[0])) = Expected, 'file name of ' + Text + ' is ' + Expected);
+  ParseUrl(Text, Url);
+  Check(DefaultFileName(Url) = Expected, 'file name of ' + Text + ' is ' + Expected);
 end;
 
 procedure TestUrls;
 var
   Url: TUrl;
-  Host: array[0..300] of Char;
 begin
   CheckParse('http://example.com', 'http://example.com/');
   CheckParse('example.com/a/b', 'http://example.com/a/b');
@@ -102,12 +96,10 @@ begin
   CheckParse('http://:80/', '');
   CheckParse('', '');
   ParseUrl('http://example.com:8080/x', Url);
-  FormatHostHeader(Url, @Host[0], SizeOf(Host));
-  Check(string(PChar(@Host[0])) = 'example.com:8080', 'Host header with a port');
+  Check(FormatHostHeader(Url) = 'example.com:8080', 'Host header with a port');
   Check(Url.Port = 8080, 'port 8080');
   ParseUrl('http://[::1]:8080/x', Url);
-  FormatHostHeader(Url, @Host[0], SizeOf(Host));
-  Check((string(PChar(@Host[0])) = '[::1]:8080') and (string(PChar(@Url.Host[0])) = '::1'),
+  Check((FormatHostHeader(Url) = '[::1]:8080') and (Url.Host = '::1'),
     'an IPv6 host: no brackets in Host, brackets in the Host header');
 
   { RFC 3986 section 5.4.1, base http://a/b/c/d;p?q }
@@ -144,7 +136,7 @@ end;
 
 function Parse(const Head: string; out Response: THttpResponseHead): THeadParseResult;
 begin
-  Result := ParseResponseHead(PChar(Head), Length(Head), Response);
+  Result := ParseResponseHead(Head, Response);
 end;
 
 procedure TestHeads;
@@ -158,14 +150,14 @@ begin
   Check(FindHeadEnd(PChar(Head), Length(Head)) = Length(Head) - 4, 'head: its end found');
   Check(FindHeadEnd(PChar(Head), 20) = 0, 'head: not ended yet');
   Check(Parse(Copy(Head, 1, Length(Head) - 4), Response) = HeadParsed, 'head: parsed');
-  Check((Response.StatusCode = 200) and (string(PChar(@Response.Reason[0])) = 'OK'), 'head: 200 OK');
+  Check((Response.StatusCode = 200) and (Response.Reason = 'OK'), 'head: 200 OK');
   Check(Response.ContentLength = 1234, 'head: Content-Length');
-  Check(string(PChar(@Response.ContentType[0])) = 'text/html', 'head: Content-Type');
+  Check(Response.ContentType = 'text/html', 'head: Content-Type');
   Check(Response.ConnectionClose, 'head: Connection: close');
 
   Check(Parse('HTTP/1.1 301 Moved Permanently'#10'location:  /new/place '#10#10, Response) = HeadParsed,
     'head: bare LF lines');
-  Check(Response.HasLocation and (string(PChar(@Response.Location[0])) = '/new/place'), 'head: Location trimmed');
+  Check(Response.HasLocation and (Response.Location = '/new/place'), 'head: Location trimmed');
   Check(StatusIsRedirect(Response.StatusCode), 'head: 301 is a redirect');
 
   Check((Parse('HTTP/1.1 200 OK'#13#10'Transfer-Encoding: chunked'#13#10'Content-Length: 5'#13#10#13#10,
