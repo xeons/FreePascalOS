@@ -176,7 +176,7 @@ var
   CommandLine: TCommandLine;
   Code: Integer;
   Value: string;
-  OldStyle: string;
+  Arguments: TStringArray;
   Operand: string;
   Width: Int64;
   SplitOnly: Boolean;
@@ -192,18 +192,18 @@ begin
   Uniform := False;
   { The old form "fmt -60": the argument becomes "--", so everything
     after it is an operand. }
-  OldStyle := Argument(1);
-  if (ArgumentTotal > 1) and (Length(OldStyle) >= 2) and (OldStyle[1] = '-') and
-     (OldStyle[2] in ['0'..'9']) then
+  Arguments := ProgramArguments;
+  if (Length(Arguments) > 0) and (Length(Arguments[0]) >= 2) and (Arguments[0][1] = '-') and
+     (Arguments[0][2] in ['0'..'9']) then
   begin
-    if not ParseDecimal(Copy(OldStyle, 2, MaxInt), Width) then
+    if not ParseDecimal(Copy(Arguments[0], 2, MaxInt), Width) then
       Fail(1, 'invalid width');
-    ArgumentValues[1] := '--';
+    Arguments[0] := '--';
   end;
   CommandLine := TCommandLine.Create([
     CommandOption('s', 'split-only', False, OptionSplitOnly),
     CommandOption('u', 'uniform-spacing', False, OptionUniform),
-    CommandOption('w', 'width', True, OptionWidth)], Usage);
+    CommandOption('w', 'width', True, OptionWidth)], Usage, Arguments);
   while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionSplitOnly: SplitOnly := True;

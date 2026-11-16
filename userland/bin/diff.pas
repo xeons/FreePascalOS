@@ -830,24 +830,16 @@ begin
 end;
 
 { Every argument but the two operands, each after a space. }
-function CollectHeaderOptions(const Operands: TStringArray): string;
+function CollectHeaderOptions(CommandLine: TCommandLine): string;
 var
+  Arguments: TStringArray;
   Index: Integer;
-  OperandIndex: Integer;
-  Text: string;
 begin
   Result := '';
-  OperandIndex := 0;
-  for Index := 1 to ArgumentTotal - 1 do
-  begin
-    Text := Argument(Index);
-    if (OperandIndex < Length(Operands)) and (Text = Operands[OperandIndex]) then
-    begin
-      Inc(OperandIndex);
-      Continue;
-    end;
-    Result := Result + ' ' + Text;
-  end;
+  Arguments := ProgramArguments;
+  for Index := 0 to High(Arguments) do
+    if (Index <> CommandLine.OperandPositions[0]) and (Index <> CommandLine.OperandPositions[1]) then
+      Result := Result + ' ' + Arguments[Index];
 end;
 
 procedure FailWithTrouble(const Message: string);
@@ -907,7 +899,7 @@ begin
     FailWithTrouble(Format('missing operand after ''%s''', [CommandLine.Operands[0]]));
   if CommandLine.OperandCount > 2 then
     FailWithTrouble(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
-  HeaderOptions := CollectHeaderOptions(CommandLine.Operands);
+  HeaderOptions := CollectHeaderOptions(CommandLine);
   PathA := CommandLine.Operands[0];
   PathB := CommandLine.Operands[1];
   IsDirectoryA := (PathA <> '-') and IsDirectory(PChar(PathA));

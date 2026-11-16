@@ -50,7 +50,6 @@ const
   OptionIgnore = 1;
   OptionUnset = 2;
   OptionNull = 3;
-  ProgramPathCapacity = 1024;
 
 procedure ClearEnvironment;
 var
@@ -90,17 +89,6 @@ begin
     PrintString(string(Block[Index]) + LineEnd);
     Inc(Index);
   end;
-end;
-
-function FindProgramPath(const Name: string; out Path: string): Boolean;
-var
-  Buffer: array[0..ProgramPathCapacity - 1] of Char;
-begin
-  Result := FindProgram(PChar(Name), @Buffer[0], ProgramPathCapacity);
-  if Result then
-    Path := PChar(@Buffer[0])
-  else
-    Path := '';
 end;
 
 var

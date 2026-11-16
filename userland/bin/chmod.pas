@@ -39,7 +39,8 @@ uses
   Util.FileTree,
   Util.Messages,
   Util.Modes,
-  Util.Output;
+  Util.Output,
+  Util.Numbers;
 
 const
   Usage = 'Usage: chmod [OPTION]... MODE[,MODE]... FILE...'#10 +
@@ -72,19 +73,6 @@ type
     function VisitInWalk(const Path: string; IsDirectory: Boolean): Boolean;
   end;
 
-{ Mode bits as four octal digits ("0644"). }
-function OctalMode(Mode: LongWord): string;
-var
-  Digit: Integer;
-begin
-  Result := '';
-  for Digit := 1 to 4 do
-  begin
-    Result := Char(Ord('0') + (Mode and 7)) + Result;
-    Mode := Mode shr 3;
-  end;
-end;
-
 function TModeChanger.ChangeOne(const Path: string): Boolean;
 var
   Information: TFileInformation;
@@ -115,11 +103,11 @@ begin
   if Verbose or (ReportChanges and (NewMode <> OldMode)) then
   begin
     if NewMode = OldMode then
-      PrintString(Format('mode of ''%s'' retained as %s (%s)'#10, [Path, OctalMode(NewMode),
+      PrintString(Format('mode of ''%s'' retained as %s (%s)'#10, [Path, OctalText(NewMode, 4),
         FormatModeText(NewMode)]))
     else
       PrintString(Format('mode of ''%s'' changed from %s (%s) to %s (%s)'#10, [Path,
-        OctalMode(OldMode), FormatModeText(Information.Mode), OctalMode(NewMode),
+        OctalText(OldMode, 4), FormatModeText(Information.Mode), OctalText(NewMode, 4),
         FormatModeText(NewMode)]));
   end;
 end;

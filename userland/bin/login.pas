@@ -165,18 +165,6 @@ begin
   end;
 end;
 
-{ The user the kernel option autologin= names; False when none is named. }
-function AutomaticLoginName(out Name: string): Boolean;
-var
-  Buffer: array[0..LoginNameCapacity - 1] of Char;
-begin
-  Result := AutomaticLoginUser(@Buffer[0], LoginNameCapacity);
-  if Result then
-    Name := PChar(@Buffer[0])
-  else
-    Name := '';
-end;
-
 { The account to log in: given, automatic, or asked for. }
 function ChooseAccount(out Account: TLoginAccount): Boolean;
 var

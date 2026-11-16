@@ -40,7 +40,8 @@ uses
   Util.CommandLine,
   Util.DigestTool,
   Util.Messages,
-  Util.Output;
+  Util.Output,
+  Util.Numbers;
 
 const
   Usage = 'Usage: cksum [OPTION]... [FILE]...'#10 +
@@ -141,22 +142,12 @@ begin
   end;
 end;
 
-{ Bytes as lower case hexadecimal digits. }
-function HexText(const Bytes: array of Byte; Count: Integer): string;
-var
-  Index: Integer;
-begin
-  Result := '';
-  for Index := 0 to Count - 1 do
-    Result := Result + LowerCase(IntToHex(Bytes[Index], 2));
-end;
-
 procedure PrintDigest(const Path: string; var ExitStatus: LongInt);
 var
   Output: TDigestOutput;
   Hex: string;
 begin
-  if not DigestFile(Algorithm, PChar(Path), Output) then
+  if not DigestFile(Algorithm, Path, Output) then
   begin
     ExitStatus := 1;
     Exit;

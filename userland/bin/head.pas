@@ -165,6 +165,7 @@ var
   ExitStatus: LongInt;
   ShowHeaders: Integer; { -1 never, 0 automatic, 1 always }
   OldStyle: string;
+  Arguments: TStringArray;
 begin
   CountBytes := False;
   AllButLast := False;
@@ -173,11 +174,12 @@ begin
 
   { "head -5 file" is the old way of writing "head -n 5 file": the
     argument becomes "--", so everything after it is an operand. }
-  OldStyle := Argument(1);
-  if (ArgumentTotal > 1) and (Length(OldStyle) >= 2) and (OldStyle[1] = '-') and
-     (OldStyle[2] in ['0'..'9']) then
+  Arguments := ProgramArguments;
+  if (Length(Arguments) > 0) and (Length(Arguments[0]) >= 2) and (Arguments[0][1] = '-') and
+     (Arguments[0][2] in ['0'..'9']) then
   begin
-    ArgumentValues[1] := '--';
+    OldStyle := Arguments[0];
+    Arguments[0] := '--';
     Delete(OldStyle, 1, 1);
     if not ParseSize(OldStyle, Amount) then
       Fail(1, Format('invalid number of lines: ''%s''', [OldStyle]));
@@ -188,7 +190,7 @@ begin
     CommandOption('n', 'lines', True, OptionLines),
     CommandOption('q', 'quiet', False, OptionQuiet),
     CommandOption(#0, 'silent', False, OptionQuiet),
-    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage, Arguments);
   while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBytes:

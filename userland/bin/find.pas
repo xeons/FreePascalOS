@@ -550,18 +550,6 @@ begin
   Node.Batch.Clear;
 end;
 
-function UserText(UserId: LongWord): string;
-begin
-  if not FindUserName(UserId, Result) then
-    Result := IntToStr(UserId);
-end;
-
-function GroupText(GroupId: LongWord): string;
-begin
-  if not FindGroupName(GroupId, Result) then
-    Result := IntToStr(GroupId);
-end;
-
 procedure ListEntry(const Path: string; const Information: TFileInformation);
 var
   TypeLetter: Char;
@@ -577,7 +565,7 @@ begin
   PrintString(Format('%9d %6d %s %3d %-8s %-8s %8d %s %2d %.2d:%.2d %s'#10, [
     Information.NodeNumber, (Information.SizeInBytes + 1023) div 1024,
     TypeLetter + FormatModeText(Information.Mode), Information.LinkCount,
-    UserText(Information.OwnerId), GroupText(Information.GroupId), Information.SizeInBytes,
+    UserNameOrNumber(Information.OwnerId), GroupNameOrNumber(Information.GroupId), Information.SizeInBytes,
     string(MonthName(DateTime.Month)), DateTime.Day, DateTime.Hour, DateTime.Minute, Path]));
 end;
 

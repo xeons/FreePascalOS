@@ -507,21 +507,20 @@ begin
   CloseFile(Handle);
 end;
 
-{ --color takes an optional value, which the option parser does not
-  know; such arguments are made plain "--color" in the program's own
-  argument list, which the parser reads. }
-procedure DropColorOptions;
+{ The program's arguments with --color's optional value dropped (the
+  option parser does not know optional values): such arguments become
+  plain "--color". }
+function ArgumentsWithoutColorValues: TStringArray;
 var
   Index: Integer;
-  Arguments: PPChar;
 begin
-  Arguments := ArgumentValues;
-  for Index := 1 to ArgumentTotal - 1 do
+  Result := ProgramArguments;
+  for Index := 0 to High(Result) do
   begin
-    if string(Arguments[Index]) = '--' then
+    if Result[Index] = '--' then
       Break;
-    if StartsStr('--color', Arguments[Index]) or StartsStr('--colour', Arguments[Index]) then
-      Arguments[Index] := '--color';
+    if StartsStr('--color', Result[Index]) or StartsStr('--colour', Result[Index]) then
+      Result[Index] := '--color';
   end;
 end;
 
@@ -543,7 +542,6 @@ begin
     Matcher.Kind := PatternFixed;
   ForceFileNames := 0;
   HavePatterns := False;
-  DropColorOptions;
   CommandLine := TCommandLine.Create([
     CommandOption('E', 'extended-regexp', False, OptionExtended),
     CommandOption('F', 'fixed-strings', False, OptionFixed),
@@ -568,7 +566,7 @@ begin
     CommandOption('l', 'files-with-matches', False, OptionFilesWith),
     CommandOption('c', 'count', False, OptionCount),
     CommandOption(#0, 'color', False, OptionColor),
-    CommandOption(#0, 'colour', False, OptionColor)], Usage);
+    CommandOption(#0, 'colour', False, OptionColor)], Usage, ArgumentsWithoutColorValues);
   while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionExtended: Matcher.Kind := PatternExtended;

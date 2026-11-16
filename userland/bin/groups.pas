@@ -37,13 +37,6 @@ const
     'Print group memberships for each USERNAME or, if no USERNAME is specified,'#10 +
     'for the current process.'#10;
 
-{ The group's name, or its number when it has none. }
-function GroupText(GroupId: LongWord): string;
-begin
-  if not FindGroupName(GroupId, Result) then
-    Result := IntToStr(GroupId);
-end;
-
 procedure PrintGroupList(const Groups: TIdArray);
 var
   Line: string;
@@ -54,7 +47,7 @@ begin
   begin
     if Index > 0 then
       Line := Line + ' ';
-    Line := Line + GroupText(Groups[Index]);
+    Line := Line + GroupNameOrNumber(Groups[Index]);
   end;
   PrintStringLine(Line);
 end;
