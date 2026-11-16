@@ -209,7 +209,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     output, recursive), the pager `less` (also started as `more`), `ps`,
     `top`, `pgrep`, `pkill`, `renice`, `taskset`, `su`, `passwd`, `watch`
     (changes to files and folders as they happen) and `volumes` (the
-    mounted volumes, and with `-w` volumes arriving and leaving)
+    mounted volumes, and with `-w` volumes arriving and leaving), and
+    `sysinfo` (the system at a glance beside its logo: kernel, uptime,
+    shell, displays, terminal, processor, memory, disks, time zone)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and

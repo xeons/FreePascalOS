@@ -2898,7 +2898,18 @@ processor time over the time since the process started, 100 for one
 processor kept busy), `rss`, `vsz`, `time`, the real `tty` and the
 command line (`args`; another user's shows as `[name]`); `top` the
 busiest processes since its last look, again every few seconds (`-b`
-batch, `-d` delay, `-n` count). `usagetest`,
+batch, `-d` delay, `-n` count). `sysinfo` shows the system at a glance
+beside a logo (units in `userland/sysinfo`: `SystemInfo.Facts` gathers,
+`SystemInfo.Logo` holds the ASCII logo): user and machine, system and
+kernel, uptime, the programs in /bin, the shell, each display (only if
+the display server already runs: `ConnectToDisplay(False)` tries once
+rather than waiting for one), the terminal, the processor's model
+(`Sys.Processor`, from CPUID: the processor tells every program), the
+memory and processes from `GetSystemUsage`, each volume's use and the
+time zone; then the sixteen colours as blocks (the text console now
+takes bright backgrounds, 100-107, as well). Colours only on a terminal
+and without `NO_COLOR` (`-c` forces them, `-C` turns them off); `-l`
+leaves out the logo. `usagetest`,
 run by coretest, checks that a busy loop is charged about the time it
 ran (at most the wall time, at least 40% of it, most of it user time,
 the processors' busy time growing with it), that a sleeping program is

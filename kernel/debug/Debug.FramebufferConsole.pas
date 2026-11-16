@@ -472,6 +472,7 @@ begin
       40..47: Console.BackgroundPixel := PaletteColor(Value - 40, False);
       49: Console.BackgroundPixel := Console.DefaultBackgroundPixel;
       90..97: Console.ForegroundPixel := PaletteColor(Value - 90, True);
+      100..107: Console.BackgroundPixel := PaletteColor(Value - 100, True);
     end;
   end;
 end;
