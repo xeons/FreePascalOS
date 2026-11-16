@@ -43,7 +43,8 @@ uses
   Image.Gif.Codec,
   Image.Jpeg.Codec,
   Image.Png.Codec,
-  Image.Tiff.Codec;
+  Image.Tiff.Codec,
+  Image.WebP.Codec;
 
 var
   Registered: Boolean = False;
@@ -60,6 +61,7 @@ begin
   RegisterImageDecoder(TGifDecoder);
   RegisterImageDecoder(TJpegDecoder);
   RegisterImageDecoder(TTiffDecoder);
+  RegisterImageDecoder(TWebPDecoder);
   RegisterImageDecoder(TDibDecoder);
   RegisterImageEncoder(TBmpEncoder);
   RegisterImageEncoder(TDibEncoder);
@@ -69,6 +71,7 @@ begin
   RegisterImageEncoder(TJpegEncoder);
   RegisterImageEncoder(TPngEncoder);
   RegisterImageEncoder(TTiffEncoder);
+  RegisterImageEncoder(TWebPEncoder);
 end;
 
 end.
