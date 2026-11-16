@@ -29,6 +29,7 @@
 unit Tls.Connections;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -40,7 +41,6 @@ uses
   Tls.CipherSuites,
   Tls.KeySchedule,
   Tls.RecordProtection,
-  Tls.ServerMessages,
   Tls.Transcript,
   Tls.Transport,
   Tls.TrustStore;
@@ -48,20 +48,19 @@ uses
 const
   { A whole protected record, and room to spare. }
   InputBufferSize = RecordHeaderLength + MaximumCiphertextLength + 64;
-  TextCapacity = 256;
 
 type
   TTlsClientOptions = record
     { The host: sent as server_name (unless it is an IP address) and
       checked against the certificate. }
-    ServerName: PChar;
+    ServerName: string;
     { The roots; needed when VerifyCertificates is set. }
     TrustStore: PTlsTrustStore;
     VerifyCertificates: Boolean;
     { Unix seconds, for the certificates' validity. }
     VerificationTime: Int64;
-    { One ALPN protocol name ("http/1.1"), or nil. }
-    ApplicationProtocol: PChar;
+    { One ALPN protocol name ("http/1.1"), or empty. }
+    ApplicationProtocol: string;
     { Count 0: the default list. }
     CipherSuites: TCipherSuiteList;
   end;
@@ -71,15 +70,13 @@ type
   TTlsConnection = record
     Transport: TTlsTransport;
     Options: TTlsClientOptions;
-    ServerName: array[0..TextCapacity - 1] of Char;
-    ApplicationProtocol: array[0..TextCapacity - 1] of Char;
     State: TTlsConnectionState;
 
     Error: LongInt;
     { The alert the server sent, or -1. }
     ReceivedAlert: LongInt;
     { More about Error (which certificate, ...), or empty. }
-    ErrorDetail: array[0..TextCapacity - 1] of Char;
+    ErrorDetail: string;
     { What the chain check said when certificates are not verified. }
     IgnoredCertificateError: LongInt;
 
@@ -114,9 +111,10 @@ type
     CloseNotifyReceived: Boolean;
     CloseNotifySent: Boolean;
 
-    ServerCertificates: array[0..MaximumServerCertificates - 1] of PTlsCertificate;
-    ServerCertificateCount: Integer;
-    SelectedProtocol: array[0..TextCapacity - 1] of Char;
+    { The server's certificates as it sent them, its own first. }
+    ServerCertificates: array of PTlsCertificate;
+    { The ALPN protocol the server chose, or empty. }
+    SelectedProtocol: string;
   end;
   PTlsConnection = ^TTlsConnection;
 
@@ -126,10 +124,7 @@ procedure ReleaseConnection(var Connection: PTlsConnection);
 { Fails the connection with Error (if it had not failed already) and
   returns the error it failed with. }
 function FailConnection(Connection: PTlsConnection; Error: LongInt): LongInt;
-procedure SetErrorDetail(Connection: PTlsConnection; Text: PChar);
-procedure AppendErrorDetail(Connection: PTlsConnection; Text: PChar);
-{ Copies a text into a buffer of TextCapacity characters. }
-procedure CopyLimitedText(Destination: PChar; Source: PChar);
+procedure SetErrorDetail(Connection: PTlsConnection; const Text: string);
 
 implementation
 
@@ -138,32 +133,14 @@ uses
   Tls.Errors,
   Tls.RecordLayer;
 
-procedure CopyLimitedText(Destination: PChar; Source: PChar);
-var
-  Index: Integer;
-begin
-  Index := 0;
-  if Source <> nil then
-    while (Source[Index] <> #0) and (Index < TextCapacity - 1) do
-    begin
-      Destination[Index] := Source[Index];
-      Inc(Index);
-    end;
-  Destination[Index] := #0;
-end;
-
 function AllocateConnection(constref Transport: TTlsTransport; constref Options: TTlsClientOptions): PTlsConnection;
 var
   Connection: PTlsConnection;
 begin
+  { Zeroed memory is also an empty string and an empty array. }
   Connection := AllocMem(SizeOf(TTlsConnection));
   Connection^.Transport := Transport;
   Connection^.Options := Options;
-  CopyLimitedText(@Connection^.ServerName[0], Options.ServerName);
-  CopyLimitedText(@Connection^.ApplicationProtocol[0], Options.ApplicationProtocol);
-  Connection^.Options.ServerName := @Connection^.ServerName[0];
-  if Options.ApplicationProtocol <> nil then
-    Connection^.Options.ApplicationProtocol := @Connection^.ApplicationProtocol[0];
   if Connection^.Options.CipherSuites.Count = 0 then
     DefaultCipherSuites(Connection^.Options.CipherSuites);
   Connection^.State := ConnectionNew;
@@ -183,7 +160,7 @@ var
 begin
   if Connection = nil then
     Exit;
-  for Index := 0 to Connection^.ServerCertificateCount - 1 do
+  for Index := 0 to High(Connection^.ServerCertificates) do
     FreeCertificate(Connection^.ServerCertificates[Index]);
   FreeBuilder(Connection^.HandshakeBuffer);
   FreeTranscript(Connection^.Transcript);
@@ -196,6 +173,7 @@ begin
   FreeMem(Connection^.Input);
   FreeMem(Connection^.Output);
   FreeMem(Connection^.Plain);
+  Finalize(Connection^);
   FreeMem(Connection);
   Connection := nil;
 end;
@@ -219,27 +197,9 @@ begin
   Result := Error;
 end;
 
-procedure SetErrorDetail(Connection: PTlsConnection; Text: PChar);
+procedure SetErrorDetail(Connection: PTlsConnection; const Text: string);
 begin
-  CopyLimitedText(@Connection^.ErrorDetail[0], Text);
-end;
-
-procedure AppendErrorDetail(Connection: PTlsConnection; Text: PChar);
-var
-  Position: Integer;
-  Index: Integer;
-begin
-  Position := 0;
-  while Connection^.ErrorDetail[Position] <> #0 do
-    Inc(Position);
-  Index := 0;
-  while (Text[Index] <> #0) and (Position < TextCapacity - 1) do
-  begin
-    Connection^.ErrorDetail[Position] := Text[Index];
-    Inc(Position);
-    Inc(Index);
-  end;
-  Connection^.ErrorDetail[Position] := #0;
+  Connection^.ErrorDetail := Text;
 end;
 
 end.

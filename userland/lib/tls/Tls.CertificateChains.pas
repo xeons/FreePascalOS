@@ -42,6 +42,7 @@
 unit Tls.CertificateChains;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -61,8 +62,8 @@ type
     Anchors: PTlsTrustStore;
     { Unix seconds. }
     Time: Int64;
-    { nil: the name is not checked. }
-    HostName: PChar;
+    { Empty: the name is not checked. }
+    HostName: string;
   end;
 
   TChainResult = record
@@ -238,7 +239,7 @@ begin
   if Result.Error <> TlsErrorNone then
     Exit;
 
-  FillChar(Search, SizeOf(Search), 0);
+  Search := Default(TSearch);
   Search.Check := Check;
   Search.BestError := TlsErrorCertificateUnknownIssuer;
   Search.BestCulprit := nil;
@@ -250,7 +251,7 @@ begin
     Exit;
   end;
 
-  if (Check.HostName <> nil) and not CertificateMatchesHost(Leaf^, Check.HostName) then
+  if (Check.HostName <> '') and not CertificateMatchesHost(Leaf^, Check.HostName) then
   begin
     Result.Error := TlsErrorCertificateNameMismatch;
     Result.Culprit := Leaf;

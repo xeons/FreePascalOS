@@ -26,7 +26,7 @@
 unit Tls.TrustStore;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
@@ -35,9 +35,9 @@ uses
 
 type
   TTlsTrustStore = record
-    Certificates: ^PTlsCertificate;
+    Certificates: array of PTlsCertificate;
+    { Length(Certificates). }
     Count: Integer;
-    Capacity: Integer;
   end;
   PTlsTrustStore = ^TTlsTrustStore;
 
@@ -46,6 +46,7 @@ procedure FreeTrustStore(var Store: PTlsTrustStore);
 { A DER certificate; TlsErrorNone or the parse error. }
 function AddTrustedCertificate(Store: PTlsTrustStore; Der: PByte; Length: PtrUInt): LongInt;
 { Every certificate block of a PEM text; returns how many were added. }
+function AddPemCertificates(Store: PTlsTrustStore; const Text: string): Integer;
 function AddPemCertificates(Store: PTlsTrustStore; Text: PChar; Length: PtrUInt): Integer;
 function TrustedCertificate(Store: PTlsTrustStore; Index: Integer): PTlsCertificate;
 { True when Store holds exactly this certificate (byte for byte). }
@@ -54,12 +55,14 @@ function StoreContainsCertificate(Store: PTlsTrustStore; constref Certificate: T
 implementation
 
 uses
+  SysUtils,
   Tls.ByteBuffers,
   Tls.Errors,
   Tls.Pem;
 
 function CreateTrustStore: PTlsTrustStore;
 begin
+  { Zeroed memory is also an empty array. }
   Result := AllocMem(SizeOf(TTlsTrustStore));
 end;
 
@@ -71,8 +74,7 @@ begin
     Exit;
   for Index := 0 to Store^.Count - 1 do
     FreeCertificate(Store^.Certificates[Index]);
-  if Store^.Certificates <> nil then
-    FreeMem(Store^.Certificates);
+  Finalize(Store^);
   FreeMem(Store);
   Store := nil;
 end;
@@ -80,7 +82,6 @@ end;
 function AddTrustedCertificate(Store: PTlsTrustStore; Der: PByte; Length: PtrUInt): LongInt;
 var
   Certificate: PTlsCertificate;
-  NewCapacity: Integer;
 begin
   if Store = nil then
     Exit(TlsErrorInvalidArgument);
@@ -92,32 +93,28 @@ begin
     FreeCertificate(Certificate);
     Exit(TlsErrorNone);
   end;
-  if Store^.Count = Store^.Capacity then
-  begin
-    NewCapacity := Store^.Capacity * 2;
-    if NewCapacity < 64 then
-      NewCapacity := 64;
-    ReAllocMem(Store^.Certificates, NewCapacity * SizeOf(PTlsCertificate));
-    Store^.Capacity := NewCapacity;
-  end;
-  Store^.Certificates[Store^.Count] := Certificate;
+  Insert(Certificate, Store^.Certificates, Store^.Count);
   Inc(Store^.Count);
+end;
+
+function AddPemCertificates(Store: PTlsTrustStore; const Text: string): Integer;
+var
+  Scanner: TPemScanner;
+  Der: TBytes;
+begin
+  Result := 0;
+  BeginPemScan(Scanner, Text);
+  while NextPemCertificate(Scanner, Der) do
+    if AddTrustedCertificate(Store, @Der[0], Length(Der)) = TlsErrorNone then
+      Inc(Result);
 end;
 
 function AddPemCertificates(Store: PTlsTrustStore; Text: PChar; Length: PtrUInt): Integer;
 var
-  Scanner: TPemScanner;
-  Der: PByte;
-  DerLength: PtrUInt;
+  Contents: string;
 begin
-  Result := 0;
-  BeginPemScan(Scanner, Text, Length);
-  while NextPemCertificate(Scanner, Der, DerLength) do
-  begin
-    if AddTrustedCertificate(Store, Der, DerLength) = TlsErrorNone then
-      Inc(Result);
-    FreeMem(Der);
-  end;
+  SetString(Contents, Text, Length);
+  Result := AddPemCertificates(Store, Contents);
 end;
 
 function TrustedCertificate(Store: PTlsTrustStore; Index: Integer): PTlsCertificate;

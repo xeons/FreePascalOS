@@ -34,6 +34,7 @@
 unit Tls.ClientHello;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -47,13 +48,13 @@ type
     Random: array[0..31] of Byte;
     SessionId: array[0..31] of Byte;
     CipherSuites: TCipherSuiteList;
-    { nil: no server_name. }
-    ServerName: PChar;
+    { Empty: no server_name. }
+    ServerName: string;
     KeyShare: array[0..31] of Byte;
     { Empty: no cookie. }
     Cookie: TTlsByteRange;
-    { nil: no ALPN. }
-    ApplicationProtocol: PChar;
+    { Empty: no ALPN. }
+    ApplicationProtocol: string;
   end;
 
 const
@@ -69,29 +70,21 @@ implementation
 uses
   Tls.Constants;
 
-function TextLength(Text: PChar): PtrUInt;
-begin
-  Result := 0;
-  if Text <> nil then
-    while Text[Result] <> #0 do
-      Inc(Result);
-end;
-
-procedure AddServerName(var Builder: TTlsBuilder; Name: PChar);
+procedure AddServerName(var Builder: TTlsBuilder; const Name: string);
 var
   Extension, List, HostName: PtrUInt;
   NameLength: PtrUInt;
 begin
-  NameLength := TextLength(Name);
+  NameLength := Length(Name);
   { Without a final dot (RFC 6066 section 3). }
-  if (NameLength > 0) and (Name[NameLength - 1] = '.') then
+  if (NameLength > 0) and (Name[NameLength] = '.') then
     Dec(NameLength);
   AppendUInt16(Builder, ExtensionServerName);
   Extension := BeginVector(Builder, 2);
   List := BeginVector(Builder, 2);
   AppendByte(Builder, 0);   { host_name }
   HostName := BeginVector(Builder, 2);
-  AppendBytes(Builder, Name, NameLength);
+  AppendBytes(Builder, PChar(Name), NameLength);
   EndVector(Builder, HostName, 2);
   EndVector(Builder, List, 2);
   EndVector(Builder, Extension, 2);
@@ -150,7 +143,7 @@ begin
   EndVector(Builder, Extension, 2);
 end;
 
-procedure AddApplicationProtocol(var Builder: TTlsBuilder; Protocol: PChar);
+procedure AddApplicationProtocol(var Builder: TTlsBuilder; const Protocol: string);
 var
   Extension, List, Name: PtrUInt;
 begin
@@ -158,7 +151,7 @@ begin
   Extension := BeginVector(Builder, 2);
   List := BeginVector(Builder, 2);
   Name := BeginVector(Builder, 1);
-  AppendBytes(Builder, Protocol, TextLength(Protocol));
+  AppendBytes(Builder, PChar(Protocol), Length(Protocol));
   EndVector(Builder, Name, 1);
   EndVector(Builder, List, 2);
   EndVector(Builder, Extension, 2);
@@ -197,13 +190,13 @@ begin
   EndVector(Builder, Compression, 1);
 
   Extensions := BeginVector(Builder, 2);
-  if TextLength(Parameters.ServerName) > 0 then
+  if Parameters.ServerName <> '' then
     AddServerName(Builder, Parameters.ServerName);
   AddSupportedGroups(Builder);
   AddSignatureAlgorithms(Builder);
   AddSupportedVersions(Builder);
   AddKeyShare(Builder, Parameters);
-  if TextLength(Parameters.ApplicationProtocol) > 0 then
+  if Parameters.ApplicationProtocol <> '' then
     AddApplicationProtocol(Builder, Parameters.ApplicationProtocol);
   if Parameters.Cookie.Length > 0 then
     AddCookie(Builder, Parameters.Cookie);

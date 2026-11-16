@@ -3050,6 +3050,7 @@ cannot do 1.3 is refused with "protocol version" (most servers can).
 =========== Tls.Sessions: over a socket, the system's roots and clock ======
   Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
   Tls.Client           create, handshake, read, write, close, errors
+  Tls.ClientConnections  the same as an object
   Tls.Handshake        the client's state machine
   Tls.RecordLayer      records, alerts, handshake reassembly
   Tls.RecordProtection AEAD per direction    Tls.KeySchedule  Tls.Transcript
@@ -3198,7 +3199,13 @@ sent an alert: handshake failure") and `TlsIgnoredCertificateError`
 (what the chain check said when not verifying). `Tls.Sessions` puts it
 over a connected socket with a timeout, the system's roots and clock:
 `OpenTlsSession(Socket, Options, Session)`, `ReadTlsSession`,
-`WriteTlsSession`, `CloseTlsSession`, `FreeTlsSession`.
+`WriteTlsSession`, `CloseTlsSession`, `FreeTlsSession`. Both have an
+object form: `TTlsClientConnection` (`Tls.ClientConnections`) owns a
+connection over any transport, and `TTlsSocketSession` (in
+`Tls.Sessions`, which the routines above hand on to) a session over a
+socket, with the server name, trust file and ALPN as strings. Names,
+error details and the server's certificate list are strings and
+dynamic arrays; the DER, keys and records stay bytes.
 
 **wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
 HTTP/1.1, one request per connection ("Connection: close"): the URL

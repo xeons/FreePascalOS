@@ -30,6 +30,7 @@
 unit Tls.ServerMessages;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -55,7 +56,7 @@ type
 
   TServerCertificates = record
     Count: Integer;
-    Entries: array[0..MaximumServerCertificates - 1] of TTlsByteRange;
+    Entries: array of TTlsByteRange;
   end;
 
 function ParseServerHello(Body: PByte; Length: PtrUInt; out Hello: TServerHello): LongInt;
@@ -97,14 +98,6 @@ begin
   Seen.Types[Seen.Count] := ExtensionType;
   Inc(Seen.Count);
   Result := True;
-end;
-
-function TextLength(Text: PChar): PtrUInt;
-begin
-  Result := 0;
-  if Text <> nil then
-    while Text[Result] <> #0 do
-      Inc(Result);
 end;
 
 function ParseServerHelloExtensions(var Extensions: TTlsReader; var Hello: TServerHello;
@@ -201,8 +194,10 @@ var
   Seen: TSeenExtensions;
   ExtensionType: Word;
   Name: TTlsByteRange;
+  Offered: string;
 begin
   SelectedProtocol := ByteRange(nil, 0);
+  Offered := string(OfferedProtocol);
   InitializeReader(Reader, Body, Length);
   if not ReadVector(Reader, 2, Extensions) or not ReaderAtEnd(Reader) then
     Exit(TlsErrorMalformedMessage);
@@ -223,15 +218,15 @@ begin
         ;
       ExtensionApplicationLayerProtocol:
         begin
-          if TextLength(OfferedProtocol) = 0 then
+          if Offered = '' then
             Exit(TlsErrorUnsupportedExtension);
           { Exactly one name, which must be the one offered. }
           if not ReadVector(Data, 2, Names) or not ReaderAtEnd(Data) then
             Exit(TlsErrorMalformedMessage);
           if not ReadVectorBytes(Names, 1, Name) or (Name.Length = 0) or not ReaderAtEnd(Names) then
             Exit(TlsErrorMalformedMessage);
-          if (Name.Length <> TextLength(OfferedProtocol)) or
-             (CompareByte(Name.Data^, OfferedProtocol^, Name.Length) <> 0) then
+          if (Name.Length <> PtrUInt(System.Length(Offered))) or
+             (CompareByte(Name.Data^, Offered[1], Name.Length) <> 0) then
             Exit(TlsErrorNoApplicationProtocol);
           SelectedProtocol := Name;
         end;
@@ -262,7 +257,7 @@ var
   Context: TTlsByteRange;
   Entry: TTlsByteRange;
 begin
-  FillChar(Certificates, SizeOf(Certificates), 0);
+  Certificates := Default(TServerCertificates);
   InitializeReader(Reader, Body, Length);
   if not ReadVectorBytes(Reader, 1, Context) or not ReadVector(Reader, 3, List) or not ReaderAtEnd(Reader) then
     Exit(TlsErrorMalformedMessage);
@@ -279,7 +274,7 @@ begin
       Exit(TlsErrorUnsupportedExtension);
     if Certificates.Count >= MaximumServerCertificates then
       Exit(TlsErrorCertificateChainTooLong);
-    Certificates.Entries[Certificates.Count] := Entry;
+    Insert(Entry, Certificates.Entries, Certificates.Count);
     Inc(Certificates.Count);
   end;
   if Certificates.Count = 0 then

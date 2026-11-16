@@ -43,6 +43,7 @@
 unit Tls.Handshake;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -101,7 +102,7 @@ var
 begin
   { No server_name for a numeric address (RFC 6066 section 3). }
   if ParseIpv4Literal(Connection^.Options.ServerName, Address) then
-    State.Hello.ServerName := nil
+    State.Hello.ServerName := ''
   else
     State.Hello.ServerName := Connection^.Options.ServerName;
   State.Hello.CipherSuites := Connection^.Options.CipherSuites;
@@ -233,22 +234,13 @@ begin
 end;
 
 procedure DescribeCertificate(Connection: PTlsConnection; Certificate: PTlsCertificate; UseIssuer: Boolean);
-var
-  Name: array[0..127] of Char;
 begin
   if Certificate = nil then
     Exit;
   if UseIssuer then
-  begin
-    SetErrorDetail(Connection, 'issuer: ');
-    FormatCommonName(Certificate^.IssuerCommonName, @Name[0], SizeOf(Name));
-  end
+    SetErrorDetail(Connection, 'issuer: ' + CommonNameText(Certificate^.IssuerCommonName))
   else
-  begin
-    SetErrorDetail(Connection, 'certificate: ');
-    FormatCommonName(Certificate^.SubjectCommonName, @Name[0], SizeOf(Name));
-  end;
-  AppendErrorDetail(Connection, @Name[0]);
+    SetErrorDetail(Connection, 'certificate: ' + CommonNameText(Certificate^.SubjectCommonName));
 end;
 
 function CheckServerCertificates(Connection: PTlsConnection): LongInt;
@@ -256,9 +248,9 @@ var
   Check: TChainCheck;
   Outcome: TChainResult;
 begin
-  FillChar(Check, SizeOf(Check), 0);
+  Check := Default(TChainCheck);
   Check.Presented := @Connection^.ServerCertificates[0];
-  Check.PresentedCount := Connection^.ServerCertificateCount;
+  Check.PresentedCount := Length(Connection^.ServerCertificates);
   Check.Anchors := Connection^.Options.TrustStore;
   Check.Time := Connection^.Options.VerificationTime;
   Check.HostName := Connection^.Options.ServerName;
@@ -267,8 +259,7 @@ begin
     Exit(TlsErrorNone);
   if Outcome.Error = TlsErrorCertificateNameMismatch then
   begin
-    SetErrorDetail(Connection, 'host: ');
-    AppendErrorDetail(Connection, Connection^.Options.ServerName);
+    SetErrorDetail(Connection, 'host: ' + Connection^.Options.ServerName);
   end
   else
     DescribeCertificate(Connection, Outcome.Culprit, Outcome.Error = TlsErrorCertificateUnknownIssuer);
@@ -284,17 +275,17 @@ function HandleCertificate(Connection: PTlsConnection; Message: PByte; MessageLe
 var
   Entries: TServerCertificates;
   Index: Integer;
+  Certificate: PTlsCertificate;
 begin
   Result := ParseCertificateMessage(Message + 4, MessageLength - 4, Entries);
   if Result <> TlsErrorNone then
     Exit;
   for Index := 0 to Entries.Count - 1 do
   begin
-    Result := ParseCertificate(Entries.Entries[Index].Data, Entries.Entries[Index].Length,
-      Connection^.ServerCertificates[Index]);
+    Result := ParseCertificate(Entries.Entries[Index].Data, Entries.Entries[Index].Length, Certificate);
     if Result <> TlsErrorNone then
       Exit;
-    Connection^.ServerCertificateCount := Index + 1;
+    Insert(Certificate, Connection^.ServerCertificates, Length(Connection^.ServerCertificates));
   end;
   if Connection^.Options.VerifyCertificates and (Connection^.Options.TrustStore = nil) then
     Exit(TlsErrorNoTrustStore);
@@ -405,22 +396,15 @@ var
   MessageLength: PtrUInt;
   SelectedProtocol: TTlsByteRange;
   Context: TTlsByteRange;
-  Index: PtrUInt;
 begin
   Result := ExpectMessage(Connection, HandshakeEncryptedExtensions, 0, MessageType, Message, MessageLength);
   if Result <> TlsErrorNone then
     Exit;
-  Result := ParseEncryptedExtensions(Message + 4, MessageLength - 4, Connection^.Options.ApplicationProtocol,
+  Result := ParseEncryptedExtensions(Message + 4, MessageLength - 4, PChar(Connection^.Options.ApplicationProtocol),
     SelectedProtocol);
   if Result <> TlsErrorNone then
     Exit;
-  Index := 0;
-  while (Index < SelectedProtocol.Length) and (Index < TextCapacity - 1) do
-  begin
-    Connection^.SelectedProtocol[Index] := Chr(SelectedProtocol.Data[Index]);
-    Inc(Index);
-  end;
-  Connection^.SelectedProtocol[Index] := #0;
+  SetString(Connection^.SelectedProtocol, PChar(SelectedProtocol.Data), SelectedProtocol.Length);
   AddToTranscript(Connection^.Transcript, Message, MessageLength);
 
   Result := ExpectMessage(Connection, HandshakeCertificate, HandshakeCertificateRequest, MessageType, Message,
@@ -521,12 +505,15 @@ begin
     Exit(TlsErrorClosed);
   end;
   Connection^.State := ConnectionHandshaking;
-  FillChar(State, SizeOf(State), 0);
+  State := Default(THandshakeState);
   InitializeBuilder(State.CookieCopy);
   InitializeBuilder(State.CertificateRequestContext);
   Result := RunHandshake(Connection, State);
   FreeBuilder(State.CookieCopy);
   FreeBuilder(State.CertificateRequestContext);
+  { The strings are let go before the wipe, which would lose them. }
+  State.Hello.ServerName := '';
+  State.Hello.ApplicationProtocol := '';
   WipeMemory(@State, SizeOf(State));
   if Result <> TlsErrorNone then
   begin

@@ -19,34 +19,84 @@
 {
   TLS over a connected socket, the way programs use it:
 
-    InitializeTlsSessionOptions(Options);
-    Options.ServerName := 'example.com';
-    Error := OpenTlsSession(Socket, Options, Session);
-    if Error <> TlsErrorNone then
-      ... DescribeTlsSessionError(Session, Error, Buffer, SizeOf(Buffer)) ...
-    WriteTlsSession(Session, Request, Length);
-    Count := ReadTlsSession(Session, @Buffer, SizeOf(Buffer));
-    CloseTlsSession(Session);
-    FreeTlsSession(Session);
+    Session := TTlsSocketSession.Create;
+    try
+      Session.ServerName := 'example.com';
+      Error := Session.Open(Socket);
+      if Error <> TlsErrorNone then
+        ... Session.DescribeError(Error) ...
+      Session.Write(Request, Length);
+      Count := Session.Read(@Buffer, SizeOf(Buffer));
+      Session.Close;
+    finally
+      Session.Free;
+    end;
 
   The session checks the server's certificate against the system's
   roots (or a PEM file the program names) at the system clock's time,
   unless told not to. The socket stays the program's: closing the
   session sends close_notify but leaves the socket open.
+
+  The routines on a PTlsSession (OpenTlsSession and the rest) are the
+  same session for programs written before the object: they hand on to
+  a TTlsSocketSession.
 }
 unit Tls.Sessions;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
 uses
   Tls.CipherSuites,
+  Tls.ClientConnections,
   Tls.Connections,
   Tls.SocketTransport,
   Tls.TrustStore;
 
 type
+  TTlsSocketSession = class
+  private
+    FServerName: string;
+    FVerifyCertificates: Boolean;
+    FTrustFile: string;
+    FHasTrustFile: Boolean;
+    FTimeoutMilliseconds: Int64;
+    FApplicationProtocol: string;
+    FCipherSuites: TCipherSuiteList;
+    FTransportContext: TSocketTransportContext;
+    FStore: PTlsTrustStore;
+    FClient: TTlsClientConnection;
+    procedure SetTrustFile(const Value: string);
+    function GetConnection: PTlsConnection;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    { Loads the roots, makes the connection and runs the handshake. }
+    function Open(Socket: Int64): LongInt;
+    function Read(Buffer: Pointer; Length: PtrUInt): Int64;
+    function Write(Buffer: Pointer; Length: PtrUInt): Int64;
+    function Close: LongInt;
+    function DescribeError(Error: LongInt): string;
+    { With VerifyCertificates off: what the check would have refused. }
+    function IgnoredCertificateError: LongInt;
+    property ServerName: string read FServerName write FServerName;
+    { On unless turned off. }
+    property VerifyCertificates: Boolean read FVerifyCertificates write FVerifyCertificates;
+    { A PEM file of trusted certificates instead of the system's (once
+      set, even to '', it is the one read). }
+    property TrustFile: string read FTrustFile write SetTrustFile;
+    { For each wait on the server; 0: no limit. }
+    property TimeoutMilliseconds: Int64 read FTimeoutMilliseconds write FTimeoutMilliseconds;
+    property ApplicationProtocol: string read FApplicationProtocol write FApplicationProtocol;
+    { Count 0: the default. }
+    property CipherSuites: TCipherSuiteList read FCipherSuites write FCipherSuites;
+    { nil until Open has made the connection. }
+    property Client: TTlsClientConnection read FClient;
+    property Connection: PTlsConnection read GetConnection;
+  end;
+
   TTlsSessionOptions = record
     ServerName: PChar;
     VerifyCertificates: Boolean;
@@ -61,14 +111,13 @@ type
 
   TTlsSession = record
     Connection: PTlsConnection;
-    TransportContext: TSocketTransportContext;
-    Store: PTlsTrustStore;
+    SocketSession: TTlsSocketSession;
   end;
   PTlsSession = ^TTlsSession;
 
 procedure InitializeTlsSessionOptions(out Options: TTlsSessionOptions);
 { Makes the session and runs the handshake. Session is set (for
-  DescribeTlsSessionError) unless memory ran out; free it either way. }
+  DescribeTlsSessionError); free it either way. }
 function OpenTlsSession(Socket: Int64; constref Options: TTlsSessionOptions; out Session: PTlsSession): LongInt;
 function ReadTlsSession(Session: PTlsSession; Buffer: Pointer; Length: PtrUInt): Int64;
 function WriteTlsSession(Session: PTlsSession; Buffer: Pointer; Length: PtrUInt): Int64;
@@ -79,11 +128,100 @@ function DescribeTlsSessionError(Session: PTlsSession; Error: LongInt; Buffer: P
 implementation
 
 uses
+  SysUtils,
   Sys.Time,
   Tls.Client,
   Tls.Errors,
   Tls.SystemTrust,
   Tls.Transport;
+
+constructor TTlsSocketSession.Create;
+begin
+  inherited Create;
+  FVerifyCertificates := True;
+end;
+
+destructor TTlsSocketSession.Destroy;
+begin
+  FClient.Free;
+  FreeTrustStore(FStore);
+  inherited Destroy;
+end;
+
+procedure TTlsSocketSession.SetTrustFile(const Value: string);
+begin
+  FTrustFile := Value;
+  FHasTrustFile := True;
+end;
+
+function TTlsSocketSession.GetConnection: PTlsConnection;
+begin
+  Result := nil;
+  if FClient <> nil then
+    Result := FClient.Connection;
+end;
+
+function TTlsSocketSession.Open(Socket: Int64): LongInt;
+var
+  Transport: TTlsTransport;
+  ClientOptions: TTlsClientOptions;
+begin
+  if FClient <> nil then
+    Exit(TlsErrorInvalidArgument);
+  if FHasTrustFile then
+    Result := LoadTrustStoreFile(FTrustFile, FStore)
+  else
+    Result := LoadSystemTrustStore(FStore);
+  { Without roots only an unchecked connection can go ahead. }
+  if (Result <> TlsErrorNone) and FVerifyCertificates then
+    Exit;
+  MakeSocketTransport(@FTransportContext, Socket, FTimeoutMilliseconds, Transport);
+  ClientOptions := Default(TTlsClientOptions);
+  ClientOptions.ServerName := FServerName;
+  ClientOptions.TrustStore := FStore;
+  ClientOptions.VerifyCertificates := FVerifyCertificates;
+  ClientOptions.VerificationTime := CurrentTime;
+  ClientOptions.ApplicationProtocol := FApplicationProtocol;
+  ClientOptions.CipherSuites := FCipherSuites;
+  try
+    FClient := TTlsClientConnection.Create(Transport, ClientOptions);
+  except
+    on Error: ETlsError do
+      Exit(Error.Code);
+  end;
+  Result := FClient.Handshake;
+end;
+
+function TTlsSocketSession.Read(Buffer: Pointer; Length: PtrUInt): Int64;
+begin
+  if FClient = nil then
+    Exit(TlsErrorInvalidArgument);
+  Result := FClient.Read(Buffer, Length);
+end;
+
+function TTlsSocketSession.Write(Buffer: Pointer; Length: PtrUInt): Int64;
+begin
+  if FClient = nil then
+    Exit(TlsErrorInvalidArgument);
+  Result := FClient.Write(Buffer, Length);
+end;
+
+function TTlsSocketSession.Close: LongInt;
+begin
+  if FClient = nil then
+    Exit(TlsErrorInvalidArgument);
+  Result := FClient.Close;
+end;
+
+function TTlsSocketSession.DescribeError(Error: LongInt): string;
+begin
+  Result := TlsErrorDescription(GetConnection, Error);
+end;
+
+function TTlsSocketSession.IgnoredCertificateError: LongInt;
+begin
+  Result := TlsIgnoredCertificateError(GetConnection);
+end;
 
 procedure InitializeTlsSessionOptions(out Options: TTlsSessionOptions);
 begin
@@ -93,61 +231,50 @@ end;
 
 function OpenTlsSession(Socket: Int64; constref Options: TTlsSessionOptions; out Session: PTlsSession): LongInt;
 var
-  Transport: TTlsTransport;
-  ClientOptions: TTlsClientOptions;
+  SocketSession: TTlsSocketSession;
 begin
-  Session := AllocMem(SizeOf(TTlsSession));
-  if Session = nil then
-    Exit(TlsErrorOutOfMemory);
+  New(Session);
+  SocketSession := TTlsSocketSession.Create;
+  Session^.SocketSession := SocketSession;
+  Session^.Connection := nil;
+  SocketSession.ServerName := string(Options.ServerName);
+  SocketSession.VerifyCertificates := Options.VerifyCertificates;
   if Options.TrustFile <> nil then
-    Result := LoadTrustStoreFile(Options.TrustFile, Session^.Store)
-  else
-    Result := LoadSystemTrustStore(Session^.Store);
-  { Without roots only an unchecked connection can go ahead. }
-  if (Result <> TlsErrorNone) and Options.VerifyCertificates then
-    Exit;
-  MakeSocketTransport(@Session^.TransportContext, Socket, Options.TimeoutMilliseconds, Transport);
-  FillChar(ClientOptions, SizeOf(ClientOptions), 0);
-  ClientOptions.ServerName := Options.ServerName;
-  ClientOptions.TrustStore := Session^.Store;
-  ClientOptions.VerifyCertificates := Options.VerifyCertificates;
-  ClientOptions.VerificationTime := CurrentTime;
-  ClientOptions.ApplicationProtocol := Options.ApplicationProtocol;
-  ClientOptions.CipherSuites := Options.CipherSuites;
-  Result := CreateTlsClient(Transport, ClientOptions, Session^.Connection);
-  if Result <> TlsErrorNone then
-    Exit;
-  Result := TlsHandshake(Session^.Connection);
+    SocketSession.TrustFile := string(Options.TrustFile);
+  SocketSession.TimeoutMilliseconds := Options.TimeoutMilliseconds;
+  SocketSession.ApplicationProtocol := string(Options.ApplicationProtocol);
+  SocketSession.CipherSuites := Options.CipherSuites;
+  Result := SocketSession.Open(Socket);
+  Session^.Connection := SocketSession.Connection;
 end;
 
 function ReadTlsSession(Session: PTlsSession; Buffer: Pointer; Length: PtrUInt): Int64;
 begin
-  if (Session = nil) or (Session^.Connection = nil) then
+  if Session = nil then
     Exit(TlsErrorInvalidArgument);
-  Result := TlsRead(Session^.Connection, Buffer, Length);
+  Result := Session^.SocketSession.Read(Buffer, Length);
 end;
 
 function WriteTlsSession(Session: PTlsSession; Buffer: Pointer; Length: PtrUInt): Int64;
 begin
-  if (Session = nil) or (Session^.Connection = nil) then
+  if Session = nil then
     Exit(TlsErrorInvalidArgument);
-  Result := TlsWrite(Session^.Connection, Buffer, Length);
+  Result := Session^.SocketSession.Write(Buffer, Length);
 end;
 
 function CloseTlsSession(Session: PTlsSession): LongInt;
 begin
-  if (Session = nil) or (Session^.Connection = nil) then
+  if Session = nil then
     Exit(TlsErrorInvalidArgument);
-  Result := TlsClose(Session^.Connection);
+  Result := Session^.SocketSession.Close;
 end;
 
 procedure FreeTlsSession(var Session: PTlsSession);
 begin
   if Session = nil then
     Exit;
-  FreeTlsClient(Session^.Connection);
-  FreeTrustStore(Session^.Store);
-  FreeMem(Session);
+  Session^.SocketSession.Free;
+  Dispose(Session);
   Session := nil;
 end;
 

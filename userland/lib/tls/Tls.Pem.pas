@@ -24,57 +24,53 @@
 unit Tls.Pem;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
+uses
+  SysUtils;
+
 type
   TPemScanner = record
-    Position: PChar;
-    Limit: PChar;
+    Text: string;
+    { Where the search for the next block starts (1-based). }
+    Position: Integer;
   end;
 
+procedure BeginPemScan(out Scanner: TPemScanner; const Text: string);
 procedure BeginPemScan(out Scanner: TPemScanner; Text: PChar; Length: PtrUInt);
-{ The next certificate block, decoded into a new buffer (free it with
-  FreeMem); False when there are no more. A block that does not decode
-  is skipped. }
+{ The next certificate block, decoded; False when there are no more. A
+  block that does not decode is skipped. }
+function NextPemCertificate(var Scanner: TPemScanner; out Der: TBytes): Boolean;
+{ The same into a new buffer (free it with FreeMem). }
 function NextPemCertificate(var Scanner: TPemScanner; out Der: PByte; out DerLength: PtrUInt): Boolean;
-{ Base64 (whitespace ignored, '=' padding) into Output, which needs
-  3/4 of Length bytes; False for anything else. }
+{ Base64 (whitespace ignored, '=' padding); False for anything else. }
+function DecodeBase64(const Text: string; out Data: TBytes): Boolean;
+{ The same into Output, which needs 3/4 of Length bytes. }
 function DecodeBase64(Text: PChar; Length: PtrUInt; Output: PByte; out OutputLength: PtrUInt): Boolean;
 
 implementation
 
+uses
+  StrUtils;
+
 const
-  BeginMarker: PChar = '-----BEGIN CERTIFICATE-----';
-  EndMarker: PChar = '-----END CERTIFICATE-----';
+  BeginMarker = '-----BEGIN CERTIFICATE-----';
+  EndMarker = '-----END CERTIFICATE-----';
+
+procedure BeginPemScan(out Scanner: TPemScanner; const Text: string);
+begin
+  Scanner.Text := Text;
+  Scanner.Position := 1;
+end;
 
 procedure BeginPemScan(out Scanner: TPemScanner; Text: PChar; Length: PtrUInt);
-begin
-  Scanner.Position := Text;
-  Scanner.Limit := Text + Length;
-end;
-
-function MarkerLength(Marker: PChar): PtrUInt;
-begin
-  Result := 0;
-  while Marker[Result] <> #0 do
-    Inc(Result);
-end;
-
-{ Where Marker next appears in [From, Limit), or nil. }
-function FindMarker(From, Limit: PChar; Marker: PChar): PChar;
 var
-  Count: PtrUInt;
+  Contents: string;
 begin
-  Count := MarkerLength(Marker);
-  while PtrUInt(Limit - From) >= Count do
-  begin
-    if CompareByte(From^, Marker^, Count) = 0 then
-      Exit(From);
-    Inc(From);
-  end;
-  Result := nil;
+  SetString(Contents, Text, Length);
+  BeginPemScan(Scanner, Contents);
 end;
 
 function Base64Value(Character: Char): Integer;
@@ -90,30 +86,28 @@ begin
   end;
 end;
 
-function DecodeBase64(Text: PChar; Length: PtrUInt; Output: PByte; out OutputLength: PtrUInt): Boolean;
+function DecodeBase64(const Text: string; out Data: TBytes): Boolean;
 var
-  Index: PtrUInt;
+  Index: Integer;
+  OutputLength: Integer;
   Accumulator: LongWord;
   Bits: Integer;
   Value: Integer;
   Padding: Integer;
 begin
+  Data := nil;
+  SetLength(Data, Length(Text) * 3 div 4 + 3);
   OutputLength := 0;
   Accumulator := 0;
   Bits := 0;
   Padding := 0;
-  Index := 0;
-  while Index < Length do
+  for Index := 1 to Length(Text) do
   begin
     if Text[Index] in [' ', #9, #10, #13] then
-    begin
-      Inc(Index);
       Continue;
-    end;
     if Text[Index] = '=' then
     begin
       Inc(Padding);
-      Inc(Index);
       Continue;
     end;
     { Nothing but padding after padding. }
@@ -127,46 +121,66 @@ begin
     if Bits >= 8 then
     begin
       Bits := Bits - 8;
-      Output[OutputLength] := Byte(Accumulator shr Bits);
+      Data[OutputLength] := Byte(Accumulator shr Bits);
       Inc(OutputLength);
     end;
-    Inc(Index);
   end;
+  SetLength(Data, OutputLength);
   { Leftover bits must be the zeros of a final partial group. }
   Result := (Padding <= 2) and (Bits < 6) and ((Accumulator and ((1 shl Bits) - 1)) = 0);
 end;
 
+function DecodeBase64(Text: PChar; Length: PtrUInt; Output: PByte; out OutputLength: PtrUInt): Boolean;
+var
+  Encoded: string;
+  Data: TBytes;
+begin
+  SetString(Encoded, Text, Length);
+  Result := DecodeBase64(Encoded, Data);
+  OutputLength := System.Length(Data);
+  if OutputLength > 0 then
+    Move(Data[0], Output^, OutputLength);
+end;
+
+function NextPemCertificate(var Scanner: TPemScanner; out Der: TBytes): Boolean;
+var
+  BlockStart, BlockEnd: Integer;
+begin
+  Der := nil;
+  while True do
+  begin
+    BlockStart := PosEx(BeginMarker, Scanner.Text, Scanner.Position);
+    if BlockStart = 0 then
+    begin
+      Scanner.Position := Length(Scanner.Text) + 1;
+      Exit(False);
+    end;
+    BlockStart := BlockStart + Length(BeginMarker);
+    BlockEnd := PosEx(EndMarker, Scanner.Text, BlockStart);
+    if BlockEnd = 0 then
+    begin
+      Scanner.Position := Length(Scanner.Text) + 1;
+      Exit(False);
+    end;
+    Scanner.Position := BlockEnd + Length(EndMarker);
+    if DecodeBase64(Copy(Scanner.Text, BlockStart, BlockEnd - BlockStart), Der) and (Length(Der) > 0) then
+      Exit(True);
+    Der := nil;
+  end;
+end;
+
 function NextPemCertificate(var Scanner: TPemScanner; out Der: PByte; out DerLength: PtrUInt): Boolean;
 var
-  BlockStart, BlockEnd: PChar;
-  BodyLength: PtrUInt;
+  Data: TBytes;
 begin
   Der := nil;
   DerLength := 0;
-  while True do
-  begin
-    BlockStart := FindMarker(Scanner.Position, Scanner.Limit, BeginMarker);
-    if BlockStart = nil then
-    begin
-      Scanner.Position := Scanner.Limit;
-      Exit(False);
-    end;
-    BlockStart := BlockStart + MarkerLength(BeginMarker);
-    BlockEnd := FindMarker(BlockStart, Scanner.Limit, EndMarker);
-    if BlockEnd = nil then
-    begin
-      Scanner.Position := Scanner.Limit;
-      Exit(False);
-    end;
-    Scanner.Position := BlockEnd + MarkerLength(EndMarker);
-    BodyLength := PtrUInt(BlockEnd - BlockStart);
-    Der := GetMem(BodyLength * 3 div 4 + 3);
-    if DecodeBase64(BlockStart, BodyLength, Der, DerLength) and (DerLength > 0) then
-      Exit(True);
-    FreeMem(Der);
-    Der := nil;
-    DerLength := 0;
-  end;
+  Result := NextPemCertificate(Scanner, Data);
+  if not Result then
+    Exit;
+  DerLength := Length(Data);
+  Der := GetMem(DerLength);
+  Move(Data[0], Der^, DerLength);
 end;
 
 end.
