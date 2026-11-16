@@ -170,10 +170,37 @@ def wait_for(text, seconds):
     return False
 
 
+def report_qemu_gone():
+    # QEMU ended in the middle of the test (the serial pipe broke): say
+    # how it ended and what it printed, and keep everything it left, so
+    # the cause is not lost when the next run reuses this folder.
+    try:
+        status = qemu.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        qemu.kill()
+        status = qemu.wait()
+    if status < 0:
+        ending = 'killed by signal ' + str(-status)
+    else:
+        ending = 'exit status ' + str(status)
+    with open(serial_log, 'wb') as log:
+        log.write(received)
+    kept = work + '-qemu-gone-' + time.strftime('%Y%m%d-%H%M%S')
+    shutil.copytree(work, kept, ignore=shutil.ignore_patterns('*.img', 'esp', 'serial.in', 'serial.out'))
+    print('INPUT TEST FAILED: QEMU ended during the test (' + ending + '); its errors, the serial log and the '
+          'last screen are kept in ' + kept)
+    with open(os.path.join(work, 'qemu-errors.log'), 'rb') as errors:
+        sys.stdout.write(errors.read().decode(errors='replace'))
+    sys.exit(1)
+
+
 def type_on_serial(data):
-    for byte in data:
-        serial_in.write(bytes([byte]))
-        time.sleep(0.02)
+    try:
+        for byte in data:
+            serial_in.write(bytes([byte]))
+            time.sleep(0.02)
+    except BrokenPipeError:
+        report_qemu_gone()
 
 
 checks = []
