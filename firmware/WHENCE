@@ -1,0 +1,119 @@
+                     FreePascalOS firmware files
+                     ===========================
+
+This folder holds firmware that devices load into themselves: code that
+runs on the device's own processor, not in FreePascalOS. It is laid out
+as the linux-firmware repository is
+(https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git),
+from which these files are copied unmodified (release 20260916). Each
+entry below says which driver uses the files and under which licence
+they may be distributed; the licence files sit beside this one.
+
+The firmware is not part of FreePascalOS's own source and is not covered
+by its GNU General Public License: it is distributed alongside it, under
+its vendors' terms. `make system-disk` installs this folder, licences
+included, as /lib/firmware.
+
+--------------------------------------------------------------------------
+
+Driver: Realtek RTL8168/8111, RTL8125 and RTL8126 Ethernet
+        (FreePascalOS kernel/drivers/network; linux-firmware's r8169 entry)
+
+File: rtl_nic/rtl8168d-1.fw
+File: rtl_nic/rtl8168d-2.fw
+File: rtl_nic/rtl8105e-1.fw
+File: rtl_nic/rtl8168e-1.fw
+File: rtl_nic/rtl8168e-2.fw
+
+File: rtl_nic/rtl8168e-3.fw
+Version: 0.0.4
+
+File: rtl_nic/rtl8168f-1.fw
+Version: 0.0.5
+
+File: rtl_nic/rtl8168f-2.fw
+Version: 0.0.4
+
+File: rtl_nic/rtl8411-1.fw
+Version: 0.0.3
+
+File: rtl_nic/rtl8411-2.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8402-1.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8106e-1.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8106e-2.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8168g-1.fw
+Version: 0.0.3
+
+File: rtl_nic/rtl8168g-2.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8168g-3.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8168h-1.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8168h-2.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8168fp-3.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8107e-1.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8107e-2.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8125a-3.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8125b-1.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8125b-2.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8125d-1.fw
+Version: 0.0.7
+
+File: rtl_nic/rtl8125d-2.fw
+Version: 0.0.4
+
+File: rtl_nic/rtl8125k-1.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8125cp-1.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl9151a-1.fw
+Version: 0.0.1
+
+File: rtl_nic/rtl8126a-2.fw
+Version: 0.0.2
+
+File: rtl_nic/rtl8125bp-2.fw
+Version: 0.0.4
+
+File: rtl_nic/rtl8126a-3.fw
+Version: 0.0.5
+
+File: rtl_nic/rtl8127a-1.fw
+Version: 0.0.5
+
+File: rtl_nic/rtl8261c.bin
+Version: 0.0.1
+
+File: rtl_nic/rtl8261d.bin
+Version: 0.0.1
+
+Licence: Redistributable. See LICENSE.r8169 for details.
+

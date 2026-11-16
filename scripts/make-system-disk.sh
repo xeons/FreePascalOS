@@ -29,6 +29,8 @@
 #          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
+#   /lib/firmware   firmware devices load (from firmware/, with its
+#                   vendors' licences and WHENCE)
 #   /tmp, /home
 #
 # The image is a whole disk with a GPT partition table and one partition,
@@ -60,6 +62,12 @@ fi
 if compgen -G "$source_directory/userland/pointers/*.pointer" > /dev/null; then
     mkdir -p "$staging_directory/lib/pointers"
     cp "$source_directory"/userland/pointers/*.pointer "$staging_directory/lib/pointers/"
+fi
+# Firmware that drivers load into their devices, laid out as
+# linux-firmware is, licences and WHENCE included.
+if [[ -d "$source_directory/firmware" ]]; then
+    mkdir -p "$staging_directory/lib/firmware"
+    cp -r "$source_directory"/firmware/* "$staging_directory/lib/firmware/"
 fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"

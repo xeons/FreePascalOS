@@ -380,6 +380,8 @@ tools/TextTest/     Checks the multi-line edit box's logic on the host
 tools/SettingsTest/ Checks the settings library on the host
 tools/FilesTest/    Checks the file manager's plain logic on the host
 scripts/            QEMU launcher, test runner, disk image builders
+firmware/           Device firmware from linux-firmware, with its vendors'
+                    licences and WHENCE (installed as /lib/firmware)
 docs/               Architecture notes
 ```
 
@@ -400,3 +402,13 @@ The system volume carries Terminus (`/lib/fonts/terminus`, SIL Open Font
 License 1.1) and DejaVu Sans rendered into bitmaps (`/lib/fonts/dejavu-sans`,
 the Bitstream Vera licence with DejaVu's changes, which are in the public
 domain), each with its licence in the same directory.
+
+The `firmware/` folder holds firmware that devices load into themselves
+(it runs on the device, not in FreePascalOS), copied unmodified from the
+linux-firmware repository and laid out the same way: `firmware/WHENCE`
+says which driver uses each file and under which licence, and the
+vendors' licence files sit beside it (for now the Realtek Ethernet
+firmware in `rtl_nic/`, under `LICENSE.r8169`). It is not covered by the
+GNU General Public License; it is distributed alongside FreePascalOS
+under its vendors' terms, and installed with its licences as
+/lib/firmware.
