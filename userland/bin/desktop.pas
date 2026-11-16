@@ -54,6 +54,9 @@
                           or shutting down)
     asking log off        Log off asks first (then log off cancelled, or
                           logging off)
+    desktop: asked to end (REASON)
+                          the desktop was asked to end (log-off,
+                          shutdown, ...) and ends
 
   The units are in userland/desktop: Desktop.Shell (putting it
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),

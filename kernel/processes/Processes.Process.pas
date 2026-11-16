@@ -40,7 +40,8 @@ uses
   Kernel.Events,
   Objects.Manager,
   Processes.AddressSpace,
-  Processes.Handles;
+  Processes.Handles,
+  Processes.NotificationQueue;
 
 const
   ProcessNameLength = 32;
@@ -143,6 +144,10 @@ type
     { Signaled when the process stops or exits (see WaitForProcessChange). }
     StateChangedEvent: TEvent;
 
+    { What the system tells the process: end requests, its terminal's
+      size (Processes.NotificationQueue, Processes.EndRequests). }
+    Notifications: TNotificationQueue;
+
     { --- Users, priority and accounting (Processes.Security) --- }
     Credentials: TProcessCredentials;
     { Seconds since 1970. }
@@ -232,6 +237,7 @@ begin
   InitializeSpinLock(Process^.StopLock);
   InitializeEvent(Process^.ContinueEvent, EventKindNotification, True);
   InitializeEvent(Process^.StateChangedEvent, EventKindNotification, False);
+  InitializeNotificationQueue(Process^.Notifications);
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
   CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);
   InitializeListHead(Process^.RunningLink);

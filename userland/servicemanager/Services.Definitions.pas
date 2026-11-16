@@ -40,6 +40,9 @@
                                              once started; notify: once
                                              it says so (NotifyServiceReady)
     ready-timeout = 30                       seconds to wait for that
+    stop-timeout  = 5                        seconds a stopped service has
+                                             to end once asked (5), before
+                                             it is ended outright
     console       = yes                      runs on the console (input,
                                              output and the foreground);
                                              no (the default): its output
@@ -63,6 +66,7 @@ const
   DefaultRestartLimit = 3;
   DefaultRestartDelayMilliseconds = 1000;
   DefaultReadyTimeoutMilliseconds = 30000;
+  DefaultStopTimeoutMilliseconds = 5000;
 
 type
   TRestartPolicy = (RestartNever, RestartOnFailure, RestartAlways);
@@ -81,6 +85,8 @@ type
     RestartDelayMilliseconds: LongInt;
     Readiness: TReadiness;
     ReadyTimeoutMilliseconds: LongInt;
+    { How long its programs have to end once asked to (stopping it). }
+    StopTimeoutMilliseconds: LongInt;
     OnConsole: Boolean;
   end;
 
@@ -124,6 +130,7 @@ begin
   Definition.RestartDelayMilliseconds := DefaultRestartDelayMilliseconds;
   Definition.Readiness := ReadyWhenStarted;
   Definition.ReadyTimeoutMilliseconds := DefaultReadyTimeoutMilliseconds;
+  Definition.StopTimeoutMilliseconds := DefaultStopTimeoutMilliseconds;
   Definition.OnConsole := False;
 end;
 
@@ -314,6 +321,11 @@ begin
   begin
     if not ParseSeconds(Value, Definition.ReadyTimeoutMilliseconds) then
       Exit('ready-timeout is a number of seconds');
+  end
+  else if Key = 'stop-timeout' then
+  begin
+    if not ParseSeconds(Value, Definition.StopTimeoutMilliseconds) then
+      Exit('stop-timeout is a number of seconds');
   end
   else if Key = 'console' then
   begin

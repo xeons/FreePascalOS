@@ -24,11 +24,21 @@
     126  it was found but could not be started
     otherwise the command's own exit status
 
-  Also the signal names used by kill and timeout. Every signal that ends
-  a program becomes a termination with exit status 128 + its number,
-  which is what a shell reports for a program killed by that signal.
-  STOP, TSTP, TTIN and TTOU stop a program, CONT continues it (job
-  control); the rest (CHLD, URG, WINCH, ...) are ignored as on Unix.
+  Also the signal names used by kill, pkill and timeout. The system has
+  no signals; each becomes what it stands for:
+
+    TERM, HUP, INT     a request to end (Sys.Notifications) with the
+                       reason asked, hang-up or interrupt: a program
+                       that takes it decides itself (it may tidy up
+                       first); any other is ended with exit status 128
+                       + the signal's number, as before
+    KILL and the rest  of the signals that end a program: ended at once
+                       with 128 + the number, which is what a shell
+                       reports for a program killed by that signal
+    STOP, TSTP, TTIN,  stop a program, CONT continues it (job control)
+    TTOU
+    CHLD, URG, WINCH   ignored as on Unix (signal 0 too: they only check
+                       that the process exists)
 }
 unit Util.Commands;
 
@@ -43,6 +53,8 @@ uses
 const
   StatusCommandNotFound = 127;
   StatusCommandNotRunnable = 126;
+  SignalHangUp = 1;
+  SignalInterrupt = 2;
   SignalTerminate = 15;
   SignalKill = 9;
   SignalContinue = 18;
@@ -63,11 +75,13 @@ function ParseSignal(Text: PChar): Integer;
 function SignalName(Number: Integer): PChar;
 
 type
-  TSignalAction = (SignalActionNone, SignalActionEnd, SignalActionStop, SignalActionContinue);
+  TSignalAction = (SignalActionNone, SignalActionAskToEnd, SignalActionEnd, SignalActionStop,
+    SignalActionContinue);
 
 function ActionOfSignal(Number: Integer): TSignalAction;
 { Delivers a signal as described above. Target is a process id, or the
-  negated id of a process group (ending a whole group is not supported).
+  negated id of a process group (ending a whole group at once is not
+  supported; asking it is).
   Returns 0 or an error code. }
 function SendSignal(Target: Int64; Number: Integer): LongInt;
 const
@@ -79,6 +93,7 @@ uses
   Abi.SystemCalls,
   Runtime.Text,
   Sys.Errors,
+  Sys.Notifications,
   Sys.Format,
   Sys.Streams,
   Sys.Text,
@@ -158,6 +173,7 @@ function ActionOfSignal(Number: Integer): TSignalAction;
 begin
   case Number of
     0, 17, 23, 28: Result := SignalActionNone;
+    SignalHangUp, SignalInterrupt, SignalTerminate: Result := SignalActionAskToEnd;
     SignalContinue: Result := SignalActionContinue;
     SignalStop, SignalTerminalStop, 21, 22: Result := SignalActionStop;
   else
@@ -165,9 +181,33 @@ begin
   end;
 end;
 
+function EndReasonOfSignal(Number: Integer): LongWord;
+begin
+  case Number of
+    SignalHangUp: Result := EndReasonHangUp;
+    SignalInterrupt: Result := EndReasonInterrupt;
+  else
+    Result := EndReasonAsked;
+  end;
+end;
+
+function AskToEnd(Target: Int64; Number: Integer): LongInt;
+var
+  Asked: Int64;
+begin
+  if Target > 0 then
+    Exit(AskProcessToEnd(QWord(Target), EndReasonOfSignal(Number)));
+  Asked := AskGroupToEnd(QWord(-Target), EndReasonOfSignal(Number));
+  if Asked < 0 then
+    Result := ErrorCodeOf(Asked)
+  else
+    Result := ErrorNone;
+end;
+
 function SendSignal(Target: Int64; Number: Integer): LongInt;
 begin
   case ActionOfSignal(Number) of
+    SignalActionAskToEnd: Result := AskToEnd(Target, Number);
     SignalActionStop: Result := StopPrograms(Target);
     SignalActionContinue: Result := ContinuePrograms(Target);
     SignalActionEnd:

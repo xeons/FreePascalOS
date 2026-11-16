@@ -32,7 +32,8 @@
   and serves the port "servicemanager" for the `service` command. When
   the system shuts down (the kernel signals the event it watches), it
   stops the services in the reverse order and ends, and the kernel does
-  the rest.
+  the rest. Stopping a service asks its programs to end (they may tidy
+  up), and ends them outright after the service's stop-timeout.
 
   The boot mode is --mode, else the kernel option mode=, else
   "graphical": the display server and the session (a login on the
@@ -49,8 +50,9 @@
                                order of the mode, then end
 
   A second manager (for tests: another directory and port) runs its
-  services until it is ended; only the first program, which the kernel
-  started, watches for shutdowns.
+  services until it is asked to end, when it stops them in order as at
+  a shutdown; only the first program, which the kernel started, watches
+  for shutdowns.
 
   The units are in userland/servicemanager: Services.Definitions (the
   files), Services.Catalog (the table, needs and order), Services.Launch
@@ -187,11 +189,11 @@ begin
       Continue;
     end;
     Print(Format('service %s: program %s, arguments %s, user %s, needs %s, modes %s, ' +
-      'restart %s (limit %d, delay %d ms), ready %s (timeout %d ms), output %s',
+      'restart %s (limit %d, delay %d ms), ready %s (timeout %d ms), stop timeout %d ms, output %s',
       [Definition.Name, Definition.ProgramPath, JoinWords(Definition.Arguments), Definition.UserName,
        JoinWords(Definition.Needs), JoinWords(Definition.Modes), RestartPolicyName(Definition.Restart),
        Definition.RestartLimit, Definition.RestartDelayMilliseconds, ReadinessName(Definition.Readiness),
-       Definition.ReadyTimeoutMilliseconds, DescribeOutput(Definition)]));
+       Definition.ReadyTimeoutMilliseconds, Definition.StopTimeoutMilliseconds, DescribeOutput(Definition)]));
   end;
   Order := StartOrder(BootMode);
   SetLength(Names, Length(Order));

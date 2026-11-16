@@ -25,8 +25,10 @@
   PATTERN is an extended regular expression matched against process
   names (or the whole name with -x). The program itself is never
   matched. Called as pkill it ends the matching processes instead of
-  printing them; the system has no signals, so -SIGNAL only picks the
-  exit status (128 + signal number, as with kill).
+  printing them; the system has no signals, so -SIGNAL picks what
+  happens as with kill: TERM (the default), HUP and INT ask the program
+  to end (it may tidy up first, or end with 128 + the signal number),
+  the others end it at once.
 }
 program pgrep;
 
@@ -202,7 +204,7 @@ begin
   begin
     for Index := 0 to MatchCount - 1 do
     begin
-      Error := TerminateProgram(Matches[Index].ProcessId, 128 + Signal);
+      Error := SendSignal(Int64(Matches[Index].ProcessId), Signal);
       if Error <> ErrorNone then
       begin
         ReportError(Error, 'killing pid %u failed', [ArgumentUnsigned(Matches[Index].ProcessId)]);

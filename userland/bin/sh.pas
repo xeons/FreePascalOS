@@ -28,6 +28,13 @@
 
   See Shell.Syntax for the supported grammar and Shell.Expansion for
   quoting and expansions.
+
+  An interactive shell on a terminal takes requests to end (kill, a log
+  off, a stopped service, the shutdown: Sys.Notifications) and acts on
+  one at its prompt, or as soon as the command it runs is over: it
+  saves its history, ends its stopped jobs as it does on exit, and ends
+  with the request's status (143). Ctrl-C does not end it, and a
+  terminal's hang-up ends it at once (129), as before.
 }
 program sh;
 
@@ -42,6 +49,7 @@ uses
   Sys.Files,
   Sys.Kernel,
   Sys.Memory,
+  Sys.Notifications,
   Sys.Streams,
   Sys.Text,
   Sys.Processes,
@@ -126,6 +134,22 @@ begin
   end;
 end;
 
+{ True if the shell was asked to end; Status is what it then ends with.
+  Other notifications are not taken, so there are none. }
+function TakeEndRequest(out Status: LongInt): Boolean;
+var
+  Notification: TAbiNotification;
+begin
+  Result := False;
+  Status := 0;
+  while ReceiveNotification(Notification) do
+    if Notification.Kind = NotificationEndRequested then
+    begin
+      Result := True;
+      Status := EndStatusOf(Notification.Reason);
+    end;
+end;
+
 { Reads and runs commands line by line until end of input or exit. A
   command spanning several lines (an open quote or an unfinished if,
   while, ...) is collected before it runs. On the console, lines are read
@@ -141,6 +165,8 @@ var
   Prompt: PChar;
   HistoryPath: PChar;
   GotLine: Boolean;
+  EditResult: TEditResult;
+  EndStatus: LongInt;
 begin
   if OnConsole then
   begin
@@ -149,6 +175,10 @@ begin
     HistoryPath := HistoryFilePath;
     BeginLineEditor(Editor, HistoryPath, StandardErrorHandle);
     FreeMemory(HistoryPath);
+    { The prompt wakes for a request to end; one that comes while a
+      command runs waits in the queue until the prompt. }
+    TakeNotifications(NotifyEndRequests);
+    Editor.WakeHandle := NotificationsHandle;
   end;
 
   BeginText(Pending);
@@ -160,10 +190,19 @@ begin
       if Pending.Length = 0 then
         NotifyFinishedJobs;
       Prompt := MakePrompt(Pending.Length > 0);
-      GotLine := EditLine(Editor, Prompt, Line) = EditLineReady;
+      EditResult := EditLine(Editor, Prompt, Line);
       FreeMemory(Prompt);
+      GotLine := EditResult = EditLineReady;
       if GotLine then
         AddHistoryLine(Editor, Line);
+      if (EditResult = EditWoken) and TakeEndRequest(EndStatus) then
+      begin
+        ExitRequested := True;
+        RequestedExitCode := EndStatus;
+        Break;
+      end;
+      if EditResult = EditWoken then
+        Continue;
     end
     else
       GotLine := ReadLine(StandardInput, Line, HadLineEnd);

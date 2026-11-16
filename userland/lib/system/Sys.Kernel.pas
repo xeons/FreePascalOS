@@ -126,6 +126,9 @@ function KernelGetKernelOptions(Buffer: PChar; Capacity: QWord): Int64;
 function KernelGetChannelPeer(Channel: Int64; out Peer: TAbiChannelPeer): Int64;
 function KernelTerminateSession(SessionId: QWord; ExitCode: LongInt): Int64;
 function KernelWatchShutdown: Int64;
+function KernelSelectNotifications(Mask: LongWord): Int64;
+function KernelReceiveNotification(out Notification: TAbiNotification): Int64;
+function KernelRequestEnd(TargetKind: LongWord; TargetId: QWord; Reason: LongWord): Int64;
 
 implementation
 
@@ -515,6 +518,21 @@ end;
 function KernelWatchShutdown: Int64;
 begin
   Result := SystemCall(CallWatchShutdown, 0, 0, 0, 0, 0, 0);
+end;
+
+function KernelSelectNotifications(Mask: LongWord): Int64;
+begin
+  Result := SystemCall(CallSelectNotifications, Mask, 0, 0, 0, 0, 0);
+end;
+
+function KernelReceiveNotification(out Notification: TAbiNotification): Int64;
+begin
+  Result := SystemCall(CallReceiveNotification, QWord(@Notification), 0, 0, 0, 0, 0);
+end;
+
+function KernelRequestEnd(TargetKind: LongWord; TargetId: QWord; Reason: LongWord): Int64;
+begin
+  Result := SystemCall(CallRequestEnd, TargetKind, TargetId, Reason, 0, 0, 0);
 end;
 
 end.

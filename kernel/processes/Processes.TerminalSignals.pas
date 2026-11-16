@@ -20,14 +20,20 @@
   The thread that acts on the terminals' signals (Io.TerminalSignals),
   for the console and every pseudo-terminal alike:
 
-    * Ctrl-C ends the terminal's foreground group with status 130,
-      sparing processes that ignore it (Processes.Termination); if that
-      ended nobody (an interactive shell waiting at its prompt is the
-      foreground), the reader gets Ctrl-C as a character instead;
+    * Ctrl-C asks the terminal's foreground group to end (reason
+      interrupt), sparing processes that ignore it: a process that
+      selected the reason is told, any other is ended with status 130
+      (Processes.EndRequests); if that asked nobody (an interactive
+      shell waiting at its prompt is the foreground), the reader gets
+      Ctrl-C as a character instead;
     * Ctrl-Z stops the foreground group (Processes.Stopping); with
       nobody to stop it does nothing;
-    * a hang-up (a pseudo-terminal's master closed) ends every process
-      whose controlling terminal it is with status 129, as SIGHUP would.
+    * a hang-up (a pseudo-terminal's master closed) asks every process
+      whose controlling terminal it is to end (reason hang-up): those
+      that did not select it end with status 129, as SIGHUP would end
+      them;
+    * a new size is told to the foreground group's processes that
+      selected NotifyTerminalResized.
 }
 unit Processes.TerminalSignals;
 
@@ -44,19 +50,17 @@ uses
   Io.LineDiscipline,
   Io.TerminalSignals,
   Processes.Thread,
-  Processes.Termination,
+  Processes.EndRequests,
   Processes.Stopping;
 
 const
-  InterruptExitCode = 130;
-  HangUpExitCode = 129;
   SignalThreadPriority = 20;
 
 procedure ActOnSignal(var Terminal: TLineDiscipline; Signal: TTerminalSignal);
 begin
   case Signal of
     TerminalSignalInterrupt:
-      if InterruptProcessGroup(Terminal.ForegroundGroup, InterruptExitCode) > 0 then
+      if InterruptProcessGroup(Terminal.ForegroundGroup) > 0 then
         FinishTerminalInterrupt(Terminal)
       else
         PassInterruptToTerminalReader(Terminal);
@@ -64,7 +68,9 @@ begin
       if SuspendProcessGroup(Terminal.ForegroundGroup) > 0 then
         FinishTerminalSuspend(Terminal);
     TerminalSignalHangUp:
-      TerminateProcessesOfTerminal(@Terminal, HangUpExitCode);
+      HangUpProcessesOfTerminal(@Terminal);
+    TerminalSignalResize:
+      TellGroupTerminalResized(Terminal.ForegroundGroup, (QWord(Terminal.Rows) shl 16) or Terminal.Columns);
   end;
 end;
 

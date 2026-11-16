@@ -6,3 +6,6 @@ modes         = graphical
 restart       = on-failure
 restart-limit = 5
 restart-delay = 2
+# Stopping it logs the user off first: their programs have 8 seconds to
+# end (and to ask about unsaved work) before they are ended.
+stop-timeout  = 12

@@ -33,10 +33,13 @@
   again; 0 means no limit). A service ended on purpose (stopped, or at
   shutdown) is "stopped".
 
-  Stopping a service ends its session: there is no way yet to ask a
-  program to end and let it tidy up (asynchronous notifications are a
-  later step), so programs must not lose anything by being ended - the
-  same as at shutdown, where the kernel ends whatever is left.
+  Stopping a service ("stopping") asks every program of its session to
+  end (Sys.Notifications: the reason is a service stop, or the
+  shutdown), so a program that takes the request can tidy up first;
+  one that does not is ended at once by the kernel. A service whose
+  program is still running after its stop-timeout is ended outright,
+  with its whole session; and whenever the service's program ends,
+  whatever is left of its session goes with it.
 }
 unit Services.Supervisor;
 
@@ -56,13 +59,16 @@ procedure WantService(Service: TService);
 procedure StartWaitingServices;
 { The service's program has ended (its process handle is signaled). }
 procedure ServiceProcessEnded(Service: TService);
-{ Ends the service on purpose (Why says why, in the log). }
-procedure StopService(Service: TService; const Why: string);
+{ Ends the service on purpose (Why says why, in the log): asks its
+  programs to end for Reason (EndReason*), and ends them outright once
+  the stop-timeout has passed. }
+procedure StopService(Service: TService; const Why: string; Reason: LongWord);
 { Stops it and starts it again once it has ended. }
 procedure RestartService(Service: TService);
 { It (or a program it started) says it is ready. }
 procedure ServiceIsReady(Service: TService);
-{ Acts on restarts that are due and waits for readiness that ran out. }
+{ Acts on restarts that are due, waits for readiness that ran out and
+  stops that took too long. }
 procedure HandleDeadlines;
 { Milliseconds until the next deadline, or -1 for none. }
 function MillisecondsToNextDeadline: Int64;
@@ -73,6 +79,7 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
+  Sys.Notifications,
   Sys.Objects,
   Sys.Processes,
   Sys.ServiceControl,
@@ -267,7 +274,7 @@ begin
   TerminateProgram(Service.ProcessId, StoppedExitCode);
 end;
 
-procedure StopService(Service: TService; const Why: string);
+procedure StopService(Service: TService; const Why: string; Reason: LongWord);
 begin
   Service.Wanted := False;
   Service.StartWhenStopped := False;
@@ -283,7 +290,9 @@ begin
   Service.State := ServiceStateStopping;
   Service.Reason := Why;
   Say('stopping ' + Service.Definition.Name + ' (' + Why + ')');
-  EndProcess(Service);
+  { Its session's id is the id of its program, which leads it. }
+  AskSessionToEnd(Service.ProcessId, Reason);
+  Service.DeadlineAt := UptimeMilliseconds + QWord(Service.Definition.StopTimeoutMilliseconds);
 end;
 
 procedure RestartService(Service: TService);
@@ -293,7 +302,7 @@ begin
     WantService(Service);
     Exit;
   end;
-  StopService(Service, 'restarting');
+  StopService(Service, 'restarting', EndReasonServiceStop);
   Service.StartWhenStopped := True;
 end;
 
@@ -325,6 +334,11 @@ begin
       { Its end comes as a failure, and the policy decides. }
       Service.Reason := 'not ready in time';
       Say(Service.Definition.Name + ' was not ready in time');
+      EndProcess(Service);
+    end
+    else if (Service.State = ServiceStateStopping) and Service.HasProcess then
+    begin
+      Say(Service.Definition.Name + ' did not stop in time: ending it');
       EndProcess(Service);
     end;
   end;

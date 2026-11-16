@@ -26,8 +26,9 @@
      manager), signals its event and waits for it to end (up to
      ShutdownCoordinatorSeconds), so it can stop the services in the
      reverse of the order they started in;
-  1. asks every user process to end, and waits for them (a few seconds
-     at most);
+  1. asks every user process to end (reason shutdown: a program that
+     takes end requests may tidy up first), waits for them a few
+     seconds, then ends whatever is left and waits again;
   2. writes everything cached out (SyncAllVolumes);
   3. writes the closing summaries (disks, keyboards);
   4. powers off through ACPI's S5 (Io.AcpiSleep), resets the machine,
@@ -74,11 +75,15 @@ uses
   Io.AcpiSleep,
   Processes.Thread,
   Processes.Termination,
+  Processes.EndRequests,
   Debug.Output;
 
 const
   { The exit status processes get (128 + SIGTERM's number). }
   ShutdownExitCode = 143;
+  { How long programs asked to end have to do so, and then how long
+    those ended outright have. }
+  WaitForAskedProcessesMilliseconds = 5000;
   WaitForProcessesMilliseconds = 5000;
   PollMilliseconds = 50;
   ShutdownStackSize = 256 * 1024;
@@ -116,10 +121,28 @@ begin
   DebugEndMessage;
 end;
 
+{ True once no user process runs; False if some still do after
+  Milliseconds. }
+function WaitForUserProcessesToEnd(Milliseconds: QWord): Boolean;
+var
+  Waited: QWord;
+begin
+  Waited := 0;
+  while (CountUserProcesses > 0) and (Waited < Milliseconds) do
+  begin
+    SleepMilliseconds(PollMilliseconds);
+    Inc(Waited, PollMilliseconds);
+  end;
+  Result := CountUserProcesses = 0;
+end;
+
 procedure EndUserProcesses;
 var
   Waited: QWord;
 begin
+  if AskAllUserProcessesToEnd(EndReasonShutdown) > 0 then
+    if not WaitForUserProcessesToEnd(WaitForAskedProcessesMilliseconds) then
+      Report('some processes did not end when asked: ending them');
   Waited := 0;
   while (TerminateAllUserProcesses(ShutdownExitCode) > 0) and (Waited < WaitForProcessesMilliseconds) do
   begin

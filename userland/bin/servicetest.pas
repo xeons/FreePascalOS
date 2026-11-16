@@ -38,7 +38,11 @@
     * the service command: list, status, start, stop and restart (a new
       process), refused for an ordinary user, an unknown name; readiness
       refused from outside the service; stopping a service ends what it
-      started (its session).
+      started (its session);
+    * stopping asks first: a service that takes the request tidies up
+      (writes a file) and ends by itself, one that ignores it is ended
+      after its stop-timeout;
+    * the manager asked to end stops every service and ends.
 
   Each check prints a line; the exit status is 1 if any failed.
 }
@@ -53,6 +57,7 @@ uses
   Abi.SystemCalls,
   Sys.Format,
   Sys.Files,
+  Sys.Notifications,
   Sys.Processes,
   Sys.ServiceControl,
   Sys.Streams,
@@ -171,6 +176,7 @@ begin
     'restart-delay = 0.25'#10 +
     'ready = notify'#10 +
     'ready-timeout = 2'#10 +
+    'stop-timeout = 3'#10 +
     'console = no'#10);
   WriteTextFile(Directory + '/badvalue.service', 'program = /bin/true'#10'restart = sometimes'#10);
   WriteTextFile(Directory + '/noprogram.service', 'description = nothing to run'#10);
@@ -183,7 +189,8 @@ begin
   Check('--check succeeds', Status = 0);
   Check('a good definition, every setting read',
     Pos('service good: program /bin/sleep, arguments 30 two words, user user, needs -, modes test other, ' +
-      'restart always (limit 0, delay 250 ms), ready notify (timeout 2000 ms), output log', Output) > 0);
+      'restart always (limit 0, delay 250 ms), ready notify (timeout 2000 ms), stop timeout 3000 ms, output log',
+      Output) > 0);
   Check('a bad value names its line',
     Pos('problem badvalue: line 2: restart is never, on-failure or always', Output) > 0);
   Check('a definition without a program', Pos('problem noprogram: no program is named', Output) > 0);
@@ -245,6 +252,11 @@ begin
     'program = /bin/sh'#10'arguments = -c "id > ' + WorkDirectory + '/asuser.txt; sleep 30"'#10 +
     'user = user'#10'modes = test'#10);
   WriteTextFile(Directory + '/manual.service', 'program = /bin/sleep'#10'arguments = 30'#10);
+  WriteTextFile(Directory + '/tidy.service',
+    'program = /bin/notifytest'#10'arguments = --tidy-service ' + WorkDirectory + '/tidied.txt'#10 +
+    'restart = never'#10'stop-timeout = 10'#10);
+  WriteTextFile(Directory + '/stubborn.service',
+    'program = /bin/notifytest'#10'arguments = --ignore-end-requests'#10'restart = never'#10'stop-timeout = 1'#10);
 end;
 
 function StatusOf(const Name: string; out Status: TServiceStatus): Boolean;
@@ -392,21 +404,64 @@ begin
     not SessionHasProcesses(OldFirst));
 end;
 
-procedure StopEverything;
+{ Starts service Name by hand and gives its program a moment to take
+  requests to end. }
+function StartByHand(const Name: string): Boolean;
 var
   Reply: TServiceReply;
-  ExitCode: LongInt;
 begin
-  AskServiceManager(TestPort, ServiceRequestStop, 'second', Reply);
-  AskServiceManager(TestPort, ServiceRequestStop, 'asuser', Reply);
-  AskServiceManager(TestPort, ServiceRequestStop, 'first', Reply);
-  WaitForState('second', ServiceStateStopped);
-  WaitForState('asuser', ServiceStateStopped);
-  if Manager >= 0 then
-  begin
-    TerminateProgram(QWord(ProcessIdOf(Manager)), 143);
-    WaitForProgramWithTimeout(Manager, 5000, ExitCode);
-  end;
+  Result := (AskServiceManager(TestPort, ServiceRequestStart, PChar(Name), Reply) = ErrorNone) and
+    WaitForState(Name, ServiceStateRunning);
+  SleepMilliseconds(500);
+end;
+
+{ Stops service Name and waits until it is stopped; how long that took
+  (milliseconds), or -1. }
+function TimeToStop(const Name: string): Int64;
+var
+  Reply: TServiceReply;
+  Started: QWord;
+begin
+  Started := UptimeMilliseconds;
+  if (AskServiceManager(TestPort, ServiceRequestStop, PChar(Name), Reply) <> ErrorNone) or
+     not WaitForState(Name, ServiceStateStopped) then
+    Exit(-1);
+  Result := Int64(UptimeMilliseconds - Started);
+end;
+
+procedure TestStopsAskFirst;
+var
+  Took: Int64;
+  Status: TServiceStatus;
+begin
+  Check('a service that tidies up when stopped runs', StartByHand('tidy'));
+  Took := TimeToStop('tidy');
+  StatusOf('tidy', Status);
+  Check('stopping it lets it tidy up and end by itself', (Took >= 0) and (Took < 5000) and
+    (Status.LastExitCode = 0) and (ReadTextFile(WorkDirectory + '/tidied.txt') = 'service-stop'#10));
+  Check('a service that ignores the request runs', StartByHand('stubborn'));
+  Took := TimeToStop('stubborn');
+  StatusOf('stubborn', Status);
+  Check('it is ended after its stop-timeout', (Took >= 900) and (Status.LastExitCode = 143) and
+    (Pos('stubborn did not stop in time: ending it', ReadTextFile(WorkDirectory + '/logs/servicemanager.log')) > 0));
+  if Took < 900 then
+    Note('stopped after ' + IntToStr(Took) + ' ms');
+end;
+
+procedure StopEverything;
+var
+  ExitCode: LongInt;
+  Log: string;
+begin
+  if Manager < 0 then
+    Exit;
+  { Asked to end, the manager stops what still runs (second, asuser)
+    as at a shutdown, then ends. }
+  Check('the manager can be asked to end', AskProcessToEnd(QWord(ProcessIdOf(Manager)), EndReasonAsked) = ErrorNone);
+  Check('it ends by itself', (WaitForProgramWithTimeout(Manager, 10000, ExitCode) = ErrorNone) and (ExitCode = 0));
+  Log := ReadTextFile(WorkDirectory + '/logs/servicemanager.log');
+  Check('it stopped its services first', (Pos('asked to end (asked): stopping the services', Log) > 0) and
+    (Pos('every service has stopped', Log) > 0));
 end;
 
 begin
@@ -421,6 +476,7 @@ begin
   WriteRunningServices(WorkDirectory + '/running');
   TestRunningServices;
   TestServiceCommand;
+  TestStopsAskFirst;
   StopEverything;
   WriteFormatted(StandardOutput, 'servicetest: %d checks, %d failed'#10, [ArgumentNumber(Checks),
     ArgumentNumber(Failures)]);

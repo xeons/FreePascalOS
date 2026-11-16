@@ -27,7 +27,10 @@ Then from the screen: Log off on the Start menu ends the session and
 brings the login window back; a wrong password there is refused, the
 right one starts the desktop again; and Shut down on the Start menu
 stops the services in order (the session before the display server) and
-powers the machine off: QEMU exits by itself.
+powers the machine off: QEMU exits by itself. Both times Notepad holds
+unsaved text: logging off, it asks whether to save (the test answers
+No) and the session ends; shutting down, nobody answers and the session
+manager ends it after the session's time is up.
 
     test-session.py <esp-directory> <system-disk-image>
 
@@ -360,7 +363,34 @@ checks.append(('service list: the graphical services run, the text console does 
                re.search(rb'serialconsole +running', listing) is not None and
                re.search(rb'console +stopped', listing) is not None))
 
-# Log off: the session ends and the login window comes back.
+
+
+def open_notepad_with_text(after):
+    """Starts Notepad from the Start menu and types into it, so it has
+    unsaved text; `after` counts the logins before this session."""
+    log = session_log()
+    found = places(log[log.rfind(b'session: user logged in'):])
+    if 'start' in found:
+        click_at(*found['start'])
+        time.sleep(1)
+        log = session_log()
+        found = places(log[log.rfind(b'session: user logged in'):])
+    if 'start-notepad' in found:
+        click_at(*found['start-notepad'])
+    log = wait_for_session_log(['title Untitled - Notepad'], 30, after=after)
+    time.sleep(1)
+    type_on_keyboard('hello')
+    time.sleep(1)
+    return log.count(b'title Untitled - Notepad') > after
+
+
+# Log off with Notepad holding unsaved text: the session's programs are
+# asked to end, so Notepad asks whether to save (No is answered), and
+# the session ends without anything being ended outright; the login
+# window comes back.
+notepad_open = open_notepad_with_text(0)
+log = session_log()
+place = places(log[log.rfind(b'session: user logged in'):])
 if 'start' in place:
     click_at(*place['start'])
     time.sleep(1)
@@ -369,13 +399,20 @@ if 'start-logoff' in place:
     click_at(*place['start-logoff'])
     time.sleep(1)
     press('ret')
+time.sleep(3)
+press('alt-n')
 log = wait_for_session_log(['session of user ended', 'login window shown'], 30)
 screen = take_screen()
 place = places(log)
+logoff_part = log[log.rfind(b'logging off user'):]
 checks.append(('Log off ends the session and shows the login window',
                b'asking log off' in log and b'logging off user' in log and
                b'session of user ended' in log and b'login window shown' in log and
                screen(640, 785) != 'cbc6bd'))
+checks.append(('Log off asks the programs to end: Notepad asks to save its text, and ends when told No',
+               notepad_open and b'asking session' in logoff_part and b'to end (log-off)' in logoff_part and
+               b'desktop: asked to end (log-off)' in logoff_part and b'answer no' in logoff_part and
+               b'\nexit' in logoff_part and b'did not end in time' not in logoff_part))
 
 # The login window: a wrong password is refused, the right one works.
 type_on_keyboard('user')
@@ -397,6 +434,10 @@ checks.append(('the right password starts the desktop again',
 # Shut down from the Start menu: through the session manager (the user
 # may not shut down; it may), the kernel, and the service manager, which
 # stops the session before the display server; then the machine is off.
+# Notepad holds unsaved text again and nobody answers its question: the
+# session manager ends it once its programs' time is up, well within
+# the session service's stop-timeout.
+open_notepad_with_text(1)
 log = wait_for_session_log(['place start'], 10, after=1)
 place = places(log[log.rfind(b'session: user logged in'):])
 if 'start' in place:
@@ -419,6 +460,7 @@ checks.append(('Shut down stops the services in order and powers off',
                qemu.returncode == 0 and b'waiting for the services to stop' in everything and
                re.search(rb'stopped session.*stopping displayserver.*stopped displayserver.*every service has stopped',
                          everything, re.S) is not None and
+               b'session did not stop in time' not in everything and
                b'entering S5' in everything))
 
 # Every program checks its heap (the kernel option heapchecks); a failed

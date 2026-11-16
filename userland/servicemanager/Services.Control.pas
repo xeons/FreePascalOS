@@ -165,7 +165,7 @@ begin
     Exit(ErrorInvalidArgument);
   case Code of
     ServiceRequestStart: WantService(Service);
-    ServiceRequestStop: StopService(Service, 'asked to');
+    ServiceRequestStop: StopService(Service, 'asked to', EndReasonServiceStop);
     ServiceRequestRestart: RestartService(Service);
   end;
 end;

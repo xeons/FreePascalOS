@@ -100,15 +100,17 @@ procedure ExitProgram(Code: LongInt);
 function CreatePipe(out ReadHandle, WriteHandle: Int64): LongInt;
 function DuplicateHandle(Handle: Int64; NewHandle: Int64): Int64;
 
-{ Asks every process of session SessionId (the id of the process that
-  leads it) but this one to end with ExitCode; returns how many were
-  asked, or minus an error. }
+{ Ends every process of session SessionId (the id of the process that
+  leads it) but this one, at once, with ExitCode; returns how many, or
+  minus an error. (Sys.Notifications.AskSessionToEnd asks them first.) }
 function EndSession(SessionId: QWord; ExitCode: LongInt): Int64;
 { The session process ProcessId belongs to; False if there is no such
   process. }
 function SessionOfProcess(ProcessId: QWord; out SessionId: QWord): Boolean;
 { True while a process of session SessionId runs (other than this one). }
 function SessionHasProcesses(SessionId: QWord): Boolean;
+{ How many processes of session SessionId run (other than this one). }
+function CountSessionProcesses(SessionId: QWord): LongInt;
 
 implementation
 
@@ -341,21 +343,26 @@ begin
 end;
 
 function SessionHasProcesses(SessionId: QWord): Boolean;
+begin
+  Result := CountSessionProcesses(SessionId) > 0;
+end;
+
+function CountSessionProcesses(SessionId: QWord): LongInt;
 var
   Information: TAbiProcessInformation;
   Index: QWord;
   Own: QWord;
 begin
+  Result := 0;
   Own := QWord(CurrentProcessId);
   Index := 0;
   while KernelListProcesses(Index, Information) >= 0 do
   begin
     if (Information.SessionId = SessionId) and (Information.ProcessId <> Own) and
        (Information.State <> ProcessStateExiting) then
-      Exit(True);
+      Inc(Result);
     Inc(Index);
   end;
-  Result := False;
 end;
 
 end.

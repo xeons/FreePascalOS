@@ -33,11 +33,10 @@
   The exit code is the one given by the caller; by Unix convention 128
   plus a signal number (143 for "terminate").
 
-  Ctrl-C on a terminal ends the terminal's foreground process group with
-  exit code 130 (128 + SIGINT), sparing processes that ignore it (an
-  interactive shell), and a terminal hanging up ends the processes it
-  controls with 129 (128 + SIGHUP); a system thread does this
-  (Processes.TerminalSignals) with the routines here.
+  Asking a process to end, which lets it tidy up first if it wants to,
+  is Processes.EndRequests; a process that does not take the request is
+  ended here, with the request's status (143, 129 for a terminal's
+  hang-up, 130 for Ctrl-C).
 
   The same safe points also let a thread wait while its process is
   stopped (StopCurrentThreadIfRequested), and act on being suspended or
@@ -49,25 +48,26 @@ unit Processes.Termination;
 
 interface
 
+uses
+  Processes.Process;
+
 procedure InitializeProcessTermination;
 
 { Returns ErrorNone, ErrorNoSuchProcess or ErrorNotPermitted. }
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;
-{ Asks every user process to end (shutting down); returns how many
-  were still running. }
+{ Ends every user process (shutting down); returns how many were still
+  running. }
 function TerminateAllUserProcesses(ExitCode: LongInt): Integer;
+{ How many user processes run. }
+function CountUserProcesses: Integer;
 
 { Asks every process of session SessionId, except the caller and those
   it may not control, to end; returns how many were asked. }
 function TerminateSession(SessionId: QWord; ExitCode: LongInt): Integer;
 
-{ Ends every process of group GroupId that does not ignore interrupts;
-  returns how many. }
-function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
-{ Ends every process whose controlling terminal has the line discipline
-  Terminal (a PLineDiscipline), ignoring interrupts or not; returns how
-  many. }
-function TerminateProcessesOfTerminal(Terminal: Pointer; ExitCode: LongInt): Integer;
+{ Marks Process for ending with ExitCode (unless it already is) and
+  alerts its threads. Requires the registry lock. }
+procedure RequestProcessTerminationLocked(Process: PProcess; ExitCode: LongInt);
 
 { Ends the current process if termination was requested. Called before
   returning from a system call (PassiveLevel, interrupts enabled). }
@@ -80,14 +80,12 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.TrapFrame,
   Kernel.Interrupts,
-  Processes.Process,
   Processes.Thread,
   Processes.UserProcess,
   Processes.Security,
   Processes.Stopping,
   Processes.ThreadControl,
-  Processes.UserExceptions,
-  Io.Manager;
+  Processes.UserExceptions;
 
 procedure EndProcessIfTerminationRequested;
 var
@@ -132,7 +130,7 @@ begin
   end;
 end;
 
-procedure RequestTerminationLocked(Process: PProcess; ExitCode: LongInt);
+procedure RequestProcessTerminationLocked(Process: PProcess; ExitCode: LongInt);
 begin
   if not Process^.TerminationRequested then
   begin
@@ -140,77 +138,6 @@ begin
     Process^.TerminationRequested := True;
   end;
   AlertProcessThreads(Process);
-end;
-
-type
-  TGroupInterrupt = record
-    GroupId: QWord;
-    ExitCode: LongInt;
-    Count: Integer;
-  end;
-  PGroupInterrupt = ^TGroupInterrupt;
-
-procedure InterruptIfInGroup(Process: PProcess; Context: Pointer);
-var
-  Request: PGroupInterrupt;
-begin
-  Request := PGroupInterrupt(Context);
-  if (Process^.GroupId = Request^.GroupId) and Process^.IsUserProcess and
-     not Process^.IgnoresInterrupt then
-  begin
-    RequestTerminationLocked(Process, Request^.ExitCode);
-    Inc(Request^.Count);
-  end;
-end;
-
-function InterruptProcessGroup(GroupId: QWord; ExitCode: LongInt): Integer;
-var
-  Request: TGroupInterrupt;
-begin
-  Request.GroupId := GroupId;
-  Request.ExitCode := ExitCode;
-  Request.Count := 0;
-  if GroupId <> 0 then
-  begin
-    LockProcessRegistry;
-    VisitRunningProcessesLocked(@InterruptIfInGroup, @Request);
-    UnlockProcessRegistry;
-  end;
-  Result := Request.Count;
-end;
-
-type
-  TTerminalRequest = record
-    Terminal: Pointer;
-    ExitCode: LongInt;
-    Count: Integer;
-  end;
-  PTerminalRequest = ^TTerminalRequest;
-
-procedure TerminateIfOnTerminal(Process: PProcess; Context: Pointer);
-var
-  Request: PTerminalRequest;
-begin
-  Request := PTerminalRequest(Context);
-  if not Process^.IsUserProcess or (Process^.ControllingTerminal = nil) then
-    Exit;
-  if PDeviceObject(Process^.ControllingTerminal)^.Terminal <> Request^.Terminal then
-    Exit;
-  RequestTerminationLocked(Process, Request^.ExitCode);
-  Inc(Request^.Count);
-end;
-
-function TerminateProcessesOfTerminal(Terminal: Pointer; ExitCode: LongInt): Integer;
-var
-  Request: TTerminalRequest;
-begin
-  Request.Terminal := Terminal;
-  Request.ExitCode := ExitCode;
-  Request.Count := 0;
-  LockProcessRegistry;
-  VisitRunningProcessesLocked(@TerminateIfOnTerminal, @Request);
-  UnlockProcessRegistry;
-  Result := Request.Count;
 end;
 
 procedure InitializeProcessTermination;
@@ -230,7 +157,7 @@ begin
     Result := ErrorNotPermitted
   else
   begin
-    RequestTerminationLocked(Process, ExitCode);
+    RequestProcessTerminationLocked(Process, ExitCode);
     Result := ErrorNone;
   end;
   UnlockProcessRegistry;
@@ -240,7 +167,7 @@ procedure TerminateIfUserProcess(Process: PProcess; Context: Pointer);
 begin
   if not Process^.IsUserProcess then
     Exit;
-  RequestTerminationLocked(Process, PLongInt(Context)^);
+  RequestProcessTerminationLocked(Process, PLongInt(Context)^);
 end;
 
 procedure CountUserProcess(Process: PProcess; Context: Pointer);
@@ -268,7 +195,7 @@ begin
     Exit;
   if not MayControlProcess(Request^.Caller, Process) then
     Exit;
-  RequestTerminationLocked(Process, Request^.ExitCode);
+  RequestProcessTerminationLocked(Process, Request^.ExitCode);
   Inc(Request^.Count);
 end;
 
@@ -292,6 +219,14 @@ begin
   LockProcessRegistry;
   VisitRunningProcessesLocked(@CountUserProcess, @Result);
   VisitRunningProcessesLocked(@TerminateIfUserProcess, @ExitCode);
+  UnlockProcessRegistry;
+end;
+
+function CountUserProcesses: Integer;
+begin
+  Result := 0;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@CountUserProcess, @Result);
   UnlockProcessRegistry;
 end;
 

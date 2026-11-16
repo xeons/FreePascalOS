@@ -86,8 +86,11 @@ how the existing pieces fit together.
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
-- [ ] Asynchronous notifications a program can handle (Ctrl-C, a request to end,
-      timers); processor exceptions are already catchable
+- [x] Asynchronous notifications a program can handle: a notification queue
+      waited on like a handle (requests to end with a reason - asked,
+      service stop, shutdown, log off, hang-up, Ctrl-C - and the terminal's
+      size); the kernel ends a program for a request it does not take, as
+      before (timers are waitable objects; processor exceptions are catchable)
 - [x] Users, groups and permission checks: real/effective/saved ids, supplementary
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
@@ -376,8 +379,8 @@ normalized (0-65535), not pixels.
       once it works; shutdown and reboot stop services in reverse order first
 - [x] The graphical session starts by itself: login, then the desktop shell for
       that user; a text console stays available for debugging
-- [ ] Asking a service to stop before ending it (needs asynchronous
-      notifications; a stop ends the service's session now)
+- [x] Asking a service to stop before ending it (its session asked to end,
+      ended after its stop-timeout); log off and shutdown ask first too
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
 - [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users

@@ -37,6 +37,7 @@ uses
   Windowing.Shell,
   Windowing.Sessions,
   Windowing.Notifications,
+  Windowing.EndRequests,
   Windowing.Windows;
 
 implementation

@@ -42,6 +42,10 @@
 
   When standard input is not the console, EditLine just prints the prompt
   and reads a line.
+
+  A program can give the editor a handle to wake it while it waits for
+  a key (WakeHandle: the shell's notifications): once that handle is
+  ready, EditLine gives up the line and returns EditWoken.
 }
 unit Util.LineEditor;
 
@@ -60,9 +64,11 @@ type
     HistoryPath: PChar;
     OutputHandle: Int64;
     IsConsole: Boolean;
+    { Waited for along with the keys (NoHandle: none). }
+    WakeHandle: Int64;
   end;
 
-  TEditResult = (EditLineReady, EditEndOfInput);
+  TEditResult = (EditLineReady, EditEndOfInput, EditWoken);
 
 { HistoryPath may be nil (no history file). Output (prompt and echo)
   goes to OutputHandle. }
@@ -86,6 +92,7 @@ uses
   Sys.Files,
   Sys.Kernel,
   Sys.Memory,
+  Sys.Objects,
   Sys.Streams,
   Sys.Text,
   Util.Directories,
@@ -598,6 +605,15 @@ begin
   Result := KernelRead(StandardInputHandle, @Character, 1) = 1;
 end;
 
+{ Waits for a key, or for the wake handle: False if the wake handle came
+  first. }
+function WaitForKeyOrWake(var Editor: TLineEditor): Boolean;
+begin
+  if Editor.WakeHandle = NoHandle then
+    Exit(True);
+  Result := WaitForHandles([StandardInputHandle, Editor.WakeHandle], InfiniteWait) <> 1;
+end;
+
 { Handles the rest of an escape sequence (after ESC). }
 procedure HandleEscapeSequence(var State: TEditState);
 var
@@ -677,6 +693,13 @@ begin
   Done := False;
   while not Done do
   begin
+    if not WaitForKeyOrWake(Editor) then
+    begin
+      MoveShownCursor(State, State.Text.Length);
+      Emit(State, KeyLineFeed);
+      Result := EditWoken;
+      Break;
+    end;
     if not ReadKey(Character) then
     begin
       Result := EditEndOfInput;
@@ -753,7 +776,7 @@ begin
   end;
   FlushOutput(State);
   FreeMemory(State.Scratch);
-  if Result = EditEndOfInput then
+  if Result <> EditLineReady then
   begin
     DiscardText(State.Text);
     Line := nil;
@@ -786,6 +809,7 @@ begin
     Editor.HistoryPath := DuplicateText(HistoryPath);
   Editor.OutputHandle := OutputHandle;
   Editor.IsConsole := IsConsole(StandardInputHandle);
+  Editor.WakeHandle := NoHandle;
   LoadHistory(Editor);
 end;
 
