@@ -34,6 +34,7 @@ unit ControlPanel.DateTimePage;
 interface
 
 uses
+  SysUtils,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -63,6 +64,7 @@ type
   public
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
     { Every second: the time shown moves on. }
@@ -72,7 +74,6 @@ type
 implementation
 
 uses
-  SysUtils,
   Abi.SystemCalls,
   Runtime.Time,
   Sys.Time,
@@ -132,6 +133,13 @@ begin
   Caption.ShowsMnemonic := False;
   Caption.Text := 'YYYY-MM-DD and HH:MM:SS, local time.';
   Caption.SetBounds(ControlLeft, 272, PageWidth - ControlLeft - PageMargin, 18);
+end;
+
+function TDateTimePage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Time';
 end;
 
 function TDateTimePage.PageName: string;

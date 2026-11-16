@@ -33,6 +33,7 @@ unit ControlPanel.SoundPage;
 interface
 
 uses
+  SysUtils,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -70,6 +71,7 @@ type
   public
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
   end;
@@ -77,7 +79,6 @@ type
 implementation
 
 uses
-  SysUtils,
   Abi.SystemCalls,
   Sys.SystemSettings,
   Windowing.Connection,
@@ -121,6 +122,13 @@ begin
   FDefault := TComboBox.Create(Self);
   FDefault.SetBounds(ControlLeft, 156, PageWidth - ControlLeft - PageMargin, 22);
   FDefault.OnChange := @ControlChanged;
+end;
+
+function TSoundPage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Sound';
 end;
 
 function TSoundPage.PageName: string;
