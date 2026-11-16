@@ -66,6 +66,14 @@ begin
   Bitmap.Coverage := nil;
 end;
 
+{ A coordinate in pixels rounded to 1/64 pixel (half up), the precision
+  FreeType's 26.6 coordinates have; glyphs then agree with FreeType's
+  to the coverage, not just to the shape. }
+function ToSixtyFourths(Value: Double): Double;
+begin
+  Result := Floor(Value * 64 + 0.5) / 64;
+end;
+
 { One contour's lines and curves into Shape (points in pixels, y down). }
 procedure AddContour(var Shape: TCoverageShape; const Outline: TGlyphOutline; First, Last: LongInt);
 var
@@ -178,8 +186,8 @@ begin
   Scale := PixelSize / Font.UnitsPerEm;
   for Index := 0 to Outline.PointCount - 1 do
   begin
-    Outline.Points[Index].X := Outline.Points[Index].X * Scale;
-    Outline.Points[Index].Y := Outline.Points[Index].Y * Scale;
+    Outline.Points[Index].X := ToSixtyFourths(Outline.Points[Index].X * Scale);
+    Outline.Points[Index].Y := ToSixtyFourths(Outline.Points[Index].Y * Scale);
   end;
   if Hinted then
     HintOutline(Font, Scale, Outline);

@@ -58,7 +58,12 @@ uses
 
 const
   PixelTolerance = 24;
-  GlyphTolerance = 1.5;
+  { FreeType's antialiasing rasterizer cuts curves into lines more
+    coarsely than ours (1/50 pixel), so curved glyphs differ a little
+    along their edges; at 9 and 12 pixels, where most of a glyph's
+    pixels are edge pixels, that averages up to about 4.3 per pixel
+    (measured on DejaVu Sans). Straight-line glyphs agree far closer. }
+  GlyphTolerance = 5.0;
 
 type
   TComparison = record

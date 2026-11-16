@@ -62,6 +62,9 @@ type
 function CheckGlyphLocations(const Locations: TGlyphLocations): Boolean;
 { The outline of Glyph in font units (see Font.Outlines' LoadOutline). }
 function ReadGlyphOutline(const Locations: TGlyphLocations; Glyph: LongWord; out Outline: TGlyphOutline): Boolean;
+{ The left edge (xMin) the glyph's header gives; False for an empty or
+  unreadable glyph. }
+function ReadGlyphBoxLeft(const Locations: TGlyphLocations; Glyph: LongWord; out BoxLeft: LongInt): Boolean;
 
 implementation
 
@@ -420,6 +423,28 @@ begin
     Result := ReadSimpleGlyph(Data, ContourCount, Outline)
   else
     Result := ReadCompositeGlyph(Locations, Data, Depth, Outline);
+end;
+
+function ReadGlyphBoxLeft(const Locations: TGlyphLocations; Glyph: LongWord; out BoxLeft: LongInt): Boolean;
+var
+  Start: QWord;
+  Finish: QWord;
+  Data: TFontTable;
+begin
+  BoxLeft := 0;
+  Result := False;
+  if Glyph >= Locations.GlyphCount then
+    Exit;
+  Start := GlyphOffset(Locations, Glyph);
+  Finish := GlyphOffset(Locations, Glyph + 1);
+  if Finish <= Start then
+    Exit;
+  Data := TablePart(Locations.Glyf, Start);
+  Data.Length := Finish - Start;
+  if not Has(Data, 0, 10) then
+    Exit;
+  BoxLeft := ReadSigned16(Data, 2);
+  Result := True;
 end;
 
 function ReadGlyphOutline(const Locations: TGlyphLocations; Glyph: LongWord; out Outline: TGlyphOutline): Boolean;

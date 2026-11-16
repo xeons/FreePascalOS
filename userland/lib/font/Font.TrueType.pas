@@ -60,6 +60,7 @@ type
     FAdvanceCount: LongWord;
     FKerning: TFontKerning;
     function Open: Boolean;
+    function LeftSideBearingUnits(Glyph: LongWord): LongInt;
   public
     function AdvanceUnits(Glyph: LongWord): LongInt; override;
     function LoadOutline(Glyph: LongWord; out Outline: TGlyphOutline): Boolean; override;
@@ -275,9 +276,33 @@ begin
   Result := ReadUnsigned16(FMetrics, 4 * QWord(Glyph));
 end;
 
+{ hmtx's left side bearing: from the long entries, then the array of
+  bearings alone for the glyphs past them. }
+function TTrueTypeFont.LeftSideBearingUnits(Glyph: LongWord): LongInt;
+begin
+  if Glyph < FAdvanceCount then
+    Result := ReadSigned16(FMetrics, 4 * QWord(Glyph) + 2)
+  else
+    Result := ReadSigned16(FMetrics, 4 * QWord(FAdvanceCount) + 2 * QWord(Glyph - FAdvanceCount));
+end;
+
+{ The outline is placed so that its left edge (the header's xMin) falls
+  at hmtx's left side bearing, as FreeType places it; in a well made
+  font the two are equal and nothing moves. }
 function TTrueTypeFont.LoadOutline(Glyph: LongWord; out Outline: TGlyphOutline): Boolean;
+var
+  BoxLeft: LongInt;
+  Shift: LongInt;
+  Index: LongInt;
 begin
   Result := ReadGlyphOutline(FLocations, Glyph, Outline);
+  if not Result or not ReadGlyphBoxLeft(FLocations, Glyph, BoxLeft) then
+    Exit;
+  Shift := LeftSideBearingUnits(Glyph) - BoxLeft;
+  if Shift = 0 then
+    Exit;
+  for Index := 0 to Outline.PointCount - 1 do
+    Outline.Points[Index].X := Outline.Points[Index].X + Shift;
 end;
 
 function TTrueTypeFont.KerningUnits(LeftGlyph, RightGlyph: LongWord): LongInt;
