@@ -2515,16 +2515,20 @@ beneath BSD-style sockets that are handles like any other.
 
 ```
   the network service (DHCP, settings, state files)   host nslookup hostname
-  resolver: Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages, Sys.HostsFile
-  programs: Sys.Sockets, Sys.NetworkInterfaces     ping ifconfig route arp
-                                                    netstat nc
-=========== system calls 104-126 (Processes.SocketCalls, .NetworkCalls) ====
+  resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages
+  programs: Sys.Sockets, Sys.NetworkInterfaces,    ping ifconfig route arp ndp
+            Sys.AddressText                         netstat nc wget
+=========== system calls 104-127 (Processes.SocketCalls, .NetworkCalls) ====
   Network.SocketOperations   bind listen accept connect send receive ...
   Network.Sockets            the socket object, readiness events, waits
   Network.TcpSockets | Network.Udp | Network.IcmpSockets
   Network.Tcp*  (connections, segments, input, output, timers, states)
+  Network.IpOutput  Network.IpDatagrams   (either IP version, for the above)
   Network.Ipv4  Network.Fragments  Network.Icmp  Network.Routing
-  Network.Arp   Network.Ethernet   Network.Loopback
+  Network.Ipv6  Network.Ipv6Headers  Network.Ipv6Fragments  Network.Icmpv6
+  Network.Ipv6Routing  Network.Ipv6AddressList  Network.Ipv6Interfaces
+  Network.NeighborDiscovery  Network.RouterDiscovery  Network.Mld
+  Network.Arp   Network.NeighborCache   Network.Ethernet   Network.Loopback
   Network.Interfaces          (one per adapter; lo is number 1)
   Network.Statistics          the protocols' counters (netstat -s)
   Network.Core                the lock, the receive queue, the wake-ups
@@ -2579,8 +2583,13 @@ place and copied only where it is kept: into a socket's datagram queue
 (64 KiB), or into a reassembly buffer. TCP keeps sent data in a 64 KiB
 send ring until it is acknowledged and retransmits from there.
 
-**Ethernet and ARP.** Frames for another station and multicast frames
-are dropped. The ARP cache (64 entries) keeps an answer for ten minutes;
+**Ethernet and ARP.** Frames for another station are dropped, and so is
+multicast but IPv6's (33:33 and a group's last four bytes, which IPv6
+filters by the groups the interface listens to); every driver already
+takes all multicast (virtio-net is promiscuous in QEMU without
+`VIRTIO_NET_F_CTRL_RX`, the e1000 family sets "multicast promiscuous",
+the Realtek chips fill their multicast filter with ones), so no filter
+is programmed. The ARP cache (64 entries) keeps an answer for ten minutes;
 a datagram to an unknown neighbour waits on its incomplete entry (up to
 8 per entry) while a request is sent once a second, three times; then
 the datagrams are dropped and each local sender gets an ICMP host
@@ -2617,7 +2626,104 @@ fragment.
 before an unconnected one); a broadcast to every socket bound to the
 port; with none, the sender gets port unreachable. A connected socket
 hears of a port unreachable that comes back (`ErrorConnectionRefused`
-on its next call). Broadcasts need `SocketOptionBroadcast`.
+on its next call). Broadcasts need `SocketOptionBroadcast`. Over IPv6 a
+datagram to a multicast group goes to every socket bound to the port,
+and a datagram without a checksum is dropped.
+
+**Both IP versions.** Endpoints (`TNetworkEndpoint`) carry the family,
+an IPv4 address or an IPv6 one (`Address6`) with the scope id of a
+link-local address; sockets and connections compare them with
+`EndpointsEqual` and friends (`Network.Addresses`). Received datagrams
+reach UDP, TCP and the ICMP sockets as a `TIpDatagram`
+(`Network.IpDatagrams`), which gives their endpoints and pseudo-header
+sum whichever version brought them; going out, `Network.IpOutput`
+chooses the source address, the payload limit and the pseudo-header sum
+and hands the packet to `Network.Ipv4` or `Network.Ipv6`. A socket is of
+one family (`TSocket.Family`): IPv6 sockets never see IPv4 traffic (no
+v4-mapped addresses), and an IPv4 and an IPv6 socket may bind the same
+port. The ICMP sockets of an IPv6 socket speak ICMPv6 (echo request 128,
+reply 129; the kernel fills in every checksum, which covers the
+pseudo-header).
+
+**IPv6** (RFC 8200; `Network.Ipv6`). A datagram is checked (version,
+payload length) and taken if it is for one of this machine's addresses
+(not a tentative one) or for a multicast group the interface listens to
+(all-nodes, and the solicited-node group of each of its addresses);
+then its extension headers are walked (`Network.Ipv6Headers`):
+hop-by-hop options (first only) and destination options are looked
+through (padding and router alert known; an unknown option skipped or
+the datagram dropped, with a parameter problem, as its two high bits
+say), a routing header with segments left is refused, "no next header"
+ends it, and a fragment goes to reassembly (`Network.Ipv6Fragments`: as
+IPv4's, 8 datagrams at once for 60 s; the whole datagram is walked
+again; atomic fragments are passed over). ICMPv6, UDP and TCP get what
+is left; another protocol a parameter problem. Lo (::1) carries IPv6 as
+it carries IPv4: its receive side looks at the version nibble. Going
+out, a datagram to one of our addresses goes through lo; to a
+link-local address or a multicast group by the interface its zone names
+(the socket's interface, the address's scope id, else the first
+Ethernet interface with IPv6); others by the routes
+(`Network.Ipv6Routing`: interface routes for fe80::/64 and manual
+prefixes, on-link prefixes and default routes from routers that expire
+with their lifetimes, routes by hand; the longest prefix on an interface
+that is up and running, the lowest metric among equals). The source is
+chosen from the leaving interface's addresses
+(`Network.Ipv6AddressList`, RFC 6724 simply): of the destination's
+scope (a global destination never gets a link-local source), preferred
+before deprecated, the longest common prefix; with no global address on
+the interface another interface's (weak host). Multicast goes to its
+33:33 address, the rest through the neighbour cache. Nothing is sent in
+fragments (larger than the link MTU: `ErrorMessageTooLong`); the hop
+limit is the socket's (`SocketOptionTimeToLive`) or what a router
+advertised (64).
+
+**Addresses and Neighbor Discovery** (RFC 4861, 4862;
+`Network.Ipv6Interfaces`, `Network.NeighborDiscovery`,
+`Network.RouterDiscovery`, `Network.NeighborCache`, `Network.Mld`).
+Each interface has an IPv6 mode: `Ipv6ModeAutomatic` (Ethernet's at
+first), `Ipv6ModeLinkLocal` (lo's, with ::1; RAs ignored) or
+`Ipv6ModeOff`. IPv6 starts on an interface when it is up with its link
+and its mode is not off: the link-local address (fe80:: with the
+modified EUI-64 identifier of the Ethernet address) is made, and every
+new address is tentative while duplicate address detection runs (one
+solicitation from ::, a second's wait; an advertisement for it, or
+another host's probe for it, removes it as a duplicate). The groups are
+reported by MLDv2 (two unsolicited reports, a report for each query;
+from :: while the link-local address is tentative, with the hop-by-hop
+router alert) so that snooping switches pass solicitations on. Once the
+link-local address is ready an automatic interface solicits routers
+(three solicitations, 4 s apart, until an advertisement comes). An
+advertisement (link-local source, hop limit 255) gives the default route
+through the router for its lifetime (metric: the interface's index, so
+eth0's router wins among equals), its hop limit, reachable time and
+retransmission timer, the link MTU (option 5), on-link prefix routes
+(L) and SLAAC addresses for 64-bit prefixes (A: the prefix and our
+identifier, with the valid and preferred lifetimes and RFC 4862 5.5.3
+e's two hours), and DNS servers (RDNSS, RFC 8106; listed with the
+interface for the network service). Addresses past their preferred
+lifetime are deprecated, past their valid one removed. When the link
+or the interface goes, the link-local and automatic addresses, what
+routers gave and the neighbours are dropped; manual addresses stay and
+are tested again. The neighbour cache (64 entries) is RFC 4861 7.3's:
+INCOMPLETE (multicast solicitations once a second, three times; the
+waiting datagrams' senders then get "address unreachable"), REACHABLE
+for the reachable time after a solicited advertisement, STALE (still
+used; the first use waits 5 s, then three unicast probes a second
+apart, unanswered: forgotten; unused for ten minutes: forgotten).
+Solicitations for our addresses are answered and teach us the asker's
+address. Redirects are ignored.
+
+**ICMPv6** (RFC 4443; `Network.Icmpv6`). Echo requests are answered,
+multicast ones too (from an address of the arrival interface). Echo
+replies and errors about echo requests go to the IPv6 echo sockets with
+the identifier, raw ICMPv6 sockets get everything; destination
+unreachable about UDP or TCP reaches the socket or connection (no route:
+`ErrorNetworkUnreachable`, address unreachable: `ErrorHostUnreachable`,
+port: `ErrorConnectionRefused`). Errors are sent for an unknown next
+header or option, a routing header with segments left, a closed UDP port
+and a neighbour that never answered; never about an ICMPv6 error, a
+datagram to a group or from a non-unicast address; they quote what fits
+in 1280 bytes.
 
 **TCP** (RFC 793 with RFC 1122, 5681, 6298). Connections
 (`TTcpConnection`) live apart from sockets: a listener makes a child in
@@ -2708,6 +2814,7 @@ binding a socket to an interface (`SocketOptionInterface`) are root's.
 | SetNodeName | 124 | name (root) |
 | WatchNetworkChanges | 125 | returns an event handle signaled after each change |
 | GetNetworkStatistics | 126 | `TAbiNetworkStatistics` |
+| ListNeighbors | 127 | buffer, capacity (`TAbiNeighborEntry`: IPv6's neighbour cache) |
 
 A listing returns how many records there are, at most
 `MaximumListedNetworkRecords` (1024): a longer list is cut short there
@@ -2718,8 +2825,12 @@ made it, or that accepted its connection; the listing reports both
 gone), which `netstat -p` shows with the process's name.
 
 Addresses (`TAbiSocketAddress`) carry a family, sixteen address bytes
-(IPv4 in the first four, in the order written) and a port in the
-machine's byte order, so IPv6 needs no new calls. Options: receive and
+(IPv4 in the first four, in the order written; IPv6 all sixteen), a
+port in the machine's byte order and, for IPv6, the scope id (the
+interface index of a link-local address). Sockets are made with
+`AddressFamilyIPv4` or `AddressFamilyIPv6` (ICMPv6 echo and raw sockets
+take `ProtocolIcmpv6` or `ProtocolIcmp`); an address of the other
+family is `ErrorAddressFamilyNotSupported`. Options: receive and
 send timeouts, broadcast, reuse address, time to live, non-blocking, the
 pending error (how a non-blocking connect ended), no delay, the kind,
 the received time to live (ping shows it), the interface, the bytes
@@ -2744,13 +2855,22 @@ connections established now (counted when asked), segments in, out and
 retransmitted (a segment that carries data, a SYN or a FIN from before
 the furthest sequence number sent), bad segments and resets sent. UDP:
 datagrams delivered, to no port, damaged or without room in the
-socket's queue, and sent.
+socket's queue, and sent. TCP and UDP count both IP versions; IPv6 has
+IP's counters of its own (`Ipv6`), and ICMPv6 its own (`Icmpv6`, with
+the types counted in slots: the errors 1-4 and the informational
+messages 128-143).
 
 **Configuration.** Anyone may list interfaces (name, description,
-Ethernet address, flags up/running/loopback/broadcast, MTU, addresses,
-packets, bytes, errors and drops each way), routes, the ARP cache and
-the sockets; only root may change an interface (address and prefix,
-up/down, MTU), the routes or the DNS servers. The kernel keeps the DNS
+Ethernet address, flags up/running/loopback/broadcast, MTU, addresses
+- the IPv4 one first, then the IPv6 ones with their flags (tentative,
+deprecated, automatic, link-local), eight in all - IPv6 mode, hop
+limit, link MTU and the DNS servers routers advertised, packets, bytes,
+errors and drops each way), routes of both families (IPv4's first), the
+ARP cache, the neighbour cache and the sockets; only root may change an
+interface (the IPv4 address and prefix, IPv6 addresses added and
+removed one by one, the IPv6 mode, up/down, MTU), the routes (an IPv6
+route through a link-local gateway names its interface) or the DNS
+servers (IPv4 or IPv6 addresses). The kernel keeps the DNS
 servers and search domain only for the resolver to read, as it keeps
 the time zone's name. Changes are written to the kernel log.
 
