@@ -55,8 +55,10 @@ var
   DefaultScale: LongWord = 100;
 
 { ErrorNone, or an error code (no display server: ErrorNotFound). Waits a
-  little for the server, as it may still be starting. }
-function ConnectToDisplay: LongInt;
+  little for the server, as it may still be starting, unless
+  WaitForServer is False (a program that only reports what it finds, and
+  runs in text mode too, should not wait for a server that never comes). }
+function ConnectToDisplay(WaitForServer: Boolean = True): LongInt;
 procedure DisconnectFromDisplay;
 function IsConnected: Boolean;
 
@@ -191,19 +193,24 @@ begin
   until WaitForHandle(DisplayChannel, Timeout) <> ErrorNone;
 end;
 
-function ConnectToDisplay: LongInt;
+function ConnectToDisplay(WaitForServer: Boolean): LongInt;
 var
   Attempt: LongInt;
+  AttemptCount: LongInt;
   Message: TWindowMessage;
 begin
   if IsConnected then
     Exit(ErrorNone);
   Broken := False;
   KeptCount := 0;
-  for Attempt := 1 to ConnectAttempts do
+  if WaitForServer then
+    AttemptCount := ConnectAttempts
+  else
+    AttemptCount := 1;
+  for Attempt := 1 to AttemptCount do
   begin
     DisplayChannel := ConnectPort(WindowingPortName);
-    if DisplayChannel >= 0 then
+    if (DisplayChannel >= 0) or (Attempt = AttemptCount) then
       Break;
     SleepMilliseconds(ConnectPause);
   end;
