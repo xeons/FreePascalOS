@@ -27,14 +27,14 @@
 program realpath;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Messages,
   Util.Options,
   Util.Paths;
@@ -59,80 +59,115 @@ const
   OptionStrip = 6;
   OptionZero = 7;
 
-{ True if Path is Base or below it. }
-function IsBelow(Path, Base: PChar): Boolean;
 var
-  Length: PtrUInt;
+  Mode: TCanonicalMode;
+  FollowLinks: Boolean;
+
+{ The character at the 0-based Index, #0 past the end. }
+function CharacterAt(const Text: string; Index: Integer): Char;
 begin
-  if TextIsEqual(Base, '/') then
+  if Index < Length(Text) then
+    Result := Text[Index + 1]
+  else
+    Result := #0;
+end;
+
+function IsComponentEnd(Character: Char): Boolean;
+begin
+  Result := (Character = '/') or (Character = #0);
+end;
+
+{ True if Path is Base or below it. }
+function IsBelow(const Path, Base: string): Boolean;
+begin
+  if Base = '/' then
     Exit(True);
-  Length := TextLength(Base);
-  Result := TextStartsWith(Path, Base) and ((Path[Length] = '/') or (Path[Length] = #0));
+  Result := StartsStr(Base, Path) and IsComponentEnd(CharacterAt(Path, Length(Base)));
 end;
 
 { Path relative to Directory (both absolute and canonical). }
-function MakeRelative(Path, Directory: PChar): PChar;
+function MakeRelative(const Path, Directory: string): string;
 var
-  Builder: TTextBuilder;
-  Common: PtrUInt;
-  Index: PtrUInt;
-  Remaining: PChar;
+  Common: Integer;
+  Index: Integer;
+  Remaining: string;
 begin
   { Longest common prefix that ends at a component boundary. }
   Common := 0;
   Index := 0;
-  while (Path[Index] <> #0) and (Path[Index] = Directory[Index]) do
+  while (Index < Length(Path)) and (CharacterAt(Path, Index) = CharacterAt(Directory, Index)) do
   begin
     Inc(Index);
-    if ((Path[Index] = '/') or (Path[Index] = #0)) and ((Directory[Index] = '/') or (Directory[Index] = #0)) then
+    if IsComponentEnd(CharacterAt(Path, Index)) and IsComponentEnd(CharacterAt(Directory, Index)) then
       Common := Index;
   end;
-  if TextIsEqual(Directory, '/') then
+  if Directory = '/' then
     Common := 0;
-  BeginText(Builder);
+  Result := '';
   { One ".." per remaining component of Directory. }
-  Remaining := Directory + Common;
-  while Remaining^ <> #0 do
+  Index := Common;
+  while Index < Length(Directory) do
   begin
-    if Remaining^ = '/' then
+    if CharacterAt(Directory, Index) = '/' then
     begin
-      Inc(Remaining);
-      if Remaining^ = #0 then
+      Inc(Index);
+      if Index >= Length(Directory) then
         Break;
-      if Builder.Length > 0 then
-        AppendCharacter(Builder, '/');
-      AppendText(Builder, '..');
+      if Result <> '' then
+        Result := Result + '/';
+      Result := Result + '..';
     end;
-    while (Remaining^ <> '/') and (Remaining^ <> #0) do
-      Inc(Remaining);
+    while not IsComponentEnd(CharacterAt(Directory, Index)) do
+      Inc(Index);
   end;
-  Remaining := Path + Common;
-  if Remaining^ = '/' then
-    Inc(Remaining);
-  if Remaining^ <> #0 then
+  Remaining := Copy(Path, Common + 1, MaxInt);
+  if StartsStr('/', Remaining) then
+    Delete(Remaining, 1, 1);
+  if Remaining <> '' then
   begin
-    if Builder.Length > 0 then
-      AppendCharacter(Builder, '/');
-    AppendText(Builder, Remaining);
+    if Result <> '' then
+      Result := Result + '/';
+    Result := Result + Remaining;
   end;
-  if Builder.Length = 0 then
-    AppendCharacter(Builder, '.');
-  Result := FinishText(Builder);
+  if Result = '' then
+    Result := '.';
+end;
+
+{ CanonicalizePath for strings. }
+function Canonicalize(const Path: string; out Canonical: string): LongInt;
+var
+  CanonicalText: PChar;
+begin
+  Canonical := '';
+  Result := CanonicalizePath(PChar(Path), Mode, FollowLinks, CanonicalText);
+  if Result <> 0 then
+    Exit;
+  Canonical := CanonicalText;
+  FreeMemory(CanonicalText);
+end;
+
+{ The canonical form of a --relative-to or --relative-base directory. }
+function CanonicalDirectory(const Path: string): string;
+var
+  Error: LongInt;
+begin
+  Error := Canonicalize(Path, Result);
+  if Error <> 0 then
+    FailWithError(1, Error, '%s', [ArgumentText(PChar(Path))]);
 end;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Mode: TCanonicalMode;
   Quiet: Boolean;
-  FollowLinks: Boolean;
   LineEnd: Char;
-  RelativeTo: PChar;
-  RelativeBase: PChar;
+  HasRelativeTo: Boolean;
+  HasRelativeBase: Boolean;
+  RelativeTo: string;
+  RelativeBase: string;
   Index: Integer;
-  Canonical: PChar;
-  Relative: PChar;
+  Canonical: string;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
@@ -140,8 +175,8 @@ begin
   Quiet := False;
   FollowLinks := True;
   LineEnd := #10;
-  RelativeTo := nil;
-  RelativeBase := nil;
+  HasRelativeTo := False;
+  HasRelativeBase := False;
   BeginOptions(Parser, [
     OptionDefinition('e', 'canonicalize-existing', False, OptionExisting),
     OptionDefinition('m', 'canonicalize-missing', False, OptionMissing),
@@ -156,35 +191,38 @@ begin
       OptionExisting: Mode := CanonicalExisting;
       OptionMissing: Mode := CanonicalMissingAllowed;
       OptionQuiet: Quiet := True;
-      OptionRelativeTo: RelativeTo := Value;
-      OptionRelativeBase: RelativeBase := Value;
+      OptionRelativeTo:
+        begin
+          RelativeTo := Value;
+          HasRelativeTo := True;
+        end;
+      OptionRelativeBase:
+        begin
+          RelativeBase := Value;
+          HasRelativeBase := True;
+        end;
       OptionStrip: FollowLinks := False;
       OptionZero: LineEnd := #0;
     end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing operand', []);
 
-  if RelativeTo <> nil then
+  if HasRelativeTo then
+    RelativeTo := CanonicalDirectory(RelativeTo);
+  if HasRelativeBase then
   begin
-    Error := CanonicalizePath(RelativeTo, Mode, FollowLinks, Canonical);
-    if Error <> 0 then
-      FailWithError(1, Error, '%s', [ArgumentText(RelativeTo)]);
-    RelativeTo := Canonical;
-  end;
-  if RelativeBase <> nil then
-  begin
-    Error := CanonicalizePath(RelativeBase, Mode, FollowLinks, Canonical);
-    if Error <> 0 then
-      FailWithError(1, Error, '%s', [ArgumentText(RelativeBase)]);
-    RelativeBase := Canonical;
-    if RelativeTo = nil then
+    RelativeBase := CanonicalDirectory(RelativeBase);
+    if not HasRelativeTo then
+    begin
       RelativeTo := RelativeBase;
+      HasRelativeTo := True;
+    end;
   end;
 
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
-    Error := CanonicalizePath(Parser.Operands[Index], Mode, FollowLinks, Canonical);
+    Error := Canonicalize(Parser.Operands[Index], Canonical);
     if Error <> 0 then
     begin
       if not Quiet then
@@ -192,17 +230,12 @@ begin
       ExitStatus := 1;
       Continue;
     end;
-    if (RelativeTo <> nil) and ((RelativeBase = nil) or (IsBelow(Canonical, RelativeBase) and
+    if HasRelativeTo and (not HasRelativeBase or (IsBelow(Canonical, RelativeBase) and
        IsBelow(RelativeTo, RelativeBase))) then
-    begin
-      Relative := MakeRelative(Canonical, RelativeTo);
-      WriteText(StandardOutput, Relative);
-      FreeMemory(Relative);
-    end
+      WriteText(StandardOutput, PChar(MakeRelative(Canonical, RelativeTo)))
     else
-      WriteText(StandardOutput, Canonical);
+      WriteText(StandardOutput, PChar(Canonical));
     WriteCharacter(StandardOutput, LineEnd);
-    FreeMemory(Canonical);
   end;
   Halt(ExitStatus);
 end.

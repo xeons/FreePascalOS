@@ -32,15 +32,14 @@
 program su;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
-  Sys.Files,
   Sys.Format,
   Sys.Kernel,
   Sys.Memory,
@@ -69,29 +68,26 @@ const
   StatusCannotRun = 126;
 
 var
+  Login: Boolean;
+  Preserve: Boolean;
+  HasCommand: Boolean;
+  Command: string;
+  HasShell: Boolean;
+  Shell: string;
+  TargetName: string;
+
+procedure ReadOptions;
+var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Login: Boolean;
-  Preserve: Boolean;
-  Command: PChar;
-  Shell: PChar;
-  TargetName: PChar;
-  TargetId: LongWord;
-  TargetGroup: LongWord;
-  Groups: array[0..MaximumGroups - 1] of LongWord;
-  GroupCount: Integer;
-  Password: PChar;
-  Check: TPasswordCheck;
-  Arguments: array[0..3] of PChar;
-  Options: TProcessOptions;
   Index: Integer;
-  Home: PChar;
+  HasTargetName: Boolean;
 begin
   Login := False;
   Preserve := False;
-  Command := nil;
-  Shell := nil;
+  HasCommand := False;
+  HasShell := False;
   BeginOptions(Parser, [
     OptionDefinition('l', 'login', False, OptionLogin),
     OptionDefinition('c', 'command', True, OptionCommand),
@@ -101,77 +97,114 @@ begin
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionLogin: Login := True;
-      OptionCommand: Command := Value;
+      OptionCommand:
+        begin
+          Command := Value;
+          HasCommand := True;
+        end;
       OptionPreserve: Preserve := True;
-      OptionShell: Shell := Value;
+      OptionShell:
+        begin
+          Shell := Value;
+          HasShell := True;
+        end;
     end;
 
-  TargetName := nil;
+  HasTargetName := False;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
-    if TextIsEqual(Parser.Operands[Index], '-') then
+    if string(Parser.Operands[Index]) = '-' then
       Login := True
-    else if TargetName = nil then
-      TargetName := Parser.Operands[Index]
+    else if not HasTargetName then
+    begin
+      TargetName := Parser.Operands[Index];
+      HasTargetName := True;
+    end
     else
       FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[Index])]);
   end;
-  if TargetName = nil then
+  if not HasTargetName then
     TargetName := 'root';
+end;
 
-  if not FindUserId(TargetName, TargetId) or (UserNameOf(TargetId) = nil) then
-    Fail(StatusFailed, 'user %s does not exist', [ArgumentText(TargetName)]);
-  TargetName := UserNameOf(TargetId);
-  if not PrimaryGroupOf(TargetId, TargetGroup) then
-    TargetGroup := TargetId;
-
-  { Root may become anyone; others must know the password. }
-  if CurrentRealUserId <> RootId then
+{ Root may become anyone; others must know the password. The password
+  stays in a heap block of its own that is wiped after the check. }
+procedure Authenticate;
+var
+  Check: TPasswordCheck;
+  Password: PChar;
+begin
+  if CurrentRealUserId = RootId then
+    Exit;
+  Check := CheckPassword(PChar(TargetName), '');
+  if Check <> PasswordAccepted then
   begin
-    Check := CheckPassword(TargetName, '');
-    if Check <> PasswordAccepted then
+    Password := ReadPassword('Password: ');
+    if Password = nil then
+      Check := PasswordRejected
+    else
     begin
-      Password := ReadPassword('Password: ');
-      if Password = nil then
-        Check := PasswordRejected
-      else
-      begin
-        Check := CheckPassword(TargetName, Password);
-        ZeroMemory(Password, TextLength(Password));
-        FreeMemory(Password);
-      end;
+      Check := CheckPassword(PChar(TargetName), Password);
+      ZeroMemory(Password, StrLen(Password));
+      FreeMemory(Password);
     end;
-    if Check <> PasswordAccepted then
-      Fail(StatusFailed, 'Authentication failure', []);
   end;
+  if Check <> PasswordAccepted then
+    Fail(StatusFailed, 'Authentication failure', []);
+end;
 
+procedure BecomeUser(TargetId, TargetGroup: LongWord);
+var
+  Groups: array[0..MaximumGroups - 1] of LongWord;
+  GroupCount: Integer;
+begin
   GroupCount := GroupsOfUser(TargetId, @Groups[0], MaximumGroups);
   if (KernelSetGroups(LongWord(GroupCount), @Groups[0]) < 0) or
      (KernelSetGroupIds(TargetGroup, TargetGroup, TargetGroup) < 0) or
      (KernelSetUserIds(TargetId, TargetId, TargetId) < 0) then
     Fail(StatusFailed, 'cannot set user id: %s', [ArgumentText(ErrorMessage(ErrorNotPermitted))]);
+end;
 
-  if Shell = nil then
+var
+  TargetId: LongWord;
+  TargetGroup: LongWord;
+  Home: string;
+  Arguments: array[0..3] of PChar;
+  Options: TProcessOptions;
+begin
+  ReadOptions;
+
+  if not FindUserId(PChar(TargetName), TargetId) or (UserNameOf(TargetId) = nil) then
+    Fail(StatusFailed, 'user %s does not exist', [ArgumentText(PChar(TargetName))]);
+  TargetName := UserNameOf(TargetId);
+  if not PrimaryGroupOf(TargetId, TargetGroup) then
+    TargetGroup := TargetId;
+
+  Authenticate;
+  BecomeUser(TargetId, TargetGroup);
+
+  if not HasShell then
     Shell := ShellOf(TargetId);
-  Home := HomeDirectoryOf(TargetId);
-  if Home = nil then
+  if HomeDirectoryOf(TargetId) <> nil then
+    Home := HomeDirectoryOf(TargetId)
+  else
     Home := '/';
   if not Preserve then
   begin
-    SetVariable('HOME', Home);
-    SetVariable('SHELL', Shell);
-    SetVariable('USER', TargetName);
-    SetVariable('LOGNAME', TargetName);
+    SetVariable('HOME', PChar(Home));
+    SetVariable('SHELL', PChar(Shell));
+    SetVariable('USER', PChar(TargetName));
+    SetVariable('LOGNAME', PChar(TargetName));
   end;
 
   DefaultProcessOptions(Options);
   if Login then
-    Options.WorkingDirectory := Home;
-  Arguments[0] := Shell;
-  if Command <> nil then
+    Options.WorkingDirectory := PChar(Home);
+  Arguments[0] := PChar(Shell);
+  if HasCommand then
   begin
     Arguments[1] := '-c';
-    Arguments[2] := Command;
+    Arguments[2] := PChar(Command);
     Arguments[3] := nil;
   end
   else

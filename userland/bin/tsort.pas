@@ -28,15 +28,14 @@
 program tsort;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  SysUtils,
+  Classes,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Input,
   Util.Messages,
   Util.Options;
@@ -45,55 +44,43 @@ const
   Usage: PChar = 'Usage: tsort [OPTION] [FILE]'#10 +
     'Write totally ordered list consistent with the partial ordering in FILE.'#10;
 
+  WhiteSpace = [' ', #9, #10, #11, #12, #13];
+
 type
-  PNode = ^TNode;
   TNode = record
-    Name: PChar;
+    Name: string;
     { Words that must come after this one. }
-    Successors: PInteger;
-    SuccessorCount: Integer;
-    SuccessorCapacity: Integer;
+    Successors: array of Integer;
     Predecessors: Integer;
     Done: Boolean;
   end;
 
 var
-  Nodes: PNode;
-  NodeCount: Integer;
-  NodeCapacity: Integer;
+  Nodes: array of TNode;
 
-function FindOrAdd(Name: PChar): Integer;
+function FindOrAdd(const Name: string): Integer;
 var
   Index: Integer;
 begin
-  for Index := 0 to NodeCount - 1 do
-    if TextIsEqual(Nodes[Index].Name, Name) then
+  for Index := 0 to High(Nodes) do
+    if Nodes[Index].Name = Name then
       Exit(Index);
-  if NodeCount = NodeCapacity then
-  begin
-    NodeCapacity := NodeCapacity * 2 + 16;
-    Nodes := PNode(ReallocateMemory(Nodes, QWord(NodeCapacity) * SizeOf(TNode)));
-  end;
-  ZeroMemory(@Nodes[NodeCount], SizeOf(TNode));
-  Nodes[NodeCount].Name := DuplicateText(Name);
-  Result := NodeCount;
-  Inc(NodeCount);
+  Result := Length(Nodes);
+  SetLength(Nodes, Result + 1);
+  Nodes[Result].Name := Name;
+  Nodes[Result].Predecessors := 0;
+  Nodes[Result].Done := False;
 end;
 
 procedure AddEdge(Before, After: Integer);
 var
-  Node: PNode;
+  Count: Integer;
 begin
   if Before = After then
     Exit;
-  Node := @Nodes[Before];
-  if Node^.SuccessorCount = Node^.SuccessorCapacity then
-  begin
-    Node^.SuccessorCapacity := Node^.SuccessorCapacity * 2 + 4;
-    Node^.Successors := PInteger(ReallocateMemory(Node^.Successors, QWord(Node^.SuccessorCapacity) * SizeOf(Integer)));
-  end;
-  Node^.Successors[Node^.SuccessorCount] := After;
-  Inc(Node^.SuccessorCount);
+  Count := Length(Nodes[Before].Successors);
+  SetLength(Nodes[Before].Successors, Count + 1);
+  Nodes[Before].Successors[Count] := After;
   Inc(Nodes[After].Predecessors);
 end;
 
@@ -101,24 +88,52 @@ procedure Release(Index: Integer);
 var
   Successor: Integer;
 begin
-  PrintLine(Nodes[Index].Name);
+  PrintLine(PChar(Nodes[Index].Name));
   Nodes[Index].Done := True;
-  for Successor := 0 to Nodes[Index].SuccessorCount - 1 do
-    Dec(Nodes[Nodes[Index].Successors[Successor]].Predecessors);
+  for Successor in Nodes[Index].Successors do
+    Dec(Nodes[Successor].Predecessors);
+end;
+
+{ Appends the words of Line (separated by white space) to Words. }
+procedure SplitWords(const Line: string; Words: TStrings);
+var
+  Position: Integer;
+  Start: Integer;
+begin
+  Position := 1;
+  while Position <= Length(Line) do
+  begin
+    while (Position <= Length(Line)) and (Line[Position] in WhiteSpace) do
+      Inc(Position);
+    if Position > Length(Line) then
+      Break;
+    Start := Position;
+    while (Position <= Length(Line)) and not (Line[Position] in WhiteSpace) do
+      Inc(Position);
+    Words.Add(Copy(Line, Start, Position - Start));
+  end;
+end;
+
+procedure ReadWords(Stream: PInputStream; Words: TStrings);
+var
+  Line: PChar;
+  HadLineEnd: Boolean;
+begin
+  while ReadLine(Stream, Line, HadLineEnd) do
+  begin
+    SplitWords(Line, Words);
+    FreeMemory(Line);
+  end;
 end;
 
 var
   Parser: TOptionParser;
   Stream: PInputStream;
-  Words: TLineList;
-  Line: PChar;
-  HadLineEnd: Boolean;
-  Position: PtrUInt;
-  Start: PtrUInt;
+  Words: TStringList;
   Index: Integer;
   Remaining: Integer;
   Progress: Boolean;
-  SourceName: PChar;
+  SourceName: string;
   ExitStatus: LongInt;
 begin
   ParseOperandsOnly(Parser, Usage);
@@ -127,49 +142,30 @@ begin
   SourceName := '-';
   if Parser.OperandCount = 1 then
     SourceName := Parser.Operands[0];
-  Stream := OpenInput(SourceName);
+  Stream := OpenInput(PChar(SourceName));
   if Stream = nil then
     Halt(1);
 
-  BeginLineList(Words);
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
-    Position := 0;
-    while Line[Position] <> #0 do
-    begin
-      while IsSpace(Line[Position]) do
-        Inc(Position);
-      if Line[Position] = #0 then
-        Break;
-      Start := Position;
-      while (Line[Position] <> #0) and not IsSpace(Line[Position]) do
-        Inc(Position);
-      if Line[Position] <> #0 then
-      begin
-        Line[Position] := #0;
-        Inc(Position);
-      end;
-      AddLine(Words, DuplicateText(Line + Start));
-    end;
-    FreeMemory(Line);
-  end;
+  Words := TStringList.Create;
+  ReadWords(Stream, Words);
   CloseInput(Stream);
   if Words.Count mod 2 <> 0 then
-    Fail(1, '%s: input contains an odd number of tokens', [ArgumentText(SourceName)]);
+    Fail(1, '%s: input contains an odd number of tokens', [ArgumentText(PChar(SourceName))]);
 
   Index := 0;
   while Index < Words.Count do
   begin
-    AddEdge(FindOrAdd(Words.Items[Index]), FindOrAdd(Words.Items[Index + 1]));
+    AddEdge(FindOrAdd(Words[Index]), FindOrAdd(Words[Index + 1]));
     Index := Index + 2;
   end;
+  Words.Free;
 
   ExitStatus := 0;
-  Remaining := NodeCount;
+  Remaining := Length(Nodes);
   while Remaining > 0 do
   begin
     Progress := False;
-    for Index := 0 to NodeCount - 1 do
+    for Index := 0 to High(Nodes) do
       if not Nodes[Index].Done and (Nodes[Index].Predecessors = 0) then
       begin
         Release(Index);
@@ -180,11 +176,11 @@ begin
     begin
       { A loop: report and break it at its first remaining word. }
       ExitStatus := 1;
-      for Index := 0 to NodeCount - 1 do
+      for Index := 0 to High(Nodes) do
         if not Nodes[Index].Done then
         begin
-          Report('%s: input contains a loop:', [ArgumentText(SourceName)]);
-          Report('%s', [ArgumentText(Nodes[Index].Name)]);
+          Report('%s: input contains a loop:', [ArgumentText(PChar(SourceName))]);
+          Report('%s', [ArgumentText(PChar(Nodes[Index].Name))]);
           Release(Index);
           Dec(Remaining);
           Break;

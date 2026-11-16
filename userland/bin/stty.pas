@@ -31,11 +31,13 @@
 program stty;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
+  StrUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Console,
   Sys.Environment,
   Sys.Format,
@@ -55,48 +57,166 @@ const
   SavedPrefix = 'fpos:';
 
 var
-  Parser: TOptionParser;
   ShowAll: Boolean;
   Save: Boolean;
+  Settings: TStringList;
   Mode: Int64;
-  NewMode: LongWord;
-  Index: Integer;
-  Setting: PChar;
-  Rows, Columns: LongInt;
-  SavedValue: Int64;
-  SizeValue: Int64;
 
-procedure ShowFlag(Name: PChar; Bit: LongWord);
+procedure PrintText(const Text: string);
 begin
-  if (Mode and Bit) = 0 then
-    WriteCharacter(StandardOutput, '-');
-  WriteText(StandardOutput, Name);
+  WriteText(StandardOutput, PChar(Text));
 end;
 
+{ Settings such as "-echo" look like options, so the arguments are
+  sorted by hand: -a, -g and --help are options, the rest settings. }
+procedure ReadArguments;
+var
+  Index: Integer;
+  Setting: string;
 begin
   ShowAll := False;
   Save := False;
-  { Settings such as "-echo" look like options, so the arguments are
-    sorted by hand: -a, -g and --help are options, the rest settings. }
-  BeginOptions(Parser, [], Usage);
   for Index := 1 to ArgumentTotal - 1 do
   begin
     Setting := Argument(Index);
-    if TextIsEqual(Setting, '-a') or TextIsEqual(Setting, '--all') then
+    if (Setting = '-a') or (Setting = '--all') then
       ShowAll := True
-    else if TextIsEqual(Setting, '-g') or TextIsEqual(Setting, '--save') then
+    else if (Setting = '-g') or (Setting = '--save') then
       Save := True
-    else if TextIsEqual(Setting, '--help') then
+    else if Setting = '--help' then
     begin
       Print(Usage);
       Halt(0);
     end
     else
-    begin
-      Parser.Operands[Parser.OperandCount] := Setting;
-      Inc(Parser.OperandCount);
-    end;
+      Settings.Add(Setting);
   end;
+end;
+
+function FlagText(const Name: string; Bit: LongWord): string;
+begin
+  if (Mode and Bit) = 0 then
+    Result := '-' + Name
+  else
+    Result := Name;
+end;
+
+procedure ShowSettings;
+var
+  Rows, Columns: LongInt;
+begin
+  if Save then
+  begin
+    PrintText(SavedPrefix + LowerCase(IntToHex(QWord(Mode), 1)) + #10);
+    Exit;
+  end;
+  GetConsoleSize(StandardInputHandle, Rows, Columns);
+  PrintText(Format('speed 115200 baud; rows %d; columns %d; line = 0;'#10, [Rows, Columns]));
+  if ShowAll then
+    WriteLine(StandardOutput, 'intr = ^C; eof = ^D; erase = ^?;');
+  PrintText(FlagText('isig', ConsoleModeInterruptKey) + ' ' +
+    FlagText('icanon', ConsoleModeLineEditing) + ' ' + FlagText('echo', ConsoleModeEcho) + #10);
+end;
+
+procedure FailInvalidArgument(const Setting: string);
+begin
+  Fail(1, 'invalid argument ''%s''', [ArgumentText(PChar(Setting))]);
+end;
+
+{ The mode saved by stty -g ("fpos:" and hexadecimal digits). }
+function ParseSavedMode(const Setting: string): LongWord;
+var
+  SavedValue: Int64;
+  Position: Integer;
+  Digit: Char;
+begin
+  SavedValue := 0;
+  for Position := Length(SavedPrefix) + 1 to Length(Setting) do
+  begin
+    Digit := LowerCase(Setting[Position]);
+    if Digit in ['0'..'9'] then
+      SavedValue := SavedValue * 16 + Ord(Digit) - Ord('0')
+    else if Digit in ['a'..'f'] then
+      SavedValue := SavedValue * 16 + Ord(Digit) - Ord('a') + 10
+    else
+      FailInvalidArgument(Setting);
+  end;
+  Result := LongWord(SavedValue);
+end;
+
+{ "rows N", "cols N" or "columns N"; Index is at the setting's name and
+  is moved to its number. }
+procedure ApplySize(var Index: Integer);
+var
+  Setting: string;
+  SizeValue: Int64;
+  Rows, Columns: LongInt;
+begin
+  Setting := Settings[Index];
+  Inc(Index);
+  if (Index >= Settings.Count) or not ParseInteger(PChar(Settings[Index]), SizeValue) or
+     (SizeValue < 1) or (SizeValue > $FFFF) then
+    Fail(1, 'invalid argument for ''%s''', [ArgumentText(PChar(Setting))]);
+  GetConsoleSize(StandardInputHandle, Rows, Columns);
+  if Setting = 'rows' then
+    Rows := LongInt(SizeValue)
+  else
+    Columns := LongInt(SizeValue);
+  if SetConsoleSize(StandardInputHandle, Rows, Columns) <> 0 then
+    Fail(1, 'standard input: cannot set the size', []);
+end;
+
+procedure ShowSize;
+var
+  Rows, Columns: LongInt;
+begin
+  GetConsoleSize(StandardInputHandle, Rows, Columns);
+  PrintText(Format('%d %d'#10, [Rows, Columns]));
+end;
+
+function ApplySettings: LongWord;
+var
+  Index: Integer;
+  Setting: string;
+begin
+  Result := LongWord(Mode);
+  Index := 0;
+  while Index < Settings.Count do
+  begin
+    Setting := Settings[Index];
+    if Setting = 'echo' then
+      Result := Result or ConsoleModeEcho
+    else if Setting = '-echo' then
+      Result := Result and not ConsoleModeEcho
+    else if Setting = 'icanon' then
+      Result := Result or ConsoleModeLineEditing
+    else if Setting = '-icanon' then
+      Result := Result and not ConsoleModeLineEditing
+    else if Setting = 'isig' then
+      Result := Result or ConsoleModeInterruptKey
+    else if Setting = '-isig' then
+      Result := Result and not ConsoleModeInterruptKey
+    else if (Setting = 'raw') or (Setting = '-cooked') then
+      Result := 0
+    else if (Setting = 'cooked') or (Setting = '-raw') or (Setting = 'sane') then
+      Result := ConsoleModeEcho or ConsoleModeLineEditing or ConsoleModeInterruptKey
+    else if (Setting = 'rows') or (Setting = 'cols') or (Setting = 'columns') then
+      ApplySize(Index)
+    else if Setting = 'size' then
+      ShowSize
+    else if StartsStr(SavedPrefix, Setting) then
+      Result := ParseSavedMode(Setting)
+    else
+      FailInvalidArgument(Setting);
+    Inc(Index);
+  end;
+end;
+
+var
+  NewMode: LongWord;
+begin
+  Settings := TStringList.Create;
+  ReadArguments;
 
   if not IsConsole(StandardInputHandle) then
     Fail(1, 'standard input: Inappropriate ioctl for device', []);
@@ -104,87 +224,14 @@ begin
   if Mode < 0 then
     Fail(1, 'standard input: cannot get the settings', []);
 
-  if Parser.OperandCount = 0 then
+  if Settings.Count = 0 then
   begin
-    if Save then
-      WriteFormatted(StandardOutput, '%s%x'#10, [ArgumentText(SavedPrefix), ArgumentUnsigned(QWord(Mode))])
-    else
-    begin
-      GetConsoleSize(StandardInputHandle, Rows, Columns);
-      WriteFormatted(StandardOutput, 'speed 115200 baud; rows %d; columns %d; line = 0;'#10,
-        [ArgumentNumber(Rows), ArgumentNumber(Columns)]);
-      if ShowAll then
-        WriteLine(StandardOutput, 'intr = ^C; eof = ^D; erase = ^?;');
-      ShowFlag('isig', ConsoleModeInterruptKey);
-      WriteCharacter(StandardOutput, ' ');
-      ShowFlag('icanon', ConsoleModeLineEditing);
-      WriteCharacter(StandardOutput, ' ');
-      ShowFlag('echo', ConsoleModeEcho);
-      WriteCharacter(StandardOutput, #10);
-    end;
+    ShowSettings;
     Halt(0);
   end;
 
-  NewMode := LongWord(Mode);
-  Index := 0;
-  while Index < Parser.OperandCount do
-  begin
-    Setting := Parser.Operands[Index];
-    if TextIsEqual(Setting, 'echo') then
-      NewMode := NewMode or ConsoleModeEcho
-    else if TextIsEqual(Setting, '-echo') then
-      NewMode := NewMode and not ConsoleModeEcho
-    else if TextIsEqual(Setting, 'icanon') then
-      NewMode := NewMode or ConsoleModeLineEditing
-    else if TextIsEqual(Setting, '-icanon') then
-      NewMode := NewMode and not ConsoleModeLineEditing
-    else if TextIsEqual(Setting, 'isig') then
-      NewMode := NewMode or ConsoleModeInterruptKey
-    else if TextIsEqual(Setting, '-isig') then
-      NewMode := NewMode and not ConsoleModeInterruptKey
-    else if TextIsEqual(Setting, 'raw') or TextIsEqual(Setting, '-cooked') then
-      NewMode := 0
-    else if TextIsEqual(Setting, 'cooked') or TextIsEqual(Setting, '-raw') or TextIsEqual(Setting, 'sane') then
-      NewMode := ConsoleModeEcho or ConsoleModeLineEditing or ConsoleModeInterruptKey
-    else if TextIsEqual(Setting, 'rows') or TextIsEqual(Setting, 'cols') or TextIsEqual(Setting, 'columns') then
-    begin
-      Inc(Index);
-      if (Index >= Parser.OperandCount) or not ParseInteger(Parser.Operands[Index], SizeValue) or
-         (SizeValue < 1) or (SizeValue > $FFFF) then
-        Fail(1, 'invalid argument for ''%s''', [ArgumentText(Setting)]);
-      GetConsoleSize(StandardInputHandle, Rows, Columns);
-      if TextIsEqual(Setting, 'rows') then
-        Rows := LongInt(SizeValue)
-      else
-        Columns := LongInt(SizeValue);
-      if SetConsoleSize(StandardInputHandle, Rows, Columns) <> 0 then
-        Fail(1, 'standard input: cannot set the size', []);
-    end
-    else if TextIsEqual(Setting, 'size') then
-    begin
-      GetConsoleSize(StandardInputHandle, Rows, Columns);
-      WriteFormatted(StandardOutput, '%d %d'#10, [ArgumentNumber(Rows), ArgumentNumber(Columns)]);
-    end
-    else if TextStartsWith(Setting, SavedPrefix) then
-    begin
-      SavedValue := 0;
-      Setting := Setting + TextLength(SavedPrefix);
-      while Setting^ <> #0 do
-      begin
-        if IsDigit(Setting^) then
-          SavedValue := SavedValue * 16 + Ord(Setting^) - Ord('0')
-        else if ToLowerCase(Setting^) in ['a'..'f'] then
-          SavedValue := SavedValue * 16 + Ord(ToLowerCase(Setting^)) - Ord('a') + 10
-        else
-          Fail(1, 'invalid argument ''%s''', [ArgumentText(Parser.Operands[Index])]);
-        Inc(Setting);
-      end;
-      NewMode := LongWord(SavedValue);
-    end
-    else
-      Fail(1, 'invalid argument ''%s''', [ArgumentText(Setting)]);
-    Inc(Index);
-  end;
+  NewMode := ApplySettings;
   if NewMode <> LongWord(Mode) then
     SetConsoleMode(StandardInputHandle, NewMode);
+  Settings.Free;
 end.
