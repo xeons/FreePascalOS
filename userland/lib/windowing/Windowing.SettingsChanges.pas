@@ -151,6 +151,16 @@ begin
   Result := (TMethod(First).Code = TMethod(Second).Code) and (TMethod(First).Data = TMethod(Second).Data);
 end;
 
+function IsSubscribed(const Group: string; Handler: TSettingsGroupChangedEvent): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Subscriptions.Items) do
+    if (Subscriptions.Items[Index].Group = Group) and SameHandler(Subscriptions.Items[Index].Handler, Handler) then
+      Exit(True);
+  Result := False;
+end;
+
 procedure TSubscriptions.GroupChanged(const Group: string; const Changes: TSettingChanges);
 var
   Called: array of TSettingsGroupChangedEvent;
@@ -165,17 +175,10 @@ begin
       Called[High(Called)] := Items[Index].Handler;
     end;
   for Index := 0 to High(Called) do
-    Called[Index](Group, Changes);
-end;
-
-function IsSubscribed(const Group: string; Handler: TSettingsGroupChangedEvent): Boolean;
-var
-  Index: Integer;
-begin
-  for Index := 0 to High(Subscriptions.Items) do
-    if (Subscriptions.Items[Index].Group = Group) and SameHandler(Subscriptions.Items[Index].Handler, Handler) then
-      Exit(True);
-  Result := False;
+    { An earlier handler may have unsubscribed a later one (freed its
+      object). }
+    if IsSubscribed(Group, Called[Index]) then
+      Called[Index](Group, Changes);
 end;
 
 function AnyoneWants(const Group: string): Boolean;
