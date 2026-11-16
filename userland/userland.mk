@@ -22,6 +22,7 @@
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
+#                  libsystem <- libdrawing <- libimage (image files)
 #                  libsystem <- libconfiguration (settings, per user and system)
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
@@ -75,6 +76,7 @@ WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
 CONTROLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/controls
 CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
+IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -86,6 +88,7 @@ WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
 CONTROLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcontrols.so
 CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
+IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -123,7 +126,7 @@ FONT_RENDERER := tools/RenderFont/render-font.py
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(IMAGE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -183,6 +186,16 @@ $(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
 		-FU$(DRAWING_LIBRARY_OBJECTS) userland/lib/drawing/Drawing.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdrawing.so -o $@ \
 		$(DRAWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libimage: images (pixels, frames, colour profile, metadata) and the
+# formats they are read from and written to.
+$(IMAGE_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/image/*.pas)
+	@rm -rf $(IMAGE_LIBRARY_OBJECTS)
+	@mkdir -p $(IMAGE_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/image -FU$(IMAGE_LIBRARY_OBJECTS) userland/lib/image/Image.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libimage.so -o $@ \
+		$(IMAGE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ldrawing -lsystem
 
 # libfont: bitmap fonts, picked by point size and DPI; measuring and
 # drawing UTF-8 text.
@@ -298,6 +311,11 @@ $(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
 $(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
 $(TLS_PROGRAMS): $(TLS_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
+# Programs that read image files.
+IMAGE_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,imageinfo)
+$(IMAGE_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -limage -ldrawing
+$(IMAGE_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS)
+$(IMAGE_PROGRAMS): $(IMAGE_LIBRARY)
 # The system settings service keeps what it changes in the settings and
 # sets the sound outputs.
 SYSTEM_SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,systemsettings)

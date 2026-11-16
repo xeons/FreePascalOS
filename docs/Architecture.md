@@ -8,6 +8,9 @@ instead of NT's terminology.
 ```
 +-----------------------------------------------------------+
 |  User mode: sh, coreutils -> libcoreutils, libsystem       |
+|  graphical programs -> libcontrols -> libwindowing ->      |
+|    libfont -> libdrawing -> libsystem                      |
+|  image files: libimage -> libdrawing (see "Images")        |
 +=================== system calls (syscall) ================+
 |  Processes (processes, threads, address spaces, handles,   |
 |             image loader, system calls)                    |
@@ -5079,6 +5082,15 @@ independent) against the Free Pascal runtime library:
   the system, `drawtest` draws a window on the display in DejaVu Sans,
   everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
+- **libimage.so** – images and image files (see "Images" below): the
+  model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing
+  pixels to libdrawing (`Image.Surfaces`), playing animations
+  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, the
+  codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
+  and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
+  (`Image.Ico.*`), GIF (`Image.Gif.*`) and JPEG (`Image.Jpeg.*`). It
+  needs libdrawing and libsystem; `imageinfo` uses it. It builds on the
+  host too: `make image-test` (part of `make test`).
 - **libconfiguration.so** – settings, the user's over the system's (see
   "Settings" below): `Configuration.Names`, `Configuration.Values`,
   `Configuration.Documents`, `Configuration.Storage`,
@@ -5170,6 +5182,117 @@ goes, so a program that hangs or crashes does not lose its diagnostics
 runtime (SysUtils' `Now`); programs show local times through
 `Sys.LocalTime` (see "Time zones"). The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
+
+### Images
+
+libimage (`userland/lib/image`) holds one model for every image format
+and a decoder and an encoder per format, picked by the content's
+signature, never by the file's name.
+
+**The model.** A `TImage` is Width x Height pixels in libdrawing's
+colours: a LongWord `$AARRGGBB` each, straight (not premultiplied)
+alpha, so blue, green, red, alpha in memory, lines one after the other
+with no gap. That is a libdrawing surface already: `ImageSurface` gives
+a surface on the image's pixels without copying anything (to draw it,
+or draw on it), `SurfaceTakingImage` and `ImageTakingSurface` move the
+pixels from one to the other without a copy (a surface with a stride of
+its own is copied). Beside the pixels an image has its resolution (dots
+per inch, 0 when unknown), the orientation it is meant to be seen in
+(EXIF's eight; the pixels stay as stored and `OrientedImage` turns
+them), the ICC profile as the file carried it, metadata as ordered text
+keys and values (`Comment`, `HotspotX`, `HotspotY`, `ColorSpace`...),
+and the format, bits per pixel and alpha it came with. Sizes above
+65535 a side or 128 million pixels are refused before anything is
+allocated, so a lying header never asks for gigabytes.
+
+**Animation.** A `TAnimatedImage` is an image whose own pixels are its
+first frame as seen, with a list of `TImageFrame`s (a picture of its
+own, an offset, a delay in milliseconds, a disposal: left, cleared to
+transparent or put back as before; a blend: replacing or drawn over by
+alpha) and a loop count (0 for ever). These are GIF's and APNG's rules
+alike. `TFrameCompositor` keeps the canvas and draws frame after frame
+on it, keeping a copy of the canvas only while a frame asks to be put
+back, so a picture box plays a GIF by calling `NextFrame` on a timer;
+`CompositeFrames` gives every frame whole.
+
+**Codecs.** `TImageDecoder` says from a file's first bytes whether it is
+its format (`CanDecode`) and turns the file, in memory, into an image;
+`TImageEncoder` writes one, with a quality and bits per pixel.
+`Image.StandardCodecs` registers the library's formats, the headerless
+DIB last since only its header's shape gives it away. `Image.Files` is
+the convenience layer: `LoadImage` from a file name, a stream or
+`TBytes` (`ImageLoadApplyOrientation` turns photographs upright),
+`TryLoadImage`, `SaveImage` and `EncodeImage` in a format, errors as
+`EImageError` with a reason (unknown format, cut short, malformed,
+unsupported, needs PNG, too large, no encoder, the file). Decoders read
+through `TImageByteReader`, whose every read is checked against the
+data, so headers that lie raise "cut short" instead of reading past the
+end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
+(area averaging when shrinking).
+
+**Formats.**
+
+- *BMP and DIB* (`Image.Bmp.*`): 1, 4, 8, 16, 24 and 32 bits; the OS/2
+  core header, the 40-byte one, V2 and V3 (masks and alpha in the
+  header), V4 and V5 (colour space, an embedded profile); RLE4 and RLE8
+  with moves (pixels skipped are transparent); BITFIELDS and
+  ALPHABITFIELDS with masks of any width (a value of N bits scaled to
+  0-255 by rounding); lines from the bottom up or the top down. A 32-bit
+  picture without masks takes its fourth byte as alpha unless it is
+  zero everywhere. Writing: 24 bits (a 40-byte header) or 32 bits (a V5
+  header with an alpha mask); a DIB is the same without the file header,
+  as the clipboard holds it.
+- *ICO and CUR* (`Image.Ico.*`): `TIconDirectory` reads the entries,
+  taking each one's real size and depth from the entry itself, and
+  picks the one for a size and scale (`NearestEntry`: the same size,
+  else the smallest larger, else the largest; the deepest of equal
+  sizes). DIB entries have their 1-bit mask applied unless they carry
+  alpha. PNG entries are recognised (size from their header) and decoded
+  through the registry (`DecodeEmbeddedImage`), so the PNG decoder,
+  when it comes with libcompression, is used without the icon code
+  changing; until then they give "needs PNG", and loading a whole file
+  falls back to its largest DIB entry. Cursors' hotspots go into the
+  entries and the metadata. Writing: several sizes in one file, 32-bit
+  entries with alpha and a mask.
+- *GIF* (`Image.Gif.*`): 87a and 89a, LZW (codes growing to 12 bits, the
+  table started again on a clear code, a code that cannot be stops the
+  frame there), global and local palettes, interlacing, transparency,
+  the graphic control extension (delay, disposal), NETSCAPE2.0 and
+  ANIMEXTS1.0 loop counts, comments; every image a frame. A file cut
+  short keeps the frames decoded so far (the last as far as its data
+  went). Writing: one frame, exact up to 256 colours, else a fixed 6 x 7
+  x 6 palette.
+- *JPEG* (`Image.Jpeg.*`): baseline and extended sequential and
+  progressive DCT, 8-bit, Huffman coding, any sampling factors
+  (libjpeg's smooth upsampling for 2:1 and 2x2, replicated otherwise),
+  restart markers, greyscale, YCbCr, RGB, CMYK and YCCK (Adobe's
+  inverted CMYK), JFIF density as the resolution, the EXIF orientation,
+  ICC profile chunks put together, comments. The inverse DCT is
+  libjpeg's accurate integer one (a block with only its DC term filled
+  directly); a 12 megapixel photograph decodes in about 150 ms on the
+  host. A file cut short keeps the blocks decoded (the rest mid grey).
+  Arithmetic coding, 12-bit samples and lossless JPEG are refused as
+  unsupported. Writing: baseline 4:2:0 with the standard tables scaled
+  by quality, with the density, orientation and profile.
+
+`imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
+orientation, resolution and profile.
+
+**Tests.** libimage builds on the host with libdrawing, and `make
+image-test` (part of `make test`) runs `tools/ImageTest` with range
+checks on. Its fixtures are made at build time with Python's Pillow
+(`tools/ImageTest/make-fixtures.py`, `make-jpeg-fixtures.py`): BMPs of
+every depth, header and compression, ICOs and a CUR, and GIFs with every
+disposal are put together byte by byte, their references the pixels
+they were made from (checked against Pillow's decoding where Pillow
+reads them the same way); files Pillow writes and every kind of JPEG
+(each subsampling, odd sizes, progressive, greyscale, restart markers,
+CMYK, an orientation, an ICC profile, a 12 megapixel photograph) have
+Pillow's decoding as their reference. Lossless formats must match
+exactly, JPEG within 2 per channel. Writing is checked by reading back;
+the model, surfaces, orientations, scaling, compositing and the
+registry on their own; and malformed, truncated and randomly damaged
+files must load or give an `EImageError`, never anything worse.
 
 ## Heap checking
 

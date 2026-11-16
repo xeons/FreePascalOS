@@ -461,15 +461,22 @@ normalized (0-65535), not pixels.
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
-  - [ ] BMP and DIB (all bit depths, RLE, bitfields; reading and writing)
-  - [ ] ICO and CUR (several sizes in one file, PNG inside; the nearest to
-        the scale)
+  - [x] The model (`TImage`, `TAnimatedImage` with frames, delays, disposal,
+        blend and loop count; resolution, orientation, ICC profile,
+        metadata), surfaces shared without copying, a frame compositor for
+        playing animations, the codec registry, `LoadImage`/`SaveImage`
+        with `EImageError` reasons, `imageinfo`; `make image-test`
+  - [x] BMP and DIB (all bit depths, RLE, bitfields; reading and writing)
+  - [x] ICO and CUR (several sizes in one file, the nearest to the scale,
+        hotspots; reading and writing) — PNG entries are recognised and
+        report "needs PNG" until the PNG decoder registers
   - [ ] PNG (all colour types and depths, interlacing, transparency; reading
         and writing; needs libcompression's deflate) and APNG frames
-  - [ ] GIF, including animation (frames, delays, disposal, transparency,
-        loop count; LZW) — the picture box plays it
-  - [ ] JPEG (baseline and progressive, chroma subsampling, EXIF orientation;
-        reading, then writing)
+  - [x] GIF, including animation (frames, delays, disposal, transparency,
+        loop count; LZW; writing one frame) — the picture box plays it
+        (`TFrameCompositor`; the picture box itself still to do)
+  - [x] JPEG (baseline and progressive, chroma subsampling, EXIF orientation;
+        reading, then writing baseline)
   - [ ] TIFF (strips and tiles, several pages; none, PackBits, LZW, deflate
         and JPEG compression)
   - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
@@ -477,7 +484,8 @@ normalized (0-65535), not pixels.
   - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
         patent pools, so check licensing before shipping it)
   - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
-        good filtering for thumbnails
+        good filtering for thumbnails (scaling done: `Image.Scaling` on
+        libdrawing's area averaging)
 - [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
       so any DPI)
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
