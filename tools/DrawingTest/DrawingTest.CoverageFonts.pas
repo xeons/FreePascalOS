@@ -275,7 +275,7 @@ var
   Data: TBytes;
   Loaded: TFontFace;
 begin
-  Result := ReadFileBytes(StrPas(@Face.Source[0]), Data) and (Length(Data) > 0) and
+  Result := ReadFileBytes(Face.Source, Data) and (Length(Data) > 0) and
     ParseCoverageFont(@Data[0], Length(Data), Loaded) and (Loaded.Size = Face.Size) and (Loaded.Bold = Face.Bold);
   if Result then
   begin
@@ -290,7 +290,7 @@ begin
   ClearFace(Result);
   Result.Size := Size;
   Result.Bold := Bold;
-  Move(PChar(Path)^, Result.Source[0], Length(Path));
+  Result.Source := Path;
 end;
 
 procedure TestDejaVuSans(Directory: string);

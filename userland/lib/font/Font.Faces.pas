@@ -41,12 +41,10 @@
 unit Font.Faces;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
-
-const
-  MaximumSourceLength = 127;
 
 type
   TGlyphFormat = (GlyphBits, GlyphCoverage);
@@ -79,7 +77,7 @@ type
     Bold: Boolean;
     { The file the glyphs are read from; empty for a face built in
       memory. }
-    Source: array[0..MaximumSourceLength] of Char;
+    Source: string;
     { Whether the glyphs are there; and whether reading them failed
       (the face is then never picked). }
     Loaded: Boolean;
@@ -135,7 +133,7 @@ procedure ClearFace(out Face: TFontFace);
 begin
   Face.Size := 0;
   Face.Bold := False;
-  FillChar(Face.Source, SizeOf(Face.Source), 0);
+  Face.Source := '';
   Face.Loaded := False;
   Face.Unusable := False;
   Face.Height := 0;

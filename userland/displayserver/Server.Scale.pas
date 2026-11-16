@@ -45,6 +45,7 @@
 unit Server.Scale;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -64,7 +65,7 @@ procedure SetUpScales;
 procedure ChangeScale(Screen: PScreen; NewPercent: LongWord);
 { Puts the window on the screen the middle of its frame is on, telling
   its program if that changes its scale. }
-procedure SettleWindowOnScreen(Window: PServerWindow);
+procedure SettleWindowOnScreen(Window: TServerWindow);
 
 { For Server.Modes: what a change to a screen needs. Places are taken
   before the change and given back after it. }
@@ -77,7 +78,7 @@ type
     OffsetY: LongInt;
     RestoreOffset: TRectangle;
   end;
-  TWindowPlaces = array[0..MaximumWindows - 1] of TWindowPlace;
+  TWindowPlaces = array of TWindowPlace;
 
   TScreenState = record
     ScalePercent: LongWord;
@@ -127,7 +128,7 @@ end;
 
 { --- Windows on screens ----------------------------------------------------- }
 
-function ScaleDiffers(Window: PServerWindow; ScalePercent, Dpi: LongWord): Boolean;
+function ScaleDiffers(Window: TServerWindow; ScalePercent, Dpi: LongWord): Boolean;
 var
   Screen: PScreen;
 begin
@@ -135,19 +136,19 @@ begin
   Result := (Screen^.ScalePercent <> ScalePercent) or (Screen^.Dpi <> Dpi);
 end;
 
-procedure SettleWindowOnScreen(Window: PServerWindow);
+procedure SettleWindowOnScreen(Window: TServerWindow);
 var
   Target: PScreen;
   Previous: PScreen;
 begin
   Target := ScreenUnderWindow(Window);
-  if Target^.Number = Window^.ScreenNumber then
+  if Target^.Number = Window.ScreenNumber then
     Exit;
   Previous := WindowScreen(Window);
-  if Window^.Visible then
+  if Window.Visible then
     DamageWindow(Window);
-  Window^.ScreenNumber := Target^.Number;
-  if Window^.Visible then
+  Window.ScreenNumber := Target^.Number;
+  if Window.Visible then
     DamageWindow(Window);
   if ScaleDiffers(Window, Previous^.ScalePercent, Previous^.Dpi) then
     TellWindowScale(Window);
@@ -158,17 +159,18 @@ end;
 procedure RememberWindowPlaces(out Places: TWindowPlaces);
 var
   Index: LongInt;
-  Window: PServerWindow;
+  Window: TServerWindow;
   Origin: TRectangle;
 begin
+  SetLength(Places, WindowCount);
   for Index := 0 to WindowCount - 1 do
   begin
     Window := Windows[Index];
     Origin := WindowScreen(Window)^.Bounds;
     Places[Index].ScreenNumber := WindowScreen(Window)^.Number;
-    Places[Index].OffsetX := Window^.ClientLeft - Origin.Left;
-    Places[Index].OffsetY := Window^.ClientTop - Origin.Top;
-    Places[Index].RestoreOffset := OffsetRectangle(Window^.RestoreBounds, -Origin.Left, -Origin.Top);
+    Places[Index].OffsetX := Window.ClientLeft - Origin.Left;
+    Places[Index].OffsetY := Window.ClientTop - Origin.Top;
+    Places[Index].RestoreOffset := OffsetRectangle(Window.RestoreBounds, -Origin.Left, -Origin.Top);
   end;
 end;
 
@@ -193,7 +195,7 @@ begin
 end;
 
 { Moves the window so its frame is on Screen, as far as it fits. }
-procedure KeepWindowOnScreen(Window: PServerWindow; Screen: PScreen);
+procedure KeepWindowOnScreen(Window: TServerWindow; Screen: PScreen);
 var
   Frame: TRectangle;
   DeltaX: LongInt;
@@ -210,7 +212,7 @@ begin
     DeltaY := Screen^.Bounds.Bottom - Frame.Bottom;
   if Frame.Top + DeltaY < Screen^.Bounds.Top then
     DeltaY := Screen^.Bounds.Top - Frame.Top;
-  MoveWindowTo(Window, Window^.ClientLeft + DeltaX, Window^.ClientTop + DeltaY);
+  MoveWindowTo(Window, Window.ClientLeft + DeltaX, Window.ClientTop + DeltaY);
 end;
 
 procedure TellEveryProgramAboutFirstScreen;
@@ -227,7 +229,7 @@ begin
     SendToClient(Clients[Index], Message);
 end;
 
-procedure PlaceWindowAgain(Window: PServerWindow; const Place: TWindowPlace; Changed: PScreen;
+procedure PlaceWindowAgain(Window: TServerWindow; const Place: TWindowPlace; Changed: PScreen;
   const Before: TScreenState; ModeChanged: Boolean);
 var
   Screen: PScreen;
@@ -245,7 +247,7 @@ begin
     OffsetY := Rescaled(OffsetY, Before.ScalePercent, Changed^.ScalePercent);
     Restore := RescaledRectangle(Restore, Before.ScalePercent, Changed^.ScalePercent);
   end;
-  Window^.RestoreBounds := OffsetRectangle(Restore, Screen^.Bounds.Left, Screen^.Bounds.Top);
+  Window.RestoreBounds := OffsetRectangle(Restore, Screen^.Bounds.Left, Screen^.Bounds.Top);
   MoveWindowTo(Window, Screen^.Bounds.Left + OffsetX, Screen^.Bounds.Top + OffsetY);
   if Screen = Changed then
   begin
@@ -253,7 +255,7 @@ begin
       comes after it. }
     if (Before.ScalePercent <> Changed^.ScalePercent) or (Before.Dpi <> Changed^.Dpi) then
       TellWindowScale(Window);
-    if Window^.Maximized then
+    if Window.Maximized then
       MaximizeAgain(Window)
     else if ModeChanged then
       KeepWindowOnScreen(Window, Changed);

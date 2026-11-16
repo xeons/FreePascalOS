@@ -45,6 +45,7 @@
 unit Server.WindowMoves;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -59,7 +60,7 @@ var
 
 { The visible window has moved from OldFrame to where it is now: copies
   what can be copied and damages the rest. }
-procedure MoveWindowPixels(Window: PServerWindow; const OldFrame: TRectangle);
+procedure MoveWindowPixels(Window: TServerWindow; const OldFrame: TRectangle);
 { When checking: if a window moved since the last check, draws every
   screen again and compares it with what the moves left (call after
   Compose). }
@@ -90,7 +91,7 @@ var
   Snapshots: array[0..MaximumScreens - 1] of TScreenSnapshot;
 
 { What the windows above Window cover. }
-procedure CollectCovering(Window: PServerWindow; out Covering: TRegion);
+procedure CollectCovering(Window: TServerWindow; out Covering: TRegion);
 var
   Index: LongInt;
   Above: Boolean;
@@ -99,7 +100,7 @@ begin
   Above := False;
   for Index := 0 to WindowCount - 1 do
   begin
-    if Above and Windows[Index]^.Visible then
+    if Above and Windows[Index].Visible then
       AddRectangleToRegion(Covering, FrameRectangle(Windows[Index]));
     if Windows[Index] = Window then
       Above := True;
@@ -210,7 +211,7 @@ begin
   SubtractRegionFromRegion(Copied, Pending);
 end;
 
-procedure MoveWindowPixels(Window: PServerWindow; const OldFrame: TRectangle);
+procedure MoveWindowPixels(Window: TServerWindow; const OldFrame: TRectangle);
 var
   NewFrame: TRectangle;
   DeltaX: LongInt;

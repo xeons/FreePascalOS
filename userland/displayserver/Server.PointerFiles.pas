@@ -50,6 +50,7 @@ function LoadPointerFiles: LongInt;
 implementation
 
 uses
+  Classes,
   Abi.SystemCalls,
   Sys.Files,
   Sys.Text,
@@ -83,21 +84,6 @@ begin
   CloseFile(Handle);
   if Got <> Int64(Information.SizeInBytes) then
     Result := '';
-end;
-
-{ The next line of Text from Position (which moves past it), without
-  its line break. }
-function NextLine(const Text: string; var Position: LongInt): string;
-var
-  Start: LongInt;
-begin
-  Start := Position;
-  while (Position <= Length(Text)) and (Text[Position] <> #10) do
-    Inc(Position);
-  Result := Copy(Text, Start, Position - Start);
-  Inc(Position);
-  if (Length(Result) > 0) and (Result[Length(Result)] = #13) then
-    SetLength(Result, Length(Result) - 1);
 end;
 
 function LineIsBlank(const Line: string): Boolean;
@@ -141,7 +127,8 @@ var
   Rows: array[0..MaximumPointerSize - 1] of TPointerRow;
   RowCount: LongInt;
   UsedRows: LongInt;
-  Position: LongInt;
+  Lines: TStringList;
+  LineIndex: LongInt;
   Line: string;
   HotspotX: LongInt;
   HotspotY: LongInt;
@@ -154,31 +141,36 @@ begin
   HotspotFound := False;
   HotspotX := 0;
   HotspotY := 0;
-  Position := 1;
-  while Position <= Length(Text) do
-  begin
-    Line := NextLine(Text, Position);
-    if (Length(Line) > 0) and (Line[1] = CommentMark) then
-      Continue;
-    if not HotspotFound then
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Text;
+    for LineIndex := 0 to Lines.Count - 1 do
     begin
-      if Line = '' then
+      Line := Lines[LineIndex];
+      if (Length(Line) > 0) and (Line[1] = CommentMark) then
         Continue;
-      if not ParseHotspot(Line, HotspotX, HotspotY) then
+      if not HotspotFound then
+      begin
+        if Line = '' then
+          Continue;
+        if not ParseHotspot(Line, HotspotX, HotspotY) then
+          Exit;
+        HotspotFound := True;
+        Continue;
+      end;
+      if (RowCount = MaximumPointerSize) or (Length(Line) > MaximumPointerSize) then
         Exit;
-      HotspotFound := True;
-      Continue;
+      for Column := 1 to Length(Line) do
+        if Line[Column] = ClearMark then
+          Line[Column] := ' ';
+      Rows[RowCount] := Line;
+      Inc(RowCount);
+      { Blank lines at the end are not rows. }
+      if not LineIsBlank(Line) then
+        UsedRows := RowCount;
     end;
-    if (RowCount = MaximumPointerSize) or (Length(Line) > MaximumPointerSize) then
-      Exit;
-    for Column := 1 to Length(Line) do
-      if Line[Column] = ClearMark then
-        Line[Column] := ' ';
-    Rows[RowCount] := Line;
-    Inc(RowCount);
-    { Blank lines at the end are not rows. }
-    if not LineIsBlank(Line) then
-      UsedRows := RowCount;
+  finally
+    Lines.Free;
   end;
   if not HotspotFound or (UsedRows = 0) then
     Exit;

@@ -35,6 +35,7 @@
 unit Server.Shell;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -44,12 +45,12 @@ uses
   Server.Windows;
 
 { Makes Client the shell if there is none; False if another is. }
-function RegisterShell(Client: PClient): Boolean;
-function IsShell(Client: PClient): Boolean;
+function RegisterShell(Client: TClient): Boolean;
+function IsShell(Client: TClient): Boolean;
 { Client is going: if it is the shell, there is none any more. }
-procedure ForgetClientInShell(Client: PClient);
+procedure ForgetClientInShell(Client: TClient);
 { The window is going: the shell hears it is gone, if it knew it. }
-procedure ForgetWindowInShell(Window: PServerWindow);
+procedure ForgetWindowInShell(Window: TServerWindow);
 { Tells the shell what changed in the windows since it was last told. }
 procedure TellShellAboutWindows;
 { Tells the shell the displays were laid out again. }
@@ -58,21 +59,20 @@ procedure TellShellDisplaysChanged;
 procedure SendToShell(var Message: TWindowMessage);
 { A window a taskbar or a task manager lists: framed, owned by no
   window, not a desktop. }
-function IsTopLevelWindow(Window: PServerWindow): Boolean;
+function IsTopLevelWindow(Window: TServerWindow): Boolean;
 { What the window is like now (ShellWindow*). }
-function WindowStateFlags(Window: PServerWindow): LongWord;
+function WindowStateFlags(Window: TServerWindow): LongWord;
 
 implementation
 
 uses
-  Sys.Text,
   Server.Composer,
   Server.WorkAreas;
 
 var
-  ShellClient: PClient;
+  ShellClient: TClient;
 
-function IsShell(Client: PClient): Boolean;
+function IsShell(Client: TClient): Boolean;
 begin
   Result := (Client <> nil) and (Client = ShellClient);
 end;
@@ -89,10 +89,10 @@ var
   Index: LongInt;
 begin
   for Index := 0 to WindowCount - 1 do
-    Windows[Index]^.ToldShell := False;
+    Windows[Index].ToldShell := False;
 end;
 
-function RegisterShell(Client: PClient): Boolean;
+function RegisterShell(Client: TClient): Boolean;
 begin
   if (ShellClient <> nil) and (ShellClient <> Client) then
     Exit(False);
@@ -101,7 +101,7 @@ begin
   Result := True;
 end;
 
-procedure ForgetClientInShell(Client: PClient);
+procedure ForgetClientInShell(Client: TClient);
 begin
   if not IsShell(Client) then
     Exit;
@@ -110,74 +110,74 @@ begin
   ClearWorkAreas;
 end;
 
-function IsTopLevelWindow(Window: PServerWindow): Boolean;
+function IsTopLevelWindow(Window: TServerWindow): Boolean;
 begin
-  Result := IsFramed(Window) and (Window^.OwnerWindow = nil) and ((Window^.Flags and WindowDesktop) = 0);
+  Result := IsFramed(Window) and (Window.OwnerWindow = nil) and ((Window.Flags and WindowDesktop) = 0);
 end;
 
 { A window the shell shows on its taskbar: another program's top-level
   window. }
-function IsListed(Window: PServerWindow): Boolean;
+function IsListed(Window: TServerWindow): Boolean;
 begin
-  Result := (ShellClient <> nil) and (Window^.Client <> Pointer(ShellClient)) and IsTopLevelWindow(Window);
+  Result := (ShellClient <> nil) and (Window.Client <> ShellClient) and IsTopLevelWindow(Window);
 end;
 
-function WindowStateFlags(Window: PServerWindow): LongWord;
+function WindowStateFlags(Window: TServerWindow): LongWord;
 begin
   Result := 0;
-  if Window^.Visible then
+  if Window.Visible then
     Result := Result or ShellWindowVisible;
-  if Window^.Minimized then
+  if Window.Minimized then
     Result := Result or ShellWindowMinimized;
   { Its dialog having the keyboard counts as its own. }
   if (ActiveWindow <> nil) and ((ActiveWindow = Window) or IsOwnedBy(ActiveWindow, Window)) then
     Result := Result or ShellWindowActive;
-  if Window^.Maximized then
+  if Window.Maximized then
     Result := Result or ShellWindowMaximized;
-  if (Window^.Flags and WindowResizable) <> 0 then
+  if (Window.Flags and WindowResizable) <> 0 then
     Result := Result or ShellWindowResizable;
 end;
 
-procedure TellWindowGone(Window: PServerWindow);
+procedure TellWindowGone(Window: TServerWindow);
 var
   Message: TWindowMessage;
 begin
-  Window^.ToldShell := False;
-  Message := NewMessage(EventShellWindowGone, Window^.Id);
+  Window.ToldShell := False;
+  Message := NewMessage(EventShellWindowGone, Window.Id);
   SendToShell(Message);
 end;
 
-procedure ForgetWindowInShell(Window: PServerWindow);
+procedure ForgetWindowInShell(Window: TServerWindow);
 begin
-  if Window^.ToldShell then
+  if Window.ToldShell then
     TellWindowGone(Window);
 end;
 
-procedure TellWindowState(Window: PServerWindow);
+procedure TellWindowState(Window: TServerWindow);
 var
   Message: TWindowMessage;
   Flags: LongWord;
 begin
   Flags := WindowStateFlags(Window);
-  if Window^.ToldShell and (Window^.ToldFlags = Flags) and (Window^.ToldScreen = Window^.ScreenNumber) and
-     (CompareText(Window^.ToldTitle, Window^.Title) = 0) then
+  if Window.ToldShell and (Window.ToldFlags = Flags) and (Window.ToldScreen = Window.ScreenNumber) and
+     (Window.ToldTitle = Window.Title) then
     Exit;
-  Window^.ToldShell := True;
-  Window^.ToldFlags := Flags;
-  Window^.ToldScreen := Window^.ScreenNumber;
-  Move(Window^.Title, Window^.ToldTitle, SizeOf(Window^.ToldTitle));
-  Message := NewMessage(EventShellWindowChanged, Window^.Id);
+  Window.ToldShell := True;
+  Window.ToldFlags := Flags;
+  Window.ToldScreen := Window.ScreenNumber;
+  Window.ToldTitle := Window.Title;
+  Message := NewMessage(EventShellWindowChanged, Window.Id);
   Message.Flags := Flags;
-  Message.Code := LongWord(Window^.ScreenNumber);
-  Message.Value := LongInt(PClient(Window^.Client)^.ProcessId);
-  Move(Window^.Title, Message.Text, SizeOf(Message.Text));
+  Message.Code := LongWord(Window.ScreenNumber);
+  Message.Value := LongInt(TClient(Window.Client).ProcessId);
+  SetMessageText(Message, PChar(Window.Title));
   SendToShell(Message);
 end;
 
 procedure TellShellAboutWindows;
 var
   Index: LongInt;
-  Window: PServerWindow;
+  Window: TServerWindow;
 begin
   if ShellClient = nil then
     Exit;
@@ -186,7 +186,7 @@ begin
     Window := Windows[Index];
     if IsListed(Window) then
       TellWindowState(Window)
-    else if Window^.ToldShell then
+    else if Window.ToldShell then
       TellWindowGone(Window);
   end;
 end;

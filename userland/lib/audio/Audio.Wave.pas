@@ -25,6 +25,7 @@
 unit Audio.Wave;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -44,7 +45,7 @@ type
   TWaveStatus = (WaveOk, WaveCannotOpen, WaveNotWave, WaveUnsupported);
 
 { Opens Path and reads up to its samples. }
-function OpenWaveFile(Path: PChar; out Wave: TWaveFile): TWaveStatus;
+function OpenWaveFile(const Path: string; out Wave: TWaveFile): TWaveStatus;
 { Reads the next samples (at most Capacity bytes); 0 at the end. }
 function ReadWaveSamples(var Wave: TWaveFile; Buffer: Pointer; Capacity: QWord): QWord;
 procedure CloseWaveFile(var Wave: TWaveFile);
@@ -97,7 +98,7 @@ begin
   Result := MemoryIsEqual(Tag, Expected, 4);
 end;
 
-function OpenWaveFile(Path: PChar; out Wave: TWaveFile): TWaveStatus;
+function OpenWaveFile(const Path: string; out Wave: TWaveFile): TWaveStatus;
 var
   Riff: array[0..11] of Byte;
   ChunkHeader: array[0..7] of Byte;
@@ -108,7 +109,7 @@ var
   FormatSize: LongWord;
 begin
   FillMemory(@Wave, SizeOf(Wave), 0);
-  Wave.Handle := OpenFile(Path, OpenRead);
+  Wave.Handle := OpenFile(PChar(Path), OpenRead);
   if Wave.Handle < 0 then
     Exit(WaveCannotOpen);
   Result := WaveNotWave;

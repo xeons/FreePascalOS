@@ -36,6 +36,7 @@
 unit Server.Desktop;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -53,7 +54,7 @@ procedure KeepPointOnScreens(var X, Y: LongInt);
 procedure LogicalToDesktop(Left, Top: LongInt; out X, Y: LongInt);
 procedure DesktopToLogical(X, Y: LongInt; out Left, Top: LongInt);
 { The screen the middle of the window's frame is on (or the nearest). }
-function ScreenUnderWindow(Window: PServerWindow): PScreen;
+function ScreenUnderWindow(Window: TServerWindow): PScreen;
 
 implementation
 
@@ -156,7 +157,7 @@ begin
   Top := Screen^.LogicalBounds.Top + PixelsToLogical(Y - Screen^.Bounds.Top, Screen^.ScalePercent);
 end;
 
-function ScreenUnderWindow(Window: PServerWindow): PScreen;
+function ScreenUnderWindow(Window: TServerWindow): PScreen;
 var
   Frame: TRectangle;
 begin

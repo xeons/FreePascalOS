@@ -28,6 +28,7 @@
 unit Server.TitleButtons;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -37,12 +38,12 @@ uses
 
 { The button under the pointer (Window nil or Button not a title button:
   none), drawn pressed if Pressed. }
-procedure TrackTitleButton(Window: PServerWindow; Button: THitArea; Pressed: Boolean);
+procedure TrackTitleButton(Window: TServerWindow; Button: THitArea; Pressed: Boolean);
 { How Window's Button looks now. }
-function TitleButtonIsHot(Window: PServerWindow; Button: THitArea): Boolean;
-function TitleButtonIsPressed(Window: PServerWindow; Button: THitArea): Boolean;
+function TitleButtonIsHot(Window: TServerWindow; Button: THitArea): Boolean;
+function TitleButtonIsPressed(Window: TServerWindow; Button: THitArea): Boolean;
 { The window is going: no button of it is hot. }
-procedure ForgetWindowInTitleButtons(Window: PServerWindow);
+procedure ForgetWindowInTitleButtons(Window: TServerWindow);
 
 implementation
 
@@ -50,7 +51,7 @@ uses
   Server.Composer;
 
 var
-  HotWindow: PServerWindow;
+  HotWindow: TServerWindow;
   HotButton: THitArea;
   HotPressed: Boolean;
 
@@ -61,11 +62,11 @@ end;
 
 procedure DamageHotButton;
 begin
-  if (HotWindow <> nil) and HotWindow^.Visible then
+  if (HotWindow <> nil) and HotWindow.Visible then
     AddDamage(TitleButtonRectangle(HotWindow, HotButton));
 end;
 
-procedure TrackTitleButton(Window: PServerWindow; Button: THitArea; Pressed: Boolean);
+procedure TrackTitleButton(Window: TServerWindow; Button: THitArea; Pressed: Boolean);
 begin
   if (Window = nil) or not IsTitleButton(Button) then
   begin
@@ -82,17 +83,17 @@ begin
   DamageHotButton;
 end;
 
-function TitleButtonIsHot(Window: PServerWindow; Button: THitArea): Boolean;
+function TitleButtonIsHot(Window: TServerWindow; Button: THitArea): Boolean;
 begin
   Result := (Window = HotWindow) and (Button = HotButton) and not HotPressed;
 end;
 
-function TitleButtonIsPressed(Window: PServerWindow; Button: THitArea): Boolean;
+function TitleButtonIsPressed(Window: TServerWindow; Button: THitArea): Boolean;
 begin
   Result := (Window = HotWindow) and (Button = HotButton) and HotPressed;
 end;
 
-procedure ForgetWindowInTitleButtons(Window: PServerWindow);
+procedure ForgetWindowInTitleButtons(Window: TServerWindow);
 begin
   if HotWindow = Window then
   begin

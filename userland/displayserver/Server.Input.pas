@@ -48,6 +48,7 @@
 unit Server.Input;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -63,9 +64,9 @@ procedure CloseInput;
 { Reads what has arrived and acts on it (call when the handle is
   signaled). }
 procedure ProcessInput;
-procedure SetPointerCapture(Window: PServerWindow; Capture: Boolean);
+procedure SetPointerCapture(Window: TServerWindow; Capture: Boolean);
 { The window is going: no hover, capture or drag refers to it. }
-procedure ForgetWindowInInput(Window: PServerWindow);
+procedure ForgetWindowInInput(Window: TServerWindow);
 { Ends a drag of a frame, if one goes on (the scale changed). }
 procedure CancelDrag;
 { Gives the pointer the shape for where it is now (call before
@@ -104,13 +105,13 @@ type
   TDrag = (DragNone, DragMove, DragResize, DragButton);
 
 var
-  Captured: PServerWindow;
-  Hovered: PServerWindow;
+  Captured: TServerWindow;
+  Hovered: TServerWindow;
   ButtonsHeld: LongWord;
   { Shift, Ctrl, Alt and the locks, from the newest key event. }
   KeyboardModifiers: LongWord;
   Drag: TDrag;
-  DragWindow: PServerWindow;
+  DragWindow: TServerWindow;
   DragArea: THitArea;
   { Where the pointer was against the window when the drag started. }
   DragStartX: LongInt;
@@ -132,7 +133,7 @@ begin
   InputHandle := -1;
 end;
 
-procedure SetPointerCapture(Window: PServerWindow; Capture: Boolean);
+procedure SetPointerCapture(Window: TServerWindow; Capture: Boolean);
 begin
   if Capture then
     Captured := Window
@@ -152,7 +153,7 @@ begin
   end;
 end;
 
-procedure ForgetWindowInInput(Window: PServerWindow);
+procedure ForgetWindowInInput(Window: TServerWindow);
 begin
   if Captured = Window then
     Captured := nil;
@@ -164,13 +165,13 @@ begin
   ForgetWindowInDoubleClicks(Window);
 end;
 
-procedure SendPointerEvent(Window: PServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt);
+procedure SendPointerEvent(Window: TServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt);
 var
   Message: TWindowMessage;
 begin
-  Message := NewMessage(Kind, Window^.Id);
-  Message.Left := PointerX - Window^.ClientLeft;
-  Message.Top := PointerY - Window^.ClientTop;
+  Message := NewMessage(Kind, Window.Id);
+  Message.Left := PointerX - Window.ClientLeft;
+  Message.Top := PointerY - Window.ClientTop;
   Message.Code := Code;
   Message.Value := Value;
   Message.Modifiers := KeyboardModifiers;
@@ -178,7 +179,7 @@ begin
 end;
 
 { The window whose client area the pointer is over (or the captor). }
-function PointerTarget: PServerWindow;
+function PointerTarget: TServerWindow;
 begin
   if Captured <> nil then
     Result := Captured
@@ -188,7 +189,7 @@ begin
     if (Result <> nil) and (HitTest(Result, PointerX, PointerY) <> HitClient) then
       Result := nil;
   end;
-  if (Result <> nil) and Result^.Disabled then
+  if (Result <> nil) and Result.Disabled then
     Result := nil;
 end;
 
@@ -244,7 +245,7 @@ begin
   AddDamage(Outline);
 end;
 
-procedure StartDrag(Window: PServerWindow; Area: THitArea);
+procedure StartDrag(Window: TServerWindow; Area: THitArea);
 begin
   DragWindow := Window;
   DragArea := Area;
@@ -253,7 +254,7 @@ begin
   DragStartBounds := ClientRectangle(Window);
   case Area of
     HitTitle:
-      if Window^.Maximized then
+      if Window.Maximized then
         Drag := DragNone
       else
         Drag := DragMove;
@@ -274,7 +275,7 @@ end;
 
 procedure FinishDrag;
 var
-  Window: PServerWindow;
+  Window: TServerWindow;
   Message: TWindowMessage;
 begin
   Window := DragWindow;
@@ -298,7 +299,7 @@ begin
         case DragArea of
           HitClose:
             begin
-              Message := NewMessage(EventCloseRequested, Window^.Id);
+              Message := NewMessage(EventCloseRequested, Window.Id);
               SendToProgram(Window, Message);
             end;
           HitMaximize:
@@ -318,7 +319,7 @@ end;
   pointer is over it. }
 procedure TrackButtonUnderPointer;
 var
-  Window: PServerWindow;
+  Window: TServerWindow;
 begin
   if Drag = DragButton then
   begin
@@ -331,7 +332,7 @@ begin
   Window := nil;
   if (Drag = DragNone) and (Captured = nil) then
     Window := WindowAt(PointerX, PointerY);
-  if (Window = nil) or Window^.Disabled then
+  if (Window = nil) or Window.Disabled then
     TrackTitleButton(nil, HitNothing, False)
   else
     TrackTitleButton(Window, HitTest(Window, PointerX, PointerY), False);
@@ -339,7 +340,7 @@ end;
 
 function PointerShapeHere: LongWord;
 var
-  Window: PServerWindow;
+  Window: TServerWindow;
   Area: THitArea;
 begin
   case Drag of
@@ -352,11 +353,11 @@ begin
   Window := Captured;
   if Window = nil then
     Window := WindowAt(PointerX, PointerY);
-  if (Window = nil) or Window^.Disabled then
+  if (Window = nil) or Window.Disabled then
     Exit;
   Area := HitTest(Window, PointerX, PointerY);
   if Area = HitClient then
-    Result := ClientPointerShape(Window, PointerX - Window^.ClientLeft, PointerY - Window^.ClientTop)
+    Result := ClientPointerShape(Window, PointerX - Window.ClientLeft, PointerY - Window.ClientTop)
   else if Window <> Captured then
     Result := FramePointerShape(Area);
 end;
@@ -377,7 +378,7 @@ end;
 
 procedure PointerMoved(OldCursor: TRectangle);
 var
-  Target: PServerWindow;
+  Target: TServerWindow;
 begin
   AddDamage(OldCursor);
   AddDamage(CursorRectangle);
@@ -407,7 +408,7 @@ end;
 
 procedure ButtonChanged(Button: LongWord; Pressed: Boolean; Time: QWord);
 var
-  Window: PServerWindow;
+  Window: TServerWindow;
   Area: THitArea;
 begin
   Button := ButtonActingAs(Button);
@@ -426,14 +427,14 @@ begin
   end;
   if Captured <> nil then
   begin
-    if not Captured^.Disabled then
+    if not Captured.Disabled then
       SendPointerEvent(Captured, EventPointerButton, Button, Ord(Pressed));
     Exit;
   end;
   Window := WindowAt(PointerX, PointerY);
   if Window = nil then
     Exit;
-  if Window^.Disabled then
+  if Window.Disabled then
   begin
     { Its dialog comes forward instead; it is not moved or resized. }
     if Pressed then
@@ -458,7 +459,7 @@ begin
     StartDrag(Window, Area);
   end
   else if TitlePressIsDoubleClick(Window, PointerX, PointerY, Time) and
-     ((Window^.Flags and WindowResizable) <> 0) then
+     ((Window.Flags and WindowResizable) <> 0) then
     ToggleMaximized(Window)
   else
     StartDrag(Window, Area);
@@ -474,15 +475,15 @@ begin
     is active (Server.Hotkeys). }
   if TakeHotkeyEvent(Event) then
     Exit;
-  if (ActiveWindow = nil) or ActiveWindow^.Disabled then
+  if (ActiveWindow = nil) or ActiveWindow.Disabled then
     Exit;
   if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then
   begin
-    Message := NewMessage(EventCloseRequested, ActiveWindow^.Id);
+    Message := NewMessage(EventCloseRequested, ActiveWindow.Id);
     SendToProgram(ActiveWindow, Message);
     Exit;
   end;
-  Message := NewMessage(EventKey, ActiveWindow^.Id);
+  Message := NewMessage(EventKey, ActiveWindow.Id);
   Message.Code := Event.Code;
   Message.Value := Event.Value;
   Message.Character := Event.Character;
@@ -492,7 +493,7 @@ end;
 
 procedure WheelTurned(Steps: LongInt);
 var
-  Target: PServerWindow;
+  Target: TServerWindow;
 begin
   Target := PointerTarget;
   if Target <> nil then
