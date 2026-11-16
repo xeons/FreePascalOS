@@ -171,13 +171,18 @@ begin
   RenderGlyph(Font, Font.GlyphOf(CodePoint), Size, 0, False, Result);
 end;
 
-{ Whether every pixel of a column of the bitmap is empty or full. }
-function ColumnIsCrisp(const Bitmap: TGlyphBitmap; Column: Integer): Boolean;
+{ Whether every pixel of the bitmap's column at X pixels right of the
+  pen is empty or full. }
+function ColumnIsCrisp(const Bitmap: TGlyphBitmap; X: Integer): Boolean;
 var
   Row: Integer;
   Value: Byte;
+  Column: Integer;
 begin
-  Result := Bitmap.Width > 0;
+  Column := X - Bitmap.Left;
+  Result := (Column >= 0) and (Column < Bitmap.Width);
+  if not Result then
+    Exit;
   for Row := 0 to Bitmap.Height - 1 do
   begin
     Value := Bitmap.Coverage[Row * Bitmap.Width + Column];
@@ -235,7 +240,9 @@ begin
   HeightsWhole := True;
   NoOvershoot := True;
   SomeBlurUnhinted := False;
-  { DejaVu Sans: H is 1493 units high, x 1120. }
+  { DejaVu Sans: H is 1493 units high, x 1120; E's arms run from 403 to
+    1114 units right of the pen (at least), H's bar from 403 to 1137: the
+    columns at 760 are in them whole from 9 pixels up. }
   for Size := 9 to 24 do
   begin
     Scale := Size / Font.UnitsPerEm;
@@ -246,12 +253,12 @@ begin
     X := Hinted(Font, Ord('x'), Size);
     O := Hinted(Font, Ord('o'), Size);
     { E's arms and H's bar, across the middle of the letter. }
-    BarsCrisp := BarsCrisp and ColumnIsCrisp(E, E.Width div 2 + 1) and ColumnIsCrisp(H, H.Width div 2);
+    BarsCrisp := BarsCrisp and ColumnIsCrisp(E, Floor(760 * Scale)) and ColumnIsCrisp(H, Floor(760 * Scale));
     HeightsWhole := HeightsWhole and (InkBottom(H) = 0) and (InkTop(H) = -CapHeight) and (InkTop(X) = -XHeight) and
       (InkBottom(X) = 0) and (InkBottom(E) = 0);
     if Size <= 16 then
       NoOvershoot := NoOvershoot and (InkTop(O) = InkTop(X)) and (InkBottom(O) = 0);
-    if not ColumnIsCrisp(Unhinted(Font, Ord('E'), Size), Unhinted(Font, Ord('E'), Size).Width div 2 + 1) then
+    if not ColumnIsCrisp(Unhinted(Font, Ord('E'), Size), Floor(760 * Scale)) then
       SomeBlurUnhinted := True;
   end;
   Check('hinted: the bars of E and H fall on whole pixels, 9 to 24 pixels', BarsCrisp);
