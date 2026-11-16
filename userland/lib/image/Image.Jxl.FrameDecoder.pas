@@ -35,7 +35,7 @@
   canvas is the caller's (Image.Jxl.Decoder).
 
   Splines are not supported (libjxl's encoder does not make them);
-  noise is synthesized as far as Image.Jxl.Noise does.
+  noise parameters are read but no noise is synthesized.
 }
 unit Image.Jxl.FrameDecoder;
 

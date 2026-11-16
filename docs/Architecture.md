@@ -5880,9 +5880,9 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   256x256, 4x8, identity, AFV); then gaborish (`Image.Jxl.Gaborish`),
   the edge preserving filter (`Image.Jxl.EdgePreserving`, also for
   modular frames that ask for it), upsampling by 2, 4 or 8
-  (`Image.Jxl.Upsampling`), patches (`Image.Jxl.Patches`), noise
-  (`Image.Jxl.Noise`), and XYB to linear sRGB to sRGB or YCbCr to RGB
-  (`Image.Jxl.Xyb`). Splines are refused as unsupported (libjxl's
+  (`Image.Jxl.Upsampling`), patches (`Image.Jxl.Patches`), and XYB to linear sRGB to sRGB or YCbCr to RGB
+  (`Image.Jxl.Xyb`). Noise parameters are read (`Image.Jxl.Noise`) but
+  no noise is synthesized; splines are refused as unsupported (libjxl's
   encoder does not make them). Frames (`Image.Jxl.Decoder`,
   `Image.Jxl.Canvas`, `Image.Jxl.Blending`): LF frames are kept for
   the frames whose low frequencies they hold, frames saved in the four
