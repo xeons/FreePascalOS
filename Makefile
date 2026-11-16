@@ -182,11 +182,20 @@ image: esp
 TEST_DISK := $(BUILD_DIRECTORY)/test-disk.img
 SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk.img
 
-run: esp $(TEST_DISK) $(SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(SYSTEM_DISK)
+# make run and make debug boot a system disk of their own, so what is
+# done there (files, passwords, logs in /var/log) stays from one run to
+# the next but never reaches the built image the tests copy. It is made
+# again from the built image whenever that is rebuilt.
+RUN_SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk-interactive.img
 
-debug: esp $(TEST_DISK) $(SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(SYSTEM_DISK)
+$(RUN_SYSTEM_DISK): $(SYSTEM_DISK)
+	cp $(SYSTEM_DISK) $@
+
+run: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
+
+debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
+	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

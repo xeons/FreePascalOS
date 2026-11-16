@@ -165,7 +165,10 @@ make userland     # build the libraries and programs into build/amd64/user
 make system-disk  # build the ext4 system volume (/bin, /lib, /etc, /tmp, /home)
 make run          # boot in QEMU with the test and system disks; the kernel log
                   # and then the shell appear on the terminal (the test disk
-                  # is a fresh copy each time; the system disk keeps changes)
+                  # is a fresh copy each time; the system disk is a copy of
+                  # its own that keeps changes between runs, until
+                  # make system-disk rebuilds the image, and never
+                  # reaches the image the tests use)
 make debug        # same, but wait for GDB on localhost:1234
 make test         # boot headless, run every self test and coretest, type
                   # into the console, boot the graphical session; print
