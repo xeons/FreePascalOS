@@ -122,7 +122,8 @@ FONT_RENDERER := tools/RenderFont/render-font.py
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
 
-$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.ErrorMessages.inc
+$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
+		shared/Abi.ErrorMessages.inc
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
 	@rm -rf $(RTL_USER_DIRECTORY)
@@ -273,7 +274,8 @@ $(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS
 	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
 	-Fu$(AUDIO_LIBRARY_OBJECTS)
 $(GRAPHICAL_SOUND_PROGRAMS): $(CONTROLS_LIBRARY) $(AUDIO_LIBRARY)
-SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest)
+# networksetup reads the static network configuration from the settings.
+SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest networksetup)
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)

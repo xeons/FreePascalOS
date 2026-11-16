@@ -1,0 +1,8 @@
+# The network: gives the interfaces the static configuration of
+# /etc/settings/Network.settings (addresses, the default route, the DNS
+# servers) once at start, then ends. A DHCP client will take its place
+# for interfaces configured with "Method = dhcp".
+description   = Static network configuration
+program       = /bin/networksetup
+modes         = text graphical
+restart       = never

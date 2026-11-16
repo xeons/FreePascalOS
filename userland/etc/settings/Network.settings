@@ -1,0 +1,13 @@
+# The network's static configuration, applied at start by the network
+# service (networksetup). These values suit QEMU's user networking:
+# the guest is 10.0.2.15, the gateway 10.0.2.2, the DNS server 10.0.2.3.
+# Method "static" applies Address, Gateway and Up; "none" leaves the
+# interface alone.
+DnsServers = ["10.0.2.3"]
+SearchDomain = ""
+
+[Interfaces/eth0]
+Method = "static"
+Address = "10.0.2.15/24"
+Gateway = "10.0.2.2"
+Up = true

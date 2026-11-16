@@ -75,6 +75,8 @@ uses
   Runtime.Checksums,
   Objects.Manager,
   Io.Startup,
+  Network.Startup,
+  Kernel.NetworkSelfTest,
   Io.BlockCache,
   Io.AudioOutput,
   Io.AudioInput,
@@ -303,6 +305,8 @@ begin
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
   InitializeIoSystem;
+  { The network adapters registered with the drivers above. }
+  StartNetworking;
   InitializeDisplays(PBootInformation(Context)^.Framebuffer);
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
@@ -317,6 +321,7 @@ begin
   RunKernelSelfTests;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
+  RunNetworkSelfTests;
   RunFileSystemSelfTests;
   { Only when asked: the write tests change the test volumes, and end
     journaled ones with a simulated crash that leaves them read-only. }

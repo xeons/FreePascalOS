@@ -95,7 +95,8 @@ uses
   Processes.Stopping,
   Processes.TerminalCalls,
   Processes.FileAttributeCalls,
-  Processes.FileLockCalls;
+  Processes.FileLockCalls,
+  Processes.SocketCalls;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -512,6 +513,8 @@ begin
         else
           Result := FinishDeviceRead(Result, BufferAddress, Buffer);
       end;
+    HandleKindSocket:
+      Result := ReadSocketHandle(ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -604,6 +607,8 @@ begin
       Result := WriteInPieces(WriteToDeviceTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindPipeWriteEnd:
       Result := WriteInPieces(WriteToPipeTarget, ObjectBody, BufferAddress, ByteCount);
+    HandleKindSocket:
+      Result := WriteSocketHandle(ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -700,6 +705,7 @@ begin
     HandleKindPort: Result := Abi.SystemCalls.HandleKindPort;
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
+    HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
   else
     Result := Failure(ErrorBadHandle);
   end;

@@ -27,7 +27,8 @@ instead of NT's terminology.
 ```
 
 Unit names carry their layer as a prefix: `Hal.*`, `Kernel.*`, `Memory.*`,
-`Objects.*`, `Processes.*`, `Runtime.*` and `Debug.*`. Architecture specific
+`Objects.*`, `Processes.*`, `Io.*`, `Network.*`, `Drivers.*`, `Runtime.*`
+and `Debug.*`. Architecture specific
 units have `Arch` in their name (`Kernel.Arch.*`, `Memory.Arch.*`) or live in
 `hal/<arch>`.
 
@@ -2435,6 +2436,262 @@ stopping, and the 3D calculations: panning in stereo, 5.1 and 7.1,
 distance, curves, cones, emitter channels, the inner radius, Doppler,
 and a voice placed and moving to one side.
 
+## Networking
+
+A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
+beneath BSD-style sockets that are handles like any other.
+
+```
+  programs: Sys.Sockets, Sys.NetworkInterfaces     ping ifconfig route arp
+=========== system calls 104-123 (Processes.SocketCalls, .NetworkCalls) ====
+  Network.SocketOperations   bind listen accept connect send receive ...
+  Network.Sockets            the socket object, readiness events, waits
+  Network.TcpSockets | Network.Udp | Network.IcmpSockets
+  Network.Tcp*  (connections, segments, input, output, timers, states)
+  Network.Ipv4  Network.Fragments  Network.Icmp  Network.Routing
+  Network.Arp   Network.Ethernet   Network.Loopback
+  Network.Interfaces          (one per adapter; lo is number 1)
+  Network.Core                the lock, the receive queue, the wake-ups
+  Network.Thread              received frames and timers
+=========== Io.NetworkAdapters (the driver interface) ======================
+  Drivers.VirtioNet (and the e1000/e1000e/RTL8139 drivers)
+```
+
+**The adapter interface** (`Io.NetworkAdapters`). A driver registers each
+card with `RegisterNetworkAdapter`: a `Transmit` routine (copies one
+Ethernet frame, at dispatch level or below, never waits; False when it
+has no room, and the driver later calls `NetworkTransmitReady`), a
+`LinkUp` routine and the Ethernet address. The adapter is named `eth0`,
+`eth1`... in the order of registration. Received frames come back
+through `NetworkFrameReceived` from the driver's deferred routine (the
+frame is copied there into a packet and queued), a changed link through
+`NetworkLinkChanged`. Registering sets the network layer up the first
+time (so the loopback interface is always first); frames that arrive
+before the network thread runs wait in the receive queue. Drivers
+handle their own suspend and resume and keep their adapter across S3.
+
+**Threads and levels.** No protocol work is done in an interrupt or a
+deferred routine: they only queue the frame (a spin-locked queue of at
+most 512 packets; more are dropped and counted) or mark the interface
+(`PendingEvents`, atomically) and signal the network thread's event.
+The network thread (`Network`, priority 13) takes the frames a batch at
+a time, sends what waited on the interfaces, and runs the timers. All
+other protocol work runs on the threads of programs inside their
+socket calls. Everything happens at passive level.
+
+**Locking.** One mutex, the network lock (`Network.Core`), covers all
+protocol state: interfaces, routes, the ARP cache, fragments, sockets
+and connections. The network thread takes it per batch; each socket
+operation takes it for its work and drops it while it waits
+(`WaitOnSocket`). Drivers' `Transmit` is called with the lock held
+(drivers never wait), so sending needs no queueing; the loopback
+interface's "transmit" puts the datagram on the receive queue, so a
+datagram sent to this machine is handled later by the thread and never
+re-enters the protocols inside the sender's call. Lock order: process
+lock, then network lock, then spin locks (the receive queue, drivers').
+The DNS server list has a spin lock of its own. Timers: whoever needs
+to be called by a time asks the thread for a wake-up
+(`RequestNetworkWakeAt`); the thread sleeps until the earliest, then
+runs the ARP, reassembly and TCP timer routines, each of which asks
+again from its own state.
+
+**Buffers.** A packet (`Network.Packets`) is one heap block with room
+for a whole frame after 128 bytes of headroom: each layer on the way
+down prepends its header without copying. Received data is handled in
+place and copied only where it is kept: into a socket's datagram queue
+(at most 64 datagrams or 128 KiB), into a TCP connection's receive ring
+(64 KiB), or into a reassembly buffer. TCP keeps sent data in a 64 KiB
+send ring until it is acknowledged and retransmits from there.
+
+**Ethernet and ARP.** Frames for another station and multicast frames
+are dropped. The ARP cache (64 entries) keeps an answer for ten minutes;
+a datagram to an unknown neighbour waits on its incomplete entry (up to
+8 per entry) while a request is sent once a second, three times; then
+the datagrams are dropped and each local sender gets an ICMP host
+unreachable (sent to itself through lo, so ping shows "Destination Host
+Unreachable"). Requests for our address are answered and the asker
+remembered; a new address is announced with a gratuitous request.
+
+**IPv4.** Datagrams are checked (version, lengths, header checksum) and
+taken if addressed to any of this machine's addresses (the weak host
+model), to 255.255.255.255, to the arrival interface's subnet
+broadcast, or - UDP only - to anything on an interface with no address
+yet (what a DHCP client needs). Nothing is forwarded. Fragments are put
+together (RFC 815: one buffer, a bitmap of 8-byte blocks, at most 8
+datagrams at once for 30 s each). Nothing is sent in fragments: a
+datagram larger than the interface's MTU (1500) fails with
+`ErrorMessageTooLong`, and TCP sets "don't fragment". The routing table
+(`Network.Routing`) has an interface route for each interface's network
+(added and removed with the address) and routes added by hand (the
+default gateway); a lookup takes the longest prefix on an interface that
+is up, the lowest metric among equals. Datagrams to this machine's own
+addresses go through lo; a broadcast goes out of the interface it
+belongs to (the bound one, the subnet's, else the default route's).
+
+**ICMP.** Echo requests are answered (not broadcast ones). Echo replies
+and errors about echo requests go to the ICMP echo sockets with the
+request's identifier; raw ICMP sockets get every message. Destination
+unreachable and time exceeded about UDP or TCP go to the socket or
+connection; errors are sent for an unknown protocol, a closed UDP port
+and a failed ARP, never about an ICMP error, a broadcast or a later
+fragment.
+
+**UDP.** A datagram goes to the socket bound to its port that fits best
+(bound to its address before bound to every address, a connected one
+before an unconnected one); a broadcast to every socket bound to the
+port; with none, the sender gets port unreachable. A connected socket
+hears of a port unreachable that comes back (`ErrorConnectionRefused`
+on its next call). Broadcasts need `SocketOptionBroadcast`.
+
+**TCP** (RFC 793 with RFC 1122, 5681, 6298). Connections
+(`TTcpConnection`) live apart from sockets: a listener makes a child in
+SYN_RECEIVED for each SYN while the backlog has room (counting children
+not yet accepted), and the child joins the accept queue when the
+handshake completes; a connection outlives its socket while it closes.
+
+- *Input* follows "Segment Arrives": the window check (an unacceptable
+  segment gets an ACK), trimming to the window, a reset believed only at
+  exactly the expected sequence number (RFC 5961), a SYN in the window
+  resets, the acknowledgment frees the send ring and moves FIN_WAIT_1,
+  CLOSING and LAST_ACK on, the send window is updated by the RFC 793
+  rule, data in order goes to the receive ring and segments that arrive
+  ahead (up to 32) wait to be joined, a FIN in order ends the stream.
+- *Output* sends what fits in the smaller of the peer's window and the
+  congestion window, in segments of at most the MSS (the peer's MSS
+  option, or 536, never more than our MTU allows; ours is advertised on
+  the SYN), then the FIN. Nagle holds back small segments while data is
+  in flight unless `SocketOptionNoDelay`.
+- *Retransmission*: one timer per connection while anything is
+  unacknowledged; its timeout is the smoothed round trip plus four times
+  its variance, at least 200 ms, at most 60 s, doubled on each expiry;
+  one segment at a time is timed, never a retransmitted one (Karn). An
+  expiry goes back to the first unacknowledged byte and drops the
+  congestion window to one segment; three duplicate ACKs retransmit at
+  once and halve it. After 12 expiries (5 for a SYN) the connection is
+  given up (`ErrorTimedOut`). A zero window is probed with one byte on
+  each expiry.
+- *Congestion control*: slow start from ten segments, then congestion
+  avoidance (a segment per round trip).
+- *ACKs* of received data wait up to 40 ms, or go at once for every
+  second segment, out of order data and FINs; reading that opens the
+  window by two segments sends a window update.
+- *Closing*: a socket closed with unread data resets the connection
+  (RFC 2525); otherwise the FIN is sent and the connection finishes on
+  its own. TIME_WAIT lasts 60 s (twice an MSL of 30 s); FIN_WAIT_2 of a
+  connection without its socket ends after 60 s. A closed listener
+  resets the children it had not handed out.
+- Initial sequence numbers follow the clock (4 per microsecond) plus a
+  random offset taken at start. No window scaling or SACK yet: windows
+  are at most 64 KiB.
+
+**Sockets** (`Network.Sockets`) are objects of type `Socket`, so
+`CallClose`, inheritance, `CallDuplicateHandle` and passing them in
+messages work as for any handle (`HandleKindSocket` = 14). A socket
+keeps two notification events in step with its state under the network
+lock: Readable (data, a connection to accept, the end of the stream, an
+error) and Writable (room to send, or a connection attempt that ended).
+`CallWaitForHandles` waits on Readable; `CallWaitForSocket` on either.
+`CallRead` and `CallWrite` work on sockets (a receive or send without
+flags). Deleting the socket (its last handle closed) closes it.
+
+Who may open what: TCP and UDP sockets, and **ICMP echo sockets**
+(`SocketKindDatagram` with `ProtocolIcmp`), are everyone's - an echo
+socket can only send echo requests, the kernel puts the socket's own
+identifier in each and fills in the checksum, and it receives only the
+replies (and errors) for that identifier, so ping needs no privileges
+and nobody can forge other ICMP messages or read anyone else's (as
+Linux's ping sockets with `ping_group_range` open to all). **Raw ICMP
+sockets** (`SocketKindRaw`) are root's: they send any ICMP message and
+receive a copy of every one. Binding a TCP or UDP port below 1024 and
+binding a socket to an interface (`SocketOptionInterface`) are root's.
+
+| Call | Number | Arguments |
+|---|---|---|
+| CreateSocket | 104 | family, kind (stream, datagram, raw; or'ed with non-blocking), protocol |
+| BindSocket | 105 | handle, address |
+| ListenSocket | 106 | handle, backlog (1-64) |
+| AcceptSocket | 107 | handle, peer address out (or 0); returns a new handle |
+| ConnectSocket | 108 | handle, address (non-blocking: `ErrorInProgress`) |
+| SendSocket | 109 | handle, buffer, length, flags, address (0: the peer) |
+| ReceiveSocket | 110 | handle, buffer, length, flags (peek, don't wait), address out |
+| ShutdownSocket | 111 | handle, receive / send / both |
+| GetSocketOption, SetSocketOption | 112, 113 | handle, option (, value) |
+| GetSocketAddress | 114 | handle, local or peer, address out |
+| WaitForSocket | 115 | handle, readable / writable, timeout |
+| ListNetworkInterfaces | 116 | buffer, capacity (`TAbiNetworkInterface`) |
+| ConfigureNetworkInterface | 117 | `TAbiInterfaceConfiguration` (root) |
+| ChangeRoute | 118 | add or remove, `TAbiRoute` (root) |
+| ListRoutes | 119 | buffer, capacity |
+| ListArpEntries | 120 | buffer, capacity |
+| ListSockets | 121 | buffer, capacity (every socket, and connections without one) |
+| GetDnsServers, SetDnsServers | 122, 123 | `TAbiDnsServers` (setting: root) |
+
+Addresses (`TAbiSocketAddress`) carry a family, sixteen address bytes
+(IPv4 in the first four, in the order written) and a port in the
+machine's byte order, so IPv6 needs no new calls. Options: receive and
+send timeouts, broadcast, reuse address, time to live, non-blocking, the
+pending error (how a non-blocking connect ended), no delay, the kind,
+the received time to live (ping shows it), the interface, the bytes
+readable. Send and receive take five arguments; the dispatcher now
+passes R8 on. The ABI is in `shared/Abi.Networking.inc`; the new error
+codes (`ErrorConnectionRefused`, `ErrorAddressInUse`,
+`ErrorNetworkUnreachable`...) take Linux's numbers. `CallGetTime`
+gained `TimeUptimeNanoseconds`, for timing ping replies.
+
+**Configuration.** Anyone may list interfaces (name, description,
+Ethernet address, flags up/running/loopback/broadcast, MTU, addresses,
+packets, bytes, errors and drops each way), routes, the ARP cache and
+the sockets; only root may change an interface (address and prefix,
+up/down, MTU), the routes or the DNS servers. The kernel keeps the DNS
+servers and search domain only for the resolver to read, as it keeps
+the time zone's name. Changes are written to the kernel log.
+
+**Startup.** `Io.Startup` starts the virtio-net cards (the other
+drivers register theirs alike); `Kernel.Startup` then starts the
+network thread (`StartNetworking`). The **network service**
+(`/etc/services/network.service`, `networksetup`) applies the static
+configuration of `/etc/settings/Network.settings` (libconfiguration)
+once at start: per interface (`[Interfaces/eth0]`) a method (`static`
+or `none`), the address with its prefix, the gateway (the default
+route) and whether it is up, and the DNS servers. The default suits
+QEMU's user networking: eth0 10.0.2.15/24, gateway 10.0.2.2, DNS
+10.0.2.3. A DHCP client will take over interfaces with `Method = dhcp`;
+`NetworkSetup.StaticConfiguration` is the piece kept beside it.
+
+**virtio-net** (`Drivers.VirtioNet`): a receive queue that always holds
+a 2 KiB buffer per descriptor and a transmit queue of one buffer per
+frame (a 12-byte virtio header in front, short frames padded to 60
+bytes); no offloads. Both queues and configuration changes (the link
+status) interrupt through MSI-X entry 0 (`ConnectVirtioQueuesInterrupt`
+in `Drivers.VirtioPci`, which now also offers many chains at once and
+takes each finished one back by its head); without MSI-X a 10 ms timer
+polls. Suspending marks the card (its frames wait in the network
+layer); waking resets it, gives it its queues and receive buffers again
+(`RestartVirtioDeviceQueues`) and reports the link and room to send.
+
+**Tools.** `ping` (an ICMP echo socket; per-reply lines and the summary
+with loss and min/avg/max/mdev like iputils; `-c -i -W -s -t -q`; hosts
+are looked up in one place, `Sys.HostNames`, numeric for now), `ifconfig`
+and `route` in the manner of net-tools (rather than an `ip` tool: their
+output is what most people know to read, and each does one thing), and
+`arp`.
+
+**Tests.** A kernel self test on every boot checks the Internet
+checksum, sequence number comparison, a UDP datagram over lo, a refused
+connection and a TCP connection's states from the handshake to
+TIME_WAIT, with data both ways. coretest runs `networktest` (loopback
+ping; UDP echo with the largest datagram and one too large; a refused
+broadcast; port unreachable; a megabyte of TCP echo through many windows
+with a sender and a server thread; a refused connection; non-blocking
+connect and waits; the socket listing; then `networksetup` on eth0,
+pings to and the ARP entry of QEMU's gateway, and a TCP echo through
+QEMU's `guestfwd` to `cat` at 10.0.2.100:7), `networktest
+--unprivileged` as an ordinary user (raw sockets, low ports, every
+change refused; ping allowed), and `ifconfig`, `route`, `arp` and
+`ping` command lines; the session test checks that the network service
+configured eth0. The QEMU command lines of all tests and `make run`
+have a virtio-net card on user networking.
+
 ## File systems
 
 The VFS (`kernel/filesystems`) has three parts:
@@ -2819,6 +3076,8 @@ test copies to an unmapped user address.
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
 | Clock, time zone, keyboard (98-103) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
+| Sockets (104-115) | CreateSocket, BindSocket, ListenSocket, AcceptSocket, ConnectSocket, SendSocket, ReceiveSocket, ShutdownSocket, Get/SetSocketOption, GetSocketAddress, WaitForSocket (see "Networking") |
+| Network configuration (116-123) | ListNetworkInterfaces, ConfigureNetworkInterface, ChangeRoute, ListRoutes, ListArpEntries, ListSockets, Get/SetDnsServers (changes root only) |
 
 There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory, the three handles
@@ -3677,7 +3936,7 @@ the next login.
 
 A process has a table of 64 handles, each naming a referenced object and
 its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread,
-watch or the null device. Handles 0-2 are standard input, output and error.
+watch, socket or the null device. Handles 0-2 are standard input, output and error.
 `DuplicateHandle` copies one onto another number, which is how the shell
 redirects its own output for builtins. A pipe counts its open ends
 separately from object references, so a reader sees end of file once the

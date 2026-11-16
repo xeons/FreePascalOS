@@ -111,4 +111,6 @@ exec "$qemu_binary" \
     -no-reboot \
     -device qemu-xhci,id=xhci \
     -device usb-tablet,bus=xhci.0 \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0 \
     "${extra_arguments[@]}"

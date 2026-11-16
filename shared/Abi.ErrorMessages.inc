@@ -59,6 +59,20 @@ begin
     ErrorMessageTooLong: AbiErrorMessage := 'Message too long';
     ErrorNoDevice: AbiErrorMessage := 'No such device';
     ErrorCorrupted: AbiErrorMessage := 'Structure needs cleaning';
+    ErrorDestinationRequired: AbiErrorMessage := 'Destination address required';
+    ErrorProtocolNotSupported: AbiErrorMessage := 'Protocol not supported';
+    ErrorAddressFamilyNotSupported: AbiErrorMessage := 'Address family not supported by protocol';
+    ErrorAddressInUse: AbiErrorMessage := 'Address already in use';
+    ErrorAddressNotAvailable: AbiErrorMessage := 'Cannot assign requested address';
+    ErrorNetworkUnreachable: AbiErrorMessage := 'Network is unreachable';
+    ErrorConnectionAborted: AbiErrorMessage := 'Software caused connection abort';
+    ErrorConnectionReset: AbiErrorMessage := 'Connection reset by peer';
+    ErrorAlreadyConnected: AbiErrorMessage := 'Transport endpoint is already connected';
+    ErrorNotConnected: AbiErrorMessage := 'Transport endpoint is not connected';
+    ErrorConnectionRefused: AbiErrorMessage := 'Connection refused';
+    ErrorHostUnreachable: AbiErrorMessage := 'No route to host';
+    ErrorAlreadyInProgress: AbiErrorMessage := 'Operation already in progress';
+    ErrorInProgress: AbiErrorMessage := 'Operation now in progress';
   else
     AbiErrorMessage := 'Unknown error';
   end;

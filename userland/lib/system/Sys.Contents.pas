@@ -66,7 +66,11 @@ uses
   Sys.ServiceControl,
   Sys.SystemSettings,
   Sys.Notifications,
-  Sys.EndRequests;
+  Sys.EndRequests,
+  Sys.InternetAddresses,
+  Sys.HostNames,
+  Sys.Sockets,
+  Sys.NetworkInterfaces;
 
 implementation
 

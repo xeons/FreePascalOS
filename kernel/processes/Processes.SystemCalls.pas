@@ -46,6 +46,8 @@ uses
   Processes.WaitCalls,
   Processes.NotificationCalls,
   Processes.MappingCalls,
+  Processes.SocketCalls,
+  Processes.NetworkCalls,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -571,10 +573,12 @@ end;
 
 function PerformGetTime(Which: QWord): Int64;
 begin
-  if Which = 0 then
-    Result := CurrentWallClockTime
+  case Which of
+    TimeWallClock: Result := CurrentWallClockTime;
+    TimeUptimeNanoseconds: Result := Int64(ClockNanoseconds);
   else
     Result := Int64(UptimeMilliseconds);
+  end;
 end;
 
 function PerformGetSystemInformation(InformationAddress: QWord): Int64;
@@ -632,7 +636,7 @@ end;
 
 { --- Dispatcher ------------------------------------------------------ }
 
-function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3: QWord): Int64;
+function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3, Argument4: QWord): Int64;
 begin
   Result := 0;
   case Number of
@@ -758,6 +762,28 @@ begin
     { --- Processor exceptions (Processes.UserExceptions) --- }
     CallSetExceptionDispatcher: Result := PerformSetExceptionDispatcher(Argument0);
     CallExceptionDispatched: Result := PerformExceptionDispatched;
+    { --- Sockets (Processes.SocketCalls) --- }
+    CallCreateSocket: Result := PerformCreateSocket(Argument0, Argument1, Argument2);
+    CallBindSocket: Result := PerformBindSocket(Int64(Argument0), Argument1);
+    CallListenSocket: Result := PerformListenSocket(Int64(Argument0), Argument1);
+    CallAcceptSocket: Result := PerformAcceptSocket(Int64(Argument0), Argument1);
+    CallConnectSocket: Result := PerformConnectSocket(Int64(Argument0), Argument1);
+    CallSendSocket: Result := PerformSendSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
+    CallReceiveSocket: Result := PerformReceiveSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
+    CallShutdownSocket: Result := PerformShutdownSocket(Int64(Argument0), Argument1);
+    CallGetSocketOption: Result := PerformGetSocketOption(Int64(Argument0), Argument1);
+    CallSetSocketOption: Result := PerformSetSocketOption(Int64(Argument0), Argument1, Int64(Argument2));
+    CallGetSocketAddress: Result := PerformGetSocketAddress(Int64(Argument0), Argument1, Argument2);
+    CallWaitForSocket: Result := PerformWaitForSocket(Int64(Argument0), Argument1, Int64(Argument2));
+    { --- Network configuration (Processes.NetworkCalls) --- }
+    CallListNetworkInterfaces: Result := PerformListNetworkInterfaces(Argument0, Argument1);
+    CallConfigureNetworkInterface: Result := PerformConfigureNetworkInterface(Argument0);
+    CallChangeRoute: Result := PerformChangeRoute(Argument0, Argument1);
+    CallListRoutes: Result := PerformListRoutes(Argument0, Argument1);
+    CallListArpEntries: Result := PerformListArpEntries(Argument0, Argument1);
+    CallListSockets: Result := PerformListSockets(Argument0, Argument1);
+    CallGetDnsServers: Result := PerformGetDnsServers(Argument0);
+    CallSetDnsServers: Result := PerformSetDnsServers(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -770,6 +796,7 @@ var
   Argument1: QWord;
   Argument2: QWord;
   Argument3: QWord;
+  Argument4: QWord;
   Result: Int64;
   MustRestart: Boolean;
 begin
@@ -778,6 +805,7 @@ begin
   Argument1 := SystemCallArgument(Frame, 1);
   Argument2 := SystemCallArgument(Frame, 2);
   Argument3 := SystemCallArgument(Frame, 3);
+  Argument4 := SystemCallArgument(Frame, 4);
   CurrentThreadObject^.SystemCallFrame := Frame;
   { A stack overflow's reserve is armed again once the stack is clear. }
   if StackReserveIsOpen then
@@ -796,7 +824,7 @@ begin
   end;
 
   repeat
-    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2, Argument3);
+    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2, Argument3, Argument4);
     { A call cut short because the program was asked to stop runs again
       once the program is continued, so the program never sees the stop. }
     MustRestart := (Result = Failure(ErrorInterrupted)) and
