@@ -70,6 +70,7 @@ uses
   Processes.Shutdown,
   Processes.Suspend,
   Drivers.DiskStatistics,
+  Drivers.NetworkCards,
   Debug.Output;
 
 const
@@ -121,7 +122,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('uptime, suspend, poweroff, reboot, exit');
+  WriteLine('netcards, uptime, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -292,6 +293,8 @@ begin
     WriteBlockCacheSummary;
     WriteDiskStatistics;
   end
+  else if TextIsEqual(@Command[0], 'netcards') then
+    WriteNetworkCardSummary
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
   else if TextIsEqual(@Command[0], 'suspend') then

@@ -73,18 +73,12 @@ uses
   Io.PowerManagement;
 
 const
-  PciConfigurationCapabilitiesPointer = $34;
-  PciStatusHasCapabilities = $0010;
-  CapabilityMessageInterrupts = $05;
-  MaximumCapabilities = 48;
-
   MessageControlOffset = 2;
   MessageAddressOffset = 4;
   MessageControlEnable = $0001;
   MessageControl64Bit = $0080;
   MessageControlVectorsInUse = $0070;
 
-  CapabilityExtendedMessageInterrupts = $11;
   ExtendedControlTableSizeMask = $07FF;
   ExtendedControlFunctionMask = $4000;
   ExtendedControlEnable = $8000;
@@ -97,29 +91,6 @@ const
   ExtendedEntryVectorControl = 12;
   ExtendedEntryMasked = 1;
 
-{ The offset of capability CapabilityId in Device's configuration space,
-  or 0. }
-function FindCapability(Device: PPciDevice; CapabilityId: Byte): Word;
-var
-  Offset: Word;
-  Steps: Integer;
-begin
-  Result := 0;
-  if (PciRead16(Device, PciConfigurationStatus) and PciStatusHasCapabilities) = 0 then
-    Exit;
-  Offset := PciRead8(Device, PciConfigurationCapabilitiesPointer) and $FC;
-  Steps := 0;
-  { The list is linked through the second byte of each entry; the step
-    limit guards against a broken, circular list. }
-  while (Offset <> 0) and (Steps < MaximumCapabilities) do
-  begin
-    if PciRead8(Device, Offset) = CapabilityId then
-      Exit(Offset);
-    Offset := PciRead8(Device, Offset + 1) and $FC;
-    Inc(Steps);
-  end;
-end;
-
 function ConnectPciMessageInterrupt(Device: PPciDevice; Handler: TInterruptHandler;
   Context: Pointer): Boolean;
 var
@@ -129,7 +100,7 @@ var
   DataOffset: Word;
 begin
   Result := False;
-  Capability := FindCapability(Device, CapabilityMessageInterrupts);
+  Capability := FindPciCapability(Device, PciCapabilityMessageInterrupts);
   if Capability = 0 then
     Exit;
   if not ConnectMessageInterrupt(Handler, Context, Message) then
@@ -223,7 +194,7 @@ var
   Programmed: TProgrammedTable;
 begin
   Result := False;
-  Capability := FindCapability(Device, CapabilityExtendedMessageInterrupts);
+  Capability := FindPciCapability(Device, PciCapabilityExtendedMessageInterrupts);
   if Capability = 0 then
     Exit;
   Control := PciRead16(Device, Capability + MessageControlOffset);

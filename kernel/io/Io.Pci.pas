@@ -59,6 +59,14 @@ const
   PciCommandBusMaster = $0004;
   PciCommandInterruptDisable = $0400;
 
+  PciCapabilityMessageInterrupts = $05;
+  PciCapabilityExpress = $10;
+  PciCapabilityExtendedMessageInterrupts = $11;
+  { In the PCI Express capability: link control, whose two low bits
+    enable the active state power management link states (L0s, L1). }
+  PciExpressLinkControl = $10;
+  PciExpressLinkControlAspmMask = $0003;
+
 type
   TPciDevice = record
     Segment: Word;
@@ -106,6 +114,10 @@ procedure PciWrite32(Device: PPciDevice; Offset: Word; Value: LongWord);
 function PciReadBar(Device: PPciDevice; BarIndex: Integer; out Bar: TPciBar): Boolean;
 
 procedure PciEnableDevice(Device: PPciDevice; EnableBusMastering: Boolean);
+
+{ The offset of capability CapabilityId (PciCapability*) in Device's
+  configuration space, or 0 if it has none. }
+function FindPciCapability(Device: PPciDevice; CapabilityId: Byte): Word;
 
 procedure WritePciSummary;
 { Keeps every function's configuration space across suspend to RAM
@@ -388,6 +400,32 @@ begin
   if EnableBusMastering then
     Command := Command or PciCommandBusMaster;
   PciWrite16(Device, PciConfigurationCommand, Command);
+end;
+
+const
+  PciConfigurationCapabilitiesPointer = $34;
+  PciStatusHasCapabilities = $0010;
+  MaximumCapabilities = 48;
+
+function FindPciCapability(Device: PPciDevice; CapabilityId: Byte): Word;
+var
+  Offset: Word;
+  Steps: Integer;
+begin
+  Result := 0;
+  if (PciRead16(Device, PciConfigurationStatus) and PciStatusHasCapabilities) = 0 then
+    Exit;
+  Offset := PciRead8(Device, PciConfigurationCapabilitiesPointer) and $FC;
+  Steps := 0;
+  { The list is linked through the second byte of each entry; the step
+    limit guards against a broken, circular list. }
+  while (Offset <> 0) and (Steps < MaximumCapabilities) do
+  begin
+    if PciRead8(Device, Offset) = CapabilityId then
+      Exit(Offset);
+    Offset := PciRead8(Device, Offset + 1) and $FC;
+    Inc(Steps);
+  end;
 end;
 
 function ClassDescription(Device: PPciDevice): PChar;

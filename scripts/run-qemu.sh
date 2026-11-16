@@ -111,4 +111,7 @@ exec "$qemu_binary" \
     -no-reboot \
     -device qemu-xhci,id=xhci \
     -device usb-tablet,bus=xhci.0 \
+    -netdev user,id=net1 -device e1000e,netdev=net1 \
+    -netdev user,id=net2 -device e1000,netdev=net2 \
+    -netdev user,id=net3 -device rtl8139,netdev=net3 \
     "${extra_arguments[@]}"
