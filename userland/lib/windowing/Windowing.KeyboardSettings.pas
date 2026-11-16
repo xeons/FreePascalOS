@@ -80,22 +80,17 @@ const
   ReplyTimeout = 5000;
   BootLayoutOption = 'keymap';
 
-function LayoutOf(const Settings: TKeyboardSettings): string;
-begin
-  Result := string(PChar(@Settings.Layout[0]));
-end;
-
 { Settings with another layout, the same repeat. }
 function WithLayout(const Settings: TKeyboardSettings; const Layout: string): TKeyboardSettings;
 begin
-  Result := NewKeyboardSettings(PChar(Layout));
+  Result := NewKeyboardSettings(Layout);
   Result.RepeatDelay := Settings.RepeatDelay;
   Result.RepeatRate := Settings.RepeatRate;
 end;
 
 function SettingsFromEvent(const Event: TWindowMessage): TKeyboardSettings;
 begin
-  Result := NewKeyboardSettings(PChar(MessageText(Event)));
+  Result := NewKeyboardSettings(MessageText(Event));
   Result.RepeatDelay := Event.Code;
   Result.RepeatRate := LongWord(Event.Value);
 end;
@@ -120,7 +115,7 @@ var
 begin
   Applied := Settings;
   Request := NewMessage(RequestSetKeyboardSettings, 0);
-  SetMessageText(Request, LayoutOf(Settings));
+  SetMessageText(Request, Settings.Layout);
   Request.Code := Settings.RepeatDelay;
   Request.Value := LongInt(Settings.RepeatRate);
   SendRequest(Request, -1);
@@ -137,7 +132,7 @@ begin
   Index := 0;
   while DescribeKeyboardLayout(Index, Layout) do
   begin
-    if string(PChar(@Layout.Name[0])) = Name then
+    if Layout.Name = Name then
       Exit(True);
     Inc(Index);
   end;
@@ -176,7 +171,7 @@ end;
 
 procedure RememberKeyboardSettings(Store: TSettings; const Settings: TKeyboardSettings; Scope: TSettingsScopeKind);
 begin
-  Store.WriteString(KeyboardLayoutSetting, LayoutOf(Settings), Scope);
+  Store.WriteString(KeyboardLayoutSetting, Settings.Layout, Scope);
   Store.WriteInteger(KeyRepeatDelaySetting, Settings.RepeatDelay, Scope);
   Store.WriteInteger(KeyRepeatRateSetting, Settings.RepeatRate, Scope);
 end;

@@ -58,9 +58,9 @@ begin
   CommandLine.ReadOperandsOnly;
   if CommandLine.OperandCount = 0 then
     FailWithUsageHint('no file to play');
-  Device := OpenAudioOutput(nil);
+  Device := OpenAudioOutput;
   if Device < 0 then
-    FailWithError(1, LongInt(-Device), string(DefaultAudioDevice));
+    FailWithError(1, LongInt(-Device), DefaultAudioDevice);
   SetLength(Buffer, ChunkBytes);
   Failed := False;
   for Operand in CommandLine.Operands do

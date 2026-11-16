@@ -113,7 +113,7 @@ begin
   if Wave.Channels = 1 then
     Plural := '';
   Line := Format('%s: %d Hz, %d channel%s, %s, %d.%.2d s, peak %d%%, ',
-    [Path, Wave.Rate, Wave.Channels, Plural, string(SampleKindName(Wave.Kind)),
+    [Path, Wave.Rate, Wave.Channels, Plural, SampleKindName(Wave.Kind),
     Int64(Hundredths div 100), Int64(Hundredths mod 100), Int64(Round(Measure.Peak * 100))]);
   if (Measure.Peak < SilenceLevel) or (Measure.Crossings < 2) then
     Line := Line + 'silent'

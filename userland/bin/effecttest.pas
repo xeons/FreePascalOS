@@ -136,7 +136,7 @@ function NewEngine: PAudioEngine;
 var
   Master: PAudioVoice;
 begin
-  if (CreateAudioEngine(nil, True, Result) <> 0) or (CreateMasteringVoice(Result, 2, Rate, Master) <> 0) then
+  if (CreateAudioEngine('', True, Result) <> 0) or (CreateMasteringVoice(Result, 2, Rate, Master) <> 0) then
     Fail(1, 'cannot create an engine');
 end;
 

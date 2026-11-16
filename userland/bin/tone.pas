@@ -151,7 +151,7 @@ begin
   end
   else
   begin
-    Handle := OpenAudioOutput(PChar(DevicePath));
+    Handle := OpenAudioOutput(DevicePath);
     if Handle < 0 then
       FailWithError(1, LongInt(-Handle), DevicePath);
     Format.Rate := LongWord(Rate);

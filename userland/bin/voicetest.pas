@@ -165,7 +165,7 @@ function NewEngine: PAudioEngine;
 var
   Master: PAudioVoice;
 begin
-  if CreateAudioEngine(nil, True, Result) <> 0 then
+  if CreateAudioEngine('', True, Result) <> 0 then
     Fail(1, 'cannot create an engine');
   if CreateMasteringVoice(Result, 2, Rate, Master) <> 0 then
     Fail(1, 'cannot create a mastering voice');
@@ -702,7 +702,7 @@ var
   Callbacks: TVoiceCallbacks;
   Error: LongInt;
 begin
-  Error := CreateAudioEngine(nil, False, Engine);
+  Error := CreateAudioEngine('', False, Engine);
   if Error <> 0 then
     Fail(1, 'cannot open the audio device');
   CreateMasteringVoice(Engine, 2, Rate, Master);

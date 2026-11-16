@@ -76,7 +76,7 @@ begin
     Message.Flags := WindowStateFlags(Window);
     Message.Code := LongWord(Window.ScreenNumber);
     Message.Value := LongInt(TClient(Window.Client).ProcessId);
-    SetMessageText(Message, PChar(Window.Title));
+    SetMessageText(Message, Window.Title);
     SendToClient(Client, Message);
   end;
   Message := NewMessage(EventWindowListed, 0);

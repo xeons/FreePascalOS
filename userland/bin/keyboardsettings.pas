@@ -75,7 +75,7 @@ const
 procedure SaySettings(const Settings: TKeyboardSettings);
 begin
   PrintStringLine(Format('layout %s, repeat delay %u, rate %u',
-    [string(PChar(@Settings.Layout[0])), Settings.RepeatDelay, Settings.RepeatRate]));
+    [Settings.Layout, Settings.RepeatDelay, Settings.RepeatRate]));
   FlushStream(StandardOutput);
 end;
 
@@ -87,7 +87,7 @@ begin
   Index := 0;
   while DescribeKeyboardLayout(Index, Layout) do
   begin
-    if string(PChar(@Layout.Name[0])) = Name then
+    if Layout.Name = Name then
       Exit(True);
     Inc(Index);
   end;
@@ -102,7 +102,7 @@ begin
   Index := 0;
   while DescribeKeyboardLayout(Index, Layout) do
   begin
-    PrintStringLine(string(PChar(@Layout.Name[0])) + ' ' + string(PChar(@Layout.Description[0])));
+    PrintStringLine(Layout.Name + ' ' + Layout.Description);
     Inc(Index);
   end;
 end;
@@ -181,7 +181,7 @@ begin
   if Changing then
   begin
     if CommandLine.OperandCount = 1 then
-      StrPLCopy(@Settings.Layout[0], CommandLine.Operands[0], KeyboardLayoutNameCapacity - 1);
+      Settings.Layout := Copy(CommandLine.Operands[0], 1, KeyboardLayoutNameCapacity - 1);
     if Delay >= 0 then
       Settings.RepeatDelay := LongWord(Delay);
     if Rate >= 0 then

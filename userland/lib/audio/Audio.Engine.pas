@@ -125,9 +125,10 @@ type
     Performance: TEnginePerformance;
   end;
 
-{ An engine playing on the audio device DevicePath (nil: /dev/audio), or
-  with Offline, one whose caller pulls the sound with RenderAudio. }
-function CreateAudioEngine(DevicePath: PChar; Offline: Boolean; out Engine: PAudioEngine): LongInt;
+{ An engine playing on the audio device DevicePath ('': the default
+  output), or with Offline, one whose caller pulls the sound with
+  RenderAudio. }
+function CreateAudioEngine(const DevicePath: string; Offline: Boolean; out Engine: PAudioEngine): LongInt;
 procedure DestroyAudioEngine(Engine: PAudioEngine);
 { Starts and stops processing (an offline engine is never started). }
 function StartAudioEngine(Engine: PAudioEngine): LongInt;
@@ -1012,7 +1013,7 @@ end;
 
 { --- The engine ----------------------------------------------------------------- }
 
-function CreateAudioEngine(DevicePath: PChar; Offline: Boolean; out Engine: PAudioEngine): LongInt;
+function CreateAudioEngine(const DevicePath: string; Offline: Boolean; out Engine: PAudioEngine): LongInt;
 begin
   Engine := PAudioEngine(AllocateMemory(SizeOf(TAudioEngine)));
   if Engine = nil then

@@ -110,7 +110,7 @@ begin
   if not ParseThousandths(PChar(CommandLine.Operands[1]), Thousandths) then
     FailWithUsageHint(SysUtils.Format('invalid length ''%s''', [CommandLine.Operands[1]]));
 
-  Input := OpenAudioInput(PChar(DevicePath));
+  Input := OpenAudioInput(DevicePath);
   if Input < 0 then
     FailWithError(1, LongInt(-Input), DevicePath);
   Format.Rate := LongWord(Rate);

@@ -37,13 +37,13 @@
 }
 unit Audio.Device;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
 const
-  DefaultAudioDevice: PChar = '/dev/audio';
-  DefaultAudioInput: PChar = '/dev/audioin';
+  DefaultAudioDevice = '/dev/audio';
+  DefaultAudioInput = '/dev/audioin';
 
 type
   TAudioFormat = record
@@ -53,10 +53,10 @@ type
     Kind: LongWord;
   end;
 
-{ Opens Path (nil: the default output, which is DefaultAudioDevice
+{ Opens Path ('': the default output, which is DefaultAudioDevice
   unless another was chosen, Audio.Outputs); returns the handle, or a
   negative error. }
-function OpenAudioOutput(Path: PChar): Int64;
+function OpenAudioOutput(const Path: string = ''): Int64;
 procedure CloseAudioOutput(Handle: Int64);
 { 0 or an error code (ErrorInvalidArgument for a format the device does
   not take). }
@@ -74,10 +74,10 @@ function QueuedAudioBytes(Handle: Int64): Int64;
 function WriteAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): LongInt;
 function DrainAudio(Handle: Int64): LongInt;
 
-{ Opens the input Path (DefaultAudioInput if nil); returns the handle,
+{ Opens the input Path (DefaultAudioInput if ''); returns the handle,
   or a negative error. The format, volumes and queue calls above work on
   it too. }
-function OpenAudioInput(Path: PChar): Int64;
+function OpenAudioInput(const Path: string = ''): Int64;
 { Reads up to ByteCount bytes (whole frames), waiting for at least one
   frame; returns how many, or a negative error. }
 function ReadAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): Int64;
@@ -93,13 +93,16 @@ uses
   Sys.Files,
   Audio.Outputs;
 
-function OpenAudioOutput(Path: PChar): Int64;
+function OpenAudioOutput(const Path: string): Int64;
+var
+  DevicePath: string;
 begin
-  if Path = nil then
-    Path := AudioOutputPath(DefaultAudioOutput);
-  if Path = nil then
-    Path := DefaultAudioDevice;
-  Result := OpenFile(Path, OpenWrite);
+  DevicePath := Path;
+  if DevicePath = '' then
+    DevicePath := AudioOutputPath(DefaultAudioOutput);
+  if DevicePath = '' then
+    DevicePath := DefaultAudioDevice;
+  Result := OpenFile(PChar(DevicePath), OpenWrite);
 end;
 
 procedure CloseAudioOutput(Handle: Int64);
@@ -181,11 +184,12 @@ begin
   Result := Control(Handle, ControlAudioDrain, 0, Answer);
 end;
 
-function OpenAudioInput(Path: PChar): Int64;
+function OpenAudioInput(const Path: string): Int64;
 begin
-  if Path = nil then
-    Path := DefaultAudioInput;
-  Result := OpenFile(Path, OpenRead);
+  if Path = '' then
+    Result := OpenFile(DefaultAudioInput, OpenRead)
+  else
+    Result := OpenFile(PChar(Path), OpenRead);
 end;
 
 function ReadAudio(Handle: Int64; Buffer: Pointer; ByteCount: QWord): Int64;

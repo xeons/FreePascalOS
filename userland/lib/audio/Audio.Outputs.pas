@@ -23,14 +23,14 @@
   Output N is /dev/audio (N = 0) or /dev/audioN. Each has a volume (the
   hardware's, for everything played on it) and can be muted (it plays
   silence, keeping its volume). One is the default: where programs play
-  that name no output (OpenAudioOutput(nil) in Audio.Device). The kernel
+  that name no output (OpenAudioOutput('') in Audio.Device). The kernel
   keeps all of it; anyone may change it, as anyone at the machine could
   turn its knobs. The system settings service remembers what is chosen
   in the system's settings and gives it to the kernel at start.
 }
 unit Audio.Outputs;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -45,14 +45,15 @@ type
     Kind: LongWord;
   end;
 
-{ The device file of output Number: /dev/audio, /dev/audio1, ... }
-function AudioOutputPath(Number: Integer): PChar;
+{ The device file of output Number: /dev/audio, /dev/audio1, ... ('' for
+  a number past the last there can be). }
+function AudioOutputPath(Number: Integer): string;
 { How many outputs there are (they are numbered without gaps). }
 function AudioOutputCount: Integer;
 { What output Number has now; False if there is no such output. }
 function DescribeAudioOutput(Number: Integer; out State: TAudioOutputState): Boolean;
 { A name for people: "HD Audio", "AC'97", "USB audio". }
-function AudioOutputKindName(Kind: LongWord): PChar;
+function AudioOutputKindName(Kind: LongWord): string;
 { Each returns ErrorNone or an Abi error (ErrorNotFound: no such
   output). }
 function SetAudioOutputVolume(Number: Integer; Volume: LongWord): LongInt;
@@ -70,21 +71,21 @@ uses
   Sys.Files;
 
 const
-  OutputPaths: array[0..MaximumAudioOutputs - 1] of PChar = (
+  OutputPaths: array[0..MaximumAudioOutputs - 1] of string = (
     '/dev/audio', '/dev/audio1', '/dev/audio2', '/dev/audio3');
 
-function AudioOutputPath(Number: Integer): PChar;
+function AudioOutputPath(Number: Integer): string;
 begin
   if (Number < 0) or (Number >= MaximumAudioOutputs) then
-    Exit(nil);
+    Exit('');
   Result := OutputPaths[Number];
 end;
 
 function OpenOutput(Number: Integer): Int64;
 begin
-  if AudioOutputPath(Number) = nil then
+  if AudioOutputPath(Number) = '' then
     Exit(-ErrorNotFound);
-  Result := OpenFile(AudioOutputPath(Number), OpenWrite);
+  Result := OpenFile(PChar(AudioOutputPath(Number)), OpenWrite);
 end;
 
 function AudioOutputCount: Integer;
@@ -124,7 +125,7 @@ begin
   Result := True;
 end;
 
-function AudioOutputKindName(Kind: LongWord): PChar;
+function AudioOutputKindName(Kind: LongWord): string;
 begin
   case Kind of
     AudioOutputKindHdAudio: Result := 'HD Audio';

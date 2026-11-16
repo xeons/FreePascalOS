@@ -34,7 +34,6 @@ interface
 { Shows (or changes) this program's icon Number: Picture with Tooltip.
   The program must be connected (ConnectToDisplay). }
 procedure ShowNotificationIcon(Number: LongWord; Picture: LongWord; const Tooltip: string);
-procedure ShowNotificationIcon(Number: LongWord; Picture: LongWord; Tooltip: PChar);
 procedure RemoveNotificationIcon(Number: LongWord);
 
 implementation
@@ -53,11 +52,6 @@ begin
   Message.Flags := Picture;
   SetMessageText(Message, Tooltip);
   SendRequest(Message, -1);
-end;
-
-procedure ShowNotificationIcon(Number: LongWord; Picture: LongWord; Tooltip: PChar);
-begin
-  ShowNotificationIcon(Number, Picture, string(Tooltip));
 end;
 
 procedure RemoveNotificationIcon(Number: LongWord);

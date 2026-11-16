@@ -97,8 +97,8 @@ begin
   while DescribeKeyboardLayout(Index, Description) do
   begin
     SetLength(FLayoutNames, Index + 1);
-    FLayoutNames[Index] := PChar(@Description.Name[0]);
-    FLayouts.Items.Add(PChar(@Description.Description[0]));
+    FLayoutNames[Index] := Description.Name;
+    FLayouts.Items.Add(Description.Description);
     Inc(Index);
   end;
   FLayouts.OnChange := @ControlChanged;
@@ -162,7 +162,7 @@ var
 begin
   AskKeyboardSettings(Settings);
   for Index := 0 to High(FLayoutNames) do
-    if FLayoutNames[Index] = string(PChar(@Settings.Layout[0])) then
+    if FLayoutNames[Index] = Settings.Layout then
       FLayouts.ItemIndex := Index;
   FDelay.Position := (Settings.RepeatDelay + DelayStep div 2) div DelayStep;
   FRate.Position := Settings.RepeatRate;
@@ -178,7 +178,7 @@ begin
   Result := True;
   if FLayouts.ItemIndex < 0 then
     Exit;
-  Wanted := NewKeyboardSettings(PChar(FLayoutNames[FLayouts.ItemIndex]));
+  Wanted := NewKeyboardSettings(FLayoutNames[FLayouts.ItemIndex]);
   Wanted.RepeatDelay := FDelay.Position * DelayStep;
   Wanted.RepeatRate := FRate.Position;
   Result := ChangeKeyboardSettings(Wanted, Applied);
@@ -195,7 +195,7 @@ begin
     Store.Flush;
   end;
   Store.Free;
-  Say(Format('applied keyboard layout %s, repeat delay %d, rate %d', [PChar(@Applied.Layout[0]),
+  Say(Format('applied keyboard layout %s, repeat delay %d, rate %d', [Applied.Layout,
     Applied.RepeatDelay, Applied.RepeatRate]));
   inherited Apply;
 end;
