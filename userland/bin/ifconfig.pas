@@ -46,14 +46,13 @@ uses
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
   Sys.AddressText,
-  Sys.Streams,
-  Sys.Text,
-  Sys.Format,
+  Sys.InterfaceText,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: ifconfig [-a] [-s] [INTERFACE]'#10 +
+  Usage ='Usage: ifconfig [-a] [-s] [INTERFACE]'#10 +
     '  or:  ifconfig INTERFACE [ADDRESS[/PREFIX]] [netmask MASK] [mtu N] [up|down]'#10 +
     '  or:  ifconfig INTERFACE [inet6] add|del IPV6ADDRESS[/PREFIX]'#10 +
     '  or:  ifconfig INTERFACE inet6 auto|linklocal|off'#10 +
@@ -71,7 +70,7 @@ var
 
 procedure Say(const Line: string);
 begin
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
 end;
 
 procedure ShowCounters(constref Description: TAbiNetworkInterface);
@@ -84,13 +83,6 @@ begin
   Say(Format('        TX errors %u  dropped %u', [Description.Counters.SendErrors, Description.Counters.SendDrops]));
 end;
 
-function NetmaskText(PrefixLength: LongWord): string;
-var
-  Buffer: array[0..InternetAddressTextCapacity - 1] of Char;
-begin
-  Result := StrPas(FormatNetmask(PrefixLength, @Buffer[0], SizeOf(Buffer)));
-end;
-
 procedure ShowIpv4Address(constref Description: TAbiNetworkInterface; constref Entry: TAbiInterfaceAddress);
 var
   Address: TInternetAddress;
@@ -98,7 +90,7 @@ var
   Mask: LongWord;
 begin
   Address := InterfaceAddressHost(Entry);
-  Line := Format('        inet %s  netmask %s', [AddressToText(Address), NetmaskText(Entry.PrefixLength)]);
+  Line := Format('        inet %s  netmask %s', [AddressToText(Address), NetmaskToText(Entry.PrefixLength)]);
   if ((Description.Flags and InterfaceFlagBroadcast) <> 0) and (Entry.PrefixLength < 31) then
   begin
     Mask := 0;
@@ -137,31 +129,17 @@ begin
   Say(Line);
 end;
 
-function HardwareText(constref Description: TAbiNetworkInterface): string;
-var
-  Buffer: array[0..31] of Char;
-begin
-  Result := StrPas(FormatHardwareAddress(@Description.HardwareAddress[0], Description.HardwareAddressLength,
-    @Buffer[0], SizeOf(Buffer)));
-end;
-
-function FlagsText(constref Description: TAbiNetworkInterface): string;
-var
-  Buffer: array[0..63] of Char;
-begin
-  Result := StrPas(FormatInterfaceFlags(Description.Flags, @Buffer[0], SizeOf(Buffer)));
-end;
-
 function InterfaceName(constref Description: TAbiNetworkInterface): string;
 begin
-  Result := StrPas(PChar(@Description.Name[0]));
+  Result := InterfaceNameToText(Description.Name);
 end;
 
 procedure ShowInterface(constref Description: TAbiNetworkInterface);
 var
   Index: LongWord;
 begin
-  Say(Format('%s: flags=<%s>  mtu %u', [InterfaceName(Description), FlagsText(Description), Description.Mtu]));
+  Say(Format('%s: flags=<%s>  mtu %u', [InterfaceName(Description), InterfaceFlagsToText(Description.Flags),
+    Description.Mtu]));
   Index := 0;
   while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
   begin
@@ -174,8 +152,8 @@ begin
   if (Description.Flags and InterfaceFlagLoopback) <> 0 then
     Say('        loop')
   else
-    Say(Format('        ether %s  (%s)', [HardwareText(Description),
-      StrPas(PChar(@Description.Description[0]))]));
+    Say(Format('        ether %s  (%s)', [HardwareAddressToText(Description.HardwareAddress,
+      Description.HardwareAddressLength), InterfaceNameToText(Description.Description)]));
   ShowCounters(Description);
   Say('');
 end;
@@ -205,7 +183,7 @@ end;
 
 procedure FailNoDevice(const Name: string);
 begin
-  Fail(1, '%s: error fetching interface information: Device not found', [ArgumentText(PChar(Name))]);
+  Fail(1, Format('%s: error fetching interface information: Device not found', [Name]));
 end;
 
 procedure Show(const Name: string);
@@ -217,7 +195,7 @@ var
 begin
   Error := ListNetworkInterfaces(Interfaces);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot list the interfaces', []);
+    FailWithError(1, Error, 'cannot list the interfaces');
   if ShortListing then
     ShowShortHeading;
   Found := False;
@@ -238,20 +216,19 @@ end;
 procedure CheckChange(const Name: string; Error: LongInt);
 begin
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(Name))]);
+    FailWithError(1, Error, Name);
 end;
 
 { The settings after the interface's name, taken one by one. }
 type
   TSettingReader = record
-    Operands: PPChar;
-    Count: Integer;
+    Operands: TStringArray;
     Index: Integer;
   end;
 
 function HasMore(constref Reader: TSettingReader): Boolean;
 begin
-  Result := Reader.Index < Reader.Count;
+  Result := Reader.Index < Length(Reader.Operands);
 end;
 
 function TakeSetting(var Reader: TSettingReader): string;
@@ -264,7 +241,7 @@ end;
 function TakeValueOf(var Reader: TSettingReader; const Setting: string): string;
 begin
   if not HasMore(Reader) then
-    FailWithUsageHint('''%s'' needs a value', [ArgumentText(PChar(Setting))]);
+    FailWithUsageHint(Format('''%s'' needs a value', [Setting]));
   Result := TakeSetting(Reader);
 end;
 
@@ -276,7 +253,7 @@ var
   HasPrefix: Boolean;
 begin
   if not TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix) or (Address.Family <> AddressFamilyIPv6) then
-    Fail(1, '%s: invalid IPv6 address ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(Text))]);
+    Fail(1, Format('%s: invalid IPv6 address ''%s''', [Name, Text]));
   if not HasPrefix then
     PrefixLength := DefaultIpv6PrefixLength;
   if Operation = 'add' then
@@ -298,7 +275,7 @@ begin
     Mode := Ipv6ModeOff
   else
   begin
-    Fail(1, '%s: unknown IPv6 setting ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(ModeName))]);
+    Fail(1, Format('%s: unknown IPv6 setting ''%s''', [Name, ModeName]));
     Exit;
   end;
   CheckChange(Name, SetInterfaceIpv6Mode(PChar(Name), Mode));
@@ -309,7 +286,7 @@ var
   Mtu: LongInt;
 begin
   if not TryStrToInt(Text, Mtu) or (Mtu <= 0) then
-    Fail(1, 'invalid MTU ''%s''', [ArgumentText(PChar(Text))]);
+    Fail(1, Format('invalid MTU ''%s''', [Text]));
   CheckChange(Name, SetInterfaceMtu(PChar(Name), LongWord(Mtu)));
 end;
 
@@ -319,10 +296,10 @@ var
   Description: TAbiNetworkInterface;
   Current: TAbiInterfaceAddress;
 begin
-  if not ParseNetmask(PChar(Text), PrefixLength) then
-    Fail(1, 'invalid netmask ''%s''', [ArgumentText(PChar(Text))]);
+  if not TextToNetmask(Text, PrefixLength) then
+    Fail(1, Format('invalid netmask ''%s''', [Text]));
   if not FindNetworkInterface(PChar(Name), Description) or not FindInterfaceIpv4Address(Description, Current) then
-    Fail(1, '%s: no address to apply the netmask to', [ArgumentText(PChar(Name))]);
+    Fail(1, Format('%s: no address to apply the netmask to', [Name]));
   CheckChange(Name, SetInterfaceAddress(PChar(Name), InterfaceAddressHost(Current), PrefixLength));
 end;
 
@@ -360,7 +337,7 @@ begin
   end;
 end;
 
-procedure Configure(Operands: PPChar; Count: Integer);
+procedure Configure(const Operands: TStringArray);
 var
   Name: string;
   Reader: TSettingReader;
@@ -372,7 +349,6 @@ begin
   if not FindNetworkInterface(PChar(Name), Description) then
     FailNoDevice(Name);
   Reader.Operands := Operands;
-  Reader.Count := Count;
   Reader.Index := 1;
   while HasMore(Reader) do
   begin
@@ -396,27 +372,26 @@ begin
     else if Setting = 'netmask' then
       ChangeNetmask(Name, TakeValueOf(Reader, Setting))
     else if not ChangeAddress(Name, Setting) then
-      Fail(1, '%s: unknown setting ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(Setting))]);
+      Fail(1, Format('%s: unknown setting ''%s''', [Name, Setting]));
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'all', False, OptionAll),
-    OptionDefinition('s', 'short', False, OptionShort)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'all', False, OptionAll),
+    CommandOption('s', 'short', False, OptionShort)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionShort then
       ShortListing := True;
-  case Parser.OperandCount of
+  case CommandLine.OperandCount of
     0: Show('');
-    1: Show(Parser.Operands[0]);
+    1: Show(CommandLine.Operands[0]);
   else
-    Configure(Parser.Operands, Parser.OperandCount);
+    Configure(CommandLine.Operands);
   end;
-  FlushStream(StandardOutput);
 end.

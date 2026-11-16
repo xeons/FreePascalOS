@@ -38,24 +38,21 @@ program route;
 
 {$mode objfpc}
 {$H+}
-{$pointermath on}
 
 uses
   SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
   Sys.AddressText,
-  Sys.Streams,
-  Sys.Text,
+  Sys.InterfaceText,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: route [-n] [-4|-6|-A inet|inet6]'#10 +
+  Usage = 'Usage: route [-n] [-4|-6|-A inet|inet6]'#10 +
     '  or:  route [-6] add|del default|[-net|-host] TARGET[/PREFIX] [netmask MASK] [gw GATEWAY]'#10 +
     '                    [dev INTERFACE] [metric N]'#10 +
     'Show the routing table, or add or remove a route (root only).'#10 +
@@ -76,7 +73,8 @@ type
     PrefixLength: LongWord;
     HasPrefix: Boolean;
     Gateway: TInternetAddress;
-    InterfaceName: PChar;
+    { '' for the interface that reaches the gateway. }
+    InterfaceName: string;
     Metric: LongWord;
   end;
 
@@ -88,62 +86,53 @@ var
 procedure ShowIpv6Routes(const Routes: TRouteList);
 var
   Route: TAbiRoute;
-  Flags: array[0..7] of Char;
-  Line: string;
 begin
-  WriteLine(StandardOutput, 'Kernel IPv6 routing table');
-  WriteLine(StandardOutput, 'Destination                    Next Hop                   Flag Met  Iface');
+  PrintStringLine('Kernel IPv6 routing table');
+  PrintStringLine('Destination                    Next Hop                   Flag Met  Iface');
   for Route in Routes do
   begin
     if Route.Destination.Family <> AddressFamilyIPv6 then
       Continue;
-    FormatRouteFlags(Route, @Flags[0], SizeOf(Flags));
-    Line := Format('%-30s %-26s %-4s %-4u %s', [InterfaceAddressToText(Route.Destination),
-      AddressToText(RouteGateway(Route)), StrPas(PChar(@Flags[0])), Route.Metric,
-      StrPas(PChar(@Route.InterfaceName[0]))]);
-    WriteLine(StandardOutput, PChar(Line));
+    PrintStringLine(Format('%-30s %-26s %-4s %-4u %s', [InterfaceAddressToText(Route.Destination),
+      AddressToText(RouteGateway(Route)), RouteFlagsToText(Route), Route.Metric,
+      InterfaceNameToText(Route.InterfaceName)]));
+  end;
+end;
+
+procedure ShowIpv4Routes(const Routes: TRouteList);
+var
+  Route: TAbiRoute;
+begin
+  PrintStringLine('Kernel IP routing table');
+  PrintStringLine('Destination     Gateway         Genmask         Flags Metric Iface');
+  for Route in Routes do
+  begin
+    if Route.Destination.Family <> AddressFamilyIPv4 then
+      Continue;
+    PrintStringLine(Format('%-15s %-15s %-15s %-5s %-6u %s', [AddressToText(InterfaceAddressHost(Route.Destination)),
+      AddressToText(RouteGateway(Route)), NetmaskToText(Route.Destination.PrefixLength), RouteFlagsToText(Route),
+      Route.Metric, InterfaceNameToText(Route.InterfaceName)]));
   end;
 end;
 
 procedure ShowRoutes;
 var
   Routes: TRouteList;
-  Index: Integer;
   Error: LongInt;
-  DestinationText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  GatewayText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  MaskText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  Flags: array[0..7] of Char;
 begin
   Error := ListRoutes(Routes);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the routing table', []);
+    FailWithError(1, Error, 'cannot read the routing table');
   SortRoutes(Routes);
   if Family = AddressFamilyIPv6 then
-  begin
-    ShowIpv6Routes(Routes);
-    Exit;
-  end;
-  WriteLine(StandardOutput, 'Kernel IP routing table');
-  WriteLine(StandardOutput, 'Destination     Gateway         Genmask         Flags Metric Iface');
-  for Index := 0 to High(Routes) do
-  begin
-    if Routes[Index].Destination.Family <> AddressFamilyIPv4 then
-      Continue;
-    FormatInternetAddress(InterfaceAddressHost(Routes[Index].Destination), @DestinationText[0],
-      SizeOf(DestinationText));
-    FormatInternetAddress(RouteGateway(Routes[Index]), @GatewayText[0], SizeOf(GatewayText));
-    FormatNetmask(Routes[Index].Destination.PrefixLength, @MaskText[0], SizeOf(MaskText));
-    FormatRouteFlags(Routes[Index], @Flags[0], SizeOf(Flags));
-    WriteFormatted(StandardOutput, '%-15s %-15s %-15s %-5s %-6u %s'#10, [ArgumentText(@DestinationText[0]),
-      ArgumentText(@GatewayText[0]), ArgumentText(@MaskText[0]), ArgumentText(@Flags[0]),
-      ArgumentUnsigned(Routes[Index].Metric), ArgumentText(@Routes[Index].InterfaceName[0])]);
-  end;
+    ShowIpv6Routes(Routes)
+  else
+    ShowIpv4Routes(Routes);
 end;
 
-function ParseTarget(Text: PChar; var Request: TRouteRequest): Boolean;
+function ParseTarget(const Text: string; var Request: TRouteRequest): Boolean;
 begin
-  if TextIsEqual(Text, 'default') then
+  if Text = 'default' then
   begin
     if Family = AddressFamilyIPv6 then
       Request.Destination := AnyIpv6Address
@@ -153,7 +142,7 @@ begin
     Request.HasPrefix := True;
     Exit(True);
   end;
-  Result := ParseAddressWithPrefix(Text, Request.Destination, Request.PrefixLength, Request.HasPrefix);
+  Result := TextToAddressWithPrefix(Text, Request.Destination, Request.PrefixLength, Request.HasPrefix);
   { An IPv6 target makes an IPv6 route. }
   if Result and (Request.Destination.Family = AddressFamilyIPv6) then
   begin
@@ -162,66 +151,70 @@ begin
   end;
 end;
 
-function ValueAfter(Operands: PPChar; Count: Integer; var Index: Integer): PChar;
+function ValueAfter(const Operands: TStringArray; var Index: Integer): string;
 begin
-  if Index + 1 >= Count then
-    FailWithUsageHint('''%s'' needs a value', [ArgumentText(Operands[Index])]);
+  if Index + 1 >= Length(Operands) then
+    FailWithUsageHint(Format('''%s'' needs a value', [Operands[Index]]));
   Inc(Index);
   Result := Operands[Index];
 end;
 
-procedure ParseRequest(Operands: PPChar; Count: Integer; out Request: TRouteRequest);
+procedure ApplySetting(const Setting, Value: string; var Request: TRouteRequest);
 var
-  Index: Integer;
-  Setting: PChar;
-  Value: PChar;
   Number: QWord;
 begin
+  if Setting = 'gw' then
+  begin
+    if not TextToAddress(Value, Request.Gateway) or (Request.Gateway.Family <> Family) then
+      Fail(1, Format('%s: bad address', [Value]));
+  end
+  else if Setting = 'dev' then
+    Request.InterfaceName := Value
+  else if Setting = 'netmask' then
+  begin
+    if not TextToNetmask(Value, Request.PrefixLength) then
+      Fail(1, Format('%s: bad netmask', [Value]));
+    Request.HasPrefix := True;
+  end
+  else if Setting = 'metric' then
+  begin
+    if not ParseUnsignedDecimal(Value, Number) or (Number > High(LongWord)) then
+      Fail(1, Format('%s: bad metric', [Value]));
+    Request.Metric := LongWord(Number);
+  end
+  else
+    FailWithUsageHint(Format('unknown setting ''%s''', [Setting]));
+end;
+
+procedure ParseRequest(const Operands: TStringArray; out Request: TRouteRequest);
+var
+  Index: Integer;
+  Setting: string;
+  Value: string;
+begin
+  Request := Default(TRouteRequest);
   Request.Destination := AnyIpv4Address;
   Request.PrefixLength := 32;
-  Request.HasPrefix := False;
   Request.Gateway := AnyIpv4Address;
   if Family = AddressFamilyIPv6 then
     Request.Gateway := AnyIpv6Address;
-  Request.InterfaceName := nil;
-  Request.Metric := 0;
   Index := 1;
-  while (Index < Count) and (TextIsEqual(Operands[Index], '-net') or TextIsEqual(Operands[Index], '-host')) do
+  while (Index < Length(Operands)) and ((Operands[Index] = '-net') or (Operands[Index] = '-host')) do
   begin
-    if TextIsEqual(Operands[Index], '-host') then
+    if Operands[Index] = '-host' then
       HostRoute := True;
     Inc(Index);
   end;
-  if Index >= Count then
-    FailWithUsageHint('missing route target', []);
+  if Index >= Length(Operands) then
+    FailWithUsageHint('missing route target');
   if not ParseTarget(Operands[Index], Request) then
-    Fail(1, '%s: bad address', [ArgumentText(Operands[Index])]);
+    Fail(1, Format('%s: bad address', [Operands[Index]]));
   Inc(Index);
-  while Index < Count do
+  while Index < Length(Operands) do
   begin
     Setting := Operands[Index];
-    Value := ValueAfter(Operands, Count, Index);
-    if TextIsEqual(Setting, 'gw') then
-    begin
-      if not ParseInternetAddress(Value, Request.Gateway) or (Request.Gateway.Family <> Family) then
-        Fail(1, '%s: bad address', [ArgumentText(Value)]);
-    end
-    else if TextIsEqual(Setting, 'dev') then
-      Request.InterfaceName := Value
-    else if TextIsEqual(Setting, 'netmask') then
-    begin
-      if not ParseNetmask(Value, Request.PrefixLength) then
-        Fail(1, '%s: bad netmask', [ArgumentText(Value)]);
-      Request.HasPrefix := True;
-    end
-    else if TextIsEqual(Setting, 'metric') then
-    begin
-      if not ParseUnsigned(Value, Number) or (Number > High(LongWord)) then
-        Fail(1, '%s: bad metric', [ArgumentText(Value)]);
-      Request.Metric := LongWord(Number);
-    end
-    else
-      FailWithUsageHint('unknown setting ''%s''', [ArgumentText(Setting)]);
+    Value := ValueAfter(Operands, Index);
+    ApplySetting(Setting, Value, Request);
     Inc(Index);
   end;
   if HostRoute and (Family = AddressFamilyIPv6) then
@@ -232,57 +225,56 @@ begin
     Request.PrefixLength := 128;
 end;
 
-procedure ChangeRoute(Operands: PPChar; Count: Integer);
+procedure ChangeRoute(const Operands: TStringArray);
 var
   Request: TRouteRequest;
   Error: LongInt;
 begin
-  ParseRequest(Operands, Count, Request);
-  if TextIsEqual(Operands[0], 'add') then
+  ParseRequest(Operands, Request);
+  if Operands[0] = 'add' then
   begin
-    if AddressIsUnspecified(Request.Gateway) and (Request.InterfaceName = nil) then
-      Fail(1, 'a route needs a gateway (gw) or an interface (dev)', []);
-    Error := AddRoute(Request.Destination, Request.PrefixLength, Request.Gateway, Request.InterfaceName,
+    if AddressIsUnspecified(Request.Gateway) and (Request.InterfaceName = '') then
+      Fail(1, 'a route needs a gateway (gw) or an interface (dev)');
+    Error := AddRoute(Request.Destination, Request.PrefixLength, Request.Gateway, PChar(Request.InterfaceName),
       Request.Metric);
   end
   else
     Error := RemoveRoute(Request.Destination, Request.PrefixLength, Request.Gateway);
   if Error = ErrorNotFound then
-    Fail(1, 'no such route', []);
+    Fail(1, 'no such route');
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot %s the route', [ArgumentText(Operands[0])]);
+    FailWithError(1, Error, Format('cannot %s the route', [Operands[0]]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('n', 'numeric', False, OptionNumeric),
-    OptionDefinition('4', nil, False, OptionIpv4),
-    OptionDefinition('6', nil, False, OptionIpv6),
-    OptionDefinition('A', nil, True, OptionFamily)], Usage);
+  CommandLine := TCommandLine.Create([
+    CommandOption('n', 'numeric', False, OptionNumeric),
+    CommandOption('4', '', False, OptionIpv4),
+    CommandOption('6', '', False, OptionIpv6),
+    CommandOption('A', '', True, OptionFamily)], Usage);
   { "route add -net ...": what follows the command is its own. }
-  Parser.StopAtFirstOperand := True;
-  while NextOption(Parser, Code, Value) do
+  CommandLine.StopAtFirstOperand := True;
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionIpv4: Family := AddressFamilyIPv4;
       OptionIpv6: Family := AddressFamilyIPv6;
       OptionFamily:
-        if TextIsEqual(Value, 'inet6') then
+        if Value = 'inet6' then
           Family := AddressFamilyIPv6
-        else if TextIsEqual(Value, 'inet') then
+        else if Value = 'inet' then
           Family := AddressFamilyIPv4
         else
-          FailWithUsageHint('unknown address family %s', [ArgumentText(Value)]);
+          FailWithUsageHint(Format('unknown address family %s', [Value]));
     end;
-  if Parser.OperandCount = 0 then
+  if CommandLine.OperandCount = 0 then
     ShowRoutes
-  else if TextIsEqual(Parser.Operands[0], 'add') or TextIsEqual(Parser.Operands[0], 'del') then
-    ChangeRoute(Parser.Operands, Parser.OperandCount)
+  else if (CommandLine.Operands[0] = 'add') or (CommandLine.Operands[0] = 'del') then
+    ChangeRoute(CommandLine.Operands)
   else
-    FailWithUsageHint('unknown command ''%s''', [ArgumentText(Parser.Operands[0])]);
-  FlushStream(StandardOutput);
+    FailWithUsageHint(Format('unknown command ''%s''', [CommandLine.Operands[0]]));
 end.

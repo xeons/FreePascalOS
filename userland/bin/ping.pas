@@ -51,10 +51,9 @@ program ping;
 {$pointermath on}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
   Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
   Sys.Notifications,
   Sys.Objects,
@@ -65,11 +64,13 @@ uses
   Sys.AddressText,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: ping [OPTION]... HOST'#10 +
+  Usage ='Usage: ping [OPTION]... HOST'#10 +
     'Send ICMP echo requests to HOST and show the replies.'#10 +
     #10 +
     '  -c COUNT      stop after sending COUNT requests'#10 +
@@ -134,7 +135,7 @@ var
   Quiet: Boolean = False;
   { HostFamily* of Sys.HostNames. }
   Families: LongWord = HostFamilyAny;
-  HostText: PChar;
+  HostText: string;
   Destination: TInternetAddress;
   { The interface of a link-local destination (fe80::2%eth0). }
   DestinationScope: LongWord = 0;
@@ -149,35 +150,35 @@ begin
   Result := QWord(KernelGetTime(TimeUptimeNanoseconds));
 end;
 
-procedure ParseSeconds(Text: PChar; out Milliseconds: QWord);
+procedure ParseSeconds(const Text: string; out Milliseconds: QWord);
 begin
-  if not ParseThousandths(Text, Milliseconds) then
-    FailWithUsageHint('invalid number of seconds: ''%s''', [ArgumentText(Text)]);
+  if not ParseThousandths(PChar(Text), Milliseconds) then
+    FailWithUsageHint(Format('invalid number of seconds: ''%s''', [Text]));
 end;
 
-procedure ParseNumber(Text: PChar; Lowest, Highest: QWord; What: PChar; out Value: QWord);
+procedure ParseNumber(const Text: string; Lowest, Highest: QWord; const What: string; out Value: QWord);
 begin
-  if not ParseUnsigned(Text, Value) or (Value < Lowest) or (Value > Highest) then
-    Fail(2, 'invalid %s: ''%s''', [ArgumentText(What), ArgumentText(Text)]);
+  if not ParseUnsignedDecimal(Text, Value) or (Value < Lowest) or (Value > Highest) then
+    Fail(2, Format('invalid %s: ''%s''', [What, Text]));
 end;
 
 procedure ParseArguments;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'count', True, OptionCount),
-    OptionDefinition('i', 'interval', True, OptionInterval),
-    OptionDefinition('W', 'timeout', True, OptionTimeout),
-    OptionDefinition('s', 'size', True, OptionSize),
-    OptionDefinition('t', 'ttl', True, OptionTimeToLive),
-    OptionDefinition('4', nil, False, OptionIpv4),
-    OptionDefinition('6', nil, False, OptionIpv6),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition('n', 'numeric', False, OptionNumeric)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'count', True, OptionCount),
+    CommandOption('i', 'interval', True, OptionInterval),
+    CommandOption('W', 'timeout', True, OptionTimeout),
+    CommandOption('s', 'size', True, OptionSize),
+    CommandOption('t', 'ttl', True, OptionTimeToLive),
+    CommandOption('4', '', False, OptionIpv4),
+    CommandOption('6', '', False, OptionIpv6),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption('n', 'numeric', False, OptionNumeric)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionCount: ParseNumber(Value, 1, High(LongWord), 'count of packets to transmit', Count);
       OptionInterval: ParseSeconds(Value, IntervalMilliseconds);
@@ -188,11 +189,12 @@ begin
       OptionIpv4: Families := HostFamilyIpv4;
       OptionIpv6: Families := HostFamilyIpv6;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing host operand', []);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  HostText := Parser.Operands[0];
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing host operand');
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  HostText := CommandLine.Operands[0];
+  CommandLine.Free;
 end;
 
 { The one place a host becomes an address (names: Sys.HostLookup). }
@@ -205,7 +207,7 @@ begin
   begin
     if ((Destination.Family = AddressFamilyIPv4) and ((Families and HostFamilyIpv4) = 0)) or
        ((Destination.Family = AddressFamilyIPv6) and ((Families and HostFamilyIpv6) = 0)) then
-      Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText('Address family for hostname not supported')]);
+      Fail(2, HostText + ': Address family for hostname not supported');
   end
   else
   begin
@@ -213,7 +215,7 @@ begin
     if (Error = ErrorNone) and (Length(Addresses) = 0) then
       Error := ErrorNotFound;
     if Error <> ErrorNone then
-      Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText(HostLookupErrorMessage(Error))]);
+      Fail(2, HostText + ': ' + HostLookupErrorMessage(Error));
     Destination := Addresses[0];
   end;
   DestinationText := AddressToText(Destination);
@@ -239,12 +241,12 @@ begin
   else
     Socket := CreateSocket(AddressFamilyIPv4, SocketKindDatagram, ProtocolIcmp);
   if Socket < 0 then
-    FailWithError(2, ErrorCodeOf(Socket), 'socket', []);
+    FailWithError(2, ErrorCodeOf(Socket), 'socket');
   if TimeToLive <> 0 then
   begin
     Error := SetSocketOption(Socket, SocketOptionTimeToLive, TimeToLive);
     if Error <> ErrorNone then
-      FailWithError(2, Error, 'cannot set the time to live', []);
+      FailWithError(2, Error, 'cannot set the time to live');
   end;
   { Broadcasts are answered by no one here, but asking is allowed. }
   if not IsIpv6 then
@@ -253,15 +255,13 @@ end;
 
 procedure SendRequest(Sequence: LongWord);
 var
-  Packet: PByte;
-  Length: QWord;
+  Packet: array of Byte;
   Index: QWord;
   Sent: Int64;
   Stamp: QWord;
 begin
-  Length := IcmpHeaderBytes + DataBytes;
-  Packet := PByte(GetMem(Length));
-  FillMemory(Packet, IcmpHeaderBytes, 0);
+  { Zero filled: the header's checksum and identifier are the kernel's. }
+  SetLength(Packet, IcmpHeaderBytes + DataBytes);
   if IsIpv6 then
     Packet[0] := Icmpv6EchoRequest
   else
@@ -277,14 +277,13 @@ begin
   if DataBytes >= TimestampBytes then
   begin
     Stamp := NowNanoseconds;
-    CopyMemory(Packet + IcmpHeaderBytes, @Stamp, TimestampBytes);
+    Move(Stamp, Packet[IcmpHeaderBytes], TimestampBytes);
   end;
-  Sent := SendSocketTo(Socket, Packet, Length, 0, DestinationAddress);
-  FreeMem(Packet);
+  Sent := SendSocketTo(Socket, @Packet[0], Length(Packet), 0, DestinationAddress);
   Inc(Statistics.Sent);
   if Sent < 0 then
   begin
-    ReportError(ErrorCodeOf(Sent), 'sendmsg', []);
+    ReportError(ErrorCodeOf(Sent), 'sendmsg');
     Inc(Statistics.Errors);
   end;
 end;
@@ -303,10 +302,10 @@ begin
   Answered[Sequence div 8] := Answered[Sequence div 8] or Bit;
 end;
 
-procedure WriteMilliseconds(Microseconds: QWord);
+{ "12.345": milliseconds with three decimals. }
+function MillisecondsText(Microseconds: QWord): string;
 begin
-  WriteFormatted(StandardOutput, '%u.%03u', [ArgumentUnsigned(Microseconds div 1000),
-    ArgumentUnsigned(Microseconds mod 1000)]);
+  Result := IntToStr(Microseconds div 1000) + '.' + Format('%.3d', [Microseconds mod 1000]);
 end;
 
 procedure NoteRoundTrip(Microseconds: QWord);
@@ -320,7 +319,7 @@ begin
   Statistics.SumOfSquares := Statistics.SumOfSquares + Microseconds * Microseconds;
 end;
 
-procedure HandleReply(Message: PByte; Length: QWord; From: PChar);
+procedure HandleReply(Message: PByte; Length: QWord; const From: string);
 var
   Sequence: LongWord;
   IsDuplicate: Boolean;
@@ -328,6 +327,7 @@ var
   Microseconds: QWord;
   HasTime: Boolean;
   ReceivedTimeToLive: Int64;
+  Line: string;
 begin
   Sequence := SequenceOf(Message);
   IsDuplicate := MarkAnswered(Sequence);
@@ -339,7 +339,7 @@ begin
   Microseconds := 0;
   if HasTime then
   begin
-    CopyMemory(@Stamp, Message + IcmpHeaderBytes, TimestampBytes);
+    Move(Message[IcmpHeaderBytes], Stamp, TimestampBytes);
     Microseconds := (NowNanoseconds - Stamp) div NanosecondsPerMicrosecond;
     if not IsDuplicate then
       NoteRoundTrip(Microseconds);
@@ -347,21 +347,16 @@ begin
   if Quiet then
     Exit;
   GetSocketOption(Socket, SocketOptionReceivedTimeToLive, ReceivedTimeToLive);
-  WriteFormatted(StandardOutput, '%u bytes from %s: icmp_seq=%u ttl=%d', [ArgumentUnsigned(Length),
-    ArgumentText(From), ArgumentUnsigned(Sequence), ArgumentNumber(ReceivedTimeToLive)]);
+  Line := Format('%u bytes from %s: icmp_seq=%u ttl=%d', [Length, From, Sequence, ReceivedTimeToLive]);
   if HasTime then
-  begin
-    WriteText(StandardOutput, ' time=');
-    WriteMilliseconds(Microseconds);
-    WriteText(StandardOutput, ' ms');
-  end;
+    Line := Line + ' time=' + MillisecondsText(Microseconds) + ' ms';
   if IsDuplicate then
-    WriteText(StandardOutput, ' (DUP!)');
-  WriteCharacter(StandardOutput, #10);
+    Line := Line + ' (DUP!)';
+  PrintStringLine(Line);
   FlushStream(StandardOutput);
 end;
 
-function Ipv6ErrorDescription(IcmpType, Code: Byte): PChar;
+function Ipv6ErrorDescription(IcmpType, Code: Byte): string;
 begin
   case IcmpType of
     Icmpv6PacketTooBig: Exit('Packet too big');
@@ -378,7 +373,7 @@ begin
   end;
 end;
 
-function ErrorDescription(IcmpType, Code: Byte): PChar;
+function ErrorDescription(IcmpType, Code: Byte): string;
 begin
   if IsIpv6 then
     Exit(Ipv6ErrorDescription(IcmpType, Code));
@@ -394,7 +389,7 @@ begin
   end;
 end;
 
-procedure HandleError(Message: PByte; Length: QWord; From: PChar);
+procedure HandleError(Message: PByte; Length: QWord; const From: string);
 var
   QuotedHeaderLength: QWord;
   Sequence: LongWord;
@@ -411,8 +406,7 @@ begin
   Inc(Statistics.Errors);
   if Quiet then
     Exit;
-  WriteFormatted(StandardOutput, 'From %s icmp_seq=%u %s'#10, [ArgumentText(From), ArgumentUnsigned(Sequence),
-    ArgumentText(ErrorDescription(Message[0], Message[1]))]);
+  PrintStringLine(Format('From %s icmp_seq=%u %s', [From, Sequence, ErrorDescription(Message[0], Message[1])]));
   FlushStream(StandardOutput);
 end;
 
@@ -431,14 +425,14 @@ begin
     From := SocketHostToText(Source);
     if IsIpv6 then
       case Buffer[0] of
-        Icmpv6EchoReply: HandleReply(@Buffer[0], QWord(Length), PChar(From));
+        Icmpv6EchoReply: HandleReply(@Buffer[0], QWord(Length), From);
         Icmpv6DestinationUnreachable, Icmpv6PacketTooBig, Icmpv6TimeExceeded, Icmpv6ParameterProblem:
-          HandleError(@Buffer[0], QWord(Length), PChar(From));
+          HandleError(@Buffer[0], QWord(Length), From);
       end
     else
       case Buffer[0] of
-        Icmpv4EchoReply: HandleReply(@Buffer[0], QWord(Length), PChar(From));
-        Icmpv4DestinationUnreachable, Icmpv4TimeExceeded: HandleError(@Buffer[0], QWord(Length), PChar(From));
+        Icmpv4EchoReply: HandleReply(@Buffer[0], QWord(Length), From);
+        Icmpv4DestinationUnreachable, Icmpv4TimeExceeded: HandleError(@Buffer[0], QWord(Length), From);
       end;
   until False;
 end;
@@ -487,19 +481,18 @@ var
   Average: QWord;
   MeanSquare: QWord;
   Deviation: QWord;
+  Line: string;
 begin
-  WriteFormatted(StandardOutput, #10'--- %s ping statistics ---'#10, [ArgumentText(HostText)]);
+  PrintString(#10'--- ' + HostText + ' ping statistics ---'#10);
   LossPercent := 0;
   if Statistics.Sent > 0 then
     LossPercent := QWord(Statistics.Sent - Statistics.Received) * 100 div Statistics.Sent;
-  WriteFormatted(StandardOutput, '%u packets transmitted, %u received', [ArgumentUnsigned(Statistics.Sent),
-    ArgumentUnsigned(Statistics.Received)]);
+  Line := Format('%u packets transmitted, %u received', [Statistics.Sent, Statistics.Received]);
   if Statistics.Duplicates > 0 then
-    WriteFormatted(StandardOutput, ', +%u duplicates', [ArgumentUnsigned(Statistics.Duplicates)]);
+    Line := Line + Format(', +%u duplicates', [Statistics.Duplicates]);
   if Statistics.Errors > 0 then
-    WriteFormatted(StandardOutput, ', +%u errors', [ArgumentUnsigned(Statistics.Errors)]);
-  WriteFormatted(StandardOutput, ', %u%% packet loss, time %ums'#10, [ArgumentUnsigned(LossPercent),
-    ArgumentUnsigned(ElapsedMilliseconds)]);
+    Line := Line + Format(', +%u errors', [Statistics.Errors]);
+  PrintStringLine(Line + Format(', %u%% packet loss, time %ums', [LossPercent, ElapsedMilliseconds]));
   if Statistics.TimedReplies = 0 then
     Exit;
   Average := Statistics.SumMicroseconds div Statistics.TimedReplies;
@@ -507,15 +500,9 @@ begin
   Deviation := 0;
   if MeanSquare > Average * Average then
     Deviation := SquareRoot(MeanSquare - Average * Average);
-  WriteText(StandardOutput, 'rtt min/avg/max/mdev = ');
-  WriteMilliseconds(Statistics.MinimumMicroseconds);
-  WriteCharacter(StandardOutput, '/');
-  WriteMilliseconds(Average);
-  WriteCharacter(StandardOutput, '/');
-  WriteMilliseconds(Statistics.MaximumMicroseconds);
-  WriteCharacter(StandardOutput, '/');
-  WriteMilliseconds(Deviation);
-  WriteLine(StandardOutput, ' ms');
+  PrintStringLine('rtt min/avg/max/mdev = ' + MillisecondsText(Statistics.MinimumMicroseconds) + '/' +
+    MillisecondsText(Average) + '/' + MillisecondsText(Statistics.MaximumMicroseconds) + '/' +
+    MillisecondsText(Deviation) + ' ms');
 end;
 
 procedure RunPings;
@@ -576,9 +563,8 @@ begin
   ResolveDestination;
   OpenSocket;
   TakeNotifications(NotifyEndRequests or NotifyEndInterrupt);
-  WriteFormatted(StandardOutput, 'PING %s (%s) %u(%u) bytes of data.'#10, [ArgumentText(HostText),
-    ArgumentText(PChar(DestinationText)), ArgumentUnsigned(DataBytes),
-    ArgumentUnsigned(DataBytes + IcmpHeaderBytes + IpHeaderBytes)]);
+  PrintStringLine(Format('PING %s (%s) %u(%u) bytes of data.', [HostText, DestinationText, DataBytes,
+    DataBytes + IcmpHeaderBytes + IpHeaderBytes]));
   FlushStream(StandardOutput);
   RunPings;
   CloseSocket(Socket);

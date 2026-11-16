@@ -109,18 +109,23 @@ function ReadWholeFile(const Path: string; out Text: string): Boolean;
 var
   Handle: Int64;
   Buffer: array[0..8191] of Char;
+  Chunk: string;
   Read: Int64;
 begin
   Text := '';
   Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
     Exit(False);
-  Read := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
+  repeat
+    Read := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
+    if Read > 0 then
+    begin
+      SetString(Chunk, PChar(@Buffer[0]), Read);
+      Text := Text + Chunk;
+    end;
+  until Read <= 0;
   CloseFile(Handle);
-  if Read <= 0 then
-    Exit(False);
-  SetString(Text, PChar(@Buffer[0]), Read);
-  Result := True;
+  Result := Text <> '';
 end;
 
 function StateValue(const InterfaceName, Key: string): string;

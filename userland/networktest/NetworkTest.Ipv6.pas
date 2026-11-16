@@ -74,7 +74,8 @@ uses
   Sys.Sockets,
   Sys.Processes,
   Sys.NetworkInterfaces,
-  Sys.AddressText;
+  Sys.AddressText,
+  Sys.InterfaceText;
 
 const
   WaitMilliseconds = 5000;
@@ -325,7 +326,7 @@ begin
     Exit;
   for Route in Routes do
     if (Route.Destination.Family = AddressFamilyIPv6) and (Route.Destination.PrefixLength = 0) and
-       AddressesAreEqual(RouteGateway(Route), Gateway) and (string(PChar(@Route.InterfaceName[0])) = Name) then
+       AddressesAreEqual(RouteGateway(Route), Gateway) and (InterfaceNameToText(Route.InterfaceName) = Name) then
       Exit(True);
 end;
 

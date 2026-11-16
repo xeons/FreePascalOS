@@ -39,13 +39,13 @@ uses
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
   Sys.AddressText,
-  Sys.Streams,
-  Sys.Format,
+  Sys.InterfaceText,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: ndp [-a] [-n] [-i INTERFACE] [ADDRESS]'#10 +
+  Usage ='Usage: ndp [-a] [-n] [-i INTERFACE] [ADDRESS]'#10 +
     'Show the IPv6 neighbour cache: the Ethernet addresses of the neighbours.'#10 +
     #10 +
     '  -a, --all              every neighbour (the default)'#10 +
@@ -76,13 +76,10 @@ begin
 end;
 
 function LinkLayerText(constref Entry: TAbiNeighborEntry): string;
-var
-  Buffer: array[0..31] of Char;
 begin
   if Entry.State = NeighborStateIncomplete then
     Exit('(incomplete)');
-  Result := StrPas(FormatHardwareAddress(@Entry.HardwareAddress[0], EthernetAddressBytes, @Buffer[0],
-    SizeOf(Buffer)));
+  Result := HardwareAddressToText(Entry.HardwareAddress, EthernetAddressBytes);
 end;
 
 function FlagsText(constref Entry: TAbiNeighborEntry): string;
@@ -97,14 +94,14 @@ var
   Line: string;
 begin
   Line := Format('%-40s %-18s %-9s %6us  %-10s %s', [AddressToText(NeighborAddress(Entry)), LinkLayerText(Entry),
-    StrPas(PChar(@Entry.InterfaceName[0])), Entry.ExpiresInSeconds, StateName(Entry.State), FlagsText(Entry)]);
-  WriteLine(StandardOutput, PChar(TrimRight(Line)));
+    InterfaceNameToText(Entry.InterfaceName), Entry.ExpiresInSeconds, StateName(Entry.State), FlagsText(Entry)]);
+  PrintStringLine(TrimRight(Line));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   InterfaceName: string = '';
   Wanted: TInternetAddress;
   HasWanted: Boolean = False;
@@ -114,35 +111,34 @@ var
   Shown: Integer = 0;
 
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'all', False, OptionAll),
-    OptionDefinition('n', 'numeric', False, OptionNumeric),
-    OptionDefinition('i', 'device', True, OptionInterface)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'all', False, OptionAll),
+    CommandOption('n', 'numeric', False, OptionNumeric),
+    CommandOption('i', 'device', True, OptionInterface)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionInterface then
       InterfaceName := Value;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if CommandLine.OperandCount = 1 then
   begin
-    if not TextToAddress(Parser.Operands[0], Wanted) or (Wanted.Family <> AddressFamilyIPv6) then
-      Fail(1, '%s: Unknown host', [ArgumentText(Parser.Operands[0])]);
+    if not TextToAddress(CommandLine.Operands[0], Wanted) or (Wanted.Family <> AddressFamilyIPv6) then
+      Fail(1, Format('%s: Unknown host', [CommandLine.Operands[0]]));
     HasWanted := True;
   end;
   Error := ListNeighbors(Entries);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the neighbour cache', []);
-  WriteLine(StandardOutput, 'Neighbor                                 Linklayer Address  Netif      Expire  State      Flags');
+    FailWithError(1, Error, 'cannot read the neighbour cache');
+  PrintStringLine('Neighbor                                Linklayer Address  Netif      Expire  State      Flags');
   for Entry in Entries do
   begin
     if HasWanted and not AddressesAreEqual(NeighborAddress(Entry), Wanted) then
       Continue;
-    if (InterfaceName <> '') and (StrPas(PChar(@Entry.InterfaceName[0])) <> InterfaceName) then
+    if (InterfaceName <> '') and (InterfaceNameToText(Entry.InterfaceName) <> InterfaceName) then
       Continue;
     ShowEntry(Entry);
     Inc(Shown);
   end;
-  FlushStream(StandardOutput);
   if HasWanted and (Shown = 0) then
-    Fail(1, '%s: no entry', [ArgumentText(Parser.Operands[0])]);
+    Fail(1, Format('%s: no entry', [CommandLine.Operands[0]]));
 end.
