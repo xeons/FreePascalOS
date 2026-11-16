@@ -108,7 +108,8 @@ begin
       HaltProcessor;
   end;
   { Started again after waking: resumed here, inside the dispatch
-    interrupt. }
+    interrupt and at its level (the saved state holds the priority
+    level), as the rest of it takes the dispatcher lock. }
   Processor^.FreezeRequested := False;
   Processor^.Frozen := False;
 end;

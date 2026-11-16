@@ -208,9 +208,9 @@ end;
 
 function SetUpMouse: Boolean;
 begin
-  SetPs2MousePolled(True);
+  Ps2BeginPolling;
   Result := SetUpMouseByPolling;
-  SetPs2MousePolled(False);
+  Ps2EndPolling;
 end;
 
 { Waking from suspend to RAM reset the mouse (the keyboard's resume, run

@@ -626,8 +626,8 @@ runs it on a thread pinned to the boot processor:
 3. Processors (`Kernel.ProcessorPower`).
    - Every other processor freezes in its dispatch interrupt, where it
      holds no spin lock: it saves its state (`Kernel.Arch.Suspend`:
-     callee-saved registers, stack, flags, FS and swapped GS bases, FPU
-     state, like `setjmp`) and halts.
+     callee-saved registers, stack, flags, FS and swapped GS bases, the
+     priority level, FPU state, like `setjmp`) and halts.
    - The boot processor saves the I/O APIC entries, pauses the clock and
      saves its own state,
      points the waking vector at the start-up page (the trampoline that
@@ -643,6 +643,13 @@ runs it on a thread pinned to the boot processor:
      starts its own as it wakes).
    - It resumes its saved state, then starts each frozen processor
      again (INIT, STARTUP), which resumes inside its dispatch interrupt.
+     The priority level (CR8, which a woken processor has at 0) comes
+     back with the rest: a processor resumed in its dispatch interrupt
+     goes on at dispatch level, holding the dispatcher lock and perhaps
+     switching threads. At level 0 a clock interrupt there would start
+     the dispatch interrupt again on top of itself, waiting forever for
+     the lock its own processor holds, and every other processor after
+     it.
 5. The wall clock is read again (the uptime leaves the sleep out), and
    every power handler resumes, first stage first:
    - **Platform:** PCI configuration (BARs, bridges, capabilities, then
@@ -669,7 +676,13 @@ runs it on a thread pinned to the boot processor:
 virtio, NVMe and USB disks and HD Audio, AC'97 and USB audio, wakes it
 (`system_wakeup`), then reads every disk raw, writes and reads back
 files on three volumes, plays a tone on each sound output (recorded and
-checked) and checks the display.
+checked) and checks the display. `make suspend-stress`
+(scripts/stress-suspend.py, not part of `make test`) suspends and wakes
+the same machine over and over (ROUNDS, 30 by default), waking it at
+once, after a moment or after two seconds, and with POINTERS=1 checks
+the PS/2 mouse and USB tablet after each wake; a wake that does not
+come back is reported with each processor's registers, local APIC and
+stack.
 
 `make aml-test` also checks the sleep states (S3, S4, S5 on both QEMU
 machines) and the GPE methods the tables have. The input test plugs a
@@ -846,8 +859,14 @@ whichever interrupt comes takes every waiting byte and hands each to its
 device by the status bit (Ps2ServiceController, under a lock), as an
 interrupt that finds the other device's byte first cannot count on the
 other interrupt coming (the line may stay raised, and both can run on
-two processors at once); while the mouse is set up by polling, its
-bytes are left for the poller.
+two processors at once). While a driver sets the controller or the
+mouse up by polling (Ps2BeginPolling .. Ps2EndPolling: the keyboard's
+controller configuration, the mouse's setup, at start-up and after
+waking), the interrupts leave every byte for the poller: the
+controller's own answers come marked as the keyboard's and raise its
+interrupt, which, on another processor, could take the answer first and
+make the setup fail. Ending, the bytes that came meanwhile are handed
+on, as their interrupt has come and gone.
 
 USB keyboards (Drivers.UsbKeyboard, on the xHCI driver) use the HID boot
 protocol. Their interrupt IN endpoint is read over and over (a report

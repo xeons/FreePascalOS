@@ -220,7 +220,7 @@ end;
 
 { Both ports off, then the first port's interrupt and scan code
   translation on (the second port's off). }
-function ConfigureController: Boolean;
+function ConfigureControllerByPolling: Boolean;
 var
   Configuration: Byte;
 begin
@@ -234,6 +234,13 @@ begin
     not Ps2ConfigurationSecondPortInterrupt;
   Ps2WriteConfiguration(Configuration);
   Result := True;
+end;
+
+function ConfigureController: Boolean;
+begin
+  Ps2BeginPolling;
+  Result := ConfigureControllerByPolling;
+  Ps2EndPolling;
 end;
 
 { The first port on, and the lights as they should be. }

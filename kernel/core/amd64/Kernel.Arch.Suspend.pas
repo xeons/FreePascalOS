@@ -22,11 +22,19 @@
   ArchSaveSuspendContext works like setjmp: it saves what the caller
   needs kept (the callee-saved registers, the stack pointer, where to
   return, the flags), the FS base and the swapped GS base (user thread
-  pointers), and the floating point and SSE registers, then returns 0.
+  pointers), the priority level (CR8, the task priority) and the
+  floating point and SSE registers, then returns 0.
   ArchResumeSuspendContext, on the same processor after it was woken and
   set up again, puts all of it back and returns from the saving call a
   second time, with 1. Memory survives suspend to RAM, so the stack the
   context points into is still there.
+
+  The priority level matters: a woken processor starts with CR8 = 0,
+  but a secondary processor froze inside its dispatch interrupt, at
+  dispatch level, and goes on from there holding the dispatcher lock
+  and switching threads. Left at 0, a clock interrupt arriving then
+  would start the dispatch interrupt again on top of itself, which
+  waits forever for the lock its own processor holds.
 }
 unit Kernel.Arch.Suspend;
 
@@ -37,7 +45,8 @@ interface
 
 type
   TArchSuspendContext = record
-    { rbx, rbp, r12-r15, rsp, rip, rflags, FS base, swapped GS base. }
+    { rbx, rbp, r12-r15, rsp, rip, rflags, FS base, swapped GS base,
+      CR8 (the priority level). }
     Registers: array[0..11] of QWord;
     { FXSAVE needs 512 bytes, 16-byte aligned: the area is found inside. }
     FpuArea: array[0..527] of Byte;
@@ -76,6 +85,9 @@ asm
   rdmsr
   mov [rsi + 80], eax
   mov [rsi + 84], edx
+  { mov rax, cr8 (the inline assembler does not know CR8) }
+  db $44, $0F, $20, $C0
+  mov [rsi + 88], rax
   lea rax, [rsi + 96 + 15]
   and rax, -16
   fxsave [rax]
@@ -95,6 +107,11 @@ asm
   mov eax, [rdi + 80]
   mov edx, [rdi + 84]
   wrmsr
+  { Interrupts are still off, so nothing arrives at the wrong level in
+    between. }
+  mov rax, [rdi + 88]
+  { mov cr8, rax }
+  db $44, $0F, $22, $C0
   mov rbx, [rdi]
   mov rbp, [rdi + 8]
   mov r12, [rdi + 16]
