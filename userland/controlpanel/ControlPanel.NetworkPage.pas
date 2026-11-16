@@ -54,7 +54,8 @@ uses
   Configuration.NetworkSettings,
   Configuration.NetworkStatus,
   ControlPanel.Pages,
-  ControlPanel.NetworkDetails;
+  ControlPanel.NetworkDetails,
+  ControlPanel.Ipv6Tab;
 
 type
   { What is chosen for one interface: the boxes as typed. }
@@ -66,6 +67,7 @@ type
     AddressText: string;
     PrefixText: string;
     GatewayText: string;
+    Ipv6: TIpv6Choice;
     Changed: Boolean;
   end;
 
@@ -85,6 +87,7 @@ type
     FDnsServers: TEditBox;
     FSearchDomain: TEditBox;
     FDetails: TNetworkDetails;
+    FIpv6Tab: TIpv6Tab;
     FStatus: TInterfaceStatusList;
     FChoices: array of TInterfaceChoice;
     { The interface whose choice the controls show, -1 for none. }
@@ -217,6 +220,7 @@ begin
   FTabs := TTabControl.Create(Self);
   FTabs.SetBounds(PageMargin, TabsTop, PageWidth - 2 * PageMargin, TabsHeight);
   MakeAddressTab(FTabs.AddPage('Add&ress'));
+  FIpv6Tab := TIpv6Tab.Create(FTabs.AddPage('IPv&6'), @AddressChanged);
   MakeDnsTab(FTabs.AddPage('&DNS'));
   Tab := FTabs.AddPage('&Status');
   FDetails := TNetworkDetails.Create(Tab, TabMargin, 4, PageWidth - 2 * PageMargin - 2 * TabMargin - 6);
@@ -258,6 +262,7 @@ destructor TNetworkPage.Destroy;
 begin
   StopWatching;
   FDetails.Free;
+  FIpv6Tab.Free;
   inherited Destroy;
 end;
 
@@ -325,9 +330,15 @@ begin
     FList.Cells[Index, ColumnState] := NetworkConditionText(FStatus[Index].Condition);
   end;
   if (FShown >= 0) and (FShown <= High(FStatus)) then
-    FDetails.ShowStatus(FStatus[FShown])
+  begin
+    FDetails.ShowStatus(FStatus[FShown]);
+    FIpv6Tab.ShowStatus(FStatus[FShown]);
+  end
   else
+  begin
     FDetails.ShowNothing;
+    FIpv6Tab.ShowNoStatus;
+  end;
 end;
 
 procedure TNetworkPage.ReportStates;
@@ -380,6 +391,7 @@ begin
   FAddress.Enabled := IsStatic;
   FPrefix.Enabled := IsStatic;
   FGateway.Enabled := IsStatic;
+  FIpv6Tab.UpdateEnabledControls(HasInterface);
   FDnsServers.Enabled := FDnsManual.Checked;
 end;
 
@@ -395,6 +407,7 @@ begin
     FAddress.Text := FChoices[FShown].AddressText;
     FPrefix.Text := FChoices[FShown].PrefixText;
     FGateway.Text := FChoices[FShown].GatewayText;
+    FIpv6Tab.ShowChoice(FChoices[FShown].Ipv6);
   end
   else
   begin
@@ -402,6 +415,7 @@ begin
     FAddress.Text := '';
     FPrefix.Text := '';
     FGateway.Text := '';
+    FIpv6Tab.ShowNoChoice;
   end;
   FFilling := False;
   UpdateEnabledControls;
@@ -427,6 +441,7 @@ begin
   Result.Up := Settings.Up;
   SplitAddressAndPrefix(Settings.Address, Result.AddressText, Result.PrefixText);
   Result.GatewayText := Settings.Gateway;
+  Result.Ipv6 := Ipv6ChoiceFromSettings(Settings);
 end;
 
 procedure TNetworkPage.LoadSettings;
@@ -501,6 +516,7 @@ begin
   FChoices[FShown].AddressText := Trim(FAddress.Text);
   FChoices[FShown].PrefixText := Trim(FPrefix.Text);
   FChoices[FShown].GatewayText := Trim(FGateway.Text);
+  FChoices[FShown].Ipv6 := FIpv6Tab.ReadChoice;
   FChoices[FShown].Changed := True;
   UpdateEnabledControls;
   MarkModified;
@@ -547,8 +563,20 @@ begin
     else
       Settings.Address := Choice.AddressText + '/' + Choice.PrefixText;
   end;
+  Settings.Ipv6Method := Choice.Ipv6.Method;
+  Settings.Ipv6Address := Choice.Ipv6.AddressText;
+  Settings.Ipv6Gateway := Choice.Ipv6.GatewayText;
   Problem := CheckInterfaceSettings(Settings);
-  if (Problem <> NetworkSettingsValid) and (Settings.Method <> NetworkMethodStatic) then
+  if (Problem in [ProblemNoIpv6Address..ProblemIpv6GatewayIsAddress]) and
+     (Settings.Ipv6Method <> Ipv6MethodStatic) then
+  begin
+    { Boxes of a fixed IPv6 address not chosen are kept only if valid. }
+    Settings.Ipv6Address := '';
+    Settings.Ipv6Gateway := '';
+    Problem := CheckInterfaceSettings(Settings);
+  end;
+  if (Problem <> NetworkSettingsValid) and (Settings.Method <> NetworkMethodStatic) and
+     not (Problem in [ProblemNoIpv6Address..ProblemIpv6GatewayIsAddress]) then
   begin
     Settings.Address := '';
     Settings.Gateway := '';
@@ -575,6 +603,9 @@ begin
   SetRequestText(@Request.NetworkMethod[0], SystemMethodCapacity, PChar(NetworkMethodName(Settings.Method)));
   SetRequestText(@Request.NetworkAddress[0], SystemAddressCapacity, PChar(Settings.Address));
   SetRequestText(@Request.NetworkGateway[0], SystemAddressCapacity, PChar(Settings.Gateway));
+  SetRequestText(@Request.NetworkIpv6Method[0], SystemMethodCapacity, PChar(Ipv6MethodName(Settings.Ipv6Method)));
+  SetRequestText(@Request.NetworkIpv6Address[0], SystemIpv6AddressCapacity, PChar(Settings.Ipv6Address));
+  SetRequestText(@Request.NetworkIpv6Gateway[0], SystemIpv6AddressCapacity, PChar(Settings.Ipv6Gateway));
   if Settings.Up then
     Request.Flags := SystemFlagInterfaceUp;
   Error := SendAsAdministrator(Window, Request);
@@ -596,6 +627,14 @@ begin
       Applied := Applied + ' via ' + Settings.Gateway;
   end;
   Say(Applied + BoolToStr(Settings.Up, ' up', ' down'));
+  Applied := 'applied network-ipv6 ' + Settings.Name + ' ' + Ipv6MethodName(Settings.Ipv6Method);
+  if Settings.Ipv6Method = Ipv6MethodStatic then
+  begin
+    Applied := Applied + ' ' + Settings.Ipv6Address;
+    if Settings.Ipv6Gateway <> '' then
+      Applied := Applied + ' via ' + Settings.Ipv6Gateway;
+  end;
+  Say(Applied);
 end;
 
 function TNetworkPage.ApplyDns: Boolean;
@@ -667,7 +706,7 @@ var
   Index: LongInt;
   Tab: TRectangle;
 const
-  TabNames: array[0..2] of string = ('address', 'dns', 'status');
+  TabNames: array[0..3] of string = ('address', 'ipv6', 'dns', 'status');
 begin
   for Index := 0 to High(FStatus) do
     if Index < FList.RowCount then
@@ -685,6 +724,7 @@ begin
   SayControlPlace('network-address', Window, FAddress);
   SayControlPlace('network-prefix', Window, FPrefix);
   SayControlPlace('network-gateway', Window, FGateway);
+  FIpv6Tab.TellPlaces(Window);
   SayPlace('network-dns-automatic', Window, FDnsAutomatic, Scaled(6), Scaled(ChoiceHeight div 2));
   SayPlace('network-dns-manual', Window, FDnsManual, Scaled(6), Scaled(ChoiceHeight div 2));
   SayControlPlace('network-dns-servers', Window, FDnsServers);

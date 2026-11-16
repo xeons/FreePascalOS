@@ -43,12 +43,14 @@ uses
   Configuration.NetworkStatus;
 
 type
-  { One interface: its picture, then two lines of text. }
+  { One interface: its picture, then two lines of text, and a third for
+    its IPv6 addresses if it has global ones. }
   TNetworkRow = class(TControl)
   private
     FPicture: LongWord;
     FHeading: string;
     FDetail: string;
+    FIpv6Detail: string;
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
@@ -95,6 +97,30 @@ const
   ButtonWidth = 130;
   ButtonHeight = 23;
 
+{ The global IPv6 addresses without their prefixes, comma separated. }
+function Ipv6AddressesText(const Status: TInterfaceStatus): string;
+var
+  Addresses: TStringArray;
+  Index: Integer;
+begin
+  Result := '';
+  Addresses := GlobalIpv6Addresses(Status);
+  for Index := 0 to High(Addresses) do
+  begin
+    if Result <> '' then
+      Result := Result + ', ';
+    Result := Result + AddressWithoutPrefix(Addresses[Index]);
+  end;
+end;
+
+{ Logical units: two lines, or three with IPv6 addresses. }
+function RowHeightFor(const Status: TInterfaceStatus): LongInt;
+begin
+  Result := NetworkRowHeight;
+  if Ipv6AddressesText(Status) <> '' then
+    Result := Result + LineHeight;
+end;
+
 function CapitalizedCondition(Condition: TNetworkCondition): string;
 var
   Text: string;
@@ -111,6 +137,7 @@ begin
     FDetail := Status.Address + ', ' + Status.Description
   else
     FDetail := Status.Description;
+  FIpv6Detail := Ipv6AddressesText(Status);
   Invalidate;
 end;
 
@@ -124,13 +151,17 @@ begin
     Scaled(LineHeight)), AlignTextLeft, Theme.FaceText);
   DrawTextInBox(Canvas, ControlFace, FDetail, MakeRectangle(Scaled(TextLeft), Scaled(LineHeight),
     Width - Scaled(TextLeft), Scaled(LineHeight)), AlignTextLeft, Theme.FaceText);
+  if FIpv6Detail <> '' then
+    DrawTextInBox(Canvas, ControlFace, FIpv6Detail, MakeRectangle(Scaled(TextLeft), Scaled(2 * LineHeight),
+      Width - Scaled(TextLeft), Scaled(LineHeight)), AlignTextLeft, Theme.FaceText);
 end;
 
 constructor TNetworkPopup.CreateNetworkPopup(AOwner: TControlWindow; Left, Bottom: LongInt);
 var
   Top: LongInt;
   Height: LongInt;
-  RowCount: LongInt;
+  RowsHeight: LongInt;
+  RowTop: LongInt;
   Index: LongInt;
   Frame: TPanel;
   Caption: TLabel;
@@ -138,10 +169,12 @@ var
 begin
   if ListInterfaceStatus(FList) <> ErrorNone then
     FList := nil;
-  RowCount := Length(FList);
-  if RowCount = 0 then
-    RowCount := 1;
-  Height := Margin + CaptionHeight + RowCount * NetworkRowHeight + ButtonHeight + Margin;
+  RowsHeight := 0;
+  for Index := 0 to High(FList) do
+    RowsHeight := RowsHeight + RowHeightFor(FList[Index]);
+  if RowsHeight = 0 then
+    RowsHeight := NetworkRowHeight;
+  Height := Margin + CaptionHeight + RowsHeight + ButtonHeight + Margin;
   Left := Left - PopupWidth div 2;
   Top := Bottom - Height;
   KeepOnDisplay(Left, Top, PopupWidth, Height);
@@ -161,12 +194,13 @@ begin
     Caption.Text := 'No network adapters.';
     Caption.SetBounds(Margin, Margin + CaptionHeight, PopupWidth - 2 * Margin, 18);
   end;
+  RowTop := Margin + CaptionHeight;
   for Index := 0 to High(FList) do
   begin
     Row := TNetworkRow.Create(Root);
-    Row.SetBounds(Margin, Margin + CaptionHeight + Index * NetworkRowHeight, PopupWidth - 2 * Margin,
-      NetworkRowHeight - 4);
+    Row.SetBounds(Margin, RowTop, PopupWidth - 2 * Margin, RowHeightFor(FList[Index]) - 4);
     Row.ShowStatus(FList[Index]);
+    RowTop := RowTop + RowHeightFor(FList[Index]);
   end;
   FSettingsButton := TButton.Create(Root);
   FSettingsButton.Text := '&Network settings...';
@@ -182,7 +216,11 @@ begin
   Popup;
   Say('network-popup');
   for Index := 0 to High(FList) do
+  begin
     Say('network-popup-row ' + FList[Index].Name + ' ' + InterfaceSummary(FList[Index]));
+    if Ipv6AddressesText(FList[Index]) <> '' then
+      Say('network-popup-ipv6 ' + FList[Index].Name + ' ' + Ipv6AddressesText(FList[Index]));
+  end;
   PrepareToReceive;
   SayPlace('network-settings', Self, (FSettingsButton.PixelBounds.Left + FSettingsButton.PixelBounds.Right) div 2,
     (FSettingsButton.PixelBounds.Top + FSettingsButton.PixelBounds.Bottom) div 2);

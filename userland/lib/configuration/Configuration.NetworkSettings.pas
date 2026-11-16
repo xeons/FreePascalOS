@@ -65,6 +65,9 @@ const
 
 type
   TNetworkMethod = (NetworkMethodNone, NetworkMethodStatic, NetworkMethodDhcp);
+  { auto: what routers advertise (SLAAC); static: the address given; none:
+    no IPv6 on the interface. }
+  TIpv6Method = (Ipv6MethodAuto, Ipv6MethodStatic, Ipv6MethodNone);
 
   TInterfaceSettings = record
     Name: string;
@@ -76,6 +79,11 @@ type
     Up: Boolean;
     { The file has a section for it. }
     Configured: Boolean;
+    Ipv6Method: TIpv6Method;
+    { "fec0::10/64", or empty (kept for static only). }
+    Ipv6Address: string;
+    { "fec0::2" or "fe80::1", or empty. }
+    Ipv6Gateway: string;
   end;
 
   TDnsSettings = record
@@ -86,18 +94,23 @@ type
 
   TNetworkSettingsProblem = (NetworkSettingsValid, ProblemBadInterfaceName, ProblemNoAddress, ProblemBadAddress,
     ProblemBadPrefix, ProblemAddressNotHost, ProblemBadGateway, ProblemGatewayOutsideNetwork,
-    ProblemGatewayIsAddress, ProblemBadDnsServer, ProblemTooManyDnsServers, ProblemBadSearchDomain);
+    ProblemGatewayIsAddress, ProblemBadDnsServer, ProblemTooManyDnsServers, ProblemBadSearchDomain,
+    ProblemNoIpv6Address, ProblemBadIpv6Address, ProblemBadIpv6Prefix, ProblemIpv6AddressNotHost,
+    ProblemBadIpv6Gateway, ProblemIpv6GatewayIsAddress);
 
 { "static", "dhcp", "none" (any letter case); False for anything else. }
 function ParseNetworkMethod(const Text: string; out Method: TNetworkMethod): Boolean;
 function NetworkMethodName(Method: TNetworkMethod): string;
+{ "auto", "static", "none" (any letter case); False for anything else. }
+function ParseIpv6Method(const Text: string; out Method: TIpv6Method): Boolean;
+function Ipv6MethodName(Method: TIpv6Method): string;
 
-{ What the settings say about interface Name (Method none and Up when
-  it has no section). }
+{ What the settings say about interface Name (Method none, Up and
+  Ipv6Method auto when it has no section). }
 function ReadInterfaceSettings(Store: TSettings; const Name: string): TInterfaceSettings;
 function ReadDnsSettings(Store: TSettings): TDnsSettings;
-{ Write to the system's scope (the caller flushes). An empty Address or
-  Gateway removes the key. }
+{ Write to the system's scope (the caller flushes). An empty Address,
+  Gateway, Ipv6Address or Ipv6Gateway removes the key. }
 procedure WriteInterfaceSettings(Store: TSettings; const Settings: TInterfaceSettings);
 procedure WriteDnsSettings(Store: TSettings; const Dns: TDnsSettings);
 
@@ -131,10 +144,12 @@ implementation
 uses
   Abi.SystemCalls,
   Sys.InternetAddresses,
-  Configuration.Names;
+  Configuration.Names,
+  Configuration.Ipv6Checks;
 
 const
   MethodNames: array[TNetworkMethod] of string = ('none', 'static', 'dhcp');
+  Ipv6MethodNames: array[TIpv6Method] of string = ('auto', 'static', 'none');
   MaximumInterfaceNameLength = NetworkInterfaceNameCapacity - 1;
   MaximumLabelLength = 63;
 
@@ -157,6 +172,25 @@ begin
   Result := MethodNames[Method];
 end;
 
+function ParseIpv6Method(const Text: string; out Method: TIpv6Method): Boolean;
+var
+  Candidate: TIpv6Method;
+begin
+  Method := Ipv6MethodAuto;
+  for Candidate := Low(TIpv6Method) to High(TIpv6Method) do
+    if LowerCase(Trim(Text)) = Ipv6MethodNames[Candidate] then
+    begin
+      Method := Candidate;
+      Exit(True);
+    end;
+  Result := False;
+end;
+
+function Ipv6MethodName(Method: TIpv6Method): string;
+begin
+  Result := Ipv6MethodNames[Method];
+end;
+
 function InterfaceSection(const Name: string): string;
 begin
   Result := NetworkInterfacesSection + '/' + Name;
@@ -172,6 +206,7 @@ begin
   Result.Name := Name;
   Result.Method := NetworkMethodNone;
   Result.Up := True;
+  Result.Ipv6Method := Ipv6MethodAuto;
   Sections := Store.ListSections(NetworkInterfacesSection);
   for Index := 0 to High(Sections) do
     if Sections[Index] = Name then
@@ -185,6 +220,10 @@ begin
   Result.Address := Trim(Store.ReadString(Section + '/Address', ''));
   Result.Gateway := Trim(Store.ReadString(Section + '/Gateway', ''));
   Result.Up := Store.ReadBoolean(Section + '/Up', True);
+  if not ParseIpv6Method(Store.ReadString(Section + '/Ipv6Method', 'auto'), Result.Ipv6Method) then
+    Result.Ipv6Method := Ipv6MethodAuto;
+  Result.Ipv6Address := Trim(Store.ReadString(Section + '/Ipv6Address', ''));
+  Result.Ipv6Gateway := Trim(Store.ReadString(Section + '/Ipv6Gateway', ''));
 end;
 
 function ReadDnsSettings(Store: TSettings): TDnsSettings;
@@ -211,6 +250,9 @@ begin
   WriteOptionalString(Store, Section + '/Address', Settings.Address);
   WriteOptionalString(Store, Section + '/Gateway', Settings.Gateway);
   Store.WriteBoolean(Section + '/Up', Settings.Up, ScopeSystem);
+  Store.WriteString(Section + '/Ipv6Method', Ipv6MethodName(Settings.Ipv6Method), ScopeSystem);
+  WriteOptionalString(Store, Section + '/Ipv6Address', Settings.Ipv6Address);
+  WriteOptionalString(Store, Section + '/Ipv6Gateway', Settings.Ipv6Gateway);
 end;
 
 procedure WriteDnsSettings(Store: TSettings; const Dns: TDnsSettings);
@@ -307,6 +349,32 @@ begin
   Result := NetworkSettingsValid;
 end;
 
+function CheckIpv6AddressAndGateway(const Settings: TInterfaceSettings): TNetworkSettingsProblem;
+var
+  Address: TInternetAddress;
+  Gateway: TInternetAddress;
+  PrefixLength: LongWord;
+begin
+  if Settings.Ipv6Address = '' then
+  begin
+    if (Settings.Ipv6Method = Ipv6MethodStatic) or (Settings.Ipv6Gateway <> '') then
+      Exit(ProblemNoIpv6Address);
+    Exit(NetworkSettingsValid);
+  end;
+  case CheckIpv6InterfaceAddress(Settings.Ipv6Address, Address, PrefixLength) of
+    Ipv6AddressNotIpv6: Exit(ProblemBadIpv6Address);
+    Ipv6AddressMissingPrefix, Ipv6AddressBadPrefix: Exit(ProblemBadIpv6Prefix);
+    Ipv6AddressNotHost: Exit(ProblemIpv6AddressNotHost);
+  end;
+  if Settings.Ipv6Gateway = '' then
+    Exit(NetworkSettingsValid);
+  if not IsIpv6GatewayAddress(Settings.Ipv6Gateway, Gateway) then
+    Exit(ProblemBadIpv6Gateway);
+  if AddressesAreEqual(Gateway, Address) then
+    Exit(ProblemIpv6GatewayIsAddress);
+  Result := NetworkSettingsValid;
+end;
+
 function CheckInterfaceSettings(const Settings: TInterfaceSettings): TNetworkSettingsProblem;
 begin
   if not IsInterfaceName(Settings.Name) then
@@ -314,18 +382,18 @@ begin
   if (Settings.Method = NetworkMethodStatic) and (Settings.Address = '') then
     Exit(ProblemNoAddress);
   Result := CheckAddressAndGateway(Settings);
+  if Result = NetworkSettingsValid then
+    Result := CheckIpv6AddressAndGateway(Settings);
 end;
 
 function CheckDnsSettings(const Dns: TDnsSettings): TNetworkSettingsProblem;
 var
   Index: Integer;
-  AddressValue: LongWord;
 begin
   if Length(Dns.Servers) > MaximumDnsServers then
     Exit(ProblemTooManyDnsServers);
   for Index := 0 to High(Dns.Servers) do
-    if not ParseHostAddress(Dns.Servers[Index], AddressValue) or (AddressValue = 0) or
-       (AddressValue shr 24 >= 224) then
+    if not IsDnsServerAddress(Dns.Servers[Index]) then
       Exit(ProblemBadDnsServer);
   if (Dns.SearchDomain <> '') and not IsSearchDomain(Dns.SearchDomain) then
     Exit(ProblemBadSearchDomain);
@@ -345,9 +413,16 @@ begin
     ProblemBadGateway: Result := 'The gateway is not the address of a computer.';
     ProblemGatewayOutsideNetwork: Result := 'The gateway must be on the same network as the address.';
     ProblemGatewayIsAddress: Result := 'The gateway cannot be the interface''s own address.';
-    ProblemBadDnsServer: Result := 'A DNS server is not an IPv4 address such as 10.0.2.3.';
+    ProblemBadDnsServer: Result := 'A DNS server is not an address such as 10.0.2.3 or fec0::3.';
     ProblemTooManyDnsServers: Result := Format('At most %d DNS servers can be used.', [MaximumDnsServers]);
     ProblemBadSearchDomain: Result := 'The search domain is not a domain name such as example.org.';
+    ProblemNoIpv6Address: Result := 'An IPv6 address is needed (with its prefix, such as fd00::10/64).';
+    ProblemBadIpv6Address: Result := 'The IPv6 address is not an address such as fd00::10.';
+    ProblemBadIpv6Prefix: Result := 'The IPv6 prefix must be 1 to 128 (such as fd00::10/64).';
+    ProblemIpv6AddressNotHost: Result := 'The IPv6 address cannot be given to a computer (it is unspecified, ' +
+      'loopback, multicast or link-local).';
+    ProblemBadIpv6Gateway: Result := 'The IPv6 gateway is not the address of a computer.';
+    ProblemIpv6GatewayIsAddress: Result := 'The IPv6 gateway cannot be the interface''s own address.';
   else
     Result := 'The settings are not valid.';
   end;

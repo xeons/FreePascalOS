@@ -56,6 +56,8 @@ uses
   Abi.SystemCalls,
   Sys.InternetAddresses,
   NetworkService.Settings,
+  NetworkService.Ipv6Settings,
+  NetworkService.Ipv6Configuration,
   NetworkService.DhcpMessages,
   NetworkService.DhcpLeases,
   NetworkService.DhcpClient;
@@ -85,6 +87,12 @@ type
       state file, or this run's). }
     HasPreviousAddress: Boolean;
     PreviousAddress: TInternetAddress;
+    { IPv6, applied apart from IPv4: as the kernel last said, and what
+      the service applied. }
+    Ipv6Facts: TIpv6Facts;
+    AppliedIpv6: TIpv6Settings;
+    HasAppliedIpv6: Boolean;
+    Ipv6Failure: string;
     destructor Destroy; override;
   end;
 
@@ -96,6 +104,7 @@ type
     FAppliedDns: TAbiDnsServers;
     function Find(const Name: string): TManagedInterface;
     procedure Reconcile(Managed: TManagedInterface);
+    procedure ReconcileIpv6(Managed: TManagedInterface);
     procedure TearDown(Managed: TManagedInterface);
     procedure SetUp(Managed: TManagedInterface);
     procedure ApplyStatic(Managed: TManagedInterface);
@@ -205,7 +214,8 @@ var
 begin
   if ListRoutes(Routes) = ErrorNone then
     for Position := 0 to High(Routes) do
-      if (Routes[Position].Destination.PrefixLength = 0) and
+      if (Routes[Position].Destination.Family = AddressFamilyIPv4) and
+         (Routes[Position].Destination.PrefixLength = 0) and
          MemoryIsEqual(@Routes[Position].Gateway[0], @Gateway.Bytes[0], 4) and
          TextIsEqual(@Routes[Position].InterfaceName[0], PChar(Managed.Name)) then
         Exit;
@@ -299,6 +309,18 @@ begin
   end;
 end;
 
+procedure TInterfaceManager.ReconcileIpv6(Managed: TManagedInterface);
+begin
+  if Managed.HasAppliedIpv6 and SameIpv6Settings(Managed.Desired.Ipv6, Managed.AppliedIpv6) then
+    Exit;
+  if Managed.HasAppliedIpv6 then
+    UndoIpv6Settings(Managed.Name, Managed.AppliedIpv6);
+  ApplyIpv6Settings(Managed.Name, Managed.Ipv6Facts.Mode, MetricOf(Managed), Managed.Desired.Ipv6,
+    Managed.Ipv6Failure);
+  Managed.AppliedIpv6 := Managed.Desired.Ipv6;
+  Managed.HasAppliedIpv6 := True;
+end;
+
 procedure TInterfaceManager.Reconcile(Managed: TManagedInterface);
 begin
   Managed.Desired := InterfaceSettingsOf(FSettings, Managed.Name);
@@ -310,6 +332,7 @@ begin
     Managed.HasApplied := True;
     ApplyNameServers;
   end;
+  ReconcileIpv6(Managed);
   WriteState(Managed);
 end;
 
@@ -337,6 +360,8 @@ end;
 procedure TInterfaceManager.RefreshInterfaces;
 var
   Interfaces: TNetworkInterfaceList;
+  Routes: TRouteList;
+  Ipv4Address: TAbiInterfaceAddress;
   Position: Integer;
   Managed: TManagedInterface;
   Previous: TInterfaceState;
@@ -346,6 +371,8 @@ var
 begin
   if ListNetworkInterfaces(Interfaces) <> ErrorNone then
     Exit;
+  if ListRoutes(Routes) <> ErrorNone then
+    Routes := nil;
   for Position := 0 to High(Interfaces) do
   begin
     if (Interfaces[Position].Flags and InterfaceFlagLoopback) <> 0 then
@@ -367,12 +394,13 @@ begin
     LinkWasUsable := Managed.IsUp and Managed.LinkIsUp;
     Managed.IsUp := (Interfaces[Position].Flags and InterfaceFlagUp) <> 0;
     Managed.LinkIsUp := (Interfaces[Position].Flags and InterfaceFlagRunning) <> 0;
-    Managed.KernelHasAddress := Interfaces[Position].AddressCount > 0;
+    Managed.KernelHasAddress := FindInterfaceIpv4Address(Interfaces[Position], Ipv4Address);
     if Managed.KernelHasAddress then
     begin
-      Managed.KernelAddress := InterfaceAddressHost(Interfaces[Position].Addresses[0]);
-      Managed.KernelPrefixLength := Interfaces[Position].Addresses[0].PrefixLength;
+      Managed.KernelAddress := InterfaceAddressHost(Ipv4Address);
+      Managed.KernelPrefixLength := Ipv4Address.PrefixLength;
     end;
+    Managed.Ipv6Facts := ReadIpv6Facts(Interfaces[Position], Routes);
     LinkIsUsable := Managed.IsUp and Managed.LinkIsUp;
     if not Managed.HasApplied then
       Reconcile(Managed)
@@ -383,6 +411,8 @@ begin
       WriteState(Managed);
     end;
   end;
+  { The routers' DNS servers may have changed. }
+  ApplyNameServers;
 end;
 
 procedure TInterfaceManager.CollectSockets(var Handles: array of Int64; var Count: Integer);
@@ -517,7 +547,7 @@ begin
   Position := 0;
   while Position < Servers.Count do
   begin
-    if MemoryIsEqual(@Servers.Servers[Position].Address[0], @Address.Bytes[0], 4) then
+    if AddressesAreEqual(SocketAddressHost(Servers.Servers[Position]), Address) then
       Exit;
     Inc(Position);
   end;
@@ -552,6 +582,10 @@ begin
       if Domain = '' then
         Domain := Lease.DomainName;
     end;
+  if Length(FSettings.DnsServers) = 0 then
+    for Position := 0 to High(FInterfaces) do
+      for ServerIndex := 0 to High(FInterfaces[Position].Ipv6Facts.DnsServers) do
+        AddServer(Servers, FInterfaces[Position].Ipv6Facts.DnsServers[ServerIndex]);
   if Length(Domain) >= DnsDomainCapacity then
     Domain := Copy(Domain, 1, DnsDomainCapacity - 1);
   if Domain <> '' then
@@ -650,6 +684,10 @@ begin
     if Managed.KernelHasAddress then
       State.Address := AddressText(Managed.KernelAddress) + '/' + IntToStr(Managed.KernelPrefixLength);
   end;
+  State.Ipv6Method := Ipv6MethodName(Managed.Desired.Ipv6.Method);
+  State.Ipv6Addresses := Managed.Ipv6Facts.Addresses;
+  State.Ipv6Gateway := Managed.Ipv6Facts.Gateway;
+  State.Ipv6DnsServers := AddressList(Managed.Ipv6Facts.DnsServers);
   WriteInterfaceState(Managed.Name, State);
 end;
 

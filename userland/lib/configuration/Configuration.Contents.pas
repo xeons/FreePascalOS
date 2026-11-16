@@ -44,6 +44,7 @@ uses
   Configuration.Settings,
   Configuration.FileStorage,
   Configuration.Locations,
+  Configuration.Ipv6Checks,
   Configuration.NetworkSettings,
   Configuration.NetworkState,
   Configuration.NetworkStatus;

@@ -31,6 +31,11 @@
     LeaseSeconds = 86400               0 for static and none
     LeaseObtained = 1794787200         Unix time; 0 without a lease
     DhcpServer = "10.0.2.2"            or ""
+    Ipv6Method = "auto"                auto, static or none
+    Ipv6Addresses = ["fe80::5054:ff:fe12:3456/64", "fec0::5054:ff:fe12:3456/64"]
+                                       the kernel's (tentative ones left out)
+    Ipv6Gateway = "fe80::2"            the IPv6 default route's, or ""
+    Ipv6DnsServers = ["fec0::3"]       what routers advertised (RDNSS)
 
   A file is written whole as NAME.state.new (mode 0644) and renamed over
   NAME.state, so a reader sees the old state or the new one, never half
@@ -63,6 +68,10 @@ type
     LeaseSeconds: Int64;
     LeaseObtained: Int64;
     DhcpServer: string;
+    Ipv6Method: string;
+    Ipv6Addresses: TStringArray;
+    Ipv6Gateway: string;
+    Ipv6DnsServers: TStringArray;
   end;
 
 { An empty state: Method none, State down. }
@@ -107,6 +116,10 @@ begin
   Result.LeaseSeconds := 0;
   Result.LeaseObtained := 0;
   Result.DhcpServer := '';
+  Result.Ipv6Method := 'auto';
+  Result.Ipv6Addresses := nil;
+  Result.Ipv6Gateway := '';
+  Result.Ipv6DnsServers := nil;
 end;
 
 procedure MakeFolder(const Path: string);
@@ -133,6 +146,10 @@ begin
     Document.SetValue('', 'LeaseSeconds', IntegerSetting(State.LeaseSeconds), False);
     Document.SetValue('', 'LeaseObtained', IntegerSetting(State.LeaseObtained), False);
     Document.SetValue('', 'DhcpServer', StringSetting(State.DhcpServer), False);
+    Document.SetValue('', 'Ipv6Method', StringSetting(State.Ipv6Method), False);
+    Document.SetValue('', 'Ipv6Addresses', ListSetting(State.Ipv6Addresses), False);
+    Document.SetValue('', 'Ipv6Gateway', StringSetting(State.Ipv6Gateway), False);
+    Document.SetValue('', 'Ipv6DnsServers', ListSetting(State.Ipv6DnsServers), False);
     Result := Document.Serialize;
   finally
     Document.Free;
