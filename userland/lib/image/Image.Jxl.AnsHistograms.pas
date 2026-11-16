@@ -213,6 +213,9 @@ begin
   if Shift > JxlAnsLogTableSize + 1 then
     RaiseBadHistogram;
   Length := ReadJxlVarLenUint8(Reader) + 3;
+  { A dynamic array result may hold the caller's old array, so it is
+    cleared before it is sized (the counts left out stay 0). }
+  Result := nil;
   SetLength(Result, Length);
   SetLength(LogCounts, Length);
   SetLength(Same, Length);
@@ -299,6 +302,7 @@ begin
       if Symbols[Index] > MaximumSymbol then
         MaximumSymbol := Symbols[Index];
     end;
+    Result := nil;
     SetLength(Result, MaximumSymbol + 1);
     if SymbolCount = 1 then
       Result[Symbols[0]] := JxlAnsTableSize
