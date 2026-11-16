@@ -69,7 +69,8 @@ uses
   Server.Theme,
   Server.Screen,
   Server.Frames,
-  Server.Cursor;
+  Server.Cursor,
+  Server.DragFeedback;
 
 var
   Damage: TRegion;
@@ -134,6 +135,7 @@ begin
     DrawRectangleOutline(Canvas, Outline, Theme.DarkShadow);
     DrawRectangleOutline(Canvas, InflateRectangle(Outline, -1), Theme.Highlight);
   end;
+  DrawDragFeedback(Canvas);
   DrawCursor(Canvas);
   PresentScreenRegion(Screen, ScreenDamage);
 end;

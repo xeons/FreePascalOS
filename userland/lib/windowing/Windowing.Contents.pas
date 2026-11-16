@@ -41,6 +41,9 @@ uses
   Windowing.Sessions,
   Windowing.Notifications,
   Windowing.EndRequests,
+  Windowing.DataTransfer,
+  Windowing.Clipboard,
+  Windowing.DragAndDrop,
   Windowing.Windows;
 
 implementation

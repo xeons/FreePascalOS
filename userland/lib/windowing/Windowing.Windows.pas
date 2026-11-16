@@ -82,7 +82,8 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Windowing.Protocol,
-  Windowing.Messages;
+  Windowing.Messages,
+  Windowing.DragAndDrop;
 
 type
   TWindow = class(TMessageReceiver)
@@ -146,6 +147,20 @@ type
     procedure Moved; virtual;
     { True if it takes input while another window is modal (pop-ups). }
     function AcceptsInputWhileModal: Boolean; virtual;
+    { A drag (of any program's) is over the window, just come in if
+      Drag.Entered: what a drop at Drag.X, Drag.Y would do (one
+      DropEffect* of Drag.AllowedEffects; 0, the default: nothing). The
+      data is there to read (ReadDragData). }
+    function DragOver(const Drag: TDragEvent): LongWord; virtual;
+    { The drag went out of the window, or was cancelled. }
+    procedure DragLeave; virtual;
+    { The drag was let go over the window, where DragOver said
+      Drag.Effect; the server was told already, so this may take its
+      time (ask in a dialog). }
+    procedure Drop(const Drag: TDragEvent); virtual;
+    { A drag this window started is over: Effect is what the drop did
+      (0: nothing). }
+    procedure DragFinished(Effect: LongWord); virtual;
   public
     { Left, Top: where the client area goes; Width, Height: its size; all
       in logical units. Flags: Window* (framed and resizable by default).
@@ -241,7 +256,8 @@ uses
   Windowing.Connection,
   Windowing.HandleWatches,
   Windowing.EndRequests,
-  Windowing.Shell;
+  Windowing.Shell,
+  Windowing.Clipboard;
 
 const
   { The message loop waits on every timer's handle at once, so their
@@ -726,6 +742,61 @@ begin
   Result := Self = ModalWindow;
 end;
 
+function TWindow.DragOver(const Drag: TDragEvent): LongWord;
+begin
+  Result := 0;
+end;
+
+procedure TWindow.DragLeave;
+begin
+end;
+
+procedure TWindow.Drop(const Drag: TDragEvent);
+begin
+end;
+
+procedure TWindow.DragFinished(Effect: LongWord);
+begin
+end;
+
+{ A drag event for Window: answered with what a drop would do; a drop
+  is answered before the window acts on it. }
+procedure DispatchDragEvent(Window: TWindow; const Message: TWindowMessage);
+var
+  Drag: TDragEvent;
+  Effect: LongWord;
+begin
+  case Message.Kind of
+    EventDragEnter, EventDragOver:
+      begin
+        Drag := DragEventFrom(Message);
+        AnswerDrag(Window.Id, Drag.Number, AllowedEffect(Window.DragOver(Drag), Drag.AllowedEffects));
+      end;
+    EventDragLeave:
+      Window.DragLeave;
+    EventDrop:
+      begin
+        Drag := DragEventFrom(Message);
+        Effect := AllowedEffect(Window.DragOver(Drag), Drag.AllowedEffects);
+        FinishDrop(Window.Id, Drag.Number, Effect);
+        if Effect = 0 then
+          Window.DragLeave
+        else
+        begin
+          Drag.Effect := Effect;
+          Window.Drop(Drag);
+        end;
+      end;
+    EventDragFinished:
+      Window.DragFinished(Message.Code);
+  end;
+end;
+
+function IsDragEvent(Kind: LongWord): Boolean;
+begin
+  Result := (Kind >= EventDragEnter) and (Kind <= EventDragFinished);
+end;
+
 { --- The message loop ------------------------------------------------------------ }
 
 procedure QuitMessageLoop(Code: LongInt);
@@ -737,6 +808,7 @@ end;
 procedure Dispatch(const Message: TWindowMessage);
 var
   Window: TWindow;
+  Copied: TWindowMessage;
 begin
   { For window 0: the first display changed (new windows' scale); each
     window on it hears for itself. }
@@ -752,12 +824,29 @@ begin
     DeliverShellEvent(Message);
     Exit;
   end;
+  { The clipboard: no window's. }
+  if IsClipboardEvent(Message.Kind) then
+  begin
+    Copied := Message;
+    DeliverClipboardEvent(Copied);
+    Exit;
+  end;
+  { This program's drag is over, whether or not its window still is. }
+  if Message.Kind = EventDragFinished then
+    ForgetOwnDrag;
   if (Message.Kind = EventKey) or (Message.Kind = EventPointerMove) or (Message.Kind = EventPointerButton) then
     NewestModifiers := Message.Modifiers;
   Window := WindowById(Message.Window);
   if Window = nil then
     Exit;
   Window.PrepareToReceive;
+  if IsDragEvent(Message.Kind) then
+  begin
+    if (Message.Kind = EventDragEnter) or (Message.Kind = EventDragOver) or (Message.Kind = EventDrop) then
+      NewestModifiers := Message.Modifiers;
+    DispatchDragEvent(Window, Message);
+    Exit;
+  end;
   { The server sends nothing to a disabled window; this drops what was
     already on its way when the modal window started. }
   if (ModalWindow <> nil) and not Window.AcceptsInputWhileModal and

@@ -33,6 +33,15 @@
   controls. DefaultScale and DefaultDpi are the first display's, which a
   new window starts at; they change with it (EventScaleChanged for
   window 0, TakeScaleChange).
+
+  Most events carry no handle, and a handle that comes with one is
+  closed; the data the clipboard and drags deliver comes in a section
+  (EventDataDelivered), kept for the program (TakeMessageHandle). A
+  request to give the clipboard's or a drag's data (EventDataRender) is
+  handed to DataRenderHandler as soon as it arrives, whatever the
+  program is waiting for, so a program pasting what it offered itself,
+  or waiting for another reply meanwhile, never keeps the server (and
+  the program asking) waiting.
 }
 unit Windowing.Connection;
 
@@ -43,8 +52,13 @@ interface
 uses
   Windowing.Protocol;
 
+type
+  TDataRenderHandler = procedure(const Message: TWindowMessage);
+
 var
   DisplayChannel: Int64 = -1;
+  { Gets every EventDataRender as it arrives (Windowing.DataTransfer). }
+  DataRenderHandler: TDataRenderHandler;
   ScreenWidth: LongInt;
   ScreenHeight: LongInt;
   { The scale and DPI in use: the window being served's. }
@@ -74,6 +88,9 @@ function WaitForEvent(Kind: LongWord; Timeout: Int64; out Message: TWindowMessag
 { A message kept or waiting on the channel, without waiting; False if
   none. }
 function NextEvent(out Message: TWindowMessage): Boolean;
+{ The handle a message came with (a section), now the caller's to close;
+  -1 if it had none or it was taken already. }
+function TakeMessageHandle(var Message: TWindowMessage): Int64;
 { True once the server is gone. }
 function ConnectionBroken: Boolean;
 { Takes the first display's size, DPI and scale from EventScaleChanged
@@ -98,6 +115,42 @@ var
   { Events that came while waiting for a reply, oldest first. }
   Kept: array of TWindowMessage;
   Broken: Boolean;
+  { Handles that came with messages, until taken: a message's Reserved
+    is its place here plus one. }
+  ReceivedHandles: array of Int64;
+
+{ Whether a handle coming with a message of Kind is kept for the program. }
+function KeepsHandle(Kind: LongWord): Boolean;
+begin
+  Result := Kind = EventDataDelivered;
+end;
+
+function StoreReceivedHandle(Handle: Int64): LongWord;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to High(ReceivedHandles) do
+    if ReceivedHandles[Index] < 0 then
+    begin
+      ReceivedHandles[Index] := Handle;
+      Exit(Index + 1);
+    end;
+  Insert(Handle, ReceivedHandles, Length(ReceivedHandles));
+  Result := Length(ReceivedHandles);
+end;
+
+function TakeMessageHandle(var Message: TWindowMessage): Int64;
+var
+  Place: LongInt;
+begin
+  Result := -1;
+  Place := LongInt(Message.Reserved) - 1;
+  Message.Reserved := 0;
+  if (Place < 0) or (Place > High(ReceivedHandles)) then
+    Exit;
+  Result := ReceivedHandles[Place];
+  ReceivedHandles[Place] := -1;
+end;
 
 function IsConnected: Boolean;
 begin
@@ -137,18 +190,33 @@ var
   HandleCount: QWord;
   Error: LongInt;
 begin
-  Result := False;
-  Error := ReceiveMessage(DisplayChannel, @Message, SizeOf(Message), Length, Handles, HandleCount);
-  if Error = ErrorWouldBlock then
+  repeat
+    Result := False;
+    Error := ReceiveMessage(DisplayChannel, @Message, SizeOf(Message), Length, Handles, HandleCount);
+    if Error = ErrorWouldBlock then
+      Exit;
+    if Error <> ErrorNone then
+    begin
+      Broken := True;
+      Exit;
+    end;
+    Result := Length = SizeOf(Message);
+    if Result then
+      Message.Reserved := 0;
+    if HandleCount > 0 then
+      if Result and KeepsHandle(Message.Kind) then
+        Message.Reserved := StoreReceivedHandle(Handles[0])
+      else
+        CloseHandle(Handles[0]);
+    { Answered here and now: the program may be waiting for something
+      else, and whoever asked waits for this. }
+    if Result and (Message.Kind = EventDataRender) and Assigned(DataRenderHandler) then
+    begin
+      DataRenderHandler(Message);
+      Continue;
+    end;
     Exit;
-  if Error <> ErrorNone then
-  begin
-    Broken := True;
-    Exit;
-  end;
-  if HandleCount > 0 then
-    CloseHandle(Handles[0]);
-  Result := Length = SizeOf(Message);
+  until False;
 end;
 
 procedure Keep(const Message: TWindowMessage);
