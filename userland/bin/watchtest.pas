@@ -378,7 +378,7 @@ end;
 procedure RunFileChecks;
 begin
   if PathExists(@Folder[0]) then
-    RemoveTree(@Folder[0]);
+    RemoveTree(PChar(@Folder[0]));
   Check('the folder made', CreateDirectory(@Folder[0]) = ErrorNone);
   TestFolder;
   TestSubtree;
@@ -387,7 +387,7 @@ begin
   TestRemovedFolder;
   TestOverflow;
   TestWaitingWithOtherHandles;
-  RemoveTree(@Folder[0]);
+  RemoveTree(PChar(@Folder[0]));
 end;
 
 procedure RunOnSystemVolume;

@@ -39,8 +39,7 @@ procedure RunDigestTool(Algorithm: TDigestAlgorithm);
 
 { Digest of a whole file ('-' for standard input); False on error
   (already reported). }
-function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean; overload;
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean; overload;
+function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean;
 
 implementation
 
@@ -136,11 +135,6 @@ begin
   FinishDigest(Context, Output);
   if Handle <> StandardInputHandle then
     CloseFile(Handle);
-end;
-
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean;
-begin
-  Result := DigestFile(Algorithm, string(Path), Output);
 end;
 
 function DigestHex(Algorithm: TDigestAlgorithm; const Output: TDigestOutput): string;

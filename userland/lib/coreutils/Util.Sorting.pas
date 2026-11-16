@@ -17,27 +17,21 @@
 }
 
 {
-  Stable sorting of pointer arrays (merge sort).
+  Stable sorting (merge sort) of strings and of lists.
 
   The comparison receives two items and returns a negative number,
   zero or a positive number. Equal items keep their original order,
-  which tools such as sort and ls rely on for predictable output.
+  which tools such as sort and ptx rely on for predictable output.
 }
 unit Util.Sorting;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
 uses
   Classes,
   SysUtils;
-
-type
-  TCompareItems = function(First, Second: Pointer; Context: Pointer): Integer;
-
-procedure SortPointers(Items: PPointer; Count: Integer; Compare: TCompareItems; Context: Pointer);
 
 type
   TCompareStrings = function(const First, Second: string): Integer of object;
@@ -50,12 +44,11 @@ procedure SortList(List: TFPList; Compare: TComparePointers);
 
 implementation
 
-uses
-  Runtime.Memory,
-  Sys.Memory;
+type
+  TPointerArray = array of Pointer;
 
-procedure MergeRuns(Source, Target: PPointer; Start, Middle, Finish: Integer;
-  Compare: TCompareItems; Context: Pointer);
+procedure MergePointerRuns(const Source: TPointerArray; var Target: TPointerArray;
+  Start, Middle, Finish: Integer; Compare: TComparePointers);
 var
   Left: Integer;
   Right: Integer;
@@ -67,7 +60,7 @@ begin
   while (Left < Middle) and (Right < Finish) do
   begin
     { Take from the left run on ties to keep the sort stable. }
-    if Compare(Source[Right], Source[Left], Context) < 0 then
+    if Compare(Source[Right], Source[Left]) < 0 then
     begin
       Target[Output] := Source[Right];
       Inc(Right);
@@ -93,26 +86,28 @@ begin
   end;
 end;
 
-procedure SortPointers(Items: PPointer; Count: Integer; Compare: TCompareItems; Context: Pointer);
+procedure SortList(List: TFPList; Compare: TComparePointers);
 var
-  Scratch: PPointer;
-  Source: PPointer;
-  Target: PPointer;
-  Swap: PPointer;
+  Items: TPointerArray;
+  Scratch: TPointerArray;
+  Swap: TPointerArray;
+  Count: Integer;
+  Index: Integer;
   Width: Integer;
   Start: Integer;
   Middle: Integer;
   Finish: Integer;
 begin
+  Count := List.Count;
   if Count < 2 then
     Exit;
-  Scratch := PPointer(AllocateMemory(QWord(Count) * SizeOf(Pointer)));
-  if Scratch = nil then
-    Exit;
-
-  { Bottom-up: merge runs of width 1, 2, 4, ... alternating buffers. }
-  Source := Items;
-  Target := Scratch;
+  Items := nil;
+  SetLength(Items, Count);
+  for Index := 0 to Count - 1 do
+    Items[Index] := List[Index];
+  Scratch := nil;
+  SetLength(Scratch, Count);
+  { Bottom-up: merge runs of width 1, 2, 4, ... alternating arrays. }
   Width := 1;
   while Width < Count do
   begin
@@ -125,52 +120,16 @@ begin
       Finish := Start + 2 * Width;
       if Finish > Count then
         Finish := Count;
-      MergeRuns(Source, Target, Start, Middle, Finish, Compare, Context);
+      MergePointerRuns(Items, Scratch, Start, Middle, Finish, Compare);
       Start := Finish;
     end;
-    Swap := Source;
-    Source := Target;
-    Target := Swap;
+    Swap := Items;
+    Items := Scratch;
+    Scratch := Swap;
     Width := Width * 2;
   end;
-
-  if Source <> Items then
-    CopyMemory(Items, Source, QWord(Count) * SizeOf(Pointer));
-  FreeMemory(Scratch);
-end;
-
-type
-  { Carries a method through SortPointers. }
-  TPointerComparison = class
-  private
-    FCompare: TComparePointers;
-  public
-    constructor Create(Compare: TComparePointers);
-  end;
-
-constructor TPointerComparison.Create(Compare: TComparePointers);
-begin
-  inherited Create;
-  FCompare := Compare;
-end;
-
-function ComparePointersBy(First, Second: Pointer; Context: Pointer): Integer;
-begin
-  Result := TPointerComparison(Context).FCompare(First, Second);
-end;
-
-procedure SortList(List: TFPList; Compare: TComparePointers);
-var
-  Comparison: TPointerComparison;
-begin
-  if List.Count < 2 then
-    Exit;
-  Comparison := TPointerComparison.Create(Compare);
-  try
-    SortPointers(PPointer(List.List), List.Count, @ComparePointersBy, Comparison);
-  finally
-    Comparison.Free;
-  end;
+  for Index := 0 to Count - 1 do
+    List[Index] := Items[Index];
 end;
 
 procedure MergeStringRuns(const Source: TStringArray; var Target: TStringArray;

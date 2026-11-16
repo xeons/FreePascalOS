@@ -23,9 +23,6 @@
   cannot cross volumes, so mv copies and then removes). Errors are
   reported as they happen; the functions return False if anything
   failed but carry on with the rest of the tree.
-
-  The routines work on strings; the PChar forms are kept for the tools
-  not yet moved to strings.
 }
 unit Util.FileTree;
 
@@ -46,23 +43,19 @@ type
   end;
 
 { Copies Source to Target (a file, link or, with Recursive, a tree). }
-function CopyPath(const Source, Target: string; const Options: TCopyOptions): Boolean; overload;
-function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean; overload;
+function CopyPath(const Source, Target: string; const Options: TCopyOptions): Boolean;
 { Removes Path and everything below it. }
-function RemoveTree(const Path: string): Boolean; overload;
-function RemoveTree(Path: PChar): Boolean; overload;
+function RemoveTree(const Path: string): Boolean;
 
 type
   { Called for every path of a walk; returns False if it failed (the
     walk continues, but reports failure). }
   TVisitPathMethod = function(const Path: string; IsDirectory: Boolean): Boolean of object;
-  TVisitPath = function(Path: PChar; IsDirectory: Boolean; Context: Pointer): Boolean;
 
 { Visits Path and, when it is a directory, everything below it (a
   directory before its contents). Symbolic links are visited but not
   followed. Returns False if any visit failed. }
-function WalkTree(const Path: string; Visit: TVisitPathMethod): Boolean; overload;
-function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean; overload;
+function WalkTree(const Path: string; Visit: TVisitPathMethod): Boolean;
 
 implementation
 
@@ -174,11 +167,6 @@ begin
     CopyAttributes(PChar(Target), Information);
 end;
 
-function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
-begin
-  Result := CopyPath(string(Source), string(Target), Options);
-end;
-
 function WalkTree(const Path: string; Visit: TVisitPathMethod): Boolean;
 var
   Information: TFileInformation;
@@ -213,41 +201,6 @@ begin
   end;
 end;
 
-type
-  { Carries a PChar visitor through a walk of the string form. }
-  TPathVisitorAdapter = class
-  private
-    FVisit: TVisitPath;
-    FContext: Pointer;
-  public
-    constructor Create(Visit: TVisitPath; Context: Pointer);
-    function VisitPath(const Path: string; IsDirectory: Boolean): Boolean;
-  end;
-
-constructor TPathVisitorAdapter.Create(Visit: TVisitPath; Context: Pointer);
-begin
-  inherited Create;
-  FVisit := Visit;
-  FContext := Context;
-end;
-
-function TPathVisitorAdapter.VisitPath(const Path: string; IsDirectory: Boolean): Boolean;
-begin
-  Result := FVisit(PChar(Path), IsDirectory, FContext);
-end;
-
-function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;
-var
-  Adapter: TPathVisitorAdapter;
-begin
-  Adapter := TPathVisitorAdapter.Create(Visit, Context);
-  try
-    Result := WalkTree(string(Path), @Adapter.VisitPath);
-  finally
-    Adapter.Free;
-  end;
-end;
-
 function RemoveTree(const Path: string): Boolean;
 var
   Information: TFileInformation;
@@ -276,11 +229,6 @@ begin
     ReportError(Error, Format('cannot remove ''%s''', [Path]));
     Result := False;
   end;
-end;
-
-function RemoveTree(Path: PChar): Boolean;
-begin
-  Result := RemoveTree(string(Path));
 end;
 
 end.
