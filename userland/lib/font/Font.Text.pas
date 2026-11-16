@@ -39,6 +39,7 @@
 unit Font.Text;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -49,7 +50,6 @@ uses
 
 const
   PointsPerInch = 72;
-  MaximumFaces = 128;
 
 type
   { Reads the glyphs of a face known only by its Source; False if it
@@ -57,14 +57,17 @@ type
   TFaceLoader = function(var Face: TFontFace): Boolean;
 
   TFontSet = record
-    Faces: array[0..MaximumFaces - 1] of TFontFace;
+    { Faces[0 .. Count - 1]. }
+    Faces: array of TFontFace;
     Count: LongInt;
     Loader: TFaceLoader;
   end;
 
 { An empty set (with no loader). }
 procedure ClearFontSet(out FontSet: TFontSet);
-{ Adds Face (its glyphs move into the set). False if the set is full. }
+{ Adds Face (its glyphs move into the set). Always True: a set has no
+  limit. Faces picked before stay where they were only while no face is
+  added, so a set is filled before faces are picked from it. }
 function AddFace(var FontSet: TFontSet; const Face: TFontFace): Boolean;
 { The pixel size PointTenths tenths of a point is at Dpi, rounded. }
 function PixelHeightFor(PointTenths, Dpi: LongWord): LongInt;
@@ -77,10 +80,14 @@ function SelectedFaceSize(const FontSet: TFontSet; PointTenths, Dpi: LongWord; B
 
 { How far the pen moves for CodePoint alone (0 for a control character). }
 function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
-function MeasureText(const Face: TFontFace; Text: PChar): LongInt;
+function MeasureText(const Face: TFontFace; Text: PChar): LongInt; overload;
+function MeasureText(const Face: TFontFace; const Text: string): LongInt; overload;
 { Draws Text with the top left of its line at (X, Y), in Color. Returns
   the width. }
 function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; Text: PChar; Color: TColor): LongInt;
+  overload;
+function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
+  Color: TColor): LongInt; overload;
 { One character with the pen at X and its line's top at Y; returns its
   advance (0 for a control character). }
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
@@ -95,19 +102,16 @@ const
   FirstPrintable = $20;
 
 procedure ClearFontSet(out FontSet: TFontSet);
-var
-  Index: LongInt;
 begin
-  for Index := 0 to MaximumFaces - 1 do
-    ClearFace(FontSet.Faces[Index]);
+  FontSet.Faces := nil;
   FontSet.Count := 0;
   FontSet.Loader := nil;
 end;
 
 function AddFace(var FontSet: TFontSet; const Face: TFontFace): Boolean;
 begin
-  if FontSet.Count = MaximumFaces then
-    Exit(False);
+  if FontSet.Count = Length(FontSet.Faces) then
+    SetLength(FontSet.Faces, 2 * FontSet.Count + 16);
   FontSet.Faces[FontSet.Count] := Face;
   Inc(FontSet.Count);
   Result := True;
@@ -219,6 +223,11 @@ begin
   end;
 end;
 
+function MeasureText(const Face: TFontFace; const Text: string): LongInt;
+begin
+  Result := MeasureText(Face, PChar(Text));
+end;
+
 { A bitmap glyph's row: each run of set pixels is one span. }
 procedure DrawBitsRow(const Canvas: TCanvas; Bits: PByte; Width, SurfaceX, SurfaceY: LongInt; Color: TColor);
 var
@@ -303,6 +312,12 @@ begin
     Result := Result + DrawCharacter(Canvas, Face, X + Result, Y, CodePoint, Color);
     Previous := CodePoint;
   end;
+end;
+
+function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
+  Color: TColor): LongInt;
+begin
+  Result := DrawText(Canvas, Face, X, Y, PChar(Text), Color);
 end;
 
 end.

@@ -195,7 +195,7 @@ begin
     NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top,
       TitleButtonRectangle(Window, HitMinimize).Left - Bar.Left - WindowMetric(Window, 2), RectangleHeight(Bar)));
     DrawText(TextClip, TitleFace^, Bar.Left + WindowMetric(Window, Theme.TitleTextIndent),
-      Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, PChar(Window.Title), TextColor);
+      Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title, TextColor);
   end;
   DrawTitleButton(Canvas, Window, HitClose);
   if HasSizeButtons(Window) then
