@@ -33,7 +33,7 @@
 }
 unit Util.Logins;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -62,13 +62,16 @@ type
   end;
 
 { The account named Name; False if there is no such user. }
-function FindLoginAccount(Name: PChar; out Account: TLoginAccount): Boolean;
+function FindLoginAccount(Name: PChar; out Account: TLoginAccount): Boolean; overload;
+function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean; overload;
 { True if Password is the account's (or it needs none); False if it is
   wrong or the account is locked. }
 function PasswordIsRight(const Account: TLoginAccount; Password: PChar): Boolean;
 { The user the kernel option autologin= names, into Name; False when
   none is named. }
 function AutomaticLoginUser(Name: PChar; Capacity: PtrUInt): Boolean;
+{ The same as a string. }
+function AutomaticLoginName(out Name: string): Boolean;
 { Starts Path (with Arguments, nil terminated) as the account's user:
   its environment, in its home directory; the handles, group and
   session as Options say. A process handle, or minus an error. }
@@ -168,6 +171,22 @@ begin
   Options.WorkingDirectory := @Account.Home[0];
   Options.Identity := @Account.Identity;
   Result := StartProgram(Path, Arguments, Options);
+end;
+
+function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean;
+begin
+  Result := FindLoginAccount(PChar(Name), Account);
+end;
+
+function AutomaticLoginName(out Name: string): Boolean;
+var
+  Buffer: array[0..LoginNameCapacity - 1] of Char;
+begin
+  Result := AutomaticLoginUser(@Buffer[0], LoginNameCapacity);
+  if Result then
+    Name := PChar(@Buffer[0])
+  else
+    Name := '';
 end;
 
 end.

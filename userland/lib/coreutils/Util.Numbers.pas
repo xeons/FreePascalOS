@@ -37,6 +37,12 @@ function ParseUnsignedDecimal(const Text: string; out Value: QWord): Boolean;
 { Hexadecimal digits (no prefix), the whole text. }
 function ParseHexadecimalDigits(const Text: string; out Value: QWord): Boolean;
 
+{ Value in octal, at least Digits digits (zero filled): what Sys.Format's
+  "%04o" printed, which SysUtils' Format cannot. }
+function OctalText(Value: QWord; Digits: Integer): string;
+{ Bytes in lower case hexadecimal, two digits each. }
+function HexText(const Bytes: array of Byte; Count: Integer): string;
+
 implementation
 
 uses
@@ -55,6 +61,32 @@ end;
 function ParseHexadecimalDigits(const Text: string; out Value: QWord): Boolean;
 begin
   Result := ParseHexadecimal(PChar(Text), Value);
+end;
+
+function OctalText(Value: QWord; Digits: Integer): string;
+begin
+  Result := '';
+  repeat
+    Result := Char(Ord('0') + (Value and 7)) + Result;
+    Value := Value shr 3;
+  until Value = 0;
+  while Length(Result) < Digits do
+    Result := '0' + Result;
+end;
+
+function HexText(const Bytes: array of Byte; Count: Integer): string;
+const
+  HexDigits: array[0..15] of Char = '0123456789abcdef';
+var
+  Index: Integer;
+begin
+  Result := '';
+  SetLength(Result, 2 * Count);
+  for Index := 0 to Count - 1 do
+  begin
+    Result[2 * Index + 1] := HexDigits[Bytes[Index] shr 4];
+    Result[2 * Index + 2] := HexDigits[Bytes[Index] and 15];
+  end;
 end;
 
 end.

@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{
+(*
   Regular expressions, POSIX basic (BRE) and extended (ERE) syntax.
 
     .          any character
@@ -35,7 +35,7 @@
 
     if CompileExpression(Text, SyntaxBasic, Expression) then
       if SearchExpression(Expression, Subject, Match) then ...
-}
+*)
 unit Util.RegularExpressions;
 
 {$mode objfpc}{$H+}
@@ -346,7 +346,7 @@ begin
   Result^.Character := Character;
 end;
 
-{ Reads "{m}", "{m,}" or "{m,n}" (after the brace). }
+(* Reads "{m}", "{m,}" or "{m,n}" (after the brace). *)
 procedure ParseBounds(var Parser: TParser; Node: PExpressionNode);
 var
   Value: Integer;

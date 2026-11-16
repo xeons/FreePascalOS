@@ -43,6 +43,11 @@
       end;
     for Operand in CommandLine.Operands do
       ...
+
+  OptionGiven and OptionValue tell afterwards whether an option was
+  given and its (last) value, which may be empty. A program that
+  rewrites its arguments first (an old "-5" form, say) passes the
+  rewritten list to the constructor.
 }
 unit Util.CommandLine;
 
@@ -65,6 +70,8 @@ type
   private
     FOptions: array of TCommandOption;
     FUsage: string;
+    FArguments: TStringArray;
+    { The next argument to look at (an index into FArguments). }
     FArgumentIndex: Integer;
     { The argument holding a group of short options and the position
       inside it; 0 when not in a group. }
@@ -72,6 +79,9 @@ type
     FGroupPosition: Integer;
     FOnlyOperandsRemain: Boolean;
     FOperands: TStringArray;
+    FOperandPositions: array of Integer;
+    FGivenCodes: array of Integer;
+    FGivenValues: TStringArray;
     FNegativeNumbersAreOperands: Boolean;
     FStopAtFirstOperand: Boolean;
     procedure ShowHelp;
@@ -81,16 +91,31 @@ type
     function FindLongOption(const Name: string; out IsAmbiguous: Boolean): Integer;
     function ParseLongOption(const Text: string; out Code: Integer; out Value: string): Boolean;
     function ContinueGroup(out Code: Integer; out Value: string): Boolean;
+    function ReadNextOption(out Code: Integer; out Value: string): Boolean;
+    procedure RememberOption(Code: Integer; const Value: string);
+    function FindGivenOption(Code: Integer): Integer;
     function GetOperandCount: Integer;
+    function GetOperandPosition(Index: Integer): Integer;
   public
-    constructor Create(const Options: array of TCommandOption; const Usage: string);
+    { Parses the program's own arguments. }
+    constructor Create(const Options: array of TCommandOption; const Usage: string); overload;
+    { Parses Arguments (without argument 0) instead. }
+    constructor Create(const Options: array of TCommandOption; const Usage: string;
+      const Arguments: TStringArray); overload;
     { Returns the next option; False once all arguments are consumed. }
     function NextOption(out Code: Integer; out Value: string): Boolean;
+    { Whether an option with Code was returned by NextOption, and the
+      value it had the last time ('' for none). }
+    function OptionGiven(Code: Integer): Boolean;
+    function OptionValue(Code: Integer): string;
     { Collects the remaining operands without looking for options (for
       programs that take no options at all). }
     procedure ReadOperandsOnly;
     property Operands: TStringArray read FOperands write FOperands;
     property OperandCount: Integer read GetOperandCount;
+    { Where operand Index was among the arguments: 0 for the first one
+      after argument 0 (-1 for an operand the program added itself). }
+    property OperandPositions[Index: Integer]: Integer read GetOperandPosition;
     { Treat "-5" as an operand rather than option 5 (seq, and others
       that take negative numbers). }
     property NegativeNumbersAreOperands: Boolean read FNegativeNumbersAreOperands
@@ -129,12 +154,20 @@ var
   Index: Integer;
 begin
   Result := nil;
+  if ArgumentTotal < 2 then
+    Exit;
   SetLength(Result, ArgumentTotal - 1);
   for Index := 1 to ArgumentTotal - 1 do
     Result[Index - 1] := Argument(Index);
 end;
 
 constructor TCommandLine.Create(const Options: array of TCommandOption; const Usage: string);
+begin
+  Create(Options, Usage, ProgramArguments);
+end;
+
+constructor TCommandLine.Create(const Options: array of TCommandOption; const Usage: string;
+  const Arguments: TStringArray);
 var
   Index: Integer;
 begin
@@ -143,7 +176,64 @@ begin
   for Index := 0 to High(Options) do
     FOptions[Index] := Options[Index];
   FUsage := Usage;
-  FArgumentIndex := 1;
+  FArguments := Copy(Arguments);
+  FArgumentIndex := 0;
+end;
+
+function TCommandLine.GetOperandPosition(Index: Integer): Integer;
+begin
+  if Index <= High(FOperandPositions) then
+    Result := FOperandPositions[Index]
+  else
+    Result := -1;
+end;
+
+function TCommandLine.FindGivenOption(Code: Integer): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FGivenCodes) do
+    if FGivenCodes[Index] = Code then
+      Exit(Index);
+  Result := -1;
+end;
+
+procedure TCommandLine.RememberOption(Code: Integer; const Value: string);
+var
+  Index: Integer;
+begin
+  Index := FindGivenOption(Code);
+  if Index < 0 then
+  begin
+    Index := Length(FGivenCodes);
+    SetLength(FGivenCodes, Index + 1);
+    SetLength(FGivenValues, Index + 1);
+    FGivenCodes[Index] := Code;
+  end;
+  FGivenValues[Index] := Value;
+end;
+
+function TCommandLine.OptionGiven(Code: Integer): Boolean;
+begin
+  Result := FindGivenOption(Code) >= 0;
+end;
+
+function TCommandLine.OptionValue(Code: Integer): string;
+var
+  Index: Integer;
+begin
+  Index := FindGivenOption(Code);
+  if Index >= 0 then
+    Result := FGivenValues[Index]
+  else
+    Result := '';
+end;
+
+function TCommandLine.NextOption(out Code: Integer; out Value: string): Boolean;
+begin
+  Result := ReadNextOption(Code, Value);
+  if Result then
+    RememberOption(Code, Value);
 end;
 
 function TCommandLine.GetOperandCount: Integer;
@@ -179,6 +269,8 @@ procedure TCommandLine.AddOperand(const Operand: string);
 begin
   SetLength(FOperands, Length(FOperands) + 1);
   FOperands[High(FOperands)] := Operand;
+  SetLength(FOperandPositions, Length(FOperands));
+  FOperandPositions[High(FOperandPositions)] := FArgumentIndex - 1;
 end;
 
 function TCommandLine.FindShortOption(Name: Char): Integer;
@@ -253,9 +345,9 @@ begin
   begin
     if EqualsPosition > 0 then
       Value := Copy(Text, EqualsPosition + 1, MaxInt)
-    else if FArgumentIndex < ArgumentTotal then
+    else if FArgumentIndex < Length(FArguments) then
     begin
-      Value := Argument(FArgumentIndex);
+      Value := FArguments[FArgumentIndex];
       Inc(FArgumentIndex);
     end
     else
@@ -282,9 +374,9 @@ begin
   begin
     if FGroupPosition <= Length(FGroup) then
       Value := Copy(FGroup, FGroupPosition, MaxInt)
-    else if FArgumentIndex < ArgumentTotal then
+    else if FArgumentIndex < Length(FArguments) then
     begin
-      Value := Argument(FArgumentIndex);
+      Value := FArguments[FArgumentIndex];
       Inc(FArgumentIndex);
     end
     else
@@ -297,7 +389,7 @@ begin
   Result := True;
 end;
 
-function TCommandLine.NextOption(out Code: Integer; out Value: string): Boolean;
+function TCommandLine.ReadNextOption(out Code: Integer; out Value: string): Boolean;
 var
   Text: string;
 begin
@@ -307,9 +399,9 @@ begin
   if FGroupPosition > 0 then
     Exit(ContinueGroup(Code, Value));
 
-  while FArgumentIndex < ArgumentTotal do
+  while FArgumentIndex < Length(FArguments) do
   begin
-    Text := Argument(FArgumentIndex);
+    Text := FArguments[FArgumentIndex];
     Inc(FArgumentIndex);
 
     if FOnlyOperandsRemain or (Length(Text) < 2) or (Text[1] <> '-') or

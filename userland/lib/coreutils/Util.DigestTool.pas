@@ -28,8 +28,7 @@
 }
 unit Util.DigestTool;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -40,22 +39,22 @@ procedure RunDigestTool(Algorithm: TDigestAlgorithm);
 
 { Digest of a whole file ('-' for standard input); False on error
   (already reported). }
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean;
+function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean; overload;
+function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean; overload;
 
 implementation
 
 uses
+  SysUtils,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
   OptionBinary = 1;
@@ -69,117 +68,91 @@ const
   OptionStrict = 9;
   OptionIgnoreMissing = 10;
 
-  HexDigits: array[0..15] of Char = '0123456789abcdef';
+  ReadBufferSize = 65536;
 
-var
-  Algorithm: TDigestAlgorithm;
+type
+  { What -c reads and how much of it it says. }
+  TDigestChecker = class
+  private
+    FAlgorithm: TDigestAlgorithm;
+    FQuiet: Boolean;
+    FStatusOnly: Boolean;
+    FWarn: Boolean;
+    FStrict: Boolean;
+    FIgnoreMissing: Boolean;
+    function ParseCheckLine(const Line: string; out Digest, Name: string): Boolean;
+    function DigestMatches(const Output: TDigestOutput; const Digest: string): Boolean;
+  public
+    constructor Create(Algorithm: TDigestAlgorithm);
+    { Returns False if any check failed. }
+    function CheckList(const ListPath: string): Boolean;
+    property Quiet: Boolean read FQuiet write FQuiet;
+    property StatusOnly: Boolean read FStatusOnly write FStatusOnly;
+    property Warn: Boolean read FWarn write FWarn;
+    property Strict: Boolean read FStrict write FStrict;
+    property IgnoreMissing: Boolean read FIgnoreMissing write FIgnoreMissing;
+  end;
 
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean;
+function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean;
 var
   Handle: Int64;
   Context: TDigestContext;
-  Buffer: PByte;
+  Buffer: array of Byte;
   Count: Int64;
   Information: TFileInformation;
 begin
-  if TextIsEqual(Path, '-') then
+  if Path = '-' then
     Handle := StandardInputHandle
   else
   begin
-    Handle := OpenFile(Path, OpenRead);
+    Handle := OpenFile(PChar(Path), OpenRead);
     if Handle < 0 then
     begin
-      ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Path)]);
+      ReportError(ErrorCodeOf(Handle), Path);
       Exit(False);
     end;
     if (GetHandleInformation(Handle, Information) = ErrorNone) and (Information.Kind = KindDirectory) then
     begin
-      ReportError(ErrorIsDirectory, '%s', [ArgumentText(Path)]);
+      ReportError(ErrorIsDirectory, Path);
       CloseFile(Handle);
       Exit(False);
     end;
   end;
 
-  Buffer := PByte(AllocateMemory(65536));
+  Buffer := nil;
+  SetLength(Buffer, ReadBufferSize);
   BeginDigest(Context, Algorithm);
   Result := True;
   repeat
-    Count := ReadFile(Handle, Buffer, 65536);
+    Count := ReadFile(Handle, @Buffer[0], ReadBufferSize);
     if Count < 0 then
     begin
-      ReportError(ErrorCodeOf(Count), '%s', [ArgumentText(Path)]);
+      ReportError(ErrorCodeOf(Count), Path);
       Result := False;
       Break;
     end;
-    UpdateDigest(Context, Buffer, QWord(Count));
+    UpdateDigest(Context, @Buffer[0], QWord(Count));
   until Count = 0;
   FinishDigest(Context, Output);
-  FreeMemory(Buffer);
   if Handle <> StandardInputHandle then
     CloseFile(Handle);
 end;
 
-procedure WriteHex(const Output: TDigestOutput);
+function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean;
+begin
+  Result := DigestFile(Algorithm, string(Path), Output);
+end;
+
+function DigestHex(Algorithm: TDigestAlgorithm; const Output: TDigestOutput): string;
 var
   Index: Integer;
 begin
+  Result := '';
   for Index := 0 to DigestSize(Algorithm) - 1 do
-  begin
-    WriteCharacter(StandardOutput, HexDigits[Output[Index] shr 4]);
-    WriteCharacter(StandardOutput, HexDigits[Output[Index] and 15]);
-  end;
+    Result := Result + LowerCase(IntToHex(Output[Index], 2));
 end;
 
-function HexEquals(const Output: TDigestOutput; Text: PChar): Boolean;
-var
-  Index: Integer;
-begin
-  if Integer(TextLength(Text)) <> 2 * DigestSize(Algorithm) then
-    Exit(False);
-  for Index := 0 to DigestSize(Algorithm) - 1 do
-  begin
-    if (ToLowerCase(Text[2 * Index]) <> HexDigits[Output[Index] shr 4]) or
-       (ToLowerCase(Text[2 * Index + 1]) <> HexDigits[Output[Index] and 15]) then
-      Exit(False);
-  end;
-  Result := True;
-end;
-
-{ Splits a check line into digest and file name; False if malformed. }
-function ParseCheckLine(Line: PChar; out Digest, Name: PChar): Boolean;
-var
-  TagPrefix: TTextBuilder;
-  Close: PtrInt;
-begin
-  Digest := nil;
-  Name := nil;
-  BeginText(TagPrefix);
-  AppendText(TagPrefix, DigestTagName(Algorithm));
-  AppendText(TagPrefix, ' (');
-  if TextStartsWith(Line, TagPrefix.Text) then
-  begin
-    { ALGORITHM (NAME) = DIGEST }
-    Name := Line + TagPrefix.Length;
-    Close := FindText(Name, ') = ');
-    DiscardText(TagPrefix);
-    if Close < 0 then
-      Exit(False);
-    Name[Close] := #0;
-    Digest := Name + Close + 4;
-    Exit(True);
-  end;
-  DiscardText(TagPrefix);
-  { DIGEST  NAME or DIGEST *NAME }
-  Close := FindCharacter(Line, ' ');
-  if (Close <= 0) or ((Line[Close + 1] <> ' ') and (Line[Close + 1] <> '*')) then
-    Exit(False);
-  Line[Close] := #0;
-  Digest := Line;
-  Name := Line + Close + 2;
-  Result := Name^ <> #0;
-end;
-
-function PluralSuffix(Count: Integer): PChar;
+function PluralSuffix(Count: Integer): string;
 begin
   if Count = 1 then
     Result := ''
@@ -187,21 +160,52 @@ begin
     Result := 's';
 end;
 
-var
-  Quiet: Boolean;
-  StatusOnly: Boolean;
-  Warn: Boolean;
-  Strict: Boolean;
-  IgnoreMissing: Boolean;
+constructor TDigestChecker.Create(Algorithm: TDigestAlgorithm);
+begin
+  inherited Create;
+  FAlgorithm := Algorithm;
+end;
 
-{ Returns False if any check failed. }
-function CheckList(ListPath: PChar): Boolean;
+function TDigestChecker.DigestMatches(const Output: TDigestOutput; const Digest: string): Boolean;
+begin
+  Result := LowerCase(Digest) = DigestHex(FAlgorithm, Output);
+end;
+
+{ Splits a check line into digest and file name; False if malformed. }
+function TDigestChecker.ParseCheckLine(const Line: string; out Digest, Name: string): Boolean;
+var
+  TagPrefix: string;
+  Close: Integer;
+begin
+  Digest := '';
+  Name := '';
+  TagPrefix := string(DigestTagName(FAlgorithm)) + ' (';
+  if StartsStr(TagPrefix, Line) then
+  begin
+    { ALGORITHM (NAME) = DIGEST }
+    Close := PosEx(') = ', Line, Length(TagPrefix) + 1);
+    if Close = 0 then
+      Exit(False);
+    Name := Copy(Line, Length(TagPrefix) + 1, Close - Length(TagPrefix) - 1);
+    Digest := Copy(Line, Close + 4, MaxInt);
+    Exit(True);
+  end;
+  { DIGEST  NAME or DIGEST *NAME }
+  Close := Pos(' ', Line);
+  if (Close <= 1) or (Close = Length(Line)) or not (Line[Close + 1] in [' ', '*']) then
+    Exit(False);
+  Digest := Copy(Line, 1, Close - 1);
+  Name := Copy(Line, Close + 2, MaxInt);
+  Result := Name <> '';
+end;
+
+function TDigestChecker.CheckList(const ListPath: string): Boolean;
 var
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
-  Digest: PChar;
-  Name: PChar;
+  Digest: string;
+  Name: string;
   Output: TDigestOutput;
   LineNumber: Integer;
   Malformed: Integer;
@@ -217,82 +221,60 @@ begin
   Mismatched := 0;
   Unreadable := 0;
   Checked := 0;
-  while ReadLine(Stream, Line, HadLineEnd) do
+  while ReadTextLine(Stream, Line, HadLineEnd) do
   begin
     Inc(LineNumber);
     if not ParseCheckLine(Line, Digest, Name) then
     begin
       Inc(Malformed);
       if Warn then
-        Report('%s: %d: improperly formatted %s checksum line', [ArgumentText(ListPath),
-          ArgumentNumber(LineNumber), ArgumentText(DigestTagName(Algorithm))]);
-      FreeMemory(Line);
+        Report(Format('%s: %d: improperly formatted %s checksum line',
+          [ListPath, LineNumber, string(DigestTagName(FAlgorithm))]));
       Continue;
     end;
-    if IgnoreMissing and not PathExists(Name) then
-    begin
-      FreeMemory(Line);
+    if IgnoreMissing and not PathExists(PChar(Name)) then
       Continue;
-    end;
     Inc(Checked);
-    if not DigestFile(Algorithm, Name, Output) then
+    if not DigestFile(FAlgorithm, Name, Output) then
     begin
       Inc(Unreadable);
       if not StatusOnly then
-        WriteFormatted(StandardOutput, '%s: FAILED open or read'#10, [ArgumentText(Name)]);
+        PrintStringLine(Name + ': FAILED open or read');
     end
-    else if HexEquals(Output, Digest) then
+    else if DigestMatches(Output, Digest) then
     begin
       if not Quiet and not StatusOnly then
-        WriteFormatted(StandardOutput, '%s: OK'#10, [ArgumentText(Name)]);
+        PrintStringLine(Name + ': OK');
     end
     else
     begin
       Inc(Mismatched);
       if not StatusOnly then
-        WriteFormatted(StandardOutput, '%s: FAILED'#10, [ArgumentText(Name)]);
+        PrintStringLine(Name + ': FAILED');
     end;
-    FreeMemory(Line);
   end;
   CloseInput(Stream);
 
   if not StatusOnly then
   begin
     if Malformed > 0 then
-      Report('WARNING: %d line%s improperly formatted', [ArgumentNumber(Malformed),
-        ArgumentText(PluralSuffix(Malformed))]);
+      Report(Format('WARNING: %d line%s improperly formatted', [Malformed, PluralSuffix(Malformed)]));
     if Unreadable > 0 then
-      Report('WARNING: %d listed file%s could not be read', [ArgumentNumber(Unreadable),
-        ArgumentText(PluralSuffix(Unreadable))]);
+      Report(Format('WARNING: %d listed file%s could not be read', [Unreadable, PluralSuffix(Unreadable)]));
     if Mismatched > 0 then
-      Report('WARNING: %d computed checksum%s did NOT match', [ArgumentNumber(Mismatched),
-        ArgumentText(PluralSuffix(Mismatched))]);
+      Report(Format('WARNING: %d computed checksum%s did NOT match', [Mismatched, PluralSuffix(Mismatched)]));
   end;
   if (Checked = 0) and (Malformed > 0) then
   begin
-    Report('%s: no properly formatted checksum lines found', [ArgumentText(ListPath)]);
+    Report(ListPath + ': no properly formatted checksum lines found');
     Exit(False);
   end;
   Result := (Mismatched = 0) and (Unreadable = 0) and not (Strict and (Malformed > 0));
 end;
 
-procedure RunDigestTool(Algorithm: TDigestAlgorithm);
-var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
-  Binary: Boolean;
-  Tagged: Boolean;
-  LineEnd: Char;
-  Check: Boolean;
-  Index: Integer;
-  Output: TDigestOutput;
-  ExitStatus: LongInt;
-  Usage: TTextBuilder;
+function UsageText(Algorithm: TDigestAlgorithm): string;
 begin
-  Util.DigestTool.Algorithm := Algorithm;
-  BeginText(Usage);
-  AppendFormatted(Usage, 'Usage: %s [OPTION]... [FILE]...'#10 +
+  Result := Format('Usage: %s [OPTION]... [FILE]...'#10 +
     'Print or check %s checksums.'#10 +
     'With no FILE, or when FILE is -, read standard input.'#10#10 +
     '  -b, --binary          read in binary mode (marks names with *)'#10 +
@@ -306,74 +288,78 @@ begin
     '      --status          don''t output anything, status code shows success'#10 +
     '      --strict          exit non-zero for improperly formatted checksum lines'#10 +
     '  -w, --warn            warn about improperly formatted checksum lines'#10,
-    [ArgumentText(ProgramName), ArgumentText(DigestTagName(Algorithm))]);
+    [ProgramNameText, string(DigestTagName(Algorithm))]);
+end;
 
+procedure RunDigestTool(Algorithm: TDigestAlgorithm);
+var
+  CommandLine: TCommandLine;
+  Checker: TDigestChecker;
+  Code: Integer;
+  Value: string;
+  Binary: Boolean;
+  Tagged: Boolean;
+  LineEnd: Char;
+  Check: Boolean;
+  Path: string;
+  Output: TDigestOutput;
+  ExitStatus: LongInt;
+begin
   Binary := False;
   Tagged := False;
   LineEnd := #10;
   Check := False;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'binary', False, OptionBinary),
-    OptionDefinition('t', 'text', False, OptionText),
-    OptionDefinition(#0, 'tag', False, OptionTag),
-    OptionDefinition('z', 'zero', False, OptionZero),
-    OptionDefinition('c', 'check', False, OptionCheck),
-    OptionDefinition(#0, 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'status', False, OptionStatus),
-    OptionDefinition('w', 'warn', False, OptionWarn),
-    OptionDefinition(#0, 'strict', False, OptionStrict),
-    OptionDefinition(#0, 'ignore-missing', False, OptionIgnoreMissing)], Usage.Text);
-  while NextOption(Parser, Code, Value) do
+  Checker := TDigestChecker.Create(Algorithm);
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'binary', False, OptionBinary),
+    CommandOption('t', 'text', False, OptionText),
+    CommandOption(#0, 'tag', False, OptionTag),
+    CommandOption('z', 'zero', False, OptionZero),
+    CommandOption('c', 'check', False, OptionCheck),
+    CommandOption(#0, 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'status', False, OptionStatus),
+    CommandOption('w', 'warn', False, OptionWarn),
+    CommandOption(#0, 'strict', False, OptionStrict),
+    CommandOption(#0, 'ignore-missing', False, OptionIgnoreMissing)], UsageText(Algorithm));
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBinary: Binary := True;
       OptionText: Binary := False;
       OptionTag: Tagged := True;
       OptionZero: LineEnd := #0;
       OptionCheck: Check := True;
-      OptionQuiet: Quiet := True;
-      OptionStatus: StatusOnly := True;
-      OptionWarn: Warn := True;
-      OptionStrict: Strict := True;
-      OptionIgnoreMissing: IgnoreMissing := True;
+      OptionQuiet: Checker.Quiet := True;
+      OptionStatus: Checker.StatusOnly := True;
+      OptionWarn: Checker.Warn := True;
+      OptionStrict: Checker.Strict := True;
+      OptionIgnoreMissing: Checker.IgnoreMissing := True;
     end;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Path in CommandLine.Operands do
   begin
     if Check then
     begin
-      if not CheckList(Parser.Operands[Index]) then
+      if not Checker.CheckList(Path) then
         ExitStatus := 1;
       Continue;
     end;
-    if not DigestFile(Algorithm, Parser.Operands[Index], Output) then
+    if not DigestFile(Algorithm, Path, Output) then
     begin
       ExitStatus := 1;
       Continue;
     end;
     if Tagged then
-    begin
-      WriteFormatted(StandardOutput, '%s (%s) = ', [ArgumentText(DigestTagName(Algorithm)),
-        ArgumentText(Parser.Operands[Index])]);
-      WriteHex(Output);
-    end
+      PrintString(Format('%s (%s) = ', [string(DigestTagName(Algorithm)), Path]) +
+        DigestHex(Algorithm, Output))
+    else if Binary then
+      PrintString(DigestHex(Algorithm, Output) + ' *' + Path)
     else
-    begin
-      WriteHex(Output);
-      if Binary then
-        WriteText(StandardOutput, ' *')
-      else
-        WriteText(StandardOutput, '  ');
-      WriteText(StandardOutput, Parser.Operands[Index]);
-    end;
-    WriteCharacter(StandardOutput, LineEnd);
+      PrintString(DigestHex(Algorithm, Output) + '  ' + Path);
+    PrintString(LineEnd);
   end;
-  DiscardText(Usage);
   Halt(ExitStatus);
 end;
 

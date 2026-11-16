@@ -80,6 +80,10 @@ type
 
 function TextVector(const Items: array of string): TTextVector;
 
+{ Finds Name in PATH (or takes it as a path if it contains '/'); False
+  if it is not there. }
+function FindProgramPath(const Name: string; out Path: string): Boolean;
+
 { Parses "TERM", "SIGTERM" or "15"; returns -1 if unknown. }
 function ParseSignal(Text: PChar): Integer; overload;
 function ParseSignal(const Text: string): Integer; overload;
@@ -272,6 +276,17 @@ end;
 function SignalNameText(Number: Integer): string;
 begin
   Result := SignalName(Number);
+end;
+
+function FindProgramPath(const Name: string; out Path: string): Boolean;
+var
+  Buffer: array[0..ProgramPathCapacity - 1] of Char;
+begin
+  Result := FindProgram(PChar(Name), @Buffer[0], ProgramPathCapacity);
+  if Result then
+    Path := PChar(@Buffer[0])
+  else
+    Path := '';
 end;
 
 end.

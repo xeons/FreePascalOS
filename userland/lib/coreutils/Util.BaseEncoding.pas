@@ -34,8 +34,7 @@
 }
 unit Util.BaseEncoding;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -51,341 +50,371 @@ procedure RunBaseEncodingTool(Default: TBaseEncoding; AllowSelection: Boolean);
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers;
 
 const
-  Base64Alphabet: PChar = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  Base64UrlAlphabet: PChar = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  Base32Alphabet: PChar = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  Base32HexAlphabet: PChar = '0123456789ABCDEFGHIJKLMNOPQRSTUV';
-  Base16Alphabet: PChar = '0123456789ABCDEF';
-  Z85Alphabet: PChar = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#';
+  Base64Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  Base64UrlAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  Base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  Base32HexAlphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUV';
+  Base16Alphabet = '0123456789ABCDEF';
+  Base2Alphabet = '01';
+  Z85Alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#';
 
   OptionDecode = 1;
   OptionIgnoreGarbage = 2;
   OptionWrap = 3;
   OptionFirstEncoding = 10;
 
+  DefaultWrapColumn = 76;
+  ReadBufferSize = 4096;
+
 type
-  { A bit stream encoder/decoder state shared by the base 64/32/16/2
-    encodings: bits collect in Accumulator. }
-  TCoder = record
-    Encoding: TBaseEncoding;
-    Alphabet: PChar;
-    BitsPerSymbol: Integer;
-    { Bytes per group and symbols per group (for padding). }
-    GroupBytes: Integer;
-    GroupSymbols: Integer;
-    Accumulator: QWord;
-    AccumulatedBits: Integer;
-    SymbolsInGroup: Integer;
+  { The encoder and decoder of one encoding. The base 64/32/16/2
+    encodings collect bits in Accumulator; Z85 works in groups of four
+    bytes and five symbols. }
+  TBaseCoder = class
+  private
+    FEncoding: TBaseEncoding;
+    FAlphabet: string;
+    FBitsPerSymbol: Integer;
+    { Symbols per group (for padding). }
+    FGroupSymbols: Integer;
+    FAccumulator: QWord;
+    FAccumulatedBits: Integer;
+    FSymbolsInGroup: Integer;
     { Output column, for wrapping. }
-    Column: Integer;
-    WrapColumn: Integer;
-    IgnoreGarbage: Boolean;
-    HadError: Boolean;
-    Z85Buffer: array[0..4] of Byte;
-    Z85Fill: Integer;
+    FColumn: Integer;
+    FWrapColumn: Integer;
+    FIgnoreGarbage: Boolean;
+    FHadError: Boolean;
+    FZ85Buffer: array[0..4] of Byte;
+    FZ85Fill: Integer;
+    procedure EmitSymbol(Symbol: Char);
+    function AlphabetSymbol(Value: QWord): Char;
+    procedure EncodeZ85Group;
+    function SymbolValue(Symbol: Char): Integer;
+    procedure DecodeZ85Value(Value: Integer);
+  public
+    constructor Create(Encoding: TBaseEncoding);
+    procedure EncodeByte(Value: Byte);
+    procedure FinishEncoding;
+    procedure DecodeSymbol(Symbol: Char);
+    procedure FinishDecoding;
+    property WrapColumn: Integer read FWrapColumn write FWrapColumn;
+    property IgnoreGarbage: Boolean read FIgnoreGarbage write FIgnoreGarbage;
+    property HadError: Boolean read FHadError;
   end;
 
-procedure PrepareCoder(out Coder: TCoder; Encoding: TBaseEncoding);
+constructor TBaseCoder.Create(Encoding: TBaseEncoding);
 begin
-  ZeroMemory(@Coder, SizeOf(Coder));
-  Coder.Encoding := Encoding;
-  Coder.WrapColumn := 76;
+  inherited Create;
+  FEncoding := Encoding;
+  FWrapColumn := DefaultWrapColumn;
   case Encoding of
     EncodingBase64, EncodingBase64Url:
       begin
         if Encoding = EncodingBase64 then
-          Coder.Alphabet := Base64Alphabet
+          FAlphabet := Base64Alphabet
         else
-          Coder.Alphabet := Base64UrlAlphabet;
-        Coder.BitsPerSymbol := 6;
-        Coder.GroupBytes := 3;
-        Coder.GroupSymbols := 4;
+          FAlphabet := Base64UrlAlphabet;
+        FBitsPerSymbol := 6;
+        FGroupSymbols := 4;
       end;
     EncodingBase32, EncodingBase32Hex:
       begin
         if Encoding = EncodingBase32 then
-          Coder.Alphabet := Base32Alphabet
+          FAlphabet := Base32Alphabet
         else
-          Coder.Alphabet := Base32HexAlphabet;
-        Coder.BitsPerSymbol := 5;
-        Coder.GroupBytes := 5;
-        Coder.GroupSymbols := 8;
+          FAlphabet := Base32HexAlphabet;
+        FBitsPerSymbol := 5;
+        FGroupSymbols := 8;
       end;
     EncodingBase16:
       begin
-        Coder.Alphabet := Base16Alphabet;
-        Coder.BitsPerSymbol := 4;
-        Coder.GroupBytes := 1;
-        Coder.GroupSymbols := 2;
+        FAlphabet := Base16Alphabet;
+        FBitsPerSymbol := 4;
+        FGroupSymbols := 2;
       end;
     EncodingZ85:
-      Coder.Alphabet := Z85Alphabet;
+      FAlphabet := Z85Alphabet;
   else
     begin
-      Coder.Alphabet := '01';
-      Coder.BitsPerSymbol := 1;
-      Coder.GroupBytes := 1;
-      Coder.GroupSymbols := 8;
+      FAlphabet := Base2Alphabet;
+      FBitsPerSymbol := 1;
+      FGroupSymbols := 8;
     end;
   end;
 end;
 
-procedure EmitSymbol(var Coder: TCoder; Symbol: Char);
+function TBaseCoder.AlphabetSymbol(Value: QWord): Char;
 begin
-  if (Coder.WrapColumn > 0) and (Coder.Column = Coder.WrapColumn) then
+  Result := FAlphabet[Value + 1];
+end;
+
+procedure TBaseCoder.EmitSymbol(Symbol: Char);
+begin
+  if (FWrapColumn > 0) and (FColumn = FWrapColumn) then
   begin
     WriteCharacter(StandardOutput, #10);
-    Coder.Column := 0;
+    FColumn := 0;
   end;
   WriteCharacter(StandardOutput, Symbol);
-  Inc(Coder.Column);
+  Inc(FColumn);
 end;
 
 { --- Encoding -------------------------------------------------------- }
 
-procedure EncodeZ85Group(var Coder: TCoder);
+procedure TBaseCoder.EncodeZ85Group;
 var
   Value: QWord;
-  Digits: array[0..4] of Char;
+  Digits: string[5];
   Index: Integer;
 begin
-  Value := (QWord(Coder.Z85Buffer[0]) shl 24) or (QWord(Coder.Z85Buffer[1]) shl 16) or
-    (QWord(Coder.Z85Buffer[2]) shl 8) or Coder.Z85Buffer[3];
-  for Index := 4 downto 0 do
+  Value := (QWord(FZ85Buffer[0]) shl 24) or (QWord(FZ85Buffer[1]) shl 16) or
+    (QWord(FZ85Buffer[2]) shl 8) or FZ85Buffer[3];
+  Digits := '';
+  for Index := 1 to 5 do
   begin
-    Digits[Index] := Coder.Alphabet[Value mod 85];
+    Digits := AlphabetSymbol(Value mod 85) + Digits;
     Value := Value div 85;
   end;
-  for Index := 0 to 4 do
-    EmitSymbol(Coder, Digits[Index]);
-  Coder.Z85Fill := 0;
+  for Index := 1 to 5 do
+    EmitSymbol(Digits[Index]);
+  FZ85Fill := 0;
 end;
 
-procedure EncodeByte(var Coder: TCoder; Value: Byte);
+procedure TBaseCoder.EncodeByte(Value: Byte);
 var
   Index: Integer;
 begin
-  case Coder.Encoding of
+  case FEncoding of
     EncodingZ85:
       begin
-        Coder.Z85Buffer[Coder.Z85Fill] := Value;
-        Inc(Coder.Z85Fill);
-        if Coder.Z85Fill = 4 then
-          EncodeZ85Group(Coder);
+        FZ85Buffer[FZ85Fill] := Value;
+        Inc(FZ85Fill);
+        if FZ85Fill = 4 then
+          EncodeZ85Group;
       end;
     EncodingBase2LeastSignificantFirst:
       for Index := 0 to 7 do
-        EmitSymbol(Coder, Coder.Alphabet[(Value shr Index) and 1]);
+        EmitSymbol(AlphabetSymbol((Value shr Index) and 1));
   else
     begin
-      Coder.Accumulator := (Coder.Accumulator shl 8) or Value;
-      Coder.AccumulatedBits := Coder.AccumulatedBits + 8;
-      while Coder.AccumulatedBits >= Coder.BitsPerSymbol do
+      FAccumulator := (FAccumulator shl 8) or Value;
+      FAccumulatedBits := FAccumulatedBits + 8;
+      while FAccumulatedBits >= FBitsPerSymbol do
       begin
-        Coder.AccumulatedBits := Coder.AccumulatedBits - Coder.BitsPerSymbol;
-        EmitSymbol(Coder, Coder.Alphabet[(Coder.Accumulator shr Coder.AccumulatedBits) and
-          ((QWord(1) shl Coder.BitsPerSymbol) - 1)]);
-        Coder.SymbolsInGroup := (Coder.SymbolsInGroup + 1) mod Coder.GroupSymbols;
+        FAccumulatedBits := FAccumulatedBits - FBitsPerSymbol;
+        EmitSymbol(AlphabetSymbol((FAccumulator shr FAccumulatedBits) and
+          ((QWord(1) shl FBitsPerSymbol) - 1)));
+        FSymbolsInGroup := (FSymbolsInGroup + 1) mod FGroupSymbols;
       end;
     end;
   end;
 end;
 
-procedure FinishEncoding(var Coder: TCoder);
+procedure TBaseCoder.FinishEncoding;
 begin
-  if Coder.Encoding = EncodingZ85 then
+  if FEncoding = EncodingZ85 then
   begin
-    if Coder.Z85Fill <> 0 then
+    if FZ85Fill <> 0 then
     begin
-      Report('invalid input (length must be multiple of 4 characters)', []);
-      Coder.HadError := True;
+      Report('invalid input (length must be multiple of 4 characters)');
+      FHadError := True;
     end;
   end
-  else if Coder.AccumulatedBits > 0 then
+  else if FAccumulatedBits > 0 then
   begin
     { Remaining bits, zero filled, then "=" up to a whole group. }
-    EmitSymbol(Coder, Coder.Alphabet[(Coder.Accumulator shl (Coder.BitsPerSymbol - Coder.AccumulatedBits)) and
-      ((QWord(1) shl Coder.BitsPerSymbol) - 1)]);
-    Coder.SymbolsInGroup := (Coder.SymbolsInGroup + 1) mod Coder.GroupSymbols;
-    Coder.AccumulatedBits := 0;
-    while Coder.SymbolsInGroup <> 0 do
+    EmitSymbol(AlphabetSymbol((FAccumulator shl (FBitsPerSymbol - FAccumulatedBits)) and
+      ((QWord(1) shl FBitsPerSymbol) - 1)));
+    FSymbolsInGroup := (FSymbolsInGroup + 1) mod FGroupSymbols;
+    FAccumulatedBits := 0;
+    while FSymbolsInGroup <> 0 do
     begin
-      EmitSymbol(Coder, '=');
-      Coder.SymbolsInGroup := (Coder.SymbolsInGroup + 1) mod Coder.GroupSymbols;
+      EmitSymbol('=');
+      FSymbolsInGroup := (FSymbolsInGroup + 1) mod FGroupSymbols;
     end;
   end;
-  if Coder.Column > 0 then
+  if FColumn > 0 then
     WriteCharacter(StandardOutput, #10);
 end;
 
 { --- Decoding -------------------------------------------------------- }
 
-function SymbolValue(const Coder: TCoder; Symbol: Char): Integer;
-var
-  Index: Integer;
+function TBaseCoder.SymbolValue(Symbol: Char): Integer;
 begin
-  Index := 0;
-  while Coder.Alphabet[Index] <> #0 do
-  begin
-    if Coder.Alphabet[Index] = Symbol then
-      Exit(Index);
-    Inc(Index);
-  end;
+  Result := Pos(Symbol, FAlphabet) - 1;
   { Hexadecimal and base32 also accept lower case. }
-  if Coder.Encoding in [EncodingBase16, EncodingBase32, EncodingBase32Hex] then
-  begin
-    Index := 0;
-    while Coder.Alphabet[Index] <> #0 do
-    begin
-      if Coder.Alphabet[Index] = ToUpperCase(Symbol) then
-        Exit(Index);
-      Inc(Index);
-    end;
-  end;
-  Result := -1;
+  if (Result < 0) and (FEncoding in [EncodingBase16, EncodingBase32, EncodingBase32Hex]) then
+    Result := Pos(UpCase(Symbol), FAlphabet) - 1;
 end;
 
-procedure DecodeSymbol(var Coder: TCoder; Symbol: Char);
+procedure TBaseCoder.DecodeZ85Value(Value: Integer);
 var
-  Value: Integer;
   Z85Value: QWord;
   Index: Integer;
 begin
+  FZ85Buffer[FZ85Fill] := Byte(Value);
+  Inc(FZ85Fill);
+  if FZ85Fill < 5 then
+    Exit;
+  Z85Value := 0;
+  for Index := 0 to 4 do
+    Z85Value := Z85Value * 85 + FZ85Buffer[Index];
+  for Index := 3 downto 0 do
+    WriteCharacter(StandardOutput, Char((Z85Value shr (8 * Index)) and $FF));
+  FZ85Fill := 0;
+end;
+
+procedure TBaseCoder.DecodeSymbol(Symbol: Char);
+var
+  Value: Integer;
+begin
   if (Symbol = #10) or (Symbol = #13) then
     Exit;
-  if Coder.HadError then
+  if FHadError then
     Exit;
   if Symbol = '=' then
   begin
     { Padding: drop the leftover bits. }
-    Coder.AccumulatedBits := 0;
+    FAccumulatedBits := 0;
     Exit;
   end;
-  Value := SymbolValue(Coder, Symbol);
+  Value := SymbolValue(Symbol);
   if Value < 0 then
   begin
-    if Coder.IgnoreGarbage then
+    if FIgnoreGarbage then
       Exit;
-    Report('invalid input', []);
-    Coder.HadError := True;
+    Report('invalid input');
+    FHadError := True;
     Exit;
   end;
 
-  case Coder.Encoding of
+  case FEncoding of
     EncodingZ85:
-      begin
-        Coder.Z85Buffer[Coder.Z85Fill] := Byte(Value);
-        Inc(Coder.Z85Fill);
-        if Coder.Z85Fill = 5 then
-        begin
-          Z85Value := 0;
-          for Index := 0 to 4 do
-            Z85Value := Z85Value * 85 + Coder.Z85Buffer[Index];
-          for Index := 3 downto 0 do
-            WriteCharacter(StandardOutput, Char((Z85Value shr (8 * Index)) and $FF));
-          Coder.Z85Fill := 0;
-        end;
-      end;
+      DecodeZ85Value(Value);
     EncodingBase2LeastSignificantFirst:
       begin
-        Coder.Accumulator := Coder.Accumulator or (QWord(Value) shl Coder.AccumulatedBits);
-        Inc(Coder.AccumulatedBits);
-        if Coder.AccumulatedBits = 8 then
+        FAccumulator := FAccumulator or (QWord(Value) shl FAccumulatedBits);
+        Inc(FAccumulatedBits);
+        if FAccumulatedBits = 8 then
         begin
-          WriteCharacter(StandardOutput, Char(Coder.Accumulator));
-          Coder.Accumulator := 0;
-          Coder.AccumulatedBits := 0;
+          WriteCharacter(StandardOutput, Char(FAccumulator));
+          FAccumulator := 0;
+          FAccumulatedBits := 0;
         end;
       end;
   else
     begin
-      Coder.Accumulator := (Coder.Accumulator shl Coder.BitsPerSymbol) or QWord(Value);
-      Coder.AccumulatedBits := Coder.AccumulatedBits + Coder.BitsPerSymbol;
-      if Coder.AccumulatedBits >= 8 then
+      FAccumulator := (FAccumulator shl FBitsPerSymbol) or QWord(Value);
+      FAccumulatedBits := FAccumulatedBits + FBitsPerSymbol;
+      if FAccumulatedBits >= 8 then
       begin
-        Coder.AccumulatedBits := Coder.AccumulatedBits - 8;
-        WriteCharacter(StandardOutput, Char((Coder.Accumulator shr Coder.AccumulatedBits) and $FF));
+        FAccumulatedBits := FAccumulatedBits - 8;
+        WriteCharacter(StandardOutput, Char((FAccumulator shr FAccumulatedBits) and $FF));
       end;
     end;
   end;
 end;
 
-procedure FinishDecoding(var Coder: TCoder);
+procedure TBaseCoder.FinishDecoding;
 begin
-  if (Coder.Encoding = EncodingZ85) and (Coder.Z85Fill <> 0) and not Coder.HadError then
+  if (FEncoding = EncodingZ85) and (FZ85Fill <> 0) and not FHadError then
   begin
-    Report('invalid input', []);
-    Coder.HadError := True;
+    Report('invalid input');
+    FHadError := True;
   end;
 end;
 
 { --- The program ----------------------------------------------------- }
 
+function UsageText(AllowSelection: Boolean): string;
+begin
+  Result := Format('Usage: %s [OPTION]... [FILE]'#10 +
+    'Encode or decode FILE, or standard input, to standard output.'#10#10, [ProgramNameText]);
+  if AllowSelection then
+    Result := Result + '      --base64 --base64url --base32 --base32hex --base16'#10 +
+      '      --base2msbf --base2lsbf --z85   choose the encoding'#10;
+  Result := Result + '  -d, --decode          decode data'#10 +
+    '  -i, --ignore-garbage  when decoding, ignore non-alphabet characters'#10 +
+    '  -w, --wrap=COLS       wrap encoded lines after COLS character (default 76).'#10 +
+    '                          Use 0 to disable line wrapping'#10;
+end;
+
+{ Feeds Handle through Coder, encoding or decoding, until its end or an
+  error. }
+procedure CodeInput(Coder: TBaseCoder; Handle: Int64; Decode: Boolean);
+var
+  Buffer: array[0..ReadBufferSize - 1] of Byte;
+  Count: Int64;
+  Index: Int64;
+begin
+  repeat
+    Count := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
+    if Count < 0 then
+      FailWithError(1, ErrorCodeOf(Count), 'read error');
+    Index := 0;
+    while Index < Count do
+    begin
+      if Decode then
+        Coder.DecodeSymbol(Char(Buffer[Index]))
+      else
+        Coder.EncodeByte(Buffer[Index]);
+      Inc(Index);
+    end;
+  until (Count = 0) or Coder.HadError;
+  if Decode then
+    Coder.FinishDecoding
+  else
+    Coder.FinishEncoding;
+end;
+
 procedure RunBaseEncodingTool(Default: TBaseEncoding; AllowSelection: Boolean);
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Decode: Boolean;
-  Coder: TCoder;
+  Coder: TBaseCoder;
   Encoding: TBaseEncoding;
   Selected: Boolean;
   Wrap: Int64;
   IgnoreGarbage: Boolean;
   Handle: Int64;
-  Buffer: array[0..4095] of Byte;
-  Count: Int64;
-  Index: Int64;
-  Usage: TTextBuilder;
 begin
-  BeginText(Usage);
-  AppendFormatted(Usage, 'Usage: %s [OPTION]... [FILE]'#10 +
-    'Encode or decode FILE, or standard input, to standard output.'#10#10, [ArgumentText(ProgramName)]);
-  if AllowSelection then
-    AppendText(Usage, '      --base64 --base64url --base32 --base32hex --base16'#10 +
-      '      --base2msbf --base2lsbf --z85   choose the encoding'#10);
-  AppendText(Usage, '  -d, --decode          decode data'#10 +
-    '  -i, --ignore-garbage  when decoding, ignore non-alphabet characters'#10 +
-    '  -w, --wrap=COLS       wrap encoded lines after COLS character (default 76).'#10 +
-    '                          Use 0 to disable line wrapping'#10);
-
   Decode := False;
   IgnoreGarbage := False;
-  Wrap := 76;
+  Wrap := DefaultWrapColumn;
   Encoding := Default;
   Selected := not AllowSelection;
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'decode', False, OptionDecode),
-    OptionDefinition('i', 'ignore-garbage', False, OptionIgnoreGarbage),
-    OptionDefinition('w', 'wrap', True, OptionWrap),
-    OptionDefinition(#0, 'base64', False, OptionFirstEncoding + Ord(EncodingBase64)),
-    OptionDefinition(#0, 'base64url', False, OptionFirstEncoding + Ord(EncodingBase64Url)),
-    OptionDefinition(#0, 'base32', False, OptionFirstEncoding + Ord(EncodingBase32)),
-    OptionDefinition(#0, 'base32hex', False, OptionFirstEncoding + Ord(EncodingBase32Hex)),
-    OptionDefinition(#0, 'base16', False, OptionFirstEncoding + Ord(EncodingBase16)),
-    OptionDefinition(#0, 'base2msbf', False, OptionFirstEncoding + Ord(EncodingBase2MostSignificantFirst)),
-    OptionDefinition(#0, 'base2lsbf', False, OptionFirstEncoding + Ord(EncodingBase2LeastSignificantFirst)),
-    OptionDefinition(#0, 'z85', False, OptionFirstEncoding + Ord(EncodingZ85))], Usage.Text);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'decode', False, OptionDecode),
+    CommandOption('i', 'ignore-garbage', False, OptionIgnoreGarbage),
+    CommandOption('w', 'wrap', True, OptionWrap),
+    CommandOption(#0, 'base64', False, OptionFirstEncoding + Ord(EncodingBase64)),
+    CommandOption(#0, 'base64url', False, OptionFirstEncoding + Ord(EncodingBase64Url)),
+    CommandOption(#0, 'base32', False, OptionFirstEncoding + Ord(EncodingBase32)),
+    CommandOption(#0, 'base32hex', False, OptionFirstEncoding + Ord(EncodingBase32Hex)),
+    CommandOption(#0, 'base16', False, OptionFirstEncoding + Ord(EncodingBase16)),
+    CommandOption(#0, 'base2msbf', False, OptionFirstEncoding + Ord(EncodingBase2MostSignificantFirst)),
+    CommandOption(#0, 'base2lsbf', False, OptionFirstEncoding + Ord(EncodingBase2LeastSignificantFirst)),
+    CommandOption(#0, 'z85', False, OptionFirstEncoding + Ord(EncodingZ85))], UsageText(AllowSelection));
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDecode: Decode := True;
       OptionIgnoreGarbage: IgnoreGarbage := True;
       OptionWrap:
-        if not ParseInteger(Value, Wrap) or (Wrap < 0) then
-          Fail(1, 'invalid wrap size: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Wrap) or (Wrap < 0) then
+          Fail(1, Format('invalid wrap size: ''%s''', [Value]));
     else
       if AllowSelection and (Code >= OptionFirstEncoding) then
       begin
@@ -393,43 +422,25 @@ begin
         Selected := True;
       end
       else
-        FailWithUsageHint('unrecognized option', []);
+        FailWithUsageHint('unrecognized option');
     end;
   if not Selected then
-    FailWithUsageHint('missing encoding type', []);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
+    FailWithUsageHint('missing encoding type');
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
 
   Handle := StandardInputHandle;
-  if (Parser.OperandCount = 1) and not TextIsEqual(Parser.Operands[0], '-') then
+  if (CommandLine.OperandCount = 1) and (CommandLine.Operands[0] <> '-') then
   begin
-    Handle := OpenFile(Parser.Operands[0], OpenRead);
+    Handle := OpenFile(PChar(CommandLine.Operands[0]), OpenRead);
     if Handle < 0 then
-      FailWithError(1, ErrorCodeOf(Handle), '%s', [ArgumentText(Parser.Operands[0])]);
+      FailWithError(1, ErrorCodeOf(Handle), CommandLine.Operands[0]);
   end;
 
-  PrepareCoder(Coder, Encoding);
+  Coder := TBaseCoder.Create(Encoding);
   Coder.WrapColumn := Integer(Wrap);
   Coder.IgnoreGarbage := IgnoreGarbage;
-  repeat
-    Count := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
-    if Count < 0 then
-      FailWithError(1, ErrorCodeOf(Count), 'read error', []);
-    Index := 0;
-    while Index < Count do
-    begin
-      if Decode then
-        DecodeSymbol(Coder, Char(Buffer[Index]))
-      else
-        EncodeByte(Coder, Buffer[Index]);
-      Inc(Index);
-    end;
-  until (Count = 0) or Coder.HadError;
-  if Decode then
-    FinishDecoding(Coder)
-  else
-    FinishEncoding(Coder);
-  DiscardText(Usage);
+  CodeInput(Coder, Handle, Decode);
   if Coder.HadError then
     Halt(1);
   Halt(0);

@@ -68,6 +68,9 @@ function GroupNameOf(GroupId: LongWord): PChar;
 { The same as strings; False if there is no such account. }
 function FindUserName(UserId: LongWord; out Name: string): Boolean;
 function FindGroupName(GroupId: LongWord; out Name: string): Boolean;
+{ The account's name, or its number when it has none. }
+function UserNameOrNumber(UserId: LongWord): string;
+function GroupNameOrNumber(GroupId: LongWord): string;
 { Accept names and decimal numbers. }
 function FindUserId(Name: PChar; out UserId: LongWord): Boolean; overload;
 function FindUserId(const Name: string; out UserId: LongWord): Boolean; overload;
@@ -100,6 +103,7 @@ procedure RecheckAccountFiles;
 implementation
 
 uses
+  SysUtils,
   Runtime.Memory,
   Runtime.Text,
   Sys.Files,
@@ -631,6 +635,18 @@ end;
 function GroupListsMember(GroupId: LongWord; const Name: string): Boolean;
 begin
   Result := GroupListsMember(GroupId, PChar(Name));
+end;
+
+function UserNameOrNumber(UserId: LongWord): string;
+begin
+  if not FindUserName(UserId, Result) then
+    Result := IntToStr(UserId);
+end;
+
+function GroupNameOrNumber(GroupId: LongWord): string;
+begin
+  if not FindGroupName(GroupId, Result) then
+    Result := IntToStr(GroupId);
 end;
 
 end.
