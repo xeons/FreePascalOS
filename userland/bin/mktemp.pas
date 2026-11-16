@@ -29,22 +29,19 @@
 program mktemp;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Crypto.Random,
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Messages,
-  Util.Options,
-  Util.Paths;
+  Util.Options;
 
 const
   Usage: PChar = 'Usage: mktemp [OPTION]... [TEMPLATE]'#10 +
@@ -68,34 +65,28 @@ const
   OptionTemporaryDirectory = 5;
   OptionRelativeToTemporary = 6;
   MaximumAttempts = 100;
-  NameCharacters: PChar = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  NameCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
+var
+  MakeDirectory: Boolean;
+  DryRun: Boolean;
+  Quiet: Boolean;
+  Suffix: string;
+  Directory: string;
+  UseDirectory: Boolean;
+  Template: string;
+
+procedure ReadOptions;
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  MakeDirectory: Boolean;
-  DryRun: Boolean;
-  Quiet: Boolean;
-  Suffix: PChar;
-  Directory: PChar;
-  UseDirectory: Boolean;
-  Template: PChar;
-  Path: PChar;
-  Builder: TTextBuilder;
-  XStart: PtrInt;
-  XCount: PtrInt;
-  Attempt: Integer;
-  Index: PtrInt;
-  Handle: Int64;
-  Error: LongInt;
-  Created: Boolean;
 begin
   MakeDirectory := False;
   DryRun := False;
   Quiet := False;
   Suffix := '';
-  Directory := nil;
+  Directory := '';
   UseDirectory := False;
   BeginOptions(Parser, [
     OptionDefinition('d', 'directory', False, OptionDirectory),
@@ -127,67 +118,87 @@ begin
     Template := 'tmp.XXXXXXXXXX';
     UseDirectory := True;
   end;
-  if UseDirectory and ((Directory = nil) or (Directory^ = #0)) then
+  if UseDirectory and (Directory = '') then
   begin
     Directory := GetVariable('TMPDIR');
-    if (Directory = nil) or (Directory^ = #0) then
+    if Directory = '' then
       Directory := '/tmp';
   end;
+end;
 
-  BeginText(Builder);
+{ Replaces the Count characters from Start with random name characters. }
+procedure RandomizeName(var Path: string; Start, Count: Integer);
+var
+  Index: Integer;
+begin
+  for Index := Start to Start + Count - 1 do
+    Path[Index] := NameCharacters[1 + RandomBelow(Length(NameCharacters))];
+end;
+
+{ Creates Path, failing if it exists; returns 0 or an error code. }
+function CreateExclusively(const Path: string): LongInt;
+var
+  Handle: Int64;
+begin
+  if MakeDirectory then
+    Exit(CreateDirectory(PChar(Path)));
+  Handle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenExclusive);
+  if Handle < 0 then
+    Exit(ErrorCodeOf(Handle));
+  CloseFile(Handle);
+  Result := ErrorNone;
+end;
+
+var
+  Path: string;
+  XStart: Integer;
+  XCount: Integer;
+  Attempt: Integer;
+  Error: LongInt;
+  Created: Boolean;
+begin
+  ReadOptions;
+
+  Path := '';
   if UseDirectory then
   begin
-    AppendText(Builder, Directory);
-    if (Builder.Length > 0) and (Builder.Text[Builder.Length - 1] <> '/') then
-      AppendCharacter(Builder, '/');
+    Path := Directory;
+    if (Path <> '') and (Path[Length(Path)] <> '/') then
+      Path := Path + '/';
   end;
-  AppendText(Builder, Template);
-  XStart := PtrInt(Builder.Length);
+  Path := Path + Template;
+  XStart := Length(Path) + 1;
   XCount := 0;
-  while (XStart > 0) and (Builder.Text[XStart - 1] = 'X') do
+  while (XStart > 1) and (Path[XStart - 1] = 'X') do
   begin
     Dec(XStart);
     Inc(XCount);
   end;
   if XCount < 3 then
-    Fail(1, 'too few X''s in template ''%s''', [ArgumentText(Template)]);
-  AppendText(Builder, Suffix);
-  Path := FinishText(Builder);
+    Fail(1, 'too few X''s in template ''%s''', [ArgumentText(PChar(Template))]);
+  Path := Path + Suffix;
 
   Created := False;
   Error := ErrorExists;
   for Attempt := 1 to MaximumAttempts do
   begin
-    for Index := XStart to XStart + XCount - 1 do
-      Path[Index] := NameCharacters[RandomBelow(TextLength(NameCharacters))];
+    RandomizeName(Path, XStart, XCount);
     if DryRun then
     begin
-      if not PathExists(Path) then
+      if not PathExists(PChar(Path)) then
       begin
         Created := True;
         Break;
       end;
       Continue;
     end;
-    if MakeDirectory then
-      Error := CreateDirectory(Path)
-    else
-    begin
-      Handle := OpenFile(Path, OpenWrite or OpenCreate or OpenExclusive);
-      if Handle >= 0 then
-      begin
-        CloseFile(Handle);
-        Error := ErrorNone;
-      end
-      else
-        Error := ErrorCodeOf(Handle);
-    end;
+    Error := CreateExclusively(Path);
     if Error = ErrorNone then
     begin
       if not MakeDirectory then
-        ChangeMode(Path, $180)   { rw------- }
+        ChangeMode(PChar(Path), $180)   { rw------- }
       else
-        ChangeMode(Path, $1C0);  { rwx------ }
+        ChangeMode(PChar(Path), $1C0);  { rwx------ }
       Created := True;
       Break;
     end;
@@ -199,11 +210,11 @@ begin
     if not Quiet then
     begin
       if MakeDirectory then
-        ReportError(Error, 'failed to create directory via template ''%s''', [ArgumentText(Template)])
+        ReportError(Error, 'failed to create directory via template ''%s''', [ArgumentText(PChar(Template))])
       else
-        ReportError(Error, 'failed to create file via template ''%s''', [ArgumentText(Template)]);
+        ReportError(Error, 'failed to create file via template ''%s''', [ArgumentText(PChar(Template))]);
     end;
     Halt(1);
   end;
-  PrintLine(Path);
+  PrintLine(PChar(Path));
 end.

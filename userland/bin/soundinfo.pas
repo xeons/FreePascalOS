@@ -31,11 +31,11 @@
 program soundinfo;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Util.Messages,
   Util.Options,
@@ -78,53 +78,52 @@ begin
   Inc(Measure.Frames);
 end;
 
-function Describe(Path: PChar): Boolean;
+function Describe(const Path: string): Boolean;
 var
   Wave: TWaveFile;
   Status: TWaveStatus;
-  Buffer: PByte;
+  Buffer: array of Byte;
   FrameBytes: LongWord;
   Got: QWord;
   Frame: QWord;
   Measure: TMeasure;
   Hertz: QWord;
   Hundredths: QWord;
-  Plural: PChar;
+  Plural: string;
+  Line: string;
 begin
-  Status := OpenWaveFile(Path, Wave);
+  Status := OpenWaveFile(PChar(Path), Wave);
   if Status <> WaveOk then
   begin
-    Report('%s: %s', [ArgumentText(Path), ArgumentText(WaveStatusText(Status))]);
+    Report('%s: %s', [ArgumentText(PChar(Path)), ArgumentText(WaveStatusText(Status))]);
     Exit(False);
   end;
   FrameBytes := Wave.Channels * BytesPerSample(Wave.Kind);
-  Buffer := PByte(AllocateMemory(ChunkFrames * FrameBytes));
+  SetLength(Buffer, ChunkFrames * FrameBytes);
   FillChar(Measure, SizeOf(Measure), 0);
   repeat
-    Got := ReadWaveSamples(Wave, Buffer, ChunkFrames * FrameBytes) div FrameBytes;
+    Got := ReadWaveSamples(Wave, @Buffer[0], Length(Buffer)) div FrameBytes;
     if Got > 0 then
       for Frame := 0 to Got - 1 do
-        MeasureSample(Measure, DecodeSample(Wave.Kind, Buffer + Frame * FrameBytes));
+        MeasureSample(Measure, DecodeSample(Wave.Kind, @Buffer[Frame * FrameBytes]));
   until Got = 0;
   CloseWaveFile(Wave);
-  FreeMemory(Buffer);
 
   Hundredths := (Measure.Frames * 100 + Wave.Rate div 2) div Wave.Rate;
   Plural := 's';
   if Wave.Channels = 1 then
     Plural := '';
-  WriteFormatted(StandardOutput, '%s: %u Hz, %u channel%s, %s, %u.%u%u s, peak %u%%, ',
-    [ArgumentText(Path), ArgumentUnsigned(Wave.Rate), ArgumentUnsigned(Wave.Channels), ArgumentText(Plural),
-    ArgumentText(SampleKindName(Wave.Kind)), ArgumentUnsigned(Hundredths div 100),
-    ArgumentUnsigned((Hundredths div 10) mod 10), ArgumentUnsigned(Hundredths mod 10),
-    ArgumentUnsigned(Round(Measure.Peak * 100))]);
+  Line := Format('%s: %d Hz, %d channel%s, %s, %d.%.2d s, peak %d%%, ',
+    [Path, Wave.Rate, Wave.Channels, Plural, string(SampleKindName(Wave.Kind)),
+    Int64(Hundredths div 100), Int64(Hundredths mod 100), Int64(Round(Measure.Peak * 100))]);
   if (Measure.Peak < SilenceLevel) or (Measure.Crossings < 2) then
-    WriteFormatted(StandardOutput, 'silent'#10, [])
+    Line := Line + 'silent'
   else
   begin
     Hertz := Round((Measure.Crossings - 1) * Wave.Rate / (Measure.LastCrossing - Measure.FirstCrossing) / 10) * 10;
-    WriteFormatted(StandardOutput, '%u Hz'#10, [ArgumentUnsigned(Hertz)]);
+    Line := Line + IntToStr(Hertz) + ' Hz';
   end;
+  WriteLine(StandardOutput, PChar(Line));
   Result := True;
 end;
 

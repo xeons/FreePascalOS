@@ -27,15 +27,14 @@
 program uptime;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
   Sys.Kernel,
-  Sys.Format,
   Sys.Streams,
   Sys.Time,
-  Util.Messages,
   Util.Options;
 
 const
@@ -49,31 +48,84 @@ const
   OptionPretty = 1;
   OptionSince = 2;
 
-function Plural(Count: Int64): PChar;
+procedure Print(const Text: string);
 begin
-  if Count = 1 then
-    Result := ''
-  else
-    Result := 's';
+  WriteText(StandardOutput, PChar(Text));
 end;
 
-procedure WriteLoad(Hundredths: LongWord);
+{ "1 day", "2 hours" }
+function CountText(Count: Int64; const Noun: string): string;
 begin
-  WriteFormatted(StandardOutput, '%d.%02d', [ArgumentNumber(Hundredths div 100),
-    ArgumentNumber(Hundredths mod 100)]);
+  Result := IntToStr(Count) + ' ' + Noun;
+  if Count <> 1 then
+    Result := Result + 's';
+end;
+
+function LoadText(Hundredths: LongWord): string;
+begin
+  Result := Format('%d.%.2d', [Hundredths div 100, Hundredths mod 100]);
+end;
+
+procedure PrintSince(UpSeconds: Int64);
+var
+  Since: Sys.Time.TDateTime;
+begin
+  DecodeTime(CurrentTime - UpSeconds, Since);
+  Print(Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d'#10, [Since.Year, Since.Month, Since.Day,
+    Since.Hour, Since.Minute, Since.Second]));
+end;
+
+procedure PrintPretty(Days, Hours, Minutes: Int64);
+var
+  Parts: string;
+begin
+  Parts := '';
+  if Days > 0 then
+    Parts := CountText(Days, 'day');
+  if Hours > 0 then
+  begin
+    if Parts <> '' then
+      Parts := Parts + ', ';
+    Parts := Parts + CountText(Hours, 'hour');
+  end;
+  if (Minutes > 0) or (Parts = '') then
+  begin
+    if Parts <> '' then
+      Parts := Parts + ', ';
+    Parts := Parts + CountText(Minutes, 'minute');
+  end;
+  Print('up ' + Parts + #10);
+end;
+
+procedure PrintSummary(Days, Hours, Minutes: Int64);
+var
+  Information: TAbiSystemInformation;
+  Moment: Sys.Time.TDateTime;
+  Line: string;
+begin
+  DecodeTime(CurrentTime, Moment);
+  Line := Format(' %.2d:%.2d:%.2d up ', [Moment.Hour, Moment.Minute, Moment.Second]);
+  if Days > 0 then
+    Line := Line + CountText(Days, 'day') + ', ';
+  if Hours > 0 then
+    Line := Line + Format('%2d:%.2d, ', [Hours, Minutes])
+  else
+    Line := Line + Format('%d min, ', [Minutes]);
+  Line := Line + ' 1 user,  load average: ';
+  if KernelGetSystemInformation(Information) < 0 then
+    FillChar(Information, SizeOf(Information), 0);
+  Line := Line + LoadText(Information.LoadAverages[0]) + ', ' +
+    LoadText(Information.LoadAverages[1]) + ', ' + LoadText(Information.LoadAverages[2]);
+  Print(Line + #10);
 end;
 
 var
-  Information: TAbiSystemInformation;
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
   Mode: Integer;
   UpSeconds: Int64;
   Days, Hours, Minutes: Int64;
-  Now: TDateTime;
-  Since: TDateTime;
-  PrintedPart: Boolean;
 begin
   Mode := 0;
   BeginOptions(Parser, [
@@ -88,57 +140,9 @@ begin
   Minutes := (UpSeconds mod 3600) div 60;
 
   case Mode of
-    OptionSince:
-      begin
-        DecodeTime(CurrentTime - UpSeconds, Since);
-        WriteFormatted(StandardOutput, '%04d-%02d-%02d %02d:%02d:%02d'#10, [ArgumentNumber(Since.Year),
-          ArgumentNumber(Since.Month), ArgumentNumber(Since.Day), ArgumentNumber(Since.Hour),
-          ArgumentNumber(Since.Minute), ArgumentNumber(Since.Second)]);
-      end;
-    OptionPretty:
-      begin
-        WriteText(StandardOutput, 'up ');
-        PrintedPart := False;
-        if Days > 0 then
-        begin
-          WriteFormatted(StandardOutput, '%d day%s', [ArgumentNumber(Days), ArgumentText(Plural(Days))]);
-          PrintedPart := True;
-        end;
-        if Hours > 0 then
-        begin
-          if PrintedPart then
-            WriteText(StandardOutput, ', ');
-          WriteFormatted(StandardOutput, '%d hour%s', [ArgumentNumber(Hours), ArgumentText(Plural(Hours))]);
-          PrintedPart := True;
-        end;
-        if (Minutes > 0) or not PrintedPart then
-        begin
-          if PrintedPart then
-            WriteText(StandardOutput, ', ');
-          WriteFormatted(StandardOutput, '%d minute%s', [ArgumentNumber(Minutes), ArgumentText(Plural(Minutes))]);
-        end;
-        WriteCharacter(StandardOutput, #10);
-      end;
+    OptionSince: PrintSince(UpSeconds);
+    OptionPretty: PrintPretty(Days, Hours, Minutes);
   else
-    begin
-      DecodeTime(CurrentTime, Now);
-      WriteFormatted(StandardOutput, ' %02d:%02d:%02d up ', [ArgumentNumber(Now.Hour), ArgumentNumber(Now.Minute),
-        ArgumentNumber(Now.Second)]);
-      if Days > 0 then
-        WriteFormatted(StandardOutput, '%d day%s, ', [ArgumentNumber(Days), ArgumentText(Plural(Days))]);
-      if Hours > 0 then
-        WriteFormatted(StandardOutput, '%2d:%02d, ', [ArgumentNumber(Hours), ArgumentNumber(Minutes)])
-      else
-        WriteFormatted(StandardOutput, '%d min, ', [ArgumentNumber(Minutes)]);
-      WriteText(StandardOutput, ' 1 user,  load average: ');
-      if KernelGetSystemInformation(Information) < 0 then
-        ZeroMemory(@Information, SizeOf(Information));
-      WriteLoad(Information.LoadAverages[0]);
-      WriteText(StandardOutput, ', ');
-      WriteLoad(Information.LoadAverages[1]);
-      WriteText(StandardOutput, ', ');
-      WriteLoad(Information.LoadAverages[2]);
-      WriteCharacter(StandardOutput, #10);
-    end;
+    PrintSummary(Days, Hours, Minutes);
   end;
 end.

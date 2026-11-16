@@ -30,16 +30,15 @@
 program od;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Util.Messages,
@@ -71,10 +70,9 @@ const
   OptionD = 9;
   OptionO = 10;
   OptionX = 11;
-  MaximumFormats = 8;
   MaximumWidth = 256;
 
-  NamedCharacters: array[0..32] of PChar = ('nul', 'soh', 'stx', 'etx', 'eot', 'enq', 'ack', 'bel',
+  NamedCharacters: array[0..32] of string = ('nul', 'soh', 'stx', 'etx', 'eot', 'enq', 'ack', 'bel',
     'bs', 'ht', 'nl', 'vt', 'ff', 'cr', 'so', 'si', 'dle', 'dc1', 'dc2', 'dc3', 'dc4', 'nak', 'syn',
     'etb', 'can', 'em', 'sub', 'esc', 'fs', 'gs', 'rs', 'us', 'sp');
 
@@ -85,37 +83,37 @@ type
   end;
 
 var
-  Formats: array[0..MaximumFormats - 1] of TFormat;
-  FormatCount: Integer;
+  Formats: array of TFormat;
   Radix: Char;
   Width: Integer;
 
 procedure AddFormat(Kind: Char; Size: Integer);
+var
+  Format: TFormat;
 begin
-  if FormatCount = MaximumFormats then
-    Fail(1, 'too many formats', []);
-  Formats[FormatCount].Kind := Kind;
-  Formats[FormatCount].Size := Size;
-  Inc(FormatCount);
+  Format.Kind := Kind;
+  Format.Size := Size;
+  Insert(Format, Formats, Length(Formats));
 end;
 
-procedure ParseFormat(Text: PChar);
+procedure ParseFormat(const Text: string);
 var
   Position: Integer;
   Kind: Char;
   Size: Integer;
 begin
-  Position := 0;
-  while Text[Position] <> #0 do
+  Position := 1;
+  while Position <= Length(Text) do
   begin
     Kind := Text[Position];
     Inc(Position);
     if not (Kind in ['a', 'c', 'd', 'o', 'u', 'x']) then
-      Fail(1, 'invalid character ''%c'' in type string ''%s''', [ArgumentCharacter(Kind), ArgumentText(Text)]);
+      Fail(1, 'invalid character ''%c'' in type string ''%s''', [ArgumentCharacter(Kind), ArgumentText(PChar(Text))]);
     Size := 1;
     if Kind in ['d', 'o', 'u', 'x'] then
-    begin
       Size := 4;
+    if (Kind in ['d', 'o', 'u', 'x']) and (Position <= Length(Text)) then
+    begin
       case Text[Position] of
         'C': begin Size := 1; Inc(Position); end;
         'S': begin Size := 2; Inc(Position); end;
@@ -190,7 +188,7 @@ begin
         begin
           Character := Bytes[Index] and $7F;
           if Character <= 32 then
-            WriteFormatted(StandardOutput, '%3s', [ArgumentText(NamedCharacters[Character])])
+            WriteText(StandardOutput, PChar(SysUtils.Format('%3s',[NamedCharacters[Character]])))
           else if Character = 127 then
             WriteText(StandardOutput, 'del')
           else
@@ -250,7 +248,7 @@ begin
   if LineFill = 0 then
     Exit;
   if not ShowDuplicates and HavePrevious and (LineFill = Width) and
-     MemoryIsEqual(@Line[0], @Previous[0], Width) then
+     CompareMem(@Line[0], @Previous[0], Width) then
   begin
     if not Suppressing then
       WriteLine(StandardOutput, '*');
@@ -259,7 +257,7 @@ begin
   else
   begin
     Suppressing := False;
-    for FormatIndex := 0 to FormatCount - 1 do
+    for FormatIndex := 0 to High(Formats) do
     begin
       if FormatIndex = 0 then
         WriteOffset(Offset - QWord(LineFill))
@@ -281,7 +279,6 @@ begin
   Skip := 0;
   Limit := -1;
   ShowDuplicates := False;
-  FormatCount := 0;
   BeginOptions(Parser, [
     OptionDefinition('A', 'address-radix', True, OptionRadix),
     OptionDefinition('j', 'skip-bytes', True, OptionSkip),
@@ -298,7 +295,7 @@ begin
     case Code of
       OptionRadix:
         begin
-          if not (Value[0] in ['d', 'o', 'x', 'n']) or (Value[1] <> #0) then
+          if (Length(string(Value)) <> 1) or not (Value[0] in ['d', 'o', 'x', 'n']) then
             Fail(1, 'invalid output address radix ''%s''', [ArgumentText(Value)]);
           Radix := Value[0];
         end;
@@ -325,7 +322,7 @@ begin
       OptionO: AddFormat('o', 2);
       OptionX: AddFormat('x', 2);
     end;
-  if FormatCount = 0 then
+  if Length(Formats) = 0 then
     AddFormat('o', 2);
   if Parser.OperandCount = 0 then
   begin
@@ -342,7 +339,7 @@ begin
   Remaining := Limit;
   for FileIndex := 0 to Parser.OperandCount - 1 do
   begin
-    if TextIsEqual(Parser.Operands[FileIndex], '-') then
+    if string(Parser.Operands[FileIndex]) = '-' then
       Handle := StandardInputHandle
     else
       Handle := OpenFile(Parser.Operands[FileIndex], OpenRead);

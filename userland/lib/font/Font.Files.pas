@@ -33,6 +33,7 @@
 unit Font.Files;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -41,23 +42,21 @@ uses
   Font.Text;
 
 const
-  FontDirectory: PChar = '/lib/fonts';
-  TerminusFamily: PChar = 'terminus';
-  DejaVuSansFamily: PChar = 'dejavu-sans';
+  FontDirectory = '/lib/fonts';
+  TerminusFamily = 'terminus';
+  DejaVuSansFamily = 'dejavu-sans';
 
 { Reads the font at Path (PSF or coverage, by its name), glyphs and all. }
-function LoadFontFace(Path: PChar; out Face: TFontFace): Boolean;
+function LoadFontFace(const Path: string; out Face: TFontFace): Boolean;
 { Every font in /lib/fonts/<Family>; False if there are none. }
-function LoadFontFamily(Family: PChar; out FontSet: TFontSet): Boolean;
+function LoadFontFamily(const Family: string; out FontSet: TFontSet): Boolean;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
-  Sys.Memory,
-  Sys.Text,
   Font.Psf,
   Font.Coverage;
 
@@ -65,91 +64,88 @@ const
   MaximumFontFileSize = 4 * 1024 * 1024;
   { Enough for the header of either kind of font. }
   SummaryBytes = 64;
+  PsfExtension = '.psf';
+  CoverageExtension = '.cvf';
 
 type
   TFontKind = (NotAFont, PsfFont, CoverageFont);
 
-function KindOfFont(Name: PChar): TFontKind;
+function KindOfFont(const Name: string): TFontKind;
 begin
-  if TextEndsWith(Name, '.psf') then
+  if ExtractFileExt(Name) = PsfExtension then
     Result := PsfFont
-  else if TextEndsWith(Name, '.cvf') then
+  else if ExtractFileExt(Name) = CoverageExtension then
     Result := CoverageFont
   else
     Result := NotAFont;
 end;
 
 { A PSF font's weight is in its name: "...b.psf" is bold. }
-function PsfNameIsBold(Name: PChar): Boolean;
+function PsfNameIsBold(const Name: string): Boolean;
 var
-  Length: PtrInt;
+  WeightPosition: LongInt;
 begin
-  Length := TextLength(Name);
-  Result := (Length >= 5) and (Name[Length - 5] = 'b');
+  WeightPosition := Length(Name) - Length(PsfExtension);
+  Result := (WeightPosition >= 1) and (Name[WeightPosition] = 'b');
 end;
 
-{ The file at Path, whole; nil if it cannot be read or is too large. }
-function ReadWholeFile(Path: PChar; out Size: QWord): PByte;
+{ The file at Path, whole; empty if it cannot be read or is too large. }
+function ReadWholeFile(const Path: string): TBytes;
 var
   Handle: Int64;
   Information: TFileInformation;
+  Size: QWord;
   Got: Int64;
 begin
   Result := nil;
-  Size := 0;
-  if (GetFileInformation(Path, Information) <> ErrorNone) or (Information.SizeInBytes = 0) or
+  if (GetFileInformation(PChar(Path), Information) <> ErrorNone) or (Information.SizeInBytes = 0) or
      (Information.SizeInBytes > MaximumFontFileSize) then
     Exit;
-  Handle := OpenFile(Path, OpenRead);
+  Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
     Exit;
-  Result := AllocateMemory(Information.SizeInBytes);
-  if Result <> nil then
-    while Size < Information.SizeInBytes do
-    begin
-      Got := ReadFile(Handle, Result + Size, Information.SizeInBytes - Size);
-      if Got <= 0 then
-        Break;
-      Size := Size + QWord(Got);
-    end;
-  CloseFile(Handle);
-  if (Result <> nil) and (Size <> Information.SizeInBytes) then
+  SetLength(Result, Information.SizeInBytes);
+  Size := 0;
+  while Size < Information.SizeInBytes do
   begin
-    FreeMemory(Result);
-    Result := nil;
+    Got := ReadFile(Handle, @Result[Size], Information.SizeInBytes - Size);
+    if Got <= 0 then
+      Break;
+    Size := Size + QWord(Got);
   end;
+  CloseFile(Handle);
+  if Size <> Information.SizeInBytes then
+    Result := nil;
 end;
 
-function LoadFontFace(Path: PChar; out Face: TFontFace): Boolean;
+function LoadFontFace(const Path: string; out Face: TFontFace): Boolean;
 var
-  Data: PByte;
-  Size: QWord;
+  Data: TBytes;
 begin
   Result := False;
   ClearFace(Face);
-  Data := ReadWholeFile(Path, Size);
+  Data := ReadWholeFile(Path);
   if Data = nil then
     Exit;
   case KindOfFont(Path) of
     PsfFont:
       begin
-        Result := ParsePsfFont(Data, Size, Face);
+        Result := ParsePsfFont(@Data[0], Length(Data), Face);
         Face.Bold := PsfNameIsBold(Path);
       end;
     CoverageFont:
-      Result := ParseCoverageFont(Data, Size, Face);
+      Result := ParseCoverageFont(@Data[0], Length(Data), Face);
   end;
-  FreeMemory(Data);
 end;
 
 { The set's loader: the glyphs of a face known by its file. }
 function LoadFaceFromSource(var Face: TFontFace): Boolean;
 var
   Loaded: TFontFace;
-  Source: array[0..MaximumSourceLength] of Char;
+  Source: string;
 begin
   Source := Face.Source;
-  Result := LoadFontFace(@Source[0], Loaded) and (Loaded.Size = Face.Size) and (Loaded.Bold = Face.Bold);
+  Result := LoadFontFace(Source, Loaded) and (Loaded.Size = Face.Size) and (Loaded.Bold = Face.Bold);
   if not Result then
     Exit;
   Face := Loaded;
@@ -157,7 +153,7 @@ begin
 end;
 
 { A face known by its file: its size and weight from the file's start. }
-function ReadFaceSummary(Path, Name: PChar; out Face: TFontFace): Boolean;
+function ReadFaceSummary(const Path, Name: string; out Face: TFontFace): Boolean;
 var
   Handle: Int64;
   Header: array[0..SummaryBytes - 1] of Byte;
@@ -169,9 +165,7 @@ begin
   ClearFace(Face);
   Size := 0;
   Bold := False;
-  if TextLength(Path) > MaximumSourceLength then
-    Exit;
-  Handle := OpenFile(Path, OpenRead);
+  Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
     Exit;
   Got := ReadFile(Handle, @Header[0], SizeOf(Header));
@@ -191,44 +185,33 @@ begin
     Exit;
   Face.Size := Size;
   Face.Bold := Bold;
-  Move(Path^, Face.Source[0], TextLength(Path));
+  Face.Source := Path;
 end;
 
-function LoadFontFamily(Family: PChar; out FontSet: TFontSet): Boolean;
+function LoadFontFamily(const Family: string; out FontSet: TFontSet): Boolean;
 var
   Handle: Int64;
   Entry: TDirectoryEntry;
-  Directory: PChar;
-  Path: PChar;
+  Directory: string;
+  Name: string;
   Face: TFontFace;
-  Builder: TTextBuilder;
 begin
   ClearFontSet(FontSet);
   FontSet.Loader := @LoadFaceFromSource;
-  BeginText(Builder);
-  AppendText(Builder, FontDirectory);
-  AppendText(Builder, '/');
-  AppendText(Builder, Family);
-  Directory := FinishText(Builder);
-  Handle := OpenFile(Directory, OpenRead);
+  Directory := FontDirectory + '/' + Family;
+  Handle := OpenFile(PChar(Directory), OpenRead);
   if Handle >= 0 then
   begin
     while ReadDirectoryEntry(Handle, Entry) do
     begin
-      if KindOfFont(@Entry.Name[0]) = NotAFont then
+      Name := PChar(@Entry.Name[0]);
+      if KindOfFont(Name) = NotAFont then
         Continue;
-      BeginText(Builder);
-      AppendText(Builder, Directory);
-      AppendText(Builder, '/');
-      AppendText(Builder, @Entry.Name[0]);
-      Path := FinishText(Builder);
-      if ReadFaceSummary(Path, @Entry.Name[0], Face) then
+      if ReadFaceSummary(Directory + '/' + Name, Name, Face) then
         AddFace(FontSet, Face);
-      FreeMemory(Path);
     end;
     CloseFile(Handle);
   end;
-  FreeMemory(Directory);
   Result := FontSet.Count > 0;
 end;
 

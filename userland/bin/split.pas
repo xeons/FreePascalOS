@@ -28,15 +28,14 @@
 program split;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Util.Messages,
@@ -72,38 +71,33 @@ type
   TSplitMode = (SplitLines, SplitBytes, SplitLineBytes, SplitChunks);
 
 var
-  Prefix: PChar;
-  Suffix: PChar;
+  Prefix: string;
+  Suffix: string;
   SuffixLength: Integer;
-  SuffixAlphabet: PChar;
+  SuffixAlphabet: string;
   Verbose: Boolean;
   PieceNumber: QWord;
   PieceHandle: Int64;
   PieceStream: POutputStream;
 
-function PieceName: PChar;
+function PieceName: string;
 var
-  Builder: TTextBuilder;
-  Digits: array[0..63] of Char;
+  Digits: string;
   Base: QWord;
   Value: QWord;
   Index: Integer;
 begin
-  Base := TextLength(SuffixAlphabet);
+  Base := Length(SuffixAlphabet);
   Value := PieceNumber;
-  for Index := SuffixLength - 1 downto 0 do
+  SetLength(Digits, SuffixLength);
+  for Index := SuffixLength downto 1 do
   begin
-    Digits[Index] := SuffixAlphabet[Value mod Base];
+    Digits[Index] := SuffixAlphabet[1 + Value mod Base];
     Value := Value div Base;
   end;
   if Value <> 0 then
     Fail(1, 'output file suffixes exhausted', []);
-  Digits[SuffixLength] := #0;
-  BeginText(Builder);
-  AppendText(Builder, Prefix);
-  AppendText(Builder, @Digits[0]);
-  AppendText(Builder, Suffix);
-  Result := FinishText(Builder);
+  Result := Prefix + Digits + Suffix;
 end;
 
 procedure ClosePiece;
@@ -117,18 +111,43 @@ end;
 
 procedure OpenNextPiece;
 var
-  Name: PChar;
+  Name: string;
 begin
   ClosePiece;
   Name := PieceName;
   if Verbose then
-    WriteFormatted(StandardOutput, 'creating file ''%s'''#10, [ArgumentText(Name)]);
-  PieceHandle := OpenFile(Name, OpenWrite or OpenCreate or OpenTruncate);
+    WriteText(StandardOutput, PChar('creating file ''' + Name + ''''#10));
+  PieceHandle := OpenFile(PChar(Name), OpenWrite or OpenCreate or OpenTruncate);
   if PieceHandle < 0 then
-    FailWithError(1, ErrorCodeOf(PieceHandle), '%s', [ArgumentText(Name)]);
+    FailWithError(1, ErrorCodeOf(PieceHandle), '%s', [ArgumentText(PChar(Name))]);
   PieceStream := CreateOutputStream(PieceHandle);
-  FreeMemory(Name);
   Inc(PieceNumber);
+end;
+
+{ The bytes of a -C record not written yet. }
+var
+  Pending: string;
+  PendingLength: QWord;
+
+procedure AddPending(Character: Char);
+begin
+  if PendingLength = QWord(Length(Pending)) then
+    SetLength(Pending, Length(Pending) * 2 + 256);
+  Inc(PendingLength);
+  Pending[PendingLength] := Character;
+end;
+
+{ Writes the pending record, into a new piece if it does not fit. }
+procedure WritePending(Amount: QWord; var InPiece: QWord);
+begin
+  if (PieceStream = nil) or (InPiece + PendingLength > Amount) then
+  begin
+    OpenNextPiece;
+    InPiece := 0;
+  end;
+  WriteBytes(PieceStream, PChar(Pending), PendingLength);
+  InPiece := InPiece + PendingLength;
+  PendingLength := 0;
 end;
 
 var
@@ -139,14 +158,13 @@ var
   Amount: QWord;
   Number: Int64;
   Input: Int64;
-  Buffer: PChar;
+  Buffer: array of Char;
   Count: Int64;
   Index: Int64;
   InPiece: QWord;
   Information: TFileInformation;
   TotalSize: QWord;
   ChunkSize: QWord;
-  Pending: TTextBuilder;
 begin
   Prefix := 'x';
   Suffix := '';
@@ -195,7 +213,7 @@ begin
     Prefix := Parser.Operands[1];
 
   Input := StandardInputHandle;
-  if (Parser.OperandCount >= 1) and not TextIsEqual(Parser.Operands[0], '-') then
+  if (Parser.OperandCount >= 1) and (string(Parser.Operands[0]) <> '-') then
   begin
     Input := OpenFile(Parser.Operands[0], OpenRead);
     if Input < 0 then
@@ -215,13 +233,14 @@ begin
       Amount := 1;
   end;
 
-  Buffer := PChar(AllocateMemory(65536));
+  SetLength(Buffer, 65536);
   PieceStream := nil;
   PieceNumber := 0;
   InPiece := 0;
-  BeginText(Pending);
+  Pending := '';
+  PendingLength := 0;
   repeat
-    Count := ReadFile(Input, Buffer, 65536);
+    Count := ReadFile(Input, @Buffer[0], Length(Buffer));
     if Count < 0 then
       FailWithError(1, ErrorCodeOf(Count), 'read error', []);
     Index := 0;
@@ -260,30 +279,15 @@ begin
           begin
             { Whole lines, at most Amount bytes per piece (longer lines
               are split). }
-            AppendCharacter(Pending, Buffer[Index]);
-            if (Buffer[Index] = #10) or (Pending.Length = Amount) then
-            begin
-              if (PieceStream = nil) or (InPiece + Pending.Length > Amount) then
-              begin
-                OpenNextPiece;
-                InPiece := 0;
-              end;
-              WriteBytes(PieceStream, Pending.Text, Pending.Length);
-              InPiece := InPiece + Pending.Length;
-              Pending.Length := 0;
-              Pending.Text[0] := #0;
-            end;
+            AddPending(Buffer[Index]);
+            if (Buffer[Index] = #10) or (PendingLength = Amount) then
+              WritePending(Amount, InPiece);
           end;
       end;
       Inc(Index);
     end;
   until Count = 0;
-  if Pending.Length > 0 then
-  begin
-    if (PieceStream = nil) or (InPiece + Pending.Length > Amount) then
-      OpenNextPiece;
-    WriteBytes(PieceStream, Pending.Text, Pending.Length);
-  end;
+  if PendingLength > 0 then
+    WritePending(Amount, InPiece);
   ClosePiece;
-  FreeMemory(Buffer);
 end.

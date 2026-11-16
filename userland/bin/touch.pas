@@ -29,7 +29,7 @@
 program touch;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Abi.SystemCalls,
@@ -65,22 +65,54 @@ const
   OptionStamp = 7;
 
 var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
   NoCreate: Boolean;
   FollowLinks: Boolean;
   ChangeAccess: Boolean;
   ChangeModification: Boolean;
   AccessTime: TUnixTime;
   ModificationTime: TUnixTime;
+  UseNow: Boolean;
+
+{ Creates Path if needed and sets its times; False after reporting a
+  failure. }
+function TouchFile(const Path: string): Boolean;
+var
+  Handle: Int64;
+  Error: LongInt;
+begin
+  Result := True;
+  if not PathExists(PChar(Path)) then
+  begin
+    if NoCreate then
+      Exit;
+    Handle := OpenFile(PChar(Path), OpenWrite or OpenCreate);
+    if Handle < 0 then
+    begin
+      ReportError(ErrorCodeOf(Handle), 'cannot touch ''%s''', [ArgumentText(PChar(Path))]);
+      Exit(False);
+    end;
+    CloseFile(Handle);
+  end;
+  if UseNow then
+    Error := SetFileTimesToNow(PChar(Path), ChangeModification, ChangeAccess, FollowLinks)
+  else
+    Error := SetFileTimes(PChar(Path), ModificationTime, AccessTime, FollowLinks);
+  if Error <> ErrorNone then
+  begin
+    ReportError(Error, 'setting times of ''%s''', [ArgumentText(PChar(Path))]);
+    Result := False;
+  end;
+end;
+
+var
+  Parser: TOptionParser;
+  Code: Integer;
+  Value: PChar;
   Information: TFileInformation;
   Index: Integer;
-  Handle: Int64;
   Error: LongInt;
   ExitStatus: LongInt;
   Time: TUnixTime;
-  UseNow: Boolean;
 begin
   UseNow := True;
   NoCreate := False;
@@ -150,29 +182,7 @@ begin
 
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
-  begin
-    if not PathExists(Parser.Operands[Index]) then
-    begin
-      if NoCreate then
-        Continue;
-      Handle := OpenFile(Parser.Operands[Index], OpenWrite or OpenCreate);
-      if Handle < 0 then
-      begin
-        ReportError(ErrorCodeOf(Handle), 'cannot touch ''%s''', [ArgumentText(Parser.Operands[Index])]);
-        ExitStatus := 1;
-        Continue;
-      end;
-      CloseFile(Handle);
-    end;
-    if UseNow then
-      Error := SetFileTimesToNow(Parser.Operands[Index], ChangeModification, ChangeAccess, FollowLinks)
-    else
-      Error := SetFileTimes(Parser.Operands[Index], ModificationTime, AccessTime, FollowLinks);
-    if Error <> ErrorNone then
-    begin
-      ReportError(Error, 'setting times of ''%s''', [ArgumentText(Parser.Operands[Index])]);
+    if not TouchFile(Parser.Operands[Index]) then
       ExitStatus := 1;
-    end;
-  end;
   Halt(ExitStatus);
 end.

@@ -26,9 +26,10 @@
 program pinky;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Sys.Time,
   Util.Accounts,
@@ -44,16 +45,35 @@ const
   OptionLong = 1;
   OptionShort = 2;
 
+procedure Print(const Text: string);
+begin
+  WriteText(StandardOutput, PChar(Text));
+end;
+
+procedure PrintLongFormat(const Requested: string);
+var
+  UserId: LongWord;
+  Name: string;
+begin
+  if not FindUserId(PChar(Requested), UserId) or (UserNameOf(UserId) = nil) then
+  begin
+    Print(Format('Login name: %-28s In real life:  ???'#10, [Requested]));
+    Exit;
+  end;
+  Name := UserNameOf(UserId);
+  Print(Format('Login name: %-28s In real life:  %s'#10, [Name, Name]));
+  Print(Format('Directory: %-29s Shell:  /bin/sh'#10#10, [string(HomeDirectoryOf(UserId))]));
+end;
+
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
   LongFormat: Boolean;
   Index: Integer;
-  UserId: LongWord;
-  Name: PChar;
+  Name: string;
   BootTime: Int64;
-  DateTime: TDateTime;
+  DateTime: Sys.Time.TDateTime;
 begin
   LongFormat := False;
   BeginOptions(Parser, [
@@ -67,26 +87,17 @@ begin
     if Parser.OperandCount = 0 then
       FailWithUsageHint('no username specified; at least one must be specified when using -l', []);
     for Index := 0 to Parser.OperandCount - 1 do
-    begin
-      if not FindUserId(Parser.Operands[Index], UserId) or (UserNameOf(UserId) = nil) then
-      begin
-        WriteFormatted(StandardOutput, 'Login name: %-28s In real life:  ???'#10, [ArgumentText(Parser.Operands[Index])]);
-        Continue;
-      end;
-      WriteFormatted(StandardOutput, 'Login name: %-28s In real life:  %s'#10, [ArgumentText(UserNameOf(UserId)),
-        ArgumentText(UserNameOf(UserId))]);
-      WriteFormatted(StandardOutput, 'Directory: %-29s Shell:  /bin/sh'#10#10, [ArgumentText(HomeDirectoryOf(UserId))]);
-    end;
+      PrintLongFormat(Parser.Operands[Index]);
     Halt(0);
   end;
 
-  Name := UserNameOf(CurrentRealUserId);
-  if Name = nil then
-    Name := 'root';
+  if UserNameOf(CurrentRealUserId) = nil then
+    Name := 'root'
+  else
+    Name := UserNameOf(CurrentRealUserId);
   PrintLine('Login    Name                 TTY      Idle   When');
   BootTime := CurrentTime - Int64(UptimeMilliseconds div 1000);
   DecodeTime(BootTime, DateTime);
-  WriteFormatted(StandardOutput, '%-8s %-20s console         %04d-%02d-%02d %02d:%02d'#10, [ArgumentText(Name),
-    ArgumentText(Name), ArgumentNumber(DateTime.Year), ArgumentNumber(DateTime.Month),
-    ArgumentNumber(DateTime.Day), ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute)]);
+  Print(Format('%-8s %-20s console         %.4d-%.2d-%.2d %.2d:%.2d'#10, [Name, Name,
+    DateTime.Year, DateTime.Month, DateTime.Day, DateTime.Hour, DateTime.Minute]));
 end.

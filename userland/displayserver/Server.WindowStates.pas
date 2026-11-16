@@ -30,6 +30,7 @@
 unit Server.WindowStates;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -37,9 +38,9 @@ uses
   Server.Windows;
 
 { Hides the window as minimized (nothing if it is not shown). }
-procedure MinimizeWindow(Window: PServerWindow);
+procedure MinimizeWindow(Window: TServerWindow);
 { Carries out a Manage* command (Windowing.Protocol) on the window. }
-procedure ManageWindow(Window: PServerWindow; Command: LongWord);
+procedure ManageWindow(Window: TServerWindow; Command: LongWord);
 
 implementation
 
@@ -47,48 +48,48 @@ uses
   Windowing.Protocol,
   Server.Actions;
 
-procedure MinimizeWindow(Window: PServerWindow);
+procedure MinimizeWindow(Window: TServerWindow);
 begin
-  if not Window^.Visible then
+  if not Window.Visible then
     Exit;
   ShowWindow(Window, False);
-  Window^.Minimized := True;
+  Window.Minimized := True;
 end;
 
 { Shown again if it was minimized (which activates it). }
-procedure RestoreFromMinimized(Window: PServerWindow);
+procedure RestoreFromMinimized(Window: TServerWindow);
 begin
-  if Window^.Minimized then
+  if Window.Minimized then
     ShowWindow(Window, True);
 end;
 
-procedure AskToClose(Window: PServerWindow);
+procedure AskToClose(Window: TServerWindow);
 var
   Message: TWindowMessage;
 begin
-  Message := NewMessage(EventCloseRequested, Window^.Id);
+  Message := NewMessage(EventCloseRequested, Window.Id);
   SendToProgram(Window, Message);
 end;
 
-procedure ManageWindow(Window: PServerWindow; Command: LongWord);
+procedure ManageWindow(Window: TServerWindow; Command: LongWord);
 begin
   case Command of
     ManageActivate:
-      if Window^.Minimized then
+      if Window.Minimized then
         RestoreFromMinimized(Window)
       else
         ActivateWindow(Window);
     ManageMinimize:
       MinimizeWindow(Window);
     ManageRestore:
-      if Window^.Minimized then
+      if Window.Minimized then
         RestoreFromMinimized(Window)
-      else if Window^.Maximized then
+      else if Window.Maximized then
         ToggleMaximized(Window);
     ManageMaximize:
       begin
         RestoreFromMinimized(Window);
-        if not Window^.Maximized and ((Window^.Flags and WindowResizable) <> 0) then
+        if not Window.Maximized and ((Window.Flags and WindowResizable) <> 0) then
           ToggleMaximized(Window);
         ActivateWindow(Window);
       end;

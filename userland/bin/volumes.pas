@@ -35,10 +35,11 @@
 program volumes;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.FileWatches,
   Sys.Format,
@@ -70,31 +71,41 @@ begin
     FailWithUsageHint('invalid number: ''%s''', [ArgumentText(Value)]);
 end;
 
-procedure WriteFlags(const Volume: TVolumeDescription);
+procedure PrintText(const Text: string);
 begin
+  WriteText(StandardOutput, PChar(Text));
+end;
+
+function HumanSize(Size: QWord): string;
+var
+  Buffer: array[0..31] of Char;
+begin
+  Result := FormatHumanSize(Size, @Buffer[0]);
+end;
+
+function FlagsText(const Volume: TVolumeDescription): string;
+begin
+  Result := '';
   if Volume.IsSystemVolume then
-    WriteText(StandardOutput, ' system');
+    Result := Result + ' system';
   if Volume.IsReadOnly then
-    WriteText(StandardOutput, ' read-only');
+    Result := Result + ' read-only';
   if Volume.IsRemovable then
-    WriteText(StandardOutput, ' removable');
+    Result := Result + ' removable';
 end;
 
 procedure WriteVolume(const Volume: TVolumeDescription);
 var
-  SizeText: array[0..31] of Char;
-  FreeText: array[0..31] of Char;
+  FreeText: string;
 begin
-  FormatHumanSize(Volume.TotalBytes, @SizeText[0]);
   if Volume.HasFreeSpace then
-    FormatHumanSize(Volume.FreeBytes, @FreeText[0])
+    FreeText := HumanSize(Volume.FreeBytes)
   else
-    CopyText(@FreeText[0], '-', SizeOf(FreeText));
-  WriteFormatted(StandardOutput, '%-10s %-12s %-6s %6s %6s %s', [ArgumentText(@Volume.Name[0]),
-    ArgumentText(@Volume.VolumeLabel[0]), ArgumentText(@Volume.FileSystemType[0]),
-    ArgumentText(@SizeText[0]), ArgumentText(@FreeText[0]), ArgumentText(@Volume.MountPoint[0])]);
-  WriteFlags(Volume);
-  WriteText(StandardOutput, #10);
+    FreeText := '-';
+  PrintText(Format('%-10s %-12s %-6s %6s %6s %s', [string(PChar(@Volume.Name[0])),
+    string(PChar(@Volume.VolumeLabel[0])), string(PChar(@Volume.FileSystemType[0])),
+    HumanSize(Volume.TotalBytes), FreeText, string(PChar(@Volume.MountPoint[0]))]) +
+    FlagsText(Volume) + #10);
 end;
 
 procedure ListVolumes;
@@ -111,19 +122,17 @@ begin
   end;
 end;
 
-procedure WriteArrival(Name: PChar);
+procedure WriteArrival(const Name: string);
 var
   Volume: TVolumeDescription;
-  SizeText: array[0..31] of Char;
+  Line: string;
 begin
-  WriteFormatted(StandardOutput, 'arrived: %s', [ArgumentText(Name)]);
-  if FindVolumeDescription(Name, Volume) then
-  begin
-    FormatHumanSize(Volume.TotalBytes, @SizeText[0]);
-    WriteFormatted(StandardOutput, ' %s "%s" %s at %s', [ArgumentText(@Volume.FileSystemType[0]),
-      ArgumentText(@Volume.VolumeLabel[0]), ArgumentText(@SizeText[0]), ArgumentText(@Volume.MountPoint[0])]);
-  end;
-  WriteText(StandardOutput, #10);
+  Line := 'arrived: ' + Name;
+  if FindVolumeDescription(PChar(Name), Volume) then
+    Line := Line + Format(' %s "%s" %s at %s', [string(PChar(@Volume.FileSystemType[0])),
+      string(PChar(@Volume.VolumeLabel[0])), HumanSize(Volume.TotalBytes),
+      string(PChar(@Volume.MountPoint[0]))]);
+  PrintText(Line + #10);
 end;
 
 { Prints volumes arriving and going away; returns how many. }
@@ -150,9 +159,9 @@ begin
     begin
       case Change.Kind of
         FileChangeCreated: WriteArrival(Change.Name);
-        FileChangeRemoved: WriteFormatted(StandardOutput, 'removed: %s'#10, [ArgumentText(Change.Name)]);
+        FileChangeRemoved: PrintText('removed: ' + string(Change.Name) + #10);
       else
-        WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(FileChangeKindText(Change.Kind))]);
+        PrintText(string(FileChangeKindText(Change.Kind)) + #10);
       end;
       FlushStream(StandardOutput);
       Inc(Result);

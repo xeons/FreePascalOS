@@ -29,10 +29,11 @@
 program nice;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Kernel,
   Sys.Errors,
   Sys.Environment,
@@ -49,18 +50,31 @@ const
     'With no COMMAND, print the current niceness.'#10#10 +
     '  -n, --adjustment=N   add integer N to the niceness (default 10)'#10;
 
+function ParseAdjustment(const Text: string): Int64;
+begin
+  if not ParseInteger(PChar(Text), Result) then
+    Fail(125, 'invalid adjustment ''%s''', [ArgumentText(PChar(Text))]);
+end;
+
+{ The old form "nice -5 command" (or "nice --5 command"). }
+function IsOldStyleAdjustment(const Text: string): Boolean;
+begin
+  Result := (Length(Text) >= 2) and (Text[1] = '-') and
+    (IsDigit(Text[2]) or ((Text[2] = '-') and (Length(Text) >= 3) and IsDigit(Text[3])));
+end;
+
 var
   First: Integer;
   Adjustment: Int64;
   Options: TProcessOptions;
-  Text: PChar;
+  Text: string;
   Current: LongInt;
   Wanted: Int64;
   Error: Int64;
 begin
   First := 1;
   Adjustment := 10;
-  if (ArgumentTotal > 1) and TextIsEqual(Argument(1), '--help') then
+  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
   begin
     Print(Usage);
     Halt(0);
@@ -68,33 +82,29 @@ begin
   if First < ArgumentTotal then
   begin
     Text := Argument(First);
-    if (TextIsEqual(Text, '-n') or TextIsEqual(Text, '--adjustment')) and (First + 1 < ArgumentTotal) then
+    if ((Text = '-n') or (Text = '--adjustment')) and (First + 1 < ArgumentTotal) then
     begin
-      if not ParseInteger(Argument(First + 1), Adjustment) then
-        Fail(125, 'invalid adjustment ''%s''', [ArgumentText(Argument(First + 1))]);
+      Adjustment := ParseAdjustment(Argument(First + 1));
       First := First + 2;
     end
-    else if TextStartsWith(Text, '--adjustment=') then
+    else if StartsStr('--adjustment=', Text) then
     begin
-      if not ParseInteger(Text + 13, Adjustment) then
-        Fail(125, 'invalid adjustment ''%s''', [ArgumentText(Text + 13)]);
+      Adjustment := ParseAdjustment(Copy(Text, 14, MaxInt));
       Inc(First);
     end
-    else if (Text[0] = '-') and (IsDigit(Text[1]) or ((Text[1] = '-') and IsDigit(Text[2]))) then
+    else if IsOldStyleAdjustment(Text) then
     begin
-      { The old form "nice -5 command". }
-      if not ParseInteger(Text + 1, Adjustment) then
-        Fail(125, 'invalid adjustment ''%s''', [ArgumentText(Text + 1)]);
+      Adjustment := ParseAdjustment(Copy(Text, 2, MaxInt));
       Inc(First);
     end;
   end;
-  if (First < ArgumentTotal) and TextIsEqual(Argument(First), '--') then
+  if (First < ArgumentTotal) and (string(Argument(First)) = '--') then
     Inc(First);
 
   KernelGetPriority(0, Current);
   if First >= ArgumentTotal then
   begin
-    WriteFormatted(StandardOutput, '%d'#10, [ArgumentNumber(Current)]);
+    WriteLine(StandardOutput, PChar(IntToStr(Current)));
     Halt(0);
   end;
   Wanted := Current + Adjustment;

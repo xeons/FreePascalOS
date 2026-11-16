@@ -24,7 +24,7 @@
 program truncate;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Abi.SystemCalls,
@@ -53,7 +53,8 @@ var
   Code: Integer;
   Value: PChar;
   NoCreate: Boolean;
-  SizeText: PChar;
+  SizeText: string;
+  HasSize: Boolean;
   Adjustment: Char;
   Size: QWord;
   Index: Integer;
@@ -65,28 +66,33 @@ var
   ExitStatus: LongInt;
 begin
   NoCreate := False;
-  SizeText := nil;
+  SizeText := '';
+  HasSize := False;
   BeginOptions(Parser, [
     OptionDefinition('c', 'no-create', False, OptionNoCreate),
     OptionDefinition('s', 'size', True, OptionSize)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionNoCreate: NoCreate := True;
-      OptionSize: SizeText := Value;
+      OptionSize:
+        begin
+          SizeText := Value;
+          HasSize := True;
+        end;
     end;
-  if SizeText = nil then
+  if not HasSize then
     FailWithUsageHint('you must specify ''--size''', []);
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing file operand', []);
 
   Adjustment := ' ';
-  if SizeText[0] in ['+', '-', '<', '>'] then
+  if (SizeText <> '') and (SizeText[1] in ['+', '-', '<', '>']) then
   begin
-    Adjustment := SizeText[0];
-    Inc(SizeText);
+    Adjustment := SizeText[1];
+    Delete(SizeText, 1, 1);
   end;
-  if not ParseSize(SizeText, Size) then
-    Fail(1, 'Invalid number: ''%s''', [ArgumentText(SizeText)]);
+  if not ParseSize(PChar(SizeText), Size) then
+    Fail(1, 'Invalid number: ''%s''', [ArgumentText(PChar(SizeText))]);
 
   Flags := OpenWrite;
   if not NoCreate then

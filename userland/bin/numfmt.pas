@@ -30,10 +30,11 @@
 program numfmt;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
@@ -62,7 +63,7 @@ const
   OptionSuffix = 6;
   OptionTo = 7;
 
-  UnitLetters: PChar = 'KMGTPEZY';
+  UnitLetters = 'KMGTPEZY';
 
 type
   TUnit = (UnitNone, UnitAuto, UnitSi, UnitIec, UnitIecI);
@@ -70,61 +71,74 @@ type
 var
   FromUnit: TUnit;
   ToUnit: TUnit;
-  Suffix: PChar;
+  Suffix: string;
   Padding: Int64;
   FieldNumber: Int64;
   Delimiter: Char;
   ExitStatus: LongInt;
 
-function ParseUnit(Text: PChar; AllowAuto: Boolean): TUnit;
+procedure WriteString(const Text: string);
 begin
-  if TextIsEqual(Text, 'none') then Result := UnitNone
-  else if TextIsEqual(Text, 'si') then Result := UnitSi
-  else if TextIsEqual(Text, 'iec') then Result := UnitIec
-  else if TextIsEqual(Text, 'iec-i') then Result := UnitIecI
-  else if AllowAuto and TextIsEqual(Text, 'auto') then Result := UnitAuto
+  WriteText(StandardOutput, PChar(Text));
+end;
+
+{ The character at Position (1-based), #0 past the end. }
+function CharacterAt(const Text: string; Position: Integer): Char;
+begin
+  if (Position >= 1) and (Position <= Length(Text)) then
+    Result := Text[Position]
+  else
+    Result := #0;
+end;
+
+function ParseUnit(const Text: string; AllowAuto: Boolean): TUnit;
+begin
+  if Text = 'none' then Result := UnitNone
+  else if Text = 'si' then Result := UnitSi
+  else if Text = 'iec' then Result := UnitIec
+  else if Text = 'iec-i' then Result := UnitIecI
+  else if AllowAuto and (Text = 'auto') then Result := UnitAuto
   else
   begin
-    Fail(1, 'invalid unit: ''%s''', [ArgumentText(Text)]);
+    Fail(1, 'invalid unit: ''%s''', [ArgumentText(PChar(Text))]);
     Result := UnitNone;
   end;
 end;
 
 { Parses "1.5K" style numbers into a value scaled by 1000 (milli-units),
   so a fraction survives. }
-function ParseHuman(Text: PChar; out Thousandths: Int64): Boolean;
+function ParseHuman(const Text: string; out Thousandths: Int64): Boolean;
 var
   Position: Integer;
   Whole: Int64;
   Fraction: Int64;
   FractionScale: Int64;
   Negative: Boolean;
-  Letter: PtrInt;
+  Letter: Integer;
   Base: Int64;
   Power: Integer;
   Multiplier: Int64;
-  SuffixLength: PtrUInt;
 begin
   Result := False;
   Thousandths := 0;
-  Position := 0;
-  Negative := Text[0] = '-';
+  Position := 1;
+  Negative := CharacterAt(Text, 1) = '-';
   if Negative then
     Inc(Position);
-  if not IsDigit(Text[Position]) then
+  if not IsDigit(CharacterAt(Text, Position)) then
     Exit;
   Whole := 0;
-  while IsDigit(Text[Position]) do
+  while IsDigit(CharacterAt(Text, Position)) do
   begin
     Whole := Whole * 10 + Ord(Text[Position]) - Ord('0');
     Inc(Position);
   end;
   Fraction := 0;
   FractionScale := 1;
-  if Text[Position] = '.' then
+  if CharacterAt(Text, Position) = '.' then
   begin
     Inc(Position);
-    while IsDigit(Text[Position]) do
+    while IsDigit(CharacterAt(Text, Position)) do
     begin
       if FractionScale < 1000 then
       begin
@@ -135,31 +149,27 @@ begin
     end;
   end;
   Multiplier := 1;
-  if (Text[Position] <> #0) and (FromUnit <> UnitNone) then
+  if (Position <= Length(Text)) and (FromUnit <> UnitNone) then
   begin
-    Letter := FindCharacter(UnitLetters, ToUpperCase(Text[Position]));
+    Letter := Pos(UpCase(Text[Position]), UnitLetters) - 1;
     if Letter >= 0 then
     begin
       Inc(Position);
       Base := 1000;
-      if (FromUnit = UnitIec) or ((FromUnit in [UnitIecI, UnitAuto]) and (Text[Position] = 'i')) then
+      if (FromUnit = UnitIec) or ((FromUnit in [UnitIecI, UnitAuto]) and (CharacterAt(Text, Position) = 'i')) then
         Base := 1024;
-      if (FromUnit = UnitIecI) and (Text[Position] <> 'i') then
+      if (FromUnit = UnitIecI) and (CharacterAt(Text, Position) <> 'i') then
         Exit;
-      if Text[Position] = 'i' then
+      if CharacterAt(Text, Position) = 'i' then
         Inc(Position);
-      for Power := 0 to Integer(Letter) do
+      for Power := 0 to Letter do
         Multiplier := Multiplier * Base;
     end;
   end;
   { An optional suffix may follow. }
-  if Suffix <> nil then
-  begin
-    SuffixLength := TextLength(Suffix);
-    if TextStartsWith(Text + Position, Suffix) then
-      Position := Position + Integer(SuffixLength);
-  end;
-  if Text[Position] <> #0 then
+  if PosEx(Suffix, Text, Position) = Position then
+    Position := Position + Length(Suffix);
+  if Position <= Length(Text) then
     Exit;
   Thousandths := Whole * Multiplier * 1000 + (Fraction * 1000 div FractionScale) * Multiplier;
   if Negative then
@@ -167,29 +177,27 @@ begin
   Result := True;
 end;
 
-{ Writes a number (in thousandths) scaled to ToUnit. }
-procedure FormatHuman(Thousandths: Int64; Buffer: PChar);
+{ A number (in thousandths) scaled to ToUnit. }
+function FormatHuman(Thousandths: Int64): string;
 var
-  Builder: TTextBuilder;
   Negative: Boolean;
   Value: QWord;
   Base: QWord;
   Power: Integer;
   Divisor: QWord;
   Tenths: QWord;
-  NumberText: TNumberText;
-  Result: PChar;
 begin
-  BeginText(Builder);
+  Result := '';
   Negative := Thousandths < 0;
   if Negative then
+  begin
     Thousandths := -Thousandths;
-  if Negative then
-    AppendCharacter(Builder, '-');
+    Result := '-';
+  end;
   if ToUnit = UnitNone then
   begin
     { Round up to a whole number. }
-    AppendText(Builder, FormatDecimal((QWord(Thousandths) + 999) div 1000, NumberText));
+    Result := Result + IntToStr((QWord(Thousandths) + 999) div 1000);
   end
   else
   begin
@@ -206,101 +214,83 @@ begin
       Inc(Power);
     end;
     if Power < 0 then
-      AppendText(Builder, FormatDecimal(Value, NumberText))
+      Result := Result + IntToStr(Value)
     else
     begin
       Tenths := (Value * 10 + Divisor - 1) div Divisor;
       if Tenths >= 100 then
-        AppendText(Builder, FormatDecimal((Tenths + 9) div 10, NumberText))
+        Result := Result + IntToStr((Tenths + 9) div 10)
       else
-      begin
-        AppendText(Builder, FormatDecimal(Tenths div 10, NumberText));
-        AppendCharacter(Builder, '.');
-        AppendCharacter(Builder, Char(Ord('0') + Tenths mod 10));
-      end;
-      AppendCharacter(Builder, UnitLetters[Power]);
+        Result := Result + IntToStr(Tenths div 10) + '.' + Char(Ord('0') + Tenths mod 10);
+      Result := Result + UnitLetters[Power + 1];
       if ToUnit = UnitIecI then
-        AppendCharacter(Builder, 'i');
+        Result := Result + 'i';
     end;
   end;
-  if Suffix <> nil then
-    AppendText(Builder, Suffix);
-  Result := FinishText(Builder);
-  CopyText(Buffer, Result, 64);
-  FreeMemory(Result);
+  Result := Result + Suffix;
 end;
 
-procedure WritePadded(Text: PChar);
-var
-  Length: Int64;
+procedure WritePadded(const Text: string);
 begin
-  Length := Int64(TextLength(Text));
-  if Padding > 0 then
-    while Length < Padding do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Inc(Length);
-    end;
-  WriteText(StandardOutput, Text);
-  if Padding < 0 then
-    while Length < -Padding do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Inc(Length);
-    end;
+  if Length(Text) < Padding then
+    WriteString(StringOfChar(' ', Padding - Length(Text)));
+  WriteString(Text);
+  if Length(Text) < -Padding then
+    WriteString(StringOfChar(' ', -Padding - Length(Text)));
 end;
 
-procedure ConvertNumber(Text: PChar);
+procedure ConvertNumber(const Text: string);
 var
   Value: Int64;
-  Buffer: array[0..63] of Char;
 begin
   if not ParseHuman(Text, Value) then
   begin
-    Report('invalid number: ''%s''', [ArgumentText(Text)]);
+    Report('invalid number: ''%s''', [ArgumentText(PChar(Text))]);
     ExitStatus := 2;
-    WriteText(StandardOutput, Text);
+    WriteString(Text);
     Exit;
   end;
-  FormatHuman(Value, @Buffer[0]);
-  WritePadded(@Buffer[0]);
+  WritePadded(FormatHuman(Value));
+end;
+
+function IsFieldEnd(Character: Char): Boolean;
+begin
+  if Delimiter = #0 then
+    Result := IsSpace(Character)
+  else
+    Result := Character = Delimiter;
 end;
 
 { Converts field FieldNumber of Line, copying the rest unchanged. }
-procedure ConvertLine(Line: PChar);
+procedure ConvertLine(const Line: string);
 var
-  Position: PtrUInt;
+  Position: Integer;
   Field: Int64;
-  Start: PtrUInt;
-  Saved: Char;
+  Start: Integer;
 begin
-  Position := 0;
+  Position := 1;
   Field := 1;
   while True do
   begin
     { Leading blanks belong to the field when splitting on whitespace. }
     Start := Position;
     if Delimiter = #0 then
-      while (Line[Position] = ' ') or (Line[Position] = #9) do
+      while CharacterAt(Line, Position) in [' ', #9] do
         Inc(Position);
-    while (Line[Position] <> #0) and not (((Delimiter = #0) and IsSpace(Line[Position])) or
-          ((Delimiter <> #0) and (Line[Position] = Delimiter))) do
+    while (Position <= Length(Line)) and not IsFieldEnd(Line[Position]) do
       Inc(Position);
     if Field = FieldNumber then
     begin
-      Saved := Line[Position];
-      Line[Position] := #0;
-      while (Line[Start] = ' ') or (Line[Start] = #9) do
+      while CharacterAt(Line, Start) in [' ', #9] do
       begin
         WriteCharacter(StandardOutput, Line[Start]);
         Inc(Start);
       end;
-      ConvertNumber(Line + Start);
-      Line[Position] := Saved;
+      ConvertNumber(Copy(Line, Start, Position - Start));
     end
     else
-      WriteBytes(StandardOutput, Line + Start, Position - Start);
-    if Line[Position] = #0 then
+      WriteString(Copy(Line, Start, Position - Start));
+    if Position > Length(Line) then
       Break;
     WriteCharacter(StandardOutput, Line[Position]);
     Inc(Position);
@@ -320,7 +310,7 @@ var
 begin
   FromUnit := UnitNone;
   ToUnit := UnitNone;
-  Suffix := nil;
+  Suffix := '';
   Padding := 0;
   FieldNumber := 1;
   Delimiter := #0;
@@ -337,7 +327,7 @@ begin
     case Code of
       OptionDelimiter:
         begin
-          if (Value[0] = #0) or (Value[1] <> #0) then
+          if Length(string(Value)) <> 1 then
             Fail(1, 'the delimiter must be a single character', []);
           Delimiter := Value[0];
         end;

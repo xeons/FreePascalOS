@@ -37,8 +37,10 @@
 program watch;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.FileWatches,
@@ -68,9 +70,9 @@ const
   ExitNothingCame = 2;
 
 var
-  Watches: array[0..MaximumWaitHandles - 1] of Int64;
-  Paths: array[0..MaximumWaitHandles - 1] of PChar;
-  WatchCount: Integer;
+  { One watch per path, at the same index. }
+  Watches: array of Int64;
+  Paths: array of string;
   ChangesWanted: QWord;
   ChangesSeen: QWord;
   Timeout: Int64;
@@ -82,16 +84,18 @@ begin
     FailWithUsageHint('invalid number: ''%s''', [ArgumentText(Value)]);
 end;
 
-procedure PrintChange(Path: PChar; const Change: TFileChange);
+procedure PrintChange(const Path: string; const Change: TFileChange);
+var
+  Line: string;
 begin
-  WriteFormatted(StandardOutput, '%s: %s', [ArgumentText(Path), ArgumentText(FileChangeKindText(Change.Kind))]);
+  Line := Path + ': ' + string(FileChangeKindText(Change.Kind));
   if Change.Kind = FileChangeRenamed then
-    WriteFormatted(StandardOutput, ': %s -> %s', [ArgumentText(Change.OldName), ArgumentText(Change.Name)])
+    Line := Line + ': ' + string(Change.OldName) + ' -> ' + string(Change.Name)
   else if (Change.Name <> nil) and (Change.Name^ <> #0) then
-    WriteFormatted(StandardOutput, ': %s', [ArgumentText(Change.Name)]);
+    Line := Line + ': ' + string(Change.Name);
   if Change.IsDirectory and (Change.Kind <> FileChangeOverflow) then
-    WriteText(StandardOutput, ' (directory)');
-  WriteText(StandardOutput, #10);
+    Line := Line + ' (directory)';
+  WriteLine(StandardOutput, PChar(Line));
   FlushStream(StandardOutput);
 end;
 
@@ -147,25 +151,26 @@ begin
     end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing operand', []);
+  { The kernel waits on at most this many handles at once. }
   if Parser.OperandCount > MaximumWaitHandles then
     Fail(1, 'too many paths', []);
 
-  WatchCount := 0;
+  SetLength(Watches, Parser.OperandCount);
+  SetLength(Paths, Parser.OperandCount);
   for Index := 0 to Parser.OperandCount - 1 do
   begin
     Handle := WatchPath(Parser.Operands[Index], Flags);
     if Handle < 0 then
       FailWithError(1, ErrorCodeOf(Handle), '%s', [ArgumentText(Parser.Operands[Index])]);
-    Watches[WatchCount] := Handle;
-    Paths[WatchCount] := Parser.Operands[Index];
-    Inc(WatchCount);
+    Watches[Index] := Handle;
+    Paths[Index] := Parser.Operands[Index];
   end;
 
   ChangesSeen := 0;
   EndedCount := 0;
-  while EndedCount < WatchCount do
+  while EndedCount < Length(Watches) do
   begin
-    Ready := WaitForHandles(Slice(Watches, WatchCount), Timeout);
+    Ready := WaitForHandles(Watches, Timeout);
     if Ready = -ErrorTimedOut then
       Break;
     if Ready < 0 then
@@ -175,8 +180,8 @@ begin
       Break;
   end;
 
-  for Index := 0 to WatchCount - 1 do
-    CloseHandle(Watches[Index]);
+  for Handle in Watches do
+    CloseHandle(Handle);
   if ChangesSeen = 0 then
     Halt(ExitNothingCame);
 end.

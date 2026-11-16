@@ -29,11 +29,11 @@
 program mv;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Memory,
@@ -65,46 +65,66 @@ var
   NoClobber: Boolean;
   Verbose: Boolean;
 
-function MoveOne(Source, Target: PChar): Boolean;
+{ Directory/(last component of Source), the target of moving Source
+  into Directory. }
+function TargetInDirectory(const Directory, Source: string): string;
+var
+  Base: PChar;
+  Joined: PChar;
+begin
+  Base := BaseName(PChar(Source));
+  Joined := JoinPath(PChar(Directory), Base);
+  Result := Joined;
+  FreeMemory(Base);
+  FreeMemory(Joined);
+end;
+
+{ Copies Source to Target and removes Source: moving between volumes. }
+function CopyAndRemove(const Source, Target: string): Boolean;
+var
+  CopyOptions: TCopyOptions;
+begin
+  CopyOptions.Recursive := True;
+  CopyOptions.KeepLinks := True;
+  CopyOptions.NoClobber := False;
+  CopyOptions.Verbose := False;
+  CopyOptions.PreserveAttributes := True;
+  Result := CopyPath(PChar(Source), PChar(Target), CopyOptions) and RemoveTree(PChar(Source));
+end;
+
+function MoveOne(const Source, Target: string): Boolean;
 var
   Error: LongInt;
   Information: TFileInformation;
-  CopyOptions: TCopyOptions;
 begin
-  Error := GetLinkInformation(Source, Information);
+  Error := GetLinkInformation(PChar(Source), Information);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot stat ''%s''', [ArgumentText(Source)]);
+    ReportError(Error, 'cannot stat ''%s''', [ArgumentText(PChar(Source))]);
     Exit(False);
   end;
-  if NoClobber and PathExists(Target) then
+  if NoClobber and PathExists(PChar(Target)) then
     Exit(True);
 
   { Renaming onto an existing file replaces it. }
-  if PathExists(Target) and not IsDirectory(Target) and (Information.Kind <> KindDirectory) then
-    RemovePath(Target);
+  if PathExists(PChar(Target)) and not IsDirectory(PChar(Target)) and (Information.Kind <> KindDirectory) then
+    RemovePath(PChar(Target));
 
-  Error := RenamePath(Source, Target);
+  Error := RenamePath(PChar(Source), PChar(Target));
   if Error = ErrorCrossVolume then
   begin
-    CopyOptions.Recursive := True;
-    CopyOptions.KeepLinks := True;
-    CopyOptions.NoClobber := False;
-    CopyOptions.Verbose := False;
-    CopyOptions.PreserveAttributes := True;
-    if not CopyPath(Source, Target, CopyOptions) then
-      Exit(False);
-    if not RemoveTree(Source) then
+    if not CopyAndRemove(Source, Target) then
       Exit(False);
     Error := ErrorNone;
   end;
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot move ''%s'' to ''%s''', [ArgumentText(Source), ArgumentText(Target)]);
+    ReportError(Error, 'cannot move ''%s'' to ''%s''', [ArgumentText(PChar(Source)), ArgumentText(PChar(Target))]);
     Exit(False);
   end;
   if Verbose then
-    WriteFormatted(StandardOutput, 'renamed ''%s'' -> ''%s'''#10, [ArgumentText(Source), ArgumentText(Target)]);
+    WriteFormatted(StandardOutput, 'renamed ''%s'' -> ''%s'''#10, [ArgumentText(PChar(Source)),
+      ArgumentText(PChar(Target))]);
   Result := True;
 end;
 
@@ -112,17 +132,17 @@ var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  TargetDirectory: PChar;
+  HasTargetDirectory: Boolean;
+  TargetDirectory: string;
   NoTargetDirectory: Boolean;
   SourceCount: Integer;
   Index: Integer;
-  Base: PChar;
-  Target: PChar;
+  Target: string;
   ExitStatus: LongInt;
 begin
   NoClobber := False;
   Verbose := False;
-  TargetDirectory := nil;
+  HasTargetDirectory := False;
   NoTargetDirectory := False;
   BeginOptions(Parser, [
     OptionDefinition('f', 'force', False, OptionForce),
@@ -135,7 +155,11 @@ begin
     case Code of
       OptionForce: NoClobber := False;
       OptionNoClobber: NoClobber := True;
-      OptionTargetDirectory: TargetDirectory := Value;
+      OptionTargetDirectory:
+        begin
+          TargetDirectory := Value;
+          HasTargetDirectory := True;
+        end;
       OptionNoTargetDirectory: NoTargetDirectory := True;
       OptionVerbose: Verbose := True;
     end;
@@ -143,13 +167,13 @@ begin
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing file operand', []);
   SourceCount := Parser.OperandCount;
-  if TargetDirectory = nil then
+  if not HasTargetDirectory then
   begin
     if Parser.OperandCount = 1 then
       FailWithUsageHint('missing destination file operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
     SourceCount := Parser.OperandCount - 1;
     Target := Parser.Operands[SourceCount];
-    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(Target)) then
+    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(PChar(Target))) then
     begin
       if SourceCount > 1 then
         FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
@@ -160,17 +184,11 @@ begin
     TargetDirectory := Target;
   end;
 
-  if not IsDirectory(TargetDirectory) then
-    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(TargetDirectory)]);
+  if not IsDirectory(PChar(TargetDirectory)) then
+    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(PChar(TargetDirectory))]);
   ExitStatus := 0;
   for Index := 0 to SourceCount - 1 do
-  begin
-    Base := BaseName(Parser.Operands[Index]);
-    Target := JoinPath(TargetDirectory, Base);
-    if not MoveOne(Parser.Operands[Index], Target) then
+    if not MoveOne(Parser.Operands[Index], TargetInDirectory(TargetDirectory, Parser.Operands[Index])) then
       ExitStatus := 1;
-    FreeMemory(Base);
-    FreeMemory(Target);
-  end;
   Halt(ExitStatus);
 end.

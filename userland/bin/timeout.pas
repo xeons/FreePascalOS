@@ -31,16 +31,15 @@
 program timeout;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Abi.SystemCalls,
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Environment,
   Sys.Format,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
   Util.Commands,
   Util.Messages;
 
@@ -61,31 +60,34 @@ const
   StatusTimedOut = 124;
   StatusTimeoutFailed = 125;
 
+  Digits = ['0'..'9'];
+
 { "1.5m" into milliseconds. }
-function ParseDuration(Text: PChar; out Milliseconds: QWord): Boolean;
+function ParseDuration(const Text: string; out Milliseconds: QWord): Boolean;
 var
   Position: Integer;
   Whole: QWord;
   Fraction: QWord;
   Scale: QWord;
   Multiplier: QWord;
+  Suffix: Char;
 begin
   Milliseconds := 0;
-  Position := 0;
   Whole := 0;
   Fraction := 0;
   Scale := 1;
-  if not IsDigit(Text[0]) and (Text[0] <> '.') then
+  if (Text = '') or not ((Text[1] in Digits) or (Text[1] = '.')) then
     Exit(False);
-  while IsDigit(Text[Position]) do
+  Position := 1;
+  while (Position <= Length(Text)) and (Text[Position] in Digits) do
   begin
     Whole := Whole * 10 + QWord(Ord(Text[Position]) - Ord('0'));
     Inc(Position);
   end;
-  if Text[Position] = '.' then
+  if (Position <= Length(Text)) and (Text[Position] = '.') then
   begin
     Inc(Position);
-    while IsDigit(Text[Position]) do
+    while (Position <= Length(Text)) and (Text[Position] in Digits) do
     begin
       if Scale < 1000 then
       begin
@@ -95,7 +97,11 @@ begin
       Inc(Position);
     end;
   end;
-  case Text[Position] of
+  if Position <= Length(Text) then
+    Suffix := Text[Position]
+  else
+    Suffix := #0;
+  case Suffix of
     #0, 's': Multiplier := 1000;
     'm': Multiplier := 60 * 1000;
     'h': Multiplier := 60 * 60 * 1000;
@@ -103,17 +109,22 @@ begin
   else
     Exit(False);
   end;
-  if (Text[Position] <> #0) and (Text[Position + 1] <> #0) then
+  if Position < Length(Text) then
     Exit(False);
   Milliseconds := Whole * Multiplier + (Fraction * Multiplier) div Scale;
   Result := True;
 end;
 
-procedure FailUsage(Message: PChar);
+procedure FailUsage(const Message: string);
 begin
-  Report('%s', [ArgumentText(Message)]);
+  Report('%s', [ArgumentText(PChar(Message))]);
   WriteFormatted(StandardError, 'Try ''%s --help'' for more information.'#10, [ArgumentText(ProgramName)]);
   Halt(StatusTimeoutFailed);
+end;
+
+function ParseSignalText(const Text: string): Integer;
+begin
+  Result := ParseSignal(PChar(Text));
 end;
 
 var
@@ -127,46 +138,46 @@ var
   ProcessId: Int64;
   Status: LongInt;
   Error: LongInt;
-  Text: PChar;
+  Text: string;
 begin
   Signal := SignalTerminate;
   PreserveStatus := False;
   KillAfter := 0;
   First := 1;
   { Options end at the duration, so the command keeps its own options. }
-  while (First < ArgumentTotal) and (Argument(First)[0] = '-') and (Argument(First)[1] <> #0) do
+  while (First < ArgumentTotal) and (Length(string(Argument(First))) > 1) and (Argument(First)[0] = '-') do
   begin
     Text := Argument(First);
-    if TextIsEqual(Text, '--help') then
+    if Text = '--help' then
     begin
       Print(Usage);
       Halt(0);
     end
-    else if TextIsEqual(Text, '--preserve-status') then
+    else if Text = '--preserve-status' then
       PreserveStatus := True
-    else if TextIsEqual(Text, '--foreground') or TextIsEqual(Text, '-v') or TextIsEqual(Text, '--verbose') then
+    else if (Text = '--foreground') or (Text = '-v') or (Text = '--verbose') then
       { accepted; there are no process groups to leave }
-    else if (TextIsEqual(Text, '-s') or TextIsEqual(Text, '--signal')) and (First + 1 < ArgumentTotal) then
+    else if ((Text = '-s') or (Text = '--signal')) and (First + 1 < ArgumentTotal) then
     begin
       Inc(First);
       Signal := ParseSignal(Argument(First));
     end
-    else if TextStartsWith(Text, '--signal=') then
-      Signal := ParseSignal(Text + 9)
-    else if TextStartsWith(Text, '-s') then
-      Signal := ParseSignal(Text + 2)
-    else if (TextIsEqual(Text, '-k') or TextIsEqual(Text, '--kill-after')) and (First + 1 < ArgumentTotal) then
+    else if StartsStr('--signal=', Text) then
+      Signal := ParseSignalText(Copy(Text, 10, MaxInt))
+    else if StartsStr('-s', Text) then
+      Signal := ParseSignalText(Copy(Text, 3, MaxInt))
+    else if ((Text = '-k') or (Text = '--kill-after')) and (First + 1 < ArgumentTotal) then
     begin
       Inc(First);
       if not ParseDuration(Argument(First), KillAfter) then
         FailUsage('invalid time interval');
     end
-    else if TextStartsWith(Text, '--kill-after=') then
+    else if StartsStr('--kill-after=', Text) then
     begin
-      if not ParseDuration(Text + 13, KillAfter) then
+      if not ParseDuration(Copy(Text, 14, MaxInt), KillAfter) then
         FailUsage('invalid time interval');
     end
-    else if TextIsEqual(Text, '--') then
+    else if Text = '--' then
     begin
       Inc(First);
       Break;

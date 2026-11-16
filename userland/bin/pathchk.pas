@@ -30,15 +30,13 @@
 program pathchk;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
-  Sys.Text,
   Util.Messages,
   Util.Options;
 
@@ -58,27 +56,65 @@ const
   PosixComponentLimit = 14;
   PosixPathLimit = 256;
 
+  PortableCharacters = ['A'..'Z', 'a'..'z', '0'..'9', '.', '_', '-', '/'];
+
 var
   CheckPosix: Boolean;
   CheckExtra: Boolean;
 
-function IsPortableCharacter(Character: Char): Boolean;
+function HasOnlyPortableCharacters(const Name: string): Boolean;
+var
+  Character: Char;
 begin
-  Result := IsAlphanumeric(Character) or (Character in ['.', '_', '-', '/']);
+  for Character in Name do
+    if not (Character in PortableCharacters) then
+    begin
+      Report('nonportable character ''%c'' in file name ''%s''', [ArgumentCharacter(Character),
+        ArgumentText(PChar(Name))]);
+      Exit(False);
+    end;
+  Result := True;
 end;
 
-function CheckName(Name: PChar): Boolean;
+{ Checks the component of Name from Start (1-based) to just before
+  Finish, which is the end of Name or a '/'. }
+function CheckComponent(const Name: string; Start, Finish: Integer; ComponentLimit: Integer): Boolean;
 var
-  Length: PtrUInt;
-  Index: PtrUInt;
-  ComponentStart: PtrUInt;
-  ComponentLimit: PtrUInt;
-  PathLimit: PtrUInt;
-  Prefix: PChar;
+  Prefix: string;
   Information: TFileInformation;
 begin
-  Length := TextLength(Name);
-  if CheckExtra and (Length = 0) then
+  if Finish - Start > ComponentLimit then
+  begin
+    Report('limit %u exceeded by length %u of file name component ''%s''', [ArgumentUnsigned(ComponentLimit),
+      ArgumentUnsigned(Finish - Start), ArgumentText(PChar(Copy(Name, Start, MaxInt)))]);
+    Exit(False);
+  end;
+  if CheckExtra and (Finish > Start) and (Name[Start] = '-') then
+  begin
+    Report('leading ''-'' in a component of file name ''%s''', [ArgumentText(PChar(Name))]);
+    Exit(False);
+  end;
+  { Without -p, existing leading parts must be directories. }
+  if not CheckPosix and (Finish <= Length(Name)) and (Finish > 1) then
+  begin
+    Prefix := Copy(Name, 1, Finish - 1);
+    if (GetFileInformation(PChar(Prefix), Information) = 0) and (Information.Kind <> KindDirectory) then
+    begin
+      Report('''%s'' is not a directory', [ArgumentText(PChar(Prefix))]);
+      Exit(False);
+    end;
+  end;
+  Result := True;
+end;
+
+function CheckName(const Name: string): Boolean;
+var
+  Position: Integer;
+  ComponentStart: Integer;
+  ComponentLimit: Integer;
+  PathLimit: Integer;
+begin
+  if CheckExtra and (Name = '') then
   begin
     Report('empty file name', []);
     Exit(False);
@@ -87,60 +123,29 @@ begin
   begin
     ComponentLimit := PosixComponentLimit;
     PathLimit := PosixPathLimit;
-    for Index := 0 to Length - 1 do
-      if not IsPortableCharacter(Name[Index]) then
-      begin
-        Report('nonportable character ''%c'' in file name ''%s''', [ArgumentCharacter(Name[Index]),
-          ArgumentText(Name)]);
-        Exit(False);
-      end;
+    if not HasOnlyPortableCharacters(Name) then
+      Exit(False);
   end
   else
   begin
     ComponentLimit := SystemComponentLimit;
     PathLimit := SystemPathLimit;
   end;
-  if Length > PathLimit then
+  if Length(Name) > PathLimit then
   begin
     Report('limit %u exceeded by length %u of file name ''%s''', [ArgumentUnsigned(PathLimit),
-      ArgumentUnsigned(Length), ArgumentText(Name)]);
+      ArgumentUnsigned(Length(Name)), ArgumentText(PChar(Name))]);
     Exit(False);
   end;
 
-  ComponentStart := 0;
-  Index := 0;
-  while Index <= Length do
-  begin
-    if (Index = Length) or (Name[Index] = '/') then
+  ComponentStart := 1;
+  for Position := 1 to Length(Name) + 1 do
+    if (Position > Length(Name)) or (Name[Position] = '/') then
     begin
-      if Index - ComponentStart > ComponentLimit then
-      begin
-        Report('limit %u exceeded by length %u of file name component ''%s''', [ArgumentUnsigned(ComponentLimit),
-          ArgumentUnsigned(Index - ComponentStart), ArgumentText(Name + ComponentStart)]);
+      if not CheckComponent(Name, ComponentStart, Position, ComponentLimit) then
         Exit(False);
-      end;
-      if CheckExtra and (Index > ComponentStart) and (Name[ComponentStart] = '-') then
-      begin
-        Report('leading ''-'' in a component of file name ''%s''', [ArgumentText(Name)]);
-        Exit(False);
-      end;
-      { Without -p, existing leading parts must be directories. }
-      if not CheckPosix and (Index < Length) and (Index > 0) then
-      begin
-        Prefix := PChar(AllocateMemory(Index + 1));
-        CopyText(Prefix, Name, Index + 1);
-        if (GetFileInformation(Prefix, Information) = 0) and (Information.Kind <> KindDirectory) then
-        begin
-          Report('''%s'' is not a directory', [ArgumentText(Prefix)]);
-          FreeMemory(Prefix);
-          Exit(False);
-        end;
-        FreeMemory(Prefix);
-      end;
-      ComponentStart := Index + 1;
+      ComponentStart := Position + 1;
     end;
-    Inc(Index);
-  end;
   Result := True;
 end;
 

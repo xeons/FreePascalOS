@@ -27,14 +27,13 @@
 program mkdir;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Util.Messages,
   Util.Modes,
@@ -57,44 +56,35 @@ var
   HasMode: Boolean;
   ModeChange: TModeChange;
 
-function MakeOne(Path: PChar): LongInt;
+function MakeOne(const Path: string): LongInt;
 begin
-  Result := CreateDirectory(Path);
+  Result := CreateDirectory(PChar(Path));
   if (Result = ErrorNone) and Verbose then
-    WriteFormatted(StandardOutput, '%s: created directory ''%s'''#10, [ArgumentText(ProgramName), ArgumentText(Path)]);
+    WriteFormatted(StandardOutput, '%s: created directory ''%s'''#10, [ArgumentText(ProgramName),
+      ArgumentText(PChar(Path))]);
 end;
 
 { Creates every missing directory along Path. }
-function MakeWithParents(Path: PChar): LongInt;
+function MakeWithParents(const Path: string): LongInt;
 var
-  Copy: PChar;
-  Position: PtrUInt;
+  Position: Integer;
+  Prefix: string;
 begin
-  Copy := DuplicateText(Path);
-  Position := 1;
   Result := ErrorNone;
-  while True do
-  begin
-    while (Copy[Position] <> '/') and (Copy[Position] <> #0) do
-      Inc(Position);
-    if Copy[Position] = '/' then
+  { A leading '/' is part of the first component. }
+  for Position := 2 to Length(Path) do
+    if Path[Position] = '/' then
     begin
-      Copy[Position] := #0;
-      if not IsDirectory(Copy) then
+      Prefix := Copy(Path, 1, Position - 1);
+      if not IsDirectory(PChar(Prefix)) then
       begin
-        Result := MakeOne(Copy);
+        Result := MakeOne(Prefix);
         if Result <> ErrorNone then
-          Break;
+          Exit;
       end;
-      Copy[Position] := '/';
-      Inc(Position);
-      Continue;
     end;
-    if not IsDirectory(Copy) then
-      Result := MakeOne(Copy);
-    Break;
-  end;
-  FreeMemory(Copy);
+  if not IsDirectory(PChar(Path)) then
+    Result := MakeOne(Path);
 end;
 
 var
@@ -103,6 +93,7 @@ var
   Value: PChar;
   Parents: Boolean;
   Index: Integer;
+  Path: string;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
@@ -129,22 +120,23 @@ begin
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
+    Path := Parser.Operands[Index];
     if Parents then
-      Error := MakeWithParents(Parser.Operands[Index])
+      Error := MakeWithParents(Path)
     else
-      Error := MakeOne(Parser.Operands[Index]);
+      Error := MakeOne(Path);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(PChar(Path))]);
       ExitStatus := 1;
     end
     else if HasMode then
     begin
       { The mode applies to the named directory, as in GNU mkdir. }
-      Error := ChangeMode(Parser.Operands[Index], ApplyModeChange(ModeChange, $1ED, True));
+      Error := ChangeMode(PChar(Path), ApplyModeChange(ModeChange, $1ED, True));
       if Error <> ErrorNone then
       begin
-        ReportError(Error, 'cannot set permissions of ''%s''', [ArgumentText(Parser.Operands[Index])]);
+        ReportError(Error, 'cannot set permissions of ''%s''', [ArgumentText(PChar(Path))]);
         ExitStatus := 1;
       end;
     end;

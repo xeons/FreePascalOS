@@ -32,6 +32,7 @@
 unit Tls.CipherSuites;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -72,6 +73,7 @@ function CipherSuiteListContains(constref List: TCipherSuiteList; Identifier: Wo
 implementation
 
 uses
+  SysUtils,
   Crypto.Aes;
 
 const
@@ -114,22 +116,6 @@ begin
   end;
 end;
 
-function NamesEqual(First, Second: PChar): Boolean;
-var
-  Index: Integer;
-  Left, Right: Char;
-begin
-  Index := 0;
-  repeat
-    Left := UpCase(First[Index]);
-    Right := UpCase(Second[Index]);
-    if Left <> Right then
-      Exit(False);
-    Inc(Index);
-  until Left = #0;
-  Result := True;
-end;
-
 function CipherSuiteByName(Name: PChar): Word;
 var
   Index: Integer;
@@ -138,7 +124,7 @@ begin
   if Name = nil then
     Exit;
   for Index := 0 to High(Suites) do
-    if NamesEqual(Name, Suites[Index].Name) then
+    if SameText(string(Name), string(Suites[Index].Name)) then
       Exit(Suites[Index].Identifier);
 end;
 

@@ -28,6 +28,7 @@
 unit Server.DoubleClicks;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -40,9 +41,9 @@ const
 { A press on Window's title bar at (X, Y), Time (milliseconds): True if
   it ends a double click. Window nil: a press elsewhere (it breaks a
   pair). }
-function TitlePressIsDoubleClick(Window: PServerWindow; X, Y: LongInt; Time: QWord): Boolean;
+function TitlePressIsDoubleClick(Window: TServerWindow; X, Y: LongInt; Time: QWord): Boolean;
 { The window is going. }
-procedure ForgetWindowInDoubleClicks(Window: PServerWindow);
+procedure ForgetWindowInDoubleClicks(Window: TServerWindow);
 
 implementation
 
@@ -51,12 +52,12 @@ const
   DoubleClickDistance = 4;
 
 var
-  LastWindow: PServerWindow;
+  LastWindow: TServerWindow;
   LastX: LongInt;
   LastY: LongInt;
   LastTime: QWord;
 
-function TitlePressIsDoubleClick(Window: PServerWindow; X, Y: LongInt; Time: QWord): Boolean;
+function TitlePressIsDoubleClick(Window: TServerWindow; X, Y: LongInt; Time: QWord): Boolean;
 var
   Distance: LongInt;
 begin
@@ -78,7 +79,7 @@ begin
   end;
 end;
 
-procedure ForgetWindowInDoubleClicks(Window: PServerWindow);
+procedure ForgetWindowInDoubleClicks(Window: TServerWindow);
 begin
   if LastWindow = Window then
     LastWindow := nil;

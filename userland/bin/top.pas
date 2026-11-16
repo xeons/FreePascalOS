@@ -33,9 +33,10 @@
 program top;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Console,
   Sys.Format,
@@ -58,7 +59,7 @@ const
   OptionCount = 3;
 
   { Clears the terminal and puts the cursor at its top left. }
-  ClearScreen: PChar = #27'[H'#27'[2J';
+  ClearScreen = #27'[H'#27'[2J';
 
 type
   TRow = record
@@ -74,31 +75,31 @@ var
   Rows: array of TRow;
 
 { "1.5" into 1500 milliseconds. }
-function ParseSeconds(Text: PChar; out Milliseconds: QWord): Boolean;
+function ParseSeconds(const Text: string; out Milliseconds: QWord): Boolean;
 var
   Position: LongInt;
   Scale: QWord;
 begin
   Milliseconds := 0;
-  Position := 0;
-  while IsDigit(Text[Position]) do
+  Position := 1;
+  while (Position <= Length(Text)) and IsDigit(Text[Position]) do
   begin
     Milliseconds := Milliseconds * 10 + QWord(Ord(Text[Position]) - Ord('0'));
     Inc(Position);
   end;
   Milliseconds := Milliseconds * 1000;
-  if Text[Position] = '.' then
+  if (Position <= Length(Text)) and (Text[Position] = '.') then
   begin
     Inc(Position);
     Scale := 100;
-    while IsDigit(Text[Position]) do
+    while (Position <= Length(Text)) and IsDigit(Text[Position]) do
     begin
       Milliseconds := Milliseconds + QWord(Ord(Text[Position]) - Ord('0')) * Scale;
       Scale := Scale div 10;
       Inc(Position);
     end;
   end;
-  Result := (Text[Position] = #0) and (Position > 0) and (Milliseconds > 0);
+  Result := (Position > Length(Text)) and (Position > 1) and (Milliseconds > 0);
 end;
 
 function StateLetter(State: LongWord): Char;
@@ -152,6 +153,11 @@ begin
   end;
 end;
 
+procedure OutputLine(const Line: string);
+begin
+  WriteLine(StandardOutput, PChar(Line));
+end;
+
 procedure WriteSummary;
 var
   Seconds: QWord;
@@ -159,14 +165,13 @@ var
 begin
   Seconds := Usages[Newest].UptimeNanoseconds div 1000000000;
   Busy := AllProcessorsBusyTenths(Usages[1 - Newest], Usages[Newest]);
-  WriteFormatted(StandardOutput, 'top - up %u:%02u:%02u, %u processes, %u threads'#10,
-    [ArgumentUnsigned(Seconds div 3600), ArgumentUnsigned((Seconds div 60) mod 60), ArgumentUnsigned(Seconds mod 60),
-    ArgumentUnsigned(Usages[Newest].ProcessCount), ArgumentUnsigned(Usages[Newest].ThreadCount)]);
-  WriteFormatted(StandardOutput, 'CPU: %u.%u%% busy on %u processors'#10, [ArgumentUnsigned(Busy div 10),
-    ArgumentUnsigned(Busy mod 10), ArgumentUnsigned(OnlineProcessors(Usages[Newest]))]);
-  WriteFormatted(StandardOutput, 'Memory: %u KiB total, %u KiB used, %u KiB free'#10#10,
-    [ArgumentUnsigned(Usages[Newest].TotalMemory div 1024), ArgumentUnsigned(UsedMemory(Usages[Newest]) div 1024),
-    ArgumentUnsigned(Usages[Newest].FreeMemory div 1024)]);
+  OutputLine(Format('top - up %d:%.2d:%.2d, %d processes, %d threads', [Seconds div 3600,
+    (Seconds div 60) mod 60, Seconds mod 60, Usages[Newest].ProcessCount, Usages[Newest].ThreadCount]));
+  OutputLine(Format('CPU: %d.%d%% busy on %d processors', [Busy div 10, Busy mod 10,
+    OnlineProcessors(Usages[Newest])]));
+  OutputLine(Format('Memory: %d KiB total, %d KiB used, %d KiB free', [Usages[Newest].TotalMemory div 1024,
+    UsedMemory(Usages[Newest]) div 1024, Usages[Newest].FreeMemory div 1024]));
+  OutputLine('');
 end;
 
 procedure WriteRows;
@@ -174,7 +179,7 @@ var
   Index: LongInt;
   Details: PProcessDetails;
   Seconds: QWord;
-  User: PChar;
+  User: string;
 begin
   WriteLine(StandardOutput, '    PID USER      NI    RES S  %CPU     TIME COMMAND');
   for Index := 0 to High(Rows) do
@@ -182,14 +187,12 @@ begin
     Details := Rows[Index].Details;
     Seconds := Details^.ProcessorNanoseconds div 1000000000;
     User := UserNameOf(Details^.EffectiveUserId);
-    if User = nil then
+    if User = '' then
       User := '?';
-    WriteFormatted(StandardOutput, '%7u %-8s %3d %6u %c %3u.%u %3u:%02u.%02u %s'#10,
-      [ArgumentUnsigned(Details^.ProcessId), ArgumentText(User), ArgumentNumber(Details^.Nice),
-      ArgumentUnsigned(Details^.ResidentBytes div 1024), ArgumentCharacter(StateLetter(Details^.State)),
-      ArgumentUnsigned(Rows[Index].Share div 10), ArgumentUnsigned(Rows[Index].Share mod 10),
-      ArgumentUnsigned(Seconds div 60), ArgumentUnsigned(Seconds mod 60),
-      ArgumentUnsigned((Details^.ProcessorNanoseconds div 10000000) mod 100), ArgumentText(@Details^.Name[0])]);
+    OutputLine(Format('%7d %-8s %3d %6d %s %3d.%d %3d:%.2d.%.2d %s', [Details^.ProcessId, User, Details^.Nice,
+      Details^.ResidentBytes div 1024, StateLetter(Details^.State), Rows[Index].Share div 10,
+      Rows[Index].Share mod 10, Seconds div 60, Seconds mod 60,
+      (Details^.ProcessorNanoseconds div 10000000) mod 100, string(PChar(@Details^.Name[0]))]));
   end;
 end;
 

@@ -31,6 +31,7 @@
 unit Server.WorkAreas;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -51,7 +52,7 @@ procedure SetWorkArea(Screen: PScreen; const Area: TRectangle);
 procedure ClearWorkAreas;
 { Moves a new framed window into the work area of its screen, as far as
   it fits, if the shell keeps part of that screen. }
-procedure PlaceWindowInWorkArea(Window: PServerWindow);
+procedure PlaceWindowInWorkArea(Window: TServerWindow);
 
 implementation
 
@@ -106,7 +107,7 @@ var
   Index: LongInt;
 begin
   for Index := 0 to WindowCount - 1 do
-    if Windows[Index]^.Maximized and (WindowScreen(Windows[Index]) = Screen) then
+    if Windows[Index].Maximized and (WindowScreen(Windows[Index]) = Screen) then
       MaximizeAgain(Windows[Index]);
 end;
 
@@ -134,7 +135,7 @@ begin
     SetWorkArea(@Screens[Index], Screens[Index].LogicalBounds);
 end;
 
-procedure PlaceWindowInWorkArea(Window: PServerWindow);
+procedure PlaceWindowInWorkArea(Window: TServerWindow);
 var
   Screen: PScreen;
   Area: TRectangle;
@@ -162,7 +163,7 @@ begin
   if Frame.Top + DeltaY < Area.Top then
     DeltaY := Area.Top - Frame.Top;
   if (DeltaX <> 0) or (DeltaY <> 0) then
-    MoveWindowTo(Window, Window^.ClientLeft + DeltaX, Window^.ClientTop + DeltaY);
+    MoveWindowTo(Window, Window.ClientLeft + DeltaX, Window.ClientTop + DeltaY);
 end;
 
 end.

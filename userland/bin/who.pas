@@ -27,13 +27,13 @@
 program who;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Sys.Time,
   Util.Accounts,
-  Util.Messages,
   Util.Options;
 
 const
@@ -51,14 +51,18 @@ const
   OptionCount = 4;
   OptionShort = 5;
 
-procedure WriteTimestamp(Time: Int64);
+function TimestampText(Time: Int64): string;
 var
-  DateTime: TDateTime;
+  DateTime: Sys.Time.TDateTime;
 begin
   DecodeTime(Time, DateTime);
-  WriteFormatted(StandardOutput, '%04d-%02d-%02d %02d:%02d', [ArgumentNumber(DateTime.Year),
-    ArgumentNumber(DateTime.Month), ArgumentNumber(DateTime.Day), ArgumentNumber(DateTime.Hour),
-    ArgumentNumber(DateTime.Minute)]);
+  Result := Format('%.4d-%.2d-%.2d %.2d:%.2d', [DateTime.Year, DateTime.Month, DateTime.Day,
+    DateTime.Hour, DateTime.Minute]);
+end;
+
+procedure PrintText(const Text: string);
+begin
+  PrintLine(PChar(Text));
 end;
 
 var
@@ -70,7 +74,7 @@ var
   ShowCount: Boolean;
   ShowSessions: Boolean;
   BootTime: Int64;
-  Name: PChar;
+  Name: string;
 begin
   ShowBoot := False;
   ShowHeading := False;
@@ -98,12 +102,13 @@ begin
       OptionCount: ShowCount := True;
     end;
 
-  Name := UserNameOf(CurrentRealUserId);
-  if Name = nil then
-    Name := 'root';
+  if UserNameOf(CurrentRealUserId) = nil then
+    Name := 'root'
+  else
+    Name := UserNameOf(CurrentRealUserId);
   if ShowCount then
   begin
-    PrintLine(Name);
+    PrintText(Name);
     PrintLine('# users=1');
     Halt(0);
   end;
@@ -112,15 +117,7 @@ begin
   if ShowHeading then
     PrintLine('NAME     LINE         TIME');
   if ShowBoot then
-  begin
-    WriteText(StandardOutput, '         system boot  ');
-    WriteTimestamp(BootTime);
-    WriteCharacter(StandardOutput, #10);
-  end;
+    PrintText('         system boot  ' + TimestampText(BootTime));
   if ShowSessions then
-  begin
-    WriteFormatted(StandardOutput, '%-8s console      ', [ArgumentText(Name)]);
-    WriteTimestamp(BootTime);
-    WriteCharacter(StandardOutput, #10);
-  end;
+    PrintText(Format('%-8s console      ', [Name]) + TimestampText(BootTime));
 end.

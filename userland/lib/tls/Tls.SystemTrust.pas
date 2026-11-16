@@ -25,7 +25,7 @@
 unit Tls.SystemTrust;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
@@ -33,50 +33,59 @@ uses
   Tls.TrustStore;
 
 const
-  SystemTrustBundlePath: PChar = '/etc/ssl/certs/ca-certificates.crt';
+  SystemTrustBundlePath = '/etc/ssl/certs/ca-certificates.crt';
 
 { TlsErrorNone with a new store of every certificate in the PEM file,
   or TlsErrorNoTrustStore when it cannot be read or holds none. }
-function LoadTrustStoreFile(Path: PChar; out Store: PTlsTrustStore): LongInt;
+function LoadTrustStoreFile(const Path: string; out Store: PTlsTrustStore): LongInt;
 function LoadSystemTrustStore(out Store: PTlsTrustStore): LongInt;
 
 implementation
 
 uses
-  Abi.SystemCalls,
-  Sys.Files,
-  Tls.ByteBuffers,
+  SysUtils,
   Tls.Errors;
 
 const
   MaximumBundleSize = 16 * 1024 * 1024;
+  ChunkSize = 16384;
 
-function LoadTrustStoreFile(Path: PChar; out Store: PTlsTrustStore): LongInt;
+{ The whole file, or False when it cannot be read or is too big. }
+function ReadBundle(const Path: string; out Contents: string): Boolean;
 var
-  Handle: Int64;
-  Contents: TTlsBuilder;
-  Chunk: array[0..16383] of Byte;
-  Count: Int64;
+  Handle: THandle;
+  Total: Integer;
+  Count: LongInt;
+begin
+  Contents := '';
+  Handle := FileOpen(Path, fmOpenRead);
+  if Handle = feInvalidHandle then
+    Exit(False);
+  Total := 0;
+  try
+    repeat
+      if Total + ChunkSize > Length(Contents) then
+        SetLength(Contents, 2 * (Total + ChunkSize));
+      Count := FileRead(Handle, Contents[Total + 1], ChunkSize);
+      if Count > 0 then
+        Total := Total + Count;
+    until (Count <= 0) or (Total > MaximumBundleSize);
+  finally
+    FileClose(Handle);
+  end;
+  SetLength(Contents, Total);
+  Result := (Count = 0) and (Total <= MaximumBundleSize);
+end;
+
+function LoadTrustStoreFile(const Path: string; out Store: PTlsTrustStore): LongInt;
+var
+  Contents: string;
 begin
   Store := nil;
-  Handle := OpenFile(Path, OpenRead);
-  if Handle < 0 then
+  if not ReadBundle(Path, Contents) then
     Exit(TlsErrorNoTrustStore);
-  InitializeBuilder(Contents);
-  repeat
-    Count := ReadFile(Handle, @Chunk[0], SizeOf(Chunk));
-    if Count > 0 then
-      AppendBytes(Contents, @Chunk[0], Count);
-  until (Count <= 0) or (Contents.Length > MaximumBundleSize) or Contents.Failed;
-  CloseFile(Handle);
-  if (Count < 0) or Contents.Failed or (Contents.Length > MaximumBundleSize) then
-  begin
-    FreeBuilder(Contents);
-    Exit(TlsErrorNoTrustStore);
-  end;
   Store := CreateTrustStore;
-  AddPemCertificates(Store, PChar(Contents.Data), Contents.Length);
-  FreeBuilder(Contents);
+  AddPemCertificates(Store, Contents);
   if Store^.Count = 0 then
   begin
     FreeTrustStore(Store);

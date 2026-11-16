@@ -24,15 +24,14 @@
 program rmdir;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Streams,
-  Sys.Text,
   Util.Messages,
   Util.Options;
 
@@ -54,26 +53,44 @@ var
   Verbose: Boolean;
 
 { Returns False if an error was reported. }
-function RemoveOne(Path: PChar): Boolean;
+function RemoveOne(const Path: string): Boolean;
 var
   Information: TFileInformation;
   Error: LongInt;
 begin
   if Verbose then
-    WriteFormatted(StandardOutput, '%s: removing directory, ''%s'''#10, [ArgumentText(ProgramName), ArgumentText(Path)]);
-  Error := GetLinkInformation(Path, Information);
+    WriteText(StandardOutput, PChar(Format('%s: removing directory, ''%s'''#10, [ProgramName, Path])));
+  Error := GetLinkInformation(PChar(Path), Information);
   if (Error = ErrorNone) and (Information.Kind <> KindDirectory) then
     Error := ErrorNotDirectory;
   if Error = ErrorNone then
-    Error := RemovePath(Path);
+    Error := RemovePath(PChar(Path));
   if (Error = ErrorDirectoryNotEmpty) and IgnoreNonEmpty then
     Exit(True);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'failed to remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, 'failed to remove ''%s''', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
   Result := True;
+end;
+
+{ a/b/c: then a/b, then a. Returns False if an error was reported. }
+function RemoveParents(Path: string): Boolean;
+var
+  LastSlash: Integer;
+begin
+  Result := True;
+  repeat
+    while (Length(Path) > 1) and (Path[Length(Path)] = '/') do
+      SetLength(Path, Length(Path) - 1);
+    LastSlash := LastDelimiter('/', Path);
+    if LastSlash <= 1 then
+      Break;
+    SetLength(Path, LastSlash - 1);
+    if not RemoveOne(Path) then
+      Exit(False);
+  until False;
 end;
 
 var
@@ -83,8 +100,7 @@ var
   Parents: Boolean;
   Index: Integer;
   ExitStatus: LongInt;
-  Path: array[0..PathCapacity - 1] of Char;
-  LastSlash: PtrInt;
+  Path: string;
 begin
   IgnoreNonEmpty := False;
   Parents := False;
@@ -105,28 +121,14 @@ begin
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
-    CopyText(@Path[0], Parser.Operands[Index], PathCapacity);
-    if not RemoveOne(@Path[0]) then
+    Path := Parser.Operands[Index];
+    if not RemoveOne(Path) then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    if not Parents then
-      Continue;
-    { a/b/c: then a/b, then a. }
-    repeat
-      while (TextLength(@Path[0]) > 1) and (Path[TextLength(@Path[0]) - 1] = '/') do
-        Path[TextLength(@Path[0]) - 1] := #0;
-      LastSlash := FindLastCharacter(@Path[0], '/');
-      if LastSlash <= 0 then
-        Break;
-      Path[LastSlash] := #0;
-      if not RemoveOne(@Path[0]) then
-      begin
-        ExitStatus := 1;
-        Break;
-      end;
-    until False;
+    if Parents and not RemoveParents(Path) then
+      ExitStatus := 1;
   end;
   Halt(ExitStatus);
 end.

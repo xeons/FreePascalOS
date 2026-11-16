@@ -27,16 +27,15 @@
 program rm;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Directories,
   Util.Input,
   Util.Messages,
@@ -66,33 +65,51 @@ var
   RemoveEmptyDirectories: Boolean;
   Verbose: Boolean;
 
-function Confirm(Question: PChar; Path: PChar): Boolean;
-var
-  Line: PChar;
-  HadLineEnd: Boolean;
+{ Copies a heap string from the libraries and frees it. }
+function TakeText(Text: PChar): string;
 begin
-  WriteFormatted(StandardError, '%s: %s ''%s''? ', [ArgumentText(ProgramName), ArgumentText(Question), ArgumentText(Path)]);
-  FlushStream(StandardError);
-  if not ReadLine(StandardInput, Line, HadLineEnd) then
-    Exit(False);
-  Result := (Line[0] = 'y') or (Line[0] = 'Y');
-  FreeMemory(Line);
+  Result := Text;
+  FreeMemory(Text);
 end;
 
-function RemoveTree(Path: PChar): Boolean; forward;
+function Confirm(const Question, Path: string): Boolean;
+var
+  LineText: PChar;
+  Answer: string;
+  HadLineEnd: Boolean;
+begin
+  WriteFormatted(StandardError, '%s: %s ''%s''? ', [ArgumentText(ProgramName), ArgumentText(PChar(Question)),
+    ArgumentText(PChar(Path))]);
+  FlushStream(StandardError);
+  if not ReadLine(StandardInput, LineText, HadLineEnd) then
+    Exit(False);
+  Answer := TakeText(LineText);
+  Result := (Answer <> '') and ((Answer[1] = 'y') or (Answer[1] = 'Y'));
+end;
+
+{ Directory + '/' + Name, without doubling the slash. }
+function JoinPath(const Directory, Name: string): string;
+begin
+  if (Directory <> '') and (Directory[Length(Directory)] <> '/') then
+    Result := Directory + '/' + Name
+  else
+    Result := Directory + Name;
+end;
+
+function RemoveTree(const Path: string): Boolean; forward;
 
 { Returns False if something could not be removed. }
-function RemoveEntry(Path: PChar; IsOperand: Boolean): Boolean;
+function RemoveEntry(const Path: string): Boolean;
 var
   Information: TFileInformation;
   Error: LongInt;
 begin
-  Error := GetLinkInformation(Path, Information);
+  Error := GetLinkInformation(PChar(Path), Information);
   if Error <> ErrorNone then
   begin
     if Force and (Error = ErrorNotFound) then
       Exit(True);
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
 
@@ -102,66 +119,64 @@ begin
       Exit(RemoveTree(Path));
     if not RemoveEmptyDirectories then
     begin
-      ReportError(ErrorIsDirectory, 'cannot remove ''%s''', [ArgumentText(Path)]);
+      ReportError(ErrorIsDirectory, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
       Exit(False);
     end;
   end;
 
   if Interactive and not Confirm('remove', Path) then
     Exit(True);
-  Error := RemovePath(Path);
+  Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
   if Verbose then
   begin
     if Information.Kind = KindDirectory then
-      WriteFormatted(StandardOutput, 'removed directory ''%s'''#10, [ArgumentText(Path)])
+      WriteText(StandardOutput, PChar('removed directory ''' + Path + ''''#10))
     else
-      WriteFormatted(StandardOutput, 'removed ''%s'''#10, [ArgumentText(Path)]);
+      WriteText(StandardOutput, PChar('removed ''' + Path + ''''#10));
   end;
   Result := True;
 end;
 
-function RemoveTree(Path: PChar): Boolean;
+function RemoveTree(const Path: string): Boolean;
 var
   Names: TLineList;
   Index: Integer;
-  ChildPath: PChar;
   Error: LongInt;
 begin
   Result := True;
   if Interactive and not Confirm('descend into directory', Path) then
     Exit;
   BeginLineList(Names);
-  Error := ListDirectory(Path, Names);
+  Error := ListDirectory(PChar(Path), Names);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
     FreeLineList(Names);
     Exit(False);
   end;
-  for Index := 0 to Names.Count - 1 do
-  begin
-    ChildPath := JoinPath(Path, Names.Items[Index]);
-    if not RemoveEntry(ChildPath, False) then
-      Result := False;
-    FreeMemory(ChildPath);
+  try
+    for Index := 0 to Names.Count - 1 do
+      if not RemoveEntry(JoinPath(Path, Names.Items[Index])) then
+        Result := False;
+  finally
+    FreeLineList(Names);
   end;
-  FreeLineList(Names);
 
   if Interactive and not Confirm('remove directory', Path) then
     Exit;
-  Error := RemovePath(Path);
+  Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
   if Verbose then
-    WriteFormatted(StandardOutput, 'removed directory ''%s'''#10, [ArgumentText(Path)]);
+    WriteText(StandardOutput, PChar('removed directory ''' + Path + ''''#10));
 end;
 
 var
@@ -170,7 +185,7 @@ var
   Value: PChar;
   Index: Integer;
   ExitStatus: LongInt;
-  Base: PChar;
+  Base: string;
 begin
   Force := False;
   Interactive := False;
@@ -206,15 +221,14 @@ begin
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
-    Base := BaseName(Parser.Operands[Index]);
-    if IsDotEntry(Base) or TextIsEqual(Base, '/') then
+    Base := TakeText(BaseName(Parser.Operands[Index]));
+    if (Base = '.') or (Base = '..') or (Base = '/') then
     begin
       Report('refusing to remove ''.'' or ''..'' or ''/'' directory: skipping ''%s''', [ArgumentText(Parser.Operands[Index])]);
       ExitStatus := 1;
     end
-    else if not RemoveEntry(Parser.Operands[Index], True) then
+    else if not RemoveEntry(Parser.Operands[Index]) then
       ExitStatus := 1;
-    FreeMemory(Base);
   end;
   Halt(ExitStatus);
 end.

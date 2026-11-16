@@ -33,6 +33,7 @@
 unit Tls.HostNames;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -40,10 +41,10 @@ interface
 uses
   Tls.Certificates;
 
-function CertificateMatchesHost(constref Certificate: TTlsCertificate; HostName: PChar): Boolean;
+function CertificateMatchesHost(constref Certificate: TTlsCertificate; const HostName: string): Boolean;
 
 { A dotted quad (four decimal parts, 0-255): the address in Address. }
-function ParseIpv4Literal(HostName: PChar; out Address: array of Byte): Boolean;
+function ParseIpv4Literal(const HostName: string; out Address: array of Byte): Boolean;
 
 { The matching rule for one dNSName pattern (exposed for the tests). }
 function DnsNameMatches(Pattern: PByte; PatternLength: PtrUInt; HostName: PByte; HostLength: PtrUInt): Boolean;
@@ -76,29 +77,22 @@ begin
   Result := True;
 end;
 
-function TextLength(Text: PChar): PtrUInt;
-begin
-  Result := 0;
-  while Text[Result] <> #0 do
-    Inc(Result);
-end;
-
-function ParseIpv4Literal(HostName: PChar; out Address: array of Byte): Boolean;
+function ParseIpv4Literal(const HostName: string; out Address: array of Byte): Boolean;
 var
   Part: Integer;
   Value: Integer;
   Digits: Integer;
-  Position: PtrUInt;
+  Position: Integer;
 begin
   Result := False;
-  if (HostName = nil) or (Length(Address) < 4) then
+  if Length(Address) < 4 then
     Exit;
-  Position := 0;
+  Position := 1;
   for Part := 0 to 3 do
   begin
     Value := 0;
     Digits := 0;
-    while (HostName[Position] >= '0') and (HostName[Position] <= '9') do
+    while (Position <= Length(HostName)) and (HostName[Position] in ['0'..'9']) do
     begin
       Value := Value * 10 + (Ord(HostName[Position]) - Ord('0'));
       Inc(Digits);
@@ -111,12 +105,12 @@ begin
     Address[Part] := Byte(Value);
     if Part < 3 then
     begin
-      if HostName[Position] <> '.' then
+      if (Position > Length(HostName)) or (HostName[Position] <> '.') then
         Exit;
       Inc(Position);
     end;
   end;
-  Result := HostName[Position] = #0;
+  Result := Position = Length(HostName) + 1;
 end;
 
 function CountLabels(Name: PByte; Length: PtrUInt): Integer;
@@ -178,7 +172,7 @@ begin
     EqualIgnoringCase(HostName + HostLabelEnd, Suffix, SuffixLength);
 end;
 
-function CertificateMatchesHost(constref Certificate: TTlsCertificate; HostName: PChar): Boolean;
+function CertificateMatchesHost(constref Certificate: TTlsCertificate; const HostName: string): Boolean;
 var
   Reader: TAsn1Reader;
   Name: TAsn1Element;
@@ -187,10 +181,10 @@ var
   IsAddress: Boolean;
 begin
   Result := False;
-  if (HostName = nil) or not Certificate.HasSubjectAlternativeNames then
+  if not Certificate.HasSubjectAlternativeNames then
     Exit;
-  HostLength := TextLength(HostName);
-  if (HostLength > 0) and (HostName[HostLength - 1] = '.') then
+  HostLength := Length(HostName);
+  if (HostLength > 0) and (HostName[HostLength] = '.') then
     Dec(HostLength);
   if HostLength = 0 then
     Exit;
@@ -206,7 +200,7 @@ begin
     end
     else if Name.Tag = Asn1ContextSpecific or 2 then
     begin
-      if DnsNameMatches(Name.Contents, Name.ContentsLength, PByte(HostName), HostLength) then
+      if DnsNameMatches(Name.Contents, Name.ContentsLength, PByte(PChar(HostName)), HostLength) then
         Exit(True);
     end;
   end;

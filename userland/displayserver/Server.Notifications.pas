@@ -30,6 +30,7 @@
 unit Server.Notifications;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -38,9 +39,10 @@ uses
 
 { Shows (Show) or takes away the icon Client numbers Code, with Picture
   and Tooltip. }
-procedure SetNotificationIcon(Client: PClient; Code: LongWord; Show: Boolean; Picture: LongWord; Tooltip: PChar);
+procedure SetNotificationIcon(Client: TClient; Code: LongWord; Show: Boolean; Picture: LongWord;
+  const Tooltip: string);
 { Client is going: so are its icons. }
-procedure ForgetClientNotificationIcons(Client: PClient);
+procedure ForgetClientNotificationIcons(Client: TClient);
 { Tells the shell (just registered) about every icon there is. }
 procedure TellShellAllNotificationIcons;
 
@@ -57,23 +59,22 @@ type
   TNotificationIcon = record
     { The server's number for it, which the shell knows it by. }
     Number: LongWord;
-    Client: PClient;
+    Client: TClient;
     { The program's number for it. }
     Code: LongWord;
     Picture: LongWord;
-    Tooltip: array[0..TitleCapacity - 1] of Char;
+    Tooltip: string;
   end;
 
 var
-  Icons: array[0..MaximumIcons - 1] of TNotificationIcon;
-  IconCount: LongInt;
+  Icons: array of TNotificationIcon;
   NextNumber: LongWord = 1;
 
-function IndexOfIcon(Client: PClient; Code: LongWord): LongInt;
+function IndexOfIcon(Client: TClient; Code: LongWord): LongInt;
 var
   Index: LongInt;
 begin
-  for Index := 0 to IconCount - 1 do
+  for Index := 0 to High(Icons) do
     if (Icons[Index].Client = Client) and (Icons[Index].Code = Code) then
       Exit(Index);
   Result := -1;
@@ -87,21 +88,22 @@ begin
   Message.Code := Icon.Number;
   Message.Value := Ord(Shown);
   Message.Flags := Icon.Picture;
-  Move(Icon.Tooltip, Message.Text, SizeOf(Message.Text));
+  SetMessageText(Message, PChar(Icon.Tooltip));
   SendToShell(Message);
 end;
 
+{ The last icon takes its place, as it always has. }
 procedure RemoveIcon(Index: LongInt);
 begin
   TellShell(Icons[Index], False);
-  Icons[Index] := Icons[IconCount - 1];
-  Dec(IconCount);
+  Icons[Index] := Icons[High(Icons)];
+  SetLength(Icons, Length(Icons) - 1);
 end;
 
-procedure SetNotificationIcon(Client: PClient; Code: LongWord; Show: Boolean; Picture: LongWord; Tooltip: PChar);
+procedure SetNotificationIcon(Client: TClient; Code: LongWord; Show: Boolean; Picture: LongWord;
+  const Tooltip: string);
 var
   Index: LongInt;
-  Message: TWindowMessage;
 begin
   Index := IndexOfIcon(Client, Code);
   if not Show then
@@ -112,28 +114,26 @@ begin
   end;
   if Index < 0 then
   begin
-    if IconCount = MaximumIcons then
+    if Length(Icons) = MaximumIcons then
       Exit;
-    Index := IconCount;
-    Inc(IconCount);
+    Index := Length(Icons);
+    SetLength(Icons, Index + 1);
     Icons[Index].Number := NextNumber;
     Inc(NextNumber);
     Icons[Index].Client := Client;
     Icons[Index].Code := Code;
   end;
   Icons[Index].Picture := Picture;
-  { The tooltip as a message's text: cut short to fit, always ended. }
-  Message := NewMessage(0, 0);
-  SetMessageText(Message, Tooltip);
-  Move(Message.Text, Icons[Index].Tooltip, SizeOf(Icons[Index].Tooltip));
+  { Cut short to fit a message's text, as the shell will hear it. }
+  Icons[Index].Tooltip := Copy(Tooltip, 1, TitleCapacity - 1);
   TellShell(Icons[Index], True);
 end;
 
-procedure ForgetClientNotificationIcons(Client: PClient);
+procedure ForgetClientNotificationIcons(Client: TClient);
 var
   Index: LongInt;
 begin
-  for Index := IconCount - 1 downto 0 do
+  for Index := High(Icons) downto 0 do
     if Icons[Index].Client = Client then
       RemoveIcon(Index);
 end;
@@ -142,7 +142,7 @@ procedure TellShellAllNotificationIcons;
 var
   Index: LongInt;
 begin
-  for Index := 0 to IconCount - 1 do
+  for Index := 0 to High(Icons) do
     TellShell(Icons[Index], True);
 end;
 

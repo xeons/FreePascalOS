@@ -30,6 +30,7 @@
 unit Server.PointerAreas;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -40,9 +41,9 @@ uses
 
 { Area 0: the whole client area (Bounds unused); 1 to
   MaximumPointerAreas: Bounds (surface pixels; empty takes it away). }
-procedure SetPointerArea(Window: PServerWindow; Area: LongWord; const Bounds: TRectangle; Shape: LongWord);
+procedure SetPointerArea(Window: TServerWindow; Area: LongWord; const Bounds: TRectangle; Shape: LongWord);
 { The shape at (X, Y) of the window's surface. }
-function ClientPointerShape(Window: PServerWindow; X, Y: LongInt): LongWord;
+function ClientPointerShape(Window: TServerWindow; X, Y: LongInt): LongWord;
 { The shape over a part of a frame (the arrow but for borders). }
 function FramePointerShape(Area: THitArea): LongWord;
 
@@ -51,28 +52,28 @@ implementation
 uses
   Windowing.Protocol;
 
-procedure SetPointerArea(Window: PServerWindow; Area: LongWord; const Bounds: TRectangle; Shape: LongWord);
+procedure SetPointerArea(Window: TServerWindow; Area: LongWord; const Bounds: TRectangle; Shape: LongWord);
 begin
   if Shape >= PointerShapeCount then
     Exit;
   if Area = 0 then
-    Window^.PointerShape := Shape
+    Window.PointerShape := Shape
   else if Area <= MaximumPointerAreas then
   begin
-    Window^.PointerAreas[Area].Bounds := Bounds;
-    Window^.PointerAreas[Area].Shape := Shape;
+    Window.PointerAreas[Area].Bounds := Bounds;
+    Window.PointerAreas[Area].Shape := Shape;
   end;
 end;
 
-function ClientPointerShape(Window: PServerWindow; X, Y: LongInt): LongWord;
+function ClientPointerShape(Window: TServerWindow; X, Y: LongInt): LongWord;
 var
   Area: LongInt;
 begin
   for Area := MaximumPointerAreas downto 1 do
-    if not RectangleIsEmpty(Window^.PointerAreas[Area].Bounds) and
-       RectangleContainsPoint(Window^.PointerAreas[Area].Bounds, X, Y) then
-      Exit(Window^.PointerAreas[Area].Shape);
-  Result := Window^.PointerShape;
+    if not RectangleIsEmpty(Window.PointerAreas[Area].Bounds) and
+       RectangleContainsPoint(Window.PointerAreas[Area].Bounds, X, Y) then
+      Exit(Window.PointerAreas[Area].Shape);
+  Result := Window.PointerShape;
 end;
 
 function FramePointerShape(Area: THitArea): LongWord;

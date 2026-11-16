@@ -31,11 +31,11 @@
 program stat;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Streams,
@@ -62,7 +62,7 @@ const
   OptionTerse = 3;
 
 
-function KindName(const Information: TFileInformation): PChar;
+function KindName(const Information: TFileInformation): string;
 begin
   case Information.Kind of
     KindFile:
@@ -80,38 +80,44 @@ begin
   end;
 end;
 
-procedure WriteModeText(const Information: TFileInformation);
+function ModeText(const Information: TFileInformation): string;
 var
   Buffer: array[0..15] of Char;
 begin
   case Information.Kind of
-    KindDirectory: WriteCharacter(StandardOutput, 'd');
-    KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
-    KindFifo: WriteCharacter(StandardOutput, 'p');
-    KindCharacterDevice: WriteCharacter(StandardOutput, 'c');
-    KindBlockDevice: WriteCharacter(StandardOutput, 'b');
+    KindDirectory: Result := 'd';
+    KindSymbolicLink: Result := 'l';
+    KindFifo: Result := 'p';
+    KindCharacterDevice: Result := 'c';
+    KindBlockDevice: Result := 'b';
   else
-    WriteCharacter(StandardOutput, '-');
+    Result := '-';
   end;
-  WriteText(StandardOutput, FormatModeText(Information.Mode, @Buffer[0]));
+  Result := Result + FormatModeText(Information.Mode, @Buffer[0]);
 end;
 
-procedure WriteTime(Time: Int64);
+{ The permission bits in octal, at least MinimumDigits long. }
+function OctalModeText(const Information: TFileInformation; MinimumDigits: Integer): string;
+begin
+  Result := OctStr(Information.Mode and $FFF, 4);
+  while (Length(Result) > MinimumDigits) and (Result[1] = '0') do
+    Delete(Result, 1, 1);
+end;
+
+function TimeText(Time: Int64): string;
 var
   Local: TLocalTime;
-  DateTime: TDateTime;
+  DateTime: Sys.Time.TDateTime;
   OffsetText: array[0..7] of Char;
 begin
   DecodeLocalTime(Time, Local);
   DateTime := Local.DateTime;
   FormatUtcOffset(Local.Offset, @OffsetText[0]);
-  WriteFormatted(StandardOutput, '%04d-%02d-%02d %02d:%02d:%02d %s', [
-    ArgumentNumber(DateTime.Year), ArgumentNumber(DateTime.Month), ArgumentNumber(DateTime.Day),
-    ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute), ArgumentNumber(DateTime.Second),
-    ArgumentText(@OffsetText[0])]);
+  Result := Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d %s', [DateTime.Year, DateTime.Month, DateTime.Day,
+    DateTime.Hour, DateTime.Minute, DateTime.Second, string(PChar(@OffsetText[0]))]);
 end;
 
-function NameOrUnknown(Name: PChar): PChar;
+function NameOrUnknown(Name: PChar): string;
 begin
   if Name = nil then
     Result := 'UNKNOWN'
@@ -119,81 +125,95 @@ begin
     Result := Name;
 end;
 
-procedure WriteWithFormat(Format: PChar; Name: PChar; const Information: TFileInformation);
+function BlockCount(const Information: TFileInformation): QWord;
+begin
+  Result := (Information.AllocatedBytes + 511) div 512;
+end;
+
+function ConversionText(Conversion: Char; const Name: string; const Information: TFileInformation): string;
+begin
+  case Conversion of
+    'n': Result := Name;
+    's': Result := IntToStr(Information.SizeInBytes);
+    'F': Result := KindName(Information);
+    'i': Result := IntToStr(Information.NodeNumber);
+    'd': Result := IntToStr(Information.VolumeNumber);
+    'b': Result := IntToStr(BlockCount(Information));
+    'B': Result := '512';
+    'h': Result := IntToStr(Information.LinkCount);
+    'a': Result := OctalModeText(Information, 1);
+    'A': Result := ModeText(Information);
+    'u': Result := IntToStr(Information.OwnerId);
+    'g': Result := IntToStr(Information.GroupId);
+    'U': Result := NameOrUnknown(UserNameOf(Information.OwnerId));
+    'G': Result := NameOrUnknown(GroupNameOf(Information.GroupId));
+    'X': Result := IntToStr(Information.AccessTime);
+    'x': Result := TimeText(Information.AccessTime);
+    'Y': Result := IntToStr(Information.ModificationTime);
+    'y': Result := TimeText(Information.ModificationTime);
+    'Z': Result := IntToStr(Information.ChangeTime);
+    'z': Result := TimeText(Information.ChangeTime);
+    '%': Result := '%';
+  else
+    Result := '%' + Conversion;
+  end;
+end;
+
+procedure WriteWithFormat(const FormatText, Name: string; const Information: TFileInformation);
 var
   Position: Integer;
+  Line: string;
 begin
-  Position := 0;
-  while Format[Position] <> #0 do
+  Line := '';
+  Position := 1;
+  while Position <= Length(FormatText) do
   begin
-    if (Format[Position] <> '%') or (Format[Position + 1] = #0) then
+    if (FormatText[Position] <> '%') or (Position = Length(FormatText)) then
     begin
-      WriteCharacter(StandardOutput, Format[Position]);
+      Line := Line + FormatText[Position];
       Inc(Position);
       Continue;
     end;
-    Inc(Position);
-    case Format[Position] of
-      'n': WriteText(StandardOutput, Name);
-      's': WriteUnsigned(StandardOutput, Information.SizeInBytes);
-      'F': WriteText(StandardOutput, KindName(Information));
-      'i': WriteUnsigned(StandardOutput, Information.NodeNumber);
-      'd': WriteUnsigned(StandardOutput, Information.VolumeNumber);
-      'b': WriteUnsigned(StandardOutput, (Information.AllocatedBytes + 511) div 512);
-      'B': WriteText(StandardOutput, '512');
-      'h': WriteUnsigned(StandardOutput, Information.LinkCount);
-      'a': WriteFormatted(StandardOutput, '%o', [ArgumentUnsigned(Information.Mode and $FFF)]);
-      'A': WriteModeText(Information);
-      'u': WriteUnsigned(StandardOutput, Information.OwnerId);
-      'g': WriteUnsigned(StandardOutput, Information.GroupId);
-      'U': WriteText(StandardOutput, NameOrUnknown(UserNameOf(Information.OwnerId)));
-      'G': WriteText(StandardOutput, NameOrUnknown(GroupNameOf(Information.GroupId)));
-      'X': WriteDecimal(StandardOutput, Information.AccessTime);
-      'x': WriteTime(Information.AccessTime);
-      'Y': WriteDecimal(StandardOutput, Information.ModificationTime);
-      'y': WriteTime(Information.ModificationTime);
-      'Z': WriteDecimal(StandardOutput, Information.ChangeTime);
-      'z': WriteTime(Information.ChangeTime);
-      '%': WriteCharacter(StandardOutput, '%');
-    else
-      begin
-        WriteCharacter(StandardOutput, '%');
-        WriteCharacter(StandardOutput, Format[Position]);
-      end;
-    end;
-    Inc(Position);
+    Line := Line + ConversionText(FormatText[Position + 1], Name, Information);
+    Inc(Position, 2);
   end;
-  WriteCharacter(StandardOutput, #10);
+  WriteLine(StandardOutput, PChar(Line));
 end;
 
-procedure WriteDefault(Name: PChar; const Information: TFileInformation);
+function ReadLinkTarget(const Path: string; out Target: string): Boolean;
 var
-  Target: array[0..PathCapacity - 1] of Char;
+  Buffer: array[0..PathCapacity - 1] of Char;
 begin
-  if (Information.Kind = KindSymbolicLink) and
-     (ReadSymbolicLink(Name, @Target[0], PathCapacity) = ErrorNone) then
-    WriteFormatted(StandardOutput, '  File: %s -> %s'#10, [ArgumentText(Name), ArgumentText(@Target[0])])
+  Result := ReadSymbolicLink(PChar(Path), @Buffer[0], PathCapacity) = ErrorNone;
+  if Result then
+    Target := PChar(@Buffer[0])
   else
-    WriteFormatted(StandardOutput, '  File: %s'#10, [ArgumentText(Name)]);
-  WriteFormatted(StandardOutput, '  Size: %-15u Blocks: %-10u Type: %s'#10, [
-    ArgumentUnsigned(Information.SizeInBytes), ArgumentUnsigned((Information.AllocatedBytes + 511) div 512),
-    ArgumentText(KindName(Information))]);
-  WriteFormatted(StandardOutput, '  Node: %-15u Links: %-10u Volume: %u'#10, [ArgumentUnsigned(Information.NodeNumber),
-    ArgumentUnsigned(Information.LinkCount), ArgumentUnsigned(Information.VolumeNumber)]);
-  WriteFormatted(StandardOutput, 'Access: (%04o/', [ArgumentUnsigned(Information.Mode and $FFF)]);
-  WriteModeText(Information);
-  WriteFormatted(StandardOutput, ')  Uid: (%5u/%8s)   Gid: (%5u/%8s)'#10, [ArgumentUnsigned(Information.OwnerId),
-    ArgumentText(NameOrUnknown(UserNameOf(Information.OwnerId))), ArgumentUnsigned(Information.GroupId),
-    ArgumentText(NameOrUnknown(GroupNameOf(Information.GroupId)))]);
-  WriteText(StandardOutput, 'Access: ');
-  WriteTime(Information.AccessTime);
-  WriteCharacter(StandardOutput, #10);
-  WriteText(StandardOutput, 'Modify: ');
-  WriteTime(Information.ModificationTime);
-  WriteCharacter(StandardOutput, #10);
-  WriteText(StandardOutput, 'Change: ');
-  WriteTime(Information.ChangeTime);
-  WriteCharacter(StandardOutput, #10);
+    Target := '';
+end;
+
+procedure OutputLine(const Line: string);
+begin
+  WriteLine(StandardOutput, PChar(Line));
+end;
+
+procedure WriteDefault(const Name: string; const Information: TFileInformation);
+var
+  Target: string;
+begin
+  if (Information.Kind = KindSymbolicLink) and ReadLinkTarget(Name, Target) then
+    OutputLine('  File: ' + Name + ' -> ' + Target)
+  else
+    OutputLine('  File: ' + Name);
+  OutputLine(Format('  Size: %-15d Blocks: %-10d Type: %s', [Information.SizeInBytes, BlockCount(Information),
+    KindName(Information)]));
+  OutputLine(Format('  Node: %-15d Links: %-10d Volume: %d', [Information.NodeNumber, Information.LinkCount,
+    Information.VolumeNumber]));
+  OutputLine(Format('Access: (%s/%s)  Uid: (%5d/%8s)   Gid: (%5d/%8s)', [OctalModeText(Information, 4),
+    ModeText(Information), Information.OwnerId, NameOrUnknown(UserNameOf(Information.OwnerId)),
+    Information.GroupId, NameOrUnknown(GroupNameOf(Information.GroupId))]));
+  OutputLine('Access: ' + TimeText(Information.AccessTime));
+  OutputLine('Modify: ' + TimeText(Information.ModificationTime));
+  OutputLine('Change: ' + TimeText(Information.ChangeTime));
 end;
 
 var
@@ -201,14 +221,16 @@ var
   Code: Integer;
   Value: PChar;
   Dereference: Boolean;
-  Format: PChar;
+  HasFormat: Boolean;
+  FormatText: string;
   Index: Integer;
   Information: TFileInformation;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
   Dereference := False;
-  Format := nil;
+  HasFormat := False;
+  FormatText := '';
   BeginOptions(Parser, [
     OptionDefinition('L', 'dereference', False, OptionDereference),
     OptionDefinition('c', 'format', True, OptionFormat),
@@ -216,8 +238,16 @@ begin
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionDereference: Dereference := True;
-      OptionFormat: Format := Value;
-      OptionTerse: Format := '%n %s %i %h %a %Y';
+      OptionFormat:
+        begin
+          HasFormat := True;
+          FormatText := Value;
+        end;
+      OptionTerse:
+        begin
+          HasFormat := True;
+          FormatText := '%n %s %i %h %a %Y';
+        end;
     end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing operand', []);
@@ -235,8 +265,8 @@ begin
       ExitStatus := 1;
       Continue;
     end;
-    if Format <> nil then
-      WriteWithFormat(Format, Parser.Operands[Index], Information)
+    if HasFormat then
+      WriteWithFormat(FormatText, Parser.Operands[Index], Information)
     else
       WriteDefault(Parser.Operands[Index], Information);
   end;

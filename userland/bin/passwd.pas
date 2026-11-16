@@ -28,13 +28,12 @@
 program passwd;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Runtime.Memory,
-  Runtime.Text,
-  Sys.Errors,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
@@ -48,11 +47,13 @@ const
     'Change the password of USER (by default, the user running passwd).'#10;
   StatusFailed = 1;
 
+{ Passwords stay in heap PChars (not reference counted strings, which
+  leave copies behind) so they can be wiped once used. }
 procedure Forget(var Text: PChar);
 begin
   if Text = nil then
     Exit;
-  ZeroMemory(Text, TextLength(Text));
+  ZeroMemory(Text, StrLen(Text));
   FreeMemory(Text);
   Text := nil;
 end;
@@ -60,7 +61,7 @@ end;
 var
   Parser: TOptionParser;
   TargetId: LongWord;
-  TargetName: PChar;
+  TargetName: string;
   Current: PChar;
   NewPassword: PChar;
   Repeated: PChar;
@@ -76,18 +77,18 @@ begin
   end
   else
     TargetId := CurrentRealUserId;
-  TargetName := UserNameOf(TargetId);
-  if TargetName = nil then
+  if UserNameOf(TargetId) = nil then
     Fail(StatusFailed, 'cannot find name for user ID %u', [ArgumentUnsigned(TargetId)]);
+  TargetName := UserNameOf(TargetId);
 
   if CurrentRealUserId <> RootId then
   begin
     if TargetId <> CurrentRealUserId then
-      Fail(StatusFailed, 'You may not view or modify password information for %s.', [ArgumentText(TargetName)]);
-    if not HasEmptyPassword(TargetName) then
+      Fail(StatusFailed, 'You may not view or modify password information for %s.', [ArgumentText(PChar(TargetName))]);
+    if not HasEmptyPassword(PChar(TargetName)) then
     begin
       Current := ReadPassword('Current password: ');
-      if (Current = nil) or (CheckPassword(TargetName, Current) <> PasswordAccepted) then
+      if (Current = nil) or (CheckPassword(PChar(TargetName), Current) <> PasswordAccepted) then
       begin
         Forget(Current);
         Fail(StatusFailed, 'Authentication token manipulation error', []);
@@ -96,17 +97,17 @@ begin
     end;
   end;
 
-  WriteFormatted(StandardOutput, 'Changing password for %s.'#10, [ArgumentText(TargetName)]);
+  WriteText(StandardOutput, PChar('Changing password for ' + TargetName + '.'#10));
   FlushStream(StandardOutput);
   NewPassword := ReadPassword('New password: ');
   Repeated := ReadPassword('Retype new password: ');
-  if (NewPassword = nil) or (Repeated = nil) or not TextIsEqual(NewPassword, Repeated) then
+  if (NewPassword = nil) or (Repeated = nil) or (StrComp(NewPassword, Repeated) <> 0) then
   begin
     Forget(NewPassword);
     Forget(Repeated);
     Fail(StatusFailed, 'Passwords do not match', []);
   end;
-  Error := SetPassword(TargetName, NewPassword);
+  Error := SetPassword(PChar(TargetName), NewPassword);
   Forget(NewPassword);
   Forget(Repeated);
   if Error <> ErrorNone then

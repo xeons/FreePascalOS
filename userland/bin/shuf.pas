@@ -29,11 +29,12 @@
 program shuf;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Text,
   Crypto.Random,
   Sys.Errors,
   Sys.Files,
@@ -64,34 +65,29 @@ const
   OptionRepeat = 5;
   OptionZero = 6;
 
+  { Longest bound text before the dash of LO-HI. }
+  MaximumBoundLength = 31;
+
 var
   Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
   EchoMode: Boolean;
-  RangeText: PChar;
+  HasRange: Boolean;
+  RangeText: string;
   Limit: Int64;
-  OutputPath: PChar;
+  HasOutputPath: Boolean;
+  OutputPath: string;
   Repeated: Boolean;
   LineEnd: Char;
-  Lines: TLineList;
-  Stream: PInputStream;
-  Output: POutputStream;
-  OutputHandle: Int64;
-  Low, High: Int64;
-  Dash: PtrInt;
-  Number: Int64;
-  Index: Integer;
-  Chosen: Integer;
-  Swap: PChar;
-  Written: Int64;
-  NumberText: TNumberText;
-  Bound: array[0..31] of Char;
+
+procedure ReadOptions;
+var
+  Code: Integer;
+  Value: PChar;
 begin
   EchoMode := False;
-  RangeText := nil;
+  HasRange := False;
   Limit := -1;
-  OutputPath := nil;
+  HasOutputPath := False;
   Repeated := False;
   LineEnd := #10;
   BeginOptions(Parser, [
@@ -104,90 +100,141 @@ begin
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionEcho: EchoMode := True;
-      OptionRange: RangeText := Value;
+      OptionRange:
+        begin
+          RangeText := Value;
+          HasRange := True;
+        end;
       OptionCount:
         if not ParseInteger(Value, Limit) or (Limit < 0) then
           Fail(1, 'invalid line count: ''%s''', [ArgumentText(Value)]);
-      OptionOutput: OutputPath := Value;
+      OptionOutput:
+        begin
+          OutputPath := Value;
+          HasOutputPath := True;
+        end;
       OptionRepeat: Repeated := True;
       OptionZero: LineEnd := #0;
     end;
+end;
 
-  BeginLineList(Lines);
-  if RangeText <> nil then
+procedure FailInvalidRange;
+begin
+  Fail(1, 'invalid input range: ''%s''', [ArgumentText(PChar(RangeText))]);
+end;
+
+{ The numbers LO through HI of RangeText. }
+procedure AddRange(Lines: TStrings);
+var
+  Dash: Integer;
+  Low, High: Int64;
+  Number: Int64;
+begin
+  Dash := Pos('-', RangeText);
+  if (Dash <= 1) or (Dash - 1 > MaximumBoundLength) then
+    FailInvalidRange;
+  if not ParseInteger(PChar(Copy(RangeText, 1, Dash - 1)), Low) or
+     not ParseInteger(PChar(Copy(RangeText, Dash + 1, MaxInt)), High) or (High < Low) then
+    FailInvalidRange;
+  for Number := Low to High do
+    Lines.Add(IntToStr(Number));
+end;
+
+procedure AddInputLines(Lines: TStrings);
+var
+  Stream: PInputStream;
+  Line: PChar;
+  HadLineEnd: Boolean;
+begin
+  if Parser.OperandCount > 1 then
+    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
+  if Parser.OperandCount = 1 then
+    Stream := OpenInput(Parser.Operands[0])
+  else
+    Stream := StandardInput;
+  if Stream = nil then
+    Halt(1);
+  while ReadLine(Stream, Line, HadLineEnd) do
   begin
-    Dash := FindCharacter(RangeText, '-');
-    if (Dash <= 0) or (Dash >= SizeOf(Bound)) then
-      Fail(1, 'invalid input range: ''%s''', [ArgumentText(RangeText)]);
-    CopyText(@Bound[0], RangeText, PtrUInt(Dash) + 1);
-    if not ParseInteger(@Bound[0], Low) or not ParseInteger(RangeText + Dash + 1, High) or (High < Low) then
-      Fail(1, 'invalid input range: ''%s''', [ArgumentText(RangeText)]);
-    for Number := Low to High do
-      AddLine(Lines, DuplicateText(FormatSignedDecimal(Number, NumberText)));
-  end
+    Lines.Add(Line);
+    FreeMemory(Line);
+  end;
+  CloseInput(Stream);
+end;
+
+procedure WriteRepeated(Output: POutputStream; Lines: TStrings);
+var
+  Written: Int64;
+begin
+  if Lines.Count = 0 then
+  begin
+    if Limit <> 0 then
+      Fail(1, 'no lines to repeat', []);
+    Exit;
+  end;
+  Written := 0;
+  while ((Limit < 0) or (Written < Limit)) and not Output^.HadError do
+  begin
+    WriteText(Output, PChar(Lines[RandomBelow(QWord(Lines.Count))]));
+    WriteCharacter(Output, LineEnd);
+    Inc(Written);
+  end;
+end;
+
+{ Fisher-Yates, stopping once Limit lines are placed. }
+procedure WriteShuffled(Output: POutputStream; Lines: TStrings);
+var
+  Index: Integer;
+  Chosen: Integer;
+begin
+  Index := 0;
+  while (Index < Lines.Count) and ((Limit < 0) or (Index < Limit)) do
+  begin
+    Chosen := Index + Integer(RandomBelow(QWord(Lines.Count - Index)));
+    Lines.Exchange(Index, Chosen);
+    WriteText(Output, PChar(Lines[Index]));
+    WriteCharacter(Output, LineEnd);
+    Inc(Index);
+  end;
+end;
+
+var
+  Lines: TStringList;
+  Index: Integer;
+  Output: POutputStream;
+  OutputHandle: Int64;
+begin
+  ReadOptions;
+
+  Lines := TStringList.Create;
+  if HasRange then
+    AddRange(Lines)
   else if EchoMode then
   begin
     for Index := 0 to Parser.OperandCount - 1 do
-      AddLine(Lines, DuplicateText(Parser.Operands[Index]));
+      Lines.Add(Parser.Operands[Index]);
   end
   else
-  begin
-    if Parser.OperandCount > 1 then
-      FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-    if Parser.OperandCount = 1 then
-      Stream := OpenInput(Parser.Operands[0])
-    else
-      Stream := StandardInput;
-    if Stream = nil then
-      Halt(1);
-    ReadAllLines(Stream, Lines);
-    CloseInput(Stream);
-  end;
+    AddInputLines(Lines);
 
   Output := StandardOutput;
   OutputHandle := -1;
-  if OutputPath <> nil then
+  if HasOutputPath then
   begin
-    OutputHandle := OpenFile(OutputPath, OpenWrite or OpenCreate or OpenTruncate);
+    OutputHandle := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
     if OutputHandle < 0 then
-      FailWithError(1, ErrorCodeOf(OutputHandle), '%s', [ArgumentText(OutputPath)]);
+      FailWithError(1, ErrorCodeOf(OutputHandle), '%s', [ArgumentText(PChar(OutputPath))]);
     Output := CreateOutputStream(OutputHandle);
   end;
 
-  Written := 0;
   if Repeated then
-  begin
-    if Lines.Count = 0 then
-    begin
-      if Limit <> 0 then
-        Fail(1, 'no lines to repeat', []);
-    end
-    else
-      while ((Limit < 0) or (Written < Limit)) and not Output^.HadError do
-      begin
-        WriteText(Output, Lines.Items[RandomBelow(QWord(Lines.Count))]);
-        WriteCharacter(Output, LineEnd);
-        Inc(Written);
-      end;
-  end
+    WriteRepeated(Output, Lines)
   else
-  begin
-    { Fisher-Yates, stopping once Limit lines are placed. }
-    Index := 0;
-    while (Index < Lines.Count) and ((Limit < 0) or (Index < Limit)) do
-    begin
-      Chosen := Index + Integer(RandomBelow(QWord(Lines.Count - Index)));
-      Swap := Lines.Items[Index];
-      Lines.Items[Index] := Lines.Items[Chosen];
-      Lines.Items[Chosen] := Swap;
-      WriteText(Output, Lines.Items[Index]);
-      WriteCharacter(Output, LineEnd);
-      Inc(Index);
-    end;
-  end;
+    WriteShuffled(Output, Lines);
   if OutputHandle >= 0 then
   begin
     DestroyOutputStream(Output);
     CloseFile(OutputHandle);
   end;
+  Lines.Free;
 end.

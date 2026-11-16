@@ -31,14 +31,12 @@
 program tone;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
   Abi.SystemCalls,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Text,
   Util.Messages,
   Util.Options,
@@ -70,8 +68,9 @@ var
   Parser: TOptionParser;
   Code: Integer;
   OptionValue: PChar;
-  OutputPath: PChar;
-  DevicePath: PChar;
+  WritesFile: Boolean;
+  OutputPath: string;
+  DevicePath: string;
   Rate: QWord;
   Amplitude: QWord;
   Frequency: QWord;
@@ -79,7 +78,7 @@ var
   FramesLeft: QWord;
   Frames: QWord;
   Generator: TToneGenerator;
-  Samples: PByte;
+  Samples: array of Byte;
   Kind: LongWord;
   Channels: QWord;
   SampleBytes: LongWord;
@@ -91,7 +90,8 @@ var
   Header: array[0..WaveHeaderSize - 1] of Byte;
   Error: LongInt;
 begin
-  OutputPath := nil;
+  WritesFile := False;
+  OutputPath := '';
   DevicePath := DefaultAudioDevice;
   Rate := 48000;
   Amplitude := 50;
@@ -105,7 +105,11 @@ begin
     OptionDefinition('a', 'amplitude', True, OptionAmplitude)], Usage);
   while NextOption(Parser, Code, OptionValue) do
     case Code of
-      OptionOutput: OutputPath := OptionValue;
+      OptionOutput:
+        begin
+          WritesFile := True;
+          OutputPath := OptionValue;
+        end;
       OptionDevice: DevicePath := OptionValue;
       OptionRate:
         if not ParseUnsigned(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
@@ -133,22 +137,22 @@ begin
   FramesLeft := Rate * Thousandths div 1000;
   StartTone(Generator, LongWord(Frequency), LongWord(Rate), LongInt(Amplitude * 32767 div 100));
   SampleBytes := BytesPerSample(Kind);
-  Samples := PByte(AllocateMemory(ChunkFrames * Channels * SampleBytes));
+  SetLength(Samples, ChunkFrames * Channels * SampleBytes);
 
-  if OutputPath <> nil then
+  if WritesFile then
   begin
-    Handle := OpenFile(OutputPath, OpenWrite or OpenCreate or OpenTruncate);
+    Handle := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
     if Handle < 0 then
-      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(OutputPath)]);
+      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(PChar(OutputPath))]);
     MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind,
       LongWord(FramesLeft * Channels * SampleBytes));
     WriteAll(Handle, @Header[0], WaveHeaderSize);
   end
   else
   begin
-    Handle := OpenAudioOutput(DevicePath);
+    Handle := OpenAudioOutput(PChar(DevicePath));
     if Handle < 0 then
-      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(DevicePath)]);
+      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(PChar(DevicePath))]);
     Format.Rate := LongWord(Rate);
     Format.Channels := LongWord(Channels);
     Format.Kind := Kind;
@@ -166,14 +170,14 @@ begin
     begin
       Value := NextToneSample(Generator);
       for Channel := 0 to Channels - 1 do
-        EncodeSample(Value, Kind, Samples + (Frame * Channels + Channel) * SampleBytes);
+        EncodeSample(Value, Kind, @Samples[(Frame * Channels + Channel) * SampleBytes]);
     end;
-    Error := WriteAll(Handle, Samples, Frames * Channels * SampleBytes);
+    Error := WriteAll(Handle, @Samples[0], Frames * Channels * SampleBytes);
     if Error <> 0 then
       FailWithError(1, Error, 'writing', []);
     FramesLeft := FramesLeft - Frames;
   end;
-  if OutputPath = nil then
+  if not WritesFile then
     DrainAudio(Handle);
   CloseFile(Handle);
 end.

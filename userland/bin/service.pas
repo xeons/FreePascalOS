@@ -59,7 +59,9 @@ const
   StatusFailed = 1;
 
 var
-  PortName: PChar;
+  { The manager's port; the system's when not given. }
+  HasPortName: Boolean;
+  PortName: string;
   Command: string;
   ServiceName: string;
 
@@ -69,11 +71,14 @@ var
   Code: Integer;
   Value: PChar;
 begin
-  PortName := nil;
+  HasPortName := False;
   BeginOptions(Parser, [OptionDefinition('p', 'port', True, OptionPort)], Usage);
   while NextOption(Parser, Code, Value) do
     if Code = OptionPort then
+    begin
       PortName := Value;
+      HasPortName := True;
+    end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('a command is needed', []);
   Command := Parser.Operands[0];
@@ -160,6 +165,14 @@ begin
   end;
 end;
 
+function PortNameArgument: PChar;
+begin
+  if HasPortName then
+    Result := PChar(PortName)
+  else
+    Result := nil;
+end;
+
 var
   Code: LongWord;
   Reply: TServiceReply;
@@ -174,7 +187,7 @@ begin
   Code := RequestCode;
   if (Code <> ServiceRequestList) and (ServiceName = '') then
     FailWithUsageHint('%s needs the name of a service', [ArgumentText(PChar(Command))]);
-  Error := AskServiceManager(PortName, Code, PChar(ServiceName), Reply);
+  Error := AskServiceManager(PortNameArgument, Code, PChar(ServiceName), Reply);
   if Error <> ErrorNone then
     FailWithError(StatusFailed, Error, 'the service manager', []);
   if Reply.Error <> ErrorNone then

@@ -31,12 +31,12 @@
 program ptx;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  Classes,
+  SysUtils,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Util.Input,
@@ -62,109 +62,149 @@ const
   OptionTraditional = 6;
 
 type
-  PEntry = ^TEntry;
-  TEntry = record
-    Line: PChar;
-    Reference: PChar;
-    WordStart: PtrUInt;
-    WordLength: PtrUInt;
+  TStringArray = array of string;
+
+  { One keyword of the input, with the line it is in. }
+  TIndexEntry = class
+  public
+    { The line, without its reference with -r. }
+    Line: string;
+    Reference: string;
+    { Where the keyword starts in Line (from 1). }
+    WordStart: Integer;
+    { What entries are sorted by: the line from the keyword on. }
+    SortKey: string;
+    constructor Create(const ALine, AReference: string; AWordStart: Integer);
   end;
 
 var
   IgnoreCase: Boolean;
   UseReferences: Boolean;
   Width: Int64;
-  IgnoreWords: TLineList;
-  OnlyWords: TLineList;
+  IgnoreWords: TStringArray;
+  OnlyWords: TStringArray;
   HaveOnlyList: Boolean;
 
-function WordInList(const List: TLineList; Word: PChar; Length: PtrUInt): Boolean;
+constructor TIndexEntry.Create(const ALine, AReference: string; AWordStart: Integer);
+begin
+  inherited Create;
+  Line := ALine;
+  Reference := AReference;
+  WordStart := AWordStart;
+  SortKey := Copy(Line, WordStart, MaxInt);
+  if IgnoreCase then
+    SortKey := UpperCase(SortKey);
+end;
+
+function WordInList(const List: TStringArray; const Word: string): Boolean;
 var
   Index: Integer;
 begin
-  for Index := 0 to List.Count - 1 do
-    if (TextLength(List.Items[Index]) = Length) and TextStartsWith(Word, List.Items[Index]) then
+  for Index := 0 to High(List) do
+    if List[Index] = Word then
       Exit(True);
   Result := False;
 end;
 
 function CompareEntries(First, Second: Pointer; Context: Pointer): Integer;
-var
-  Left: PEntry;
-  Right: PEntry;
-  Index: PtrUInt;
-  A, B: Char;
 begin
-  Left := PEntry(First);
-  Right := PEntry(Second);
-  Index := 0;
-  while True do
-  begin
-    A := Left^.Line[Left^.WordStart + Index];
-    B := Right^.Line[Right^.WordStart + Index];
-    if IgnoreCase then
-    begin
-      A := ToUpperCase(A);
-      B := ToUpperCase(B);
-    end;
-    if (A <> B) or (A = #0) then
-      Exit(Integer(Byte(A)) - Integer(Byte(B)));
-    Inc(Index);
-  end;
+  Result := CompareStr(TIndexEntry(First).SortKey, TIndexEntry(Second).SortKey);
 end;
 
-procedure WriteRightAligned(Text: PChar; Length: PtrUInt; Field: Int64);
-var
-  Start: PtrUInt;
+{ The end of Text, right aligned in Field columns: the part nearest the
+  keyword is kept if it does not fit. }
+function RightAligned(const Text: string; Field: Int64): string;
 begin
-  { Keep the part nearest the keyword if it does not fit. }
-  Start := 0;
-  if Int64(Length) > Field then
-    Start := Length - PtrUInt(Field);
-  while Field > Int64(Length - Start) do
-  begin
-    WriteCharacter(StandardOutput, ' ');
-    Dec(Field);
-  end;
-  WriteBytes(StandardOutput, Text + Start, Length - Start);
+  if Length(Text) > Field then
+    Result := Copy(Text, Length(Text) - Field + 1, Field)
+  else
+    Result := StringOfChar(' ', Field - Length(Text)) + Text;
 end;
 
-procedure WriteEntry(Entry: PEntry);
+procedure WriteEntry(Entry: TIndexEntry);
 var
   HalfWidth: Int64;
-  Left: PtrUInt;
-  Right: PChar;
-  RightLength: PtrUInt;
+  Left: Integer;
+  Output: string;
 begin
   HalfWidth := Width div 2;
-  if UseReferences and (Entry^.Reference <> nil) then
-  begin
-    WriteText(StandardOutput, Entry^.Reference);
-    WriteCharacter(StandardOutput, ' ');
-  end;
+  Output := '';
+  if UseReferences then
+    Output := Entry.Reference + ' ';
   { Text before the keyword, without trailing blanks. }
-  Left := Entry^.WordStart;
-  while (Left > 0) and IsSpace(Entry^.Line[Left - 1]) do
+  Left := Entry.WordStart - 1;
+  while (Left > 0) and IsSpace(Entry.Line[Left]) do
     Dec(Left);
-  WriteRightAligned(Entry^.Line, Left, HalfWidth - 3);
-  WriteText(StandardOutput, '   ');
-  Right := Entry^.Line + Entry^.WordStart;
-  RightLength := TextLength(Right);
-  if Int64(RightLength) > Width - HalfWidth then
-    RightLength := PtrUInt(Width - HalfWidth);
-  WriteBytes(StandardOutput, Right, RightLength);
-  WriteCharacter(StandardOutput, #10);
+  Output := Output + RightAligned(Copy(Entry.Line, 1, Left), HalfWidth - 3) + '   ' +
+    Copy(Entry.Line, Entry.WordStart, Width - HalfWidth);
+  WriteLine(StandardOutput, PChar(Output));
 end;
 
-procedure LoadWordList(Path: PChar; var List: TLineList);
+{ Appends every line of Stream to Lines. }
+procedure ReadLinesInto(Stream: PInputStream; var Lines: TStringArray);
+var
+  List: TLineList;
+  Index: Integer;
+  First: Integer;
+begin
+  BeginLineList(List);
+  ReadAllLines(Stream, List);
+  First := Length(Lines);
+  SetLength(Lines, First + List.Count);
+  for Index := 0 to List.Count - 1 do
+    Lines[First + Index] := List.Items[Index];
+  FreeLineList(List);
+end;
+
+procedure LoadWordList(Path: PChar; var List: TStringArray);
 var
   Stream: PInputStream;
 begin
   Stream := OpenInput(Path);
   if Stream = nil then
     Halt(1);
-  ReadAllLines(Stream, List);
+  ReadLinesInto(Stream, List);
   CloseInput(Stream);
+end;
+
+{ Adds an entry for every keyword of Line that is to be indexed. }
+procedure AddEntries(const FullLine: string; Entries: TFPList);
+var
+  Line: string;
+  Reference: string;
+  Position: Integer;
+  Start: Integer;
+  Keyword: string;
+begin
+  Line := FullLine;
+  Reference := '';
+  Position := 1;
+  if UseReferences then
+  begin
+    while (Position <= Length(Line)) and not IsSpace(Line[Position]) do
+      Inc(Position);
+    Reference := Copy(Line, 1, Position - 1);
+    while (Position <= Length(Line)) and IsSpace(Line[Position]) do
+      Inc(Position);
+    Line := Copy(Line, Position, MaxInt);
+    Position := 1;
+  end;
+  while Position <= Length(Line) do
+  begin
+    while (Position <= Length(Line)) and not IsAlphanumeric(Line[Position]) do
+      Inc(Position);
+    if Position > Length(Line) then
+      Break;
+    Start := Position;
+    while (Position <= Length(Line)) and IsAlphanumeric(Line[Position]) do
+      Inc(Position);
+    Keyword := Copy(Line, Start, Position - Start);
+    if WordInList(IgnoreWords, Keyword) then
+      Continue;
+    if HaveOnlyList and not WordInList(OnlyWords, Keyword) then
+      Continue;
+    Entries.Add(TIndexEntry.Create(Line, Reference, Start));
+  end;
 end;
 
 var
@@ -173,21 +213,12 @@ var
   Value: PChar;
   Index: Integer;
   Stream: PInputStream;
-  Lines: TLineList;
-  Entries: PPointer;
-  EntryCount: Integer;
-  EntryCapacity: Integer;
-  Entry: PEntry;
-  Line: PChar;
-  Position: PtrUInt;
-  Start: PtrUInt;
-  Reference: PChar;
+  Lines: TStringArray;
+  Entries: TFPList;
   LineIndex: Integer;
   ExitStatus: LongInt;
 begin
   Width := 72;
-  BeginLineList(IgnoreWords);
-  BeginLineList(OnlyWords);
   BeginOptions(Parser, [
     OptionDefinition('f', 'ignore-case', False, OptionIgnoreCase),
     OptionDefinition('i', 'ignore-file', True, OptionIgnoreFile),
@@ -216,7 +247,7 @@ begin
   end;
 
   ExitStatus := 0;
-  BeginLineList(Lines);
+  Lines := nil;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
     Stream := OpenInput(Parser.Operands[Index]);
@@ -225,58 +256,16 @@ begin
       ExitStatus := 1;
       Continue;
     end;
-    ReadAllLines(Stream, Lines);
+    ReadLinesInto(Stream, Lines);
     CloseInput(Stream);
   end;
 
-  Entries := nil;
-  EntryCount := 0;
-  EntryCapacity := 0;
-  for LineIndex := 0 to Lines.Count - 1 do
-  begin
-    Line := Lines.Items[LineIndex];
-    Position := 0;
-    Reference := nil;
-    if UseReferences then
-    begin
-      while (Line[Position] <> #0) and not IsSpace(Line[Position]) do
-        Inc(Position);
-      Reference := PChar(AllocateMemory(Position + 1));
-      CopyText(Reference, Line, Position + 1);
-      while IsSpace(Line[Position]) do
-        Inc(Position);
-      Line := Line + Position;
-      Position := 0;
-    end;
-    while Line[Position] <> #0 do
-    begin
-      while (Line[Position] <> #0) and not IsAlphanumeric(Line[Position]) do
-        Inc(Position);
-      if Line[Position] = #0 then
-        Break;
-      Start := Position;
-      while IsAlphanumeric(Line[Position]) do
-        Inc(Position);
-      if WordInList(IgnoreWords, Line + Start, Position - Start) then
-        Continue;
-      if HaveOnlyList and not WordInList(OnlyWords, Line + Start, Position - Start) then
-        Continue;
-      if EntryCount = EntryCapacity then
-      begin
-        EntryCapacity := EntryCapacity * 2 + 64;
-        Entries := PPointer(ReallocateMemory(Entries, QWord(EntryCapacity) * SizeOf(Pointer)));
-      end;
-      Entry := PEntry(AllocateMemory(SizeOf(TEntry)));
-      Entry^.Line := Line;
-      Entry^.Reference := Reference;
-      Entry^.WordStart := Start;
-      Entry^.WordLength := Position - Start;
-      Entries[EntryCount] := Entry;
-      Inc(EntryCount);
-    end;
-  end;
-  SortPointers(Entries, EntryCount, @CompareEntries, nil);
-  for Index := 0 to EntryCount - 1 do
-    WriteEntry(PEntry(Entries[Index]));
+  Entries := TFPList.Create;
+  for LineIndex := 0 to High(Lines) do
+    AddEntries(Lines[LineIndex], Entries);
+  if Entries.Count > 0 then
+    SortPointers(PPointer(Entries.List), Entries.Count, @CompareEntries, nil);
+  for Index := 0 to Entries.Count - 1 do
+    WriteEntry(TIndexEntry(Entries[Index]));
   Halt(ExitStatus);
 end.

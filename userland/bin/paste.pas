@@ -28,16 +28,13 @@
 program paste;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
+  SysUtils,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Input,
-  Util.Messages,
   Util.Options;
 
 const
@@ -50,22 +47,91 @@ const
 
   OptionDelimiters = 1;
   OptionSerial = 2;
-  MaximumFiles = 32;
+
+var
+  Delimiters: string;
+  Streams: array of PInputStream;
+
+function ReadTextLine(Stream: PInputStream; out Line: string): Boolean;
+var
+  Text: PChar;
+  HadLineEnd: Boolean;
+begin
+  Result := ReadLine(Stream, Text, HadLineEnd);
+  Line := '';
+  if Result then
+  begin
+    Line := Text;
+    FreeMemory(Text);
+  end;
+end;
+
+{ The delimiter that goes before the field at Position (1 or more). }
+function DelimiterBefore(Position: Integer): string;
+begin
+  if Delimiters = '' then
+    Result := ''
+  else
+    Result := Delimiters[(Position - 1) mod Length(Delimiters) + 1];
+end;
+
+procedure PasteSerially;
+var
+  Index: Integer;
+  Position: Integer;
+  Line: string;
+  Output: string;
+begin
+  for Index := 0 to High(Streams) do
+  begin
+    if Streams[Index] = nil then
+      Continue;
+    Output := '';
+    Position := 0;
+    while ReadTextLine(Streams[Index], Line) do
+    begin
+      if Position > 0 then
+        Output := Output + DelimiterBefore(Position);
+      Output := Output + Line;
+      Inc(Position);
+    end;
+    WriteLine(StandardOutput, PChar(Output));
+  end;
+end;
+
+procedure PasteInParallel;
+var
+  Index: Integer;
+  Line: string;
+  Output: string;
+  AnyLine: Boolean;
+begin
+  repeat
+    { Build the whole output line; print it only if some file still
+      had a line. }
+    AnyLine := False;
+    Output := '';
+    for Index := 0 to High(Streams) do
+    begin
+      if Index > 0 then
+        Output := Output + DelimiterBefore(Index);
+      if (Streams[Index] <> nil) and ReadTextLine(Streams[Index], Line) then
+      begin
+        Output := Output + Line;
+        AnyLine := True;
+      end;
+    end;
+    if AnyLine then
+      WriteLine(StandardOutput, PChar(Output));
+  until not AnyLine;
+end;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Delimiters: PChar;
-  DelimiterCount: Integer;
   Serial: Boolean;
-  Streams: array[0..MaximumFiles - 1] of PInputStream;
   Index: Integer;
-  Line: PChar;
-  HadLineEnd: Boolean;
-  AnyLine: Boolean;
-  Position: Integer;
-  Output: TTextBuilder;
   ExitStatus: LongInt;
 begin
   Delimiters := #9;
@@ -78,64 +144,26 @@ begin
       OptionDelimiters: Delimiters := Value;
       OptionSerial: Serial := True;
     end;
-  DelimiterCount := Integer(TextLength(Delimiters));
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
-  if Parser.OperandCount > MaximumFiles then
-    Fail(1, 'too many files', []);
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  if Parser.OperandCount = 0 then
+    Streams := [OpenInput('-')]
+  else
   begin
-    Streams[Index] := OpenInput(Parser.Operands[Index]);
+    SetLength(Streams, Parser.OperandCount);
+    for Index := 0 to Parser.OperandCount - 1 do
+      Streams[Index] := OpenInput(Parser.Operands[Index]);
+  end;
+  for Index := 0 to High(Streams) do
     if Streams[Index] = nil then
       ExitStatus := 1;
-  end;
 
   if Serial then
-  begin
-    for Index := 0 to Parser.OperandCount - 1 do
-    begin
-      if Streams[Index] = nil then
-        Continue;
-      Position := 0;
-      while ReadLine(Streams[Index], Line, HadLineEnd) do
-      begin
-        if (Position > 0) and (DelimiterCount > 0) then
-          WriteCharacter(StandardOutput, Delimiters[(Position - 1) mod DelimiterCount]);
-        WriteText(StandardOutput, Line);
-        FreeMemory(Line);
-        Inc(Position);
-      end;
-      WriteCharacter(StandardOutput, #10);
-    end;
-  end
+    PasteSerially
   else
-    repeat
-      { Build the whole output line; print it only if some file still
-        had a line. }
-      AnyLine := False;
-      BeginText(Output);
-      for Index := 0 to Parser.OperandCount - 1 do
-      begin
-        if (Index > 0) and (DelimiterCount > 0) then
-          AppendCharacter(Output, Delimiters[(Index - 1) mod DelimiterCount]);
-        if (Streams[Index] <> nil) and ReadLine(Streams[Index], Line, HadLineEnd) then
-        begin
-          AppendText(Output, Line);
-          FreeMemory(Line);
-          AnyLine := True;
-        end;
-      end;
-      if AnyLine then
-        WriteLine(StandardOutput, Output.Text);
-      DiscardText(Output);
-    until not AnyLine;
+    PasteInParallel;
 
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to High(Streams) do
     CloseInput(Streams[Index]);
   Halt(ExitStatus);
 end.

@@ -28,11 +28,10 @@
 program yes;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Environment,
   Sys.Streams,
-  Sys.Text,
   Util.Options;
 
 const
@@ -41,23 +40,21 @@ const
 
 var
   Parser: TOptionParser;
-  Line: TTextBuilder;
+  Line: string;
   Index: Integer;
 begin
   ParseOperandsOnly(Parser, Usage);
-  BeginText(Line);
   if Parser.OperandCount = 0 then
-    AppendText(Line, 'y')
+    Line := 'y'
   else
-    for Index := 0 to Parser.OperandCount - 1 do
-    begin
-      if Index > 0 then
-        AppendCharacter(Line, ' ');
-      AppendText(Line, Parser.Operands[Index]);
-    end;
-  AppendCharacter(Line, #10);
+  begin
+    Line := Parser.Operands[0];
+    for Index := 1 to Parser.OperandCount - 1 do
+      Line := Line + ' ' + Parser.Operands[Index];
+  end;
+  Line := Line + #10;
 
   while not StandardOutput^.HadError do
-    WriteBytes(StandardOutput, Line.Text, Line.Length);
+    WriteBytes(StandardOutput, PChar(Line), Length(Line));
   Halt(0);
 end.

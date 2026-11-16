@@ -26,9 +26,10 @@
 program nl;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
@@ -56,26 +57,78 @@ const
   OptionStart = 4;
   OptionWidth = 5;
 
-function ParseNumber(Text: PChar): Int64;
+var
+  Style: Char;
+  Increment: Int64;
+  Separator: string;
+  LineNumber: Int64;
+  Width: Int64;
+
+function ParseNumber(const Text: string): Int64;
 begin
-  if not ParseInteger(Text, Result) then
-    Fail(1, 'invalid number: ''%s''', [ArgumentText(Text)]);
+  if not ParseInteger(PChar(Text), Result) then
+    Fail(1, 'invalid number: ''%s''', [ArgumentText(PChar(Text))]);
+end;
+
+function ReadTextLine(Stream: PInputStream; out Line: string): Boolean;
+var
+  Text: PChar;
+  HadLineEnd: Boolean;
+begin
+  Result := ReadLine(Stream, Text, HadLineEnd);
+  Line := '';
+  if Result then
+  begin
+    Line := Text;
+    FreeMemory(Text);
+  end;
+end;
+
+{ Pads Text with spaces to Width columns: on the left, or on the right
+  when Width is negative. }
+function Aligned(const Text: string; Width: Int64): string;
+begin
+  if Width >= 0 then
+    Result := StringOfChar(' ', Width - Length(Text)) + Text
+  else
+    Result := Text + StringOfChar(' ', -Width - Length(Text));
+end;
+
+function IsNumbered(const Line: string): Boolean;
+begin
+  case Style of
+    'a': Result := True;
+    't': Result := Line <> '';
+  else
+    Result := False;
+  end;
+end;
+
+procedure NumberLines(Stream: PInputStream);
+var
+  Line: string;
+  Prefix: string;
+begin
+  while ReadTextLine(Stream, Line) do
+  begin
+    if IsNumbered(Line) then
+    begin
+      Prefix := Aligned(IntToStr(LineNumber), Width) + Separator;
+      LineNumber := LineNumber + Increment;
+    end
+    else
+      Prefix := Aligned('', Width + 1);
+    WriteLine(StandardOutput, PChar(Prefix + Line));
+  end;
 end;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Style: Char;
-  Increment: Int64;
-  Separator: PChar;
-  LineNumber: Int64;
-  Width: Int64;
+  Files: array of string;
   Index: Integer;
   Stream: PInputStream;
-  Line: PChar;
-  HadLineEnd: Boolean;
-  Numbered: Boolean;
   ExitStatus: LongInt;
 begin
   Style := 't';
@@ -93,7 +146,7 @@ begin
     case Code of
       OptionStyle:
         begin
-          if not (Value[0] in ['a', 't', 'n']) or (Value[1] <> #0) then
+          if (StrLen(Value) <> 1) or not (Value[0] in ['a', 't', 'n']) then
             Fail(1, 'invalid body numbering style: ''%s''', [ArgumentText(Value)]);
           Style := Value[0];
         end;
@@ -104,38 +157,23 @@ begin
     end;
 
   if Parser.OperandCount = 0 then
+    Files := ['-']
+  else
   begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
+    SetLength(Files, Parser.OperandCount);
+    for Index := 0 to Parser.OperandCount - 1 do
+      Files[Index] := Parser.Operands[Index];
   end;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to High(Files) do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(PChar(Files[Index]));
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    while ReadLine(Stream, Line, HadLineEnd) do
-    begin
-      case Style of
-        'a': Numbered := True;
-        't': Numbered := Line^ <> #0;
-      else
-        Numbered := False;
-      end;
-      if Numbered then
-      begin
-        WriteFormatted(StandardOutput, '%*d%s', [ArgumentNumber(Width), ArgumentNumber(LineNumber),
-          ArgumentText(Separator)]);
-        LineNumber := LineNumber + Increment;
-      end
-      else
-        WriteFormatted(StandardOutput, '%*s', [ArgumentNumber(Width + 1), ArgumentText('')]);
-      WriteLine(StandardOutput, Line);
-      FreeMemory(Line);
-    end;
+    NumberLines(Stream);
     CloseInput(Stream);
   end;
   Halt(ExitStatus);

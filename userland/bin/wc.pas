@@ -27,11 +27,10 @@
 program wc;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  SysUtils,
   Sys.Files,
   Sys.Format,
   Sys.Streams,
@@ -80,7 +79,7 @@ var
   LineLength: QWord;
   Character: Char;
 begin
-  ZeroMemory(@Counts, SizeOf(Counts));
+  Counts := Default(TCounts);
   InWord := False;
   LineLength := 0;
   repeat
@@ -118,44 +117,30 @@ begin
     Counts.MaximumLine := LineLength;
 end;
 
-procedure PrintCounts(const Counts: TCounts; Name: PChar);
+{ Name is empty for standard input, which is not named. }
+procedure PrintCounts(const Counts: TCounts; const Name: string);
 var
-  PrintedAny: Boolean;
+  Line: string;
 
-  procedure PrintNumber(Mask: Integer; Value: QWord);
-  var
-    NumberText: TNumberText;
-    Digits: PChar;
-    Padding: Integer;
+  procedure AddNumber(Mask: Integer; Value: QWord);
   begin
     if (Selection and Mask) = 0 then
       Exit;
-    if PrintedAny then
-      WriteCharacter(StandardOutput, ' ');
-    Digits := FormatDecimal(Value, NumberText);
-    Padding := Width - Integer(TextLength(Digits));
-    while Padding > 0 do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Dec(Padding);
-    end;
-    WriteText(StandardOutput, Digits);
-    PrintedAny := True;
+    if Line <> '' then
+      Line := Line + ' ';
+    Line := Line + IntToStr(Value).PadLeft(Width);
   end;
 
 begin
-  PrintedAny := False;
-  PrintNumber(ShowLines, Counts.Lines);
-  PrintNumber(ShowWords, Counts.Words);
-  PrintNumber(ShowCharacters, Counts.Characters);
-  PrintNumber(ShowBytes, Counts.Bytes);
-  PrintNumber(ShowMaximumLine, Counts.MaximumLine);
-  if Name <> nil then
-  begin
-    WriteCharacter(StandardOutput, ' ');
-    WriteText(StandardOutput, Name);
-  end;
-  WriteCharacter(StandardOutput, #10);
+  Line := '';
+  AddNumber(ShowLines, Counts.Lines);
+  AddNumber(ShowWords, Counts.Words);
+  AddNumber(ShowCharacters, Counts.Characters);
+  AddNumber(ShowBytes, Counts.Bytes);
+  AddNumber(ShowMaximumLine, Counts.MaximumLine);
+  if Name <> '' then
+    Line := Line + ' ' + Name;
+  WriteLine(StandardOutput, PChar(Line));
 end;
 
 function TotalSizeWidth(const Parser: TOptionParser): Integer;
@@ -163,7 +148,6 @@ var
   Index: Integer;
   Total: QWord;
   Information: TFileInformation;
-  NumberText: TNumberText;
 begin
   Total := 0;
   for Index := 0 to Parser.OperandCount - 1 do
@@ -171,7 +155,7 @@ begin
     if GetFileInformation(Parser.Operands[Index], Information) = 0 then
       Total := Total + Information.SizeInBytes;
   end;
-  Result := Integer(TextLength(FormatDecimal(Total, NumberText)));
+  Result := Length(IntToStr(Total));
 end;
 
 var
@@ -212,7 +196,7 @@ begin
   else
     Width := TotalSizeWidth(Parser);
 
-  ZeroMemory(@Total, SizeOf(Total));
+  Total := Default(TCounts);
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
@@ -225,7 +209,7 @@ begin
     CountStream(Stream, Counts);
     CloseInput(Stream);
     if ReadStandardInput then
-      PrintCounts(Counts, nil)
+      PrintCounts(Counts, '')
     else
       PrintCounts(Counts, Parser.Operands[Index]);
     Total.Lines := Total.Lines + Counts.Lines;

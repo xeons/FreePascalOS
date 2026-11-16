@@ -27,11 +27,10 @@
 program renice;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Abi.SystemCalls,
-  Runtime.Text,
+  SysUtils,
   Sys.Environment,
   Sys.Errors,
   Sys.Format,
@@ -49,7 +48,7 @@ const
 var
   Index: Integer;
   Priority: Int64;
-  Text: PChar;
+  Text: string;
   ProcessId: Int64;
   OldNice: LongInt;
   Error: Int64;
@@ -60,7 +59,7 @@ begin
   HavePriority := False;
   Priority := 0;
   Index := 1;
-  if (ArgumentTotal > 1) and TextIsEqual(Argument(1), '--help') then
+  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
   begin
     Print(Usage);
     Halt(0);
@@ -69,31 +68,31 @@ begin
   begin
     Text := Argument(Index);
     Inc(Index);
-    if TextIsEqual(Text, '-p') or TextIsEqual(Text, '--pid') then
+    if (Text = '-p') or (Text = '--pid') then
       Continue;
-    if TextIsEqual(Text, '-g') or TextIsEqual(Text, '-u') then
-      Fail(1, 'option ''%s'' is not supported', [ArgumentText(Text)]);
-    if TextIsEqual(Text, '-n') or TextIsEqual(Text, '--priority') then
+    if (Text = '-g') or (Text = '-u') then
+      Fail(1, 'option ''%s'' is not supported', [ArgumentText(PChar(Text))]);
+    if (Text = '-n') or (Text = '--priority') then
     begin
       if Index >= ArgumentTotal then
-        Fail(1, 'option ''%s'' requires an argument', [ArgumentText(Text)]);
+        Fail(1, 'option ''%s'' requires an argument', [ArgumentText(PChar(Text))]);
       Text := Argument(Index);
       Inc(Index);
-      if not ParseInteger(Text, Priority) then
-        Fail(1, 'invalid priority ''%s''', [ArgumentText(Text)]);
+      if not ParseInteger(PChar(Text), Priority) then
+        Fail(1, 'invalid priority ''%s''', [ArgumentText(PChar(Text))]);
       HavePriority := True;
       Continue;
     end;
     if not HavePriority then
     begin
-      if not ParseInteger(Text, Priority) then
-        Fail(1, 'invalid priority ''%s''', [ArgumentText(Text)]);
+      if not ParseInteger(PChar(Text), Priority) then
+        Fail(1, 'invalid priority ''%s''', [ArgumentText(PChar(Text))]);
       HavePriority := True;
       Continue;
     end;
-    if not ParseInteger(Text, ProcessId) or (ProcessId <= 0) then
+    if not ParseInteger(PChar(Text), ProcessId) or (ProcessId <= 0) then
     begin
-      Report('invalid process ID ''%s''', [ArgumentText(Text)]);
+      Report('invalid process ID ''%s''', [ArgumentText(PChar(Text))]);
       ExitStatus := 1;
       Continue;
     end;
@@ -111,8 +110,8 @@ begin
       Priority := -20;
     if Priority > 19 then
       Priority := 19;
-    WriteFormatted(StandardOutput, '%d (process ID) old priority %d, new priority %d'#10,
-      [ArgumentNumber(ProcessId), ArgumentNumber(OldNice), ArgumentNumber(Priority)]);
+    WriteText(StandardOutput, PChar(Format('%d (process ID) old priority %d, new priority %d'#10,
+      [ProcessId, OldNice, Priority])));
   end;
   if not HavePriority then
     FailWithUsageHint('missing priority', []);

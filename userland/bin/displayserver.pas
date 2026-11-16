@@ -104,7 +104,7 @@ begin
     Count := 2;
     for Index := 0 to ClientCount - 1 do
     begin
-      Handles[Count] := Clients[Index]^.Channel;
+      Handles[Count] := Clients[Index].Channel;
       Inc(Count);
     end;
     Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);

@@ -31,10 +31,10 @@
 program printf;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Environment,
   Sys.Format,
   Sys.Streams,
@@ -42,61 +42,77 @@ uses
   Util.Messages;
 
 var
-  Arguments: PPChar;
-  ArgumentCountLeft: Integer;
+  Arguments: array of string;
+  NextArgumentIndex: Integer;
   ExitStatus: LongInt;
   ConsumedAny: Boolean;
 
-function NextArgument: PChar;
+{ The character at Position (1-based), #0 past the end. }
+function CharacterAt(const Text: string; Position: Integer): Char;
 begin
-  if ArgumentCountLeft = 0 then
-    Exit(nil);
-  Result := Arguments^;
-  Inc(Arguments);
-  Dec(ArgumentCountLeft);
+  if (Position >= 1) and (Position <= Length(Text)) then
+    Result := Text[Position]
+  else
+    Result := #0;
+end;
+
+{ The next argument, '' once they are used up. }
+function NextArgument: string;
+begin
+  if NextArgumentIndex > High(Arguments) then
+    Exit('');
+  Result := Arguments[NextArgumentIndex];
+  Inc(NextArgumentIndex);
   ConsumedAny := True;
+end;
+
+function ArgumentsLeft: Boolean;
+begin
+  Result := NextArgumentIndex <= High(Arguments);
 end;
 
 { Numbers may be written 'c (the code of character c) or in decimal,
   0x hexadecimal or 0 octal. }
-function ArgumentAsNumber(Text: PChar): Int64;
+function ArgumentAsNumber(const Text: string): Int64;
 var
   IsNegative: Boolean;
   Base: Integer;
   Digit: Integer;
   Position: Integer;
+  Character: Char;
 begin
   Result := 0;
-  if Text = nil then
+  if Text = '' then
     Exit;
-  if (Text[0] = '''') or (Text[0] = '"') then
-    Exit(Ord(Text[1]));
-  if ParseInteger(Text, Result) then
+  if (Text[1] = '''') or (Text[1] = '"') then
+    Exit(Ord(CharacterAt(Text, 2)));
+  if ParseInteger(PChar(Text), Result) then
     Exit;
 
-  Position := 0;
-  IsNegative := Text[0] = '-';
-  if IsNegative or (Text[0] = '+') then
+  Position := 1;
+  IsNegative := Text[1] = '-';
+  if IsNegative or (Text[1] = '+') then
     Inc(Position);
   Base := 10;
-  if (Text[Position] = '0') and (ToLowerCase(Text[Position + 1]) = 'x') then
+  if (CharacterAt(Text, Position) = '0') and (LowerCase(CharacterAt(Text, Position + 1)) = 'x') then
   begin
     Base := 16;
     Inc(Position, 2);
   end
-  else if Text[Position] = '0' then
+  else if CharacterAt(Text, Position) = '0' then
     Base := 8;
-  while Text[Position] <> #0 do
+  while Position <= Length(Text) do
   begin
-    if IsDigit(Text[Position]) then
-      Digit := Ord(Text[Position]) - Ord('0')
-    else if ToLowerCase(Text[Position]) in ['a'..'f'] then
-      Digit := Ord(ToLowerCase(Text[Position])) - Ord('a') + 10
+    Character := LowerCase(Text[Position]);
+    if Character in ['0'..'9'] then
+      Digit := Ord(Character) - Ord('0')
+    else if Character in ['a'..'f'] then
+      Digit := Ord(Character) - Ord('a') + 10
     else
       Digit := 99;
     if Digit >= Base then
     begin
-      Report('''%s'': expected a numeric value', [ArgumentText(Text)]);
+      Report('''%s'': expected a numeric value', [ArgumentText(PChar(Text))]);
       ExitStatus := 1;
       Break;
     end;
@@ -109,7 +125,7 @@ end;
 
 { Interprets one backslash escape at Text[Position] (just after the
   backslash); returns False for \c, which stops all output. }
-function WriteEscape(Text: PChar; var Position: Integer; OctalNeedsZero: Boolean): Boolean;
+function WriteEscape(const Text: string; var Position: Integer; OctalNeedsZero: Boolean): Boolean;
 var
   Value: Integer;
   DigitCount: Integer;
@@ -141,7 +157,7 @@ begin
           DigitCount := 0;
           if OctalNeedsZero then
             Inc(Position);
-          while (DigitCount < 3) and (Text[Position] in ['0'..'7']) do
+          while (DigitCount < 3) and (CharacterAt(Text, Position) in ['0'..'7']) do
           begin
             Value := Value * 8 + Ord(Text[Position]) - Ord('0');
             Inc(Position);
@@ -161,17 +177,15 @@ begin
 end;
 
 { %b: the argument with escapes interpreted. }
-function WriteWithEscapes(Text: PChar): Boolean;
+function WriteWithEscapes(const Text: string): Boolean;
 var
   Position: Integer;
 begin
   Result := True;
-  if Text = nil then
-    Exit;
-  Position := 0;
-  while Text[Position] <> #0 do
+  Position := 1;
+  while Position <= Length(Text) do
   begin
-    if (Text[Position] = '\') and (Text[Position + 1] <> #0) then
+    if (Text[Position] = '\') and (Position < Length(Text)) then
     begin
       Inc(Position);
       if not WriteEscape(Text, Position, True) then
@@ -186,38 +200,37 @@ begin
 end;
 
 { Prints FORMAT once. Returns False if output must stop (\c). }
-function PrintFormatOnce(Format: PChar): Boolean;
+function PrintFormatOnce(const FormatText: string): Boolean;
 var
   Position: Integer;
-  Specification: TTextBuilder;
+  Specification: string;
   Conversion: Char;
   Number: Int64;
-  NumberText: TNumberText;
-  Value: PChar;
+  Value: string;
 begin
   Result := True;
-  Position := 0;
-  while Format[Position] <> #0 do
+  Position := 1;
+  while Position <= Length(FormatText) do
   begin
-    if Format[Position] = '\' then
+    if FormatText[Position] = '\' then
     begin
       Inc(Position);
-      if Format[Position] = #0 then
+      if Position > Length(FormatText) then
       begin
         WriteCharacter(StandardOutput, '\');
         Break;
       end;
-      if not WriteEscape(Format, Position, False) then
+      if not WriteEscape(FormatText, Position, False) then
         Exit(False);
       Continue;
     end;
-    if Format[Position] <> '%' then
+    if FormatText[Position] <> '%' then
     begin
-      WriteCharacter(StandardOutput, Format[Position]);
+      WriteCharacter(StandardOutput, FormatText[Position]);
       Inc(Position);
       Continue;
     end;
-    if Format[Position + 1] = '%' then
+    if CharacterAt(FormatText, Position + 1) = '%' then
     begin
       WriteCharacter(StandardOutput, '%');
       Inc(Position, 2);
@@ -226,26 +239,24 @@ begin
 
     { Collect the specification, replacing * with argument values, and
       hand it to the library formatter. }
-    BeginText(Specification);
-    AppendCharacter(Specification, '%');
+    Specification := '%';
     Inc(Position);
-    while Format[Position] in ['-', '+', ' ', '#', '0'..'9', '.', '*'] do
+    while CharacterAt(FormatText, Position) in ['-', '+', ' ', '#', '0'..'9', '.', '*'] do
     begin
-      if Format[Position] = '*' then
-        AppendText(Specification, FormatSignedDecimal(ArgumentAsNumber(NextArgument), NumberText))
+      if FormatText[Position] = '*' then
+        Specification := Specification + IntToStr(ArgumentAsNumber(NextArgument))
       else
-        AppendCharacter(Specification, Format[Position]);
+        Specification := Specification + FormatText[Position];
       Inc(Position);
     end;
     { Length modifiers such as l or h make no difference here. }
-    while Format[Position] in ['l', 'h', 'j', 'z', 't', 'L'] do
+    while CharacterAt(FormatText, Position) in ['l', 'h', 'j', 'z', 't', 'L'] do
       Inc(Position);
-    Conversion := Format[Position];
+    Conversion := CharacterAt(FormatText, Position);
     if Conversion = #0 then
     begin
-      Report('%s: missing conversion specifier', [ArgumentText(Specification.Text)]);
+      Report('%s: missing conversion specifier', [ArgumentText(PChar(Specification))]);
       ExitStatus := 1;
-      DiscardText(Specification);
       Break;
     end;
     Inc(Position);
@@ -253,47 +264,50 @@ begin
     case Conversion of
       's':
         begin
-          AppendCharacter(Specification, 's');
+          Specification := Specification + 's';
           Value := NextArgument;
-          if Value = nil then
-            Value := '';
-          WriteFormatted(StandardOutput, Specification.Text, [ArgumentText(Value)]);
+          WriteFormatted(StandardOutput, PChar(Specification), [ArgumentText(PChar(Value))]);
         end;
       'b':
         if not WriteWithEscapes(NextArgument) then
-        begin
-          DiscardText(Specification);
           Exit(False);
-        end;
       'c':
         begin
           Value := NextArgument;
-          if (Value <> nil) and (Value^ <> #0) then
-            WriteCharacter(StandardOutput, Value^);
+          if Value <> '' then
+            WriteCharacter(StandardOutput, Value[1]);
         end;
       'd', 'i', 'u', 'x', 'X', 'o':
         begin
-          AppendCharacter(Specification, Conversion);
+          Specification := Specification + Conversion;
           Number := ArgumentAsNumber(NextArgument);
           if Conversion in ['d', 'i'] then
-            WriteFormatted(StandardOutput, Specification.Text, [ArgumentNumber(Number)])
+            WriteFormatted(StandardOutput, PChar(Specification), [ArgumentNumber(Number)])
           else
-            WriteFormatted(StandardOutput, Specification.Text, [ArgumentUnsigned(QWord(Number))]);
+            WriteFormatted(StandardOutput, PChar(Specification), [ArgumentUnsigned(QWord(Number))]);
         end;
     else
       begin
         Report('%%%s: invalid conversion specification', [ArgumentCharacter(Conversion)]);
         ExitStatus := 1;
-        DiscardText(Specification);
         Exit(False);
       end;
     end;
-    DiscardText(Specification);
   end;
 end;
 
+procedure CollectArguments(First: Integer);
 var
-  Format: PChar;
+  Index: Integer;
+begin
+  SetLength(Arguments, ArgumentTotal - First);
+  for Index := First to ArgumentTotal - 1 do
+    Arguments[Index - First] := Argument(Index);
+  NextArgumentIndex := 0;
+end;
+
+var
+  FormatText: string;
 begin
   ExitStatus := 0;
   if ArgumentTotal < 2 then
@@ -302,30 +316,26 @@ begin
     WriteFormatted(StandardError, 'Try ''%s --help'' for more information.'#10, [ArgumentText(ProgramName)]);
     Halt(1);
   end;
-  if TextIsEqual(Argument(1), '--help') then
+  if string(Argument(1)) = '--help' then
   begin
     PrintLine('Usage: printf FORMAT [ARGUMENT]...');
     PrintLine('Print ARGUMENT(s) according to FORMAT.');
     Halt(0);
   end;
 
-  Format := Argument(1);
-  if TextIsEqual(Format, '--') and (ArgumentTotal >= 3) then
+  FormatText := Argument(1);
+  if (FormatText = '--') and (ArgumentTotal >= 3) then
   begin
-    Format := Argument(2);
-    Arguments := ArgumentValues + 3;
-    ArgumentCountLeft := ArgumentTotal - 3;
+    FormatText := Argument(2);
+    CollectArguments(3);
   end
   else
-  begin
-    Arguments := ArgumentValues + 2;
-    ArgumentCountLeft := ArgumentTotal - 2;
-  end;
+    CollectArguments(2);
 
   repeat
     ConsumedAny := False;
-    if not PrintFormatOnce(Format) then
+    if not PrintFormatOnce(FormatText) then
       Break;
-  until (ArgumentCountLeft = 0) or not ConsumedAny;
+  until not ArgumentsLeft or not ConsumedAny;
   Halt(ExitStatus);
 end.

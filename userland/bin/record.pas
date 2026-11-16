@@ -32,14 +32,12 @@
 program RecordSound;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
   Abi.SystemCalls,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Text,
   Util.Messages,
   Util.Options,
@@ -73,7 +71,7 @@ var
   BytesLeft: QWord;
   Wanted: QWord;
   Got: Int64;
-  Buffer: PByte;
+  Buffer: array of Byte;
   Input: Int64;
   Output: Int64;
   Format: TAudioFormat;
@@ -128,16 +126,16 @@ begin
   MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind, LongWord(BytesLeft));
   WriteAll(Output, @Header[0], WaveHeaderSize);
 
-  Buffer := PByte(AllocateMemory(ChunkBytes));
+  SetLength(Buffer, ChunkBytes);
   while BytesLeft > 0 do
   begin
     Wanted := BytesLeft;
     if Wanted > ChunkBytes then
       Wanted := ChunkBytes;
-    Got := ReadAudio(Input, Buffer, Wanted);
+    Got := ReadAudio(Input, @Buffer[0], Wanted);
     if Got <= 0 then
       FailWithError(1, LongInt(-Got), 'reading %s', [ArgumentText(DevicePath)]);
-    Error := WriteAll(Output, Buffer, QWord(Got));
+    Error := WriteAll(Output, @Buffer[0], QWord(Got));
     if Error <> 0 then
       FailWithError(1, Error, '%s', [ArgumentText(OutputPath)]);
     BytesLeft := BytesLeft - QWord(Got);

@@ -32,12 +32,11 @@
 program xargs;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
   Sys.Format,
@@ -46,7 +45,6 @@ uses
   Sys.Streams,
   Sys.Text,
   Util.Commands,
-  Util.Input,
   Util.Messages,
   Util.Options;
 
@@ -84,65 +82,60 @@ const
 
   DefaultMaximumCharacters = 128 * 1024;
 
+  UnmatchedQuoteMessage: PChar =
+    'unmatched quote; by default quotes are special to xargs unless you use the -0 option';
+
 type
   TSplitMode = (SplitBlanks, SplitCharacter);
+  TStringArray = array of string;
 
 var
   SplitMode: TSplitMode;
   Delimiter: Char;
-  Replacement: PChar;
+  Replacing: Boolean;
+  Replacement: string;
   MaximumLines: Int64;
   MaximumArguments: Int64;
   MaximumCharacters: Int64;
   NoRunIfEmpty: Boolean;
   Verbose: Boolean;
 
-  CommandWords: PPChar;
-  CommandWordCount: Integer;
+  CommandWords: TStringArray;
   ExitStatus: LongInt;
   InputEnded: Boolean;
 
 { --- Reading items --------------------------------------------------- }
 
-{ Reads the next item. EndsLine tells whether a line end followed it
-  (for -L); a line ending in a blank continues on the next line. }
-function ReadItem(out Item: PChar; out EndsLine: Boolean): Boolean;
+{ Reads the next item separated by Delimiter (-0, -d). }
+function ReadDelimitedItem(out Item: string): Boolean;
 var
-  Builder: TTextBuilder;
+  Character: Char;
+  HaveItem: Boolean;
+begin
+  Item := '';
+  HaveItem := False;
+  while ReadCharacter(StandardInput, Character) do
+  begin
+    if Character = Delimiter then
+      Exit(True);
+    Item := Item + Character;
+    HaveItem := True;
+  end;
+  InputEnded := True;
+  Result := HaveItem;
+end;
+
+{ Reads the next blank separated item, with quotes and backslashes.
+  EndsLine tells whether a line end followed it. }
+function ReadBlankSeparatedItem(out Item: string; out EndsLine: Boolean): Boolean;
+var
   Character: Char;
   Quote: Char;
   HaveItem: Boolean;
 begin
-  Item := nil;
+  Item := '';
   EndsLine := False;
-  if InputEnded then
-    Exit(False);
-  BeginText(Builder);
   HaveItem := False;
-  if SplitMode = SplitCharacter then
-  begin
-    while ReadCharacter(StandardInput, Character) do
-    begin
-      if Character = Delimiter then
-      begin
-        Item := FinishText(Builder);
-        EndsLine := True;
-        Exit(True);
-      end;
-      AppendCharacter(Builder, Character);
-      HaveItem := True;
-    end;
-    InputEnded := True;
-    if HaveItem then
-    begin
-      Item := FinishText(Builder);
-      EndsLine := True;
-      Exit(True);
-    end;
-    DiscardText(Builder);
-    Exit(False);
-  end;
-
   Quote := #0;
   while ReadCharacter(StandardInput, Character) do
   begin
@@ -151,24 +144,18 @@ begin
       if Character = Quote then
         Quote := #0
       else if Character = #10 then
-        Fail(1, 'unmatched quote; by default quotes are special to xargs unless you use the -0 option', [])
+        Fail(1, UnmatchedQuoteMessage, [])
       else
-        AppendCharacter(Builder, Character);
+        Item := Item + Character;
       Continue;
     end;
     case Character of
       ' ', #9, #10:
         begin
-          if Character = #10 then
-            EndsLine := True;
           if HaveItem then
           begin
-            if Character <> #10 then
-            begin
-              { A blank followed by a line end does not end the line. }
-              EndsLine := False;
-            end;
-            Item := FinishText(Builder);
+            { A blank followed by a line end does not end the line. }
+            EndsLine := Character = #10;
             Exit(True);
           end;
           EndsLine := False;
@@ -181,85 +168,97 @@ begin
       '\':
         begin
           if ReadCharacter(StandardInput, Character) then
-            AppendCharacter(Builder, Character);
+            Item := Item + Character;
           HaveItem := True;
         end;
     else
-      AppendCharacter(Builder, Character);
+      Item := Item + Character;
       HaveItem := True;
     end;
   end;
   InputEnded := True;
   if Quote <> #0 then
-    Fail(1, 'unmatched quote; by default quotes are special to xargs unless you use the -0 option', []);
-  if HaveItem then
+    Fail(1, UnmatchedQuoteMessage, []);
+  EndsLine := HaveItem;
+  Result := HaveItem;
+end;
+
+{ Reads the next item. EndsLine tells whether a line end followed it
+  (for -L); a line ending in a blank continues on the next line. }
+function ReadItem(out Item: string; out EndsLine: Boolean): Boolean;
+begin
+  Item := '';
+  EndsLine := False;
+  if InputEnded then
+    Exit(False);
+  if SplitMode = SplitCharacter then
   begin
-    Item := FinishText(Builder);
-    EndsLine := True;
-    Exit(True);
-  end;
-  DiscardText(Builder);
-  Result := False;
+    Result := ReadDelimitedItem(Item);
+    EndsLine := Result;
+  end
+  else
+    Result := ReadBlankSeparatedItem(Item, EndsLine);
 end;
 
 { For -I: the next whole line, leading blanks removed. }
-function ReadReplacementLine(out Item: PChar): Boolean;
+function ReadReplacementLine(out Item: string): Boolean;
 var
   Line: PChar;
   HadLineEnd: Boolean;
-  Start: PChar;
+  Start: Integer;
 begin
+  if SplitMode = SplitCharacter then
+    Exit(ReadItem(Item, HadLineEnd));
   repeat
-    if SplitMode = SplitCharacter then
-    begin
-      Result := ReadItem(Item, HadLineEnd);
-      Exit;
-    end;
     if not ReadLine(StandardInput, Line, HadLineEnd) then
       Exit(False);
-    Start := Line;
-    while (Start^ = ' ') or (Start^ = #9) do
+    Item := Line;
+    FreeMemory(Line);
+    Start := 1;
+    while (Start <= Length(Item)) and (Item[Start] in [' ', #9]) do
       Inc(Start);
-    if Start^ <> #0 then
+    if Start <= Length(Item) then
     begin
-      Item := DuplicateText(Start);
-      FreeMemory(Line);
+      Delete(Item, 1, Start - 1);
       Exit(True);
     end;
-    FreeMemory(Line);
   until False;
 end;
 
 { --- Running --------------------------------------------------------- }
 
-procedure RunWith(Items: PPChar; ItemCount: Integer);
+procedure WriteCommandLine(const Words: TStringArray);
 var
-  Arguments: PPChar;
+  Index: Integer;
+begin
+  for Index := 0 to High(Words) do
+  begin
+    if Index > 0 then
+      WriteCharacter(StandardError, ' ');
+    WriteText(StandardError, PChar(Words[Index]));
+  end;
+  WriteCharacter(StandardError, #10);
+  FlushStream(StandardError);
+end;
+
+{ Runs Words (the command and its arguments) and waits for it. }
+procedure Run(const Words: TStringArray);
+var
+  Arguments: array of PChar;
   Index: Integer;
   Options: TProcessOptions;
   Handle: Int64;
   Status: LongInt;
 begin
-  Arguments := PPChar(AllocateZeroedMemory(QWord(CommandWordCount + ItemCount + 1) * SizeOf(PChar)));
-  for Index := 0 to CommandWordCount - 1 do
-    Arguments[Index] := CommandWords[Index];
-  for Index := 0 to ItemCount - 1 do
-    Arguments[CommandWordCount + Index] := Items[Index];
   if Verbose then
-  begin
-    for Index := 0 to CommandWordCount + ItemCount - 1 do
-    begin
-      if Index > 0 then
-        WriteCharacter(StandardError, ' ');
-      WriteText(StandardError, Arguments[Index]);
-    end;
-    WriteCharacter(StandardError, #10);
-    FlushStream(StandardError);
-  end;
+    WriteCommandLine(Words);
+  SetLength(Arguments, Length(Words) + 1);
+  for Index := 0 to High(Words) do
+    Arguments[Index] := PChar(Words[Index]);
+  Arguments[High(Arguments)] := nil;
   DefaultProcessOptions(Options);
   FlushStandardStreams;
-  Handle := StartCommand(Arguments, Options, Status);
-  FreeMemory(Arguments);
+  Handle := StartCommand(@Arguments[0], Options, Status);
   if Handle < 0 then
     Halt(Status);
   Status := WaitForProgram(Handle);
@@ -267,117 +266,91 @@ begin
     Exit;
   if Status = 255 then
   begin
-    Report('%s: exited with status 255; aborting', [ArgumentText(CommandWords[0])]);
+    Report('%s: exited with status 255; aborting', [ArgumentText(PChar(Words[0]))]);
     Halt(StatusCommandReturned255);
   end;
   if (Status < 0) or (Status > 128) then
   begin
-    Report('%s: terminated by a signal', [ArgumentText(CommandWords[0])]);
+    Report('%s: terminated by a signal', [ArgumentText(PChar(Words[0]))]);
     Halt(StatusCommandKilled);
   end;
   ExitStatus := StatusCommandFailed;
 end;
 
-{ Replaces every occurrence of Replacement in Word with Item. }
-function ReplaceIn(Word, Item: PChar): PChar;
-var
-  Builder: TTextBuilder;
-  Position: PChar;
-  ReplacementLength: PtrUInt;
+procedure RunWith(const Items: TStringArray);
 begin
-  ReplacementLength := TextLength(Replacement);
-  BeginText(Builder);
-  Position := Word;
-  while Position^ <> #0 do
-  begin
-    if (ReplacementLength > 0) and TextStartsWith(Position, Replacement) then
-    begin
-      AppendText(Builder, Item);
-      Inc(Position, ReplacementLength);
-    end
-    else
-    begin
-      AppendCharacter(Builder, Position^);
-      Inc(Position);
-    end;
-  end;
-  Result := FinishText(Builder);
+  Run(Concat(CommandWords, Items));
+end;
+
+{ Replaces every occurrence of Replacement in Word with Item. }
+function ReplaceIn(const Word, Item: string): string;
+begin
+  if Replacement = '' then
+    Exit(Word);
+  Result := StringReplace(Word, Replacement, Item, [rfReplaceAll]);
 end;
 
 procedure RunReplacing;
 var
-  Item: PChar;
-  Arguments: PPChar;
+  Item: string;
+  Words: TStringArray;
   Index: Integer;
-  SavedWords: PPChar;
 begin
+  SetLength(Words, Length(CommandWords));
   while ReadReplacementLine(Item) do
   begin
-    Arguments := PPChar(AllocateZeroedMemory(QWord(CommandWordCount + 1) * SizeOf(PChar)));
-    for Index := 0 to CommandWordCount - 1 do
-      Arguments[Index] := ReplaceIn(CommandWords[Index], Item);
-    SavedWords := CommandWords;
-    CommandWords := Arguments;
-    RunWith(nil, 0);
-    CommandWords := SavedWords;
-    for Index := 0 to CommandWordCount - 1 do
-      FreeMemory(Arguments[Index]);
-    FreeMemory(Arguments);
-    FreeMemory(Item);
+    for Index := 0 to High(CommandWords) do
+      Words[Index] := ReplaceIn(CommandWords[Index], Item);
+    Run(Words);
   end;
 end;
 
 procedure RunCollecting;
 var
-  Items: TLineList;
-  Item: PChar;
+  Items: TStringArray;
+  Item: string;
   EndsLine: Boolean;
-  Length: Int64;
+  LineLength: Int64;
   BaseLength: Int64;
   Lines: Int64;
   Index: Integer;
   RanOnce: Boolean;
+
+  procedure RunCollected;
+  begin
+    RunWith(Items);
+    RanOnce := True;
+    Items := nil;
+    LineLength := BaseLength;
+    Lines := 0;
+  end;
+
 begin
   BaseLength := 0;
-  for Index := 0 to CommandWordCount - 1 do
-    BaseLength := BaseLength + Int64(TextLength(CommandWords[Index])) + 1;
+  for Index := 0 to High(CommandWords) do
+    BaseLength := BaseLength + Length(CommandWords[Index]) + 1;
   if BaseLength > MaximumCharacters then
     Fail(1, 'argument list too long', []);
-  BeginLineList(Items);
+  Items := nil;
   RanOnce := False;
-  Length := BaseLength;
+  LineLength := BaseLength;
   Lines := 0;
   while ReadItem(Item, EndsLine) do
   begin
-    if (Items.Count > 0) and (Length + Int64(TextLength(Item)) + 1 > MaximumCharacters) then
-    begin
-      RunWith(Items.Items, Items.Count);
-      RanOnce := True;
-      FreeLineList(Items);
-      BeginLineList(Items);
-      Length := BaseLength;
-      Lines := 0;
-    end;
-    if BaseLength + Int64(TextLength(Item)) + 1 > MaximumCharacters then
+    if (Length(Items) > 0) and (LineLength + Length(Item) + 1 > MaximumCharacters) then
+      RunCollected;
+    if BaseLength + Length(Item) + 1 > MaximumCharacters then
       Fail(1, 'argument line too long', []);
-    AddLine(Items, Item);
-    Length := Length + Int64(TextLength(Item)) + 1;
+    Insert(Item, Items, Length(Items));
+    LineLength := LineLength + Length(Item) + 1;
     if EndsLine then
       Inc(Lines);
-    if ((MaximumArguments > 0) and (Items.Count >= MaximumArguments)) or
+    if ((MaximumArguments > 0) and (Length(Items) >= MaximumArguments)) or
        ((MaximumLines > 0) and (Lines >= MaximumLines)) then
-    begin
-      RunWith(Items.Items, Items.Count);
-      RanOnce := True;
-      FreeLineList(Items);
-      BeginLineList(Items);
-      Length := BaseLength;
-      Lines := 0;
-    end;
+      RunCollected;
   end;
-  if (Items.Count > 0) or (not RanOnce and not NoRunIfEmpty) then
-    RunWith(Items.Items, Items.Count);
-  FreeLineList(Items);
+  if (Length(Items) > 0) or (not RanOnce and not NoRunIfEmpty) then
+    RunWith(Items);
 end;
 
 function ParseCount(Value: PChar; Option: PChar): Int64;
@@ -385,6 +358,25 @@ begin
   if not ParseInteger(Value, Result) or (Result < 1) then
   begin
     Report('invalid number "%s" for -%s option', [ArgumentText(Value), ArgumentText(Option)]);
+    Halt(StatusUsage);
+  end;
+end;
+
+procedure SetDelimiter(const Text: string);
+begin
+  SplitMode := SplitCharacter;
+  if Text = '\n' then
+    Delimiter := #10
+  else if Text = '\t' then
+    Delimiter := #9
+  else if Text = '\0' then
+    Delimiter := #0
+  else if Length(Text) = 1 then
+    Delimiter := Text[1]
+  else
+  begin
+    Report('invalid input delimiter specification %s: the delimiter must be a single character',
+      [ArgumentText(PChar(Text))]);
     Halt(StatusUsage);
   end;
 end;
@@ -399,6 +391,7 @@ begin
   SplitMode := SplitBlanks;
   MaximumCharacters := DefaultMaximumCharacters;
   ExitStatus := 0;
+  Replacing := False;
   BeginOptions(Parser, [
     OptionDefinition('0', 'null', False, OptionNull),
     OptionDefinition('d', 'delimiter', True, OptionDelimiter),
@@ -418,27 +411,11 @@ begin
           SplitMode := SplitCharacter;
           Delimiter := #0;
         end;
-      OptionDelimiter:
-        begin
-          SplitMode := SplitCharacter;
-          if TextIsEqual(Value, '\n') then
-            Delimiter := #10
-          else if TextIsEqual(Value, '\t') then
-            Delimiter := #9
-          else if TextIsEqual(Value, '\0') then
-            Delimiter := #0
-          else if (Value[0] <> #0) and (Value[1] = #0) then
-            Delimiter := Value[0]
-          else
-          begin
-            Report('invalid input delimiter specification %s: the delimiter must be a single character',
-              [ArgumentText(Value)]);
-            Halt(StatusUsage);
-          end;
-        end;
+      OptionDelimiter: SetDelimiter(Value);
       OptionReplace:
         begin
           Replacement := Value;
+          Replacing := True;
           MaximumLines := 1;
         end;
       OptionMaximumLines: MaximumLines := ParseCount(Value, 'L');
@@ -455,20 +432,15 @@ begin
     end;
 
   if Parser.OperandCount = 0 then
-  begin
-    CommandWordCount := 1;
-    CommandWords := PPChar(AllocateZeroedMemory(2 * SizeOf(PChar)));
-    CommandWords[0] := 'echo';
-  end
+    CommandWords := ['echo']
   else
   begin
-    CommandWordCount := Parser.OperandCount;
-    CommandWords := PPChar(AllocateZeroedMemory(QWord(CommandWordCount + 1) * SizeOf(PChar)));
-    for Index := 0 to CommandWordCount - 1 do
+    SetLength(CommandWords, Parser.OperandCount);
+    for Index := 0 to Parser.OperandCount - 1 do
       CommandWords[Index] := Parser.Operands[Index];
   end;
 
-  if Replacement <> nil then
+  if Replacing then
     RunReplacing
   else
     RunCollecting;

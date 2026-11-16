@@ -34,6 +34,7 @@
 unit Server.Composer;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -44,14 +45,14 @@ uses
 
 var
   { The window with the keyboard (its title bar is drawn active). }
-  ActiveWindow: PServerWindow;
+  ActiveWindow: TServerWindow;
   { While a frame is dragged to a new size: the outline of where it
     will be. }
   OutlineVisible: Boolean;
   Outline: TRectangle;
 
 procedure AddDamage(const Rectangle: TRectangle);
-procedure DamageWindow(Window: PServerWindow);
+procedure DamageWindow(Window: TServerWindow);
 function HasDamage: Boolean;
 { What needs drawing again now (a copy of it). }
 procedure CopyDamage(out Region: TRegion);
@@ -82,7 +83,7 @@ begin
     AddRectangleToRegion(Damage, Visible);
 end;
 
-procedure DamageWindow(Window: PServerWindow);
+procedure DamageWindow(Window: TServerWindow);
 begin
   AddDamage(FrameRectangle(Window));
 end;
@@ -106,7 +107,7 @@ procedure ComposeScreen(Screen: PScreen);
 var
   Canvas: TCanvas;
   Index: LongInt;
-  Window: PServerWindow;
+  Window: TServerWindow;
   ScreenDamage: TRegion;
 begin
   CopyRegion(Damage, ScreenDamage);
@@ -120,13 +121,13 @@ begin
   for Index := 0 to WindowCount - 1 do
   begin
     Window := Windows[Index];
-    if not Window^.Visible then
+    if not Window.Visible then
       Continue;
     if IsFramed(Window) then
       DrawFrame(Canvas, Window, Window = ActiveWindow);
-    if Window^.Surface.Pixels <> nil then
-      DrawSurface(Canvas, Window^.Surface, MakeRectangle(0, 0, Window^.Surface.Width, Window^.Surface.Height),
-        Window^.ClientLeft, Window^.ClientTop, False, 255);
+    if Window.Surface.Pixels <> nil then
+      DrawSurface(Canvas, Window.Surface, MakeRectangle(0, 0, Window.Surface.Width, Window.Surface.Height),
+        Window.ClientLeft, Window.ClientTop, False, 255);
   end;
   if OutlineVisible then
   begin

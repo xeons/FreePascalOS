@@ -29,10 +29,10 @@
 program taskset;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Kernel,
   Sys.Errors,
   Sys.Environment,
@@ -69,70 +69,75 @@ begin
   end;
 end;
 
-function ParseMask(Text: PChar; out Mask: QWord): Boolean;
+function ParseMask(const Text: string; out Mask: QWord): Boolean;
 var
+  Digits: string;
   Digit: QWord;
+  Index: Integer;
 begin
   Mask := 0;
-  if (Text[0] = '0') and (Text[1] in ['x', 'X']) then
-    Text := Text + 2;
-  if Text^ = #0 then
+  Digits := Text;
+  if (Length(Digits) >= 2) and (Digits[1] = '0') and (Digits[2] in ['x', 'X']) then
+    Delete(Digits, 1, 2);
+  if Digits = '' then
     Exit(False);
-  while Text^ <> #0 do
+  for Index := 1 to Length(Digits) do
   begin
-    if not HexDigitValue(Text^, Digit) or ((Mask shr 60) <> 0) then
+    if not HexDigitValue(Digits[Index], Digit) or ((Mask shr 60) <> 0) then
       Exit(False);
     Mask := (Mask shl 4) or Digit;
-    Inc(Text);
   end;
   Result := True;
 end;
 
-{ Reads a processor number at Text, advancing past it. }
-function ParseProcessorNumber(var Text: PChar; out Number: QWord): Boolean;
+{ Reads a processor number at Text[Position], advancing past it. }
+function ParseProcessorNumber(const Text: string; var Position: Integer; out Number: QWord): Boolean;
 begin
   Number := 0;
-  if not IsDigit(Text^) then
+  if (Position > Length(Text)) or not IsDigit(Text[Position]) then
     Exit(False);
-  while IsDigit(Text^) do
+  while (Position <= Length(Text)) and IsDigit(Text[Position]) do
   begin
-    Number := Number * 10 + QWord(Ord(Text^) - Ord('0'));
+    Number := Number * 10 + QWord(Ord(Text[Position]) - Ord('0'));
     if Number >= MaximumProcessors then
       Exit(False);
-    Inc(Text);
+    Inc(Position);
   end;
   Result := True;
 end;
 
 { "0,2-3" into a mask. }
-function ParseList(Text: PChar; out Mask: QWord): Boolean;
+function ParseList(const Text: string; out Mask: QWord): Boolean;
 var
+  Position: Integer;
   Low: QWord;
   High: QWord;
   Number: QWord;
 begin
   Mask := 0;
+  Position := 1;
   repeat
-    if not ParseProcessorNumber(Text, Low) then
+    if not ParseProcessorNumber(Text, Position, Low) then
       Exit(False);
     High := Low;
-    if Text^ = '-' then
+    if (Position <= Length(Text)) and (Text[Position] = '-') then
     begin
-      Inc(Text);
-      if not ParseProcessorNumber(Text, High) or (High < Low) then
+      Inc(Position);
+      if not ParseProcessorNumber(Text, Position, High) or (High < Low) then
         Exit(False);
     end;
     for Number := Low to High do
       Mask := Mask or (QWord(1) shl Number);
-    if Text^ = ',' then
-      Inc(Text)
-    else if Text^ <> #0 then
+    if Position > Length(Text) then
+      Break;
+    if Text[Position] <> ',' then
       Exit(False);
-  until Text^ = #0;
+    Inc(Position);
+  until Position > Length(Text);
   Result := True;
 end;
 
-function ParseAffinity(Text: PChar; out Mask: QWord): Boolean;
+function ParseAffinity(const Text: string; out Mask: QWord): Boolean;
 begin
   if UseList then
     Result := ParseList(Text, Mask)
@@ -140,14 +145,13 @@ begin
     Result := ParseMask(Text, Mask);
 end;
 
-{ Writes Mask as a list: "0,2-3". }
-procedure WriteList(Mask: QWord);
+{ Mask as a list: "0,2-3". }
+function ListText(Mask: QWord): string;
 var
   Number: Integer;
   RunEnd: Integer;
-  IsFirst: Boolean;
 begin
-  IsFirst := True;
+  Result := '';
   Number := 0;
   while Number < MaximumProcessors do
   begin
@@ -159,31 +163,24 @@ begin
     RunEnd := Number;
     while (RunEnd + 1 < MaximumProcessors) and ((Mask and (QWord(1) shl (RunEnd + 1))) <> 0) do
       Inc(RunEnd);
-    if not IsFirst then
-      WriteCharacter(StandardOutput, ',');
-    IsFirst := False;
-    WriteDecimal(StandardOutput, Number);
+    if Result <> '' then
+      Result := Result + ',';
+    Result := Result + IntToStr(Number);
     if RunEnd > Number then
-    begin
-      WriteCharacter(StandardOutput, '-');
-      WriteDecimal(StandardOutput, RunEnd);
-    end;
+      Result := Result + '-' + IntToStr(RunEnd);
     Number := RunEnd + 1;
   end;
 end;
 
-procedure WriteAffinity(ProcessId: Int64; Which: PChar; Mask: QWord);
+procedure WriteAffinity(ProcessId: Int64; const Which: string; Mask: QWord);
+var
+  Line: string;
 begin
   if UseList then
-  begin
-    WriteFormatted(StandardOutput, 'pid %d''s %s affinity list: ', [ArgumentNumber(ProcessId),
-      ArgumentText(Which)]);
-    WriteList(Mask);
-    WriteCharacter(StandardOutput, #10);
-  end
+    Line := Format('pid %d''s %s affinity list: %s', [ProcessId, Which, ListText(Mask)])
   else
-    WriteFormatted(StandardOutput, 'pid %d''s %s affinity mask: %x'#10, [ArgumentNumber(ProcessId),
-      ArgumentText(Which), ArgumentUnsigned(Mask)]);
+    Line := Format('pid %d''s %s affinity mask: %s', [ProcessId, Which, LowerCase(IntToHex(Mask, 1))]);
+  WriteLine(StandardOutput, PChar(Line));
 end;
 
 function GetAffinityOrFail(ProcessId: Int64): QWord;
@@ -209,8 +206,8 @@ end;
 
 procedure ParseOptions;
 var
-  Text: PChar;
-  Position: PChar;
+  Text: string;
+  Position: Integer;
 begin
   ForProcess := False;
   UseList := False;
@@ -218,33 +215,29 @@ begin
   while First < ArgumentTotal do
   begin
     Text := Argument(First);
-    if TextIsEqual(Text, '--help') then
+    if Text = '--help' then
     begin
       Print(Usage);
       Halt(0);
     end
-    else if TextIsEqual(Text, '--pid') then
+    else if Text = '--pid' then
       ForProcess := True
-    else if TextIsEqual(Text, '--cpu-list') then
+    else if Text = '--cpu-list' then
       UseList := True
-    else if TextIsEqual(Text, '--') then
+    else if Text = '--' then
     begin
       Inc(First);
       Break;
     end
-    else if (Text[0] = '-') and (Text[1] <> #0) then
+    else if (Length(Text) >= 2) and (Text[1] = '-') then
     begin
-      Position := Text + 1;
-      while Position^ <> #0 do
-      begin
-        case Position^ of
+      for Position := 2 to Length(Text) do
+        case Text[Position] of
           'p': ForProcess := True;
           'c': UseList := True;
         else
-          FailWithUsageHint('invalid option -- ''%c''', [ArgumentCharacter(Position^)]);
+          FailWithUsageHint('invalid option -- ''%c''', [ArgumentCharacter(Text[Position])]);
         end;
-        Inc(Position);
-      end;
     end
     else
       Break;

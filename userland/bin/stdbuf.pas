@@ -29,15 +29,15 @@
 program stdbuf;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Environment,
   Sys.Format,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
   Util.Commands,
   Util.Messages,
   Util.Sizes;
@@ -53,39 +53,40 @@ const
     'Otherwise MODE is a number which may be followed by one of the following:'#10 +
     'KB 1000, K 1024, MB 1000*1000, M 1024*1024, and so on for G, T.'#10;
 
-procedure CheckMode(Mode: PChar);
+procedure CheckMode(const Mode: string);
 var
   Size: QWord;
 begin
-  if TextIsEqual(Mode, 'L') or TextIsEqual(Mode, '0') or ParseSize(Mode, Size) then
+  if (Mode = 'L') or (Mode = '0') or ParseSize(PChar(Mode), Size) then
     Exit;
-  Fail(125, 'invalid mode ''%s''', [ArgumentText(Mode)]);
+  Fail(125, 'invalid mode ''%s''', [ArgumentText(PChar(Mode))]);
 end;
 
 { Handles "-o L", "-oL" and "--output=L" for one stream. }
-function TakeMode(var Index: Integer; Short, Long: PChar; out Mode: PChar): Boolean;
+function TakeMode(var Index: Integer; const Short, Long: string; out Mode: string): Boolean;
 var
-  Text: PChar;
+  Text: string;
 begin
-  Mode := nil;
+  Result := True;
   Text := Argument(Index);
-  if TextIsEqual(Text, Short) and (Index + 1 < ArgumentTotal) then
+  if (Text = Short) and (Index + 1 < ArgumentTotal) then
   begin
     Inc(Index);
     Mode := Argument(Index);
   end
-  else if TextStartsWith(Text, Short) and (TextLength(Text) > 2) then
-    Mode := Text + 2
-  else if TextStartsWith(Text, Long) then
-    Mode := Text + TextLength(Long);
-  Result := Mode <> nil;
+  else if StartsStr(Short, Text) and (Length(Text) > 2) then
+    Mode := Copy(Text, 3, MaxInt)
+  else if StartsStr(Long, Text) then
+    Mode := Copy(Text, Length(Long) + 1, MaxInt)
+  else
+    Result := False;
   if Result then
     CheckMode(Mode);
 end;
 
 var
   Index: Integer;
-  Mode: PChar;
+  Mode: string;
   Options: TProcessOptions;
   AnySetting: Boolean;
 begin
@@ -93,22 +94,22 @@ begin
   AnySetting := False;
   while (Index < ArgumentTotal) and (Argument(Index)[0] = '-') do
   begin
-    if TextIsEqual(Argument(Index), '--help') then
+    if string(Argument(Index)) = '--help' then
     begin
       Print(Usage);
       Halt(0);
     end;
-    if TextIsEqual(Argument(Index), '--') then
+    if string(Argument(Index)) = '--' then
     begin
       Inc(Index);
       Break;
     end;
     if TakeMode(Index, '-o', '--output=', Mode) then
-      SetVariable('_STDBUF_O', Mode)
+      SetVariable('_STDBUF_O', PChar(Mode))
     else if TakeMode(Index, '-e', '--error=', Mode) then
-      SetVariable('_STDBUF_E', Mode)
+      SetVariable('_STDBUF_E', PChar(Mode))
     else if TakeMode(Index, '-i', '--input=', Mode) then
-      SetVariable('_STDBUF_I', Mode)
+      SetVariable('_STDBUF_I', PChar(Mode))
     else
       FailWithUsageHint('invalid option -- ''%s''', [ArgumentText(Argument(Index))]);
     AnySetting := True;

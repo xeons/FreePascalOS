@@ -30,6 +30,7 @@
 unit Server.Frames;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -43,10 +44,10 @@ type
   THitArea = (HitNothing, HitClient, HitTitle, HitMinimize, HitMaximize, HitClose,
     HitLeft, HitRight, HitTop, HitBottom, HitTopLeft, HitTopRight, HitBottomLeft, HitBottomRight);
 
-function TitleBarRectangle(Window: PServerWindow): TRectangle;
-function TitleButtonRectangle(Window: PServerWindow; Button: THitArea): TRectangle;
-procedure DrawFrame(const Canvas: TCanvas; Window: PServerWindow; Active: Boolean);
-function HitTest(Window: PServerWindow; X, Y: LongInt): THitArea;
+function TitleBarRectangle(Window: TServerWindow): TRectangle;
+function TitleButtonRectangle(Window: TServerWindow; Button: THitArea): TRectangle;
+procedure DrawFrame(const Canvas: TCanvas; Window: TServerWindow; Active: Boolean);
+function HitTest(Window: TServerWindow; X, Y: LongInt): THitArea;
 
 implementation
 
@@ -61,7 +62,7 @@ uses
   Server.Screen,
   Server.TitleButtons;
 
-function TitleBarRectangle(Window: PServerWindow): TRectangle;
+function TitleBarRectangle(Window: TServerWindow): TRectangle;
 var
   Frame: TRectangle;
   Border: LongInt;
@@ -71,10 +72,10 @@ begin
   Result.Left := Frame.Left + Border;
   Result.Right := Frame.Right - Border;
   Result.Top := Frame.Top + Border;
-  Result.Bottom := Window^.ClientTop - 1;
+  Result.Bottom := Window.ClientTop - 1;
 end;
 
-function TitleButtonRectangle(Window: PServerWindow; Button: THitArea): TRectangle;
+function TitleButtonRectangle(Window: TServerWindow; Button: THitArea): TRectangle;
 var
   Bar: TRectangle;
   Width: LongInt;
@@ -97,9 +98,9 @@ begin
   Result := MakeRectangle(Right - Width, Bar.Top + (RectangleHeight(Bar) - Height) div 2, Width, Height);
 end;
 
-function HasSizeButtons(Window: PServerWindow): Boolean;
+function HasSizeButtons(Window: TServerWindow): Boolean;
 begin
-  Result := (Window^.Flags and WindowResizable) <> 0;
+  Result := (Window.Flags and WindowResizable) <> 0;
 end;
 
 procedure DrawGlyphLine(const Canvas: TCanvas; const Box: TRectangle; FromX, FromY, ToX, ToY, Thickness: LongInt);
@@ -111,7 +112,7 @@ begin
       Theme.FaceText);
 end;
 
-procedure DrawTitleButton(const Canvas: TCanvas; Window: PServerWindow; Button: THitArea);
+procedure DrawTitleButton(const Canvas: TCanvas; Window: TServerWindow; Button: THitArea);
 var
   Box: TRectangle;
   Glyph: TRectangle;
@@ -156,7 +157,7 @@ begin
   end;
 end;
 
-procedure DrawFrame(const Canvas: TCanvas; Window: PServerWindow; Active: Boolean);
+procedure DrawFrame(const Canvas: TCanvas; Window: TServerWindow; Active: Boolean);
 var
   Frame: TRectangle;
   Bar: TRectangle;
@@ -194,7 +195,7 @@ begin
     NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top,
       TitleButtonRectangle(Window, HitMinimize).Left - Bar.Left - WindowMetric(Window, 2), RectangleHeight(Bar)));
     DrawText(TextClip, TitleFace^, Bar.Left + WindowMetric(Window, Theme.TitleTextIndent),
-      Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, @Window^.Title[0], TextColor);
+      Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title, TextColor);
   end;
   DrawTitleButton(Canvas, Window, HitClose);
   if HasSizeButtons(Window) then
@@ -204,7 +205,7 @@ begin
   end;
 end;
 
-function HitTest(Window: PServerWindow; X, Y: LongInt): THitArea;
+function HitTest(Window: TServerWindow; X, Y: LongInt): THitArea;
 var
   Frame: TRectangle;
   Corner: LongInt;
@@ -231,7 +232,7 @@ begin
       Exit(HitMinimize);
   end;
   Border := WindowMetric(Window, Theme.BorderWidth);
-  if HasSizeButtons(Window) and not Window^.Maximized then
+  if HasSizeButtons(Window) and not Window.Maximized then
   begin
     { The corners reach a title bar's height along each edge. }
     Corner := WindowMetric(Window, Theme.TitleHeight);

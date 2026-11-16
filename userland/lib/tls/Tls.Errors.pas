@@ -27,8 +27,12 @@
 unit Tls.Errors;
 
 {$mode objfpc}
+{$H+}
 
 interface
+
+uses
+  SysUtils;
 
 const
   TlsErrorNone = 0;
@@ -96,18 +100,41 @@ const
   TlsAlertCertificateRequired = 116;
   TlsAlertNoApplicationProtocol = 120;
 
-function TlsErrorMessage(Error: LongInt): PChar;
+type
+  { For callers that would rather raise than check codes: the code and
+    its message. }
+  ETlsError = class(Exception)
+  private
+    FCode: LongInt;
+  public
+    constructor CreateCode(Code: LongInt);
+    constructor CreateCodeMessage(Code: LongInt; const Text: string);
+    property Code: LongInt read FCode;
+  end;
+
+function TlsErrorMessage(Error: LongInt): string;
 { True for the TlsErrorCertificate* codes. }
 function TlsErrorIsCertificateError(Error: LongInt): Boolean;
 { The alert to send to the peer for Error, or -1 for none (the
   connection is gone, or the peer sent the alert). }
 function TlsAlertForError(Error: LongInt): LongInt;
 { "handshake failure", "unknown CA", ... }
-function TlsAlertName(Description: LongInt): PChar;
+function TlsAlertName(Description: LongInt): string;
 
 implementation
 
-function TlsErrorMessage(Error: LongInt): PChar;
+constructor ETlsError.CreateCode(Code: LongInt);
+begin
+  CreateCodeMessage(Code, TlsErrorMessage(Code));
+end;
+
+constructor ETlsError.CreateCodeMessage(Code: LongInt; const Text: string);
+begin
+  inherited Create(Text);
+  FCode := Code;
+end;
+
+function TlsErrorMessage(Error: LongInt): string;
 begin
   case Error of
     TlsErrorNone: Result := 'success';
@@ -180,7 +207,7 @@ begin
   end;
 end;
 
-function TlsAlertName(Description: LongInt): PChar;
+function TlsAlertName(Description: LongInt): string;
 begin
   case Description of
     TlsAlertCloseNotify: Result := 'close notify';
