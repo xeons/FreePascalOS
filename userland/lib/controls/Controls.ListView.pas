@@ -37,12 +37,24 @@
   it), Ctrl+A selects all. Without it, the focused item is the one
   selected. A double click or Enter activates (OnActivate,
   NotifyActivated); every change of the selection or the focus is
-  announced once (OnChange, NotifyChanged). A right click asks for a
-  context menu (OnContextMenu, when the button is let go, so letting go
-  does not choose from the menu at once): pressed on an item that is
-  not selected it selects that item alone first, as a left click would,
-  so the menu is about what was clicked; Shift+F10 asks for one for the
-  focused item.
+  announced once (OnChange, NotifyChanged). Typing the first letters of
+  a name goes to it (Controls.TypeAhead).
+
+  A right click selects the item under the pointer first (unless it is
+  selected already: a menu for all the selected items), or clears the
+  selection on empty space; the context menu itself is the program's
+  (OnContextMenu, when the button is let go). Shift+F10 and the menu key
+  ask for it at the focused item.
+
+  EditItem puts an edit box over an item's name to rename it in place
+  (Controls.ListEditing); OnEdited hears the new name and may refuse it.
+
+  With DragEnabled, moving the pointer a few units with the button held
+  on an item starts a drag (OnStartDrag gives what is dragged, usually
+  the selected items); pressing on one of several selected items keeps
+  them selected until the button is let go without a drag, so they can
+  be dragged together. Where a drop would go is shown with DropTarget,
+  which the program sets as the drag passes over (OnDragOver).
 }
 unit Controls.ListView;
 
@@ -52,9 +64,13 @@ unit Controls.ListView;
 interface
 
 uses
+  Drawing.Rectangles,
   Controls.Base,
+  Controls.DragData,
   Controls.ListItems,
   Controls.ListSorting,
+  Controls.ListEditing,
+  Controls.TypeAhead,
   Controls.ListViewBase;
 
 type
@@ -63,6 +79,12 @@ type
   { Compares two items by Column, for SortByColumn; negative if First
     goes before Second (ascending). }
   TListColumnCompareEvent = function(Sender: TListView; First, Second: TListItem; Column: LongInt): LongInt of object;
+  { An item renamed in place to NewCaption; Accept (True to start with)
+    False keeps the old name. }
+  TListItemEditedEvent = procedure(Sender: TListView; Index: LongInt; const NewCaption: string;
+    var Accept: Boolean) of object;
+  { A drag starts: Data is what is dragged (nil: no drag). }
+  TListStartDragEvent = procedure(Sender: TListView; var Data: TDragData) of object;
   TListViewMode = Controls.ListViewBase.TListViewMode;
 
 const
@@ -88,9 +110,25 @@ type
     FOnColumnClick: TColumnEvent;
     FOnActivate: TControlEvent;
     FOnCompare: TListColumnCompareEvent;
-    FOnContextMenu: TPointerEvent;
-    FRightButtonPressed: Boolean;
-    procedure AskForContextMenu(X, Y: LongInt);
+    FTypeAhead: TTypeAhead;
+    FEditor: TCaptionEditor;
+    FOnEdited: TListItemEditedEvent;
+    FDragEnabled: Boolean;
+    FOnStartDrag: TListStartDragEvent;
+    { The item a left press was on (-1: none, or no press), where, and
+      whether a drag has started from it. }
+    FPressIndex: LongInt;
+    FPressX: LongInt;
+    FPressY: LongInt;
+    FDragStarted: Boolean;
+    { A press on one of several selected items: it alone is selected
+      when the button is let go, unless a drag started. }
+    FSelectOnRelease: LongInt;
+    function CaptionOf(Index: LongInt): string;
+    function FindByTyping(Character: LongWord): Boolean;
+    procedure EditorFinished(Sender: TCaptionEditor; Accepted: Boolean);
+    procedure PlaceEditor;
+    procedure StartDragFromPress;
     procedure SetSelected(Row: LongInt; Value: Boolean);
     procedure SetItemIndex(Value: LongInt);
     procedure SetMultiSelect(Value: Boolean);
@@ -110,8 +148,19 @@ type
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    procedure Layout; override;
+    { A rename in place is over (whether the name changed or not). }
+    procedure EditingEnded; virtual;
+    procedure Wheel(Steps: LongInt); override;
   public
     constructor Create(AParent: TControl); override;
+    function KeyboardContextPoint: TPoint; override;
+    { Puts an edit box over item Index's name to rename it (the name
+      without its extension selected if SelectWithoutExtension). }
+    procedure EditItem(Index: LongInt; SelectWithoutExtension: Boolean = True);
+    { Ends a rename in progress, taking the name typed if Accept. }
+    procedure EndEditing(Accept: Boolean);
+    function IsEditing: Boolean;
     procedure SelectAll;
     procedure ClearSelection;
     { Sorts the items by Column's texts (as numbers if Numeric, or by
@@ -127,8 +176,9 @@ type
     property OnColumnClick: TColumnEvent read FOnColumnClick write FOnColumnClick;
     property OnActivate: TControlEvent read FOnActivate write FOnActivate;
     property OnCompare: TListColumnCompareEvent read FOnCompare write FOnCompare;
-    { X, Y: where (pixels of the list view) the menu belongs. }
-    property OnContextMenu: TPointerEvent read FOnContextMenu write FOnContextMenu;
+    property OnEdited: TListItemEditedEvent read FOnEdited write FOnEdited;
+    property DragEnabled: Boolean read FDragEnabled write FDragEnabled;
+    property OnStartDrag: TListStartDragEvent read FOnStartDrag write FOnStartDrag;
   end;
 
 implementation
@@ -145,12 +195,124 @@ uses
 const
   MinimumColumnWidth = 16;
   SpaceCharacter = 32;
+  { Logical units the pointer moves with the button held before a drag
+    starts (less is a shaky click). }
+  DragThreshold = 4;
 
 constructor TListView.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   FResizing := -1;
   FLastClickIndex := -1;
+  FEditIndex := -1;
+  FPressIndex := -1;
+  FSelectOnRelease := -1;
+  ResetTypeAhead(FTypeAhead);
+end;
+
+{ --- Renaming in place ---------------------------------------------------------- }
+
+function TListView.IsEditing: Boolean;
+begin
+  Result := (FEditor <> nil) and FEditor.Editing;
+end;
+
+{ Puts the edit box over the name being edited (its logical bounds;
+  the layout places it in pixels: setting the bounds the ordinary way
+  would lay the list out again, which places the box again...). }
+procedure TListView.PlaceEditor;
+var
+  Box: TRectangle;
+begin
+  if not IsEditing then
+    Exit;
+  Box := CaptionBounds(FEditIndex);
+  { A little taller than the text, for the edit box's bevel. }
+  FEditor.AssignBounds(Unscaled(Box.Left) - 2, Unscaled(Box.Top + RectangleHeight(Box) div 2) - 11,
+    Unscaled(RectangleWidth(Box)) + 4, 22);
+end;
+
+procedure TListView.EditItem(Index: LongInt; SelectWithoutExtension: Boolean);
+begin
+  if (Index < 0) or (Index >= FItems.Count) then
+    Exit;
+  EndEditing(True);
+  if FEditor = nil then
+  begin
+    FEditor := TCaptionEditor.Create(Self);
+    FEditor.OnFinished := @EditorFinished;
+  end;
+  EnsureVisible(Index);
+  FEditIndex := Index;
+  FEditor.StartEditing(TListItem(FItems[Index]).Caption, SelectWithoutExtension);
+  PlaceEditor;
+  FEditor.UpdatePixelBounds;
+  Invalidate;
+end;
+
+procedure TListView.EndEditing(Accept: Boolean);
+begin
+  if IsEditing then
+    FEditor.StopEditing(Accept);
+end;
+
+procedure TListView.EditorFinished(Sender: TCaptionEditor; Accepted: Boolean);
+var
+  Index: LongInt;
+  Accept: Boolean;
+  HadFocus: Boolean;
+begin
+  Index := FEditIndex;
+  FEditIndex := -1;
+  { Enter or Escape leave the focus in the (hidden) box: back to the
+    list. A click elsewhere has moved it already. }
+  HadFocus := Sender.Focused;
+  if HadFocus then
+    SetFocus;
+  Invalidate;
+  if Accepted and (Index >= 0) and (Index < FItems.Count) and (Sender.Text <> TListItem(FItems[Index]).Caption) then
+  begin
+    Accept := Sender.Text <> '';
+    if Assigned(FOnEdited) then
+      FOnEdited(Self, Index, Sender.Text, Accept);
+    if Accept and (Index < FItems.Count) then
+      TListItem(FItems[Index]).Cells[0] := Sender.Text;
+  end;
+  EditingEnded;
+end;
+
+procedure TListView.EditingEnded;
+begin
+end;
+
+procedure TListView.Layout;
+begin
+  PlaceEditor;
+  inherited Layout;
+end;
+
+procedure TListView.Wheel(Steps: LongInt);
+begin
+  { The box would stay where the name was. }
+  EndEditing(True);
+  inherited Wheel(Steps);
+end;
+
+{ --- Typing names ------------------------------------------------------------ }
+
+function TListView.CaptionOf(Index: LongInt): string;
+begin
+  Result := TListItem(FItems[Index]).Caption;
+end;
+
+function TListView.FindByTyping(Character: LongWord): Boolean;
+var
+  Found: LongInt;
+begin
+  Found := TypeAheadFind(FTypeAhead, Character, UptimeMilliseconds, FItemIndex, FItems.Count, @CaptionOf);
+  Result := Found >= 0;
+  if Result then
+    SetItemIndex(Found);
 end;
 
 { --- Selection --------------------------------------------------------------- }
@@ -413,26 +575,51 @@ var
   Modifiers: LongWord;
   Now: QWord;
 begin
-  if Button = ButtonRight then
-  begin
-    FRightButtonPressed := True;
-    if ShowsHeader and (Y < 2 + HeaderHeight) then
-      Exit;
-    Index := ItemAtPoint(Grid, X, Y);
-    if (Index >= 0) and not Selected[Index] then
-      ClickItem(Index, 0);
-    Exit;
-  end;
-  if Button <> ButtonLeft then
-    Exit;
+  EndEditing(True);
   if ShowsHeader and (Y < 2 + HeaderHeight) then
   begin
-    ClickHeader(X);
+    if Button = ButtonLeft then
+      ClickHeader(X);
     Exit;
   end;
   Index := ItemAtPoint(Grid, X, Y);
   Modifiers := HeldModifiers;
-  ClickItem(Index, Modifiers);
+  if Button = ButtonRight then
+  begin
+    { The context menu is for what is under the pointer: the selection
+      if the item is in it, else that item alone (or nothing). }
+    if Index < 0 then
+    begin
+      if FMultiSelect then
+        ClearSelection;
+    end
+    else if not Selected[Index] then
+      SetItemIndex(Index)
+    else
+    begin
+      FItemIndex := Index;
+      Invalidate;
+    end;
+    Exit;
+  end;
+  if Button <> ButtonLeft then
+    Exit;
+  FPressIndex := Index;
+  FPressX := X;
+  FPressY := Y;
+  FDragStarted := False;
+  FSelectOnRelease := -1;
+  if (Index >= 0) and FMultiSelect and Selected[Index] and (SelectedCount > 1) and
+     ((Modifiers and (ModifierShift or ModifierControl)) = 0) then
+  begin
+    { Keep the others for a drag; decided when the button is let go. }
+    FSelectOnRelease := Index;
+    FItemIndex := Index;
+    FAnchor := Index;
+    Invalidate;
+  end
+  else
+    ClickItem(Index, Modifiers);
   if Index < 0 then
     Exit;
   Now := UptimeMilliseconds;
@@ -447,10 +634,32 @@ begin
   FLastClickTime := Now;
 end;
 
+procedure TListView.StartDragFromPress;
+var
+  Data: TDragData;
+begin
+  FDragStarted := True;
+  FSelectOnRelease := -1;
+  { A drag is no click: the next press does not make a double click. }
+  FLastClickIndex := -1;
+  Data := nil;
+  if Assigned(FOnStartDrag) then
+    FOnStartDrag(Self, Data);
+  if Data <> nil then
+    BeginDrag(Data);
+end;
+
 procedure TListView.PointerMove(X, Y: LongInt; Buttons: LongWord);
 var
   Width: LongInt;
 begin
+  if (FResizing < 0) and FDragEnabled and (FPressIndex >= 0) and not FDragStarted and
+     ((Buttons and (LongWord(1) shl ButtonLeft)) <> 0) and
+     ((Abs(X - FPressX) > Scaled(DragThreshold)) or (Abs(Y - FPressY) > Scaled(DragThreshold))) then
+  begin
+    StartDragFromPress;
+    Exit;
+  end;
   if FResizing < 0 then
     Exit;
   Width := FResizeStartWidth + Unscaled(X - FResizeStartX);
@@ -463,17 +672,25 @@ end;
 procedure TListView.PointerUp(X, Y: LongInt; Button: LongWord);
 begin
   FResizing := -1;
-  if (Button = ButtonRight) and FRightButtonPressed then
+  if (Button = ButtonLeft) and (FSelectOnRelease >= 0) and not FDragStarted then
+    SetItemIndex(FSelectOnRelease);
+  if Button = ButtonLeft then
   begin
-    FRightButtonPressed := False;
-    AskForContextMenu(X, Y);
+    FSelectOnRelease := -1;
+    FPressIndex := -1;
+    FDragStarted := False;
   end;
 end;
 
-procedure TListView.AskForContextMenu(X, Y: LongInt);
+function TListView.KeyboardContextPoint: TPoint;
+var
+  Cell: TRectangle;
 begin
-  if Assigned(FOnContextMenu) then
-    FOnContextMenu(Self, X, Y, ButtonRight);
+  if FItemIndex < 0 then
+    Exit(inherited KeyboardContextPoint);
+  EnsureVisible(FItemIndex);
+  Cell := CaptionBounds(FItemIndex);
+  Result := MakePoint(Cell.Left + Scaled(8), Cell.Top + RectangleHeight(Cell) div 2);
 end;
 
 procedure TListView.Activate;
@@ -515,18 +732,16 @@ begin
       Result := False;
     Exit;
   end;
-  if (Code = KeyF10) and ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = ModifierShift) and
-     Assigned(FOnContextMenu) then
-  begin
-    if FItemIndex >= 0 then
-      AskForContextMenu((ItemBounds(FItemIndex).Left + ItemBounds(FItemIndex).Right) div 2,
-        ItemBounds(FItemIndex).Bottom)
-    else
-      AskForContextMenu(0, 0);
-    Exit;
-  end;
   if FItems.Count = 0 then
     Exit(False);
+  { A character typed (not a command key): a name starting with it. A
+    space starts no name (Ctrl+Space toggles, above). }
+  if (Character >= SpaceCharacter) and ((Modifiers and (ModifierControl or ModifierAlt)) = 0) and
+     not ((Character = SpaceCharacter) and (FTypeAhead.Typed = '')) then
+  begin
+    FindByTyping(Character);
+    Exit;
+  end;
   { With nothing focused the first key lands on the first item. }
   Start := FItemIndex;
   if Start < 0 then

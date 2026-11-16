@@ -21,7 +21,7 @@
   a hill), the window shown on a task button, and the notification
   icons' pictures (information, a warning, a loudspeaker for the volume,
   two linked screens for the network). Drawn with shapes on the design
-  grid (Desktop.Shapes), usually 16 logical units square.
+  grid (Controls.PictureGrid), usually 16 logical units square.
 }
 unit Desktop.SmallPictures;
 
@@ -45,7 +45,7 @@ uses
   Drawing.Colors,
   Drawing.Rasterizer,
   Windowing.Protocol,
-  Desktop.Shapes;
+  Controls.PictureGrid;
 
 const
   OutlineColor = $FF262A30;

@@ -72,7 +72,7 @@
   Desktop.Programs (what it offers and starting it), Desktop.Taskbar,
   Desktop.StartButton, Desktop.StartMenu, Desktop.TaskButtons,
   Desktop.WindowList, Desktop.NotificationArea and Desktop.Clock (the
-  taskbar), Desktop.Shapes, Desktop.ProgramPictures and
+  taskbar), Controls.PictureGrid, Desktop.ProgramPictures and
   Desktop.SmallPictures (the pictures), Desktop.Report (what it prints).
 }
 program DesktopShell;

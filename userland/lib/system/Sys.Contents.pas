@@ -44,6 +44,7 @@ uses
   Sys.Streams,
   Sys.Format,
   Sys.Files,
+  Sys.FileCopies,
   Sys.Environment,
   Sys.Processes,
   Sys.ProcessList,

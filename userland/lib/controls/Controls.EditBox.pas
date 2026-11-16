@@ -76,6 +76,9 @@ type
   public
     constructor Create(AParent: TControl); override;
     procedure SelectAll;
+    { Selects Count characters from character First (the caret at their
+      end). }
+    procedure SelectRange(First, Count: LongInt);
     function SelectedText: string;
     procedure CutToClipboard;
     procedure CopyToClipboard;
@@ -92,6 +95,7 @@ type
 implementation
 
 uses
+  Controls.TextPositions,
   Abi.SystemCalls,
   Drawing.Rectangles,
   Drawing.Bevels,
@@ -229,6 +233,12 @@ begin
   Invalidate;
 end;
 
+procedure TEditBox.SelectRange(First, Count: LongInt);
+begin
+  MoveCaret(First, False);
+  MoveCaret(First + Count, True);
+end;
+
 procedure TEditBox.ScrollToCaret;
 var
   X: LongInt;
@@ -287,21 +297,6 @@ begin
   if FAnchor > Count then
     FAnchor := Count;
   Changed;
-end;
-
-{ A code point as UTF-8. }
-function Utf8Of(CodePoint: LongWord): string;
-begin
-  if CodePoint < $80 then
-    Result := Char(CodePoint)
-  else if CodePoint < $800 then
-    Result := Char($C0 or (CodePoint shr 6)) + Char($80 or (CodePoint and $3F))
-  else if CodePoint < $10000 then
-    Result := Char($E0 or (CodePoint shr 12)) + Char($80 or ((CodePoint shr 6) and $3F)) +
-      Char($80 or (CodePoint and $3F))
-  else
-    Result := Char($F0 or (CodePoint shr 18)) + Char($80 or ((CodePoint shr 12) and $3F)) +
-      Char($80 or ((CodePoint shr 6) and $3F)) + Char($80 or (CodePoint and $3F));
 end;
 
 function TEditBox.KeyDown(Code, Character, Modifiers: LongWord): Boolean;

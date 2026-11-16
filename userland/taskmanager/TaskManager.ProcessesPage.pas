@@ -102,7 +102,7 @@ type
     procedure ShowAllUsersChanged(Sender: TControl);
     procedure EndClicked(Sender: TControl);
     procedure ListKey(Sender: TControl; Code, Character, Modifiers: LongWord; var Handled: Boolean);
-    procedure ContextMenuWanted(Sender: TControl; X, Y: LongInt; Button: LongWord);
+    procedure ContextMenuWanted(Sender: TControl; X, Y: LongInt; FromKeyboard: Boolean);
     procedure BuildMenu;
     procedure MenuChosen(Item: TMenuItem);
   protected
@@ -471,7 +471,7 @@ begin
       FMenu[Index].Enabled := False;
 end;
 
-procedure TProcessesPage.ContextMenuWanted(Sender: TControl; X, Y: LongInt; Button: LongWord);
+procedure TProcessesPage.ContextMenuWanted(Sender: TControl; X, Y: LongInt; FromKeyboard: Boolean);
 const
   PlaceNames: array[1..5] of string = ('menu-end', 'menu-end-now', 'menu-stop', 'menu-continue',
     'menu-properties');

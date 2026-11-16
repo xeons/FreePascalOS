@@ -134,6 +134,9 @@ type
     ChangeTime: TUnixTime;
     { Space the node takes up on the volume. }
     AllocatedBytes: QWord;
+    { The volume's Number: filled in when the information is described
+      to a caller (drivers leave it alone). }
+    VolumeNumber: LongWord;
   end;
 
   { Which fields of TAttributeChanges apply. }
@@ -288,6 +291,9 @@ type
     { Nodes in the node cache besides the root, and nodes removed while
       open (out of the cache, still held). }
     NodesInUse: LongInt;
+    { Unique since the system started (1, 2, ...): what file information
+      reports as the volume a node is on. }
+    Number: LongWord;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;

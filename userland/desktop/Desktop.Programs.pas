@@ -35,7 +35,7 @@ unit Desktop.Programs;
 interface
 
 type
-  TProgramPicture = (PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs,
+  TProgramPicture = (PictureFiles, PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs,
     PictureTaskManager);
 
   TDesktopProgram = record
@@ -45,8 +45,9 @@ type
   end;
 
 const
-  DesktopProgramCount = 6;
+  DesktopProgramCount = 7;
   DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
+    (Command: 'files'; Caption: 'Files'; Picture: PictureFiles),
     (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
     (Command: 'notepad'; Caption: 'Notepad'; Picture: PictureNotepad),
     (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),

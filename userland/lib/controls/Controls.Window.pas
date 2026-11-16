@@ -35,6 +35,17 @@
   handler wherever the focus is (Ctrl+S to save, say): they are looked
   at before the focused control gets the key.
 
+  A right click asks the control under the pointer for its context
+  menu when the button is let go; Shift+F10 and the menu key ask the
+  focused one.
+
+  A drag (TControl.BeginDrag) runs while the button stays down: the
+  window asks the control under the pointer, then its parents, what a
+  drop would do (again whenever Ctrl or Shift change), tells the one
+  that answered when the pointer leaves it, and hands it the data when
+  the button is let go. Escape, or the window losing the keyboard,
+  ends the drag without a drop. The window owns the dragged data.
+
   Mnemonics come next: Alt with a character picks the first visible,
   enabled control (in the order they were made) whose caption has that
   mnemonic, a menu bar heading among them. A window with a menu bar
@@ -55,6 +66,7 @@ uses
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.Windows,
+  Controls.DragData,
   Controls.Base;
 
 type
@@ -99,6 +111,21 @@ type
     FAltPressedAlone: Boolean;
     { The pointer shape the server was last asked for. }
     FShownPointerShape: LongWord;
+    { A drag in progress: its data (nil: none), the control it came
+      from, the control that would take the drop and what it would do. }
+    FDragData: TDragData;
+    FDragSource: TControl;
+    FDragTarget: TControl;
+    FDragEffect: TDropEffect;
+    { Where the pointer was last (surface pixels). }
+    FPointerX: LongInt;
+    FPointerY: LongInt;
+    function StartDrag(Control: TControl; Data: TDragData): Boolean;
+    procedure UpdateDrag;
+    procedure CancelDrag;
+    procedure FinishDrag(X, Y: LongInt);
+    function HandleDragKey(Code: LongWord): Boolean;
+    procedure OpenContextMenuFromKeyboard;
     procedure ShowPointerShapeOf(Control: TControl);
     procedure MoveFocus(Forward: Boolean);
     function RunAccelerator(Code, Modifiers: LongWord): Boolean;
@@ -160,6 +187,7 @@ type
     procedure ControlRemoved(Control: TControl); override;
     procedure FocusControlAfter(Control: TControl); override;
     function OwnerWindow: TMessageReceiver; override;
+    function BeginDrag(Control: TControl; Data: TDragData): Boolean; override;
   end;
 
 constructor TWindowHost.Create(Window: TControlWindow);
@@ -199,8 +227,17 @@ begin
   FWindow.FocusControlAfter(Control);
 end;
 
+function TWindowHost.BeginDrag(Control: TControl; Data: TDragData): Boolean;
+begin
+  Result := FWindow.StartDrag(Control, Data);
+end;
+
 procedure TWindowHost.ControlRemoved(Control: TControl);
 begin
+  if FWindow.FDragTarget = Control then
+    FWindow.FDragTarget := nil;
+  if FWindow.FDragSource = Control then
+    FWindow.FDragSource := nil;
   if FWindow.FFocused = Control then
     FWindow.FFocused := nil;
   if FWindow.FHovered = Control then
@@ -251,6 +288,8 @@ end;
 
 destructor TControlWindow.Destroy;
 begin
+  FDragData.Free;
+  FDragData := nil;
   FRoot.Free;
   FRoot := nil;
   { A pop-up still open (a context menu: the menu bar closed its own
@@ -302,6 +341,8 @@ end;
 
 procedure TControlWindow.ActiveChanged;
 begin
+  if not Active then
+    CancelDrag;
   if FFocused <> nil then
     FFocused.Invalidate;
   { Keys that went to another window in between do not count. }
@@ -449,10 +490,121 @@ begin
   Result := False;
 end;
 
+{ --- Dragging ------------------------------------------------------------------ }
+
+function TControlWindow.StartDrag(Control: TControl; Data: TDragData): Boolean;
+begin
+  { Only while a button is held, and one drag at a time. }
+  if (FPressed = nil) or (FDragData <> nil) then
+  begin
+    Data.Free;
+    Exit(False);
+  end;
+  FDragData := Data;
+  FDragSource := Control;
+  FDragTarget := nil;
+  FDragEffect := DropNone;
+  UpdateDrag;
+  Result := True;
+end;
+
+{ Asks the control under the pointer, then its parents, what a drop
+  there would do; the first that would do something is the target. }
+procedure TControlWindow.UpdateDrag;
+var
+  Control: TControl;
+  Effect: TDropEffect;
+begin
+  if FDragData = nil then
+    Exit;
+  Effect := DropNone;
+  Control := FRoot.ControlAt(FPointerX, FPointerY);
+  while Control <> nil do
+  begin
+    Effect := Control.HandleDragOver(FDragData, FPointerX, FPointerY, HeldModifiers);
+    if Effect <> DropNone then
+      Break;
+    Control := Control.Parent;
+  end;
+  if Control <> FDragTarget then
+  begin
+    if FDragTarget <> nil then
+      FDragTarget.HandleDragLeave;
+    FDragTarget := Control;
+  end;
+  FDragEffect := Effect;
+end;
+
+procedure TControlWindow.CancelDrag;
+var
+  Target: TControl;
+begin
+  if FDragData = nil then
+    Exit;
+  Target := FDragTarget;
+  FDragTarget := nil;
+  if Target <> nil then
+    Target.HandleDragLeave;
+  FDragData.Free;
+  FDragData := nil;
+  FDragSource := nil;
+end;
+
+procedure TControlWindow.FinishDrag(X, Y: LongInt);
+var
+  Target: TControl;
+  Data: TDragData;
+  Effect: TDropEffect;
+begin
+  FPointerX := X;
+  FPointerY := Y;
+  UpdateDrag;
+  Target := FDragTarget;
+  Data := FDragData;
+  Effect := FDragEffect;
+  { The drag is over before the drop runs: a drop may ask something in
+    a dialog, whose loop must not see a drag still going on. }
+  FDragData := nil;
+  FDragTarget := nil;
+  FDragSource := nil;
+  if Target <> nil then
+  begin
+    Target.HandleDragLeave;
+    if Effect <> DropNone then
+      Target.HandleDragDrop(Data, X, Y, Effect);
+  end;
+  Data.Free;
+end;
+
+{ A key while dragging: Escape ends the drag, Ctrl and Shift change what
+  a drop would do. True if the key was the drag's. }
+function TControlWindow.HandleDragKey(Code: LongWord): Boolean;
+begin
+  Result := FDragData <> nil;
+  if not Result then
+    Exit;
+  if Code = KeyEscape then
+    CancelDrag
+  else
+    UpdateDrag;
+end;
+
+procedure TControlWindow.OpenContextMenuFromKeyboard;
+var
+  Place: TPoint;
+begin
+  if FFocused = nil then
+    Exit;
+  Place := FFocused.KeyboardContextPoint;
+  FFocused.HandleContextMenu(FFocused.PixelBounds.Left + Place.X, FFocused.PixelBounds.Top + Place.Y, True);
+end;
+
 procedure TControlWindow.KeyDown(Code, Character, Modifiers: LongWord);
 var
   Control: TControl;
 begin
+  if HandleDragKey(Code) then
+    Exit;
   { (Alt repeats while held: still alone.) }
   FAltPressedAlone := Code = KeyAlt;
   if (Code = KeyF10) and ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = 0) and
@@ -473,6 +625,12 @@ begin
   end;
   if RunAccelerator(Code, Modifiers) then
     Exit;
+  if (Code = KeyMenu) or ((Code = KeyF10) and
+     ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = ModifierShift)) then
+  begin
+    OpenContextMenuFromKeyboard;
+    Exit;
+  end;
   if RunMnemonic(Character, Modifiers) then
     Exit;
   Control := FFocused;
@@ -498,6 +656,8 @@ begin
     in between (one the display server kept, Alt+F4's F4) spoils it. }
   AltAlone := FAltPressedAlone and (Code = KeyAlt);
   FAltPressedAlone := False;
+  if HandleDragKey(Code) then
+    Exit;
   if AltAlone then
   begin
     ToggleMenuMode;
@@ -526,6 +686,13 @@ procedure TControlWindow.PointerMove(X, Y: LongInt; Buttons: LongWord);
 var
   Target: TControl;
 begin
+  FPointerX := X;
+  FPointerY := Y;
+  if FDragData <> nil then
+  begin
+    UpdateDrag;
+    Exit;
+  end;
   if FPressed <> nil then
   begin
     FPressed.HandlePointerMove(X, Y, Buttons);
@@ -552,6 +719,8 @@ begin
   { A click is not a key: Alt held while clicking is not Alt alone, and
     a click ends the menu bar's keyboard mode. }
   FAltPressedAlone := False;
+  FPointerX := X;
+  FPointerY := Y;
   if (FMenuBar <> nil) and FMenuBar.InMenuMode and (FPopup = nil) then
     FMenuBar.LeaveMenuMode;
   Target := FRoot.ControlAt(X, Y);
@@ -572,6 +741,17 @@ begin
   SetCapture(False);
   if Target <> nil then
     Target.HandlePointerUp(X, Y, Button);
+  if FDragData <> nil then
+  begin
+    FinishDrag(X, Y);
+    Exit;
+  end;
+  { A right click asks for the control's context menu once the button
+    is let go (so the release does not choose an item of it), if it was
+    let go over the control it was pressed on. }
+  if (Button = ButtonRight) and (Target <> nil) and (FPopup = nil) and
+     RectangleContainsPoint(Target.PixelBounds, X, Y) then
+    Target.HandleContextMenu(X, Y, False);
 end;
 
 procedure TControlWindow.PointerLeave;

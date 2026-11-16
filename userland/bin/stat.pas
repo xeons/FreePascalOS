@@ -25,7 +25,8 @@
   %h link count  %a mode in octal  %A mode as text  %u %g owner and group
   ids  %U %G their names  %x %y %z access, modification and change time
   %X %Y %Z the same in seconds since 1970  %b allocated blocks  %B the
-  size of those blocks (512)  %%
+  size of those blocks (512)  %d the volume's number (two files are on
+  one volume when their numbers are equal)  %%
 }
 program stat;
 
@@ -131,6 +132,7 @@ begin
       's': WriteUnsigned(StandardOutput, Information.SizeInBytes);
       'F': WriteText(StandardOutput, KindName(Information));
       'i': WriteUnsigned(StandardOutput, Information.NodeNumber);
+      'd': WriteUnsigned(StandardOutput, Information.VolumeNumber);
       'b': WriteUnsigned(StandardOutput, (Information.AllocatedBytes + 511) div 512);
       'B': WriteText(StandardOutput, '512');
       'h': WriteUnsigned(StandardOutput, Information.LinkCount);
@@ -170,8 +172,8 @@ begin
   WriteFormatted(StandardOutput, '  Size: %-15u Blocks: %-10u Type: %s'#10, [
     ArgumentUnsigned(Information.SizeInBytes), ArgumentUnsigned((Information.AllocatedBytes + 511) div 512),
     ArgumentText(KindName(Information))]);
-  WriteFormatted(StandardOutput, '  Node: %-15u Links: %u'#10, [ArgumentUnsigned(Information.NodeNumber),
-    ArgumentUnsigned(Information.LinkCount)]);
+  WriteFormatted(StandardOutput, '  Node: %-15u Links: %-10u Volume: %u'#10, [ArgumentUnsigned(Information.NodeNumber),
+    ArgumentUnsigned(Information.LinkCount), ArgumentUnsigned(Information.VolumeNumber)]);
   WriteFormatted(StandardOutput, 'Access: (%04o/', [ArgumentUnsigned(Information.Mode and $FFF)]);
   WriteModeText(Information);
   WriteFormatted(StandardOutput, ')  Uid: (%5u/%8s)   Gid: (%5u/%8s)'#10, [ArgumentUnsigned(Information.OwnerId),

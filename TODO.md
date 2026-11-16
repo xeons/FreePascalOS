@@ -382,7 +382,7 @@ normalized (0-65535), not pixels.
       that user; a text console stays available for debugging
 - [x] Asking a service to stop before ending it (its session asked to end,
       ended after its stop-timeout); log off and shutdown ask first too
-- [ ] File manager: folders, icon and list views, copy, move, delete, rename,
+- [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
 - [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every

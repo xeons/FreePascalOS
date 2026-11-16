@@ -65,6 +65,7 @@ uses
   Runtime.Text,
   Sys.Errors,
   Sys.Files,
+  Sys.FileCopies,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
@@ -73,72 +74,28 @@ uses
   Util.Messages,
   Util.Paths;
 
-const
-  CopyBufferSize = 64 * 1024;
-
 function CopyFileContents(Source, Target: PChar): Boolean;
 var
-  SourceHandle: Int64;
-  TargetHandle: Int64;
-  Buffer: PChar;
-  Count: Int64;
-  Error: LongInt;
+  Failure: TCopyFailure;
 begin
-  Result := False;
-  SourceHandle := OpenFile(Source, OpenRead);
-  if SourceHandle < 0 then
-  begin
-    ReportError(ErrorCodeOf(SourceHandle), 'cannot open ''%s'' for reading', [ArgumentText(Source)]);
+  Failure := CopyFileData(Source, Target, CopyReplace, nil, nil);
+  Result := Failure.Error = ErrorNone;
+  if Result then
     Exit;
-  end;
-  TargetHandle := OpenFile(Target, OpenWrite or OpenCreate or OpenTruncate);
-  if TargetHandle < 0 then
-  begin
-    ReportError(ErrorCodeOf(TargetHandle), 'cannot create regular file ''%s''', [ArgumentText(Target)]);
-    CloseFile(SourceHandle);
-    Exit;
-  end;
-
-  Buffer := PChar(AllocateMemory(CopyBufferSize));
-  Result := True;
-  repeat
-    Count := ReadFile(SourceHandle, Buffer, CopyBufferSize);
-    if Count < 0 then
-    begin
-      ReportError(ErrorCodeOf(Count), 'error reading ''%s''', [ArgumentText(Source)]);
-      Result := False;
-      Break;
-    end;
-    if Count = 0 then
-      Break;
-    Error := WriteAll(TargetHandle, Buffer, QWord(Count));
-    if Error <> ErrorNone then
-    begin
-      ReportError(Error, 'error writing ''%s''', [ArgumentText(Target)]);
-      Result := False;
-      Break;
-    end;
-  until False;
-  FreeMemory(Buffer);
-  CloseFile(SourceHandle);
-  CloseFile(TargetHandle);
+  if not Failure.AtTarget then
+    ReportError(Failure.Error, 'error reading ''%s''', [ArgumentText(Source)])
+  else
+    ReportError(Failure.Error, 'error writing ''%s''', [ArgumentText(Target)]);
 end;
 
 function CopyLink(Source, Target: PChar): Boolean;
 var
-  LinkTarget: array[0..PathCapacity - 1] of Char;
-  Error: LongInt;
+  Failure: TCopyFailure;
 begin
-  Error := ReadSymbolicLink(Source, @LinkTarget[0], PathCapacity);
-  if Error = ErrorNone then
-  begin
-    if PathExists(Target) then
-      RemovePath(Target);
-    Error := CreateSymbolicLink(@LinkTarget[0], Target);
-  end;
-  if Error <> ErrorNone then
-    ReportError(Error, 'cannot create symbolic link ''%s''', [ArgumentText(Target)]);
-  Result := Error = ErrorNone;
+  Failure := CopySymbolicLink(Source, Target, CopyReplace);
+  if Failure.Error <> ErrorNone then
+    ReportError(Failure.Error, 'cannot create symbolic link ''%s''', [ArgumentText(Target)]);
+  Result := Failure.Error = ErrorNone;
 end;
 
 function CopyDirectory(Source, Target: PChar; const Options: TCopyOptions): Boolean;
@@ -179,32 +136,10 @@ begin
   FreeLineList(Names);
 end;
 
-{ Copies mode, owner, group and times; formats without owners keep
-  their own, which is not worth a message. }
-procedure PreserveAttributesOf(Target: PChar; const Information: TFileInformation);
-var
-  Changes: TAttributeChanges;
-begin
-  Changes.Fields := ChangeFieldModificationTime or ChangeFieldAccessTime or ChangeFieldOwner or ChangeFieldGroup;
-  Changes.ModificationTime := Information.ModificationTime;
-  Changes.AccessTime := Information.AccessTime;
-  Changes.OwnerId := Information.OwnerId;
-  Changes.GroupId := Information.GroupId;
-  Changes.Mode := Information.Mode;
-  if Information.Kind <> KindSymbolicLink then
-    Changes.Fields := Changes.Fields or ChangeFieldMode;
-  if SetPathAttributes(Target, Changes, False) <> ErrorNone then
-  begin
-    Changes.Fields := Changes.Fields and not (ChangeFieldOwner or ChangeFieldGroup);
-    SetPathAttributes(Target, Changes, False);
-  end;
-end;
-
 function CopyPath(Source, Target: PChar; const Options: TCopyOptions): Boolean;
 var
   Information: TFileInformation;
   Error: LongInt;
-  TargetExisted: Boolean;
 begin
   if Options.KeepLinks then
     Error := GetLinkInformation(Source, Information)
@@ -234,15 +169,12 @@ begin
       Result := CopyLink(Source, Target);
   else
     begin
-      TargetExisted := PathExists(Target);
+      { (A new copy gets the source's permissions, less the umask.) }
       Result := CopyFileContents(Source, Target);
-      { A new copy gets the source's permissions, less the umask. }
-      if Result and not TargetExisted and not Options.PreserveAttributes then
-        ChangeMode(Target, Information.Mode and $1FF and not CurrentUmask);
     end;
   end;
   if Result and Options.PreserveAttributes then
-    PreserveAttributesOf(Target, Information);
+    CopyAttributes(Target, Information);
 end;
 
 function WalkTree(Path: PChar; Visit: TVisitPath; Context: Pointer): Boolean;

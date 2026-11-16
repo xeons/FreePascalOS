@@ -148,8 +148,6 @@ type
     FPickedIndex: LongInt;
     FOpenList: TMenuList;
     FOnChoose: TMenuItemEvent;
-    function HeadingLeft(Index: LongInt): LongInt;
-    function HeadingWidth(Index: LongInt): LongInt;
     function HeadingAt(X: LongInt): LongInt;
     function HeadingWithMnemonic(Character: LongWord): LongInt;
     function NextHeading(Index, Step: LongInt): LongInt;
@@ -170,6 +168,9 @@ type
     function InMenuMode: Boolean; override;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
+    { Where heading Index is across the bar (this control's pixels). }
+    function HeadingLeft(Index: LongInt): LongInt;
+    function HeadingWidth(Index: LongInt): LongInt;
     { The headings; each heading's items are its menu. }
     property Menu: TMenuItem read FMenu;
     property OnChoose: TMenuItemEvent read FOnChoose write FOnChoose;

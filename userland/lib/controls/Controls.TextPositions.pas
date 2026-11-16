@@ -55,11 +55,27 @@ function ColumnOfByte(const Text: string; ByteIndex: LongInt): LongInt;
 function ByteOfColumn(const Text: string; Column: LongInt): LongInt;
 { Characters First to First + Count - 1 of Text (as many as there are). }
 function CharacterRange(const Text: string; First, Count: LongInt): string;
+{ A code point (a typed character) as UTF-8. }
+function Utf8Of(CodePoint: LongWord): string;
 
 implementation
 
 uses
   Font.Utf8;
+
+function Utf8Of(CodePoint: LongWord): string;
+begin
+  if CodePoint < $80 then
+    Result := Char(CodePoint)
+  else if CodePoint < $800 then
+    Result := Char($C0 or (CodePoint shr 6)) + Char($80 or (CodePoint and $3F))
+  else if CodePoint < $10000 then
+    Result := Char($E0 or (CodePoint shr 12)) + Char($80 or ((CodePoint shr 6) and $3F)) +
+      Char($80 or (CodePoint and $3F))
+  else
+    Result := Char($F0 or (CodePoint shr 18)) + Char($80 or ((CodePoint shr 12) and $3F)) +
+      Char($80 or ((CodePoint shr 6) and $3F)) + Char($80 or (CodePoint and $3F));
+end;
 
 function MakePosition(Line, Column: LongInt): TTextPosition;
 begin

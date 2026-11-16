@@ -19,9 +19,12 @@
 {
   Icons: a program's own (a surface) or a stock one drawn as shapes.
 
-  Stock icons (a document, a folder) are drawn for the box they are
+  Stock icons (a text document, a folder, a plain file, a program, a
+  fixed or removable disk, the home folder, the computer:
+  Controls.FileIcons has the newer ones) are drawn for the box they are
   given, so they are sharp at any size and display scale; there are no
-  pictures of them to load. Their shapes are anti-aliased, so slanted
+  pictures of them to load. A symbolic link shows as what it points to
+  with a small arrow over it (DrawIconOverlay). Their shapes are anti-aliased, so slanted
   edges are smooth while straight ones stay on whole pixels. A
   program's own icon is a surface scaled smoothly to the box (and
   blended by its alpha), so one picture serves the small and the large
@@ -39,7 +42,10 @@ uses
   Drawing.Canvas;
 
 type
-  TStockIcon = (StockIconDocument, StockIconFolder);
+  TStockIcon = (StockIconDocument, StockIconFolder, StockIconFile, StockIconProgram, StockIconFixedDisk,
+    StockIconRemovableDisk, StockIconHome, StockIconComputer);
+  { Marks drawn over an icon. }
+  TIconOverlay = (OverlayNone, OverlayLink);
 
 const
   { Sizes in logical units: small icons (beside text), large icons
@@ -50,6 +56,7 @@ const
 procedure DrawStockIcon(const Canvas: TCanvas; Icon: TStockIcon; const Box: TRectangle);
 { Icon if it has pixels, else the stock icon Fallback. }
 procedure DrawIcon(const Canvas: TCanvas; const Icon: TSurface; Fallback: TStockIcon; const Box: TRectangle);
+procedure DrawIconOverlay(const Canvas: TCanvas; Overlay: TIconOverlay; const Box: TRectangle);
 
 implementation
 
@@ -57,7 +64,8 @@ uses
   Drawing.Colors,
   Drawing.Rasterizer,
   Drawing.SmoothShapes,
-  Drawing.Scaling;
+  Drawing.Scaling,
+  Controls.FileIcons;
 
 const
   { The stock icons are designed on a grid this many steps across. }
@@ -158,7 +166,19 @@ begin
   case Icon of
     StockIconDocument: DrawDocument(Canvas, Box);
     StockIconFolder: DrawFolder(Canvas, Box);
+    StockIconFile: DrawBlankPage(Canvas, Box);
+    StockIconProgram: DrawProgramIcon(Canvas, Box);
+    StockIconFixedDisk: DrawFixedDisk(Canvas, Box);
+    StockIconRemovableDisk: DrawRemovableDisk(Canvas, Box);
+    StockIconHome: DrawHome(Canvas, Box);
+    StockIconComputer: DrawComputer(Canvas, Box);
   end;
+end;
+
+procedure DrawIconOverlay(const Canvas: TCanvas; Overlay: TIconOverlay; const Box: TRectangle);
+begin
+  if (Overlay = OverlayLink) and not RectangleIsEmpty(Box) then
+    DrawLinkOverlay(Canvas, Box);
 end;
 
 procedure DrawIcon(const Canvas: TCanvas; const Icon: TSurface; Fallback: TStockIcon; const Box: TRectangle);

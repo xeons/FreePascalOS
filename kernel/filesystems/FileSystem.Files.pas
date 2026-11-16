@@ -1046,6 +1046,7 @@ begin
     { The node's information stays readable on a gone volume. }
     AcquireMutex(OpenedFile^.Volume^.Lock);
     Information := OpenedFile^.Node^.Information;
+    Information.VolumeNumber := OpenedFile^.Volume^.Number;
     ReleaseMutex(OpenedFile^.Volume^.Lock);
   end;
   Result := StatusSuccess;
@@ -1074,6 +1075,7 @@ begin
   if Result = StatusSuccess then
   begin
     Information := Node^.Information;
+    Information.VolumeNumber := Volume^.Number;
     ReleaseNodeReference(Volume, Node);
   end;
   ReleaseMutex(Volume^.Lock);

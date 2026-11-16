@@ -131,21 +131,6 @@ uses
 const
   TabCharacter = 9;
 
-{ A code point as UTF-8. }
-function Utf8Of(CodePoint: LongWord): string;
-begin
-  if CodePoint < $80 then
-    Result := Char(CodePoint)
-  else if CodePoint < $800 then
-    Result := Char($C0 or (CodePoint shr 6)) + Char($80 or (CodePoint and $3F))
-  else if CodePoint < $10000 then
-    Result := Char($E0 or (CodePoint shr 12)) + Char($80 or ((CodePoint shr 6) and $3F)) +
-      Char($80 or (CodePoint and $3F))
-  else
-    Result := Char($F0 or (CodePoint shr 18)) + Char($80 or ((CodePoint shr 12) and $3F)) +
-      Char($80 or ((CodePoint shr 6) and $3F)) + Char($80 or (CodePoint and $3F));
-end;
-
 { Whether the character at Column of Text is part of a word (anything but
   spaces, tabs and punctuation). }
 function IsWordCharacter(const Text: string; Column: LongInt): Boolean;

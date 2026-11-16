@@ -18,12 +18,12 @@
 
 {
   The programs' pictures, for the desktop's icons and the Start menu:
-  a terminal (a screen with a prompt), a notepad (a ruled page with a
+  the file manager (an open folder with papers in it), a terminal (a screen with a prompt), a notepad (a ruled page with a
   pencil), the controls (a small window with a check box, a button and
   a slider), swatches (a window with colour samples), the dialogs (a
   window with a folder and colour discs) and the task manager (a window
   with a graph of how busy the processors are). Each is drawn with shapes on
-  the design grid (Desktop.Shapes), at any size.
+  the design grid (Controls.PictureGrid), at any size.
 }
 unit Desktop.ProgramPictures;
 
@@ -43,7 +43,7 @@ implementation
 uses
   Drawing.Colors,
   Drawing.Rasterizer,
-  Desktop.Shapes;
+  Controls.PictureGrid;
 
 const
   OutlineColor = $FF262A30;
@@ -59,6 +59,7 @@ const
   PencilTipColor = $FF3B3226;
   CheckColor = $FF1E7B3A;
   FolderColor = $FFE9C153;
+  FolderBackColor = $FFD9A93A;
 
 { A small window: frame, face and title bar; what is in it is drawn
   over its face (from row 11 down). }
@@ -67,6 +68,20 @@ begin
   DrawRoundedBox(Canvas, Grid, 3, 5, 29, 28, 1.5, WindowFaceColor, OutlineColor, 1);
   DrawRoundedBox(Canvas, Grid, 4, 6, 28, 10.5, 0.8, WindowTitleColor, ColorTransparent, 0);
   DrawGridDisc(Canvas, Grid, 25.6, 8.2, 1, $FFE0E4EA);
+end;
+
+procedure DrawFiles(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  { The folder's back with its tab, two papers standing in it, and its
+    front leaning open towards the viewer. }
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(3, 8), PrecisePoint(11, 8), PrecisePoint(13.5, 10.5),
+    PrecisePoint(28, 10.5), PrecisePoint(28, 27), PrecisePoint(3, 27)], FolderBackColor, OutlineColor, 1);
+  DrawRoundedBox(Canvas, Grid, 7, 5, 22, 22, 0.6, PageColor, OutlineColor, 0.9);
+  DrawRoundedBox(Canvas, Grid, 11, 7.5, 25, 23, 0.6, PageColor, OutlineColor, 0.9);
+  DrawGridLine(Canvas, Grid, 14, 11.5, 22, 11.5, 0.9, RuleColor);
+  DrawGridLine(Canvas, Grid, 14, 14.5, 22, 14.5, 0.9, RuleColor);
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(5, 15), PrecisePoint(30.5, 15), PrecisePoint(28, 27),
+    PrecisePoint(3, 27)], FolderColor, OutlineColor, 1);
 end;
 
 procedure DrawTerminal(const Canvas: TCanvas; const Grid: TPictureGrid);
@@ -145,6 +160,8 @@ var
 begin
   Grid := GridFor(Box);
   case Picture of
+    PictureFiles:
+      DrawFiles(Canvas, Grid);
     PictureTerminal:
       DrawTerminal(Canvas, Grid);
     PictureNotepad:

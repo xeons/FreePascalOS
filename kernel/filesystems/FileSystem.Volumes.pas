@@ -78,6 +78,7 @@ implementation
 uses
   Runtime.Text,
   Runtime.LinkedList,
+  Runtime.Atomic,
   Memory.KernelHeap,
   Kernel.Mutex,
   Kernel.Options,
@@ -95,6 +96,10 @@ var
   Volumes: array[0..MaximumVolumes - 1] of PVolume;
   MountedVolumeCount: Integer;
   VolumeListLock: TMutex;
+  { The last number given to a volume (TVolume.Number); volumes are
+    mounted at boot and by the disk arrival thread, so it is counted
+    atomically. }
+  LastVolumeNumber: Int64;
 
 procedure RegisterFileSystemDriver(Driver: PFileSystemDriver);
 begin
@@ -177,6 +182,7 @@ begin
       KernelOptionIsSet('read-only-volumes');
     InitializeMutex(Volume^.Lock);
     InitializeListHead(Volume^.NodeCache);
+    Volume^.Number := LongWord(AtomicIncrement(LastVolumeNumber));
     CopyText(@Volume^.Name[0], @Device^.Name[0], VolumeNameLength);
 
     Status := Driver^.Mount(Volume);

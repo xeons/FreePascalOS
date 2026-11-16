@@ -28,6 +28,10 @@
   views, cells of a fixed size for large icons. A scroll bar shows when
   the lines do not fit: down the side, or along the bottom in the list
   view, which grows across.
+
+  The item under a drag that a drop would go to (DropTarget) is shown
+  highlighted like a selected one; details rows show the items' small
+  icons too if IconsInDetails.
 }
 unit Controls.ListViewBase;
 
@@ -64,6 +68,13 @@ type
     FScrollBar: TScrollBar;
     FSortColumn: LongInt;
     FSortAscending: Boolean;
+    FDropTarget: LongInt;
+    FIconsInDetails: Boolean;
+    { The item being renamed in place (-1: none): its name is left to
+      the edit box over it. }
+    FEditIndex: LongInt;
+    procedure SetDropTarget(Value: LongInt);
+    procedure SetIconsInDetails(Value: Boolean);
     function HeaderHeight: LongInt;
     function RowHeight: LongInt;
     function ShowsHeader: Boolean;
@@ -113,6 +124,11 @@ type
     { Item Index's cell as shown now, and its icon (icon views). }
     function ItemBounds(Index: LongInt): TRectangle;
     function IconBounds(Index: LongInt): TRectangle;
+    { Where item Index's name is as shown now (what an edit box renaming
+      it covers). }
+    function CaptionBounds(Index: LongInt): TRectangle;
+    { The item at (X, Y) of this control's pixels, or -1. }
+    function ItemAt(X, Y: LongInt): LongInt;
     property Items[Row: LongInt]: TListItem read GetItem;
     property Cells[Row, Column: LongInt]: string read GetCell write SetCell;
     property RowCount: LongInt read GetRowCount;
@@ -122,6 +138,9 @@ type
     property SortAscending: Boolean read FSortAscending;
     { Whether sorting by the column (a header click) compares numbers. }
     property ColumnNumeric[Column: LongInt]: Boolean read GetColumnNumeric write SetColumnNumeric;
+    { The item shown as where a drop would go (-1: none). }
+    property DropTarget: LongInt read FDropTarget write SetDropTarget;
+    property IconsInDetails: Boolean read FIconsInDetails write SetIconsInDetails;
   end;
 
 implementation
@@ -147,6 +166,8 @@ begin
   FAnchor := -1;
   FSortColumn := -1;
   FSortAscending := True;
+  FDropTarget := -1;
+  FEditIndex := -1;
   FScrollBar := TScrollBar.Create(Self);
   FScrollBar.Visible := False;
 end;
@@ -219,6 +240,10 @@ begin
   WasSelected := TListItem(FItems[Index]).Selected;
   TListItem(FItems[Index]).Free;
   FItems.Delete(Index);
+  if FDropTarget = Index then
+    FDropTarget := -1
+  else if FDropTarget > Index then
+    Dec(FDropTarget);
   if FItemIndex > Index then
     Dec(FItemIndex)
   else if FItemIndex >= FItems.Count then
@@ -241,6 +266,7 @@ begin
   FItems.Clear;
   FItemIndex := -1;
   FAnchor := -1;
+  FDropTarget := -1;
   FFirstLine := 0;
   UpdateScrollBar;
   Invalidate;
@@ -441,6 +467,48 @@ begin
   end;
 end;
 
+function TListViewBase.CaptionBounds(Index: LongInt): TRectangle;
+var
+  Widths: TPixelWidths;
+  FirstWidth: LongInt;
+begin
+  case FViewMode of
+    ViewList, ViewSmallIcons: Result := SmallIconCaptionBox(ItemBounds(Index));
+    ViewLargeIcons: Result := LargeIconCaptionBox(ItemBounds(Index));
+  else
+    begin
+      Widths := PixelWidths;
+      FirstWidth := RectangleWidth(ItemBounds(Index));
+      if Length(Widths) > 0 then
+        FirstWidth := Widths[0];
+      Result := DetailsCaptionBox(ItemBounds(Index), FirstWidth, FIconsInDetails);
+    end;
+  end;
+end;
+
+function TListViewBase.ItemAt(X, Y: LongInt): LongInt;
+begin
+  Result := ItemAtPoint(Grid, X, Y);
+end;
+
+procedure TListViewBase.SetDropTarget(Value: LongInt);
+begin
+  if (Value < -1) or (Value >= FItems.Count) then
+    Value := -1;
+  if Value = FDropTarget then
+    Exit;
+  FDropTarget := Value;
+  Invalidate;
+end;
+
+procedure TListViewBase.SetIconsInDetails(Value: Boolean);
+begin
+  if Value = FIconsInDetails then
+    Exit;
+  FIconsInDetails := Value;
+  Invalidate;
+end;
+
 { --- Scrolling --------------------------------------------------------------- }
 
 procedure TListViewBase.Layout;
@@ -572,12 +640,12 @@ begin
     if not IntersectRectangles(Cell, Shown.Area, VisiblePart) then
       Continue;
     Item := TListItem(FItems[Index]);
-    Highlighted := Item.Selected;
+    Highlighted := Item.Selected or (Index = FDropTarget);
     FocusFrame := (Index = FItemIndex) and Focused;
     case FViewMode of
-      ViewDetails: PaintDetailsRow(Inner, Item, Cell, Widths, Highlighted, FocusFrame);
+      ViewDetails: PaintDetailsRow(Inner, Item, Cell, Widths, Highlighted, FocusFrame, FIconsInDetails);
       ViewList, ViewSmallIcons: PaintSmallIconItem(Inner, Item, Cell, Highlighted, FocusFrame);
-      ViewLargeIcons: PaintLargeIconItem(Inner, Item, Cell, Highlighted, FocusFrame);
+      ViewLargeIcons: PaintLargeIconItem(Inner, Item, Cell, Highlighted, FocusFrame, Index <> FEditIndex);
     end;
   end;
 end;
