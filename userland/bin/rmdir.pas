@@ -30,13 +30,12 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: rmdir [OPTION]... DIRECTORY...'#10 +
+  Usage = 'Usage: rmdir [OPTION]... DIRECTORY...'#10 +
     'Remove the DIRECTORY(ies), if they are empty.'#10 +
     #10 +
     '      --ignore-fail-on-non-empty'#10 +
@@ -59,7 +58,7 @@ var
   Error: LongInt;
 begin
   if Verbose then
-    WriteText(StandardOutput, PChar(Format('%s: removing directory, ''%s'''#10, [ProgramName, Path])));
+    PrintString(Format('%s: removing directory, ''%s'''#10, [ProgramNameText, Path]));
   Error := GetLinkInformation(PChar(Path), Information);
   if (Error = ErrorNone) and (Information.Kind <> KindDirectory) then
     Error := ErrorNotDirectory;
@@ -69,7 +68,7 @@ begin
     Exit(True);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'failed to remove ''%s''', [ArgumentText(PChar(Path))]);
+    ReportError(Error, Format('failed to remove ''%s''', [Path]));
     Exit(False);
   end;
   Result := True;
@@ -94,34 +93,32 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Parents: Boolean;
-  Index: Integer;
   ExitStatus: LongInt;
   Path: string;
 begin
   IgnoreNonEmpty := False;
   Parents := False;
   Verbose := False;
-  BeginOptions(Parser, [
-    OptionDefinition(#0, 'ignore-fail-on-non-empty', False, OptionIgnoreNonEmpty),
-    OptionDefinition('p', 'parents', False, OptionParents),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption(#0, 'ignore-fail-on-non-empty', False, OptionIgnoreNonEmpty),
+    CommandOption('p', 'parents', False, OptionParents),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionIgnoreNonEmpty: IgnoreNonEmpty := True;
       OptionParents: Parents := True;
       OptionVerbose: Verbose := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Path in CommandLine.Operands do
   begin
-    Path := Parser.Operands[Index];
     if not RemoveOne(Path) then
     begin
       ExitStatus := 1;

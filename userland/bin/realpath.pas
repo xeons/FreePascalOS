@@ -30,17 +30,15 @@ program realpath;
 {$H+}
 
 uses
-  SysUtils,
   StrUtils,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: realpath [OPTION]... FILE...'#10 +
+  Usage = 'Usage: realpath [OPTION]... FILE...'#10 +
     'Print the resolved absolute file name;'#10 +
     'all but the last component must exist'#10#10 +
     '  -e, --canonicalize-existing  all components of the path must exist'#10 +
@@ -133,40 +131,27 @@ begin
     Result := '.';
 end;
 
-{ CanonicalizePath for strings. }
-function Canonicalize(const Path: string; out Canonical: string): LongInt;
-var
-  CanonicalText: PChar;
-begin
-  Canonical := '';
-  Result := CanonicalizePath(PChar(Path), Mode, FollowLinks, CanonicalText);
-  if Result <> 0 then
-    Exit;
-  Canonical := CanonicalText;
-  FreeMemory(CanonicalText);
-end;
-
 { The canonical form of a --relative-to or --relative-base directory. }
 function CanonicalDirectory(const Path: string): string;
 var
   Error: LongInt;
 begin
-  Error := Canonicalize(Path, Result);
+  Error := CanonicalizePath(Path, Mode, FollowLinks, Result);
   if Error <> 0 then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(Path))]);
+    FailWithError(1, Error, Path);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Quiet: Boolean;
   LineEnd: Char;
   HasRelativeTo: Boolean;
   HasRelativeBase: Boolean;
   RelativeTo: string;
   RelativeBase: string;
-  Index: Integer;
+  Operand: string;
   Canonical: string;
   Error: LongInt;
   ExitStatus: LongInt;
@@ -175,43 +160,33 @@ begin
   Quiet := False;
   FollowLinks := True;
   LineEnd := #10;
-  HasRelativeTo := False;
-  HasRelativeBase := False;
-  BeginOptions(Parser, [
-    OptionDefinition('e', 'canonicalize-existing', False, OptionExisting),
-    OptionDefinition('m', 'canonicalize-missing', False, OptionMissing),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'relative-to', True, OptionRelativeTo),
-    OptionDefinition(#0, 'relative-base', True, OptionRelativeBase),
-    OptionDefinition('s', 'strip', False, OptionStrip),
-    OptionDefinition(#0, 'no-symlinks', False, OptionStrip),
-    OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('e', 'canonicalize-existing', False, OptionExisting),
+    CommandOption('m', 'canonicalize-missing', False, OptionMissing),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'relative-to', True, OptionRelativeTo),
+    CommandOption(#0, 'relative-base', True, OptionRelativeBase),
+    CommandOption('s', 'strip', False, OptionStrip),
+    CommandOption(#0, 'no-symlinks', False, OptionStrip),
+    CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionExisting: Mode := CanonicalExisting;
       OptionMissing: Mode := CanonicalMissingAllowed;
       OptionQuiet: Quiet := True;
-      OptionRelativeTo:
-        begin
-          RelativeTo := Value;
-          HasRelativeTo := True;
-        end;
-      OptionRelativeBase:
-        begin
-          RelativeBase := Value;
-          HasRelativeBase := True;
-        end;
       OptionStrip: FollowLinks := False;
       OptionZero: LineEnd := #0;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
 
+  HasRelativeTo := CommandLine.OptionGiven(OptionRelativeTo);
+  HasRelativeBase := CommandLine.OptionGiven(OptionRelativeBase);
   if HasRelativeTo then
-    RelativeTo := CanonicalDirectory(RelativeTo);
+    RelativeTo := CanonicalDirectory(CommandLine.OptionValue(OptionRelativeTo));
   if HasRelativeBase then
   begin
-    RelativeBase := CanonicalDirectory(RelativeBase);
+    RelativeBase := CanonicalDirectory(CommandLine.OptionValue(OptionRelativeBase));
     if not HasRelativeTo then
     begin
       RelativeTo := RelativeBase;
@@ -220,21 +195,21 @@ begin
   end;
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Error := Canonicalize(Parser.Operands[Index], Canonical);
+    Error := CanonicalizePath(Operand, Mode, FollowLinks, Canonical);
     if Error <> 0 then
     begin
       if not Quiet then
-        ReportError(Error, '%s', [ArgumentText(Parser.Operands[Index])]);
+        ReportError(Error, Operand);
       ExitStatus := 1;
       Continue;
     end;
     if HasRelativeTo and (not HasRelativeBase or (IsBelow(Canonical, RelativeBase) and
        IsBelow(RelativeTo, RelativeBase))) then
-      WriteText(StandardOutput, PChar(MakeRelative(Canonical, RelativeTo)))
+      PrintString(MakeRelative(Canonical, RelativeTo))
     else
-      WriteText(StandardOutput, PChar(Canonical));
+      PrintString(Canonical);
     WriteCharacter(StandardOutput, LineEnd);
   end;
   Halt(ExitStatus);

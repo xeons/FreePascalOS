@@ -31,21 +31,21 @@ program renice;
 
 uses
   SysUtils,
-  Sys.Environment,
   Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Streams,
-  Sys.Text,
-  Util.Messages;
+  Util.CommandLine,
+  Util.Messages,
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: renice [-n] PRIORITY [-p] PID...'#10 +
+  Usage = 'Usage: renice [-n] PRIORITY [-p] PID...'#10 +
     'Alter the priority of running processes.'#10#10 +
     '  -n, --priority N   set the nice value to N'#10 +
     '  -p, --pid          interpret the following arguments as process IDs (the default)'#10;
 
 var
+  Arguments: TStringArray;
   Index: Integer;
   Priority: Int64;
   Text: string;
@@ -58,41 +58,42 @@ begin
   ExitStatus := 0;
   HavePriority := False;
   Priority := 0;
-  Index := 1;
-  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
+  Arguments := ProgramArguments;
+  Index := 0;
+  if (Length(Arguments) > 0) and (Arguments[0] = '--help') then
   begin
-    Print(Usage);
+    PrintString(Usage);
     Halt(0);
   end;
-  while Index < ArgumentTotal do
+  while Index < Length(Arguments) do
   begin
-    Text := Argument(Index);
+    Text := Arguments[Index];
     Inc(Index);
     if (Text = '-p') or (Text = '--pid') then
       Continue;
     if (Text = '-g') or (Text = '-u') then
-      Fail(1, 'option ''%s'' is not supported', [ArgumentText(PChar(Text))]);
+      Fail(1, Format('option ''%s'' is not supported', [Text]));
     if (Text = '-n') or (Text = '--priority') then
     begin
-      if Index >= ArgumentTotal then
-        Fail(1, 'option ''%s'' requires an argument', [ArgumentText(PChar(Text))]);
-      Text := Argument(Index);
+      if Index >= Length(Arguments) then
+        Fail(1, Format('option ''%s'' requires an argument', [Text]));
+      Text := Arguments[Index];
       Inc(Index);
-      if not ParseInteger(PChar(Text), Priority) then
-        Fail(1, 'invalid priority ''%s''', [ArgumentText(PChar(Text))]);
+      if not ParseDecimal(Text, Priority) then
+        Fail(1, Format('invalid priority ''%s''', [Text]));
       HavePriority := True;
       Continue;
     end;
     if not HavePriority then
     begin
-      if not ParseInteger(PChar(Text), Priority) then
-        Fail(1, 'invalid priority ''%s''', [ArgumentText(PChar(Text))]);
+      if not ParseDecimal(Text, Priority) then
+        Fail(1, Format('invalid priority ''%s''', [Text]));
       HavePriority := True;
       Continue;
     end;
-    if not ParseInteger(PChar(Text), ProcessId) or (ProcessId <= 0) then
+    if not ParseDecimal(Text, ProcessId) or (ProcessId <= 0) then
     begin
-      Report('invalid process ID ''%s''', [ArgumentText(PChar(Text))]);
+      Report(Format('invalid process ID ''%s''', [Text]));
       ExitStatus := 1;
       Continue;
     end;
@@ -101,8 +102,8 @@ begin
       Error := KernelSetPriority(QWord(ProcessId), LongInt(Priority));
     if Error < 0 then
     begin
-      Report('failed to set priority for %d (process ID): %s', [ArgumentNumber(ProcessId),
-        ArgumentText(ErrorMessage(ErrorCodeOf(Error)))]);
+      Report(Format('failed to set priority for %d (process ID): %s', [ProcessId,
+        ErrorText(ErrorCodeOf(Error))]));
       ExitStatus := 1;
       Continue;
     end;
@@ -110,10 +111,10 @@ begin
       Priority := -20;
     if Priority > 19 then
       Priority := 19;
-    WriteText(StandardOutput, PChar(Format('%d (process ID) old priority %d, new priority %d'#10,
-      [ProcessId, OldNice, Priority])));
+    PrintString(Format('%d (process ID) old priority %d, new priority %d'#10,
+      [ProcessId, OldNice, Priority]));
   end;
   if not HavePriority then
-    FailWithUsageHint('missing priority', []);
+    FailWithUsageHint('missing priority');
   Halt(ExitStatus);
 end.

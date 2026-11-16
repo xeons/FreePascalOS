@@ -30,18 +30,15 @@ program readlink;
 {$H+}
 
 uses
-  SysUtils,
   Abi.SystemCalls,
-  Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: readlink [OPTION]... FILE...'#10 +
+  Usage = 'Usage: readlink [OPTION]... FILE...'#10 +
     'Print value of a symbolic link or canonical file name.'#10 +
     #10 +
     '  -f, --canonicalize     canonicalize by following every symlink in every'#10 +
@@ -59,39 +56,16 @@ const
   OptionCanonicalizeExisting = 6;
   OptionCanonicalizeMissing = 7;
 
-function ReadLinkTarget(Path: PChar; out Target: string): LongInt;
-begin
-  SetLength(Target, PathCapacity);
-  Result := ReadSymbolicLink(Path, PChar(Target), PathCapacity);
-  if Result = ErrorNone then
-    SetLength(Target, StrLen(PChar(Target)))
-  else
-    Target := '';
-end;
-
-function CanonicalTarget(Path: PChar; Mode: TCanonicalMode; out Target: string): LongInt;
 var
-  Canonical: PChar;
-begin
-  Result := CanonicalizePath(Path, Mode, True, Canonical);
-  Target := '';
-  if Result = ErrorNone then
-  begin
-    Target := Canonical;
-    FreeMemory(Canonical);
-  end;
-end;
-
-var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Canonicalize: Boolean;
   CanonicalMode: TCanonicalMode;
   NoNewline: Boolean;
   Quiet: Boolean;
   LineEnd: Char;
-  Index: Integer;
+  Operand: string;
   Target: string;
   Error: LongInt;
   ExitStatus: LongInt;
@@ -101,16 +75,16 @@ begin
   NoNewline := False;
   Quiet := True;
   LineEnd := #10;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'canonicalize', False, OptionCanonicalize),
-    OptionDefinition('e', 'canonicalize-existing', False, OptionCanonicalizeExisting),
-    OptionDefinition('m', 'canonicalize-missing', False, OptionCanonicalizeMissing),
-    OptionDefinition('n', 'no-newline', False, OptionNoNewline),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition('s', 'silent', False, OptionQuiet),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'canonicalize', False, OptionCanonicalize),
+    CommandOption('e', 'canonicalize-existing', False, OptionCanonicalizeExisting),
+    CommandOption('m', 'canonicalize-missing', False, OptionCanonicalizeMissing),
+    CommandOption('n', 'no-newline', False, OptionNoNewline),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption('s', 'silent', False, OptionQuiet),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionCanonicalize:
         begin
@@ -132,25 +106,25 @@ begin
       OptionVerbose: Quiet := False;
       OptionZero: LineEnd := #0;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
     if Canonicalize then
-      Error := CanonicalTarget(Parser.Operands[Index], CanonicalMode, Target)
+      Error := CanonicalizePath(Operand, CanonicalMode, True, Target)
     else
-      Error := ReadLinkTarget(Parser.Operands[Index], Target);
+      Error := ReadLinkTarget(Operand, Target);
     if Error <> ErrorNone then
     begin
       if not Quiet then
-        ReportError(Error, '%s', [ArgumentText(Parser.Operands[Index])]);
+        ReportError(Error, Operand);
       ExitStatus := 1;
       Continue;
     end;
-    WriteText(StandardOutput, PChar(Target));
-    if not NoNewline or (Parser.OperandCount > 1) then
+    PrintString(Target);
+    if not NoNewline or (CommandLine.OperandCount > 1) then
       WriteCharacter(StandardOutput, LineEnd);
   end;
   Halt(ExitStatus);

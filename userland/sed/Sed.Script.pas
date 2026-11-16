@@ -117,10 +117,10 @@ type
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Util.Messages;
 
 destructor TScript.Destroy;
@@ -153,7 +153,7 @@ end;
 
 procedure TScript.ScriptError(const Message: string);
 begin
-  Fail(1, '-e expression #1, char %d: %s', [ArgumentNumber(FPosition), ArgumentText(PChar(Message))]);
+  Fail(1, Format('-e expression #1, char %d: %s', [FPosition, Message]));
 end;
 
 { #0 past the end of the script, like the end of a C string. }
@@ -218,13 +218,13 @@ end;
 
 function TScript.CompileRegex(const Text: string; IgnoreCase: Boolean): PExpression;
 var
-  ErrorMessage: PChar;
+  ErrorMessage: string;
 begin
   if Text = '' then
     Exit(nil); { the last regex }
   New(Result);
   FillChar(Result^, SizeOf(TExpression), 0);
-  if not CompileExpression(PChar(Text), FSyntax, Result^, ErrorMessage) then
+  if not CompileExpression(Text, FSyntax, Result^, ErrorMessage) then
     ScriptError(ErrorMessage);
   Result^.IgnoreCase := IgnoreCase;
 end;
@@ -350,7 +350,7 @@ begin
   begin
     WriteFile.Handle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenTruncate);
     if WriteFile.Handle < 0 then
-      FailWithError(4, ErrorCodeOf(WriteFile.Handle), 'couldn''t open file %s', [ArgumentText(PChar(Path))]);
+      FailWithError(4, ErrorCodeOf(WriteFile.Handle), 'couldn''t open file ' + Path);
     WriteFile.Stream := CreateOutputStream(WriteFile.Handle);
   end;
   Result := Length(WriteFiles);
@@ -472,8 +472,7 @@ begin
     '{', '}', 'p', 'P', 'd', 'D', 'n', 'N', 'g', 'G', 'h', 'H', 'x', '=', 'l', 'z':
       ;
   else
-    Fail(1, '-e expression #1, char %d: unknown command: `%c''', [ArgumentNumber(FPosition),
-      ArgumentCharacter(Command.Name)]);
+    Fail(1, Format('-e expression #1, char %d: unknown command: `', [FPosition]) + Command.Name + '''');
   end;
 end;
 
@@ -542,8 +541,8 @@ begin
           if (Commands[Target].Name = ':') and (Commands[Target].Text = Commands[Index].Text) then
             Commands[Index].JumpTarget := Target;
         if Commands[Index].JumpTarget < 0 then
-          Fail(1, '-e expression #1, char 0: can''t find label for jump to `%s''',
-            [ArgumentText(PChar(Commands[Index].Text))]);
+          Fail(1, '-e expression #1, char 0: can''t find label for jump to `' +
+            Commands[Index].Text + '''');
       end;
     end;
 end;

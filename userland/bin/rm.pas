@@ -30,20 +30,20 @@ program rm;
 {$H+}
 
 uses
+  Classes,
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Directories,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: rm [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: rm [OPTION]... [FILE]...'#10 +
     'Remove (unlink) the FILE(s).'#10 +
     #10 +
     '  -f, --force           ignore nonexistent files and arguments, never prompt'#10 +
@@ -65,35 +65,22 @@ var
   RemoveEmptyDirectories: Boolean;
   Verbose: Boolean;
 
-{ Copies a heap string from the libraries and frees it. }
-function TakeText(Text: PChar): string;
-begin
-  Result := Text;
-  FreeMemory(Text);
-end;
-
 function Confirm(const Question, Path: string): Boolean;
 var
-  LineText: PChar;
   Answer: string;
   HadLineEnd: Boolean;
 begin
-  WriteFormatted(StandardError, '%s: %s ''%s''? ', [ArgumentText(ProgramName), ArgumentText(PChar(Question)),
-    ArgumentText(PChar(Path))]);
+  PrintErrorString(Format('%s: %s ''%s''? ', [ProgramNameText, Question, Path]));
   FlushStream(StandardError);
-  if not ReadLine(StandardInput, LineText, HadLineEnd) then
+  if not ReadTextLine(StandardInput, Answer, HadLineEnd) then
     Exit(False);
-  Answer := TakeText(LineText);
   Result := (Answer <> '') and ((Answer[1] = 'y') or (Answer[1] = 'Y'));
 end;
 
-{ Directory + '/' + Name, without doubling the slash. }
-function JoinPath(const Directory, Name: string): string;
+{ Reports that Path could not be removed. }
+procedure ReportCannotRemove(Error: LongInt; const Path: string);
 begin
-  if (Directory <> '') and (Directory[Length(Directory)] <> '/') then
-    Result := Directory + '/' + Name
-  else
-    Result := Directory + Name;
+  ReportError(Error, Format('cannot remove ''%s''', [Path]));
 end;
 
 function RemoveTree(const Path: string): Boolean; forward;
@@ -109,7 +96,7 @@ begin
   begin
     if Force and (Error = ErrorNotFound) then
       Exit(True);
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
+    ReportCannotRemove(Error, Path);
     Exit(False);
   end;
 
@@ -119,7 +106,7 @@ begin
       Exit(RemoveTree(Path));
     if not RemoveEmptyDirectories then
     begin
-      ReportError(ErrorIsDirectory, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
+      ReportCannotRemove(ErrorIsDirectory, Path);
       Exit(False);
     end;
   end;
@@ -129,42 +116,41 @@ begin
   Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
+    ReportCannotRemove(Error, Path);
     Exit(False);
   end;
   if Verbose then
   begin
     if Information.Kind = KindDirectory then
-      WriteText(StandardOutput, PChar('removed directory ''' + Path + ''''#10))
+      PrintStringLine('removed directory ''' + Path + '''')
     else
-      WriteText(StandardOutput, PChar('removed ''' + Path + ''''#10));
+      PrintStringLine('removed ''' + Path + '''');
   end;
   Result := True;
 end;
 
 function RemoveTree(const Path: string): Boolean;
 var
-  Names: TLineList;
-  Index: Integer;
+  Names: TStringList;
+  Name: string;
   Error: LongInt;
 begin
   Result := True;
   if Interactive and not Confirm('descend into directory', Path) then
     Exit;
-  BeginLineList(Names);
-  Error := ListDirectory(PChar(Path), Names);
-  if Error <> ErrorNone then
-  begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
-    FreeLineList(Names);
-    Exit(False);
-  end;
+  Names := TStringList.Create;
   try
-    for Index := 0 to Names.Count - 1 do
-      if not RemoveEntry(JoinPath(Path, Names.Items[Index])) then
+    Error := ListDirectory(Path, Names);
+    if Error <> ErrorNone then
+    begin
+      ReportCannotRemove(Error, Path);
+      Exit(False);
+    end;
+    for Name in Names do
+      if not RemoveEntry(JoinPath(Path, Name)) then
         Result := False;
   finally
-    FreeLineList(Names);
+    Names.Free;
   end;
 
   if Interactive and not Confirm('remove directory', Path) then
@@ -172,18 +158,18 @@ begin
   Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot remove ''%s''', [ArgumentText(PChar(Path))]);
+    ReportCannotRemove(Error, Path);
     Exit(False);
   end;
   if Verbose then
-    WriteText(StandardOutput, PChar('removed directory ''' + Path + ''''#10));
+    PrintStringLine('removed directory ''' + Path + '''');
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   ExitStatus: LongInt;
   Base: string;
 begin
@@ -192,14 +178,14 @@ begin
   Recursive := False;
   RemoveEmptyDirectories := False;
   Verbose := False;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'force', False, OptionForce),
-    OptionDefinition('i', nil, False, OptionInteractive),
-    OptionDefinition('r', 'recursive', False, OptionRecursive),
-    OptionDefinition('R', nil, False, OptionRecursive),
-    OptionDefinition('d', 'dir', False, OptionDirectory),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'force', False, OptionForce),
+    CommandOption('i', '', False, OptionInteractive),
+    CommandOption('r', 'recursive', False, OptionRecursive),
+    CommandOption('R', '', False, OptionRecursive),
+    CommandOption('d', 'dir', False, OptionDirectory),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionForce:
         begin
@@ -215,19 +201,19 @@ begin
       OptionDirectory: RemoveEmptyDirectories := True;
       OptionVerbose: Verbose := True;
     end;
-  if (Parser.OperandCount = 0) and not Force then
-    FailWithUsageHint('missing operand', []);
+  if (CommandLine.OperandCount = 0) and not Force then
+    FailWithUsageHint('missing operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Base := TakeText(BaseName(Parser.Operands[Index]));
+    Base := BaseName(Operand);
     if (Base = '.') or (Base = '..') or (Base = '/') then
     begin
-      Report('refusing to remove ''.'' or ''..'' or ''/'' directory: skipping ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      Report(Format('refusing to remove ''.'' or ''..'' or ''/'' directory: skipping ''%s''', [Operand]));
       ExitStatus := 1;
     end
-    else if not RemoveEntry(Parser.Operands[Index]) then
+    else if not RemoveEntry(Operand) then
       ExitStatus := 1;
   end;
   Halt(ExitStatus);
