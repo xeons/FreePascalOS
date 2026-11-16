@@ -336,6 +336,15 @@ $(IMAGE_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -limage -lcompression -ldrawing
 $(IMAGE_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 	-Fu$(IMAGE_LIBRARY_OBJECTS)
 $(IMAGE_PROGRAMS): $(IMAGE_LIBRARY)
+# The clipboard tool: the clipboard (libwindowing, libcontrols' file
+# lists) and images (libimage).
+CLIPBOARD_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,clipboard)
+$(CLIPBOARD_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
+	-ldrawing
+$(CLIPBOARD_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS)
+$(CLIPBOARD_PROGRAMS): $(CONTROLS_LIBRARY) $(IMAGE_LIBRARY)
 # The system settings service keeps what it changes in the settings and
 # sets the sound outputs.
 SYSTEM_SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,systemsettings)

@@ -64,6 +64,10 @@ procedure WriteClipboardText(const Text: string);
 procedure WriteClipboardBytes(Format: LongWord; const Data: TBytes);
 { Empties the clipboard. }
 procedure ClearClipboard;
+{ Gives the server every format this program has on the clipboard and
+  waits until it has taken them (for a program about to end: the
+  clipboard keeps all of it). }
+procedure FlushClipboard;
 { The formats on the clipboard now (DataFormatBit of each; 0: empty, or
   no display server). }
 function ClipboardFormats: LongWord;
@@ -114,6 +118,19 @@ end;
 procedure ClearClipboard;
 begin
   OfferData(DataSourceClipboard, nil);
+end;
+
+procedure FlushClipboard;
+var
+  Message: TWindowMessage;
+begin
+  if not IsConnected then
+    Exit;
+  GiveEveryFormat(DataSourceClipboard);
+  { Answered once everything sent before is done. }
+  Message := NewMessage(RequestDescribeClipboard, 0);
+  SendRequest(Message, -1);
+  WaitForEvent(EventClipboardFormats, ReplyTimeout, Message);
 end;
 
 function OwnsClipboard: Boolean;
