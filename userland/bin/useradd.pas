@@ -39,15 +39,14 @@ uses
   Abi.SystemCalls,
   Runtime.Memory,
   Sys.Memory,
-  Sys.Format,
   Util.Accounts,
   Util.AccountChanges,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Util.Passwords;
 
 const
-  Usage: PChar = 'Usage: useradd [-c FULL-NAME] [-a] NAME'#10 +
+  Usage = 'Usage: useradd [-c FULL-NAME] [-a] NAME'#10 +
     'Add the user NAME, asking for their password.'#10 +
     '  -c, --comment FULL-NAME  the user''s full name'#10 +
     '  -a, --administrator      make the user an administrator (group wheel)'#10;
@@ -66,9 +65,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   FullName: string;
   Administrator: Boolean;
   Name: string;
@@ -78,35 +77,35 @@ var
 begin
   FullName := '';
   Administrator := False;
-  BeginOptions(Parser, [OptionDefinition('c', 'comment', True, OptionComment),
-    OptionDefinition('a', 'administrator', False, OptionAdministrator)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([CommandOption('c', 'comment', True, OptionComment),
+    CommandOption('a', 'administrator', False, OptionAdministrator)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionComment: FullName := Value;
       OptionAdministrator: Administrator := True;
     end;
-  if Parser.OperandCount <> 1 then
-    FailWithUsageHint('one user name is needed', []);
+  if CommandLine.OperandCount <> 1 then
+    FailWithUsageHint('one user name is needed');
   if CurrentUserId <> RootId then
-    Fail(1, 'only root may add users', []);
-  Name := Parser.Operands[0];
+    Fail(1, 'only root may add users');
+  Name := CommandLine.Operands[0];
   if not IsValidUserName(Name) then
-    Fail(1, 'invalid user name ''%s''', [ArgumentText(PChar(Name))]);
+    Fail(1, Format('invalid user name ''%s''', [Name]));
   if not IsValidFullName(FullName) then
-    Fail(1, 'a full name may not hold a colon', []);
+    Fail(1, 'a full name may not hold a colon');
   NewPassword := ReadPassword('New password: ');
   Repeated := ReadPassword('Retype new password: ');
   if (NewPassword = nil) or (Repeated = nil) or (StrComp(NewPassword, Repeated) <> 0) then
   begin
     Forget(NewPassword);
     Forget(Repeated);
-    Fail(1, 'Passwords do not match', []);
+    Fail(1, 'Passwords do not match');
   end;
   Error := AddUser(Name, FullName, NewPassword, Administrator);
   Forget(NewPassword);
   Forget(Repeated);
   if Error = ErrorExists then
-    Fail(1, 'user ''%s'' already exists', [ArgumentText(PChar(Name))]);
+    Fail(1, Format('user ''%s'' already exists', [Name]));
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot add user ''%s''', [ArgumentText(PChar(Name))]);
+    FailWithError(1, Error, Format('cannot add user ''%s''', [Name]));
 end.

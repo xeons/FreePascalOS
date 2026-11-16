@@ -24,23 +24,24 @@
 program users;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Streams,
   Util.Accounts,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: users'#10 +
+  Usage = 'Usage: users'#10 +
     'Output who is currently logged in.'#10;
 
 var
-  Parser: TOptionParser;
-  Name: PChar;
+  CommandLine: TCommandLine;
+  Name: string;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  Name := UserNameOf(CurrentRealUserId);
-  if Name = nil then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if not FindUserName(CurrentRealUserId, Name) then
     Name := 'root';
-  PrintLine(Name);
+  PrintStringLine(Name);
 end.

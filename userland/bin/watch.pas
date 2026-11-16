@@ -44,15 +44,15 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.FileWatches,
-  Sys.Format,
   Sys.Objects,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: watch [OPTION]... PATH...'#10 +
+  Usage = 'Usage: watch [OPTION]... PATH...'#10 +
     'Print the changes made to each PATH (a folder or a file; /volumes for the volumes).'#10 +
     #10 +
     '  -r, --recursive        also watch every folder below'#10 +
@@ -72,16 +72,16 @@ const
 var
   { One watch per path, at the same index. }
   Watches: array of Int64;
-  Paths: array of string;
+  Paths: TStringArray;
   ChangesWanted: QWord;
   ChangesSeen: QWord;
   Timeout: Int64;
   EndedCount: Integer;
 
-procedure ParseNumberOption(Value: PChar; out Number: QWord);
+procedure ParseNumberOption(const Value: string; out Number: QWord);
 begin
-  if not ParseUnsigned(Value, Number) then
-    FailWithUsageHint('invalid number: ''%s''', [ArgumentText(Value)]);
+  if not ParseUnsignedDecimal(Value, Number) then
+    FailWithUsageHint(Format('invalid number: ''%s''', [Value]));
 end;
 
 procedure PrintChange(const Path: string; const Change: TFileChange);
@@ -95,7 +95,7 @@ begin
     Line := Line + ': ' + string(Change.Name);
   if Change.IsDirectory and (Change.Kind <> FileChangeOverflow) then
     Line := Line + ' (directory)';
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
   FlushStream(StandardOutput);
 end;
 
@@ -119,9 +119,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Flags: LongWord;
   Number: QWord;
   Index: Integer;
@@ -131,13 +131,13 @@ begin
   Flags := WatchNames;
   ChangesWanted := 0;
   Timeout := InfiniteWait;
-  BeginOptions(Parser, [
-    OptionDefinition('r', 'recursive', False, OptionRecursive),
-    OptionDefinition('c', 'contents', False, OptionContents),
-    OptionDefinition('a', 'attributes', False, OptionAttributes),
-    OptionDefinition('n', 'count', True, OptionCount),
-    OptionDefinition('t', 'timeout', True, OptionTimeout)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('r', 'recursive', False, OptionRecursive),
+    CommandOption('c', 'contents', False, OptionContents),
+    CommandOption('a', 'attributes', False, OptionAttributes),
+    CommandOption('n', 'count', True, OptionCount),
+    CommandOption('t', 'timeout', True, OptionTimeout)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionRecursive: Flags := Flags or WatchSubtree;
       OptionContents: Flags := Flags or WatchContents;
@@ -149,21 +149,20 @@ begin
           Timeout := Int64(Number);
         end;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
   { The kernel waits on at most this many handles at once. }
-  if Parser.OperandCount > MaximumWaitHandles then
-    Fail(1, 'too many paths', []);
+  if CommandLine.OperandCount > MaximumWaitHandles then
+    Fail(1, 'too many paths');
 
-  SetLength(Watches, Parser.OperandCount);
-  SetLength(Paths, Parser.OperandCount);
-  for Index := 0 to Parser.OperandCount - 1 do
+  Paths := CommandLine.Operands;
+  SetLength(Watches, Length(Paths));
+  for Index := 0 to High(Paths) do
   begin
-    Handle := WatchPath(Parser.Operands[Index], Flags);
+    Handle := WatchPath(PChar(Paths[Index]), Flags);
     if Handle < 0 then
-      FailWithError(1, ErrorCodeOf(Handle), '%s', [ArgumentText(Parser.Operands[Index])]);
+      FailWithError(1, ErrorCodeOf(Handle), Paths[Index]);
     Watches[Index] := Handle;
-    Paths[Index] := Parser.Operands[Index];
   end;
 
   ChangesSeen := 0;
@@ -174,7 +173,7 @@ begin
     if Ready = -ErrorTimedOut then
       Break;
     if Ready < 0 then
-      Fail(1, 'waiting failed: %s', [ArgumentText(ErrorMessage(ErrorCodeOf(Ready)))]);
+      Fail(1, 'waiting failed: ' + ErrorText(ErrorCodeOf(Ready)));
     PrintChanges(Integer(Ready));
     if (ChangesWanted > 0) and (ChangesSeen >= ChangesWanted) then
       Break;

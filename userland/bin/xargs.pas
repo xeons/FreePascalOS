@@ -37,19 +37,17 @@ program xargs;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Environment,
-  Sys.Errors,
-  Sys.Format,
-  Sys.Memory,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Commands,
+  Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: xargs [OPTION]... COMMAND [INITIAL-ARGS]...'#10 +
+  Usage = 'Usage: xargs [OPTION]... COMMAND [INITIAL-ARGS]...'#10 +
     'Run COMMAND with arguments INITIAL-ARGS and more arguments read from input.'#10#10 +
     '  -0, --null                   items are separated by a null, not whitespace;'#10 +
     '                                 disables quote and backslash processing'#10 +
@@ -82,17 +80,15 @@ const
 
   DefaultMaximumCharacters = 128 * 1024;
 
-  UnmatchedQuoteMessage: PChar =
+  UnmatchedQuoteMessage =
     'unmatched quote; by default quotes are special to xargs unless you use the -0 option';
 
 type
   TSplitMode = (SplitBlanks, SplitCharacter);
-  TStringArray = array of string;
 
 var
   SplitMode: TSplitMode;
   Delimiter: Char;
-  Replacing: Boolean;
   Replacement: string;
   MaximumLines: Int64;
   MaximumArguments: Int64;
@@ -144,7 +140,7 @@ begin
       if Character = Quote then
         Quote := #0
       else if Character = #10 then
-        Fail(1, UnmatchedQuoteMessage, [])
+        Fail(1, UnmatchedQuoteMessage)
       else
         Item := Item + Character;
       Continue;
@@ -178,7 +174,7 @@ begin
   end;
   InputEnded := True;
   if Quote <> #0 then
-    Fail(1, UnmatchedQuoteMessage, []);
+    Fail(1, UnmatchedQuoteMessage);
   EndsLine := HaveItem;
   Result := HaveItem;
 end;
@@ -203,17 +199,14 @@ end;
 { For -I: the next whole line, leading blanks removed. }
 function ReadReplacementLine(out Item: string): Boolean;
 var
-  Line: PChar;
   HadLineEnd: Boolean;
   Start: Integer;
 begin
   if SplitMode = SplitCharacter then
     Exit(ReadItem(Item, HadLineEnd));
   repeat
-    if not ReadLine(StandardInput, Line, HadLineEnd) then
+    if not ReadTextLine(StandardInput, Item, HadLineEnd) then
       Exit(False);
-    Item := Line;
-    FreeMemory(Line);
     Start := 1;
     while (Start <= Length(Item)) and (Item[Start] in [' ', #9]) do
       Inc(Start);
@@ -228,37 +221,23 @@ end;
 { --- Running --------------------------------------------------------- }
 
 procedure WriteCommandLine(const Words: TStringArray);
-var
-  Index: Integer;
 begin
-  for Index := 0 to High(Words) do
-  begin
-    if Index > 0 then
-      WriteCharacter(StandardError, ' ');
-    WriteText(StandardError, PChar(Words[Index]));
-  end;
-  WriteCharacter(StandardError, #10);
+  WriteStringLine(StandardError, String.Join(' ', Words));
   FlushStream(StandardError);
 end;
 
 { Runs Words (the command and its arguments) and waits for it. }
 procedure Run(const Words: TStringArray);
 var
-  Arguments: array of PChar;
-  Index: Integer;
   Options: TProcessOptions;
   Handle: Int64;
   Status: LongInt;
 begin
   if Verbose then
     WriteCommandLine(Words);
-  SetLength(Arguments, Length(Words) + 1);
-  for Index := 0 to High(Words) do
-    Arguments[Index] := PChar(Words[Index]);
-  Arguments[High(Arguments)] := nil;
   DefaultProcessOptions(Options);
   FlushStandardStreams;
-  Handle := StartCommand(@Arguments[0], Options, Status);
+  Handle := StartCommand(Words, Options, Status);
   if Handle < 0 then
     Halt(Status);
   Status := WaitForProgram(Handle);
@@ -266,12 +245,12 @@ begin
     Exit;
   if Status = 255 then
   begin
-    Report('%s: exited with status 255; aborting', [ArgumentText(PChar(Words[0]))]);
+    Report(Words[0] + ': exited with status 255; aborting');
     Halt(StatusCommandReturned255);
   end;
   if (Status < 0) or (Status > 128) then
   begin
-    Report('%s: terminated by a signal', [ArgumentText(PChar(Words[0]))]);
+    Report(Words[0] + ': terminated by a signal');
     Halt(StatusCommandKilled);
   end;
   ExitStatus := StatusCommandFailed;
@@ -330,7 +309,7 @@ begin
   for Index := 0 to High(CommandWords) do
     BaseLength := BaseLength + Length(CommandWords[Index]) + 1;
   if BaseLength > MaximumCharacters then
-    Fail(1, 'argument list too long', []);
+    Fail(1, 'argument list too long');
   Items := nil;
   RanOnce := False;
   LineLength := BaseLength;
@@ -340,7 +319,7 @@ begin
     if (Length(Items) > 0) and (LineLength + Length(Item) + 1 > MaximumCharacters) then
       RunCollected;
     if BaseLength + Length(Item) + 1 > MaximumCharacters then
-      Fail(1, 'argument line too long', []);
+      Fail(1, 'argument line too long');
     Insert(Item, Items, Length(Items));
     LineLength := LineLength + Length(Item) + 1;
     if EndsLine then
@@ -353,11 +332,11 @@ begin
     RunWith(Items);
 end;
 
-function ParseCount(Value: PChar; Option: PChar): Int64;
+function ParseCount(const Value: string; Option: Char): Int64;
 begin
-  if not ParseInteger(Value, Result) or (Result < 1) then
+  if not ParseDecimal(Value, Result) or (Result < 1) then
   begin
-    Report('invalid number "%s" for -%s option', [ArgumentText(Value), ArgumentText(Option)]);
+    Report(Format('invalid number "%s" for -%s option', [Value, Option]));
     Halt(StatusUsage);
   end;
 end;
@@ -375,36 +354,34 @@ begin
     Delimiter := Text[1]
   else
   begin
-    Report('invalid input delimiter specification %s: the delimiter must be a single character',
-      [ArgumentText(PChar(Text))]);
+    Report(Format('invalid input delimiter specification %s: the delimiter must be a single character',
+      [Text]));
     Halt(StatusUsage);
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
   Processes: Int64;
 begin
   SplitMode := SplitBlanks;
   MaximumCharacters := DefaultMaximumCharacters;
   ExitStatus := 0;
-  Replacing := False;
-  BeginOptions(Parser, [
-    OptionDefinition('0', 'null', False, OptionNull),
-    OptionDefinition('d', 'delimiter', True, OptionDelimiter),
-    OptionDefinition('I', nil, True, OptionReplace),
-    OptionDefinition('L', 'max-lines', True, OptionMaximumLines),
-    OptionDefinition('n', 'max-args', True, OptionMaximumArguments),
-    OptionDefinition('P', 'max-procs', True, OptionMaximumProcesses),
-    OptionDefinition('r', 'no-run-if-empty', False, OptionNoRunIfEmpty),
-    OptionDefinition('s', 'max-chars', True, OptionMaximumCharacters),
-    OptionDefinition('t', 'verbose', False, OptionVerbose)], Usage);
+  CommandLine := TCommandLine.Create([
+    CommandOption('0', 'null', False, OptionNull),
+    CommandOption('d', 'delimiter', True, OptionDelimiter),
+    CommandOption('I', '', True, OptionReplace),
+    CommandOption('L', 'max-lines', True, OptionMaximumLines),
+    CommandOption('n', 'max-args', True, OptionMaximumArguments),
+    CommandOption('P', 'max-procs', True, OptionMaximumProcesses),
+    CommandOption('r', 'no-run-if-empty', False, OptionNoRunIfEmpty),
+    CommandOption('s', 'max-chars', True, OptionMaximumCharacters),
+    CommandOption('t', 'verbose', False, OptionVerbose)], Usage);
   { Options end at the command name. }
-  Parser.StopAtFirstOperand := True;
-  while NextOption(Parser, Code, Value) do
+  CommandLine.StopAtFirstOperand := True;
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionNull:
         begin
@@ -415,15 +392,14 @@ begin
       OptionReplace:
         begin
           Replacement := Value;
-          Replacing := True;
           MaximumLines := 1;
         end;
       OptionMaximumLines: MaximumLines := ParseCount(Value, 'L');
       OptionMaximumArguments: MaximumArguments := ParseCount(Value, 'n');
       OptionMaximumProcesses:
-        if not ParseInteger(Value, Processes) or (Processes < 0) then
+        if not ParseDecimal(Value, Processes) or (Processes < 0) then
         begin
-          Report('invalid number "%s" for -P option', [ArgumentText(Value)]);
+          Report(Format('invalid number "%s" for -P option', [Value]));
           Halt(StatusUsage);
         end;
       OptionNoRunIfEmpty: NoRunIfEmpty := True;
@@ -431,16 +407,12 @@ begin
       OptionVerbose: Verbose := True;
     end;
 
-  if Parser.OperandCount = 0 then
+  if CommandLine.OperandCount = 0 then
     CommandWords := ['echo']
   else
-  begin
-    SetLength(CommandWords, Parser.OperandCount);
-    for Index := 0 to Parser.OperandCount - 1 do
-      CommandWords[Index] := Parser.Operands[Index];
-  end;
+    CommandWords := CommandLine.Operands;
 
-  if Replacing then
+  if CommandLine.OptionGiven(OptionReplace) then
     RunReplacing
   else
     RunCollecting;

@@ -31,13 +31,13 @@ program who;
 
 uses
   SysUtils,
-  Sys.Streams,
   Sys.Time,
   Util.Accounts,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: who [OPTION]... [ am i ]'#10 +
+  Usage = 'Usage: who [OPTION]... [ am i ]'#10 +
     'Print information about users who are currently logged in.'#10#10 +
     '  -a, --all         same as -b -H'#10 +
     '  -b, --boot        time of last system boot'#10 +
@@ -60,15 +60,10 @@ begin
     DateTime.Hour, DateTime.Minute]);
 end;
 
-procedure PrintText(const Text: string);
-begin
-  PrintLine(PChar(Text));
-end;
-
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   ShowBoot: Boolean;
   ShowHeading: Boolean;
   ShowCount: Boolean;
@@ -80,13 +75,13 @@ begin
   ShowHeading := False;
   ShowCount := False;
   ShowSessions := True;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'all', False, OptionAll),
-    OptionDefinition('b', 'boot', False, OptionBoot),
-    OptionDefinition('H', 'heading', False, OptionHeading),
-    OptionDefinition('q', 'count', False, OptionCount),
-    OptionDefinition('s', 'short', False, OptionShort)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'all', False, OptionAll),
+    CommandOption('b', 'boot', False, OptionBoot),
+    CommandOption('H', 'heading', False, OptionHeading),
+    CommandOption('q', 'count', False, OptionCount),
+    CommandOption('s', 'short', False, OptionShort)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionAll:
         begin
@@ -102,22 +97,20 @@ begin
       OptionCount: ShowCount := True;
     end;
 
-  if UserNameOf(CurrentRealUserId) = nil then
-    Name := 'root'
-  else
-    Name := UserNameOf(CurrentRealUserId);
+  if not FindUserName(CurrentRealUserId, Name) then
+    Name := 'root';
   if ShowCount then
   begin
-    PrintText(Name);
-    PrintLine('# users=1');
+    PrintStringLine(Name);
+    PrintStringLine('# users=1');
     Halt(0);
   end;
 
   BootTime := CurrentTime - Int64(UptimeMilliseconds div 1000);
   if ShowHeading then
-    PrintLine('NAME     LINE         TIME');
+    PrintStringLine('NAME     LINE         TIME');
   if ShowBoot then
-    PrintText('         system boot  ' + TimestampText(BootTime));
+    PrintStringLine('         system boot  ' + TimestampText(BootTime));
   if ShowSessions then
-    PrintText(Format('%-8s console      ', [Name]) + TimestampText(BootTime));
+    PrintStringLine(Format('%-8s console      ', [Name]) + TimestampText(BootTime));
 end.

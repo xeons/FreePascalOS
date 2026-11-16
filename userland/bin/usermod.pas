@@ -32,15 +32,15 @@ program usermod;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Util.Accounts,
   Util.AccountChanges,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: usermod [-c FULL-NAME] [-G GROUP,...] [-a] NAME'#10 +
+  Usage = 'Usage: usermod [-c FULL-NAME] [-G GROUP,...] [-a] NAME'#10 +
     'Change the user NAME.'#10 +
     '  -c, --comment FULL-NAME  the user''s full name'#10 +
     '  -G, --groups GROUP,...   the user''s supplementary groups'#10 +
@@ -52,58 +52,39 @@ const
 procedure Check(Error: LongInt; const Name: string);
 begin
   if Error = ErrorNotFound then
-    Fail(1, 'user ''%s'' or one of the groups does not exist', [ArgumentText(PChar(Name))]);
+    Fail(1, Format('user ''%s'' or one of the groups does not exist', [Name]));
   if Error = ErrorInvalidArgument then
-    Fail(1, 'a full name may not hold a colon', []);
+    Fail(1, 'a full name may not hold a colon');
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot change user ''%s''', [ArgumentText(PChar(Name))]);
+    FailWithError(1, Error, Format('cannot change user ''%s''', [Name]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  FullName: string;
-  HasFullName: Boolean;
-  GroupText: string;
-  HasGroups: Boolean;
-  Append: Boolean;
+  Value: string;
   Name: string;
   Groups: TGroupNames;
   Added: TGroupNames;
   Index: Integer;
 begin
-  HasFullName := False;
-  HasGroups := False;
-  Append := False;
-  BeginOptions(Parser, [OptionDefinition('c', 'comment', True, OptionComment),
-    OptionDefinition('G', 'groups', True, OptionGroups),
-    OptionDefinition('a', 'append', False, OptionAppend)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionComment:
-        begin
-          FullName := Value;
-          HasFullName := True;
-        end;
-      OptionGroups:
-        begin
-          GroupText := Value;
-          HasGroups := True;
-        end;
-      OptionAppend: Append := True;
-    end;
-  if Parser.OperandCount <> 1 then
-    FailWithUsageHint('one user name is needed', []);
+  CommandLine := TCommandLine.Create([CommandOption('c', 'comment', True, OptionComment),
+    CommandOption('G', 'groups', True, OptionGroups),
+    CommandOption('a', 'append', False, OptionAppend)], Usage);
+  { The options are looked up below, once all are read. }
+  while CommandLine.NextOption(Code, Value) do
+    ;
+  if CommandLine.OperandCount <> 1 then
+    FailWithUsageHint('one user name is needed');
   if CurrentUserId <> RootId then
-    Fail(1, 'only root may change users', []);
-  Name := Parser.Operands[0];
-  if HasFullName then
-    Check(ChangeFullName(Name, FullName), Name);
-  if HasGroups then
+    Fail(1, 'only root may change users');
+  Name := CommandLine.Operands[0];
+  if CommandLine.OptionGiven(OptionComment) then
+    Check(ChangeFullName(Name, CommandLine.OptionValue(OptionComment)), Name);
+  if CommandLine.OptionGiven(OptionGroups) then
   begin
-    Groups := SplitGroupList(GroupText);
-    if Append then
+    Groups := SplitGroupList(CommandLine.OptionValue(OptionGroups));
+    if CommandLine.OptionGiven(OptionAppend) then
     begin
       Added := Groups;
       Groups := SupplementaryGroupsOf(Name);

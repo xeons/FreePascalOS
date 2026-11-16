@@ -33,16 +33,16 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: uniq [OPTION]... [INPUT [OUTPUT]]'#10 +
+  Usage = 'Usage: uniq [OPTION]... [INPUT [OUTPUT]]'#10 +
     'Filter adjacent matching lines from INPUT (or standard input),'#10 +
     'writing to OUTPUT (or standard output).'#10 +
     #10 +
@@ -113,22 +113,21 @@ begin
   Result := ComparedPart(First) = ComparedPart(Second);
 end;
 
-procedure ParseCount(Text: PChar; out Value: Int64);
+procedure ParseCount(const Text: string; out Value: Int64);
 begin
-  if not ParseInteger(Text, Value) or (Value < 0) then
-    Fail(1, 'invalid number: ''%s''', [ArgumentText(Text)]);
+  if not ParseDecimal(Text, Value) or (Value < 0) then
+    Fail(1, Format('invalid number: ''%s''', [Text]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Input: PInputStream;
   Output: POutputStream;
   OutputHandle: Int64;
   Previous: string;
   HasPrevious: Boolean;
-  LineText: PChar;
   Line: string;
   HadLineEnd: Boolean;
   RunLength: Int64;
@@ -140,21 +139,21 @@ begin
   if (OnlyRepeated and (RunLength < 2)) or (OnlyUnique and (RunLength > 1)) then
     Exit;
   if ShowCounts then
-    WriteFormatted(Output, '%7d ', [ArgumentNumber(RunLength)]);
-  WriteLine(Output, PChar(Previous));
+    WriteString(Output, Format('%7d ', [RunLength]));
+  WriteStringLine(Output, Previous);
 end;
 
 begin
   CheckCharacters := -1;
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'count', False, OptionCount),
-    OptionDefinition('d', 'repeated', False, OptionRepeated),
-    OptionDefinition('f', 'skip-fields', True, OptionSkipFields),
-    OptionDefinition('i', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('s', 'skip-chars', True, OptionSkipCharacters),
-    OptionDefinition('u', 'unique', False, OptionUnique),
-    OptionDefinition('w', 'check-chars', True, OptionCheckCharacters)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'count', False, OptionCount),
+    CommandOption('d', 'repeated', False, OptionRepeated),
+    CommandOption('f', 'skip-fields', True, OptionSkipFields),
+    CommandOption('i', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('s', 'skip-chars', True, OptionSkipCharacters),
+    CommandOption('u', 'unique', False, OptionUnique),
+    CommandOption('w', 'check-chars', True, OptionCheckCharacters)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionCount: ShowCounts := True;
       OptionRepeated: OnlyRepeated := True;
@@ -164,32 +163,30 @@ begin
       OptionUnique: OnlyUnique := True;
       OptionCheckCharacters: ParseCount(Value, CheckCharacters);
     end;
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
+  if CommandLine.OperandCount > 2 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
 
-  if Parser.OperandCount >= 1 then
-    Input := OpenInput(Parser.Operands[0])
+  if CommandLine.OperandCount >= 1 then
+    Input := OpenInput(CommandLine.Operands[0])
   else
     Input := StandardInput;
   if Input = nil then
     Halt(1);
   Output := StandardOutput;
   OutputHandle := -1;
-  if Parser.OperandCount = 2 then
+  if CommandLine.OperandCount = 2 then
   begin
-    OutputHandle := OpenFile(Parser.Operands[1], OpenWrite or OpenCreate or OpenTruncate);
+    OutputHandle := OpenFile(PChar(CommandLine.Operands[1]), OpenWrite or OpenCreate or OpenTruncate);
     if OutputHandle < 0 then
-      FailWithError(1, ErrorCodeOf(OutputHandle), '%s', [ArgumentText(Parser.Operands[1])]);
+      FailWithError(1, ErrorCodeOf(OutputHandle), CommandLine.Operands[1]);
     Output := CreateOutputStream(OutputHandle);
   end;
 
   Previous := '';
   HasPrevious := False;
   RunLength := 0;
-  while ReadLine(Input, LineText, HadLineEnd) do
+  while ReadTextLine(Input, Line, HadLineEnd) do
   begin
-    Line := LineText;
-    FreeMemory(LineText);
     if HasPrevious and LinesMatch(Previous, Line) then
     begin
       Inc(RunLength);

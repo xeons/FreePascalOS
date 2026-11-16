@@ -31,27 +31,24 @@ program yes;
 {$H+}
 
 uses
+  SysUtils,
   Sys.Streams,
-  Util.Options;
+  Util.CommandLine;
 
 const
-  Usage: PChar = 'Usage: yes [STRING]...'#10 +
+  Usage = 'Usage: yes [STRING]...'#10 +
     'Repeatedly output a line with all specified STRING(s), or ''y''.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Line: string;
-  Index: Integer;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
     Line := 'y'
   else
-  begin
-    Line := Parser.Operands[0];
-    for Index := 1 to Parser.OperandCount - 1 do
-      Line := Line + ' ' + Parser.Operands[Index];
-  end;
+    Line := String.Join(' ', CommandLine.Operands);
   Line := Line + #10;
 
   while not StandardOutput^.HadError do

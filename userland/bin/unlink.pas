@@ -24,33 +24,37 @@
 program unlink;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: unlink FILE'#10 +
+  Usage = 'Usage: unlink FILE'#10 +
     'Call the unlink function to remove the specified FILE.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
+  Path: string;
   Information: TFileInformation;
   Error: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount < 1 then
-    FailWithUsageHint('missing operand', []);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  Error := GetLinkInformation(Parser.Operands[0], Information);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount < 1 then
+    FailWithUsageHint('missing operand');
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  Path := CommandLine.Operands[0];
+  Error := GetLinkInformation(PChar(Path), Information);
   if (Error = ErrorNone) and (Information.Kind = KindDirectory) then
     Error := ErrorIsDirectory;
   if Error = ErrorNone then
-    Error := RemovePath(Parser.Operands[0]);
+    Error := RemovePath(PChar(Path));
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot unlink ''%s''', [ArgumentText(Parser.Operands[0])]);
+    FailWithError(1, Error, Format('cannot unlink ''%s''', [Path]));
 end.
