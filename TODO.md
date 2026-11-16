@@ -56,6 +56,17 @@ how the existing pieces fit together.
       (image sections, reference counted physical pages)
 - [ ] Keep relocated copies of image pages per load address, so loading a
       library needs no relocation work at all
+- [x] Heap checking in the kernel heap and every program's heap (kernel option
+      `heapchecks`, `HEAP_CHECKS`): fill patterns that make freed pointers
+      non-canonical, guards after blocks, double free detection, a quarantine
+      checked when blocks leave it; on in every test boot
+- [ ] Page heap (opt-in per program): every block on pages of its own,
+      end-aligned against an unmapped guard page, freed pages unmapped and
+      their addresses kept from reuse. Needs a reserve / commit / decommit
+      call and an address space that is not a 1024-entry region table with
+      first-fit reuse
+- [ ] Heap checking for the physical page allocator (fill freed pages, keep
+      them from reuse for a while)
 
 ## Objects and processes
 

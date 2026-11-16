@@ -43,6 +43,10 @@ procedure MoveMemory(Destination: Pointer; Source: Pointer; ByteCount: PtrUInt);
 
 function MemoryIsEqual(First: Pointer; Second: Pointer; ByteCount: PtrUInt): Boolean;
 
+{ The index of the first of ByteCount bytes that differs from Value, or
+  ByteCount if every byte equals it (checking a fill pattern). }
+function FindByteNotEqual(Start: Pointer; ByteCount: PtrUInt; Value: Byte): PtrUInt;
+
 implementation
 
 const
@@ -175,6 +179,38 @@ begin
     Inc(Index);
   end;
   Result := True;
+end;
+
+function FindByteNotEqual(Start: Pointer; ByteCount: PtrUInt; Value: Byte): PtrUInt;
+var
+  Bytes: PByte;
+  QWords: PQWord;
+  PatternQWord: QWord;
+  QWordCount: PtrUInt;
+  Index: PtrUInt;
+begin
+  Bytes := PByte(Start);
+  Index := 0;
+
+  { Whole QWords first; the byte loop below then finds which byte of a
+    differing QWord changed. }
+  if IsQWordAligned(Start) then
+  begin
+    PatternQWord := QWord(Value) * QWord($0101010101010101);
+    QWords := PQWord(Start);
+    QWordCount := ByteCount div QWordSize;
+    while (Index < QWordCount) and (QWords[Index] = PatternQWord) do
+      Inc(Index);
+    Index := Index * QWordSize;
+  end;
+
+  while Index < ByteCount do
+  begin
+    if Bytes[Index] <> Value then
+      Exit(Index);
+    Inc(Index);
+  end;
+  Result := ByteCount;
 end;
 
 end.

@@ -29,6 +29,11 @@
     kshell      Run the kernel debug shell (Kernel.DebugShell) on the
                 console before the first program starts.
     init=PATH   The first program (default: the service manager).
+    heapchecks[=fill|all|off]
+                Heap checking (Memory.HeapChecks): fill patterns, guards,
+                double free detection and, unless "fill", a quarantine
+                of freed blocks. It is also the default for user programs
+                that have no HEAP_CHECKS in their environment.
     fstest, hangdump=SECONDS, keymap=LAYOUT, root=VOLUME: see their units.
 
   User mode reads the line too (CallGetKernelOptions): the service

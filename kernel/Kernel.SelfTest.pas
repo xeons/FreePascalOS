@@ -133,12 +133,16 @@ var
   FreePagesAfterFirstRound: QWord;
 begin
   { The first round may grow the size classes; those pages are kept for
-    reuse. A second identical round must then not need any more memory. }
+    reuse. A second identical round must then not need any more memory.
+    With heap checks, freed blocks wait in a quarantine instead of being
+    reused at once: each round empties it before counting. }
   ExerciseHeapOnce;
+  FlushKernelHeapQuarantine;
   GetPhysicalMemoryStatistics(Statistics);
   FreePagesAfterFirstRound := Statistics.FreePages;
 
   ExerciseHeapOnce;
+  FlushKernelHeapQuarantine;
   GetPhysicalMemoryStatistics(Statistics);
   Check(Statistics.FreePages = FreePagesAfterFirstRound, 'kernel heap leaked physical pages');
 

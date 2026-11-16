@@ -2868,6 +2868,146 @@ goes, so a program that hangs or crashes does not lose its diagnostics
 (coretest checks the order through a pipe). Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
 
+## Heap checking
+
+Freed memory that keeps its old contents hides bugs: an object used after
+it was freed goes on working until its memory is reused, often far from the
+cause, and a test that repeats the same steps in another program may pass
+by luck. Heap checking (in the spirit of the Windows debug heap, glibc's
+`MALLOC_PERTURB_`, Linux's `slub_debug` and `init_on_free`, macOS's
+`MallocScribble` and OpenBSD's junking and delayed reuse) makes such bugs
+show where they happen, in the kernel heap and in every program's heap.
+`make test` boots every test machine with it.
+
+**Switching it on.** The kernel option `heapchecks` (or `heapchecks=all`)
+turns on everything, `heapchecks=fill` only the fill patterns, guards and
+double free detection (no quarantine), `heapchecks=off` nothing. The kernel
+heap reads it before its first allocation. User programs take the
+environment variable `HEAP_CHECKS` (same values; `1` also means all) and,
+when it is not set, the kernel option - the environment does not reach
+every program (login starts sessions with a fresh environment), the option
+does. So one option checks the kernel and every program, and
+`HEAP_CHECKS=off program` (or `HEAP_CHECKS=all program` on a system booted
+without the option) changes it for one program. The level is decided before
+anything is allocated (right after `InitHeap` in System's initialization,
+reading the environment in place and the options into a stack buffer), so
+every block of a program carries the checking header, and no block from
+before the checks can be taken for a bad one.
+
+**Patterns** (the same in the kernel and in user mode; each repeated over
+eight bytes is a non-canonical address, so a pointer read from such memory
+faults when it is followed):
+
+| Byte  | Where | Catches |
+|-------|-------|---------|
+| `$A5` | new blocks (`GetMem`, `New`, the part `ReAllocMem` adds, `AllocateKernelMemory`) | reads of memory that was never set |
+| `$DF` | freed blocks | use after free: a method call through a freed object reads the method table `$DFDFDFDFDFDFDFDF` and faults at once |
+| `$FD` | the guard after the requested bytes | writes past the end, found when the block is freed |
+
+`AllocMem`, `AllocateZeroedMemory` and `AllocateZeroedKernelMemory` still
+return zeroed memory, `ReAllocMem` keeps the contents, and objects still
+start with zeroed fields (`InitInstance`).
+
+**Quarantine.** Freed blocks wait in a first in, first out queue before
+their memory can be reused, so a stale pointer keeps finding `$DF` for a
+while, and a write through it is found when the block leaves the queue: its
+fill is checked, and a changed byte stops the program (or the system) with
+the block, its size, the offset of the first changed byte, what it holds,
+and where the block was freed. Freeing a block that is in the quarantine is
+a double free. Sizes: the kernel keeps up to 1024 small blocks or 512 KiB
+(`Memory.KernelHeapChecks`), a program up to 1024 blocks or 512 KiB
+(`rtl/fpc/sysheapquarantine.inc`); blocks over 64 KiB in user mode are
+filled and freed at once rather than pushing out everything else.
+
+**User mode** (`rtl/fpc/sysheapcheck.inc` and the include files named in
+`system.pp`): a memory manager in front of Free Pascal's heap. Every block
+gets a 16-byte header (a state - allocated, quarantined, given back - and
+the size asked for) and at least 8 guard bytes. `FreeMem`, `ReAllocMem` and
+`MemSize` check the header: a freed block or a pointer that is not a heap
+block is reported (with where it was freed before, if it is still in the
+quarantine). `MemSize` returns the size asked for. `ReAllocMem` grows a
+block in place while it fits and otherwise moves it (keeping room to grow,
+so growing step by step stays cheap) - so a pointer kept into the old block
+finds the free fill too. The quarantine has its own lock (the word lock of
+`systhrd.inc`) and is never held while the heap's lock is taken; blocks
+leaving it are checked and freed outside it. A failed check writes a report
+to standard error and, when that is not the console, to the console (which
+is the kernel log on the serial line), and ends the process at once with
+exit status 204 (Free Pascal's "invalid pointer operation"); exit
+procedures and finalizers do not run on a damaged heap:
+
+```
+heap check in /bin/heaptest (process 3070): memory was written after it was freed
+  block:     $0000100000002050, 136 bytes
+  offset:    10 holds $00 instead of $DF
+  freed at: $00007F00001B425A $0000000000402A92 $0000000000402B79 ...
+  found at: $00007F00001C0C73 ...
+```
+
+The code addresses come from the frame chain, which user code keeps for
+this (`-OoNOSTACKFRAME` in `userland.mk`; it also gives the backtrace after
+a runtime error). Program addresses can be looked up with
+`addr2line -f -e build/amd64/user/bin/PROGRAM`; library addresses
+(`$00007F...`) are relative to the library's load address (libraries are
+placed one after another from `$00007F0000000000` in load order, libsystem
+first).
+
+A use after free usually needs no report: the program faults at once. The
+processor raises a general protection fault, not a page fault, for a
+non-canonical address, so the kernel looks at the faulting instruction
+(`Kernel.Arch.PrivilegedInstructions`): only a privileged instruction is
+reported as one (runtime error 218); anything else is an access violation
+(runtime error 216, `EAccessViolation`), like any other bad pointer.
+
+**Kernel** (`Memory.HeapChecks` for the setting, patterns and reports,
+`Memory.KernelHeapChecks` for the checks of the kernel heap,
+`Memory.HeapQuarantine` for the queue):
+
+- Small blocks (up to 2 KiB) get the full treatment. The header's
+  `RequestedBytes` marks where the guard starts. A free block always holds
+  `$DF`: pages carved into blocks are filled, freed blocks are filled, and a
+  block is checked again when it is handed out, so even a write long after
+  the block left the quarantine is found at the next allocation. The
+  header's magic tells allocated, quarantined and free blocks apart; freeing
+  a quarantined or free block is a double free.
+- Large blocks (their own mapped pages) are filled with `$A5` when
+  allocated. Their pages are unmapped when they are freed, so a stale
+  pointer faults; with the quarantine their address range waits too (up to
+  256 ranges, 4 GiB of the 1 TiB dynamic region), so nothing is mapped there
+  again soon. They have no guard.
+- Reports are panics (`PanicHeapCorruption`) naming the problem, the block,
+  its size, the offset and byte found, and the code that freed the block
+  (`FreeKernelMemory` keeps a frame to find its return address; look it up
+  with `addr2line -f -e build/amd64/kernel.elf`).
+- The heap may be used at dispatch level, so the quarantine is a fixed
+  table under a spin lock of its own (no memory of its own, no sleeping);
+  the heap lock and the quarantine lock are never held together.
+- Not covered: the physical page allocator (`Memory.PhysicalPages`: page
+  tables, DMA buffers, user pages, kernel stacks - stacks have guard pages
+  of their own), device mappings, and memory programs allocate with system
+  calls directly (the heap's own chunks, threadvar blocks, sections). DMA
+  buffers come from the page allocator, so filling heap blocks never changes
+  memory a device is using; a device that writes into a freed heap block is
+  caught as a write after free.
+
+**Tests.** `heaptest` checks the promises (fills, zeroed memory,
+`ReAllocMem`, `MemSize`, threads allocating at once) and makes each mistake
+on purpose in a child process: coretest checks that a use after free ends
+with runtime error 216 and that a write after free, a double free and a
+write past the end end with status 204 and the right report. With the
+quarantine on, the kernel self test `Kernel.HeapCheckTest` damages blocks
+on purpose and checks that the functions the heap uses before it panics
+find the damage at the right offset (then repairs it). The test scripts
+fail when the log shows a heap check report from any other program, and
+`Kernel.SelfTest`'s heap test empties the quarantine before it counts
+pages.
+
+**Not done:** a page heap (each block on its own pages, end-aligned against
+an unmapped guard page, freed pages unmapped). User address spaces are a
+sorted table of at most 1024 regions with first-fit reuse, so a region per
+block would neither fit nor keep freed addresses unused; it needs a reserve
+/ commit / decommit system call first (see TODO.md).
+
 ## Diagnosing hangs
 
 With the kernel option `hangdump=SECONDS`, a system thread

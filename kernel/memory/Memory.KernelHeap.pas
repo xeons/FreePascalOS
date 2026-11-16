@@ -31,6 +31,14 @@
   which lets FreeKernelMemory work with nothing but the pointer and catch
   double frees and stray pointers.
 
+  With the kernel option "heapchecks" (Memory.HeapChecks) blocks are
+  filled when they are allocated and when they are freed, small blocks
+  carry a guard after the requested bytes, and freed small blocks wait
+  in a quarantine before they are reused (Memory.KernelHeapChecks). A
+  large block's pages are unmapped when it is freed, so a stale pointer
+  faults; with the quarantine its address range waits too, so that
+  nothing is mapped there again soon.
+
   The allocator may be called at or below DispatchLevel.
 }
 unit Memory.KernelHeap;
@@ -47,6 +55,10 @@ function AllocateKernelMemory(ByteCount: QWord): Pointer;
 function AllocateZeroedKernelMemory(ByteCount: QWord): Pointer;
 procedure FreeKernelMemory(Block: Pointer);
 
+{ Checks and releases every block and address range waiting in the heap
+  check quarantine, so that a measurement sees nothing held back. }
+procedure FlushKernelHeapQuarantine;
+
 procedure WriteKernelHeapSummary;
 
 implementation
@@ -58,33 +70,16 @@ uses
   Memory.VirtualRanges,
   Memory.PageMapping,
   Memory.Arch.PageTables,
+  Memory.HeapChecks,
+  Memory.KernelHeapBlocks,
+  Memory.KernelHeapChecks,
+  Kernel.Arch.Cpu,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Panic,
   Debug.Output;
 
-const
-  SizeClassCount = 7;
-  SizeClassBytes: array[0..SizeClassCount - 1] of QWord = (32, 64, 128, 256, 512, 1024, 2048);
-  LargestSmallBlock = 2048;
-
-  HeaderMagicSmallAllocated = LongWord($AB5A110C);
-  HeaderMagicLargeAllocated = LongWord($AB1A110C);
-  HeaderMagicFree = LongWord($AB0FF4EE);
-
 type
-  { Exactly 16 bytes so that the memory after it stays 16-byte aligned. }
-  TBlockHeader = record
-    Magic: LongWord;
-    SizeClass: LongWord;
-    { For large blocks: number of mapped pages. For free small blocks:
-      the next free block in the same class. }
-    case Boolean of
-      False: (PageCount: QWord);
-      True: (NextFree: Pointer);
-  end;
-  PBlockHeader = ^TBlockHeader;
-
   TSizeClass = record
     FreeList: PBlockHeader;
     BlocksInUse: QWord;
@@ -97,11 +92,26 @@ var
   LargeAllocationCount: QWord;
   LargeAllocationPages: QWord;
 
+procedure WriteHeapCheckLevel;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('heap');
+  DebugWrite('heap checks: ');
+  DebugWriteLine(HeapCheckLevelName(KernelHeapCheckLevel));
+  DebugEndMessage;
+end;
+
 procedure InitializeKernelHeap;
 var
   ClassIndex: Integer;
 begin
   InitializeSpinLock(HeapLock);
+  { Decided before the first allocation, so that every block is handled
+    the same way from allocation to free. }
+  InitializeHeapChecks;
+  InitializeKernelHeapQuarantine;
+  if KernelHeapCheckLevel <> HeapChecksOff then
+    WriteHeapCheckLevel;
   for ClassIndex := 0 to SizeClassCount - 1 do
   begin
     SizeClasses[ClassIndex].FreeList := nil;
@@ -124,6 +134,18 @@ begin
   Result := -1;
 end;
 
+{ Puts a small block on its class's free list. Called with the heap
+  lock held. }
+procedure PushFreeSmallBlock(Block: PBlockHeader);
+var
+  ClassIndex: LongWord;
+begin
+  ClassIndex := Block^.SizeClass;
+  Block^.Magic := HeaderMagicFree;
+  Block^.NextFree := SizeClasses[ClassIndex].FreeList;
+  SizeClasses[ClassIndex].FreeList := Block;
+end;
+
 { Splits a fresh page into blocks for the class. Called with the heap
   lock held. }
 function RefillSizeClass(ClassIndex: Integer): Boolean;
@@ -144,10 +166,10 @@ begin
   while Offset + BlockSize <= PageSize do
   begin
     Block := PBlockHeader(PageStart + Offset);
-    Block^.Magic := HeaderMagicFree;
     Block^.SizeClass := LongWord(ClassIndex);
-    Block^.NextFree := SizeClasses[ClassIndex].FreeList;
-    SizeClasses[ClassIndex].FreeList := Block;
+    if KernelHeapCheckLevel <> HeapChecksOff then
+      FillNewFreeBlock(Block);
+    PushFreeSmallBlock(Block);
     Offset := Offset + BlockSize;
   end;
 
@@ -155,7 +177,7 @@ begin
   Result := True;
 end;
 
-function AllocateSmallBlock(ClassIndex: Integer): Pointer;
+function AllocateSmallBlock(ClassIndex: Integer; ByteCount: QWord): Pointer;
 var
   PreviousLevel: TPriorityLevel;
   Block: PBlockHeader;
@@ -179,11 +201,15 @@ begin
   SizeClasses[ClassIndex].FreeList := Block^.NextFree;
   Inc(SizeClasses[ClassIndex].BlocksInUse);
 
+  if KernelHeapCheckLevel <> HeapChecksOff then
+    CheckFreeBlockBeforeReuse(Block);
   Block^.Magic := HeaderMagicSmallAllocated;
-  Block^.PageCount := 0;
+  Block^.RequestedBytes := ByteCount;
 
   ReleaseSpinLock(HeapLock, PreviousLevel);
-  Result := Pointer(Block + 1);
+  if KernelHeapCheckLevel <> HeapChecksOff then
+    FillNewSmallBlock(Block);
+  Result := BlockData(Block);
 end;
 
 { Allocates PageCount pages of virtual space backed by physical pages.
@@ -227,7 +253,12 @@ begin
   LargeAllocationPages := LargeAllocationPages + PageCount;
   ReleaseSpinLock(HeapLock, PreviousLevel);
 
-  Result := Pointer(Block + 1);
+  { The pages come zeroed; with heap checks they hold junk instead, as
+    small blocks do. }
+  if KernelHeapCheckLevel <> HeapChecksOff then
+    FillMemory(BlockData(Block), PageCount * PageSize - SizeOf(TBlockHeader), HeapAllocationFill);
+
+  Result := BlockData(Block);
 end;
 
 function AllocateKernelMemory(ByteCount: QWord): Pointer;
@@ -242,7 +273,7 @@ begin
   if TotalBytes <= LargestSmallBlock then
   begin
     ClassIndex := SizeClassFor(TotalBytes);
-    Result := AllocateSmallBlock(ClassIndex);
+    Result := AllocateSmallBlock(ClassIndex, ByteCount);
   end
   else
     Result := AllocateLargeBlock(TotalBytes);
@@ -255,22 +286,50 @@ begin
     ZeroMemory(Result, ByteCount);
 end;
 
-procedure FreeSmallBlock(Block: PBlockHeader);
+procedure CheckSizeClass(Block: PBlockHeader);
+begin
+  if Block^.SizeClass >= SizeClassCount then
+    KernelPanicWithCode(PanicHeapCorruption, 'kernel heap block has an invalid size class',
+      QWord(Block), Block^.SizeClass, 0, 0);
+end;
+
+{ Puts a chain of blocks (linked through NextFree) back on their free
+  lists. }
+procedure PushFreeSmallBlocks(Chain: PBlockHeader);
 var
   PreviousLevel: TPriorityLevel;
-  ClassIndex: LongWord;
+  Next: PBlockHeader;
 begin
-  ClassIndex := Block^.SizeClass;
-  if ClassIndex >= SizeClassCount then
-    KernelPanicWithCode(PanicHeapCorruption, 'kernel heap block has an invalid size class',
-      QWord(Block), ClassIndex, 0, 0);
+  if Chain = nil then
+    Exit;
+  PreviousLevel := AcquireSpinLock(HeapLock);
+  while Chain <> nil do
+  begin
+    Next := Chain^.NextFree;
+    PushFreeSmallBlock(Chain);
+    Chain := Next;
+  end;
+  ReleaseSpinLock(HeapLock, PreviousLevel);
+end;
+
+procedure FreeSmallBlock(Block: PBlockHeader; Caller: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  CheckSizeClass(Block);
+  if KernelHeapCheckLevel <> HeapChecksOff then
+    PrepareFreedSmallBlock(Block, Caller);
 
   PreviousLevel := AcquireSpinLock(HeapLock);
-  Block^.Magic := HeaderMagicFree;
-  Block^.NextFree := SizeClasses[ClassIndex].FreeList;
-  SizeClasses[ClassIndex].FreeList := Block;
-  Dec(SizeClasses[ClassIndex].BlocksInUse);
+  Dec(SizeClasses[Block^.SizeClass].BlocksInUse);
+  if KernelHeapCheckLevel <> HeapChecksQuarantine then
+    PushFreeSmallBlock(Block);
   ReleaseSpinLock(HeapLock, PreviousLevel);
+
+  { With the quarantine the block waits, and the oldest waiting blocks
+    are reused instead. }
+  if KernelHeapCheckLevel = HeapChecksQuarantine then
+    PushFreeSmallBlocks(QuarantineSmallBlock(Block, Caller));
 end;
 
 procedure FreeLargeBlock(Block: PBlockHeader);
@@ -289,30 +348,45 @@ begin
   ReleaseSpinLock(HeapLock, PreviousLevel);
 
   UnmapAndFreePages(StartAddress, PageCount);
-  FreeVirtualRange(StartAddress, PageCount);
+  if KernelHeapCheckLevel = HeapChecksQuarantine then
+    QuarantineAddressRange(StartAddress, PageCount)
+  else
+    FreeVirtualRange(StartAddress, PageCount);
 end;
 
+{ Built with a frame (rbp chain) so that it can find its return
+  address. }
+{$push}
+{$stackframes on}
 procedure FreeKernelMemory(Block: Pointer);
 var
   Header: PBlockHeader;
+  Caller: QWord;
 begin
   if Block = nil then
     Exit;
 
+  { The return address in this procedure's frame: who freed the block,
+    for the heap check reports. }
+  Caller := PQWord(ReadFramePointer + SizeOf(QWord))^;
   Header := PBlockHeader(Block) - 1;
   case Header^.Magic of
     HeaderMagicSmallAllocated:
-      FreeSmallBlock(Header);
+      FreeSmallBlock(Header, Caller);
     HeaderMagicLargeAllocated:
       FreeLargeBlock(Header);
-    HeaderMagicFree:
-      KernelPanicWithCode(PanicHeapCorruption, 'kernel memory freed twice',
-        QWord(Block), 0, 0, 0);
+    HeaderMagicFree, HeaderMagicQuarantined:
+      ReportDoubleFree(Block, Header^.Magic, Caller);
   else
-    KernelPanicWithCode(PanicHeapCorruption,
-      'freeing a pointer that did not come from the kernel heap',
-      QWord(Block), Header^.Magic, 0, 0);
+    ReportBadFree('freeing a pointer that did not come from the kernel heap',
+      Block, Header^.Magic, Caller, 0);
   end;
+end;
+{$pop}
+
+procedure FlushKernelHeapQuarantine;
+begin
+  PushFreeSmallBlocks(ReleaseWholeQuarantine);
 end;
 
 procedure WriteKernelHeapSummary;
@@ -339,6 +413,8 @@ begin
   DebugWrite(' large allocations in ');
   DebugWriteDecimal(LargeAllocationPages);
   DebugWriteLine(' pages');
+  if KernelHeapCheckLevel = HeapChecksQuarantine then
+    WriteKernelHeapQuarantineSummary;
   DebugEndMessage;
 end;
 

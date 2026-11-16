@@ -49,7 +49,7 @@ shutil.rmtree(work, ignore_errors=True)
 os.makedirs(work)
 shutil.copytree(esp_directory, os.path.join(work, 'esp'))
 with open(os.path.join(work, 'esp', 'FreePascalOS', 'options.txt'), 'w') as options:
-    options.write('test-exit kshell mode=text autologin=root\n')
+    options.write('test-exit kshell mode=text autologin=root heapchecks\n')
 shutil.copy(system_disk, os.path.join(work, 'system.img'))
 
 firmware_code = '/usr/share/edk2/x64/OVMF_CODE.4m.fd'
@@ -1679,6 +1679,13 @@ for name, expected in (('hda', '1000:0.5'), ('ac97', '700:0.5'), ('usb', '500:0.
 counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)
 checks.append(('keys came from the PS/2 and the USB keyboard',
                counts is not None and int(counts.group(1)) > 0 and int(counts.group(2)) > 0))
+
+# Every program checks its heap (the kernel option heapchecks); a failed
+# check is reported on the console.
+heap_reports = re.findall(rb'heap check in [^\r\n]*', bytes(received))
+checks.append(('no heap check failed' + ''.join('\n    ' + report.decode(errors='replace')
+                                                 for report in heap_reports),
+               not heap_reports))
 
 failed = False
 for name, passed in checks:

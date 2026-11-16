@@ -48,7 +48,7 @@ shutil.rmtree(work, ignore_errors=True)
 os.makedirs(work)
 shutil.copytree(esp_directory, os.path.join(work, 'esp'))
 with open(os.path.join(work, 'esp', 'FreePascalOS', 'options.txt'), 'w') as options:
-    options.write('autologin=user\n')
+    options.write('autologin=user heapchecks\n')
 shutil.copy(system_disk, os.path.join(work, 'system.img'))
 
 firmware_code = '/usr/share/edk2/x64/OVMF_CODE.4m.fd'
@@ -393,6 +393,13 @@ checks.append(('Shut down stops the services in order and powers off',
                re.search(rb'stopped session.*stopping displayserver.*stopped displayserver.*every service has stopped',
                          everything, re.S) is not None and
                b'entering S5' in everything))
+
+# Every program checks its heap (the kernel option heapchecks); a failed
+# check is reported on the console.
+heap_reports = re.findall(rb'heap check in [^\r\n]*', bytes(received))
+checks.append(('no heap check failed' + ''.join('\n    ' + report.decode(errors='replace')
+                                                 for report in heap_reports),
+               not heap_reports))
 
 failed = False
 for name, passed in checks:

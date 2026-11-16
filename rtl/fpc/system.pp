@@ -30,6 +30,9 @@
     sysosh.inc    platform types (handles, critical sections, ...)
     sysos.inc     the system call itself and error codes
     sysheap.inc   memory for the heap manager
+    sysheapcheck.inc  heap checking (HEAP_CHECKS), with
+                  sysheapchecklevel.inc, sysheapcheckreport.inc and
+                  sysheapquarantine.inc
     sysfile.inc   file handles: open, read, write, seek, ...
     sysdir.inc    directories
     systhrd.inc   the thread manager
@@ -152,6 +155,11 @@ procedure ContinueAtContext(Context: Pointer); noreturn;
 procedure OsSetupEntryInformation(constref Information: TEntryInformation); forward;
 
 {$I system.inc}
+
+{$I sysheapchecklevel.inc}
+{$I sysheapcheckreport.inc}
+{$I sysheapquarantine.inc}
+{$I sysheapcheck.inc}
 
 {*****************************************************************************
                                 Entry and exit
@@ -397,6 +405,9 @@ begin
   StackLength := CheckInitialStkLen(MainStackSize);
   StackBottom := InitialStackPointer - StackLength;
   InitHeap;
+  { Before the first allocation: every block then has the checking
+    heap's header, or none has. }
+  InitHeapChecks;
   SysInitExceptions;
   InitUnicodeStringManager;
   { Text is UTF-8 everywhere: file names, the console, files. }

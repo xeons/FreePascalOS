@@ -63,12 +63,13 @@ done
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
 # With a system disk the user mode test program runs as the first
-# process; its exit code decides the result.
+# process; its exit code decides the result. heapchecks: the kernel heap
+# and every program check their heap (fill patterns, guards, quarantine).
 if [[ -n "${system_disk_image:-}" ]]; then
     # hangdump: if the tests stop making progress, the log shows why.
-    echo "test-exit fstest init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
 else
-    echo "test-exit fstest" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest heapchecks" > "$test_esp_directory/FreePascalOS/options.txt"
 fi
 
 firmware_variables="$build_directory/test-OVMF_VARS.fd"
@@ -210,8 +211,22 @@ if [[ -n "$test_disk_image" ]]; then
     done
 fi
 
+# A heap check that failed in a program (the report goes to the console)
+# fails the test, unless it was one of the mistakes heaptest makes on
+# purpose.
+unexpected_heap_reports=$(grep 'heap check in ' "$serial_log" | grep -v 'heap check in [^ ]*heaptest ')
+
 case "$qemu_status" in
     1)
+        if [[ -n "$unexpected_heap_reports" ]]; then
+            echo "TEST FAILED: heap checks failed in user mode:"
+            echo "$unexpected_heap_reports"
+            exit 1
+        fi
+        if ! grep -q 'kernel heap checks: .*passed' "$serial_log"; then
+            echo "TEST FAILED: the kernel heap check self test did not run"
+            exit 1
+        fi
         if (( ${#missing_file_systems[@]} > 0 )); then
             echo "TEST FAILED: no passing file system test for: ${missing_file_systems[*]}"
             exit 1
