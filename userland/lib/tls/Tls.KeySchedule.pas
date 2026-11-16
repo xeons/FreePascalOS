@@ -42,6 +42,7 @@
 unit Tls.KeySchedule;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -65,10 +66,10 @@ type
 
 { HKDF-Expand-Label(Secret, Label, Context, Length) with "tls13 " put
   before Label. }
-procedure ExpandLabel(Hash: TDigestAlgorithm; Secret: PByte; Label_: PChar; Context: PByte; ContextLength: Integer;
+procedure ExpandLabel(Hash: TDigestAlgorithm; Secret: PByte; const Label_: string; Context: PByte; ContextLength: Integer;
   Output: PByte; OutputLength: Integer);
 { Derive-Secret with a transcript hash already computed. }
-procedure DeriveSecret(Hash: TDigestAlgorithm; Secret: PByte; Label_: PChar; TranscriptHash: PByte;
+procedure DeriveSecret(Hash: TDigestAlgorithm; Secret: PByte; const Label_: string; TranscriptHash: PByte;
   out Output: TTlsSecret);
 
 procedure BeginKeySchedule(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm);
@@ -96,32 +97,24 @@ uses
   Crypto.Hmac;
 
 const
-  LabelPrefix: PChar = 'tls13 ';
+  LabelPrefix = 'tls13 ';
 
-function TextLength(Text: PChar): Integer;
-begin
-  Result := 0;
-  while Text[Result] <> #0 do
-    Inc(Result);
-end;
-
-procedure ExpandLabel(Hash: TDigestAlgorithm; Secret: PByte; Label_: PChar; Context: PByte; ContextLength: Integer;
+procedure ExpandLabel(Hash: TDigestAlgorithm; Secret: PByte; const Label_: string; Context: PByte; ContextLength: Integer;
   Output: PByte; OutputLength: Integer);
 var
   HkdfLabel: array[0..2 + 1 + 255 + 1 + 255 - 1] of Byte;
   Position: Integer;
-  PrefixLength, LabelLength: Integer;
+  FullLabel: string;
+  LabelLength: Integer;
 begin
-  PrefixLength := TextLength(LabelPrefix);
-  LabelLength := TextLength(Label_);
+  FullLabel := LabelPrefix + Label_;
+  LabelLength := Length(FullLabel);
   (* struct { uint16 length; opaque label<7..255>; opaque context<0..255>; } *)
   HkdfLabel[0] := Byte(OutputLength shr 8);
   HkdfLabel[1] := Byte(OutputLength);
-  HkdfLabel[2] := Byte(PrefixLength + LabelLength);
+  HkdfLabel[2] := Byte(LabelLength);
   Position := 3;
-  Move(LabelPrefix^, HkdfLabel[Position], PrefixLength);
-  Position := Position + PrefixLength;
-  Move(Label_^, HkdfLabel[Position], LabelLength);
+  Move(FullLabel[1], HkdfLabel[Position], LabelLength);
   Position := Position + LabelLength;
   HkdfLabel[Position] := Byte(ContextLength);
   Inc(Position);
@@ -131,7 +124,7 @@ begin
   HkdfExpand(Hash, Secret, QWord(DigestSize(Hash)), @HkdfLabel[0], QWord(Position), Output, QWord(OutputLength));
 end;
 
-procedure DeriveSecret(Hash: TDigestAlgorithm; Secret: PByte; Label_: PChar; TranscriptHash: PByte;
+procedure DeriveSecret(Hash: TDigestAlgorithm; Secret: PByte; const Label_: string; TranscriptHash: PByte;
   out Output: TTlsSecret);
 begin
   FillChar(Output, SizeOf(Output), 0);

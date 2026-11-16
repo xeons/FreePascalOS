@@ -34,6 +34,7 @@
 unit Tls.Certificates;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -110,13 +111,16 @@ const
 function ParseCertificate(Data: PByte; Length: PtrUInt; out Certificate: PTlsCertificate): LongInt;
 procedure FreeCertificate(var Certificate: PTlsCertificate);
 
-{ Copies a common name into Buffer as text ("?" for characters outside
-  printable ASCII); "(no common name)" when there is none. }
+{ A common name as text ("?" for characters outside printable ASCII);
+  "(no common name)" when there is none. }
+function CommonNameText(constref Name: TTlsByteRange): string;
+{ The same into a buffer of Capacity characters (cut short to fit). }
 procedure FormatCommonName(constref Name: TTlsByteRange; Buffer: PChar; Capacity: PtrUInt);
 
 implementation
 
 uses
+  SysUtils,
   Crypto.Bits,
   Tls.Asn1,
   Tls.Errors,
@@ -538,37 +542,29 @@ begin
   Certificate := nil;
 end;
 
-procedure FormatCommonName(constref Name: TTlsByteRange; Buffer: PChar; Capacity: PtrUInt);
-const
-  NoName: PChar = '(no common name)';
+function CommonNameText(constref Name: TTlsByteRange): string;
 var
   Index: PtrUInt;
   Character: Byte;
 begin
-  if Capacity = 0 then
-    Exit;
   if Name.Length = 0 then
-  begin
-    Index := 0;
-    while (NoName[Index] <> #0) and (Index + 1 < Capacity) do
-    begin
-      Buffer[Index] := NoName[Index];
-      Inc(Index);
-    end;
-    Buffer[Index] := #0;
-    Exit;
-  end;
-  Index := 0;
-  while (Index < Name.Length) and (Index + 1 < Capacity) do
+    Exit('(no common name)');
+  SetLength(Result, Name.Length);
+  for Index := 0 to Name.Length - 1 do
   begin
     Character := Name.Data[Index];
     if (Character >= 32) and (Character < 127) then
-      Buffer[Index] := Chr(Character)
+      Result[Index + 1] := Chr(Character)
     else
-      Buffer[Index] := '?';
-    Inc(Index);
+      Result[Index + 1] := '?';
   end;
-  Buffer[Index] := #0;
+end;
+
+procedure FormatCommonName(constref Name: TTlsByteRange; Buffer: PChar; Capacity: PtrUInt);
+begin
+  if Capacity = 0 then
+    Exit;
+  StrPLCopy(Buffer, CommonNameText(Name), Capacity - 1);
 end;
 
 end.

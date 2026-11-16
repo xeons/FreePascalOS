@@ -37,6 +37,7 @@
 unit Tls.Client;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -61,18 +62,21 @@ function TlsLastError(Connection: PTlsConnection): LongInt;
 { The error in words, with the server's alert and the certificate or
   host it is about: "the certificate has expired (certificate:
   example.com)". }
+function TlsErrorDescription(Connection: PTlsConnection; Error: LongInt): string;
+{ The same into a buffer of Capacity characters (cut short to fit). }
 function TlsDescribeError(Connection: PTlsConnection; Error: LongInt; Buffer: PChar; Capacity: PtrUInt): PChar;
 { With VerifyCertificates off: what the check would have refused. }
 function TlsIgnoredCertificateError(Connection: PTlsConnection): LongInt;
-function TlsCipherSuiteName(Connection: PTlsConnection): PChar;
+function TlsCipherSuiteName(Connection: PTlsConnection): string;
 { The ALPN protocol the server chose, or ''. }
-function TlsSelectedProtocol(Connection: PTlsConnection): PChar;
+function TlsSelectedProtocol(Connection: PTlsConnection): string;
 { True when the stream ended with the server's close_notify. }
 function TlsClosedCleanly(Connection: PTlsConnection): Boolean;
 
 implementation
 
 uses
+  SysUtils,
   Tls.ByteBuffers,
   Tls.Constants,
   Tls.Errors,
@@ -88,7 +92,7 @@ begin
   Connection := nil;
   if (Transport.Send = nil) or (Transport.Receive = nil) then
     Exit(TlsErrorInvalidArgument);
-  if (Options.ServerName = nil) or (Options.ServerName[0] = #0) then
+  if Options.ServerName = '' then
     Exit(TlsErrorInvalidArgument);
   Connection := AllocateConnection(Transport, Options);
   if Connection = nil then
@@ -270,43 +274,23 @@ begin
   Result := Connection^.Error;
 end;
 
-procedure AppendText(Buffer: PChar; Capacity: PtrUInt; var Position: PtrUInt; Text: PChar);
-var
-  Index: PtrUInt;
+function TlsErrorDescription(Connection: PTlsConnection; Error: LongInt): string;
 begin
-  Index := 0;
-  while (Text[Index] <> #0) and (Position + 1 < Capacity) do
-  begin
-    Buffer[Position] := Text[Index];
-    Inc(Position);
-    Inc(Index);
-  end;
-  Buffer[Position] := #0;
+  Result := TlsErrorMessage(Error);
+  if Connection = nil then
+    Exit;
+  if (Error = TlsErrorAlertReceived) and (Connection^.ReceivedAlert >= 0) then
+    Result := Result + ': ' + TlsAlertName(Connection^.ReceivedAlert);
+  if TlsErrorIsCertificateError(Error) and (Connection^.ErrorDetail <> '') then
+    Result := Result + ' (' + Connection^.ErrorDetail + ')';
 end;
 
 function TlsDescribeError(Connection: PTlsConnection; Error: LongInt; Buffer: PChar; Capacity: PtrUInt): PChar;
-var
-  Position: PtrUInt;
 begin
   Result := Buffer;
   if Capacity = 0 then
     Exit;
-  Position := 0;
-  Buffer[0] := #0;
-  AppendText(Buffer, Capacity, Position, TlsErrorMessage(Error));
-  if Connection = nil then
-    Exit;
-  if (Error = TlsErrorAlertReceived) and (Connection^.ReceivedAlert >= 0) then
-  begin
-    AppendText(Buffer, Capacity, Position, ': ');
-    AppendText(Buffer, Capacity, Position, TlsAlertName(Connection^.ReceivedAlert));
-  end;
-  if TlsErrorIsCertificateError(Error) and (Connection^.ErrorDetail[0] <> #0) then
-  begin
-    AppendText(Buffer, Capacity, Position, ' (');
-    AppendText(Buffer, Capacity, Position, @Connection^.ErrorDetail[0]);
-    AppendText(Buffer, Capacity, Position, ')');
-  end;
+  StrPLCopy(Buffer, TlsErrorDescription(Connection, Error), Capacity - 1);
 end;
 
 function TlsIgnoredCertificateError(Connection: PTlsConnection): LongInt;
@@ -316,18 +300,18 @@ begin
   Result := Connection^.IgnoredCertificateError;
 end;
 
-function TlsCipherSuiteName(Connection: PTlsConnection): PChar;
-begin
-  if (Connection = nil) or (Connection^.Suite.Name = nil) then
-    Exit('');
-  Result := Connection^.Suite.Name;
-end;
-
-function TlsSelectedProtocol(Connection: PTlsConnection): PChar;
+function TlsCipherSuiteName(Connection: PTlsConnection): string;
 begin
   if Connection = nil then
     Exit('');
-  Result := @Connection^.SelectedProtocol[0];
+  Result := string(Connection^.Suite.Name);
+end;
+
+function TlsSelectedProtocol(Connection: PTlsConnection): string;
+begin
+  if Connection = nil then
+    Exit('');
+  Result := Connection^.SelectedProtocol;
 end;
 
 function TlsClosedCleanly(Connection: PTlsConnection): Boolean;

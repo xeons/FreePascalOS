@@ -54,6 +54,7 @@ uses
   Tls.RecordLayer,
   Tls.Handshake,
   Tls.Client,
+  Tls.ClientConnections,
   Tls.SocketTransport,
   Tls.SystemTrust,
   Tls.Sessions;
