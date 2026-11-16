@@ -28,6 +28,12 @@
   The session manager runs as root and reads the user's settings in
   their home (Configuration.Locations.OpenSettingsOfHome); it never
   writes them.
+
+  While a user is logged in (or the login window shows) it watches the
+  settings it handed over (Configuration.Watcher, in the message loop):
+  when the user changes them - their own programs, the settings tool -
+  or the system's change under them, the display server is given them
+  again at once ("user changed the mouse settings: speed 12, ...").
 }
 unit Session.UserSettings;
 
@@ -48,6 +54,9 @@ uses
   SysUtils,
   Configuration.Settings,
   Configuration.Locations,
+  Configuration.Changes,
+  Configuration.Watcher,
+  Windowing.SettingsChanges,
   Windowing.MouseSettings,
   Windowing.KeyboardSettings,
   Sys.Keyboard,
@@ -55,8 +64,57 @@ uses
 
 const
   OnOff: array[Boolean] of string = ('off', 'on');
+  MouseGroup = 'Mouse';
+  KeyboardGroup = 'Keyboard';
 
-procedure ApplyMouseSettings(Store: TSettings; const Whose: string);
+type
+  { Applies the watched settings again when they change. }
+  TSettingsFollower = class
+  public
+    Whose: string;
+    procedure GroupChanged(const Group: string; const Changes: TSettingChanges);
+  end;
+
+var
+  Follower: TSettingsFollower;
+  Watching: TLoopSettingsWatcher;
+
+procedure ApplyMouseSettings(Store: TSettings; const Whose: string; Changed: Boolean); forward;
+procedure ApplyKeyboardSettings(Store: TSettings; const Whose: string; Changed: Boolean); forward;
+
+procedure TSettingsFollower.GroupChanged(const Group: string; const Changes: TSettingChanges);
+begin
+  if Group = MouseGroup then
+    ApplyMouseSettings(Watching.Watcher.Settings, Whose, True)
+  else if Group = KeyboardGroup then
+    ApplyKeyboardSettings(Watching.Watcher.Settings, Whose, True);
+end;
+
+{ "mouse settings of NAME", or "NAME changed the mouse settings" when
+  they changed while in use. }
+function SettingsOf(const What, Whose: string; Changed: Boolean): string;
+begin
+  if Changed then
+    Result := Whose + ' changed the ' + What + ' settings'
+  else
+    Result := What + ' settings of ' + Whose;
+end;
+
+{ Watches the settings Watcher reads from now on (instead of any it
+  watched before). }
+procedure FollowSettings(Watcher: TSettingsWatcher; const Whose: string);
+begin
+  Watching.Free;
+  if Follower = nil then
+    Follower := TSettingsFollower.Create;
+  Follower.Whose := Whose;
+  Watcher.OnChanged := @Follower.GroupChanged;
+  Watcher.Watch(MouseGroup);
+  Watcher.Watch(KeyboardGroup);
+  Watching := TLoopSettingsWatcher.Create(Watcher, True);
+end;
+
+procedure ApplyMouseSettings(Store: TSettings; const Whose: string; Changed: Boolean);
 var
   Wanted: TMouseSettings;
   Applied: TMouseSettings;
@@ -67,11 +125,11 @@ begin
     Say('the display server did not take the mouse settings of ' + Whose);
     Exit;
   end;
-  Say(Format('mouse settings of %s: speed %d, acceleration %d, left-handed %s',
-    [Whose, Applied.Speed, Applied.Acceleration, OnOff[Applied.LeftHanded]]));
+  Say(Format('%s: speed %d, acceleration %d, left-handed %s',
+    [SettingsOf('mouse', Whose, Changed), Applied.Speed, Applied.Acceleration, OnOff[Applied.LeftHanded]]));
 end;
 
-procedure ApplyKeyboardSettings(Store: TSettings; const Whose: string);
+procedure ApplyKeyboardSettings(Store: TSettings; const Whose: string; Changed: Boolean);
 var
   Wanted: TKeyboardSettings;
   Applied: TKeyboardSettings;
@@ -82,8 +140,8 @@ begin
     Say('the display server did not take the keyboard settings of ' + Whose);
     Exit;
   end;
-  Say(Format('keyboard settings of %s: layout %s, repeat delay %d, rate %d',
-    [Whose, Applied.Layout, Applied.RepeatDelay, Applied.RepeatRate]));
+  Say(Format('%s: layout %s, repeat delay %d, rate %d',
+    [SettingsOf('keyboard', Whose, Changed), Applied.Layout, Applied.RepeatDelay, Applied.RepeatRate]));
 end;
 
 procedure ApplyUserSettings(const Name, Home: string);
@@ -91,9 +149,10 @@ var
   Store: TSettings;
 begin
   Store := OpenSettingsOfHome(Home);
-  ApplyMouseSettings(Store, Name);
-  ApplyKeyboardSettings(Store, Name);
+  ApplyMouseSettings(Store, Name, False);
+  ApplyKeyboardSettings(Store, Name, False);
   Store.Free;
+  FollowSettings(OpenSettingsWatcherOfHome(Home), Name);
 end;
 
 procedure ApplySystemSettings;
@@ -101,9 +160,14 @@ var
   Store: TSettings;
 begin
   Store := OpenSystemSettings;
-  ApplyMouseSettings(Store, 'the system');
-  ApplyKeyboardSettings(Store, 'the system');
+  ApplyMouseSettings(Store, 'the system', False);
+  ApplyKeyboardSettings(Store, 'the system', False);
   Store.Free;
+  FollowSettings(OpenSystemSettingsWatcher, 'the system');
 end;
+
+finalization
+  Watching.Free;
+  Follower.Free;
 
 end.

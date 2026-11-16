@@ -28,7 +28,10 @@
   composed with the pointer on the desktop, the input routed to them.
   Gives each display the mode and scale the system's settings keep for
   it, and the mouse the system's settings (Server.RememberedSettings),
-  with a line for each. Prints a line for each display after the first, then
+  with a line for each, and follows them while it runs
+  (Server.LiveSettings): a display's mode or scale, and the mouse's and
+  keyboards' settings, changed in the system's settings are applied at
+  once. Prints a line for each display after the first, then
   "displayserver: ready" (with the first display's size, DPI and scale)
   once it serves, then how many of the pointer's shapes it read from
   /lib/pointers; started by the service manager, it tells it it is
@@ -53,8 +56,9 @@
   (the pointer's shapes); Server.WindowStates (minimizing and the
   shell's commands), Server.Shell (the shell's list of windows),
   Server.WorkAreas (what the taskbar leaves), Server.Notifications
-  (the notification area's icons) and Server.RememberedSettings (what
-  it keeps in the system's settings).
+  (the notification area's icons), Server.RememberedSettings (what
+  it keeps in the system's settings) and Server.LiveSettings (following
+  them).
 }
 program DisplayServer;
 
@@ -79,6 +83,7 @@ uses
   Server.Shell,
   Server.PointerFiles,
   Server.RememberedSettings,
+  Server.LiveSettings,
   Server.WindowMoves;
 
 const
@@ -93,10 +98,11 @@ var
 
 procedure ServeForever;
 var
-  Handles: array[0..MaximumClients + 1] of Int64;
+  Handles: array[0..MaximumWaitHandles - 1] of Int64;
   Count: LongInt;
   Index: LongInt;
   Ready: Int64;
+  ClientsEnd: LongInt;
 begin
   repeat
     Handles[0] := InputHandle;
@@ -107,15 +113,20 @@ begin
       Handles[Count] := Clients[Index].Channel;
       Inc(Count);
     end;
-    Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);
+    ClientsEnd := Count;
+    AddSettingsHandles(Handles, Count);
+    Ready := WaitForHandles(Slice(Handles, Count), SettingsWaitTime);
     if Ready = 0 then
       ProcessInput
     else if Ready = 1 then
       AcceptClients(Port)
-    else if (Ready >= 2) and (Ready < Count) then
+    else if (Ready >= 2) and (Ready < ClientsEnd) then
       ServeClient(Clients[Ready - 2])
+    else if (Ready >= ClientsEnd) and (Ready < Count) then
+      SettingsHandleReady(Handles[Ready])
     else if Ready = -ErrorInterrupted then
       Break;
+    DeliverSettingsChanges;
     TellShellAboutWindows;
     RefreshPointerShape;
     Compose;
@@ -163,6 +174,7 @@ begin
   InitializeCursor;
   PointerFilesRead := LoadPointerFiles;
   ApplyRememberedSettings;
+  StartFollowingSettings;
   AddDamage(DesktopBounds);
   Compose;
   SayOtherScreens;
@@ -175,6 +187,7 @@ begin
     service manager started the server). }
   NotifyServiceReady;
   ServeForever;
+  StopFollowingSettings;
   CloseInput;
   CloseScreens;
 end.
