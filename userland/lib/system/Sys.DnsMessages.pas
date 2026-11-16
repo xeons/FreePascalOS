@@ -36,13 +36,13 @@
 unit Sys.DnsMessages;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
 
 uses
-  Sys.InternetAddresses,
-  Sys.DnsNames;
+  Sys.InternetAddresses;
 
 const
   DnsHeaderBytes = 12;
@@ -53,7 +53,6 @@ const
   { The records kept of one message, the sections together; more are
     left out (and counted in SkippedRecords). }
   MaximumDnsRecords = 32;
-  DnsTextCapacity = 400;
 
   DnsTypeA = 1;
   DnsTypeNs = 2;
@@ -87,7 +86,7 @@ type
 
   TDnsRecord = record
     Section: TDnsSection;
-    Name: TDnsName;
+    Name: string;
     RecordType: Word;
     RecordClass: Word;
     TimeToLive: LongWord;
@@ -97,18 +96,17 @@ type
     { MX. }
     Preference: Word;
     { CNAME, NS, PTR, MX; SOA: the primary server. }
-    Target: TDnsName;
+    Target: string;
     { SOA: the administrator's mailbox, and its numbers. }
-    Mailbox: TDnsName;
+    Mailbox: string;
     Serial: LongWord;
     Refresh: LongWord;
     Retry: LongWord;
     Expire: LongWord;
     Minimum: LongWord;
     { TXT: each string in double quotes, with spaces between them. }
-    Text: array[0..DnsTextCapacity - 1] of Char;
+    Text: string;
   end;
-  PDnsRecord = ^TDnsRecord;
 
   TDnsMessage = record
     Id: Word;
@@ -116,46 +114,47 @@ type
     ResponseCode: Byte;
     { The first question (a response repeats the query's). }
     QuestionCount: Word;
-    QuestionName: TDnsName;
+    QuestionName: string;
     QuestionType: Word;
     QuestionClass: Word;
     { The counts of the header. }
     AnswerCount: Word;
     AuthorityCount: Word;
     AdditionalCount: Word;
+    { The records kept, the sections in order (RecordCount of them). }
     RecordCount: Integer;
     SkippedRecords: Integer;
-    Records: array[0..MaximumDnsRecords - 1] of TDnsRecord;
+    Records: array of TDnsRecord;
     { Bytes the message had. }
     Length: LongWord;
   end;
-  PDnsMessage = ^TDnsMessage;
 
 { A query for Name's records of RecordType (class IN) into Buffer;
   Length is its size. False if the name is not a valid one. }
-function BuildDnsQuery(Id: Word; Name: PChar; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
+function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
   Capacity: LongWord; out Length: LongWord): Boolean;
 { Reads a whole message. False if it is damaged. }
 function ParseDnsMessage(Data: PByte; Length: LongWord; out Message: TDnsMessage): Boolean;
 { Reads only the header and the first question (to match a response
   with its query before reading the rest). }
-function ParseDnsHeader(Data: PByte; Length: LongWord; out Id, Flags: Word; out QuestionName: TDnsName;
+function ParseDnsHeader(Data: PByte; Length: LongWord; out Id, Flags: Word; out QuestionName: string;
   out QuestionType, QuestionClass: Word): Boolean;
 
-{ "A", "MX", ... ("TYPE99" for others; into Buffer). }
-function DnsTypeName(RecordType: Word; Buffer: PChar; Capacity: PtrUInt): PChar;
+{ "A", "MX", ... ("TYPE99" for others). }
+function DnsTypeName(RecordType: Word): string;
 { The type a name stands for ("a", "MX", "TYPE99"). }
-function ParseDnsTypeName(Text: PChar; out RecordType: Word): Boolean;
+function ParseDnsTypeName(const Text: string; out RecordType: Word): Boolean;
 { "NOERROR", "NXDOMAIN", ... }
-function DnsResponseCodeName(Code: Byte): PChar;
+function DnsResponseCodeName(Code: Byte): string;
 
 implementation
 
 uses
+  SysUtils,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Text;
+  Sys.Text,
+  Sys.DnsNames;
 
 function ReadWord(Data: PByte; Position: LongWord): Word;
 begin
@@ -174,7 +173,7 @@ begin
   Data[Position + 1] := Byte(Value);
 end;
 
-function BuildDnsQuery(Id: Word; Name: PChar; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
+function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
   Capacity: LongWord; out Length: LongWord): Boolean;
 var
   Position: LongWord;
@@ -183,7 +182,7 @@ begin
   Length := 0;
   if Capacity < DnsHeaderBytes + 4 then
     Exit(False);
-  FillMemory(Buffer, DnsHeaderBytes, 0);
+  FillChar(Buffer^, DnsHeaderBytes, 0);
   WriteWord(Buffer, 0, Id);
   Flags := 0;
   if RecursionDesired then
@@ -201,14 +200,14 @@ begin
   Result := True;
 end;
 
-function ParseDnsHeader(Data: PByte; Length: LongWord; out Id, Flags: Word; out QuestionName: TDnsName;
+function ParseDnsHeader(Data: PByte; Length: LongWord; out Id, Flags: Word; out QuestionName: string;
   out QuestionType, QuestionClass: Word): Boolean;
 var
   Position: LongWord;
 begin
   Id := 0;
   Flags := 0;
-  QuestionName[0] := #0;
+  QuestionName := '';
   QuestionType := 0;
   QuestionClass := 0;
   if Length < DnsHeaderBytes then
@@ -225,27 +224,15 @@ begin
   Result := True;
 end;
 
-procedure AppendToText(var Text: array of Char; var Used: PtrUInt; Character: Char);
-begin
-  if Used + 1 < PtrUInt(System.Length(Text)) then
-  begin
-    Text[Used] := Character;
-    Inc(Used);
-    Text[Used] := #0;
-  end;
-end;
-
 { TXT: the strings (a length byte each) as "first" "second". }
 function ReadTextStrings(Data: PByte; Start, DataLength: LongWord; var Entry: TDnsRecord): Boolean;
 var
   Position: LongWord;
   StringLength: LongWord;
-  Index: Integer;
-  Used: PtrUInt;
+  Index: LongWord;
   Character: Char;
 begin
-  Used := 0;
-  Entry.Text[0] := #0;
+  Entry.Text := '';
   Position := Start;
   while Position < Start + DataLength do
   begin
@@ -253,17 +240,17 @@ begin
     Inc(Position);
     if Position + StringLength > Start + DataLength then
       Exit(False);
-    if Used > 0 then
-      AppendToText(Entry.Text, Used, ' ');
-    AppendToText(Entry.Text, Used, '"');
-    for Index := 0 to LongInt(StringLength) - 1 do
+    if Entry.Text <> '' then
+      Entry.Text := Entry.Text + ' ';
+    Entry.Text := Entry.Text + '"';
+    for Index := 1 to StringLength do
     begin
-      Character := Char(Data[Position + LongWord(Index)]);
+      Character := Char(Data[Position + Index - 1]);
       if (Character = '"') or (Character = '\') then
-        AppendToText(Entry.Text, Used, '\');
-      AppendToText(Entry.Text, Used, Character);
+        Entry.Text := Entry.Text + '\';
+      Entry.Text := Entry.Text + Character;
     end;
-    AppendToText(Entry.Text, Used, '"');
+    Entry.Text := Entry.Text + '"';
     Position := Position + StringLength;
   end;
   Result := True;
@@ -289,9 +276,9 @@ begin
       begin
         if Entry.DataLength <> 16 then
           Exit;
-        FillMemory(@Entry.Address, SizeOf(Entry.Address), 0);
+        Entry.Address := Default(TInternetAddress);
         Entry.Address.Family := AddressFamilyIPv6;
-        CopyMemory(@Entry.Address.Bytes[0], Data + Start, 16);
+        Move(Data[Start], Entry.Address.Bytes[0], 16);
       end;
     DnsTypeCname, DnsTypeNs, DnsTypePtr:
       if not DecodeDnsName(Data, Length, Position, Entry.Target) or (Position > Finish) then
@@ -331,10 +318,9 @@ var
   DataStart: LongWord;
 begin
   Result := False;
-  Entry.Name[0] := #0;
-  Entry.Target[0] := #0;
-  Entry.Mailbox[0] := #0;
-  Entry.Text[0] := #0;
+  Entry.Target := '';
+  Entry.Mailbox := '';
+  Entry.Text := '';
   if not DecodeDnsName(Data, Length, Position, Entry.Name) or (Position + 10 > Length) then
     Exit;
   Entry.RecordType := ReadWord(Data, Position);
@@ -350,19 +336,26 @@ begin
   Result := True;
 end;
 
+function SectionRecordCount(constref Message: TDnsMessage; Section: TDnsSection): Word;
+begin
+  case Section of
+    DnsSectionAnswer: Result := Message.AnswerCount;
+    DnsSectionAuthority: Result := Message.AuthorityCount;
+  else
+    Result := Message.AdditionalCount;
+  end;
+end;
+
 function ParseDnsMessage(Data: PByte; Length: LongWord; out Message: TDnsMessage): Boolean;
 var
   Position: LongWord;
   Index: LongWord;
   Section: TDnsSection;
-  SectionCount: Word;
-  Scratch: PDnsRecord;
-  Entry: PDnsRecord;
+  Entry: TDnsRecord;
   Keep: Boolean;
 begin
   Result := False;
-  Message.RecordCount := 0;
-  Message.SkippedRecords := 0;
+  Message := Default(TDnsMessage);
   Message.Length := Length;
   if not ParseDnsHeader(Data, Length, Message.Id, Message.Flags, Message.QuestionName, Message.QuestionType,
        Message.QuestionClass) then
@@ -373,103 +366,70 @@ begin
   Message.AuthorityCount := ReadWord(Data, 8);
   Message.AdditionalCount := ReadWord(Data, 10);
   Position := DnsHeaderBytes;
-  Index := 0;
-  while Index < Message.QuestionCount do
+  for Index := 1 to Message.QuestionCount do
   begin
     if not SkipDnsName(Data, Length, Position) or (Position + 4 > Length) then
       Exit;
     Position := Position + 4;
-    Inc(Index);
   end;
-  New(Scratch);
-  try
-    for Section := Low(TDnsSection) to High(TDnsSection) do
+  for Section := Low(TDnsSection) to High(TDnsSection) do
+    for Index := 1 to SectionRecordCount(Message, Section) do
     begin
-      case Section of
-        DnsSectionAnswer: SectionCount := Message.AnswerCount;
-        DnsSectionAuthority: SectionCount := Message.AuthorityCount;
-      else
-        SectionCount := Message.AdditionalCount;
-      end;
-      Index := 0;
-      while Index < SectionCount do
+      Keep := Message.RecordCount < MaximumDnsRecords;
+      Entry := Default(TDnsRecord);
+      Entry.Section := Section;
+      if not ReadRecord(Data, Length, Position, Keep, Entry) then
+        Exit;
+      if Keep then
       begin
-        Keep := Message.RecordCount < MaximumDnsRecords;
-        if Keep then
-          Entry := @Message.Records[Message.RecordCount]
-        else
-          Entry := Scratch;
-        Entry^.Section := Section;
-        if not ReadRecord(Data, Length, Position, Keep, Entry^) then
-          Exit;
-        if Keep then
-          Inc(Message.RecordCount)
-        else
-          Inc(Message.SkippedRecords);
-        Inc(Index);
-      end;
+        SetLength(Message.Records, Message.RecordCount + 1);
+        Message.Records[Message.RecordCount] := Entry;
+        Inc(Message.RecordCount);
+      end
+      else
+        Inc(Message.SkippedRecords);
     end;
-  finally
-    Dispose(Scratch);
-  end;
   Result := True;
 end;
 
-function DnsTypeName(RecordType: Word; Buffer: PChar; Capacity: PtrUInt): PChar;
-var
-  Number: TNumberText;
-  Name: PChar;
-begin
-  case RecordType of
-    DnsTypeA: Name := 'A';
-    DnsTypeNs: Name := 'NS';
-    DnsTypeCname: Name := 'CNAME';
-    DnsTypeSoa: Name := 'SOA';
-    DnsTypePtr: Name := 'PTR';
-    DnsTypeMx: Name := 'MX';
-    DnsTypeTxt: Name := 'TXT';
-    DnsTypeAaaa: Name := 'AAAA';
-    DnsTypeAny: Name := 'ANY';
-  else
-    Name := nil;
-  end;
-  Result := Buffer;
-  if Name <> nil then
-    CopyText(Buffer, Name, Capacity)
-  else
-  begin
-    CopyText(Buffer, 'TYPE', Capacity);
-    if Capacity > 5 then
-      CopyText(Buffer + 4, FormatDecimal(RecordType, Number), Capacity - 4);
-  end;
-end;
-
-function ParseDnsTypeName(Text: PChar; out RecordType: Word): Boolean;
 const
-  Names: array[0..8] of PChar = ('A', 'NS', 'CNAME', 'SOA', 'PTR', 'MX', 'TXT', 'AAAA', 'ANY');
-  Types: array[0..8] of Word = (DnsTypeA, DnsTypeNs, DnsTypeCname, DnsTypeSoa, DnsTypePtr, DnsTypeMx,
+  DnsTypeNames: array[0..8] of string = ('A', 'NS', 'CNAME', 'SOA', 'PTR', 'MX', 'TXT', 'AAAA', 'ANY');
+  DnsTypeValues: array[0..8] of Word = (DnsTypeA, DnsTypeNs, DnsTypeCname, DnsTypeSoa, DnsTypePtr, DnsTypeMx,
     DnsTypeTxt, DnsTypeAaaa, DnsTypeAny);
+  UnknownTypePrefix = 'TYPE';
+
+function DnsTypeName(RecordType: Word): string;
+var
+  Index: Integer;
+begin
+  for Index := Low(DnsTypeValues) to High(DnsTypeValues) do
+    if DnsTypeValues[Index] = RecordType then
+      Exit(DnsTypeNames[Index]);
+  Result := UnknownTypePrefix + IntToStr(RecordType);
+end;
+function ParseDnsTypeName(const Text: string; out RecordType: Word): Boolean;
 var
   Index: Integer;
   Value: QWord;
 begin
   RecordType := 0;
-  for Index := Low(Names) to High(Names) do
-    if CompareTextIgnoringCase(Text, Names[Index]) = 0 then
+  for Index := Low(DnsTypeNames) to High(DnsTypeNames) do
+    if SameText(Text, DnsTypeNames[Index]) then
     begin
-      RecordType := Types[Index];
+      RecordType := DnsTypeValues[Index];
       Exit(True);
     end;
   Result := False;
-  if (ToUpperCase(Text[0]) = 'T') and (ToUpperCase(Text[1]) = 'Y') and (ToUpperCase(Text[2]) = 'P') and
-     (ToUpperCase(Text[3]) = 'E') and ParseUnsigned(Text + 4, Value) and (Value > 0) and (Value <= 65535) then
+  if StartsText(UnknownTypePrefix, Text) and
+     ParseUnsigned(PChar(Copy(Text, Length(UnknownTypePrefix) + 1, MaxInt)), Value) and (Value > 0) and
+     (Value <= 65535) then
   begin
     RecordType := Word(Value);
     Result := True;
   end;
 end;
 
-function DnsResponseCodeName(Code: Byte): PChar;
+function DnsResponseCodeName(Code: Byte): string;
 begin
   case Code of
     DnsResponseNoError: Result := 'NOERROR';

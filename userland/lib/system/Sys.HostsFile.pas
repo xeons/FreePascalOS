@@ -32,153 +32,123 @@
 unit Sys.HostsFile;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Sys.InternetAddresses,
-  Sys.DnsNames;
+  Sys.InternetAddresses;
 
 const
-  HostsFilePath: PChar = '/etc/hosts';
-  { The most of the file read. }
-  MaximumHostsFileBytes = 65536;
+  HostsFilePath = '/etc/hosts';
 
 type
   THostsFileAddresses = record
-    Count: Integer;
-    Addresses: array[0..15] of TInternetAddress;
+    Addresses: TInternetAddressArray;
     { The first name of the first line that had the name. }
-    CanonicalName: TDnsName;
+    CanonicalName: string;
   end;
 
 { The addresses /etc/hosts gives Name (of the families Families asks
   for: HostFamily* of Sys.HostNames, bits 1 IPv4 and 2 IPv6). False if
   it gives none. }
-function LookUpHostsFileName(Name: PChar; Families: LongWord; out Found: THostsFileAddresses): Boolean;
+function LookUpHostsFileName(const Name: string; Families: LongWord; out Found: THostsFileAddresses): Boolean;
 { The first name /etc/hosts gives Address. }
-function LookUpHostsFileAddress(constref Address: TInternetAddress; out Name: TDnsName): Boolean;
+function LookUpHostsFileAddress(constref Address: TInternetAddress; out Name: string): Boolean;
 
 implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Text,
+  Sys.Files,
   Sys.Text,
-  Sys.Files;
+  Sys.DnsNames;
 
 const
   FamilyBitIpv4 = 1;
   FamilyBitIpv6 = 2;
+  ReadChunkBytes = 4096;
 
 type
-  { One line, split: the words point into the line, which was cut at
-    their ends. }
-  THostsLine = record
-    WordCount: Integer;
-    Words: array[0..15] of PChar;
-  end;
+  { The words of one line: the address, then its names. }
+  THostsLine = array of string;
+  THostsLines = array of THostsLine;
 
-  TLineVisitor = function(constref Line: THostsLine; Context: Pointer): Boolean;
-
-{ Reads the file into a new buffer (with a final #0); nil if it cannot
-  be read. }
-function ReadHostsFile: PChar;
+{ The whole file; '' if it cannot be read. }
+function ReadHostsFile: string;
 var
   Handle: Int64;
-  Used: Int64;
+  Chunk: array[0..ReadChunkBytes - 1] of Char;
+  ChunkText: string;
   Read: Int64;
 begin
-  Result := nil;
+  Result := '';
   Handle := OpenFile(HostsFilePath, OpenRead);
   if Handle < 0 then
     Exit;
-  Result := GetMem(MaximumHostsFileBytes + 1);
-  Used := 0;
   repeat
-    Read := ReadFile(Handle, Result + Used, MaximumHostsFileBytes - Used);
+    Read := ReadFile(Handle, @Chunk[0], SizeOf(Chunk));
     if Read > 0 then
-      Used := Used + Read;
-  until (Read <= 0) or (Used >= MaximumHostsFileBytes);
-  CloseFile(Handle);
-  Result[Used] := #0;
-end;
-
-{ Splits Text[Start..] up to the line's end into words (cutting them
-  in place); the next line's start is returned. }
-function SplitLine(Text: PChar; Start: PtrUInt; out Line: THostsLine): PtrUInt;
-var
-  Position: PtrUInt;
-  InComment: Boolean;
-begin
-  Line.WordCount := 0;
-  Position := Start;
-  InComment := False;
-  while (Text[Position] <> #0) and (Text[Position] <> #10) do
-  begin
-    if Text[Position] = '#' then
-      InComment := True;
-    if InComment or IsSpace(Text[Position]) then
     begin
-      Text[Position] := #0;
-      Inc(Position);
-      Continue;
+      SetString(ChunkText, PChar(@Chunk[0]), Read);
+      Result := Result + ChunkText;
     end;
-    if (Position = Start) or (Text[Position - 1] = #0) then
-      if Line.WordCount <= High(Line.Words) then
-      begin
-        Line.Words[Line.WordCount] := @Text[Position];
-        Inc(Line.WordCount);
-      end;
-    Inc(Position);
-  end;
-  if Text[Position] = #10 then
-  begin
-    Text[Position] := #0;
-    Inc(Position);
-  end;
-  Result := Position;
+  until Read <= 0;
+  CloseFile(Handle);
 end;
 
-{ Calls Visitor for every line with an address and a name, until it
-  returns False. }
-procedure VisitHostsFile(Visitor: TLineVisitor; Context: Pointer);
+{ The words of Text, without its comment. }
+function SplitLine(const Text: string): THostsLine;
 var
-  Text: PChar;
-  Position: PtrUInt;
+  Position: Integer;
+  WordStart: Integer;
+  LineEnd: Integer;
+begin
+  Result := nil;
+  LineEnd := Pos('#', Text);
+  if LineEnd = 0 then
+    LineEnd := Length(Text) + 1;
+  Position := 1;
+  while Position < LineEnd do
+  begin
+    while (Position < LineEnd) and IsSpace(Text[Position]) do
+      Inc(Position);
+    WordStart := Position;
+    while (Position < LineEnd) and not IsSpace(Text[Position]) do
+      Inc(Position);
+    if Position > WordStart then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Copy(Text, WordStart, Position - WordStart);
+    end;
+  end;
+end;
+
+{ Every line with an address and a name. }
+function ReadHostsLines: THostsLines;
+var
+  Text: string;
+  LineStart: Integer;
+  LineEnd: Integer;
   Line: THostsLine;
 begin
+  Result := nil;
   Text := ReadHostsFile;
-  if Text = nil then
-    Exit;
-  try
-    Position := 0;
-    while Text[Position] <> #0 do
+  LineStart := 1;
+  while LineStart <= Length(Text) do
+  begin
+    LineEnd := LineStart;
+    while (LineEnd <= Length(Text)) and (Text[LineEnd] <> #10) do
+      Inc(LineEnd);
+    Line := SplitLine(Copy(Text, LineStart, LineEnd - LineStart));
+    if Length(Line) >= 2 then
     begin
-      Position := SplitLine(Text, Position, Line);
-      if (Line.WordCount >= 2) and not Visitor(Line, Context) then
-        Break;
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Line;
     end;
-  finally
-    FreeMem(Text);
+    LineStart := LineEnd + 1;
   end;
 end;
-
-type
-  TNameSearch = record
-    Name: PChar;
-    Families: LongWord;
-    Found: ^THostsFileAddresses;
-  end;
-  PNameSearch = ^TNameSearch;
-
-  TAddressSearch = record
-    Address: TInternetAddress;
-    Name: ^TDnsName;
-    Found: Boolean;
-  end;
-  PAddressSearch = ^TAddressSearch;
 
 function FamilyIsWanted(constref Address: TInternetAddress; Families: LongWord): Boolean;
 begin
@@ -186,68 +156,49 @@ begin
     ((Address.Family = AddressFamilyIPv6) and ((Families and FamilyBitIpv6) <> 0));
 end;
 
-function VisitForName(constref Line: THostsLine; Context: Pointer): Boolean;
+function LineHasName(const Line: THostsLine; const Name: string): Boolean;
 var
-  Search: PNameSearch;
-  Address: TInternetAddress;
   Index: Integer;
 begin
-  Result := True;
-  Search := PNameSearch(Context);
-  if not ParseInternetAddress(Line.Words[0], Address) or not FamilyIsWanted(Address, Search^.Families) then
-    Exit;
-  for Index := 1 to Line.WordCount - 1 do
-    if DnsNamesAreEqual(Line.Words[Index], Search^.Name) then
-    begin
-      if Search^.Found^.Count = 0 then
-        CopyText(@Search^.Found^.CanonicalName[0], Line.Words[1], DnsNameCapacity);
-      if Search^.Found^.Count <= High(Search^.Found^.Addresses) then
-      begin
-        Search^.Found^.Addresses[Search^.Found^.Count] := Address;
-        Inc(Search^.Found^.Count);
-      end;
-      Exit;
-    end;
+  for Index := 1 to High(Line) do
+    if DnsNamesAreEqual(Line[Index], Name) then
+      Exit(True);
+  Result := False;
 end;
 
-function VisitForAddress(constref Line: THostsLine; Context: Pointer): Boolean;
+function LookUpHostsFileName(const Name: string; Families: LongWord; out Found: THostsFileAddresses): Boolean;
 var
-  Search: PAddressSearch;
+  Line: THostsLine;
   Address: TInternetAddress;
 begin
-  Search := PAddressSearch(Context);
-  Result := True;
-  if ParseInternetAddress(Line.Words[0], Address) and AddressesAreEqual(Address, Search^.Address) then
+  Found := Default(THostsFileAddresses);
+  for Line in ReadHostsLines do
   begin
-    CopyText(@Search^.Name^[0], Line.Words[1], DnsNameCapacity);
-    Search^.Found := True;
-    Result := False;
+    if not ParseInternetAddress(PChar(Line[0]), Address) or not FamilyIsWanted(Address, Families) then
+      Continue;
+    if not LineHasName(Line, Name) then
+      Continue;
+    if Length(Found.Addresses) = 0 then
+      Found.CanonicalName := Line[1];
+    SetLength(Found.Addresses, Length(Found.Addresses) + 1);
+    Found.Addresses[High(Found.Addresses)] := Address;
   end;
+  Result := Length(Found.Addresses) > 0;
 end;
 
-function LookUpHostsFileName(Name: PChar; Families: LongWord; out Found: THostsFileAddresses): Boolean;
+function LookUpHostsFileAddress(constref Address: TInternetAddress; out Name: string): Boolean;
 var
-  Search: TNameSearch;
+  Line: THostsLine;
+  LineAddress: TInternetAddress;
 begin
-  Found.Count := 0;
-  Found.CanonicalName[0] := #0;
-  Search.Name := Name;
-  Search.Families := Families;
-  Search.Found := @Found;
-  VisitHostsFile(@VisitForName, @Search);
-  Result := Found.Count > 0;
-end;
-
-function LookUpHostsFileAddress(constref Address: TInternetAddress; out Name: TDnsName): Boolean;
-var
-  Search: TAddressSearch;
-begin
-  Name[0] := #0;
-  Search.Address := Address;
-  Search.Name := @Name;
-  Search.Found := False;
-  VisitHostsFile(@VisitForAddress, @Search);
-  Result := Search.Found;
+  Name := '';
+  for Line in ReadHostsLines do
+    if ParseInternetAddress(PChar(Line[0]), LineAddress) and AddressesAreEqual(LineAddress, Address) then
+    begin
+      Name := Line[1];
+      Exit(True);
+    end;
+  Result := False;
 end;
 
 end.

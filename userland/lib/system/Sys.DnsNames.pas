@@ -34,6 +34,7 @@
 unit Sys.DnsNames;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -42,71 +43,64 @@ uses
   Sys.InternetAddresses;
 
 const
-  { A name as text, with its terminator: the longest name, with room for
-    some \DDD (more are cut off). }
-  DnsNameCapacity = 320;
   { On the wire: the length bytes included. }
   MaximumDnsNameBytes = 255;
   MaximumDnsLabelBytes = 63;
   MaximumNamePointers = 64;
 
-type
-  TDnsName = array[0..DnsNameCapacity - 1] of Char;
-
 { Writes Name (text, the final dot allowed) at Buffer[Position] in wire
   form, without compression; Position moves past it. False if a label
   is empty or too long, the name is too long, or it does not fit in
   Capacity. }
-function EncodeDnsName(Name: PChar; Buffer: PByte; Capacity: LongWord; var Position: LongWord): Boolean;
+function EncodeDnsName(const Name: string; Buffer: PByte; Capacity: LongWord; var Position: LongWord): Boolean;
 { Reads the name at Message[Position] (Length bytes in all), following
   pointers; Position moves past the name where it was written (past its
   first pointer, if it has one). False for a damaged name. }
-function DecodeDnsName(Message: PByte; Length: LongWord; var Position: LongWord; out Name: TDnsName): Boolean;
-{ Steps over the name at Message[Position] without reading it. }
+function DecodeDnsName(Message: PByte; Length: LongWord; var Position: LongWord; out Name: string): Boolean;
+{ Steps over the name at Message[Position] without keeping it. }
 function SkipDnsName(Message: PByte; Length: LongWord; var Position: LongWord): Boolean;
 
 { The same name: letters compared without case, a final dot ignored. }
-function DnsNamesAreEqual(First, Second: PChar): Boolean;
+function DnsNamesAreEqual(const First, Second: string): Boolean;
 { True if Name has no dot (but for a final one): a single label, which
   the search domain is tried for. }
-function IsSingleLabelName(Name: PChar): Boolean;
-{ Name, a dot and Domain. False if it does not fit. }
-function JoinDnsNames(Name, Domain: PChar; out Joined: TDnsName): Boolean;
+function IsSingleLabelName(const Name: string): Boolean;
+{ Name (without a final dot), a dot and Domain. }
+function JoinDnsNames(const Name, Domain: string): string;
 { The name a reverse lookup asks for: "15.2.0.10.in-addr.arpa" for
   10.0.2.15, the nibbles under "ip6.arpa" for IPv6. }
-function ReverseLookupName(constref Address: TInternetAddress; out Name: TDnsName): Boolean;
+function ReverseLookupName(constref Address: TInternetAddress; out Name: string): Boolean;
 
 implementation
 
 uses
-  Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Text;
+  SysUtils,
+  Abi.SystemCalls;
 
 const
   PointerMask = $C0;
+  LowerHexDigits = '0123456789abcdef';
 
-function EncodeDnsName(Name: PChar; Buffer: PByte; Capacity: LongWord; var Position: LongWord): Boolean;
+function EncodeDnsName(const Name: string; Buffer: PByte; Capacity: LongWord; var Position: LongWord): Boolean;
 var
   Start: LongWord;
-  LabelStart: PtrUInt;
-  LabelLength: PtrUInt;
-  Index: PtrUInt;
-  Cursor: PtrUInt;
+  LabelStart: Integer;
+  LabelLength: LongWord;
+  Index: LongWord;
+  Cursor: Integer;
 begin
   Result := False;
   Start := Position;
-  Cursor := 0;
+  Cursor := 1;
   { The root, "." or "". }
-  if (Name[0] = '.') and (Name[1] = #0) then
-    Cursor := 1;
-  while Name[Cursor] <> #0 do
+  if Name = '.' then
+    Cursor := 2;
+  while Cursor <= Length(Name) do
   begin
     LabelStart := Cursor;
-    while (Name[Cursor] <> #0) and (Name[Cursor] <> '.') do
+    while (Cursor <= Length(Name)) and (Name[Cursor] <> '.') do
       Inc(Cursor);
-    LabelLength := Cursor - LabelStart;
+    LabelLength := LongWord(Cursor - LabelStart);
     if (LabelLength = 0) or (LabelLength > MaximumDnsLabelBytes) then
       Exit;
     if (Position - Start) + 1 + LabelLength + 1 > MaximumDnsNameBytes then
@@ -116,10 +110,10 @@ begin
     Buffer[Position] := Byte(LabelLength);
     Inc(Position);
     for Index := 0 to LabelLength - 1 do
-      Buffer[Position + Index] := Byte(Name[LabelStart + Index]);
-    Position := Position + LongWord(LabelLength);
-    if Name[Cursor] = '.' then
-      Inc(Cursor);
+      Buffer[Position + Index] := Byte(Name[LabelStart + Integer(Index)]);
+    Position := Position + LabelLength;
+    { Past the dot. }
+    Inc(Cursor);
   end;
   if Position + 1 > Capacity then
     Exit;
@@ -128,38 +122,22 @@ begin
   Result := True;
 end;
 
-procedure AppendNameCharacter(var Name: TDnsName; var Used: PtrUInt; Character: Char);
-begin
-  if Used + 1 < DnsNameCapacity then
-  begin
-    Name[Used] := Character;
-    Inc(Used);
-    Name[Used] := #0;
-  end;
-end;
-
 { A label's byte as text: itself, or \DDD. }
-procedure AppendLabelByte(var Name: TDnsName; var Used: PtrUInt; Value: Byte);
+function LabelByteText(Value: Byte): string;
 begin
   if (Value > 32) and (Value < 127) and (Value <> Ord('.')) and (Value <> Ord('\')) then
-  begin
-    AppendNameCharacter(Name, Used, Char(Value));
-    Exit;
-  end;
-  AppendNameCharacter(Name, Used, '\');
-  AppendNameCharacter(Name, Used, Char(Ord('0') + Value div 100));
-  AppendNameCharacter(Name, Used, Char(Ord('0') + (Value div 10) mod 10));
-  AppendNameCharacter(Name, Used, Char(Ord('0') + Value mod 10));
+    Result := Char(Value)
+  else
+    Result := '\' + Format('%.3d', [Value]);
 end;
 
-function DecodeDnsName(Message: PByte; Length: LongWord; var Position: LongWord; out Name: TDnsName): Boolean;
+function DecodeDnsName(Message: PByte; Length: LongWord; var Position: LongWord; out Name: string): Boolean;
 var
   Cursor: LongWord;
   LabelLength: LongWord;
   Target: LongWord;
   Pointers: Integer;
   WireBytes: LongWord;
-  Used: PtrUInt;
   Index: LongWord;
   { Where the name continues in place once a pointer was taken. }
   EndInPlace: LongWord;
@@ -167,8 +145,7 @@ var
   Lowest: LongWord;
 begin
   Result := False;
-  Name[0] := #0;
-  Used := 0;
+  Name := '';
   Cursor := Position;
   Lowest := Position;
   Pointers := 0;
@@ -204,14 +181,14 @@ begin
     end;
     if Cursor + 1 + LabelLength > Length then
       Exit;
-    if Used > 0 then
-      AppendNameCharacter(Name, Used, '.');
+    if Name <> '' then
+      Name := Name + '.';
     for Index := 1 to LabelLength do
-      AppendLabelByte(Name, Used, Message[Cursor + Index]);
+      Name := Name + LabelByteText(Message[Cursor + Index]);
     Cursor := Cursor + 1 + LabelLength;
   until False;
-  if Used = 0 then
-    AppendNameCharacter(Name, Used, '.');
+  if Name = '' then
+    Name := '.';
   if Pointers > 0 then
     Position := EndInPlace
   else
@@ -221,108 +198,61 @@ end;
 
 function SkipDnsName(Message: PByte; Length: LongWord; var Position: LongWord): Boolean;
 var
-  Name: TDnsName;
+  Name: string;
 begin
   Result := DecodeDnsName(Message, Length, Position, Name);
 end;
 
-function DnsNamesAreEqual(First, Second: PChar): Boolean;
-var
-  Index: PtrUInt;
-  FirstLength: PtrUInt;
-  SecondLength: PtrUInt;
+{ Name without a final dot (the root "." stays as it is). }
+function WithoutFinalDot(const Name: string): string;
 begin
-  FirstLength := TextLength(First);
-  SecondLength := TextLength(Second);
-  if (FirstLength > 1) and (First[FirstLength - 1] = '.') then
-    Dec(FirstLength);
-  if (SecondLength > 1) and (Second[SecondLength - 1] = '.') then
-    Dec(SecondLength);
-  if FirstLength <> SecondLength then
+  if (Length(Name) > 1) and (Name[Length(Name)] = '.') then
+    Result := Copy(Name, 1, Length(Name) - 1)
+  else
+    Result := Name;
+end;
+
+function DnsNamesAreEqual(const First, Second: string): Boolean;
+begin
+  Result := SameText(WithoutFinalDot(First), WithoutFinalDot(Second));
+end;
+
+function IsSingleLabelName(const Name: string): Boolean;
+var
+  Position: Integer;
+begin
+  if Name = '' then
     Exit(False);
-  Index := 0;
-  while Index < FirstLength do
-  begin
-    if ToLowerCase(First[Index]) <> ToLowerCase(Second[Index]) then
-      Exit(False);
-    Inc(Index);
-  end;
-  Result := True;
+  Position := Pos('.', Name);
+  Result := (Position = 0) or (Position = Length(Name));
 end;
 
-function IsSingleLabelName(Name: PChar): Boolean;
-var
-  Position: PtrInt;
-  Length: PtrUInt;
+function JoinDnsNames(const Name, Domain: string): string;
 begin
-  Length := TextLength(Name);
-  if Length = 0 then
-    Exit(False);
-  Position := FindCharacter(Name, '.');
-  Result := (Position < 0) or (PtrUInt(Position) = Length - 1);
+  if (Name <> '') and (Name[Length(Name)] = '.') then
+    Result := Copy(Name, 1, Length(Name) - 1) + '.' + Domain
+  else
+    Result := Name + '.' + Domain;
 end;
 
-function JoinDnsNames(Name, Domain: PChar; out Joined: TDnsName): Boolean;
+function ReverseLookupName(constref Address: TInternetAddress; out Name: string): Boolean;
 var
-  NameLength: PtrUInt;
-  DomainLength: PtrUInt;
-begin
-  Joined[0] := #0;
-  NameLength := TextLength(Name);
-  if (NameLength > 0) and (Name[NameLength - 1] = '.') then
-    Dec(NameLength);
-  DomainLength := TextLength(Domain);
-  if NameLength + 1 + DomainLength + 1 > DnsNameCapacity then
-    Exit(False);
-  CopyMemory(@Joined[0], Name, NameLength);
-  Joined[NameLength] := '.';
-  CopyMemory(@Joined[NameLength + 1], Domain, DomainLength);
-  Joined[NameLength + 1 + DomainLength] := #0;
-  Result := True;
-end;
-
-procedure AppendText(var Name: TDnsName; var Used: PtrUInt; Text: PChar);
-var
-  Index: PtrUInt;
-begin
-  Index := 0;
-  while Text[Index] <> #0 do
-  begin
-    AppendNameCharacter(Name, Used, Text[Index]);
-    Inc(Index);
-  end;
-end;
-
-function ReverseLookupName(constref Address: TInternetAddress; out Name: TDnsName): Boolean;
-const
-  LowerDigits: PChar = '0123456789abcdef';
-var
-  Used: PtrUInt;
   Index: Integer;
-  Number: TNumberText;
 begin
-  Name[0] := #0;
-  Used := 0;
+  Name := '';
   case Address.Family of
     AddressFamilyIPv4:
       begin
         for Index := 3 downto 0 do
-        begin
-          AppendText(Name, Used, FormatDecimal(Address.Bytes[Index], Number));
-          AppendNameCharacter(Name, Used, '.');
-        end;
-        AppendText(Name, Used, 'in-addr.arpa');
+          Name := Name + IntToStr(Address.Bytes[Index]) + '.';
+        Name := Name + 'in-addr.arpa';
       end;
     AddressFamilyIPv6:
       begin
         for Index := 15 downto 0 do
-        begin
-          AppendNameCharacter(Name, Used, LowerDigits[Address.Bytes[Index] and $F]);
-          AppendNameCharacter(Name, Used, '.');
-          AppendNameCharacter(Name, Used, LowerDigits[Address.Bytes[Index] shr 4]);
-          AppendNameCharacter(Name, Used, '.');
-        end;
-        AppendText(Name, Used, 'ip6.arpa');
+          Name := Name + LowerHexDigits[(Address.Bytes[Index] and $F) + 1] + '.' +
+            LowerHexDigits[(Address.Bytes[Index] shr 4) + 1] + '.';
+        Name := Name + 'ip6.arpa';
       end;
   else
     Exit(False);

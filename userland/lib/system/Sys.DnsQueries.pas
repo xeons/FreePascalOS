@@ -37,13 +37,13 @@
 unit Sys.DnsQueries;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
 
 uses
   Abi.SystemCalls,
-  Sys.DnsNames,
   Sys.DnsMessages;
 
 const
@@ -52,10 +52,12 @@ const
   DefaultDnsAttempts = 2;
 
 type
+  TDnsServerList = array of TAbiSocketAddress;
+
   TDnsQueryOptions = record
-    ServerCount: Integer;
-    Servers: array[0..MaximumDnsServers - 1] of TAbiSocketAddress;
-    SearchDomain: array[0..DnsDomainCapacity - 1] of Char;
+    { Asked in turn. }
+    Servers: TDnsServerList;
+    SearchDomain: string;
     { For each server, each round. }
     TimeoutMilliseconds: LongWord;
     { Rounds over the servers. }
@@ -70,7 +72,7 @@ type
     { Who answered. }
     Server: TAbiSocketAddress;
     { The name asked for (with the search domain, if it was tried). }
-    QueriedName: TDnsName;
+    QueriedName: string;
     UsedTcp: Boolean;
     { From sending the query that was answered to its answer. }
     ElapsedMilliseconds: QWord;
@@ -85,26 +87,25 @@ procedure UseOnlyDnsServer(var Options: TDnsQueryOptions; constref Server: TAbiS
 { Asks for Name's records of RecordType. ErrorNone when a server
   answered (Message holds the answer, whatever its response code),
   ErrorTimedOut if none did, ErrorNotFound if there is no server to
-  ask, ErrorInvalidArgument for a name that is not one. Message is
-  large (about 50 KB): keep it off small stacks. }
-function QueryDns(Name: PChar; RecordType: Word; constref Options: TDnsQueryOptions; out Message: TDnsMessage;
+  ask, ErrorInvalidArgument for a name that is not one. }
+function QueryDns(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions; out Message: TDnsMessage;
   out Details: TDnsQueryDetails): LongInt;
 { The same, trying Name in the search domain first if it is a single
   label (the name as it is follows if that does not exist). }
-function QueryDnsSearching(Name: PChar; RecordType: Word; constref Options: TDnsQueryOptions;
+function QueryDnsSearching(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
   out Message: TDnsMessage; out Details: TDnsQueryDetails): LongInt;
 
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  SysUtils,
   Sys.Errors,
   Sys.Kernel,
   Sys.Sockets,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
-  Sys.RandomNumbers;
+  Sys.RandomNumbers,
+  Sys.DnsNames;
 
 const
   FirstRandomPort = 49152;
@@ -116,7 +117,7 @@ const
 
 type
   TPendingQuery = record
-    Name: PChar;
+    Name: string;
     RecordType: Word;
     Id: Word;
     Query: array[0..MaximumUdpDnsMessage - 1] of Byte;
@@ -133,27 +134,28 @@ var
   Servers: TAbiDnsServers;
   Index: Integer;
 begin
-  FillMemory(@Options, SizeOf(Options), 0);
+  Options := Default(TDnsQueryOptions);
   Options.TimeoutMilliseconds := DefaultDnsTimeoutMilliseconds;
   Options.Attempts := DefaultDnsAttempts;
   Options.RecursionDesired := True;
   if GetDnsServers(Servers) <> ErrorNone then
     Exit;
-  Index := 0;
-  while (Index < Integer(Servers.Count)) and (Index < MaximumDnsServers) do
+  if Servers.Count > MaximumDnsServers then
+    Servers.Count := MaximumDnsServers;
+  SetLength(Options.Servers, Servers.Count);
+  for Index := 0 to High(Options.Servers) do
   begin
     Options.Servers[Index] := Servers.Servers[Index];
     if Options.Servers[Index].Port = 0 then
       Options.Servers[Index].Port := DnsServerPort;
-    Inc(Index);
   end;
-  Options.ServerCount := Index;
-  CopyText(@Options.SearchDomain[0], @Servers.SearchDomain[0], DnsDomainCapacity);
+  Servers.SearchDomain[High(Servers.SearchDomain)] := #0;
+  Options.SearchDomain := StrPas(PChar(@Servers.SearchDomain[0]));
 end;
 
 procedure UseOnlyDnsServer(var Options: TDnsQueryOptions; constref Server: TAbiSocketAddress);
 begin
-  Options.ServerCount := 1;
+  SetLength(Options.Servers, 1);
   Options.Servers[0] := Server;
   if Options.Servers[0].Port = 0 then
     Options.Servers[0].Port := DnsServerPort;
@@ -184,7 +186,7 @@ function ReplyMatches(Reply: PByte; Length: LongWord; constref Pending: TPending
 var
   Id: Word;
   Flags: Word;
-  QuestionName: TDnsName;
+  QuestionName: string;
   QuestionType: Word;
   QuestionClass: Word;
 begin
@@ -194,9 +196,9 @@ begin
   if (Id <> Pending.Id) or ((Flags and DnsFlagResponse) = 0) then
     Exit;
   { A server that could not read the query may leave the question out. }
-  if QuestionName[0] = #0 then
+  if QuestionName = '' then
     Exit((Flags and DnsResponseCodeMask) <> DnsResponseNoError);
-  Result := DnsNamesAreEqual(@QuestionName[0], Pending.Name) and (QuestionType = Pending.RecordType) and
+  Result := DnsNamesAreEqual(QuestionName, Pending.Name) and (QuestionType = Pending.RecordType) and
     (QuestionClass = DnsClassInternet);
 end;
 
@@ -295,7 +297,7 @@ begin
   begin
     Framed[0] := Byte(Pending.QueryLength shr 8);
     Framed[1] := Byte(Pending.QueryLength);
-    CopyMemory(@Framed[2], @Pending.Query[0], Pending.QueryLength);
+    Move(Pending.Query[0], Framed[2], Pending.QueryLength);
     Result := SendAll(Socket, @Framed[0], Pending.QueryLength + 2);
   end;
   if Result = ErrorNone then
@@ -343,14 +345,14 @@ begin
     if (Result = ErrorNone) and (ReplyLength >= 4) and ((Reply[2] and (DnsFlagTruncated shr 8)) <> 0) then
     begin
       { The whole answer over TCP; the truncated one if that fails. }
-      CopyMemory(@Truncated[0], Reply, ReplyLength);
+      Move(Reply^, Truncated[0], ReplyLength);
       if ExchangeOverTcp(Server, Pending, Options.TimeoutMilliseconds, Reply, TcpLength) = ErrorNone then
       begin
         ReplyLength := TcpLength;
         UsedTcp := True;
       end
       else
-        CopyMemory(Reply, @Truncated[0], ReplyLength);
+        Move(Truncated[0], Reply^, ReplyLength);
     end;
   end;
   if Result <> ErrorNone then
@@ -362,7 +364,7 @@ begin
   Details.ElapsedMilliseconds := NowMilliseconds - Started;
 end;
 
-function QueryDns(Name: PChar; RecordType: Word; constref Options: TDnsQueryOptions; out Message: TDnsMessage;
+function QueryDns(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions; out Message: TDnsMessage;
   out Details: TDnsQueryDetails): LongInt;
 var
   Pending: TPendingQuery;
@@ -371,13 +373,13 @@ var
   ServerIndex: Integer;
   Error: LongInt;
   HaveFailure: Boolean;
-  Failure: PDnsMessage;
+  Failure: TDnsMessage;
   FailureDetails: TDnsQueryDetails;
 begin
-  FillMemory(@Details, SizeOf(Details), 0);
-  Message.RecordCount := 0;
-  CopyText(@Details.QueriedName[0], Name, DnsNameCapacity);
-  if Options.ServerCount <= 0 then
+  Details := Default(TDnsQueryDetails);
+  Message := Default(TDnsMessage);
+  Details.QueriedName := Name;
+  if Length(Options.Servers) = 0 then
     Exit(ErrorNotFound);
   Pending.Name := Name;
   Pending.RecordType := RecordType;
@@ -386,12 +388,11 @@ begin
        Pending.QueryLength) then
     Exit(ErrorInvalidArgument);
   Reply := GetMem(MaximumTcpDnsMessage);
-  New(Failure);
   HaveFailure := False;
   Result := ErrorTimedOut;
   try
     for Attempt := 1 to Options.Attempts do
-      for ServerIndex := 0 to Options.ServerCount - 1 do
+      for ServerIndex := 0 to High(Options.Servers) do
       begin
         Error := AskServer(Options.Servers[ServerIndex], Pending, Options, Reply, Message, Details);
         if Error <> ErrorNone then
@@ -403,31 +404,27 @@ begin
         if not ServerFailed(Message.ResponseCode) then
           Exit(ErrorNone);
         { Kept in case no other server does better. }
-        Failure^ := Message;
+        Failure := Message;
         FailureDetails := Details;
         HaveFailure := True;
         Result := ErrorNone;
       end;
     if HaveFailure then
     begin
-      Message := Failure^;
+      Message := Failure;
       Details := FailureDetails;
     end;
   finally
-    Dispose(Failure);
     FreeMem(Reply);
   end;
 end;
 
-function QueryDnsSearching(Name: PChar; RecordType: Word; constref Options: TDnsQueryOptions;
+function QueryDnsSearching(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
   out Message: TDnsMessage; out Details: TDnsQueryDetails): LongInt;
-var
-  Joined: TDnsName;
 begin
-  if (Options.SearchDomain[0] <> #0) and IsSingleLabelName(Name) and (Name[TextLength(Name) - 1] <> '.') and
-     JoinDnsNames(Name, @Options.SearchDomain[0], Joined) then
+  if (Options.SearchDomain <> '') and IsSingleLabelName(Name) and (Name[Length(Name)] <> '.') then
   begin
-    Result := QueryDns(@Joined[0], RecordType, Options, Message, Details);
+    Result := QueryDns(JoinDnsNames(Name, Options.SearchDomain), RecordType, Options, Message, Details);
     if (Result = ErrorNone) and (Message.ResponseCode <> DnsResponseNameError) then
       Exit;
   end;

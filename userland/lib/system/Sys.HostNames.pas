@@ -39,66 +39,60 @@
 unit Sys.HostNames;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
 uses
-  Sys.InternetAddresses,
-  Sys.DnsNames;
+  Sys.InternetAddresses;
 
 const
   { Families of LookUpHostAddresses. }
   HostFamilyIpv4 = 1;
   HostFamilyIpv6 = 2;
   HostFamilyAny = HostFamilyIpv4 or HostFamilyIpv6;
-  MaximumHostAddresses = 16;
   MaximumAliasSteps = 8;
 
 type
   THostAddresses = record
-    Count: Integer;
-    { IPv4 addresses before IPv6 ones. }
-    Addresses: array[0..MaximumHostAddresses - 1] of TInternetAddress;
+    { IPv4 addresses before IPv6 ones, each once. }
+    Addresses: TInternetAddressArray;
     { The name the addresses belong to once aliases were followed. }
-    CanonicalName: TDnsName;
+    CanonicalName: string;
   end;
 
 { ErrorNone with the (first IPv4) address of Host. }
-function LookUpHost(Host: PChar; out Address: TInternetAddress): LongInt;
+function LookUpHost(const Host: string; out Address: TInternetAddress): LongInt;
 { ErrorNone with the first address of Host of either family (an IPv4
   one if it has one): for naming a server, such as a DNS server. To
   connect, Sys.HostLookup orders the addresses better. }
-function LookUpAnyHostAddress(Host: PChar; out Address: TInternetAddress): LongInt;
+function LookUpAnyHostAddress(const Host: string; out Address: TInternetAddress): LongInt;
 { Every address of Host of the families asked for. }
-function LookUpHostAddresses(Host: PChar; Families: LongWord; out Found: THostAddresses): LongInt;
+function LookUpHostAddresses(const Host: string; Families: LongWord; out Found: THostAddresses): LongInt;
 { The name of Address (reverse lookup): /etc/hosts, then a PTR record.
-  Name is written without the final dot. }
-function LookUpAddressName(constref Address: TInternetAddress; Name: PChar; Capacity: PtrUInt): LongInt;
+  Name is without the final dot. }
+function LookUpAddressName(constref Address: TInternetAddress; out Name: string): LongInt;
 { A message for the errors above ("Name or service not known"). }
-function HostLookupErrorMessage(Error: LongInt): PChar;
+function HostLookupErrorMessage(Error: LongInt): string;
 
 implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Text,
+  Sys.DnsNames,
   Sys.HostsFile,
   Sys.DnsMessages,
   Sys.DnsQueries;
 
 procedure AddAddress(var Found: THostAddresses; constref Address: TInternetAddress);
 var
-  Index: Integer;
+  Existing: TInternetAddress;
 begin
-  for Index := 0 to Found.Count - 1 do
-    if AddressesAreEqual(Found.Addresses[Index], Address) then
+  for Existing in Found.Addresses do
+    if AddressesAreEqual(Existing, Address) then
       Exit;
-  if Found.Count < MaximumHostAddresses then
-  begin
-    Found.Addresses[Found.Count] := Address;
-    Inc(Found.Count);
-  end;
+  SetLength(Found.Addresses, Length(Found.Addresses) + 1);
+  Found.Addresses[High(Found.Addresses)] := Address;
 end;
 
 { The error a response stands for when it brought nothing. }
@@ -111,9 +105,15 @@ begin
   end;
 end;
 
+function IsAnswerFor(constref Entry: TDnsRecord; RecordType: Word; const Name: string): Boolean;
+begin
+  Result := (Entry.Section = DnsSectionAnswer) and (Entry.RecordType = RecordType) and
+    DnsNamesAreEqual(Entry.Name, Name);
+end;
+
 { Follows the CNAME records of the answer from Name; Name becomes the
   end of the chain. False if the chain is too long. }
-function FollowAliases(constref Message: TDnsMessage; var Name: TDnsName): Boolean;
+function FollowAliases(constref Message: TDnsMessage; var Name: string): Boolean;
 var
   Steps: Integer;
   Index: Integer;
@@ -123,11 +123,9 @@ begin
   repeat
     Moved := False;
     for Index := 0 to Message.RecordCount - 1 do
-      if (Message.Records[Index].Section = DnsSectionAnswer) and
-         (Message.Records[Index].RecordType = DnsTypeCname) and
-         DnsNamesAreEqual(@Message.Records[Index].Name[0], @Name[0]) then
+      if IsAnswerFor(Message.Records[Index], DnsTypeCname, Name) then
       begin
-        CopyText(@Name[0], @Message.Records[Index].Target[0], DnsNameCapacity);
+        Name := Message.Records[Index].Target;
         Moved := True;
         Inc(Steps);
         Break;
@@ -138,13 +136,13 @@ begin
   Result := True;
 end;
 
-{ The records of RecordType for Name (aliases followed) into Found;
-  Message is the caller's (large) buffer. }
-function QueryAddresses(Name: PChar; RecordType: Word; constref Options: TDnsQueryOptions;
-  var Message: TDnsMessage; var Found: THostAddresses): LongInt;
+{ The records of RecordType for Name (aliases followed) into Found. }
+function QueryAddresses(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
+  var Found: THostAddresses): LongInt;
 var
+  Message: TDnsMessage;
   Details: TDnsQueryDetails;
-  Current: TDnsName;
+  Current: string;
   Queries: Integer;
   Index: Integer;
   Added: Boolean;
@@ -153,96 +151,91 @@ begin
   Result := QueryDnsSearching(Name, RecordType, Options, Message, Details);
   if Result <> ErrorNone then
     Exit;
-  CopyText(@Current[0], @Details.QueriedName[0], DnsNameCapacity);
+  Current := Details.QueriedName;
   Queries := 1;
   repeat
-    HadAlias := not DnsNamesAreEqual(@Current[0], @Message.QuestionName[0]);
+    HadAlias := not DnsNamesAreEqual(Current, Message.QuestionName);
     if not FollowAliases(Message, Current) then
       Exit(ErrorNotFound);
-    HadAlias := HadAlias or not DnsNamesAreEqual(@Current[0], @Message.QuestionName[0]);
+    HadAlias := HadAlias or not DnsNamesAreEqual(Current, Message.QuestionName);
     Added := False;
     for Index := 0 to Message.RecordCount - 1 do
-      if (Message.Records[Index].Section = DnsSectionAnswer) and
-         (Message.Records[Index].RecordType = RecordType) and
-         DnsNamesAreEqual(@Message.Records[Index].Name[0], @Current[0]) then
+      if IsAnswerFor(Message.Records[Index], RecordType, Current) then
       begin
         AddAddress(Found, Message.Records[Index].Address);
         Added := True;
       end;
     if Added then
     begin
-      if Found.CanonicalName[0] = #0 then
-        CopyText(@Found.CanonicalName[0], @Current[0], DnsNameCapacity);
+      if Found.CanonicalName = '' then
+        Found.CanonicalName := Current;
       Exit(ErrorNone);
     end;
     { An alias whose target the server did not answer for: ask for it. }
     if not HadAlias or (Message.ResponseCode <> DnsResponseNoError) or (Queries > MaximumAliasSteps) then
       Exit(ResponseError(Message));
-    Result := QueryDns(@Current[0], RecordType, Options, Message, Details);
+    Result := QueryDns(Current, RecordType, Options, Message, Details);
     if Result <> ErrorNone then
       Exit;
     Inc(Queries);
   until False;
 end;
 
-function LookUpInDns(Host: PChar; Families: LongWord; var Found: THostAddresses): LongInt;
+function LookUpInDns(const Host: string; Families: LongWord; var Found: THostAddresses): LongInt;
 var
   Options: TDnsQueryOptions;
-  Message: PDnsMessage;
   Ipv6Error: LongInt;
 begin
   SystemDnsQueryOptions(Options);
-  New(Message);
-  try
-    Result := ErrorNotFound;
-    if (Families and HostFamilyIpv4) <> 0 then
-      Result := QueryAddresses(Host, DnsTypeA, Options, Message^, Found);
-    if (Families and HostFamilyIpv6) <> 0 then
-    begin
-      Ipv6Error := QueryAddresses(Host, DnsTypeAaaa, Options, Message^, Found);
-      if (Families and HostFamilyIpv4) = 0 then
-        Result := Ipv6Error;
-    end;
-  finally
-    Dispose(Message);
+  Result := ErrorNotFound;
+  if (Families and HostFamilyIpv4) <> 0 then
+    Result := QueryAddresses(Host, DnsTypeA, Options, Found);
+  if (Families and HostFamilyIpv6) <> 0 then
+  begin
+    Ipv6Error := QueryAddresses(Host, DnsTypeAaaa, Options, Found);
+    if (Families and HostFamilyIpv4) = 0 then
+      Result := Ipv6Error;
   end;
-  if Found.Count > 0 then
+  if Length(Found.Addresses) > 0 then
     Result := ErrorNone;
 end;
 
-function LookUpHostAddresses(Host: PChar; Families: LongWord; out Found: THostAddresses): LongInt;
+function FamilyIsWanted(constref Address: TInternetAddress; Families: LongWord): Boolean;
+begin
+  Result := ((Address.Family = AddressFamilyIPv4) and ((Families and HostFamilyIpv4) <> 0)) or
+    ((Address.Family = AddressFamilyIPv6) and ((Families and HostFamilyIpv6) <> 0));
+end;
+
+function LookUpHostAddresses(const Host: string; Families: LongWord; out Found: THostAddresses): LongInt;
 var
   Address: TInternetAddress;
   FromFile: THostsFileAddresses;
-  Index: Integer;
 begin
-  Found.Count := 0;
-  Found.CanonicalName[0] := #0;
-  if (Host = nil) or (Host[0] = #0) then
+  Found := Default(THostAddresses);
+  if Host = '' then
     Exit(ErrorNotFound);
-  if ParseInternetAddress(Host, Address) then
+  if ParseInternetAddress(PChar(Host), Address) then
   begin
-    CopyText(@Found.CanonicalName[0], Host, DnsNameCapacity);
-    if ((Address.Family = AddressFamilyIPv4) and ((Families and HostFamilyIpv4) = 0)) or
-       ((Address.Family = AddressFamilyIPv6) and ((Families and HostFamilyIpv6) = 0)) then
+    Found.CanonicalName := Host;
+    if not FamilyIsWanted(Address, Families) then
       Exit(ErrorNotFound);
     AddAddress(Found, Address);
     Exit(ErrorNone);
   end;
   if LookUpHostsFileName(Host, Families, FromFile) then
   begin
-    CopyText(@Found.CanonicalName[0], @FromFile.CanonicalName[0], DnsNameCapacity);
-    for Index := 0 to FromFile.Count - 1 do
-      if FromFile.Addresses[Index].Family = AddressFamilyIPv4 then
-        AddAddress(Found, FromFile.Addresses[Index]);
-    for Index := 0 to FromFile.Count - 1 do
-      if FromFile.Addresses[Index].Family <> AddressFamilyIPv4 then
-        AddAddress(Found, FromFile.Addresses[Index]);
+    Found.CanonicalName := FromFile.CanonicalName;
+    for Address in FromFile.Addresses do
+      if Address.Family = AddressFamilyIPv4 then
+        AddAddress(Found, Address);
+    for Address in FromFile.Addresses do
+      if Address.Family <> AddressFamilyIPv4 then
+        AddAddress(Found, Address);
     Exit(ErrorNone);
   end;
   if DnsNamesAreEqual(Host, 'localhost') then
   begin
-    CopyText(@Found.CanonicalName[0], 'localhost', DnsNameCapacity);
+    Found.CanonicalName := 'localhost';
     if (Families and HostFamilyIpv4) <> 0 then
       AddAddress(Found, LoopbackIpv4Address);
     if (Families and HostFamilyIpv6) <> 0 then
@@ -252,71 +245,64 @@ begin
   Result := LookUpInDns(Host, Families, Found);
 end;
 
-function LookUpHost(Host: PChar; out Address: TInternetAddress): LongInt;
+{ The first address of Host of Families. }
+function LookUpFirstAddress(const Host: string; Families: LongWord; out Address: TInternetAddress): LongInt;
 var
   Found: THostAddresses;
 begin
   Address := AnyIpv4Address;
-  Result := LookUpHostAddresses(Host, HostFamilyIpv4, Found);
-  if (Result = ErrorNone) and (Found.Count > 0) then
+  Result := LookUpHostAddresses(Host, Families, Found);
+  if (Result = ErrorNone) and (Length(Found.Addresses) > 0) then
     Address := Found.Addresses[0];
 end;
 
-function LookUpAnyHostAddress(Host: PChar; out Address: TInternetAddress): LongInt;
-var
-  Found: THostAddresses;
+function LookUpHost(const Host: string; out Address: TInternetAddress): LongInt;
 begin
-  Address := AnyIpv4Address;
-  Result := LookUpHostAddresses(Host, HostFamilyAny, Found);
-  if (Result = ErrorNone) and (Found.Count > 0) then
-    Address := Found.Addresses[0];
+  Result := LookUpFirstAddress(Host, HostFamilyIpv4, Address);
 end;
 
-function LookUpAddressName(constref Address: TInternetAddress; Name: PChar; Capacity: PtrUInt): LongInt;
+function LookUpAnyHostAddress(const Host: string; out Address: TInternetAddress): LongInt;
+begin
+  Result := LookUpFirstAddress(Host, HostFamilyAny, Address);
+end;
+
+function WithoutFinalDot(const Name: string): string;
+begin
+  if (Length(Name) > 1) and (Name[Length(Name)] = '.') then
+    Result := Copy(Name, 1, Length(Name) - 1)
+  else
+    Result := Name;
+end;
+
+function LookUpAddressName(constref Address: TInternetAddress; out Name: string): LongInt;
 var
-  FromFile: TDnsName;
-  Question: TDnsName;
+  Question: string;
   Options: TDnsQueryOptions;
-  Message: PDnsMessage;
+  Message: TDnsMessage;
   Details: TDnsQueryDetails;
   Index: Integer;
-  Length: PtrUInt;
 begin
-  if Capacity > 0 then
-    Name[0] := #0;
-  if LookUpHostsFileAddress(Address, FromFile) then
-  begin
-    CopyText(Name, @FromFile[0], Capacity);
+  if LookUpHostsFileAddress(Address, Name) then
     Exit(ErrorNone);
-  end;
+  Name := '';
   if not ReverseLookupName(Address, Question) then
     Exit(ErrorAddressFamilyNotSupported);
   SystemDnsQueryOptions(Options);
-  New(Message);
-  try
-    Result := QueryDns(@Question[0], DnsTypePtr, Options, Message^, Details);
-    if Result <> ErrorNone then
-      Exit;
-    if not FollowAliases(Message^, Question) then
-      Exit(ErrorNotFound);
-    for Index := 0 to Message^.RecordCount - 1 do
-      if (Message^.Records[Index].Section = DnsSectionAnswer) and
-         (Message^.Records[Index].RecordType = DnsTypePtr) and
-         DnsNamesAreEqual(@Message^.Records[Index].Name[0], @Question[0]) then
-      begin
-        CopyText(Name, @Message^.Records[Index].Target[0], Capacity);
-        Length := TextLength(Name);
-        if (Length > 1) and (Name[Length - 1] = '.') then
-          Name[Length - 1] := #0;
-        Exit(ErrorNone);
-      end;
-    Result := ResponseError(Message^);
-  finally
-    Dispose(Message);
-  end;
+  Result := QueryDns(Question, DnsTypePtr, Options, Message, Details);
+  if Result <> ErrorNone then
+    Exit;
+  if not FollowAliases(Message, Question) then
+    Exit(ErrorNotFound);
+  for Index := 0 to Message.RecordCount - 1 do
+    if IsAnswerFor(Message.Records[Index], DnsTypePtr, Question) then
+    begin
+      Name := WithoutFinalDot(Message.Records[Index].Target);
+      Exit(ErrorNone);
+    end;
+  Result := ResponseError(Message);
 end;
 
-function HostLookupErrorMessage(Error: LongInt): PChar;
+function HostLookupErrorMessage(Error: LongInt): string;
 begin
   case Error of
     ErrorNone: Result := 'Success';

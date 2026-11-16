@@ -51,6 +51,8 @@ type
     Bytes: array[0..15] of Byte;
   end;
 
+  TInternetAddressArray = array of TInternetAddress;
+
 function Ipv4Address(First, Second, Third, Fourth: Byte): TInternetAddress;
 function AnyIpv4Address: TInternetAddress;
 function LoopbackIpv4Address: TInternetAddress;

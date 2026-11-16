@@ -40,7 +40,7 @@ uses
   Sys.HostNames;
 
 type
-  TInternetAddressArray = array of TInternetAddress;
+  TInternetAddressArray = Sys.InternetAddresses.TInternetAddressArray;
 
 { The addresses of Host (HostFamily* of Sys.HostNames) in the order to
   try them; ErrorNone, or the resolver's error (HostLookupErrorMessage
@@ -112,14 +112,12 @@ end;
 function ResolveHost(const Host: string; Families: LongWord; out Addresses: TInternetAddressArray): LongInt;
 var
   Found: THostAddresses;
-  Index: Integer;
 begin
   Addresses := nil;
-  Result := LookUpHostAddresses(PChar(Host), Families, Found);
+  Result := LookUpHostAddresses(Host, Families, Found);
   if Result <> ErrorNone then
     Exit;
-  for Index := 0 to Found.Count - 1 do
-    AppendAddress(Addresses, Found.Addresses[Index]);
+  Addresses := Copy(Found.Addresses);
   OrderAddressesForConnecting(Addresses);
 end;
 
