@@ -188,6 +188,33 @@ end;
 
 { --- Starting -------------------------------------------------------- }
 
+{ The arguments one after another, a space between each, cut short to
+  fit Capacity (with its zero): what the task manager and ps show. }
+procedure JoinArguments(Arguments: PPChar; Count: Integer; Destination: PChar; Capacity: QWord);
+var
+  Index: Integer;
+  Used: QWord;
+  Source: PChar;
+begin
+  Used := 0;
+  for Index := 0 to Count - 1 do
+  begin
+    if (Index > 0) and (Used + 1 < Capacity) then
+    begin
+      Destination[Used] := ' ';
+      Inc(Used);
+    end;
+    Source := Arguments[Index];
+    while (Source <> nil) and (Source^ <> #0) and (Used + 1 < Capacity) do
+    begin
+      Destination[Used] := Source^;
+      Inc(Used);
+      Inc(Source);
+    end;
+  end;
+  Destination[Used] := #0;
+end;
+
 function TotalStringBytes(Strings: PPChar; Count: Integer): QWord;
 var
   Index: Integer;
@@ -326,6 +353,7 @@ begin
     Process^.SessionId := Process^.ProcessId;
   Process^.Credentials := Startup.Credentials;
   Process^.ControllingTerminal := Startup.ControllingTerminal;
+  JoinArguments(Startup.Arguments, Startup.ArgumentCount, @Process^.CommandLine[0], ProcessCommandLineCapacity);
 
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then

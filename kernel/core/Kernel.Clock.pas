@@ -92,6 +92,7 @@ uses
   Hal.RealTimeClock,
   Kernel.Arch.Cpu,
   Kernel.Arch.TrapFrame,
+  Kernel.Arch.UserMode,
   Kernel.Interrupts,
   Kernel.Scheduler,
   Kernel.Processors,
@@ -175,7 +176,7 @@ begin
     Processor^.NextTickTime := Processor^.NextTickTime + ElapsedTicks * NanosecondsPerTick;
   end;
   ExpireTimers(Now);
-  SchedulerClockInterrupt(Now, ElapsedTicks);
+  SchedulerClockInterrupt(Now, ElapsedTicks, ArchFrameIsFromUserMode(Frame));
 
   WereEnabled := SaveAndDisableInterrupts;
   SetClockInterruptFor(Processor, NextClockDeadline(Processor, Now), Now);

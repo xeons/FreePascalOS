@@ -38,6 +38,7 @@ uses
   Kernel.SpinLock,
   Kernel.Mutex,
   Kernel.Events,
+  Kernel.ProcessorTime,
   Objects.Manager,
   Processes.AddressSpace,
   Processes.Handles,
@@ -46,6 +47,8 @@ uses
 const
   ProcessNameLength = 32;
   ProcessPathCapacity = 1024;
+  { The arguments it was started with, joined by spaces (cut short). }
+  ProcessCommandLineCapacity = 256;
 
 const
   MaximumProcessGroups = 32;
@@ -150,8 +153,15 @@ type
 
     { --- Users, priority and accounting (Processes.Security) --- }
     Credentials: TProcessCredentials;
-    { Seconds since 1970. }
+    { Seconds since 1970, and the system's clock (nanoseconds since it
+      started) at the same moment, which measures how long it has run. }
     StartTime: Int64;
+    StartUptimeNanoseconds: QWord;
+    { The processor time of its threads that have ended (their own goes
+      with them; see Processes.Accounting). Guarded by ThreadListLock. }
+    EndedThreadTimes: TThreadTimes;
+    { The arguments it was started with, joined by spaces. }
+    CommandLine: array[0..ProcessCommandLineCapacity - 1] of Char;
 
     { Links running user processes, so they can be found by id. }
     RunningLink: TListEntry;
@@ -245,6 +255,7 @@ begin
   Process^.Credentials.Umask := DefaultUmask;
   Process^.Credentials.AffinityMask := AllProcessors;
   Process^.StartTime := CurrentWallClockTime;
+  Process^.StartUptimeNanoseconds := ClockNanoseconds;
 end;
 
 procedure InitializeProcessManager;

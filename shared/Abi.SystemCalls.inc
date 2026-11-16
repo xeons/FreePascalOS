@@ -378,7 +378,20 @@ const
     there is none; ErrorMessageTooLong if the first does not fit. }
   CallReadWatch = 95;
 
-  CallCount = 96;
+  { --- Processor time and memory: what a task manager shows ----------------- }
+
+  { (BufferAddress, Capacity): describes the running processes, one
+    TAbiProcessDetails each, as many as fit in Capacity records; returns
+    how many processes there are (more than Capacity: call again with
+    room for them). Anyone may list every process; the command line of
+    another user's process is shown only to root (the others get it
+    empty, with ProcessDetailsCommandLineHidden). }
+  CallListProcessDetails = 96;
+  { (UsageAddress): the system's processor time and memory, as a
+    TAbiSystemUsage. }
+  CallGetSystemUsage = 97;
+
+  CallCount = 98;
 
   { How long a shutdown waits for the process watching it. }
   ShutdownCoordinatorSeconds = 30;
@@ -429,11 +442,17 @@ const
   NiceLowest = -20;
   NiceHighest = 19;
   MaximumSupplementaryGroups = 32;
-  { Process states in TAbiProcessInformation. }
+  { Process states in TAbiProcessInformation and TAbiProcessDetails:
+    running (a thread runs or is ready to), waiting for something,
+    ending, stopped (job control). }
   ProcessStateRunning = 0;
   ProcessStateSleeping = 1;
   ProcessStateExiting = 2;
   ProcessStateStopped = 3;
+  { TAbiProcessDetails.Flags: its command line is another user's, kept
+    from the caller; Ctrl-C does not end it (an interactive shell). }
+  ProcessDetailsCommandLineHidden = $01;
+  ProcessDetailsIgnoresInterrupt = $02;
 
   { --- Arguments ------------------------------------------------------- }
 
@@ -732,6 +751,9 @@ const
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
+  AbiTerminalNameCapacity = 16;
+  AbiCommandLineCapacity = 256;
+  AbiMaximumProcessors = 32;
   MaximumArguments = 256;
 
 type
@@ -766,6 +788,93 @@ type
     Groups: array[0..MaximumSupplementaryGroups - 1] of LongWord;
   end;
   PAbiCredentials = ^TAbiCredentials;
+
+  { One process, as CallListProcessDetails describes it. Times are in
+    nanoseconds of processor time; memory in bytes. }
+  TAbiProcessDetails = record
+    ProcessId: QWord;
+    ParentProcessId: QWord;
+    GroupId: QWord;
+    SessionId: QWord;
+    RealUserId: LongWord;
+    EffectiveUserId: LongWord;
+    { ProcessState*. }
+    State: LongWord;
+    ThreadCount: LongWord;
+    HandleCount: LongWord;
+    Nice: LongInt;
+    { The thread priority its nice value gives (1 .. 31; 8 for nice 0). }
+    Priority: LongWord;
+    { ProcessDetails*. }
+    Flags: LongWord;
+    { Seconds since 1970, and milliseconds since the system started, at
+      the same moment: when it started. }
+    StartTime: Int64;
+    StartUptimeMilliseconds: QWord;
+    { The processor time of all its threads, those that ended included,
+      and how it divides between user mode and the kernel (sampled by
+      the clock: the two add up to the total). }
+    ProcessorNanoseconds: QWord;
+    UserNanoseconds: QWord;
+    KernelNanoseconds: QWord;
+    { The size of what it may touch (its regions), the memory it has
+      (resident), the part of that shared with other processes
+      (program and library pages, sections) and its own (private), and
+      the most it ever had. }
+    VirtualBytes: QWord;
+    ResidentBytes: QWord;
+    SharedBytes: QWord;
+    PrivateBytes: QWord;
+    PeakResidentBytes: QWord;
+    Name: array[0..AbiTextCapacity - 1] of Char;
+    { Its controlling terminal ("console", "pts2"), empty if none. }
+    Terminal: array[0..AbiTerminalNameCapacity - 1] of Char;
+    { The arguments it was started with, joined by spaces. }
+    CommandLine: array[0..AbiCommandLineCapacity - 1] of Char;
+  end;
+  PAbiProcessDetails = ^TAbiProcessDetails;
+
+  TAbiProcessorUsage = record
+    { How long it has run threads, and its idle thread, since it
+      started, in nanoseconds. }
+    BusyNanoseconds: QWord;
+    IdleNanoseconds: QWord;
+    { 1 if it runs. }
+    Online: LongWord;
+    Reserved: LongWord;
+  end;
+
+  { What CallGetSystemUsage gives. Memory in bytes. }
+  TAbiSystemUsage = record
+    UptimeNanoseconds: QWord;
+    { Processors started; Processors[0 .. ProcessorCount - 1] hold
+      their times. }
+    ProcessorCount: LongWord;
+    ProcessCount: LongWord;
+    { Every thread, the kernel's included. }
+    ThreadCount: LongWord;
+    Reserved: LongWord;
+    ContextSwitches: QWord;
+    { The RAM the system has, and what is free. }
+    TotalMemory: QWord;
+    FreeMemory: QWord;
+    { What the rest is used for: processes' own memory, program and
+      library files, memory shared between processes, disk blocks kept
+      in memory, the kernel's heap, its threads' stacks, page tables,
+      the kernel itself (its image, the loader's data, the page
+      database) and drivers' buffers. }
+    UserMemory: QWord;
+    ProgramImageMemory: QWord;
+    SectionMemory: QWord;
+    BlockCacheMemory: QWord;
+    KernelHeapMemory: QWord;
+    KernelStackMemory: QWord;
+    PageTableMemory: QWord;
+    KernelImageMemory: QWord;
+    DriverMemory: QWord;
+    Processors: array[0..AbiMaximumProcessors - 1] of TAbiProcessorUsage;
+  end;
+  PAbiSystemUsage = ^TAbiSystemUsage;
 
   TAbiProcessInformation = record
     ProcessId: QWord;

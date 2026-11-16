@@ -32,7 +32,9 @@
   are the same, fainter. Wider ones are their outlines (a rectangle
   along the line) filled by the rasterizer (Drawing.Rasterizer), as are
   joined lines (AddLineStroke and AddRoundJoint build them up into one
-  shape, so where pieces overlap nothing is blended twice).
+  shape, so where pieces overlap nothing is blended twice): a polyline
+  (DrawSmoothPolyline, a graph's line) is drawn so, its corners
+  rounded.
 }
 unit Drawing.SmoothLines;
 
@@ -52,6 +54,10 @@ procedure AddLineStroke(var Shape: TCoverageShape; FromX, FromY, ToX, ToY, Width
 { A disc Width across at (X, Y) (centre coordinates) added to Shape,
   clockwise: rounds the corner where two strokes meet. }
 procedure AddRoundJoint(var Shape: TCoverageShape; X, Y, Width: Double);
+{ Lines Width wide from each point to the next (centre coordinates),
+  joined with round corners and blended as one shape. }
+procedure DrawSmoothPolyline(const Canvas: TCanvas; const Points: array of TPrecisePoint; Width: Double;
+  Color: TColor);
 
 implementation
 
@@ -202,6 +208,25 @@ end;
 procedure AddRoundJoint(var Shape: TCoverageShape; X, Y, Width: Double);
 begin
   AddShapeEllipse(Shape, X + HalfPixel, Y + HalfPixel, Width / 2, Width / 2, True);
+end;
+
+procedure DrawSmoothPolyline(const Canvas: TCanvas; const Points: array of TPrecisePoint; Width: Double;
+  Color: TColor);
+var
+  Shape: TCoverageShape;
+  Index: LongInt;
+begin
+  if (Width <= 0) or (Length(Points) < 2) then
+    Exit;
+  BeginShape(Shape);
+  for Index := 1 to High(Points) do
+  begin
+    AddLineStroke(Shape, Points[Index - 1].X, Points[Index - 1].Y, Points[Index].X, Points[Index].Y, Width);
+    { The corner between this piece and the next. }
+    if Index < High(Points) then
+      AddRoundJoint(Shape, Points[Index].X, Points[Index].Y, Width);
+  end;
+  FillShape(Canvas, Shape, Color);
 end;
 
 procedure DrawSmoothLine(const Canvas: TCanvas; FromX, FromY, ToX, ToY, Width: Double; Color: TColor);

@@ -46,6 +46,8 @@ uses
   Sys.Files,
   Sys.Environment,
   Sys.Processes,
+  Sys.ProcessList,
+  Sys.SystemUsage,
   Sys.Time,
   Sys.Libraries,
   Sys.Information,

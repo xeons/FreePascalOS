@@ -25,7 +25,8 @@
   leaves the keyboard with the window that had it: a click on the active
   window's button minimizes it, on another's activates it (restoring it
   if minimized). A right click on a button opens Restore, Minimize,
-  Maximize and Close for that window. The buttons share what is left
+  Maximize and Close for that window; on the taskbar itself, a menu
+  with the Task Manager. The buttons share what is left
   between the Start button and the notification area, each at most
   MaximumButtonWidth wide. The clock is checked every second and drawn
   when the minute changes; a notification icon's tooltip shows when the
@@ -57,6 +58,8 @@ const
   TaskbarHeight = 30;
 
 type
+  TTaskbarEvent = procedure of object;
+
   TTaskbarWindow = class(TControlWindow)
   private
     FWindowList: TWindowList;
@@ -66,6 +69,8 @@ type
     FButtons: TList;
     FContextMenu: TMenuItem;
     FContextWindowId: LongWord;
+    FTaskbarMenu: TMenuItem;
+    FOnTaskManagerChosen: TTaskbarEvent;
     function ButtonCount: LongInt;
     function Button(Index: LongInt): TTaskButton;
     function ButtonFor(WindowId: LongWord): TTaskButton;
@@ -76,11 +81,14 @@ type
     procedure TaskClicked(Sender: TControl);
     procedure TaskContextMenu(Sender: TControl; X, Y: LongInt; PressedButton: LongWord);
     procedure ContextChosen(Item: TMenuItem);
+    procedure ShowTaskbarMenu(X, Y: LongInt);
+    procedure TaskManagerChosen(Item: TMenuItem);
     procedure HoverChanged(Sender: TControl);
     procedure ShowHoveredTooltip;
     procedure TellPlaces;
   protected
     procedure Resized; override;
+    procedure PointerUp(X, Y: LongInt; ReleasedButton: LongWord); override;
     procedure TimerFired(TimerId: LongWord); override;
     procedure CloseRequested; override;
   public
@@ -94,6 +102,8 @@ type
     procedure NotificationIconChanged(const Message: TWindowMessage);
     { Moves to the bottom of the display, now this place and size. }
     procedure PlaceOnDisplay(DisplayLeft, DisplayTop, DisplayWidth, DisplayHeight: LongInt);
+    { The taskbar's menu's Task Manager was chosen. }
+    property OnTaskManagerChosen: TTaskbarEvent read FOnTaskManagerChosen write FOnTaskManagerChosen;
   end;
 
 implementation
@@ -145,6 +155,7 @@ begin
   HideTooltip;
   FStartMenu.Free;
   FContextMenu.Free;
+  FTaskbarMenu.Free;
   FButtons.Free;
   inherited Destroy;
 end;
@@ -358,6 +369,40 @@ procedure TTaskbarWindow.ContextChosen(Item: TMenuItem);
 begin
   Say('context ' + LowerCase(Item.Caption));
   ManageWindow(FContextWindowId, LongWord(Item.Tag));
+end;
+
+{ A right click let go on the taskbar itself, where no button is. }
+procedure TTaskbarWindow.PointerUp(X, Y: LongInt; ReleasedButton: LongWord);
+begin
+  inherited PointerUp(X, Y, ReleasedButton);
+  if (ReleasedButton = ButtonRight) and (Root.ControlAt(X, Y) = Root) then
+    ShowTaskbarMenu(X, Y);
+end;
+
+procedure TTaskbarWindow.ShowTaskbarMenu(X, Y: LongInt);
+var
+  List: TMenuList;
+  MenuWindow: TWindow;
+  MenuWidth: LongInt;
+  MenuHeight: LongInt;
+begin
+  FTaskbarMenu.Free;
+  FTaskbarMenu := TMenuItem.Create('');
+  FTaskbarMenu.Add('Task &Manager', @TaskManagerChosen);
+  { Above the taskbar, which is at the bottom of the display. }
+  MeasurePopupMenu(FTaskbarMenu, MenuWidth, MenuHeight);
+  List := ShowPopupMenu(Self, FTaskbarMenu, ScreenLeft + Unscaled(X), ScreenTop - MenuHeight);
+  MenuWindow := TWindow(List.Host.OwnerWindow);
+  MenuWindow.PrepareToReceive;
+  SayPlace('taskbar-task-manager', MenuWindow, Scaled(40), Scaled(PopupMenuItemTop(FTaskbarMenu, 0) +
+    Theme.MenuItemHeight div 2));
+end;
+
+procedure TTaskbarWindow.TaskManagerChosen(Item: TMenuItem);
+begin
+  Say('context task manager');
+  if Assigned(FOnTaskManagerChosen) then
+    FOnTaskManagerChosen();
 end;
 
 procedure TTaskbarWindow.HoverChanged(Sender: TControl);

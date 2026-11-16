@@ -29,10 +29,14 @@
 
   Columns: pid ppid pgid uid user ruid ruser ni (nice) pri stat (s)
   nlwp (thcount) vsz rss (both KiB) %cpu %mem time etime stime (start)
-  tty comm (cmd, args, command).
+  tty comm (ucomm), cmd (args, command).
 
-  Programs keep no command line in the kernel, so cmd and args show the
-  program name, as comm does.
+  %cpu is the processor time over the time since the process started
+  (100 is one processor kept busy all along), time the processor time
+  so far, rss the memory it has, vsz the size of what it may touch.
+  comm is the program's name, args its command line; another user's
+  command line is root's to see only, so others get the name in
+  brackets for it.
 }
 program ps;
 
@@ -47,6 +51,7 @@ uses
   Sys.Format,
   Sys.Kernel,
   Sys.Memory,
+  Sys.ProcessList,
   Sys.Streams,
   Sys.Text,
   Sys.Time,
@@ -73,16 +78,14 @@ const
   OptionUser = 5;
   OptionNoHeaders = 6;
 
-  MaximumProcesses = 256;
   MaximumColumns = 24;
   MaximumSelected = 32;
-  PageKiB = 4;
 
 type
   TColumnKind = (ColumnPid, ColumnParent, ColumnGroup, ColumnUid, ColumnUser, ColumnRealUid,
     ColumnRealUser, ColumnNice, ColumnPriority, ColumnState, ColumnThreads, ColumnVirtual,
     ColumnResident, ColumnCpuPercent, ColumnMemoryPercent, ColumnTime, ColumnElapsed,
-    ColumnStart, ColumnTerminal, ColumnCommand, ColumnCpu);
+    ColumnStart, ColumnTerminal, ColumnCommand, ColumnArguments, ColumnCpu);
 
   TColumn = record
     Kind: TColumnKind;
@@ -100,7 +103,7 @@ type
   end;
 
 const
-  ColumnNames: array[0..33] of TColumnName = (
+  ColumnNames: array[0..35] of TColumnName = (
     (Name: 'pid'; Kind: ColumnPid; Header: 'PID'; Width: 7; LeftAligned: False),
     (Name: 'ppid'; Kind: ColumnParent; Header: 'PPID'; Width: 7; LeftAligned: False),
     (Name: 'pgid'; Kind: ColumnGroup; Header: 'PGID'; Width: 7; LeftAligned: False),
@@ -132,8 +135,10 @@ const
     (Name: 'start'; Kind: ColumnStart; Header: 'START'; Width: 5; LeftAligned: True),
     (Name: 'tty'; Kind: ColumnTerminal; Header: 'TTY'; Width: 8; LeftAligned: True),
     (Name: 'comm'; Kind: ColumnCommand; Header: 'COMMAND'; Width: 0; LeftAligned: True),
-    (Name: 'cmd'; Kind: ColumnCommand; Header: 'CMD'; Width: 0; LeftAligned: True),
-    (Name: 'args'; Kind: ColumnCommand; Header: 'COMMAND'; Width: 0; LeftAligned: True),
+    (Name: 'ucomm'; Kind: ColumnCommand; Header: 'COMMAND'; Width: 0; LeftAligned: True),
+    (Name: 'cmd'; Kind: ColumnArguments; Header: 'CMD'; Width: 0; LeftAligned: True),
+    (Name: 'args'; Kind: ColumnArguments; Header: 'COMMAND'; Width: 0; LeftAligned: True),
+    (Name: 'command'; Kind: ColumnArguments; Header: 'COMMAND'; Width: 0; LeftAligned: True),
     (Name: 'c'; Kind: ColumnCpu; Header: 'C'; Width: 2; LeftAligned: False));
 
 var
@@ -145,7 +150,8 @@ var
   SelectedUsers: array[0..MaximumSelected - 1] of LongWord;
   SelectedUserCount: Integer;
   ShowHeaders: Boolean;
-  Now: Int64;
+  { Milliseconds since the system started. }
+  Uptime: QWord;
   TotalMemory: QWord;
 
 procedure AddColumn(Kind: TColumnKind; Header: PChar; Width: Integer; LeftAligned: Boolean);
@@ -279,7 +285,7 @@ begin
   until Last;
 end;
 
-function IsSelected(const Information: TAbiProcessInformation): Boolean;
+function IsSelected(const Information: TProcessDetails): Boolean;
 var
   Index: Integer;
 begin
@@ -296,7 +302,7 @@ begin
   Result := False;
 end;
 
-function StateLetter(const Information: TAbiProcessInformation): Char;
+function StateLetter(const Information: TProcessDetails): Char;
 begin
   case Information.State of
     ProcessStateRunning: Result := 'R';
@@ -329,9 +335,26 @@ begin
     AppendFormatted(Builder, '%u', [ArgumentUnsigned(Id)]);
 end;
 
-procedure FormatCell(Kind: TColumnKind; const Information: TAbiProcessInformation; var Builder: TTextBuilder);
+{ Milliseconds the process has run for. }
+function ElapsedMilliseconds(const Information: TProcessDetails): QWord;
+begin
+  if Uptime > Information.StartUptimeMilliseconds then
+    Result := Uptime - Information.StartUptimeMilliseconds
+  else
+    Result := 0;
+end;
+
+procedure AppendArguments(var Builder: TTextBuilder; const Information: TProcessDetails);
+begin
+  if Information.CommandLine[0] <> #0 then
+    AppendText(Builder, @Information.CommandLine[0])
+  else
+    AppendFormatted(Builder, '[%s]', [ArgumentText(@Information.Name[0])]);
+end;
+
+procedure FormatCell(Kind: TColumnKind; const Information: TProcessDetails; var Builder: TTextBuilder);
 var
-  Elapsed: Int64;
+  Elapsed: QWord;
   Tenths: QWord;
   Start: TDateTime;
 begin
@@ -354,14 +377,11 @@ begin
           AppendText(Builder, 'N');
       end;
     ColumnThreads: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ThreadCount)]);
-    ColumnVirtual, ColumnResident:
-      AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.MemoryPages * PageKiB)]);
+    ColumnVirtual: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.VirtualBytes div 1024)]);
+    ColumnResident: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ResidentBytes div 1024)]);
     ColumnCpuPercent, ColumnCpu:
       begin
-        Elapsed := (Now - Information.StartTime) * 1000;
-        if Elapsed <= 0 then
-          Elapsed := 1000;
-        Tenths := Information.CpuMilliseconds * 1000 div QWord(Elapsed);
+        Tenths := ProcessorShareTenths(0, Information.ProcessorNanoseconds, ElapsedMilliseconds(Information), 1);
         if Kind = ColumnCpu then
           AppendFormatted(Builder, '%u', [ArgumentUnsigned(Tenths div 10)])
         else
@@ -371,27 +391,30 @@ begin
       begin
         Tenths := 0;
         if TotalMemory > 0 then
-          Tenths := Information.MemoryPages * 4096 * 1000 div TotalMemory;
+          Tenths := Information.ResidentBytes * 1000 div TotalMemory;
         AppendFormatted(Builder, '%u.%u', [ArgumentUnsigned(Tenths div 10), ArgumentUnsigned(Tenths mod 10)]);
       end;
-    ColumnTime: FormatDuration(Information.CpuMilliseconds div 1000, True, Builder);
+    ColumnTime: FormatDuration(Information.ProcessorNanoseconds div 1000000000, True, Builder);
     ColumnElapsed:
       begin
-        Elapsed := Now - Information.StartTime;
-        if Elapsed < 0 then
-          Elapsed := 0;
+        Elapsed := ElapsedMilliseconds(Information) div 1000;
         if Elapsed < 3600 then
-          AppendFormatted(Builder, '%02d:%02d', [ArgumentNumber(Elapsed div 60), ArgumentNumber(Elapsed mod 60)])
+          AppendFormatted(Builder, '%02u:%02u', [ArgumentUnsigned(Elapsed div 60), ArgumentUnsigned(Elapsed mod 60)])
         else
-          FormatDuration(QWord(Elapsed), True, Builder);
+          FormatDuration(Elapsed, True, Builder);
       end;
     ColumnStart:
       begin
         DecodeTime(Information.StartTime, Start);
         AppendFormatted(Builder, '%02d:%02d', [ArgumentNumber(Start.Hour), ArgumentNumber(Start.Minute)]);
       end;
-    ColumnTerminal: AppendText(Builder, 'console');
+    ColumnTerminal:
+      if Information.Terminal[0] <> #0 then
+        AppendText(Builder, @Information.Terminal[0])
+      else
+        AppendText(Builder, '?');
     ColumnCommand: AppendText(Builder, @Information.Name[0]);
+    ColumnArguments: AppendArguments(Builder, Information);
   end;
 end;
 
@@ -423,8 +446,8 @@ var
   BsdStyle: Boolean;
   HeaderText: Boolean;
   Column: Integer;
-  ListIndex: QWord;
-  Information: TAbiProcessInformation;
+  ListIndex: LongInt;
+  Snapshot: TProcessSnapshot;
   SystemInformation: TAbiSystemInformation;
   Builder: TTextBuilder;
 begin
@@ -479,7 +502,10 @@ begin
       ParseFormat('pid,tty,time,cmd');
   end;
 
-  Now := CurrentTime;
+  InitializeProcessSnapshot(Snapshot);
+  if TakeProcessSnapshot(Snapshot) <> ErrorNone then
+    Fail(1, 'cannot list the processes', []);
+  Uptime := Snapshot.TakenAtMilliseconds;
   if KernelGetSystemInformation(SystemInformation) >= 0 then
     TotalMemory := SystemInformation.TotalMemory;
 
@@ -499,20 +525,16 @@ begin
     WriteCharacter(StandardOutput, #10);
   end;
 
-  ListIndex := 0;
-  while KernelListProcesses(ListIndex, Information) >= 0 do
+  for ListIndex := 0 to Snapshot.Count - 1 do
   begin
-    Inc(ListIndex);
-    if ListIndex > MaximumProcesses then
-      Break;
-    if not IsSelected(Information) then
+    if not IsSelected(Snapshot.Entries[ListIndex]) then
       Continue;
     for Column := 0 to ColumnCount - 1 do
     begin
       if Column > 0 then
         WriteCharacter(StandardOutput, ' ');
       BeginText(Builder);
-      FormatCell(Columns[Column].Kind, Information, Builder);
+      FormatCell(Columns[Column].Kind, Snapshot.Entries[ListIndex], Builder);
       WritePadded(Builder.Text, Columns[Column], Column = ColumnCount - 1);
       DiscardText(Builder);
     end;

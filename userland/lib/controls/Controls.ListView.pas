@@ -37,7 +37,12 @@
   it), Ctrl+A selects all. Without it, the focused item is the one
   selected. A double click or Enter activates (OnActivate,
   NotifyActivated); every change of the selection or the focus is
-  announced once (OnChange, NotifyChanged).
+  announced once (OnChange, NotifyChanged). A right click asks for a
+  context menu (OnContextMenu, when the button is let go, so letting go
+  does not choose from the menu at once): pressed on an item that is
+  not selected it selects that item alone first, as a left click would,
+  so the menu is about what was clicked; Shift+F10 asks for one for the
+  focused item.
 }
 unit Controls.ListView;
 
@@ -83,6 +88,9 @@ type
     FOnColumnClick: TColumnEvent;
     FOnActivate: TControlEvent;
     FOnCompare: TListColumnCompareEvent;
+    FOnContextMenu: TPointerEvent;
+    FRightButtonPressed: Boolean;
+    procedure AskForContextMenu(X, Y: LongInt);
     procedure SetSelected(Row: LongInt; Value: Boolean);
     procedure SetItemIndex(Value: LongInt);
     procedure SetMultiSelect(Value: Boolean);
@@ -119,6 +127,8 @@ type
     property OnColumnClick: TColumnEvent read FOnColumnClick write FOnColumnClick;
     property OnActivate: TControlEvent read FOnActivate write FOnActivate;
     property OnCompare: TListColumnCompareEvent read FOnCompare write FOnCompare;
+    { X, Y: where (pixels of the list view) the menu belongs. }
+    property OnContextMenu: TPointerEvent read FOnContextMenu write FOnContextMenu;
   end;
 
 implementation
@@ -403,6 +413,16 @@ var
   Modifiers: LongWord;
   Now: QWord;
 begin
+  if Button = ButtonRight then
+  begin
+    FRightButtonPressed := True;
+    if ShowsHeader and (Y < 2 + HeaderHeight) then
+      Exit;
+    Index := ItemAtPoint(Grid, X, Y);
+    if (Index >= 0) and not Selected[Index] then
+      ClickItem(Index, 0);
+    Exit;
+  end;
   if Button <> ButtonLeft then
     Exit;
   if ShowsHeader and (Y < 2 + HeaderHeight) then
@@ -443,6 +463,17 @@ end;
 procedure TListView.PointerUp(X, Y: LongInt; Button: LongWord);
 begin
   FResizing := -1;
+  if (Button = ButtonRight) and FRightButtonPressed then
+  begin
+    FRightButtonPressed := False;
+    AskForContextMenu(X, Y);
+  end;
+end;
+
+procedure TListView.AskForContextMenu(X, Y: LongInt);
+begin
+  if Assigned(FOnContextMenu) then
+    FOnContextMenu(Self, X, Y, ButtonRight);
 end;
 
 procedure TListView.Activate;
@@ -482,6 +513,16 @@ begin
       Activate
     else
       Result := False;
+    Exit;
+  end;
+  if (Code = KeyF10) and ((Modifiers and (ModifierShift or ModifierControl or ModifierAlt)) = ModifierShift) and
+     Assigned(FOnContextMenu) then
+  begin
+    if FItemIndex >= 0 then
+      AskForContextMenu((ItemBounds(FItemIndex).Left + ItemBounds(FItemIndex).Right) div 2,
+        ItemBounds(FItemIndex).Bottom)
+    else
+      AskForContextMenu(0, 0);
     Exit;
   end;
   if FItems.Count = 0 then

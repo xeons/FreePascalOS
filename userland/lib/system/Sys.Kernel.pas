@@ -120,6 +120,10 @@ function KernelCreateFifo(Path: PChar): Int64;
 { Watching files and folders. }
 function KernelCreateWatch(Path: PChar; Flags: LongWord): Int64;
 function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
+{ Processor time and memory. Returns how many processes there are (Capacity
+  records filled at most). }
+function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
+function KernelGetSystemUsage(out Usage: TAbiSystemUsage): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
 function KernelContinueProcesses(Target: Int64): Int64;
@@ -477,6 +481,16 @@ end;
 function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallReadWatch, QWord(Handle), QWord(Buffer), Capacity, 0, 0, 0);
+end;
+
+function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListProcessDetails, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelGetSystemUsage(out Usage: TAbiSystemUsage): Int64;
+begin
+  Result := SystemCall(CallGetSystemUsage, QWord(@Usage), 0, 0, 0, 0, 0);
 end;
 
 function KernelCreatePort(Name: PChar): Int64;

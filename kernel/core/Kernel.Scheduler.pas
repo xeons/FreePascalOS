@@ -117,10 +117,10 @@ function TakeTerminatedThread: PThreadControlBlock;
 
 { Called by the executing processor's clock interrupt at ClockLevel, at
   clock time Now, with the number of 10 ms ticks that passed since the
-  last tick (usually 0 or 1): charges them to the running thread and its
-  time slice, and asks the dispatch interrupt to wake the threads whose
-  timeout is due. }
-procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord);
+  last tick (usually 0 or 1), found in user mode or not: charges them to
+  the running thread and its time slice, and asks the dispatch interrupt
+  to wake the threads whose timeout is due. }
+procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord; InUserMode: Boolean);
 
 { Building blocks for synchronization objects. All "Locked" routines
   require the dispatcher lock to be held. }
@@ -166,6 +166,7 @@ uses
   Kernel.Processors,
   Kernel.InterProcessor,
   Kernel.ReadyQueues,
+  Kernel.ProcessorTime,
   Kernel.Arch.ProcessorBlock,
   Kernel.Panic;
 
@@ -227,6 +228,7 @@ var
 begin
   Processor := CurrentProcessor;
   PreviousThread := Processor^.RunningThread;
+  ChargeRunningThreadLocked(Processor, ClockNanoseconds);
   NextThread^.State := ThreadStateRunning;
   NextThread^.QuantumRemaining := QuantumTicks;
   Processor^.RunningThread := NextThread;
@@ -432,7 +434,7 @@ begin
   FifteenMinutes := LongWord((LoadAverage[2] * 100 + LoadOne div 2) shr LoadFractionBits);
 end;
 
-procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord);
+procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord; InUserMode: Boolean);
 var
   Processor: PProcessor;
   Thread: PThreadControlBlock;
@@ -444,7 +446,7 @@ begin
   if ElapsedTicks > 0 then
   begin
     Thread := Processor^.RunningThread;
-    Thread^.RunTicks := Thread^.RunTicks + ElapsedTicks;
+    ChargeClockTicks(Thread, ElapsedTicks, InUserMode);
     if (Processor^.Index = 0) and (ClockTickCount >= NextLoadSampleTick) then
     begin
       SampleLoad;
@@ -693,6 +695,7 @@ begin
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
   CurrentProcessor^.IdleThread := IdleThread;
   CurrentProcessor^.RunningThread := IdleThread;
+  StartProcessorTime(CurrentProcessor, ClockNanoseconds);
   ArchSetThreadInterruptStack(IdleThread^.StackTop);
   MarkProcessorOnline(CurrentProcessor);
 
@@ -712,6 +715,7 @@ begin
   Processor^.QuantumHasExpired := False;
   Processor^.IdleThread := IdleThread;
   Processor^.RunningThread := IdleThread;
+  StartProcessorTime(Processor, ClockNanoseconds);
   ArchSetThreadInterruptStack(IdleThread^.StackTop);
   MarkProcessorOnline(Processor);
 end;

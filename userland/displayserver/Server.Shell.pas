@@ -56,6 +56,11 @@ procedure TellShellAboutWindows;
 procedure TellShellDisplaysChanged;
 { Sends Message to the shell, if there is one. }
 procedure SendToShell(var Message: TWindowMessage);
+{ A window a taskbar or a task manager lists: framed, owned by no
+  window, not a desktop. }
+function IsTopLevelWindow(Window: PServerWindow): Boolean;
+{ What the window is like now (ShellWindow*). }
+function WindowStateFlags(Window: PServerWindow): LongWord;
 
 implementation
 
@@ -105,15 +110,19 @@ begin
   ClearWorkAreas;
 end;
 
-{ A window the shell shows on its taskbar: another program's, framed,
-  owned by nothing, not a desktop. }
-function IsListed(Window: PServerWindow): Boolean;
+function IsTopLevelWindow(Window: PServerWindow): Boolean;
 begin
-  Result := (ShellClient <> nil) and (Window^.Client <> Pointer(ShellClient)) and IsFramed(Window) and
-    (Window^.OwnerWindow = nil) and ((Window^.Flags and WindowDesktop) = 0);
+  Result := IsFramed(Window) and (Window^.OwnerWindow = nil) and ((Window^.Flags and WindowDesktop) = 0);
 end;
 
-function StateFlags(Window: PServerWindow): LongWord;
+{ A window the shell shows on its taskbar: another program's top-level
+  window. }
+function IsListed(Window: PServerWindow): Boolean;
+begin
+  Result := (ShellClient <> nil) and (Window^.Client <> Pointer(ShellClient)) and IsTopLevelWindow(Window);
+end;
+
+function WindowStateFlags(Window: PServerWindow): LongWord;
 begin
   Result := 0;
   if Window^.Visible then
@@ -149,7 +158,7 @@ var
   Message: TWindowMessage;
   Flags: LongWord;
 begin
-  Flags := StateFlags(Window);
+  Flags := WindowStateFlags(Window);
   if Window^.ToldShell and (Window^.ToldFlags = Flags) and (Window^.ToldScreen = Window^.ScreenNumber) and
      (CompareText(Window^.ToldTitle, Window^.Title) = 0) then
     Exit;
@@ -160,6 +169,7 @@ begin
   Message := NewMessage(EventShellWindowChanged, Window^.Id);
   Message.Flags := Flags;
   Message.Code := LongWord(Window^.ScreenNumber);
+  Message.Value := LongInt(PClient(Window^.Client)^.ProcessId);
   Move(Window^.Title, Message.Text, SizeOf(Message.Text));
   SendToShell(Message);
 end;

@@ -35,6 +35,7 @@ interface
 
 uses
   Classes,
+  Drawing.Rectangles,
   Drawing.Canvas,
   Controls.Base;
 
@@ -58,6 +59,8 @@ type
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
     function AddPage(const Caption: string): TControl;
+    { Where page Index's tab is (pixels of the tab control). }
+    function TabBounds(Index: LongInt): TRectangle;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
     property PageCount: LongInt read GetPageCount;
@@ -69,7 +72,6 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Drawing.Rectangles,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
@@ -118,6 +120,11 @@ begin
   Result := Scaled(2);
   for Position := 0 to Index - 1 do
     Result := Result + TabWidth(Position);
+end;
+
+function TTabControl.TabBounds(Index: LongInt): TRectangle;
+begin
+  Result := MakeRectangle(TabLeft(Index), 0, TabWidth(Index), TabHeight);
 end;
 
 function TTabControl.AddPage(const Caption: string): TControl;

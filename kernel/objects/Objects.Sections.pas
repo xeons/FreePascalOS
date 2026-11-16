@@ -104,7 +104,7 @@ begin
   end;
   for Index := 0 to Result^.PageCount - 1 do
   begin
-    Result^.Pages[Index] := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    Result^.Pages[Index] := AllocateZeroedPhysicalPage(PageUsageSection);
     if Result^.Pages[Index] = 0 then
     begin
       DereferenceObject(Result);

@@ -36,6 +36,7 @@ uses
   Windowing.Messages,
   Windowing.HandleWatches,
   Windowing.Shell,
+  Windowing.WindowList,
   Windowing.Sessions,
   Windowing.Notifications,
   Windowing.EndRequests,

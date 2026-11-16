@@ -35,7 +35,8 @@ unit Desktop.Programs;
 interface
 
 type
-  TProgramPicture = (PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs);
+  TProgramPicture = (PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs,
+    PictureTaskManager);
 
   TDesktopProgram = record
     Command: PChar;
@@ -44,17 +45,21 @@ type
   end;
 
 const
-  DesktopProgramCount = 5;
+  DesktopProgramCount = 6;
   DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
     (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
     (Command: 'notepad'; Caption: 'Notepad'; Picture: PictureNotepad),
     (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),
     (Command: 'controlsdemo'; Caption: 'Controls demo'; Picture: PictureSwatches),
-    (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs));
+    (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs),
+    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager));
 
 { Starts DesktopPrograms[Index]; False (after saying why in a message
-  box) if it could not be started. }
+  box) if it could not be started. ProcessId is the started program's. }
 function StartDesktopProgram(Index: LongInt): Boolean;
+function StartDesktopProgram(Index: LongInt; out ProcessId: QWord): Boolean;
+{ The index of the program started by Command, or -1. }
+function IndexOfDesktopProgram(Command: PChar): LongInt;
 
 implementation
 
@@ -77,6 +82,23 @@ end;
 
 function StartDesktopProgram(Index: LongInt): Boolean;
 var
+  ProcessId: QWord;
+begin
+  Result := StartDesktopProgram(Index, ProcessId);
+end;
+
+function IndexOfDesktopProgram(Command: PChar): LongInt;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to DesktopProgramCount - 1 do
+    if StrComp(DesktopPrograms[Index].Command, Command) = 0 then
+      Exit(Index);
+  Result := -1;
+end;
+
+function StartDesktopProgram(Index: LongInt; out ProcessId: QWord): Boolean;
+var
   Entry: TDesktopProgram;
   FullPath: array[0..PathCapacity - 1] of Char;
   Arguments: array[0..1] of PChar;
@@ -84,6 +106,7 @@ var
   Process: Int64;
 begin
   Result := False;
+  ProcessId := 0;
   if (Index < 0) or (Index >= DesktopProgramCount) then
     Exit;
   Entry := DesktopPrograms[Index];
@@ -102,6 +125,7 @@ begin
     ReportFailure(Entry.Caption, Entry.Command, 'could not be started.');
     Exit;
   end;
+  ProcessId := QWord(ProcessIdOf(Process));
   { Nobody waits for it: the handle is not needed. }
   CloseHandle(Process);
   Say('started ' + string(Entry.Command));

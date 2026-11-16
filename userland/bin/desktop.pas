@@ -28,8 +28,11 @@
   off and Shut down, through the session manager that started it), a
   button for each window of the other programs (a click
   activates it, or minimizes it if it is active; a right click offers
-  Restore, Minimize, Maximize and Close), the notification area and a
-  clock (HH:MM, UTC: the system has no time zone yet). Maximized windows
+  Restore, Minimize, Maximize and Close; on the taskbar itself, the Task
+  Manager), the notification area and a clock (HH:MM, UTC: the system
+  has no time zone yet). Ctrl+Shift+Escape, a key the desktop takes for
+  the whole desktop, opens the task manager (or brings the one it
+  opened forward). Maximized windows
   stop above the taskbar. -w names a wallpaper image, kept for when
   images can be read (libimage); until then the drawn design shows. The
   image is kept in the user's settings (Desktop/Wallpaper), so a desktop
@@ -40,15 +43,18 @@
     place NAME X Y        where NAME is on the screen (pixels): start,
                           start-COMMAND, start-logoff and start-shutdown
                           (when the menu opens), icon-COMMAND, task-TITLE,
-                          context-ITEM (a button's menu), clock,
-                          notification-N
+                          context-ITEM (a button's menu),
+                          taskbar-task-manager (the taskbar's menu),
+                          clock, notification-N
     task N STATE TITLE    a window of another program is new or changed
                           (STATE: shown, active, minimized, hidden)
     task-gone N           that window is gone
     started COMMAND       a program was started (cannot start COMMAND:
                           it is not installed)
     menu TEXT             a Start menu item was chosen
-    context ITEM          a task button's menu item was chosen
+    context ITEM          a task button's menu item was chosen (context
+                          task manager: the taskbar's menu's)
+    hotkey task manager   Ctrl+Shift+Escape was pressed
     clock HH:MM           the time the clock shows now
     notification N TEXT   a notification icon is shown (notification-gone N)
     tooltip TEXT          a notification icon's tooltip is shown

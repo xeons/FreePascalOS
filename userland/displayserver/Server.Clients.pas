@@ -29,9 +29,12 @@
   place, size, scale, modes and work area) and change a display's scale
   or mode; places they give and are told are logical units of the
   desktop (Server.Desktop). One of them may be the shell
-  (Server.Shell), which alone sets work areas and manages other
-  programs' windows; any program may put icons in its notification area
-  (Server.Notifications).
+  (Server.Shell), which alone sets work areas and takes keys for the
+  whole desktop (Server.Hotkeys); any program may put icons in its
+  notification area (Server.Notifications) and list the other programs'
+  windows (Server.WindowList). Who each program is - its process and
+  the user it runs as - is asked of the kernel when it connects, and
+  decides whose windows it may see and manage.
 }
 unit Server.Clients;
 
@@ -50,6 +53,10 @@ type
   PClient = ^TClient;
   TClient = record
     Channel: Int64;
+    { The program at the other end, and its effective user when it
+      connected. }
+    ProcessId: QWord;
+    UserId: LongWord;
   end;
 
 var
@@ -83,6 +90,8 @@ uses
   Server.WorkAreas,
   Server.WindowStates,
   Server.Shell,
+  Server.Hotkeys,
+  Server.WindowList,
   Server.Notifications;
 
 procedure SendToClient(Client: PClient; var Message: TWindowMessage);
@@ -95,6 +104,7 @@ procedure AcceptClients(Port: Int64);
 var
   Channel: Int64;
   Client: PClient;
+  Peer: TAbiChannelPeer;
 begin
   repeat
     Channel := AcceptConnection(Port);
@@ -105,8 +115,17 @@ begin
       CloseHandle(Channel);
       Continue;
     end;
+    { A program the kernel cannot name is let in as nobody in particular:
+      it sees and manages only its own windows. }
+    if GetChannelPeer(Channel, Peer) <> ErrorNone then
+    begin
+      Peer.ProcessId := 0;
+      Peer.UserId := High(LongWord);
+    end;
     New(Client);
     Client^.Channel := Channel;
+    Client^.ProcessId := Peer.ProcessId;
+    Client^.UserId := Peer.UserId;
     Clients[ClientCount] := Client;
     Inc(ClientCount);
   until False;
@@ -120,6 +139,8 @@ begin
     if (Index < WindowCount) and (Windows[Index]^.Client = Client) then
       DestroyWindow(Windows[Index]);
   ForgetClientNotificationIcons(Client);
+  if IsShell(Client) then
+    ForgetHotkeys;
   ForgetClientInShell(Client);
   CloseHandle(Client^.Channel);
   for Index := 0 to ClientCount - 1 do
@@ -353,6 +374,11 @@ begin
         Message.Text[TitleCapacity - 1] := #0;
         SetNotificationIcon(Client, Message.Code, Message.Value <> 0, Message.Flags, @Message.Text[0]);
       end;
+    RequestListWindows:
+      ListWindowsFor(Client);
+    RequestRegisterHotkey:
+      if IsShell(Client) then
+        SetHotkey(Message.Code, Message.Modifiers, Message.Value <> 0);
   else
     Result := False;
   end;
@@ -382,9 +408,8 @@ begin
   begin
     if Handle >= 0 then
       CloseHandle(Handle);
-    { The shell manages any window; a program its own. }
     Window := FindWindow(Message.Window);
-    if (Window <> nil) and ((Window^.Client = Pointer(Client)) or IsShell(Client)) then
+    if (Window <> nil) and MayManageWindow(Client, Window) then
       ManageWindow(Window, Message.Code);
     Exit;
   end;

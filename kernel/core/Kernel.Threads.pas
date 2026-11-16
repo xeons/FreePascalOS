@@ -143,8 +143,16 @@ type
       waits; only a stopped thread clears it (ClearCurrentThreadAlert). }
     AlertPending: Boolean;
 
-    { Clock ticks spent running. }
+    { Clock ticks spent running (the hang dump shows them). }
     RunTicks: QWord;
+    { Time spent running, in clock nanoseconds: charged at every switch
+      away from the thread, so it is exact rather than counted in ticks
+      (Kernel.ProcessorTime). }
+    RunNanoseconds: QWord;
+    { The clock ticks that found the thread in user mode and in the
+      kernel: how its run time divides between the two. }
+    UserTicks: QWord;
+    KernelTicks: QWord;
 
     { Inside a routine copying to or from user memory, whose faults on
       user addresses are survivable (Kernel.Arch.UserCopy). }

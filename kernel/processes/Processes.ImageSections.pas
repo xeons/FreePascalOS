@@ -244,7 +244,7 @@ begin
   end;
   for Index := 1 to PageCount do
   begin
-    Result^.Pages[Index - 1] := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    Result^.Pages[Index - 1] := AllocateZeroedPhysicalPage(PageUsageProgramImage);
     if Result^.Pages[Index - 1] = 0 then
     begin
       DestroySection(Result);

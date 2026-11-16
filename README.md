@@ -113,13 +113,27 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   mode and scale (`displaymode -r`, `displayscale -r`), the session
   manager gives it the user's mouse settings at login (`mousesettings
   -r`), Notepad remembers word wrap, the status bar and the font, the
-  terminal its size. The `settings` tool reads and changes them:
+  terminal its size, the task manager its size, tab, sort and update
+  speed. The `settings` tool reads and changes them:
   `settings get|set|delete|list|check [-s] PATH [VALUE]`, e.g.
   `settings set Terminal/FontSize 140`, `settings list -s Display`.
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
-  with CPU time counted per thread, nice values mapped to thread
+  with processor time timed at every thread switch (exact to the clock,
+  user mode and kernel told apart, kept when a thread ends), each
+  processor's busy and idle time, and each process's memory (resident,
+  private, shared, peak, address space) beside the system's (what the
+  RAM is used for: programs, program files, shared memory, the disk
+  cache, the kernel's heap, stacks and page tables); `ps -o
+  pid,user,pcpu,rss,time,args` shows them. Nice values mapped to thread
   priorities (`nice`, `renice`), processor affinity (`taskset`), per
-  processor run queues, and 1/5/15 minute load averages (`uptime`). Named pipes on ext volumes (`mkfifo`, `mknod NAME p`), and
+  processor run queues, and 1/5/15 minute load averages (`uptime`).
+- **Task Manager** (`taskmanager`, Ctrl+Shift+Escape, the Start menu or
+  the taskbar's menu): the programs with windows (Switch To, End
+  Program, offering to end one outright that does not), every process
+  sorted by CPU, memory or any column (End asks, End now ends outright,
+  Stop, Continue, Priority, Properties; root acts on everyone's), and
+  graphs of the processors (each one too) and the memory over the last
+  minute. Named pipes on ext volumes (`mkfifo`, `mknod NAME p`), and
   the space files take on the volume (`du`, `ls -s`, `stat %b`).
 - **A userland written in Free Pascal**:
   - `libsystem.so`: system calls, heap, buffered streams, printf style
@@ -155,7 +169,7 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - everyday tools beyond the core utilities: `grep` (with `egrep` and
     `fgrep`), `sed`, `find`, `xargs`, `diff` (normal, unified and context
     output, recursive), the pager `less` (also started as `more`), `ps`,
-    `pgrep`, `pkill`, `renice`, `taskset`, `su`, `passwd`, `watch`
+    `top`, `pgrep`, `pkill`, `renice`, `taskset`, `su`, `passwd`, `watch`
     (changes to files and folders as they happen) and `volumes` (the
     mounted volumes, and with `-w` volumes arriving and leaving)
 - Debug output to the serial port and to a text console drawn on the
@@ -214,8 +228,9 @@ the `root=` option). It starts the services of the boot mode, defined in
 `/etc/services` (`service list` shows them):
 
 - **Graphical** (the default): the display server, then the login window;
-  logging in starts the desktop as that user. The Start menu has Log off
-  (back to the login window) and Shut down. The serial port (the terminal
+  logging in starts the desktop as that user. The Start menu has the
+  programs, Log off (back to the login window) and Shut down;
+  Ctrl+Shift+Escape opens the Task Manager. The serial port (the terminal
   `make run` starts in) keeps a text login for debugging.
 - **Text** (kernel option `mode=text`): a login on the console, the screen
   and the serial port.

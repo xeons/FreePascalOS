@@ -25,8 +25,11 @@
   and the notification icons; the message loop (Windowing.Windows)
   hands those events to OnShellEvent, as they are about no window of the
   shell's own. The shell sets each display's work area (what its
-  taskbar leaves) and manages other programs' windows; ManageWindow is
-  also how any program minimizes or maximizes its own windows.
+  taskbar leaves), manages other programs' windows and may take keys
+  for the whole desktop (RegisterHotkey: they reach OnShellEvent as
+  EventHotkey whatever window is active). ManageWindow is also how any
+  program minimizes or maximizes its own windows, or switches to and
+  closes those of other programs of its user (a task manager).
 }
 unit Windowing.Shell;
 
@@ -42,7 +45,7 @@ type
 
 var
   { Gets EventShellWindowChanged, EventShellWindowGone,
-    EventDisplaysChanged and EventNotificationIconChanged. }
+    EventDisplaysChanged, EventNotificationIconChanged and EventHotkey. }
   OnShellEvent: TShellEventHandler;
 
 { Asks to be the shell; False if another program is (or no answer). The
@@ -52,8 +55,13 @@ function RegisterAsShell: Boolean;
   area of display Number; only the shell may. }
 procedure SetWorkArea(Number: LongInt; Left, Top, Width, Height: LongInt);
 { Carries out a Manage* command on window Id (any program's for the
-  shell, else one of this program's own). }
+  shell; else one of this program's own, or of another program of the
+  same user). }
 procedure ManageWindow(Id: LongWord; Command: LongWord);
+{ The shell only: takes the key Code (a scan code, as in key events)
+  pressed with exactly Modifiers (Abi ModifierShift, ModifierControl,
+  ModifierAlt) for itself, or gives it back (Take False). }
+procedure RegisterHotkey(Code, Modifiers: LongWord; Take: Boolean);
 { Whether an event of Kind is for the shell (and OnShellEvent). }
 function IsShellEvent(Kind: LongWord): Boolean;
 { Hands Message to OnShellEvent, if set. }
@@ -100,10 +108,21 @@ begin
   SendRequest(Message, -1);
 end;
 
+procedure RegisterHotkey(Code, Modifiers: LongWord; Take: Boolean);
+var
+  Message: TWindowMessage;
+begin
+  Message := NewMessage(RequestRegisterHotkey, 0);
+  Message.Code := Code;
+  Message.Modifiers := Modifiers;
+  Message.Value := Ord(Take);
+  SendRequest(Message, -1);
+end;
+
 function IsShellEvent(Kind: LongWord): Boolean;
 begin
   Result := (Kind = EventShellWindowChanged) or (Kind = EventShellWindowGone) or (Kind = EventDisplaysChanged) or
-    (Kind = EventNotificationIconChanged);
+    (Kind = EventNotificationIconChanged) or (Kind = EventHotkey);
 end;
 
 procedure DeliverShellEvent(const Message: TWindowMessage);

@@ -51,6 +51,8 @@ uses
   Abi.SystemCalls,
   Kernel.Mutex,
   Kernel.Scheduler,
+  Kernel.Clock,
+  Kernel.ProcessorTime,
   Processes.Thread,
   Processes.UserProcess,
   Processes.UserThread,
@@ -75,6 +77,8 @@ type
   PListSearch = ^TListSearch;
 
 procedure DescribeProcess(Process: PProcess; out Information: TAbiProcessInformation);
+var
+  Times: TThreadTimes;
 begin
   FillMemory(@Information, SizeOf(Information), 0);
   Information.ProcessId := Process^.ProcessId;
@@ -95,7 +99,8 @@ begin
     Information.State := ProcessStateSleeping;
   if Process^.AddressSpace <> nil then
     Information.MemoryPages := Process^.AddressSpace^.CommittedPages;
-  Information.CpuMilliseconds := TicksToMilliseconds(ProcessRunTicks(Process));
+  GetProcessTimes(Process, Times);
+  Information.CpuMilliseconds := Times.RunNanoseconds div NanosecondsPerMillisecond;
   Information.StartTime := Process^.StartTime;
   CopyText(@Information.Name[0], @Process^.Name[0], AbiTextCapacity);
 end;

@@ -124,17 +124,32 @@ type
     Regions: PUserRegion;
     RegionCount: Integer;
     NextLibraryAddress: QWord;
+    { The pages mapped (the resident set), the ones among them that are
+      shared - mapped from a program image or a section, which other
+      processes may map too - and the most there ever were. }
     CommittedPages: QWord;
+    SharedPages: QWord;
+    PeakCommittedPages: QWord;
     { The threads of a process share the space: region changes, page
       commits and lookups happen under this lock (held briefly, at
       dispatch level, so no thread is preempted halfway through). }
     Lock: TSpinLock;
   end;
 
+  { What a process's memory amounts to (GetAddressSpaceUsage). }
+  TAddressSpaceUsage = record
+    { The regions' sizes, guards left out: what the program may touch. }
+    VirtualBytes: QWord;
+    ResidentPages: QWord;
+    SharedPages: QWord;
+    PeakResidentPages: QWord;
+  end;
+
 { All routines returning LongInt return 0 on success or an Abi error code. }
 
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
 procedure DestroyAddressSpace(Space: PAddressSpace);
+procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
@@ -225,6 +240,13 @@ const
 
 { --- Creation and destruction ---------------------------------------- }
 
+{ Keeps the peak up to date after a page was mapped (space lock held). }
+procedure NoteCommittedPagesGrew(Space: PAddressSpace);
+begin
+  if Space^.CommittedPages > Space^.PeakCommittedPages then
+    Space^.PeakCommittedPages := Space^.CommittedPages;
+end;
+
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
 begin
   Space := PAddressSpace(AllocateZeroedKernelMemory(SizeOf(TAddressSpace)));
@@ -252,6 +274,22 @@ begin
   DestroyAddressSpaceRoot(Space^.Root);
   FreeKernelMemory(Space^.Regions);
   FreeKernelMemory(Space);
+end;
+
+procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+begin
+  Usage.VirtualBytes := 0;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  for Index := 0 to Space^.RegionCount - 1 do
+    if Space^.Regions[Index].Kind <> RegionKindStackGuard then
+      Usage.VirtualBytes := Usage.VirtualBytes + Space^.Regions[Index].Length;
+  Usage.ResidentPages := Space^.CommittedPages;
+  Usage.SharedPages := Space^.SharedPages;
+  Usage.PeakResidentPages := Space^.PeakCommittedPages;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 { --- Regions --------------------------------------------------------- }
@@ -358,13 +396,16 @@ begin
     Start := Candidate;
 end;
 
-procedure ReleaseRegionPages(Space: PAddressSpace; Start, Length: QWord);
+{ Unmaps and frees the pages of [Start, Start + Length); returns how
+  many there were. }
+function ReleaseRegionPages(Space: PAddressSpace; Start, Length: QWord): QWord;
 var
   Offset: QWord;
   RunLength: LongWord;
   RunIndex: LongWord;
   PhysicalPages: TPhysicalPageRun;
 begin
+  Result := 0;
   Offset := 0;
   while Offset < Length do
   begin
@@ -377,6 +418,7 @@ begin
       begin
         FreePhysicalPage(PhysicalPages[RunIndex]);
         Dec(Space^.CommittedPages);
+        Inc(Result);
       end;
     Offset := Offset + QWord(RunLength) * PageSize;
   end;
@@ -431,10 +473,16 @@ end;
   run time allocations. }
 { Gives back the pages of region Index and takes it out of the list. }
 procedure RemoveRegionAtLocked(Space: PAddressSpace; Index: Integer);
+var
+  Released: QWord;
 begin
   if Index < 0 then
     Exit;
-  ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
+  Released := ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
+  { A section's pages were all counted as shared. (Image regions, the
+    other shared kind, go only with the whole address space.) }
+  if Space^.Regions[Index].Kind = RegionKindSection then
+    Space^.SharedPages := Space^.SharedPages - Released;
   while Index + 1 < Space^.RegionCount do
   begin
     Space^.Regions[Index] := Space^.Regions[Index + 1];
@@ -567,6 +615,8 @@ begin
       { Released (as an ordinary page) when the region goes. }
       ReferencePhysicalPage(Pages[Index]);
       Inc(Space^.CommittedPages);
+      Inc(Space^.SharedPages);
+      NoteCommittedPagesGrew(Space);
     end;
     if Result <> ErrorNone then
       RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
@@ -610,7 +660,7 @@ begin
     Exit(ErrorNone);
   end;
 
-  PhysicalAddress := AllocateZeroedPhysicalPage(PageUsageGeneral);
+  PhysicalAddress := AllocateZeroedPhysicalPage(PageUsageUserMemory);
   if PhysicalAddress = 0 then
     Exit(ErrorOutOfMemory);
   if not MapPageInAddressSpace(Space^.Root, PageAddress, PhysicalAddress, MappingAttributesFor(Attributes)) then
@@ -619,6 +669,7 @@ begin
     Exit(ErrorOutOfMemory);
   end;
   Inc(Space^.CommittedPages);
+  NoteCommittedPagesGrew(Space);
   Result := ErrorNone;
 end;
 
@@ -645,6 +696,8 @@ begin
   if MapPageInAddressSpace(Space^.Root, RoundDownToPage(Address), Physical, Mapping) then
   begin
     Inc(Space^.CommittedPages);
+    Inc(Space^.SharedPages);
+    NoteCommittedPagesGrew(Space);
     Result := ErrorNone;
   end
   else
@@ -669,7 +722,7 @@ begin
   Attributes := Space^.Regions[Index].Attributes;
   if PhysicalPageIsShared(Shared) then
   begin
-    Copy := AllocatePhysicalPage(PageUsageGeneral);
+    Copy := AllocatePhysicalPage(PageUsageUserMemory);
     if Copy = 0 then
       Exit(ErrorOutOfMemory);
     CopyMemory(PhysicalToVirtual(Copy), PhysicalToVirtual(Shared), PageSize);
@@ -681,6 +734,8 @@ begin
   UnmapPageInAddressSpace(Space^.Root, PageAddress);
   if Copy <> Shared then
     FreePhysicalPage(Shared);
+  { The process's own page from now on, whether copied or not. }
+  Dec(Space^.SharedPages);
   if not MapPageInAddressSpace(Space^.Root, PageAddress, Copy, MappingAttributesFor(Attributes)) then
   begin
     FreePhysicalPage(Copy);

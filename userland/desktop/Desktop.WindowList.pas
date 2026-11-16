@@ -19,7 +19,7 @@
 {
   The other programs' top-level windows, as the display server tells the
   shell about them (EventShellWindowChanged, EventShellWindowGone): each
-  one's number, title, state and display, in the order they appeared,
+  one's number, title, state, display and process, in the order they appeared,
   which is the order of the taskbar's buttons. Each change is said on
   the standard output ("task N STATE TITLE", "task-gone N"), and
   OnChange lets the taskbar follow.
@@ -41,6 +41,8 @@ type
     { ShellWindow* (Windowing.Protocol). }
     Flags: LongWord;
     DisplayNumber: LongInt;
+    { The process of the program it belongs to. }
+    ProcessId: QWord;
   end;
 
   TWindowListEvent = procedure of object;
@@ -57,6 +59,8 @@ type
     procedure TakeChange(const Message: TWindowMessage);
     procedure Remove(Id: LongWord);
     function IndexOf(Id: LongWord): LongInt;
+    { The first window of process ProcessId, or -1. }
+    function IndexOfProcess(ProcessId: QWord): LongInt;
     { Whether window Index has a button: shown, or minimized. }
     function HasButton(Index: LongInt): Boolean;
     property Count: LongInt read GetCount;
@@ -105,6 +109,16 @@ begin
   Result := -1;
 end;
 
+function TWindowList.IndexOfProcess(ProcessId: QWord): LongInt;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to High(FWindows) do
+    if FWindows[Index].ProcessId = ProcessId then
+      Exit(Index);
+  Result := -1;
+end;
+
 function TWindowList.HasButton(Index: LongInt): Boolean;
 begin
   Result := (FWindows[Index].Flags and (ShellWindowVisible or ShellWindowMinimized)) <> 0;
@@ -130,6 +144,7 @@ begin
   FWindows[Index].Title := StrPas(@Message.Text[0]);
   FWindows[Index].Flags := Message.Flags;
   FWindows[Index].DisplayNumber := LongInt(Message.Code);
+  FWindows[Index].ProcessId := QWord(LongWord(Message.Value));
   Say(Format('task %u %s %s', [Message.Window, StateName(Message.Flags), FWindows[Index].Title]));
   Changed;
 end;

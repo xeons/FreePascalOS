@@ -41,6 +41,7 @@ uses
   Runtime.LinkedList,
   Memory.KernelStacks,
   Kernel.Threads,
+  Kernel.ProcessorTime,
   Kernel.Events,
   Objects.Manager,
   Processes.Process;
@@ -136,8 +137,9 @@ procedure VisitProcessThreads(Process: PProcess; Visit: TThreadVisitor; Context:
 { Base moved by Offset, kept within the thread priorities. }
 function OffsetPriority(Base: LongWord; Offset: LongInt): LongWord;
 procedure SetProcessThreadAffinity(Process: PProcess; Mask: QWord);
-{ Clock ticks used by the threads of Process. }
-function ProcessRunTicks(Process: PProcess): QWord;
+{ The processor time of Process: its threads', the ones that ended
+  included. }
+procedure GetProcessTimes(Process: PProcess; out Times: TThreadTimes);
 { True if a thread of Process is running or ready to run. }
 function ProcessIsRunnable(Process: PProcess): Boolean;
 
@@ -196,9 +198,13 @@ procedure DetachFromProcess(Thread: PThread);
 var
   PreviousLevel: TPriorityLevel;
   Process: PProcess;
+  Times: TThreadTimes;
 begin
   Process := Thread^.Process;
+  { It has ended, so its times are final; they stay the process's. }
+  GetThreadTimes(@Thread^.ControlBlock, Times);
   PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  AddThreadTimes(Process^.EndedThreadTimes, Times);
   RemoveListEntry(@Thread^.ProcessLink);
   Dec(Process^.ThreadCount);
   ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
@@ -341,15 +347,30 @@ begin
   ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
 end;
 
-procedure AddRunTicks(Thread: PThread; Context: Pointer);
+procedure AddTimesOfThread(Thread: PThread; Context: Pointer);
+var
+  Times: TThreadTimes;
 begin
-  PQWord(Context)^ := PQWord(Context)^ + Thread^.ControlBlock.RunTicks;
+  GetThreadTimes(@Thread^.ControlBlock, Times);
+  AddThreadTimes(PThreadTimes(Context)^, Times);
 end;
 
-function ProcessRunTicks(Process: PProcess): QWord;
+procedure GetProcessTimes(Process: PProcess; out Times: TThreadTimes);
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PListEntry;
 begin
-  Result := 0;
-  VisitProcessThreads(Process, @AddRunTicks, @Result);
+  { One lock over the ended threads' times and the list, so a thread
+    ending meanwhile is counted exactly once. }
+  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+  Times := Process^.EndedThreadTimes;
+  Entry := Process^.Threads.Next;
+  while Entry <> @Process^.Threads do
+  begin
+    AddTimesOfThread(ThreadFromProcessLink(Entry), @Times);
+    Entry := Entry^.Next;
+  end;
+  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
 end;
 
 procedure NoteRunnable(Thread: PThread; Context: Pointer);

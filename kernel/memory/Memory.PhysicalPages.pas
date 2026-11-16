@@ -55,8 +55,22 @@ type
     PageUsageFrameDatabase,
     PageUsageKernelHeap,
     PageUsageKernelStack,
-    PageUsageGeneral
+    { Driver buffers and anything else of the kernel's. }
+    PageUsageGeneral,
+    { A process's own pages: its heap, stacks, data, the copies it made
+      of shared pages it wrote to. }
+    PageUsageUserMemory,
+    { The pages of program and library files, shared by every process
+      that loads them (Processes.ImageSections). }
+    PageUsageProgramImage,
+    { Memory shared between processes (Objects.Sections). }
+    PageUsageSection,
+    { Disk blocks kept in memory (Io.BlockCache). }
+    PageUsageBlockCache
   );
+
+  { How many pages each use has, for the system's memory figures. }
+  TPageUsageCounts = array[TPageUsage] of QWord;
 
   TPhysicalMemoryStatistics = record
     TotalUsablePages: QWord;
@@ -93,6 +107,9 @@ function PageUsageOf(PhysicalAddress: TPhysicalAddress): TPageUsage;
 function ClaimLowPhysicalPages(PageCount: QWord): TPhysicalAddress;
 
 procedure GetPhysicalMemoryStatistics(out Statistics: TPhysicalMemoryStatistics);
+{ The pages of each use (PageUsageReserved counts every page that is not
+  RAM the kernel owns, holes in the memory map included). }
+procedure GetPageUsageCounts(out Counts: TPageUsageCounts);
 
 procedure WritePhysicalMemorySummary;
 
@@ -129,6 +146,33 @@ var
   FreePageCount: QWord;
   UsablePageCount: QWord;
   DatabaseLock: TSpinLock;
+  { Kept with every change of a page's use, under the database lock. }
+  UsageCounts: TPageUsageCounts;
+
+{ Counts every page's use once the database is built; from then on the
+  counts follow each change. }
+procedure CountFrameUsages;
+var
+  Usage: TPageUsage;
+  Frame: QWord;
+begin
+  for Usage := Low(TPageUsage) to High(TPageUsage) do
+    UsageCounts[Usage] := 0;
+  Frame := 0;
+  while Frame < FrameCount do
+  begin
+    Inc(UsageCounts[FrameDatabase[Frame].Usage]);
+    Inc(Frame);
+  end;
+end;
+
+{ Gives a page another use, keeping the counts (database lock held). }
+procedure ChangeFrameUsage(Frame: QWord; Usage: TPageUsage);
+begin
+  Dec(UsageCounts[FrameDatabase[Frame].Usage]);
+  FrameDatabase[Frame].Usage := Usage;
+  Inc(UsageCounts[Usage]);
+end;
 
 function IsRamRegion(Kind: LongWord): Boolean;
 begin
@@ -300,6 +344,7 @@ begin
     PageUsageFrameDatabase);
 
   BuildFreeList;
+  CountFrameUsages;
 end;
 
 function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
@@ -318,7 +363,7 @@ begin
 
   FreeListHead := FrameDatabase[Frame].NextFreeFrame;
   FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
-  FrameDatabase[Frame].Usage := Usage;
+  ChangeFrameUsage(Frame, Usage);
   FrameDatabase[Frame].ExtraReferences := 0;
   Dec(FreePageCount);
 
@@ -356,7 +401,7 @@ begin
     else
       FrameDatabase[Previous].NextFreeFrame := FrameDatabase[Frame].NextFreeFrame;
     FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
-    FrameDatabase[Frame].Usage := Usage;
+    ChangeFrameUsage(Frame, Usage);
     FrameDatabase[Frame].ExtraReferences := 0;
     Dec(FreePageCount);
     Result := Frame shl PageShift;
@@ -397,7 +442,10 @@ begin
   if FrameDatabase[Frame].ExtraReferences > 0 then
     Dec(FrameDatabase[Frame].ExtraReferences)
   else
+  begin
+    ChangeFrameUsage(Frame, PageUsageFree);
     PushFreeFrame(Frame);
+  end;
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
 end;
 
@@ -460,7 +508,7 @@ begin
     for Frame := First to First + PageCount - 1 do
     begin
       LowFrameIsFree[Frame] := False;
-      FrameDatabase[Frame].Usage := PageUsageGeneral;
+      ChangeFrameUsage(Frame, PageUsageGeneral);
     end;
     Result := First shl PageShift;
   end;
@@ -483,6 +531,15 @@ begin
   Statistics.TotalUsablePages := UsablePageCount;
   Statistics.FreePages := FreePageCount;
   Statistics.HighestPageFrameNumber := FrameCount - 1;
+end;
+
+procedure GetPageUsageCounts(out Counts: TPageUsageCounts);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  Counts := UsageCounts;
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
 end;
 
 procedure WritePhysicalMemorySummary;

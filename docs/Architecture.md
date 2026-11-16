@@ -182,8 +182,16 @@ Rules that follow from this:
   held across a context switch and released by the thread that runs next.
 - Exited threads are put on a list and cleaned up by the idle thread
   (stack freed, object dereferenced).
-- Each clock tick is charged to the running thread (`RunTicks`), which is
-  where a process's CPU time comes from.
+- Processor time is taken at every switch (`Kernel.ProcessorTime`): each
+  processor remembers since when its running thread runs, and the switch
+  charges the time since then (in clock nanoseconds) to the thread it
+  leaves and to the processor's busy time, or its idle time when it
+  leaves its idle thread. So a thread's time is exact to the clock, not
+  counted in ticks; reading it adds the run going on now. Where the
+  clock tick finds the thread (user mode or the kernel) is counted per
+  tick, and the exact time is split between the two in that proportion,
+  rather than timing every system call and interrupt (see "Processor
+  time and memory").
 - Every 5 seconds the clock tick samples the number of threads running or
   ready and folds it into three exponentially decayed averages (1, 5 and
   15 minutes, fixed point with 11 fraction bits, as in Unix load
@@ -216,10 +224,11 @@ Rules that follow from this:
   disabled). A late interrupt counts every tick it missed, and the ticks
   keep to their schedule (each is due 10 ms after the last was due).
 - **Why the tick stays.** A fully tickless clock would also have to
-  stop the tick on idle processors and account time slices and CPU time
-  from timestamps at every switch. The tick is kept for exactly those -
-  time slices (`QuantumTicks`), the time charged to the running thread
-  (`RunTicks`), the load averages - while everything that waits for a
+  stop the tick on idle processors and account time slices from
+  timestamps at every switch (processor time already is). The tick is
+  kept for those - time slices (`QuantumTicks`), the split of processor
+  time between user mode and the kernel, the load averages - while
+  everything that waits for a
   time is taken off the tick: it costs one extra interrupt per due time,
   is simple to get right, and gives timers and sleeps the precision of
   the APIC timer.
@@ -1267,16 +1276,19 @@ The shell (`Server.Shell`): one program may register as the shell
 (`RequestRegisterShell`, answered by `EventShellRegistered`; a second is
 refused while the first lives). It hears about every top-level window
 of the other programs (framed, owned by no window, not a desktop):
-`EventShellWindowChanged` with its title, display and state (shown,
+`EventShellWindowChanged` with its title, display, state (shown,
 minimized, active, which counts its dialog having the keyboard,
-maximized, resizable), `EventShellWindowGone` when it goes or is given
-an owner. Rather than every place that changes a window telling the
+maximized, resizable) and the process its program runs as (asked of
+the kernel, `CallGetChannelPeer`, when the program connected),
+`EventShellWindowGone` when it goes or is given an owner. Rather than every place that changes a window telling the
 shell, the server compares each window with what the shell last heard
 of it (kept in the window) once per turn of its loop and sends what
 differs. `RequestManageWindow` activates, minimizes, restores,
 maximizes or asks to close a window (`Manage*`): the shell's for any
 window, any program's for its own (`TWindow.Minimize`, `Maximize`,
-`Restore`). Minimizing is a state (`Server.WindowStates`): the window
+`Restore`) and for the top-level windows of the programs of its user
+(root: of every program), which is how a task manager switches to one
+(`Server.WindowList`). Minimizing is a state (`Server.WindowStates`): the window
 is hidden with the windows it owns, its program hears it
 (`EventVisibilityChanged`), and it stays in the shell's list as
 minimized until shown again, by its program or the shell (activating a
@@ -1296,6 +1308,22 @@ program can ask for it (`RequestDescribeWorkArea`, answered by
 `EventWorkArea`; `DescribeWorkArea` in `Windowing.Displays`). Without a
 shell, or when it ends, every display is whole.
 
+Other programs' windows (`Server.WindowList`): any program may list the
+top-level windows of the other programs of its user (root: of all;
+another user's titles may say what that user is doing) with
+`RequestListWindows`, answered by an `EventWindowListed` per window
+(its title, state, display and process) and one for window 0 that ends
+the list (`ListOtherWindows` in `Windowing.WindowList`).
+
+Keys for the whole desktop (`Server.Hotkeys`): the shell may take a key
+with the modifiers that must be held with it (`RequestRegisterHotkey`;
+`RegisterHotkey` in `Windowing.Shell`). Pressed with exactly those
+(Shift, Ctrl, Alt and AltGr compared, the locks not), it goes to the
+shell as `EventHotkey` whatever window is active, and neither it nor
+its release reaches a window, so no program sees half a key. The keys
+go when the shell does. The desktop takes Ctrl+Shift+Escape for the
+task manager.
+
 Notification icons (`Server.Notifications`): any program may show a
 small icon with a tooltip in the shell's notification area
 (`RequestSetNotificationIcon`: its own number for the icon, shown or
@@ -1306,19 +1334,21 @@ keeps the icons, numbered its own way since programs' numbers may
 clash, passes them to the shell (`EventNotificationIconChanged`, all of
 them when a shell registers) and drops a program's icons when it ends.
 
-The protocol's numbers: requests 1 to 24 (hello to the window requests
+The protocol's numbers: requests 1 to 26 (hello to the window requests
 up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestSetOwner` = 16, `RequestSetPointerShape` = 17,
 `RequestGetMouseSettings` = 18, `RequestSetMouseSettings` = 19,
 `RequestRegisterShell` = 20, `RequestSetWorkArea` = 21,
 `RequestDescribeWorkArea` = 22, `RequestManageWindow` = 23,
-`RequestSetNotificationIcon` = 24), events 101 to 122 (up to
+`RequestSetNotificationIcon` = 24, `RequestListWindows` = 25,
+`RequestRegisterHotkey` = 26), events 101 to 124 (up to
 `EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
 `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
 `EventMouseSettings` = 116, `EventShellRegistered` = 117,
 `EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
 `EventWorkArea` = 120, `EventDisplaysChanged` = 121,
-`EventNotificationIconChanged` = 122).
+`EventNotificationIconChanged` = 122, `EventWindowListed` = 123,
+`EventHotkey` = 124).
 
 `wintest` shows a window and prints what happens to it (its place, a
 new scale, being shown or hidden; `-b` sets a text beam over its left
@@ -1478,6 +1508,10 @@ with the focus. `SortByColumn` sorts by a column's texts, as numbers
 (the number a text starts with) or by `OnCompare`, and puts an arrow on
 that column's header; `SortWith` takes any comparison. The sort is a
 stable merge sort (`Controls.ListSorting`), so ties keep their order.
+A right click asks for a context menu (`OnContextMenu`, when the button
+is let go, so the release does not choose from the menu at once): on
+an item not selected it first selects that item alone, so the menu is
+about what was clicked; Shift+F10 asks for one at the focused item.
 With `SortOnHeaderClick` a header click sorts (again: the other way).
 
 A click with Ctrl or Shift is told by the modifiers: the display server
@@ -1778,7 +1812,7 @@ bands of rolling water, all anti-aliased, drawn once per size into a
 surface of its own and copied from when the window paints. `-w IMAGE`
 names a wallpaper image, kept for when libimage can read one (step 8).
 On the first display the programs' icons (`Desktop.Programs`: Terminal,
-Notepad, Controls tour, Controls demo, Dialogs) stand in a grid of
+Notepad, Controls tour, Controls demo, Dialogs, Task Manager) stand in a grid of
 equal cells in columns from the top left, all in logical units: a
 picture above a caption, the selected one tinted with its caption on
 the selection colour. A click selects, a double click (two presses
@@ -1813,7 +1847,12 @@ logical units each. Since the taskbar never has the keyboard, a click
 leaves the active window active: on its button it minimizes it, on
 another's it activates that window (restoring it if minimized). A right
 click, when let go, opens Restore, Minimize, Maximize and Close for that
-window (each greyed when it cannot be done). The notification area
+window (each greyed when it cannot be done); a right click on the
+taskbar itself opens a menu with the Task Manager (just above it).
+Ctrl+Shift+Escape is a key the shell takes for the whole desktop (see
+the display server's keys): it opens the task manager, or brings the
+one the shell started forward if it still has a window (found by its
+process in the window list), as the taskbar's menu does. The notification area
 (`Desktop.NotificationArea`) is a sunken panel with the icons, left to
 right in the order they came, and the clock (`Desktop.Clock`: HH:MM in
 UTC, since the system has no time zone setting yet), checked every
@@ -1824,7 +1863,8 @@ to open.
 
 `desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
-HH:MM`, `notification N TEXT`, `tooltip TEXT`) and where things are
+HH:MM`, `notification N TEXT`, `tooltip TEXT`, `hotkey task manager`,
+`context task manager`) and where things are
 (`place NAME X Y`: the Start button and menu items, the icons, the task
 buttons and their menu's items, the clock, the notification icons). The
 input test starts the server and the shell and checks the wallpaper on
@@ -1840,6 +1880,76 @@ double click on an icon starts controlstour, whose button's menu closes
 it; that the Start menu starts dialogtour and that Shut down asks first
 (Escape says no); and that wintest's icon shows its tooltip and goes
 when wintest ends.
+
+### The task manager
+
+`taskmanager` (units in `userland/taskmanager`) shows the programs, the
+processes and how busy the system is, from the kernel's accounting
+(see "Processor time and memory"). Each look (`TaskManager.Sampler`)
+takes a snapshot of the processes and the system's usage and keeps the
+one before: a process's CPU is the processor time it added over the
+time that passed, out of all the processors (one of four kept busy is
+25%, as task managers show it), a processor's the busy time it added
+over all it added. Each look also adds a sample to one-minute histories
+(`TaskManager.History`): all the processors, each one, the memory in
+use. It looks every second; View > Update Speed offers twice a second,
+every four seconds and paused, and Refresh Now (F5) looks at once. The
+status bar shows the number of processes, CPU usage and memory in use.
+
+- **Programs** (`TaskManager.ProgramsPage`): the windows the display
+  server lists for it (`ListOtherWindows`: this user's programs, all
+  for root) by title, with their state and process. Switch To (or a
+  double click) activates one (`ManageWindow`); End Program asks its
+  process to end (`AskProcessToEnd`) - a program with unsaved work asks
+  what to do with it - and five seconds later, if it still runs, offers
+  to end it outright, as it may have stopped responding.
+- **Processes** (`TaskManager.ProcessesPage`): a list view with name,
+  id, user, CPU, memory (private), threads, state and session, sorted by
+  any column (the header; CPU, busiest first, to begin with; equal rows
+  stay in id order so nothing shuffles at every look), several selected
+  at once, brought up to date in place (rows of ended processes go, new
+  ones come, the selection and focus stay with their processes). Only
+  this user's processes are listed unless "Show processes from all
+  users" is ticked. A right click (the list view's new `OnContextMenu`,
+  which selects the row under the pointer first; Shift+F10 too) offers
+  End (ask), End now (outright, `TerminateProcess` with status 137,
+  after a confirmation), Stop and Continue (job control), Priority
+  (High, Above normal, Normal, Below normal, Low: nice -10 to 10, the
+  current one checked) and Properties (`TaskManager.PropertiesDialog`:
+  everything the kernel says about the process). What this user may not
+  do to another user's processes is greyed out; what fails anyway (only
+  root raises a priority) is told in one message box naming each process
+  and why (`TaskManager.ProcessActions`). The End Process button and the
+  Delete key ask the selection to end.
+- **Performance** (`TaskManager.PerformancePage`): a graph of all the
+  processors, one for each processor, one of the memory in use
+  (`TaskManager.UsageGraph`: a sunken field with a light grid, the
+  newest sample at the right, the line and the area under it
+  anti-aliased with libdrawing's new `DrawSmoothPolyline` and
+  `FillSmoothPolygon`, all measured at the window's scale), and the
+  numbers: processes, threads, up time, processors, context switches,
+  and what the memory is used for.
+
+The window's size, the tab, the sort column and order and the update
+speed are kept in the user's settings (group `TaskManager`;
+`TaskManager.Settings`). The desktop opens it with Ctrl+Shift+Escape,
+from the Start menu and the taskbar's menu. It prints what happens
+(`settings ...`, `tab NAME`, `process PID NAME CPU KB` for the first
+rows after each look, `program WINDOW PID TITLE`, `cpu N% memory N%`,
+`performance ...`, `graph NAME X Y W H`, `sort`, `asked PID`,
+`ended-now PID`, `ended PID` once a process it ended is gone,
+`stopped`, `continued`, `priority`, `properties`, `error TEXT`) and
+where things are (`place NAME X Y`: the tabs, buttons, the first rows,
+the context menu's items; told again if the server moved the window).
+The input test opens it with Ctrl+Shift+Escape over two `burn` busy
+loops (one ignoring requests to end) and a Notepad holding unsaved
+text, and checks that both loops are at the top sorted by CPU, that
+End asks the first and it ends, that the second stays when asked and
+End now (confirmed) ends it, that the Performance tab's processor graph
+moves on from one screen dump to the next, that the Programs tab lists
+Notepad, Switch To brings it forward and End Program makes it ask
+about saving (No) and end, and that the taskbar's menu brings the task
+manager forward and, closed with Alt+F4, it has kept its tab and size.
 
 ## Sound
 
@@ -2416,6 +2526,7 @@ test copies to an unmapped user address.
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
+| Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
 
 There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory, the three handles
@@ -2438,6 +2549,77 @@ A thread's priority is its process's (from the nice value) plus an offset
 of -15 .. 15, kept when the nice value changes; only root may raise a
 thread above its process. The runtime's `SuspendThread`, `ResumeThread`,
 `KillThread`, `ThreadSetPriority` and `ThreadGetPriority` use these calls.
+
+### Processor time and memory
+
+What a task manager, `ps` and `top` show comes from the kernel's own
+accounting, read with two calls.
+
+- **Processor time.** Each thread's run time is charged at every switch
+  (`Kernel.ProcessorTime`, see "Scheduling"): exact to the clock rather
+  than to a 10 ms tick, so a thread that runs in short bursts between
+  ticks is charged what it ran. The clock tick only samples where it
+  finds the thread (`UserTicks`, `KernelTicks`), and the exact time is
+  divided in that proportion (`SplitRunTime`), so user and kernel time
+  always add up to the total. A process's time is its threads' plus
+  that of the threads that ended (`EndedThreadTimes`, added under its
+  thread list lock as each one is reaped, so nothing is counted twice or
+  lost; `GetProcessTimes`). Each processor's busy and idle time (its
+  idle thread's) is charged at the same switches; they add up to the
+  time it has run.
+- **A process's memory** (`Processes.AddressSpace`): the pages it has
+  mapped (resident, `CommittedPages`), the ones among them shared -
+  program and library pages mapped from an image section until written
+  to (copy on write gives the process its own), and section pages -
+  (`SharedPages`), and the most it ever had (`PeakCommittedPages`);
+  private is resident less shared. The size of what it may touch is the
+  sum of its regions, the stack guards left out.
+- **The system's memory** (`Memory.PhysicalPages`): the page allocator
+  counts the pages of each use as they change hands (`TPageUsage`: a
+  process's own pages, program images, sections, the block cache, the
+  kernel heap, kernel stacks, page tables, the kernel image, the
+  loader's data and the page database, drivers' buffers), so the figures
+  add up to the RAM there is.
+- **`ListProcessDetails` (96)**: (Buffer, Capacity) fills up to Capacity
+  `TAbiProcessDetails` - ids, users, state (running, waiting, stopped,
+  ending), threads, handles, nice and priority, start time (wall clock
+  and uptime), processor time (total, user, kernel), memory (virtual,
+  resident, shared, private, peak), name, controlling terminal and
+  command line (the arguments it was started with, which the kernel now
+  keeps, joined by spaces) - and returns how many processes there are,
+  so a caller with too little room asks again (`Sys.ProcessList` does,
+  keeping its buffer for the next snapshot). The list is taken under
+  the registry lock, each record copied straight to the caller. Anyone
+  may list every process, as with `ps` on Unix; another user's command
+  line is shown only to root (`ProcessDetailsCommandLineHidden`), since
+  arguments may carry what a user typed. The old `ListProcesses` (50)
+  stays, its time now from the same accounting.
+- **`GetSystemUsage` (97)**: a `TAbiSystemUsage` - the uptime, every
+  processor's busy and idle time and whether it runs, the number of
+  processes and threads (the kernel's too), context switches, and the
+  memory by use (`Processes.SystemUsage`).
+
+`Sys.ProcessList` (snapshots, a process's share of the processors
+between two of them) and `Sys.SystemUsage` (a processor's busy share
+between two samples, the memory in use) wrap them. `ps` shows %CPU (the
+processor time over the time since the process started, 100 for one
+processor kept busy), `rss`, `vsz`, `time`, the real `tty` and the
+command line (`args`; another user's shows as `[name]`); `top` the
+busiest processes since its last look, again every few seconds (`-b`
+batch, `-d` delay, `-n` count). `usagetest`,
+run by coretest, checks that a busy loop is charged about the time it
+ran (at most the wall time, at least 40% of it, most of it user time,
+the processors' busy time growing with it), that a sleeping program is
+charged next to nothing, that ended threads leave their time in the
+process and the thread count follows them, that memory taken from the
+kernel and touched shows as resident and private and goes when freed
+(the peak staying), that each processor's busy and idle time add up to
+its run time and the memory figures to the RAM, and that a list given
+room for one says how many there are; coretest also checks `ps`'s new
+columns (a `burn` busy loop above 10% CPU with its 8 MiB resident) and
+who sees whose command line. `burn` (threads spinning, memory taken
+and touched, `-i` to ignore requests to end) is the busy program the
+tests use.
 
 ### Processor exceptions
 

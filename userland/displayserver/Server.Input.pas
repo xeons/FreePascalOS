@@ -30,7 +30,8 @@
   pressed while held (Server.TitleButtons); a double click on a title
   bar maximizes the window or restores it (Server.DoubleClicks). A
   window dropped on another screen takes its scale. Keys go to the
-  active window; Alt+F4 asks it to close. Pointer events carry the
+  active window, but for the shell's keys for the whole desktop
+  (Server.Hotkeys); Alt+F4 asks it to close. Pointer events carry the
   modifiers held (as the last key event said), so a program can tell a
   Ctrl+click or a Shift+click.
 
@@ -92,7 +93,8 @@ uses
   Server.DoubleClicks,
   Server.PointerAreas,
   Server.WindowStates,
-  Server.WindowMoves;
+  Server.WindowMoves,
+  Server.Hotkeys;
 
 const
   EventsPath: PChar = '/dev/events';
@@ -468,6 +470,10 @@ var
 begin
   { Kept whichever window has the keyboard, for the pointer's events. }
   KeyboardModifiers := Event.Modifiers;
+  { The shell's keys for the whole desktop come first, whatever window
+    is active (Server.Hotkeys). }
+  if TakeHotkeyEvent(Event) then
+    Exit;
   if (ActiveWindow = nil) or ActiveWindow^.Disabled then
     Exit;
   if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then

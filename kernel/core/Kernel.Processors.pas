@@ -91,6 +91,13 @@ type
     ActiveAddressSpace: QWord;
     { Requests from other processors (Kernel.InterProcessor). }
     PendingRequests: LongWord;
+    { Processor time (Kernel.ProcessorTime), in clock nanoseconds:
+      since when the running thread runs, and the time spent idle (in
+      the idle thread) and busy so far. Changed at every switch, under
+      the dispatcher lock. }
+    RunningSince: QWord;
+    IdleNanoseconds: QWord;
+    BusyNanoseconds: QWord;
     { Where the clock interrupt last found the processor (for the hang
       dump: a processor stuck in a loop shows where). }
     InterruptedAddress: QWord;

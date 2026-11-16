@@ -175,7 +175,7 @@ begin
     KernelPanic('no memory for the block cache');
   for LineIndex := 0 to LineCount - 1 do
   begin
-    PagePhysical := AllocatePhysicalPage(PageUsageGeneral);
+    PagePhysical := AllocatePhysicalPage(PageUsageBlockCache);
     if PagePhysical = 0 then
       KernelPanic('no memory for block cache pages');
     Lines[LineIndex].Data := PByte(PhysicalToVirtual(PagePhysical));

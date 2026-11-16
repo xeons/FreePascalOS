@@ -20,8 +20,9 @@
   The programs' pictures, for the desktop's icons and the Start menu:
   a terminal (a screen with a prompt), a notepad (a ruled page with a
   pencil), the controls (a small window with a check box, a button and
-  a slider), swatches (a window with colour samples) and the dialogs (a
-  window with a folder and colour discs). Each is drawn with shapes on
+  a slider), swatches (a window with colour samples), the dialogs (a
+  window with a folder and colour discs) and the task manager (a window
+  with a graph of how busy the processors are). Each is drawn with shapes on
   the design grid (Desktop.Shapes), at any size.
 }
 unit Desktop.ProgramPictures;
@@ -125,6 +126,19 @@ begin
   DrawGridDisc(Canvas, Grid, 19.5, 22, 3, WithAlpha($FF3B73C4, 220));
 end;
 
+procedure DrawTaskManager(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawLittleWindow(Canvas, Grid);
+  DrawRoundedBox(Canvas, Grid, 6, 13, 26, 25.5, 0.5, ScreenColor, OutlineColor, 0.8);
+  DrawGridLine(Canvas, Grid, 6, 19.25, 26, 19.25, 0.4, $FF2E5A44);
+  DrawGridLine(Canvas, Grid, 16, 13, 16, 25.5, 0.4, $FF2E5A44);
+  DrawGridLine(Canvas, Grid, 7, 23, 10.5, 20, 1.2, PromptColor);
+  DrawGridLine(Canvas, Grid, 10.5, 20, 13.5, 22, 1.2, PromptColor);
+  DrawGridLine(Canvas, Grid, 13.5, 22, 18, 15.5, 1.2, PromptColor);
+  DrawGridLine(Canvas, Grid, 18, 15.5, 21.5, 18.5, 1.2, PromptColor);
+  DrawGridLine(Canvas, Grid, 21.5, 18.5, 25, 16, 1.2, PromptColor);
+end;
+
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 var
   Grid: TPictureGrid;
@@ -141,6 +155,8 @@ begin
       DrawSwatches(Canvas, Grid);
     PictureDialogs:
       DrawDialogs(Canvas, Grid);
+    PictureTaskManager:
+      DrawTaskManager(Canvas, Grid);
   end;
 end;
 

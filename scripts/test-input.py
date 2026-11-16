@@ -1702,6 +1702,161 @@ shell_places('GONE')
 checks.append(('desktop: a notification icon\'s tooltip; the icon goes with its program',
                tooltip_shown and b'tooltip Hello' in log_since('ASKED $m') and
                b'notification-gone 2' in log_since('ENDED $m')))
+# The task manager (taskmanager), opened with Ctrl+Shift+Escape (a key
+# the desktop takes for the whole desktop): two busy programs (burn,
+# the second ignoring requests to end) are at the top of its Processes
+# list, sorted by CPU; End asks the first, which ends; the second does
+# not, and End now (confirmed) ends it outright. The Performance tab's
+# processor graph moves on. The Programs tab lists a Notepad with text
+# in it: Switch To brings it forward, End Program asks it to end, it
+# asks about saving (No) and ends. The taskbar's own menu brings the
+# task manager forward; closed, it has kept its tab and size in the
+# user's settings.
+def task_manager_rows(log):
+    # The newest look's first rows: (pid, name, cpu) in order.
+    looks = log.split(b'\ncpu ')
+    for look in reversed(looks[:-1]):
+        rows = re.findall(rb'process (\d+) (\S+) (\d+) \d+', look)
+        if rows:
+            return [(int(pid), name.decode(), int(cpu)) for pid, name, cpu in rows]
+    return []
+
+
+def wait_for_task_manager(texts, seconds):
+    # Like wait_for_shell_log, for what the task manager (started by the
+    # desktop, so writing to its log) prints.
+    return wait_for_shell_log(texts, seconds)
+
+
+type_on_serial(b'burn > /tmp/b1.log & burn -i > /tmp/b2.log & notepad > /tmp/n9.log &\r')
+time.sleep(3)
+type_on_keyboard('unsaved words')
+time.sleep(0.5)
+type_on_serial(b'm=DONE; cat /tmp/b1.log /tmp/b2.log; echo BURNS $m\r')
+wait_for('BURNS DONE', 10)
+burns_log = log_since('cat /tmp/b1.log')
+ready = re.findall(rb'burn: ready (\d+)', burns_log)
+polite_burn, stubborn_burn = (int(ready[0]), int(ready[1])) if len(ready) == 2 else (0, 0)
+press('ctrl-shift-esc')
+opened = wait_for_task_manager(['hotkey task manager', 'started taskmanager', 'place tab-performance',
+                                'place row-' + str(stubborn_burn)], 40)
+time.sleep(2)
+place = shell_places('TASKS')
+tm_log = log_since('BURNS DONE')
+top_rows = task_manager_rows(tm_log)
+checks.append(('task manager: Ctrl+Shift+Escape opens it on the Processes tab',
+               opened and b'tab processes' in tm_log and b'settings size 600 440, tab processes, sort 3 descending'
+               in tm_log))
+checks.append(('task manager: the busy programs are at the top when sorted by CPU',
+               len(top_rows) >= 2 and {top_rows[0][0], top_rows[1][0]} == {polite_burn, stubborn_burn} and
+               top_rows[0][2] >= 10 and top_rows[1][2] >= 10))
+# End (ask): the polite one ends.
+if 'row-' + str(polite_burn) in place:
+    right_click_at(*place['row-' + str(polite_burn)])
+    place = shell_places('MENU1')
+    if 'menu-end' in place:
+        click_at(*place['menu-end'])
+wait_for_task_manager(['ended ' + str(polite_burn)], 20)
+asked_log = log_since('MENU1 $m')
+checks.append(('task manager: End asks a process to end, and it ends',
+               ('asked ' + str(polite_burn)).encode() in asked_log and
+               ('ended ' + str(polite_burn)).encode() in asked_log))
+# The stubborn one: asked, it stays; End now (Yes) ends it outright.
+place = shell_places('STUBBORN')
+if 'row-' + str(stubborn_burn) in place:
+    right_click_at(*place['row-' + str(stubborn_burn)])
+    place = shell_places('MENU2')
+    if 'menu-end' in place:
+        click_at(*place['menu-end'])
+time.sleep(3)
+place = shell_places('STILL')
+stubborn_log = log_since('MENU2 $m')
+stayed = (('asked ' + str(stubborn_burn)).encode() in stubborn_log and
+          ('ended ' + str(stubborn_burn)).encode() not in stubborn_log)
+if 'row-' + str(stubborn_burn) in place:
+    right_click_at(*place['row-' + str(stubborn_burn)])
+    place = shell_places('MENU3')
+    if 'menu-end-now' in place:
+        click_at(*place['menu-end-now'])
+        time.sleep(1)
+        press('ret')
+wait_for_task_manager(['ended ' + str(stubborn_burn)], 20)
+ended_log = log_since('MENU3 $m')
+checks.append(('task manager: a process that ignores the request stays; End now (confirmed) ends it',
+               stayed and ('ended-now ' + str(stubborn_burn)).encode() in ended_log and
+               ('ended ' + str(stubborn_burn)).encode() in ended_log))
+# The Performance tab: the processor graph moves on from one look to the next.
+place = shell_places('PERFORMANCE')
+graph = None
+if 'tab-performance' in place:
+    click_at(*place['tab-performance'])
+    wait_for_task_manager(['graph cpu'], 15)
+    graph = re.findall(rb'graph cpu (\d+) (\d+) (\d+) (\d+)', log_since('PERFORMANCE $m'))
+graph_moved = False
+if graph:
+    graph_left, graph_top, graph_width, graph_height = (int(value) for value in graph[-1])
+    before = take_screen()
+    time.sleep(3)
+    after = take_screen()
+    changed = sum(1 for x in range(graph_left + 4, graph_left + graph_width - 4, 3)
+                  for y in range(graph_top + 20, graph_top + graph_height - 4, 3) if before(x, y) != after(x, y))
+    graph_moved = changed > 20
+checks.append(('task manager: the Performance tab\'s processor graph moves on',
+               graph_moved and b'performance cpu' in log_since('PERFORMANCE $m')))
+# The Programs tab: Notepad's window; Switch To; End Program, No to saving.
+place = shell_places('PROGRAMS')
+if 'tab-programs' in place:
+    click_at(*place['tab-programs'])
+    wait_for_task_manager(['Untitled - Notepad', 'place end-program'], 15)
+programs_log = log_since('PROGRAMS $m')
+notepad_window = re.search(rb'program (\d+) (\d+) Untitled - Notepad', programs_log)
+place = shell_places('NOTEPAD')
+if notepad_window and 'program-' + notepad_window.group(1).decode() in place:
+    click_at(*place['program-' + notepad_window.group(1).decode()])
+    click_at(*place['switch-to'])
+    time.sleep(1)
+    # Notepad is in front now: the task manager's taskbar button brings
+    # it back.
+    place = shell_places('SWITCHED')
+    if 'task-Task-Manager' in place:
+        click_at(*place['task-Task-Manager'])
+    place = shell_places('BACK')
+    click_at(*place['program-' + notepad_window.group(1).decode()])
+    click_at(*place['end-program'])
+    time.sleep(2)
+    press('alt-n')
+    wait_for_task_manager(['ended ' + notepad_window.group(2).decode()], 20)
+type_on_serial(b'm=DONE; cat /tmp/n9.log; echo NOTEPAD9 $m\r')
+wait_for('NOTEPAD9 DONE', 10)
+switched_log = log_since('NOTEPAD $m')
+checks.append(('task manager: the Programs tab lists Notepad; Switch To brings it forward',
+               notepad_window is not None and re.search(rb'task \d+ active Untitled - Notepad', switched_log)
+               is not None))
+checks.append(('task manager: End Program asks Notepad to end; it asks about saving (No) and ends',
+               notepad_window is not None and b'answer no' in switched_log and
+               ('ended ' + notepad_window.group(2).decode()).encode() in switched_log))
+# The taskbar's own menu brings the task manager forward (the wallpaper
+# took the keyboard from it); Alt+F4 closes it, and the next one would
+# start on the tab and at the size it had.
+click_at(1000, 400)
+right_click_at(900, 785)
+place = shell_places('TASKBARMENU')
+if 'taskbar-task-manager' in place:
+    click_at(*place['taskbar-task-manager'])
+    time.sleep(1.5)
+    shell_places('CHOSEN')
+    press('alt-f4')
+    time.sleep(1.5)
+type_on_serial(b'pgrep -x taskmanager || echo gone; settings get TaskManager/Tab; settings get TaskManager/Width; '
+               b'settings delete TaskManager; m=DONE; echo CLOSED $m\r')
+closed = wait_for('CLOSED DONE', 15)
+closed_log = log_since('TASKBARMENU $m')
+checks.append(('task manager: the taskbar\'s menu brings it forward; closed, it keeps its tab and size',
+               closed and b'context task manager' in closed_log and
+               re.search(rb'task \d+ active Task Manager', closed_log) is not None and
+               re.search(rb'\ngone\r?\n0\r?\n600\r?\n', closed_log) is not None))
+type_on_serial(b'pkill -x burn; pkill -x notepad; m=DONE; echo TASKS-ENDED $m\r')
+wait_for('TASKS-ENDED DONE', 10)
 type_on_serial(b'kill %4 %2; kill %1; wait; m=DONE; echo DESKTOP $m\r')
 checks.append(('desktop: the server ended, the console has the screen again',
                wait_for('DESKTOP DONE', 20) and screen_pixel(2, 400) == '101830'))

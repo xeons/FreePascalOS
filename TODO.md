@@ -385,7 +385,10 @@ normalized (0-65535), not pixels.
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
 - [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
-- [ ] Task Manager: processes, CPU and memory
+- [x] Task Manager: processes, CPU and memory (programs with windows, every
+      process with End / End now / Stop / Continue / Priority / Properties,
+      processor and memory graphs; processor time timed at every switch,
+      per-process and system memory figures, Ctrl+Shift+Escape)
 - [ ] Graphical login, locking, log off, shut down and suspend from the desktop
       (login, log off and shut down are done; locking and suspend remain)
 - [x] File change notifications (folders refresh), volume arrival

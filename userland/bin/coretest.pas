@@ -86,7 +86,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..310] of TCommandTest = (
+  CommandTests: array[0..314] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -388,6 +388,12 @@ const
     (Command: 'su user -c "printf ''user\nnew1\nnew1\n'' | passwd" 2>/dev/null; su user -c "echo new1 | su user -c whoami" 2>/dev/null; printf ''user\nuser\n'' | passwd user 2>/dev/null | tail -n 1'; ExpectedOutput: 'Changing password for user.'#10'passwd: password updated successfully'#10'user'#10'passwd: password updated successfully'#10; ExpectedStatus: 0),
     (Command: 'ps | head -n 1; ps -f | head -n 1; ps -e -o comm= > ps.out; sort ps.out | tr "\n" " "; echo'; ExpectedOutput: '    PID TTY          TIME CMD'#10'UID          PID    PPID  C STIME TTY          TIME CMD'#10'coretest ps sh '#10; ExpectedStatus: 0),
     (Command: 'ps aux | head -n 1; ps -o user= -o comm= -p $(pgrep -x coretest); su user -c "ps -o user= -u user" | sort -u'; ExpectedOutput: 'USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START     TIME COMMAND'#10'root     coretest'#10'user'#10; ExpectedStatus: 0),
+    { Processor time and memory: the kernel's accounting (usagetest), the
+      columns ps shows from it, and whose command lines may be seen. }
+    (Command: 'usagetest --own-details > usage.log; echo $?; grep -E ''FAIL|='' usage.log; tail -n 1 usage.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'ps -o pid,user,pcpu,rss,time,comm | head -n 1; ps -o tty= -p $$; burn -s 3 -m 8 > /dev/null & p=$!; sleep 1.5; c=$(ps -o pcpu= -p $p | cut -d . -f 1 | tr -d " "); r=$(ps -o rss= -p $p | tr -d " "); wait; test $c -ge 10 && echo busy; test $r -ge 8192 && echo resident'; ExpectedOutput: '    PID USER     %CPU   RSS     TIME COMMAND'#10'console'#10'busy'#10'resident'#10; ExpectedStatus: 0),
+    (Command: 'top -b -n 1 -d 0.2 > top.out; head -n 1 top.out | cut -c 1-8; sed -n 5p top.out; grep -c " top$" top.out'; ExpectedOutput: 'top - up'#10'    PID USER      NI    RES S  %CPU     TIME COMMAND'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'sleep 5 & ps -o args= -p $!; su user -c "ps -o args= -p $!; sleep 5 & ps -o args= -p \$!; kill \$!"; kill $!'; ExpectedOutput: 'sleep 5'#10'[sleep]'#10'sleep 5'#10; ExpectedStatus: 0),
     (Command: 'nice; nice -n 5 nice; nice -n 5 nice -n 3 nice; nice -n -5 nice; su user -c "nice -n 5 nice -n -2 nice" 2>/dev/null'; ExpectedOutput: '0'#10'5'#10'8'#10'-5'#10'5'#10; ExpectedStatus: 0),
     (Command: 'renice 3 -p $(pgrep -x coretest) | cut -d " " -f 2-; ps -o ni= -p $(pgrep -x coretest); su user -c "renice 0 -p $(pgrep -x coretest)" 2>/dev/null || echo denied; renice 0 -p $(pgrep -x coretest) > /dev/null'; ExpectedOutput: '(process ID) old priority 0, new priority 3'#10'  3'#10'denied'#10; ExpectedStatus: 0),
     (Command: 'pgrep -x coretest | wc -l; pgrep -c nosuchprogram; echo $?; sleep 30 & pkill -x sleep; echo $?'; ExpectedOutput: '1'#10'0'#10'1'#10'0'#10; ExpectedStatus: 0),

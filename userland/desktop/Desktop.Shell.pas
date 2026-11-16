@@ -30,6 +30,11 @@
   notification icon of its own, a volume placeholder until there is a
   mixer to open, through the same interface as any program.
 
+  Ctrl+Shift+Escape is the shell's for the whole desktop (a key it takes
+  from the display server): it opens the task manager, or brings the
+  one it opened before forward, as do the Start menu's entry and the
+  taskbar's own menu.
+
   Asked to end (the user logs off, the system shuts down), the shell
   simply ends: its windows hold nothing to save, and its end tells the
   session manager the session is over.
@@ -53,11 +58,14 @@ type
     FWindowList: TWindowList;
     FTaskbar: TTaskbarWindow;
     FDesktops: array of TDesktopWindow;
+    { The task manager the shell started last (0: none). }
+    FTaskManagerProcessId: QWord;
     procedure LayOut;
     procedure PlaceDesktop(Number: LongInt; Left, Top, Width, Height: LongInt);
     procedure ShellEvent(const Message: TWindowMessage);
     procedure WindowsChanged;
     procedure EndRequested(Reason: LongWord);
+    procedure OpenTaskManager;
   public
     { Builds the desktop; the program is the shell already. }
     constructor Create;
@@ -67,12 +75,15 @@ type
 implementation
 
 uses
+  Abi.SystemCalls,
   Sys.Notifications,
   Windowing.Displays,
   Windowing.Shell,
   Windowing.Notifications,
   Windowing.EndRequests,
   Windowing.Windows,
+  Controls.Keys,
+  Desktop.Programs,
   Desktop.Report;
 
 const
@@ -92,7 +103,9 @@ begin
   FWindowList.OnChange := @WindowsChanged;
   OnShellEvent := @ShellEvent;
   OnEndRequested := @EndRequested;
+  RegisterHotkey(KeyEscape, ModifierControl or ModifierShift, True);
   LayOut;
+  FTaskbar.OnTaskManagerChosen := @OpenTaskManager;
   ShowNotificationIcon(VolumeIconNumber, NotificationPictureVolume, VolumeTooltip);
 end;
 
@@ -165,7 +178,30 @@ begin
     EventNotificationIconChanged:
       if FTaskbar <> nil then
         FTaskbar.NotificationIconChanged(Message);
+    EventHotkey:
+      if Message.Code = KeyEscape then
+      begin
+        Say('hotkey task manager');
+        OpenTaskManager;
+      end;
   end;
+end;
+
+procedure TShell.OpenTaskManager;
+var
+  Index: LongInt;
+begin
+  { One is enough: the one already open comes forward. }
+  if FTaskManagerProcessId <> 0 then
+  begin
+    Index := FWindowList.IndexOfProcess(FTaskManagerProcessId);
+    if Index >= 0 then
+    begin
+      ManageWindow(FWindowList[Index].Id, ManageActivate);
+      Exit;
+    end;
+  end;
+  StartDesktopProgram(IndexOfDesktopProgram('taskmanager'), FTaskManagerProcessId);
 end;
 
 procedure TShell.WindowsChanged;

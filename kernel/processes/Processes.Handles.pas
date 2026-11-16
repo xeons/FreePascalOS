@@ -80,6 +80,9 @@ function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleK
 
 function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
 procedure CloseAllHandles(var Table: THandleTable);
+{ How many handles are open (a snapshot: read without the process's
+  lock, it may be one out while another thread opens or closes one). }
+function CountOpenHandles(const Table: THandleTable): LongWord;
 
 { What a handle holds on its object, taken and given back outside a
   handle table: by a message carrying the handle (Processes.Channels). A
@@ -196,6 +199,16 @@ var
 begin
   for Index := 0 to MaximumHandles - 1 do
     CloseHandle(Table, Index);
+end;
+
+function CountOpenHandles(const Table: THandleTable): LongWord;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to MaximumHandles - 1 do
+    if Table.Entries[Index].Kind <> HandleKindFree then
+      Inc(Result);
 end;
 
 end.

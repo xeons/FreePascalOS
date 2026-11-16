@@ -74,6 +74,14 @@
   with a tooltip in the shell's notification area
   (RequestSetNotificationIcon); the shell hears of it
   (EventNotificationIconChanged) and draws it.
+
+  The shell may also take keys for the whole desktop (RequestRegisterHotkey:
+  Ctrl+Shift+Escape opens the task manager): pressed, whichever window
+  is active, such a key goes to the shell (EventHotkey) and to no window.
+  Any program may list the other programs' top-level windows with the
+  process each belongs to (RequestListWindows: a task manager), and
+  manage those of programs of the same user (root: all of them) as the
+  shell does.
 }
 unit Windowing.Protocol;
 
@@ -162,13 +170,27 @@ const
   RequestSetWorkArea = 21;
   { Window 0; Code: a display's number. Answered by EventWorkArea. }
   RequestDescribeWorkArea = 22;
-  { Window: a window of this program, or for the shell any top-level
-    window of another; Code: Manage*, what to do with it. }
+  { Window: a window of this program, for the shell any top-level window
+    of another, and for any program a top-level window of a program of
+    the same user (root: any); Code: Manage*, what to do with it. }
   RequestManageWindow = 23;
   { Window 0; Code: a number this program picks for the icon; Value: 1
     shows it (or changes it), 0 takes it away; Flags: NotificationPicture*,
     what it shows; Text: its tooltip. A program's icons go when it ends. }
   RequestSetNotificationIcon = 24;
+  { Window 0. Answered by EventWindowListed for each top-level window
+    (framed, owned by no window, not a desktop) of the other programs of
+    the same user (root: of every program), then one with Window 0 to
+    end the list. }
+  RequestListWindows = 25;
+  { Window 0, from the shell only; Code: a key (as in EventKey);
+    Modifiers: the ones that must be held with it (ModifierShift,
+    ModifierControl, ModifierAlt of Abi.SystemCalls; the locks are
+    ignored); Value: 1 to
+    take the key, 0 to give it back. From then on the key pressed with
+    exactly those modifiers goes to the shell (EventHotkey), not to the
+    active window. Not answered; the keys go when the shell does. }
+  RequestRegisterHotkey = 26;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -231,7 +253,8 @@ const
   EventShellRegistered = 117;
   { To the shell. Window: a top-level window (framed, owned by no window)
     of another program, which is new or changed; Text: its title; Flags:
-    ShellWindow*; Code: the display it is on. }
+    ShellWindow*; Code: the display it is on; Value: the process of the
+    program it belongs to. }
   EventShellWindowChanged = 118;
   { To the shell. Window: a window it was told about is gone (or is no
     longer a top-level window: it was given an owner). }
@@ -247,6 +270,13 @@ const
     same for as long as the icon lives); Value: 1 shown or changed, 0
     gone; Flags: NotificationPicture*; Text: its tooltip. }
   EventNotificationIconChanged = 122;
+  { The answer to RequestListWindows, one per window. Window: the
+    window (0: the list is over); Text: its title; Flags: ShellWindow*;
+    Code: the display it is on; Value: the process its program runs as. }
+  EventWindowListed = 123;
+  { Window 0, to the shell: a key it took (RequestRegisterHotkey) was
+    pressed. Code: the key; Modifiers: as in EventKey. }
+  EventHotkey = 124;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -277,7 +307,9 @@ const
     it, the shell keeping it in its list; Restore shows a minimized
     window again, or else gives a maximized one its size back; Maximize
     shows it if minimized and fills its display's work area; Close asks
-    its program to close it (EventCloseRequested). }
+    its program to close it (EventCloseRequested). A program may manage
+    its own windows, the shell any, and any program the windows of the
+    programs of its user (root: of all). }
   ManageActivate = 1;
   ManageMinimize = 2;
   ManageRestore = 3;
