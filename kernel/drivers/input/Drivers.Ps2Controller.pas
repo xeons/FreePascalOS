@@ -33,6 +33,16 @@
   interrupt that may never come (the line can stay raised, and the two
   interrupts can run on two processors at once; a lock keeps them in
   turn).
+
+  Setting the controller and the mouse up is done by polling: a command
+  is written and its answer read from the same output byte. The
+  controller's own answers (the configuration byte) come marked as the
+  keyboard's, and raise the keyboard interrupt if it is on, as it is
+  after a reset and while the mouse is set up. So while a driver polls
+  (Ps2BeginPolling .. Ps2EndPolling), the interrupts leave every byte
+  alone: otherwise one running on another processor could take the
+  answer first, and the setup would fail (the mouse would stay off after
+  waking from suspend to RAM, say).
 }
 unit Drivers.Ps2Controller;
 
@@ -84,9 +94,12 @@ type
 { Where the keyboard's and the mouse's bytes go (nil: dropped). }
 procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
 procedure SetPs2MouseRoutine(Routine: TPs2ByteRoutine);
-{ While the mouse is set up by polling (its answers read with
-  Ps2ReadFromMouse), the interrupts leave its bytes alone. }
-procedure SetPs2MousePolled(Polled: Boolean);
+{ While a driver sets the controller or the mouse up by polling, the
+  interrupts leave every byte to it. Begin waits for an interrupt
+  already taking bytes to finish; End hands the bytes that came
+  meanwhile to their routines (their interrupt came and went). }
+procedure Ps2BeginPolling;
+procedure Ps2EndPolling;
 { Takes every waiting byte to its routine: both interrupts call this. }
 procedure Ps2ServiceController;
 
@@ -94,6 +107,7 @@ implementation
 
 uses
   Hal.PortIo,
+  Kernel.Arch.Cpu,
   Kernel.SpinLock;
 
 const
@@ -107,22 +121,22 @@ const
 var
   KeyboardRoutine: TPs2ByteRoutine;
   MouseRoutine: TPs2ByteRoutine;
-  MousePolled: Boolean;
+  Polling: Boolean;
   ServiceLock: TSpinLock;
   ServiceLockReady: Boolean;
 
-procedure SetPs2MousePolled(Polled: Boolean);
-begin
-  MousePolled := Polled;
-end;
-
-procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
+procedure PrepareServiceLock;
 begin
   if not ServiceLockReady then
   begin
     InitializeSpinLock(ServiceLock);
     ServiceLockReady := True;
   end;
+end;
+
+procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
+begin
+  PrepareServiceLock;
   KeyboardRoutine := Routine;
 end;
 
@@ -143,8 +157,10 @@ begin
     Status := ReadPortByte(Ps2StatusPort);
     if (Status and Ps2StatusOutputFull) = 0 then
       Break;
-    { The mouse's answers while it is being set up are for the poller. }
-    if ((Status and Ps2StatusFromAuxiliary) <> 0) and (MousePolled or not Assigned(MouseRoutine)) then
+    { While a driver polls, every answer is for it. }
+    if Polling then
+      Break;
+    if ((Status and Ps2StatusFromAuxiliary) <> 0) and not Assigned(MouseRoutine) then
       Break;
     Value := ReadPortByte(Ps2DataPort);
     if (Status and Ps2StatusFromAuxiliary) <> 0 then
@@ -157,6 +173,33 @@ begin
     Inc(Count);
   until Count >= MaximumFlushBytes;
   ReleaseSpinLockAtCurrentLevel(ServiceLock);
+end;
+
+procedure Ps2BeginPolling;
+var
+  WereEnabled: Boolean;
+begin
+  PrepareServiceLock;
+  Polling := True;
+  { An interrupt that took the lock before it saw the flag finishes
+    first. Interrupts off: one on this processor must not wait for the
+    lock held here. }
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(ServiceLock);
+  ReleaseSpinLockAtCurrentLevel(ServiceLock);
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure Ps2EndPolling;
+var
+  WereEnabled: Boolean;
+begin
+  Polling := False;
+  { A byte that came after the poller's last read raised its interrupt,
+    which left it; the interrupt does not come again for it. }
+  WereEnabled := SaveAndDisableInterrupts;
+  Ps2ServiceController;
+  RestoreInterrupts(WereEnabled);
 end;
 
 function Ps2ControllerIsPresent: Boolean;

@@ -105,7 +105,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test suspend-stress
 
 all: esp
 
@@ -206,6 +206,13 @@ test: aml-test drawing-test text-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# Not part of make test (it takes a minute a round under TCG): suspends
+# and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,
+# POINTERS=1 to check the mouse and tablet after each wake).
+ROUNDS ?= 30
+suspend-stress: esp $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/stress-suspend.py $(ESP_DIRECTORY) $(SYSTEM_DISK) $(ROUNDS)
 
 include userland/userland.mk
 
