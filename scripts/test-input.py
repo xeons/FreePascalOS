@@ -1668,6 +1668,97 @@ if wait_for_files_log(['folder /tmp/fm 4'], 15):
     double_click_at(*places()['item-gamma.txt'])
     notepad_opened = wait_for_files_log(['opened-with-notepad /tmp/fm/gamma.txt', 'title gamma.txt - Notepad'], 30)
 checks.append(('files: a text file opened in Notepad with a double click', notepad_opened))
+# The system clipboard and drag and drop between two programs: a second
+# Files window (on /tmp/fm2, its own process) dragged by its title bar
+# onto the second display; a path typed into the first window's address
+# box and copied (Ctrl+C) is on the display server's clipboard (the
+# clipboard tool prints it) and pasted (Ctrl+V) into the second window's
+# address box, which then goes there; a file dragged from the first
+# window into the second is moved there (the display server follows the
+# drag from one program's window to the other's).
+def second_files_places(marker):
+    start = len(received)
+    type_on_serial(b'm=DONE; cat /tmp/f2.log; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 15)
+    output = bytes(received[start:])
+    return output, {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
+                    for match in re.finditer(rb'place (\S+) (\d+) (\d+)', output)}
+
+
+def first_files_places(marker):
+    # The first window's places from its own log (the second's are in
+    # what the serial line received too).
+    log = files_log(marker)
+    return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
+            for match in re.finditer(rb'place (\S+) (\d+) (\d+)', log)}
+
+
+type_on_serial(b'kill $(pgrep notepad); mkdir -p /tmp/fm2; files /tmp/fm2 > /tmp/f2.log &\r')
+second_output, second_place = b'', {}
+for attempt in range(30):
+    second_output, second_place = second_files_places('FILES2-' + str(attempt))
+    if b'folder /tmp/fm2 0' in second_output and 'menu-file' in second_place and 'address' in second_place:
+        break
+    time.sleep(1)
+second_moved = False
+if 'menu-file' in second_place:
+    title_x, title_y = second_place['menu-file'][0] + 200, second_place['menu-file'][1] - 22
+    before = second_place.get('folder-empty-space')
+    drag(title_x, title_y, title_x + 1280, title_y)
+    time.sleep(1.5)
+    second_output, second_place = second_files_places('FILES2-MOVED')
+    second_moved = second_place.get('folder-empty-space', before) != before
+checks.append(('files: a second window (another process) dragged onto the second display', second_moved))
+pasted_across = clipboard_shows = False
+place = first_files_places('FILES1-PLACES-A')
+if second_moved and 'address' in place:
+    click_at(*place['address'])
+    press('ctrl-a')
+    type_on_keyboard('/tmp/fm/sub')
+    press('ctrl-a')
+    press('ctrl-c')
+    time.sleep(0.5)
+    output = shell_output('clipboard -p; echo', 'CLIP-SHOWN')
+    clipboard_shows = b'\n/tmp/fm/sub' in output
+    press('esc')
+    click_at(*second_place['address'])
+    press('ctrl-a')
+    press('ctrl-v')
+    press('ret')
+    for attempt in range(15):
+        second_output, second_place = second_files_places('FILES2-PASTED-' + str(attempt))
+        if b'folder /tmp/fm/sub 1' in second_output:
+            pasted_across = True
+            break
+        time.sleep(1)
+checks.append(('clipboard: typed and copied (Ctrl+C) in one window, on the system clipboard (clipboard -p)',
+               clipboard_shows))
+checks.append(('clipboard: pasted (Ctrl+V) into another program\'s window', pasted_across))
+dragged_across = False
+if pasted_across:
+    # The second window back on its own folder, then gamma.txt dragged
+    # into it from the first.
+    click_at(*second_place['address'])
+    press('ctrl-a')
+    type_on_keyboard('/tmp/fm2')
+    press('ret')
+    time.sleep(1.5)
+    second_output, second_place = second_files_places('FILES2-BACK')
+    place = first_files_places('FILES1-PLACES-B')
+    if 'item-gamma.txt' in place and 'folder-empty-space' in second_place:
+        drag(place['item-gamma.txt'][0], place['item-gamma.txt'][1], *second_place['folder-empty-space'])
+        for attempt in range(20):
+            second_output, second_place = second_files_places('FILES2-DROPPED-' + str(attempt))
+            if b'dropped move 1 /tmp/fm2' in second_output and b'moved 1' in second_output:
+                break
+            time.sleep(1)
+output = shell_output('test -f /tmp/fm2/gamma.txt && test ! -e /tmp/fm/gamma.txt && echo DRAGGED-OK', 'FILES2-CHECK')
+dragged_across = b'dropped move 1 /tmp/fm2' in second_output and b'\nDRAGGED-OK' in output
+checks.append(('drag and drop: a file dragged from one Files window into another program\'s window is moved',
+               dragged_across))
+type_on_serial(b'kill %3; wait %3; mv /tmp/fm2/gamma.txt /tmp/fm/ 2>/dev/null; rm -r /tmp/fm2\r')
+time.sleep(2)
+
 type_on_serial(b'kill $(pgrep notepad); kill %2; wait %2; settings delete Files; rm -r /volumes/disk3p1/tree '
                b'/volumes/disk3p1/gamma.txt; kill %1; wait; m=DONE; echo FILES-ENDED $m\r')
 files_ended = wait_for('FILES-ENDED DONE', 30)

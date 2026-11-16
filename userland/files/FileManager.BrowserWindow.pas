@@ -90,6 +90,8 @@ type
     { The scale changed: the places are told again once laid out. }
     FScaleWasChanged: Boolean;
     procedure Resized; override;
+    { Moved by the user: where things are is told again (for tests). }
+    procedure Moved; override;
     procedure ScaleChanged; override;
     { The folder shown changed (another folder, or read again). }
     procedure FolderShown; virtual;
@@ -184,6 +186,13 @@ end;
 procedure TBrowserWindow.PlaceStatusPanels;
 begin
   FStatusBar.SetPanels([ItemsPanelWidth, ClientWidth - ItemsPanelWidth]);
+end;
+
+procedure TBrowserWindow.Moved;
+begin
+  inherited Moved;
+  if FAddressBox <> nil then
+    TellPlaces;
 end;
 
 procedure TBrowserWindow.Resized;

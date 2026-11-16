@@ -100,6 +100,7 @@ uses
   Server.Hotkeys,
   Server.WindowList,
   Server.Notifications,
+  Server.DataOffers,
   Server.ScreenLock;
 
 constructor TClient.Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
@@ -154,6 +155,7 @@ begin
     if (Index < WindowCount) and (Windows[Index].Client = Client) then
       DestroyWindow(Windows[Index]);
   ForgetClientNotificationIcons(Client);
+  ForgetClientData(Client);
   if IsShell(Client) then
     ForgetHotkeys;
   ForgetClientInShell(Client);
@@ -435,6 +437,9 @@ var
   Left: LongInt;
   Top: LongInt;
 begin
+  { The clipboard and drags (Server.DataOffers): sections come with them. }
+  if CarryOutDataRequest(Client, Message, Handle) then
+    Exit;
   if CarryOutDisplayRequest(Client, Message) or CarryOutLockRequest(Client, Message) then
   begin
     if Handle >= 0 then

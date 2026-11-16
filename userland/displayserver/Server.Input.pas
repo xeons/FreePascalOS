@@ -35,6 +35,9 @@
   modifiers held (as the last key event said), so a program can tell a
   Ctrl+click or a Shift+click.
 
+  While a program's drag of data goes on (Server.DataDrag) the pointer,
+  its button 1 and the keys are the drag's: no window hears them.
+
   A mouse's motion goes through its settings (speed, acceleration) and
   its buttons may be swapped (left-handed: Server.MouseSettings). The
   pointer's shape follows what it is over (RefreshPointerShape:
@@ -78,6 +81,12 @@ procedure ReleasePointer;
 { Gives the pointer the shape for where it is now (call before
   composing: windows may have moved or changed their shapes). }
 procedure RefreshPointerShape;
+{ For a drag of data (Server.DataDrag): whether button 1 is held, the
+  keyboard's modifiers, and the pointer let go by whatever window had
+  captured it or was under it. }
+function LeftButtonHeld: Boolean;
+function CurrentKeyboardModifiers: LongWord;
+procedure ReleasePointerForDrag;
 
 implementation
 
@@ -102,6 +111,7 @@ uses
   Server.WindowStates,
   Server.WindowMoves,
   Server.Hotkeys,
+  Server.DataDrag,
   Server.ScreenLock;
 
 const
@@ -151,6 +161,16 @@ begin
     Captured := nil;
 end;
 
+function LeftButtonHeld: Boolean;
+begin
+  Result := (ButtonsHeld and (LongWord(1) shl ButtonLeft)) <> 0;
+end;
+
+function CurrentKeyboardModifiers: LongWord;
+begin
+  Result := KeyboardModifiers;
+end;
+
 procedure CancelDrag;
 begin
   DragWindow := nil;
@@ -168,6 +188,7 @@ procedure SendPointerEvent(Window: TServerWindow; Kind: LongWord; Code: LongWord
 procedure ReleasePointer;
 begin
   CancelDrag;
+  CancelDataDrag;
   Captured := nil;
   if Hovered <> nil then
     SendPointerEvent(Hovered, EventPointerLeave, 0, 0);
@@ -184,6 +205,7 @@ begin
     CancelDrag;
   ForgetWindowInTitleButtons(Window);
   ForgetWindowInDoubleClicks(Window);
+  ForgetWindowInDataDrag(Window);
 end;
 
 procedure SendPointerEvent(Window: TServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt);
@@ -197,6 +219,14 @@ begin
   Message.Value := Value;
   Message.Modifiers := KeyboardModifiers;
   SendToProgram(Window, Message);
+end;
+
+procedure ReleasePointerForDrag;
+begin
+  Captured := nil;
+  if Hovered <> nil then
+    SendPointerEvent(Hovered, EventPointerLeave, 0, 0);
+  Hovered := nil;
 end;
 
 { The window whose client area the pointer is over (or the captor). }
@@ -364,6 +394,8 @@ var
   Window: TServerWindow;
   Area: THitArea;
 begin
+  if DataDragActive then
+    Exit(PointerArrow);
   case Drag of
     DragResize:
       Exit(FramePointerShape(DragArea));
@@ -403,6 +435,11 @@ var
 begin
   AddDamage(OldCursor);
   AddDamage(CursorRectangle);
+  if DataDragActive then
+  begin
+    DataDragPointerMoved(KeyboardModifiers);
+    Exit;
+  end;
   TrackButtonUnderPointer;
   case Drag of
     DragMove:
@@ -437,6 +474,12 @@ begin
     ButtonsHeld := ButtonsHeld or (LongWord(1) shl Button)
   else
     ButtonsHeld := ButtonsHeld and not (LongWord(1) shl Button);
+  if DataDragActive then
+  begin
+    if not Pressed and (Button = ButtonLeft) then
+      FinishDataDrag(KeyboardModifiers);
+    Exit;
+  end;
   if Drag <> DragNone then
   begin
     if not Pressed and (Button = ButtonLeft) then
@@ -492,6 +535,11 @@ var
 begin
   { Kept whichever window has the keyboard, for the pointer's events. }
   KeyboardModifiers := Event.Modifiers;
+  if DataDragActive then
+  begin
+    DataDragKey(Event.Code, Event.Value <> 0, KeyboardModifiers);
+    Exit;
+  end;
   { The shell's keys for the whole desktop come first, whatever window
     is active (Server.Hotkeys). }
   if TakeHotkeyEvent(Event) then

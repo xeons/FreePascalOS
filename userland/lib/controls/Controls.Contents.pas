@@ -74,6 +74,7 @@ uses
   Controls.Tooltips,
   Controls.Splitter,
   Controls.FileLists,
+  Controls.SystemDrag,
   Controls.CommonDialogs,
   Controls.FileNames,
   Controls.FolderListing,

@@ -507,7 +507,7 @@ normalized (0-65535), not pixels.
       so any DPI)
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits
-- [ ] Clipboard (text and images) and drag and drop
+- [x] Clipboard (text and images) and drag and drop
 - [ ] Themes; Paint; image viewer; calculator; volume control
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 

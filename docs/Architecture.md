@@ -1436,15 +1436,84 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestRegisterHotkey` = 26, `RequestGetKeyboardSettings` = 27,
 `RequestSetKeyboardSettings` = 28; the screen lock's in a range of
 their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
-`RequestRepaintDisplays` = 42), events 101 to 125 (up to
+`RequestRepaintDisplays` = 42; the clipboard and drag and drop 29 to
+36: `RequestOfferData` = 29, `RequestProvideData` = 30,
+`RequestAskData` = 31, `RequestWatchClipboard` = 32,
+`RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
+`RequestAnswerDrag` = 35, `RequestFinishDrop` = 36), events 101 to 125 (up to
 `EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
 `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
 `EventMouseSettings` = 116, `EventShellRegistered` = 117,
 `EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
 `EventWorkArea` = 120, `EventDisplaysChanged` = 121,
 `EventNotificationIconChanged` = 122, `EventWindowListed` = 123,
-`EventHotkey` = 124, `EventKeyboardSettings` = 125; `EventScreenLock`
-= 140, `EventIdleDescribed` = 141).
+`EventHotkey` = 124, `EventKeyboardSettings` = 125; the clipboard's
+and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
+127, `EventClipboardChanged` = 128, `EventClipboardFormats` = 129,
+`EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
+132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
+135; `EventScreenLock` = 140, `EventIdleDescribed` = 141).
+
+The clipboard (`Server.DataOffers`) is the server's. A program offers
+data in one or more formats (`RequestOfferData` with
+`DataSourceClipboard`: text as UTF-8, an image as a PNG file or as raw
+pixels - `DataFormatBgra`: width and height as 32-bit little-endian
+numbers, then blue, green, red, alpha a pixel, straight alpha, lines
+from the top - and a file list, the text of `Controls.FileLists`) and
+owns the clipboard until another program offers; the old owner hears
+`EventClipboardLost` (naming its own number for the offer, so one made
+since is kept). Rendering is delayed: the server asks the owner for a
+format the first time someone wants it (`EventDataRender`, answered with
+`RequestProvideData`), keeps the questions until the bytes come, and
+keeps the bytes; when the owner ends, what it gave stays on the
+clipboard and what it never gave goes (libwindowing gives every format
+before a program ends, so normally all of it stays). Bytes travel in
+sections, as surfaces do: the program copies them into a section it
+sends with the request, the server copies them out (at most
+`MaximumDataBytes`, 64 MiB, a format) and gives every program that asks
+(`RequestAskData`, answered by `EventDataDelivered` with a section of
+its own and the length) a fresh copy, so nobody changes what another
+reads. `RequestDescribeClipboard` tells the formats
+(`EventClipboardFormats`); programs that ask (`RequestWatchClipboard`)
+hear every change (`EventClipboardChanged`: the formats, whether they
+own it, a change count).
+
+Drag and drop (`Server.DataDrag`): a program offers the drag's data the
+same way (`DataSourceDrag`, every format given at once) and starts the
+drag from its window while button 1 is held (`RequestStartDrag`: the
+effects allowed - copy, move, link, `DropEffect*` - and a few words
+saying what is dragged). The pointer is then the drag's: no window gets
+pointer events or keys; the window under the pointer (its client area,
+enabled, usable under the screen lock) hears `EventDragEnter`,
+`EventDragOver` (also when Ctrl, Shift or Alt change) and
+`EventDragLeave`, each with the pointer in its pixels, the formats, the
+effects and the modifiers, and answers what a drop there would do
+(`RequestAnswerDrag`). Beside the pointer a label in the tooltip's
+colours shows that answer as a sign (a plus to copy, an arrow to move, a
+bent arrow to link, a struck red circle for nothing) and the words
+(`Server.DragFeedback`, drawn over the windows, under the pointer).
+Escape cancels. When button 1 is let go the window under the pointer
+hears `EventDrop`, decides again, reads the data (`RequestAskData` with
+`DataSourceDrag`) and says what it did (`RequestFinishDrop`), which the
+window the drag started from hears (`EventDragFinished`; nothing if
+cancelled or dropped on no window). A program that starts its drag just
+after the button was let go (it saw the pointer move with the button
+held, the release still on its way) has it dropped where the pointer
+is. Locking the screen cancels a drag, and none starts from a window the
+lock hides.
+
+`clipboard` uses it from the command line: `-c` copies standard input
+(`-t FORMAT`: text, png, bgra or files), `-p` pastes to standard output
+(status 1 if the clipboard has no such format), `-l` lists the formats,
+`-x` empties it, `--copy-image FILE` puts an image (any format libimage
+reads) on it as PNG and raw pixels, made only when asked for
+(`ClipboardTool.Images`), `--paste-image FILE` saves its image (from
+PNG, or `-t bgra`) as a PNG file, `--copy-files PATH...` puts files on it
+(a file list, and the paths as text), and `-w` waits for a change and
+says what the clipboard holds then. Coretest starts a display server and
+checks text, a format not held, files, an image read back by
+`imageinfo` from both image formats, and a watch hearing the clipboard
+emptied, each after the program that copied has ended.
 
 `wintest` shows a window and prints what happens to it (its place, a
 new scale, being shown or hidden; `-b` sets a text beam over its left
@@ -1477,7 +1546,15 @@ has none again.
 
 ### Windows and controls for programs
 
-**libwindowing** is what a program uses to have windows. One connection
+**libwindowing** is what a program uses to have windows. Its clipboard
+and drags are strings and bytes: `Windowing.DataTransfer` (a
+`TDataOffer` of formats, given when the server asks, `AskData`),
+`Windowing.Clipboard` (`WriteClipboardText`, `WriteClipboard`,
+`ReadClipboard`, `ReadClipboardText`, `ClipboardFormats`,
+`WatchClipboard` with `OnClipboardChanged` from the message loop,
+`FlushClipboard`), `Windowing.DragAndDrop` (`StartDrag`, `ReadDragData`;
+a window's `DragOver`, `DragLeave`, `Drop` and `DragFinished`, which the
+message loop calls and answers for). One connection
 per program (`Windowing.Connection`: hello, the screen's size, DPI and
 scale; `Scaled` and `Unscaled` between logical units and pixels;
 replies waited for while other events are kept in order). A `TWindow`
@@ -1682,9 +1759,28 @@ absolute path with every byte but letters, digits, "-", ".", "_", "~"
 and "/" written as "%" and two hexadecimal digits). Reading also takes
 plain absolute paths and skips empty lines; text without the header is
 not a file list. Dragged files carry the same text (format
-"file-list"). For now the store keeps the text in the program;
-the system clipboard (step 8) will be a store that asks the display
-server, set with `SetClipboardStore`, and the controls stay as they are.
+"file-list"). The store is the display server's system clipboard
+(`Windowing.Clipboard`): text as UTF-8, file lists in their own format
+with the plain paths beside them as text (`SetClipboardFileListText`;
+pasting files into an edit box gives their paths); within the program
+while it has no display server. Every program's edit boxes, Notepad,
+the terminal and Files share it, so text and files cut or copied in one
+program are pasted in another, and stay after it ends.
+
+Drags of text and file lists go through the display server
+(`Controls.SystemDrag`, `Windowing.DragAndDrop`), so they reach other
+windows and programs: `BeginDrag` hands the data to the server, and
+each window a drag comes over asks its controls just as for a drag of
+its own (`TControlWindow.DragOver`, `DragLeave`, `Drop`: a drag of this
+program's own shows its `TDragData` with the source control, one from
+another program is read when it first comes over and has no source).
+The drag ends when the server says what the drop did, and the control
+pressed then hears the button let go. A program's own formats stay
+within the window, as before. Edit boxes, the multi-line edit box and
+the terminal take dropped text (and files, as their paths: the terminal
+quotes them for the shell); Files drops move or copy files between its
+windows in different processes as within one; the desktop opens files
+dropped on a program's icon with that program (`Desktop.FileDrops`).
 A one line box pastes up to the first line break; the multi-line box
 splits what it pastes into lines.
 

@@ -27,9 +27,11 @@
   items (a move within a list) from one that came from elsewhere.
 
   A control under the pointer says what a drop would do (TDropEffect):
-  nothing (it takes no such data, or not there), copy or move; the
-  window starting the drag owns the data and frees it when the drag
-  ends (Controls.Window).
+  nothing (it takes no such data, or not there), copy, move or link;
+  the window starting the drag owns the data and frees it when the drag
+  ends (Controls.Window). Text and file lists go to other windows and
+  programs too, through the display server (Controls.SystemDrag); a
+  drag from another program comes as data with no source control.
 }
 unit Controls.DragData;
 
@@ -44,7 +46,7 @@ const
   DragFormatFileList = 'file-list';
 
 type
-  TDropEffect = (DropNone, DropCopy, DropMove);
+  TDropEffect = (DropNone, DropCopy, DropMove, DropLink);
 
   TDragData = class
   private

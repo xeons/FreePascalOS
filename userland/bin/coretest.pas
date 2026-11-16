@@ -104,7 +104,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..370] of TCommandTest = (
+  CommandTests: array[0..374] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -596,7 +596,17 @@ const
       an exception: status 217), or with status 139 when the kernel must
       end it (no dispatcher) ------------------------------------------- }
     (Command: '/bin/coretest --crash-on-purpose 2>&1 | sed -n 2p; /bin/coretest --crash-on-purpose 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10'still running'#10; ExpectedStatus: 0),
-    (Command: '/bin/coretest --overflow-stack 2>&1 | sed -n 2p; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'EStackOverflow: Stack overflow'#10'139'#10; ExpectedStatus: 0)
+    (Command: '/bin/coretest --overflow-stack 2>&1 | sed -n 2p; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'EStackOverflow: Stack overflow'#10'139'#10; ExpectedStatus: 0),
+
+    { --- the system clipboard (the display server's, through the
+      clipboard tool): text copied and pasted, a format it does not
+      hold, files as a file list and their paths, an image as PNG and raw
+      pixels (each read back by imageinfo), a watch hearing it emptied;
+      what a program put there stays after it ends. Then the server ends. }
+    (Command: 'displayserver > /tmp/ds.log 2>&1 & for i in $(seq 200); do grep -q ready /tmp/ds.log 2>/dev/null && break; sleep 0.1; done; printf "hello clip" | clipboard -c; clipboard -p; echo; clipboard -l; clipboard -p -t png 2>&1; echo $?'; ExpectedOutput: 'hello clip'#10'text'#10'clipboard: the clipboard holds no png'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'clipboard --copy-files /etc/passwd /etc/group; clipboard -l; clipboard -p; echo; clipboard -p -t files'; ExpectedOutput: 'text'#10'files'#10'/etc/passwd'#10'/etc/group'#10'file-list copy'#10'file:///etc/passwd'#10'file:///etc/group'#10; ExpectedStatus: 0),
+    (Command: 'printf "BM\076\000\000\000\000\000\000\000\066\000\000\000\050\000\000\000\002\000\000\000\001\000\000\000\001\000\030\000\000\000\000\000\010\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\377\000\000\000\377\000\000\000" > t.bmp; clipboard --copy-image t.bmp; clipboard -l; clipboard -p -t png > c.png; imageinfo c.png | cut -d, -f1-2; clipboard --paste-image d.png -t bgra; imageinfo d.png | cut -d, -f1-2; clipboard -p -t bgra | wc -c; rm t.bmp c.png d.png'; ExpectedOutput: 'png'#10'bgra'#10'c.png: PNG, 2 x 1'#10'd.png: PNG, 2 x 1'#10'16'#10; ExpectedStatus: 0),
+    (Command: 'clipboard -w > w.log & for i in $(seq 200); do grep -q watching w.log 2>/dev/null && break; sleep 0.1; done; clipboard -x; wait; cat w.log; clipboard -l | wc -l; rm w.log; pkill -x displayserver; echo $?'; ExpectedOutput: 'watching'#10'changed empty'#10'0'#10'0'#10; ExpectedStatus: 0)
   );
 
 var

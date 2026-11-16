@@ -26,7 +26,9 @@
   columns from the top left, each a picture above its caption, all in
   logical units. A click selects an icon (or none, on the wallpaper); a
   double click, or Enter, starts its program; the arrow keys move the
-  selection.
+  selection. Files dragged onto an icon (from Files) are opened with its
+  program (Desktop.FileDrops); the icon is selected while they are over
+  it.
 }
 unit Desktop.DesktopWindow;
 
@@ -40,7 +42,8 @@ uses
   Drawing.Surfaces,
   Drawing.Canvas,
   Windowing.Windows,
-  Configuration.Changes;
+  Configuration.Changes,
+  Windowing.DragAndDrop;
 
 type
   TDesktopWindow = class(TWindow)
@@ -51,6 +54,10 @@ type
     FSelected: LongInt;
     FLastClickIndex: LongInt;
     FLastClickTime: QWord;
+    { The selection before files were dragged over the icons. }
+    FSelectedBeforeDrag: LongInt;
+    FDragOverIcons: Boolean;
+    procedure EndDragOverIcons;
     function IconCount: LongInt;
     function RowsPerColumn: LongInt;
     { Cell Index's rectangle in surface pixels. }
@@ -68,6 +75,9 @@ type
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
     procedure CloseRequested; override;
+    function DragOver(const Drag: TDragEvent): LongWord; override;
+    procedure DragLeave; override;
+    procedure Drop(const Drag: TDragEvent); override;
   public
     { Covers the display numbered DisplayNumber: Left, Top, Width,
       Height in logical units of the desktop. }
@@ -81,6 +91,7 @@ type
 implementation
 
 uses
+  Classes,
   Abi.SystemCalls,
   Sys.Time,
   Drawing.Colors,
@@ -94,6 +105,7 @@ uses
   Desktop.ProgramPictures,
   Desktop.Wallpaper,
   Desktop.Settings,
+  Desktop.FileDrops,
   Desktop.Report;
 
 const
@@ -320,6 +332,58 @@ begin
     MoveSelection(0, 1)
   else if Code = KeyArrowLeft then
     MoveSelection(0, -1);
+end;
+
+procedure TDesktopWindow.EndDragOverIcons;
+begin
+  if not FDragOverIcons then
+    Exit;
+  FDragOverIcons := False;
+  Select(FSelectedBeforeDrag);
+end;
+
+function TDesktopWindow.DragOver(const Drag: TDragEvent): LongWord;
+var
+  Index: LongInt;
+begin
+  Result := 0;
+  Index := -1;
+  if FShowsIcons and DragCarriesFiles(Drag) then
+    Index := IconAt(Drag.X, Drag.Y);
+  if Index < 0 then
+  begin
+    EndDragOverIcons;
+    Exit;
+  end;
+  if not FDragOverIcons then
+  begin
+    FSelectedBeforeDrag := FSelected;
+    FDragOverIcons := True;
+  end;
+  Select(Index);
+  { The files stay where they are: the program opens them there. }
+  Result := DropEffectLink;
+end;
+
+procedure TDesktopWindow.DragLeave;
+begin
+  EndDragOverIcons;
+end;
+
+procedure TDesktopWindow.Drop(const Drag: TDragEvent);
+var
+  Index: LongInt;
+  Paths: TStringList;
+begin
+  Index := IconAt(Drag.X, Drag.Y);
+  EndDragOverIcons;
+  Paths := TStringList.Create;
+  try
+    if ReadDroppedPaths(Paths) then
+      OpenDroppedFiles(Index, Paths);
+  finally
+    Paths.Free;
+  end;
 end;
 
 procedure TDesktopWindow.CloseRequested;
