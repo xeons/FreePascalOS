@@ -24,10 +24,12 @@
   For each file prints its format (from its content, not its name), its
   size, the bits per pixel it is stored in, and what else it says:
   alpha, frames with their total time and loop count, the orientation
-  it is meant to be seen in, the resolution, a colour profile:
+  it is meant to be seen in, the resolution, a colour profile, the
+  pages of a TIFF (the rest describes the first):
 
     t.bmp: BMP, 2 x 1, 24 bits per pixel
     a.gif: GIF, 40 x 30, 4 bits per pixel, alpha, 5 frames, 0.42 s, 3 loops
+    s.tif: TIFF, 1700 x 2200, 1 bits per pixel, 300 dpi, 3 pages
 }
 program imageinfo;
 
@@ -41,6 +43,7 @@ uses
   Sys.Streams,
   Image.Errors,
   Image.Model,
+  Image.Metadata,
   Image.Frames,
   Image.Files;
 
@@ -91,6 +94,8 @@ begin
       Line := Line + Format(', %d dpi', [Round(Image.Resolution.HorizontalDpi)]);
     if Length(Image.IccProfile) > 0 then
       Line := Line + Format(', colour profile of %d bytes', [Length(Image.IccProfile)]);
+    if Image.Metadata.Contains(MetadataKeyPageCount) then
+      Line := Line + ', ' + Image.Metadata.GetValue(MetadataKeyPageCount) + ' pages';
     PrintStringLine(Line);
   finally
     Image.Free;
