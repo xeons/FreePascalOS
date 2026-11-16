@@ -405,6 +405,9 @@ normalized (0-65535), not pixels.
         down calendar; date, time, or both; formats; uses the time zone)
   - [ ] Picture box (shows an image: normal, stretched, zoomed to fit,
         centred; needs libimage from step 8 for files, surfaces before then)
+  - [ ] Paint box (a control the program draws in OnPaint: no focus, no
+        background of its own, repainted when resized; every control has
+        OnPaint already, this packages it like the picture box)
   - [ ] Tooltip component (a Hint text on any control, shown after the
         pointer rests and hidden when it leaves or a key is pressed; the
         tooltip window exists, the timing is left to each program now)
