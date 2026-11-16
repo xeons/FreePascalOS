@@ -68,7 +68,6 @@ program servicemanager;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
   Sys.KernelOptions,
   Sys.Kernel,
   Sys.Processes,

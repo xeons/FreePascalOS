@@ -45,26 +45,25 @@ uses
   Abi.SystemCalls,
   Sys.Objects,
   Sys.Processes,
+  Util.Commands,
   Controls.MessageBoxes,
   Controls.FileNames,
   FileManager.Output;
 
 const
   NotepadCommand = 'notepad';
-  PathCapacity = 1024;
 
 function Start(const ProgramPath, Argument: string): Boolean;
 var
-  Arguments: array[0..2] of PChar;
+  Arguments: TTextVector;
   Options: TProcessOptions;
   Folder: string;
   Process: Int64;
 begin
-  Arguments[0] := PChar(ProgramPath);
-  Arguments[1] := nil;
-  Arguments[2] := nil;
   if Argument <> '' then
-    Arguments[1] := PChar(Argument);
+    Arguments := TextVector([ProgramPath, Argument])
+  else
+    Arguments := TextVector([ProgramPath]);
   DefaultProcessOptions(Options);
   Options.GroupId := GroupNew;
   if Argument <> '' then
@@ -93,9 +92,9 @@ end;
 
 function OpenWithNotepad(const Path: string; Owner: TWindow): Boolean;
 var
-  NotepadPath: array[0..PathCapacity - 1] of Char;
+  NotepadPath: string;
 begin
-  Result := FindProgram(NotepadCommand, @NotepadPath[0], PathCapacity) and Start(StrPas(@NotepadPath[0]), Path);
+  Result := FindProgramPath(NotepadCommand, NotepadPath) and Start(NotepadPath, Path);
   if Result then
     Say('opened-with-notepad ' + Path)
   else

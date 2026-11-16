@@ -54,16 +54,14 @@ uses
   Sys.Files,
   Sys.Processes,
   Sys.ServiceControl,
+  Util.Commands,
   Util.Logins,
   Services.Logs;
 
 type
-  { nil-terminated, for StartProgram. }
-  TArgumentPointers = array of PChar;
-
   TLaunchEnvironment = record
     Texts: array of string;
-    Values: array of PChar;
+    Values: TTextVector;
   end;
 
 procedure AddVariable(var Environment: TLaunchEnvironment; const Name, Value: string);
@@ -85,15 +83,12 @@ begin
   AddVariable(Environment, 'TERM', 'console');
   AddVariable(Environment, ServiceNameVariable, Service.Definition.Name);
   AddVariable(Environment, ServicePortVariable, ControlPortName);
-  SetLength(Environment.Values, Length(Environment.Texts) + 1);
-  for Index := 0 to High(Environment.Texts) do
-    Environment.Values[Index] := PChar(Environment.Texts[Index]);
-  Environment.Values[High(Environment.Values)] := nil;
+  Environment.Values := TextVector(Environment.Texts);
 end;
 
 { The program's path, its arguments and a closing nil, pointing into
   Service's strings. }
-function BuildArguments(Service: TService): TArgumentPointers;
+function BuildArguments(Service: TService): TTextVector;
 var
   Index: LongInt;
 begin
@@ -109,7 +104,7 @@ function LaunchService(Service: TService): LongInt;
 var
   Account: TLoginAccount;
   Environment: TLaunchEnvironment;
-  Arguments: TArgumentPointers;
+  Arguments: TTextVector;
   Options: TProcessOptions;
   NullInput: Int64;
   Process: Int64;

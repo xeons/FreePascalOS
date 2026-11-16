@@ -96,7 +96,6 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Objects,
-  Sys.Files,
   Sys.Environment,
   Sys.FileWatches,
   Sys.Volumes,

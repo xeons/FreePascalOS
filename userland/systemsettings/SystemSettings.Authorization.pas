@@ -46,8 +46,7 @@ implementation
 uses
   Sys.Kernel,
   Util.Accounts,
-  Util.Passwords,
-  SystemSettings.Report;
+  Util.Passwords;
 
 const
   WrongPasswordPauseMilliseconds = 1500;

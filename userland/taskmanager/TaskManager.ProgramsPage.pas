@@ -87,7 +87,6 @@ uses
   SysUtils,
   Drawing.Rectangles,
   Abi.SystemCalls,
-  Sys.Errors,
   Sys.ProcessList,
   Sys.Notifications,
   Sys.Processes,

@@ -75,11 +75,9 @@ uses
   Abi.SystemCalls,
   Sys.Objects,
   Sys.Processes,
+  Util.Commands,
   Controls.MessageBoxes,
   Desktop.Report;
-
-const
-  PathCapacity = 512;
 
 procedure ReportFailure(const Caption, Command, Reason: string);
 begin
@@ -96,26 +94,25 @@ end;
 
 function StartCommand(const Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
 var
-  FullPath: array[0..PathCapacity - 1] of Char;
-  Arguments: array[0..2] of PChar;
+  FullPath: string;
+  Arguments: TTextVector;
   Options: TProcessOptions;
   Process: Int64;
 begin
   Result := False;
   ProcessId := 0;
-  if not FindProgram(PChar(Command), @FullPath[0], PathCapacity) then
+  if not FindProgramPath(Command, FullPath) then
   begin
     ReportFailure(Caption, Command, 'is not installed.');
     Exit;
   end;
-  Arguments[0] := PChar(Command);
-  Arguments[1] := nil;
   if Argument <> '' then
-    Arguments[1] := PChar(Argument);
-  Arguments[2] := nil;
+    Arguments := TextVector([Command, Argument])
+  else
+    Arguments := TextVector([Command]);
   DefaultProcessOptions(Options);
   Options.GroupId := GroupNew;
-  Process := StartProgram(@FullPath[0], @Arguments[0], Options);
+  Process := StartProgram(PChar(FullPath), @Arguments[0], Options);
   if Process < 0 then
   begin
     ReportFailure(Caption, Command, 'could not be started.');

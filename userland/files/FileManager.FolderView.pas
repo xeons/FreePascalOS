@@ -142,7 +142,6 @@ uses
   Abi.SystemCalls,
   Windowing.Connection,
   Sys.Objects,
-  Sys.Files,
   Sys.FileWatches,
   Drawing.Rectangles,
   Windowing.Windows,
