@@ -26,7 +26,7 @@
 program uname;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Sys.Format,
@@ -65,16 +65,17 @@ var
   Value: PChar;
   Selection: Integer;
   Information: TSystemInformation;
-  PrintedAny: Boolean;
+  Fields: string;
+  FieldCount: Integer;
 
-procedure PrintField(Mask: Integer; Text: PChar);
+procedure AddField(Mask: Integer; const Text: string);
 begin
   if (Selection and Mask) = 0 then
     Exit;
-  if PrintedAny then
-    WriteCharacter(StandardOutput, ' ');
-  WriteText(StandardOutput, Text);
-  PrintedAny := True;
+  if FieldCount > 0 then
+    Fields := Fields + ' ';
+  Fields := Fields + Text;
+  Inc(FieldCount);
 end;
 
 begin
@@ -98,14 +99,15 @@ begin
 
   if GetSystemInformation(Information) <> 0 then
     Fail(1, 'cannot get system information', []);
-  PrintedAny := False;
-  PrintField(ShowKernelName, @Information.SystemName[0]);
-  PrintField(ShowNodeName, @Information.NodeName[0]);
-  PrintField(ShowRelease, @Information.Release[0]);
-  PrintField(ShowVersion, @Information.Version[0]);
-  PrintField(ShowMachine, @Information.Machine[0]);
-  PrintField(ShowProcessor, @Information.Machine[0]);
-  PrintField(ShowPlatform, @Information.Machine[0]);
-  PrintField(ShowOperatingSystem, 'FreePascalOS');
-  WriteCharacter(StandardOutput, #10);
+  Fields := '';
+  FieldCount := 0;
+  AddField(ShowKernelName, PChar(@Information.SystemName[0]));
+  AddField(ShowNodeName, PChar(@Information.NodeName[0]));
+  AddField(ShowRelease, PChar(@Information.Release[0]));
+  AddField(ShowVersion, PChar(@Information.Version[0]));
+  AddField(ShowMachine, PChar(@Information.Machine[0]));
+  AddField(ShowProcessor, PChar(@Information.Machine[0]));
+  AddField(ShowPlatform, PChar(@Information.Machine[0]));
+  AddField(ShowOperatingSystem, 'FreePascalOS');
+  WriteLine(StandardOutput, PChar(Fields));
 end.

@@ -33,10 +33,11 @@
 program timezone;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Format,
   Sys.Streams,
   Sys.Time,
@@ -55,12 +56,13 @@ const
 procedure WriteZone(Zone: PTimeZone);
 var
   Local: TLocalTime;
+  { FormatUtcOffset writes "+hh:mm" and its terminator into a buffer. }
   OffsetText: array[0..7] of Char;
 begin
   DecodeTimeInZone(Zone, CurrentTime, Local);
   FormatUtcOffset(Local.Offset, @OffsetText[0]);
-  WriteFormatted(StandardOutput, '%s %s %s'#10, [ArgumentText(Zone^.Name), ArgumentText(@OffsetText[0]),
-    ArgumentText(Local.Abbreviation)]);
+  WriteLine(StandardOutput, PChar(Format('%s %s %s', [Zone^.Name, PChar(@OffsetText[0]),
+    Local.Abbreviation])));
 end;
 
 procedure ListZones;
@@ -71,15 +73,15 @@ begin
     WriteZone(TimeZoneAt(Index));
 end;
 
-procedure SetZone(Name: PChar);
+procedure SetZone(const Name: string);
 var
   Request: TSystemSettingsRequest;
   Error: LongInt;
 begin
-  if FindTimeZone(Name) = nil then
-    Fail(1, 'unknown time zone ''%s'' (timezone -l lists them)', [ArgumentText(Name)]);
+  if FindTimeZone(PChar(Name)) = nil then
+    Fail(1, 'unknown time zone ''%s'' (timezone -l lists them)', [ArgumentText(PChar(Name))]);
   Request := NewSystemSettingsRequest(SystemRequestSetTimeZone);
-  SetRequestText(@Request.Text[0], SystemTextCapacity, Name);
+  SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(Name));
   Error := SendSystemRequest(Request, True);
   if Error <> ErrorNone then
     FailWithError(1, Error, 'cannot set the time zone', []);

@@ -24,7 +24,7 @@
 program tee;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Abi.SystemCalls,
@@ -44,17 +44,17 @@ const
 
   OptionAppend = 1;
   OptionIgnore = 2;
-  MaximumFiles = 32;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
   Append: Boolean;
-  Handles: array[0..MaximumFiles - 1] of Int64;
+  Paths: array of string;
+  Handles: array of Int64;
   Index: Integer;
   Flags: LongWord;
-  Buffer: array[0..4095] of Char;
+  Buffer: array[0..4095] of Byte;
   Count: Int64;
   ExitStatus: LongInt;
   Error: LongInt;
@@ -66,20 +66,22 @@ begin
   while NextOption(Parser, Code, Value) do
     if Code = OptionAppend then
       Append := True;
-  if Parser.OperandCount > MaximumFiles then
-    Fail(1, 'too many files', []);
+  SetLength(Paths, Parser.OperandCount);
+  for Index := 0 to High(Paths) do
+    Paths[Index] := Parser.Operands[Index];
+  SetLength(Handles, Length(Paths));
 
   if Append then
     Flags := OpenWrite or OpenCreate or OpenAppend
   else
     Flags := OpenWrite or OpenCreate or OpenTruncate;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to High(Paths) do
   begin
-    Handles[Index] := OpenFile(Parser.Operands[Index], Flags);
+    Handles[Index] := OpenFile(PChar(Paths[Index]), Flags);
     if Handles[Index] < 0 then
     begin
-      ReportError(ErrorCodeOf(Handles[Index]), '%s', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(ErrorCodeOf(Handles[Index]), '%s', [ArgumentText(PChar(Paths[Index]))]);
       ExitStatus := 1;
     end;
   end;
@@ -89,14 +91,14 @@ begin
     if Count <= 0 then
       Break;
     WriteAll(StandardOutputHandle, @Buffer[0], QWord(Count));
-    for Index := 0 to Parser.OperandCount - 1 do
+    for Index := 0 to High(Handles) do
     begin
       if Handles[Index] < 0 then
         Continue;
       Error := WriteAll(Handles[Index], @Buffer[0], QWord(Count));
       if Error <> ErrorNone then
       begin
-        ReportError(Error, '%s', [ArgumentText(Parser.Operands[Index])]);
+        ReportError(Error, '%s', [ArgumentText(PChar(Paths[Index]))]);
         CloseFile(Handles[Index]);
         Handles[Index] := -1;
         ExitStatus := 1;
@@ -104,7 +106,7 @@ begin
     end;
   until False;
 
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to High(Handles) do
     if Handles[Index] >= 0 then
       CloseFile(Handles[Index]);
   Halt(ExitStatus);

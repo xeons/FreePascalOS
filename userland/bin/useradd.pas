@@ -35,9 +35,9 @@ program useradd;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Runtime.Memory,
-  Runtime.Text,
   Sys.Memory,
   Sys.Format,
   Util.Accounts,
@@ -54,11 +54,13 @@ const
   OptionComment = 1;
   OptionAdministrator = 2;
 
+{ Passwords stay in heap PChars (not reference counted strings, which
+  leave copies behind) so they can be wiped once used. }
 procedure Forget(var Text: PChar);
 begin
   if Text = nil then
     Exit;
-  ZeroMemory(Text, TextLength(Text));
+  ZeroMemory(Text, StrLen(Text));
   FreeMemory(Text);
   Text := nil;
 end;
@@ -94,7 +96,7 @@ begin
     Fail(1, 'a full name may not hold a colon', []);
   NewPassword := ReadPassword('New password: ');
   Repeated := ReadPassword('Retype new password: ');
-  if (NewPassword = nil) or (Repeated = nil) or not TextIsEqual(NewPassword, Repeated) then
+  if (NewPassword = nil) or (Repeated = nil) or (StrComp(NewPassword, Repeated) <> 0) then
   begin
     Forget(NewPassword);
     Forget(Repeated);

@@ -28,11 +28,11 @@
 program nohup;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Console,
   Sys.Environment,
   Sys.Errors,
@@ -41,8 +41,7 @@ uses
   Sys.Processes,
   Sys.Streams,
   Util.Commands,
-  Util.Messages,
-  Util.Paths;
+  Util.Messages;
 
 const
   Usage: PChar = 'Usage: nohup COMMAND [ARG]...'#10 +
@@ -51,21 +50,36 @@ const
     '''$HOME/nohup.out'' otherwise.'#10;
 
   StatusNohupFailed = 125;
+  OutputName = 'nohup.out';
+
+{ $HOME/nohup.out, or /nohup.out when HOME is not set. }
+function HomeOutputPath: string;
+var
+  Home: PChar;
+begin
+  Home := GetVariable('HOME');
+  if Home = nil then
+    Result := '/'
+  else
+    Result := Home;
+  if (Result <> '') and (Result[Length(Result)] <> '/') then
+    Result := Result + '/';
+  Result := Result + OutputName;
+end;
 
 var
   First: Integer;
   Options: TProcessOptions;
   OutputHandle: Int64;
-  HomePath: PChar;
-  Path: PChar;
+  Path: string;
 begin
   First := 1;
-  if (ArgumentTotal > 1) and TextIsEqual(Argument(1), '--help') then
+  if (ArgumentTotal > 1) and (string(Argument(1)) = '--help') then
   begin
     Print(Usage);
     Halt(0);
   end;
-  if (ArgumentTotal > 1) and TextIsEqual(Argument(1), '--') then
+  if (ArgumentTotal > 1) and (string(Argument(1)) = '--') then
     Inc(First);
   if First >= ArgumentTotal then
   begin
@@ -76,19 +90,16 @@ begin
   DefaultProcessOptions(Options);
   if IsConsole(StandardOutputHandle) then
   begin
-    Path := 'nohup.out';
-    OutputHandle := OpenFile(Path, OpenWrite or OpenCreate or OpenAppend);
+    Path := OutputName;
+    OutputHandle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenAppend);
     if OutputHandle < 0 then
     begin
-      HomePath := GetVariable('HOME');
-      if HomePath = nil then
-        HomePath := '/';
-      Path := JoinPath(HomePath, 'nohup.out');
-      OutputHandle := OpenFile(Path, OpenWrite or OpenCreate or OpenAppend);
+      Path := HomeOutputPath;
+      OutputHandle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenAppend);
     end;
     if OutputHandle < 0 then
       FailWithError(StatusNohupFailed, ErrorCodeOf(OutputHandle), 'failed to open ''nohup.out''', []);
-    Report('ignoring input and appending output to ''%s''', [ArgumentText(Path)]);
+    Report('ignoring input and appending output to ''%s''', [ArgumentText(PChar(Path))]);
     Options.OutputHandle := OutputHandle;
     if IsConsole(StandardErrorHandle) then
       Options.ErrorHandle := OutputHandle;

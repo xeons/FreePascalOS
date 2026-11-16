@@ -27,12 +27,10 @@
 program mknod;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
   Sys.Files,
   Sys.Format,
   Util.Messages,
@@ -54,33 +52,38 @@ var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  ModeText: PChar;
+  ModeText: string;
+  HasMode: Boolean;
   ModeChange: TModeChange;
-  Kind: PChar;
+  Kind: string;
   Error: LongInt;
 begin
-  ModeText := nil;
+  ModeText := '';
+  HasMode := False;
   BeginOptions(Parser, [OptionDefinition('m', 'mode', True, OptionMode)], Usage);
   while NextOption(Parser, Code, Value) do
     if Code = OptionMode then
+    begin
       ModeText := Value;
+      HasMode := True;
+    end;
   if Parser.OperandCount < 2 then
     FailWithUsageHint('missing operand', []);
-  if (ModeText <> nil) and not ParseModeChange(ModeText, ModeChange) then
-    Fail(1, 'invalid mode ''%s''', [ArgumentText(ModeText)]);
+  if HasMode and not ParseModeChange(PChar(ModeText), ModeChange) then
+    Fail(1, 'invalid mode ''%s''', [ArgumentText(PChar(ModeText))]);
   Kind := Parser.Operands[1];
-  if TextIsEqual(Kind, 'p') then
+  if Kind = 'p' then
   begin
     if Parser.OperandCount > 2 then
       FailWithUsageHint('Fifos do not have major and minor device numbers.', []);
     Error := CreateFifo(Parser.Operands[0]);
-    if (Error = ErrorNone) and (ModeText <> nil) then
+    if (Error = ErrorNone) and HasMode then
       Error := ChangeMode(Parser.Operands[0], ApplyModeChange(ModeChange, $1B6, False));
     if Error <> ErrorNone then
       FailWithError(1, Error, '''%s''', [ArgumentText(Parser.Operands[0])]);
   end
-  else if TextIsEqual(Kind, 'b') or TextIsEqual(Kind, 'c') or TextIsEqual(Kind, 'u') then
+  else if (Kind = 'b') or (Kind = 'c') or (Kind = 'u') then
     Fail(1, '''%s'': device files are not supported', [ArgumentText(Parser.Operands[0])])
   else
-    FailWithUsageHint('invalid device type ''%s''', [ArgumentText(Kind)]);
+    FailWithUsageHint('invalid device type ''%s''', [ArgumentText(PChar(Kind))]);
 end.

@@ -28,11 +28,10 @@
 program mkfifo;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Abi.SystemCalls,
-  Sys.Errors,
   Sys.Files,
   Sys.Format,
   Util.Messages,
@@ -50,27 +49,32 @@ var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  ModeText: PChar;
+  ModeText: string;
+  HasMode: Boolean;
   ModeChange: TModeChange;
   Index: Integer;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
-  ModeText := nil;
+  ModeText := '';
+  HasMode := False;
   BeginOptions(Parser, [OptionDefinition('m', 'mode', True, OptionMode)], Usage);
   while NextOption(Parser, Code, Value) do
     if Code = OptionMode then
+    begin
       ModeText := Value;
+      HasMode := True;
+    end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing operand', []);
-  if (ModeText <> nil) and not ParseModeChange(ModeText, ModeChange) then
-    Fail(1, 'invalid mode ''%s''', [ArgumentText(ModeText)]);
+  if HasMode and not ParseModeChange(PChar(ModeText), ModeChange) then
+    Fail(1, 'invalid mode ''%s''', [ArgumentText(PChar(ModeText))]);
 
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
     Error := CreateFifo(Parser.Operands[Index]);
-    if (Error = ErrorNone) and (ModeText <> nil) then
+    if (Error = ErrorNone) and HasMode then
       Error := ChangeMode(Parser.Operands[Index], ApplyModeChange(ModeChange, $1B6, False));
     if Error <> ErrorNone then
     begin

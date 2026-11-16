@@ -26,10 +26,10 @@
 program seq;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Format,
   Sys.Streams,
   Sys.Text,
@@ -54,18 +54,27 @@ begin
     FailWithUsageHint('invalid argument: ''%s''', [ArgumentText(Text)]);
 end;
 
-function DecimalWidth(Value: Int64): Integer;
+{ Value padded with zeros (after any sign) to Width characters. }
+function ZeroPadded(Value: Int64; Width: Integer): string;
 var
-  NumberText: TNumberText;
+  Digits: string;
+  Sign: string;
 begin
-  Result := Integer(TextLength(FormatSignedDecimal(Value, NumberText)));
+  Digits := IntToStr(Value);
+  Sign := '';
+  if Value < 0 then
+  begin
+    Sign := '-';
+    Delete(Digits, 1, 1);
+  end;
+  Result := Sign + StringOfChar('0', Width - Length(Sign) - Length(Digits)) + Digits;
 end;
 
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
-  Separator: PChar;
+  Separator: string;
   EqualWidth: Boolean;
   First: Int64;
   Increment: Int64;
@@ -73,7 +82,7 @@ var
   Current: Int64;
   Width: Integer;
   IsFirstNumber: Boolean;
-  NumberFormat: TTextBuilder;
+  Output: string;
 begin
   Separator := #10;
   EqualWidth := False;
@@ -112,26 +121,23 @@ begin
   if Increment = 0 then
     FailWithUsageHint('invalid Zero increment value: ''%s''', [ArgumentText(Parser.Operands[1])]);
 
-  { With -w every number is printed as %0<width>d. }
-  BeginText(NumberFormat);
-  AppendText(NumberFormat, '%');
+  { With -w every number is padded with zeros to the wider end. }
+  Width := 0;
   if EqualWidth then
   begin
-    Width := DecimalWidth(First);
-    if DecimalWidth(Last) > Width then
-      Width := DecimalWidth(Last);
-    AppendCharacter(NumberFormat, '0');
-    AppendDecimal(NumberFormat, Width);
+    Width := Length(IntToStr(First));
+    if Length(IntToStr(Last)) > Width then
+      Width := Length(IntToStr(Last));
   end;
-  AppendCharacter(NumberFormat, 'd');
 
   IsFirstNumber := True;
   Current := First;
   while ((Increment > 0) and (Current <= Last)) or ((Increment < 0) and (Current >= Last)) do
   begin
+    Output := ZeroPadded(Current, Width);
     if not IsFirstNumber then
-      WriteText(StandardOutput, Separator);
-    WriteFormatted(StandardOutput, NumberFormat.Text, [ArgumentNumber(Current)]);
+      Output := Separator + Output;
+    WriteText(StandardOutput, PChar(Output));
     IsFirstNumber := False;
     Current := Current + Increment;
   end;

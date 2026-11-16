@@ -27,16 +27,15 @@
 program sum;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Crypto.Checksums,
   Sys.Errors,
   Sys.Files,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Util.Messages,
   Util.Options;
@@ -51,19 +50,59 @@ const
   OptionSystemV = 2;
 
 var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
   UseSystemV: Boolean;
-  Index: Integer;
+  ShowNames: Boolean;
+  Buffer: array of Byte;
+
+{ Prints the checksum line of one file; False if it could not be opened. }
+function SumFile(const Path: string): Boolean;
+var
   Handle: Int64;
-  Buffer: PByte;
   Count: Int64;
   BsdSum: Word;
   SystemVSum: QWord;
   ByteCount: QWord;
+  Line: string;
+begin
+  if Path = '-' then
+    Handle := StandardInputHandle
+  else
+    Handle := OpenFile(PChar(Path), OpenRead);
+  if Handle < 0 then
+  begin
+    ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(PChar(Path))]);
+    Exit(False);
+  end;
+  BsdSum := 0;
+  SystemVSum := 0;
+  ByteCount := 0;
+  repeat
+    Count := ReadFile(Handle, @Buffer[0], Length(Buffer));
+    if Count <= 0 then
+      Break;
+    BsdSum := BsdSumUpdate(BsdSum, @Buffer[0], QWord(Count));
+    SystemVSum := SystemVSumUpdate(SystemVSum, @Buffer[0], QWord(Count));
+    ByteCount := ByteCount + QWord(Count);
+  until False;
+  if Handle <> StandardInputHandle then
+    CloseFile(Handle);
+  if UseSystemV then
+    Line := Format('%u %u', [QWord(SystemVSumFinish(SystemVSum)), (ByteCount + 511) div 512])
+  else
+    Line := Format('%.5u %5u', [BsdSum, (ByteCount + 1023) div 1024]);
+  if ShowNames or (UseSystemV and (Path <> '-')) then
+    Line := Line + ' ' + Path;
+  WriteLine(StandardOutput, PChar(Line));
+  Result := True;
+end;
+
+var
+  Parser: TOptionParser;
+  Code: Integer;
+  Value: PChar;
+  Files: array of string;
+  Index: Integer;
   ExitStatus: LongInt;
-  ShowNames: Boolean;
 begin
   UseSystemV := False;
   BeginOptions(Parser, [
@@ -73,48 +112,18 @@ begin
     UseSystemV := Code = OptionSystemV;
   ShowNames := Parser.OperandCount > 1;
   if Parser.OperandCount = 0 then
+    Files := ['-']
+  else
   begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
+    SetLength(Files, Parser.OperandCount);
+    for Index := 0 to Parser.OperandCount - 1 do
+      Files[Index] := Parser.Operands[Index];
   end;
 
-  Buffer := PByte(AllocateMemory(65536));
+  SetLength(Buffer, 65536);
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-  begin
-    if TextIsEqual(Parser.Operands[Index], '-') then
-      Handle := StandardInputHandle
-    else
-      Handle := OpenFile(Parser.Operands[Index], OpenRead);
-    if Handle < 0 then
-    begin
-      ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Parser.Operands[Index])]);
+  for Index := 0 to High(Files) do
+    if not SumFile(Files[Index]) then
       ExitStatus := 1;
-      Continue;
-    end;
-    BsdSum := 0;
-    SystemVSum := 0;
-    ByteCount := 0;
-    repeat
-      Count := ReadFile(Handle, Buffer, 65536);
-      if Count <= 0 then
-        Break;
-      BsdSum := BsdSumUpdate(BsdSum, Buffer, QWord(Count));
-      SystemVSum := SystemVSumUpdate(SystemVSum, Buffer, QWord(Count));
-      ByteCount := ByteCount + QWord(Count);
-    until False;
-    if Handle <> StandardInputHandle then
-      CloseFile(Handle);
-    if UseSystemV then
-      WriteFormatted(StandardOutput, '%u %u', [ArgumentUnsigned(SystemVSumFinish(SystemVSum)),
-        ArgumentUnsigned((ByteCount + 511) div 512)])
-    else
-      WriteFormatted(StandardOutput, '%05u %5u', [ArgumentUnsigned(BsdSum),
-        ArgumentUnsigned((ByteCount + 1023) div 1024)]);
-    if ShowNames or (UseSystemV and not TextIsEqual(Parser.Operands[Index], '-')) then
-      WriteFormatted(StandardOutput, ' %s', [ArgumentText(Parser.Operands[Index])]);
-    WriteCharacter(StandardOutput, #10);
-  end;
-  FreeMemory(Buffer);
   Halt(ExitStatus);
 end.

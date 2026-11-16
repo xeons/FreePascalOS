@@ -27,17 +27,15 @@
 program readlink;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Util.Messages,
   Util.Options,
   Util.Paths;
@@ -61,18 +59,40 @@ const
   OptionCanonicalizeExisting = 6;
   OptionCanonicalizeMissing = 7;
 
+function ReadLinkTarget(Path: PChar; out Target: string): LongInt;
+begin
+  SetLength(Target, PathCapacity);
+  Result := ReadSymbolicLink(Path, PChar(Target), PathCapacity);
+  if Result = ErrorNone then
+    SetLength(Target, StrLen(PChar(Target)))
+  else
+    Target := '';
+end;
+
+function CanonicalTarget(Path: PChar; Mode: TCanonicalMode; out Target: string): LongInt;
+var
+  Canonical: PChar;
+begin
+  Result := CanonicalizePath(Path, Mode, True, Canonical);
+  Target := '';
+  if Result = ErrorNone then
+  begin
+    Target := Canonical;
+    FreeMemory(Canonical);
+  end;
+end;
+
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
   Canonicalize: Boolean;
   CanonicalMode: TCanonicalMode;
-  Canonical: PChar;
   NoNewline: Boolean;
   Quiet: Boolean;
   LineEnd: Char;
   Index: Integer;
-  Target: array[0..PathCapacity - 1] of Char;
+  Target: string;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
@@ -119,16 +139,9 @@ begin
   for Index := 0 to Parser.OperandCount - 1 do
   begin
     if Canonicalize then
-    begin
-      Error := CanonicalizePath(Parser.Operands[Index], CanonicalMode, True, Canonical);
-      if Error = ErrorNone then
-      begin
-        CopyText(@Target[0], Canonical, PathCapacity);
-        FreeMemory(Canonical);
-      end;
-    end
+      Error := CanonicalTarget(Parser.Operands[Index], CanonicalMode, Target)
     else
-      Error := ReadSymbolicLink(Parser.Operands[Index], @Target[0], PathCapacity);
+      Error := ReadLinkTarget(Parser.Operands[Index], Target);
     if Error <> ErrorNone then
     begin
       if not Quiet then
@@ -136,7 +149,7 @@ begin
       ExitStatus := 1;
       Continue;
     end;
-    WriteText(StandardOutput, @Target[0]);
+    WriteText(StandardOutput, PChar(Target));
     if not NoNewline or (Parser.OperandCount > 1) then
       WriteCharacter(StandardOutput, LineEnd);
   end;
