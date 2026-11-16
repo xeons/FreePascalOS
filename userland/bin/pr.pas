@@ -29,13 +29,13 @@
 program pr;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
+  StrUtils,
   Sys.Environment,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Sys.Time,
@@ -69,7 +69,8 @@ const
 var
   Columns: Int64;
   DoubleSpace: Boolean;
-  Header: PChar;
+  HasHeader: Boolean;
+  Header: string;
   PageLength: Int64;
   NumberLines: Boolean;
   Indent: Int64;
@@ -77,78 +78,70 @@ var
   PageWidth: Int64;
   LineNumber: Int64;
 
+procedure WriteString(const Text: string);
+begin
+  WriteText(StandardOutput, PChar(Text));
+end;
+
 procedure WriteSpaces(Count: Int64);
 begin
-  while Count > 0 do
-  begin
-    WriteCharacter(StandardOutput, ' ');
-    Dec(Count);
-  end;
+  if Count > 0 then
+    WriteString(StringOfChar(' ', Count));
 end;
 
-procedure WritePageHeader(Title: PChar; Page: Integer);
+procedure WritePageHeader(const Title: string; Page: Integer);
 var
   DateTime: TDateTime;
-  DateText: array[0..31] of Char;
-  PageText: array[0..31] of Char;
+  DateText: string;
+  PageText: string;
   Middle: Int64;
-  Formatted: PChar;
 begin
   DecodeTime(CurrentTime, DateTime);
-  Formatted := FormatText('%04d-%02d-%02d %02d:%02d', [ArgumentNumber(DateTime.Year), ArgumentNumber(DateTime.Month),
-    ArgumentNumber(DateTime.Day), ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute)]);
-  CopyText(@DateText[0], Formatted, SizeOf(DateText));
-  FreeMemory(Formatted);
-  Formatted := FormatText('Page %d', [ArgumentNumber(Page)]);
-  CopyText(@PageText[0], Formatted, SizeOf(PageText));
-  FreeMemory(Formatted);
+  DateText := Format('%.4d-%.2d-%.2d %.2d:%.2d', [DateTime.Year, DateTime.Month, DateTime.Day,
+    DateTime.Hour, DateTime.Minute]);
+  PageText := 'Page ' + IntToStr(Page);
 
-  WriteCharacter(StandardOutput, #10);
-  WriteCharacter(StandardOutput, #10);
+  WriteString(#10#10);
   WriteSpaces(Indent);
-  WriteText(StandardOutput, @DateText[0]);
+  WriteString(DateText);
   { The title centered between date and page number. }
-  Middle := (PageWidth - Int64(TextLength(Title))) div 2 - Int64(TextLength(@DateText[0]));
+  Middle := (PageWidth - Length(Title)) div 2 - Length(DateText);
   if Middle < 1 then
     Middle := 1;
   WriteSpaces(Middle);
-  WriteText(StandardOutput, Title);
-  Middle := PageWidth - Int64(TextLength(@DateText[0])) - Middle - Int64(TextLength(Title)) - Int64(TextLength(@PageText[0]));
+  WriteString(Title);
+  Middle := PageWidth - Length(DateText) - Middle - Length(Title) - Length(PageText);
   if Middle < 1 then
     Middle := 1;
   WriteSpaces(Middle);
-  WriteLine(StandardOutput, @PageText[0]);
-  WriteCharacter(StandardOutput, #10);
-  WriteCharacter(StandardOutput, #10);
+  WriteString(PageText + #10#10#10);
 end;
 
-{ Writes one text line (possibly empty), cut or padded to Width. }
-procedure WriteCell(Line: PChar; Width: Int64; PadToWidth: Boolean);
+{ Writes one text line, or an empty cell when HasLine is False, cut or
+  padded to Width. }
+procedure WriteCell(HasLine: Boolean; const Line: string; Width: Int64; PadToWidth: Boolean);
 var
-  Length: Int64;
-  Prefix: PChar;
+  Written: Int64;
+  Shown: string;
 begin
-  Length := 0;
-  if NumberLines and (Line <> nil) then
+  Written := 0;
+  if NumberLines and HasLine then
   begin
     Inc(LineNumber);
-    Prefix := FormatText('%5d'#9, [ArgumentNumber(LineNumber)]);
-    WriteText(StandardOutput, Prefix);
-    FreeMemory(Prefix);
-    Length := 8;
+    WriteString(Format('%5d'#9, [LineNumber]));
+    Written := 8;
   end;
-  if Line <> nil then
-    while (Line^ <> #0) and (Length < Width) do
-    begin
-      WriteCharacter(StandardOutput, Line^);
-      Inc(Line);
-      Inc(Length);
-    end;
+  if HasLine and (Width > Written) then
+  begin
+    Shown := LeftStr(Line, Width - Written);
+    WriteString(Shown);
+    Inc(Written, Length(Shown));
+  end;
   if PadToWidth then
-    WriteSpaces(Width - Length);
+    WriteSpaces(Width - Written);
 end;
 
-procedure PrintFile(const Lines: TLineList; Title: PChar);
+procedure PrintFile(const Lines: TLineList; const Title: string);
 var
   BodyLines: Int64;
   LinesPerPage: Int64;
@@ -187,9 +180,9 @@ begin
       begin
         Index := First + Column * BodyLines + Row;
         if Index < Lines.Count then
-          WriteCell(Lines.Items[Index], ColumnWidth - 1, Column < Columns - 1)
+          WriteCell(True, Lines.Items[Index], ColumnWidth - 1, Column < Columns - 1)
         else
-          WriteCell(nil, ColumnWidth - 1, Column < Columns - 1);
+          WriteCell(False, '', ColumnWidth - 1, Column < Columns - 1);
         if Column < Columns - 1 then
           WriteCharacter(StandardOutput, ' ');
       end;
@@ -206,12 +199,30 @@ begin
         if DoubleSpace then
           WriteCharacter(StandardOutput, #10);
       end;
-      for Row := 1 to TrailerLines do
-        WriteCharacter(StandardOutput, #10);
+      WriteString(StringOfChar(#10, TrailerLines));
     end;
     First := First + Integer(LinesPerPage);
     Inc(Page);
   until First >= Lines.Count;
+end;
+
+{ "-2" means two columns: such arguments are read here and replaced by
+  an option the parser ignores. }
+procedure ReadColumnArguments;
+var
+  Index: Integer;
+  Text: string;
+begin
+  for Index := 1 to ArgumentTotal - 1 do
+  begin
+    Text := ArgumentValues[Index];
+    if (Length(Text) >= 2) and (Text[1] = '-') and IsDigit(Text[2]) then
+    begin
+      if not ParseInteger(PChar(Copy(Text, 2, MaxInt)), Columns) or (Columns < 1) then
+        Fail(1, 'invalid number of columns', []);
+      ArgumentValues[Index] := '--columns-given';
+    end;
+  end;
 end;
 
 var
@@ -221,23 +232,15 @@ var
   Index: Integer;
   Stream: PInputStream;
   Lines: TLineList;
-  Title: PChar;
+  Title: string;
   ExitStatus: LongInt;
 begin
   Columns := 1;
   PageLength := 66;
   PageWidth := 72;
   Indent := 0;
-  Header := nil;
-  { "-2" means two columns. }
-  for Index := 1 to ArgumentTotal - 1 do
-    if (ArgumentValues[Index][0] = '-') and IsDigit(ArgumentValues[Index][1]) then
-    begin
-      if not ParseInteger(ArgumentValues[Index] + 1, Columns) or (Columns < 1) then
-        Fail(1, 'invalid number of columns', []);
-      { Replaced by an option the parser ignores. }
-      ArgumentValues[Index] := '--columns-given';
-    end;
+  HasHeader := False;
+  ReadColumnArguments;
   BeginOptions(Parser, [
     OptionDefinition(#0, 'columns', True, OptionColumns),
     OptionDefinition(#0, 'columns-given', False, 0),
@@ -254,7 +257,11 @@ begin
         if not ParseInteger(Value, Columns) or (Columns < 1) then
           Fail(1, 'invalid number of columns: ''%s''', [ArgumentText(Value)]);
       OptionDouble: DoubleSpace := True;
-      OptionHeader: Header := Value;
+      OptionHeader:
+        begin
+          Header := Value;
+          HasHeader := True;
+        end;
       OptionLength:
         if not ParseInteger(Value, PageLength) or (PageLength < 1) then
           Fail(1, 'invalid page length: ''%s''', [ArgumentText(Value)]);
@@ -284,11 +291,12 @@ begin
     BeginLineList(Lines);
     ReadAllLines(Stream, Lines);
     CloseInput(Stream);
-    Title := Header;
-    if Title = nil then
+    if HasHeader then
+      Title := Header
+    else
     begin
       Title := Parser.Operands[Index];
-      if TextIsEqual(Title, '-') then
+      if Title = '-' then
         Title := '';
     end;
     LineNumber := 0;

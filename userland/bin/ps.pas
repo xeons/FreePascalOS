@@ -41,19 +41,16 @@
 program ps;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
   Sys.ProcessList,
   Sys.Streams,
-  Sys.Text,
   Sys.Time,
   Util.Accounts,
   Util.Messages,
@@ -78,9 +75,6 @@ const
   OptionUser = 5;
   OptionNoHeaders = 6;
 
-  MaximumColumns = 24;
-  MaximumSelected = 32;
-
 type
   TColumnKind = (ColumnPid, ColumnParent, ColumnGroup, ColumnUid, ColumnUser, ColumnRealUid,
     ColumnRealUser, ColumnNice, ColumnPriority, ColumnState, ColumnThreads, ColumnVirtual,
@@ -89,15 +83,15 @@ type
 
   TColumn = record
     Kind: TColumnKind;
-    Header: PChar;
+    Header: string;
     Width: Integer;
     LeftAligned: Boolean;
   end;
 
   TColumnName = record
-    Name: PChar;
+    Name: string;
     Kind: TColumnKind;
-    Header: PChar;
+    Header: string;
     Width: Integer;
     LeftAligned: Boolean;
   end;
@@ -142,147 +136,113 @@ const
     (Name: 'c'; Kind: ColumnCpu; Header: 'C'; Width: 2; LeftAligned: False));
 
 var
-  Columns: array[0..MaximumColumns - 1] of TColumn;
-  ColumnCount: Integer;
+  Columns: array of TColumn;
   SelectAll: Boolean;
-  SelectedPids: array[0..MaximumSelected - 1] of Int64;
-  SelectedPidCount: Integer;
-  SelectedUsers: array[0..MaximumSelected - 1] of LongWord;
-  SelectedUserCount: Integer;
+  SelectedPids: array of Int64;
+  SelectedUsers: array of LongWord;
   ShowHeaders: Boolean;
   { Milliseconds since the system started. }
   Uptime: QWord;
   TotalMemory: QWord;
 
-procedure AddColumn(Kind: TColumnKind; Header: PChar; Width: Integer; LeftAligned: Boolean);
-begin
-  if ColumnCount >= MaximumColumns then
-    Exit;
-  Columns[ColumnCount].Kind := Kind;
-  Columns[ColumnCount].Header := Header;
-  Columns[ColumnCount].Width := Width;
-  Columns[ColumnCount].LeftAligned := LeftAligned;
-  Inc(ColumnCount);
-end;
-
-function AddNamedColumn(Name: PChar; Header: PChar): Boolean;
+{ Adds the column called Name; Header replaces its usual header when
+  HasHeader. }
+function AddNamedColumn(const Name: string; HasHeader: Boolean; const Header: string): Boolean;
 var
   Index: Integer;
+  Column: TColumn;
 begin
   for Index := Low(ColumnNames) to High(ColumnNames) do
-    if TextIsEqual(ColumnNames[Index].Name, Name) or
-       ((Name[0] = 'c') and TextIsEqual(Name, 'command') and TextIsEqual(ColumnNames[Index].Name, 'args')) then
+    if ColumnNames[Index].Name = Name then
     begin
-      if Header = nil then
-        Header := ColumnNames[Index].Header;
-      AddColumn(ColumnNames[Index].Kind, Header, ColumnNames[Index].Width, ColumnNames[Index].LeftAligned);
+      Column.Kind := ColumnNames[Index].Kind;
+      if HasHeader then
+        Column.Header := Header
+      else
+        Column.Header := ColumnNames[Index].Header;
+      Column.Width := ColumnNames[Index].Width;
+      Column.LeftAligned := ColumnNames[Index].LeftAligned;
+      Insert(Column, Columns, Length(Columns));
       Exit(True);
     end;
   Result := False;
 end;
 
 { "pid,user=WHO comm" }
-procedure ParseFormat(List: PChar);
+procedure ParseFormat(const List: string);
 var
-  Copy: PChar;
-  Start: PChar;
-  Position: PChar;
-  Header: PChar;
-  Equals: PChar;
-  Ending: Char;
+  Position: Integer;
+  Start: Integer;
+  Name: string;
+  Header: string;
+  HasHeader: Boolean;
 begin
-  Copy := DuplicateText(List);
-  Position := Copy;
-  while Position^ <> #0 do
+  Position := 1;
+  while Position <= Length(List) do
   begin
-    while Position^ in [',', ' '] do
+    while (Position <= Length(List)) and (List[Position] in [',', ' ']) do
       Inc(Position);
-    if Position^ = #0 then
+    if Position > Length(List) then
       Break;
     Start := Position;
-    Header := nil;
-    Equals := nil;
-    while not (Position^ in [#0, ',', ' ']) do
+    HasHeader := False;
+    Header := '';
+    while (Position <= Length(List)) and not (List[Position] in [',', ' ']) do
     begin
-      if Position^ = '=' then
+      if List[Position] = '=' then
       begin
         { A header runs to the end of the list. }
-        Equals := Position;
-        while Position^ <> #0 do
-          Inc(Position);
+        HasHeader := True;
+        Header := Copy(List, Position + 1, MaxInt);
         Break;
       end;
       Inc(Position);
     end;
-    Ending := Position^;
-    Position^ := #0;
-    if Equals <> nil then
-    begin
-      Equals^ := #0;
-      Header := DuplicateText(Equals + 1);
-    end;
-    if not AddNamedColumn(Start, Header) then
-      FailWithUsageHint('unknown user-defined format specifier "%s"', [ArgumentText(Start)]);
-    if Ending <> #0 then
-      Inc(Position);
+    Name := Copy(List, Start, Position - Start);
+    if HasHeader then
+      Position := Length(List) + 1;
+    if not AddNamedColumn(Name, HasHeader, Header) then
+      FailWithUsageHint('unknown user-defined format specifier "%s"', [ArgumentText(PChar(Name))]);
+    Inc(Position);
   end;
 end;
 
-procedure ParseNumberList(List: PChar);
+procedure ParseNumberList(const List: string);
 var
-  Position: PChar;
+  Position: Integer;
   Value: Int64;
 begin
-  Position := List;
-  while Position^ <> #0 do
+  Position := 1;
+  while Position <= Length(List) do
   begin
     Value := 0;
-    if not (Position^ in ['0'..'9']) then
+    if not (List[Position] in ['0'..'9']) then
       FailWithUsageHint('process ID list syntax error', []);
-    while Position^ in ['0'..'9'] do
+    while (Position <= Length(List)) and (List[Position] in ['0'..'9']) do
     begin
-      Value := Value * 10 + Ord(Position^) - Ord('0');
+      Value := Value * 10 + Ord(List[Position]) - Ord('0');
       Inc(Position);
     end;
-    if SelectedPidCount < MaximumSelected then
-    begin
-      SelectedPids[SelectedPidCount] := Value;
-      Inc(SelectedPidCount);
-    end;
-    while Position^ in [',', ' '] do
+    Insert(Value, SelectedPids, Length(SelectedPids));
+    while (Position <= Length(List)) and (List[Position] in [',', ' ']) do
       Inc(Position);
   end;
 end;
 
-procedure ParseUserList(List: PChar);
+procedure ParseUserList(const List: string);
 var
-  Copy: PChar;
-  Start: PChar;
-  Position: PChar;
-  Last: Boolean;
+  Names: TStringArray;
+  Index: Integer;
   UserId: LongWord;
 begin
-  Copy := DuplicateText(List);
-  Position := Copy;
-  repeat
-    Start := Position;
-    while not (Position^ in [#0, ',']) do
-      Inc(Position);
-    Last := Position^ = #0;
-    Position^ := #0;
-    if Start^ <> #0 then
+  Names := List.Split([',']);
+  for Index := 0 to High(Names) do
+    if Names[Index] <> '' then
     begin
-      if not FindUserId(Start, UserId) then
-        Fail(1, 'user name does not exist: %s', [ArgumentText(Start)]);
-      if SelectedUserCount < MaximumSelected then
-      begin
-        SelectedUsers[SelectedUserCount] := UserId;
-        Inc(SelectedUserCount);
-      end;
+      if not FindUserId(PChar(Names[Index]), UserId) then
+        Fail(1, 'user name does not exist: %s', [ArgumentText(PChar(Names[Index]))]);
+      Insert(UserId, SelectedUsers, Length(SelectedUsers));
     end;
-    if not Last then
-      Inc(Position);
-  until Last;
 end;
 
 function IsSelected(const Information: TProcessDetails): Boolean;
@@ -291,12 +251,12 @@ var
 begin
   if SelectAll then
     Exit(True);
-  if (SelectedPidCount = 0) and (SelectedUserCount = 0) then
+  if (Length(SelectedPids) = 0) and (Length(SelectedUsers) = 0) then
     Exit(Information.EffectiveUserId = CurrentUserId);
-  for Index := 0 to SelectedPidCount - 1 do
+  for Index := 0 to High(SelectedPids) do
     if Int64(Information.ProcessId) = SelectedPids[Index] then
       Exit(True);
-  for Index := 0 to SelectedUserCount - 1 do
+  for Index := 0 to High(SelectedUsers) do
     if Information.EffectiveUserId = SelectedUsers[Index] then
       Exit(True);
   Result := False;
@@ -313,26 +273,24 @@ begin
   end;
 end;
 
-procedure FormatDuration(Seconds: QWord; WithDays: Boolean; var Builder: TTextBuilder);
+function DurationText(Seconds: QWord; WithDays: Boolean): string;
 var
   Days: QWord;
 begin
   Days := Seconds div 86400;
   Seconds := Seconds mod 86400;
   if WithDays and (Days > 0) then
-    AppendFormatted(Builder, '%d-%02d:%02d:%02d', [ArgumentUnsigned(Days),
-      ArgumentUnsigned(Seconds div 3600), ArgumentUnsigned((Seconds div 60) mod 60), ArgumentUnsigned(Seconds mod 60)])
+    Result := Format('%d-%.2d:%.2d:%.2d', [Days, Seconds div 3600, (Seconds div 60) mod 60, Seconds mod 60])
   else
-    AppendFormatted(Builder, '%02d:%02d:%02d', [ArgumentUnsigned(Days * 24 + Seconds div 3600),
-      ArgumentUnsigned((Seconds div 60) mod 60), ArgumentUnsigned(Seconds mod 60)]);
+    Result := Format('%.2d:%.2d:%.2d', [Days * 24 + Seconds div 3600, (Seconds div 60) mod 60, Seconds mod 60]);
 end;
 
-procedure AppendUser(var Builder: TTextBuilder; Id: LongWord);
+function UserText(Id: LongWord): string;
 begin
   if UserNameOf(Id) <> nil then
-    AppendText(Builder, UserNameOf(Id))
+    Result := UserNameOf(Id)
   else
-    AppendFormatted(Builder, '%u', [ArgumentUnsigned(Id)]);
+    Result := IntToStr(Id);
 end;
 
 { Milliseconds the process has run for. }
@@ -344,118 +302,115 @@ begin
     Result := 0;
 end;
 
-procedure AppendArguments(var Builder: TTextBuilder; const Information: TProcessDetails);
+function ArgumentsText(const Information: TProcessDetails): string;
 begin
-  if Information.CommandLine[0] <> #0 then
-    AppendText(Builder, @Information.CommandLine[0])
-  else
-    AppendFormatted(Builder, '[%s]', [ArgumentText(@Information.Name[0])]);
+  Result := PChar(@Information.CommandLine[0]);
+  if Result = '' then
+    Result := '[' + PChar(@Information.Name[0]) + ']';
 end;
 
-procedure FormatCell(Kind: TColumnKind; const Information: TProcessDetails; var Builder: TTextBuilder);
+function TenthsText(Tenths: QWord): string;
+begin
+  Result := IntToStr(Tenths div 10) + '.' + IntToStr(Tenths mod 10);
+end;
+
+function CellText(Kind: TColumnKind; const Information: TProcessDetails): string;
 var
   Elapsed: QWord;
   Tenths: QWord;
   Start: TDateTime;
 begin
+  Result := '';
   case Kind of
-    ColumnPid: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ProcessId)]);
-    ColumnParent: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ParentProcessId)]);
-    ColumnGroup: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.GroupId)]);
-    ColumnUid: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.EffectiveUserId)]);
-    ColumnRealUid: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.RealUserId)]);
-    ColumnUser: AppendUser(Builder, Information.EffectiveUserId);
-    ColumnRealUser: AppendUser(Builder, Information.RealUserId);
-    ColumnNice: AppendFormatted(Builder, '%d', [ArgumentNumber(Information.Nice)]);
-    ColumnPriority: AppendFormatted(Builder, '%d', [ArgumentNumber(20 + Information.Nice)]);
+    ColumnPid: Result := IntToStr(Information.ProcessId);
+    ColumnParent: Result := IntToStr(Information.ParentProcessId);
+    ColumnGroup: Result := IntToStr(Information.GroupId);
+    ColumnUid: Result := IntToStr(Information.EffectiveUserId);
+    ColumnRealUid: Result := IntToStr(Information.RealUserId);
+    ColumnUser: Result := UserText(Information.EffectiveUserId);
+    ColumnRealUser: Result := UserText(Information.RealUserId);
+    ColumnNice: Result := IntToStr(Information.Nice);
+    ColumnPriority: Result := IntToStr(20 + Information.Nice);
     ColumnState:
       begin
-        AppendFormatted(Builder, '%c', [ArgumentCharacter(StateLetter(Information))]);
+        Result := StateLetter(Information);
         if Information.Nice < 0 then
-          AppendText(Builder, '<')
+          Result := Result + '<'
         else if Information.Nice > 0 then
-          AppendText(Builder, 'N');
+          Result := Result + 'N';
       end;
-    ColumnThreads: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ThreadCount)]);
-    ColumnVirtual: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.VirtualBytes div 1024)]);
-    ColumnResident: AppendFormatted(Builder, '%u', [ArgumentUnsigned(Information.ResidentBytes div 1024)]);
+    ColumnThreads: Result := IntToStr(Information.ThreadCount);
+    ColumnVirtual: Result := IntToStr(Information.VirtualBytes div 1024);
+    ColumnResident: Result := IntToStr(Information.ResidentBytes div 1024);
     ColumnCpuPercent, ColumnCpu:
       begin
         Tenths := ProcessorShareTenths(0, Information.ProcessorNanoseconds, ElapsedMilliseconds(Information), 1);
         if Kind = ColumnCpu then
-          AppendFormatted(Builder, '%u', [ArgumentUnsigned(Tenths div 10)])
+          Result := IntToStr(Tenths div 10)
         else
-          AppendFormatted(Builder, '%u.%u', [ArgumentUnsigned(Tenths div 10), ArgumentUnsigned(Tenths mod 10)]);
+          Result := TenthsText(Tenths);
       end;
     ColumnMemoryPercent:
       begin
         Tenths := 0;
         if TotalMemory > 0 then
           Tenths := Information.ResidentBytes * 1000 div TotalMemory;
-        AppendFormatted(Builder, '%u.%u', [ArgumentUnsigned(Tenths div 10), ArgumentUnsigned(Tenths mod 10)]);
+        Result := TenthsText(Tenths);
       end;
-    ColumnTime: FormatDuration(Information.ProcessorNanoseconds div 1000000000, True, Builder);
+    ColumnTime: Result := DurationText(Information.ProcessorNanoseconds div 1000000000, True);
     ColumnElapsed:
       begin
         Elapsed := ElapsedMilliseconds(Information) div 1000;
         if Elapsed < 3600 then
-          AppendFormatted(Builder, '%02u:%02u', [ArgumentUnsigned(Elapsed div 60), ArgumentUnsigned(Elapsed mod 60)])
+          Result := Format('%.2d:%.2d', [Elapsed div 60, Elapsed mod 60])
         else
-          FormatDuration(Elapsed, True, Builder);
+          Result := DurationText(Elapsed, True);
       end;
     ColumnStart:
       begin
         DecodeTime(Information.StartTime, Start);
-        AppendFormatted(Builder, '%02d:%02d', [ArgumentNumber(Start.Hour), ArgumentNumber(Start.Minute)]);
+        Result := Format('%.2d:%.2d', [Start.Hour, Start.Minute]);
       end;
     ColumnTerminal:
-      if Information.Terminal[0] <> #0 then
-        AppendText(Builder, @Information.Terminal[0])
-      else
-        AppendText(Builder, '?');
-    ColumnCommand: AppendText(Builder, @Information.Name[0]);
-    ColumnArguments: AppendArguments(Builder, Information);
+      begin
+        Result := PChar(@Information.Terminal[0]);
+        if Result = '' then
+          Result := '?';
+      end;
+    ColumnCommand: Result := PChar(@Information.Name[0]);
+    ColumnArguments: Result := ArgumentsText(Information);
   end;
 end;
 
-procedure WritePadded(Text: PChar; const Column: TColumn; IsLast: Boolean);
+procedure WritePadded(const Text: string; const Column: TColumn; IsLast: Boolean);
 var
-  Padding: Integer;
+  Padding: string;
 begin
-  Padding := Column.Width - Integer(TextLength(Text));
+  Padding := StringOfChar(' ', Column.Width - Length(Text));
   if not Column.LeftAligned then
-    while Padding > 0 do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Dec(Padding);
-    end;
-  WriteText(StandardOutput, Text);
+    WriteText(StandardOutput, PChar(Padding));
+  WriteText(StandardOutput, PChar(Text));
   if Column.LeftAligned and not IsLast then
-    while Padding > 0 do
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      Dec(Padding);
-    end;
+    WriteText(StandardOutput, PChar(Padding));
 end;
 
+procedure ReadOptions;
 var
   Parser: TOptionParser;
   Code: Integer;
   Value: PChar;
+  FirstArgument: string;
   FullFormat: Boolean;
   BsdStyle: Boolean;
-  HeaderText: Boolean;
-  Column: Integer;
-  ListIndex: LongInt;
-  Snapshot: TProcessSnapshot;
-  SystemInformation: TAbiSystemInformation;
-  Builder: TTextBuilder;
 begin
   ShowHeaders := True;
   FullFormat := False;
   BsdStyle := False;
+  FirstArgument := '';
+  if ArgumentTotal > 1 then
+    FirstArgument := Argument(1);
   { BSD style options come without a dash: "ps aux", "ps ax". }
-  if (ArgumentTotal > 1) and (Argument(1)[0] in ['a', 'x', 'u']) then
+  if (FirstArgument <> '') and (FirstArgument[1] in ['a', 'x', 'u']) then
   begin
     BsdStyle := True;
     SelectAll := True;
@@ -483,7 +438,7 @@ begin
       FailWithUsageHint('garbage option ''%s''', [ArgumentText(Parser.Operands[0])]);
   end;
 
-  if ColumnCount = 0 then
+  if Length(Columns) = 0 then
   begin
     { A header after "=" runs to the end of its list, so renamed
       columns go in lists of their own. }
@@ -501,6 +456,48 @@ begin
     else
       ParseFormat('pid,tty,time,cmd');
   end;
+end;
+
+procedure WriteHeaderLine;
+var
+  Column: Integer;
+  HeaderText: Boolean;
+begin
+  { "-o comm=" and the like: no header line at all. }
+  HeaderText := False;
+  for Column := 0 to High(Columns) do
+    if Columns[Column].Header <> '' then
+      HeaderText := True;
+  if not (ShowHeaders and HeaderText) then
+    Exit;
+  for Column := 0 to High(Columns) do
+  begin
+    if Column > 0 then
+      WriteCharacter(StandardOutput, ' ');
+    WritePadded(Columns[Column].Header, Columns[Column], Column = High(Columns));
+  end;
+  WriteCharacter(StandardOutput, #10);
+end;
+
+procedure WriteProcessLine(const Information: TProcessDetails);
+var
+  Column: Integer;
+begin
+  for Column := 0 to High(Columns) do
+  begin
+    if Column > 0 then
+      WriteCharacter(StandardOutput, ' ');
+    WritePadded(CellText(Columns[Column].Kind, Information), Columns[Column], Column = High(Columns));
+  end;
+  WriteCharacter(StandardOutput, #10);
+end;
+
+var
+  ListIndex: LongInt;
+  Snapshot: TProcessSnapshot;
+  SystemInformation: TAbiSystemInformation;
+begin
+  ReadOptions;
 
   InitializeProcessSnapshot(Snapshot);
   if TakeProcessSnapshot(Snapshot) <> ErrorNone then
@@ -509,35 +506,8 @@ begin
   if KernelGetSystemInformation(SystemInformation) >= 0 then
     TotalMemory := SystemInformation.TotalMemory;
 
-  { "-o comm=" and the like: no header line at all. }
-  HeaderText := False;
-  for Column := 0 to ColumnCount - 1 do
-    if Columns[Column].Header^ <> #0 then
-      HeaderText := True;
-  if ShowHeaders and HeaderText then
-  begin
-    for Column := 0 to ColumnCount - 1 do
-    begin
-      if Column > 0 then
-        WriteCharacter(StandardOutput, ' ');
-      WritePadded(Columns[Column].Header, Columns[Column], Column = ColumnCount - 1);
-    end;
-    WriteCharacter(StandardOutput, #10);
-  end;
-
+  WriteHeaderLine;
   for ListIndex := 0 to Snapshot.Count - 1 do
-  begin
-    if not IsSelected(Snapshot.Entries[ListIndex]) then
-      Continue;
-    for Column := 0 to ColumnCount - 1 do
-    begin
-      if Column > 0 then
-        WriteCharacter(StandardOutput, ' ');
-      BeginText(Builder);
-      FormatCell(Columns[Column].Kind, Snapshot.Entries[ListIndex], Builder);
-      WritePadded(Builder.Text, Columns[Column], Column = ColumnCount - 1);
-      DiscardText(Builder);
-    end;
-    WriteCharacter(StandardOutput, #10);
-  end;
+    if IsSelected(Snapshot.Entries[ListIndex]) then
+      WriteProcessLine(Snapshot.Entries[ListIndex]);
 end.
