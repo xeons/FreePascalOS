@@ -426,6 +426,51 @@ normalized (0-65535), not pixels.
 - [ ] Themes; Paint; image viewer; calculator; volume control
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
+## Networking
+
+### Phase 1: the stack, sockets, the first tools
+- [x] Network adapters (`Io.NetworkAdapters`): the interface drivers
+      register through; frames handed to the network thread, never
+      handled in a driver's interrupt
+- [x] Packet buffers, the network thread and its timers, one network lock
+- [x] Ethernet II, ARP (cache with timeouts, pending datagrams), IPv4
+      (checksums, fragment reassembly, no fragments sent, broadcasts),
+      routing table with a default gateway, ICMP (echo, unreachable)
+- [x] UDP; TCP: state machine, retransmission with RTT estimation,
+      sliding windows, MSS, congestion control, fast retransmit, FIN/RST,
+      TIME_WAIT, listen backlog, out-of-order segments kept
+- [x] Loopback interface (lo, 127.0.0.1/8)
+- [x] Sockets as handles (system calls 104-115): TCP, UDP, ICMP echo for
+      everyone, raw ICMP for root; options, non-blocking, waits
+- [x] Configuration calls (116-123): interfaces, routes, ARP cache,
+      socket listing, DNS servers (changes root only)
+- [x] libsystem: `Sys.Sockets`, `Sys.NetworkInterfaces`,
+      `Sys.InternetAddresses`, `Sys.HostNames`
+- [x] virtio-net driver (MSI-X, suspend and resume)
+- [x] `ping`, `ifconfig`, `route`, `arp`
+- [x] Static configuration at start from `/etc/settings/Network.settings`
+      (the network service, `networksetup`)
+- [x] Tests: `networktest` (loopback, QEMU's gateway, a TCP echo through
+      QEMU), coretest command lines, a kernel self test
+
+### Phase 2
+- [ ] DHCP client service (interfaces with `Method = dhcp`)
+- [ ] DNS resolver in libsystem (`Sys.HostNames.LookUpHost`), with the
+      kernel's server list
+- [ ] `host` and `nslookup`
+- [ ] `netstat` (`CallListSockets` is there)
+- [ ] `nc`
+- [ ] `wget`
+- [ ] Control Panel network page
+- [ ] Taskbar network icon
+- [ ] IPv6 (addresses already carry a family)
+- [ ] Wi-Fi (later, a project of its own): the Intel CNVi driver
+      (Alder Lake-P, 8086:51f0) with its firmware from linux-firmware
+      (iwlwifi licence, in firmware/ beside the Realtek files), scanning,
+      WPA2/WPA3 (802.11 frames, the 4-way handshake, CCMP), and choosing
+      a network from the desktop
+- [ ] TCP window scaling and SACK; keep-alives
+
 ## ARM64 port
 
 - [ ] Toolchain: AArch64 Free Pascal cross compiler (and a way to produce

@@ -75,6 +75,7 @@ uses
   Io.Partitions,
   Drivers.Ahci,
   Drivers.VirtioBlock,
+  Drivers.VirtioNet,
   Drivers.Nvme,
   Drivers.Xhci,
   Drivers.UsbStorage,
@@ -158,6 +159,8 @@ begin
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;
+  { Network adapters (Io.NetworkAdapters). }
+  InitializeVirtioNetDevices;
   { Built-in sound first, so it keeps the first device names. }
   InitializeHdAudioControllers;
   InitializeAc97Controllers;

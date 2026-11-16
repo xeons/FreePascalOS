@@ -49,6 +49,11 @@
       timezone), the system settings service (the zone, the clock, the
       volumes and default output kept, refusals), accounts (useradd,
       usermod, userdel) and the keyboards' layouts (keyboardsettings),
+    * networking (networktest): loopback ping, UDP and TCP echo over
+      loopback (a megabyte through many windows), refused connections,
+      waiting on sockets, the static configuration of eth0, ping and
+      ARP for QEMU's gateway and a TCP echo through it, and what an
+      ordinary user may not do; ifconfig, route, arp and ping,
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
@@ -90,7 +95,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..329] of TCommandTest = (
+  CommandTests: array[0..340] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -458,6 +463,18 @@ const
     (Command: 'HEAP_CHECKS=fill heaptest --write-past-end 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err'; ExpectedOutput: '204'#10' memory was written past the end of a block'#10'  offset:    20 holds $00 instead of $FD'#10; ExpectedStatus: 0),
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { --- networking (networktest, ifconfig, route, arp, ping) ----------- }
+    (Command: 'networktest > net.log; echo $?; grep FAIL net.log; tail -n 1 net.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "networktest --unprivileged" > netu.log; echo $?; grep FAIL netu.log; tail -n 1 netu.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'ifconfig lo | head -n 3'; ExpectedOutput: 'lo: flags=<UP,LOOPBACK,RUNNING>  mtu 1500'#10'        inet 127.0.0.1  netmask 255.0.0.0'#10'        loop'#10; ExpectedStatus: 0),
+    (Command: 'ifconfig eth0 | head -n 2'; ExpectedOutput: 'eth0: flags=<UP,BROADCAST,RUNNING>  mtu 1500'#10'        inet 10.0.2.15  netmask 255.255.255.0  broadcast 10.0.2.255'#10; ExpectedStatus: 0),
+    (Command: 'ifconfig nosuch 2>&1; echo $?'; ExpectedOutput: 'ifconfig: nosuch: error fetching interface information: Device not found'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'route'; ExpectedOutput: 'Kernel IP routing table'#10'Destination     Gateway         Genmask         Flags Metric Iface'#10'0.0.0.0         10.0.2.2        0.0.0.0         UG    0      eth0'#10'10.0.2.0        0.0.0.0         255.255.255.0   U     0      eth0'#10'127.0.0.0       0.0.0.0         255.0.0.0       U     0      lo'#10; ExpectedStatus: 0),
+    (Command: 'arp 10.0.2.2 | tail -n 1 | cut -c 1-22'; ExpectedOutput: '10.0.2.2         ether'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "ifconfig eth0 down" 2>&1; echo $?; su user -c "route add default gw 10.0.2.9" 2>&1; echo $?; ifconfig eth0 | head -n 1 | cut -d " " -f 2'; ExpectedOutput: 'ifconfig: eth0: Operation not permitted'#10'1'#10'route: cannot add the route: Operation not permitted'#10'1'#10'flags=<UP,BROADCAST,RUNNING>'#10; ExpectedStatus: 0),
+    (Command: 'route add -net 10.9.0.0/16 gw 10.0.2.2 && route | grep 10.9.0.0 | cut -c 1-47; route del -net 10.9.0.0/16 && route | grep 10.9.0.0 | wc -l'; ExpectedOutput: '10.9.0.0        10.0.2.2        255.255.0.0    '#10'0'#10; ExpectedStatus: 0),
+    (Command: 'ping -c 2 -i 0.2 127.0.0.1 | sed -e "s/time=.*/time/" -e "s/time [0-9]*ms/time/" -e "s/= .*/= X/"'; ExpectedOutput: 'PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.'#10'64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time'#10'64 bytes from 127.0.0.1: icmp_seq=2 ttl=64 time'#10#10'--- 127.0.0.1 ping statistics ---'#10'2 packets transmitted, 2 received, 0% packet loss, time'#10'rtt min/avg/max/mdev = X'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "ping -c 1 -q -s 1000 10.0.2.2" | tail -n 2 | head -n 1 | cut -d , -f 1-3; ping -c 1 nosuchhost 2>&1; echo $?'; ExpectedOutput: '1 packets transmitted, 1 received, 0% packet loss'#10'ping: nosuchhost: Name or service not known'#10'2'#10; ExpectedStatus: 0),
     { Watching files and folders: changes another process makes, on
       several file system types, and a folder the user may not read. }
     (Command: 'watchtest > watch.log; echo $?; grep -E ''FAIL|expected:|got:'' watch.log; tail -n 1 watch.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
@@ -474,7 +491,7 @@ const
     (Command: 'settings set Test/Name "two words"; settings set Test/Count 7; settings set -t list Test/List a "b c"; settings get Test/Name; settings get Test/Count; settings get Test/List; settings list Test'; ExpectedOutput: 'two words'#10'7'#10'a'#10'b c'#10'Name = "two words"'#10'Count = 7'#10'List = ["a", "b c"]'#10; ExpectedStatus: 0),
     (Command: 'settings set -s Test/Count 3; settings set -s -f Test/Fixed true; settings set Test/Fixed false; settings get Test/Count; settings get Test/Fixed; settings get -s Test/Count; settings list -s Test; stat -c %a /etc/settings /etc/settings/Test.settings /.settings /.settings/Test.settings'; ExpectedOutput: '7'#10'true'#10'3'#10'Count = 3'#10'fixed Fixed = true'#10'755'#10'644'#10'700'#10'600'#10; ExpectedStatus: 0),
     (Command: 'su user -c "settings set -s Test/Count 1" 2>&1; echo $?; su user -c "settings get Test/Count; settings set Test/Count 9; settings get Test/Count; stat -c %a /home/user/.settings /home/user/.settings/Test.settings; settings delete Test"; su user -c "cat /.settings/Test.settings" > /dev/null 2>&1; echo $?'; ExpectedOutput: 'settings: /etc/settings: Permission denied'#10'1'#10'3'#10'9'#10'700'#10'600'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'settings delete Test/Count; settings get Test/Count; settings delete -s Test; settings get Test/Count 2>&1; echo $?; ls /etc/settings; settings get Bad 2>&1; echo $?'; ExpectedOutput: '3'#10'settings: Test/Count is not set'#10'1'#10'settings: Bad: not the path of a setting (GROUP/KEY)'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'settings delete Test/Count; settings get Test/Count; settings delete -s Test; settings get Test/Count 2>&1; echo $?; ls /etc/settings; settings get Bad 2>&1; echo $?'; ExpectedOutput: '3'#10'settings: Test/Count is not set'#10'1'#10'Network.settings'#10'settings: Bad: not the path of a setting (GROUP/KEY)'#10'2'#10; ExpectedStatus: 0),
     (Command: 'printf ''Good = 1\nbroken line\n'' > /.settings/Damaged.settings; settings get Damaged/Good; settings check Damaged; echo $?; settings set Damaged/More 2; cat /.settings/Damaged.settings; settings delete Damaged; settings delete Test; ls /.settings | wc -l'; ExpectedOutput: '1'#10'line 2: broken line'#10'1'#10'Good = 1'#10'More = 2'#10'broken line'#10'0'#10; ExpectedStatus: 0),
     { The service manager and the service command (a second manager). }
     (Command: 'servicetest > svc.log; echo $?; grep -E ''FAIL|received'' svc.log; tail -n 1 svc.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),

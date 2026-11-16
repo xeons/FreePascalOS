@@ -51,6 +51,8 @@ const
   CallCreatePipe = 22;
   CallDuplicateHandle = 23;
   CallSleep = 24;
+  { (Which): TimeWallClock (Unix time), TimeUptimeMilliseconds or
+    TimeUptimeNanoseconds (timing ping replies). }
   CallGetTime = 25;
   CallLoadLibrary = 26;
   CallFindSymbol = 27;
@@ -422,7 +424,14 @@ const
     TAbiKeyboardLayout; ErrorNotFound after the last. }
   CallDescribeKeyboardLayout = 103;
 
-  CallCount = 104;
+  { 104-123: networking (sockets, interfaces, routes), in
+    Abi.Networking.inc. }
+
+  CallCount = 124;
+
+  TimeWallClock = 0;
+  TimeUptimeMilliseconds = 1;
+  TimeUptimeNanoseconds = 2;
 
   TimeZoneNameCapacity = 48;
   KeyboardLayoutNameCapacity = 16;
@@ -755,6 +764,21 @@ const
   ErrorMessageTooLong = 90;
   { The volume (or the device) went away: a USB disk was unplugged. }
   ErrorNoDevice = 19;
+  { Networking (the numbers Linux gives them). }
+  ErrorDestinationRequired = 89;
+  ErrorProtocolNotSupported = 93;
+  ErrorAddressFamilyNotSupported = 97;
+  ErrorAddressInUse = 98;
+  ErrorAddressNotAvailable = 99;
+  ErrorNetworkUnreachable = 101;
+  ErrorConnectionAborted = 103;
+  ErrorConnectionReset = 104;
+  ErrorAlreadyConnected = 106;
+  ErrorNotConnected = 107;
+  ErrorConnectionRefused = 111;
+  ErrorHostUnreachable = 113;
+  ErrorAlreadyInProgress = 114;
+  ErrorInProgress = 115;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -804,6 +828,8 @@ const
   HandleKindPort = 11;
   HandleKindChannel = 12;
   HandleKindWatch = 13;
+  { A network socket (Abi.Networking.inc). }
+  HandleKindSocket = 14;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -1202,3 +1228,4 @@ const
   ModifierNumLock = $20;
   ModifierScrollLock = $40;
 
+{$include Abi.Networking.inc}

@@ -87,85 +87,120 @@ function NetworkAdapterCount: Integer;
 
 implementation
 
-{ A stand-in until the network stack exists: it keeps the list and names
-  the adapters, and drops what arrives. }
+{
+  The adapter's State is its network interface (Network.Interfaces).
+  Registering sets the network layer up first if nothing has yet (the
+  loopback interface comes first, so it is always number 1); frames
+  that arrive before the network thread runs wait in the receive queue.
+}
 
 uses
-  Memory.KernelHeap;
-
-const
-  MaximumAdapters = 16;
+  Runtime.Memory,
+  Runtime.Text,
+  Runtime.Atomic,
+  Memory.KernelHeap,
+  Network.Packets,
+  Network.Core,
+  Network.Interfaces,
+  Network.Startup,
+  Debug.Output;
 
 var
-  Adapters: array[0..MaximumAdapters - 1] of PNetworkAdapter;
-  AdapterCount: Integer;
+  RegisteredAdapterCount: Integer;
+  EthernetAdapterCount: Integer;
 
-procedure WriteName(Adapter: PNetworkAdapter; Number: Integer);
+procedure NameAdapter(Adapter: PNetworkAdapter);
 var
-  Digits: array[0..3] of Char;
-  DigitCount: Integer;
-  Position: Integer;
+  Number: TNumberText;
 begin
-  DigitCount := 0;
-  repeat
-    Digits[DigitCount] := Char(Ord('0') + Number mod 10);
-    Number := Number div 10;
-    Inc(DigitCount);
-  until Number = 0;
-  Adapter^.Name[0] := 'e';
-  Adapter^.Name[1] := 't';
-  Adapter^.Name[2] := 'h';
-  Position := 3;
-  while DigitCount > 0 do
+  CopyText(@Adapter^.Name[0], 'eth', SizeOf(Adapter^.Name));
+  CopyText(@Adapter^.Name[3], FormatDecimal(EthernetAdapterCount, Number), SizeOf(Adapter^.Name) - 3);
+  Inc(EthernetAdapterCount);
+end;
+
+procedure WriteAdapterDescription(Adapter: PNetworkAdapter);
+var
+  Index: Integer;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('network');
+  DebugWrite(@Adapter^.Name[0]);
+  DebugWrite(': ');
+  DebugWrite(@Adapter^.Description[0]);
+  DebugWrite(', address ');
+  for Index := 0 to EthernetAddressLength - 1 do
   begin
-    Dec(DigitCount);
-    Adapter^.Name[Position] := Digits[DigitCount];
-    Inc(Position);
+    if Index > 0 then
+      DebugWriteCharacter(':');
+    DebugWriteHex(Adapter^.Address[Index], 2);
   end;
-  Adapter^.Name[Position] := #0;
+  DebugWriteLine('');
+  DebugEndMessage;
 end;
 
 function RegisterNetworkAdapter(const Routines: TNetworkDriverRoutines; Context: Pointer;
   const Address: TEthernetAddress; Description: PChar): PNetworkAdapter;
 var
-  Index: Integer;
+  NetworkInterface: PNetworkInterface;
 begin
-  Result := nil;
-  if AdapterCount = MaximumAdapters then
-    Exit;
+  InitializeNetworking;
   Result := PNetworkAdapter(AllocateZeroedKernelMemory(SizeOf(TNetworkAdapter)));
   if Result = nil then
     Exit;
   Result^.Routines := Routines;
   Result^.Context := Context;
   Result^.Address := Address;
-  WriteName(Result, AdapterCount);
-  Index := 0;
-  while (Description <> nil) and (Description[Index] <> #0) and (Index < High(Result^.Description)) do
+  CopyText(@Result^.Description[0], Description, SizeOf(Result^.Description));
+  NameAdapter(Result);
+  LockNetwork;
+  NetworkInterface := CreateNetworkInterface(Result, False);
+  UnlockNetwork;
+  if NetworkInterface = nil then
   begin
-    Result^.Description[Index] := Description[Index];
-    Inc(Index);
+    FreeKernelMemory(Result);
+    Exit(nil);
   end;
-  Result^.Description[Index] := #0;
-  Adapters[AdapterCount] := Result;
-  Inc(AdapterCount);
+  Result^.State := NetworkInterface;
+  Inc(RegisteredAdapterCount);
+  WriteAdapterDescription(Result);
 end;
 
 procedure NetworkFrameReceived(Adapter: PNetworkAdapter; Frame: PByte; Length: LongWord);
+var
+  NetworkInterface: PNetworkInterface;
+  Packet: PPacket;
 begin
+  NetworkInterface := PNetworkInterface(Adapter^.State);
+  if (NetworkInterface = nil) or (Length > MaximumFrameBytes) or (Length = 0) then
+    Exit;
+  Packet := AllocatePacket(0);
+  if Packet = nil then
+  begin
+    AtomicIncrement(NetworkInterface^.QueueDrops);
+    Exit;
+  end;
+  CopyMemory(@Packet^.Bytes[0], Frame, Length);
+  Packet^.Length := Length;
+  Packet^.NetworkInterface := NetworkInterface;
+  if not QueueReceivedPacket(Packet) then
+    AtomicIncrement(NetworkInterface^.QueueDrops);
 end;
 
 procedure NetworkLinkChanged(Adapter: PNetworkAdapter);
 begin
+  if Adapter^.State <> nil then
+    PostInterfaceEvent(PNetworkInterface(Adapter^.State), InterfaceEventLinkChanged);
 end;
 
 procedure NetworkTransmitReady(Adapter: PNetworkAdapter);
 begin
+  if Adapter^.State <> nil then
+    PostInterfaceEvent(PNetworkInterface(Adapter^.State), InterfaceEventTransmitReady);
 end;
 
 function NetworkAdapterCount: Integer;
 begin
-  Result := AdapterCount;
+  Result := RegisteredAdapterCount;
 end;
 
 end.

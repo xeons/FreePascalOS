@@ -68,6 +68,20 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   volume and mute and the default output, remembered for the next boot
   (`mixer -l`, `mixer -r 60`, `mixer -D 1`), and a volume icon on the
   taskbar that opens a volume control.
+- **Networking**: a TCP/IP stack in the kernel - Ethernet II, ARP (a
+  cache with timeouts, datagrams waiting for the answer), IPv4 (header
+  checksums, reassembly of fragments, a routing table with a default
+  gateway, broadcasts), ICMP (echo, unreachable), UDP and TCP (the full
+  state machine: three-way handshake, retransmission timed by the
+  measured round trip, sliding windows, the MSS option, congestion
+  control, fast retransmit, FIN and RST, TIME_WAIT, a listen backlog) -
+  over a virtio-net driver and a loopback interface (`lo`, 127.0.0.1).
+  Programs use BSD-style sockets (`Sys.Sockets`: TCP streams, UDP
+  datagrams, ICMP echo for ping) that are handles like any other
+  (closed, waited for, non-blocking); `ping`, `ifconfig`, `route` and
+  `arp`; the network service gives the interfaces the static
+  configuration of `/etc/settings/Network.settings` at start (QEMU's
+  user networking: 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3).
 - USB keyboards next to PS/2 ones, with dead keys for the German and
   French layouts; a framebuffer console with UTF-8 and escape sequences.
 - A kernel debug shell (kernel option `kshell`).
@@ -222,6 +236,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     mounted volumes, and with `-w` volumes arriving and leaving), and
     `sysinfo` (the system at a glance beside its logo: kernel, uptime,
     shell, displays, terminal, processor, memory, disks, time zone)
+  - network tools: `ping` (`-c`, `-i`, `-W`, `-s`, `-t`, `-q`; replies and
+    the summary as iputils prints them), `ifconfig` (show; `ifconfig eth0
+    10.0.2.15/24 up`, `down`, `mtu`, `netmask`), `route` (show; `route add
+    default gw 10.0.2.2`, `route del ...`) and `arp` (the ARP cache), in
+    the manner of net-tools
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
@@ -229,7 +248,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   format. After a test run, `make test` checks every written partition with
   the format's own tools (fsck.fat, fsck.exfat, e2fsck, mtools, debugfs).
   `make test` then runs `coretest` in user mode, which drives the shell and
-  every utility through about 210 command lines and checks their output.
+  every utility through about 210 command lines and checks their output
+  (networking included: `networktest` over loopback and over QEMU's user
+  network).
 
 ## Requirements
 
@@ -359,7 +380,10 @@ kernel/
   firmware/         ACPI tables
   io/               I/O manager, device files, I/O startup, PCI and MSI,
                     block devices, partitions, block cache, pipes, console
-                    and its input, input devices
+                    and its input, input devices, network adapters
+  network/          The TCP/IP stack: interfaces, Ethernet, ARP, IPv4,
+                    routing, ICMP, UDP, TCP, sockets, the network thread
+  drivers/virtio/   Virtio on PCI, and the virtio network card
   drivers/storage/  AHCI SATA driver
   drivers/input/    PS/2 keyboard and serial port drivers
   drivers/devices/  Memory devices, console device, disk devices
@@ -382,6 +406,7 @@ userland/
                     the dialogs, asking for an administrator's password)
   systemsettings/   The system settings service's units (who may, what
                     it changes, what it remembers, its port)
+  networksetup/     The network service's units (the static configuration)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)

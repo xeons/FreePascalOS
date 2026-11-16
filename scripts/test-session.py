@@ -22,7 +22,9 @@ and checks, without typing anything, that the display server and the
 session come up and the desktop shell runs as the user (the taskbar and
 the wallpaper in a screen dump, its lines in /var/log/session.log, read
 from a root shell on the serial console). On the serial console it logs
-in with a wrong password, then the right one, and asks `service list`,
+in with a wrong password, then the right one, and asks `service list`
+and `ifconfig eth0` (the network service's static configuration, and a
+ping of QEMU's gateway),
 and as the user keeps a mouse speed in the user's settings (mousesettings
 --remember). The Control Panel, opened from the Start menu as the
 user, keeps a display scale of 150% and 100% again, lets a smaller mode
@@ -90,6 +92,7 @@ qemu = subprocess.Popen([
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),
     '-drive', 'format=raw,file=' + os.path.join(work, 'system.img'),
     '-device', 'qemu-xhci,id=xhci', '-device', 'usb-tablet,bus=xhci.0',
+    '-netdev', 'user,id=net0', '-device', 'virtio-net-pci,netdev=net0',
     '-audiodev', 'none,id=sound0', '-device', 'intel-hda', '-device', 'hda-output,audiodev=sound0',
     '-netdev', 'user,id=net1', '-device', 'e1000e,netdev=net1',
     '-netdev', 'user,id=net2', '-device', 'e1000,netdev=net2',
@@ -390,6 +393,16 @@ checks.append(('service list: the graphical services run, the text console does 
                re.search(rb'session +running', listing) is not None and
                re.search(rb'serialconsole +running', listing) is not None and
                re.search(rb'console +stopped', listing) is not None))
+
+# The network service gave eth0 the static configuration of
+# /etc/settings/Network.settings at start, and QEMU's gateway answers.
+start = len(received)
+type_on_serial(b'ifconfig eth0 | grep inet; ping -c 1 -W 5 10.0.2.2 | grep -c "bytes from"; n=DONE; echo NETWORK $n\r')
+networked = wait_for('NETWORK DONE', 20, start)
+network_log = bytes(received[start:])
+checks.append(('the network service configured eth0 and the gateway answers a ping',
+               networked and b'inet 10.0.2.15  netmask 255.255.255.0' in network_log and
+               re.search(rb'(?m)^1\r?$', network_log) is not None))
 
 # The user's mouse settings (libconfiguration): kept by mousesettings
 # --remember in the user's own settings, given to the display server by

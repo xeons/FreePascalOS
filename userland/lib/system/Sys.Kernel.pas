@@ -144,6 +144,34 @@ function KernelSelectNotifications(Mask: LongWord): Int64;
 function KernelReceiveNotification(out Notification: TAbiNotification): Int64;
 function KernelRequestEnd(TargetKind: LongWord; TargetId: QWord; Reason: LongWord): Int64;
 
+{ Networking: sockets (Sys.Sockets) and the network's configuration
+  (Sys.NetworkInterfaces). Addresses are TAbiSocketAddress records. }
+function KernelCreateSocket(Family, Kind, Protocol: LongWord): Int64;
+function KernelBindSocket(Handle: Int64; constref Address: TAbiSocketAddress): Int64;
+function KernelListenSocket(Handle: Int64; Backlog: LongWord): Int64;
+{ Peer may be nil. }
+function KernelAcceptSocket(Handle: Int64; Peer: PAbiSocketAddress): Int64;
+function KernelConnectSocket(Handle: Int64; constref Address: TAbiSocketAddress): Int64;
+{ Address nil: to the connected peer. }
+function KernelSendSocket(Handle: Int64; Buffer: Pointer; Length: QWord; Flags: LongWord;
+  Address: PAbiSocketAddress): Int64;
+{ Address may be nil. }
+function KernelReceiveSocket(Handle: Int64; Buffer: Pointer; Length: QWord; Flags: LongWord;
+  Address: PAbiSocketAddress): Int64;
+function KernelShutdownSocket(Handle: Int64; How: LongWord): Int64;
+function KernelGetSocketOption(Handle: Int64; Option: LongWord): Int64;
+function KernelSetSocketOption(Handle: Int64; Option: LongWord; Value: Int64): Int64;
+function KernelGetSocketAddress(Handle: Int64; Which: LongWord; out Address: TAbiSocketAddress): Int64;
+function KernelWaitForSocket(Handle: Int64; Conditions: LongWord; Timeout: Int64): Int64;
+function KernelListNetworkInterfaces(Buffer: PAbiNetworkInterface; Capacity: QWord): Int64;
+function KernelConfigureNetworkInterface(constref Configuration: TAbiInterfaceConfiguration): Int64;
+function KernelChangeRoute(Operation: LongWord; constref Route: TAbiRoute): Int64;
+function KernelListRoutes(Buffer: PAbiRoute; Capacity: QWord): Int64;
+function KernelListArpEntries(Buffer: PAbiArpEntry; Capacity: QWord): Int64;
+function KernelListSockets(Buffer: PAbiSocketInformation; Capacity: QWord): Int64;
+function KernelGetDnsServers(out Servers: TAbiDnsServers): Int64;
+function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
+
 implementation
 
 procedure KernelExit(Code: LongInt);
@@ -597,6 +625,108 @@ end;
 function KernelRequestEnd(TargetKind: LongWord; TargetId: QWord; Reason: LongWord): Int64;
 begin
   Result := SystemCall(CallRequestEnd, TargetKind, TargetId, Reason, 0, 0, 0);
+end;
+
+function KernelCreateSocket(Family, Kind, Protocol: LongWord): Int64;
+begin
+  Result := SystemCall(CallCreateSocket, Family, Kind, Protocol, 0, 0, 0);
+end;
+
+function KernelBindSocket(Handle: Int64; constref Address: TAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallBindSocket, QWord(Handle), QWord(@Address), 0, 0, 0, 0);
+end;
+
+function KernelListenSocket(Handle: Int64; Backlog: LongWord): Int64;
+begin
+  Result := SystemCall(CallListenSocket, QWord(Handle), Backlog, 0, 0, 0, 0);
+end;
+
+function KernelAcceptSocket(Handle: Int64; Peer: PAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallAcceptSocket, QWord(Handle), QWord(Peer), 0, 0, 0, 0);
+end;
+
+function KernelConnectSocket(Handle: Int64; constref Address: TAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallConnectSocket, QWord(Handle), QWord(@Address), 0, 0, 0, 0);
+end;
+
+function KernelSendSocket(Handle: Int64; Buffer: Pointer; Length: QWord; Flags: LongWord;
+  Address: PAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallSendSocket, QWord(Handle), QWord(Buffer), Length, Flags, QWord(Address), 0);
+end;
+
+function KernelReceiveSocket(Handle: Int64; Buffer: Pointer; Length: QWord; Flags: LongWord;
+  Address: PAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallReceiveSocket, QWord(Handle), QWord(Buffer), Length, Flags, QWord(Address), 0);
+end;
+
+function KernelShutdownSocket(Handle: Int64; How: LongWord): Int64;
+begin
+  Result := SystemCall(CallShutdownSocket, QWord(Handle), How, 0, 0, 0, 0);
+end;
+
+function KernelGetSocketOption(Handle: Int64; Option: LongWord): Int64;
+begin
+  Result := SystemCall(CallGetSocketOption, QWord(Handle), Option, 0, 0, 0, 0);
+end;
+
+function KernelSetSocketOption(Handle: Int64; Option: LongWord; Value: Int64): Int64;
+begin
+  Result := SystemCall(CallSetSocketOption, QWord(Handle), Option, QWord(Value), 0, 0, 0);
+end;
+
+function KernelGetSocketAddress(Handle: Int64; Which: LongWord; out Address: TAbiSocketAddress): Int64;
+begin
+  Result := SystemCall(CallGetSocketAddress, QWord(Handle), Which, QWord(@Address), 0, 0, 0);
+end;
+
+function KernelWaitForSocket(Handle: Int64; Conditions: LongWord; Timeout: Int64): Int64;
+begin
+  Result := SystemCall(CallWaitForSocket, QWord(Handle), Conditions, QWord(Timeout), 0, 0, 0);
+end;
+
+function KernelListNetworkInterfaces(Buffer: PAbiNetworkInterface; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListNetworkInterfaces, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelConfigureNetworkInterface(constref Configuration: TAbiInterfaceConfiguration): Int64;
+begin
+  Result := SystemCall(CallConfigureNetworkInterface, QWord(@Configuration), 0, 0, 0, 0, 0);
+end;
+
+function KernelChangeRoute(Operation: LongWord; constref Route: TAbiRoute): Int64;
+begin
+  Result := SystemCall(CallChangeRoute, Operation, QWord(@Route), 0, 0, 0, 0);
+end;
+
+function KernelListRoutes(Buffer: PAbiRoute; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListRoutes, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelListArpEntries(Buffer: PAbiArpEntry; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListArpEntries, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelListSockets(Buffer: PAbiSocketInformation; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListSockets, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelGetDnsServers(out Servers: TAbiDnsServers): Int64;
+begin
+  Result := SystemCall(CallGetDnsServers, QWord(@Servers), 0, 0, 0, 0, 0);
+end;
+
+function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
+begin
+  Result := SystemCall(CallSetDnsServers, QWord(@Servers), 0, 0, 0, 0, 0);
 end;
 
 end.

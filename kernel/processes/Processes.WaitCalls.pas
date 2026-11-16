@@ -23,7 +23,7 @@
   timer object's own event, a process's or thread's exit event, a pipe
   read end's or channel end's Readable event, a pipe write end's
   Writable event, a port's Pending event, a watch's Ready event (change
-  records waiting), a device's ReadyEvent (if its
+  records waiting), a socket's Readable event, a device's ReadyEvent (if its
   driver keeps one: a terminal's says a read would not wait), or for a
   device opened only for writing its WritableEvent (a pseudo-terminal's
   master side: room to type). The
@@ -63,7 +63,8 @@ uses
   Processes.UserAccess,
   Processes.Channels,
   Processes.ObjectCalls,
-  FileSystem.Watches;
+  FileSystem.Watches,
+  Network.Sockets;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -95,6 +96,8 @@ begin
     HandleKindChannel: Result := @PChannelEnd(ObjectBody)^.Readable;
     HandleKindPort: Result := @PPort(ObjectBody)^.Pending;
     HandleKindWatch: Result := @PWatch(ObjectBody)^.Ready;
+    { Data, a connection to accept, the end of the stream or an error. }
+    HandleKindSocket: Result := @PSocket(ObjectBody)^.Readable;
     HandleKindDevice:
       Result := DeviceReadinessEvent(PDeviceFile(ObjectBody));
   else

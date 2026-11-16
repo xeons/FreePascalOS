@@ -32,11 +32,15 @@
   address, length, flags, next), an available ring where the driver puts
   the first descriptor of each request, and a used ring where the device
   puts what it has finished. Each part gets a page of its own (virtio
-  1.0 places them independently). The driver here keeps one request in
-  flight per queue, which is all its users need.
+  1.0 places them independently). A driver either keeps one request in
+  flight per queue, starting at descriptor 0 (SubmitVirtqueueChain,
+  TakeVirtqueueCompletion: the block driver), or offers many chains at
+  once and takes each finished one back by its head (OfferVirtqueueChain,
+  NotifyVirtqueue, TakeVirtqueueUsedChain: the network driver).
 
-  Interrupts come by MSI-X: queue interrupts go through table entry 0;
-  configuration changes are not signalled.
+  Interrupts come by MSI-X: queue interrupts go through table entry 0,
+  and configuration changes too if the driver asks for them (a network
+  card's link).
 }
 unit Drivers.VirtioPci;
 
@@ -53,6 +57,7 @@ const
   VirtioVendorId = $1AF4;
   { Modern device ids are $1040 + the virtio device type. }
   VirtioModernDeviceIdBase = $1040;
+  VirtioDeviceTypeNetwork = 1;
   VirtioDeviceTypeBlock = 2;
 
   VirtioFeatureVersion1 = 32;
@@ -87,6 +92,8 @@ type
     UsedPhysical: QWord;
   end;
 
+  PPVirtqueue = ^PVirtqueue;
+
   PVirtioDevice = ^TVirtioDevice;
   TVirtioDevice = record
     Pci: PPciDevice;
@@ -96,6 +103,8 @@ type
     InterruptStatus: PByte;
     DeviceConfiguration: PByte;
     UsesInterrupts: Boolean;
+    { Configuration changes come by interrupt too. }
+    ConfigurationChangesSignalled: Boolean;
     { The features agreed on (for resetting the device again). }
     AcceptedFeatures: QWord;
   end;
@@ -113,12 +122,20 @@ function SetUpVirtqueue(var Device: TVirtioDevice; Index: Word; out Queue: TVirt
   MSI-X the driver polls. Call after the queues are set up. }
 procedure ConnectVirtioInterrupt(var Device: TVirtioDevice; var Queue: TVirtqueue;
   Handler: TInterruptHandler; Context: Pointer);
+{ The same for Count queues at once (Queues[0..Count-1]), and with
+  WithConfigurationChanges for changes of the device's configuration
+  too. }
+procedure ConnectVirtioQueuesInterrupt(var Device: TVirtioDevice; Queues: PPVirtqueue; Count: Integer;
+  WithConfigurationChanges: Boolean; Handler: TInterruptHandler; Context: Pointer);
 { Tells the device the driver is ready. }
 procedure StartVirtioDevice(var Device: TVirtioDevice);
 { After waking from suspend to RAM reset the device: resets it, agrees
   on the same features, gives it Queue again (emptied) with its
   interrupt vector, and starts it. False if the device refuses. }
 function RestartVirtioDevice(var Device: TVirtioDevice; var Queue: TVirtqueue): Boolean;
+{ The same for Count queues (their descriptors emptied too: the driver
+  writes them again). }
+function RestartVirtioDeviceQueues(var Device: TVirtioDevice; Queues: PPVirtqueue; Count: Integer): Boolean;
 procedure FailVirtioDevice(var Device: TVirtioDevice);
 
 { Makes the descriptor chain starting at descriptor 0 available and
@@ -126,6 +143,14 @@ procedure FailVirtioDevice(var Device: TVirtioDevice);
 procedure SubmitVirtqueueChain(var Queue: TVirtqueue);
 { True if the device has finished a chain since the last call. }
 function TakeVirtqueueCompletion(var Queue: TVirtqueue): Boolean;
+{ Makes the chain starting at descriptor Head available, without telling
+  the device yet. }
+procedure OfferVirtqueueChain(var Queue: TVirtqueue; Head: Word);
+{ Tells the device that chains were offered. }
+procedure NotifyVirtqueue(var Queue: TVirtqueue);
+{ The next chain the device finished: its head and the bytes it wrote
+  into it. False if there is none. }
+function TakeVirtqueueUsedChain(var Queue: TVirtqueue; out Head: Word; out Length: LongWord): Boolean;
 
 implementation
 
@@ -385,6 +410,31 @@ begin
   Device.UsesInterrupts := Read16(Device.Common, CommonQueueVector) = 0;
 end;
 
+procedure ConnectVirtioQueuesInterrupt(var Device: TVirtioDevice; Queues: PPVirtqueue; Count: Integer;
+  WithConfigurationChanges: Boolean; Handler: TInterruptHandler; Context: Pointer);
+var
+  Index: Integer;
+begin
+  Device.UsesInterrupts := False;
+  if not ConnectPciExtendedMessageInterrupt(Device.Pci, Handler, Context) then
+    Exit;
+  Device.UsesInterrupts := True;
+  if WithConfigurationChanges then
+    Write16(Device.Common, CommonConfigurationVector, 0)
+  else
+    Write16(Device.Common, CommonConfigurationVector, NoVector);
+  Device.ConfigurationChangesSignalled := WithConfigurationChanges and
+    (Read16(Device.Common, CommonConfigurationVector) = 0);
+  for Index := 0 to Count - 1 do
+  begin
+    Write16(Device.Common, CommonQueueSelect, Queues[Index]^.Index);
+    Write16(Device.Common, CommonQueueVector, 0);
+    { The device says NoVector if it cannot use the entry. }
+    if Read16(Device.Common, CommonQueueVector) <> 0 then
+      Device.UsesInterrupts := False;
+  end;
+end;
+
 procedure StartVirtioDevice(var Device: TVirtioDevice);
 begin
   Write8(Device.Common, CommonDeviceStatus,
@@ -393,7 +443,17 @@ end;
 
 function RestartVirtioDevice(var Device: TVirtioDevice; var Queue: TVirtqueue): Boolean;
 var
+  Queues: array[0..0] of PVirtqueue;
+begin
+  Queues[0] := @Queue;
+  Result := RestartVirtioDeviceQueues(Device, @Queues[0], 1);
+end;
+
+function RestartVirtioDeviceQueues(var Device: TVirtioDevice; Queues: PPVirtqueue; Count: Integer): Boolean;
+var
   Accepted: QWord;
+  Index: Integer;
+  Queue: PVirtqueue;
 begin
   Write8(Device.Common, CommonDeviceStatus, 0);
   while Read8(Device.Common, CommonDeviceStatus) <> 0 do
@@ -403,18 +463,25 @@ begin
   Result := NegotiateVirtioFeatures(Device, Device.AcceptedFeatures, Accepted);
   if not Result then
     Exit;
-  { Empty rings, counted from the start again. }
-  FillMemory(Queue.Descriptors, 4096, 0);
-  FillMemory(Queue.Available, 4096, 0);
-  FillMemory(Queue.Used, 4096, 0);
-  Queue.LastSeenUsed := 0;
-  ProgramVirtqueue(Device, Queue);
-  if Device.UsesInterrupts then
+  for Index := 0 to Count - 1 do
   begin
-    Write16(Device.Common, CommonConfigurationVector, NoVector);
-    Write16(Device.Common, CommonQueueSelect, Queue.Index);
-    Write16(Device.Common, CommonQueueVector, 0);
+    Queue := Queues[Index];
+    { Empty rings, counted from the start again. }
+    FillMemory(Queue^.Descriptors, 4096, 0);
+    FillMemory(Queue^.Available, 4096, 0);
+    FillMemory(Queue^.Used, 4096, 0);
+    Queue^.LastSeenUsed := 0;
+    ProgramVirtqueue(Device, Queue^);
+    if Device.UsesInterrupts then
+    begin
+      Write16(Device.Common, CommonQueueSelect, Queue^.Index);
+      Write16(Device.Common, CommonQueueVector, 0);
+    end;
   end;
+  if Device.UsesInterrupts and Device.ConfigurationChangesSignalled then
+    Write16(Device.Common, CommonConfigurationVector, 0)
+  else
+    Write16(Device.Common, CommonConfigurationVector, NoVector);
   StartVirtioDevice(Device);
 end;
 
@@ -425,17 +492,47 @@ begin
       Read8(Device.Common, CommonDeviceStatus) or StatusFailed);
 end;
 
-procedure SubmitVirtqueueChain(var Queue: TVirtqueue);
+procedure OfferVirtqueueChain(var Queue: TVirtqueue; Head: Word);
 var
   AvailableIndex: Word;
 begin
   AvailableIndex := Queue.Available[1];
-  Queue.Available[2 + (AvailableIndex mod Queue.Size)] := 0;
+  Queue.Available[2 + (AvailableIndex mod Queue.Size)] := Head;
   { The descriptors and the ring entry before the index the device reads. }
   FullMemoryBarrier;
   Queue.Available[1] := Word(AvailableIndex + 1);
+end;
+
+procedure NotifyVirtqueue(var Queue: TVirtqueue);
+begin
   FullMemoryBarrier;
   Queue.NotifyAddress^ := Queue.Index;
+end;
+
+procedure SubmitVirtqueueChain(var Queue: TVirtqueue);
+begin
+  OfferVirtqueueChain(Queue, 0);
+  NotifyVirtqueue(Queue);
+end;
+
+function TakeVirtqueueUsedChain(var Queue: TVirtqueue; out Head: Word; out Length: LongWord): Boolean;
+var
+  UsedIndex: Word;
+  Entry: PByte;
+begin
+  Head := 0;
+  Length := 0;
+  FullMemoryBarrier;
+  UsedIndex := PWord(Queue.Used + 2)^;
+  Result := UsedIndex <> Queue.LastSeenUsed;
+  if not Result then
+    Exit;
+  { The entry is read after the index that says it is there. }
+  FullMemoryBarrier;
+  Entry := Queue.Used + 4 + QWord(Queue.LastSeenUsed mod Queue.Size) * 8;
+  Head := Word(PLongWord(Entry)^);
+  Length := PLongWord(Entry + 4)^;
+  Queue.LastSeenUsed := Word(Queue.LastSeenUsed + 1);
 end;
 
 function TakeVirtqueueCompletion(var Queue: TVirtqueue): Boolean;

@@ -102,6 +102,7 @@ qemu = subprocess.Popen([
     '-device', 'usb-tablet,bus=xhci.0',
     '-drive', 'if=none,id=virtio0,format=raw,file=' + os.path.join(work, 'virtio.img'),
     '-device', 'virtio-blk-pci,drive=virtio0',
+    '-netdev', 'user,id=net0', '-device', 'virtio-net-pci,netdev=net0',
     '-drive', 'if=none,id=nvme0,format=raw,file=' + os.path.join(work, 'nvme.img'),
     '-device', 'nvme,serial=fpostest,drive=nvme0',
     '-drive', 'if=none,id=usbdisk0,format=raw,file=' + os.path.join(work, 'usb.img'),

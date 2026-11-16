@@ -160,6 +160,12 @@ if [[ -n "$system_disk_image" ]]; then
     fi
 fi
 
+# A virtio network card on QEMU's user networking (the guest is
+# 10.0.2.15, the gateway 10.0.2.2 answers pings); a TCP connection to
+# 10.0.2.100 port 7 reaches "cat", an echo service for networktest.
+network_arguments=(-netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat
+    -device virtio-net-pci,netdev=net0)
+
 # ACCEL=kvm runs on the real processor (faster, and with the processor's
 # own behaviour, such as SIMD floating point exceptions, which QEMU's
 # emulator does not raise).
@@ -190,6 +196,7 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
     -drive if=pflash,format=raw,file="$firmware_variables" \
     "${disk_arguments[@]}" \
+    "${network_arguments[@]}" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -netdev user,id=net1 -device e1000e,netdev=net1 \
     -netdev user,id=net2 -device e1000,netdev=net2 \
@@ -280,6 +287,11 @@ case "$qemu_status" in
                 echo "TEST FAILED: the sound played on the USB audio output was not right"
                 exit 1
             fi
+        fi
+        # The network card: found and driven by interrupts.
+        if ! grep -q '\[virtio\] eth[0-9]*: network card, interrupts by MSI-X' "$serial_log"; then
+            echo "TEST FAILED: the virtio network card was not started with MSI-X interrupts"
+            exit 1
         fi
         # The virtio disk: found, driven by interrupts, and its volume
         # (tested like the others) consistent afterwards.

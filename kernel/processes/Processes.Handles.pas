@@ -52,7 +52,9 @@ type
     HandleKindPort,
     HandleKindChannel,
     { A watch on a folder or file (Processes.WatchCalls). }
-    HandleKindWatch
+    HandleKindWatch,
+    { A network socket (Processes.SocketCalls). }
+    HandleKindSocket
   );
 
   THandleEntry = record
