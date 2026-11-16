@@ -47,7 +47,7 @@ uses
   Abi.SystemCalls,
   Runtime.Memory,
   Runtime.Text,
-  Sys.Format,
+  SysUtils,
   Sys.Environment,
   Sys.Processes,
   Sys.ProcessList,
@@ -74,10 +74,10 @@ procedure Check(Name: PChar; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'usagetest: pass: %s'#10, [ArgumentText(Name)])
+    WriteString(StandardOutput, Format('usagetest: pass: %s'#10, [Name]))
   else
   begin
-    WriteFormatted(StandardOutput, 'usagetest: FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('usagetest: FAIL: %s'#10, [Name]));
     Inc(Failures);
   end;
 end;
@@ -85,7 +85,7 @@ end;
 { What was measured, for a check that failed. }
 procedure Report(Name: PChar; Value: QWord);
 begin
-  WriteFormatted(StandardOutput, 'usagetest:   %s = %u'#10, [ArgumentText(Name), ArgumentUnsigned(Value)]);
+  WriteString(StandardOutput, Format('usagetest:   %s = %u'#10, [Name, Value]));
 end;
 
 function OwnDetails(out Details: TProcessDetails): Boolean;
@@ -355,8 +355,8 @@ begin
   end
   else
     WriteStringLine(StandardOutput, 'usagetest: run as "usagetest --own-details" (its command line is checked)');
-  WriteFormatted(StandardOutput, 'usagetest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('usagetest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   if (Failures > 0) or (Checks = 0) then
     Halt(1);
 end.

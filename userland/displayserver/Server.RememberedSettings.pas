@@ -60,7 +60,6 @@ implementation
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
   Configuration.Settings,
   Configuration.Locations,
@@ -88,7 +87,7 @@ end;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, 'displayserver: %s'#10, [ArgumentText(PChar(Text))]);
+  WriteString(StandardOutput, 'displayserver: ' + Text + #10);
   FlushStream(StandardOutput);
 end;
 

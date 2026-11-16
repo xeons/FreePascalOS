@@ -47,7 +47,7 @@ uses
   Sys.Errors,
   Sys.FileWatches,
   Sys.Files,
-  Sys.Format,
+  SysUtils,
   Sys.Memory,
   Sys.Objects,
   Sys.Processes,
@@ -72,10 +72,10 @@ procedure Check(Name: PChar; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'watchtest: pass: %s: %s'#10, [ArgumentText(Place), ArgumentText(Name)])
+    WriteString(StandardOutput, Format('watchtest: pass: %s: %s'#10, [Place, Name]))
   else
   begin
-    WriteFormatted(StandardOutput, 'watchtest: FAIL: %s: %s'#10, [ArgumentText(Place), ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('watchtest: FAIL: %s: %s'#10, [Place, Name]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -86,14 +86,14 @@ procedure ShowLines(Title, Text: PChar);
 var
   Index: PtrUInt;
 begin
-  WriteFormatted(StandardOutput, '  %s: ', [ArgumentText(Title)]);
+  WriteString(StandardOutput, Format('  %s: ', [Title]));
   Index := 0;
   while Text[Index] <> #0 do
   begin
     if Text[Index] = #10 then
       WriteString(StandardOutput, '|')
     else
-      WriteFormatted(StandardOutput, '%c', [ArgumentCharacter(Text[Index])]);
+      WriteCharacter(StandardOutput, Text[Index]);
     Inc(Index);
   end;
   WriteString(StandardOutput, #10);
@@ -216,7 +216,7 @@ begin
   AppendText(Builder, Command);
   Text := FinishText(Builder);
   if RunShell(Text) <> 0 then
-    WriteFormatted(StandardOutput, '  (the shell failed: %s)'#10, [ArgumentText(Command)]);
+    WriteString(StandardOutput, Format('  (the shell failed: %s)'#10, [Command]));
   FreeMemory(Text);
 end;
 
@@ -453,8 +453,8 @@ begin
   RunOnSystemVolume;
   RunOnTestVolumes;
   TestRefusals;
-  WriteFormatted(StandardOutput, 'watchtest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('watchtest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   if Failures > 0 then
     Halt(1);
 end.

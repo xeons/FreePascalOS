@@ -42,7 +42,7 @@ uses
   Abi.SystemCalls,
   Runtime.Text,
   Sys.Console,
-  Sys.Format,
+  SysUtils,
   Sys.Kernel,
   Sys.Objects,
   Sys.Processes,
@@ -67,10 +67,10 @@ procedure Check(Name: PChar; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'ptytest: pass: %s'#10, [ArgumentText(Name)])
+    WriteString(StandardOutput, Format('ptytest: pass: %s'#10, [Name]))
   else
   begin
-    WriteFormatted(StandardOutput, 'ptytest: FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('ptytest: FAIL: %s'#10, [Name]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -96,7 +96,7 @@ begin
       Shown := Shown + '<' + IntToHexText(Ord(Received[Index])) + '>'
     else
       Shown := Shown + Received[Index];
-  WriteFormatted(StandardOutput, 'ptytest: received: %s'#10, [ArgumentText(PChar(Shown))]);
+  WriteString(StandardOutput, Format('ptytest: received: %s'#10, [PChar(Shown)]));
 end;
 
 { Reads from the master until Expected appears in what came, or
@@ -275,8 +275,8 @@ begin
   TestSides;
   TestShell;
   TestEndOfOutput;
-  WriteFormatted(StandardOutput, 'ptytest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('ptytest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   if Failures > 0 then
     Halt(1);
 end.

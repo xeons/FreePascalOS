@@ -62,7 +62,6 @@ uses
   Abi.SystemCalls,
   Sys.EndRequests,
   Sys.Files,
-  Sys.Format,
   Sys.Kernel,
   Sys.Notifications,
   Sys.Objects,
@@ -86,10 +85,10 @@ procedure Check(const Name: string; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'notifytest: pass: %s'#10, [ArgumentText(PChar(Name))])
+    WriteString(StandardOutput, Format('notifytest: pass: %s'#10, [PChar(Name)]))
   else
   begin
-    WriteFormatted(StandardOutput, 'notifytest: FAIL: %s'#10, [ArgumentText(PChar(Name))]);
+    WriteString(StandardOutput, Format('notifytest: FAIL: %s'#10, [PChar(Name)]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -97,13 +96,13 @@ end;
 
 procedure Note(const Text: string);
 begin
-  WriteFormatted(StandardOutput, 'notifytest: %s'#10, [ArgumentText(PChar(Text))]);
+  WriteString(StandardOutput, Format('notifytest: %s'#10, [PChar(Text)]));
   FlushStream(StandardOutput);
 end;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(PChar(Text))]);
+  WriteString(StandardOutput, Format('%s'#10, [PChar(Text)]));
   FlushStream(StandardOutput);
 end;
 
@@ -542,8 +541,8 @@ begin
   TestHandlerThread;
   TestPermission;
   TestTerminal;
-  WriteFormatted(StandardOutput, 'notifytest: %d checks, %d failed'#10, [ArgumentNumber(Checks),
-    ArgumentNumber(Failures)]);
+  WriteString(StandardOutput, Format('notifytest: %d checks, %d failed'#10, [Checks,
+    Failures]));
   if Failures > 0 then
     Halt(1);
   Halt(0);

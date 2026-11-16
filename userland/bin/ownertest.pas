@@ -46,7 +46,7 @@ program OwnerTest;
 
 uses
   Abi.SystemCalls,
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Drawing.Colors,
   Drawing.Rectangles,
@@ -73,16 +73,16 @@ var
   WindowC: TColorWindow;
   StepsTaken: LongInt;
 
-procedure Say(Format: PChar; const Arguments: array of TFormatArgument);
+procedure Say(const Pattern: string; const Arguments: array of const);
 begin
-  WriteFormatted(StandardOutput, Format, Arguments);
+  WriteString(StandardOutput, Format(Pattern, Arguments));
   FlushStream(StandardOutput);
 end;
 
 procedure SayWhatIsVisible;
 begin
-  Say('visible A %d B %d C %d'#10, [ArgumentNumber(Ord(WindowA.Visible)), ArgumentNumber(Ord(WindowB.Visible)),
-    ArgumentNumber(Ord(WindowC.Visible))]);
+  Say('visible A %d B %d C %d'#10, [Ord(WindowA.Visible), Ord(WindowB.Visible),
+    Ord(WindowC.Visible)]);
 end;
 
 procedure TakeNextStep;
@@ -103,7 +103,7 @@ begin
   else
     Exit;
   end;
-  Say('step %d'#10, [ArgumentNumber(StepsTaken)]);
+  Say('step %d'#10, [StepsTaken]);
 end;
 
 constructor TColorWindow.CreateColored(const ATitle: string; Left, Top, Width, Height: LongInt; AColor: TColor;
@@ -127,7 +127,7 @@ end;
 
 procedure TColorWindow.VisibilityChanged;
 begin
-  Say('visible %s %d'#10, [ArgumentText(PChar(Title)), ArgumentNumber(Ord(Visible))]);
+  Say('visible %s %d'#10, [PChar(Title), Ord(Visible)]);
 end;
 
 begin

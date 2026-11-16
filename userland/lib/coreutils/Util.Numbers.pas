@@ -44,8 +44,8 @@ function ParseWidthAndHeight(const Text: string; out Width, Height: LongWord): B
   thousandths. }
 function ParseThousandths(const Text: string; out Value: QWord): Boolean;
 
-{ Value in octal, at least Digits digits (zero filled): what Sys.Format's
-  "%04o" printed, which SysUtils' Format cannot. }
+{ Value in octal, at least Digits digits (zero filled), as C's "%04o"
+  prints it, which SysUtils' Format cannot. }
 function OctalText(Value: QWord; Digits: Integer): string;
 { Bytes in lower case hexadecimal, two digits each. }
 function HexText(const Bytes: array of Byte; Count: Integer): string;

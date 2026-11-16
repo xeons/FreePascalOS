@@ -42,7 +42,7 @@ uses
   Abi.SystemCalls,
   Runtime.Text,
   Sys.Errors,
-  Sys.Format,
+  SysUtils,
   Sys.Kernel,
   Sys.Objects,
   Sys.Processes,
@@ -67,10 +67,10 @@ procedure Check(Name: PChar; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'ipctest: pass: %s'#10, [ArgumentText(Name)])
+    WriteString(StandardOutput, Format('ipctest: pass: %s'#10, [Name]))
   else
   begin
-    WriteFormatted(StandardOutput, 'ipctest: FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('ipctest: FAIL: %s'#10, [Name]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -435,8 +435,8 @@ begin
   TestConsole;
   TestChannels;
   TestSharedSection;
-  WriteFormatted(StandardOutput, 'ipctest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('ipctest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   if Failures > 0 then
     Halt(1);
 end.
