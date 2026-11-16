@@ -86,6 +86,11 @@ begin
   Bar := TitleBarRectangle(Window);
   Width := WindowMetric(Window, Theme.TitleButtonWidth);
   Height := WindowMetric(Window, Theme.TitleButtonHeight);
+  { The glyph is a square as far from the top as from the bottom; with
+    the width and height alike odd or even it is as far from each side
+    too, whole pixels at every scale. }
+  if Odd(Width - Height) then
+    Inc(Width);
   Gap := WindowMetric(Window, 2);
   Right := Bar.Right - Gap;
   if Button <> HitClose then
@@ -103,6 +108,15 @@ begin
   Result := (Window.Flags and WindowResizable) <> 0;
 end;
 
+{ The leftmost button drawn: the title stops short of it. }
+function LeftmostTitleButton(Window: TServerWindow): THitArea;
+begin
+  if HasSizeButtons(Window) then
+    Result := HitMinimize
+  else
+    Result := HitClose;
+end;
+
 procedure DrawGlyphLine(const Canvas: TCanvas; const Box: TRectangle; FromX, FromY, ToX, ToY, Thickness: LongInt);
 var
   Offset: LongInt;
@@ -110,6 +124,20 @@ begin
   for Offset := 0 to Thickness - 1 do
     DrawLine(Canvas, Box.Left + FromX + Offset, Box.Top + FromY, Box.Left + ToX + Offset, Box.Top + ToY,
       Theme.FaceText);
+end;
+
+{ The outline of Box, Thickness pixels wide inside it. }
+procedure DrawGlyphOutline(const Canvas: TCanvas; const Box: TRectangle; Thickness: LongInt);
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Width := RectangleWidth(Box);
+  Height := RectangleHeight(Box);
+  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Top, Width, Thickness), Theme.FaceText);
+  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Bottom - Thickness, Width, Thickness), Theme.FaceText);
+  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Top, Thickness, Height), Theme.FaceText);
+  FillRectangle(Canvas, MakeRectangle(Box.Right - Thickness, Box.Top, Thickness, Height), Theme.FaceText);
 end;
 
 procedure DrawTitleButton(const Canvas: TCanvas; Window: TServerWindow; Button: THitArea);
@@ -148,7 +176,7 @@ begin
       end;
     HitMaximize:
       begin
-        DrawRectangleOutline(Canvas, Glyph, Theme.FaceText);
+        DrawGlyphOutline(Canvas, Glyph, Thickness);
         FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Top, Size, 2 * Thickness), Theme.FaceText);
       end;
     HitMinimize:
@@ -164,6 +192,7 @@ var
   TextColor: TColor;
   Client: TRectangle;
   TextClip: TCanvas;
+  TextRight: LongInt;
   TitleFace: PFontFace;
 begin
   Frame := FrameRectangle(Window);
@@ -192,8 +221,8 @@ begin
   begin
     { The title stops before the buttons. }
     TextClip := Canvas;
-    NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top,
-      TitleButtonRectangle(Window, HitMinimize).Left - Bar.Left - WindowMetric(Window, 2), RectangleHeight(Bar)));
+    TextRight := TitleButtonRectangle(Window, LeftmostTitleButton(Window)).Left - WindowMetric(Window, 2);
+    NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top, TextRight - Bar.Left, RectangleHeight(Bar)));
     DrawText(TextClip, TitleFace^, Bar.Left + WindowMetric(Window, Theme.TitleTextIndent),
       Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title, TextColor);
   end;

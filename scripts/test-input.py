@@ -709,7 +709,7 @@ def drag(from_x, from_y, to_x, to_y):
 # first is active again and gets a key. Ending the server gives the
 # screen back to the console. At 100 DPI logical units are pixels: the
 # client areas start at 100,100 and 250,200, 300x200; frames are 4
-# wide, title bars 18 high (their gradient starts 3 pixels into the frame).
+# wide, title bars 22 high (their gradient starts 3 pixels into the frame).
 # The second window has the text beam over its left half (a pointer
 # area). The server reads the pointer's shapes from /lib/pointers, and
 # checks every window move (copying what stays visible) against a full
@@ -749,7 +749,7 @@ checks.append(('display server: a window resized by its corner',
 # Maximized: the client area fills the screen below the title bar.
 click_at(673, 240)
 type_on_serial(b'm=DONE; cat /tmp/w2.log; echo MAXIMIZED $m\r')
-checks.append(('display server: maximized', wait_for('resized 1280 782', 10) and wait_for('MAXIMIZED DONE', 5)))
+checks.append(('display server: maximized', wait_for('resized 1280 778', 10) and wait_for('MAXIMIZED DONE', 5)))
 # Its close button is now at the top right corner.
 click_at(1271, 8)
 time.sleep(0.5)
@@ -762,7 +762,7 @@ checks.append(('display server: the close button, then a key for the window left
                take_screen()(500, 350) == '2f5f7a'))
 
 # The title buttons of the window left (First, active; its close button
-# at 383-398 x 83-96): hot under the pointer (a lighter face), pressed
+# at 379-398 x 79-96): hot under the pointer (a lighter face), pressed
 # while held (sunken: dark at its top left), back to normal when the
 # pointer goes off it with the button held; let go there, nothing
 # happens. The pointer is at the button's bottom right, clear of the
@@ -778,9 +778,9 @@ let_up = take_screen()
 send_to_monitor('mouse_button 0\n')
 time.sleep(0.5)
 checks.append(('title buttons: hot, pressed, and up again off the button',
-               hot(386, 86) == 'e2ded6' and hot(384, 84) == 'ffffff' and
-               pressed(386, 86) == 'cbc6bd' and pressed(383, 83) == '7e7a72' and pressed(384, 84) == '35322d' and
-               let_up(386, 86) == 'cbc6bd' and let_up(384, 84) == 'ffffff'))
+               hot(382, 86) == 'e2ded6' and hot(380, 80) == 'ffffff' and
+               pressed(382, 86) == 'cbc6bd' and pressed(379, 79) == '7e7a72' and pressed(380, 80) == '35322d' and
+               let_up(382, 86) == 'cbc6bd' and let_up(380, 80) == 'ffffff'))
 # Over the right border the pointer is the left-right resize arrow: its
 # hotspot in the middle of a white shaft (the arrow's tip is black).
 point_tablet_at(402, 150)
@@ -809,7 +809,7 @@ type_on_serial(b'm=DONE; cat /tmp/w1.log; echo DOUBLE $m\r')
 wait_for('DOUBLE DONE', 10)
 log_from_here = bytes(received[received.rfind(b'TITLE DONE'):])
 checks.append(('title bar: a double click maximizes, another restores',
-               re.search(rb'resized 1280 782\r?\nmoved 100 100\r?\nresized 300 200', log_from_here) is not None and
+               re.search(rb'resized 1280 778\r?\nmoved 100 100\r?\nresized 300 200', log_from_here) is not None and
                received.count(b'\nclose') == closes_before))
 # Dragged partly off the screen and back: each move copies what stays
 # visible, and the picture is the same as drawing everything again.
@@ -1109,7 +1109,7 @@ if tour_started:
     click_at(*place['help'])
     click_at(place['help'][0] - 8, place['help'][1] + 21)
     time.sleep(1)
-    # The pointer where it will click (the window's title bar, y 21-39),
+    # The pointer where it will click (the window's title bar, y 17-38),
     # so it is drawn in the same place on both screens.
     point_tablet_at(80, 30)
     before = client_area_of_tour(take_screen())
@@ -1769,7 +1769,7 @@ checks.append(('terminal: the next window starts at the size the last one closed
 # on the wallpaper takes the keyboard from it, a click on its button
 # gives it back, another minimizes it (it is hidden, the program told)
 # and a third restores it. Maximized, it stops above the taskbar
-# (1280x752: the work area less the title bar), and its button's menu
+# (1280x748: the work area less the title bar), and its button's menu
 # restores it. A new window low on the screen is moved into the work
 # area. A double click on an icon starts controlstour, whose button's
 # menu closes it; the Start menu starts dialogtour, and its Shut down
@@ -1863,7 +1863,7 @@ maximized = take_screen()
 type_on_serial(b'm=DONE; cat /tmp/w5.log; echo MAXIMIZED $m\r')
 wait_for('MAXIMIZED DONE', 10)
 checks.append(('desktop: a maximized window stops above the taskbar',
-               b'resized 1280 752' in log_since('BUTTONS DONE') and maximized(640, 765) == 'f0e8d0' and
+               b'resized 1280 748' in log_since('BUTTONS DONE') and maximized(640, 765) == 'f0e8d0' and
                maximized(640, 785) == 'cbc6bd'))
 place = shell_places('MENU')
 if 'task-First' in place:
@@ -1874,7 +1874,7 @@ if 'task-First' in place:
 type_on_serial(b'm=DONE; cat /tmp/w5.log; echo RESTORED $m\r')
 wait_for('RESTORED DONE', 10)
 checks.append(('desktop: a taskbar button\'s menu restores its window',
-               re.search(rb'resized 1280 752\r?\n(moved 100 100\r?\n)?resized 300 200', log_since('MAXIMIZED DONE'))
+               re.search(rb'resized 1280 748\r?\n(moved 100 100\r?\n)?resized 300 200', log_since('MAXIMIZED DONE'))
                is not None))
 type_on_serial(b'wintest -t Low -x 600 -y 700 > /tmp/w6.log &\r')
 time.sleep(2)
