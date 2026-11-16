@@ -23,69 +23,68 @@
 }
 program groups;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Format,
-  Sys.Streams,
+  SysUtils,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: groups [USER]...'#10 +
+  Usage = 'Usage: groups [USER]...'#10 +
     'Print group memberships for each USERNAME or, if no USERNAME is specified,'#10 +
     'for the current process.'#10;
-  MaximumGroups = 64;
 
-procedure PrintGroupList(Count: Integer; Groups: PLongWord);
+{ The group's name, or its number when it has none. }
+function GroupText(GroupId: LongWord): string;
+begin
+  if not FindGroupName(GroupId, Result) then
+    Result := IntToStr(GroupId);
+end;
+
+procedure PrintGroupList(const Groups: TIdArray);
 var
+  Line: string;
   Index: Integer;
 begin
-  for Index := 0 to Count - 1 do
+  Line := '';
+  for Index := 0 to High(Groups) do
   begin
     if Index > 0 then
-      WriteCharacter(StandardOutput, ' ');
-    if GroupNameOf(Groups[Index]) <> nil then
-      WriteText(StandardOutput, GroupNameOf(Groups[Index]))
-    else
-      WriteUnsigned(StandardOutput, Groups[Index]);
+      Line := Line + ' ';
+    Line := Line + GroupText(Groups[Index]);
   end;
-  WriteCharacter(StandardOutput, #10);
-end;
-
-procedure PrintGroups(UserId: LongWord);
-var
-  Groups: array[0..MaximumGroups - 1] of LongWord;
-begin
-  PrintGroupList(GroupsOfUser(UserId, @Groups[0], MaximumGroups), @Groups[0]);
+  PrintStringLine(Line);
 end;
 
 var
-  Parser: TOptionParser;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Operand: string;
+  UserName: string;
   UserId: LongWord;
   ExitStatus: LongInt;
-  CurrentList: array[0..MaximumGroups - 1] of LongWord;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
   begin
-    PrintGroupList(CurrentGroups(@CurrentList[0], MaximumGroups), @CurrentList[0]);
+    PrintGroupList(CurrentGroups);
     Halt(0);
   end;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    if not FindUserId(Parser.Operands[Index], UserId) or (UserNameOf(UserId) = nil) then
+    if not FindUserId(Operand, UserId) or not FindUserName(UserId, UserName) then
     begin
-      Report('''%s'': no such user', [ArgumentText(Parser.Operands[Index])]);
+      Report(Format('''%s'': no such user', [Operand]));
       ExitStatus := 1;
       Continue;
     end;
-    WriteFormatted(StandardOutput, '%s : ', [ArgumentText(Parser.Operands[Index])]);
-    PrintGroups(UserId);
+    PrintString(Operand + ' : ');
+    PrintGroupList(GroupsOfUser(UserId));
   end;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.

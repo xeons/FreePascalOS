@@ -28,22 +28,20 @@
 }
 program fmt;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Sys.Environment,
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: fmt [-WIDTH] [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: fmt [-WIDTH] [OPTION]... [FILE]...'#10 +
     'Reformat each paragraph in the FILE(s), writing to standard output.'#10#10 +
     '  -s, --split-only        split long lines, but do not refill'#10 +
     '  -u, --uniform-spacing   one space between words, two after sentences'#10 +
@@ -53,166 +51,185 @@ const
   OptionUniform = 2;
   OptionWidth = 3;
 
-var
-  Width: Int64;
-  SplitOnly: Boolean;
-  Uniform: Boolean;
-  Output: TTextBuilder;   { the line being filled }
-  OutputIndent: PChar;
-  ParagraphIndent: TTextBuilder;
-  HasParagraph: Boolean;
-  LastWordEndedSentence: Boolean;
+  SpaceCharacters = [' ', #9, #10, #11, #12, #13];
 
-function IndentationOf(Line: PChar): PtrUInt;
+type
+  { Fills the words of paragraphs into lines of at most Width columns. }
+  TParagraphFiller = class
+  private
+    FWidth: Int64;
+    FSplitOnly: Boolean;
+    FUniform: Boolean;
+    { The line being filled, without the indentation. }
+    FLine: string;
+    FParagraphIndent: string;
+    FHasParagraph: Boolean;
+    FLastWordEndedSentence: Boolean;
+    procedure FlushLine;
+    procedure AddWord(const Word: string);
+    procedure AddLineWords(const Line: string; Start: Integer);
+    procedure StartParagraph(const Indent: string);
+  public
+    constructor Create(Width: Int64; SplitOnly, Uniform: Boolean);
+    procedure ProcessLine(const Line: string);
+    procedure EndParagraph;
+  end;
+
+function IndentationOf(const Line: string): Integer;
 begin
   Result := 0;
-  while (Line[Result] = ' ') or (Line[Result] = #9) do
+  while (Result < Length(Line)) and (Line[Result + 1] in [' ', #9]) do
     Inc(Result);
 end;
 
-procedure FlushOutputLine;
+constructor TParagraphFiller.Create(Width: Int64; SplitOnly, Uniform: Boolean);
 begin
-  if Output.Length > 0 then
-  begin
-    WriteText(StandardOutput, ParagraphIndent.Text);
-    WriteLine(StandardOutput, Output.Text);
-  end;
-  Output.Length := 0;
-  Output.Text[0] := #0;
+  inherited Create;
+  FWidth := Width;
+  FSplitOnly := SplitOnly;
+  FUniform := Uniform;
 end;
 
-procedure AddWord(Word: PChar; WordLength: PtrUInt);
+procedure TParagraphFiller.FlushLine;
+begin
+  if FLine <> '' then
+    PrintStringLine(FParagraphIndent + FLine);
+  FLine := '';
+end;
+
+procedure TParagraphFiller.AddWord(const Word: string);
 var
   Gap: Integer;
 begin
   Gap := 1;
-  if Uniform and LastWordEndedSentence then
+  if FUniform and FLastWordEndedSentence then
     Gap := 2;
-  if (Output.Length > 0) and (Int64(ParagraphIndent.Length + Output.Length + PtrUInt(Gap) + WordLength) > Width) then
-    FlushOutputLine;
-  if Output.Length > 0 then
-  begin
-    AppendCharacter(Output, ' ');
-    if Gap = 2 then
-      AppendCharacter(Output, ' ');
-  end;
-  AppendBytes(Output, Word, WordLength);
-  LastWordEndedSentence := (WordLength > 0) and (Word[WordLength - 1] in ['.', '!', '?']);
+  if (FLine <> '') and (Length(FParagraphIndent) + Length(FLine) + Gap + Length(Word) > FWidth) then
+    FlushLine;
+  if FLine <> '' then
+    FLine := FLine + StringOfChar(' ', Gap);
+  FLine := FLine + Word;
+  FLastWordEndedSentence := (Word <> '') and (Word[Length(Word)] in ['.', '!', '?']);
 end;
 
-procedure EndParagraph;
+procedure TParagraphFiller.EndParagraph;
 begin
-  FlushOutputLine;
-  HasParagraph := False;
-  LastWordEndedSentence := False;
+  FlushLine;
+  FHasParagraph := False;
+  FLastWordEndedSentence := False;
 end;
 
-procedure AddLineWords(Line: PChar);
+{ Adds the words of Line from character Start on. }
+procedure TParagraphFiller.AddLineWords(const Line: string; Start: Integer);
 var
-  Position: PtrUInt;
-  Start: PtrUInt;
+  Position: Integer;
+  WordStart: Integer;
 begin
-  Position := 0;
-  while Line[Position] <> #0 do
+  Position := Start;
+  while Position <= Length(Line) do
   begin
-    while IsSpace(Line[Position]) do
+    while (Position <= Length(Line)) and (Line[Position] in SpaceCharacters) do
       Inc(Position);
-    if Line[Position] = #0 then
+    if Position > Length(Line) then
       Break;
-    Start := Position;
-    while (Line[Position] <> #0) and not IsSpace(Line[Position]) do
+    WordStart := Position;
+    while (Position <= Length(Line)) and not (Line[Position] in SpaceCharacters) do
       Inc(Position);
-    AddWord(Line + Start, Position - Start);
+    AddWord(Copy(Line, WordStart, Position - WordStart));
   end;
 end;
 
-procedure ProcessLine(Line: PChar);
+procedure TParagraphFiller.StartParagraph(const Indent: string);
+begin
+  FParagraphIndent := Indent;
+  FHasParagraph := True;
+end;
+
+procedure TParagraphFiller.ProcessLine(const Line: string);
 var
-  Indent: PtrUInt;
+  Indent: Integer;
 begin
   Indent := IndentationOf(Line);
-  if Line[Indent] = #0 then
+  if Indent = Length(Line) then
   begin
     EndParagraph;
-    WriteCharacter(StandardOutput, #10);
+    PrintString(#10);
     Exit;
   end;
-  if SplitOnly then
+  if FSplitOnly then
   begin
     { Each input line is its own paragraph. }
     EndParagraph;
-    DiscardText(ParagraphIndent);
-    BeginText(ParagraphIndent);
-    AppendBytes(ParagraphIndent, Line, Indent);
-    AddLineWords(Line + Indent);
+    FParagraphIndent := Copy(Line, 1, Indent);
+    AddLineWords(Line, Indent + 1);
     EndParagraph;
     Exit;
   end;
-  if HasParagraph and (Indent <> ParagraphIndent.Length) then
+  if FHasParagraph and (Indent <> Length(FParagraphIndent)) then
     EndParagraph;
-  if not HasParagraph then
-  begin
-    DiscardText(ParagraphIndent);
-    BeginText(ParagraphIndent);
-    AppendBytes(ParagraphIndent, Line, Indent);
-    HasParagraph := True;
-  end;
-  AddLineWords(Line + Indent);
+  if not FHasParagraph then
+    StartParagraph(Copy(Line, 1, Indent));
+  AddLineWords(Line, Indent + 1);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  OldStyle: string;
+  Operand: string;
+  Width: Int64;
+  SplitOnly: Boolean;
+  Uniform: Boolean;
+  Filler: TParagraphFiller;
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   ExitStatus: LongInt;
 begin
   Width := 75;
-  { The old form "fmt -60". }
-  if (ArgumentTotal > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
+  SplitOnly := False;
+  Uniform := False;
+  { The old form "fmt -60": the argument becomes "--", so everything
+    after it is an operand. }
+  OldStyle := Argument(1);
+  if (ArgumentTotal > 1) and (Length(OldStyle) >= 2) and (OldStyle[1] = '-') and
+     (OldStyle[2] in ['0'..'9']) then
   begin
-    if not ParseInteger(ArgumentValues[1] + 1, Width) then
-      Fail(1, 'invalid width', []);
+    if not ParseDecimal(Copy(OldStyle, 2, MaxInt), Width) then
+      Fail(1, 'invalid width');
     ArgumentValues[1] := '--';
   end;
-  BeginOptions(Parser, [
-    OptionDefinition('s', 'split-only', False, OptionSplitOnly),
-    OptionDefinition('u', 'uniform-spacing', False, OptionUniform),
-    OptionDefinition('w', 'width', True, OptionWidth)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('s', 'split-only', False, OptionSplitOnly),
+    CommandOption('u', 'uniform-spacing', False, OptionUniform),
+    CommandOption('w', 'width', True, OptionWidth)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionSplitOnly: SplitOnly := True;
       OptionUniform: Uniform := True;
       OptionWidth:
-        if not ParseInteger(Value, Width) or (Width < 1) then
-          Fail(1, 'invalid width: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Width) or (Width < 1) then
+          Fail(1, Format('invalid width: ''%s''', [Value]));
     end;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
-  BeginText(Output);
-  BeginText(ParagraphIndent);
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
+  Filler := TParagraphFiller.Create(Width, SplitOnly, Uniform);
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    while ReadLine(Stream, Line, HadLineEnd) do
-    begin
-      ProcessLine(Line);
-      FreeMemory(Line);
-    end;
+    while ReadTextLine(Stream, Line, HadLineEnd) do
+      Filler.ProcessLine(Line);
     CloseInput(Stream);
   end;
-  EndParagraph;
+  Filler.EndParagraph;
+  Filler.Free;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.

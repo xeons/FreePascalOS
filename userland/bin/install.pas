@@ -29,27 +29,22 @@
 }
 program install;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
   Util.Accounts,
+  Util.CommandLine,
   Util.FileTree,
   Util.Messages,
   Util.Modes,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: install [OPTION]... [-T] SOURCE DEST'#10 +
+  Usage = 'Usage: install [OPTION]... [-T] SOURCE DEST'#10 +
     '  or:  install [OPTION]... SOURCE... DIRECTORY'#10 +
     '  or:  install [OPTION]... -t DIRECTORY SOURCE...'#10 +
     '  or:  install [OPTION]... -d DIRECTORY...'#10 +
@@ -79,6 +74,8 @@ const
   OptionCompare = 10;
   OptionStrip = 11;
 
+  DefaultMode = '755';
+
 var
   ModeChange: TModeChange;
   Owner: Int64;
@@ -87,88 +84,81 @@ var
   Verbose: Boolean;
 
 { Creates Path and its missing parents. }
-function MakeDirectories(Path: PChar): Boolean;
+function MakeDirectories(const Path: string): Boolean;
 var
-  Copy: PChar;
-  Position: PtrUInt;
+  Position: Integer;
+  Prefix: string;
   Error: LongInt;
 begin
   Result := True;
-  Copy := DuplicateText(Path);
-  Position := 1;
+  { Each prefix ending before a slash (a leading slash is not one), then
+    the whole path. }
+  Position := 2;
   while True do
   begin
-    while (Copy[Position] <> '/') and (Copy[Position] <> #0) do
+    while (Position <= Length(Path)) and (Path[Position] <> '/') do
       Inc(Position);
-    if Copy[Position] = '/' then
-      Copy[Position] := #0;
-    if (Copy[0] <> #0) and not IsDirectory(Copy) then
+    Prefix := Copy(Path, 1, Position - 1);
+    if (Prefix <> '') and not IsDirectory(PChar(Prefix)) then
     begin
-      Error := CreateDirectory(Copy);
+      Error := CreateDirectory(PChar(Prefix));
       if Error <> ErrorNone then
       begin
-        ReportError(Error, 'cannot create directory ''%s''', [ArgumentText(Copy)]);
-        Result := False;
-        Break;
+        ReportError(Error, Format('cannot create directory ''%s''', [Prefix]));
+        Exit(False);
       end;
       if Verbose then
-        WriteFormatted(StandardOutput, '%s: creating directory ''%s'''#10, [ArgumentText(ProgramName), ArgumentText(Copy)]);
+        PrintString(Format('%s: creating directory ''%s'''#10, [ProgramNameText, Prefix]));
     end;
-    if TextLength(Copy) = TextLength(Path) then
+    if Position > Length(Path) then
       Break;
-    Copy[Position] := '/';
     Inc(Position);
-    if Copy[Position] = #0 then
+    if Position > Length(Path) then
       Break;
   end;
-  FreeMemory(Copy);
 end;
 
-function ApplyAttributes(Path: PChar; IsDirectoryPath: Boolean; ModificationTime: Int64): Boolean;
+function ApplyAttributes(const Path: string; IsDirectoryPath: Boolean; ModificationTime: Int64): Boolean;
 var
   Error: LongInt;
 begin
   Result := True;
-  Error := ChangeMode(Path, ApplyModeChange(ModeChange, 0, IsDirectoryPath));
+  Error := ChangeMode(PChar(Path), ApplyModeChange(ModeChange, 0, IsDirectoryPath));
   if Error = ErrorNone then
-    Error := ChangeOwner(Path, Owner, Group, True);
+    Error := ChangeOwner(PChar(Path), Owner, Group, True);
   if (Error = ErrorNone) and (ModificationTime >= 0) then
-    Error := SetFileTimes(Path, ModificationTime, ModificationTime, True);
+    Error := SetFileTimes(PChar(Path), ModificationTime, ModificationTime, True);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot set attributes of ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, Format('cannot set attributes of ''%s''', [Path]));
     Result := False;
   end;
 end;
 
-function InstallFile(Source, Target: PChar): Boolean;
+function InstallFile(const Source, Target: string): Boolean;
 var
   Options: TCopyOptions;
   Information: TFileInformation;
   Time: Int64;
 begin
-  if GetFileInformation(Source, Information) <> ErrorNone then
+  if GetFileInformation(PChar(Source), Information) <> ErrorNone then
   begin
-    Report('cannot stat ''%s'': No such file or directory', [ArgumentText(Source)]);
+    Report(Format('cannot stat ''%s'': No such file or directory', [Source]));
     Exit(False);
   end;
   if Information.Kind = KindDirectory then
   begin
-    Report('omitting directory ''%s''', [ArgumentText(Source)]);
+    Report(Format('omitting directory ''%s''', [Source]));
     Exit(False);
   end;
   { Replace rather than overwrite, so a running copy is not disturbed. }
-  if PathExists(Target) and not IsDirectory(Target) then
-    RemovePath(Target);
-  Options.Recursive := False;
-  Options.KeepLinks := False;
-  Options.NoClobber := False;
-  Options.Verbose := False;
-  Options.PreserveAttributes := False;
+  if PathExists(PChar(Target)) and not IsDirectory(PChar(Target)) then
+    RemovePath(PChar(Target));
+  Options := Default(TCopyOptions);
   if not CopyPath(Source, Target, Options) then
     Exit(False);
   if Verbose then
-    WriteFormatted(StandardOutput, '''%s'' -> ''%s'''#10, [ArgumentText(Source), ArgumentText(Target)]);
+    PrintString(Format('''%s'' -> ''%s'''#10, [Source, Target]));
   Time := -1;
   if PreserveTimes then
     Time := Information.ModificationTime;
@@ -176,61 +166,66 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   DirectoryMode: Boolean;
   CreateParents: Boolean;
-  TargetDirectory: PChar;
+  TargetDirectory: string;
+  HasTargetDirectory: Boolean;
   NoTargetDirectory: Boolean;
   Index: Integer;
   SourceCount: Integer;
-  Target: PChar;
-  Base: PChar;
-  Parent: PChar;
+  Target: string;
+  Operand: string;
   Id: LongWord;
   ExitStatus: LongInt;
 begin
   DirectoryMode := False;
   CreateParents := False;
-  TargetDirectory := nil;
+  TargetDirectory := '';
+  HasTargetDirectory := False;
   NoTargetDirectory := False;
   Owner := -1;
   Group := -1;
-  ParseModeChange('755', ModeChange);
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'directory', False, OptionDirectory),
-    OptionDefinition('D', nil, False, OptionParents),
-    OptionDefinition('g', 'group', True, OptionGroup),
-    OptionDefinition('m', 'mode', True, OptionMode),
-    OptionDefinition('o', 'owner', True, OptionOwner),
-    OptionDefinition('p', 'preserve-timestamps', False, OptionPreserve),
-    OptionDefinition('t', 'target-directory', True, OptionTarget),
-    OptionDefinition('T', 'no-target-directory', False, OptionNoTarget),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition('C', 'compare', False, OptionCompare),
-    OptionDefinition('s', 'strip', False, OptionStrip)], Usage);
-  while NextOption(Parser, Code, Value) do
+  ParseModeChange(string(DefaultMode), ModeChange);
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'directory', False, OptionDirectory),
+    CommandOption('D', '', False, OptionParents),
+    CommandOption('g', 'group', True, OptionGroup),
+    CommandOption('m', 'mode', True, OptionMode),
+    CommandOption('o', 'owner', True, OptionOwner),
+    CommandOption('p', 'preserve-timestamps', False, OptionPreserve),
+    CommandOption('t', 'target-directory', True, OptionTarget),
+    CommandOption('T', 'no-target-directory', False, OptionNoTarget),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption('C', 'compare', False, OptionCompare),
+    CommandOption('s', 'strip', False, OptionStrip)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDirectory: DirectoryMode := True;
       OptionParents: CreateParents := True;
       OptionGroup:
         begin
           if not FindGroupId(Value, Id) then
-            Fail(1, 'invalid group ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid group ''%s''', [Value]));
           Group := Id;
         end;
       OptionMode:
         if not ParseModeChange(Value, ModeChange) then
-          Fail(1, 'invalid mode ''%s''', [ArgumentText(Value)]);
+          Fail(1, Format('invalid mode ''%s''', [Value]));
       OptionOwner:
         begin
           if not FindUserId(Value, Id) then
-            Fail(1, 'invalid user ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid user ''%s''', [Value]));
           Owner := Id;
         end;
       OptionPreserve: PreserveTimes := True;
-      OptionTarget: TargetDirectory := Value;
+      OptionTarget:
+        begin
+          TargetDirectory := Value;
+          HasTargetDirectory := True;
+        end;
       OptionNoTarget: NoTargetDirectory := True;
       OptionVerbose: Verbose := True;
     end;
@@ -238,38 +233,32 @@ begin
   ExitStatus := 0;
   if DirectoryMode then
   begin
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('missing operand', []);
-    for Index := 0 to Parser.OperandCount - 1 do
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('missing operand');
+    for Operand in CommandLine.Operands do
     begin
-      if not MakeDirectories(Parser.Operands[Index]) or
-         not ApplyAttributes(Parser.Operands[Index], True, -1) then
+      if not MakeDirectories(Operand) or not ApplyAttributes(Operand, True, -1) then
         ExitStatus := 1;
     end;
     Halt(ExitStatus);
   end;
 
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
-  SourceCount := Parser.OperandCount;
-  if TargetDirectory = nil then
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
+  SourceCount := CommandLine.OperandCount;
+  if not HasTargetDirectory then
   begin
-    if Parser.OperandCount = 1 then
-      FailWithUsageHint('missing destination file operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
-    SourceCount := Parser.OperandCount - 1;
-    Target := Parser.Operands[SourceCount];
-    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(Target)) then
+    if CommandLine.OperandCount = 1 then
+      FailWithUsageHint(Format('missing destination file operand after ''%s''', [CommandLine.Operands[0]]));
+    SourceCount := CommandLine.OperandCount - 1;
+    Target := CommandLine.Operands[SourceCount];
+    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(PChar(Target))) then
     begin
       if SourceCount > 1 then
-        FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-      if CreateParents then
-      begin
-        Parent := DirectoryName(Target);
-        if not MakeDirectories(Parent) then
-          Halt(1);
-        FreeMemory(Parent);
-      end;
-      if InstallFile(Parser.Operands[0], Target) then
+        FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+      if CreateParents and not MakeDirectories(DirectoryName(Target)) then
+        Halt(1);
+      if InstallFile(CommandLine.Operands[0], Target) then
         Halt(0);
       Halt(1);
     end;
@@ -277,16 +266,14 @@ begin
   end;
   if CreateParents and not MakeDirectories(TargetDirectory) then
     Halt(1);
-  if not IsDirectory(TargetDirectory) then
-    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(TargetDirectory)]);
+  if not IsDirectory(PChar(TargetDirectory)) then
+    Fail(1, Format('target ''%s'' is not a directory', [TargetDirectory]));
   for Index := 0 to SourceCount - 1 do
   begin
-    Base := BaseName(Parser.Operands[Index]);
-    Target := JoinPath(TargetDirectory, Base);
-    if not InstallFile(Parser.Operands[Index], Target) then
+    Target := JoinPath(TargetDirectory, BaseName(CommandLine.Operands[Index]));
+    if not InstallFile(CommandLine.Operands[Index], Target) then
       ExitStatus := 1;
-    FreeMemory(Base);
-    FreeMemory(Target);
   end;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.

@@ -23,20 +23,19 @@
 }
 program fold;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Format,
-  Sys.Memory,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: fold [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: fold [OPTION]... [FILE]...'#10 +
     'Wrap input lines in each FILE, writing to standard output.'#10 +
     #10 +
     '  -b, --bytes         count bytes rather than columns'#10 +
@@ -51,78 +50,69 @@ var
   BreakAtSpaces: Boolean;
   Width: Int64;
 
-procedure FoldLine(Line: PChar);
+procedure FoldLine(const Line: string);
 var
-  Start: PtrInt;
-  Length: PtrInt;
-  BreakAt: PtrInt;
-  Index: PtrInt;
+  Start: Int64;
+  BreakAt: Int64;
+  Index: Int64;
 begin
+  { Start and BreakAt are offsets from 0, as in the line's bytes. }
   Start := 0;
-  Length := 0;
-  while Line[Length] <> #0 do
-    Inc(Length);
-  while Length - Start > Width do
+  while Length(Line) - Start > Width do
   begin
     BreakAt := Start + Width;
     if BreakAtSpaces then
     begin
       Index := BreakAt - 1;
-      while (Index > Start) and (Line[Index] <> ' ') do
+      while (Index > Start) and (Line[Index + 1] <> ' ') do
         Dec(Index);
       if Index > Start then
         BreakAt := Index + 1;
     end;
-    WriteBytes(StandardOutput, Line + Start, QWord(BreakAt - Start));
-    WriteCharacter(StandardOutput, #10);
+    PrintStringLine(Copy(Line, Start + 1, BreakAt - Start));
     Start := BreakAt;
   end;
-  WriteLine(StandardOutput, Line + Start);
+  PrintStringLine(Copy(Line, Start + 1, MaxInt));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   ExitStatus: LongInt;
 begin
   BreakAtSpaces := False;
   Width := 80;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'bytes', False, OptionBytes),
-    OptionDefinition('s', 'spaces', False, OptionSpaces),
-    OptionDefinition('w', 'width', True, OptionWidth)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'bytes', False, OptionBytes),
+    CommandOption('s', 'spaces', False, OptionSpaces),
+    CommandOption('w', 'width', True, OptionWidth)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionSpaces: BreakAtSpaces := True;
       OptionWidth:
-        if not ParseInteger(Value, Width) or (Width < 1) then
-          Fail(1, 'invalid number of columns: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Width) or (Width < 1) then
+          Fail(1, Format('invalid number of columns: ''%s''', [Value]));
     end;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    while ReadLine(Stream, Line, HadLineEnd) do
-    begin
+    while ReadTextLine(Stream, Line, HadLineEnd) do
       FoldLine(Line);
-      FreeMemory(Line);
-    end;
     CloseInput(Stream);
   end;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.

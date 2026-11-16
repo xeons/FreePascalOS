@@ -27,23 +27,21 @@
 }
 program head;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
+  Classes,
   Sys.Environment,
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: head [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: head [OPTION]... [FILE]...'#10 +
     'Print the first 10 lines of each FILE to standard output.'#10 +
     'With more than one FILE, precede each with a header giving the file name.'#10 +
     #10 +
@@ -61,22 +59,28 @@ const
   OptionQuiet = 3;
   OptionVerbose = 4;
 
+  CopyBufferSize = 4096;
+
 var
   CountBytes: Boolean;
   AllButLast: Boolean;
   Amount: QWord;
 
-procedure ParseAmount(Text: PChar);
+procedure ParseAmount(const Text: string);
+var
+  Number: string;
 begin
-  AllButLast := Text[0] = '-';
+  AllButLast := (Text <> '') and (Text[1] = '-');
   if AllButLast then
-    Inc(Text);
-  if not ParseSize(Text, Amount) then
+    Number := Copy(Text, 2, MaxInt)
+  else
+    Number := Text;
+  if not ParseSize(Number, Amount) then
   begin
     if CountBytes then
-      Fail(1, 'invalid number of bytes: ''%s''', [ArgumentText(Text)])
+      Fail(1, Format('invalid number of bytes: ''%s''', [Number]))
     else
-      Fail(1, 'invalid number of lines: ''%s''', [ArgumentText(Text)]);
+      Fail(1, Format('invalid number of lines: ''%s''', [Number]));
   end;
 end;
 
@@ -96,7 +100,7 @@ end;
 
 procedure HeadBytes(Stream: PInputStream);
 var
-  Buffer: array[0..4095] of Char;
+  Buffer: array[0..CopyBufferSize - 1] of Byte;
   Remaining: QWord;
   Wanted: QWord;
   Count: QWord;
@@ -118,66 +122,74 @@ end;
 { All but the last Amount lines: collect everything, then print. }
 procedure HeadAllButLastLines(Stream: PInputStream);
 var
-  List: TLineList;
+  Lines: TStringList;
   Index: Integer;
   Keep: Int64;
 begin
-  BeginLineList(List);
-  ReadAllLines(Stream, List);
-  Keep := Int64(List.Count) - Int64(Amount);
-  for Index := 0 to Integer(Keep) - 1 do
-    WriteLine(StandardOutput, List.Items[Index]);
-  FreeLineList(List);
+  Lines := TStringList.Create;
+  try
+    ReadLinesInto(Stream, Lines);
+    Keep := Int64(Lines.Count) - Int64(Amount);
+    for Index := 0 to Integer(Keep) - 1 do
+      PrintStringLine(Lines[Index]);
+  finally
+    Lines.Free;
+  end;
 end;
 
 procedure HeadAllButLastBytes(Stream: PInputStream);
 var
-  Builder: TTextBuilder;
-  Buffer: array[0..4095] of Char;
-  Count: QWord;
+  Contents: string;
 begin
-  BeginText(Builder);
-  repeat
-    Count := ReadBytes(Stream, @Buffer[0], SizeOf(Buffer));
-    AppendBytes(Builder, @Buffer[0], Count);
-  until Count = 0;
-  if Builder.Length > Amount then
-    WriteBytes(StandardOutput, Builder.Text, Builder.Length - Amount);
-  DiscardText(Builder);
+  Contents := ReadAllText(Stream);
+  if QWord(Length(Contents)) > Amount then
+    PrintString(Copy(Contents, 1, QWord(Length(Contents)) - Amount));
+end;
+
+procedure PrintHeader(const Path: string; IsFirst: Boolean);
+begin
+  if not IsFirst then
+    PrintString(#10);
+  if Path = '-' then
+    PrintStringLine('==> standard input <==')
+  else
+    PrintStringLine('==> ' + Path + ' <==');
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Index: Integer;
   Stream: PInputStream;
   ExitStatus: LongInt;
   ShowHeaders: Integer; { -1 never, 0 automatic, 1 always }
-  OldStyle: PChar;
+  OldStyle: string;
 begin
   CountBytes := False;
   AllButLast := False;
   Amount := 10;
   ShowHeaders := 0;
 
-  { "head -5 file" is the old way of writing "head -n 5 file". }
-  OldStyle := nil;
-  if (ArgumentTotal > 1) and (ArgumentValues[1][0] = '-') and IsDigit(ArgumentValues[1][1]) then
+  { "head -5 file" is the old way of writing "head -n 5 file": the
+    argument becomes "--", so everything after it is an operand. }
+  OldStyle := Argument(1);
+  if (ArgumentTotal > 1) and (Length(OldStyle) >= 2) and (OldStyle[1] = '-') and
+     (OldStyle[2] in ['0'..'9']) then
   begin
-    OldStyle := ArgumentValues[1] + 1;
     ArgumentValues[1] := '--';
+    Delete(OldStyle, 1, 1);
     if not ParseSize(OldStyle, Amount) then
-      Fail(1, 'invalid number of lines: ''%s''', [ArgumentText(OldStyle)]);
+      Fail(1, Format('invalid number of lines: ''%s''', [OldStyle]));
   end;
 
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'bytes', True, OptionBytes),
-    OptionDefinition('n', 'lines', True, OptionLines),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'silent', False, OptionQuiet),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'bytes', True, OptionBytes),
+    CommandOption('n', 'lines', True, OptionLines),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'silent', False, OptionQuiet),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBytes:
         begin
@@ -193,37 +205,27 @@ begin
       OptionVerbose: ShowHeaders := 1;
     end;
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   if ShowHeaders = 0 then
   begin
-    if Parser.OperandCount > 1 then
+    if CommandLine.OperandCount > 1 then
       ShowHeaders := 1
     else
       ShowHeaders := -1;
   end;
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to CommandLine.OperandCount - 1 do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(CommandLine.Operands[Index]);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
     if ShowHeaders = 1 then
-    begin
-      if Index > 0 then
-        WriteCharacter(StandardOutput, #10);
-      if TextIsEqual(Parser.Operands[Index], '-') then
-        WriteLine(StandardOutput, '==> standard input <==')
-      else
-        WriteFormatted(StandardOutput, '==> %s <=='#10, [ArgumentText(Parser.Operands[Index])]);
-    end;
+      PrintHeader(CommandLine.Operands[Index], Index = 0);
     if CountBytes and AllButLast then
       HeadAllButLastBytes(Stream)
     else if CountBytes then
@@ -234,5 +236,6 @@ begin
       HeadLines(Stream);
     CloseInput(Stream);
   end;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.

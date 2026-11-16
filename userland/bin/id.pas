@@ -26,19 +26,17 @@
 }
 program id;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Streams,
+  SysUtils,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: id [OPTION]... [USER]'#10 +
+  Usage = 'Usage: id [OPTION]... [USER]'#10 +
     'Print user and group information for the specified USER,'#10 +
     'or (when USER omitted) for the current user.'#10#10 +
     '  -g, --group     print only the effective group ID'#10 +
@@ -54,62 +52,99 @@ const
   OptionReal = 4;
   OptionUser = 5;
   OptionZero = 6;
-  MaximumGroups = 64;
 
-procedure WriteIdentifier(Id: LongWord; Name: PChar; AsName: Boolean);
+{ The name (with AsName, when there is one) or the number. }
+function IdentifierText(Id: LongWord; HasName: Boolean; const Name: string; AsName: Boolean): string;
 begin
-  if AsName and (Name <> nil) then
-    WriteText(StandardOutput, Name)
+  if AsName and HasName then
+    Result := Name
   else
-    WriteUnsigned(StandardOutput, Id);
+    Result := IntToStr(Id);
+end;
+
+function UserIdentifier(UserId: LongWord; AsName: Boolean): string;
+var
+  Name: string;
+begin
+  Result := IdentifierText(UserId, FindUserName(UserId, Name), Name, AsName);
+end;
+
+function GroupIdentifier(GroupId: LongWord; AsName: Boolean): string;
+var
+  Name: string;
+begin
+  Result := IdentifierText(GroupId, FindGroupName(GroupId, Name), Name, AsName);
+end;
+
+{ "1000(name)", or just the number when there is no name. }
+function NumberAndName(Id: LongWord; HasName: Boolean; const Name: string): string;
+begin
+  Result := IntToStr(Id);
+  if HasName then
+    Result := Result + '(' + Name + ')';
+end;
+
+function UserNumberAndName(UserId: LongWord): string;
+var
+  Name: string;
+begin
+  Result := NumberAndName(UserId, FindUserName(UserId, Name), Name);
+end;
+
+function GroupNumberAndName(GroupId: LongWord): string;
+var
+  Name: string;
+begin
+  Result := NumberAndName(GroupId, FindGroupName(GroupId, Name), Name);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Selection: Integer;
   AsName: Boolean;
   Separator: Char;
   UserId: LongWord;
   GroupId: LongWord;
-  Groups: array[0..MaximumGroups - 1] of LongWord;
-  GroupCount: Integer;
+  UserName: string;
+  Groups: TIdArray;
   Index: Integer;
   RealIds: Boolean;
   ForProcess: Boolean;
+  Line: string;
 begin
   RealIds := False;
   ForProcess := False;
   Selection := 0;
   AsName := False;
   Separator := ' ';
-  BeginOptions(Parser, [
-    OptionDefinition('g', 'group', False, OptionGroup),
-    OptionDefinition('G', 'groups', False, OptionGroups),
-    OptionDefinition('n', 'name', False, OptionName),
-    OptionDefinition('r', 'real', False, OptionReal),
-    OptionDefinition('u', 'user', False, OptionUser),
-    OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('g', 'group', False, OptionGroup),
+    CommandOption('G', 'groups', False, OptionGroups),
+    CommandOption('n', 'name', False, OptionName),
+    CommandOption('r', 'real', False, OptionReal),
+    CommandOption('u', 'user', False, OptionUser),
+    CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionGroup, OptionGroups, OptionUser:
         begin
           if (Selection <> 0) and (Selection <> Code) then
-            FailWithUsageHint('cannot print "only" of more than one choice', []);
+            FailWithUsageHint('cannot print "only" of more than one choice');
           Selection := Code;
         end;
       OptionName: AsName := True;
       OptionReal: RealIds := True;
       OptionZero: Separator := #0;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
 
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount = 1 then
   begin
-    if not FindUserId(Parser.Operands[0], UserId) or (UserNameOf(UserId) = nil) then
-      Fail(1, '''%s'': no such user', [ArgumentText(Parser.Operands[0])]);
+    if not FindUserId(CommandLine.Operands[0], UserId) or not FindUserName(UserId, UserName) then
+      Fail(1, Format('''%s'': no such user', [CommandLine.Operands[0]]));
     if not PrimaryGroupOf(UserId, GroupId) then
       GroupId := 0;
   end
@@ -126,58 +161,42 @@ begin
     end;
   end;
   if ForProcess then
-    GroupCount := CurrentGroups(@Groups[0], MaximumGroups)
+    Groups := CurrentGroups
   else
-    GroupCount := GroupsOfUser(UserId, @Groups[0], MaximumGroups);
-  if GroupCount = 0 then
-  begin
-    Groups[0] := GroupId;
-    GroupCount := 1;
-  end;
+    Groups := GroupsOfUser(UserId);
+  if Length(Groups) = 0 then
+    Groups := [GroupId];
 
+  Line := '';
   case Selection of
-    OptionUser: WriteIdentifier(UserId, UserNameOf(UserId), AsName);
-    OptionGroup: WriteIdentifier(GroupId, GroupNameOf(GroupId), AsName);
+    OptionUser: Line := UserIdentifier(UserId, AsName);
+    OptionGroup: Line := GroupIdentifier(GroupId, AsName);
     OptionGroups:
-      for Index := 0 to GroupCount - 1 do
+      for Index := 0 to High(Groups) do
       begin
         if Index > 0 then
-          WriteCharacter(StandardOutput, Separator);
-        WriteIdentifier(Groups[Index], GroupNameOf(Groups[Index]), AsName);
+          Line := Line + Separator;
+        Line := Line + GroupIdentifier(Groups[Index], AsName);
       end;
   else
     begin
-      WriteFormatted(StandardOutput, 'uid=%u', [ArgumentUnsigned(UserId)]);
-      if UserNameOf(UserId) <> nil then
-        WriteFormatted(StandardOutput, '(%s)', [ArgumentText(UserNameOf(UserId))]);
-      WriteFormatted(StandardOutput, ' gid=%u', [ArgumentUnsigned(GroupId)]);
-      if GroupNameOf(GroupId) <> nil then
-        WriteFormatted(StandardOutput, '(%s)', [ArgumentText(GroupNameOf(GroupId))]);
+      Line := 'uid=' + UserNumberAndName(UserId) + ' gid=' + GroupNumberAndName(GroupId);
       if ForProcess and (CurrentUserId <> UserId) then
-      begin
-        WriteFormatted(StandardOutput, ' euid=%u', [ArgumentUnsigned(CurrentUserId)]);
-        if UserNameOf(CurrentUserId) <> nil then
-          WriteFormatted(StandardOutput, '(%s)', [ArgumentText(UserNameOf(CurrentUserId))]);
-      end;
+        Line := Line + ' euid=' + UserNumberAndName(CurrentUserId);
       if ForProcess and (CurrentGroupId <> GroupId) then
-      begin
-        WriteFormatted(StandardOutput, ' egid=%u', [ArgumentUnsigned(CurrentGroupId)]);
-        if GroupNameOf(CurrentGroupId) <> nil then
-          WriteFormatted(StandardOutput, '(%s)', [ArgumentText(GroupNameOf(CurrentGroupId))]);
-      end;
-      WriteText(StandardOutput, ' groups=');
-      for Index := 0 to GroupCount - 1 do
+        Line := Line + ' egid=' + GroupNumberAndName(CurrentGroupId);
+      Line := Line + ' groups=';
+      for Index := 0 to High(Groups) do
       begin
         if Index > 0 then
-          WriteCharacter(StandardOutput, ',');
-        WriteUnsigned(StandardOutput, Groups[Index]);
-        if GroupNameOf(Groups[Index]) <> nil then
-          WriteFormatted(StandardOutput, '(%s)', [ArgumentText(GroupNameOf(Groups[Index]))]);
+          Line := Line + ',';
+        Line := Line + GroupNumberAndName(Groups[Index]);
       end;
     end;
   end;
   if Separator = #0 then
-    WriteCharacter(StandardOutput, #0)
+    PrintString(Line + #0)
   else
-    WriteCharacter(StandardOutput, #10);
+    PrintString(Line + #10);
+  CommandLine.Free;
 end.

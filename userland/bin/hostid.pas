@@ -23,29 +23,30 @@
 }
 program hostid;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Crypto.Checksums,
-  Sys.Format,
   Sys.Information,
-  Sys.Streams,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: hostid'#10 +
+  Usage = 'Usage: hostid'#10 +
     'Print the numeric identifier (in hexadecimal) for the current host.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Information: TSystemInformation;
+  NodeName: string;
   Identifier: LongWord;
 begin
-  ParseOperandsOnly(Parser, Usage);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  CommandLine.Free;
   GetSystemInformation(Information);
-  Identifier := Crc32Finish(Crc32Update(Crc32Initial, @Information.NodeName[0],
-    TextLength(@Information.NodeName[0])));
-  WriteFormatted(StandardOutput, '%08x'#10, [ArgumentUnsigned(Identifier)]);
+  NodeName := PChar(@Information.NodeName[0]);
+  Identifier := Crc32Finish(Crc32Update(Crc32Initial, PByte(PChar(NodeName)), Length(NodeName)));
+  PrintStringLine(LowerCase(IntToHex(Identifier, 8)));
 end.

@@ -29,34 +29,30 @@
 }
 program ls;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
+  Classes,
+  Contnrs,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
   Sys.Environment,
   Sys.Time,
   Sys.TimeZones,
   Sys.LocalTime,
   Util.Accounts,
+  Util.CommandLine,
   Util.Directories,
-  Util.Input,
   Util.Modes,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths,
-  Util.Sizes,
-  Util.Sorting;
+  Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: ls [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: ls [OPTION]... [FILE]...'#10 +
     'List information about the FILEs (the current directory by default).'#10 +
     'Entries are sorted alphabetically unless -S or -t is given.'#10 +
     #10 +
@@ -96,12 +92,36 @@ const
 type
   TSortOrder = (SortByName, SortBySize, SortByTime);
 
-  PEntry = ^TEntry;
-  TEntry = record
-    Name: PChar;        { as displayed }
-    Path: PChar;        { for looking it up }
+  { A file to list. }
+  TEntry = class
+  public
+    Name: string;        { as displayed }
+    Path: string;        { for looking it up }
     Information: TFileInformation;
-    LinkTarget: PChar;
+    HasLinkTarget: Boolean;
+    LinkTarget: string;
+  end;
+
+  TEntryList = class;
+
+  TEntryEnumerator = class
+  private
+    FList: TEntryList;
+    FIndex: Integer;
+    function GetCurrent: TEntry;
+  public
+    constructor Create(List: TEntryList);
+    function MoveNext: Boolean;
+    property Current: TEntry read GetCurrent;
+  end;
+
+  { Entries, owned by the list. }
+  TEntryList = class(TObjectList)
+  private
+    function GetEntry(Index: Integer): TEntry;
+  public
+    function GetEnumerator: TEntryEnumerator;
+    property Entries[Index: Integer]: TEntry read GetEntry; default;
   end;
 
 var
@@ -119,111 +139,127 @@ var
   NumericIds: Boolean;
   ShowSizes: Boolean;
   BlockWidth: Integer;
-  Now: Int64;
+  StartTime: Int64;
   ExitStatus: LongInt;
 
-function NewEntry(Name, Path: PChar): PEntry;
+constructor TEntryEnumerator.Create(List: TEntryList);
+begin
+  inherited Create;
+  FList := List;
+  FIndex := -1;
+end;
+
+function TEntryEnumerator.GetCurrent: TEntry;
+begin
+  Result := FList[FIndex];
+end;
+
+function TEntryEnumerator.MoveNext: Boolean;
+begin
+  Inc(FIndex);
+  Result := FIndex < FList.Count;
+end;
+
+function TEntryList.GetEntry(Index: Integer): TEntry;
+begin
+  Result := TEntry(Items[Index]);
+end;
+
+function TEntryList.GetEnumerator: TEntryEnumerator;
+begin
+  Result := TEntryEnumerator.Create(Self);
+end;
+
+{ The entry for Path, or nil (reported) when it cannot be looked at. }
+function NewEntry(const Name, Path: string): TEntry;
 var
   Error: LongInt;
-  Target: array[0..PathCapacity - 1] of Char;
 begin
-  Result := PEntry(AllocateZeroedMemory(SizeOf(TEntry)));
-  Result^.Name := DuplicateText(Name);
-  Result^.Path := DuplicateText(Path);
-  Error := GetLinkInformation(Path, Result^.Information);
+  Result := TEntry.Create;
+  Result.Name := Name;
+  Result.Path := Path;
+  Error := GetLinkInformation(PChar(Path), Result.Information);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot access ''%s''', [ArgumentText(Path)]);
+    ReportError(Error, Format('cannot access ''%s''', [Path]));
     ExitStatus := 1;
-    FreeMemory(Result^.Name);
-    FreeMemory(Result^.Path);
-    FreeMemory(Result);
+    Result.Free;
     Exit(nil);
   end;
-  if (Result^.Information.Kind = KindSymbolicLink) and
-     (ReadSymbolicLink(Path, @Target[0], PathCapacity) = ErrorNone) then
-    Result^.LinkTarget := DuplicateText(@Target[0]);
+  if Result.Information.Kind = KindSymbolicLink then
+    Result.HasLinkTarget := ReadLinkTarget(Path, Result.LinkTarget) = ErrorNone;
 end;
 
-procedure FreeEntry(Entry: PEntry);
-begin
-  FreeMemory(Entry^.Name);
-  FreeMemory(Entry^.Path);
-  FreeMemory(Entry^.LinkTarget);
-  FreeMemory(Entry);
-end;
-
-function CompareEntries(First, Second: Pointer; Context: Pointer): Integer;
+function CompareEntries(First, Second: Pointer): Integer;
 var
-  Left: PEntry;
-  Right: PEntry;
+  Left: TEntry;
+  Right: TEntry;
 begin
-  Left := PEntry(First);
-  Right := PEntry(Second);
+  Left := TEntry(First);
+  Right := TEntry(Second);
   Result := 0;
   case SortOrder of
     SortBySize:
-      if Left^.Information.SizeInBytes > Right^.Information.SizeInBytes then
+      if Left.Information.SizeInBytes > Right.Information.SizeInBytes then
         Result := -1
-      else if Left^.Information.SizeInBytes < Right^.Information.SizeInBytes then
+      else if Left.Information.SizeInBytes < Right.Information.SizeInBytes then
         Result := 1;
     SortByTime:
-      if Left^.Information.ModificationTime > Right^.Information.ModificationTime then
+      if Left.Information.ModificationTime > Right.Information.ModificationTime then
         Result := -1
-      else if Left^.Information.ModificationTime < Right^.Information.ModificationTime then
+      else if Left.Information.ModificationTime < Right.Information.ModificationTime then
         Result := 1;
   end;
   if Result = 0 then
-    Result := CompareText(Left^.Name, Right^.Name);
+    Result := CompareStr(Left.Name, Right.Name);
   if Reverse then
     Result := -Result;
 end;
 
-function IndicatorOf(Entry: PEntry): Char;
+{ The -F indicator; '' when there is none. }
+function IndicatorOf(Entry: TEntry): string;
 begin
-  Result := #0;
+  Result := '';
   if not Classify then
     Exit;
-  case Entry^.Information.Kind of
+  case Entry.Information.Kind of
     KindDirectory: Result := '/';
     KindSymbolicLink: Result := '@';
     KindFifo: Result := '|';
     KindFile:
-      if (Entry^.Information.Mode and $49) <> 0 then
+      if (Entry.Information.Mode and $49) <> 0 then
         Result := '*';
   end;
 end;
 
-function DisplayWidth(Entry: PEntry): Integer;
+function DisplayWidth(Entry: TEntry): Integer;
 begin
-  Result := Integer(TextLength(Entry^.Name));
-  if IndicatorOf(Entry) <> #0 then
-    Inc(Result);
+  Result := Length(Entry.Name) + Length(IndicatorOf(Entry));
   if ShowSizes then
     Result := Result + BlockWidth + 1;
 end;
 
-procedure WriteName(Entry: PEntry);
+function NameText(Entry: TEntry): string;
 begin
-  WriteText(StandardOutput, Entry^.Name);
-  if IndicatorOf(Entry) <> #0 then
-    WriteCharacter(StandardOutput, IndicatorOf(Entry));
+  Result := Entry.Name + IndicatorOf(Entry);
 end;
 
-procedure WriteModeText(const Information: TFileInformation);
-var
-  Buffer: array[0..15] of Char;
+function KindLetter(Kind: LongWord): string;
 begin
-  case Information.Kind of
-    KindDirectory: WriteCharacter(StandardOutput, 'd');
-    KindSymbolicLink: WriteCharacter(StandardOutput, 'l');
-    KindFifo: WriteCharacter(StandardOutput, 'p');
-    KindCharacterDevice: WriteCharacter(StandardOutput, 'c');
-    KindBlockDevice: WriteCharacter(StandardOutput, 'b');
+  case Kind of
+    KindDirectory: Result := 'd';
+    KindSymbolicLink: Result := 'l';
+    KindFifo: Result := 'p';
+    KindCharacterDevice: Result := 'c';
+    KindBlockDevice: Result := 'b';
   else
-    WriteCharacter(StandardOutput, '-');
+    Result := '-';
   end;
-  WriteText(StandardOutput, FormatModeText(Information.Mode, @Buffer[0]));
+end;
+
+function ModeText(const Information: TFileInformation): string;
+begin
+  Result := KindLetter(Information.Kind) + FormatModeText(Information.Mode);
 end;
 
 { Allocated size in 1 KiB blocks, as -s and "total" show it. }
@@ -232,63 +268,68 @@ begin
   Result := (Information.AllocatedBytes + 1023) div 1024;
 end;
 
-procedure WriteBlocks(Entry: PEntry);
+function BlocksText(Entry: TEntry): string;
 begin
+  Result := '';
   if ShowSizes then
-    WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(BlockWidth),
-      ArgumentUnsigned(BlocksOf(Entry^.Information))]);
+    Result := Format('%*d ', [BlockWidth, BlocksOf(Entry.Information)]);
 end;
 
 var
   ShownZone: PTimeZone = nil;
 
-procedure WriteTimestamp(Time: Int64);
+function TimestampText(Time: Int64): string;
 var
   Local: TLocalTime;
-  DateTime: TDateTime;
+  DateTime: Sys.Time.TDateTime;
 begin
   { Local time, in the zone found once for all the files. }
   if ShownZone = nil then
     ShownZone := CurrentTimeZone;
   DecodeTimeInZone(ShownZone, Time, Local);
   DateTime := Local.DateTime;
-  WriteFormatted(StandardOutput, '%s %2d ', [ArgumentText(MonthName(DateTime.Month)), ArgumentNumber(DateTime.Day)]);
-  if (Time > Now - SecondsInHalfYear) and (Time <= Now + 3600) then
-    WriteFormatted(StandardOutput, '%02d:%02d', [ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute)])
+  Result := Format('%s %2d ', [string(MonthName(DateTime.Month)), DateTime.Day]);
+  if (Time > StartTime - SecondsInHalfYear) and (Time <= StartTime + 3600) then
+    Result := Result + Format('%.2d:%.2d', [DateTime.Hour, DateTime.Minute])
   else
-    WriteFormatted(StandardOutput, ' %4d', [ArgumentNumber(DateTime.Year)]);
+    Result := Result + Format(' %4d', [DateTime.Year]);
 end;
 
-function OwnerText(Id: LongWord; var Buffer: TNumberText): PChar;
+function OwnerText(Id: LongWord): string;
 begin
-  Result := nil;
-  if not NumericIds then
-    Result := UserNameOf(Id);
-  if Result = nil then
-    Result := FormatDecimal(Id, Buffer);
+  if NumericIds or not FindUserName(Id, Result) then
+    Result := IntToStr(Id);
 end;
 
-function GroupText(Id: LongWord; var Buffer: TNumberText): PChar;
+function GroupText(Id: LongWord): string;
 begin
-  Result := nil;
-  if not NumericIds then
-    Result := GroupNameOf(Id);
-  if Result = nil then
-    Result := FormatDecimal(Id, Buffer);
+  if NumericIds or not FindGroupName(Id, Result) then
+    Result := IntToStr(Id);
 end;
 
-procedure WriteLong(Entries: PPointer; Count: Integer);
+function SizeText(const Information: TFileInformation): string;
+begin
+  if HumanReadable then
+    Result := FormatHumanSize(Information.SizeInBytes)
+  else
+    Result := IntToStr(Information.SizeInBytes);
+end;
+
+procedure RaiseToWidth(var Width: Integer; const Text: string);
+begin
+  if Length(Text) > Width then
+    Width := Length(Text);
+end;
+
+procedure WriteLong(Entries: TEntryList);
 var
-  Index: Integer;
-  Entry: PEntry;
+  Entry: TEntry;
   SizeWidth: Integer;
   LinkWidth: Integer;
   NodeWidth: Integer;
-  SizeText: array[0..31] of Char;
-  NumberText: TNumberText;
-  Width: Integer;
   OwnerWidth: Integer;
   GroupWidth: Integer;
+  Line: string;
 begin
   { Column widths, so numbers line up. }
   SizeWidth := 1;
@@ -296,59 +337,34 @@ begin
   NodeWidth := 1;
   OwnerWidth := 1;
   GroupWidth := 1;
-  for Index := 0 to Count - 1 do
+  for Entry in Entries do
   begin
-    Entry := PEntry(Entries[Index]);
-    if HumanReadable then
-      Width := Integer(TextLength(FormatHumanSize(Entry^.Information.SizeInBytes, @SizeText[0])))
-    else
-      Width := Integer(TextLength(FormatDecimal(Entry^.Information.SizeInBytes, NumberText)));
-    if Width > SizeWidth then
-      SizeWidth := Width;
-    Width := Integer(TextLength(FormatDecimal(Entry^.Information.LinkCount, NumberText)));
-    if Width > LinkWidth then
-      LinkWidth := Width;
-    Width := Integer(TextLength(FormatDecimal(Entry^.Information.NodeNumber, NumberText)));
-    if Width > NodeWidth then
-      NodeWidth := Width;
-    Width := Integer(TextLength(OwnerText(Entry^.Information.OwnerId, NumberText)));
-    if Width > OwnerWidth then
-      OwnerWidth := Width;
-    Width := Integer(TextLength(GroupText(Entry^.Information.GroupId, NumberText)));
-    if Width > GroupWidth then
-      GroupWidth := Width;
+    RaiseToWidth(SizeWidth, SizeText(Entry.Information));
+    RaiseToWidth(LinkWidth, IntToStr(Entry.Information.LinkCount));
+    RaiseToWidth(NodeWidth, IntToStr(Entry.Information.NodeNumber));
+    RaiseToWidth(OwnerWidth, OwnerText(Entry.Information.OwnerId));
+    RaiseToWidth(GroupWidth, GroupText(Entry.Information.GroupId));
   end;
 
-  for Index := 0 to Count - 1 do
+  for Entry in Entries do
   begin
-    Entry := PEntry(Entries[Index]);
+    Line := '';
     if ShowNodeNumbers then
-      WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(NodeWidth), ArgumentUnsigned(Entry^.Information.NodeNumber)]);
-    WriteBlocks(Entry);
-    WriteModeText(Entry^.Information);
-    WriteFormatted(StandardOutput, ' %*u %-*s %-*s ', [ArgumentNumber(LinkWidth),
-      ArgumentUnsigned(Entry^.Information.LinkCount), ArgumentNumber(OwnerWidth),
-      ArgumentText(OwnerText(Entry^.Information.OwnerId, NumberText)), ArgumentNumber(GroupWidth),
-      ArgumentText(GroupText(Entry^.Information.GroupId, NumberText))]);
-    if HumanReadable then
-      WriteFormatted(StandardOutput, '%*s ', [ArgumentNumber(SizeWidth),
-        ArgumentText(FormatHumanSize(Entry^.Information.SizeInBytes, @SizeText[0]))])
-    else
-      WriteFormatted(StandardOutput, '%*u ', [ArgumentNumber(SizeWidth), ArgumentUnsigned(Entry^.Information.SizeInBytes)]);
-    WriteTimestamp(Entry^.Information.ModificationTime);
-    WriteCharacter(StandardOutput, ' ');
-    WriteName(Entry);
-    if Entry^.LinkTarget <> nil then
-    begin
-      WriteText(StandardOutput, ' -> ');
-      WriteText(StandardOutput, Entry^.LinkTarget);
-    end;
-    WriteCharacter(StandardOutput, #10);
+      Line := Format('%*d ', [NodeWidth, Entry.Information.NodeNumber]);
+    Line := Line + BlocksText(Entry) + ModeText(Entry.Information);
+    Line := Line + Format(' %*d %-*s %-*s ', [LinkWidth, Entry.Information.LinkCount,
+      OwnerWidth, OwnerText(Entry.Information.OwnerId),
+      GroupWidth, GroupText(Entry.Information.GroupId)]);
+    Line := Line + Format('%*s ', [SizeWidth, SizeText(Entry.Information)]);
+    Line := Line + TimestampText(Entry.Information.ModificationTime) + ' ' + NameText(Entry);
+    if Entry.HasLinkTarget then
+      Line := Line + ' -> ' + Entry.LinkTarget;
+    PrintStringLine(Line);
   end;
 end;
 
 { Arranges names in columns, filled top to bottom, as wide as fits. }
-procedure WriteColumns(Entries: PPointer; Count: Integer);
+procedure WriteColumns(Entries: TEntryList);
 var
   ColumnWidth: Integer;
   Columns: Integer;
@@ -356,180 +372,162 @@ var
   Row: Integer;
   Column: Integer;
   Index: Integer;
-  Padding: Integer;
-  Entry: PEntry;
+  Entry: TEntry;
+  Line: string;
 begin
-  if Count = 0 then
+  if Entries.Count = 0 then
     Exit;
   ColumnWidth := 0;
-  for Index := 0 to Count - 1 do
-  begin
-    if DisplayWidth(PEntry(Entries[Index])) > ColumnWidth then
-      ColumnWidth := DisplayWidth(PEntry(Entries[Index]));
-  end;
+  for Entry in Entries do
+    if DisplayWidth(Entry) > ColumnWidth then
+      ColumnWidth := DisplayWidth(Entry);
   ColumnWidth := ColumnWidth + 2;
   Columns := ScreenWidth div ColumnWidth;
   if Columns < 1 then
     Columns := 1;
-  Rows := (Count + Columns - 1) div Columns;
+  Rows := (Entries.Count + Columns - 1) div Columns;
 
   for Row := 0 to Rows - 1 do
   begin
+    Line := '';
     for Column := 0 to Columns - 1 do
     begin
       Index := Column * Rows + Row;
-      if Index >= Count then
+      if Index >= Entries.Count then
         Break;
-      Entry := PEntry(Entries[Index]);
-      WriteBlocks(Entry);
-      WriteName(Entry);
-      if (Index + Rows < Count) then
-      begin
-        Padding := ColumnWidth - DisplayWidth(Entry);
-        while Padding > 0 do
-        begin
-          WriteCharacter(StandardOutput, ' ');
-          Dec(Padding);
-        end;
-      end;
+      Entry := Entries[Index];
+      Line := Line + BlocksText(Entry) + NameText(Entry);
+      if Index + Rows < Entries.Count then
+        Line := Line + StringOfChar(' ', ColumnWidth - DisplayWidth(Entry));
     end;
-    WriteCharacter(StandardOutput, #10);
+    PrintStringLine(Line);
   end;
 end;
 
-procedure WriteEntries(Entries: PPointer; Count: Integer);
+procedure WriteOnePerLine(Entries: TEntryList);
 var
-  Index: Integer;
-  NumberText: TNumberText;
-  Width: Integer;
+  Entry: TEntry;
+  Line: string;
 begin
-  SortPointers(Entries, Count, @CompareEntries, nil);
-  BlockWidth := 1;
-  for Index := 0 to Count - 1 do
+  for Entry in Entries do
   begin
-    Width := Integer(TextLength(FormatDecimal(BlocksOf(PEntry(Entries[Index])^.Information), NumberText)));
-    if Width > BlockWidth then
-      BlockWidth := Width;
+    Line := '';
+    if ShowNodeNumbers then
+      Line := IntToStr(Entry.Information.NodeNumber) + ' ';
+    PrintStringLine(Line + BlocksText(Entry) + NameText(Entry));
   end;
-  if LongFormat then
-    WriteLong(Entries, Count)
-  else if OnePerLine then
-    for Index := 0 to Count - 1 do
-    begin
-      if ShowNodeNumbers then
-        WriteFormatted(StandardOutput, '%u ', [ArgumentUnsigned(PEntry(Entries[Index])^.Information.NodeNumber)]);
-      WriteBlocks(PEntry(Entries[Index]));
-      WriteName(PEntry(Entries[Index]));
-      WriteCharacter(StandardOutput, #10);
-    end
-  else
-    WriteColumns(Entries, Count);
 end;
 
-procedure ListDirectoryContents(Path: PChar; ShowHeader: Boolean);
+procedure WriteEntries(Entries: TEntryList);
 var
-  Names: TLineList;
-  Entries: PPointer;
-  Count: Integer;
-  Index: Integer;
-  ChildPath: PChar;
-  Entry: PEntry;
+  Entry: TEntry;
+begin
+  Entries.Sort(@CompareEntries);
+  BlockWidth := 1;
+  for Entry in Entries do
+    RaiseToWidth(BlockWidth, IntToStr(BlocksOf(Entry.Information)));
+  if LongFormat then
+    WriteLong(Entries)
+  else if OnePerLine then
+    WriteOnePerLine(Entries)
+  else
+    WriteColumns(Entries);
+end;
+
+procedure ListDirectoryContents(const Path: string; ShowHeader: Boolean);
+var
+  Names: TStringList;
+  Name: string;
+  Entries: TEntryList;
+  Entry: TEntry;
   Error: LongInt;
   Total: QWord;
 begin
-  BeginLineList(Names);
-  Error := ListDirectory(Path, Names);
-  if Error <> ErrorNone then
-  begin
-    ReportError(Error, 'cannot open directory ''%s''', [ArgumentText(Path)]);
-    ExitStatus := 2;
-    FreeLineList(Names);
-    Exit;
-  end;
-  if ShowAll then
-  begin
-    AddLine(Names, DuplicateText('.'));
-    AddLine(Names, DuplicateText('..'));
-  end;
-
-  Entries := PPointer(AllocateMemory(QWord(Names.Count + 1) * SizeOf(Pointer)));
-  Count := 0;
-  Total := 0;
-  for Index := 0 to Names.Count - 1 do
-  begin
-    if (Names.Items[Index][0] = '.') and not (ShowAll or ShowAlmostAll) then
-      Continue;
-    ChildPath := JoinPath(Path, Names.Items[Index]);
-    Entry := NewEntry(Names.Items[Index], ChildPath);
-    FreeMemory(ChildPath);
-    if Entry = nil then
-      Continue;
-    Entries[Count] := Entry;
-    Total := Total + BlocksOf(Entry^.Information);
-    Inc(Count);
-  end;
-  FreeLineList(Names);
-
-  if ShowHeader then
-    WriteFormatted(StandardOutput, '%s:'#10, [ArgumentText(Path)]);
-  if LongFormat or ShowSizes then
-    WriteFormatted(StandardOutput, 'total %u'#10, [ArgumentUnsigned(Total)]);
-  WriteEntries(Entries, Count);
-
-  if Recursive then
-    for Index := 0 to Count - 1 do
+  Entries := TEntryList.Create;
+  Names := TStringList.Create;
+  try
+    Error := ListDirectory(Path, Names);
+    if Error <> ErrorNone then
     begin
-      Entry := PEntry(Entries[Index]);
-      if (Entry^.Information.Kind = KindDirectory) and not IsDotEntry(Entry^.Name) then
-      begin
-        WriteCharacter(StandardOutput, #10);
-        ListDirectoryContents(Entry^.Path, True);
-      end;
+      ReportError(Error, Format('cannot open directory ''%s''', [Path]));
+      ExitStatus := 2;
+      Exit;
+    end;
+    if ShowAll then
+    begin
+      Names.Add('.');
+      Names.Add('..');
     end;
 
-  for Index := 0 to Count - 1 do
-    FreeEntry(PEntry(Entries[Index]));
-  FreeMemory(Entries);
+    Total := 0;
+    for Name in Names do
+    begin
+      if (Name[1] = '.') and not (ShowAll or ShowAlmostAll) then
+        Continue;
+      Entry := NewEntry(Name, JoinPath(Path, Name));
+      if Entry = nil then
+        Continue;
+      Entries.Add(Entry);
+      Total := Total + BlocksOf(Entry.Information);
+    end;
+
+    if ShowHeader then
+      PrintStringLine(Path + ':');
+    if LongFormat or ShowSizes then
+      PrintStringLine('total ' + IntToStr(Total));
+    WriteEntries(Entries);
+
+    if Recursive then
+      for Entry in Entries do
+        if (Entry.Information.Kind = KindDirectory) and not IsDotEntry(Entry.Name) then
+        begin
+          PrintString(#10);
+          ListDirectoryContents(Entry.Path, True);
+        end;
+  finally
+    Names.Free;
+    Entries.Free;
+  end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Index: Integer;
-  Files: PPointer;
-  FileCount: Integer;
-  Directories: TLineList;
-  Entry: PEntry;
+  Operand: string;
+  Files: TEntryList;
+  Directories: TStringList;
+  Entry: TEntry;
   Information: TFileInformation;
   IsDirectoryOperand: Boolean;
-  ProgramBase: PChar;
+  ProgramBase: string;
 begin
   SortOrder := SortByName;
   OnePerLine := KernelGetHandleKind(StandardOutputHandle) <> HandleKindConsole;
-  ProgramBase := BaseName(Argument(0));
-  if TextIsEqual(ProgramBase, 'dir') then
+  ProgramBase := BaseName(string(Argument(0)));
+  if ProgramBase = 'dir' then
     OnePerLine := False
-  else if TextIsEqual(ProgramBase, 'vdir') then
+  else if ProgramBase = 'vdir' then
     LongFormat := True;
   ExitStatus := 0;
-  Now := CurrentTime;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'all', False, OptionAll),
-    OptionDefinition('A', 'almost-all', False, OptionAlmostAll),
-    OptionDefinition('d', 'directory', False, OptionDirectory),
-    OptionDefinition('F', 'classify', False, OptionClassify),
-    OptionDefinition('h', 'human-readable', False, OptionHumanReadable),
-    OptionDefinition('i', 'inode', False, OptionNodeNumber),
-    OptionDefinition('l', nil, False, OptionLong),
-    OptionDefinition('r', 'reverse', False, OptionReverse),
-    OptionDefinition('R', 'recursive', False, OptionRecursive),
-    OptionDefinition('S', nil, False, OptionSortSize),
-    OptionDefinition('t', nil, False, OptionSortTime),
-    OptionDefinition('1', nil, False, OptionOnePerLine),
-    OptionDefinition('n', 'numeric-uid-gid', False, OptionNumeric),
-    OptionDefinition('s', 'size', False, OptionSize)], Usage);
-  while NextOption(Parser, Code, Value) do
+  StartTime := CurrentTime;
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'all', False, OptionAll),
+    CommandOption('A', 'almost-all', False, OptionAlmostAll),
+    CommandOption('d', 'directory', False, OptionDirectory),
+    CommandOption('F', 'classify', False, OptionClassify),
+    CommandOption('h', 'human-readable', False, OptionHumanReadable),
+    CommandOption('i', 'inode', False, OptionNodeNumber),
+    CommandOption('l', '', False, OptionLong),
+    CommandOption('r', 'reverse', False, OptionReverse),
+    CommandOption('R', 'recursive', False, OptionRecursive),
+    CommandOption('S', '', False, OptionSortSize),
+    CommandOption('t', '', False, OptionSortTime),
+    CommandOption('1', '', False, OptionOnePerLine),
+    CommandOption('n', 'numeric-uid-gid', False, OptionNumeric),
+    CommandOption('s', 'size', False, OptionSize)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionAll: ShowAll := True;
       OptionAlmostAll: ShowAlmostAll := True;
@@ -551,41 +549,37 @@ begin
         end;
     end;
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '.';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['.'];
 
   { Files first (sorted together), then each directory. }
-  Files := PPointer(AllocateMemory(QWord(Parser.OperandCount + 1) * SizeOf(Pointer)));
-  FileCount := 0;
-  BeginLineList(Directories);
-  for Index := 0 to Parser.OperandCount - 1 do
+  Files := TEntryList.Create;
+  Directories := TStringList.Create;
+  for Operand in CommandLine.Operands do
   begin
-    IsDirectoryOperand := (GetFileInformation(Parser.Operands[Index], Information) = ErrorNone) and
+    IsDirectoryOperand := (GetFileInformation(PChar(Operand), Information) = ErrorNone) and
       (Information.Kind = KindDirectory);
     if IsDirectoryOperand and not ListDirectoriesThemselves then
-      AddLine(Directories, Parser.Operands[Index])
+      Directories.Add(Operand)
     else
     begin
-      Entry := NewEntry(Parser.Operands[Index], Parser.Operands[Index]);
+      Entry := NewEntry(Operand, Operand);
       if Entry <> nil then
-      begin
-        Files[FileCount] := Entry;
-        Inc(FileCount);
-      end
+        Files.Add(Entry)
       else
         ExitStatus := 2;
     end;
   end;
 
-  WriteEntries(Files, FileCount);
+  WriteEntries(Files);
   for Index := 0 to Directories.Count - 1 do
   begin
-    if (FileCount > 0) or (Index > 0) then
-      WriteCharacter(StandardOutput, #10);
-    ListDirectoryContents(Directories.Items[Index], (Parser.OperandCount > 1) or Recursive);
+    if (Files.Count > 0) or (Index > 0) then
+      PrintString(#10);
+    ListDirectoryContents(Directories[Index], (CommandLine.OperandCount > 1) or Recursive);
   end;
+  Files.Free;
+  Directories.Free;
+  CommandLine.Free;
   Halt(ExitStatus);
 end.
