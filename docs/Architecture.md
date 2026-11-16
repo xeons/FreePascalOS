@@ -891,6 +891,27 @@ Characters beyond ASCII are sent in UTF-8; with Num Lock off the keypad
 sends cursor and editing keys. The PS/2 driver sets the Caps, Num and
 Scroll Lock lights (keyboard command 0xED, answered by interrupts).
 
+**Keyboard layouts and the key repeat.** These tables are the system's
+only ones: the console and the display server's input both type through
+them, so a layout is chosen in one place, the kernel. The boot's comes
+from `keymap=`; while the system runs, `CallSetKeyboardSettings` (root
+only; `CallGetKeyboardSettings` and `CallDescribeKeyboardLayout` for
+anyone, `Sys.Keyboard` in libsystem) chooses another and the key
+repeat. A new layout is built in a spare table and then made the active
+one, so a key typed meanwhile sees one whole layout or the other. The
+repeat (`Drivers.KeyboardRepeat`: a delay of 250 to 1000 ms and 2 to
+30 repeats a second) is the PS/2 keyboard's own typematic setting
+(command 0xF3, the nearest it can do), sent with the lights through
+one little command machine: one command of two bytes at a time, each
+byte answered by an interrupt, a change that comes meanwhile waiting for
+it (`Ps2RunInTurnWithInterrupts` starts a command from a system call in
+turn with the interrupt). USB keyboards send no repeats yet. On the
+screen the layout is the user's: the display server (root) changes it
+for any program (`RequestSetKeyboardSettings`, see below), as it does
+the mouse's settings; `keyboardsettings [-r] [-d DELAY] [-s RATE]
+[LAYOUT]` (`-l` lists the layouts) goes through the server when one
+runs, and otherwise to the kernel, as root only.
+
 The PS/2 keyboard and mouse share the controller's one output byte:
 whichever interrupt comes takes every waiting byte and hands each to its
 device by the status bit (Ps2ServiceController, under a lock), as an
@@ -1129,6 +1150,20 @@ the system's again when the session ends. `mousesettings [-r] [-s SPEED]
 [-a ACCELERATION] [-l on|off]` changes them and prints them; `-r`
 (`--remember`) also keeps them in the user's settings.
 
+The keyboards' settings (`Server.KeyboardSettings`): the layout and the
+key repeat are the kernel's (keys become characters there, for the
+console too), and only root may change them; the server runs as root
+and changes them for any program (`RequestGetKeyboardSettings`,
+`RequestSetKeyboardSettings`, answered with `EventKeyboardSettings`:
+the layout's name in Text, the delay and the rate), as it does the
+mouse's: they belong to whoever sits at the screen. A layout the kernel
+does not have leaves the layout as it was. They are a user's settings
+too (`Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate`,
+`Windowing.KeyboardSettings`): the server starts with the system's
+(over the machine's own: the layout `keymap=` chose, else US), the
+session manager gives it a user's at login and the system's after the
+session.
+
 Remembered display settings (`Server.RememberedSettings`): a request to
 change a display's scale or mode with the flag `DisplayRemember`
 (`displayscale -r`, `displaymode -r`) has the server keep it in the
@@ -1301,24 +1336,26 @@ small icon with a tooltip in the shell's notification area
 (`RequestSetNotificationIcon`: its own number for the icon, shown or
 taken away, a picture and the tooltip; `Windowing.Notifications`). The
 picture is one the shell draws (`NotificationPicture*`: information, a
-warning, the volume, the network), so no pixels travel. The server
+warning, the volume, the volume muted, the network), so no pixels
+travel. The server
 keeps the icons, numbered its own way since programs' numbers may
 clash, passes them to the shell (`EventNotificationIconChanged`, all of
 them when a shell registers) and drops a program's icons when it ends.
 
-The protocol's numbers: requests 1 to 24 (hello to the window requests
+The protocol's numbers: requests 1 to 26 (hello to the window requests
 up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestSetOwner` = 16, `RequestSetPointerShape` = 17,
 `RequestGetMouseSettings` = 18, `RequestSetMouseSettings` = 19,
 `RequestRegisterShell` = 20, `RequestSetWorkArea` = 21,
 `RequestDescribeWorkArea` = 22, `RequestManageWindow` = 23,
-`RequestSetNotificationIcon` = 24), events 101 to 122 (up to
+`RequestSetNotificationIcon` = 24, `RequestGetKeyboardSettings` = 25,
+`RequestSetKeyboardSettings` = 26), events 101 to 123 (up to
 `EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
 `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
 `EventMouseSettings` = 116, `EventShellRegistered` = 117,
 `EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
 `EventWorkArea` = 120, `EventDisplaysChanged` = 121,
-`EventNotificationIconChanged` = 122).
+`EventNotificationIconChanged` = 122, `EventKeyboardSettings` = 123).
 
 `wintest` shows a window and prints what happens to it (its place, a
 new scale, being shown or hidden; `-b` sets a text beam over its left
@@ -1358,7 +1395,8 @@ replies waited for while other events are kept in order). A `TWindow`
 (`Windowing.Windows`) is a class whose handlers a program overrides:
 `Paint` (on its surface, clipped to what is invalid), keys, the pointer,
 the wheel, `Resized`, `ScaleChanged`, `ActiveChanged`, `CloseRequested`,
-`TimerFired`.
+`TimerFired`, `Moved` (the server moved it, or told its place after the
+displays changed).
 Positions given to it are logical units; what it is told is pixels.
 `Invalidate` marks what needs painting; the message loop
 (`RunMessageLoop`) paints before it waits and tells the server what
@@ -1446,8 +1484,12 @@ to its parents until one uses them), moves the focus with Tab and
 Shift+Tab, and presses the default and cancel buttons on Enter and
 Escape. So far: label, panel, group box, button, check box, radio button
 (one checked among its siblings), edit box (one line, UTF-8 by
-characters, caret, selection, scrolling), progress bar, scroll bar and
-status bar (`Controls.Text` draws text fitted with "..."), list box,
+characters, caret, selection, scrolling), progress bar, scroll bar,
+slider (`Controls.Slider`: a value on a groove with tick marks, the
+thumb put where the groove is pressed and dragged, the arrow keys,
+Page Up and Down, Home and End; `OnRelease` once a drag ends, for what
+is slow to apply) and status bar (`Controls.Text` draws text fitted
+with "..."), list box,
 multi-line edit box (`Controls.TextEdit`: positions are a line and a
 character), combo box (its text always the chosen item's, also when the
 items change under it), menu bar and pop-up menus (`Controls.Menus`),
@@ -1778,7 +1820,7 @@ bands of rolling water, all anti-aliased, drawn once per size into a
 surface of its own and copied from when the window paints. `-w IMAGE`
 names a wallpaper image, kept for when libimage can read one (step 8).
 On the first display the programs' icons (`Desktop.Programs`: Terminal,
-Notepad, Controls tour, Controls demo, Dialogs) stand in a grid of
+Notepad, Control Panel, Controls tour, Controls demo, Dialogs) stand in a grid of
 equal cells in columns from the top left, all in logical units: a
 picture above a caption, the selected one tinted with its caption on
 the selection colour. A click selects, a double click (two presses
@@ -1816,15 +1858,22 @@ click, when let go, opens Restore, Minimize, Maximize and Close for that
 window (each greyed when it cannot be done). The notification area
 (`Desktop.NotificationArea`) is a sunken panel with the icons, left to
 right in the order they came, and the clock (`Desktop.Clock`: HH:MM in
-UTC, since the system has no time zone setting yet), checked every
-second; a tooltip shows when the pointer has rested on an icon for half
-a second. The shell shows one icon of its own through the same
-interface as any program: a volume placeholder until there is a mixer
-to open.
+the local time of the system's time zone, `Sys.LocalTime`), checked
+every second; a tooltip shows when the pointer has rested on an icon
+for half a second. The shell shows one icon of its own through the same
+interface as any program: the volume (`Desktop.VolumeIndicator`), the
+default output's, looked at every second with the clock, a loudspeaker
+crossed out when muted, its tooltip "Volume: 80%". A click on a volume
+icon opens the volume control (`Desktop.VolumePopup`): a pop-up above
+it, like a menu, with the volume on a slider and Mute, which act on the
+output at once, and Settings..., which opens the Control Panel's Sound
+page (`controlpanel sound`); when it closes, a change is kept by the
+system settings service.
 
 `desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
-HH:MM`, `notification N TEXT`, `tooltip TEXT`) and where things are
+HH:MM`, `notification N TEXT`, `tooltip TEXT`, `volume-popup`, `volume
+N`, `mute on|off`, `volume-kept N`) and where things are
 (`place NAME X Y`: the Start button and menu items, the icons, the task
 buttons and their menu's items, the clock, the notification icons). The
 input test starts the server and the shell and checks the wallpaper on
@@ -1840,6 +1889,59 @@ double click on an icon starts controlstour, whose button's menu closes
 it; that the Start menu starts dialogtour and that Shut down asks first
 (Escape says no); and that wintest's icon shows its tooltip and goes
 when wintest ends.
+
+### The Control Panel
+
+`controlpanel [PAGE]` (units in `userland/controlpanel`) is the
+system's settings in one window: a list of pages on the left, the page
+chosen on the right (`ControlPanel.Pages`: a group box that shows the
+settings as they are, `Load`, and makes the changes chosen on it,
+`Apply`), and OK, Cancel and Apply along the bottom. Apply can be
+pressed once a page was changed, and applies every page that was; OK
+does the same and closes the window unless a change failed; Cancel and
+the close button forget what was not applied. PAGE (`display`, `mouse`,
+`keyboard`, `sound`, `datetime`, `users`) opens that page first; the
+Start menu and a desktop icon open it, the volume control its Sound
+page. Everything is in logical units and points, so it looks the same
+at every scale.
+
+| Page | What it changes | How |
+|---|---|---|
+| Display | each display's resolution (its modes) and scale (100% to 300%) | the display server (`Windowing.Displays`); then "Keep these display settings?" counts 15 seconds down (`ControlPanel.KeepSettingsDialog`): Keep asks again with `DisplayRemember` (the system's settings), anything else - Revert, Escape, the time running out - sets them back |
+| Mouse | the pointer's speed and acceleration, left-handed buttons | the display server, kept in the user's settings (`Windowing.MouseSettings`) |
+| Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate, and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
+| Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
+| Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
+| Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
+
+**Root's changes from a user's Control Panel.** The Control Panel runs
+as whoever started it. What only root may change goes to the system
+settings service (see "Startup, services and sessions"), which runs as
+root, asks the kernel who connected and decides
+(`ControlPanel.Administrator`): an ordinary user is asked once for an
+administrator's password (root's, or their own if they are in `wheel`),
+which goes with every request until the Control Panel ends and is never
+written anywhere; their own password needs their present one instead.
+No program is set-user-ID for this and no file is opened to others.
+
+It prints what happens (`page NAME`, `applied ...` for each change,
+`keep-asked SECONDS`, `keep-countdown N`, `kept`, `reverted`,
+`password-asked TITLE`, `dialog TITLE`, `typed TEXT` for the keyboard's
+try box, `user-added NAME`, `user-removed NAME`, `password-changed
+NAME`, `user-changed NAME`, `refused CODE ERROR`, `scale P`, `closed`,
+`cancelled`) and where its controls are (`place NAME X Y`). The session
+test opens it from the Start menu as the ordinary user and, on the
+Display page, keeps 150% (remembered, the taskbar half as high again in
+a screen dump) and 100% again, and leaves a smaller mode unanswered
+until it goes back; sets the mouse's speed (the display server has it);
+chooses the German layout and types z, y and the a-umlaut key into the
+try box and, in a terminal it starts, a command whose output shows the
+German characters, then US again; sets the volume (the output and the
+system's settings have it, the volume icon shows it); chooses
+Europe/Berlin, root's password asked (`date` and the taskbar clock
+follow); adds a user and gives them a new password (not asked again),
+then logs in as them through the login window, and later removes them
+with their home.
 
 ## Sound
 
@@ -1925,9 +2027,26 @@ a millisecond, and the bytes completed are the output's position.
 Built-in sound starts before the USB controllers, so it keeps the first
 device names.
 
+**Volumes, mute and the default output.** Each output's volume (its
+hardware's, `ControlAudioSetMasterVolume`) can be muted
+(`ControlAudioSetMute`): the mixer then writes silence, whatever the
+amplifier can do, and the volume is kept for when it is unmuted (the
+monitor input records the silence too: it is what plays). One output is
+the default (`ControlAudioGetDefaultOutput`, `...Set`, asked of or set
+on any output; the first until another is chosen): where programs play
+that name no output, since libaudio's `OpenAudioOutput(nil)` opens it.
+The kernel keeps only the number, and says what each output is
+(`ControlAudioGetKind`: HD Audio, AC'97, USB audio). Anyone may change
+these, as anyone at the machine could turn its knobs (the devices are
+open to everyone); the system settings service keeps them in the
+system's settings (`Sound/N/Volume`, `Sound/N/Muted`,
+`Sound/DefaultOutput`) and gives them to the kernel at every boot.
+
 In user space, `libaudio` holds `Audio.Device` (format, volume, writing,
-draining), `Audio.Wave` (PCM WAV files) and `Audio.Synthesis` (sine tones
-from a quarter-sine table and a fixed point phase).
+draining), `Audio.Outputs` (the outputs there are, their volumes, mutes
+and kinds, the default one), `Audio.Wave` (PCM WAV files) and
+`Audio.Synthesis` (sine tones from a quarter-sine table and a fixed
+point phase).
 
 ### The voice engine
 
@@ -2006,7 +2125,9 @@ The programs are `tone` (plays a tone, or writes it as a WAV file, in
 any format), `play` (WAV files: integer, float and extensible, any of the
 formats streams take), `record` (records an input into a WAV file),
 `soundinfo` (a WAV file's format, length, peak and frequency), `mixer`
-(the master volume), `voicetest` (the engine's tests) and `effecttest`
+(an output's volume and mute, `-l` the outputs, `-D N` the default
+output, `-r` keeping the change through the system settings service),
+`voicetest` (the engine's tests) and `effecttest`
 (the effects' and 3D audio's). The tests record what QEMU's HD Audio device plays (its
 `wav` audio backend). coretest plays a 1000 Hz tone, a 440 Hz WAV file,
 600 and 1500 Hz from two programs at once, then 800, 2000 and 300 Hz at
@@ -2416,6 +2537,7 @@ test copies to an unmapped user address.
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
+| Clock, time zone, keyboard (96-101) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
 
 There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory, the three handles
@@ -2651,6 +2773,31 @@ runs with its owner (group) as effective and saved id; `su` and `passwd`
 are installed that way and check passwords against salted SHA-256 hashes
 in `/etc/shadow` (`Util.Passwords`).
 
+**Account management.** `Util.AccountChanges` (libcoreutils) adds,
+removes and changes accounts; `useradd [-c FULL-NAME] [-a] NAME` (the
+password read twice from the terminal or standard input), `userdel [-r]
+NAME`, `usermod [-c FULL-NAME] [-G GROUP,...] [-a] NAME` (root only) and
+the system settings service (for the Control Panel) all use it, so the
+same code changes the files however it is asked. A new user gets the
+next id from 1000 free as both user and group id, a group of their own
+(their primary group), `/home/NAME` (theirs, 0755), `/bin/sh` and their
+password's salted hash; `-a` (or Administrator in the Control Panel)
+puts them in `wheel`. A name is a small letter, then small letters,
+digits, `_` and `-`, 31 at most; a full name holds no colon. Removing a
+user takes their lines from the three files, their own group (unless
+another user has it as theirs) and their place in other groups, and,
+asked to, their home - only under `/home`. Root's account is never
+removed. The files are written as settings are (`Util.AccountFiles`): all
+of a file anew into `PATH.new`, its mode set before any text goes in
+(0600 for `/etc/shadow`, so the hashes are never readable by others),
+then renamed over the file, so a reader sees the old file or the new one
+and a crash leaves one of them; whoever edits holds an exclusive lock
+on `/etc` (only root can open it so), so useradd and the service take
+turns. `passwd` writes the same way. `Util.Accounts` reads the files
+again when their node, size or time changed (looked at once a second at
+most, at once after an edit), so the session manager, which runs all
+the time, logs in a user added after it started.
+
 Root may start a program as another user: `TAbiProcessCreation.Identity`
 names its user and group (real, effective and saved) and its
 supplementary groups, which the kernel checks the program's execute
@@ -2785,6 +2932,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `serialconsole` | graphical | `login` on the console, which is only the serial port while the display server has the screen and the keyboards: a text console for debugging |
 | `displayserver` | graphical | the display server; ready once its port takes clients |
 | `session` | graphical | the session manager (needs `displayserver`) |
+| `systemsettings` | text, graphical | the system settings service: the machine's remembered settings at start, root's changes for the users who may |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
 `userland/etc/services`), lines of `key = value` (`Services.Definitions`):
@@ -2899,6 +3047,33 @@ refused for NAME`, `NAME logged in (session N)`, `logging off NAME`,
 end in time: ending them`, `session of NAME ended (status S)`, `asked
 to end (REASON)`.
 
+**The system settings service.** `systemsettings` (units in
+`userland/systemsettings`, root) makes the changes to the machine that
+only root may make, for the users who may ask for them, and keeps what
+is to last in the system's settings (`SystemSettings.Remembered`). At
+start it gives the kernel the remembered time zone (`Time/Zone`), each
+sound output's volume and mute and the default output (`Sound/...`);
+then it serves the port `systemsettings` (`Sys.SystemSettings` has the
+protocol: one `TSystemSettingsRequest` answered by one
+`TSystemSettingsReply`): the time zone, the clock, a volume, the
+default output, adding and removing a user, a password, a full name, a
+user's groups, and asking whether a password is an administrator's.
+Who may (`SystemSettings.Authorization`) is decided by who connected
+(the kernel says, `CallGetChannelPeer`) and the password the request
+carries: root asks for anything without one; anyone may set the sound;
+a user may change their own password and full name with their own
+password; everything else needs an administrator's password - root's,
+or the caller's own when they are in `wheel`, as sudo asks. A wrong
+password is answered (`ErrorAccessDenied`) after a pause of 1.5 seconds,
+so passwords cannot be tried quickly. One program, small and checked,
+holds every privileged change and checks every caller the same way,
+rather than set-user-ID helpers each doing so; the Control Panel and the
+tools (`timezone`, `date -s`, `mixer -r`, through `Util.SystemRequests`,
+which asks for the password on the terminal) all ask it. It holds
+nothing to tidy up (each change is written as it is made), so a stop
+ends it at once. Its log, `/var/log/systemsettings.log`, has a line for
+each change and each refusal, never a password.
+
 **Tests.** coretest runs `servicetest`: `servicemanager --check` on good
 and wrong definitions and on needs across modes (the order), then a
 second manager (its own directory, logs and port; only the first
@@ -2929,6 +3104,61 @@ again and nobody answering, stops the services in order (the session
 manager ends Notepad once its time is up, within the session's
 stop-timeout) and powers off (QEMU exits). The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
+
+### Time zones
+
+The kernel keeps UTC (the wall clock, file times); people read local
+time. **The database** (`Sys.TimeZones` in libsystem) is a compiled
+table of 66 zones named as in the IANA database (`Europe/Berlin`,
+`America/New_York`, `Australia/Sydney`, `Asia/Kolkata`...), each with
+its standard offset, the abbreviations of its standard and daylight
+times, and one of four daylight saving rules (daylight time is an hour
+ahead):
+
+| Rule | Daylight time |
+|---|---|
+| European | last Sunday of March 01:00 UTC to last Sunday of October 01:00 UTC |
+| North American | second Sunday of March 02:00 standard time to first Sunday of November 02:00 daylight time |
+| Australian | first Sunday of October 02:00 standard to first Sunday of April 03:00 daylight time |
+| New Zealand | last Sunday of September 02:00 standard to first Sunday of April 03:00 daylight time |
+
+The rules are today's, used for every year; places whose rules change
+often (Egypt, Iran, Israel, Chile...) are left out rather than shown
+wrong. A southern zone's daylight time spans the new year: the year a
+moment falls in is taken by standard time, and daylight time is before
+the April change or after the October one. A local time is turned back
+into a moment by trying the daylight offset first (so the hour that
+comes twice is taken the first time) and then the standard one (the
+hour skipped when clocks go forward reads as if standard time went
+on). Compiled in, the table is there for every program at once, with no
+file to parse.
+
+**The system's zone** is a name the kernel keeps (`CallGetTimeZone`,
+anyone; `CallSetTimeZone`, root; "UTC" at boot), as other systems keep
+their zone with the clock: every program finds it with one call, and a
+change reaches them all at once. The system settings service gives the
+kernel the remembered one (`Time/Zone`) at start and changes it for
+administrators (`timezone ZONE`, the Control Panel). **Local times**
+(`Sys.LocalTime`): `DecodeLocalTime` gives a moment's wall clock
+reading, offset and abbreviation in the zone the program shows times in
+- the environment variable `TZ` if it names a zone (`TZ=Asia/Tokyo
+date`; an unknown name is UTC), else the system's. `date` (local by
+default, `-u` for UTC, `%Z` and `%z`), `ls -l`, `stat`, Notepad's
+Time/Date, the taskbar clock and the file manager show local times;
+`date -d`, `touch -d` and `-t` read them (`Util.Dates`: a date or clock
+time is local unless it ends in UTC or Z).
+
+**Setting the clock.** `CallSetWallClock` (root) sets the wall clock and
+writes the battery backed clock (`WriteRealTimeClock`: the clock held
+still with status register B's SET bit while its registers are
+written, in its own BCD or binary, 12 or 24 hour format), which holds
+UTC. `date -s DATE` and the Control Panel ask the system settings
+service for it. `timezone` prints the system's zone, `-l` lists the
+database with each zone's offset now. coretest checks offsets and
+abbreviations on both sides of each rule's changes (Berlin, New York,
+Sydney both ways, Auckland), half and quarter hour zones, a local time
+read back, the system's zone used by `date`, `touch` and `ls -l`,
+refusals for a wrong password, and the clock set by root.
 
 ### Settings
 
@@ -3037,6 +3267,8 @@ as soon as a file changes, and programs need no change.
 | notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
 | terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
 | desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+| keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
+| system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start |
 
 A display's mode and scale are the machine's (the screen in front of
 it, whoever logs in), so the display server, which runs as root, keeps
@@ -3149,7 +3381,9 @@ independent) against the Free Pascal runtime library:
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
-  `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
+  `Sys.Environment`, `Sys.Time`, `Sys.TimeZones` (the time zone
+  database) and `Sys.LocalTime` (local times, the system's zone, setting
+  it and the clock), `Sys.Libraries`, `Sys.Information`,
   `Sys.FileWatches` (watching files and folders: a watch, its changes
   read and handed out one by one), `Sys.Volumes` (the volumes with
   their labels, file systems, sizes, free space and mount points, and a
@@ -3160,6 +3394,8 @@ independent) against the Free Pascal runtime library:
   any terminal), `Sys.PseudoTerminals` (creating one, starting a
   program on it), `Sys.KernelOptions` (the kernel's command line),
   `Sys.ServiceControl` (talking to the service manager),
+  `Sys.SystemSettings` (talking to the system settings service),
+  `Sys.Keyboard` (the keyboards' layout and repeat, and the layouts),
   `Sys.Locks` (user-mode locks and atomic operations) and `Sys.Threads`
   (creating, waiting for and ending threads, through the runtime's thread
   manager). The heap is thread safe; buffered output is not synchronized.
@@ -3261,7 +3497,7 @@ independent) against the Free Pascal runtime library:
   `Configuration.Documents`, `Configuration.Storage`,
   `Configuration.Scopes`, `Configuration.Settings`,
   `Configuration.FileStorage` and `Configuration.Locations`. It needs
-  only libsystem; libwindowing uses it (`Windowing.MouseSettings`). All
+  only libsystem; libwindowing uses it (`Windowing.MouseSettings`, `Windowing.KeyboardSettings`). All
   but the last two build on the host too: `make settings-test` (part of
   `make test`) runs `tools/SettingsTest` over a storage in memory.
 - **libtlstest.so** – a small library in assembly with TLS and
@@ -3274,7 +3510,11 @@ independent) against the Free Pascal runtime library:
   `Util.Directories`, `Util.FileTree` (copying, removing and walking
   trees), `Util.RegularExpressions` (POSIX BRE and ERE with groups),
   `Util.Modes` (chmod modes), `Util.Dates`, `Util.BaseEncoding`,
-  `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group),
+  `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group, read
+  again when they change), `Util.AccountFiles` (writing the account
+  files safely, under their lock), `Util.AccountChanges` (adding,
+  removing and changing accounts), `Util.SystemRequests` (asking the
+  system settings service from a tool),
   `Util.Logins` (logging a user in: the account, the password, starting
   a program as the user) and `Util.Commands` (running a command, signal
   names).
@@ -3335,7 +3575,9 @@ UTF-8 everywhere (`DefaultSystemCodePage`, file names, the console).
 Standard output is written line by line on the console and in buffers
 otherwise; error output (`StdErr`, `ErrOutput`) line by line wherever it
 goes, so a program that hangs or crashes does not lose its diagnostics
-(coretest checks the order through a pipe). Times are UTC. The runtime is checked by `rtltest` (strings, arrays,
+(coretest checks the order through a pipe). Times are UTC in the
+runtime (SysUtils' `Now`); programs show local times through
+`Sys.LocalTime` (see "Time zones"). The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
 
 ## Heap checking

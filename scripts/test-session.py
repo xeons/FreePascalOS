@@ -24,10 +24,19 @@ the wallpaper in a screen dump, its lines in /var/log/session.log, read
 from a root shell on the serial console). On the serial console it logs
 in with a wrong password, then the right one, and asks `service list`,
 and as the user keeps a mouse speed in the user's settings (mousesettings
---remember). Then from the screen: Log off on the Start menu ends the
+--remember). The Control Panel, opened from the Start menu as the
+user, keeps a display scale of 150% and 100% again, lets a smaller mode
+go back by itself, sets the mouse's speed, types German characters with
+the German layout (in its own box and in a terminal), sets the volume,
+the time zone (root's password asked; date and the taskbar clock
+follow), adds a user and gives them a new password. Then from the
+screen: Log off on the Start menu ends the
 session and brings the login window back (with the system's mouse
-settings); a wrong password there is refused, the right one starts the
-desktop again, with the user's mouse speed; and Shut down on the Start menu
+settings); a wrong password there is refused, the new user logs in
+with the password the Control Panel gave them and logs off, the right
+password starts the user's desktop again, with the user's mouse speed,
+and the Control Panel removes the new user with their home; and Shut
+down on the Start menu
 stops the services in order (the session before the display server) and
 powers the machine off: QEMU exits by itself. Both times Notepad holds
 unsaved text: logging off, it asks whether to save (the test answers
@@ -81,6 +90,7 @@ qemu = subprocess.Popen([
     '-drive', 'format=raw,file=fat:rw:' + os.path.join(work, 'esp'),
     '-drive', 'format=raw,file=' + os.path.join(work, 'system.img'),
     '-device', 'qemu-xhci,id=xhci', '-device', 'usb-tablet,bus=xhci.0',
+    '-audiodev', 'none,id=sound0', '-device', 'intel-hda', '-device', 'hda-output,audiodev=sound0',
     '-serial', 'pipe:' + os.path.join(work, 'serial'),
     '-display', 'none', '-no-reboot',
     '-monitor', 'unix:' + monitor_path + ',server,nowait',
@@ -296,6 +306,19 @@ def session_log():
     return bytes(received[start:])
 
 
+def run_and_read(command):
+    """What a command prints in the root shell on the serial console."""
+    global marker_count
+    marker_count += 1
+    marker = 'OUT' + str(marker_count)
+    start = len(received)
+    type_on_serial(command.encode() + b'; m=DONE; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 20, start)
+    output = bytes(received[start:])
+    # From the line after the command's echo.
+    return output[output.find(b'\n'):]
+
+
 def wait_for_session_log(texts, seconds, after=0):
     """Until the log has every text (counting only lines after the first
     `after` occurrences of the last login window), or the time runs out."""
@@ -378,6 +401,89 @@ checks.append(('mousesettings --remember keeps the user\'s mouse settings (their
                re.search(rb'\n15\r?\n600\r?\n', remembered_log) is not None))
 
 
+def control_panel_part():
+    """The session log from the last Control Panel started, and the places
+    it said."""
+    log = session_log()
+    part = log[log.rfind(b'started controlpanel'):]
+    return part, places(part)
+
+
+def wait_for_control_panel(text, seconds, after=0):
+    """Until the last Control Panel's lines hold text more than `after`
+    times; its part of the log and its places."""
+    deadline = time.time() + seconds
+    while True:
+        part, found = control_panel_part()
+        if part.count(text.encode()) > after or time.time() > deadline:
+            return part, found
+        time.sleep(1)
+
+
+def start_control_panel(login_marker):
+    """Opens the Control Panel from the Start menu of the session that
+    `login_marker` began."""
+    log = session_log()
+    found = places(log[log.rfind(login_marker):])
+    if 'start' in found:
+        click_at(*found['start'])
+        time.sleep(1)
+        log = session_log()
+        found = places(log[log.rfind(login_marker):])
+    if 'start-controlpanel' in found:
+        click_at(*found['start-controlpanel'])
+    return wait_for_control_panel('page display', 30)
+
+
+def click_place(found, name):
+    if name in found:
+        click_at(*found[name])
+    else:
+        print('[session] no place ' + name)
+
+
+def choose_in_combo(found, name, key, count):
+    """Drops a combo box down and moves its choice with a key."""
+    click_place(found, name)
+    time.sleep(0.5)
+    for step in range(count):
+        press(key)
+    press('ret')
+    time.sleep(0.5)
+
+
+def apply_and_keep(found, after):
+    """Apply, then Keep in "Keep these settings?"; True once kept."""
+    click_place(found, 'apply')
+    part, found = wait_for_control_panel('place keep-yes', 30, after)
+    click_place(found, 'keep-yes')
+    part, found = wait_for_control_panel('kept', 20, after)
+    return part.count(b'kept') > after
+
+
+def type_with_shift(text):
+    """Types text on the keyboard, capitals with Shift."""
+    for character in text:
+        if character == ' ':
+            press('spc')
+        elif character.isupper():
+            press('shift-' + character.lower())
+        else:
+            press(character)
+
+
+def log_in_through_window(name, password):
+    """Types a name and a password into the login window shown last,
+    each over what its box holds."""
+    log = session_log()
+    found = places(log[log.rfind(b'login window shown') - 400:])
+    for box, text in (('login-user-name', name), ('login-password', password)):
+        click_place(found, box)
+        press('ctrl-a')
+        type_on_keyboard(text)
+    press('ret')
+
+
 def open_notepad_with_text(after):
     """Starts Notepad from the Start menu and types into it, so it has
     unsaved text; `after` counts the logins before this session."""
@@ -396,6 +502,163 @@ def open_notepad_with_text(after):
     time.sleep(1)
     return log.count(b'title Untitled - Notepad') > after
 
+
+# The Control Panel, from the Start menu, as the user (an ordinary one:
+# what only root may change asks for root's password).
+part, found = start_control_panel(b'session: user logged in')
+checks.append(('the Start menu starts the Control Panel on its Display page',
+               b'started controlpanel' in part and b'page display' in part))
+
+# Display: 150% kept (the server keeps it in the system's settings), then
+# 100% kept again; a smaller mode not answered goes back by itself.
+choose_in_combo(found, 'display-scales', 'down', 2)
+kept = apply_and_keep(found, 0)
+part, found = control_panel_part()
+screen = take_screen()
+scale_kept = run_and_read('settings get -s Display/0/Scale')
+checks.append(('Display: a scale of 150% is applied, kept and remembered (the taskbar 1.5 times as high)',
+               kept and b'applied display 0 mode 1280 x 800 scale 150' in part and b'scale 150' in part and
+               re.search(rb'\n150\r?\n', scale_kept) is not None and screen(640, 760) == 'cbc6bd'))
+choose_in_combo(found, 'display-scales', 'up', 2)
+kept = apply_and_keep(found, 1)
+part, found = control_panel_part()
+scale_kept = run_and_read('settings get -s Display/0/Scale')
+checks.append(('Display: back to 100%, kept',
+               kept and b'scale 100' in part and re.search(rb'\n100\r?\n', scale_kept) is not None))
+choose_in_combo(found, 'display-modes', 'up', 1)
+click_place(found, 'apply')
+part, found = wait_for_control_panel('reverted', 45)
+mode_now = run_and_read('displaymode')
+checks.append(('Display: a new mode left unanswered goes back when the countdown ends',
+               b'keep-countdown 0' in part and b'reverted' in part and b'1280x800' in mode_now and
+               re.search(rb'applied display 0 mode (?!1280 x 800)\d+ x \d+', part) is not None))
+
+# Mouse: a speed of 20 reaches the display server; 15 again.
+click_place(found, 'page-mouse')
+part, found = wait_for_control_panel('page mouse', 20)
+click_place(found, 'mouse-speed-20')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied mouse speed 20', 20)
+mouse_now = run_and_read('mousesettings')
+click_place(found, 'mouse-speed-15')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied mouse speed 15', 20)
+checks.append(('Mouse: the speed chosen reaches the display server',
+               b'applied mouse speed 20, acceleration 0, left-handed off' in part and
+               b'speed 20, acceleration 0, left-handed off' in mouse_now and
+               b'applied mouse speed 15' in part))
+
+# Keyboard: German; keys typed with it give German characters, in the
+# Control Panel's box and in a terminal; then US again.
+click_place(found, 'page-keyboard')
+part, found = wait_for_control_panel('page keyboard', 20)
+click_place(found, 'keyboard-layout-de')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied keyboard layout de', 20)
+layout_now = run_and_read('keyboardsettings')
+click_place(found, 'keyboard-try')
+for key in ('z', 'y', 'apostrophe'):
+    press(key)
+part, found = wait_for_control_panel('typed yz\u00e4', 20)
+typed = 'typed yz\u00e4'.encode() in part
+log = session_log()
+desktop_places = places(log[log.rfind(b'session: user logged in'):])
+click_place(desktop_places, 'start')
+time.sleep(1)
+log = session_log()
+desktop_places = places(log[log.rfind(b'session: user logged in'):])
+click_place(desktop_places, 'start-terminal')
+time.sleep(3)
+# German keys for "echo yz\u00e4 > /tmp/kb": z and y swapped, the a umlaut
+# on the apostrophe key, > on Shift and the key by the left Shift, / on
+# Shift+7.
+for key in ('e', 'c', 'h', 'o', 'spc', 'z', 'y', 'apostrophe', 'spc', 'shift-less', 'spc', 'shift-7', 't', 'm',
+            'p', 'shift-7', 'k', 'b', 'ret'):
+    press(key)
+time.sleep(1)
+type_on_keyboard('exit')
+press('ret')
+time.sleep(2)
+typed_in_terminal = run_and_read('cat /tmp/kb')
+part, found = control_panel_part()
+click_place(found, 'page-keyboard')
+time.sleep(1)
+click_place(found, 'keyboard-layout-us')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied keyboard layout us', 20)
+checks.append(('Keyboard: German keys type German characters, in the Control Panel and in a terminal',
+               b'layout de, repeat delay 500, rate 11' in layout_now and typed and
+               'yz\u00e4'.encode() in typed_in_terminal and b'applied keyboard layout us' in part))
+
+# Sound: the volume at 40% reaches the output, is kept, and the volume
+# icon shows it.
+click_place(found, 'page-sound')
+part, found = wait_for_control_panel('page sound', 20)
+click_place(found, 'sound-volume-40')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied volume 0 40', 20)
+time.sleep(1.5)
+volume_now = run_and_read('mixer; settings get -s Sound/0/Volume')
+log = session_log()
+checks.append(('Sound: the volume reaches the output, is kept, and the volume icon shows it',
+               b'applied volume 0 40' in part and re.search(rb'volume 40%\r?\n40\r?\n', volume_now) is not None and
+               b'Volume: 40%' in log))
+
+# Date and Time: Europe/Berlin, which needs root's password; the taskbar
+# clock and date show the new local time.
+zones = run_and_read('timezone -l').decode(errors='replace')
+zone_names = re.findall(r'^([A-Z][A-Za-z_/]+) [-+]\d{4} ', zones, re.M)
+click_place(found, 'page-datetime')
+part, found = wait_for_control_panel('page datetime', 20)
+click_place(found, 'datetime-zones')
+press('home')
+for step in range(zone_names.index('Europe/Berlin') if 'Europe/Berlin' in zone_names else 0):
+    press('down')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('password-asked', 20)
+type_on_keyboard('root')
+press('ret')
+part, found = wait_for_control_panel('applied time-zone Europe/Berlin', 30)
+time.sleep(2)
+before = run_and_read('date +%H:%M; timezone')
+log = session_log()
+clocks = re.findall(rb'clock (\d\d:\d\d)', log)
+after = run_and_read('date +%H:%M')
+times_now = re.findall(rb'\n(\d\d:\d\d)\r?\n', before + after)
+checks.append(('Date and Time: a new time zone (root\'s password asked) reaches date and the taskbar clock',
+               b'password-asked Administrator' in part and b'applied time-zone Europe/Berlin' in part and
+               b'Europe/Berlin +0' in before and bool(clocks) and clocks[-1] in times_now))
+
+# Users: alice added (the password given before is not asked again),
+# then a new password for her.
+click_place(found, 'page-users')
+part, found = wait_for_control_panel('page users', 20)
+click_place(found, 'users-add')
+part, found = wait_for_control_panel('dialog Add a User', 20)
+type_on_keyboard('alice')
+press('tab')
+type_with_shift('Alice Example')
+press('tab')
+type_on_keyboard('secret1')
+press('tab')
+type_on_keyboard('secret1')
+press('ret')
+part, found = wait_for_control_panel('user-added alice', 30)
+account = run_and_read('grep "^alice:" /etc/passwd; stat -c "%U %G %a" /home/alice')
+click_place(found, 'user-row-alice')
+click_place(found, 'users-password')
+part, found = wait_for_control_panel('dialog Password of alice', 20)
+type_on_keyboard('secret2')
+press('tab')
+type_on_keyboard('secret2')
+press('ret')
+part, found = wait_for_control_panel('password-changed alice', 30)
+checks.append(('Users: a new user, with a home of their own, and a new password for them',
+               b'user-added alice' in part and part.count(b'password-asked') == 1 and
+               b'alice:x:1001:1001:Alice Example:/home/alice:/bin/sh' in account and
+               b'alice alice 755' in account and b'password-changed alice' in part))
+click_place(found, 'ok')
+part, found = wait_for_control_panel('closed', 20)
 
 # Log off with Notepad holding unsaved text: the session's programs are
 # asked to end, so Notepad asks whether to save (No is answered), and
@@ -437,14 +700,33 @@ type_on_keyboard('wrong')
 press('ret')
 log = wait_for_session_log(['login refused for user'], 20)
 checks.append(('the login window refuses a wrong password', b'login refused for user' in log))
-type_on_keyboard('user')
-press('ret')
-log = wait_for_session_log(['user logged in'], 30, after=1)
+# The user the Control Panel added logs in with the password it gave
+# them, and logs off. (The refused login left its name in the box: it
+# is chosen whole and typed over.)
+log_in_through_window('alice', 'secret2')
+log = wait_for_session_log(['alice logged in', 'place start'], 30)
 log = wait_for_session_log(['desktop: ready'], 30, after=1)
+listing = run_and_read('ps -e -o user= -o comm= | grep desktop')
+checks.append(('the new user logs in through the login window, with the password the Control Panel gave',
+               b'session: alice logged in' in log and re.search(rb'alice +desktop', listing) is not None))
+place = places(log[log.rfind(b'session: alice logged in'):])
+if 'start' in place:
+    click_at(*place['start'])
+    time.sleep(1)
+    log = session_log()
+    place = places(log[log.rfind(b'session: alice logged in'):])
+if 'start-logoff' in place:
+    click_at(*place['start-logoff'])
+    time.sleep(1)
+    press('ret')
+log = wait_for_session_log(['session of alice ended', 'login window shown'], 30, after=1)
+log_in_through_window('user', 'user')
+log = wait_for_session_log(['user logged in'], 30, after=1)
+log = wait_for_session_log(['desktop: ready'], 30, after=2)
 place = places(log[log.rfind(b'session: user logged in'):])
 screen = take_screen()
 checks.append(('the right password starts the desktop again',
-               log.count(b'session: user logged in') == 2 and log.count(b'desktop: ready') == 2 and
+               log.count(b'session: user logged in') == 2 and log.count(b'desktop: ready') == 3 and
                screen(640, 785) == 'cbc6bd'))
 start = len(received)
 type_on_serial(b'mousesettings; m=DONE; echo MOUSE $m\r')
@@ -453,6 +735,27 @@ checks.append(('the user\'s mouse settings are given back at their next login',
                log.count(b'mouse settings of user: speed 10, acceleration 0, left-handed off') == 1 and
                b'mouse settings of user: speed 15, acceleration 0, left-handed off' in log and
                mouse_asked and b'speed 15, acceleration 0, left-handed off' in bytes(received[start:])))
+
+# The Control Panel removes alice, with her home (a new Control Panel:
+# root's password is asked again).
+part, found = start_control_panel(b'session: user logged in')
+click_place(found, 'page-users')
+part, found = wait_for_control_panel('page users', 20)
+click_place(found, 'user-row-alice')
+click_place(found, 'users-remove')
+part, found = wait_for_control_panel('place user-remove-home', 20)
+click_place(found, 'user-remove-home')
+click_place(found, 'user-ok')
+part, found = wait_for_control_panel('password-asked', 20)
+type_on_keyboard('root')
+press('ret')
+part, found = wait_for_control_panel('user-removed alice', 30)
+gone = run_and_read('grep -c "^alice:" /etc/passwd /etc/group /etc/shadow; test -e /home/alice || echo home-gone')
+checks.append(('Users: the Control Panel removes a user with their home',
+               b'user-removed alice' in part and b'/etc/passwd:0' in gone and b'/etc/group:0' in gone and
+               b'/etc/shadow:0' in gone and b'home-gone' in gone))
+click_place(found, 'ok')
+wait_for_control_panel('closed', 20)
 
 # Shut down from the Start menu: through the session manager (the user
 # may not shut down; it may), the kernel, and the service manager, which

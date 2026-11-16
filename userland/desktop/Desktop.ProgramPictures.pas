@@ -21,7 +21,8 @@
   a terminal (a screen with a prompt), a notepad (a ruled page with a
   pencil), the controls (a small window with a check box, a button and
   a slider), swatches (a window with colour samples) and the dialogs (a
-  window with a folder and colour discs). Each is drawn with shapes on
+  window with a folder and colour discs) and the Control Panel (a window
+  of three sliders, as on a mixing desk). Each is drawn with shapes on
   the design grid (Desktop.Shapes), at any size.
 }
 unit Desktop.ProgramPictures;
@@ -125,6 +126,23 @@ begin
   DrawGridDisc(Canvas, Grid, 19.5, 22, 3, WithAlpha($FF3B73C4, 220));
 end;
 
+procedure DrawControlPanel(const Canvas: TCanvas; const Grid: TPictureGrid);
+const
+  KnobRows: array[0..2] of Double = (16, 22.5, 18.5);
+var
+  Index: LongInt;
+  Column: Double;
+begin
+  DrawLittleWindow(Canvas, Grid);
+  for Index := 0 to 2 do
+  begin
+    Column := 9.5 + Index * 6.5;
+    DrawGridLine(Canvas, Grid, Column, 13.5, Column, 25.5, 1.2, $FF7E7A72);
+    DrawRoundedBox(Canvas, Grid, Column - 2.6, KnobRows[Index] - 1.6, Column + 2.6, KnobRows[Index] + 1.6, 0.6,
+      WindowTitleColor, OutlineColor, 0.7);
+  end;
+end;
+
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 var
   Grid: TPictureGrid;
@@ -141,6 +159,8 @@ begin
       DrawSwatches(Canvas, Grid);
     PictureDialogs:
       DrawDialogs(Canvas, Grid);
+    PictureControlPanel:
+      DrawControlPanel(Canvas, Grid);
   end;
 end;
 

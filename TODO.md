@@ -384,7 +384,7 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [ ] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
-- [ ] Control Panel: display, mouse, keyboard layout, sound, date and time, users
+- [x] Control Panel: display, mouse, keyboard layout, sound, date and time, users
 - [ ] Task Manager: processes, CPU and memory
 - [ ] Graphical login, locking, log off, shut down and suspend from the desktop
       (login, log off and shut down are done; locking and suspend remain)

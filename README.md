@@ -54,7 +54,10 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   under `/volumes` at once and announced, and unplugging one takes its
   volumes away cleanly (`volumes`, `volumes -w`).
 - Sound: an audio framework (`/dev/audio`) with an Intel HD Audio driver,
-  `libaudio`, and the `tone`, `play` and `mixer` programs.
+  `libaudio`, and the `tone`, `play` and `mixer` programs; each output's
+  volume and mute and the default output, remembered for the next boot
+  (`mixer -l`, `mixer -r 60`, `mixer -D 1`), and a volume icon on the
+  taskbar that opens a volume control.
 - USB keyboards next to PS/2 ones, with dead keys for the German and
   French layouts; a framebuffer console with UTF-8 and escape sequences.
 - A kernel debug shell (kernel option `kshell`).
@@ -62,7 +65,21 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - I/O APIC interrupt routing (from the ACPI MADT), with interrupt-driven
   PS/2 keyboard and serial console input; interrupt handlers hand work to
   dispatch level through deferred calls. Keyboard layouts us, uk, de and
-  fr (kernel option `keymap=`), AltGr, Num Lock and the lock lights.
+  fr (kernel option `keymap=`, or chosen while the system runs: each
+  user's own on the screen), AltGr, Num Lock, the lock lights and the
+  PS/2 key repeat (`keyboardsettings`).
+- **Time zones**: a database of 66 zones with their daylight saving
+  rules, the system's zone (`timezone Europe/Berlin`, remembered), local
+  times in `date`, `ls -l`, Notepad and the taskbar clock (`TZ=` for one
+  program), and setting the clock (`date -s`), written to the battery
+  backed clock.
+- **The Control Panel** (`controlpanel`, on the Start menu): display
+  (resolution and scale, kept only when "Keep these settings?" is
+  answered in time), mouse, keyboard layout and repeat, sound, date and
+  time (the time zone, the clock) and users (add, remove, passwords, full
+  names, groups). What only root may change is made by the system
+  settings service, which asks an ordinary user for an administrator's
+  password.
 - **The Free Pascal runtime library** for user programs: strings,
   dynamic arrays, exceptions, classes, generics, threads (TThread),
   SysUtils, Classes, StrUtils, DateUtils, Math, Variants and the rest of
@@ -91,7 +108,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   chown, setting times and running programs are checked against the
   Unix mode bits (root passes everything but needs one execute bit to run
   a file). Set-user-ID programs run as their owner; `su`, `passwd` and
-  `login` check salted SHA-256 hashes in `/etc/shadow`.
+  `login` check salted SHA-256 hashes in `/etc/shadow`. `useradd`,
+  `userdel` and `usermod` (and the Control Panel) manage the accounts:
+  a home with the right owner, a group of one's own, `wheel` for
+  administrators; the account files are always written whole and
+  renamed into place.
 - **Startup, services and sessions**: the first program is a service
   manager that starts the services of the boot mode (text or graphical)
   from definitions in `/etc/services` in the order of what they need,
@@ -233,7 +254,10 @@ appears there too). The services' output is in
 
 The system volume has two accounts: `root` (password `root`) and `user`
 (uid 1000, home `/home/user`, password `user`). `su user` becomes the
-ordinary user, `passwd` changes a password.
+ordinary user, `passwd` changes a password, `useradd NAME` adds a user.
+The Control Panel (Start menu, or `controlpanel [display|mouse|keyboard|
+sound|datetime|users]`) changes the machine's settings; as `user` it asks
+for root's password where it must.
 
 Settings live in `/etc/settings` (the system's) and in `.settings` in each
 user's home (`/home/user/.settings`; root's home is `/`, so `/.settings`),
@@ -309,6 +333,10 @@ userland/
   bin/              One file per program (/bin/<name>)
   sh/               The shell's units (lexer, parser, expansion, execution)
   notepad/          Notepad's units (files, the document, menus, Go To)
+  controlpanel/     The Control Panel's units (the window, one per page,
+                    the dialogs, asking for an administrator's password)
+  systemsettings/   The system settings service's units (who may, what
+                    it changes, what it remembers, its port)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)

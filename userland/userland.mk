@@ -261,16 +261,29 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
-GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings wintest ownertest controlsdemo controlstour dialogtour notepad terminal desktop sessionmanager)
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest controlsdemo controlstour dialogtour notepad terminal sessionmanager)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
 	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS)
 $(GRAPHICAL_PROGRAMS): $(CONTROLS_LIBRARY)
+# Graphical programs that set the sound outputs too.
+GRAPHICAL_SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,controlpanel desktop)
+$(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -ldrawing -laudio
+$(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
+	-Fu$(AUDIO_LIBRARY_OBJECTS)
+$(GRAPHICAL_SOUND_PROGRAMS): $(CONTROLS_LIBRARY) $(AUDIO_LIBRARY)
 SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest)
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
+# The system settings service keeps what it changes in the settings and
+# sets the sound outputs.
+SYSTEM_SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,systemsettings)
+$(SYSTEM_SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio -lconfiguration
+$(SYSTEM_SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
+$(SYSTEM_SETTINGS_PROGRAMS): $(AUDIO_LIBRARY) $(CONFIGURATION_LIBRARY)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)

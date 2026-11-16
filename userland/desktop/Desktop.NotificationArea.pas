@@ -23,7 +23,8 @@
 
   Icons stand left to right in the order they came. The pointer resting
   on one is told to the taskbar (OnHoverChanged), which shows its
-  tooltip after a moment. Changes are said on the standard output
+  tooltip after a moment; a click on one is told too (OnIconClicked:
+  the volume's opens the volume control). Changes are said on the standard output
   ("notification N TEXT", "notification-gone N").
 }
 unit Desktop.NotificationArea;
@@ -52,6 +53,8 @@ type
     FClock: string;
     FHovered: LongInt;
     FOnHoverChanged: TControlEvent;
+    FOnIconClicked: TControlEvent;
+    FClicked: LongInt;
     function GetIconCount: LongInt;
     function GetIcon(Index: LongInt): TNotificationIcon;
     function IconAt(X, Y: LongInt): LongInt;
@@ -61,6 +64,7 @@ type
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerLeave; override;
+    procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
   public
     constructor Create(AParent: TControl); override;
     { Takes an EventNotificationIconChanged. }
@@ -77,12 +81,16 @@ type
     { The icon under the pointer, -1 for none. }
     property Hovered: LongInt read FHovered;
     property OnHoverChanged: TControlEvent read FOnHoverChanged write FOnHoverChanged;
+    { The icon clicked last (for OnIconClicked). }
+    property Clicked: LongInt read FClicked;
+    property OnIconClicked: TControlEvent read FOnIconClicked write FOnIconClicked;
   end;
 
 implementation
 
 uses
   SysUtils,
+  Abi.SystemCalls,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
@@ -219,6 +227,15 @@ end;
 procedure TNotificationArea.PointerLeave;
 begin
   SetHovered(-1);
+end;
+
+procedure TNotificationArea.PointerUp(X, Y: LongInt; Button: LongWord);
+begin
+  if Button <> ButtonLeft then
+    Exit;
+  FClicked := IconAt(X, Y);
+  if (FClicked >= 0) and Assigned(FOnIconClicked) then
+    FOnIconClicked(Self);
 end;
 
 end.

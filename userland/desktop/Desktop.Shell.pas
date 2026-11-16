@@ -26,9 +26,9 @@
   it. What the server tells the shell (Windowing.Shell) goes to the
   window list, which the taskbar follows, and to the notification area;
   when the displays are laid out again (a new scale or mode) the
-  desktops and the taskbar are placed again. The shell shows one
-  notification icon of its own, a volume placeholder until there is a
-  mixer to open, through the same interface as any program.
+  desktops and the taskbar are placed again. The taskbar shows the
+  volume's notification icon (Desktop.VolumeIndicator) through the same
+  interface as any program.
 
   Asked to end (the user logs off, the system shuts down), the shell
   simply ends: its windows hold nothing to save, and its end tells the
@@ -70,14 +70,9 @@ uses
   Sys.Notifications,
   Windowing.Displays,
   Windowing.Shell,
-  Windowing.Notifications,
   Windowing.EndRequests,
   Windowing.Windows,
   Desktop.Report;
-
-const
-  VolumeIconNumber = 1;
-  VolumeTooltip: PChar = 'Volume: no mixer yet';
 
 procedure TShell.EndRequested(Reason: LongWord);
 begin
@@ -93,7 +88,6 @@ begin
   OnShellEvent := @ShellEvent;
   OnEndRequested := @EndRequested;
   LayOut;
-  ShowNotificationIcon(VolumeIconNumber, NotificationPictureVolume, VolumeTooltip);
 end;
 
 destructor TShell.Destroy;

@@ -35,7 +35,8 @@ unit Desktop.Programs;
 interface
 
 type
-  TProgramPicture = (PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs);
+  TProgramPicture = (PictureTerminal, PictureNotepad, PictureControls, PictureSwatches, PictureDialogs,
+    PictureControlPanel);
 
   TDesktopProgram = record
     Command: PChar;
@@ -44,10 +45,11 @@ type
   end;
 
 const
-  DesktopProgramCount = 5;
+  DesktopProgramCount = 6;
   DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
     (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
     (Command: 'notepad'; Caption: 'Notepad'; Picture: PictureNotepad),
+    (Command: 'controlpanel'; Caption: 'Control Panel'; Picture: PictureControlPanel),
     (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),
     (Command: 'controlsdemo'; Caption: 'Controls demo'; Picture: PictureSwatches),
     (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs));
@@ -55,6 +57,9 @@ const
 { Starts DesktopPrograms[Index]; False (after saying why in a message
   box) if it could not be started. }
 function StartDesktopProgram(Index: LongInt): Boolean;
+{ Starts Command with one Argument (nil: none) in the same way; Caption
+  names it in a message box if it cannot start. }
+function StartCommand(Command, Argument: PChar; const Caption: string): Boolean;
 
 implementation
 
@@ -75,37 +80,44 @@ begin
   ShowMessageBox('Cannot start ' + Caption, Caption + ' (' + Command + ') ' + Reason, MessageOk, SignError);
 end;
 
-function StartDesktopProgram(Index: LongInt): Boolean;
+function StartCommand(Command, Argument: PChar; const Caption: string): Boolean;
 var
-  Entry: TDesktopProgram;
   FullPath: array[0..PathCapacity - 1] of Char;
-  Arguments: array[0..1] of PChar;
+  Arguments: array[0..2] of PChar;
   Options: TProcessOptions;
   Process: Int64;
 begin
   Result := False;
-  if (Index < 0) or (Index >= DesktopProgramCount) then
-    Exit;
-  Entry := DesktopPrograms[Index];
-  if not FindProgram(Entry.Command, @FullPath[0], PathCapacity) then
+  if not FindProgram(Command, @FullPath[0], PathCapacity) then
   begin
-    ReportFailure(Entry.Caption, Entry.Command, 'is not installed.');
+    ReportFailure(Caption, Command, 'is not installed.');
     Exit;
   end;
-  Arguments[0] := Entry.Command;
-  Arguments[1] := nil;
+  Arguments[0] := Command;
+  Arguments[1] := Argument;
+  Arguments[2] := nil;
   DefaultProcessOptions(Options);
   Options.GroupId := GroupNew;
   Process := StartProgram(@FullPath[0], @Arguments[0], Options);
   if Process < 0 then
   begin
-    ReportFailure(Entry.Caption, Entry.Command, 'could not be started.');
+    ReportFailure(Caption, Command, 'could not be started.');
     Exit;
   end;
   { Nobody waits for it: the handle is not needed. }
   CloseHandle(Process);
-  Say('started ' + string(Entry.Command));
+  if Argument <> nil then
+    Say('started ' + string(Command) + ' ' + string(Argument))
+  else
+    Say('started ' + string(Command));
   Result := True;
+end;
+
+function StartDesktopProgram(Index: LongInt): Boolean;
+begin
+  if (Index < 0) or (Index >= DesktopProgramCount) then
+    Exit(False);
+  Result := StartCommand(DesktopPrograms[Index].Command, nil, DesktopPrograms[Index].Caption);
 end;
 
 end.
