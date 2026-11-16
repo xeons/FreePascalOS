@@ -458,7 +458,26 @@ normalized (0-65535), not pixels.
 
 ### 8. Richer graphics
 - [ ] libcompression: deflate
-- [ ] libimage: BMP and ICO, then PNG (reading and writing), JPEG (reading)
+- [ ] libimage: one image model (pixels, frames with delays, colour
+      profile, metadata) and a decoder/encoder per format, chosen by content
+      (magic bytes) rather than file name:
+  - [ ] BMP and DIB (all bit depths, RLE, bitfields; reading and writing)
+  - [ ] ICO and CUR (several sizes in one file, PNG inside; the nearest to
+        the scale)
+  - [ ] PNG (all colour types and depths, interlacing, transparency; reading
+        and writing; needs libcompression's deflate) and APNG frames
+  - [ ] GIF, including animation (frames, delays, disposal, transparency,
+        loop count; LZW) — the picture box plays it
+  - [ ] JPEG (baseline and progressive, chroma subsampling, EXIF orientation;
+        reading, then writing)
+  - [ ] TIFF (strips and tiles, several pages; none, PackBits, LZW, deflate
+        and JPEG compression)
+  - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
+  - [ ] JPEG XL (VarDCT and modular modes, animation)
+  - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
+        patent pools, so check licensing before shipping it)
+  - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
+        good filtering for thumbnails
 - [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
       so any DPI)
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
