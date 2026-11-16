@@ -22,13 +22,18 @@
   The system's fonts are families of files, one directory each in
   /lib/fonts, with their licences: "terminus" (PSF bitmap fonts in
   heights from 12 to 32 pixels, regular "...n.psf" and bold "...b.psf";
-  the console's font, monospaced) and "dejavu-sans" (DejaVu Sans
-  rendered into coverage fonts, ".cvf", every pixel size from 9 to 40,
-  regular and bold; proportional, the interface's).
+  the console's and the terminal's font, monospaced), "dejavu-sans"
+  (DejaVu Sans, TrueType, regular and bold; proportional, the
+  interface's) and "dejavu-sans-mono" (DejaVu Sans Mono, TrueType,
+  regular and bold). A family may also hold coverage fonts (".cvf",
+  Font.Coverage).
 
   LoadFontFamily reads only the start of every font file in a family's
-  directory, enough for its size and weight, and gives the set a loader
-  that reads a face's glyphs the first time it is picked.
+  directory, enough for its size and weight (a TrueType font's table
+  directory and its head and OS/2 tables), and gives the set a loader
+  that reads a face's glyphs the first time it is picked. A TrueType
+  font is one face of any size; its file is read whole, once, and kept
+  for as long as the program runs.
 }
 unit Font.Files;
 
@@ -45,8 +50,10 @@ const
   FontDirectory = '/lib/fonts';
   TerminusFamily = 'terminus';
   DejaVuSansFamily = 'dejavu-sans';
+  DejaVuSansMonoFamily = 'dejavu-sans-mono';
 
-{ Reads the font at Path (PSF or coverage, by its name), glyphs and all. }
+{ Reads the font at Path (PSF, coverage or TrueType, by its name),
+  glyphs and all (a TrueType font gives its face of any size). }
 function LoadFontFace(const Path: string; out Face: TFontFace): Boolean;
 { Every font in /lib/fonts/<Family>; False if there are none. }
 function LoadFontFamily(const Family: string; out FontSet: TFontSet): Boolean;
@@ -58,26 +65,52 @@ uses
   Abi.SystemCalls,
   Sys.Files,
   Font.Psf,
-  Font.Coverage;
+  Font.Coverage,
+  Font.FontData,
+  Font.TrueType,
+  Font.OutlineFaces;
 
 const
-  MaximumFontFileSize = 4 * 1024 * 1024;
-  { Enough for the header of either kind of font. }
+  MaximumFontFileSize = 16 * 1024 * 1024;
+  { Enough for the header of a bitmap or coverage font. }
   SummaryBytes = 64;
   PsfExtension = '.psf';
   CoverageExtension = '.cvf';
+  TrueTypeExtension = '.ttf';
+  OpenTypeExtension = '.otf';
+  { A TrueType font's table directory, at most. }
+  MaximumDirectoryTables = 256;
+  MacStyleBold = $0001;
+  BoldWeightClass = 600;
 
 type
-  TFontKind = (NotAFont, PsfFont, CoverageFont);
+  TFontKind = (NotAFont, PsfFont, CoverageFont, TrueTypeFont);
 
 function KindOfFont(const Name: string): TFontKind;
+var
+  Extension: string;
 begin
-  if ExtractFileExt(Name) = PsfExtension then
+  Extension := LowerCase(ExtractFileExt(Name));
+  if Extension = PsfExtension then
     Result := PsfFont
-  else if ExtractFileExt(Name) = CoverageExtension then
+  else if Extension = CoverageExtension then
     Result := CoverageFont
+  else if (Extension = TrueTypeExtension) or (Extension = OpenTypeExtension) then
+    Result := TrueTypeFont
   else
     Result := NotAFont;
+end;
+
+{ A TrueType font's whole file as its face of any size. }
+function ParseTrueTypeFace(const Data: TBytes; out Face: TFontFace): Boolean;
+var
+  Font: TTrueTypeFont;
+begin
+  ClearFace(Face);
+  Font := LoadTrueTypeFont(Data);
+  Result := Font <> nil;
+  if Result then
+    DescribeOutlineFont(Font, Face);
 end;
 
 { A PSF font's weight is in its name: "...b.psf" is bold. }
@@ -135,6 +168,8 @@ begin
       end;
     CoverageFont:
       Result := ParseCoverageFont(@Data[0], Length(Data), Face);
+    TrueTypeFont:
+      Result := ParseTrueTypeFace(Data, Face);
   end;
 end;
 
@@ -145,11 +180,74 @@ var
   Source: string;
 begin
   Source := Face.Source;
-  Result := LoadFontFace(Source, Loaded) and (Loaded.Size = Face.Size) and (Loaded.Bold = Face.Bold);
+  Result := LoadFontFace(Source, Loaded) and (Loaded.Size = Face.Size) and (Loaded.Bold = Face.Bold) and
+    (Loaded.AnySize = Face.AnySize);
   if not Result then
     Exit;
   Face := Loaded;
   Face.Source := Source;
+end;
+
+{ Count bytes of the open file at Offset; False if they are not all there. }
+function ReadAt(Handle: Int64; Offset: QWord; Count: LongWord; out Bytes: TBytes): Boolean;
+var
+  Got: Int64;
+begin
+  Bytes := nil;
+  SetLength(Bytes, Count);
+  Result := (Count = 0) or ((SeekFile(Handle, Int64(Offset), SeekFromStart) = Int64(Offset)) and
+    (ReadFile(Handle, @Bytes[0], Count) = Count));
+end;
+
+{ A TrueType font's weight, from its table directory, head and OS/2,
+  read where they are without reading the rest of the file. }
+function ReadTrueTypeWeight(const Path: string; out Bold: Boolean): Boolean;
+var
+  Handle: Int64;
+  Header: TBytes;
+  Directory: TBytes;
+  Part: TBytes;
+  Table: TFontTable;
+  TableCount: LongWord;
+  Index: LongWord;
+  Tag: string;
+  Offset: LongWord;
+  Length_: LongWord;
+begin
+  Result := False;
+  Bold := False;
+  Handle := OpenFile(PChar(Path), OpenRead);
+  if Handle < 0 then
+    Exit;
+  try
+    if not ReadAt(Handle, 0, 12, Header) or not LooksLikeTrueType(@Header[0], 12) then
+      Exit;
+    Table := FontTableAt(Header, 0, 12);
+    TableCount := ReadUnsigned16(Table, 4);
+    if (TableCount = 0) or (TableCount > MaximumDirectoryTables) or
+       not ReadAt(Handle, 12, 16 * TableCount, Directory) then
+      Exit;
+    Table := FontTableAt(Directory, 0, Length(Directory));
+    for Index := 0 to TableCount - 1 do
+    begin
+      Tag := ReadTag(Table, 16 * QWord(Index));
+      Offset := ReadUnsigned32(Table, 16 * QWord(Index) + 8);
+      Length_ := ReadUnsigned32(Table, 16 * QWord(Index) + 12);
+      if (Tag = 'head') and (Length_ >= 46) and ReadAt(Handle, Offset, 46, Part) then
+      begin
+        if (ReadUnsigned16(FontTableAt(Part, 0, 46), 44) and MacStyleBold) <> 0 then
+          Bold := True;
+        Result := True;
+      end
+      else if (Tag = 'OS/2') and (Length_ >= 6) and ReadAt(Handle, Offset, 6, Part) then
+      begin
+        if ReadUnsigned16(FontTableAt(Part, 0, 6), 4) >= BoldWeightClass then
+          Bold := True;
+      end;
+    end;
+  finally
+    CloseFile(Handle);
+  end;
 end;
 
 { A face known by its file: its size and weight from the file's start. }
@@ -165,6 +263,18 @@ begin
   ClearFace(Face);
   Size := 0;
   Bold := False;
+  if KindOfFont(Name) = TrueTypeFont then
+  begin
+    Result := ReadTrueTypeWeight(Path, Bold);
+    if Result then
+    begin
+      Face.Format := GlyphOutline;
+      Face.AnySize := True;
+      Face.Bold := Bold;
+      Face.Source := Path;
+    end;
+    Exit;
+  end;
   Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
     Exit;

@@ -17,16 +17,19 @@
 }
 
 {
-  The font dialog: a user picks a family (the theme's proportional text
-  family or its monospaced one), a size, in points, and bold or
-  regular, seeing a sample of the text as it will look.
+  The font dialog: a user picks a family (the proportional DejaVu Sans,
+  the bitmap Terminus or the monospaced DejaVu Sans Mono), a size, in
+  points, and bold or regular, seeing a sample of the text as it will
+  look.
 
-  The sizes listed are the ones the family's fonts come in, at this
-  display's DPI: the system has faces of some pixel sizes only, so
-  each listed size is the smallest whole point size (or half, if no
-  whole one fits) that picks that face. A size between two would only
-  look like the smaller one. The sample is drawn with the very face a
-  program asking for that size gets (Windowing.Fonts).
+  A TrueType family has every size: the usual point sizes are listed
+  (6 to 72), and the size the dialog starts with too if it is not one
+  of them. A bitmap family has faces of some pixel sizes only, so each
+  listed size is the smallest whole point size (or half, if no whole
+  one fits) that picks one of its faces at this display's DPI: a size
+  between two would only look like the smaller one. The sample is drawn
+  with the very face a program asking for that size gets
+  (Windowing.Fonts).
 
   ChooseFont does it in one call; TFontDialog is there for a program
   that wants more (where the sizes are, say).
@@ -69,6 +72,9 @@ type
     FPreview: TFontPreview;
     procedure BuildControls;
     procedure ListSizes;
+    procedure ListBitmapSizes;
+    procedure ListScalableSizes;
+    procedure InsertSize(Size: LongWord);
     procedure ChoiceChanged(Sender: TControl);
     procedure FamilyChanged(Sender: TControl);
     function GetFamily: TFontFamily;
@@ -129,6 +135,9 @@ const
   PreviewHeight = 116;
   { Sizes are looked for up to this, in tenths of a point. }
   LargestPointTenths = 2000;
+  { The sizes listed for a family with every size, in tenths. }
+  ScalableSizes: array[0..17] of LongWord = (60, 70, 80, 90, 100, 110, 120, 140, 160, 180, 200, 220, 240, 260,
+    280, 360, 480, 720);
 
 function PointSizeText(PointTenths: LongWord): string;
 begin
@@ -224,6 +233,7 @@ begin
   FFamilyBox.SetBounds(DialogMargin, FamilyTop, FamilyWidth, 22);
   FFamilyBox.Items.Add(FamilyName(FontFamilyText));
   FFamilyBox.Items.Add(FamilyName(FontFamilyFixed));
+  FFamilyBox.Items.Add(FamilyName(FontFamilyMono));
   Caption := TLabel.Create(Root);
   Caption.Text := '&Size (points):';
   Caption.SetBounds(DialogMargin, SizeCaptionTop, ListWidth + 8, 16);
@@ -240,17 +250,54 @@ begin
   AddOkAndCancel(DialogWidth, DialogHeight);
 end;
 
+{ Size in its place among FSizes (smallest first), unless it is there. }
+procedure TFontDialog.InsertSize(Size: LongWord);
+var
+  Known: LongInt;
+begin
+  for Known := 0 to High(FSizes) do
+    if FSizes[Known] = Size then
+      Exit;
+  SetLength(FSizes, Length(FSizes) + 1);
+  Known := High(FSizes);
+  while (Known > 0) and (FSizes[Known - 1] > Size) do
+  begin
+    FSizes[Known] := FSizes[Known - 1];
+    Dec(Known);
+  end;
+  FSizes[Known] := Size;
+end;
+
 procedure TFontDialog.ListSizes;
+var
+  Index: LongInt;
+begin
+  FSizes := nil;
+  if FamilyIsScalable(GetFamily) then
+    ListScalableSizes
+  else
+    ListBitmapSizes;
+  FSizeList.Items.Clear;
+  for Index := 0 to High(FSizes) do
+    FSizeList.Items.Add(PointSizeText(FSizes[Index]));
+end;
+
+procedure TFontDialog.ListScalableSizes;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to High(ScalableSizes) do
+    InsertSize(ScalableSizes[Index]);
+end;
+
+procedure TFontDialog.ListBitmapSizes;
 var
   Index: LongInt;
   Height: LongInt;
   Size: LongWord;
-  Known: LongInt;
-  AlreadyListed: Boolean;
 begin
   { Each regular face's height once, smallest first (the faces may come
     in any order, bold and regular mixed). }
-  FSizes := nil;
   for Index := 0 to FamilyFaceCount(GetFamily) - 1 do
   begin
     if FamilyFace(GetFamily, Index)^.Bold then
@@ -259,26 +306,9 @@ begin
     Size := SmallestSizeFor(GetFamily, Height, 10);
     if Size = 0 then
       Size := SmallestSizeFor(GetFamily, Height, 5);
-    if Size = 0 then
-      Continue;
-    AlreadyListed := False;
-    for Known := 0 to High(FSizes) do
-      if FSizes[Known] = Size then
-        AlreadyListed := True;
-    if AlreadyListed then
-      Continue;
-    SetLength(FSizes, Length(FSizes) + 1);
-    Known := High(FSizes);
-    while (Known > 0) and (FSizes[Known - 1] > Size) do
-    begin
-      FSizes[Known] := FSizes[Known - 1];
-      Dec(Known);
-    end;
-    FSizes[Known] := Size;
+    if Size <> 0 then
+      InsertSize(Size);
   end;
-  FSizeList.Items.Clear;
-  for Index := 0 to High(FSizes) do
-    FSizeList.Items.Add(PointSizeText(FSizes[Index]));
 end;
 
 function TFontDialog.GetPointTenths: LongWord;
@@ -295,6 +325,22 @@ var
   Wanted: LongInt;
   Nearest: LongInt;
 begin
+  { Every size is there in a family with every size: listed if it was
+    not. }
+  if FamilyIsScalable(GetFamily) and (Value > 0) and (Value <= LargestPointTenths) then
+  begin
+    InsertSize(Value);
+    if FSizeList.Items.Count <> Length(FSizes) then
+    begin
+      FSizeList.Items.Clear;
+      for Index := 0 to High(FSizes) do
+        FSizeList.Items.Add(PointSizeText(FSizes[Index]));
+    end;
+    for Index := 0 to High(FSizes) do
+      if FSizes[Index] = Value then
+        FSizeList.ItemIndex := Index;
+    Exit;
+  end;
   Wanted := FaceSizeFor(GetFamily, Value);
   for Index := 0 to High(FSizes) do
     if FaceSizeFor(GetFamily, FSizes[Index]) = Wanted then
@@ -316,6 +362,8 @@ function TFontDialog.GetFamily: TFontFamily;
 begin
   if FFamilyBox.ItemIndex = Ord(FontFamilyFixed) then
     Result := FontFamilyFixed
+  else if FFamilyBox.ItemIndex = Ord(FontFamilyMono) then
+    Result := FontFamilyMono
   else
     Result := FontFamilyText;
 end;

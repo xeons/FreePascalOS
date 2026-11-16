@@ -123,7 +123,7 @@ begin
     else
     begin
       { As libfont measures: no kerning next to a control character. }
-      if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and (Face^.KerningCount > 0) then
+      if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and FaceHasKerning(Face^) then
         X := X + KerningBetween(Face^, Previous, CodePoint);
       X := X + CharacterAdvance(Face^, CodePoint);
     end;

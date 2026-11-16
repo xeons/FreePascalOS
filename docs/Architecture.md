@@ -1618,13 +1618,16 @@ receiver that is freed takes its queued messages with it.
 
 `Windowing.Theme` holds the colours and metrics (logical units), shared
 by the display server's frames and the controls, and the font families:
-the interface's text (`TextFamily`, DejaVu Sans, proportional) and a
-monospaced one (`FixedFamily`, Terminus). `Windowing.Fonts` lists each
-family once and picks faces from them at the display's DPI: the theme's
-text face (`TextFace`, `BoldTextFace`, `FontFace`) and the monospaced one
-(`FixedTextFace`, `FixedFontFace`), or either family by name
-(`TFontFamily`: `FamilyFontFace`, `FamilyFaceSize`, `FamilyName`; a
-system without the monospaced fonts gets the text family's). The
+the interface's text (`TextFamily`, DejaVu Sans, proportional, TrueType)
+and a monospaced one (`FixedFamily`, Terminus, bitmap). `Windowing.Fonts`
+lists each family once and picks faces from them at the display's DPI:
+the theme's text face (`TextFace`, `BoldTextFace`, `FontFace`) and the
+monospaced one (`FixedTextFace`, `FixedFontFace`), or any family by name
+(`TFontFamily`: `FontFamilyText`, `FontFamilyFixed` and `FontFamilyMono`,
+DejaVu Sans Mono, TrueType; `FamilyFontFace`, `FamilyFaceSize`,
+`FamilyName`, `FamilyIsScalable`; a system without a monospaced family
+gets the text family's). A TrueType family gives every size exactly, so
+text is the same size at any DPI and scale. The
 display server picks its title face from the theme's text family too. Text is drawn anti-aliased;
 the multi-line edit box uses the monospaced face unless told otherwise,
 so columns of text line up, and the console stays Terminus. The controls use anti-aliased
@@ -1880,13 +1883,16 @@ it found nothing in a message box owned by the dialog. `Controls.ColorDialog` (`
 grid of basic colours, a scroll bar and a number box for each of red,
 green and blue kept in step, and a swatch of the colour.
 `Controls.FontDialog` (`ChooseFont`; `ChooseFontOfFamily` also lets
-the user pick the family, the proportional DejaVu Sans or the
-monospaced Terminus) lists the sizes the family comes in at this
-display's DPI (the faces have some pixel sizes
-only; each is listed as the smallest whole, or else half, point size
-that picks it, so no two entries look the same, found without reading
-any face), bold or regular, and a sample drawn with the face a program
-asking for that size gets (`Windowing.Fonts` lists the faces for it).
+the user pick the family: the proportional DejaVu Sans, the bitmap
+Terminus or the monospaced DejaVu Sans Mono) lists sizes: for a
+TrueType family the usual point sizes from 6 to 72, and the size it
+started with if that is another; for Terminus the sizes its faces come
+in at this display's DPI (each listed as the smallest whole, or else
+half, point size that picks it, so no two entries look the same, found
+without reading any face); bold or regular, and a sample drawn with the
+face a program asking for that size gets (`Windowing.Fonts`). Notepad
+remembers the family by name (`Notepad/Font/Family`: `text`, `fixed`
+or `mono`).
 
 Mnemonics: an ampersand in a caption marks the next character as the
 control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
@@ -5376,7 +5382,12 @@ independent) against the Free Pascal runtime library:
   outline the other way round cuts a hole); each edge adds the signed
   area to its right to the rows it crosses, summing along a row gives
   every pixel's coverage, and runs of equal coverage go through
-  `FillSpan` with the colour faded by it. `Drawing.SmoothLines` draws
+  `FillSpan` with the colour faded by it; quadratic curves
+  (`AddShapeQuadratic`, for glyph outlines) become enough edges to stay
+  within a fiftieth of a pixel. `Drawing.CoverageBlending` blends a
+  colour by a coverage gamma-correct (the light of both mixed, gamma
+  1.8), a span of coverage bytes at a time: what text is drawn with.
+  `Drawing.SmoothLines` draws
   lines one pixel wide or thinner by Wu's algorithm and wider ones as
   their outlines through the rasterizer (strokes and round joints add
   up into one shape, so overlaps are not blended twice);
@@ -5388,43 +5399,80 @@ independent) against the Free Pascal runtime library:
   lend no colour), the same size an exact copy.
 - **libfont.so** – text: `Font.Faces` (a face: a line height, the
   baseline and underline, and glyphs with their own advances, bearings
-  and bitmaps, as bits or as 8-bit coverage, and kerning pairs; a
-  monospaced face is one whose advances are equal), `Font.Psf` (PSF1
-  and PSF2 bitmap fonts with their Unicode tables), `Font.Coverage`
-  (coverage fonts, below), `Font.Utf8` (decoding, one U+FFFD for every
-  bad sequence), `Font.Text` (font sets of one family; a face picked by
-  point size and DPI, the largest pixel size not larger than asked;
-  measuring and drawing with advances and kerning, coverage glyphs
-  blending the text colour over what is there) and `Font.Files`
-  (families, one directory each in `/lib/fonts` with their licences:
-  `terminus`, Terminus in heights 12 to 32, regular and bold, the
-  console's font, monospaced, a face standing for an em six sevenths of
-  its height, so faces of both families picked for one size match;
-  `dejavu-sans`, DejaVu Sans in every pixel size from 9 to 40, regular
-  and bold, the interface's). Listing a
-  family reads only the start of each file, its size and weight; a
-  face's glyphs are read the first time it is picked, so a program does
-  not load every size. Sizes are in points, so text is the same size on
-  any display.
+  and bitmaps, as bits or as 8-bit coverage, or rendered from an
+  outline font; kerning pairs; a monospaced face is one whose advances
+  are equal), `Font.Psf` (PSF1 and PSF2 bitmap fonts with their Unicode
+  tables), `Font.Coverage` (coverage fonts: anti-aliased bitmaps
+  rendered beforehand, one pixel size a file), the TrueType units
+  (below), `Font.Utf8` (decoding, one U+FFFD for every bad sequence),
+  `Font.Text` (font sets of one family; a face picked by point size and
+  DPI: a bitmap face of exactly that pixel size, else the outline font
+  made into a face at that size, else the largest bitmap face not larger
+  than asked; measuring and drawing with advances and kerning) and
+  `Font.Files` (families, one directory each in `/lib/fonts` with their
+  licences: `terminus`, Terminus in heights 12 to 32, regular and bold,
+  the console's and the terminal's font, monospaced, a face standing for
+  an em six sevenths of its height, so faces of both kinds picked for
+  one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
+  DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
+  `userland/fonts` and copied by the build). Listing a family reads
+  only the start of each file, its size and weight (for a TrueType font
+  its table directory, head and OS/2); a face's glyphs are read the
+  first time it is picked, so a program does not load every size. Sizes
+  are in points, so text is the same size on any display.
 
-  The system has no font rasterizer yet (TrueType comes later), so the
-  proportional font is rendered at build time: `tools/RenderFont`
-  (Python with Pillow, which uses FreeType) draws DejaVu Sans, hinted
-  and anti-aliased, into a coverage font (`.cvf`) per pixel size. The
-  format, little-endian: a 40 byte header (magic `CVF1`, flags with
-  bold, the pixel size, line height, ascent, underline top and
-  thickness, the glyph and kerning pair counts, and where the glyph
-  table, the kerning table and the coverage data are); glyphs by code
-  point (advance, left bearing, top, width, height, where the bitmap
-  is); kerning pairs by left then right code point (the adjustment in
-  pixels, measured from the font's own tables through Raqm and scaled
-  to each size); then the bitmaps, a byte a pixel. The characters are
-  Terminus's western ones (ASCII, Latin-1, Latin Extended-A), the
-  typographic punctuation, the euro and U+FFFD. `Font.Coverage` checks
-  every offset, size and order before using any of it; a bad file gives
-  no face. The build says so clearly if Pillow or DejaVu Sans is
-  missing (`DEJAVU_SANS_FONT`, `DEJAVU_SANS_BOLD_FONT` and
-  `DEJAVU_LICENSE` say where they are).
+  TrueType: `Font.FontData` reads big-endian numbers inside a table,
+  every read checked against the table's end in 64-bit arithmetic.
+  `Font.TrueType` (`LoadTrueTypeFont`) opens a font: the table
+  directory (every table inside the file; CFF "OTTO" fonts and
+  collections are not read), `head` (units to the em, 16 to 16384; the
+  loca format; the weight bit), `maxp`, `hhea` and `hmtx` (advances;
+  glyphs past the last advance share it), `OS/2` (weight class; the
+  line if hhea has none), `post` (underline), `loca` (in order, inside
+  glyf) and `cmap`; anything wrong refuses the font.
+  `Font.CharacterMaps` reads the Unicode subtable, format 12 (3/10,
+  0/4, 0/6) before format 4 (3/1, 0/0-3), into mappings by code point.
+  `Font.GlyphData` reads outlines: simple glyphs (flags with repeats,
+  delta coordinates) and composite ones (offsets or matched points,
+  scale, x and y scale or 2x2 matrix, nested to a depth of 8); a broken
+  glyph is refused and drawn as nothing. `Font.Kerning` takes GPOS pair
+  kerning (lookup types 2 and 9, formats 1 and 2, from the kern
+  features of the Latin script's default language system, else the
+  default script's) when the font has it and the `kern` table (format
+  0, horizontal) otherwise, read in place. `Font.Outlines` is the model
+  the rest uses (`TOutlineFont`: metrics in font units, mappings,
+  advances, outlines, kerning).
+
+  Rendering (`Font.GlyphRendering`): the outline scaled to the pixel
+  size (the em), hinted, and its lines and quadratic curves (on-curve
+  points implied between two off-curve ones) handed to libdrawing's
+  rasterizer: exact area coverage, non-zero winding, curves cut into
+  lines no more than a fiftieth of a pixel off. The pen may sit a
+  quarter, half or three quarters of a pixel along (subpixel
+  positioning). Hinting (`Font.Hinting`) is a light autohinter of the
+  system's own, vertical only, chosen over running the fonts' TrueType
+  bytecode: from the letters themselves it measures the font's blue
+  zones (baseline, x height, cap height, ascender, descender, with the
+  round letters' overshoot), and in each glyph finds level edges, puts
+  those in a zone on its height rounded to whole pixels (the overshoot
+  only once it comes to half a pixel), makes a bottom edge and the top
+  edge over it into a stem of whole pixels (at least one), and moves
+  every other point by the piecewise-linear map those edges make.
+  Nothing moves sideways, so advances and shapes stay as designed and
+  hinted text measures as unhinted text does. `Font.GlyphCache` keeps
+  rendered glyphs by font, pixel size, glyph, subpixel offset and
+  hinting, at most 2048 glyphs and 2 MB of coverage, the least recently
+  used pushed out first (a hash table and a list of use through one
+  array). `Font.OutlineFaces` makes a face of a size: ascender and
+  descender rounded up (as FreeType gives them) plus the line gap, the
+  underline just under the baseline, advances and kerning rounded to
+  whole pixels (the interface's metrics are as they were with the
+  pre-rendered fonts). `MeasureText` and `DrawText` keep the pen on
+  whole pixels, as layout measures; `MeasureTextPrecisely` and
+  `DrawTextPrecisely` use the exact advances and quarter-pixel pens.
+  Coverage is blended in the text colour gamma-correct
+  (`Drawing.CoverageBlending`: the light of both colours mixed, gamma
+  1.8; over a pixel that is not opaque, the usual blend).
 
   Both libraries build on the host too, without `Font.Files`: `make
   drawing-test` (part of `make test`) runs `tools/DrawingTest`, which
@@ -5438,12 +5486,28 @@ independent) against the Free Pascal runtime library:
   ellipses and rings (symmetric, adding up to their areas), polygons
   and smooth scaling (exact values for growing, shrinking, thin lines
   and transparency); a coverage font built by the test (measured with
-  kerning, drawn pixel for pixel, every truncation and broken table
-  refused), DejaVu Sans as rendered (metrics, kerning, glyphs drawn
-  exactly, ASCII within the line) and a family read only when picked;
-  and writes a sample picture (`build/tools/drawing-sample.ppm`). On
-  the system, `drawtest` draws a window on the display in DejaVu Sans,
-  everything sized by the display's scale and DPI; the input test
+  kerning, drawn pixel for pixel gamma-correct, every truncation and
+  broken table refused), DejaVu Sans (metrics, kerning, glyphs drawn
+  exactly as rendered, ASCII within the line) and a family read only
+  when picked, in every size; and writes a sample picture
+  (`build/tools/drawing-sample.ppm`). `make font-test` (part of `make
+  test`) runs `tools/FontTest` (with range checks) on fixtures
+  `tools/FontTest/make-font-fixtures.py` makes: fonts put together byte
+  by byte (simple, curved and composite glyphs, both loca formats, both
+  character map formats, a kern table, GPOS formats 1 and 2 through an
+  extension), broken copies that must be refused (and every truncation),
+  broken glyphs refused, and what FreeType (freetype-py, else the
+  FreeType library through ctypes) and HarfBuzz (Pillow's Raqm layout)
+  make of them and of DejaVu Sans, Bold and Mono: character map lookups,
+  advances, kern table pairs and GPOS kerning exactly, line metrics,
+  and glyphs rendered unhinted at four sizes and four subpixel offsets
+  compared pixel by pixel with FreeType's (within 24 a pixel and 1.5 on
+  average); the hinter (E's and H's bars, baseline, x height and cap
+  height on whole pixels, no overshoot at small sizes), the text API,
+  gamma-correct blending, subpixel glyphs, the cache's limits and order
+  of use, and font sets giving every size with faces that never move.
+  On the system, `drawtest` draws a window on the display in DejaVu
+  Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
 - **libimage.so** – images and image files (see "Images" below): the
   model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing

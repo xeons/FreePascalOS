@@ -468,10 +468,7 @@ begin
   FWordWrapItem.Checked := Format.WordWrap;
   FStatusBar.Visible := Format.StatusBar;
   FStatusBarItem.Checked := Format.StatusBar;
-  if Format.FontFamilyIsFixed then
-    Family := FontFamilyFixed
-  else
-    Family := FontFamilyText;
+  Family := Format.FontFamily;
   if (Family <> FEditor.FontFamily) or (Format.FontPointTenths <> FEditor.FontPointTenths) or
      (Format.FontBold <> FEditor.FontBold) then
     FEditor.SetFont(Family, Format.FontPointTenths, Format.FontBold);
@@ -513,7 +510,7 @@ begin
   if not ChooseFontOfFamily(Family, PointTenths, Bold) then
     Exit;
   FEditor.SetFont(Family, PointTenths, Bold);
-  RememberFont(Family = FontFamilyFixed, PointTenths, Bold);
+  RememberFont(Family, PointTenths, Bold);
   Say('font ' + IntToStr(PointTenths) + ' ' + Weights[Bold] + ' ' + FamilyName(Family));
 end;
 

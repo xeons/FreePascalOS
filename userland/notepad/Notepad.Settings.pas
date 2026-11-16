@@ -38,6 +38,7 @@ unit Notepad.Settings;
 interface
 
 uses
+  Windowing.Fonts,
   Controls.TextEdit;
 
 const
@@ -47,7 +48,7 @@ type
   TNotepadFormat = record
     WordWrap: Boolean;
     StatusBar: Boolean;
-    FontFamilyIsFixed: Boolean;
+    FontFamily: TFontFamily;
     FontPointTenths: LongWord;
     FontBold: Boolean;
   end;
@@ -56,12 +57,11 @@ type
 function RememberedFormat(Editor: TTextEdit): TNotepadFormat;
 procedure RememberWordWrap(WordWrap: Boolean);
 procedure RememberStatusBar(Visible: Boolean);
-procedure RememberFont(FamilyIsFixed: Boolean; PointTenths: LongWord; Bold: Boolean);
+procedure RememberFont(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean);
 
 implementation
 
 uses
-  Windowing.Fonts,
   Configuration.Settings,
   Configuration.Locations;
 
@@ -71,8 +71,8 @@ const
   FontFamilySetting = 'Notepad/Font/Family';
   FontSizeSetting = 'Notepad/Font/Size';
   FontBoldSetting = 'Notepad/Font/Bold';
-  FixedFamilyName = 'fixed';
-  TextFamilyName = 'text';
+  { The families as the setting names them. }
+  FamilySettingNames: array[TFontFamily] of string = ('text', 'fixed', 'mono');
   SmallestPointTenths = 40;
   LargestPointTenths = 1000;
 
@@ -80,14 +80,16 @@ function RememberedFormat(Editor: TTextEdit): TNotepadFormat;
 var
   Store: TSettings;
   FamilyName: string;
+  Family: TFontFamily;
 begin
   Store := OpenSettings;
   Result.WordWrap := Store.ReadBoolean(WordWrapSetting, Editor.WordWrap);
   Result.StatusBar := Store.ReadBoolean(StatusBarSetting, True);
-  FamilyName := TextFamilyName;
-  if Editor.FontFamily = FontFamilyFixed then
-    FamilyName := FixedFamilyName;
-  Result.FontFamilyIsFixed := Store.ReadString(FontFamilySetting, FamilyName) = FixedFamilyName;
+  FamilyName := Store.ReadString(FontFamilySetting, FamilySettingNames[Editor.FontFamily]);
+  Result.FontFamily := FontFamilyText;
+  for Family := Low(TFontFamily) to High(TFontFamily) do
+    if FamilySettingNames[Family] = FamilyName then
+      Result.FontFamily := Family;
   Result.FontPointTenths := Store.ReadIntegerWithin(FontSizeSetting, Editor.FontPointTenths, SmallestPointTenths,
     LargestPointTenths);
   Result.FontBold := Store.ReadBoolean(FontBoldSetting, Editor.FontBold);
@@ -113,15 +115,12 @@ begin
   Store.Free;
 end;
 
-procedure RememberFont(FamilyIsFixed: Boolean; PointTenths: LongWord; Bold: Boolean);
+procedure RememberFont(Family: TFontFamily; PointTenths: LongWord; Bold: Boolean);
 var
   Store: TSettings;
 begin
   Store := OpenSettings;
-  if FamilyIsFixed then
-    Store.WriteString(FontFamilySetting, FixedFamilyName)
-  else
-    Store.WriteString(FontFamilySetting, TextFamilyName);
+  Store.WriteString(FontFamilySetting, FamilySettingNames[Family]);
   Store.WriteInteger(FontSizeSetting, PointTenths);
   Store.WriteBoolean(FontBoldSetting, Bold);
   Store.Free;

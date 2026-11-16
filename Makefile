@@ -26,6 +26,8 @@
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
+#   make font-test  Check libfont's TrueType reading, rendering, hinting and glyph
+#                   cache on the host against FreeType (fixtures made by Python)
 #   make text-test  Check the multi-line edit box's plain logic on the host (undo,
 #                   word wrap, search)
 #   make settings-test  Check the settings library on the host (files, escaping,
@@ -120,7 +122,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test files-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test font-test text-test settings-test files-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -218,7 +220,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test text-test settings-test files-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
+test: aml-test drawing-test font-test text-test settings-test files-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -268,7 +270,7 @@ font: $(FONT_TOOL)
 
 # libdrawing and libfont are plain Pascal: they build for the host too,
 # and are checked there pixel by pixel (with the system's fonts, Terminus
-# and the rendered DejaVu Sans).
+# and DejaVu Sans).
 DRAWING_TEST := build/tools/DrawingTest
 DRAWING_TEST_SOURCES := $(wildcard tools/DrawingTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
 	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
@@ -284,6 +286,34 @@ drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
 		> build/tools/drawing-test.out || \
 		{ grep FAIL build/tools/drawing-test.out; echo "DRAWING TEST FAILED (build/tools/drawing-test.out)"; exit 1; }
 	@echo "DRAWING TEST PASSED: $$(tail -n 1 build/tools/drawing-test.out | cut -d ' ' -f 2-)"
+
+# libfont's TrueType fonts on the host (with range checks), against
+# FreeType: fixtures made at build time by tools/FontTest/make-font-fixtures.py
+# (fonts put together byte by byte, broken copies, and what FreeType and
+# HarfBuzz make of those and of DejaVu Sans; freetype-py, else the
+# FreeType library through ctypes, and Pillow).
+FONT_TEST := build/tools/FontTest
+FONT_FIXTURES := build/tools/font-fixtures
+FONT_FIXTURES_STAMP := $(FONT_FIXTURES)/.made
+FONT_FIXTURE_SCRIPTS := tools/FontTest/make-font-fixtures.py tools/FontTest/freetypereference.py
+FONT_TEST_SOURCES := $(wildcard tools/FontTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
+	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+
+$(FONT_TEST): $(FONT_TEST_SOURCES)
+	@mkdir -p build/tools/font-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font \
+		-FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
+
+$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf)
+	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the font test's references (python-pillow)"; exit 1; }
+	@rm -rf $(FONT_FIXTURES)
+	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/fonts
+	@touch $@
+
+font-test: $(FONT_TEST) $(FONT_FIXTURES_STAMP)
+	@$(FONT_TEST) $(FONT_FIXTURES) > build/tools/font-test.out || \
+		{ grep FAIL build/tools/font-test.out; echo "FONT TEST FAILED (build/tools/font-test.out)"; exit 1; }
+	@echo "FONT TEST PASSED: $$(tail -n 1 build/tools/font-test.out | cut -d ' ' -f 2-)"
 
 # The plain logic behind the multi-line edit box (positions, the undo
 # history, word wrap, search) builds for the host too, and is checked

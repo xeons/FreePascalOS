@@ -76,6 +76,11 @@ procedure AddShapePolygon(var Shape: TCoverageShape; const Points: array of TPre
   or not (a hole in a clockwise outline around it). }
 procedure AddShapeEllipse(var Shape: TCoverageShape; CentreX, CentreY, RadiusX, RadiusY: Double;
   Clockwise: Boolean);
+{ A quadratic Bezier curve from (FromX, FromY) to (ToX, ToY) pulled
+  towards (ControlX, ControlY), as the outlines of TrueType glyphs are
+  made: enough straight edges that none strays more than a fiftieth of
+  a pixel from the curve. }
+procedure AddShapeQuadratic(var Shape: TCoverageShape; FromX, FromY, ControlX, ControlY, ToX, ToY: Double);
 { Draws the shape in Color, each pixel at the colour's alpha times its
   coverage. }
 procedure FillShape(const Canvas: TCanvas; const Shape: TCoverageShape; Color: TColor);
@@ -182,6 +187,52 @@ begin
     begin
       X := CentreX + RadiusX;
       Y := CentreY;
+    end;
+    AddShapeEdge(Shape, PreviousX, PreviousY, X, Y);
+    PreviousX := X;
+    PreviousY := Y;
+  end;
+end;
+
+procedure AddShapeQuadratic(var Shape: TCoverageShape; FromX, FromY, ControlX, ControlY, ToX, ToY: Double);
+const
+  Tolerance = 0.02;
+  MaximumPieces = 64;
+var
+  Deviation: Double;
+  Pieces: LongInt;
+  Piece: LongInt;
+  T: Double;
+  Rest: Double;
+  PreviousX: Double;
+  PreviousY: Double;
+  X: Double;
+  Y: Double;
+begin
+  { The curve strays at most a quarter of |From - 2 Control + To| from
+    the chord; N edges cut that by N squared. }
+  Deviation := 0.25 * Sqrt(Sqr(FromX - 2 * ControlX + ToX) + Sqr(FromY - 2 * ControlY + ToY));
+  if Deviation <= Tolerance then
+    Pieces := 1
+  else if Deviation >= Tolerance * MaximumPieces * MaximumPieces then
+    Pieces := MaximumPieces
+  else
+    Pieces := Trunc(Sqrt(Deviation / Tolerance)) + 1;
+  PreviousX := FromX;
+  PreviousY := FromY;
+  for Piece := 1 to Pieces do
+  begin
+    if Piece = Pieces then
+    begin
+      X := ToX;
+      Y := ToY;
+    end
+    else
+    begin
+      T := Piece / Pieces;
+      Rest := 1 - T;
+      X := Rest * Rest * FromX + 2 * Rest * T * ControlX + T * T * ToX;
+      Y := Rest * Rest * FromY + 2 * Rest * T * ControlY + T * T * ToY;
     end;
     AddShapeEdge(Shape, PreviousX, PreviousY, X, Y);
     PreviousX := X;
