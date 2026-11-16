@@ -96,12 +96,12 @@ end;
 
 function CurrentTimeZone: PTimeZone;
 var
-  Name: PChar;
+  Name: string;
 begin
   Name := GetVariable('TZ');
-  if (Name <> nil) and (Name[0] <> #0) then
+  if Name <> '' then
   begin
-    Result := FindTimeZone(Name);
+    Result := FindTimeZone(PChar(Name));
     if Result = nil then
       Result := UtcTimeZone;
     Exit;

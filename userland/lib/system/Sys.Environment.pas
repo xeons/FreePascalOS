@@ -25,7 +25,7 @@
 }
 unit Sys.Environment;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -36,10 +36,13 @@ function Argument(Index: Integer): PChar;
 { All arguments, nil terminated (for passing on to a new process). }
 function ArgumentValues: PPChar;
 
-{ Returns nil if the variable is not set. }
-function GetVariable(Name: PChar): PChar;
-procedure SetVariable(Name, Value: PChar);
-procedure RemoveVariable(Name: PChar);
+{ The variable's value; '' when it is not set (or set to ''). }
+function GetVariable(const Name: string): string;
+{ The same, telling an unset variable from an empty one. }
+function FindVariable(const Name: string; out Value: string): Boolean;
+function VariableIsSet(const Name: string): Boolean;
+procedure SetVariable(const Name, Value: string);
+procedure RemoveVariable(const Name: string);
 
 { The environment as a nil terminated array of "NAME=value" strings. }
 function EnvironmentBlock: PPChar;
@@ -48,10 +51,10 @@ function EnvironmentCount: Integer;
 implementation
 
 uses
+  SysUtils,
   Runtime.Memory,
   Runtime.Text,
-  Sys.Memory,
-  Sys.Text;
+  Sys.Memory;
 
 const
   MaximumVariables = 256;
@@ -118,15 +121,12 @@ begin
 end;
 
 { True if Entry is "Name=...". }
-function EntryHasName(Entry, Name: PChar): Boolean;
-var
-  NameLength: PtrUInt;
+function EntryHasName(Entry: PChar; const Name: string): Boolean;
 begin
-  NameLength := TextLength(Name);
-  Result := TextStartsWith(Entry, Name) and (Entry[NameLength] = '=');
+  Result := (StrLComp(Entry, PChar(Name), Length(Name)) = 0) and (Entry[Length(Name)] = '=');
 end;
 
-function FindVariableIndex(Name: PChar): Integer;
+function FindVariableIndex(const Name: string): Integer;
 var
   Block: PPChar;
   Index: Integer;
@@ -142,44 +142,49 @@ begin
   Result := -1;
 end;
 
-function GetVariable(Name: PChar): PChar;
+function FindVariable(const Name: string; out Value: string): Boolean;
 var
   Index: Integer;
 begin
+  Value := '';
   Index := FindVariableIndex(Name);
-  if Index < 0 then
-    Exit(nil);
-  Result := EnvironmentBlock[Index] + TextLength(Name) + 1;
+  Result := Index >= 0;
+  if Result then
+    Value := EnvironmentBlock[Index] + Length(Name) + 1;
 end;
 
-procedure SetVariable(Name, Value: PChar);
+function GetVariable(const Name: string): string;
+begin
+  FindVariable(Name, Result);
+end;
+
+function VariableIsSet(const Name: string): Boolean;
+begin
+  Result := FindVariableIndex(Name) >= 0;
+end;
+
+procedure SetVariable(const Name, Value: string);
 var
-  Builder: TTextBuilder;
+  Entry: string;
   Index: Integer;
 begin
   MakeEnvironmentWritable;
-  BeginText(Builder);
-  AppendText(Builder, Name);
-  AppendCharacter(Builder, '=');
-  AppendText(Builder, Value);
-
+  Entry := Name + '=' + Value;
   Index := FindVariableIndex(Name);
   if Index >= 0 then
   begin
     FreeMemory(Variables[Index]);
-    Variables[Index] := FinishText(Builder);
+    Variables[Index] := DuplicateText(PChar(Entry));
   end
   else if VariableCount < MaximumVariables then
   begin
-    Variables[VariableCount] := FinishText(Builder);
+    Variables[VariableCount] := DuplicateText(PChar(Entry));
     Inc(VariableCount);
     Variables[VariableCount] := nil;
-  end
-  else
-    DiscardText(Builder);
+  end;
 end;
 
-procedure RemoveVariable(Name: PChar);
+procedure RemoveVariable(const Name: string);
 var
   Index: Integer;
 begin

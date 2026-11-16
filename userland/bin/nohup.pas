@@ -55,14 +55,9 @@ const
 
 { $HOME/nohup.out, or /nohup.out when HOME is not set. }
 function HomeOutputPath: string;
-var
-  Home: PChar;
 begin
-  Home := GetVariable('HOME');
-  if Home = nil then
-    Result := '/'
-  else
-    Result := Home;
+  if not FindVariable('HOME', Result) then
+    Result := '/';
   if (Result <> '') and (Result[Length(Result)] <> '/') then
     Result := Result + '/';
   Result := Result + OutputName;

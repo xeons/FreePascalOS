@@ -179,10 +179,10 @@ begin
   Home := UserHomeDirectory(TargetId);
   if not Preserve then
   begin
-    SetVariable('HOME', PChar(Home));
-    SetVariable('SHELL', PChar(Shell));
-    SetVariable('USER', PChar(TargetName));
-    SetVariable('LOGNAME', PChar(TargetName));
+    SetVariable('HOME', Home);
+    SetVariable('SHELL', Shell);
+    SetVariable('USER', TargetName);
+    SetVariable('LOGNAME', TargetName);
   end;
 
   DefaultProcessOptions(Options);

@@ -167,9 +167,7 @@ var
   SearchPath: string;
   Directory: string;
 begin
-  if GetVariable('PATH') <> nil then
-    SearchPath := GetVariable('PATH')
-  else
+  if not FindVariable('PATH', SearchPath) then
     SearchPath := '/bin';
   for Directory in SplitString(SearchPath, ':') do
     if Directory <> '' then

@@ -77,14 +77,8 @@ begin
 end;
 
 function CurrentHome: string;
-var
-  Home: PChar;
 begin
-  Home := GetVariable('HOME');
-  if Home = nil then
-    Result := ''
-  else
-    Result := string(Home);
+  Result := GetVariable('HOME');
 end;
 
 function SystemScope: TSettingsScope;

@@ -49,7 +49,7 @@ var
   Index: Integer;
   Block: PPChar;
   Operand: string;
-  VariableValue: PChar;
+  VariableValue: string;
   ExitStatus: LongInt;
 begin
   LineEnd := #10;
@@ -70,14 +70,12 @@ begin
   ExitStatus := 0;
   for Operand in CommandLine.Operands do
   begin
-    { nil tells an unset variable from an empty one. }
-    VariableValue := GetVariable(PChar(Operand));
-    if VariableValue = nil then
+    if not FindVariable(Operand, VariableValue) then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    PrintString(string(VariableValue) + LineEnd);
+    PrintString(VariableValue + LineEnd);
   end;
   Halt(ExitStatus);
 end.

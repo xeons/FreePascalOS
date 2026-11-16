@@ -285,7 +285,7 @@ var
 begin
   if CurrentDirectory(Directory) then
     AssignVariable('PWD', Directory);
-  if GetVariable('PATH') = nil then
+  if not VariableIsSet('PATH') then
     SetVariable('PATH', '/bin');
 end;
 

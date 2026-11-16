@@ -297,7 +297,7 @@ var
   PromptWidth: Integer;
 begin
   GetConsoleSize(StandardInputHandle, Rows, Columns);
-  if (GetVariable('COLUMNS') <> nil) and ParseDecimal(GetVariable('COLUMNS'), Number) and
+  if ParseDecimal(GetVariable('COLUMNS'), Number) and
      (Number >= 2 * MinimumWindowWidth) and (Number <= 1000) then
     Columns := LongInt(Number);
   FPromptTail := Copy(FPrompt, LastDelimiter(KeyLineFeed, FPrompt) + 1, MaxInt);

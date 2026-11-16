@@ -167,7 +167,7 @@ var
   Value: string;
 begin
   ShowLogo := True;
-  UseColours := OutputIsTerminal and (GetVariable('NO_COLOR') = nil);
+  UseColours := OutputIsTerminal and not VariableIsSet('NO_COLOR');
   CommandLine := TCommandLine.Create([
     CommandOption('l', 'no-logo', False, OptionNoLogo),
     CommandOption('c', 'color', False, OptionColor),

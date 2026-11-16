@@ -161,9 +161,7 @@ begin
     Exit;
   end;
 
-  if GetVariable('PATH') <> nil then
-    SearchPath := GetVariable('PATH')
-  else
+  if not FindVariable('PATH', SearchPath) then
     SearchPath := '/bin';
 
   Start := 1;

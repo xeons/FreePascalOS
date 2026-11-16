@@ -320,7 +320,7 @@ begin
     Exit(False);
   Deadline := UptimeMilliseconds + 5000;
   repeat
-    if AskServiceManager(TestPort, ServiceRequestList, nil, Reply) = ErrorNone then
+    if AskServiceManager(TestPort, ServiceRequestList, '', Reply) = ErrorNone then
       Exit(True);
     SleepMilliseconds(50);
   until UptimeMilliseconds > Deadline;

@@ -133,20 +133,13 @@ end;
 { --- The environment (exported variables) ------------------------------ }
 
 function FindEnvironmentVariable(const Name: string; out Value: string): Boolean;
-var
-  Found: PChar;
 begin
-  Found := GetVariable(PChar(Name));
-  Result := Found <> nil;
-  if Result then
-    Value := string(Found)
-  else
-    Value := '';
+  Result := FindVariable(Name, Value);
 end;
 
 function IsEnvironmentVariable(const Name: string): Boolean;
 begin
-  Result := GetVariable(PChar(Name)) <> nil;
+  Result := VariableIsSet(Name);
 end;
 
 { --- The shell's own variables ------------------------------------------ }
@@ -206,7 +199,7 @@ begin
   { An exported variable stays exported when it changes. }
   if (Index < 0) and IsEnvironmentVariable(Name) then
   begin
-    SetVariable(PChar(Name), PChar(StoredValue));
+    SetVariable(Name, StoredValue);
     Exit;
   end;
   if Index >= 0 then
@@ -222,11 +215,11 @@ begin
   Index := FindShellVariable(Name);
   if Index >= 0 then
   begin
-    SetVariable(PChar(Name), PChar(ShellVariables[Index].Value));
+    SetVariable(Name, ShellVariables[Index].Value);
     DeleteShellVariable(Index);
   end
   else if not IsEnvironmentVariable(Name) then
-    SetVariable(PChar(Name), '');
+    SetVariable(Name, '');
 end;
 
 procedure UnsetVariable(const Name: string);
@@ -236,7 +229,7 @@ begin
   Index := FindShellVariable(Name);
   if Index >= 0 then
     DeleteShellVariable(Index);
-  RemoveVariable(PChar(Name));
+  RemoveVariable(Name);
 end;
 
 function AssignFromText(const Text: string; MakeExported: Boolean): Boolean;
