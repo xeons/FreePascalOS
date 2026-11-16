@@ -129,15 +129,16 @@ begin
     FWindow := TLockWindow.Create;
     FWindow.OnUnlock := @UnlockAttempted;
   end;
-  FWindow.Present(FSession.UserName);
+  { The server first, so it knows which window had the keyboard before
+    the lock screen takes it. }
   if not LockScreen(True) then
   begin
     Say('the display server did not lock the screen');
-    FWindow.Hide;
     Exit(False);
   end;
   FLocked := True;
   Say(Format('screen locked (%s)', [Reason]));
+  FWindow.Present(FSession.UserName);
   Result := True;
 end;
 

@@ -445,8 +445,9 @@ normalized (0-65535), not pixels.
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,
       per-process and system memory figures, Ctrl+Shift+Escape)
-- [ ] Graphical login, locking, log off, shut down and suspend from the desktop
-      (login, log off and shut down are done; locking and suspend remain)
+- [x] Graphical login, locking, log off, shut down and suspend from the desktop
+      (the lock enforced by the display server; Super+L, Ctrl+Alt+L, the
+      Start menu, after idle minutes and before suspending)
 - [x] File change notifications (folders refresh), volume arrival
 - [x] Per-user settings store (libconfiguration): typed settings in text
       files, the user's over the system's over defaults, fixed values, safe
