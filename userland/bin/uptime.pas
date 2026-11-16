@@ -33,12 +33,12 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Kernel,
-  Sys.Streams,
   Sys.Time,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: uptime [OPTION]...'#10 +
+  Usage = 'Usage: uptime [OPTION]...'#10 +
     'Print the current time, the length of time the system has been up,'#10 +
     'the number of users on the system, and the average number of jobs'#10 +
     'in the run queue over the last 1, 5 and 15 minutes.'#10#10 +
@@ -47,11 +47,6 @@ const
 
   OptionPretty = 1;
   OptionSince = 2;
-
-procedure Print(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
 
 { "1 day", "2 hours" }
 function CountText(Count: Int64; const Noun: string): string;
@@ -71,7 +66,7 @@ var
   Since: Sys.Time.TDateTime;
 begin
   DecodeTime(CurrentTime - UpSeconds, Since);
-  Print(Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d'#10, [Since.Year, Since.Month, Since.Day,
+  PrintString(Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d'#10, [Since.Year, Since.Month, Since.Day,
     Since.Hour, Since.Minute, Since.Second]));
 end;
 
@@ -94,7 +89,7 @@ begin
       Parts := Parts + ', ';
     Parts := Parts + CountText(Minutes, 'minute');
   end;
-  Print('up ' + Parts + #10);
+  PrintString('up ' + Parts + #10);
 end;
 
 procedure PrintSummary(Days, Hours, Minutes: Int64);
@@ -116,22 +111,22 @@ begin
     FillChar(Information, SizeOf(Information), 0);
   Line := Line + LoadText(Information.LoadAverages[0]) + ', ' +
     LoadText(Information.LoadAverages[1]) + ', ' + LoadText(Information.LoadAverages[2]);
-  Print(Line + #10);
+  PrintString(Line + #10);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Mode: Integer;
   UpSeconds: Int64;
   Days, Hours, Minutes: Int64;
 begin
   Mode := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('p', 'pretty', False, OptionPretty),
-    OptionDefinition('s', 'since', False, OptionSince)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('p', 'pretty', False, OptionPretty),
+    CommandOption('s', 'since', False, OptionSince)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     Mode := Code;
 
   UpSeconds := Int64(UptimeMilliseconds div 1000);

@@ -47,17 +47,16 @@ program mixer;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
-  Sys.Streams,
-  Sys.Text,
   Sys.SystemSettings,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.SystemRequests,
   Audio.Outputs;
 
 const
-  Usage: PChar = 'Usage: mixer [-o N] [-m on|off] [-r] [VOLUME]'#10 +
+  Usage = 'Usage: mixer [-o N] [-m on|off] [-r] [VOLUME]'#10 +
     '       mixer -l'#10 +
     '       mixer -D N [-r]'#10 +
     'Show or set the volume (percent) of a sound output, mute it, list the outputs'#10 +
@@ -68,11 +67,6 @@ const
   OptionList = 3;
   OptionDefault = 4;
   OptionRemember = 5;
-
-procedure PrintText(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
 
 function MutedSuffix(Muted: Boolean): string;
 begin
@@ -97,7 +91,7 @@ begin
       Mark := ', default'
     else
       Mark := '';
-    PrintText(Format('%d %s %s: volume %d%%%s%s'#10, [Number, string(AudioOutputPath(Number)),
+    PrintString(Format('%d %s %s: volume %d%%%s%s'#10, [Number, string(AudioOutputPath(Number)),
       string(AudioOutputKindName(State.Kind)), State.Volume, MutedSuffix(State.Muted), Mark]));
     Inc(Number);
   end;
@@ -107,15 +101,15 @@ function NumberIn(const Text: string; Highest: Int64; const What: string): Integ
 var
   Value: Int64;
 begin
-  if not ParseInteger(PChar(Text), Value) or (Value < 0) or (Value > Highest) then
-    FailWithUsageHint('%s must be a number from 0 to %d', [ArgumentText(PChar(What)), ArgumentNumber(Highest)]);
+  if not ParseDecimal(Text, Value) or (Value < 0) or (Value > Highest) then
+    FailWithUsageHint(Format('%s must be a number from 0 to %d', [What, Highest]));
   Result := Integer(Value);
 end;
 
 procedure Check(Error: LongInt; const What: string);
 begin
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(What))]);
+    FailWithError(1, Error, What);
 end;
 
 { The volume and mute of Output through the service, which applies and
@@ -142,9 +136,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Output: Integer;
   NewDefault: Integer;
   { 'on', 'off', or empty when -m was not given. }
@@ -159,12 +153,12 @@ begin
   MuteText := '';
   List := False;
   Remember := False;
-  BeginOptions(Parser, [OptionDefinition('o', 'output', True, OptionOutput),
-    OptionDefinition('m', 'mute', True, OptionMute),
-    OptionDefinition('l', 'list', False, OptionList),
-    OptionDefinition('D', 'default', True, OptionDefault),
-    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([CommandOption('o', 'output', True, OptionOutput),
+    CommandOption('m', 'mute', True, OptionMute),
+    CommandOption('l', 'list', False, OptionList),
+    CommandOption('D', 'default', True, OptionDefault),
+    CommandOption('r', 'remember', False, OptionRemember)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionOutput: Output := NumberIn(Value, MaximumAudioOutputs - 1, 'the output');
       OptionDefault: NewDefault := NumberIn(Value, MaximumAudioOutputs - 1, 'the output');
@@ -174,11 +168,11 @@ begin
         begin
           MuteText := Value;
           if (MuteText <> 'on') and (MuteText <> 'off') then
-            FailWithUsageHint('--mute takes on or off', []);
+            FailWithUsageHint('--mute takes on or off');
         end;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('too many arguments', []);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint('too many arguments');
   if List then
   begin
     ListOutputs;
@@ -196,11 +190,11 @@ begin
   if Output < 0 then
     Output := DefaultAudioOutput;
   if not DescribeAudioOutput(Output, State) then
-    Fail(1, 'there is no sound output %d', [ArgumentNumber(Output)]);
+    Fail(1, Format('there is no sound output %d', [Output]));
   Changed := False;
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount = 1 then
   begin
-    State.Volume := LongWord(NumberIn(Parser.Operands[0], 100, 'the volume'));
+    State.Volume := LongWord(NumberIn(CommandLine.Operands[0], 100, 'the volume'));
     Changed := True;
   end;
   if MuteText <> '' then
@@ -217,5 +211,5 @@ begin
   end;
   if Changed or Remember then
     Halt(0);
-  PrintText(Format('volume %d%%%s'#10, [State.Volume, MutedSuffix(State.Muted)]));
+  PrintString(Format('volume %d%%%s'#10, [State.Volume, MutedSuffix(State.Muted)]));
 end.

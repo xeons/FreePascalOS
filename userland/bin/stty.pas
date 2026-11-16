@@ -39,15 +39,13 @@ uses
   Classes,
   Abi.SystemCalls,
   Sys.Console,
-  Sys.Environment,
-  Sys.Format,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: stty [SETTING]...'#10 +
+  Usage = 'Usage: stty [SETTING]...'#10 +
     '  or:  stty OPTION'#10 +
     'Print or change terminal characteristics.'#10#10 +
     '  -a, --all          print all current settings in human-readable form'#10 +
@@ -62,30 +60,23 @@ var
   Settings: TStringList;
   Mode: Int64;
 
-procedure PrintText(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
-
 { Settings such as "-echo" look like options, so the arguments are
   sorted by hand: -a, -g and --help are options, the rest settings. }
 procedure ReadArguments;
 var
-  Index: Integer;
   Setting: string;
 begin
   ShowAll := False;
   Save := False;
-  for Index := 1 to ArgumentTotal - 1 do
+  for Setting in ProgramArguments do
   begin
-    Setting := Argument(Index);
     if (Setting = '-a') or (Setting = '--all') then
       ShowAll := True
     else if (Setting = '-g') or (Setting = '--save') then
       Save := True
     else if Setting = '--help' then
     begin
-      Print(Usage);
+      PrintString(Usage);
       Halt(0);
     end
     else
@@ -107,20 +98,20 @@ var
 begin
   if Save then
   begin
-    PrintText(SavedPrefix + LowerCase(IntToHex(QWord(Mode), 1)) + #10);
+    PrintString(SavedPrefix + LowerCase(IntToHex(QWord(Mode), 1)) + #10);
     Exit;
   end;
   GetConsoleSize(StandardInputHandle, Rows, Columns);
-  PrintText(Format('speed 115200 baud; rows %d; columns %d; line = 0;'#10, [Rows, Columns]));
+  PrintString(Format('speed 115200 baud; rows %d; columns %d; line = 0;'#10, [Rows, Columns]));
   if ShowAll then
-    WriteLine(StandardOutput, 'intr = ^C; eof = ^D; erase = ^?;');
-  PrintText(FlagText('isig', ConsoleModeInterruptKey) + ' ' +
+    PrintStringLine('intr = ^C; eof = ^D; erase = ^?;');
+  PrintString(FlagText('isig', ConsoleModeInterruptKey) + ' ' +
     FlagText('icanon', ConsoleModeLineEditing) + ' ' + FlagText('echo', ConsoleModeEcho) + #10);
 end;
 
 procedure FailInvalidArgument(const Setting: string);
 begin
-  Fail(1, 'invalid argument ''%s''', [ArgumentText(PChar(Setting))]);
+  Fail(1, Format('invalid argument ''%s''', [Setting]));
 end;
 
 { The mode saved by stty -g ("fpos:" and hexadecimal digits). }
@@ -154,16 +145,16 @@ var
 begin
   Setting := Settings[Index];
   Inc(Index);
-  if (Index >= Settings.Count) or not ParseInteger(PChar(Settings[Index]), SizeValue) or
+  if (Index >= Settings.Count) or not ParseDecimal(Settings[Index], SizeValue) or
      (SizeValue < 1) or (SizeValue > $FFFF) then
-    Fail(1, 'invalid argument for ''%s''', [ArgumentText(PChar(Setting))]);
+    Fail(1, Format('invalid argument for ''%s''', [Setting]));
   GetConsoleSize(StandardInputHandle, Rows, Columns);
   if Setting = 'rows' then
     Rows := LongInt(SizeValue)
   else
     Columns := LongInt(SizeValue);
   if SetConsoleSize(StandardInputHandle, Rows, Columns) <> 0 then
-    Fail(1, 'standard input: cannot set the size', []);
+    Fail(1, 'standard input: cannot set the size');
 end;
 
 procedure ShowSize;
@@ -171,7 +162,7 @@ var
   Rows, Columns: LongInt;
 begin
   GetConsoleSize(StandardInputHandle, Rows, Columns);
-  PrintText(Format('%d %d'#10, [Rows, Columns]));
+  PrintString(Format('%d %d'#10, [Rows, Columns]));
 end;
 
 function ApplySettings: LongWord;
@@ -219,10 +210,10 @@ begin
   ReadArguments;
 
   if not IsConsole(StandardInputHandle) then
-    Fail(1, 'standard input: Inappropriate ioctl for device', []);
+    Fail(1, 'standard input: Inappropriate ioctl for device');
   Mode := GetConsoleMode(StandardInputHandle);
   if Mode < 0 then
-    Fail(1, 'standard input: cannot get the settings', []);
+    Fail(1, 'standard input: cannot get the settings');
 
   if Settings.Count = 0 then
   begin

@@ -33,7 +33,7 @@ uses
   Util.Power;
 
 const
-  Usage: PChar = 'Usage: poweroff'#10 +
+  Usage = 'Usage: poweroff'#10 +
     'Power the system off.'#10;
 
 begin

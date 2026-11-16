@@ -35,14 +35,15 @@ program printf;
 
 uses
   SysUtils,
-  Sys.Environment,
   Sys.Format,
   Sys.Streams,
-  Sys.Text,
-  Util.Messages;
+  Util.CommandLine,
+  Util.Messages,
+  Util.Numbers,
+  Util.Output;
 
 var
-  Arguments: array of string;
+  Arguments: TStringArray;
   NextArgumentIndex: Integer;
   ExitStatus: LongInt;
   ConsumedAny: Boolean;
@@ -86,7 +87,7 @@ begin
     Exit;
   if (Text[1] = '''') or (Text[1] = '"') then
     Exit(Ord(CharacterAt(Text, 2)));
-  if ParseInteger(PChar(Text), Result) then
+  if ParseDecimal(Text, Result) then
     Exit;
 
   Position := 1;
@@ -112,7 +113,7 @@ begin
       Digit := 99;
     if Digit >= Base then
     begin
-      Report('''%s'': expected a numeric value', [ArgumentText(PChar(Text))]);
+      Report(Format('''%s'': expected a numeric value', [Text]));
       ExitStatus := 1;
       Break;
     end;
@@ -255,7 +256,7 @@ begin
     Conversion := CharacterAt(FormatText, Position);
     if Conversion = #0 then
     begin
-      Report('%s: missing conversion specifier', [ArgumentText(PChar(Specification))]);
+      Report(Specification + ': missing conversion specifier');
       ExitStatus := 1;
       Break;
     end;
@@ -266,6 +267,8 @@ begin
         begin
           Specification := Specification + 's';
           Value := NextArgument;
+          { The C style formatter of the system library (flags, %o and
+            lower case %x, which SysUtils' Format lacks). }
           WriteFormatted(StandardOutput, PChar(Specification), [ArgumentText(PChar(Value))]);
         end;
       'b':
@@ -288,7 +291,7 @@ begin
         end;
     else
       begin
-        Report('%%%s: invalid conversion specification', [ArgumentCharacter(Conversion)]);
+        Report('%' + Conversion + ': invalid conversion specification');
         ExitStatus := 1;
         Exit(False);
       end;
@@ -296,41 +299,28 @@ begin
   end;
 end;
 
-procedure CollectArguments(First: Integer);
-var
-  Index: Integer;
-begin
-  SetLength(Arguments, ArgumentTotal - First);
-  for Index := First to ArgumentTotal - 1 do
-    Arguments[Index - First] := Argument(Index);
-  NextArgumentIndex := 0;
-end;
-
 var
   FormatText: string;
 begin
   ExitStatus := 0;
-  if ArgumentTotal < 2 then
+  { FORMAT may itself start with '-': no option parsing. }
+  Arguments := ProgramArguments;
+  if Length(Arguments) = 0 then
+    FailWithUsageHint('missing operand');
+  if Arguments[0] = '--help' then
   begin
-    Report('missing operand', []);
-    WriteFormatted(StandardError, 'Try ''%s --help'' for more information.'#10, [ArgumentText(ProgramName)]);
-    Halt(1);
-  end;
-  if string(Argument(1)) = '--help' then
-  begin
-    PrintLine('Usage: printf FORMAT [ARGUMENT]...');
-    PrintLine('Print ARGUMENT(s) according to FORMAT.');
+    PrintStringLine('Usage: printf FORMAT [ARGUMENT]...');
+    PrintStringLine('Print ARGUMENT(s) according to FORMAT.');
     Halt(0);
   end;
 
-  FormatText := Argument(1);
-  if (FormatText = '--') and (ArgumentTotal >= 3) then
+  FormatText := Arguments[0];
+  NextArgumentIndex := 1;
+  if (FormatText = '--') and (Length(Arguments) >= 2) then
   begin
-    FormatText := Argument(2);
-    CollectArguments(3);
-  end
-  else
-    CollectArguments(2);
+    FormatText := Arguments[1];
+    NextArgumentIndex := 2;
+  end;
 
   repeat
     ConsumedAny := False;

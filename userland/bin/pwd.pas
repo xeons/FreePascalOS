@@ -21,27 +21,27 @@
 }
 program pwd;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Files,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output,
+  Util.Paths;
 
 const
-  Usage: PChar = 'Usage: pwd'#10 +
+  Usage = 'Usage: pwd'#10 +
     'Print the full name of the current working directory.'#10;
 
 var
-  Parser: TOptionParser;
-  Directory: array[0..PathCapacity - 1] of Char;
+  CommandLine: TCommandLine;
+  Directory: string;
   Error: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  Error := GetCurrentDirectory(@Directory[0], PathCapacity);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  Error := CurrentDirectoryPath(Directory);
   if Error <> 0 then
-    FailWithError(1, Error, 'cannot get the current directory', []);
-  PrintLine(@Directory[0]);
+    FailWithError(1, Error, 'cannot get the current directory');
+  PrintStringLine(Directory);
 end.

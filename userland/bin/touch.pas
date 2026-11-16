@@ -32,18 +32,18 @@ program touch;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Runtime.Time,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Time,
+  Util.CommandLine,
   Util.Dates,
-  Util.Messages,
-  Util.Options;
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: touch [OPTION]... FILE...'#10 +
+  Usage = 'Usage: touch [OPTION]... FILE...'#10 +
     'Update the access and modification times of each FILE to the current time.'#10#10 +
     'A FILE argument that does not exist is created empty, unless -c or -h'#10 +
     'is supplied.'#10#10 +
@@ -88,7 +88,7 @@ begin
     Handle := OpenFile(PChar(Path), OpenWrite or OpenCreate);
     if Handle < 0 then
     begin
-      ReportError(ErrorCodeOf(Handle), 'cannot touch ''%s''', [ArgumentText(PChar(Path))]);
+      ReportError(ErrorCodeOf(Handle), Format('cannot touch ''%s''', [Path]));
       Exit(False);
     end;
     CloseFile(Handle);
@@ -99,17 +99,17 @@ begin
     Error := SetFileTimes(PChar(Path), ModificationTime, AccessTime, FollowLinks);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'setting times of ''%s''', [ArgumentText(PChar(Path))]);
+    ReportError(Error, Format('setting times of ''%s''', [Path]));
     Result := False;
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Information: TFileInformation;
-  Index: Integer;
+  Operand: string;
   Error: LongInt;
   ExitStatus: LongInt;
   Time: TUnixTime;
@@ -122,16 +122,16 @@ begin
   Time := CurrentTime;
   AccessTime := Time;
   ModificationTime := Time;
-  BeginOptions(Parser, [
-    OptionDefinition('a', nil, False, OptionAccessOnly),
-    OptionDefinition('c', 'no-create', False, OptionNoCreate),
-    OptionDefinition('d', 'date', True, OptionDate),
-    OptionDefinition('h', 'no-dereference', False, OptionNoDereference),
-    OptionDefinition('m', nil, False, OptionModificationOnly),
-    OptionDefinition('r', 'reference', True, OptionReference),
-    OptionDefinition('t', nil, True, OptionStamp),
-    OptionDefinition('f', nil, False, 0)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', '', False, OptionAccessOnly),
+    CommandOption('c', 'no-create', False, OptionNoCreate),
+    CommandOption('d', 'date', True, OptionDate),
+    CommandOption('h', 'no-dereference', False, OptionNoDereference),
+    CommandOption('m', '', False, OptionModificationOnly),
+    CommandOption('r', 'reference', True, OptionReference),
+    CommandOption('t', '', True, OptionStamp),
+    CommandOption('f', '', False, 0)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionAccessOnly: ChangeAccess := True;
       OptionNoCreate: NoCreate := True;
@@ -139,7 +139,7 @@ begin
         begin
           UseNow := False;
           if not ParseDateText(Value, Time) then
-            Fail(1, 'invalid date format ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid date format ''%s''', [Value]));
           AccessTime := Time;
           ModificationTime := Time;
         end;
@@ -152,9 +152,9 @@ begin
       OptionReference:
         begin
           UseNow := False;
-          Error := GetFileInformation(Value, Information);
+          Error := GetFileInformation(PChar(Value), Information);
           if Error <> ErrorNone then
-            FailWithError(1, Error, 'failed to get attributes of ''%s''', [ArgumentText(Value)]);
+            FailWithError(1, Error, Format('failed to get attributes of ''%s''', [Value]));
           AccessTime := Information.AccessTime;
           ModificationTime := Information.ModificationTime;
         end;
@@ -162,7 +162,7 @@ begin
         begin
           UseNow := False;
           if not ParseTouchStamp(Value, Time) then
-            Fail(1, 'invalid date format ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid date format ''%s''', [Value]));
           AccessTime := Time;
           ModificationTime := Time;
         end;
@@ -177,12 +177,12 @@ begin
     AccessTime := -1;
   if not ChangeModification then
     ModificationTime := -1;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-    if not TouchFile(Parser.Operands[Index]) then
+  for Operand in CommandLine.Operands do
+    if not TouchFile(Operand) then
       ExitStatus := 1;
   Halt(ExitStatus);
 end.

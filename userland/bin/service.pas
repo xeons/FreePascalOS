@@ -41,15 +41,14 @@ program service;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
-  Sys.Format,
   Sys.ServiceControl,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: service [-p PORT] list'#10 +
+  Usage = 'Usage: service [-p PORT] list'#10 +
     '       service [-p PORT] status NAME'#10 +
     '       service [-p PORT] start|stop|restart NAME'#10 +
     '       service ready'#10 +
@@ -67,31 +66,24 @@ var
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
+  CommandLine: TCommandLine;
 begin
-  HasPortName := False;
-  BeginOptions(Parser, [OptionDefinition('p', 'port', True, OptionPort)], Usage);
-  while NextOption(Parser, Code, Value) do
-    if Code = OptionPort then
-    begin
-      PortName := Value;
-      HasPortName := True;
-    end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('a command is needed', []);
-  Command := Parser.Operands[0];
-  ServiceName := '';
-  if Parser.OperandCount > 1 then
-    ServiceName := Parser.Operands[1];
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-end;
-
-procedure Print(const Text: string);
-begin
-  WriteLine(StandardOutput, PChar(Text));
+  CommandLine := TCommandLine.Create([CommandOption('p', 'port', True, OptionPort)], Usage);
+  try
+    CommandLine.ReadOperandsOnly;
+    HasPortName := CommandLine.OptionGiven(OptionPort);
+    PortName := CommandLine.OptionValue(OptionPort);
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('a command is needed');
+    Command := CommandLine.Operands[0];
+    ServiceName := '';
+    if CommandLine.OperandCount > 1 then
+      ServiceName := CommandLine.Operands[1];
+    if CommandLine.OperandCount > 2 then
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+  finally
+    CommandLine.Free;
+  end;
 end;
 
 function SecondsText(Milliseconds: QWord): string;
@@ -105,7 +97,7 @@ var
   Status: TServiceStatus;
   ProcessText: string;
 begin
-  Print(Format('%-16s %-11s %7s %8s  %s', ['NAME', 'STATE', 'PID', 'RESTARTS', 'DESCRIPTION']));
+  PrintStringLine(Format('%-16s %-11s %7s %8s  %s', ['NAME', 'STATE', 'PID', 'RESTARTS', 'DESCRIPTION']));
   Index := 0;
   while Index < Reply.Count do
   begin
@@ -114,7 +106,7 @@ begin
       ProcessText := IntToStr(Status.ProcessId)
     else
       ProcessText := '-';
-    Print(Format('%-16s %-11s %7s %8d  %s', [string(PChar(@Status.Name[0])),
+    PrintStringLine(Format('%-16s %-11s %7s %8d  %s', [string(PChar(@Status.Name[0])),
       string(ServiceStateName(Status.State)), ProcessText, Status.Restarts,
       string(PChar(@Status.Description[0]))]));
     Inc(Index);
@@ -128,22 +120,22 @@ begin
   Line := string(PChar(@Status.Name[0]));
   if Status.Description[0] <> #0 then
     Line := Line + ' - ' + string(PChar(@Status.Description[0]));
-  Print(Line);
+  PrintStringLine(Line);
   Line := '  state: ' + string(ServiceStateName(Status.State));
   if (Status.State = ServiceStateRunning) and (Status.ReadyAt >= Status.StartedAt) then
     Line := Line + ' (ready after ' + SecondsText(Status.ReadyAt - Status.StartedAt) + ')';
-  Print(Line);
+  PrintStringLine(Line);
   if Status.ProcessId <> 0 then
-    Print('  process: ' + IntToStr(Status.ProcessId));
+    PrintStringLine('  process: ' + IntToStr(Status.ProcessId));
   if Status.InBootMode <> 0 then
-    Print('  boot mode: yes')
+    PrintStringLine('  boot mode: yes')
   else
-    Print('  boot mode: no');
-  Print('  restarts: ' + IntToStr(Status.Restarts));
+    PrintStringLine('  boot mode: no');
+  PrintStringLine('  restarts: ' + IntToStr(Status.Restarts));
   if Status.HasEnded <> 0 then
-    Print('  last ended: with status ' + IntToStr(Status.LastExitCode));
+    PrintStringLine('  last ended: with status ' + IntToStr(Status.LastExitCode));
   if Status.Reason[0] <> #0 then
-    Print('  note: ' + string(PChar(@Status.Reason[0])));
+    PrintStringLine('  note: ' + string(PChar(@Status.Reason[0])));
 end;
 
 function RequestCode: LongWord;
@@ -160,7 +152,7 @@ begin
     Result := ServiceRequestRestart
   else
   begin
-    FailWithUsageHint('unknown command ''%s''', [ArgumentText(PChar(Command))]);
+    FailWithUsageHint(Format('unknown command ''%s''', [Command]));
     Result := 0;
   end;
 end;
@@ -186,16 +178,15 @@ begin
   end;
   Code := RequestCode;
   if (Code <> ServiceRequestList) and (ServiceName = '') then
-    FailWithUsageHint('%s needs the name of a service', [ArgumentText(PChar(Command))]);
+    FailWithUsageHint(Command + ' needs the name of a service');
   Error := AskServiceManager(PortNameArgument, Code, PChar(ServiceName), Reply);
   if Error <> ErrorNone then
-    FailWithError(StatusFailed, Error, 'the service manager', []);
+    FailWithError(StatusFailed, Error, 'the service manager');
   if Reply.Error <> ErrorNone then
   begin
     if Reply.Error = ErrorNotFound then
-      Fail(StatusFailed, 'no service is called %s', [ArgumentText(PChar(ServiceName))]);
-    FailWithError(StatusFailed, Reply.Error, 'cannot %s %s', [ArgumentText(PChar(Command)),
-      ArgumentText(PChar(ServiceName))]);
+      Fail(StatusFailed, 'no service is called ' + ServiceName);
+    FailWithError(StatusFailed, Reply.Error, Format('cannot %s %s', [Command, ServiceName]));
   end;
   if Code = ServiceRequestList then
     PrintList(Reply)

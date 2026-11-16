@@ -34,16 +34,16 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Runtime.Memory,
-  Sys.Format,
   Sys.Memory,
   Sys.Streams,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Passwords;
 
 const
-  Usage: PChar = 'Usage: passwd [USER]'#10 +
+  Usage = 'Usage: passwd [USER]'#10 +
     'Change the password of USER (by default, the user running passwd).'#10;
   StatusFailed = 1;
 
@@ -59,7 +59,7 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   TargetId: LongWord;
   TargetName: string;
   Current: PChar;
@@ -67,37 +67,37 @@ var
   Repeated: PChar;
   Error: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if CommandLine.OperandCount = 1 then
   begin
-    if not FindUserId(Parser.Operands[0], TargetId) or (UserNameOf(TargetId) = nil) then
-      Fail(StatusFailed, 'user ''%s'' does not exist', [ArgumentText(Parser.Operands[0])]);
+    if not FindUserId(CommandLine.Operands[0], TargetId) or not FindUserName(TargetId, TargetName) then
+      Fail(StatusFailed, Format('user ''%s'' does not exist', [CommandLine.Operands[0]]));
   end
   else
     TargetId := CurrentRealUserId;
-  if UserNameOf(TargetId) = nil then
-    Fail(StatusFailed, 'cannot find name for user ID %u', [ArgumentUnsigned(TargetId)]);
-  TargetName := UserNameOf(TargetId);
+  if not FindUserName(TargetId, TargetName) then
+    Fail(StatusFailed, Format('cannot find name for user ID %u', [TargetId]));
 
   if CurrentRealUserId <> RootId then
   begin
     if TargetId <> CurrentRealUserId then
-      Fail(StatusFailed, 'You may not view or modify password information for %s.', [ArgumentText(PChar(TargetName))]);
-    if not HasEmptyPassword(PChar(TargetName)) then
+      Fail(StatusFailed, Format('You may not view or modify password information for %s.', [TargetName]));
+    if not HasEmptyPassword(TargetName) then
     begin
       Current := ReadPassword('Current password: ');
       if (Current = nil) or (CheckPassword(PChar(TargetName), Current) <> PasswordAccepted) then
       begin
         Forget(Current);
-        Fail(StatusFailed, 'Authentication token manipulation error', []);
+        Fail(StatusFailed, 'Authentication token manipulation error');
       end;
       Forget(Current);
     end;
   end;
 
-  WriteText(StandardOutput, PChar('Changing password for ' + TargetName + '.'#10));
+  PrintString('Changing password for ' + TargetName + '.'#10);
   FlushStream(StandardOutput);
   NewPassword := ReadPassword('New password: ');
   Repeated := ReadPassword('Retype new password: ');
@@ -105,12 +105,12 @@ begin
   begin
     Forget(NewPassword);
     Forget(Repeated);
-    Fail(StatusFailed, 'Passwords do not match', []);
+    Fail(StatusFailed, 'Passwords do not match');
   end;
   Error := SetPassword(PChar(TargetName), NewPassword);
   Forget(NewPassword);
   Forget(Repeated);
   if Error <> ErrorNone then
-    FailWithError(StatusFailed, Error, 'cannot update ''%s''', [ArgumentText(ShadowPath)]);
-  PrintLine('passwd: password updated successfully');
+    FailWithError(StatusFailed, Error, Format('cannot update ''%s''', [ShadowPath]));
+  PrintStringLine('passwd: password updated successfully');
 end.

@@ -36,17 +36,17 @@ program tone;
 uses
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
   Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
   Audio.Formats,
   Audio.Device,
   Audio.Wave,
   Audio.Synthesis;
 
 const
-  Usage: PChar = 'Usage: tone [-d DEVICE | -o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] ' +
+  Usage = 'Usage: tone [-d DEVICE | -o FILE] [-r RATE] [-f FORMAT] [-c CHANNELS] [-a AMPLITUDE] ' +
     'FREQUENCY SECONDS'#10 +
     'Play a sine tone of FREQUENCY Hz for SECONDS seconds, or write it to FILE'#10 +
     'as a WAV file.'#10 +
@@ -65,9 +65,9 @@ const
   ChunkFrames = 1024;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   WritesFile: Boolean;
   OutputPath: string;
   DevicePath: string;
@@ -97,13 +97,13 @@ begin
   Amplitude := 50;
   Kind := SampleSigned16;
   Channels := 2;
-  BeginOptions(Parser, [OptionDefinition('o', 'output', True, OptionOutput),
-    OptionDefinition('d', 'device', True, OptionDevice),
-    OptionDefinition('r', 'rate', True, OptionRate),
-    OptionDefinition('f', 'format', True, OptionFormat),
-    OptionDefinition('c', 'channels', True, OptionChannels),
-    OptionDefinition('a', 'amplitude', True, OptionAmplitude)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('o', 'output', True, OptionOutput),
+    CommandOption('d', 'device', True, OptionDevice),
+    CommandOption('r', 'rate', True, OptionRate),
+    CommandOption('f', 'format', True, OptionFormat),
+    CommandOption('c', 'channels', True, OptionChannels),
+    CommandOption('a', 'amplitude', True, OptionAmplitude)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionOutput:
         begin
@@ -112,27 +112,28 @@ begin
         end;
       OptionDevice: DevicePath := OptionValue;
       OptionRate:
-        if not ParseUnsigned(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
-          FailWithUsageHint('the rate must be 8000 to 192000', []);
+        if not ParseUnsignedDecimal(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
+          FailWithUsageHint('the rate must be 8000 to 192000');
       OptionFormat:
         begin
-          Kind := SampleKindOfName(OptionValue);
+          Kind := SampleKindOfName(PChar(OptionValue));
           if Kind = 0 then
-            FailWithUsageHint('unknown sample format ''%s''', [ArgumentText(OptionValue)]);
+            FailWithUsageHint('unknown sample format ''' + OptionValue + '''');
         end;
       OptionChannels:
-        if not ParseUnsigned(OptionValue, Channels) or (Channels < 1) or (Channels > 8) then
-          FailWithUsageHint('there can be 1 to 8 channels', []);
+        if not ParseUnsignedDecimal(OptionValue, Channels) or (Channels < 1) or (Channels > 8) then
+          FailWithUsageHint('there can be 1 to 8 channels');
       OptionAmplitude:
-        if not ParseUnsigned(OptionValue, Amplitude) or (Amplitude > 100) then
-          FailWithUsageHint('the amplitude must be 0 to 100', []);
+        if not ParseUnsignedDecimal(OptionValue, Amplitude) or (Amplitude > 100) then
+          FailWithUsageHint('the amplitude must be 0 to 100');
     end;
-  if Parser.OperandCount <> 2 then
-    FailWithUsageHint('a frequency and a length are needed', []);
-  if not ParseUnsigned(Parser.Operands[0], Frequency) or (Frequency = 0) or (Frequency >= Rate div 2) then
-    FailWithUsageHint('invalid frequency ''%s''', [ArgumentText(Parser.Operands[0])]);
-  if not ParseThousandths(Parser.Operands[1], Thousandths) then
-    FailWithUsageHint('invalid length ''%s''', [ArgumentText(Parser.Operands[1])]);
+  if CommandLine.OperandCount <> 2 then
+    FailWithUsageHint('a frequency and a length are needed');
+  if not ParseUnsignedDecimal(CommandLine.Operands[0], Frequency) or (Frequency = 0) or
+     (Frequency >= Rate div 2) then
+    FailWithUsageHint('invalid frequency ''' + CommandLine.Operands[0] + '''');
+  if not ParseThousandths(PChar(CommandLine.Operands[1]), Thousandths) then
+    FailWithUsageHint('invalid length ''' + CommandLine.Operands[1] + '''');
 
   FramesLeft := Rate * Thousandths div 1000;
   StartTone(Generator, LongWord(Frequency), LongWord(Rate), LongInt(Amplitude * 32767 div 100));
@@ -143,7 +144,7 @@ begin
   begin
     Handle := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
     if Handle < 0 then
-      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(PChar(OutputPath))]);
+      FailWithError(1, LongInt(-Handle), OutputPath);
     MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind,
       LongWord(FramesLeft * Channels * SampleBytes));
     WriteAll(Handle, @Header[0], WaveHeaderSize);
@@ -152,13 +153,13 @@ begin
   begin
     Handle := OpenAudioOutput(PChar(DevicePath));
     if Handle < 0 then
-      FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(PChar(DevicePath))]);
+      FailWithError(1, LongInt(-Handle), DevicePath);
     Format.Rate := LongWord(Rate);
     Format.Channels := LongWord(Channels);
     Format.Kind := Kind;
     Error := SetAudioFormat(Handle, Format);
     if Error <> 0 then
-      FailWithError(1, Error, 'setting the format', []);
+      FailWithError(1, Error, 'setting the format');
   end;
 
   while FramesLeft > 0 do
@@ -174,7 +175,7 @@ begin
     end;
     Error := WriteAll(Handle, @Samples[0], Frames * Channels * SampleBytes);
     if Error <> 0 then
-      FailWithError(1, Error, 'writing', []);
+      FailWithError(1, Error, 'writing');
     FramesLeft := FramesLeft - Frames;
   end;
   if not WritesFile then

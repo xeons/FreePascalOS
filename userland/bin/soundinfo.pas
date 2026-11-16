@@ -35,15 +35,14 @@ program soundinfo;
 
 uses
   SysUtils,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Audio.Formats,
   Audio.Wave;
 
 const
-  Usage: PChar = 'Usage: soundinfo FILE...'#10 +
+  Usage = 'Usage: soundinfo FILE...'#10 +
     'Describe the sound in WAV files: format, length, level and frequency.'#10;
   ChunkFrames = 4096;
   { Under this the first channel counts as silent (and crossings are not
@@ -95,7 +94,7 @@ begin
   Status := OpenWaveFile(PChar(Path), Wave);
   if Status <> WaveOk then
   begin
-    Report('%s: %s', [ArgumentText(PChar(Path)), ArgumentText(WaveStatusText(Status))]);
+    Report(Path + ': ' + WaveStatusText(Status));
     Exit(False);
   end;
   FrameBytes := Wave.Channels * BytesPerSample(Wave.Kind);
@@ -123,21 +122,22 @@ begin
     Hertz := Round((Measure.Crossings - 1) * Wave.Rate / (Measure.LastCrossing - Measure.FirstCrossing) / 10) * 10;
     Line := Line + IntToStr(Hertz) + ' Hz';
   end;
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
   Result := True;
 end;
 
 var
-  Parser: TOptionParser;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Operand: string;
   Status: Integer;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('no files given', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('no files given');
   Status := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-    if not Describe(Parser.Operands[Index]) then
+  for Operand in CommandLine.Operands do
+    if not Describe(Operand) then
       Status := 1;
   Halt(Status);
 end.

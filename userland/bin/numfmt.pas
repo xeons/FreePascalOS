@@ -35,15 +35,16 @@ program numfmt;
 uses
   SysUtils,
   StrUtils,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
+  Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: numfmt [OPTION]... [NUMBER]...'#10 +
+  Usage = 'Usage: numfmt [OPTION]... [NUMBER]...'#10 +
     'Reformat NUMBER(s), or the numbers from standard input if none are specified.'#10#10 +
     '  -d, --delimiter=X    use X instead of whitespace for field delimiter'#10 +
     '      --field=N        replace the number in input field N (default is 1)'#10 +
@@ -77,11 +78,6 @@ var
   Delimiter: Char;
   ExitStatus: LongInt;
 
-procedure WriteString(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
-
 { The character at Position (1-based), #0 past the end. }
 function CharacterAt(const Text: string; Position: Integer): Char;
 begin
@@ -100,7 +96,7 @@ begin
   else if AllowAuto and (Text = 'auto') then Result := UnitAuto
   else
   begin
-    Fail(1, 'invalid unit: ''%s''', [ArgumentText(PChar(Text))]);
+    Fail(1, Format('invalid unit: ''%s''', [Text]));
     Result := UnitNone;
   end;
 end;
@@ -233,10 +229,10 @@ end;
 procedure WritePadded(const Text: string);
 begin
   if Length(Text) < Padding then
-    WriteString(StringOfChar(' ', Padding - Length(Text)));
-  WriteString(Text);
+    PrintString(StringOfChar(' ', Padding - Length(Text)));
+  PrintString(Text);
   if Length(Text) < -Padding then
-    WriteString(StringOfChar(' ', -Padding - Length(Text)));
+    PrintString(StringOfChar(' ', -Padding - Length(Text)));
 end;
 
 procedure ConvertNumber(const Text: string);
@@ -245,9 +241,9 @@ var
 begin
   if not ParseHuman(Text, Value) then
   begin
-    Report('invalid number: ''%s''', [ArgumentText(PChar(Text))]);
+    Report(Format('invalid number: ''%s''', [Text]));
     ExitStatus := 2;
-    WriteString(Text);
+    PrintString(Text);
     Exit;
   end;
   WritePadded(FormatHuman(Value));
@@ -283,29 +279,29 @@ begin
     begin
       while CharacterAt(Line, Start) in [' ', #9] do
       begin
-        WriteCharacter(StandardOutput, Line[Start]);
+        PrintString(Line[Start]);
         Inc(Start);
       end;
       ConvertNumber(Copy(Line, Start, Position - Start));
     end
     else
-      WriteString(Copy(Line, Start, Position - Start));
+      PrintString(Copy(Line, Start, Position - Start));
     if Position > Length(Line) then
       Break;
-    WriteCharacter(StandardOutput, Line[Position]);
+    PrintString(Line[Position]);
     Inc(Position);
     Inc(Field);
   end;
-  WriteCharacter(StandardOutput, #10);
+  PrintString(#10);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   HeaderLines: Int64;
-  Index: Integer;
-  Line: PChar;
+  Number: string;
+  Line: string;
   HadLineEnd: Boolean;
 begin
   FromUnit := UnitNone;
@@ -315,54 +311,51 @@ begin
   FieldNumber := 1;
   Delimiter := #0;
   HeaderLines := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'delimiter', True, OptionDelimiter),
-    OptionDefinition(#0, 'field', True, OptionField),
-    OptionDefinition(#0, 'from', True, OptionFrom),
-    OptionDefinition(#0, 'header', False, OptionHeader),
-    OptionDefinition(#0, 'padding', True, OptionPadding),
-    OptionDefinition(#0, 'suffix', True, OptionSuffix),
-    OptionDefinition(#0, 'to', True, OptionTo)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'delimiter', True, OptionDelimiter),
+    CommandOption(#0, 'field', True, OptionField),
+    CommandOption(#0, 'from', True, OptionFrom),
+    CommandOption(#0, 'header', False, OptionHeader),
+    CommandOption(#0, 'padding', True, OptionPadding),
+    CommandOption(#0, 'suffix', True, OptionSuffix),
+    CommandOption(#0, 'to', True, OptionTo)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDelimiter:
         begin
-          if Length(string(Value)) <> 1 then
-            Fail(1, 'the delimiter must be a single character', []);
-          Delimiter := Value[0];
+          if Length(Value) <> 1 then
+            Fail(1, 'the delimiter must be a single character');
+          Delimiter := Value[1];
         end;
       OptionField:
-        if not ParseInteger(Value, FieldNumber) or (FieldNumber < 1) then
-          Fail(1, 'invalid field value ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, FieldNumber) or (FieldNumber < 1) then
+          Fail(1, Format('invalid field value ''%s''', [Value]));
       OptionFrom: FromUnit := ParseUnit(Value, True);
       OptionHeader: HeaderLines := 1;
       OptionPadding:
-        if not ParseInteger(Value, Padding) or (Padding = 0) then
-          Fail(1, 'invalid padding value ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Padding) or (Padding = 0) then
+          Fail(1, Format('invalid padding value ''%s''', [Value]));
       OptionSuffix: Suffix := Value;
       OptionTo: ToUnit := ParseUnit(Value, False);
     end;
 
   ExitStatus := 0;
-  if Parser.OperandCount > 0 then
+  if CommandLine.OperandCount > 0 then
   begin
-    for Index := 0 to Parser.OperandCount - 1 do
+    for Number in CommandLine.Operands do
     begin
-      ConvertNumber(Parser.Operands[Index]);
-      WriteCharacter(StandardOutput, #10);
+      ConvertNumber(Number);
+      PrintString(#10);
     end;
     Halt(ExitStatus);
   end;
-  while ReadLine(StandardInput, Line, HadLineEnd) do
-  begin
+  while ReadTextLine(StandardInput, Line, HadLineEnd) do
     if HeaderLines > 0 then
     begin
-      WriteLine(StandardOutput, Line);
+      PrintStringLine(Line);
       Dec(HeaderLines);
     end
     else
       ConvertLine(Line);
-    FreeMemory(Line);
-  end;
   Halt(ExitStatus);
 end.

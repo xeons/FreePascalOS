@@ -27,26 +27,27 @@
 }
 program suspend;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
   Sys.Kernel,
   Sys.Errors,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: suspend'#10 +
+  Usage = 'Usage: suspend'#10 +
     'Suspend the system to RAM until it is woken.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Status: Int64;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no arguments are taken', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no arguments are taken');
   Status := KernelSuspend;
   if Status < 0 then
-    FailWithError(1, ErrorCodeOf(Status), 'cannot suspend', []);
+    FailWithError(1, ErrorCodeOf(Status), 'cannot suspend');
 end.

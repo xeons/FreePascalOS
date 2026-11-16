@@ -31,14 +31,13 @@ program paste;
 {$H+}
 
 uses
-  SysUtils,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Input,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: paste [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: paste [OPTION]... [FILE]...'#10 +
     'Write lines consisting of the sequentially corresponding lines from'#10 +
     'each FILE, separated by TABs, to standard output.'#10 +
     #10 +
@@ -51,20 +50,6 @@ const
 var
   Delimiters: string;
   Streams: array of PInputStream;
-
-function ReadTextLine(Stream: PInputStream; out Line: string): Boolean;
-var
-  Text: PChar;
-  HadLineEnd: Boolean;
-begin
-  Result := ReadLine(Stream, Text, HadLineEnd);
-  Line := '';
-  if Result then
-  begin
-    Line := Text;
-    FreeMemory(Text);
-  end;
-end;
 
 { The delimiter that goes before the field at Position (1 or more). }
 function DelimiterBefore(Position: Integer): string;
@@ -80,6 +65,7 @@ var
   Index: Integer;
   Position: Integer;
   Line: string;
+  HadLineEnd: Boolean;
   Output: string;
 begin
   for Index := 0 to High(Streams) do
@@ -88,14 +74,14 @@ begin
       Continue;
     Output := '';
     Position := 0;
-    while ReadTextLine(Streams[Index], Line) do
+    while ReadTextLine(Streams[Index], Line, HadLineEnd) do
     begin
       if Position > 0 then
         Output := Output + DelimiterBefore(Position);
       Output := Output + Line;
       Inc(Position);
     end;
-    WriteLine(StandardOutput, PChar(Output));
+    PrintStringLine(Output);
   end;
 end;
 
@@ -103,6 +89,7 @@ procedure PasteInParallel;
 var
   Index: Integer;
   Line: string;
+  HadLineEnd: Boolean;
   Output: string;
   AnyLine: Boolean;
 begin
@@ -115,45 +102,42 @@ begin
     begin
       if Index > 0 then
         Output := Output + DelimiterBefore(Index);
-      if (Streams[Index] <> nil) and ReadTextLine(Streams[Index], Line) then
+      if (Streams[Index] <> nil) and ReadTextLine(Streams[Index], Line, HadLineEnd) then
       begin
         Output := Output + Line;
         AnyLine := True;
       end;
     end;
     if AnyLine then
-      WriteLine(StandardOutput, PChar(Output));
+      PrintStringLine(Output);
   until not AnyLine;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Serial: Boolean;
   Index: Integer;
   ExitStatus: LongInt;
 begin
   Delimiters := #9;
   Serial := False;
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'delimiters', True, OptionDelimiters),
-    OptionDefinition('s', 'serial', False, OptionSerial)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'delimiters', True, OptionDelimiters),
+    CommandOption('s', 'serial', False, OptionSerial)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDelimiters: Delimiters := Value;
       OptionSerial: Serial := True;
     end;
 
   ExitStatus := 0;
-  if Parser.OperandCount = 0 then
-    Streams := [OpenInput('-')]
-  else
-  begin
-    SetLength(Streams, Parser.OperandCount);
-    for Index := 0 to Parser.OperandCount - 1 do
-      Streams[Index] := OpenInput(Parser.Operands[Index]);
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
+  SetLength(Streams, CommandLine.OperandCount);
+  for Index := 0 to CommandLine.OperandCount - 1 do
+    Streams[Index] := OpenInput(CommandLine.Operands[Index]);
   for Index := 0 to High(Streams) do
     if Streams[Index] = nil then
       ExitStatus := 1;

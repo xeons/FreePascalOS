@@ -33,17 +33,15 @@ program tail;
 uses
   Classes,
   SysUtils,
-  Sys.Environment,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: tail [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: tail [OPTION]... [FILE]...'#10 +
     'Print the last 10 lines of each FILE to standard output.'#10 +
     'With more than one FILE, precede each with a header giving the file name.'#10 +
     #10 +
@@ -72,44 +70,49 @@ begin
   Number := Text;
   if (Number <> '') and (Number[1] in ['+', '-']) then
     Delete(Number, 1, 1);
-  if not ParseSize(PChar(Number), Amount) then
+  if not ParseSize(Number, Amount) then
   begin
     if CountBytes then
-      Fail(1, 'invalid number of bytes: ''%s''', [ArgumentText(PChar(Number))])
+      Fail(1, Format('invalid number of bytes: ''%s''', [Number]))
     else
-      Fail(1, 'invalid number of lines: ''%s''', [ArgumentText(PChar(Number))]);
+      Fail(1, Format('invalid number of lines: ''%s''', [Number]));
   end;
 end;
 
 procedure TailLines(Stream: PInputStream);
 var
-  List: TLineList;
+  Lines: TStringList;
+  LastLineTerminated: Boolean;
   First: Int64;
   Index: Integer;
 begin
-  BeginLineList(List);
-  ReadAllLines(Stream, List);
-  if FromStart then
-  begin
-    First := Int64(Amount) - 1;
-    if First < 0 then
-      First := 0;
-  end
-  else
-  begin
-    First := Int64(List.Count) - Int64(Amount);
-    if First < 0 then
-      First := 0;
+  Lines := TStringList.Create;
+  try
+    LastLineTerminated := ReadLinesInto(Stream, Lines);
+    if FromStart then
+    begin
+      First := Int64(Amount) - 1;
+      if First < 0 then
+        First := 0;
+    end
+    else
+    begin
+      First := Int64(Lines.Count) - Int64(Amount);
+      if First < 0 then
+        First := 0;
+    end;
+    Index := Integer(First);
+    while Index < Lines.Count do
+    begin
+      if (Index < Lines.Count - 1) or LastLineTerminated then
+        PrintStringLine(Lines[Index])
+      else
+        PrintString(Lines[Index]);
+      Inc(Index);
+    end;
+  finally
+    Lines.Free;
   end;
-  Index := Integer(First);
-  while Index < List.Count do
-  begin
-    WriteText(StandardOutput, List.Items[Index]);
-    if (Index < List.Count - 1) or List.LastLineTerminated then
-      WriteCharacter(StandardOutput, #10);
-    Inc(Index);
-  end;
-  FreeLineList(List);
 end;
 
 procedure TailBytes(Stream: PInputStream);
@@ -145,34 +148,40 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Index: Integer;
   Stream: PInputStream;
   ExitStatus: LongInt;
   ShowHeaders: Integer;
   OldStyle: string;
+  Arguments: TStringArray;
 begin
   CountBytes := False;
   FromStart := False;
   Amount := 10;
   ShowHeaders := 0;
 
-  if (ArgumentTotal > 1) and (ArgumentValues[1][0] in ['-', '+']) and IsDigit(ArgumentValues[1][1]) then
+  { "tail -5 file" and "tail +5 file" are the old ways of writing
+    "tail -n 5 file": the argument becomes "--", so everything after it
+    is an operand. }
+  Arguments := ProgramArguments;
+  if (Length(Arguments) > 0) and (Length(Arguments[0]) >= 2) and (Arguments[0][1] in ['-', '+']) and
+     (Arguments[0][2] in ['0'..'9']) then
   begin
-    OldStyle := ArgumentValues[1];
-    ArgumentValues[1] := '--';
+    OldStyle := Arguments[0];
+    Arguments[0] := '--';
     ParseAmount(OldStyle);
   end;
 
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'bytes', True, OptionBytes),
-    OptionDefinition('n', 'lines', True, OptionLines),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'silent', False, OptionQuiet),
-    OptionDefinition('v', 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'bytes', True, OptionBytes),
+    CommandOption('n', 'lines', True, OptionLines),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'silent', False, OptionQuiet),
+    CommandOption('v', 'verbose', False, OptionVerbose)], Usage, Arguments);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBytes:
         begin
@@ -188,23 +197,20 @@ begin
       OptionVerbose: ShowHeaders := 1;
     end;
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   if ShowHeaders = 0 then
   begin
-    if Parser.OperandCount > 1 then
+    if CommandLine.OperandCount > 1 then
       ShowHeaders := 1
     else
       ShowHeaders := -1;
   end;
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to CommandLine.OperandCount - 1 do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(CommandLine.Operands[Index]);
     if Stream = nil then
     begin
       ExitStatus := 1;
@@ -214,10 +220,10 @@ begin
     begin
       if Index > 0 then
         WriteCharacter(StandardOutput, #10);
-      if string(Parser.Operands[Index]) = '-' then
-        WriteLine(StandardOutput, '==> standard input <==')
+      if CommandLine.Operands[Index] = '-' then
+        PrintStringLine('==> standard input <==')
       else
-        WriteText(StandardOutput, PChar('==> ' + string(Parser.Operands[Index]) + ' <=='#10));
+        PrintStringLine('==> ' + CommandLine.Operands[Index] + ' <==');
     end;
     if CountBytes then
       TailBytes(Stream)

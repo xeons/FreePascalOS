@@ -29,14 +29,14 @@ program uname;
 {$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Information,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: uname [OPTION]...'#10 +
+  Usage = 'Usage: uname [OPTION]...'#10 +
     'Print certain system information. With no OPTION, same as -s.'#10 +
     #10 +
     '  -a, --all                print all information, in the following order:'#10 +
@@ -60,9 +60,9 @@ const
   ShowAll = $FF;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Selection: Integer;
   Information: TSystemInformation;
   Fields: string;
@@ -80,25 +80,25 @@ end;
 
 begin
   Selection := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'all', False, ShowAll),
-    OptionDefinition('s', 'kernel-name', False, ShowKernelName),
-    OptionDefinition('n', 'nodename', False, ShowNodeName),
-    OptionDefinition('r', 'kernel-release', False, ShowRelease),
-    OptionDefinition('v', 'kernel-version', False, ShowVersion),
-    OptionDefinition('m', 'machine', False, ShowMachine),
-    OptionDefinition('p', 'processor', False, ShowProcessor),
-    OptionDefinition('i', 'hardware-platform', False, ShowPlatform),
-    OptionDefinition('o', 'operating-system', False, ShowOperatingSystem)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'all', False, ShowAll),
+    CommandOption('s', 'kernel-name', False, ShowKernelName),
+    CommandOption('n', 'nodename', False, ShowNodeName),
+    CommandOption('r', 'kernel-release', False, ShowRelease),
+    CommandOption('v', 'kernel-version', False, ShowVersion),
+    CommandOption('m', 'machine', False, ShowMachine),
+    CommandOption('p', 'processor', False, ShowProcessor),
+    CommandOption('i', 'hardware-platform', False, ShowPlatform),
+    CommandOption('o', 'operating-system', False, ShowOperatingSystem)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     Selection := Selection or Code;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[0])]);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[0]]));
   if Selection = 0 then
     Selection := ShowKernelName;
 
   if GetSystemInformation(Information) <> 0 then
-    Fail(1, 'cannot get system information', []);
+    Fail(1, 'cannot get system information');
   Fields := '';
   FieldCount := 0;
   AddField(ShowKernelName, PChar(@Information.SystemName[0]));
@@ -109,5 +109,5 @@ begin
   AddField(ShowProcessor, PChar(@Information.Machine[0]));
   AddField(ShowPlatform, PChar(@Information.Machine[0]));
   AddField(ShowOperatingSystem, 'FreePascalOS');
-  WriteLine(StandardOutput, PChar(Fields));
+  PrintStringLine(Fields);
 end.

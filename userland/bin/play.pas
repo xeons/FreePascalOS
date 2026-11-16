@@ -31,55 +31,55 @@ program play;
 {$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Audio.Device,
   Audio.Wave;
 
 const
-  Usage: PChar = 'Usage: play FILE...'#10 +
+  Usage = 'Usage: play FILE...'#10 +
     'Play WAV files (8 to 32-bit PCM or float, 1 to 8 channels, 8000 to 192000 Hz).'#10;
   ChunkBytes = 16384;
 
 var
-  Parser: TOptionParser;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Operand: string;
   Wave: TWaveFile;
   Status: TWaveStatus;
   Device: Int64;
-  Format: TAudioFormat;
+  AudioFormat: TAudioFormat;
   Buffer: array of Byte;
   Count: QWord;
   Error: LongInt;
   Failed: Boolean;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('no file to play', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('no file to play');
   Device := OpenAudioOutput(nil);
   if Device < 0 then
-    FailWithError(1, LongInt(-Device), '%s', [ArgumentText(DefaultAudioDevice)]);
+    FailWithError(1, LongInt(-Device), string(DefaultAudioDevice));
   SetLength(Buffer, ChunkBytes);
   Failed := False;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Status := OpenWaveFile(Parser.Operands[Index], Wave);
+    Status := OpenWaveFile(Operand, Wave);
     if Status <> WaveOk then
     begin
-      Report('%s: %s', [ArgumentText(Parser.Operands[Index]), ArgumentText(WaveStatusText(Status))]);
+      Report(Operand + ': ' + WaveStatusText(Status));
       CloseWaveFile(Wave);
       Failed := True;
       Continue;
     end;
-    Format.Rate := Wave.Rate;
-    Format.Channels := Wave.Channels;
-    Format.Kind := Wave.Kind;
-    Error := SetAudioFormat(Device, Format);
+    AudioFormat.Rate := Wave.Rate;
+    AudioFormat.Channels := Wave.Channels;
+    AudioFormat.Kind := Wave.Kind;
+    Error := SetAudioFormat(Device, AudioFormat);
     if Error <> 0 then
     begin
-      ReportError(Error, '%s: %u Hz, %u channels', [ArgumentText(Parser.Operands[Index]),
-        ArgumentUnsigned(Wave.Rate), ArgumentUnsigned(Wave.Channels)]);
+      ReportError(Error, Format('%s: %u Hz, %u channels', [Operand, Wave.Rate, Wave.Channels]));
       CloseWaveFile(Wave);
       Failed := True;
       Continue;
@@ -90,7 +90,7 @@ begin
       begin
         Error := WriteAudio(Device, @Buffer[0], Count);
         if Error <> 0 then
-          FailWithError(1, Error, 'writing to %s', [ArgumentText(DefaultAudioDevice)]);
+          FailWithError(1, Error, 'writing to ' + DefaultAudioDevice);
       end;
     until Count = 0;
     CloseWaveFile(Wave);

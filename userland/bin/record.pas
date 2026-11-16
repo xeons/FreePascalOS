@@ -36,17 +36,18 @@ program RecordSound;
 
 uses
   Abi.SystemCalls,
+  SysUtils,
   Sys.Files,
-  Sys.Format,
   Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
   Audio.Formats,
   Audio.Device,
   Audio.Wave;
 
 const
-  Usage: PChar = 'Usage: record [-d DEVICE] [-r RATE] [-f FORMAT] [-c CHANNELS] FILE SECONDS'#10 +
+  Usage = 'Usage: record [-d DEVICE] [-r RATE] [-f FORMAT] [-c CHANNELS] FILE SECONDS'#10 +
     'Record SECONDS seconds of sound from the audio input into FILE (WAV).'#10 +
     '  -d DEVICE     the input (default /dev/audioin)'#10 +
     '  -r RATE       8000 to 192000 samples a second (default 48000)'#10 +
@@ -59,11 +60,11 @@ const
   ChunkBytes = 16384;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
-  DevicePath: PChar;
-  OutputPath: PChar;
+  OptionValue: string;
+  DevicePath: string;
+  OutputPath: string;
   Rate: QWord;
   Channels: QWord;
   Kind: LongWord;
@@ -83,46 +84,46 @@ begin
   Rate := 48000;
   Channels := 2;
   Kind := SampleSigned16;
-  BeginOptions(Parser, [OptionDefinition('d', 'device', True, OptionDevice),
-    OptionDefinition('r', 'rate', True, OptionRate),
-    OptionDefinition('f', 'format', True, OptionFormat),
-    OptionDefinition('c', 'channels', True, OptionChannels)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('d', 'device', True, OptionDevice),
+    CommandOption('r', 'rate', True, OptionRate),
+    CommandOption('f', 'format', True, OptionFormat),
+    CommandOption('c', 'channels', True, OptionChannels)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionDevice: DevicePath := OptionValue;
       OptionRate:
-        if not ParseUnsigned(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
-          FailWithUsageHint('the rate must be 8000 to 192000', []);
+        if not ParseUnsignedDecimal(OptionValue, Rate) or (Rate < 8000) or (Rate > 192000) then
+          FailWithUsageHint('the rate must be 8000 to 192000');
       OptionFormat:
         begin
           Kind := SampleKindOfName(OptionValue);
           if Kind = 0 then
-            FailWithUsageHint('unknown sample format ''%s''', [ArgumentText(OptionValue)]);
+            FailWithUsageHint(SysUtils.Format('unknown sample format ''%s''', [OptionValue]));
         end;
       OptionChannels:
-        if not ParseUnsigned(OptionValue, Channels) or (Channels < 1) or (Channels > 8) then
-          FailWithUsageHint('there can be 1 to 8 channels', []);
+        if not ParseUnsignedDecimal(OptionValue, Channels) or (Channels < 1) or (Channels > 8) then
+          FailWithUsageHint('there can be 1 to 8 channels');
     end;
-  if Parser.OperandCount <> 2 then
-    FailWithUsageHint('a file and a length are needed', []);
-  OutputPath := Parser.Operands[0];
-  if not ParseThousandths(Parser.Operands[1], Thousandths) then
-    FailWithUsageHint('invalid length ''%s''', [ArgumentText(Parser.Operands[1])]);
+  if CommandLine.OperandCount <> 2 then
+    FailWithUsageHint('a file and a length are needed');
+  OutputPath := CommandLine.Operands[0];
+  if not ParseThousandths(PChar(CommandLine.Operands[1]), Thousandths) then
+    FailWithUsageHint(SysUtils.Format('invalid length ''%s''', [CommandLine.Operands[1]]));
 
-  Input := OpenAudioInput(DevicePath);
+  Input := OpenAudioInput(PChar(DevicePath));
   if Input < 0 then
-    FailWithError(1, LongInt(-Input), '%s', [ArgumentText(DevicePath)]);
+    FailWithError(1, LongInt(-Input), DevicePath);
   Format.Rate := LongWord(Rate);
   Format.Channels := LongWord(Channels);
   Format.Kind := Kind;
   Error := SetAudioFormat(Input, Format);
   if Error <> 0 then
-    FailWithError(1, Error, 'setting the format', []);
+    FailWithError(1, Error, 'setting the format');
   BytesLeft := (Rate * Thousandths div 1000) * Channels * BytesPerSample(Kind);
 
-  Output := OpenFile(OutputPath, OpenWrite or OpenCreate or OpenTruncate);
+  Output := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
   if Output < 0 then
-    FailWithError(1, LongInt(-Output), '%s', [ArgumentText(OutputPath)]);
+    FailWithError(1, LongInt(-Output), OutputPath);
   MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind, LongWord(BytesLeft));
   WriteAll(Output, @Header[0], WaveHeaderSize);
 
@@ -134,15 +135,15 @@ begin
       Wanted := ChunkBytes;
     Got := ReadAudio(Input, @Buffer[0], Wanted);
     if Got <= 0 then
-      FailWithError(1, LongInt(-Got), 'reading %s', [ArgumentText(DevicePath)]);
+      FailWithError(1, LongInt(-Got), 'reading ' + DevicePath);
     Error := WriteAll(Output, @Buffer[0], QWord(Got));
     if Error <> 0 then
-      FailWithError(1, Error, '%s', [ArgumentText(OutputPath)]);
+      FailWithError(1, Error, OutputPath);
     BytesLeft := BytesLeft - QWord(Got);
   end;
   Dropped := DroppedAudioFrames(Input);
   if Dropped > 0 then
-    Report('%d frames were dropped (not read in time)', [ArgumentNumber(Dropped)]);
+    Report(SysUtils.Format('%d frames were dropped (not read in time)', [Dropped]));
   CloseAudioOutput(Input);
   CloseFile(Output);
 end.

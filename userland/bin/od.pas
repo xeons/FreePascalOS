@@ -38,15 +38,15 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: od [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: od [OPTION]... [FILE]...'#10 +
     'Write an unambiguous representation, octal bytes by default,'#10 +
     'of FILE to standard output.'#10#10 +
     '  -A, --address-radix=RADIX   output format for file offsets; RADIX is one'#10 +
@@ -108,7 +108,7 @@ begin
     Kind := Text[Position];
     Inc(Position);
     if not (Kind in ['a', 'c', 'd', 'o', 'u', 'x']) then
-      Fail(1, 'invalid character ''%c'' in type string ''%s''', [ArgumentCharacter(Kind), ArgumentText(PChar(Text))]);
+      Fail(1, SysUtils.Format('invalid character ''%s'' in type string ''%s''', [Kind, Text]));
     Size := 1;
     if Kind in ['d', 'o', 'u', 'x'] then
       Size := 4;
@@ -130,12 +130,29 @@ begin
   end;
 end;
 
+{ Text padded with spaces on the left to Width columns. }
+function RightAligned(const Text: string; Width: Integer): string;
+begin
+  Result := StringOfChar(' ', Width - Length(Text)) + Text;
+end;
+
+{ Text padded with zeros on the left to Width digits. }
+function ZeroFilled(const Text: string; Width: Integer): string;
+begin
+  Result := StringOfChar('0', Width - Length(Text)) + Text;
+end;
+
+function LowerHexText(Value: QWord; Digits: Integer): string;
+begin
+  Result := LowerCase(IntToHex(Value, Digits));
+end;
+
 procedure WriteOffset(Offset: QWord);
 begin
   case Radix of
-    'd': WriteFormatted(StandardOutput, '%07u', [ArgumentUnsigned(Offset)]);
-    'x': WriteFormatted(StandardOutput, '%06x', [ArgumentUnsigned(Offset)]);
-    'o': WriteFormatted(StandardOutput, '%07o', [ArgumentUnsigned(Offset)]);
+    'd': PrintString(ZeroFilled(UIntToStr(Offset), 7));
+    'x': PrintString(LowerHexText(Offset, 6));
+    'o': PrintString(OctalText(Offset, 7));
   end;
 end;
 
@@ -171,46 +188,46 @@ begin
       if Index + ByteIndex < Count then
         Value := Value or Bytes[Index + ByteIndex];
     end;
-    WriteCharacter(StandardOutput, ' ');
+    PrintString(' ');
     case Format.Kind of
-      'o': WriteFormatted(StandardOutput, '%0*o', [ArgumentNumber(Field), ArgumentUnsigned(Value)]);
-      'x': WriteFormatted(StandardOutput, '%0*x', [ArgumentNumber(Field), ArgumentUnsigned(Value)]);
-      'u': WriteFormatted(StandardOutput, '%*u', [ArgumentNumber(Field), ArgumentUnsigned(Value)]);
+      'o': PrintString(OctalText(Value, Field));
+      'x': PrintString(LowerHexText(Value, Field));
+      'u': PrintString(RightAligned(UIntToStr(Value), Field));
       'd':
         begin
           if (Format.Size < 8) and ((Value shr (8 * Format.Size - 1)) and 1 <> 0) then
             Signed := Int64(Value) - (Int64(1) shl (8 * Format.Size))
           else
             Signed := Int64(Value);
-          WriteFormatted(StandardOutput, '%*d', [ArgumentNumber(Field), ArgumentNumber(Signed)]);
+          PrintString(RightAligned(IntToStr(Signed), Field));
         end;
       'a':
         begin
           Character := Bytes[Index] and $7F;
           if Character <= 32 then
-            WriteText(StandardOutput, PChar(SysUtils.Format('%3s',[NamedCharacters[Character]])))
+            PrintString(RightAligned(NamedCharacters[Character], 3))
           else if Character = 127 then
-            WriteText(StandardOutput, 'del')
+            PrintString('del')
           else
-            WriteFormatted(StandardOutput, '%3c', [ArgumentCharacter(Char(Character))]);
+            PrintString(RightAligned(Char(Character), 3));
         end;
       'c':
         begin
           Character := Bytes[Index];
           case Character of
-            0: WriteText(StandardOutput, ' \0');
-            7: WriteText(StandardOutput, ' \a');
-            8: WriteText(StandardOutput, ' \b');
-            9: WriteText(StandardOutput, ' \t');
-            10: WriteText(StandardOutput, ' \n');
-            11: WriteText(StandardOutput, ' \v');
-            12: WriteText(StandardOutput, ' \f');
-            13: WriteText(StandardOutput, ' \r');
+            0: PrintString(' \0');
+            7: PrintString(' \a');
+            8: PrintString(' \b');
+            9: PrintString(' \t');
+            10: PrintString(' \n');
+            11: PrintString(' \v');
+            12: PrintString(' \f');
+            13: PrintString(' \r');
           else
             if (Character >= 32) and (Character < 127) then
-              WriteFormatted(StandardOutput, '%3c', [ArgumentCharacter(Char(Character))])
+              PrintString(RightAligned(Char(Character), 3))
             else
-              WriteFormatted(StandardOutput, '%03o', [ArgumentUnsigned(Character)]);
+              PrintString(OctalText(Character, 3));
           end;
         end;
     end;
@@ -219,15 +236,15 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Skip: QWord;
   Limit: Int64;
   ShowDuplicates: Boolean;
   Number: Int64;
   Size: QWord;
-  FileIndex: Integer;
+  FileName: string;
   Handle: Int64;
   Line: array[0..MaximumWidth - 1] of Byte;
   Previous: array[0..MaximumWidth - 1] of Byte;
@@ -251,7 +268,7 @@ begin
      CompareMem(@Line[0], @Previous[0], Width) then
   begin
     if not Suppressing then
-      WriteLine(StandardOutput, '*');
+      PrintStringLine('*');
     Suppressing := True;
   end
   else
@@ -262,9 +279,9 @@ begin
       if FormatIndex = 0 then
         WriteOffset(Offset - QWord(LineFill))
       else if Radix <> 'n' then
-        WriteText(StandardOutput, '       ');
+        PrintString('       ');
       WriteLineInFormat(Formats[FormatIndex], @Line[0], LineFill);
-      WriteCharacter(StandardOutput, #10);
+      PrintString(#10);
     end;
   end;
   for Index := 0 to LineFill - 1 do
@@ -279,41 +296,41 @@ begin
   Skip := 0;
   Limit := -1;
   ShowDuplicates := False;
-  BeginOptions(Parser, [
-    OptionDefinition('A', 'address-radix', True, OptionRadix),
-    OptionDefinition('j', 'skip-bytes', True, OptionSkip),
-    OptionDefinition('N', 'read-bytes', True, OptionCount),
-    OptionDefinition('t', 'format', True, OptionFormat),
-    OptionDefinition('v', 'output-duplicates', False, OptionDuplicates),
-    OptionDefinition('w', 'width', True, OptionWidth),
-    OptionDefinition('b', nil, False, OptionB),
-    OptionDefinition('c', nil, False, OptionC),
-    OptionDefinition('d', nil, False, OptionD),
-    OptionDefinition('o', nil, False, OptionO),
-    OptionDefinition('x', nil, False, OptionX)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('A', 'address-radix', True, OptionRadix),
+    CommandOption('j', 'skip-bytes', True, OptionSkip),
+    CommandOption('N', 'read-bytes', True, OptionCount),
+    CommandOption('t', 'format', True, OptionFormat),
+    CommandOption('v', 'output-duplicates', False, OptionDuplicates),
+    CommandOption('w', 'width', True, OptionWidth),
+    CommandOption('b', '', False, OptionB),
+    CommandOption('c', '', False, OptionC),
+    CommandOption('d', '', False, OptionD),
+    CommandOption('o', '', False, OptionO),
+    CommandOption('x', '', False, OptionX)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionRadix:
         begin
-          if (Length(string(Value)) <> 1) or not (Value[0] in ['d', 'o', 'x', 'n']) then
-            Fail(1, 'invalid output address radix ''%s''', [ArgumentText(Value)]);
-          Radix := Value[0];
+          if (Length(Value) <> 1) or not (Value[1] in ['d', 'o', 'x', 'n']) then
+            Fail(1, SysUtils.Format('invalid output address radix ''%s''', [Value]));
+          Radix := Value[1];
         end;
       OptionSkip:
         if not ParseSize(Value, Skip) then
-          Fail(1, 'invalid skip count ''%s''', [ArgumentText(Value)]);
+          Fail(1, SysUtils.Format('invalid skip count ''%s''', [Value]));
       OptionCount:
         begin
           if not ParseSize(Value, Size) then
-            Fail(1, 'invalid count ''%s''', [ArgumentText(Value)]);
+            Fail(1, SysUtils.Format('invalid count ''%s''', [Value]));
           Limit := Int64(Size);
         end;
       OptionFormat: ParseFormat(Value);
       OptionDuplicates: ShowDuplicates := True;
       OptionWidth:
         begin
-          if not ParseInteger(Value, Number) or (Number < 1) or (Number > MaximumWidth) then
-            Fail(1, 'invalid width ''%s''', [ArgumentText(Value)]);
+          if not ParseDecimal(Value, Number) or (Number < 1) or (Number > MaximumWidth) then
+            Fail(1, SysUtils.Format('invalid width ''%s''', [Value]));
           Width := Integer(Number);
         end;
       OptionB: AddFormat('o', 1);
@@ -324,11 +341,8 @@ begin
     end;
   if Length(Formats) = 0 then
     AddFormat('o', 2);
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   { All files form one stream of bytes. }
   ExitStatus := 0;
@@ -337,15 +351,15 @@ begin
   HavePrevious := False;
   Suppressing := False;
   Remaining := Limit;
-  for FileIndex := 0 to Parser.OperandCount - 1 do
+  for FileName in CommandLine.Operands do
   begin
-    if string(Parser.Operands[FileIndex]) = '-' then
+    if FileName = '-' then
       Handle := StandardInputHandle
     else
-      Handle := OpenFile(Parser.Operands[FileIndex], OpenRead);
+      Handle := OpenFile(PChar(FileName), OpenRead);
     if Handle < 0 then
     begin
-      ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Parser.Operands[FileIndex])]);
+      ReportError(ErrorCodeOf(Handle), FileName);
       ExitStatus := 1;
       Continue;
     end;
@@ -375,7 +389,7 @@ begin
   if Radix <> 'n' then
   begin
     WriteOffset(Offset);
-    WriteCharacter(StandardOutput, #10);
+    PrintString(#10);
   end;
   Halt(ExitStatus);
 end.

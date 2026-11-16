@@ -22,27 +22,28 @@
 program whoami;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Format,
-  Sys.Streams,
+  SysUtils,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: whoami'#10 +
+  Usage = 'Usage: whoami'#10 +
     'Print the user name associated with the current effective user ID.'#10;
 
 var
-  Parser: TOptionParser;
-  Name: PChar;
+  CommandLine: TCommandLine;
+  Name: string;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('extra operand', []);
-  Name := UserNameOf(CurrentUserId);
-  if Name = nil then
-    Fail(1, 'cannot find name for user ID %u', [ArgumentUnsigned(CurrentUserId)]);
-  PrintLine(Name);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint('extra operand');
+  if not FindUserName(CurrentUserId, Name) then
+    Fail(1, Format('cannot find name for user ID %u', [CurrentUserId]));
+  PrintStringLine(Name);
 end.

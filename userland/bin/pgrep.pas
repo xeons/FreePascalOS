@@ -40,21 +40,18 @@ uses
   Abi.SystemCalls,
   Sys.Environment,
   Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
   Sys.Processes,
-  Sys.Streams,
-  Sys.Text,
   Util.Accounts,
+  Util.CommandLine,
   Util.Commands,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths,
   Util.RegularExpressions;
 
 const
-  Usage: PChar = 'Usage: pgrep [OPTION]... PATTERN'#10 +
+  Usage = 'Usage: pgrep [OPTION]... PATTERN'#10 +
     '       pkill [-SIGNAL] [OPTION]... PATTERN'#10 +
     'List (pgrep) or end (pkill) the processes whose names match PATTERN.'#10#10 +
     '  -c, --count             count matching processes (pgrep)'#10 +
@@ -76,9 +73,9 @@ const
   DefaultSignal = 15;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   IsKill: Boolean;
   CountOnly: Boolean;
   Delimiter: string;
@@ -90,8 +87,8 @@ var
   UserId: LongWord;
   Signal: Integer;
   Pattern: TExpression;
-  PatternError: PChar;
-  PatternText: PChar;
+  PatternError: string;
+  PatternText: string;
   Matches: array of TAbiProcessInformation;
   MatchCount: Integer;
   Information: TAbiProcessInformation;
@@ -105,30 +102,25 @@ var
   SignalName: string;
   Line: string;
 
-{ Copies a heap string from the libraries and frees it. }
-function TakeText(Text: PChar): string;
-begin
-  Result := Text;
-  FreeMemory(Text);
-end;
-
 function Selected(const Information: TAbiProcessInformation): Boolean;
 var
+  Name: string;
   Match: TMatch;
 begin
   if Information.ProcessId = Own then
     Exit(False);
   if HaveUser and (Information.EffectiveUserId <> UserId) then
     Exit(False);
-  if not SearchExpression(Pattern, @Information.Name[0], Match) then
+  Name := PChar(@Information.Name[0]);
+  if not SearchExpression(Pattern, Name, Match) then
     Exit(False);
-  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> Length(string(PChar(@Information.Name[0]))))) then
+  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> Length(Name))) then
     Exit(False);
   Result := True;
 end;
 
 begin
-  IsKill := TakeText(BaseName(Argument(0))) = 'pkill';
+  IsKill := BaseName(string(Argument(0))) = 'pkill';
   Delimiter := #10;
   Signal := DefaultSignal;
   First := 1;
@@ -139,25 +131,25 @@ begin
     if (Length(SignalName) >= 2) and (SignalName[1] = '-') and (SignalName[2] <> '-') then
     begin
       Delete(SignalName, 1, 1);
-      if ParseSignal(PChar(SignalName)) > 0 then
+      if ParseSignal(SignalName) > 0 then
       begin
-        Signal := ParseSignal(PChar(SignalName));
+        Signal := ParseSignal(SignalName);
         First := 2;
       end;
     end;
   end;
 
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'count', False, OptionCount),
-    OptionDefinition('d', 'delimiter', True, OptionDelimiter),
-    OptionDefinition('f', 'full', False, OptionFull),
-    OptionDefinition('l', 'list-name', False, OptionListName),
-    OptionDefinition('n', 'newest', False, OptionNewest),
-    OptionDefinition('o', 'oldest', False, OptionOldest),
-    OptionDefinition('u', 'euid', True, OptionUser),
-    OptionDefinition('x', 'exact', False, OptionExact)], Usage);
-  Parser.ArgumentIndex := First;
-  while NextOption(Parser, Code, Value) do
+  { The signal argument of pkill, if any, is left out. }
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'count', False, OptionCount),
+    CommandOption('d', 'delimiter', True, OptionDelimiter),
+    CommandOption('f', 'full', False, OptionFull),
+    CommandOption('l', 'list-name', False, OptionListName),
+    CommandOption('n', 'newest', False, OptionNewest),
+    CommandOption('o', 'oldest', False, OptionOldest),
+    CommandOption('u', 'euid', True, OptionUser),
+    CommandOption('x', 'exact', False, OptionExact)], Usage, Copy(ProgramArguments, First - 1, MaxInt));
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionCount: CountOnly := True;
       OptionDelimiter: Delimiter := Value;
@@ -168,17 +160,17 @@ begin
       OptionUser:
         begin
           if not FindUserId(Value, UserId) then
-            Fail(2, 'invalid user name: %s', [ArgumentText(Value)]);
+            Fail(2, 'invalid user name: ' + Value);
           HaveUser := True;
         end;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('no matching criteria specified', []);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('only one pattern can be provided', []);
-  PatternText := Parser.Operands[0];
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('no matching criteria specified');
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint('only one pattern can be provided');
+  PatternText := CommandLine.Operands[0];
   if not CompileExpression(PatternText, SyntaxExtended, Pattern, PatternError) then
-    Fail(2, 'invalid pattern ''%s'': %s', [ArgumentText(PatternText), ArgumentText(PatternError)]);
+    Fail(2, Format('invalid pattern ''%s'': %s', [PatternText, PatternError]));
 
   Own := QWord(CurrentProcessId);
   MatchCount := 0;
@@ -213,7 +205,7 @@ begin
   if MatchCount = 0 then
   begin
     if CountOnly then
-      PrintLine('0');
+      PrintStringLine('0');
     Halt(1);
   end;
   ExitStatus := 0;
@@ -224,7 +216,7 @@ begin
       Error := SendSignal(Int64(Matches[Index].ProcessId), Signal);
       if Error <> ErrorNone then
       begin
-        ReportError(Error, 'killing pid %u failed', [ArgumentUnsigned(Matches[Index].ProcessId)]);
+        ReportError(Error, Format('killing pid %u failed', [Matches[Index].ProcessId]));
         ExitStatus := 1;
       end;
     end;
@@ -233,7 +225,7 @@ begin
 
   if CountOnly then
   begin
-    WriteLine(StandardOutput, PChar(IntToStr(MatchCount)));
+    PrintStringLine(IntToStr(MatchCount));
     Halt(0);
   end;
   Line := '';
@@ -245,5 +237,5 @@ begin
     if ListName then
       Line := Line + ' ' + string(PChar(@Matches[Index].Name[0]));
   end;
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
 end.

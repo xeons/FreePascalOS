@@ -36,14 +36,13 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: tr [OPTION]... SET1 [SET2]'#10 +
+  Usage = 'Usage: tr [OPTION]... SET1 [SET2]'#10 +
     'Translate, squeeze, and/or delete characters from standard input,'#10 +
     'writing to standard output.'#10 +
     #10 +
@@ -78,7 +77,7 @@ begin
         (Byte(Character) < 128);
   else
     begin
-      Fail(1, 'invalid character class ''%s''', [ArgumentText(PChar(ClassName))]);
+      Fail(1, Format('invalid character class ''%s''', [ClassName]));
       Result := False;
     end;
   end;
@@ -156,8 +155,8 @@ begin
       Inc(Position);
       Last := ReadSetCharacter(Text, Position);
       if Last < First then
-        Fail(1, 'range-endpoints of ''%c-%c'' are in reverse collating sequence order',
-          [ArgumentCharacter(First), ArgumentCharacter(Last)]);
+        Fail(1, 'range-endpoints of ''' + First + '-' + Last +
+          ''' are in reverse collating sequence order');
       for Character := First to Last do
         Result := Result + Character;
     end
@@ -178,9 +177,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Complement: Boolean;
   DeleteMode: Boolean;
   Squeeze: Boolean;
@@ -201,27 +200,27 @@ begin
   Complement := False;
   DeleteMode := False;
   Squeeze := False;
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'complement', False, OptionComplement),
-    OptionDefinition('C', nil, False, OptionComplement),
-    OptionDefinition('d', 'delete', False, OptionDelete),
-    OptionDefinition('s', 'squeeze-repeats', False, OptionSqueeze)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'complement', False, OptionComplement),
+    CommandOption('C', '', False, OptionComplement),
+    CommandOption('d', 'delete', False, OptionDelete),
+    CommandOption('s', 'squeeze-repeats', False, OptionSqueeze)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionComplement: Complement := True;
       OptionDelete: DeleteMode := True;
       OptionSqueeze: Squeeze := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
-  if (Parser.OperandCount = 1) and not DeleteMode and not Squeeze then
-    FailWithUsageHint('missing operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
+  if (CommandLine.OperandCount = 1) and not DeleteMode and not Squeeze then
+    FailWithUsageHint(Format('missing operand after ''%s''', [CommandLine.Operands[0]]));
 
-  FirstList := ExpandSet(Parser.Operands[0]);
+  FirstList := ExpandSet(CommandLine.Operands[0]);
   MakeSet(FirstList, Complement, FirstSet);
   SecondList := '';
-  if Parser.OperandCount >= 2 then
-    SecondList := ExpandSet(Parser.Operands[1]);
+  if CommandLine.OperandCount >= 2 then
+    SecondList := ExpandSet(CommandLine.Operands[1]);
 
   { The translation table; SET2 is padded with its last character. }
   for Character := #0 to #255 do

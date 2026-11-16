@@ -42,17 +42,17 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.FileWatches,
-  Sys.Format,
   Sys.Objects,
   Sys.Streams,
-  Sys.Text,
   Sys.Volumes,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: volumes [OPTION]...'#10 +
+  Usage = 'Usage: volumes [OPTION]...'#10 +
     'List the mounted volumes.'#10 +
     #10 +
     '  -w, --wait             then print volumes arriving and going away'#10 +
@@ -65,22 +65,10 @@ const
 
   ExitNothingCame = 2;
 
-procedure ParseNumberOption(Value: PChar; out Number: QWord);
+procedure ParseNumberOption(const Value: string; out Number: QWord);
 begin
-  if not ParseUnsigned(Value, Number) then
-    FailWithUsageHint('invalid number: ''%s''', [ArgumentText(Value)]);
-end;
-
-procedure PrintText(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
-
-function HumanSize(Size: QWord): string;
-var
-  Buffer: array[0..31] of Char;
-begin
-  Result := FormatHumanSize(Size, @Buffer[0]);
+  if not ParseUnsignedDecimal(Value, Number) then
+    FailWithUsageHint(Format('invalid number: ''%s''', [Value]));
 end;
 
 function FlagsText(const Volume: TVolumeDescription): string;
@@ -99,12 +87,12 @@ var
   FreeText: string;
 begin
   if Volume.HasFreeSpace then
-    FreeText := HumanSize(Volume.FreeBytes)
+    FreeText := FormatHumanSize(Volume.FreeBytes)
   else
     FreeText := '-';
-  PrintText(Format('%-10s %-12s %-6s %6s %6s %s', [string(PChar(@Volume.Name[0])),
+  PrintString(Format('%-10s %-12s %-6s %6s %6s %s', [string(PChar(@Volume.Name[0])),
     string(PChar(@Volume.VolumeLabel[0])), string(PChar(@Volume.FileSystemType[0])),
-    HumanSize(Volume.TotalBytes), FreeText, string(PChar(@Volume.MountPoint[0]))]) +
+    FormatHumanSize(Volume.TotalBytes), FreeText, string(PChar(@Volume.MountPoint[0]))]) +
     FlagsText(Volume) + #10);
 end;
 
@@ -113,7 +101,7 @@ var
   Volume: TVolumeDescription;
   Index: Integer;
 begin
-  WriteLine(StandardOutput, 'Name       Label        Type     Size   Free Mounted on');
+  PrintStringLine('Name       Label        Type     Size   Free Mounted on');
   Index := 0;
   while GetVolumeDescription(Index, Volume) do
   begin
@@ -130,9 +118,9 @@ begin
   Line := 'arrived: ' + Name;
   if FindVolumeDescription(PChar(Name), Volume) then
     Line := Line + Format(' %s "%s" %s at %s', [string(PChar(@Volume.FileSystemType[0])),
-      string(PChar(@Volume.VolumeLabel[0])), HumanSize(Volume.TotalBytes),
+      string(PChar(@Volume.VolumeLabel[0])), FormatHumanSize(Volume.TotalBytes),
       string(PChar(@Volume.MountPoint[0]))]);
-  PrintText(Line + #10);
+  PrintString(Line + #10);
 end;
 
 { Prints volumes arriving and going away; returns how many. }
@@ -145,9 +133,9 @@ begin
   Result := 0;
   Watch := WatchVolumes;
   if Watch < 0 then
-    FailWithError(1, ErrorCodeOf(Watch), '%s', [ArgumentText(VolumesFolder)]);
+    FailWithError(1, ErrorCodeOf(Watch), VolumesFolder);
   { Said once the watch is in place, so a test can plug a disk in. }
-  WriteLine(StandardOutput, 'waiting for volumes');
+  PrintStringLine('waiting for volumes');
   FlushStream(StandardOutput);
   while (Wanted = 0) or (Result < Wanted) do
   begin
@@ -159,9 +147,9 @@ begin
     begin
       case Change.Kind of
         FileChangeCreated: WriteArrival(Change.Name);
-        FileChangeRemoved: PrintText('removed: ' + string(Change.Name) + #10);
+        FileChangeRemoved: PrintString('removed: ' + string(Change.Name) + #10);
       else
-        PrintText(string(FileChangeKindText(Change.Kind)) + #10);
+        PrintString(string(FileChangeKindText(Change.Kind)) + #10);
       end;
       FlushStream(StandardOutput);
       Inc(Result);
@@ -171,9 +159,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   ShouldWait: Boolean;
   Wanted: QWord;
   Number: QWord;
@@ -182,11 +170,11 @@ begin
   ShouldWait := False;
   Wanted := 0;
   Timeout := InfiniteWait;
-  BeginOptions(Parser, [
-    OptionDefinition('w', 'wait', False, OptionWait),
-    OptionDefinition('n', 'count', True, OptionCount),
-    OptionDefinition('t', 'timeout', True, OptionTimeout)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('w', 'wait', False, OptionWait),
+    CommandOption('n', 'count', True, OptionCount),
+    CommandOption('t', 'timeout', True, OptionTimeout)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionWait: ShouldWait := True;
       OptionCount: ParseNumberOption(Value, Wanted);

@@ -30,15 +30,15 @@ program mknod;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
+  Util.CommandLine,
   Util.Messages,
-  Util.Modes,
-  Util.Options;
+  Util.Modes;
 
 const
-  Usage: PChar = 'Usage: mknod [OPTION]... NAME TYPE [MAJOR MINOR]'#10 +
+  Usage = 'Usage: mknod [OPTION]... NAME TYPE [MAJOR MINOR]'#10 +
     'Create the special file NAME of the given TYPE.'#10#10 +
     '  -m, --mode=MODE   set file permission bits to MODE, not a=rw - umask'#10#10 +
     'TYPE may be:'#10 +
@@ -49,41 +49,37 @@ const
   OptionMode = 1;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  ModeText: string;
+  Value: string;
   HasMode: Boolean;
   ModeChange: TModeChange;
+  Name: string;
   Kind: string;
   Error: LongInt;
 begin
-  ModeText := '';
-  HasMode := False;
-  BeginOptions(Parser, [OptionDefinition('m', 'mode', True, OptionMode)], Usage);
-  while NextOption(Parser, Code, Value) do
-    if Code = OptionMode then
-    begin
-      ModeText := Value;
-      HasMode := True;
-    end;
-  if Parser.OperandCount < 2 then
-    FailWithUsageHint('missing operand', []);
-  if HasMode and not ParseModeChange(PChar(ModeText), ModeChange) then
-    Fail(1, 'invalid mode ''%s''', [ArgumentText(PChar(ModeText))]);
-  Kind := Parser.Operands[1];
+  CommandLine := TCommandLine.Create([CommandOption('m', 'mode', True, OptionMode)], Usage);
+  while CommandLine.NextOption(Code, Value) do
+    ;
+  if CommandLine.OperandCount < 2 then
+    FailWithUsageHint('missing operand');
+  HasMode := CommandLine.OptionGiven(OptionMode);
+  if HasMode and not ParseModeChange(CommandLine.OptionValue(OptionMode), ModeChange) then
+    Fail(1, Format('invalid mode ''%s''', [CommandLine.OptionValue(OptionMode)]));
+  Name := CommandLine.Operands[0];
+  Kind := CommandLine.Operands[1];
   if Kind = 'p' then
   begin
-    if Parser.OperandCount > 2 then
-      FailWithUsageHint('Fifos do not have major and minor device numbers.', []);
-    Error := CreateFifo(Parser.Operands[0]);
+    if CommandLine.OperandCount > 2 then
+      FailWithUsageHint('Fifos do not have major and minor device numbers.');
+    Error := CreateFifo(PChar(Name));
     if (Error = ErrorNone) and HasMode then
-      Error := ChangeMode(Parser.Operands[0], ApplyModeChange(ModeChange, $1B6, False));
+      Error := ChangeMode(PChar(Name), ApplyModeChange(ModeChange, $1B6, False));
     if Error <> ErrorNone then
-      FailWithError(1, Error, '''%s''', [ArgumentText(Parser.Operands[0])]);
+      FailWithError(1, Error, Format('''%s''', [Name]));
   end
   else if (Kind = 'b') or (Kind = 'c') or (Kind = 'u') then
-    Fail(1, '''%s'': device files are not supported', [ArgumentText(Parser.Operands[0])])
+    Fail(1, Format('''%s'': device files are not supported', [Name]))
   else
-    FailWithUsageHint('invalid device type ''%s''', [ArgumentText(PChar(Kind))]);
+    FailWithUsageHint(Format('invalid device type ''%s''', [Kind]));
 end.

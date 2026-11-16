@@ -25,16 +25,16 @@
 }
 program printenv;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 uses
   Sys.Environment,
-  Sys.Streams,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: printenv [OPTION]... [VARIABLE]...'#10 +
+  Usage = 'Usage: printenv [OPTION]... [VARIABLE]...'#10 +
     'Print the values of the specified environment VARIABLE(s).'#10 +
     'If no VARIABLE is specified, print name and value pairs for them all.'#10#10 +
     '  -0, --null     end each output line with NUL, not newline'#10;
@@ -42,41 +42,42 @@ const
   OptionNull = 1;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   LineEnd: Char;
   Index: Integer;
   Block: PPChar;
+  Operand: string;
+  VariableValue: PChar;
   ExitStatus: LongInt;
 begin
   LineEnd := #10;
-  BeginOptions(Parser, [OptionDefinition('0', 'null', False, OptionNull)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([CommandOption('0', 'null', False, OptionNull)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     LineEnd := #0;
-  if Parser.OperandCount = 0 then
+  if CommandLine.OperandCount = 0 then
   begin
     Block := EnvironmentBlock;
     Index := 0;
     while Block[Index] <> nil do
     begin
-      WriteText(StandardOutput, Block[Index]);
-      WriteCharacter(StandardOutput, LineEnd);
+      PrintString(string(Block[Index]) + LineEnd);
       Inc(Index);
     end;
     Halt(0);
   end;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Value := GetVariable(Parser.Operands[Index]);
-    if Value = nil then
+    { nil tells an unset variable from an empty one. }
+    VariableValue := GetVariable(PChar(Operand));
+    if VariableValue = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    WriteText(StandardOutput, Value);
-    WriteCharacter(StandardOutput, LineEnd);
+    PrintString(string(VariableValue) + LineEnd);
   end;
   Halt(ExitStatus);
 end.

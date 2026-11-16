@@ -39,17 +39,15 @@ uses
   Crypto.Random,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Paths,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: shred [OPTION]... FILE...'#10 +
+  Usage = 'Usage: shred [OPTION]... FILE...'#10 +
     'Overwrite the specified FILE(s) repeatedly, in order to make it harder'#10 +
     'for even very expensive hardware probing to recover the data.'#10#10 +
     '  -f, --force    change permissions to allow writing if necessary'#10 +
@@ -84,23 +82,7 @@ var
 { "<program>: <message>" on standard error, for -v. }
 procedure ReportProgress(const Message: string);
 begin
-  WriteText(StandardError, PChar(string(ProgramName) + ': ' + Message + #10));
-end;
-
-{ Copies a heap string from the libraries and frees it. }
-function TakeText(Text: PChar): string;
-begin
-  Result := Text;
-  FreeMemory(Text);
-end;
-
-{ Directory + '/' + Name, without doubling the slash. }
-function JoinPath(const Directory, Name: string): string;
-begin
-  if (Directory <> '') and (Directory[Length(Directory)] <> '/') then
-    Result := Directory + '/' + Name
-  else
-    Result := Directory + Name;
+  PrintErrorStringLine(ProgramNameText + ': ' + Message);
 end;
 
 function OverwritePass(Handle: Int64; const Path: string; Length: QWord; UseZeros: Boolean;
@@ -131,7 +113,7 @@ begin
     Error := WriteAll(Handle, @Buffer[0], Chunk);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, '%s: error writing', [ArgumentText(PChar(Path))]);
+      ReportError(Error, Path + ': error writing');
       Exit(False);
     end;
     Written := Written + Chunk;
@@ -159,9 +141,9 @@ var
   Length: Integer;
   Error: LongInt;
 begin
-  Directory := TakeText(DirectoryName(PChar(Path)));
+  Directory := DirectoryName(Path);
   Current := Path;
-  Length := System.Length(TakeText(BaseName(PChar(Path))));
+  Length := System.Length(BaseName(Path));
   while Length > 0 do
   begin
     Candidate := JoinPath(Directory, RandomName(Length));
@@ -175,7 +157,7 @@ begin
   end;
   Error := RemovePath(PChar(Current));
   if Error <> ErrorNone then
-    ReportError(Error, '%s: failed to remove', [ArgumentText(PChar(Current))])
+    ReportError(Error, Current + ': failed to remove')
   else if Verbose then
     ReportProgress(Path + ': removed');
   Result := Error = ErrorNone;
@@ -197,14 +179,14 @@ begin
   end;
   if Handle < 0 then
   begin
-    ReportError(ErrorCodeOf(Handle), '%s: failed to open for writing', [ArgumentText(PChar(Path))]);
+    ReportError(ErrorCodeOf(Handle), Path + ': failed to open for writing');
     Exit(False);
   end;
   GetHandleInformation(Handle, Information);
   if Information.Kind <> KindFile then
   begin
     CloseFile(Handle);
-    Report('%s: invalid file type', [ArgumentText(PChar(Path))]);
+    Report(Path + ': invalid file type');
     Exit(False);
   end;
   if Size >= 0 then
@@ -241,33 +223,33 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   ByteCount: QWord;
   ExitStatus: LongInt;
 begin
   Iterations := 3;
   Size := -1;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'force', False, OptionForce),
-    OptionDefinition('n', 'iterations', True, OptionIterations),
-    OptionDefinition('s', 'size', True, OptionSize),
-    OptionDefinition('u', 'remove', False, OptionRemove),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition('x', 'exact', False, OptionExact),
-    OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'force', False, OptionForce),
+    CommandOption('n', 'iterations', True, OptionIterations),
+    CommandOption('s', 'size', True, OptionSize),
+    CommandOption('u', 'remove', False, OptionRemove),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption('x', 'exact', False, OptionExact),
+    CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionForce: Force := True;
       OptionIterations:
-        if not ParseInteger(Value, Iterations) or (Iterations < 0) then
-          Fail(1, 'invalid number of passes: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Iterations) or (Iterations < 0) then
+          Fail(1, Format('invalid number of passes: ''%s''', [Value]));
       OptionSize:
         begin
           if not ParseSize(Value, ByteCount) then
-            Fail(1, 'invalid file size: ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid file size: ''%s''', [Value]));
           Size := Int64(ByteCount);
         end;
       OptionRemove: Remove := True;
@@ -275,13 +257,13 @@ begin
       OptionExact: Exact := True;
       OptionZero: FinalZero := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
 
   SetLength(Buffer, BufferSize);
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-    if not ShredFile(Parser.Operands[Index]) then
+  for Operand in CommandLine.Operands do
+    if not ShredFile(Operand) then
       ExitStatus := 1;
   Halt(ExitStatus);
 end.

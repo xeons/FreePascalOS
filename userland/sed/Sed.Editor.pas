@@ -97,10 +97,9 @@ implementation
 
 uses
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Util.Input,
-  Util.Messages;
+  Util.Messages,
+  Util.Output;
 
 const
   LineWrapWidth = 70;
@@ -154,11 +153,11 @@ begin
     begin
       if IsDirectory(PChar(Path)) then
       begin
-        Report('couldn''t edit %s: not a regular file', [ArgumentText(PChar(Path))]);
+        Report('couldn''t edit ' + Path + ': not a regular file');
         ExitStatus := 2;
         Continue;
       end;
-      FCurrentInput := OpenInput(PChar(Path));
+      FCurrentInput := OpenInput(Path);
       if FCurrentInput = nil then
       begin
         ExitStatus := 2;
@@ -188,7 +187,6 @@ end;
 { Reads the next raw line from the input files (in order). }
 function TStreamEditor.ReadRawLine(out Line: string): Boolean;
 var
-  HeapLine: PChar;
   HadLineEnd: Boolean;
 begin
   Line := '';
@@ -198,12 +196,8 @@ begin
         Exit(False);
     if LineEnd = #10 then
     begin
-      if ReadLine(FCurrentInput, HeapLine, HadLineEnd) then
-      begin
-        Line := HeapLine;
-        FreeMemory(HeapLine);
+      if ReadTextLine(FCurrentInput, Line, HadLineEnd) then
         Exit(True);
-      end;
     end
     else if ReadUntilLineEnd(Line) then
       Exit(True);
@@ -285,7 +279,7 @@ begin
       WriteText(Output, '\'#10);
       Column := 0;
     end;
-    WriteText(Output, PChar(Piece));
+    WriteString(Output, Piece);
     Column := Column + Length(Piece);
   end;
   WriteText(Output, '$'#10);
@@ -309,7 +303,7 @@ var
 begin
   if not PathExists(PChar(Path)) then
     Exit;
-  Stream := OpenInput(PChar(Path));
+  Stream := OpenInput(Path);
   if Stream = nil then
     Exit;
   repeat
@@ -328,8 +322,7 @@ begin
       CopyFileToOutput(FQueue[Index].Text)
     else
     begin
-      WriteText(Output, PChar(FQueue[Index].Text));
-      WriteCharacter(Output, #10);
+      WriteStringLine(Output, FQueue[Index].Text);
     end;
   FQueue := nil;
 end;
@@ -341,7 +334,7 @@ begin
   if Expression = nil then
   begin
     if FLastExpression = nil then
-      Fail(1, 'no previous regular expression', []);
+      Fail(1, 'no previous regular expression');
     Exit(FLastExpression);
   end;
   FLastExpression := Expression;
@@ -360,7 +353,7 @@ begin
         Result := FLineNumber = Address.Line
       else
         Result := (FLineNumber >= Address.Line) and ((FLineNumber - Address.Line) mod Address.Step = 0);
-    AddressRegex: Result := SearchExpression(RegexFor(Address.Expression)^, PChar(FPatternSpace), Match);
+    AddressRegex: Result := SearchExpression(RegexFor(Address.Expression)^, FPatternSpace, Match);
   else
     Result := True;
   end;
@@ -470,7 +463,7 @@ begin
   From := 0;
   Copied := 0;
   Count := 0;
-  while (From <= Length(Subject)) and SearchExpressionFrom(Expression^, PChar(Subject), From, Match) do
+  while (From <= Length(Subject)) and SearchExpressionFrom(Expression^, Subject, From, Match) do
   begin
     Inc(Count);
     if Count >= Command.Occurrence then
@@ -541,19 +534,12 @@ begin
           WriteCharacter(Output, #10);
         end;
       'a': QueueOutput(Command^.Text, False);
-      'i':
-        begin
-          WriteText(Output, PChar(Command^.Text));
-          WriteCharacter(Output, #10);
-        end;
+      'i': WriteStringLine(Output, Command^.Text);
       'c':
         begin
           { In a range, the text replaces the whole range. }
           if not Command^.InRange or Command^.Negate then
-          begin
-            WriteText(Output, PChar(Command^.Text));
-            WriteCharacter(Output, #10);
-          end;
+            WriteStringLine(Output, Command^.Text);
           FlushQueue;
           Exit;
         end;

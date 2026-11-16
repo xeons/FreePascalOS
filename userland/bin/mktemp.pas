@@ -38,13 +38,12 @@ uses
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: mktemp [OPTION]... [TEMPLATE]'#10 +
+  Usage = 'Usage: mktemp [OPTION]... [TEMPLATE]'#10 +
     'Create a temporary file or directory, safely, and print its name.'#10 +
     'TEMPLATE must contain at least 3 consecutive ''X''s in last component.'#10 +
     'If TEMPLATE is not specified, use tmp.XXXXXXXXXX, and --tmpdir is implied.'#10#10 +
@@ -78,9 +77,9 @@ var
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   MakeDirectory := False;
   DryRun := False;
@@ -88,14 +87,14 @@ begin
   Suffix := '';
   Directory := '';
   UseDirectory := False;
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'directory', False, OptionDirectory),
-    OptionDefinition('u', 'dry-run', False, OptionDryRun),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'suffix', True, OptionSuffix),
-    OptionDefinition('p', 'tmpdir', True, OptionTemporaryDirectory),
-    OptionDefinition('t', nil, False, OptionRelativeToTemporary)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'directory', False, OptionDirectory),
+    CommandOption('u', 'dry-run', False, OptionDryRun),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'suffix', True, OptionSuffix),
+    CommandOption('p', 'tmpdir', True, OptionTemporaryDirectory),
+    CommandOption('t', '', False, OptionRelativeToTemporary)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDirectory: MakeDirectory := True;
       OptionDryRun: DryRun := True;
@@ -108,11 +107,11 @@ begin
         end;
       OptionRelativeToTemporary: UseDirectory := True;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('too many templates', []);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint('too many templates');
 
-  if Parser.OperandCount = 1 then
-    Template := Parser.Operands[0]
+  if CommandLine.OperandCount = 1 then
+    Template := CommandLine.Operands[0]
   else
   begin
     Template := 'tmp.XXXXXXXXXX';
@@ -175,7 +174,7 @@ begin
     Inc(XCount);
   end;
   if XCount < 3 then
-    Fail(1, 'too few X''s in template ''%s''', [ArgumentText(PChar(Template))]);
+    Fail(1, Format('too few X''s in template ''%s''', [Template]));
   Path := Path + Suffix;
 
   Created := False;
@@ -210,11 +209,11 @@ begin
     if not Quiet then
     begin
       if MakeDirectory then
-        ReportError(Error, 'failed to create directory via template ''%s''', [ArgumentText(PChar(Template))])
+        ReportError(Error, Format('failed to create directory via template ''%s''', [Template]))
       else
-        ReportError(Error, 'failed to create file via template ''%s''', [ArgumentText(PChar(Template))]);
+        ReportError(Error, Format('failed to create file via template ''%s''', [Template]));
     end;
     Halt(1);
   end;
-  PrintLine(PChar(Path));
+  PrintStringLine(Path);
 end.

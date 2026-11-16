@@ -37,17 +37,17 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
   Sys.Time,
   Sys.LocalTime,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
   Util.Modes,
-  Util.Options;
+  Util.Output,
+  Util.Paths;
 
 const
-  Usage: PChar = 'Usage: stat [OPTION]... FILE...'#10 +
+  Usage = 'Usage: stat [OPTION]... FILE...'#10 +
     'Display file status.'#10 +
     #10 +
     '  -L, --dereference     follow links'#10 +
@@ -60,7 +60,6 @@ const
   OptionDereference = 1;
   OptionFormat = 2;
   OptionTerse = 3;
-
 
 function KindName(const Information: TFileInformation): string;
 begin
@@ -81,8 +80,6 @@ begin
 end;
 
 function ModeText(const Information: TFileInformation): string;
-var
-  Buffer: array[0..15] of Char;
 begin
   case Information.Kind of
     KindDirectory: Result := 'd';
@@ -93,7 +90,7 @@ begin
   else
     Result := '-';
   end;
-  Result := Result + FormatModeText(Information.Mode, @Buffer[0]);
+  Result := Result + FormatModeText(Information.Mode);
 end;
 
 { The permission bits in octal, at least MinimumDigits long. }
@@ -117,12 +114,16 @@ begin
     DateTime.Hour, DateTime.Minute, DateTime.Second, string(PChar(@OffsetText[0]))]);
 end;
 
-function NameOrUnknown(Name: PChar): string;
+function UserNameOrUnknown(UserId: LongWord): string;
 begin
-  if Name = nil then
-    Result := 'UNKNOWN'
-  else
-    Result := Name;
+  if not FindUserName(UserId, Result) then
+    Result := 'UNKNOWN';
+end;
+
+function GroupNameOrUnknown(GroupId: LongWord): string;
+begin
+  if not FindGroupName(GroupId, Result) then
+    Result := 'UNKNOWN';
 end;
 
 function BlockCount(const Information: TFileInformation): QWord;
@@ -145,8 +146,8 @@ begin
     'A': Result := ModeText(Information);
     'u': Result := IntToStr(Information.OwnerId);
     'g': Result := IntToStr(Information.GroupId);
-    'U': Result := NameOrUnknown(UserNameOf(Information.OwnerId));
-    'G': Result := NameOrUnknown(GroupNameOf(Information.GroupId));
+    'U': Result := UserNameOrUnknown(Information.OwnerId);
+    'G': Result := GroupNameOrUnknown(Information.GroupId);
     'X': Result := IntToStr(Information.AccessTime);
     'x': Result := TimeText(Information.AccessTime);
     'Y': Result := IntToStr(Information.ModificationTime);
@@ -177,98 +178,74 @@ begin
     Line := Line + ConversionText(FormatText[Position + 1], Name, Information);
     Inc(Position, 2);
   end;
-  WriteLine(StandardOutput, PChar(Line));
-end;
-
-function ReadLinkTarget(const Path: string; out Target: string): Boolean;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
-begin
-  Result := ReadSymbolicLink(PChar(Path), @Buffer[0], PathCapacity) = ErrorNone;
-  if Result then
-    Target := PChar(@Buffer[0])
-  else
-    Target := '';
-end;
-
-procedure OutputLine(const Line: string);
-begin
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
 end;
 
 procedure WriteDefault(const Name: string; const Information: TFileInformation);
 var
   Target: string;
 begin
-  if (Information.Kind = KindSymbolicLink) and ReadLinkTarget(Name, Target) then
-    OutputLine('  File: ' + Name + ' -> ' + Target)
+  if (Information.Kind = KindSymbolicLink) and (ReadLinkTarget(Name, Target) = ErrorNone) then
+    PrintStringLine('  File: ' + Name + ' -> ' + Target)
   else
-    OutputLine('  File: ' + Name);
-  OutputLine(Format('  Size: %-15d Blocks: %-10d Type: %s', [Information.SizeInBytes, BlockCount(Information),
+    PrintStringLine('  File: ' + Name);
+  PrintStringLine(Format('  Size: %-15d Blocks: %-10d Type: %s', [Information.SizeInBytes, BlockCount(Information),
     KindName(Information)]));
-  OutputLine(Format('  Node: %-15d Links: %-10d Volume: %d', [Information.NodeNumber, Information.LinkCount,
+  PrintStringLine(Format('  Node: %-15d Links: %-10d Volume: %d', [Information.NodeNumber, Information.LinkCount,
     Information.VolumeNumber]));
-  OutputLine(Format('Access: (%s/%s)  Uid: (%5d/%8s)   Gid: (%5d/%8s)', [OctalModeText(Information, 4),
-    ModeText(Information), Information.OwnerId, NameOrUnknown(UserNameOf(Information.OwnerId)),
-    Information.GroupId, NameOrUnknown(GroupNameOf(Information.GroupId))]));
-  OutputLine('Access: ' + TimeText(Information.AccessTime));
-  OutputLine('Modify: ' + TimeText(Information.ModificationTime));
-  OutputLine('Change: ' + TimeText(Information.ChangeTime));
+  PrintStringLine(Format('Access: (%s/%s)  Uid: (%5d/%8s)   Gid: (%5d/%8s)', [OctalModeText(Information, 4),
+    ModeText(Information), Information.OwnerId, UserNameOrUnknown(Information.OwnerId),
+    Information.GroupId, GroupNameOrUnknown(Information.GroupId)]));
+  PrintStringLine('Access: ' + TimeText(Information.AccessTime));
+  PrintStringLine('Modify: ' + TimeText(Information.ModificationTime));
+  PrintStringLine('Change: ' + TimeText(Information.ChangeTime));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Dereference: Boolean;
-  HasFormat: Boolean;
+  UseFormat: Boolean;
   FormatText: string;
-  Index: Integer;
+  Operand: string;
   Information: TFileInformation;
   Error: LongInt;
   ExitStatus: LongInt;
 begin
   Dereference := False;
-  HasFormat := False;
   FormatText := '';
-  BeginOptions(Parser, [
-    OptionDefinition('L', 'dereference', False, OptionDereference),
-    OptionDefinition('c', 'format', True, OptionFormat),
-    OptionDefinition('t', 'terse', False, OptionTerse)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('L', 'dereference', False, OptionDereference),
+    CommandOption('c', 'format', True, OptionFormat),
+    CommandOption('t', 'terse', False, OptionTerse)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionDereference: Dereference := True;
-      OptionFormat:
-        begin
-          HasFormat := True;
-          FormatText := Value;
-        end;
-      OptionTerse:
-        begin
-          HasFormat := True;
-          FormatText := '%n %s %i %h %a %Y';
-        end;
+      OptionFormat: FormatText := Value;
+      OptionTerse: FormatText := '%n %s %i %h %a %Y';
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  UseFormat := CommandLine.OptionGiven(OptionFormat) or CommandLine.OptionGiven(OptionTerse);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
     if Dereference then
-      Error := GetFileInformation(Parser.Operands[Index], Information)
+      Error := GetFileInformation(PChar(Operand), Information)
     else
-      Error := GetLinkInformation(Parser.Operands[Index], Information);
+      Error := GetLinkInformation(PChar(Operand), Information);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, 'cannot stat ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      ReportError(Error, Format('cannot stat ''%s''', [Operand]));
       ExitStatus := 1;
       Continue;
     end;
-    if HasFormat then
-      WriteWithFormat(FormatText, Parser.Operands[Index], Information)
+    if UseFormat then
+      WriteWithFormat(FormatText, Operand, Information)
     else
-      WriteDefault(Parser.Operands[Index], Information);
+      WriteDefault(Operand, Information);
   end;
   Halt(ExitStatus);
 end.

@@ -54,21 +54,18 @@ uses
   SysUtils,
   StrUtils,
   Abi.SystemCalls,
-  Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
   Util.RegularExpressions,
   Sed.Script,
   Sed.Editor;
 
 const
-  Usage: PChar = 'Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...'#10#10 +
+  Usage = 'Usage: sed [OPTION]... {script-only-if-no-other-script} [input-file]...'#10#10 +
     '  -n, --quiet, --silent'#10 +
     '                 suppress automatic printing of pattern space'#10 +
     '  -e script, --expression=script'#10 +
@@ -114,20 +111,20 @@ var
 begin
   if not PathExists(PChar(Path)) then
   begin
-    Report('can''t read %s: No such file or directory', [ArgumentText(PChar(Path))]);
+    Report('can''t read ' + Path + ': No such file or directory');
     Editor.ExitStatus := 2;
     Exit;
   end;
   if IsDirectory(PChar(Path)) then
   begin
-    Report('couldn''t edit %s: not a regular file', [ArgumentText(PChar(Path))]);
+    Report('couldn''t edit ' + Path + ': not a regular file');
     Editor.ExitStatus := 2;
     Exit;
   end;
   TemporaryPath := Path + '.sedtmp';
   Handle := OpenFile(PChar(TemporaryPath), OpenWrite or OpenCreate or OpenTruncate);
   if Handle < 0 then
-    FailWithError(4, ErrorCodeOf(Handle), 'couldn''t open temporary file %s', [ArgumentText(PChar(TemporaryPath))]);
+    FailWithError(4, ErrorCodeOf(Handle), 'couldn''t open temporary file ' + TemporaryPath);
   Editor.Output := CreateOutputStream(Handle);
   Editor.SetInputFiles([Path]);
   Editor.ResetStreamState;
@@ -147,22 +144,24 @@ begin
     RemovePath(PChar(Path));
   Error := RenamePath(PChar(TemporaryPath), PChar(Path));
   if Error <> ErrorNone then
-    ReportError(Error, 'cannot rename %s', [ArgumentText(PChar(TemporaryPath))]);
+    ReportError(Error, 'cannot rename ' + TemporaryPath);
 end;
 
 { "-i" and "-iSUFFIX" share a letter with no separate value; they are
-  taken out before the option parser sees them. }
-procedure TakeInPlaceOptions;
+  replaced by an option of their own before the option parser sees
+  them. }
+function TakeInPlaceOptions: TStringArray;
 const
   LongInPlace = '--in-place';
-  TakenOption: PChar = '--in-place-taken';
+  TakenOption = '--in-place-taken';
 var
   Index: Integer;
   Text: string;
 begin
-  for Index := 1 to ArgumentTotal - 1 do
+  Result := ProgramArguments;
+  for Index := 0 to High(Result) do
   begin
-    Text := ArgumentValues[Index];
+    Text := Result[Index];
     if Text = '--' then
       Break;
     if StartsStr(LongInPlace, Text) then
@@ -170,14 +169,14 @@ begin
       InPlace := True;
       if Copy(Text, Length(LongInPlace) + 1, 1) = '=' then
         InPlaceSuffix := Copy(Text, Length(LongInPlace) + 2, MaxInt);
-      ArgumentValues[Index] := TakenOption;
+      Result[Index] := TakenOption;
     end
     else if StartsStr('-i', Text) then
     begin
       InPlace := True;
       if Length(Text) > 2 then
         InPlaceSuffix := Copy(Text, 3, MaxInt);
-      ArgumentValues[Index] := TakenOption;
+      Result[Index] := TakenOption;
     end;
   end;
 end;
@@ -185,45 +184,41 @@ end;
 procedure AddScriptFile(const Path: string);
 var
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
 begin
-  Stream := OpenInput(PChar(Path));
+  Stream := OpenInput(Path);
   if Stream = nil then
     Halt(1);
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
+  while ReadTextLine(Stream, Line, HadLineEnd) do
     Script.AddText(Line);
-    FreeMemory(Line);
-  end;
   CloseInput(Stream);
 end;
 
 { Reads the options; returns the index of the first input file among
   the operands. }
-function ReadOptions(out Parser: TOptionParser): Integer;
+function ReadOptions(out CommandLine: TCommandLine): Integer;
 var
   Code: Integer;
-  Value: PChar;
+  Value: string;
   HaveScript: Boolean;
 begin
   Syntax := SyntaxBasic;
   LineEnd := #10;
   HaveScript := False;
-  TakeInPlaceOptions;
-  BeginOptions(Parser, [
-    OptionDefinition('n', 'quiet', False, OptionQuiet),
-    OptionDefinition(#0, 'silent', False, OptionQuiet),
-    OptionDefinition('e', 'expression', True, OptionExpression),
-    OptionDefinition('f', 'file', True, OptionScriptFile),
-    OptionDefinition('E', 'regexp-extended', False, OptionExtended),
-    OptionDefinition('r', nil, False, OptionExtended),
-    OptionDefinition('s', 'separate', False, OptionSeparate),
-    OptionDefinition('z', 'null-data', False, OptionNullData),
-    OptionDefinition('u', 'unbuffered', False, OptionUnbuffered),
-    OptionDefinition(#0, 'posix', False, OptionPosix),
-    OptionDefinition(#0, 'in-place-taken', False, 0)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('n', 'quiet', False, OptionQuiet),
+    CommandOption(#0, 'silent', False, OptionQuiet),
+    CommandOption('e', 'expression', True, OptionExpression),
+    CommandOption('f', 'file', True, OptionScriptFile),
+    CommandOption('E', 'regexp-extended', False, OptionExtended),
+    CommandOption('r', '', False, OptionExtended),
+    CommandOption('s', 'separate', False, OptionSeparate),
+    CommandOption('z', 'null-data', False, OptionNullData),
+    CommandOption('u', 'unbuffered', False, OptionUnbuffered),
+    CommandOption(#0, 'posix', False, OptionPosix),
+    CommandOption(#0, 'in-place-taken', False, 0)], Usage, TakeInPlaceOptions);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionQuiet: Quiet := True;
       OptionExpression:
@@ -243,44 +238,34 @@ begin
   Result := 0;
   if not HaveScript then
   begin
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('no script specified', []);
-    Script.AddText(Parser.Operands[0]);
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('no script specified');
+    Script.AddText(CommandLine.Operands[0]);
     Result := 1;
   end;
 end;
 
-function OperandsFrom(const Parser: TOptionParser; First: Integer): TStringArray;
+procedure RunInPlace(Editor: TStreamEditor; const InputFiles: TStringArray);
 var
-  Index: Integer;
-begin
-  Result := nil;
-  SetLength(Result, Parser.OperandCount - First);
-  for Index := First to Parser.OperandCount - 1 do
-    Result[Index - First] := Parser.Operands[Index];
-end;
-
-procedure RunInPlace(Editor: TStreamEditor; const Parser: TOptionParser; FirstFile: Integer);
-var
-  Index: Integer;
+  Path: string;
 begin
   Editor.Separate := True;
-  if FirstFile >= Parser.OperandCount then
-    Fail(1, 'no input files', []);
-  for Index := FirstFile to Parser.OperandCount - 1 do
+  if Length(InputFiles) = 0 then
+    Fail(1, 'no input files');
+  for Path in InputFiles do
   begin
-    EditInPlace(Editor, Parser.Operands[Index]);
+    EditInPlace(Editor, Path);
     if Editor.Quitting then
       Break;
   end;
 end;
 
-procedure RunOnInput(Editor: TStreamEditor; const Parser: TOptionParser; FirstFile: Integer);
+procedure RunOnInput(Editor: TStreamEditor; const InputFiles: TStringArray);
 begin
-  if FirstFile >= Parser.OperandCount then
+  if Length(InputFiles) = 0 then
     Editor.SetInputFiles(['-'])
   else
-    Editor.SetInputFiles(OperandsFrom(Parser, FirstFile));
+    Editor.SetInputFiles(InputFiles);
   if Separate then
     while Editor.HasInputLeft and not Editor.Quitting do
     begin
@@ -295,13 +280,16 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   FirstFile: Integer;
+  InputFiles: TStringArray;
   Editor: TStreamEditor;
   ExitStatus: LongInt;
 begin
   Script := TScript.Create;
-  FirstFile := ReadOptions(Parser);
+  FirstFile := ReadOptions(CommandLine);
+  InputFiles := Copy(CommandLine.Operands, FirstFile, MaxInt);
+  CommandLine.Free;
   Script.Parse(Syntax);
 
   Editor := TStreamEditor.Create(Script);
@@ -309,9 +297,9 @@ begin
   Editor.Separate := Separate;
   Editor.LineEnd := LineEnd;
   if InPlace then
-    RunInPlace(Editor, Parser, FirstFile)
+    RunInPlace(Editor, InputFiles)
   else
-    RunOnInput(Editor, Parser, FirstFile);
+    RunOnInput(Editor, InputFiles);
   ExitStatus := Editor.ExitStatus;
   if Editor.Quitting and (Editor.QuitCode <> 0) then
     ExitStatus := Editor.QuitCode;

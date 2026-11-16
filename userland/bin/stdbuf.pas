@@ -35,15 +35,15 @@ uses
   SysUtils,
   StrUtils,
   Sys.Environment,
-  Sys.Format,
   Sys.Processes,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Commands,
   Util.Messages,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: stdbuf OPTION... COMMAND'#10 +
+  Usage = 'Usage: stdbuf OPTION... COMMAND'#10 +
     'Run COMMAND, with modified buffering operations for its standard streams.'#10#10 +
     '  -i, --input=MODE   adjust standard input stream buffering'#10 +
     '  -o, --output=MODE  adjust standard output stream buffering'#10 +
@@ -57,22 +57,23 @@ procedure CheckMode(const Mode: string);
 var
   Size: QWord;
 begin
-  if (Mode = 'L') or (Mode = '0') or ParseSize(PChar(Mode), Size) then
+  if (Mode = 'L') or (Mode = '0') or ParseSize(Mode, Size) then
     Exit;
-  Fail(125, 'invalid mode ''%s''', [ArgumentText(PChar(Mode))]);
+  Fail(125, Format('invalid mode ''%s''', [Mode]));
 end;
 
 { Handles "-o L", "-oL" and "--output=L" for one stream. }
-function TakeMode(var Index: Integer; const Short, Long: string; out Mode: string): Boolean;
+function TakeMode(const Arguments: TStringArray; var Index: Integer; const Short, Long: string;
+  out Mode: string): Boolean;
 var
   Text: string;
 begin
   Result := True;
-  Text := Argument(Index);
-  if (Text = Short) and (Index + 1 < ArgumentTotal) then
+  Text := Arguments[Index];
+  if (Text = Short) and (Index + 1 < Length(Arguments)) then
   begin
     Inc(Index);
-    Mode := Argument(Index);
+    Mode := Arguments[Index];
   end
   else if StartsStr(Short, Text) and (Length(Text) > 2) then
     Mode := Copy(Text, 3, MaxInt)
@@ -85,40 +86,42 @@ begin
 end;
 
 var
+  Arguments: TStringArray;
   Index: Integer;
   Mode: string;
   Options: TProcessOptions;
   AnySetting: Boolean;
 begin
-  Index := 1;
+  Arguments := ProgramArguments;
+  Index := 0;
   AnySetting := False;
-  while (Index < ArgumentTotal) and (Argument(Index)[0] = '-') do
+  while (Index < Length(Arguments)) and StartsStr('-', Arguments[Index]) do
   begin
-    if string(Argument(Index)) = '--help' then
+    if Arguments[Index] = '--help' then
     begin
-      Print(Usage);
+      PrintString(Usage);
       Halt(0);
     end;
-    if string(Argument(Index)) = '--' then
+    if Arguments[Index] = '--' then
     begin
       Inc(Index);
       Break;
     end;
-    if TakeMode(Index, '-o', '--output=', Mode) then
+    if TakeMode(Arguments, Index, '-o', '--output=', Mode) then
       SetVariable('_STDBUF_O', PChar(Mode))
-    else if TakeMode(Index, '-e', '--error=', Mode) then
+    else if TakeMode(Arguments, Index, '-e', '--error=', Mode) then
       SetVariable('_STDBUF_E', PChar(Mode))
-    else if TakeMode(Index, '-i', '--input=', Mode) then
+    else if TakeMode(Arguments, Index, '-i', '--input=', Mode) then
       SetVariable('_STDBUF_I', PChar(Mode))
     else
-      FailWithUsageHint('invalid option -- ''%s''', [ArgumentText(Argument(Index))]);
+      FailWithUsageHint(Format('invalid option -- ''%s''', [Arguments[Index]]));
     AnySetting := True;
     Inc(Index);
   end;
   if not AnySetting then
-    FailWithUsageHint('you must specify a buffering mode option', []);
-  if Index >= ArgumentTotal then
-    FailWithUsageHint('missing operand', []);
+    FailWithUsageHint('you must specify a buffering mode option');
+  if Index >= Length(Arguments) then
+    FailWithUsageHint('missing operand');
   DefaultProcessOptions(Options);
-  RunCommandAndExit(ArgumentValues + Index, Options);
+  RunCommandAndExit(Copy(Arguments, Index, MaxInt), Options);
 end.

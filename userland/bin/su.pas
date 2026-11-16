@@ -40,19 +40,17 @@ uses
   Runtime.Memory,
   Sys.Environment,
   Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
   Sys.Memory,
   Sys.Processes,
-  Sys.Streams,
   Util.Accounts,
+  Util.CommandLine,
   Util.Commands,
   Util.Messages,
-  Util.Options,
   Util.Passwords;
 
 const
-  Usage: PChar = 'Usage: su [OPTION]... [-] [USER]'#10 +
+  Usage = 'Usage: su [OPTION]... [-] [USER]'#10 +
     'Change the effective user ID and group ID to that of USER (root by default).'#10#10 +
     '  -, -l, --login                 start in USER''s home directory'#10 +
     '  -c, --command=COMMAND          pass COMMAND to the shell with -c'#10 +
@@ -70,7 +68,7 @@ const
 var
   Login: Boolean;
   Preserve: Boolean;
-  HasCommand: Boolean;
+  RunsCommand: Boolean;
   Command: string;
   HasShell: Boolean;
   Shell: string;
@@ -78,51 +76,44 @@ var
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   HasTargetName: Boolean;
 begin
   Login := False;
   Preserve := False;
-  HasCommand := False;
-  HasShell := False;
-  BeginOptions(Parser, [
-    OptionDefinition('l', 'login', False, OptionLogin),
-    OptionDefinition('c', 'command', True, OptionCommand),
-    OptionDefinition('m', 'preserve-environment', False, OptionPreserve),
-    OptionDefinition('p', nil, False, OptionPreserve),
-    OptionDefinition('s', 'shell', True, OptionShell)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('l', 'login', False, OptionLogin),
+    CommandOption('c', 'command', True, OptionCommand),
+    CommandOption('m', 'preserve-environment', False, OptionPreserve),
+    CommandOption('p', '', False, OptionPreserve),
+    CommandOption('s', 'shell', True, OptionShell)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionLogin: Login := True;
-      OptionCommand:
-        begin
-          Command := Value;
-          HasCommand := True;
-        end;
+      OptionCommand: Command := Value;
       OptionPreserve: Preserve := True;
-      OptionShell:
-        begin
-          Shell := Value;
-          HasShell := True;
-        end;
+      OptionShell: Shell := Value;
     end;
+  RunsCommand := CommandLine.OptionGiven(OptionCommand);
+  HasShell := CommandLine.OptionGiven(OptionShell);
 
   HasTargetName := False;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    if string(Parser.Operands[Index]) = '-' then
+    if Operand = '-' then
       Login := True
     else if not HasTargetName then
     begin
-      TargetName := Parser.Operands[Index];
+      TargetName := Operand;
       HasTargetName := True;
     end
     else
-      FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[Index])]);
+      FailWithUsageHint(Format('extra operand ''%s''', [Operand]));
   end;
+  CommandLine.Free;
   if not HasTargetName then
     TargetName := 'root';
 end;
@@ -136,7 +127,7 @@ var
 begin
   if CurrentRealUserId = RootId then
     Exit;
-  Check := CheckPassword(PChar(TargetName), '');
+  Check := CheckPassword(TargetName, '');
   if Check <> PasswordAccepted then
   begin
     Password := ReadPassword('Password: ');
@@ -150,7 +141,7 @@ begin
     end;
   end;
   if Check <> PasswordAccepted then
-    Fail(StatusFailed, 'Authentication failure', []);
+    Fail(StatusFailed, 'Authentication failure');
 end;
 
 procedure BecomeUser(TargetId, TargetGroup: LongWord);
@@ -162,21 +153,21 @@ begin
   if (KernelSetGroups(LongWord(GroupCount), @Groups[0]) < 0) or
      (KernelSetGroupIds(TargetGroup, TargetGroup, TargetGroup) < 0) or
      (KernelSetUserIds(TargetId, TargetId, TargetId) < 0) then
-    Fail(StatusFailed, 'cannot set user id: %s', [ArgumentText(ErrorMessage(ErrorNotPermitted))]);
+    Fail(StatusFailed, 'cannot set user id: ' + ErrorText(ErrorNotPermitted));
 end;
 
 var
   TargetId: LongWord;
   TargetGroup: LongWord;
+  AccountName: string;
   Home: string;
-  Arguments: array[0..3] of PChar;
   Options: TProcessOptions;
 begin
   ReadOptions;
 
-  if not FindUserId(PChar(TargetName), TargetId) or (UserNameOf(TargetId) = nil) then
-    Fail(StatusFailed, 'user %s does not exist', [ArgumentText(PChar(TargetName))]);
-  TargetName := UserNameOf(TargetId);
+  if not FindUserId(TargetName, TargetId) or not FindUserName(TargetId, AccountName) then
+    Fail(StatusFailed, Format('user %s does not exist', [TargetName]));
+  TargetName := AccountName;
   if not PrimaryGroupOf(TargetId, TargetGroup) then
     TargetGroup := TargetId;
 
@@ -184,11 +175,8 @@ begin
   BecomeUser(TargetId, TargetGroup);
 
   if not HasShell then
-    Shell := ShellOf(TargetId);
-  if HomeDirectoryOf(TargetId) <> nil then
-    Home := HomeDirectoryOf(TargetId)
-  else
-    Home := '/';
+    Shell := UserShell(TargetId);
+  Home := UserHomeDirectory(TargetId);
   if not Preserve then
   begin
     SetVariable('HOME', PChar(Home));
@@ -200,17 +188,8 @@ begin
   DefaultProcessOptions(Options);
   if Login then
     Options.WorkingDirectory := PChar(Home);
-  Arguments[0] := PChar(Shell);
-  if HasCommand then
-  begin
-    Arguments[1] := '-c';
-    Arguments[2] := PChar(Command);
-    Arguments[3] := nil;
-  end
+  if RunsCommand then
+    RunCommandAndExit([Shell, '-c', Command], Options)
   else
-  begin
-    Arguments[1] := '-i';
-    Arguments[2] := nil;
-  end;
-  RunCommandAndExit(@Arguments[0], Options);
+    RunCommandAndExit([Shell, '-i'], Options);
 end.

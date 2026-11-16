@@ -38,18 +38,17 @@ program timezone;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
-  Sys.Streams,
   Sys.Time,
   Sys.TimeZones,
   Sys.LocalTime,
   Sys.SystemSettings,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.SystemRequests;
 
 const
-  Usage: PChar = 'Usage: timezone [-l] [ZONE]'#10 +
+  Usage = 'Usage: timezone [-l] [ZONE]'#10 +
     'Show the system''s time zone, list the zones (-l), or set the system''s zone.'#10;
   OptionList = 1;
 
@@ -61,8 +60,7 @@ var
 begin
   DecodeTimeInZone(Zone, CurrentTime, Local);
   FormatUtcOffset(Local.Offset, @OffsetText[0]);
-  WriteLine(StandardOutput, PChar(Format('%s %s %s', [Zone^.Name, PChar(@OffsetText[0]),
-    Local.Abbreviation])));
+  PrintStringLine(Format('%s %s %s', [Zone^.Name, PChar(@OffsetText[0]), Local.Abbreviation]));
 end;
 
 procedure ListZones;
@@ -79,32 +77,32 @@ var
   Error: LongInt;
 begin
   if FindTimeZone(PChar(Name)) = nil then
-    Fail(1, 'unknown time zone ''%s'' (timezone -l lists them)', [ArgumentText(PChar(Name))]);
+    Fail(1, Format('unknown time zone ''%s'' (timezone -l lists them)', [Name]));
   Request := NewSystemSettingsRequest(SystemRequestSetTimeZone);
   SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(Name));
   Error := SendSystemRequest(Request, True);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot set the time zone', []);
+    FailWithError(1, Error, 'cannot set the time zone');
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   List: Boolean;
 begin
   List := False;
-  BeginOptions(Parser, [OptionDefinition('l', 'list', False, OptionList)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([CommandOption('l', 'list', False, OptionList)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionList then
       List := True;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
   if List then
     ListZones
-  else if Parser.OperandCount = 1 then
+  else if CommandLine.OperandCount = 1 then
   begin
-    SetZone(Parser.Operands[0]);
+    SetZone(CommandLine.Operands[0]);
     WriteZone(SystemTimeZone);
   end
   else

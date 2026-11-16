@@ -30,14 +30,14 @@ program seq;
 
 uses
   SysUtils,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: seq [OPTION]... LAST'#10 +
+  Usage = 'Usage: seq [OPTION]... LAST'#10 +
     '  or:  seq [OPTION]... FIRST LAST'#10 +
     '  or:  seq [OPTION]... FIRST INCREMENT LAST'#10 +
     'Print numbers from FIRST to LAST, in steps of INCREMENT.'#10 +
@@ -48,10 +48,10 @@ const
   OptionSeparator = 1;
   OptionEqualWidth = 2;
 
-function ParseNumber(Text: PChar): Int64;
+function ParseNumber(const Text: string): Int64;
 begin
-  if not ParseInteger(Text, Result) then
-    FailWithUsageHint('invalid argument: ''%s''', [ArgumentText(Text)]);
+  if not ParseDecimal(Text, Result) then
+    FailWithUsageHint(Format('invalid argument: ''%s''', [Text]));
 end;
 
 { Value padded with zeros (after any sign) to Width characters. }
@@ -71,9 +71,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Separator: string;
   EqualWidth: Boolean;
   First: Int64;
@@ -86,12 +86,12 @@ var
 begin
   Separator := #10;
   EqualWidth := False;
-  BeginOptions(Parser, [
-    OptionDefinition('s', 'separator', True, OptionSeparator),
-    OptionDefinition('w', 'equal-width', False, OptionEqualWidth)], Usage);
+  CommandLine := TCommandLine.Create([
+    CommandOption('s', 'separator', True, OptionSeparator),
+    CommandOption('w', 'equal-width', False, OptionEqualWidth)], Usage);
   { "seq -5 5" counts from minus five. }
-  Parser.NegativeNumbersAreOperands := True;
-  while NextOption(Parser, Code, Value) do
+  CommandLine.NegativeNumbersAreOperands := True;
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionSeparator: Separator := Value;
       OptionEqualWidth: EqualWidth := True;
@@ -99,27 +99,27 @@ begin
 
   First := 1;
   Increment := 1;
-  case Parser.OperandCount of
-    1: Last := ParseNumber(Parser.Operands[0]);
+  case CommandLine.OperandCount of
+    1: Last := ParseNumber(CommandLine.Operands[0]);
     2:
       begin
-        First := ParseNumber(Parser.Operands[0]);
-        Last := ParseNumber(Parser.Operands[1]);
+        First := ParseNumber(CommandLine.Operands[0]);
+        Last := ParseNumber(CommandLine.Operands[1]);
       end;
     3:
       begin
-        First := ParseNumber(Parser.Operands[0]);
-        Increment := ParseNumber(Parser.Operands[1]);
-        Last := ParseNumber(Parser.Operands[2]);
+        First := ParseNumber(CommandLine.Operands[0]);
+        Increment := ParseNumber(CommandLine.Operands[1]);
+        Last := ParseNumber(CommandLine.Operands[2]);
       end;
   else
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('missing operand', [])
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('missing operand')
     else
-      FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[3])]);
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[3]]));
   end;
   if Increment = 0 then
-    FailWithUsageHint('invalid Zero increment value: ''%s''', [ArgumentText(Parser.Operands[1])]);
+    FailWithUsageHint(Format('invalid Zero increment value: ''%s''', [CommandLine.Operands[1]]));
 
   { With -w every number is padded with zeros to the wider end. }
   Width := 0;
@@ -137,7 +137,7 @@ begin
     Output := ZeroPadded(Current, Width);
     if not IsFirstNumber then
       Output := Separator + Output;
-    WriteText(StandardOutput, PChar(Output));
+    PrintString(Output);
     IsFirstNumber := False;
     Current := Current + Increment;
   end;

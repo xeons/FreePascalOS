@@ -35,15 +35,15 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: split [OPTION]... [FILE [PREFIX]]'#10 +
+  Usage = 'Usage: split [OPTION]... [FILE [PREFIX]]'#10 +
     'Output pieces of FILE to PREFIXaa, PREFIXab, ...;'#10 +
     'default size is 1000 lines, and default PREFIX is ''x''.'#10#10 +
     '  -a, --suffix-length=N   generate suffixes of length N (default 2)'#10 +
@@ -96,7 +96,7 @@ begin
     Value := Value div Base;
   end;
   if Value <> 0 then
-    Fail(1, 'output file suffixes exhausted', []);
+    Fail(1, 'output file suffixes exhausted');
   Result := Prefix + Digits + Suffix;
 end;
 
@@ -116,10 +116,10 @@ begin
   ClosePiece;
   Name := PieceName;
   if Verbose then
-    WriteText(StandardOutput, PChar('creating file ''' + Name + ''''#10));
+    PrintString('creating file ''' + Name + ''''#10);
   PieceHandle := OpenFile(PChar(Name), OpenWrite or OpenCreate or OpenTruncate);
   if PieceHandle < 0 then
-    FailWithError(1, ErrorCodeOf(PieceHandle), '%s', [ArgumentText(PChar(Name))]);
+    FailWithError(1, ErrorCodeOf(PieceHandle), Name);
   PieceStream := CreateOutputStream(PieceHandle);
   Inc(PieceNumber);
 end;
@@ -151,9 +151,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Mode: TSplitMode;
   Amount: QWord;
   Number: Int64;
@@ -172,29 +172,29 @@ begin
   SuffixAlphabet := 'abcdefghijklmnopqrstuvwxyz';
   Mode := SplitLines;
   Amount := 1000;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'suffix-length', True, OptionSuffixLength),
-    OptionDefinition(#0, 'additional-suffix', True, OptionAdditionalSuffix),
-    OptionDefinition('b', 'bytes', True, OptionBytes),
-    OptionDefinition('C', 'line-bytes', True, OptionLineBytes),
-    OptionDefinition('d', 'numeric-suffixes', False, OptionNumeric),
-    OptionDefinition('x', 'hex-suffixes', False, OptionHex),
-    OptionDefinition('l', 'lines', True, OptionLines),
-    OptionDefinition('n', 'number', True, OptionChunks),
-    OptionDefinition(#0, 'verbose', False, OptionVerbose)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'suffix-length', True, OptionSuffixLength),
+    CommandOption(#0, 'additional-suffix', True, OptionAdditionalSuffix),
+    CommandOption('b', 'bytes', True, OptionBytes),
+    CommandOption('C', 'line-bytes', True, OptionLineBytes),
+    CommandOption('d', 'numeric-suffixes', False, OptionNumeric),
+    CommandOption('x', 'hex-suffixes', False, OptionHex),
+    CommandOption('l', 'lines', True, OptionLines),
+    CommandOption('n', 'number', True, OptionChunks),
+    CommandOption(#0, 'verbose', False, OptionVerbose)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionSuffixLength:
         begin
-          if not ParseInteger(Value, Number) or (Number < 1) or (Number > 60) then
-            Fail(1, 'invalid suffix length: ''%s''', [ArgumentText(Value)]);
+          if not ParseDecimal(Value, Number) or (Number < 1) or (Number > 60) then
+            Fail(1, Format('invalid suffix length: ''%s''', [Value]));
           SuffixLength := Integer(Number);
         end;
       OptionAdditionalSuffix: Suffix := Value;
       OptionBytes, OptionLineBytes, OptionLines, OptionChunks:
         begin
           if not ParseSize(Value, Amount) or (Amount = 0) then
-            Fail(1, 'invalid number: ''%s''', [ArgumentText(Value)]);
+            Fail(1, Format('invalid number: ''%s''', [Value]));
           case Code of
             OptionBytes: Mode := SplitBytes;
             OptionLineBytes: Mode := SplitLineBytes;
@@ -207,23 +207,23 @@ begin
       OptionHex: SuffixAlphabet := '0123456789abcdef';
       OptionVerbose: Verbose := True;
     end;
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-  if Parser.OperandCount = 2 then
-    Prefix := Parser.Operands[1];
+  if CommandLine.OperandCount > 2 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+  if CommandLine.OperandCount = 2 then
+    Prefix := CommandLine.Operands[1];
 
   Input := StandardInputHandle;
-  if (Parser.OperandCount >= 1) and (string(Parser.Operands[0]) <> '-') then
+  if (CommandLine.OperandCount >= 1) and (CommandLine.Operands[0] <> '-') then
   begin
-    Input := OpenFile(Parser.Operands[0], OpenRead);
+    Input := OpenFile(PChar(CommandLine.Operands[0]), OpenRead);
     if Input < 0 then
-      FailWithError(1, ErrorCodeOf(Input), 'cannot open ''%s'' for reading', [ArgumentText(Parser.Operands[0])]);
+      FailWithError(1, ErrorCodeOf(Input), Format('cannot open ''%s'' for reading', [CommandLine.Operands[0]]));
   end;
 
   if Mode = SplitChunks then
   begin
     if (GetHandleInformation(Input, Information) <> 0) or (Information.Kind <> KindFile) then
-      Fail(1, 'cannot determine file size', []);
+      Fail(1, 'cannot determine file size');
     TotalSize := Information.SizeInBytes;
     ChunkSize := TotalSize div Amount;
     Mode := SplitBytes;
@@ -242,7 +242,7 @@ begin
   repeat
     Count := ReadFile(Input, @Buffer[0], Length(Buffer));
     if Count < 0 then
-      FailWithError(1, ErrorCodeOf(Count), 'read error', []);
+      FailWithError(1, ErrorCodeOf(Count), 'read error');
     Index := 0;
     while Index < Count do
     begin

@@ -32,15 +32,14 @@ program wc;
 uses
   SysUtils,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: wc [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: wc [OPTION]... [FILE]...'#10 +
     'Print newline, word, and byte counts for each FILE, and a total line if'#10 +
     'more than one FILE is specified. A word is a nonempty sequence of'#10 +
     'non white space characters.'#10 +
@@ -140,28 +139,28 @@ begin
   AddNumber(ShowMaximumLine, Counts.MaximumLine);
   if Name <> '' then
     Line := Line + ' ' + Name;
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
 end;
 
-function TotalSizeWidth(const Parser: TOptionParser): Integer;
+function TotalSizeWidth(const Paths: TStringArray): Integer;
 var
-  Index: Integer;
+  Path: string;
   Total: QWord;
   Information: TFileInformation;
 begin
   Total := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Path in Paths do
   begin
-    if GetFileInformation(Parser.Operands[Index], Information) = 0 then
+    if GetFileInformation(PChar(Path), Information) = 0 then
       Total := Total + Information.SizeInBytes;
   end;
   Result := Length(IntToStr(Total));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Index: Integer;
   Stream: PInputStream;
   ExitStatus: LongInt;
@@ -170,37 +169,34 @@ var
   ReadStandardInput: Boolean;
 begin
   Selection := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'bytes', False, ShowBytes),
-    OptionDefinition('m', 'chars', False, ShowCharacters),
-    OptionDefinition('l', 'lines', False, ShowLines),
-    OptionDefinition('L', 'max-line-length', False, ShowMaximumLine),
-    OptionDefinition('w', 'words', False, ShowWords)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'bytes', False, ShowBytes),
+    CommandOption('m', 'chars', False, ShowCharacters),
+    CommandOption('l', 'lines', False, ShowLines),
+    CommandOption('L', 'max-line-length', False, ShowMaximumLine),
+    CommandOption('w', 'words', False, ShowWords)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     Selection := Selection or Code;
   if Selection = 0 then
     Selection := ShowLines or ShowWords or ShowBytes;
 
-  ReadStandardInput := Parser.OperandCount = 0;
+  ReadStandardInput := CommandLine.OperandCount = 0;
   if ReadStandardInput then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+    CommandLine.Operands := ['-'];
   { As GNU wc does: one number alone is not padded; for standard input
     columns are 7 wide; for files, as wide as their total size. }
-  if (Parser.OperandCount = 1) and ((Selection and (Selection - 1)) = 0) then
+  if (CommandLine.OperandCount = 1) and ((Selection and (Selection - 1)) = 0) then
     Width := 0
   else if ReadStandardInput then
     Width := 7
   else
-    Width := TotalSizeWidth(Parser);
+    Width := TotalSizeWidth(CommandLine.Operands);
 
   Total := Default(TCounts);
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to CommandLine.OperandCount - 1 do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(CommandLine.Operands[Index]);
     if Stream = nil then
     begin
       ExitStatus := 1;
@@ -211,7 +207,7 @@ begin
     if ReadStandardInput then
       PrintCounts(Counts, '')
     else
-      PrintCounts(Counts, Parser.Operands[Index]);
+      PrintCounts(Counts, CommandLine.Operands[Index]);
     Total.Lines := Total.Lines + Counts.Lines;
     Total.Words := Total.Words + Counts.Words;
     Total.Characters := Total.Characters + Counts.Characters;
@@ -219,7 +215,7 @@ begin
     if Counts.MaximumLine > Total.MaximumLine then
       Total.MaximumLine := Counts.MaximumLine;
   end;
-  if Parser.OperandCount > 1 then
+  if CommandLine.OperandCount > 1 then
     PrintCounts(Total, 'total');
   Halt(ExitStatus);
 end.

@@ -53,9 +53,8 @@ program settings;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Configuration.Names,
   Configuration.Values,
   Configuration.Scopes,
@@ -63,7 +62,7 @@ uses
   Configuration.Locations;
 
 const
-  Usage: PChar = 'Usage: settings get [-s | -u] PATH'#10 +
+  Usage = 'Usage: settings get [-s | -u] PATH'#10 +
     '       settings set [-s [-f]] [-t KIND] PATH VALUE...'#10 +
     '       settings delete [-s] PATH'#10 +
     '       settings list [-s | -u] [PATH]'#10 +
@@ -90,33 +89,34 @@ var
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
-  Index: Integer;
+  OptionValue: string;
 begin
   Choice := ChoiceBoth;
   Fixed := False;
   KindName := '';
-  BeginOptions(Parser, [OptionDefinition('s', 'system', False, OptionSystem),
-    OptionDefinition('u', 'user', False, OptionUser),
-    OptionDefinition('f', 'fixed', False, OptionFixed),
-    OptionDefinition('t', 'type', True, OptionType)], Usage);
-  Parser.NegativeNumbersAreOperands := True;
-  while NextOption(Parser, Code, OptionValue) do
-    case Code of
-      OptionSystem: Choice := ChoiceSystem;
-      OptionUser: Choice := ChoiceUser;
-      OptionFixed: Fixed := True;
-      OptionType: KindName := LowerCase(string(OptionValue));
-    end;
-  SetLength(Operands, Parser.OperandCount);
-  for Index := 0 to Parser.OperandCount - 1 do
-    Operands[Index] := string(Parser.Operands[Index]);
+  CommandLine := TCommandLine.Create([CommandOption('s', 'system', False, OptionSystem),
+    CommandOption('u', 'user', False, OptionUser),
+    CommandOption('f', 'fixed', False, OptionFixed),
+    CommandOption('t', 'type', True, OptionType)], Usage);
+  try
+    CommandLine.NegativeNumbersAreOperands := True;
+    while CommandLine.NextOption(Code, OptionValue) do
+      case Code of
+        OptionSystem: Choice := ChoiceSystem;
+        OptionUser: Choice := ChoiceUser;
+        OptionFixed: Fixed := True;
+        OptionType: KindName := LowerCase(OptionValue);
+      end;
+    Operands := CommandLine.Operands;
+  finally
+    CommandLine.Free;
+  end;
   if Length(Operands) = 0 then
-    FailWithUsageHint('a command is needed: get, set, delete, list or check', []);
+    FailWithUsageHint('a command is needed: get, set, delete, list or check');
   if Fixed and (Choice <> ChoiceSystem) then
-    FailWithUsageHint('--fixed is for the system''s settings (-s)', []);
+    FailWithUsageHint('--fixed is for the system''s settings (-s)');
 end;
 
 { The scope set and delete change. }
@@ -132,13 +132,13 @@ function ChosenScope: TSettingsScope;
 begin
   Result := Store.Scopes[WrittenScope];
   if Result = nil then
-    Fail(1, 'there are no user settings here (HOME is not set)', []);
+    Fail(1, 'there are no user settings here (HOME is not set)');
 end;
 
 procedure NeedOperands(Lowest, Highest: Integer);
 begin
   if (Length(Operands) - 1 < Lowest) or (Length(Operands) - 1 > Highest) then
-    FailWithUsageHint('wrong number of operands for %s', [ArgumentText(PChar(Operands[0]))]);
+    FailWithUsageHint('wrong number of operands for ' + Operands[0]);
 end;
 
 procedure NeedKeyPath(const Path: string);
@@ -146,7 +146,7 @@ var
   Parsed: TSettingsPath;
 begin
   if not ParseKeyPath(Path, Parsed) then
-    Fail(2, '%s: not the path of a setting (GROUP/KEY)', [ArgumentText(PChar(Path))]);
+    Fail(2, Path + ': not the path of a setting (GROUP/KEY)');
 end;
 
 procedure NeedSectionPath(const Path: string);
@@ -154,7 +154,7 @@ var
   Parsed: TSettingsPath;
 begin
   if not ParseSectionPath(Path, Parsed) then
-    Fail(2, '%s: not a settings path', [ArgumentText(PChar(Path))]);
+    Fail(2, Path + ': not a settings path');
 end;
 
 procedure FlushOrFail;
@@ -163,7 +163,7 @@ var
 begin
   Error := Store.Flush;
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(ChosenScope.Storage.Location))]);
+    FailWithError(1, Error, ChosenScope.Storage.Location);
 end;
 
 procedure PrintValue(const Value: TSettingValue);
@@ -196,7 +196,7 @@ begin
   end;
   if not Found then
   begin
-    Report('%s is not set', [ArgumentText(PChar(Operands[1]))]);
+    Report(Operands[1] + ' is not set');
     Halt(1);
   end;
   PrintValue(Value);
@@ -218,17 +218,17 @@ begin
     Exit(ListSetting(Items));
   end;
   if Length(Operands) > 3 then
-    FailWithUsageHint('one VALUE (or -t list for several)', []);
+    FailWithUsageHint('one VALUE (or -t list for several)');
   if KindName = 'string' then
     Exit(StringSetting(Text));
   if not ParseSettingValue(Text, Result) then
-    Fail(2, '%s: not a value (a string in quotes must end with one)', [ArgumentText(PChar(Text))]);
+    Fail(2, Text + ': not a value (a string in quotes must end with one)');
   if (KindName = 'integer') and (Result.Kind <> SettingInteger) then
-    Fail(2, '%s: not an integer', [ArgumentText(PChar(Text))]);
+    Fail(2, Text + ': not an integer');
   if (KindName = 'boolean') and (Result.Kind <> SettingBoolean) then
-    Fail(2, '%s: not a boolean (true or false)', [ArgumentText(PChar(Text))]);
+    Fail(2, Text + ': not a boolean (true or false)');
   if (KindName <> '') and (KindName <> 'integer') and (KindName <> 'boolean') then
-    FailWithUsageHint('the kind must be string, integer, boolean or list', []);
+    FailWithUsageHint('the kind must be string, integer, boolean or list');
 end;
 
 procedure SetCommand;
@@ -245,7 +245,7 @@ begin
   NeedOperands(1, 1);
   NeedSectionPath(Operands[1]);
   if Operands[1] = '' then
-    Fail(2, 'deleting every group is not done', []);
+    Fail(2, 'deleting every group is not done');
   ChosenScope;
   Store.Delete(Operands[1], WrittenScope);
   FlushOrFail;
@@ -318,11 +318,11 @@ var
 begin
   NeedOperands(1, 1);
   if not IsSettingsName(Operands[1]) then
-    Fail(2, '%s: not the name of a group', [ArgumentText(PChar(Operands[1]))]);
+    Fail(2, Operands[1] + ': not the name of a group');
   Scope := ChosenScope;
   Error := Scope.ReadError(Operands[1]);
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s/%s', [ArgumentText(PChar(Scope.Storage.Location)), ArgumentText(PChar(Operands[1]))]);
+    FailWithError(1, Error, Scope.Storage.Location + '/' + Operands[1]);
   Problems := Scope.Problems(Operands[1]);
   for Index := 0 to High(Problems) do
     WriteLn(Problems[Index]);
@@ -347,6 +347,6 @@ begin
   else if Operands[0] = 'check' then
     CheckCommand
   else
-    FailWithUsageHint('%s: not a command (get, set, delete, list or check)', [ArgumentText(PChar(Operands[0]))]);
+    FailWithUsageHint(Operands[0] + ': not a command (get, set, delete, list or check)');
   Store.Free;
 end.

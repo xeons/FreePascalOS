@@ -27,16 +27,18 @@
 program tty;
 
 {$mode objfpc}
+{$H+}
 
 uses
   Abi.SystemCalls,
   Sys.Console,
   Sys.PseudoTerminals,
   Sys.Streams,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: tty [OPTION]...'#10 +
+  Usage = 'Usage: tty [OPTION]...'#10 +
     'Print the file name of the terminal connected to standard input.'#10#10 +
     '  -s, --silent, --quiet   print nothing, only return an exit status'#10;
 
@@ -44,16 +46,16 @@ const
 
 var
   Path: array[0..15] of Char;
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Silent: Boolean;
 begin
   Silent := False;
-  BeginOptions(Parser, [
-    OptionDefinition('s', 'silent', False, OptionSilent),
-    OptionDefinition(#0, 'quiet', False, OptionSilent)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('s', 'silent', False, OptionSilent),
+    CommandOption(#0, 'quiet', False, OptionSilent)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     Silent := True;
   if IsConsole(StandardInputHandle) then
   begin
@@ -62,13 +64,13 @@ begin
     if TerminalNumber(StandardInputHandle) >= 0 then
     begin
       PseudoTerminalPath(TerminalNumber(StandardInputHandle), @Path[0]);
-      PrintLine(@Path[0]);
+      PrintStringLine(PChar(@Path[0]));
     end
     else
-      PrintLine('/dev/console');
+      PrintStringLine('/dev/console');
     Halt(0);
   end;
   if not Silent then
-    PrintLine('not a tty');
+    PrintStringLine('not a tty');
   Halt(1);
 end.
