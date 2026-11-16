@@ -466,15 +466,16 @@ const
     (Command: 'taskset 1 nproc; taskset -c 0 sh -c nproc; sh -c ''taskset -pc 0 $$ | tail -n 1 | cut -d: -f2''; taskset 0x10000000 true 2>/dev/null; echo $?'; ExpectedOutput: '1'#10'1'#10' 0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'rtltest > rt.log; echo $?; grep FAIL rt.log; tail -n 1 rt.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
     { Heap checking (HEAP_CHECKS): what it promises, and each mistake
-      ends the program - a use after free with runtime error 216, the
-      others with the report and status 204. }
+      ends the program - a use after free with an unhandled
+      EAccessViolation (heaptest has SysUtils, through libcoreutils:
+      status 217), the others with the report and status 204. }
     (Command: 'HEAP_CHECKS=all heaptest > heap.log; echo $?; grep FAIL heap.log; tail -n 1 heap.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
-    (Command: 'HEAP_CHECKS=all heaptest --use-after-free 2>&1 | head -n 1 | cut -c 1-17; HEAP_CHECKS=all heaptest --use-after-free 2>/dev/null; echo $?'; ExpectedOutput: 'Runtime error 216'#10'216'#10; ExpectedStatus: 0),
+    (Command: 'HEAP_CHECKS=all heaptest --use-after-free 2>&1 | sed -n 2p; HEAP_CHECKS=all heaptest --use-after-free 2>/dev/null; echo $?'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=all heaptest --write-after-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err; grep "freed at:" heap.err | cut -c 1-14'; ExpectedOutput: '204'#10' memory was written after it was freed'#10'  offset:    10 holds $00 instead of $DF'#10'  freed at: $0'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=all heaptest --double-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "freed before at:" heap.err | cut -c 1-21'; ExpectedOutput: '204'#10' a block was freed twice'#10'  freed before at: $0'#10; ExpectedStatus: 0),
     { make test boots with the option heapchecks, which programs follow
       when HEAP_CHECKS is not set. }
-    (Command: 'heaptest --use-after-free 2>/dev/null; echo $?'; ExpectedOutput: '216'#10; ExpectedStatus: 0),
+    (Command: 'heaptest --use-after-free 2>/dev/null; echo $?'; ExpectedOutput: '217'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=fill heaptest --write-past-end 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err'; ExpectedOutput: '204'#10' memory was written past the end of a block'#10'  offset:    20 holds $00 instead of $FD'#10; ExpectedStatus: 0),
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
