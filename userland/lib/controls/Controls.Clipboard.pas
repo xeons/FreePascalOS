@@ -20,12 +20,12 @@
   The clipboard: text cut or copied, and files, waiting to be pasted.
 
   Controls (the edit boxes) and programs use only the routines below.
-  Where it is kept is a store behind them: the display server's system
-  clipboard (Windowing.Clipboard), shared by every program, as UTF-8
-  text and file lists (Controls.FileLists' text, with the plain paths
-  as text beside it, for pasting into an edit box); within the program
-  while it has no display server. Another store can take its place
-  (SetClipboardStore) without the controls changing.
+  Where it is kept is a store behind them: within the program by
+  default; libcontrols puts the display server's system clipboard in
+  its place when it loads (Controls.SystemClipboard), so that every
+  program shares it. Another store can take its place
+  (SetClipboardStore) without the controls changing. This unit needs
+  no display server, so it builds on the host too.
 }
 unit Controls.Clipboard;
 
@@ -63,24 +63,15 @@ procedure SetClipboardStore(Store: TClipboardStore);
 
 implementation
 
-uses
-  SysUtils,
-  Windowing.Protocol,
-  Windowing.Connection,
-  Windowing.DataTransfer,
-  Windowing.Clipboard;
-
 type
-  { The display server's clipboard; within the program while there is no
-    connection to a display server. }
-  TSystemClipboardStore = class(TClipboardStore)
+  { Kept within the program. }
+  TProgramClipboardStore = class(TClipboardStore)
   private
     FText: string;
     FFileList: string;
   public
     function ReadText: string; override;
     procedure WriteText(const Text: string); override;
-    function HoldsText: Boolean; override;
     procedure WriteFileList(const ListText, PlainText: string); override;
     function ReadFileList: string; override;
   end;
@@ -103,64 +94,33 @@ begin
   Result := ReadText;
 end;
 
-function TSystemClipboardStore.ReadText: string;
+function TProgramClipboardStore.ReadText: string;
 begin
-  if not IsConnected then
-    Exit(FText);
-  if not ReadClipboardText(Result) then
-    Result := '';
+  Result := FText;
 end;
 
-procedure TSystemClipboardStore.WriteText(const Text: string);
+procedure TProgramClipboardStore.WriteText(const Text: string);
 begin
   FText := Text;
   FFileList := '';
-  if not IsConnected then
-    Exit;
-  if Text = '' then
-    ClearClipboard
-  else
-    WriteClipboardText(Text);
 end;
 
-function TSystemClipboardStore.HoldsText: Boolean;
-begin
-  if not IsConnected then
-    Exit(FText <> '');
-  Result := ClipboardHasFormat(DataFormatText);
-end;
-
-procedure TSystemClipboardStore.WriteFileList(const ListText, PlainText: string);
-var
-  Offer: TDataOffer;
+procedure TProgramClipboardStore.WriteFileList(const ListText, PlainText: string);
 begin
   FText := PlainText;
   FFileList := ListText;
-  if not IsConnected then
-    Exit;
-  Offer := TDataOffer.Create;
-  Offer.Add(DataFormatFileList, TextToBytes(ListText));
-  Offer.Add(DataFormatText, TextToBytes(PlainText));
-  WriteClipboard(Offer);
 end;
 
-function TSystemClipboardStore.ReadFileList: string;
-var
-  Data: TBytes;
+function TProgramClipboardStore.ReadFileList: string;
 begin
-  if not IsConnected then
-    Exit(FFileList);
-  if ReadClipboard(DataFormatFileList, Data) then
-    Result := BytesToText(Data)
-  else
-    Result := '';
+  Result := FFileList;
 end;
 
 { The store, made when first needed. }
 function ActiveStore: TClipboardStore;
 begin
   if CurrentStore = nil then
-    CurrentStore := TSystemClipboardStore.Create;
+    CurrentStore := TProgramClipboardStore.Create;
   Result := CurrentStore;
 end;
 

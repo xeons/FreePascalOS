@@ -37,6 +37,7 @@ uses
   Controls.Buttons,
   Controls.Toggles,
   Controls.Clipboard,
+  Controls.SystemClipboard,
   Controls.EditCommands,
   Controls.EditBox,
   Controls.PasswordBox,
