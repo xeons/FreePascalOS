@@ -20,9 +20,10 @@
   The network service's main loop. It waits, all at once, for:
     - its notifications (a request to end: the service stopped, the
       system shutting down), which end the loop;
-    - a watch on /etc/settings: Network.settings written, created or
-      renamed into place (as the system settings service and the
-      settings library write it) is read again and applied;
+    - the system's settings, group Network (Configuration.Watcher, on
+      /etc/settings): when a value in Network.settings changes - however
+      it is written, the settings library's safe write included - it is
+      read again and applied; a rewrite that changes nothing is not;
     - the kernel's network changes (CallWatchNetworkChanges): adapters
       that appear, links that come or go;
     - the DHCP clients' sockets;
@@ -48,26 +49,40 @@ uses
   Sys.Kernel,
   Sys.Objects,
   Sys.Notifications,
-  Sys.FileWatches,
   Sys.Information,
   Sys.NetworkInterfaces,
   Sys.ServiceControl,
+  Configuration.Changes,
+  Configuration.Watcher,
   NetworkService.Log,
   NetworkService.Settings,
   NetworkService.DhcpLeases,
   NetworkService.Interfaces;
 
 const
-  SettingsFolder = '/etc/settings';
+  SettingsGroup = 'Network';
   SettingsFileName = 'Network.settings';
   { The longest wait without looking at the time. }
   LongestWaitMilliseconds = 5000;
 
+type
+  TSettingsFollower = class
+  public
+    Changed: Boolean;
+    procedure GroupChanged(const Group: string; const Changes: TSettingChanges);
+  end;
+
 var
   Manager: TInterfaceManager;
-  SettingsWatch: Int64 = -1;
+  SettingsWatcher: TSettingsWatcher;
+  Follower: TSettingsFollower;
   ChangeWatch: Int64 = -1;
   AppliedHostName: string;
+
+procedure TSettingsFollower.GroupChanged(const Group: string; const Changes: TSettingChanges);
+begin
+  Changed := True;
+end;
 
 procedure ApplyHostName(const HostName: string);
 var
@@ -92,38 +107,25 @@ begin
   Manager.ApplySettings(Settings);
 end;
 
-procedure OpenSettingsWatch;
+procedure OpenSettingsWatcher;
 begin
-  SettingsWatch := WatchPath(SettingsFolder, WatchNames or WatchContents);
-  if SettingsWatch < 0 then
-  begin
-    Say('cannot watch ' + SettingsFolder + ': ' + ErrorText(LongInt(-SettingsWatch)) +
-      ' (the settings are read again every few seconds)');
-    SettingsWatch := -1;
-  end;
+  Follower := TSettingsFollower.Create;
+  SettingsWatcher := OpenSystemSettingsWatcher;
+  SettingsWatcher.OnChanged := @Follower.GroupChanged;
+  SettingsWatcher.Watch(SettingsGroup);
+  if Length(SettingsWatcher.Handles(False)) = 0 then
+    Say('cannot watch the settings (they are read again every few seconds)');
 end;
 
-{ True if a change in the folder concerns Network.settings. }
-function SettingsFileChanged: Boolean;
-var
-  Reader: TFileChangeReader;
-  Change: TFileChange;
+{ Applies the settings if a burst of changes to them is over. }
+procedure ApplyChangedSettings;
 begin
-  Result := False;
-  while ReadFileChanges(Reader, SettingsWatch) = ErrorNone do
-    while NextFileChange(Reader, Change) do
-    begin
-      if (Change.Kind = FileChangeOverflow) or
-         (string(Change.Name) = SettingsFileName) or
-         (string(Change.OldName) = SettingsFileName) then
-        Result := True;
-      if (Change.Kind = FileChangeWatchedItemRemoved) or (Change.Kind = FileChangeVolumeGone) then
-      begin
-        CloseHandle(SettingsWatch);
-        SettingsWatch := -1;
-        Exit(True);
-      end;
-    end;
+  Follower.Changed := False;
+  SettingsWatcher.DeliverChanges;
+  if not Follower.Changed then
+    Exit;
+  Say(SettingsFileName + ' changed');
+  ReadAndApplySettings;
 end;
 
 function EndWasRequested: Boolean;
@@ -143,21 +145,28 @@ function WaitTime: Int64;
 var
   Deadline: QWord;
   Now: QWord;
+  SettingsWait: Int64;
 begin
   Deadline := Manager.NextDeadline;
   Now := QWord(KernelGetTime(TimeUptimeMilliseconds));
   if Deadline <= Now then
     Exit(0);
   if Deadline - Now > LongestWaitMilliseconds then
-    Exit(LongestWaitMilliseconds);
-  Result := Int64(Deadline - Now);
+    Result := LongestWaitMilliseconds
+  else
+    Result := Int64(Deadline - Now);
+  SettingsWait := SettingsWatcher.WaitTime;
+  if (SettingsWait <> InfiniteWait) and (SettingsWait < Result) then
+    Result := SettingsWait;
 end;
 
 procedure ServeUntilAskedToEnd;
 var
   Handles: array[0..MaximumWaitHandles - 1] of Int64;
   Count: Integer;
-  SettingsPosition: Integer;
+  SettingsHandles: TWatcherHandles;
+  FirstSettings: Integer;
+  Index: Integer;
   ChangePosition: Integer;
   Ready: Int64;
 begin
@@ -165,11 +174,11 @@ begin
     Count := 0;
     Handles[Count] := NotificationsHandle;
     Inc(Count);
-    SettingsPosition := -1;
-    if SettingsWatch >= 0 then
+    FirstSettings := Count;
+    SettingsHandles := SettingsWatcher.Handles(False);
+    for Index := 0 to High(SettingsHandles) do
     begin
-      SettingsPosition := Count;
-      Handles[Count] := SettingsWatch;
+      Handles[Count] := SettingsHandles[Index];
       Inc(Count);
     end;
     ChangePosition := -1;
@@ -186,23 +195,15 @@ begin
       if EndWasRequested then
         Exit;
     end
-    else if (Ready > 0) and (Ready = SettingsPosition) then
-    begin
-      if SettingsFileChanged then
-      begin
-        Say(SettingsFileName + ' changed');
-        ReadAndApplySettings;
-      end;
-      if SettingsWatch < 0 then
-        OpenSettingsWatch;
-    end
+    else if (Ready >= FirstSettings) and (Ready < FirstSettings + Length(SettingsHandles)) then
+      SettingsWatcher.HandleReady(Handles[Ready])
     else if (Ready > 0) and (Ready = ChangePosition) then
       Manager.RefreshInterfaces
     else if (Ready > 0) and (Ready < Count) then
-      Manager.HandleReadable(Handles[Ready])
-    else if SettingsWatch < 0 then
-      { Without a watch: look again now and then. }
-      ReadAndApplySettings;
+      Manager.HandleReadable(Handles[Ready]);
+    { Without watches the watcher looks at the settings now and then by
+      itself. }
+    ApplyChangedSettings;
     Manager.HandleDeadlines;
   until False;
 end;
@@ -218,7 +219,7 @@ begin
       Say('cannot watch the network for changes: ' + ErrorText(LongInt(-ChangeWatch)));
       ChangeWatch := -1;
     end;
-    OpenSettingsWatch;
+    OpenSettingsWatcher;
     { The settings first, so each interface is set up once as they say. }
     ReadAndApplySettings;
     Manager.RefreshInterfaces;
@@ -229,8 +230,8 @@ begin
   finally
     Manager.Free;
   end;
-  if SettingsWatch >= 0 then
-    CloseHandle(SettingsWatch);
+  SettingsWatcher.Free;
+  Follower.Free;
   if ChangeWatch >= 0 then
     CloseHandle(ChangeWatch);
   Say('stopped');

@@ -304,12 +304,13 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   `make run` and `make test`
 - OpenSSL (`openssl`) and Python 3's ssl module, for the HTTPS tests of
   `make test` (the test servers on the host)
-- The system's fonts: Terminus (`terminus-font`), and DejaVu Sans
-  (`ttf-dejavu`) with Python's Pillow (`python-pillow`), which renders it
-  into the interface's anti-aliased bitmap fonts at build time
+- The console's font: Terminus (`terminus-font`); DejaVu Sans and DejaVu
+  Sans Mono come with the source (`userland/fonts`)
+- Python's Pillow (`python-pillow`) and FreeType (`freetype2`, which
+  Pillow uses; or `python-freetype-py`), for the host tests' fixtures
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font ttf-dejavu python-pillow`.
+`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2`.
 
 ## Building and running
 
@@ -455,10 +456,12 @@ userland/
   wget/             wget's units (URLs, HTTP, connections, progress)
   etc/              Files installed in /etc (accounts, services, settings,
                     the Mozilla CA list in ssl/certs)
+  fonts/            DejaVu Sans and DejaVu Sans Mono (TrueType, with their
+                    licence), installed in /lib/fonts
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
-tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
 tools/DrawingTest/  Checks libdrawing and libfont on the host
+tools/FontTest/     Checks libfont's TrueType fonts on the host against FreeType
 tools/TextTest/     Checks the multi-line edit box's logic on the host
 tools/SettingsTest/ Checks the settings library on the host
 tools/FilesTest/    Checks the file manager's plain logic on the host
@@ -486,9 +489,10 @@ Terminus (ter-116n), distributed under the SIL Open Font License 1.1; the
 license is in `kernel/debug/Debug.ConsoleFont.LICENSE`.
 
 The system volume carries Terminus (`/lib/fonts/terminus`, SIL Open Font
-License 1.1) and DejaVu Sans rendered into bitmaps (`/lib/fonts/dejavu-sans`,
-the Bitstream Vera licence with DejaVu's changes, which are in the public
-domain), each with its licence in the same directory.
+License 1.1) and DejaVu Sans and DejaVu Sans Mono 2.37
+(`/lib/fonts/dejavu-sans`, `/lib/fonts/dejavu-sans-mono`, from
+`userland/fonts`; the Bitstream Vera licence with DejaVu's changes, which
+are in the public domain), each with its licence in the same directory.
 
 The `firmware/` folder holds firmware that devices load into themselves
 (it runs on the device, not in FreePascalOS), copied unmodified from the

@@ -33,6 +33,14 @@
   font: a byte a pixel, 0 nothing to 255 fully covered, drawn by
   blending the text colour over what is there).
 
+  An outline face (Format GlyphOutline) has no bitmaps of its own: its
+  glyphs are rendered from its outline font (Outlines, Font.Outlines)
+  when drawn and kept in the glyph cache (Font.GlyphCache). A family
+  lists such a font once, as a face of any size (AnySize, Size 0); the
+  face picked for a size is made from it at that pixel size (Font.Text,
+  Font.OutlineFaces), its advances and kerning the font's scaled and
+  rounded to whole pixels, its glyphs hinted (Hinted).
+
   A face can be known before its glyphs are read: its Size, weight and
   the file they are in (Source), which is all that picking a face
   needs; the glyphs are read the first time it is picked (Font.Text,
@@ -46,8 +54,11 @@ unit Font.Faces;
 
 interface
 
+uses
+  Font.Outlines;
+
 type
-  TGlyphFormat = (GlyphBits, GlyphCoverage);
+  TGlyphFormat = (GlyphBits, GlyphCoverage, GlyphOutline);
 
   TGlyph = record
     Advance: LongInt;
@@ -101,6 +112,12 @@ type
     { Sorted by left, then right code point. }
     Kerning: array of TKerningPair;
     KerningCount: LongInt;
+    { An outline face: the font its glyphs come from (shared by every
+      size made from it, never freed); whether it stands for every size
+      (a family's listing) and whether its glyphs are hinted. }
+    Outlines: TOutlineFont;
+    AnySize: Boolean;
+    Hinted: Boolean;
   end;
   PFontFace = ^TFontFace;
 
@@ -122,6 +139,8 @@ function GlyphRow(const Face: TFontFace; Glyph: LongWord; Row: LongInt): PByte;
 { How far the pen moves between Left and Right besides their advances:
   the pair's kerning, 0 if it has none. }
 function KerningBetween(const Face: TFontFace; Left, Right: LongWord): LongInt;
+{ Whether any pair of the face's characters is kerned at all. }
+function FaceHasKerning(const Face: TFontFace): Boolean;
 
 implementation
 
@@ -150,6 +169,9 @@ begin
   Face.FallbackGlyph := 0;
   Face.Kerning := nil;
   Face.KerningCount := 0;
+  Face.Outlines := nil;
+  Face.AnySize := False;
+  Face.Hinted := False;
 end;
 
 procedure AddMapping(var Face: TFontFace; CodePoint, Glyph: LongWord);
@@ -241,6 +263,8 @@ end;
 
 function GlyphRowBytes(const Face: TFontFace; Glyph: LongWord): LongInt;
 begin
+  if Face.Format = GlyphOutline then
+    Exit(0);
   if Glyph >= Face.GlyphCount then
     Glyph := Face.FallbackGlyph;
   if Face.Format = GlyphBits then
@@ -251,9 +275,32 @@ end;
 
 function GlyphRow(const Face: TFontFace; Glyph: LongWord; Row: LongInt): PByte;
 begin
+  if Face.Format = GlyphOutline then
+    Exit(nil);
   if Glyph >= Face.GlyphCount then
     Glyph := Face.FallbackGlyph;
   Result := @Face.Bitmaps[Face.Glyphs[Glyph].BitmapOffset + PtrUInt(Row) * PtrUInt(GlyphRowBytes(Face, Glyph))];
+end;
+
+{ An outline face's kerning: the font's, in pixels at the face's size. }
+function OutlineKerning(const Face: TFontFace; Left, Right: LongWord): LongInt;
+var
+  Units: LongInt;
+begin
+  Result := 0;
+  if (Face.Outlines = nil) or (Face.Size <= 0) or not Face.Outlines.HasKerning then
+    Exit;
+  Units := Face.Outlines.KerningUnits(GlyphFor(Face, Left), GlyphFor(Face, Right));
+  if Units <> 0 then
+    Result := RoundHalfUp(Units * Face.Size / Face.Outlines.UnitsPerEm);
+end;
+
+function FaceHasKerning(const Face: TFontFace): Boolean;
+begin
+  if Face.Format = GlyphOutline then
+    Result := (Face.Outlines <> nil) and Face.Outlines.HasKerning
+  else
+    Result := Face.KerningCount > 0;
 end;
 
 function KerningBetween(const Face: TFontFace; Left, Right: LongWord): LongInt;
@@ -263,6 +310,8 @@ var
   Middle: LongInt;
   Pair: TKerningPair;
 begin
+  if Face.Format = GlyphOutline then
+    Exit(OutlineKerning(Face, Left, Right));
   Low := 0;
   High := Face.KerningCount - 1;
   while Low <= High do

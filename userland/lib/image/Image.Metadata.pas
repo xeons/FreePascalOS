@@ -43,6 +43,9 @@ const
   { How many pages a file of several (a TIFF) has; the image is the
     first (Image.Tiff.Codec picks others). }
   MetadataKeyPageCount = 'PageCount';
+  { How the pixels were compressed when a format has several ways (a
+    WebP's 'lossy' or 'lossless'). }
+  MetadataKeyCompression = 'Compression';
 
 type
   TImageMetadataEntry = record

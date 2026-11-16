@@ -60,7 +60,7 @@ procedure SetWorkArea(Number: LongInt; Left, Top, Width, Height: LongInt);
 procedure ManageWindow(Id: LongWord; Command: LongWord);
 { The shell only: takes the key Code (a scan code, as in key events)
   pressed with exactly Modifiers (Abi ModifierShift, ModifierControl,
-  ModifierAlt) for itself, or gives it back (Take False). }
+  ModifierAlt, ModifierAltGr, ModifierSuper) for itself, or gives it back (Take False). }
 procedure RegisterHotkey(Code, Modifiers: LongWord; Take: Boolean);
 { Whether an event of Kind is for the shell (and OnShellEvent). }
 function IsShellEvent(Kind: LongWord): Boolean;

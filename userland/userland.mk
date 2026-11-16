@@ -109,18 +109,15 @@ TERMINUS_SIZES := 12 14 16 18 20 22 24 28 32
 SYSTEM_FONT_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/terminus
 SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 
-# The interface's proportional font (/lib/fonts/dejavu-sans): DejaVu Sans,
-# regular and bold, rendered on the host into coverage fonts at every
-# pixel size from 9 to 40 (tools/RenderFont, with Python's Pillow); with
-# its licence (Bitstream Vera and DejaVu's changes), which has to go with
-# it.
-DEJAVU_SANS_FONT ?= /usr/share/fonts/TTF/DejaVuSans.ttf
-DEJAVU_SANS_BOLD_FONT ?= /usr/share/fonts/TTF/DejaVuSans-Bold.ttf
-DEJAVU_LICENSE ?= /usr/share/licenses/ttf-dejavu/LICENSE
-DEJAVU_SANS_SIZES := 9-40
-DEJAVU_SANS_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/dejavu-sans
-DEJAVU_SANS_STAMP := $(DEJAVU_SANS_DIRECTORY)/.rendered
-FONT_RENDERER := tools/RenderFont/render-font.py
+# The TrueType fonts (/lib/fonts/dejavu-sans, the interface's, and
+# /lib/fonts/dejavu-sans-mono): DejaVu Sans and DejaVu Sans Mono, regular
+# and bold, kept in userland/fonts with their licence (Bitstream Vera and
+# DejaVu's changes), which has to go with them; libfont renders them at
+# any size.
+OUTLINE_FONT_SOURCE := userland/fonts
+OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*.ttf) $(wildcard $(OUTLINE_FONT_SOURCE)/*/LICENSE)
+DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
+DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
 
 
 
@@ -201,8 +198,8 @@ $(IMAGE_LIBRARY): $(DRAWING_LIBRARY) $(COMPRESSION_LIBRARY) $(wildcard userland/
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libimage.so -o $@ \
 		$(IMAGE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcompression -ldrawing -lsystem
 
-# libfont: bitmap fonts, picked by point size and DPI; measuring and
-# drawing UTF-8 text.
+# libfont: bitmap and TrueType fonts, picked by point size and DPI;
+# measuring and drawing UTF-8 text.
 $(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
 	@rm -rf $(FONT_LIBRARY_OBJECTS)
 	@mkdir -p $(FONT_LIBRARY_OBJECTS)
@@ -269,17 +266,12 @@ $(SYSTEM_FONTS_STAMP):
 	cp $(TERMINUS_LICENSE) $(SYSTEM_FONT_DIRECTORY)/LICENSE
 	@touch $@
 
-$(DEJAVU_SANS_STAMP): $(FONT_RENDERER)
-	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed to render the interface font (python-pillow)"; exit 1; }
-	@for font in $(DEJAVU_SANS_FONT) $(DEJAVU_SANS_BOLD_FONT) $(DEJAVU_LICENSE); do \
-		test -f $$font || { echo "DejaVu Sans is needed in $$font (set DEJAVU_SANS_FONT, DEJAVU_SANS_BOLD_FONT, DEJAVU_LICENSE)"; exit 1; }; \
+$(DEJAVU_SANS_STAMP): $(OUTLINE_FONT_FILES)
+	@for family in $(notdir $(wildcard $(OUTLINE_FONT_SOURCE)/*)); do \
+		rm -rf $(USER_BUILD_DIRECTORY)/fonts/$$family; \
+		mkdir -p $(USER_BUILD_DIRECTORY)/fonts/$$family; \
+		cp $(OUTLINE_FONT_SOURCE)/$$family/* $(USER_BUILD_DIRECTORY)/fonts/$$family/; \
 	done
-	@rm -rf $(DEJAVU_SANS_DIRECTORY)
-	python3 $(FONT_RENDERER) --font $(DEJAVU_SANS_FONT) --sizes $(DEJAVU_SANS_SIZES) --name dejavu-sans \
-		--output $(DEJAVU_SANS_DIRECTORY)
-	python3 $(FONT_RENDERER) --font $(DEJAVU_SANS_BOLD_FONT) --bold --sizes $(DEJAVU_SANS_SIZES) --name dejavu-sans-bold \
-		--output $(DEJAVU_SANS_DIRECTORY)
-	cp $(DEJAVU_LICENSE) $(DEJAVU_SANS_DIRECTORY)/LICENSE
 	@touch $@
 
 # A library loaded at run time by the tests.
@@ -336,6 +328,15 @@ $(IMAGE_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -limage -lcompression -ldrawing
 $(IMAGE_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 	-Fu$(IMAGE_LIBRARY_OBJECTS)
 $(IMAGE_PROGRAMS): $(IMAGE_LIBRARY)
+# The clipboard tool: the clipboard (libwindowing, libcontrols' file
+# lists) and images (libimage).
+CLIPBOARD_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,clipboard)
+$(CLIPBOARD_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
+	-ldrawing
+$(CLIPBOARD_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS)
+$(CLIPBOARD_PROGRAMS): $(CONTROLS_LIBRARY) $(IMAGE_LIBRARY)
 # The system settings service keeps what it changes in the settings and
 # sets the sound outputs.
 SYSTEM_SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,systemsettings)

@@ -40,10 +40,10 @@
   object.
 
   Change notification: CheckForChanges calls OnChanged with every group
-  someone else changed since this object read it. Today a program calls
-  it when it wants (a timer, its window being activated); once the kernel
-  watches folders for changes, a watch on both scopes' folders calls it
-  as soon as a file changes, and programs need no change.
+  whose file someone rewrote since this object read it. A program that
+  wants to hear of changes as they happen, and which keys changed, uses
+  a settings watcher (Configuration.Watcher; Windowing.SettingsChanges
+  in a window program).
 }
 unit Configuration.Settings;
 

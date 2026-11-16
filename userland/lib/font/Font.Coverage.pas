@@ -18,10 +18,10 @@
 
 {
   Coverage fonts (.cvf): anti-aliased bitmap fonts, one pixel size
-  each, with glyphs of their own widths and kerning pairs. The system
-  has no font rasterizer yet, so a proportional font is rendered on the
-  host at every size wanted (tools/RenderFont/render-font.py, which
-  describes the format) and only its coverage is blended here.
+  each, with glyphs of their own widths and kerning pairs, rendered
+  beforehand (by any tool) so that only their coverage is blended here.
+  The system's own proportional fonts are TrueType now (Font.TrueType,
+  rendered at any size); coverage fonts remain readable in a family.
 
   All numbers are little-endian. A 40 byte header: magic "CVF1", the
   header size, flags (bit 0 bold), the pixel size (the em), the line

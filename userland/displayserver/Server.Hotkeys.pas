@@ -26,7 +26,8 @@
   with exactly those (Shift, Ctrl, Alt and AltGr compared, the locks
   not), it goes to the shell as EventHotkey and no window hears of it,
   its release neither, so a program never sees half a key. The keys go
-  when the shell does.
+  when the shell does. While the screen is locked (Server.ScreenLock)
+  they are swallowed: neither the shell nor any window hears them.
 }
 unit Server.Hotkeys;
 
@@ -49,12 +50,13 @@ implementation
 
 uses
   Windowing.Protocol,
-  Server.Shell;
+  Server.Shell,
+  Server.ScreenLock;
 
 const
   MaximumHotkeys = 16;
   { The modifiers that tell one key combination from another. }
-  ComparedModifiers = ModifierShift or ModifierControl or ModifierAlt or ModifierAltGr;
+  ComparedModifiers = ModifierShift or ModifierControl or ModifierAlt or ModifierAltGr or ModifierSuper;
   NoKey = High(LongWord);
 
 type
@@ -121,7 +123,8 @@ begin
   Message := NewMessage(EventHotkey, 0);
   Message.Code := Event.Code;
   Message.Modifiers := Event.Modifiers;
-  SendToShell(Message);
+  if not ScreenLocked then
+    SendToShell(Message);
   Result := True;
 end;
 

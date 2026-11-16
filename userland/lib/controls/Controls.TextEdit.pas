@@ -49,6 +49,7 @@ interface
 uses
   Classes,
   Windowing.Messages,
+  Controls.DragData,
   Controls.Base,
   Controls.EditCommands,
   Controls.TextPositions,
@@ -87,6 +88,9 @@ type
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    { Text (or files, as their paths) dropped goes where it is let go. }
+    function DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect; override;
+    procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); override;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
@@ -126,7 +130,8 @@ uses
   Windowing.Protocol,
   Windowing.Windows,
   Controls.Keys,
-  Controls.Clipboard;
+  Controls.Clipboard,
+  Controls.SystemDrag;
 
 const
   TabCharacter = 9;
@@ -369,11 +374,38 @@ begin
 end;
 
 procedure TTextEdit.PasteFromClipboard;
+var
+  Pasted: string;
 begin
-  if FReadOnly or not ClipboardHasText then
+  if FReadOnly then
     Exit;
+  Pasted := ClipboardText;
   { Lines as this box keeps them: carriage returns are dropped. }
-  ReplaceSelection(StringReplace(ClipboardText, #13, '', [rfReplaceAll]));
+  if Pasted <> '' then
+    ReplaceSelection(StringReplace(Pasted, #13, '', [rfReplaceAll]));
+end;
+
+function TTextEdit.DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+var
+  Dropped: string;
+begin
+  Result := DropNone;
+  if FReadOnly or not Enabled or (Data.Source = Self) or not DragDataAsText(Data, Dropped) then
+    Exit;
+  Result := DropCopy;
+end;
+
+procedure TTextEdit.DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+var
+  Dropped: string;
+  Position: TTextPosition;
+begin
+  if FReadOnly or not DragDataAsText(Data, Dropped) then
+    Exit;
+  SetFocus;
+  Position := PositionAt(X, Y);
+  MoveCaret(Position.Line, Position.Column, False);
+  ReplaceSelection(StringReplace(Dropped, #13, '', [rfReplaceAll]));
 end;
 
 procedure TTextEdit.RunEditCommand(Command: TEditCommand);

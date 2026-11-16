@@ -44,6 +44,7 @@ unit ControlPanel.NetworkPage;
 interface
 
 uses
+  SysUtils,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -122,6 +123,7 @@ type
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     destructor Destroy; override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
     procedure Tick; override;
@@ -130,7 +132,6 @@ type
 implementation
 
 uses
-  SysUtils,
   Abi.SystemCalls,
   Sys.Objects,
   Sys.SystemSettings,
@@ -264,6 +265,13 @@ begin
   FDetails.Free;
   FIpv6Tab.Free;
   inherited Destroy;
+end;
+
+function TNetworkPage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Network';
 end;
 
 function TNetworkPage.PageName: string;

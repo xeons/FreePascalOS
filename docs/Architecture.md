@@ -727,8 +727,9 @@ runs it on a thread pinned to the boot processor:
    - **Services:** block I/O open again; audio volumes set again and
      capturing restarted.
 
-`suspend` (root only, `CallSuspend`) and the kernel debug shell's
-`suspend` start it. The input test suspends a machine with AHCI,
+`suspend` (root only, `CallSuspend`), the kernel debug shell's
+`suspend` and the desktop's Suspend (through the session manager, which
+is root) start it. The input test suspends a machine with AHCI,
 virtio, NVMe and USB disks and HD Audio, AC'97 and USB audio, wakes it
 (`system_wakeup`), then reads every disk raw, writes and reads back
 files on three volumes, plays a tone on each sound output (recorded and
@@ -1384,11 +1385,35 @@ the list (`ListOtherWindows` in `Windowing.WindowList`).
 Keys for the whole desktop (`Server.Hotkeys`): the shell may take a key
 with the modifiers that must be held with it (`RequestRegisterHotkey`;
 `RegisterHotkey` in `Windowing.Shell`). Pressed with exactly those
-(Shift, Ctrl, Alt and AltGr compared, the locks not), it goes to the
+(Shift, Ctrl, Alt, AltGr and Super compared, the locks not), it goes to the
 shell as `EventHotkey` whatever window is active, and neither it nor
 its release reaches a window, so no program sees half a key. The keys
 go when the shell does. The desktop takes Ctrl+Shift+Escape for the
-task manager.
+task manager, and Super+L and Ctrl+Alt+L to lock the screen. (The
+kernel reports either Super key, E0 5B and E0 5C, or a USB keyboard's
+GUI modifier bits, as `ModifierSuper`; it types nothing.)
+
+The screen lock (`Server.ScreenLock`): a state the server owns, so no
+program can show itself over the lock screen however it misbehaves. A
+program running as root (the session manager) locks the screen
+(`RequestLockScreen`, answered by `EventScreenLock`; `LockScreen` in
+`Windowing.ScreenLock`). While it is locked only that program's windows
+are composed, over a plain dark background; every other window is left
+out of composing, is never the window under the pointer
+(`WindowAt`), cannot be activated or capture the pointer, and gets no
+keys; the shell's keys are swallowed (neither the shell nor a window
+hears them) and Alt+F4 does nothing. A window moved behind the lock
+copies no pixels. Locking ends any drag, capture and hover and takes
+the keyboard from the window that had it; unlocking gives it back to
+that window. A program that ends while holding the lock leaves the
+screen locked, with nothing but the background, until a root program
+takes the lock over or unlocks it. Locking a screen another live
+program holds is refused. The server also keeps the time of the last
+input: `RequestDescribeIdle` (`EventIdleDescribed`, milliseconds;
+`IdleMilliseconds`) is how the session manager locks after a while,
+and `RequestRepaintDisplays` (`RepaintDisplays`) draws every display
+again from the windows, which the session manager asks after waking
+from suspend (a display's memory may not keep its picture).
 
 Notification icons (`Server.Notifications`): any program may show a
 small icon with a tooltip in the shell's notification area
@@ -1409,14 +1434,86 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestDescribeWorkArea` = 22, `RequestManageWindow` = 23,
 `RequestSetNotificationIcon` = 24, `RequestListWindows` = 25,
 `RequestRegisterHotkey` = 26, `RequestGetKeyboardSettings` = 27,
-`RequestSetKeyboardSettings` = 28), events 101 to 125 (up to
+`RequestSetKeyboardSettings` = 28; the screen lock's in a range of
+their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
+`RequestRepaintDisplays` = 42; the clipboard and drag and drop 29 to
+36: `RequestOfferData` = 29, `RequestProvideData` = 30,
+`RequestAskData` = 31, `RequestWatchClipboard` = 32,
+`RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
+`RequestAnswerDrag` = 35, `RequestFinishDrop` = 36), events 101 to 125 (up to
 `EventScaleChanged` = 112; `EventDisplayDescribed` = 113,
 `EventDisplayMode` = 114, `EventVisibilityChanged` = 115,
 `EventMouseSettings` = 116, `EventShellRegistered` = 117,
 `EventShellWindowChanged` = 118, `EventShellWindowGone` = 119,
 `EventWorkArea` = 120, `EventDisplaysChanged` = 121,
 `EventNotificationIconChanged` = 122, `EventWindowListed` = 123,
-`EventHotkey` = 124, `EventKeyboardSettings` = 125).
+`EventHotkey` = 124, `EventKeyboardSettings` = 125; the clipboard's
+and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
+127, `EventClipboardChanged` = 128, `EventClipboardFormats` = 129,
+`EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
+132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
+135; `EventScreenLock` = 140, `EventIdleDescribed` = 141).
+
+The clipboard (`Server.DataOffers`) is the server's. A program offers
+data in one or more formats (`RequestOfferData` with
+`DataSourceClipboard`: text as UTF-8, an image as a PNG file or as raw
+pixels - `DataFormatBgra`: width and height as 32-bit little-endian
+numbers, then blue, green, red, alpha a pixel, straight alpha, lines
+from the top - and a file list, the text of `Controls.FileLists`) and
+owns the clipboard until another program offers; the old owner hears
+`EventClipboardLost` (naming its own number for the offer, so one made
+since is kept). Rendering is delayed: the server asks the owner for a
+format the first time someone wants it (`EventDataRender`, answered with
+`RequestProvideData`), keeps the questions until the bytes come, and
+keeps the bytes; when the owner ends, what it gave stays on the
+clipboard and what it never gave goes (libwindowing gives every format
+before a program ends, so normally all of it stays). Bytes travel in
+sections, as surfaces do: the program copies them into a section it
+sends with the request, the server copies them out (at most
+`MaximumDataBytes`, 64 MiB, a format) and gives every program that asks
+(`RequestAskData`, answered by `EventDataDelivered` with a section of
+its own and the length) a fresh copy, so nobody changes what another
+reads. `RequestDescribeClipboard` tells the formats
+(`EventClipboardFormats`); programs that ask (`RequestWatchClipboard`)
+hear every change (`EventClipboardChanged`: the formats, whether they
+own it, a change count).
+
+Drag and drop (`Server.DataDrag`): a program offers the drag's data the
+same way (`DataSourceDrag`, every format given at once) and starts the
+drag from its window while button 1 is held (`RequestStartDrag`: the
+effects allowed - copy, move, link, `DropEffect*` - and a few words
+saying what is dragged). The pointer is then the drag's: no window gets
+pointer events or keys; the window under the pointer (its client area,
+enabled, usable under the screen lock) hears `EventDragEnter`,
+`EventDragOver` (also when Ctrl, Shift or Alt change) and
+`EventDragLeave`, each with the pointer in its pixels, the formats, the
+effects and the modifiers, and answers what a drop there would do
+(`RequestAnswerDrag`). Beside the pointer a label in the tooltip's
+colours shows that answer as a sign (a plus to copy, an arrow to move, a
+bent arrow to link, a struck red circle for nothing) and the words
+(`Server.DragFeedback`, drawn over the windows, under the pointer).
+Escape cancels. When button 1 is let go the window under the pointer
+hears `EventDrop`, decides again, reads the data (`RequestAskData` with
+`DataSourceDrag`) and says what it did (`RequestFinishDrop`), which the
+window the drag started from hears (`EventDragFinished`; nothing if
+cancelled or dropped on no window). A program that starts its drag just
+after the button was let go (it saw the pointer move with the button
+held, the release still on its way) has it dropped where the pointer
+is. Locking the screen cancels a drag, and none starts from a window the
+lock hides.
+
+`clipboard` uses it from the command line: `-c` copies standard input
+(`-t FORMAT`: text, png, bgra or files), `-p` pastes to standard output
+(status 1 if the clipboard has no such format), `-l` lists the formats,
+`-x` empties it, `--copy-image FILE` puts an image (any format libimage
+reads) on it as PNG and raw pixels, made only when asked for
+(`ClipboardTool.Images`), `--paste-image FILE` saves its image (from
+PNG, or `-t bgra`) as a PNG file, `--copy-files PATH...` puts files on it
+(a file list, and the paths as text), and `-w` waits for a change and
+says what the clipboard holds then. Coretest starts a display server and
+checks text, a format not held, files, an image read back by
+`imageinfo` from both image formats, and a watch hearing the clipboard
+emptied, each after the program that copied has ended.
 
 `wintest` shows a window and prints what happens to it (its place, a
 new scale, being shown or hidden; `-b` sets a text beam over its left
@@ -1449,7 +1546,15 @@ has none again.
 
 ### Windows and controls for programs
 
-**libwindowing** is what a program uses to have windows. One connection
+**libwindowing** is what a program uses to have windows. Its clipboard
+and drags are strings and bytes: `Windowing.DataTransfer` (a
+`TDataOffer` of formats, given when the server asks, `AskData`),
+`Windowing.Clipboard` (`WriteClipboardText`, `WriteClipboard`,
+`ReadClipboard`, `ReadClipboardText`, `ClipboardFormats`,
+`WatchClipboard` with `OnClipboardChanged` from the message loop,
+`FlushClipboard`), `Windowing.DragAndDrop` (`StartDrag`, `ReadDragData`;
+a window's `DragOver`, `DragLeave`, `Drop` and `DragFinished`, which the
+message loop calls and answers for). One connection
 per program (`Windowing.Connection`: hello, the screen's size, DPI and
 scale; `Scaled` and `Unscaled` between logical units and pixels;
 replies waited for while other events are kept in order). A `TWindow`
@@ -1513,13 +1618,16 @@ receiver that is freed takes its queued messages with it.
 
 `Windowing.Theme` holds the colours and metrics (logical units), shared
 by the display server's frames and the controls, and the font families:
-the interface's text (`TextFamily`, DejaVu Sans, proportional) and a
-monospaced one (`FixedFamily`, Terminus). `Windowing.Fonts` lists each
-family once and picks faces from them at the display's DPI: the theme's
-text face (`TextFace`, `BoldTextFace`, `FontFace`) and the monospaced one
-(`FixedTextFace`, `FixedFontFace`), or either family by name
-(`TFontFamily`: `FamilyFontFace`, `FamilyFaceSize`, `FamilyName`; a
-system without the monospaced fonts gets the text family's). The
+the interface's text (`TextFamily`, DejaVu Sans, proportional, TrueType)
+and a monospaced one (`FixedFamily`, Terminus, bitmap). `Windowing.Fonts`
+lists each family once and picks faces from them at the display's DPI:
+the theme's text face (`TextFace`, `BoldTextFace`, `FontFace`) and the
+monospaced one (`FixedTextFace`, `FixedFontFace`), or any family by name
+(`TFontFamily`: `FontFamilyText`, `FontFamilyFixed` and `FontFamilyMono`,
+DejaVu Sans Mono, TrueType; `FamilyFontFace`, `FamilyFaceSize`,
+`FamilyName`, `FamilyIsScalable`; a system without a monospaced family
+gets the text family's). A TrueType family gives every size exactly, so
+text is the same size at any DPI and scale. The
 display server picks its title face from the theme's text family too. Text is drawn anti-aliased;
 the multi-line edit box uses the monospaced face unless told otherwise,
 so columns of text line up, and the console stays Terminus. The controls use anti-aliased
@@ -1654,9 +1762,28 @@ absolute path with every byte but letters, digits, "-", ".", "_", "~"
 and "/" written as "%" and two hexadecimal digits). Reading also takes
 plain absolute paths and skips empty lines; text without the header is
 not a file list. Dragged files carry the same text (format
-"file-list"). For now the store keeps the text in the program;
-the system clipboard (step 8) will be a store that asks the display
-server, set with `SetClipboardStore`, and the controls stay as they are.
+"file-list"). The store is the display server's system clipboard
+(`Windowing.Clipboard`): text as UTF-8, file lists in their own format
+with the plain paths beside them as text (`SetClipboardFileListText`;
+pasting files into an edit box gives their paths); within the program
+while it has no display server. Every program's edit boxes, Notepad,
+the terminal and Files share it, so text and files cut or copied in one
+program are pasted in another, and stay after it ends.
+
+Drags of text and file lists go through the display server
+(`Controls.SystemDrag`, `Windowing.DragAndDrop`), so they reach other
+windows and programs: `BeginDrag` hands the data to the server, and
+each window a drag comes over asks its controls just as for a drag of
+its own (`TControlWindow.DragOver`, `DragLeave`, `Drop`: a drag of this
+program's own shows its `TDragData` with the source control, one from
+another program is read when it first comes over and has no source).
+The drag ends when the server says what the drop did, and the control
+pressed then hears the button let go. A program's own formats stay
+within the window, as before. Edit boxes, the multi-line edit box and
+the terminal take dropped text (and files, as their paths: the terminal
+quotes them for the shell); Files drops move or copy files between its
+windows in different processes as within one; the desktop opens files
+dropped on a program's icon with that program (`Desktop.FileDrops`).
 A one line box pastes up to the first line break; the multi-line box
 splits what it pastes into lines.
 
@@ -1756,13 +1883,16 @@ it found nothing in a message box owned by the dialog. `Controls.ColorDialog` (`
 grid of basic colours, a scroll bar and a number box for each of red,
 green and blue kept in step, and a swatch of the colour.
 `Controls.FontDialog` (`ChooseFont`; `ChooseFontOfFamily` also lets
-the user pick the family, the proportional DejaVu Sans or the
-monospaced Terminus) lists the sizes the family comes in at this
-display's DPI (the faces have some pixel sizes
-only; each is listed as the smallest whole, or else half, point size
-that picks it, so no two entries look the same, found without reading
-any face), bold or regular, and a sample drawn with the face a program
-asking for that size gets (`Windowing.Fonts` lists the faces for it).
+the user pick the family: the proportional DejaVu Sans, the bitmap
+Terminus or the monospaced DejaVu Sans Mono) lists sizes: for a
+TrueType family the usual point sizes from 6 to 72, and the size it
+started with if that is another; for Terminus the sizes its faces come
+in at this display's DPI (each listed as the smallest whole, or else
+half, point size that picks it, so no two entries look the same, found
+without reading any face); bold or regular, and a sample drawn with the
+face a program asking for that size gets (`Windowing.Fonts`). Notepad
+remembers the family by name (`Notepad/Font/Family`: `text`, `fixed`
+or `mono`).
 
 Mnemonics: an ampersand in a caption marks the next character as the
 control's mnemonic ("&File", "&OK"; "&&" is an ampersand itself).
@@ -1856,7 +1986,8 @@ the caret's row), and on Exit cancels the question to save, then
 answers No. Word wrap, the status bar and the font are kept in the
 user's settings (`Notepad.Settings`, group `Notepad`) as soon as they
 are chosen, and Notepad starts with them (it prints `settings word-wrap
-on|off, status-bar on|off, font ...`); the input test turns word wrap on,
+on|off, status-bar on|off, font ...`, and again when the settings
+change while it runs and differ from the window's); the input test turns word wrap on,
 ends Notepad and checks that the next one starts with it on.
 
 ### The file manager
@@ -2035,7 +2166,10 @@ and closes a second terminal with Alt+F4 (its shell hung up, status
 user's settings (`Terminal.Settings`: `Terminal/Rows`,
 `Terminal/Columns`), and the next one starts at it (the second terminal
 of the input test starts at the size the first was dragged to); the
-text's size is `Terminal/FontSize` (tenths of a point, 110 by default).
+text's size is `Terminal/FontSize` (tenths of a point, 110 by default),
+its colours `Terminal/TextColor` and `Terminal/BackgroundColor`
+(`#RRGGBB`); those three are taken at once when they change while it
+runs (see "Settings").
 
 ### The desktop shell
 
@@ -2074,13 +2208,17 @@ which the shell keeps out of that display's work area
 (and the desktops too) when the server says the displays changed. The
 Start button (`Desktop.StartButton`: a sunrise mark and a bold caption,
 pressed in while its menu is open) opens the Start menu on the press
-(`Desktop.StartMenu`: the programs, then Log off and Shut down, opened
+(`Desktop.StartMenu`: the programs, then Lock, Log off, Suspend and Shut down, opened
 just above the taskbar). Both ask in a message box, then ask the
 session manager (`Windowing.Sessions`, see "Startup, services and
 sessions"): Log off ends the session, Shut down turns the computer off
-(the session manager is root; the user is not). A desktop started by
-hand, with no session manager, ends itself to log off and calls the
-system's shutdown itself. The window list
+(the session manager is root; the user is not). Lock and Suspend, next
+to them, act at once (`Desktop.Locking`): the session manager shows the
+lock screen, or suspends the computer (locking it first when the user
+wants it locked on resume); Super+L and Ctrl+Alt+L, keys the shell
+takes for the whole desktop, lock it too. A desktop started by hand,
+with no session manager, ends itself to log off, calls the system's
+shutdown and suspend itself (root only) and cannot lock. The window list
 (`Desktop.WindowList`) follows the server's events; each window shown or
 minimized has a button (`Desktop.TaskButtons`: a small window mark and
 the title; pressed in on a lighter face, its title bold, for the active
@@ -2124,7 +2262,8 @@ and Network settings..., which opens the Control
 Panel's Network page. The desktop has no notification balloons yet, so
 a link going down or up is only shown by the icon.
 
-`desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
+`desktop` prints what happens (`asking log off`, `logging off`, `menu Lock`, `menu Suspend`, `hotkey lock`,
+`locking`, `suspending`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
 HH:MM`, `notification N TEXT`, `tooltip TEXT`, `hotkey task manager`,
 `context task manager`, `volume-popup`, `volume N`, `mute on|off`,
@@ -2228,7 +2367,7 @@ Apply along the bottom. Apply can be
 pressed once a page was changed, and applies every page that was; OK
 does the same and closes the window unless a change failed; Cancel and
 the close button forget what was not applied. PAGE (`display`, `mouse`,
-`keyboard`, `sound`, `datetime`, `network`, `users`) opens that page
+`keyboard`, `sound`, `datetime`, `network`, `users`, `lock`) opens that page
 first; the Start menu and a desktop icon open it, the volume control
 its Sound page, the network icon's pop-up its Network page. Everything is in logical units and points, so it looks the same
 at every scale.
@@ -2242,6 +2381,7 @@ at every scale.
 | Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
 | Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
+| Screen Lock | locking by itself after 1 to 60 minutes without input (off at first), locking before suspending (on at first) | kept in the user's settings (`Windowing.LockSettings`), which the session manager reads |
 
 **Root's changes from a user's Control Panel.** The Control Panel runs
 as whoever started it. What only root may change goes to the system
@@ -2953,11 +3093,12 @@ layer); waking resets it, gives it its queues and receive buffers again
 `/etc/services/network.service` in both boot modes (root, `ready =
 notify`, restarted on failure up to three times), runs as long as the
 system does. Its main loop (`NetworkService.Supervisor`) waits at once
-for its notifications (an end request ends it), a watch on
-`/etc/settings` (Network.settings written, created or renamed into
-place - the settings library and the system settings service write a
-`.new` file and rename it - is read again whole and applied), the
-kernel's network changes, and the DHCP clients' sockets, and wakes at
+for its notifications (an end request ends it), the system's settings
+watcher (`Configuration.Watcher` on `/etc/settings`, group `Network`:
+when a value in Network.settings changes - the settings library's and
+the system settings service's `.new` file renamed into place included -
+it is read again whole and applied; a rewrite that changes nothing is
+not), the kernel's network changes, and the DHCP clients' sockets, and wakes at
 the clients' next deadline (at least every 5 s).
 
 **Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
@@ -3476,7 +3617,8 @@ incomplete one only as a single one-bit code), as are the code length
 repeats, symbols 286, 287, 30 and 31, the end of block code, stored
 lengths and every distance against the output so far; the first error
 stops the decoder. The wrappers are checked as they arrive: the zlib
-header (no preset dictionary) and Adler-32; the gzip header byte by
+header (with a preset dictionary only when one was given: see below)
+and Adler-32; the gzip header byte by
 byte (extra field, name, comment, header CRC; `GzipHeader` has them),
 CRC-32 and length; members follow one another as one output, and
 anything else after a member is trailing data.
@@ -3494,6 +3636,22 @@ or with codes of its own (Huffman lengths limited to 15, the code
 lengths run-length coded and limited to 7), whichever is smallest
 counted to the bit. A block of incompressible data goes out before the
 window slides away from its start, so that it can still be stored.
+
+**Dictionaries and flushes.** `SetDictionary` before the first byte
+gives raw or zlib data a preset dictionary: the deflater puts its last
+32 KiB into the window as if they had just been coded (and zlib's
+header gets FDICT and the dictionary's Adler-32), the inflater puts it
+into the history before the first block. A zlib stream that asks for a
+dictionary fails with `CompressionErrorPresetDictionary` when none was
+given (`DictionaryId` names it) and `CompressionErrorDictionaryMismatch`
+when another was. `Compress` with a `TDeflateFlush` flushes: `FlushSync`
+codes everything taken so far and ends it with an empty stored block
+(00 00 FF FF), so the receiver can decompress all of it now;
+`FlushFull` also empties the hash chains, so nothing after refers to
+anything before and decompression can start there; asking again
+without new input adds nothing. The inflater needs nothing for them:
+everything before a flush point comes out as soon as the input up to it
+is in. `TCompressionStream.Flush` does the same for streams.
 
 **The convenience layer.** `Compression.Buffers` does whole arrays in
 one call and raises `ECompressionError` (with the code): decompression
@@ -3515,8 +3673,18 @@ is built with range checks); round trips at every level in every
 format, whole and in pieces; sizes within a tenth of zlib's on the
 same data; the stream adapters; gzip header fields. The samples it
 compresses are then decompressed by Python's zlib and gzip
-(`check-with-zlib.py`). On the system, `gzip` (`-c`, `-d`, `-f`, `-k`,
-`-1` to `-9`) compresses and decompresses files; coretest checks it.
+(`check-with-zlib.py`). Preset dictionaries and flushes are checked
+both ways: zlib's data made with `zdict` (zlib and raw, levels 0 to 9,
+a dictionary longer than the window) decompressed with the dictionary,
+refused without it or with another; zlib's sync and full flushes
+giving all the input before them at once, and the data after a full
+flush decompressing on its own; the same of the library's own
+dictionaries and flushes at every level, whose samples Python's zlib
+then checks (`zdict`, decompressing up to each flush point). On the
+system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
+decompresses files; started as `gunzip` it decompresses and as `zcat`
+it decompresses to standard output (copies made by
+make-system-disk.sh); coretest checks it.
 
 ## Network drivers
 
@@ -4699,14 +4867,44 @@ same way (telling the programs "shutdown", or "log off") and then ends.
 without the window for the first session of a boot. The session
 manager serves the port `session` (`Windowing.Sessions`,
 `Session.Requests`), listened to only from the session's user or root:
-log off (it answers, then ends the session as above), shut down and restart (it
-calls `CallShutdown`, which a user may not). Its output, with the
+log off (it answers, then ends the session as above), lock (with a user
+logged in), shut down and restart (it calls `CallShutdown`, which a user
+may not) and suspend (`CallSuspend`, likewise; `Session.Suspend`).
+
+**Locking.** The session manager locks the user's session
+(`Session.ScreenLock`) when the desktop asks (the Start menu's Lock,
+Super+L, Ctrl+Alt+L), after the minutes without input the user's
+settings name (`ScreenLock/AfterMinutes`, 0 - never - by default; the
+display server's idle time is asked every 5 seconds), and before
+suspending when `ScreenLock/OnResume` (true by default) says so
+(`Windowing.LockSettings`; the Control Panel's Screen Lock page). It
+asks the display server for the lock first, then shows the lock screen
+(`Session.LockWindow`): a window without a frame over the first
+display, a night sky with the clock (looked at every second), the
+date, the user's name and a password box with Unlock. The password is
+typed into a `TPasswordBox` (libcontrols, `Controls.PasswordBox`: the
+characters in one buffer of its own, overwritten as they leave it and
+before it is freed, never a string; the login window uses it too) and
+checked from that buffer against `/etc/shadow` as at login
+(`PasswordIsRight`). A wrong one empties the box, which stays disabled
+for 1.5 seconds before the refusal shows, so passwords cannot be tried
+quickly. The right one hides the lock screen and unlocks the server,
+which gives the keyboard back to the window that had it. When the
+session ends while locked (the power button, a desktop that crashed)
+the screen is unlocked for the login window. Suspending locks first
+(when wanted) and asks the kernel half a second later, once the lock
+screen shows; after waking it has the display server draw every display
+again, and the desktop's clock catches up by itself. Its output, with the
 desktop's (the desktop inherits it), is in `/var/log/session.log`:
 `session: login window shown`, the places of the window's boxes, `login
 refused for NAME`, `NAME logged in (session N)`, `logging off NAME`,
 `asking session N to end (REASON)`, `C programs of session N did not
 end in time: ending them`, `session of NAME ended (status S)`, `asked
-to end (REASON)`.
+to end (REASON)`, `screen locked (asked|idle|suspend)` with the places
+of the lock screen's box and button (`lock-password`, `lock-unlock`),
+`lock clock HH:MM`, `unlock refused for NAME`, `lock password refused`
+(when the refusal shows), `screen unlocked by NAME`, `suspending`,
+`resumed`.
 
 **The system settings service.** `systemsettings` (units in
 `userland/systemsettings`, root) makes the changes to the machine that
@@ -4763,7 +4961,18 @@ refuses a wrong password and starts the desktop again with the right
 one; and Shut down on the Start menu, with Notepad holding unsaved text
 again and nobody answering, stops the services in order (the session
 manager ends Notepad once its time is up, within the session's
-stop-timeout) and powers off (QEMU exits). The input test checks that
+stop-timeout) and powers off (QEMU exits). Before logging off it locks
+the screen with Ctrl+Alt+L, Notepad active behind it: a screen dump
+shows only the lock screen; keys typed, a click on the Start button
+and Ctrl+Shift+Escape reach nothing (Notepad prints no caret move, the
+Start menu does not open, the task manager's key is not heard); a
+wrong password is refused after the pause and the right one unlocks
+(the taskbar back); Super+L and the Start menu's Lock lock it again;
+then Alt+F4 closes Notepad at once, having had the keyboard back and
+none of the keys typed while locked. Then Suspend on the Start menu
+locks the screen, the machine sleeps (QEMU says so) and wakes
+(`system_wakeup`) with the lock screen showing; the password unlocks
+it and the desktop and its clock are back. The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
 
 ### Time zones
@@ -4913,11 +5122,58 @@ writers up. It goes with its handle, so a writer that crashes leaves no
 stale lock. Readers take no lock. A group whose last key goes is
 removed.
 
-**Change notification.** `TSettings.CheckForChanges` calls `OnChanged`
-for each group someone else changed since the program read it (it
-compares versions). Today a program calls it when it wants; once the
-kernel can watch folders, a watch on both scopes' folders will call it
-as soon as a file changes, and programs need no change.
+**Change notification.** Programs hear when settings change and apply
+them at once, without restarting. A snapshot of a group
+(`Configuration.Changes`) holds every key as a program sees it: the
+value that wins and whether it is fixed. A settings watcher
+(`Configuration.Watcher`, `TSettingsWatcher`) has a `TSettings` of its
+own (`OpenSettingsWatcher`, `OpenSystemSettingsWatcher`,
+`OpenSettingsWatcherOfHome`) and watches each scope's folder with a
+file watch (`Sys.FileWatches`): two handles at most; while a user's
+`.settings` folder does not exist yet its parent (the home) is watched
+until it appears, and a folder removed is watched again. What the
+watches report goes to a change tracker
+(`Configuration.ChangeTracker`, no kernel needed, tested on the host):
+`GROUP.settings` and `GROUP.settings.new` are a group's, so the burst a
+safe write makes (the `.new` file created, written and renamed over
+the old) marks the group once; a burst is waited out (60 ms without a
+change, at most 300 ms after its first), then each marked group is
+read again and its snapshot compared with the one before. `OnChanged`
+gets the group and the keys that changed (`TSettingChange`: added,
+removed or modified, old and new value and fixedness;
+`DescribeSettingChange` writes `PATH = 5 (was 3)`). A rewrite that
+changes nothing a program sees - the same values, a comment, a user's
+value equal to the system's, a user's value under a fixed one - is
+silent; a value the system fixes, or a fixed value going, counts.
+Overflowed watches make every watched group be read again; without
+watches at all the folders are looked at every 5 seconds.
+
+Two ways to use a watcher: a service's own loop waits on its `Handles`
+with its other handles for at most `WaitTime`, calls `HandleReady` with
+one that was ready and `DeliverChanges` after every wait (the display
+server and the network service); `WaitForChanges` blocks until a group
+is reported or a time is up (`settings watch`). A window program calls
+`SubscribeToSettings(GROUP, Handler)` (`Windowing.SettingsChanges`):
+all of a program's subscriptions share one watcher of the user's
+settings over the system's, which takes at most three of the message
+loop's sixteen handle watches (the two folders and a timer of its own
+that is due when a burst is over); `TLoopSettingsWatcher` puts any
+other watcher into the loop (the session manager's). A program hears
+its own writes too, so a handler applies what the settings say and
+finds nothing to do. `TSettings.CheckForChanges` is still there for a
+program that only wants to know which groups were rewritten.
+
+Who follows what:
+
+| Program | Settings followed | What happens |
+|---|---|---|
+| display server | system `Display/N/Mode`, `Display/N/Scale`, `Mouse/*`, `Keyboard/*` (`Server.LiveSettings`) | the display gets its mode and scale again (what it has already is left alone, so its own remembering changes nothing); each mouse and keyboard value it still has from the system's settings takes the new one, a value someone set since (a user's, from the session manager) stays |
+| session manager | the logged-in user's `Mouse/*`, `Keyboard/*` over the system's; the system's after a session (`Session.UserSettings`) | gives them to the display server again (`user changed the mouse settings: speed 12, ...`) |
+| desktop | `Desktop/ClockFormat`, `Desktop/Wallpaper`, the system's `Time` | the clock in its format at once (and its room on the taskbar), the wallpaper drawn again, the clock again for a new zone |
+| terminal | `Terminal/FontSize`, `Terminal/TextColor`, `Terminal/BackgroundColor` | new colours repaint; a new size keeps the rows and columns and the window follows (`terminal: settings: font 110, text #d0d0d0, background #203040`) |
+| notepad | `Notepad/*` | word wrap, the status bar and the font as the settings say, if they differ from the window's |
+| Control Panel | each page's group (`Display`, `Mouse`, `Keyboard`, `Sound`, `Time`, `Network`) | the page shown is loaded again unless the user changed something on it (`refreshed PAGE`); the Mouse and Keyboard pages show what the user's settings say (the session manager passes them on) |
+| network service | system `Network` | read again and applied (`Network.settings changed`) |
 
 **Who keeps what.**
 
@@ -4926,8 +5182,9 @@ as soon as a file changes, and programs need no change.
 | display server | system | `Display/N/Mode`, `Display/N/Scale` when a change asks to be remembered (`displaymode -r`, `displayscale -r`); starts with the system's `Mouse/*` |
 | mousesettings `-r`, session manager | user | `Mouse/Speed`, `Mouse/Acceleration`, `Mouse/LeftHanded`: the session manager gives the display server the user's at login and the system's after the session (`Session.UserSettings`) |
 | notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
-| terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
-| desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+| terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize`, `Terminal/TextColor`, `Terminal/BackgroundColor` (`#RRGGBB`) |
+| desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read), `Desktop/ClockFormat` (`24-hour` or `12-hour`) |
+| Control Panel (writes), session manager (reads) | user | `ScreenLock/AfterMinutes` (0: never), `ScreenLock/OnResume` (`Windowing.LockSettings`) |
 | files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 | keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
 | system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start; `Network/Interfaces/NAME/*`, `Network/DnsServers`, `Network/SearchDomain` for an administrator (the network service applies them) |
@@ -4942,8 +5199,12 @@ the screen.
 
 **The `settings` tool**: `settings get [-s|-u] PATH`, `settings set
 [-s [-f]] [-t string|integer|boolean|list] PATH VALUE...`, `settings
-delete [-s] PATH`, `settings list [-s|-u] [PATH]` and `settings check
-[-s|-u] GROUP`. Without `-s` or `-u` it shows what programs see and
+delete [-s] PATH`, `settings list [-s|-u] [PATH]`, `settings check
+[-s|-u] GROUP` and `settings watch [-s|-u] [-n COUNT] [-T SECONDS]
+GROUP...`, which prints `watching GROUP...` and then a line for every
+key that changes (`Test/A = fixed 5 (was 1)`), until COUNT keys
+changed, SECONDS passed (status 1 if COUNT was not reached) or it is
+killed. Without `-s` or `-u` it shows what programs see and
 changes the user's; `-s` is the system's (only root may change them),
 `-f` makes a system value fixed.
 
@@ -4952,7 +5213,13 @@ files (changes keeping comments and broken lines, damaged and binary
 files), scopes over a storage in memory (changes seen before a flush,
 two writers keeping both changes, others' changes noticed, an unreadable
 group not written over), layering (user over system over default,
-fixed values, values of the wrong kind), and the network's settings
+fixed values, values of the wrong kind), change notification
+(`SettingsTest.Changes`: snapshots compared - keys added, removed and
+changed, a value becoming fixed, comments and the other scope's equal
+value not counting; the tracker told of file changes as the watches
+tell them: a safe write's files heard as one change, bursts coalesced
+but not waited out for ever, rewrites that change nothing silent,
+other files and groups ignored, a group removed), and the network's settings
 and state files (`SettingsTest.Network`: reading and writing
 `Network.settings`, every check the system settings service makes, the
 address and prefix boxes, a state file). coretest runs `settingstest`
@@ -4963,10 +5230,19 @@ half-written, a crash's `.new` file read back, a damaged file, and three
 programs writing 25 keys each into one group at once, every change
 kept) and the `settings` tool: both scopes, a fixed value, an ordinary
 user refused the system's settings but writing their own (0700 and
-0600), unable to read root's, a damaged file. The input test keeps a
+0600), unable to read root's, a damaged file; and `settings watch`
+printing the changes another command makes (a comment and a system
+value under the user's printing nothing, a value fixed and unfixed by
+the system), for a user whose settings folder does not exist yet too.
+The input test keeps a
 mode and a scale with `-r` and checks the next display server gives
 them back (and the displays' own once deleted), and checks Notepad's
-word wrap and the terminal's size survive a restart; the session test
+word wrap and the terminal's size survive a restart, and that a
+terminal's background colour set with `settings set` repaints the
+running terminal (and deleting it brings its own back); the session
+test sets the user's clock format to 12 hours and a mouse speed with
+the settings tool and sees the running desktop's clock and the display
+server follow; it also
 keeps a user's mouse speed with `mousesettings -r` and checks the
 session manager gives the system's back after Log off and the user's at
 the next login.
@@ -5106,7 +5382,12 @@ independent) against the Free Pascal runtime library:
   outline the other way round cuts a hole); each edge adds the signed
   area to its right to the rows it crosses, summing along a row gives
   every pixel's coverage, and runs of equal coverage go through
-  `FillSpan` with the colour faded by it. `Drawing.SmoothLines` draws
+  `FillSpan` with the colour faded by it; quadratic curves
+  (`AddShapeQuadratic`, for glyph outlines) become enough edges to stay
+  within a fiftieth of a pixel. `Drawing.CoverageBlending` blends a
+  colour by a coverage gamma-correct (the light of both mixed, gamma
+  1.8), a span of coverage bytes at a time: what text is drawn with.
+  `Drawing.SmoothLines` draws
   lines one pixel wide or thinner by Wu's algorithm and wider ones as
   their outlines through the rasterizer (strokes and round joints add
   up into one shape, so overlaps are not blended twice);
@@ -5118,43 +5399,80 @@ independent) against the Free Pascal runtime library:
   lend no colour), the same size an exact copy.
 - **libfont.so** – text: `Font.Faces` (a face: a line height, the
   baseline and underline, and glyphs with their own advances, bearings
-  and bitmaps, as bits or as 8-bit coverage, and kerning pairs; a
-  monospaced face is one whose advances are equal), `Font.Psf` (PSF1
-  and PSF2 bitmap fonts with their Unicode tables), `Font.Coverage`
-  (coverage fonts, below), `Font.Utf8` (decoding, one U+FFFD for every
-  bad sequence), `Font.Text` (font sets of one family; a face picked by
-  point size and DPI, the largest pixel size not larger than asked;
-  measuring and drawing with advances and kerning, coverage glyphs
-  blending the text colour over what is there) and `Font.Files`
-  (families, one directory each in `/lib/fonts` with their licences:
-  `terminus`, Terminus in heights 12 to 32, regular and bold, the
-  console's font, monospaced, a face standing for an em six sevenths of
-  its height, so faces of both families picked for one size match;
-  `dejavu-sans`, DejaVu Sans in every pixel size from 9 to 40, regular
-  and bold, the interface's). Listing a
-  family reads only the start of each file, its size and weight; a
-  face's glyphs are read the first time it is picked, so a program does
-  not load every size. Sizes are in points, so text is the same size on
-  any display.
+  and bitmaps, as bits or as 8-bit coverage, or rendered from an
+  outline font; kerning pairs; a monospaced face is one whose advances
+  are equal), `Font.Psf` (PSF1 and PSF2 bitmap fonts with their Unicode
+  tables), `Font.Coverage` (coverage fonts: anti-aliased bitmaps
+  rendered beforehand, one pixel size a file), the TrueType units
+  (below), `Font.Utf8` (decoding, one U+FFFD for every bad sequence),
+  `Font.Text` (font sets of one family; a face picked by point size and
+  DPI: a bitmap face of exactly that pixel size, else the outline font
+  made into a face at that size, else the largest bitmap face not larger
+  than asked; measuring and drawing with advances and kerning) and
+  `Font.Files` (families, one directory each in `/lib/fonts` with their
+  licences: `terminus`, Terminus in heights 12 to 32, regular and bold,
+  the console's and the terminal's font, monospaced, a face standing for
+  an em six sevenths of its height, so faces of both kinds picked for
+  one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
+  DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
+  `userland/fonts` and copied by the build). Listing a family reads
+  only the start of each file, its size and weight (for a TrueType font
+  its table directory, head and OS/2); a face's glyphs are read the
+  first time it is picked, so a program does not load every size. Sizes
+  are in points, so text is the same size on any display.
 
-  The system has no font rasterizer yet (TrueType comes later), so the
-  proportional font is rendered at build time: `tools/RenderFont`
-  (Python with Pillow, which uses FreeType) draws DejaVu Sans, hinted
-  and anti-aliased, into a coverage font (`.cvf`) per pixel size. The
-  format, little-endian: a 40 byte header (magic `CVF1`, flags with
-  bold, the pixel size, line height, ascent, underline top and
-  thickness, the glyph and kerning pair counts, and where the glyph
-  table, the kerning table and the coverage data are); glyphs by code
-  point (advance, left bearing, top, width, height, where the bitmap
-  is); kerning pairs by left then right code point (the adjustment in
-  pixels, measured from the font's own tables through Raqm and scaled
-  to each size); then the bitmaps, a byte a pixel. The characters are
-  Terminus's western ones (ASCII, Latin-1, Latin Extended-A), the
-  typographic punctuation, the euro and U+FFFD. `Font.Coverage` checks
-  every offset, size and order before using any of it; a bad file gives
-  no face. The build says so clearly if Pillow or DejaVu Sans is
-  missing (`DEJAVU_SANS_FONT`, `DEJAVU_SANS_BOLD_FONT` and
-  `DEJAVU_LICENSE` say where they are).
+  TrueType: `Font.FontData` reads big-endian numbers inside a table,
+  every read checked against the table's end in 64-bit arithmetic.
+  `Font.TrueType` (`LoadTrueTypeFont`) opens a font: the table
+  directory (every table inside the file; CFF "OTTO" fonts and
+  collections are not read), `head` (units to the em, 16 to 16384; the
+  loca format; the weight bit), `maxp`, `hhea` and `hmtx` (advances;
+  glyphs past the last advance share it), `OS/2` (weight class; the
+  line if hhea has none), `post` (underline), `loca` (in order, inside
+  glyf) and `cmap`; anything wrong refuses the font.
+  `Font.CharacterMaps` reads the Unicode subtable, format 12 (3/10,
+  0/4, 0/6) before format 4 (3/1, 0/0-3), into mappings by code point.
+  `Font.GlyphData` reads outlines: simple glyphs (flags with repeats,
+  delta coordinates) and composite ones (offsets or matched points,
+  scale, x and y scale or 2x2 matrix, nested to a depth of 8); a broken
+  glyph is refused and drawn as nothing. `Font.Kerning` takes GPOS pair
+  kerning (lookup types 2 and 9, formats 1 and 2, from the kern
+  features of the Latin script's default language system, else the
+  default script's) when the font has it and the `kern` table (format
+  0, horizontal) otherwise, read in place. `Font.Outlines` is the model
+  the rest uses (`TOutlineFont`: metrics in font units, mappings,
+  advances, outlines, kerning).
+
+  Rendering (`Font.GlyphRendering`): the outline scaled to the pixel
+  size (the em), hinted, and its lines and quadratic curves (on-curve
+  points implied between two off-curve ones) handed to libdrawing's
+  rasterizer: exact area coverage, non-zero winding, curves cut into
+  lines no more than a fiftieth of a pixel off. The pen may sit a
+  quarter, half or three quarters of a pixel along (subpixel
+  positioning). Hinting (`Font.Hinting`) is a light autohinter of the
+  system's own, vertical only, chosen over running the fonts' TrueType
+  bytecode: from the letters themselves it measures the font's blue
+  zones (baseline, x height, cap height, ascender, descender, with the
+  round letters' overshoot), and in each glyph finds level edges, puts
+  those in a zone on its height rounded to whole pixels (the overshoot
+  only once it comes to half a pixel), makes a bottom edge and the top
+  edge over it into a stem of whole pixels (at least one), and moves
+  every other point by the piecewise-linear map those edges make.
+  Nothing moves sideways, so advances and shapes stay as designed and
+  hinted text measures as unhinted text does. `Font.GlyphCache` keeps
+  rendered glyphs by font, pixel size, glyph, subpixel offset and
+  hinting, at most 2048 glyphs and 2 MB of coverage, the least recently
+  used pushed out first (a hash table and a list of use through one
+  array). `Font.OutlineFaces` makes a face of a size: ascender and
+  descender rounded up (as FreeType gives them) plus the line gap, the
+  underline just under the baseline, advances and kerning rounded to
+  whole pixels (the interface's metrics are as they were with the
+  pre-rendered fonts). `MeasureText` and `DrawText` keep the pen on
+  whole pixels, as layout measures; `MeasureTextPrecisely` and
+  `DrawTextPrecisely` use the exact advances and quarter-pixel pens.
+  Coverage is blended in the text colour gamma-correct
+  (`Drawing.CoverageBlending`: the light of both colours mixed, gamma
+  1.8; over a pixel that is not opaque, the usual blend).
 
   Both libraries build on the host too, without `Font.Files`: `make
   drawing-test` (part of `make test`) runs `tools/DrawingTest`, which
@@ -5168,17 +5486,34 @@ independent) against the Free Pascal runtime library:
   ellipses and rings (symmetric, adding up to their areas), polygons
   and smooth scaling (exact values for growing, shrinking, thin lines
   and transparency); a coverage font built by the test (measured with
-  kerning, drawn pixel for pixel, every truncation and broken table
-  refused), DejaVu Sans as rendered (metrics, kerning, glyphs drawn
-  exactly, ASCII within the line) and a family read only when picked;
-  and writes a sample picture (`build/tools/drawing-sample.ppm`). On
-  the system, `drawtest` draws a window on the display in DejaVu Sans,
-  everything sized by the display's scale and DPI; the input test
+  kerning, drawn pixel for pixel gamma-correct, every truncation and
+  broken table refused), DejaVu Sans (metrics, kerning, glyphs drawn
+  exactly as rendered, ASCII within the line) and a family read only
+  when picked, in every size; and writes a sample picture
+  (`build/tools/drawing-sample.ppm`). `make font-test` (part of `make
+  test`) runs `tools/FontTest` (with range checks) on fixtures
+  `tools/FontTest/make-font-fixtures.py` makes: fonts put together byte
+  by byte (simple, curved and composite glyphs, both loca formats, both
+  character map formats, a kern table, GPOS formats 1 and 2 through an
+  extension), broken copies that must be refused (and every truncation),
+  broken glyphs refused, and what FreeType (freetype-py, else the
+  FreeType library through ctypes) and HarfBuzz (Pillow's Raqm layout)
+  make of them and of DejaVu Sans, Bold and Mono: character map lookups,
+  advances, kern table pairs and GPOS kerning exactly, line metrics,
+  and glyphs rendered unhinted at four sizes and four subpixel offsets
+  compared pixel by pixel with FreeType's (within 24 a pixel and 1.5 on
+  average); the hinter (E's and H's bars, baseline, x height and cap
+  height on whole pixels, no overshoot at small sizes), the text API,
+  gamma-correct blending, subpixel glyphs, the cache's limits and order
+  of use, and font sets giving every size with faces that never move.
+  On the system, `drawtest` draws a window on the display in DejaVu
+  Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
 - **libimage.so** – images and image files (see "Images" below): the
   model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing
   pixels to libdrawing (`Image.Surfaces`), playing animations
-  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, the
+  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, `Image.Resampling`,
+  colour management (`Image.ColorProfiles.*`), the
   codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
   and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
   (`Image.Ico.*`), GIF (`Image.Gif.*`), JPEG (`Image.Jpeg.*`), PNG,
@@ -5435,15 +5770,74 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   delays and sizes of their own: a file decodes as its first page with
   `PageCount` in the metadata when it has more, and `TiffPageCount` and
   `DecodeTiffPage` (`Image.Tiff.Codec`) pick any page; a directory chain
-  that loops is one page. Old-style JPEG (6), CCITT, the floating point
-  predictor, float and signed samples, CIELab and JPEG or subsampled
-  YCbCr in separate planes are refused as unsupported. Writing
+  that loops is one page. Fax compression (`Image.Tiff.Ccitt`, codes in
+  `Image.Tiff.CcittCodes`): CCITT RLE (2), Group 3 (3, T.4, one- and
+  two-dimensional rows after EOLs, with or without fill bits) and
+  Group 4 (4, T.6), white runs as 0 bits as libtiff gives them; where
+  the data breaks off the rest is white, the uncompressed mode is
+  refused. Floating point samples (`Image.Tiff.FloatSamples`) of 16
+  and 32 bits, with or without the floating point predictor (3), are
+  light from 0 to 1, tone mapped to 8 bits: a page whose brightest
+  colour sample is above 1 is scaled down by it, then clamped, NaN as
+  0. Old-style JPEG (6, `Image.Tiff.OldJpeg`): a whole stream at
+  JPEGInterchangeFormat decoded as one picture, or a JPEG stream a
+  strip or tile (tables from JPEGInterchangeFormat if they are there);
+  tables only in JPEGQTables and the like are refused. Signed samples,
+  CIELab and JPEG or subsampled YCbCr in separate planes are refused as
+  unsupported. Writing
   (`Image.Tiff.Writing`): 8-bit RGB, or RGBA (unassociated alpha) when
   a pixel is not opaque, uncompressed, LZW or deflate with or without
   the predictor, in strips of about 64 KiB, with the resolution,
   orientation, profile and the three texts; `EncodeTiffPages` writes
   several pages, the registered encoder one, deflate with the
   predictor.
+- *WebP* (`Image.WebP.*`, with libcompression's Huffman code builder
+  for writing): the RIFF container (`Image.WebP.Container` lists the
+  chunks without copying; a chunk cut short ends the list) in its
+  simple form (one VP8 or VP8L chunk) and extended form (VP8X with the
+  canvas size, ICCP as the profile, EXIF's orientation, XMP as the
+  metadata key `XML:com.adobe.xmp`, ALPH, ANIM and ANMF). Lossless
+  (`Image.WebP.LosslessDecoder`, RFC 9649): the four transforms
+  (predictor with its fourteen modes per tile, colour, subtract green,
+  colour indexing with 1, 2, 4 or 8 bits per index), the colour cache,
+  meta prefix codes (groups of five codes chosen per tile; only the
+  groups some tile uses get tables), LZ77 with 2-D distance codes, and
+  canonical prefix codes of up to 15 bits decoded through two-level
+  tables (`Image.WebP.PrefixCodes`, only complete codes accepted, as
+  libwebp does). Lossy (`Image.WebP.LossyDecoder`, RFC 6386 key
+  frames): the boolean decoder with libwebp's arithmetic (its sign
+  bits included), segments, one to eight token partitions, 16x16 and
+  4x4 intra modes and the chroma modes predicted in a work block from
+  the unfiltered pixels around it (127 above the picture, 129 to its
+  left), dequantisation, the Walsh-Hadamard and DCT inverse transforms
+  with libwebp's shortcuts, and the simple and normal loop filters
+  over the whole frame once it is decoded. `Image.WebP.YuvConversion`
+  turns the 4:2:0 planes into colours with libwebp's fancy upsampling
+  (line pairs, 9-3-3-1 weights) and its 14-bit BT.601 arithmetic, so a
+  lossy picture comes out as libwebp (and Pillow) decodes it, pixel for
+  pixel. ALPH (`Image.WebP.Alpha`): raw or a headerless VP8L stream
+  (alpha in green), the horizontal, vertical and gradient filters; the
+  level reduction is only a hint. An animation is a `TAnimatedImage`:
+  ANMF offsets (in two pixel steps), durations, dispose to transparent
+  or not, blend by alpha or replace; ANIM's loop count and background
+  colour (kept, not drawn, as libwebp's own decoder ignores it); a
+  frame that is broken or cut short ends the animation there, keeping
+  the frames before it, and so does one past a budget of 512 million
+  pixels for all the frames together (a few bytes of VP8L can describe
+  a large frame of one colour). libwebp blends translucent frame pixels with
+  coarser rounding than libdrawing, so such frames as seen may differ
+  slightly (most where both pixels are nearly transparent). The
+  metadata key `Compression` says `lossy`, `lossless` or `lossy and
+  lossless`. Writing (`Image.WebP.Writing`) is lossless: green
+  subtracted, a predictor mode per 16x16 tile (the one leaving the
+  smallest residuals), LZ77 through hash chains with 2-D distance codes,
+  one group of prefix codes (`Image.WebP.LosslessEncoder`,
+  `Image.WebP.PrefixCodeWriting`, `Image.WebP.BackwardReferences`);
+  a simple file, or VP8X with ICCP, EXIF (the orientation) and XMP; a
+  `TAnimatedImage` as ANIM and ANMF frames, every frame written whole as
+  seen when one starts at an odd offset or puts the canvas back (which
+  WebP cannot say). Pictures over 16384 pixels a side cannot be written
+  (VP8L's limit).
 
 - *JPEG XL* (`Image.Jxl.*`, ISO/IEC 18181, decoding only): a bare
   codestream or the container (`Image.Jxl.Container`: `jxlc`, or
@@ -5512,8 +5906,47 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   there. There is no encoder.
 
 `imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
-orientation, resolution, profile, a TIFF's pages and a JPEG XL file's coding,
-colour space and boxes.
+orientation, resolution, profile, a WebP's compression, a TIFF's pages
+and a JPEG XL file's coding, colour space and boxes.
+
+**Colour management** (`Image.ColorProfiles`, `TImage.ConvertToSrgb`,
+`LoadImage`'s `ImageLoadConvertToSrgb`) converts an image from its ICC
+profile to sRGB and says what it did (`TColorConversionResult`: not
+needed, done, approximate, unsupported). `Image.ColorProfiles.Reading`
+reads profiles of versions 2 and 4: the header, the colorants
+(rXYZ/gXYZ/bXYZ), tone curves (curv as gamma or table, para of every
+function type: `Image.ColorProfiles.Curves`), kTRC, wtpt, chad, the
+description (desc or mluc) and A2B0 as mft1, mft2 or mAB
+(`Image.ColorProfiles.Luts`: curves, a multilinear grid, M curves, a
+matrix with offset, B curves; Lab or XYZ PCS, mft2's Lab in the older
+encoding). `Image.ColorProfiles.Transforms` works a profile out into
+tables once: matrix/TRC RGB as three 256-entry tables to 16-bit linear
+light, one 3 x 3 matrix in 16.16 fixed point through the PCS to linear
+sRGB (sRGB's matrix from its primaries, adapted to D50 by Bradford, as
+LittleCMS does), and a 16384-entry table back to 8-bit sRGB; grey as
+one 256-entry table; a LUT as a 33 x 33 x 33 grid of 16-bit sRGB,
+interpolated trilinearly. A LUT is preferred to colorants when there
+are both (as LittleCMS does), and the intent is relative colorimetric.
+Colorants of an old profile that add up to its media white point
+rather than D50 are adapted (by chad, or Bradford from wtpt). A profile
+that is sRGB itself needs nothing; a CMYK profile is not used (the
+decoders have already turned the inks into RGB by the naive rule) and
+the result is approximate; other colour spaces and unreadable
+profiles are left alone. Without a profile, PNG's gAMA and cHRM (when
+there is no sRGB chunk) make a matrix/TRC transform; 1/2.2 with sRGB's
+primaries counts as sRGB. A converted image loses its profile and is
+marked sRGB (`OriginalColorProfile` names what it was); an
+animation's frames are converted with it. `Image.ColorProfiles.Matrices`
+has the colour arithmetic (matrices, chromaticities, Bradford, Lab,
+sRGB's curves).
+
+**Resampling** (`Image.Resampling`; `ScaleImage` and `ThumbnailImage`
+given a filter): box, triangle (bilinear), Mitchell-Netravali (B = C =
+1/3) and Lanczos-3, in two separable passes as Pillow does them (each
+output pixel takes the source about its centre, the kernel stretched
+when shrinking, weights normalised), on premultiplied colours in single
+precision, so transparent pixels lend no colour, and clamped. Without
+a filter the scaling stays libdrawing's area averaging and bilinear.
 
 **Tests.** libimage builds on the host with libdrawing and
 libcompression, and `make image-test` (part of `make test`) runs
@@ -5542,7 +5975,36 @@ each compression, page and metadata, and are put together byte by byte
 for big endian, BigTIFF, tiles, the predictor, old-style LZW, every
 depth, planar RGBA, associated alpha, CMYK, subsampled YCbCr and JPEG
 with JPEGTables, their references worked out from the samples (or
-Pillow's decoding of each JPEG chunk). JPEG XL files (`make-jxl-fixtures.py`)
+Pillow's decoding of each JPEG chunk); fax files come from Pillow with
+libtiff (Group 3 one- and two-dimensional, with fill bits, Group 4,
+CCITT RLE, strips, fill order 2, a page 1728 wide) and one is made
+white is zero; floating point files (32-bit from Pillow with the
+predictor, 16- and 32-bit RGB and grey made here with and without it,
+one of high dynamic range with a NaN and an infinity) and old-style
+JPEG files are made here. Colour fixtures (`make-color-fixtures.py`)
+are profiles written byte by byte (Display P3 v4 with a parametric
+curve and chad, Adobe RGB v2 with its D65 media white, gamma 1.8,
+ProPhoto with table curves, grey v2 and v4, an mft2 to XYZ whose
+colorants disagree, an mAB to Lab) in PNGs, with LittleCMS's
+conversion (Pillow's ImageCms) as the reference: within 2 for
+matrix/TRC and grey, 3 for LUTs (tried on mid-tones, away from the
+gamut's edge where interpolations differ most); the sRGB profile must
+change nothing, a Lab profile is refused, a CMYK JPEG is approximate,
+and PNG gAMA/cHRM files are compared with conversions worked out in
+the script. Damaged profiles must convert or be refused. Resampling is
+compared with Pillow's resize (Lanczos and bilinear shrinking and
+enlarging, box shrinking; within 2), and checked for flat colours, no
+dark fringes at transparent edges and the kernels' values. WebPs (`make-webp-fixtures.py`)
+come from Pillow (lossless with every palette size and the encoder's
+fastest and most thorough settings, lossy at qualities 10 to 100 and odd
+and tiny sizes, alpha, metadata, animations) and from libwebp through
+ctypes when it can be loaded (the simple loop filter, sharpness, four
+token partitions, one segment, raw alpha); ALPH chunks with each filter
+and animations with every blend and dispose flag are put together from
+their parts. Their references are Pillow's decoding (libwebp's):
+lossless and lossy alike must match within one step (lossy is meant to
+be exact), frames as seen too (translucent frames by premultiplied
+colour), and written WebPs must give Pillow every frame as written. JPEG XL files (`make-jxl-fixtures.py`)
 are made with the host's `cjxl` (left out, and the checks skipped,
 without it) from pictures Pillow draws: lossless at several efforts,
 with every predictor forced, palettes, grey, 16 bits, alpha, several
@@ -5551,7 +6013,8 @@ progressive, with and without the restoration filters, with noise;
 lossy modular; animations (lossless and lossy, cropped frames with
 offsets); an orientation, an ICC profile, metadata boxes and a JPEG
 reconstruction box. Their references are `djxl`'s decoding: lossless
-ones must match exactly, lossy ones within a few levels. PNG image data is also damaged
+ones must match exactly, lossy ones within a few levels.
+PNG image data is also damaged
 behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged

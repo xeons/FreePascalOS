@@ -36,8 +36,8 @@
 
   Changes made by others: CheckForChanges compares the version of every
   group read so far with the storage's, and names those that changed.
-  That is the hook for a "settings changed" notification: once the
-  kernel can watch folders, a watch on the scope's folder calls it.
+  The settings watcher (Configuration.Watcher) does better: it compares
+  the values themselves, as soon as a folder watch reports a file.
 }
 unit Configuration.Scopes;
 

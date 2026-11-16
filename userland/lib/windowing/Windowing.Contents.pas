@@ -33,14 +33,20 @@ uses
   Windowing.Displays,
   Windowing.MouseSettings,
   Windowing.KeyboardSettings,
+  Windowing.LockSettings,
+  Windowing.ScreenLock,
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,
+  Windowing.SettingsChanges,
   Windowing.Shell,
   Windowing.WindowList,
   Windowing.Sessions,
   Windowing.Notifications,
   Windowing.EndRequests,
+  Windowing.DataTransfer,
+  Windowing.Clipboard,
+  Windowing.DragAndDrop,
   Windowing.Windows;
 
 implementation

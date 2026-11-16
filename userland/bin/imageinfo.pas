@@ -94,6 +94,8 @@ begin
       Line := Line + Format(', %d dpi', [Round(Image.Resolution.HorizontalDpi)]);
     if Length(Image.IccProfile) > 0 then
       Line := Line + Format(', colour profile of %d bytes', [Length(Image.IccProfile)]);
+    if Image.Metadata.Contains(MetadataKeyCompression) then
+      Line := Line + ', ' + Image.Metadata.GetValue(MetadataKeyCompression);
     if Image.Metadata.Contains(MetadataKeyPageCount) then
       Line := Line + ', ' + Image.Metadata.GetValue(MetadataKeyPageCount) + ' pages';
     if Image.Metadata.Contains('JxlEncoding') then

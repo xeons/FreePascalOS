@@ -27,8 +27,10 @@
   samples, one strip for the whole picture, YCbCr subsampled 2 x 2 with
   the coefficients of Rec. 601 and the reference black and white of
   full range. What the decoders cannot do (samples of differing sizes,
-  samples other than unsigned integers, more than 16 bits) is
-  ImageErrorUnsupported here, before anything is decoded.
+  signed samples, integers of more than 16 bits, floating point samples
+  of other than 16 or 32 bits, fax compression of anything but one
+  bilevel sample) is ImageErrorUnsupported here, before anything is
+  decoded.
 
   Strips and tiles are both "chunks": a strip is a chunk the width of
   the picture and RowsPerStrip lines high. With separate planes there
@@ -54,6 +56,8 @@ type
     Height: LongInt;
     BitsPerSample: LongInt;
     SamplesPerPixel: LongInt;
+    { TiffSampleFormatUnsigned or TiffSampleFormatFloat. }
+    SampleFormat: LongInt;
     Compression: LongInt;
     Photometric: LongInt;
     PlanarConfiguration: LongInt;
@@ -74,6 +78,12 @@ type
     YCbCrCoefficients: array[0..2] of Double;
     ReferenceBlackWhite: array[0..5] of Double;
     JpegTables: TBytes;
+    { Old-style JPEG's stream of the whole page (0 when none). }
+    JpegInterchangeOffset: Int64;
+    JpegInterchangeLength: Int64;
+    { Fax compression's options. }
+    T4Options: LongWord;
+    T6Options: LongWord;
     InkSet: LongInt;
     Orientation: LongInt;
     HorizontalResolution: Double;
@@ -187,12 +197,23 @@ begin
       if (Index < Page.SamplesPerPixel) and (Bits[Index] <> Bits[0]) then
         Unsupported('samples of different sizes');
   end;
-  if (Page.BitsPerSample < 1) or (Page.BitsPerSample > 16) then
-    Unsupported(IntToStr(Page.BitsPerSample) + ' bits per sample');
   Formats := TiffFile.IntegersOf(Directory, TiffTagSampleFormat);
-  for Index := 0 to Length(Formats) - 1 do
-    if Formats[Index] <> TiffSampleFormatUnsigned then
-      Unsupported('samples that are not unsigned integers');
+  Page.SampleFormat := TiffSampleFormatUnsigned;
+  if Length(Formats) > 0 then
+    Page.SampleFormat := ClampToLongInt(Formats[0]);
+  for Index := 1 to Length(Formats) - 1 do
+    if (Index < Page.SamplesPerPixel) and (Formats[Index] <> Formats[0]) then
+      Unsupported('samples of different formats');
+  case Page.SampleFormat of
+    TiffSampleFormatUnsigned:
+      if (Page.BitsPerSample < 1) or (Page.BitsPerSample > 16) then
+        Unsupported(IntToStr(Page.BitsPerSample) + ' bits per sample');
+    TiffSampleFormatFloat:
+      if (Page.BitsPerSample <> 16) and (Page.BitsPerSample <> 32) then
+        Unsupported(IntToStr(Page.BitsPerSample) + '-bit floating point samples');
+  else
+    Unsupported('samples that are neither unsigned integers nor floating point');
+  end;
   Page.ExtraSamples := TiffFile.IntegersOf(Directory, TiffTagExtraSamples);
   if Length(Page.ExtraSamples) >= Page.SamplesPerPixel then
     SetLength(Page.ExtraSamples, Page.SamplesPerPixel - 1);
@@ -279,6 +300,10 @@ begin
     for Index := 0 to 5 do
       Page.ReferenceBlackWhite[Index] := Numbers[Index];
   Page.JpegTables := TiffFile.BytesOf(Directory, TiffTagJpegTables);
+  Page.JpegInterchangeOffset := TiffFile.IntegerOf(Directory, TiffTagJpegInterchangeFormat, 0);
+  Page.JpegInterchangeLength := TiffFile.IntegerOf(Directory, TiffTagJpegInterchangeFormatLength, 0);
+  Page.T4Options := LongWord(TiffFile.IntegerOf(Directory, TiffTagT4Options, 0) and $FFFFFFFF);
+  Page.T6Options := LongWord(TiffFile.IntegerOf(Directory, TiffTagT6Options, 0) and $FFFFFFFF);
 end;
 
 procedure ReadDescription(TiffFile: TTiffFile; constref Directory: TTiffDirectory; var Page: TTiffPage);
@@ -293,10 +318,24 @@ begin
   Page.DateTime := TiffFile.TextOf(Directory, TiffTagDateTime);
 end;
 
+procedure CheckCompression(constref Page: TTiffPage);
+begin
+  case Page.Compression of
+    TiffCompressionCcittRle, TiffCompressionCcittGroup3, TiffCompressionCcittGroup4:
+      if (Page.BitsPerSample <> 1) or (Page.SamplesPerPixel <> 1) then
+        Unsupported('CCITT fax compression of other than one bilevel sample');
+  end;
+  if (Page.SampleFormat = TiffSampleFormatFloat) and ((Page.Photometric = TiffPhotometricPalette) or
+    (Page.Photometric = TiffPhotometricYCbCr) or (Page.Compression = TiffCompressionJpeg) or
+    (Page.Compression = TiffCompressionOldJpeg)) then
+    Unsupported('floating point samples with this photometric interpretation or compression');
+end;
+
 procedure CheckColor(var Page: TTiffPage);
 var
   ColorSamples: LongInt;
 begin
+  CheckCompression(Page);
   ColorSamples := TiffColorSampleCount(Page);
   case Page.Photometric of
     TiffPhotometricWhiteIsZero, TiffPhotometricBlackIsZero:

@@ -30,6 +30,8 @@ unit ControlPanel.MousePage;
 interface
 
 uses
+  SysUtils,
+  Windowing.MouseSettings,
   Controls.Base,
   Controls.Window,
   Controls.Labels,
@@ -46,11 +48,14 @@ type
     FAccelerationValue: TLabel;
     FLeftHanded: TCheckBox;
     procedure SliderChanged(Sender: TControl);
+    procedure ShowSettings(const Settings: TMouseSettings);
   protected
     procedure LoadSettings; override;
+    procedure ReloadSettings(const Group: string); override;
   public
     constructor CreatePage(AParent: TControl; AWindow: TControlWindow; const ATitle: string); override;
     function PageName: string; override;
+    function SettingsGroups: TStringArray; override;
     function Apply: Boolean; override;
     procedure TellPlaces; override;
   end;
@@ -58,11 +63,9 @@ type
 implementation
 
 uses
-  SysUtils,
   Abi.SystemCalls,
   Windowing.Protocol,
   Windowing.Connection,
-  Windowing.MouseSettings,
   Configuration.Settings,
   Configuration.Locations,
   Controls.MessageBoxes,
@@ -106,6 +109,13 @@ begin
   FLeftHanded.OnChange := @ControlChanged;
 end;
 
+function TMousePage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
+  SetLength(Result, 1);
+  Result[0] := 'Mouse';
+end;
+
 function TMousePage.PageName: string;
 begin
   Result := 'mouse';
@@ -123,6 +133,22 @@ var
   Settings: TMouseSettings;
 begin
   AskMouseSettings(Settings);
+  ShowSettings(Settings);
+end;
+
+{ Changed elsewhere: what the user's settings say now, which the session
+  manager gives the display server (it may not have them yet). }
+procedure TMousePage.ReloadSettings(const Group: string);
+var
+  Store: TSettings;
+begin
+  Store := OpenSettings;
+  ShowSettings(RememberedMouseSettings(Store));
+  Store.Free;
+end;
+
+procedure TMousePage.ShowSettings(const Settings: TMouseSettings);
+begin
   FSpeed.Position := Settings.Speed;
   FAcceleration.Position := Settings.Acceleration;
   FLeftHanded.Checked := Settings.LeftHanded;

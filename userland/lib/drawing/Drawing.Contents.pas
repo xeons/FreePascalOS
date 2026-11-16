@@ -38,6 +38,7 @@ uses
   Drawing.Canvas,
   Drawing.Shapes,
   Drawing.Rasterizer,
+  Drawing.CoverageBlending,
   Drawing.SmoothLines,
   Drawing.SmoothShapes,
   Drawing.Scaling,

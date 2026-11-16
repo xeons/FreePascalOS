@@ -46,8 +46,14 @@ const
   AttributeUnderline = $02;
   AttributeReverse = $04;
 
-  DefaultTextColor: TColor = $FFD0D0D0;
-  DefaultBackgroundColor: TColor = $FF101010;
+  StandardTextColor = TColor($FFD0D0D0);
+  StandardBackgroundColor = TColor($FF101010);
+
+var
+  { The terminal's own colours: the user's settings may change them
+    (Terminal.Settings). }
+  DefaultTextColor: TColor = StandardTextColor;
+  DefaultBackgroundColor: TColor = StandardBackgroundColor;
 
 type
   TCell = record

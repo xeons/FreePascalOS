@@ -25,7 +25,10 @@
   window, unless a change failed; Cancel and the close button close it,
   forgetting what was not applied. Every second the page shown hears
   the time (the Date and Time page's clock moves on, the Network page's
-  counters).
+  counters). When settings a page shows change elsewhere (the settings
+  tool, another program), the page shown is loaded again unless the
+  user changed something on it ("refreshed PAGE"); another page is
+  loaded when it is shown anyway.
 }
 unit ControlPanel.MainWindow;
 
@@ -35,6 +38,7 @@ unit ControlPanel.MainWindow;
 interface
 
 uses
+  Configuration.Changes,
   Controls.Base,
   Controls.Window,
   Controls.ListBox,
@@ -61,6 +65,8 @@ type
     function ApplyAll: Boolean;
     procedure UpdateApplyButton;
     procedure KeepInWorkArea;
+    procedure SubscribeToPageSettings;
+    procedure PageSettingsChanged(const Group: string; const Changes: TSettingChanges);
   protected
     procedure TimerFired(Timer: LongWord); override;
     procedure CloseRequested; override;
@@ -69,6 +75,7 @@ type
     procedure Moved; override;
   public
     constructor Create;
+    destructor Destroy; override;
     { Shows the page whose name is Name ("display"); False if none is. }
     function ShowPageNamed(const Name: string): Boolean;
     procedure ShowPage(Index: LongInt);
@@ -84,6 +91,7 @@ uses
   Windowing.Windows,
   Windowing.Theme,
   Windowing.Displays,
+  Windowing.SettingsChanges,
   Controls.Dialogs,
   Controls.CommonDialogs,
   ControlPanel.DisplayPage,
@@ -93,6 +101,7 @@ uses
   ControlPanel.DateTimePage,
   ControlPanel.NetworkPage,
   ControlPanel.UsersPage,
+  ControlPanel.LockPage,
   ControlPanel.Report;
 
 const
@@ -132,6 +141,7 @@ begin
   AddPage(TDateTimePage.CreatePage(Root, Self, 'Date and Time'));
   AddPage(TNetworkPage.CreatePage(Root, Self, 'Network'));
   AddPage(TUsersPage.CreatePage(Root, Self, 'Users'));
+  AddPage(TLockPage.CreatePage(Root, Self, 'Screen Lock'));
   FPageList.OnChange := @PageChosen;
   ButtonTop := WindowHeight - DialogMargin - DialogButtonHeight;
   ButtonLeft := WindowWidth - DialogMargin - 3 * DialogButtonWidth - 2 * DialogButtonGap;
@@ -154,7 +164,52 @@ begin
   DefaultControl := FOkButton;
   CancelControl := FCancelButton;
   FCurrent := -1;
+  SubscribeToPageSettings;
   StartTimer(ClockTimer, 1000);
+end;
+
+destructor TControlPanelWindow.Destroy;
+begin
+  UnsubscribeFromSettings(@PageSettingsChanged);
+  inherited Destroy;
+end;
+
+procedure TControlPanelWindow.SubscribeToPageSettings;
+var
+  Index: LongInt;
+  Groups: TStringArray;
+  GroupIndex: LongInt;
+begin
+  for Index := 0 to High(FPages) do
+  begin
+    Groups := FPages[Index].SettingsGroups;
+    for GroupIndex := 0 to High(Groups) do
+      SubscribeToSettings(Groups[GroupIndex], @PageSettingsChanged);
+  end;
+end;
+
+function GroupsInclude(const Groups: TStringArray; const Group: string): Boolean;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to High(Groups) do
+    if Groups[Index] = Group then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TControlPanelWindow.PageSettingsChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Page: TSettingsPage;
+begin
+  if (FCurrent < 0) or (FCurrent > High(FPages)) then
+    Exit;
+  Page := FPages[FCurrent];
+  if Page.Modified or not GroupsInclude(Page.SettingsGroups, Group) then
+    Exit;
+  Page.Reload(Group);
+  Invalidate;
+  Say('refreshed ' + Page.PageName);
 end;
 
 procedure TControlPanelWindow.AddPage(Page: TSettingsPage);

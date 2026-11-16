@@ -84,6 +84,25 @@
   process each belongs to (RequestListWindows: a task manager), and
   manage those of programs of the same user (root: all of them) as the
   shell does.
+
+  The clipboard is the server's: a program offers data in one or more
+  formats (RequestOfferData) and gives each when it is first asked for
+  (EventDataRender, RequestProvideData), so nothing is made that nobody
+  pastes; the server keeps what it was given, also after the program
+  ends. Others ask which formats there are and for one of them
+  (RequestDescribeClipboard, RequestAskData); programs may watch it
+  change (RequestWatchClipboard). A drag between windows works the same
+  way (DataSourceDrag): the program starting it gives its data at once
+  and the server follows the pointer, telling the windows under it
+  (EventDragEnter, EventDragOver, EventDragLeave, EventDrop), which
+  answer what a drop would do.
+
+  The session manager (running as root) may lock the screen
+  (RequestLockScreen): then only its windows - the lock screen - are
+  drawn and get input, whatever other programs do, until it unlocks it.
+  Any program may ask how long nobody has touched the keyboard or the
+  pointer (RequestDescribeIdle), which is what locks the screen after a
+  while.
 }
 unit Windowing.Protocol;
 
@@ -188,8 +207,8 @@ const
   RequestListWindows = 25;
   { Window 0, from the shell only; Code: a key (as in EventKey);
     Modifiers: the ones that must be held with it (ModifierShift,
-    ModifierControl, ModifierAlt of Abi.SystemCalls; the locks are
-    ignored); Value: 1 to
+    ModifierControl, ModifierAlt, ModifierAltGr, ModifierSuper of
+    Abi.SystemCalls; the locks are ignored); Value: 1 to
     take the key, 0 to give it back. From then on the key pressed with
     exactly those modifiers goes to the shell (EventHotkey), not to the
     active window. Not answered; the keys go when the shell does. }
@@ -204,6 +223,73 @@ const
     Windowing.KeyboardSettings). Answered by EventKeyboardSettings with
     what they are now (the old layout if the kernel has no such one). }
   RequestSetKeyboardSettings = 28;
+  { The screen lock (Server.ScreenLock; numbered from 40, a range of its
+    own). Window 0, from a program running as root only (the session
+    manager); Value 1 locks the screen, 0 unlocks it. While it is
+    locked only this program's windows are drawn and get input; every
+    other window is hidden behind the lock, cannot be activated or take
+    the pointer, and the shell's keys for the whole desktop are
+    swallowed. Locking a screen another program has locked is refused,
+    unless that program has ended (the screen stays locked until a
+    program running as root takes the lock over or unlocks it).
+    Answered by EventScreenLock. }
+  RequestLockScreen = 40;
+  { Window 0. Answered by EventIdleDescribed: how long since the last
+    input (a key, the pointer, a button or the wheel). }
+  RequestDescribeIdle = 41;
+  { Window 0: draws every display again from the windows (after waking
+    from suspend, when the display's memory may not have kept its
+    picture). Not answered. }
+  RequestRepaintDisplays = 42;
+
+  { The clipboard and drag and drop (Windowing.DataTransfer): data in
+    formats (DataFormat*), offered by one program and asked for by
+    others. Each offer is one of two sources (DataSource*): the
+    clipboard, or the drag going on. Bytes travel in sections, of at
+    most MaximumDataBytes. }
+
+  { Window 0; Value: DataSource*; Flags: the formats offered
+    (DataFormatBit of each; 0 empties the clipboard); Code: the
+    program's own number for the offer (EventClipboardLost names it). For the clipboard
+    this program owns it from now on, and the previous owner hears
+    EventClipboardLost: a format is asked of it (EventDataRender) the
+    first time someone wants it, unless it gave it already
+    (RequestProvideData). For a drag: what the RequestStartDrag that
+    follows carries. }
+  RequestOfferData = 29;
+  { Window 0; Value: DataSource*; Code: a DataFormat* of the program's
+    offer; Width: its length in bytes (0 to MaximumDataBytes); Handle: a
+    section holding them (none for 0 bytes). The server keeps a copy (the
+    program may close its section), so the clipboard keeps what was given
+    after the program ends. Not answered. }
+  RequestProvideData = 30;
+  { Window 0; Value: DataSource*; Code: a DataFormat*. Answered by
+    EventDataDelivered, at once if the server has the data, or once the
+    owner gave it. }
+  RequestAskData = 31;
+  { Window 0; Value: 1 to hear EventClipboardChanged from now on, 0 to
+    stop. }
+  RequestWatchClipboard = 32;
+  { Window 0. Answered by EventClipboardFormats. }
+  RequestDescribeClipboard = 33;
+  { Window: the window the drag starts from (button 1 held on it, the
+    window captured or not); Code: the effects allowed (DropEffect*);
+    Text: what is dragged, shown beside the pointer. The formats are the
+    drag offer's (RequestOfferData and RequestProvideData with
+    DataSourceDrag, just before). From then on the server follows the
+    pointer: windows under it hear EventDragEnter, EventDragOver and
+    EventDragLeave (and no pointer events), the one it is let go over
+    EventDrop, and this window EventDragFinished. Escape cancels. If
+    button 1 is up already, the drop is where the pointer is. }
+  RequestStartDrag = 34;
+  { Window: the window under a drag; Value: the drag's number; Code: the
+    effect a drop there would have (one DropEffect* of those allowed, 0:
+    none), shown beside the pointer. }
+  RequestAnswerDrag = 35;
+  { Window: the window a drag was dropped on; Value: the drag's number;
+    Code: what the drop does (a DropEffect*, 0: refused). The window the
+    drag came from hears it (EventDragFinished). }
+  RequestFinishDrop = 36;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -294,6 +380,49 @@ const
     delay before a held key repeats, in milliseconds; Value: the
     repeats a second. }
   EventKeyboardSettings = 125;
+  { Window 0; Value: DataSource*; Code: a format this program offered,
+    which someone asks for: it answers with RequestProvideData. }
+  EventDataRender = 126;
+  { The answer to RequestAskData. Value and Code as asked; Flags:
+    DataAvailable if there is such data (else nothing more is filled
+    in); Width: its length in bytes; Handle: a section holding them
+    (none for 0 bytes), the program's to close. }
+  EventDataDelivered = 127;
+  { Window 0, to programs watching the clipboard: what it holds changed.
+    Flags: the formats on it now (0: empty); Code: 1 if this program owns
+    it; Value: the number of changes so far. }
+  EventClipboardChanged = 128;
+  { The answer to RequestDescribeClipboard, as EventClipboardChanged. }
+  EventClipboardFormats = 129;
+  { Window 0: another program owns the clipboard now (or it was
+    emptied): what this program offered (Code: the offer's number, as
+    the program gave it) will not be asked for again. }
+  EventClipboardLost = 130;
+  { Window: the window under the pointer, which a drag came into. Left,
+    Top: the pointer (surface pixels); Flags: the formats; Code: the
+    effects allowed; Modifiers: the keyboard's; Value: the drag's number;
+    Text: what is dragged. Answered by RequestAnswerDrag. }
+  EventDragEnter = 131;
+  { As EventDragEnter: the pointer moved over the window, or the
+    modifiers changed. Answered by RequestAnswerDrag. }
+  EventDragOver = 132;
+  { Window; Value: the drag's number: the pointer went out of the window
+    (or the drag was cancelled). }
+  EventDragLeave = 133;
+  { As EventDragOver: the drag was let go over the window. It reads the
+    data (RequestAskData with DataSourceDrag) and says what it did
+    (RequestFinishDrop). }
+  EventDrop = 134;
+  { Window: the window a drag started from; Value: the drag's number;
+    Code: what the drop did (a DropEffect*; 0: nothing - refused,
+    cancelled with Escape, or let go over no window that takes it). }
+  EventDragFinished = 135;
+  { The answer to RequestLockScreen. Value: 1 the screen is locked now,
+    0 not; Code: 1 if this program holds the lock. }
+  EventScreenLock = 140;
+  { The answer to RequestDescribeIdle. Value: the milliseconds since the
+    last input (at most High(LongInt)). }
+  EventIdleDescribed = 141;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -302,6 +431,34 @@ const
     Display/N/Mode) and gives the display it the next time it starts.
     Without it the change lasts until the server ends. }
   DisplayRemember = $01;
+
+  { --- Data: the clipboard, drag and drop -------------------------------- }
+
+  DataSourceClipboard = 0;
+  DataSourceDrag = 1;
+
+  { Text, UTF-8. }
+  DataFormatText = 1;
+  { An image as a PNG file. }
+  DataFormatPng = 2;
+  { An image as raw pixels: its width and height (32 bits each, little
+    endian), then each pixel as blue, green, red, alpha (straight alpha),
+    a line after another from the top. }
+  DataFormatBgra = 3;
+  { Files: a file list (Controls.FileLists: "file-list copy" or
+    "file-list cut", then a file URI a line). }
+  DataFormatFileList = 4;
+  DataFormatCount = 4;
+
+  DataAvailable = $01;
+  { The most one format may hold: 64 MiB (a 4096 x 4096 image). }
+  MaximumDataBytes = 64 * 1024 * 1024;
+
+  { What a drop does: copies the data, moves it (the place it came from
+    loses it), or links to it. }
+  DropEffectCopy = $01;
+  DropEffectMove = $02;
+  DropEffectLink = $04;
 
   { --- Window flags ----------------------------------------------------- }
 
@@ -402,6 +559,8 @@ type
     Character: LongWord;
     Modifiers: LongWord;
     Flags: LongWord;
+    { Not sent: where a message received with a handle keeps it
+      (Windowing.Connection, TakeMessageHandle). }
     Reserved: LongWord;
     Text: array[0..TitleCapacity - 1] of Char;
   end;
@@ -410,6 +569,8 @@ type
 { A length in logical units in pixels at ScalePercent, rounded. }
 function LogicalToPixels(Value: LongInt; ScalePercent: LongWord): LongInt;
 function PixelsToLogical(Value: LongInt; ScalePercent: LongWord): LongInt;
+{ A format's bit in a set of formats (Flags of RequestOfferData). }
+function DataFormatBit(Format: LongWord): LongWord;
 { A message of Kind for Window, every other field zero. }
 function NewMessage(Kind, Window: LongWord): TWindowMessage;
 { Copies Text into the message (cut short if it does not fit). }
@@ -436,6 +597,13 @@ begin
     Result := (Value * 100 + LongInt(ScalePercent) div 2) div LongInt(ScalePercent)
   else
     Result := -((-Value * 100 + LongInt(ScalePercent) div 2) div LongInt(ScalePercent));
+end;
+
+function DataFormatBit(Format: LongWord): LongWord;
+begin
+  if (Format = 0) or (Format > 31) then
+    Exit(0);
+  Result := LongWord(1) shl (Format - 1);
 end;
 
 function NewMessage(Kind, Window: LongWord): TWindowMessage;

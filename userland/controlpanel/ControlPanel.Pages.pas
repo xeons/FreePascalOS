@@ -26,6 +26,11 @@
   changed, Cancel forgets the changes. A page whose changes are made at
   once, in dialogs of their own (the users), never says it is modified.
   Sizes are logical units: PageWidth x PageHeight.
+
+  A page names the settings groups it shows (SettingsGroups); when one
+  changes elsewhere - the settings tool, another program - the page
+  shown is loaded again (Reload), unless the user changed something on
+  it, which is left as they made it.
 }
 unit ControlPanel.Pages;
 
@@ -35,6 +40,7 @@ unit ControlPanel.Pages;
 interface
 
 uses
+  SysUtils,
   Controls.Base,
   Controls.Window,
   Controls.Panels;
@@ -58,6 +64,9 @@ type
     { Puts the settings as they are now into the page's controls (their
       changes meanwhile do not count as the user's). }
     procedure LoadSettings; virtual; abstract;
+    { Group changed: puts the settings into the controls again; by
+      default LoadSettings. }
+    procedure ReloadSettings(const Group: string); virtual;
     { Something on the page was changed by the user. }
     procedure MarkModified;
     { A control's change marks the page modified (hook OnChange). }
@@ -68,6 +77,10 @@ type
     function PageName: string; virtual; abstract;
     { Shows the settings as they are now; not modified any more. }
     procedure Load;
+    { The same after Group changed elsewhere. }
+    procedure Reload(const Group: string);
+    { The settings groups the page shows (none by default). }
+    function SettingsGroups: TStringArray; virtual;
     { Makes the changes; False (after saying why) if they could not be
       made, the page staying modified. }
     function Apply: Boolean; virtual;
@@ -100,6 +113,27 @@ begin
     FLoading := False;
   end;
   FModified := False;
+end;
+
+procedure TSettingsPage.Reload(const Group: string);
+begin
+  FLoading := True;
+  try
+    ReloadSettings(Group);
+  finally
+    FLoading := False;
+  end;
+  FModified := False;
+end;
+
+procedure TSettingsPage.ReloadSettings(const Group: string);
+begin
+  LoadSettings;
+end;
+
+function TSettingsPage.SettingsGroups: TStringArray;
+begin
+  Result := nil;
 end;
 
 procedure TSettingsPage.MarkModified;

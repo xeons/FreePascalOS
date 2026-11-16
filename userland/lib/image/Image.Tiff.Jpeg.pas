@@ -29,7 +29,8 @@
   stream: RGB is three components with no colour transform, YCbCr three
   with it (and any subsampling the stream's frame gives), BlackIsZero
   and WhiteIsZero one, Separated four CMYK inks, not inverted.
-  Old-style JPEG (compression 6) is not supported.
+  Old-style JPEG (compression 6) is Image.Tiff.OldJpeg's, which draws
+  with DrawTiffJpegChunk too.
 }
 unit Image.Tiff.Jpeg;
 
@@ -47,6 +48,8 @@ uses
 
 { Image's pixels from Page's JPEG chunks. }
 procedure DecodeTiffJpegChunks(const Data: TBytes; constref Page: TTiffPage; Image: TImage);
+{ Chunk drawn into Image at (Left, Top), cut at Image's sides. }
+procedure DrawTiffJpegChunk(Chunk, Image: TImage; Left, Top: LongInt);
 
 implementation
 
@@ -111,7 +114,7 @@ begin
     Pixels[Index] := Pixels[Index] xor $00FFFFFF;
 end;
 
-procedure DrawChunk(Chunk, Image: TImage; Left, Top: LongInt);
+procedure DrawTiffJpegChunk(Chunk, Image: TImage; Left, Top: LongInt);
 var
   Width: LongInt;
   Height: LongInt;
@@ -152,7 +155,7 @@ begin
         InvertGrey(Chunk);
       Left := (Index mod Page.ChunksAcross) * Page.ChunkWidth;
       Top := (Index div Page.ChunksAcross) * Page.ChunkHeight;
-      DrawChunk(Chunk, Image, Left, Top);
+      DrawTiffJpegChunk(Chunk, Image, Left, Top);
     finally
       Chunk.Free;
     end;

@@ -30,11 +30,28 @@
   lists a family's files): the set's Loader reads a face the first time
   it is picked, and a face that cannot be read is passed over.
 
+  A face of any size (an outline font, Font.OutlineFaces) gives every
+  size exactly: a bitmap face of the very size wanted is taken before
+  it, anything else is made from the outline font at that size. Faces
+  made so are kept in the set (Instances, each allocated on its own and
+  never moved or freed), so a face picked stays valid however many more
+  sizes are picked after it.
+
   Text is UTF-8. Characters below U+0020 take no room and draw nothing.
   Every character moves the pen by its glyph's advance, and by the
   face's kerning between it and the character before. Bitmap glyphs
-  are drawn in the text colour; coverage glyphs blend it over what is
-  there by how much of each pixel they cover.
+  are drawn in the text colour; coverage glyphs (and outline glyphs,
+  rendered through the glyph cache) blend it over what is there by how
+  much of each pixel they cover, gamma-correct
+  (Drawing.CoverageBlending).
+
+  MeasureText and DrawText keep the pen on whole pixels, with advances
+  and kerning rounded, which is what layout measures with. The precise
+  pair (MeasureTextPrecisely, DrawTextPrecisely) moves an outline
+  face's pen by its exact advances and puts each glyph at the nearest
+  quarter pixel (subpixel positioning: even spacing in long runs of
+  text at small sizes); for other faces they are the same as the plain
+  ones.
 }
 unit Font.Text;
 
@@ -61,6 +78,9 @@ type
     Faces: array of TFontFace;
     Count: LongInt;
     Loader: TFaceLoader;
+    { Faces made from faces of any size, Instances[0 .. InstanceCount - 1]. }
+    Instances: array of PFontFace;
+    InstanceCount: LongInt;
   end;
 
 { An empty set (with no loader). }
@@ -78,6 +98,9 @@ function SelectFace(var FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boo
   glyphs (0 if none): to list the sizes there are. }
 function SelectedFaceSize(const FontSet: TFontSet; PointTenths, Dpi: LongWord; Bold: Boolean): LongInt;
 
+{ Whether a face of the set gives every size (an outline font). }
+function FontSetIsScalable(const FontSet: TFontSet): Boolean;
+
 { How far the pen moves for CodePoint alone (0 for a control character). }
 function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
 function MeasureText(const Face: TFontFace; const Text: string): LongInt;
@@ -89,11 +112,26 @@ function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; c
   advance (0 for a control character). }
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
   Color: TColor): LongInt;
+{ Text measured and drawn with exact advances and subpixel positions
+  (see above); the width is rounded to whole pixels. }
+function MeasureTextPrecisely(const Face: TFontFace; const Text: string): LongInt;
+function DrawTextPrecisely(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
+  Color: TColor): LongInt;
 
 implementation
 
 uses
+  Math,
+  Drawing.CoverageBlending,
+  Font.Outlines,
+  Font.OutlineFaces,
+  Font.GlyphCache,
   Font.Utf8;
+
+const
+  { Pixel sizes an outline face is made in. }
+  SmallestOutlineSize = 1;
+  LargestOutlineSize = 1024;
 
 const
   FirstPrintable = $20;
@@ -103,6 +141,8 @@ begin
   FontSet.Faces := nil;
   FontSet.Count := 0;
   FontSet.Loader := nil;
+  FontSet.Instances := nil;
+  FontSet.InstanceCount := 0;
 end;
 
 function AddFace(var FontSet: TFontSet; const Face: TFontFace): Boolean;
@@ -119,28 +159,83 @@ begin
   Result := LongInt((QWord(PointTenths) * Dpi + 10 * PointsPerInch div 2) div (10 * PointsPerInch));
 end;
 
+function FontSetIsScalable(const FontSet: TFontSet): Boolean;
+var
+  Index: LongInt;
+begin
+  Result := False;
+  for Index := 0 to FontSet.Count - 1 do
+    if FontSet.Faces[Index].AnySize and not FontSet.Faces[Index].Unusable then
+      Exit(True);
+end;
+
+{ The pixel size an outline face is made in for Wanted. }
+function OutlineSizeFor(Wanted: LongInt): LongInt;
+begin
+  Result := Wanted;
+  if Result < SmallestOutlineSize then
+    Result := SmallestOutlineSize;
+  if Result > LargestOutlineSize then
+    Result := LargestOutlineSize;
+end;
+
 { The index of the face to pick among the usable ones of a weight; -1
-  if there is none. }
+  if there is none. A bitmap face of exactly the size wanted, else one
+  of any size, else the largest not larger (or the smallest). }
 function SelectFaceIndex(const FontSet: TFontSet; Wanted: LongInt; Bold: Boolean): LongInt;
 var
   Index: LongInt;
   Smallest: LongInt;
   Size: LongInt;
+  Scalable: LongInt;
 begin
   Result := -1;
   Smallest := -1;
+  Scalable := -1;
   for Index := 0 to FontSet.Count - 1 do
   begin
     if (FontSet.Faces[Index].Bold <> Bold) or FontSet.Faces[Index].Unusable then
       Continue;
+    if FontSet.Faces[Index].AnySize then
+    begin
+      if Scalable < 0 then
+        Scalable := Index;
+      Continue;
+    end;
     Size := FontSet.Faces[Index].Size;
+    if Size = Wanted then
+      Exit(Index);
     if (Size <= Wanted) and ((Result < 0) or (Size > FontSet.Faces[Result].Size)) then
       Result := Index;
     if (Smallest < 0) or (Size < FontSet.Faces[Smallest].Size) then
       Smallest := Index;
   end;
-  if Result < 0 then
+  if Scalable >= 0 then
+    Result := Scalable
+  else if Result < 0 then
     Result := Smallest;
+end;
+
+{ The face made from FontSet.Faces[Source] (of any size) at Size,
+  made now if it was not. }
+function InstanceOf(var FontSet: TFontSet; Source, Size: LongInt): PFontFace;
+var
+  Index: LongInt;
+  Face: PFontFace;
+begin
+  for Index := 0 to FontSet.InstanceCount - 1 do
+  begin
+    Face := FontSet.Instances[Index];
+    if (Face^.Outlines = FontSet.Faces[Source].Outlines) and (Face^.Size = Size) and
+       (Face^.Bold = FontSet.Faces[Source].Bold) then
+      Exit(Face);
+  end;
+  New(Result);
+  MakeOutlineFace(FontSet.Faces[Source], Size, Result^);
+  if FontSet.InstanceCount = Length(FontSet.Instances) then
+    SetLength(FontSet.Instances, 2 * FontSet.InstanceCount + 8);
+  FontSet.Instances[FontSet.InstanceCount] := Result;
+  Inc(FontSet.InstanceCount);
 end;
 
 { The face to pick of a weight, read if it was not; faces that cannot be
@@ -154,11 +249,21 @@ begin
     if Index < 0 then
       Exit(nil);
     Result := @FontSet.Faces[Index];
-    if Result^.Loaded then
-      Exit;
-    if (FontSet.Loader <> nil) and FontSet.Loader(Result^) and Result^.Loaded then
-      Exit;
-    Result^.Unusable := True;
+    if not Result^.Loaded and not ((FontSet.Loader <> nil) and FontSet.Loader(Result^) and Result^.Loaded) then
+    begin
+      Result^.Unusable := True;
+      Continue;
+    end;
+    if Result^.AnySize then
+    begin
+      if Result^.Outlines = nil then
+      begin
+        Result^.Unusable := True;
+        Continue;
+      end;
+      Result := InstanceOf(FontSet, Index, OutlineSizeFor(Wanted));
+    end;
+    Exit;
   until False;
 end;
 
@@ -183,6 +288,8 @@ begin
     Index := SelectFaceIndex(FontSet, Wanted, not Bold);
   if Index < 0 then
     Result := 0
+  else if FontSet.Faces[Index].AnySize then
+    Result := OutlineSizeFor(Wanted)
   else
     Result := FontSet.Faces[Index].Size;
 end;
@@ -191,6 +298,8 @@ function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
 begin
   if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
     Result := 0
+  else if Face.Format = GlyphOutline then
+    Result := OutlineAdvance(Face, GlyphFor(Face, CodePoint))
   else
     Result := Face.Glyphs[GlyphFor(Face, CodePoint)].Advance;
 end;
@@ -200,7 +309,7 @@ end;
 function KerningStep(const Face: TFontFace; Previous, CodePoint: LongWord): LongInt;
 begin
   Result := 0;
-  if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and (Face.KerningCount > 0) then
+  if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and FaceHasKerning(Face) then
     Result := KerningBetween(Face, Previous, CodePoint);
 end;
 
@@ -247,25 +356,21 @@ begin
   end;
 end;
 
-{ A coverage glyph's row: each run of pixels covered alike is one span
-  of the colour faded by that coverage. }
-procedure DrawCoverageRow(const Canvas: TCanvas; Coverage: PByte; Width, SurfaceX, SurfaceY: LongInt;
-  Color: TColor);
+{ An outline glyph from the glyph cache, its pen at (PenX, BaselineY)
+  on the baseline (surface coordinates), Subpixel quarters further
+  right. }
+procedure DrawOutlineGlyph(const Canvas: TCanvas; const Face: TFontFace; Glyph: LongWord; PenX, BaselineY,
+  Subpixel: LongInt; Color: TColor);
 var
-  Column: LongInt;
-  RunStart: LongInt;
-  Value: Byte;
+  Bitmap: PGlyphBitmap;
+  Row: LongInt;
 begin
-  Column := 0;
-  while Column < Width do
-  begin
-    Value := Coverage[Column];
-    RunStart := Column;
-    while (Column < Width) and (Coverage[Column] = Value) do
-      Inc(Column);
-    if Value <> 0 then
-      FillSpan(Canvas, SurfaceY, SurfaceX + RunStart, SurfaceX + Column, FadeColor(Color, Value));
-  end;
+  Bitmap := CachedGlyph(Face.Outlines, Face.Size, Glyph, Subpixel, Face.Hinted);
+  if (Bitmap = nil) or (Bitmap^.Width = 0) then
+    Exit;
+  for Row := 0 to Bitmap^.Height - 1 do
+    BlendCoverageSpan(Canvas, BaselineY + Bitmap^.Top + Row, PenX + Bitmap^.Left,
+      @Bitmap^.Coverage[Row * Bitmap^.Width], Bitmap^.Width, Color);
 end;
 
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
@@ -280,13 +385,18 @@ begin
   if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
     Exit;
   Glyph := GlyphFor(Face, CodePoint);
+  if Face.Format = GlyphOutline then
+  begin
+    DrawOutlineGlyph(Canvas, Face, Glyph, X + Canvas.OriginX, Y + Face.Ascent + Canvas.OriginY, 0, Color);
+    Exit;
+  end;
   Left := X + Face.Glyphs[Glyph].LeftBearing + Canvas.OriginX;
   Top := Y + Face.Glyphs[Glyph].Top + Canvas.OriginY;
   for Row := 0 to Face.Glyphs[Glyph].Height - 1 do
     if Face.Format = GlyphBits then
       DrawBitsRow(Canvas, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Left, Top + Row, Color)
     else
-      DrawCoverageRow(Canvas, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Left, Top + Row, Color);
+      BlendCoverageSpan(Canvas, Top + Row, Left, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Color);
 end;
 
 function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
@@ -305,6 +415,64 @@ begin
     Result := Result + DrawCharacter(Canvas, Face, X + Result, Y, CodePoint, Color);
     Previous := CodePoint;
   end;
+end;
+
+{ Where the pen ends after Text, exactly (pixels from the start),
+  drawing each glyph at the nearest quarter pixel on the way if Draw. }
+function PrecisePen(const Face: TFontFace; const Text: string; Draw: Boolean; const Canvas: TCanvas;
+  X, Y: LongInt; Color: TColor): Double;
+var
+  Cursor: PChar;
+  CodePoint: LongWord;
+  Previous: LongWord;
+  Glyph: LongWord;
+  PreviousGlyph: LongWord;
+  Quarters: LongInt;
+  WholePixels: LongInt;
+begin
+  Result := 0;
+  Cursor := PChar(Text);
+  Previous := 0;
+  PreviousGlyph := 0;
+  while NextCharacter(Cursor, CodePoint) do
+  begin
+    if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
+    begin
+      Previous := CodePoint;
+      Continue;
+    end;
+    Glyph := GlyphFor(Face, CodePoint);
+    if Previous >= FirstPrintable then
+      Result := Result + PreciseOutlineKerning(Face, PreviousGlyph, Glyph);
+    if Draw then
+    begin
+      Quarters := Floor(Result * SubpixelSteps + 0.5);
+      WholePixels := Floor(Quarters / SubpixelSteps);
+      DrawOutlineGlyph(Canvas, Face, Glyph, X + Canvas.OriginX + WholePixels, Y + Face.Ascent + Canvas.OriginY,
+        Quarters - SubpixelSteps * WholePixels, Color);
+    end;
+    Result := Result + PreciseOutlineAdvance(Face, Glyph);
+    Previous := CodePoint;
+    PreviousGlyph := Glyph;
+  end;
+end;
+
+function MeasureTextPrecisely(const Face: TFontFace; const Text: string): LongInt;
+var
+  Unused: TCanvas;
+begin
+  if Face.Format <> GlyphOutline then
+    Exit(MeasureText(Face, Text));
+  FillChar(Unused, SizeOf(Unused), 0);
+  Result := RoundHalfUp(PrecisePen(Face, Text, False, Unused, 0, 0, 0));
+end;
+
+function DrawTextPrecisely(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
+  Color: TColor): LongInt;
+begin
+  if Face.Format <> GlyphOutline then
+    Exit(DrawText(Canvas, Face, X, Y, Text, Color));
+  Result := RoundHalfUp(PrecisePen(Face, Text, True, Canvas, X, Y, Color));
 end;
 
 end.

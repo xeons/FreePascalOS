@@ -24,7 +24,8 @@
   the individual units (usually Configuration.Locations to open the
   settings, Configuration.Settings to read and write them). Everything
   but the files (Configuration.FileStorage), their places
-  (Configuration.Locations) and the network's status as the kernel and
+  (Configuration.Locations), watching their folders
+  (Configuration.Watcher) and the network's status as the kernel and
   the network service tell it (Configuration.NetworkStatus) needs only
   the runtime library and libsystem's address parsing, so it builds
   and is tested on the host as well (tools/SettingsTest).
@@ -42,6 +43,9 @@ uses
   Configuration.Storage,
   Configuration.Scopes,
   Configuration.Settings,
+  Configuration.Changes,
+  Configuration.ChangeTracker,
+  Configuration.Watcher,
   Configuration.FileStorage,
   Configuration.Locations,
   Configuration.Ipv6Checks,

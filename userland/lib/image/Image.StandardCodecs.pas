@@ -45,6 +45,7 @@ uses
   Image.Jpeg.Codec,
   Image.Png.Codec,
   Image.Tiff.Codec,
+  Image.WebP.Codec,
   Image.Jxl.Codec;
 
 var
@@ -62,6 +63,7 @@ begin
   RegisterImageDecoder(TGifDecoder);
   RegisterImageDecoder(TJpegDecoder);
   RegisterImageDecoder(TTiffDecoder);
+  RegisterImageDecoder(TWebPDecoder);
   RegisterImageDecoder(TJxlDecoder);
   RegisterImageDecoder(TDibDecoder);
   RegisterImageEncoder(TBmpEncoder);
@@ -72,6 +74,7 @@ begin
   RegisterImageEncoder(TJpegEncoder);
   RegisterImageEncoder(TPngEncoder);
   RegisterImageEncoder(TTiffEncoder);
+  RegisterImageEncoder(TWebPEncoder);
 end;
 
 end.

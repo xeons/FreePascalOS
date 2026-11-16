@@ -61,6 +61,7 @@ type
     ImageFormatJpeg,
     ImageFormatPng,
     ImageFormatTiff,
+    ImageFormatWebp,
     ImageFormatJxl
   );
 
@@ -139,6 +140,7 @@ begin
     ImageFormatJpeg: Result := 'JPEG';
     ImageFormatPng: Result := 'PNG';
     ImageFormatTiff: Result := 'TIFF';
+    ImageFormatWebp: Result := 'WebP';
     ImageFormatJxl: Result := 'JPEG XL';
   else
     Result := 'unknown';
@@ -168,6 +170,8 @@ begin
     Result := ImageFormatPng
   else if (Lower = 'tiff') or (Lower = 'tif') then
     Result := ImageFormatTiff
+  else if Lower = 'webp' then
+    Result := ImageFormatWebp
   else if Lower = 'jxl' then
     Result := ImageFormatJxl
   else

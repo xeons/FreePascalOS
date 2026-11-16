@@ -445,16 +445,23 @@ normalized (0-65535), not pixels.
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,
       per-process and system memory figures, Ctrl+Shift+Escape)
-- [ ] Graphical login, locking, log off, shut down and suspend from the desktop
-      (login, log off and shut down are done; locking and suspend remain)
+- [x] Graphical login, locking, log off, shut down and suspend from the desktop
+      (the lock enforced by the display server; Super+L, Ctrl+Alt+L, the
+      Start menu, after idle minutes and before suspending)
 - [x] File change notifications (folders refresh), volume arrival
 - [x] Per-user settings store (libconfiguration): typed settings in text
       files, the user's over the system's over defaults, fixed values, safe
       writes under an advisory file lock (new kernel feature); the display
       server, the session manager (mouse), Notepad, the terminal and the
       desktop use it; the `settings` tool
-- [ ] Settings changed notifications (on top of folder watches:
-      `TSettings.CheckForChanges` is the hook)
+- [x] Settings changed notifications (on top of folder watches): per
+      group, the keys that changed (snapshots compared, so a rewrite
+      that changes nothing is silent), bursts and safe writes' renames
+      coalesced (`Configuration.Watcher`, `Windowing.SettingsChanges`,
+      `settings watch`); the display server, session manager, desktop
+      (clock format, wallpaper, time zone), terminal (font size,
+      colours), Notepad, Control Panel pages and the network service
+      apply changes live
 
 ### 8. Richer graphics
 - [x] libcompression: deflate (inflate: stored, fixed and dynamic blocks,
@@ -462,8 +469,10 @@ normalized (0-65535), not pixels.
       lazy matching), zlib and gzip wrappers (several members), Adler-32 and
       CRC-32; TInflater/TDeflater, stream adapters, one-call functions;
       `gzip`; checked on the host against zlib (`make compression-test`)
-- [ ] libcompression: preset dictionaries, flushing mid-stream (sync and
-      full flush points), zip archives; `zcat`/`gunzip` names for gzip
+- [x] libcompression: preset dictionaries (zlib FDICT and raw, both
+      ways), flushing mid-stream (sync and full flush points);
+      `zcat`/`gunzip` names for gzip; checked against Python's zlib
+- [ ] libcompression: zip archives
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
@@ -486,21 +495,32 @@ normalized (0-65535), not pixels.
         reading, then writing baseline)
   - [x] TIFF (strips and tiles, several pages, BigTIFF; none, PackBits, LZW,
         deflate and JPEG compression; reading, and writing RGB/RGBA)
-  - [ ] TIFF: CCITT Group 3/4, the floating point predictor and float
-        samples, old-style JPEG
-  - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
+  - [x] TIFF: CCITT RLE, Group 3 (1D/2D) and Group 4, the floating point
+        predictor and 16/32-bit float samples (tone mapped to 8 bits),
+        old-style JPEG (interchange-format streams and a stream a strip)
+  - [x] WebP (lossy VP8, lossless VP8L, alpha, animation; ICC, EXIF
+        orientation, XMP; writing lossless, animations included)
+  - [ ] WebP: lossy writing (VP8 encoder)
   - [x] JPEG XL (VarDCT and modular modes, animation; decoding only,
         splines refused)
-  - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
-        patent pools, so check licensing before shipping it)
-  - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
-        good filtering for thumbnails (scaling done: `Image.Scaling` on
-        libdrawing's area averaging)
-- [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
-      so any DPI)
+  - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
+    through pools; AVIF, the same HEIF container with royalty-free AV1, can
+    be added instead if wanted)
+  - [x] Colour management basics: ICC v2/v4 matrix/TRC, grey and LUT
+        (mft1, mft2, mAB) profiles to sRGB with tables, wtpt/chad,
+        PNG gAMA/cHRM, CMYK naive (`Image.ColorProfiles`,
+        `TImage.ConvertToSrgb`, `ImageLoadConvertToSrgb`); checked
+        against LittleCMS
+  - [x] Scaling with good filtering: `Image.Resampling` (Lanczos-3,
+        Mitchell, bilinear, box; separable, premultiplied alpha) beside
+        `Image.Scaling`'s area averaging; checked against Pillow
+- [x] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
+      so any DPI): DejaVu Sans (the interface's) and DejaVu Sans Mono at every
+      size, light vertical autohinting, gamma-correct blending; CFF outlines and
+      the fonts' own bytecode hinting not done
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits
-- [ ] Clipboard (text and images) and drag and drop
+- [x] Clipboard (text and images) and drag and drop
 - [ ] Themes; Paint; image viewer; calculator; volume control
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 

@@ -24,8 +24,8 @@
   The first directory holds Terminus PSF files (uncompressed):
   ter-v16n.psf (PSF1, 8x16) and ter-v24n.psf (PSF2, 12x24) are drawn and
   compared with their bitmaps, and the sizes 12 to 32 are used for
-  picking faces. The second holds DejaVu Sans rendered into coverage
-  fonts (DrawingTest.CoverageFonts). The anti-aliased shapes and smooth
+  picking faces. The second holds DejaVu Sans, the TrueType files
+  (DrawingTest.CoverageFonts). The anti-aliased shapes and smooth
   scaling are checked in DrawingTest.Smoothing. Every check prints a
   line; the exit code is 1 if any failed. With a third argument a sample
   picture is written there (a PPM), for looking at.
@@ -634,11 +634,11 @@ begin
   FillRectangle(Canvas, MakeRectangle(20, 20, 280, 160), Face3D);
   DrawBevel(Canvas, MakeRectangle(20, 20, 280, 160), RaisedBevel(Highlight, Face3D, Shadow, DarkShadow));
   FillHorizontalGradient(Canvas, MakeRectangle(23, 23, 274, 18), $FF1C3F6E, $FF7FA6D6);
-  if LoadCoverageFace(DejaVuDirectory, 'dejavu-sans-bold-12.cvf', Bold) then
+  if LoadOutlineFace(DejaVuDirectory, 'DejaVuSans-Bold.ttf', 12, Bold) then
     DrawText(Canvas, Bold, 28, 24, 'Sample window', ColorWhite);
   FillRectangle(Canvas, MakeRectangle(40, 60, 120, 24), ColorWhite);
   DrawBevel(Canvas, MakeRectangle(40, 60, 120, 24), SunkenBevel(Highlight, Face3D, Shadow, DarkShadow));
-  if LoadCoverageFace(DejaVuDirectory, 'dejavu-sans-12.cvf', Face) then
+  if LoadOutlineFace(DejaVuDirectory, 'DejaVuSans.ttf', 12, Face) then
   begin
     DrawText(Canvas, Face, 45, 64, 'caf'#$C3#$A9' '#$E2#$82#$AC'5 AVATAR', ColorBlack);
     DrawText(Canvas, Face, 224, 145, 'OK', ColorBlack);

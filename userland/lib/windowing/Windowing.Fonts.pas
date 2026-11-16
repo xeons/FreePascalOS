@@ -20,9 +20,15 @@
   The fonts programs draw with: the theme's two families (the
   interface's text, proportional, and a monospaced one), each listed
   once, and faces picked by size in points at the display's DPI. A
-  face's glyphs are read the first time it is picked. Either family can
-  be asked for by name (TFontFamily: what a font dialog offers); a
-  system without the monospaced fonts gets the text family's instead.
+  face's glyphs are read the first time it is picked. Any family can
+  be asked for by name (TFontFamily: what a font dialog offers): the
+  two of the theme and DejaVu Sans Mono, a scalable monospaced one; a
+  system without a monospaced family gets the text family's instead.
+
+  The text family (DejaVu Sans) and DejaVu Sans Mono are TrueType: every
+  size there is, at any DPI. The theme's monospaced family is Terminus,
+  bitmap fonts in some sizes, kept for the terminal (whose text it was
+  drawn for) and wherever columns of the console's look are wanted.
 }
 unit Windowing.Fonts;
 
@@ -35,7 +41,7 @@ uses
   Font.Faces;
 
 type
-  TFontFamily = (FontFamilyText, FontFamilyFixed);
+  TFontFamily = (FontFamilyText, FontFamilyFixed, FontFamilyMono);
 
 { The face of the theme's text family for PointTenths tenths of a point
   (bold or not); nil if the system has no such fonts. }
@@ -60,6 +66,8 @@ function FamilyFaceCount(Family: TFontFamily): LongInt;
 function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
 { The family's name, to show ("DejaVu Sans"). }
 function FamilyName(Family: TFontFamily): string;
+{ Whether the family has every size (an outline font), not just some. }
+function FamilyIsScalable(Family: TFontFamily): Boolean;
 
 implementation
 
@@ -81,6 +89,7 @@ type
 var
   TextFamily: TFamily;
   FixedFamily: TFamily;
+  MonoFamily: TFamily;
 
 { A family's directory is listed the first time any of its faces is
   wanted. }
@@ -100,6 +109,15 @@ begin
   Result := nil;
   if Family = FontFamilyFixed then
   begin
+    EnsureFamilyListed(FixedFamily, Theme.FixedFamily);
+    if FixedFamily.Available then
+      Exit(@FixedFamily.Fonts);
+  end;
+  if Family = FontFamilyMono then
+  begin
+    EnsureFamilyListed(MonoFamily, DejaVuSansMonoFamily);
+    if MonoFamily.Available then
+      Exit(@MonoFamily.Fonts);
     EnsureFamilyListed(FixedFamily, Theme.FixedFamily);
     if FixedFamily.Available then
       Exit(@FixedFamily.Fonts);
@@ -146,10 +164,22 @@ end;
 
 function FamilyName(Family: TFontFamily): string;
 begin
-  if Family = FontFamilyFixed then
-    Result := 'Terminus'
+  case Family of
+    FontFamilyFixed:
+      Result := 'Terminus';
+    FontFamilyMono:
+      Result := 'DejaVu Sans Mono';
   else
     Result := 'DejaVu Sans';
+  end;
+end;
+
+function FamilyIsScalable(Family: TFontFamily): Boolean;
+var
+  Fonts: PFontSet;
+begin
+  Fonts := FontsOf(Family);
+  Result := (Fonts <> nil) and FontSetIsScalable(Fonts^);
 end;
 
 function FontFace(PointTenths: LongWord; Bold: Boolean): PFontFace;

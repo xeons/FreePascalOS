@@ -89,7 +89,7 @@ const
 
   { The modifier bits, in report order, as scan codes. }
   ModifierScanCodes: array[0..7] of Word = (
-    $1D, $2A, $38, 0, Extended or $1D, $36, Extended or $38, 0);
+    $1D, $2A, $38, Extended or $5B, Extended or $1D, $36, Extended or $38, Extended or $5C);
 
 type
   PUsbKeyboard = ^TUsbKeyboard;

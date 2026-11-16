@@ -22,7 +22,8 @@
   output (raw, zlib and gzip; stored, fixed and dynamic blocks; several
   members) decompressed whole and in pieces; broken streams refused
   with the right error; damaged streams handled cleanly; round trips at
-  every level; sizes against zlib's; the stream adapters.
+  every level; sizes against zlib's; the stream adapters; preset
+  dictionaries and sync and full flushes, against zlib's and our own.
 
     CompressionTest [sample directory]
 
@@ -38,7 +39,8 @@ program CompressionTest;
 uses
   TestChecks,
   CompressionTest.Decoding,
-  CompressionTest.Encoding;
+  CompressionTest.Encoding,
+  CompressionTest.Flushing;
 
 begin
   TestChecksums;
@@ -52,7 +54,12 @@ begin
   TestCompressedSizes;
   TestCompressionStream;
   TestGzipHeaderWriting;
+  TestDictionaries;
+  TestFlushes;
   if ParamCount >= 1 then
+  begin
     WriteSamples(ParamStr(1));
+    WriteDictionaryAndFlushSamples(ParamStr(1));
+  end;
   FinishChecks('compression test');
 end.
