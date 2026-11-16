@@ -302,7 +302,7 @@ def frame_chunk(image, left, top, duration, dispose, no_blend, lossy=False):
         bitstream = picture_chunks(encode(image, quality=80))
     else:
         bitstream = picture_chunks(encode(image, lossless=True, exact=True))
-    flags = (2 if dispose else 0) | (1 if no_blend else 0)
+    flags = (1 if dispose else 0) | (2 if no_blend else 0)
     header = long24(left // 2) + long24(top // 2) + long24(image.width - 1) + long24(image.height - 1) + \
         long24(duration) + bytes((flags,))
     return chunk(b"ANMF", header + bitstream)

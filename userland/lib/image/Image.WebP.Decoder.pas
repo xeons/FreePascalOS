@@ -64,6 +64,11 @@ uses
   Image.WebP.YuvConversion,
   Image.WebP.Alpha;
 
+const
+  { The most pixels the frames of one animation may hold together
+    (2 GiB of them). }
+  AnimationPixelBudget = Int64(4) * MaximumImagePixels;
+
 type
   TPictureFacts = record
     Lossless: Boolean;
@@ -177,7 +182,7 @@ begin
 end;
 
 function DecodeFrame(const Data: TBytes; constref Chunk: TWebPChunk; CanvasWidth, CanvasHeight: LongInt;
-  var Compression: string; var HasAlpha: Boolean): TImageFrame;
+  var Compression: string; var HasAlpha: Boolean; var PixelsLeft: Int64): TImageFrame;
 var
   Header: TWebPFrameHeader;
   Picture: TWebPPictureChunks;
@@ -188,6 +193,11 @@ begin
   ReadFrameHeader(Data, Chunk, Header);
   if (Header.Left + Header.Width > CanvasWidth) or (Header.Top + Header.Height > CanvasHeight) then
     RaiseImageError(ImageErrorMalformed, 'WebP frame outside the canvas');
+  { A few bytes can describe a large frame of one colour: the frames
+    together may not hold more than a budget of pixels. }
+  Dec(PixelsLeft, Int64(Header.Width) * Header.Height);
+  if PixelsLeft < 0 then
+    RaiseImageError(ImageErrorTooLarge, 'WebP animation');
   Picture := FindPictureChunks(ListChunksIn(Data, Chunk.Start + FrameHeaderLength, Chunk.Size - FrameHeaderLength,
     Truncated));
   Image := DecodePicture(Data, Picture, Facts);
@@ -223,6 +233,7 @@ var
   Frame: TImageFrame;
   Compositor: TFrameCompositor;
   First: TImage;
+  PixelsLeft: Int64;
 begin
   AnimationIndex := FindChunk(Chunks, ChunkTagAnimation);
   if AnimationIndex < 0 then
@@ -234,12 +245,14 @@ begin
     Result.BackgroundColor := Header.BackgroundColor;
     Compression := '';
     HasAlpha := (Extended.Flags and WebPFlagAlpha) <> 0;
+    PixelsLeft := AnimationPixelBudget;
     for Index := 0 to High(Chunks) do
     begin
       if Chunks[Index].Tag <> ChunkTagFrame then
         Continue;
       try
-        Frame := DecodeFrame(Data, Chunks[Index], Extended.CanvasWidth, Extended.CanvasHeight, Compression, HasAlpha);
+        Frame := DecodeFrame(Data, Chunks[Index], Extended.CanvasWidth, Extended.CanvasHeight, Compression, HasAlpha,
+          PixelsLeft);
       except
         on EImageError do
         begin

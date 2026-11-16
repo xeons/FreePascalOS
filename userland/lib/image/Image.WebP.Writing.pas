@@ -181,7 +181,12 @@ begin
   Header := TImageByteWriter.Create;
   try
     Header.WriteLongLittle(Animation.BackgroundColor);
-    Header.WriteWordLittle(Word(Animation.LoopCount and $FFFF));
+    if Animation.LoopCount < 0 then
+      Header.WriteWordLittle(0)
+    else if Animation.LoopCount > $FFFF then
+      Header.WriteWordLittle($FFFF)
+    else
+      Header.WriteWordLittle(Animation.LoopCount);
     WriteChunk(Writer, ChunkTagAnimation, Header.ToBytes);
   finally
     Header.Free;

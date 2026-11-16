@@ -53,8 +53,8 @@ const
   WebPFlagIcc = $20;
 
   { ANMF's flags byte. }
-  WebPFrameNoBlend = $01;
-  WebPFrameDisposeBackground = $02;
+  WebPFrameDisposeBackground = $01;
+  WebPFrameNoBlend = $02;
 
   RiffHeaderLength = 12;
   ChunkHeaderLength = 8;

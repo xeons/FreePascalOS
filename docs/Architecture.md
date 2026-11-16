@@ -5474,7 +5474,9 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   or not, blend by alpha or replace; ANIM's loop count and background
   colour (kept, not drawn, as libwebp's own decoder ignores it); a
   frame that is broken or cut short ends the animation there, keeping
-  the frames before it. libwebp blends translucent frame pixels with
+  the frames before it, and so does one past a budget of 512 million
+  pixels for all the frames together (a few bytes of VP8L can describe
+  a large frame of one colour). libwebp blends translucent frame pixels with
   coarser rounding than libdrawing, so such frames as seen may differ
   slightly (most where both pixels are nearly transparent). The
   metadata key `Compression` says `lossy`, `lossless` or `lossy and
