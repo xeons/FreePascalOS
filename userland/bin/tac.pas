@@ -25,52 +25,51 @@
 }
 program tac;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  Classes,
   Sys.Streams,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: tac [FILE]...'#10 +
+  Usage = 'Usage: tac [FILE]...'#10 +
     'Write each FILE to standard output, last line first.'#10;
 
 var
-  Parser: TOptionParser;
-  Lines: TLineList;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Lines: TStringList;
+  Operand: string;
   Line: Integer;
   Stream: PInputStream;
   ExitStatus: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-  begin
-    Stream := OpenInput(Parser.Operands[Index]);
-    if Stream = nil then
+  Lines := TStringList.Create;
+  try
+    for Operand in CommandLine.Operands do
     begin
-      ExitStatus := 1;
-      Continue;
+      Stream := OpenInput(Operand);
+      if Stream = nil then
+      begin
+        ExitStatus := 1;
+        Continue;
+      end;
+      Lines.Clear;
+      ReadLinesInto(Stream, Lines);
+      CloseInput(Stream);
+      for Line := Lines.Count - 1 downto 0 do
+        PrintStringLine(Lines[Line]);
     end;
-    BeginLineList(Lines);
-    ReadAllLines(Stream, Lines);
-    CloseInput(Stream);
-    Line := Lines.Count - 1;
-    while Line >= 0 do
-    begin
-      WriteLine(StandardOutput, Lines.Items[Line]);
-      Dec(Line);
-    end;
-    FreeLineList(Lines);
+  finally
+    Lines.Free;
   end;
   Halt(ExitStatus);
 end.

@@ -21,23 +21,24 @@
 }
 program sync;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
   Sys.Files,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: sync'#10 +
+  Usage = 'Usage: sync'#10 +
     'Synchronize cached writes to persistent storage.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Error: LongInt;
 begin
-  ParseOperandsOnly(Parser, Usage);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
   Error := SyncFileSystems;
   if Error <> 0 then
-    FailWithError(1, Error, 'error syncing', []);
+    FailWithError(1, Error, 'error syncing');
 end.

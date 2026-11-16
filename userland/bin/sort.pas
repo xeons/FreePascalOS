@@ -30,20 +30,22 @@ program sort;
 {$H+}
 
 uses
+  Classes,
   SysUtils,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Sorting;
 
 const
-  Usage: PChar = 'Usage: sort [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: sort [OPTION]... [FILE]...'#10 +
     'Write sorted concatenation of all FILE(s) to standard output.'#10 +
     #10 +
     '  -b, --ignore-leading-blanks  ignore leading blanks'#10 +
@@ -65,10 +67,9 @@ const
   OptionUnique = 8;
 
 type
-  { A line being sorted; the sort moves pointers to these. }
-  PSortLine = ^TSortLine;
-  TSortLine = record
-    Text: string;
+  { The order of the lines, as the options ask for it. }
+  TLineOrder = class
+    function Compare(const First, Second: string): Integer;
   end;
 
 var
@@ -248,13 +249,13 @@ begin
     Result := CompareRanges(First, FirstStart, FirstFinish, Second, SecondStart, SecondFinish);
 end;
 
-function CompareLines(First, Second: Pointer; Context: Pointer): Integer;
+function TLineOrder.Compare(const First, Second: string): Integer;
 begin
-  Result := CompareKeys(PSortLine(First)^.Text, PSortLine(Second)^.Text);
+  Result := CompareKeys(First, Second);
   { As GNU sort does, equal keys fall back to comparing whole lines,
     unless -u asks for keys alone. }
   if (Result = 0) and not Unique then
-    Result := CompareStr(PSortLine(First)^.Text, PSortLine(Second)^.Text);
+    Result := CompareStr(First, Second);
   if Reverse then
     Result := -Result;
 end;
@@ -289,48 +290,47 @@ begin
   else
     Part := Text;
   Part := StripKeyOptions(Part, True);
-  if not ParseInteger(PChar(Part), Number) or (Number < 1) then
-    Fail(2, 'invalid number at field start: invalid count at start of ''%s''', [ArgumentText(PChar(Part))]);
+  if not ParseDecimal(Part, Number) or (Number < 1) then
+    Fail(2, Format('invalid number at field start: invalid count at start of ''%s''', [Part]));
   KeyStart := Integer(Number);
   KeyEnd := 0;
   if Comma > 0 then
   begin
     Part := StripKeyOptions(Copy(Text, Comma + 1, MaxInt), False);
-    if not ParseInteger(PChar(Part), Number) or (Number < 1) then
-      Fail(2, 'invalid number after '','': invalid count at start of ''%s''', [ArgumentText(PChar(Part))]);
+    if not ParseDecimal(Part, Number) or (Number < 1) then
+      Fail(2, Format('invalid number after '','': invalid count at start of ''%s''', [Part]));
     KeyEnd := Integer(Number);
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  HasOutputPath: Boolean;
+  Value: string;
   OutputPath: string;
-  InputLines: TLineList;
-  Lines: array of TSortLine;
-  Order: array of PSortLine;
+  InputLines: TStringList;
+  Lines: TStringArray;
+  Order: TLineOrder;
+  Operand: string;
   Index: Integer;
   Stream: PInputStream;
   Output: POutputStream;
   OutputHandle: Int64;
   ExitStatus: LongInt;
 begin
-  HasOutputPath := False;
   Separator := #0;
   KeyStart := 0;
   KeyEnd := 0;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'ignore-leading-blanks', False, OptionIgnoreBlanks),
-    OptionDefinition('f', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('n', 'numeric-sort', False, OptionNumeric),
-    OptionDefinition('r', 'reverse', False, OptionReverse),
-    OptionDefinition('k', 'key', True, OptionKey),
-    OptionDefinition('t', 'field-separator', True, OptionSeparator),
-    OptionDefinition('o', 'output', True, OptionOutput),
-    OptionDefinition('u', 'unique', False, OptionUnique)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'ignore-leading-blanks', False, OptionIgnoreBlanks),
+    CommandOption('f', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('n', 'numeric-sort', False, OptionNumeric),
+    CommandOption('r', 'reverse', False, OptionReverse),
+    CommandOption('k', 'key', True, OptionKey),
+    CommandOption('t', 'field-separator', True, OptionSeparator),
+    CommandOption('o', 'output', True, OptionOutput),
+    CommandOption('u', 'unique', False, OptionUnique)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionIgnoreBlanks: IgnoreBlanks := True;
       OptionIgnoreCase: IgnoreCase := True;
@@ -339,61 +339,49 @@ begin
       OptionKey: ParseKey(Value);
       OptionSeparator:
         begin
-          if Length(string(Value)) <> 1 then
-            Fail(2, 'multi-character tab ''%s''', [ArgumentText(Value)]);
-          Separator := Value[0];
+          if Length(Value) <> 1 then
+            Fail(2, Format('multi-character tab ''%s''', [Value]));
+          Separator := Value[1];
         end;
-      OptionOutput:
-        begin
-          OutputPath := Value;
-          HasOutputPath := True;
-        end;
+      OptionOutput: OutputPath := Value;
       OptionUnique: Unique := True;
     end;
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   ExitStatus := 0;
-  BeginLineList(InputLines);
-  for Index := 0 to Parser.OperandCount - 1 do
+  InputLines := TStringList.Create;
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
-      Fail(2, 'cannot read: %s', [ArgumentText(Parser.Operands[Index])]);
-    ReadAllLines(Stream, InputLines);
+      Fail(2, 'cannot read: ' + Operand);
+    ReadLinesInto(Stream, InputLines);
     CloseInput(Stream);
   end;
-  SetLength(Lines, InputLines.Count);
-  SetLength(Order, InputLines.Count);
-  for Index := 0 to InputLines.Count - 1 do
-  begin
-    Lines[Index].Text := InputLines.Items[Index];
-    Order[Index] := @Lines[Index];
-  end;
-  FreeLineList(InputLines);
+  Lines := InputLines.ToStringArray;
+  InputLines.Free;
 
-  if Length(Order) > 0 then
-    SortPointers(PPointer(@Order[0]), Length(Order), @CompareLines, nil);
+  Order := TLineOrder.Create;
+  SortStrings(Lines, @Order.Compare);
+  Order.Free;
 
   { The output file may be one of the inputs, so open it only now. }
   Output := StandardOutput;
   OutputHandle := -1;
-  if HasOutputPath then
+  if CommandLine.OptionGiven(OptionOutput) then
   begin
     OutputHandle := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
     if OutputHandle < 0 then
-      FailWithError(2, ErrorCodeOf(OutputHandle), 'open failed: %s', [ArgumentText(PChar(OutputPath))]);
+      FailWithError(2, ErrorCodeOf(OutputHandle), 'open failed: ' + OutputPath);
     Output := CreateOutputStream(OutputHandle);
   end;
-  for Index := 0 to High(Order) do
+  for Index := 0 to High(Lines) do
   begin
-    if Unique and (Index > 0) and (CompareKeys(Order[Index - 1]^.Text, Order[Index]^.Text) = 0) then
+    if Unique and (Index > 0) and (CompareKeys(Lines[Index - 1], Lines[Index]) = 0) then
       Continue;
-    WriteLine(Output, PChar(Order[Index]^.Text));
+    WriteStringLine(Output, Lines[Index]);
   end;
   if OutputHandle >= 0 then
   begin

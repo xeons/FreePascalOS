@@ -35,13 +35,12 @@ uses
   Crypto.Checksums,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: sum [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: sum [OPTION]... [FILE]...'#10 +
     'Print checksum and block counts for each FILE.'#10#10 +
     '  -r              use BSD sum algorithm (the default), use 1K blocks'#10 +
     '  -s, --sysv      use System V sum algorithm, use 512 bytes blocks'#10;
@@ -70,7 +69,7 @@ begin
     Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
   begin
-    ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(PChar(Path))]);
+    ReportError(ErrorCodeOf(Handle), Path);
     Exit(False);
   end;
   BsdSum := 0;
@@ -92,38 +91,31 @@ begin
     Line := Format('%.5u %5u', [BsdSum, (ByteCount + 1023) div 1024]);
   if ShowNames or (UseSystemV and (Path <> '-')) then
     Line := Line + ' ' + Path;
-  WriteLine(StandardOutput, PChar(Line));
+  PrintStringLine(Line);
   Result := True;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Files: array of string;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   ExitStatus: LongInt;
 begin
   UseSystemV := False;
-  BeginOptions(Parser, [
-    OptionDefinition('r', nil, False, OptionBsd),
-    OptionDefinition('s', 'sysv', False, OptionSystemV)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('r', '', False, OptionBsd),
+    CommandOption('s', 'sysv', False, OptionSystemV)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     UseSystemV := Code = OptionSystemV;
-  ShowNames := Parser.OperandCount > 1;
-  if Parser.OperandCount = 0 then
-    Files := ['-']
-  else
-  begin
-    SetLength(Files, Parser.OperandCount);
-    for Index := 0 to Parser.OperandCount - 1 do
-      Files[Index] := Parser.Operands[Index];
-  end;
+  ShowNames := CommandLine.OperandCount > 1;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   SetLength(Buffer, 65536);
   ExitStatus := 0;
-  for Index := 0 to High(Files) do
-    if not SumFile(Files[Index]) then
+  for Operand in CommandLine.Operands do
+    if not SumFile(Operand) then
       ExitStatus := 1;
   Halt(ExitStatus);
 end.

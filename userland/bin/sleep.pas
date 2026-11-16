@@ -31,13 +31,13 @@ program sleep;
 {$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Processes,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: sleep NUMBER[SUFFIX]...'#10 +
+  Usage = 'Usage: sleep NUMBER[SUFFIX]...'#10 +
     'Pause for NUMBER seconds. SUFFIX may be ''s'' for seconds (the default),'#10 +
     '''m'' for minutes, ''h'' for hours or ''d'' for days. NUMBER may be a'#10 +
     'decimal fraction. Given two or more arguments, pause for their sum.'#10;
@@ -105,19 +105,20 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Operand: string;
   Total: QWord;
   Duration: QWord;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
   Total := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    if not ParseDuration(Parser.Operands[Index], Duration) then
-      FailWithUsageHint('invalid time interval ''%s''', [ArgumentText(Parser.Operands[Index])]);
+    if not ParseDuration(Operand, Duration) then
+      FailWithUsageHint(Format('invalid time interval ''%s''', [Operand]));
     Total := Total + Duration;
   end;
   SleepMilliseconds(Total);

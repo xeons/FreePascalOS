@@ -38,16 +38,15 @@ uses
   Crypto.Random,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: shuf [OPTION]... [FILE]'#10 +
+  Usage = 'Usage: shuf [OPTION]... [FILE]'#10 +
     '  or:  shuf -e [OPTION]... [ARG]...'#10 +
     '  or:  shuf -i LO-HI [OPTION]...'#10 +
     'Write a random permutation of the input lines to standard output.'#10#10 +
@@ -69,12 +68,11 @@ const
   MaximumBoundLength = 31;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   EchoMode: Boolean;
   HasRange: Boolean;
   RangeText: string;
   Limit: Int64;
-  HasOutputPath: Boolean;
   OutputPath: string;
   Repeated: Boolean;
   LineEnd: Char;
@@ -82,22 +80,21 @@ var
 procedure ReadOptions;
 var
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   EchoMode := False;
   HasRange := False;
   Limit := -1;
-  HasOutputPath := False;
   Repeated := False;
   LineEnd := #10;
-  BeginOptions(Parser, [
-    OptionDefinition('e', 'echo', False, OptionEcho),
-    OptionDefinition('i', 'input-range', True, OptionRange),
-    OptionDefinition('n', 'head-count', True, OptionCount),
-    OptionDefinition('o', 'output', True, OptionOutput),
-    OptionDefinition('r', 'repeat', False, OptionRepeat),
-    OptionDefinition('z', 'zero-terminated', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('e', 'echo', False, OptionEcho),
+    CommandOption('i', 'input-range', True, OptionRange),
+    CommandOption('n', 'head-count', True, OptionCount),
+    CommandOption('o', 'output', True, OptionOutput),
+    CommandOption('r', 'repeat', False, OptionRepeat),
+    CommandOption('z', 'zero-terminated', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionEcho: EchoMode := True;
       OptionRange:
@@ -106,13 +103,9 @@ begin
           HasRange := True;
         end;
       OptionCount:
-        if not ParseInteger(Value, Limit) or (Limit < 0) then
-          Fail(1, 'invalid line count: ''%s''', [ArgumentText(Value)]);
-      OptionOutput:
-        begin
-          OutputPath := Value;
-          HasOutputPath := True;
-        end;
+        if not ParseDecimal(Value, Limit) or (Limit < 0) then
+          Fail(1, Format('invalid line count: ''%s''', [Value]));
+      OptionOutput: OutputPath := Value;
       OptionRepeat: Repeated := True;
       OptionZero: LineEnd := #0;
     end;
@@ -120,7 +113,7 @@ end;
 
 procedure FailInvalidRange;
 begin
-  Fail(1, 'invalid input range: ''%s''', [ArgumentText(PChar(RangeText))]);
+  Fail(1, Format('invalid input range: ''%s''', [RangeText]));
 end;
 
 { The numbers LO through HI of RangeText. }
@@ -133,8 +126,8 @@ begin
   Dash := Pos('-', RangeText);
   if (Dash <= 1) or (Dash - 1 > MaximumBoundLength) then
     FailInvalidRange;
-  if not ParseInteger(PChar(Copy(RangeText, 1, Dash - 1)), Low) or
-     not ParseInteger(PChar(Copy(RangeText, Dash + 1, MaxInt)), High) or (High < Low) then
+  if not ParseDecimal(Copy(RangeText, 1, Dash - 1), Low) or
+     not ParseDecimal(Copy(RangeText, Dash + 1, MaxInt), High) or (High < Low) then
     FailInvalidRange;
   for Number := Low to High do
     Lines.Add(IntToStr(Number));
@@ -143,22 +136,16 @@ end;
 procedure AddInputLines(Lines: TStrings);
 var
   Stream: PInputStream;
-  Line: PChar;
-  HadLineEnd: Boolean;
 begin
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
-    Stream := OpenInput(Parser.Operands[0])
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if CommandLine.OperandCount = 1 then
+    Stream := OpenInput(CommandLine.Operands[0])
   else
     Stream := StandardInput;
   if Stream = nil then
     Halt(1);
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
-    Lines.Add(Line);
-    FreeMemory(Line);
-  end;
+  ReadLinesInto(Stream, Lines);
   CloseInput(Stream);
 end;
 
@@ -169,13 +156,13 @@ begin
   if Lines.Count = 0 then
   begin
     if Limit <> 0 then
-      Fail(1, 'no lines to repeat', []);
+      Fail(1, 'no lines to repeat');
     Exit;
   end;
   Written := 0;
   while ((Limit < 0) or (Written < Limit)) and not Output^.HadError do
   begin
-    WriteText(Output, PChar(Lines[RandomBelow(QWord(Lines.Count))]));
+    WriteString(Output, Lines[RandomBelow(QWord(Lines.Count))]);
     WriteCharacter(Output, LineEnd);
     Inc(Written);
   end;
@@ -192,7 +179,7 @@ begin
   begin
     Chosen := Index + Integer(RandomBelow(QWord(Lines.Count - Index)));
     Lines.Exchange(Index, Chosen);
-    WriteText(Output, PChar(Lines[Index]));
+    WriteString(Output, Lines[Index]);
     WriteCharacter(Output, LineEnd);
     Inc(Index);
   end;
@@ -200,7 +187,7 @@ end;
 
 var
   Lines: TStringList;
-  Index: Integer;
+  Operand: string;
   Output: POutputStream;
   OutputHandle: Int64;
 begin
@@ -211,19 +198,19 @@ begin
     AddRange(Lines)
   else if EchoMode then
   begin
-    for Index := 0 to Parser.OperandCount - 1 do
-      Lines.Add(Parser.Operands[Index]);
+    for Operand in CommandLine.Operands do
+      Lines.Add(Operand);
   end
   else
     AddInputLines(Lines);
 
   Output := StandardOutput;
   OutputHandle := -1;
-  if HasOutputPath then
+  if CommandLine.OptionGiven(OptionOutput) then
   begin
     OutputHandle := OpenFile(PChar(OutputPath), OpenWrite or OpenCreate or OpenTruncate);
     if OutputHandle < 0 then
-      FailWithError(1, ErrorCodeOf(OutputHandle), '%s', [ArgumentText(PChar(OutputPath))]);
+      FailWithError(1, ErrorCodeOf(OutputHandle), OutputPath);
     Output := CreateOutputStream(OutputHandle);
   end;
 
