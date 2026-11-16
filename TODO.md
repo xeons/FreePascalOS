@@ -490,8 +490,9 @@ normalized (0-65535), not pixels.
         samples, old-style JPEG
   - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
   - [ ] JPEG XL (VarDCT and modular modes, animation)
-  - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
-        patent pools, so check licensing before shipping it)
+  - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
+    through pools; AVIF, the same HEIF container with royalty-free AV1, can
+    be added instead if wanted)
   - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
         good filtering for thumbnails (scaling done: `Image.Scaling` on
         libdrawing's area averaging)
