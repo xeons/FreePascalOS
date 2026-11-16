@@ -11,6 +11,7 @@ instead of NT's terminology.
 |  graphical programs -> libcontrols -> libwindowing ->      |
 |    libfont -> libdrawing -> libsystem                      |
 |  image files: libimage -> libdrawing (see "Images")        |
+|  compression: libcompression -> libsystem                  |
 +=================== system calls (syscall) ================+
 |  Processes (processes, threads, address spaces, handles,   |
 |             image loader, system calls)                    |
@@ -3430,6 +3431,95 @@ authority and an expired certificate each refused (and accepted with
 --no-check-certificate). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
+### Compression
+
+**libcompression** (`userland/lib/compression`, units `Compression.*`)
+is deflate (RFC 1951) both ways, with the zlib (RFC 1950) and gzip
+(RFC 1952) wrappers and their checksums. It needs only libsystem.
+libimage uses it for PNG and TIFF, gzip for .gz files.
+
+```
+  Compression.Buffers   CompressZlib, DecompressGzip, ... on TBytes (raise)
+  Compression.Streams   TDecompressionStream, TCompressionStream over a TStream
+=========== streaming, any piece sizes, errors as codes ====================
+  Compression.Inflater  TInflater: raw, zlib, gzip (several members), or
+                        whichever the header says; checks every checksum
+  Compression.Deflater  TDeflater: levels 0-9, raw, zlib or gzip
+  Compression.InflateEngine   blocks, codes, history; fast loop
+  Compression.HuffmanDecoding two-level lookup tables
+  Compression.DeflateEngine   greedy and lazy matching, stored blocks
+  Compression.MatchFinder     hash chains over two windows
+  Compression.DeflateBlocks   stored, fixed or dynamic, the smallest
+  Compression.HuffmanEncoding lengths limited to 15 (7), canonical codes
+  Compression.BitWriter  Compression.ZlibFormat  Compression.GzipFormat
+  Compression.Checksums (Adler-32, CRC-32)  Compression.DeflateFormat
+  Compression.Formats  Compression.Errors
+=========== libsystem ======================================================
+```
+
+**Decompressing.** `TInflater` is fed with `SetInput` and emptied by
+`Decompress(Output, Capacity, Written)`, which says why it stopped:
+it needs input, the output is full, the data has finished, or it
+failed (`Error`, a `TCompressionError`). The decoder
+(`Compression.InflateEngine`) is a state machine that can stop
+wherever the input runs out - in a block header, among a dynamic
+block's code lengths, between a length and its distance, in the
+middle of a copy - and go on with the next piece. Output goes into a
+96 KiB history (32 KiB that matches reach back into, 64 KiB of room)
+that the caller empties; the last 32 KiB slide to the front once all
+of it is taken. While 8 bytes of input and a whole match's room are
+left, a tight loop decodes: it refills a 64-bit bit buffer eight bytes
+at a time (56 bits, enough for a length and a distance with their
+extra bits) and looks codes up in two-level tables
+(`Compression.HuffmanDecoding`: 10 bits for literals and lengths, 8
+for distances; longer codes in subtables), without a check per bit.
+Codes are checked as zlib checks them (no over-subscribed code; an
+incomplete one only as a single one-bit code), as are the code length
+repeats, symbols 286, 287, 30 and 31, the end of block code, stored
+lengths and every distance against the output so far; the first error
+stops the decoder. The wrappers are checked as they arrive: the zlib
+header (no preset dictionary) and Adler-32; the gzip header byte by
+byte (extra field, name, comment, header CRC; `GzipHeader` has them),
+CRC-32 and length; members follow one another as one output, and
+anything else after a member is trailing data.
+
+**Compressing.** `TDeflater` takes input with `SetInput` and gives
+output with `Compress(Output, Capacity, Written, Finish)`. Input goes
+into a buffer of two windows (`Compression.MatchFinder`); each
+position is put on a hash chain of its next three bytes, and a search
+walks back along it (comparing eight bytes at a time) as far as the
+level allows. The levels are zlib's, with its limits: 0 stores, 1 to 3
+take the longest match greedily, 4 to 9 take a match only when the
+next position does not start a longer one. 32768 symbols make a block,
+which `Compression.DeflateBlocks` sends stored, with the fixed codes
+or with codes of its own (Huffman lengths limited to 15, the code
+lengths run-length coded and limited to 7), whichever is smallest
+counted to the bit. A block of incompressible data goes out before the
+window slides away from its start, so that it can still be stored.
+
+**The convenience layer.** `Compression.Buffers` does whole arrays in
+one call and raises `ECompressionError` (with the code): decompression
+is strict about cut off data and trailing bytes and can be bounded
+(`MaximumSize`). `Compression.Streams` puts both directions behind a
+`TStream`.
+
+`make compression-test` (part of `make test`) builds the library on the
+host as `tools/CompressionTest`, with vectors that
+`tools/CompressionTest/make-vectors.py` makes with Python's zlib when
+the test is built: zlib's output of five kinds of data at several
+levels (stored, fixed only, Huffman only, run length, small windows
+and small blocks, raw, zlib and gzip, several members, empty data, a
+match exactly 32768 back), each decompressed whole, a byte at a time
+and in varying pieces; broken streams of every kind, each refused with
+its own error, whole and a byte at a time; every vector damaged forty
+ways, which must be refused or decompressed but never crash (the test
+is built with range checks); round trips at every level in every
+format, whole and in pieces; sizes within a tenth of zlib's on the
+same data; the stream adapters; gzip header fields. The samples it
+compresses are then decompressed by Python's zlib and gzip
+(`check-with-zlib.py`). On the system, `gzip` (`-c`, `-d`, `-f`, `-k`,
+`-1` to `-9`) compresses and decompresses files; coretest checks it.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a
@@ -4963,6 +5053,11 @@ independent) against the Free Pascal runtime library:
 - **libtls.so** – a TLS 1.3 client with X.509 certificate checking, the
   `Tls.*` units (see "TLS and wget"); it needs libcryptography and
   libsystem. wget uses it.
+- **libcompression.so** – deflate compression and decompression with the
+  zlib and gzip wrappers, Adler-32 and CRC-32, streaming classes
+  (`TInflater`, `TDeflater`), stream adapters and one-call functions on
+  `TBytes`, the `Compression.*` units (see "Compression"); it needs only
+  libsystem. libimage and gzip use it.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),

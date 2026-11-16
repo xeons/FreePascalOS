@@ -457,7 +457,13 @@ normalized (0-65535), not pixels.
       `TSettings.CheckForChanges` is the hook)
 
 ### 8. Richer graphics
-- [ ] libcompression: deflate
+- [x] libcompression: deflate (inflate: stored, fixed and dynamic blocks,
+      streaming, strict checks; deflate at levels 0-9 with hash chains and
+      lazy matching), zlib and gzip wrappers (several members), Adler-32 and
+      CRC-32; TInflater/TDeflater, stream adapters, one-call functions;
+      `gzip`; checked on the host against zlib (`make compression-test`)
+- [ ] libcompression: preset dictionaries, flushing mid-stream (sync and
+      full flush points), zip archives; `zcat`/`gunzip` names for gzip
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
