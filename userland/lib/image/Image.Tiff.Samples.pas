@@ -22,7 +22,8 @@
   pixel after pixel, each as stored (0 to 2 to the bits, less one).
 
   Samples of fewer than 8 bits are packed from the highest bit of each
-  byte; 16-bit ones are in the file's byte order. Subsampled YCbCr
+  byte; 16- and 32-bit ones are in the file's byte order (32-bit ones
+  are floating point, given as their bits). Subsampled YCbCr
   gives each pixel the luma of its own and the Cb and Cr of its block.
 }
 unit Image.Tiff.Samples;
@@ -64,6 +65,16 @@ begin
           Exit((LongWord(Line[Position]) shl 8) or Line[Position + 1])
         else
           Exit((LongWord(Line[Position + 1]) shl 8) or Line[Position]);
+      end;
+    32:
+      begin
+        Position := BitOffset shr 3;
+        if BigEndian then
+          Exit((LongWord(Line[Position]) shl 24) or (LongWord(Line[Position + 1]) shl 16) or
+            (LongWord(Line[Position + 2]) shl 8) or Line[Position + 3])
+        else
+          Exit((LongWord(Line[Position + 3]) shl 24) or (LongWord(Line[Position + 2]) shl 16) or
+            (LongWord(Line[Position + 1]) shl 8) or Line[Position]);
       end;
   end;
   Value := 0;
