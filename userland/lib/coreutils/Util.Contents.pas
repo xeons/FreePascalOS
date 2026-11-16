@@ -41,6 +41,8 @@ uses
   Util.Accounts,
   Util.Commands,
   Util.RegularExpressions,
+  Util.LineCompletion,
+  Util.LineEditing,
   Util.LineEditor,
   Util.Globbing,
   Util.Passwords,

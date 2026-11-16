@@ -25,8 +25,7 @@
 }
 unit Sys.KernelOptions;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -34,92 +33,68 @@ const
   KernelOptionsCapacity = 512;
 
 { True if the flag Name (or a name=value pair of that name) is given. }
-function KernelOptionIsSet(Name: PChar): Boolean;
-{ Copies the value of the name=value option Name into Value (at most
-  Capacity - 1 characters); False if the option is not given. }
-function GetKernelOption(Name: PChar; Value: PChar; Capacity: PtrUInt): Boolean;
+function KernelOptionIsSet(const Name: string): Boolean;
+{ The value of the name=value option Name; False (Value empty) if the
+  option is not given. }
+function GetKernelOption(const Name: string; out Value: string): Boolean;
 
 implementation
 
 uses
-  Runtime.Text,
   Sys.Kernel;
 
 { The line, read afresh: it is short, and asked for rarely. }
-procedure ReadOptions(Line: PChar);
+function ReadOptions: string;
+var
+  Line: array[0..KernelOptionsCapacity - 1] of Char;
 begin
-  if KernelGetKernelOptions(Line, KernelOptionsCapacity) < 0 then
-    Line^ := #0;
+  if KernelGetKernelOptions(@Line[0], KernelOptionsCapacity) < 0 then
+    Exit('');
+  Line[KernelOptionsCapacity - 1] := #0;
+  Result := PChar(@Line[0]);
 end;
 
-{ The word of Line named Name: a pointer just past the name (at '=',
-  a space or the end), or nil. }
-function FindWord(Line: PChar; Name: PChar): PChar;
+{ The word of the options named Name ("name" or "name=value"); False if
+  there is none. }
+function FindWord(const Name: string; out Word: string): Boolean;
 var
-  WordStart: PChar;
-  NameLength: PtrUInt;
-  Index: PtrUInt;
-  Matches: Boolean;
-  AfterName: Char;
+  Line: string;
+  Start: Integer;
+  Finish: Integer;
 begin
-  NameLength := TextLength(Name);
-  WordStart := Line;
-  while WordStart^ <> #0 do
+  Line := ReadOptions;
+  Start := 1;
+  while Start <= Length(Line) do
   begin
-    while WordStart^ = ' ' do
-      Inc(WordStart);
-    if WordStart^ = #0 then
-      Break;
-    Matches := True;
-    Index := 0;
-    while Matches and (Index < NameLength) do
-    begin
-      if WordStart[Index] <> Name[Index] then
-        Matches := False;
-      Inc(Index);
-    end;
-    if Matches then
-    begin
-      AfterName := WordStart[NameLength];
-      if (AfterName = #0) or (AfterName = ' ') or (AfterName = '=') then
-        Exit(@WordStart[NameLength]);
-    end;
-    while (WordStart^ <> ' ') and (WordStart^ <> #0) do
-      Inc(WordStart);
+    while (Start <= Length(Line)) and (Line[Start] = ' ') do
+      Inc(Start);
+    Finish := Start;
+    while (Finish <= Length(Line)) and (Line[Finish] <> ' ') do
+      Inc(Finish);
+    Word := Copy(Line, Start, Finish - Start);
+    if (Word <> '') and ((Word = Name) or (Copy(Word, 1, Length(Name) + 1) = Name + '=')) then
+      Exit(True);
+    Start := Finish;
   end;
-  Result := nil;
-end;
-
-function KernelOptionIsSet(Name: PChar): Boolean;
-var
-  Line: array[0..KernelOptionsCapacity - 1] of Char;
-begin
-  ReadOptions(@Line[0]);
-  Result := FindWord(@Line[0], Name) <> nil;
-end;
-
-function GetKernelOption(Name: PChar; Value: PChar; Capacity: PtrUInt): Boolean;
-var
-  Line: array[0..KernelOptionsCapacity - 1] of Char;
-  AfterName: PChar;
-  Length: PtrUInt;
-begin
+  Word := '';
   Result := False;
-  if Capacity = 0 then
-    Exit;
-  ReadOptions(@Line[0]);
-  AfterName := FindWord(@Line[0], Name);
-  if (AfterName = nil) or (AfterName^ <> '=') then
-    Exit;
-  Inc(AfterName);
-  Length := 0;
-  while (AfterName[Length] <> ' ') and (AfterName[Length] <> #0) and (Length + 1 < Capacity) do
-  begin
-    Value[Length] := AfterName[Length];
-    Inc(Length);
-  end;
-  Value[Length] := #0;
-  Result := True;
+end;
+
+function KernelOptionIsSet(const Name: string): Boolean;
+var
+  Word: string;
+begin
+  Result := FindWord(Name, Word);
+end;
+
+function GetKernelOption(const Name: string; out Value: string): Boolean;
+var
+  Word: string;
+begin
+  Value := '';
+  Result := FindWord(Name, Word) and (Length(Word) > Length(Name));
+  if Result then
+    Value := Copy(Word, Length(Name) + 2, MaxInt);
 end;
 
 end.

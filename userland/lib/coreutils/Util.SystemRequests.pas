@@ -55,8 +55,7 @@ begin
     if Password <> nil then
     begin
       SetRequestText(@Request.Authorization[0], SystemPasswordCapacity, Password);
-      ZeroMemory(Password, TextLength(Password));
-      FreeMemory(Password);
+      ForgetPassword(Password);
     end;
   end;
   Result := AskSystemSettings(Request);

@@ -24,39 +24,30 @@
 unit Util.Sizes;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
-function FormatHumanSize(Size: QWord): string; overload;
-{ Writes into Buffer (at least 16 characters) and returns it. }
-function FormatHumanSize(Size: QWord; Buffer: PChar): PChar; overload;
+function FormatHumanSize(Size: QWord): string;
 { Accepts a decimal number with an optional suffix K, M, G, T (powers of
   1024) or KB, MB, GB, TB (powers of 1000). }
-function ParseSize(const Text: string; out Size: QWord): Boolean; overload;
-function ParseSize(Text: PChar; out Size: QWord): Boolean; overload;
+function ParseSize(const Text: string; out Size: QWord): Boolean;
 
 implementation
 
 uses
-  Runtime.Text,
-  Sys.Text;
+  SysUtils,
+  Util.Numbers;
 
-function FormatHumanSize(Size: QWord; Buffer: PChar): PChar;
+function FormatHumanSize(Size: QWord): string;
 const
   Units: array[0..6] of Char = ('B', 'K', 'M', 'G', 'T', 'P', 'E');
 var
   UnitIndex: Integer;
   Tenths: QWord;
   Divisor: QWord;
-  NumberText: TNumberText;
-  Position: PtrUInt;
 begin
   if Size < 1024 then
-  begin
-    CopyText(Buffer, FormatDecimal(Size, NumberText), 16);
-    Exit(Buffer);
-  end;
+    Exit(IntToStr(Size));
 
   UnitIndex := 0;
   Divisor := 1;
@@ -69,64 +60,37 @@ begin
     numbers above. }
   Tenths := (Size * 10 + Divisor - 1) div Divisor;
   if Tenths >= 100 then
-  begin
-    CopyText(Buffer, FormatDecimal((Tenths + 9) div 10, NumberText), 16);
-    Position := TextLength(Buffer);
-  end
+    Result := IntToStr((Tenths + 9) div 10)
   else
-  begin
-    CopyText(Buffer, FormatDecimal(Tenths div 10, NumberText), 16);
-    Position := TextLength(Buffer);
-    Buffer[Position] := '.';
-    Buffer[Position + 1] := Char(Ord('0') + Tenths mod 10);
-    Position := Position + 2;
-  end;
-  Buffer[Position] := Units[UnitIndex];
-  Buffer[Position + 1] := #0;
-  Result := Buffer;
-end;
-
-function FormatHumanSize(Size: QWord): string;
-var
-  Buffer: array[0..15] of Char;
-begin
-  Result := FormatHumanSize(Size, @Buffer[0]);
+    Result := IntToStr(Tenths div 10) + '.' + Char(Ord('0') + Tenths mod 10);
+  Result := Result + Units[UnitIndex];
 end;
 
 function ParseSize(const Text: string; out Size: QWord): Boolean;
-begin
-  Result := ParseSize(PChar(Text), Size);
-end;
-
-function ParseSize(Text: PChar; out Size: QWord): Boolean;
 var
-  Digits: array[0..31] of Char;
-  Length: PtrUInt;
+  DigitCount: Integer;
+  Suffix: string;
   Multiplier: QWord;
   Base: QWord;
   Value: QWord;
-  SuffixStart: PtrUInt;
 begin
   Size := 0;
-  Length := TextLength(Text);
-  SuffixStart := 0;
-  while (SuffixStart < Length) and IsDigit(Text[SuffixStart]) do
-    Inc(SuffixStart);
-  if (SuffixStart = 0) or (SuffixStart >= SizeOf(Digits)) then
-    Exit(False);
-  CopyText(@Digits[0], Text, SuffixStart + 1);
-  if not ParseUnsigned(@Digits[0], Value) then
+  DigitCount := 0;
+  while (DigitCount < Length(Text)) and (Text[DigitCount + 1] in ['0'..'9']) do
+    Inc(DigitCount);
+  if (DigitCount = 0) or not ParseUnsignedDecimal(Copy(Text, 1, DigitCount), Value) then
     Exit(False);
 
   Multiplier := 1;
-  if SuffixStart < Length then
+  Suffix := UpperCase(Copy(Text, DigitCount + 1, MaxInt));
+  if Suffix <> '' then
   begin
     Base := 1024;
-    if (Length = SuffixStart + 2) and (ToUpperCase(Text[SuffixStart + 1]) = 'B') then
+    if (Length(Suffix) = 2) and (Suffix[2] = 'B') then
       Base := 1000
-    else if Length <> SuffixStart + 1 then
+    else if Length(Suffix) <> 1 then
       Exit(False);
-    case ToUpperCase(Text[SuffixStart]) of
+    case Suffix[1] of
       'K': Multiplier := Base;
       'M': Multiplier := Base * Base;
       'G': Multiplier := Base * Base * Base;

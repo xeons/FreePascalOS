@@ -47,17 +47,6 @@ const
     'Change the password of USER (by default, the user running passwd).'#10;
   StatusFailed = 1;
 
-{ Passwords stay in heap PChars (not reference counted strings, which
-  leave copies behind) so they can be wiped once used. }
-procedure Forget(var Text: PChar);
-begin
-  if Text = nil then
-    Exit;
-  ZeroMemory(Text, StrLen(Text));
-  FreeMemory(Text);
-  Text := nil;
-end;
-
 var
   CommandLine: TCommandLine;
   TargetId: LongWord;
@@ -88,12 +77,12 @@ begin
     if not HasEmptyPassword(TargetName) then
     begin
       Current := ReadPassword('Current password: ');
-      if (Current = nil) or (CheckPassword(PChar(TargetName), Current) <> PasswordAccepted) then
+      if (Current = nil) or (CheckPassword(TargetName, Current) <> PasswordAccepted) then
       begin
-        Forget(Current);
+        ForgetPassword(Current);
         Fail(StatusFailed, 'Authentication token manipulation error');
       end;
-      Forget(Current);
+      ForgetPassword(Current);
     end;
   end;
 
@@ -103,13 +92,13 @@ begin
   Repeated := ReadPassword('Retype new password: ');
   if (NewPassword = nil) or (Repeated = nil) or (StrComp(NewPassword, Repeated) <> 0) then
   begin
-    Forget(NewPassword);
-    Forget(Repeated);
+    ForgetPassword(NewPassword);
+    ForgetPassword(Repeated);
     Fail(StatusFailed, 'Passwords do not match');
   end;
-  Error := SetPassword(PChar(TargetName), NewPassword);
-  Forget(NewPassword);
-  Forget(Repeated);
+  Error := SetPassword(TargetName, NewPassword);
+  ForgetPassword(NewPassword);
+  ForgetPassword(Repeated);
   if Error <> ErrorNone then
     FailWithError(StatusFailed, Error, Format('cannot update ''%s''', [ShadowPath]));
   PrintStringLine('passwd: password updated successfully');

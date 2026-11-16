@@ -76,10 +76,10 @@ var
 begin
   Environment.Texts := nil;
   AddVariable(Environment, 'PATH', '/bin');
-  AddVariable(Environment, 'HOME', PChar(@Account.Home[0]));
-  AddVariable(Environment, 'USER', PChar(@Account.Name[0]));
-  AddVariable(Environment, 'LOGNAME', PChar(@Account.Name[0]));
-  AddVariable(Environment, 'SHELL', PChar(@Account.Shell[0]));
+  AddVariable(Environment, 'HOME', Account.Home);
+  AddVariable(Environment, 'USER', Account.Name);
+  AddVariable(Environment, 'LOGNAME', Account.Name);
+  AddVariable(Environment, 'SHELL', Account.Shell);
   AddVariable(Environment, 'TERM', 'console');
   AddVariable(Environment, ServiceNameVariable, Service.Definition.Name);
   AddVariable(Environment, ServicePortVariable, ControlPortName);

@@ -146,13 +146,8 @@ end;
 
 { The layout the kernel option keymap= names, or ''. }
 function BootLayout: string;
-var
-  Buffer: array[0..KeyboardLayoutNameCapacity - 1] of Char;
 begin
-  if GetKernelOption(BootLayoutOption, @Buffer[0], KeyboardLayoutNameCapacity) then
-    Result := string(PChar(@Buffer[0]))
-  else
-    Result := '';
+  GetKernelOption(BootLayoutOption, Result);
 end;
 
 function DefaultKeyboardSettings: TKeyboardSettings;

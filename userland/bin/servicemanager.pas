@@ -136,12 +136,12 @@ end;
 
 function ChooseBootMode: string;
 var
-  Value: array[0..63] of Char;
+  Value: string;
 begin
   if RequestedMode <> '' then
     Exit(RequestedMode);
-  if GetKernelOption(ModeOption, @Value[0], SizeOf(Value)) and (Value[0] <> #0) then
-    Exit(string(PChar(@Value[0])));
+  if GetKernelOption(ModeOption, Value) and (Value <> '') then
+    Exit(Value);
   Result := DefaultBootMode;
 end;
 

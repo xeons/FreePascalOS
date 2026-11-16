@@ -53,17 +53,6 @@ const
   OptionComment = 1;
   OptionAdministrator = 2;
 
-{ Passwords stay in heap PChars (not reference counted strings, which
-  leave copies behind) so they can be wiped once used. }
-procedure Forget(var Text: PChar);
-begin
-  if Text = nil then
-    Exit;
-  ZeroMemory(Text, StrLen(Text));
-  FreeMemory(Text);
-  Text := nil;
-end;
-
 var
   CommandLine: TCommandLine;
   Code: Integer;
@@ -97,13 +86,13 @@ begin
   Repeated := ReadPassword('Retype new password: ');
   if (NewPassword = nil) or (Repeated = nil) or (StrComp(NewPassword, Repeated) <> 0) then
   begin
-    Forget(NewPassword);
-    Forget(Repeated);
+    ForgetPassword(NewPassword);
+    ForgetPassword(Repeated);
     Fail(1, 'Passwords do not match');
   end;
   Error := AddUser(Name, FullName, NewPassword, Administrator);
-  Forget(NewPassword);
-  Forget(Repeated);
+  ForgetPassword(NewPassword);
+  ForgetPassword(Repeated);
   if Error = ErrorExists then
     Fail(1, Format('user ''%s'' already exists', [Name]));
   if Error <> ErrorNone then

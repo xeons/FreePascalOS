@@ -62,9 +62,9 @@ function IsValidFullName(const FullName: string): Boolean;
   name, ErrorExists for a user (or group) already there, ErrorNotFound
   for no such user or group, ErrorNotPermitted for root's account,
   which cannot be removed. }
-function AddUser(const Name, FullName, Password: string; Administrator: Boolean): LongInt;
+function AddUser(const Name, FullName: string; Password: PChar; Administrator: Boolean): LongInt;
 function RemoveUser(const Name: string; RemoveHome: Boolean): LongInt;
-function ChangePassword(const Name, Password: string): LongInt;
+function ChangePassword(const Name: string; Password: PChar): LongInt;
 function ChangeFullName(const Name, FullName: string): LongInt;
 { The user's supplementary groups become exactly Groups (their primary
   group stays theirs whatever the list says). }
@@ -255,7 +255,7 @@ begin
     Result := ChangeMode(PChar(Home), HomeFolderMode);
 end;
 
-function AddUser(const Name, FullName, Password: string; Administrator: Boolean): LongInt;
+function AddUser(const Name, FullName: string; Password: PChar; Administrator: Boolean): LongInt;
 var
   Tables: TAccountTables;
   Id: Int64;
@@ -282,7 +282,7 @@ begin
   AppendAccountLine(Tables.Groups, Name + ':x:' + IntToText(Id) + ':');
   AppendAccountLine(Tables.Users, Name + ':x:' + IntToText(Id) + ':' + IntToText(Id) + ':' + FullName + ':' +
     Home + ':' + DefaultShell);
-  PutPasswordInLines(Tables.Shadow, PChar(Name), PChar(Password));
+  PutPasswordInLines(Tables.Shadow, Name, Password);
   if Administrator then
   begin
     WheelIndex := FindAccountLine(Tables.Groups, AdministratorsGroup);
@@ -352,7 +352,7 @@ begin
       Result := ErrorIo;
 end;
 
-function ChangePassword(const Name, Password: string): LongInt;
+function ChangePassword(const Name: string; Password: PChar): LongInt;
 var
   Tables: TAccountTables;
 begin
@@ -364,7 +364,7 @@ begin
     CloseTables(Tables, False);
     Exit(ErrorNotFound);
   end;
-  PutPasswordInLines(Tables.Shadow, PChar(Name), PChar(Password));
+  PutPasswordInLines(Tables.Shadow, Name, Password);
   Result := CloseTables(Tables, True);
 end;
 

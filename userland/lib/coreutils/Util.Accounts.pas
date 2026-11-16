@@ -30,13 +30,11 @@
   The files are read when first wanted and read again whenever they
   changed since (their node, size or time differ: Util.AccountFiles
   writes a new file each time), so a program that runs for long, like
-  the session manager, sees an account added after it started. A name
-  returned earlier stays valid until the files change.
+  the session manager, sees an account added after it started.
 }
 unit Util.Accounts;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
@@ -44,6 +42,9 @@ const
   RootId = 0;
   PasswordFilePath = '/etc/passwd';
   GroupFilePath = '/etc/group';
+
+type
+  TIdArray = array of LongWord;
 
 { The running program's effective user and group. }
 function CurrentUserId: LongWord;
@@ -53,49 +54,35 @@ function CurrentGroupId: LongWord;
 function CurrentRealUserId: LongWord;
 function CurrentRealGroupId: LongWord;
 { The effective group followed by the supplementary groups, without
-  duplicates. Returns the count. }
-function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer; overload;
+  duplicates. }
+function CurrentGroups: TIdArray;
 
-type
-  TIdArray = array of LongWord;
-
-function CurrentGroups: TIdArray; overload;
-function ShellOf(UserId: LongWord): PChar;
-
-{ Returns nil if there is no such account. }
-function UserNameOf(UserId: LongWord): PChar;
-function GroupNameOf(GroupId: LongWord): PChar;
-{ The same as strings; False if there is no such account. }
+{ An account's name; False (Name empty) if there is no such account. }
 function FindUserName(UserId: LongWord; out Name: string): Boolean;
 function FindGroupName(GroupId: LongWord; out Name: string): Boolean;
 { The account's name, or its number when it has none. }
 function UserNameOrNumber(UserId: LongWord): string;
 function GroupNameOrNumber(GroupId: LongWord): string;
 { Accept names and decimal numbers. }
-function FindUserId(Name: PChar; out UserId: LongWord): Boolean; overload;
-function FindUserId(const Name: string; out UserId: LongWord): Boolean; overload;
-function FindGroupId(Name: PChar; out GroupId: LongWord): Boolean; overload;
-function FindGroupId(const Name: string; out GroupId: LongWord): Boolean; overload;
+function FindUserId(const Name: string; out UserId: LongWord): Boolean;
+function FindGroupId(const Name: string; out GroupId: LongWord): Boolean;
 function PrimaryGroupOf(UserId: LongWord; out GroupId: LongWord): Boolean;
-function HomeDirectoryOf(UserId: LongWord): PChar;
-{ ShellOf, HomeDirectoryOf and FullNameOf as strings. }
+{ A user's shell ("/bin/sh" without one) and home directory ("/" for an
+  unknown user). }
 function UserShell(UserId: LongWord): string;
 function UserHomeDirectory(UserId: LongWord): string;
-function UserFullName(UserId: LongWord): string;
-{ Number of groups listing UserName as a member, or with it as primary
-  group; their ids go to Groups (up to Capacity). }
-function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): Integer; overload;
-function GroupsOfUser(UserId: LongWord): TIdArray; overload;
 { The comment field of a user's account (their full name); '' if none. }
-function FullNameOf(UserId: LongWord): PChar;
+function UserFullName(UserId: LongWord): string;
+{ The groups listing the user as a member, after the user's primary
+  group. }
+function GroupsOfUser(UserId: LongWord): TIdArray;
 { The accounts in the order of the files: Index from 0; False past the
   last. }
 function UserAt(Index: Integer; out UserId: LongWord): Boolean;
 function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
 { True if the group lists user Name as a member (its primary members are
   not listed there). }
-function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean; overload;
-function GroupListsMember(GroupId: LongWord; const Name: string): Boolean; overload;
+function GroupListsMember(GroupId: LongWord; const Name: string): Boolean;
 { The files are looked at again on the next question, however soon (the
   account editing calls this after writing them). }
 procedure RecheckAccountFiles;
@@ -104,31 +91,32 @@ implementation
 
 uses
   SysUtils,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Files,
-  Sys.Time,
-  Sys.Memory,
-  Sys.Streams,
-  Sys.Text,
-  Sys.Kernel,
+  StrUtils,
   Abi.SystemCalls,
-  Util.Input;
+  Sys.Files,
+  Sys.Kernel,
+  Sys.Streams,
+  Sys.Time,
+  Util.Input,
+  Util.Numbers;
 
 type
   TAccount = record
-    Name: PChar;
+    Name: string;
     Id: LongWord;
     GroupId: LongWord;   { users: primary group }
-    Home: PChar;         { users }
-    Shell: PChar;        { users }
-    FullName: PChar;     { users: the comment field }
-    Members: PChar;      { groups: comma separated }
+    Home: string;        { users }
+    Shell: string;       { users }
+    FullName: string;    { users: the comment field }
+    Members: string;     { groups: comma separated }
   end;
   PAccount = ^TAccount;
+  TAccountTable = array of TAccount;
 
 const
   RecheckMilliseconds = 1000;
+  { name:password:uid:gid:comment:home:shell }
+  UserFieldCount = 7;
 
 type
   { What a file was when it was read, to tell when it changed. }
@@ -140,14 +128,9 @@ type
   end;
 
 var
-  Users: PAccount = nil;
-  UserCount: Integer = 0;
-  Groups: PAccount = nil;
-  GroupCount: Integer = 0;
+  Users: TAccountTable;
+  Groups: TAccountTable;
   Loaded: Boolean = False;
-  { The lines the tables point into. }
-  UserLines: TLineList;
-  GroupLines: TLineList;
   UserFileVersion: TFileVersion;
   GroupFileVersion: TFileVersion;
   { Looking at the files costs two calls, so it is done at most once a
@@ -155,94 +138,93 @@ var
   LastCheck: QWord;
   CheckDue: Boolean = True;
 
-{ Splits Line at ':' in place into at most Capacity fields. }
-function SplitFields(Line: PChar; Fields: PPChar; Capacity: Integer): Integer;
+{ Splits Line at ':' into at most Capacity fields (the last one keeps
+  any further colons). }
+function SplitFields(const Line: string; Capacity: Integer): TStringArray;
 var
-  Position: PtrUInt;
+  Start: Integer;
+  Position: Integer;
 begin
-  Result := 0;
-  if Capacity = 0 then
-    Exit;
-  Fields[0] := Line;
-  Result := 1;
-  Position := 0;
-  while Line[Position] <> #0 do
-  begin
-    if (Line[Position] = ':') and (Result < Capacity) then
+  Result := nil;
+  Start := 1;
+  for Position := 1 to Length(Line) do
+    if (Line[Position] = ':') and (Length(Result) < Capacity - 1) then
     begin
-      Line[Position] := #0;
-      Fields[Result] := Line + Position + 1;
-      Inc(Result);
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Copy(Line, Start, Position - Start);
+      Start := Position + 1;
     end;
-    Inc(Position);
-  end;
+  SetLength(Result, Length(Result) + 1);
+  Result[High(Result)] := Copy(Line, Start, MaxInt);
 end;
 
-procedure LoadFile(Path: PChar; IsGroupFile: Boolean; var Table: PAccount; var Count: Integer;
-  var Lines: TLineList);
+{ The field at Index, or Default when the line has fewer fields. }
+function FieldOr(const Fields: TStringArray; Index: Integer; const Default: string): string;
+begin
+  if Index < Length(Fields) then
+    Result := Fields[Index]
+  else
+    Result := Default;
+end;
+
+{ An account from one line; False for a line that is not one. }
+function ParseAccount(const Line: string; IsGroupFile: Boolean; out Account: TAccount): Boolean;
+var
+  Fields: TStringArray;
+  Number: Int64;
+begin
+  Account := Default(TAccount);
+  if (Line = '') or (Line[1] = '#') then
+    Exit(False);
+  Fields := SplitFields(Line, UserFieldCount);
+  if (Length(Fields) < 3) or not ParseDecimal(Fields[2], Number) then
+    Exit(False);
+  Account.Name := Fields[0];
+  Account.Id := LongWord(Number);
+  if IsGroupFile then
+    Account.Members := FieldOr(Fields, 3, '')
+  else
+  begin
+    if (Length(Fields) >= 4) and ParseDecimal(Fields[3], Number) then
+      Account.GroupId := LongWord(Number);
+    Account.FullName := FieldOr(Fields, 4, '');
+    Account.Home := FieldOr(Fields, 5, '/');
+    Account.Shell := FieldOr(Fields, 6, '');
+    if Account.Shell = '' then
+      Account.Shell := '/bin/sh';
+  end;
+  Result := True;
+end;
+
+function LoadFile(const Path: string; IsGroupFile: Boolean): TAccountTable;
 var
   Stream: PInputStream;
-  Index: Integer;
-  Fields: array[0..6] of PChar;
-  FieldCount: Integer;
-  Number: Int64;
-  Entry: PAccount;
+  Line: string;
+  HadLineEnd: Boolean;
+  Account: TAccount;
 begin
+  Result := nil;
   { A missing file just means no names; it is not worth a message. }
-  if not PathExists(Path) then
+  if not PathExists(PChar(Path)) then
     Exit;
   Stream := OpenInput(Path);
   if Stream = nil then
     Exit;
-  ReadAllLines(Stream, Lines);
-  CloseInput(Stream);
-  Table := PAccount(AllocateZeroedMemory(QWord(Lines.Count + 1) * SizeOf(TAccount)));
-  Count := 0;
-  for Index := 0 to Lines.Count - 1 do
-  begin
-    if (Lines.Items[Index][0] = '#') or (Lines.Items[Index][0] = #0) then
-      Continue;
-    FieldCount := SplitFields(Lines.Items[Index], @Fields[0], Length(Fields));
-    if (FieldCount < 3) or not ParseInteger(Fields[2], Number) then
-      Continue;
-    Entry := @Table[Count];
-    Entry^.Name := Fields[0];
-    Entry^.Id := LongWord(Number);
-    if IsGroupFile then
+  while ReadTextLine(Stream, Line, HadLineEnd) do
+    if ParseAccount(Line, IsGroupFile, Account) then
     begin
-      if FieldCount >= 4 then
-        Entry^.Members := Fields[3]
-      else
-        Entry^.Members := '';
-    end
-    else
-    begin
-      if (FieldCount >= 4) and ParseInteger(Fields[3], Number) then
-        Entry^.GroupId := LongWord(Number);
-      if FieldCount >= 5 then
-        Entry^.FullName := Fields[4]
-      else
-        Entry^.FullName := '';
-      if FieldCount >= 6 then
-        Entry^.Home := Fields[5]
-      else
-        Entry^.Home := '/';
-      if (FieldCount >= 7) and (Fields[6][0] <> #0) then
-        Entry^.Shell := Fields[6]
-      else
-        Entry^.Shell := '/bin/sh';
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Account;
     end;
-    Inc(Count);
-  end;
-  { The line texts stay in use by the table until the next reading. }
+  CloseInput(Stream);
 end;
 
-function VersionOf(Path: PChar): TFileVersion;
+function VersionOf(const Path: string): TFileVersion;
 var
   Information: TFileInformation;
 begin
-  FillMemory(@Result, SizeOf(Result), 0);
-  if GetFileInformation(Path, Information) <> ErrorNone then
+  Result := Default(TFileVersion);
+  if GetFileInformation(PChar(Path), Information) <> ErrorNone then
     Exit;
   Result.Exists := True;
   Result.NodeNumber := Information.NodeNumber;
@@ -254,18 +236,6 @@ function SameVersion(const First, Second: TFileVersion): Boolean;
 begin
   Result := (First.Exists = Second.Exists) and (First.NodeNumber = Second.NodeNumber) and
     (First.Size = Second.Size) and (First.ModificationTime = Second.ModificationTime);
-end;
-
-procedure ForgetTables;
-begin
-  FreeMemory(Users);
-  FreeMemory(Groups);
-  Users := nil;
-  Groups := nil;
-  UserCount := 0;
-  GroupCount := 0;
-  FreeLineList(UserLines);
-  FreeLineList(GroupLines);
 end;
 
 procedure EnsureLoaded;
@@ -281,18 +251,11 @@ begin
   GroupVersion := VersionOf(GroupFilePath);
   if Loaded and SameVersion(UserVersion, UserFileVersion) and SameVersion(GroupVersion, GroupFileVersion) then
     Exit;
-  if Loaded then
-    ForgetTables
-  else
-  begin
-    BeginLineList(UserLines);
-    BeginLineList(GroupLines);
-  end;
   Loaded := True;
   UserFileVersion := UserVersion;
   GroupFileVersion := GroupVersion;
-  LoadFile(PasswordFilePath, False, Users, UserCount, UserLines);
-  LoadFile(GroupFilePath, True, Groups, GroupCount, GroupLines);
+  Users := LoadFile(PasswordFilePath, False);
+  Groups := LoadFile(GroupFilePath, True);
 end;
 
 var
@@ -304,7 +267,7 @@ begin
   if HaveCredentials then
     Exit;
   if KernelGetCredentials(Credentials) < 0 then
-    ZeroMemory(@Credentials, SizeOf(Credentials));
+    Credentials := Default(TAbiCredentials);
   HaveCredentials := True;
 end;
 
@@ -332,309 +295,82 @@ begin
   Result := Credentials.RealGroupId;
 end;
 
-function CurrentGroups(Groups: PLongWord; Capacity: Integer): Integer;
+function ContainsId(const Ids: TIdArray; Id: LongWord): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Ids) do
+    if Ids[Index] = Id then
+      Exit(True);
+  Result := False;
+end;
+
+procedure AppendId(var Ids: TIdArray; Id: LongWord);
+begin
+  SetLength(Ids, Length(Ids) + 1);
+  Ids[High(Ids)] := Id;
+end;
+
+function CurrentGroups: TIdArray;
 var
   Index: LongWord;
-  Seen: Integer;
-  Duplicate: Boolean;
 begin
   EnsureCredentials;
-  Result := 0;
-  if Capacity < 1 then
-    Exit;
-  Groups[0] := Credentials.EffectiveGroupId;
-  Result := 1;
+  Result := nil;
+  AppendId(Result, Credentials.EffectiveGroupId);
   Index := 0;
-  while (Index < Credentials.GroupCount) and (Result < Capacity) do
+  while Index < Credentials.GroupCount do
   begin
-    Duplicate := False;
-    for Seen := 0 to Result - 1 do
-      if Groups[Seen] = Credentials.Groups[Index] then
-        Duplicate := True;
-    if not Duplicate then
-    begin
-      Groups[Result] := Credentials.Groups[Index];
-      Inc(Result);
-    end;
+    if not ContainsId(Result, Credentials.Groups[Index]) then
+      AppendId(Result, Credentials.Groups[Index]);
     Inc(Index);
   end;
 end;
 
-function FindById(Table: PAccount; Count: Integer; Id: LongWord): PAccount;
+function FindById(const Table: TAccountTable; Id: LongWord): PAccount;
 var
   Index: Integer;
 begin
-  for Index := 0 to Count - 1 do
+  for Index := 0 to High(Table) do
     if Table[Index].Id = Id then
       Exit(@Table[Index]);
   Result := nil;
 end;
 
-function FindByName(Table: PAccount; Count: Integer; Name: PChar): PAccount;
+function FindByName(const Table: TAccountTable; const Name: string): PAccount;
 var
   Index: Integer;
 begin
-  for Index := 0 to Count - 1 do
-    if TextIsEqual(Table[Index].Name, Name) then
+  for Index := 0 to High(Table) do
+    if Table[Index].Name = Name then
       Exit(@Table[Index]);
   Result := nil;
 end;
 
-function UserNameOf(UserId: LongWord): PChar;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Users, UserCount, UserId);
-  if Entry = nil then
-    Exit(nil);
-  Result := Entry^.Name;
-end;
-
-function GroupNameOf(GroupId: LongWord): PChar;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Groups, GroupCount, GroupId);
-  if Entry = nil then
-    Exit(nil);
-  Result := Entry^.Name;
-end;
-
-function FindUserId(Name: PChar; out UserId: LongWord): Boolean;
-var
-  Entry: PAccount;
-  Number: Int64;
-begin
-  EnsureLoaded;
-  UserId := 0;
-  Entry := FindByName(Users, UserCount, Name);
-  if Entry <> nil then
-  begin
-    UserId := Entry^.Id;
-    Exit(True);
-  end;
-  Result := ParseInteger(Name, Number) and (Number >= 0) and (Number <= High(LongWord));
-  if Result then
-    UserId := LongWord(Number);
-end;
-
-function FindGroupId(Name: PChar; out GroupId: LongWord): Boolean;
-var
-  Entry: PAccount;
-  Number: Int64;
-begin
-  EnsureLoaded;
-  GroupId := 0;
-  Entry := FindByName(Groups, GroupCount, Name);
-  if Entry <> nil then
-  begin
-    GroupId := Entry^.Id;
-    Exit(True);
-  end;
-  Result := ParseInteger(Name, Number) and (Number >= 0) and (Number <= High(LongWord));
-  if Result then
-    GroupId := LongWord(Number);
-end;
-
-function PrimaryGroupOf(UserId: LongWord; out GroupId: LongWord): Boolean;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  GroupId := 0;
-  Entry := FindById(Users, UserCount, UserId);
-  Result := Entry <> nil;
-  if Result then
-    GroupId := Entry^.GroupId;
-end;
-
-function ShellOf(UserId: LongWord): PChar;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Users, UserCount, UserId);
-  if Entry = nil then
-    Exit('/bin/sh');
-  Result := Entry^.Shell;
-end;
-
-function HomeDirectoryOf(UserId: LongWord): PChar;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Users, UserCount, UserId);
-  if Entry = nil then
-    Exit('/');
-  Result := Entry^.Home;
-end;
-
-{ True if Name appears in the comma separated Members list. }
-function IsMember(Members, Name: PChar): Boolean;
-var
-  Start: PChar;
-  Length: PtrUInt;
-begin
-  Length := TextLength(Name);
-  Start := Members;
-  while Start^ <> #0 do
-  begin
-    if TextStartsWith(Start, Name) and ((Start[Length] = ',') or (Start[Length] = #0)) then
-      Exit(True);
-    while (Start^ <> ',') and (Start^ <> #0) do
-      Inc(Start);
-    if Start^ = ',' then
-      Inc(Start);
-  end;
-  Result := False;
-end;
-
-function GroupsOfUser(UserId: LongWord; Groups: PLongWord; Capacity: Integer): Integer;
-var
-  Primary: LongWord;
-  Name: PChar;
-  Index: Integer;
-begin
-  EnsureLoaded;
-  Result := 0;
-  if PrimaryGroupOf(UserId, Primary) and (Capacity > 0) then
-  begin
-    Groups[0] := Primary;
-    Result := 1;
-  end;
-  Name := UserNameOf(UserId);
-  if Name = nil then
-    Exit;
-  for Index := 0 to GroupCount - 1 do
-  begin
-    if (Result > 0) and (Util.Accounts.Groups[Index].Id = Primary) then
-      Continue;
-    if IsMember(Util.Accounts.Groups[Index].Members, Name) and (Result < Capacity) then
-    begin
-      Groups[Result] := Util.Accounts.Groups[Index].Id;
-      Inc(Result);
-    end;
-  end;
-end;
-
-procedure RecheckAccountFiles;
-begin
-  CheckDue := True;
-end;
-
-function FullNameOf(UserId: LongWord): PChar;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Users, UserCount, UserId);
-  if (Entry = nil) or (Entry^.FullName = nil) then
-    Exit('');
-  Result := Entry^.FullName;
-end;
-
-function UserAt(Index: Integer; out UserId: LongWord): Boolean;
-begin
-  EnsureLoaded;
-  UserId := 0;
-  Result := (Index >= 0) and (Index < UserCount);
-  if Result then
-    UserId := Users[Index].Id;
-end;
-
-function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
-begin
-  EnsureLoaded;
-  GroupId := 0;
-  Result := (Index >= 0) and (Index < GroupCount);
-  if Result then
-    GroupId := Groups[Index].Id;
-end;
-
-function GroupListsMember(GroupId: LongWord; Name: PChar): Boolean;
-var
-  Entry: PAccount;
-begin
-  EnsureLoaded;
-  Entry := FindById(Groups, GroupCount, GroupId);
-  Result := (Entry <> nil) and IsMember(Entry^.Members, Name);
-end;
-
-{ --- Strings ----------------------------------------------------------- }
-
-const
-  { More groups than any account is in. }
-  GroupListCapacity = 1024;
-
-function CurrentGroups: TIdArray;
-begin
-  Result := nil;
-  SetLength(Result, GroupListCapacity);
-  SetLength(Result, CurrentGroups(@Result[0], GroupListCapacity));
-end;
-
-function GroupsOfUser(UserId: LongWord): TIdArray;
-begin
-  Result := nil;
-  SetLength(Result, GroupListCapacity);
-  SetLength(Result, GroupsOfUser(UserId, @Result[0], GroupListCapacity));
-end;
-
 function FindUserName(UserId: LongWord; out Name: string): Boolean;
 var
-  Text: PChar;
+  Entry: PAccount;
 begin
-  Text := UserNameOf(UserId);
-  Result := Text <> nil;
+  EnsureLoaded;
+  Entry := FindById(Users, UserId);
+  Result := Entry <> nil;
   if Result then
-    Name := Text
+    Name := Entry^.Name
   else
     Name := '';
 end;
 
 function FindGroupName(GroupId: LongWord; out Name: string): Boolean;
 var
-  Text: PChar;
+  Entry: PAccount;
 begin
-  Text := GroupNameOf(GroupId);
-  Result := Text <> nil;
+  EnsureLoaded;
+  Entry := FindById(Groups, GroupId);
+  Result := Entry <> nil;
   if Result then
-    Name := Text
+    Name := Entry^.Name
   else
     Name := '';
-end;
-
-function FindUserId(const Name: string; out UserId: LongWord): Boolean;
-begin
-  Result := FindUserId(PChar(Name), UserId);
-end;
-
-function FindGroupId(const Name: string; out GroupId: LongWord): Boolean;
-begin
-  Result := FindGroupId(PChar(Name), GroupId);
-end;
-
-function UserShell(UserId: LongWord): string;
-begin
-  Result := ShellOf(UserId);
-end;
-
-function UserHomeDirectory(UserId: LongWord): string;
-begin
-  Result := HomeDirectoryOf(UserId);
-end;
-
-function UserFullName(UserId: LongWord): string;
-begin
-  Result := FullNameOf(UserId);
-end;
-
-function GroupListsMember(GroupId: LongWord; const Name: string): Boolean;
-begin
-  Result := GroupListsMember(GroupId, PChar(Name));
 end;
 
 function UserNameOrNumber(UserId: LongWord): string;
@@ -647,6 +383,153 @@ function GroupNameOrNumber(GroupId: LongWord): string;
 begin
   if not FindGroupName(GroupId, Result) then
     Result := IntToStr(GroupId);
+end;
+
+{ The id of the account named Name in Table, or Name read as a number. }
+function FindIdOf(const Table: TAccountTable; const Name: string; out Id: LongWord): Boolean;
+var
+  Entry: PAccount;
+  Number: Int64;
+begin
+  Id := 0;
+  Entry := FindByName(Table, Name);
+  if Entry <> nil then
+  begin
+    Id := Entry^.Id;
+    Exit(True);
+  end;
+  Result := ParseDecimal(Name, Number) and (Number >= 0) and (Number <= High(LongWord));
+  if Result then
+    Id := LongWord(Number);
+end;
+
+function FindUserId(const Name: string; out UserId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  Result := FindIdOf(Users, Name, UserId);
+end;
+
+function FindGroupId(const Name: string; out GroupId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  Result := FindIdOf(Groups, Name, GroupId);
+end;
+
+function PrimaryGroupOf(UserId: LongWord; out GroupId: LongWord): Boolean;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  GroupId := 0;
+  Entry := FindById(Users, UserId);
+  Result := Entry <> nil;
+  if Result then
+    GroupId := Entry^.GroupId;
+end;
+
+function UserShell(UserId: LongWord): string;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Users, UserId);
+  if Entry = nil then
+    Exit('/bin/sh');
+  Result := Entry^.Shell;
+end;
+
+function UserHomeDirectory(UserId: LongWord): string;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Users, UserId);
+  if Entry = nil then
+    Exit('/');
+  Result := Entry^.Home;
+end;
+
+function UserFullName(UserId: LongWord): string;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Users, UserId);
+  if Entry = nil then
+    Exit('');
+  Result := Entry^.FullName;
+end;
+
+{ True if Name appears in the comma separated Members list. }
+function IsMember(const Members, Name: string): Boolean;
+var
+  Start: Integer;
+  Finish: Integer;
+begin
+  Start := 1;
+  while Start <= Length(Members) do
+  begin
+    Finish := PosEx(',', Members, Start);
+    if Finish = 0 then
+      Finish := Length(Members) + 1;
+    if Copy(Members, Start, Finish - Start) = Name then
+      Exit(True);
+    Start := Finish + 1;
+  end;
+  Result := False;
+end;
+
+function GroupsOfUser(UserId: LongWord): TIdArray;
+var
+  Primary: LongWord;
+  Name: string;
+  Index: Integer;
+begin
+  EnsureLoaded;
+  Result := nil;
+  if PrimaryGroupOf(UserId, Primary) then
+    AppendId(Result, Primary);
+  if not FindUserName(UserId, Name) then
+    Exit;
+  for Index := 0 to High(Groups) do
+  begin
+    if (Length(Result) > 0) and (Groups[Index].Id = Primary) then
+      Continue;
+    if IsMember(Groups[Index].Members, Name) then
+      AppendId(Result, Groups[Index].Id);
+  end;
+end;
+
+procedure RecheckAccountFiles;
+begin
+  CheckDue := True;
+end;
+
+function UserAt(Index: Integer; out UserId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  UserId := 0;
+  Result := (Index >= 0) and (Index < Length(Users));
+  if Result then
+    UserId := Users[Index].Id;
+end;
+
+function GroupAt(Index: Integer; out GroupId: LongWord): Boolean;
+begin
+  EnsureLoaded;
+  GroupId := 0;
+  Result := (Index >= 0) and (Index < Length(Groups));
+  if Result then
+    GroupId := Groups[Index].Id;
+end;
+
+function GroupListsMember(GroupId: LongWord; const Name: string): Boolean;
+var
+  Entry: PAccount;
+begin
+  EnsureLoaded;
+  Entry := FindById(Groups, GroupId);
+  Result := (Entry <> nil) and IsMember(Entry^.Members, Name);
 end;
 
 end.

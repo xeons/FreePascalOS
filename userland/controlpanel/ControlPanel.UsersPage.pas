@@ -154,8 +154,8 @@ begin
     Inc(Index);
     if (UserId <> RootId) and ((UserId < FirstPersonId) or (UserId >= NobodyId)) then
       Continue;
-    Name := UserNameOf(UserId);
-    FList.AddRow([Name, string(FullNameOf(UserId)), GroupListOf(UserId)]);
+    FindUserName(UserId, Name);
+    FList.AddRow([Name, UserFullName(UserId), GroupListOf(UserId)]);
     SetLength(FNames, Length(FNames) + 1);
     FNames[High(FNames)] := Name;
   end;
@@ -209,7 +209,7 @@ var
 begin
   if not ChosenUser(Name) or not FindUserId(Name, UserId) then
     Exit;
-  if not AskToRemoveUser(Window, Name, string(HomeDirectoryOf(UserId)), RemoveHome) then
+  if not AskToRemoveUser(Window, Name, UserHomeDirectory(UserId), RemoveHome) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestRemoveUser);
   SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
@@ -221,6 +221,7 @@ end;
 procedure TUsersPage.PasswordClicked(Sender: TControl);
 var
   Name: string;
+  OwnName: string;
   Own: Boolean;
   Current: string;
   NewPassword: string;
@@ -230,8 +231,7 @@ begin
   if not ChosenUser(Name) then
     Exit;
   { An ordinary user's own password: the present one proves it is them. }
-  Own := not RunningAsRoot and (UserNameOf(CurrentRealUserId) <> nil) and
-    (string(UserNameOf(CurrentRealUserId)) = Name);
+  Own := not RunningAsRoot and FindUserName(CurrentRealUserId, OwnName) and (OwnName = Name);
   if not AskForNewPassword(Window, Name, Own, Current, NewPassword) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestSetPassword);
@@ -269,9 +269,9 @@ begin
     if (GroupId = PrimaryGroup) or (GroupId >= NobodyId) then
       Continue;
     SetLength(AllGroups, Length(AllGroups) + 1);
-    AllGroups[High(AllGroups)] := GroupNameOf(GroupId);
+    FindGroupName(GroupId, AllGroups[High(AllGroups)]);
   end;
-  Properties.FullName := FullNameOf(UserId);
+  Properties.FullName := UserFullName(UserId);
   OldFullName := Properties.FullName;
   Properties.Groups := SupplementaryGroupsOf(Name);
   if not AskForProperties(Window, Name, AllGroups, Properties) then

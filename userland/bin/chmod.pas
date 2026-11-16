@@ -167,7 +167,6 @@ begin
     if GetFileInformation(PChar(Reference), Information) <> ErrorNone then
       Fail(1, Format('failed to get attributes of ''%s''', [Reference]));
     Changer.Change.Symbolic := '';
-    Changer.Change.Text := PChar(Changer.Change.Symbolic);
     Changer.Change.IsOctal := True;
     Changer.Change.OctalValue := Information.Mode and $FFF;
   end

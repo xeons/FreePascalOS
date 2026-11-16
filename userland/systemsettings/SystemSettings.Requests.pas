@@ -107,7 +107,7 @@ var
   Name: string;
 begin
   Name := TextOf(Request.UserName);
-  Result := AddUser(Name, TextOf(Request.FullName), TextOf(Request.Password),
+  Result := AddUser(Name, TextOf(Request.FullName), PChar(@Request.Password[0]),
     (Request.Flags and SystemFlagAdministrator) <> 0);
   if Result = ErrorNone then
     Say('user ' + Name + ' added');
@@ -132,7 +132,7 @@ var
   Name: string;
 begin
   Name := TextOf(Request.UserName);
-  Result := ChangePassword(Name, TextOf(Request.Password));
+  Result := ChangePassword(Name, PChar(@Request.Password[0]));
   if Result = ErrorNone then
     Say('password of ' + Name + ' changed');
 end;

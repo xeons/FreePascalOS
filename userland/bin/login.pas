@@ -124,23 +124,13 @@ begin
   Result := ReadTextLine(StandardInput, Name, HadLineEnd);
 end;
 
-{ Overwrites a password in memory once it has been checked. }
-procedure ErasePassword(var Password: string);
-begin
-  if Password = '' then
-    Exit;
-  UniqueString(Password);
-  FillChar(Password[1], Length(Password), 0);
-  Password := '';
-end;
-
 { Asks until someone gives a right name and password. False at the end
   of input or after MaximumTries. }
 function AskForAccount(out Account: TLoginAccount): Boolean;
 var
   Attempt: Integer;
   Name: string;
-  Password: string;
+  Password: PChar;
   Known: Boolean;
   Right: Boolean;
 begin
@@ -152,11 +142,12 @@ begin
     { An empty line asks again, and is not a wrong try. }
     if Name = '' then
       Continue;
-    Known := FindLoginAccount(PChar(Name), Account);
-    if not ReadPassword('Password: ', Password) then
+    Known := FindLoginAccount(Name, Account);
+    Password := ReadPassword('Password: ');
+    if Password = nil then
       Exit;
-    Right := Known and PasswordIsRight(Account, PChar(Password));
-    ErasePassword(Password);
+    Right := Known and PasswordIsRight(Account, Password);
+    ForgetPassword(Password);
     if Right then
       Exit(True);
     PrintStringLine('Login incorrect');
@@ -172,45 +163,47 @@ var
 begin
   if HasGivenUser then
   begin
-    if not FindLoginAccount(PChar(GivenUser), Account) then
+    if not FindLoginAccount(GivenUser, Account) then
       Fail(StatusNobodyLoggedIn, Format('user %s does not exist', [GivenUser]));
     Exit(True);
   end;
   if Automatic and AutomaticLoginName(AutomaticName) then
   begin
-    if FindLoginAccount(PChar(AutomaticName), Account) then
+    if FindLoginAccount(AutomaticName, Account) then
       Exit(True);
     Report(Format('automatic login: user %s does not exist', [AutomaticName]));
   end;
   Result := AskForAccount(Account);
 end;
 
+function UserProgramArguments(const Account: TLoginAccount; OnTerminal: Boolean): TStringArray;
+begin
+  if HasProgramPath then
+    Result := TStringArray.Create(ProgramPath)
+  else if OnTerminal then
+    Result := TStringArray.Create(Account.Shell, '-i')
+  else
+    Result := TStringArray.Create(Account.Shell);
+end;
+
 function RunUserProgram(const Account: TLoginAccount): LongInt;
 var
-  Arguments: TTextVector;
-  Shell: string;
+  Arguments: TStringArray;
   Options: TProcessOptions;
-  Environment: TLoginEnvironment;
   OnTerminal: Boolean;
   Process: Int64;
 begin
   OnTerminal := IsConsole(StandardInputHandle);
   DefaultProcessOptions(Options);
-  Shell := PChar(@Account.Shell[0]);
-  if HasProgramPath then
-    Arguments := TextVector([ProgramPath])
-  else if OnTerminal then
-    Arguments := TextVector([Shell, '-i'])
-  else
-    Arguments := TextVector([Shell]);
+  Arguments := UserProgramArguments(Account, OnTerminal);
   { On a terminal the user's program has its foreground; Ctrl-C there
     must not end login, which waits for it. }
   if OnTerminal then
     Options.GroupId := GroupNewInForeground;
   IgnoreInterrupts(True);
-  Process := StartAsUser(Account, Arguments[0], PPChar(@Arguments[0]), Options, Environment);
+  Process := StartAsUser(Account, Arguments, Options);
   if Process < 0 then
-    FailWithError(StatusNobodyLoggedIn, LongInt(-Process), Format('cannot run %s', [string(Arguments[0])]));
+    FailWithError(StatusNobodyLoggedIn, LongInt(-Process), Format('cannot run %s', [Arguments[0]]));
   Result := WaitForProgram(Process);
 end;
 

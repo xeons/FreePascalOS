@@ -51,6 +51,7 @@ uses
   Sys.Notifications,
   Sys.Processes,
   Sys.Streams,
+  Util.Input,
   Util.LineEditor,
   Shell.Output,
   Shell.Host,
@@ -146,7 +147,7 @@ begin
   FOnConsole := OnConsole;
   if not OnConsole then
     Exit;
-  BeginLineEditor(FEditor, PChar(HistoryFilePath), StandardErrorHandle);
+  FEditor := TLineEditor.Create(HistoryFilePath, StandardErrorHandle);
   { The prompt wakes for a request to end; one that comes while a
     command runs waits in the queue until the prompt. }
   TakeNotifications(NotifyEndRequests);
@@ -156,27 +157,22 @@ end;
 destructor TCommandReader.Destroy;
 begin
   if FOnConsole then
-    SaveHistory(FEditor);
+  begin
+    FEditor.SaveHistory;
+    FEditor.Free;
+  end;
   inherited Destroy;
 end;
 
 function TCommandReader.ReadFromInput(out Line: string): Boolean;
 var
-  Text: PChar;
   HadLineEnd: Boolean;
 begin
-  Line := '';
-  Result := ReadLine(StandardInput, Text, HadLineEnd);
-  if Result then
-  begin
-    Line := string(Text);
-    FreeMemory(Text);
-  end;
+  Result := ReadTextLine(StandardInput, Line, HadLineEnd);
 end;
 
 function TCommandReader.ReadFromConsole(Continuation: Boolean; out Line: string): Boolean;
 var
-  Text: PChar;
   EditResult: TEditResult;
   EndStatus: LongInt;
 begin
@@ -185,12 +181,10 @@ begin
     { "[1]+  Done  sleep 5" for jobs that ended since the last prompt. }
     if not Continuation then
       NotifyFinishedJobs;
-    EditResult := EditLine(FEditor, PChar(MakePrompt(Continuation)), Text);
+    EditResult := FEditor.EditLine(MakePrompt(Continuation), Line);
     if EditResult = EditLineReady then
     begin
-      AddHistoryLine(FEditor, Text);
-      Line := string(Text);
-      FreeMemory(Text);
+      FEditor.AddHistoryLine(Line);
       Exit(True);
     end;
     if (EditResult = EditWoken) and TakeEndRequest(EndStatus) then

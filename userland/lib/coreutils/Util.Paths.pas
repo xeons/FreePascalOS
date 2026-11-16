@@ -19,30 +19,22 @@
 {
   Path names. BaseName, DirectoryName and JoinPath are purely textual;
   CanonicalizePath consults the file system to resolve symbolic links.
-
-  Every routine works on strings; the PChar forms (whose results are new
-  heap strings) are kept for the tools not yet moved to strings.
 }
 unit Util.Paths;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
 { The last component: "/usr/lib/" -> "lib", "/" -> "/". }
-function BaseName(const Path: string): string; overload;
-function BaseName(Path: PChar): PChar; overload;
+function BaseName(const Path: string): string;
 { Everything before the last component: "/usr/lib" -> "/usr",
   "file" -> ".", "/" -> "/". }
-function DirectoryName(const Path: string): string; overload;
-function DirectoryName(Path: PChar): PChar; overload;
+function DirectoryName(const Path: string): string;
 { Directory + '/' + Name, without doubling the slash. }
-function JoinPath(const Directory, Name: string): string; overload;
-function JoinPath(Directory, Name: PChar): PChar; overload;
+function JoinPath(const Directory, Name: string): string;
 { True for "." and "..". }
-function IsDotEntry(const Name: string): Boolean; overload;
-function IsDotEntry(Name: PChar): Boolean; overload;
+function IsDotEntry(const Name: string): Boolean;
 
 type
   TCanonicalMode = (
@@ -57,10 +49,7 @@ type
   symbolic link replaced by its target. Returns 0, or an error code (and
   an empty Canonical). }
 function CanonicalizePath(const Path: string; Mode: TCanonicalMode; FollowLinks: Boolean;
-  out Canonical: string): LongInt; overload;
-{ The same with a new heap string (nil on an error). }
-function CanonicalizePath(Path: PChar; Mode: TCanonicalMode; FollowLinks: Boolean;
-  out Canonical: PChar): LongInt; overload;
+  out Canonical: string): LongInt;
 
 { The current directory; 0 or an error code. }
 function CurrentDirectoryPath(out Path: string): LongInt;
@@ -123,26 +112,6 @@ end;
 function IsDotEntry(const Name: string): Boolean;
 begin
   Result := (Name = '.') or (Name = '..');
-end;
-
-function BaseName(Path: PChar): PChar;
-begin
-  Result := DuplicateText(PChar(BaseName(string(Path))));
-end;
-
-function DirectoryName(Path: PChar): PChar;
-begin
-  Result := DuplicateText(PChar(DirectoryName(string(Path))));
-end;
-
-function JoinPath(Directory, Name: PChar): PChar;
-begin
-  Result := DuplicateText(PChar(JoinPath(string(Directory), string(Name))));
-end;
-
-function IsDotEntry(Name: PChar): Boolean;
-begin
-  Result := IsDotEntry(string(Name));
 end;
 
 function CurrentDirectoryPath(out Path: string): LongInt;
@@ -283,17 +252,6 @@ begin
   if State.Path = '' then
     State.Path := '/';
   Canonical := State.Path;
-end;
-
-function CanonicalizePath(Path: PChar; Mode: TCanonicalMode; FollowLinks: Boolean;
-  out Canonical: PChar): LongInt;
-var
-  CanonicalText: string;
-begin
-  Canonical := nil;
-  Result := CanonicalizePath(string(Path), Mode, FollowLinks, CanonicalText);
-  if Result = ErrorNone then
-    Canonical := DuplicateText(PChar(CanonicalText));
 end;
 
 end.
