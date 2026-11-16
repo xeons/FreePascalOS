@@ -111,11 +111,8 @@ begin
 end;
 
 function CountText(Packets, Bytes: QWord): string;
-var
-  Buffer: array[0..31] of Char;
 begin
-  FormatHumanSize(Bytes, @Buffer[0]);
-  Result := Format('%u packets, %u bytes (%s)', [Packets, Bytes, string(PChar(@Buffer[0]))]);
+  Result := Format('%u packets, %u bytes (%s)', [Packets, Bytes, FormatHumanSize(Bytes)]);
 end;
 
 function StateText(const Status: TInterfaceStatus): string;

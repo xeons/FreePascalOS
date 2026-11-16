@@ -58,6 +58,9 @@ uses
   Services.Logs;
 
 type
+  { nil-terminated, for StartProgram. }
+  TArgumentPointers = array of PChar;
+
   TLaunchEnvironment = record
     Texts: array of string;
     Values: array of PChar;
@@ -88,40 +91,36 @@ begin
   Environment.Values[High(Environment.Values)] := nil;
 end;
 
-procedure BuildArguments(Service: TService; out Arguments: array of PChar; out Count: LongInt);
+{ The program's path, its arguments and a closing nil, pointing into
+  Service's strings. }
+function BuildArguments(Service: TService): TArgumentPointers;
 var
   Index: LongInt;
 begin
-  Arguments[0] := PChar(Service.Definition.ProgramPath);
-  Count := 1;
+  Result := nil;
+  SetLength(Result, Length(Service.Definition.Arguments) + 2);
+  Result[0] := PChar(Service.Definition.ProgramPath);
   for Index := 0 to High(Service.Definition.Arguments) do
-    if Count < High(Arguments) then
-    begin
-      Arguments[Count] := PChar(Service.Definition.Arguments[Index]);
-      Inc(Count);
-    end;
-  Arguments[Count] := nil;
+    Result[Index + 1] := PChar(Service.Definition.Arguments[Index]);
+  Result[High(Result)] := nil;
 end;
 
 function LaunchService(Service: TService): LongInt;
-const
-  MaximumArguments = 32;
 var
   Account: TLoginAccount;
   Environment: TLaunchEnvironment;
-  Arguments: array[0..MaximumArguments] of PChar;
-  ArgumentCount: LongInt;
+  Arguments: TArgumentPointers;
   Options: TProcessOptions;
   NullInput: Int64;
   Process: Int64;
 begin
-  if not FindLoginAccount(PChar(Service.Definition.UserName), Account) then
+  if not FindLoginAccount(Service.Definition.UserName, Account) then
   begin
     Service.Reason := 'its user ' + Service.Definition.UserName + ' does not exist';
     Exit(ErrorNotFound);
   end;
   BuildEnvironment(Service, Account, Environment);
-  BuildArguments(Service, Arguments, ArgumentCount);
+  Arguments := BuildArguments(Service);
   DefaultProcessOptions(Options);
   Options.Environment := @Environment.Values[0];
   Options.WorkingDirectory := '/';

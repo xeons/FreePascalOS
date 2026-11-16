@@ -128,7 +128,7 @@ begin
     else if FMenu[Index].Tag = LogOffTag then
       Name := 'start-logoff'
     else
-      Name := 'start-' + string(DesktopPrograms[FMenu[Index].Tag].Command);
+      Name := 'start-' + DesktopPrograms[FMenu[Index].Tag].Command;
     Top := PopupMenuItemTop(FMenu, Index);
     SayPlace(Name, Popup, Scaled(40), Scaled(Top + Theme.MenuItemHeight div 2));
   end;

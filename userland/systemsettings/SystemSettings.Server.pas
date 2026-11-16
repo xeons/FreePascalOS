@@ -103,14 +103,8 @@ begin
 end;
 
 function CallerName(const Peer: TAbiChannelPeer): string;
-var
-  Name: PChar;
 begin
-  Name := UserNameOf(Peer.UserId);
-  if Name = nil then
-    Result := IntToStr(Peer.UserId)
-  else
-    Result := Name;
+  Result := UserNameOrNumber(Peer.UserId);
 end;
 
 { Serves the request waiting on connection Index; False if the

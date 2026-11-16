@@ -126,12 +126,31 @@ begin
   DrawIconOverlay(Canvas, FOverlay, Box);
 end;
 
-function NameOrNumber(Name: PChar; Number: LongWord): string;
+{ "name (number)", or the number alone for an account with no name. }
+function NameOrNumber(const Name: string; Number: LongWord): string;
 begin
-  if (Name = nil) or (Name^ = #0) then
+  if Name = '' then
     Result := IntToStr(Number)
   else
-    Result := StrPas(Name) + ' (' + IntToStr(Number) + ')';
+    Result := Name + ' (' + IntToStr(Number) + ')';
+end;
+
+function OwnerText(UserId: LongWord): string;
+var
+  Name: string;
+begin
+  if not FindUserName(UserId, Name) then
+    Name := '';
+  Result := NameOrNumber(Name, UserId);
+end;
+
+function GroupText(GroupId: LongWord): string;
+var
+  Name: string;
+begin
+  if not FindGroupName(GroupId, Name) then
+    Name := '';
+  Result := NameOrNumber(Name, GroupId);
 end;
 
 { "1 file", "3 files". }
@@ -195,8 +214,8 @@ begin
   AddPlainRow('Modified:', TimeText(AItem.ModificationTime));
   AddPlainRow('Accessed:', TimeText(AItem.AccessTime));
   AddPlainRow('Changed:', TimeText(AItem.ChangeTime));
-  AddPlainRow('Owner:', NameOrNumber(UserNameOf(AItem.OwnerId), AItem.OwnerId));
-  AddPlainRow('Group:', NameOrNumber(GroupNameOf(AItem.GroupId), AItem.GroupId));
+  AddPlainRow('Owner:', OwnerText(AItem.OwnerId));
+  AddPlainRow('Group:', GroupText(AItem.GroupId));
   AddPermissions;
   AddButton('Close', ResultOk, DialogWidth - Margin - 75, Height - Margin - 23, 75, 23, True, True);
   FocusControl(DefaultControl);

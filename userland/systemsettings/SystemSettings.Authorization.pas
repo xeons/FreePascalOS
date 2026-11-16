@@ -39,7 +39,7 @@ uses
 function AuthorizeRequest(const Peer: TAbiChannelPeer; const Request: TSystemSettingsRequest): LongInt;
 { True if Password proves the caller an administrator: root's password,
   or the caller's own when they are in "wheel". }
-function IsAdministratorPassword(UserId: LongWord; Password: PChar): Boolean;
+function IsAdministratorPassword(UserId: LongWord; const Password: string): Boolean;
 
 implementation
 
@@ -55,29 +55,27 @@ const
 
 function InAdministratorsGroup(UserId: LongWord): Boolean;
 var
-  Groups: array[0..MaximumSupplementaryGroups] of LongWord;
-  Count: Integer;
-  Index: Integer;
   Administrators: LongWord;
+  AdministratorsName: string;
+  GroupId: LongWord;
 begin
   Result := False;
-  if not FindGroupId(AdministratorsGroupName, Administrators) or (GroupNameOf(Administrators) = nil) then
+  if not FindGroupId(AdministratorsGroupName, Administrators)
+    or not FindGroupName(Administrators, AdministratorsName) then
     Exit;
-  Count := GroupsOfUser(UserId, @Groups[0], Length(Groups));
-  for Index := 0 to Count - 1 do
-    if Groups[Index] = Administrators then
+  for GroupId in GroupsOfUser(UserId) do
+    if GroupId = Administrators then
       Exit(True);
 end;
 
-function IsOwnPassword(UserId: LongWord; Password: PChar): Boolean;
+function IsOwnPassword(UserId: LongWord; const Password: string): Boolean;
 var
-  Name: PChar;
+  Name: string;
 begin
-  Name := UserNameOf(UserId);
-  Result := (Name <> nil) and (CheckPassword(Name, Password) = PasswordAccepted);
+  Result := FindUserName(UserId, Name) and (CheckPassword(Name, Password) = PasswordAccepted);
 end;
 
-function IsAdministratorPassword(UserId: LongWord; Password: PChar): Boolean;
+function IsAdministratorPassword(UserId: LongWord; const Password: string): Boolean;
 begin
   Result := (CheckPassword(RootName, Password) = PasswordAccepted) or
     (InAdministratorsGroup(UserId) and IsOwnPassword(UserId, Password));
@@ -85,15 +83,14 @@ end;
 
 function AboutTheCaller(const Peer: TAbiChannelPeer; const Request: TSystemSettingsRequest): Boolean;
 var
-  Name: PChar;
+  Name: string;
 begin
-  Name := UserNameOf(Peer.UserId);
-  Result := (Name <> nil) and (string(Name) = string(PChar(@Request.UserName[0])));
+  Result := FindUserName(Peer.UserId, Name) and (Name = string(PChar(@Request.UserName[0])));
 end;
 
 function AuthorizeRequest(const Peer: TAbiChannelPeer; const Request: TSystemSettingsRequest): LongInt;
 var
-  Password: PChar;
+  Password: string;
   Accepted: Boolean;
 begin
   if Peer.UserId = RootId then
@@ -102,7 +99,7 @@ begin
     SystemRequestSetVolume, SystemRequestSetDefaultOutput:
       Exit(ErrorNone);
   end;
-  Password := @Request.Authorization[0];
+  Password := PChar(@Request.Authorization[0]);
   { One's own password and full name, with one's own password. }
   if (Request.Code in [SystemRequestSetPassword, SystemRequestSetFullName]) and AboutTheCaller(Peer, Request) then
     Accepted := IsOwnPassword(Peer.UserId, Password) or IsAdministratorPassword(Peer.UserId, Password)

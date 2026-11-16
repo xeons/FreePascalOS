@@ -235,14 +235,9 @@ begin
 end;
 
 function TFolderView.OwnerNameOf(OwnerId: LongWord): string;
-var
-  Name: PChar;
 begin
-  Name := UserNameOf(OwnerId);
-  if (Name = nil) or (Name^ = #0) then
-    Result := IntToStr(OwnerId)
-  else
-    Result := StrPas(Name);
+  if not FindUserName(OwnerId, Result) or (Result = '') then
+    Result := IntToStr(OwnerId);
 end;
 
 procedure TFolderView.AddItemRow(const Item: TFolderItem);

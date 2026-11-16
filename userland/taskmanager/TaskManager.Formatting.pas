@@ -93,14 +93,8 @@ begin
 end;
 
 function UserName(UserId: LongWord): string;
-var
-  Name: PChar;
 begin
-  Name := UserNameOf(UserId);
-  if Name <> nil then
-    Result := StrPas(Name)
-  else
-    Result := IntToStr(UserId);
+  Result := UserNameOrNumber(UserId);
 end;
 
 end.

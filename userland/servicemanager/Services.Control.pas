@@ -53,8 +53,6 @@ implementation
 
 uses
   SysUtils,
-  Runtime.Memory,
-  Runtime.Text,
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Objects,
@@ -105,11 +103,17 @@ begin
   Dec(ClientCount);
 end;
 
+{ Text into a fixed field of the reply, cut to fit and terminated. }
+procedure PutText(Field: PChar; Capacity: Integer; const Text: string);
+begin
+  StrPLCopy(Field, Text, Capacity - 1);
+end;
+
 procedure DescribeService(Service: TService; out Status: TServiceStatus);
 begin
-  FillMemory(@Status, SizeOf(Status), 0);
-  CopyText(@Status.Name[0], PChar(Service.Definition.Name), ServiceNameCapacity);
-  CopyText(@Status.Description[0], PChar(Service.Definition.Description), ServiceTextCapacity);
+  Status := Default(TServiceStatus);
+  PutText(@Status.Name[0], ServiceNameCapacity, Service.Definition.Name);
+  PutText(@Status.Description[0], ServiceTextCapacity, Service.Definition.Description);
   Status.State := Service.State;
   Status.InBootMode := Ord(Service.InBootMode);
   Status.ProcessId := Service.ProcessId;
@@ -119,9 +123,9 @@ begin
   Status.StartedAt := Service.StartedAt;
   Status.ReadyAt := Service.ReadyAt;
   if Service.Problem <> '' then
-    CopyText(@Status.Reason[0], PChar(Service.Problem), ServiceTextCapacity)
+    PutText(@Status.Reason[0], ServiceTextCapacity, Service.Problem)
   else
-    CopyText(@Status.Reason[0], PChar(Service.Reason), ServiceTextCapacity);
+    PutText(@Status.Reason[0], ServiceTextCapacity, Service.Reason);
 end;
 
 procedure ListServices(var Reply: TServiceReply);

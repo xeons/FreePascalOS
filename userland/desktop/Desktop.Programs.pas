@@ -39,8 +39,8 @@ type
     PictureSwatches, PictureDialogs, PictureTaskManager);
 
   TDesktopProgram = record
-    Command: PChar;
-    Caption: PChar;
+    Command: string;
+    Caption: string;
     Picture: TProgramPicture;
   end;
 
@@ -61,12 +61,12 @@ const
 function StartDesktopProgram(Index: LongInt): Boolean;
 function StartDesktopProgram(Index: LongInt; out ProcessId: QWord): Boolean;
 { The index of the program started by Command, or -1. }
-function IndexOfDesktopProgram(Command: PChar): LongInt;
-{ Starts Command with one Argument (nil: none) in the same way; Caption
+function IndexOfDesktopProgram(const Command: string): LongInt;
+{ Starts Command with one Argument ('': none) in the same way; Caption
   names it in a message box if it cannot start. ProcessId is the started
   program's. }
-function StartCommand(Command, Argument: PChar; const Caption: string): Boolean;
-function StartCommand(Command, Argument: PChar; const Caption: string; out ProcessId: QWord): Boolean;
+function StartCommand(const Command, Argument, Caption: string): Boolean;
+function StartCommand(const Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
 
 implementation
 
@@ -87,14 +87,14 @@ begin
   ShowMessageBox('Cannot start ' + Caption, Caption + ' (' + Command + ') ' + Reason, MessageOk, SignError);
 end;
 
-function StartCommand(Command, Argument: PChar; const Caption: string): Boolean;
+function StartCommand(const Command, Argument, Caption: string): Boolean;
 var
   ProcessId: QWord;
 begin
   Result := StartCommand(Command, Argument, Caption, ProcessId);
 end;
 
-function StartCommand(Command, Argument: PChar; const Caption: string; out ProcessId: QWord): Boolean;
+function StartCommand(const Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
 var
   FullPath: array[0..PathCapacity - 1] of Char;
   Arguments: array[0..2] of PChar;
@@ -103,13 +103,15 @@ var
 begin
   Result := False;
   ProcessId := 0;
-  if not FindProgram(Command, @FullPath[0], PathCapacity) then
+  if not FindProgram(PChar(Command), @FullPath[0], PathCapacity) then
   begin
     ReportFailure(Caption, Command, 'is not installed.');
     Exit;
   end;
-  Arguments[0] := Command;
-  Arguments[1] := Argument;
+  Arguments[0] := PChar(Command);
+  Arguments[1] := nil;
+  if Argument <> '' then
+    Arguments[1] := PChar(Argument);
   Arguments[2] := nil;
   DefaultProcessOptions(Options);
   Options.GroupId := GroupNew;
@@ -122,10 +124,10 @@ begin
   ProcessId := QWord(ProcessIdOf(Process));
   { Nobody waits for it: the handle is not needed. }
   CloseHandle(Process);
-  if Argument <> nil then
-    Say('started ' + string(Command) + ' ' + string(Argument))
+  if Argument <> '' then
+    Say('started ' + Command + ' ' + Argument)
   else
-    Say('started ' + string(Command));
+    Say('started ' + Command);
   Result := True;
 end;
 
@@ -141,15 +143,15 @@ begin
   ProcessId := 0;
   if (Index < 0) or (Index >= DesktopProgramCount) then
     Exit(False);
-  Result := StartCommand(DesktopPrograms[Index].Command, nil, DesktopPrograms[Index].Caption, ProcessId);
+  Result := StartCommand(DesktopPrograms[Index].Command, '', DesktopPrograms[Index].Caption, ProcessId);
 end;
 
-function IndexOfDesktopProgram(Command: PChar): LongInt;
+function IndexOfDesktopProgram(const Command: string): LongInt;
 var
   Index: LongInt;
 begin
   for Index := 0 to DesktopProgramCount - 1 do
-    if StrComp(DesktopPrograms[Index].Command, Command) = 0 then
+    if DesktopPrograms[Index].Command = Command then
       Exit(Index);
   Result := -1;
 end;
