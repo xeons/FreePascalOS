@@ -380,6 +380,40 @@ normalized (0-65535), not pixels.
 - [x] Owned windows: a dialog stays above its owner; the owner disabled for real
       (the server refuses to activate it)
 - [x] Common dialogs: open and save a file, choose a colour, choose a font
+- [ ] Layout without hand-computed positions:
+  - [ ] Anchors (any of left, top, right, bottom: kept at their distance
+        from the parent's edges when it resizes; left and right together
+        stretch the control)
+  - [ ] Docking with margins and padding (Align exists: top, bottom, left,
+        right, client; add Margin and Padding, and a dock order)
+  - [ ] AutoSize (a control sized to its content: labels, buttons, check
+        boxes; containers to their children) and minimum and maximum sizes
+  - [ ] FlowLayoutPanel (children in a row or column, wrapping)
+  - [ ] TableLayoutPanel (rows and columns: fixed, automatic or a share of
+        what is left; spanning cells)
+  - [ ] SplitContainer (two panels with a splitter between them, either
+        orientation, minimum sizes, one panel fixed when resizing; builds
+        on TSplitter)
+  - [ ] Panel improvements: scrolling when the content is larger (AutoScroll)
+- [ ] More controls:
+  - [ ] Checked list box (a check box per item, Space toggles, check events)
+  - [ ] Numeric up/down (an edit box with up and down buttons; minimum,
+        maximum, step, decimal places; arrow keys and the wheel)
+  - [ ] Calendar (a month grid: today, a selected date or range, first day
+        of the week, moving by month and year, keyboard navigation)
+  - [ ] Date and time picker (an edit box with fields for each part, a drop
+        down calendar; date, time, or both; formats; uses the time zone)
+  - [ ] Picture box (shows an image: normal, stretched, zoomed to fit,
+        centred; needs libimage from step 8 for files, surfaces before then)
+  - [ ] Tooltip component (a Hint text on any control, shown after the
+        pointer rests and hidden when it leaves or a key is pressed; the
+        tooltip window exists, the timing is left to each program now)
+  - [ ] Image list (images of one size, several sizes for DPI, shared by
+        list views, tree views, toolbars, tabs and menus)
+  - [ ] Timer component (OnTimer at an interval, Enabled; over the message
+        loop's window timers)
+  - [ ] Chart control (line, bar, area and pie; axes, legends, scaling;
+        Task Manager's graphs could move to it)
 
 ### 6. Desktop shell
 - [x] Pseudo-terminals (for terminal windows)
