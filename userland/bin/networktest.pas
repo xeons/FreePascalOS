@@ -29,11 +29,15 @@
   a megabyte each way (many windows; a sender thread and a server
   thread), a connection refused, a non-blocking connect waited for with
   WaitForSocket, a listener waited for with WaitForHandles, and the
-  socket listing. Then the network card: the network setup program
-  configures eth0 from /etc/settings/Network.settings (10.0.2.15/24,
-  the default route through 10.0.2.2, the DNS server 10.0.2.3), QEMU's
-  gateway 10.0.2.2 answers pings and appears in the ARP cache, and a TCP
-  connection to 10.0.2.100 port 7 (QEMU forwards it to "cat") echoes.
+  socket listing. Then the network card: the network service (started
+  here) obtains 10.0.2.15/24 for eth0 from QEMU's DHCP server, with the
+  default route through 10.0.2.2 and the DNS server 10.0.2.3, all in
+  /var/lib/network/eth0.state; QEMU's gateway 10.0.2.2 answers pings
+  and appears in the ARP cache, and a TCP connection to 10.0.2.100 port
+  7 (QEMU forwards it to "cat") echoes. A change to Network.settings
+  (eth1 static, then back to none) is applied at once; stopping the
+  service gives the lease back, and it is started again (and left
+  running) for the checks coretest makes next.
 
   --unprivileged (run as an ordinary user): raw sockets, ports below
   1024, binding to an interface and every configuration change are
@@ -47,6 +51,7 @@ program NetworkTest;
 {$pointermath on}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Runtime.Memory,
   Runtime.Text,
@@ -58,7 +63,8 @@ uses
   Sys.Processes,
   Sys.Sockets,
   Sys.Streams,
-  Sys.Threads;
+  Sys.Threads,
+  NetworkTest.Service;
 
 const
   WaitMilliseconds = 5000;
@@ -408,21 +414,6 @@ end;
 
 { --- The network card -------------------------------------------------------- }
 
-function RunNetworkSetup: LongInt;
-var
-  Arguments: array[0..1] of PChar;
-  Options: TProcessOptions;
-  Process: Int64;
-begin
-  Arguments[0] := 'networksetup';
-  Arguments[1] := nil;
-  DefaultProcessOptions(Options);
-  Process := StartProgram('/bin/networksetup', @Arguments[0], Options);
-  if Process < 0 then
-    Exit(LongInt(Process));
-  Result := WaitForProgram(Process);
-end;
-
 function HasDefaultRouteThrough(constref Gateway: TInternetAddress): Boolean;
 var
   Routes: TRouteList;
@@ -483,11 +474,88 @@ begin
   CloseSocket(Socket);
 end;
 
+function InterfaceHasAddress(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): Boolean;
+var
+  Description: TAbiNetworkInterface;
+begin
+  Result := FindNetworkInterface(Name, Description) and (Description.AddressCount = 1) and
+    AddressesAreEqual(InterfaceAddressHost(Description.Addresses[0]), Address) and
+    (Description.Addresses[0].PrefixLength = PrefixLength);
+end;
+
+function InterfaceHasNoAddress(Name: PChar): Boolean;
+var
+  Description: TAbiNetworkInterface;
+begin
+  Result := FindNetworkInterface(Name, Description) and (Description.AddressCount = 0);
+end;
+
+{ Waits until Name has Address/PrefixLength (or, with Wanted False, no
+  address at all). }
+function WaitForInterfaceAddress(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+  Wanted: Boolean; Milliseconds: QWord): Boolean;
+var
+  Waited: QWord;
+begin
+  Waited := 0;
+  repeat
+    if Wanted and InterfaceHasAddress(Name, Address, PrefixLength) then
+      Exit(True);
+    if not Wanted and InterfaceHasNoAddress(Name) then
+      Exit(True);
+    SleepMilliseconds(100);
+    Waited := Waited + 100;
+  until Waited >= Milliseconds;
+  Result := False;
+end;
+
+{ The state file of eth0 says what QEMU's DHCP server gave. }
+procedure CheckDhcpStateFile;
+begin
+  Check('eth0.state: Method dhcp', StateValue('eth0', 'Method') = 'dhcp');
+  Check('eth0.state: State configured', StateValue('eth0', 'State') = 'configured');
+  Check('eth0.state: Address 10.0.2.15/24', StateValue('eth0', 'Address') = '10.0.2.15/24');
+  Check('eth0.state: Gateway 10.0.2.2', StateValue('eth0', 'Gateway') = '10.0.2.2');
+  Check('eth0.state: DnsServers ["10.0.2.3"]', StateValue('eth0', 'DnsServers') = '10.0.2.3');
+  Check('eth0.state: DhcpServer 10.0.2.2', StateValue('eth0', 'DhcpServer') = '10.0.2.2');
+  Check('eth0.state: a lease of some seconds', StrToIntDef(StateValue('eth0', 'LeaseSeconds'), 0) > 0);
+  Check('eth0.state: the time it was obtained', StrToInt64Def(StateValue('eth0', 'LeaseObtained'), 0) > 0);
+end;
+
+{ The Control Panel's way: the settings file changes, the service
+  applies it at once. }
+procedure CheckLiveSettingsChange;
+var
+  Description: TAbiNetworkInterface;
+  Address: TInternetAddress;
+begin
+  if not FindNetworkInterface('eth1', Description) then
+  begin
+    Check('there is a second network card (eth1)', False);
+    Exit;
+  end;
+  Address := Ipv4Address(192, 168, 50, 2);
+  Check('eth1 is left alone at first (Method none)', StateValue('eth1', 'Method') = 'none');
+  Check('Network.settings: eth1 made static', SetStaticAddressSetting('eth1', '192.168.50.2/24'));
+  Check('the service gives eth1 192.168.50.2/24 at once',
+    WaitForInterfaceAddress('eth1', Address, 24, True, 10000));
+  Check('eth1.state: static, configured, 192.168.50.2/24',
+    WaitForStateValue('eth1', 'Address', '192.168.50.2/24', 5000) and (StateValue('eth1', 'Method') = 'static') and
+    WaitForStateValue('eth1', 'State', 'configured', 5000));
+  Check('Network.settings: eth1 back to none', RemoveInterfaceSetting('eth1'));
+  Check('the service takes the address it set away again',
+    WaitForInterfaceAddress('eth1', Address, 24, False, 10000));
+  Check('eth1.state: none again', WaitForStateValue('eth1', 'Method', 'none', 5000) and
+    WaitForStateValue('eth1', 'Address', '', 5000));
+end;
+
 procedure TestNetworkCard;
 var
   Description: TAbiNetworkInterface;
   Gateway: TInternetAddress;
   Servers: TAbiDnsServers;
+  Service: Int64;
+  Status: LongInt;
 begin
   if not FindNetworkInterface('eth0', Description) then
   begin
@@ -495,13 +563,16 @@ begin
     Exit;
   end;
   Gateway := Ipv4Address(10, 0, 2, 2);
-  Check('networksetup applies /etc/settings/Network.settings', RunNetworkSetup = 0);
-  Check('eth0 is up with 10.0.2.15/24', FindNetworkInterface('eth0', Description) and
-    ((Description.Flags and InterfaceFlagUp) <> 0) and (Description.AddressCount = 1) and
-    AddressesAreEqual(InterfaceAddressHost(Description.Addresses[0]), Ipv4Address(10, 0, 2, 15)) and
-    (Description.Addresses[0].PrefixLength = 24));
-  Check('the default route goes through 10.0.2.2 on eth0', HasDefaultRouteThrough(Gateway));
-  Check('the DNS server is 10.0.2.3', (GetDnsServers(Servers) = ErrorNone) and (Servers.Count = 1) and
+  Service := StartNetworkService;
+  Check('the network service starts', Service >= 0);
+  if Service < 0 then
+    Exit;
+  Check('DHCP: eth0 is configured within 20 seconds', WaitForStateValue('eth0', 'State', 'configured', 20000));
+  Check('DHCP: eth0 is up with 10.0.2.15/24', FindNetworkInterface('eth0', Description) and
+    ((Description.Flags and InterfaceFlagUp) <> 0) and InterfaceHasAddress('eth0', Ipv4Address(10, 0, 2, 15), 24));
+  CheckDhcpStateFile;
+  Check('DHCP: the default route goes through 10.0.2.2 on eth0', HasDefaultRouteThrough(Gateway));
+  Check('DHCP: the DNS server is 10.0.2.3', (GetDnsServers(Servers) = ErrorNone) and (Servers.Count = 1) and
     AddressesAreEqual(SocketAddressHost(Servers.Servers[0]), Ipv4Address(10, 0, 2, 3)));
   Check('ping 10.0.2.2 (QEMU''s gateway) answers', Ping(Gateway, 3) > 0);
   Check('10.0.2.2 is in the ARP cache', GatewayIsInArpCache(Gateway));
@@ -509,6 +580,21 @@ begin
   Check('a TCP connection to 10.0.2.100 port 7 echoes', EchoServiceAnswers);
   Check('eth0 counted what went through it', FindNetworkInterface('eth0', Description) and
     (Description.Counters.ReceivedPackets > 0) and (Description.Counters.SentPackets > 0));
+  CheckLiveSettingsChange;
+
+  { Stopping gives the lease back. }
+  Status := StopNetworkService(Service, 10000);
+  Check('the network service ends when asked (status 0)', Status = 0);
+  Check('the lease is given back: eth0 has no address', InterfaceHasNoAddress('eth0'));
+  Check('eth0.state: down after the service stopped', StateValue('eth0', 'State') = 'down');
+
+  { Started again and left running for the checks that follow. }
+  Service := StartNetworkService;
+  Check('the network service starts again', Service >= 0);
+  Check('DHCP: eth0 is configured again', WaitForStateValue('eth0', 'State', 'configured', 20000) and
+    WaitForInterfaceAddress('eth0', Ipv4Address(10, 0, 2, 15), 24, True, 5000));
+  if Service >= 0 then
+    CloseHandle(Service);
 end;
 
 { --- What an ordinary user may not do ------------------------------------------ }

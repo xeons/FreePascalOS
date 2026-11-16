@@ -1,8 +1,15 @@
-# The network: gives the interfaces the static configuration of
-# /etc/settings/Network.settings (addresses, the default route, the DNS
-# servers) once at start, then ends. A DHCP client will take its place
-# for interfaces configured with "Method = dhcp".
-description   = Static network configuration
-program       = /bin/networksetup
+# The network: gives the interfaces the configuration of
+# /etc/settings/Network.settings - static addresses or DHCP leases, the
+# default routes, the DNS servers - and keeps it: leases renewed,
+# changes to the file applied as they are written, links and new
+# adapters followed. Each interface's state is in
+# /var/lib/network/NAME.state. Stopping it gives the leases back.
+description   = Network configuration and DHCP client
+program       = /bin/network
 modes         = text graphical
-restart       = never
+ready         = notify
+ready-timeout = 15
+restart       = on-failure
+restart-limit = 3
+restart-delay = 1
+stop-timeout  = 5

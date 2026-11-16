@@ -35,10 +35,16 @@ type
 function GetSystemInformation(out Information: TSystemInformation): LongInt;
 { Returns False when Index is past the last volume. }
 function GetVolume(Index: Integer; out Information: TVolumeInformation): Boolean;
+{ The machine's node name (its host name) into Buffer. }
+function GetNodeName(Buffer: PChar; Capacity: PtrUInt): LongInt;
+{ A new node name (root only): letters, digits, hyphens and dots,
+  starting with a letter or digit, 63 at most. }
+function SetNodeName(Name: PChar): LongInt;
 
 implementation
 
 uses
+  Runtime.Text,
   Sys.Kernel,
   Sys.Errors;
 
@@ -50,6 +56,22 @@ end;
 function GetVolume(Index: Integer; out Information: TVolumeInformation): Boolean;
 begin
   Result := KernelListVolumes(QWord(Index), Information) > 0;
+end;
+
+function GetNodeName(Buffer: PChar; Capacity: PtrUInt): LongInt;
+var
+  Information: TSystemInformation;
+begin
+  Result := GetSystemInformation(Information);
+  if Result = ErrorNone then
+    CopyText(Buffer, @Information.NodeName[0], Capacity)
+  else if Capacity > 0 then
+    Buffer[0] := #0;
+end;
+
+function SetNodeName(Name: PChar): LongInt;
+begin
+  Result := ErrorCodeOf(KernelSetNodeName(Name));
 end;
 
 end.

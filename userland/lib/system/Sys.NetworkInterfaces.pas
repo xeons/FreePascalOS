@@ -61,6 +61,12 @@ function ListArpEntries(out Entries: TArpEntryList): LongInt;
 function ListSockets(out Entries: TSocketInformationList): LongInt;
 function GetDnsServers(out Servers: TAbiDnsServers): LongInt;
 function SetDnsServers(constref Servers: TAbiDnsServers): LongInt;
+{ A handle (an automatic reset event) that becomes ready after every
+  change to the network's configuration: an adapter that appears, a
+  link that comes or goes, an interface turned on or off or given an
+  address, a route, the DNS servers. Or minus an error code. Closed with
+  CloseHandle (Sys.Objects). }
+function WatchNetworkChanges: Int64;
 
 { "52:54:00:12:34:56". }
 function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
@@ -263,6 +269,11 @@ end;
 function SetDnsServers(constref Servers: TAbiDnsServers): LongInt;
 begin
   Result := ErrorCodeOf(KernelSetDnsServers(Servers));
+end;
+
+function WatchNetworkChanges: Int64;
+begin
+  Result := KernelWatchNetworkChanges;
 end;
 
 function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;

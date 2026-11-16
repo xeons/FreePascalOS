@@ -23,7 +23,7 @@ session come up and the desktop shell runs as the user (the taskbar and
 the wallpaper in a screen dump, its lines in /var/log/session.log, read
 from a root shell on the serial console). On the serial console it logs
 in with a wrong password, then the right one, and asks `service list`
-and `ifconfig eth0` (the network service's static configuration, and a
+and `ifconfig eth0` (the address the network service obtained by DHCP, and a
 ping of QEMU's gateway),
 and as the user keeps a mouse speed in the user's settings (mousesettings
 --remember). The Control Panel, opened from the Start menu as the
@@ -394,8 +394,8 @@ checks.append(('service list: the graphical services run, the text console does 
                re.search(rb'serialconsole +running', listing) is not None and
                re.search(rb'console +stopped', listing) is not None))
 
-# The network service gave eth0 the static configuration of
-# /etc/settings/Network.settings at start, and QEMU's gateway answers.
+# The network service obtained eth0's address from QEMU's DHCP server, as
+# /etc/settings/Network.settings asks, and QEMU's gateway answers.
 start = len(received)
 type_on_serial(b'ifconfig eth0 | grep inet; ping -c 1 -W 5 10.0.2.2 | grep -c "bytes from"; n=DONE; echo NETWORK $n\r')
 networked = wait_for('NETWORK DONE', 20, start)

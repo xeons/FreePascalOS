@@ -113,6 +113,12 @@ const
   CallGetDnsServers = 122;
   { (ServersAddress): new DNS servers. Root only. }
   CallSetDnsServers = 123;
+  { (): an event handle (automatic reset) signaled after every change to
+    the network's configuration from now on: an adapter registered, a
+    link that came or went, an interface turned on or off or given an
+    address, a route or the DNS servers changed. The watcher looks again
+    (CallListNetworkInterfaces ...) when it is signaled. Anyone. }
+  CallWatchNetworkChanges = 125;
 
   AddressFamilyUnspecified = 0;
   AddressFamilyIPv4 = 2;

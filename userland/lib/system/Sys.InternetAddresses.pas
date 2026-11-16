@@ -40,6 +40,9 @@ const
   Ipv4AddressTextCapacity = 16;
   { With ":65535". }
   SocketAddressTextCapacity = 22;
+  { Any address, IPv6 ones included
+    ("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255" and its terminator). }
+  InternetAddressTextCapacity = 46;
 
 type
   TInternetAddress = record
@@ -60,6 +63,12 @@ function AddressIsUnspecified(constref Address: TInternetAddress): Boolean;
 
 { A dotted quad, each part 0-255 in decimal; nothing else in Text. }
 function ParseIpv4Address(Text: PChar; out Address: TInternetAddress): Boolean;
+{ An IPv6 address as RFC 4291 writes it: eight groups of up to four
+  hexadecimal digits, "::" for a run of zero groups, and an IPv4 address
+  for the last 32 bits if wanted ("::ffff:10.0.2.15"). }
+function ParseIpv6Address(Text: PChar; out Address: TInternetAddress): Boolean;
+{ Either. }
+function ParseInternetAddress(Text: PChar; out Address: TInternetAddress): Boolean;
 { "A.B.C.D/N"; without "/N" the prefix is 32 and HasPrefix False. }
 function ParseAddressWithPrefix(Text: PChar; out Address: TInternetAddress; out PrefixLength: LongWord;
   out HasPrefix: Boolean): Boolean;
@@ -67,7 +76,9 @@ function ParseAddressWithPrefix(Text: PChar; out Address: TInternetAddress; out 
   not all in front. }
 function ParseNetmask(Text: PChar; out PrefixLength: LongWord): Boolean;
 
-{ Writes the address into Buffer and returns Buffer. }
+{ Writes the address into Buffer and returns Buffer: IPv6 addresses as
+  RFC 5952 recommends (lower case, the longest run of zero groups as
+  "::"). }
 function FormatInternetAddress(constref Address: TInternetAddress; Buffer: PChar; Capacity: PtrUInt): PChar;
 { "255.255.255.0" for 24. }
 function FormatNetmask(PrefixLength: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
@@ -180,6 +191,126 @@ begin
   Result := (Text <> nil) and ParseQuadAt(Text, Position, Address) and (Text[Position] = #0);
 end;
 
+function HexadecimalDigitValue(Character: Char; out Value: LongWord): Boolean;
+begin
+  Result := True;
+  if (Character >= '0') and (Character <= '9') then
+    Value := Ord(Character) - Ord('0')
+  else if (Character >= 'a') and (Character <= 'f') then
+    Value := Ord(Character) - Ord('a') + 10
+  else if (Character >= 'A') and (Character <= 'F') then
+    Value := Ord(Character) - Ord('A') + 10
+  else
+    Result := False;
+end;
+
+{ The groups of one side of "::" (or of a whole address), each up to
+  four hexadecimal digits, separated by single colons; the last may be a
+  dotted quad (two groups). Stops before "::" or at the end; Count says
+  how many groups were read. }
+function ParseIpv6Groups(Text: PChar; var Position: PtrUInt; out Groups: array of Word;
+  out Count: Integer): Boolean;
+var
+  Digits: Integer;
+  Value: LongWord;
+  DigitValue: LongWord;
+  QuadPosition: PtrUInt;
+  Quad: TInternetAddress;
+begin
+  Count := 0;
+  repeat
+    if Count > High(Groups) then
+      Exit(False);
+    QuadPosition := Position;
+    if (Count < High(Groups)) and ParseQuadAt(Text, QuadPosition, Quad) and (Text[QuadPosition] = #0) then
+    begin
+      Groups[Count] := (Word(Quad.Bytes[0]) shl 8) or Quad.Bytes[1];
+      Groups[Count + 1] := (Word(Quad.Bytes[2]) shl 8) or Quad.Bytes[3];
+      Inc(Count, 2);
+      Position := QuadPosition;
+      Exit(True);
+    end;
+    Digits := 0;
+    Value := 0;
+    while HexadecimalDigitValue(Text[Position], DigitValue) do
+    begin
+      if Digits = 4 then
+        Exit(False);
+      Value := Value * 16 + DigitValue;
+      Inc(Digits);
+      Inc(Position);
+    end;
+    if Digits = 0 then
+      Exit(False);
+    Groups[Count] := Word(Value);
+    Inc(Count);
+    if (Text[Position] <> ':') or (Text[Position + 1] = ':') then
+      Exit(True);
+    Inc(Position);
+  until False;
+end;
+
+function ParseIpv6Address(Text: PChar; out Address: TInternetAddress): Boolean;
+var
+  Position: PtrUInt;
+  Front: array[0..7] of Word;
+  Back: array[0..7] of Word;
+  FrontCount: Integer;
+  BackCount: Integer;
+  HasGap: Boolean;
+  Index: Integer;
+  Groups: array[0..7] of Word;
+begin
+  FillMemory(@Address, SizeOf(Address), 0);
+  Address.Family := AddressFamilyIPv6;
+  Result := False;
+  if Text = nil then
+    Exit;
+  Position := 0;
+  FrontCount := 0;
+  BackCount := 0;
+  HasGap := False;
+  if not ((Text[0] = ':') and (Text[1] = ':')) then
+    if not ParseIpv6Groups(Text, Position, Front, FrontCount) then
+      Exit;
+  if (Text[Position] = ':') and (Text[Position + 1] = ':') then
+  begin
+    HasGap := True;
+    Inc(Position, 2);
+    if Text[Position] <> #0 then
+      if not ParseIpv6Groups(Text, Position, Back, BackCount) then
+        Exit;
+  end;
+  if Text[Position] <> #0 then
+    Exit;
+  if HasGap then
+  begin
+    if FrontCount + BackCount > 7 then
+      Exit;
+  end
+  else if FrontCount <> 8 then
+    Exit;
+  for Index := 0 to 7 do
+    Groups[Index] := 0;
+  for Index := 0 to FrontCount - 1 do
+    Groups[Index] := Front[Index];
+  for Index := 0 to BackCount - 1 do
+    Groups[8 - BackCount + Index] := Back[Index];
+  for Index := 0 to 7 do
+  begin
+    Address.Bytes[Index * 2] := Byte(Groups[Index] shr 8);
+    Address.Bytes[Index * 2 + 1] := Byte(Groups[Index]);
+  end;
+  Result := True;
+end;
+
+function ParseInternetAddress(Text: PChar; out Address: TInternetAddress): Boolean;
+begin
+  Result := ParseIpv4Address(Text, Address);
+  if not Result then
+    Result := ParseIpv6Address(Text, Address);
+end;
+
 function ParseAddressWithPrefix(Text: PChar; out Address: TInternetAddress; out PrefixLength: LongWord;
   out HasPrefix: Boolean): Boolean;
 var
@@ -217,31 +348,113 @@ begin
   Result := Value = 0;
 end;
 
-function FormatInternetAddress(constref Address: TInternetAddress; Buffer: PChar; Capacity: PtrUInt): PChar;
+procedure AppendTextTo(Text: PChar; Capacity: PtrUInt; Addition: PChar);
 var
-  Text: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Length: PtrUInt;
+begin
+  Length := TextLength(Text);
+  if Length + 1 < Capacity then
+    CopyText(@Text[Length], Addition, Capacity - Length);
+end;
+
+procedure FormatIpv4Text(constref Address: TInternetAddress; Text: PChar; Capacity: PtrUInt);
+var
   Number: TNumberText;
   Part: Integer;
-  Length: PtrUInt;
+begin
+  Text[0] := #0;
+  for Part := 0 to 3 do
+  begin
+    AppendTextTo(Text, Capacity, FormatDecimal(Address.Bytes[Part], Number));
+    if Part < 3 then
+      AppendTextTo(Text, Capacity, '.');
+  end;
+end;
+
+{ The longest run of two or more zero groups (RFC 5952: the first of
+  equal ones); First is -1 if there is none. }
+procedure FindLongestZeroRun(const Groups: array of Word; out First, Count: Integer);
+var
+  Index: Integer;
+  RunStart: Integer;
+begin
+  First := -1;
+  Count := 0;
+  Index := 0;
+  while Index < 8 do
+  begin
+    if Groups[Index] <> 0 then
+    begin
+      Inc(Index);
+      Continue;
+    end;
+    RunStart := Index;
+    while (Index < 8) and (Groups[Index] = 0) do
+      Inc(Index);
+    if (Index - RunStart >= 2) and (Index - RunStart > Count) then
+    begin
+      First := RunStart;
+      Count := Index - RunStart;
+    end;
+  end;
+end;
+
+procedure FormatIpv6Text(constref Address: TInternetAddress; Text: PChar; Capacity: PtrUInt);
+const
+  LowerDigits: PChar = '0123456789abcdef';
+var
+  Groups: array[0..7] of Word;
+  Index: Integer;
+  RunFirst: Integer;
+  RunCount: Integer;
+  Group: array[0..4] of Char;
+  Digit: Integer;
+  Started: Boolean;
+  GroupLength: Integer;
+begin
+  for Index := 0 to 7 do
+    Groups[Index] := (Word(Address.Bytes[Index * 2]) shl 8) or Address.Bytes[Index * 2 + 1];
+  FindLongestZeroRun(Groups, RunFirst, RunCount);
+  Text[0] := #0;
+  Index := 0;
+  while Index < 8 do
+  begin
+    if Index = RunFirst then
+    begin
+      AppendTextTo(Text, Capacity, '::');
+      Index := Index + RunCount;
+      Continue;
+    end;
+    if (Index > 0) and (Index <> RunFirst + RunCount) then
+      AppendTextTo(Text, Capacity, ':');
+    GroupLength := 0;
+    Started := False;
+    for Digit := 3 downto 0 do
+      if Started or (((Groups[Index] shr (Digit * 4)) and $F) <> 0) or (Digit = 0) then
+      begin
+        Started := True;
+        Group[GroupLength] := LowerDigits[(Groups[Index] shr (Digit * 4)) and $F];
+        Inc(GroupLength);
+      end;
+    Group[GroupLength] := #0;
+    AppendTextTo(Text, Capacity, @Group[0]);
+    Inc(Index);
+  end;
+end;
+
+function FormatInternetAddress(constref Address: TInternetAddress; Buffer: PChar; Capacity: PtrUInt): PChar;
+var
+  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   Result := Buffer;
   if Capacity = 0 then
     Exit;
-  Text[0] := #0;
-  if Address.Family = AddressFamilyIPv4 then
-    for Part := 0 to 3 do
-    begin
-      Length := TextLength(@Text[0]);
-      CopyText(@Text[Length], FormatDecimal(Address.Bytes[Part], Number), Ipv4AddressTextCapacity - Length);
-      if Part < 3 then
-      begin
-        Length := TextLength(@Text[0]);
-        Text[Length] := '.';
-        Text[Length + 1] := #0;
-      end;
-    end
+  case Address.Family of
+    AddressFamilyIPv4: FormatIpv4Text(Address, @Text[0], InternetAddressTextCapacity);
+    AddressFamilyIPv6: FormatIpv6Text(Address, @Text[0], InternetAddressTextCapacity);
   else
-    CopyText(@Text[0], '?', Ipv4AddressTextCapacity);
+    CopyText(@Text[0], '?', InternetAddressTextCapacity);
+  end;
   CopyText(Buffer, @Text[0], Capacity);
 end;
 

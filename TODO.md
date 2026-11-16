@@ -449,15 +449,37 @@ normalized (0-65535), not pixels.
 - [x] virtio-net driver (MSI-X, suspend and resume)
 - [x] `ping`, `ifconfig`, `route`, `arp`
 - [x] Static configuration at start from `/etc/settings/Network.settings`
-      (the network service, `networksetup`)
+      (the network service)
 - [x] Tests: `networktest` (loopback, QEMU's gateway, a TCP echo through
       QEMU), coretest command lines, a kernel self test
 
 ### Phase 2
-- [ ] DHCP client service (interfaces with `Method = dhcp`)
-- [ ] DNS resolver in libsystem (`Sys.HostNames.LookUpHost`), with the
-      kernel's server list
-- [ ] `host` and `nslookup`
+- [x] The network service runs for good (`/bin/network`): settings
+      applied per interface (`static`, `dhcp`, `none`), changes to
+      Network.settings applied as they are written (a folder watch),
+      links and adapters that appear later followed (a kernel event,
+      `CallWatchNetworkChanges`), state files in `/var/lib/network`
+- [x] DHCP client (RFC 2131/2132): discover, offer, request, ack, nak,
+      INIT-REBOOT, renewing (T1, unicast) and rebinding (T2, broadcast),
+      expiry, randomised exponential retransmission, an ARP probe of the
+      offered address and DECLINE, RELEASE when stopped or taken down
+- [x] Sockets on one port bound to different interfaces do not conflict
+- [x] The node name kept by the kernel and set by root
+      (`CallSetNodeName`), `hostname`
+- [x] DNS resolver in libsystem (`Sys.HostNames` over `Sys.DnsQueries`,
+      `Sys.DnsMessages`, `Sys.DnsNames`, `Sys.HostsFile`): `/etc/hosts`,
+      the kernel's server list, the search domain, retries across
+      servers, TCP for truncated answers, CNAME chains, A, AAAA, PTR,
+      name compression with loop protection, random ids and ports
+- [x] `host` and `nslookup`; `ping` takes names
+- [x] Tests: DHCP from QEMU and the state file, a settings change
+      applied live, the lease given back (networktest); the resolver
+      against a DNS server of its own (dnstest); host, nslookup and
+      hostname command lines
+- [ ] A small per-process cache of DNS answers; EDNS(0) for answers
+      larger than 512 bytes over UDP
+- [ ] DHCP: option overload (52), several offers compared, the random
+      1-10 s wait before the first DISCOVER (left out to start quickly)
 - [ ] `netstat` (`CallListSockets` is there)
 - [ ] `nc`
 - [ ] `wget`

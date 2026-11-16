@@ -171,6 +171,8 @@ function KernelListArpEntries(Buffer: PAbiArpEntry; Capacity: QWord): Int64;
 function KernelListSockets(Buffer: PAbiSocketInformation; Capacity: QWord): Int64;
 function KernelGetDnsServers(out Servers: TAbiDnsServers): Int64;
 function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
+function KernelWatchNetworkChanges: Int64;
+function KernelSetNodeName(Name: PChar): Int64;
 
 implementation
 
@@ -727,6 +729,16 @@ end;
 function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
 begin
   Result := SystemCall(CallSetDnsServers, QWord(@Servers), 0, 0, 0, 0, 0);
+end;
+
+function KernelWatchNetworkChanges: Int64;
+begin
+  Result := SystemCall(CallWatchNetworkChanges, 0, 0, 0, 0, 0, 0);
+end;
+
+function KernelSetNodeName(Name: PChar): Int64;
+begin
+  Result := SystemCall(CallSetNodeName, QWord(Name), 0, 0, 0, 0, 0);
 end;
 
 end.

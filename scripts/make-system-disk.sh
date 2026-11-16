@@ -28,6 +28,7 @@
 #          definitions in /etc/services and the system's settings in
 #          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
+#   /var/lib/network  the network service's state of each interface
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
 #   /lib/firmware   firmware devices load (from firmware/, with its
 #                   vendors' licences and WHENCE)
@@ -49,7 +50,7 @@ staging_directory="$user_build_directory/root"
 partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
-mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log}
+mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log,var/lib/network}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 # The fonts graphical programs draw with (libfont).

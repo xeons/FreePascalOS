@@ -51,9 +51,13 @@
       usermod, userdel) and the keyboards' layouts (keyboardsettings),
     * networking (networktest): loopback ping, UDP and TCP echo over
       loopback (a megabyte through many windows), refused connections,
-      waiting on sockets, the static configuration of eth0, ping and
-      ARP for QEMU's gateway and a TCP echo through it, and what an
-      ordinary user may not do; ifconfig, route, arp and ping,
+      waiting on sockets, the network service (DHCP from QEMU on eth0,
+      its state file, a settings change applied live, the lease given
+      back when it stops), ping and ARP for QEMU's gateway and a TCP
+      echo through it, and what an ordinary user may not do; the
+      resolver (dnstest: /etc/hosts and a DNS server of its own on
+      127.0.0.1); ifconfig, route, arp, ping, host, nslookup and
+      hostname,
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
@@ -95,7 +99,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..340] of TCommandTest = (
+  CommandTests: array[0..346] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -474,7 +478,18 @@ const
     (Command: 'su user -c "ifconfig eth0 down" 2>&1; echo $?; su user -c "route add default gw 10.0.2.9" 2>&1; echo $?; ifconfig eth0 | head -n 1 | cut -d " " -f 2'; ExpectedOutput: 'ifconfig: eth0: Operation not permitted'#10'1'#10'route: cannot add the route: Operation not permitted'#10'1'#10'flags=<UP,BROADCAST,RUNNING>'#10; ExpectedStatus: 0),
     (Command: 'route add -net 10.9.0.0/16 gw 10.0.2.2 && route | grep 10.9.0.0 | cut -c 1-47; route del -net 10.9.0.0/16 && route | grep 10.9.0.0 | wc -l'; ExpectedOutput: '10.9.0.0        10.0.2.2        255.255.0.0    '#10'0'#10; ExpectedStatus: 0),
     (Command: 'ping -c 2 -i 0.2 127.0.0.1 | sed -e "s/time=.*/time/" -e "s/time [0-9]*ms/time/" -e "s/= .*/= X/"'; ExpectedOutput: 'PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.'#10'64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time'#10'64 bytes from 127.0.0.1: icmp_seq=2 ttl=64 time'#10#10'--- 127.0.0.1 ping statistics ---'#10'2 packets transmitted, 2 received, 0% packet loss, time'#10'rtt min/avg/max/mdev = X'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "ping -c 1 -q -s 1000 10.0.2.2" | tail -n 2 | head -n 1 | cut -d , -f 1-3; ping -c 1 nosuchhost 2>&1; echo $?'; ExpectedOutput: '1 packets transmitted, 1 received, 0% packet loss'#10'ping: nosuchhost: Name or service not known'#10'2'#10; ExpectedStatus: 0),
+    { A name nobody has: what the message says depends on whether QEMU's
+      DNS can reach the internet, the status does not. }
+    (Command: 'su user -c "ping -c 1 -q -s 1000 10.0.2.2" | tail -n 2 | head -n 1 | cut -d , -f 1-3; ping -c 1 nosuchhost.invalid > p.out 2>&1; echo $?; cut -d : -f 1-2 p.out'; ExpectedOutput: '1 packets transmitted, 1 received, 0% packet loss'#10'2'#10'ping: nosuchhost.invalid'#10; ExpectedStatus: 0),
+    (Command: 'ping -c 1 localhost | head -n 1'; ExpectedOutput: 'PING localhost (127.0.0.1) 56(84) bytes of data.'#10; ExpectedStatus: 0),
+    { The network service (left running by networktest): eth0's state. }
+    (Command: 'grep -E "^(Method|State|Address|Gateway|DhcpServer) " /var/lib/network/eth0.state'; ExpectedOutput: 'Method = "dhcp"'#10'State = "configured"'#10'Address = "10.0.2.15/24"'#10'Gateway = "10.0.2.2"'#10'DhcpServer = "10.0.2.2"'#10; ExpectedStatus: 0),
+    { The resolver against a DNS server of dnstest's own (nothing here
+      needs the internet). }
+    (Command: 'dnstest > dns.log; echo $?; grep FAIL dns.log; tail -n 1 dns.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'dnstest --serve & p=$!; dnstest --wait; host www.test.example 127.0.0.1; host alias.test.example 127.0.0.1 | tail -n 4; host -t SOA test.example 127.0.0.1 | tail -n 1; host -t TXT www.test.example 127.0.0.1 | tail -n 1; host 192.0.2.10 127.0.0.1 | tail -n 1; host nosuch.test.example 127.0.0.1 > h.out; echo $?; tail -n 1 h.out; kill $p; wait $p'; ExpectedOutput: 'Using domain server:'#10'Name: 127.0.0.1'#10'Address: 127.0.0.1#53'#10'Aliases: '#10#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'alias.test.example is an alias for www.test.example.'#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'test.example has SOA record ns.test.example. hostmaster.test.example. 2026111601 3600 600 86400 300'#10'www.test.example descriptive text "hello world"'#10'10.2.0.192.in-addr.arpa domain name pointer www.test.example.'#10'1'#10'Host nosuch.test.example not found: 3(NXDOMAIN)'#10; ExpectedStatus: 0),
+    (Command: 'dnstest --serve & p=$!; dnstest --wait; nslookup www.test.example 127.0.0.1; nslookup -type=MX www.test.example 127.0.0.1 | tail -n 2; nslookup 192.0.2.10 127.0.0.1 | tail -n 2; nslookup nosuch.test.example 127.0.0.1 > n.out; echo $?; grep "can.t find" n.out; kill $p; wait $p'; ExpectedOutput: 'Server:'#9#9'127.0.0.1'#10'Address:'#9'127.0.0.1#53'#10#10'Name:'#9'www.test.example'#10'Address: 192.0.2.10'#10'Name:'#9'www.test.example'#10'Address: 2001:db8::10'#10#10'www.test.example'#9'mail exchanger = 10 mail.test.example.'#10#10'10.2.0.192.in-addr.arpa'#9'name = www.test.example.'#10#10'1'#10'** server can''t find nosuch.test.example: NXDOMAIN'#10; ExpectedStatus: 0),
+    (Command: 'hostname; uname -n; su user -c "hostname other" 2>&1; echo $?; hostname "bad name" 2>&1; hostname test-box.example && hostname && hostname -s && uname -n; hostname freepascalos; hostname -I'; ExpectedOutput: 'freepascalos'#10'freepascalos'#10'hostname: you must be root to change the host name'#10'1'#10'hostname: the specified hostname is invalid'#10'test-box.example'#10'test-box'#10'test-box.example'#10'10.0.2.15 '#10; ExpectedStatus: 0),
     { Watching files and folders: changes another process makes, on
       several file system types, and a folder the user may not read. }
     (Command: 'watchtest > watch.log; echo $?; grep -E ''FAIL|expected:|got:'' watch.log; tail -n 1 watch.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
