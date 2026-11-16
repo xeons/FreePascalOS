@@ -105,6 +105,7 @@ uses
   Abi.SystemCalls,
   Memory.Layout,
   Kernel.Arch.Cpu,
+  Kernel.Arch.PrivilegedInstructions,
   Memory.Arch.PageTables,
   Processes.Process,
   Processes.Thread,
@@ -304,6 +305,27 @@ begin
     Thread^.OpenedStackReserve := Thread^.UserStackStart;
 end;
 
+{ A general protection fault is a privileged instruction only if the
+  instruction is one (Kernel.Arch.PrivilegedInstructions); otherwise it
+  was a memory access through a non-canonical address, an access
+  violation. Called with interrupts enabled (reading user memory may
+  fault the page in). }
+function GeneralProtectionCode(Frame: PTrapFrame): LongWord;
+var
+  Instruction: array[0..LongestInstruction - 1] of Byte;
+  Count: Integer;
+begin
+  { The instruction may end before the end of its page; read less until
+    the read works. }
+  Count := LongestInstruction;
+  while (Count > 0) and (CopyFromUser(@Instruction[0], Frame^.Rip, QWord(Count)) <> ErrorNone) do
+    Dec(Count);
+  if IsPrivilegedInstruction(@Instruction[0], Count) then
+    Result := ExceptionPrivilegedOperation
+  else
+    Result := ExceptionAccessViolation;
+end;
+
 function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
 var
   Code: LongWord;
@@ -323,7 +345,11 @@ begin
       Code := ExceptionStackOverflow;
   end
   else
+  begin
+    if TrapFrameVector(Frame) = VectorGeneralProtection then
+      Code := GeneralProtectionCode(Frame);
     FaultAddress := 0;
+  end;
   DisableInterrupts;
   Result := DeliverException(Frame, Code, Access, FaultAddress);
 end;
