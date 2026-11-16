@@ -60,7 +60,8 @@ uses
   Network.ByteOrder,
   Network.Checksums,
   Network.Addresses,
-  Network.Core;
+  Network.Core,
+  Network.Statistics;
 
 const
   BlockBytes = 8;
@@ -119,6 +120,7 @@ begin
   { A new one: a free slot, else the one that has waited longest. }
   if Free = nil then
   begin
+    Inc(NetworkStatistics.Ip.ReassemblyFailures);
     ReleaseReassembly(Oldest);
     Free := Oldest;
   end;
@@ -226,7 +228,10 @@ begin
     if not Reassemblies[Index].InUse then
       Continue;
     if Reassemblies[Index].Deadline <= Now then
-      ReleaseReassembly(@Reassemblies[Index])
+    begin
+      Inc(NetworkStatistics.Ip.ReassemblyFailures);
+      ReleaseReassembly(@Reassemblies[Index]);
+    end
     else
       RequestNetworkWakeAt(Reassemblies[Index].Deadline);
   end;

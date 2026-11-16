@@ -19,7 +19,8 @@
 {
   The network's configuration: the interfaces (their addresses, state,
   MTU and counters), the routes, the ARP cache, every socket and
-  connection, and the DNS servers. Anyone may list; only root may
+  connection, the DNS servers, and the protocols' counters. Anyone may
+  list; only root may
   change (ErrorNotPermitted otherwise), as ifconfig, route and the
   network setup service do.
 }
@@ -49,6 +50,13 @@ function SetInterfaceUp(Name: PChar; Up: Boolean): LongInt;
 function SetInterfaceMtu(Name: PChar; Mtu: LongWord): LongInt;
 
 function ListRoutes(out Routes: TRouteList): LongInt;
+{ In the order route -n shows them: the default route first, then the
+  networks by address, a longer prefix before a shorter one. }
+procedure SortRoutes(var Routes: TRouteList);
+{ The gateway of a route as an address. }
+function RouteGateway(constref Route: TAbiRoute): TInternetAddress;
+{ "UG", "U", "UH" ... as route -n shows the flags. }
+function FormatRouteFlags(constref Route: TAbiRoute; Buffer: PChar; Capacity: PtrUInt): PChar;
 { Gateway 0.0.0.0: on the link of InterfaceName. InterfaceName nil or
   empty: the interface that reaches the gateway. }
 function AddRoute(constref Destination: TInternetAddress; PrefixLength: LongWord;
@@ -67,6 +75,8 @@ function SetDnsServers(constref Servers: TAbiDnsServers): LongInt;
   address, a route, the DNS servers. Or minus an error code. Closed with
   CloseHandle (Sys.Objects). }
 function WatchNetworkChanges: Int64;
+{ The counters of IP, ICMP, TCP and UDP since the start. }
+function GetNetworkStatistics(out Statistics: TAbiNetworkStatistics): LongInt;
 
 { "52:54:00:12:34:56". }
 function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
@@ -274,6 +284,74 @@ end;
 function WatchNetworkChanges: Int64;
 begin
   Result := KernelWatchNetworkChanges;
+end;
+
+function GetNetworkStatistics(out Statistics: TAbiNetworkStatistics): LongInt;
+begin
+  FillMemory(@Statistics, SizeOf(Statistics), 0);
+  Result := ErrorCodeOf(KernelGetNetworkStatistics(Statistics));
+end;
+
+function RouteComesBefore(constref First, Second: TAbiRoute): Boolean;
+var
+  FirstDestination: LongWord;
+  SecondDestination: LongWord;
+begin
+  if (First.Destination.PrefixLength = 0) <> (Second.Destination.PrefixLength = 0) then
+    Exit(First.Destination.PrefixLength = 0);
+  FirstDestination := Ipv4AddressValue(InterfaceAddressHost(First.Destination));
+  SecondDestination := Ipv4AddressValue(InterfaceAddressHost(Second.Destination));
+  if FirstDestination <> SecondDestination then
+    Exit(FirstDestination < SecondDestination);
+  Result := First.Destination.PrefixLength > Second.Destination.PrefixLength;
+end;
+
+procedure SortRoutes(var Routes: TRouteList);
+var
+  Index: Integer;
+  Place: Integer;
+  Held: TAbiRoute;
+begin
+  for Index := 1 to High(Routes) do
+  begin
+    Held := Routes[Index];
+    Place := Index;
+    while (Place > 0) and RouteComesBefore(Held, Routes[Place - 1]) do
+    begin
+      Routes[Place] := Routes[Place - 1];
+      Dec(Place);
+    end;
+    Routes[Place] := Held;
+  end;
+end;
+
+function RouteGateway(constref Route: TAbiRoute): TInternetAddress;
+begin
+  Result := AnyIpv4Address;
+  CopyMemory(@Result.Bytes[0], @Route.Gateway[0], 4);
+end;
+
+procedure AppendFlagLetter(Text: PChar; var Length: Integer; Letter: Char);
+begin
+  Text[Length] := Letter;
+  Inc(Length);
+end;
+
+function FormatRouteFlags(constref Route: TAbiRoute; Buffer: PChar; Capacity: PtrUInt): PChar;
+var
+  Text: array[0..7] of Char;
+  Length: Integer;
+begin
+  Length := 0;
+  if (Route.Flags and RouteFlagUp) <> 0 then
+    AppendFlagLetter(@Text[0], Length, 'U');
+  if (Route.Flags and RouteFlagGateway) <> 0 then
+    AppendFlagLetter(@Text[0], Length, 'G');
+  if Route.Destination.PrefixLength = 32 then
+    AppendFlagLetter(@Text[0], Length, 'H');
+  Text[Length] := #0;
+  Result := Buffer;
+  CopyText(Buffer, @Text[0], Capacity);
 end;
 
 function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;

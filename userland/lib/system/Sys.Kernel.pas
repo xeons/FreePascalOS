@@ -173,6 +173,7 @@ function KernelGetDnsServers(out Servers: TAbiDnsServers): Int64;
 function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
 function KernelWatchNetworkChanges: Int64;
 function KernelSetNodeName(Name: PChar): Int64;
+function KernelGetNetworkStatistics(out Statistics: TAbiNetworkStatistics): Int64;
 
 implementation
 
@@ -739,6 +740,11 @@ end;
 function KernelSetNodeName(Name: PChar): Int64;
 begin
   Result := SystemCall(CallSetNodeName, QWord(Name), 0, 0, 0, 0, 0);
+end;
+
+function KernelGetNetworkStatistics(out Statistics: TAbiNetworkStatistics): Int64;
+begin
+  Result := SystemCall(CallGetNetworkStatistics, QWord(@Statistics), 0, 0, 0, 0, 0);
 end;
 
 end.

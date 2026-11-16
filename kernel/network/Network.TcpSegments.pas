@@ -76,7 +76,8 @@ uses
   Network.ByteOrder,
   Network.Checksums,
   Network.Packets,
-  Network.ByteRings;
+  Network.ByteRings,
+  Network.Statistics;
 
 const
   OptionEnd = 0;
@@ -184,6 +185,21 @@ begin
   WriteBigEndian16(Segment + 16, FinishChecksum(AddToChecksum(Sum, Segment, Length)));
 end;
 
+{ Counts a segment sent: a retransmission carries data, a SYN or a FIN
+  from before the furthest sequence number sent. }
+procedure CountSegmentSent(Connection: PTcpConnection; Sequence: LongWord; Flags: Byte; DataLength: LongWord);
+var
+  TakesSequence: Boolean;
+begin
+  if (Flags and TcpFlagReset) <> 0 then
+    Inc(NetworkStatistics.Tcp.ResetsSent);
+  TakesSequence := (DataLength > 0) or ((Flags and (TcpFlagSyn or TcpFlagFin)) <> 0);
+  if TakesSequence and (Connection <> nil) and SequenceBefore(Sequence, Connection^.SendMaximum) then
+    Inc(NetworkStatistics.Tcp.SegmentsRetransmitted)
+  else
+    Inc(NetworkStatistics.Tcp.SegmentsSent);
+end;
+
 function SendConnectionSegment(Connection: PTcpConnection; Sequence: LongWord; Flags: Byte;
   DataOffset, DataLength: LongWord): LongInt;
 var
@@ -230,6 +246,7 @@ begin
     Connection^.AckDeadline := 0;
     Connection^.SegmentsSinceAck := 0;
   end;
+  CountSegmentSent(Connection, Sequence, Flags, DataLength);
   Result := SendIpv4(Packet, Connection^.Local.Address, Connection^.Remote.Address, IpProtocolTcp,
     Connection^.TimeToLive, True, Connection^.BoundInterface);
 end;
@@ -246,6 +263,7 @@ begin
   Header := AppendToPacket(Packet, TcpHeaderBytes);
   WriteHeader(Header, SourcePort, DestinationPort, Sequence, Acknowledgment, TcpHeaderBytes, Flags, 0);
   WriteChecksum(Header, TcpHeaderBytes, Source, Destination);
+  CountSegmentSent(nil, Sequence, Flags, 0);
   SendIpv4(Packet, Source, Destination, IpProtocolTcp, DefaultTimeToLive, True, nil);
 end;
 

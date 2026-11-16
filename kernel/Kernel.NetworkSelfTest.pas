@@ -72,9 +72,16 @@ begin
   ReportPassed('network checksums and sequence numbers');
 end;
 
+{ The kernel's own sockets belong to root and to no process. }
+function KernelOwner: TSocketOwner;
+begin
+  Result.UserId := 0;
+  Result.ProcessId := 0;
+end;
+
 function NewSocket(Kind: LongWord): PSocket;
 begin
-  Check(CreateSocket(AddressFamilyIPv4, Kind, ProtocolDefault, 0, True, Result) = ErrorNone,
+  Check(CreateSocket(AddressFamilyIPv4, Kind, ProtocolDefault, KernelOwner, True, Result) = ErrorNone,
     'a socket is made');
 end;
 
@@ -172,7 +179,7 @@ begin
   Client := NewSocket(SocketKindStream or SocketKindNonBlocking);
   Check(ConnectSocket(Client, Address) = ErrorInProgress, 'a non-blocking connect is under way');
   Check(TcpStateOf(Client) in [TcpSynSent, TcpEstablished], 'the client sent its SYN');
-  Check(AcceptOnSocket(Listener, Server, Peer) = ErrorNone, 'the listener accepts the connection');
+  Check(AcceptOnSocket(Listener, KernelOwner, Server, Peer) = ErrorNone, 'the listener accepts the connection');
   Check(Peer.Address = LoopbackAddress, 'from 127.0.0.1');
   Check(WaitForTcpState(Client, TcpEstablished), 'the client is ESTABLISHED');
   Check(TcpStateOf(Server) = TcpEstablished, 'the server side is ESTABLISHED');

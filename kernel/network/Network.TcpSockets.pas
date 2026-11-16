@@ -42,7 +42,8 @@ procedure DescribeTcpReadiness(Socket: PSocket; out IsReadable, IsWritable: Bool
 { The socket is being deleted. }
 procedure CloseTcpSocket(Socket: PSocket);
 function ListenOnTcpSocket(Socket: PSocket; Backlog: LongWord): LongInt;
-function AcceptOnTcpSocket(Socket: PSocket; out NewSocket: PSocket): LongInt;
+{ NewSocket belongs to Owner, the process accepting. }
+function AcceptOnTcpSocket(Socket: PSocket; constref Owner: TSocketOwner; out NewSocket: PSocket): LongInt;
 function ConnectTcpSocket(Socket: PSocket; constref Destination: TNetworkEndpoint): LongInt;
 function SendOnTcpSocket(Socket: PSocket; Data: PByte; Length: LongWord; Flags: LongWord): Int64;
 function ReceiveOnTcpSocket(Socket: PSocket; Data: PByte; Length: LongWord; Flags: LongWord): Int64;
@@ -71,7 +72,8 @@ uses
   Network.TcpConnections,
   Network.TcpSegments,
   Network.TcpStates,
-  Network.TcpOutput;
+  Network.TcpOutput,
+  Network.Statistics;
 
 function ConnectionOf(Socket: PSocket): PTcpConnection;
 begin
@@ -240,12 +242,13 @@ begin
 end;
 
 { Gives the first connection waiting on Listener a socket of its own. }
-function TakeAcceptedConnection(Socket: PSocket; Listener: PTcpConnection; out NewSocket: PSocket): LongInt;
+function TakeAcceptedConnection(Socket: PSocket; Listener: PTcpConnection; constref Owner: TSocketOwner;
+  out NewSocket: PSocket): LongInt;
 var
   Child: PTcpConnection;
 begin
   Child := PTcpConnection(ContainingRecord(Listener^.AcceptQueue.Next, FieldOffset(PTcpConnection(nil)^.AcceptLink)));
-  NewSocket := AllocateSocket(Socket^.Kind, SocketProtocolTcp, Socket^.OwnerUserId);
+  NewSocket := AllocateSocket(Socket^.Kind, SocketProtocolTcp, Owner);
   if NewSocket = nil then
     Exit(ErrorOutOfMemory);
   RemoveListEntry(@Child^.AcceptLink);
@@ -266,7 +269,7 @@ begin
   Result := ErrorNone;
 end;
 
-function AcceptOnTcpSocket(Socket: PSocket; out NewSocket: PSocket): LongInt;
+function AcceptOnTcpSocket(Socket: PSocket; constref Owner: TSocketOwner; out NewSocket: PSocket): LongInt;
 var
   Listener: PTcpConnection;
   Deadline: QWord;
@@ -281,7 +284,7 @@ begin
     if Socket^.Connection <> Listener then
       Exit(ErrorBadHandle);
     if Listener^.AcceptQueueCount > 0 then
-      Exit(TakeAcceptedConnection(Socket, Listener, NewSocket));
+      Exit(TakeAcceptedConnection(Socket, Listener, Owner, NewSocket));
     Result := TakePendingError(Socket);
     if Result <> ErrorNone then
       Exit;
@@ -352,6 +355,7 @@ begin
   Connection^.SendNext := Connection^.InitialSendSequence;
   Connection^.SendMaximum := Connection^.InitialSendSequence;
   Connection^.State := TcpSynSent;
+  Inc(NetworkStatistics.Tcp.ActiveOpens);
   Connection^.Socket := Socket;
   Socket^.Connection := Connection;
   Socket^.Peer := Remote;

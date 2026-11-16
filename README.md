@@ -78,8 +78,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   over a virtio-net driver and a loopback interface (`lo`, 127.0.0.1).
   Programs use BSD-style sockets (`Sys.Sockets`: TCP streams, UDP
   datagrams, ICMP echo for ping) that are handles like any other
-  (closed, waited for, non-blocking); `ping`, `ifconfig`, `route` and
-  `arp`. **The network service** (`/bin/network`) configures the
+  (closed, waited for, non-blocking); `ping`, `ifconfig`, `route`,
+  `arp`, `netstat` and `nc`. **The network service** (`/bin/network`) configures the
   interfaces as `/etc/settings/Network.settings` says and keeps them so:
   static addresses or a **DHCP client** (RFC 2131: discover, request,
   INIT-REBOOT, renewing and rebinding, lease expiry, a probe of the
@@ -256,8 +256,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     answers, `-T`, a server to ask), `nslookup NAME [SERVER]`
     (`-type=`), `hostname` (show, `-s`, `-i`, `-I`; set as root), `ifconfig` (show; `ifconfig eth0
     10.0.2.15/24 up`, `down`, `mtu`, `netmask`), `route` (show; `route add
-    default gw 10.0.2.2`, `route del ...`) and `arp` (the ARP cache), in
-    the manner of net-tools
+    default gw 10.0.2.2`, `route del ...`), `arp` (the ARP cache) and
+    `netstat` (sockets with `-t -u -w -l -a -n -p`, the routing table
+    `-r`, the interfaces and their counters `-i`, the protocol counters
+    `-s`), in the manner of net-tools; `nc` with OpenBSD's options
+    (connect, `-l` listen and `-k` keep listening, `-u` UDP, `-z` port
+    scans with ranges, `-v`, `-w`, `-q`, `-N`, `-n`, `-p`, `-d`)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and

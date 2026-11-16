@@ -87,7 +87,8 @@ begin
     EndpointToAbi(Socket^.Peer, Description.PeerAddress);
     Description.ReceiveQueued := Socket^.Datagrams.Bytes;
   end;
-  Description.OwnerUserId := Socket^.OwnerUserId;
+  Description.OwnerUserId := Socket^.Owner.UserId;
+  Description.OwnerProcessId := Socket^.Owner.ProcessId;
 end;
 
 function ListSockets(Records: PAbiSocketInformation; Capacity: LongWord): LongWord;

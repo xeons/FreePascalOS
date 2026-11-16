@@ -36,8 +36,10 @@ uses
 
 { Puts a received datagram on the socket's queue (dropped if it is
   full or the socket was shut for receiving). }
-procedure QueueDatagramForSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
-  Data: PByte; Length: LongWord);
+{ False if the socket's queue had no room for it (or it takes nothing
+  more). }
+function QueueDatagramForSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
+  Data: PByte; Length: LongWord): Boolean;
 function ReceiveDatagram(Socket: PSocket; Data: PByte; Length: LongWord; Flags: LongWord;
   out Source: TNetworkEndpoint): Int64;
 { Fixes the peer (an address of family AddressFamilyUnspecified
@@ -63,12 +65,13 @@ uses
   Network.Ipv4,
   Network.Ports;
 
-procedure QueueDatagramForSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
-  Data: PByte; Length: LongWord);
+function QueueDatagramForSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
+  Data: PByte; Length: LongWord): Boolean;
 begin
   if Socket^.ReceiveIsShut then
-    Exit;
-  if EnqueueDatagram(Socket^.Datagrams, Source, TimeToLive, Data, Length) then
+    Exit(False);
+  Result := EnqueueDatagram(Socket^.Datagrams, Source, TimeToLive, Data, Length);
+  if Result then
     UpdateSocketReadiness(Socket);
 end;
 

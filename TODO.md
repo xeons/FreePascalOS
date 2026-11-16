@@ -481,8 +481,12 @@ normalized (0-65535), not pixels.
       larger than 512 bytes over UDP
 - [ ] DHCP: option overload (52), several offers compared, the random
       1-10 s wait before the first DISCOVER (left out to start quickly)
-- [ ] `netstat` (`CallListSockets` is there)
-- [ ] `nc`
+- [x] `netstat` (`-tuwlanp`, `-r`, `-i`, `-s`; the socket listing gives
+      the owner process, protocol counters in the kernel)
+- [x] `nc` (OpenBSD options: `-l -k -u -z -v -w -n -N -q -p -d`)
+- [ ] `ss` (on top of netstat's pieces)
+- [ ] Reverse lookups and a services list for `netstat` without `-n`
+      (`Netstat.Names`)
 - [ ] `wget`
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)

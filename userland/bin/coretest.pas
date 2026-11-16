@@ -57,7 +57,7 @@
       echo through it, and what an ordinary user may not do; the
       resolver (dnstest: /etc/hosts and a DNS server of its own on
       127.0.0.1); ifconfig, route, arp, ping, host, nslookup and
-      hostname,
+      hostname, netstat and nc,
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
@@ -99,7 +99,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..346] of TCommandTest = (
+  CommandTests: array[0..353] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -490,6 +490,17 @@ const
     (Command: 'dnstest --serve & p=$!; dnstest --wait; host www.test.example 127.0.0.1; host alias.test.example 127.0.0.1 | tail -n 4; host -t SOA test.example 127.0.0.1 | tail -n 1; host -t TXT www.test.example 127.0.0.1 | tail -n 1; host 192.0.2.10 127.0.0.1 | tail -n 1; host nosuch.test.example 127.0.0.1 > h.out; echo $?; tail -n 1 h.out; kill $p; wait $p'; ExpectedOutput: 'Using domain server:'#10'Name: 127.0.0.1'#10'Address: 127.0.0.1#53'#10'Aliases: '#10#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'alias.test.example is an alias for www.test.example.'#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'test.example has SOA record ns.test.example. hostmaster.test.example. 2026111601 3600 600 86400 300'#10'www.test.example descriptive text "hello world"'#10'10.2.0.192.in-addr.arpa domain name pointer www.test.example.'#10'1'#10'Host nosuch.test.example not found: 3(NXDOMAIN)'#10; ExpectedStatus: 0),
     (Command: 'dnstest --serve & p=$!; dnstest --wait; nslookup www.test.example 127.0.0.1; nslookup -type=MX www.test.example 127.0.0.1 | tail -n 2; nslookup 192.0.2.10 127.0.0.1 | tail -n 2; nslookup nosuch.test.example 127.0.0.1 > n.out; echo $?; grep "can.t find" n.out; kill $p; wait $p'; ExpectedOutput: 'Server:'#9#9'127.0.0.1'#10'Address:'#9'127.0.0.1#53'#10#10'Name:'#9'www.test.example'#10'Address: 192.0.2.10'#10'Name:'#9'www.test.example'#10'Address: 2001:db8::10'#10#10'www.test.example'#9'mail exchanger = 10 mail.test.example.'#10#10'10.2.0.192.in-addr.arpa'#9'name = www.test.example.'#10#10'1'#10'** server can''t find nosuch.test.example: NXDOMAIN'#10; ExpectedStatus: 0),
     (Command: 'hostname; uname -n; su user -c "hostname other" 2>&1; echo $?; hostname "bad name" 2>&1; hostname test-box.example && hostname && hostname -s && uname -n; hostname freepascalos; hostname -I'; ExpectedOutput: 'freepascalos'#10'freepascalos'#10'hostname: you must be root to change the host name'#10'1'#10'hostname: the specified hostname is invalid'#10'test-box.example'#10'test-box'#10'test-box.example'#10'10.0.2.15 '#10; ExpectedStatus: 0),
+    { netstat and nc: a listener seen by netstat (with its program),
+      files both ways checked by their sums, a UDP round trip, port
+      scans, a connection established, the routes, the interfaces and
+      the counters. }
+    (Command: 'nc -l 7101 < /dev/null > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":7101 " && break; sleep 0.1; done; netstat -tln | grep ":7101 " | tr -s " "; netstat -tlnp | grep ":7101 " | tr -s " " | cut -d " " -f 7 | cut -d / -f 2; nc -z 127.0.0.1 7101; echo $?; wait'; ExpectedOutput: 'tcp 0 0 0.0.0.0:7101 0.0.0.0:* LISTEN'#10'nc'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'seq 1 5000 > na; seq 5001 9000 > nb; nc -l 7102 < nb > na.got & for i in $(seq 50); do netstat -tln | grep -q ":7102 " && break; sleep 0.1; done; nc -N 127.0.0.1 7102 < na > nb.got; echo $?; wait; test "$(sha256sum < na)" = "$(sha256sum < na.got)" && echo sent; test "$(sha256sum < nb)" = "$(sha256sum < nb.got)" && echo received; rm na nb na.got nb.got'; ExpectedOutput: '0'#10'sent'#10'received'#10; ExpectedStatus: 0),
+    (Command: 'echo request > ur; echo reply > up; nc -u -l -w 2 7103 < up > ur.got & for i in $(seq 50); do netstat -uln | grep -q ":7103 " && break; sleep 0.1; done; netstat -uln | grep ":7103 " | tr -s " "; nc -u -w 2 127.0.0.1 7103 < ur; wait; cat ur.got; rm ur up ur.got'; ExpectedOutput: 'udp 0 0 0.0.0.0:7103 0.0.0.0:*'#10'reply'#10'request'#10; ExpectedStatus: 0),
+    (Command: 'nc -l 7104 < /dev/null > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":7104 " && break; sleep 0.1; done; nc -zv 127.0.0.1 7104 2>&1; echo $?; wait; nc -zv 127.0.0.1 7105 2>&1; echo $?; nc -z 127.0.0.1 7105-7107; echo $?'; ExpectedOutput: 'Connection to 127.0.0.1 7104 port [tcp/*] succeeded!'#10'0'#10'nc: connect to 127.0.0.1 port 7105 (tcp) failed: Connection refused'#10'1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'nc -l 7106 < /dev/null > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":7106 " && break; sleep 0.1; done; sleep 2 | nc -N 127.0.0.1 7106 > /dev/null & for i in $(seq 50); do test $(netstat -tn | grep -c ":7106 .*ESTABLISHED") -ge 2 && break; sleep 0.1; done; netstat -tn | grep ":7106 " | tr -s " " | cut -d " " -f 6; netstat -tn | head -n 1; wait'; ExpectedOutput: 'ESTABLISHED'#10'ESTABLISHED'#10'Active Internet connections (w/o servers)'#10; ExpectedStatus: 0),
+    (Command: 'netstat -rn | head -n 3; netstat -i | tail -n +3 | tr -s " " | cut -d " " -f 1,2,11'; ExpectedOutput: 'Kernel IP routing table'#10'Destination     Gateway         Genmask         Flags   MSS Window  irtt Iface'#10'0.0.0.0         10.0.2.2        0.0.0.0         UG        0 0          0 eth0'#10'lo 1500 LRU'#10'eth0 1500 BRU'#10; ExpectedStatus: 0),
+    (Command: 'b=$(netstat -s | grep "ICMP messages received" | tr -s " " | cut -d " " -f 2); ping -c 2 -i 0.2 127.0.0.1 > /dev/null; a=$(netstat -s | grep "ICMP messages received" | tr -s " " | cut -d " " -f 2); test $a -ge $((b + 4)) && echo counted; netstat -s | grep -c "echo replies:"; netstat -st | head -n 1; netstat -su | grep -c "packets sent"'; ExpectedOutput: 'counted'#10'2'#10'Tcp:'#10'1'#10; ExpectedStatus: 0),
     { Watching files and folders: changes another process makes, on
       several file system types, and a folder the user may not read. }
     (Command: 'watchtest > watch.log; echo $?; grep -E ''FAIL|expected:|got:'' watch.log; tail -n 1 watch.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),

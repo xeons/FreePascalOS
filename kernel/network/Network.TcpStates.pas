@@ -54,7 +54,18 @@ uses
   Network.Core,
   Network.Sockets,
   Network.TcpConnections,
-  Network.TcpSegments;
+  Network.TcpSegments,
+  Network.Statistics;
+
+{ RFC 1213's tcpAttemptFails and tcpEstabResets: the transitions to
+  CLOSED from the handshake, and from ESTABLISHED or CLOSE_WAIT. }
+procedure CountAbortedConnection(State: TTcpState);
+begin
+  if State in [TcpSynSent, TcpSynReceived] then
+    Inc(NetworkStatistics.Tcp.FailedAttempts)
+  else if State in [TcpEstablished, TcpCloseWait] then
+    Inc(NetworkStatistics.Tcp.EstablishedResets);
+end;
 
 procedure NotifyConnectionSocket(Connection: PTcpConnection);
 begin
@@ -90,6 +101,7 @@ var
 begin
   if SendReset and not (Connection^.State in [TcpClosed, TcpListen, TcpSynSent, TcpTimeWait]) then
     SendConnectionSegment(Connection, Connection^.SendNext, TcpFlagReset, 0, 0);
+  CountAbortedConnection(Connection^.State);
   Connection^.State := TcpClosed;
   Connection^.RetransmitDeadline := 0;
   Connection^.AckDeadline := 0;

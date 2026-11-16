@@ -786,6 +786,7 @@ begin
     CallSetDnsServers: Result := PerformSetDnsServers(Argument0);
     CallSetNodeName: Result := PerformSetNodeName(Argument0);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
+    CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -849,6 +850,7 @@ begin
   InitializeUserProcesses;
   InitializeProcessTermination;
   InitializeThreadCalls;
+  InitializeWaitCalls;
   { From here on the kernel touches user memory only through checked
     copies, so SMAP can be turned on. }
   InitializeUserCopy;

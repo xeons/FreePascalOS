@@ -56,6 +56,13 @@ uses
 type
   TSocketProtocol = (SocketProtocolUdp, SocketProtocolTcp, SocketProtocolIcmpEcho, SocketProtocolIcmpRaw);
 
+  { Who a socket belongs to, for listings (netstat -p): the user and
+    the process that made it, or accepted its connection. }
+  TSocketOwner = record
+    UserId: LongWord;
+    ProcessId: QWord;
+  end;
+
   PSocket = ^TSocket;
   TSocket = record
     { On the list of every socket. }
@@ -63,7 +70,7 @@ type
     { SocketKind* without the non-blocking flag. }
     Kind: LongWord;
     Protocol: TSocketProtocol;
-    OwnerUserId: LongWord;
+    Owner: TSocketOwner;
     { Options. }
     NonBlocking: Boolean;
     ReceiveTimeout: LongWord;
@@ -96,7 +103,7 @@ type
 procedure InitializeSockets;
 { A new socket (referenced once, for its first handle), on the list of
   sockets, under the lock. }
-function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; OwnerUserId: LongWord): PSocket;
+function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; constref Owner: TSocketOwner): PSocket;
 { Every socket, for listings and for finding who gets a datagram. }
 function FirstSocket: PSocket;
 function NextSocket(Socket: PSocket): PSocket;
@@ -156,14 +163,14 @@ begin
   InitializeListHead(AllSockets);
 end;
 
-function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; OwnerUserId: LongWord): PSocket;
+function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; constref Owner: TSocketOwner): PSocket;
 begin
   Result := PSocket(CreateObject(SocketObjectType, nil));
   if Result = nil then
     Exit;
   Result^.Kind := Kind;
   Result^.Protocol := Protocol;
-  Result^.OwnerUserId := OwnerUserId;
+  Result^.Owner := Owner;
   Result^.TimeToLive := 64;
   Result^.Local := MakeEndpoint(AnyAddress, 0);
   Result^.Peer := MakeEndpoint(AnyAddress, 0);

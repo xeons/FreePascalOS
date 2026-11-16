@@ -424,7 +424,7 @@ const
     TAbiKeyboardLayout; ErrorNotFound after the last. }
   CallDescribeKeyboardLayout = 103;
 
-  { 104-123: networking (sockets, interfaces, routes), in
+  { 104-124: networking (sockets, interfaces, routes, statistics), in
     Abi.Networking.inc. }
 
   { (NameAddress): the machine's node name (its host name, which
@@ -433,9 +433,10 @@ const
     only; ErrorInvalidArgument for another name. }
   CallSetNodeName = 124;
 
-  { 125: CallWatchNetworkChanges, in Abi.Networking.inc. }
+  { 125: CallWatchNetworkChanges and 126: CallGetNetworkStatistics, in
+    Abi.Networking.inc. }
 
-  CallCount = 126;
+  CallCount = 127;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;

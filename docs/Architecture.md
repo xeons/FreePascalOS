@@ -2488,7 +2488,8 @@ beneath BSD-style sockets that are handles like any other.
   the network service (DHCP, settings, state files)   host nslookup hostname
   resolver: Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages, Sys.HostsFile
   programs: Sys.Sockets, Sys.NetworkInterfaces     ping ifconfig route arp
-=========== system calls 104-125 (Processes.SocketCalls, .NetworkCalls) ====
+                                                    netstat nc
+=========== system calls 104-126 (Processes.SocketCalls, .NetworkCalls) ====
   Network.SocketOperations   bind listen accept connect send receive ...
   Network.Sockets            the socket object, readiness events, waits
   Network.TcpSockets | Network.Udp | Network.IcmpSockets
@@ -2496,6 +2497,7 @@ beneath BSD-style sockets that are handles like any other.
   Network.Ipv4  Network.Fragments  Network.Icmp  Network.Routing
   Network.Arp   Network.Ethernet   Network.Loopback
   Network.Interfaces          (one per adapter; lo is number 1)
+  Network.Statistics          the protocols' counters (netstat -s)
   Network.Core                the lock, the receive queue, the wake-ups
   Network.Thread              received frames and timers
 =========== Io.NetworkAdapters (the driver interface) ======================
@@ -2636,6 +2638,10 @@ keeps two notification events in step with its state under the network
 lock: Readable (data, a connection to accept, the end of the stream, an
 error) and Writable (room to send, or a connection attempt that ended).
 `CallWaitForHandles` waits on Readable; `CallWaitForSocket` on either.
+`CallWaitForHandles` also takes a file (always ready, as poll says of
+files) and a device whose driver keeps no readiness event, so a program
+can wait on its standard input, whatever it is, and a socket together
+(nc does).
 `CallRead` and `CallWrite` work on sockets (a receive or send without
 flags). Deleting the socket (its last handle closed) closes it.
 
@@ -2672,6 +2678,15 @@ binding a socket to an interface (`SocketOptionInterface`) are root's.
 | GetDnsServers, SetDnsServers | 122, 123 | `TAbiDnsServers` (setting: root) |
 | SetNodeName | 124 | name (root) |
 | WatchNetworkChanges | 125 | returns an event handle signaled after each change |
+| GetNetworkStatistics | 126 | `TAbiNetworkStatistics` |
+
+A listing returns how many records there are, at most
+`MaximumListedNetworkRecords` (1024): a longer list is cut short there
+rather than reporting a count no buffer could be given. Each socket
+records its **owner** (`TSocketOwner`): the user and the process that
+made it, or that accepted its connection; the listing reports both
+(`OwnerUserId`, `OwnerProcessId`, 0 for a connection whose socket is
+gone), which `netstat -p` shows with the process's name.
 
 Addresses (`TAbiSocketAddress`) carry a family, sixteen address bytes
 (IPv4 in the first four, in the order written) and a port in the
@@ -2684,6 +2699,23 @@ passes R8 on. The ABI is in `shared/Abi.Networking.inc`; the new error
 codes (`ErrorConnectionRefused`, `ErrorAddressInUse`,
 `ErrorNetworkUnreachable`...) take Linux's numbers. `CallGetTime`
 gained `TimeUptimeNanoseconds`, for timing ping replies.
+
+**Statistics** (`Network.Statistics`, `CallGetNetworkStatistics`): the
+counters of RFC 1213's groups, kept under the network lock where the
+protocols do their work. IP: datagrams received, with header or address
+errors, of unknown protocols, delivered, forwarded (always 0), sent,
+dropped on the way out (too large, no memory), without a route, and
+fragments, reassemblies and failed reassemblies (timed out or pushed
+out). ICMP: messages in and out, errors, and each type 0-18 counted
+apart (outgoing ones counted in `SendIpv4`, whoever sent them). TCP:
+active opens (connect), passive opens (a listener's new child), failed
+attempts (SYN_SENT or SYN_RECEIVED to CLOSED), resets of established
+connections (ESTABLISHED or CLOSE_WAIT straight to CLOSED), the
+connections established now (counted when asked), segments in, out and
+retransmitted (a segment that carries data, a SYN or a FIN from before
+the furthest sequence number sent), bad segments and resets sent. UDP:
+datagrams delivered, to no port, damaged or without room in the
+socket's queue, and sent.
 
 **Configuration.** Anyone may list interfaces (name, description,
 Ethernet address, flags up/running/loopback/broadcast, MTU, addresses,
@@ -2910,6 +2942,29 @@ so a pointer loop is refused, and makes reverse names (`in-addr.arpa`,
 rest) and no cache yet. `Sys.InternetAddresses` reads and writes IPv6
 addresses too (RFC 5952 form).
 
+**netstat** (`userland/netstat`, `Netstat.*`) in the manner of
+net-tools: the sockets (`Netstat.Connections`: TCP, then UDP, then ICMP
+with `-w`; `-l` servers, `-a` all, otherwise connected ones; `-p` the
+owner as "pid/name" from a process snapshot), `-r` the routes with
+net-tools' columns (the sorting and flags now in
+`Sys.NetworkInterfaces`, shared with route), `-i` the interfaces and
+their counters, `-s` the protocol counters in net-tools' words. Every
+endpoint goes through `Netstat.Names.FormatEndpoint`, where names will
+come once there are reverse lookups; addresses are numeric until then.
+
+**nc** (`userland/nc`, `Netcat.*`) with OpenBSD's options. One thread
+relays (`Netcat.Relay`): it waits on the standard input and the socket
+together and moves whatever is ready, the input first, so a file is
+sent whole before the peer's end is acted on. The peer ending its
+stream ends nc; the end of the input shuts the sending side with `-N`,
+ends nc after `-q` seconds, or otherwise leaves the socket open for
+what the peer still sends; `-w` ends an idle connection and limits
+connecting (the socket's send timeout). `-l` listens (TCP: one
+connection, or one after another with `-k`; UDP: the first datagram's
+sender becomes the peer); `-z` tries ports and ranges, and for UDP
+waits for a port unreachable; `-v` writes OpenBSD's messages. Hosts go
+through `Sys.HostNames`; `-n` takes numeric addresses only.
+
 **Tools.** `ping` (an ICMP echo socket; per-reply lines and the summary
 with loss and min/avg/max/mdev like iputils; `-c -i -W -s -t -q -n`;
 the host is looked up by `Sys.HostNames`, and the first line shows the
@@ -2949,7 +3004,13 @@ compression loop refused, a reply with a wrong id ignored, a missing
 server passed over, new ids and ports each time. `dnstest --serve` and
 `--wait` serve coretest's `host` and `nslookup` command lines; there
 are also `ifconfig`, `route`, `arp`, `ping` (`localhost` from
-`/etc/hosts`), `hostname` and eth0's state file. The session test checks
+`/etc/hosts`), `hostname` and eth0's state file, and netstat and nc ones:
+a listener seen by `netstat -tln` (and its program with `-p`), files
+sent both ways by nc over loopback with matching sha256 sums, a UDP
+round trip, `nc -z` on an open and a closed port and a range, two
+ESTABLISHED ends in `netstat -tn`, the default route in `netstat -r`,
+lo and eth0 in `netstat -i`, and the ICMP counters of `netstat -s`
+growing after a ping. The session test checks
 that the network service configured eth0. The QEMU command lines of all
 tests and `make run` have a virtio-net card on user networking.
 
@@ -3974,7 +4035,10 @@ input (a driver may keep a
 not wait - a line read but not handed out, or typed input, in line
 editing mode a whole line), or a device opened only for writing with
 room (its `WritableEvent`: a pseudo-terminal's master side, with room
-to type). Each stands for a notification event kept
+to type), a socket readable. A file, and a device whose driver keeps no
+such event, is always ready (one event signaled from the start and
+never reset), as poll says of files elsewhere: a read of it waits for
+no one else. Each stands for a notification event kept
 in step with the object (pipes gained `Readable` and `Writable` events
 for this, apart from the synchronization events their readers and
 writers wait on; a terminal updates its events under a lock of its own,
