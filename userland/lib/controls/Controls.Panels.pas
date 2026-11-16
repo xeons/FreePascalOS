@@ -60,6 +60,7 @@ type
 implementation
 
 uses
+  Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Bevels,
   Windowing.Theme,
@@ -95,10 +96,26 @@ begin
     Host.FocusControlAfter(Self);
 end;
 
+{ The outline of Rectangle, Thickness pixels wide inside it. }
+procedure DrawThickOutline(const Canvas: TCanvas; const Rectangle: TRectangle; Thickness: LongInt; Color: TColor);
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Width := RectangleWidth(Rectangle);
+  Height := RectangleHeight(Rectangle);
+  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Top, Width, Thickness), Color);
+  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Bottom - Thickness, Width, Thickness), Color);
+  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Top, Thickness, Height), Color);
+  FillRectangle(Canvas, MakeRectangle(Rectangle.Right - Thickness, Rectangle.Top, Thickness, Height), Color);
+end;
+
 procedure TGroupBox.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
-  Frame: TRectangle;
+  ShadowFrame: TRectangle;
+  HighlightFrame: TRectangle;
+  LineWidth: LongInt;
   TextTop: LongInt;
   Indent: LongInt;
   Width: LongInt;
@@ -106,12 +123,19 @@ begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
   TextTop := TextHeight(ControlFace) div 2;
-  { Etched: a shadow line with a highlight line just inside it. }
-  Frame := MakeRectangle(0, TextTop, RectangleWidth(Box) - 1, RectangleHeight(Box) - TextTop - 1);
-  DrawRectangleOutline(Canvas, Frame, Theme.Shadow);
-  DrawRectangleOutline(Canvas, OffsetRectangle(Frame, 1, 1), Theme.Highlight);
-  DrawRectangleOutline(Canvas, MakeRectangle(Frame.Left, Frame.Top, RectangleWidth(Frame) - 1,
-    RectangleHeight(Frame) - 1), Theme.Shadow);
+  LineWidth := Scaled(1);
+  if LineWidth < 1 then
+    LineWidth := 1;
+  { Etched (a groove): a highlight outline a line down and right of a
+    shadow outline, the shadow drawn over it. The shadow's right and
+    bottom lines fall inside the highlight's, so the groove turns each
+    corner cleanly; the outer corners at the top right and bottom left
+    stay the face. }
+  ShadowFrame := MakeRectangle(0, TextTop, RectangleWidth(Box) - LineWidth,
+    RectangleHeight(Box) - TextTop - LineWidth);
+  HighlightFrame := OffsetRectangle(ShadowFrame, LineWidth, LineWidth);
+  DrawThickOutline(Canvas, HighlightFrame, LineWidth, Theme.Highlight);
+  DrawThickOutline(Canvas, ShadowFrame, LineWidth, Theme.Shadow);
   if Text = '' then
     Exit;
   Indent := Scaled(8);

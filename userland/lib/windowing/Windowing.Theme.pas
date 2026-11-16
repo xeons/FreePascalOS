@@ -113,9 +113,9 @@ begin
   Theme.ActiveTitleText := $FFFFFFFF;
   Theme.InactiveTitleText := $FFDCD9D3;
   Theme.BorderWidth := 4;
-  Theme.TitleHeight := 18;
-  Theme.TitleButtonWidth := 16;
-  Theme.TitleButtonHeight := 14;
+  Theme.TitleHeight := 22;
+  Theme.TitleButtonWidth := 20;
+  Theme.TitleButtonHeight := 18;
   Theme.TitleTextIndent := 4;
   Theme.MinimumWidth := 112;
   Theme.MinimumHeight := 27;
