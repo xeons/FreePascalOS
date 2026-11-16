@@ -1518,7 +1518,7 @@ monospaced one (`FixedFamily`, Terminus). `Windowing.Fonts` lists each
 family once and picks faces from them at the display's DPI: the theme's
 text face (`TextFace`, `BoldTextFace`, `FontFace`) and the monospaced one
 (`FixedTextFace`, `FixedFontFace`), or either family by name
-(`TFontFamily`: `FamilyFontFace`, `FamilyFaceSize`, `FamilyCaption`; a
+(`TFontFamily`: `FamilyFontFace`, `FamilyFaceSize`, `FamilyName`; a
 system without the monospaced fonts gets the text family's). The
 display server picks its title face from the theme's text family too. Text is drawn anti-aliased;
 the multi-line edit box uses the monospaced face unless told otherwise,
@@ -3360,17 +3360,15 @@ for each session. A root that does not parse is left out.
 `CreateTlsClient` (server name, trust store, whether to verify, the
 time, ALPN, cipher suites), `TlsHandshake`, `TlsRead` (0 at the end;
 `TlsClosedCleanly` tells a close_notify from the transport just
-ending), `TlsWrite`, `TlsClose` (close_notify), `TlsDescribeError`
+ending), `TlsWrite`, `TlsClose` (close_notify), `TlsErrorDescription`
 ("the certificate has expired (certificate: example.com)", "the server
 sent an alert: handshake failure") and `TlsIgnoredCertificateError`
-(what the chain check said when not verifying). `Tls.Sessions` puts it
-over a connected socket with a timeout, the system's roots and clock:
-`OpenTlsSession(Socket, Options, Session)`, `ReadTlsSession`,
-`WriteTlsSession`, `CloseTlsSession`, `FreeTlsSession`. Both have an
-object form: `TTlsClientConnection` (`Tls.ClientConnections`) owns a
-connection over any transport, and `TTlsSocketSession` (in
-`Tls.Sessions`, which the routines above hand on to) a session over a
-socket, with the server name, trust file and ALPN as strings. Names,
+(what the chain check said when not verifying). `TTlsClientConnection`
+(`Tls.ClientConnections`) owns such a connection as an object, and
+`TTlsSocketSession` (`Tls.Sessions`) puts it over a connected socket
+with a timeout, the system's roots and clock (`Open`, `Read`, `Write`,
+`Close`, `DescribeError`), with the server name, trust file and ALPN as
+strings. Names,
 error details and the server's certificate list are strings and
 dynamic arrays; the DER, keys and records stay bytes.
 
@@ -5060,8 +5058,8 @@ independent) against the Free Pascal runtime library:
   libsystem. libimage and gzip use it.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
-  (buffered standard input, output and error), `Sys.Format` (printf style),
-  `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
+  (buffered standard input, output and error, with strings written and
+  lines read as strings), `Sys.Text` (character classes), `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.TimeZones` (the time zone
   database) and `Sys.LocalTime` (local times, the system's zone, setting
   it and the clock), `Sys.Libraries`, `Sys.Information`,
@@ -5197,8 +5195,9 @@ independent) against the Free Pascal runtime library:
 - **libtlstest.so** – a small library in assembly with TLS and
   initializer arrays, which Free Pascal does not emit; `threadtest` uses
   it to test the loader and the runtime.
-- **libcoreutils.so** – `Util.Options` (GNU style options: grouped short
-  options, long options with abbreviations, `--help` and `--version`),
+- **libcoreutils.so** – `Util.CommandLine` (`TCommandLine`: GNU style
+  options, grouped short options, long options with abbreviations,
+  `--help` and `--version`), `Util.Numbers` (numbers in arguments),
   `Util.Messages` ("program: message: error" diagnostics), `Util.Input`,
   `Util.Paths`, `Util.Sorting` (stable merge sort), `Util.Sizes`,
   `Util.Directories`, `Util.FileTree` (copying, on `Sys.FileCopies`, removing and walking
@@ -5210,8 +5209,11 @@ independent) against the Free Pascal runtime library:
   removing and changing accounts), `Util.SystemRequests` (asking the
   system settings service from a tool),
   `Util.Logins` (logging a user in: the account, the password, starting
-  a program as the user) and `Util.Commands` (running a command, signal
-  names).
+  a program as the user), `Util.LineEditor` (the shell's line editing
+  and history, with `Util.LineEditing` and `Util.LineCompletion`) and
+  `Util.Commands` (running a command, signal names). They all work on
+  strings; passwords alone stay in heap blocks the caller wipes
+  (`ReadPassword`, `ForgetPassword`).
 - **sh** – lexer, parser to a syntax tree, word expansion and execution;
   on a terminal (the console or a pseudo-terminal) it reads lines through `Util.LineEditor` (cursor keys,
   history in `$HOME/.sh_history`, Tab completion; a line longer than the
