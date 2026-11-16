@@ -25,6 +25,13 @@
   pointer (captured), so it sees a press anywhere: one outside it
   dismisses it (OnDismiss). Positions are on the screen, in logical
   units.
+
+  A dismissed pop-up is freed later, from the message loop (posted), and
+  never while one of its own events is still being handled: an item
+  chosen in a menu may open a message box, whose loop would otherwise
+  free the menu in the middle of the click that chose it. Each event
+  method counts how deep it is (BeginEvent, EndEvent); a pop-up asked to
+  be freed meanwhile is freed once the outermost event is over.
 }
 unit Controls.Popups;
 
@@ -48,9 +55,21 @@ type
     FOnDismiss: TControlEvent;
     FOnPressedOutside: TPressedOutsideEvent;
     FClosing: Boolean;
+    { How many of its event methods are running (nested loops inside
+      them), and whether it is to be freed when the last one ends. }
+    FEventDepth: LongInt;
+    FFreeWhenEventsEnd: Boolean;
+    procedure BeginEvent;
+    procedure EndEvent;
+    procedure PostFree;
   protected
+    procedure KeyDown(Code, Character, Modifiers: LongWord); override;
+    procedure KeyUp(Code, Modifiers: LongWord); override;
+    procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
+    procedure Wheel(Steps: LongInt); override;
+    procedure TimerFired(TimerId: LongWord); override;
     procedure CloseRequested; override;
     { A modal window's pop-ups (a combo box's list in a dialog) work. }
     function AcceptsInputWhileModal: Boolean; override;
@@ -94,9 +113,39 @@ var
   Reaper: TPopupReaper;
 
 procedure TPopupReaper.ReceiveMessage(var Message: TPostedMessage);
+var
+  Popup: TPopupWindow;
 begin
-  if Message.Code = MessageFreePopup then
-    TObject(Message.Parameter1).Free;
+  if Message.Code <> MessageFreePopup then
+    Exit;
+  Popup := TPopupWindow(Message.Parameter1);
+  { Still inside one of its events (a nested loop): later. }
+  if Popup.FEventDepth > 0 then
+    Popup.FFreeWhenEventsEnd := True
+  else
+    Popup.Free;
+end;
+
+procedure TPopupWindow.PostFree;
+begin
+  if Reaper = nil then
+    Reaper := TPopupReaper.Create;
+  PostMessage(Reaper, MessageFreePopup, PtrInt(Self));
+end;
+
+procedure TPopupWindow.BeginEvent;
+begin
+  Inc(FEventDepth);
+end;
+
+procedure TPopupWindow.EndEvent;
+begin
+  Dec(FEventDepth);
+  if (FEventDepth = 0) and FFreeWhenEventsEnd then
+  begin
+    FFreeWhenEventsEnd := False;
+    PostFree;
+  end;
 end;
 
 constructor TPopupWindow.CreatePopup(AOwner: TControlWindow; Left, Top, Width, Height: LongInt);
@@ -141,29 +190,87 @@ begin
     OwnerWindow.Popup := nil;
   if Assigned(FOnDismiss) then
     FOnDismiss(Root);
-  if Reaper = nil then
-    Reaper := TPopupReaper.Create;
-  PostMessage(Reaper, MessageFreePopup, PtrInt(Self));
+  PostFree;
+end;
+
+procedure TPopupWindow.KeyDown(Code, Character, Modifiers: LongWord);
+begin
+  BeginEvent;
+  try
+    inherited KeyDown(Code, Character, Modifiers);
+  finally
+    EndEvent;
+  end;
+end;
+
+procedure TPopupWindow.KeyUp(Code, Modifiers: LongWord);
+begin
+  BeginEvent;
+  try
+    inherited KeyUp(Code, Modifiers);
+  finally
+    EndEvent;
+  end;
+end;
+
+procedure TPopupWindow.PointerMove(X, Y: LongInt; Buttons: LongWord);
+begin
+  BeginEvent;
+  try
+    inherited PointerMove(X, Y, Buttons);
+  finally
+    EndEvent;
+  end;
 end;
 
 procedure TPopupWindow.PointerDown(X, Y: LongInt; Button: LongWord);
 begin
-  if not ContainsPixel(X, Y) then
-  begin
-    if Assigned(FOnPressedOutside) and FOnPressedOutside(X, Y, Button) then
+  BeginEvent;
+  try
+    if not ContainsPixel(X, Y) then
+    begin
+      if Assigned(FOnPressedOutside) and FOnPressedOutside(X, Y, Button) then
+        Exit;
+      Dismiss;
       Exit;
-    Dismiss;
-    Exit;
+    end;
+    inherited PointerDown(X, Y, Button);
+  finally
+    EndEvent;
   end;
-  inherited PointerDown(X, Y, Button);
 end;
 
 procedure TPopupWindow.PointerUp(X, Y: LongInt; Button: LongWord);
 begin
-  inherited PointerUp(X, Y, Button);
-  { The window's own capture ended with the button; a pop-up keeps it. }
-  if not FClosing then
-    SetCapture(True);
+  BeginEvent;
+  try
+    inherited PointerUp(X, Y, Button);
+    { The window's own capture ended with the button; a pop-up keeps it. }
+    if not FClosing then
+      SetCapture(True);
+  finally
+    EndEvent;
+  end;
+end;
+
+procedure TPopupWindow.Wheel(Steps: LongInt);
+begin
+  BeginEvent;
+  try
+    inherited Wheel(Steps);
+  finally
+    EndEvent;
+  end;
+end;
+
+procedure TPopupWindow.TimerFired(TimerId: LongWord);
+begin
+  BeginEvent;
+  try
+    inherited TimerFired(TimerId);
+  finally
+    EndEvent;
+  end;
 end;
 
 procedure TPopupWindow.CloseRequested;
