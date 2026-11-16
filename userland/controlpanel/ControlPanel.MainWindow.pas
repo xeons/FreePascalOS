@@ -24,7 +24,8 @@
   pressed once something was changed); OK does the same and closes the
   window, unless a change failed; Cancel and the close button close it,
   forgetting what was not applied. Every second the page shown hears
-  the time (the Date and Time page's clock moves on).
+  the time (the Date and Time page's clock moves on, the Network page's
+  counters).
 }
 unit ControlPanel.MainWindow;
 
@@ -38,15 +39,13 @@ uses
   Controls.Window,
   Controls.ListBox,
   Controls.Buttons,
-  ControlPanel.Pages,
-  ControlPanel.DateTimePage;
+  ControlPanel.Pages;
 
 type
   TControlPanelWindow = class(TControlWindow)
   private
     FPageList: TListBox;
     FPages: array of TSettingsPage;
-    FDateTimePage: TDateTimePage;
     FOkButton: TButton;
     FCancelButton: TButton;
     FApplyButton: TButton;
@@ -91,6 +90,8 @@ uses
   ControlPanel.MousePage,
   ControlPanel.KeyboardPage,
   ControlPanel.SoundPage,
+  ControlPanel.DateTimePage,
+  ControlPanel.NetworkPage,
   ControlPanel.UsersPage,
   ControlPanel.Report;
 
@@ -128,8 +129,8 @@ begin
   AddPage(TMousePage.CreatePage(Root, Self, 'Mouse'));
   AddPage(TKeyboardPage.CreatePage(Root, Self, 'Keyboard'));
   AddPage(TSoundPage.CreatePage(Root, Self, 'Sound'));
-  FDateTimePage := TDateTimePage.CreatePage(Root, Self, 'Date and Time');
-  AddPage(FDateTimePage);
+  AddPage(TDateTimePage.CreatePage(Root, Self, 'Date and Time'));
+  AddPage(TNetworkPage.CreatePage(Root, Self, 'Network'));
   AddPage(TUsersPage.CreatePage(Root, Self, 'Users'));
   FPageList.OnChange := @PageChosen;
   ButtonTop := WindowHeight - DialogMargin - DialogButtonHeight;
@@ -268,8 +269,8 @@ procedure TControlPanelWindow.TimerFired(Timer: LongWord);
 begin
   if Timer = ClockTimer then
   begin
-    if FPages[FCurrent] = FDateTimePage then
-      FDateTimePage.Tick;
+    if FCurrent >= 0 then
+      FPages[FCurrent].Tick;
   end
   else
     inherited TimerFired(Timer);

@@ -45,7 +45,9 @@
                           (when the menu opens), icon-COMMAND, task-TITLE,
                           context-ITEM (a button's menu),
                           taskbar-task-manager (the taskbar's menu),
-                          clock, notification-N
+                          clock, notification-N, network-settings (the
+                          network pop-up's button), volume-N, volume-mute,
+                          volume-settings (the volume control's)
     task N STATE TITLE    a window of another program is new or changed
                           (STATE: shown, active, minimized, hidden)
     task-gone N           that window is gone
@@ -58,6 +60,10 @@
     clock HH:MM           the time the clock shows now
     notification N TEXT   a notification icon is shown (notification-gone N)
     tooltip TEXT          a notification icon's tooltip is shown
+                          (the network's: "eth0: 10.0.2.15 - connected",
+                          with an em dash)
+    network-popup         the network icon's list of interfaces opened,
+                          then network-popup-row NAME SUMMARY for each
     asking shut down      Shut down asks first (then shut down cancelled,
                           or shutting down)
     asking log off        Log off asks first (then log off cancelled, or
@@ -71,8 +77,9 @@
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),
   Desktop.Programs (what it offers and starting it), Desktop.Taskbar,
   Desktop.StartButton, Desktop.StartMenu, Desktop.TaskButtons,
-  Desktop.WindowList, Desktop.NotificationArea and Desktop.Clock (the
-  taskbar), Controls.PictureGrid, Desktop.ProgramPictures and
+  Desktop.WindowList, Desktop.NotificationArea, Desktop.Clock,
+  Desktop.VolumeIndicator, Desktop.VolumePopup, Desktop.NetworkIndicator
+  and Desktop.NetworkPopup (the taskbar), Controls.PictureGrid, Desktop.ProgramPictures and
   Desktop.SmallPictures (the pictures), Desktop.Report (what it prints).
 }
 program DesktopShell;

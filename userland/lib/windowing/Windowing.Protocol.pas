@@ -342,13 +342,22 @@ const
   ShellWindowResizable = $10;
 
   { What a notification icon shows (drawn by the shell; a click on a
-    volume picture opens the shell's volume control). }
+    volume picture opens the shell's volume control, on a network
+    picture its list of the network's interfaces). }
   NotificationPictureInformation = 1;
   NotificationPictureWarning = 2;
   NotificationPictureVolume = 3;
+  { The network, connected: two linked screens. }
   NotificationPictureNetwork = 4;
   { The volume, muted: the loudspeaker crossed out. }
   NotificationPictureVolumeMuted = 5;
+  { The network: obtaining an address (dots of waiting); the link up
+    but no address (a warning sign over it); no link (no cable: the
+    link crossed out); no network adapter at all (grey screens). }
+  NotificationPictureNetworkConnecting = 6;
+  NotificationPictureNetworkLimited = 7;
+  NotificationPictureNetworkNoLink = 8;
+  NotificationPictureNetworkNone = 9;
 
   { --- Pointer shapes ---------------------------------------------------- }
 

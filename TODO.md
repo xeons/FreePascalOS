@@ -399,7 +399,8 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
-- [x] Control Panel: display, mouse, keyboard layout, sound, date and time, users
+- [x] Control Panel: display, mouse, keyboard layout, sound, date and time,
+      network, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,
@@ -483,8 +484,11 @@ normalized (0-65535), not pixels.
 - [ ] `netstat` (`CallListSockets` is there)
 - [ ] `nc`
 - [ ] `wget`
-- [ ] Control Panel network page
-- [ ] Taskbar network icon
+- [x] Control Panel network page (DHCP or a static address per interface,
+      DNS servers, live status; changes through the system settings service)
+- [x] Taskbar network icon (connected, connecting, no address, no cable, no
+      adapter; a pop-up listing the interfaces); balloons when the link goes
+      down or up wait for notification balloons on the desktop
 - [ ] IPv6 (addresses already carry a family)
 - [ ] Wi-Fi (later, a project of its own): the Intel CNVi driver
       (Alder Lake-P, 8086:51f0) with its firmware from linux-firmware

@@ -30,14 +30,18 @@
     keyboard   the layout, the key repeat's delay and rate
     sound      each output's volume and mute, the default output
     datetime   the time zone, the date and time ("date" works too)
+    network    each interface's address (DHCP, static or none), whether
+               it is on, the DNS servers and search domain, and how it
+               is doing (state, lease, counters), as it changes
     users      adding and removing users, passwords, full names, groups
 
   PAGE opens that page first. The display, mouse and keyboard settings
   go to the display server; the mouse's and keyboard's are kept in the
   user's settings, the display's in the system's. The time zone, the
-  clock, the volumes and the accounts are changed by the system settings
-  service, which asks for an administrator's password where it must
-  (ControlPanel.Administrator). Units in userland/controlpanel.
+  clock, the volumes, the network's settings and the accounts are
+  changed by the system settings service, which asks for an
+  administrator's password where it must (ControlPanel.Administrator).
+  Units in userland/controlpanel.
 
   Prints what happens, a line each:
 
@@ -45,7 +49,16 @@
     place NAME X Y         where a control is on the screen (pixels)
     applied WHAT           a page's changes were made (display, mouse,
                            keyboard, volume, default output, time-zone,
-                           clock)
+                           clock, network NAME METHOD [ADDRESS [via
+                           GATEWAY]] up|down, dns SERVERS|automatic
+                           [DOMAIN])
+    network-interface NAME METHOD up|down CONDITION [ADDRESS]
+                           an interface on the Network page, as loaded
+    network-state NAME CONDITION [ADDRESS]
+                           ...and its state whenever it changes
+                           (CONDITION: connected, connecting, failed,
+                           no-link, unconfigured, disabled)
+    network-chosen NAME    another interface was chosen in the list
     keep-asked SECONDS     "Keep these settings?" appeared
     keep-countdown N       ...and N seconds are left
     kept / reverted        the display's settings were kept, or went back

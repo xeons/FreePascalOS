@@ -21,8 +21,10 @@
   caller has been found to be allowed it (SystemSettings.Authorization):
   the clock and the zone through the kernel, the sound through the
   outputs (Audio.Outputs), the accounts through Util.AccountChanges, the
-  same routines useradd, userdel and usermod use. What is to last is
-  kept in the system's settings (SystemSettings.Remembered).
+  same routines useradd, userdel and usermod use, and the network's
+  settings into the file the network service applies
+  (SystemSettings.Network). What is to last is kept in the system's
+  settings (SystemSettings.Remembered).
 }
 unit SystemSettings.Requests;
 
@@ -48,6 +50,7 @@ uses
   Util.Accounts,
   Util.AccountChanges,
   SystemSettings.Remembered,
+  SystemSettings.Network,
   SystemSettings.Report;
 
 function TextOf(const Field: array of Char): string;
@@ -169,6 +172,8 @@ begin
     SystemRequestSetPassword: Result := SetPassword(Request);
     SystemRequestSetFullName: Result := SetFullName(Request);
     SystemRequestSetGroups: Result := SetGroups(Request);
+    SystemRequestSetNetworkInterface: Result := SetNetworkInterface(Request);
+    SystemRequestSetDnsServers: Result := SetDnsServers(Request);
   else
     Result := ErrorInvalidArgument;
   end;

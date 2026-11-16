@@ -20,8 +20,11 @@
   The taskbar's small pictures: the Start button's mark (a sunrise over
   a hill), the window shown on a task button, and the notification
   icons' pictures (information, a warning, a loudspeaker for the volume,
-  crossed out when it is muted, two linked screens for the network). Drawn with shapes on the design
-  grid (Controls.PictureGrid), usually 16 logical units square.
+  crossed out when it is muted, two linked screens for the network -
+  dots of waiting while connecting, a warning sign without an address,
+  a red cross without a cable, grey screens without any adapter). Drawn
+  with shapes on the design grid (Controls.PictureGrid), usually 16
+  logical units square.
 }
 unit Desktop.SmallPictures;
 
@@ -58,6 +61,9 @@ const
   WaveColor = $FF2F6DB5;
   MutedColor = $FFC8323C;
   ScreenColor = $FF5B9BD5;
+  ActivityColor = $FFF5A623;
+  AbsentScreenColor = $FFB4B8BE;
+  AbsentOutlineColor = $FF7A7E84;
 
 procedure DrawStartMark(const Canvas: TCanvas; const Box: TRectangle);
 var
@@ -116,11 +122,49 @@ begin
   DrawGridLine(Canvas, Grid, 29, 11, 20, 21, 2.6, MutedColor);
 end;
 
+procedure DrawScreens(const Canvas: TCanvas; const Grid: TPictureGrid; Fill, Outline: TColor);
+begin
+  DrawRoundedBox(Canvas, Grid, 13, 2, 30, 13, 1.5, Fill, Outline, 1.6);
+  DrawRoundedBox(Canvas, Grid, 2, 17, 19, 28, 1.5, Fill, Outline, 1.6);
+end;
+
 procedure DrawNetwork(const Canvas: TCanvas; const Grid: TPictureGrid);
 begin
   DrawGridLine(Canvas, Grid, 10, 20, 22, 11, 2, OutlineColor);
-  DrawRoundedBox(Canvas, Grid, 13, 2, 30, 13, 1.5, ScreenColor, OutlineColor, 1.6);
-  DrawRoundedBox(Canvas, Grid, 2, 17, 19, 28, 1.5, ScreenColor, OutlineColor, 1.6);
+  DrawScreens(Canvas, Grid, ScreenColor, OutlineColor);
+end;
+
+procedure DrawNetworkConnecting(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawScreens(Canvas, Grid, ScreenColor, OutlineColor);
+  { Not linked yet: three dots of waiting in the free corner. }
+  DrawGridDisc(Canvas, Grid, 22.5, 24, 1.7, ActivityColor);
+  DrawGridDisc(Canvas, Grid, 26.5, 24, 1.7, ActivityColor);
+  DrawGridDisc(Canvas, Grid, 30.3, 24, 1.7, ActivityColor);
+end;
+
+procedure DrawNetworkLimited(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawGridLine(Canvas, Grid, 10, 20, 22, 11, 2, OutlineColor);
+  DrawScreens(Canvas, Grid, ScreenColor, OutlineColor);
+  { A small warning sign in the corner: linked, but no address. }
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(25, 16), PrecisePoint(31, 29.5), PrecisePoint(19, 29.5)], WarningColor,
+    OutlineColor, 1.2);
+  DrawGridLine(Canvas, Grid, 25, 20.5, 25, 25, 1.8, OutlineColor);
+  DrawGridDisc(Canvas, Grid, 25, 27.3, 1.1, OutlineColor);
+end;
+
+procedure DrawNetworkNoLink(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawScreens(Canvas, Grid, ScreenColor, OutlineColor);
+  { No cable: a red cross where nothing links them. }
+  DrawGridLine(Canvas, Grid, 21, 18, 30, 28, 2.6, MutedColor);
+  DrawGridLine(Canvas, Grid, 30, 18, 21, 28, 2.6, MutedColor);
+end;
+
+procedure DrawNetworkNone(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawScreens(Canvas, Grid, AbsentScreenColor, AbsentOutlineColor);
 end;
 
 procedure DrawNotificationPicture(const Canvas: TCanvas; Picture: LongWord; const Box: TRectangle);
@@ -137,6 +181,14 @@ begin
       DrawVolumeMuted(Canvas, Grid);
     NotificationPictureNetwork:
       DrawNetwork(Canvas, Grid);
+    NotificationPictureNetworkConnecting:
+      DrawNetworkConnecting(Canvas, Grid);
+    NotificationPictureNetworkLimited:
+      DrawNetworkLimited(Canvas, Grid);
+    NotificationPictureNetworkNoLink:
+      DrawNetworkNoLink(Canvas, Grid);
+    NotificationPictureNetworkNone:
+      DrawNetworkNone(Canvas, Grid);
   else
     DrawInformation(Canvas, Grid);
   end;

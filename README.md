@@ -110,10 +110,14 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - **The Control Panel** (`controlpanel`, on the Start menu): display
   (resolution and scale, kept only when "Keep these settings?" is
   answered in time), mouse, keyboard layout and repeat, sound, date and
-  time (the time zone, the clock) and users (add, remove, passwords, full
+  time (the time zone, the clock), network (each interface's address
+  from DHCP or a static one, the DNS servers, and its state, lease and
+  counters as they change) and users (add, remove, passwords, full
   names, groups). What only root may change is made by the system
   settings service, which asks an ordinary user for an administrator's
-  password.
+  password. A network icon on the taskbar shows whether the computer is
+  connected (its address in the tooltip), connecting or without a
+  cable, and lists the interfaces when clicked.
 - **The Free Pascal runtime library** for user programs: strings,
   dynamic arrays, exceptions, classes, generics, threads (TThread),
   SysUtils, Classes, StrUtils, DateUtils, Math, Variants and the rest of

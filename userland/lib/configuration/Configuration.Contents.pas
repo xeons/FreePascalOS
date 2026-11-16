@@ -23,8 +23,10 @@
   Compiling this unit compiles every unit of the library; programs use
   the individual units (usually Configuration.Locations to open the
   settings, Configuration.Settings to read and write them). Everything
-  but the files (Configuration.FileStorage) and their places
-  (Configuration.Locations) needs only the runtime library, so it builds
+  but the files (Configuration.FileStorage), their places
+  (Configuration.Locations) and the network's status as the kernel and
+  the network service tell it (Configuration.NetworkStatus) needs only
+  the runtime library and libsystem's address parsing, so it builds
   and is tested on the host as well (tools/SettingsTest).
 }
 unit Configuration.Contents;
@@ -41,7 +43,10 @@ uses
   Configuration.Scopes,
   Configuration.Settings,
   Configuration.FileStorage,
-  Configuration.Locations;
+  Configuration.Locations,
+  Configuration.NetworkSettings,
+  Configuration.NetworkState,
+  Configuration.NetworkStatus;
 
 implementation
 

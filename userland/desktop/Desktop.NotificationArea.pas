@@ -24,7 +24,8 @@
   Icons stand left to right in the order they came. The pointer resting
   on one is told to the taskbar (OnHoverChanged), which shows its
   tooltip after a moment; a click on one is told too (OnIconClicked:
-  the volume's opens the volume control). Changes are said on the standard output
+  the volume's opens the volume control, the network's the list of
+  interfaces). Changes are said on the standard output
   ("notification N TEXT", "notification-gone N").
 }
 unit Desktop.NotificationArea;

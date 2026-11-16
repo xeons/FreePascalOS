@@ -28,7 +28,9 @@
   seen before they are flushed, two writers keeping both changes, others'
   changes noticed, a damaged group not written over
   (Configuration.Scopes); and the user's settings over the system's over
-  the defaults, with fixed values (Configuration.Settings). Every check
+  the defaults, with fixed values (Configuration.Settings); the network's
+  settings and the network service's state files
+  (SettingsTest.Network). Every check
   prints a line; the exit code is 1 if any failed.
 
   This is a host tool, built with the normal Free Pascal runtime library.
@@ -49,7 +51,8 @@ uses
   Configuration.Storage,
   Configuration.Scopes,
   Configuration.Settings,
-  SettingsTest.MemoryStorage;
+  SettingsTest.MemoryStorage,
+  SettingsTest.Network;
 
 var
   Failures: Integer = 0;
@@ -520,6 +523,8 @@ begin
   TestDamagedDocuments;
   TestScopes;
   TestLayers;
+  TestNetworkSettings(@Check);
+  TestNetworkState(@Check);
   WriteLn('[settings] ', Checks - Failures, ' passed, ', Failures, ' failed');
   if Failures > 0 then
     Halt(1);
