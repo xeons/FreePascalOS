@@ -172,6 +172,8 @@ begin
 end;
 
 procedure LocalApicSendSelfInterrupt(Vector: Byte);
+var
+  WereEnabled: Boolean;
 begin
   if UsesX2ApicMode then
   begin
@@ -181,15 +183,34 @@ begin
     Exit;
   end;
 
+  { Interrupts off for the same reason as in SendInterruptCommand. }
+  WereEnabled := SaveAndDisableInterrupts;
   while (ReadApicRegister(RegisterInterruptCommandLow) and InterruptCommandDeliveryPending) <> 0 do
     CpuRelax;
   WriteApicRegister(RegisterInterruptCommandHigh, 0);
   WriteApicRegister(RegisterInterruptCommandLow, InterruptCommandShorthandSelf or Vector);
+  RestoreInterrupts(WereEnabled);
 end;
 
 { Writes the interrupt command register: Command in the low half and
-  the destination in the high half. }
+  the destination in the high half.
+
+  In xAPIC mode these are two registers, and writing the low one sends
+  the interrupt to whatever destination the high one holds at that
+  moment. An interrupt arriving between the two writes may send an
+  interrupt of its own (the clock interrupt asks for a dispatch
+  interrupt on this processor, a woken thread for one on another), which
+  rewrites the high register: the interrupted send then goes to the
+  wrong processor. A TLB shootdown request sent that way never reaches
+  its processor - and merges with the one already pending at the
+  processor it does reach - so its sender waits for an acknowledgement
+  forever, and every processor that then wants to shoot down spins
+  behind it. So the wait for the previous command and both writes
+  happen with interrupts disabled. In x2APIC mode the register is one
+  MSR, written by one instruction. }
 procedure SendInterruptCommand(DestinationId: LongWord; Command: LongWord);
+var
+  WereEnabled: Boolean;
 begin
   if UsesX2ApicMode then
   begin
@@ -197,10 +218,12 @@ begin
       (QWord(DestinationId) shl 32) or Command);
     Exit;
   end;
+  WereEnabled := SaveAndDisableInterrupts;
   while (ReadApicRegister(RegisterInterruptCommandLow) and InterruptCommandDeliveryPending) <> 0 do
     CpuRelax;
   WriteApicRegister(RegisterInterruptCommandHigh, DestinationId shl 24);
   WriteApicRegister(RegisterInterruptCommandLow, Command);
+  RestoreInterrupts(WereEnabled);
 end;
 
 procedure LocalApicSendInterrupt(DestinationId: LongWord; Vector: Byte);
