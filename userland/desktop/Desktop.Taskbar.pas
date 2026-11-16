@@ -29,10 +29,11 @@
   with the Task Manager. The buttons share what is left
   between the Start button and the notification area, each at most
   MaximumButtonWidth wide. The clock is checked every second and drawn
-  when the minute changes, and the volume icon with it
-  (Desktop.VolumeIndicator); a notification icon's tooltip shows when
-  the pointer has rested on it for a moment, and a click on a volume
-  icon opens the volume control (Desktop.VolumePopup).
+  when the minute changes, and the volume and network icons with it
+  (Desktop.VolumeIndicator, Desktop.NetworkIndicator); a notification
+  icon's tooltip shows when the pointer has rested on it for a moment, a
+  click on a volume icon opens the volume control (Desktop.VolumePopup)
+  and on a network icon the list of interfaces (Desktop.NetworkPopup).
 }
 unit Desktop.Taskbar;
 
@@ -54,6 +55,7 @@ uses
   Desktop.TaskButtons,
   Desktop.NotificationArea,
   Desktop.VolumeIndicator,
+  Desktop.NetworkIndicator,
   Desktop.StartMenu;
 
 const
@@ -75,7 +77,10 @@ type
     FTaskbarMenu: TMenuItem;
     FOnTaskManagerChosen: TTaskbarEvent;
     FVolumeIndicator: TVolumeIndicator;
+    FNetworkIndicator: TNetworkIndicator;
     procedure IconClicked(Sender: TControl);
+    procedure OpenVolumePopup(Left: LongInt);
+    procedure OpenNetworkPopup(Left: LongInt);
     function ButtonCount: LongInt;
     function Button(Index: LongInt): TTaskButton;
     function ButtonFor(WindowId: LongWord): TTaskButton;
@@ -124,6 +129,7 @@ uses
   Controls.Tooltips,
   Desktop.Clock,
   Desktop.VolumePopup,
+  Desktop.NetworkPopup,
   Desktop.Report;
 
 const
@@ -155,6 +161,8 @@ begin
   FNotificationArea.SetClock(ClockText);
   FVolumeIndicator := TVolumeIndicator.Create;
   FVolumeIndicator.Refresh;
+  FNetworkIndicator := TNetworkIndicator.Create;
+  FNetworkIndicator.Refresh;
   ArrangeControls;
   StartTimer(ClockTimer, ClockCheckMilliseconds);
 end;
@@ -167,6 +175,7 @@ begin
   FTaskbarMenu.Free;
   FButtons.Free;
   FVolumeIndicator.Free;
+  FNetworkIndicator.Free;
   inherited Destroy;
 end;
 
@@ -444,6 +453,7 @@ begin
   begin
     FNotificationArea.SetClock(ClockText);
     FVolumeIndicator.Refresh;
+    FNetworkIndicator.Refresh;
   end
   else if TimerId = TooltipTimer then
   begin
@@ -452,21 +462,46 @@ begin
   end;
 end;
 
+procedure TTaskbarWindow.OpenVolumePopup(Left: LongInt);
+var
+  VolumeControl: TVolumePopup;
+begin
+  VolumeControl := TVolumePopup.CreateVolumePopup(Self, Left, ScreenTop);
+  VolumeControl.Open;
+end;
+
+procedure TTaskbarWindow.OpenNetworkPopup(Left: LongInt);
+var
+  NetworkList: TNetworkPopup;
+begin
+  NetworkList := TNetworkPopup.CreateNetworkPopup(Self, Left, ScreenTop);
+  NetworkList.Open;
+end;
+
 procedure TTaskbarWindow.IconClicked(Sender: TControl);
 var
   Index: LongInt;
   Icon: TRectangle;
-  VolumeControl: TVolumePopup;
+  Picture: LongWord;
+  Left: LongInt;
 begin
   Index := FNotificationArea.Clicked;
-  if (Index < 0) or not (FNotificationArea.Icons[Index].Picture in [NotificationPictureVolume,
-     NotificationPictureVolumeMuted]) then
+  if Index < 0 then
     Exit;
-  HideTooltip;
+  Picture := FNotificationArea.Icons[Index].Picture;
   Icon := OffsetRectangle(FNotificationArea.IconBounds(Index), FNotificationArea.PixelBounds.Left,
     FNotificationArea.PixelBounds.Top);
-  VolumeControl := TVolumePopup.CreateVolumePopup(Self, ScreenLeft + Unscaled((Icon.Left + Icon.Right) div 2), ScreenTop);
-  VolumeControl.Open;
+  Left := ScreenLeft + Unscaled((Icon.Left + Icon.Right) div 2);
+  if Picture in [NotificationPictureVolume, NotificationPictureVolumeMuted] then
+  begin
+    HideTooltip;
+    OpenVolumePopup(Left);
+  end
+  else if IsNetworkPicture(Picture) then
+  begin
+    HideTooltip;
+    OpenNetworkPopup(Left);
+  end;
 end;
 
 procedure TTaskbarWindow.CloseRequested;

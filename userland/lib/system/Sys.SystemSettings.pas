@@ -20,8 +20,9 @@
   Talking to the system settings service (userland/systemsettings), which
   makes the changes to the machine that only root may make, for the
   users who may ask for them: the time zone, the date and time, the
-  sound outputs' remembered volumes and the default output, and the
-  user accounts.
+  sound outputs' remembered volumes and the default output, the user
+  accounts, and the network's settings (each interface's address or
+  DHCP, the DNS servers).
 
   It runs as root and serves the port "systemsettings". The kernel tells
   it who connected (CallGetChannelPeer), and it decides by that and by
@@ -84,14 +85,34 @@ const
   { UserName; Text: the supplementary groups, comma separated (the
     primary group stays). }
   SystemRequestSetGroups = 10;
+  { NetworkInterface: an interface (eth0); NetworkMethod: "static",
+    "dhcp" or "none"; NetworkAddress: its address with the prefix
+    ("10.0.2.15/24"; needed for static, otherwise kept for later if
+    given); NetworkGateway: the default route's gateway, on that
+    network, or empty; Flags: SystemFlagInterfaceUp. Checked
+    (Configuration.NetworkSettings) and written to
+    /etc/settings/Network.settings, which the network service applies
+    as soon as it changes. }
+  SystemRequestSetNetworkInterface = 11;
+  { Text: the DNS servers, separated by commas or spaces (empty: those
+    DHCP gives); SearchDomain: where names without a dot are looked up
+    (or empty). Written to Network.settings as above. }
+  SystemRequestSetDnsServers = 12;
 
   SystemFlagMuted = $01;
   SystemFlagAdministrator = $02;
   SystemFlagRemoveHome = $04;
+  SystemFlagInterfaceUp = $08;
 
   SystemNameCapacity = 32;
   SystemTextCapacity = 256;
   SystemPasswordCapacity = 128;
+  { An interface's name, a method's ("static"), an address with its
+    prefix ("255.255.255.255/32"), a domain name. }
+  SystemInterfaceNameCapacity = 16;
+  SystemMethodCapacity = 16;
+  SystemAddressCapacity = 32;
+  SystemDomainCapacity = 64;
 
   { The group whose members are administrators. }
   AdministratorsGroupName = 'wheel';
@@ -110,6 +131,11 @@ type
     FullName: array[0..SystemTextCapacity - 1] of Char;
     Password: array[0..SystemPasswordCapacity - 1] of Char;
     Text: array[0..SystemTextCapacity - 1] of Char;
+    NetworkInterface: array[0..SystemInterfaceNameCapacity - 1] of Char;
+    NetworkMethod: array[0..SystemMethodCapacity - 1] of Char;
+    NetworkAddress: array[0..SystemAddressCapacity - 1] of Char;
+    NetworkGateway: array[0..SystemAddressCapacity - 1] of Char;
+    SearchDomain: array[0..SystemDomainCapacity - 1] of Char;
   end;
 
   TSystemSettingsReply = record

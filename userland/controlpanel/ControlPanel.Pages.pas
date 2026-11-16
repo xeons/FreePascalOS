@@ -75,6 +75,8 @@ type
     procedure TellPlaces; virtual;
     { The page became the one shown. }
     procedure Shown; virtual;
+    { Every second while the page is shown (a clock, counters move on). }
+    procedure Tick; virtual;
     property Window: TControlWindow read FWindow;
     property Modified: Boolean read FModified write FModified;
     property OnModified: TControlEvent read FOnModified write FOnModified;
@@ -125,6 +127,10 @@ begin
 end;
 
 procedure TSettingsPage.Shown;
+begin
+end;
+
+procedure TSettingsPage.Tick;
 begin
 end;
 

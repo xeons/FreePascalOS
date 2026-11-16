@@ -1760,9 +1760,9 @@ checks.append(('terminal: the next window starts at the size the last one closed
 
 # The desktop shell (desktop): a wallpaper on both displays (its sky
 # starts 0f2c42 at the top), the taskbar along the bottom of the first (30 high: 770-799) with the
-# Start button, the clock and the shell's own notification icon (a
-# loudspeaker); a second shell is refused. A window (wintest First,
-# with a notification icon of its own) gets a taskbar button: a click
+# Start button, the clock and the shell's own notification icons (a
+# loudspeaker, then the network's); a second shell is refused. A window
+# (wintest First, with a notification icon of its own, the third) gets a taskbar button: a click
 # on the wallpaper takes the keyboard from it, a click on its button
 # gives it back, another minimizes it (it is hidden, the program told)
 # and a third restores it. Maximized, it stops above the taskbar
@@ -1837,7 +1837,7 @@ place = shell_places('FIRST')
 first_log = log_since('FIRST $m')
 first_listed = 'task-First' in place and re.search(rb'task \d+ active First', first_log) is not None
 checks.append(('desktop: a window gets a taskbar button, a notification icon its own',
-               first_listed and b'notification 2 Hello' in first_log))
+               first_listed and b'notification 3 Hello' in first_log))
 type_on_serial(b'm=DONE; echo BUTTONS $m\r')
 wait_for('BUTTONS DONE', 10)
 if first_listed:
@@ -1918,12 +1918,12 @@ if 'start' in place:
 place = shell_places('ASKED')
 checks.append(('desktop: Shut down asks first, and No leaves everything running',
                b'asking shut down' in log_since('STARTED $m') and b'shut down cancelled' in log_since('STARTED $m')))
-if 'notification-2' in place:
-    point_tablet_at(*place['notification-2'])
+if 'notification-3' in place:
+    point_tablet_at(*place['notification-3'])
     time.sleep(1.5)
     tooltip = take_screen()
     point_tablet_at(640, 400)
-    tooltip_x = place['notification-2'][0]
+    tooltip_x = place['notification-3'][0]
     tooltip_shown = 'f4efd8' in [tooltip(tooltip_x, y) for y in range(745, 769)]
 else:
     tooltip_shown = False
@@ -1932,7 +1932,7 @@ time.sleep(1.5)
 shell_places('GONE')
 checks.append(('desktop: a notification icon\'s tooltip; the icon goes with its program',
                tooltip_shown and b'tooltip Hello' in log_since('ASKED $m') and
-               b'notification-gone 2' in log_since('ENDED $m')))
+               b'notification-gone 3' in log_since('ENDED $m')))
 # The task manager (taskmanager), opened with Ctrl+Shift+Escape (a key
 # the desktop takes for the whole desktop): two busy programs (burn,
 # the second ignoring requests to end) are at the top of its Processes

@@ -66,7 +66,7 @@ type
     function Apply: Boolean; override;
     procedure TellPlaces; override;
     { Every second: the time shown moves on. }
-    procedure Tick;
+    procedure Tick; override;
   end;
 
 implementation

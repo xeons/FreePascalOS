@@ -2073,21 +2073,34 @@ process in the window list), as the taskbar's menu does. The notification area
 right in the order they came, and the clock (`Desktop.Clock`: HH:MM in
 the local time of the system's time zone, `Sys.LocalTime`), checked
 every second; a tooltip shows when the pointer has rested on an icon
-for half a second. The shell shows one icon of its own through the same
-interface as any program: the volume (`Desktop.VolumeIndicator`), the
+for half a second. The shell shows two icons of its own through the same
+interface as any program. The first is the volume (`Desktop.VolumeIndicator`), the
 default output's, looked at every second with the clock, a loudspeaker
 crossed out when muted, its tooltip "Volume: 80%". A click on a volume
 icon opens the volume control (`Desktop.VolumePopup`): a pop-up above
 it, like a menu, with the volume on a slider and Mute, which act on the
 output at once, and Settings..., which opens the Control Panel's Sound
 page (`controlpanel sound`); when it closes, a change is kept by the
-system settings service.
+system settings service. The second is the network
+(`Desktop.NetworkIndicator`): how the most connected interface is doing
+(`Configuration.NetworkStatus`) - two linked screens when connected, its
+tooltip "eth0: 10.0.2.15 — connected"; dots of waiting while
+connecting; a warning sign when linked without an address; a red cross
+without a cable (or when nothing is configured); grey screens without
+any network adapter (`NotificationPictureNetwork*`). The network
+service's state folder is watched, and the kernel's link looked at
+every second with the clock. A click on it opens the list of interfaces
+(`Desktop.NetworkPopup`): each with its picture, name and state,
+address and adapter, and Network settings..., which opens the Control
+Panel's Network page. The desktop has no notification balloons yet, so
+a link going down or up is only shown by the icon.
 
 `desktop` prints what happens (`asking log off`, `logging off`, `task N STATE TITLE` and `task-gone N`
 for the list, `started COMMAND`, `menu TEXT`, `context ITEM`, `clock
 HH:MM`, `notification N TEXT`, `tooltip TEXT`, `hotkey task manager`,
 `context task manager`, `volume-popup`, `volume N`, `mute on|off`,
-`volume-kept N`) and where things are
+`volume-kept N`, `network-popup`, `network-popup-row NAME SUMMARY`) and
+where things are
 (`place NAME X Y`: the Start button and menu items, the icons, the task
 buttons and their menu's items, the clock, the notification icons). The
 input test starts the server and the shell and checks the wallpaper on
@@ -2101,8 +2114,9 @@ the taskbar still showing, and that its button's menu restores it; that
 a new window low on the screen is moved up into the work area; that a
 double click on an icon starts controlstour, whose button's menu closes
 it; that the Start menu starts dialogtour and that Shut down asks first
-(Escape says no); and that wintest's icon shows its tooltip and goes
-when wintest ends.
+(Escape says no); and that wintest's icon (the third, after the
+shell's volume and network icons) shows its tooltip and goes when
+wintest ends.
 
 ### The task manager
 
@@ -2180,13 +2194,14 @@ manager forward and, closed with Alt+F4, it has kept its tab and size.
 system's settings in one window: a list of pages on the left, the page
 chosen on the right (`ControlPanel.Pages`: a group box that shows the
 settings as they are, `Load`, and makes the changes chosen on it,
-`Apply`), and OK, Cancel and Apply along the bottom. Apply can be
+`Apply`; the page shown hears `Tick` every second), and OK, Cancel and
+Apply along the bottom. Apply can be
 pressed once a page was changed, and applies every page that was; OK
 does the same and closes the window unless a change failed; Cancel and
 the close button forget what was not applied. PAGE (`display`, `mouse`,
-`keyboard`, `sound`, `datetime`, `users`) opens that page first; the
-Start menu and a desktop icon open it, the volume control its Sound
-page. Everything is in logical units and points, so it looks the same
+`keyboard`, `sound`, `datetime`, `network`, `users`) opens that page
+first; the Start menu and a desktop icon open it, the volume control
+its Sound page, the network icon's pop-up its Network page. Everything is in logical units and points, so it looks the same
 at every scale.
 
 | Page | What it changes | How |
@@ -2196,6 +2211,7 @@ at every scale.
 | Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate, and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
 | Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
 | Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
+| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
 
 **Root's changes from a user's Control Panel.** The Control Panel runs
@@ -2209,7 +2225,9 @@ written anywhere; their own password needs their present one instead.
 No program is set-user-ID for this and no file is opened to others.
 
 It prints what happens (`page NAME`, `applied ...` for each change,
-`keep-asked SECONDS`, `keep-countdown N`, `kept`, `reverted`,
+`network-interface NAME METHOD up|down CONDITION ADDRESS` as the Network
+page loads, `network-state ...` when one changes, `network-chosen
+NAME`, `keep-asked SECONDS`, `keep-countdown N`, `kept`, `reverted`,
 `password-asked TITLE`, `dialog TITLE`, `typed TEXT` for the keyboard's
 try box, `user-added NAME`, `user-removed NAME`, `password-changed
 NAME`, `user-changed NAME`, `refused CODE ERROR`, `scale P`, `closed`,
@@ -2225,7 +2243,29 @@ system's settings have it, the volume icon shows it); chooses
 Europe/Berlin, root's password asked (`date` and the taskbar clock
 follow); adds a user and gives them a new password (not asked again),
 then logs in as them through the login window, and later removes them
-with their home.
+with their home; on the Network page checks that eth0 has 10.0.2.15
+from DHCP, gives eth1 192.168.50.2/24 (the password given before goes
+with it), finds it in `Network.settings` and in `ifconfig eth1`, and
+sets eth1's method back to what it was; then that the taskbar's network
+icon's tooltip names eth0's address and a click lists the interfaces.
+
+**The Network page** (`ControlPanel.NetworkPage`,
+`ControlPanel.NetworkDetails`): a list of the interfaces (the adapter's
+description, the Ethernet address, the link, the state; the kernel does
+not report a link speed yet) and three tabs for the one chosen:
+Address (Enable this interface; Obtain an address automatically (DHCP),
+Use this address with address, prefix or netmask and gateway boxes, or
+Leave this interface unconfigured - the three methods of the settings),
+DNS (the same for every interface: obtained automatically, which writes
+an empty `DnsServers`, or these servers, and the search domain), and
+Status. What is chosen for each interface is kept while moving between
+them until Apply. Apply checks the values with the same code the
+service uses (`Configuration.NetworkSettings`), saying what is wrong
+(a gateway outside the address's network, a netmask with holes...),
+then sends each changed interface and the DNS settings as an
+administrator. The status comes from `Configuration.NetworkStatus`:
+the network service's state folder is watched (`WatchHandle`), and
+every second the kernel's link and counters are read again.
 
 ## Sound
 
@@ -2660,6 +2700,29 @@ route) and whether it is up, and the DNS servers. The default suits
 QEMU's user networking: eth0 10.0.2.15/24, gateway 10.0.2.2, DNS
 10.0.2.3. A DHCP client will take over interfaces with `Method = dhcp`;
 `NetworkSetup.StaticConfiguration` is the piece kept beside it.
+
+**The desktop's side.** The settings file and the network service's
+state files (`/var/lib/network/NAME.state`: `Method`, `State` - down,
+no-link, configuring, configured, failed - `Address`, `Gateway`,
+`DnsServers`, `Domain`, `LeaseSeconds`, `LeaseObtained`, `DhcpServer`)
+are read in one place, libconfiguration: `Configuration.NetworkSettings`
+reads, checks and writes `Network.settings` (method names; a static
+address needs a prefix of 1-30 and must be a host of its network, not
+0/8, loopback, multicast, its network's address or broadcast; a
+gateway must be another host on that network; DNS servers are host
+addresses, at most four; the search domain a domain name; an empty
+`DnsServers` means those DHCP gives), `Configuration.NetworkState`
+parses a state file, and `Configuration.NetworkStatus` puts each
+interface's state beside the kernel's facts (link, Ethernet address,
+MTU, counters) as one record with a condition (disabled, not
+configured, no link, failed, connecting, connected) and watches the
+state folder. The Control Panel's Network page and the taskbar's
+network icon show them (see "The Control Panel" and "The desktop
+shell"). Changes go through the system settings service
+(`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`,
+`SystemSettings.Network`): administrators only, every value checked
+again there, the interface one the kernel has (not loopback); it only
+writes the file, which the network service watches and applies.
 
 **virtio-net** (`Drivers.VirtioNet`): a receive queue that always holds
 a 2 KiB buffer per descriptor and a transmit queue of one buffer per
@@ -4103,7 +4166,7 @@ as soon as a file changes, and programs need no change.
 | desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
 | files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 | keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
-| system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start |
+| system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start; `Network/Interfaces/NAME/*`, `Network/DnsServers`, `Network/SearchDomain` for an administrator (the network service applies them) |
 
 A display's mode and scale are the machine's (the screen in front of
 it, whoever logs in), so the display server, which runs as root, keeps
@@ -4123,8 +4186,11 @@ changes the user's; `-s` is the system's (only root may change them),
 files (changes keeping comments and broken lines, damaged and binary
 files), scopes over a storage in memory (changes seen before a flush,
 two writers keeping both changes, others' changes noticed, an unreadable
-group not written over) and layering (user over system over default,
-fixed values, values of the wrong kind). coretest runs `settingstest`
+group not written over), layering (user over system over default,
+fixed values, values of the wrong kind), and the network's settings
+and state files (`SettingsTest.Network`: reading and writing
+`Network.settings`, every check the system settings service makes, the
+address and prefix boxes, a state file). coretest runs `settingstest`
 (the locks: shared and exclusive, refused without waiting, a program
 waiting until a lock is given up, a waiting program ended, a lock given
 up by a program that ends; the files' and folder's modes, no file left

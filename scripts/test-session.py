@@ -31,7 +31,11 @@ user, keeps a display scale of 150% and 100% again, lets a smaller mode
 go back by itself, sets the mouse's speed, types German characters with
 the German layout (in its own box and in a terminal), sets the volume,
 the time zone (root's password asked; date and the taskbar clock
-follow), adds a user and gives them a new password. Then from the
+follow), adds a user and gives them a new password, shows eth0's
+address from DHCP on the Network page and gives eth1 a static address
+(kept in the settings and applied: ifconfig shows it) and then what it
+had again; the taskbar's network icon names eth0's address in its
+tooltip and lists the interfaces when clicked. Then from the
 screen: Log off on the Start menu ends the
 session and brings the login window back (with the system's mouse
 settings); a wrong password there is refused, the new user logs in
@@ -488,6 +492,24 @@ def type_with_shift(text):
             press(character)
 
 
+def type_address(text):
+    """Types an address on the keyboard (dots and slashes by their keys'
+    names)."""
+    names = {'.': 'dot', '/': 'slash'}
+    for character in text:
+        press(names.get(character, character))
+
+
+def replace_box_text(found, name, text):
+    """Clicks a box and types text over what it holds."""
+    click_place(found, name)
+    press('ctrl-a')
+    if text:
+        type_address(text)
+    else:
+        press('backspace')
+
+
 def log_in_through_window(name, password):
     """Types a name and a password into the login window shown last,
     each over what its box holds."""
@@ -673,8 +695,80 @@ checks.append(('Users: a new user, with a home of their own, and a new password 
                b'user-added alice' in part and part.count(b'password-asked') == 1 and
                b'alice:x:1001:1001:Alice Example:/home/alice:/bin/sh' in account and
                b'alice alice 755' in account and b'password-changed alice' in part))
+
+# Network: eth0 has its address from DHCP (the network service's state);
+# eth1 is given a static address (the administrator's password given
+# before goes with it, not asked again), which the system settings
+# service keeps in Network.settings and the network service applies at
+# once; then eth1 gets back what it had.
+click_place(found, 'page-network')
+part, found = wait_for_control_panel('page network', 20)
+time.sleep(2)
+part, found = control_panel_part()
+eth1_line = re.search(rb'network-interface eth1 (\w+) (up|down)', part)
+eth1_method = eth1_line.group(1).decode() if eth1_line else 'none'
+eth1_was_down = eth1_line is not None and eth1_line.group(2) == b'down'
+checks.append(('Network: the page lists eth0 with DHCP and the address 10.0.2.15',
+               b'network-interface eth0 dhcp' in part and
+               re.search(rb'network-(?:interface eth0 dhcp up|state eth0) connected 10\.0\.2\.15/24', part)
+               is not None))
+click_place(found, 'network-row-eth1')
+part, found = wait_for_control_panel('network-chosen eth1', 10)
+click_place(found, 'network-tab-address')
+if eth1_was_down:
+    click_place(found, 'network-enabled')
+click_place(found, 'network-method-static')
+replace_box_text(found, 'network-address', '192.168.50.2')
+replace_box_text(found, 'network-prefix', '24')
+replace_box_text(found, 'network-gateway', '')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied network eth1 static 192.168.50.2/24', 30)
+kept = run_and_read('settings get -s Network/Interfaces/eth1/Method; settings get -s Network/Interfaces/eth1/Address')
+configured = b''
+for attempt in range(15):
+    configured = run_and_read('ifconfig eth1')
+    if b'inet 192.168.50.2' in configured:
+        break
+    time.sleep(1)
+checks.append(('Network: a static address for eth1 is kept in the settings and applied by the network service',
+               b'applied network eth1 static 192.168.50.2/24 up' in part and part.count(b'password-asked') == 1 and
+               re.search(rb'\nstatic\r?\n192\.168\.50\.2/24\r?\n', kept) is not None and
+               b'inet 192.168.50.2  netmask 255.255.255.0' in configured))
+click_place(found, 'network-method-' + eth1_method)
+if eth1_was_down:
+    click_place(found, 'network-enabled')
+click_place(found, 'apply')
+part, found = wait_for_control_panel('applied network eth1 ' + eth1_method, 30)
+kept = run_and_read('settings get -s Network/Interfaces/eth1/Method')
+checks.append(('Network: eth1 gets back the method it had (' + eth1_method + ')',
+               ('applied network eth1 ' + eth1_method).encode() in part and
+               re.search(('\\n' + eth1_method + '\\r?\\n').encode(), kept) is not None))
 click_place(found, 'ok')
 part, found = wait_for_control_panel('closed', 20)
+
+# The taskbar's network icon: its tooltip names eth0's address, and a
+# click opens the list of interfaces.
+log = session_log()
+desktop_part = log[log.rfind(b'session: user logged in'):]
+network_icon = re.findall(rb'notification (\d+) eth0: ', desktop_part)
+desktop_places = places(desktop_part)
+icon_place = desktop_places.get('notification-' + network_icon[-1].decode()) if network_icon else None
+if icon_place:
+    place_tablet(*icon_place)
+    time.sleep(1.5)
+    click_at(*icon_place)
+    time.sleep(1.5)
+    # A press outside the pop-up closes it, like a menu (the clock does
+    # nothing when clicked).
+    click_place(desktop_places, 'clock')
+    place_tablet(640, 400)
+    time.sleep(1)
+log = session_log()
+desktop_part = log[log.rfind(b'session: user logged in'):]
+checks.append(('the taskbar\'s network icon: its tooltip names eth0\'s address, a click lists the interfaces',
+               icon_place is not None and
+               'tooltip eth0: 10.0.2.15 \u2014 connected'.encode() in desktop_part and
+               b'network-popup' in desktop_part and b'network-popup-row eth0 eth0: 10.0.2.15' in desktop_part))
 
 # Log off with Notepad holding unsaved text: the session's programs are
 # asked to end, so Notepad asks whether to save (No is answered), and

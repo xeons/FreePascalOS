@@ -29,7 +29,8 @@
 #   make text-test  Check the multi-line edit box's plain logic on the host (undo,
 #                   word wrap, search)
 #   make settings-test  Check the settings library on the host (files, escaping,
-#                   layering, two writers, damaged files)
+#                   layering, two writers, damaged files, the network's
+#                   settings and state files)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -318,13 +319,15 @@ files-test: $(FILES_TEST)
 # the host too, and is checked there over a storage in memory.
 SETTINGS_TEST := build/tools/SettingsTest
 SETTINGS_TEST_SOURCES := $(wildcard tools/SettingsTest/*.pas) shared/Abi.SystemCalls.pas shared/Abi.SystemCalls.inc \
-	$(filter-out %/Configuration.FileStorage.pas %/Configuration.Locations.pas %/Configuration.Contents.pas, \
-		$(wildcard userland/lib/configuration/*.pas))
+	shared/Abi.Networking.inc shared/Runtime.Memory.pas shared/Runtime.Text.pas \
+	userland/lib/system/Sys.InternetAddresses.pas \
+	$(filter-out %/Configuration.FileStorage.pas %/Configuration.Locations.pas %/Configuration.Contents.pas \
+		%/Configuration.NetworkStatus.pas, $(wildcard userland/lib/configuration/*.pas))
 
 $(SETTINGS_TEST): $(SETTINGS_TEST_SOURCES)
 	@mkdir -p build/tools/settings-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/SettingsTest -Fuuserland/lib/configuration -Fushared -Fishared \
-		-FUbuild/tools/settings-test-units -o$@ tools/SettingsTest/SettingsTest.pas
+	fpc -Mobjfpc -O2 -vew -Futools/SettingsTest -Fuuserland/lib/configuration -Fuuserland/lib/system \
+		-Fushared -Fishared -FUbuild/tools/settings-test-units -o$@ tools/SettingsTest/SettingsTest.pas
 
 settings-test: $(SETTINGS_TEST)
 	@$(SETTINGS_TEST) > build/tools/settings-test.out || \
