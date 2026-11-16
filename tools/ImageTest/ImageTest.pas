@@ -49,6 +49,7 @@ uses
   ImageTest.Apng,
   ImageTest.PngWriting,
   ImageTest.Tiff,
+  ImageTest.WebP,
   ImageTest.Robustness;
 
 begin
@@ -69,6 +70,7 @@ begin
   TestApng;
   TestPngWriting;
   TestTiff;
+  TestWebP;
   TestRobustness;
   FinishChecks('ImageTest');
 end.

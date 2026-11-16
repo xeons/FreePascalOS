@@ -31,8 +31,8 @@
   ALPH/VP8 or VP8L chunks.
 
   The chunks are listed without copying (offsets into the file); a
-  chunk that runs past the end of the file is "cut short", a RIFF size
-  shorter than the file ends the list there.
+  chunk that runs past the end of the file ends the list (the file was
+  cut short), and so does a RIFF size shorter than the file.
 }
 unit Image.WebP.Container;
 
@@ -117,11 +117,13 @@ function ChunkTagName(Tag: LongWord): string;
 { True when Data starts like a WebP file (RIFF, WEBP). }
 function HasWebPSignature(const Data: TBytes): Boolean;
 
-{ The chunks of the whole file. }
-function ListWebPChunks(const Data: TBytes): TWebPChunkList;
+{ The chunks of the whole file, as far as they are there: a chunk cut
+  short ends the list and sets Truncated (no chunk at all is "cut
+  short"). }
+function ListWebPChunks(const Data: TBytes; out Truncated: Boolean): TWebPChunkList;
 { The chunks inside Count bytes at Start (an ANMF's payload past its
-  header). }
-function ListChunksIn(const Data: TBytes; Start, Count: PtrInt): TWebPChunkList;
+  header), likewise. }
+function ListChunksIn(const Data: TBytes; Start, Count: PtrInt; out Truncated: Boolean): TWebPChunkList;
 
 { The index of the first chunk with Tag, or -1. }
 function FindChunk(const Chunks: TWebPChunkList; Tag: LongWord): LongInt;
@@ -167,7 +169,7 @@ begin
     (Data[10] = Ord('B')) and (Data[11] = Ord('P'));
 end;
 
-function ListChunksIn(const Data: TBytes; Start, Count: PtrInt): TWebPChunkList;
+function ListChunksIn(const Data: TBytes; Start, Count: PtrInt; out Truncated: Boolean): TWebPChunkList;
 var
   Position: PtrInt;
   Finish: PtrInt;
@@ -175,6 +177,7 @@ var
   Chunk: TWebPChunk;
 begin
   Result := nil;
+  Truncated := False;
   Position := Start;
   Finish := Start + Count;
   while Finish - Position >= ChunkHeaderLength do
@@ -184,14 +187,19 @@ begin
     Chunk.Start := Position + ChunkHeaderLength;
     Chunk.Size := Size;
     if Size > Finish - Chunk.Start then
-      RaiseImageError(ImageErrorTruncated, 'WebP chunk ' + ChunkTagName(Chunk.Tag));
+    begin
+      Truncated := True;
+      Exit;
+    end;
     SetLength(Result, Length(Result) + 1);
     Result[High(Result)] := Chunk;
     Position := Chunk.Start + Size + (Size and 1);
   end;
+  if Position < Finish then
+    Truncated := True;
 end;
 
-function ListWebPChunks(const Data: TBytes): TWebPChunkList;
+function ListWebPChunks(const Data: TBytes; out Truncated: Boolean): TWebPChunkList;
 var
   RiffSize: Int64;
   Finish: Int64;
@@ -204,7 +212,7 @@ begin
   Finish := RiffSize + 8;
   if Finish > Length(Data) then
     Finish := Length(Data);
-  Result := ListChunksIn(Data, RiffHeaderLength, Finish - RiffHeaderLength);
+  Result := ListChunksIn(Data, RiffHeaderLength, Finish - RiffHeaderLength, Truncated);
   if Length(Result) = 0 then
     RaiseImageError(ImageErrorTruncated, 'WebP file without chunks');
 end;

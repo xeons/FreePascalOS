@@ -102,6 +102,11 @@ begin
     Result := LossyPlanesToImage(Planes, nil);
 end;
 
+function HasPictureChunk(const Chunks: TWebPChunkList): Boolean;
+begin
+  Result := (FindChunk(Chunks, ChunkTagLossy) >= 0) or (FindChunk(Chunks, ChunkTagLossless) >= 0);
+end;
+
 procedure NoteCompression(var Compression: string; Lossless: Boolean);
 var
   Kind: string;
@@ -178,11 +183,13 @@ var
   Picture: TWebPPictureChunks;
   Facts: TPictureFacts;
   Image: TImage;
+  Truncated: Boolean;
 begin
   ReadFrameHeader(Data, Chunk, Header);
   if (Header.Left + Header.Width > CanvasWidth) or (Header.Top + Header.Height > CanvasHeight) then
     RaiseImageError(ImageErrorMalformed, 'WebP frame outside the canvas');
-  Picture := FindPictureChunks(ListChunksIn(Data, Chunk.Start + FrameHeaderLength, Chunk.Size - FrameHeaderLength));
+  Picture := FindPictureChunks(ListChunksIn(Data, Chunk.Start + FrameHeaderLength, Chunk.Size - FrameHeaderLength,
+    Truncated));
   Image := DecodePicture(Data, Picture, Facts);
   if (Image.Width <> Header.Width) or (Image.Height <> Header.Height) then
   begin
@@ -205,7 +212,7 @@ begin
     Result.Blend := FrameBlendOver;
 end;
 
-function DecodeAnimation(const Data: TBytes; const Chunks: TWebPChunkList;
+function DecodeAnimation(const Data: TBytes; const Chunks: TWebPChunkList; Truncated: Boolean;
   constref Extended: TWebPExtendedHeader): TAnimatedImage;
 var
   AnimationIndex: LongInt;
@@ -243,6 +250,8 @@ begin
       end;
       Result.AddFrame(Frame);
     end;
+    if (Result.FrameCount = 0) and Truncated then
+      RaiseImageError(ImageErrorTruncated, 'WebP animation');
     if Result.FrameCount = 0 then
       RaiseImageError(ImageErrorMalformed, 'WebP animation without frames');
     SetSource(Result, HasAlpha, Compression);
@@ -259,13 +268,15 @@ begin
   end;
 end;
 
-function DecodeStill(const Data: TBytes; const Chunks: TWebPChunkList; Extended: Boolean;
+function DecodeStill(const Data: TBytes; const Chunks: TWebPChunkList; Truncated, Extended: Boolean;
   constref Header: TWebPExtendedHeader): TImage;
 var
   Picture: TWebPPictureChunks;
   Facts: TPictureFacts;
   Compression: string;
 begin
+  if Truncated and not HasPictureChunk(Chunks) then
+    RaiseImageError(ImageErrorTruncated, 'WebP picture');
   Picture := FindPictureChunks(Chunks);
   Result := DecodePicture(Data, Picture, Facts);
   try
@@ -284,21 +295,22 @@ function DecodeWebPImage(const Data: TBytes): TImage;
 var
   Chunks: TWebPChunkList;
   Header: TWebPExtendedHeader;
+  Truncated: Boolean;
 begin
-  Chunks := ListWebPChunks(Data);
+  Chunks := ListWebPChunks(Data, Truncated);
   if Chunks[0].Tag = ChunkTagExtended then
   begin
     ReadExtendedHeader(Data, Chunks[0], Header);
     CheckImageSize(Header.CanvasWidth, Header.CanvasHeight);
     if (Header.Flags and WebPFlagAnimation) <> 0 then
-      Result := DecodeAnimation(Data, Chunks, Header)
+      Result := DecodeAnimation(Data, Chunks, Truncated, Header)
     else
-      Result := DecodeStill(Data, Chunks, True, Header);
+      Result := DecodeStill(Data, Chunks, Truncated, True, Header);
   end
   else if (Chunks[0].Tag = ChunkTagLossy) or (Chunks[0].Tag = ChunkTagLossless) then
   begin
     Header := Default(TWebPExtendedHeader);
-    Result := DecodeStill(Data, Copy(Chunks, 0, 1), False, Header);
+    Result := DecodeStill(Data, Copy(Chunks, 0, 1), Truncated, False, Header);
   end
   else
     RaiseImageError(ImageErrorMalformed, 'WebP file starting with ' + ChunkTagName(Chunks[0].Tag));

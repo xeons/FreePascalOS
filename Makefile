@@ -439,7 +439,8 @@ IMAGE_FIXTURES := build/tools/image-fixtures
 IMAGE_FIXTURES_STAMP := $(IMAGE_FIXTURES)/.made
 IMAGE_WRITTEN := build/tools/image-written
 IMAGE_FIXTURE_SCRIPTS := tools/ImageTest/make-fixtures.py tools/ImageTest/make-jpeg-fixtures.py \
-	tools/ImageTest/make-png-fixtures.py tools/ImageTest/make-tiff-fixtures.py tools/ImageTest/fixturecommon.py
+	tools/ImageTest/make-png-fixtures.py tools/ImageTest/make-tiff-fixtures.py tools/ImageTest/make-webp-fixtures.py \
+	tools/ImageTest/fixturecommon.py
 IMAGE_TEST_SOURCES := $(wildcard tools/ImageTest/*.pas) $(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas)) \
 	$(wildcard userland/lib/drawing/*.pas) $(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
 
@@ -455,6 +456,7 @@ $(IMAGE_FIXTURES_STAMP): $(IMAGE_FIXTURE_SCRIPTS)
 	python3 -B tools/ImageTest/make-jpeg-fixtures.py $(IMAGE_FIXTURES)
 	python3 -B tools/ImageTest/make-png-fixtures.py $(IMAGE_FIXTURES)
 	python3 -B tools/ImageTest/make-tiff-fixtures.py $(IMAGE_FIXTURES)
+	python3 -B tools/ImageTest/make-webp-fixtures.py $(IMAGE_FIXTURES)
 	@touch $@
 
 image-test: $(IMAGE_TEST) $(IMAGE_FIXTURES_STAMP)

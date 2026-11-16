@@ -55,6 +55,9 @@ procedure WriteFileBytes(const FileName: string; const Data: TBytes);
   reference (Name's base name .rgba), for check-with-pillow.py to
   decode and compare; nothing when there is no written directory. }
 procedure WriteForPillow(const Name: string; const Data: TBytes; Image: TImage);
+{ Writes only the reference Name (a .rgba file) in the written
+  directory: another frame of an animation written before. }
+procedure WriteReferenceForPillow(const Name: string; Image: TImage);
 
 { Compares Image with the reference file ReferenceName (in the fixture
   directory): the same size, and no channel of any pixel further than
@@ -128,19 +131,16 @@ begin
   end;
 end;
 
-procedure WriteForPillow(const Name: string; const Data: TBytes; Image: TImage);
+procedure WriteReferenceForPillow(const Name: string; Image: TImage);
 var
   Reference: TBytes;
   X: LongInt;
   Y: LongInt;
   Offset: PtrInt;
   Pixel: LongWord;
-  Directory: string;
 begin
   if WrittenDirectory = '' then
     Exit;
-  Directory := IncludeTrailingPathDelimiter(WrittenDirectory);
-  WriteFileBytes(Directory + Name, Data);
   Reference := nil;
   SetLength(Reference, 8 + PtrInt(Image.Width) * Image.Height * 4);
   Reference[0] := Image.Width and $FF;
@@ -162,7 +162,15 @@ begin
       Reference[Offset + 3] := Pixel shr 24;
       Inc(Offset, 4);
     end;
-  WriteFileBytes(Directory + ChangeFileExt(Name, '.rgba'), Reference);
+  WriteFileBytes(IncludeTrailingPathDelimiter(WrittenDirectory) + Name, Reference);
+end;
+
+procedure WriteForPillow(const Name: string; const Data: TBytes; Image: TImage);
+begin
+  if WrittenDirectory = '' then
+    Exit;
+  WriteFileBytes(IncludeTrailingPathDelimiter(WrittenDirectory) + Name, Data);
+  WriteReferenceForPillow(ChangeFileExt(Name, '.rgba'), Image);
 end;
 
 function Difference(First, Second: LongInt): LongInt;

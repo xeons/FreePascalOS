@@ -22,8 +22,10 @@
 ImageTest writes each file its encoders made (name.png, name.tif...)
 with the pixels it was made from beside it (name.rgba, see
 fixturecommon.py). Every file must open in Pillow and give exactly
-those pixels; the exit code is 1 if any does not. An animated PNG is
-checked by its first frame as Pillow shows it.
+those pixels; the exit code is 1 if any does not. An animation (APNG,
+WebP) is checked by its first frame as Pillow shows it, and by every
+frame when references name-frame1.rgba, name-frame2.rgba... are there
+too (name-frame0.rgba being name.rgba).
 """
 
 import os
@@ -49,24 +51,37 @@ def first_difference(actual, expected, width):
     return None
 
 
-def check(directory, name):
-    reference_path = os.path.join(directory, os.path.splitext(name)[0] + ".rgba")
-    if not os.path.exists(reference_path):
-        return f"{name}: no reference"
+def compare(name, image, reference_path, label):
     width, height, expected = read_reference(reference_path)
-    try:
-        with Image.open(os.path.join(directory, name)) as image:
-            image.load()
-            decoded = image.convert("RGBA")
-    except Exception as error:
-        return f"{name}: Pillow cannot read it ({error})"
+    decoded = image.convert("RGBA")
     if decoded.size != (width, height):
-        return f"{name}: Pillow reads {decoded.size[0]} x {decoded.size[1]}, written {width} x {height}"
+        return f"{name}{label}: Pillow reads {decoded.size[0]} x {decoded.size[1]}, written {width} x {height}"
     actual = decoded.tobytes()
     if actual != expected:
         x, y, got, wanted = first_difference(actual, expected, width)
-        return f"{name}: pixel ({x}, {y}) is {got}, written {wanted}"
+        return f"{name}{label}: pixel ({x}, {y}) is {got}, written {wanted}"
     return None
+
+
+def check(directory, name):
+    base = os.path.join(directory, os.path.splitext(name)[0])
+    reference_path = base + ".rgba"
+    if not os.path.exists(reference_path):
+        return f"{name}: no reference"
+    try:
+        with Image.open(os.path.join(directory, name)) as image:
+            image.load()
+            problem = compare(name, image, reference_path, "")
+            index = 1
+            while problem is None and os.path.exists(f"{base}-frame{index}.rgba"):
+                if getattr(image, "n_frames", 1) <= index:
+                    return f"{name}: Pillow sees {getattr(image, 'n_frames', 1)} frames, more were written"
+                image.seek(index)
+                problem = compare(name, image, f"{base}-frame{index}.rgba", f" frame {index}")
+                index += 1
+            return problem
+    except Exception as error:
+        return f"{name}: Pillow cannot read it ({error})"
 
 
 def main():

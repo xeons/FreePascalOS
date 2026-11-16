@@ -488,7 +488,9 @@ normalized (0-65535), not pixels.
         deflate and JPEG compression; reading, and writing RGB/RGBA)
   - [ ] TIFF: CCITT Group 3/4, the floating point predictor and float
         samples, old-style JPEG
-  - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
+  - [x] WebP (lossy VP8, lossless VP8L, alpha, animation; ICC, EXIF
+        orientation, XMP; writing lossless, animations included)
+  - [ ] WebP: lossy writing (VP8 encoder)
   - [ ] JPEG XL (VarDCT and modular modes, animation)
   - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
         patent pools, so check licensing before shipping it)
