@@ -462,8 +462,10 @@ normalized (0-65535), not pixels.
       lazy matching), zlib and gzip wrappers (several members), Adler-32 and
       CRC-32; TInflater/TDeflater, stream adapters, one-call functions;
       `gzip`; checked on the host against zlib (`make compression-test`)
-- [ ] libcompression: preset dictionaries, flushing mid-stream (sync and
-      full flush points), zip archives; `zcat`/`gunzip` names for gzip
+- [x] libcompression: preset dictionaries (zlib FDICT and raw, both
+      ways), flushing mid-stream (sync and full flush points);
+      `zcat`/`gunzip` names for gzip; checked against Python's zlib
+- [ ] libcompression: zip archives
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
@@ -486,15 +488,21 @@ normalized (0-65535), not pixels.
         reading, then writing baseline)
   - [x] TIFF (strips and tiles, several pages, BigTIFF; none, PackBits, LZW,
         deflate and JPEG compression; reading, and writing RGB/RGBA)
-  - [ ] TIFF: CCITT Group 3/4, the floating point predictor and float
-        samples, old-style JPEG
+  - [x] TIFF: CCITT RLE, Group 3 (1D/2D) and Group 4, the floating point
+        predictor and 16/32-bit float samples (tone mapped to 8 bits),
+        old-style JPEG (interchange-format streams and a stream a strip)
   - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
   - [ ] JPEG XL (VarDCT and modular modes, animation)
   - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
         patent pools, so check licensing before shipping it)
-  - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
-        good filtering for thumbnails (scaling done: `Image.Scaling` on
-        libdrawing's area averaging)
+  - [x] Colour management basics: ICC v2/v4 matrix/TRC, grey and LUT
+        (mft1, mft2, mAB) profiles to sRGB with tables, wtpt/chad,
+        PNG gAMA/cHRM, CMYK naive (`Image.ColorProfiles`,
+        `TImage.ConvertToSrgb`, `ImageLoadConvertToSrgb`); checked
+        against LittleCMS
+  - [x] Scaling with good filtering: `Image.Resampling` (Lanczos-3,
+        Mitchell, bilinear, box; separable, premultiplied alpha) beside
+        `Image.Scaling`'s area averaging; checked against Pillow
 - [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
       so any DPI)
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to

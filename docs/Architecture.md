@@ -3476,7 +3476,8 @@ incomplete one only as a single one-bit code), as are the code length
 repeats, symbols 286, 287, 30 and 31, the end of block code, stored
 lengths and every distance against the output so far; the first error
 stops the decoder. The wrappers are checked as they arrive: the zlib
-header (no preset dictionary) and Adler-32; the gzip header byte by
+header (with a preset dictionary only when one was given: see below)
+and Adler-32; the gzip header byte by
 byte (extra field, name, comment, header CRC; `GzipHeader` has them),
 CRC-32 and length; members follow one another as one output, and
 anything else after a member is trailing data.
@@ -3494,6 +3495,22 @@ or with codes of its own (Huffman lengths limited to 15, the code
 lengths run-length coded and limited to 7), whichever is smallest
 counted to the bit. A block of incompressible data goes out before the
 window slides away from its start, so that it can still be stored.
+
+**Dictionaries and flushes.** `SetDictionary` before the first byte
+gives raw or zlib data a preset dictionary: the deflater puts its last
+32 KiB into the window as if they had just been coded (and zlib's
+header gets FDICT and the dictionary's Adler-32), the inflater puts it
+into the history before the first block. A zlib stream that asks for a
+dictionary fails with `CompressionErrorPresetDictionary` when none was
+given (`DictionaryId` names it) and `CompressionErrorDictionaryMismatch`
+when another was. `Compress` with a `TDeflateFlush` flushes: `FlushSync`
+codes everything taken so far and ends it with an empty stored block
+(00 00 FF FF), so the receiver can decompress all of it now;
+`FlushFull` also empties the hash chains, so nothing after refers to
+anything before and decompression can start there; asking again
+without new input adds nothing. The inflater needs nothing for them:
+everything before a flush point comes out as soon as the input up to it
+is in. `TCompressionStream.Flush` does the same for streams.
 
 **The convenience layer.** `Compression.Buffers` does whole arrays in
 one call and raises `ECompressionError` (with the code): decompression
@@ -3515,8 +3532,18 @@ is built with range checks); round trips at every level in every
 format, whole and in pieces; sizes within a tenth of zlib's on the
 same data; the stream adapters; gzip header fields. The samples it
 compresses are then decompressed by Python's zlib and gzip
-(`check-with-zlib.py`). On the system, `gzip` (`-c`, `-d`, `-f`, `-k`,
-`-1` to `-9`) compresses and decompresses files; coretest checks it.
+(`check-with-zlib.py`). Preset dictionaries and flushes are checked
+both ways: zlib's data made with `zdict` (zlib and raw, levels 0 to 9,
+a dictionary longer than the window) decompressed with the dictionary,
+refused without it or with another; zlib's sync and full flushes
+giving all the input before them at once, and the data after a full
+flush decompressing on its own; the same of the library's own
+dictionaries and flushes at every level, whose samples Python's zlib
+then checks (`zdict`, decompressing up to each flush point). On the
+system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
+decompresses files; started as `gunzip` it decompresses and as `zcat`
+it decompresses to standard output (copies made by
+make-system-disk.sh); coretest checks it.
 
 ## Network drivers
 
@@ -5178,7 +5205,8 @@ independent) against the Free Pascal runtime library:
 - **libimage.so** – images and image files (see "Images" below): the
   model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing
   pixels to libdrawing (`Image.Surfaces`), playing animations
-  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, the
+  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, `Image.Resampling`,
+  colour management (`Image.ColorProfiles.*`), the
   codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
   and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
   (`Image.Ico.*`), GIF (`Image.Gif.*`) and JPEG (`Image.Jpeg.*`). It
@@ -5434,9 +5462,21 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   delays and sizes of their own: a file decodes as its first page with
   `PageCount` in the metadata when it has more, and `TiffPageCount` and
   `DecodeTiffPage` (`Image.Tiff.Codec`) pick any page; a directory chain
-  that loops is one page. Old-style JPEG (6), CCITT, the floating point
-  predictor, float and signed samples, CIELab and JPEG or subsampled
-  YCbCr in separate planes are refused as unsupported. Writing
+  that loops is one page. Fax compression (`Image.Tiff.Ccitt`, codes in
+  `Image.Tiff.CcittCodes`): CCITT RLE (2), Group 3 (3, T.4, one- and
+  two-dimensional rows after EOLs, with or without fill bits) and
+  Group 4 (4, T.6), white runs as 0 bits as libtiff gives them; where
+  the data breaks off the rest is white, the uncompressed mode is
+  refused. Floating point samples (`Image.Tiff.FloatSamples`) of 16
+  and 32 bits, with or without the floating point predictor (3), are
+  light from 0 to 1, tone mapped to 8 bits: a page whose brightest
+  colour sample is above 1 is scaled down by it, then clamped, NaN as
+  0. Old-style JPEG (6, `Image.Tiff.OldJpeg`): a whole stream at
+  JPEGInterchangeFormat decoded as one picture, or a JPEG stream a
+  strip or tile (tables from JPEGInterchangeFormat if they are there);
+  tables only in JPEGQTables and the like are refused. Signed samples,
+  CIELab and JPEG or subsampled YCbCr in separate planes are refused as
+  unsupported. Writing
   (`Image.Tiff.Writing`): 8-bit RGB, or RGBA (unassociated alpha) when
   a pixel is not opaque, uncompressed, LZW or deflate with or without
   the predictor, in strips of about 64 KiB, with the resolution,
@@ -5446,6 +5486,45 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
 
 `imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
 orientation, resolution, profile and a TIFF's pages.
+
+**Colour management** (`Image.ColorProfiles`, `TImage.ConvertToSrgb`,
+`LoadImage`'s `ImageLoadConvertToSrgb`) converts an image from its ICC
+profile to sRGB and says what it did (`TColorConversionResult`: not
+needed, done, approximate, unsupported). `Image.ColorProfiles.Reading`
+reads profiles of versions 2 and 4: the header, the colorants
+(rXYZ/gXYZ/bXYZ), tone curves (curv as gamma or table, para of every
+function type: `Image.ColorProfiles.Curves`), kTRC, wtpt, chad, the
+description (desc or mluc) and A2B0 as mft1, mft2 or mAB
+(`Image.ColorProfiles.Luts`: curves, a multilinear grid, M curves, a
+matrix with offset, B curves; Lab or XYZ PCS, mft2's Lab in the older
+encoding). `Image.ColorProfiles.Transforms` works a profile out into
+tables once: matrix/TRC RGB as three 256-entry tables to 16-bit linear
+light, one 3 x 3 matrix in 16.16 fixed point through the PCS to linear
+sRGB (sRGB's matrix from its primaries, adapted to D50 by Bradford, as
+LittleCMS does), and a 16384-entry table back to 8-bit sRGB; grey as
+one 256-entry table; a LUT as a 33 x 33 x 33 grid of 16-bit sRGB,
+interpolated trilinearly. A LUT is preferred to colorants when there
+are both (as LittleCMS does), and the intent is relative colorimetric.
+Colorants of an old profile that add up to its media white point
+rather than D50 are adapted (by chad, or Bradford from wtpt). A profile
+that is sRGB itself needs nothing; a CMYK profile is not used (the
+decoders have already turned the inks into RGB by the naive rule) and
+the result is approximate; other colour spaces and unreadable
+profiles are left alone. Without a profile, PNG's gAMA and cHRM (when
+there is no sRGB chunk) make a matrix/TRC transform; 1/2.2 with sRGB's
+primaries counts as sRGB. A converted image loses its profile and is
+marked sRGB (`OriginalColorProfile` names what it was); an
+animation's frames are converted with it. `Image.ColorProfiles.Matrices`
+has the colour arithmetic (matrices, chromaticities, Bradford, Lab,
+sRGB's curves).
+
+**Resampling** (`Image.Resampling`; `ScaleImage` and `ThumbnailImage`
+given a filter): box, triangle (bilinear), Mitchell-Netravali (B = C =
+1/3) and Lanczos-3, in two separable passes as Pillow does them (each
+output pixel takes the source about its centre, the kernel stretched
+when shrinking, weights normalised), on premultiplied colours in single
+precision, so transparent pixels lend no colour, and clamped. Without
+a filter the scaling stays libdrawing's area averaging and bilinear.
 
 **Tests.** libimage builds on the host with libdrawing and
 libcompression, and `make image-test` (part of `make test`) runs
@@ -5474,7 +5553,26 @@ each compression, page and metadata, and are put together byte by byte
 for big endian, BigTIFF, tiles, the predictor, old-style LZW, every
 depth, planar RGBA, associated alpha, CMYK, subsampled YCbCr and JPEG
 with JPEGTables, their references worked out from the samples (or
-Pillow's decoding of each JPEG chunk). PNG image data is also damaged
+Pillow's decoding of each JPEG chunk); fax files come from Pillow with
+libtiff (Group 3 one- and two-dimensional, with fill bits, Group 4,
+CCITT RLE, strips, fill order 2, a page 1728 wide) and one is made
+white is zero; floating point files (32-bit from Pillow with the
+predictor, 16- and 32-bit RGB and grey made here with and without it,
+one of high dynamic range with a NaN and an infinity) and old-style
+JPEG files are made here. Colour fixtures (`make-color-fixtures.py`)
+are profiles written byte by byte (Display P3 v4 with a parametric
+curve and chad, Adobe RGB v2 with its D65 media white, gamma 1.8,
+ProPhoto with table curves, grey v2 and v4, an mft2 to XYZ whose
+colorants disagree, an mAB to Lab) in PNGs, with LittleCMS's
+conversion (Pillow's ImageCms) as the reference: within 2 for
+matrix/TRC and grey, 3 for LUTs (tried on mid-tones, away from the
+gamut's edge where interpolations differ most); the sRGB profile must
+change nothing, a Lab profile is refused, a CMYK JPEG is approximate,
+and PNG gAMA/cHRM files are compared with conversions worked out in
+the script. Damaged profiles must convert or be refused. Resampling is
+compared with Pillow's resize (Lanczos and bilinear shrinking and
+enlarging, box shrinking; within 2), and checked for flat colours, no
+dark fringes at transparent edges and the kernels' values. PNG image data is also damaged
 behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged

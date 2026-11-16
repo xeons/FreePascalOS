@@ -103,7 +103,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..368] of TCommandTest = (
+  CommandTests: array[0..369] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -589,7 +589,9 @@ const
       an exception: status 217), or with status 139 when the kernel must
       end it (no dispatcher) ------------------------------------------- }
     (Command: '/bin/coretest --crash-on-purpose 2>&1 | sed -n 2p; /bin/coretest --crash-on-purpose 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10'still running'#10; ExpectedStatus: 0),
-    (Command: '/bin/coretest --overflow-stack 2>&1 | sed -n 2p; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'EStackOverflow: Stack overflow'#10'139'#10; ExpectedStatus: 0)
+    (Command: '/bin/coretest --overflow-stack 2>&1 | sed -n 2p; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'EStackOverflow: Stack overflow'#10'139'#10; ExpectedStatus: 0),
+    { gzip started as zcat and gunzip. }
+    (Command: 'printf zz | gzip > zz.gz; zcat zz.gz; echo; gunzip zz.gz; cat zz; echo; ls zz*'; ExpectedOutput: 'zz'#10'zz'#10'zz'#10; ExpectedStatus: 0)
   );
 
 var
