@@ -18,7 +18,8 @@
 
 {
   The user's settings that belong to the display server rather than to a
-  program: the mouse's (Windowing.MouseSettings). The display server
+  program: the mouse's (Windowing.MouseSettings) and the keyboards'
+  layout and repeat (Windowing.KeyboardSettings). The display server
   serves whoever sits at the screen, so the session manager, which knows
   who that is, hands it the user's settings when they log in (their own
   over the system's) and the system's when the session ends, so the
@@ -48,6 +49,8 @@ uses
   Configuration.Settings,
   Configuration.Locations,
   Windowing.MouseSettings,
+  Windowing.KeyboardSettings,
+  Sys.Keyboard,
   Session.Report;
 
 const
@@ -68,12 +71,28 @@ begin
     [Whose, Applied.Speed, Applied.Acceleration, OnOff[Applied.LeftHanded]]));
 end;
 
+procedure ApplyKeyboardSettings(Store: TSettings; const Whose: string);
+var
+  Wanted: TKeyboardSettings;
+  Applied: TKeyboardSettings;
+begin
+  Wanted := RememberedKeyboardSettings(Store);
+  if not ChangeKeyboardSettings(Wanted, Applied) then
+  begin
+    Say('the display server did not take the keyboard settings of ' + Whose);
+    Exit;
+  end;
+  Say(Format('keyboard settings of %s: layout %s, repeat delay %d, rate %d',
+    [Whose, PChar(@Applied.Layout[0]), Applied.RepeatDelay, Applied.RepeatRate]));
+end;
+
 procedure ApplyUserSettings(const Name, Home: string);
 var
   Store: TSettings;
 begin
   Store := OpenSettingsOfHome(Home);
   ApplyMouseSettings(Store, Name);
+  ApplyKeyboardSettings(Store, Name);
   Store.Free;
 end;
 
@@ -83,6 +102,7 @@ var
 begin
   Store := OpenSystemSettings;
   ApplyMouseSettings(Store, 'the system');
+  ApplyKeyboardSettings(Store, 'the system');
   Store.Free;
 end;
 

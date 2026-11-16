@@ -39,6 +39,7 @@ uses
   Sys.Format,
   Sys.Streams,
   Sys.Time,
+  Sys.LocalTime,
   Util.Accounts,
   Util.Messages,
   Util.Modes,
@@ -96,12 +97,17 @@ end;
 
 procedure WriteTime(Time: Int64);
 var
+  Local: TLocalTime;
   DateTime: TDateTime;
+  OffsetText: array[0..7] of Char;
 begin
-  DecodeTime(Time, DateTime);
-  WriteFormatted(StandardOutput, '%04d-%02d-%02d %02d:%02d:%02d +0000', [
+  DecodeLocalTime(Time, Local);
+  DateTime := Local.DateTime;
+  FormatUtcOffset(Local.Offset, @OffsetText[0]);
+  WriteFormatted(StandardOutput, '%04d-%02d-%02d %02d:%02d:%02d %s', [
     ArgumentNumber(DateTime.Year), ArgumentNumber(DateTime.Month), ArgumentNumber(DateTime.Day),
-    ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute), ArgumentNumber(DateTime.Second)]);
+    ArgumentNumber(DateTime.Hour), ArgumentNumber(DateTime.Minute), ArgumentNumber(DateTime.Second),
+    ArgumentText(@OffsetText[0])]);
 end;
 
 function NameOrUnknown(Name: PChar): PChar;

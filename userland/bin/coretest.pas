@@ -45,6 +45,10 @@
     * the service manager: definitions, the start order, readiness,
       restarts, logs, the service command (servicetest), and login with
       a right and a wrong password,
+    * the Control Panel's subsystems: time zones and local times (date,
+      timezone), the system settings service (the zone, the clock, the
+      volumes and default output kept, refusals), accounts (useradd,
+      usermod, userdel) and the keyboards' layouts (keyboardsettings),
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
@@ -86,7 +90,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..310] of TCommandTest = (
+  CommandTests: array[0..324] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -472,6 +476,35 @@ const
       environment. }
     (Command: 'printf ''user\nuser\n'' | login -e /bin/id 2>/dev/null; printf ''user\nwrong\n'' | login -e /bin/id 2>/dev/null; echo $?'; ExpectedOutput: 'fpos login: uid=1000(user) gid=1000(user) groups=1000(user)'#10'fpos login: Login incorrect'#10'fpos login: 1'#10; ExpectedStatus: 0),
     (Command: 'login -f root -e /bin/id; login -f user -e /bin/pwd; login -f user -e /bin/printenv; su user -c "login -f root -e /bin/id" 2>&1; echo $?'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'/home/user'#10'HOME=/home/user'#10'SHELL=/bin/sh'#10'USER=user'#10'LOGNAME=user'#10'PATH=/bin'#10'TERM=console'#10'login: only root may log users in'#10'1'#10; ExpectedStatus: 0),
+
+    { --- the Control Panel's subsystems ------------------------------- }
+    { Time zones (Sys.TimeZones): offsets and abbreviations on both sides
+      of daylight saving's changes, north and south, half and quarter
+      hours; local times read back; an unknown TZ is UTC. }
+    (Command: 'for t in 1774745999 1774746000 1792889999 1792890000; do TZ=Europe/Berlin date -d @$t "+%F %T %Z %z"; done'; ExpectedOutput: '2026-03-29 01:59:59 CET +0100'#10'2026-03-29 03:00:00 CEST +0200'#10'2026-10-25 02:59:59 CEST +0200'#10'2026-10-25 02:00:00 CET +0100'#10; ExpectedStatus: 0),
+    (Command: 'for t in 1772953199 1772953200 1793512799 1793512800; do TZ=America/New_York date -d @$t "+%F %T %Z %z"; done'; ExpectedOutput: '2026-03-08 01:59:59 EST -0500'#10'2026-03-08 03:00:00 EDT -0400'#10'2026-11-01 01:59:59 EDT -0400'#10'2026-11-01 01:00:00 EST -0500'#10; ExpectedStatus: 0),
+    (Command: 'for t in 1775318399 1775318400 1791043199 1791043200; do TZ=Australia/Sydney date -d @$t "+%F %T %Z %z"; done'; ExpectedOutput: '2026-04-05 02:59:59 AEDT +1100'#10'2026-04-05 02:00:00 AEST +1000'#10'2026-10-04 01:59:59 AEST +1000'#10'2026-10-04 03:00:00 AEDT +1100'#10; ExpectedStatus: 0),
+    (Command: 'TZ=Pacific/Auckland date -d @1790431200 "+%F %T %Z %z"; TZ=Europe/London date -d @1782907200 "+%T %Z"; TZ=Asia/Kolkata date -d @1767225600 "+%T %z"; TZ=Asia/Kathmandu date -d @1767225600 "+%T %z"; TZ=America/St_Johns date -d @1782907200 "+%T %Z %z"'; ExpectedOutput: '2026-09-27 03:00:00 NZDT +1300'#10'13:00:00 BST'#10'05:30:00 +0530'#10'05:45:00 +0545'#10'09:30:00 NDT -0230'#10; ExpectedStatus: 0),
+    (Command: 'TZ=America/New_York date -d "2026-07-04 12:00" +%s; date -u -d "2026-07-04 12:00" +%s; TZ=Nowhere/City date -d @0 "+%F %T %Z"; timezone -l | wc -l; timezone -l | grep -c "^Europe/"; timezone; timezone Mars/Base 2>&1; echo $?'; ExpectedOutput: '1783180800'#10'1783166400'#10'1970-01-01 00:00:00 UTC'#10'66'#10'23'#10'UTC +0000 UTC'#10'timezone: unknown time zone ''Mars/Base'' (timezone -l lists them)'#10'1'#10; ExpectedStatus: 0),
+    { The system settings service, started here (there is no service
+      manager under coretest): the system's zone (kept, used by date,
+      touch and ls), refused to a user with a wrong password and done
+      with root's; the clock; the sound outputs' volumes, mute and the
+      default output, kept in the system's settings. }
+    (Command: 'systemsettings > /tmp/systemsettings.log 2>&1 & until grep -q ready /tmp/systemsettings.log 2>/dev/null; do sleep 0.1; done; timezone Europe/Paris | cut -d " " -f 1; settings get -s Time/Zone; date -d @1782907200 "+%H:%M %Z"; touch -d "2026-07-01 14:00" tf; stat -c %y tf; ls -l tf | cut -d " " -f 6-8; rm tf'; ExpectedOutput: 'Europe/Paris'#10'Europe/Paris'#10'14:00 CEST'#10'2026-07-01 14:00:00 +0200'#10'Jul  1'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "echo wrong | timezone Asia/Tokyo" > /dev/null 2>&1 || echo refused; su user -c "echo root | timezone Asia/Tokyo" 2>/dev/null; timezone UTC; settings get -s Time/Zone'; ExpectedOutput: 'refused'#10'Asia/Tokyo +0900 JST'#10'UTC +0000 UTC'#10'UTC'#10; ExpectedStatus: 0),
+    (Command: 'date -s @$(date +%s) > /dev/null; echo $?; su user -c "echo wrong | date -s @1800000000" > /dev/null 2>&1 || echo refused; grep -c "wrong password" /tmp/systemsettings.log'; ExpectedOutput: '0'#10'refused'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'mixer -r 70; mixer; settings get -s Sound/0/Volume; mixer -m on; mixer; mixer -m off; mixer -r 80; mixer -l | head -n 2; mixer -D 1; mixer -l | grep default; mixer -D 0'; ExpectedOutput: 'volume 70%'#10'70'#10'volume 70%, muted'#10'0 /dev/audio HD Audio: volume 80%, default'#10'1 /dev/audio1 AC''97: volume 80%'#10'1 /dev/audio1 AC''97: volume 80%, default'#10; ExpectedStatus: 0),
+    { Accounts (Util.AccountChanges): useradd, usermod and userdel, the
+      home's owner and mode, logging in as the new user, what is
+      refused; the files keep their modes. }
+    (Command: 'printf "pw1\npw1\n" | useradd -c "Test Person" tester 2>/dev/null; grep "^tester:" /etc/passwd /etc/group; stat -c "%U %G %a" /home/tester; printf "tester\npw1\n" | login -e /bin/id 2>/dev/null'; ExpectedOutput: '/etc/passwd:tester:x:1001:1001:Test Person:/home/tester:/bin/sh'#10'/etc/group:tester:x:1001:'#10'tester tester 755'#10'fpos login: uid=1001(tester) gid=1001(tester) groups=1001(tester)'#10; ExpectedStatus: 0),
+    (Command: 'usermod -c "Tess Ter" -G wheel tester; grep "^tester:" /etc/passwd | cut -d: -f5; id tester; usermod -a -G user tester; groups tester; usermod -G "" tester; id tester'; ExpectedOutput: 'Tess Ter'#10'uid=1001(tester) gid=1001(tester) groups=1001(tester),10(wheel)'#10'tester : tester wheel user'#10'uid=1001(tester) gid=1001(tester) groups=1001(tester)'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "useradd x" 2>&1; userdel nosuch 2>&1; userdel root 2>&1; printf "a\nb\n" | useradd y 2>&1 | tail -c 23; useradd -c "a:b" z < /dev/null 2>&1; printf "a\na\n" | useradd tester 2>&1 | tail -c 29; useradd Bad < /dev/null 2>&1; echo $?'; ExpectedOutput: 'useradd: only root may add users'#10'userdel: user ''nosuch'' does not exist'#10'userdel: the account ''root'' cannot be removed'#10'Passwords do not match'#10'useradd: a full name may not hold a colon'#10'user ''tester'' already exists'#10'useradd: invalid user name ''Bad'''#10'1'#10; ExpectedStatus: 0),
+    (Command: 'userdel -r tester; grep -c "^tester:" /etc/passwd /etc/group /etc/shadow; test -e /home/tester || echo gone; stat -c %a /etc/shadow /etc/passwd /etc/group'; ExpectedOutput: '/etc/passwd:0'#10'/etc/group:0'#10'/etc/shadow:0'#10'gone'#10'600'#10'644'#10'644'#10; ExpectedStatus: 0),
+    { The keyboards' layout and repeat (the kernel's tables; with no
+      display server only root changes them); then the service ends. }
+    (Command: 'keyboardsettings; keyboardsettings -l; keyboardsettings -d 250 -s 30 de; su user -c "keyboardsettings fr" 2>&1; keyboardsettings xx 2>&1; keyboardsettings -d 500 -s 11 us; pkill -x systemsettings; echo $?'; ExpectedOutput: 'layout us, repeat delay 500, rate 11'#10'us English (US)'#10'uk English (UK)'#10'de German (QWERTZ)'#10'fr French (AZERTY)'#10'layout de, repeat delay 250, rate 30'#10'keyboardsettings: cannot change the keyboard settings: Operation not permitted'#10'keyboardsettings: there is no keyboard layout ''xx'' (keyboardsettings -l lists them)'#10'layout us, repeat delay 500, rate 11'#10'0'#10; ExpectedStatus: 0),
 
     { --- a crashing program ends alone: with a runtime error, or with
       status 139 when the kernel must end it (no dispatcher) ----------- }

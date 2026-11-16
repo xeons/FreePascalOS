@@ -20,8 +20,13 @@
   date - print the system date and time
 
   date [-u] [-d DATE | -r FILE] [+FORMAT]
+  date -s DATE
 
-  The system clock runs in UTC, so times are always shown in UTC.
+  The system clock runs in UTC; times are shown in the local time of the
+  system's time zone (or the zone TZ names), or in UTC with -u. -s sets
+  the system's date and time (DATE as for -d, a local time unless it
+  ends in UTC), through the system settings service: root may, others
+  are asked for an administrator's password.
   FORMAT conversions:
     %Y year  %y year % 100  %m month  %d day  %e day, space padded
     %H hour  %M minute  %S second  %j day of the year
@@ -34,6 +39,7 @@ program date;
 {$pointermath on}
 
 uses
+  Abi.SystemCalls,
   Runtime.Text,
   Runtime.Time,
   Sys.Format,
@@ -41,7 +47,12 @@ uses
   Sys.Text,
   Sys.Files,
   Sys.Time,
+  Sys.TimeZones,
+  Sys.LocalTime,
+  Sys.SystemSettings,
+  Sys.Environment,
   Util.Dates,
+  Util.SystemRequests,
   Util.Messages,
   Util.Options;
 
@@ -51,7 +62,8 @@ const
     #10 +
     '  -d, --date=STRING     display time described by STRING, not ''now'''#10 +
     '  -r, --reference=FILE  display the last modification time of FILE'#10 +
-    '  -u, --utc, --universal  print Coordinated Universal Time (the default)'#10 +
+    '  -s, --set=STRING      set time described by STRING'#10 +
+    '  -u, --utc, --universal  print or set Coordinated Universal Time'#10 +
     #10 +
     'FORMAT: %Y %y %m %d %e %H %M %S %j %a %b %s %F %T %D %Z %n %t %%'#10;
 
@@ -60,6 +72,7 @@ const
   OptionDate = 1;
   OptionUniversal = 2;
   OptionReference = 3;
+  OptionSet = 4;
 
 procedure WritePadded(Value: Int64; Width: Integer; Padding: Char);
 var
@@ -83,12 +96,23 @@ begin
     DaysSinceUnixEpoch(DateTime.Year, 1, 1) + 1;
 end;
 
+var
+  { -u: UTC rather than the current zone. }
+  ShowUniversal: Boolean;
+
 procedure WriteTime(Format: PChar; Time: TUnixTime);
 var
+  Local: TLocalTime;
   DateTime: TDateTime;
   Position: Integer;
+  OffsetText: array[0..7] of Char;
 begin
-  DecodeTime(Time, DateTime);
+  if ShowUniversal then
+    DecodeTimeInZone(UtcTimeZone, Time, Local)
+  else
+    DecodeLocalTime(Time, Local);
+  DateTime := Local.DateTime;
+  FormatUtcOffset(Local.Offset, @OffsetText[0]);
   Position := 0;
   while Format[Position] <> #0 do
   begin
@@ -112,8 +136,8 @@ begin
       'a': WriteText(StandardOutput, DayName(DateTime.DayOfWeek));
       'b', 'h': WriteText(StandardOutput, MonthName(DateTime.Month));
       's': WriteDecimal(StandardOutput, Time);
-      'Z': WriteText(StandardOutput, 'UTC');
-      'z': WriteText(StandardOutput, '+0000');
+      'Z': WriteText(StandardOutput, Local.Abbreviation);
+      'z': WriteText(StandardOutput, @OffsetText[0]);
       'F': WriteTime('%Y-%m-%d', Time);
       'T': WriteTime('%H:%M:%S', Time);
       'D': WriteTime('%m/%d/%y', Time);
@@ -131,6 +155,19 @@ begin
   end;
 end;
 
+{ Asks the system settings service to set the clock to Time. }
+procedure SetClock(Time: TUnixTime);
+var
+  Request: TSystemSettingsRequest;
+  Error: LongInt;
+begin
+  Request := NewSystemSettingsRequest(SystemRequestSetClock);
+  Request.Time := Time;
+  Error := SendSystemRequest(Request, True);
+  if Error <> ErrorNone then
+    FailWithError(1, Error, 'cannot set date', []);
+end;
+
 var
   Parser: TOptionParser;
   Code: Integer;
@@ -138,19 +175,32 @@ var
   Time: TUnixTime;
   Format: PChar;
   Information: TFileInformation;
+  SetText: PChar;
+  DateText: PChar;
 begin
   Time := CurrentTime;
   Format := DefaultFormat;
+  SetText := nil;
+  DateText := nil;
+  ShowUniversal := False;
   BeginOptions(Parser, [
     OptionDefinition('d', 'date', True, OptionDate),
+    OptionDefinition('s', 'set', True, OptionSet),
     OptionDefinition('u', 'utc', False, OptionUniversal),
     OptionDefinition(#0, 'universal', False, OptionUniversal),
     OptionDefinition('r', 'reference', True, OptionReference)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
+      OptionUniversal:
+        begin
+          ShowUniversal := True;
+          { Dates written for -d and -s are UTC too. }
+          SetVariable('TZ', 'UTC');
+        end;
+      OptionSet:
+        SetText := Value;
       OptionDate:
-        if not ParseDateText(Value, Time) then
-          Fail(1, 'invalid date ''%s''', [ArgumentText(Value)]);
+        DateText := Value;
       OptionReference:
         begin
           if GetFileInformation(Value, Information) <> 0 then
@@ -166,6 +216,15 @@ begin
     if Parser.Operands[0][0] <> '+' then
       Fail(1, 'setting the date is not supported; invalid date ''%s''', [ArgumentText(Parser.Operands[0])]);
     Format := Parser.Operands[0] + 1;
+  end;
+
+  if (DateText <> nil) and not ParseDateText(DateText, Time) then
+    Fail(1, 'invalid date ''%s''', [ArgumentText(DateText)]);
+  if SetText <> nil then
+  begin
+    if not ParseDateText(SetText, Time) then
+      Fail(1, 'invalid date ''%s''', [ArgumentText(SetText)]);
+    SetClock(Time);
   end;
 
   WriteTime(Format, Time);

@@ -36,6 +36,9 @@ unit Util.Passwords;
 
 interface
 
+uses
+  Util.AccountFiles;
+
 const
   ShadowPath = '/etc/shadow';
 
@@ -46,9 +49,16 @@ type
 function CheckPassword(Name: PChar; Password: PChar): TPasswordCheck;
 { True if user Name needs no password. }
 function HasEmptyPassword(Name: PChar): Boolean;
-{ Stores a new password for user Name (adding a line if there is none).
-  Returns an error code (0 on success). }
+{ Stores a new password for user Name (adding a line if there is none),
+  replacing /etc/shadow as Util.AccountFiles does, under the account
+  files' lock. Returns an error code (0 on success). }
 function SetPassword(Name: PChar; Password: PChar): LongInt;
+{ The hash field for Password, with a new random salt. }
+function NewPasswordHash(Password: PChar): AnsiString;
+{ Puts Password's hash on Name's line of the shadow file's Lines (a new
+  line if there is none), the other fields kept: for programs that edit
+  the account files under their lock themselves. }
+procedure PutPasswordInLines(var Lines: TAccountLines; Name: PChar; Password: PChar);
 
 { Prints Prompt to the console (or standard error) and reads a line from
   standard input, without echo when it is the console. Returns nil at end
@@ -75,8 +85,6 @@ const
   HashRounds = 1000;
   HashPrefix = '$sha256$';
   SaltBytes = 8;
-  LineCapacity = 512;
-  LineEnd: PChar = #10;
 
 type
   THashText = array[0..127] of Char;
@@ -201,63 +209,53 @@ begin
   FreeLineList(Lines);
 end;
 
-function SetPassword(Name: PChar; Password: PChar): LongInt;
+function NewPasswordHash(Password: PChar): AnsiString;
 var
-  Lines: TLineList;
-  Hash: PChar;
-  LineIndex: Integer;
   SaltBuffer: array[0..SaltBytes - 1] of Byte;
   Salt: array[0..2 * SaltBytes] of Char;
   Computed: THashText;
-  Handle: Int64;
-  Index: Integer;
-  Line: PChar;
-  Rest: PChar;
-  Builder: TTextBuilder;
 begin
-  FindEntry(Name, Lines, Hash, LineIndex);
   RandomBytes(@SaltBuffer[0], SaltBytes);
   FormatHexBytes(@SaltBuffer[0], SaltBytes, @Salt[0]);
   ComputeHash(@Salt[0], 2 * SaltBytes, Password, Computed);
+  Result := HashPrefix + AnsiString(PChar(@Salt[0])) + '$' + AnsiString(PChar(@Computed[0]));
+end;
 
-  BeginText(Builder);
-  AppendText(Builder, Name);
-  AppendText(Builder, ':' + HashPrefix);
-  AppendText(Builder, @Salt[0]);
-  AppendText(Builder, '$');
-  AppendText(Builder, @Computed[0]);
-  if LineIndex >= 0 then
-  begin
-    Rest := Hash + FieldLength(Hash);
-    AppendText(Builder, Rest);
-  end
-  else
-    AppendText(Builder, ':');
-
-  Handle := OpenFile(ShadowPath, OpenWrite or OpenCreate or OpenTruncate);
-  if Handle < 0 then
-  begin
-    DiscardText(Builder);
-    FreeLineList(Lines);
-    Exit(ErrorCodeOf(Handle));
-  end;
-  Result := ErrorNone;
-  for Index := 0 to Lines.Count - 1 do
-  begin
-    if Index = LineIndex then
-      Line := Builder.Text
-    else
-      Line := Lines.Items[Index];
-    if (WriteFile(Handle, Line, TextLength(Line)) < 0) or (WriteFile(Handle, PChar(LineEnd), 1) < 0) then
-      Result := ErrorIo;
-  end;
+procedure PutPasswordInLines(var Lines: TAccountLines; Name: PChar; Password: PChar);
+var
+  LineIndex: Integer;
+  Fields: TAccountFields;
+begin
+  LineIndex := FindAccountLine(Lines, AnsiString(Name));
   if LineIndex < 0 then
-    if (WriteFile(Handle, Builder.Text, TextLength(Builder.Text)) < 0) or
-       (WriteFile(Handle, PChar(LineEnd), 1) < 0) then
-      Result := ErrorIo;
-  CloseFile(Handle);
-  DiscardText(Builder);
-  FreeLineList(Lines);
+  begin
+    AppendAccountLine(Lines, AnsiString(Name) + ':' + NewPasswordHash(Password) + ':');
+    Exit;
+  end;
+  Fields := SplitAccountLine(Lines[LineIndex]);
+  if Length(Fields) < 2 then
+    SetLength(Fields, 2);
+  Fields[1] := NewPasswordHash(Password);
+  Lines[LineIndex] := JoinAccountFields(Fields);
+end;
+
+function SetPassword(Name: PChar; Password: PChar): LongInt;
+var
+  Lock: Int64;
+  Lines: TAccountLines;
+begin
+  Lock := LockAccountFiles;
+  if Lock < 0 then
+    Exit(ErrorCodeOf(Lock));
+  Result := ReadAccountFile(ShadowPath, Lines);
+  if Result = ErrorNotFound then
+    Result := ErrorNone;
+  if Result = ErrorNone then
+  begin
+    PutPasswordInLines(Lines, Name, Password);
+    Result := WriteAccountFile(ShadowPath, Lines, ShadowFileMode);
+  end;
+  UnlockAccountFiles(Lock);
 end;
 
 function ReadPassword(Prompt: PChar): PChar;

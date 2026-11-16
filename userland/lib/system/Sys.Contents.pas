@@ -47,6 +47,9 @@ uses
   Sys.Environment,
   Sys.Processes,
   Sys.Time,
+  Sys.TimeZones,
+  Sys.LocalTime,
+  Sys.Keyboard,
   Sys.Libraries,
   Sys.Information,
   Sys.FileWatches,
@@ -57,6 +60,7 @@ uses
   Sys.Objects,
   Sys.KernelOptions,
   Sys.ServiceControl,
+  Sys.SystemSettings,
   Sys.Notifications,
   Sys.EndRequests;
 

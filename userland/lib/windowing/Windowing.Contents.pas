@@ -32,6 +32,7 @@ uses
   Windowing.Connection,
   Windowing.Displays,
   Windowing.MouseSettings,
+  Windowing.KeyboardSettings,
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,

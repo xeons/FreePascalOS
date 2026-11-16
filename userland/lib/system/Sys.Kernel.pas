@@ -120,6 +120,13 @@ function KernelCreateFifo(Path: PChar): Int64;
 { Watching files and folders. }
 function KernelCreateWatch(Path: PChar; Flags: LongWord): Int64;
 function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
+{ The clock, the time zone and the keyboards (changes are root's). }
+function KernelSetWallClock(Time: Int64): Int64;
+function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
+function KernelSetTimeZone(Name: PChar): Int64;
+function KernelGetKeyboardSettings(out Settings: TAbiKeyboardSettings): Int64;
+function KernelSetKeyboardSettings(constref Settings: TAbiKeyboardSettings): Int64;
+function KernelDescribeKeyboardLayout(Index: QWord; out Layout: TAbiKeyboardLayout): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
 function KernelContinueProcesses(Target: Int64): Int64;
@@ -477,6 +484,36 @@ end;
 function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallReadWatch, QWord(Handle), QWord(Buffer), Capacity, 0, 0, 0);
+end;
+
+function KernelSetWallClock(Time: Int64): Int64;
+begin
+  Result := SystemCall(CallSetWallClock, QWord(Time), 0, 0, 0, 0, 0);
+end;
+
+function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallGetTimeZone, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelSetTimeZone(Name: PChar): Int64;
+begin
+  Result := SystemCall(CallSetTimeZone, QWord(Name), 0, 0, 0, 0, 0);
+end;
+
+function KernelGetKeyboardSettings(out Settings: TAbiKeyboardSettings): Int64;
+begin
+  Result := SystemCall(CallGetKeyboardSettings, QWord(@Settings), 0, 0, 0, 0, 0);
+end;
+
+function KernelSetKeyboardSettings(constref Settings: TAbiKeyboardSettings): Int64;
+begin
+  Result := SystemCall(CallSetKeyboardSettings, QWord(@Settings), 0, 0, 0, 0, 0);
+end;
+
+function KernelDescribeKeyboardLayout(Index: QWord; out Layout: TAbiKeyboardLayout): Int64;
+begin
+  Result := SystemCall(CallDescribeKeyboardLayout, Index, QWord(@Layout), 0, 0, 0, 0);
 end;
 
 function KernelCreatePort(Name: PChar): Int64;

@@ -17,8 +17,10 @@
 }
 
 {
-  Reading dates and times written by people (date -d, touch -d, touch -t).
-  All times are UTC, the system's only time zone.
+  Reading dates and times written by people (date -d, date -s, touch -d,
+  touch -t). Dates and clock times are local times of the zone the
+  program shows times in (Sys.LocalTime); "UTC" or "Z" after one makes
+  it UTC.
 
     @SECONDS                 seconds since 1970-01-01
     now, today, yesterday, tomorrow
@@ -48,7 +50,8 @@ implementation
 uses
   Runtime.Text,
   Sys.Text,
-  Sys.Time;
+  Sys.Time,
+  Sys.LocalTime;
 
 const
   SecondsPerDay = 86400;
@@ -94,12 +97,13 @@ begin
   Result := True;
 end;
 
+{ Local midnight of today. }
 function StartOfToday: TUnixTime;
 var
-  Now: TUnixTime;
+  Local: TLocalTime;
 begin
-  Now := CurrentTime;
-  Result := Now - (Now mod SecondsPerDay);
+  DecodeLocalTime(CurrentTime, Local);
+  Result := LocalTimeToUnixTime(Local.DateTime.Year, Local.DateTime.Month, Local.DateTime.Day, 0, 0, 0);
 end;
 
 function UnitSeconds(Name: PChar; out Seconds: Int64): Boolean;
@@ -213,22 +217,25 @@ begin
   begin
     if (Month < 1) or (Month > 12) or (Day < 1) or (Day > 31) then
       Exit(False);
-    Time := CalendarToUnixTime(Year, Month, Day, 0, 0, 0);
+    ClockSeconds := 0;
     Rest := Text + 10;
     if (Rest^ = 'T') or (Rest^ = ' ') then
     begin
       Rest := SkipSpaces(Rest + 1);
-      if Rest^ = #0 then
-        Exit(True);
-      if not ParseClock(Rest, ClockSeconds, Consumed) then
+      if (Rest^ <> #0) and not ParseClock(Rest, ClockSeconds, Consumed) then
         Exit(False);
-      Time := Time + ClockSeconds;
-      Rest := Rest + Consumed;
+      if Rest^ <> #0 then
+        Rest := Rest + Consumed;
     end;
     Rest := SkipSpaces(Rest);
     if TextIsEqual(Rest, 'UTC') or TextIsEqual(Rest, 'Z') then
-      Rest := Rest + TextLength(Rest);
-    Exit(Rest^ = #0);
+      Time := CalendarToUnixTime(Year, Month, Day, 0, 0, 0) + ClockSeconds
+    else if Rest^ = #0 then
+      Time := LocalTimeToUnixTime(Year, Month, Day, ClockSeconds div 3600, (ClockSeconds div 60) mod 60,
+        ClockSeconds mod 60)
+    else
+      Exit(False);
+    Exit(True);
   end;
 
   { HH:MM[:SS] today }
@@ -248,7 +255,7 @@ var
   Year, Month, Day, Hour, Minute, Second: LongInt;
   Century: LongInt;
   Offset: Integer;
-  Now: TDateTime;
+  Now: TLocalTime;
 begin
   Time := 0;
   Dot := FindCharacter(Text, '.');
@@ -259,8 +266,8 @@ begin
   if not (Digits in [8, 10, 12]) then
     Exit(False);
 
-  DecodeTime(CurrentTime, Now);
-  Year := Now.Year;
+  DecodeLocalTime(CurrentTime, Now);
+  Year := Now.DateTime.Year;
   Offset := 0;
   if Digits = 12 then
   begin
@@ -291,7 +298,7 @@ begin
   end;
   if (Month < 1) or (Month > 12) or (Day < 1) or (Day > 31) or (Hour > 23) or (Minute > 59) or (Second > 60) then
     Exit(False);
-  Time := CalendarToUnixTime(Year, Month, Day, Hour, Minute, Second);
+  Time := LocalTimeToUnixTime(Year, Month, Day, Hour, Minute, Second);
   Result := True;
 end;
 

@@ -59,7 +59,9 @@
   MaximumPointerAreas rectangles of it); over the frame the server picks
   it (resize arrows on the borders). The mouse's settings (speed,
   acceleration, left-handed buttons) are the server's, read and changed
-  with RequestGetMouseSettings and RequestSetMouseSettings.
+  with RequestGetMouseSettings and RequestSetMouseSettings; the
+  keyboards' layout and repeat with RequestGetKeyboardSettings and
+  RequestSetKeyboardSettings (the server passes them to the kernel).
 
   One program may be the shell (RequestRegisterShell; a second is
   refused while the first lives): it hears about the top-level windows
@@ -169,6 +171,16 @@ const
     shows it (or changes it), 0 takes it away; Flags: NotificationPicture*,
     what it shows; Text: its tooltip. A program's icons go when it ends. }
   RequestSetNotificationIcon = 24;
+  { Window 0. Answered by EventKeyboardSettings. }
+  RequestGetKeyboardSettings = 25;
+  { Window 0; Text, Code, Value as in EventKeyboardSettings: the
+    keyboards' new layout and repeat (any program may change them, as
+    the mouse's; the server asks the kernel, where keys become
+    characters, so they last until changed again: the session manager
+    gives the user's at login and the system's after,
+    Windowing.KeyboardSettings). Answered by EventKeyboardSettings with
+    what they are now (the old layout if the kernel has no such one). }
+  RequestSetKeyboardSettings = 26;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -247,6 +259,10 @@ const
     same for as long as the icon lives); Value: 1 shown or changed, 0
     gone; Flags: NotificationPicture*; Text: its tooltip. }
   EventNotificationIconChanged = 122;
+  { Window 0. Text: the keyboards' layout (us, uk, de, fr); Code: the
+    delay before a held key repeats, in milliseconds; Value: the
+    repeats a second. }
+  EventKeyboardSettings = 123;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -293,11 +309,14 @@ const
   ShellWindowMaximized = $08;
   ShellWindowResizable = $10;
 
-  { What a notification icon shows (drawn by the shell). }
+  { What a notification icon shows (drawn by the shell; a click on a
+    volume picture opens the shell's volume control). }
   NotificationPictureInformation = 1;
   NotificationPictureWarning = 2;
   NotificationPictureVolume = 3;
   NotificationPictureNetwork = 4;
+  { The volume, muted: the loudspeaker crossed out. }
+  NotificationPictureVolumeMuted = 5;
 
   { --- Pointer shapes ---------------------------------------------------- }
 
