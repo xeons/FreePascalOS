@@ -15,7 +15,6 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
-
 {
   comm - compare two sorted files line by line
 
@@ -26,21 +25,18 @@
 }
 program comm;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: comm [OPTION]... FILE1 FILE2'#10 +
+  Usage = 'Usage: comm [OPTION]... FILE1 FILE2'#10 +
     'Compare sorted files FILE1 and FILE2 line by line.'#10#10 +
     'With no options, produce three-column output.  Column one contains'#10 +
     'lines unique to FILE1, column two contains lines unique to FILE2,'#10 +
@@ -59,10 +55,10 @@ const
 
 var
   Show: array[1..3] of Boolean;
-  Delimiter: PChar;
+  Delimiter: string;
   Counts: array[1..3] of Int64;
 
-procedure PrintInColumn(Column: Integer; Line: PChar);
+procedure PrintInColumn(Column: Integer; const Line: string);
 var
   Index: Integer;
 begin
@@ -71,19 +67,19 @@ begin
     Exit;
   for Index := 1 to Column - 1 do
     if Show[Index] then
-      WriteText(StandardOutput, Delimiter);
-  WriteLine(StandardOutput, Line);
+      PrintString(Delimiter);
+  PrintStringLine(Line);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   ShowTotal: Boolean;
   First: PInputStream;
   Second: PInputStream;
-  LineOne: PChar;
-  LineTwo: PChar;
+  LineOne: string;
+  LineTwo: string;
   HasOne: Boolean;
   HasTwo: Boolean;
   HadLineEnd: Boolean;
@@ -94,13 +90,13 @@ begin
   Show[3] := True;
   Delimiter := #9;
   ShowTotal := False;
-  BeginOptions(Parser, [
-    OptionDefinition('1', nil, False, OptionHideFirst),
-    OptionDefinition('2', nil, False, OptionHideSecond),
-    OptionDefinition('3', nil, False, OptionHideCommon),
-    OptionDefinition(#0, 'output-delimiter', True, OptionDelimiter),
-    OptionDefinition(#0, 'total', False, OptionTotal)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('1', '', False, OptionHideFirst),
+    CommandOption('2', '', False, OptionHideSecond),
+    CommandOption('3', '', False, OptionHideCommon),
+    CommandOption(#0, 'output-delimiter', True, OptionDelimiter),
+    CommandOption(#0, 'total', False, OptionTotal)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionHideFirst: Show[1] := False;
       OptionHideSecond: Show[2] := False;
@@ -108,21 +104,21 @@ begin
       OptionDelimiter: Delimiter := Value;
       OptionTotal: ShowTotal := True;
     end;
-  if Parser.OperandCount < 2 then
-    FailWithUsageHint('missing operand', []);
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-  First := OpenInput(Parser.Operands[0]);
-  Second := OpenInput(Parser.Operands[1]);
+  if CommandLine.OperandCount < 2 then
+    FailWithUsageHint('missing operand');
+  if CommandLine.OperandCount > 2 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+  First := OpenInput(CommandLine.Operands[0]);
+  Second := OpenInput(CommandLine.Operands[1]);
   if (First = nil) or (Second = nil) then
     Halt(1);
 
-  HasOne := ReadLine(First, LineOne, HadLineEnd);
-  HasTwo := ReadLine(Second, LineTwo, HadLineEnd);
+  HasOne := ReadTextLine(First, LineOne, HadLineEnd);
+  HasTwo := ReadTextLine(Second, LineTwo, HadLineEnd);
   while HasOne or HasTwo do
   begin
     if HasOne and HasTwo then
-      Order := CompareText(LineOne, LineTwo)
+      Order := CompareStr(LineOne, LineTwo)
     else if HasOne then
       Order := -1
     else
@@ -130,27 +126,24 @@ begin
     if Order < 0 then
     begin
       PrintInColumn(1, LineOne);
-      FreeMemory(LineOne);
-      HasOne := ReadLine(First, LineOne, HadLineEnd);
+      HasOne := ReadTextLine(First, LineOne, HadLineEnd);
     end
     else if Order > 0 then
     begin
       PrintInColumn(2, LineTwo);
-      FreeMemory(LineTwo);
-      HasTwo := ReadLine(Second, LineTwo, HadLineEnd);
+      HasTwo := ReadTextLine(Second, LineTwo, HadLineEnd);
     end
     else
     begin
       PrintInColumn(3, LineOne);
-      FreeMemory(LineOne);
-      FreeMemory(LineTwo);
-      HasOne := ReadLine(First, LineOne, HadLineEnd);
-      HasTwo := ReadLine(Second, LineTwo, HadLineEnd);
+      HasOne := ReadTextLine(First, LineOne, HadLineEnd);
+      HasTwo := ReadTextLine(Second, LineTwo, HadLineEnd);
     end;
   end;
   if ShowTotal then
-    WriteFormatted(StandardOutput, '%d%s%d%s%d%stotal'#10, [ArgumentNumber(Counts[1]), ArgumentText(Delimiter),
-      ArgumentNumber(Counts[2]), ArgumentText(Delimiter), ArgumentNumber(Counts[3]), ArgumentText(Delimiter)]);
+    PrintString(Format('%d%s%d%s%d%stotal'#10, [Counts[1], Delimiter, Counts[2], Delimiter, Counts[3],
+      Delimiter]));
   CloseInput(First);
   CloseInput(Second);
+  CommandLine.Free;
 end.

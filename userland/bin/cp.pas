@@ -25,21 +25,18 @@
 }
 program cp;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
+  Util.CommandLine,
   Util.FileTree,
   Util.Messages,
-  Util.Options,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: cp [OPTION]... [-T] SOURCE DEST'#10 +
+  Usage = 'Usage: cp [OPTION]... [-T] SOURCE DEST'#10 +
     '  or:  cp [OPTION]... SOURCE... DIRECTORY'#10 +
     '  or:  cp [OPTION]... -t DIRECTORY SOURCE...'#10 +
     'Copy SOURCE to DEST, or multiple SOURCE(s) to DIRECTORY.'#10 +
@@ -65,38 +62,34 @@ const
   OptionPreserve = 9;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Options: TCopyOptions;
-  TargetDirectory: PChar;
+  TargetDirectory: string;
+  HasTargetDirectory: Boolean;
   NoTargetDirectory: Boolean;
   SourceCount: Integer;
   Index: Integer;
-  Base: PChar;
-  Target: PChar;
+  Target: string;
   ExitStatus: LongInt;
 begin
-  Options.Recursive := False;
-  Options.KeepLinks := False;
-  Options.NoClobber := False;
-  Options.Verbose := False;
-  Options.PreserveAttributes := False;
-  TargetDirectory := nil;
+  Options := Default(TCopyOptions);
+  HasTargetDirectory := False;
   NoTargetDirectory := False;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'archive', False, OptionArchive),
-    OptionDefinition('d', nil, False, OptionNoDereference),
-    OptionDefinition('P', 'no-dereference', False, OptionNoDereference),
-    OptionDefinition('f', 'force', False, OptionForce),
-    OptionDefinition('n', 'no-clobber', False, OptionNoClobber),
-    OptionDefinition('R', 'recursive', False, OptionRecursive),
-    OptionDefinition('r', nil, False, OptionRecursive),
-    OptionDefinition('t', 'target-directory', True, OptionTargetDirectory),
-    OptionDefinition('T', 'no-target-directory', False, OptionNoTargetDirectory),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition('p', 'preserve', False, OptionPreserve)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'archive', False, OptionArchive),
+    CommandOption('d', '', False, OptionNoDereference),
+    CommandOption('P', 'no-dereference', False, OptionNoDereference),
+    CommandOption('f', 'force', False, OptionForce),
+    CommandOption('n', 'no-clobber', False, OptionNoClobber),
+    CommandOption('R', 'recursive', False, OptionRecursive),
+    CommandOption('r', '', False, OptionRecursive),
+    CommandOption('t', 'target-directory', True, OptionTargetDirectory),
+    CommandOption('T', 'no-target-directory', False, OptionNoTargetDirectory),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption('p', 'preserve', False, OptionPreserve)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionArchive:
         begin
@@ -114,42 +107,43 @@ begin
           { Like GNU cp, -R copies links inside the tree as links. }
           Options.KeepLinks := True;
         end;
-      OptionTargetDirectory: TargetDirectory := Value;
+      OptionTargetDirectory:
+        begin
+          TargetDirectory := Value;
+          HasTargetDirectory := True;
+        end;
       OptionNoTargetDirectory: NoTargetDirectory := True;
       OptionVerbose: Options.Verbose := True;
     end;
 
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing file operand', []);
-  SourceCount := Parser.OperandCount;
-  if TargetDirectory = nil then
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing file operand');
+  SourceCount := CommandLine.OperandCount;
+  if not HasTargetDirectory then
   begin
-    if Parser.OperandCount = 1 then
-      FailWithUsageHint('missing destination file operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
-    SourceCount := Parser.OperandCount - 1;
-    Target := Parser.Operands[SourceCount];
-    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(Target)) then
+    if CommandLine.OperandCount = 1 then
+      FailWithUsageHint(Format('missing destination file operand after ''%s''', [CommandLine.Operands[0]]));
+    SourceCount := CommandLine.OperandCount - 1;
+    Target := CommandLine.Operands[SourceCount];
+    if NoTargetDirectory or ((SourceCount = 1) and not IsDirectory(PChar(Target))) then
     begin
       if SourceCount > 1 then
-        FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-      if CopyPath(Parser.Operands[0], Target, Options) then
+        FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+      if CopyPath(CommandLine.Operands[0], Target, Options) then
         Halt(0);
       Halt(1);
     end;
     TargetDirectory := Target;
   end;
 
-  if not IsDirectory(TargetDirectory) then
-    Fail(1, 'target ''%s'' is not a directory', [ArgumentText(TargetDirectory)]);
+  if not IsDirectory(PChar(TargetDirectory)) then
+    Fail(1, Format('target ''%s'' is not a directory', [TargetDirectory]));
   ExitStatus := 0;
   for Index := 0 to SourceCount - 1 do
   begin
-    Base := BaseName(Parser.Operands[Index]);
-    Target := JoinPath(TargetDirectory, Base);
-    if not CopyPath(Parser.Operands[Index], Target, Options) then
+    Target := JoinPath(TargetDirectory, BaseName(CommandLine.Operands[Index]));
+    if not CopyPath(CommandLine.Operands[Index], Target, Options) then
       ExitStatus := 1;
-    FreeMemory(Base);
-    FreeMemory(Target);
   end;
   Halt(ExitStatus);
 end.

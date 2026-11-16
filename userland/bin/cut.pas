@@ -28,21 +28,17 @@
 }
 program cut;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: cut OPTION... [FILE]...'#10 +
+  Usage = 'Usage: cut OPTION... [FILE]...'#10 +
     'Print selected parts of lines from each FILE to standard output.'#10 +
     #10 +
     '  -b, --bytes=LIST        select only these bytes'#10 +
@@ -62,8 +58,8 @@ const
   OptionComplement = 7;
   OptionNoSplit = 8;
 
-  MaximumRanges = 64;
   Unbounded = High(LongInt);
+  InvalidList = 'invalid byte, character or field list';
 
 type
   TRange = record
@@ -74,15 +70,37 @@ type
   TCutMode = (CutNone, CutBytes, CutCharacters, CutFields);
 
 var
-  Ranges: array[0..MaximumRanges - 1] of TRange;
-  RangeCount: Integer;
+  Ranges: array of TRange;
   Mode: TCutMode;
   Delimiter: Char;
-  OutputDelimiter: PChar;
+  OutputDelimiter: string;
+  HasOutputDelimiter: Boolean;
   OnlyDelimited: Boolean;
   Complement: Boolean;
 
-procedure ParseList(Text: PChar);
+{ The character at Position, #0 past the end. }
+function CharacterAt(const Text: string; Position: Integer): Char;
+begin
+  if Position <= Length(Text) then
+    Result := Text[Position]
+  else
+    Result := #0;
+end;
+
+{ Reads the digits at Position into Number; False if there are none. }
+function ReadNumber(const Text: string; var Position: Integer; out Number: LongInt): Boolean;
+begin
+  Number := 0;
+  Result := False;
+  while CharacterAt(Text, Position) in ['0'..'9'] do
+  begin
+    Number := Number * 10 + Ord(Text[Position]) - Ord('0');
+    Result := True;
+    Inc(Position);
+  end;
+end;
+
+procedure ParseList(const Text: string);
 var
   Position: Integer;
   Number: LongInt;
@@ -90,171 +108,150 @@ var
   HasDash: Boolean;
   SawDigits: Boolean;
 begin
-  RangeCount := 0;
-  Position := 0;
+  Ranges := nil;
+  Position := 1;
   repeat
     Range.First := 1;
     Range.Last := Unbounded;
     HasDash := False;
-    SawDigits := False;
-    Number := 0;
-    while IsDigit(Text[Position]) do
-    begin
-      Number := Number * 10 + Ord(Text[Position]) - Ord('0');
-      SawDigits := True;
-      Inc(Position);
-    end;
+    SawDigits := ReadNumber(Text, Position, Number);
     if SawDigits then
       Range.First := Number;
-    if Text[Position] = '-' then
+    if CharacterAt(Text, Position) = '-' then
     begin
       HasDash := True;
       Inc(Position);
-      Number := 0;
-      SawDigits := False;
-      while IsDigit(Text[Position]) do
-      begin
-        Number := Number * 10 + Ord(Text[Position]) - Ord('0');
-        SawDigits := True;
-        Inc(Position);
-      end;
+      SawDigits := ReadNumber(Text, Position, Number);
       if SawDigits then
         Range.Last := Number;
     end
     else
       Range.Last := Range.First;
     if (Range.First < 1) or (Range.Last < Range.First) or (not HasDash and not SawDigits) then
-      Fail(1, 'invalid byte, character or field list', []);
-    if RangeCount = MaximumRanges then
-      Fail(1, 'too many ranges', []);
-    Ranges[RangeCount] := Range;
-    Inc(RangeCount);
-    if Text[Position] = ',' then
+      Fail(1, InvalidList);
+    SetLength(Ranges, Length(Ranges) + 1);
+    Ranges[High(Ranges)] := Range;
+    if CharacterAt(Text, Position) = ',' then
       Inc(Position)
-    else if Text[Position] <> #0 then
-      Fail(1, 'invalid byte, character or field list', []);
-  until Text[Position] = #0;
+    else if Position <= Length(Text) then
+      Fail(1, InvalidList);
+  until Position > Length(Text);
 end;
 
 function IsSelected(Number: LongInt): Boolean;
 var
-  Index: Integer;
+  Range: TRange;
 begin
   Result := False;
-  for Index := 0 to RangeCount - 1 do
-  begin
-    if (Number >= Ranges[Index].First) and (Number <= Ranges[Index].Last) then
+  for Range in Ranges do
+    if (Number >= Range.First) and (Number <= Range.Last) then
     begin
       Result := True;
       Break;
     end;
-  end;
   if Complement then
     Result := not Result;
 end;
 
-procedure CutPositions(Line: PChar);
+procedure CutPositions(const Line: string);
 var
-  Position: LongInt;
+  Position: Integer;
   Number: LongInt;
   PreviousSelected: Boolean;
   PrintedAny: Boolean;
+  Selected: string;
 begin
-  Position := 0;
   Number := 0;
   PreviousSelected := False;
   PrintedAny := False;
-  while Line[Position] <> #0 do
+  Selected := '';
+  for Position := 1 to Length(Line) do
   begin
     { With -c, a character is a whole UTF-8 sequence. }
     if (Mode = CutBytes) or ((Byte(Line[Position]) and $C0) <> $80) then
       Inc(Number);
     if IsSelected(Number) then
     begin
-      if (OutputDelimiter <> nil) and PrintedAny and not PreviousSelected then
-        WriteText(StandardOutput, OutputDelimiter);
-      WriteCharacter(StandardOutput, Line[Position]);
+      if HasOutputDelimiter and PrintedAny and not PreviousSelected then
+        Selected := Selected + OutputDelimiter;
+      Selected := Selected + Line[Position];
       PrintedAny := True;
       PreviousSelected := True;
     end
     else
       PreviousSelected := False;
-    Inc(Position);
   end;
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine(Selected);
 end;
 
-procedure CutFieldsOfLine(Line: PChar);
+procedure CutFieldsOfLine(const Line: string);
 var
-  Position: LongInt;
+  Position: Integer;
   FieldNumber: LongInt;
-  FieldStart: LongInt;
+  FieldStart: Integer;
   PrintedAny: Boolean;
+  Separator: string;
+  Selected: string;
 begin
-  if FindCharacter(Line, Delimiter) < 0 then
+  if Pos(Delimiter, Line) = 0 then
   begin
     if not OnlyDelimited then
-      WriteLine(StandardOutput, Line);
+      PrintStringLine(Line);
     Exit;
   end;
-  Position := 0;
+  if HasOutputDelimiter then
+    Separator := OutputDelimiter
+  else
+    Separator := Delimiter;
   FieldNumber := 1;
-  FieldStart := 0;
+  FieldStart := 1;
   PrintedAny := False;
-  while True do
-  begin
-    if (Line[Position] = Delimiter) or (Line[Position] = #0) then
+  Selected := '';
+  { One position past the end closes the last field. }
+  for Position := 1 to Length(Line) + 1 do
+    if (Position > Length(Line)) or (Line[Position] = Delimiter) then
     begin
       if IsSelected(FieldNumber) then
       begin
         if PrintedAny then
-        begin
-          if OutputDelimiter <> nil then
-            WriteText(StandardOutput, OutputDelimiter)
-          else
-            WriteCharacter(StandardOutput, Delimiter);
-        end;
-        WriteBytes(StandardOutput, Line + FieldStart, QWord(Position - FieldStart));
+          Selected := Selected + Separator;
+        Selected := Selected + Copy(Line, FieldStart, Position - FieldStart);
         PrintedAny := True;
       end;
-      if Line[Position] = #0 then
-        Break;
       Inc(FieldNumber);
       FieldStart := Position + 1;
     end;
-    Inc(Position);
-  end;
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine(Selected);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   Stream: PInputStream;
-  Line: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   ExitStatus: LongInt;
 begin
   Mode := CutNone;
   Delimiter := #9;
-  OutputDelimiter := nil;
-  BeginOptions(Parser, [
-    OptionDefinition('b', 'bytes', True, OptionBytes),
-    OptionDefinition('c', 'characters', True, OptionCharacters),
-    OptionDefinition('d', 'delimiter', True, OptionDelimiter),
-    OptionDefinition('f', 'fields', True, OptionFields),
-    OptionDefinition('s', 'only-delimited', False, OptionOnlyDelimited),
-    OptionDefinition('n', nil, False, OptionNoSplit),
-    OptionDefinition(#0, 'output-delimiter', True, OptionOutputDelimiter),
-    OptionDefinition(#0, 'complement', False, OptionComplement)], Usage);
-  while NextOption(Parser, Code, Value) do
+  HasOutputDelimiter := False;
+  CommandLine := TCommandLine.Create([
+    CommandOption('b', 'bytes', True, OptionBytes),
+    CommandOption('c', 'characters', True, OptionCharacters),
+    CommandOption('d', 'delimiter', True, OptionDelimiter),
+    CommandOption('f', 'fields', True, OptionFields),
+    CommandOption('s', 'only-delimited', False, OptionOnlyDelimited),
+    CommandOption('n', '', False, OptionNoSplit),
+    CommandOption(#0, 'output-delimiter', True, OptionOutputDelimiter),
+    CommandOption(#0, 'complement', False, OptionComplement)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBytes, OptionCharacters, OptionFields:
         begin
           if Mode <> CutNone then
-            FailWithUsageHint('only one type of list may be specified', []);
+            FailWithUsageHint('only one type of list may be specified');
           case Code of
             OptionBytes: Mode := CutBytes;
             OptionCharacters: Mode := CutCharacters;
@@ -265,39 +262,37 @@ begin
         end;
       OptionDelimiter:
         begin
-          if (Value[0] = #0) or (Value[1] <> #0) then
-            Fail(1, 'the delimiter must be a single character', []);
-          Delimiter := Value[0];
+          if Length(Value) <> 1 then
+            Fail(1, 'the delimiter must be a single character');
+          Delimiter := Value[1];
         end;
       OptionOnlyDelimited: OnlyDelimited := True;
-      OptionOutputDelimiter: OutputDelimiter := Value;
+      OptionOutputDelimiter:
+        begin
+          OutputDelimiter := Value;
+          HasOutputDelimiter := True;
+        end;
       OptionComplement: Complement := True;
     end;
   if Mode = CutNone then
-    FailWithUsageHint('you must specify a list of bytes, characters, or fields', []);
+    FailWithUsageHint('you must specify a list of bytes, characters, or fields');
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    while ReadLine(Stream, Line, HadLineEnd) do
-    begin
+    while ReadTextLine(Stream, Line, HadLineEnd) do
       if Mode = CutFields then
         CutFieldsOfLine(Line)
       else
         CutPositions(Line);
-      FreeMemory(Line);
-    end;
     CloseInput(Stream);
   end;
   Halt(ExitStatus);

@@ -38,26 +38,22 @@
 }
 program dd;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
   Sys.Text,
   Sys.Time,
   Util.Messages,
+  Util.Output,
   Util.Sizes;
 
 const
-  Usage: PChar = 'Usage: dd [OPERAND]...'#10 +
+  Usage = 'Usage: dd [OPERAND]...'#10 +
     'Copy a file, converting and formatting according to the operands.'#10#10 +
     '  bs=BYTES        read and write up to BYTES bytes at a time (default: 512)'#10 +
     '  cbs=BYTES       accepted for compatibility'#10 +
@@ -73,8 +69,10 @@ const
     'CONVS: lcase ucase notrunc sync noerror fsync'#10;
 
 var
-  InputPath: PChar;
-  OutputPath: PChar;
+  InputPath: string;
+  OutputPath: string;
+  HasInputPath: Boolean;
+  HasOutputPath: Boolean;
   InputBlockSize: QWord;
   OutputBlockSize: QWord;
   CountBlocks: Int64;
@@ -84,78 +82,87 @@ var
   Quiet: Boolean;
   NoTransferLine: Boolean;
 
-procedure ParseNumber(Text, Name: PChar; out Value: QWord);
+function ParseNumber(const Text: string): QWord;
 begin
-  if not ParseSize(Text, Value) then
-    Fail(1, 'invalid number: ''%s''', [ArgumentText(Text)]);
+  if not ParseSize(Text, Result) then
+    Fail(1, Format('invalid number: ''%s''', [Text]));
 end;
 
-procedure ParseConversions(Text: PChar);
-var
-  Copy: PChar;
-  Start: PChar;
-  Comma: PtrInt;
+procedure ApplyConversion(const Name: string);
 begin
-  Copy := DuplicateText(Text);
-  Start := Copy;
+  if Name = 'lcase' then ToLower := True
+  else if Name = 'ucase' then ToUpper := True
+  else if Name = 'notrunc' then NoTruncate := True
+  else if Name = 'sync' then PadBlocks := True
+  else if Name = 'noerror' then IgnoreErrors := True
+  else if (Name = 'fsync') or (Name = 'fdatasync') then SyncAtEnd := True
+  else
+    Fail(1, Format('invalid conversion: ''%s''', [Name]));
+end;
+
+{ A comma separated list of conversions (an empty one is invalid). }
+procedure ParseConversions(const Text: string);
+var
+  Rest: string;
+  Comma: Integer;
+begin
+  Rest := Text;
   repeat
-    Comma := FindCharacter(Start, ',');
-    if Comma >= 0 then
-      Start[Comma] := #0;
-    if TextIsEqual(Start, 'lcase') then ToLower := True
-    else if TextIsEqual(Start, 'ucase') then ToUpper := True
-    else if TextIsEqual(Start, 'notrunc') then NoTruncate := True
-    else if TextIsEqual(Start, 'sync') then PadBlocks := True
-    else if TextIsEqual(Start, 'noerror') then IgnoreErrors := True
-    else if TextIsEqual(Start, 'fsync') or TextIsEqual(Start, 'fdatasync') then SyncAtEnd := True
+    Comma := Pos(',', Rest);
+    if Comma > 0 then
+    begin
+      ApplyConversion(Copy(Rest, 1, Comma - 1));
+      Delete(Rest, 1, Comma);
+    end
     else
-      Fail(1, 'invalid conversion: ''%s''', [ArgumentText(Start)]);
-    if Comma >= 0 then
-      Start := Start + Comma + 1;
-  until Comma < 0;
-  FreeMemory(Copy);
+      ApplyConversion(Rest);
+  until Comma = 0;
 end;
 
-procedure ParseOperand(Text: PChar);
+procedure ParseOperand(const Text: string);
 var
-  Equals: PtrInt;
-  Name: array[0..15] of Char;
-  Value: PChar;
+  Equals: Integer;
+  Name: string;
+  Value: string;
   Number: QWord;
 begin
-  Equals := FindCharacter(Text, '=');
-  if (Equals <= 0) or (Equals >= SizeOf(Name)) then
-    FailWithUsageHint('unrecognized operand ''%s''', [ArgumentText(Text)]);
-  CopyText(@Name[0], Text, PtrUInt(Equals) + 1);
-  Value := Text + Equals + 1;
-  if TextIsEqual(@Name[0], 'if') then InputPath := Value
-  else if TextIsEqual(@Name[0], 'of') then OutputPath := Value
-  else if TextIsEqual(@Name[0], 'bs') then
+  Equals := Pos('=', Text);
+  if Equals <= 1 then
+    FailWithUsageHint(Format('unrecognized operand ''%s''', [Text]));
+  Name := Copy(Text, 1, Equals - 1);
+  Value := Copy(Text, Equals + 1, MaxInt);
+  if Name = 'if' then
   begin
-    ParseNumber(Value, @Name[0], Number);
+    InputPath := Value;
+    HasInputPath := True;
+  end
+  else if Name = 'of' then
+  begin
+    OutputPath := Value;
+    HasOutputPath := True;
+  end
+  else if Name = 'bs' then
+  begin
+    Number := ParseNumber(Value);
     InputBlockSize := Number;
     OutputBlockSize := Number;
   end
-  else if TextIsEqual(@Name[0], 'ibs') then ParseNumber(Value, @Name[0], InputBlockSize)
-  else if TextIsEqual(@Name[0], 'obs') then ParseNumber(Value, @Name[0], OutputBlockSize)
-  else if TextIsEqual(@Name[0], 'cbs') then ParseNumber(Value, @Name[0], Number)
-  else if TextIsEqual(@Name[0], 'count') then
+  else if Name = 'ibs' then InputBlockSize := ParseNumber(Value)
+  else if Name = 'obs' then OutputBlockSize := ParseNumber(Value)
+  else if Name = 'cbs' then ParseNumber(Value)
+  else if Name = 'count' then CountBlocks := Int64(ParseNumber(Value))
+  else if Name = 'skip' then SkipBlocks := ParseNumber(Value)
+  else if Name = 'seek' then SeekBlocks := ParseNumber(Value)
+  else if Name = 'conv' then ParseConversions(Value)
+  else if Name = 'status' then
   begin
-    ParseNumber(Value, @Name[0], Number);
-    CountBlocks := Int64(Number);
-  end
-  else if TextIsEqual(@Name[0], 'skip') then ParseNumber(Value, @Name[0], SkipBlocks)
-  else if TextIsEqual(@Name[0], 'seek') then ParseNumber(Value, @Name[0], SeekBlocks)
-  else if TextIsEqual(@Name[0], 'conv') then ParseConversions(Value)
-  else if TextIsEqual(@Name[0], 'status') then
-  begin
-    Quiet := TextIsEqual(Value, 'none');
-    NoTransferLine := TextIsEqual(Value, 'noxfer');
+    Quiet := Value = 'none';
+    NoTransferLine := Value = 'noxfer';
   end
   else
-    FailWithUsageHint('unrecognized operand ''%s''', [ArgumentText(Text)]);
+    FailWithUsageHint(Format('unrecognized operand ''%s''', [Text]));
   if (InputBlockSize = 0) or (OutputBlockSize = 0) then
-    Fail(1, 'invalid number: ''%s''', [ArgumentText(Value)]);
+    Fail(1, Format('invalid number: ''%s''', [Value]));
 end;
 
 var
@@ -163,8 +170,8 @@ var
   Input: Int64;
   Output: Int64;
   Flags: LongWord;
-  InputBuffer: PByte;
-  OutputBuffer: PByte;
+  InputBuffer: array of Byte;
+  OutputBuffer: array of Byte;
   OutputFill: QWord;
   Count: Int64;
   FullIn, PartialIn, FullOut, PartialOut: QWord;
@@ -176,16 +183,17 @@ var
   Take: QWord;
   Started: QWord;
   Elapsed: QWord;
-  Error: LongInt;
   Skipped: QWord;
 
 procedure WriteOutputBlock(ByteCount: QWord);
+var
+  Error: LongInt;
 begin
   if ByteCount = 0 then
     Exit;
-  Error := WriteAll(Output, OutputBuffer, ByteCount);
+  Error := WriteAll(Output, @OutputBuffer[0], ByteCount);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'error writing ''%s''', [ArgumentText(OutputPath)]);
+    FailWithError(1, Error, Format('error writing ''%s''', [OutputPath]));
   if ByteCount = OutputBlockSize then
     Inc(FullOut)
   else
@@ -197,36 +205,34 @@ begin
   InputBlockSize := 512;
   OutputBlockSize := 512;
   CountBlocks := -1;
-  InputPath := nil;
-  OutputPath := nil;
   for Index := 1 to ArgumentTotal - 1 do
   begin
-    if TextIsEqual(Argument(Index), '--help') then
+    if Argument(Index) = '--help' then
     begin
-      Print(Usage);
+      PrintString(Usage);
       Halt(0);
     end;
     ParseOperand(Argument(Index));
   end;
 
   Input := StandardInputHandle;
-  if InputPath <> nil then
+  if HasInputPath then
   begin
-    Input := OpenFile(InputPath, OpenRead);
+    Input := OpenFile(PChar(InputPath), OpenRead);
     if Input < 0 then
-      FailWithError(1, ErrorCodeOf(Input), 'failed to open ''%s''', [ArgumentText(InputPath)]);
+      FailWithError(1, ErrorCodeOf(Input), Format('failed to open ''%s''', [InputPath]));
   end
   else
     InputPath := 'standard input';
   Output := StandardOutputHandle;
-  if OutputPath <> nil then
+  if HasOutputPath then
   begin
     Flags := OpenWrite or OpenCreate;
     if not NoTruncate and (SeekBlocks = 0) then
       Flags := Flags or OpenTruncate;
-    Output := OpenFile(OutputPath, Flags);
+    Output := OpenFile(PChar(OutputPath), Flags);
     if Output < 0 then
-      FailWithError(1, ErrorCodeOf(Output), 'failed to open ''%s''', [ArgumentText(OutputPath)]);
+      FailWithError(1, ErrorCodeOf(Output), Format('failed to open ''%s''', [OutputPath]));
     if SeekBlocks > 0 then
     begin
       SeekFile(Output, Int64(SeekBlocks * OutputBlockSize), SeekFromStart);
@@ -237,8 +243,8 @@ begin
   else
     OutputPath := 'standard output';
 
-  InputBuffer := PByte(AllocateMemory(InputBlockSize));
-  OutputBuffer := PByte(AllocateMemory(OutputBlockSize));
+  SetLength(InputBuffer, InputBlockSize);
+  SetLength(OutputBuffer, OutputBlockSize);
   Started := UptimeMilliseconds;
 
   { Skip by seeking when possible, otherwise by reading. }
@@ -249,7 +255,7 @@ begin
       Skipped := 0;
       while Skipped < SkipBlocks do
       begin
-        if ReadFile(Input, InputBuffer, InputBlockSize) <= 0 then
+        if ReadFile(Input, @InputBuffer[0], InputBlockSize) <= 0 then
           Break;
         Inc(Skipped);
       end;
@@ -266,10 +272,10 @@ begin
   ReadFailed := False;
   while (CountBlocks < 0) or (BlocksRead < CountBlocks) do
   begin
-    Count := ReadFile(Input, InputBuffer, InputBlockSize);
+    Count := ReadFile(Input, @InputBuffer[0], InputBlockSize);
     if Count < 0 then
     begin
-      ReportError(ErrorCodeOf(Count), 'error reading ''%s''', [ArgumentText(InputPath)]);
+      ReportError(ErrorCodeOf(Count), Format('error reading ''%s''', [InputPath]));
       ReadFailed := True;
       if not IgnoreErrors then
         Break;
@@ -285,7 +291,7 @@ begin
       Inc(PartialIn);
       if PadBlocks then
       begin
-        ZeroMemory(InputBuffer + Count, InputBlockSize - QWord(Count));
+        FillChar(InputBuffer[Count], InputBlockSize - QWord(Count), 0);
         Count := Int64(InputBlockSize);
       end;
     end;
@@ -303,7 +309,7 @@ begin
       Take := OutputBlockSize - OutputFill;
       if Take > QWord(Count - Position) then
         Take := QWord(Count - Position);
-      CopyMemory(OutputBuffer + OutputFill, InputBuffer + Position, Take);
+      Move(InputBuffer[Position], OutputBuffer[OutputFill], Take);
       OutputFill := OutputFill + Take;
       Position := Position + Int64(Take);
       if OutputFill = OutputBlockSize then
@@ -323,13 +329,13 @@ begin
 
   if not Quiet then
   begin
-    WriteFormatted(StandardError, '%u+%u records in'#10'%u+%u records out'#10, [ArgumentUnsigned(FullIn),
-      ArgumentUnsigned(PartialIn), ArgumentUnsigned(FullOut), ArgumentUnsigned(PartialOut)]);
+    PrintErrorString(Format('%d+%d records in'#10'%d+%d records out'#10, [FullIn, PartialIn, FullOut,
+      PartialOut]));
     if not NoTransferLine then
     begin
       Elapsed := UptimeMilliseconds - Started;
-      WriteFormatted(StandardError, '%u bytes copied, %u.%03u s'#10, [ArgumentUnsigned(TotalBytes),
-        ArgumentUnsigned(Elapsed div 1000), ArgumentUnsigned(Elapsed mod 1000)]);
+      PrintErrorString(Format('%d bytes copied, %d.%.3d s'#10, [TotalBytes, Elapsed div 1000,
+        Elapsed mod 1000]));
     end;
   end;
   if ReadFailed then

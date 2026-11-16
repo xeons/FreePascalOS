@@ -21,22 +21,24 @@
 }
 program arch;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
   Sys.Information,
-  Sys.Streams,
-  Util.Options;
+  Util.CommandLine,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: arch'#10 +
+  Usage = 'Usage: arch'#10 +
     'Print machine architecture.'#10;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Information: TSystemInformation;
 begin
-  ParseOperandsOnly(Parser, Usage);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  CommandLine.Free;
   GetSystemInformation(Information);
-  PrintLine(@Information.Machine[0]);
+  PrintStringLine(PChar(@Information.Machine[0]));
 end.

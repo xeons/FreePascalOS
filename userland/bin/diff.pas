@@ -31,30 +31,27 @@
 }
 program diff;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Environment,
-  Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Sys.Time,
+  Util.CommandLine,
   Util.Directories,
   Util.Input,
   Util.Messages,
-  Util.Options,
-  Util.Paths,
-  Util.Sorting;
+  Util.Numbers,
+  Util.Output,
+  Util.Paths;
 
 const
-  Usage: PChar = 'Usage: diff [OPTION]... FILES'#10 +
+  Usage = 'Usage: diff [OPTION]... FILES'#10 +
     'Compare FILES line by line.'#10#10 +
     '  -q, --brief                   report only when files differ'#10 +
     '  -c, -C NUM, --context[=NUM]   output NUM (default 3) lines of copied context'#10 +
@@ -91,13 +88,32 @@ type
   TOutputFormat = (FormatNormal, FormatUnified, FormatContext);
 
   { One input file, read into memory. }
-  TSide = record
-    Path: PChar;
-    Lines: TLineList;
-    Keys: PPChar;          { lines as compared (after -i, -b, -w) }
-    Hashes: PLongWord;
-    ModificationTime: Int64;
-    Exists: Boolean;
+  TSide = class
+  private
+    FPath: string;
+    FLines: TStringList;
+    { The lines as compared (after -i, -b, -w), and their hashes. }
+    FKeys: array of string;
+    FHashes: array of LongWord;
+    FLastLineTerminated: Boolean;
+    FModificationTime: Int64;
+    function GetCount: Integer;
+  public
+    constructor Create(const Path: string);
+    destructor Destroy; override;
+    { Reads the file; False (reported) if it cannot be read. An absent
+      file is empty when MayBeAbsent. }
+    function Read(MayBeAbsent: Boolean): Boolean;
+    function LineTerminated(Index: Integer): Boolean;
+    function LineIsBlank(Index: Integer): Boolean;
+    { True if line Index here is line OtherIndex of Other, as compared. }
+    function SameLine(Index: Integer; Other: TSide; OtherIndex: Integer): Boolean;
+    { The line with Prefix before it (and a note if it has no line end). }
+    procedure WriteLine(const Prefix: string; Index: Integer);
+    { The "--- path<TAB>time" line of unified and context output. }
+    procedure WriteHeader(const Marker: string);
+    property Path: string read FPath;
+    property Count: Integer read GetCount;
   end;
 
   { A run of changed lines: [AStart, AEnd) in FILE1 becomes
@@ -106,12 +122,31 @@ type
     AStart, AEnd: Integer;
     BStart, BEnd: Integer;
   end;
-  PChange = ^TChange;
 
-  PLongIntArray = ^LongInt;
+  { The changes that turn one side into the other, and their printing. }
+  TDifference = class
+  private
+    FSideA: TSide;
+    FSideB: TSide;
+    FChangedA: array of Boolean;
+    FChangedB: array of Boolean;
+    FChanges: array of TChange;
+    procedure MarkChanges(LowA, HighA, LowB, HighB: Integer);
+    function ChangeIsBlank(const Change: TChange): Boolean;
+    procedure CollectChanges;
+    procedure HunkBounds(First, Last: Integer; out AStart, AEnd, BStart, BEnd: Integer);
+    function HunkEnd(First: Integer): Integer;
+    procedure PrintContextLines(Side: TSide; First, Last, Start, Finish: Integer; IsSideA: Boolean);
+  public
+    constructor Create(SideA, SideB: TSide);
+    function ChangeCount: Integer;
+    procedure PrintNormal;
+    procedure PrintUnified;
+    procedure PrintContext;
+  end;
 
 var
-  Format: TOutputFormat;
+  OutputFormat: TOutputFormat;
   ContextLines: Integer;
   Brief: Boolean;
   Recursive: Boolean;
@@ -122,159 +157,181 @@ var
   IgnoreBlankLines: Boolean;
   { The options as given, repeated before each file pair compared
     inside directories ("diff -ru a/x b/x"). }
-  HeaderOptions: TTextBuilder;
+  HeaderOptions: string;
   Status: LongInt;
 
 { --- Reading --------------------------------------------------------- }
 
 function IsBlank(Character: Char): Boolean;
 begin
-  Result := (Character = ' ') or (Character = #9) or (Character = #13) or (Character = #11) or (Character = #12);
+  Result := Character in [' ', #9, #13, #11, #12];
 end;
 
-function MakeKey(Line: PChar): PChar;
+function MakeKey(const Line: string): string;
 var
-  Builder: TTextBuilder;
-  Position: PChar;
+  Character: Char;
   PendingSpace: Boolean;
 begin
   if not IgnoreCase and not IgnoreSpaceChange and not IgnoreAllSpace then
     Exit(Line);
-  BeginText(Builder);
-  Position := Line;
+  Result := '';
   PendingSpace := False;
-  while Position^ <> #0 do
+  for Character in Line do
   begin
-    if IsBlank(Position^) and (IgnoreAllSpace or IgnoreSpaceChange) then
+    if IsBlank(Character) and (IgnoreAllSpace or IgnoreSpaceChange) then
     begin
       PendingSpace := IgnoreSpaceChange and not IgnoreAllSpace;
-      Inc(Position);
       Continue;
     end;
     if PendingSpace then
     begin
-      AppendCharacter(Builder, ' ');
+      Result := Result + ' ';
       PendingSpace := False;
     end;
     if IgnoreCase then
-      AppendCharacter(Builder, ToLowerCase(Position^))
+      Result := Result + ToLowerCase(Character)
     else
-      AppendCharacter(Builder, Position^);
-    Inc(Position);
+      Result := Result + Character;
   end;
   { Trailing white space is dropped (PendingSpace is not written). }
-  Result := FinishText(Builder);
 end;
 
-function HashOf(Text: PChar; Terminated: Boolean): LongWord;
+function HashOf(const Text: string; Terminated: Boolean): LongWord;
+var
+  Character: Char;
 begin
   Result := 2166136261;
-  while Text^ <> #0 do
-  begin
-    Result := (Result xor Byte(Text^)) * 16777619;
-    Inc(Text);
-  end;
+  for Character in Text do
+    Result := (Result xor Byte(Character)) * 16777619;
   if not Terminated then
     Result := Result xor $5A5A5A5A;
 end;
 
-function LineTerminated(const Side: TSide; Index: Integer): Boolean;
+constructor TSide.Create(const Path: string);
 begin
-  Result := (Index < Side.Lines.Count - 1) or Side.Lines.LastLineTerminated;
+  inherited Create;
+  FPath := Path;
+  FLines := TStringList.Create;
+  FLastLineTerminated := True;
 end;
 
-function ReadSide(Path: PChar; MayBeAbsent: Boolean; out Side: TSide): Boolean;
+destructor TSide.Destroy;
+begin
+  FLines.Free;
+  inherited Destroy;
+end;
+
+function TSide.GetCount: Integer;
+begin
+  Result := FLines.Count;
+end;
+
+function TSide.LineTerminated(Index: Integer): Boolean;
+begin
+  Result := (Index < FLines.Count - 1) or FLastLineTerminated;
+end;
+
+function TSide.LineIsBlank(Index: Integer): Boolean;
+begin
+  Result := FKeys[Index] = '';
+end;
+
+function TSide.SameLine(Index: Integer; Other: TSide; OtherIndex: Integer): Boolean;
+begin
+  Result := (FHashes[Index] = Other.FHashes[OtherIndex]) and
+    (FKeys[Index] = Other.FKeys[OtherIndex]) and
+    (LineTerminated(Index) = Other.LineTerminated(OtherIndex));
+end;
+
+function TSide.Read(MayBeAbsent: Boolean): Boolean;
 var
   Stream: PInputStream;
   Information: TFileInformation;
   Index: Integer;
 begin
-  ZeroMemory(@Side, SizeOf(Side));
-  Side.Path := Path;
-  BeginLineList(Side.Lines);
-  Side.Lines.LastLineTerminated := True;
-  Side.Exists := True;
-  if MayBeAbsent and not TextIsEqual(Path, '-') and not PathExists(Path) then
-  begin
-    Side.Exists := False;
-    Side.ModificationTime := 0;
-  end
+  FModificationTime := 0;
+  if MayBeAbsent and (FPath <> '-') and not PathExists(PChar(FPath)) then
+    FModificationTime := 0
   else
   begin
-    if TextIsEqual(Path, '-') then
-      Side.ModificationTime := CurrentTime
-    else if GetFileInformation(Path, Information) = ErrorNone then
-      Side.ModificationTime := Information.ModificationTime;
-    Stream := OpenInput(Path);
+    if FPath = '-' then
+      FModificationTime := CurrentTime
+    else if GetFileInformation(PChar(FPath), Information) = ErrorNone then
+      FModificationTime := Information.ModificationTime;
+    Stream := OpenInput(FPath);
     if Stream = nil then
       Exit(False);
-    ReadAllLines(Stream, Side.Lines);
+    FLastLineTerminated := ReadLinesInto(Stream, FLines);
     CloseInput(Stream);
   end;
-  Side.Keys := PPChar(AllocateMemory(QWord(Side.Lines.Count + 1) * SizeOf(PChar)));
-  Side.Hashes := PLongWord(AllocateMemory(QWord(Side.Lines.Count + 1) * SizeOf(LongWord)));
-  for Index := 0 to Side.Lines.Count - 1 do
+  SetLength(FKeys, FLines.Count);
+  SetLength(FHashes, FLines.Count);
+  for Index := 0 to FLines.Count - 1 do
   begin
-    Side.Keys[Index] := MakeKey(Side.Lines.Items[Index]);
-    Side.Hashes[Index] := HashOf(Side.Keys[Index], LineTerminated(Side, Index));
+    FKeys[Index] := MakeKey(FLines[Index]);
+    FHashes[Index] := HashOf(FKeys[Index], LineTerminated(Index));
   end;
   Result := True;
 end;
 
-procedure FreeSide(var Side: TSide);
-var
-  Index: Integer;
+procedure TSide.WriteLine(const Prefix: string; Index: Integer);
 begin
-  for Index := 0 to Side.Lines.Count - 1 do
-    if Side.Keys[Index] <> Side.Lines.Items[Index] then
-      FreeMemory(Side.Keys[Index]);
-  FreeMemory(Side.Keys);
-  FreeMemory(Side.Hashes);
-  FreeLineList(Side.Lines);
+  PrintStringLine(Prefix + FLines[Index]);
+  if not LineTerminated(Index) then
+    PrintStringLine('\ No newline at end of file');
+end;
+
+procedure TSide.WriteHeader(const Marker: string);
+var
+  DateTime: Sys.Time.TDateTime;
+begin
+  Sys.Time.DecodeTime(FModificationTime, DateTime);
+  PrintString(Format('%s %s'#9'%.4d-%.2d-%.2d %.2d:%.2d:%.2d.000000000 +0000'#10, [Marker, FPath,
+    DateTime.Year, DateTime.Month, DateTime.Day, DateTime.Hour, DateTime.Minute, DateTime.Second]));
 end;
 
 { --- Comparing (Myers) ----------------------------------------------- }
 
-var
-  SideA: TSide;
-  SideB: TSide;
-  ChangedA: PBoolean;
-  ChangedB: PBoolean;
-  Changes: PChange;
-  ChangeCount: Integer;
-
-function LinesEqual(IndexA, IndexB: Integer): Boolean;
+constructor TDifference.Create(SideA, SideB: TSide);
 begin
-  Result := (SideA.Hashes[IndexA] = SideB.Hashes[IndexB]) and
-    TextIsEqual(SideA.Keys[IndexA], SideB.Keys[IndexB]) and
-    (LineTerminated(SideA, IndexA) = LineTerminated(SideB, IndexB));
+  inherited Create;
+  FSideA := SideA;
+  FSideB := SideB;
+  SetLength(FChangedA, SideA.Count);
+  SetLength(FChangedB, SideB.Count);
+  MarkChanges(0, SideA.Count, 0, SideB.Count);
+  CollectChanges;
+end;
+
+function TDifference.ChangeCount: Integer;
+begin
+  Result := Length(FChanges);
 end;
 
 { Marks the lines of [LowA, HighA) and [LowB, HighB) that are not part
   of a longest common subsequence. }
-procedure MarkChanges(LowA, HighA, LowB, HighB: Integer);
+procedure TDifference.MarkChanges(LowA, HighA, LowB, HighB: Integer);
 var
   N, M: Integer;
   MaximumD: Integer;
   Offset: Integer;
-  V: PLongIntArray;
-  Trace: ^PLongIntArray;
+  V: array of LongInt;
+  Trace: array of array of LongInt;
   D, K: Integer;
   X, Y: Integer;
   PreviousK: Integer;
   PreviousX, PreviousY: Integer;
-  Previous: PLongIntArray;
   SnakeStartX: Integer;
   Found: Boolean;
   Index: Integer;
 begin
   { Common lines at both ends need no search. }
-  while (LowA < HighA) and (LowB < HighB) and LinesEqual(LowA, LowB) do
+  while (LowA < HighA) and (LowB < HighB) and FSideA.SameLine(LowA, FSideB, LowB) do
   begin
     Inc(LowA);
     Inc(LowB);
   end;
-  while (LowA < HighA) and (LowB < HighB) and LinesEqual(HighA - 1, HighB - 1) do
+  while (LowA < HighA) and (LowB < HighB) and FSideA.SameLine(HighA - 1, FSideB, HighB - 1) do
   begin
     Dec(HighA);
     Dec(HighB);
@@ -284,17 +341,18 @@ begin
   if (N = 0) or (M = 0) then
   begin
     for Index := LowA to HighA - 1 do
-      ChangedA[Index] := True;
+      FChangedA[Index] := True;
     for Index := LowB to HighB - 1 do
-      ChangedB[Index] := True;
+      FChangedB[Index] := True;
     Exit;
   end;
 
   MaximumD := N + M;
   Offset := MaximumD + 1;
-  V := PLongIntArray(AllocateZeroedMemory(QWord(2 * MaximumD + 3) * SizeOf(LongInt)));
-  Trace := AllocateZeroedMemory(QWord(MaximumD + 1) * SizeOf(PLongIntArray));
-  V[Offset + 1] := 0;
+  V := nil;
+  SetLength(V, 2 * MaximumD + 3);
+  Trace := nil;
+  SetLength(Trace, MaximumD + 1);
   Found := False;
   D := 0;
   while (D <= MaximumD) and not Found do
@@ -307,7 +365,7 @@ begin
       else
         X := V[Offset + K - 1] + 1;
       Y := X - K;
-      while (X < N) and (Y < M) and LinesEqual(LowA + X, LowB + Y) do
+      while (X < N) and (Y < M) and FSideA.SameLine(LowA + X, FSideB, LowB + Y) do
       begin
         Inc(X);
         Inc(Y);
@@ -318,9 +376,7 @@ begin
       Inc(K, 2);
     end;
     { Keep the diagonals -D..D of this round for the walk back. }
-    Trace[D] := PLongIntArray(AllocateMemory(QWord(2 * D + 1) * SizeOf(LongInt)));
-    for Index := -D to D do
-      Trace[D][Index + D] := V[Offset + Index];
+    Trace[D] := Copy(V, Offset - D, 2 * D + 1);
     if not Found then
       Inc(D);
   end;
@@ -331,12 +387,11 @@ begin
   while D > 0 do
   begin
     K := X - Y;
-    Previous := Trace[D - 1];
-    if (K = -D) or ((K <> D) and (Previous[K - 1 + D - 1] < Previous[K + 1 + D - 1])) then
+    if (K = -D) or ((K <> D) and (Trace[D - 1][K - 1 + D - 1] < Trace[D - 1][K + 1 + D - 1])) then
       PreviousK := K + 1
     else
       PreviousK := K - 1;
-    PreviousX := Previous[PreviousK + D - 1];
+    PreviousX := Trace[D - 1][PreviousK + D - 1];
     PreviousY := PreviousX - PreviousK;
     { The snake of this round starts just after the edit. }
     if PreviousK = K + 1 then
@@ -349,48 +404,41 @@ begin
       Dec(Y);
     end;
     if PreviousK = K + 1 then
-      ChangedB[LowB + PreviousY] := True
+      FChangedB[LowB + PreviousY] := True
     else
-      ChangedA[LowA + PreviousX] := True;
+      FChangedA[LowA + PreviousX] := True;
     X := PreviousX;
     Y := PreviousY;
     Dec(D);
   end;
-
-  for Index := 0 to MaximumD do
-    if Trace[Index] <> nil then
-      FreeMemory(Trace[Index]);
-  FreeMemory(Trace);
-  FreeMemory(V);
 end;
 
-function ChangeIsBlank(const Change: TChange): Boolean;
+function TDifference.ChangeIsBlank(const Change: TChange): Boolean;
 var
   Index: Integer;
 begin
   for Index := Change.AStart to Change.AEnd - 1 do
-    if SideA.Keys[Index]^ <> #0 then
+    if not FSideA.LineIsBlank(Index) then
       Exit(False);
   for Index := Change.BStart to Change.BEnd - 1 do
-    if SideB.Keys[Index]^ <> #0 then
+    if not FSideB.LineIsBlank(Index) then
       Exit(False);
   Result := True;
 end;
 
 { Turns the marks into runs of changes. }
-procedure CollectChanges;
+procedure TDifference.CollectChanges;
 var
   IndexA, IndexB: Integer;
   Change: TChange;
 begin
-  Changes := PChange(AllocateMemory(QWord(SideA.Lines.Count + SideB.Lines.Count + 1) * SizeOf(TChange)));
-  ChangeCount := 0;
+  FChanges := nil;
   IndexA := 0;
   IndexB := 0;
-  while (IndexA < SideA.Lines.Count) or (IndexB < SideB.Lines.Count) do
+  while (IndexA < FSideA.Count) or (IndexB < FSideB.Count) do
   begin
-    if (IndexA < SideA.Lines.Count) and (IndexB < SideB.Lines.Count) and
-       not ChangedA[IndexA] and not ChangedB[IndexB] then
+    if (IndexA < FSideA.Count) and (IndexB < FSideB.Count) and
+       not FChangedA[IndexA] and not FChangedB[IndexB] then
     begin
       Inc(IndexA);
       Inc(IndexB);
@@ -398,141 +446,98 @@ begin
     end;
     Change.AStart := IndexA;
     Change.BStart := IndexB;
-    while (IndexA < SideA.Lines.Count) and ChangedA[IndexA] do
+    while (IndexA < FSideA.Count) and FChangedA[IndexA] do
       Inc(IndexA);
-    while (IndexB < SideB.Lines.Count) and ChangedB[IndexB] do
+    while (IndexB < FSideB.Count) and FChangedB[IndexB] do
       Inc(IndexB);
     Change.AEnd := IndexA;
     Change.BEnd := IndexB;
     if (Change.AEnd = Change.AStart) and (Change.BEnd = Change.BStart) then
     begin
       { Should not happen; step on to stay safe. }
-      if IndexA < SideA.Lines.Count then
+      if IndexA < FSideA.Count then
         Inc(IndexA);
-      if IndexB < SideB.Lines.Count then
+      if IndexB < FSideB.Count then
         Inc(IndexB);
       Continue;
     end;
     if IgnoreBlankLines and ChangeIsBlank(Change) then
       Continue;
-    Changes[ChangeCount] := Change;
-    Inc(ChangeCount);
+    SetLength(FChanges, Length(FChanges) + 1);
+    FChanges[High(FChanges)] := Change;
   end;
 end;
 
 { --- Printing -------------------------------------------------------- }
 
-procedure WriteRange(Start, Finish: Integer);
+{ Normal and context ranges, 1-based; a single line prints as one
+  number, an empty range as the line before it. }
+function RangeText(Start, Finish: Integer): string;
 begin
-  { 1-based; a single line prints as one number. }
-  if Finish - Start <= 1 then
-  begin
-    if Finish - Start = 1 then
-      WriteDecimal(StandardOutput, Start + 1)
-    else
-      WriteDecimal(StandardOutput, Start);
-  end
+  if Finish - Start = 0 then
+    Result := IntToStr(Start)
+  else if Finish - Start = 1 then
+    Result := IntToStr(Start + 1)
   else
-  begin
-    WriteDecimal(StandardOutput, Start + 1);
-    WriteCharacter(StandardOutput, ',');
-    WriteDecimal(StandardOutput, Finish);
-  end;
-end;
-
-procedure WriteLineWithPrefix(Prefix: PChar; const Side: TSide; Index: Integer);
-begin
-  WriteText(StandardOutput, Prefix);
-  WriteLine(StandardOutput, Side.Lines.Items[Index]);
-  if not LineTerminated(Side, Index) then
-    WriteLine(StandardOutput, '\ No newline at end of file');
-end;
-
-procedure PrintNormal;
-var
-  Index: Integer;
-  Line: Integer;
-  Change: PChange;
-begin
-  for Index := 0 to ChangeCount - 1 do
-  begin
-    Change := @Changes[Index];
-    if Change^.AEnd = Change^.AStart then
-    begin
-      WriteDecimal(StandardOutput, Change^.AStart);
-      WriteCharacter(StandardOutput, 'a');
-      WriteRange(Change^.BStart, Change^.BEnd);
-    end
-    else if Change^.BEnd = Change^.BStart then
-    begin
-      WriteRange(Change^.AStart, Change^.AEnd);
-      WriteCharacter(StandardOutput, 'd');
-      WriteDecimal(StandardOutput, Change^.BStart);
-    end
-    else
-    begin
-      WriteRange(Change^.AStart, Change^.AEnd);
-      WriteCharacter(StandardOutput, 'c');
-      WriteRange(Change^.BStart, Change^.BEnd);
-    end;
-    WriteCharacter(StandardOutput, #10);
-    for Line := Change^.AStart to Change^.AEnd - 1 do
-      WriteLineWithPrefix('< ', SideA, Line);
-    if (Change^.AEnd > Change^.AStart) and (Change^.BEnd > Change^.BStart) then
-      WriteLine(StandardOutput, '---');
-    for Line := Change^.BStart to Change^.BEnd - 1 do
-      WriteLineWithPrefix('> ', SideB, Line);
-  end;
-end;
-
-procedure WriteFileHeader(Marker: PChar; const Side: TSide);
-var
-  DateTime: TDateTime;
-begin
-  DecodeTime(Side.ModificationTime, DateTime);
-  WriteFormatted(StandardOutput, '%s %s'#9'%04d-%02d-%02d %02d:%02d:%02d.000000000 +0000'#10, [
-    ArgumentText(Marker), ArgumentText(Side.Path), ArgumentNumber(DateTime.Year),
-    ArgumentNumber(DateTime.Month), ArgumentNumber(DateTime.Day), ArgumentNumber(DateTime.Hour),
-    ArgumentNumber(DateTime.Minute), ArgumentNumber(DateTime.Second)]);
+    Result := IntToStr(Start + 1) + ',' + IntToStr(Finish);
 end;
 
 { Unified ranges: "start,count", with ",1" left out; an empty range
   names the line before it. }
-procedure WriteUnifiedRange(Start, Count: Integer);
+function UnifiedRangeText(Start, Count: Integer): string;
 begin
   if Count = 0 then
-    WriteDecimal(StandardOutput, Start)
+    Result := IntToStr(Start)
   else
-    WriteDecimal(StandardOutput, Start + 1);
+    Result := IntToStr(Start + 1);
   if Count <> 1 then
+    Result := Result + ',' + IntToStr(Count);
+end;
+
+procedure TDifference.PrintNormal;
+var
+  Change: TChange;
+  Line: Integer;
+begin
+  for Change in FChanges do
   begin
-    WriteCharacter(StandardOutput, ',');
-    WriteDecimal(StandardOutput, Count);
+    if Change.AEnd = Change.AStart then
+      PrintStringLine(IntToStr(Change.AStart) + 'a' + RangeText(Change.BStart, Change.BEnd))
+    else if Change.BEnd = Change.BStart then
+      PrintStringLine(RangeText(Change.AStart, Change.AEnd) + 'd' + IntToStr(Change.BStart))
+    else
+      PrintStringLine(RangeText(Change.AStart, Change.AEnd) + 'c' + RangeText(Change.BStart, Change.BEnd));
+    for Line := Change.AStart to Change.AEnd - 1 do
+      FSideA.WriteLine('< ', Line);
+    if (Change.AEnd > Change.AStart) and (Change.BEnd > Change.BStart) then
+      PrintStringLine('---');
+    for Line := Change.BStart to Change.BEnd - 1 do
+      FSideB.WriteLine('> ', Line);
   end;
 end;
 
 { The changes First..Last form one hunk with its surrounding context. }
-procedure HunkBounds(First, Last: Integer; out AStart, AEnd, BStart, BEnd: Integer);
+procedure TDifference.HunkBounds(First, Last: Integer; out AStart, AEnd, BStart, BEnd: Integer);
 begin
-  AStart := Changes[First].AStart - ContextLines;
+  AStart := FChanges[First].AStart - ContextLines;
   if AStart < 0 then
     AStart := 0;
-  BStart := Changes[First].BStart - (Changes[First].AStart - AStart);
-  AEnd := Changes[Last].AEnd + ContextLines;
-  if AEnd > SideA.Lines.Count then
-    AEnd := SideA.Lines.Count;
-  BEnd := Changes[Last].BEnd + (AEnd - Changes[Last].AEnd);
+  BStart := FChanges[First].BStart - (FChanges[First].AStart - AStart);
+  AEnd := FChanges[Last].AEnd + ContextLines;
+  if AEnd > FSideA.Count then
+    AEnd := FSideA.Count;
+  BEnd := FChanges[Last].BEnd + (AEnd - FChanges[Last].AEnd);
 end;
 
-function HunkEnd(First: Integer): Integer;
+function TDifference.HunkEnd(First: Integer): Integer;
 begin
   Result := First;
   while (Result + 1 < ChangeCount) and
-        (Changes[Result + 1].AStart - Changes[Result].AEnd <= 2 * ContextLines) do
+        (FChanges[Result + 1].AStart - FChanges[Result].AEnd <= 2 * ContextLines) do
     Inc(Result);
 end;
 
-procedure PrintUnified;
+procedure TDifference.PrintUnified;
 var
   First, Last: Integer;
   AStart, AEnd, BStart, BEnd: Integer;
@@ -540,67 +545,97 @@ var
   LineA: Integer;
   Line: Integer;
 begin
-  WriteFileHeader('---', SideA);
-  WriteFileHeader('+++', SideB);
+  FSideA.WriteHeader('---');
+  FSideB.WriteHeader('+++');
   First := 0;
   while First < ChangeCount do
   begin
     Last := HunkEnd(First);
     HunkBounds(First, Last, AStart, AEnd, BStart, BEnd);
-    WriteText(StandardOutput, '@@ -');
-    WriteUnifiedRange(AStart, AEnd - AStart);
-    WriteText(StandardOutput, ' +');
-    WriteUnifiedRange(BStart, BEnd - BStart);
-    WriteText(StandardOutput, ' @@'#10);
+    PrintStringLine('@@ -' + UnifiedRangeText(AStart, AEnd - AStart) + ' +' +
+      UnifiedRangeText(BStart, BEnd - BStart) + ' @@');
     LineA := AStart;
     for Index := First to Last do
     begin
-      while LineA < Changes[Index].AStart do
+      while LineA < FChanges[Index].AStart do
       begin
-        WriteLineWithPrefix(' ', SideA, LineA);
+        FSideA.WriteLine(' ', LineA);
         Inc(LineA);
       end;
-      for Line := Changes[Index].AStart to Changes[Index].AEnd - 1 do
-        WriteLineWithPrefix('-', SideA, Line);
-      for Line := Changes[Index].BStart to Changes[Index].BEnd - 1 do
-        WriteLineWithPrefix('+', SideB, Line);
-      LineA := Changes[Index].AEnd;
+      for Line := FChanges[Index].AStart to FChanges[Index].AEnd - 1 do
+        FSideA.WriteLine('-', Line);
+      for Line := FChanges[Index].BStart to FChanges[Index].BEnd - 1 do
+        FSideB.WriteLine('+', Line);
+      LineA := FChanges[Index].AEnd;
     end;
     while LineA < AEnd do
     begin
-      WriteLineWithPrefix(' ', SideA, LineA);
+      FSideA.WriteLine(' ', LineA);
       Inc(LineA);
     end;
     First := Last + 1;
   end;
 end;
 
-procedure WriteContextRange(Start, Finish: Integer);
+{ One half of a context hunk: the lines Start..Finish - 1 of Side with
+  the changes First..Last marked; a change found on both sides is "!",
+  one on this side only "-" (side A) or "+" (side B). }
+procedure TDifference.PrintContextLines(Side: TSide; First, Last, Start, Finish: Integer;
+  IsSideA: Boolean);
+var
+  Index: Integer;
+  Line: Integer;
+  Cursor: Integer;
+  ChangeStart, ChangeEnd: Integer;
+  OtherIsEmpty: Boolean;
+  Marker: string;
 begin
-  if Finish - Start = 0 then
-    WriteDecimal(StandardOutput, Start)
-  else if Finish - Start = 1 then
-    WriteDecimal(StandardOutput, Start + 1)
-  else
+  Cursor := Start;
+  for Index := First to Last do
   begin
-    WriteDecimal(StandardOutput, Start + 1);
-    WriteCharacter(StandardOutput, ',');
-    WriteDecimal(StandardOutput, Finish);
+    if IsSideA then
+    begin
+      ChangeStart := FChanges[Index].AStart;
+      ChangeEnd := FChanges[Index].AEnd;
+      OtherIsEmpty := FChanges[Index].BEnd = FChanges[Index].BStart;
+    end
+    else
+    begin
+      ChangeStart := FChanges[Index].BStart;
+      ChangeEnd := FChanges[Index].BEnd;
+      OtherIsEmpty := FChanges[Index].AEnd = FChanges[Index].AStart;
+    end;
+    while Cursor < ChangeStart do
+    begin
+      Side.WriteLine('  ', Cursor);
+      Inc(Cursor);
+    end;
+    if not OtherIsEmpty then
+      Marker := '! '
+    else if IsSideA then
+      Marker := '- '
+    else
+      Marker := '+ ';
+    for Line := ChangeStart to ChangeEnd - 1 do
+      Side.WriteLine(Marker, Line);
+    Cursor := ChangeEnd;
+  end;
+  while Cursor < Finish do
+  begin
+    Side.WriteLine('  ', Cursor);
+    Inc(Cursor);
   end;
 end;
 
-procedure PrintContext;
+procedure TDifference.PrintContext;
 var
   First, Last: Integer;
   AStart, AEnd, BStart, BEnd: Integer;
   Index: Integer;
-  Line: Integer;
-  Cursor: Integer;
   HasDeletions, HasInsertions: Boolean;
-  Marker: PChar;
 begin
-  WriteFileHeader('***', SideA);
-  WriteFileHeader('---', SideB);
+  FSideA.WriteHeader('***');
+  FSideB.WriteHeader('---');
   First := 0;
   while First < ChangeCount do
   begin
@@ -610,66 +645,18 @@ begin
     HasInsertions := False;
     for Index := First to Last do
     begin
-      if Changes[Index].AEnd > Changes[Index].AStart then
+      if FChanges[Index].AEnd > FChanges[Index].AStart then
         HasDeletions := True;
-      if Changes[Index].BEnd > Changes[Index].BStart then
+      if FChanges[Index].BEnd > FChanges[Index].BStart then
         HasInsertions := True;
     end;
-    WriteLine(StandardOutput, '***************');
-    WriteText(StandardOutput, '*** ');
-    WriteContextRange(AStart, AEnd);
-    WriteText(StandardOutput, ' ****'#10);
+    PrintStringLine('***************');
+    PrintStringLine('*** ' + RangeText(AStart, AEnd) + ' ****');
     if HasDeletions then
-    begin
-      Cursor := AStart;
-      for Index := First to Last do
-      begin
-        while Cursor < Changes[Index].AStart do
-        begin
-          WriteLineWithPrefix('  ', SideA, Cursor);
-          Inc(Cursor);
-        end;
-        if Changes[Index].BEnd > Changes[Index].BStart then
-          Marker := '! '
-        else
-          Marker := '- ';
-        for Line := Changes[Index].AStart to Changes[Index].AEnd - 1 do
-          WriteLineWithPrefix(Marker, SideA, Line);
-        Cursor := Changes[Index].AEnd;
-      end;
-      while Cursor < AEnd do
-      begin
-        WriteLineWithPrefix('  ', SideA, Cursor);
-        Inc(Cursor);
-      end;
-    end;
-    WriteText(StandardOutput, '--- ');
-    WriteContextRange(BStart, BEnd);
-    WriteText(StandardOutput, ' ----'#10);
+      PrintContextLines(FSideA, First, Last, AStart, AEnd, True);
+    PrintStringLine('--- ' + RangeText(BStart, BEnd) + ' ----');
     if HasInsertions then
-    begin
-      Cursor := BStart;
-      for Index := First to Last do
-      begin
-        while Cursor < Changes[Index].BStart do
-        begin
-          WriteLineWithPrefix('  ', SideB, Cursor);
-          Inc(Cursor);
-        end;
-        if Changes[Index].AEnd > Changes[Index].AStart then
-          Marker := '! '
-        else
-          Marker := '+ ';
-        for Line := Changes[Index].BStart to Changes[Index].BEnd - 1 do
-          WriteLineWithPrefix(Marker, SideB, Line);
-        Cursor := Changes[Index].BEnd;
-      end;
-      while Cursor < BEnd do
-      begin
-        WriteLineWithPrefix('  ', SideB, Cursor);
-        Inc(Cursor);
-      end;
-    end;
+      PrintContextLines(FSideB, First, Last, BStart, BEnd, False);
     First := Last + 1;
   end;
 end;
@@ -682,67 +669,66 @@ begin
     Status := Value;
 end;
 
+procedure PrintDifference(Difference: TDifference; const PathA, PathB: string; InsideDirectories: Boolean);
+begin
+  if Brief then
+  begin
+    PrintString(Format('Files %s and %s differ'#10, [PathA, PathB]));
+    Exit;
+  end;
+  if InsideDirectories then
+    PrintString(Format('diff%s %s %s'#10, [HeaderOptions, PathA, PathB]));
+  case OutputFormat of
+    FormatUnified: Difference.PrintUnified;
+    FormatContext: Difference.PrintContext;
+  else
+    Difference.PrintNormal;
+  end;
+end;
+
 { Compares two files; InsideDirectories prints the "diff ..." line
   before a difference. }
-procedure CompareFiles(PathA, PathB: PChar; InsideDirectories: Boolean);
+procedure CompareFiles(const PathA, PathB: string; InsideDirectories: Boolean);
+var
+  SideA, SideB: TSide;
+  Difference: TDifference;
 begin
-  if not ReadSide(PathA, NewFile and InsideDirectories, SideA) then
-  begin
-    NoteStatus(StatusTrouble);
-    Exit;
-  end;
-  if not ReadSide(PathB, NewFile and InsideDirectories, SideB) then
-  begin
-    FreeSide(SideA);
-    NoteStatus(StatusTrouble);
-    Exit;
-  end;
-  ChangedA := PBoolean(AllocateZeroedMemory(QWord(SideA.Lines.Count + 1)));
-  ChangedB := PBoolean(AllocateZeroedMemory(QWord(SideB.Lines.Count + 1)));
-  MarkChanges(0, SideA.Lines.Count, 0, SideB.Lines.Count);
-  CollectChanges;
-  if ChangeCount > 0 then
-  begin
-    NoteStatus(StatusDifferent);
-    if Brief then
-      WriteFormatted(StandardOutput, 'Files %s and %s differ'#10, [ArgumentText(PathA), ArgumentText(PathB)])
-    else
+  SideA := TSide.Create(PathA);
+  SideB := TSide.Create(PathB);
+  try
+    if not SideA.Read(NewFile and InsideDirectories) or not SideB.Read(NewFile and InsideDirectories) then
     begin
-      if InsideDirectories then
-        WriteFormatted(StandardOutput, 'diff%s %s %s'#10, [ArgumentText(HeaderOptions.Text),
-          ArgumentText(PathA), ArgumentText(PathB)]);
-      case Format of
-        FormatUnified: PrintUnified;
-        FormatContext: PrintContext;
-      else
-        PrintNormal;
-      end;
+      NoteStatus(StatusTrouble);
+      Exit;
     end;
+    Difference := TDifference.Create(SideA, SideB);
+    try
+      if Difference.ChangeCount > 0 then
+      begin
+        NoteStatus(StatusDifferent);
+        PrintDifference(Difference, PathA, PathB, InsideDirectories);
+      end;
+    finally
+      Difference.Free;
+    end;
+  finally
+    SideA.Free;
+    SideB.Free;
   end;
-  FreeMemory(Changes);
-  FreeMemory(ChangedA);
-  FreeMemory(ChangedB);
-  FreeSide(SideA);
-  FreeSide(SideB);
 end;
 
-function CompareNames(First, Second: Pointer; Context: Pointer): Integer;
-begin
-  Result := CompareText(PChar(First), PChar(Second));
-end;
-
-function KindOf(Path: PChar; out Kind: LongWord): Boolean;
+function KindOf(const Path: string; out Kind: LongWord): Boolean;
 var
   Information: TFileInformation;
 begin
-  Result := GetFileInformation(Path, Information) = ErrorNone;
+  Result := GetFileInformation(PChar(Path), Information) = ErrorNone;
   if Result then
     Kind := Information.Kind
   else
     Kind := 0;
 end;
 
-function KindName(Kind: LongWord): PChar;
+function KindName(Kind: LongWord): string;
 begin
   if Kind = KindDirectory then
     Result := 'directory'
@@ -750,137 +736,162 @@ begin
     Result := 'regular file';
 end;
 
-procedure CompareDirectories(PathA, PathB: PChar);
+{ The names in Path, in byte order. }
+function SortedNames(const Path: string): TStringList;
+begin
+  Result := TStringList.Create;
+  ListDirectory(Path, Result);
+  Result.UseLocale := False;
+  Result.CaseSensitive := True;
+  Result.Sort;
+end;
+
+procedure CompareDirectories(const PathA, PathB: string); forward;
+
+{ One name of two directories being compared; Order tells which of them
+  has it (below 0: only PathA, above 0: only PathB, 0: both). }
+procedure CompareEntry(const PathA, PathB, Name: string; Order: Integer);
 var
-  NamesA, NamesB: TLineList;
-  IndexA, IndexB: Integer;
-  Order: Integer;
-  Name: PChar;
-  ChildA, ChildB: PChar;
+  ChildA, ChildB: string;
   KindA, KindB: LongWord;
   HaveA, HaveB: Boolean;
 begin
-  BeginLineList(NamesA);
-  BeginLineList(NamesB);
-  ListDirectory(PathA, NamesA);
-  ListDirectory(PathB, NamesB);
-  SortPointers(PPointer(NamesA.Items), NamesA.Count, @CompareNames, nil);
-  SortPointers(PPointer(NamesB.Items), NamesB.Count, @CompareNames, nil);
-  IndexA := 0;
-  IndexB := 0;
-  while (IndexA < NamesA.Count) or (IndexB < NamesB.Count) do
+  ChildA := JoinPath(PathA, Name);
+  ChildB := JoinPath(PathB, Name);
+  HaveA := KindOf(ChildA, KindA);
+  HaveB := KindOf(ChildB, KindB);
+  if (Order <> 0) and not (NewFile and ((HaveA and (KindA <> KindDirectory)) or
+     (HaveB and (KindB <> KindDirectory)))) then
   begin
-    if IndexA >= NamesA.Count then
-      Order := 1
-    else if IndexB >= NamesB.Count then
-      Order := -1
-    else
-      Order := CompareText(NamesA.Items[IndexA], NamesB.Items[IndexB]);
     if Order < 0 then
-      Name := NamesA.Items[IndexA]
+      PrintString(Format('Only in %s: %s'#10, [PathA, Name]))
     else
-      Name := NamesB.Items[IndexB];
-    ChildA := JoinPath(PathA, Name);
-    ChildB := JoinPath(PathB, Name);
-    HaveA := KindOf(ChildA, KindA);
-    HaveB := KindOf(ChildB, KindB);
-    if (Order <> 0) and not (NewFile and ((HaveA and (KindA <> KindDirectory)) or
-       (HaveB and (KindB <> KindDirectory)))) then
-    begin
-      if Order < 0 then
-        WriteFormatted(StandardOutput, 'Only in %s: %s'#10, [ArgumentText(PathA), ArgumentText(Name)])
-      else
-        WriteFormatted(StandardOutput, 'Only in %s: %s'#10, [ArgumentText(PathB), ArgumentText(Name)]);
-      NoteStatus(StatusDifferent);
-    end
-    else if (Order = 0) and (KindA = KindDirectory) and (KindB = KindDirectory) then
-    begin
-      if Recursive then
-        CompareDirectories(ChildA, ChildB)
-      else
-        WriteFormatted(StandardOutput, 'Common subdirectories: %s and %s'#10,
-          [ArgumentText(ChildA), ArgumentText(ChildB)]);
-    end
-    else if (Order = 0) and ((KindA = KindDirectory) <> (KindB = KindDirectory)) then
-    begin
-      WriteFormatted(StandardOutput, 'File %s is a %s while file %s is a %s'#10, [ArgumentText(ChildA),
-        ArgumentText(KindName(KindA)), ArgumentText(ChildB), ArgumentText(KindName(KindB))]);
-      NoteStatus(StatusDifferent);
-    end
+      PrintString(Format('Only in %s: %s'#10, [PathB, Name]));
+    NoteStatus(StatusDifferent);
+  end
+  else if (Order = 0) and (KindA = KindDirectory) and (KindB = KindDirectory) then
+  begin
+    if Recursive then
+      CompareDirectories(ChildA, ChildB)
     else
-      CompareFiles(ChildA, ChildB, True);
-    FreeMemory(ChildA);
-    FreeMemory(ChildB);
-    if Order <= 0 then
-      Inc(IndexA);
-    if Order >= 0 then
-      Inc(IndexB);
-  end;
-  FreeLineList(NamesA);
-  FreeLineList(NamesB);
+      PrintString(Format('Common subdirectories: %s and %s'#10, [ChildA, ChildB]));
+  end
+  else if (Order = 0) and ((KindA = KindDirectory) <> (KindB = KindDirectory)) then
+  begin
+    PrintString(Format('File %s is a %s while file %s is a %s'#10, [ChildA, KindName(KindA), ChildB,
+      KindName(KindB)]));
+    NoteStatus(StatusDifferent);
+  end
+  else
+    CompareFiles(ChildA, ChildB, True);
 end;
 
-procedure SetContext(Value: PChar);
+procedure CompareDirectories(const PathA, PathB: string);
+var
+  NamesA, NamesB: TStringList;
+  IndexA, IndexB: Integer;
+  Order: Integer;
+begin
+  NamesA := SortedNames(PathA);
+  NamesB := SortedNames(PathB);
+  try
+    IndexA := 0;
+    IndexB := 0;
+    while (IndexA < NamesA.Count) or (IndexB < NamesB.Count) do
+    begin
+      if IndexA >= NamesA.Count then
+        Order := 1
+      else if IndexB >= NamesB.Count then
+        Order := -1
+      else
+        Order := CompareStr(NamesA[IndexA], NamesB[IndexB]);
+      if Order < 0 then
+        CompareEntry(PathA, PathB, NamesA[IndexA], Order)
+      else
+        CompareEntry(PathA, PathB, NamesB[IndexB], Order);
+      if Order <= 0 then
+        Inc(IndexA);
+      if Order >= 0 then
+        Inc(IndexB);
+    end;
+  finally
+    NamesA.Free;
+    NamesB.Free;
+  end;
+end;
+
+procedure SetContext(const Value: string);
 var
   Number: Int64;
 begin
-  if not ParseInteger(Value, Number) or (Number < 0) then
-    FailWithUsageHint('invalid context length ''%s''', [ArgumentText(Value)]);
+  if not ParseDecimal(Value, Number) or (Number < 0) then
+    FailWithUsageHint(Format('invalid context length ''%s''', [Value]));
   ContextLines := Integer(Number);
 end;
 
-procedure CollectHeaderOptions(const Parser: TOptionParser);
+{ Every argument but the two operands, each after a space. }
+function CollectHeaderOptions(const Operands: TStringArray): string;
 var
   Index: Integer;
-  Text: PChar;
+  OperandIndex: Integer;
+  Text: string;
 begin
-  BeginText(HeaderOptions);
+  Result := '';
+  OperandIndex := 0;
   for Index := 1 to ArgumentTotal - 1 do
   begin
     Text := Argument(Index);
-    if (Text = Parser.Operands[0]) or (Text = Parser.Operands[1]) then
+    if (OperandIndex < Length(Operands)) and (Text = Operands[OperandIndex]) then
+    begin
+      Inc(OperandIndex);
       Continue;
-    AppendCharacter(HeaderOptions, ' ');
-    AppendText(HeaderOptions, Text);
+    end;
+    Result := Result + ' ' + Text;
   end;
 end;
 
-var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
-  PathA, PathB: PChar;
-  IsDirectoryA, IsDirectoryB: Boolean;
-  Base: PChar;
+procedure FailWithTrouble(const Message: string);
 begin
-  Format := FormatNormal;
+  Report(Message);
+  Report('Try ''diff --help'' for more information.');
+  Halt(StatusTrouble);
+end;
+
+var
+  CommandLine: TCommandLine;
+  Code: Integer;
+  Value: string;
+  PathA, PathB: string;
+  IsDirectoryA, IsDirectoryB: Boolean;
+begin
+  OutputFormat := FormatNormal;
   ContextLines := DefaultContext;
   Status := StatusSame;
-  BeginOptions(Parser, [
-    OptionDefinition('q', 'brief', False, OptionBrief),
-    OptionDefinition('c', nil, False, OptionContext),
-    OptionDefinition('C', 'context', True, OptionContextLines),
-    OptionDefinition('u', nil, False, OptionUnified),
-    OptionDefinition('U', 'unified', True, OptionUnifiedLines),
-    OptionDefinition('r', 'recursive', False, OptionRecursive),
-    OptionDefinition('N', 'new-file', False, OptionNewFile),
-    OptionDefinition('i', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('b', 'ignore-space-change', False, OptionIgnoreSpaceChange),
-    OptionDefinition('w', 'ignore-all-space', False, OptionIgnoreAllSpace),
-    OptionDefinition('B', 'ignore-blank-lines', False, OptionIgnoreBlankLines)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('q', 'brief', False, OptionBrief),
+    CommandOption('c', '', False, OptionContext),
+    CommandOption('C', 'context', True, OptionContextLines),
+    CommandOption('u', '', False, OptionUnified),
+    CommandOption('U', 'unified', True, OptionUnifiedLines),
+    CommandOption('r', 'recursive', False, OptionRecursive),
+    CommandOption('N', 'new-file', False, OptionNewFile),
+    CommandOption('i', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('b', 'ignore-space-change', False, OptionIgnoreSpaceChange),
+    CommandOption('w', 'ignore-all-space', False, OptionIgnoreAllSpace),
+    CommandOption('B', 'ignore-blank-lines', False, OptionIgnoreBlankLines)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionBrief: Brief := True;
-      OptionContext: Format := FormatContext;
+      OptionContext: OutputFormat := FormatContext;
       OptionContextLines:
         begin
-          Format := FormatContext;
+          OutputFormat := FormatContext;
           SetContext(Value);
         end;
-      OptionUnified: Format := FormatUnified;
+      OptionUnified: OutputFormat := FormatUnified;
       OptionUnifiedLines:
         begin
-          Format := FormatUnified;
+          OutputFormat := FormatUnified;
           SetContext(Value);
         end;
       OptionRecursive: Recursive := True;
@@ -890,41 +901,27 @@ begin
       OptionIgnoreAllSpace: IgnoreAllSpace := True;
       OptionIgnoreBlankLines: IgnoreBlankLines := True;
     end;
-  if Parser.OperandCount < 2 then
-  begin
-    if Parser.OperandCount = 0 then
-      Report('missing operand after ''diff''', [])
-    else
-      Report('missing operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
-    Report('Try ''diff --help'' for more information.', []);
-    Halt(StatusTrouble);
-  end;
-  if Parser.OperandCount > 2 then
-  begin
-    Report('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-    Report('Try ''diff --help'' for more information.', []);
-    Halt(StatusTrouble);
-  end;
-  CollectHeaderOptions(Parser);
-  PathA := Parser.Operands[0];
-  PathB := Parser.Operands[1];
-  IsDirectoryA := not TextIsEqual(PathA, '-') and IsDirectory(PathA);
-  IsDirectoryB := not TextIsEqual(PathB, '-') and IsDirectory(PathB);
+  if CommandLine.OperandCount = 0 then
+    FailWithTrouble('missing operand after ''diff''');
+  if CommandLine.OperandCount = 1 then
+    FailWithTrouble(Format('missing operand after ''%s''', [CommandLine.Operands[0]]));
+  if CommandLine.OperandCount > 2 then
+    FailWithTrouble(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+  HeaderOptions := CollectHeaderOptions(CommandLine.Operands);
+  PathA := CommandLine.Operands[0];
+  PathB := CommandLine.Operands[1];
+  IsDirectoryA := (PathA <> '-') and IsDirectory(PChar(PathA));
+  IsDirectoryB := (PathB <> '-') and IsDirectory(PChar(PathB));
   if IsDirectoryA and IsDirectoryB then
     CompareDirectories(PathA, PathB)
   else
   begin
     if IsDirectoryA then
-    begin
-      Base := BaseName(PathB);
-      PathA := JoinPath(PathA, Base);
-    end
+      PathA := JoinPath(PathA, BaseName(PathB))
     else if IsDirectoryB then
-    begin
-      Base := BaseName(PathA);
-      PathB := JoinPath(PathB, Base);
-    end;
+      PathB := JoinPath(PathB, BaseName(PathA));
     CompareFiles(PathA, PathB, False);
   end;
+  CommandLine.Free;
   Halt(Status);
 end.
