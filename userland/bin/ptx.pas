@@ -36,16 +36,17 @@ program ptx;
 uses
   Classes,
   SysUtils,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Util.Sorting;
 
 const
-  Usage: PChar = 'Usage: ptx [OPTION]... [INPUT]...'#10 +
+  Usage = 'Usage: ptx [OPTION]... [INPUT]...'#10 +
     'Output a permuted index, including context, of the words in the input files.'#10#10 +
     '  -f, --ignore-case          fold lower case to upper case for sorting'#10 +
     '  -i, --ignore-file=FILE     read ignore word list from FILE'#10 +
@@ -62,8 +63,6 @@ const
   OptionTraditional = 6;
 
 type
-  TStringArray = array of string;
-
   { One keyword of the input, with the line it is in. }
   TIndexEntry = class
   public
@@ -77,13 +76,19 @@ type
     constructor Create(const ALine, AReference: string; AWordStart: Integer);
   end;
 
+  { Orders entries by SortKey. }
+  TEntryOrder = class
+  public
+    function Compare(First, Second: Pointer): Integer;
+  end;
+
 var
   IgnoreCase: Boolean;
   UseReferences: Boolean;
   Width: Int64;
-  IgnoreWords: TStringArray;
-  OnlyWords: TStringArray;
-  HaveOnlyList: Boolean;
+  IgnoreWords: TStringList;
+  { nil without -o. }
+  OnlyWords: TStringList;
 
 constructor TIndexEntry.Create(const ALine, AReference: string; AWordStart: Integer);
 begin
@@ -96,19 +101,20 @@ begin
     SortKey := UpperCase(SortKey);
 end;
 
-function WordInList(const List: TStringArray; const Word: string): Boolean;
-var
-  Index: Integer;
-begin
-  for Index := 0 to High(List) do
-    if List[Index] = Word then
-      Exit(True);
-  Result := False;
-end;
-
-function CompareEntries(First, Second: Pointer; Context: Pointer): Integer;
+function TEntryOrder.Compare(First, Second: Pointer): Integer;
 begin
   Result := CompareStr(TIndexEntry(First).SortKey, TIndexEntry(Second).SortKey);
+end;
+
+{ An exact (case sensitive) match. }
+function WordInList(List: TStrings; const Word: string): Boolean;
+var
+  Item: string;
+begin
+  for Item in List do
+    if Item = Word then
+      Exit(True);
+  Result := False;
 end;
 
 { The end of Text, right aligned in Field columns: the part nearest the
@@ -137,26 +143,10 @@ begin
     Dec(Left);
   Output := Output + RightAligned(Copy(Entry.Line, 1, Left), HalfWidth - 3) + '   ' +
     Copy(Entry.Line, Entry.WordStart, Width - HalfWidth);
-  WriteLine(StandardOutput, PChar(Output));
+  PrintStringLine(Output);
 end;
 
-{ Appends every line of Stream to Lines. }
-procedure ReadLinesInto(Stream: PInputStream; var Lines: TStringArray);
-var
-  List: TLineList;
-  Index: Integer;
-  First: Integer;
-begin
-  BeginLineList(List);
-  ReadAllLines(Stream, List);
-  First := Length(Lines);
-  SetLength(Lines, First + List.Count);
-  for Index := 0 to List.Count - 1 do
-    Lines[First + Index] := List.Items[Index];
-  FreeLineList(List);
-end;
-
-procedure LoadWordList(Path: PChar; var List: TStringArray);
+procedure LoadWordList(const Path: string; List: TStrings);
 var
   Stream: PInputStream;
 begin
@@ -201,56 +191,58 @@ begin
     Keyword := Copy(Line, Start, Position - Start);
     if WordInList(IgnoreWords, Keyword) then
       Continue;
-    if HaveOnlyList and not WordInList(OnlyWords, Keyword) then
+    if (OnlyWords <> nil) and not WordInList(OnlyWords, Keyword) then
       Continue;
     Entries.Add(TIndexEntry.Create(Line, Reference, Start));
   end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   Stream: PInputStream;
-  Lines: TStringArray;
+  Lines: TStringList;
+  Line: string;
   Entries: TFPList;
-  LineIndex: Integer;
+  Order: TEntryOrder;
+  Index: Integer;
   ExitStatus: LongInt;
 begin
   Width := 72;
-  BeginOptions(Parser, [
-    OptionDefinition('f', 'ignore-case', False, OptionIgnoreCase),
-    OptionDefinition('i', 'ignore-file', True, OptionIgnoreFile),
-    OptionDefinition('o', 'only-file', True, OptionOnlyFile),
-    OptionDefinition('r', 'references', False, OptionReferences),
-    OptionDefinition('w', 'width', True, OptionWidth),
-    OptionDefinition('G', 'traditional', False, OptionTraditional)], Usage);
-  while NextOption(Parser, Code, Value) do
+  IgnoreWords := TStringList.Create;
+  OnlyWords := nil;
+  CommandLine := TCommandLine.Create([
+    CommandOption('f', 'ignore-case', False, OptionIgnoreCase),
+    CommandOption('i', 'ignore-file', True, OptionIgnoreFile),
+    CommandOption('o', 'only-file', True, OptionOnlyFile),
+    CommandOption('r', 'references', False, OptionReferences),
+    CommandOption('w', 'width', True, OptionWidth),
+    CommandOption('G', 'traditional', False, OptionTraditional)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionIgnoreCase: IgnoreCase := True;
       OptionIgnoreFile: LoadWordList(Value, IgnoreWords);
       OptionOnlyFile:
         begin
+          if OnlyWords = nil then
+            OnlyWords := TStringList.Create;
           LoadWordList(Value, OnlyWords);
-          HaveOnlyList := True;
         end;
       OptionReferences: UseReferences := True;
       OptionWidth:
-        if not ParseInteger(Value, Width) or (Width < 10) then
-          Fail(1, 'invalid width: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Width) or (Width < 10) then
+          Fail(1, Format('invalid width: ''%s''', [Value]));
     end;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   ExitStatus := 0;
-  Lines := nil;
-  for Index := 0 to Parser.OperandCount - 1 do
+  Lines := TStringList.Create;
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
@@ -261,10 +253,11 @@ begin
   end;
 
   Entries := TFPList.Create;
-  for LineIndex := 0 to High(Lines) do
-    AddEntries(Lines[LineIndex], Entries);
-  if Entries.Count > 0 then
-    SortPointers(PPointer(Entries.List), Entries.Count, @CompareEntries, nil);
+  for Line in Lines do
+    AddEntries(Line, Entries);
+  Order := TEntryOrder.Create;
+  SortList(Entries, @Order.Compare);
+  Order.Free;
   for Index := 0 to Entries.Count - 1 do
     WriteEntry(TIndexEntry(Entries[Index]));
   Halt(ExitStatus);

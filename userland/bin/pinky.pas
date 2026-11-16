@@ -30,14 +30,14 @@ program pinky;
 
 uses
   SysUtils,
-  Sys.Streams,
   Sys.Time,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: pinky [OPTION]... [USER]...'#10 +
+  Usage = 'Usage: pinky [OPTION]... [USER]...'#10 +
     'A lightweight ''finger'' program;  print user information.'#10#10 +
     '  -l              produce long format output for the specified USERs'#10 +
     '  -s              do short format output, this is the default'#10;
@@ -45,59 +45,51 @@ const
   OptionLong = 1;
   OptionShort = 2;
 
-procedure Print(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
-
 procedure PrintLongFormat(const Requested: string);
 var
   UserId: LongWord;
   Name: string;
 begin
-  if not FindUserId(PChar(Requested), UserId) or (UserNameOf(UserId) = nil) then
+  if not FindUserId(Requested, UserId) or not FindUserName(UserId, Name) then
   begin
-    Print(Format('Login name: %-28s In real life:  ???'#10, [Requested]));
+    PrintString(Format('Login name: %-28s In real life:  ???'#10, [Requested]));
     Exit;
   end;
-  Name := UserNameOf(UserId);
-  Print(Format('Login name: %-28s In real life:  %s'#10, [Name, Name]));
-  Print(Format('Directory: %-29s Shell:  /bin/sh'#10#10, [string(HomeDirectoryOf(UserId))]));
+  PrintString(Format('Login name: %-28s In real life:  %s'#10, [Name, Name]));
+  PrintString(Format('Directory: %-29s Shell:  /bin/sh'#10#10, [UserHomeDirectory(UserId)]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   LongFormat: Boolean;
-  Index: Integer;
+  Operand: string;
   Name: string;
   BootTime: Int64;
   DateTime: Sys.Time.TDateTime;
 begin
   LongFormat := False;
-  BeginOptions(Parser, [
-    OptionDefinition('l', nil, False, OptionLong),
-    OptionDefinition('s', nil, False, OptionShort)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('l', '', False, OptionLong),
+    CommandOption('s', '', False, OptionShort)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     LongFormat := Code = OptionLong;
 
   if LongFormat then
   begin
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('no username specified; at least one must be specified when using -l', []);
-    for Index := 0 to Parser.OperandCount - 1 do
-      PrintLongFormat(Parser.Operands[Index]);
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('no username specified; at least one must be specified when using -l');
+    for Operand in CommandLine.Operands do
+      PrintLongFormat(Operand);
     Halt(0);
   end;
 
-  if UserNameOf(CurrentRealUserId) = nil then
-    Name := 'root'
-  else
-    Name := UserNameOf(CurrentRealUserId);
-  PrintLine('Login    Name                 TTY      Idle   When');
+  if not FindUserName(CurrentRealUserId, Name) then
+    Name := 'root';
+  PrintStringLine('Login    Name                 TTY      Idle   When');
   BootTime := CurrentTime - Int64(UptimeMilliseconds div 1000);
   DecodeTime(BootTime, DateTime);
-  Print(Format('%-8s %-20s console         %.4d-%.2d-%.2d %.2d:%.2d'#10, [Name, Name,
+  PrintString(Format('%-8s %-20s console         %.4d-%.2d-%.2d %.2d:%.2d'#10, [Name, Name,
     DateTime.Year, DateTime.Month, DateTime.Day, DateTime.Hour, DateTime.Minute]));
 end.

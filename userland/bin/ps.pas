@@ -46,18 +46,17 @@ program ps;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Environment,
-  Sys.Format,
   Sys.Kernel,
   Sys.ProcessList,
   Sys.Streams,
   Sys.Time,
   Util.Accounts,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: ps [OPTION]...'#10 +
+  Usage = 'Usage: ps [OPTION]...'#10 +
     'Report a snapshot of the current processes.'#10#10 +
     '  -A, -e             select all processes'#10 +
     '  -f                 full format listing'#10 +
@@ -202,7 +201,7 @@ begin
     if HasHeader then
       Position := Length(List) + 1;
     if not AddNamedColumn(Name, HasHeader, Header) then
-      FailWithUsageHint('unknown user-defined format specifier "%s"', [ArgumentText(PChar(Name))]);
+      FailWithUsageHint(Format('unknown user-defined format specifier "%s"', [Name]));
     Inc(Position);
   end;
 end;
@@ -217,7 +216,7 @@ begin
   begin
     Value := 0;
     if not (List[Position] in ['0'..'9']) then
-      FailWithUsageHint('process ID list syntax error', []);
+      FailWithUsageHint('process ID list syntax error');
     while (Position <= Length(List)) and (List[Position] in ['0'..'9']) do
     begin
       Value := Value * 10 + Ord(List[Position]) - Ord('0');
@@ -239,8 +238,8 @@ begin
   for Index := 0 to High(Names) do
     if Names[Index] <> '' then
     begin
-      if not FindUserId(PChar(Names[Index]), UserId) then
-        Fail(1, 'user name does not exist: %s', [ArgumentText(PChar(Names[Index]))]);
+      if not FindUserId(Names[Index], UserId) then
+        Fail(1, 'user name does not exist: ' + Names[Index]);
       Insert(UserId, SelectedUsers, Length(SelectedUsers));
     end;
 end;
@@ -285,14 +284,6 @@ begin
     Result := Format('%.2d:%.2d:%.2d', [Days * 24 + Seconds div 3600, (Seconds div 60) mod 60, Seconds mod 60]);
 end;
 
-function UserText(Id: LongWord): string;
-begin
-  if UserNameOf(Id) <> nil then
-    Result := UserNameOf(Id)
-  else
-    Result := IntToStr(Id);
-end;
-
 { Milliseconds the process has run for. }
 function ElapsedMilliseconds(const Information: TProcessDetails): QWord;
 begin
@@ -327,8 +318,8 @@ begin
     ColumnGroup: Result := IntToStr(Information.GroupId);
     ColumnUid: Result := IntToStr(Information.EffectiveUserId);
     ColumnRealUid: Result := IntToStr(Information.RealUserId);
-    ColumnUser: Result := UserText(Information.EffectiveUserId);
-    ColumnRealUser: Result := UserText(Information.RealUserId);
+    ColumnUser: Result := UserNameOrNumber(Information.EffectiveUserId);
+    ColumnRealUser: Result := UserNameOrNumber(Information.RealUserId);
     ColumnNice: Result := IntToStr(Information.Nice);
     ColumnPriority: Result := IntToStr(20 + Information.Nice);
     ColumnState:
@@ -388,17 +379,18 @@ var
 begin
   Padding := StringOfChar(' ', Column.Width - Length(Text));
   if not Column.LeftAligned then
-    WriteText(StandardOutput, PChar(Padding));
-  WriteText(StandardOutput, PChar(Text));
+    PrintString(Padding);
+  PrintString(Text);
   if Column.LeftAligned and not IsLast then
-    WriteText(StandardOutput, PChar(Padding));
+    PrintString(Padding);
 end;
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
+  Arguments: TStringArray;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   FirstArgument: string;
   FullFormat: Boolean;
   BsdStyle: Boolean;
@@ -407,8 +399,9 @@ begin
   FullFormat := False;
   BsdStyle := False;
   FirstArgument := '';
-  if ArgumentTotal > 1 then
-    FirstArgument := Argument(1);
+  Arguments := ProgramArguments;
+  if Length(Arguments) > 0 then
+    FirstArgument := Arguments[0];
   { BSD style options come without a dash: "ps aux", "ps ax". }
   if (FirstArgument <> '') and (FirstArgument[1] in ['a', 'x', 'u']) then
   begin
@@ -417,15 +410,15 @@ begin
   end
   else
   begin
-    BeginOptions(Parser, [
-      OptionDefinition('A', nil, False, OptionAll),
-      OptionDefinition('e', nil, False, OptionAll),
-      OptionDefinition('f', nil, False, OptionFull),
-      OptionDefinition('o', 'format', True, OptionFormat),
-      OptionDefinition('p', 'pid', True, OptionPid),
-      OptionDefinition('u', 'user', True, OptionUser),
-      OptionDefinition(#0, 'no-headers', False, OptionNoHeaders)], Usage);
-    while NextOption(Parser, Code, Value) do
+    CommandLine := TCommandLine.Create([
+      CommandOption('A', '', False, OptionAll),
+      CommandOption('e', '', False, OptionAll),
+      CommandOption('f', '', False, OptionFull),
+      CommandOption('o', 'format', True, OptionFormat),
+      CommandOption('p', 'pid', True, OptionPid),
+      CommandOption('u', 'user', True, OptionUser),
+      CommandOption(#0, 'no-headers', False, OptionNoHeaders)], Usage, Arguments);
+    while CommandLine.NextOption(Code, Value) do
       case Code of
         OptionAll: SelectAll := True;
         OptionFull: FullFormat := True;
@@ -434,8 +427,9 @@ begin
         OptionUser: ParseUserList(Value);
         OptionNoHeaders: ShowHeaders := False;
       end;
-    if Parser.OperandCount > 0 then
-      FailWithUsageHint('garbage option ''%s''', [ArgumentText(Parser.Operands[0])]);
+    if CommandLine.OperandCount > 0 then
+      FailWithUsageHint(Format('garbage option ''%s''', [CommandLine.Operands[0]]));
+    CommandLine.Free;
   end;
 
   if Length(Columns) = 0 then
@@ -501,7 +495,7 @@ begin
 
   InitializeProcessSnapshot(Snapshot);
   if TakeProcessSnapshot(Snapshot) <> ErrorNone then
-    Fail(1, 'cannot list the processes', []);
+    Fail(1, 'cannot list the processes');
   Uptime := Snapshot.TakenAtMilliseconds;
   if KernelGetSystemInformation(SystemInformation) >= 0 then
     TotalMemory := SystemInformation.TotalMemory;

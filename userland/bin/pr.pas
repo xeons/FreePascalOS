@@ -32,19 +32,19 @@ program pr;
 {$H+}
 
 uses
+  Classes,
   SysUtils,
   StrUtils,
-  Sys.Environment,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
   Sys.Time,
+  Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: pr [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: pr [OPTION]... [FILE]...'#10 +
     'Paginate or columnate FILE(s) for printing.'#10#10 +
     '  -COLUMN, --columns=COLUMN  output COLUMN columns'#10 +
     '  -d, --double-space         double space the output'#10 +
@@ -69,8 +69,6 @@ const
 var
   Columns: Int64;
   DoubleSpace: Boolean;
-  HasHeader: Boolean;
-  Header: string;
   PageLength: Int64;
   NumberLines: Boolean;
   Indent: Int64;
@@ -78,15 +76,10 @@ var
   PageWidth: Int64;
   LineNumber: Int64;
 
-procedure WriteString(const Text: string);
-begin
-  WriteText(StandardOutput, PChar(Text));
-end;
-
 procedure WriteSpaces(Count: Int64);
 begin
   if Count > 0 then
-    WriteString(StringOfChar(' ', Count));
+    PrintString(StringOfChar(' ', Count));
 end;
 
 procedure WritePageHeader(const Title: string; Page: Integer);
@@ -101,20 +94,20 @@ begin
     DateTime.Hour, DateTime.Minute]);
   PageText := 'Page ' + IntToStr(Page);
 
-  WriteString(#10#10);
+  PrintString(#10#10);
   WriteSpaces(Indent);
-  WriteString(DateText);
+  PrintString(DateText);
   { The title centered between date and page number. }
   Middle := (PageWidth - Length(Title)) div 2 - Length(DateText);
   if Middle < 1 then
     Middle := 1;
   WriteSpaces(Middle);
-  WriteString(Title);
+  PrintString(Title);
   Middle := PageWidth - Length(DateText) - Middle - Length(Title) - Length(PageText);
   if Middle < 1 then
     Middle := 1;
   WriteSpaces(Middle);
-  WriteString(PageText + #10#10#10);
+  PrintString(PageText + #10#10#10);
 end;
 
 { Writes one text line, or an empty cell when HasLine is False, cut or
@@ -128,20 +121,20 @@ begin
   if NumberLines and HasLine then
   begin
     Inc(LineNumber);
-    WriteString(Format('%5d'#9, [LineNumber]));
+    PrintString(Format('%5d'#9, [LineNumber]));
     Written := 8;
   end;
   if HasLine and (Width > Written) then
   begin
     Shown := LeftStr(Line, Width - Written);
-    WriteString(Shown);
+    PrintString(Shown);
     Inc(Written, Length(Shown));
   end;
   if PadToWidth then
     WriteSpaces(Width - Written);
 end;
 
-procedure PrintFile(const Lines: TLineList; const Title: string);
+procedure PrintFile(Lines: TStrings; const Title: string);
 var
   BodyLines: Int64;
   LinesPerPage: Int64;
@@ -180,7 +173,7 @@ begin
       begin
         Index := First + Column * BodyLines + Row;
         if Index < Lines.Count then
-          WriteCell(True, Lines.Items[Index], ColumnWidth - 1, Column < Columns - 1)
+          WriteCell(True, Lines[Index], ColumnWidth - 1, Column < Columns - 1)
         else
           WriteCell(False, '', ColumnWidth - 1, Column < Columns - 1);
         if Column < Columns - 1 then
@@ -199,7 +192,7 @@ begin
         if DoubleSpace then
           WriteCharacter(StandardOutput, #10);
       end;
-      WriteString(StringOfChar(#10, TrailerLines));
+      PrintString(StringOfChar(#10, TrailerLines));
     end;
     First := First + Integer(LinesPerPage);
     Inc(Page);
@@ -208,30 +201,27 @@ end;
 
 { "-2" means two columns: such arguments are read here and replaced by
   an option the parser ignores. }
-procedure ReadColumnArguments;
+function ReadColumnArguments: TStringArray;
 var
   Index: Integer;
-  Text: string;
 begin
-  for Index := 1 to ArgumentTotal - 1 do
-  begin
-    Text := ArgumentValues[Index];
-    if (Length(Text) >= 2) and (Text[1] = '-') and IsDigit(Text[2]) then
+  Result := ProgramArguments;
+  for Index := 0 to High(Result) do
+    if (Length(Result[Index]) >= 2) and (Result[Index][1] = '-') and (Result[Index][2] in ['0'..'9']) then
     begin
-      if not ParseInteger(PChar(Copy(Text, 2, MaxInt)), Columns) or (Columns < 1) then
-        Fail(1, 'invalid number of columns', []);
-      ArgumentValues[Index] := '--columns-given';
+      if not ParseDecimal(Copy(Result[Index], 2, MaxInt), Columns) or (Columns < 1) then
+        Fail(1, 'invalid number of columns');
+      Result[Index] := '--columns-given';
     end;
-  end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   Stream: PInputStream;
-  Lines: TLineList;
+  Lines: TStringList;
   Title: string;
   ExitStatus: LongInt;
 begin
@@ -239,69 +229,60 @@ begin
   PageLength := 66;
   PageWidth := 72;
   Indent := 0;
-  HasHeader := False;
-  ReadColumnArguments;
-  BeginOptions(Parser, [
-    OptionDefinition(#0, 'columns', True, OptionColumns),
-    OptionDefinition(#0, 'columns-given', False, 0),
-    OptionDefinition('d', 'double-space', False, OptionDouble),
-    OptionDefinition('h', 'header', True, OptionHeader),
-    OptionDefinition('l', 'length', True, OptionLength),
-    OptionDefinition('n', 'number-lines', False, OptionNumber),
-    OptionDefinition('o', 'indent', True, OptionIndent),
-    OptionDefinition('t', 'omit-header', False, OptionOmitHeader),
-    OptionDefinition('w', 'width', True, OptionWidth)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption(#0, 'columns', True, OptionColumns),
+    CommandOption(#0, 'columns-given', False, 0),
+    CommandOption('d', 'double-space', False, OptionDouble),
+    CommandOption('h', 'header', True, OptionHeader),
+    CommandOption('l', 'length', True, OptionLength),
+    CommandOption('n', 'number-lines', False, OptionNumber),
+    CommandOption('o', 'indent', True, OptionIndent),
+    CommandOption('t', 'omit-header', False, OptionOmitHeader),
+    CommandOption('w', 'width', True, OptionWidth)], Usage, ReadColumnArguments);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionColumns:
-        if not ParseInteger(Value, Columns) or (Columns < 1) then
-          Fail(1, 'invalid number of columns: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Columns) or (Columns < 1) then
+          Fail(1, Format('invalid number of columns: ''%s''', [Value]));
       OptionDouble: DoubleSpace := True;
-      OptionHeader:
-        begin
-          Header := Value;
-          HasHeader := True;
-        end;
       OptionLength:
-        if not ParseInteger(Value, PageLength) or (PageLength < 1) then
-          Fail(1, 'invalid page length: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, PageLength) or (PageLength < 1) then
+          Fail(1, Format('invalid page length: ''%s''', [Value]));
       OptionNumber: NumberLines := True;
       OptionIndent:
-        if not ParseInteger(Value, Indent) or (Indent < 0) then
-          Fail(1, 'invalid indent: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, Indent) or (Indent < 0) then
+          Fail(1, Format('invalid indent: ''%s''', [Value]));
       OptionOmitHeader: OmitHeader := True;
       OptionWidth:
-        if not ParseInteger(Value, PageWidth) or (PageWidth < 1) then
-          Fail(1, 'invalid page width: ''%s''', [ArgumentText(Value)]);
+        if not ParseDecimal(Value, PageWidth) or (PageWidth < 1) then
+          Fail(1, Format('invalid page width: ''%s''', [Value]));
     end;
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  Lines := TStringList.Create;
+  for Operand in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Operand);
     if Stream = nil then
     begin
       ExitStatus := 1;
       Continue;
     end;
-    BeginLineList(Lines);
-    ReadAllLines(Stream, Lines);
+    Lines.Clear;
+    ReadLinesInto(Stream, Lines);
     CloseInput(Stream);
-    if HasHeader then
-      Title := Header
+    if CommandLine.OptionGiven(OptionHeader) then
+      Title := CommandLine.OptionValue(OptionHeader)
     else
     begin
-      Title := Parser.Operands[Index];
+      Title := Operand;
       if Title = '-' then
         Title := '';
     end;
     LineNumber := 0;
     PrintFile(Lines, Title);
-    FreeLineList(Lines);
   end;
+  Lines.Free;
   Halt(ExitStatus);
 end.

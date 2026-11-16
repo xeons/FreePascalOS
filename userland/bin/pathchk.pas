@@ -36,12 +36,11 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
 const
-  Usage: PChar = 'Usage: pathchk [OPTION]... NAME...'#10 +
+  Usage = 'Usage: pathchk [OPTION]... NAME...'#10 +
     'Diagnose invalid or non-portable file names.'#10#10 +
     '  -p                  check for most POSIX systems'#10 +
     '  -P                  check for empty names and leading "-"'#10 +
@@ -69,8 +68,7 @@ begin
   for Character in Name do
     if not (Character in PortableCharacters) then
     begin
-      Report('nonportable character ''%c'' in file name ''%s''', [ArgumentCharacter(Character),
-        ArgumentText(PChar(Name))]);
+      Report(Format('nonportable character ''%s'' in file name ''%s''', [Character, Name]));
       Exit(False);
     end;
   Result := True;
@@ -85,13 +83,13 @@ var
 begin
   if Finish - Start > ComponentLimit then
   begin
-    Report('limit %u exceeded by length %u of file name component ''%s''', [ArgumentUnsigned(ComponentLimit),
-      ArgumentUnsigned(Finish - Start), ArgumentText(PChar(Copy(Name, Start, MaxInt)))]);
+    Report(Format('limit %d exceeded by length %d of file name component ''%s''', [ComponentLimit,
+      Finish - Start, Copy(Name, Start, MaxInt)]));
     Exit(False);
   end;
   if CheckExtra and (Finish > Start) and (Name[Start] = '-') then
   begin
-    Report('leading ''-'' in a component of file name ''%s''', [ArgumentText(PChar(Name))]);
+    Report(Format('leading ''-'' in a component of file name ''%s''', [Name]));
     Exit(False);
   end;
   { Without -p, existing leading parts must be directories. }
@@ -100,7 +98,7 @@ begin
     Prefix := Copy(Name, 1, Finish - 1);
     if (GetFileInformation(PChar(Prefix), Information) = 0) and (Information.Kind <> KindDirectory) then
     begin
-      Report('''%s'' is not a directory', [ArgumentText(PChar(Prefix))]);
+      Report(Format('''%s'' is not a directory', [Prefix]));
       Exit(False);
     end;
   end;
@@ -116,7 +114,7 @@ var
 begin
   if CheckExtra and (Name = '') then
   begin
-    Report('empty file name', []);
+    Report('empty file name');
     Exit(False);
   end;
   if CheckPosix then
@@ -133,8 +131,8 @@ begin
   end;
   if Length(Name) > PathLimit then
   begin
-    Report('limit %u exceeded by length %u of file name ''%s''', [ArgumentUnsigned(PathLimit),
-      ArgumentUnsigned(Length(Name)), ArgumentText(PChar(Name))]);
+    Report(Format('limit %d exceeded by length %d of file name ''%s''', [PathLimit,
+      Length(Name), Name]));
     Exit(False);
   end;
 
@@ -150,17 +148,17 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Operand: string;
   ExitStatus: LongInt;
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('p', nil, False, OptionPosix),
-    OptionDefinition('P', nil, False, OptionExtra),
-    OptionDefinition(#0, 'portability', False, OptionPortability)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('p', '', False, OptionPosix),
+    CommandOption('P', '', False, OptionExtra),
+    CommandOption(#0, 'portability', False, OptionPortability)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionPosix: CheckPosix := True;
       OptionExtra: CheckExtra := True;
@@ -170,11 +168,11 @@ begin
           CheckExtra := True;
         end;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
-    if not CheckName(Parser.Operands[Index]) then
+  for Operand in CommandLine.Operands do
+    if not CheckName(Operand) then
       ExitStatus := 1;
   Halt(ExitStatus);
 end.
