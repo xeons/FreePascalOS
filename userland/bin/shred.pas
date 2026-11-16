@@ -31,12 +31,11 @@
 program shred;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Crypto.Random,
   Sys.Errors,
   Sys.Files,
@@ -70,7 +69,7 @@ const
   OptionZero = 7;
   BufferSize = 65536;
   BlockSize = 4096;
-  NameCharacters: PChar = '0123456789abcdefghijklmnopqrstuvwxyz';
+  NameCharacters = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 var
   Iterations: Int64;
@@ -80,9 +79,31 @@ var
   Exact: Boolean;
   FinalZero: Boolean;
   Force: Boolean;
-  Buffer: PByte;
+  Buffer: array of Byte;
 
-function OverwritePass(Handle: Int64; Path: PChar; Length: QWord; UseZeros: Boolean;
+{ "<program>: <message>" on standard error, for -v. }
+procedure ReportProgress(const Message: string);
+begin
+  WriteText(StandardError, PChar(string(ProgramName) + ': ' + Message + #10));
+end;
+
+{ Copies a heap string from the libraries and frees it. }
+function TakeText(Text: PChar): string;
+begin
+  Result := Text;
+  FreeMemory(Text);
+end;
+
+{ Directory + '/' + Name, without doubling the slash. }
+function JoinPath(const Directory, Name: string): string;
+begin
+  if (Directory <> '') and (Directory[Length(Directory)] <> '/') then
+    Result := Directory + '/' + Name
+  else
+    Result := Directory + Name;
+end;
+
+function OverwritePass(Handle: Int64; const Path: string; Length: QWord; UseZeros: Boolean;
   PassNumber, PassCount: Integer): Boolean;
 var
   Written: QWord;
@@ -92,11 +113,9 @@ begin
   if Verbose then
   begin
     if UseZeros then
-      WriteFormatted(StandardError, '%s: %s: pass %d/%d (000000)...'#10, [ArgumentText(ProgramName),
-        ArgumentText(Path), ArgumentNumber(PassNumber), ArgumentNumber(PassCount)])
+      ReportProgress(Format('%s: pass %d/%d (000000)...', [Path, PassNumber, PassCount]))
     else
-      WriteFormatted(StandardError, '%s: %s: pass %d/%d (random)...'#10, [ArgumentText(ProgramName),
-        ArgumentText(Path), ArgumentNumber(PassNumber), ArgumentNumber(PassCount)]);
+      ReportProgress(Format('%s: pass %d/%d (random)...', [Path, PassNumber, PassCount]));
   end;
   SeekFile(Handle, 0, SeekFromStart);
   Written := 0;
@@ -106,13 +125,13 @@ begin
     if Chunk > BufferSize then
       Chunk := BufferSize;
     if UseZeros then
-      ZeroMemory(Buffer, Chunk)
+      FillChar(Buffer[0], Chunk, 0)
     else
-      RandomBytes(Buffer, Chunk);
-    Error := WriteAll(Handle, Buffer, Chunk);
+      RandomBytes(@Buffer[0], Chunk);
+    Error := WriteAll(Handle, @Buffer[0], Chunk);
     if Error <> ErrorNone then
     begin
-      ReportError(Error, '%s: error writing', [ArgumentText(Path)]);
+      ReportError(Error, '%s: error writing', [ArgumentText(PChar(Path))]);
       Exit(False);
     end;
     Written := Written + Chunk;
@@ -122,52 +141,47 @@ begin
   Result := True;
 end;
 
-{ Renames Path to ever shorter random names, then removes it. }
-function WipeName(Path: PChar): Boolean;
+function RandomName(Length: Integer): string;
 var
-  Directory: PChar;
-  Base: PChar;
-  Current: PChar;
-  Candidate: PChar;
-  Name: array[0..255] of Char;
-  Length: Integer;
   Index: Integer;
-  Error: LongInt;
 begin
-  Directory := DirectoryName(Path);
-  Base := BaseName(Path);
-  Current := DuplicateText(Path);
-  Length := Integer(TextLength(Base));
-  while Length > 0 do
-  begin
-    for Index := 0 to Length - 1 do
-      Name[Index] := NameCharacters[RandomBelow(TextLength(NameCharacters))];
-    Name[Length] := #0;
-    Candidate := JoinPath(Directory, @Name[0]);
-    if not PathExists(Candidate) and (RenamePath(Current, Candidate) = ErrorNone) then
-    begin
-      if Verbose then
-        WriteFormatted(StandardError, '%s: %s: renamed to %s'#10, [ArgumentText(ProgramName),
-          ArgumentText(Current), ArgumentText(Candidate)]);
-      FreeMemory(Current);
-      Current := Candidate;
-    end
-    else
-      FreeMemory(Candidate);
-    Dec(Length);
-  end;
-  Error := RemovePath(Current);
-  if Error <> ErrorNone then
-    ReportError(Error, '%s: failed to remove', [ArgumentText(Current)])
-  else if Verbose then
-    WriteFormatted(StandardError, '%s: %s: removed'#10, [ArgumentText(ProgramName), ArgumentText(Path)]);
-  Result := Error = ErrorNone;
-  FreeMemory(Current);
-  FreeMemory(Directory);
-  FreeMemory(Base);
+  SetLength(Result, Length);
+  for Index := 1 to Length do
+    Result[Index] := NameCharacters[1 + RandomBelow(System.Length(NameCharacters))];
 end;
 
-function ShredFile(Path: PChar): Boolean;
+{ Renames Path to ever shorter random names, then removes it. }
+function WipeName(const Path: string): Boolean;
+var
+  Directory: string;
+  Current: string;
+  Candidate: string;
+  Length: Integer;
+  Error: LongInt;
+begin
+  Directory := TakeText(DirectoryName(PChar(Path)));
+  Current := Path;
+  Length := System.Length(TakeText(BaseName(PChar(Path))));
+  while Length > 0 do
+  begin
+    Candidate := JoinPath(Directory, RandomName(Length));
+    if not PathExists(PChar(Candidate)) and (RenamePath(PChar(Current), PChar(Candidate)) = ErrorNone) then
+    begin
+      if Verbose then
+        ReportProgress(Current + ': renamed to ' + Candidate);
+      Current := Candidate;
+    end;
+    Dec(Length);
+  end;
+  Error := RemovePath(PChar(Current));
+  if Error <> ErrorNone then
+    ReportError(Error, '%s: failed to remove', [ArgumentText(PChar(Current))])
+  else if Verbose then
+    ReportProgress(Path + ': removed');
+  Result := Error = ErrorNone;
+end;
+
+function ShredFile(const Path: string): Boolean;
 var
   Handle: Int64;
   Information: TFileInformation;
@@ -175,22 +189,22 @@ var
   Pass: Integer;
   PassCount: Integer;
 begin
-  Handle := OpenFile(Path, OpenWrite);
+  Handle := OpenFile(PChar(Path), OpenWrite);
   if (Handle < 0) and Force then
   begin
-    ChangeMode(Path, $180);
-    Handle := OpenFile(Path, OpenWrite);
+    ChangeMode(PChar(Path), $180);
+    Handle := OpenFile(PChar(Path), OpenWrite);
   end;
   if Handle < 0 then
   begin
-    ReportError(ErrorCodeOf(Handle), '%s: failed to open for writing', [ArgumentText(Path)]);
+    ReportError(ErrorCodeOf(Handle), '%s: failed to open for writing', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
   GetHandleInformation(Handle, Information);
   if Information.Kind <> KindFile then
   begin
     CloseFile(Handle);
-    Report('%s: invalid file type', [ArgumentText(Path)]);
+    Report('%s: invalid file type', [ArgumentText(PChar(Path))]);
     Exit(False);
   end;
   if Size >= 0 then
@@ -219,7 +233,7 @@ begin
   if Result and Remove then
   begin
     { Truncate first so the data blocks are released, then the name. }
-    Handle := OpenFile(Path, OpenWrite or OpenTruncate);
+    Handle := OpenFile(PChar(Path), OpenWrite or OpenTruncate);
     if Handle >= 0 then
       CloseFile(Handle);
     Result := WipeName(Path);
@@ -264,11 +278,10 @@ begin
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing file operand', []);
 
-  Buffer := PByte(AllocateMemory(BufferSize));
+  SetLength(Buffer, BufferSize);
   ExitStatus := 0;
   for Index := 0 to Parser.OperandCount - 1 do
     if not ShredFile(Parser.Operands[Index]) then
       ExitStatus := 1;
-  FreeMemory(Buffer);
   Halt(ExitStatus);
 end.

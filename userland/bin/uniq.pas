@@ -26,11 +26,11 @@
 program uniq;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
   Sys.Format,
@@ -71,58 +71,46 @@ var
   SkipCharacters: Int64;
   CheckCharacters: Int64;  { -1 = all }
 
-function ComparisonStart(Line: PChar): PChar;
+{ The index (from 1) of the first character that takes part in comparisons. }
+function ComparisonStart(const Line: string): Integer;
 var
   Field: Int64;
-  Skipped: Int64;
 begin
-  Result := Line;
+  Result := 1;
   Field := 0;
-  while (Field < SkipFields) and (Result^ <> #0) do
+  while (Field < SkipFields) and (Result <= Length(Line)) do
   begin
-    while (Result^ <> #0) and IsSpace(Result^) do
+    while (Result <= Length(Line)) and IsSpace(Line[Result]) do
       Inc(Result);
-    while (Result^ <> #0) and not IsSpace(Result^) do
+    while (Result <= Length(Line)) and not IsSpace(Line[Result]) do
       Inc(Result);
     Inc(Field);
   end;
-  Skipped := 0;
-  while (Skipped < SkipCharacters) and (Result^ <> #0) do
-  begin
-    Inc(Result);
-    Inc(Skipped);
-  end;
+  if SkipCharacters > Length(Line) - Result + 1 then
+    Result := Length(Line) + 1
+  else
+    Inc(Result, SkipCharacters);
 end;
 
-function LinesMatch(First, Second: PChar): Boolean;
+{ The part of Line that is compared, case folded with -i. }
+function ComparedPart(const Line: string): string;
 var
-  Left: PChar;
-  Right: PChar;
-  Compared: Int64;
-  LeftCharacter: Char;
-  RightCharacter: Char;
+  Start: Integer;
 begin
-  Left := ComparisonStart(First);
-  Right := ComparisonStart(Second);
-  Compared := 0;
-  while (CheckCharacters < 0) or (Compared < CheckCharacters) do
-  begin
-    LeftCharacter := Left^;
-    RightCharacter := Right^;
-    if IgnoreCase then
-    begin
-      LeftCharacter := ToLowerCase(LeftCharacter);
-      RightCharacter := ToLowerCase(RightCharacter);
-    end;
-    if LeftCharacter <> RightCharacter then
-      Exit(False);
-    if LeftCharacter = #0 then
-      Break;
-    Inc(Left);
-    Inc(Right);
-    Inc(Compared);
-  end;
-  Result := True;
+  Start := ComparisonStart(Line);
+  if CheckCharacters < 0 then
+    Result := Copy(Line, Start, MaxInt)
+  else if CheckCharacters > MaxInt then
+    Result := Copy(Line, Start, MaxInt)
+  else
+    Result := Copy(Line, Start, CheckCharacters);
+  if IgnoreCase then
+    Result := LowerCase(Result);
+end;
+
+function LinesMatch(const First, Second: string): Boolean;
+begin
+  Result := ComparedPart(First) = ComparedPart(Second);
 end;
 
 procedure ParseCount(Text: PChar; out Value: Int64);
@@ -138,20 +126,22 @@ var
   Input: PInputStream;
   Output: POutputStream;
   OutputHandle: Int64;
-  Previous: PChar;
-  Line: PChar;
+  Previous: string;
+  HasPrevious: Boolean;
+  LineText: PChar;
+  Line: string;
   HadLineEnd: Boolean;
   RunLength: Int64;
 
 procedure FlushRun;
 begin
-  if Previous = nil then
+  if not HasPrevious then
     Exit;
   if (OnlyRepeated and (RunLength < 2)) or (OnlyUnique and (RunLength > 1)) then
     Exit;
   if ShowCounts then
     WriteFormatted(Output, '%7d ', [ArgumentNumber(RunLength)]);
-  WriteLine(Output, Previous);
+  WriteLine(Output, PChar(Previous));
 end;
 
 begin
@@ -193,23 +183,24 @@ begin
     Output := CreateOutputStream(OutputHandle);
   end;
 
-  Previous := nil;
+  Previous := '';
+  HasPrevious := False;
   RunLength := 0;
-  while ReadLine(Input, Line, HadLineEnd) do
+  while ReadLine(Input, LineText, HadLineEnd) do
   begin
-    if (Previous <> nil) and LinesMatch(Previous, Line) then
+    Line := LineText;
+    FreeMemory(LineText);
+    if HasPrevious and LinesMatch(Previous, Line) then
     begin
       Inc(RunLength);
-      FreeMemory(Line);
       Continue;
     end;
     FlushRun;
-    FreeMemory(Previous);
     Previous := Line;
+    HasPrevious := True;
     RunLength := 1;
   end;
   FlushRun;
-  FreeMemory(Previous);
   CloseInput(Input);
   if OutputHandle >= 0 then
   begin

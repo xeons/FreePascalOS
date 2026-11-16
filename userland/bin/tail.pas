@@ -28,13 +28,13 @@
 program tail;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  Classes,
+  SysUtils,
   Sys.Environment,
-  Runtime.Text,
   Sys.Format,
-  Sys.Memory,
   Sys.Streams,
   Sys.Text,
   Util.Input,
@@ -64,17 +64,20 @@ var
   FromStart: Boolean;
   Amount: QWord;
 
-procedure ParseAmount(Text: PChar);
+procedure ParseAmount(const Text: string);
+var
+  Number: string;
 begin
-  FromStart := Text[0] = '+';
-  if (Text[0] = '+') or (Text[0] = '-') then
-    Inc(Text);
-  if not ParseSize(Text, Amount) then
+  FromStart := (Text <> '') and (Text[1] = '+');
+  Number := Text;
+  if (Number <> '') and (Number[1] in ['+', '-']) then
+    Delete(Number, 1, 1);
+  if not ParseSize(PChar(Number), Amount) then
   begin
     if CountBytes then
-      Fail(1, 'invalid number of bytes: ''%s''', [ArgumentText(Text)])
+      Fail(1, 'invalid number of bytes: ''%s''', [ArgumentText(PChar(Number))])
     else
-      Fail(1, 'invalid number of lines: ''%s''', [ArgumentText(Text)]);
+      Fail(1, 'invalid number of lines: ''%s''', [ArgumentText(PChar(Number))]);
   end;
 end;
 
@@ -111,29 +114,34 @@ end;
 
 procedure TailBytes(Stream: PInputStream);
 var
-  Builder: TTextBuilder;
-  Buffer: array[0..4095] of Char;
+  Contents: TMemoryStream;
+  Buffer: array[0..4095] of Byte;
   Count: QWord;
   Start: QWord;
+  Size: QWord;
 begin
-  BeginText(Builder);
-  repeat
-    Count := ReadBytes(Stream, @Buffer[0], SizeOf(Buffer));
-    AppendBytes(Builder, @Buffer[0], Count);
-  until Count = 0;
-  if FromStart then
-  begin
-    Start := 0;
-    if Amount > 0 then
-      Start := Amount - 1;
-  end
-  else if Builder.Length > Amount then
-    Start := Builder.Length - Amount
-  else
-    Start := 0;
-  if Start < Builder.Length then
-    WriteBytes(StandardOutput, Builder.Text + Start, Builder.Length - Start);
-  DiscardText(Builder);
+  Contents := TMemoryStream.Create;
+  try
+    repeat
+      Count := ReadBytes(Stream, @Buffer[0], SizeOf(Buffer));
+      Contents.WriteBuffer(Buffer[0], Count);
+    until Count = 0;
+    Size := Contents.Size;
+    if FromStart then
+    begin
+      Start := 0;
+      if Amount > 0 then
+        Start := Amount - 1;
+    end
+    else if Size > Amount then
+      Start := Size - Amount
+    else
+      Start := 0;
+    if Start < Size then
+      WriteBytes(StandardOutput, PChar(Contents.Memory) + Start, Size - Start);
+  finally
+    Contents.Free;
+  end;
 end;
 
 var
@@ -144,14 +152,13 @@ var
   Stream: PInputStream;
   ExitStatus: LongInt;
   ShowHeaders: Integer;
-  OldStyle: PChar;
+  OldStyle: string;
 begin
   CountBytes := False;
   FromStart := False;
   Amount := 10;
   ShowHeaders := 0;
 
-  OldStyle := nil;
   if (ArgumentTotal > 1) and (ArgumentValues[1][0] in ['-', '+']) and IsDigit(ArgumentValues[1][1]) then
   begin
     OldStyle := ArgumentValues[1];
@@ -207,10 +214,10 @@ begin
     begin
       if Index > 0 then
         WriteCharacter(StandardOutput, #10);
-      if TextIsEqual(Parser.Operands[Index], '-') then
+      if string(Parser.Operands[Index]) = '-' then
         WriteLine(StandardOutput, '==> standard input <==')
       else
-        WriteFormatted(StandardOutput, '==> %s <=='#10, [ArgumentText(Parser.Operands[Index])]);
+        WriteText(StandardOutput, PChar('==> ' + string(Parser.Operands[Index]) + ' <=='#10));
     end;
     if CountBytes then
       TailBytes(Stream)

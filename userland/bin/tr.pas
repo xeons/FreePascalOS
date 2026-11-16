@@ -30,11 +30,11 @@
 program tr;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Files,
   Sys.Format,
   Sys.Streams,
@@ -57,51 +57,40 @@ const
   OptionDelete = 2;
   OptionSqueeze = 3;
 
+  { Longer names after '[:' are taken as plain characters. }
+  ClassNameLimit = 16;
+
 type
-  TCharacterList = record
-    Items: array[0..1023] of Char;
-    Count: Integer;
-  end;
   TCharacterSet = array[Char] of Boolean;
 
-procedure AddCharacter(var List: TCharacterList; Character: Char);
+function ClassMatches(const ClassName: string; Character: Char): Boolean;
 begin
-  if List.Count < Length(List.Items) then
-  begin
-    List.Items[List.Count] := Character;
-    Inc(List.Count);
-  end;
-end;
-
-function ClassMatches(ClassName: PChar; Character: Char): Boolean;
-begin
-  if TextIsEqual(ClassName, 'alpha') then
-    Result := IsLetter(Character)
-  else if TextIsEqual(ClassName, 'digit') then
-    Result := IsDigit(Character)
-  else if TextIsEqual(ClassName, 'alnum') then
-    Result := IsAlphanumeric(Character)
-  else if TextIsEqual(ClassName, 'upper') then
-    Result := IsUpperCase(Character)
-  else if TextIsEqual(ClassName, 'lower') then
-    Result := IsLowerCase(Character)
-  else if TextIsEqual(ClassName, 'space') then
-    Result := IsSpace(Character)
-  else if TextIsEqual(ClassName, 'blank') then
-    Result := (Character = ' ') or (Character = #9)
-  else if TextIsEqual(ClassName, 'punct') then
-    Result := IsPrintable(Character) and not IsAlphanumeric(Character) and (Character <> ' ') and (Byte(Character) < 128)
+  case ClassName of
+    'alpha': Result := IsLetter(Character);
+    'digit': Result := IsDigit(Character);
+    'alnum': Result := IsAlphanumeric(Character);
+    'upper': Result := IsUpperCase(Character);
+    'lower': Result := IsLowerCase(Character);
+    'space': Result := IsSpace(Character);
+    'blank': Result := (Character = ' ') or (Character = #9);
+    'punct':
+      Result := IsPrintable(Character) and not IsAlphanumeric(Character) and (Character <> ' ') and
+        (Byte(Character) < 128);
   else
-    Fail(1, 'invalid character class ''%s''', [ArgumentText(ClassName)]);
+    begin
+      Fail(1, 'invalid character class ''%s''', [ArgumentText(PChar(ClassName))]);
+      Result := False;
+    end;
+  end;
 end;
 
 { Reads one (possibly escaped) character at Text[Position]. }
-function ReadSetCharacter(Text: PChar; var Position: Integer): Char;
+function ReadSetCharacter(const Text: string; var Position: Integer): Char;
 var
   Value: Integer;
   DigitCount: Integer;
 begin
-  if (Text[Position] = '\') and (Text[Position + 1] <> #0) then
+  if (Text[Position] = '\') and (Position < Length(Text)) then
   begin
     Inc(Position);
     case Text[Position] of
@@ -116,7 +105,7 @@ begin
         begin
           Value := 0;
           DigitCount := 0;
-          while (DigitCount < 3) and (Text[Position] in ['0'..'7']) do
+          while (DigitCount < 3) and (Position <= Length(Text)) and (Text[Position] in ['0'..'7']) do
           begin
             Value := Value * 8 + Ord(Text[Position]) - Ord('0');
             Inc(Position);
@@ -134,34 +123,35 @@ begin
   Inc(Position);
 end;
 
-procedure ExpandSet(Text: PChar; var List: TCharacterList);
+{ The characters of a set, in order, with ranges and classes expanded. }
+function ExpandSet(const Text: string): string;
 var
   Position: Integer;
   First: Char;
   Last: Char;
   Character: Char;
-  ClassName: array[0..15] of Char;
-  ClassEnd: PtrInt;
+  ClassEnd: Integer;
+  ClassName: string;
 begin
-  List.Count := 0;
-  Position := 0;
-  while Text[Position] <> #0 do
+  Result := '';
+  Position := 1;
+  while Position <= Length(Text) do
   begin
-    if (Text[Position] = '[') and (Text[Position + 1] = ':') then
+    if (Text[Position] = '[') and (Position < Length(Text)) and (Text[Position + 1] = ':') then
     begin
-      ClassEnd := FindText(Text + Position, ':]');
-      if (ClassEnd > 2) and (ClassEnd - 2 < Length(ClassName)) then
+      ClassEnd := Pos(':]', Text, Position);
+      if (ClassEnd > Position + 2) and (ClassEnd - Position - 2 < ClassNameLimit) then
       begin
-        CopyText(@ClassName[0], Text + Position + 2, PtrUInt(ClassEnd - 2) + 1);
+        ClassName := Copy(Text, Position + 2, ClassEnd - Position - 2);
         for Character := #1 to #255 do
-          if ClassMatches(@ClassName[0], Character) then
-            AddCharacter(List, Character);
-        Position := Position + Integer(ClassEnd) + 2;
+          if ClassMatches(ClassName, Character) then
+            Result := Result + Character;
+        Position := ClassEnd + 2;
         Continue;
       end;
     end;
     First := ReadSetCharacter(Text, Position);
-    if (Text[Position] = '-') and (Text[Position + 1] <> #0) then
+    if (Position < Length(Text)) and (Text[Position] = '-') then
     begin
       Inc(Position);
       Last := ReadSetCharacter(Text, Position);
@@ -169,22 +159,22 @@ begin
         Fail(1, 'range-endpoints of ''%c-%c'' are in reverse collating sequence order',
           [ArgumentCharacter(First), ArgumentCharacter(Last)]);
       for Character := First to Last do
-        AddCharacter(List, Character);
+        Result := Result + Character;
     end
     else
-      AddCharacter(List, First);
+      Result := Result + First;
   end;
 end;
 
-procedure MakeSet(const List: TCharacterList; Complement: Boolean; out CharacterSet: TCharacterSet);
+procedure MakeSet(const Characters: string; Complement: Boolean; out CharacterSet: TCharacterSet);
 var
   Character: Char;
   Index: Integer;
 begin
   for Character := #0 to #255 do
     CharacterSet[Character] := Complement;
-  for Index := 0 to List.Count - 1 do
-    CharacterSet[List.Items[Index]] := not Complement;
+  for Index := 1 to Length(Characters) do
+    CharacterSet[Characters[Index]] := not Complement;
 end;
 
 var
@@ -194,14 +184,15 @@ var
   Complement: Boolean;
   DeleteMode: Boolean;
   Squeeze: Boolean;
-  FirstList: TCharacterList;
-  SecondList: TCharacterList;
+  FirstList: string;
+  SecondList: string;
   FirstSet: TCharacterSet;
   SqueezeSet: TCharacterSet;
   Translation: array[Char] of Char;
   Character: Char;
   Index: Integer;
   Buffer: array[0..4095] of Char;
+  LastSecond: Char;
   Count: Int64;
   Position: Int64;
   LastWritten: Integer;
@@ -226,42 +217,43 @@ begin
   if (Parser.OperandCount = 1) and not DeleteMode and not Squeeze then
     FailWithUsageHint('missing operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
 
-  ExpandSet(Parser.Operands[0], FirstList);
+  FirstList := ExpandSet(Parser.Operands[0]);
   MakeSet(FirstList, Complement, FirstSet);
-  SecondList.Count := 0;
+  SecondList := '';
   if Parser.OperandCount >= 2 then
-    ExpandSet(Parser.Operands[1], SecondList);
+    SecondList := ExpandSet(Parser.Operands[1]);
 
   { The translation table; SET2 is padded with its last character. }
   for Character := #0 to #255 do
     Translation[Character] := Character;
-  if not DeleteMode and (SecondList.Count > 0) then
+  if not DeleteMode and (SecondList <> '') then
   begin
+    LastSecond := SecondList[Length(SecondList)];
     if Complement then
     begin
       for Character := #0 to #255 do
         if FirstSet[Character] then
-          Translation[Character] := SecondList.Items[SecondList.Count - 1];
+          Translation[Character] := LastSecond;
     end
     else
-      for Index := 0 to FirstList.Count - 1 do
+      for Index := 1 to Length(FirstList) do
       begin
-        if Index < SecondList.Count then
-          Translation[FirstList.Items[Index]] := SecondList.Items[Index]
+        if Index <= Length(SecondList) then
+          Translation[FirstList[Index]] := SecondList[Index]
         else
-          Translation[FirstList.Items[Index]] := SecondList.Items[SecondList.Count - 1];
+          Translation[FirstList[Index]] := LastSecond;
       end;
   end;
 
   { Squeezing applies to the last set given. }
-  if DeleteMode or (SecondList.Count = 0) then
+  if DeleteMode or (SecondList = '') then
     SqueezeSet := FirstSet
   else
     MakeSet(SecondList, False, SqueezeSet);
-  if DeleteMode and (SecondList.Count = 0) then
+  if DeleteMode and (SecondList = '') then
     for Character := #0 to #255 do
       SqueezeSet[Character] := False;
-  if DeleteMode and (SecondList.Count > 0) then
+  if DeleteMode and (SecondList <> '') then
     MakeSet(SecondList, False, SqueezeSet);
 
   LastWritten := -1;

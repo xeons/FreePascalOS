@@ -33,15 +33,16 @@
 program pgrep;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Environment,
   Sys.Errors,
   Sys.Format,
   Sys.Kernel,
+  Sys.Memory,
   Sys.Processes,
   Sys.Streams,
   Sys.Text,
@@ -72,7 +73,6 @@ const
   OptionUser = 6;
   OptionExact = 7;
   OptionFull = 8;
-  MaximumMatches = 256;
   DefaultSignal = 15;
 
 var
@@ -81,7 +81,7 @@ var
   Value: PChar;
   IsKill: Boolean;
   CountOnly: Boolean;
-  Delimiter: PChar;
+  Delimiter: string;
   ListName: Boolean;
   Newest: Boolean;
   Oldest: Boolean;
@@ -92,7 +92,7 @@ var
   Pattern: TExpression;
   PatternError: PChar;
   PatternText: PChar;
-  Matches: array[0..MaximumMatches - 1] of TAbiProcessInformation;
+  Matches: array of TAbiProcessInformation;
   MatchCount: Integer;
   Information: TAbiProcessInformation;
   ListIndex: QWord;
@@ -102,6 +102,15 @@ var
   First: Integer;
   ExitStatus: LongInt;
   Error: LongInt;
+  SignalName: string;
+  Line: string;
+
+{ Copies a heap string from the libraries and frees it. }
+function TakeText(Text: PChar): string;
+begin
+  Result := Text;
+  FreeMemory(Text);
+end;
 
 function Selected(const Information: TAbiProcessInformation): Boolean;
 var
@@ -113,22 +122,29 @@ begin
     Exit(False);
   if not SearchExpression(Pattern, @Information.Name[0], Match) then
     Exit(False);
-  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> PtrInt(TextLength(@Information.Name[0])))) then
+  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> Length(string(PChar(@Information.Name[0]))))) then
     Exit(False);
   Result := True;
 end;
 
 begin
-  IsKill := TextIsEqual(BaseName(Argument(0)), 'pkill');
+  IsKill := TakeText(BaseName(Argument(0))) = 'pkill';
   Delimiter := #10;
   Signal := DefaultSignal;
   First := 1;
   { pkill -9 NAME, pkill -KILL NAME }
-  if IsKill and (ArgumentTotal > 2) and (Argument(1)[0] = '-') and (Argument(1)[1] <> '-') and
-     (ParseSignal(Argument(1) + 1) > 0) then
+  if IsKill and (ArgumentTotal > 2) then
   begin
-    Signal := ParseSignal(Argument(1) + 1);
-    First := 2;
+    SignalName := Argument(1);
+    if (Length(SignalName) >= 2) and (SignalName[1] = '-') and (SignalName[2] <> '-') then
+    begin
+      Delete(SignalName, 1, 1);
+      if ParseSignal(PChar(SignalName)) > 0 then
+      begin
+        Signal := ParseSignal(PChar(SignalName));
+        First := 2;
+      end;
+    end;
   end;
 
   BeginOptions(Parser, [
@@ -167,11 +183,12 @@ begin
   Own := QWord(CurrentProcessId);
   MatchCount := 0;
   ListIndex := 0;
-  while (KernelListProcesses(ListIndex, Information) >= 0) and (MatchCount < MaximumMatches) do
+  while KernelListProcesses(ListIndex, Information) >= 0 do
   begin
     Inc(ListIndex);
     if Selected(Information) then
     begin
+      SetLength(Matches, MatchCount + 1);
       Matches[MatchCount] := Information;
       Inc(MatchCount);
     end;
@@ -216,19 +233,17 @@ begin
 
   if CountOnly then
   begin
-    WriteFormatted(StandardOutput, '%d'#10, [ArgumentNumber(MatchCount)]);
+    WriteLine(StandardOutput, PChar(IntToStr(MatchCount)));
     Halt(0);
   end;
+  Line := '';
   for Index := 0 to MatchCount - 1 do
   begin
     if Index > 0 then
-      WriteText(StandardOutput, Delimiter);
-    WriteUnsigned(StandardOutput, Matches[Index].ProcessId);
+      Line := Line + Delimiter;
+    Line := Line + IntToStr(Matches[Index].ProcessId);
     if ListName then
-    begin
-      WriteCharacter(StandardOutput, ' ');
-      WriteText(StandardOutput, @Matches[Index].Name[0]);
-    end;
+      Line := Line + ' ' + string(PChar(@Matches[Index].Name[0]));
   end;
-  WriteCharacter(StandardOutput, #10);
+  WriteLine(StandardOutput, PChar(Line));
 end.
