@@ -43,14 +43,16 @@
 program ShowMouseSettings;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.MouseSettings,
@@ -58,7 +60,7 @@ uses
   Configuration.Locations;
 
 const
-  Usage: PChar = 'Usage: mousesettings [-r] [-s SPEED] [-a ACCELERATION] [-l on|off]'#10 +
+  Usage = 'Usage: mousesettings [-r] [-s SPEED] [-a ACCELERATION] [-l on|off]'#10 +
     'Show the mouse''s settings in the display server, or change them:'#10 +
     '  -s, --speed N            1 to 20 (10: as far as the mouse moves)'#10 +
     '  -a, --acceleration N     0 (none) to 10'#10 +
@@ -71,22 +73,21 @@ const
 
 procedure SaySettings(const Settings: TMouseSettings);
 var
-  LeftHanded: PChar;
+  LeftHanded: string;
 begin
   if Settings.LeftHanded then
     LeftHanded := 'on'
   else
     LeftHanded := 'off';
-  WriteFormatted(StandardOutput, 'speed %u, acceleration %u, left-handed %s'#10,
-    [ArgumentUnsigned(Settings.Speed), ArgumentUnsigned(Settings.Acceleration), ArgumentText(LeftHanded)]);
+  PrintStringLine(Format('speed %u, acceleration %u, left-handed %s',
+    [Settings.Speed, Settings.Acceleration, LeftHanded]));
   FlushStream(StandardOutput);
 end;
 
-function NumberIn(Text: PChar; Lowest, Highest: Int64; What: PChar): Int64;
+function NumberIn(const Text: string; Lowest, Highest: Int64; const What: string): Int64;
 begin
-  if not ParseInteger(Text, Result) or (Result < Lowest) or (Result > Highest) then
-    FailWithUsageHint('the %s must be a number from %d to %d', [ArgumentText(What), ArgumentNumber(Lowest),
-      ArgumentNumber(Highest)]);
+  if not ParseDecimal(Text, Result) or (Result < Lowest) or (Result > Highest) then
+    FailWithUsageHint(Format('the %s must be a number from %d to %d', [What, Lowest, Highest]));
 end;
 
 procedure RememberForUser(const Settings: TMouseSettings);
@@ -96,21 +97,22 @@ var
 begin
   Store := OpenSettings;
   if not Store.HasScope(ScopeUser) then
-    Fail(1, 'there are no user settings to keep them in (HOME is not set)', []);
+    Fail(1, 'there are no user settings to keep them in (HOME is not set)');
   RememberMouseSettings(Store, Settings);
   Error := Store.Flush;
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(Store.Scopes[ScopeUser].Storage.Location))]);
+    FailWithError(1, Error, Store.Scopes[ScopeUser].Storage.Location);
   Store.Free;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Speed: Int64;
   Acceleration: Int64;
-  LeftHandedText: PChar;
+  LeftHandedGiven: Boolean;
+  LeftHanded: Boolean;
   Remember: Boolean;
   Error: LongInt;
   Settings: TMouseSettings;
@@ -118,13 +120,14 @@ var
 begin
   Speed := -1;
   Acceleration := -1;
-  LeftHandedText := nil;
+  LeftHandedGiven := False;
+  LeftHanded := False;
   Remember := False;
-  BeginOptions(Parser, [OptionDefinition('s', 'speed', True, OptionSpeed),
-    OptionDefinition('a', 'acceleration', True, OptionAcceleration),
-    OptionDefinition('l', 'left-handed', True, OptionLeftHanded),
-    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('s', 'speed', True, OptionSpeed),
+    CommandOption('a', 'acceleration', True, OptionAcceleration),
+    CommandOption('l', 'left-handed', True, OptionLeftHanded),
+    CommandOption('r', 'remember', False, OptionRemember)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionSpeed:
         Speed := NumberIn(OptionValue, MinimumMouseSpeed, MaximumMouseSpeed, 'speed');
@@ -132,31 +135,32 @@ begin
         Acceleration := NumberIn(OptionValue, 0, MaximumMouseAcceleration, 'acceleration');
       OptionLeftHanded:
         begin
-          if (CompareText(OptionValue, 'on') <> 0) and (CompareText(OptionValue, 'off') <> 0) then
-            FailWithUsageHint('--left-handed takes on or off', []);
-          LeftHandedText := OptionValue;
+          if (OptionValue <> 'on') and (OptionValue <> 'off') then
+            FailWithUsageHint('--left-handed takes on or off');
+          LeftHandedGiven := True;
+          LeftHanded := OptionValue = 'on';
         end;
       OptionRemember:
         Remember := True;
     end;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('no operands are taken', []);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint('no operands are taken');
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the display server', []);
+    FailWithError(1, Error, 'the display server');
   if not AskMouseSettings(Settings) then
-    Fail(1, 'the display server did not say its mouse settings', []);
+    Fail(1, 'the display server did not say its mouse settings');
   Applied := Settings;
-  if (Speed >= 0) or (Acceleration >= 0) or (LeftHandedText <> nil) then
+  if (Speed >= 0) or (Acceleration >= 0) or LeftHandedGiven then
   begin
     if Speed >= 0 then
       Settings.Speed := Speed;
     if Acceleration >= 0 then
       Settings.Acceleration := Acceleration;
-    if LeftHandedText <> nil then
-      Settings.LeftHanded := CompareText(LeftHandedText, 'on') = 0;
+    if LeftHandedGiven then
+      Settings.LeftHanded := LeftHanded;
     if not ChangeMouseSettings(Settings, Applied) then
-      Fail(1, 'the display server did not change its mouse settings', []);
+      Fail(1, 'the display server did not change its mouse settings');
   end;
   if Remember then
     RememberForUser(Applied);

@@ -37,19 +37,21 @@
 program ShowDisplay;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Display,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]'#10 +
+  Usage = 'Usage: display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]'#10 +
     'Show what a display is like, list its modes, or fill it with a colour.'#10 +
     '  -d NUMBER         the display (0, the first, by default)'#10 +
     '  -l                list the modes it can be set to'#10 +
@@ -67,7 +69,7 @@ const
   FrameInsetInches = 4;
   PointsPerInch = 72;
 
-function FormatName(Format: LongWord): PChar;
+function FormatName(Format: LongWord): string;
 begin
   if Format = DisplayFormatRedGreenBlue then
     Result := 'red-green-blue'
@@ -77,14 +79,11 @@ end;
 
 procedure DescribeDisplay(const Display: TDisplay);
 begin
-  WriteFormatted(StandardOutput, '%ux%u pixels, %u bytes a line, %s'#10,
-    [ArgumentUnsigned(Display.Width), ArgumentUnsigned(Display.Height), ArgumentUnsigned(Display.Pitch),
-     ArgumentText(FormatName(Display.Format))]);
+  PrintStringLine(Format('%ux%u pixels, %u bytes a line, %s',
+    [Display.Width, Display.Height, Display.Pitch, FormatName(Display.Format)]));
   if Display.WidthMillimetres > 0 then
-    WriteFormatted(StandardOutput, '%ux%u mm'#10, [ArgumentUnsigned(Display.WidthMillimetres),
-      ArgumentUnsigned(Display.HeightMillimetres)]);
-  WriteFormatted(StandardOutput, '%u DPI, scale %u%%'#10, [ArgumentUnsigned(Display.Dpi),
-    ArgumentUnsigned(Display.ScalePercent)]);
+    PrintStringLine(Format('%ux%u mm', [Display.WidthMillimetres, Display.HeightMillimetres]));
+  PrintStringLine(Format('%u DPI, scale %u%%', [Display.Dpi, Display.ScalePercent]));
 end;
 
 procedure ListModes(const Display: TDisplay);
@@ -92,7 +91,7 @@ var
   Index: LongInt;
   Width: LongWord;
   Height: LongWord;
-  Mark: PChar;
+  Mark: string;
 begin
   for Index := 0 to DisplayModeCount(Display) - 1 do
     if DisplayModeAt(Display, Index, Width, Height) then
@@ -100,8 +99,7 @@ begin
       Mark := '';
       if (Width = Display.Width) and (Height = Display.Height) then
         Mark := ' *';
-      WriteFormatted(StandardOutput, '%ux%u%s'#10, [ArgumentUnsigned(Width), ArgumentUnsigned(Height),
-        ArgumentText(Mark)]);
+      PrintStringLine(Format('%ux%u%s', [Width, Height, Mark]));
     end;
 end;
 
@@ -140,9 +138,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Fill: Boolean;
   Color: QWord;
   Seconds: QWord;
@@ -160,41 +158,41 @@ begin
   List := False;
   ModeWidth := 0;
   ModeHeight := 0;
-  BeginOptions(Parser, [OptionDefinition('f', 'fill', True, OptionFill),
-    OptionDefinition('s', 'seconds', True, OptionSeconds), OptionDefinition('d', 'display', True, OptionNumber),
-    OptionDefinition('l', 'list', False, OptionList), OptionDefinition('m', 'mode', True, OptionMode)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('f', 'fill', True, OptionFill),
+    CommandOption('s', 'seconds', True, OptionSeconds), CommandOption('d', 'display', True, OptionNumber),
+    CommandOption('l', 'list', False, OptionList), CommandOption('m', 'mode', True, OptionMode)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionFill:
         begin
-          if not ParseHexadecimal(OptionValue, Color) or (Color > $FFFFFF) then
-            FailWithUsageHint('the colour must be six hexadecimal digits (RRGGBB)', []);
+          if not ParseHexadecimalDigits(OptionValue, Color) or (Color > $FFFFFF) then
+            FailWithUsageHint('the colour must be six hexadecimal digits (RRGGBB)');
           Fill := True;
         end;
       OptionSeconds:
-        if not ParseUnsigned(OptionValue, Seconds) then
-          FailWithUsageHint('the time must be a whole number of seconds', []);
+        if not ParseUnsignedDecimal(OptionValue, Seconds) then
+          FailWithUsageHint('the time must be a whole number of seconds');
       OptionNumber:
-        if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
-          FailWithUsageHint('the display must be a number', []);
+        if not ParseUnsignedDecimal(OptionValue, Number) or (Number > 63) then
+          FailWithUsageHint('the display must be a number');
       OptionList:
         List := True;
       OptionMode:
-        if not ParseSize(OptionValue, ModeWidth, ModeHeight) then
-          FailWithUsageHint('the mode must be WIDTHxHEIGHT', []);
+        if not ParseSize(PChar(OptionValue), ModeWidth, ModeHeight) then
+          FailWithUsageHint('the mode must be WIDTHxHEIGHT');
     end;
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no operands are taken', []);
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no operands are taken');
   Error := OpenDisplay(Display, LongInt(Number));
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'display %u', [ArgumentUnsigned(Number)]);
+    FailWithError(1, Error, Format('display %u', [Number]));
   if ModeWidth > 0 then
   begin
     Error := SetDisplayMode(Display, ModeWidth, ModeHeight);
     if Error <> ErrorNone then
     begin
       CloseDisplay(Display);
-      FailWithError(1, Error, 'the mode %ux%u', [ArgumentUnsigned(ModeWidth), ArgumentUnsigned(ModeHeight)]);
+      FailWithError(1, Error, Format('the mode %ux%u', [ModeWidth, ModeHeight]));
     end;
   end;
   if Fill then

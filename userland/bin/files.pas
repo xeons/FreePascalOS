@@ -87,7 +87,8 @@ program Files;
 
 uses
   SysUtils,
-  Sys.Files,
+  Abi.SystemCalls,
+  Util.Paths,
   Windowing.Windows,
   Controls.FileNames,
   FileManager.PlacesPane,
@@ -97,14 +98,12 @@ uses
   the home folder. }
 function StartFolder: string;
 var
-  Buffer: array[0..PathCapacity - 1] of Char;
   Current: string;
 begin
   if ParamCount < 1 then
     Exit(HomeFolder);
-  Current := '/';
-  if GetCurrentDirectory(@Buffer[0], PathCapacity) >= 0 then
-    Current := StrPas(@Buffer[0]);
+  if CurrentDirectoryPath(Current) <> ErrorNone then
+    Current := '/';
   Result := CombinePath(Current, ParamStr(1));
 end;
 

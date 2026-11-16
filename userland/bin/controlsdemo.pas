@@ -47,8 +47,8 @@ program ControlsDemo;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
+  Util.Output,
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Canvas,
@@ -109,7 +109,7 @@ type
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine(Text);
   FlushStream(StandardOutput);
 end;
 

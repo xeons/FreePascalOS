@@ -45,13 +45,13 @@ implementation
 uses
   SysUtils,
   Drawing.Rectangles,
-  Sys.Format,
   Sys.Streams,
+  Util.Output,
   Windowing.Connection;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine(Text);
   FlushStream(StandardOutput);
 end;
 

@@ -63,7 +63,7 @@ type
     destructor Destroy; override;
     { Makes the pseudo-terminal and starts ShellPath on it. Returns 0 or
       an error code. }
-    function Start(ShellPath: PChar; Rows, Columns: LongInt): LongInt;
+    function Start(const ShellPath: string; Rows, Columns: LongInt): LongInt;
     procedure Send(const Bytes: string);
     { Tells the terminal its window's new size. }
     procedure Resize(Rows, Columns: LongInt);
@@ -106,16 +106,16 @@ begin
   inherited Destroy;
 end;
 
-function TTerminalSession.Start(ShellPath: PChar; Rows, Columns: LongInt): LongInt;
+function TTerminalSession.Start(const ShellPath: string; Rows, Columns: LongInt): LongInt;
 var
   Arguments: array[0..1] of PChar;
 begin
   Result := CreatePseudoTerminal(Rows, Columns, FTerminal);
   if Result <> ErrorNone then
     Exit;
-  Arguments[0] := ShellPath;
+  Arguments[0] := PChar(ShellPath);
   Arguments[1] := nil;
-  FShell := StartOnTerminal(ShellPath, @Arguments[0], FTerminal.TerminalHandle);
+  FShell := StartOnTerminal(PChar(ShellPath), @Arguments[0], FTerminal.TerminalHandle);
   { Only the shell (and what it starts) holds the terminal now. }
   KernelClose(FTerminal.TerminalHandle);
   FTerminal.TerminalHandle := NoHandle;

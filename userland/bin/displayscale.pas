@@ -34,19 +34,21 @@
 program ShowDisplayScale;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Windowing.Connection,
   Windowing.Displays;
 
 const
-  Usage: PChar = 'Usage: displayscale [-d NUMBER] [-r] [PERCENT]'#10 +
+  Usage = 'Usage: displayscale [-d NUMBER] [-r] [PERCENT]'#10 +
     'Show a display''s scale in the display server, or change it (100 to 400 percent).'#10 +
     '  -d NUMBER       the display (0, the first, by default)'#10 +
     '  -r, --remember  keep the scale for the next time the server starts'#10;
@@ -57,15 +59,14 @@ const
 
 procedure SayScale(const Information: TDisplayInformation);
 begin
-  WriteFormatted(StandardOutput, 'scale %u%%, %u DPI'#10, [ArgumentUnsigned(Information.ScalePercent),
-    ArgumentUnsigned(Information.Dpi)]);
+  PrintStringLine(Format('scale %u%%, %u DPI', [Information.ScalePercent, Information.Dpi]));
   FlushStream(StandardOutput);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Percent: Int64;
   Number: QWord;
   Error: LongInt;
@@ -75,30 +76,30 @@ var
 begin
   Number := 0;
   Remember := False;
-  BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber),
-    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('d', 'display', True, OptionNumber),
+    CommandOption('r', 'remember', False, OptionRemember)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     if Code = OptionRemember then
       Remember := True
     else if Code = OptionNumber then
-      if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
-        FailWithUsageHint('the display must be a number', []);
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('one scale at most', []);
+      if not ParseUnsignedDecimal(OptionValue, Number) or (Number > 63) then
+        FailWithUsageHint('the display must be a number');
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint('one scale at most');
   Percent := 0;
-  if Parser.OperandCount = 1 then
-    if not ParseInteger(Parser.Operands[0], Percent) or (Percent < MinimumPercent) or (Percent > MaximumPercent) then
-      FailWithUsageHint('the scale must be a percentage from %d to %d', [ArgumentNumber(MinimumPercent),
-        ArgumentNumber(MaximumPercent)]);
+  if CommandLine.OperandCount = 1 then
+    if not ParseDecimal(CommandLine.Operands[0], Percent) or (Percent < MinimumPercent)
+      or (Percent > MaximumPercent) then
+      FailWithUsageHint(Format('the scale must be a percentage from %d to %d', [MinimumPercent, MaximumPercent]));
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the display server', []);
+    FailWithError(1, Error, 'the display server');
   if Percent <> 0 then
     Answered := SetDisplayScale(LongInt(Number), LongWord(Percent), Information, Remember)
   else
     Answered := DescribeDisplay(LongInt(Number), Information);
   if not Answered then
-    Fail(1, 'there is no display %u', [ArgumentUnsigned(Number)]);
+    Fail(1, Format('there is no display %u', [Number]));
   SayScale(Information);
   DisconnectFromDisplay;
 end.

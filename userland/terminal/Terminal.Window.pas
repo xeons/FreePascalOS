@@ -66,7 +66,7 @@ type
     constructor Create(Left, Top, Rows, Columns: LongInt);
     destructor Destroy; override;
     { Starts ShellPath on a new pseudo-terminal; False if it could not. }
-    function StartShell(ShellPath: PChar): Boolean;
+    function StartShell(const ShellPath: string): Boolean;
   end;
 
 implementation
@@ -74,7 +74,7 @@ implementation
 uses
   SysUtils,
   Sys.Streams,
-  Sys.Format,
+  Util.Output,
   Windowing.Connection,
   Controls.Base,
   Terminal.Settings;
@@ -120,7 +120,7 @@ begin
   inherited Destroy;
 end;
 
-function TTerminalWindow.StartShell(ShellPath: PChar): Boolean;
+function TTerminalWindow.StartShell(const ShellPath: string): Boolean;
 var
   Error: LongInt;
   CellWidth: LongInt;
@@ -130,15 +130,12 @@ begin
   Result := Error = 0;
   FView.CellSize(CellWidth, CellHeight);
   if Result then
-    WriteFormatted(StandardOutput,
-      'terminal: /dev/pts%d, %d rows, %d columns, window at %d,%d, %dx%d pixels, cells %dx%d'#10,
-      [ArgumentNumber(FSession.Number), ArgumentNumber(FView.Emulator.Screen.Rows),
-       ArgumentNumber(FView.Emulator.Screen.Columns), ArgumentNumber(FLeft), ArgumentNumber(FTop),
-       ArgumentNumber(PixelWidth), ArgumentNumber(PixelHeight), ArgumentNumber(CellWidth),
-       ArgumentNumber(CellHeight)])
+    PrintStringLine(Format(
+      'terminal: /dev/pts%d, %d rows, %d columns, window at %d,%d, %dx%d pixels, cells %dx%d',
+      [FSession.Number, FView.Emulator.Screen.Rows, FView.Emulator.Screen.Columns, FLeft, FTop,
+       PixelWidth, PixelHeight, CellWidth, CellHeight]))
   else
-    WriteFormatted(StandardError, 'terminal: cannot start %s: error %d'#10,
-      [ArgumentText(ShellPath), ArgumentNumber(Error)]);
+    PrintErrorStringLine(Format('terminal: cannot start %s: error %d', [ShellPath, Error]));
   FlushStream(StandardOutput);
 end;
 
@@ -155,8 +152,7 @@ end;
 procedure TTerminalWindow.GridResized(Rows, Columns: LongInt);
 begin
   FSession.Resize(Rows, Columns);
-  WriteFormatted(StandardOutput, 'terminal: %d rows, %d columns'#10, [ArgumentNumber(Rows),
-    ArgumentNumber(Columns)]);
+  PrintStringLine(Format('terminal: %d rows, %d columns', [Rows, Columns]));
   FlushStream(StandardOutput);
 end;
 
@@ -195,7 +191,7 @@ end;
 procedure TTerminalWindow.SessionEnded(ExitCode: LongInt);
 begin
   RememberSize;
-  WriteFormatted(StandardOutput, 'terminal: the shell ended with status %d'#10, [ArgumentNumber(ExitCode)]);
+  PrintStringLine(Format('terminal: the shell ended with status %d', [ExitCode]));
   FlushStream(StandardOutput);
   Free;
 end;
@@ -206,7 +202,7 @@ var
 begin
   RememberSize;
   ExitCode := FSession.Close(HangUpWaitMilliseconds);
-  WriteFormatted(StandardOutput, 'terminal: closed; the shell ended with status %d'#10, [ArgumentNumber(ExitCode)]);
+  PrintStringLine(Format('terminal: closed; the shell ended with status %d', [ExitCode]));
   FlushStream(StandardOutput);
   Free;
 end;
