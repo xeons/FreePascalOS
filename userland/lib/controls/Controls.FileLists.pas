@@ -73,11 +73,11 @@ function ClipboardHoldsFileList: Boolean;
 implementation
 
 uses
+  SysUtils,
   Controls.Clipboard;
 
 const
   UriPrefix = 'file://';
-  HexadecimalDigits: array[0..15] of Char = '0123456789ABCDEF';
   ActionWords: array[TFileListAction] of string = ('copy', 'cut');
   { Bytes written as they are in a file URI's path. }
   PlainCharacters = ['A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~', '/'];
@@ -85,17 +85,13 @@ const
 function PathToFileUri(const Path: string): string;
 var
   Index: LongInt;
-  Value: Byte;
 begin
   Result := UriPrefix;
   for Index := 1 to Length(Path) do
     if Path[Index] in PlainCharacters then
       Result := Result + Path[Index]
     else
-    begin
-      Value := Ord(Path[Index]);
-      Result := Result + '%' + HexadecimalDigits[Value shr 4] + HexadecimalDigits[Value and 15];
-    end;
+      Result := Result + '%' + IntToHex(Ord(Path[Index]), 2);
 end;
 
 { The value of a hexadecimal digit, or -1. }

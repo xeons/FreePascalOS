@@ -44,6 +44,10 @@ function PositionBefore(const First, Second: TTextPosition): Boolean;
 function SamePosition(const First, Second: TTextPosition): Boolean;
 { Where Text ends when inserted at Start: line feeds start new lines. }
 function PositionAfterText(const Start: TTextPosition; const Text: string): TTextPosition;
+{ The character starting at Text[Index] (from 1): its code point and
+  its length in bytes; 0 past the end or at a zero byte (where Font.Utf8
+  stops), with CodePoint 0. }
+function CharacterAt(const Text: string; Index: LongInt; out CodePoint: LongWord): LongInt;
 { The number of characters in Text. }
 function CountCharacters(const Text: string): LongInt;
 function ByteOffsetsOf(const Text: string): TByteOffsets;
@@ -93,20 +97,31 @@ begin
   Result := (First.Line = Second.Line) and (First.Column = Second.Column);
 end;
 
+function CharacterAt(const Text: string; Index: LongInt; out CodePoint: LongWord): LongInt;
+var
+  Start: PChar;
+  Cursor: PChar;
+begin
+  CodePoint := 0;
+  if (Index < 1) or (Index > Length(Text)) then
+    Exit(0);
+  Start := PChar(Text) + Index - 1;
+  Cursor := Start;
+  if not NextCharacter(Cursor, CodePoint) then
+    Exit(0);
+  Result := Cursor - Start;
+end;
+
 { The length in bytes of the character starting at Text[Index] (from 1).
   Font.Utf8 decides, so the counts agree with what is drawn; a zero byte
   (which Font.Utf8 takes for the end) is a character of its own. }
 function CharacterLengthAt(const Text: string; Index: LongInt): LongInt;
 var
-  Start: PChar;
-  Cursor: PChar;
   CodePoint: LongWord;
 begin
-  Start := PChar(Text) + Index - 1;
-  Cursor := Start;
-  if not NextCharacter(Cursor, CodePoint) then
-    Exit(1);
-  Result := Cursor - Start;
+  Result := CharacterAt(Text, Index, CodePoint);
+  if Result = 0 then
+    Result := 1;
 end;
 
 function CountCharacters(const Text: string): LongInt;

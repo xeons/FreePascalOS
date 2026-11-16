@@ -78,7 +78,6 @@ procedure DrawLayoutRange(const Canvas: TCanvas; Face: PFontFace; const Text: st
 implementation
 
 uses
-  Font.Utf8,
   Font.Text;
 
 const
@@ -97,7 +96,6 @@ function LayOutLine(Face: PFontFace; const Text: string; WrapWidth: LongInt): TL
 var
   Count: LongInt;
   Index: LongInt;
-  Cursor: PChar;
   CodePoint: LongWord;
   Previous: LongWord;
   X: LongInt;
@@ -116,9 +114,7 @@ begin
   for Index := 0 to Count - 1 do
   begin
     Result.Positions[Index] := X;
-    Cursor := PChar(Text) + Result.Bytes[Index];
-    if not NextCharacter(Cursor, CodePoint) then
-      CodePoint := 0;
+    CharacterAt(Text, Result.Bytes[Index] + 1, CodePoint);
     BreakAfter[Index] := (CodePoint = 32) or (CodePoint = TabCharacter);
     if Face = nil then
       Continue;

@@ -82,6 +82,7 @@ implementation
 uses
   Font.Text,
   Font.Utf8,
+  Controls.TextPositions,
   Windowing.Theme,
   Windowing.Fonts;
 
@@ -111,18 +112,21 @@ end;
 
 function CharacterOffsets(const Text: string): TCharacterOffsets;
 var
-  Cursor: PChar;
   CodePoint: LongWord;
+  CharacterBytes: LongInt;
   Count: LongInt;
 begin
+  Result := nil;
   SetLength(Result, Length(Text) + 1);
   Count := 0;
-  Cursor := PChar(Text);
   Result[0] := 0;
-  while NextCharacter(Cursor, CodePoint) do
+  { Up to a zero byte, where Font.Utf8 stops, as drawing does. }
+  CharacterBytes := CharacterAt(Text, 1, CodePoint);
+  while CharacterBytes > 0 do
   begin
     Inc(Count);
-    Result[Count] := Cursor - PChar(Text);
+    Result[Count] := Result[Count - 1] + CharacterBytes;
+    CharacterBytes := CharacterAt(Text, Result[Count] + 1, CodePoint);
   end;
   SetLength(Result, Count + 1);
 end;
@@ -250,7 +254,6 @@ function MnemonicOf(const Text: string): LongWord;
 var
   Shown: string;
   Position: LongInt;
-  Cursor: PChar;
   CodePoint: LongWord;
 begin
   Result := 0;
@@ -258,8 +261,7 @@ begin
   if Position = 0 then
     Exit;
   Shown := TextWithoutMnemonic(Text);
-  Cursor := PChar(Shown) + Position - 1;
-  if NextCharacter(Cursor, CodePoint) then
+  if CharacterAt(Shown, Position, CodePoint) > 0 then
     Result := LowerCaseCharacter(CodePoint);
 end;
 
@@ -281,7 +283,6 @@ procedure UnderlineMnemonic(const Canvas: TCanvas; Face: PFontFace; const Text, 
 var
   Position: LongInt;
   VisibleLength: LongInt;
-  Cursor: PChar;
   CodePoint: LongWord;
   CharacterBytes: LongInt;
   Left: LongInt;
@@ -297,10 +298,9 @@ begin
     VisibleLength := Length(Shown) - Length('...');
   if Position > VisibleLength then
     Exit;
-  Cursor := PChar(Shown) + Position - 1;
-  if not NextCharacter(Cursor, CodePoint) then
+  CharacterBytes := CharacterAt(Shown, Position, CodePoint);
+  if CharacterBytes = 0 then
     Exit;
-  CharacterBytes := Cursor - (PChar(Shown) + Position - 1);
   if Position + CharacterBytes - 1 > VisibleLength then
     Exit;
   { Measured with the character, so kerning before it counts. }

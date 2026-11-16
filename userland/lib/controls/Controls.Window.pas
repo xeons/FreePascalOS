@@ -351,31 +351,32 @@ begin
     FMenuBar.LeaveMenuMode;
 end;
 
+type
+  TControlArray = array of TControl;
+
 { Every visible, enabled control that takes the focus, in tree order. }
-procedure CollectFocusable(Control: TControl; var List: array of TControl; var Count: LongInt);
+procedure CollectFocusable(Control: TControl; var List: TControlArray);
 var
   Index: LongInt;
 begin
   if not Control.Visible or not Control.Enabled then
     Exit;
-  if Control.CanFocus and (Count <= High(List)) then
-  begin
-    List[Count] := Control;
-    Inc(Count);
-  end;
+  if Control.CanFocus then
+    Insert(Control, List, Length(List));
   for Index := 0 to Control.ChildCount - 1 do
-    CollectFocusable(Control.Children[Index], List, Count);
+    CollectFocusable(Control.Children[Index], List);
 end;
 
 procedure TControlWindow.MoveFocus(Forward: Boolean);
 var
-  List: array[0..255] of TControl;
+  List: TControlArray;
   Count: LongInt;
   Index: LongInt;
   Current: LongInt;
 begin
-  Count := 0;
-  CollectFocusable(FRoot, List, Count);
+  List := nil;
+  CollectFocusable(FRoot, List);
+  Count := Length(List);
   if Count = 0 then
     Exit;
   Current := -1;

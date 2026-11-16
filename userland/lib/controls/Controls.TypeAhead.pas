@@ -62,6 +62,7 @@ function StartsWithIgnoringCase(const Name, Prefix: string): Boolean;
 implementation
 
 uses
+  SysUtils,
   Controls.TextPositions;
 
 procedure ResetTypeAhead(out State: TTypeAhead);
@@ -70,24 +71,12 @@ begin
   State.LastKeyTime := 0;
 end;
 
-function LowerLetter(Character: Char): Char;
-begin
-  if Character in ['A'..'Z'] then
-    Result := Chr(Ord(Character) + 32)
-  else
-    Result := Character;
-end;
-
+{ CompareText folds ASCII letters only, as the comparison here should. }
 function StartsWithIgnoringCase(const Name, Prefix: string): Boolean;
-var
-  Index: LongInt;
 begin
   if Length(Prefix) > Length(Name) then
     Exit(False);
-  for Index := 1 to Length(Prefix) do
-    if LowerLetter(Name[Index]) <> LowerLetter(Prefix[Index]) then
-      Exit(False);
-  Result := True;
+  Result := CompareText(Copy(Name, 1, Length(Prefix)), Prefix) = 0;
 end;
 
 { True if Text is one character (of Width bytes) said again and again. }

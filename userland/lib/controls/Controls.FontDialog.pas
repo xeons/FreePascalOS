@@ -222,8 +222,8 @@ begin
   Caption.SetBounds(DialogMargin, DialogMargin, FamilyWidth, 16);
   FFamilyBox := TComboBox.Create(Root);
   FFamilyBox.SetBounds(DialogMargin, FamilyTop, FamilyWidth, 22);
-  FFamilyBox.Items.Add(FamilyCaption(FontFamilyText));
-  FFamilyBox.Items.Add(FamilyCaption(FontFamilyFixed));
+  FFamilyBox.Items.Add(FamilyName(FontFamilyText));
+  FFamilyBox.Items.Add(FamilyName(FontFamilyFixed));
   Caption := TLabel.Create(Root);
   Caption.Text := '&Size (points):';
   Caption.SetBounds(DialogMargin, SizeCaptionTop, ListWidth + 8, 16);
