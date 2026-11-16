@@ -65,7 +65,8 @@
       a write after free, a double free and a write past the end each end
       the program that makes them,
     * that a crashing program (coretest --crash-on-purpose) only ends
-      itself, with runtime error 216 (202 for a stack overflow), and that
+      itself, with an unhandled EAccessViolation (EStackOverflow for a
+      stack overflow) and status 217, and that
       one without an exception dispatcher is ended by the kernel (139).
 
   Exits with status 0 when every test passed, 1 otherwise.
@@ -575,10 +576,12 @@ const
       display server only root changes them); then the service ends. }
     (Command: 'keyboardsettings; keyboardsettings -l; keyboardsettings -d 250 -s 30 de; su user -c "keyboardsettings fr" 2>&1; keyboardsettings xx 2>&1; keyboardsettings -d 500 -s 11 us; pkill -x systemsettings; echo $?'; ExpectedOutput: 'layout us, repeat delay 500, rate 11'#10'us English (US)'#10'uk English (UK)'#10'de German (QWERTZ)'#10'fr French (AZERTY)'#10'layout de, repeat delay 250, rate 30'#10'keyboardsettings: cannot change the keyboard settings: Operation not permitted'#10'keyboardsettings: there is no keyboard layout ''xx'' (keyboardsettings -l lists them)'#10'layout us, repeat delay 500, rate 11'#10'0'#10; ExpectedStatus: 0),
 
-    { --- a crashing program ends alone: with a runtime error, or with
-      status 139 when the kernel must end it (no dispatcher) ----------- }
-    (Command: '/bin/coretest --crash-on-purpose 2>&1 | head -n 1 | cut -c 1-17; /bin/coretest --crash-on-purpose 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'Runtime error 216'#10'216'#10'still running'#10; ExpectedStatus: 0),
-    (Command: '/bin/coretest --overflow-stack 2>&1 | head -n 1 | cut -c 1-17; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'Runtime error 202'#10'139'#10; ExpectedStatus: 0)
+    { --- a crashing program ends alone: with an unhandled exception
+      (coretest has SysUtils, through libcoreutils, so the fault becomes
+      an exception: status 217), or with status 139 when the kernel must
+      end it (no dispatcher) ------------------------------------------- }
+    (Command: '/bin/coretest --crash-on-purpose 2>&1 | sed -n 2p; /bin/coretest --crash-on-purpose 2>/dev/null; echo $?; echo still running'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10'still running'#10; ExpectedStatus: 0),
+    (Command: '/bin/coretest --overflow-stack 2>&1 | sed -n 2p; /bin/coretest --crash-without-dispatcher; echo $?'; ExpectedOutput: 'EStackOverflow: Stack overflow'#10'139'#10; ExpectedStatus: 0)
   );
 
 var

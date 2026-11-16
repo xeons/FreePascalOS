@@ -639,7 +639,9 @@ begin
     ((Description.Flags and InterfaceFlagUp) <> 0) and InterfaceHasIpv4Address('eth0', Ipv4Address(10, 0, 2, 15), 24));
   CheckDhcpStateFile;
   Check('DHCP: the default route goes through 10.0.2.2 on eth0', HasDefaultRouteThrough(Gateway));
-  Check('DHCP: the DNS server is 10.0.2.3', (GetDnsServers(Servers) = ErrorNone) and (Servers.Count = 1) and
+  { The DHCP server comes first; servers a router advertises over IPv6
+    (fec0::3 under QEMU) follow it. }
+  Check('DHCP: the first DNS server is 10.0.2.3', (GetDnsServers(Servers) = ErrorNone) and (Servers.Count >= 1) and
     AddressesAreEqual(SocketAddressHost(Servers.Servers[0]), Ipv4Address(10, 0, 2, 3)));
   Check('ping 10.0.2.2 (QEMU''s gateway) answers', Ping(Gateway, 3) > 0);
   Check('10.0.2.2 is in the ARP cache', GatewayIsInArpCache(Gateway));

@@ -449,7 +449,7 @@ begin
   if (Option = '!') or (Option = '-not') then
   begin
     Result := TFindNode.Create(NodeNot);
-    Result.Left := ParsePrimary;
+    Result.Left := ParsePrimary();
     Exit;
   end;
   if not ParseWalkOption(Option, Result) then
