@@ -103,7 +103,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..363] of TCommandTest = (
+  CommandTests: array[0..367] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -255,6 +255,10 @@ const
     (Command: 'printf "\206\117\322\157\265\131\367\133" | basenc --z85'; ExpectedOutput: 'HelloWorld'#10; ExpectedStatus: 0),
     (Command: 'seq 100 | base64 -w 0 | base64 -d | tail -n 1'; ExpectedOutput: '100'#10; ExpectedStatus: 0),
     (Command: 'echo "a!b" | base64 -d 2>&1; echo $?'; ExpectedOutput: 'base64: invalid input'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'printf hello | gzip | gzip -d; echo; seq 2000 | gzip -9 | gzip -dc | tail -n 1'; ExpectedOutput: 'hello'#10'2000'#10; ExpectedStatus: 0),
+    (Command: 'seq 500 > z.txt; gzip z.txt; ls z.txt*; gzip -dk z.txt.gz; ls z.txt*; tail -n 1 z.txt'; ExpectedOutput: 'z.txt.gz'#10'z.txt'#10'z.txt.gz'#10'500'#10; ExpectedStatus: 0),
+    (Command: '{ printf one | gzip -1; printf two | gzip; } | gzip -d; echo; gzip -c z.txt | gzip -d | wc -l'; ExpectedOutput: 'onetwo'#10'500'#10; ExpectedStatus: 0),
+    (Command: 'echo junk | gzip -d 2>&1; echo $?; gzip -d z.txt 2>&1; echo $?'; ExpectedOutput: 'gzip: stdin: not in gzip format'#10'1'#10'gzip: z.txt: unknown suffix -- ignored'#10'1'#10; ExpectedStatus: 0),
 
     { --- users and the system ---------------------------------------- }
     (Command: 'id; id -un; id -g; whoami; groups; groups root'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root)'#10'root'#10'0'#10'root'#10'root'#10'root : root wheel'#10; ExpectedStatus: 0),

@@ -26,6 +26,7 @@
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
+#                  libsystem <- libcompression (deflate, zlib, gzip)
 #                  libwindowing <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -75,6 +76,7 @@ WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
 CONTROLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/controls
 CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
+COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -86,6 +88,7 @@ WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
 CONTROLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcontrols.so
 CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
+COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -123,7 +126,7 @@ FONT_RENDERER := tools/RenderFont/render-font.py
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -212,6 +215,16 @@ $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
 		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
+# libcompression: deflate compression and decompression, the zlib and
+# gzip wrappers and their checksums.
+$(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
+	@rm -rf $(COMPRESSION_LIBRARY_OBJECTS)
+	@mkdir -p $(COMPRESSION_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/compression \
+		-FU$(COMPRESSION_LIBRARY_OBJECTS) userland/lib/compression/Compression.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcompression.so -o $@ \
+		$(COMPRESSION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # libwindowing: the display server's protocol and windows for programs.
 $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
 	@rm -rf $(WINDOWING_LIBRARY_OBJECTS)
@@ -297,6 +310,11 @@ TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
 $(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
 $(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
 $(TLS_PROGRAMS): $(TLS_LIBRARY)
+# gzip compresses through libcompression.
+COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
+$(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
+$(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(COMPRESSION_LIBRARY_OBJECTS)
+$(COMPRESSION_PROGRAMS): $(COMPRESSION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 # The system settings service keeps what it changes in the settings and
 # sets the sound outputs.
