@@ -27,7 +27,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Output,
-  Util.Paths;
+  Sys.Files;
 
 const
   Usage = 'Usage: pwd'#10 +

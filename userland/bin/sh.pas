@@ -46,6 +46,7 @@ uses
   Abi.SystemCalls,
   Sys.Environment,
   Sys.Errors,
+  Sys.Files,
   Sys.Kernel,
   Sys.Memory,
   Sys.Notifications,
@@ -92,7 +93,7 @@ var
 begin
   if Continuation then
     Exit('> ');
-  if not CurrentDirectory(Directory) then
+  if CurrentDirectoryPath(Directory) <> ErrorNone then
     Directory := '?';
   Result := 'fpos:' + Directory + '$ ';
 end;
@@ -283,7 +284,7 @@ procedure SetDefaultVariables;
 var
   Directory: string;
 begin
-  if CurrentDirectory(Directory) then
+  if CurrentDirectoryPath(Directory) = ErrorNone then
     AssignVariable('PWD', Directory);
   if not VariableIsSet('PATH') then
     SetVariable('PATH', '/bin');

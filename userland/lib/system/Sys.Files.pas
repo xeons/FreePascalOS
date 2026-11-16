@@ -25,7 +25,7 @@
 }
 unit Sys.Files;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -64,8 +64,12 @@ function RemovePath(Path: PChar): LongInt;
 function RenamePath(SourcePath, TargetPath: PChar): LongInt;
 function CreateSymbolicLink(Target, Path: PChar): LongInt;
 function ReadSymbolicLink(Path: PChar; Buffer: PChar; Capacity: QWord): LongInt;
+{ What the symbolic link Path points to; 0 or an error code. }
+function ReadLinkTarget(const Path: string; out Target: string): LongInt;
 
 function GetCurrentDirectory(Buffer: PChar; Capacity: QWord): LongInt;
+{ The current directory; 0 or an error code. }
+function CurrentDirectoryPath(out Path: string): LongInt;
 function ChangeDirectory(Path: PChar): LongInt;
 
 function SyncFileSystems: LongInt;
@@ -212,6 +216,26 @@ end;
 function ReadSymbolicLink(Path: PChar; Buffer: PChar; Capacity: QWord): LongInt;
 begin
   Result := ErrorCodeOf(KernelReadSymbolicLink(Path, Buffer, Capacity));
+end;
+
+function ReadLinkTarget(const Path: string; out Target: string): LongInt;
+var
+  Buffer: array[0..PathCapacity - 1] of Char;
+begin
+  Target := '';
+  Result := ReadSymbolicLink(PChar(Path), @Buffer[0], PathCapacity);
+  if Result = ErrorNone then
+    Target := PChar(@Buffer[0]);
+end;
+
+function CurrentDirectoryPath(out Path: string): LongInt;
+var
+  Buffer: array[0..PathCapacity - 1] of Char;
+begin
+  Path := '';
+  Result := GetCurrentDirectory(@Buffer[0], PathCapacity);
+  if Result = ErrorNone then
+    Path := PChar(@Buffer[0]);
 end;
 
 function GetCurrentDirectory(Buffer: PChar; Capacity: QWord): LongInt;

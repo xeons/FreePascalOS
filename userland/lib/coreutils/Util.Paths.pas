@@ -51,10 +51,6 @@ type
 function CanonicalizePath(const Path: string; Mode: TCanonicalMode; FollowLinks: Boolean;
   out Canonical: string): LongInt;
 
-{ The current directory; 0 or an error code. }
-function CurrentDirectoryPath(out Path: string): LongInt;
-{ What the symbolic link Path points to; 0 or an error code. }
-function ReadLinkTarget(const Path: string; out Target: string): LongInt;
 
 implementation
 
@@ -112,26 +108,6 @@ end;
 function IsDotEntry(const Name: string): Boolean;
 begin
   Result := (Name = '.') or (Name = '..');
-end;
-
-function CurrentDirectoryPath(out Path: string): LongInt;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
-begin
-  Path := '';
-  Result := GetCurrentDirectory(@Buffer[0], PathCapacity);
-  if Result = ErrorNone then
-    Path := PChar(@Buffer[0]);
-end;
-
-function ReadLinkTarget(const Path: string; out Target: string): LongInt;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
-begin
-  Target := '';
-  Result := ReadSymbolicLink(PChar(Path), @Buffer[0], PathCapacity);
-  if Result = ErrorNone then
-    Target := PChar(@Buffer[0]);
 end;
 
 { --- Canonical names ------------------------------------------------- }

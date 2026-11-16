@@ -100,7 +100,7 @@ begin
     end;
   end;
 
-  if CurrentDirectory(Directory) then
+  if CurrentDirectoryPath(Directory) = ErrorNone then
     AssignVariable('OLDPWD', Directory);
   Error := ChangeDirectory(PChar(Target));
   if Error <> ErrorNone then
@@ -108,7 +108,7 @@ begin
     CommandError('cd', Target + ': ' + ErrorMessage(Error));
     Exit(1);
   end;
-  if CurrentDirectory(Directory) then
+  if CurrentDirectoryPath(Directory) = ErrorNone then
     AssignVariable('PWD', Directory);
   Result := 0;
 end;
