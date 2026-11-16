@@ -66,7 +66,7 @@ uses
   Network.Core,
   Network.ByteRings,
   Network.Interfaces,
-  Network.Ipv4,
+  Network.IpOutput,
   Network.Ports,
   Network.TcpTypes,
   Network.TcpConnections,
@@ -202,7 +202,7 @@ var
 begin
   if Socket^.IsBound then
     Exit(ErrorNone);
-  Port := ChooseDynamicPort(Socket, Socket^.Local.Address);
+  Port := ChooseDynamicPort(Socket, Socket^.Local);
   if Port = 0 then
     Exit(ErrorAddressInUse);
   Socket^.Local.Port := Port;
@@ -248,7 +248,7 @@ var
   Child: PTcpConnection;
 begin
   Child := PTcpConnection(ContainingRecord(Listener^.AcceptQueue.Next, FieldOffset(PTcpConnection(nil)^.AcceptLink)));
-  NewSocket := AllocateSocket(Socket^.Kind, SocketProtocolTcp, Owner);
+  NewSocket := AllocateSocket(Socket^.Family, Socket^.Kind, SocketProtocolTcp, Owner);
   if NewSocket = nil then
     Exit(ErrorOutOfMemory);
   RemoveListEntry(@Child^.AcceptLink);
@@ -298,9 +298,7 @@ function ConnectTcpSocket(Socket: PSocket; constref Destination: TNetworkEndpoin
 var
   Connection: PTcpConnection;
   Remote: TNetworkEndpoint;
-  NetworkInterface: PNetworkInterface;
-  NextHop: TIpv4Address;
-  Source: TIpv4Address;
+  Source: TNetworkEndpoint;
   Deadline: QWord;
 begin
   Connection := ConnectionOf(Socket);
@@ -321,19 +319,22 @@ begin
     end;
   end;
   Remote := Destination;
-  if Remote.Address = AnyAddress then
-    Remote.Address := LoopbackAddress;
+  if EndpointIsUnspecified(Remote) then
+    Remote := LoopbackEndpoint(Remote.Family, Remote.Port);
   if Remote.Port = 0 then
     Exit(ErrorConnectionRefused);
-  Result := RouteDatagram(Remote.Address, Socket^.BoundInterface, NetworkInterface, NextHop, Source);
+  Result := ChooseSourceAddress(Remote, Socket^.BoundInterface, Source);
   if Result <> ErrorNone then
     Exit;
-  if Socket^.Local.Address = AnyAddress then
-    Socket^.Local.Address := Source;
+  if EndpointIsUnspecified(Socket^.Local) then
+  begin
+    Source.Port := Socket^.Local.Port;
+    Socket^.Local := Source;
+  end;
   Result := BindImplicitly(Socket);
   if Result <> ErrorNone then
     Exit;
-  if FindTcpConnection(Socket^.Local.Address, Socket^.Local.Port, Remote.Address, Remote.Port) <> nil then
+  if FindTcpConnection(Socket^.Local, Remote) <> nil then
     Exit(ErrorAddressInUse);
 
   Connection := CreateTcpConnection;
@@ -349,7 +350,7 @@ begin
   Connection^.BoundInterface := Socket^.BoundInterface;
   Connection^.TimeToLive := Socket^.TimeToLive;
   Connection^.NoDelay := Socket^.NoDelay;
-  Connection^.MaximumSegment := OwnMaximumSegment(Remote.Address, Socket^.BoundInterface);
+  Connection^.MaximumSegment := OwnMaximumSegment(Remote, Socket^.BoundInterface);
   Connection^.InitialSendSequence := GenerateInitialSequence;
   Connection^.SendUnacknowledged := Connection^.InitialSendSequence;
   Connection^.SendNext := Connection^.InitialSendSequence;
@@ -543,7 +544,7 @@ function TcpPeer(Socket: PSocket; out Peer: TNetworkEndpoint): Boolean;
 var
   Connection: PTcpConnection;
 begin
-  Peer := MakeEndpoint(AnyAddress, 0);
+  Peer := UnspecifiedEndpoint(Socket^.Family);
   Connection := ConnectionOf(Socket);
   Result := (Connection <> nil) and Connection^.WasEstablished;
   if Result then

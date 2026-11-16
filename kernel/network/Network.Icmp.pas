@@ -37,7 +37,8 @@ unit Network.Icmp;
 interface
 
 uses
-  Network.Ipv4;
+  Network.Ipv4,
+  Network.IpDatagrams;
 
 const
   IcmpHeaderBytes = 8;
@@ -52,7 +53,7 @@ const
   IcmpCodeProtocolUnreachable = 2;
   IcmpCodePortUnreachable = 3;
 
-procedure IcmpInput(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure IcmpInput(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 { Sends an ICMP error about the datagram at Original (its header first,
   OriginalLength bytes) to its source. }
 procedure SendIcmpError(Original: PByte; OriginalLength: LongWord; IcmpType, Code: Byte);
@@ -64,6 +65,7 @@ procedure ReportUndeliverableDatagram(Original: PByte; OriginalLength: LongWord;
 implementation
 
 uses
+  Abi.SystemCalls,
   Runtime.Memory,
   Network.ByteOrder,
   Network.Checksums,
@@ -79,7 +81,7 @@ const
   { The original header and the first 8 bytes of its payload. }
   QuotedPayloadBytes = 8;
 
-procedure SendEchoReply(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure SendEchoReply(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 var
   Packet: PPacket;
   Reply: PByte;
@@ -98,14 +100,27 @@ begin
   SendIpv4(Packet, Datagram.Destination, Datagram.Source, IpProtocolIcmp, DefaultTimeToLive, False, nil);
 end;
 
+{ The error a destination unreachable stands for, for a socket. }
+function UnreachableError(Code: Byte): LongInt;
+begin
+  case Code of
+    IcmpCodeNetworkUnreachable: Result := ErrorNetworkUnreachable;
+    IcmpCodeHostUnreachable: Result := ErrorHostUnreachable;
+  else
+    Result := ErrorConnectionRefused;
+  end;
+end;
+
 { An error about a datagram we sent: to whoever sent it. }
-procedure HandleError(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure HandleError(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 var
   Quoted: PByte;
   QuotedHeaderLength: LongWord;
   QuotedSource: TIpv4Address;
   QuotedDestination: TIpv4Address;
   QuotedPayload: PByte;
+  Local: TNetworkEndpoint;
+  Remote: TNetworkEndpoint;
 begin
   if Length < IcmpHeaderBytes + Ipv4HeaderBytes + QuotedPayloadBytes then
     Exit;
@@ -117,20 +132,22 @@ begin
   QuotedSource := ReadIpv4Address(Quoted + 12);
   QuotedDestination := ReadIpv4Address(Quoted + 16);
   QuotedPayload := Quoted + QuotedHeaderLength;
+  Local := MakeEndpoint(QuotedSource, ReadBigEndian16(QuotedPayload));
+  Remote := MakeEndpoint(QuotedDestination, ReadBigEndian16(QuotedPayload + 2));
   case Quoted[9] of
     IpProtocolUdp:
-      UdpReportError(QuotedSource, QuotedDestination, ReadBigEndian16(QuotedPayload),
-        ReadBigEndian16(QuotedPayload + 2), Message[0], Message[1]);
+      if Message[0] = IcmpTypeDestinationUnreachable then
+        UdpReportError(Local, Remote, UnreachableError(Message[1]));
     IpProtocolTcp:
-      TcpReportError(QuotedSource, QuotedDestination, ReadBigEndian16(QuotedPayload),
-        ReadBigEndian16(QuotedPayload + 2), ReadBigEndian32(QuotedPayload + 4), Message[0], Message[1]);
+      if Message[0] = IcmpTypeDestinationUnreachable then
+        TcpReportError(Local, Remote, ReadBigEndian32(QuotedPayload + 4), UnreachableError(Message[1]));
     IpProtocolIcmp:
       if QuotedPayload[0] = IcmpTypeEchoRequest then
         DeliverEchoMessage(Datagram, Message, Length, ReadBigEndian16(QuotedPayload + 4));
   end;
 end;
 
-procedure IcmpInput(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure IcmpInput(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 begin
   if (Length < IcmpHeaderBytes) or (InternetChecksum(Message, Length) <> 0) then
   begin

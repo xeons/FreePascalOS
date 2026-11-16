@@ -19,7 +19,8 @@
 {
   netstat -r: the routing table as net-tools' netstat -rn writes it
   (route -n's columns, with MSS, Window and irtt in place of Metric;
-  the kernel keeps none of the three per route, so they are 0).
+  the kernel keeps none of the three per route, so they are 0), then
+  IPv6's as netstat -rn -6 writes it.
 }
 unit Netstat.Routes;
 
@@ -27,7 +28,10 @@ unit Netstat.Routes;
 
 interface
 
-procedure ShowRoutingTable;
+uses
+  Netstat.Selection;
+
+procedure ShowRoutingTable(constref Selection: TNetstatSelection);
 
 implementation
 
@@ -37,6 +41,7 @@ uses
   Sys.Format,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
+  Sys.AddressText,
   Sys.Streams,
   Util.Messages;
 
@@ -56,20 +61,55 @@ begin
     ArgumentUnsigned(0), ArgumentUnsigned(0), ArgumentText(@Route.InterfaceName[0])]);
 end;
 
-procedure ShowRoutingTable;
+procedure WriteIpv6Route(constref Route: TAbiRoute);
+var
+  Flags: array[0..7] of Char;
+  Line: AnsiString;
+begin
+  FormatRouteFlags(Route, @Flags[0], SizeOf(Flags));
+  Line := InterfaceAddressToText(Route.Destination);
+  WriteFormatted(StandardOutput, '%-30s %-26s %-5s %5u %s'#10, [ArgumentText(PChar(Line)),
+    ArgumentText(PChar(AddressToText(RouteGateway(Route)))), ArgumentText(@Flags[0]),
+    ArgumentUnsigned(Route.Metric), ArgumentText(@Route.InterfaceName[0])]);
+end;
+
+procedure ShowIpv4Routes(const Routes: TRouteList);
+var
+  Index: Integer;
+begin
+  WriteLine(StandardOutput, 'Kernel IP routing table');
+  WriteLine(StandardOutput, 'Destination     Gateway         Genmask         Flags   MSS Window  irtt Iface');
+  for Index := 0 to High(Routes) do
+    if Routes[Index].Destination.Family = AddressFamilyIPv4 then
+      WriteRoute(Routes[Index]);
+end;
+
+procedure ShowIpv6Routes(const Routes: TRouteList);
+var
+  Index: Integer;
+begin
+  WriteLine(StandardOutput, 'Kernel IPv6 routing table');
+  WriteLine(StandardOutput, 'Destination                    Next Hop                   Flag  Metric Iface');
+  for Index := 0 to High(Routes) do
+    if Routes[Index].Destination.Family = AddressFamilyIPv6 then
+      WriteIpv6Route(Routes[Index]);
+end;
+
+procedure ShowRoutingTable(constref Selection: TNetstatSelection);
 var
   Routes: TRouteList;
-  Index: Integer;
   Error: LongInt;
 begin
   Error := ListRoutes(Routes);
   if Error <> ErrorNone then
     FailWithError(1, Error, 'cannot read the routing table', []);
   SortRoutes(Routes);
-  WriteLine(StandardOutput, 'Kernel IP routing table');
-  WriteLine(StandardOutput, 'Destination     Gateway         Genmask         Flags   MSS Window  irtt Iface');
-  for Index := 0 to High(Routes) do
-    WriteRoute(Routes[Index]);
+  if Selection.ShowIpv4 then
+    ShowIpv4Routes(Routes);
+  if Selection.ShowIpv4 and Selection.ShowIpv6 then
+    WriteLine(StandardOutput, '');
+  if Selection.ShowIpv6 then
+    ShowIpv6Routes(Routes);
 end;
 
 end.

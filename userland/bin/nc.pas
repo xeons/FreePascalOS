@@ -19,8 +19,8 @@
 {
   nc - netcat: read and write TCP and UDP connections
 
-  nc [-dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...
-  nc -l [-dkNnuv] [-q SECONDS] [-w SECONDS] [HOST] [-p] PORT
+  nc [-46dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...
+  nc -l [-46dkNnuv] [-q SECONDS] [-w SECONDS] [HOST] [-p] PORT
 
   With OpenBSD's nc options. It connects to HOST (or, with -l, waits
   for a connection) and then copies its standard input to the
@@ -31,8 +31,10 @@
   limits connecting). -z only says whether ports take connections (with
   -v, how each went; the exit status is 0 if one did). -k keeps
   listening after a connection ends. -u uses UDP. -n takes only numeric
-  addresses; otherwise HOST goes through Sys.HostNames. -d does not
-  read the standard input.
+  addresses; otherwise HOST goes through Sys.HostLookup (IPv6 first
+  when it can be reached). -d does not read the standard input. HOST
+  may be an IPv6 address (::1, or [::1]); -4 and -6 keep to one IP
+  version, and -l -6 listens on :: (without it nc listens on IPv4).
 
   The pieces are in userland/nc (Netcat.*).
 }
@@ -43,6 +45,7 @@ program nc;
 
 uses
   Sys.Format,
+  Sys.HostNames,
   Sys.InternetAddresses,
   Sys.Streams,
   Sys.Text,
@@ -55,11 +58,13 @@ uses
   Netcat.Listener;
 
 const
-  Usage: PChar = 'Usage: nc [-dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...'#10 +
-    '  or:  nc -l [-dkNnuv] [-q SECONDS] [-w SECONDS] [HOST] [-p] PORT'#10 +
+  Usage: PChar = 'Usage: nc [-46dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...'#10 +
+    '  or:  nc -l [-46dkNnuv] [-q SECONDS] [-w SECONDS] [HOST] [-p] PORT'#10 +
     'Connect to HOST, or listen for a connection, and copy the standard input to'#10 +
     'it and what comes from it to the standard output.'#10 +
     #10 +
+    '  -4           IPv4 only'#10 +
+    '  -6           IPv6 only'#10 +
     '  -l           listen for a connection'#10 +
     '  -k           go on listening after a connection ends (with -l)'#10 +
     '  -p PORT      the local port (with -l, the one to listen on)'#10 +
@@ -83,6 +88,8 @@ const
   OptionShutdown = 9;
   OptionNumeric = 10;
   OptionIgnoreInput = 11;
+  OptionIpv4 = 12;
+  OptionIpv6 = 13;
 
   MillisecondsPerSecond = 1000;
 
@@ -119,7 +126,9 @@ begin
     OptionDefinition('q', nil, True, OptionQuitAfter),
     OptionDefinition('N', nil, False, OptionShutdown),
     OptionDefinition('n', nil, False, OptionNumeric),
-    OptionDefinition('d', nil, False, OptionIgnoreInput)], Usage);
+    OptionDefinition('d', nil, False, OptionIgnoreInput),
+    OptionDefinition('4', nil, False, OptionIpv4),
+    OptionDefinition('6', nil, False, OptionIpv6)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionListen: Settings.Listen := True;
@@ -135,6 +144,8 @@ begin
       OptionShutdown: Settings.ShutdownAtEndOfInput := True;
       OptionNumeric: Settings.NumericOnly := True;
       OptionIgnoreInput: Settings.IgnoreInput := True;
+      OptionIpv4: Settings.Families := HostFamilyIpv4;
+      OptionIpv6: Settings.Families := HostFamilyIpv6;
     end;
   if Settings.KeepListening and not Settings.Listen then
     FailWithUsageHint('-k needs -l', []);
@@ -151,7 +162,7 @@ var
   Port: Word;
   PortOperand: Integer;
 begin
-  LocalAddress := AnyIpv4Address;
+  LocalAddress := AnyListeningAddress;
   Port := Settings.LocalPort;
   PortOperand := -1;
   if Port = 0 then

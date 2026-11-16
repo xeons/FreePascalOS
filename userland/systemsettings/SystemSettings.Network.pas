@@ -75,6 +75,37 @@ begin
   Store.Free;
 end;
 
+{ The IPv6 fields of the request; with no method given, those the file
+  has now. False for a method that is not one. }
+function TakeIpv6Fields(const Request: TSystemSettingsRequest; var Settings: TInterfaceSettings): Boolean;
+var
+  Store: TSettings;
+  Current: TInterfaceSettings;
+begin
+  if TextOf(Request.NetworkIpv6Method) = '' then
+  begin
+    Store := OpenSystemSettings;
+    Current := ReadInterfaceSettings(Store, Settings.Name);
+    Store.Free;
+    Settings.Ipv6Method := Current.Ipv6Method;
+    Settings.Ipv6Address := Current.Ipv6Address;
+    Settings.Ipv6Gateway := Current.Ipv6Gateway;
+    Exit(True);
+  end;
+  Result := ParseIpv6Method(TextOf(Request.NetworkIpv6Method), Settings.Ipv6Method);
+  Settings.Ipv6Address := TextOf(Request.NetworkIpv6Address);
+  Settings.Ipv6Gateway := TextOf(Request.NetworkIpv6Gateway);
+end;
+
+function Ipv6Summary(const Settings: TInterfaceSettings): string;
+begin
+  Result := 'IPv6 ' + Ipv6MethodName(Settings.Ipv6Method);
+  if Settings.Ipv6Address <> '' then
+    Result := Result + ' ' + Settings.Ipv6Address;
+  if Settings.Ipv6Gateway <> '' then
+    Result := Result + ' via ' + Settings.Ipv6Gateway;
+end;
+
 function SetNetworkInterface(const Request: TSystemSettingsRequest): LongInt;
 var
   Settings: TInterfaceSettings;
@@ -90,6 +121,8 @@ begin
   Settings.Configured := True;
   if not IsConfigurableInterface(Settings.Name) then
     Exit(ErrorNotFound);
+  if not TakeIpv6Fields(Request, Settings) then
+    Exit(ErrorInvalidArgument);
   Problem := CheckInterfaceSettings(Settings);
   if Problem <> NetworkSettingsValid then
   begin
@@ -98,9 +131,9 @@ begin
   end;
   Result := WriteSettings(Settings);
   if Result = ErrorNone then
-    Say(Format('network interface %s: %s %s%s, %s', [Settings.Name, NetworkMethodName(Settings.Method),
+    Say(Format('network interface %s: %s %s%s, %s, %s', [Settings.Name, NetworkMethodName(Settings.Method),
       Settings.Address, BoolToStr(Settings.Gateway <> '', ' via ' + Settings.Gateway, ''),
-      BoolToStr(Settings.Up, 'up', 'down')]));
+      BoolToStr(Settings.Up, 'up', 'down'), Ipv6Summary(Settings)]));
 end;
 
 function SetDnsServers(const Request: TSystemSettingsRequest): LongInt;

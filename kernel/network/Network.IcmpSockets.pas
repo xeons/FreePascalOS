@@ -30,8 +30,13 @@
   A raw ICMP socket (SocketKindRaw) is root's: it sends ICMP messages as
   given and receives a copy of every ICMP message that arrives.
 
-  Messages are read whole, from the ICMP header on (no IPv4 header);
-  SocketOptionReceivedTimeToLive gives the time to live of the last one.
+  Messages are read whole, from the ICMP header on (no IP header);
+  SocketOptionReceivedTimeToLive gives the time to live (hop limit) of
+  the last one.
+
+  An IPv6 socket of either kind does the same with ICMPv6: echo
+  requests are type 128, replies 129, and the kernel fills in the
+  checksum (which covers the IPv6 pseudo-header) of everything sent.
 }
 unit Network.IcmpSockets;
 
@@ -43,12 +48,13 @@ interface
 uses
   Network.Addresses,
   Network.Ipv4,
-  Network.Sockets;
+  Network.Sockets,
+  Network.IpDatagrams;
 
 { A copy of an ICMP message for every raw socket. }
-procedure DeliverToRawSockets(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure DeliverToRawSockets(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 { An echo reply, or an error about an echo request, with Identifier. }
-procedure DeliverEchoMessage(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord;
+procedure DeliverEchoMessage(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord;
   Identifier: Word);
 function SendIcmpMessage(Socket: PSocket; Data: PByte; Length: LongWord;
   constref Destination: TNetworkEndpoint): Int64;
@@ -62,36 +68,40 @@ uses
   Network.Checksums,
   Network.Packets,
   Network.Icmp,
+  Network.Icmpv6,
+  Network.Ipv6,
+  Network.IpOutput,
   Network.Udp,
   Network.DatagramSockets;
 
-procedure DeliverToRawSockets(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord);
+procedure DeliverToRawSockets(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 var
   Socket: PSocket;
   Source: TNetworkEndpoint;
 begin
-  Source := MakeEndpoint(Datagram.Source, 0);
+  Source := DatagramSource(Datagram, 0);
   Socket := FirstSocket;
   while Socket <> nil do
   begin
-    if (Socket^.Protocol = SocketProtocolIcmpRaw) and
+    if (Socket^.Protocol = SocketProtocolIcmpRaw) and (Socket^.Family = Datagram.Family) and
        ((Socket^.BoundInterface = nil) or (Socket^.BoundInterface = Datagram.ArrivalInterface)) then
       QueueDatagramForSocket(Socket, Source, Datagram.TimeToLive, Message, Length);
     Socket := NextSocket(Socket);
   end;
 end;
 
-procedure DeliverEchoMessage(constref Datagram: TIpv4Datagram; Message: PByte; Length: LongWord;
+procedure DeliverEchoMessage(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord;
   Identifier: Word);
 var
   Socket: PSocket;
   Source: TNetworkEndpoint;
 begin
-  Source := MakeEndpoint(Datagram.Source, 0);
+  Source := DatagramSource(Datagram, 0);
   Socket := FirstSocket;
   while Socket <> nil do
   begin
-    if (Socket^.Protocol = SocketProtocolIcmpEcho) and Socket^.IsBound and (Socket^.Local.Port = Identifier) then
+    if (Socket^.Protocol = SocketProtocolIcmpEcho) and (Socket^.Family = Datagram.Family) and Socket^.IsBound and
+       (Socket^.Local.Port = Identifier) then
       QueueDatagramForSocket(Socket, Source, Datagram.TimeToLive, Message, Length);
     Socket := NextSocket(Socket);
   end;
@@ -100,25 +110,36 @@ end;
 function SendIcmpMessage(Socket: PSocket; Data: PByte; Length: LongWord;
   constref Destination: TNetworkEndpoint): Int64;
 var
-  Target: TIpv4Address;
-  Source: TIpv4Address;
+  Target: TNetworkEndpoint;
+  Source: TNetworkEndpoint;
   Packet: PPacket;
   Message: PByte;
   Error: LongInt;
+  EchoRequestType: Byte;
+  Protocol: Byte;
+  Sum: LongWord;
 begin
   if Length < IcmpHeaderBytes then
     Exit(-ErrorInvalidArgument);
-  if (Socket^.Protocol = SocketProtocolIcmpEcho) and ((Data[0] <> IcmpTypeEchoRequest) or (Data[1] <> 0)) then
+  EchoRequestType := IcmpTypeEchoRequest;
+  Protocol := IpProtocolIcmp;
+  if Socket^.Family = AddressFamilyIPv6 then
+  begin
+    EchoRequestType := Icmpv6TypeEchoRequest;
+    Protocol := NextHeaderIcmpv6;
+  end;
+  if (Socket^.Protocol = SocketProtocolIcmpEcho) and ((Data[0] <> EchoRequestType) or (Data[1] <> 0)) then
     Exit(-ErrorInvalidArgument);
-  Target := Destination.Address;
-  if Target = AnyAddress then
-    Target := LoopbackAddress;
-  if IsBroadcastAddress(Target, Socket^.BoundInterface) and not Socket^.BroadcastAllowed then
+  Target := Destination;
+  if EndpointIsUnspecified(Target) then
+    Target := LoopbackEndpoint(Target.Family, 0);
+  if (Target.Family = AddressFamilyIPv4) and IsBroadcastAddress(Target.Address, Socket^.BoundInterface) and
+     not Socket^.BroadcastAllowed then
     Exit(-ErrorAccessDenied);
   Error := DatagramSourceAddress(Socket, Target, Source);
   if Error <> ErrorNone then
     Exit(-Error);
-  if Length > PayloadLimit(Target, Socket^.BoundInterface) then
+  if Length > IpPayloadLimit(Target, Socket^.BoundInterface) then
     Exit(-ErrorMessageTooLong);
   Error := BindDatagramSocketImplicitly(Socket);
   if Error <> ErrorNone then
@@ -134,12 +155,19 @@ begin
   end;
   CopyMemory(Message, Data, Length);
   if Socket^.Protocol = SocketProtocolIcmpEcho then
-  begin
     WriteBigEndian16(Message + 4, Socket^.Local.Port);
+  if Socket^.Family = AddressFamilyIPv6 then
+  begin
+    WriteBigEndian16(Message + 2, 0);
+    Sum := TransportPseudoHeaderSum(Source, Target, NextHeaderIcmpv6, Length);
+    WriteBigEndian16(Message + 2, FinishChecksum(AddToChecksum(Sum, Message, Length)));
+  end
+  else if Socket^.Protocol = SocketProtocolIcmpEcho then
+  begin
     WriteBigEndian16(Message + 2, 0);
     WriteBigEndian16(Message + 2, InternetChecksum(Message, Length));
   end;
-  Error := SendIpv4(Packet, Source, Target, IpProtocolIcmp, Socket^.TimeToLive, False, Socket^.BoundInterface);
+  Error := SendIpPacket(Packet, Source, Target, Protocol, Socket^.TimeToLive, False, Socket^.BoundInterface);
   if Error <> ErrorNone then
     Exit(-Error);
   Result := Length;

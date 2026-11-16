@@ -6,8 +6,12 @@
 #
 # Per interface: Method "dhcp", "static" (Address = "A.B.C.D/N",
 # Gateway = "A.B.C.D") or "none" (left alone); Up = false turns it off.
-# An interface without a section is left alone.
-# DnsServers: empty for those DHCP gives; a list overrides them.
+# Ipv6Method "auto" (from routers' advertisements), "static"
+# (Ipv6Address = "fd00::10/64", Ipv6Gateway optional) or "none" (IPv6
+# off); without one it is auto.
+# An interface without a section is left alone (and IPv6 auto).
+# DnsServers: empty for those DHCP (and IPv6 routers) give; a list of
+# IPv4 or IPv6 addresses overrides them.
 # SearchDomain: empty for the domain DHCP gives.
 DnsServers = []
 SearchDomain = ""

@@ -67,6 +67,9 @@ type
   TSocket = record
     { On the list of every socket. }
     Link: TListEntry;
+    { AddressFamilyIPv4 or AddressFamilyIPv6: its endpoints are of this
+      family, and it sees only this family's traffic. }
+    Family: Word;
     { SocketKind* without the non-blocking flag. }
     Kind: LongWord;
     Protocol: TSocketProtocol;
@@ -103,7 +106,8 @@ type
 procedure InitializeSockets;
 { A new socket (referenced once, for its first handle), on the list of
   sockets, under the lock. }
-function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; constref Owner: TSocketOwner): PSocket;
+function AllocateSocket(Family: Word; Kind: LongWord; Protocol: TSocketProtocol;
+  constref Owner: TSocketOwner): PSocket;
 { Every socket, for listings and for finding who gets a datagram. }
 function FirstSocket: PSocket;
 function NextSocket(Socket: PSocket): PSocket;
@@ -163,17 +167,19 @@ begin
   InitializeListHead(AllSockets);
 end;
 
-function AllocateSocket(Kind: LongWord; Protocol: TSocketProtocol; constref Owner: TSocketOwner): PSocket;
+function AllocateSocket(Family: Word; Kind: LongWord; Protocol: TSocketProtocol;
+  constref Owner: TSocketOwner): PSocket;
 begin
   Result := PSocket(CreateObject(SocketObjectType, nil));
   if Result = nil then
     Exit;
+  Result^.Family := Family;
   Result^.Kind := Kind;
   Result^.Protocol := Protocol;
   Result^.Owner := Owner;
   Result^.TimeToLive := 64;
-  Result^.Local := MakeEndpoint(AnyAddress, 0);
-  Result^.Peer := MakeEndpoint(AnyAddress, 0);
+  Result^.Local := UnspecifiedEndpoint(Family);
+  Result^.Peer := UnspecifiedEndpoint(Family);
   InitializeDatagramQueue(Result^.Datagrams);
   InitializeEvent(Result^.Readable, EventKindNotification, False);
   InitializeEvent(Result^.Writable, EventKindNotification, False);

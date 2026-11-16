@@ -501,14 +501,27 @@ normalized (0-65535), not pixels.
       P-256 key exchange (only x25519 is offered), session resumption,
       OCSP / revocation, TLS 1.2 for servers without 1.3, Ed25519 and P-521
       certificates
-- [ ] wget: keep-alive (one request per connection now), IPv6, cookies,
+- [ ] wget: keep-alive (one request per connection now), cookies,
       authentication, recursion (-r), --trust-server-names, gzip
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no
       adapter; a pop-up listing the interfaces); balloons when the link goes
       down or up wait for notification balloons on the desktop
-- [ ] IPv6 (addresses already carry a family)
+- [x] IPv6: input and output over Ethernet and lo, extension headers,
+      reassembly, ICMPv6, Neighbor Discovery (neighbour cache, DAD), router
+      solicitation and advertisements (SLAAC, default route, MTU, RDNSS),
+      MLDv2 reports, IPv6 routes, TCP/UDP/ICMP sockets of both families;
+      resolver ordering (IPv6 first when reachable) and DNS over IPv6; ping
+      -6, ifconfig inet6, route -6, ndp, netstat tcp6/udp6, nc -6, wget
+      [v6] URLs; per interface Ipv6Method in Network.settings, the Control
+      Panel and the network pop-up
+- [ ] IPv6 later: DHCPv6 (stateful addresses, the M and O flags), privacy
+      addresses (RFC 8981), sending fragments and path MTU discovery
+      (packet too big is ignored), redirects, MLD reports for groups
+      programs join (no multicast sockets yet), source address
+      selection's full RFC 6724 policy table, v4-mapped addresses on IPv6
+      sockets, a stable-privacy identifier (RFC 7217) instead of EUI-64
 - [ ] Wi-Fi (later, a project of its own): the Intel CNVi driver
       (Alder Lake-P, 8086:51f0) with its firmware from linux-firmware
       (iwlwifi licence, in firmware/ beside the Realtek files), scanning,

@@ -433,10 +433,10 @@ const
     only; ErrorInvalidArgument for another name. }
   CallSetNodeName = 124;
 
-  { 125: CallWatchNetworkChanges and 126: CallGetNetworkStatistics, in
-    Abi.Networking.inc. }
+  { 125: CallWatchNetworkChanges, 126: CallGetNetworkStatistics and 127:
+    CallListNeighbors, in Abi.Networking.inc. }
 
-  CallCount = 127;
+  CallCount = 128;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;

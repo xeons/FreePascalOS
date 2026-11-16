@@ -46,7 +46,10 @@ uses
   Runtime.Memory,
   Kernel.Scheduler,
   Objects.Manager,
+  Runtime.Text,
+  Io.NetworkAdapters,
   Network.Addresses,
+  Network.Ipv6Addresses,
   Network.Checksums,
   Network.Core,
   Network.Sockets,
@@ -79,10 +82,14 @@ begin
   Result.ProcessId := 0;
 end;
 
+function NewSocketOf(Family: Word; Kind: LongWord): PSocket;
+begin
+  Check(CreateSocket(Family, Kind, ProtocolDefault, KernelOwner, True, Result) = ErrorNone, 'a socket is made');
+end;
+
 function NewSocket(Kind: LongWord): PSocket;
 begin
-  Check(CreateSocket(AddressFamilyIPv4, Kind, ProtocolDefault, KernelOwner, True, Result) = ErrorNone,
-    'a socket is made');
+  Result := NewSocketOf(AddressFamilyIPv4, Kind);
 end;
 
 function TcpStateOf(Socket: PSocket): TTcpState;
@@ -214,12 +221,85 @@ begin
   ReportPassed('network TCP handshake, data and close over loopback');
 end;
 
+procedure TestIpv6Addresses;
+const
+  Hardware: TEthernetAddress = ($52, $54, $00, $12, $34, $56);
+  ExpectedLinkLocal: TIpv6Address = ($FE, $80, 0, 0, 0, 0, 0, 0, $50, $54, $00, $FF, $FE, $12, $34, $56);
+  ExpectedSolicited: TIpv6Address = ($FF, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, $FF, $12, $34, $56);
+var
+  LinkLocal: TIpv6Address;
+  Text: array[0..Ipv6AddressTextCapacity - 1] of Char;
+  Group: TEthernetAddress;
+begin
+  LinkLocal := LinkLocalAddressFor(Hardware);
+  Check(Ipv6AddressesEqual(LinkLocal, ExpectedLinkLocal), 'the EUI-64 link-local address of 52:54:00:12:34:56');
+  Check(Ipv6AddressesEqual(SolicitedNodeAddress(LinkLocal), ExpectedSolicited), 'its solicited-node group');
+  Group := MulticastEthernetAddress(ExpectedSolicited);
+  Check((Group[0] = $33) and (Group[1] = $33) and (Group[2] = $FF) and (Group[5] = $56),
+    'the group''s Ethernet address');
+  FormatIpv6Address(LinkLocal, @Text[0]);
+  Check(TextIsEqual(@Text[0], 'fe80::5054:ff:fe12:3456'), 'an IPv6 address written as RFC 5952 says');
+  FormatIpv6Address(LoopbackIpv6Address, @Text[0]);
+  Check(TextIsEqual(@Text[0], '::1'), '::1 written');
+  Check(CommonIpv6PrefixLength(LinkLocal, ExpectedSolicited) = 7, 'the common prefix of two addresses');
+  Check(SameIpv6Prefix(LinkLocal, Ipv6PrefixOf(LinkLocal, 64), 64), 'an address shares its own prefix');
+  ReportPassed('network IPv6 addresses');
+end;
+
+procedure TestIpv6Loopback;
+var
+  Receiver: PSocket;
+  Sender: PSocket;
+  Listener: PSocket;
+  Client: PSocket;
+  Server: PSocket;
+  Bound: TNetworkEndpoint;
+  Source: TNetworkEndpoint;
+  Peer: TNetworkEndpoint;
+  Text: array[0..15] of Byte;
+begin
+  Receiver := NewSocketOf(AddressFamilyIPv6, SocketKindDatagram);
+  Sender := NewSocketOf(AddressFamilyIPv6, SocketKindDatagram);
+  Check(BindSocket(Receiver, LoopbackEndpoint(AddressFamilyIPv6, 0), True) = ErrorNone, 'a UDP socket binds ::1');
+  Check(BindSocket(Sender, MakeEndpoint(LoopbackAddress, 0), True) = ErrorAddressFamilyNotSupported,
+    'an IPv6 socket takes no IPv4 address');
+  GetSocketEndpoint(Receiver, SocketAddressLocal, Bound);
+  SetSocketOption(Receiver, SocketOptionReceiveTimeout, TimeoutMilliseconds, True);
+  Text[0] := Ord('v');
+  Text[1] := Ord('6');
+  Check(SendOnSocket(Sender, @Text[0], 2, 0, @Bound) = 2, 'a UDP datagram is sent to ::1');
+  FillMemory(@Text[0], SizeOf(Text), 0);
+  Check((ReceiveOnSocket(Receiver, @Text[0], SizeOf(Text), 0, Source) = 2) and (Text[1] = Ord('6')),
+    'the UDP datagram arrives over IPv6');
+  Check((Source.Family = AddressFamilyIPv6) and IsLoopbackIpv6Address(Source.Address6), 'from ::1');
+  DereferenceObject(Sender);
+  DereferenceObject(Receiver);
+
+  Listener := NewSocketOf(AddressFamilyIPv6, SocketKindStream);
+  Check(BindSocket(Listener, UnspecifiedEndpoint(AddressFamilyIPv6), True) = ErrorNone, 'a TCP listener binds ::');
+  Check(ListenOnSocket(Listener, 2) = ErrorNone, 'it listens');
+  GetSocketEndpoint(Listener, SocketAddressLocal, Bound);
+  SetSocketOption(Listener, SocketOptionReceiveTimeout, TimeoutMilliseconds, True);
+  Client := NewSocketOf(AddressFamilyIPv6, SocketKindStream);
+  SetSocketOption(Client, SocketOptionSendTimeout, TimeoutMilliseconds, True);
+  Check(ConnectSocket(Client, LoopbackEndpoint(AddressFamilyIPv6, Bound.Port)) = ErrorNone,
+    'a TCP connection to [::1] is made');
+  Check(AcceptOnSocket(Listener, KernelOwner, Server, Peer) = ErrorNone, 'and accepted');
+  Check((Peer.Family = AddressFamilyIPv6) and IsLoopbackIpv6Address(Peer.Address6), 'from ::1');
+  DereferenceObject(Server);
+  DereferenceObject(Client);
+  DereferenceObject(Listener);
+  ReportPassed('network UDP and TCP over IPv6 loopback');
+end;
+
 procedure RunNetworkSelfTests;
 begin
   TestChecksums;
   TestUdp;
   TestRefusedConnection;
   TestTcpConnection;
+  TestIpv6Addresses;
+  TestIpv6Loopback;
 end;
 
 end.

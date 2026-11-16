@@ -47,13 +47,13 @@ interface
 
 uses
   Network.Addresses,
-  Network.Ipv4;
+  Network.Ipv4,
+  Network.IpDatagrams;
 
-procedure TcpInput(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord);
-{ An ICMP error about a segment we sent (its endpoints as we sent it):
-  while connecting, "unreachable" ends the attempt. }
-procedure TcpReportError(Source, Destination: TIpv4Address; SourcePort, DestinationPort: Word;
-  Sequence: LongWord; IcmpType, Code: Byte);
+procedure TcpInput(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord);
+{ A destination unreachable about a segment we sent (its endpoints as
+  we sent it): while connecting, it ends the attempt with Error. }
+procedure TcpReportError(constref Local, Remote: TNetworkEndpoint; Sequence: LongWord; Error: LongInt);
 
 implementation
 
@@ -73,7 +73,6 @@ uses
   Network.Statistics;
 
 const
-  IcmpTypeDestinationUnreachable = 3;
   DuplicateAcksForFastRetransmit = 3;
 
 function Minimum(First, Second: LongWord): LongWord;
@@ -91,14 +90,14 @@ begin
   PeerMss := Segment.PeerMss;
   if PeerMss = 0 then
     PeerMss := DefaultPeerMss;
-  Result := Minimum(PeerMss, OwnMaximumSegment(Connection^.Remote.Address, Connection^.BoundInterface));
+  Result := Minimum(PeerMss, OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface));
   if Result < 64 then
     Result := 64;
 end;
 
 { --- LISTEN --------------------------------------------------------------- }
 
-procedure HandleListen(Listener: PTcpConnection; constref Datagram: TIpv4Datagram;
+procedure HandleListen(Listener: PTcpConnection; constref Datagram: TIpDatagram;
   constref Segment: TTcpSegment);
 var
   Child: PTcpConnection;
@@ -120,8 +119,8 @@ begin
     FreeTcpConnection(Child);
     Exit;
   end;
-  Child^.Local := MakeEndpoint(Datagram.Destination, Segment.DestinationPort);
-  Child^.Remote := MakeEndpoint(Datagram.Source, Segment.SourcePort);
+  Child^.Local := DatagramDestination(Datagram, Segment.DestinationPort);
+  Child^.Remote := DatagramSource(Datagram, Segment.SourcePort);
   Child^.BoundInterface := Listener^.BoundInterface;
   Child^.TimeToLive := Listener^.TimeToLive;
   Child^.NoDelay := Listener^.NoDelay;
@@ -143,7 +142,7 @@ end;
 
 { --- SYN_SENT ------------------------------------------------------------- }
 
-procedure HandleSynSent(Connection: PTcpConnection; constref Datagram: TIpv4Datagram;
+procedure HandleSynSent(Connection: PTcpConnection; constref Datagram: TIpDatagram;
   constref Segment: TTcpSegment);
 var
   HasAck: Boolean;
@@ -458,7 +457,7 @@ end;
 
 { SYN_RECEIVED: the ACK that completes the handshake. False if the
   segment goes no further. }
-function CompleteHandshake(Connection: PTcpConnection; constref Datagram: TIpv4Datagram;
+function CompleteHandshake(Connection: PTcpConnection; constref Datagram: TIpDatagram;
   constref Segment: TTcpSegment): Boolean;
 begin
   if not (SequenceAfter(Segment.Acknowledgment, Connection^.SendUnacknowledged) and
@@ -478,7 +477,7 @@ begin
   Result := True;
 end;
 
-procedure HandleSynchronized(Connection: PTcpConnection; constref Datagram: TIpv4Datagram;
+procedure HandleSynchronized(Connection: PTcpConnection; constref Datagram: TIpDatagram;
   Segment: TTcpSegment);
 var
   InOrder: Boolean;
@@ -534,7 +533,7 @@ begin
   TcpOutput(Connection);
 end;
 
-procedure TcpInput(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord);
+procedure TcpInput(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord);
 var
   Segment: TTcpSegment;
   Connection: PTcpConnection;
@@ -549,11 +548,11 @@ begin
   Inc(NetworkStatistics.Tcp.SegmentsReceived);
   if Datagram.IsBroadcast then
     Exit;
-  Connection := FindTcpConnection(Datagram.Destination, Segment.DestinationPort, Datagram.Source,
-    Segment.SourcePort);
+  Connection := FindTcpConnection(DatagramDestination(Datagram, Segment.DestinationPort),
+    DatagramSource(Datagram, Segment.SourcePort));
   if Connection = nil then
   begin
-    Listener := FindTcpListener(Datagram.Destination, Segment.DestinationPort);
+    Listener := FindTcpListener(DatagramDestination(Datagram, Segment.DestinationPort));
     if Listener <> nil then
       HandleListen(Listener, Datagram, Segment)
     else
@@ -566,24 +565,16 @@ begin
     HandleSynchronized(Connection, Datagram, Segment);
 end;
 
-procedure TcpReportError(Source, Destination: TIpv4Address; SourcePort, DestinationPort: Word;
-  Sequence: LongWord; IcmpType, Code: Byte);
+procedure TcpReportError(constref Local, Remote: TNetworkEndpoint; Sequence: LongWord; Error: LongInt);
 var
   Connection: PTcpConnection;
-  Error: LongInt;
 begin
-  Connection := FindTcpConnection(Source, SourcePort, Destination, DestinationPort);
-  if (Connection = nil) or (Connection^.State <> TcpSynSent) or (IcmpType <> IcmpTypeDestinationUnreachable) then
+  Connection := FindTcpConnection(Local, Remote);
+  if (Connection = nil) or (Connection^.State <> TcpSynSent) then
     Exit;
   if SequenceBefore(Sequence, Connection^.SendUnacknowledged) or
      SequenceAfter(Sequence, Connection^.SendMaximum) then
     Exit;
-  case Code of
-    0: Error := ErrorNetworkUnreachable;
-    1: Error := ErrorHostUnreachable;
-  else
-    Error := ErrorConnectionRefused;
-  end;
   CloseTcpConnection(Connection, Error, False);
 end;
 

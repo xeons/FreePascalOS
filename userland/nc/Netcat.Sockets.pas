@@ -30,15 +30,19 @@ uses
   Abi.SystemCalls,
   Sys.InternetAddresses;
 
-{ The address of Host (numeric only with -n); ends nc if there is none. }
+{ The address of Host (numeric only with -n; an IPv6 address may be in
+  brackets) of the families -4 and -6 allow, the one to try first; ends
+  nc if there is none. }
 function ResolveHost(Host: PChar): TInternetAddress;
+{ The unspecified address (0.0.0.0, or :: with -6) to listen on. }
+function AnyListeningAddress: TInternetAddress;
 { A TCP or UDP socket (-u), bound to -p's port if one was given (with
   Address as the local address); ends nc on failure. }
 function OpenSocket(constref LocalAddress: TInternetAddress; LocalPort: Word): Int64;
 { "tcp" or "udp". }
 function TransportName: PChar;
 { The address part of Address as text, into Buffer
-  (Ipv4AddressTextCapacity). }
+  (InternetAddressTextCapacity). }
 function HostText(constref Address: TAbiSocketAddress; Buffer: PChar): PChar;
 
 implementation
@@ -47,25 +51,56 @@ uses
   Sys.Errors,
   Sys.Format,
   Sys.HostNames,
+  Sys.HostLookup,
+  Sys.AddressText,
   Sys.Sockets,
   Util.Messages,
   Netcat.Settings;
 
+function FamilyIsAllowed(Family: Word): Boolean;
+begin
+  case Family of
+    AddressFamilyIPv4: Result := (Settings.Families and HostFamilyIpv4) <> 0;
+    AddressFamilyIPv6: Result := (Settings.Families and HostFamilyIpv6) <> 0;
+  else
+    Result := False;
+  end;
+end;
+
 function ResolveHost(Host: PChar): TInternetAddress;
 var
   Error: LongInt;
+  Name: AnsiString;
+  Port: AnsiString;
+  Addresses: TInternetAddressArray;
 begin
-  if Settings.NumericOnly then
+  { "[::1]" as a URL writes it. }
+  if not SplitHostAndPort(Host, Name, Port) or (Port <> '') then
+    Name := Host;
+  if ParseInternetAddress(PChar(Name), Result) then
   begin
-    if not ParseIpv4Address(Host, Result) then
-      Fail(1, '%s: not a numeric address (-n)', [ArgumentText(Host)]);
+    if not FamilyIsAllowed(Result.Family) then
+      Fail(1, '%s: Address family for hostname not supported', [ArgumentText(Host)]);
     Exit;
   end;
-  Error := LookUpHost(Host, Result);
+  if Settings.NumericOnly then
+    Fail(1, '%s: not a numeric address (-n)', [ArgumentText(Host)]);
+  Error := Sys.HostLookup.ResolveHost(Name, Settings.Families, Addresses);
+  if (Error = ErrorNone) and (Length(Addresses) = 0) then
+    Error := ErrorNotFound;
   if Error = ErrorNotFound then
     Fail(1, '%s: Name or service not known', [ArgumentText(Host)]);
   if Error <> ErrorNone then
     FailWithError(1, Error, '%s', [ArgumentText(Host)]);
+  Result := Addresses[0];
+end;
+
+function AnyListeningAddress: TInternetAddress;
+begin
+  if Settings.Families = HostFamilyIpv6 then
+    Result := AnyIpv6Address
+  else
+    Result := AnyIpv4Address;
 end;
 
 function OpenSocket(constref LocalAddress: TInternetAddress; LocalPort: Word): Int64;
@@ -77,7 +112,7 @@ begin
     Kind := SocketKindDatagram
   else
     Kind := SocketKindStream;
-  Result := CreateSocket(AddressFamilyIPv4, Kind, ProtocolDefault);
+  Result := CreateSocket(LocalAddress.Family, Kind, ProtocolDefault);
   if Result < 0 then
     FailWithError(1, ErrorCodeOf(Result), 'cannot make a socket', []);
   if (LocalPort = 0) and AddressIsUnspecified(LocalAddress) then
@@ -98,7 +133,7 @@ end;
 
 function HostText(constref Address: TAbiSocketAddress; Buffer: PChar): PChar;
 begin
-  Result := FormatInternetAddress(SocketAddressHost(Address), Buffer, Ipv4AddressTextCapacity);
+  Result := FormatInternetAddress(SocketAddressHost(Address), Buffer, InternetAddressTextCapacity);
 end;
 
 end.

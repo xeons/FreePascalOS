@@ -19,7 +19,7 @@
 {
   ping - send ICMP echo requests to a host
 
-  ping [-q] [-n] [-c COUNT] [-i INTERVAL] [-W TIMEOUT] [-s SIZE] [-t TTL] HOST
+  ping [-4|-6] [-q] [-n] [-c COUNT] [-i INTERVAL] [-W TIMEOUT] [-s SIZE] [-t TTL] HOST
 
   Sends an echo request every INTERVAL seconds (1) and prints each
   reply as it comes, like iputils' ping; COUNT requests (all of them
@@ -33,15 +33,21 @@
 
   It uses an ICMP echo socket, which anyone may open (the kernel keeps
   it to echo requests and their replies). HOST is a name or an address,
-  looked up by Sys.HostNames (/etc/hosts, then DNS); the first line
+  looked up by Sys.HostLookup (/etc/hosts, then DNS); the first line
   shows both, "PING name (address)", as iputils does. Replies are shown
   by address (-n is taken and changes nothing).
+
+  IPv6 works the same with ICMPv6: an IPv6 address is pinged over IPv6,
+  a name over the family the resolver puts first (IPv6 when this
+  machine can reach the address), or the one -4 or -6 asks for. A
+  link-local address takes its interface after a % (fe80::2%eth0).
 
   Exit status: 0 if a reply came, 1 if none did, 2 on errors.
 }
 program ping;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 uses
@@ -55,6 +61,8 @@ uses
   Sys.Sockets,
   Sys.InternetAddresses,
   Sys.HostNames,
+  Sys.HostLookup,
+  Sys.AddressText,
   Sys.Streams,
   Sys.Text,
   Util.Messages,
@@ -69,6 +77,8 @@ const
     '  -W TIMEOUT    seconds to wait for replies after the last request (10)'#10 +
     '  -s SIZE       bytes of data in each request (56)'#10 +
     '  -t TTL        time to live of the requests (64)'#10 +
+    '  -4            use IPv4 only'#10 +
+    '  -6            use IPv6 only'#10 +
     '  -q            show only the summary'#10 +
     '  -n            numeric output (replies are always shown by address)'#10;
 
@@ -79,8 +89,22 @@ const
   OptionTimeToLive = 5;
   OptionQuiet = 6;
   OptionNumeric = 7;
+  OptionIpv4 = 8;
+  OptionIpv6 = 9;
 
   IcmpHeaderBytes = 8;
+  Ipv4HeaderBytes = 20;
+  Ipv6HeaderBytes = 40;
+  Icmpv4EchoRequest = 8;
+  Icmpv4EchoReply = 0;
+  Icmpv4DestinationUnreachable = 3;
+  Icmpv4TimeExceeded = 11;
+  Icmpv6DestinationUnreachable = 1;
+  Icmpv6PacketTooBig = 2;
+  Icmpv6TimeExceeded = 3;
+  Icmpv6ParameterProblem = 4;
+  Icmpv6EchoRequest = 128;
+  Icmpv6EchoReply = 129;
   TimestampBytes = 8;
   MaximumDataBytes = 65507;
   BufferBytes = 2048;
@@ -108,9 +132,13 @@ var
   DataBytes: QWord = 56;
   TimeToLive: QWord = 0;
   Quiet: Boolean = False;
+  { HostFamily* of Sys.HostNames. }
+  Families: LongWord = HostFamilyAny;
   HostText: PChar;
   Destination: TInternetAddress;
-  DestinationText: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  { The interface of a link-local destination (fe80::2%eth0). }
+  DestinationScope: LongWord = 0;
+  DestinationText: string;
   Socket: Int64;
   Statistics: TStatistics;
   { Which sequence numbers were answered (to tell duplicates). }
@@ -145,6 +173,8 @@ begin
     OptionDefinition('W', 'timeout', True, OptionTimeout),
     OptionDefinition('s', 'size', True, OptionSize),
     OptionDefinition('t', 'ttl', True, OptionTimeToLive),
+    OptionDefinition('4', nil, False, OptionIpv4),
+    OptionDefinition('6', nil, False, OptionIpv6),
     OptionDefinition('q', 'quiet', False, OptionQuiet),
     OptionDefinition('n', 'numeric', False, OptionNumeric)], Usage);
   while NextOption(Parser, Code, Value) do
@@ -155,6 +185,8 @@ begin
       OptionSize: ParseNumber(Value, 0, MaximumDataBytes, 'packet size', DataBytes);
       OptionTimeToLive: ParseNumber(Value, 1, 255, 'TTL', TimeToLive);
       OptionQuiet: Quiet := True;
+      OptionIpv4: Families := HostFamilyIpv4;
+      OptionIpv6: Families := HostFamilyIpv6;
     end;
   if Parser.OperandCount = 0 then
     FailWithUsageHint('missing host operand', []);
@@ -163,22 +195,49 @@ begin
   HostText := Parser.Operands[0];
 end;
 
-{ The one place a host becomes an address (names: Sys.HostNames). }
+{ The one place a host becomes an address (names: Sys.HostLookup). }
 procedure ResolveDestination;
 var
   Error: LongInt;
+  Addresses: TInternetAddressArray;
 begin
-  Error := LookUpHost(HostText, Destination);
-  if Error <> ErrorNone then
-    Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText(HostLookupErrorMessage(Error))]);
-  FormatInternetAddress(Destination, @DestinationText[0], SizeOf(DestinationText));
+  if TextToScopedAddress(HostText, Destination, DestinationScope) then
+  begin
+    if ((Destination.Family = AddressFamilyIPv4) and ((Families and HostFamilyIpv4) = 0)) or
+       ((Destination.Family = AddressFamilyIPv6) and ((Families and HostFamilyIpv6) = 0)) then
+      Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText('Address family for hostname not supported')]);
+  end
+  else
+  begin
+    Error := ResolveHost(HostText, Families, Addresses);
+    if (Error = ErrorNone) and (Length(Addresses) = 0) then
+      Error := ErrorNotFound;
+    if Error <> ErrorNone then
+      Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText(HostLookupErrorMessage(Error))]);
+    Destination := Addresses[0];
+  end;
+  DestinationText := AddressToText(Destination);
+end;
+
+function DestinationAddress: TAbiSocketAddress;
+begin
+  Result := MakeSocketAddress(Destination, 0);
+  Result.ScopeId := DestinationScope;
+end;
+
+function IsIpv6: Boolean;
+begin
+  Result := Destination.Family = AddressFamilyIPv6;
 end;
 
 procedure OpenSocket;
 var
   Error: LongInt;
 begin
-  Socket := CreateSocket(AddressFamilyIPv4, SocketKindDatagram, ProtocolIcmp);
+  if IsIpv6 then
+    Socket := CreateSocket(AddressFamilyIPv6, SocketKindDatagram, ProtocolIcmpv6)
+  else
+    Socket := CreateSocket(AddressFamilyIPv4, SocketKindDatagram, ProtocolIcmp);
   if Socket < 0 then
     FailWithError(2, ErrorCodeOf(Socket), 'socket', []);
   if TimeToLive <> 0 then
@@ -188,7 +247,8 @@ begin
       FailWithError(2, Error, 'cannot set the time to live', []);
   end;
   { Broadcasts are answered by no one here, but asking is allowed. }
-  SetSocketOption(Socket, SocketOptionBroadcast, 1);
+  if not IsIpv6 then
+    SetSocketOption(Socket, SocketOptionBroadcast, 1);
 end;
 
 procedure SendRequest(Sequence: LongWord);
@@ -202,7 +262,10 @@ begin
   Length := IcmpHeaderBytes + DataBytes;
   Packet := PByte(GetMem(Length));
   FillMemory(Packet, IcmpHeaderBytes, 0);
-  Packet[0] := 8;
+  if IsIpv6 then
+    Packet[0] := Icmpv6EchoRequest
+  else
+    Packet[0] := Icmpv4EchoRequest;
   Packet[6] := Byte(Sequence shr 8);
   Packet[7] := Byte(Sequence);
   Index := 0;
@@ -216,7 +279,7 @@ begin
     Stamp := NowNanoseconds;
     CopyMemory(Packet + IcmpHeaderBytes, @Stamp, TimestampBytes);
   end;
-  Sent := SendSocketTo(Socket, Packet, Length, 0, MakeSocketAddress(Destination, 0));
+  Sent := SendSocketTo(Socket, Packet, Length, 0, DestinationAddress);
   FreeMem(Packet);
   Inc(Statistics.Sent);
   if Sent < 0 then
@@ -298,9 +361,28 @@ begin
   FlushStream(StandardOutput);
 end;
 
+function Ipv6ErrorDescription(IcmpType, Code: Byte): PChar;
+begin
+  case IcmpType of
+    Icmpv6PacketTooBig: Exit('Packet too big');
+    Icmpv6TimeExceeded: Exit('Time exceeded: Hop limit');
+    Icmpv6ParameterProblem: Exit('Parameter problem');
+  end;
+  case Code of
+    0: Result := 'Destination unreachable: No route';
+    1: Result := 'Destination unreachable: Administratively prohibited';
+    3: Result := 'Destination unreachable: Address unreachable';
+    4: Result := 'Destination unreachable: Port unreachable';
+  else
+    Result := 'Destination unreachable';
+  end;
+end;
+
 function ErrorDescription(IcmpType, Code: Byte): PChar;
 begin
-  if IcmpType = 11 then
+  if IsIpv6 then
+    Exit(Ipv6ErrorDescription(IcmpType, Code));
+  if IcmpType = Icmpv4TimeExceeded then
     Exit('Time to live exceeded');
   case Code of
     0: Result := 'Destination Net Unreachable';
@@ -317,9 +399,12 @@ var
   QuotedHeaderLength: QWord;
   Sequence: LongWord;
 begin
-  if Length < IcmpHeaderBytes + 20 + IcmpHeaderBytes then
+  if Length < IcmpHeaderBytes + Ipv4HeaderBytes + IcmpHeaderBytes then
     Exit;
-  QuotedHeaderLength := QWord(Message[IcmpHeaderBytes] and $0F) * 4;
+  if IsIpv6 then
+    QuotedHeaderLength := Ipv6HeaderBytes
+  else
+    QuotedHeaderLength := QWord(Message[IcmpHeaderBytes] and $0F) * 4;
   if Length < IcmpHeaderBytes + QuotedHeaderLength + IcmpHeaderBytes then
     Exit;
   Sequence := SequenceOf(Message + IcmpHeaderBytes + QuotedHeaderLength);
@@ -336,18 +421,25 @@ procedure ReceiveMessages;
 var
   Buffer: array[0..BufferBytes - 1] of Byte;
   Source: TAbiSocketAddress;
-  From: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  From: string;
   Length: Int64;
 begin
   repeat
     Length := ReceiveSocketFrom(Socket, @Buffer[0], SizeOf(Buffer), SocketFlagDontWait, Source);
     if Length < IcmpHeaderBytes then
       Exit;
-    FormatInternetAddress(SocketAddressHost(Source), @From[0], SizeOf(From));
-    case Buffer[0] of
-      0: HandleReply(@Buffer[0], QWord(Length), @From[0]);
-      3, 11: HandleError(@Buffer[0], QWord(Length), @From[0]);
-    end;
+    From := SocketHostToText(Source);
+    if IsIpv6 then
+      case Buffer[0] of
+        Icmpv6EchoReply: HandleReply(@Buffer[0], QWord(Length), PChar(From));
+        Icmpv6DestinationUnreachable, Icmpv6PacketTooBig, Icmpv6TimeExceeded, Icmpv6ParameterProblem:
+          HandleError(@Buffer[0], QWord(Length), PChar(From));
+      end
+    else
+      case Buffer[0] of
+        Icmpv4EchoReply: HandleReply(@Buffer[0], QWord(Length), PChar(From));
+        Icmpv4DestinationUnreachable, Icmpv4TimeExceeded: HandleError(@Buffer[0], QWord(Length), PChar(From));
+      end;
   until False;
 end;
 
@@ -471,14 +563,22 @@ begin
   WriteSummary((NowNanoseconds - Start) div NanosecondsPerMillisecond);
 end;
 
+function IpHeaderBytes: QWord;
+begin
+  if IsIpv6 then
+    Result := Ipv6HeaderBytes
+  else
+    Result := Ipv4HeaderBytes;
+end;
+
 begin
   ParseArguments;
   ResolveDestination;
   OpenSocket;
   TakeNotifications(NotifyEndRequests or NotifyEndInterrupt);
   WriteFormatted(StandardOutput, 'PING %s (%s) %u(%u) bytes of data.'#10, [ArgumentText(HostText),
-    ArgumentText(@DestinationText[0]), ArgumentUnsigned(DataBytes),
-    ArgumentUnsigned(DataBytes + IcmpHeaderBytes + 20)]);
+    ArgumentText(PChar(DestinationText)), ArgumentUnsigned(DataBytes),
+    ArgumentUnsigned(DataBytes + IcmpHeaderBytes + IpHeaderBytes)]);
   FlushStream(StandardOutput);
   RunPings;
   CloseSocket(Socket);

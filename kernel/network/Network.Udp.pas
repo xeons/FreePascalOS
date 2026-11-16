@@ -40,15 +40,16 @@ interface
 uses
   Network.Addresses,
   Network.Ipv4,
-  Network.Sockets;
+  Network.Sockets,
+  Network.IpDatagrams;
 
 const
   UdpHeaderBytes = 8;
 
-procedure UdpInput(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord);
-{ An ICMP error about a datagram we sent (its endpoints as we sent it). }
-procedure UdpReportError(Source, Destination: TIpv4Address; SourcePort, DestinationPort: Word;
-  IcmpType, Code: Byte);
+procedure UdpInput(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord);
+{ A destination unreachable about a datagram we sent (its endpoints as
+  we sent it): a connected socket hears of Error. }
+procedure UdpReportError(constref Local, Remote: TNetworkEndpoint; Error: LongInt);
 function SendUdpDatagram(Socket: PSocket; Data: PByte; Length: LongWord;
   constref Destination: TNetworkEndpoint): Int64;
 { True if Destination is a broadcast address for a socket bound to
@@ -65,7 +66,9 @@ uses
   Network.Packets,
   Network.Interfaces,
   Network.DatagramSockets,
+  Network.IpOutput,
   Network.Icmp,
+  Network.Icmpv6,
   Network.Statistics;
 
 procedure CountUdpReceiveError;
@@ -104,13 +107,23 @@ begin
   Result := False;
 end;
 
-procedure UdpInput(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord);
+{ Tells the sender no socket has the port. }
+procedure SendPortUnreachable(constref Datagram: TIpDatagram);
+begin
+  if Datagram.Family = AddressFamilyIPv6 then
+    SendIcmpv6Error(Datagram.Header, Datagram.TotalLength, Icmpv6TypeDestinationUnreachable,
+      Icmpv6CodePortUnreachable, 0)
+  else
+    SendIcmpError(Datagram.Header, Datagram.TotalLength, IcmpTypeDestinationUnreachable, IcmpCodePortUnreachable);
+end;
+
+procedure UdpInput(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord);
 var
   DatagramLength: LongWord;
   Checksum: Word;
   Sum: LongWord;
   Source: TNetworkEndpoint;
-  DestinationPort: Word;
+  Destination: TNetworkEndpoint;
   Socket: PSocket;
   Best: PSocket;
   Delivered: Boolean;
@@ -129,9 +142,16 @@ begin
     CountReceiveError(Datagram.ArrivalInterface);
     Exit;
   end;
+  { Over IPv6 the checksum may not be left out. }
+  if (Checksum = 0) and (Datagram.Family = AddressFamilyIPv6) then
+  begin
+    CountUdpReceiveError;
+    CountReceiveError(Datagram.ArrivalInterface);
+    Exit;
+  end;
   if Checksum <> 0 then
   begin
-    Sum := PseudoHeaderSum(Datagram.Source, Datagram.Destination, IpProtocolUdp, DatagramLength);
+    Sum := DatagramPseudoHeaderSum(Datagram, IpProtocolUdp, DatagramLength);
     if FinishChecksum(AddToChecksum(Sum, Payload, DatagramLength)) <> 0 then
     begin
       CountUdpReceiveError;
@@ -139,8 +159,8 @@ begin
       Exit;
     end;
   end;
-  Source := MakeEndpoint(Datagram.Source, ReadBigEndian16(Payload));
-  DestinationPort := ReadBigEndian16(Payload + 2);
+  Source := DatagramSource(Datagram, ReadBigEndian16(Payload));
+  Destination := DatagramDestination(Datagram, ReadBigEndian16(Payload + 2));
 
   Best := nil;
   Delivered := False;
@@ -148,8 +168,7 @@ begin
   while Socket <> nil do
   begin
     if (Socket^.Protocol = SocketProtocolUdp) and
-       DatagramSocketMatches(Socket, Source, Datagram.Destination, DestinationPort, Datagram.IsBroadcast,
-         Datagram.ArrivalInterface) then
+       DatagramSocketMatches(Socket, Source, Destination, Datagram.IsBroadcast, Datagram.ArrivalInterface) then
     begin
       if Datagram.IsBroadcast then
       begin
@@ -157,7 +176,7 @@ begin
           DatagramLength - UdpHeaderBytes);
         Delivered := True;
       end
-      else if (Best = nil) or ((Best^.Local.Address = AnyAddress) and (Socket^.Local.Address <> AnyAddress)) or
+      else if (Best = nil) or (EndpointIsUnspecified(Best^.Local) and not EndpointIsUnspecified(Socket^.Local)) or
               (not Best^.IsConnected and Socket^.IsConnected) then
         Best := Socket;
     end;
@@ -172,26 +191,20 @@ begin
   if not Delivered then
     Inc(NetworkStatistics.Udp.NoPorts);
   if not Delivered and not Datagram.IsBroadcast then
-    SendIcmpError(Datagram.Header, Datagram.TotalLength, IcmpTypeDestinationUnreachable, IcmpCodePortUnreachable);
+    SendPortUnreachable(Datagram);
 end;
 
-procedure UdpReportError(Source, Destination: TIpv4Address; SourcePort, DestinationPort: Word;
-  IcmpType, Code: Byte);
+procedure UdpReportError(constref Local, Remote: TNetworkEndpoint; Error: LongInt);
 var
   Socket: PSocket;
 begin
-  if IcmpType <> IcmpTypeDestinationUnreachable then
-    Exit;
   Socket := FirstSocket;
   while Socket <> nil do
   begin
-    if (Socket^.Protocol = SocketProtocolUdp) and Socket^.IsConnected and (Socket^.Local.Port = SourcePort) and
-       (Socket^.Peer.Address = Destination) and (Socket^.Peer.Port = DestinationPort) then
+    if (Socket^.Protocol = SocketProtocolUdp) and Socket^.IsConnected and (Socket^.Local.Port = Local.Port) and
+       EndpointsEqual(Socket^.Peer, Remote) then
     begin
-      if Code = IcmpCodePortUnreachable then
-        Socket^.PendingError := ErrorConnectionRefused
-      else
-        Socket^.PendingError := ErrorHostUnreachable;
+      Socket^.PendingError := Error;
       UpdateSocketReadiness(Socket);
     end;
     Socket := NextSocket(Socket);
@@ -202,7 +215,7 @@ function SendUdpDatagram(Socket: PSocket; Data: PByte; Length: LongWord;
   constref Destination: TNetworkEndpoint): Int64;
 var
   Target: TNetworkEndpoint;
-  Source: TIpv4Address;
+  Source: TNetworkEndpoint;
   Packet: PPacket;
   Header: PByte;
   Sum: LongWord;
@@ -210,17 +223,18 @@ var
   Error: LongInt;
 begin
   Target := Destination;
-  if Target.Address = AnyAddress then
-    Target.Address := LoopbackAddress;
+  if EndpointIsUnspecified(Target) then
+    Target := LoopbackEndpoint(Target.Family, Target.Port);
   if Target.Port = 0 then
     Exit(-ErrorInvalidArgument);
-  if IsBroadcastAddress(Target.Address, Socket^.BoundInterface) and not Socket^.BroadcastAllowed then
+  if (Target.Family = AddressFamilyIPv4) and IsBroadcastAddress(Target.Address, Socket^.BoundInterface) and
+     not Socket^.BroadcastAllowed then
     Exit(-ErrorAccessDenied);
-  Error := DatagramSourceAddress(Socket, Target.Address, Source);
+  Error := DatagramSourceAddress(Socket, Target, Source);
   if Error <> ErrorNone then
     Exit(-Error);
   if (Length > MaximumDatagramBytes) or
-     (Length + UdpHeaderBytes > PayloadLimit(Target.Address, Socket^.BoundInterface)) then
+     (Length + UdpHeaderBytes > IpPayloadLimit(Target, Socket^.BoundInterface)) then
     Exit(-ErrorMessageTooLong);
   Error := BindDatagramSocketImplicitly(Socket);
   if Error <> ErrorNone then
@@ -234,15 +248,14 @@ begin
   WriteBigEndian16(Header + 4, UdpHeaderBytes + Length);
   WriteBigEndian16(Header + 6, 0);
   CopyMemory(Header + UdpHeaderBytes, Data, Length);
-  Sum := PseudoHeaderSum(Source, Target.Address, IpProtocolUdp, UdpHeaderBytes + Length);
+  Sum := TransportPseudoHeaderSum(Source, Target, IpProtocolUdp, UdpHeaderBytes + Length);
   Checksum := FinishChecksum(AddToChecksum(Sum, Header, UdpHeaderBytes + Length));
   { Zero means "no checksum"; the same value in ones' complement is all
     ones. }
   if Checksum = 0 then
     Checksum := $FFFF;
   WriteBigEndian16(Header + 6, Checksum);
-  Error := SendIpv4(Packet, Source, Target.Address, IpProtocolUdp, Socket^.TimeToLive, False,
-    Socket^.BoundInterface);
+  Error := SendIpPacket(Packet, Source, Target, IpProtocolUdp, Socket^.TimeToLive, False, Socket^.BoundInterface);
   if Error <> ErrorNone then
     Exit(-Error);
   Inc(NetworkStatistics.Udp.Sent);

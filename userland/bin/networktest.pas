@@ -39,15 +39,24 @@
   service gives the lease back, and it is started again (and left
   running) for the checks coretest makes next.
 
+  IPv6: lo has ::1, which answers pings; UDP and TCP over ::1; an IPv4
+  and an IPv6 socket share a port; the listing shows an IPv6 listener.
+  eth0 gets its link-local address and, from QEMU's router
+  advertisement, fec0::5054:ff:fe12:3456/64 (SLAAC), the default route
+  through fe80::2 and the DNS server fec0::3 (RDNSS); fec0::2 answers
+  pings and is in the neighbour cache. A static IPv6 address set in
+  Network.settings is applied and taken away again.
+
   --unprivileged (run as an ordinary user): raw sockets, ports below
   1024, binding to an interface and every configuration change are
-  refused, while an ICMP echo socket (ping) works.
+  refused, while an ICMP echo socket (ping, IPv4 and IPv6) works.
 
   Each check prints a line; the exit status is 1 if any failed.
 }
 program NetworkTest;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 uses
@@ -64,7 +73,8 @@ uses
   Sys.Sockets,
   Sys.Streams,
   Sys.Threads,
-  NetworkTest.Service;
+  NetworkTest.Service,
+  NetworkTest.Ipv6;
 
 const
   WaitMilliseconds = 5000;
@@ -169,10 +179,21 @@ begin
   Check('lo is up, running and a loopback interface',
     Found and (Description.Flags and (InterfaceFlagUp or InterfaceFlagRunning or InterfaceFlagLoopback) =
       InterfaceFlagUp or InterfaceFlagRunning or InterfaceFlagLoopback));
-  Check('lo has 127.0.0.1/8', Found and (Description.AddressCount = 1) and
-    AddressesAreEqual(InterfaceAddressHost(Description.Addresses[0]), LoopbackIpv4Address) and
-    (Description.Addresses[0].PrefixLength = 8));
+  Check('lo has 127.0.0.1/8', Found and InterfaceHasAddress(Description, LoopbackIpv4Address, 8));
+  Check('lo has ::1/128', Found and InterfaceHasAddress(Description, LoopbackIpv6Address, 128));
   Check('ping 127.0.0.1: three replies', Ping(LoopbackIpv4Address, 3) = 3);
+  Check('ping ::1 (ICMPv6): three replies', PingIpv6(LoopbackIpv6Address, 3) = 3);
+end;
+
+{ --- IPv6 over lo -------------------------------------------------------------- }
+
+procedure TestIpv6Loopback;
+begin
+  Check('UDP over IPv6: a datagram to [::1] and back', UdpEchoOverIpv6Loopback);
+  Check('TCP over IPv6: a connection to [::1], data each way', TcpOverIpv6Loopback);
+  Check('an IPv4 and an IPv6 socket may have the same port', DualStackPortWorks);
+  Check('an IPv6 socket takes no IPv4 address', Ipv6SocketRefusesIpv4);
+  Check('the socket listing shows an IPv6 listener', Ipv6ListenerIsListed);
 end;
 
 { --- UDP ------------------------------------------------------------------- }
@@ -474,20 +495,23 @@ begin
   CloseSocket(Socket);
 end;
 
-function InterfaceHasAddress(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): Boolean;
+{ Name's IPv4 address is Address/PrefixLength. }
+function InterfaceHasIpv4Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): Boolean;
 var
   Description: TAbiNetworkInterface;
+  Current: TAbiInterfaceAddress;
 begin
-  Result := FindNetworkInterface(Name, Description) and (Description.AddressCount = 1) and
-    AddressesAreEqual(InterfaceAddressHost(Description.Addresses[0]), Address) and
-    (Description.Addresses[0].PrefixLength = PrefixLength);
+  Result := FindNetworkInterface(Name, Description) and FindInterfaceIpv4Address(Description, Current) and
+    AddressesAreEqual(InterfaceAddressHost(Current), Address) and (Current.PrefixLength = PrefixLength);
 end;
 
+{ Name has no IPv4 address (its IPv6 ones do not count). }
 function InterfaceHasNoAddress(Name: PChar): Boolean;
 var
   Description: TAbiNetworkInterface;
+  Current: TAbiInterfaceAddress;
 begin
-  Result := FindNetworkInterface(Name, Description) and (Description.AddressCount = 0);
+  Result := FindNetworkInterface(Name, Description) and not FindInterfaceIpv4Address(Description, Current);
 end;
 
 { Waits until Name has Address/PrefixLength (or, with Wanted False, no
@@ -499,7 +523,7 @@ var
 begin
   Waited := 0;
   repeat
-    if Wanted and InterfaceHasAddress(Name, Address, PrefixLength) then
+    if Wanted and InterfaceHasIpv4Address(Name, Address, PrefixLength) then
       Exit(True);
     if not Wanted and InterfaceHasNoAddress(Name) then
       Exit(True);
@@ -520,6 +544,48 @@ begin
   Check('eth0.state: DhcpServer 10.0.2.2', StateValue('eth0', 'DhcpServer') = '10.0.2.2');
   Check('eth0.state: a lease of some seconds', StrToIntDef(StateValue('eth0', 'LeaseSeconds'), 0) > 0);
   Check('eth0.state: the time it was obtained', StrToInt64Def(StateValue('eth0', 'LeaseObtained'), 0) > 0);
+end;
+
+{ A static IPv6 address in the settings, then the default again. }
+procedure CheckIpv6SettingsChange;
+var
+  Address: TInternetAddress;
+begin
+  Address := Ipv6('fd00:50::2');
+  Check('Network.settings: eth1 gets a static IPv6 address', SetStaticIpv6Setting('eth1', 'fd00:50::2/64'));
+  Check('the service gives eth1 fd00:50::2/64 (and turns router advertisements off)',
+    WaitForIpv6Address('eth1', Address, 64, True, 10000) and WaitForIpv6Mode('eth1', Ipv6ModeLinkLocal, 5000));
+  Check('eth1.state: Ipv6Method static', WaitForStateValue('eth1', 'Ipv6Method', 'static', 5000));
+  Check('Network.settings: eth1 back to the default', RemoveInterfaceSetting('eth1'));
+  Check('the static IPv6 address goes, IPv6 is automatic again',
+    WaitForIpv6Address('eth1', Address, 64, False, 10000) and WaitForIpv6Mode('eth1', Ipv6ModeAutomatic, 5000));
+end;
+
+{ IPv6 on eth0 from QEMU's router (fec0::/64, router fe80::2, host
+  fec0::2, DNS fec0::3). }
+procedure CheckIpv6OnEth0;
+var
+  Description: TAbiNetworkInterface;
+  LinkLocal: TInternetAddress;
+  Global: TInternetAddress;
+  Router: TInternetAddress;
+begin
+  LinkLocal := Ipv6('fe80::5054:ff:fe12:3456');
+  Global := Ipv6('fec0::5054:ff:fe12:3456');
+  Router := Ipv6('fe80::2');
+  Check('IPv6: eth0 is automatic', InterfaceIpv6ModeIs('eth0', Ipv6ModeAutomatic));
+  Check('IPv6: eth0 has its link-local address fe80::5054:ff:fe12:3456/64',
+    WaitForIpv6Address('eth0', LinkLocal, 64, True, 10000));
+  Check('IPv6: SLAAC gives eth0 fec0::5054:ff:fe12:3456/64', WaitForIpv6Address('eth0', Global, 64, True, 20000));
+  Check('IPv6: the default route goes through fe80::2 on eth0', HasIpv6DefaultRoute('eth0', Router));
+  Check('IPv6: the router advertised the DNS server fec0::3', InterfaceHasIpv6DnsServer('eth0', Ipv6('fec0::3')));
+  Check('IPv6: ping fec0::2 (QEMU''s host) answers', PingIpv6(Ipv6('fec0::2'), 3) > 0);
+  Check('IPv6: fec0::2 is in the neighbour cache', NeighborIsKnown(Ipv6('fec0::2')));
+  Check('IPv6: ping our own fec0::5054:ff:fe12:3456 answers', PingIpv6(Global, 1) = 1);
+  Check('IPv6: eth0.state lists the SLAAC address',
+    WaitForStateValue('eth0', 'Ipv6Addresses', 'fe80::5054:ff:fe12:3456/64,fec0::5054:ff:fe12:3456/64', 5000));
+  Check('eth0 counted what went through it', FindNetworkInterface('eth0', Description) and
+    (Description.Counters.SentPackets > 0));
 end;
 
 { The Control Panel's way: the settings file changes, the service
@@ -547,6 +613,7 @@ begin
     WaitForInterfaceAddress('eth1', Address, 24, False, 10000));
   Check('eth1.state: none again', WaitForStateValue('eth1', 'Method', 'none', 5000) and
     WaitForStateValue('eth1', 'Address', '', 5000));
+  CheckIpv6SettingsChange;
 end;
 
 procedure TestNetworkCard;
@@ -569,7 +636,7 @@ begin
     Exit;
   Check('DHCP: eth0 is configured within 20 seconds', WaitForStateValue('eth0', 'State', 'configured', 20000));
   Check('DHCP: eth0 is up with 10.0.2.15/24', FindNetworkInterface('eth0', Description) and
-    ((Description.Flags and InterfaceFlagUp) <> 0) and InterfaceHasAddress('eth0', Ipv4Address(10, 0, 2, 15), 24));
+    ((Description.Flags and InterfaceFlagUp) <> 0) and InterfaceHasIpv4Address('eth0', Ipv4Address(10, 0, 2, 15), 24));
   CheckDhcpStateFile;
   Check('DHCP: the default route goes through 10.0.2.2 on eth0', HasDefaultRouteThrough(Gateway));
   Check('DHCP: the DNS server is 10.0.2.3', (GetDnsServers(Servers) = ErrorNone) and (Servers.Count = 1) and
@@ -580,6 +647,7 @@ begin
   Check('a TCP connection to 10.0.2.100 port 7 echoes', EchoServiceAnswers);
   Check('eth0 counted what went through it', FindNetworkInterface('eth0', Description) and
     (Description.Counters.ReceivedPackets > 0) and (Description.Counters.SentPackets > 0));
+  CheckIpv6OnEth0;
   CheckLiveSettingsChange;
 
   { Stopping gives the lease back. }
@@ -606,6 +674,9 @@ var
 begin
   Check('a raw ICMP socket is root''s',
     NewSocket(SocketKindRaw, ProtocolIcmp) = -ErrorNotPermitted);
+  Check('a raw ICMPv6 socket is root''s',
+    CreateSocket(AddressFamilyIPv6, SocketKindRaw, ProtocolIcmpv6) = -ErrorNotPermitted);
+  Check('an ICMPv6 echo socket is anyone''s: ping ::1 answers', PingIpv6(LoopbackIpv6Address, 1) = 1);
   Socket := NewSocket(SocketKindStream, ProtocolDefault);
   Check('binding a port below 1024 is root''s', BindSocket(Socket, Loopback(80)) = ErrorAccessDenied);
   Check('binding to an interface is root''s',
@@ -627,6 +698,7 @@ begin
   else
   begin
     TestLoopbackInterface;
+    TestIpv6Loopback;
     TestUdp;
     TestTcpEcho;
     TestTcpRefusedAndWaits;

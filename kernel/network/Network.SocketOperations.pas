@@ -74,6 +74,7 @@ uses
   Network.Udp,
   Network.IcmpSockets,
   Network.DatagramSockets,
+  Network.IpOutput,
   Network.TcpSockets;
 
 function CreateSocket(Family, Kind, Protocol: LongWord; constref Owner: TSocketOwner; CallerIsRoot: Boolean;
@@ -83,8 +84,11 @@ var
   SocketProtocol: TSocketProtocol;
 begin
   Socket := nil;
-  if Family <> AddressFamilyIPv4 then
+  if (Family <> AddressFamilyIPv4) and (Family <> AddressFamilyIPv6) then
     Exit(ErrorAddressFamilyNotSupported);
+  { ICMPv6 is IPv6's ICMP; an IPv6 socket may name it either way. }
+  if (Protocol = ProtocolIcmpv6) and (Family = AddressFamilyIPv6) then
+    Protocol := ProtocolIcmp;
   if (Kind and not (SocketKindNonBlocking or $FF)) <> 0 then
     Exit(ErrorInvalidArgument);
   BaseKind := Kind and $FF;
@@ -114,7 +118,7 @@ begin
     Exit(ErrorInvalidArgument);
   end;
   LockNetwork;
-  Socket := AllocateSocket(BaseKind, SocketProtocol, Owner);
+  Socket := AllocateSocket(Family, BaseKind, SocketProtocol, Owner);
   if Socket <> nil then
     Socket^.NonBlocking := (Kind and SocketKindNonBlocking) <> 0;
   UnlockNetwork;
@@ -123,10 +127,12 @@ begin
   Result := ErrorNone;
 end;
 
-function AddressIsBindable(Socket: PSocket; Address: TIpv4Address): Boolean;
+function AddressIsBindable(Socket: PSocket; constref Endpoint: TNetworkEndpoint): Boolean;
 begin
-  Result := (Address = AnyAddress) or IsLocalAddress(Address) or
-    ((Socket^.Protocol = SocketProtocolUdp) and IsBroadcastAddress(Address, nil));
+  if EndpointIsUnspecified(Endpoint) or IsLocalEndpointAddress(Endpoint) then
+    Exit(True);
+  Result := (Endpoint.Family = AddressFamilyIPv4) and (Socket^.Protocol = SocketProtocolUdp) and
+    IsBroadcastAddress(Endpoint.Address, nil);
 end;
 
 function BindSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint; CallerIsRoot: Boolean): LongInt;
@@ -136,7 +142,9 @@ begin
   LockNetwork;
   if Socket^.IsBound or (Socket^.Connection <> nil) then
     Result := ErrorInvalidArgument
-  else if not AddressIsBindable(Socket, Endpoint.Address) then
+  else if Endpoint.Family <> Socket^.Family then
+    Result := ErrorAddressFamilyNotSupported
+  else if not AddressIsBindable(Socket, Endpoint) then
     Result := ErrorAddressNotAvailable
   else if (Endpoint.Port <> 0) and (Endpoint.Port < FirstUnprivilegedPort) and not CallerIsRoot and
           (Socket^.Protocol in [SocketProtocolUdp, SocketProtocolTcp]) then
@@ -149,15 +157,16 @@ begin
       Port := 0
     else if Port = 0 then
     begin
-      Port := ChooseDynamicPort(Socket, Endpoint.Address);
+      Port := ChooseDynamicPort(Socket, Endpoint);
       if Port = 0 then
         Result := ErrorAddressInUse;
     end
-    else if not PortIsFree(Socket, Endpoint.Address, Port, Socket^.ReuseAddress) then
+    else if not PortIsFree(Socket, Endpoint, Port, Socket^.ReuseAddress) then
       Result := ErrorAddressInUse;
     if Result = ErrorNone then
     begin
-      Socket^.Local := MakeEndpoint(Endpoint.Address, Port);
+      Socket^.Local := Endpoint;
+      Socket^.Local.Port := Port;
       Socket^.IsBound := True;
     end;
   end;
@@ -177,7 +186,7 @@ function AcceptOnSocket(Socket: PSocket; constref Owner: TSocketOwner; out NewSo
   out Peer: TNetworkEndpoint): LongInt;
 begin
   NewSocket := nil;
-  Peer := MakeEndpoint(AnyAddress, 0);
+  Peer := UnspecifiedEndpoint(Socket^.Family);
   if Socket^.Protocol <> SocketProtocolTcp then
     Exit(ErrorUnsupported);
   LockNetwork;
@@ -189,6 +198,9 @@ end;
 
 function ConnectSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint): LongInt;
 begin
+  if (Endpoint.Family <> Socket^.Family) and
+     ((Endpoint.Family <> AddressFamilyUnspecified) or (Socket^.Protocol = SocketProtocolTcp)) then
+    Exit(ErrorAddressFamilyNotSupported);
   LockNetwork;
   if Socket^.Protocol = SocketProtocolTcp then
     Result := ConnectTcpSocket(Socket, Endpoint)
@@ -218,6 +230,8 @@ begin
     Result := -ErrorBrokenPipe
   else if (Destination = nil) and not Socket^.IsConnected then
     Result := -ErrorDestinationRequired
+  else if (Destination <> nil) and (Destination^.Family <> Socket^.Family) then
+    Result := -ErrorAddressFamilyNotSupported
   else
   begin
     if Destination = nil then
@@ -237,7 +251,7 @@ function ReceiveOnSocket(Socket: PSocket; Data: PByte; Length: LongWord; Flags: 
 var
   Peer: TNetworkEndpoint;
 begin
-  Source := MakeEndpoint(AnyAddress, 0);
+  Source := UnspecifiedEndpoint(Socket^.Family);
   LockNetwork;
   if Socket^.Protocol = SocketProtocolTcp then
   begin
@@ -360,7 +374,7 @@ end;
 
 function GetSocketEndpoint(Socket: PSocket; Which: LongWord; out Endpoint: TNetworkEndpoint): LongInt;
 begin
-  Endpoint := MakeEndpoint(AnyAddress, 0);
+  Endpoint := UnspecifiedEndpoint(Socket^.Family);
   Result := ErrorNone;
   LockNetwork;
   case Which of

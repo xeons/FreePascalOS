@@ -56,7 +56,7 @@ const
 
 procedure ReportPeer(constref Peer: TAbiSocketAddress);
 var
-  Text: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   ReportProgress('Connection received on %s %u', [ArgumentText(HostText(Peer, @Text[0])),
     ArgumentUnsigned(Peer.Port)]);
@@ -118,7 +118,7 @@ function RunListener(constref LocalAddress: TInternetAddress; Port: Word): Integ
 var
   Socket: Int64;
   Error: LongInt;
-  Text: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   Socket := OpenSocket(LocalAddress, Port);
   if not Settings.Datagrams then

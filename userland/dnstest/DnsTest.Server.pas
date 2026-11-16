@@ -18,8 +18,9 @@
 
 {
   dnstest's DNS server: the zone of DnsTest.Zone over UDP and TCP on
-  127.0.0.1 port 53 (root's), until its stop event is set (or, run as
-  "dnstest --serve", until the program is asked to end).
+  127.0.0.1 port 53 (root's), and over UDP on [::1]:53, until its stop
+  event is set (or, run as "dnstest --serve", until the program is
+  asked to end).
 
   It remembers the id and source port of the last two UDP queries, so
   the test can see that the resolver changes both every time.
@@ -62,11 +63,21 @@ uses
 
 var
   UdpSocket: Int64 = -1;
+  Udp6Socket: Int64 = -1;
   TcpListener: Int64 = -1;
 
 function ServerAddress: TAbiSocketAddress;
 begin
   Result := MakeSocketAddress(LoopbackIpv4Address, TestServerPort);
+end;
+
+{ The UDP socket on [::1]:53. }
+function OpenIpv6Server: LongInt;
+begin
+  Udp6Socket := CreateSocket(AddressFamilyIPv6, SocketKindDatagram or SocketKindNonBlocking, ProtocolUdp);
+  if Udp6Socket < 0 then
+    Exit(LongInt(-Udp6Socket));
+  Result := BindSocket(Udp6Socket, MakeSocketAddress(LoopbackIpv6Address, TestServerPort));
 end;
 
 function OpenTestServer: LongInt;
@@ -84,6 +95,8 @@ begin
   Result := BindSocket(TcpListener, ServerAddress);
   if Result = ErrorNone then
     Result := ListenOnSocket(TcpListener, 8);
+  if Result = ErrorNone then
+    Result := OpenIpv6Server;
 end;
 
 procedure CloseTestServer;
@@ -92,7 +105,10 @@ begin
     CloseSocket(UdpSocket);
   if TcpListener >= 0 then
     CloseSocket(TcpListener);
+  if Udp6Socket >= 0 then
+    CloseSocket(Udp6Socket);
   UdpSocket := -1;
+  Udp6Socket := -1;
   TcpListener := -1;
 end;
 
@@ -105,7 +121,7 @@ begin
   Inc(ServerRecord.Queries);
 end;
 
-procedure AnswerUdpQueries;
+procedure AnswerUdpQueries(Socket: Int64);
 var
   Query: array[0..511] of Byte;
   Source: TAbiSocketAddress;
@@ -113,15 +129,15 @@ var
   Answer: TAnswer;
 begin
   repeat
-    Received := ReceiveSocketFrom(UdpSocket, @Query[0], SizeOf(Query), SocketFlagDontWait, Source);
+    Received := ReceiveSocketFrom(Socket, @Query[0], SizeOf(Query), SocketFlagDontWait, Source);
     if Received < 2 then
       Exit;
     NoteQuery(@Query[0], Source);
     if not BuildAnswer(@Query[0], LongWord(Received), True, Answer) then
       Continue;
     if Answer.HasDecoy then
-      SendSocketTo(UdpSocket, @Answer.Decoy[0], Answer.DecoyLength, 0, Source);
-    SendSocketTo(UdpSocket, @Answer.Data[0], Answer.Length, 0, Source);
+      SendSocketTo(Socket, @Answer.Decoy[0], Answer.DecoyLength, 0, Source);
+    SendSocketTo(Socket, @Answer.Data[0], Answer.Length, 0, Source);
   until False;
 end;
 
@@ -176,11 +192,12 @@ var
   Ready: Int64;
 begin
   repeat
-    Ready := WaitForHandles([StopHandle, UdpSocket, TcpListener], InfiniteWait);
+    Ready := WaitForHandles([StopHandle, UdpSocket, TcpListener, Udp6Socket], InfiniteWait);
     case Ready of
       0: Exit;
-      1: AnswerUdpQueries;
+      1: AnswerUdpQueries(UdpSocket);
       2: AnswerTcpConnection;
+      3: AnswerUdpQueries(Udp6Socket);
     else
       Exit;
     end;

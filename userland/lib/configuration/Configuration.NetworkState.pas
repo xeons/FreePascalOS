@@ -71,6 +71,14 @@ type
     LeaseSeconds: Int64;
     LeaseObtained: Int64;
     DhcpServer: string;
+    { Ipv6Method auto when the file does not say. }
+    Ipv6Method: TIpv6Method;
+    { "fec0::5054:ff:fe12:3456/64", the link-local one included. }
+    Ipv6Addresses: TStringArray;
+    { The IPv6 default route's gateway, or empty. }
+    Ipv6Gateway: string;
+    { What routers advertised (RDNSS). }
+    Ipv6DnsServers: TStringArray;
   end;
 
 { Reads a state file's Text for interface Name; False (and Known False)
@@ -173,6 +181,11 @@ begin
     State.LeaseSeconds := DocumentInteger(Document, 'LeaseSeconds');
     State.LeaseObtained := DocumentInteger(Document, 'LeaseObtained');
     State.DhcpServer := DocumentString(Document, 'DhcpServer');
+    if not ParseIpv6Method(DocumentString(Document, 'Ipv6Method'), State.Ipv6Method) then
+      State.Ipv6Method := Ipv6MethodAuto;
+    State.Ipv6Addresses := DocumentList(Document, 'Ipv6Addresses');
+    State.Ipv6Gateway := DocumentString(Document, 'Ipv6Gateway');
+    State.Ipv6DnsServers := DocumentList(Document, 'Ipv6DnsServers');
     State.Known := True;
     Result := True;
   finally

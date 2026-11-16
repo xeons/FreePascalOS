@@ -19,8 +19,8 @@
 {
   netstat -s: the protocols' counters (CallGetNetworkStatistics) in the
   words net-tools uses, a group per protocol: Ip, Icmp (with the
-  messages of each type that were seen), Tcp and Udp. -t or -u keeps
-  to TCP or UDP.
+  messages of each type that were seen), Ip6, Icmp6, Tcp and Udp. -t or
+  -u keeps to TCP or UDP, -4 or -6 to one IP version's groups.
 }
 unit Netstat.Statistics;
 
@@ -49,9 +49,9 @@ begin
   WriteFormatted(StandardOutput, '    %u %s'#10, [ArgumentUnsigned(Value), ArgumentText(Text)]);
 end;
 
-procedure ShowIp(constref Ip: TAbiIpStatistics);
+procedure ShowIp(Title: PChar; constref Ip: TAbiIpStatistics);
 begin
-  WriteLine(StandardOutput, 'Ip:');
+  WriteLine(StandardOutput, Title);
   { 2: not a router (RFC 1213's ipForwarding). }
   WriteLine(StandardOutput, '    Forwarding: 2');
   WriteCounter(Ip.Received, 'total packets received');
@@ -125,6 +125,75 @@ begin
   WriteIcmpHistogram('ICMP output histogram:', Icmp.SentByType);
 end;
 
+{ The ICMPv6 type counted in Slot (Abi.Networking.inc: the errors 1-4,
+  then the informational messages 128-143). }
+function Icmpv6TypeOfSlot(Slot: Integer): Integer;
+begin
+  if Slot < Icmpv6FirstInformationalSlot then
+    Result := Icmpv6FirstErrorType + Slot
+  else
+    Result := Icmpv6FirstInformationalType + Slot - Icmpv6FirstInformationalSlot;
+end;
+
+function Icmpv6TypeName(IcmpType: Integer): PChar;
+begin
+  case IcmpType of
+    1: Result := 'destination unreachable';
+    2: Result := 'packet too big';
+    3: Result := 'time exceeded';
+    4: Result := 'parameter problem';
+    128: Result := 'echo request';
+    129: Result := 'echo reply';
+    130: Result := 'group membership query';
+    131: Result := 'group membership report';
+    132: Result := 'group membership reduction';
+    133: Result := 'router solicitation';
+    134: Result := 'router advertisement';
+    135: Result := 'neighbour solicitation';
+    136: Result := 'neighbour advertisement';
+    137: Result := 'redirect';
+    143: Result := 'MLDv2 report';
+  else
+    Result := nil;
+  end;
+end;
+
+procedure WriteIcmpv6Histogram(Title: PChar; const Counts: array of QWord);
+var
+  Slot: Integer;
+  IcmpType: Integer;
+  Name: PChar;
+  Written: Boolean;
+begin
+  Written := False;
+  for Slot := 0 to High(Counts) do
+  begin
+    if Counts[Slot] = 0 then
+      Continue;
+    if not Written then
+      WriteFormatted(StandardOutput, '    %s'#10, [ArgumentText(Title)]);
+    Written := True;
+    IcmpType := Icmpv6TypeOfSlot(Slot);
+    Name := Icmpv6TypeName(IcmpType);
+    if Name <> nil then
+      WriteFormatted(StandardOutput, '        %s: %u'#10, [ArgumentText(Name), ArgumentUnsigned(Counts[Slot])])
+    else
+      WriteFormatted(StandardOutput, '        type %d: %u'#10, [ArgumentNumber(IcmpType),
+        ArgumentUnsigned(Counts[Slot])]);
+  end;
+end;
+
+procedure ShowIcmpv6(constref Icmp: TAbiIcmpv6Statistics);
+begin
+  WriteLine(StandardOutput, 'Icmp6:');
+  WriteCounter(Icmp.Received, 'ICMPv6 messages received');
+  WriteCounter(Icmp.ReceiveErrors, 'input ICMPv6 message failed');
+  WriteIcmpv6Histogram('ICMPv6 input histogram:', Icmp.ReceivedByType);
+  WriteCounter(Icmp.Sent, 'ICMPv6 messages sent');
+  WriteCounter(Icmp.SendErrors, 'ICMPv6 messages failed');
+  WriteIcmpv6Histogram('ICMPv6 output histogram:', Icmp.SentByType);
+end;
+
 procedure ShowTcp(constref Tcp: TAbiTcpStatistics);
 begin
   WriteLine(StandardOutput, 'Tcp:');
@@ -160,10 +229,15 @@ begin
   if Error <> ErrorNone then
     FailWithError(1, Error, 'cannot read the network statistics', []);
   Everything := Selection.ShowTcp and Selection.ShowUdp;
-  if Everything then
+  if Everything and Selection.ShowIpv4 then
   begin
-    ShowIp(Statistics.Ip);
+    ShowIp('Ip:', Statistics.Ip);
     ShowIcmp(Statistics.Icmp);
+  end;
+  if Everything and Selection.ShowIpv6 then
+  begin
+    ShowIp('Ip6:', Statistics.Ipv6);
+    ShowIcmpv6(Statistics.Icmpv6);
   end;
   if Selection.ShowTcp then
     ShowTcp(Statistics.Tcp);

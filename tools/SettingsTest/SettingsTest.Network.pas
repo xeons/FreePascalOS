@@ -62,7 +62,14 @@ const
     'Up = true'#10 +
     ''#10 +
     '[Interfaces/eth2]'#10 +
-    'Address = "192.168.7.4/24"'#10;
+    'Address = "192.168.7.4/24"'#10 +
+    'Ipv6Method = "STATIC"'#10 +
+    'Ipv6Address = "fd00::7/64"'#10 +
+    'Ipv6Gateway = "fe80::1"'#10 +
+    ''#10 +
+    '[Interfaces/eth3]'#10 +
+    'Method = "none"'#10 +
+    'Ipv6Method = "none"'#10;
 
   SampleState =
     'Method = "dhcp"'#10 +
@@ -73,7 +80,11 @@ const
     'Domain = "example.org"'#10 +
     'LeaseSeconds = 86400'#10 +
     'LeaseObtained = 1794268800'#10 +
-    'DhcpServer = "10.0.2.2"'#10;
+    'DhcpServer = "10.0.2.2"'#10 +
+    'Ipv6Method = "auto"'#10 +
+    'Ipv6Addresses = ["fe80::5054:ff:fe12:3456/64", "fec0::5054:ff:fe12:3456/64"]'#10 +
+    'Ipv6Gateway = "fe80::2"'#10 +
+    'Ipv6DnsServers = ["fec0::3"]'#10;
 
 function StaticSettings(const Address, Gateway: string): TInterfaceSettings;
 begin
@@ -96,6 +107,14 @@ begin
   Result.SearchDomain := Domain;
 end;
 
+function StaticIpv6Settings(const Address, Gateway: string): TInterfaceSettings;
+begin
+  Result := StaticSettings('10.0.2.15/24', '');
+  Result.Ipv6Method := Ipv6MethodStatic;
+  Result.Ipv6Address := Address;
+  Result.Ipv6Gateway := Gateway;
+end;
+
 procedure TestReadingAndWriting(Check: TCheckProcedure);
 var
   Storage: TMemoryStorage;
@@ -114,9 +133,16 @@ begin
   Settings := ReadInterfaceSettings(Store, 'eth2');
   Check('network: a section without a method is static (as the first network service took it)',
     Settings.Configured and (Settings.Method = NetworkMethodStatic) and Settings.Up);
+  Check('network: IPv6 settings are read (method in any case)', (Settings.Ipv6Method = Ipv6MethodStatic) and
+    (Settings.Ipv6Address = 'fd00::7/64') and (Settings.Ipv6Gateway = 'fe80::1'));
+  Settings := ReadInterfaceSettings(Store, 'eth3');
+  Check('network: IPv6 can be turned off', Settings.Ipv6Method = Ipv6MethodNone);
+  Settings := ReadInterfaceSettings(Store, 'eth0');
+  Check('network: a section without Ipv6Method is IPv6 auto', (Settings.Ipv6Method = Ipv6MethodAuto) and
+    (Settings.Ipv6Address = ''));
   Settings := ReadInterfaceSettings(Store, 'eth1');
   Check('network: an interface without a section is left alone', not Settings.Configured and
-    (Settings.Method = NetworkMethodNone));
+    (Settings.Method = NetworkMethodNone) and (Settings.Ipv6Method = Ipv6MethodAuto));
   Dns := ReadDnsSettings(Store);
   Check('network: the DNS servers are read', (Length(Dns.Servers) = 1) and (Dns.Servers[0] = '10.0.2.3') and
     (Dns.SearchDomain = ''));
@@ -133,15 +159,81 @@ begin
   Check('network: automatic DNS servers are an empty list', (Pos('DnsServers = []', Text) > 0) and
     (Pos('SearchDomain = "example.org"', Text) > 0));
 
+  Check('network: the IPv6 method is written', Pos('Ipv6Method = "auto"', Text) > 0);
+
+  Settings.Ipv6Method := Ipv6MethodStatic;
+  Settings.Ipv6Address := 'fd00::50/64';
+  Settings.Ipv6Gateway := 'fd00::1';
+  WriteInterfaceSettings(Store, Settings);
+  Store.Flush;
+  Settings := ReadInterfaceSettings(Store, 'eth1');
+  Check('network: a static IPv6 address is written and read back', (Settings.Ipv6Method = Ipv6MethodStatic) and
+    (Settings.Ipv6Address = 'fd00::50/64') and (Settings.Ipv6Gateway = 'fd00::1'));
+
   Settings.Method := NetworkMethodDhcp;
   Settings.Address := '';
+  Settings.Ipv6Method := Ipv6MethodAuto;
+  Settings.Ipv6Address := '';
+  Settings.Ipv6Gateway := '';
   WriteInterfaceSettings(Store, Settings);
   Store.Flush;
   Settings := ReadInterfaceSettings(Store, 'eth1');
   Check('network: back to DHCP, an empty address removes the key', (Settings.Method = NetworkMethodDhcp) and
     (Settings.Address = '') and (Pos('192.168.50.2', Storage.TextOf('Network')) = 0));
+  Check('network: back to IPv6 auto, the empty IPv6 keys go', (Settings.Ipv6Method = Ipv6MethodAuto) and
+    (Pos('fd00::50', Storage.TextOf('Network')) = 0));
   Store.Free;
   Storage.Free;
+end;
+
+procedure TestIpv6Checks(Check: TCheckProcedure);
+var
+  Method: TIpv6Method;
+  Settings: TInterfaceSettings;
+begin
+  Check('network: IPv6 methods are read in any case', ParseIpv6Method('AUTO', Method) and
+    (Method = Ipv6MethodAuto) and ParseIpv6Method(' static', Method) and (Method = Ipv6MethodStatic) and
+    ParseIpv6Method('none', Method) and (Method = Ipv6MethodNone) and not ParseIpv6Method('dhcp', Method) and
+    (Ipv6MethodName(Ipv6MethodNone) = 'none'));
+  Check('network: a static IPv6 address with a gateway',
+    CheckInterfaceSettings(StaticIpv6Settings('fd00::10/64', 'fd00::1')) = NetworkSettingsValid);
+  Check('network: a link-local IPv6 gateway is taken',
+    CheckInterfaceSettings(StaticIpv6Settings('fec0::10/64', 'fe80::2')) = NetworkSettingsValid);
+  Check('network: a static IPv6 address without a gateway',
+    CheckInterfaceSettings(StaticIpv6Settings('2001:db8::5/128', '')) = NetworkSettingsValid);
+  Check('network: static IPv6 needs an address',
+    CheckInterfaceSettings(StaticIpv6Settings('', '')) = ProblemNoIpv6Address);
+  Check('network: an IPv6 gateway needs an address too',
+    CheckInterfaceSettings(StaticIpv6Settings('', 'fd00::1')) = ProblemNoIpv6Address);
+  Check('network: an IPv6 address needs its prefix',
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10', '')) = ProblemBadIpv6Prefix) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/0', '')) = ProblemBadIpv6Prefix) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/129', '')) = ProblemBadIpv6Address));
+  Check('network: not an IPv6 address',
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00:::10/64', '')) = ProblemBadIpv6Address) and
+    (CheckInterfaceSettings(StaticIpv6Settings('10.0.2.15/24', '')) = ProblemBadIpv6Address));
+  Check('network: ::, ::1, multicast and link-local IPv6 addresses are not hosts',
+    (CheckInterfaceSettings(StaticIpv6Settings('::/64', '')) = ProblemIpv6AddressNotHost) and
+    (CheckInterfaceSettings(StaticIpv6Settings('::1/128', '')) = ProblemIpv6AddressNotHost) and
+    (CheckInterfaceSettings(StaticIpv6Settings('ff02::1/64', '')) = ProblemIpv6AddressNotHost) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fe80::5/64', '')) = ProblemIpv6AddressNotHost));
+  Check('network: bad IPv6 gateways',
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/64', 'router')) = ProblemBadIpv6Gateway) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/64', '10.0.2.2')) = ProblemBadIpv6Gateway) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/64', 'ff02::2')) = ProblemBadIpv6Gateway) and
+    (CheckInterfaceSettings(StaticIpv6Settings('fd00::10/64', 'fd00::10')) = ProblemIpv6GatewayIsAddress));
+  Settings := StaticIpv6Settings('fd00::10/64', '');
+  Settings.Ipv6Method := Ipv6MethodAuto;
+  Check('network: IPv6 auto keeps a valid address for later', CheckInterfaceSettings(Settings) =
+    NetworkSettingsValid);
+  Settings.Ipv6Method := Ipv6MethodNone;
+  Settings.Ipv6Address := '';
+  Check('network: IPv6 off needs no address', CheckInterfaceSettings(Settings) = NetworkSettingsValid);
+  Check('network: IPv6 DNS servers', CheckDnsSettings(DnsSettings(['fec0::3', '10.0.2.3'], '')) =
+    NetworkSettingsValid);
+  Check('network: bad IPv6 DNS servers', (CheckDnsSettings(DnsSettings(['::'], '')) = ProblemBadDnsServer) and
+    (CheckDnsSettings(DnsSettings(['ff02::fb'], '')) = ProblemBadDnsServer) and
+    (CheckDnsSettings(DnsSettings(['fec0::3::1'], '')) = ProblemBadDnsServer));
 end;
 
 procedure TestChecks(Check: TCheckProcedure);
@@ -247,6 +339,7 @@ procedure TestNetworkSettings(Check: TCheckProcedure);
 begin
   TestReadingAndWriting(Check);
   TestChecks(Check);
+  TestIpv6Checks(Check);
   TestAddressBoxes(Check);
 end;
 
@@ -259,6 +352,10 @@ begin
     (State.Address = '10.0.2.15/24') and (State.Gateway = '10.0.2.2') and (Length(State.DnsServers) = 2) and
     (State.DnsServers[1] = '10.0.2.4') and (State.Domain = 'example.org') and (State.LeaseSeconds = 86400) and
     (State.LeaseObtained = 1794268800) and (State.DhcpServer = '10.0.2.2'));
+  Check('network state: the IPv6 keys are read', (State.Ipv6Method = Ipv6MethodAuto) and
+    (Length(State.Ipv6Addresses) = 2) and (State.Ipv6Addresses[1] = 'fec0::5054:ff:fe12:3456/64') and
+    (State.Ipv6Gateway = 'fe80::2') and (Length(State.Ipv6DnsServers) = 1) and
+    (State.Ipv6DnsServers[0] = 'fec0::3'));
   Check('network state: the lease ends a lease''s length after it began', LeaseExpires(State) = 1794268800 + 86400);
   Check('network state: every state is known', (ParseInterfaceProgress('down') = ProgressDown) and
     (ParseInterfaceProgress('no-link') = ProgressNoLink) and (ParseInterfaceProgress('configuring') =
@@ -266,7 +363,8 @@ begin
     (InterfaceProgressName(ProgressNoLink) = 'no-link'));
   Check('network state: a state still configuring, without an address',
     ParseInterfaceState('eth1', 'Method = "dhcp"'#10'State = "configuring"'#10'Address = ""'#10, State) and
-    (State.Progress = ProgressConfiguring) and (State.Address = '') and (LeaseExpires(State) = 0));
+    (State.Progress = ProgressConfiguring) and (State.Address = '') and (LeaseExpires(State) = 0) and
+    (State.Ipv6Method = Ipv6MethodAuto) and (Length(State.Ipv6Addresses) = 0));
   Check('network state: a file without a known state is not taken',
     not ParseInterfaceState('eth1', 'Method = "dhcp"'#10'State = "dreaming"'#10, State) and not State.Known and
     not ParseInterfaceState('eth1', '', State));

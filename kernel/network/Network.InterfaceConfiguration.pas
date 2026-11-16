@@ -18,14 +18,17 @@
 
 {
   Configuring interfaces: the address and prefix, on and off, the MTU,
-  and how an interface is described to programs (ifconfig).
+  IPv6's mode and manual addresses, and how an interface is described
+  to programs (ifconfig).
 
   Giving an interface an address replaces the one it had: the routes
   through the interface and its ARP entries are dropped, the route to
   its own network is added, and the address is announced. Turning it
   off drops what waits to be sent and its ARP entries; its routes stay
-  but are not used while it is off. Every change is written to the
-  kernel log. Under the network lock.
+  but are not used while it is off. Turning it on or off starts or
+  stops IPv6 on it (Network.Ipv6Interfaces). IPv6 addresses are added
+  and removed one by one beside the others. Every change is written to
+  the kernel log. Under the network lock.
 }
 unit Network.InterfaceConfiguration;
 
@@ -57,6 +60,11 @@ uses
   Network.Packets,
   Network.Routing,
   Network.Arp,
+  Network.Ipv6Addresses,
+  Network.Ipv6Types,
+  Network.Ipv6AddressList,
+  Network.Ipv6Interfaces,
+  Network.Ipv6,
   Debug.Output;
 
 procedure WriteChange(NetworkInterface: PNetworkInterface; What: PChar);
@@ -130,6 +138,7 @@ begin
     ForgetInterfaceNeighbours(NetworkInterface);
     WriteChange(NetworkInterface, 'down');
   end;
+  Ipv6InterfaceChanged(NetworkInterface);
 end;
 
 function SetInterfaceMtu(NetworkInterface: PNetworkInterface; Mtu: LongWord): LongInt;
@@ -140,7 +149,61 @@ begin
   Result := ErrorNone;
 end;
 
+function Ipv6AddressOf(constref Address: TAbiInterfaceAddress): TIpv6Address;
+begin
+  CopyMemory(@Result[0], @Address.Address[0], Ipv6AddressLength);
+end;
+
+{ InterfaceChangeAddress: IPv4 replaces the address, IPv6 adds one. }
+function ChangeAddress(NetworkInterface: PNetworkInterface; constref Address: TAbiInterfaceAddress): LongInt;
+var
+  Address6: TIpv6Address;
+begin
+  case Address.Family of
+    AddressFamilyUnspecified:
+      begin
+        RemoveInterfaceAddress(NetworkInterface);
+        Result := ErrorNone;
+      end;
+    AddressFamilyIPv4:
+      Result := SetInterfaceAddress(NetworkInterface, ReadIpv4Address(@Address.Address[0]), Address.PrefixLength);
+    AddressFamilyIPv6:
+      begin
+        Address6 := Ipv6AddressOf(Address);
+        if NetworkInterface^.Ipv6.Mode = Ipv6ModeOff then
+          Exit(ErrorNetworkUnreachable);
+        if IsLinkLocalIpv6Address(Address6) or IsLoopbackIpv6Address(Address6) then
+          Exit(ErrorInvalidArgument);
+        Result := AddIpv6Address(NetworkInterface, Address6, Address.PrefixLength, Ipv6OriginManual, Ipv6Forever,
+          Ipv6Forever);
+      end;
+  else
+    Result := ErrorAddressFamilyNotSupported;
+  end;
+end;
+
+function RemoveAddress(NetworkInterface: PNetworkInterface; constref Address: TAbiInterfaceAddress): LongInt;
+begin
+  case Address.Family of
+    AddressFamilyIPv4:
+      begin
+        if not NetworkInterface^.HasAddress or
+           (NetworkInterface^.Address <> ReadIpv4Address(@Address.Address[0])) then
+          Exit(ErrorNotFound);
+        RemoveInterfaceAddress(NetworkInterface);
+        Result := ErrorNone;
+      end;
+    AddressFamilyIPv6:
+      Result := RemoveIpv6Address(NetworkInterface, Ipv6AddressOf(Address));
+  else
+    Result := ErrorAddressFamilyNotSupported;
+  end;
+end;
+
 function ConfigureInterface(constref Configuration: TAbiInterfaceConfiguration): LongInt;
+const
+  KnownChanges = InterfaceChangeAddress or InterfaceChangeUp or InterfaceChangeMtu or InterfaceChangeIpv6Mode or
+    InterfaceChangeRemoveAddress;
 var
   Name: array[0..NetworkInterfaceNameCapacity - 1] of Char;
   NetworkInterface: PNetworkInterface;
@@ -149,7 +212,7 @@ begin
   NetworkInterface := FindInterfaceByName(@Name[0]);
   if NetworkInterface = nil then
     Exit(ErrorNoDevice);
-  if (Configuration.Changes and not (InterfaceChangeAddress or InterfaceChangeUp or InterfaceChangeMtu)) <> 0 then
+  if (Configuration.Changes and not KnownChanges) <> 0 then
     Exit(ErrorInvalidArgument);
   Result := ErrorNone;
   if (Configuration.Changes and InterfaceChangeMtu) <> 0 then
@@ -158,21 +221,71 @@ begin
     if Result <> ErrorNone then
       Exit;
   end;
-  if (Configuration.Changes and InterfaceChangeAddress) <> 0 then
+  if (Configuration.Changes and InterfaceChangeIpv6Mode) <> 0 then
   begin
-    case Configuration.Address.Family of
-      AddressFamilyUnspecified: RemoveInterfaceAddress(NetworkInterface);
-      AddressFamilyIPv4:
-        Result := SetInterfaceAddress(NetworkInterface, ReadIpv4Address(@Configuration.Address.Address[0]),
-          Configuration.Address.PrefixLength);
-    else
-      Result := ErrorAddressFamilyNotSupported;
-    end;
+    Result := SetIpv6Mode(NetworkInterface, Configuration.Ipv6Mode);
+    if Result <> ErrorNone then
+      Exit;
+  end;
+  if (Configuration.Changes and InterfaceChangeRemoveAddress) <> 0 then
+  begin
+    Result := RemoveAddress(NetworkInterface, Configuration.Address);
+    if Result <> ErrorNone then
+      Exit;
+  end
+  else if (Configuration.Changes and InterfaceChangeAddress) <> 0 then
+  begin
+    Result := ChangeAddress(NetworkInterface, Configuration.Address);
     if Result <> ErrorNone then
       Exit;
   end;
   if (Configuration.Changes and InterfaceChangeUp) <> 0 then
     SetInterfaceUp(NetworkInterface, Configuration.Up <> 0);
+end;
+
+function AddressFlags(Entry: PIpv6InterfaceAddress): LongWord;
+begin
+  Result := 0;
+  case Entry^.State of
+    Ipv6AddressTentative: Result := InterfaceAddressFlagTentative;
+    Ipv6AddressDeprecated: Result := InterfaceAddressFlagDeprecated;
+  end;
+  case Entry^.Origin of
+    Ipv6OriginAutomatic: Result := Result or InterfaceAddressFlagAutomatic;
+    Ipv6OriginLinkLocal: Result := Result or InterfaceAddressFlagLinkLocal;
+  end;
+end;
+
+{ The IPv6 part of a description: mode, addresses (after the IPv4 one),
+  what routers advertised. }
+procedure DescribeIpv6(NetworkInterface: PNetworkInterface; var Description: TAbiNetworkInterface);
+var
+  Index: Integer;
+  Entry: PIpv6InterfaceAddress;
+  Slot: ^TAbiInterfaceAddress;
+begin
+  Description.Ipv6Mode := NetworkInterface^.Ipv6.Mode;
+  Description.Ipv6HopLimit := NetworkInterface^.Ipv6.HopLimit;
+  Description.Ipv6Mtu := Ipv6LinkMtu(NetworkInterface);
+  for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
+  begin
+    Entry := @NetworkInterface^.Ipv6.Addresses[Index];
+    if (Entry^.State = Ipv6AddressFree) or (Description.AddressCount >= MaximumInterfaceAddresses) then
+      Continue;
+    Slot := @Description.Addresses[Description.AddressCount];
+    Slot^.Family := AddressFamilyIPv6;
+    Slot^.PrefixLength := Entry^.PrefixLength;
+    Slot^.Flags := AddressFlags(Entry);
+    CopyMemory(@Slot^.Address[0], @Entry^.Address[0], Ipv6AddressLength);
+    Inc(Description.AddressCount);
+  end;
+  for Index := 0 to MaximumDnsServers - 1 do
+    if NetworkInterface^.Ipv6.DnsServers[Index].InUse then
+    begin
+      CopyMemory(@Description.Ipv6DnsServers[Description.Ipv6DnsServerCount][0],
+        @NetworkInterface^.Ipv6.DnsServers[Index].Address[0], Ipv6AddressLength);
+      Inc(Description.Ipv6DnsServerCount);
+    end;
 end;
 
 procedure DescribeInterface(NetworkInterface: PNetworkInterface; out Description: TAbiNetworkInterface);
@@ -201,6 +314,7 @@ begin
     Description.Addresses[0].PrefixLength := NetworkInterface^.PrefixLength;
     WriteIpv4Address(@Description.Addresses[0].Address[0], NetworkInterface^.Address);
   end;
+  DescribeIpv6(NetworkInterface, Description);
   Description.Counters := NetworkInterface^.Counters;
   Description.Counters.ReceiveDrops := Description.Counters.ReceiveDrops + QWord(NetworkInterface^.QueueDrops);
 end;

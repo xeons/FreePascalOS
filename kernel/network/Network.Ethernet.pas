@@ -18,9 +18,10 @@
 
 {
   Ethernet II framing: a destination and a source address and the type
-  of what follows (IPv4, ARP), then the payload. Frames for another
-  station, and multicast frames (nothing here joins a group), are
-  dropped; broadcasts are taken.
+  of what follows (IPv4, ARP, IPv6), then the payload. Frames for another
+  station are dropped; broadcasts are taken, and IPv6 multicast frames
+  (33:33 and the group's last four bytes), which IPv6 filters by the
+  groups the interface listens to. Other multicast is dropped.
 }
 unit Network.Ethernet;
 
@@ -37,6 +38,7 @@ uses
 const
   EtherTypeIpv4 = $0800;
   EtherTypeArp = $0806;
+  EtherTypeIpv6 = $86DD;
 
   BroadcastEthernetAddress: TEthernetAddress = ($FF, $FF, $FF, $FF, $FF, $FF);
 
@@ -54,13 +56,17 @@ uses
   Runtime.Memory,
   Network.ByteOrder,
   Network.Arp,
-  Network.Ipv4;
+  Network.Ipv4,
+  Network.Ipv6;
 
 function IsForThisStation(NetworkInterface: PNetworkInterface; Destination: PByte): Boolean;
 begin
   if MemoryIsEqual(Destination, @NetworkInterface^.HardwareAddress[0], EthernetAddressLength) then
     Exit(True);
-  Result := MemoryIsEqual(Destination, @BroadcastEthernetAddress[0], EthernetAddressLength);
+  if MemoryIsEqual(Destination, @BroadcastEthernetAddress[0], EthernetAddressLength) then
+    Exit(True);
+  { An IPv6 multicast group. }
+  Result := (Destination[0] = $33) and (Destination[1] = $33);
 end;
 
 procedure EthernetInput(NetworkInterface: PNetworkInterface; Packet: PPacket);
@@ -85,6 +91,8 @@ begin
       Ipv4Input(NetworkInterface, Frame + EthernetHeaderBytes, Packet^.Length - EthernetHeaderBytes);
     EtherTypeArp:
       ArpInput(NetworkInterface, Frame + EthernetHeaderBytes, Packet^.Length - EthernetHeaderBytes);
+    EtherTypeIpv6:
+      Ipv6Input(NetworkInterface, Frame + EthernetHeaderBytes, Packet^.Length - EthernetHeaderBytes);
   else
     CountReceiveDrop(NetworkInterface);
   end;

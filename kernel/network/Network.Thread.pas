@@ -32,6 +32,7 @@
 unit Network.Thread;
 
 {$mode objfpc}
+{$pointermath on}
 
 interface
 
@@ -47,12 +48,28 @@ uses
   Network.Interfaces,
   Network.Ethernet,
   Network.Ipv4,
+  Network.Ipv6,
   Network.Arp,
   Network.Fragments,
+  Network.NeighborCache,
+  Network.Ipv6Fragments,
+  Network.Ipv6Interfaces,
   Network.TcpTimers;
 
 const
   FramesPerBatch = 64;
+
+{ A datagram that went round lo: IPv4 or IPv6 as its version says. }
+procedure LoopbackInput(NetworkInterface: PNetworkInterface; Packet: PPacket);
+var
+  Data: PByte;
+begin
+  Data := PacketData(Packet);
+  if (Packet^.Length > 0) and ((Data[0] shr 4) = 6) then
+    Ipv6Input(NetworkInterface, Data, Packet^.Length)
+  else
+    Ipv4Input(NetworkInterface, Data, Packet^.Length);
+end;
 
 procedure HandleFrame(Packet: PPacket);
 var
@@ -61,7 +78,7 @@ begin
   NetworkInterface := PNetworkInterface(Packet^.NetworkInterface);
   CountReceivedFrame(NetworkInterface, Packet^.Length);
   if NetworkInterface^.IsLoopback then
-    Ipv4Input(NetworkInterface, PacketData(Packet), Packet^.Length)
+    LoopbackInput(NetworkInterface, Packet)
   else if NetworkInterface^.IsUp then
     EthernetInput(NetworkInterface, Packet)
   else
@@ -95,6 +112,9 @@ begin
   BeginNetworkTimerRound;
   RunArpTimers(Now);
   RunReassemblyTimers(Now);
+  RunNeighborTimers(Now);
+  RunIpv6ReassemblyTimers(Now);
+  RunIpv6InterfaceTimers(Now);
   RunTcpTimers(Now);
 end;
 

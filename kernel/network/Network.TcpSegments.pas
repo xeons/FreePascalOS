@@ -34,7 +34,8 @@ uses
   Network.Addresses,
   Network.Interfaces,
   Network.Ipv4,
-  Network.TcpTypes;
+  Network.TcpTypes,
+  Network.IpDatagrams;
 
 type
   TTcpSegment = record
@@ -51,7 +52,7 @@ type
   end;
 
 { False for a segment too short or with a wrong checksum. }
-function ParseTcpSegment(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord;
+function ParseTcpSegment(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord;
   out Segment: TTcpSegment): Boolean;
 { The sequence space a segment takes: its data, and one each for SYN and
   FIN. }
@@ -59,7 +60,7 @@ function SegmentSequenceLength(constref Segment: TTcpSegment): LongWord;
 { The window we can advertise: the room in the receive buffer. }
 function ReceiveWindow(Connection: PTcpConnection): LongWord;
 { The MSS we advertise: what the route's MTU leaves for data. }
-function OwnMaximumSegment(Remote: TIpv4Address; BoundInterface: PNetworkInterface): LongWord;
+function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
 { Sends a segment of Connection: Flags (ACK added in every state but
   SYN_SENT), Sequence, and DataLength bytes of the send buffer from
   DataOffset. Clears a pending ACK. }
@@ -67,7 +68,7 @@ function SendConnectionSegment(Connection: PTcpConnection; Sequence: LongWord; F
   DataOffset, DataLength: LongWord): LongInt;
 { Answers a segment that belongs to no connection with a reset (unless
   it is a reset itself). }
-procedure SendResetFor(constref Datagram: TIpv4Datagram; constref Segment: TTcpSegment);
+procedure SendResetFor(constref Datagram: TIpDatagram; constref Segment: TTcpSegment);
 
 implementation
 
@@ -77,6 +78,7 @@ uses
   Network.Checksums,
   Network.Packets,
   Network.ByteRings,
+  Network.IpOutput,
   Network.Statistics;
 
 const
@@ -108,7 +110,7 @@ begin
   end;
 end;
 
-function ParseTcpSegment(constref Datagram: TIpv4Datagram; Payload: PByte; Length: LongWord;
+function ParseTcpSegment(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord;
   out Segment: TTcpSegment): Boolean;
 var
   HeaderLength: LongWord;
@@ -120,7 +122,7 @@ begin
   HeaderLength := LongWord(Payload[12] shr 4) * 4;
   if (HeaderLength < TcpHeaderBytes) or (HeaderLength > Length) then
     Exit(False);
-  Sum := PseudoHeaderSum(Datagram.Source, Datagram.Destination, IpProtocolTcp, Length);
+  Sum := DatagramPseudoHeaderSum(Datagram, IpProtocolTcp, Length);
   if FinishChecksum(AddToChecksum(Sum, Payload, Length)) <> 0 then
     Exit(False);
   Segment.SourcePort := ReadBigEndian16(Payload);
@@ -153,11 +155,11 @@ begin
     Result := $FFFF;
 end;
 
-function OwnMaximumSegment(Remote: TIpv4Address; BoundInterface: PNetworkInterface): LongWord;
+function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
 var
   Limit: LongWord;
 begin
-  Limit := PayloadLimit(Remote, BoundInterface);
+  Limit := IpPayloadLimit(Remote, BoundInterface);
   if Limit <= TcpHeaderBytes + DefaultPeerMss then
     Exit(DefaultPeerMss);
   Result := Limit - TcpHeaderBytes;
@@ -177,11 +179,11 @@ begin
   WriteBigEndian16(Header + 18, 0);
 end;
 
-procedure WriteChecksum(Segment: PByte; Length: LongWord; Source, Destination: TIpv4Address);
+procedure WriteChecksum(Segment: PByte; Length: LongWord; constref Source, Destination: TNetworkEndpoint);
 var
   Sum: LongWord;
 begin
-  Sum := PseudoHeaderSum(Source, Destination, IpProtocolTcp, Length);
+  Sum := TransportPseudoHeaderSum(Source, Destination, IpProtocolTcp, Length);
   WriteBigEndian16(Segment + 16, FinishChecksum(AddToChecksum(Sum, Segment, Length)));
 end;
 
@@ -234,11 +236,11 @@ begin
     Header[TcpHeaderBytes] := OptionMaximumSegment;
     Header[TcpHeaderBytes + 1] := TcpMssOptionBytes;
     WriteBigEndian16(Header + TcpHeaderBytes + 2,
-      Word(OwnMaximumSegment(Connection^.Remote.Address, Connection^.BoundInterface)));
+      Word(OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface)));
   end;
   if DataLength > 0 then
     CopyFromByteRing(Connection^.SendBuffer, DataOffset, Header + HeaderLength, DataLength);
-  WriteChecksum(Header, HeaderLength + DataLength, Connection^.Local.Address, Connection^.Remote.Address);
+  WriteChecksum(Header, HeaderLength + DataLength, Connection^.Local, Connection^.Remote);
   if (Flags and TcpFlagAck) <> 0 then
   begin
     Connection^.AdvertisedEdge := Connection^.ReceiveNext + Window;
@@ -247,12 +249,12 @@ begin
     Connection^.SegmentsSinceAck := 0;
   end;
   CountSegmentSent(Connection, Sequence, Flags, DataLength);
-  Result := SendIpv4(Packet, Connection^.Local.Address, Connection^.Remote.Address, IpProtocolTcp,
+  Result := SendIpPacket(Packet, Connection^.Local, Connection^.Remote, IpProtocolTcp,
     Connection^.TimeToLive, True, Connection^.BoundInterface);
 end;
 
-procedure SendBareSegment(Source, Destination: TIpv4Address; SourcePort, DestinationPort: Word;
-  Sequence, Acknowledgment: LongWord; Flags: Byte);
+procedure SendBareSegment(constref Source, Destination: TNetworkEndpoint; Sequence, Acknowledgment: LongWord;
+  Flags: Byte);
 var
   Packet: PPacket;
   Header: PByte;
@@ -261,22 +263,25 @@ begin
   if Packet = nil then
     Exit;
   Header := AppendToPacket(Packet, TcpHeaderBytes);
-  WriteHeader(Header, SourcePort, DestinationPort, Sequence, Acknowledgment, TcpHeaderBytes, Flags, 0);
+  WriteHeader(Header, Source.Port, Destination.Port, Sequence, Acknowledgment, TcpHeaderBytes, Flags, 0);
   WriteChecksum(Header, TcpHeaderBytes, Source, Destination);
   CountSegmentSent(nil, Sequence, Flags, 0);
-  SendIpv4(Packet, Source, Destination, IpProtocolTcp, DefaultTimeToLive, True, nil);
+  SendIpPacket(Packet, Source, Destination, IpProtocolTcp, DefaultTimeToLive, True, nil);
 end;
 
-procedure SendResetFor(constref Datagram: TIpv4Datagram; constref Segment: TTcpSegment);
+procedure SendResetFor(constref Datagram: TIpDatagram; constref Segment: TTcpSegment);
+var
+  Local: TNetworkEndpoint;
+  Remote: TNetworkEndpoint;
 begin
   if ((Segment.Flags and TcpFlagReset) <> 0) or Datagram.IsBroadcast then
     Exit;
+  Local := DatagramDestination(Datagram, Segment.DestinationPort);
+  Remote := DatagramSource(Datagram, Segment.SourcePort);
   if (Segment.Flags and TcpFlagAck) <> 0 then
-    SendBareSegment(Datagram.Destination, Datagram.Source, Segment.DestinationPort, Segment.SourcePort,
-      Segment.Acknowledgment, 0, TcpFlagReset)
+    SendBareSegment(Local, Remote, Segment.Acknowledgment, 0, TcpFlagReset)
   else
-    SendBareSegment(Datagram.Destination, Datagram.Source, Segment.DestinationPort, Segment.SourcePort,
-      0, Segment.Sequence + SegmentSequenceLength(Segment), TcpFlagReset or TcpFlagAck);
+    SendBareSegment(Local, Remote, 0, Segment.Sequence + SegmentSequenceLength(Segment), TcpFlagReset or TcpFlagAck);
 end;
 
 end.

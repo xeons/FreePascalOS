@@ -44,7 +44,8 @@ interface
 uses
   Network.Addresses,
   Network.Packets,
-  Network.Interfaces;
+  Network.Interfaces,
+  Network.IpDatagrams;
 
 const
   Ipv4HeaderBytes = 20;
@@ -52,22 +53,6 @@ const
   IpProtocolIcmp = 1;
   IpProtocolTcp = 6;
   IpProtocolUdp = 17;
-
-type
-  { A received datagram, as the protocols above see it. }
-  TIpv4Datagram = record
-    Source: TIpv4Address;
-    Destination: TIpv4Address;
-    Protocol: Byte;
-    TimeToLive: Byte;
-    { Sent to a broadcast address. }
-    IsBroadcast: Boolean;
-    ArrivalInterface: PNetworkInterface;
-    { The whole datagram, header first (for ICMP errors about it). }
-    Header: PByte;
-    HeaderLength: LongWord;
-    TotalLength: LongWord;
-  end;
 
 { A datagram that arrived (Data: what follows the Ethernet header, or
   the whole frame on lo). }
@@ -103,6 +88,7 @@ uses
   Network.Udp,
   Network.TcpInput,
   Network.Statistics,
+  Runtime.Memory,
   Memory.KernelHeap;
 
 const
@@ -131,7 +117,7 @@ begin
   Result := not NetworkInterface^.HasAddress and (Protocol = IpProtocolUdp);
 end;
 
-procedure DeliverDatagram(constref Datagram: TIpv4Datagram);
+procedure DeliverDatagram(constref Datagram: TIpDatagram);
 var
   Payload: PByte;
   PayloadLength: LongWord;
@@ -154,13 +140,15 @@ end;
 
 procedure Ipv4Input(NetworkInterface: PNetworkInterface; Data: PByte; Length: LongWord);
 var
-  Datagram: TIpv4Datagram;
+  Datagram: TIpDatagram;
   Flags: Word;
   FragmentOffset: LongWord;
   Whole: PByte;
   WholeLength: LongWord;
 begin
   Inc(NetworkStatistics.Ip.Received);
+  FillMemory(@Datagram, SizeOf(Datagram), 0);
+  Datagram.Family := AddressFamilyIPv4;
   if (Length < Ipv4HeaderBytes) or ((Data[0] shr 4) <> 4) then
   begin
     Inc(NetworkStatistics.Ip.HeaderErrors);

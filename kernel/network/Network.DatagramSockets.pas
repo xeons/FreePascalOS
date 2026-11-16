@@ -49,20 +49,22 @@ function ConnectDatagramSocket(Socket: PSocket; constref Destination: TNetworkEn
 function BindDatagramSocketImplicitly(Socket: PSocket): LongInt;
 { The address a datagram to Destination leaves with: the socket's own,
   else that of the interface it goes out of. }
-function DatagramSourceAddress(Socket: PSocket; Destination: TIpv4Address; out Source: TIpv4Address): LongInt;
+function DatagramSourceAddress(Socket: PSocket; constref Destination: TNetworkEndpoint;
+  out Source: TNetworkEndpoint): LongInt;
 { True if the socket takes a datagram from Source arriving for
-  Destination:Port on NetworkInterface. }
-function DatagramSocketMatches(Socket: PSocket; constref Source: TNetworkEndpoint; Destination: TIpv4Address;
-  Port: Word; IsBroadcast: Boolean; NetworkInterface: Pointer): Boolean;
+  Destination (with its port) on NetworkInterface. }
+function DatagramSocketMatches(Socket: PSocket; constref Source, Destination: TNetworkEndpoint;
+  IsBroadcast: Boolean; NetworkInterface: Pointer): Boolean;
 
 implementation
 
 uses
   Abi.SystemCalls,
   Runtime.Memory,
+  Network.Udp,
   Network.Datagrams,
   Network.Interfaces,
-  Network.Ipv4,
+  Network.IpOutput,
   Network.Ports;
 
 function QueueDatagramForSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
@@ -83,7 +85,7 @@ var
   Error: LongInt;
   Deadline: QWord;
 begin
-  Source := MakeEndpoint(AnyAddress, 0);
+  Source := UnspecifiedEndpoint(Socket^.Family);
   Deadline := SocketWaitDeadline(Socket^.ReceiveTimeout);
   repeat
     Entry := FirstDatagram(Socket^.Datagrams);
@@ -123,7 +125,7 @@ begin
     Socket^.IsBound := True;
     Exit(ErrorNone);
   end;
-  Port := ChooseDynamicPort(Socket, Socket^.Local.Address);
+  Port := ChooseDynamicPort(Socket, Socket^.Local);
   if Port = 0 then
     Exit(ErrorAddressInUse);
   Socket^.Local.Port := Port;
@@ -131,54 +133,62 @@ begin
   Result := ErrorNone;
 end;
 
-function DatagramSourceAddress(Socket: PSocket; Destination: TIpv4Address; out Source: TIpv4Address): LongInt;
-var
-  NetworkInterface: PNetworkInterface;
-  NextHop: TIpv4Address;
+function DatagramSourceAddress(Socket: PSocket; constref Destination: TNetworkEndpoint;
+  out Source: TNetworkEndpoint): LongInt;
 begin
-  Result := RouteDatagram(Destination, Socket^.BoundInterface, NetworkInterface, NextHop, Source);
-  if (Result = ErrorNone) and (Socket^.Local.Address <> AnyAddress) and
-     (Socket^.Local.Address <> LimitedBroadcastAddress) then
-    Source := Socket^.Local.Address;
+  Result := ChooseSourceAddress(Destination, Socket^.BoundInterface, Source);
+  if Result <> ErrorNone then
+    Exit;
+  if EndpointIsUnspecified(Socket^.Local) then
+    Exit;
+  { A socket bound to a broadcast address sends from the interface's. }
+  if (Socket^.Local.Family = AddressFamilyIPv4) and IsBroadcastAddress(Socket^.Local.Address, nil) then
+    Exit;
+  Source := Socket^.Local;
+  Source.Port := 0;
 end;
 
 function ConnectDatagramSocket(Socket: PSocket; constref Destination: TNetworkEndpoint): LongInt;
 var
-  Source: TIpv4Address;
+  Source: TNetworkEndpoint;
   Peer: TNetworkEndpoint;
 begin
   if Destination.Family = AddressFamilyUnspecified then
   begin
     Socket^.IsConnected := False;
-    Socket^.Peer := MakeEndpoint(AnyAddress, 0);
+    Socket^.Peer := UnspecifiedEndpoint(Socket^.Family);
     Exit(ErrorNone);
   end;
   Peer := Destination;
-  if Peer.Address = AnyAddress then
-    Peer.Address := LoopbackAddress;
-  Result := DatagramSourceAddress(Socket, Peer.Address, Source);
+  if EndpointIsUnspecified(Peer) then
+    Peer := LoopbackEndpoint(Peer.Family, Peer.Port);
+  Result := DatagramSourceAddress(Socket, Peer, Source);
   if Result <> ErrorNone then
     Exit;
   Result := BindDatagramSocketImplicitly(Socket);
   if Result <> ErrorNone then
     Exit;
-  if Socket^.Local.Address = AnyAddress then
-    Socket^.Local.Address := Source;
+  if EndpointIsUnspecified(Socket^.Local) then
+  begin
+    Source.Port := Socket^.Local.Port;
+    Socket^.Local := Source;
+  end;
   Socket^.Peer := Peer;
   Socket^.IsConnected := True;
 end;
 
-function DatagramSocketMatches(Socket: PSocket; constref Source: TNetworkEndpoint; Destination: TIpv4Address;
-  Port: Word; IsBroadcast: Boolean; NetworkInterface: Pointer): Boolean;
+function DatagramSocketMatches(Socket: PSocket; constref Source, Destination: TNetworkEndpoint;
+  IsBroadcast: Boolean; NetworkInterface: Pointer): Boolean;
 begin
   Result := False;
-  if not Socket^.IsBound or (Socket^.Local.Port <> Port) then
+  if (Socket^.Family <> Destination.Family) or not Socket^.IsBound or (Socket^.Local.Port <> Destination.Port) then
     Exit;
   if (Socket^.BoundInterface <> nil) and (Socket^.BoundInterface <> NetworkInterface) then
     Exit;
-  if not IsBroadcast and (Socket^.Local.Address <> AnyAddress) and (Socket^.Local.Address <> Destination) then
+  if not IsBroadcast and not EndpointIsUnspecified(Socket^.Local) and
+     not EndpointAddressesEqual(Socket^.Local, Destination) then
     Exit;
-  if Socket^.IsConnected and ((Socket^.Peer.Address <> Source.Address) or (Socket^.Peer.Port <> Source.Port)) then
+  if Socket^.IsConnected and not EndpointsEqual(Socket^.Peer, Source) then
     Exit;
   Result := True;
 end;

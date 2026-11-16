@@ -33,10 +33,15 @@
     Gateway = "10.0.2.2"               static: the default route through it
     Up = true                          false: turned off (a lease given
                                        back first)
+    Ipv6Method = "auto"                auto, static or none (IPv6 off)
+    Ipv6Address = "fec0::10/64"        static: an IPv6 address and prefix
+    Ipv6Gateway = "fec0::2"            static: the IPv6 default route
 
   Address and Gateway are read only for static (the Control Panel keeps
-  them for a switch back). An interface without a section is left alone
-  (Method none, Up true). The file
+  them for a switch back), Ipv6Address and Ipv6Gateway likewise only for
+  Ipv6Method static (NetworkService.Ipv6Settings). An interface without
+  a section is left alone for IPv4 (Method none, Up true) and is auto
+  for IPv6. The file
   is read whole each time it changes (ReadNetworkSettings); what does
   not make sense is reported in the interface's Problem and that
   interface is not configured.
@@ -50,7 +55,8 @@ interface
 
 uses
   SysUtils,
-  Sys.InternetAddresses;
+  Sys.InternetAddresses,
+  NetworkService.Ipv6Settings;
 
 type
   TAddressMethod = (MethodNone, MethodStatic, MethodDhcp);
@@ -67,6 +73,8 @@ type
     Up: Boolean;
     { Not empty: the section cannot be applied, and says why. }
     Problem: string;
+    { Applied apart from the rest: a change to it leaves a lease alone. }
+    Ipv6: TIpv6Settings;
   end;
 
   TNetworkSettings = record
@@ -79,8 +87,10 @@ type
   end;
 
 function ReadNetworkSettings: TNetworkSettings;
-{ The settings of the interface Name: its section's, or Method none. }
+{ The settings of the interface Name: its section's, or Method none
+  (and IPv6 auto). }
 function InterfaceSettingsOf(constref Settings: TNetworkSettings; const Name: string): TInterfaceSettings;
+{ The same IPv4 settings (Ipv6 is compared with SameIpv6Settings). }
 function SameInterfaceSettings(constref First, Second: TInterfaceSettings): Boolean;
 function AddressMethodName(Method: TAddressMethod): string;
 
@@ -118,6 +128,7 @@ begin
   Result.Gateway := AnyIpv4Address;
   Result.Up := True;
   Result.Problem := '';
+  Result.Ipv6 := DefaultIpv6Settings;
 end;
 
 procedure ReadStaticAddress(Store: TSettings; const Section: string; var Entry: TInterfaceSettings);
@@ -160,6 +171,7 @@ begin
   { A section without a Method is static, as it was before DHCP. }
   MethodText := LowerCase(Store.ReadString(Section + '/Method', 'static'));
   Result.Up := Store.ReadBoolean(Section + '/Up', True);
+  Result.Ipv6 := ReadIpv6Settings(Store, Section);
   if MethodText = 'static' then
   begin
     Result.Method := MethodStatic;
@@ -180,7 +192,7 @@ begin
   Names := Store.ReadList(DnsServersSetting, nil);
   Settings.DnsServers := nil;
   for Index := 0 to High(Names) do
-    if ParseIpv4Address(PChar(Names[Index]), Address) then
+    if ParseInternetAddress(PChar(Names[Index]), Address) then
     begin
       SetLength(Settings.DnsServers, Length(Settings.DnsServers) + 1);
       Settings.DnsServers[High(Settings.DnsServers)] := Address;

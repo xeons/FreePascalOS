@@ -21,18 +21,21 @@
   list and configure the network interfaces, the routes, the ARP cache
   and the DNS servers. Included at the end of Abi.SystemCalls.inc.
 
-  Addresses carry a family (AddressFamily*), so that IPv6 can be added
-  without new calls: an IPv4 address takes the first four bytes of the
-  sixteen, in the order it is written (10.0.2.15 is 10, 0, 2, 15).
-  Ports are in the machine's byte order.
+  Addresses carry a family (AddressFamily*): an IPv4 address takes the
+  first four bytes of the sixteen, in the order it is written (10.0.2.15
+  is 10, 0, 2, 15); an IPv6 address all sixteen, in the order of the
+  wire. Ports are in the machine's byte order. IPv4 and IPv6 sockets are
+  separate (an IPv6 socket never sees IPv4 traffic), so a server that
+  wants both binds one of each, on the same port if it likes.
 }
 const
   { --- Sockets ------------------------------------------------------------- }
 
   { (Family, Kind, Protocol): a new socket handle (HandleKindSocket).
-    Family is AddressFamilyIPv4; Kind is SocketKindStream (TCP),
-    SocketKindDatagram (UDP, or ICMP echo with ProtocolIcmp) or
-    SocketKindRaw (ICMP, root only), with SocketKindNonBlocking or'ed in
+    Family is AddressFamilyIPv4 or AddressFamilyIPv6; Kind is
+    SocketKindStream (TCP), SocketKindDatagram (UDP, or ICMP echo with
+    ProtocolIcmp, or ProtocolIcmpv6 on IPv6) or SocketKindRaw (ICMP or
+    ICMPv6, root only), with SocketKindNonBlocking or'ed in
     for a socket whose calls never wait. Protocol 0 picks the kind's
     usual one. Closing the last handle closes the socket; a TCP
     connection is then ended gracefully by the kernel. }
@@ -103,6 +106,10 @@ const
   { (BufferAddress, Capacity): the ARP cache, TAbiArpEntry records;
     returns how many entries there are. }
   CallListArpEntries = 120;
+  { (BufferAddress, Capacity): IPv6's neighbour cache (Neighbor
+    Discovery; the ARP cache is IPv4's), TAbiNeighborEntry records;
+    returns how many entries there are. }
+  CallListNeighbors = 127;
   { (BufferAddress, Capacity): every socket and TCP connection (also
     those closing after their socket went), TAbiSocketInformation
     records; returns how many there are. }
@@ -125,7 +132,6 @@ const
 
   AddressFamilyUnspecified = 0;
   AddressFamilyIPv4 = 2;
-  { Not yet supported; the number is kept for it. }
   AddressFamilyIPv6 = 10;
 
   SocketKindStream = 1;
@@ -138,6 +144,8 @@ const
   ProtocolIcmp = 1;
   ProtocolTcp = 6;
   ProtocolUdp = 17;
+  { ICMP for IPv6 (an IPv6 socket also takes ProtocolIcmp for it). }
+  ProtocolIcmpv6 = 58;
 
   { Flags of CallSendSocket and CallReceiveSocket. }
   { Receive: leave what is read in the queue. }
@@ -168,7 +176,8 @@ const
     sockets that all ask for it) or while a connection on it waits out
     TIME_WAIT. }
   SocketOptionReuseAddress = 4;
-  { The time to live of the datagrams sent (1-255; 64 at first). }
+  { The time to live of the datagrams sent (1-255; 64 at first); for an
+    IPv6 socket the hop limit of what it sends. }
   SocketOptionTimeToLive = 5;
   { 1: calls never wait (ErrorWouldBlock, ErrorInProgress). }
   SocketOptionNonBlocking = 6;
@@ -213,7 +222,9 @@ const
   NetworkInterfaceNameCapacity = 16;
   NetworkInterfaceDescriptionCapacity = 48;
   HardwareAddressCapacity = 8;
-  MaximumInterfaceAddresses = 4;
+  { IPv4 and IPv6 addresses together (an Ethernet interface usually has
+    an IPv4 address, an IPv6 link-local one and one or two global ones). }
+  MaximumInterfaceAddresses = 8;
   MaximumDnsServers = 4;
   DnsDomainCapacity = 64;
 
@@ -226,9 +237,41 @@ const
   InterfaceFlagBroadcast = $08;
 
   { TAbiInterfaceConfiguration.Changes. }
+  { IPv4: the interface's address becomes Address (family Unspecified:
+    it has none). IPv6: Address is added beside the others (a manual
+    address that never expires). }
   InterfaceChangeAddress = $01;
   InterfaceChangeUp = $02;
   InterfaceChangeMtu = $04;
+  { The interface's IPv6 mode becomes Ipv6Mode. }
+  InterfaceChangeIpv6Mode = $08;
+  { Address is removed (IPv6: that address; IPv4: the interface's
+    address if it is Address). ErrorNotFound if it has no such address. }
+  InterfaceChangeRemoveAddress = $10;
+
+  { How an interface does IPv6 (TAbiNetworkInterface.Ipv6Mode,
+    TAbiInterfaceConfiguration.Ipv6Mode). Ethernet interfaces start in
+    Ipv6ModeAutomatic, lo in Ipv6ModeLinkLocal (with ::1). }
+  { No IPv6 at all: no addresses, IPv6 frames dropped. }
+  Ipv6ModeOff = 1;
+  { A link-local address (made from the Ethernet address) and the
+    addresses set by hand; router advertisements are ignored. }
+  Ipv6ModeLinkLocal = 2;
+  { Also asks for routers (router solicitation) and takes what their
+    advertisements give: addresses for the prefixes (SLAAC), the default
+    route, the MTU, the hop limit and DNS servers (RDNSS). }
+  Ipv6ModeAutomatic = 3;
+
+  { TAbiInterfaceAddress.Flags (IPv6 addresses; 0 for IPv4 ones). }
+  { Duplicate address detection is still under way: not used yet. }
+  InterfaceAddressFlagTentative = $01;
+  { Its preferred lifetime ran out: kept for what uses it, not chosen
+    for anything new. }
+  InterfaceAddressFlagDeprecated = $02;
+  { Made from a router's prefix (SLAAC); goes when its lifetime ends. }
+  InterfaceAddressFlagAutomatic = $04;
+  { The link-local address the kernel made. }
+  InterfaceAddressFlagLinkLocal = $08;
 
   { TAbiRoute.Flags. }
   { Through a gateway (else the destination is on the link). }
@@ -238,6 +281,9 @@ const
   RouteFlagInterface = $02;
   { Its interface is up. }
   RouteFlagUp = $04;
+  { IPv6: learned from a router advertisement (a default router, or an
+    on-link prefix); goes when its lifetime ends. }
+  RouteFlagAutomatic = $08;
 
   RouteAdd = 1;
   RouteRemove = 2;
@@ -247,22 +293,39 @@ const
   ArpStateIncomplete = 1;
   ArpStateReachable = 2;
 
+  { TAbiNeighborEntry.State (RFC 4861 7.3.2; DELAY is shown as PROBE). }
+  NeighborStateIncomplete = 1;
+  NeighborStateReachable = 2;
+  { Not confirmed lately: still used, and checked when it is. }
+  NeighborStateStale = 3;
+  { Being checked (unicast solicitations). }
+  NeighborStateProbe = 4;
+
+  { TAbiNeighborEntry.Flags. }
+  { The neighbour said it is a router. }
+  NeighborFlagRouter = $01;
+
 type
-  { A socket address: AddressFamilyIPv4 with its four bytes first. }
+  { A socket address: AddressFamilyIPv4 with its four bytes first, or
+    AddressFamilyIPv6 with all sixteen. }
   TAbiSocketAddress = record
     Family: Word;
     Port: Word;
-    Reserved: LongWord;
+    { IPv6: the index of the interface a link-local address (fe80::/10)
+      belongs to (fe80::1%eth0); 0 otherwise. Sending to a link-local
+      address with 0 picks the first interface that is up. }
+    ScopeId: LongWord;
     Address: array[0..15] of Byte;
     Reserved2: QWord;
   end;
   PAbiSocketAddress = ^TAbiSocketAddress;
 
-  { An address with its network prefix (10.0.2.15/24). }
+  { An address with its network prefix (10.0.2.15/24, fec0::1/64). }
   TAbiInterfaceAddress = record
     Family: Word;
     PrefixLength: Word;
-    Reserved: LongWord;
+    { InterfaceAddressFlag*. }
+    Flags: LongWord;
     Address: array[0..15] of Byte;
   end;
 
@@ -290,9 +353,19 @@ type
     Flags: LongWord;
     Mtu: LongWord;
     AddressCount: LongWord;
-    Reserved: LongWord;
+    { Ipv6Mode*. }
+    Ipv6Mode: LongWord;
+    { The IPv4 address first (if there is one), then the IPv6 ones. }
     Addresses: array[0..MaximumInterfaceAddresses - 1] of TAbiInterfaceAddress;
     Counters: TAbiInterfaceCounters;
+    { What routers advertised: the hop limit of the IPv6 datagrams sent
+      (64 if none said), the MTU of the link for IPv6, and the DNS
+      servers (RDNSS, RFC 8106) whose lifetime has not run out. }
+    Ipv6HopLimit: LongWord;
+    Ipv6Mtu: LongWord;
+    Ipv6DnsServerCount: LongWord;
+    Reserved: LongWord;
+    Ipv6DnsServers: array[0..MaximumDnsServers - 1] of array[0..15] of Byte;
   end;
   PAbiNetworkInterface = ^TAbiNetworkInterface;
 
@@ -304,7 +377,8 @@ type
     { 1: up, 0: down. }
     Up: LongWord;
     Mtu: LongWord;
-    Reserved: LongWord;
+    { Ipv6Mode*, with InterfaceChangeIpv6Mode. }
+    Ipv6Mode: LongWord;
     Address: TAbiInterfaceAddress;
   end;
 
@@ -330,6 +404,22 @@ type
     ExpiresInSeconds: LongWord;
   end;
   PAbiArpEntry = ^TAbiArpEntry;
+
+  { CallListNeighbors: an IPv6 neighbour. }
+  TAbiNeighborEntry = record
+    Address: array[0..15] of Byte;
+    HardwareAddress: array[0..HardwareAddressCapacity - 1] of Byte;
+    InterfaceName: array[0..NetworkInterfaceNameCapacity - 1] of Char;
+    { NeighborState*. }
+    State: LongWord;
+    { NeighborFlag*. }
+    Flags: LongWord;
+    { Seconds until a reachable entry becomes stale, or a stale one is
+      forgotten. }
+    ExpiresInSeconds: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiNeighborEntry = ^TAbiNeighborEntry;
 
   TAbiSocketInformation = record
     Family: Word;
@@ -395,6 +485,28 @@ type
     SentByType: array[0..IcmpTypesCounted - 1] of QWord;
   end;
 
+const
+  { ICMPv6 types counted one by one, each in a slot of its own: the
+    errors 1-4 in slots 0-3, the informational messages 128-143 (echo,
+    MLD, Neighbor Discovery) in slots 4-19; others only in the totals. }
+  Icmpv6TypesCounted = 20;
+  Icmpv6FirstErrorType = 1;
+  Icmpv6LastErrorType = 4;
+  Icmpv6FirstInformationalType = 128;
+  Icmpv6LastInformationalType = 143;
+  Icmpv6FirstInformationalSlot = 4;
+
+type
+  TAbiIcmpv6Statistics = record
+    Received: QWord;
+    { Too short, or a bad checksum. }
+    ReceiveErrors: QWord;
+    Sent: QWord;
+    SendErrors: QWord;
+    ReceivedByType: array[0..Icmpv6TypesCounted - 1] of QWord;
+    SentByType: array[0..Icmpv6TypesCounted - 1] of QWord;
+  end;
+
   TAbiTcpStatistics = record
     { Connections begun by connect (CLOSED to SYN_SENT), and taken by
       listeners (LISTEN to SYN_RECEIVED). }
@@ -429,15 +541,19 @@ type
     Sent: QWord;
   end;
 
-  { CallGetNetworkStatistics. }
+  { CallGetNetworkStatistics. TCP and UDP count both IP versions. }
   TAbiNetworkStatistics = record
     Ip: TAbiIpStatistics;
     Icmp: TAbiIcmpStatistics;
     Tcp: TAbiTcpStatistics;
     Udp: TAbiUdpStatistics;
+    { IPv6 (its fragments included) and ICMPv6. }
+    Ipv6: TAbiIpStatistics;
+    Icmpv6: TAbiIcmpv6Statistics;
   end;
   PAbiNetworkStatistics = ^TAbiNetworkStatistics;
 
+  { The servers may be IPv4 or IPv6 addresses. }
   TAbiDnsServers = record
     Count: LongWord;
     Reserved: LongWord;

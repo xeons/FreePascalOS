@@ -17,7 +17,8 @@
 }
 
 {
-  The protocols' counters (netstat -s): what IP, ICMP, TCP and UDP
+  The protocols' counters (netstat -s): what IP, ICMP, IPv6, ICMPv6,
+  TCP and UDP
   received, sent and threw away since the start, in the manner of the
   MIB-II groups. The protocols count under the network lock, where all
   their work is done; TakeNetworkStatistics copies them out under it.
@@ -38,6 +39,9 @@ var
 { An ICMP message of IcmpType came in, or went out. }
 procedure CountIcmpReceived(IcmpType: Byte);
 procedure CountIcmpSent(IcmpType: Byte);
+{ The same for ICMPv6. }
+procedure CountIcmpv6Received(IcmpType: Byte);
+procedure CountIcmpv6Sent(IcmpType: Byte);
 { A copy of the counters, with the connections established now counted
   (under the lock). }
 procedure TakeNetworkStatistics(out Statistics: TAbiNetworkStatistics);
@@ -60,6 +64,42 @@ begin
   Inc(NetworkStatistics.Icmp.Sent);
   if IcmpType < IcmpTypesCounted then
     Inc(NetworkStatistics.Icmp.SentByType[IcmpType]);
+end;
+
+{ The slot of an ICMPv6 type in the counters by type; -1 if it has
+  none. }
+function Icmpv6TypeSlot(IcmpType: Byte): Integer;
+begin
+  if (IcmpType >= Icmpv6FirstErrorType) and (IcmpType <= Icmpv6LastErrorType) then
+    Result := IcmpType - Icmpv6FirstErrorType
+  else if IcmpType >= Icmpv6FirstInformationalType then
+  begin
+    if IcmpType > Icmpv6LastInformationalType then
+      Exit(-1);
+    Result := Icmpv6FirstInformationalSlot + IcmpType - Icmpv6FirstInformationalType;
+  end
+  else
+    Result := -1;
+end;
+
+procedure CountIcmpv6Received(IcmpType: Byte);
+var
+  Slot: Integer;
+begin
+  Inc(NetworkStatistics.Icmpv6.Received);
+  Slot := Icmpv6TypeSlot(IcmpType);
+  if Slot >= 0 then
+    Inc(NetworkStatistics.Icmpv6.ReceivedByType[Slot]);
+end;
+
+procedure CountIcmpv6Sent(IcmpType: Byte);
+var
+  Slot: Integer;
+begin
+  Inc(NetworkStatistics.Icmpv6.Sent);
+  Slot := Icmpv6TypeSlot(IcmpType);
+  if Slot >= 0 then
+    Inc(NetworkStatistics.Icmpv6.SentByType[Slot]);
 end;
 
 function CountEstablishedConnections: QWord;

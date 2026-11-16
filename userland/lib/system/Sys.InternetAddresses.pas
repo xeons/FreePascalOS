@@ -22,8 +22,9 @@
   port (10.0.2.15:80), read and written; and turned into the socket
   addresses the system calls take.
 
-  An address carries its family, so that IPv6 can be added: an IPv4
-  address keeps its four bytes first, in the order they are written.
+  An address carries its family: an IPv4 address keeps its four bytes
+  first, in the order they are written; an IPv6 address all sixteen. A
+  socket address of IPv6 is written with brackets ([fec0::2]:80).
 }
 unit Sys.InternetAddresses;
 
@@ -38,8 +39,8 @@ uses
 const
   { "255.255.255.255" and its terminator. }
   Ipv4AddressTextCapacity = 16;
-  { With ":65535". }
-  SocketAddressTextCapacity = 22;
+  { An IPv6 address in brackets with ":65535". }
+  SocketAddressTextCapacity = 54;
   { Any address, IPv6 ones included
     ("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255" and its terminator). }
   InternetAddressTextCapacity = 46;
@@ -58,8 +59,21 @@ function BroadcastIpv4Address: TInternetAddress;
 function Ipv4AddressValue(constref Address: TInternetAddress): LongWord;
 function Ipv4AddressFromValue(Value: LongWord): TInternetAddress;
 function AddressesAreEqual(constref First, Second: TInternetAddress): Boolean;
-{ 0.0.0.0 (or no family at all). }
+{ 0.0.0.0 or :: (or no family at all). }
 function AddressIsUnspecified(constref Address: TInternetAddress): Boolean;
+
+{ "::" and "::1". }
+function AnyIpv6Address: TInternetAddress;
+function LoopbackIpv6Address: TInternetAddress;
+{ 127.0.0.0/8 or ::1. }
+function AddressIsLoopback(constref Address: TInternetAddress): Boolean;
+{ IPv6 fe80::/10 (IPv4 169.254.0.0/16). }
+function AddressIsLinkLocal(constref Address: TInternetAddress): Boolean;
+{ IPv4 224.0.0.0/4, IPv6 ff00::/8. }
+function AddressIsMulticast(constref Address: TInternetAddress): Boolean;
+{ True if the first PrefixLength bits of the two (of one family) are
+  the same. }
+function AddressesSharePrefix(constref First, Second: TInternetAddress; PrefixLength: LongWord): Boolean;
 
 { A dotted quad, each part 0-255 in decimal; nothing else in Text. }
 function ParseIpv4Address(Text: PChar; out Address: TInternetAddress): Boolean;
@@ -69,7 +83,8 @@ function ParseIpv4Address(Text: PChar; out Address: TInternetAddress): Boolean;
 function ParseIpv6Address(Text: PChar; out Address: TInternetAddress): Boolean;
 { Either. }
 function ParseInternetAddress(Text: PChar; out Address: TInternetAddress): Boolean;
-{ "A.B.C.D/N"; without "/N" the prefix is 32 and HasPrefix False. }
+{ "A.B.C.D/N" or an IPv6 address with "/N"; without "/N" the prefix is
+  32 (IPv6: 128) and HasPrefix False. }
 function ParseAddressWithPrefix(Text: PChar; out Address: TInternetAddress; out PrefixLength: LongWord;
   out HasPrefix: Boolean): Boolean;
 { A netmask (255.255.255.0) as a prefix length; False if its ones are
@@ -85,7 +100,7 @@ function FormatNetmask(PrefixLength: LongWord; Buffer: PChar; Capacity: PtrUInt)
 
 function MakeSocketAddress(constref Address: TInternetAddress; Port: Word): TAbiSocketAddress;
 function SocketAddressHost(constref SocketAddress: TAbiSocketAddress): TInternetAddress;
-{ "10.0.2.15:80". }
+{ "10.0.2.15:80", "[fec0::2]:80". }
 function FormatSocketAddress(constref SocketAddress: TAbiSocketAddress; Buffer: PChar; Capacity: PtrUInt): PChar;
 { The address part of a TAbiInterfaceAddress (or of a route). }
 function InterfaceAddressHost(constref Address: TAbiInterfaceAddress): TInternetAddress;
@@ -138,9 +153,83 @@ begin
 end;
 
 function AddressIsUnspecified(constref Address: TInternetAddress): Boolean;
+var
+  Index: Integer;
 begin
-  Result := (Address.Family = AddressFamilyUnspecified) or
-    ((Address.Family = AddressFamilyIPv4) and (Ipv4AddressValue(Address) = 0));
+  case Address.Family of
+    AddressFamilyIPv4: Result := Ipv4AddressValue(Address) = 0;
+    AddressFamilyIPv6:
+      begin
+        for Index := 0 to 15 do
+          if Address.Bytes[Index] <> 0 then
+            Exit(False);
+        Result := True;
+      end;
+  else
+    Result := True;
+  end;
+end;
+
+function AnyIpv6Address: TInternetAddress;
+begin
+  FillMemory(@Result, SizeOf(Result), 0);
+  Result.Family := AddressFamilyIPv6;
+end;
+
+function LoopbackIpv6Address: TInternetAddress;
+begin
+  Result := AnyIpv6Address;
+  Result.Bytes[15] := 1;
+end;
+
+function AddressIsLoopback(constref Address: TInternetAddress): Boolean;
+begin
+  case Address.Family of
+    AddressFamilyIPv4: Result := Address.Bytes[0] = 127;
+    AddressFamilyIPv6: Result := AddressesAreEqual(Address, LoopbackIpv6Address);
+  else
+    Result := False;
+  end;
+end;
+
+function AddressIsLinkLocal(constref Address: TInternetAddress): Boolean;
+begin
+  case Address.Family of
+    AddressFamilyIPv4: Result := (Address.Bytes[0] = 169) and (Address.Bytes[1] = 254);
+    AddressFamilyIPv6: Result := (Address.Bytes[0] = $FE) and ((Address.Bytes[1] and $C0) = $80);
+  else
+    Result := False;
+  end;
+end;
+
+function AddressIsMulticast(constref Address: TInternetAddress): Boolean;
+begin
+  case Address.Family of
+    AddressFamilyIPv4: Result := (Address.Bytes[0] and $F0) = $E0;
+    AddressFamilyIPv6: Result := Address.Bytes[0] = $FF;
+  else
+    Result := False;
+  end;
+end;
+
+function AddressesSharePrefix(constref First, Second: TInternetAddress; PrefixLength: LongWord): Boolean;
+var
+  WholeBytes: LongWord;
+  RemainingBits: LongWord;
+  Mask: Byte;
+begin
+  if First.Family <> Second.Family then
+    Exit(False);
+  if PrefixLength > 128 then
+    PrefixLength := 128;
+  WholeBytes := PrefixLength div 8;
+  RemainingBits := PrefixLength mod 8;
+  if not MemoryIsEqual(@First.Bytes[0], @Second.Bytes[0], WholeBytes) then
+    Exit(False);
+  if RemainingBits = 0 then
+    Exit(True);
+  Mask := Byte($FF shl (8 - RemainingBits));
+  Result := (First.Bytes[WholeBytes] and Mask) = (Second.Bytes[WholeBytes] and Mask);
 end;
 
 { A decimal number of 1 to 3 digits from Text[Position], at most Limit;
@@ -311,6 +400,36 @@ begin
     Result := ParseIpv6Address(Text, Address);
 end;
 
+{ An IPv6 address with an optional "/N" (N up to 128). }
+function ParseIpv6AddressWithPrefix(Text: PChar; out Address: TInternetAddress; out PrefixLength: LongWord;
+  out HasPrefix: Boolean): Boolean;
+var
+  AddressText: array[0..InternetAddressTextCapacity - 1] of Char;
+  Length: PtrUInt;
+  Position: PtrUInt;
+begin
+  PrefixLength := 128;
+  HasPrefix := False;
+  Length := 0;
+  while (Text[Length] <> #0) and (Text[Length] <> '/') do
+    Inc(Length);
+  if Length >= InternetAddressTextCapacity then
+    Exit(False);
+  CopyMemory(@AddressText[0], Text, Length);
+  AddressText[Length] := #0;
+  if not ParseIpv6Address(@AddressText[0], Address) then
+    Exit(False);
+  Position := Length;
+  if Text[Position] = '/' then
+  begin
+    Inc(Position);
+    if not ParseSmallNumber(Text, Position, 128, PrefixLength) then
+      Exit(False);
+    HasPrefix := True;
+  end;
+  Result := Text[Position] = #0;
+end;
+
 function ParseAddressWithPrefix(Text: PChar; out Address: TInternetAddress; out PrefixLength: LongWord;
   out HasPrefix: Boolean): Boolean;
 var
@@ -319,8 +438,10 @@ begin
   PrefixLength := 32;
   HasPrefix := False;
   Position := 0;
-  if (Text = nil) or not ParseQuadAt(Text, Position, Address) then
+  if Text = nil then
     Exit(False);
+  if not ParseQuadAt(Text, Position, Address) then
+    Exit(ParseIpv6AddressWithPrefix(Text, Address, PrefixLength, HasPrefix));
   if Text[Position] = '/' then
   begin
     Inc(Position);
@@ -491,8 +612,19 @@ var
   Number: TNumberText;
   Length: PtrUInt;
 begin
-  FormatInternetAddress(SocketAddressHost(SocketAddress), @Text[0], SocketAddressTextCapacity);
-  Length := TextLength(@Text[0]);
+  if SocketAddress.Family = AddressFamilyIPv6 then
+  begin
+    Text[0] := '[';
+    FormatInternetAddress(SocketAddressHost(SocketAddress), @Text[1], SocketAddressTextCapacity - 1);
+    Length := TextLength(@Text[0]);
+    Text[Length] := ']';
+    Inc(Length);
+  end
+  else
+  begin
+    FormatInternetAddress(SocketAddressHost(SocketAddress), @Text[0], SocketAddressTextCapacity);
+    Length := TextLength(@Text[0]);
+  end;
   Text[Length] := ':';
   CopyText(@Text[Length + 1], FormatDecimal(SocketAddress.Port, Number), SocketAddressTextCapacity - Length - 1);
   Result := Buffer;

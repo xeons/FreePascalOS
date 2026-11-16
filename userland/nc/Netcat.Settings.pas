@@ -56,6 +56,8 @@ type
     QuitAfterInputMilliseconds: Int64;
     { -p: the local port (0: one the system chooses). }
     LocalPort: Word;
+    { -4, -6: HostFamily* of Sys.HostNames (both when neither is given). }
+    Families: LongWord;
   end;
 
 var
@@ -69,13 +71,15 @@ procedure ReportProgress(Format: PChar; const Arguments: array of TFormatArgumen
 implementation
 
 uses
-  Sys.Streams;
+  Sys.Streams,
+  Sys.HostNames;
 
 procedure InitializeSettings;
 begin
   FillChar(Settings, SizeOf(Settings), 0);
   Settings.TimeoutMilliseconds := NoTimeLimit;
   Settings.QuitAfterInputMilliseconds := NoTimeLimit;
+  Settings.Families := HostFamilyAny;
 end;
 
 procedure ReportProgress(Format: PChar; const Arguments: array of TFormatArgument);

@@ -47,6 +47,7 @@ uses
   Abi.SystemCalls,
   Io.NetworkAdapters,
   Network.Addresses,
+  Network.Ipv6Types,
   Network.Packets;
 
 const
@@ -76,6 +77,8 @@ type
     HasAddress: Boolean;
     Address: TIpv4Address;
     PrefixLength: LongWord;
+    { Addresses, router information and timers of IPv6. }
+    Ipv6: TIpv6InterfaceState;
     Counters: TAbiInterfaceCounters;
     TransmitQueue: TPacketQueue;
     { InterfaceEvent*, set by drivers at dispatch level. }
@@ -125,6 +128,7 @@ uses
   Memory.KernelHeap,
   Network.Core,
   Network.ChangeWatchers,
+  Network.Ipv6Interfaces,
   Debug.Output;
 
 var
@@ -146,6 +150,7 @@ begin
   Result^.HardwareAddress := Adapter^.Address;
   Result^.Mtu := DefaultMtu;
   Result^.LinkIsUp := Adapter^.Routines.LinkUp(Adapter^.Context);
+  InitializeIpv6Interface(Result);
   InitializePacketQueue(Result^.TransmitQueue);
   Interfaces[InterfaceCount] := Result;
   Inc(InterfaceCount);
@@ -291,6 +296,7 @@ begin
       begin
         NetworkInterface^.LinkIsUp := LinkNow;
         WriteLinkChange(NetworkInterface);
+        Ipv6InterfaceChanged(NetworkInterface);
         NoteNetworkChange;
       end;
     end;

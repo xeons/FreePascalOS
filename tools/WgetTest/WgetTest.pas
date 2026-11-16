@@ -92,7 +92,11 @@ begin
   CheckParse('http://host/a b', 'http://host/a%20b');
   CheckParse('ftp://example.com/', '');
   CheckParse('http://user@example.com/', '');
-  CheckParse('http://[::1]/', '');
+  CheckParse('http://[::1]/', 'http://[::1]/');
+  CheckParse('http://[FEC0::2]:8080/x', 'http://[fec0::2]:8080/x');
+  CheckParse('http://[::1', '');
+  CheckParse('http://[::1]x/', '');
+  CheckParse('http://[fe80::1%25eth0]/', '');
   CheckParse('http://host:0/', '');
   CheckParse('http://host:65536/', '');
   CheckParse('http://:80/', '');
@@ -101,6 +105,10 @@ begin
   FormatHostHeader(Url, @Host[0], SizeOf(Host));
   Check(string(PChar(@Host[0])) = 'example.com:8080', 'Host header with a port');
   Check(Url.Port = 8080, 'port 8080');
+  ParseUrl('http://[::1]:8080/x', Url);
+  FormatHostHeader(Url, @Host[0], SizeOf(Host));
+  Check((string(PChar(@Host[0])) = '[::1]:8080') and (string(PChar(@Url.Host[0])) = '::1'),
+    'an IPv6 host: no brackets in Host, brackets in the Host header');
 
   { RFC 3986 section 5.4.1, base http://a/b/c/d;p?q }
   CheckResolve('http://a/b/c/d;p?q', 'g', 'http://a/b/c/g');

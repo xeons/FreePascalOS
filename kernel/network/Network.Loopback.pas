@@ -17,9 +17,9 @@
 }
 
 {
-  The loopback interface lo (127.0.0.1/8): datagrams to this machine's
-  own addresses go round through it. Its "adapter" takes an IPv4
-  datagram (no Ethernet header) and puts it on the receive queue as if
+  The loopback interface lo (127.0.0.1/8 and ::1): datagrams to this
+  machine's own addresses go round through it. Its "adapter" takes an
+  IPv4 or IPv6 datagram (no Ethernet header) and puts it on the receive queue as if
   it had arrived, so the network thread handles it later like any other
   - nothing is processed inside the sender's call, so sending never
   re-enters the protocols. It needs no hardware and is always up.
@@ -34,7 +34,7 @@ interface
 uses
   Network.Interfaces;
 
-{ Makes lo, up with 127.0.0.1/8 (under the network lock). }
+{ Makes lo, up with 127.0.0.1/8 and ::1 (under the network lock). }
 procedure CreateLoopbackInterface;
 function LoopbackInterface: PNetworkInterface;
 

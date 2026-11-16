@@ -71,7 +71,8 @@ begin
   Index := 0;
   while Index < Servers.Count do
   begin
-    if Servers.Servers[Index].Family <> AddressFamilyIPv4 then
+    if (Servers.Servers[Index].Family <> AddressFamilyIPv4) and
+       (Servers.Servers[Index].Family <> AddressFamilyIPv6) then
       Exit(ErrorInvalidArgument);
     Copy.Servers[Index] := Servers.Servers[Index];
     Inc(Index);

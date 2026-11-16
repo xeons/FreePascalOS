@@ -34,8 +34,8 @@ uses
   Abi.SystemCalls;
 
 const
-  { "localhost:65535", or an address with its port. }
-  EndpointTextCapacity = 48;
+  { "localhost:65535", or an address (IPv6 too) with its port. }
+  EndpointTextCapacity = 64;
 
 { Address and port as netstat shows them; port 0 is "*". }
 function FormatEndpoint(constref Address: TAbiSocketAddress; Numeric: Boolean; Buffer: PChar;
@@ -52,10 +52,10 @@ uses
 procedure AppendHost(var Builder: TTextBuilder; constref Address: TAbiSocketAddress; Numeric: Boolean);
 var
   Host: TInternetAddress;
-  Text: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   Host := SocketAddressHost(Address);
-  if not Numeric and AddressesAreEqual(Host, LoopbackIpv4Address) then
+  if not Numeric and AddressIsLoopback(Host) then
   begin
     AppendText(Builder, 'localhost');
     Exit;

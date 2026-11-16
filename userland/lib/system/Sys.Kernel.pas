@@ -168,6 +168,7 @@ function KernelConfigureNetworkInterface(constref Configuration: TAbiInterfaceCo
 function KernelChangeRoute(Operation: LongWord; constref Route: TAbiRoute): Int64;
 function KernelListRoutes(Buffer: PAbiRoute; Capacity: QWord): Int64;
 function KernelListArpEntries(Buffer: PAbiArpEntry; Capacity: QWord): Int64;
+function KernelListNeighbors(Buffer: PAbiNeighborEntry; Capacity: QWord): Int64;
 function KernelListSockets(Buffer: PAbiSocketInformation; Capacity: QWord): Int64;
 function KernelGetDnsServers(out Servers: TAbiDnsServers): Int64;
 function KernelSetDnsServers(constref Servers: TAbiDnsServers): Int64;
@@ -715,6 +716,11 @@ end;
 function KernelListArpEntries(Buffer: PAbiArpEntry; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallListArpEntries, QWord(Buffer), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelListNeighbors(Buffer: PAbiNeighborEntry; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListNeighbors, QWord(Buffer), Capacity, 0, 0, 0, 0);
 end;
 
 function KernelListSockets(Buffer: PAbiSocketInformation; Capacity: QWord): Int64;

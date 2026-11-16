@@ -89,7 +89,10 @@ const
     "dhcp" or "none"; NetworkAddress: its address with the prefix
     ("10.0.2.15/24"; needed for static, otherwise kept for later if
     given); NetworkGateway: the default route's gateway, on that
-    network, or empty; Flags: SystemFlagInterfaceUp. Checked
+    network, or empty; Flags: SystemFlagInterfaceUp; NetworkIpv6Method:
+    "auto", "static" or "none" (empty: the IPv6 settings stay as they
+    are), NetworkIpv6Address ("fd00::10/64", needed for static) and
+    NetworkIpv6Gateway (or empty). Checked
     (Configuration.NetworkSettings) and written to
     /etc/settings/Network.settings, which the network service applies
     as soon as it changes. }
@@ -112,6 +115,8 @@ const
   SystemInterfaceNameCapacity = 16;
   SystemMethodCapacity = 16;
   SystemAddressCapacity = 32;
+  { An IPv6 address with its prefix ("ffff:...:ffff/128"). }
+  SystemIpv6AddressCapacity = 48;
   SystemDomainCapacity = 64;
 
   { The group whose members are administrators. }
@@ -136,6 +141,9 @@ type
     NetworkAddress: array[0..SystemAddressCapacity - 1] of Char;
     NetworkGateway: array[0..SystemAddressCapacity - 1] of Char;
     SearchDomain: array[0..SystemDomainCapacity - 1] of Char;
+    NetworkIpv6Method: array[0..SystemMethodCapacity - 1] of Char;
+    NetworkIpv6Address: array[0..SystemIpv6AddressCapacity - 1] of Char;
+    NetworkIpv6Gateway: array[0..SystemIpv6AddressCapacity - 1] of Char;
   end;
 
   TSystemSettingsReply = record

@@ -42,6 +42,7 @@ unit Configuration.NetworkStatus;
 interface
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Configuration.NetworkState;
 
@@ -49,6 +50,17 @@ type
   { From the least to the most connected. }
   TNetworkCondition = (ConditionDisabled, ConditionNotConfigured, ConditionNoLink, ConditionFailed,
     ConditionConnecting, ConditionConnected);
+
+  { One of the kernel's IPv6 addresses of an interface. }
+  TIpv6AddressStatus = record
+    { "fec0::5054:ff:fe12:3456/64". }
+    Text: string;
+    { InterfaceAddressFlag* (tentative, deprecated, automatic, link-local). }
+    Flags: LongWord;
+    IsLinkLocal: Boolean;
+  end;
+
+  TIpv6AddressStatusList = array of TIpv6AddressStatus;
 
   TInterfaceStatus = record
     Name: string;
@@ -60,8 +72,14 @@ type
     LinkUp: Boolean;
     Mtu: LongWord;
     Counters: TAbiInterfaceCounters;
-    { The kernel's first address with its prefix, or empty. }
+    { The kernel's IPv4 address with its prefix, or empty. }
     KernelAddress: string;
+    { Ipv6Mode* as the kernel has it. }
+    Ipv6Mode: LongWord;
+    { Every IPv6 address the kernel gave it, in the kernel's order. }
+    Ipv6Addresses: TIpv6AddressStatusList;
+    { The gateway of its IPv6 default route ("fe80::2"), or empty. }
+    Ipv6Router: string;
     State: TInterfaceState;
     Condition: TNetworkCondition;
     { The address to show: the service's, else the kernel's. }
@@ -78,6 +96,9 @@ function FindBestInterface(const List: TInterfaceStatusList): LongInt;
 function NetworkConditionText(Condition: TNetworkCondition): string;
 { "eth0: 10.0.2.15 - connected" (with an em dash), "eth0: no cable". }
 function InterfaceSummary(const Status: TInterfaceStatus): string;
+{ The IPv6 addresses worth showing first: neither link-local nor
+  tentative ("fec0::5054:ff:fe12:3456/64"). }
+function GlobalIpv6Addresses(const Status: TInterfaceStatus): TStringArray;
 { "10.0.2.15/24" -> "10.0.2.15". }
 function AddressWithoutPrefix(const Text: string): string;
 { Reads /var/lib/network/NAME.state; False if there is none (or it
@@ -98,7 +119,7 @@ const
 implementation
 
 uses
-  SysUtils,
+  Sys.AddressText,
   Sys.Files,
   Sys.FileWatches,
   Sys.InternetAddresses,
@@ -141,14 +162,59 @@ begin
   Result := ReadSmallFile(InterfaceStatePath(Name), Text) and ParseInterfaceState(Name, Text, State);
 end;
 
-function FirstKernelAddress(const Description: TAbiNetworkInterface): string;
+function KernelIpv4Address(const Description: TAbiNetworkInterface): string;
 var
-  Text: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Address: TAbiInterfaceAddress;
 begin
-  if Description.AddressCount = 0 then
+  if not FindInterfaceIpv4Address(Description, Address) then
     Exit('');
-  FormatInternetAddress(InterfaceAddressHost(Description.Addresses[0]), @Text[0], SizeOf(Text));
-  Result := string(PChar(@Text[0])) + '/' + IntToStr(Description.Addresses[0].PrefixLength);
+  Result := InterfaceAddressToText(Address);
+end;
+
+function KernelIpv6Addresses(const Description: TAbiNetworkInterface): TIpv6AddressStatusList;
+var
+  Index: LongWord;
+  Entry: TIpv6AddressStatus;
+begin
+  Result := nil;
+  Index := 0;
+  while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
+  begin
+    if Description.Addresses[Index].Family = AddressFamilyIPv6 then
+    begin
+      Entry.Text := InterfaceAddressToText(Description.Addresses[Index]);
+      Entry.Flags := Description.Addresses[Index].Flags;
+      Entry.IsLinkLocal := AddressIsLinkLocal(InterfaceAddressHost(Description.Addresses[Index]));
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Entry;
+    end;
+    Inc(Index);
+  end;
+end;
+
+function Ipv6DefaultRouter(const Name: string; const Routes: TRouteList): string;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Routes) do
+    if (Routes[Index].Destination.Family = AddressFamilyIPv6) and (Routes[Index].Destination.PrefixLength = 0) and
+       (string(PChar(@Routes[Index].InterfaceName[0])) = Name) then
+      Exit(AddressToText(RouteGateway(Routes[Index])));
+  Result := '';
+end;
+
+function GlobalIpv6Addresses(const Status: TInterfaceStatus): TStringArray;
+var
+  Index: Integer;
+begin
+  Result := nil;
+  for Index := 0 to High(Status.Ipv6Addresses) do
+    if not Status.Ipv6Addresses[Index].IsLinkLocal and
+       ((Status.Ipv6Addresses[Index].Flags and InterfaceAddressFlagTentative) = 0) then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Status.Ipv6Addresses[Index].Text;
+    end;
 end;
 
 function ConditionOf(const Status: TInterfaceStatus): TNetworkCondition;
@@ -174,7 +240,7 @@ begin
   end;
 end;
 
-function DescribeInterface(const Description: TAbiNetworkInterface): TInterfaceStatus;
+function DescribeInterface(const Description: TAbiNetworkInterface; const Routes: TRouteList): TInterfaceStatus;
 var
   Text: array[0..3 * HardwareAddressCapacity] of Char;
 begin
@@ -187,7 +253,10 @@ begin
   Result.LinkUp := (Description.Flags and InterfaceFlagRunning) <> 0;
   Result.Mtu := Description.Mtu;
   Result.Counters := Description.Counters;
-  Result.KernelAddress := FirstKernelAddress(Description);
+  Result.KernelAddress := KernelIpv4Address(Description);
+  Result.Ipv6Mode := Description.Ipv6Mode;
+  Result.Ipv6Addresses := KernelIpv6Addresses(Description);
+  Result.Ipv6Router := Ipv6DefaultRouter(Result.Name, Routes);
   ReadInterfaceStateFile(Result.Name, Result.State);
   Result.Condition := ConditionOf(Result);
   if Result.State.Known and (Result.State.Address <> '') then
@@ -199,18 +268,21 @@ end;
 function ListInterfaceStatus(out List: TInterfaceStatusList): LongInt;
 var
   Interfaces: TNetworkInterfaceList;
+  Routes: TRouteList;
   Index: LongInt;
 begin
   List := nil;
   Result := ListNetworkInterfaces(Interfaces);
   if Result <> ErrorNone then
     Exit;
+  if ListRoutes(Routes) <> ErrorNone then
+    Routes := nil;
   for Index := 0 to High(Interfaces) do
   begin
     if (Interfaces[Index].Flags and InterfaceFlagLoopback) <> 0 then
       Continue;
     SetLength(List, Length(List) + 1);
-    List[High(List)] := DescribeInterface(Interfaces[Index]);
+    List[High(List)] := DescribeInterface(Interfaces[Index], Routes);
   end;
 end;
 
