@@ -108,7 +108,7 @@ begin
         Exit(False);
       end;
       if Verbose then
-        PrintString(Format('%s: creating directory ''%s'''#10, [ProgramNameText, Prefix]));
+        PrintString(Format('%s: creating directory ''%s'''#10, [ProgramName, Prefix]));
     end;
     if Position > Length(Path) then
       Break;

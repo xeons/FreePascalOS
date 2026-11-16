@@ -288,7 +288,7 @@ begin
     '      --status          don''t output anything, status code shows success'#10 +
     '      --strict          exit non-zero for improperly formatted checksum lines'#10 +
     '  -w, --warn            warn about improperly formatted checksum lines'#10,
-    [ProgramNameText, string(DigestTagName(Algorithm))]);
+    [ProgramName, string(DigestTagName(Algorithm))]);
 end;
 
 procedure RunDigestTool(Algorithm: TDigestAlgorithm);

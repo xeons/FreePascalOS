@@ -28,7 +28,6 @@ interface
 
 uses
   Util.Messages,
-  Util.Options,
   Util.Input,
   Util.Paths,
   Util.Sorting,

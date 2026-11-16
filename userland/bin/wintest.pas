@@ -44,17 +44,18 @@
 }
 program WinTest;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Objects,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Surfaces,
@@ -87,7 +88,7 @@ var
   Scale: LongWord;
   Dpi: LongWord;
   WindowId: LongWord;
-  Title: PChar;
+  Title: string;
   Color: TColor;
   Fonts: TFontSet;
   TextFace: PFontFace;
@@ -97,11 +98,12 @@ var
   SurfaceWidth: LongInt;
   SurfaceHeight: LongInt;
   BeamOverLeftHalf: Boolean;
-  NotificationTooltip: PChar;
+  ShowNotification: Boolean;
+  NotificationTooltip: string;
 
-procedure Say(Format: PChar; const Arguments: array of TFormatArgument);
+procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, Format, Arguments);
+  WriteString(StandardOutput, Text);
   FlushStream(StandardOutput);
 end;
 
@@ -159,12 +161,12 @@ begin
     SleepMilliseconds(100);
   end;
   if Channel < 0 then
-    Fail(1, 'no display server', []);
+    Fail(1, 'no display server');
   Message := NewMessage(RequestHello, 0);
   Message.Value := ProtocolVersion;
   Send(Message, -1);
   if not Receive(Message, ReplyTimeout) or (Message.Kind <> EventWelcome) then
-    Fail(1, 'the display server did not answer', []);
+    Fail(1, 'the display server did not answer');
   Dpi := LongWord(Message.Value);
   Scale := Message.Code;
 end;
@@ -214,7 +216,7 @@ begin
   if FontsLoaded then
     TextFace := SelectFace(Fonts, 90, Dpi, False);
   ReplaceSurface(LogicalToPixels(LogicalWidth, Scale), LogicalToPixels(LogicalHeight, Scale));
-  Say('scale %u %u'#10, [ArgumentUnsigned(Scale), ArgumentUnsigned(Dpi)]);
+  Say(Format('scale %u %u'#10, [Scale, Dpi]));
 end;
 
 procedure HandleEvents;
@@ -225,33 +227,32 @@ begin
   while Receive(Message, InfiniteWait) do
     case Message.Kind of
       EventActivated:
-        Say('active %d'#10, [ArgumentNumber(Message.Value)]);
+        Say(Format('active %d'#10, [Message.Value]));
       EventVisibilityChanged:
-        Say('visible %d'#10, [ArgumentNumber(Message.Value)]);
+        Say(Format('visible %d'#10, [Message.Value]));
       EventPointerButton:
         if Message.Value <> 0 then
-          Say('button %u press %d %d'#10, [ArgumentUnsigned(Message.Code), ArgumentNumber(Message.Left),
-            ArgumentNumber(Message.Top)]);
+          Say(Format('button %u press %d %d'#10, [Message.Code, Message.Left, Message.Top]));
       EventKey:
         if Message.Value <> 0 then
           if (Message.Character >= 32) and (Message.Character < 127) then
-            Say('key 0x%X %c'#10, [ArgumentUnsigned(Message.Code), ArgumentCharacter(Char(Message.Character))])
+            Say(Format('key 0x%X %s'#10, [Message.Code, Char(Message.Character)]))
           else
-            Say('key 0x%X'#10, [ArgumentUnsigned(Message.Code)]);
+            Say(Format('key 0x%X'#10, [Message.Code]));
       EventResized:
         begin
           ReplaceSurface(Message.SurfaceWidth, Message.SurfaceHeight);
-          Say('resized %d %d'#10, [ArgumentNumber(SurfaceWidth), ArgumentNumber(SurfaceHeight)]);
+          Say(Format('resized %d %d'#10, [SurfaceWidth, SurfaceHeight]));
         end;
       EventMoved:
-        Say('moved %d %d'#10, [ArgumentNumber(Message.Left), ArgumentNumber(Message.Top)]);
+        Say(Format('moved %d %d'#10, [Message.Left, Message.Top]));
       EventScaleChanged:
         { For window 0 it is about the first display, not this window. }
         if Message.Window = WindowId then
           TakeNewScale(Message.Code, LongWord(Message.Value));
       EventCloseRequested:
         begin
-          Say('close'#10, []);
+          Say('close'#10);
           Request := NewMessage(RequestDestroyWindow, WindowId);
           Send(Request, -1);
           Exit;
@@ -260,9 +261,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Number: Int64;
   Left: LongInt;
   Top: LongInt;
@@ -277,29 +278,32 @@ begin
   Width := 300;
   Height := 200;
   Color := $FFF0E8D0;
-  BeginOptions(Parser, [OptionDefinition('t', 'title', True, OptionTitle), OptionDefinition('x', 'left', True, OptionLeft),
-    OptionDefinition('y', 'top', True, OptionTop), OptionDefinition('w', 'width', True, OptionWidth),
-    OptionDefinition('h', 'height', True, OptionHeight), OptionDefinition('c', 'color', True, OptionColor),
-    OptionDefinition('b', 'beam', False, OptionBeam), OptionDefinition('n', 'notify', True, OptionNotification)],
-    Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('t', 'title', True, OptionTitle),
+    CommandOption('x', 'left', True, OptionLeft), CommandOption('y', 'top', True, OptionTop),
+    CommandOption('w', 'width', True, OptionWidth), CommandOption('h', 'height', True, OptionHeight),
+    CommandOption('c', 'color', True, OptionColor), CommandOption('b', 'beam', False, OptionBeam),
+    CommandOption('n', 'notify', True, OptionNotification)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionTitle:
         Title := OptionValue;
       OptionBeam:
         BeamOverLeftHalf := True;
       OptionNotification:
-        NotificationTooltip := OptionValue;
+        begin
+          ShowNotification := True;
+          NotificationTooltip := OptionValue;
+        end;
       OptionColor:
         begin
-          if not ParseHexadecimal(OptionValue, ColorValue) or (ColorValue > $FFFFFF) then
-            FailWithUsageHint('the colour must be six hexadecimal digits (RRGGBB)', []);
+          if not ParseHexadecimalDigits(OptionValue, ColorValue) or (ColorValue > $FFFFFF) then
+            FailWithUsageHint('the colour must be six hexadecimal digits (RRGGBB)');
           Color := $FF000000 or TColor(ColorValue);
         end;
     else
       begin
-        if not ParseInteger(OptionValue, Number) then
-          FailWithUsageHint('%s is not a number', [ArgumentText(OptionValue)]);
+        if not ParseDecimal(OptionValue, Number) then
+          FailWithUsageHint(Format('%s is not a number', [OptionValue]));
         case Code of
           OptionLeft: Left := Number;
           OptionTop: Top := Number;
@@ -308,13 +312,14 @@ begin
         end;
       end;
     end;
+  CommandLine.Free;
   Connect;
   FontsLoaded := LoadFontFamily(DejaVuSansFamily, Fonts);
   if FontsLoaded then
     TextFace := SelectFace(Fonts, 90, Dpi, False);
   Section := DrawSurface(LogicalToPixels(Width, Scale), LogicalToPixels(Height, Scale));
   if Section < 0 then
-    Fail(1, 'no memory for the window', []);
+    Fail(1, 'no memory for the window');
   Message := NewMessage(RequestCreateWindow, 0);
   Message.Left := Left;
   Message.Top := Top;
@@ -324,14 +329,14 @@ begin
   SetMessageText(Message, Title);
   Send(Message, Section);
   if not Receive(Message, ReplyTimeout) or (Message.Kind <> EventWindowCreated) then
-    Fail(1, 'the window was not created', []);
+    Fail(1, 'the window was not created');
   WindowId := Message.Window;
-  Say('created %u'#10, [ArgumentUnsigned(WindowId)]);
+  Say(Format('created %u'#10, [WindowId]));
   SetBeamArea;
   Message := NewMessage(RequestShowWindow, WindowId);
   Message.Value := 1;
   Send(Message, -1);
-  if NotificationTooltip <> nil then
+  if ShowNotification then
   begin
     Message := NewMessage(RequestSetNotificationIcon, 0);
     Message.Code := 1;

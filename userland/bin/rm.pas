@@ -70,7 +70,7 @@ var
   Answer: string;
   HadLineEnd: Boolean;
 begin
-  PrintErrorString(Format('%s: %s ''%s''? ', [ProgramNameText, Question, Path]));
+  PrintErrorString(Format('%s: %s ''%s''? ', [ProgramName, Question, Path]));
   FlushStream(StandardError);
   if not ReadTextLine(StandardInput, Answer, HadLineEnd) then
     Exit(False);

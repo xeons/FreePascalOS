@@ -15,18 +15,14 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
-
 {
   Diagnostics in the usual command line form:
 
     ls: cannot access 'missing': No such file or directory
 
   Every message starts with the program name (taken from argument 0
-  without its directory).
-
-  Each routine comes in two forms: with a Sys.Format format and its
-  arguments, and with a finished string (made with SysUtils' Format
-  where it needs one):
+  without its directory). Messages are finished strings, made with
+  SysUtils' Format where they need one:
 
     ReportError(Error, Format('cannot access ''%s''', [Path]));
 }
@@ -36,57 +32,39 @@ unit Util.Messages;
 
 interface
 
-uses
-  Sys.Format;
-
-function ProgramName: PChar;
-function ProgramNameText: string;
+{ Argument 0 without its directory ("program" if that leaves nothing). }
+function ProgramName: string;
 { The text of an Abi error code ("No such file or directory"). }
 function ErrorText(ErrorCode: LongInt): string;
 
 { "<program>: <message>" on standard error. }
-procedure Report(Format: PChar; const Arguments: array of TFormatArgument); overload;
-procedure Report(const Message: string); overload;
+procedure Report(const Message: string);
 { "<program>: <message>: <error text>" on standard error. }
-procedure ReportError(ErrorCode: LongInt; Format: PChar; const Arguments: array of TFormatArgument); overload;
-procedure ReportError(ErrorCode: LongInt; const Message: string); overload;
+procedure ReportError(ErrorCode: LongInt; const Message: string);
 { Report, then end the program with ExitStatus. }
-procedure Fail(ExitStatus: LongInt; Format: PChar; const Arguments: array of TFormatArgument); overload;
-procedure Fail(ExitStatus: LongInt; const Message: string); overload;
-procedure FailWithError(ExitStatus: LongInt; ErrorCode: LongInt; Format: PChar;
-  const Arguments: array of TFormatArgument); overload;
-procedure FailWithError(ExitStatus: LongInt; ErrorCode: LongInt; const Message: string); overload;
+procedure Fail(ExitStatus: LongInt; const Message: string);
+procedure FailWithError(ExitStatus: LongInt; ErrorCode: LongInt; const Message: string);
 { "Try '<program> --help' for more information." and exit status 1. }
-procedure FailWithUsageHint(Format: PChar; const Arguments: array of TFormatArgument); overload;
-procedure FailWithUsageHint(const Message: string); overload;
+procedure FailWithUsageHint(const Message: string);
 
 implementation
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Environment,
   Sys.Errors,
-  Sys.Streams,
-  Sys.Text;
+  Sys.Streams;
 
-function ProgramName: PChar;
+function ProgramName: string;
 var
-  FullName: PChar;
-  LastSlash: PtrInt;
+  LastSlash: Integer;
 begin
-  FullName := Argument(0);
-  LastSlash := FindLastCharacter(FullName, '/');
-  if LastSlash >= 0 then
-    Result := FullName + LastSlash + 1
-  else
-    Result := FullName;
-  if Result^ = #0 then
+  Result := Argument(0);
+  LastSlash := LastDelimiter('/', Result);
+  if LastSlash > 0 then
+    Delete(Result, 1, LastSlash);
+  if Result = '' then
     Result := 'program';
-end;
-
-function ProgramNameText: string;
-begin
-  Result := ProgramName;
 end;
 
 function ErrorText(ErrorCode: LongInt): string;
@@ -94,17 +72,17 @@ begin
   Result := ErrorMessage(ErrorCode);
 end;
 
-procedure WriteMessageStart;
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, ProgramName);
-  WriteText(StandardError, ': ');
-end;
-
 procedure WriteMessageText(const Message: string);
 begin
   if Message <> '' then
     WriteBytes(StandardError, PChar(Message), Length(Message));
+end;
+
+procedure WriteMessageStart;
+begin
+  FlushStream(StandardOutput);
+  WriteMessageText(ProgramName);
+  WriteText(StandardError, ': ');
 end;
 
 procedure Report(const Message: string);
@@ -139,48 +117,8 @@ procedure FailWithUsageHint(const Message: string);
 begin
   Report(Message);
   WriteText(StandardError, 'Try ''');
-  WriteText(StandardError, ProgramName);
+  WriteMessageText(ProgramName);
   WriteText(StandardError, ''' --help'' for more information.'#10);
-  Halt(1);
-end;
-
-procedure Report(Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, ProgramName);
-  WriteText(StandardError, ': ');
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteCharacter(StandardError, #10);
-end;
-
-procedure ReportError(ErrorCode: LongInt; Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, ProgramName);
-  WriteText(StandardError, ': ');
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteText(StandardError, ': ');
-  WriteText(StandardError, ErrorMessage(ErrorCode));
-  WriteCharacter(StandardError, #10);
-end;
-
-procedure Fail(ExitStatus: LongInt; Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  Report(Format, Arguments);
-  Halt(ExitStatus);
-end;
-
-procedure FailWithError(ExitStatus: LongInt; ErrorCode: LongInt; Format: PChar;
-  const Arguments: array of TFormatArgument);
-begin
-  ReportError(ErrorCode, Format, Arguments);
-  Halt(ExitStatus);
-end;
-
-procedure FailWithUsageHint(Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  Report(Format, Arguments);
-  WriteFormatted(StandardError, 'Try ''%s --help'' for more information.'#10, [ArgumentText(ProgramName)]);
   Halt(1);
 end;
 

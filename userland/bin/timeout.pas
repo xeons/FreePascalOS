@@ -117,7 +117,7 @@ end;
 procedure FailUsage(const Message: string);
 begin
   Report(Message);
-  PrintErrorString(Format('Try ''%s --help'' for more information.'#10, [ProgramNameText]));
+  PrintErrorString(Format('Try ''%s --help'' for more information.'#10, [ProgramName]));
   Halt(StatusTimeoutFailed);
 end;
 

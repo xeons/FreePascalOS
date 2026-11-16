@@ -66,7 +66,7 @@ var
 begin
   for Index := 1 to HighestSignal do
   begin
-    PrintString(Format('%2d) SIG%-8s', [Index, SignalNameText(Index)]));
+    PrintString(Format('%2d) SIG%-8s', [Index, SignalName(Index)]));
     if Index mod 5 = 0 then
       PrintString(#10);
   end;
@@ -86,9 +86,9 @@ begin
       { Exit statuses above 128 name the signal that ended a program. }
       if Number > 128 then
         Number := Number - 128;
-      if SignalNameText(Integer(Number)) = '' then
+      if SignalName(Integer(Number)) = '' then
         Fail(1, Format('%s: invalid signal', [Arguments[Index]]));
-      PrintStringLine(SignalNameText(Integer(Number)));
+      PrintStringLine(SignalName(Integer(Number)));
     end
     else
     begin

@@ -22,33 +22,35 @@
 }
 unit Util.Power;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
 { Runs a power command: no arguments, then the shutdown Action
   (ShutdownPowerOff, ShutdownReboot, ShutdownHalt). }
-procedure RunPowerCommand(Action: QWord; Usage: PChar);
+procedure RunPowerCommand(Action: QWord; const Usage: string);
 
 implementation
 
 uses
   Sys.Kernel,
   Sys.Errors,
-  Util.Messages,
-  Util.Options;
+  Util.CommandLine,
+  Util.Messages;
 
-procedure RunPowerCommand(Action: QWord; Usage: PChar);
+procedure RunPowerCommand(Action: QWord; const Usage: string);
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Status: Int64;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no arguments are taken', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no arguments are taken');
+  CommandLine.Free;
   Status := KernelShutdown(Action);
   if Status < 0 then
-    FailWithError(1, ErrorCodeOf(Status), 'cannot shut down', []);
+    FailWithError(1, ErrorCodeOf(Status), 'cannot shut down');
 end;
 
 end.

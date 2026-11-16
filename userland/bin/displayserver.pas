@@ -58,16 +58,17 @@
 }
 program DisplayServer;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Objects,
   Sys.ServiceControl,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Drawing.Rectangles,
   Windowing.Protocol,
   Server.Screen,
@@ -128,50 +129,48 @@ var
   Index: LongInt;
 begin
   for Index := 1 to ScreenCount - 1 do
-    WriteFormatted(StandardOutput, 'displayserver: display %d: %ux%u at %d,%d, %u DPI, scale %u%%'#10,
-      [ArgumentNumber(Index), ArgumentUnsigned(Screens[Index].Device.Width),
-       ArgumentUnsigned(Screens[Index].Device.Height), ArgumentNumber(Screens[Index].Bounds.Left),
-       ArgumentNumber(Screens[Index].Bounds.Top), ArgumentUnsigned(Screens[Index].Dpi),
-       ArgumentUnsigned(Screens[Index].ScalePercent)]);
+    WriteString(StandardOutput, Format('displayserver: display %d: %ux%u at %d,%d, %u DPI, scale %u%%'#10,
+      [Index, Screens[Index].Device.Width, Screens[Index].Device.Height, Screens[Index].Bounds.Left,
+       Screens[Index].Bounds.Top, Screens[Index].Dpi, Screens[Index].ScalePercent]));
 end;
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  Value: string;
 begin
-  BeginOptions(Parser, [OptionDefinition(#0, 'check-moves', False, OptionCheckMoves)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption(#0, 'check-moves', False, OptionCheckMoves)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionCheckMoves then
       CheckingMoves := True;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('no operands are taken', []);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint('no operands are taken');
+  CommandLine.Free;
 end;
 
 begin
   ReadOptions;
   Error := OpenScreens;
   if Error <> ErrorNone then
-    FailWithError(1, Error, '/dev/display', []);
+    FailWithError(1, Error, '/dev/display');
   SetUpScales;
   Error := OpenInput;
   if Error <> ErrorNone then
-    FailWithError(1, Error, '/dev/events', []);
+    FailWithError(1, Error, '/dev/events');
   Port := CreatePort(WindowingPortName);
   if Port < 0 then
-    FailWithError(1, LongInt(-Port), 'the port %s', [ArgumentText(WindowingPortName)]);
+    FailWithError(1, LongInt(-Port), Format('the port %s', [WindowingPortName]));
   InitializeCursor;
   PointerFilesRead := LoadPointerFiles;
   ApplyRememberedSettings;
   AddDamage(DesktopBounds);
   Compose;
   SayOtherScreens;
-  WriteFormatted(StandardOutput, 'displayserver: ready (%ux%u, %u DPI, scale %u%%)'#10,
-    [ArgumentUnsigned(Screens[0].Device.Width), ArgumentUnsigned(Screens[0].Device.Height),
-     ArgumentUnsigned(Screens[0].Dpi), ArgumentUnsigned(Screens[0].ScalePercent)]);
-  WriteFormatted(StandardOutput, 'displayserver: %d of %d pointer shapes from %s'#10,
-    [ArgumentNumber(PointerFilesRead), ArgumentNumber(PointerShapeCount), ArgumentText(PointerDirectory)]);
+  WriteString(StandardOutput, Format('displayserver: ready (%ux%u, %u DPI, scale %u%%)'#10,
+    [Screens[0].Device.Width, Screens[0].Device.Height, Screens[0].Dpi, Screens[0].ScalePercent]));
+  WriteString(StandardOutput, Format('displayserver: %d of %d pointer shapes from %s'#10,
+    [PointerFilesRead, PointerShapeCount, PointerDirectory]));
   FlushStream(StandardOutput);
   { Clients can connect now: the session waits for this (when the
     service manager started the server). }

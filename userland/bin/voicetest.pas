@@ -31,18 +31,19 @@
 }
 program voicetest;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 uses
+  SysUtils,
   Runtime.Text,
-  Sys.Format,
   Sys.Memory,
   Sys.Processes,
   Sys.Streams,
   Sys.Text,
   Util.Messages,
-  Util.Options,
+  Util.CommandLine,
+  Util.Output,
   Audio.Formats,
   Audio.Device,
   Audio.Filters,
@@ -69,14 +70,14 @@ var
 
 { --- Checking and measuring --------------------------------------------- }
 
-procedure Check(Name: PChar; Condition: Boolean; Detail: PChar);
+procedure Check(const Name: string; Condition: Boolean; const Detail: string);
 begin
   if Condition then
     Inc(Passed)
   else
   begin
     Inc(Failed);
-    PrintFormatted('voicetest: %s failed: %s'#10, [ArgumentText(Name), ArgumentText(Detail)]);
+    PrintString(Format('voicetest: %s failed: %s'#10, [Name, Detail]));
   end;
 end;
 
@@ -91,9 +92,9 @@ begin
   Result := Round(Value * 1000);
 end;
 
-function Describe(Value, Expected: Single): PChar;
+function Describe(Value, Expected: Single): string;
 begin
-  Result := FormatText('%d/1000, expected %d/1000', [ArgumentNumber(Milli(Value)), ArgumentNumber(Milli(Expected))]);
+  Result := Format('%d/1000, expected %d/1000', [Milli(Value), Milli(Expected)]);
 end;
 
 { The peak of one side of what was rendered, after it settled. }
@@ -165,9 +166,9 @@ var
   Master: PAudioVoice;
 begin
   if CreateAudioEngine(nil, True, Result) <> 0 then
-    Fail(1, 'cannot create an engine', []);
+    Fail(1, 'cannot create an engine');
   if CreateMasteringVoice(Result, 2, Rate, Master) <> 0 then
-    Fail(1, 'cannot create a mastering voice', []);
+    Fail(1, 'cannot create a mastering voice');
 end;
 
 function FloatFormat(SourceRate, Channels: LongWord): TAudioFormat;
@@ -197,7 +198,7 @@ var
   Buffer: TAudioBuffer;
 begin
   if CreateSourceVoice(Engine, FloatFormat(SourceRate, Channels), 4, NoCallbacks, Destinations, Result) <> 0 then
-    Fail(1, 'cannot create a source voice', []);
+    Fail(1, 'cannot create a source voice');
   Buffer := WholeBuffer(MakeSine(SourceRate, Hertz, SourceRate, Channels), SourceRate * Channels * SizeOf(Single));
   Buffer.LoopCount := LoopInfinite;
   SubmitSourceBuffer(Result, Buffer);
@@ -406,10 +407,10 @@ begin
   Check('buffers queued', State.BuffersQueued = 2, 'not 2');
   StartVoice(Voice, CommitNow);
   Render(Engine);
-  Check('buffer callbacks', TextIsEqual(@Events[0], Expected), @Events[0]);
+  Check('buffer callbacks', TextIsEqual(@Events[0], Expected), PChar(@Events[0]));
   GetVoiceState(Voice, State);
   Check('samples played', State.SamplesPlayed = 190,
-    FormatText('%u, expected 190', [ArgumentUnsigned(State.SamplesPlayed)]));
+    Format('%u, expected 190', [State.SamplesPlayed]));
   Check('queue empty', State.BuffersQueued = 0, 'buffers left');
   DestroyAudioEngine(Engine);
 end;
@@ -437,7 +438,7 @@ begin
   Render(Engine);
   GetVoiceState(Voice, State);
   Check('exit loop', State.BuffersQueued = 0, 'the buffer is still looping');
-  Check('exit loop (callbacks)', TextEndsWith(@Events[0], 'loop L, end L, '), @Events[0]);
+  Check('exit loop (callbacks)', TextEndsWith(@Events[0], 'loop L, end L, '), PChar(@Events[0]));
   DestroyAudioEngine(Engine);
 end;
 
@@ -459,7 +460,7 @@ begin
   FlushSourceBuffers(Voice);
   GetVoiceState(Voice, State);
   Check('flush (the playing buffer stays)', State.BuffersQueued = 1,
-    FormatText('%u buffers', [ArgumentUnsigned(State.BuffersQueued)]));
+    Format('%u buffers', [State.BuffersQueued]));
   DestroyAudioEngine(Engine);
 end;
 
@@ -635,7 +636,7 @@ begin
   PassesBefore := State.Passes;
   Render(Engine);
   Check('effect tails', State.Passes - PassesBefore = 5,
-    FormatText('%d passes, expected 5', [ArgumentNumber(State.Passes - PassesBefore)]));
+    Format('%d passes, expected 5', [State.Passes - PassesBefore]));
   StartVoice(Voice, CommitNow);
   StopVoice(Voice, 0, CommitNow);
   PassesBefore := State.Passes;
@@ -659,8 +660,8 @@ begin
   GetPerformanceData(Engine, Data);
   Check('performance data', (Data.TotalVoices = 3) and (Data.ActiveSourceVoices = 1) and
     (Data.Passes = RenderFrames div 480) and (Data.FramesRendered = RenderFrames),
-    FormatText('%u voices, %u active, %u passes', [ArgumentUnsigned(Data.TotalVoices),
-    ArgumentUnsigned(Data.ActiveSourceVoices), ArgumentUnsigned(Data.Passes)]));
+    Format('%u voices, %u active, %u passes', [Data.TotalVoices,
+    Data.ActiveSourceVoices, Data.Passes]));
   DestroyAudioEngine(Engine);
 end;
 
@@ -680,7 +681,7 @@ begin
   CheckOperationSets;
   CheckEffects;
   CheckPerformanceData;
-  PrintFormatted('voicetest: %d checks passed'#10, [ArgumentNumber(Passed)]);
+  PrintString(Format('voicetest: %d checks passed'#10, [Passed]));
   if Failed > 0 then
     Halt(1);
 end;
@@ -703,7 +704,7 @@ var
 begin
   Error := CreateAudioEngine(nil, False, Engine);
   if Error <> 0 then
-    Fail(1, 'cannot open the audio device', []);
+    Fail(1, 'cannot open the audio device');
   CreateMasteringVoice(Engine, 2, Rate, Master);
   { One cycle of 600 Hz at 24 kHz, 16-bit mono. }
   for Frame := 0 to CycleFrames - 1 do
@@ -731,13 +732,14 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount = 0 then
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount = 0 then
     RunOfflineChecks
-  else if (Parser.OperandCount = 1) and TextIsEqual(Parser.Operands[0], 'play') then
+  else if (CommandLine.OperandCount = 1) and (CommandLine.Operands[0] = 'play') then
     PlayThroughDevice
   else
-    FailWithUsageHint('unknown arguments', []);
+    FailWithUsageHint('unknown arguments');
 end.

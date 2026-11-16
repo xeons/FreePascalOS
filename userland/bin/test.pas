@@ -275,7 +275,7 @@ var
   Evaluator: TExpressionEvaluator;
   Outcome: Boolean;
 begin
-  Name := ProgramNameText;
+  Name := ProgramName;
   Words := ProgramArguments;
   if Name = '[' then
   begin

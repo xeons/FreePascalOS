@@ -46,6 +46,7 @@ implementation
 uses
   SysUtils,
   Classes,
+  Sys.Processes,
   Sys.Streams,
   Shell.Text,
   Shell.Output,
@@ -108,7 +109,7 @@ begin
     else
       WriteStringLine(StandardOutput, Name);
   end
-  else if LocateProgram(Name, ProgramPath) then
+  else if FindProgramPath(Name, ProgramPath) then
   begin
     if Verbose then
       WriteStringLine(StandardOutput, Name + ' is ' + ProgramPath)

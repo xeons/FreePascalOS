@@ -65,13 +65,11 @@ const
 { Starts Arguments[0] (looked up in PATH) with Options. Returns the
   process handle, or reports the problem and returns -1 with Status set
   to 126 or 127. }
-function StartCommand(Arguments: PPChar; const Options: TProcessOptions; out Status: LongInt): Int64; overload;
 function StartCommand(const Arguments: array of string; const Options: TProcessOptions;
-  out Status: LongInt): Int64; overload;
+  out Status: LongInt): Int64;
 { Starts the command, waits for it, and ends this program with its
   status. }
-procedure RunCommandAndExit(Arguments: PPChar; const Options: TProcessOptions); overload;
-procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions); overload;
+procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions);
 
 type
   { A nil terminated list of PChar for the system calls (arguments, an
@@ -80,17 +78,10 @@ type
 
 function TextVector(const Items: array of string): TTextVector;
 
-{ Finds Name in PATH (or takes it as a path if it contains '/'); False
-  if it is not there. }
-function FindProgramPath(const Name: string; out Path: string): Boolean;
-
 { Parses "TERM", "SIGTERM" or "15"; returns -1 if unknown. }
-function ParseSignal(Text: PChar): Integer; overload;
-function ParseSignal(const Text: string): Integer; overload;
-{ "TERM" for 15; nil if the number has no name. }
-function SignalName(Number: Integer): PChar;
-{ The same as a string; '' if the number has no name. }
-function SignalNameText(Number: Integer): string;
+function ParseSignal(const Text: string): Integer;
+{ "TERM" for 15; '' if the number has no name. }
+function SignalName(Number: Integer): string;
 
 type
   TSignalAction = (SignalActionNone, SignalActionAskToEnd, SignalActionEnd, SignalActionStop,
@@ -108,44 +99,45 @@ const
 implementation
 
 uses
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.Notifications,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
-  Util.Messages;
+  Util.Messages,
+  Util.Numbers;
 
 const
-  ProgramPathCapacity = 1024;
-  SignalNames: array[1..HighestSignal] of PChar = (
+  SignalNames: array[1..HighestSignal] of string = (
     'HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2',
     'PIPE', 'ALRM', 'TERM', 'STKFLT', 'CHLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG',
     'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'POLL', 'PWR', 'SYS');
 
-function StartCommand(Arguments: PPChar; const Options: TProcessOptions; out Status: LongInt): Int64;
+function StartCommand(const Arguments: array of string; const Options: TProcessOptions;
+  out Status: LongInt): Int64;
 var
-  ProgramPath: array[0..ProgramPathCapacity - 1] of Char;
+  ProgramPath: string;
+  Vector: TTextVector;
 begin
   Status := 0;
-  if not FindProgram(Arguments[0], @ProgramPath[0], ProgramPathCapacity) then
+  if not FindProgramPath(Arguments[0], ProgramPath) then
   begin
-    ReportError(2, '''%s''', [ArgumentText(Arguments[0])]);
+    ReportError(2, '''' + Arguments[0] + '''');
     Status := StatusCommandNotFound;
     Exit(-1);
   end;
   FlushStandardStreams;
-  Result := StartProgram(@ProgramPath[0], Arguments, Options);
+  Vector := TextVector(Arguments);
+  Result := StartProgram(PChar(ProgramPath), PPChar(@Vector[0]), Options);
   if Result < 0 then
   begin
-    ReportError(ErrorCodeOf(Result), '''%s''', [ArgumentText(Arguments[0])]);
+    ReportError(ErrorCodeOf(Result), '''' + Arguments[0] + '''');
     Status := StatusCommandNotRunnable;
     Result := -1;
   end;
 end;
 
-procedure RunCommandAndExit(Arguments: PPChar; const Options: TProcessOptions);
+procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions);
 var
   Handle: Int64;
   Status: LongInt;
@@ -159,31 +151,33 @@ begin
   Halt(Status);
 end;
 
-function ParseSignal(Text: PChar): Integer;
+function ParseSignal(const Text: string): Integer;
 var
   Number: Int64;
+  Name: string;
   Index: Integer;
 begin
-  if ParseInteger(Text, Number) then
+  if ParseDecimal(Text, Number) then
   begin
     if (Number >= 0) and (Number <= HighestSignal) then
       Exit(Integer(Number));
     Exit(-1);
   end;
-  if TextStartsWith(Text, 'SIG') or TextStartsWith(Text, 'sig') then
-    Text := Text + 3;
+  Name := Text;
+  if StartsStr('SIG', Name) or StartsStr('sig', Name) then
+    Delete(Name, 1, 3);
   for Index := 1 to HighestSignal do
   begin
-    if CompareTextIgnoringCase(Text, SignalNames[Index]) = 0 then
+    if SameText(Name, SignalNames[Index]) then
       Exit(Index);
   end;
   Result := -1;
 end;
 
-function SignalName(Number: Integer): PChar;
+function SignalName(Number: Integer): string;
 begin
   if (Number < 1) or (Number > HighestSignal) then
-    Exit(nil);
+    Exit('');
   Result := SignalNames[Number];
 end;
 
@@ -249,44 +243,6 @@ begin
   for Index := 0 to High(Items) do
     Result[Index] := PChar(Items[Index]);
   Result[Length(Items)] := nil;
-end;
-
-function StartCommand(const Arguments: array of string; const Options: TProcessOptions;
-  out Status: LongInt): Int64;
-var
-  Vector: TTextVector;
-begin
-  Vector := TextVector(Arguments);
-  Result := StartCommand(PPChar(@Vector[0]), Options, Status);
-end;
-
-procedure RunCommandAndExit(const Arguments: array of string; const Options: TProcessOptions);
-var
-  Vector: TTextVector;
-begin
-  Vector := TextVector(Arguments);
-  RunCommandAndExit(PPChar(@Vector[0]), Options);
-end;
-
-function ParseSignal(const Text: string): Integer;
-begin
-  Result := ParseSignal(PChar(Text));
-end;
-
-function SignalNameText(Number: Integer): string;
-begin
-  Result := SignalName(Number);
-end;
-
-function FindProgramPath(const Name: string; out Path: string): Boolean;
-var
-  Buffer: array[0..ProgramPathCapacity - 1] of Char;
-begin
-  Result := FindProgram(PChar(Name), @Buffer[0], ProgramPathCapacity);
-  if Result then
-    Path := PChar(@Buffer[0])
-  else
-    Path := '';
 end;
 
 end.
