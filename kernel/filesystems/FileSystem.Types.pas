@@ -101,6 +101,9 @@ type
     StatusAccessDenied
   );
 
+  { The advisory lock an open file holds (FileSystem.Locks). }
+  TFileLockKind = (LockKindNone, LockKindShared, LockKindExclusive);
+
   TNodeKind = (
     NodeKindFile,
     NodeKindDirectory,
@@ -154,6 +157,9 @@ type
     { Set by RemoveOpenNode when the node lost its last name while open:
       its storage is freed (FinishRemoval) when the last reference goes. }
     RemovalPending: Boolean;
+    { Advisory locks held on the file (FileSystem.Locks), nil while
+      nobody holds or waits for one. Drivers hand nodes out zeroed. }
+    LockState: Pointer;
   end;
 
   { Position within a directory listing. Its meaning belongs to the

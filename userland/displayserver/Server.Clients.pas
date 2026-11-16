@@ -78,6 +78,7 @@ uses
   Server.Scale,
   Server.Modes,
   Server.MouseSettings,
+  Server.RememberedSettings,
   Server.PointerAreas,
   Server.WorkAreas,
   Server.WindowStates,
@@ -310,7 +311,11 @@ begin
       begin
         Screen := ScreenByNumber(Message.Value);
         if Screen <> nil then
+        begin
           ChangeScale(Screen, Message.Code);
+          if (Message.Flags and DisplayRemember) <> 0 then
+            RememberScreenScale(Screen);
+        end;
         DescribeScreen(Client, Message.Value);
       end;
     RequestDescribeDisplay:
@@ -318,8 +323,9 @@ begin
     RequestSetDisplayMode:
       begin
         Screen := ScreenByNumber(LongInt(Message.Code));
-        if Screen <> nil then
-          ChangeMode(Screen, Message.Width, Message.Height);
+        if (Screen <> nil) and (ChangeMode(Screen, Message.Width, Message.Height) = ErrorNone) and
+           ((Message.Flags and DisplayRemember) <> 0) then
+          RememberScreenMode(Screen);
         DescribeScreen(Client, LongInt(Message.Code));
       end;
     RequestDescribeDisplayMode:

@@ -28,7 +28,9 @@
   When the desktop ends (Log off on its Start menu, which asks here, or
   a failure) the rest of the session is ended and the login window comes
   back. The kernel option autologin=USER logs USER in without asking for
-  the first session of a boot (after logging off, the window asks).
+  the first session of a boot (after logging off, the window asks). The
+  display server is given the user's mouse settings before their desktop
+  starts, and the system's once the session has ended.
 
   It serves the port "session" for the desktop: log off, shut down and
   restart (see Session.Requests). Runs as root, as it starts programs as
@@ -39,10 +41,12 @@
   boxes and button ("session: place login-user-name X Y", login-password,
   login-ok), "session: login refused for NAME", "session: NAME logged in
   (session N)", "session: logging off NAME", "session: session of NAME
-  ended (status S)", "session: shutting down".
+  ended (status S)", "session: mouse settings of NAME (or the system):
+  speed S, acceleration A, left-handed on|off", "session: shutting down".
 
   Its units are in userland/sessionmanager: Session.LoginWindow,
-  Session.UserSession, Session.Requests and Session.Report.
+  Session.UserSession, Session.UserSettings, Session.Requests and
+  Session.Report.
 }
 program sessionmanager;
 

@@ -32,8 +32,9 @@
 
   Any program may change them (RequestSetMouseSettings), as it may the
   display's scale: they are the settings of whoever sits at the screen.
-  They last until the server ends; keeping them in a file is for the
-  configuration library (step 7).
+  The server starts with the system's (Server.RememberedSettings); the
+  session manager gives it each user's own when they log in, and the
+  system's again when they log off (Windowing.MouseSettings).
 }
 unit Server.MouseSettings;
 

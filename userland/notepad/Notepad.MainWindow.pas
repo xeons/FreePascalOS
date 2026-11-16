@@ -25,8 +25,10 @@
   when there is something to undo, Cut, Copy and Delete with a
   selection, Paste with text on the clipboard); an accelerator checks
   the same first. Find and Replace remember what was looked for, so
-  Find Next (F3) looks again. The face chosen with Format > Font and
-  word wrap last as long as the window.
+  Find Next (F3) looks again. Word wrap, the status bar and the face
+  chosen with Format > Font are kept in the user's settings
+  (Notepad.Settings) as soon as they are chosen, and the next Notepad
+  starts with them.
 }
 unit Notepad.MainWindow;
 
@@ -93,6 +95,7 @@ type
     procedure WordWrapChosen(Item: TMenuItem);
     procedure FontChosen(Item: TMenuItem);
     procedure StatusBarChosen(Item: TMenuItem);
+    procedure ApplyRememberedFormat;
     procedure AboutChosen(Item: TMenuItem);
     procedure ShowFindDialog(Replacing: Boolean);
     procedure RememberSearch(Dialog: TFindDialog);
@@ -118,6 +121,7 @@ uses
   Controls.MessageBoxes,
   Controls.FontDialog,
   Notepad.GoToDialog,
+  Notepad.Settings,
   Notepad.Output;
 
 const
@@ -132,6 +136,7 @@ begin
   FStatusBar := TStatusBar.Create(Root);
   PlaceStatusPanels;
   FEditor.OnCaretMoved := @CaretMoved;
+  ApplyRememberedFormat;
   FDirection := SearchDown;
   ShowCaretPlace;
   UpdateTitle;
@@ -435,18 +440,41 @@ end;
 
 { --- Format, View, Help ----------------------------------------------------------------------- }
 
-procedure TNotepadWindow.WordWrapChosen(Item: TMenuItem);
 const
-  States: array[Boolean] of string = ('off', 'on');
+  OnOff: array[Boolean] of string = ('off', 'on');
+  Weights: array[Boolean] of string = ('regular', 'bold');
+
+{ Word wrap, the status bar and the face as the user last chose them. }
+procedure TNotepadWindow.ApplyRememberedFormat;
+var
+  Format: TNotepadFormat;
+  Family: TFontFamily;
+begin
+  Format := RememberedFormat(FEditor);
+  FEditor.WordWrap := Format.WordWrap;
+  FWordWrapItem.Checked := Format.WordWrap;
+  FStatusBar.Visible := Format.StatusBar;
+  FStatusBarItem.Checked := Format.StatusBar;
+  if Format.FontFamilyIsFixed then
+    Family := FontFamilyFixed
+  else
+    Family := FontFamilyText;
+  if (Family <> FEditor.FontFamily) or (Format.FontPointTenths <> FEditor.FontPointTenths) or
+     (Format.FontBold <> FEditor.FontBold) then
+    FEditor.SetFont(Family, Format.FontPointTenths, Format.FontBold);
+  Say('settings word-wrap ' + OnOff[Format.WordWrap] + ', status-bar ' + OnOff[Format.StatusBar] + ', font ' +
+    IntToStr(Format.FontPointTenths) + ' ' + Weights[Format.FontBold] + ' ' + StrPas(FamilyCaption(Family)));
+end;
+
+procedure TNotepadWindow.WordWrapChosen(Item: TMenuItem);
 begin
   FEditor.WordWrap := not FEditor.WordWrap;
   FWordWrapItem.Checked := FEditor.WordWrap;
-  Say('wrap ' + States[FEditor.WordWrap] + ' ' + IntToStr(FEditor.RowCount));
+  RememberWordWrap(FEditor.WordWrap);
+  Say('wrap ' + OnOff[FEditor.WordWrap] + ' ' + IntToStr(FEditor.RowCount));
 end;
 
 procedure TNotepadWindow.FontChosen(Item: TMenuItem);
-const
-  Weights: array[Boolean] of string = ('regular', 'bold');
 var
   Family: TFontFamily;
   PointTenths: LongWord;
@@ -458,6 +486,7 @@ begin
   if not ChooseFontOfFamily(Family, PointTenths, Bold) then
     Exit;
   FEditor.SetFont(Family, PointTenths, Bold);
+  RememberFont(Family = FontFamilyFixed, PointTenths, Bold);
   Say('font ' + IntToStr(PointTenths) + ' ' + Weights[Bold] + ' ' + StrPas(FamilyCaption(Family)));
 end;
 
@@ -465,6 +494,7 @@ procedure TNotepadWindow.StatusBarChosen(Item: TMenuItem);
 begin
   FStatusBar.Visible := not FStatusBar.Visible;
   FStatusBarItem.Checked := FStatusBar.Visible;
+  RememberStatusBar(FStatusBar.Visible);
 end;
 
 procedure TNotepadWindow.AboutChosen(Item: TMenuItem);

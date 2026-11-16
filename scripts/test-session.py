@@ -22,10 +22,12 @@ and checks, without typing anything, that the display server and the
 session come up and the desktop shell runs as the user (the taskbar and
 the wallpaper in a screen dump, its lines in /var/log/session.log, read
 from a root shell on the serial console). On the serial console it logs
-in with a wrong password, then the right one, and asks `service list`.
-Then from the screen: Log off on the Start menu ends the session and
-brings the login window back; a wrong password there is refused, the
-right one starts the desktop again; and Shut down on the Start menu
+in with a wrong password, then the right one, and asks `service list`,
+and as the user keeps a mouse speed in the user's settings (mousesettings
+--remember). Then from the screen: Log off on the Start menu ends the
+session and brings the login window back (with the system's mouse
+settings); a wrong password there is refused, the right one starts the
+desktop again, with the user's mouse speed; and Shut down on the Start menu
 stops the services in order (the session before the display server) and
 powers the machine off: QEMU exits by itself.
 
@@ -333,6 +335,18 @@ checks.append(('service list: the graphical services run, the text console does 
                re.search(rb'serialconsole +running', listing) is not None and
                re.search(rb'console +stopped', listing) is not None))
 
+# The user's mouse settings (libconfiguration): kept by mousesettings
+# --remember in the user's own settings, given to the display server by
+# the session manager at their next login (and the system's in between).
+start = len(received)
+type_on_serial(b'su user -c "mousesettings -r -s 15; settings get Mouse/Speed; stat -c %a \\$HOME/.settings/Mouse.settings"; '
+               b'm=DONE; echo REMEMBERED $m\r')
+remembered = wait_for('REMEMBERED DONE', 15, start)
+remembered_log = bytes(received[start:])
+checks.append(('mousesettings --remember keeps the user\'s mouse settings (theirs alone)',
+               remembered and b'speed 15, acceleration 0, left-handed off' in remembered_log and
+               re.search(rb'\n15\r?\n600\r?\n', remembered_log) is not None))
+
 # Log off: the session ends and the login window comes back.
 if 'start' in place:
     click_at(*place['start'])
@@ -349,6 +363,9 @@ checks.append(('Log off ends the session and shows the login window',
                b'asking log off' in log and b'logging off user' in log and
                b'session of user ended' in log and b'login window shown' in log and
                screen(640, 785) != 'cbc6bd'))
+checks.append(('the session manager gives the display server the system\'s mouse settings after a session',
+               re.search(rb'session of user ended.*mouse settings of the system: speed 10, acceleration 0, '
+                         rb'left-handed off.*login window shown', log, re.S) is not None))
 
 # The login window: a wrong password is refused, the right one works.
 type_on_keyboard('user')
@@ -366,6 +383,13 @@ screen = take_screen()
 checks.append(('the right password starts the desktop again',
                log.count(b'session: user logged in') == 2 and log.count(b'desktop: ready') == 2 and
                screen(640, 785) == 'cbc6bd'))
+start = len(received)
+type_on_serial(b'mousesettings; m=DONE; echo MOUSE $m\r')
+mouse_asked = wait_for('MOUSE DONE', 15, start)
+checks.append(('the user\'s mouse settings are given back at their next login',
+               log.count(b'mouse settings of user: speed 10, acceleration 0, left-handed off') == 1 and
+               b'mouse settings of user: speed 15, acceleration 0, left-handed off' in log and
+               mouse_asked and b'speed 15, acceleration 0, left-handed off' in bytes(received[start:])))
 
 # Shut down from the Start menu: through the session manager (the user
 # may not shut down; it may), the kernel, and the service manager, which

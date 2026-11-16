@@ -31,7 +31,9 @@
   Restore, Minimize, Maximize and Close), the notification area and a
   clock (HH:MM, UTC: the system has no time zone yet). Maximized windows
   stop above the taskbar. -w names a wallpaper image, kept for when
-  images can be read (libimage); until then the drawn design shows.
+  images can be read (libimage); until then the drawn design shows. The
+  image is kept in the user's settings (Desktop/Wallpaper), so a desktop
+  started without -w shows the one chosen last.
 
   Prints what happens, a line each:
 
@@ -54,6 +56,7 @@
                           or shutting down)
     asking log off        Log off asks first (then log off cancelled, or
                           logging off)
+    wallpaper IMAGE       the wallpaper image chosen (-w, or kept)
 
   The units are in userland/desktop: Desktop.Shell (putting it
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),
@@ -77,13 +80,16 @@ uses
   Windowing.Shell,
   Desktop.Wallpaper,
   Desktop.Report,
-  Desktop.Shell;
+  Desktop.Shell,
+  Configuration.Settings,
+  Configuration.Locations;
 
 const
   Usage: PChar = 'Usage: desktop [-w IMAGE]'#10 +
     'Show the desktop and the taskbar (the display server''s shell).'#10 +
     '  -w IMAGE  a wallpaper image (shown once images can be read)'#10;
   OptionWallpaper = 1;
+  WallpaperSetting = 'Desktop/Wallpaper';
 
 procedure ReadOptions;
 var
@@ -99,6 +105,22 @@ begin
     FailWithUsageHint('no operands are taken', []);
 end;
 
+{ A wallpaper named with -w is kept for the next time; without one, the
+  one kept last is shown. }
+procedure RememberWallpaper;
+var
+  Store: TSettings;
+begin
+  Store := OpenSettings;
+  if WallpaperImagePath <> '' then
+    Store.WriteString(WallpaperSetting, WallpaperImagePath)
+  else
+    WallpaperImagePath := Store.ReadString(WallpaperSetting, '');
+  Store.Free;
+  if WallpaperImagePath <> '' then
+    Say('wallpaper ' + WallpaperImagePath);
+end;
+
 var
   Error: LongInt;
   Shell: TShell;
@@ -109,6 +131,7 @@ begin
     FailWithError(1, Error, 'the display server', []);
   if not RegisterAsShell then
     Fail(1, 'another shell is running', []);
+  RememberWallpaper;
   { The desktop's windows never close by themselves; it runs until the
     display server goes. }
   QuitWhenLastWindowCloses := False;

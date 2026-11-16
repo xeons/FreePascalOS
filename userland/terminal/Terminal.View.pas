@@ -18,8 +18,8 @@
 
 {
   The terminal as a control: a grid of character cells drawn in the
-  theme's monospaced face (Terminus) at TerminalPoints, so a cell is the
-  same size on any display, with a scroll bar for the scrollback.
+  theme's monospaced face (Terminus) at TerminalPointTenths, so a cell is
+  the same size on any display, with a scroll bar for the scrollback.
 
   Its size decides the rows and columns: when they change it resizes
   the emulator's screens and says so (OnGridResized), for the
@@ -54,8 +54,12 @@ uses
   Terminal.Selection;
 
 const
-  { The text's size, in tenths of a point. }
-  TerminalPoints = 110;
+  DefaultTerminalPointTenths = 110;
+
+var
+  { The text's size, in tenths of a point: the terminal sets it from the
+    user's settings before it makes its window. }
+  TerminalPointTenths: LongWord = DefaultTerminalPointTenths;
 
 type
   TInputEvent = procedure(const Bytes: string) of object;
@@ -159,8 +163,8 @@ end;
   have moved to a display of another DPI. }
 procedure TTerminalView.PickFaces;
 begin
-  FRegularFace := FixedFontFace(TerminalPoints, False);
-  FBoldFace := FixedFontFace(TerminalPoints, True);
+  FRegularFace := FixedFontFace(TerminalPointTenths, False);
+  FBoldFace := FixedFontFace(TerminalPointTenths, True);
   FCellWidth := 8;
   FCellHeight := 16;
   if FRegularFace <> nil then

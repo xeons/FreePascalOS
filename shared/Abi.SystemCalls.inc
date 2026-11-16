@@ -446,6 +446,25 @@ const
     it was opened. ErrorUnsupported if the display's mode cannot be
     changed (a firmware framebuffer without a driver). }
   ControlDisplaySetMode = 208;
+  { Requests of CallControlHandle on a file or directory handle: an
+    advisory lock on the whole file, as flock does it. The lock belongs
+    to the open file (shared by handles duplicated from it, passed to
+    children or sent in messages) and lasts until ControlUnlockFile or
+    until the open file's last handle is closed (a program that ends
+    gives its locks up). Locks only hold back other lock requests, not
+    reads or writes. The argument is FileLockShared or FileLockExclusive,
+    with FileLockNoWait to fail with ErrorWouldBlock instead of waiting.
+    Any number of shared locks or one exclusive lock may be held; asking
+    again with the other kind first gives up the one held. A shared lock
+    needs read permission on the file, an exclusive one write permission
+    (so readers cannot hold up writers); ErrorAccessDenied otherwise.
+    ErrorInterrupted if the wait is interrupted (Ctrl-C, the program
+    being ended). }
+  ControlLockFile = 300;
+  ControlUnlockFile = 301;
+  FileLockShared = 1;
+  FileLockExclusive = 2;
+  FileLockNoWait = $100;
   { Blue, green, red, unused (a little-endian LongWord $00RRGGBB). }
   DisplayFormatBlueGreenRed = 1;
   { Red, green, blue, unused ($00BBGGRR). }

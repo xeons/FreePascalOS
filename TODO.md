@@ -385,7 +385,13 @@ normalized (0-65535), not pixels.
 - [ ] Graphical login, locking, log off, shut down and suspend from the desktop
       (login, log off and shut down are done; locking and suspend remain)
 - [ ] File change notifications (folders refresh), volume arrival
-- [ ] Per-user settings store (libconfiguration)
+- [x] Per-user settings store (libconfiguration): typed settings in text
+      files, the user's over the system's over defaults, fixed values, safe
+      writes under an advisory file lock (new kernel feature); the display
+      server, the session manager (mouse), Notepad, the terminal and the
+      desktop use it; the `settings` tool
+- [ ] Settings changed notifications (on top of folder watches:
+      `TSettings.CheckForChanges` is the hook)
 
 ### 8. Richer graphics
 - [ ] libcompression: deflate

@@ -51,11 +51,14 @@ function DescribeDisplay(Number: LongInt; out Information: TDisplayInformation):
 { How many displays there are. }
 function CountDisplays: LongInt;
 { Asks for a new scale (100 to 400 percent) for a display, and gives
-  what it is like then. }
-function SetDisplayScale(Number: LongInt; Percent: LongWord; out Information: TDisplayInformation): Boolean;
+  what it is like then. Remember: the server keeps it for the next time
+  it starts (in the system's settings). }
+function SetDisplayScale(Number: LongInt; Percent: LongWord; out Information: TDisplayInformation;
+  Remember: Boolean = False): Boolean;
 { Asks for one of the display's modes, and gives what it is like then
-  (the size it had if the mode was refused). }
-function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information: TDisplayInformation): Boolean;
+  (the size it had if the mode was refused). Remember: as for the scale. }
+function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information: TDisplayInformation;
+  Remember: Boolean = False): Boolean;
 { The display's mode numbered Index (from 0, smallest first); False past
   the end. Current: the display has it now. }
 function DescribeDisplayMode(Number, Index: LongInt; out Width, Height: LongInt; out Current: Boolean): Boolean;
@@ -136,17 +139,21 @@ begin
     Inc(Result);
 end;
 
-function SetDisplayScale(Number: LongInt; Percent: LongWord; out Information: TDisplayInformation): Boolean;
+function SetDisplayScale(Number: LongInt; Percent: LongWord; out Information: TDisplayInformation;
+  Remember: Boolean): Boolean;
 var
   Request: TWindowMessage;
 begin
   Request := NewMessage(RequestSetScale, 0);
   Request.Code := Percent;
   Request.Value := Number;
+  if Remember then
+    Request.Flags := DisplayRemember;
   Result := AskForDescription(Request, Information);
 end;
 
-function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information: TDisplayInformation): Boolean;
+function SetDisplayMode(Number: LongInt; Width, Height: LongInt; out Information: TDisplayInformation;
+  Remember: Boolean): Boolean;
 var
   Request: TWindowMessage;
 begin
@@ -154,6 +161,8 @@ begin
   Request.Code := LongWord(Number);
   Request.Width := Width;
   Request.Height := Height;
+  if Remember then
+    Request.Flags := DisplayRemember;
   Result := AskForDescription(Request, Information);
 end;
 

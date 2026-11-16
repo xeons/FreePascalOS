@@ -25,6 +25,10 @@
   The session lasts as long as the desktop: when the desktop ends (Log
   off, or it failed), whatever is left of the session is ended too, and
   OnEnded is called. Logging off ends the whole session at once.
+
+  The display server is given the user's settings (the mouse's) before
+  the desktop starts, and the system's when the session has ended
+  (Session.UserSettings).
 }
 unit Session.UserSession;
 
@@ -71,6 +75,7 @@ uses
   Sys.Objects,
   Sys.Processes,
   Windowing.HandleWatches,
+  Session.UserSettings,
   Session.Report;
 
 const
@@ -108,6 +113,7 @@ begin
   if IsActive then
     Exit;
   FAccount := Account;
+  ApplyUserSettings(UserName, string(PChar(@FAccount.Home[0])));
   Arguments[0] := DesktopProgram;
   Arguments[1] := nil;
   DefaultProcessOptions(Options);
@@ -117,6 +123,7 @@ begin
   if Process < 0 then
   begin
     Say('cannot start the desktop for ' + UserName);
+    ApplySystemSettings;
     Exit;
   end;
   FProcess := Process;
@@ -147,6 +154,7 @@ begin
   { What the user left running goes with the desktop. }
   EndSession(FSessionId, EndedExitCode);
   Say(Format('session of %s ended (status %d)', [UserName, ExitCode]));
+  ApplySystemSettings;
   if Assigned(FOnEnded) then
     FOnEnded(ExitCode);
 end;

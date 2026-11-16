@@ -28,6 +28,8 @@
 #   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
 #   make text-test  Check the multi-line edit box's plain logic on the host (undo,
 #                   word wrap, search)
+#   make settings-test  Check the settings library on the host (files, escaping,
+#                   layering, two writers, damaged files)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -105,7 +107,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test suspend-stress
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test suspend-stress
 
 all: esp
 
@@ -202,7 +204,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test text-test esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test drawing-test text-test settings-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -285,6 +287,23 @@ text-test: $(TEXT_TEST)
 	@$(TEXT_TEST) > build/tools/text-test.out || \
 		{ grep FAIL build/tools/text-test.out; echo "TEXT TEST FAILED (build/tools/text-test.out)"; exit 1; }
 	@echo "TEXT TEST PASSED: $$(tail -n 1 build/tools/text-test.out | cut -d ' ' -f 2-)"
+
+# The settings library (libconfiguration) but for its files builds for
+# the host too, and is checked there over a storage in memory.
+SETTINGS_TEST := build/tools/SettingsTest
+SETTINGS_TEST_SOURCES := $(wildcard tools/SettingsTest/*.pas) shared/Abi.SystemCalls.pas shared/Abi.SystemCalls.inc \
+	$(filter-out %/Configuration.FileStorage.pas %/Configuration.Locations.pas %/Configuration.Contents.pas, \
+		$(wildcard userland/lib/configuration/*.pas))
+
+$(SETTINGS_TEST): $(SETTINGS_TEST_SOURCES)
+	@mkdir -p build/tools/settings-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/SettingsTest -Fuuserland/lib/configuration -Fushared -Fishared \
+		-FUbuild/tools/settings-test-units -o$@ tools/SettingsTest/SettingsTest.pas
+
+settings-test: $(SETTINGS_TEST)
+	@$(SETTINGS_TEST) > build/tools/settings-test.out || \
+		{ grep -A2 FAIL build/tools/settings-test.out; echo "SETTINGS TEST FAILED (build/tools/settings-test.out)"; exit 1; }
+	@echo "SETTINGS TEST PASSED: $$(tail -n 1 build/tools/settings-test.out | cut -d ' ' -f 2-)"
 
 clean:
 	rm -rf build

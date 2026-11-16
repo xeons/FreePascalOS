@@ -23,7 +23,10 @@
 
   Opens a window on the display server with a shell (or PROGRAM) on a
   pseudo-terminal of its own: a VT100/ANSI terminal of 25 rows of 80
-  columns to start with, which follows the window's size. Text is
+  columns to start with, which follows the window's size. The size the
+  window has when it closes is kept in the user's settings
+  (Terminal/Rows, Terminal/Columns) for the next terminal to start at,
+  and the text's size is Terminal/FontSize (tenths of a point, 110). Text is
   selected with the mouse and copied with Ctrl+Shift+C, pasted with
   Ctrl+Shift+V (or from the right click's menu); the wheel and
   Shift+Page Up/Down scroll back. Closing the window ends the shell;
@@ -46,6 +49,8 @@ uses
   Util.Options,
   Windowing.Connection,
   Windowing.Windows,
+  Terminal.View,
+  Terminal.Settings,
   Terminal.Window;
 
 const
@@ -68,6 +73,7 @@ var
   Top: LongInt;
   ProgramPath: string;
   Window: TTerminalWindow;
+  Remembered: TTerminalSettings;
 begin
   Left := 100;
   Top := 80;
@@ -84,7 +90,9 @@ begin
     end;
   if ConnectToDisplay <> ErrorNone then
     Fail(1, 'no display server', []);
-  Window := TTerminalWindow.Create(Left, Top);
+  Remembered := RememberedTerminalSettings;
+  TerminalPointTenths := Remembered.FontPointTenths;
+  Window := TTerminalWindow.Create(Left, Top, Remembered.Rows, Remembered.Columns);
   Window.Show;
   if not Window.StartShell(PChar(ProgramPath)) then
     Halt(1);
