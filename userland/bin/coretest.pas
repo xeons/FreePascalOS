@@ -103,7 +103,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..363] of TCommandTest = (
+  CommandTests: array[0..368] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -255,6 +255,10 @@ const
     (Command: 'printf "\206\117\322\157\265\131\367\133" | basenc --z85'; ExpectedOutput: 'HelloWorld'#10; ExpectedStatus: 0),
     (Command: 'seq 100 | base64 -w 0 | base64 -d | tail -n 1'; ExpectedOutput: '100'#10; ExpectedStatus: 0),
     (Command: 'echo "a!b" | base64 -d 2>&1; echo $?'; ExpectedOutput: 'base64: invalid input'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'printf hello | gzip | gzip -d; echo; seq 2000 | gzip -9 | gzip -dc | tail -n 1'; ExpectedOutput: 'hello'#10'2000'#10; ExpectedStatus: 0),
+    (Command: 'seq 500 > z.txt; gzip z.txt; ls z.txt*; gzip -dk z.txt.gz; ls z.txt*; tail -n 1 z.txt'; ExpectedOutput: 'z.txt.gz'#10'z.txt'#10'z.txt.gz'#10'500'#10; ExpectedStatus: 0),
+    (Command: '{ printf one | gzip -1; printf two | gzip; } | gzip -d; echo; gzip -c z.txt | gzip -d | wc -l'; ExpectedOutput: 'onetwo'#10'500'#10; ExpectedStatus: 0),
+    (Command: 'echo junk | gzip -d 2>&1; echo $?; gzip -d z.txt 2>&1; echo $?'; ExpectedOutput: 'gzip: stdin: not in gzip format'#10'1'#10'gzip: z.txt: unknown suffix -- ignored'#10'1'#10; ExpectedStatus: 0),
 
     { --- users and the system ---------------------------------------- }
     (Command: 'id; id -un; id -g; whoami; groups; groups root'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root)'#10'root'#10'0'#10'root'#10'root'#10'root : root wheel'#10; ExpectedStatus: 0),
@@ -446,6 +450,7 @@ const
     (Command: 'voicetest'; ExpectedOutput: 'voicetest: 44 checks passed'#10; ExpectedStatus: 0),
     (Command: 'effecttest'; ExpectedOutput: 'effecttest: 41 checks passed'#10; ExpectedStatus: 0),
     (Command: 'record -r 16000 -c 1 i.wav 0.5 && soundinfo i.wav; tone -o s.wav -r 22050 -c 1 -f u8 440 0.25 && soundinfo s.wav'; ExpectedOutput: 'i.wav: 16000 Hz, 1 channel, s16, 0.50 s, peak 0%, silent'#10's.wav: 22050 Hz, 1 channel, u8, 0.25 s, peak 49%, 440 Hz'#10; ExpectedStatus: 0),
+    (Command: 'printf "BM\076\000\000\000\000\000\000\000\066\000\000\000\050\000\000\000\002\000\000\000\001\000\000\000\001\000\030\000\000\000\000\000\010\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\377\000\000\000\377\000\000\000" > t.bmp; imageinfo t.bmp; imageinfo /etc/passwd 2>&1; echo $?; rm t.bmp'; ExpectedOutput: 't.bmp: BMP, 2 x 1, 24 bits per pixel'#10'imageinfo: /etc/passwd: not an image format known'#10'1'#10; ExpectedStatus: 0),
     (Command: 'su user -c "poweroff; reboot; halt; suspend" 2>&1; poweroff now 2>&1 | head -n 1'; ExpectedOutput: 'poweroff: cannot shut down: Operation not permitted'#10'reboot: cannot shut down: Operation not permitted'#10'halt: cannot shut down: Operation not permitted'#10'suspend: cannot suspend: Operation not permitted'#10'poweroff: no arguments are taken'#10; ExpectedStatus: 0),
     (Command: 'mixer; mixer 90; mixer; mixer 80'; ExpectedOutput: 'volume 80%'#10'volume 90%'#10; ExpectedStatus: 0),
     { The order and lengths are what check-audio.py expects: a tone, a WAV

@@ -8,6 +8,10 @@ instead of NT's terminology.
 ```
 +-----------------------------------------------------------+
 |  User mode: sh, coreutils -> libcoreutils, libsystem       |
+|  graphical programs -> libcontrols -> libwindowing ->      |
+|    libfont -> libdrawing -> libsystem                      |
+|  image files: libimage -> libdrawing (see "Images")        |
+|  compression: libcompression -> libsystem                  |
 +=================== system calls (syscall) ================+
 |  Processes (processes, threads, address spaces, handles,   |
 |             image loader, system calls)                    |
@@ -3427,6 +3431,95 @@ authority and an expired certificate each refused (and accepted with
 --no-check-certificate). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
+### Compression
+
+**libcompression** (`userland/lib/compression`, units `Compression.*`)
+is deflate (RFC 1951) both ways, with the zlib (RFC 1950) and gzip
+(RFC 1952) wrappers and their checksums. It needs only libsystem.
+libimage uses it for PNG and TIFF, gzip for .gz files.
+
+```
+  Compression.Buffers   CompressZlib, DecompressGzip, ... on TBytes (raise)
+  Compression.Streams   TDecompressionStream, TCompressionStream over a TStream
+=========== streaming, any piece sizes, errors as codes ====================
+  Compression.Inflater  TInflater: raw, zlib, gzip (several members), or
+                        whichever the header says; checks every checksum
+  Compression.Deflater  TDeflater: levels 0-9, raw, zlib or gzip
+  Compression.InflateEngine   blocks, codes, history; fast loop
+  Compression.HuffmanDecoding two-level lookup tables
+  Compression.DeflateEngine   greedy and lazy matching, stored blocks
+  Compression.MatchFinder     hash chains over two windows
+  Compression.DeflateBlocks   stored, fixed or dynamic, the smallest
+  Compression.HuffmanEncoding lengths limited to 15 (7), canonical codes
+  Compression.BitWriter  Compression.ZlibFormat  Compression.GzipFormat
+  Compression.Checksums (Adler-32, CRC-32)  Compression.DeflateFormat
+  Compression.Formats  Compression.Errors
+=========== libsystem ======================================================
+```
+
+**Decompressing.** `TInflater` is fed with `SetInput` and emptied by
+`Decompress(Output, Capacity, Written)`, which says why it stopped:
+it needs input, the output is full, the data has finished, or it
+failed (`Error`, a `TCompressionError`). The decoder
+(`Compression.InflateEngine`) is a state machine that can stop
+wherever the input runs out - in a block header, among a dynamic
+block's code lengths, between a length and its distance, in the
+middle of a copy - and go on with the next piece. Output goes into a
+96 KiB history (32 KiB that matches reach back into, 64 KiB of room)
+that the caller empties; the last 32 KiB slide to the front once all
+of it is taken. While 8 bytes of input and a whole match's room are
+left, a tight loop decodes: it refills a 64-bit bit buffer eight bytes
+at a time (56 bits, enough for a length and a distance with their
+extra bits) and looks codes up in two-level tables
+(`Compression.HuffmanDecoding`: 10 bits for literals and lengths, 8
+for distances; longer codes in subtables), without a check per bit.
+Codes are checked as zlib checks them (no over-subscribed code; an
+incomplete one only as a single one-bit code), as are the code length
+repeats, symbols 286, 287, 30 and 31, the end of block code, stored
+lengths and every distance against the output so far; the first error
+stops the decoder. The wrappers are checked as they arrive: the zlib
+header (no preset dictionary) and Adler-32; the gzip header byte by
+byte (extra field, name, comment, header CRC; `GzipHeader` has them),
+CRC-32 and length; members follow one another as one output, and
+anything else after a member is trailing data.
+
+**Compressing.** `TDeflater` takes input with `SetInput` and gives
+output with `Compress(Output, Capacity, Written, Finish)`. Input goes
+into a buffer of two windows (`Compression.MatchFinder`); each
+position is put on a hash chain of its next three bytes, and a search
+walks back along it (comparing eight bytes at a time) as far as the
+level allows. The levels are zlib's, with its limits: 0 stores, 1 to 3
+take the longest match greedily, 4 to 9 take a match only when the
+next position does not start a longer one. 32768 symbols make a block,
+which `Compression.DeflateBlocks` sends stored, with the fixed codes
+or with codes of its own (Huffman lengths limited to 15, the code
+lengths run-length coded and limited to 7), whichever is smallest
+counted to the bit. A block of incompressible data goes out before the
+window slides away from its start, so that it can still be stored.
+
+**The convenience layer.** `Compression.Buffers` does whole arrays in
+one call and raises `ECompressionError` (with the code): decompression
+is strict about cut off data and trailing bytes and can be bounded
+(`MaximumSize`). `Compression.Streams` puts both directions behind a
+`TStream`.
+
+`make compression-test` (part of `make test`) builds the library on the
+host as `tools/CompressionTest`, with vectors that
+`tools/CompressionTest/make-vectors.py` makes with Python's zlib when
+the test is built: zlib's output of five kinds of data at several
+levels (stored, fixed only, Huffman only, run length, small windows
+and small blocks, raw, zlib and gzip, several members, empty data, a
+match exactly 32768 back), each decompressed whole, a byte at a time
+and in varying pieces; broken streams of every kind, each refused with
+its own error, whole and a byte at a time; every vector damaged forty
+ways, which must be refused or decompressed but never crash (the test
+is built with range checks); round trips at every level in every
+format, whole and in pieces; sizes within a tenth of zlib's on the
+same data; the stream adapters; gzip header fields. The samples it
+compresses are then decompressed by Python's zlib and gzip
+(`check-with-zlib.py`). On the system, `gzip` (`-c`, `-d`, `-f`, `-k`,
+`-1` to `-9`) compresses and decompresses files; coretest checks it.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a
@@ -4960,6 +5053,11 @@ independent) against the Free Pascal runtime library:
 - **libtls.so** – a TLS 1.3 client with X.509 certificate checking, the
   `Tls.*` units (see "TLS and wget"); it needs libcryptography and
   libsystem. wget uses it.
+- **libcompression.so** – deflate compression and decompression with the
+  zlib and gzip wrappers, Adler-32 and CRC-32, streaming classes
+  (`TInflater`, `TDeflater`), stream adapters and one-call functions on
+  `TBytes`, the `Compression.*` units (see "Compression"); it needs only
+  libsystem. libimage and gzip use it.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
@@ -5079,6 +5177,15 @@ independent) against the Free Pascal runtime library:
   the system, `drawtest` draws a window on the display in DejaVu Sans,
   everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
+- **libimage.so** – images and image files (see "Images" below): the
+  model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing
+  pixels to libdrawing (`Image.Surfaces`), playing animations
+  (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, the
+  codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
+  and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
+  (`Image.Ico.*`), GIF (`Image.Gif.*`) and JPEG (`Image.Jpeg.*`). It
+  needs libdrawing and libsystem; `imageinfo` uses it. It builds on the
+  host too: `make image-test` (part of `make test`).
 - **libconfiguration.so** – settings, the user's over the system's (see
   "Settings" below): `Configuration.Names`, `Configuration.Values`,
   `Configuration.Documents`, `Configuration.Storage`,
@@ -5170,6 +5277,117 @@ goes, so a program that hangs or crashes does not lose its diagnostics
 runtime (SysUtils' `Now`); programs show local times through
 `Sys.LocalTime` (see "Time zones"). The runtime is checked by `rtltest` (strings, arrays,
 exceptions, classes, generics, files, searching, threads, processes).
+
+### Images
+
+libimage (`userland/lib/image`) holds one model for every image format
+and a decoder and an encoder per format, picked by the content's
+signature, never by the file's name.
+
+**The model.** A `TImage` is Width x Height pixels in libdrawing's
+colours: a LongWord `$AARRGGBB` each, straight (not premultiplied)
+alpha, so blue, green, red, alpha in memory, lines one after the other
+with no gap. That is a libdrawing surface already: `ImageSurface` gives
+a surface on the image's pixels without copying anything (to draw it,
+or draw on it), `SurfaceTakingImage` and `ImageTakingSurface` move the
+pixels from one to the other without a copy (a surface with a stride of
+its own is copied). Beside the pixels an image has its resolution (dots
+per inch, 0 when unknown), the orientation it is meant to be seen in
+(EXIF's eight; the pixels stay as stored and `OrientedImage` turns
+them), the ICC profile as the file carried it, metadata as ordered text
+keys and values (`Comment`, `HotspotX`, `HotspotY`, `ColorSpace`...),
+and the format, bits per pixel and alpha it came with. Sizes above
+65535 a side or 128 million pixels are refused before anything is
+allocated, so a lying header never asks for gigabytes.
+
+**Animation.** A `TAnimatedImage` is an image whose own pixels are its
+first frame as seen, with a list of `TImageFrame`s (a picture of its
+own, an offset, a delay in milliseconds, a disposal: left, cleared to
+transparent or put back as before; a blend: replacing or drawn over by
+alpha) and a loop count (0 for ever). These are GIF's and APNG's rules
+alike. `TFrameCompositor` keeps the canvas and draws frame after frame
+on it, keeping a copy of the canvas only while a frame asks to be put
+back, so a picture box plays a GIF by calling `NextFrame` on a timer;
+`CompositeFrames` gives every frame whole.
+
+**Codecs.** `TImageDecoder` says from a file's first bytes whether it is
+its format (`CanDecode`) and turns the file, in memory, into an image;
+`TImageEncoder` writes one, with a quality and bits per pixel.
+`Image.StandardCodecs` registers the library's formats, the headerless
+DIB last since only its header's shape gives it away. `Image.Files` is
+the convenience layer: `LoadImage` from a file name, a stream or
+`TBytes` (`ImageLoadApplyOrientation` turns photographs upright),
+`TryLoadImage`, `SaveImage` and `EncodeImage` in a format, errors as
+`EImageError` with a reason (unknown format, cut short, malformed,
+unsupported, needs PNG, too large, no encoder, the file). Decoders read
+through `TImageByteReader`, whose every read is checked against the
+data, so headers that lie raise "cut short" instead of reading past the
+end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
+(area averaging when shrinking).
+
+**Formats.**
+
+- *BMP and DIB* (`Image.Bmp.*`): 1, 4, 8, 16, 24 and 32 bits; the OS/2
+  core header, the 40-byte one, V2 and V3 (masks and alpha in the
+  header), V4 and V5 (colour space, an embedded profile); RLE4 and RLE8
+  with moves (pixels skipped are transparent); BITFIELDS and
+  ALPHABITFIELDS with masks of any width (a value of N bits scaled to
+  0-255 by rounding); lines from the bottom up or the top down. A 32-bit
+  picture without masks takes its fourth byte as alpha unless it is
+  zero everywhere. Writing: 24 bits (a 40-byte header) or 32 bits (a V5
+  header with an alpha mask); a DIB is the same without the file header,
+  as the clipboard holds it.
+- *ICO and CUR* (`Image.Ico.*`): `TIconDirectory` reads the entries,
+  taking each one's real size and depth from the entry itself, and
+  picks the one for a size and scale (`NearestEntry`: the same size,
+  else the smallest larger, else the largest; the deepest of equal
+  sizes). DIB entries have their 1-bit mask applied unless they carry
+  alpha. PNG entries are recognised (size from their header) and decoded
+  through the registry (`DecodeEmbeddedImage`), so the PNG decoder,
+  when it comes with libcompression, is used without the icon code
+  changing; until then they give "needs PNG", and loading a whole file
+  falls back to its largest DIB entry. Cursors' hotspots go into the
+  entries and the metadata. Writing: several sizes in one file, 32-bit
+  entries with alpha and a mask.
+- *GIF* (`Image.Gif.*`): 87a and 89a, LZW (codes growing to 12 bits, the
+  table started again on a clear code, a code that cannot be stops the
+  frame there), global and local palettes, interlacing, transparency,
+  the graphic control extension (delay, disposal), NETSCAPE2.0 and
+  ANIMEXTS1.0 loop counts, comments; every image a frame. A file cut
+  short keeps the frames decoded so far (the last as far as its data
+  went). Writing: one frame, exact up to 256 colours, else a fixed 6 x 7
+  x 6 palette.
+- *JPEG* (`Image.Jpeg.*`): baseline and extended sequential and
+  progressive DCT, 8-bit, Huffman coding, any sampling factors
+  (libjpeg's smooth upsampling for 2:1 and 2x2, replicated otherwise),
+  restart markers, greyscale, YCbCr, RGB, CMYK and YCCK (Adobe's
+  inverted CMYK), JFIF density as the resolution, the EXIF orientation,
+  ICC profile chunks put together, comments. The inverse DCT is
+  libjpeg's accurate integer one (a block with only its DC term filled
+  directly); a 12 megapixel photograph decodes in about 150 ms on the
+  host. A file cut short keeps the blocks decoded (the rest mid grey).
+  Arithmetic coding, 12-bit samples and lossless JPEG are refused as
+  unsupported. Writing: baseline 4:2:0 with the standard tables scaled
+  by quality, with the density, orientation and profile.
+
+`imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
+orientation, resolution and profile.
+
+**Tests.** libimage builds on the host with libdrawing, and `make
+image-test` (part of `make test`) runs `tools/ImageTest` with range
+checks on. Its fixtures are made at build time with Python's Pillow
+(`tools/ImageTest/make-fixtures.py`, `make-jpeg-fixtures.py`): BMPs of
+every depth, header and compression, ICOs and a CUR, and GIFs with every
+disposal are put together byte by byte, their references the pixels
+they were made from (checked against Pillow's decoding where Pillow
+reads them the same way); files Pillow writes and every kind of JPEG
+(each subsampling, odd sizes, progressive, greyscale, restart markers,
+CMYK, an orientation, an ICC profile, a 12 megapixel photograph) have
+Pillow's decoding as their reference. Lossless formats must match
+exactly, JPEG within 2 per channel. Writing is checked by reading back;
+the model, surfaces, orientations, scaling, compositing and the
+registry on their own; and malformed, truncated and randomly damaged
+files must load or give an `EImageError`, never anything worse.
 
 ## Heap checking
 

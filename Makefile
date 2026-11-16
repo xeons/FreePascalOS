@@ -33,9 +33,14 @@
 #                   settings and state files)
 #   make crypto-test  Check libcryptography's TLS algorithms on the host against
 #                   published known answers
+#   make compression-test  Check libcompression on the host against zlib's
+#                   output (made by Python), and have Python's zlib
+#                   decompress what it compresses
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
+#   make image-test  Check libimage on the host against Pillow's decoding of fixtures
+#                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -116,7 +121,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test files-test suspend-stress \
-	crypto-test tls-test wget-test
+	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
 
@@ -213,7 +218,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test text-test settings-test files-test crypto-test tls-test wget-test esp $(TEST_DISK) \
+test: aml-test drawing-test text-test settings-test files-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -358,6 +363,34 @@ crypto-test: $(CRYPTO_TEST)
 		{ grep -A2 FAIL build/tools/crypto-test.out; echo "CRYPTO TEST FAILED (build/tools/crypto-test.out)"; exit 1; }
 	@echo "CRYPTO TEST PASSED: $$(tail -n 1 build/tools/crypto-test.out | cut -d ' ' -f 3-)"
 
+# libcompression builds for the host too, and is checked there against
+# zlib's own output (made by Python's zlib when the test is built); what
+# it compresses is then decompressed by Python's zlib and gzip.
+COMPRESSION_TEST := build/tools/CompressionTest
+COMPRESSION_TEST_UNITS := build/tools/compression-test-units
+COMPRESSION_VECTORS := $(COMPRESSION_TEST_UNITS)/CompressionTest.Vectors.inc
+COMPRESSION_SAMPLES := build/tools/compression-samples
+COMPRESSION_TEST_SOURCES := $(wildcard tools/CompressionTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
+
+$(COMPRESSION_VECTORS): tools/CompressionTest/make-vectors.py
+	@mkdir -p $(COMPRESSION_TEST_UNITS)
+	python3 tools/CompressionTest/make-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(COMPRESSION_TEST): $(COMPRESSION_TEST_SOURCES) $(COMPRESSION_VECTORS)
+	@mkdir -p $(COMPRESSION_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/CompressionTest -Futools/CryptoTest -Fuuserland/lib/compression \
+		-Fi$(COMPRESSION_TEST_UNITS) -FU$(COMPRESSION_TEST_UNITS) -o$@ tools/CompressionTest/CompressionTest.pas
+
+compression-test: $(COMPRESSION_TEST)
+	@mkdir -p $(COMPRESSION_SAMPLES)
+	@$(COMPRESSION_TEST) $(COMPRESSION_SAMPLES) > build/tools/compression-test.out || \
+		{ grep -A2 FAIL build/tools/compression-test.out; echo "COMPRESSION TEST FAILED (build/tools/compression-test.out)"; exit 1; }
+	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
+		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }
+	@echo "COMPRESSION TEST PASSED: $$(tail -n 1 build/tools/compression-test.out | cut -d ' ' -f 3-)"
+
 # libtls but for its socket, file and clock units builds for the host too
 # (with a Crypto.Random of the host's), and is checked there; then its
 # client connects to OpenSSL's s_server (skipped without openssl).
@@ -394,6 +427,35 @@ wget-test: $(WGET_TEST)
 	@$(WGET_TEST) > build/tools/wget-test.out || \
 		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
 	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
+
+# libimage builds for the host too (with libdrawing), with range checks,
+# and is checked there against fixtures made at build time with Pillow:
+# files put together byte by byte for every BMP, ICO and GIF variant,
+# and JPEGs of every kind, with Pillow's decoding as the reference.
+IMAGE_TEST := build/tools/ImageTest
+IMAGE_FIXTURES := build/tools/image-fixtures
+IMAGE_FIXTURES_STAMP := $(IMAGE_FIXTURES)/.made
+IMAGE_FIXTURE_SCRIPTS := tools/ImageTest/make-fixtures.py tools/ImageTest/make-jpeg-fixtures.py \
+	tools/ImageTest/fixturecommon.py
+IMAGE_TEST_SOURCES := $(wildcard tools/ImageTest/*.pas) $(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas)) \
+	$(wildcard userland/lib/drawing/*.pas)
+
+$(IMAGE_TEST): $(IMAGE_TEST_SOURCES)
+	@mkdir -p build/tools/image-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ImageTest -Fuuserland/lib/image -Fuuserland/lib/drawing \
+		-FUbuild/tools/image-test-units -o$@ tools/ImageTest/ImageTest.pas
+
+$(IMAGE_FIXTURES_STAMP): $(IMAGE_FIXTURE_SCRIPTS)
+	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the image test's fixtures (python-pillow)"; exit 1; }
+	@rm -rf $(IMAGE_FIXTURES)
+	python3 -B tools/ImageTest/make-fixtures.py $(IMAGE_FIXTURES)
+	python3 -B tools/ImageTest/make-jpeg-fixtures.py $(IMAGE_FIXTURES)
+	@touch $@
+
+image-test: $(IMAGE_TEST) $(IMAGE_FIXTURES_STAMP)
+	@$(IMAGE_TEST) $(IMAGE_FIXTURES) > build/tools/image-test.out || \
+		{ grep -A2 FAIL build/tools/image-test.out; echo "IMAGE TEST FAILED (build/tools/image-test.out)"; exit 1; }
+	@echo "IMAGE TEST PASSED: $$(tail -n 1 build/tools/image-test.out | cut -d ' ' -f 2-)"
 
 clean:
 	rm -rf build
