@@ -34,26 +34,27 @@
 }
 program host;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
   Sys.InternetAddresses,
+  Sys.AddressText,
   Sys.DnsNames,
   Sys.DnsMessages,
   Sys.DnsQueries,
   Sys.HostNames,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: host [OPTION]... NAME [SERVER]'#10 +
+  Usage = 'Usage: host [OPTION]... NAME [SERVER]'#10 +
     'Look NAME up in the DNS (an address: its name).'#10 +
     #10 +
     '  -t TYPE       the records wanted (A, AAAA, CNAME, MX, NS, TXT, PTR, SOA, ANY)'#10 +
@@ -71,116 +72,101 @@ const
 var
   Options: TDnsQueryOptions;
   Message: TDnsMessage;
-  NameText: PChar;
-  ServerText: PChar = nil;
+  NameText: string;
+  ServerText: string = '';
+  HasServer: Boolean = False;
   WantedType: Word = 0;
   Verbose: Boolean = False;
   ShownAliases: Boolean = False;
 
 procedure ParseArguments;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Number: QWord;
 begin
   SystemDnsQueryOptions(Options);
-  BeginOptions(Parser, [
-    OptionDefinition('t', 'type', True, OptionType),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition('T', 'tcp', False, OptionTcp),
-    OptionDefinition('W', 'wait', True, OptionWait),
-    OptionDefinition('R', 'retry', True, OptionAttempts)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionType:
-        if not ParseDnsTypeName(Value, WantedType) then
-          Fail(2, 'invalid type: %s', [ArgumentText(Value)]);
-      OptionVerbose: Verbose := True;
-      OptionTcp: Options.TcpOnly := True;
-      OptionWait:
-        if not ParseThousandths(Value, Number) or (Number = 0) or (Number > 600000) then
-          Fail(2, 'invalid wait: %s', [ArgumentText(Value)])
-        else
-          Options.TimeoutMilliseconds := LongWord(Number);
-      OptionAttempts:
-        if not ParseUnsigned(Value, Number) or (Number = 0) or (Number > 10) then
-          Fail(2, 'invalid number of attempts: %s', [ArgumentText(Value)])
-        else
-          Options.Attempts := LongWord(Number);
+  CommandLine := TCommandLine.Create([
+    CommandOption('t', 'type', True, OptionType),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption('T', 'tcp', False, OptionTcp),
+    CommandOption('W', 'wait', True, OptionWait),
+    CommandOption('R', 'retry', True, OptionAttempts)], Usage);
+  try
+    while CommandLine.NextOption(Code, Value) do
+      case Code of
+        OptionType:
+          if not ParseDnsTypeName(Value, WantedType) then
+            Fail(2, Format('invalid type: %s', [Value]));
+        OptionVerbose: Verbose := True;
+        OptionTcp: Options.TcpOnly := True;
+        OptionWait:
+          if not ParseThousandths(PChar(Value), Number) or (Number = 0) or (Number > 600000) then
+            Fail(2, Format('invalid wait: %s', [Value]))
+          else
+            Options.TimeoutMilliseconds := LongWord(Number);
+        OptionAttempts:
+          if not ParseUnsignedDecimal(Value, Number) or (Number = 0) or (Number > 10) then
+            Fail(2, Format('invalid number of attempts: %s', [Value]))
+          else
+            Options.Attempts := LongWord(Number);
+      end;
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('missing name operand');
+    if CommandLine.OperandCount > 2 then
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+    NameText := CommandLine.Operands[0];
+    if CommandLine.OperandCount = 2 then
+    begin
+      ServerText := CommandLine.Operands[1];
+      HasServer := True;
     end;
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing name operand', []);
-  if Parser.OperandCount > 2 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-  NameText := Parser.Operands[0];
-  if Parser.OperandCount = 2 then
-    ServerText := Parser.Operands[1];
+  finally
+    CommandLine.Free;
+  end;
 end;
 
 procedure UseServerOperand;
 var
   Address: TInternetAddress;
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
   Error: LongInt;
 begin
-  if ServerText = nil then
+  if not HasServer then
     Exit;
   Error := LookUpAnyHostAddress(ServerText, Address);
   if Error <> ErrorNone then
-    Fail(1, 'couldn''t get address for ''%s'': %s', [ArgumentText(ServerText),
-      ArgumentText(HostLookupErrorMessage(Error))]);
+    Fail(1, Format('couldn''t get address for ''%s'': %s', [ServerText, HostLookupErrorMessage(Error)]));
   UseOnlyDnsServer(Options, MakeSocketAddress(Address, DnsServerPort));
-  FormatInternetAddress(Address, @Text[0], SizeOf(Text));
-  WriteFormatted(StandardOutput, 'Using domain server:'#10'Name: %s'#10'Address: %s#%u'#10'Aliases: '#10#10,
-    [ArgumentText(ServerText), ArgumentText(@Text[0]), ArgumentUnsigned(DnsServerPort)]);
-end;
-
-var
-  TypeTextBuffer: array[0..15] of Char;
-
-{ The type's name; valid until the next call. }
-function TypeText(RecordType: Word): PChar;
-begin
-  Result := DnsTypeName(RecordType, @TypeTextBuffer[0], SizeOf(TypeTextBuffer));
+  PrintString(Format('Using domain server:'#10'Name: %s'#10'Address: %s#%d'#10'Aliases: '#10#10,
+    [ServerText, AddressToText(Address), DnsServerPort]));
 end;
 
 { --- Short output (as host prints records) -------------------------------- }
 
-procedure WriteShortRecord(constref Entry: TDnsRecord);
-var
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
-  Name: PChar;
+function ShortRecordText(constref Entry: TDnsRecord): string;
 begin
-  Name := @Entry.Name[0];
   case Entry.RecordType of
     DnsTypeA:
-      WriteFormatted(StandardOutput, '%s has address %s'#10, [ArgumentText(Name),
-        ArgumentText(FormatInternetAddress(Entry.Address, @Text[0], SizeOf(Text)))]);
+      Result := Format('%s has address %s', [Entry.Name, AddressToText(Entry.Address)]);
     DnsTypeAaaa:
-      WriteFormatted(StandardOutput, '%s has IPv6 address %s'#10, [ArgumentText(Name),
-        ArgumentText(FormatInternetAddress(Entry.Address, @Text[0], SizeOf(Text)))]);
+      Result := Format('%s has IPv6 address %s', [Entry.Name, AddressToText(Entry.Address)]);
     DnsTypeCname:
-      WriteFormatted(StandardOutput, '%s is an alias for %s.'#10, [ArgumentText(Name),
-        ArgumentText(@Entry.Target[0])]);
+      Result := Format('%s is an alias for %s.', [Entry.Name, Entry.Target]);
     DnsTypeMx:
-      WriteFormatted(StandardOutput, '%s mail is handled by %u %s.'#10, [ArgumentText(Name),
-        ArgumentUnsigned(Entry.Preference), ArgumentText(@Entry.Target[0])]);
+      Result := Format('%s mail is handled by %d %s.', [Entry.Name, Entry.Preference, Entry.Target]);
     DnsTypeNs:
-      WriteFormatted(StandardOutput, '%s name server %s.'#10, [ArgumentText(Name), ArgumentText(@Entry.Target[0])]);
+      Result := Format('%s name server %s.', [Entry.Name, Entry.Target]);
     DnsTypePtr:
-      WriteFormatted(StandardOutput, '%s domain name pointer %s.'#10, [ArgumentText(Name),
-        ArgumentText(@Entry.Target[0])]);
+      Result := Format('%s domain name pointer %s.', [Entry.Name, Entry.Target]);
     DnsTypeTxt:
-      WriteFormatted(StandardOutput, '%s descriptive text %s'#10, [ArgumentText(Name), ArgumentText(@Entry.Text[0])]);
+      Result := Format('%s descriptive text %s', [Entry.Name, Entry.Text]);
     DnsTypeSoa:
-      WriteFormatted(StandardOutput, '%s has SOA record %s. %s. %u %u %u %u %u'#10, [ArgumentText(Name),
-        ArgumentText(@Entry.Target[0]), ArgumentText(@Entry.Mailbox[0]), ArgumentUnsigned(Entry.Serial),
-        ArgumentUnsigned(Entry.Refresh), ArgumentUnsigned(Entry.Retry), ArgumentUnsigned(Entry.Expire),
-        ArgumentUnsigned(Entry.Minimum)]);
+      Result := Format('%s has SOA record %s. %s. %u %u %u %u %u', [Entry.Name, Entry.Target, Entry.Mailbox,
+        Entry.Serial, Entry.Refresh, Entry.Retry, Entry.Expire, Entry.Minimum]);
   else
-    WriteFormatted(StandardOutput, '%s has %s record (%u bytes)'#10, [ArgumentText(Name),
-      ArgumentText(TypeText(Entry.RecordType)), ArgumentUnsigned(Entry.DataLength)]);
+    Result := Format('%s has %s record (%d bytes)', [Entry.Name, DnsTypeName(Entry.RecordType),
+      Entry.DataLength]);
   end;
 end;
 
@@ -188,128 +174,116 @@ end;
   the type asked for was among them. }
 function WriteShortAnswer(RecordType: Word): Boolean;
 var
-  Index: Integer;
-  Entry: PDnsRecord;
+  Entry: TDnsRecord;
 begin
   Result := False;
-  for Index := 0 to Message.RecordCount - 1 do
+  for Entry in Message.Records do
   begin
-    Entry := @Message.Records[Index];
-    if Entry^.Section <> DnsSectionAnswer then
+    if Entry.Section <> DnsSectionAnswer then
       Continue;
-    if (Entry^.RecordType = DnsTypeCname) and (RecordType <> DnsTypeCname) and (RecordType <> DnsTypeAny) then
+    if (Entry.RecordType = DnsTypeCname) and (RecordType <> DnsTypeCname) and (RecordType <> DnsTypeAny) then
     begin
       if not ShownAliases then
-        WriteShortRecord(Entry^);
+        PrintStringLine(ShortRecordText(Entry));
       Continue;
     end;
-    if (Entry^.RecordType = RecordType) or (RecordType = DnsTypeAny) then
+    if (Entry.RecordType = RecordType) or (RecordType = DnsTypeAny) then
       Result := True;
-    WriteShortRecord(Entry^);
+    PrintStringLine(ShortRecordText(Entry));
   end;
   ShownAliases := True;
 end;
 
 { --- Verbose output (as dig prints messages) ------------------------------ }
 
-procedure WriteRecordData(constref Entry: TDnsRecord);
-var
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
+function RecordDataText(constref Entry: TDnsRecord): string;
 begin
   case Entry.RecordType of
     DnsTypeA, DnsTypeAaaa:
-      WriteText(StandardOutput, FormatInternetAddress(Entry.Address, @Text[0], SizeOf(Text)));
+      Result := AddressToText(Entry.Address);
     DnsTypeCname, DnsTypeNs, DnsTypePtr:
-      WriteFormatted(StandardOutput, '%s.', [ArgumentText(@Entry.Target[0])]);
+      Result := Entry.Target + '.';
     DnsTypeMx:
-      WriteFormatted(StandardOutput, '%u %s.', [ArgumentUnsigned(Entry.Preference), ArgumentText(@Entry.Target[0])]);
+      Result := Format('%d %s.', [Entry.Preference, Entry.Target]);
     DnsTypeTxt:
-      WriteText(StandardOutput, @Entry.Text[0]);
+      Result := Entry.Text;
     DnsTypeSoa:
-      WriteFormatted(StandardOutput, '%s. %s. %u %u %u %u %u', [ArgumentText(@Entry.Target[0]),
-        ArgumentText(@Entry.Mailbox[0]), ArgumentUnsigned(Entry.Serial), ArgumentUnsigned(Entry.Refresh),
-        ArgumentUnsigned(Entry.Retry), ArgumentUnsigned(Entry.Expire), ArgumentUnsigned(Entry.Minimum)]);
+      Result := Format('%s. %s. %u %u %u %u %u', [Entry.Target, Entry.Mailbox, Entry.Serial, Entry.Refresh,
+        Entry.Retry, Entry.Expire, Entry.Minimum]);
   else
-    WriteFormatted(StandardOutput, '\# %u', [ArgumentUnsigned(Entry.DataLength)]);
+    Result := Format('\# %d', [Entry.DataLength]);
   end;
 end;
 
-procedure WriteSection(Section: TDnsSection; Title: PChar);
+procedure WriteSection(Section: TDnsSection; const Title: string);
 var
   Index: Integer;
-  Entry: PDnsRecord;
   Wrote: Boolean;
 begin
   Wrote := False;
   for Index := 0 to Message.RecordCount - 1 do
   begin
-    Entry := @Message.Records[Index];
-    if Entry^.Section <> Section then
+    if Message.Records[Index].Section <> Section then
       Continue;
     if not Wrote then
-      WriteFormatted(StandardOutput, ';; %s SECTION:'#10, [ArgumentText(Title)]);
+      PrintStringLine(Format(';; %s SECTION:', [Title]));
     Wrote := True;
-    WriteFormatted(StandardOutput, '%s.'#9'%u'#9'IN'#9'%s'#9, [ArgumentText(@Entry^.Name[0]),
-      ArgumentUnsigned(Entry^.TimeToLive), ArgumentText(TypeText(Entry^.RecordType))]);
-    WriteRecordData(Entry^);
-    WriteCharacter(StandardOutput, #10);
+    PrintStringLine(Format('%s.'#9'%u'#9'IN'#9'%s'#9'%s', [Message.Records[Index].Name,
+      Message.Records[Index].TimeToLive, DnsTypeName(Message.Records[Index].RecordType),
+      RecordDataText(Message.Records[Index])]));
   end;
   if Wrote then
-    WriteCharacter(StandardOutput, #10);
+    PrintStringLine('');
 end;
 
-procedure WriteFlag(Flag: Word; Name: PChar);
+procedure WriteFlag(Flag: Word; const Name: string);
 begin
   if (Message.Flags and Flag) <> 0 then
-    WriteFormatted(StandardOutput, ' %s', [ArgumentText(Name)]);
+    PrintString(' ' + Name);
 end;
 
 procedure WriteVerboseAnswer(constref Details: TDnsQueryDetails);
-var
-  Server: array[0..SocketAddressTextCapacity - 1] of Char;
 begin
-  WriteFormatted(StandardOutput, ';; ->>HEADER<<- opcode: QUERY, status: %s, id: %u'#10,
-    [ArgumentText(DnsResponseCodeName(Message.ResponseCode)), ArgumentUnsigned(Message.Id)]);
-  WriteText(StandardOutput, ';; flags:');
+  PrintStringLine(Format(';; ->>HEADER<<- opcode: QUERY, status: %s, id: %d',
+    [DnsResponseCodeName(Message.ResponseCode), Message.Id]));
+  PrintString(';; flags:');
   WriteFlag(DnsFlagResponse, 'qr');
   WriteFlag(DnsFlagAuthoritative, 'aa');
   WriteFlag(DnsFlagTruncated, 'tc');
   WriteFlag(DnsFlagRecursionDesired, 'rd');
   WriteFlag(DnsFlagRecursionAvailable, 'ra');
-  WriteFormatted(StandardOutput, '; QUERY: %u, ANSWER: %u, AUTHORITY: %u, ADDITIONAL: %u'#10#10,
-    [ArgumentUnsigned(Message.QuestionCount), ArgumentUnsigned(Message.AnswerCount),
-    ArgumentUnsigned(Message.AuthorityCount), ArgumentUnsigned(Message.AdditionalCount)]);
-  WriteFormatted(StandardOutput, ';; QUESTION SECTION:'#10';%s.'#9#9#9'IN'#9'%s'#10#10,
-    [ArgumentText(@Message.QuestionName[0]), ArgumentText(TypeText(Message.QuestionType))]);
+  PrintString(Format('; QUERY: %d, ANSWER: %d, AUTHORITY: %d, ADDITIONAL: %d'#10#10,
+    [Message.QuestionCount, Message.AnswerCount, Message.AuthorityCount, Message.AdditionalCount]));
+  PrintString(Format(';; QUESTION SECTION:'#10';%s.'#9#9#9'IN'#9'%s'#10#10,
+    [Message.QuestionName, DnsTypeName(Message.QuestionType)]));
   WriteSection(DnsSectionAnswer, 'ANSWER');
   WriteSection(DnsSectionAuthority, 'AUTHORITY');
   WriteSection(DnsSectionAdditional, 'ADDITIONAL');
-  FormatInternetAddress(SocketAddressHost(Details.Server), @Server[0], SizeOf(Server));
-  WriteFormatted(StandardOutput, 'Received %u bytes from %s#%u in %u ms'#10, [ArgumentUnsigned(Message.Length),
-    ArgumentText(@Server[0]), ArgumentUnsigned(Details.Server.Port), ArgumentUnsigned(Details.ElapsedMilliseconds)]);
+  PrintStringLine(Format('Received %u bytes from %s#%d in %d ms', [Message.Length,
+    AddressToText(SocketAddressHost(Details.Server)), Details.Server.Port, Details.ElapsedMilliseconds]));
   if Details.UsedTcp then
-    WriteLine(StandardOutput, ';; (over TCP)');
-  WriteCharacter(StandardOutput, #10);
+    PrintStringLine(';; (over TCP)');
+  PrintStringLine('');
 end;
 
 { --- Lookups ----------------------------------------------------------------- }
 
 procedure FailToReach;
 begin
-  WriteLine(StandardOutput, ';; connection timed out; no servers could be reached');
+  PrintStringLine(';; connection timed out; no servers could be reached');
   FlushStream(StandardOutput);
   Halt(1);
 end;
 
 { Asks for one type; True if records of it came. A name that does not
   exist ends the program. }
-function LookUp(Name: PChar; RecordType: Word; Searching, ShowMissing: Boolean): Boolean;
+function LookUp(const Name: string; RecordType: Word; Searching, ShowMissing: Boolean): Boolean;
 var
   Details: TDnsQueryDetails;
   Error: LongInt;
 begin
   if Verbose then
-    WriteFormatted(StandardOutput, 'Trying "%s"'#10, [ArgumentText(Name)]);
+    PrintStringLine(Format('Trying "%s"', [Name]));
   if Searching then
     Error := QueryDnsSearching(Name, RecordType, Options, Message, Details)
   else
@@ -317,15 +291,15 @@ begin
   if (Error = ErrorTimedOut) or (Error = ErrorConnectionRefused) or (Error = ErrorNetworkUnreachable) then
     FailToReach;
   if Error = ErrorNotFound then
-    Fail(1, 'no DNS server is configured', []);
+    Fail(1, 'no DNS server is configured');
   if Error <> ErrorNone then
-    Fail(1, '%s: %s', [ArgumentText(Name), ArgumentText(ErrorMessage(Error))]);
+    Fail(1, Format('%s: %s', [Name, ErrorText(Error)]));
   if Verbose then
     WriteVerboseAnswer(Details);
   if Message.ResponseCode <> DnsResponseNoError then
   begin
-    WriteFormatted(StandardOutput, 'Host %s not found: %u(%s)'#10, [ArgumentText(Name),
-      ArgumentUnsigned(Message.ResponseCode), ArgumentText(DnsResponseCodeName(Message.ResponseCode))]);
+    PrintStringLine(Format('Host %s not found: %d(%s)', [Name, Message.ResponseCode,
+      DnsResponseCodeName(Message.ResponseCode)]));
     FlushStream(StandardOutput);
     Halt(1);
   end;
@@ -334,17 +308,16 @@ begin
   else
     Result := WriteShortAnswer(RecordType);
   if not Result and ShowMissing then
-    WriteFormatted(StandardOutput, '%s has no %s record'#10, [ArgumentText(@Details.QueriedName[0]),
-      ArgumentText(TypeText(RecordType))]);
+    PrintStringLine(Format('%s has no %s record', [Details.QueriedName, DnsTypeName(RecordType)]));
 end;
 
 procedure LookUpAddress(constref Address: TInternetAddress);
 var
-  Question: TDnsName;
+  Question: string;
 begin
   if not ReverseLookupName(Address, Question) then
-    Fail(1, '%s: address family not supported', [ArgumentText(NameText)]);
-  if not LookUp(@Question[0], DnsTypePtr, False, True) then
+    Fail(1, Format('%s: address family not supported', [NameText]));
+  if not LookUp(Question, DnsTypePtr, False, True) then
     Halt(1);
 end;
 
@@ -372,7 +345,7 @@ var
 begin
   ParseArguments;
   UseServerOperand;
-  if ParseInternetAddress(NameText, Address) and ((WantedType = 0) or (WantedType = DnsTypePtr)) then
+  if TextToAddress(NameText, Address) and ((WantedType = 0) or (WantedType = DnsTypePtr)) then
     LookUpAddress(Address)
   else
     LookUpName;

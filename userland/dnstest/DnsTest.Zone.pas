@@ -40,12 +40,13 @@
 unit DnsTest.Zone;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
 
 const
-  ZoneName: PChar = 'test.example';
+  ZoneName = 'test.example';
   WwwAddress: array[0..3] of Byte = (192, 0, 2, 10);
   SpoofedAddress: array[0..3] of Byte = (6, 6, 6, 6);
   BigTextStrings = 10;
@@ -69,8 +70,7 @@ function BuildAnswer(Query: PByte; Length: LongWord; Truncate: Boolean; out Answ
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  StrUtils,
   Sys.DnsNames,
   Sys.DnsMessages;
 
@@ -85,7 +85,7 @@ type
     Length: LongWord;
     AnswerCount: Word;
     AuthorityCount: Word;
-    QuestionName: TDnsName;
+    QuestionName: string;
   end;
 
 procedure PutByte(var Builder: TBuilder; Value: Byte);
@@ -108,11 +108,11 @@ begin
 end;
 
 { A name: a pointer to the question's if it is that one. }
-procedure PutName(var Builder: TBuilder; Name: PChar);
+procedure PutName(var Builder: TBuilder; const Name: string);
 var
   Position: LongWord;
 begin
-  if DnsNamesAreEqual(Name, @Builder.QuestionName[0]) then
+  if DnsNamesAreEqual(Name, Builder.QuestionName) then
   begin
     PutWord(Builder, QuestionNamePointer);
     Exit;
@@ -124,7 +124,7 @@ end;
 
 { The owner, type, class and time to live; returns where the data's
   length goes. }
-function BeginRecord(var Builder: TBuilder; Owner: PChar; RecordType: Word): LongWord;
+function BeginRecord(var Builder: TBuilder; const Owner: string; RecordType: Word): LongWord;
 begin
   PutName(Builder, Owner);
   PutWord(Builder, RecordType);
@@ -143,7 +143,7 @@ begin
   Builder.Data[LengthPosition + 1] := Byte(DataLength);
 end;
 
-procedure PutAddressRecord(var Builder: TBuilder; Owner: PChar; A, B, C, D: Byte);
+procedure PutAddressRecord(var Builder: TBuilder; const Owner: string; A, B, C, D: Byte);
 var
   Mark: LongWord;
 begin
@@ -156,7 +156,7 @@ begin
   Inc(Builder.AnswerCount);
 end;
 
-procedure PutNameRecord(var Builder: TBuilder; Owner: PChar; RecordType: Word; Target: PChar);
+procedure PutNameRecord(var Builder: TBuilder; const Owner: string; RecordType: Word; const Target: string);
 var
   Mark: LongWord;
 begin
@@ -166,13 +166,13 @@ begin
   Inc(Builder.AnswerCount);
 end;
 
-procedure PutWwwRecords(var Builder: TBuilder; Owner: PChar; RecordType: Word);
+procedure PutWwwRecords(var Builder: TBuilder; const Owner: string; RecordType: Word);
 const
   Ipv6: array[0..15] of Byte = ($20, $01, $0D, $B8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, $10);
+  Text = 'hello world';
 var
   Mark: LongWord;
   Index: Integer;
-  Text: PChar;
 begin
   case RecordType of
     DnsTypeA: PutAddressRecord(Builder, Owner, WwwAddress[0], WwwAddress[1], WwwAddress[2], WwwAddress[3]);
@@ -194,10 +194,9 @@ begin
       end;
     DnsTypeTxt:
       begin
-        Text := 'hello world';
         Mark := BeginRecord(Builder, Owner, DnsTypeTxt);
-        PutByte(Builder, Byte(TextLength(Text)));
-        for Index := 0 to Integer(TextLength(Text)) - 1 do
+        PutByte(Builder, Byte(Length(Text)));
+        for Index := 1 to Length(Text) do
           PutByte(Builder, Byte(Text[Index]));
         EndRecord(Builder, Mark);
         Inc(Builder.AnswerCount);
@@ -224,7 +223,7 @@ begin
     Inc(Builder.AnswerCount);
 end;
 
-procedure PutBigText(var Builder: TBuilder; Owner: PChar);
+procedure PutBigText(var Builder: TBuilder; const Owner: string);
 var
   Mark: LongWord;
   StringIndex: Integer;
@@ -256,24 +255,20 @@ begin
   Inc(Builder.AnswerCount);
 end;
 
-function IsName(Name, Wanted: PChar): Boolean;
+function IsName(const Name, Wanted: string): Boolean;
 begin
   Result := DnsNamesAreEqual(Name, Wanted);
 end;
 
-function IsInZone(Name: PChar): Boolean;
-var
-  NameLength: PtrUInt;
-  ZoneLength: PtrUInt;
+{ The zone itself, or a name ending in ".test.example". }
+function IsInZone(const Name: string): Boolean;
 begin
-  NameLength := TextLength(Name);
-  ZoneLength := TextLength(ZoneName);
-  Result := IsName(Name, ZoneName) or ((NameLength > ZoneLength + 1) and
-    DnsNamesAreEqual(Name + NameLength - ZoneLength, ZoneName) and (Name[NameLength - ZoneLength - 1] = '.'));
+  Result := IsName(Name, ZoneName) or ((Length(Name) > Length(ZoneName) + 1) and
+    EndsText('.' + ZoneName, Name));
 end;
 
 { The records; the response code. }
-function AddRecords(var Builder: TBuilder; Name: PChar; RecordType: Word): Byte;
+function AddRecords(var Builder: TBuilder; const Name: string; RecordType: Word): Byte;
 begin
   Result := 0;
   if IsName(Name, 'www.test.example') then
@@ -338,7 +333,7 @@ begin
   PutWord(Builder, 0);
   PutWord(Builder, 0);
   PutWord(Builder, 0);
-  CopyMemory(Builder.Data + DnsHeaderBytes, Query + DnsHeaderBytes, QuestionLength);
+  Move(Query[DnsHeaderBytes], Builder.Data[DnsHeaderBytes], QuestionLength);
   Builder.Length := DnsHeaderBytes + QuestionLength;
 end;
 
@@ -369,7 +364,7 @@ begin
   Builder.AnswerCount := 0;
   Builder.AuthorityCount := 0;
   if not ParseDnsHeader(Query, Length, Id, QueryFlags, Builder.QuestionName, QuestionType, QuestionClass) or
-     ((QueryFlags and DnsFlagResponse) <> 0) or (Builder.QuestionName[0] = #0) then
+     ((QueryFlags and DnsFlagResponse) <> 0) or (Builder.QuestionName = '') then
     Exit(False);
   QuestionEnd := DnsHeaderBytes;
   if not SkipDnsName(Query, Length, QuestionEnd) then
@@ -378,7 +373,7 @@ begin
   Flags := DnsFlagResponse or DnsFlagAuthoritative or DnsFlagRecursionAvailable or
     (QueryFlags and DnsFlagRecursionDesired);
   WriteHeader(Builder, Id, Flags, QuestionEnd - DnsHeaderBytes, Query);
-  Code := AddRecords(Builder, @Builder.QuestionName[0], QuestionType);
+  Code := AddRecords(Builder, Builder.QuestionName, QuestionType);
   if Truncate and (Builder.Length > MaximumUdpDnsMessage) then
   begin
     Builder.AnswerCount := 0;
@@ -388,13 +383,13 @@ begin
   Builder.Data[3] := Builder.Data[3] or Code;
   SetCounts(Builder);
   Answer.Length := Builder.Length;
-  if IsName(@Builder.QuestionName[0], 'spoof.test.example') and (QuestionType = DnsTypeA) and
+  if IsName(Builder.QuestionName, 'spoof.test.example') and (QuestionType = DnsTypeA) and
      (Builder.Length <= SizeOf(Answer.Decoy)) then
   begin
     { The same reply with another id and another address. }
-    CopyMemory(@Answer.Decoy[0], @Answer.Data[0], Builder.Length);
+    Move(Answer.Data[0], Answer.Decoy[0], Builder.Length);
     Answer.Decoy[0] := Answer.Decoy[0] xor $5A;
-    CopyMemory(@Answer.Decoy[Builder.Length - 4], @SpoofedAddress[0], 4);
+    Move(SpoofedAddress[0], Answer.Decoy[Builder.Length - 4], 4);
     Answer.DecoyLength := Builder.Length;
     Answer.HasDecoy := True;
   end;
