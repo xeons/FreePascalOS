@@ -20,7 +20,7 @@
   What goes wrong reading or writing an image: EImageError with a
   reason a program can act on (a format it does not know, a file cut
   short, one that breaks its format's rules, a feature not supported,
-  an embedded PNG with no PNG decoder yet) and a message for people.
+  an embedded PNG with no PNG decoder registered) and a message for people.
 
   Decoders raise it; the convenience layer (Image.Files) passes it on,
   and its Try routines turn it into a result.

@@ -31,7 +31,9 @@
   The colour space: one component is grey; three are YCbCr unless an
   Adobe segment says there is no transform, or there is neither a JFIF
   nor an Adobe segment and the components are called R, G and B; four
-  are CMYK, or YCCK when the Adobe segment says so.
+  are CMYK, or YCCK when the Adobe segment says so. A container that
+  knows better (TIFF's photometric interpretation) can force three
+  components to be YCbCr or RGB (DecodeJpegImageWithTransform).
 
   A file that ends early, or whose data breaks off, keeps what was
   decoded (blocks not reached are mid grey) as long as the frame header
@@ -57,8 +59,16 @@ uses
   Image.Errors,
   Image.Model;
 
+type
+  { How three-component data is turned into colours: as the file says
+    (JFIF, Adobe segment, component names), or as a container that
+    knows better says (TIFF's photometric interpretation). }
+  TJpegColorTransform = (JpegTransformAutomatic, JpegTransformYCbCr, JpegTransformNone);
+
 { Data's JPEG file as an image. }
 function DecodeJpegImage(const Data: TBytes): TImage;
+{ The same, with the colour transform of three components forced. }
+function DecodeJpegImageWithTransform(const Data: TBytes; Transform: TJpegColorTransform): TImage;
 
 implementation
 
@@ -120,13 +130,17 @@ begin
     end;
 end;
 
-function ChooseColorSpace(State: TJpegState): TJpegColorSpace;
+function ChooseColorSpace(State: TJpegState; Transform: TJpegColorTransform): TJpegColorSpace;
 begin
   case State.Frame.ComponentCount of
     1:
       Result := JpegGrey;
     3:
-      if State.HasAdobe then
+      if Transform = JpegTransformYCbCr then
+        Result := JpegYCbCr
+      else if Transform = JpegTransformNone then
+        Result := JpegRgb
+      else if State.HasAdobe then
       begin
         if State.AdobeTransform = 0 then
           Result := JpegRgb
@@ -146,7 +160,7 @@ begin
   end;
 end;
 
-procedure ProduceColors(State: TJpegState; Image: TImage);
+procedure ProduceColors(State: TJpegState; Image: TImage; Transform: TJpegColorTransform);
 var
   ColorSpace: TJpegColorSpace;
   Buffers: array[0..JpegMaximumComponents - 1] of TBytes;
@@ -155,7 +169,7 @@ var
   Y: LongInt;
   Width: LongInt;
 begin
-  ColorSpace := ChooseColorSpace(State);
+  ColorSpace := ChooseColorSpace(State, Transform);
   Image.Metadata.SetValue(MetadataKeyColorSpace, ColorSpaceNames[ColorSpace]);
   for Index := 0 to State.Frame.ComponentCount - 1 do
     SetLength(Buffers[Index], UpsampleBufferSize(State.Frame));
@@ -328,6 +342,11 @@ begin
 end;
 
 function DecodeJpegImage(const Data: TBytes): TImage;
+begin
+  Result := DecodeJpegImageWithTransform(Data, JpegTransformAutomatic);
+end;
+
+function DecodeJpegImageWithTransform(const Data: TBytes; Transform: TJpegColorTransform): TImage;
 var
   State: TJpegState;
   Comment: string;
@@ -348,7 +367,7 @@ begin
       FinishProgressiveFrame(State);
     Image := TImage.Create(State.Frame.Width, State.Frame.Height);
     try
-      ProduceColors(State, Image);
+      ProduceColors(State, Image, Transform);
       SetProperties(State, Image, Comment);
     except
       Image.Free;

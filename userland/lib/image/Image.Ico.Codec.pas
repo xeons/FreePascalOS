@@ -20,8 +20,7 @@
   ICO and CUR as decoders and encoders for the registry.
 
   Decoding a whole file gives its largest entry (the deepest of equal
-  sizes); if that is a PNG and there is no PNG decoder yet, the largest
-  DIB entry instead, and ImageErrorNeedsPng only when there is none.
+  sizes), PNG entries through the PNG decoder like the rest.
   To pick an entry by size use Image.Ico.Directory and
   Image.Ico.Reading directly. Encoding writes the image as an icon of
   one entry (Image.Ico.Writing writes several).
@@ -35,7 +34,6 @@ interface
 
 uses
   SysUtils,
-  Image.Errors,
   Image.Model,
   Image.Codecs,
   Image.Ico.Directory,
@@ -76,23 +74,10 @@ implementation
 function DecodeIconFile(const Data: TBytes): TImage;
 var
   Directory: TIconDirectory;
-  Best: LongInt;
-  BestDib: LongInt;
 begin
   Directory := TIconDirectory.Create(Data);
   try
-    Best := Directory.LargestEntry(False);
-    try
-      Result := DecodeIconEntry(Directory, Best);
-    except
-      on Error: EImageError do
-      begin
-        BestDib := Directory.LargestEntry(True);
-        if (Error.Reason <> ImageErrorNeedsPng) or (BestDib < 0) then
-          raise;
-        Result := DecodeIconEntry(Directory, BestDib);
-      end;
-    end;
+    Result := DecodeIconEntry(Directory, Directory.LargestEntry(False));
   finally
     Directory.Free;
   end;

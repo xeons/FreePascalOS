@@ -19,8 +19,9 @@
 {
   ICO and CUR (make-fixtures.py): a directory of four sizes and depths
   with masks and alpha, every entry decoded; picking the entry nearest
-  a size and scale; PNG entries reported as needing PNG, and a file
-  with a DIB beside them still loading; Pillow's BMP icons; a cursor's
+  a size and scale; PNG entries decoded through the PNG decoder,
+  beside a DIB entry and alone (as Pillow writes icons); Pillow's BMP
+  icons; a cursor's
   hotspots; writing several sizes and reading them back; malformed
   directories refused.
 }
@@ -125,34 +126,42 @@ procedure TestPngEntries;
 var
   Directory: TIconDirectory;
   Image: TImage;
-  Reason: TImageErrorReason;
   PngIndex: LongInt;
 begin
   Directory := TIconDirectory.Create(FixtureBytes('icon-png-mixed.ico'));
   try
     PngIndex := EntryWithSide(Directory, 64);
     Check((PngIndex >= 0) and Directory.Entries[PngIndex].IsPng, 'a PNG entry is recognised, with its size');
-    Reason := ImageErrorNone;
-    try
-      DecodeIconEntry(Directory, PngIndex).Free;
-    except
-      on Error: EImageError do
-        Reason := Error.Reason;
-    end;
-    Check(Reason = ImageErrorNeedsPng, 'a PNG entry needs PNG');
+    if PngIndex >= 0 then
+      CheckEntry(Directory, 64, 'icon-png-mixed-64.rgba');
   finally
     Directory.Free;
   end;
-  Image := LoadImage(FixtureBytes('icon-png-mixed.ico'));
+  Image := nil;
   try
-    Check((Image.Width = 16) and (Image.Height = 16), 'beside a PNG entry the DIB entry is loaded');
+    try
+      Image := LoadImage(FixtureBytes('icon-png-mixed.ico'));
+      Check(Image.SourceFormatName = 'ICO', 'an icon with a PNG entry is still an icon');
+    except
+      on Error: Exception do
+        Note('icon-png-mixed.ico: ' + Error.Message);
+    end;
+    CheckImageMatchesReference('an icon loads its largest entry, a PNG', Image, 'icon-png-mixed-64.rgba', 0);
   finally
     Image.Free;
   end;
   Image := nil;
-  Check(not TryLoadImage(FixtureBytes('icon-png-only.ico'), Image, Reason) and (Reason = ImageErrorNeedsPng),
-    'an icon of PNG entries only needs PNG');
-  Image.Free;
+  try
+    try
+      Image := LoadImage(FixtureBytes('icon-png-only.ico'));
+    except
+      on Error: Exception do
+        Note('icon-png-only.ico: ' + Error.Message);
+    end;
+    CheckImageMatchesReference('Pillow''s icon of PNG entries', Image, 'icon-png-only.rgba', 0);
+  finally
+    Image.Free;
+  end;
 end;
 
 procedure TestCursor;

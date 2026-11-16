@@ -5319,7 +5319,8 @@ the convenience layer: `LoadImage` from a file name, a stream or
 `TBytes` (`ImageLoadApplyOrientation` turns photographs upright),
 `TryLoadImage`, `SaveImage` and `EncodeImage` in a format, errors as
 `EImageError` with a reason (unknown format, cut short, malformed,
-unsupported, needs PNG, too large, no encoder, the file). Decoders read
+unsupported, needs PNG (only without the PNG decoder registered), too
+large, no encoder, the file). Decoders read
 through `TImageByteReader`, whose every read is checked against the
 data, so headers that lie raise "cut short" instead of reading past the
 end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
@@ -5343,10 +5344,9 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   else the smallest larger, else the largest; the deepest of equal
   sizes). DIB entries have their 1-bit mask applied unless they carry
   alpha. PNG entries are recognised (size from their header) and decoded
-  through the registry (`DecodeEmbeddedImage`), so the PNG decoder,
-  when it comes with libcompression, is used without the icon code
-  changing; until then they give "needs PNG", and loading a whole file
-  falls back to its largest DIB entry. Cursors' hotspots go into the
+  through the registry (`DecodeEmbeddedImage`) by the PNG decoder, the
+  icon code knowing nothing of PNG (a program that registers codecs of
+  its own without PNG gets "needs PNG"). Cursors' hotspots go into the
   entries and the metadata. Writing: several sizes in one file, 32-bit
   entries with alpha and a mask.
 - *GIF* (`Image.Gif.*`): 87a and 89a, LZW (codes growing to 12 bits, the
@@ -5369,13 +5369,85 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   Arithmetic coding, 12-bit samples and lossless JPEG are refused as
   unsupported. Writing: baseline 4:2:0 with the standard tables scaled
   by quality, with the density, orientation and profile.
+- *PNG and APNG* (`Image.Png.*`, with libcompression): every colour
+  type at every depth (grey 1 to 16 bits, RGB, palette, grey and
+  alpha, RGBA), Adam7 interlacing, the five filters, tRNS (palette
+  alphas, or a grey or RGB colour compared at the file's own depth).
+  Every chunk's CRC is checked (`Image.Png.Chunks` lists the chunks
+  without copying them); an unknown critical chunk is unsupported.
+  The image data is decompressed as it is read: the IDAT (or fdAT)
+  chunks go into a `TInflater` one after another
+  (`Image.Png.DataStream`), each line comes out into one of two line
+  buffers, is unfiltered in place against the other and turned into
+  colours straight into the picture (`Image.Png.Pixels`; an
+  interlaced pass writes every n-th pixel where it belongs), with
+  nothing allocated per line. Samples under 8 bits are multiplied out,
+  16-bit ones rounded to the nearest 8-bit value ((V x 255 + 32767)
+  div 65535, where Pillow takes the high byte). Ancillary chunks
+  (`Image.Png.Ancillary`): tEXt, zTXt and iTXt into the metadata (as
+  UTF-8, the keyword the key), pHYs as the resolution, iCCP as the
+  profile (decompressed), gAMA, cHRM, sRGB and tIME as metadata, eXIf
+  as the orientation; an ancillary chunk that makes no sense is passed
+  over. An APNG (`Image.Png.Animation`) is a `TAnimatedImage` whose own
+  pixels are the default image (what a viewer that does not animate
+  shows): its frames carry offsets, delays (the fraction in
+  milliseconds; a denominator of 0 is hundredths), dispose ops (a first
+  frame's "previous" clears) and blend ops, the loop count is acTL's;
+  the default image is the first frame when an fcTL comes before IDAT,
+  otherwise the frames follow it. Sequence numbers are checked; a frame
+  that is broken or cut short ends the animation there, keeping the
+  frames before it. Writing (`Image.Png.Writing`): the smallest colour
+  type that keeps every pixel (`Image.Png.ColorTable` counts them in a
+  small hash table): 8-bit grey when grey and opaque, a palette of 1,
+  2, 4 or 8 bits (translucent entries first, so tRNS is short) up to
+  256 colours, grey and alpha, RGB or RGBA (or RGB or RGBA when asked
+  for with 24 or 32 bits per pixel); each line of a true colour or
+  grey picture filtered the five ways and the cheapest kept (the sum
+  of the bytes as signed numbers, libpng's heuristic), palette lines
+  unfiltered; compressed as the lines are made, at the zlib level asked
+  for (`TPngEncoder.CompressionLevel`, 6 by default), into IDAT chunks
+  of up to 256 KiB (`Image.Png.DataWriter`); the profile, sRGB, the
+  resolution, the orientation (eXIf) and the metadata as tEXt (iTXt
+  when not ASCII). A `TAnimatedImage` is written as an APNG, its first
+  frame the default image when it covers the canvas with the image's
+  own pixels.
+- *TIFF* (`Image.Tiff.*`, with libcompression): little and big endian,
+  classic TIFF and BigTIFF, strips and tiles, planar configuration 1
+  and 2; compression none, PackBits, LZW (TIFF's, and the old style
+  with its reversed bit order, told apart as libtiff does), deflate (8
+  and Adobe's 32946, through `TInflater`) and new-style JPEG (7): each
+  strip or tile is JPEGTables without its EOI followed by the chunk
+  without its SOI, decoded by the JPEG decoder with the colour
+  transform the photometric interpretation says
+  (`DecodeJpegImageWithTransform`); the horizontal predictor on 8- and
+  16-bit samples; fill order 2. Samples of 1, 2, 4, 8 and 16 bits
+  (16-bit ones rounded as PNG's are) as white- or black-is-zero grey,
+  RGB, a palette (its 16-bit colour map's high bytes), CMYK (inks not
+  inverted, as JPEG's), and YCbCr with 1, 2 or 4 times subsampling
+  (libtiff's fixed-point conversion); extra samples as unassociated
+  alpha, or associated alpha divided out. Orientation, resolution
+  (centimetres turned into inches), the ICC profile (tag 34675) and
+  ImageDescription, Software and DateTime (`Description`, `Software`,
+  `DateTime`) go into the image. Pages are not frames, having no
+  delays and sizes of their own: a file decodes as its first page with
+  `PageCount` in the metadata when it has more, and `TiffPageCount` and
+  `DecodeTiffPage` (`Image.Tiff.Codec`) pick any page; a directory chain
+  that loops is one page. Old-style JPEG (6), CCITT, the floating point
+  predictor, float and signed samples, CIELab and JPEG or subsampled
+  YCbCr in separate planes are refused as unsupported. Writing
+  (`Image.Tiff.Writing`): 8-bit RGB, or RGBA (unassociated alpha) when
+  a pixel is not opaque, uncompressed, LZW or deflate with or without
+  the predictor, in strips of about 64 KiB, with the resolution,
+  orientation, profile and the three texts; `EncodeTiffPages` writes
+  several pages, the registered encoder one, deflate with the
+  predictor.
 
 `imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
-orientation, resolution and profile.
+orientation, resolution, profile and a TIFF's pages.
 
-**Tests.** libimage builds on the host with libdrawing, and `make
-image-test` (part of `make test`) runs `tools/ImageTest` with range
-checks on. Its fixtures are made at build time with Python's Pillow
+**Tests.** libimage builds on the host with libdrawing and
+libcompression, and `make image-test` (part of `make test`) runs
+`tools/ImageTest` with range checks on. Its fixtures are made at build time with Python's Pillow
 (`tools/ImageTest/make-fixtures.py`, `make-jpeg-fixtures.py`): BMPs of
 every depth, header and compression, ICOs and a CUR, and GIFs with every
 disposal are put together byte by byte, their references the pixels
@@ -5383,10 +5455,27 @@ they were made from (checked against Pillow's decoding where Pillow
 reads them the same way); files Pillow writes and every kind of JPEG
 (each subsampling, odd sizes, progressive, greyscale, restart markers,
 CMYK, an orientation, an ICC profile, a 12 megapixel photograph) have
-Pillow's decoding as their reference. Lossless formats must match
-exactly, JPEG within 2 per channel. Writing is checked by reading back;
-the model, surfaces, orientations, scaling, compositing and the
-registry on their own; and malformed, truncated and randomly damaged
+Pillow's decoding as their reference. PNGs (`make-png-fixtures.py`)
+are put together chunk by chunk as PngSuite's are: every colour type
+and depth, plain and interlaced, every filter, tRNS of each kind, tiny
+interlaced pictures with empty passes, image data in one-byte and empty
+chunks, every ancillary chunk, APNGs with every dispose and blend op
+and a default image in and out of the animation, and broken files of
+every kind; their references are worked out from the samples (16-bit
+ones rounded) and must equal Pillow's decoding wherever Pillow reads
+them the same way (frames as seen by a compositor in the script).
+Lossless formats must match exactly, JPEG within 2 per channel. Writing
+is checked by reading back, and every PNG and TIFF the test writes is
+then decoded by Pillow (`check-with-pillow.py`) and must give the pixels it
+was written from. TIFFs (`make-tiff-fixtures.py`) come from Pillow for
+each compression, page and metadata, and are put together byte by byte
+for big endian, BigTIFF, tiles, the predictor, old-style LZW, every
+depth, planar RGBA, associated alpha, CMYK, subsampled YCbCr and JPEG
+with JPEGTables, their references worked out from the samples (or
+Pillow's decoding of each JPEG chunk). PNG image data is also damaged
+behind correct CRCs, so the damage reaches the decompressor and the
+filters. The model, surfaces, orientations, scaling, compositing and
+the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
 
 ## Heap checking

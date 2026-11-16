@@ -21,8 +21,8 @@
 
   Compiling this unit compiles every unit of the library; programs use
   the individual units (usually Image.Model, Image.Files and
-  Image.Surfaces). libimage needs libdrawing and the runtime library,
-  so it builds and is tested on the host as well (tools/ImageTest).
+  Image.Surfaces). libimage needs libdrawing, libcompression (PNG and
+  TIFF) and the runtime library, so it builds and is tested on the host as well (tools/ImageTest).
 }
 unit Image.Contents;
 
@@ -73,6 +73,39 @@ uses
   Image.Jpeg.ForwardDct,
   Image.Jpeg.Encoding,
   Image.Jpeg.Codec,
+  { PNG and APNG }
+  Image.Png.Chunks,
+  Image.Png.Header,
+  Image.Png.Filters,
+  Image.Png.Interlace,
+  Image.Png.Pixels,
+  Image.Png.DataStream,
+  Image.Png.Reading,
+  Image.Png.Ancillary,
+  Image.Png.Animation,
+  Image.Png.Decoder,
+  Image.Png.ColorTable,
+  Image.Png.DataWriter,
+  Image.Png.MetadataWriting,
+  Image.Png.Writing,
+  Image.Png.Codec,
+  { TIFF }
+  Image.Tiff.Tags,
+  Image.Tiff.Directory,
+  Image.Tiff.Pages,
+  Image.Tiff.PackBits,
+  Image.Tiff.Lzw,
+  Image.Tiff.LzwEncoding,
+  Image.Tiff.Predictor,
+  Image.Tiff.Decompression,
+  Image.Tiff.Strips,
+  Image.Tiff.Samples,
+  Image.Tiff.Color,
+  Image.Tiff.Photometric,
+  Image.Tiff.Jpeg,
+  Image.Tiff.Reading,
+  Image.Tiff.Writing,
+  Image.Tiff.Codec,
   Image.StandardCodecs,
   Image.Files;
 

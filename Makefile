@@ -431,30 +431,39 @@ wget-test: $(WGET_TEST)
 # libimage builds for the host too (with libdrawing), with range checks,
 # and is checked there against fixtures made at build time with Pillow:
 # files put together byte by byte for every BMP, ICO and GIF variant,
-# and JPEGs of every kind, with Pillow's decoding as the reference.
+# JPEGs, PNGs and TIFFs of every kind, with Pillow's decoding as the
+# reference. What the test writes (PNG, TIFF) is then read by Pillow
+# (check-with-pillow.py) and must give the pixels it was written from.
 IMAGE_TEST := build/tools/ImageTest
 IMAGE_FIXTURES := build/tools/image-fixtures
 IMAGE_FIXTURES_STAMP := $(IMAGE_FIXTURES)/.made
+IMAGE_WRITTEN := build/tools/image-written
 IMAGE_FIXTURE_SCRIPTS := tools/ImageTest/make-fixtures.py tools/ImageTest/make-jpeg-fixtures.py \
-	tools/ImageTest/fixturecommon.py
+	tools/ImageTest/make-png-fixtures.py tools/ImageTest/make-tiff-fixtures.py tools/ImageTest/fixturecommon.py
 IMAGE_TEST_SOURCES := $(wildcard tools/ImageTest/*.pas) $(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas)) \
-	$(wildcard userland/lib/drawing/*.pas)
+	$(wildcard userland/lib/drawing/*.pas) $(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
 
 $(IMAGE_TEST): $(IMAGE_TEST_SOURCES)
 	@mkdir -p build/tools/image-test-units
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/ImageTest -Fuuserland/lib/image -Fuuserland/lib/drawing \
-		-FUbuild/tools/image-test-units -o$@ tools/ImageTest/ImageTest.pas
+		-Fuuserland/lib/compression -FUbuild/tools/image-test-units -o$@ tools/ImageTest/ImageTest.pas
 
 $(IMAGE_FIXTURES_STAMP): $(IMAGE_FIXTURE_SCRIPTS)
 	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the image test's fixtures (python-pillow)"; exit 1; }
 	@rm -rf $(IMAGE_FIXTURES)
 	python3 -B tools/ImageTest/make-fixtures.py $(IMAGE_FIXTURES)
 	python3 -B tools/ImageTest/make-jpeg-fixtures.py $(IMAGE_FIXTURES)
+	python3 -B tools/ImageTest/make-png-fixtures.py $(IMAGE_FIXTURES)
+	python3 -B tools/ImageTest/make-tiff-fixtures.py $(IMAGE_FIXTURES)
 	@touch $@
 
 image-test: $(IMAGE_TEST) $(IMAGE_FIXTURES_STAMP)
-	@$(IMAGE_TEST) $(IMAGE_FIXTURES) > build/tools/image-test.out || \
+	@rm -rf $(IMAGE_WRITTEN)
+	@mkdir -p $(IMAGE_WRITTEN)
+	@$(IMAGE_TEST) $(IMAGE_FIXTURES) $(IMAGE_WRITTEN) > build/tools/image-test.out || \
 		{ grep -A2 FAIL build/tools/image-test.out; echo "IMAGE TEST FAILED (build/tools/image-test.out)"; exit 1; }
+	@python3 -B tools/ImageTest/check-with-pillow.py $(IMAGE_WRITTEN) > build/tools/image-pillow.out || \
+		{ cat build/tools/image-pillow.out; echo "IMAGE TEST FAILED (Pillow reads what was written differently)"; exit 1; }
 	@echo "IMAGE TEST PASSED: $$(tail -n 1 build/tools/image-test.out | cut -d ' ' -f 2-)"
 
 clean:

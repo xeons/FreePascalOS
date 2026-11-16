@@ -17,9 +17,9 @@
 }
 
 {
-  Damaged BMP, ICO, CUR and GIF files: every good fixture cut at many
-  lengths and with bytes changed at random (the same each run). Each
-  must load or be refused with EImageError; anything else (an access
+  Damaged BMP, ICO, CUR, GIF, PNG and APNG files: every good fixture
+  cut at many lengths and with bytes changed at random (the same each
+  run). Each must load or be refused with EImageError; anything else (an access
   violation, a range error with range checks on) fails. One check per
   fixture, so a failure names the file and the damage.
 }
@@ -42,10 +42,13 @@ uses
   ImageTest.Checks;
 
 const
-  Fixtures: array[0..15] of string = (
+  Fixtures: array[0..26] of string = (
     'bmp1.bmp', 'bmp4.bmp', 'bmp8-core.bmp', 'bmp16-565.bmp', 'bmp24.bmp', 'bmp32-v5.bmp',
     'bmp32-alphabitfields.bmp', 'bmp-rle8.bmp', 'bmp-rle4.bmp', 'bmp32-profile.bmp', 'dib4.dib',
-    'icon-multi.ico', 'pointer.cur', 'icon-png-mixed.ico', 'anim.gif', 'noise.gif');
+    'icon-multi.ico', 'pointer.cur', 'icon-png-mixed.ico', 'icon-png-only.ico', 'anim.gif', 'noise.gif',
+    'png-c0-d1-i.png', 'png-c3-d4.png', 'png-c6-d16-i.png', 'png-c2-d8.png', 'png-trns-rgb16.png',
+    'png-metadata.png', 'png-idat-bytes.png', 'apng-default-frame.png', 'apng-default-separate.png',
+    'apng-palette.png');
   CutsPerFile = 24;
   DamagesPerFile = 40;
 

@@ -24,6 +24,9 @@
   Every offset is checked against the segment; anything that does not
   fit gives no orientation (0) rather than an error, since EXIF is
   optional.
+
+  ReadTiffOrientation reads the same from a bare TIFF structure, as a
+  PNG's eXIf chunk holds it.
 }
 unit Image.Jpeg.Exif;
 
@@ -38,6 +41,9 @@ uses
 { The orientation (1 to 8) in the APP1 segment's payload of Count bytes
   at Start in Data, or 0. }
 function ReadExifOrientation(const Data: TBytes; Start, Count: PtrInt): LongInt;
+{ The orientation (1 to 8) in the TIFF structure of Count bytes at
+  Start in Data, or 0. }
+function ReadTiffOrientation(const Data: TBytes; Start, Count: PtrInt): LongInt;
 
 implementation
 
@@ -85,7 +91,7 @@ begin
   Result := True;
 end;
 
-function ReadExifOrientation(const Data: TBytes; Start, Count: PtrInt): LongInt;
+function ReadTiffOrientation(const Data: TBytes; Start, Count: PtrInt): LongInt;
 var
   View: TTiffView;
   DirectoryOffset: LongWord;
@@ -97,14 +103,11 @@ var
   Value: LongWord;
 begin
   Result := 0;
-  if (Start < 0) or (Count < 14) or (Start + Count > Length(Data)) then
-    Exit;
-  if (Data[Start] <> Ord('E')) or (Data[Start + 1] <> Ord('x')) or (Data[Start + 2] <> Ord('i')) or
-    (Data[Start + 3] <> Ord('f')) or (Data[Start + 4] <> 0) or (Data[Start + 5] <> 0) then
+  if (Start < 0) or (Count < 8) or (Start + Count > Length(Data)) then
     Exit;
   View.Data := Data;
-  View.Start := Start + 6;
-  View.Count := Count - 6;
+  View.Start := Start;
+  View.Count := Count;
   if (Data[View.Start] = Ord('I')) and (Data[View.Start + 1] = Ord('I')) then
     View.BigEndian := False
   else if (Data[View.Start] = Ord('M')) and (Data[View.Start + 1] = Ord('M')) then
@@ -129,6 +132,17 @@ begin
     end;
     Inc(Entry);
   end;
+end;
+
+function ReadExifOrientation(const Data: TBytes; Start, Count: PtrInt): LongInt;
+begin
+  Result := 0;
+  if (Start < 0) or (Count < 14) or (Start + Count > Length(Data)) then
+    Exit;
+  if (Data[Start] <> Ord('E')) or (Data[Start + 1] <> Ord('x')) or (Data[Start + 2] <> Ord('i')) or
+    (Data[Start + 3] <> Ord('f')) or (Data[Start + 4] <> 0) or (Data[Start + 5] <> 0) then
+    Exit;
+  Result := ReadTiffOrientation(Data, Start + 6, Count - 6);
 end;
 
 end.

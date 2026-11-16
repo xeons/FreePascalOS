@@ -25,8 +25,7 @@
   it. With ImageLoadApplyOrientation a picture whose EXIF says to turn
   it comes back turned, its orientation normal. Problems raise
   EImageError with a reason: ImageErrorUnknownFormat for content no
-  decoder takes, ImageErrorNeedsPng for a PNG (no decoder yet),
-  ImageErrorFile when the file cannot be read, and the decoder's own.
+  decoder takes, ImageErrorFile when the file cannot be read, and the decoder's own.
   TryLoadImage gives False and the reason instead.
 
   SaveImage and EncodeImage write in the format asked for
@@ -131,11 +130,7 @@ begin
   RegisterStandardImageCodecs;
   DecoderClass := FindImageDecoder(Data);
   if DecoderClass = nil then
-  begin
-    if DetectImageFormat(Data) = ImageFormatPng then
-      RaiseImageError(ImageErrorNeedsPng, 'no PNG decoder yet');
     RaiseImageError(ImageErrorUnknownFormat, '');
-  end;
   Decoder := DecoderClass.Create;
   try
     Result := Decoder.Decode(Data);

@@ -22,9 +22,8 @@
   shape, last. Calling RegisterStandardImageCodecs again does nothing;
   Image.Files calls it before it looks for a codec.
 
-  PNG comes with libcompression's deflate: its decoder will register
-  here, and ICO's PNG entries will find it through the embedded image
-  hook.
+  PNG and TIFF use libcompression's deflate. ICO's PNG entries find the
+  PNG decoder through the embedded image hook (Image.Codecs).
 }
 unit Image.StandardCodecs;
 
@@ -42,7 +41,9 @@ uses
   Image.Bmp.Codec,
   Image.Ico.Codec,
   Image.Gif.Codec,
-  Image.Jpeg.Codec;
+  Image.Jpeg.Codec,
+  Image.Png.Codec,
+  Image.Tiff.Codec;
 
 var
   Registered: Boolean = False;
@@ -52,11 +53,13 @@ begin
   if Registered then
     Exit;
   Registered := True;
+  RegisterImageDecoder(TPngDecoder);
   RegisterImageDecoder(TBmpDecoder);
   RegisterImageDecoder(TIcoDecoder);
   RegisterImageDecoder(TCurDecoder);
   RegisterImageDecoder(TGifDecoder);
   RegisterImageDecoder(TJpegDecoder);
+  RegisterImageDecoder(TTiffDecoder);
   RegisterImageDecoder(TDibDecoder);
   RegisterImageEncoder(TBmpEncoder);
   RegisterImageEncoder(TDibEncoder);
@@ -64,6 +67,8 @@ begin
   RegisterImageEncoder(TCurEncoder);
   RegisterImageEncoder(TGifEncoder);
   RegisterImageEncoder(TJpegEncoder);
+  RegisterImageEncoder(TPngEncoder);
+  RegisterImageEncoder(TTiffEncoder);
 end;
 
 end.

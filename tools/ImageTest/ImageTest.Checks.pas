@@ -41,12 +41,20 @@ var
   PassedChecks: Integer = 0;
   FailedChecks: Integer = 0;
   FixtureDirectory: string = '';
+  { Where files the test writes go, for check-with-pillow.py ('' to
+    write nothing). }
+  WrittenDirectory: string = '';
 
 procedure Check(Condition: Boolean; const Name: string);
 procedure Note(const Text: string);
 function FixturePath(const Name: string): string;
 function ReadFileBytes(const FileName: string): TBytes;
 function FixtureBytes(const Name: string): TBytes;
+procedure WriteFileBytes(const FileName: string; const Data: TBytes);
+{ Writes Data as Name in the written directory with Image as its
+  reference (Name's base name .rgba), for check-with-pillow.py to
+  decode and compare; nothing when there is no written directory. }
+procedure WriteForPillow(const Name: string; const Data: TBytes; Image: TImage);
 
 { Compares Image with the reference file ReferenceName (in the fixture
   directory): the same size, and no channel of any pixel further than
@@ -105,6 +113,56 @@ end;
 function FixtureBytes(const Name: string): TBytes;
 begin
   Result := ReadFileBytes(FixturePath(Name));
+end;
+
+procedure WriteFileBytes(const FileName: string; const Data: TBytes);
+var
+  Stream: TFileStream;
+begin
+  Stream := TFileStream.Create(FileName, fmCreate);
+  try
+    if Length(Data) > 0 then
+      Stream.WriteBuffer(Data[0], Length(Data));
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure WriteForPillow(const Name: string; const Data: TBytes; Image: TImage);
+var
+  Reference: TBytes;
+  X: LongInt;
+  Y: LongInt;
+  Offset: PtrInt;
+  Pixel: LongWord;
+  Directory: string;
+begin
+  if WrittenDirectory = '' then
+    Exit;
+  Directory := IncludeTrailingPathDelimiter(WrittenDirectory);
+  WriteFileBytes(Directory + Name, Data);
+  Reference := nil;
+  SetLength(Reference, 8 + PtrInt(Image.Width) * Image.Height * 4);
+  Reference[0] := Image.Width and $FF;
+  Reference[1] := (Image.Width shr 8) and $FF;
+  Reference[2] := (Image.Width shr 16) and $FF;
+  Reference[3] := (Image.Width shr 24) and $FF;
+  Reference[4] := Image.Height and $FF;
+  Reference[5] := (Image.Height shr 8) and $FF;
+  Reference[6] := (Image.Height shr 16) and $FF;
+  Reference[7] := (Image.Height shr 24) and $FF;
+  Offset := 8;
+  for Y := 0 to Image.Height - 1 do
+    for X := 0 to Image.Width - 1 do
+    begin
+      Pixel := Image.Line(Y)[X];
+      Reference[Offset] := (Pixel shr 16) and $FF;
+      Reference[Offset + 1] := (Pixel shr 8) and $FF;
+      Reference[Offset + 2] := Pixel and $FF;
+      Reference[Offset + 3] := Pixel shr 24;
+      Inc(Offset, 4);
+    end;
+  WriteFileBytes(Directory + ChangeFileExt(Name, '.rgba'), Reference);
 end;
 
 function Difference(First, Second: LongInt): LongInt;

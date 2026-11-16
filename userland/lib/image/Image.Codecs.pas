@@ -35,7 +35,8 @@
   format (an ICO's PNG entries) decodes them through DecodeEmbeddedImage,
   which finds a registered decoder for them, so a PNG decoder registered
   later is used without the container knowing of it. A PNG with no PNG
-  decoder registered is ImageErrorNeedsPng.
+  decoder registered (a program that registers codecs itself, without
+  Image.StandardCodecs) is ImageErrorNeedsPng.
 }
 unit Image.Codecs;
 
@@ -58,7 +59,8 @@ type
     ImageFormatCur,
     ImageFormatGif,
     ImageFormatJpeg,
-    ImageFormatPng
+    ImageFormatPng,
+    ImageFormatTiff
   );
 
   TImageDecoder = class
@@ -135,6 +137,7 @@ begin
     ImageFormatGif: Result := 'GIF';
     ImageFormatJpeg: Result := 'JPEG';
     ImageFormatPng: Result := 'PNG';
+    ImageFormatTiff: Result := 'TIFF';
   else
     Result := 'unknown';
   end;
@@ -159,8 +162,10 @@ begin
     Result := ImageFormatGif
   else if (Lower = 'jpeg') or (Lower = 'jpg') or (Lower = 'jpe') or (Lower = 'jfif') then
     Result := ImageFormatJpeg
-  else if Lower = 'png' then
+  else if (Lower = 'png') or (Lower = 'apng') then
     Result := ImageFormatPng
+  else if (Lower = 'tiff') or (Lower = 'tif') then
+    Result := ImageFormatTiff
   else
     Result := ImageFormatUnknown;
 end;
@@ -247,7 +252,7 @@ begin
   if DecoderClass = nil then
   begin
     if DetectImageFormat(Data) = ImageFormatPng then
-      RaiseImageError(ImageErrorNeedsPng, 'no PNG decoder yet');
+      RaiseImageError(ImageErrorNeedsPng, 'no PNG decoder registered');
     RaiseImageError(ImageErrorUnknownFormat, 'embedded image');
   end;
   Decoder := DecoderClass.Create;

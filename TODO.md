@@ -474,17 +474,20 @@ normalized (0-65535), not pixels.
         with `EImageError` reasons, `imageinfo`; `make image-test`
   - [x] BMP and DIB (all bit depths, RLE, bitfields; reading and writing)
   - [x] ICO and CUR (several sizes in one file, the nearest to the scale,
-        hotspots; reading and writing) — PNG entries are recognised and
-        report "needs PNG" until the PNG decoder registers
-  - [ ] PNG (all colour types and depths, interlacing, transparency; reading
-        and writing; needs libcompression's deflate) and APNG frames
+        hotspots; reading and writing; PNG entries through the PNG decoder)
+  - [x] PNG (all colour types and depths, interlacing, transparency, text,
+        profile, resolution, EXIF orientation; reading, and writing in the
+        smallest colour type with adaptive filtering) and APNG frames
+        (reading and writing)
   - [x] GIF, including animation (frames, delays, disposal, transparency,
         loop count; LZW; writing one frame) — the picture box plays it
         (`TFrameCompositor`; the picture box itself still to do)
   - [x] JPEG (baseline and progressive, chroma subsampling, EXIF orientation;
         reading, then writing baseline)
-  - [ ] TIFF (strips and tiles, several pages; none, PackBits, LZW, deflate
-        and JPEG compression)
+  - [x] TIFF (strips and tiles, several pages, BigTIFF; none, PackBits, LZW,
+        deflate and JPEG compression; reading, and writing RGB/RGBA)
+  - [ ] TIFF: CCITT Group 3/4, the floating point predictor and float
+        samples, old-style JPEG
   - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
   - [ ] JPEG XL (VarDCT and modular modes, animation)
   - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by

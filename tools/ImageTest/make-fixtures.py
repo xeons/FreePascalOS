@@ -499,8 +499,10 @@ def make_icons():
     png = io.BytesIO()
     test_picture(64, 64, seed=25, alpha=True).save(png, "PNG")
     write("icon-png-mixed.ico", icon_file([(16, 16, 4, entry16, None), (64, 64, 32, png.getvalue(), None)]))
+    write_reference(path("icon-png-mixed-64.rgba"), test_picture(64, 64, seed=25, alpha=True))
     # Only PNG entries, as Pillow writes icons.
     test_picture(32, 32, seed=26, alpha=True).save(path("icon-png-only.ico"), sizes=[(32, 32)])
+    write_reference(path("icon-png-only.rgba"), Image.open(path("icon-png-only.ico")))
     # Pillow's BMP entries.
     picture = test_picture(32, 32, seed=27, alpha=True)
     picture.save(path("pillow-bmp.ico"), sizes=[(16, 16), (32, 32)], bitmap_format="bmp")

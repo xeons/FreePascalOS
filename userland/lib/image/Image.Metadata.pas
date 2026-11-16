@@ -37,6 +37,12 @@ const
   MetadataKeyHotspotX = 'HotspotX';
   MetadataKeyHotspotY = 'HotspotY';
   MetadataKeyColorSpace = 'ColorSpace';
+  MetadataKeyDescription = 'Description';
+  MetadataKeySoftware = 'Software';
+  MetadataKeyDateTime = 'DateTime';
+  { How many pages a file of several (a TIFF) has; the image is the
+    first (Image.Tiff.Codec picks others). }
+  MetadataKeyPageCount = 'PageCount';
 
 type
   TImageMetadataEntry = record

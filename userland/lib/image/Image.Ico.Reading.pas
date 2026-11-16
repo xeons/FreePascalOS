@@ -26,9 +26,9 @@
   that alpha is zero everywhere. A mask that is missing leaves the
   picture opaque.
 
-  A PNG entry is decoded through Image.Codecs' embedded image hook; until
-  a PNG decoder is registered that is EImageError with
-  ImageErrorNeedsPng.
+  A PNG entry is decoded through Image.Codecs' embedded image hook, by
+  the PNG decoder Image.StandardCodecs registers (a program that
+  registers codecs of its own without it gets ImageErrorNeedsPng).
 
   For a cursor the entry's hotspot goes into the metadata (HotspotX,
   HotspotY).
