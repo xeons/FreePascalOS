@@ -172,8 +172,10 @@ type
     TotalSize: QWord;
   end;
 
-{ Reads a frame header (the reader at its first, byte aligned, bit). }
-function ReadJxlFrameHeader(Reader: TJxlBitReader; const Headers: TJxlImageHeaders): TJxlFrameHeader;
+{ Reads a frame header (the reader at its first, byte aligned, bit).
+  A preview frame's size defaults to the preview's. }
+function ReadJxlFrameHeader(Reader: TJxlBitReader; const Headers: TJxlImageHeaders;
+  IsPreview: Boolean = False): TJxlFrameHeader;
 { The number of sections in the frame's table of contents. }
 function JxlSectionCount(const Header: TJxlFrameHeader): LongInt;
 { Reads the table of contents and skips to the byte after it. }
@@ -436,8 +438,11 @@ begin
   Header.Dimensions := Dimensions;
 end;
 
-function ReadJxlFrameHeader(Reader: TJxlBitReader; const Headers: TJxlImageHeaders): TJxlFrameHeader;
+function ReadJxlFrameHeader(Reader: TJxlBitReader; const Headers: TJxlImageHeaders;
+  IsPreview: Boolean): TJxlFrameHeader;
 var
+  DefaultWidth: LongWord;
+  DefaultHeight: LongWord;
   ExtraCount: LongInt;
   Index: LongInt;
   Distributions: array[0..3] of TJxlU32Distribution;
@@ -469,8 +474,18 @@ begin
     Result.BQmScale := 2;
   end;
   Result.Passes.Count := 1;
-  Result.FrameWidth := Headers.Width;
-  Result.FrameHeight := Headers.Height;
+  if IsPreview then
+  begin
+    DefaultWidth := Headers.Metadata.PreviewWidth;
+    DefaultHeight := Headers.Metadata.PreviewHeight;
+  end
+  else
+  begin
+    DefaultWidth := Headers.Width;
+    DefaultHeight := Headers.Height;
+  end;
+  Result.FrameWidth := DefaultWidth;
+  Result.FrameHeight := DefaultHeight;
   SetLength(Result.ExtraChannelBlending, ExtraCount);
   Result.IsLast := True;
   SetDefaultLoopFilter(Result.LoopFilter);
@@ -543,8 +558,8 @@ begin
         RaiseBadFrame('empty frame');
       if (Result.FrameType = JxlFrameRegular) or (Result.FrameType = JxlFrameSkipProgressive) then
         IsPartialFrame := (Result.X0 > 0) or (Result.Y0 > 0) or
-          (Int64(Result.FrameWidth) + Result.X0 < Int64(Headers.Width)) or
-          (Int64(Result.FrameHeight) + Result.Y0 < Int64(Headers.Height));
+          (Int64(Result.FrameWidth) + Result.X0 < Int64(DefaultWidth)) or
+          (Int64(Result.FrameHeight) + Result.Y0 < Int64(DefaultHeight));
     end;
   end;
   if (Result.FrameType = JxlFrameRegular) or (Result.FrameType = JxlFrameSkipProgressive) then
