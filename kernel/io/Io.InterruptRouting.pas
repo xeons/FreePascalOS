@@ -74,6 +74,10 @@ function ConnectGlobalInterrupt(Gsi: LongWord; LevelTriggered, ActiveLow: Boolea
 { The global system interrupt ISA IRQ Irq arrives on. }
 function GlobalInterruptOfIsaIrq(Irq: Byte): LongWord;
 
+{ Writes every shared line: its vector, handlers and how often it fired
+  (the kernel debug shell's "interrupts"). }
+procedure WriteSharedLineSummary;
+
 { Connects a message signalled interrupt to Handler. Returns False if no
   vector is free. }
 function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
@@ -90,6 +94,7 @@ uses
   Hal.IoApic,
   Firmware.Madt,
   Kernel.Processors,
+  Io.LineInterruptStorms,
   Debug.Output;
 
 const
@@ -231,11 +236,13 @@ type
   PSharedLine = ^TSharedLine;
   TSharedLine = record
     Gsi: LongWord;
+    Vector: Byte;
     LevelTriggered: Boolean;
     ActiveLow: Boolean;
     Count: Integer;
     Handlers: array[0..MaximumSharers - 1] of TInterruptHandler;
     Contexts: array[0..MaximumSharers - 1] of Pointer;
+    StormWatch: TLineStormWatch;
   end;
 
 var
@@ -249,6 +256,7 @@ var
   Index: Integer;
 begin
   Line := PSharedLine(Context);
+  NoteLineInterrupt(Line^.StormWatch, Line^.Gsi, Line^.Vector);
   for Index := 0 to Line^.Count - 1 do
     Line^.Handlers[Index](Frame, Line^.Contexts[Index]);
 end;
@@ -295,6 +303,7 @@ begin
   Line^.Count := 1;
   if not AllocateVector(@DispatchSharedLine, Line, Vector) then
     Exit;
+  Line^.Vector := Vector;
   Target := ChooseTargetProcessor;
   if not RouteGlobalInterrupt(Gsi, Vector, Byte(Target^.ApicId), ActiveLow, LevelTriggered) then
   begin
@@ -304,6 +313,28 @@ begin
   Inc(SharedLineCount);
   ReportConnection('GSI', Gsi, Vector, Target);
   Result := True;
+end;
+
+procedure WriteSharedLineSummary;
+var
+  Index: Integer;
+  Line: PSharedLine;
+begin
+  DebugBeginMessage;
+  for Index := 0 to SharedLineCount - 1 do
+  begin
+    Line := @SharedLines[Index];
+    DebugWrite('GSI ');
+    DebugWriteDecimal(Line^.Gsi);
+    DebugWrite(' on vector 0x');
+    DebugWriteHex(Line^.Vector, 2);
+    DebugWrite(': ');
+    DebugWriteDecimal(Line^.Count);
+    DebugWrite(' handlers, fired ');
+    DebugWriteDecimal(Line^.StormWatch.Fires);
+    DebugWriteLine(' times');
+  end;
+  DebugEndMessage;
 end;
 
 function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
