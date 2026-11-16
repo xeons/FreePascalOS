@@ -18,8 +18,9 @@
 
 {
   Lists of files as text: how files cut or copied wait on the clipboard
-  (which holds text), and what a drag of files carries
-  (DragFormatFileList), so any program can read them.
+  (its file list format, with the plain paths as its text beside it),
+  and what a drag of files carries (DragFormatFileList), so any program
+  can read them.
 
   The format, lines ending in line feeds (a carriage return before one
   is ignored when reading):
@@ -207,19 +208,33 @@ begin
   end;
 end;
 
+{ The paths, a line each: what pasting the files into text gives. }
+function PlainPaths(Paths: TStrings): string;
+var
+  Index: LongInt;
+begin
+  Result := '';
+  for Index := 0 to Paths.Count - 1 do
+  begin
+    if Index > 0 then
+      Result := Result + #10;
+    Result := Result + Paths[Index];
+  end;
+end;
+
 procedure SetClipboardFileList(Action: TFileListAction; Paths: TStrings);
 begin
-  SetClipboardText(EncodeFileList(Action, Paths));
+  SetClipboardFileListText(EncodeFileList(Action, Paths), PlainPaths(Paths));
 end;
 
 function ClipboardFileList(out Action: TFileListAction; Paths: TStrings): Boolean;
 begin
-  Result := DecodeFileList(ClipboardText, Action, Paths) and (Paths.Count > 0);
+  Result := DecodeFileList(ClipboardFileListText, Action, Paths) and (Paths.Count > 0);
 end;
 
 function ClipboardHoldsFileList: Boolean;
 begin
-  Result := Copy(ClipboardText, 1, Length(FileListHeader) + 1) = FileListHeader + ' ';
+  Result := Copy(ClipboardFileListText, 1, Length(FileListHeader) + 1) = FileListHeader + ' ';
 end;
 
 end.

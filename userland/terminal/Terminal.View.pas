@@ -46,6 +46,7 @@ uses
   Drawing.Canvas,
   Font.Faces,
   Windowing.Messages,
+  Controls.DragData,
   Controls.Base,
   Controls.ScrollBar,
   Controls.EditCommands,
@@ -93,6 +94,7 @@ type
     procedure SendInput(const Bytes: string);
     procedure CopySelection;
     procedure PasteClipboard;
+    procedure SendPastedText(const Pasted: string);
     procedure SelectAll;
     procedure RunEditCommand(Command: TEditCommand);
     procedure PaintCell(const Canvas: TCanvas; const Cell: TCell; X, Y: LongInt; Selected, IsCursor: Boolean);
@@ -105,6 +107,10 @@ type
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
     procedure FocusChanged; override;
     procedure Layout; override;
+    { Text dropped is typed as if pasted; files dropped, their paths
+      (quoted where the shell needs it). }
+    function DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect; override;
+    procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); override;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
@@ -126,6 +132,7 @@ type
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Drawing.Colors,
   Font.Text,
@@ -133,8 +140,10 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Windowing.Fonts,
+  Classes,
   Controls.Keys,
   Controls.Clipboard,
+  Controls.FileLists,
   Terminal.Screen,
   Terminal.Keys;
 
@@ -322,12 +331,63 @@ end;
 procedure TTerminalView.PasteClipboard;
 var
   Pasted: string;
+begin
+  Pasted := ClipboardText;
+  if Pasted <> '' then
+    SendPastedText(Pasted);
+end;
+
+function TTerminalView.DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+begin
+  if (Data.Format = DragFormatText) or (Data.Format = DragFormatFileList) then
+    Result := DropCopy
+  else
+    Result := DropNone;
+end;
+
+{ Path in single quotes unless it has only characters the shell takes
+  as they are. }
+function QuotedForShell(const Path: string): string;
+var
+  Index: LongInt;
+begin
+  for Index := 1 to Length(Path) do
+    if not (Path[Index] in ['A'..'Z', 'a'..'z', '0'..'9', '/', '.', '_', '-', '+', ',', ':', '@']) then
+      Exit('''' + StringReplace(Path, '''', '''\''''', [rfReplaceAll]) + '''');
+  Result := Path;
+end;
+
+procedure TTerminalView.DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+var
+  Paths: TStringList;
+  Action: TFileListAction;
+  Line: string;
+  Index: LongInt;
+begin
+  SetFocus;
+  if Data.Format = DragFormatText then
+  begin
+    SendPastedText(Data.Text);
+    Exit;
+  end;
+  Paths := TStringList.Create;
+  try
+    if not DecodeFileList(Data.Text, Action, Paths) then
+      Exit;
+    Line := '';
+    for Index := 0 to Paths.Count - 1 do
+      Line := Line + QuotedForShell(Paths[Index]) + ' ';
+    SendInput(Line);
+  finally
+    Paths.Free;
+  end;
+end;
+
+procedure TTerminalView.SendPastedText(const Pasted: string);
+var
   Sent: string;
   Index: LongInt;
 begin
-  if not ClipboardHasText then
-    Exit;
-  Pasted := ClipboardText;
   Sent := '';
   Index := 1;
   while Index <= Length(Pasted) do

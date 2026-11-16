@@ -44,7 +44,14 @@
   drop would do (again whenever Ctrl or Shift change), tells the one
   that answered when the pointer leaves it, and hands it the data when
   the button is let go. Escape, or the window losing the keyboard,
-  ends the drag without a drop. The window owns the dragged data.
+  ends the drag without a drop. The window owns the dragged data. Text
+  and file lists are dragged through the display server instead
+  (Controls.SystemDrag), so they reach other windows and programs: the
+  server follows the pointer and the window under it, this one or
+  another, asks its controls in the same way when the server tells it
+  of the drag (DragOver, DragLeave, Drop); the drag is over when the
+  server says what the drop did (DragFinished), and the control pressed
+  then hears the button let go.
 
   Mnemonics come next: Alt with a character picks the first visible,
   enabled control (in the order they were made) whose caption has that
@@ -66,6 +73,7 @@ uses
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.Windows,
+  Windowing.DragAndDrop,
   Controls.DragData,
   Controls.Base;
 
@@ -117,11 +125,15 @@ type
     FDragSource: TControl;
     FDragTarget: TControl;
     FDragEffect: TDropEffect;
+    { The drag (FDragData) goes through the display server. }
+    FSystemDrag: Boolean;
     { Where the pointer was last (surface pixels). }
     FPointerX: LongInt;
     FPointerY: LongInt;
     function StartDrag(Control: TControl; Data: TDragData): Boolean;
     procedure UpdateDrag;
+    procedure FindDropTarget(Data: TDragData; Modifiers: LongWord);
+    procedure EndSystemDrag;
     procedure CancelDrag;
     procedure FinishDrag(X, Y: LongInt);
     function HandleDragKey(Code: LongWord): Boolean;
@@ -143,6 +155,10 @@ type
     procedure Wheel(Steps: LongInt); override;
     procedure Resized; override;
     procedure ActiveChanged; override;
+    function DragOver(const Drag: TDragEvent): LongWord; override;
+    procedure DragLeave; override;
+    procedure Drop(const Drag: TDragEvent); override;
+    procedure DragFinished(Effect: LongWord); override;
   public
     { As TWindow.Create; AOwner: the window it belongs to (nil: none). }
     constructor Create(const ATitle: string; Left, Top, Width, Height: LongInt;
@@ -169,9 +185,12 @@ type
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Windowing.Messages,
-  Controls.Keys;
+  Windowing.DataTransfer,
+  Controls.Keys,
+  Controls.SystemDrag;
 
 type
   { Forwards what controls ask of their host to the window. }
@@ -288,6 +307,8 @@ end;
 
 destructor TControlWindow.Destroy;
 begin
+  if OutgoingDrag = FDragData then
+    OutgoingDrag := nil;
   FDragData.Free;
   FDragData := nil;
   FRoot.Free;
@@ -494,6 +515,8 @@ end;
 { --- Dragging ------------------------------------------------------------------ }
 
 function TControlWindow.StartDrag(Control: TControl; Data: TDragData): Boolean;
+var
+  Offer: TDataOffer;
 begin
   { Only while a button is held, and one drag at a time. }
   if (FPressed = nil) or (FDragData <> nil) then
@@ -505,24 +528,37 @@ begin
   FDragSource := Control;
   FDragTarget := nil;
   FDragEffect := DropNone;
-  UpdateDrag;
   Result := True;
+  Offer := nil;
+  if IsConnected then
+    Offer := OfferForDragData(Data);
+  if Offer = nil then
+  begin
+    UpdateDrag;
+    Exit;
+  end;
+  { The server follows the pointer from now on, and tells whichever
+    window is under it, this one too. }
+  FSystemDrag := True;
+  OutgoingDrag := Data;
+  Windowing.DragAndDrop.StartDrag(Id, Offer, DropEffectCopy or DropEffectMove or DropEffectLink,
+    DescribeDragData(Data));
 end;
 
-{ Asks the control under the pointer, then its parents, what a drop
-  there would do; the first that would do something is the target. }
-procedure TControlWindow.UpdateDrag;
+{ Asks the control under the pointer, then its parents, what a drop of
+  Data there would do; the first that would do something is the target. }
+procedure TControlWindow.FindDropTarget(Data: TDragData; Modifiers: LongWord);
 var
   Control: TControl;
   Effect: TDropEffect;
 begin
-  if FDragData = nil then
-    Exit;
   Effect := DropNone;
-  Control := FRoot.ControlAt(FPointerX, FPointerY);
+  Control := nil;
+  if Data <> nil then
+    Control := FRoot.ControlAt(FPointerX, FPointerY);
   while Control <> nil do
   begin
-    Effect := Control.HandleDragOver(FDragData, FPointerX, FPointerY, HeldModifiers);
+    Effect := Control.HandleDragOver(Data, FPointerX, FPointerY, Modifiers);
     if Effect <> DropNone then
       Break;
     Control := Control.Parent;
@@ -536,11 +572,92 @@ begin
   FDragEffect := Effect;
 end;
 
+procedure TControlWindow.UpdateDrag;
+begin
+  if (FDragData = nil) or FSystemDrag then
+    Exit;
+  FindDropTarget(FDragData, HeldModifiers);
+end;
+
+function TControlWindow.DragOver(const Drag: TDragEvent): LongWord;
+begin
+  FPointerX := Drag.X;
+  FPointerY := Drag.Y;
+  FindDropTarget(IncomingDragData(Drag), Drag.Modifiers);
+  Result := DropEffectBits(FDragEffect);
+end;
+
+procedure TControlWindow.DragLeave;
+var
+  Target: TControl;
+begin
+  Target := FDragTarget;
+  FDragTarget := nil;
+  FDragEffect := DropNone;
+  if Target <> nil then
+    Target.HandleDragLeave;
+end;
+
+procedure TControlWindow.Drop(const Drag: TDragEvent);
+var
+  Target: TControl;
+  Effect: TDropEffect;
+  Incoming: TDragData;
+  Data: TDragData;
+begin
+  Target := FDragTarget;
+  Effect := FDragEffect;
+  FDragTarget := nil;
+  FDragEffect := DropNone;
+  if Target = nil then
+    Exit;
+  Target.HandleDragLeave;
+  Incoming := IncomingDragData(Drag);
+  if Incoming = nil then
+    Exit;
+  { A copy: the drag's own data goes when the drag is over, which the
+    server may say while the drop still asks something in a dialog. }
+  Data := TDragData.Create(Incoming.Format, Incoming.Text, Incoming.Source);
+  try
+    Target.HandleDragDrop(Data, Drag.X, Drag.Y, Effect);
+  finally
+    Data.Free;
+  end;
+end;
+
+{ The server's drag is over: the data goes, and the control pressed
+  hears the button let go (the server kept the release). }
+procedure TControlWindow.EndSystemDrag;
+var
+  Pressed: TControl;
+begin
+  if not FSystemDrag then
+    Exit;
+  FSystemDrag := False;
+  if OutgoingDrag = FDragData then
+    OutgoingDrag := nil;
+  FreeAndNil(FDragData);
+  FDragSource := nil;
+  Pressed := FPressed;
+  FPressed := nil;
+  if Pressed <> nil then
+  begin
+    SetCapture(False);
+    Pressed.HandlePointerUp(FPointerX, FPointerY, ButtonLeft);
+  end;
+end;
+
+procedure TControlWindow.DragFinished(Effect: LongWord);
+begin
+  EndSystemDrag;
+end;
+
 procedure TControlWindow.CancelDrag;
 var
   Target: TControl;
 begin
-  if FDragData = nil then
+  { The server ends its own drags (Escape there). }
+  if (FDragData = nil) or FSystemDrag then
     Exit;
   Target := FDragTarget;
   FDragTarget := nil;
@@ -691,6 +808,7 @@ begin
   FPointerY := Y;
   if FDragData <> nil then
   begin
+    { (Moves the server sent before it took a drag of its own over.) }
     UpdateDrag;
     Exit;
   end;
@@ -744,7 +862,9 @@ begin
     Target.HandlePointerUp(X, Y, Button);
   if FDragData <> nil then
   begin
-    FinishDrag(X, Y);
+    { The server drops its drag itself, where this was let go. }
+    if not FSystemDrag then
+      FinishDrag(X, Y);
     Exit;
   end;
   { A right click asks for the control's context menu once the button

@@ -42,6 +42,7 @@ interface
 
 uses
   Drawing.Canvas,
+  Controls.DragData,
   Controls.Base,
   Controls.EditCommands;
 
@@ -73,6 +74,9 @@ type
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
     procedure TextChanged; override;
+    { Text (or files, as their paths) dropped goes where it is let go. }
+    function DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect; override;
+    procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); override;
   public
     constructor Create(AParent: TControl); override;
     procedure SelectAll;
@@ -95,6 +99,7 @@ type
 implementation
 
 uses
+  SysUtils,
   Controls.TextPositions,
   Abi.SystemCalls,
   Drawing.Rectangles,
@@ -104,7 +109,8 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Text,
-  Controls.Clipboard;
+  Controls.Clipboard,
+  Controls.SystemDrag;
 
 constructor TEditBox.Create(AParent: TControl);
 begin
@@ -209,10 +215,36 @@ begin
 end;
 
 procedure TEditBox.PasteFromClipboard;
+var
+  Pasted: string;
 begin
-  if FReadOnly or not ClipboardHasText then
+  if FReadOnly then
     Exit;
-  ReplaceSelection(FirstLineOf(ClipboardText));
+  Pasted := ClipboardText;
+  if Pasted <> '' then
+    ReplaceSelection(FirstLineOf(Pasted));
+end;
+
+function TEditBox.DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+var
+  Dropped: string;
+begin
+  Result := DropNone;
+  { (Its own text is not dragged out of it.) }
+  if FReadOnly or not Enabled or (Data.Source = Self) or not DragDataAsText(Data, Dropped) then
+    Exit;
+  Result := DropCopy;
+end;
+
+procedure TEditBox.DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+var
+  Dropped: string;
+begin
+  if FReadOnly or not DragDataAsText(Data, Dropped) then
+    Exit;
+  SetFocus;
+  MoveCaret(PositionAt(X), False);
+  ReplaceSelection(FirstLineOf(StringReplace(Dropped, #10, ' ', [rfReplaceAll])));
 end;
 
 procedure TEditBox.RunEditCommand(Command: TEditCommand);
