@@ -2445,8 +2445,10 @@ A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
 beneath BSD-style sockets that are handles like any other.
 
 ```
+  the network service (DHCP, settings, state files)   host nslookup hostname
+  resolver: Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages, Sys.HostsFile
   programs: Sys.Sockets, Sys.NetworkInterfaces     ping ifconfig route arp
-=========== system calls 104-123 (Processes.SocketCalls, .NetworkCalls) ====
+=========== system calls 104-125 (Processes.SocketCalls, .NetworkCalls) ====
   Network.SocketOperations   bind listen accept connect send receive ...
   Network.Sockets            the socket object, readiness events, waits
   Network.TcpSockets | Network.Udp | Network.IcmpSockets
@@ -2628,6 +2630,8 @@ binding a socket to an interface (`SocketOptionInterface`) are root's.
 | ListArpEntries | 120 | buffer, capacity |
 | ListSockets | 121 | buffer, capacity (every socket, and connections without one) |
 | GetDnsServers, SetDnsServers | 122, 123 | `TAbiDnsServers` (setting: root) |
+| SetNodeName | 124 | name (root) |
+| WatchNetworkChanges | 125 | returns an event handle signaled after each change |
 
 Addresses (`TAbiSocketAddress`) carry a family, sixteen address bytes
 (IPv4 in the first four, in the order written) and a port in the
@@ -2651,15 +2655,29 @@ the time zone's name. Changes are written to the kernel log.
 
 **Startup.** `Io.Startup` starts the virtio-net cards (the other
 drivers register theirs alike); `Kernel.Startup` then starts the
-network thread (`StartNetworking`). The **network service**
-(`/etc/services/network.service`, `networksetup`) applies the static
-configuration of `/etc/settings/Network.settings` (libconfiguration)
-once at start: per interface (`[Interfaces/eth0]`) a method (`static`
-or `none`), the address with its prefix, the gateway (the default
-route) and whether it is up, and the DNS servers. The default suits
-QEMU's user networking: eth0 10.0.2.15/24, gateway 10.0.2.2, DNS
-10.0.2.3. A DHCP client will take over interfaces with `Method = dhcp`;
-`NetworkSetup.StaticConfiguration` is the piece kept beside it.
+network thread (`StartNetworking`). The network service configures the
+interfaces (below).
+
+**Watching for changes** (`Network.ChangeWatchers`,
+`CallWatchNetworkChanges`, `Sys.NetworkInterfaces.WatchNetworkChanges`).
+A program that follows the network gets an automatic reset event that
+is signaled after every change: an adapter registered, a link that came
+or went, an interface turned on or off or given an address, a route, the
+DNS servers. It then lists again. The kernel keeps the events in a
+table of 32 with a reference each; one whose handle was closed (only the
+table's reference left) is dropped the next time the table is looked
+at. The network service waits on it instead of polling.
+
+**Ports and interfaces.** Two sockets may bind the same port when both
+are bound to interfaces (`SocketOptionInterface`, root's), different
+ones: the DHCP client has a socket on port 68 for each interface.
+
+**The node name** (`Processes.NodeName`): the host name
+`CallGetSystemInformation` reports, "freepascalos" until root sets
+another with `CallSetNodeName` (124; 1 to 63 letters, digits, hyphens
+and dots, starting with a letter or digit): `hostname NAME`, or the
+network service from `HostName` in Network.settings. `Sys.Information`
+has `GetNodeName` and `SetNodeName`.
 
 **virtio-net** (`Drivers.VirtioNet`): a receive queue that always holds
 a 2 KiB buffer per descriptor and a transmit queue of one buffer per
@@ -2672,12 +2690,175 @@ polls. Suspending marks the card (its frames wait in the network
 layer); waking resets it, gives it its queues and receive buffers again
 (`RestartVirtioDeviceQueues`) and reports the link and room to send.
 
+### The network service
+
+`/bin/network` (units `NetworkService.*` in `userland/network`), run by
+`/etc/services/network.service` in both boot modes (root, `ready =
+notify`, restarted on failure up to three times), runs as long as the
+system does. Its main loop (`NetworkService.Supervisor`) waits at once
+for its notifications (an end request ends it), a watch on
+`/etc/settings` (Network.settings written, created or renamed into
+place - the settings library and the system settings service write a
+`.new` file and rename it - is read again whole and applied), the
+kernel's network changes, and the DHCP clients' sockets, and wakes at
+the clients' next deadline (at least every 5 s).
+
+**Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
+
+    HostName = "freepascalos"       optional: the node name
+    DnsServers = []                 empty: those DHCP gives; a list overrides them
+    SearchDomain = ""               empty: the domain DHCP gives
+
+    [Interfaces/eth0]
+    Method = "dhcp"                 dhcp, static or none (no Method: static)
+    Address = "10.0.2.15/24"        static only
+    Gateway = "10.0.2.2"            static only
+    Up = true
+
+The default suits QEMU's user networking: eth0 by DHCP, the other cards
+left alone. Address and Gateway are read only for `static` (the Control
+Panel keeps them for a switch back). An interface with no section is
+`none` with `Up = true`. Each interface (`NetworkService.Interfaces`) is
+brought in line whenever the settings or the kernel's interfaces change:
+if its settings changed, what was applied is undone first - a lease is
+given back (DHCPRELEASE) and its address removed, an address the
+service set is removed with its routes - then:
+
+| Method | What the service does |
+|---|---|
+| static | the address, on (or off as Up says), the default route through the gateway (metric 0 for eth0, 1 for eth1, ...) |
+| dhcp | on, and a DHCP client started (it waits for the link); `Up = false` gives the lease back and turns the interface off |
+| none | nothing: the interface is left as it is, an address set by hand included; only `Up = false` turns it off. An address the service itself had set (static, or a lease) is removed when the method becomes none |
+
+A link that comes or goes, or an interface turned off or on by hand, is
+passed to its DHCP client; an adapter that appears later is taken in
+like the others. The DNS servers given to the kernel are the settings'
+list if it is not empty, else every lease's servers (each once, four at
+most); the search domain is the settings', else the first lease's
+domain; they are set only when they change. Asked to end, the service
+gives every lease back (the addresses go), writes the state files and
+ends with status 0; static addresses stay. Its log is
+`/var/log/network.log`.
+
+**The DHCP client** (`NetworkService.DhcpClient`, RFC 2131 4.4; messages
+in `NetworkService.DhcpMessages`, leases in `NetworkService.DhcpLeases`)
+has a UDP socket per interface (port 68, bound to the interface,
+broadcasts allowed) and this state machine:
+
+    Init -DISCOVER-> Selecting -OFFER, REQUEST-> Requesting -ACK-> Probing -> Bound
+    Probing -address answered by another host, DECLINE-> (10 s) Init
+    Requesting -NAK, or 4 requests unanswered-> Init
+    InitReboot (a previous lease) -REQUEST-> Rebooting -ACK-> Probing; -NAK, 3 unanswered-> Init
+    Bound -T1-> Renewing (REQUEST to the server, unicast, ciaddr set)
+    Renewing -T2-> Rebinding (REQUEST broadcast) -expiry-> address removed, Init
+    Renewing, Rebinding -ACK-> Bound; -NAK-> address removed, Init
+    any -link lost-> Paused (the lease kept until it runs out) -link back-> InitReboot
+
+Messages carry the client identifier (61: type 1 and the Ethernet
+address), the host name (12: the node name), the address asked for
+(50) and the server (54) where they belong, the parameter request list
+(55: mask, router, DNS, domain, lease, T1, T2, server id) and the
+largest message (57); the broadcast flag is set until there is an
+address. Replies are taken by transaction id and hardware address; read
+are the offered address, mask (else the address's class), routers, DNS
+servers, domain name, lease time (none: for ever), T1 and T2 (else half
+and seven eighths of the lease) and the server identifier.
+Retransmissions wait 4 s, 8, 16, 32 and at most 64, each moved by up to
+a second at random; while renewing and rebinding half the time left, at
+least a minute. Times run on the uptime clock. A client with no lease a
+minute after it began is "failed" in its state file and goes on trying.
+The previous lease's address comes from the state file left by an
+earlier run (a crash; a clean stop gives the lease back) or from this
+run. Left out: option overload (52), comparing several offers, the
+random 1-10 s wait before the first DISCOVER (so the network is up at
+once).
+
+**The address probe** (`NetworkService.AddressProbe`): before an
+offered address is taken, an empty datagram goes to its discard port on
+the client's socket. The interface has no address yet, so the kernel's
+ARP request for it carries 0.0.0.0 as sender - RFC 5227's probe - and a
+second later the ARP cache tells whether a host answered for the
+address; then the client declines it. Nobody answering costs nothing:
+the datagram is dropped after the kernel's three tries.
+
+### Interface state files (the contract with the desktop)
+
+For each interface but lo the service keeps `/var/lib/network/NAME.state`
+(`NetworkService.StateFiles`), in the format of libconfiguration's
+settings files (read it with `TSettingsDocument`):
+
+| Key | Kind | Value |
+|---|---|---|
+| `Method` | string | `static`, `dhcp` or `none` |
+| `State` | string | `down`, `no-link`, `configuring`, `configured` or `failed` |
+| `Address` | string | `10.0.2.15/24`, or `""` |
+| `Gateway` | string | `10.0.2.2`, or `""` |
+| `DnsServers` | list of strings | the lease's servers (dhcp), the settings' (static) |
+| `Domain` | string | the lease's domain (dhcp), the search domain (static) |
+| `LeaseSeconds` | integer | the lease's length; 0 for static, none and an endless lease |
+| `LeaseObtained` | integer | Unix time the lease was acknowledged (renewals too); 0 without one |
+| `DhcpServer` | string | the server that gave the lease, or `""` |
+
+`State` is `down` while the interface is off (also for dhcp after the
+service stopped, and for none without an address), `no-link` while it
+has no link, `failed` when its settings cannot be applied or DHCP found
+nothing for a minute, `configuring` while DHCP looks for a lease, and
+`configured` once it has its address (none: an address set by hand). A
+file is written whole as `NAME.state.new` (0644) and renamed into place,
+and only when its text changes, so a program watching the folder hears
+of real changes only; the folder (0755) is made by the system disk and
+by the service. The desktop watches the folder; the Control Panel
+changes the settings by having the system settings service write
+`/etc/settings/Network.settings`, which the service picks up through its
+watch.
+
+### The resolver
+
+`Sys.HostNames` is the one place programs turn hosts into addresses
+(`LookUpHost`: the first IPv4 address; `LookUpHostAddresses`: all, of
+the families asked for, IPv4 first, with the canonical name;
+`LookUpAddressName`: the reverse; `HostLookupErrorMessage`). A host is a
+numeric address (IPv4, or IPv6 as RFC 4291 writes it), then a name in
+`/etc/hosts` (`Sys.HostsFile`, read at each lookup), then a name asked
+of the DNS servers; "localhost" is 127.0.0.1 even without the file. An
+address is named by `/etc/hosts`, then by a PTR record. Errors:
+`ErrorNotFound` (no such name, no address, no server), `ErrorTimedOut`
+(no server answered), `ErrorWouldBlock` (the servers failed: "try
+again").
+
+Below it, `Sys.DnsQueries` (which `host` and `nslookup` use directly)
+asks the kernel's servers (or those given) over UDP: each server in
+turn, `Attempts` rounds (2), `TimeoutMilliseconds` each (2.5 s). Every
+query has a new random id and leaves from a random port of the dynamic
+range (`Sys.RandomNumbers`, from `/dev/urandom`), the socket is
+connected to the server so only its datagrams come in, and a reply
+counts only if its id and question are the query's. A truncated reply
+is asked again over TCP; SERVFAIL, REFUSED, NOTIMP and FORMERR pass on
+to the next server, the last of them being the answer if none does
+better. `QueryDnsSearching` tries a single-label name in the search
+domain first. Aliases are followed through the CNAME records of an
+answer, and asked for again when the answer stops at an alias, eight
+steps at most. `Sys.DnsMessages` builds queries and reads answers into
+records (A, AAAA, CNAME, NS, PTR, MX, SOA, TXT; others by length),
+checking every length against the message; `Sys.DnsNames` reads names
+with their compression pointers, only backwards and at most 64 of them,
+so a pointer loop is refused, and makes reverse names (`in-addr.arpa`,
+`ip6.arpa`). No EDNS (UDP answers stop at 512 bytes, TCP takes the
+rest) and no cache yet. `Sys.InternetAddresses` reads and writes IPv6
+addresses too (RFC 5952 form).
+
 **Tools.** `ping` (an ICMP echo socket; per-reply lines and the summary
-with loss and min/avg/max/mdev like iputils; `-c -i -W -s -t -q`; hosts
-are looked up in one place, `Sys.HostNames`, numeric for now), `ifconfig`
+with loss and min/avg/max/mdev like iputils; `-c -i -W -s -t -q -n`;
+the host is looked up by `Sys.HostNames`, and the first line shows the
+name and the address, `PING name (addr)`), `ifconfig`
 and `route` in the manner of net-tools (rather than an `ip` tool: their
-output is what most people know to read, and each does one thing), and
-`arp`.
+output is what most people know to read, and each does one thing),
+`arp`, `host` (BIND's: addresses and mail servers by default, `-t
+TYPE`, a reverse lookup for an address, `-v` with the whole answers as
+dig prints them, `-T` for TCP, `-W`, `-R`, a server to ask),
+`nslookup NAME [SERVER]` (the non-interactive form, `-type=`,
+`-timeout=`, `-vc`) and `hostname` (show, `-s`, `-i`, `-I`; set as
+root).
 
 **Tests.** A kernel self test on every boot checks the Internet
 checksum, sequence number comparison, a UDP datagram over lo, a refused
@@ -2686,14 +2867,28 @@ TIME_WAIT, with data both ways. coretest runs `networktest` (loopback
 ping; UDP echo with the largest datagram and one too large; a refused
 broadcast; port unreachable; a megabyte of TCP echo through many windows
 with a sender and a server thread; a refused connection; non-blocking
-connect and waits; the socket listing; then `networksetup` on eth0,
-pings to and the ARP entry of QEMU's gateway, and a TCP echo through
-QEMU's `guestfwd` to `cat` at 10.0.2.100:7), `networktest
---unprivileged` as an ordinary user (raw sockets, low ports, every
-change refused; ping allowed), and `ifconfig`, `route`, `arp` and
-`ping` command lines; the session test checks that the network service
-configured eth0. The QEMU command lines of all tests and `make run`
-have a virtio-net card on user networking.
+connect and waits; the socket listing; then the network service, started
+as a child: eth0 configured by QEMU's DHCP server within 20 s with
+10.0.2.15/24, the default route through 10.0.2.2 and the DNS server
+10.0.2.3, the whole of `eth0.state`; pings to and the ARP entry of
+QEMU's gateway, a TCP echo through QEMU's `guestfwd` to `cat` at
+10.0.2.100:7; eth1 made static (192.168.50.2/24) in Network.settings
+and back to none, applied by the service at once; the service asked to
+end giving the lease back, then started again and left running),
+`networktest --unprivileged` as an ordinary user (raw sockets, low
+ports, every change refused; ping allowed), and `dnstest`, which runs a
+DNS server of its own on 127.0.0.1:53 with a fixed zone (`DnsTest.Zone`:
+nothing needs the internet, QEMU's DNS forwards to a host that may have
+none) and makes it the system's for a while: `/etc/hosts` both ways, A,
+a CNAME answered whole and one asked again, the search domain, several
+addresses, AAAA, NXDOMAIN, PTR, a truncated answer asked over TCP, a
+compression loop refused, a reply with a wrong id ignored, a missing
+server passed over, new ids and ports each time. `dnstest --serve` and
+`--wait` serve coretest's `host` and `nslookup` command lines; there
+are also `ifconfig`, `route`, `arp`, `ping` (`localhost` from
+`/etc/hosts`), `hostname` and eth0's state file. The session test checks
+that the network service configured eth0. The QEMU command lines of all
+tests and `make run` have a virtio-net card on user networking.
 
 ## Network drivers
 
@@ -3767,6 +3962,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `displayserver` | graphical | the display server; ready once its port takes clients |
 | `session` | graphical | the session manager (needs `displayserver`) |
 | `systemsettings` | text, graphical | the system settings service: the machine's remembered settings at start, root's changes for the users who may |
+| `network` | text, graphical | the network service: the interfaces' addresses (static or DHCP), routes, DNS servers and host name, kept as Network.settings says (see "Networking") |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
 `userland/etc/services`), lines of `key = value` (`Services.Definitions`):
@@ -4104,6 +4300,7 @@ as soon as a file changes, and programs need no change.
 | files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 | keyboardsettings `-r`, Control Panel, session manager, display server | user (system: what the login window has) | `Keyboard/Layout`, `Keyboard/RepeatDelay`, `Keyboard/RepeatRate` (`Windowing.KeyboardSettings`), given to the display server as the mouse's are |
 | system settings service | system | `Time/Zone`; `Sound/N/Volume`, `Sound/N/Muted`, `Sound/DefaultOutput`, given to the kernel at start |
+| network service (reads; the Control Panel writes through the system settings service) | system | `Network/HostName`, `Network/DnsServers`, `Network/SearchDomain`, `Network/Interfaces/NAME/Method`, `.../Address`, `.../Gateway`, `.../Up`, applied as soon as the file changes |
 
 A display's mode and scale are the machine's (the screen in front of
 it, whoever logs in), so the display server, which runs as root, keeps

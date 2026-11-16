@@ -427,7 +427,15 @@ const
   { 104-123: networking (sockets, interfaces, routes), in
     Abi.Networking.inc. }
 
-  CallCount = 124;
+  { (NameAddress): the machine's node name (its host name, which
+    CallGetSystemInformation reports) from now on: 1 to 63 letters,
+    digits, hyphens and dots, starting with a letter or digit. Root
+    only; ErrorInvalidArgument for another name. }
+  CallSetNodeName = 124;
+
+  { 125: CallWatchNetworkChanges, in Abi.Networking.inc. }
+
+  CallCount = 126;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;

@@ -25,7 +25,9 @@
   both the same), unless:
     - UDP: both asked for SocketOptionReuseAddress;
     - TCP: the new one asked for it and the other is not listening (a
-      connection waiting out TIME_WAIT, or one that is still closing).
+      connection waiting out TIME_WAIT, or one that is still closing);
+    - both are bound to interfaces (SocketOptionInterface), different
+      ones: a DHCP client has a socket on port 68 for each interface.
   TCP connections whose socket has gone still hold their port until
   they are freed.
 
@@ -77,6 +79,9 @@ begin
   Result := False;
   if (Other = Socket) or (Other^.Protocol <> Socket^.Protocol) or not Other^.IsBound or
      (Other^.Local.Port <> Port) or not AddressesOverlap(Other^.Local.Address, Address) then
+    Exit;
+  if (Socket^.BoundInterface <> nil) and (Other^.BoundInterface <> nil) and
+     (Socket^.BoundInterface <> Other^.BoundInterface) then
     Exit;
   case Socket^.Protocol of
     SocketProtocolUdp:

@@ -17,26 +17,38 @@
 }
 
 {
-  networksetup - configure the network at start
-
-  networksetup
-
-  The network service (/etc/services/network.service) runs it once
-  while the system starts: it gives the interfaces the addresses, the
-  default route and the DNS servers that /etc/settings/Network.settings
-  names (NetworkSetup.StaticConfiguration). Root only; running it again
-  applies the settings again. Exit status 0 if everything applied, 1
-  otherwise.
+  What the network service says on its standard output (its service's
+  log, /var/log/network.log): a line for each change it makes and each
+  problem it meets.
 }
-program networksetup;
+unit NetworkService.Log;
 
 {$mode objfpc}
 {$H+}
 
-uses
-  NetworkSetup.StaticConfiguration;
+interface
 
+procedure Say(const Text: string);
+{ An error code's message, for lines like "eth0: address: ...". }
+function ErrorText(Error: LongInt): string;
+
+implementation
+
+uses
+  Sys.Errors,
+  Sys.Streams;
+
+procedure Say(const Text: string);
 begin
-  if ApplyStaticConfiguration > 0 then
-    Halt(1);
+  WriteText(StandardOutput, 'network: ');
+  WriteText(StandardOutput, PChar(Text));
+  WriteCharacter(StandardOutput, #10);
+  FlushStream(StandardOutput);
+end;
+
+function ErrorText(Error: LongInt): string;
+begin
+  Result := string(ErrorMessage(Error));
+end;
+
 end.

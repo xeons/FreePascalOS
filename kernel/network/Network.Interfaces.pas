@@ -124,6 +124,7 @@ uses
   Runtime.Atomic,
   Memory.KernelHeap,
   Network.Core,
+  Network.ChangeWatchers,
   Debug.Output;
 
 var
@@ -148,6 +149,7 @@ begin
   InitializePacketQueue(Result^.TransmitQueue);
   Interfaces[InterfaceCount] := Result;
   Inc(InterfaceCount);
+  NoteNetworkChange;
 end;
 
 function NetworkInterfaceCount: Integer;
@@ -289,6 +291,7 @@ begin
       begin
         NetworkInterface^.LinkIsUp := LinkNow;
         WriteLinkChange(NetworkInterface);
+        NoteNetworkChange;
       end;
     end;
     if NetworkInterface^.TransmitQueue.Count > 0 then

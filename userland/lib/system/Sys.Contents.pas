@@ -68,6 +68,11 @@ uses
   Sys.Notifications,
   Sys.EndRequests,
   Sys.InternetAddresses,
+  Sys.RandomNumbers,
+  Sys.DnsNames,
+  Sys.DnsMessages,
+  Sys.DnsQueries,
+  Sys.HostsFile,
   Sys.HostNames,
   Sys.Sockets,
   Sys.NetworkInterfaces;

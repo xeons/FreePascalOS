@@ -48,6 +48,7 @@ uses
   Processes.MappingCalls,
   Processes.SocketCalls,
   Processes.NetworkCalls,
+  Processes.NodeName,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -98,7 +99,6 @@ const
   SystemRelease = '0.2.0';
   SystemVersion = '#1 FreePascalOS kernel';
   MachineName = 'x86_64';
-  NodeName = 'freepascalos';
   MaximumArgumentBytes = 64 * 1024;
 
 function Failure(Error: LongInt): Int64;
@@ -591,7 +591,7 @@ begin
   CopyText(@Information.Release[0], SystemRelease, AbiTextCapacity);
   CopyText(@Information.Version[0], SystemVersion, AbiTextCapacity);
   CopyText(@Information.Machine[0], MachineName, AbiTextCapacity);
-  CopyText(@Information.NodeName[0], NodeName, AbiTextCapacity);
+  GetNodeName(@Information.NodeName[0], AbiTextCapacity);
   GetPhysicalMemoryStatistics(Statistics);
   Information.TotalMemory := Statistics.TotalUsablePages * PageSize;
   Information.FreeMemory := Statistics.FreePages * PageSize;
@@ -784,6 +784,8 @@ begin
     CallListSockets: Result := PerformListSockets(Argument0, Argument1);
     CallGetDnsServers: Result := PerformGetDnsServers(Argument0);
     CallSetDnsServers: Result := PerformSetDnsServers(Argument0);
+    CallSetNodeName: Result := PerformSetNodeName(Argument0);
+    CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
   else
     Result := Failure(ErrorNotImplemented);
   end;

@@ -79,9 +79,19 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   Programs use BSD-style sockets (`Sys.Sockets`: TCP streams, UDP
   datagrams, ICMP echo for ping) that are handles like any other
   (closed, waited for, non-blocking); `ping`, `ifconfig`, `route` and
-  `arp`; the network service gives the interfaces the static
-  configuration of `/etc/settings/Network.settings` at start (QEMU's
-  user networking: 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3).
+  `arp`. **The network service** (`/bin/network`) configures the
+  interfaces as `/etc/settings/Network.settings` says and keeps them so:
+  static addresses or a **DHCP client** (RFC 2131: discover, request,
+  INIT-REBOOT, renewing and rebinding, lease expiry, a probe of the
+  offered address and DECLINE, RELEASE when stopped; QEMU's user
+  networking gives eth0 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3),
+  changes to the file applied the moment they are written, links and new
+  adapters followed (a kernel event, no polling), and each interface's
+  state in `/var/lib/network/NAME.state` for the desktop. A **DNS
+  resolver** in libsystem behind `Sys.HostNames` (`/etc/hosts`, then
+  UDP queries with random ids and ports, TCP for truncated answers,
+  CNAME chains, the search domain, reverse lookups), with `host`,
+  `nslookup` and `hostname`, and names everywhere (`ping example.com`).
 - USB keyboards next to PS/2 ones, with dead keys for the German and
   French layouts; a framebuffer console with UTF-8 and escape sequences.
 - A kernel debug shell (kernel option `kshell`).
@@ -236,8 +246,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     mounted volumes, and with `-w` volumes arriving and leaving), and
     `sysinfo` (the system at a glance beside its logo: kernel, uptime,
     shell, displays, terminal, processor, memory, disks, time zone)
-  - network tools: `ping` (`-c`, `-i`, `-W`, `-s`, `-t`, `-q`; replies and
-    the summary as iputils prints them), `ifconfig` (show; `ifconfig eth0
+  - network tools: `ping HOST` (a name or an address; `-c`, `-i`, `-W`,
+    `-s`, `-t`, `-q`; replies and the summary as iputils prints them),
+    `host` (`-t A|AAAA|CNAME|MX|NS|TXT|PTR|SOA|ANY`, `-v` as dig shows
+    answers, `-T`, a server to ask), `nslookup NAME [SERVER]`
+    (`-type=`), `hostname` (show, `-s`, `-i`, `-I`; set as root), `ifconfig` (show; `ifconfig eth0
     10.0.2.15/24 up`, `down`, `mtu`, `netmask`), `route` (show; `route add
     default gw 10.0.2.2`, `route del ...`) and `arp` (the ARP cache), in
     the manner of net-tools
@@ -250,7 +263,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   `make test` then runs `coretest` in user mode, which drives the shell and
   every utility through about 210 command lines and checks their output
   (networking included: `networktest` over loopback and over QEMU's user
-  network).
+  network, DHCP from QEMU, and `dnstest` against a DNS server of its
+  own).
 
 ## Requirements
 
@@ -406,7 +420,9 @@ userland/
                     the dialogs, asking for an administrator's password)
   systemsettings/   The system settings service's units (who may, what
                     it changes, what it remembers, its port)
-  networksetup/     The network service's units (the static configuration)
+  network/          The network service's units (settings, the DHCP client,
+                    its messages and leases, the interfaces, state files)
+  dnstest/          dnstest's DNS server and its fixed zone
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)

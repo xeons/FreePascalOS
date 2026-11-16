@@ -19,7 +19,7 @@
 {
   ping - send ICMP echo requests to a host
 
-  ping [-q] [-c COUNT] [-i INTERVAL] [-W TIMEOUT] [-s SIZE] [-t TTL] HOST
+  ping [-q] [-n] [-c COUNT] [-i INTERVAL] [-W TIMEOUT] [-s SIZE] [-t TTL] HOST
 
   Sends an echo request every INTERVAL seconds (1) and prints each
   reply as it comes, like iputils' ping; COUNT requests (all of them
@@ -32,8 +32,10 @@
   as they come.
 
   It uses an ICMP echo socket, which anyone may open (the kernel keeps
-  it to echo requests and their replies). The host is looked up by
-  Sys.HostNames (numeric addresses for now).
+  it to echo requests and their replies). HOST is a name or an address,
+  looked up by Sys.HostNames (/etc/hosts, then DNS); the first line
+  shows both, "PING name (address)", as iputils does. Replies are shown
+  by address (-n is taken and changes nothing).
 
   Exit status: 0 if a reply came, 1 if none did, 2 on errors.
 }
@@ -67,7 +69,8 @@ const
     '  -W TIMEOUT    seconds to wait for replies after the last request (10)'#10 +
     '  -s SIZE       bytes of data in each request (56)'#10 +
     '  -t TTL        time to live of the requests (64)'#10 +
-    '  -q            show only the summary'#10;
+    '  -q            show only the summary'#10 +
+    '  -n            numeric output (replies are always shown by address)'#10;
 
   OptionCount = 1;
   OptionInterval = 2;
@@ -75,6 +78,7 @@ const
   OptionSize = 4;
   OptionTimeToLive = 5;
   OptionQuiet = 6;
+  OptionNumeric = 7;
 
   IcmpHeaderBytes = 8;
   TimestampBytes = 8;
@@ -141,7 +145,8 @@ begin
     OptionDefinition('W', 'timeout', True, OptionTimeout),
     OptionDefinition('s', 'size', True, OptionSize),
     OptionDefinition('t', 'ttl', True, OptionTimeToLive),
-    OptionDefinition('q', 'quiet', False, OptionQuiet)], Usage);
+    OptionDefinition('q', 'quiet', False, OptionQuiet),
+    OptionDefinition('n', 'numeric', False, OptionNumeric)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionCount: ParseNumber(Value, 1, High(LongWord), 'count of packets to transmit', Count);
@@ -160,9 +165,12 @@ end;
 
 { The one place a host becomes an address (names: Sys.HostNames). }
 procedure ResolveDestination;
+var
+  Error: LongInt;
 begin
-  if LookUpHost(HostText, Destination) <> ErrorNone then
-    Fail(2, '%s: Name or service not known', [ArgumentText(HostText)]);
+  Error := LookUpHost(HostText, Destination);
+  if Error <> ErrorNone then
+    Fail(2, '%s: %s', [ArgumentText(HostText), ArgumentText(HostLookupErrorMessage(Error))]);
   FormatInternetAddress(Destination, @DestinationText[0], SizeOf(DestinationText));
 end;
 

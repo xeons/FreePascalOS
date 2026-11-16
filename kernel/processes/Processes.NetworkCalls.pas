@@ -19,8 +19,10 @@
 {
   System calls that list and configure the network: the interfaces,
   the routes, the ARP cache, the sockets and connections, and the DNS
-  servers (CallListNetworkInterfaces to CallSetDnsServers). Anyone may
-  list; changing is root's (ErrorNotPermitted), as for the clock.
+  servers (CallListNetworkInterfaces to CallSetDnsServers), and watching
+  them for changes (CallWatchNetworkChanges). Anyone may list and watch;
+  changing is root's (ErrorNotPermitted), as for the clock. Every change
+  made signals the watchers (Network.ChangeWatchers).
 
   A listing is made in a kernel buffer under the network lock and then
   copied out, so the program sees one consistent moment.
@@ -40,6 +42,7 @@ function PerformListArpEntries(BufferAddress, Capacity: QWord): Int64;
 function PerformListSockets(BufferAddress, Capacity: QWord): Int64;
 function PerformGetDnsServers(ServersAddress: QWord): Int64;
 function PerformSetDnsServers(ServersAddress: QWord): Int64;
+function PerformWatchNetworkChanges: Int64;
 
 implementation
 
@@ -50,7 +53,12 @@ uses
   Processes.Process,
   Processes.Thread,
   Processes.UserAccess,
+  Processes.Handles,
+  Kernel.Mutex,
+  Objects.Events,
+  Objects.Manager,
   Network.Core,
+  Network.ChangeWatchers,
   Network.Addresses,
   Network.Interfaces,
   Network.InterfaceConfiguration,
@@ -196,6 +204,8 @@ begin
   LockNetwork;
   Error := ConfigureInterface(Configuration);
   UnlockNetwork;
+  if Error = ErrorNone then
+    NoteNetworkChange;
   Result := Failure(Error);
 end;
 
@@ -238,6 +248,8 @@ begin
       Error := ErrorInvalidArgument;
     end;
   UnlockNetwork;
+  if Error = ErrorNone then
+    NoteNetworkChange;
   Result := Failure(Error);
 end;
 
@@ -259,7 +271,30 @@ begin
   Error := CopyFromUser(@Servers, ServersAddress, SizeOf(Servers));
   if Error = ErrorNone then
     Error := SetDnsServers(Servers);
+  if Error = ErrorNone then
+    NoteNetworkChange;
   Result := Failure(Error);
+end;
+
+function PerformWatchNetworkChanges: Int64;
+var
+  Process: PProcess;
+  Watcher: PEventObject;
+  Handle: Int64;
+begin
+  Watcher := CreateNetworkChangeWatcher;
+  if Watcher = nil then
+    Exit(Failure(ErrorOutOfMemory));
+  Process := CurrentProcess;
+  AcquireMutex(Process^.Lock);
+  Handle := InsertHandle(Process^.Handles, HandleKindEvent, Watcher, 0);
+  ReleaseMutex(Process^.Lock);
+  { The handle has its own reference (or none, if it could not be made);
+    the creation reference goes. }
+  DereferenceObject(Watcher);
+  if Handle < 0 then
+    Exit(Failure(ErrorTooManyHandles));
+  Result := Handle;
 end;
 
 end.

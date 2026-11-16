@@ -1,0 +1,5 @@
+# Names this machine knows without asking a DNS server: an address, then
+# its names (the first is its canonical name). Read by the resolver
+# (Sys.HostNames) before DNS.
+127.0.0.1	localhost localhost.localdomain
+::1		localhost ip6-localhost ip6-loopback
