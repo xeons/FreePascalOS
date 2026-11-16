@@ -21,15 +21,16 @@
 
   Each protocol has its own ports (an ICMP echo socket's port is the
   identifier of its echo requests). Two sockets of a protocol may not
-  bind the same port on overlapping addresses (one of them 0.0.0.0, or
-  both the same), unless:
+  bind the same port on overlapping addresses (one of them 0.0.0.0 or
+  ::, or both the same), unless:
     - UDP: both asked for SocketOptionReuseAddress;
     - TCP: the new one asked for it and the other is not listening (a
       connection waiting out TIME_WAIT, or one that is still closing);
     - both are bound to interfaces (SocketOptionInterface), different
       ones: a DHCP client has a socket on port 68 for each interface.
   TCP connections whose socket has gone still hold their port until
-  they are freed.
+  they are freed. IPv4 and IPv6 never overlap: a socket of each family
+  may have the same port.
 
   A port of 0 is given one from the dynamic range (49152-65535), taken
   in turn so that a port just let go is not handed out again at once.
@@ -52,10 +53,10 @@ const
 
 { True if Socket may bind Address:Port (with AllowReuse: as its
   SocketOptionReuseAddress allows). }
-function PortIsFree(Socket: PSocket; Address: TIpv4Address; Port: Word; AllowReuse: Boolean): Boolean;
+function PortIsFree(Socket: PSocket; constref Address: TNetworkEndpoint; Port: Word; AllowReuse: Boolean): Boolean;
 { A free port from the dynamic range for Socket on Address; 0 if every
   one is taken. }
-function ChooseDynamicPort(Socket: PSocket; Address: TIpv4Address): Word;
+function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint): Word;
 
 implementation
 
@@ -66,19 +67,21 @@ uses
 var
   NextDynamicPort: LongWord = FirstDynamicPort;
 
-function AddressesOverlap(First, Second: TIpv4Address): Boolean;
+function AddressesOverlap(constref First, Second: TNetworkEndpoint): Boolean;
 begin
-  Result := (First = AnyAddress) or (Second = AnyAddress) or (First = Second);
+  if First.Family <> Second.Family then
+    Exit(False);
+  Result := EndpointIsUnspecified(First) or EndpointIsUnspecified(Second) or EndpointAddressesEqual(First, Second);
 end;
 
-function ConflictsWithSocket(Socket, Other: PSocket; Address: TIpv4Address; Port: Word;
+function ConflictsWithSocket(Socket, Other: PSocket; constref Address: TNetworkEndpoint; Port: Word;
   AllowReuse: Boolean): Boolean;
 var
   Connection: PTcpConnection;
 begin
   Result := False;
   if (Other = Socket) or (Other^.Protocol <> Socket^.Protocol) or not Other^.IsBound or
-     (Other^.Local.Port <> Port) or not AddressesOverlap(Other^.Local.Address, Address) then
+     (Other^.Local.Port <> Port) or not AddressesOverlap(Other^.Local, Address) then
     Exit;
   if (Socket^.BoundInterface <> nil) and (Other^.BoundInterface <> nil) and
      (Socket^.BoundInterface <> Other^.BoundInterface) then
@@ -99,7 +102,8 @@ begin
 end;
 
 { A TCP connection without a socket that still has the port. }
-function ConflictsWithOrphan(Socket: PSocket; Address: TIpv4Address; Port: Word; AllowReuse: Boolean): Boolean;
+function ConflictsWithOrphan(Socket: PSocket; constref Address: TNetworkEndpoint; Port: Word;
+  AllowReuse: Boolean): Boolean;
 var
   Connection: PTcpConnection;
 begin
@@ -110,13 +114,13 @@ begin
   while Connection <> nil do
   begin
     if (Connection^.Socket = nil) and (Connection^.Listener = nil) and (Connection^.Local.Port = Port) and
-       AddressesOverlap(Connection^.Local.Address, Address) and not AllowReuse then
+       AddressesOverlap(Connection^.Local, Address) and not AllowReuse then
       Exit(True);
     Connection := NextTcpConnection(Connection);
   end;
 end;
 
-function PortIsFree(Socket: PSocket; Address: TIpv4Address; Port: Word; AllowReuse: Boolean): Boolean;
+function PortIsFree(Socket: PSocket; constref Address: TNetworkEndpoint; Port: Word; AllowReuse: Boolean): Boolean;
 var
   Other: PSocket;
 begin
@@ -130,7 +134,7 @@ begin
   Result := not ConflictsWithOrphan(Socket, Address, Port, AllowReuse);
 end;
 
-function ChooseDynamicPort(Socket: PSocket; Address: TIpv4Address): Word;
+function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint): Word;
 var
   Tries: LongWord;
   Candidate: Word;

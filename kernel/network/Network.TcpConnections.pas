@@ -50,9 +50,8 @@ function CreateConnectionBuffers(Connection: PTcpConnection): Boolean;
 procedure FreeTcpConnection(Connection: PTcpConnection);
 function FirstTcpConnection: PTcpConnection;
 function NextTcpConnection(Connection: PTcpConnection): PTcpConnection;
-function FindTcpConnection(LocalAddress: TIpv4Address; LocalPort: Word; RemoteAddress: TIpv4Address;
-  RemotePort: Word): PTcpConnection;
-function FindTcpListener(LocalAddress: TIpv4Address; LocalPort: Word): PTcpConnection;
+function FindTcpConnection(constref Local, Remote: TNetworkEndpoint): PTcpConnection;
+function FindTcpListener(constref Local: TNetworkEndpoint): PTcpConnection;
 function GenerateInitialSequence: LongWord;
 { Frees the out-of-order segments a connection keeps. }
 procedure DiscardOutOfOrder(Connection: PTcpConnection);
@@ -148,21 +147,19 @@ begin
   Result := PTcpConnection(ContainingRecord(Connection^.Link.Next, FieldOffset(PTcpConnection(nil)^.Link)));
 end;
 
-function FindTcpConnection(LocalAddress: TIpv4Address; LocalPort: Word; RemoteAddress: TIpv4Address;
-  RemotePort: Word): PTcpConnection;
+function FindTcpConnection(constref Local, Remote: TNetworkEndpoint): PTcpConnection;
 begin
   Result := FirstTcpConnection;
   while Result <> nil do
   begin
-    if not (Result^.State in [TcpClosed, TcpListen]) and (Result^.Local.Port = LocalPort) and
-       (Result^.Remote.Port = RemotePort) and (Result^.Local.Address = LocalAddress) and
-       (Result^.Remote.Address = RemoteAddress) then
+    if not (Result^.State in [TcpClosed, TcpListen]) and EndpointsEqual(Result^.Local, Local) and
+       EndpointsEqual(Result^.Remote, Remote) then
       Exit;
     Result := NextTcpConnection(Result);
   end;
 end;
 
-function FindTcpListener(LocalAddress: TIpv4Address; LocalPort: Word): PTcpConnection;
+function FindTcpListener(constref Local: TNetworkEndpoint): PTcpConnection;
 var
   Candidate: PTcpConnection;
 begin
@@ -170,11 +167,12 @@ begin
   Candidate := FirstTcpConnection;
   while Candidate <> nil do
   begin
-    if (Candidate^.State = TcpListen) and (Candidate^.Local.Port = LocalPort) then
+    if (Candidate^.State = TcpListen) and (Candidate^.Local.Family = Local.Family) and
+       (Candidate^.Local.Port = Local.Port) then
     begin
-      if Candidate^.Local.Address = LocalAddress then
+      if EndpointAddressesEqual(Candidate^.Local, Local) then
         Exit(Candidate);
-      if Candidate^.Local.Address = AnyAddress then
+      if EndpointIsUnspecified(Candidate^.Local) then
         Result := Candidate;
     end;
     Candidate := NextTcpConnection(Candidate);

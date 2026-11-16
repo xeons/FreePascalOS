@@ -781,6 +781,7 @@ begin
     CallChangeRoute: Result := PerformChangeRoute(Argument0, Argument1);
     CallListRoutes: Result := PerformListRoutes(Argument0, Argument1);
     CallListArpEntries: Result := PerformListArpEntries(Argument0, Argument1);
+    CallListNeighbors: Result := PerformListNeighbors(Argument0, Argument1);
     CallListSockets: Result := PerformListSockets(Argument0, Argument1);
     CallGetDnsServers: Result := PerformGetDnsServers(Argument0);
     CallSetDnsServers: Result := PerformSetDnsServers(Argument0);

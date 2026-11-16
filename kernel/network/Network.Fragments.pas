@@ -36,7 +36,8 @@ unit Network.Fragments;
 interface
 
 uses
-  Network.Ipv4;
+  Network.Ipv4,
+  Network.IpDatagrams;
 
 const
   MaximumReassemblies = 8;
@@ -47,7 +48,7 @@ const
   at Offset bytes into the payload. True once the datagram is whole:
   Whole is then a new kernel heap block holding it, a 20-byte header
   first, WholeLength bytes long, for the caller to free. }
-function AddFragment(constref Datagram: TIpv4Datagram; Identification: Word; Offset: LongWord;
+function AddFragment(constref Datagram: TIpDatagram; Identification: Word; Offset: LongWord;
   MoreFragments: Boolean; out Whole: PByte; out WholeLength: LongWord): Boolean;
 { On the network thread: drops what took too long. }
 procedure RunReassemblyTimers(Now: QWord);
@@ -94,7 +95,7 @@ begin
   Reassembly^.InUse := False;
 end;
 
-function FindReassembly(constref Datagram: TIpv4Datagram; Identification: Word): PReassembly;
+function FindReassembly(constref Datagram: TIpDatagram; Identification: Word): PReassembly;
 var
   Index: Integer;
   Free: PReassembly;
@@ -191,7 +192,7 @@ begin
   CopyMemory(Result + Ipv4HeaderBytes, Reassembly^.Payload, Reassembly^.PayloadLength);
 end;
 
-function AddFragment(constref Datagram: TIpv4Datagram; Identification: Word; Offset: LongWord;
+function AddFragment(constref Datagram: TIpDatagram; Identification: Word; Offset: LongWord;
   MoreFragments: Boolean; out Whole: PByte; out WholeLength: LongWord): Boolean;
 var
   Reassembly: PReassembly;

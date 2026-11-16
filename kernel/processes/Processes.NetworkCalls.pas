@@ -40,6 +40,7 @@ function PerformConfigureNetworkInterface(ConfigurationAddress: QWord): Int64;
 function PerformChangeRoute(Operation, RouteAddress: QWord): Int64;
 function PerformListRoutes(BufferAddress, Capacity: QWord): Int64;
 function PerformListArpEntries(BufferAddress, Capacity: QWord): Int64;
+function PerformListNeighbors(BufferAddress, Capacity: QWord): Int64;
 function PerformListSockets(BufferAddress, Capacity: QWord): Int64;
 function PerformGetDnsServers(ServersAddress: QWord): Int64;
 function PerformSetDnsServers(ServersAddress: QWord): Int64;
@@ -51,6 +52,7 @@ implementation
 uses
   Abi.SystemCalls,
   Runtime.Text,
+  Runtime.Memory,
   Memory.KernelHeap,
   Processes.Process,
   Processes.Thread,
@@ -65,13 +67,17 @@ uses
   Network.Interfaces,
   Network.InterfaceConfiguration,
   Network.Routing,
+  Network.Ipv6Addresses,
+  Network.Ipv6Types,
+  Network.Ipv6Routing,
   Network.Arp,
+  Network.NeighborCache,
   Network.SocketListing,
   Network.Statistics,
   Network.Dns;
 
 type
-  TListKind = (ListInterfaces, ListRoutes, ListArpEntries, ListSocketEntries);
+  TListKind = (ListInterfaces, ListRoutes, ListArpEntries, ListNeighborEntries, ListSocketEntries);
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -89,6 +95,7 @@ begin
     ListInterfaces: Result := SizeOf(TAbiNetworkInterface);
     ListRoutes: Result := SizeOf(TAbiRoute);
     ListArpEntries: Result := SizeOf(TAbiArpEntry);
+    ListNeighborEntries: Result := SizeOf(TAbiNeighborEntry);
   else
     Result := SizeOf(TAbiSocketInformation);
   end;
@@ -99,6 +106,7 @@ end;
 function FillRecords(Kind: TListKind; Records: PByte; Capacity: LongWord): LongWord;
 var
   Position: LongWord;
+  Ipv4Count: LongWord;
 begin
   LockNetwork;
   case Kind of
@@ -114,11 +122,16 @@ begin
       end;
     ListRoutes:
       begin
-        Result := RouteCount;
+        { IPv4's routes, then IPv6's. }
+        Ipv4Count := RouteCount;
+        Result := Ipv4Count + LongWord(Ipv6RouteCount);
         Position := 0;
         while (Position < Result) and (Position < Capacity) do
         begin
-          DescribeRoute(Position, PAbiRoute(Records)[Position]);
+          if Position < Ipv4Count then
+            DescribeRoute(Position, PAbiRoute(Records)[Position])
+          else
+            DescribeIpv6Route(Position - Ipv4Count, PAbiRoute(Records)[Position]);
           Inc(Position);
         end;
       end;
@@ -129,6 +142,16 @@ begin
         while (Position < Result) and (Position < Capacity) do
         begin
           DescribeArpEntry(Position, PAbiArpEntry(Records)[Position]);
+          Inc(Position);
+        end;
+      end;
+    ListNeighborEntries:
+      begin
+        Result := NeighborEntryCount;
+        Position := 0;
+        while (Position < Result) and (Position < Capacity) do
+        begin
+          DescribeNeighborEntry(Position, PAbiNeighborEntry(Records)[Position]);
           Inc(Position);
         end;
       end;
@@ -189,6 +212,11 @@ begin
   Result := PerformListing(ListArpEntries, BufferAddress, Capacity);
 end;
 
+function PerformListNeighbors(BufferAddress, Capacity: QWord): Int64;
+begin
+  Result := PerformListing(ListNeighborEntries, BufferAddress, Capacity);
+end;
+
 function PerformListSockets(BufferAddress, Capacity: QWord): Int64;
 begin
   Result := PerformListing(ListSocketEntries, BufferAddress, Capacity);
@@ -212,6 +240,28 @@ begin
   Result := Failure(Error);
 end;
 
+{ An IPv6 route added or removed (under the lock). }
+function ChangeIpv6Route(Operation: QWord; constref Route: TAbiRoute; NetworkInterface: PNetworkInterface): LongInt;
+var
+  Destination: TIpv6Address;
+  Gateway: TIpv6Address;
+begin
+  CopyMemory(@Destination[0], @Route.Destination.Address[0], Ipv6AddressLength);
+  CopyMemory(@Gateway[0], @Route.Gateway[0], Ipv6AddressLength);
+  case Operation of
+    RouteAdd:
+      if IsUnspecifiedIpv6Address(Gateway) and (NetworkInterface = nil) then
+        Result := ErrorInvalidArgument
+      else
+        Result := AddIpv6Route(Destination, Route.Destination.PrefixLength, Gateway, NetworkInterface, 0,
+          Route.Metric, Ipv6Forever);
+    RouteRemove:
+      Result := RemoveIpv6Route(Destination, Route.Destination.PrefixLength, Gateway, NetworkInterface);
+  else
+    Result := ErrorInvalidArgument;
+  end;
+end;
+
 function PerformChangeRoute(Operation, RouteAddress: QWord): Int64;
 var
   Route: TAbiRoute;
@@ -226,7 +276,7 @@ begin
   Error := CopyFromUser(@Route, RouteAddress, SizeOf(Route));
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  if Route.Destination.Family <> AddressFamilyIPv4 then
+  if (Route.Destination.Family <> AddressFamilyIPv4) and (Route.Destination.Family <> AddressFamilyIPv6) then
     Exit(Failure(ErrorAddressFamilyNotSupported));
   Destination := ReadIpv4Address(@Route.Destination.Address[0]);
   Gateway := ReadIpv4Address(@Route.Gateway[0]);
@@ -237,6 +287,8 @@ begin
     NetworkInterface := FindInterfaceByName(@Name[0]);
   if (Name[0] <> #0) and (NetworkInterface = nil) then
     Error := ErrorNoDevice
+  else if Route.Destination.Family = AddressFamilyIPv6 then
+    Error := ChangeIpv6Route(Operation, Route, NetworkInterface)
   else
     case Operation of
       RouteAdd:

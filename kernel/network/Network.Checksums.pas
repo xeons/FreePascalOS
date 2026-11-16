@@ -19,9 +19,9 @@
 {
   The Internet checksum (RFC 1071): the ones' complement of the ones'
   complement sum of the data as 16-bit big-endian words, an odd last
-  byte padded with zero. IPv4 headers, ICMP, UDP and TCP use it; UDP and
-  TCP also sum a pseudo-header (source and destination address, the
-  protocol and the length) in front of their data.
+  byte padded with zero. IPv4 headers, ICMP, ICMPv6, UDP and TCP use it;
+  UDP, TCP and ICMPv6 also sum a pseudo-header (source and destination
+  address, the protocol and the length) in front of their data.
 
   A sum is built in a 32-bit accumulator (AddToChecksum, which may be
   called for several pieces as long as every piece but the last has an
@@ -46,6 +46,10 @@ function InternetChecksum(Data: PByte; Length: LongWord): Word;
 { Starts a UDP or TCP checksum with the IPv4 pseudo-header (addresses in
   host order). }
 function PseudoHeaderSum(Source, Destination: LongWord; Protocol: Byte; Length: LongWord): LongWord;
+{ Starts a UDP, TCP or ICMPv6 checksum with the IPv6 pseudo-header
+  (RFC 8200 8.1: the addresses as on the wire, the upper-layer length
+  as 32 bits and the next header value). }
+function Ipv6PseudoHeaderSum(Source, Destination: PByte; NextHeader: Byte; Length: LongWord): LongWord;
 
 implementation
 
@@ -87,6 +91,19 @@ var
 begin
   Total := (Source shr 16) + (Source and $FFFF) + (Destination shr 16) + (Destination and $FFFF) +
     Protocol + Length;
+  Result := LongWord(Total);
+end;
+
+function Ipv6PseudoHeaderSum(Source, Destination: PByte; NextHeader: Byte; Length: LongWord): LongWord;
+var
+  Sum: LongWord;
+  Total: QWord;
+begin
+  Sum := AddToChecksum(ChecksumStart, Source, 16);
+  Sum := AddToChecksum(Sum, Destination, 16);
+  Total := QWord(Sum) + (Length shr 16) + (Length and $FFFF) + NextHeader;
+  while (Total shr 32) <> 0 do
+    Total := (Total and $FFFFFFFF) + (Total shr 32);
   Result := LongWord(Total);
 end;
 

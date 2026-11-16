@@ -47,7 +47,7 @@ uses
 procedure DescribeConnection(Connection: PTcpConnection; out Description: TAbiSocketInformation);
 begin
   FillMemory(@Description, SizeOf(Description), 0);
-  Description.Family := AddressFamilyIPv4;
+  Description.Family := Connection^.Local.Family;
   Description.Kind := SocketKindStream;
   Description.Protocol := ProtocolTcp;
   Description.State := AbiTcpState(Connection^.State);
@@ -66,12 +66,12 @@ begin
   begin
     DescribeConnection(Connection, Description);
     if Connection^.State = TcpListen then
-      Description.PeerAddress.Family := AddressFamilyIPv4;
+      Description.PeerAddress.Family := Socket^.Family;
   end
   else
   begin
     FillMemory(@Description, SizeOf(Description), 0);
-    Description.Family := AddressFamilyIPv4;
+    Description.Family := Socket^.Family;
     Description.Kind := Socket^.Kind;
     case Socket^.Protocol of
       SocketProtocolTcp:
@@ -80,6 +80,8 @@ begin
           Description.State := TcpStateClosed;
         end;
       SocketProtocolUdp: Description.Protocol := ProtocolUdp;
+    else if Socket^.Family = AddressFamilyIPv6 then
+      Description.Protocol := ProtocolIcmpv6
     else
       Description.Protocol := ProtocolIcmp;
     end;
