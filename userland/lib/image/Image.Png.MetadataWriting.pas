@@ -57,9 +57,9 @@ uses
 
 const
   ProfileName = 'ICC Profile';
-  DerivedKeys: array[0..7] of string = (MetadataKeyColorSpace, MetadataKeyGamma, MetadataKeyChromaticities,
+  DerivedKeys: array[0..8] of string = (MetadataKeyColorSpace, MetadataKeyGamma, MetadataKeyChromaticities,
     MetadataKeyRenderingIntent, MetadataKeyModificationTime, MetadataKeyHotspotX, MetadataKeyHotspotY,
-    MetadataKeyPageCount);
+    MetadataKeyPageCount, MetadataKeyCompression);
   RenderingIntentNames: array[0..3] of string = ('Perceptual', 'RelativeColorimetric', 'Saturation',
     'AbsoluteColorimetric');
   OrientationTag = $0112;

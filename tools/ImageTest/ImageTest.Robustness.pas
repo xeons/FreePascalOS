@@ -43,13 +43,15 @@ uses
   ImageTest.Checks;
 
 const
-  Fixtures: array[0..26] of string = (
+  Fixtures: array[0..37] of string = (
     'bmp1.bmp', 'bmp4.bmp', 'bmp8-core.bmp', 'bmp16-565.bmp', 'bmp24.bmp', 'bmp32-v5.bmp',
     'bmp32-alphabitfields.bmp', 'bmp-rle8.bmp', 'bmp-rle4.bmp', 'bmp32-profile.bmp', 'dib4.dib',
     'icon-multi.ico', 'pointer.cur', 'icon-png-mixed.ico', 'icon-png-only.ico', 'anim.gif', 'noise.gif',
     'png-c0-d1-i.png', 'png-c3-d4.png', 'png-c6-d16-i.png', 'png-c2-d8.png', 'png-trns-rgb16.png',
     'png-metadata.png', 'png-idat-bytes.png', 'apng-default-frame.png', 'apng-default-separate.png',
-    'apng-palette.png');
+    'apng-palette.png', 'webp-lossless-best.webp', 'webp-lossless-palette4.webp', 'webp-lossless-alpha.webp',
+    'webp-lossless-smooth.webp', 'webp-lossy-q75.webp', 'webp-lossy-large.webp', 'webp-lossy-alpha.webp',
+    'webp-alpha-filter-3.webp', 'webp-anim-flags.webp', 'webp-anim-mixed.webp', 'webp-metadata.webp');
   CutsPerFile = 24;
   DamagesPerFile = 40;
 

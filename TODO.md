@@ -498,7 +498,9 @@ normalized (0-65535), not pixels.
   - [x] TIFF: CCITT RLE, Group 3 (1D/2D) and Group 4, the floating point
         predictor and 16/32-bit float samples (tone mapped to 8 bits),
         old-style JPEG (interchange-format streams and a stream a strip)
-  - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
+  - [x] WebP (lossy VP8, lossless VP8L, alpha, animation; ICC, EXIF
+        orientation, XMP; writing lossless, animations included)
+  - [ ] WebP: lossy writing (VP8 encoder)
   - [ ] JPEG XL (VarDCT and modular modes, animation)
   - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
     through pools; AVIF, the same HEIF container with royalty-free AV1, can

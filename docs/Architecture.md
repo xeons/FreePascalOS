@@ -5790,9 +5790,56 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   orientation, profile and the three texts; `EncodeTiffPages` writes
   several pages, the registered encoder one, deflate with the
   predictor.
+- *WebP* (`Image.WebP.*`, with libcompression's Huffman code builder
+  for writing): the RIFF container (`Image.WebP.Container` lists the
+  chunks without copying; a chunk cut short ends the list) in its
+  simple form (one VP8 or VP8L chunk) and extended form (VP8X with the
+  canvas size, ICCP as the profile, EXIF's orientation, XMP as the
+  metadata key `XML:com.adobe.xmp`, ALPH, ANIM and ANMF). Lossless
+  (`Image.WebP.LosslessDecoder`, RFC 9649): the four transforms
+  (predictor with its fourteen modes per tile, colour, subtract green,
+  colour indexing with 1, 2, 4 or 8 bits per index), the colour cache,
+  meta prefix codes (groups of five codes chosen per tile; only the
+  groups some tile uses get tables), LZ77 with 2-D distance codes, and
+  canonical prefix codes of up to 15 bits decoded through two-level
+  tables (`Image.WebP.PrefixCodes`, only complete codes accepted, as
+  libwebp does). Lossy (`Image.WebP.LossyDecoder`, RFC 6386 key
+  frames): the boolean decoder with libwebp's arithmetic (its sign
+  bits included), segments, one to eight token partitions, 16x16 and
+  4x4 intra modes and the chroma modes predicted in a work block from
+  the unfiltered pixels around it (127 above the picture, 129 to its
+  left), dequantisation, the Walsh-Hadamard and DCT inverse transforms
+  with libwebp's shortcuts, and the simple and normal loop filters
+  over the whole frame once it is decoded. `Image.WebP.YuvConversion`
+  turns the 4:2:0 planes into colours with libwebp's fancy upsampling
+  (line pairs, 9-3-3-1 weights) and its 14-bit BT.601 arithmetic, so a
+  lossy picture comes out as libwebp (and Pillow) decodes it, pixel for
+  pixel. ALPH (`Image.WebP.Alpha`): raw or a headerless VP8L stream
+  (alpha in green), the horizontal, vertical and gradient filters; the
+  level reduction is only a hint. An animation is a `TAnimatedImage`:
+  ANMF offsets (in two pixel steps), durations, dispose to transparent
+  or not, blend by alpha or replace; ANIM's loop count and background
+  colour (kept, not drawn, as libwebp's own decoder ignores it); a
+  frame that is broken or cut short ends the animation there, keeping
+  the frames before it, and so does one past a budget of 512 million
+  pixels for all the frames together (a few bytes of VP8L can describe
+  a large frame of one colour). libwebp blends translucent frame pixels with
+  coarser rounding than libdrawing, so such frames as seen may differ
+  slightly (most where both pixels are nearly transparent). The
+  metadata key `Compression` says `lossy`, `lossless` or `lossy and
+  lossless`. Writing (`Image.WebP.Writing`) is lossless: green
+  subtracted, a predictor mode per 16x16 tile (the one leaving the
+  smallest residuals), LZ77 through hash chains with 2-D distance codes,
+  one group of prefix codes (`Image.WebP.LosslessEncoder`,
+  `Image.WebP.PrefixCodeWriting`, `Image.WebP.BackwardReferences`);
+  a simple file, or VP8X with ICCP, EXIF (the orientation) and XMP; a
+  `TAnimatedImage` as ANIM and ANMF frames, every frame written whole as
+  seen when one starts at an odd offset or puts the canvas back (which
+  WebP cannot say). Pictures over 16384 pixels a side cannot be written
+  (VP8L's limit).
 
 `imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
-orientation, resolution, profile and a TIFF's pages.
+orientation, resolution, profile, a WebP's compression and a TIFF's pages.
 
 **Colour management** (`Image.ColorProfiles`, `TImage.ConvertToSrgb`,
 `LoadImage`'s `ImageLoadConvertToSrgb`) converts an image from its ICC
@@ -5879,7 +5926,18 @@ and PNG gAMA/cHRM files are compared with conversions worked out in
 the script. Damaged profiles must convert or be refused. Resampling is
 compared with Pillow's resize (Lanczos and bilinear shrinking and
 enlarging, box shrinking; within 2), and checked for flat colours, no
-dark fringes at transparent edges and the kernels' values. PNG image data is also damaged
+dark fringes at transparent edges and the kernels' values. WebPs (`make-webp-fixtures.py`)
+come from Pillow (lossless with every palette size and the encoder's
+fastest and most thorough settings, lossy at qualities 10 to 100 and odd
+and tiny sizes, alpha, metadata, animations) and from libwebp through
+ctypes when it can be loaded (the simple loop filter, sharpness, four
+token partitions, one segment, raw alpha); ALPH chunks with each filter
+and animations with every blend and dispose flag are put together from
+their parts. Their references are Pillow's decoding (libwebp's):
+lossless and lossy alike must match within one step (lossy is meant to
+be exact), frames as seen too (translucent frames by premultiplied
+colour), and written WebPs must give Pillow every frame as written.
+PNG image data is also damaged
 behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged

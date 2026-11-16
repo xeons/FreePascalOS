@@ -60,7 +60,8 @@ type
     ImageFormatGif,
     ImageFormatJpeg,
     ImageFormatPng,
-    ImageFormatTiff
+    ImageFormatTiff,
+    ImageFormatWebp
   );
 
   TImageDecoder = class
@@ -138,6 +139,7 @@ begin
     ImageFormatJpeg: Result := 'JPEG';
     ImageFormatPng: Result := 'PNG';
     ImageFormatTiff: Result := 'TIFF';
+    ImageFormatWebp: Result := 'WebP';
   else
     Result := 'unknown';
   end;
@@ -166,6 +168,8 @@ begin
     Result := ImageFormatPng
   else if (Lower = 'tiff') or (Lower = 'tif') then
     Result := ImageFormatTiff
+  else if Lower = 'webp' then
+    Result := ImageFormatWebp
   else
     Result := ImageFormatUnknown;
 end;

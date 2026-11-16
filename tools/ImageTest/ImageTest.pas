@@ -52,6 +52,7 @@ uses
   ImageTest.Tiff,
   ImageTest.ColorProfiles,
   ImageTest.Resampling,
+  ImageTest.WebP,
   ImageTest.Robustness;
 
 begin
@@ -74,6 +75,7 @@ begin
   TestTiff;
   TestColorProfiles;
   TestResampling;
+  TestWebP;
   TestRobustness;
   FinishChecks('ImageTest');
 end.
