@@ -28,7 +28,10 @@
   seen before they are flushed, two writers keeping both changes, others'
   changes noticed, a damaged group not written over
   (Configuration.Scopes); and the user's settings over the system's over
-  the defaults, with fixed values (Configuration.Settings); the network's
+  the defaults, with fixed values (Configuration.Settings); change
+  notification - snapshots compared, bursts of file changes coalesced,
+  safe writes' renames, rewrites that change nothing kept silent
+  (SettingsTest.Changes); the network's
   settings and the network service's state files
   (SettingsTest.Network). Every check
   prints a line; the exit code is 1 if any failed.
@@ -52,7 +55,8 @@ uses
   Configuration.Scopes,
   Configuration.Settings,
   SettingsTest.MemoryStorage,
-  SettingsTest.Network;
+  SettingsTest.Network,
+  SettingsTest.Changes;
 
 var
   Failures: Integer = 0;
@@ -523,6 +527,7 @@ begin
   TestDamagedDocuments;
   TestScopes;
   TestLayers;
+  TestChangeDetection(@Check);
   TestNetworkSettings(@Check);
   TestNetworkState(@Check);
   WriteLn('[settings] ', Checks - Failures, ' passed, ', Failures, ' failed');
