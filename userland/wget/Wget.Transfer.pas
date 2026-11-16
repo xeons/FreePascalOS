@@ -386,6 +386,10 @@ begin
     Exit(AttemptRetry);
   end;
   Say(Fetch, 'HTTP request sent, awaiting response... ');
+  { With -S the response's head follows on lines of its own, as GNU wget
+    shows it. }
+  if Fetch.Settings.ShowServerResponse then
+    Say(Fetch, #10);
   Head := ReceiveResponseHead(Connection, Fetch.Settings, Response);
   case Head of
     HeadReceived:
