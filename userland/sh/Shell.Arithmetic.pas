@@ -30,121 +30,155 @@
 unit Shell.Arithmetic;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 { Evaluates Text; False on a syntax error or division by zero. }
-function EvaluateArithmetic(Text: PChar; out Value: Int64): Boolean;
+function EvaluateArithmetic(const Text: string; out Value: Int64): Boolean;
 
 implementation
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Text,
+  Shell.Text,
   Shell.Variables;
 
 type
-  TEvaluator = record
-    Text: PChar;
-    Position: PtrUInt;
-    Failed: Boolean;
+  { A recursive descent evaluator: one method per precedence level. }
+  TArithmeticEvaluator = class
+  private
+    FText: string;
+    FPosition: Integer;
+    FFailed: Boolean;
+    function Peek(Offset: Integer = 0): Char;
+    procedure SkipBlanks;
+    function Accept(const Symbol: string): Boolean;
+    function ReadName: string;
+    function ParsePrimary: Int64;
+    function ParseProduct: Int64;
+    function ParseSum: Int64;
+    function ParseComparison: Int64;
+    function ParseEquality: Int64;
+    function ParseAnd: Int64;
+    function ParseOr: Int64;
+    function ParseAssignment: Int64;
+  public
+    constructor Create(const Text: string);
+    function Evaluate(out Value: Int64): Boolean;
   end;
 
-procedure SkipBlanks(var Evaluator: TEvaluator);
-begin
-  while IsSpace(Evaluator.Text[Evaluator.Position]) do
-    Inc(Evaluator.Position);
-end;
-
-{ Consumes Symbol if it comes next. }
-function Accept(var Evaluator: TEvaluator; Symbol: PChar): Boolean;
+{ The variable's value as a number; 0 if unset or not a number. }
+function NumericValue(const Name: string): Int64;
 var
-  Length: PtrUInt;
+  Text: string;
 begin
-  SkipBlanks(Evaluator);
-  Length := TextLength(Symbol);
-  Result := TextStartsWith(Evaluator.Text + Evaluator.Position, Symbol);
-  { Do not take "<" from "<=", or "=" alone. }
-  if Result and (Length = 1) and (Symbol[0] in ['<', '>', '!']) and
-     (Evaluator.Text[Evaluator.Position + 1] = '=') then
-    Result := False;
-  if Result and (Length = 1) and (Symbol[0] in ['|', '&']) and
-     (Evaluator.Text[Evaluator.Position + 1] = Symbol[0]) then
-    Result := False;
-  if Result then
-    Inc(Evaluator.Position, Length);
-end;
-
-function ParseOr(var Evaluator: TEvaluator): Int64; forward;
-
-function ParsePrimary(var Evaluator: TEvaluator): Int64;
-var
-  Start: PtrUInt;
-  Name: array[0..127] of Char;
-  Length: PtrUInt;
-  VariableValue: PChar;
-begin
-  Result := 0;
-  SkipBlanks(Evaluator);
-  if Accept(Evaluator, '(') then
-  begin
-    Result := ParseOr(Evaluator);
-    if not Accept(Evaluator, ')') then
-      Evaluator.Failed := True;
-    Exit;
-  end;
-  if Accept(Evaluator, '-') then
-    Exit(-ParsePrimary(Evaluator));
-  if Accept(Evaluator, '+') then
-    Exit(ParsePrimary(Evaluator));
-  if Accept(Evaluator, '!') then
-    Exit(Ord(ParsePrimary(Evaluator) = 0));
-
-  if Evaluator.Text[Evaluator.Position] = '$' then
-    Inc(Evaluator.Position);
-  Start := Evaluator.Position;
-  if IsDigit(Evaluator.Text[Start]) then
-  begin
-    while IsDigit(Evaluator.Text[Evaluator.Position]) do
-    begin
-      Result := Result * 10 + Ord(Evaluator.Text[Evaluator.Position]) - Ord('0');
-      Inc(Evaluator.Position);
-    end;
-    Exit;
-  end;
-  while IsAlphanumeric(Evaluator.Text[Evaluator.Position]) or (Evaluator.Text[Evaluator.Position] = '_') do
-    Inc(Evaluator.Position);
-  Length := Evaluator.Position - Start;
-  if (Length = 0) or (Length >= SizeOf(Name)) then
-  begin
-    Evaluator.Failed := True;
-    Exit;
-  end;
-  CopyText(@Name[0], Evaluator.Text + Start, Length + 1);
-  VariableValue := LookupVariable(@Name[0]);
-  if (VariableValue = nil) or not ParseInteger(VariableValue, Result) then
+  if not FindVariable(Name, Text) or not TryParseInteger(Text, Result) then
     Result := 0;
 end;
 
-function ParseProduct(var Evaluator: TEvaluator): Int64;
+constructor TArithmeticEvaluator.Create(const Text: string);
+begin
+  inherited Create;
+  FText := TextBeforeNull(Text);
+  FPosition := 1;
+end;
+
+function TArithmeticEvaluator.Peek(Offset: Integer): Char;
+begin
+  Result := CharAt(FText, FPosition + Offset);
+end;
+
+procedure TArithmeticEvaluator.SkipBlanks;
+begin
+  while IsSpace(Peek) do
+    Inc(FPosition);
+end;
+
+{ Consumes Symbol if it comes next. }
+function TArithmeticEvaluator.Accept(const Symbol: string): Boolean;
+begin
+  SkipBlanks;
+  Result := Copy(FText, FPosition, Length(Symbol)) = Symbol;
+  { Do not take "<" from "<=", or "=" alone. }
+  if Result and (Length(Symbol) = 1) and (Symbol[1] in ['<', '>', '!']) and (Peek(1) = '=') then
+    Result := False;
+  if Result and (Length(Symbol) = 1) and (Symbol[1] in ['|', '&']) and (Peek(1) = Symbol[1]) then
+    Result := False;
+  if Result then
+    Inc(FPosition, Length(Symbol));
+end;
+
+{ Letters, digits and '_' from the current position (possibly none). }
+function TArithmeticEvaluator.ReadName: string;
+var
+  Start: Integer;
+begin
+  Start := FPosition;
+  while IsNameCharacter(Peek) do
+    Inc(FPosition);
+  Result := Copy(FText, Start, FPosition - Start);
+end;
+
+function TArithmeticEvaluator.ParsePrimary: Int64;
+var
+  Name: string;
+begin
+  Result := 0;
+  SkipBlanks;
+  if Accept('(') then
+  begin
+    Result := ParseOr;
+    if not Accept(')') then
+      FFailed := True;
+    Exit;
+  end;
+  if Accept('-') then
+    Exit(-ParsePrimary());
+  if Accept('+') then
+    Exit(ParsePrimary());
+  if Accept('!') then
+    Exit(Ord(ParsePrimary() = 0));
+
+  if Peek = '$' then
+    Inc(FPosition);
+  if IsDigit(Peek) then
+  begin
+    while IsDigit(Peek) do
+    begin
+      Result := Result * 10 + Ord(Peek) - Ord('0');
+      Inc(FPosition);
+    end;
+    Exit;
+  end;
+  Name := ReadName;
+  if Name = '' then
+  begin
+    FFailed := True;
+    Exit;
+  end;
+  Result := NumericValue(Name);
+end;
+
+function TArithmeticEvaluator.ParseProduct: Int64;
 var
   Right: Int64;
 begin
-  Result := ParsePrimary(Evaluator);
-  while not Evaluator.Failed do
+  Result := ParsePrimary;
+  while not FFailed do
   begin
-    if Accept(Evaluator, '*') then
-      Result := Result * ParsePrimary(Evaluator)
-    else if Accept(Evaluator, '/') or Accept(Evaluator, '%') then
+    if Accept('*') then
+      Result := Result * ParsePrimary
+    else if Accept('/') or Accept('%') then
     begin
-      Right := ParsePrimary(Evaluator);
+      Right := ParsePrimary;
       if Right = 0 then
       begin
-        Evaluator.Failed := True;
+        FFailed := True;
         Exit;
       end;
-      if Evaluator.Text[Evaluator.Position - 1] = '/' then
+      if CharAt(FText, FPosition - 1) = '/' then
         Result := Result div Right
       else
         Result := Result mod Right;
@@ -154,119 +188,108 @@ begin
   end;
 end;
 
-function ParseSum(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseSum: Int64;
 begin
-  Result := ParseProduct(Evaluator);
-  while not Evaluator.Failed do
+  Result := ParseProduct;
+  while not FFailed do
   begin
-    if Accept(Evaluator, '+') then
-      Result := Result + ParseProduct(Evaluator)
-    else if Accept(Evaluator, '-') then
-      Result := Result - ParseProduct(Evaluator)
+    if Accept('+') then
+      Result := Result + ParseProduct
+    else if Accept('-') then
+      Result := Result - ParseProduct
     else
       Break;
   end;
 end;
 
-function ParseComparison(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseComparison: Int64;
 begin
-  Result := ParseSum(Evaluator);
-  while not Evaluator.Failed do
+  Result := ParseSum;
+  while not FFailed do
   begin
-    if Accept(Evaluator, '<=') then
-      Result := Ord(Result <= ParseSum(Evaluator))
-    else if Accept(Evaluator, '>=') then
-      Result := Ord(Result >= ParseSum(Evaluator))
-    else if Accept(Evaluator, '<') then
-      Result := Ord(Result < ParseSum(Evaluator))
-    else if Accept(Evaluator, '>') then
-      Result := Ord(Result > ParseSum(Evaluator))
+    if Accept('<=') then
+      Result := Ord(Result <= ParseSum)
+    else if Accept('>=') then
+      Result := Ord(Result >= ParseSum)
+    else if Accept('<') then
+      Result := Ord(Result < ParseSum)
+    else if Accept('>') then
+      Result := Ord(Result > ParseSum)
     else
       Break;
   end;
 end;
 
-function ParseEquality(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseEquality: Int64;
 begin
-  Result := ParseComparison(Evaluator);
-  while not Evaluator.Failed do
+  Result := ParseComparison;
+  while not FFailed do
   begin
-    if Accept(Evaluator, '==') then
-      Result := Ord(Result = ParseComparison(Evaluator))
-    else if Accept(Evaluator, '!=') then
-      Result := Ord(Result <> ParseComparison(Evaluator))
+    if Accept('==') then
+      Result := Ord(Result = ParseComparison)
+    else if Accept('!=') then
+      Result := Ord(Result <> ParseComparison)
     else
       Break;
   end;
 end;
 
-function ParseAnd(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseAnd: Int64;
 var
   Right: Int64;
 begin
-  Result := ParseEquality(Evaluator);
-  while not Evaluator.Failed and Accept(Evaluator, '&&') do
+  Result := ParseEquality;
+  while not FFailed and Accept('&&') do
   begin
-    Right := ParseEquality(Evaluator);
+    Right := ParseEquality;
     Result := Ord((Result <> 0) and (Right <> 0));
   end;
 end;
 
-function ParseOr(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseOr: Int64;
 var
   Right: Int64;
 begin
-  Result := ParseAnd(Evaluator);
-  while not Evaluator.Failed and Accept(Evaluator, '||') do
+  Result := ParseAnd;
+  while not FFailed and Accept('||') do
   begin
-    Right := ParseAnd(Evaluator);
+    Right := ParseAnd;
     Result := Ord((Result <> 0) or (Right <> 0));
   end;
 end;
 
 { NAME op= expression, or an ordinary expression. }
-function ParseAssignment(var Evaluator: TEvaluator): Int64;
+function TArithmeticEvaluator.ParseAssignment: Int64;
 var
-  Saved: PtrUInt;
-  Start: PtrUInt;
-  Name: array[0..127] of Char;
-  Length: PtrUInt;
+  Saved: Integer;
+  Name: string;
   Operation: Char;
   Current: Int64;
   Right: Int64;
-  CurrentText: PChar;
-  NumberText: TNumberText;
 begin
-  Saved := Evaluator.Position;
-  SkipBlanks(Evaluator);
-  Start := Evaluator.Position;
-  while IsAlphanumeric(Evaluator.Text[Evaluator.Position]) or (Evaluator.Text[Evaluator.Position] = '_') do
-    Inc(Evaluator.Position);
-  Length := Evaluator.Position - Start;
-  if (Length > 0) and (Length < SizeOf(Name)) and not IsDigit(Evaluator.Text[Start]) then
+  Saved := FPosition;
+  SkipBlanks;
+  Name := ReadName;
+  if (Name <> '') and not IsDigit(Name[1]) then
   begin
-    SkipBlanks(Evaluator);
+    SkipBlanks;
     Operation := #0;
-    if (Evaluator.Text[Evaluator.Position] = '=') and (Evaluator.Text[Evaluator.Position + 1] <> '=') then
+    if (Peek = '=') and (Peek(1) <> '=') then
     begin
       Operation := '=';
-      Inc(Evaluator.Position);
+      Inc(FPosition);
     end
-    else if (Evaluator.Text[Evaluator.Position] in ['+', '-', '*', '/', '%']) and
-            (Evaluator.Text[Evaluator.Position + 1] = '=') then
+    else if (Peek in ['+', '-', '*', '/', '%']) and (Peek(1) = '=') then
     begin
-      Operation := Evaluator.Text[Evaluator.Position];
-      Inc(Evaluator.Position, 2);
+      Operation := Peek;
+      Inc(FPosition, 2);
     end;
     if Operation <> #0 then
     begin
-      CopyText(@Name[0], Evaluator.Text + Start, Length + 1);
-      Right := ParseAssignment(Evaluator);
-      if Evaluator.Failed then
+      Right := ParseAssignment();
+      if FFailed then
         Exit(0);
-      CurrentText := LookupVariable(@Name[0]);
-      if (CurrentText = nil) or not ParseInteger(CurrentText, Current) then
-        Current := 0;
+      Current := NumericValue(Name);
       case Operation of
         '=': Current := Right;
         '+': Current := Current + Right;
@@ -276,7 +299,7 @@ begin
         begin
           if Right = 0 then
           begin
-            Evaluator.Failed := True;
+            FFailed := True;
             Exit(0);
           end;
           if Operation = '/' then
@@ -285,24 +308,33 @@ begin
             Current := Current mod Right;
         end;
       end;
-      AssignVariable(@Name[0], FormatSignedDecimal(Current, NumberText));
+      AssignVariable(Name, IntToStr(Current));
       Exit(Current);
     end;
   end;
-  Evaluator.Position := Saved;
-  Result := ParseOr(Evaluator);
+  FPosition := Saved;
+  Result := ParseOr;
 end;
 
-function EvaluateArithmetic(Text: PChar; out Value: Int64): Boolean;
-var
-  Evaluator: TEvaluator;
+function TArithmeticEvaluator.Evaluate(out Value: Int64): Boolean;
 begin
-  Evaluator.Text := Text;
-  Evaluator.Position := 0;
-  Evaluator.Failed := False;
-  Value := ParseAssignment(Evaluator);
-  SkipBlanks(Evaluator);
-  Result := not Evaluator.Failed and (Evaluator.Text[Evaluator.Position] = #0);
+  FPosition := 1;
+  FFailed := False;
+  Value := ParseAssignment;
+  SkipBlanks;
+  Result := not FFailed and (Peek = #0);
+end;
+
+function EvaluateArithmetic(const Text: string; out Value: Int64): Boolean;
+var
+  Evaluator: TArithmeticEvaluator;
+begin
+  Evaluator := TArithmeticEvaluator.Create(Text);
+  try
+    Result := Evaluator.Evaluate(Value);
+  finally
+    Evaluator.Free;
+  end;
 end;
 
 end.

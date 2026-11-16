@@ -35,7 +35,7 @@
 unit Shell.JobBuiltins;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
@@ -43,21 +43,21 @@ uses
   Shell.Builtins;
 
 { Returns nil if Name is not one of these builtins. }
-function FindJobBuiltin(Name: PChar): TBuiltinRoutine;
+function FindJobBuiltin(const Name: string): TBuiltinRoutine;
 
 implementation
 
 uses
+  SysUtils,
+  Classes,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Console,
   Sys.Errors,
-  Sys.Format,
-  Sys.Memory,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
+  Shell.Text,
+  Shell.Output,
+  Shell.Host,
   Shell.Variables,
   Shell.Execution,
   Shell.Jobs;
@@ -65,90 +65,102 @@ uses
 const
   StatusInterrupted = 130;
   StatusNotChild = 127;
+  StatusCannotRun = 126;
   PollMilliseconds = 20;
-  ProgramPathCapacity = 1024;
 
-procedure JobError(Name: PChar; Format: PChar; const Arguments: array of TFormatArgument);
-begin
-  FlushStream(StandardOutput);
-  WriteText(StandardError, 'sh: ');
-  WriteText(StandardError, Name);
-  WriteText(StandardError, ': ');
-  WriteFormatted(StandardError, Format, Arguments);
-  WriteCharacter(StandardError, #10);
-end;
-
-{ The job named by Specification (nil = current), or reports it. }
-function LookUpJob(Name: PChar; Specification: PChar): PJob;
+{ The job named by Specification, or reports it. }
+function LookUpJob(const Name, Specification: string): TJob;
 begin
   Result := FindJob(Specification);
-  if Result <> nil then
-    Exit;
-  if Specification = nil then
-    JobError(Name, 'current: no such job', [])
-  else
-    JobError(Name, '%s: no such job', [ArgumentText(Specification)]);
+  if Result = nil then
+    CommandError(Name, Specification + ': no such job');
+end;
+
+{ The current job, or reports that there is none. }
+function LookUpCurrentJob(const Name: string): TJob;
+begin
+  Result := CurrentJob;
+  if Result = nil then
+    CommandError(Name, 'current: no such job');
 end;
 
 { --- jobs ---------------------------------------------------------------- }
 
-procedure ListJob(Job: PJob; ShowProcessIds, OnlyProcessIds: Boolean);
+procedure ListJob(Job: TJob; ShowProcessIds, OnlyProcessIds: Boolean);
 var
   Index: Integer;
+  StateText: string;
+  Line: string;
 begin
   if OnlyProcessIds then
   begin
-    for Index := 0 to Job^.Count - 1 do
-      WriteFormatted(StandardOutput, '%d'#10, [ArgumentNumber(Job^.ProcessIds[Index])]);
+    for Index := 0 to High(Job.Processes) do
+      WriteStringLine(StandardOutput, IntToStr(Job.Processes[Index].ProcessId));
     Exit;
   end;
-  if ShowProcessIds then
-    WriteFormatted(StandardOutput, '[%d]%c %d ', [ArgumentNumber(Job^.Number),
-      ArgumentCharacter(JobMark(Job)), ArgumentNumber(Job^.ProcessIds[0])]);
-  if ShowProcessIds then
+  if not ShowProcessIds then
   begin
-    { The state and command without the "[N]+" already printed. }
-    case Job^.State of
-      JobRunning: WriteFormatted(StandardOutput, '%-24s%s &'#10, [ArgumentText('Running'), ArgumentText(Job^.Command)]);
-      JobStopped: WriteFormatted(StandardOutput, '%-24s%s'#10, [ArgumentText('Stopped'), ArgumentText(Job^.Command)]);
-    else
-      WriteFormatted(StandardOutput, '%-24s%s'#10, [ArgumentText('Done'), ArgumentText(Job^.Command)]);
-    end;
-  end
-  else
     PrintJob(StandardOutput, Job, True);
+    Exit;
+  end;
+  { "[N]+ PID", then the state and command. }
+  case Job.State of
+    JobRunning: StateText := 'Running';
+    JobStopped: StateText := 'Stopped';
+  else
+    StateText := 'Done';
+  end;
+  Line := Format('[%d]', [Job.Number]) + JobMark(Job) + Format(' %d %-24s%s',
+    [Job.Processes[0].ProcessId, StateText, Job.Command]);
+  if Job.State = JobRunning then
+    Line := Line + ' &';
+  WriteStringLine(StandardOutput, Line);
 end;
 
-function BuiltinJobs(Arguments: PPChar; Count: Integer): LongInt;
+{ Forgets the jobs that have finished (they have now been reported). }
+procedure RemoveFinishedJobs;
+var
+  Index: Integer;
+  Job: TJob;
+begin
+  for Index := 0 to MaximumJobs - 1 do
+  begin
+    Job := JobInSlot(Index);
+    if (Job <> nil) and (Job.State = JobDone) then
+      RemoveJob(Job);
+  end;
+end;
+
+function BuiltinJobs(Arguments: TStrings): LongInt;
 var
   ShowProcessIds: Boolean;
   OnlyProcessIds: Boolean;
   First: Integer;
   Index: Integer;
-  Job: PJob;
+  Job: TJob;
 begin
   Result := 0;
   ShowProcessIds := False;
   OnlyProcessIds := False;
   First := 1;
-  while (First < Count) and (Arguments[First][0] = '-') and (Arguments[First][1] <> #0) do
+  while (First < Arguments.Count) and (CharAt(Arguments[First], 1) = '-') and (Length(Arguments[First]) > 1) do
   begin
-    if TextIsEqual(Arguments[First], '-l') then
+    if Arguments[First] = '-l' then
       ShowProcessIds := True
-    else if TextIsEqual(Arguments[First], '-p') then
+    else if Arguments[First] = '-p' then
       OnlyProcessIds := True
     else
     begin
-      JobError('jobs', '%s: invalid option', [ArgumentText(Arguments[First])]);
+      CommandError('jobs', Arguments[First] + ': invalid option');
       Exit(2);
     end;
     Inc(First);
   end;
 
   UpdateJobs;
-  if First < Count then
+  if First < Arguments.Count then
   begin
-    for Index := First to Count - 1 do
+    for Index := First to Arguments.Count - 1 do
     begin
       Job := LookUpJob('jobs', Arguments[Index]);
       if Job = nil then
@@ -167,49 +179,42 @@ begin
     end;
   end;
   FlushStream(StandardOutput);
-
-  { Finished jobs have now been reported. }
-  for Index := 0 to MaximumJobs - 1 do
-  begin
-    Job := JobInSlot(Index);
-    if (Job <> nil) and (Job^.State = JobDone) then
-      RemoveJob(Job);
-  end;
+  RemoveFinishedJobs;
 end;
 
 { --- fg and bg ----------------------------------------------------------- }
 
-function BuiltinForeground(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinForeground(Arguments: TStrings): LongInt;
 var
-  Job: PJob;
+  Job: TJob;
   OwnsConsole: Boolean;
 begin
-  if Count > 2 then
+  if Arguments.Count > 2 then
   begin
-    JobError('fg', 'too many arguments', []);
+    CommandError('fg', 'too many arguments');
     Exit(2);
   end;
   UpdateJobs;
-  if Count = 2 then
+  if Arguments.Count = 2 then
     Job := LookUpJob('fg', Arguments[1])
   else
-    Job := LookUpJob('fg', nil);
+    Job := LookUpCurrentJob('fg');
   if Job = nil then
     Exit(1);
 
-  WriteLine(StandardOutput, Job^.Command);
+  WriteStringLine(StandardOutput, Job.Command);
   FlushStream(StandardOutput);
-  OwnsConsole := ShellIsInteractive and (Job^.GroupId > 0) and IsConsole(StandardInputHandle);
+  OwnsConsole := ShellIsInteractive and (Job.GroupId > 0) and IsConsole(StandardInputHandle);
   if OwnsConsole then
-    SetForegroundGroup(StandardInputHandle, Job^.GroupId);
-  TouchJob(Job);
-  ContinueJob(Job);
-  Job^.State := JobRunning;
-  Result := WaitForJob(Job, ShellIsInteractive);
+    SetForegroundGroup(StandardInputHandle, Job.GroupId);
+  Job.Touch;
+  Job.Continue;
+  Job.State := JobRunning;
+  Result := Job.WaitUntilDone(ShellIsInteractive);
   if OwnsConsole then
     SetForegroundGroup(StandardInputHandle, CurrentProcessGroup);
 
-  if Job^.State = JobStopped then
+  if Job.State = JobStopped then
   begin
     PrintJob(StandardError, Job, False);
     FlushStream(StandardError);
@@ -223,44 +228,43 @@ begin
   end;
 end;
 
-procedure ContinueInBackground(Job: PJob; var Status: LongInt);
+procedure ContinueInBackground(Job: TJob; var Status: LongInt);
 begin
-  if Job^.State = JobRunning then
+  if Job.State = JobRunning then
   begin
     { It may have stopped without the table hearing of it yet. }
-    ContinueJob(Job);
-    JobError('bg', 'job %d already in background', [ArgumentNumber(Job^.Number)]);
+    Job.Continue;
+    CommandError('bg', 'job ' + IntToStr(Job.Number) + ' already in background');
     Exit;
   end;
-  if Job^.State = JobDone then
+  if Job.State = JobDone then
   begin
-    JobError('bg', 'job has terminated', []);
+    CommandError('bg', 'job has terminated');
     Status := 1;
     Exit;
   end;
-  TouchJob(Job);
-  ContinueJob(Job);
-  WriteFormatted(StandardOutput, '[%d]%c %s &'#10, [ArgumentNumber(Job^.Number),
-    ArgumentCharacter(JobMark(Job)), ArgumentText(Job^.Command)]);
+  Job.Touch;
+  Job.Continue;
+  WriteStringLine(StandardOutput, Format('[%d]', [Job.Number]) + JobMark(Job) + ' ' + Job.Command + ' &');
 end;
 
-function BuiltinBackground(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinBackground(Arguments: TStrings): LongInt;
 var
   Index: Integer;
-  Job: PJob;
+  Job: TJob;
 begin
   Result := 0;
   UpdateJobs;
-  if Count < 2 then
+  if Arguments.Count < 2 then
   begin
-    Job := LookUpJob('bg', nil);
+    Job := LookUpCurrentJob('bg');
     if Job = nil then
       Exit(1);
     ContinueInBackground(Job, Result);
   end
   else
   begin
-    for Index := 1 to Count - 1 do
+    for Index := 1 to Arguments.Count - 1 do
     begin
       Job := LookUpJob('bg', Arguments[Index]);
       if Job = nil then
@@ -277,17 +281,17 @@ end;
 { Waits for a job to end. An interactive shell checks for Ctrl-C while it
   waits (the job is not in the foreground, so the key comes to the
   shell). }
-function WaitForJobToEnd(Job: PJob): LongInt;
+function WaitForJobToEnd(Job: TJob): LongInt;
 begin
   if not ShellIsInteractive then
-    Exit(WaitForJob(Job, False));
+    Exit(Job.WaitUntilDone(False));
   repeat
     UpdateJobs;
-    if Job^.State <> JobRunning then
-      Exit(JobStatus(Job));
+    if Job.State <> JobRunning then
+      Exit(Job.Status);
     if IsConsole(StandardInputHandle) and TakePendingInterrupt(StandardInputHandle) then
     begin
-      WriteLine(StandardError, '^C');
+      WriteStringLine(StandardError, '^C');
       InterruptRequested := True;
       Exit(StatusInterrupted);
     end;
@@ -295,12 +299,12 @@ begin
   until False;
 end;
 
-function WaitForOperand(Operand: PChar): LongInt;
+function WaitForOperand(const Operand: string): LongInt;
 var
-  Job: PJob;
+  Job: TJob;
   ProcessId: Int64;
 begin
-  if Operand[0] = '%' then
+  if CharAt(Operand, 1) = '%' then
   begin
     Job := LookUpJob('wait', Operand);
     if Job = nil then
@@ -308,32 +312,32 @@ begin
   end
   else
   begin
-    if not ParseInteger(Operand, ProcessId) then
+    if not TryParseInteger(Operand, ProcessId) then
     begin
-      JobError('wait', '`%s'': not a pid or valid job spec', [ArgumentText(Operand)]);
+      CommandError('wait', '`' + Operand + ''': not a pid or valid job spec');
       Exit(2);
     end;
     Job := FindJobByProcessId(ProcessId);
     if Job = nil then
     begin
-      JobError('wait', 'pid %d is not a child of this shell', [ArgumentNumber(ProcessId)]);
+      CommandError('wait', 'pid ' + IntToStr(ProcessId) + ' is not a child of this shell');
       Exit(StatusNotChild);
     end;
   end;
   Result := WaitForJobToEnd(Job);
-  if Job^.State = JobDone then
+  if Job.State = JobDone then
     RemoveJob(Job);
 end;
 
-function BuiltinWait(Arguments: PPChar; Count: Integer): LongInt;
+function BuiltinWait(Arguments: TStrings): LongInt;
 var
   Index: Integer;
-  Job: PJob;
+  Job: TJob;
 begin
   Result := 0;
-  if Count >= 2 then
+  if Arguments.Count >= 2 then
   begin
-    for Index := 1 to Count - 1 do
+    for Index := 1 to Arguments.Count - 1 do
     begin
       Result := WaitForOperand(Arguments[Index]);
       if InterruptRequested then
@@ -345,101 +349,105 @@ begin
   for Index := 0 to MaximumJobs - 1 do
   begin
     Job := JobInSlot(Index);
-    if (Job = nil) or (Job^.State = JobStopped) then
+    if (Job = nil) or (Job.State = JobStopped) then
       Continue;
     WaitForJobToEnd(Job);
     if InterruptRequested then
       Exit(StatusInterrupted);
-    if Job^.State = JobDone then
+    if Job.State = JobDone then
       RemoveJob(Job);
   end;
 end;
 
 { --- kill ---------------------------------------------------------------- }
 
-function BuiltinKill(Arguments: PPChar; Count: Integer): LongInt;
+{ The arguments for /bin/kill: job operands become the process ids of
+  their programs that are still running. JobsUnknown tells whether an
+  operand named no job. }
+function TranslateKillArguments(Arguments: TStrings; out JobsUnknown: Boolean): TStringList;
 var
-  Translated: PPChar;
-  TranslatedCount: Integer;
   Index: Integer;
   ProcessIndex: Integer;
-  Job: PJob;
-  Buffer: TNumberText;
-  ProgramPath: array[0..ProgramPathCapacity - 1] of Char;
-  Options: TProcessOptions;
-  Handle: Int64;
+  Job: TJob;
 begin
-  { A job may stand for up to MaximumJobProcesses process ids. }
-  Translated := PPChar(AllocateZeroedMemory(QWord(Count * MaximumJobProcesses + 1) * SizeOf(PChar)));
-  TranslatedCount := 0;
-  Result := 0;
-  UpdateJobs;
-  for Index := 0 to Count - 1 do
+  JobsUnknown := False;
+  Result := TStringList.Create;
+  for Index := 0 to Arguments.Count - 1 do
   begin
-    if (Index = 0) or (Arguments[Index][0] <> '%') then
+    if (Index = 0) or (CharAt(Arguments[Index], 1) <> '%') then
     begin
-      Translated[TranslatedCount] := DuplicateText(Arguments[Index]);
-      Inc(TranslatedCount);
+      Result.Add(Arguments[Index]);
       Continue;
     end;
     Job := LookUpJob('kill', Arguments[Index]);
     if Job = nil then
     begin
-      Result := 1;
+      JobsUnknown := True;
       Continue;
     end;
-    for ProcessIndex := 0 to Job^.Count - 1 do
-    begin
-      if Job^.Finished[ProcessIndex] then
-        Continue;
-      Translated[TranslatedCount] := DuplicateText(FormatSignedDecimal(Job^.ProcessIds[ProcessIndex], Buffer));
-      Inc(TranslatedCount);
-    end;
+    for ProcessIndex := 0 to High(Job.Processes) do
+      if not Job.Processes[ProcessIndex].Finished then
+        Result.Add(IntToStr(Job.Processes[ProcessIndex].ProcessId));
   end;
-
-  { Only job operands, all of them unknown or finished: nothing to do. }
-  if (Result <> 0) and (TranslatedCount <= 1) then
-  begin
-    for Index := 0 to TranslatedCount - 1 do
-      FreeMemory(Translated[Index]);
-    FreeMemory(Translated);
-    Exit;
-  end;
-
-  if not FindProgram('kill', @ProgramPath[0], ProgramPathCapacity) then
-  begin
-    JobError('kill', 'command not found', []);
-    Result := StatusNotChild;
-  end
-  else
-  begin
-    DefaultProcessOptions(Options);
-    FlushStream(StandardOutput);
-    Handle := StartProgram(@ProgramPath[0], Translated, Options);
-    if Handle < 0 then
-    begin
-      JobError('kill', '%s', [ArgumentText(ErrorMessage(ErrorCodeOf(Handle)))]);
-      Result := 126;
-    end
-    else if WaitForProgram(Handle) <> 0 then
-      Result := 1;
-  end;
-  for Index := 0 to TranslatedCount - 1 do
-    FreeMemory(Translated[Index]);
-  FreeMemory(Translated);
 end;
 
-function FindJobBuiltin(Name: PChar): TBuiltinRoutine;
+{ Runs /bin/kill with Arguments and returns the builtin's status. }
+function RunKillProgram(Arguments: TStrings): LongInt;
+var
+  ProgramPath: string;
+  Vector: TTextVector;
+  Options: TProcessOptions;
+  Handle: Int64;
 begin
-  if TextIsEqual(Name, 'jobs') then
+  Result := 0;
+  if not LocateProgram('kill', ProgramPath) then
+  begin
+    CommandError('kill', 'command not found');
+    Exit(StatusNotChild);
+  end;
+  Vector := MakeTextVector(Arguments);
+  DefaultProcessOptions(Options);
+  FlushStream(StandardOutput);
+  Handle := StartProgram(PChar(ProgramPath), @Vector[0], Options);
+  if Handle < 0 then
+  begin
+    CommandError('kill', ErrorMessage(ErrorCodeOf(Handle)));
+    Result := StatusCannotRun;
+  end
+  else if WaitForProgram(Handle) <> 0 then
+    Result := 1;
+end;
+
+function BuiltinKill(Arguments: TStrings): LongInt;
+var
+  Translated: TStringList;
+  JobsUnknown: Boolean;
+begin
+  UpdateJobs;
+  Translated := TranslateKillArguments(Arguments, JobsUnknown);
+  try
+    { Only job operands, all of them unknown or finished: nothing to do. }
+    if JobsUnknown and (Translated.Count <= 1) then
+      Exit(1);
+    Result := RunKillProgram(Translated);
+    if JobsUnknown and (Result = 0) then
+      Result := 1;
+  finally
+    Translated.Free;
+  end;
+end;
+
+function FindJobBuiltin(const Name: string): TBuiltinRoutine;
+begin
+  if Name = 'jobs' then
     Result := @BuiltinJobs
-  else if TextIsEqual(Name, 'fg') then
+  else if Name = 'fg' then
     Result := @BuiltinForeground
-  else if TextIsEqual(Name, 'bg') then
+  else if Name = 'bg' then
     Result := @BuiltinBackground
-  else if TextIsEqual(Name, 'wait') then
+  else if Name = 'wait' then
     Result := @BuiltinWait
-  else if TextIsEqual(Name, 'kill') then
+  else if Name = 'kill' then
     Result := @BuiltinKill
   else
     Result := nil;

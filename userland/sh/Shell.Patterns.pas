@@ -32,43 +32,40 @@
 unit Shell.Patterns;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
-function HasPatternCharacters(Pattern: PChar): Boolean;
-function MatchPattern(Pattern, Text: PChar): Boolean;
-{ Removes the backslash escapes from a pattern (new heap string). }
-function UnescapePattern(Pattern: PChar): PChar;
+uses
+  Classes;
 
-type
-  TMatchCallback = procedure(Path: PChar; Context: Pointer);
+function HasPatternCharacters(const Pattern: string): Boolean;
+function MatchPattern(const Pattern, Text: string): Boolean;
+{ Removes the backslash escapes from a pattern. }
+function UnescapePattern(const Pattern: string): string;
 
-{ Calls Callback for every matching path, in sorted order. Returns the
-  number of matches. }
-function ExpandPattern(Pattern: PChar; Callback: TMatchCallback; Context: Pointer): Integer;
+{ Adds every matching path to Matches, in byte order. Returns the number
+  of matches. }
+function ExpandPattern(const Pattern: string; Matches: TStrings): Integer;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Files,
-  Sys.Memory,
-  Sys.Text,
-  Util.Sorting;
+  Shell.Text;
 
-function HasPatternCharacters(Pattern: PChar): Boolean;
+function HasPatternCharacters(const Pattern: string): Boolean;
 var
   Index: Integer;
 begin
-  Index := 0;
-  while Pattern[Index] <> #0 do
+  Index := 1;
+  while Index <= Length(Pattern) do
   begin
     case Pattern[Index] of
       '\':
-        if Pattern[Index + 1] <> #0 then
+        if Index < Length(Pattern) then
           Inc(Index);
       '*', '?', '[':
         Exit(True);
@@ -78,9 +75,11 @@ begin
   Result := False;
 end;
 
-{ Matches a bracket expression at Pattern (just after '['). Returns the
-  position after the closing ']' or nil if the expression is not closed. }
-function MatchBracket(Pattern: PChar; Character: Char; out Matched: Boolean): PChar;
+{ Matches a bracket expression starting at Pattern[Position] (just after
+  the '['). Returns the position after the closing ']', or 0 if the
+  expression is not closed. }
+function MatchBracket(const Pattern: string; Position: Integer; Character: Char;
+  out Matched: Boolean): Integer;
 var
   Negate: Boolean;
   First: Boolean;
@@ -88,209 +87,191 @@ var
   High: Char;
 begin
   Matched := False;
-  Negate := (Pattern^ = '!') or (Pattern^ = '^');
+  Negate := CharAt(Pattern, Position) in ['!', '^'];
   if Negate then
-    Inc(Pattern);
+    Inc(Position);
   First := True;
-  while (Pattern^ <> #0) and ((Pattern^ <> ']') or First) do
+  while (CharAt(Pattern, Position) <> #0) and ((CharAt(Pattern, Position) <> ']') or First) do
   begin
     First := False;
-    Low := Pattern^;
-    if (Low = '\') and (Pattern[1] <> #0) then
+    Low := Pattern[Position];
+    if (Low = '\') and (CharAt(Pattern, Position + 1) <> #0) then
     begin
-      Inc(Pattern);
-      Low := Pattern^;
+      Inc(Position);
+      Low := Pattern[Position];
     end;
     High := Low;
-    if (Pattern[1] = '-') and (Pattern[2] <> ']') and (Pattern[2] <> #0) then
+    if (CharAt(Pattern, Position + 1) = '-') and not (CharAt(Pattern, Position + 2) in [']', #0]) then
     begin
-      High := Pattern[2];
-      Inc(Pattern, 2);
+      High := Pattern[Position + 2];
+      Inc(Position, 2);
     end;
     if (Character >= Low) and (Character <= High) then
       Matched := True;
-    Inc(Pattern);
+    Inc(Position);
   end;
-  if Pattern^ <> ']' then
-    Exit(nil);
+  if CharAt(Pattern, Position) <> ']' then
+    Exit(0);
   if Negate then
     Matched := not Matched;
-  Result := Pattern + 1;
+  Result := Position + 1;
 end;
 
-function MatchPattern(Pattern, Text: PChar): Boolean;
+{ Matches Pattern from PatternIndex against Text from TextIndex. }
+function MatchFrom(const Pattern: string; PatternIndex: Integer; const Text: string;
+  TextIndex: Integer): Boolean;
 var
   Matched: Boolean;
-  AfterBracket: PChar;
+  AfterBracket: Integer;
 begin
-  while Pattern^ <> #0 do
+  while CharAt(Pattern, PatternIndex) <> #0 do
   begin
-    case Pattern^ of
+    case Pattern[PatternIndex] of
       '*':
         begin
-          while Pattern^ = '*' do
-            Inc(Pattern);
-          if Pattern^ = #0 then
+          while CharAt(Pattern, PatternIndex) = '*' do
+            Inc(PatternIndex);
+          if CharAt(Pattern, PatternIndex) = #0 then
             Exit(True);
-          while Text^ <> #0 do
+          while CharAt(Text, TextIndex) <> #0 do
           begin
-            if MatchPattern(Pattern, Text) then
+            if MatchFrom(Pattern, PatternIndex, Text, TextIndex) then
               Exit(True);
-            Inc(Text);
+            Inc(TextIndex);
           end;
           Exit(False);
         end;
       '?':
         begin
-          if Text^ = #0 then
+          if CharAt(Text, TextIndex) = #0 then
             Exit(False);
-          Inc(Pattern);
-          Inc(Text);
+          Inc(PatternIndex);
+          Inc(TextIndex);
         end;
       '[':
         begin
-          if Text^ = #0 then
+          if CharAt(Text, TextIndex) = #0 then
             Exit(False);
-          AfterBracket := MatchBracket(Pattern + 1, Text^, Matched);
-          if AfterBracket = nil then
+          AfterBracket := MatchBracket(Pattern, PatternIndex + 1, Text[TextIndex], Matched);
+          if AfterBracket = 0 then
           begin
             { An unclosed '[' is an ordinary character. }
-            if Text^ <> '[' then
+            if Text[TextIndex] <> '[' then
               Exit(False);
-            Inc(Pattern);
+            Inc(PatternIndex);
           end
           else
           begin
             if not Matched then
               Exit(False);
-            Pattern := AfterBracket;
+            PatternIndex := AfterBracket;
           end;
-          Inc(Text);
+          Inc(TextIndex);
         end;
     else
       begin
-        if (Pattern^ = '\') and (Pattern[1] <> #0) then
-          Inc(Pattern);
-        if Pattern^ <> Text^ then
+        if (Pattern[PatternIndex] = '\') and (CharAt(Pattern, PatternIndex + 1) <> #0) then
+          Inc(PatternIndex);
+        if Pattern[PatternIndex] <> CharAt(Text, TextIndex) then
           Exit(False);
-        Inc(Pattern);
-        Inc(Text);
+        Inc(PatternIndex);
+        Inc(TextIndex);
       end;
     end;
   end;
-  Result := Text^ = #0;
+  Result := CharAt(Text, TextIndex) = #0;
 end;
 
-function UnescapePattern(Pattern: PChar): PChar;
+function MatchPattern(const Pattern, Text: string): Boolean;
+begin
+  Result := MatchFrom(Pattern, 1, Text, 1);
+end;
+
+function UnescapePattern(const Pattern: string): string;
 var
-  Builder: TTextBuilder;
   Index: Integer;
 begin
-  BeginText(Builder);
-  Index := 0;
-  while Pattern[Index] <> #0 do
+  Result := '';
+  Index := 1;
+  while Index <= Length(Pattern) do
   begin
-    if (Pattern[Index] = '\') and (Pattern[Index + 1] <> #0) then
+    if (Pattern[Index] = '\') and (Index < Length(Pattern)) then
       Inc(Index);
-    AppendCharacter(Builder, Pattern[Index]);
+    Result := Result + Pattern[Index];
     Inc(Index);
   end;
-  Result := FinishText(Builder);
 end;
 
-function CompareNames(First, Second: Pointer; Context: Pointer): Integer;
+function CompareInByteOrder(List: TStringList; First, Second: Integer): Integer;
 begin
-  Result := CompareText(PChar(First), PChar(Second));
+  Result := CompareStr(List[First], List[Second]);
 end;
 
-function ExpandPattern(Pattern: PChar; Callback: TMatchCallback; Context: Pointer): Integer;
+{ The names in Directory that match NamePattern, each after Prefix. }
+procedure CollectMatches(const Directory, NamePattern, Prefix: string; Found: TStrings);
 var
-  LastSlash: PtrInt;
-  DirectoryPattern: PChar;
-  Directory: PChar;
-  NamePattern: PChar;
-  Prefix: PChar;
   Handle: Int64;
   Entry: TDirectoryEntry;
-  Matches: PPChar;
-  MatchCount: Integer;
-  Capacity: Integer;
-  Builder: TTextBuilder;
-  Index: Integer;
+  Name: string;
+begin
+  Handle := OpenFile(PChar(Directory), OpenRead);
+  if Handle < 0 then
+    Exit;
+  try
+    while ReadDirectoryEntry(Handle, Entry) do
+    begin
+      Name := string(PChar(@Entry.Name[0]));
+      if (Name = '.') or (Name = '..') then
+        Continue;
+      if (CharAt(Name, 1) = '.') and (CharAt(NamePattern, 1) <> '.') then
+        Continue;
+      if MatchPattern(NamePattern, Name) then
+        Found.Add(Prefix + Name);
+    end;
+  finally
+    CloseFile(Handle);
+  end;
+end;
+
+function ExpandPattern(const Pattern: string; Matches: TStrings): Integer;
+var
+  LastSlash: Integer;
+  Directory: string;
+  NamePattern: string;
+  Prefix: string;
+  Found: TStringList;
 begin
   Result := 0;
-  LastSlash := FindLastCharacter(Pattern, '/');
-  if LastSlash >= 0 then
+  LastSlash := LastDelimiter('/', Pattern);
+  if LastSlash > 0 then
   begin
-    DirectoryPattern := PChar(AllocateMemory(LastSlash + 2));
-    CopyText(DirectoryPattern, Pattern, PtrUInt(LastSlash) + 2);
-    NamePattern := Pattern + LastSlash + 1;
-    Prefix := UnescapePattern(DirectoryPattern);
-    FreeMemory(DirectoryPattern);
-    if LastSlash = 0 then
-      Directory := DuplicateText('/')
+    Prefix := UnescapePattern(Copy(Pattern, 1, LastSlash));
+    NamePattern := Copy(Pattern, LastSlash + 1, MaxInt);
+    if LastSlash = 1 then
+      Directory := '/'
     else
-    begin
-      Directory := DuplicateText(Prefix);
-      Directory[TextLength(Directory) - 1] := #0;
-    end;
+      Directory := Copy(Prefix, 1, Length(Prefix) - 1);
   end
   else
   begin
     NamePattern := Pattern;
-    Prefix := DuplicateText('');
-    Directory := DuplicateText('.');
+    Prefix := '';
+    Directory := '.';
   end;
 
   { Only the last component may contain pattern characters. }
   if HasPatternCharacters(Directory) then
-  begin
-    FreeMemory(Prefix);
-    FreeMemory(Directory);
     Exit;
-  end;
 
-  Handle := OpenFile(Directory, OpenRead);
-  FreeMemory(Directory);
-  if Handle < 0 then
-  begin
-    FreeMemory(Prefix);
-    Exit;
+  Found := TStringList.Create;
+  try
+    CollectMatches(Directory, NamePattern, Prefix, Found);
+    Found.CustomSort(@CompareInByteOrder);
+    Matches.AddStrings(Found);
+    Result := Found.Count;
+  finally
+    Found.Free;
   end;
-
-  Matches := nil;
-  MatchCount := 0;
-  Capacity := 0;
-  while ReadDirectoryEntry(Handle, Entry) do
-  begin
-    if TextIsEqual(@Entry.Name[0], '.') or TextIsEqual(@Entry.Name[0], '..') then
-      Continue;
-    if (Entry.Name[0] = '.') and (NamePattern[0] <> '.') then
-      Continue;
-    if not MatchPattern(NamePattern, @Entry.Name[0]) then
-      Continue;
-    if MatchCount = Capacity then
-    begin
-      Capacity := Capacity * 2 + 16;
-      Matches := PPChar(ReallocateMemory(Matches, QWord(Capacity) * SizeOf(PChar)));
-    end;
-    BeginText(Builder);
-    AppendText(Builder, Prefix);
-    AppendText(Builder, @Entry.Name[0]);
-    Matches[MatchCount] := FinishText(Builder);
-    Inc(MatchCount);
-  end;
-  CloseFile(Handle);
-  FreeMemory(Prefix);
-
-  SortPointers(PPointer(Matches), MatchCount, @CompareNames, nil);
-  for Index := 0 to MatchCount - 1 do
-  begin
-    Callback(Matches[Index], Context);
-    FreeMemory(Matches[Index]);
-  end;
-  FreeMemory(Matches);
-  Result := MatchCount;
 end;
 
 end.

@@ -17,7 +17,7 @@
 }
 
 (*
-  The shell's syntax tree and the parser that builds it.
+  The parser that builds the shell's syntax tree (Shell.Nodes).
 
   Grammar (a subset of the POSIX shell grammar):
 
@@ -39,257 +39,217 @@
 unit Shell.Syntax;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Shell.Lexer;
+  Shell.Lexer,
+  Shell.Nodes;
 
 type
-  TNodeKind = (NodeSimple, NodePipeline, NodeAndOr, NodeSequence, NodeIf, NodeLoop, NodeFor,
-    NodeCase, NodeCaseItem, NodeFunction, NodeRedirected);
-  TAndOrOperator = (OperatorAnd, OperatorOr);
-
-  PRedirection = ^TRedirection;
-  TRedirection = record
-    Kind: TRedirectKind;
-    Handle: Integer;
-    Target: PChar;      { raw word }
-    { Here-documents: the body, and whether it is taken literally. }
-    HereBody: PChar;
-    HereIsQuoted: Boolean;
-  end;
-
-  PNode = ^TNode;
-  PPNode = ^PNode;
-  TNode = record
-    Kind: TNodeKind;
-
-    { NodeSimple: words and NAME=value assignments are raw text.
-      NodeFor: Words is the list after "in" (nil = "$@").
-      NodeCase: Words[0] is the subject; Children are NodeCaseItems,
-      whose Words are the patterns and Body the commands. }
-    Words: PPChar;
-    WordCount: Integer;
-    Assignments: PPChar;
-    AssignmentCount: Integer;
-    Redirections: PRedirection;
-    RedirectionCount: Integer;
-
-    { NodePipeline: the commands; NodeSequence: the items. }
-    Children: PPNode;
-    ChildCount: Integer;
-    { NodeSequence: which items end with '&'. }
-    RunInBackground: PBoolean;
-    { NodePipeline: '!' inverts the status. }
-    Negate: Boolean;
-
-    { NodeAndOr }
-    Left: PNode;
-    Right: PNode;
-    AndOrOperator: TAndOrOperator;
-
-    { NodeIf: Condition/Body/ElseBody (elif nests in ElseBody).
-      NodeLoop: Condition/Body, IsUntil. NodeFor: VariableName/Body.
-      NodeFunction: VariableName is the function's name, Body its body
-      and SourceText the definition as written.
-      NodeRedirected: a compound command (Body) with Redirections. }
-    Condition: PNode;
-    Body: PNode;
-    ElseBody: PNode;
-    IsUntil: Boolean;
-    VariableName: PChar;
-    SourceText: PChar;
-  end;
-
   TParseResult = (ParseSuccess, ParseIncomplete, ParseError);
 
-{ Parses a whole input. Tree is nil for empty input. On ParseError,
-  ErrorMessage describes the problem. }
-function ParseInput(Text: PChar; out Tree: PNode; out ErrorMessage: PChar): TParseResult;
-procedure FreeNode(Node: PNode);
-{ A deep copy (function bodies outlive the command line they came in). }
-function CopyNode(Node: PNode): PNode;
+  TParser = class
+  private
+    FSource: string;
+    FTokens: TTokenArray;
+    FPosition: Integer;
+    FIncomplete: Boolean;
+    FFailed: Boolean;
+    FErrorMessage: string;
+    function CurrentKind: TTokenKind;
+    function CurrentText: string;
+    procedure Advance;
+    function IsReservedWord(const Word: string): Boolean;
+    function AtListTerminator: Boolean;
+    procedure SkipNewlines;
+    function Stopped: Boolean;
+    procedure SetError(const Message: string);
+    function Expect(const Word, Message: string): Boolean;
+    function ParseRedirection(var Redirections: TRedirectionArray): Boolean;
+    function ParseSimpleCommand: TShellNode;
+    function ParseIf: TShellNode;
+    function ParseLoop: TShellNode;
+    function ParseFor: TShellNode;
+    function ParseCaseItem(Node: TCaseNode): Boolean;
+    function ParseCase: TShellNode;
+    function ParseFunction: TShellNode;
+    function IsFunctionDefinition: Boolean;
+    function ParseCompoundCommand: TShellNode;
+    function IsCompoundStart: Boolean;
+    function ParseCommand: TShellNode;
+    function ParsePipeline: TShellNode;
+    function ParseAndOr: TShellNode;
+    function ParseList: TSequenceNode;
+  public
+    constructor Create(const Text: string);
+    { Parses the whole input. Tree is nil unless the result is
+      ParseSuccess; on ParseError, ErrorMessage describes the problem. }
+    function Parse(out Tree: TShellNode; out ErrorMessage: string): TParseResult;
+  end;
+
+{ Parses Text with a TParser. }
+function ParseInput(const Text: string; out Tree: TShellNode; out ErrorMessage: string): TParseResult;
 
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Memory,
-  Sys.Text;
+  Shell.Text;
 
-type
-  TParser = record
-    Source: PChar;
-    Tokens: TTokenList;
-    Position: Integer;
-    Incomplete: Boolean;
-    Failed: Boolean;
-    ErrorMessage: PChar;
-  end;
-
-function NewNode(Kind: TNodeKind): PNode;
-begin
-  Result := PNode(AllocateZeroedMemory(SizeOf(TNode)));
-  Result^.Kind := Kind;
-end;
-
-procedure AppendText(var Items: PPChar; var Count: Integer; Text: PChar);
-begin
-  Items := PPChar(ReallocateMemory(Items, QWord(Count + 2) * SizeOf(PChar)));
-  Items[Count] := Text;
-  Inc(Count);
-  Items[Count] := nil;
-end;
-
-procedure AppendChild(Node: PNode; Child: PNode; Background: Boolean);
-begin
-  Node^.Children := PPNode(ReallocateMemory(Node^.Children, QWord(Node^.ChildCount + 1) * SizeOf(PNode)));
-  Node^.RunInBackground := PBoolean(ReallocateMemory(Node^.RunInBackground, QWord(Node^.ChildCount + 1) * SizeOf(Boolean)));
-  Node^.Children[Node^.ChildCount] := Child;
-  Node^.RunInBackground[Node^.ChildCount] := Background;
-  Inc(Node^.ChildCount);
-end;
-
-{ --- Token access ---------------------------------------------------- }
-
-function Current(var Parser: TParser): PToken;
-begin
-  Result := @Parser.Tokens.Items[Parser.Position];
-end;
-
-procedure Advance(var Parser: TParser);
-begin
-  if Current(Parser)^.Kind <> TokenEnd then
-    Inc(Parser.Position);
-end;
-
-function IsReservedWord(var Parser: TParser; Word: PChar): Boolean;
+function ParseInput(const Text: string; out Tree: TShellNode; out ErrorMessage: string): TParseResult;
 var
-  Token: PToken;
+  Parser: TParser;
 begin
-  Token := Current(Parser);
-  Result := (Token^.Kind = TokenWord) and TextIsEqual(Token^.Text, Word);
+  Parser := TParser.Create(Text);
+  try
+    Result := Parser.Parse(Tree, ErrorMessage);
+  finally
+    Parser.Free;
+  end;
+end;
+
+function IsAssignment(const Word: string): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  if not IsNameStart(CharAt(Word, 1)) then
+    Exit;
+  Index := 2;
+  while IsNameCharacter(CharAt(Word, Index)) do
+    Inc(Index);
+  Result := CharAt(Word, Index) = '=';
+end;
+
+constructor TParser.Create(const Text: string);
+begin
+  inherited Create;
+  FSource := TextBeforeNull(Text);
+end;
+
+{ --- Token access ------------------------------------------------------ }
+
+function TParser.CurrentKind: TTokenKind;
+begin
+  Result := FTokens[FPosition].Kind;
+end;
+
+function TParser.CurrentText: string;
+begin
+  Result := FTokens[FPosition].Text;
+end;
+
+procedure TParser.Advance;
+begin
+  if CurrentKind <> TokenEnd then
+    Inc(FPosition);
+end;
+
+function TParser.IsReservedWord(const Word: string): Boolean;
+begin
+  Result := (CurrentKind = TokenWord) and (CurrentText = Word);
 end;
 
 { Words that end a list inside a compound command. }
-function AtListTerminator(var Parser: TParser): Boolean;
+function TParser.AtListTerminator: Boolean;
 var
-  Token: PToken;
+  Word: string;
 begin
-  Token := Current(Parser);
-  case Token^.Kind of
-    TokenEnd, TokenRightParenthesis: Result := True;
+  case CurrentKind of
+    TokenEnd, TokenRightParenthesis, TokenDoubleSemicolon:
+      Result := True;
     TokenWord:
-      Result := TextIsEqual(Token^.Text, 'then') or TextIsEqual(Token^.Text, 'else') or
-        TextIsEqual(Token^.Text, 'elif') or TextIsEqual(Token^.Text, 'fi') or
-        TextIsEqual(Token^.Text, 'do') or TextIsEqual(Token^.Text, 'done') or
-        TextIsEqual(Token^.Text, '}') or TextIsEqual(Token^.Text, 'esac');
-    TokenDoubleSemicolon: Result := True;
+      begin
+        Word := CurrentText;
+        Result := (Word = 'then') or (Word = 'else') or (Word = 'elif') or (Word = 'fi') or
+          (Word = 'do') or (Word = 'done') or (Word = '}') or (Word = 'esac');
+      end;
   else
     Result := False;
   end;
 end;
 
-procedure SkipNewlines(var Parser: TParser);
+procedure TParser.SkipNewlines;
 begin
-  while Current(Parser)^.Kind = TokenNewline do
-    Advance(Parser);
+  while CurrentKind = TokenNewline do
+    Advance;
 end;
 
-procedure SetError(var Parser: TParser; Message: PChar);
+function TParser.Stopped: Boolean;
 begin
-  if Parser.Failed or Parser.Incomplete then
+  Result := FFailed or FIncomplete;
+end;
+
+procedure TParser.SetError(const Message: string);
+begin
+  if Stopped then
     Exit;
   { Running out of tokens means the user is still typing. }
-  if Current(Parser)^.Kind = TokenEnd then
+  if CurrentKind = TokenEnd then
   begin
-    Parser.Incomplete := True;
+    FIncomplete := True;
     Exit;
   end;
-  Parser.Failed := True;
-  Parser.ErrorMessage := Message;
+  FFailed := True;
+  FErrorMessage := Message;
 end;
 
-function Expect(var Parser: TParser; Word: PChar; Message: PChar): Boolean;
+function TParser.Expect(const Word, Message: string): Boolean;
 begin
-  SkipNewlines(Parser);
-  Result := IsReservedWord(Parser, Word);
+  SkipNewlines;
+  Result := IsReservedWord(Word);
   if Result then
-    Advance(Parser)
+    Advance
   else
-    SetError(Parser, Message);
+    SetError(Message);
 end;
 
-{ --- Grammar --------------------------------------------------------- }
+{ --- Grammar ----------------------------------------------------------- }
 
-function ParseList(var Parser: TParser): PNode; forward;
-
-function IsAssignment(Word: PChar): Boolean;
+{ Parses the redirection at the current token and adds it. }
+function TParser.ParseRedirection(var Redirections: TRedirectionArray): Boolean;
 var
-  Index: Integer;
-begin
-  Result := False;
-  if not (IsLetter(Word[0]) or (Word[0] = '_')) then
-    Exit;
-  Index := 1;
-  while IsAlphanumeric(Word[Index]) or (Word[Index] = '_') do
-    Inc(Index);
-  Result := Word[Index] = '=';
-end;
-
-{ Parses the redirection at the current token and adds it to Node. }
-function ParseRedirection(var Parser: TParser; Node: PNode): Boolean;
-var
-  Token: PToken;
+  Token: TToken;
   Redirection: TRedirection;
 begin
-  Token := Current(Parser);
-  Redirection.Kind := Token^.RedirectKind;
-  Redirection.Handle := Token^.RedirectHandle;
-  Redirection.HereBody := nil;
-  Redirection.HereIsQuoted := Token^.HereIsQuoted;
-  Advance(Parser);
-  if Current(Parser)^.Kind <> TokenWord then
+  Token := FTokens[FPosition];
+  Advance;
+  if CurrentKind <> TokenWord then
   begin
-    SetError(Parser, 'syntax error: missing file name after redirection');
+    SetError('syntax error: missing file name after redirection');
     Exit(False);
   end;
-  if Token^.HereBody <> nil then
-    Redirection.HereBody := DuplicateText(Token^.HereBody);
-  Redirection.Target := DuplicateText(Current(Parser)^.Text);
-  Advance(Parser);
-  Node^.Redirections := PRedirection(ReallocateMemory(Node^.Redirections,
-    QWord(Node^.RedirectionCount + 1) * SizeOf(TRedirection)));
-  Node^.Redirections[Node^.RedirectionCount] := Redirection;
-  Inc(Node^.RedirectionCount);
+  Redirection.Kind := Token.RedirectKind;
+  Redirection.Handle := Token.RedirectHandle;
+  Redirection.HereBody := Token.HereBody;
+  Redirection.HereIsQuoted := Token.HereIsQuoted;
+  Redirection.Target := CurrentText;
+  Advance;
+  AppendRedirection(Redirections, Redirection);
   Result := True;
 end;
 
-function ParseSimpleCommand(var Parser: TParser): PNode;
+function TParser.ParseSimpleCommand: TShellNode;
 var
-  Token: PToken;
-  Node: PNode;
+  Node: TSimpleCommandNode;
 begin
-  Node := NewNode(NodeSimple);
+  Node := TSimpleCommandNode.Create;
   while True do
   begin
-    Token := Current(Parser);
-    if Token^.Kind = TokenWord then
+    if CurrentKind = TokenWord then
     begin
-      if (Node^.WordCount = 0) and IsAssignment(Token^.Text) then
-        AppendText(Node^.Assignments, Node^.AssignmentCount, DuplicateText(Token^.Text))
+      if (Length(Node.Words) = 0) and IsAssignment(CurrentText) then
+        AppendWord(Node.Assignments, CurrentText)
       else
-        AppendText(Node^.Words, Node^.WordCount, DuplicateText(Token^.Text));
-      Advance(Parser);
+        AppendWord(Node.Words, CurrentText);
+      Advance;
     end
-    else if Token^.Kind = TokenRedirect then
+    else if CurrentKind = TokenRedirect then
     begin
-      if not ParseRedirection(Parser, Node) then
+      if not ParseRedirection(Node.Redirections) then
       begin
-        FreeNode(Node);
+        Node.Free;
         Exit(nil);
       end;
     end
@@ -297,513 +257,398 @@ begin
       Break;
   end;
 
-  if (Node^.WordCount = 0) and (Node^.AssignmentCount = 0) and (Node^.RedirectionCount = 0) then
+  if (Length(Node.Words) = 0) and (Length(Node.Assignments) = 0) and (Length(Node.Redirections) = 0) then
   begin
-    SetError(Parser, 'syntax error: command expected');
-    FreeNode(Node);
+    SetError('syntax error: command expected');
+    Node.Free;
     Exit(nil);
   end;
   Result := Node;
 end;
 
-function ParseIf(var Parser: TParser): PNode;
+function TParser.ParseIf: TShellNode;
 var
-  Node: PNode;
+  Node: TIfNode;
 begin
-  Advance(Parser); { 'if' or 'elif' }
-  Node := NewNode(NodeIf);
-  Node^.Condition := ParseList(Parser);
-  if Expect(Parser, 'then', 'syntax error: "then" expected') then
-    Node^.Body := ParseList(Parser);
-  SkipNewlines(Parser);
-  if IsReservedWord(Parser, 'elif') then
+  Advance; { 'if' or 'elif' }
+  Node := TIfNode.Create;
+  Result := Node;
+  Node.Condition := ParseList;
+  if Expect('then', 'syntax error: "then" expected') then
+    Node.Body := ParseList;
+  SkipNewlines;
+  if IsReservedWord('elif') then
     { The rest of the chain, including its "fi", parses as a nested if. }
-    Node^.ElseBody := ParseIf(Parser)
+    Node.ElseBody := ParseIf()
   else
   begin
-    if IsReservedWord(Parser, 'else') then
+    if IsReservedWord('else') then
     begin
-      Advance(Parser);
-      Node^.ElseBody := ParseList(Parser);
+      Advance;
+      Node.ElseBody := ParseList;
     end;
-    Expect(Parser, 'fi', 'syntax error: "fi" expected');
+    Expect('fi', 'syntax error: "fi" expected');
   end;
-  Result := Node;
 end;
 
-function ParseLoop(var Parser: TParser): PNode;
+function TParser.ParseLoop: TShellNode;
 var
-  Node: PNode;
+  Node: TLoopNode;
 begin
-  Node := NewNode(NodeLoop);
-  Node^.IsUntil := IsReservedWord(Parser, 'until');
-  Advance(Parser);
-  Node^.Condition := ParseList(Parser);
-  if Expect(Parser, 'do', 'syntax error: "do" expected') then
-    Node^.Body := ParseList(Parser);
-  Expect(Parser, 'done', 'syntax error: "done" expected');
+  Node := TLoopNode.Create;
   Result := Node;
+  Node.IsUntil := IsReservedWord('until');
+  Advance;
+  Node.Condition := ParseList;
+  if Expect('do', 'syntax error: "do" expected') then
+    Node.Body := ParseList;
+  Expect('done', 'syntax error: "done" expected');
 end;
 
-function ParseFor(var Parser: TParser): PNode;
+function TParser.ParseFor: TShellNode;
 var
-  Node: PNode;
+  Node: TForNode;
 begin
-  Advance(Parser); { 'for' }
-  Node := NewNode(NodeFor);
-  if Current(Parser)^.Kind <> TokenWord then
+  Advance; { 'for' }
+  Node := TForNode.Create;
+  Result := Node;
+  if CurrentKind <> TokenWord then
   begin
-    SetError(Parser, 'syntax error: variable name expected after "for"');
-    Exit(Node);
+    SetError('syntax error: variable name expected after "for"');
+    Exit;
   end;
-  Node^.VariableName := DuplicateText(Current(Parser)^.Text);
-  Advance(Parser);
-  SkipNewlines(Parser);
-  if IsReservedWord(Parser, 'in') then
+  Node.VariableName := CurrentText;
+  Advance;
+  SkipNewlines;
+  if IsReservedWord('in') then
   begin
-    Advance(Parser);
+    Advance;
     { An empty list after "in" means no iterations, not "$@". }
-    AppendText(Node^.Words, Node^.WordCount, nil);
-    Node^.WordCount := 0;
-    while Current(Parser)^.Kind = TokenWord do
+    Node.HasWordList := True;
+    while CurrentKind = TokenWord do
     begin
-      AppendText(Node^.Words, Node^.WordCount, DuplicateText(Current(Parser)^.Text));
-      Advance(Parser);
+      AppendWord(Node.Words, CurrentText);
+      Advance;
     end;
   end;
-  if Current(Parser)^.Kind = TokenSemicolon then
-    Advance(Parser);
-  if Expect(Parser, 'do', 'syntax error: "do" expected') then
-    Node^.Body := ParseList(Parser);
-  Expect(Parser, 'done', 'syntax error: "done" expected');
-  Result := Node;
+  if CurrentKind = TokenSemicolon then
+    Advance;
+  if Expect('do', 'syntax error: "do" expected') then
+    Node.Body := ParseList;
+  Expect('done', 'syntax error: "done" expected');
 end;
 
-function ParseCase(var Parser: TParser): PNode;
+{ One "pattern | pattern ) list ;;" of a case; False after an error. }
+function TParser.ParseCaseItem(Node: TCaseNode): Boolean;
 var
-  Node: PNode;
-  Item: PNode;
+  Item: TCaseItem;
 begin
-  Advance(Parser); { 'case' }
-  Node := NewNode(NodeCase);
-  Result := Node;
-  if Current(Parser)^.Kind <> TokenWord then
+  Result := False;
+  Item := TCaseItem.Create;
+  Node.Add(Item);
+  if CurrentKind = TokenLeftParenthesis then
+    Advance;
+  repeat
+    if CurrentKind <> TokenWord then
+    begin
+      SetError('syntax error: pattern expected');
+      Exit;
+    end;
+    AppendWord(Item.Patterns, CurrentText);
+    Advance;
+    if CurrentKind <> TokenPipe then
+      Break;
+    Advance;
+  until False;
+  if CurrentKind <> TokenRightParenthesis then
   begin
-    SetError(Parser, 'syntax error: word expected after "case"');
+    SetError('syntax error: ")" expected after pattern');
     Exit;
   end;
-  AppendText(Node^.Words, Node^.WordCount, DuplicateText(Current(Parser)^.Text));
-  Advance(Parser);
-  SkipNewlines(Parser);
-  if not IsReservedWord(Parser, 'in') then
+  Advance;
+  Item.Body := ParseList;
+  SkipNewlines;
+  if CurrentKind = TokenDoubleSemicolon then
   begin
-    SetError(Parser, 'syntax error: "in" expected');
+    Advance;
+    SkipNewlines;
+  end
+  else if not IsReservedWord('esac') then
+  begin
+    SetError('syntax error: ";;" or "esac" expected');
     Exit;
   end;
-  Advance(Parser);
-  SkipNewlines(Parser);
-  while not IsReservedWord(Parser, 'esac') do
-  begin
-    if Parser.Failed or Parser.Incomplete then
-      Exit;
-    if Current(Parser)^.Kind = TokenEnd then
-    begin
-      SetError(Parser, 'syntax error: "esac" expected');
-      Exit;
-    end;
-    Item := NewNode(NodeCaseItem);
-    AppendChild(Node, Item, False);
-    if Current(Parser)^.Kind = TokenLeftParenthesis then
-      Advance(Parser);
-    repeat
-      if Current(Parser)^.Kind <> TokenWord then
-      begin
-        SetError(Parser, 'syntax error: pattern expected');
-        Exit;
-      end;
-      AppendText(Item^.Words, Item^.WordCount, DuplicateText(Current(Parser)^.Text));
-      Advance(Parser);
-      if Current(Parser)^.Kind <> TokenPipe then
-        Break;
-      Advance(Parser);
-    until False;
-    if Current(Parser)^.Kind <> TokenRightParenthesis then
-    begin
-      SetError(Parser, 'syntax error: ")" expected after pattern');
-      Exit;
-    end;
-    Advance(Parser);
-    Item^.Body := ParseList(Parser);
-    SkipNewlines(Parser);
-    if Current(Parser)^.Kind = TokenDoubleSemicolon then
-    begin
-      Advance(Parser);
-      SkipNewlines(Parser);
-    end
-    else if not IsReservedWord(Parser, 'esac') then
-    begin
-      SetError(Parser, 'syntax error: ";;" or "esac" expected');
-      Exit;
-    end;
-  end;
-  Advance(Parser); { 'esac' }
+  Result := True;
 end;
 
-function ParseCommand(var Parser: TParser): PNode; forward;
-
-{ NAME ( ) command, or function NAME [( )] command; StartIndex is the
-  first token of the definition, for its source text. }
-function ParseFunction(var Parser: TParser; StartIndex: Integer): PNode;
+function TParser.ParseCase: TShellNode;
 var
-  Node: PNode;
-  StartOffset: PtrUInt;
-  EndOffset: PtrUInt;
-  Length: PtrUInt;
+  Node: TCaseNode;
 begin
-  Node := NewNode(NodeFunction);
+  Advance; { 'case' }
+  Node := TCaseNode.Create;
   Result := Node;
-  if IsReservedWord(Parser, 'function') then
-    Advance(Parser);
-  if Current(Parser)^.Kind <> TokenWord then
+  if CurrentKind <> TokenWord then
   begin
-    SetError(Parser, 'syntax error: function name expected');
+    SetError('syntax error: word expected after "case"');
     Exit;
   end;
-  Node^.VariableName := DuplicateText(Current(Parser)^.Text);
-  Advance(Parser);
-  if Current(Parser)^.Kind = TokenLeftParenthesis then
+  Node.Subject := CurrentText;
+  Advance;
+  SkipNewlines;
+  if not IsReservedWord('in') then
   begin
-    Advance(Parser);
-    if Current(Parser)^.Kind <> TokenRightParenthesis then
+    SetError('syntax error: "in" expected');
+    Exit;
+  end;
+  Advance;
+  SkipNewlines;
+  while not IsReservedWord('esac') do
+  begin
+    if Stopped then
+      Exit;
+    if CurrentKind = TokenEnd then
     begin
-      SetError(Parser, 'syntax error: ")" expected');
+      SetError('syntax error: "esac" expected');
       Exit;
     end;
-    Advance(Parser);
+    if not ParseCaseItem(Node) then
+      Exit;
   end;
-  SkipNewlines(Parser);
-  Node^.Body := ParseCommand(Parser);
-  if (Node^.Body = nil) or Parser.Failed or Parser.Incomplete then
-    Exit;
-  StartOffset := Parser.Tokens.Items[StartIndex].StartOffset;
-  EndOffset := Parser.Tokens.Items[Parser.Position - 1].EndOffset;
-  Length := EndOffset - StartOffset;
-  Node^.SourceText := PChar(AllocateMemory(Length + 1));
-  CopyMemory(Node^.SourceText, Parser.Source + StartOffset, Length);
-  Node^.SourceText[Length] := #0;
+  Advance; { 'esac' }
 end;
 
-function IsFunctionDefinition(var Parser: TParser): Boolean;
+{ NAME ( ) command, or function NAME [( )] command. }
+function TParser.ParseFunction: TShellNode;
 var
-  Index: Integer;
+  Node: TFunctionNode;
+  StartIndex: Integer;
+  StartPosition: Integer;
 begin
-  if IsReservedWord(Parser, 'function') then
+  StartIndex := FPosition;
+  Node := TFunctionNode.Create;
+  Result := Node;
+  if IsReservedWord('function') then
+    Advance;
+  if CurrentKind <> TokenWord then
+  begin
+    SetError('syntax error: function name expected');
+    Exit;
+  end;
+  Node.Name := CurrentText;
+  Advance;
+  if CurrentKind = TokenLeftParenthesis then
+  begin
+    Advance;
+    if CurrentKind <> TokenRightParenthesis then
+    begin
+      SetError('syntax error: ")" expected');
+      Exit;
+    end;
+    Advance;
+  end;
+  SkipNewlines;
+  Node.Body := ParseCommand;
+  if (Node.Body = nil) or Stopped then
+    Exit;
+  StartPosition := FTokens[StartIndex].StartPosition;
+  Node.SourceText := Copy(FSource, StartPosition, FTokens[FPosition - 1].EndPosition - StartPosition);
+end;
+
+function TParser.IsFunctionDefinition: Boolean;
+begin
+  if IsReservedWord('function') then
     Exit(True);
-  Index := Parser.Position;
-  Result := (Parser.Tokens.Items[Index].Kind = TokenWord) and
-    (Index + 2 < Parser.Tokens.Count) and
-    (Parser.Tokens.Items[Index + 1].Kind = TokenLeftParenthesis) and
-    (Parser.Tokens.Items[Index + 2].Kind = TokenRightParenthesis);
+  Result := (CurrentKind = TokenWord) and (FPosition + 2 < Length(FTokens)) and
+    (FTokens[FPosition + 1].Kind = TokenLeftParenthesis) and
+    (FTokens[FPosition + 2].Kind = TokenRightParenthesis);
 end;
 
-function ParseCompoundCommand(var Parser: TParser): PNode;
+function TParser.ParseCompoundCommand: TShellNode;
 begin
   Result := nil;
-  if IsReservedWord(Parser, 'case') then
-    Exit(ParseCase(Parser));
-  if IsReservedWord(Parser, 'if') then
-    Exit(ParseIf(Parser));
-  if IsReservedWord(Parser, 'while') or IsReservedWord(Parser, 'until') then
-    Exit(ParseLoop(Parser));
-  if IsReservedWord(Parser, 'for') then
-    Exit(ParseFor(Parser));
-  if IsReservedWord(Parser, '{') then
+  if IsReservedWord('case') then
+    Exit(ParseCase);
+  if IsReservedWord('if') then
+    Exit(ParseIf);
+  if IsReservedWord('while') or IsReservedWord('until') then
+    Exit(ParseLoop);
+  if IsReservedWord('for') then
+    Exit(ParseFor);
+  if IsReservedWord('{') then
   begin
-    Advance(Parser);
-    Result := ParseList(Parser);
-    Expect(Parser, '}', 'syntax error: "}" expected');
+    Advance;
+    Result := ParseList;
+    Expect('}', 'syntax error: "}" expected');
     Exit;
   end;
-  if Current(Parser)^.Kind = TokenLeftParenthesis then
+  if CurrentKind = TokenLeftParenthesis then
   begin
-    Advance(Parser);
-    Result := ParseList(Parser);
-    SkipNewlines(Parser);
-    if Current(Parser)^.Kind = TokenRightParenthesis then
-      Advance(Parser)
+    Advance;
+    Result := ParseList;
+    SkipNewlines;
+    if CurrentKind = TokenRightParenthesis then
+      Advance
     else
-      SetError(Parser, 'syntax error: ")" expected');
+      SetError('syntax error: ")" expected');
   end;
 end;
 
-function IsCompoundStart(var Parser: TParser): Boolean;
+function TParser.IsCompoundStart: Boolean;
 begin
-  Result := IsReservedWord(Parser, 'case') or IsReservedWord(Parser, 'if') or
-    IsReservedWord(Parser, 'while') or IsReservedWord(Parser, 'until') or
-    IsReservedWord(Parser, 'for') or IsReservedWord(Parser, '{') or
-    (Current(Parser)^.Kind = TokenLeftParenthesis);
+  Result := IsReservedWord('case') or IsReservedWord('if') or
+    IsReservedWord('while') or IsReservedWord('until') or
+    IsReservedWord('for') or IsReservedWord('{') or
+    (CurrentKind = TokenLeftParenthesis);
 end;
 
-function ParseCommand(var Parser: TParser): PNode;
+function TParser.ParseCommand: TShellNode;
 var
-  Wrapper: PNode;
+  Wrapper: TRedirectedNode;
 begin
-  if IsFunctionDefinition(Parser) then
-    Exit(ParseFunction(Parser, Parser.Position));
-  if not IsCompoundStart(Parser) then
-    Exit(ParseSimpleCommand(Parser));
-  Result := ParseCompoundCommand(Parser);
-  if Parser.Failed or Parser.Incomplete or (Current(Parser)^.Kind <> TokenRedirect) then
+  if IsFunctionDefinition then
+    Exit(ParseFunction);
+  if not IsCompoundStart then
+    Exit(ParseSimpleCommand);
+  Result := ParseCompoundCommand;
+  if Stopped or (CurrentKind <> TokenRedirect) then
     Exit;
   { Redirections after a compound command apply to all of it. }
-  Wrapper := NewNode(NodeRedirected);
-  Wrapper^.Body := Result;
+  Wrapper := TRedirectedNode.Create;
+  Wrapper.Body := Result;
   Result := Wrapper;
-  while Current(Parser)^.Kind = TokenRedirect do
-    if not ParseRedirection(Parser, Wrapper) then
+  while CurrentKind = TokenRedirect do
+    if not ParseRedirection(Wrapper.Redirections) then
       Exit;
 end;
 
-function ParsePipeline(var Parser: TParser): PNode;
+function TParser.ParsePipeline: TShellNode;
 var
-  Node: PNode;
-  Command: PNode;
+  Node: TPipelineNode;
+  Command: TShellNode;
+  Count: Integer;
 begin
-  Node := NewNode(NodePipeline);
-  if IsReservedWord(Parser, '!') then
+  Node := TPipelineNode.Create;
+  if IsReservedWord('!') then
   begin
-    Node^.Negate := True;
-    Advance(Parser);
+    Node.Negate := True;
+    Advance;
   end;
   repeat
-    Command := ParseCommand(Parser);
+    Command := ParseCommand;
     if Command = nil then
     begin
-      FreeNode(Node);
+      Node.Free;
       Exit(nil);
     end;
-    AppendChild(Node, Command, False);
-    if Current(Parser)^.Kind <> TokenPipe then
+    Count := Length(Node.Commands);
+    SetLength(Node.Commands, Count + 1);
+    Node.Commands[Count] := Command;
+    if CurrentKind <> TokenPipe then
       Break;
-    Advance(Parser);
-    SkipNewlines(Parser);
-  until Parser.Failed or Parser.Incomplete;
+    Advance;
+    SkipNewlines;
+  until Stopped;
 
   { A single command without '!' needs no pipeline node. }
-  if (Node^.ChildCount = 1) and not Node^.Negate then
+  if (Length(Node.Commands) = 1) and not Node.Negate then
   begin
-    Result := Node^.Children[0];
-    Node^.ChildCount := 0;
-    FreeNode(Node);
+    Result := Node.Commands[0];
+    Node.Commands := nil;
+    Node.Free;
   end
   else
     Result := Node;
 end;
 
-function ParseAndOr(var Parser: TParser): PNode;
+function TParser.ParseAndOr: TShellNode;
 var
-  Left: PNode;
-  Right: PNode;
-  Node: PNode;
-  Combination: TAndOrOperator;
+  Left: TShellNode;
+  Right: TShellNode;
+  Node: TAndOrNode;
+  Operation: TAndOrOperator;
 begin
-  Left := ParsePipeline(Parser);
-  while (Left <> nil) and (Current(Parser)^.Kind in [TokenAndIf, TokenOrIf]) do
+  Left := ParsePipeline;
+  while (Left <> nil) and (CurrentKind in [TokenAndIf, TokenOrIf]) do
   begin
-    if Current(Parser)^.Kind = TokenAndIf then
-      Combination := OperatorAnd
+    if CurrentKind = TokenAndIf then
+      Operation := OperatorAnd
     else
-      Combination := OperatorOr;
-    Advance(Parser);
-    SkipNewlines(Parser);
-    Right := ParsePipeline(Parser);
+      Operation := OperatorOr;
+    Advance;
+    SkipNewlines;
+    Right := ParsePipeline;
     if Right = nil then
     begin
-      FreeNode(Left);
+      Left.Free;
       Exit(nil);
     end;
-    Node := NewNode(NodeAndOr);
-    Node^.Left := Left;
-    Node^.Right := Right;
-    Node^.AndOrOperator := Combination;
+    Node := TAndOrNode.Create;
+    Node.Left := Left;
+    Node.Right := Right;
+    Node.Operation := Operation;
     Left := Node;
   end;
   Result := Left;
 end;
 
-function ParseList(var Parser: TParser): PNode;
+function TParser.ParseList: TSequenceNode;
 var
-  Node: PNode;
-  Item: PNode;
-  Background: Boolean;
+  Item: TShellNode;
 begin
-  Node := NewNode(NodeSequence);
-  SkipNewlines(Parser);
-  while not AtListTerminator(Parser) do
+  Result := TSequenceNode.Create;
+  SkipNewlines;
+  while not AtListTerminator do
   begin
-    Item := ParseAndOr(Parser);
+    Item := ParseAndOr;
     if Item = nil then
       Break;
-    Background := Current(Parser)^.Kind = TokenAmpersand;
-    AppendChild(Node, Item, Background);
-    if Current(Parser)^.Kind in [TokenSemicolon, TokenAmpersand, TokenNewline] then
-      Advance(Parser)
-    else if not AtListTerminator(Parser) then
+    Result.Add(Item, CurrentKind = TokenAmpersand);
+    if CurrentKind in [TokenSemicolon, TokenAmpersand, TokenNewline] then
+      Advance
+    else if not AtListTerminator then
     begin
-      SetError(Parser, 'syntax error: unexpected token');
+      SetError('syntax error: unexpected token');
       Break;
     end;
-    SkipNewlines(Parser);
-    if Parser.Failed or Parser.Incomplete then
+    SkipNewlines;
+    if Stopped then
       Break;
   end;
-  Result := Node;
 end;
 
-function ParseInput(Text: PChar; out Tree: PNode; out ErrorMessage: PChar): TParseResult;
-var
-  Parser: TParser;
+function TParser.Parse(out Tree: TShellNode; out ErrorMessage: string): TParseResult;
 begin
   Tree := nil;
-  ErrorMessage := nil;
-  FillMemory(@Parser, SizeOf(Parser), 0);
-  Parser.Source := Text;
-  if Tokenize(Text, Parser.Tokens) = LexIncomplete then
-  begin
-    FreeTokens(Parser.Tokens);
+  ErrorMessage := '';
+  FPosition := 0;
+  FFailed := False;
+  FIncomplete := False;
+  FErrorMessage := '';
+  if Tokenize(FSource, FTokens) = LexIncomplete then
     Exit(ParseIncomplete);
-  end;
 
-  Tree := ParseList(Parser);
-  if not Parser.Failed and not Parser.Incomplete and (Current(Parser)^.Kind <> TokenEnd) then
+  Tree := ParseList;
+  if not Stopped and (CurrentKind <> TokenEnd) then
   begin
-    Parser.Failed := True;
-    if Current(Parser)^.Kind = TokenWord then
-      Parser.ErrorMessage := 'syntax error: unexpected word'
+    FFailed := True;
+    if CurrentKind = TokenWord then
+      FErrorMessage := 'syntax error: unexpected word'
     else
-      Parser.ErrorMessage := 'syntax error: unexpected token';
+      FErrorMessage := 'syntax error: unexpected token';
   end;
-  FreeTokens(Parser.Tokens);
+  FTokens := nil;
 
-  if Parser.Failed or Parser.Incomplete then
+  if Stopped then
   begin
-    FreeNode(Tree);
+    Tree.Free;
     Tree := nil;
-    if Parser.Incomplete then
+    if FIncomplete then
       Exit(ParseIncomplete);
-    ErrorMessage := Parser.ErrorMessage;
+    ErrorMessage := FErrorMessage;
     Exit(ParseError);
   end;
   Result := ParseSuccess;
-end;
-
-procedure FreeTextList(Items: PPChar; Count: Integer);
-var
-  Index: Integer;
-begin
-  Index := 0;
-  while Index < Count do
-  begin
-    FreeMemory(Items[Index]);
-    Inc(Index);
-  end;
-  FreeMemory(Items);
-end;
-
-procedure FreeNode(Node: PNode);
-var
-  Index: Integer;
-begin
-  if Node = nil then
-    Exit;
-  FreeTextList(Node^.Words, Node^.WordCount);
-  FreeTextList(Node^.Assignments, Node^.AssignmentCount);
-  Index := 0;
-  while Index < Node^.RedirectionCount do
-  begin
-    FreeMemory(Node^.Redirections[Index].Target);
-    Inc(Index);
-  end;
-  for Index := 0 to Node^.RedirectionCount - 1 do
-    FreeMemory(Node^.Redirections[Index].HereBody);
-  FreeMemory(Node^.Redirections);
-  Index := 0;
-  while Index < Node^.ChildCount do
-  begin
-    FreeNode(Node^.Children[Index]);
-    Inc(Index);
-  end;
-  FreeMemory(Node^.Children);
-  FreeMemory(Node^.RunInBackground);
-  FreeNode(Node^.Left);
-  FreeNode(Node^.Right);
-  FreeNode(Node^.Condition);
-  FreeNode(Node^.Body);
-  FreeNode(Node^.ElseBody);
-  FreeMemory(Node^.VariableName);
-  FreeMemory(Node^.SourceText);
-  FreeMemory(Node);
-end;
-
-function CopyTextList(Items: PPChar; Count: Integer): PPChar;
-var
-  Index: Integer;
-begin
-  if Items = nil then
-    Exit(nil);
-  Result := PPChar(AllocateZeroedMemory(QWord(Count + 1) * SizeOf(PChar)));
-  for Index := 0 to Count - 1 do
-    Result[Index] := DuplicateText(Items[Index]);
-end;
-
-function CopyOptionalText(Text: PChar): PChar;
-begin
-  if Text = nil then
-    Result := nil
-  else
-    Result := DuplicateText(Text);
-end;
-
-function CopyNode(Node: PNode): PNode;
-var
-  Index: Integer;
-begin
-  if Node = nil then
-    Exit(nil);
-  Result := PNode(AllocateMemory(SizeOf(TNode)));
-  Result^ := Node^;
-  Result^.Words := CopyTextList(Node^.Words, Node^.WordCount);
-  Result^.Assignments := CopyTextList(Node^.Assignments, Node^.AssignmentCount);
-  Result^.Redirections := nil;
-  if Node^.RedirectionCount > 0 then
-  begin
-    Result^.Redirections := PRedirection(AllocateMemory(QWord(Node^.RedirectionCount) * SizeOf(TRedirection)));
-    for Index := 0 to Node^.RedirectionCount - 1 do
-    begin
-      Result^.Redirections[Index] := Node^.Redirections[Index];
-      Result^.Redirections[Index].Target := CopyOptionalText(Node^.Redirections[Index].Target);
-      Result^.Redirections[Index].HereBody := CopyOptionalText(Node^.Redirections[Index].HereBody);
-    end;
-  end;
-  Result^.Children := nil;
-  Result^.RunInBackground := nil;
-  if Node^.ChildCount > 0 then
-  begin
-    Result^.Children := PPNode(AllocateMemory(QWord(Node^.ChildCount) * SizeOf(PNode)));
-    Result^.RunInBackground := PBoolean(AllocateMemory(QWord(Node^.ChildCount) * SizeOf(Boolean)));
-    for Index := 0 to Node^.ChildCount - 1 do
-    begin
-      Result^.Children[Index] := CopyNode(Node^.Children[Index]);
-      Result^.RunInBackground[Index] := Node^.RunInBackground[Index];
-    end;
-  end;
-  Result^.Left := CopyNode(Node^.Left);
-  Result^.Right := CopyNode(Node^.Right);
-  Result^.Condition := CopyNode(Node^.Condition);
-  Result^.Body := CopyNode(Node^.Body);
-  Result^.ElseBody := CopyNode(Node^.ElseBody);
-  Result^.VariableName := CopyOptionalText(Node^.VariableName);
-  Result^.SourceText := CopyOptionalText(Node^.SourceText);
 end;
 
 end.
