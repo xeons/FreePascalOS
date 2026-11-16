@@ -54,6 +54,9 @@ uses
   Windowing.DataTransfer,
   Windowing.Clipboard,
   Controls.FileLists,
+  { Its initialization puts the display server's clipboard behind
+    Controls.FileLists' file lists. }
+  Controls.SystemClipboard,
   ClipboardTool.Images;
 
 const

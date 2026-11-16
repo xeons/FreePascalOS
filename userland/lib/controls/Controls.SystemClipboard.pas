@@ -22,7 +22,8 @@
   lists (Controls.FileLists' text) offered with the plain paths as text
   beside them, for pasting into an edit box. While a program has no
   connection to a display server it keeps the contents itself.
-  Installed when libcontrols loads.
+  Installed by its initialization, which runs in programs that use this
+  unit: through Controls.Window, every program with control windows.
 }
 unit Controls.SystemClipboard;
 

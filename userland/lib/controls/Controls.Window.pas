@@ -190,6 +190,9 @@ uses
   Windowing.Messages,
   Windowing.DataTransfer,
   Controls.Keys,
+  { Used for its initialization: every program with control windows
+    shares the display server's clipboard. }
+  Controls.SystemClipboard,
   Controls.SystemDrag;
 
 type

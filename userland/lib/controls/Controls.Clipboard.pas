@@ -21,9 +21,9 @@
 
   Controls (the edit boxes) and programs use only the routines below.
   Where it is kept is a store behind them: within the program by
-  default; libcontrols puts the display server's system clipboard in
-  its place when it loads (Controls.SystemClipboard), so that every
-  program shares it. Another store can take its place
+  default; Controls.SystemClipboard (used by Controls.Window, so by
+  every program with control windows) puts the display server's system
+  clipboard in its place, so that every program shares it. Another store can take its place
   (SetClipboardStore) without the controls changing. This unit needs
   no display server, so it builds on the host too.
 }
