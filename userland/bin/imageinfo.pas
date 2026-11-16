@@ -38,7 +38,7 @@ uses
   SysUtils,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Image.Errors,
   Image.Model,
   Image.Frames,
