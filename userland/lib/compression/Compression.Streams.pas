@@ -23,7 +23,8 @@
                           is read as the decompressed data
     TCompressionStream    is written with data and writes it compressed
                           to a target stream; Finish (or freeing it)
-                          ends the compressed data
+                          ends the compressed data, Flush writes out
+                          everything so far (a sync or full flush)
 
   Both go forwards only; Seek tells the position and nothing more.
   Damaged or cut off data raises ECompressionError. When the compressed
@@ -84,6 +85,10 @@ type
     destructor Destroy; override;
     { Writes the rest of the compressed data and the trailer. }
     procedure Finish;
+    { Writes out everything written so far, so that the reader can
+      decompress all of it now; with Full, the reader can also start
+      over from here. }
+    procedure Flush(Full: Boolean = False);
     function Read(var Buffer; Count: LongInt): LongInt; override;
     function Write(const Buffer; Count: LongInt): LongInt; override;
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
@@ -237,6 +242,23 @@ begin
   FFinished := True;
   FDeflater.SetInput(nil, 0);
   while FDeflater.Compress(@FBuffer[0], Length(FBuffer), Written, True) <> DeflateFinished do
+    WriteOutput(Written);
+  WriteOutput(Written);
+end;
+
+procedure TCompressionStream.Flush(Full: Boolean);
+var
+  Written: SizeInt;
+  Mode: TDeflateFlush;
+begin
+  if FFinished then
+    Exit;
+  if Full then
+    Mode := FlushFull
+  else
+    Mode := FlushSync;
+  FDeflater.SetInput(nil, 0);
+  while FDeflater.Compress(@FBuffer[0], Length(FBuffer), Written, Mode) = DeflateOutputFull do
     WriteOutput(Written);
   WriteOutput(Written);
 end;

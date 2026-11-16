@@ -41,6 +41,18 @@
   input may still start another. Anything but a member after a member
   is CompressionErrorTrailingData. After zlib and raw data the rest of
   the input is left alone (InputRemaining).
+
+  SetDictionary gives the preset dictionary the data was compressed
+  with: raw data always starts from it; zlib data uses it only when its
+  header asks for one, and then the dictionary's Adler-32 must be the
+  id in the header (CompressionErrorDictionaryMismatch). zlib data that
+  needs a dictionary when none was given fails with
+  CompressionErrorPresetDictionary; DictionaryId then says which one,
+  so the caller can SetDictionary, Reset and start over.
+
+  Flush points (empty stored blocks, from a sync or full flush) need
+  nothing special: everything before one comes out as soon as the
+  input up to it has been given.
 }
 unit Compression.Inflater;
 
@@ -83,10 +95,14 @@ type
     FChecksum: LongWord;
     FMemberLength: LongWord;
     FTotalOutput: Int64;
+    FDictionary: array of Byte;
+    FDictionaryId: LongWord;
+    FDictionaryWanted: Boolean;
     function Fail(Error: TCompressionError): TInflateResult;
     procedure StartMember;
     function ReadHeader: TStepOutcome;
     function ReadZlibHeaderByte(Value: Byte): TStepOutcome;
+    function CheckDictionaryId: TStepOutcome;
     function ReadTrailer: TStepOutcome;
     function CheckTrailer: TCompressionError;
     procedure TakeFromEngine(Output: PByte; Capacity: SizeInt; var Written: SizeInt);
@@ -99,6 +115,8 @@ type
     { Back to the start of a new stream (the format stays). }
     procedure Reset;
     procedure SetInput(Data: Pointer; Count: SizeInt);
+    { The preset dictionary (raw and zlib data); kept across Reset. }
+    procedure SetDictionary(Data: Pointer; Count: SizeInt);
     function Decompress(Output: Pointer; Capacity: SizeInt; out Written: SizeInt): TInflateResult;
 
     property Format: TCompressionFormat read FFormat;
@@ -113,6 +131,8 @@ type
     { The header of the gzip member being (or last) decompressed. }
     property GzipHeader: TGzipHeader read GetGzipHeader;
     property MemberCount: Integer read FMemberCount;
+    { The Adler-32 of the dictionary zlib data asked for (0 if none). }
+    property DictionaryId: LongWord read FDictionaryId;
   end;
 
 implementation
@@ -150,6 +170,8 @@ begin
   FHeaderReader.Reset;
   FHeaderBytes := 0;
   FTrailerBytes := 0;
+  FDictionaryId := 0;
+  FDictionaryWanted := (FStreamFormat = FormatRaw) and (Length(FDictionary) > 0);
   FMemberLength := 0;
   if FStreamFormat = FormatGzip then
     FChecksum := Crc32Initial
@@ -164,6 +186,18 @@ end;
 procedure TInflater.SetInput(Data: Pointer; Count: SizeInt);
 begin
   FEngine.SetInput(Data, Count);
+end;
+
+procedure TInflater.SetDictionary(Data: Pointer; Count: SizeInt);
+begin
+  if Count < 0 then
+    Count := 0;
+  FDictionary := nil;
+  SetLength(FDictionary, Count);
+  if Count > 0 then
+    Move(Data^, FDictionary[0], Count);
+  if (FStreamFormat = FormatRaw) and (FState = InflaterBody) and (FEngine.TotalOutput = 0) then
+    FDictionaryWanted := Count > 0;
 end;
 
 function TInflater.GetFinished: Boolean;
@@ -188,20 +222,49 @@ begin
   Result := InflateFailed;
 end;
 
+{ The two header bytes, then the dictionary id if the header has one. }
 function TInflater.ReadZlibHeaderByte(Value: Byte): TStepOutcome;
 begin
   Result := StepNeedsInput;
-  if FHeaderBytes = 0 then
+  Inc(FHeaderBytes);
+  if FHeaderBytes = 1 then
   begin
     FZlibMethodByte := Value;
-    FHeaderBytes := 1;
     Exit;
   end;
-  FError := CheckZlibHeader(FZlibMethodByte, Value);
-  if FError = CompressionErrorNone then
-    Result := StepDone
-  else
-    Result := StepFailed;
+  if FHeaderBytes = 2 then
+  begin
+    FError := CheckZlibHeader(FZlibMethodByte, Value, True);
+    if FError <> CompressionErrorNone then
+      Result := StepFailed
+    else if ZlibHeaderHasDictionary(Value) then
+      FDictionaryWanted := True
+    else
+      Result := StepDone;
+    Exit;
+  end;
+  FDictionaryId := (FDictionaryId shl 8) or Value;
+  if FHeaderBytes = ZlibHeaderSize + ZlibDictionaryIdSize then
+    Result := CheckDictionaryId;
+end;
+
+function TInflater.CheckDictionaryId: TStepOutcome;
+var
+  Id: LongWord;
+begin
+  Result := StepFailed;
+  if Length(FDictionary) = 0 then
+  begin
+    FError := CompressionErrorPresetDictionary;
+    Exit;
+  end;
+  Id := Adler32(Adler32Initial, @FDictionary[0], Length(FDictionary));
+  if Id <> FDictionaryId then
+  begin
+    FError := CompressionErrorDictionaryMismatch;
+    Exit;
+  end;
+  Result := StepDone;
 end;
 
 function TInflater.ReadHeader: TStepOutcome;
@@ -345,6 +408,12 @@ begin
           end;
         end;
       InflaterBody:
+      begin
+        if FDictionaryWanted then
+        begin
+          FEngine.SetDictionary(@FDictionary[0], Length(FDictionary));
+          FDictionaryWanted := False;
+        end;
         case FEngine.Decode of
           EngineNeedsInput:
             if FEngine.PendingOutput = 0 then
@@ -366,6 +435,7 @@ begin
               Exit;
             end;
         end;
+      end;
       InflaterTrailer:
         case ReadTrailer of
           StepNeedsInput:

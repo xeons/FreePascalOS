@@ -27,8 +27,9 @@
 
   The page's directory (Image.Tiff.Pages) says how its strips or tiles
   are compressed: JPEG chunks are decoded whole by the JPEG decoder
-  (Image.Tiff.Jpeg); the others are decompressed into planes of samples
-  (Image.Tiff.Strips) and turned into colours (Image.Tiff.Photometric).
+  (Image.Tiff.Jpeg, and Image.Tiff.OldJpeg for compression 6); the
+  others are decompressed into planes of samples (Image.Tiff.Strips)
+  and turned into colours (Image.Tiff.Photometric).
   Besides the pixels: the orientation (the pixels are not turned), the
   resolution in dots per inch (from centimetres if that is the unit, none
   when there is no unit), the ICC profile, and the description, software
@@ -60,7 +61,8 @@ uses
   Image.Tiff.Pages,
   Image.Tiff.Strips,
   Image.Tiff.Photometric,
-  Image.Tiff.Jpeg;
+  Image.Tiff.Jpeg,
+  Image.Tiff.OldJpeg;
 
 const
   CentimetresPerInch = 2.54;
@@ -118,7 +120,7 @@ var
 begin
   case Page.Compression of
     TiffCompressionNone, TiffCompressionPackBits, TiffCompressionLzw, TiffCompressionAdobeDeflate,
-    TiffCompressionDeflate:
+    TiffCompressionDeflate, TiffCompressionCcittRle, TiffCompressionCcittGroup3, TiffCompressionCcittGroup4:
       begin
         Planes := ReadTiffPlanes(TiffFile.Data, Page, TiffFile.BigEndian);
         ConvertTiffPlanes(Page, Planes, Image);
@@ -126,9 +128,7 @@ begin
     TiffCompressionJpeg:
       DecodeTiffJpegChunks(TiffFile.Data, Page, Image);
     TiffCompressionOldJpeg:
-      RaiseImageError(ImageErrorUnsupported, 'old-style TIFF JPEG');
-    TiffCompressionCcittRle, TiffCompressionCcittGroup3, TiffCompressionCcittGroup4:
-      RaiseImageError(ImageErrorUnsupported, 'TIFF CCITT fax compression');
+      DecodeTiffOldJpeg(TiffFile.Data, Page, Image);
   else
     RaiseImageError(ImageErrorUnsupported, 'TIFF compression ' + IntToStr(Page.Compression));
   end;

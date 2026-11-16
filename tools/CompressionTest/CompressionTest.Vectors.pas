@@ -54,6 +54,33 @@ type
     Compressed: PChar;
   end;
 
+  { Data zlib compressed with a preset dictionary of
+    MakeData(DataText, DictionarySize, DictionarySeed), whose Adler-32 is
+    DictionaryId. }
+  TDictionaryVector = record
+    Name: PChar;
+    Format: TCompressionFormat;
+    Kind: TDataKind;
+    Size: Integer;
+    Seed: LongWord;
+    DictionarySize: Integer;
+    DictionarySeed: LongWord;
+    DictionaryId: LongWord;
+    Compressed: PChar;
+  end;
+
+  { zlib data with flush points: "compressed length:input length:full"
+    separated by commas (full is 1 after a full flush, 0 after a sync
+    flush). }
+  TFlushVector = record
+    Name: PChar;
+    Kind: TDataKind;
+    Size: Integer;
+    Seed: LongWord;
+    Points: PChar;
+    Compressed: PChar;
+  end;
+
 {$I CompressionTest.Vectors.inc}
 
 implementation

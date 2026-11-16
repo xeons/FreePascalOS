@@ -65,6 +65,8 @@ const
   TiffTagXResolution = 282;
   TiffTagYResolution = 283;
   TiffTagPlanarConfiguration = 284;
+  TiffTagT4Options = 292;
+  TiffTagT6Options = 293;
   TiffTagResolutionUnit = 296;
   TiffTagSoftware = 305;
   TiffTagDateTime = 306;
@@ -78,6 +80,9 @@ const
   TiffTagExtraSamples = 338;
   TiffTagSampleFormat = 339;
   TiffTagJpegTables = 347;
+  { Old-style JPEG: where a whole JPEG stream of the page is. }
+  TiffTagJpegInterchangeFormat = 513;
+  TiffTagJpegInterchangeFormatLength = 514;
   TiffTagYCbCrCoefficients = 529;
   TiffTagYCbCrSubsampling = 530;
   TiffTagReferenceBlackWhite = 532;
@@ -120,6 +125,8 @@ const
   TiffExtraUnassociatedAlpha = 2;
 
   TiffSampleFormatUnsigned = 1;
+  TiffSampleFormatSigned = 2;
+  TiffSampleFormatFloat = 3;
 
   TiffResolutionUnitNone = 1;
   TiffResolutionUnitInch = 2;

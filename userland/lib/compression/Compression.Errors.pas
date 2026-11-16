@@ -58,7 +58,9 @@ type
     CompressionErrorTrailingData,
     { Use of the library. }
     CompressionErrorInvalidArgument,
-    CompressionErrorOutputLimit
+    CompressionErrorOutputLimit,
+    { Preset dictionaries (zlib). }
+    CompressionErrorDictionaryMismatch
   );
 
   { Raised by the convenience layer: the code and its message. }
@@ -104,6 +106,7 @@ begin
     CompressionErrorTrailingData: Result := 'trailing data after the compressed data';
     CompressionErrorInvalidArgument: Result := 'invalid argument';
     CompressionErrorOutputLimit: Result := 'the decompressed data is larger than allowed';
+    CompressionErrorDictionaryMismatch: Result := 'the preset dictionary is not the one the data needs';
   else
     Result := 'unknown error';
   end;

@@ -89,6 +89,13 @@ type
 
     constructor Create;
     procedure Reset;
+    { Before any input: puts the end of Data (as much as a match can
+      reach back) in the window as if it had just been coded, so that
+      matches may refer into it (a preset dictionary). }
+    procedure Preload(Data: PByte; Count: SizeInt);
+    { Empties every chain: nothing coded so far is found again (after a
+      full flush). }
+    procedure ForgetHistory;
     { Adds input after the look ahead; returns how much fitted. }
     function Fill(Data: PByte; Count: SizeInt): SizeInt;
     { True if Fill would slide first; then Slide moves everything down
@@ -146,6 +153,36 @@ begin
   Result := FHead[Hash];
   FPrevious[At and WindowMask] := Result;
   FHead[Hash] := At;
+end;
+
+procedure TMatchFinder.Preload(Data: PByte; Count: SizeInt);
+var
+  At: LongInt;
+begin
+  if Count > MaximumDistance then
+  begin
+    Inc(Data, Count - MaximumDistance);
+    Count := MaximumDistance;
+  end;
+  if (Count <= 0) or (Position <> 0) or (Lookahead <> 0) then
+    Exit;
+  Move(Data^, FWindow[0], Count);
+  At := 0;
+  while At + MinimumMatch <= Count do
+  begin
+    Insert(At);
+    Inc(At);
+  end;
+  Position := Count;
+  BlockStart := Count;
+end;
+
+procedure TMatchFinder.ForgetHistory;
+var
+  Index: Integer;
+begin
+  for Index := 0 to HashSize - 1 do
+    FHead[Index] := NoPosition;
 end;
 
 function TMatchFinder.NeedsSlide: Boolean;

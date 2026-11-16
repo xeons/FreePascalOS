@@ -349,6 +349,53 @@ def pascal_hex(data):
     return " +\n      ".join("'" + line + "'" for line in lines)
 
 
+def dictionary_vectors():
+    """(name, format, kind, size, seed, dictionary size, dictionary seed, data)
+
+    Text compressed with a dictionary of other text made from the same
+    words, so that the dictionary helps."""
+    cases = []
+    for name, format_name, wbits, level, size, dictionary_size in [
+            ("zlib level 1", "FormatZlib", 15, 1, 20000, 4000),
+            ("zlib level 6", "FormatZlib", 15, 6, 20000, 4000),
+            ("zlib level 9", "FormatZlib", 15, 9, 3000, 30000),
+            ("zlib level 0", "FormatZlib", 15, 0, 2000, 1000),
+            ("raw level 6", "FormatRaw", -15, 6, 20000, 4000),
+            ("zlib dictionary longer than the window", "FormatZlib", 15, 6, 10000, 50000)]:
+        data = make_text(size, 21)
+        dictionary = make_text(dictionary_size, 22)
+        compressor = zlib.compressobj(level, zlib.DEFLATED, wbits, 8, zlib.Z_DEFAULT_STRATEGY, dictionary)
+        compressed = compressor.compress(data) + compressor.flush()
+        cases.append((name, format_name, "DataText", size, 21, dictionary_size, 22, zlib.adler32(dictionary),
+                      compressed))
+    return cases
+
+
+def flush_vectors():
+    """(name, kind, size, seed, flush points, data): zlib data with flushes
+    after some pieces of the input; each point is the length of the
+    compressed data up to the flush, of the input it holds, and 1 for a
+    full flush (0 for a sync flush)."""
+    cases = []
+    for name, level, modes in [("sync flushes", 6, [zlib.Z_SYNC_FLUSH] * 3),
+                               ("full flushes", 6, [zlib.Z_FULL_FLUSH] * 3),
+                               ("mixed flushes at level 1", 1,
+                                [zlib.Z_SYNC_FLUSH, zlib.Z_FULL_FLUSH, zlib.Z_SYNC_FLUSH]),
+                               ("flushes at level 0", 0, [zlib.Z_SYNC_FLUSH, zlib.Z_FULL_FLUSH, zlib.Z_SYNC_FLUSH])]:
+        data = make_text(30000, 23)
+        compressor = zlib.compressobj(level)
+        compressed = b""
+        points = []
+        start = 0
+        for end, mode in zip([5000, 12000, 20000], modes):
+            compressed += compressor.compress(data[start:end]) + compressor.flush(mode)
+            points.append((len(compressed), end, 1 if mode == zlib.Z_FULL_FLUSH else 0))
+            start = end
+        compressed += compressor.compress(data[start:]) + compressor.flush()
+        cases.append((name, "DataText", 30000, 23, points, compressed))
+    return cases
+
+
 def main():
     good = []
 
@@ -415,6 +462,23 @@ def main():
     print("      %s;" % pascal_hex(header_vector))
     print("  GzipHeaderVectorSize = 1000;")
     print("  GzipHeaderVectorSeed = 6;")
+    dictionaries = dictionary_vectors()
+    print("  DictionaryVectors: array[0..%d] of TDictionaryVector = (" % (len(dictionaries) - 1))
+    for index, (name, format_name, kind, size, seed, dictionary_size, dictionary_seed, dictionary_id,
+                data) in enumerate(dictionaries):
+        print("    (Name: '%s'; Format: %s; Kind: %s; Size: %d; Seed: %d; DictionarySize: %d; DictionarySeed: %d;" %
+              (name, format_name, kind, size, seed, dictionary_size, dictionary_seed))
+        print("     DictionaryId: $%08x; Compressed:" % dictionary_id)
+        print("      %s)%s" % (pascal_hex(data), "," if index < len(dictionaries) - 1 else ""))
+    print("  );")
+    flushes = flush_vectors()
+    print("  FlushVectors: array[0..%d] of TFlushVector = (" % (len(flushes) - 1))
+    for index, (name, kind, size, seed, points, data) in enumerate(flushes):
+        print("    (Name: '%s'; Kind: %s; Size: %d; Seed: %d;" % (name, kind, size, seed))
+        print("     Points: '%s';" % ",".join("%d:%d:%d" % point for point in points))
+        print("     Compressed:")
+        print("      %s)%s" % (pascal_hex(data), "," if index < len(flushes) - 1 else ""))
+    print("  );")
     print("  { Of a million bytes of $FF. }")
     print("  FilledAdler: LongWord = $%08x;" % zlib.adler32(b"\xff" * 1000000))
     print("  FilledCrc: LongWord = $%08x;" % zlib.crc32(b"\xff" * 1000000))

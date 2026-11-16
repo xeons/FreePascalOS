@@ -30,9 +30,20 @@ reference (name.rgba, see fixturecommon.py):
   tiff-metadata (+ .icc)                             description, software,
                                                      date, resolution in cm,
                                                      orientation, ICC profile
+  tiff-g4, -g3, -g3-2d, -g3-fill, -ccitt-rle,         fax compression, also in
+  -g4-strips, -g4-fill-order, -g3-2d-fill-order,      strips, fill order 2, and
+  -g3-2d-fax-width                                   1728 pixels wide
+  tiff-float-predictor-deflate, -lzw                 32-bit float grey,
+                                                     predictor 3 (the truth is
+                                                     worked out here)
 
 Files put together byte by byte here, for what Pillow does not write:
-big-endian files, BigTIFF, tiles, separate planes, the horizontal
+big-endian files, BigTIFF, tiles, separate planes, fax data seen
+white is zero, floating point samples of 16 and 32 bits with and
+without the floating point predictor (and one of high dynamic range,
+scaled down by its brightest sample, with a NaN and an infinity), old-
+style JPEG (a whole stream at JPEGInterchangeFormat, or a stream a
+strip), the horizontal
 predictor on 8 and 16 bits, 1-, 2-, 4- and 16-bit samples, white is
 zero, palettes of 4 bits, associated and unassociated alpha, CMYK,
 YCbCr subsampled 2 x 2 and 2 x 1, JPEG with JPEGTables in strips and in
@@ -755,6 +766,191 @@ def malformed_files():
                [tuple(values[3 * index:3 * index + 3]) + (255,) for index in range(width * height)])
 
 
+# --- Fax compression, floating point samples, old-style JPEG -----------------
+
+def entry_value(data, tag):
+    """Where a little-endian TIFF's first directory has tag, and its
+    first value."""
+    directory = struct.unpack_from("<I", data, 4)[0]
+    count = struct.unpack_from("<H", data, directory)[0]
+    for index in range(count):
+        entry = directory + 2 + 12 * index
+        if struct.unpack_from("<H", data, entry)[0] == tag:
+            field_type = struct.unpack_from("<H", data, entry + 2)[0]
+            return entry, struct.unpack_from("<H" if field_type == SHORT else "<I", data, entry + 8)[0]
+    raise KeyError(tag)
+
+
+def strip_data(name):
+    """The strips of a Pillow-written TIFF, joined, and its tags."""
+    with Image.open(path(name)) as image:
+        tags = dict(image.tag_v2)
+    with open(path(name), "rb") as source:
+        data = source.read()
+    return b"".join(data[offset:offset + count] for offset, count in zip(tags[273], tags[279])), tags
+
+
+def fax_files():
+    picture = fixturecommon.test_picture(123, 45, seed=81).convert("1")
+    for name, options in (("tiff-g4.tif", dict(compression="group4")),
+                          ("tiff-g3.tif", dict(compression="group3")),
+                          ("tiff-g3-2d.tif", dict(compression="group3", tiffinfo={292: 1})),
+                          ("tiff-g3-fill.tif", dict(compression="group3", tiffinfo={292: 5})),
+                          ("tiff-ccitt-rle.tif", dict(compression="tiff_ccitt")),
+                          ("tiff-g4-strips.tif", dict(compression="group4", tiffinfo={278: 8})),
+                          ("tiff-g4-fill-order.tif", dict(compression="group4", tiffinfo={266: 2})),
+                          ("tiff-g3-2d-fill-order.tif", dict(compression="group3", tiffinfo={266: 2, 292: 1}))):
+        pillow_fixture(name, picture, **options)
+    fax = Image.new("1", (1728, 30), 1)
+    pixels = fax.load()
+    generator = random.Random(82)
+    for y in range(30):
+        for x in range(1728):
+            if (x // 40 + y // 6) % 3 == 0 or generator.random() < 0.02:
+                pixels[x, y] = 0
+    pillow_fixture("tiff-g3-2d-fax-width.tif", fax, compression="group3", tiffinfo={292: 1})
+    # The Group 4 data again, white is zero: the same bits, seen inverted.
+    data, tags = strip_data("tiff-g4.tif")
+    assert len(tags[273]) == 1, "the Group 4 fixture is one strip"
+    entries = {256: (LONG, [123]), 257: (LONG, [45]), 258: (SHORT, [1]), 259: (SHORT, [4]), 262: (SHORT, [0]),
+               277: (SHORT, [1]), 278: (LONG, [45]), 293: (LONG, [0])}
+    write("tiff-g4-white-is-zero.tif", build_tiff([Page(entries, [data])]))
+    with Image.open(path("tiff-g4.tif")) as decoded:
+        inverted = Image.eval(decoded.convert("L"), lambda value: 255 - value)
+    fixturecommon.write_reference(path(reference_name("tiff-g4-white-is-zero.tif")), inverted)
+
+
+def float_bytes(value, bits, big_endian):
+    return struct.pack((">" if big_endian else "<") + ("e" if bits == 16 else "f"), value)
+
+
+def float_predictor(row_bytes, samples_per_pixel, bits):
+    """The floating point predictor on one line (bytes of big-endian
+    samples): the bytes regrouped, most significant first, then
+    differences one pixel apart."""
+    size = bits // 8
+    count = len(row_bytes) // size
+    grouped = bytearray(len(row_bytes))
+    for sample in range(count):
+        for byte in range(size):
+            grouped[byte * count + sample] = row_bytes[sample * size + byte]
+    for index in range(len(grouped) - 1, samples_per_pixel - 1, -1):
+        grouped[index] = (grouped[index] - grouped[index - samples_per_pixel]) & 0xFF
+    return bytes(grouped)
+
+
+def float_value_for(level, scale=1.0):
+    """A sample that tone maps to level (0 to 255), well away from a
+    rounding boundary; below 0 and above 255 give values clamped to 0
+    and 1."""
+    if level < 0:
+        return -0.25 * scale
+    if level >= 255:
+        return 1.0 * scale
+    return (level + 0.3) / 255 * scale
+
+
+def float_file(name, width, height, samples_per_pixel, bits, big_endian, method, predictor, scale=1.0,
+               specials=False):
+    generator = random.Random(len(name))
+    levels = []
+    values = []
+    for y in range(height):
+        for x in range(width):
+            for sample in range(samples_per_pixel):
+                if (x + y) % 7:
+                    level = (x * 9 + y * 5 + sample * 80) % 270 - 5
+                else:
+                    level = generator.randrange(256)
+                value = float_value_for(level, scale)
+                if specials and (x, y, sample) == (1, 1, 0):
+                    value = float("nan")
+                    level = 0
+                elif specials and (x, y, sample) == (2, 1, 0):
+                    value = float("inf")
+                    level = 255
+                levels.append(max(0, min(255, level)))
+                values.append(value)
+    rows = []
+    stride = width * samples_per_pixel
+    for y in range(height):
+        row_values = values[y * stride:(y + 1) * stride]
+        if predictor:
+            row = float_predictor(b"".join(float_bytes(v, bits, True) for v in row_values), samples_per_pixel, bits)
+        else:
+            row = b"".join(float_bytes(v, bits, big_endian) for v in row_values)
+        rows.append(row)
+    chunk = compress(b"".join(rows), method)
+    photometric = 2 if samples_per_pixel >= 3 else 1
+    entries = base_entries(width, height, bits, samples_per_pixel, photometric, method, rows=height)
+    entries[339] = (SHORT, [3] * samples_per_pixel)
+    if predictor:
+        entries[317] = (SHORT, [3])
+    write(name, build_tiff([Page(entries, [chunk])], big_endian=big_endian))
+    truth = []
+    for index in range(width * height):
+        pixel = levels[index * samples_per_pixel:(index + 1) * samples_per_pixel]
+        if samples_per_pixel >= 3:
+            truth.append((pixel[0], pixel[1], pixel[2], 255))
+        else:
+            truth.append((pixel[0], pixel[0], pixel[0], 255))
+    save_truth(name, width, height, truth)
+
+
+def pillow_float_files():
+    """32-bit float grey through libtiff, with the floating point predictor."""
+    width, height = 47, 21
+    image = Image.new("F", (width, height))
+    truth = []
+    for y in range(height):
+        for x in range(width):
+            level = (x * 11 + y * 7) % 262 - 3
+            image.putpixel((x, y), float_value_for(level))
+            level = max(0, min(255, level))
+            truth.append((level, level, level, 255))
+    for name, method in (("tiff-float-predictor-deflate.tif", "tiff_adobe_deflate"),
+                         ("tiff-float-predictor-lzw.tif", "tiff_lzw")):
+        image.save(path(name), "TIFF", compression=method, tiffinfo={317: 3})
+        save_truth(name, width, height, truth)
+
+
+def old_jpeg_files():
+    width, height = 40, 40
+    source = fixturecommon.smooth_picture(width, height)
+    stream = io.BytesIO()
+    source.save(stream, "JPEG", quality=90, subsampling=2)
+    jpeg = stream.getvalue()
+    entries = base_entries(width, height, 8, 3, 6, "none", rows=height)
+    entries[259] = (SHORT, [6])
+    entries[513] = (LONG, [0])
+    entries[514] = (LONG, [len(jpeg)])
+    data = bytearray(build_tiff([Page(entries, [jpeg])]))
+    _, strip_offset = entry_value(data, 273)
+    entry, _ = entry_value(data, 513)
+    struct.pack_into("<I", data, entry + 8, strip_offset)
+    write("tiff-old-jpeg.tif", bytes(data))
+    with Image.open(io.BytesIO(jpeg)) as decoded:
+        fixturecommon.write_reference(path(reference_name("tiff-old-jpeg.tif")), decoded)
+
+    canvas = Image.new("RGBA", (width, height))
+    chunks = []
+    for top in range(0, height, 16):
+        piece = source.crop((0, top, width, min(height, top + 16)))
+        stream = io.BytesIO()
+        piece.save(stream, "JPEG", quality=90, subsampling=2)
+        chunks.append(stream.getvalue())
+        with Image.open(io.BytesIO(stream.getvalue())) as decoded:
+            canvas.paste(decoded.convert("RGBA"), (0, top))
+    entries = base_entries(width, height, 8, 3, 6, "none", rows=16)
+    entries[259] = (SHORT, [6])
+    write("tiff-old-jpeg-strips.tif", build_tiff([Page(entries, chunks)]))
+    fixturecommon.write_reference(path(reference_name("tiff-old-jpeg-strips.tif")), canvas)
+
+    entries = base_entries(width, height, 8, 3, 6, "none", rows=height)
+    entries[259] = (SHORT, [6])
+    write("bad-tiff-old-jpeg.tif", build_tiff([Page(entries, [bytes(range(7, 250)) * 4])]))
+
+
 def main():
     make_pillow_files()
     rgb_file("tiff-be-lzw-predictor.tif", 37, 23, 71, "lzw", big_endian=True, predictor=True)
@@ -777,6 +973,14 @@ def main():
     ycbcr_file("tiff-ycbcr21-lzw.tif", 30, 20, 2, 1, "lzw")
     jpeg_tiff("tiff-jpeg-strips.tif", 61, 45, ("strips", 16))
     jpeg_tiff("tiff-jpeg-tiles.tif", 50, 40, ("tiles", 32, 32))
+    fax_files()
+    pillow_float_files()
+    float_file("tiff-float-rgb-be-predictor.tif", 29, 17, 3, 32, True, "deflate", True)
+    float_file("tiff-float-rgb-le-predictor.tif", 23, 13, 3, 32, False, "lzw", True)
+    float_file("tiff-half-grey.tif", 31, 9, 1, 16, False, "none", False)
+    float_file("tiff-half-grey-be-predictor.tif", 27, 11, 1, 16, True, "deflate", True)
+    float_file("tiff-float-hdr.tif", 25, 10, 1, 32, False, "none", False, scale=4.0, specials=True)
+    old_jpeg_files()
     malformed_files()
     for warning in WARNINGS:
         print("warning:", warning)

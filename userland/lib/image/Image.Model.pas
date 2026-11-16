@@ -76,6 +76,18 @@ type
     VerticalDpi: Double;
   end;
 
+  { What converting an image's colours to sRGB did (Image.ColorProfiles). }
+  TColorConversionResult = (
+    { The image is sRGB already, or says nothing about its colours. }
+    ColorConversionNotNeeded,
+    ColorConversionDone,
+    { Converted, but not exactly as the profile says (a CMYK profile, a
+      LUT that could not be read and the colorants used instead). }
+    ColorConversionApproximate,
+    { The profile cannot be used; the image is as it was. }
+    ColorConversionUnsupported
+  );
+
   TImage = class
   private
     FWidth: LongInt;
@@ -111,6 +123,9 @@ type
     function Clone: TImage;
     { Resolution, orientation, profile, metadata and source of Other. }
     procedure CopyPropertiesFrom(Other: TImage);
+    { The colours converted from the ICC profile (or PNG gamma and
+      chromaticities) to sRGB: Image.ColorProfiles.ConvertImageToSrgb. }
+    function ConvertToSrgb: TColorConversionResult;
 
     { The image takes Pixels (from GetMem, Width x Height, no gap
       between lines) as its own, freeing what it had. }
@@ -146,6 +161,9 @@ function OrientationSwapsSides(Orientation: TImageOrientation): Boolean;
 function MakeResolution(HorizontalDpi, VerticalDpi: Double): TImageResolution;
 
 implementation
+
+uses
+  Image.ColorProfiles;
 
 function ImageSizeAllowed(Width, Height: Int64): Boolean;
 begin
@@ -275,6 +293,11 @@ begin
   FSourceFormatName := Other.FSourceFormatName;
   FSourceBitsPerPixel := Other.FSourceBitsPerPixel;
   FSourceHasAlpha := Other.FSourceHasAlpha;
+end;
+
+function TImage.ConvertToSrgb: TColorConversionResult;
+begin
+  Result := ConvertImageToSrgb(Self);
 end;
 
 procedure TImage.AdoptPixels(NewPixels: PLongWord; NewWidth, NewHeight: LongInt);

@@ -23,7 +23,9 @@
 
   ScaleImage makes an image of the size asked; ThumbnailImage one that
   fits in a box keeping the proportions (never larger than the image
-  itself).
+  itself). Given a filter (Image.Resampling: box, triangle, Mitchell,
+  Lanczos-3), both resample with it instead: separable passes on
+  premultiplied colours, better for photographs, upwards and down.
 }
 unit Image.Scaling;
 
@@ -37,13 +39,16 @@ uses
   Drawing.Canvas,
   Drawing.Scaling,
   Image.Model,
-  Image.Surfaces;
+  Image.Surfaces,
+  Image.Resampling;
 
 function ScaleImage(Image: TImage; NewWidth, NewHeight: LongInt): TImage;
+function ScaleImage(Image: TImage; NewWidth, NewHeight: LongInt; Filter: TResamplingFilter): TImage;
 { The size Width x Height takes to fit in MaximumWidth x MaximumHeight,
   proportions kept, at least 1 x 1, never larger than it is. }
 procedure FitSize(Width, Height, MaximumWidth, MaximumHeight: LongInt; out FittedWidth, FittedHeight: LongInt);
 function ThumbnailImage(Image: TImage; MaximumWidth, MaximumHeight: LongInt): TImage;
+function ThumbnailImage(Image: TImage; MaximumWidth, MaximumHeight: LongInt; Filter: TResamplingFilter): TImage;
 
 implementation
 
@@ -61,6 +66,11 @@ begin
     Result.Free;
     raise;
   end;
+end;
+
+function ScaleImage(Image: TImage; NewWidth, NewHeight: LongInt; Filter: TResamplingFilter): TImage;
+begin
+  Result := ResampleImage(Image, NewWidth, NewHeight, Filter);
 end;
 
 procedure FitSize(Width, Height, MaximumWidth, MaximumHeight: LongInt; out FittedWidth, FittedHeight: LongInt);
@@ -92,6 +102,15 @@ var
 begin
   FitSize(Image.Width, Image.Height, MaximumWidth, MaximumHeight, Width, Height);
   Result := ScaleImage(Image, Width, Height);
+end;
+
+function ThumbnailImage(Image: TImage; MaximumWidth, MaximumHeight: LongInt; Filter: TResamplingFilter): TImage;
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  FitSize(Image.Width, Image.Height, MaximumWidth, MaximumHeight, Width, Height);
+  Result := ResampleImage(Image, Width, Height, Filter);
 end;
 
 end.

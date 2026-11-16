@@ -28,7 +28,8 @@
   sample, each unit one sample.
 
   Each chunk is decompressed (Image.Tiff.Decompression), the predictor
-  undone on its own lines, and its lines copied into the planes at the
+  (horizontal, or floating point: Image.Tiff.FloatSamples) undone on
+  its own lines, and its lines copied into the planes at the
   chunk's place: strips one under the other, tiles side by side (a tile
   is a multiple of 16 pixels wide, so it starts on a byte; the parts of
   tiles beyond the picture are dropped).
@@ -68,7 +69,8 @@ implementation
 
 uses
   Image.Tiff.Decompression,
-  Image.Tiff.Predictor;
+  Image.Tiff.Predictor,
+  Image.Tiff.FloatSamples;
 
 const
   { The most bytes the planes, or one chunk, may take. }
@@ -137,7 +139,8 @@ begin
       if Planes.Subsampled or ((Page.BitsPerSample <> 8) and (Page.BitsPerSample <> 16)) then
         Unsupported('horizontal predictor on these samples');
     TiffPredictorFloatingPoint:
-      Unsupported('floating point predictor');
+      if Planes.Subsampled or (Page.SampleFormat <> TiffSampleFormatFloat) then
+        Unsupported('floating point predictor on samples that are not floating point');
   else
     RaiseImageError(ImageErrorMalformed, 'TIFF predictor');
   end;
@@ -185,15 +188,16 @@ begin
   if Expected > MaximumChunkBytes then
     RaiseImageError(ImageErrorTooLarge, 'TIFF strip or tile');
   Bytes := DecompressTiffChunk(Data, Page, Index, Expected);
+  if Planes.PlaneCount = 1 then
+    SamplesPerUnit := Page.SamplesPerPixel
+  else
+    SamplesPerUnit := 1;
   if Page.Predictor = TiffPredictorHorizontal then
-  begin
-    if Planes.PlaneCount = 1 then
-      SamplesPerUnit := Page.SamplesPerPixel
-    else
-      SamplesPerUnit := 1;
     UndoHorizontalPredictor(PByte(Bytes), ChunkUnitLines, ChunkLineBytes, ChunkUnitsAcross, SamplesPerUnit,
-      Page.BitsPerSample, Planes.BigEndian);
-  end;
+      Page.BitsPerSample, Planes.BigEndian)
+  else if Page.Predictor = TiffPredictorFloatingPoint then
+    UndoFloatingPointPredictor(PByte(Bytes), ChunkUnitLines, ChunkLineBytes, ChunkUnitsAcross * SamplesPerUnit,
+      SamplesPerUnit, Page.BitsPerSample div 8, Planes.BigEndian);
   FirstLine := Top div Planes.UnitHeight;
   ByteOffset := (Int64(Left div Planes.UnitWidth) * Planes.BitsPerUnit) div 8;
   CopyCount := ChunkLineBytes;

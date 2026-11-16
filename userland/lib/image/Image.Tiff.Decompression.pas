@@ -18,8 +18,9 @@
 
 {
   One strip or tile of a TIFF page decompressed: none, PackBits, LZW
-  (new and old style), or deflate (compression 8, Adobe's, and 32946,
-  the older number; both zlib streams, through libcompression).
+  (new and old style), deflate (compression 8, Adobe's, and 32946,
+  the older number; both zlib streams, through libcompression), or fax
+  compression (CCITT RLE, Group 3, Group 4: Image.Tiff.Ccitt).
 
   The chunk's bytes must lie inside the file (else ImageErrorTruncated);
   a chunk without a byte count runs to the end of the file. Fill order
@@ -54,7 +55,8 @@ uses
   Compression.Formats,
   Compression.Inflater,
   Image.Tiff.PackBits,
-  Image.Tiff.Lzw;
+  Image.Tiff.Lzw,
+  Image.Tiff.Ccitt;
 
 function TiffChunkBytes(const Data: TBytes; constref Page: TTiffPage; Index: LongInt): TBytes;
 var
@@ -117,6 +119,34 @@ begin
   end;
 end;
 
+procedure DecodeFax(const Raw: TBytes; constref Page: TTiffPage; var Output: TBytes);
+var
+  RowBytes: PtrInt;
+  Scheme: TCcittScheme;
+  Options: LongWord;
+begin
+  RowBytes := (PtrInt(Page.ChunkWidth) + 7) div 8;
+  case Page.Compression of
+    TiffCompressionCcittRle:
+      begin
+        Scheme := CcittModifiedHuffman;
+        Options := 0;
+      end;
+    TiffCompressionCcittGroup3:
+      begin
+        Scheme := CcittGroup3;
+        Options := Page.T4Options;
+      end;
+  else
+    begin
+      Scheme := CcittGroup4;
+      Options := Page.T6Options;
+    end;
+  end;
+  DecodeCcitt(@Raw[0], Length(Raw), Scheme, Options, Page.ChunkWidth, Length(Output) div RowBytes, @Output[0],
+    RowBytes);
+end;
+
 function DecompressTiffChunk(const Data: TBytes; constref Page: TTiffPage; Index: LongInt;
   ExpectedSize: PtrInt): TBytes;
 var
@@ -147,6 +177,8 @@ begin
       DecodeTiffLzw(@Raw[0], Length(Raw), @Result[0], ExpectedSize);
     TiffCompressionAdobeDeflate, TiffCompressionDeflate:
       Inflate(Raw, Result);
+    TiffCompressionCcittRle, TiffCompressionCcittGroup3, TiffCompressionCcittGroup4:
+      DecodeFax(Raw, Page, Result);
   else
     RaiseImageError(ImageErrorUnsupported, 'TIFF compression ' + IntToStr(Page.Compression));
   end;

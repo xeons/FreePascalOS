@@ -23,7 +23,8 @@
 
   The fixtures are made at build time by make-fixtures.py (BMP, DIB,
   ICO, CUR, GIF), make-jpeg-fixtures.py (JPEG), make-png-fixtures.py
-  (PNG, APNG) and make-tiff-fixtures.py (TIFF), with Pillow; their
+  (PNG, APNG), make-tiff-fixtures.py (TIFF) and make-color-fixtures.py
+  (ICC profiles, PNG gamma, resampling), with Pillow; their
   references are Pillow's decoding or the pixels the files were made
   from. Every check prints a line; the exit code is 1 if any failed.
   Files the encoders write go into the written directory, each with its
@@ -49,6 +50,8 @@ uses
   ImageTest.Apng,
   ImageTest.PngWriting,
   ImageTest.Tiff,
+  ImageTest.ColorProfiles,
+  ImageTest.Resampling,
   ImageTest.Robustness;
 
 begin
@@ -69,6 +72,8 @@ begin
   TestApng;
   TestPngWriting;
   TestTiff;
+  TestColorProfiles;
+  TestResampling;
   TestRobustness;
   FinishChecks('ImageTest');
 end.
