@@ -75,6 +75,7 @@ var
   Offset: LongInt;
   Index: LongInt;
 begin
+  Result := nil;
   SetLength(Result, JxlCoefficientOrderSize);
   UsedOrders := Reader.ReadU32(JxlVal($5F), JxlVal($13), JxlVal(0), JxlBits(JxlOrderCount));
   Code := nil;

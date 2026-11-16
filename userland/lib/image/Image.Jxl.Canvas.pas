@@ -84,6 +84,7 @@ var
 begin
   Header := Frame.Header;
   ChannelCount := Length(Frame.Planes);
+  Result := nil;
   SetLength(Result, ChannelCount);
   try
     for Channel := 0 to ChannelCount - 1 do

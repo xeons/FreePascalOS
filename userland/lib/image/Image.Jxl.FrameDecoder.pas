@@ -242,6 +242,10 @@ begin
     ApplyJxlNoise(Copy(Frame.Planes, 0, 3), Noise, Header);
   if Header.FrameType = JxlFrameLowFrequency then
     Exit;
+  { A reference only frame is never shown: saved before the colour
+    transform, it is kept as decoded (patches add its XYB samples). }
+  if (Header.FrameType = JxlFrameReferenceOnly) and Header.SaveBeforeColorTransform then
+    Exit;
   if JxlFrameCanBeReferenced(Header) and Header.SaveBeforeColorTransform then
     Frame.SavedPlanes := ClonePlanes(Frame.Planes);
   case Header.ColorTransform of

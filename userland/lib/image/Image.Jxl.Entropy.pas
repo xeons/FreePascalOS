@@ -115,6 +115,11 @@ type
 function ReadJxlEntropyCode(Reader: TJxlBitReader; ContextCount: LongInt;
   DisallowLz77: Boolean = False): TJxlEntropyCode;
 
+{ Reads a context map (simple, or itself entropy coded, optionally
+  move-to-front) into Map, whose length is the context count; returns
+  the number of clusters. }
+function ReadJxlContextMap(Reader: TJxlBitReader; var Map: array of Byte): LongInt;
+
 { Reads a hybrid integer configuration for an alphabet of
   2^LogAlphabetSize symbols. }
 function ReadJxlHybridUintConfig(Reader: TJxlBitReader; LogAlphabetSize: LongInt): TJxlHybridUintConfig;
@@ -204,9 +209,7 @@ begin
   end;
 end;
 
-{ Reads the context map of Code (its length already set) and sets its
-  histogram count. }
-procedure ReadContextMap(Reader: TJxlBitReader; Code: TJxlEntropyCode);
+function ReadJxlContextMap(Reader: TJxlBitReader; var Map: array of Byte): LongInt;
 var
   BitsPerEntry: LongInt;
   Index: LongInt;
@@ -214,27 +217,26 @@ var
   MapCode: TJxlEntropyCode;
   MapReader: TJxlSymbolReader;
   Symbol: LongWord;
-  Largest: LongInt;
 begin
   if Reader.ReadBool then
   begin
     BitsPerEntry := LongInt(Reader.ReadBits(2));
-    for Index := 0 to High(Code.FContextMap) do
-      Code.FContextMap[Index] := Reader.ReadBits(BitsPerEntry);
+    for Index := 0 to High(Map) do
+      Map[Index] := Reader.ReadBits(BitsPerEntry);
   end
   else
   begin
     UseMoveToFront := Reader.ReadBool;
-    MapCode := ReadJxlEntropyCode(Reader, 1, Length(Code.FContextMap) <= 2);
+    MapCode := ReadJxlEntropyCode(Reader, 1, Length(Map) <= 2);
     try
       MapReader := TJxlSymbolReader.Create(MapCode, Reader);
       try
-        for Index := 0 to High(Code.FContextMap) do
+        for Index := 0 to High(Map) do
         begin
           Symbol := MapReader.ReadUint(0);
           if Symbol >= MaximumClusters then
             RaiseBadEntropyCode('bad cluster in context map');
-          Code.FContextMap[Index] := Symbol;
+          Map[Index] := Symbol;
         end;
         MapReader.CheckFinalState;
       finally
@@ -244,13 +246,12 @@ begin
       MapCode.Free;
     end;
     if UseMoveToFront then
-      InverseMoveToFront(Code.FContextMap);
+      InverseMoveToFront(Map);
   end;
-  Largest := 0;
-  for Index := 0 to High(Code.FContextMap) do
-    if Code.FContextMap[Index] > Largest then
-      Largest := Code.FContextMap[Index];
-  Code.FHistogramCount := Largest + 1;
+  Result := 0;
+  for Index := 0 to High(Map) do
+    if Map[Index] + 1 > Result then
+      Result := Map[Index] + 1;
 end;
 
 procedure ReadHistograms(Reader: TJxlBitReader; Code: TJxlEntropyCode);
@@ -317,7 +318,7 @@ begin
     SetLength(Result.FContextMap, ContextCount);
     Result.FHistogramCount := 1;
     if ContextCount > 1 then
-      ReadContextMap(Reader, Result);
+      Result.FHistogramCount := ReadJxlContextMap(Reader, Result.FContextMap);
     Result.FUsePrefixCodes := Reader.ReadBool;
     if Result.FUsePrefixCodes then
       Result.FLogAlphabetSize := JxlPrefixMaximumBits
