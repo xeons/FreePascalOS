@@ -42,8 +42,7 @@ uses
   Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: shuf [OPTION]... [FILE]'#10 +

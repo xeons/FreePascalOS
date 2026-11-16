@@ -76,7 +76,7 @@ end;
 
 function SendWithPassword(var Request: TSystemSettingsRequest; const Password: string): LongInt;
 begin
-  SetRequestText(@Request.Authorization[0], SystemPasswordCapacity, PChar(Password));
+  SetRequestText(Request.Authorization, Password);
   Result := AskSystemSettings(Request);
   if Result <> ErrorNone then
     Say(Format('refused %d %d', [Request.Code, Result]));

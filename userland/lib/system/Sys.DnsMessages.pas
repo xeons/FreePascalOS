@@ -153,7 +153,6 @@ uses
   SysUtils,
   StrUtils,
   Abi.SystemCalls,
-  Sys.Text,
   Sys.DnsNames;
 
 function ReadWord(Data: PByte; Position: LongWord): Word;
@@ -407,6 +406,25 @@ begin
       Exit(DnsTypeNames[Index]);
   Result := UnknownTypePrefix + IntToStr(RecordType);
 end;
+
+{ Decimal digits, with an optional '+' and spaces around them. }
+function IsDecimalNumber(const Text: string; out Value: QWord): Boolean;
+var
+  Digits: string;
+  Character: Char;
+begin
+  Value := 0;
+  Digits := Trim(Text);
+  if (Digits <> '') and (Digits[1] = '+') then
+    Delete(Digits, 1, 1);
+  if Digits = '' then
+    Exit(False);
+  for Character in Digits do
+    if not (Character in ['0'..'9']) then
+      Exit(False);
+  Result := TryStrToQWord(Digits, Value);
+end;
+
 function ParseDnsTypeName(const Text: string; out RecordType: Word): Boolean;
 var
   Index: Integer;
@@ -421,7 +439,7 @@ begin
     end;
   Result := False;
   if StartsText(UnknownTypePrefix, Text) and
-     ParseUnsigned(PChar(Copy(Text, Length(UnknownTypePrefix) + 1, MaxInt)), Value) and (Value > 0) and
+     IsDecimalNumber(Copy(Text, Length(UnknownTypePrefix) + 1, MaxInt), Value) and (Value > 0) and
      (Value <= 65535) then
   begin
     RecordType := Word(Value);

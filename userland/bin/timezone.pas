@@ -44,7 +44,7 @@ uses
   Sys.SystemSettings,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.SystemRequests;
 
 const
@@ -55,12 +55,9 @@ const
 procedure WriteZone(Zone: PTimeZone);
 var
   Local: TLocalTime;
-  { FormatUtcOffset writes "+hh:mm" and its terminator into a buffer. }
-  OffsetText: array[0..7] of Char;
 begin
   DecodeTimeInZone(Zone, CurrentTime, Local);
-  FormatUtcOffset(Local.Offset, @OffsetText[0]);
-  PrintStringLine(Format('%s %s %s', [Zone^.Name, PChar(@OffsetText[0]), Local.Abbreviation]));
+  PrintStringLine(Format('%s %s %s', [Zone^.Name, FormatUtcOffset(Local.Offset), Local.Abbreviation]));
 end;
 
 procedure ListZones;
@@ -79,7 +76,7 @@ begin
   if FindTimeZone(PChar(Name)) = nil then
     Fail(1, Format('unknown time zone ''%s'' (timezone -l lists them)', [Name]));
   Request := NewSystemSettingsRequest(SystemRequestSetTimeZone);
-  SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(Name));
+  SetRequestText(Request.Text, Name);
   Error := SendSystemRequest(Request, True);
   if Error <> ErrorNone then
     FailWithError(1, Error, 'cannot set the time zone');

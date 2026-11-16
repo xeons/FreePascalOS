@@ -49,7 +49,7 @@ function OpenWaveFile(const Path: string; out Wave: TWaveFile): TWaveStatus;
 { Reads the next samples (at most Capacity bytes); 0 at the end. }
 function ReadWaveSamples(var Wave: TWaveFile; Buffer: Pointer; Capacity: QWord): QWord;
 procedure CloseWaveFile(var Wave: TWaveFile);
-function WaveStatusText(Status: TWaveStatus): PChar;
+function WaveStatusText(Status: TWaveStatus): string;
 
 { The 44-byte header of a WAV file of samples of Kind, DataBytes of them. }
 procedure MakeWaveHeader(Header: PByte; Rate, Channels, Kind: LongWord; DataBytes: LongWord);
@@ -173,7 +173,7 @@ begin
   Wave.Handle := -1;
 end;
 
-function WaveStatusText(Status: TWaveStatus): PChar;
+function WaveStatusText(Status: TWaveStatus): string;
 begin
   case Status of
     WaveOk: Result := 'ok';

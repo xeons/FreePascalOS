@@ -32,7 +32,7 @@ uses
   SysUtils,
   Sys.Information,
   Util.CommandLine,
-  Util.Output,
+  Sys.Streams,
   Util.Sizes;
 
 const

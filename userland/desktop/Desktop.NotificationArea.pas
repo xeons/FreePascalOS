@@ -199,7 +199,7 @@ begin
       FIcons[Index].Number := Message.Code;
     end;
     FIcons[Index].Picture := Message.Flags;
-    FIcons[Index].Tooltip := StrPas(@Message.Text[0]);
+    FIcons[Index].Tooltip := MessageText(Message);
     Say(Format('notification %u %s', [Message.Code, FIcons[Index].Tooltip]));
   end;
   { The icon under the pointer may be another one now. }

@@ -46,7 +46,6 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
   Sys.Processes,
   Sys.Streams,
   Configuration.Scopes,
@@ -71,10 +70,10 @@ procedure Check(const Name: string; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'settingstest: pass: %s'#10, [ArgumentText(PChar(Name))])
+    WriteString(StandardOutput, Format('settingstest: pass: %s'#10, [PChar(Name)]))
   else
   begin
-    WriteFormatted(StandardOutput, 'settingstest: FAIL: %s'#10, [ArgumentText(PChar(Name))]);
+    WriteString(StandardOutput, Format('settingstest: FAIL: %s'#10, [PChar(Name)]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -297,8 +296,8 @@ begin
   PrepareWorkFolder;
   TestLocks;
   TestFiles;
-  WriteFormatted(StandardOutput, 'settingstest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('settingstest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   FlushStream(StandardOutput);
   if Failures > 0 then
     Halt(1);

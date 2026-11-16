@@ -49,7 +49,7 @@ uses
   Sys.InterfaceText,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage ='Usage: ifconfig [-a] [-s] [INTERFACE]'#10 +

@@ -157,7 +157,7 @@ begin
     Exit;
   FShownTooltip := Tooltip;
   FShownPicture := Picture;
-  ShowNotificationIcon(NetworkIconNumber, Picture, PChar(Tooltip));
+  ShowNotificationIcon(NetworkIconNumber, Picture, Tooltip);
 end;
 
 end.

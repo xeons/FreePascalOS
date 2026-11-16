@@ -34,7 +34,7 @@ program echo;
 uses
   SysUtils,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 var
   PrintLineEnd: Boolean;

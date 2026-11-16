@@ -21,7 +21,7 @@
 }
 unit Sys.Information;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -37,6 +37,8 @@ function GetSystemInformation(out Information: TSystemInformation): LongInt;
 function GetVolume(Index: Integer; out Information: TVolumeInformation): Boolean;
 { The machine's node name (its host name) into Buffer. }
 function GetNodeName(Buffer: PChar; Capacity: PtrUInt): LongInt;
+{ The same as a string ('' on an error); 0 or an error code. }
+function ReadNodeName(out Name: string): LongInt;
 { A new node name (root only): letters, digits, hyphens and dots,
   starting with a letter or digit, 63 at most. }
 function SetNodeName(Name: PChar): LongInt;
@@ -72,6 +74,16 @@ end;
 function SetNodeName(Name: PChar): LongInt;
 begin
   Result := ErrorCodeOf(KernelSetNodeName(Name));
+end;
+
+function ReadNodeName(out Name: string): LongInt;
+var
+  Buffer: array[0..AbiTextCapacity - 1] of Char;
+begin
+  Name := '';
+  Result := GetNodeName(@Buffer[0], SizeOf(Buffer));
+  if Result = ErrorNone then
+    Name := PChar(@Buffer[0]);
 end;
 
 end.

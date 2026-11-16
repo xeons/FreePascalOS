@@ -36,8 +36,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: tsort [OPTION] [FILE]'#10 +

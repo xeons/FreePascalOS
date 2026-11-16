@@ -250,7 +250,7 @@ end;
 
 function TDhcpClient.BaseParameters(Kind: Byte): TDhcpRequestParameters;
 var
-  NodeName: array[0..63] of Char;
+  NodeName: string;
   Elapsed: QWord;
 begin
   Result.Kind := Kind;
@@ -267,8 +267,8 @@ begin
   Result.HasServerIdentifier := False;
   Result.ServerIdentifier := AnyIpv4Address;
   Result.HostName := '';
-  if GetNodeName(@NodeName[0], SizeOf(NodeName)) = ErrorNone then
-    Result.HostName := string(PChar(@NodeName[0]));
+  if ReadNodeName(NodeName) = ErrorNone then
+    Result.HostName := NodeName;
   Result.AskForParameters := (Kind = DhcpDiscover) or (Kind = DhcpRequest);
 end;
 

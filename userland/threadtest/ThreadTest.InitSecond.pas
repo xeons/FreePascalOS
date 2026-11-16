@@ -46,5 +46,5 @@ initialization
 
 finalization
   if PrintFinalization then
-    PrintLine('threadtest: unit finalization ran');
+    PrintStringLine('threadtest: unit finalization ran');
 end.

@@ -32,8 +32,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: comm [OPTION]... FILE1 FILE2'#10 +

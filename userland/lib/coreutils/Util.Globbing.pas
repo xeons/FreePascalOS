@@ -28,22 +28,29 @@
 unit Util.Globbing;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
-function MatchWildcards(Pattern, Text: PChar; IgnoreCase: Boolean): Boolean; overload;
-function MatchWildcards(const Pattern, Text: string; IgnoreCase: Boolean): Boolean; overload;
+function MatchWildcards(const Pattern, Text: string; IgnoreCase: Boolean): Boolean;
 
 implementation
 
 uses
-  Sys.Text;
+  SysUtils;
+
+{ The character at Index (from 1), #0 past the end. }
+function CharacterAt(const Text: string; Index: Integer): Char;
+begin
+  if Index <= Length(Text) then
+    Result := Text[Index]
+  else
+    Result := #0;
+end;
 
 function SameCharacter(First, Second: Char; IgnoreCase: Boolean): Boolean;
 begin
   if IgnoreCase then
-    Result := ToLowerCase(First) = ToLowerCase(Second)
+    Result := LowerCase(First) = LowerCase(Second)
   else
     Result := First = Second;
 end;
@@ -53,9 +60,10 @@ begin
   Result := (Character >= Low) and (Character <= High);
 end;
 
-{ Matches a bracket expression (Pattern is just after '['). Returns the
-  position after ']', or nil if the bracket is not closed. }
-function MatchBracket(Pattern: PChar; Character: Char; IgnoreCase: Boolean; out Matched: Boolean): PChar;
+{ Matches a bracket expression starting at Index (just after '[').
+  Returns the index after ']', or 0 if the bracket is not closed. }
+function MatchBracket(const Pattern: string; Index: Integer; Character: Char; IgnoreCase: Boolean;
+  out Matched: Boolean): Integer;
 var
   Negate: Boolean;
   First: Boolean;
@@ -63,105 +71,105 @@ var
   High: Char;
 begin
   Matched := False;
-  Negate := (Pattern^ = '!') or (Pattern^ = '^');
+  Negate := CharacterAt(Pattern, Index) in ['!', '^'];
   if Negate then
-    Inc(Pattern);
+    Inc(Index);
   First := True;
-  while (Pattern^ <> #0) and ((Pattern^ <> ']') or First) do
+  while (Index <= Length(Pattern)) and ((Pattern[Index] <> ']') or First) do
   begin
     First := False;
-    Low := Pattern^;
-    if (Low = '\') and (Pattern[1] <> #0) then
+    Low := Pattern[Index];
+    if (Low = '\') and (Index < Length(Pattern)) then
     begin
-      Inc(Pattern);
-      Low := Pattern^;
+      Inc(Index);
+      Low := Pattern[Index];
     end;
     High := Low;
-    if (Pattern[1] = '-') and (Pattern[2] <> ']') and (Pattern[2] <> #0) then
+    if (CharacterAt(Pattern, Index + 1) = '-') and not (CharacterAt(Pattern, Index + 2) in [']', #0]) then
     begin
-      High := Pattern[2];
-      Inc(Pattern, 2);
+      High := Pattern[Index + 2];
+      Inc(Index, 2);
     end;
     if InRange(Character, Low, High) then
       Matched := True
-    else if IgnoreCase and (InRange(ToLowerCase(Character), Low, High) or
-      InRange(ToUpperCase(Character), Low, High)) then
+    else if IgnoreCase and (InRange(LowerCase(Character), Low, High) or
+      InRange(UpCase(Character), Low, High)) then
       Matched := True;
-    Inc(Pattern);
+    Inc(Index);
   end;
-  if Pattern^ <> ']' then
-    Exit(nil);
+  if CharacterAt(Pattern, Index) <> ']' then
+    Exit(0);
   if Negate then
     Matched := not Matched;
-  Result := Pattern + 1;
+  Result := Index + 1;
 end;
 
-function MatchWildcards(Pattern, Text: PChar; IgnoreCase: Boolean): Boolean;
+function MatchFrom(const Pattern, Text: string; PatternIndex, TextIndex: Integer; IgnoreCase: Boolean): Boolean;
 var
   Matched: Boolean;
-  AfterBracket: PChar;
+  AfterBracket: Integer;
 begin
-  while Pattern^ <> #0 do
+  while PatternIndex <= Length(Pattern) do
   begin
-    case Pattern^ of
+    case Pattern[PatternIndex] of
       '*':
         begin
-          while Pattern^ = '*' do
-            Inc(Pattern);
-          if Pattern^ = #0 then
+          while CharacterAt(Pattern, PatternIndex) = '*' do
+            Inc(PatternIndex);
+          if PatternIndex > Length(Pattern) then
             Exit(True);
-          while Text^ <> #0 do
+          while TextIndex <= Length(Text) do
           begin
-            if MatchWildcards(Pattern, Text, IgnoreCase) then
+            if MatchFrom(Pattern, Text, PatternIndex, TextIndex, IgnoreCase) then
               Exit(True);
-            Inc(Text);
+            Inc(TextIndex);
           end;
           Exit(False);
         end;
       '?':
         begin
-          if Text^ = #0 then
+          if TextIndex > Length(Text) then
             Exit(False);
-          Inc(Pattern);
-          Inc(Text);
+          Inc(PatternIndex);
+          Inc(TextIndex);
         end;
       '[':
         begin
-          if Text^ = #0 then
+          if TextIndex > Length(Text) then
             Exit(False);
-          AfterBracket := MatchBracket(Pattern + 1, Text^, IgnoreCase, Matched);
-          if AfterBracket = nil then
+          AfterBracket := MatchBracket(Pattern, PatternIndex + 1, Text[TextIndex], IgnoreCase, Matched);
+          if AfterBracket = 0 then
           begin
             { An unclosed '[' is an ordinary character. }
-            if Text^ <> '[' then
+            if Text[TextIndex] <> '[' then
               Exit(False);
-            Inc(Pattern);
+            Inc(PatternIndex);
           end
           else
           begin
             if not Matched then
               Exit(False);
-            Pattern := AfterBracket;
+            PatternIndex := AfterBracket;
           end;
-          Inc(Text);
+          Inc(TextIndex);
         end;
     else
       begin
-        if (Pattern^ = '\') and (Pattern[1] <> #0) then
-          Inc(Pattern);
-        if not SameCharacter(Pattern^, Text^, IgnoreCase) then
+        if (Pattern[PatternIndex] = '\') and (PatternIndex < Length(Pattern)) then
+          Inc(PatternIndex);
+        if not SameCharacter(Pattern[PatternIndex], CharacterAt(Text, TextIndex), IgnoreCase) then
           Exit(False);
-        Inc(Pattern);
-        Inc(Text);
+        Inc(PatternIndex);
+        Inc(TextIndex);
       end;
     end;
   end;
-  Result := Text^ = #0;
+  Result := TextIndex > Length(Text);
 end;
 
 function MatchWildcards(const Pattern, Text: string; IgnoreCase: Boolean): Boolean;
 begin
-  Result := MatchWildcards(PChar(Pattern), PChar(Text), IgnoreCase);
+  Result := MatchFrom(Pattern, Text, 1, 1, IgnoreCase);
 end;
 
 end.

@@ -35,63 +35,76 @@
 unit Util.Dates;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
 uses
   Runtime.Time;
 
-function ParseDateText(Text: PChar; out Time: TUnixTime): Boolean; overload;
-function ParseDateText(const Text: string; out Time: TUnixTime): Boolean; overload;
-function ParseTouchStamp(Text: PChar; out Time: TUnixTime): Boolean; overload;
-function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean; overload;
+function ParseDateText(const Text: string; out Time: TUnixTime): Boolean;
+function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean;
 
 implementation
 
 uses
-  Runtime.Text,
+  StrUtils,
   Sys.Text,
   Sys.Time,
-  Sys.LocalTime;
+  Sys.LocalTime,
+  Util.Numbers;
 
 const
   SecondsPerDay = 86400;
+  { Longer unit names are cut short to this (and so not recognised). }
+  UnitNameLimit = 15;
 
-{ Reads Count digits as a number; False if they are not all digits. }
-function ReadDigits(Text: PChar; Count: Integer; out Value: LongInt): Boolean;
+{ The character at Index (from 1), #0 past the end. }
+function CharacterAt(const Text: string; Index: Integer): Char;
+begin
+  if (Index >= 1) and (Index <= Length(Text)) then
+    Result := Text[Index]
+  else
+    Result := #0;
+end;
+
+{ Reads Count digits from Start as a number; False if they are not all
+  digits. }
+function ReadDigits(const Text: string; Start, Count: Integer; out Value: LongInt): Boolean;
 var
   Index: Integer;
 begin
   Value := 0;
-  for Index := 0 to Count - 1 do
+  for Index := Start to Start + Count - 1 do
   begin
-    if not IsDigit(Text[Index]) then
+    if not IsDigit(CharacterAt(Text, Index)) then
       Exit(False);
     Value := Value * 10 + Ord(Text[Index]) - Ord('0');
   end;
   Result := True;
 end;
 
-function SkipSpaces(Text: PChar): PChar;
+function WithoutLeadingSpaces(const Text: string): string;
+var
+  Start: Integer;
 begin
-  Result := Text;
-  while IsSpace(Result^) do
-    Inc(Result);
+  Start := 1;
+  while IsSpace(CharacterAt(Text, Start)) do
+    Inc(Start);
+  Result := Copy(Text, Start, MaxInt);
 end;
 
-{ HH:MM[:SS] at Text; Consumed tells how many characters. }
-function ParseClock(Text: PChar; out Seconds: LongInt; out Consumed: Integer): Boolean;
+{ HH:MM[:SS] at the start of Text; Consumed tells how many characters. }
+function ParseClock(const Text: string; out Seconds: LongInt; out Consumed: Integer): Boolean;
 var
   Hour, Minute, Second: LongInt;
 begin
   Consumed := 0;
   Seconds := 0;
-  if not ReadDigits(Text, 2, Hour) or (Text[2] <> ':') or not ReadDigits(Text + 3, 2, Minute) then
+  if not ReadDigits(Text, 1, 2, Hour) or (CharacterAt(Text, 3) <> ':') or not ReadDigits(Text, 4, 2, Minute) then
     Exit(False);
   Consumed := 5;
   Second := 0;
-  if (Text[5] = ':') and ReadDigits(Text + 6, 2, Second) then
+  if (CharacterAt(Text, 6) = ':') and ReadDigits(Text, 7, 2, Second) then
     Consumed := 8;
   if (Hour > 23) or (Minute > 59) or (Second > 60) then
     Exit(False);
@@ -108,163 +121,178 @@ begin
   Result := LocalTimeToUnixTime(Local.DateTime.Year, Local.DateTime.Month, Local.DateTime.Day, 0, 0, 0);
 end;
 
-function UnitSeconds(Name: PChar; out Seconds: Int64): Boolean;
+function UnitSeconds(const Name: string; out Seconds: Int64): Boolean;
 var
-  Word: array[0..15] of Char;
-  Length: PtrUInt;
+  Word: string;
 begin
-  CopyText(@Word[0], Name, SizeOf(Word));
-  Length := TextLength(@Word[0]);
-  if (Length > 1) and (Word[Length - 1] = 's') then
-    Word[Length - 1] := #0;
+  Word := Name;
+  if (Length(Word) > 1) and (Word[Length(Word)] = 's') then
+    SetLength(Word, Length(Word) - 1);
   Result := True;
-  if TextIsEqual(@Word[0], 'second') or TextIsEqual(@Word[0], 'sec') then
+  if (Word = 'second') or (Word = 'sec') then
     Seconds := 1
-  else if TextIsEqual(@Word[0], 'minute') or TextIsEqual(@Word[0], 'min') then
+  else if (Word = 'minute') or (Word = 'min') then
     Seconds := 60
-  else if TextIsEqual(@Word[0], 'hour') then
+  else if Word = 'hour' then
     Seconds := 3600
-  else if TextIsEqual(@Word[0], 'day') then
+  else if Word = 'day' then
     Seconds := SecondsPerDay
-  else if TextIsEqual(@Word[0], 'week') then
+  else if Word = 'week' then
     Seconds := 7 * SecondsPerDay
   else
     Result := False;
 end;
 
 { "N UNIT ago", "+N UNIT", "-N UNIT" }
-function ParseRelative(Text: PChar; out Time: TUnixTime): Boolean;
+function ParseRelative(const Text: string; out Time: TUnixTime): Boolean;
 var
   Sign: Int64;
   Amount: Int64;
-  UnitName: array[0..15] of Char;
-  Length: Integer;
+  UnitName: string;
+  Position: Integer;
+  Rest: string;
   Multiplier: Int64;
 begin
   Result := False;
   Sign := 1;
-  if Text^ = '+' then
-    Inc(Text)
-  else if Text^ = '-' then
+  Position := 1;
+  if CharacterAt(Text, Position) = '+' then
+    Inc(Position)
+  else if CharacterAt(Text, Position) = '-' then
   begin
     Sign := -1;
-    Inc(Text);
+    Inc(Position);
   end;
-  if not IsDigit(Text^) then
+  if not IsDigit(CharacterAt(Text, Position)) then
     Exit;
   Amount := 0;
-  while IsDigit(Text^) do
+  while IsDigit(CharacterAt(Text, Position)) do
   begin
-    Amount := Amount * 10 + Ord(Text^) - Ord('0');
-    Inc(Text);
+    Amount := Amount * 10 + Ord(Text[Position]) - Ord('0');
+    Inc(Position);
   end;
-  Text := SkipSpaces(Text);
-  Length := 0;
-  while IsLetter(Text^) and (Length < 15) do
-  begin
-    UnitName[Length] := Text^;
-    Inc(Length);
-    Inc(Text);
-  end;
-  UnitName[Length] := #0;
-  if not UnitSeconds(@UnitName[0], Multiplier) then
+  Rest := WithoutLeadingSpaces(Copy(Text, Position, MaxInt));
+  Position := 1;
+  while IsLetter(CharacterAt(Rest, Position)) and (Position <= UnitNameLimit) do
+    Inc(Position);
+  UnitName := Copy(Rest, 1, Position - 1);
+  if not UnitSeconds(UnitName, Multiplier) then
     Exit;
-  Text := SkipSpaces(Text);
-  if TextStartsWith(Text, 'ago') then
+  Rest := WithoutLeadingSpaces(Copy(Rest, Position, MaxInt));
+  if StartsStr('ago', Rest) then
   begin
     Sign := -Sign;
-    Text := SkipSpaces(Text + 3);
+    Rest := WithoutLeadingSpaces(Copy(Rest, 4, MaxInt));
   end;
-  if Text^ <> #0 then
+  if Rest <> '' then
     Exit;
   Time := CurrentTime + Sign * Amount * Multiplier;
   Result := True;
 end;
 
-function ParseDateText(Text: PChar; out Time: TUnixTime): Boolean;
+{ YYYY-MM-DD [HH:MM[:SS]] [UTC|Z] after the date's ten characters. }
+function ParseCalendarDate(const Text: string; out Time: TUnixTime): Boolean;
 var
   Year, Month, Day: LongInt;
   ClockSeconds: LongInt;
   Consumed: Integer;
-  Rest: PChar;
+  Rest: string;
 begin
   Time := 0;
-  Text := SkipSpaces(Text);
-  if Text^ = '@' then
-    Exit(ParseInteger(Text + 1, Time));
-  if TextIsEqual(Text, 'now') then
+  ReadDigits(Text, 1, 4, Year);
+  ReadDigits(Text, 6, 2, Month);
+  ReadDigits(Text, 9, 2, Day);
+  if (Month < 1) or (Month > 12) or (Day < 1) or (Day > 31) then
+    Exit(False);
+  ClockSeconds := 0;
+  Rest := Copy(Text, 11, MaxInt);
+  if CharacterAt(Rest, 1) in ['T', ' '] then
+  begin
+    Rest := WithoutLeadingSpaces(Copy(Rest, 2, MaxInt));
+    if Rest <> '' then
+    begin
+      if not ParseClock(Rest, ClockSeconds, Consumed) then
+        Exit(False);
+      Delete(Rest, 1, Consumed);
+    end;
+  end;
+  Rest := WithoutLeadingSpaces(Rest);
+  if (Rest = 'UTC') or (Rest = 'Z') then
+    Time := CalendarToUnixTime(Year, Month, Day, 0, 0, 0) + ClockSeconds
+  else if Rest = '' then
+    Time := LocalTimeToUnixTime(Year, Month, Day, ClockSeconds div 3600, (ClockSeconds div 60) mod 60,
+      ClockSeconds mod 60)
+  else
+    Exit(False);
+  Result := True;
+end;
+
+function IsCalendarDate(const Text: string): Boolean;
+var
+  Value: LongInt;
+begin
+  Result := ReadDigits(Text, 1, 4, Value) and (CharacterAt(Text, 5) = '-') and ReadDigits(Text, 6, 2, Value) and
+    (CharacterAt(Text, 8) = '-') and ReadDigits(Text, 9, 2, Value);
+end;
+
+function ParseDateText(const Text: string; out Time: TUnixTime): Boolean;
+var
+  Trimmed: string;
+  ClockSeconds: LongInt;
+  Consumed: Integer;
+begin
+  Time := 0;
+  Trimmed := WithoutLeadingSpaces(Text);
+  if CharacterAt(Trimmed, 1) = '@' then
+    Exit(ParseDecimal(Copy(Trimmed, 2, MaxInt), Time));
+  if Trimmed = 'now' then
   begin
     Time := CurrentTime;
     Exit(True);
   end;
-  if TextIsEqual(Text, 'today') then
+  if Trimmed = 'today' then
   begin
     Time := StartOfToday;
     Exit(True);
   end;
-  if TextIsEqual(Text, 'yesterday') then
+  if Trimmed = 'yesterday' then
   begin
     Time := CurrentTime - SecondsPerDay;
     Exit(True);
   end;
-  if TextIsEqual(Text, 'tomorrow') then
+  if Trimmed = 'tomorrow' then
   begin
     Time := CurrentTime + SecondsPerDay;
     Exit(True);
   end;
-
-  { YYYY-MM-DD [HH:MM[:SS]] }
-  if ReadDigits(Text, 4, Year) and (Text[4] = '-') and ReadDigits(Text + 5, 2, Month) and
-     (Text[7] = '-') and ReadDigits(Text + 8, 2, Day) then
-  begin
-    if (Month < 1) or (Month > 12) or (Day < 1) or (Day > 31) then
-      Exit(False);
-    ClockSeconds := 0;
-    Rest := Text + 10;
-    if (Rest^ = 'T') or (Rest^ = ' ') then
-    begin
-      Rest := SkipSpaces(Rest + 1);
-      if (Rest^ <> #0) and not ParseClock(Rest, ClockSeconds, Consumed) then
-        Exit(False);
-      if Rest^ <> #0 then
-        Rest := Rest + Consumed;
-    end;
-    Rest := SkipSpaces(Rest);
-    if TextIsEqual(Rest, 'UTC') or TextIsEqual(Rest, 'Z') then
-      Time := CalendarToUnixTime(Year, Month, Day, 0, 0, 0) + ClockSeconds
-    else if Rest^ = #0 then
-      Time := LocalTimeToUnixTime(Year, Month, Day, ClockSeconds div 3600, (ClockSeconds div 60) mod 60,
-        ClockSeconds mod 60)
-    else
-      Exit(False);
-    Exit(True);
-  end;
+  if IsCalendarDate(Trimmed) then
+    Exit(ParseCalendarDate(Trimmed, Time));
 
   { HH:MM[:SS] today }
-  if ParseClock(Text, ClockSeconds, Consumed) and (SkipSpaces(Text + Consumed)^ = #0) then
+  if ParseClock(Trimmed, ClockSeconds, Consumed) and (WithoutLeadingSpaces(Copy(Trimmed, Consumed + 1, MaxInt)) = '') then
   begin
     Time := StartOfToday + ClockSeconds;
     Exit(True);
   end;
 
-  Result := ParseRelative(Text, Time);
+  Result := ParseRelative(Trimmed, Time);
 end;
 
-function ParseTouchStamp(Text: PChar; out Time: TUnixTime): Boolean;
+function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean;
 var
-  Digits: PtrUInt;
-  Dot: PtrInt;
+  Digits: Integer;
+  Dot: Integer;
   Year, Month, Day, Hour, Minute, Second: LongInt;
   Century: LongInt;
   Offset: Integer;
   Now: TLocalTime;
 begin
   Time := 0;
-  Dot := FindCharacter(Text, '.');
-  if Dot >= 0 then
-    Digits := PtrUInt(Dot)
+  Dot := Pos('.', Text);
+  if Dot > 0 then
+    Digits := Dot - 1
   else
-    Digits := TextLength(Text);
+    Digits := Length(Text);
   if not (Digits in [8, 10, 12]) then
     Exit(False);
 
@@ -273,13 +301,13 @@ begin
   Offset := 0;
   if Digits = 12 then
   begin
-    if not ReadDigits(Text, 4, Year) then
+    if not ReadDigits(Text, 1, 4, Year) then
       Exit(False);
     Offset := 4;
   end
   else if Digits = 10 then
   begin
-    if not ReadDigits(Text, 2, Year) then
+    if not ReadDigits(Text, 1, 2, Year) then
       Exit(False);
     { POSIX: 69..99 are 1969..1999, 00..68 are 2000..2068. }
     if Year >= 69 then
@@ -289,29 +317,19 @@ begin
     Year := Century + Year;
     Offset := 2;
   end;
-  if not ReadDigits(Text + Offset, 2, Month) or not ReadDigits(Text + Offset + 2, 2, Day) or
-     not ReadDigits(Text + Offset + 4, 2, Hour) or not ReadDigits(Text + Offset + 6, 2, Minute) then
+  if not ReadDigits(Text, Offset + 1, 2, Month) or not ReadDigits(Text, Offset + 3, 2, Day) or
+     not ReadDigits(Text, Offset + 5, 2, Hour) or not ReadDigits(Text, Offset + 7, 2, Minute) then
     Exit(False);
   Second := 0;
-  if Dot >= 0 then
+  if Dot > 0 then
   begin
-    if (TextLength(Text + Dot + 1) <> 2) or not ReadDigits(Text + Dot + 1, 2, Second) then
+    if (Length(Text) - Dot <> 2) or not ReadDigits(Text, Dot + 1, 2, Second) then
       Exit(False);
   end;
   if (Month < 1) or (Month > 12) or (Day < 1) or (Day > 31) or (Hour > 23) or (Minute > 59) or (Second > 60) then
     Exit(False);
   Time := LocalTimeToUnixTime(Year, Month, Day, Hour, Minute, Second);
   Result := True;
-end;
-
-function ParseDateText(const Text: string; out Time: TUnixTime): Boolean;
-begin
-  Result := ParseDateText(PChar(Text), Time);
-end;
-
-function ParseTouchStamp(const Text: string; out Time: TUnixTime): Boolean;
-begin
-  Result := ParseTouchStamp(PChar(Text), Time);
 end;
 
 end.

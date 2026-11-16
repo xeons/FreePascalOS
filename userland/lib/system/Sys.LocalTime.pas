@@ -33,7 +33,7 @@
 }
 unit Sys.LocalTime;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -65,12 +65,12 @@ procedure DecodeTimeInZone(Zone: PTimeZone; Time: TUnixTime; out Local: TLocalTi
   ZoneLocalTimeToUnixTime for the hours that come twice or never). }
 function LocalTimeToUnixTime(Year, Month, Day, Hour, Minute, Second: LongInt): TUnixTime;
 
-{ "+0100", "-0500", "+0530": Buffer holds at least 6 characters. }
-procedure FormatUtcOffset(Offset: LongInt; Buffer: PChar);
+{ "+0100", "-0500", "+0530". }
+function FormatUtcOffset(Offset: LongInt): string;
 
 { The system's zone from now on (root only): ErrorNotFound for a name
   the database does not know, ErrorNotPermitted for others than root. }
-function SetSystemTimeZone(Name: PChar): LongInt;
+function SetSystemTimeZone(const Name: string): LongInt;
 { Sets the system's clock to Time (UTC), and the battery backed clock
   with it (root only). }
 function SetSystemClock(Time: TUnixTime): LongInt;
@@ -96,12 +96,12 @@ end;
 
 function CurrentTimeZone: PTimeZone;
 var
-  Name: PChar;
+  Name: string;
 begin
   Name := GetVariable('TZ');
-  if (Name <> nil) and (Name[0] <> #0) then
+  if Name <> '' then
   begin
-    Result := FindTimeZone(Name);
+    Result := FindTimeZone(PChar(Name));
     if Result = nil then
       Result := UtcTimeZone;
     Exit;
@@ -130,32 +130,29 @@ begin
   Result := ZoneLocalTimeToUnixTime(CurrentTimeZone, Year, Month, Day, Hour, Minute, Second);
 end;
 
-procedure FormatUtcOffset(Offset: LongInt; Buffer: PChar);
+function FormatUtcOffset(Offset: LongInt): string;
 var
   Minutes: LongInt;
   Hours: LongInt;
 begin
   if Offset < 0 then
   begin
-    Buffer[0] := '-';
+    Result := '-';
     Offset := -Offset;
   end
   else
-    Buffer[0] := '+';
+    Result := '+';
   Minutes := (Offset div 60) mod 60;
   Hours := Offset div 3600;
-  Buffer[1] := Char(Ord('0') + (Hours div 10) mod 10);
-  Buffer[2] := Char(Ord('0') + Hours mod 10);
-  Buffer[3] := Char(Ord('0') + Minutes div 10);
-  Buffer[4] := Char(Ord('0') + Minutes mod 10);
-  Buffer[5] := #0;
+  Result := Result + Char(Ord('0') + (Hours div 10) mod 10) + Char(Ord('0') + Hours mod 10) +
+    Char(Ord('0') + Minutes div 10) + Char(Ord('0') + Minutes mod 10);
 end;
 
-function SetSystemTimeZone(Name: PChar): LongInt;
+function SetSystemTimeZone(const Name: string): LongInt;
 begin
-  if FindTimeZone(Name) = nil then
+  if FindTimeZone(PChar(Name)) = nil then
     Exit(ErrorNotFound);
-  Result := ErrorCodeOf(KernelSetTimeZone(Name));
+  Result := ErrorCodeOf(KernelSetTimeZone(PChar(Name)));
 end;
 
 function SetSystemClock(Time: TUnixTime): LongInt;

@@ -88,7 +88,7 @@ begin
   Message.Code := Icon.Number;
   Message.Value := Ord(Shown);
   Message.Flags := Icon.Picture;
-  SetMessageText(Message, PChar(Icon.Tooltip));
+  SetMessageText(Message, Icon.Tooltip);
   SendToShell(Message);
 end;
 

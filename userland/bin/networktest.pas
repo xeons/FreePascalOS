@@ -70,7 +70,6 @@ uses
   Sys.Sockets,
   Sys.Streams,
   Sys.Threads,
-  Util.Output,
   NetworkTest.Service,
   NetworkTest.Ipv6;
 

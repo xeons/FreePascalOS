@@ -65,8 +65,7 @@ uses
   Abi.SystemCalls,
   Sys.Console,
   Sys.Streams,
-  Sys.Time,
-  Util.Output;
+  Sys.Time;
 
 const
   RedrawInterval = 200;

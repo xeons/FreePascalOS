@@ -31,10 +31,10 @@ program readlink;
 
 uses
   Abi.SystemCalls,
+  Sys.Files,
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
   Util.Paths;
 
 const

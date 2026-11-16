@@ -43,7 +43,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Modes,
-  Util.Output,
+  Sys.Streams,
   Util.Paths;
 
 const
@@ -105,13 +105,11 @@ function TimeText(Time: Int64): string;
 var
   Local: TLocalTime;
   DateTime: Sys.Time.TDateTime;
-  OffsetText: array[0..7] of Char;
 begin
   DecodeLocalTime(Time, Local);
   DateTime := Local.DateTime;
-  FormatUtcOffset(Local.Offset, @OffsetText[0]);
   Result := Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d %s', [DateTime.Year, DateTime.Month, DateTime.Day,
-    DateTime.Hour, DateTime.Minute, DateTime.Second, string(PChar(@OffsetText[0]))]);
+    DateTime.Hour, DateTime.Minute, DateTime.Second, FormatUtcOffset(Local.Offset)]);
 end;
 
 function UserNameOrUnknown(UserId: LongWord): string;

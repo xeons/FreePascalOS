@@ -36,8 +36,7 @@ implementation
 
 uses
   Sys.Errors,
-  Sys.Streams,
-  Util.Output;
+  Sys.Streams;
 
 procedure Say(const Text: string);
 begin

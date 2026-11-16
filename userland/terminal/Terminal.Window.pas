@@ -74,7 +74,6 @@ implementation
 uses
   SysUtils,
   Sys.Streams,
-  Util.Output,
   Windowing.Connection,
   Controls.Base,
   Terminal.Settings;

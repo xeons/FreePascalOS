@@ -73,7 +73,7 @@ begin
     Exit;
   FShownTooltip := Tooltip;
   FShownPicture := Picture;
-  ShowNotificationIcon(VolumeIconNumber, Picture, PChar(Tooltip));
+  ShowNotificationIcon(VolumeIconNumber, Picture, Tooltip);
 end;
 
 end.

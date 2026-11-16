@@ -44,11 +44,10 @@ uses
   Abi.SystemCalls,
   Sys.Display,
   Sys.Kernel,
-  Sys.Text,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]'#10 +
@@ -178,7 +177,7 @@ begin
       OptionList:
         List := True;
       OptionMode:
-        if not ParseSize(PChar(OptionValue), ModeWidth, ModeHeight) then
+        if not ParseWidthAndHeight(OptionValue, ModeWidth, ModeHeight) then
           FailWithUsageHint('the mode must be WIDTHxHEIGHT');
     end;
   if CommandLine.OperandCount <> 0 then

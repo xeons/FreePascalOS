@@ -58,7 +58,7 @@ uses
   Sys.Environment,
   Abi.SystemCalls,
   Runtime.Text,
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Sys.Processes,
   Sys.Kernel,
@@ -87,10 +87,10 @@ var
 procedure Check(Passed: Boolean; Name: PChar);
 begin
   if Passed then
-    PrintFormatted('ok %s'#10, [ArgumentText(Name)])
+    PrintString(Format('ok %s'#10, [Name]))
   else
   begin
-    PrintFormatted('FAIL %s'#10, [ArgumentText(Name)]);
+    PrintString(Format('FAIL %s'#10, [Name]));
     Inc(FailureCount);
   end;
 end;
@@ -500,7 +500,7 @@ begin
       CrashInThread
     else if TextIsEqual(ArgumentValues[1], '--last-thread-exits') then
       LastThreadExits;
-    PrintLine('threadtest: unknown option');
+    PrintStringLine('threadtest: unknown option');
     Halt(2);
   end;
 

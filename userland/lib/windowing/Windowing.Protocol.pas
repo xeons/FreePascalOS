@@ -413,7 +413,6 @@ function PixelsToLogical(Value: LongInt; ScalePercent: LongWord): LongInt;
 { A message of Kind for Window, every other field zero. }
 function NewMessage(Kind, Window: LongWord): TWindowMessage;
 { Copies Text into the message (cut short if it does not fit). }
-procedure SetMessageText(var Message: TWindowMessage; Text: PChar);
 procedure SetMessageText(var Message: TWindowMessage; const Text: string);
 { The message's text, up to its terminating zero (at most
   TitleCapacity - 1 characters). }
@@ -444,20 +443,6 @@ begin
   FillChar(Result, SizeOf(Result), 0);
   Result.Kind := Kind;
   Result.Window := Window;
-end;
-
-procedure SetMessageText(var Message: TWindowMessage; Text: PChar);
-var
-  Index: Integer;
-begin
-  Index := 0;
-  if Text <> nil then
-    while (Text[Index] <> #0) and (Index < TitleCapacity - 1) do
-    begin
-      Message.Text[Index] := Text[Index];
-      Inc(Index);
-    end;
-  Message.Text[Index] := #0;
 end;
 
 procedure SetMessageText(var Message: TWindowMessage; const Text: string);

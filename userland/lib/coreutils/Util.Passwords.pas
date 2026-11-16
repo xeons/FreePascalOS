@@ -28,11 +28,13 @@
     Dn = SHA256(Dn-1 + password)
 
   Any fields after the second are kept as they are.
+
+  Passwords themselves stay in buffers the caller can wipe (a PChar it
+  owns): nothing here copies one into a string.
 }
 unit Util.Passwords;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
@@ -46,194 +48,158 @@ type
   TPasswordCheck = (PasswordAccepted, PasswordRejected, PasswordLocked, PasswordUnknownUser);
 
 { Checks Password against the hash stored for user Name. }
-function CheckPassword(Name: PChar; Password: PChar): TPasswordCheck; overload;
-function CheckPassword(const Name, Password: string): TPasswordCheck; overload;
+function CheckPassword(const Name: string; Password: PChar): TPasswordCheck;
 { True if user Name needs no password. }
-function HasEmptyPassword(Name: PChar): Boolean; overload;
-function HasEmptyPassword(const Name: string): Boolean; overload;
+function HasEmptyPassword(const Name: string): Boolean;
 { Stores a new password for user Name (adding a line if there is none),
   replacing /etc/shadow as Util.AccountFiles does, under the account
   files' lock. Returns an error code (0 on success). }
-function SetPassword(Name: PChar; Password: PChar): LongInt;
+function SetPassword(const Name: string; Password: PChar): LongInt;
 { The hash field for Password, with a new random salt. }
-function NewPasswordHash(Password: PChar): AnsiString;
+function NewPasswordHash(Password: PChar): string;
 { Puts Password's hash on Name's line of the shadow file's Lines (a new
   line if there is none), the other fields kept: for programs that edit
   the account files under their lock themselves. }
-procedure PutPasswordInLines(var Lines: TAccountLines; Name: PChar; Password: PChar);
+procedure PutPasswordInLines(var Lines: TAccountLines; const Name: string; Password: PChar);
 
 { Prints Prompt to the console (or standard error) and reads a line from
   standard input, without echo when it is the console. Returns nil at end
-  of input; the caller frees the text. }
-function ReadPassword(Prompt: PChar): PChar; overload;
-{ The same into a string; False at end of input. }
-function ReadPassword(const Prompt: string; out Password: string): Boolean; overload;
+  of input; the caller wipes and frees the text with ForgetPassword. }
+function ReadPassword(const Prompt: string): PChar;
+{ Overwrites a password ReadPassword returned and frees it (nil is
+  allowed). }
+procedure ForgetPassword(var Password: PChar);
 
 implementation
 
 uses
+  SysUtils,
+  StrUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Console,
   Sys.Errors,
-  Sys.Files,
   Sys.Memory,
   Sys.Streams,
-  Sys.Text,
   Crypto.Digests,
   Crypto.Random,
-  Util.Input;
+  Util.Input,
+  Util.Numbers;
 
 const
   HashRounds = 1000;
   HashPrefix = '$sha256$';
   SaltBytes = 8;
 
-type
-  THashText = array[0..127] of Char;
-
-procedure ComputeHash(Salt: PChar; SaltLength: Integer; Password: PChar; out Hash: THashText);
+function ComputeHash(const Salt: string; Password: PChar): string;
 var
   Context: TDigestContext;
   Digest: TDigestOutput;
   Round: Integer;
 begin
   BeginDigest(Context, DigestSha256);
-  UpdateDigest(Context, PByte(Salt), SaltLength);
-  UpdateDigest(Context, PByte(Password), TextLength(Password));
+  UpdateDigest(Context, PByte(PChar(Salt)), Length(Salt));
+  UpdateDigest(Context, PByte(Password), StrLen(Password));
   FinishDigest(Context, Digest);
   for Round := 2 to HashRounds do
   begin
     BeginDigest(Context, DigestSha256);
     UpdateDigest(Context, @Digest[0], DigestSize(DigestSha256));
-    UpdateDigest(Context, PByte(Password), TextLength(Password));
+    UpdateDigest(Context, PByte(Password), StrLen(Password));
     FinishDigest(Context, Digest);
   end;
-  FormatHexBytes(@Digest[0], DigestSize(DigestSha256), @Hash[0]);
+  Result := HexText(Digest, DigestSize(DigestSha256));
 end;
 
-function SameBytes(First, Second: PChar; Count: PtrUInt): Boolean;
+{ Looks at every byte, so the time taken does not tell how much matched. }
+function SameTextInFixedTime(const First, Second: string): Boolean;
 var
-  Index: PtrUInt;
+  Index: Integer;
   Difference: Byte;
 begin
-  { Looks at every byte, so the time taken does not tell how much matched. }
+  if Length(First) <> Length(Second) then
+    Exit(False);
   Difference := 0;
-  for Index := 1 to Count do
-    Difference := Difference or (Byte(First[Index - 1]) xor Byte(Second[Index - 1]));
+  for Index := 1 to Length(First) do
+    Difference := Difference or (Byte(First[Index]) xor Byte(Second[Index]));
   Result := Difference = 0;
 end;
 
-{ Finds the line of Name; Lines stays loaded for the caller to free. }
-function FindEntry(Name: PChar; var Lines: TLineList; out Hash: PChar; out LineIndex: Integer): Boolean;
+{ The hash field of Name's line (up to the next ':' or the end); False
+  if the file cannot be read or has no line for Name. }
+function FindHash(const Name: string; out Hash: string): Boolean;
 var
   Stream: PInputStream;
-  Index: Integer;
-  NameLength: PtrUInt;
-  Line: PChar;
+  Line: string;
+  HadLineEnd: Boolean;
+  FieldEnd: Integer;
 begin
-  Result := False;
-  Hash := nil;
-  LineIndex := -1;
-  BeginLineList(Lines);
+  Hash := '';
   Stream := OpenInput(ShadowPath);
   if Stream = nil then
-    Exit;
-  ReadAllLines(Stream, Lines);
+    Exit(False);
+  Result := False;
+  while ReadTextLine(Stream, Line, HadLineEnd) do
+    if StartsStr(Name + ':', Line) then
+    begin
+      Hash := Copy(Line, Length(Name) + 2, MaxInt);
+      FieldEnd := Pos(':', Hash);
+      if FieldEnd > 0 then
+        SetLength(Hash, FieldEnd - 1);
+      Result := True;
+      Break;
+    end;
   CloseInput(Stream);
-  NameLength := TextLength(Name);
-  for Index := 0 to Lines.Count - 1 do
-  begin
-    Line := Lines.Items[Index];
-    if TextStartsWith(Line, Name) and (Line[NameLength] = ':') then
-    begin
-      Hash := Line + NameLength + 1;
-      LineIndex := Index;
-      Exit(True);
-    end;
-  end;
 end;
 
-{ Length of the hash field (up to the next ':' or the end). }
-function FieldLength(Text: PChar): PtrUInt;
-begin
-  Result := 0;
-  while (Text[Result] <> ':') and (Text[Result] <> #0) do
-    Inc(Result);
-end;
-
-function CheckPassword(Name: PChar; Password: PChar): TPasswordCheck;
+function CheckPassword(const Name: string; Password: PChar): TPasswordCheck;
 var
-  Lines: TLineList;
-  Hash: PChar;
-  LineIndex: Integer;
-  Length: PtrUInt;
-  Salt: PChar;
-  SaltLength: Integer;
-  Computed: THashText;
-  Stored: PChar;
+  Hash: string;
+  SaltAndDigest: string;
+  SaltEnd: Integer;
 begin
-  if not FindEntry(Name, Lines, Hash, LineIndex) then
-  begin
-    FreeLineList(Lines);
+  if not FindHash(Name, Hash) then
     Exit(PasswordUnknownUser);
-  end;
-  Length := FieldLength(Hash);
   Result := PasswordRejected;
-  if Length = 0 then
+  if Hash = '' then
     Result := PasswordAccepted
-  else if (Hash[0] = '!') or (Hash[0] = '*') then
+  else if (Hash[1] = '!') or (Hash[1] = '*') then
     Result := PasswordLocked
-  else if TextStartsWith(Hash, HashPrefix) then
+  else if StartsStr(HashPrefix, Hash) then
   begin
-    Salt := Hash + TextLength(HashPrefix);
-    SaltLength := 0;
-    while (Salt[SaltLength] <> '$') and (Salt[SaltLength] <> ':') and (Salt[SaltLength] <> #0) do
-      Inc(SaltLength);
-    if Salt[SaltLength] = '$' then
-    begin
-      Stored := Salt + SaltLength + 1;
-      ComputeHash(Salt, SaltLength, Password, Computed);
-      if (FieldLength(Stored) = TextLength(@Computed[0])) and
-         SameBytes(Stored, @Computed[0], TextLength(@Computed[0])) then
-        Result := PasswordAccepted;
-    end;
+    SaltAndDigest := Copy(Hash, Length(HashPrefix) + 1, MaxInt);
+    SaltEnd := Pos('$', SaltAndDigest);
+    if (SaltEnd > 0) and SameTextInFixedTime(Copy(SaltAndDigest, SaltEnd + 1, MaxInt),
+      ComputeHash(Copy(SaltAndDigest, 1, SaltEnd - 1), Password)) then
+      Result := PasswordAccepted;
   end;
-  FreeLineList(Lines);
 end;
 
-function HasEmptyPassword(Name: PChar): Boolean;
+function HasEmptyPassword(const Name: string): Boolean;
 var
-  Lines: TLineList;
-  Hash: PChar;
-  LineIndex: Integer;
+  Hash: string;
 begin
-  Result := FindEntry(Name, Lines, Hash, LineIndex) and (FieldLength(Hash) = 0);
-  FreeLineList(Lines);
+  Result := FindHash(Name, Hash) and (Hash = '');
 end;
 
-function NewPasswordHash(Password: PChar): AnsiString;
+function NewPasswordHash(Password: PChar): string;
 var
   SaltBuffer: array[0..SaltBytes - 1] of Byte;
-  Salt: array[0..2 * SaltBytes] of Char;
-  Computed: THashText;
+  Salt: string;
 begin
   RandomBytes(@SaltBuffer[0], SaltBytes);
-  FormatHexBytes(@SaltBuffer[0], SaltBytes, @Salt[0]);
-  ComputeHash(@Salt[0], 2 * SaltBytes, Password, Computed);
-  Result := HashPrefix + AnsiString(PChar(@Salt[0])) + '$' + AnsiString(PChar(@Computed[0]));
+  Salt := HexText(SaltBuffer, SaltBytes);
+  Result := HashPrefix + Salt + '$' + ComputeHash(Salt, Password);
 end;
 
-procedure PutPasswordInLines(var Lines: TAccountLines; Name: PChar; Password: PChar);
+procedure PutPasswordInLines(var Lines: TAccountLines; const Name: string; Password: PChar);
 var
   LineIndex: Integer;
   Fields: TAccountFields;
 begin
-  LineIndex := FindAccountLine(Lines, AnsiString(Name));
+  LineIndex := FindAccountLine(Lines, Name);
   if LineIndex < 0 then
   begin
-    AppendAccountLine(Lines, AnsiString(Name) + ':' + NewPasswordHash(Password) + ':');
+    AppendAccountLine(Lines, Name + ':' + NewPasswordHash(Password) + ':');
     Exit;
   end;
   Fields := SplitAccountLine(Lines[LineIndex]);
@@ -243,7 +209,7 @@ begin
   Lines[LineIndex] := JoinAccountFields(Fields);
 end;
 
-function SetPassword(Name: PChar; Password: PChar): LongInt;
+function SetPassword(const Name: string; Password: PChar): LongInt;
 var
   Lock: Int64;
   Lines: TAccountLines;
@@ -262,7 +228,7 @@ begin
   UnlockAccountFiles(Lock);
 end;
 
-function ReadPassword(Prompt: PChar): PChar;
+function ReadPassword(const Prompt: string): PChar;
 var
   OnConsole: Boolean;
   OldMode: Int64;
@@ -270,7 +236,7 @@ var
   HadLineEnd: Boolean;
 begin
   OnConsole := IsConsole(StandardInputHandle);
-  WriteText(StandardError, Prompt);
+  WriteString(StandardError, Prompt);
   FlushStream(StandardError);
   OldMode := 0;
   if OnConsole then
@@ -290,28 +256,13 @@ begin
   Result := Line;
 end;
 
-function CheckPassword(const Name, Password: string): TPasswordCheck;
+procedure ForgetPassword(var Password: PChar);
 begin
-  Result := CheckPassword(PChar(Name), PChar(Password));
-end;
-
-function HasEmptyPassword(const Name: string): Boolean;
-begin
-  Result := HasEmptyPassword(PChar(Name));
-end;
-
-function ReadPassword(const Prompt: string; out Password: string): Boolean;
-var
-  Text: PChar;
-begin
-  Password := '';
-  Text := ReadPassword(PChar(Prompt));
-  Result := Text <> nil;
-  if Result then
-  begin
-    Password := Text;
-    FreeMemory(Text);
-  end;
+  if Password = nil then
+    Exit;
+  FillChar(Password^, StrLen(Password), 0);
+  FreeMemory(Password);
+  Password := nil;
 end;
 
 end.

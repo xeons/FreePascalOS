@@ -28,14 +28,15 @@
 }
 program effecttest;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Memory,
   Util.Messages,
-  Util.Options,
+  Util.CommandLine,
+  Sys.Streams,
   Audio.Formats,
   Audio.Device,
   Audio.EffectChain,
@@ -62,14 +63,14 @@ var
 
 { --- Checking and measuring --------------------------------------------- }
 
-procedure Check(Name: PChar; Condition: Boolean; Detail: PChar);
+procedure Check(const Name: string; Condition: Boolean; const Detail: string);
 begin
   if Condition then
     Inc(Passed)
   else
   begin
     Inc(Failed);
-    PrintFormatted('effecttest: %s failed: %s'#10, [ArgumentText(Name), ArgumentText(Detail)]);
+    PrintString(Format('effecttest: %s failed: %s'#10, [Name, Detail]));
   end;
 end;
 
@@ -78,10 +79,10 @@ begin
   Result := Abs(Value - Expected) <= Tolerance;
 end;
 
-function Describe(Value, Expected: Single): PChar;
+function Describe(Value, Expected: Single): string;
 begin
-  Result := FormatText('%d/1000, expected %d/1000', [ArgumentNumber(Round(Value * 1000)),
-    ArgumentNumber(Round(Expected * 1000))]);
+  Result := Format('%d/1000, expected %d/1000', [Round(Value * 1000),
+    Round(Expected * 1000)]);
 end;
 
 function Peak(Channel: LongWord): Single;
@@ -135,8 +136,8 @@ function NewEngine: PAudioEngine;
 var
   Master: PAudioVoice;
 begin
-  if (CreateAudioEngine(nil, True, Result) <> 0) or (CreateMasteringVoice(Result, 2, Rate, Master) <> 0) then
-    Fail(1, 'cannot create an engine', []);
+  if (CreateAudioEngine('', True, Result) <> 0) or (CreateMasteringVoice(Result, 2, Rate, Master) <> 0) then
+    Fail(1, 'cannot create an engine');
 end;
 
 function StereoFloat: TAudioFormat;
@@ -339,7 +340,7 @@ begin
   Early := Energy(Start, Start + 2400);
   Late := Energy(Start + 4800, Start + 7200);
   Check('reverb (the room answers)', (Start > 0) and (Start < 2400) and (Early > 0.0001),
-    FormatText('first sound at frame %u', [ArgumentUnsigned(Start)]));
+    Format('first sound at frame %u', [Start]));
   Check('reverb (dies away)', (Late > 0) and (Late < Early), 'not decaying');
   Difference := 0;
   for Frame := 0 to RenderFrames - 1 do
@@ -347,7 +348,7 @@ begin
   Check('reverb (the sides differ)', Difference > 0.01, 'the same on both sides');
   Check('reverb (tail)', (Effect^.TailFrames(Effect, Rate) > Rate div 2) and
     (Effect^.TailFrames(Effect, Rate) < Rate * 10),
-    FormatText('%u frames', [ArgumentUnsigned(Effect^.TailFrames(Effect, Rate))]));
+    Format('%u frames', [Effect^.TailFrames(Effect, Rate)]));
   DestroyAudioEngine(Engine);
 end;
 
@@ -379,10 +380,10 @@ end;
 
 { --- 3D audio --------------------------------------------------------------------- }
 
-function DescribeGains(const Spatial: TSpatialResult): PChar;
+function DescribeGains(const Spatial: TSpatialResult): string;
 begin
-  Result := FormatText('left %d/1000, right %d/1000', [ArgumentNumber(Round(Spatial.Matrix[0] * 1000)),
-    ArgumentNumber(Round(Spatial.Matrix[1] * 1000))]);
+  Result := Format('left %d/1000, right %d/1000', [Round(Spatial.Matrix[0] * 1000),
+    Round(Spatial.Matrix[1] * 1000)]);
 end;
 
 procedure CheckPanning;
@@ -532,9 +533,9 @@ begin
   CalculateSpatial(Listener, Emitter, 2, DefaultSpeedOfSound, Spatial);
   Check('emitter channels', (Spatial.SourceChannels = 2) and Near(Spatial.Matrix[0], Cos(Pi / 8), 0.001) and
     Near(Spatial.Matrix[3], Cos(Pi / 8), 0.001) and Near(Spatial.Matrix[1], Sin(Pi / 8), 0.001),
-    FormatText('%d %d %d %d', [ArgumentNumber(Round(Spatial.Matrix[0] * 1000)),
-    ArgumentNumber(Round(Spatial.Matrix[1] * 1000)), ArgumentNumber(Round(Spatial.Matrix[2] * 1000)),
-    ArgumentNumber(Round(Spatial.Matrix[3] * 1000))]));
+    Format('%d %d %d %d', [Round(Spatial.Matrix[0] * 1000),
+    Round(Spatial.Matrix[1] * 1000), Round(Spatial.Matrix[2] * 1000),
+    Round(Spatial.Matrix[3] * 1000)]));
   { At the emitter, inside its inner radius: everywhere at once. }
   InitializeEmitter(Emitter);
   Emitter.InnerRadius := 2;
@@ -587,11 +588,12 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
 begin
-  ParseOperandsOnly(Parser, Usage);
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no arguments are taken', []);
+  CommandLine := TCommandLine.Create([], Usage);
+  CommandLine.ReadOperandsOnly;
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no arguments are taken');
   Rendered := PSingle(AllocateMemory(RenderFrames * 2 * SizeOf(Single)));
   CheckVolumeMeter;
   CheckLimiter;
@@ -605,7 +607,7 @@ begin
   CheckCurvesAndCones;
   CheckEmitterChannels;
   CheckSpatialVoice;
-  PrintFormatted('effecttest: %d checks passed'#10, [ArgumentNumber(Passed)]);
+  PrintString(Format('effecttest: %d checks passed'#10, [Passed]));
   if Failed > 0 then
     Halt(1);
 end.

@@ -33,7 +33,7 @@
 }
 unit Sys.PseudoTerminals;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -47,12 +47,12 @@ function CreatePseudoTerminal(Rows, Columns: LongInt; out Terminal: TAbiPseudoTe
   TerminalHandle; returns a process handle or a negative error. }
 function StartOnTerminal(Path: PChar; Arguments: PPChar; TerminalHandle: Int64): Int64;
 { "/dev/ptsN" for Number, in Buffer (at least 16 bytes). }
-procedure PseudoTerminalPath(Number: Int64; Buffer: PChar);
+function PseudoTerminalPath(Number: Int64): string;
 
 implementation
 
 uses
-  Runtime.Text,
+  SysUtils,
   Sys.Kernel,
   Sys.Errors,
   Sys.Processes;
@@ -78,12 +78,9 @@ begin
   Result := StartProgram(Path, Arguments, Options);
 end;
 
-procedure PseudoTerminalPath(Number: Int64; Buffer: PChar);
-var
-  NumberText: TNumberText;
+function PseudoTerminalPath(Number: Int64): string;
 begin
-  CopyText(Buffer, '/dev/pts', 16);
-  CopyText(Buffer + 8, FormatDecimal(QWord(Number), NumberText), 8);
+  Result := '/dev/pts' + IntToStr(QWord(Number));
 end;
 
 end.

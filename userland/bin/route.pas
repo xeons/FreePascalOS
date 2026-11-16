@@ -49,7 +49,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: route [-n] [-4|-6|-A inet|inet6]'#10 +

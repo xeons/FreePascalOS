@@ -38,7 +38,6 @@ uses
   Abi.SystemCalls,
   SysUtils,
   Sys.Files,
-  Sys.Text,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
@@ -107,10 +106,10 @@ begin
   if CommandLine.OperandCount <> 2 then
     FailWithUsageHint('a file and a length are needed');
   OutputPath := CommandLine.Operands[0];
-  if not ParseThousandths(PChar(CommandLine.Operands[1]), Thousandths) then
+  if not ParseThousandths(CommandLine.Operands[1], Thousandths) then
     FailWithUsageHint(SysUtils.Format('invalid length ''%s''', [CommandLine.Operands[1]]));
 
-  Input := OpenAudioInput(PChar(DevicePath));
+  Input := OpenAudioInput(DevicePath);
   if Input < 0 then
     FailWithError(1, LongInt(-Input), DevicePath);
   Format.Rate := LongWord(Rate);

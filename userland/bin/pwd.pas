@@ -26,8 +26,8 @@ program pwd;
 uses
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
-  Util.Paths;
+  Sys.Streams,
+  Sys.Files;
 
 const
   Usage = 'Usage: pwd'#10 +

@@ -340,7 +340,7 @@ end;
 function UsageText(AllowSelection: Boolean): string;
 begin
   Result := Format('Usage: %s [OPTION]... [FILE]'#10 +
-    'Encode or decode FILE, or standard input, to standard output.'#10#10, [ProgramNameText]);
+    'Encode or decode FILE, or standard input, to standard output.'#10#10, [ProgramName]);
   if AllowSelection then
     Result := Result + '      --base64 --base64url --base32 --base32hex --base16'#10 +
       '      --base2msbf --base2lsbf --z85   choose the encoding'#10;

@@ -35,7 +35,7 @@
 }
 unit Sys.ServiceControl;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -111,11 +111,12 @@ type
 const
   ServiceReplyHeaderSize = 8;
 
-{ Sends Code (and the service Name, which may be nil) to the manager at
-  the port PortName (nil: the system's) and waits for the reply. Returns
+{ Sends Code (and the service Name, which may be '') to the manager at
+  the port PortName ('': the system's) and waits for the reply. Returns
   an error when the manager cannot be reached; else Reply.Error is the
   manager's answer. }
-function AskServiceManager(PortName: PChar; Code: LongWord; Name: PChar; out Reply: TServiceReply): LongInt;
+function AskServiceManager(const PortName: string; Code: LongWord; const Name: string;
+  out Reply: TServiceReply): LongInt;
 
 { Tells the manager that started this program (or the program that
   started this one) that its service is ready. Does nothing when no
@@ -123,11 +124,12 @@ function AskServiceManager(PortName: PChar; Code: LongWord; Name: PChar; out Rep
 procedure NotifyServiceReady;
 
 { "running", "failed", ... }
-function ServiceStateName(State: LongWord): PChar;
+function ServiceStateName(State: LongWord): string;
 
 implementation
 
 uses
+  SysUtils,
   Runtime.Memory,
   Runtime.Text,
   Sys.Environment,
@@ -137,7 +139,8 @@ uses
 const
   ReplyTimeoutMilliseconds = 10000;
 
-function AskServiceManager(PortName: PChar; Code: LongWord; Name: PChar; out Reply: TServiceReply): LongInt;
+function AskServiceManager(const PortName: string; Code: LongWord; const Name: string;
+  out Reply: TServiceReply): LongInt;
 var
   Request: TServiceRequest;
   Channel: Int64;
@@ -145,13 +148,13 @@ var
 begin
   FillMemory(@Reply, ServiceReplyHeaderSize, 0);
   Reply.Count := 0;
-  if PortName = nil then
-    PortName := ServiceManagerPortName;
   FillMemory(@Request, SizeOf(Request), 0);
   Request.Code := Code;
-  if Name <> nil then
-    CopyText(@Request.Name[0], Name, ServiceNameCapacity);
-  Channel := ConnectPort(PortName);
+  StrPLCopy(@Request.Name[0], Name, ServiceNameCapacity - 1);
+  if PortName = '' then
+    Channel := ConnectPort(ServiceManagerPortName)
+  else
+    Channel := ConnectPort(PChar(PortName));
   if Channel < 0 then
     Exit(ErrorCodeOf(Channel));
   Result := CallChannel(Channel, @Request, SizeOf(Request), @Reply, SizeOf(Reply), ReplyLength,
@@ -163,16 +166,16 @@ end;
 
 procedure NotifyServiceReady;
 var
-  PortName: PChar;
+  PortName: string;
   Reply: TServiceReply;
 begin
   PortName := GetVariable(ServicePortVariable);
-  if (PortName = nil) or (PortName^ = #0) then
+  if PortName = '' then
     Exit;
   AskServiceManager(PortName, ServiceRequestReady, GetVariable(ServiceNameVariable), Reply);
 end;
 
-function ServiceStateName(State: LongWord): PChar;
+function ServiceStateName(State: LongWord): string;
 begin
   case State of
     ServiceStateStopped: Result := 'stopped';

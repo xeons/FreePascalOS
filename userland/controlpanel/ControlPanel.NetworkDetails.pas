@@ -131,12 +131,10 @@ function AddressText(const Text: string): string;
 var
   AddressValue: LongWord;
   PrefixLength: LongWord;
-  Mask: array[0..Ipv4AddressTextCapacity - 1] of Char;
 begin
   if not ParseInterfaceAddress(Text, AddressValue, PrefixLength) then
     Exit(OrNoValue(Text));
-  FormatNetmask(PrefixLength, @Mask[0], SizeOf(Mask));
-  Result := Text + ' (netmask ' + string(PChar(@Mask[0])) + ')';
+  Result := Text + ' (netmask ' + NetmaskToText(PrefixLength) + ')';
 end;
 
 procedure TNetworkDetails.ShowStatus(const Status: TInterfaceStatus);

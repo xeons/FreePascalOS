@@ -26,7 +26,7 @@
 }
 unit Sys.Processes;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -54,9 +54,9 @@ type
 { Options with the standard handles and environment of this program. }
 procedure DefaultProcessOptions(out Options: TProcessOptions);
 
-{ Finds Name in PATH (or takes it as a path if it contains '/'). The
-  result is written to FullPath. }
-function FindProgram(Name: PChar; FullPath: PChar; Capacity: PtrUInt): Boolean;
+{ Finds Name in PATH (or takes it as a path if it contains '/'); False
+  (and Path empty) if it is not there. }
+function FindProgramPath(const Name: string; out Path: string): Boolean;
 
 { Starts a program; returns a process handle or a negative error. }
 function StartProgram(Path: PChar; Arguments: PPChar; const Options: TProcessOptions): Int64;
@@ -120,8 +120,7 @@ uses
   Sys.Kernel,
   Sys.Errors,
   Sys.Files,
-  Sys.Environment,
-  Sys.Text;
+  Sys.Environment;
 
 procedure DefaultProcessOptions(out Options: TProcessOptions);
 begin
@@ -135,43 +134,50 @@ begin
   Options.NewSession := False;
 end;
 
-function FindProgram(Name: PChar; FullPath: PChar; Capacity: PtrUInt): Boolean;
+function IsProgramFile(const Path: string): Boolean;
 var
-  SearchPath: PChar;
-  Start: PtrUInt;
-  Finish: PtrUInt;
-  Length: PtrUInt;
   Information: TFileInformation;
 begin
-  Result := False;
-  if (Name = nil) or (Name^ = #0) then
-    Exit;
-  if FindCharacter(Name, '/') >= 0 then
+  Result := (GetFileInformation(PChar(Path), Information) = ErrorNone) and (Information.Kind = KindFile);
+end;
+
+function FindProgramPath(const Name: string; out Path: string): Boolean;
+var
+  SearchPath: string;
+  Directory: string;
+  Start: Integer;
+  Finish: Integer;
+  Information: TFileInformation;
+begin
+  Path := '';
+  if Name = '' then
+    Exit(False);
+  if Pos('/', Name) > 0 then
   begin
-    CopyText(FullPath, Name, Capacity);
-    Exit(GetFileInformation(FullPath, Information) = ErrorNone);
+    Result := GetFileInformation(PChar(Name), Information) = ErrorNone;
+    if Result then
+      Path := Name;
+    Exit;
   end;
 
-  SearchPath := GetVariable('PATH');
-  if SearchPath = nil then
+  if not FindVariable('PATH', SearchPath) then
     SearchPath := '/bin';
 
-  Start := 0;
-  repeat
+  Start := 1;
+  while Start <= Length(SearchPath) + 1 do
+  begin
     Finish := Start;
-    while (SearchPath[Finish] <> ':') and (SearchPath[Finish] <> #0) do
+    while (Finish <= Length(SearchPath)) and (SearchPath[Finish] <> ':') do
       Inc(Finish);
-    Length := Finish - Start;
-    if (Length > 0) and (Length + TextLength(Name) + 2 < Capacity) then
+    Directory := Copy(SearchPath, Start, Finish - Start);
+    if (Directory <> '') and IsProgramFile(Directory + '/' + Name) then
     begin
-      CopyMemory(FullPath, SearchPath + Start, Length);
-      FullPath[Length] := '/';
-      CopyText(FullPath + Length + 1, Name, Capacity - Length - 1);
-      if (GetFileInformation(FullPath, Information) = ErrorNone) and (Information.Kind = KindFile) then
-        Exit(True);
+      Path := Directory + '/' + Name;
+      Exit(True);
     end;
     Start := Finish + 1;
-  until SearchPath[Finish] = #0;
+  end;
+  Result := False;
 end;
 
 function StartProgram(Path: PChar; Arguments: PPChar; const Options: TProcessOptions): Int64;

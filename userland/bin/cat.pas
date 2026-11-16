@@ -31,8 +31,7 @@ uses
   SysUtils,
   Sys.Streams,
   Util.CommandLine,
-  Util.Input,
-  Util.Output;
+  Util.Input;
 
 const
   Usage = 'Usage: cat [OPTION]... [FILE]...'#10 +
@@ -105,7 +104,7 @@ begin
   end;
   if Code >= 128 then
   begin
-    WriteText(StandardOutput, 'M-');
+    WriteString(StandardOutput, 'M-');
     Code := Code - 128;
   end;
   if Code < 32 then
@@ -114,7 +113,7 @@ begin
     WriteCharacter(StandardOutput, Char(Code + 64));
   end
   else if Code = 127 then
-    WriteText(StandardOutput, '^?')
+    WriteString(StandardOutput, '^?')
   else
     WriteCharacter(StandardOutput, Char(Code));
 end;

@@ -42,7 +42,7 @@ uses
   Abi.SystemCalls,
   Runtime.Text,
   Sys.Console,
-  Sys.Format,
+  SysUtils,
   Sys.Kernel,
   Sys.Objects,
   Sys.Processes,
@@ -67,10 +67,10 @@ procedure Check(Name: PChar; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'ptytest: pass: %s'#10, [ArgumentText(Name)])
+    WriteString(StandardOutput, Format('ptytest: pass: %s'#10, [Name]))
   else
   begin
-    WriteFormatted(StandardOutput, 'ptytest: FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('ptytest: FAIL: %s'#10, [Name]));
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -96,7 +96,7 @@ begin
       Shown := Shown + '<' + IntToHexText(Ord(Received[Index])) + '>'
     else
       Shown := Shown + Received[Index];
-  WriteFormatted(StandardOutput, 'ptytest: received: %s'#10, [ArgumentText(PChar(Shown))]);
+  WriteString(StandardOutput, Format('ptytest: received: %s'#10, [PChar(Shown)]));
 end;
 
 { Reads from the master until Expected appears in what came, or
@@ -141,7 +141,6 @@ procedure TestSides;
 var
   Rows: LongInt;
   Columns: LongInt;
-  Path: array[0..15] of Char;
   Opened: Int64;
   Line: array[0..15] of Char;
 begin
@@ -161,8 +160,7 @@ begin
   Check('nothing to read yet', WaitForHandles([Terminal.OutputHandle], 0) = -ErrorTimedOut);
   Check('room to type', WaitForHandles([Terminal.InputHandle], 0) = 0);
   Check('nothing typed yet', WaitForHandles([Terminal.TerminalHandle], 0) = -ErrorTimedOut);
-  PseudoTerminalPath(Terminal.Number, @Path[0]);
-  Opened := KernelOpen(@Path[0], OpenRead or OpenWrite);
+  Opened := KernelOpen(PChar(PseudoTerminalPath(Terminal.Number)), OpenRead or OpenWrite);
   Check('the terminal opens by its path', Opened >= 0);
   Check('a program writing to the terminal', KernelWrite(Opened, PChar('out'#10), 4) = 4);
   Check('is read on the master side', ExpectOutput('out'#10, ReplyTimeout));
@@ -187,7 +185,6 @@ end;
 procedure TestShell;
 var
   Shell: Int64;
-  Path: array[0..15] of Char;
   Start: QWord;
   ExitCode: LongInt;
 begin
@@ -202,9 +199,8 @@ begin
   Check('and its output follows', ExpectOutput(#10'hi'#10, ReplyTimeout));
   Check('then the prompt again', ExpectOutput(Prompt, ReplyTimeout));
 
-  PseudoTerminalPath(Terminal.Number, @Path[0]);
   TypeText('tty; stty size'#13);
-  Check('tty names the pseudo-terminal', ExpectOutput(#10 + string(PChar(@Path[0])) + #10, ReplyTimeout));
+  Check('tty names the pseudo-terminal', ExpectOutput(#10 + PseudoTerminalPath(Terminal.Number) + #10, ReplyTimeout));
   Check('stty size gives the size the master set', ExpectOutput('30 100'#10, ReplyTimeout));
   Check('prompt after tty', ExpectOutput(Prompt, ReplyTimeout));
 
@@ -279,8 +275,8 @@ begin
   TestSides;
   TestShell;
   TestEndOfOutput;
-  WriteFormatted(StandardOutput, 'ptytest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  WriteString(StandardOutput, Format('ptytest: %d of %d checks passed'#10, [Checks - Failures,
+    Checks]));
   if Failures > 0 then
     Halt(1);
 end.

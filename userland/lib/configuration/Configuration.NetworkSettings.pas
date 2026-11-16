@@ -266,7 +266,7 @@ var
   Address: TInternetAddress;
 begin
   AddressValue := 0;
-  Result := (Text <> '') and ParseIpv4Address(PChar(Text), Address);
+  Result := (Text <> '') and TextToIpv4Address(Text, Address);
   if Result then
     AddressValue := Ipv4AddressValue(Address);
 end;
@@ -278,7 +278,7 @@ var
 begin
   AddressValue := 0;
   PrefixLength := 0;
-  Result := (Text <> '') and ParseAddressWithPrefix(PChar(Text), Address, PrefixLength, HasPrefix) and HasPrefix;
+  Result := (Text <> '') and TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix) and HasPrefix;
   if Result then
     AddressValue := Ipv4AddressValue(Address);
 end;
@@ -329,7 +329,7 @@ begin
       Exit(ProblemNoAddress);
     Exit(NetworkSettingsValid);
   end;
-  if not ParseAddressWithPrefix(PChar(Settings.Address), Address, PrefixLength, HasPrefix) then
+  if not TextToAddressWithPrefix(Settings.Address, Address, PrefixLength, HasPrefix) then
     Exit(ProblemBadAddress);
   if not HasPrefix or (PrefixLength < 1) or (PrefixLength > 30) then
     Exit(ProblemBadPrefix);
@@ -439,7 +439,7 @@ begin
     Exit(False);
   if Pos('.', PrefixText) > 0 then
   begin
-    if not ParseNetmask(PChar(Trim(PrefixText)), PrefixLength) then
+    if not TextToNetmask(Trim(PrefixText), PrefixLength) then
       Exit(False);
   end
   else

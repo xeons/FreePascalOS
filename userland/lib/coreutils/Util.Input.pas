@@ -20,17 +20,13 @@
   Input files and lists of lines.
 
   Many tools read "each FILE, or standard input when FILE is - or no
-  FILE is given". OpenInput handles the '-' convention; the line list
+  FILE is given". OpenInput handles the '-' convention; ReadLinesInto
   collects a whole input for tools that need to see all of it at once
   (sort, tail, tac and others).
-
-  The string forms read lines into strings and TStrings; the PChar forms
-  and TLineList are kept for the tools not yet moved to strings.
 }
 unit Util.Input;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
@@ -38,45 +34,23 @@ uses
   Classes,
   Sys.Streams;
 
-type
-  TLineList = record
-    Items: PPChar;
-    Count: Integer;
-    Capacity: Integer;
-    { False if the last line had no line end. }
-    LastLineTerminated: Boolean;
-  end;
-
 { Opens Path for reading ('-' is standard input). Reports the error and
   returns nil when the file cannot be opened. }
-function OpenInput(Path: PChar): PInputStream; overload;
-function OpenInput(const Path: string): PInputStream; overload;
+function OpenInput(const Path: string): PInputStream;
 procedure CloseInput(Stream: PInputStream);
 
-{ Reads the next line without its line end. Returns False at end of input
-  with nothing read. HadLineEnd tells whether the line was terminated
-  (the last line may not be). }
-function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
 { Appends every line of Stream to Lines. Returns False if the last line
   had no line end. }
 function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;
 { Everything left in Stream. }
 function ReadAllText(Stream: PInputStream): string;
 
-procedure BeginLineList(out List: TLineList);
-procedure AddLine(var List: TLineList; Line: PChar);
-{ Appends every line of Stream to List. }
-procedure ReadAllLines(Stream: PInputStream; var List: TLineList);
-procedure FreeLineList(var List: TLineList);
-
 implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
   Sys.Memory,
   Util.Messages;
 
@@ -100,23 +74,6 @@ begin
     Exit(nil);
   end;
   Result := CreateInputStream(Handle);
-end;
-
-function OpenInput(Path: PChar): PInputStream;
-begin
-  Result := OpenInput(string(Path));
-end;
-
-function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
-var
-  Text: PChar;
-begin
-  Line := '';
-  Result := ReadLine(Stream, Text, HadLineEnd);
-  if not Result then
-    Exit;
-  Line := Text;
-  FreeMemory(Text);
 end;
 
 function ReadLinesInto(Stream: PInputStream; Lines: TStrings): Boolean;
@@ -156,54 +113,6 @@ begin
     Exit;
   CloseFile(Stream^.Handle);
   DestroyInputStream(Stream);
-end;
-
-procedure BeginLineList(out List: TLineList);
-begin
-  List.Items := nil;
-  List.Count := 0;
-  List.Capacity := 0;
-  List.LastLineTerminated := True;
-end;
-
-procedure AddLine(var List: TLineList; Line: PChar);
-begin
-  if List.Count = List.Capacity then
-  begin
-    if List.Capacity = 0 then
-      List.Capacity := 64
-    else
-      List.Capacity := List.Capacity * 2;
-    List.Items := PPChar(ReallocateMemory(List.Items, QWord(List.Capacity) * SizeOf(PChar)));
-  end;
-  List.Items[List.Count] := Line;
-  Inc(List.Count);
-end;
-
-procedure ReadAllLines(Stream: PInputStream; var List: TLineList);
-var
-  Line: PChar;
-  HadLineEnd: Boolean;
-begin
-  while ReadLine(Stream, Line, HadLineEnd) do
-  begin
-    AddLine(List, Line);
-    List.LastLineTerminated := HadLineEnd;
-  end;
-end;
-
-procedure FreeLineList(var List: TLineList);
-var
-  Index: Integer;
-begin
-  Index := 0;
-  while Index < List.Count do
-  begin
-    FreeMemory(List.Items[Index]);
-    Inc(Index);
-  end;
-  FreeMemory(List.Items);
-  BeginLineList(List);
 end;
 
 end.

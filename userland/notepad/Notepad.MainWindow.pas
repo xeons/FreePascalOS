@@ -464,7 +464,7 @@ begin
      (Format.FontBold <> FEditor.FontBold) then
     FEditor.SetFont(Family, Format.FontPointTenths, Format.FontBold);
   Say('settings word-wrap ' + OnOff[Format.WordWrap] + ', status-bar ' + OnOff[Format.StatusBar] + ', font ' +
-    IntToStr(Format.FontPointTenths) + ' ' + Weights[Format.FontBold] + ' ' + StrPas(FamilyCaption(Family)));
+    IntToStr(Format.FontPointTenths) + ' ' + Weights[Format.FontBold] + ' ' + FamilyName(Family));
 end;
 
 procedure TNotepadWindow.WordWrapChosen(Item: TMenuItem);
@@ -488,7 +488,7 @@ begin
     Exit;
   FEditor.SetFont(Family, PointTenths, Bold);
   RememberFont(Family = FontFamilyFixed, PointTenths, Bold);
-  Say('font ' + IntToStr(PointTenths) + ' ' + Weights[Bold] + ' ' + StrPas(FamilyCaption(Family)));
+  Say('font ' + IntToStr(PointTenths) + ' ' + Weights[Bold] + ' ' + FamilyName(Family));
 end;
 
 procedure TNotepadWindow.StatusBarChosen(Item: TMenuItem);

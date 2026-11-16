@@ -174,7 +174,7 @@ begin
   Found := Default(THostsFileAddresses);
   for Line in ReadHostsLines do
   begin
-    if not ParseInternetAddress(PChar(Line[0]), Address) or not FamilyIsWanted(Address, Families) then
+    if not TextToAddress(Line[0], Address) or not FamilyIsWanted(Address, Families) then
       Continue;
     if not LineHasName(Line, Name) then
       Continue;
@@ -193,7 +193,7 @@ var
 begin
   Name := '';
   for Line in ReadHostsLines do
-    if ParseInternetAddress(PChar(Line[0]), LineAddress) and AddressesAreEqual(LineAddress, Address) then
+    if TextToAddress(Line[0], LineAddress) and AddressesAreEqual(LineAddress, Address) then
     begin
       Name := Line[1];
       Exit(True);

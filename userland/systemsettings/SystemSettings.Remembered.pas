@@ -77,7 +77,7 @@ begin
   Name := Store.ReadString(TimeZoneSetting, '');
   if Name = '' then
     Exit;
-  if SetSystemTimeZone(PChar(Name)) = ErrorNone then
+  if SetSystemTimeZone(Name) = ErrorNone then
     Say('time zone ' + Name)
   else
     Say('the kept time zone ' + Name + ' is not known: staying in UTC');

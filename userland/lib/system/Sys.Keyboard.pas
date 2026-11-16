@@ -28,7 +28,7 @@
 }
 unit Sys.Keyboard;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 interface
 
@@ -37,7 +37,9 @@ uses
 
 type
   TKeyboardSettings = record
-    Layout: array[0..KeyboardLayoutNameCapacity - 1] of Char;
+    { The layout's name ("us"); at most KeyboardLayoutNameCapacity - 1
+      characters reach the kernel. }
+    Layout: string;
     { Milliseconds before a held key repeats. }
     RepeatDelay: LongWord;
     { Repeats a second. }
@@ -45,8 +47,8 @@ type
   end;
 
   TKeyboardLayoutDescription = record
-    Name: array[0..KeyboardLayoutNameCapacity - 1] of Char;
-    Description: array[0..KeyboardLayoutDescriptionCapacity - 1] of Char;
+    Name: string;
+    Description: string;
   end;
 
 { What the kernel has now. }
@@ -59,20 +61,31 @@ function DescribeKeyboardLayout(Index: Integer; out Layout: TKeyboardLayoutDescr
 function KeyboardLayoutCount: Integer;
 { Settings with Layout as its layout, the repeat at the kernel's
   defaults. }
-function NewKeyboardSettings(Layout: PChar): TKeyboardSettings;
+function NewKeyboardSettings(const Layout: string): TKeyboardSettings;
 
 const
-  DefaultKeyboardLayout: PChar = 'us';
+  DefaultKeyboardLayout = 'us';
   DefaultKeyRepeatDelay = 500;
   DefaultKeyRepeatRate = 11;
 
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  SysUtils,
   Sys.Kernel,
   Sys.Errors;
+
+{ The text the kernel wrote into a fixed field: up to its terminating
+  zero, and at most one character short of the field. }
+function FieldText(const Field: array of Char): string;
+var
+  Count: Integer;
+begin
+  Count := 0;
+  while (Count < High(Field)) and (Field[Count] <> #0) do
+    Inc(Count);
+  SetString(Result, PChar(@Field[0]), Count);
+end;
 
 function GetKeyboardSettings(out Settings: TKeyboardSettings): LongInt;
 var
@@ -82,7 +95,7 @@ begin
   Result := ErrorCodeOf(KernelGetKeyboardSettings(Kernel));
   if Result <> ErrorNone then
     Exit;
-  CopyText(@Settings.Layout[0], @Kernel.Layout[0], KeyboardLayoutNameCapacity);
+  Settings.Layout := FieldText(Kernel.Layout);
   Settings.RepeatDelay := Kernel.RepeatDelay;
   Settings.RepeatRate := Kernel.RepeatRate;
 end;
@@ -91,8 +104,8 @@ function SetKeyboardSettings(const Settings: TKeyboardSettings): LongInt;
 var
   Kernel: TAbiKeyboardSettings;
 begin
-  FillMemory(@Kernel, SizeOf(Kernel), 0);
-  CopyText(@Kernel.Layout[0], @Settings.Layout[0], KeyboardLayoutNameCapacity);
+  Kernel := Default(TAbiKeyboardSettings);
+  StrPLCopy(@Kernel.Layout[0], Settings.Layout, KeyboardLayoutNameCapacity - 1);
   Kernel.RepeatDelay := Settings.RepeatDelay;
   Kernel.RepeatRate := Settings.RepeatRate;
   Result := ErrorCodeOf(KernelSetKeyboardSettings(Kernel));
@@ -102,14 +115,14 @@ function DescribeKeyboardLayout(Index: Integer; out Layout: TKeyboardLayoutDescr
 var
   Kernel: TAbiKeyboardLayout;
 begin
-  FillMemory(@Layout, SizeOf(Layout), 0);
+  Layout := Default(TKeyboardLayoutDescription);
   if Index < 0 then
     Exit(False);
   Result := KernelDescribeKeyboardLayout(QWord(Index), Kernel) >= 0;
   if not Result then
     Exit;
-  CopyText(@Layout.Name[0], @Kernel.Name[0], KeyboardLayoutNameCapacity);
-  CopyText(@Layout.Description[0], @Kernel.Description[0], KeyboardLayoutDescriptionCapacity);
+  Layout.Name := FieldText(Kernel.Name);
+  Layout.Description := FieldText(Kernel.Description);
 end;
 
 function KeyboardLayoutCount: Integer;
@@ -121,10 +134,10 @@ begin
     Inc(Result);
 end;
 
-function NewKeyboardSettings(Layout: PChar): TKeyboardSettings;
+function NewKeyboardSettings(const Layout: string): TKeyboardSettings;
 begin
-  FillMemory(@Result, SizeOf(Result), 0);
-  CopyText(@Result.Layout[0], Layout, KeyboardLayoutNameCapacity);
+  Result := Default(TKeyboardSettings);
+  Result.Layout := Copy(Layout, 1, KeyboardLayoutNameCapacity - 1);
   Result.RepeatDelay := DefaultKeyRepeatDelay;
   Result.RepeatRate := DefaultKeyRepeatRate;
 end;

@@ -51,7 +51,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
+  Sys.Streams,
   Util.SystemRequests,
   Audio.Outputs;
 
@@ -91,8 +91,8 @@ begin
       Mark := ', default'
     else
       Mark := '';
-    PrintString(Format('%d %s %s: volume %d%%%s%s'#10, [Number, string(AudioOutputPath(Number)),
-      string(AudioOutputKindName(State.Kind)), State.Volume, MutedSuffix(State.Muted), Mark]));
+    PrintString(Format('%d %s %s: volume %d%%%s%s'#10, [Number, AudioOutputPath(Number),
+      AudioOutputKindName(State.Kind), State.Volume, MutedSuffix(State.Muted), Mark]));
     Inc(Number);
   end;
 end;

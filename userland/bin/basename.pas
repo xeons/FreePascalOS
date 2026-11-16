@@ -34,7 +34,7 @@ uses
   StrUtils,
   Util.CommandLine,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Paths;
 
 const

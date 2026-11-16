@@ -31,8 +31,7 @@ uses
   Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: fold [OPTION]... [FILE]...'#10 +

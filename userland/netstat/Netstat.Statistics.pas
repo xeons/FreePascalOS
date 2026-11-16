@@ -42,7 +42,7 @@ uses
   Abi.SystemCalls,
   Sys.NetworkInterfaces,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 type
   { net-tools' name of a message type; '' for those it has none for. }

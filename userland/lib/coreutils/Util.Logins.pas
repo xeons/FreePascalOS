@@ -34,7 +34,6 @@
 unit Util.Logins;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
@@ -43,81 +42,71 @@ uses
   Sys.Processes;
 
 const
-  LoginNameCapacity = 64;
-  LoginPathCapacity = 256;
   AutomaticLoginOption = 'autologin';
 
 type
   TLoginAccount = record
-    Name: array[0..LoginNameCapacity - 1] of Char;
+    Name: string;
     Identity: TAbiProcessIdentity;
-    Home: array[0..LoginPathCapacity - 1] of Char;
-    Shell: array[0..LoginPathCapacity - 1] of Char;
-  end;
-
-  { The environment a logged in user starts with. }
-  TLoginEnvironment = record
-    Texts: array[0..7] of array[0..LoginPathCapacity + 15] of Char;
-    Values: array[0..8] of PChar;
+    Home: string;
+    Shell: string;
   end;
 
 { The account named Name; False if there is no such user. }
-function FindLoginAccount(Name: PChar; out Account: TLoginAccount): Boolean; overload;
-function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean; overload;
+function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean;
 { True if Password is the account's (or it needs none); False if it is
-  wrong or the account is locked. }
+  wrong or the account is locked. nil counts as empty. }
 function PasswordIsRight(const Account: TLoginAccount; Password: PChar): Boolean;
-{ The user the kernel option autologin= names, into Name; False when
-  none is named. }
-function AutomaticLoginUser(Name: PChar; Capacity: PtrUInt): Boolean;
-{ The same as a string. }
+{ The user the kernel option autologin= names; False when none is
+  named. }
 function AutomaticLoginName(out Name: string): Boolean;
-{ Starts Path (with Arguments, nil terminated) as the account's user:
-  its environment, in its home directory; the handles, group and
-  session as Options say. A process handle, or minus an error. }
-function StartAsUser(const Account: TLoginAccount; Path: PChar; Arguments: PPChar;
-  var Options: TProcessOptions; var Environment: TLoginEnvironment): Int64;
+{ Starts Arguments[0] (with Arguments) as the account's user: its
+  environment, in its home directory; the handles, group and session as
+  Options say. A process handle, or minus an error. }
+function StartAsUser(const Account: TLoginAccount; const Arguments: array of string;
+  const Options: TProcessOptions): Int64;
 
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
+  SysUtils,
   Sys.Environment,
   Sys.KernelOptions,
   Util.Accounts,
+  Util.Commands,
   Util.Passwords;
 
 const
   DefaultTerminal = 'console';
   SearchPath = '/bin';
 
-function FindLoginAccount(Name: PChar; out Account: TLoginAccount): Boolean;
+function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean;
 var
   UserId: LongWord;
   GroupId: LongWord;
-  Count: Integer;
-  Text: PChar;
+  Groups: TIdArray;
+  Index: Integer;
 begin
-  FillMemory(@Account, SizeOf(Account), 0);
+  Account := Default(TLoginAccount);
   Result := False;
-  if (Name = nil) or (Name^ = #0) or not FindUserId(Name, UserId) or (UserNameOf(UserId) = nil) then
+  if (Name = '') or not FindUserId(Name, UserId) or not FindUserName(UserId, Account.Name) then
     Exit;
   if not PrimaryGroupOf(UserId, GroupId) then
     GroupId := UserId;
-  CopyText(@Account.Name[0], UserNameOf(UserId), LoginNameCapacity);
   Account.Identity.UserId := UserId;
   Account.Identity.GroupId := GroupId;
-  Count := GroupsOfUser(UserId, @Account.Identity.Groups[0], MaximumSupplementaryGroups);
-  Account.Identity.GroupCount := LongWord(Count);
-  Text := HomeDirectoryOf(UserId);
-  if (Text = nil) or (Text^ = #0) then
-    Text := '/';
-  CopyText(@Account.Home[0], Text, LoginPathCapacity);
-  Text := ShellOf(UserId);
-  if (Text = nil) or (Text^ = #0) then
-    Text := '/bin/sh';
-  CopyText(@Account.Shell[0], Text, LoginPathCapacity);
+  Groups := GroupsOfUser(UserId);
+  if Length(Groups) > MaximumSupplementaryGroups then
+    SetLength(Groups, MaximumSupplementaryGroups);
+  for Index := 0 to High(Groups) do
+    Account.Identity.Groups[Index] := Groups[Index];
+  Account.Identity.GroupCount := LongWord(Length(Groups));
+  Account.Home := UserHomeDirectory(UserId);
+  if Account.Home = '' then
+    Account.Home := '/';
+  Account.Shell := UserShell(UserId);
+  if Account.Shell = '' then
+    Account.Shell := '/bin/sh';
   Result := True;
 end;
 
@@ -125,68 +114,48 @@ function PasswordIsRight(const Account: TLoginAccount; Password: PChar): Boolean
 begin
   if Password = nil then
     Password := '';
-  Result := CheckPassword(@Account.Name[0], Password) = PasswordAccepted;
-end;
-
-function AutomaticLoginUser(Name: PChar; Capacity: PtrUInt): Boolean;
-begin
-  Result := GetKernelOption(AutomaticLoginOption, Name, Capacity) and (Name^ <> #0);
-end;
-
-procedure AddVariable(var Environment: TLoginEnvironment; var Count: Integer; Name, Value: PChar);
-var
-  NameLength: PtrUInt;
-begin
-  NameLength := TextLength(Name);
-  CopyText(@Environment.Texts[Count][0], Name, LoginPathCapacity);
-  Environment.Texts[Count][NameLength] := '=';
-  CopyText(@Environment.Texts[Count][NameLength + 1], Value, LoginPathCapacity);
-  Environment.Values[Count] := @Environment.Texts[Count][0];
-  Inc(Count);
-end;
-
-procedure BuildEnvironment(const Account: TLoginAccount; var Environment: TLoginEnvironment);
-var
-  Count: Integer;
-  Terminal: PChar;
-begin
-  Count := 0;
-  Terminal := GetVariable('TERM');
-  if (Terminal = nil) or (Terminal^ = #0) then
-    Terminal := DefaultTerminal;
-  AddVariable(Environment, Count, 'HOME', @Account.Home[0]);
-  AddVariable(Environment, Count, 'SHELL', @Account.Shell[0]);
-  AddVariable(Environment, Count, 'USER', @Account.Name[0]);
-  AddVariable(Environment, Count, 'LOGNAME', @Account.Name[0]);
-  AddVariable(Environment, Count, 'PATH', SearchPath);
-  AddVariable(Environment, Count, 'TERM', Terminal);
-  Environment.Values[Count] := nil;
-end;
-
-function StartAsUser(const Account: TLoginAccount; Path: PChar; Arguments: PPChar;
-  var Options: TProcessOptions; var Environment: TLoginEnvironment): Int64;
-begin
-  BuildEnvironment(Account, Environment);
-  Options.Environment := @Environment.Values[0];
-  Options.WorkingDirectory := @Account.Home[0];
-  Options.Identity := @Account.Identity;
-  Result := StartProgram(Path, Arguments, Options);
-end;
-
-function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean;
-begin
-  Result := FindLoginAccount(PChar(Name), Account);
+  Result := CheckPassword(Account.Name, Password) = PasswordAccepted;
 end;
 
 function AutomaticLoginName(out Name: string): Boolean;
-var
-  Buffer: array[0..LoginNameCapacity - 1] of Char;
 begin
-  Result := AutomaticLoginUser(@Buffer[0], LoginNameCapacity);
-  if Result then
-    Name := PChar(@Buffer[0])
-  else
-    Name := '';
+  Result := GetKernelOption(AutomaticLoginOption, Name) and (Name <> '');
+end;
+
+{ The environment a logged in user starts with: NAME=value texts. }
+function LoginEnvironment(const Account: TLoginAccount): TStringArray;
+var
+  Terminal: string;
+begin
+  Terminal := GetVariable('TERM');
+  if Terminal = '' then
+    Terminal := DefaultTerminal;
+  Result := nil;
+  SetLength(Result, 6);
+  Result[0] := 'HOME=' + Account.Home;
+  Result[1] := 'SHELL=' + Account.Shell;
+  Result[2] := 'USER=' + Account.Name;
+  Result[3] := 'LOGNAME=' + Account.Name;
+  Result[4] := 'PATH=' + SearchPath;
+  Result[5] := 'TERM=' + Terminal;
+end;
+
+function StartAsUser(const Account: TLoginAccount; const Arguments: array of string;
+  const Options: TProcessOptions): Int64;
+var
+  Environment: TStringArray;
+  EnvironmentVector: TTextVector;
+  ArgumentVector: TTextVector;
+  UserOptions: TProcessOptions;
+begin
+  Environment := LoginEnvironment(Account);
+  EnvironmentVector := TextVector(Environment);
+  ArgumentVector := TextVector(Arguments);
+  UserOptions := Options;
+  UserOptions.Environment := @EnvironmentVector[0];
+  UserOptions.WorkingDirectory := PChar(Account.Home);
+  UserOptions.Identity := @Account.Identity;
+  Result := StartProgram(ArgumentVector[0], @ArgumentVector[0], UserOptions);
 end;
 
 end.

@@ -28,7 +28,6 @@ interface
 
 uses
   Util.Messages,
-  Util.Options,
   Util.Input,
   Util.Paths,
   Util.Sorting,
@@ -42,6 +41,8 @@ uses
   Util.Accounts,
   Util.Commands,
   Util.RegularExpressions,
+  Util.LineCompletion,
+  Util.LineEditing,
   Util.LineEditor,
   Util.Globbing,
   Util.Passwords,
@@ -50,7 +51,7 @@ uses
   Util.SystemRequests,
   Util.Power,
   Util.Logins,
-  Util.Output,
+  Sys.Streams,
   Util.CommandLine,
   Util.Numbers;
 

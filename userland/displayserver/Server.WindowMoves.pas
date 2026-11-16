@@ -74,7 +74,7 @@ implementation
 uses
   Drawing.Regions,
   Drawing.Surfaces,
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Server.Screen,
   Server.Cursor,
@@ -311,8 +311,8 @@ begin
   if Differing = 0 then
     Exit;
   Inc(ChecksDiffering);
-  WriteFormatted(StandardOutput, 'displayserver: a move left %d pixels unlike a full redraw (the first at %d,%d)'#10,
-    [ArgumentNumber(Differing), ArgumentNumber(FirstX), ArgumentNumber(FirstY)]);
+  WriteString(StandardOutput, Format('displayserver: a move left %d pixels unlike a full redraw ' +
+    '(the first at %d,%d)'#10, [Differing, FirstX, FirstY]));
   FlushStream(StandardOutput);
 end;
 
@@ -320,8 +320,8 @@ procedure ReportMoveChecks;
 begin
   if not CheckingMoves then
     Exit;
-  WriteFormatted(StandardOutput, 'displayserver: %u moves compared with a full redraw, %u differed'#10,
-    [ArgumentUnsigned(ChecksMade), ArgumentUnsigned(ChecksDiffering)]);
+  WriteString(StandardOutput, Format('displayserver: %u moves compared with a full redraw, %u differed'#10,
+    [ChecksMade, ChecksDiffering]));
   FlushStream(StandardOutput);
 end;
 

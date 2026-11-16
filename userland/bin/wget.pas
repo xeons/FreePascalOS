@@ -47,7 +47,6 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Wget.Settings,
   Wget.Transfer,
   Wget.Urls;
@@ -97,7 +96,7 @@ begin
   begin
     if Name = '' then
       Continue;
-    Identifier := CipherSuiteByName(PChar(Name));
+    Identifier := CipherSuiteByName(Name);
     if Identifier = 0 then
       Fail(ExitParseError, Format('unknown cipher suite ''%s''', [Name]));
     if Settings.CipherSuites.Count >= MaximumCipherSuites then

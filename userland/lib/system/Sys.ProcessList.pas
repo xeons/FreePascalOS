@@ -29,7 +29,7 @@
 }
 unit Sys.ProcessList;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -67,7 +67,7 @@ function ProcessorShareTenths(EarlierNanoseconds, LaterNanoseconds: QWord; Elaps
   ProcessorCount: LongWord): LongWord;
 
 { "running", "waiting", "stopped" or "ending" (ProcessState*). }
-function ProcessStateName(State: LongWord): PChar;
+function ProcessStateName(State: LongWord): string;
 
 implementation
 
@@ -181,7 +181,7 @@ begin
     Result := 1000;
 end;
 
-function ProcessStateName(State: LongWord): PChar;
+function ProcessStateName(State: LongWord): string;
 begin
   case State of
     ProcessStateRunning: Result := 'running';

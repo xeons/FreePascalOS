@@ -32,7 +32,7 @@ uses
   Sys.Files,
   Util.CommandLine,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: rmdir [OPTION]... DIRECTORY...'#10 +
@@ -58,7 +58,7 @@ var
   Error: LongInt;
 begin
   if Verbose then
-    PrintString(Format('%s: removing directory, ''%s'''#10, [ProgramNameText, Path]));
+    PrintString(Format('%s: removing directory, ''%s'''#10, [ProgramName, Path]));
   Error := GetLinkInformation(PChar(Path), Information);
   if (Error = ErrorNone) and (Information.Kind <> KindDirectory) then
     Error := ErrorNotDirectory;

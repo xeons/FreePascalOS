@@ -37,8 +37,7 @@ uses
   Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: join [OPTION]... FILE1 FILE2'#10 +

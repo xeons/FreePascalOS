@@ -120,18 +120,6 @@ begin
     SendMessage(Client.Channel, @Message, SizeOf(Message), []);
 end;
 
-{ The message's text (a title or a tooltip), up to its end or the
-  field's last character, whichever comes first. }
-function MessageText(const Message: TWindowMessage): string;
-var
-  TextLength: LongInt;
-begin
-  TextLength := 0;
-  while (TextLength < TitleCapacity - 1) and (Message.Text[TextLength] <> #0) do
-    Inc(TextLength);
-  SetString(Result, PChar(@Message.Text[0]), TextLength);
-end;
-
 procedure AcceptClients(Port: Int64);
 var
   Channel: Int64;
@@ -350,7 +338,7 @@ var
 begin
   Settings := CurrentKeyboardSettings;
   Reply := NewMessage(EventKeyboardSettings, 0);
-  SetMessageText(Reply, @Settings.Layout[0]);
+  SetMessageText(Reply, Settings.Layout);
   Reply.Code := Settings.RepeatDelay;
   Reply.Value := LongInt(Settings.RepeatRate);
   SendToClient(Client, Reply);
@@ -360,7 +348,7 @@ procedure TakeKeyboardSettings(const Message: TWindowMessage);
 var
   Settings: TKeyboardSettings;
 begin
-  Settings := NewKeyboardSettings(@Message.Text[0]);
+  Settings := NewKeyboardSettings(MessageText(Message));
   Settings.RepeatDelay := Message.Code;
   Settings.RepeatRate := LongWord(Message.Value);
   ChangeKeyboardSettings(Settings);

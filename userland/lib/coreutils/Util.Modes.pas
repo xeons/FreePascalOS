@@ -30,91 +30,91 @@
 unit Util.Modes;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
 type
   { A parsed mode, applied later to each file's current mode. }
   TModeChange = record
-    { The symbolic form; Text points into it. }
+    { The symbolic form (when not octal). }
     Symbolic: string;
-    Text: PChar;
     IsOctal: Boolean;
     OctalValue: LongWord;
   end;
 
 { Returns False if Text is not a valid mode. }
-function ParseModeChange(Text: PChar; out Change: TModeChange): Boolean; overload;
-function ParseModeChange(const Text: string; out Change: TModeChange): Boolean; overload;
+function ParseModeChange(const Text: string; out Change: TModeChange): Boolean;
 { The new mode for a file with CurrentMode. }
 function ApplyModeChange(const Change: TModeChange; CurrentMode: LongWord; IsDirectory: Boolean): LongWord;
-{ "rwxr-xr-x" (9 characters; Buffer needs 10). }
-function FormatModeText(Mode: LongWord; Buffer: PChar): PChar; overload;
-function FormatModeText(Mode: LongWord): string; overload;
+{ "rwxr-xr-x" (9 characters). }
+function FormatModeText(Mode: LongWord): string;
 
 implementation
-
-uses
-  Sys.Text;
 
 const
   DefaultMask = $12; { the usual umask 022 }
 
-function ParseModeChange(Text: PChar; out Change: TModeChange): Boolean;
+{ The character at Position (from 0), #0 past the end: the scanning
+  below looks one past the text. }
+function CharacterAt(const Text: string; Position: Integer): Char;
+begin
+  if Position < Length(Text) then
+    Result := Text[Position + 1]
+  else
+    Result := #0;
+end;
+
+function ParseOctalMode(const Text: string; out Change: TModeChange): Boolean;
 var
   Position: Integer;
   Value: LongWord;
 begin
-  Change.Symbolic := Text;
-  Change.Text := PChar(Change.Symbolic);
-  Text := Change.Text;
-  Change.IsOctal := False;
-  Change.OctalValue := 0;
-  if Text^ = #0 then
-    Exit(False);
-
-  if Text^ in ['0'..'7'] then
-  begin
-    Value := 0;
-    Position := 0;
-    while Text[Position] in ['0'..'7'] do
-    begin
-      Value := Value * 8 + LongWord(Ord(Text[Position]) - Ord('0'));
-      Inc(Position);
-    end;
-    if (Text[Position] <> #0) or (Value > $FFF) then
-      Exit(False);
-    Change.IsOctal := True;
-    Change.OctalValue := Value;
-    Exit(True);
-  end;
-
-  { Validate the symbolic form by applying it once. }
+  Value := 0;
   Position := 0;
-  while Text[Position] <> #0 do
+  while CharacterAt(Text, Position) in ['0'..'7'] do
   begin
-    while Text[Position] in ['u', 'g', 'o', 'a'] do
-      Inc(Position);
-    if not (Text[Position] in ['+', '-', '=']) then
-      Exit(False);
-    while Text[Position] in ['+', '-', '='] do
-    begin
-      Inc(Position);
-      while Text[Position] in ['r', 'w', 'x', 'X', 's', 't', 'u', 'g', 'o'] do
-        Inc(Position);
-    end;
-    if Text[Position] = ',' then
-      Inc(Position)
-    else if Text[Position] <> #0 then
-      Exit(False);
+    Value := Value * 8 + LongWord(Ord(Text[Position + 1]) - Ord('0'));
+    Inc(Position);
   end;
+  if (Position < Length(Text)) or (Value > $FFF) then
+    Exit(False);
+  Change.IsOctal := True;
+  Change.OctalValue := Value;
   Result := True;
 end;
 
 function ParseModeChange(const Text: string; out Change: TModeChange): Boolean;
+var
+  Position: Integer;
 begin
-  Result := ParseModeChange(PChar(Text), Change);
+  Change.Symbolic := Text;
+  Change.IsOctal := False;
+  Change.OctalValue := 0;
+  if Text = '' then
+    Exit(False);
+  if Text[1] in ['0'..'7'] then
+    Exit(ParseOctalMode(Text, Change));
+
+  { Check the symbolic form's shape. }
+  Position := 0;
+  while Position < Length(Text) do
+  begin
+    while CharacterAt(Text, Position) in ['u', 'g', 'o', 'a'] do
+      Inc(Position);
+    if not (CharacterAt(Text, Position) in ['+', '-', '=']) then
+      Exit(False);
+    while CharacterAt(Text, Position) in ['+', '-', '='] do
+    begin
+      Inc(Position);
+      while CharacterAt(Text, Position) in ['r', 'w', 'x', 'X', 's', 't', 'u', 'g', 'o'] do
+        Inc(Position);
+    end;
+    if CharacterAt(Text, Position) = ',' then
+      Inc(Position)
+    else if Position < Length(Text) then
+      Exit(False);
+  end;
+  Result := True;
 end;
 
 { The rwx bits (in "user" position 0o700 scale 0..7) for who letters. }
@@ -137,7 +137,7 @@ end;
 
 function ApplyModeChange(const Change: TModeChange; CurrentMode: LongWord; IsDirectory: Boolean): LongWord;
 var
-  Text: PChar;
+  Text: string;
   Position: Integer;
   UserSelected, GroupSelected, OthersSelected: Boolean;
   NoneGiven: Boolean;
@@ -149,17 +149,17 @@ begin
   if Change.IsOctal then
     Exit(Change.OctalValue);
   Result := CurrentMode and $FFF;
-  Text := Change.Text;
+  Text := Change.Symbolic;
   Position := 0;
-  while Text[Position] <> #0 do
+  while Position < Length(Text) do
   begin
     UserSelected := False;
     GroupSelected := False;
     OthersSelected := False;
     NoneGiven := True;
-    while Text[Position] in ['u', 'g', 'o', 'a'] do
+    while CharacterAt(Text, Position) in ['u', 'g', 'o', 'a'] do
     begin
-      case Text[Position] of
+      case Text[Position + 1] of
         'u': UserSelected := True;
         'g': GroupSelected := True;
         'o': OthersSelected := True;
@@ -181,14 +181,14 @@ begin
     end;
     Mask := WhoMask(UserSelected, GroupSelected, OthersSelected);
 
-    while Text[Position] in ['+', '-', '='] do
+    while CharacterAt(Text, Position) in ['+', '-', '='] do
     begin
-      Operation := Text[Position];
+      Operation := Text[Position + 1];
       Inc(Position);
       Permissions := 0;
-      while Text[Position] in ['r', 'w', 'x', 'X', 's', 't', 'u', 'g', 'o'] do
+      while CharacterAt(Text, Position) in ['r', 'w', 'x', 'X', 's', 't', 'u', 'g', 'o'] do
       begin
-        case Text[Position] of
+        case Text[Position + 1] of
           'r': Permissions := Permissions or Spread(4);
           'w': Permissions := Permissions or Spread(2);
           'x': Permissions := Permissions or Spread(1);
@@ -220,40 +220,32 @@ begin
           end;
       end;
     end;
-    if Text[Position] = ',' then
+    if CharacterAt(Text, Position) = ',' then
       Inc(Position);
   end;
 end;
 
-function FormatModeText(Mode: LongWord; Buffer: PChar): PChar;
+function FormatModeText(Mode: LongWord): string;
 const
-  Letters: array[0..8] of Char = ('r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x');
+  Letters: array[1..9] of Char = ('r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x');
 var
   Bit: Integer;
 begin
-  for Bit := 0 to 8 do
+  SetLength(Result, 9);
+  for Bit := 1 to 9 do
   begin
-    if (Mode and (1 shl (8 - Bit))) <> 0 then
-      Buffer[Bit] := Letters[Bit]
+    if (Mode and (1 shl (9 - Bit))) <> 0 then
+      Result[Bit] := Letters[Bit]
     else
-      Buffer[Bit] := '-';
+      Result[Bit] := '-';
   end;
   { Special bits show in the execute positions. }
   if (Mode and $800) <> 0 then
-    if Buffer[2] = 'x' then Buffer[2] := 's' else Buffer[2] := 'S';
+    if Result[3] = 'x' then Result[3] := 's' else Result[3] := 'S';
   if (Mode and $400) <> 0 then
-    if Buffer[5] = 'x' then Buffer[5] := 's' else Buffer[5] := 'S';
+    if Result[6] = 'x' then Result[6] := 's' else Result[6] := 'S';
   if (Mode and $200) <> 0 then
-    if Buffer[8] = 'x' then Buffer[8] := 't' else Buffer[8] := 'T';
-  Buffer[9] := #0;
-  Result := Buffer;
-end;
-
-function FormatModeText(Mode: LongWord): string;
-var
-  Buffer: array[0..9] of Char;
-begin
-  Result := FormatModeText(Mode, @Buffer[0]);
+    if Result[9] = 'x' then Result[9] := 't' else Result[9] := 'T';
 end;
 
 end.

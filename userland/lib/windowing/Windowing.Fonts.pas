@@ -60,8 +60,6 @@ function FamilyFaceCount(Family: TFontFamily): LongInt;
 function FamilyFace(Family: TFontFamily; Index: LongInt): PFontFace;
 { The family's name, to show ("DejaVu Sans"). }
 function FamilyName(Family: TFontFamily): string;
-{ The same as a PChar (for older callers). }
-function FamilyCaption(Family: TFontFamily): PChar;
 
 implementation
 
@@ -147,11 +145,6 @@ begin
 end;
 
 function FamilyName(Family: TFontFamily): string;
-begin
-  Result := string(FamilyCaption(Family));
-end;
-
-function FamilyCaption(Family: TFontFamily): PChar;
 begin
   if Family = FontFamilyFixed then
     Result := 'Terminus'

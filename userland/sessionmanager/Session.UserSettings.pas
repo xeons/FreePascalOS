@@ -83,7 +83,7 @@ begin
     Exit;
   end;
   Say(Format('keyboard settings of %s: layout %s, repeat delay %d, rate %d',
-    [Whose, PChar(@Applied.Layout[0]), Applied.RepeatDelay, Applied.RepeatRate]));
+    [Whose, Applied.Layout, Applied.RepeatDelay, Applied.RepeatRate]));
 end;
 
 procedure ApplyUserSettings(const Name, Home: string);

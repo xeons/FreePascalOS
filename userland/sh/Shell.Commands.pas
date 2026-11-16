@@ -227,7 +227,7 @@ var
 begin
   Status := 0;
   Name := Prepared.Fields[0];
-  if not LocateProgram(Name, ProgramPath) then
+  if not FindProgramPath(Name, ProgramPath) then
   begin
     ShellError(Name + ': command not found');
     Status := StatusNotFound;

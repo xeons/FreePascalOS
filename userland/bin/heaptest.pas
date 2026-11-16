@@ -44,7 +44,7 @@ uses
   Sys.Environment,
   Sys.Memory,
   Sys.Threads,
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
   Runtime.Text;
 
@@ -75,12 +75,12 @@ begin
   if Condition then
   begin
     Inc(PassedCount);
-    WriteFormatted(StandardOutput, 'heaptest: pass: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('heaptest: pass: %s'#10, [Name]));
   end
   else
   begin
     Inc(FailedCount);
-    WriteFormatted(StandardOutput, 'heaptest: FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('heaptest: FAIL: %s'#10, [Name]));
   end;
 end;
 
@@ -244,7 +244,7 @@ begin
   Victim := TVictim.Create;
   Victim.Free;
   { The method table pointer is now $DFDFDFDFDFDFDFDF. }
-  WriteFormatted(StandardOutput, 'not reached %d'#10, [ArgumentNumber(Victim.Describe)]);
+  WriteString(StandardOutput, Format('not reached %d'#10, [Victim.Describe]));
 end;
 
 { Frees enough other blocks that the damaged one leaves the quarantine
@@ -298,10 +298,10 @@ begin
       WritePastEnd
     else
     begin
-      WriteFormatted(StandardError, 'heaptest: unknown option %s'#10, [ArgumentText(Argument(1))]);
+      WriteString(StandardError, Format('heaptest: unknown option %s'#10, [Argument(1)]));
       Halt(2);
     end;
-    WriteFormatted(StandardOutput, 'heaptest: the mistake was not caught'#10, []);
+    WriteString(StandardOutput, Format('heaptest: the mistake was not caught'#10, []));
     Halt(3);
   end;
 
@@ -310,8 +310,8 @@ begin
   TestReallocation;
   TestStringsAndObjects;
   TestThreads;
-  WriteFormatted(StandardOutput, 'heaptest: %d passed, %d failed'#10,
-    [ArgumentNumber(PassedCount), ArgumentNumber(FailedCount)]);
+  WriteString(StandardOutput, Format('heaptest: %d passed, %d failed'#10,
+    [PassedCount, FailedCount]));
   if FailedCount > 0 then
     Halt(1);
 end.

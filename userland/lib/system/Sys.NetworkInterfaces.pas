@@ -71,8 +71,6 @@ function ListRoutes(out Routes: TRouteList): LongInt;
 procedure SortRoutes(var Routes: TRouteList);
 { The gateway of a route as an address. }
 function RouteGateway(constref Route: TAbiRoute): TInternetAddress;
-{ "UG", "U", "UH" ... as route -n shows the flags. }
-function FormatRouteFlags(constref Route: TAbiRoute; Buffer: PChar; Capacity: PtrUInt): PChar;
 { Gateway 0.0.0.0: on the link of InterfaceName. InterfaceName nil or
   empty: the interface that reaches the gateway. }
 function AddRoute(constref Destination: TInternetAddress; PrefixLength: LongWord;
@@ -95,11 +93,6 @@ function SetDnsServers(constref Servers: TAbiDnsServers): LongInt;
 function WatchNetworkChanges: Int64;
 { The counters of IP, ICMP, TCP and UDP since the start. }
 function GetNetworkStatistics(out Statistics: TAbiNetworkStatistics): LongInt;
-
-{ "52:54:00:12:34:56". }
-function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
-{ "UP,BROADCAST,RUNNING" (as ifconfig shows them). }
-function FormatInterfaceFlags(Flags: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
 
 implementation
 
@@ -455,89 +448,6 @@ begin
     Result := AnyIpv4Address;
     CopyMemory(@Result.Bytes[0], @Route.Gateway[0], 4);
   end;
-end;
-
-procedure AppendFlagLetter(Text: PChar; var Length: Integer; Letter: Char);
-begin
-  Text[Length] := Letter;
-  Inc(Length);
-end;
-
-function FormatRouteFlags(constref Route: TAbiRoute; Buffer: PChar; Capacity: PtrUInt): PChar;
-var
-  Text: array[0..7] of Char;
-  Length: Integer;
-begin
-  Length := 0;
-  if (Route.Flags and RouteFlagUp) <> 0 then
-    AppendFlagLetter(@Text[0], Length, 'U');
-  if (Route.Flags and RouteFlagGateway) <> 0 then
-    AppendFlagLetter(@Text[0], Length, 'G');
-  if ((Route.Destination.Family = AddressFamilyIPv4) and (Route.Destination.PrefixLength = 32)) or
-     ((Route.Destination.Family = AddressFamilyIPv6) and (Route.Destination.PrefixLength = 128)) then
-    AppendFlagLetter(@Text[0], Length, 'H');
-  if (Route.Flags and RouteFlagAutomatic) <> 0 then
-    AppendFlagLetter(@Text[0], Length, 'A');
-  Text[Length] := #0;
-  Result := Buffer;
-  CopyText(Buffer, @Text[0], Capacity);
-end;
-
-function FormatHardwareAddress(Bytes: PByte; Length: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
-const
-  Digits: PChar = '0123456789abcdef';
-var
-  Text: array[0..3 * HardwareAddressCapacity] of Char;
-  Index: LongWord;
-  Position: Integer;
-begin
-  Position := 0;
-  Index := 0;
-  while (Index < Length) and (Index < HardwareAddressCapacity) do
-  begin
-    if Index > 0 then
-    begin
-      Text[Position] := ':';
-      Inc(Position);
-    end;
-    Text[Position] := Digits[Bytes[Index] shr 4];
-    Text[Position + 1] := Digits[Bytes[Index] and $0F];
-    Position := Position + 2;
-    Inc(Index);
-  end;
-  Text[Position] := #0;
-  Result := Buffer;
-  CopyText(Buffer, @Text[0], Capacity);
-end;
-
-procedure AppendFlag(Text: PChar; Capacity: PtrUInt; Name: PChar);
-var
-  Length: PtrUInt;
-begin
-  Length := TextLength(Text);
-  if Length > 0 then
-  begin
-    CopyText(Text + Length, ',', Capacity - Length);
-    Inc(Length);
-  end;
-  CopyText(Text + Length, Name, Capacity - Length);
-end;
-
-function FormatInterfaceFlags(Flags: LongWord; Buffer: PChar; Capacity: PtrUInt): PChar;
-var
-  Text: array[0..63] of Char;
-begin
-  Text[0] := #0;
-  if (Flags and InterfaceFlagUp) <> 0 then
-    AppendFlag(@Text[0], SizeOf(Text), 'UP');
-  if (Flags and InterfaceFlagBroadcast) <> 0 then
-    AppendFlag(@Text[0], SizeOf(Text), 'BROADCAST');
-  if (Flags and InterfaceFlagLoopback) <> 0 then
-    AppendFlag(@Text[0], SizeOf(Text), 'LOOPBACK');
-  if (Flags and InterfaceFlagRunning) <> 0 then
-    AppendFlag(@Text[0], SizeOf(Text), 'RUNNING');
-  Result := Buffer;
-  CopyText(Buffer, @Text[0], Capacity);
 end;
 
 end.

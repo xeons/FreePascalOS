@@ -34,7 +34,7 @@ uses
   Sys.Processes,
   Util.Commands,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: chroot [OPTION] NEWROOT [COMMAND [ARG]...]'#10 +
@@ -56,14 +56,9 @@ end;
 
 { $SHELL, or /bin/sh when it is not set. }
 function ShellPath: string;
-var
-  Value: PChar;
 begin
-  Value := GetVariable('SHELL');
-  if Value = nil then
-    Result := '/bin/sh'
-  else
-    Result := Value;
+  if not FindVariable('SHELL', Result) then
+    Result := '/bin/sh';
 end;
 
 var

@@ -30,7 +30,7 @@ uses
   Crypto.Checksums,
   Sys.Information,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: hostid'#10 +

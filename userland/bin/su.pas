@@ -135,9 +135,8 @@ begin
       Check := PasswordRejected
     else
     begin
-      Check := CheckPassword(PChar(TargetName), Password);
-      ZeroMemory(Password, StrLen(Password));
-      FreeMemory(Password);
+      Check := CheckPassword(TargetName, Password);
+      ForgetPassword(Password);
     end;
   end;
   if Check <> PasswordAccepted then
@@ -146,11 +145,12 @@ end;
 
 procedure BecomeUser(TargetId, TargetGroup: LongWord);
 var
-  Groups: array[0..MaximumGroups - 1] of LongWord;
-  GroupCount: Integer;
+  Groups: TIdArray;
 begin
-  GroupCount := GroupsOfUser(TargetId, @Groups[0], MaximumGroups);
-  if (KernelSetGroups(LongWord(GroupCount), @Groups[0]) < 0) or
+  Groups := GroupsOfUser(TargetId);
+  if Length(Groups) > MaximumGroups then
+    SetLength(Groups, MaximumGroups);
+  if (KernelSetGroups(LongWord(Length(Groups)), PLongWord(Groups)) < 0) or
      (KernelSetGroupIds(TargetGroup, TargetGroup, TargetGroup) < 0) or
      (KernelSetUserIds(TargetId, TargetId, TargetId) < 0) then
     Fail(StatusFailed, 'cannot set user id: ' + ErrorText(ErrorNotPermitted));
@@ -179,10 +179,10 @@ begin
   Home := UserHomeDirectory(TargetId);
   if not Preserve then
   begin
-    SetVariable('HOME', PChar(Home));
-    SetVariable('SHELL', PChar(Shell));
-    SetVariable('USER', PChar(TargetName));
-    SetVariable('LOGNAME', PChar(TargetName));
+    SetVariable('HOME', Home);
+    SetVariable('SHELL', Shell);
+    SetVariable('USER', TargetName);
+    SetVariable('LOGNAME', TargetName);
   end;
 
   DefaultProcessOptions(Options);

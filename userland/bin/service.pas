@@ -44,8 +44,7 @@ uses
   Sys.ServiceControl,
   Sys.Streams,
   Util.CommandLine,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: service [-p PORT] list'#10 +
@@ -59,7 +58,6 @@ const
 
 var
   { The manager's port; the system's when not given. }
-  HasPortName: Boolean;
   PortName: string;
   Command: string;
   ServiceName: string;
@@ -71,7 +69,6 @@ begin
   CommandLine := TCommandLine.Create([CommandOption('p', 'port', True, OptionPort)], Usage);
   try
     CommandLine.ReadOperandsOnly;
-    HasPortName := CommandLine.OptionGiven(OptionPort);
     PortName := CommandLine.OptionValue(OptionPort);
     if CommandLine.OperandCount = 0 then
       FailWithUsageHint('a command is needed');
@@ -107,7 +104,7 @@ begin
     else
       ProcessText := '-';
     PrintStringLine(Format('%-16s %-11s %7s %8d  %s', [string(PChar(@Status.Name[0])),
-      string(ServiceStateName(Status.State)), ProcessText, Status.Restarts,
+      ServiceStateName(Status.State), ProcessText, Status.Restarts,
       string(PChar(@Status.Description[0]))]));
     Inc(Index);
   end;
@@ -121,7 +118,7 @@ begin
   if Status.Description[0] <> #0 then
     Line := Line + ' - ' + string(PChar(@Status.Description[0]));
   PrintStringLine(Line);
-  Line := '  state: ' + string(ServiceStateName(Status.State));
+  Line := '  state: ' + ServiceStateName(Status.State);
   if (Status.State = ServiceStateRunning) and (Status.ReadyAt >= Status.StartedAt) then
     Line := Line + ' (ready after ' + SecondsText(Status.ReadyAt - Status.StartedAt) + ')';
   PrintStringLine(Line);
@@ -157,14 +154,6 @@ begin
   end;
 end;
 
-function PortNameArgument: PChar;
-begin
-  if HasPortName then
-    Result := PChar(PortName)
-  else
-    Result := nil;
-end;
-
 var
   Code: LongWord;
   Reply: TServiceReply;
@@ -179,7 +168,7 @@ begin
   Code := RequestCode;
   if (Code <> ServiceRequestList) and (ServiceName = '') then
     FailWithUsageHint(Command + ' needs the name of a service');
-  Error := AskServiceManager(PortNameArgument, Code, PChar(ServiceName), Reply);
+  Error := AskServiceManager(PortName, Code, ServiceName, Reply);
   if Error <> ErrorNone then
     FailWithError(StatusFailed, Error, 'the service manager');
   if Reply.Error <> ErrorNone then

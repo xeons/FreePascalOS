@@ -34,8 +34,7 @@ uses
   Sys.Console,
   Sys.PseudoTerminals,
   Sys.Streams,
-  Util.CommandLine,
-  Util.Output;
+  Util.CommandLine;
 
 const
   Usage = 'Usage: tty [OPTION]...'#10 +
@@ -45,7 +44,6 @@ const
   OptionSilent = 1;
 
 var
-  Path: array[0..15] of Char;
   CommandLine: TCommandLine;
   Code: Integer;
   Value: string;
@@ -62,10 +60,7 @@ begin
     if Silent then
       Halt(0);
     if TerminalNumber(StandardInputHandle) >= 0 then
-    begin
-      PseudoTerminalPath(TerminalNumber(StandardInputHandle), @Path[0]);
-      PrintStringLine(PChar(@Path[0]));
-    end
+      PrintStringLine(PseudoTerminalPath(TerminalNumber(StandardInputHandle)))
     else
       PrintStringLine('/dev/console');
     Halt(0);

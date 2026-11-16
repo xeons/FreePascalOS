@@ -46,11 +46,9 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Streams,
-  Sys.Text,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Windowing.Connection,
   Windowing.Displays;
 
@@ -146,7 +144,7 @@ begin
     FailWithUsageHint('one mode at most');
   Width := 0;
   Height := 0;
-  if (CommandLine.OperandCount = 1) and not ParseSize(PChar(CommandLine.Operands[0]), Width, Height) then
+  if (CommandLine.OperandCount = 1) and not ParseWidthAndHeight(CommandLine.Operands[0], Width, Height) then
     FailWithUsageHint('the mode must be WIDTHxHEIGHT');
   Error := ConnectToDisplay;
   if Error <> ErrorNone then

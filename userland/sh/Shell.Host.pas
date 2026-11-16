@@ -40,10 +40,6 @@ type
     alive while it is in use (arguments, environment). }
   TTextVector = array of PChar;
 
-{ False (Path empty) if the kernel cannot tell. }
-function CurrentDirectory(out Path: string): Boolean;
-{ Finds Name in PATH (or takes it as a path if it contains '/'). }
-function LocateProgram(const Name: string; out Path: string): Boolean;
 { Reads the whole file; returns an Abi error code (ErrorNone on success). }
 function ReadTextFile(const Path: string; out Text: string): LongInt;
 { Reads Handle to its end. }
@@ -61,28 +57,6 @@ uses
 
 const
   ReadChunkSize = 4096;
-
-function CurrentDirectory(out Path: string): Boolean;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
-begin
-  Result := GetCurrentDirectory(@Buffer[0], PathCapacity) = ErrorNone;
-  if Result then
-    Path := string(PChar(@Buffer[0]))
-  else
-    Path := '';
-end;
-
-function LocateProgram(const Name: string; out Path: string): Boolean;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
-begin
-  Result := FindProgram(PChar(Name), @Buffer[0], PathCapacity);
-  if Result then
-    Path := string(PChar(@Buffer[0]))
-  else
-    Path := '';
-end;
 
 function ReadToEnd(Handle: Int64): string;
 var

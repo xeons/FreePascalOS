@@ -32,8 +32,7 @@ procedure Say(const Text: string);
 implementation
 
 uses
-  Sys.Streams,
-  Util.Output;
+  Sys.Streams;
 
 procedure Say(const Text: string);
 begin

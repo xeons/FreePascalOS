@@ -98,8 +98,7 @@ implementation
 uses
   Sys.Files,
   Util.Input,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   LineWrapWidth = 70;
@@ -276,13 +275,13 @@ begin
     Piece := UnambiguousText(Byte(FPatternSpace[Index]));
     if Column + Length(Piece) > LineWrapWidth - 1 then
     begin
-      WriteText(Output, '\'#10);
+      WriteString(Output, '\'#10);
       Column := 0;
     end;
     WriteString(Output, Piece);
     Column := Column + Length(Piece);
   end;
-  WriteText(Output, '$'#10);
+  WriteString(Output, '$'#10);
 end;
 
 procedure TStreamEditor.QueueOutput(const Text: string; IsFile: Boolean);

@@ -36,7 +36,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Modes,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: mkdir [OPTION]... DIRECTORY...'#10 +
@@ -58,7 +58,7 @@ function MakeOne(const Path: string): LongInt;
 begin
   Result := CreateDirectory(PChar(Path));
   if (Result = ErrorNone) and Verbose then
-    PrintString(Format('%s: created directory ''%s'''#10, [ProgramNameText, Path]));
+    PrintString(Format('%s: created directory ''%s'''#10, [ProgramName, Path]));
 end;
 
 { Creates every missing directory along Path. }

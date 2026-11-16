@@ -52,7 +52,7 @@ uses
   Sys.Files,
   Sys.Processes,
   Util.FileTree,
-  Util.Output;
+  Sys.Streams;
 
 type
   TCommandTest = record

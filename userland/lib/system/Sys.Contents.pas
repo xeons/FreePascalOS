@@ -42,7 +42,6 @@ uses
   Sys.Exceptions,
   Sys.Text,
   Sys.Streams,
-  Sys.Format,
   Sys.Files,
   Sys.FileCopies,
   Sys.Environment,

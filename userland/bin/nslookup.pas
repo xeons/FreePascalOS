@@ -48,8 +48,7 @@ uses
   Sys.HostNames,
   Util.CommandLine,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 var
   Options: TDnsQueryOptions;

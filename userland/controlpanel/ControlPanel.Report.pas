@@ -46,7 +46,6 @@ uses
   SysUtils,
   Drawing.Rectangles,
   Sys.Streams,
-  Util.Output,
   Windowing.Connection;
 
 procedure Say(const Text: string);

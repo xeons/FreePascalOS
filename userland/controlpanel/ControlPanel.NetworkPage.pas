@@ -599,13 +599,13 @@ begin
     Exit(False);
   end;
   Request := NewSystemSettingsRequest(SystemRequestSetNetworkInterface);
-  SetRequestText(@Request.NetworkInterface[0], SystemInterfaceNameCapacity, PChar(Settings.Name));
-  SetRequestText(@Request.NetworkMethod[0], SystemMethodCapacity, PChar(NetworkMethodName(Settings.Method)));
-  SetRequestText(@Request.NetworkAddress[0], SystemAddressCapacity, PChar(Settings.Address));
-  SetRequestText(@Request.NetworkGateway[0], SystemAddressCapacity, PChar(Settings.Gateway));
-  SetRequestText(@Request.NetworkIpv6Method[0], SystemMethodCapacity, PChar(Ipv6MethodName(Settings.Ipv6Method)));
-  SetRequestText(@Request.NetworkIpv6Address[0], SystemIpv6AddressCapacity, PChar(Settings.Ipv6Address));
-  SetRequestText(@Request.NetworkIpv6Gateway[0], SystemIpv6AddressCapacity, PChar(Settings.Ipv6Gateway));
+  SetRequestText(Request.NetworkInterface, Settings.Name);
+  SetRequestText(Request.NetworkMethod, NetworkMethodName(Settings.Method));
+  SetRequestText(Request.NetworkAddress, Settings.Address);
+  SetRequestText(Request.NetworkGateway, Settings.Gateway);
+  SetRequestText(Request.NetworkIpv6Method, Ipv6MethodName(Settings.Ipv6Method));
+  SetRequestText(Request.NetworkIpv6Address, Settings.Ipv6Address);
+  SetRequestText(Request.NetworkIpv6Gateway, Settings.Ipv6Gateway);
   if Settings.Up then
     Request.Flags := SystemFlagInterfaceUp;
   Error := SendAsAdministrator(Window, Request);
@@ -660,8 +660,8 @@ begin
     Exit(False);
   end;
   Request := NewSystemSettingsRequest(SystemRequestSetDnsServers);
-  SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(JoinServerList(Dns.Servers)));
-  SetRequestText(@Request.SearchDomain[0], SystemDomainCapacity, PChar(Dns.SearchDomain));
+  SetRequestText(Request.Text, JoinServerList(Dns.Servers));
+  SetRequestText(Request.SearchDomain, Dns.SearchDomain);
   Error := SendAsAdministrator(Window, Request);
   Result := Error = ErrorNone;
   if not Result then

@@ -52,7 +52,7 @@ implementation
 
 uses
   SysUtils,
-  Util.Output;
+  Sys.Streams;
 
 const
   LineEnd = #13#10;

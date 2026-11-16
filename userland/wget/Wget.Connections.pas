@@ -112,7 +112,7 @@ uses
   Sys.AddressText,
   Sys.Sockets,
   Tls.Errors,
-  Util.Output;
+  Sys.Streams;
 
 const
   TimeoutText = 'Read error (Connection timed out)';

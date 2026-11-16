@@ -39,8 +39,7 @@ procedure RunDigestTool(Algorithm: TDigestAlgorithm);
 
 { Digest of a whole file ('-' for standard input); False on error
   (already reported). }
-function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean; overload;
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean; overload;
+function DigestFile(Algorithm: TDigestAlgorithm; const Path: string; out Output: TDigestOutput): Boolean;
 
 implementation
 
@@ -53,8 +52,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   OptionBinary = 1;
@@ -136,11 +134,6 @@ begin
   FinishDigest(Context, Output);
   if Handle <> StandardInputHandle then
     CloseFile(Handle);
-end;
-
-function DigestFile(Algorithm: TDigestAlgorithm; Path: PChar; out Output: TDigestOutput): Boolean;
-begin
-  Result := DigestFile(Algorithm, string(Path), Output);
 end;
 
 function DigestHex(Algorithm: TDigestAlgorithm; const Output: TDigestOutput): string;
@@ -288,7 +281,7 @@ begin
     '      --status          don''t output anything, status code shows success'#10 +
     '      --strict          exit non-zero for improperly formatted checksum lines'#10 +
     '  -w, --warn            warn about improperly formatted checksum lines'#10,
-    [ProgramNameText, string(DigestTagName(Algorithm))]);
+    [ProgramName, string(DigestTagName(Algorithm))]);
 end;
 
 procedure RunDigestTool(Algorithm: TDigestAlgorithm);

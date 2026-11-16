@@ -46,7 +46,7 @@ uses
   Util.CommandLine,
   Util.Commands,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Paths,
   Util.RegularExpressions;
 

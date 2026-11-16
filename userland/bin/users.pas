@@ -29,7 +29,7 @@ program users;
 uses
   Util.Accounts,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: users'#10 +

@@ -45,7 +45,6 @@ uses
   Util.Input,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Util.RegularExpressions;
 
 const

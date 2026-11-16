@@ -80,14 +80,11 @@ function SelectedFaceSize(const FontSet: TFontSet; PointTenths, Dpi: LongWord; B
 
 { How far the pen moves for CodePoint alone (0 for a control character). }
 function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
-function MeasureText(const Face: TFontFace; Text: PChar): LongInt; overload;
-function MeasureText(const Face: TFontFace; const Text: string): LongInt; overload;
+function MeasureText(const Face: TFontFace; const Text: string): LongInt;
 { Draws Text with the top left of its line at (X, Y), in Color. Returns
   the width. }
-function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; Text: PChar; Color: TColor): LongInt;
-  overload;
 function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
-  Color: TColor): LongInt; overload;
+  Color: TColor): LongInt;
 { One character with the pen at X and its line's top at Y; returns its
   advance (0 for a control character). }
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
@@ -207,25 +204,20 @@ begin
     Result := KerningBetween(Face, Previous, CodePoint);
 end;
 
-function MeasureText(const Face: TFontFace; Text: PChar): LongInt;
+function MeasureText(const Face: TFontFace; const Text: string): LongInt;
 var
+  Cursor: PChar;
   CodePoint: LongWord;
   Previous: LongWord;
 begin
   Result := 0;
-  if Text = nil then
-    Exit;
+  Cursor := PChar(Text);
   Previous := 0;
-  while NextCharacter(Text, CodePoint) do
+  while NextCharacter(Cursor, CodePoint) do
   begin
     Result := Result + KerningStep(Face, Previous, CodePoint) + CharacterAdvance(Face, CodePoint);
     Previous := CodePoint;
   end;
-end;
-
-function MeasureText(const Face: TFontFace; const Text: string): LongInt;
-begin
-  Result := MeasureText(Face, PChar(Text));
 end;
 
 { A bitmap glyph's row: each run of set pixels is one span. }
@@ -297,27 +289,22 @@ begin
       DrawCoverageRow(Canvas, GlyphRow(Face, Glyph, Row), Face.Glyphs[Glyph].Width, Left, Top + Row, Color);
 end;
 
-function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; Text: PChar; Color: TColor): LongInt;
+function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
+  Color: TColor): LongInt;
 var
+  Cursor: PChar;
   CodePoint: LongWord;
   Previous: LongWord;
 begin
   Result := 0;
-  if Text = nil then
-    Exit;
+  Cursor := PChar(Text);
   Previous := 0;
-  while NextCharacter(Text, CodePoint) do
+  while NextCharacter(Cursor, CodePoint) do
   begin
     Result := Result + KerningStep(Face, Previous, CodePoint);
     Result := Result + DrawCharacter(Canvas, Face, X + Result, Y, CodePoint, Color);
     Previous := CodePoint;
   end;
-end;
-
-function DrawText(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; const Text: string;
-  Color: TColor): LongInt;
-begin
-  Result := DrawText(Canvas, Face, X, Y, PChar(Text), Color);
 end;
 
 end.

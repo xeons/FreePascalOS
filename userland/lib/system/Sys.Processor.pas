@@ -22,21 +22,17 @@
 }
 unit Sys.Processor;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$asmmode intel}
 
 interface
 
-const
-  ProcessorVendorCapacity = 13;
-  ProcessorModelCapacity = 49;
-
-{ "GenuineIntel", "AuthenticAMD", ... (12 characters and #0). }
-procedure GetProcessorVendor(Buffer: PChar);
+{ "GenuineIntel", "AuthenticAMD", ... (12 characters). }
+function ProcessorVendor: string;
 { The model name, such as "AMD Ryzen 7 5800X 8-Core Processor", with
   the spaces some processors pad it with taken away; empty if the
-  processor does not tell it. Buffer holds ProcessorModelCapacity. }
-procedure GetProcessorModel(Buffer: PChar);
+  processor does not tell it. }
+function ProcessorModel: string;
 
 implementation
 
@@ -68,59 +64,53 @@ asm
   pop rbx
 end;
 
-procedure GetProcessorVendor(Buffer: PChar);
+function ProcessorVendor: string;
 var
   Registers: TCpuidRegisters;
 begin
   RunCpuid(0, Registers);
-  Move(Registers.Ebx, Buffer[0], 4);
-  Move(Registers.Edx, Buffer[4], 4);
-  Move(Registers.Ecx, Buffer[8], 4);
-  Buffer[12] := #0;
+  SetLength(Result, 12);
+  Move(Registers.Ebx, Result[1], 4);
+  Move(Registers.Edx, Result[5], 4);
+  Move(Registers.Ecx, Result[9], 4);
+  { A processor that leaves bytes zero ends the name there. }
+  SetLength(Result, StrLen(PChar(Result)));
 end;
 
-{ Takes away the spaces before and after Buffer's text, and runs of
-  spaces inside it. }
-procedure TidySpaces(Buffer: PChar);
+{ Text without the spaces before and after it, and with runs of spaces
+  inside it made one. }
+function TidySpaces(const Text: string): string;
 var
-  ReadIndex: LongInt;
-  WriteIndex: LongInt;
+  Character: Char;
 begin
-  ReadIndex := 0;
-  WriteIndex := 0;
-  while Buffer[ReadIndex] <> #0 do
-  begin
-    if (Buffer[ReadIndex] <> ' ') or ((WriteIndex > 0) and (Buffer[WriteIndex - 1] <> ' ')) then
-    begin
-      Buffer[WriteIndex] := Buffer[ReadIndex];
-      Inc(WriteIndex);
-    end;
-    Inc(ReadIndex);
-  end;
-  if (WriteIndex > 0) and (Buffer[WriteIndex - 1] = ' ') then
-    Dec(WriteIndex);
-  Buffer[WriteIndex] := #0;
+  Result := '';
+  for Character in Text do
+    if (Character <> ' ') or ((Result <> '') and (Result[Length(Result)] <> ' ')) then
+      Result := Result + Character;
+  if (Result <> '') and (Result[Length(Result)] = ' ') then
+    SetLength(Result, Length(Result) - 1);
 end;
 
-procedure GetProcessorModel(Buffer: PChar);
+function ProcessorModel: string;
 var
   Registers: TCpuidRegisters;
   Leaf: LongWord;
-  Offset: LongInt;
+  Name: string;
 begin
-  Buffer[0] := #0;
+  Result := '';
   RunCpuid(FirstExtendedLeaf, Registers);
   if Registers.Eax < LastModelLeaf then
     Exit;
-  Offset := 0;
+  Name := '';
   for Leaf := FirstModelLeaf to LastModelLeaf do
   begin
     RunCpuid(Leaf, Registers);
-    Move(Registers, Buffer[Offset], SizeOf(Registers));
-    Inc(Offset, SizeOf(Registers));
+    SetLength(Name, Length(Name) + SizeOf(Registers));
+    Move(Registers, Name[Length(Name) - SizeOf(Registers) + 1], SizeOf(Registers));
   end;
-  Buffer[Offset] := #0;
-  TidySpaces(Buffer);
+  { The name ends at its first zero byte. }
+  SetLength(Name, StrLen(PChar(Name)));
+  Result := TidySpaces(Name);
 end;
 
 end.

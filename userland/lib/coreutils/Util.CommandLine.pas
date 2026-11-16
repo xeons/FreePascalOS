@@ -17,8 +17,7 @@
 }
 
 {
-  Command line options in the GNU style, on strings (Util.Options is the
-  same parser on PChar).
+  Command line options in the GNU style.
 
     -a -b       short options, which can be grouped: -ab
     -n 5, -n5   a short option with a value
@@ -57,6 +56,9 @@ interface
 
 uses
   SysUtils;
+
+const
+  CoreutilsVersion = '0.2';
 
 type
   TCommandOption = record
@@ -137,8 +139,7 @@ uses
   StrUtils,
   Sys.Environment,
   Util.Messages,
-  Util.Options,
-  Util.Output;
+  Sys.Streams;
 
 function CommandOption(ShortName: Char; const LongName: string; TakesValue: Boolean;
   Code: Integer): TCommandOption;
@@ -255,13 +256,13 @@ begin
   if FUsage <> '' then
     PrintString(FUsage)
   else
-    PrintString(Format('Usage: %s [OPTION]... [ARGUMENT]...'#10, [ProgramNameText]));
+    PrintString(Format('Usage: %s [OPTION]... [ARGUMENT]...'#10, [ProgramName]));
   Halt(0);
 end;
 
 procedure TCommandLine.ShowVersion;
 begin
-  PrintString(Format('%s (FreePascalOS coreutils) %s'#10, [ProgramNameText, CoreutilsVersion]));
+  PrintString(Format('%s (FreePascalOS coreutils) %s'#10, [ProgramName, CoreutilsVersion]));
   Halt(0);
 end;
 

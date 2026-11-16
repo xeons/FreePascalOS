@@ -41,7 +41,7 @@
 }
 unit Sys.Streams;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 {$pointermath on}
 
 interface
@@ -84,22 +84,27 @@ procedure DestroyOutputStream(Stream: POutputStream);
 procedure DestroyInputStream(Stream: PInputStream);
 
 procedure WriteBytes(Stream: POutputStream; Bytes: PChar; Count: QWord);
-procedure WriteText(Stream: POutputStream; Text: PChar);
-procedure WriteLine(Stream: POutputStream; Text: PChar);
+{ The whole string (embedded NUL bytes included). }
+procedure WriteString(Stream: POutputStream; const Text: string);
+{ Text and a line feed. }
+procedure WriteStringLine(Stream: POutputStream; const Text: string);
 procedure WriteCharacter(Stream: POutputStream; Character: Char);
 procedure WriteDecimal(Stream: POutputStream; Value: Int64);
 procedure WriteUnsigned(Stream: POutputStream; Value: QWord);
 procedure FlushStream(Stream: POutputStream);
 
 { Shorthands for standard output and standard error. }
-procedure Print(Text: PChar);
-procedure PrintLine(Text: PChar);
-procedure PrintError(Text: PChar);
-procedure PrintErrorLine(Text: PChar);
+procedure PrintString(const Text: string);
+procedure PrintStringLine(const Text: string);
+procedure PrintErrorString(const Text: string);
+procedure PrintErrorStringLine(const Text: string);
 
-{ Reads the next line into a new heap string without its line end.
+{ Reads the next line without its line end (up to a NUL byte in it).
   Returns False at end of input with nothing read. HadLineEnd tells
   whether the line was terminated (the last line may not be). }
+function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
+{ The same into a new heap block (freed with FreeMemory) the caller can
+  wipe: for passwords. }
 function ReadLine(Stream: PInputStream; out Line: PChar; out HadLineEnd: Boolean): Boolean;
 function ReadCharacter(Stream: PInputStream; out Character: Char): Boolean;
 { Reads up to Count bytes; returns the number read (0 at end). }
@@ -110,6 +115,7 @@ procedure FlushStandardStreams;
 implementation
 
 uses
+  SysUtils,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -142,9 +148,9 @@ begin
   end;
   if (Name = nil) or (Name^ = #0) then
     Name := 'program';
-  WriteText(StandardError, Name);
-  WriteText(StandardError, ': write error: ');
-  WriteText(StandardError, ErrorMessage(ErrorCode));
+  WriteString(StandardError, Name);
+  WriteString(StandardError, ': write error: ');
+  WriteString(StandardError, ErrorMessage(ErrorCode));
   WriteCharacter(StandardError, #10);
 end;
 
@@ -204,7 +210,7 @@ begin
   Index := 0;
   while envp[Index] <> nil do
   begin
-    if TextStartsWith(envp[Index], Name) and (envp[Index][NameLength] = '=') then
+    if (StrLComp(envp[Index], Name, NameLength) = 0) and (envp[Index][NameLength] = '=') then
       Exit(envp[Index] + NameLength + 1);
     Inc(Index);
   end;
@@ -304,15 +310,15 @@ begin
     FlushStream(Stream);
 end;
 
-procedure WriteText(Stream: POutputStream; Text: PChar);
+procedure WriteString(Stream: POutputStream; const Text: string);
 begin
-  if Text <> nil then
-    WriteBytes(Stream, Text, TextLength(Text));
+  if Text <> '' then
+    WriteBytes(Stream, PChar(Text), Length(Text));
 end;
 
-procedure WriteLine(Stream: POutputStream; Text: PChar);
+procedure WriteStringLine(Stream: POutputStream; const Text: string);
 begin
-  WriteText(Stream, Text);
+  WriteString(Stream, Text);
   WriteCharacter(Stream, #10);
 end;
 
@@ -325,34 +331,34 @@ procedure WriteDecimal(Stream: POutputStream; Value: Int64);
 var
   NumberText: TNumberText;
 begin
-  WriteText(Stream, FormatSignedDecimal(Value, NumberText));
+  WriteString(Stream, FormatSignedDecimal(Value, NumberText));
 end;
 
 procedure WriteUnsigned(Stream: POutputStream; Value: QWord);
 var
   NumberText: TNumberText;
 begin
-  WriteText(Stream, FormatDecimal(Value, NumberText));
+  WriteString(Stream, FormatDecimal(Value, NumberText));
 end;
 
-procedure Print(Text: PChar);
+procedure PrintString(const Text: string);
 begin
-  WriteText(StandardOutput, Text);
+  WriteString(StandardOutput, Text);
 end;
 
-procedure PrintLine(Text: PChar);
+procedure PrintStringLine(const Text: string);
 begin
-  WriteLine(StandardOutput, Text);
+  WriteStringLine(StandardOutput, Text);
 end;
 
-procedure PrintError(Text: PChar);
+procedure PrintErrorString(const Text: string);
 begin
-  WriteText(StandardError, Text);
+  WriteString(StandardError, Text);
 end;
 
-procedure PrintErrorLine(Text: PChar);
+procedure PrintErrorStringLine(const Text: string);
 begin
-  WriteLine(StandardError, Text);
+  WriteStringLine(StandardError, Text);
 end;
 
 { --- Input ----------------------------------------------------------- }
@@ -415,6 +421,18 @@ begin
   end;
   Line := FinishText(Builder);
   Result := True;
+end;
+
+function ReadTextLine(Stream: PInputStream; out Line: string; out HadLineEnd: Boolean): Boolean;
+var
+  Text: PChar;
+begin
+  Line := '';
+  Result := ReadLine(Stream, Text, HadLineEnd);
+  if not Result then
+    Exit;
+  Line := Text;
+  FreeMemory(Text);
 end;
 
 function ReadBytes(Stream: PInputStream; Bytes: PChar; Count: QWord): QWord;

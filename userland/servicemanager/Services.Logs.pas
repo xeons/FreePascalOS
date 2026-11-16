@@ -56,8 +56,7 @@ uses
   Abi.SystemCalls,
   Sys.Files,
   Sys.Streams,
-  Sys.Time,
-  Util.Output;
+  Sys.Time;
 
 const
   ManagerLogName = 'servicemanager';

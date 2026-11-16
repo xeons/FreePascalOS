@@ -40,8 +40,7 @@ uses
   Util.CommandLine,
   Util.Input,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: numfmt [OPTION]... [NUMBER]...'#10 +

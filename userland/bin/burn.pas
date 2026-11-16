@@ -42,8 +42,7 @@ uses
   Sys.Time,
   Util.CommandLine,
   Util.Messages,
-  Util.Numbers,
-  Util.Output;
+  Util.Numbers;
 
 const
   Usage = 'Usage: burn [-t THREADS] [-s SECONDS] [-m MEBIBYTES] [-i]'#10 +

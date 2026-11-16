@@ -39,7 +39,7 @@ uses
   Util.CommandLine,
   Util.Commands,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Sizes;
 
 const
@@ -108,11 +108,11 @@ begin
       Break;
     end;
     if TakeMode(Arguments, Index, '-o', '--output=', Mode) then
-      SetVariable('_STDBUF_O', PChar(Mode))
+      SetVariable('_STDBUF_O', Mode)
     else if TakeMode(Arguments, Index, '-e', '--error=', Mode) then
-      SetVariable('_STDBUF_E', PChar(Mode))
+      SetVariable('_STDBUF_E', Mode)
     else if TakeMode(Arguments, Index, '-i', '--input=', Mode) then
-      SetVariable('_STDBUF_I', PChar(Mode))
+      SetVariable('_STDBUF_I', Mode)
     else
       FailWithUsageHint(Format('invalid option -- ''%s''', [Arguments[Index]]));
     AnySetting := True;

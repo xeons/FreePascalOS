@@ -154,8 +154,8 @@ begin
     Inc(Index);
     if (UserId <> RootId) and ((UserId < FirstPersonId) or (UserId >= NobodyId)) then
       Continue;
-    Name := UserNameOf(UserId);
-    FList.AddRow([Name, string(FullNameOf(UserId)), GroupListOf(UserId)]);
+    FindUserName(UserId, Name);
+    FList.AddRow([Name, UserFullName(UserId), GroupListOf(UserId)]);
     SetLength(FNames, Length(FNames) + 1);
     FNames[High(FNames)] := Name;
   end;
@@ -192,9 +192,9 @@ begin
   if not AskForNewUser(Window, User) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestAddUser);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(User.Name));
-  SetRequestText(@Request.FullName[0], SystemTextCapacity, PChar(User.FullName));
-  SetRequestText(@Request.Password[0], SystemPasswordCapacity, PChar(User.Password));
+  SetRequestText(Request.UserName, User.Name);
+  SetRequestText(Request.FullName, User.FullName);
+  SetRequestText(Request.Password, User.Password);
   if User.Administrator then
     Request.Flags := SystemFlagAdministrator;
   SayDone('user-added', SendAsAdministrator(Window, Request), User.Name);
@@ -209,10 +209,10 @@ var
 begin
   if not ChosenUser(Name) or not FindUserId(Name, UserId) then
     Exit;
-  if not AskToRemoveUser(Window, Name, string(HomeDirectoryOf(UserId)), RemoveHome) then
+  if not AskToRemoveUser(Window, Name, UserHomeDirectory(UserId), RemoveHome) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestRemoveUser);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
+  SetRequestText(Request.UserName, Name);
   if RemoveHome then
     Request.Flags := SystemFlagRemoveHome;
   SayDone('user-removed', SendAsAdministrator(Window, Request), Name);
@@ -221,6 +221,7 @@ end;
 procedure TUsersPage.PasswordClicked(Sender: TControl);
 var
   Name: string;
+  OwnName: string;
   Own: Boolean;
   Current: string;
   NewPassword: string;
@@ -230,13 +231,12 @@ begin
   if not ChosenUser(Name) then
     Exit;
   { An ordinary user's own password: the present one proves it is them. }
-  Own := not RunningAsRoot and (UserNameOf(CurrentRealUserId) <> nil) and
-    (string(UserNameOf(CurrentRealUserId)) = Name);
+  Own := not RunningAsRoot and FindUserName(CurrentRealUserId, OwnName) and (OwnName = Name);
   if not AskForNewPassword(Window, Name, Own, Current, NewPassword) then
     Exit;
   Request := NewSystemSettingsRequest(SystemRequestSetPassword);
-  SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-  SetRequestText(@Request.Password[0], SystemPasswordCapacity, PChar(NewPassword));
+  SetRequestText(Request.UserName, Name);
+  SetRequestText(Request.Password, NewPassword);
   if Own then
     Error := SendWithPassword(Request, Current)
   else
@@ -269,9 +269,9 @@ begin
     if (GroupId = PrimaryGroup) or (GroupId >= NobodyId) then
       Continue;
     SetLength(AllGroups, Length(AllGroups) + 1);
-    AllGroups[High(AllGroups)] := GroupNameOf(GroupId);
+    FindGroupName(GroupId, AllGroups[High(AllGroups)]);
   end;
-  Properties.FullName := FullNameOf(UserId);
+  Properties.FullName := UserFullName(UserId);
   OldFullName := Properties.FullName;
   Properties.Groups := SupplementaryGroupsOf(Name);
   if not AskForProperties(Window, Name, AllGroups, Properties) then
@@ -280,15 +280,15 @@ begin
   if Properties.FullName <> OldFullName then
   begin
     Request := NewSystemSettingsRequest(SystemRequestSetFullName);
-    SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-    SetRequestText(@Request.FullName[0], SystemTextCapacity, PChar(Properties.FullName));
+    SetRequestText(Request.UserName, Name);
+    SetRequestText(Request.FullName, Properties.FullName);
     Error := SendAsAdministrator(Window, Request);
   end;
   if Error = ErrorNone then
   begin
     Request := NewSystemSettingsRequest(SystemRequestSetGroups);
-    SetRequestText(@Request.UserName[0], SystemNameCapacity, PChar(Name));
-    SetRequestText(@Request.Text[0], SystemTextCapacity, PChar(JoinGroupList(Properties.Groups)));
+    SetRequestText(Request.UserName, Name);
+    SetRequestText(Request.Text, JoinGroupList(Properties.Groups));
     Error := SendAsAdministrator(Window, Request);
   end;
   SayDone('user-changed', Error, Name);

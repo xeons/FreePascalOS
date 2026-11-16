@@ -400,7 +400,7 @@ var
   Handle: Int64;
 begin
   Result := 0;
-  if not LocateProgram('kill', ProgramPath) then
+  if not FindProgramPath('kill', ProgramPath) then
   begin
     CommandError('kill', 'command not found');
     Exit(StatusNotChild);

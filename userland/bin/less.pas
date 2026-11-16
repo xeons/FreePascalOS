@@ -51,7 +51,6 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Input,
-  Util.Output,
   Util.Paths,
   Util.RegularExpressions;
 

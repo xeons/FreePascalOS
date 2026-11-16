@@ -39,7 +39,6 @@
 unit Util.RegularExpressions;
 
 {$mode objfpc}{$H+}
-{$pointermath on}
 
 interface
 
@@ -59,8 +58,7 @@ type
     { NodeSet: 256 membership bits. }
     Members: array[0..31] of Byte;
     { NodeSequence, NodeAlternation: children; NodeRepeat, NodeGroup: Child. }
-    Children: ^PExpressionNode;
-    ChildCount: Integer;
+    Children: array of PExpressionNode;
     Child: PExpressionNode;
     Minimum: Integer;
     Maximum: Integer;   { -1 = unlimited }
@@ -80,26 +78,18 @@ type
   end;
 
 { Returns False with ErrorMessage set if Text is not a valid expression. }
-function CompileExpression(Text: PChar; Syntax: TExpressionSyntax; out Expression: TExpression;
-  out ErrorMessage: PChar): Boolean; overload;
 function CompileExpression(const Text: string; Syntax: TExpressionSyntax; out Expression: TExpression;
-  out ErrorMessage: string): Boolean; overload;
+  out ErrorMessage: string): Boolean;
 procedure FreeExpression(var Expression: TExpression);
 
 { Finds the leftmost match anywhere in Subject. }
-function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean; overload;
-function SearchExpression(const Expression: TExpression; const Subject: string;
-  out Match: TMatch): Boolean; overload;
+function SearchExpression(const Expression: TExpression; const Subject: string; out Match: TMatch): Boolean;
 { Matches only at the start of Subject (like expr's ':' operator). }
-function MatchExpressionAtStart(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean; overload;
-function MatchExpressionAtStart(const Expression: TExpression; const Subject: string;
-  out Match: TMatch): Boolean; overload;
+function MatchExpressionAtStart(const Expression: TExpression; const Subject: string; out Match: TMatch): Boolean;
 { Finds the leftmost match starting at or after byte offset StartOffset;
   "^" still means the start of Subject (as sed's s///g needs). }
-function SearchExpressionFrom(const Expression: TExpression; Subject: PChar; StartOffset: PtrInt;
-  out Match: TMatch): Boolean; overload;
 function SearchExpressionFrom(const Expression: TExpression; const Subject: string; StartOffset: PtrInt;
-  out Match: TMatch): Boolean; overload;
+  out Match: TMatch): Boolean;
 
 { The text group Group matched (Match from a search of Subject); '' when
   it did not take part. }
@@ -108,9 +98,6 @@ function MatchedText(const Subject: string; const Match: TMatch; Group: Integer)
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Memory,
   Sys.Text;
 
 const
@@ -120,25 +107,26 @@ const
 
 type
   TParser = record
-    Text: PChar;
+    Text: string;
+    { From 0: the character at Position is Text[Position + 1]. }
     Position: PtrInt;
     Syntax: TExpressionSyntax;
     GroupCount: Integer;
     Failed: Boolean;
-    ErrorMessage: PChar;
+    ErrorMessage: string;
   end;
 
 function NewNode(Kind: TNodeKind): PExpressionNode;
 begin
-  Result := PExpressionNode(AllocateZeroedMemory(SizeOf(TExpressionNode)));
+  New(Result);
+  Result^ := Default(TExpressionNode);
   Result^.Kind := Kind;
 end;
 
 procedure AddChild(Node: PExpressionNode; Child: PExpressionNode);
 begin
-  Node^.Children := ReallocateMemory(Node^.Children, QWord(Node^.ChildCount + 1) * SizeOf(PExpressionNode));
-  Node^.Children[Node^.ChildCount] := Child;
-  Inc(Node^.ChildCount);
+  SetLength(Node^.Children, Length(Node^.Children) + 1);
+  Node^.Children[High(Node^.Children)] := Child;
 end;
 
 procedure SetMember(Node: PExpressionNode; Character: Char);
@@ -151,7 +139,7 @@ begin
   Result := (Node^.Members[Ord(Character) shr 3] and (1 shl (Ord(Character) and 7))) <> 0;
 end;
 
-procedure Failure(var Parser: TParser; Message: PChar);
+procedure Failure(var Parser: TParser; const Message: string);
 begin
   if not Parser.Failed then
   begin
@@ -160,31 +148,40 @@ begin
   end;
 end;
 
+{ The character Offset after the current one; #0 past the end. }
+function Ahead(var Parser: TParser; Offset: Integer): Char;
+begin
+  if Parser.Position + Offset < Length(Parser.Text) then
+    Result := Parser.Text[Parser.Position + Offset + 1]
+  else
+    Result := #0;
+end;
+
 function Current(var Parser: TParser): Char;
 begin
-  Result := Parser.Text[Parser.Position];
+  Result := Ahead(Parser, 0);
 end;
 
 function NextIs(var Parser: TParser; Offset: Integer; Character: Char): Boolean;
 begin
-  Result := Parser.Text[Parser.Position + Offset] = Character;
+  Result := Ahead(Parser, Offset) = Character;
 end;
 
-function ClassContains(ClassName: PChar; Character: Char): Boolean;
+function ClassContains(const ClassName: string; Character: Char): Boolean;
 begin
-  if TextIsEqual(ClassName, 'alpha') then Result := IsLetter(Character)
-  else if TextIsEqual(ClassName, 'digit') then Result := IsDigit(Character)
-  else if TextIsEqual(ClassName, 'alnum') then Result := IsAlphanumeric(Character)
-  else if TextIsEqual(ClassName, 'upper') then Result := IsUpperCase(Character)
-  else if TextIsEqual(ClassName, 'lower') then Result := IsLowerCase(Character)
-  else if TextIsEqual(ClassName, 'space') then Result := IsSpace(Character)
-  else if TextIsEqual(ClassName, 'blank') then Result := (Character = ' ') or (Character = #9)
-  else if TextIsEqual(ClassName, 'punct') then
+  if ClassName = 'alpha' then Result := IsLetter(Character)
+  else if ClassName = 'digit' then Result := IsDigit(Character)
+  else if ClassName = 'alnum' then Result := IsAlphanumeric(Character)
+  else if ClassName = 'upper' then Result := IsUpperCase(Character)
+  else if ClassName = 'lower' then Result := IsLowerCase(Character)
+  else if ClassName = 'space' then Result := IsSpace(Character)
+  else if ClassName = 'blank' then Result := (Character = ' ') or (Character = #9)
+  else if ClassName = 'punct' then
     Result := (Byte(Character) > 32) and (Byte(Character) < 127) and not IsAlphanumeric(Character)
-  else if TextIsEqual(ClassName, 'print') then Result := (Byte(Character) >= 32) and (Byte(Character) < 127)
-  else if TextIsEqual(ClassName, 'graph') then Result := (Byte(Character) > 32) and (Byte(Character) < 127)
-  else if TextIsEqual(ClassName, 'cntrl') then Result := (Byte(Character) < 32) or (Byte(Character) = 127)
-  else if TextIsEqual(ClassName, 'xdigit') then
+  else if ClassName = 'print' then Result := (Byte(Character) >= 32) and (Byte(Character) < 127)
+  else if ClassName = 'graph' then Result := (Byte(Character) > 32) and (Byte(Character) < 127)
+  else if ClassName = 'cntrl' then Result := (Byte(Character) < 32) or (Byte(Character) = 127)
+  else if ClassName = 'xdigit' then
     Result := IsDigit(Character) or (ToLowerCase(Character) in ['a'..'f'])
   else
     Result := False;
@@ -197,8 +194,7 @@ var
   Low: Char;
   High: Char;
   Character: Char;
-  ClassName: array[0..15] of Char;
-  ClassLength: Integer;
+  ClassName: string;
   Index: Integer;
 begin
   Inc(Parser.Position); { '[' }
@@ -213,22 +209,19 @@ begin
     if (Current(Parser) = '[') and NextIs(Parser, 1, ':') then
     begin
       Parser.Position := Parser.Position + 2;
-      ClassLength := 0;
+      ClassName := '';
       while (Current(Parser) <> #0) and not ((Current(Parser) = ':') and NextIs(Parser, 1, ']')) do
       begin
-        if ClassLength < 15 then
-        begin
-          ClassName[ClassLength] := Current(Parser);
-          Inc(ClassLength);
-        end;
+        { Longer names are cut short, as they always were. }
+        if Length(ClassName) < 15 then
+          ClassName := ClassName + Current(Parser);
         Inc(Parser.Position);
       end;
-      ClassName[ClassLength] := #0;
       if Current(Parser) = #0 then
         Break;
       Parser.Position := Parser.Position + 2;
       for Index := 1 to 255 do
-        if ClassContains(@ClassName[0], Char(Index)) then
+        if ClassContains(ClassName, Char(Index)) then
           SetMember(Result, Char(Index));
       Continue;
     end;
@@ -237,7 +230,7 @@ begin
     High := Low;
     if (Current(Parser) = '-') and not NextIs(Parser, 1, ']') and not NextIs(Parser, 1, #0) then
     begin
-      High := Parser.Text[Parser.Position + 1];
+      High := Ahead(Parser, 1);
       Parser.Position := Parser.Position + 2;
       if High < Low then
       begin
@@ -320,8 +313,8 @@ begin
       end;
     '$':
       { In BRE "$" is an anchor only at the end. }
-      if (Parser.Syntax = SyntaxExtended) or (Parser.Text[Parser.Position + 1] = #0) or
-         ((Parser.Text[Parser.Position + 1] = '\') and (Parser.Text[Parser.Position + 2] in [')', '|'])) then
+      if (Parser.Syntax = SyntaxExtended) or (Ahead(Parser, 1) = #0) or
+         ((Ahead(Parser, 1) = '\') and (Ahead(Parser, 2) in [')', '|'])) then
       begin
         Inc(Parser.Position);
         Exit(NewNode(NodeEnd));
@@ -430,7 +423,7 @@ begin
       end;
       Inc(Parser.Position);
     end
-    else if ((Parser.Syntax = SyntaxExtended) and (Current(Parser) = '{') and IsDigit(Parser.Text[Parser.Position + 1])) or
+    else if ((Parser.Syntax = SyntaxExtended) and (Current(Parser) = '{') and IsDigit(Ahead(Parser, 1))) or
             ((Parser.Syntax = SyntaxBasic) and (Current(Parser) = '\') and NextIs(Parser, 1, '{')) then
     begin
       if Parser.Syntax = SyntaxBasic then
@@ -457,14 +450,14 @@ begin
   while not AtSequenceEnd(Parser) and not Parser.Failed do
   begin
     { A leading "*" in BRE is an ordinary character. }
-    if (Current(Parser) = '*') and (Result^.ChildCount = 0) then
+    if (Current(Parser) = '*') and (Length(Result^.Children) = 0) then
     begin
       Atom := NewNode(NodeCharacter);
       Atom^.Character := '*';
       Inc(Parser.Position);
     end
     else
-      Atom := ParseAtom(Parser, Result^.ChildCount = 0);
+      Atom := ParseAtom(Parser, Length(Result^.Children) = 0);
     AddChild(Result, ParseRepeats(Parser, Atom));
   end;
 end;
@@ -496,25 +489,24 @@ var
 begin
   if Node = nil then
     Exit;
-  for Index := 0 to Node^.ChildCount - 1 do
+  for Index := 0 to High(Node^.Children) do
     FreeNode(Node^.Children[Index]);
-  FreeMemory(Node^.Children);
   FreeNode(Node^.Child);
-  FreeMemory(Node);
+  Dispose(Node);
 end;
 
-function CompileExpression(Text: PChar; Syntax: TExpressionSyntax; out Expression: TExpression;
-  out ErrorMessage: PChar): Boolean;
+function CompileExpression(const Text: string; Syntax: TExpressionSyntax; out Expression: TExpression;
+  out ErrorMessage: string): Boolean;
 var
   Parser: TParser;
 begin
-  ZeroMemory(@Parser, SizeOf(Parser));
+  Parser := Default(TParser);
   Parser.Text := Text;
   Parser.Syntax := Syntax;
   Expression.Root := ParseAlternation(Parser);
   Expression.GroupCount := Parser.GroupCount;
   Expression.IgnoreCase := False;
-  ErrorMessage := nil;
+  ErrorMessage := '';
   if not Parser.Failed and (Current(Parser) <> #0) then
     Failure(Parser, 'Unmatched ) or \)');
   if Parser.Failed then
@@ -549,7 +541,7 @@ type
 
   TMatcher = record
     Expression: ^TExpression;
-    Subject: PChar;
+    Subject: string;
     Length: PtrInt;
     Match: TMatch;
     Steps: QWord;
@@ -590,7 +582,7 @@ begin
   case Continuation^.Node^.Kind of
     NodeSequence:
       begin
-        if Continuation^.Index >= Continuation^.Node^.ChildCount then
+        if Continuation^.Index >= Length(Continuation^.Node^.Children) then
           Exit(MatchContinuation(Matcher, Continuation^.Next, Position, EndPosition));
         Step := Continuation^;
         Inc(Step.Index);
@@ -652,16 +644,16 @@ begin
     NodeEmpty:
       Result := MatchContinuation(Matcher, Continuation, Position, EndPosition);
     NodeCharacter:
-      Result := (Position < Matcher.Length) and CharactersEqual(Matcher, Matcher.Subject[Position], Node^.Character) and
+      Result := (Position < Matcher.Length) and CharactersEqual(Matcher, Matcher.Subject[Position + 1], Node^.Character) and
         MatchContinuation(Matcher, Continuation, Position + 1, EndPosition);
     NodeAnyCharacter:
-      Result := (Position < Matcher.Length) and (Matcher.Subject[Position] <> #10) and
+      Result := (Position < Matcher.Length) and (Matcher.Subject[Position + 1] <> #10) and
         MatchContinuation(Matcher, Continuation, Position + 1, EndPosition);
     NodeSet:
       begin
         if Position >= Matcher.Length then
           Exit(False);
-        Character := Matcher.Subject[Position];
+        Character := Matcher.Subject[Position + 1];
         Result := IsMember(Node, Character) or (Matcher.Expression^.IgnoreCase and
           (IsMember(Node, ToLowerCase(Character)) or IsMember(Node, ToUpperCase(Character))));
         Result := Result and MatchContinuation(Matcher, Continuation, Position + 1, EndPosition);
@@ -680,7 +672,7 @@ begin
       end;
     NodeAlternation:
       begin
-        for Index := 0 to Node^.ChildCount - 1 do
+        for Index := 0 to High(Node^.Children) do
           if MatchNode(Matcher, Node^.Children[Index], Position, Continuation, EndPosition) then
             Exit(True);
         Result := False;
@@ -733,33 +725,43 @@ begin
   end;
 end;
 
-function MatchExpressionAtStart(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+{ The subject as matching sees it: up to its first #0, as the tools have
+  always treated a line. }
+procedure BeginMatcher(out Matcher: TMatcher; const Expression: TExpression; const Subject: string);
 var
-  Matcher: TMatcher;
+  Terminator: Integer;
 begin
   Matcher.Expression := @Expression;
   Matcher.Subject := Subject;
-  Matcher.Length := PtrInt(TextLength(Subject));
+  Terminator := Pos(#0, Subject);
+  if Terminator > 0 then
+    Matcher.Length := Terminator - 1
+  else
+    Matcher.Length := Length(Subject);
   Matcher.Steps := 0;
+end;
+
+function MatchExpressionAtStart(const Expression: TExpression; const Subject: string; out Match: TMatch): Boolean;
+var
+  Matcher: TMatcher;
+begin
+  BeginMatcher(Matcher, Expression, Subject);
   Result := TryAt(Matcher, 0);
   Match := Matcher.Match;
 end;
 
-function SearchExpression(const Expression: TExpression; Subject: PChar; out Match: TMatch): Boolean;
+function SearchExpression(const Expression: TExpression; const Subject: string; out Match: TMatch): Boolean;
 begin
   Result := SearchExpressionFrom(Expression, Subject, 0, Match);
 end;
 
-function SearchExpressionFrom(const Expression: TExpression; Subject: PChar; StartOffset: PtrInt;
+function SearchExpressionFrom(const Expression: TExpression; const Subject: string; StartOffset: PtrInt;
   out Match: TMatch): Boolean;
 var
   Matcher: TMatcher;
   Position: PtrInt;
 begin
-  Matcher.Expression := @Expression;
-  Matcher.Subject := Subject;
-  Matcher.Length := PtrInt(TextLength(Subject));
-  Matcher.Steps := 0;
+  BeginMatcher(Matcher, Expression, Subject);
   Position := StartOffset;
   if Position > Matcher.Length then
   begin
@@ -776,38 +778,6 @@ begin
   until Position > Matcher.Length;
   ResetMatch(Match);
   Result := False;
-end;
-
-{ --- Strings ----------------------------------------------------------- }
-
-function CompileExpression(const Text: string; Syntax: TExpressionSyntax; out Expression: TExpression;
-  out ErrorMessage: string): Boolean;
-var
-  MessageText: PChar;
-begin
-  Result := CompileExpression(PChar(Text), Syntax, Expression, MessageText);
-  if Result then
-    ErrorMessage := ''
-  else
-    ErrorMessage := MessageText;
-end;
-
-function SearchExpression(const Expression: TExpression; const Subject: string;
-  out Match: TMatch): Boolean;
-begin
-  Result := SearchExpression(Expression, PChar(Subject), Match);
-end;
-
-function MatchExpressionAtStart(const Expression: TExpression; const Subject: string;
-  out Match: TMatch): Boolean;
-begin
-  Result := MatchExpressionAtStart(Expression, PChar(Subject), Match);
-end;
-
-function SearchExpressionFrom(const Expression: TExpression; const Subject: string; StartOffset: PtrInt;
-  out Match: TMatch): Boolean;
-begin
-  Result := SearchExpressionFrom(Expression, PChar(Subject), StartOffset, Match);
 end;
 
 function MatchedText(const Subject: string; const Match: TMatch; Group: Integer): string;

@@ -33,17 +33,17 @@
 }
 program DrawTest;
 
-{$mode objfpc}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Display,
-  Sys.Format,
   Sys.Kernel,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Surfaces,
@@ -119,9 +119,9 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  Value: string;
   Seconds: QWord;
   Display: TDisplay;
   Error: LongInt;
@@ -133,18 +133,19 @@ var
   Canvas: TCanvas;
 begin
   Seconds := DefaultSeconds;
-  BeginOptions(Parser, [OptionDefinition('s', 'seconds', True, OptionSeconds)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('s', 'seconds', True, OptionSeconds)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionSeconds then
-      if not ParseUnsigned(OptionValue, Seconds) then
-        FailWithUsageHint('the time must be a whole number of seconds', []);
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no operands are taken', []);
+      if not ParseUnsignedDecimal(Value, Seconds) then
+        FailWithUsageHint('the time must be a whole number of seconds');
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no operands are taken');
+  CommandLine.Free;
   if not LoadFontFamily(DejaVuSansFamily, Fonts) then
-    Fail(1, 'no fonts in %s/%s', [ArgumentText(FontDirectory), ArgumentText(DejaVuSansFamily)]);
+    Fail(1, Format('no fonts in %s/%s', [FontDirectory, DejaVuSansFamily]));
   Error := OpenDisplay(Display);
   if Error <> ErrorNone then
-    FailWithError(1, Error, '/dev/display', []);
+    FailWithError(1, Error, '/dev/display');
   Scale := Display.ScalePercent;
   Title := SelectFace(Fonts, TitlePoints, Display.Dpi, True);
   Text := SelectFace(Fonts, TextPoints, Display.Dpi, False);
@@ -163,6 +164,6 @@ begin
   end;
   KernelSleep(Seconds * 1000);
   CloseDisplay(Display);
-  WriteFormatted(StandardOutput, '%u DPI: title %u px bold, text %u px'#10, [ArgumentUnsigned(Display.Dpi),
-    ArgumentUnsigned(Title^.Size), ArgumentUnsigned(Text^.Size)]);
+  WriteString(StandardOutput, Format('%u DPI: title %u px bold, text %u px'#10,
+    [Display.Dpi, Title^.Size, Text^.Size]));
 end.

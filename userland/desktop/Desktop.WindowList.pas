@@ -141,7 +141,7 @@ begin
     SetLength(FWindows, Index + 1);
     FWindows[Index].Id := Message.Window;
   end;
-  FWindows[Index].Title := StrPas(@Message.Text[0]);
+  FWindows[Index].Title := MessageText(Message);
   FWindows[Index].Flags := Message.Flags;
   FWindows[Index].DisplayNumber := LongInt(Message.Code);
   FWindows[Index].ProcessId := QWord(LongWord(Message.Value));

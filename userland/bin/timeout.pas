@@ -40,7 +40,7 @@ uses
   Util.CommandLine,
   Util.Commands,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: timeout [OPTION] DURATION COMMAND [ARG]...'#10 +
@@ -117,7 +117,7 @@ end;
 procedure FailUsage(const Message: string);
 begin
   Report(Message);
-  PrintErrorString(Format('Try ''%s --help'' for more information.'#10, [ProgramNameText]));
+  PrintErrorString(Format('Try ''%s --help'' for more information.'#10, [ProgramName]));
   Halt(StatusTimeoutFailed);
 end;
 

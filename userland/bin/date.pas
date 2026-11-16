@@ -51,7 +51,7 @@ uses
   Util.Dates,
   Util.SystemRequests,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: date [OPTION]... [+FORMAT]'#10 +
@@ -95,7 +95,6 @@ var
   Local: TLocalTime;
   DateTime: Sys.Time.TDateTime;
   Position: Integer;
-  OffsetBuffer: array[0..7] of Char;
   OffsetText: string;
 begin
   if ShowUniversal then
@@ -103,8 +102,7 @@ begin
   else
     DecodeLocalTime(Time, Local);
   DateTime := Local.DateTime;
-  FormatUtcOffset(Local.Offset, @OffsetBuffer[0]);
-  OffsetText := PChar(@OffsetBuffer[0]);
+  OffsetText := FormatUtcOffset(Local.Offset);
   Result := '';
   Position := 1;
   while Position <= Length(TimeFormat) do

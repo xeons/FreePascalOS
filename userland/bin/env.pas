@@ -36,8 +36,7 @@ uses
   Sys.Streams,
   Util.CommandLine,
   Util.Commands,
-  Util.Messages,
-  Util.Output;
+  Util.Messages;
 
 const
   Usage = 'Usage: env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]'#10 +
@@ -58,7 +57,7 @@ begin
   while EnvironmentCount > 0 do
   begin
     Entry := EnvironmentBlock[0];
-    RemoveVariable(PChar(Copy(Entry, 1, Pos('=', Entry) - 1)));
+    RemoveVariable(Copy(Entry, 1, Pos('=', Entry) - 1));
   end;
 end;
 
@@ -119,10 +118,10 @@ begin
     else if (Text = '-u') and (First + 1 < Length(Arguments)) then
     begin
       Inc(First);
-      RemoveVariable(PChar(Arguments[First]));
+      RemoveVariable(Arguments[First]);
     end
     else if StartsStr('--unset=', Text) then
-      RemoveVariable(PChar(Copy(Text, 9, MaxInt)))
+      RemoveVariable(Copy(Text, 9, MaxInt))
     else if (Text = '-0') or (Text = '--null') then
       LineEnd := #0
     else
@@ -140,8 +139,7 @@ begin
     EqualsPosition := Pos('=', Arguments[First]);
     if EqualsPosition <= 1 then
       Break;
-    SetVariable(PChar(Copy(Arguments[First], 1, EqualsPosition - 1)),
-      PChar(Copy(Arguments[First], EqualsPosition + 1, MaxInt)));
+    SetVariable(Copy(Arguments[First], 1, EqualsPosition - 1), Copy(Arguments[First], EqualsPosition + 1, MaxInt));
     Inc(First);
   end;
 

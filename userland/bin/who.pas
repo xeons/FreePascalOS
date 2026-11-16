@@ -34,7 +34,7 @@ uses
   Sys.Time,
   Util.Accounts,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: who [OPTION]... [ am i ]'#10 +

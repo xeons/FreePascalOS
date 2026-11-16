@@ -40,7 +40,7 @@ uses
   Util.CommandLine,
   Util.DigestTool,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Numbers;
 
 const

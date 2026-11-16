@@ -170,7 +170,7 @@ begin
   Message.Flags := Flags;
   Message.Code := LongWord(Window.ScreenNumber);
   Message.Value := LongInt(TClient(Window.Client).ProcessId);
-  SetMessageText(Message, PChar(Window.Title));
+  SetMessageText(Message, Window.Title);
   SendToShell(Message);
 end;
 

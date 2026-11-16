@@ -49,7 +49,7 @@ uses
   Sys.Text,
   Sys.Time,
   Util.Messages,
-  Util.Output,
+  Sys.Streams,
   Util.Sizes;
 
 const

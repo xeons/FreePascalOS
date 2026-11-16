@@ -41,7 +41,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Sys.Streams;
 
 const
   StatusTrue = 0;
@@ -275,7 +275,7 @@ var
   Evaluator: TExpressionEvaluator;
   Outcome: Boolean;
 begin
-  Name := ProgramNameText;
+  Name := ProgramName;
   Words := ProgramArguments;
   if Name = '[' then
   begin

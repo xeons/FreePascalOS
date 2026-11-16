@@ -35,7 +35,7 @@ uses
   Sys.Kernel,
   Sys.Time,
   Util.CommandLine,
-  Util.Output;
+  Sys.Streams;
 
 const
   Usage = 'Usage: uptime [OPTION]...'#10 +

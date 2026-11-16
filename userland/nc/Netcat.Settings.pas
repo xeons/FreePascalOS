@@ -70,8 +70,7 @@ implementation
 
 uses
   Sys.Streams,
-  Sys.HostNames,
-  Util.Output;
+  Sys.HostNames;
 
 procedure InitializeSettings;
 begin

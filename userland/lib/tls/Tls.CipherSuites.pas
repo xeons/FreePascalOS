@@ -67,7 +67,7 @@ function FindCipherSuite(Identifier: Word; out Info: TCipherSuiteInfo): Boolean;
 procedure DefaultCipherSuites(out List: TCipherSuiteList);
 { "TLS_AES_128_GCM_SHA256" etc.; also the OpenSSL style names
   ("TLS_AES_128_GCM_SHA256" is the same in both). 0 when unknown. }
-function CipherSuiteByName(Name: PChar): Word;
+function CipherSuiteByName(const Name: string): Word;
 function CipherSuiteListContains(constref List: TCipherSuiteList; Identifier: Word): Boolean;
 
 implementation
@@ -116,15 +116,13 @@ begin
   end;
 end;
 
-function CipherSuiteByName(Name: PChar): Word;
+function CipherSuiteByName(const Name: string): Word;
 var
   Index: Integer;
 begin
   Result := 0;
-  if Name = nil then
-    Exit;
   for Index := 0 to High(Suites) do
-    if SameText(string(Name), string(Suites[Index].Name)) then
+    if SameText(Name, string(Suites[Index].Name)) then
       Exit(Suites[Index].Identifier);
 end;
 

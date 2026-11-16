@@ -42,7 +42,7 @@ function BytesPerSample(Kind: LongWord): LongWord;
 function SampleKindIsValid(Kind: LongWord): Boolean;
 { The kind called Name (u8, s16, s24, s32, float); 0 if none. }
 function SampleKindOfName(const Name: string): LongWord;
-function SampleKindName(Kind: LongWord): PChar;
+function SampleKindName(Kind: LongWord): string;
 { Writes Value (-1 to 1, clipped) as one sample of Kind at Destination. }
 procedure EncodeSample(Value: Single; Kind: LongWord; Destination: PByte);
 { Reads one sample of Kind at Source as -1 to 1. }
@@ -82,7 +82,7 @@ begin
     Result := 0;
 end;
 
-function SampleKindName(Kind: LongWord): PChar;
+function SampleKindName(Kind: LongWord): string;
 begin
   case Kind of
     SampleUnsigned8: Result := 'u8';

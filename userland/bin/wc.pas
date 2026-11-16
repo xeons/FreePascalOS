@@ -35,8 +35,7 @@ uses
   Sys.Streams,
   Sys.Text,
   Util.CommandLine,
-  Util.Input,
-  Util.Output;
+  Util.Input;
 
 const
   Usage = 'Usage: wc [OPTION]... [FILE]...'#10 +

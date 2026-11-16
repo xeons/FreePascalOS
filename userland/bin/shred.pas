@@ -42,7 +42,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
+  Sys.Streams,
   Util.Paths,
   Util.Sizes;
 
@@ -82,7 +82,7 @@ var
 { "<program>: <message>" on standard error, for -v. }
 procedure ReportProgress(const Message: string);
 begin
-  PrintErrorStringLine(ProgramNameText + ': ' + Message);
+  PrintErrorStringLine(ProgramName + ': ' + Message);
 end;
 
 function OverwritePass(Handle: Int64; const Path: string; Length: QWord; UseZeros: Boolean;

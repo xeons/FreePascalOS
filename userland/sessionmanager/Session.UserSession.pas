@@ -60,7 +60,6 @@ type
   TUserSession = class
   private
     FAccount: TLoginAccount;
-    FEnvironment: TLoginEnvironment;
     FProcess: Int64;
     FSessionId: QWord;
     FDesktopExitCode: LongInt;
@@ -134,12 +133,11 @@ end;
 
 function TUserSession.UserName: string;
 begin
-  Result := string(PChar(@FAccount.Name[0]));
+  Result := FAccount.Name;
 end;
 
 function TUserSession.Start(const Account: TLoginAccount): Boolean;
 var
-  Arguments: array[0..1] of PChar;
   Options: TProcessOptions;
   Process: Int64;
 begin
@@ -147,13 +145,11 @@ begin
   if IsActive then
     Exit;
   FAccount := Account;
-  ApplyUserSettings(UserName, string(PChar(@FAccount.Home[0])));
-  Arguments[0] := DesktopProgram;
-  Arguments[1] := nil;
+  ApplyUserSettings(UserName, FAccount.Home);
   DefaultProcessOptions(Options);
   Options.GroupId := GroupNew;
   Options.NewSession := True;
-  Process := StartAsUser(FAccount, DesktopProgram, @Arguments[0], Options, FEnvironment);
+  Process := StartAsUser(FAccount, [DesktopProgram], Options);
   if Process < 0 then
   begin
     Say('cannot start the desktop for ' + UserName);

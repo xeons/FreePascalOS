@@ -35,12 +35,11 @@ program printf;
 
 uses
   SysUtils,
-  Sys.Format,
   Sys.Streams,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output;
+  Printf.Conversions;
 
 var
   Arguments: TStringArray;
@@ -239,7 +238,7 @@ begin
     end;
 
     { Collect the specification, replacing * with argument values, and
-      hand it to the library formatter. }
+      hand it to the conversion (Printf.Conversions). }
     Specification := '%';
     Inc(Position);
     while CharacterAt(FormatText, Position) in ['-', '+', ' ', '#', '0'..'9', '.', '*'] do
@@ -267,9 +266,7 @@ begin
         begin
           Specification := Specification + 's';
           Value := NextArgument;
-          { The C style formatter of the system library (flags, %o and
-            lower case %x, which SysUtils' Format lacks). }
-          WriteFormatted(StandardOutput, PChar(Specification), [ArgumentText(PChar(Value))]);
+          WriteString(StandardOutput, FormatConversion(Specification, TextArgument(Value)));
         end;
       'b':
         if not WriteWithEscapes(NextArgument) then
@@ -285,9 +282,9 @@ begin
           Specification := Specification + Conversion;
           Number := ArgumentAsNumber(NextArgument);
           if Conversion in ['d', 'i'] then
-            WriteFormatted(StandardOutput, PChar(Specification), [ArgumentNumber(Number)])
+            WriteString(StandardOutput, FormatConversion(Specification, SignedArgument(Number)))
           else
-            WriteFormatted(StandardOutput, PChar(Specification), [ArgumentUnsigned(QWord(Number))]);
+            WriteString(StandardOutput, FormatConversion(Specification, UnsignedArgument(QWord(Number))));
         end;
     else
       begin

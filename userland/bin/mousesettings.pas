@@ -52,7 +52,6 @@ uses
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.MouseSettings,

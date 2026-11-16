@@ -39,7 +39,7 @@ uses
   Sys.NetworkInterfaces,
   Sys.InterfaceText,
   Util.Messages,
-  Util.Output;
+  Sys.Streams;
 
 { "BRU", "LRU": net-tools' letters, in its order. }
 function ShortFlagsText(Flags: LongWord): string;

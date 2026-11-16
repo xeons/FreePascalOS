@@ -83,7 +83,7 @@ uses
   Sys.Environment,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
+  SysUtils,
   Sys.Libraries,
   Sys.Memory,
   Sys.Processes,
@@ -598,12 +598,12 @@ begin
   if Condition then
   begin
     Inc(PassedCount);
-    WriteFormatted(StandardOutput, '[coretest] pass: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('[coretest] pass: %s'#10, [Name]));
   end
   else
   begin
     Inc(FailedCount);
-    WriteFormatted(StandardOutput, '[coretest] FAIL: %s'#10, [ArgumentText(Name)]);
+    WriteString(StandardOutput, Format('[coretest] FAIL: %s'#10, [Name]));
   end;
 end;
 
@@ -616,8 +616,8 @@ begin
   while Text[Index] <> #0 do
   begin
     case Text[Index] of
-      #10: WriteText(StandardOutput, '\n');
-      #9: WriteText(StandardOutput, '\t');
+      #10: WriteString(StandardOutput, '\n');
+      #9: WriteString(StandardOutput, '\t');
     else
       WriteCharacter(StandardOutput, Text[Index]);
     end;
@@ -681,12 +681,12 @@ begin
   Check(Passed, Test.Command);
   if not Passed then
   begin
-    WriteFormatted(StandardOutput, '[coretest]   expected status %d, output "', [ArgumentNumber(Test.ExpectedStatus)]);
+    WriteString(StandardOutput, Format('[coretest]   expected status %d, output "', [Test.ExpectedStatus]));
     WriteVisible(Test.ExpectedOutput);
-    WriteLine(StandardOutput, '"');
-    WriteFormatted(StandardOutput, '[coretest]   got      status %d, output "', [ArgumentNumber(Status)]);
+    WriteStringLine(StandardOutput, '"');
+    WriteString(StandardOutput, Format('[coretest]   got      status %d, output "', [Status]));
     WriteVisible(Output);
-    WriteLine(StandardOutput, '"');
+    WriteStringLine(StandardOutput, '"');
   end;
   FreeMemory(Output);
 end;
@@ -806,7 +806,7 @@ begin
   end;
   PassedCount := 0;
   FailedCount := 0;
-  WriteLine(StandardOutput, '[coretest] user mode tests starting');
+  WriteStringLine(StandardOutput, '[coretest] user mode tests starting');
   PrepareWorkDirectory;
   TestRunTimeLoading;
   TestHeap;
@@ -816,8 +816,8 @@ begin
   ChangeDirectory('/');
   RemoveTree(WorkDirectory);
   SyncFileSystems;
-  WriteFormatted(StandardOutput, '[coretest] %d passed, %d failed'#10, [ArgumentNumber(PassedCount),
-    ArgumentNumber(FailedCount)]);
+  WriteString(StandardOutput, Format('[coretest] %d passed, %d failed'#10, [PassedCount,
+    FailedCount]));
   if FailedCount > 0 then
     Halt(1);
   Halt(0);

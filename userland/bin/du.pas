@@ -38,7 +38,7 @@ uses
   Util.Directories,
   Util.Messages,
   Util.Numbers,
-  Util.Output,
+  Sys.Streams,
   Util.Paths,
   Util.Sizes;
 
