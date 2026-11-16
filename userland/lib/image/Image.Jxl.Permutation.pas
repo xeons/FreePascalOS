@@ -82,6 +82,7 @@ var
   Candidate: PtrUInt;
   Level: LongInt;
 begin
+  Result := nil;
   SetLength(Result, Size);
   if Size = 0 then
     Exit;

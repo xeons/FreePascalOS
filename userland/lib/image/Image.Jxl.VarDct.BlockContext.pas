@@ -103,76 +103,6 @@ begin
   Result.LowFrequencyContextCount := 1;
 end;
 
-procedure InverseMoveToFront(var Values: array of Byte);
-var
-  Table: array[0..255] of Byte;
-  Index: LongInt;
-  Position: LongInt;
-  Value: Byte;
-begin
-  for Index := 0 to 255 do
-    Table[Index] := Index;
-  for Index := 0 to High(Values) do
-  begin
-    Position := Values[Index];
-    Value := Table[Position];
-    Values[Index] := Value;
-    while Position > 0 do
-    begin
-      Table[Position] := Table[Position - 1];
-      Dec(Position);
-    end;
-    Table[0] := Value;
-  end;
-end;
-
-{ A context map as entropy coded streams code theirs (simple, or itself
-  entropy coded with optional move-to-front); returns the cluster count. }
-function ReadContextMap(Reader: TJxlBitReader; var Map: array of Byte): LongInt;
-var
-  BitsPerEntry: LongInt;
-  Index: LongInt;
-  UseMoveToFront: Boolean;
-  Code: TJxlEntropyCode;
-  SymbolReader: TJxlSymbolReader;
-  Symbol: LongWord;
-begin
-  if Reader.ReadBool then
-  begin
-    BitsPerEntry := LongInt(Reader.ReadBits(2));
-    for Index := 0 to High(Map) do
-      Map[Index] := Reader.ReadBits(BitsPerEntry);
-  end
-  else
-  begin
-    UseMoveToFront := Reader.ReadBool;
-    Code := ReadJxlEntropyCode(Reader, 1, Length(Map) <= 2);
-    try
-      SymbolReader := TJxlSymbolReader.Create(Code, Reader);
-      try
-        for Index := 0 to High(Map) do
-        begin
-          Symbol := SymbolReader.ReadUint(0);
-          if Symbol >= 256 then
-            RaiseBadBlockContext('bad cluster');
-          Map[Index] := Symbol;
-        end;
-        SymbolReader.CheckFinalState;
-      finally
-        SymbolReader.Free;
-      end;
-    finally
-      Code.Free;
-    end;
-    if UseMoveToFront then
-      InverseMoveToFront(Map);
-  end;
-  Result := 0;
-  for Index := 0 to High(Map) do
-    if Map[Index] + 1 > Result then
-      Result := Map[Index] + 1;
-end;
-
 function ReadJxlBlockContextMap(Reader: TJxlBitReader): TJxlBlockContextMap;
 var
   Channel: LongInt;
@@ -200,7 +130,7 @@ begin
   if Result.LowFrequencyContextCount * (Count + 1) > 64 then
     RaiseBadBlockContext('too big');
   SetLength(Result.ContextMap, 3 * JxlOrderCount * Result.LowFrequencyContextCount * (Count + 1));
-  Result.ContextCount := ReadContextMap(Reader, Result.ContextMap);
+  Result.ContextCount := ReadJxlContextMap(Reader, Result.ContextMap);
   if Result.ContextCount > 16 then
     RaiseBadBlockContext('too many contexts');
 end;
