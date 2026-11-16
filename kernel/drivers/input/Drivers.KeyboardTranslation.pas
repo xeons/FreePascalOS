@@ -68,6 +68,8 @@ type
     KeyCount: QWord;
     { Left Alt (AltGr is the right one). }
     AltPressed: Boolean;
+    { Either Super (logo) key: E0 5B, E0 5C. }
+    SuperPressed: Boolean;
     { The keyboard's number in input events, and what the key being
       handled typed (0 if nothing, or a sequence). }
     Source: Word;
@@ -99,6 +101,9 @@ const
   ScanCapsLock = $3A;
   ScanNumLock = $45;
   ScanScrollLock = $46;
+  { After E0: the left and right Super (logo) keys. }
+  ScanLeftSuper = $5B;
+  ScanRightSuper = $5C;
   ScanFirstKeypad = $47;
   ScanLastKeypad = $53;
 
@@ -325,6 +330,8 @@ begin
     Result := Result or ModifierNumLock;
   if State.ScrollLockOn then
     Result := Result or ModifierScrollLock;
+  if State.SuperPressed then
+    Result := Result or ModifierSuper;
 end;
 
 procedure ReportKeyEvent(var State: TKeyboardState; Code: Byte; Extended, Released: Boolean);
@@ -363,12 +370,15 @@ begin
   Result := False;
   if Extended then
   begin
-    { Right Ctrl is E0 1D, AltGr E0 38; E0 2A/B6 are fake shifts some
-      keys send. }
+    { Right Ctrl is E0 1D, AltGr E0 38, the Super keys E0 5B and E0 5C
+      (modifiers: they type nothing); E0 2A/B6 are fake shifts some keys
+      send. }
     if Code = ScanControl then
       State.ControlPressed := not Released
     else if Code = ScanAlt then
       State.AltGrPressed := not Released
+    else if (Code = ScanLeftSuper) or (Code = ScanRightSuper) then
+      State.SuperPressed := not Released
     else if not Released and (Code <> ScanLeftShift) and (Code <> ScanRightShift) then
     begin
       Inc(State.KeyCount);

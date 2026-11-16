@@ -24,15 +24,17 @@
   Becomes the display server's shell (one runs at a time) and shows a
   desktop on every display (a drawn wallpaper; on the first, an icon for
   each program: a double click or Enter starts it) and a taskbar along
-  the bottom of the first display: the Start menu (the programs, Log
-  off and Shut down, through the session manager that started it), a
+  the bottom of the first display: the Start menu (the programs, Lock,
+  Log off, Suspend and Shut down, through the session manager that
+  started it), a
   button for each window of the other programs (a click
   activates it, or minimizes it if it is active; a right click offers
   Restore, Minimize, Maximize and Close; on the taskbar itself, the Task
   Manager), the notification area and a clock (HH:MM, UTC: the system
   has no time zone yet). Ctrl+Shift+Escape, a key the desktop takes for
   the whole desktop, opens the task manager (or brings the one it
-  opened forward). Maximized windows
+  opened forward); Super+L and Ctrl+Alt+L lock the screen (the session
+  manager shows the lock screen). Maximized windows
   stop above the taskbar. -w names a wallpaper image, kept for when
   images can be read (libimage); until then the drawn design shows. The
   image is kept in the user's settings (Desktop/Wallpaper), so a desktop
@@ -41,8 +43,9 @@
   Prints what happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels): start,
-                          start-COMMAND, start-logoff and start-shutdown
-                          (when the menu opens), icon-COMMAND, task-TITLE,
+                          start-COMMAND, start-lock, start-logoff,
+                          start-suspend and start-shutdown (when the
+                          menu opens), icon-COMMAND, task-TITLE,
                           context-ITEM (a button's menu),
                           taskbar-task-manager (the taskbar's menu),
                           clock, notification-N, network-settings (the
@@ -57,6 +60,9 @@
     context ITEM          a task button's menu item was chosen (context
                           task manager: the taskbar's menu's)
     hotkey task manager   Ctrl+Shift+Escape was pressed
+    hotkey lock           Super+L or Ctrl+Alt+L was pressed
+    locking, suspending   the session manager is asked to lock the
+                          screen, or to suspend
     clock HH:MM           the time the clock shows now
     notification N TEXT   a notification icon is shown (notification-gone N)
     tooltip TEXT          a notification icon's tooltip is shown
@@ -80,7 +86,8 @@
   Desktop.WindowList, Desktop.NotificationArea, Desktop.Clock,
   Desktop.VolumeIndicator, Desktop.VolumePopup, Desktop.NetworkIndicator
   and Desktop.NetworkPopup (the taskbar), Controls.PictureGrid, Desktop.ProgramPictures and
-  Desktop.SmallPictures (the pictures), Desktop.Report (what it prints).
+  Desktop.SmallPictures (the pictures), Desktop.Locking (locking and
+  suspending), Desktop.Report (what it prints).
 }
 program DesktopShell;
 

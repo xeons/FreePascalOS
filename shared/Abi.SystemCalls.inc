@@ -1236,5 +1236,7 @@ const
   ModifierCapsLock = $10;
   ModifierNumLock = $20;
   ModifierScrollLock = $40;
+  { The Super (Windows logo) key, left or right. }
+  ModifierSuper = $80;
 
 {$include Abi.Networking.inc}

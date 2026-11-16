@@ -29,7 +29,9 @@
   desktop pixels where they fall in that buffer, so a window across the
   edge between two screens is drawn on both. Pixels put right in a back
   buffer some other way (a moved window's, copied: Server.WindowMoves)
-  go to the screen with them (AddPresentOnly).
+  go to the screen with them (AddPresentOnly). While the screen is
+  locked (Server.ScreenLock) only the lock screen's windows are drawn,
+  over a plain dark background.
 }
 unit Server.Composer;
 
@@ -70,7 +72,12 @@ uses
   Server.Screen,
   Server.Frames,
   Server.Cursor,
-  Server.DragFeedback;
+  Server.DragFeedback,
+  Server.ScreenLock;
+
+const
+  { Behind the lock screen, where it does not cover a display. }
+  LockedBackground = $FF0B1724;
 
 var
   Damage: TRegion;
@@ -118,11 +125,14 @@ begin
   BeginCanvas(Canvas, Screen^.BackBuffer);
   SetCanvasOrigin(Canvas, -Screen^.Bounds.Left, -Screen^.Bounds.Top);
   SetCanvasClip(Canvas, ScreenDamage);
-  FillRectangle(Canvas, Screen^.Bounds, Theme.Desktop);
+  if ScreenLocked then
+    FillRectangle(Canvas, Screen^.Bounds, LockedBackground)
+  else
+    FillRectangle(Canvas, Screen^.Bounds, Theme.Desktop);
   for Index := 0 to WindowCount - 1 do
   begin
     Window := Windows[Index];
-    if not Window.Visible then
+    if not Window.Visible or not WindowUsable(Window) then
       Continue;
     if IsFramed(Window) then
       DrawFrame(Canvas, Window, Window = ActiveWindow);

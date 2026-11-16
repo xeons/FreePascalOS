@@ -18,14 +18,17 @@
 
 {
   The session manager's port, "session" (Windowing.Sessions has the
-  protocol): the desktop asks it to log off, shut down or restart.
+  protocol): the desktop asks it to log off, lock the screen
+  (Session.ScreenLock), shut down, restart or suspend
+  (Session.Suspend).
 
   Only the user of the session (or root) is listened to: the kernel says
   who holds the other end of each connection. The answer goes before
   the request is carried out, since logging off ends the program that
   asked. Shutting down is the kernel's (CallShutdown): it tells the
   service manager, which stops the services in order, this one among
-  them.
+  them. Suspending is the kernel's too (CallSuspend), and allowed to the
+  same users. Locking needs a user logged in.
 }
 unit Session.Requests;
 
@@ -35,10 +38,11 @@ unit Session.Requests;
 interface
 
 uses
-  Session.UserSession;
+  Session.UserSession,
+  Session.ScreenLock;
 
 { Creates the port; False if it cannot be made. }
-function OpenSessionPort(Session: TUserSession): Boolean;
+function OpenSessionPort(Session: TUserSession; Lock: TScreenLock): Boolean;
 
 implementation
 
@@ -50,6 +54,7 @@ uses
   Sys.Objects,
   Windowing.HandleWatches,
   Windowing.Sessions,
+  Session.Suspend,
   Session.Report;
 
 type
@@ -57,6 +62,7 @@ type
   private
     FPort: Int64;
     FSession: TUserSession;
+    FLock: TScreenLock;
     procedure ConnectionWaiting(Handle: Int64);
     procedure RequestArrived(Handle: Int64);
     function Permitted(const Peer: TAbiChannelPeer): Boolean;
@@ -66,7 +72,7 @@ type
 var
   Server: TRequestServer;
 
-function OpenSessionPort(Session: TUserSession): Boolean;
+function OpenSessionPort(Session: TUserSession; Lock: TScreenLock): Boolean;
 var
   Port: Int64;
 begin
@@ -76,6 +82,7 @@ begin
   Server := TRequestServer.Create;
   Server.FPort := Port;
   Server.FSession := Session;
+  Server.FLock := Lock;
   WatchHandle(Port, @Server.ConnectionWaiting);
   Result := True;
 end;
@@ -111,6 +118,10 @@ begin
         Say('restarting');
         KernelShutdown(ShutdownReboot);
       end;
+    SessionRequestLock:
+      FLock.Lock('asked');
+    SessionRequestSuspend:
+      SuspendSoon(FLock);
   end;
 end;
 
@@ -136,8 +147,10 @@ begin
   Reply.Reserved := 0;
   if not Permitted(Peer) then
     Reply.Error := ErrorNotPermitted
-  else if (Request.Code < SessionRequestLogOff) or (Request.Code > SessionRequestReboot) then
+  else if (Request.Code < SessionRequestLogOff) or (Request.Code > SessionRequestSuspend) then
     Reply.Error := ErrorInvalidArgument
+  else if (Request.Code = SessionRequestLock) and (not FSession.IsActive or FSession.IsEnding) then
+    Reply.Error := ErrorNotPermitted
   else
     Reply.Error := ErrorNone;
   SendMessage(Handle, @Reply, SizeOf(Reply), []);

@@ -32,6 +32,10 @@
   (EventDragFinished); with no window there, or a cancelled drag, it
   hears that nothing was done.
 
+  While the screen is locked (Server.ScreenLock) no drag starts, and
+  locking cancels one: only the lock screen's windows are ever under the
+  pointer (WindowAt).
+
   A program that starts a drag a moment after the button was let go
   (it saw the pointer move with it held, the release still on its way)
   gets the drop where the pointer is.
@@ -56,6 +60,8 @@ procedure StartDataDrag(Client: TClient; Window: TServerWindow; AllowedEffects: 
 procedure TakeDragAnswer(Window: TServerWindow; Number, Effect: LongWord);
 { What the window dropped on did. }
 procedure TakeDropFinish(Window: TServerWindow; Number, Effect: LongWord);
+{ Ends the drag with nothing dropped (Escape, or the screen locked). }
+procedure CancelDataDrag;
 { The pointer moved (Modifiers: the keyboard's). }
 procedure DataDragPointerMoved(Modifiers: LongWord);
 { Button 1 was let go: the drop. }
@@ -77,7 +83,8 @@ uses
   Server.Actions,
   Server.Input,
   Server.DataOffers,
-  Server.DragFeedback;
+  Server.DragFeedback,
+  Server.ScreenLock;
 
 const
   ScanEscape = $01;
@@ -200,7 +207,8 @@ procedure StartDataDrag(Client: TClient; Window: TServerWindow; AllowedEffects: 
 var
   Message: TWindowMessage;
 begin
-  if (Window = nil) or (DragOfferOwner <> Client) or (DragOfferFormats = 0) or Active or (AllowedEffects = 0) then
+  if (Window = nil) or (DragOfferOwner <> Client) or (DragOfferFormats = 0) or Active or (AllowedEffects = 0) or
+     not WindowUsable(Window) then
   begin
     if Window <> nil then
     begin

@@ -17,8 +17,12 @@
 }
 
 {
-  The Start menu: the programs (Desktop.Programs), then Log off and
-  Shut down.
+  The Start menu: the programs (Desktop.Programs), then Lock, Log off,
+  Suspend and Shut down.
+
+  Lock and Suspend act at once (Desktop.Locking: the session manager
+  shows the lock screen, or suspends the computer, locking it first if
+  the user wants it locked on resume).
 
   It opens above the Start button, its bottom on the taskbar's top edge
   (libcontrols' pop-up menu, measured first so it can be placed so).
@@ -30,7 +34,8 @@
   hand, with no session manager, ends itself to log off and calls the
   system's shutdown itself (only root may). Where each item is on the
   screen is said when it opens ("place start-COMMAND X Y",
-  "place start-logoff X Y", "place start-shutdown X Y").
+  "place start-lock X Y", "place start-logoff X Y", "place
+  start-suspend X Y", "place start-shutdown X Y").
 }
 unit Desktop.StartMenu;
 
@@ -52,6 +57,8 @@ type
     procedure ProgramChosen(Item: TMenuItem);
     procedure ShutDownChosen(Item: TMenuItem);
     procedure LogOffChosen(Item: TMenuItem);
+    procedure LockChosen(Item: TMenuItem);
+    procedure SuspendChosen(Item: TMenuItem);
     procedure TellPlaces(List: TMenuList);
   public
     constructor Create;
@@ -78,12 +85,15 @@ uses
   Controls.MessageBoxes,
   Windowing.Sessions,
   Desktop.Programs,
+  Desktop.Locking,
   Desktop.Report;
 
 const
   { The tags of Log off and Shut down: past the programs. }
   ShutDownTag = -1;
   LogOffTag = -2;
+  LockTag = -3;
+  SuspendTag = -4;
 
 constructor TStartMenu.Create;
 var
@@ -98,8 +108,12 @@ begin
     Item.Tag := Index;
   end;
   FMenu.AddSeparator;
+  Item := FMenu.Add('Loc&k', @LockChosen);
+  Item.Tag := LockTag;
   Item := FMenu.Add('&Log off...', @LogOffChosen);
   Item.Tag := LogOffTag;
+  Item := FMenu.Add('S&uspend', @SuspendChosen);
+  Item.Tag := SuspendTag;
   Item := FMenu.Add('&Shut down...', @ShutDownChosen);
   Item.Tag := ShutDownTag;
 end;
@@ -127,6 +141,10 @@ begin
       Name := 'start-shutdown'
     else if FMenu[Index].Tag = LogOffTag then
       Name := 'start-logoff'
+    else if FMenu[Index].Tag = LockTag then
+      Name := 'start-lock'
+    else if FMenu[Index].Tag = SuspendTag then
+      Name := 'start-suspend'
     else
       Name := 'start-' + DesktopPrograms[FMenu[Index].Tag].Command;
     Top := PopupMenuItemTop(FMenu, Index);
@@ -173,6 +191,18 @@ begin
   if Status < 0 then
     ShowMessageBox('Shut down', 'The computer could not be shut down: ' + string(ErrorMessage(ErrorCodeOf(Status))) +
       '.', MessageOk, SignError);
+end;
+
+procedure TStartMenu.LockChosen(Item: TMenuItem);
+begin
+  Say('menu Lock');
+  LockDesktop;
+end;
+
+procedure TStartMenu.SuspendChosen(Item: TMenuItem);
+begin
+  Say('menu Suspend');
+  SuspendComputer;
 end;
 
 procedure TStartMenu.LogOffChosen(Item: TMenuItem);

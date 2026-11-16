@@ -96,6 +96,13 @@
   and the server follows the pointer, telling the windows under it
   (EventDragEnter, EventDragOver, EventDragLeave, EventDrop), which
   answer what a drop would do.
+
+  The session manager (running as root) may lock the screen
+  (RequestLockScreen): then only its windows - the lock screen - are
+  drawn and get input, whatever other programs do, until it unlocks it.
+  Any program may ask how long nobody has touched the keyboard or the
+  pointer (RequestDescribeIdle), which is what locks the screen after a
+  while.
 }
 unit Windowing.Protocol;
 
@@ -200,8 +207,8 @@ const
   RequestListWindows = 25;
   { Window 0, from the shell only; Code: a key (as in EventKey);
     Modifiers: the ones that must be held with it (ModifierShift,
-    ModifierControl, ModifierAlt of Abi.SystemCalls; the locks are
-    ignored); Value: 1 to
+    ModifierControl, ModifierAlt, ModifierAltGr, ModifierSuper of
+    Abi.SystemCalls; the locks are ignored); Value: 1 to
     take the key, 0 to give it back. From then on the key pressed with
     exactly those modifiers goes to the shell (EventHotkey), not to the
     active window. Not answered; the keys go when the shell does. }
@@ -216,6 +223,24 @@ const
     Windowing.KeyboardSettings). Answered by EventKeyboardSettings with
     what they are now (the old layout if the kernel has no such one). }
   RequestSetKeyboardSettings = 28;
+  { The screen lock (Server.ScreenLock; numbered from 40, a range of its
+    own). Window 0, from a program running as root only (the session
+    manager); Value 1 locks the screen, 0 unlocks it. While it is
+    locked only this program's windows are drawn and get input; every
+    other window is hidden behind the lock, cannot be activated or take
+    the pointer, and the shell's keys for the whole desktop are
+    swallowed. Locking a screen another program has locked is refused,
+    unless that program has ended (the screen stays locked until a
+    program running as root takes the lock over or unlocks it).
+    Answered by EventScreenLock. }
+  RequestLockScreen = 40;
+  { Window 0. Answered by EventIdleDescribed: how long since the last
+    input (a key, the pointer, a button or the wheel). }
+  RequestDescribeIdle = 41;
+  { Window 0: draws every display again from the windows (after waking
+    from suspend, when the display's memory may not have kept its
+    picture). Not answered. }
+  RequestRepaintDisplays = 42;
 
   { The clipboard and drag and drop (Windowing.DataTransfer): data in
     formats (DataFormat*), offered by one program and asked for by
@@ -392,6 +417,12 @@ const
     Code: what the drop did (a DropEffect*; 0: nothing - refused,
     cancelled with Escape, or let go over no window that takes it). }
   EventDragFinished = 135;
+  { The answer to RequestLockScreen. Value: 1 the screen is locked now,
+    0 not; Code: 1 if this program holds the lock. }
+  EventScreenLock = 140;
+  { The answer to RequestDescribeIdle. Value: the milliseconds since the
+    last input (at most High(LongInt)). }
+  EventIdleDescribed = 141;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;

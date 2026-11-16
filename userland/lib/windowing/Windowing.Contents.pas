@@ -33,6 +33,8 @@ uses
   Windowing.Displays,
   Windowing.MouseSettings,
   Windowing.KeyboardSettings,
+  Windowing.LockSettings,
+  Windowing.ScreenLock,
   Windowing.Fonts,
   Windowing.Messages,
   Windowing.HandleWatches,
