@@ -112,15 +112,9 @@ begin
 end;
 
 { The node name; False if it cannot be read. }
-function ReadNodeName(out Name: string): Boolean;
-var
-  Buffer: array[0..AbiTextCapacity - 1] of Char;
+function NodeNameKnown(out Name: string): Boolean;
 begin
-  Result := GetNodeName(@Buffer[0], SizeOf(Buffer)) = ErrorNone;
-  if Result then
-    Name := StrPas(@Buffer[0])
-  else
-    Name := '';
+  Result := ReadNodeName(Name) = ErrorNone;
 end;
 
 procedure ShowAddresses;
@@ -192,7 +186,7 @@ begin
     SetName;
     Halt(0);
   end;
-  if not ReadNodeName(NodeName) then
+  if not NodeNameKnown(NodeName) then
     Fail(1, 'cannot read the host name');
   case Display of
     DisplayAddresses: ShowAddresses;

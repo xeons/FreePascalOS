@@ -122,6 +122,7 @@ uses
   Sys.AddressText,
   Sys.Files,
   Sys.FileWatches,
+  Sys.InterfaceText,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces;
 
@@ -241,14 +242,11 @@ begin
 end;
 
 function DescribeInterface(const Description: TAbiNetworkInterface; const Routes: TRouteList): TInterfaceStatus;
-var
-  Text: array[0..3 * HardwareAddressCapacity] of Char;
 begin
   Result := Default(TInterfaceStatus);
-  Result.Name := string(PChar(@Description.Name[0]));
+  Result.Name := InterfaceNameToText(Description.Name);
   Result.Description := string(PChar(@Description.Description[0]));
-  FormatHardwareAddress(@Description.HardwareAddress[0], Description.HardwareAddressLength, @Text[0], SizeOf(Text));
-  Result.HardwareAddress := string(PChar(@Text[0]));
+  Result.HardwareAddress := HardwareAddressToText(Description.HardwareAddress, Description.HardwareAddressLength);
   Result.Up := (Description.Flags and InterfaceFlagUp) <> 0;
   Result.LinkUp := (Description.Flags and InterfaceFlagRunning) <> 0;
   Result.Mtu := Description.Mtu;
