@@ -33,6 +33,9 @@
       section shared between two processes (ipctest),
     * pseudo-terminals: a shell on one, typed into through the master
       side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
+    * notifications and requests to end: taken or left to the system,
+      groups, sessions, a handler thread, permissions, Ctrl-C taken by a
+      program and a terminal's new size (notifytest),
     * the service manager: definitions, the start order, readiness,
       restarts, logs, the service command (servicetest), and login with
       a right and a wrong password,
@@ -77,7 +80,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..299] of TCommandTest = (
+  CommandTests: array[0..302] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -391,6 +394,11 @@ const
     (Command: 'sleep 5 & jobs; kill %1; wait %1; echo $?'; ExpectedOutput: '[1]+  Running                 sleep 5 &'#10'143'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 & jobs -p > jp; read p < jp; test "$p" = "$!" && echo same; wait; echo $?'; ExpectedOutput: 'same'#10'0'#10; ExpectedStatus: 0),
     (Command: 'sh -c "exit 3" & wait $!; echo $?; wait 99999 2>/dev/null; echo $?; wait; echo $?'; ExpectedOutput: '3'#10'127'#10'0'#10; ExpectedStatus: 0),
+    { kill: TERM, HUP and INT ask a program to end (one that takes the
+      request ends as it chooses, one that does not with 128 + the
+      signal), KILL ends it whatever it takes. }
+    (Command: 'sleep 5 & kill -9 $!; wait $!; echo $?; sleep 5 & kill -INT $!; wait $!; echo $?; sleep 5 & kill -HUP $!; wait $!; echo $?'; ExpectedOutput: '137'#10'130'#10'129'#10; ExpectedStatus: 0),
+    (Command: 'notifytest --take 2 42 > t.out & until grep -q ready t.out 2>/dev/null; do sleep 0.1; done; kill $!; wait $!; echo $?; cut -d " " -f 1-2 t.out; notifytest --take 2 42 > t.out & until grep -q ready t.out 2>/dev/null; do sleep 0.1; done; kill -9 $!; wait $!; echo $?'; ExpectedOutput: '42'#10'ready'#10'got asked'#10'137'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 & kill -STOP $!; sleep 1; jobs; ps -o s= -p $!; kill -CONT %1; wait; echo done $?'; ExpectedOutput: '[1]+  Stopped                 sleep 1'#10'T'#10'done 0'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 & kill -s STOP %1; sleep 1; bg; wait; echo $?'; ExpectedOutput: '[1]+ sleep 1 &'#10'0'#10; ExpectedStatus: 0),
     (Command: 'sleep 1 | cat & sleep 0 & jobs; fg %1; echo fg $?; jobs %2 2>&1; fg 2>&1; echo $?'; ExpectedOutput: '[1]-  Running                 sleep 1 | cat &'#10'[2]+  Running                 sleep 0 &'#10'sleep 1 | cat'#10'fg 0'#10'[2]+  Done                    sleep 0'#10'sh: fg: current: no such job'#10'1'#10; ExpectedStatus: 0),
@@ -434,6 +442,9 @@ const
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'ptytest > pty.log; echo $?; grep -E ''FAIL|received'' pty.log; tail -n 1 pty.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Notifications: end requests taken or not, groups, sessions, a
+      handler thread, permissions, Ctrl-C and a new size on a terminal. }
+    (Command: 'notifytest > notify.log; echo $?; grep -E ''FAIL|received'' notify.log; tail -n 1 notify.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
     { The service manager and the service command (a second manager). }
     (Command: 'servicetest > svc.log; echo $?; grep -E ''FAIL|received'' svc.log; tail -n 1 svc.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
     { login: a right and a wrong password (read from a pipe), root only,

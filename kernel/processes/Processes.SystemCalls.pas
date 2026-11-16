@@ -39,6 +39,7 @@ implementation
 uses
   Processes.ObjectCalls,
   Processes.WaitCalls,
+  Processes.NotificationCalls,
   Processes.MappingCalls,
   Runtime.Memory,
   Runtime.Text,
@@ -721,6 +722,10 @@ begin
     CallGetChannelPeer: Result := PerformGetChannelPeer(Int64(Argument0), Argument1);
     CallTerminateSession: Result := PerformTerminateSession(Argument0, Argument1);
     CallWatchShutdown: Result := PerformWatchShutdown;
+    { Notifications (Processes.NotificationCalls). }
+    CallSelectNotifications: Result := PerformSelectNotifications(Argument0);
+    CallReceiveNotification: Result := PerformReceiveNotification(Argument0);
+    CallRequestEnd: Result := PerformRequestEnd(Argument0, Argument1, Argument2);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

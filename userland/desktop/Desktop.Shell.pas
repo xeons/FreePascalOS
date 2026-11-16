@@ -29,6 +29,10 @@
   desktops and the taskbar are placed again. The shell shows one
   notification icon of its own, a volume placeholder until there is a
   mixer to open, through the same interface as any program.
+
+  Asked to end (the user logs off, the system shuts down), the shell
+  simply ends: its windows hold nothing to save, and its end tells the
+  session manager the session is over.
 }
 unit Desktop.Shell;
 
@@ -53,6 +57,7 @@ type
     procedure PlaceDesktop(Number: LongInt; Left, Top, Width, Height: LongInt);
     procedure ShellEvent(const Message: TWindowMessage);
     procedure WindowsChanged;
+    procedure EndRequested(Reason: LongWord);
   public
     { Builds the desktop; the program is the shell already. }
     constructor Create;
@@ -62,13 +67,23 @@ type
 implementation
 
 uses
+  Sys.Notifications,
   Windowing.Displays,
   Windowing.Shell,
-  Windowing.Notifications;
+  Windowing.Notifications,
+  Windowing.EndRequests,
+  Windowing.Windows,
+  Desktop.Report;
 
 const
   VolumeIconNumber = 1;
   VolumeTooltip: PChar = 'Volume: no mixer yet';
+
+procedure TShell.EndRequested(Reason: LongWord);
+begin
+  Say('desktop: asked to end (' + EndReasonName(Reason) + ')');
+  QuitMessageLoop(0);
+end;
 
 constructor TShell.Create;
 begin
@@ -76,6 +91,7 @@ begin
   FWindowList := TWindowList.Create;
   FWindowList.OnChange := @WindowsChanged;
   OnShellEvent := @ShellEvent;
+  OnEndRequested := @EndRequested;
   LayOut;
   ShowNotificationIcon(VolumeIconNumber, NotificationPictureVolume, VolumeTooltip);
 end;
@@ -85,6 +101,7 @@ var
   Index: LongInt;
 begin
   OnShellEvent := nil;
+  OnEndRequested := nil;
   FTaskbar.Free;
   for Index := 0 to High(FDesktops) do
     FDesktops[Index].Free;

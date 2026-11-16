@@ -54,7 +54,9 @@ uses
   Sys.Display,
   Sys.Objects,
   Sys.KernelOptions,
-  Sys.ServiceControl;
+  Sys.ServiceControl,
+  Sys.Notifications,
+  Sys.EndRequests;
 
 implementation
 

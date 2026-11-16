@@ -1308,6 +1308,16 @@ if notepad_started:
     press('alt-n')
     time.sleep(1)
 log_from_here = notepad_log('NOTEPAD-ENDED')
+# kill asks a program with windows to end: Notepad, with nothing to
+# save, closes its window as if its close button were clicked and ends
+# by itself (status 0, not 143).
+type_on_serial(b'notepad > /tmp/k.log & until grep -q title /tmp/k.log 2>/dev/null; do sleep 0.2; done; sleep 1; '
+               b'kill $!; wait $!; echo NOTEPAD-ASKED $?; tail -n 1 /tmp/k.log\r')
+asked_ended = wait_for('NOTEPAD-ASKED 0', 30)
+collect(0.5)
+asked_output = bytes(received[received.rfind(b'NOTEPAD-ASKED 0'):])
+checks.append(('notepad: kill asks it to end, and it closes its window by itself (status 0)',
+               asked_ended and re.search(rb'NOTEPAD-ASKED 0\r?\nexit', asked_output) is not None))
 type_on_serial(b'kill %1; wait; m=DONE; echo NOTEPAD-SERVER $m\r')
 wait_for('NOTEPAD-SERVER DONE', 15)
 wrap_rows = re.search(rb'wrap on (\d+)', log_from_here)

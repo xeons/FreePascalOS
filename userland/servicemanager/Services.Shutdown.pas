@@ -24,9 +24,14 @@
   Shut down) and waits for it to end. The services stop in the reverse
   of the order they started in: a service is stopped once no running
   service needs it any more, so the session goes before the display
-  server, and services that do not need each other stop together. Once
-  none runs, the manager ends, and the kernel ends whatever is left (the
-  users' programs), writes the disks out and powers off.
+  server, and services that do not need each other stop together. Each
+  is stopped as `service stop` would (its programs asked to end, for the
+  reason "shutdown", and ended outright after its stop-timeout). Once
+  none runs, the manager ends, and the kernel asks whatever is left to
+  end, then ends it, writes the disks out and powers off.
+
+  A manager asked to end (a second one, for tests) stops its services
+  the same way, for the reason "service stop", and ends.
 }
 unit Services.Shutdown;
 
@@ -38,8 +43,9 @@ interface
 var
   ShuttingDown: Boolean = False;
 
-{ Stops wanting every service, and cancels restarts. }
-procedure BeginShutdown;
+{ Stops wanting every service, and cancels restarts. Why goes in the
+  log; Reason (EndReason*) is what the services' programs are told. }
+procedure BeginShutdown(const Why: string; Reason: LongWord);
 { Stops each running service that no running service needs. }
 procedure StopServicesInOrder;
 { True once no service has a process. }
@@ -53,13 +59,17 @@ uses
   Services.Logs,
   Services.Supervisor;
 
-procedure BeginShutdown;
+var
+  StopReason: LongWord;
+
+procedure BeginShutdown(const Why: string; Reason: LongWord);
 var
   Index: LongInt;
   Service: TService;
 begin
   ShuttingDown := True;
-  Say('the system is shutting down: stopping the services');
+  StopReason := Reason;
+  Say(Why + ': stopping the services');
   for Index := 0 to High(ServiceTable) do
   begin
     Service := ServiceTable[Index];
@@ -93,7 +103,7 @@ begin
   begin
     Service := ServiceTable[Index];
     if Service.HasProcess and (Service.State <> ServiceStateStopping) and not IsStillNeeded(Service) then
-      StopService(Service, 'shutting down');
+      StopService(Service, 'shutting down', StopReason);
   end;
 end;
 

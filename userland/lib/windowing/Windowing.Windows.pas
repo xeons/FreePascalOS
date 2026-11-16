@@ -59,8 +59,10 @@
   in logical units looks the same.
 
   RunMessageLoop serves every window until QuitMessageLoop, or until the
-  last window is gone (if QuitWhenLastWindowCloses), and the program's
-  own handles it watches (Windowing.HandleWatches). RunModal serves
+  last window is gone (if QuitWhenLastWindowCloses), the program's
+  own handles it watches (Windowing.HandleWatches), and requests to end
+  the program (Windowing.EndRequests: by default its windows are asked
+  to close, as AskWindowsToClose does). RunModal serves
   them until a flag is set, with one window modal: the program's other
   windows are disabled meanwhile, except for windows that take input
   anyway (pop-ups of the modal window). It also delivers messages posted
@@ -221,6 +223,10 @@ procedure RunModal(Window: TWindow; var Done: Boolean);
 { The modifiers (ModifierShift, ModifierControl, ...) held at the newest
   key or pointer event: what a click was made with (a Ctrl+click). }
 function HeldModifiers: LongWord;
+{ Asks every window that no other window owns to close, as its close
+  button would (CloseRequested): what a request to end the program does
+  by default. }
+procedure AskWindowsToClose;
 
 implementation
 
@@ -231,6 +237,7 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Windowing.HandleWatches,
+  Windowing.EndRequests,
   Windowing.Shell;
 
 const
@@ -810,14 +817,37 @@ begin
     (QuitWhenLastWindowCloses and (WindowListCount = 0));
 end;
 
+procedure AskWindowsToClose;
+var
+  Unowned: array[0..MaximumProgramWindows - 1] of TWindow;
+  UnownedCount: LongInt;
+  Index: LongInt;
+begin
+  { A copy: each window may free itself, or others, as it closes. }
+  UnownedCount := 0;
+  for Index := 0 to WindowListCount - 1 do
+    if WindowList[Index].Owner = nil then
+    begin
+      Unowned[UnownedCount] := WindowList[Index];
+      Inc(UnownedCount);
+    end;
+  for Index := 0 to UnownedCount - 1 do
+    if WindowById(Unowned[Index].Id) = Unowned[Index] then
+    begin
+      Unowned[Index].PrepareToReceive;
+      Unowned[Index].CloseRequested;
+    end;
+end;
+
 { Delivers what has come, paints, and waits for more (once). }
 procedure ServeOnce;
 var
-  Handles: array[0..MaximumTimers + MaximumHandleWatches + 1] of Int64;
+  Handles: array[0..MaximumTimers + MaximumHandleWatches + 2] of Int64;
   Count: LongInt;
   Index: LongInt;
   Ready: Int64;
   FirstWatch: LongInt;
+  NotificationsPlace: LongInt;
   Message: TWindowMessage;
   Window: TWindow;
   TimerId: LongWord;
@@ -839,7 +869,15 @@ begin
     Handles[Count] := Timers[Index].Handle;
     Inc(Count);
   end;
-  { The program's own handles (Windowing.HandleWatches) come last. }
+  { The program's own handles (Windowing.HandleWatches) come last, after
+  the notifications (Windowing.EndRequests). }
+  NotificationsPlace := -1;
+  if LoopWaitsForNotifications then
+  begin
+    NotificationsPlace := Count;
+    Handles[Count] := NotificationsHandle;
+    Inc(Count);
+  end;
   FirstWatch := Count;
   for Index := 0 to WatchedHandleCount - 1 do
   begin
@@ -847,7 +885,9 @@ begin
     Inc(Count);
   end;
   Ready := WaitForHandles(Slice(Handles, Count), InfiniteWait);
-  if (Ready >= 2) and (Ready < FirstWatch) then
+  if (NotificationsPlace >= 0) and (Ready = NotificationsPlace) then
+    ServeNotifications
+  else if (Ready >= 2) and (Ready < 2 + TimerCount) then
   begin
     Window := Timers[Ready - 2].Window;
     TimerId := Timers[Ready - 2].Id;

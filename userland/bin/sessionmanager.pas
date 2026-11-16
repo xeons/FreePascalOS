@@ -25,10 +25,18 @@
   started once the display server is ready. It shows the login window
   (a user name and a password, checked against /etc/shadow); on success
   it starts the desktop shell as that user, in a session of its own.
-  When the desktop ends (Log off on its Start menu, which asks here, or
-  a failure) the rest of the session is ended and the login window comes
-  back. The kernel option autologin=USER logs USER in without asking for
-  the first session of a boot (after logging off, the window asks).
+  Log off on the desktop's Start menu (which asks here) asks every
+  program of the session to end, so they can save their work (Notepad
+  asks about unsaved text); what still runs after a few seconds is ended
+  outright (Session.UserSession). When the session is over - after Log
+  off, or when the desktop ended by itself and the rest went the same
+  way - the login window comes back. The kernel option autologin=USER
+  logs USER in without asking for the first session of a boot (after
+  logging off, the window asks).
+
+  Asked to end itself (its service stopped, the system shutting down),
+  it ends the user's session the same way first (telling the programs
+  the reason: shutdown, or log off), then ends.
 
   It serves the port "session" for the desktop: log off, shut down and
   restart (see Session.Requests). Runs as root, as it starts programs as
@@ -38,8 +46,10 @@
   to as well): "session: login window shown" with the places of its
   boxes and button ("session: place login-user-name X Y", login-password,
   login-ok), "session: login refused for NAME", "session: NAME logged in
-  (session N)", "session: logging off NAME", "session: session of NAME
-  ended (status S)", "session: shutting down".
+  (session N)", "session: logging off NAME", "session: asking session N
+  to end (REASON)", "session: C programs of session N did not end in
+  time: ending them", "session: session of NAME ended (status S)",
+  "session: shutting down", "session: asked to end (REASON)".
 
   Its units are in userland/sessionmanager: Session.LoginWindow,
   Session.UserSession, Session.Requests and Session.Report.
@@ -55,7 +65,9 @@ uses
   Util.Accounts,
   Util.Logins,
   Util.Messages,
+  Sys.Notifications,
   Windowing.Connection,
+  Windowing.EndRequests,
   Windowing.Windows,
   Session.LoginWindow,
   Session.Report,
@@ -67,14 +79,18 @@ type
   private
     FWindow: TLoginWindow;
     FSession: TUserSession;
+    FQuitting: Boolean;
     function LoginAttempted(const Name, Password: string): Boolean;
     procedure SessionEnded(ExitCode: LongInt);
     function StartSessionOf(const Name: string): Boolean;
+    procedure EndRequested(Reason: LongWord);
   public
     constructor Create;
     { Logs the automatic user in, or asks. }
     procedure Start;
     property Session: TUserSession read FSession;
+    { It was asked to end, and has (or the session is ending first). }
+    property Quitting: Boolean read FQuitting;
   end;
 
 constructor TSessionManager.Create;
@@ -84,6 +100,24 @@ begin
   FSession.OnEnded := @SessionEnded;
   FWindow := TLoginWindow.Create;
   FWindow.OnLogin := @LoginAttempted;
+  OnEndRequested := @EndRequested;
+end;
+
+{ The user's programs hear that the system shuts down, or that their
+  session ends (the service was stopped, or someone asked). }
+procedure TSessionManager.EndRequested(Reason: LongWord);
+begin
+  Say('asked to end (' + EndReasonName(Reason) + ')');
+  FQuitting := True;
+  if not FSession.IsActive then
+  begin
+    QuitMessageLoop(0);
+    Exit;
+  end;
+  if Reason = EndReasonShutdown then
+    FSession.EndFor(EndReasonShutdown)
+  else
+    FSession.EndFor(EndReasonLogOff);
 end;
 
 function TSessionManager.StartSessionOf(const Name: string): Boolean;
@@ -111,7 +145,10 @@ end;
 
 procedure TSessionManager.SessionEnded(ExitCode: LongInt);
 begin
-  FWindow.Present;
+  if FQuitting then
+    QuitMessageLoop(0)
+  else
+    FWindow.Present;
 end;
 
 procedure TSessionManager.Start;
@@ -142,10 +179,12 @@ begin
   if not OpenSessionPort(Manager.Session) then
     Fail(1, 'another session manager is running', []);
   Manager.Start;
-  { The loop only ends when the display server has gone: the user's
-    programs cannot go on without it, and the service manager starts
-    this one again (a failure) once the server is back. }
   RunMessageLoop;
-  Manager.Session.LogOff;
+  if Manager.Quitting then
+    Halt(0);
+  { Otherwise the display server has gone: the user's programs cannot go
+    on without it, and the service manager starts this one again (a
+    failure) once the server is back. }
+  Manager.Session.EndNow;
   Halt(1);
 end.

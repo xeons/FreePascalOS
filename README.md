@@ -75,8 +75,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   loader that maps position independent programs and the shared
   libraries they need, binding symbols at load time; images are kept as
   sections whose pages every process shares (copy on write). Programs can also load libraries at run
-  time (`LoadLibrary` / `FindSymbol`), end, stop and continue other
-  programs (`kill`, `timeout`, Ctrl-C, Ctrl-Z), wait with timeouts, change permissions, owners and times,
+  time (`LoadLibrary` / `FindSymbol`), ask other programs to end (they
+  may tidy up first: `kill` asks, `kill -9` ends at once), end, stop and
+  continue them (`timeout`, Ctrl-C, Ctrl-Z), wait with timeouts, change permissions, owners and times,
   make hard links, and run in a `chroot`.
 - **Users and permissions**: processes run as real, effective and saved
   user and group ids with supplementary groups and a umask, all inherited;
@@ -90,9 +91,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   from definitions in `/etc/services` in the order of what they need,
   waits for each to be ready, starts failed ones again within limits,
   logs their output to `/var/log`, and stops them in reverse order when
-  the system shuts down; `service list|status|start|stop|restart`. A
-  login on the console, and a login window on the screen that starts
-  the user's desktop in a session of its own (Log off ends it).
+  the system shuts down; `service list|status|start|stop|restart`
+  (stopping asks the service's programs to end, and ends them after its
+  `stop-timeout`). A login on the console, and a login window on the
+  screen that starts the user's desktop in a session of its own (Log off
+  asks its programs to end - Notepad asks to save - then ends what is
+  left).
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
   with CPU time counted per thread, nice values mapped to thread
   priorities (`nice`, `renice`), processor affinity (`taskset`), per

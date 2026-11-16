@@ -22,11 +22,17 @@
   kill [-s SIGNAL | -SIGNAL] PID...
   kill -l [NUMBER]...
 
-  The system has no signals yet. Every signal that would end a program
-  ends it, with exit status 128 + the signal number; STOP, TSTP, TTIN and
-  TTOU stop it and CONT continues it; the others (and signal 0) only
-  check that the process exists (Util.Commands.SendSignal). A negative
-  PID names a process group, for stopping and continuing.
+  The system has no signals; each becomes what it stands for
+  (Util.Commands.SendSignal). TERM (the default), HUP and INT ask the
+  program to end, for the reason "asked", "hang-up" or "interrupt": a
+  program that takes requests to end may tidy up first (save its work,
+  ask its user) or refuse; any other program ends at once with status
+  128 + the signal number, as before. KILL (kill -9) and the other
+  signals that would end a program end it at once, whatever it takes.
+  STOP, TSTP, TTIN and TTOU stop it and CONT continues it; the others
+  (and signal 0) only check that the process exists. A negative PID
+  names a process group: it can be asked to end, stopped and continued
+  (write "kill -TERM -- -PGID").
 }
 program kill;
 
@@ -48,7 +54,8 @@ uses
 const
   Usage: PChar = 'Usage: kill [-s SIGNAL | -SIGNAL] PID...'#10 +
     '  or:  kill -l [SIGNAL]...'#10 +
-    'Send signals to processes, or list signals.'#10#10 +
+    'Send signals to processes, or list signals. TERM (the default), HUP and INT'#10 +
+    'ask a process to end and let it tidy up first; KILL (-9) ends it at once.'#10#10 +
     '  -s, --signal=SIGNAL, -SIGNAL'#10 +
     '                   specify the name or number of the signal to be sent'#10 +
     '  -l, --list       list signal names, or convert signal names to/from numbers'#10;

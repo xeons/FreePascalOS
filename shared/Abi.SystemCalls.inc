@@ -277,7 +277,88 @@ const
     another living process has taken it. }
   CallWatchShutdown = 90;
 
-  CallCount = 91;
+  { --- Notifications -------------------------------------------------------
+    The system tells a process things through its notification queue,
+    which it waits on with the pseudo-handle NotificationsHandle among
+    its other handles (CallWaitForHandles: ready while a notification
+    waits) and reads with CallReceiveNotification. A process takes only
+    the notifications it selects; for the others the system acts for it
+    (see CallRequestEnd). }
+
+  { (Mask): the notifications the process takes itself (Notify*), in
+    place of the ones it took; returns the previous mask. A new program
+    starts with none. }
+  CallSelectNotifications = 91;
+  { (NotificationAddress): takes the oldest notification into a
+    TAbiNotification. ErrorWouldBlock if none waits. }
+  CallReceiveNotification = 92;
+  { (TargetKind, TargetId, Reason): asks a process (EndTargetProcess,
+    TargetId 0: the caller), every process of a group (EndTargetGroup)
+    or of a session (EndTargetSession) to end, for Reason (EndReason*).
+    A process that selected the reason's Notify* bit is sent an
+    end-requested notification and decides itself what to do (the
+    sender may end it outright later, as the service manager does after
+    a service's stop timeout); any other is ended at once with the
+    reason's status (EndStatusOf: 143, 129 for a hang-up, 130 for an
+    interrupt), as it always was. Groups and sessions leave the caller
+    out. Returns how many were asked; ErrorNoSuchProcess for none,
+    ErrorNotPermitted if all of them belong to another user (root may
+    ask anyone). }
+  CallRequestEnd = 93;
+
+  CallCount = 94;
+
+  { The pseudo-handle of the calling process's notification queue, for
+    CallWaitForHandles. }
+  NotificationsHandle = -2;
+
+  { TAbiNotification.Kind }
+  { Something asks the process to end: Reason says who or why. }
+  NotificationEndRequested = 1;
+  { The size of the process's controlling terminal changed while the
+    process was in its foreground group: Value is rows shl 16 or
+    columns. Nothing happens for processes that do not select it. }
+  NotificationTerminalResized = 2;
+
+  { Reasons of an end request (TAbiNotification.Reason). }
+  { Someone asked (kill, the default). }
+  EndReasonAsked = 1;
+  { The service manager stops the service the process belongs to. }
+  EndReasonServiceStop = 2;
+  { The system is shutting down. }
+  EndReasonShutdown = 3;
+  { The user logs off: the process's session ends. }
+  EndReasonLogOff = 4;
+  { The process's controlling terminal hung up. }
+  EndReasonHangUp = 5;
+  { Ctrl-C on the process's controlling terminal (the foreground group). }
+  EndReasonInterrupt = 6;
+  HighestEndReason = 6;
+
+  { Bits of CallSelectNotifications: an end request for each reason
+    (1 shl the reason), and the terminal's size. }
+  NotifyEndAsked = $0002;
+  NotifyEndServiceStop = $0004;
+  NotifyEndShutdown = $0008;
+  NotifyEndLogOff = $0010;
+  NotifyEndHangUp = $0020;
+  NotifyEndInterrupt = $0040;
+  { The requests that come from people and the system rather than from
+    a terminal: what a program with windows takes. }
+  NotifyEndRequests = NotifyEndAsked or NotifyEndServiceStop or NotifyEndShutdown or NotifyEndLogOff;
+  NotifyTerminalResized = $10000;
+  NotifyEverything = NotifyEndRequests or NotifyEndHangUp or NotifyEndInterrupt or NotifyTerminalResized;
+
+  { Targets of CallRequestEnd. }
+  EndTargetProcess = 0;
+  EndTargetGroup = 1;
+  EndTargetSession = 2;
+
+  { The status of a process ended because it did not take an end
+    request: 128 plus the Unix signal's number (TERM, HUP, INT). }
+  EndStatusRequested = 143;
+  EndStatusHangUp = 129;
+  EndStatusInterrupted = 130;
 
   { How long a shutdown waits for the process watching it. }
   ShutdownCoordinatorSeconds = 30;
@@ -710,6 +791,20 @@ type
   PAbiProcessCreation = ^TAbiProcessCreation;
 
   { Who the other end of a channel is (CallGetChannelPeer). }
+  { What CallReceiveNotification gives. }
+  TAbiNotification = record
+    { Notification* }
+    Kind: LongWord;
+    { EndReason* for NotificationEndRequested; 0 otherwise. }
+    Reason: LongWord;
+    { The process that sent it; 0 for the system (a terminal, the
+      shutdown). }
+    SenderProcessId: QWord;
+    { What goes with it (NotificationTerminalResized: the size). }
+    Value: QWord;
+  end;
+  PAbiNotification = ^TAbiNotification;
+
   TAbiChannelPeer = record
     ProcessId: QWord;
     { The effective ids when it connected or accepted. }

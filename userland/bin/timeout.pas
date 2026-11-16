@@ -23,8 +23,10 @@
 
   DURATION is a number with an optional suffix s, m, h or d (fractions
   allowed); 0 disables the limit. If the command is still running when
-  the time is up it is ended, and timeout exits with 124 (or, with
-  --preserve-status, the command's status, 128 + the signal number).
+  the time is up it is sent the signal as kill would send it (TERM asks
+  it to end: it may tidy up first; -k ends it outright later), and
+  timeout exits with 124 (or, with --preserve-status, the command's
+  status, 128 + the signal number for a program that took nothing).
 }
 program timeout;
 
@@ -193,7 +195,9 @@ begin
 
   { Time is up. }
   ProcessId := ProcessIdOf(Handle);
-  TerminateProgram(QWord(ProcessId), 128 + Signal);
+  { TERM asks the command to end (it may tidy up first); KILL after
+    KillAfter ends it whatever it takes. }
+  SendSignal(ProcessId, Signal);
   if KillAfter > 0 then
   begin
     if WaitForProgramWithTimeout(Handle, KillAfter, Status) <> 0 then

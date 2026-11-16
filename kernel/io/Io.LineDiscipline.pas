@@ -81,7 +81,7 @@ const
   TerminalTransferInterrupted = -1;
 
 type
-  TTerminalSignal = (TerminalSignalInterrupt, TerminalSignalSuspend, TerminalSignalHangUp);
+  TTerminalSignal = (TerminalSignalInterrupt, TerminalSignalSuspend, TerminalSignalHangUp, TerminalSignalResize);
 
   PLineDiscipline = ^TLineDiscipline;
   { Shows Count bytes of Text to whoever looks at the terminal. Called
@@ -128,6 +128,9 @@ type
     SuspendKeyPressed: Boolean;
     HangUpPending: Boolean;
     HungUp: Boolean;
+    { The size changed: the foreground group is told (programs that
+      selected NotifyTerminalResized). }
+    ResizePending: Boolean;
 
     { Kept in step under ReadinessLock, so that two updates at once
       cannot leave them set the wrong way. }
@@ -162,7 +165,7 @@ procedure SetTerminalSize(var Terminal: TLineDiscipline; Rows, Columns: LongWord
 procedure SetTerminalForegroundGroup(var Terminal: TLineDiscipline; GroupId: QWord);
 
 { For the signal thread: takes one thing that happened (Ctrl-C first,
-  then Ctrl-Z, then a hang-up); False if nothing did. }
+  then Ctrl-Z, then a hang-up, then a new size); False if nothing did. }
 function TakeTerminalSignal(var Terminal: TLineDiscipline; out Signal: TTerminalSignal): Boolean;
 { After Ctrl-C ended programs: shows "^C" and forgets typed input. }
 procedure FinishTerminalInterrupt(var Terminal: TLineDiscipline);
@@ -348,6 +351,7 @@ begin
   Terminal.SuspendKeyPressed := False;
   Terminal.HangUpPending := False;
   Terminal.HungUp := False;
+  Terminal.ResizePending := False;
   ReleaseSpinLockAtCurrentLevel(Terminal.RingLock);
   RestoreInterrupts(WereEnabled);
   Terminal.LineLength := 0;
@@ -658,9 +662,19 @@ begin
 end;
 
 procedure SetTerminalSize(var Terminal: TLineDiscipline; Rows, Columns: LongWord);
+var
+  WereEnabled: Boolean;
 begin
+  if (Terminal.Rows = Rows) and (Terminal.Columns = Columns) then
+    Exit;
   Terminal.Rows := Rows;
   Terminal.Columns := Columns;
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(Terminal.RingLock);
+  Terminal.ResizePending := True;
+  ReleaseSpinLockAtCurrentLevel(Terminal.RingLock);
+  RestoreInterrupts(WereEnabled);
+  RaiseTerminalSignal;
 end;
 
 procedure SetTerminalForegroundGroup(var Terminal: TLineDiscipline; GroupId: QWord);
@@ -689,6 +703,11 @@ begin
   begin
     Terminal.HangUpPending := False;
     Signal := TerminalSignalHangUp;
+  end
+  else if Terminal.ResizePending then
+  begin
+    Terminal.ResizePending := False;
+    Signal := TerminalSignalResize;
   end
   else
     Result := False;

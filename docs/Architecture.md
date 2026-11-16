@@ -598,8 +598,10 @@ for now the routing of PCI interrupt lines.
      service manager), signals its event and waits up to 30 seconds for
      it to end, so the services stop in the reverse of their start
      order (see "Startup, services and sessions");
-  1. asks every user process to end (status 143) and waits up to five
-     seconds;
+  1. asks every user process to end (reason shutdown, see
+     "Notifications and requests to end": those that do not take it end
+     at once with status 143), waits up to five seconds, then ends what
+     is left and waits five more;
   2. syncs the volumes;
   3. writes the closing summaries;
   4. enters S5, resets or halts.
@@ -700,9 +702,11 @@ has a foreground group. When a terminal's interrupt key mode is on (the
 default; `stty -isig` turns it off), Ctrl-C does not reach the input
 buffer: the terminal notes it (`Io.LineDiscipline`) and a deferred call
 wakes the `terminal-signals` system thread (`Io.TerminalSignals`,
-`Processes.TerminalSignals`), which ends every process of that
-terminal's foreground group with exit status 130, except processes that
-asked to ignore it. If it ended none (an interactive shell waiting at its prompt
+`Processes.TerminalSignals`), which asks every process of that
+terminal's foreground group to end with the reason "interrupt", except
+processes that asked to ignore it: a process that takes that request
+(see "Notifications and requests to end") is told and decides itself,
+any other ends with exit status 130. If it asked none (an interactive shell waiting at its prompt
 is the foreground), Ctrl-C is passed to the reader as a character, and
 the shell's line editor clears the line. The interactive shell runs each
 foreground pipeline in a new group and makes it the foreground group
@@ -795,14 +799,16 @@ both sides are closed; devices are never removed) and fills a
 `Size` is the window size (rows shl 16 or columns; 0 for 25 by 80). The
 program showing the terminal sets the size with `ControlSetConsoleSize`
 on either side when its window changes; programs ask with
-`ControlGetConsoleSize` (`stty size`). There is no notification:
-programs ask when they lay something out (the shell's line editor does
-before every line).
+`ControlGetConsoleSize` (`stty size`), and a change is told to the
+processes of the terminal's foreground group that selected
+`NotifyTerminalResized` (through the signal thread). The shell's line
+editor simply asks before every line.
 
 Closing the last master handle hangs the terminal up: readers of the
 terminal get end of file, writers `ErrorIo`, it cannot be opened again,
-and the signal thread ends every process whose controlling terminal it
-is with status 129 (128 + SIGHUP), interactive shells included.
+and the signal thread asks every process whose controlling terminal it
+is to end with the reason "hang-up": those that do not take it
+(interactive shells included) end with status 129 (128 + SIGHUP).
 
 **Controlling terminals.** A process has one (`TProcess.ControllingTerminal`,
 a terminal device), inherited from its parent; the first program's is
@@ -1317,7 +1323,16 @@ sees it. The loop waits on the server's channel, the posted message
 event, the window timers (timer objects) and the program's own handles
 (`Windowing.HandleWatches`: a pipe, a pseudo-terminal's master side, a
 process; `WatchHandle` calls a handler whenever one is ready, after the
-server's events are served) at once.
+server's events are served) at once, and on the program's notifications:
+once its loop runs, a program with windows takes requests to end
+(asked, service stop, shutdown, log off) and handles one as if its user
+had closed every window no other window owns (`Windowing.EndRequests`,
+`AskWindowsToClose`: each gets `CloseRequested`, so Notepad asks to save
+and the last window gone ends the loop). `OnEndRequested` replaces that
+(the desktop simply ends; the session manager logs the user off first),
+and `TakeEndRequests := False` leaves the requests to the system. A
+request that comes while one is handled (a question on the screen) is
+dropped.
 
 A window can be given an owner when it is made, or later (`Owner`),
 which it then stays above, and can be disabled (`Enabled`). A program
@@ -2244,6 +2259,7 @@ test copies to an unmapped user address.
 | Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
+| Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
@@ -2357,8 +2373,104 @@ point:
 Stopping a program uses the same safe points (see "Job control").
 
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
-shell reports a program killed by that signal. Running processes are kept
+shell reports a program killed by that signal. Ending a program outright
+is the last resort: `kill`, the service manager, the session manager and
+the shutdown first ask it to end (next section). Running processes are kept
 in a registry so they can be found by id.
+
+### Notifications and requests to end
+
+There are no Unix signals: nothing runs code in a program behind its
+back. Instead the system tells a process what concerns it through the
+process's **notification queue** (`Processes.NotificationQueue`), which
+the process waits on like any other handle: the pseudo-handle
+`NotificationsHandle` (-2) in `CallWaitForHandles` stands for the
+caller's queue, ready while a notification waits. A program's message
+loop, a shell's prompt or a service's main wait simply includes it, and
+reads what came with `CallReceiveNotification` (92), a
+`TAbiNotification`: a kind, a reason, the sending process (0 for the
+system) and a value. Two kinds exist:
+
+| Kind | Reason / value | Sent by |
+|---|---|---|
+| end requested | asked, service stop, shutdown, log off, hang-up, interrupt | `CallRequestEnd`, the shutdown, a terminal's hang-up and Ctrl-C |
+| terminal resized | rows shl 16 or columns | `ControlSetConsoleSize` on the process's terminal, to its foreground group |
+
+A process **selects** what it takes itself (`CallSelectNotifications`
+(91): a mask with a bit per end reason and one for the terminal's
+size; a new program starts with none, so nothing is inherited). What it
+does not select never reaches its queue: for an end request the kernel
+acts for it, and ends it at once with the reason's status - 143, 129
+for a hang-up, 130 for Ctrl-C - exactly what happened before
+notifications existed. So old programs, programs without a loop, and
+programs that are stuck all behave as they always did, and the choice
+is made in the kernel (`Processes.EndRequests`) rather than by a
+handler thread in every program's runtime. A notification of the same
+kind and reason as one still waiting is merged into it (the newer sender
+and value win), so a queue of 16 never overflows and a sender never
+waits. The queue's ready event is kept in step with its contents under
+its spin lock.
+
+**Asking to end.** `CallRequestEnd(TargetKind, TargetId, Reason)` (93)
+asks a process (0: the caller), every process of a group or of a
+session (0: the caller's; the caller itself is left out) to end, and
+returns how many were asked. The permission is the one for ending a
+process: the same user, or root; other users' processes are skipped,
+and a request that reached nobody for that reason fails with
+`ErrorNotPermitted`. A process already being ended counts as asked. A
+process that took the request decides: it may tidy up and end (with a
+status of its own), ask its user, or carry on - nothing waits for it
+forever, since whoever asked may still end it outright
+(`CallTerminateProcess`, `CallTerminateSession`) after waiting long
+enough, as the service manager, the session manager and the shutdown
+do. The terminal's signal thread uses the same routine: Ctrl-C asks the
+foreground group (reason interrupt; processes that ignore interrupts
+are spared, and if nobody was asked the reader gets the character), a
+hang-up asks every process the terminal controls (reason hang-up), and
+a new size is told to the foreground group's processes that selected
+it. A stopped process that took a request acts on it once continued.
+
+**In libsystem.** `Sys.Notifications`: `TakeNotifications` and
+`LeaveNotifications` (it remembers the mask, so taking more never
+leaves a moment with nothing taken), `ReceiveNotification`,
+`WaitForNotification`, `AskProcessToEnd`, `AskGroupToEnd`,
+`AskSessionToEnd`, `EndReasonName` and `EndStatusOf`.
+`Sys.EndRequests.HandleEndRequests(Handler, Mask)` is for programs with
+no wait of their own: a thread of the runtime waits for the requests
+and calls the handler for each (it usually tidies up and calls Halt).
+
+**Who takes what.**
+
+| Program | Takes | Does |
+|---|---|---|
+| any program with windows (libwindowing) | asked, service stop, shutdown, log off | closes every window no other window owns, as its close button would (`Windowing.EndRequests`; overridable with `OnEndRequested`): Notepad asks to save, a terminal window hangs its shell up |
+| the desktop | the same | ends (its windows hold nothing) |
+| the session manager | the same | ends the user's session as Log off does (reason shutdown or log off), then ends |
+| the service manager | the same | stops every service in order, as at a shutdown, then ends |
+| the interactive shell | the same | at its prompt (or once the running command is over): saves its history, ends its stopped jobs, ends with 143 |
+| `notifytest --tidy-service` | the same | (a test service) writes the reason into a file and ends |
+
+Ctrl-C and hang-ups are taken by none of these, so they behave as
+before: the interactive shell ignores Ctrl-C and is ended by a hang-up
+(129). `kill` (`Util.Commands.SendSignal`) asks: TERM (the default),
+HUP and INT become end requests with the reasons asked, hang-up and
+interrupt, so a program that takes none of them still ends with 143,
+129 or 130; KILL (`kill -9`) and the other ending signals end the
+program at once whatever it takes; a negative PID asks a whole group
+(`kill -TERM -- -PGID`). `pkill` and `timeout` send the same way.
+
+`notifytest` (run by coretest) checks the program's own queue (empty,
+an end request it sent itself waited for among other handles, a second
+one merged into the first, bad reasons and processes), then children:
+one that takes the request, waits for it among a timer and an event and
+ends with its own status, having heard the reason and the sender;
+requests it did not take ending it with 143, 129 and 130; a program
+that takes nothing ending with 143; a group and a session asked as a
+whole (each with its own status); a handler thread; an ordinary user
+refused for root's process and its group; and, on a pseudo-terminal,
+Ctrl-C taken by the foreground program and a new size told to it.
+coretest also checks `kill`, `kill -9`, `-INT` and `-HUP` on programs
+that take requests and programs that do not.
 
 ### File attributes
 
@@ -2527,7 +2639,8 @@ spaces), `user` (root), `needs` (services that must be running and
 ready first), `modes`, `restart` (`never`, `on-failure`, `always`),
 `restart-limit` (restarts in a row before it is left failed; 0: none),
 `restart-delay` and `ready-timeout` (seconds, fractions allowed),
-`ready` (`started`, or `notify`: once it says so) and `console` (`yes`:
+`ready` (`started`, or `notify`: once it says so), `stop-timeout`
+(seconds a stopped service has to end once asked; 5) and `console` (`yes`:
 the console as its standard handles and its foreground; otherwise its
 output goes to `/var/log/NAME.log`, its input is `/dev/null`). A wrong
 line is reported with its number and the service never starts, nor does
@@ -2562,8 +2675,14 @@ lines (started, ready, ended, given up, stopped) go to the console and
 (`Sys.ServiceControl`: a `TServiceRequest`, answered with the status of
 the services concerned): `service list`, `service status NAME`, and,
 for root only (`CallGetChannelPeer`), `service start|stop|restart NAME`.
-Starting wants the service and what it needs; stopping ends its
-session; restarting stops it and starts it again once it has ended.
+Starting wants the service and what it needs; stopping asks every
+program of its session to end (reason "service stop"; a program that
+does not take the request ends at once, one that does may tidy up) and
+ends the session outright if the service's program still runs after
+its `stop-timeout` ("did not stop in time"); when the service's program
+ends, what is left of its session goes with it. Restarting stops it and
+starts it again once it has ended. A manager asked to end itself stops
+every service in order, as at a shutdown, and ends.
 
 **Shutting down.** The manager, as the first program, takes the
 kernel's shutdown event (`CallWatchShutdown`, root only, one process at a
@@ -2573,17 +2692,19 @@ the event and waits up to 30 seconds for the manager to end. The
 manager stops every service that no running service needs, waits for
 them to end, and repeats (`Services.Shutdown`): the reverse of the
 start order, services that do not depend on each other together (the
-session and the serial console, then the display server). Then it
-ends, and the kernel ends what is left (the users' programs), writes
-the disks out and powers off. There is no way yet to ask a program to
-end and let it tidy up (asynchronous notifications are a later step),
-so stopping a service ends it, as the kernel's shutdown always did.
+session and the serial console, then the display server), each asked
+to end as `service stop` asks (reason "shutdown"). The session manager
+takes the request and logs the user off first (below), so the user's
+programs get to save; its `stop-timeout` (12 seconds) is longer than
+the time it gives them. Then the manager ends, and the kernel asks
+whatever is left to end, ends it, writes the disks out and powers off.
 
 **Sessions.** Every process belongs to a session, inherited from its
 parent; `ProcessNewSession` in `TAbiProcessCreation` makes the new
 process lead a new one, whose id is its process id (`SessionId` in the
 process list). `CallTerminateSession` asks every process of a session
-(that the caller may end) to end. A service's session holds what it
+(that the caller may end) to end at once; `CallRequestEnd` with
+`EndTargetSession` asks them first. A service's session holds what it
 started; a user's session on the screen holds the desktop and every
 program started from it, the shells in its terminals included.
 
@@ -2602,17 +2723,27 @@ units in `userland/sessionmanager`, root) connects to the display
 server and shows the login window (`Session.LoginWindow`: a user name, a
 password box that shows dots - `TEditBox.HidesText` in libcontrols - and
 OK). Right ones start `/bin/desktop` as the user, in a new session
-(`Session.UserSession`). When the desktop ends, the rest of the session
-is ended and the login window comes back. `autologin=USER` logs USER in
+(`Session.UserSession`). Log off asks every program of the user's
+session to end (reason "log off"): programs with windows close them as
+if their user had (Notepad asks whether to save), the desktop ends;
+whatever still runs after 8 seconds is ended outright. The session is
+over once none of its programs runs (watched every 100 ms); then the
+login window comes back. A desktop that ends by itself leads to the
+same: the rest is asked, then ended. Asked to end itself (its service
+stopped, the shutdown), the session manager ends the user's session the
+same way (telling the programs "shutdown", or "log off") and then ends.
+`autologin=USER` logs USER in
 without the window for the first session of a boot. The session
 manager serves the port `session` (`Windowing.Sessions`,
 `Session.Requests`), listened to only from the session's user or root:
-log off (it answers, then ends the session), shut down and restart (it
+log off (it answers, then ends the session as above), shut down and restart (it
 calls `CallShutdown`, which a user may not). Its output, with the
 desktop's (the desktop inherits it), is in `/var/log/session.log`:
 `session: login window shown`, the places of the window's boxes, `login
 refused for NAME`, `NAME logged in (session N)`, `logging off NAME`,
-`session of NAME ended (status S)`.
+`asking session N to end (REASON)`, `C programs of session N did not
+end in time: ending them`, `session of NAME ended (status S)`, `asked
+to end (REASON)`.
 
 **Tests.** coretest runs `servicetest`: `servicemanager --check` on good
 and wrong definitions and on needs across modes (the order), then a
@@ -2622,7 +2753,11 @@ need each other, fail every time (left failed after two restarts, three
 starts in the log), log a line and end, are not ready in time, run as
 the ordinary user, or wait to be started; then `service` list, status,
 start, stop, restart, refusals for an ordinary user and for readiness
-from outside a service, and a stop ending a service's whole session.
+from outside a service, a stop ending a service's whole session, a
+service that takes the stop request tidying up (it writes the reason
+into a file) and ending by itself, one that ignores it ended after its
+one-second `stop-timeout`, and the second manager asked to end stopping
+its services and ending.
 coretest also runs `login` with a right and a wrong password through a
 pipe, `-f`, the user's environment and groups, and refuses it to a
 user. The input test boots in text mode with `autologin=root`. The
@@ -2632,9 +2767,14 @@ typing, that the display server and the session start in order and
 the desktop comes up as the user (the taskbar and wallpaper in a screen
 dump, its lines in the log, read from a root shell on the serial
 console after a wrong and a right password); then Log off brings the
-login window back, which refuses a wrong password and starts the
-desktop again with the right one; and Shut down on the Start menu stops
-the services in order and powers off (QEMU exits).
+login window back - Notepad, started from the Start menu with text
+typed into it, asks whether to save, and the test answers No - which
+refuses a wrong password and starts the desktop again with the right
+one; and Shut down on the Start menu, with Notepad holding unsaved text
+again and nobody answering, stops the services in order (the session
+manager ends Notepad once its time is up, within the session's
+stop-timeout) and powers off (QEMU exits). The input test checks that
+`kill` makes Notepad close its window and end by itself (status 0).
 
 ### Handles
 

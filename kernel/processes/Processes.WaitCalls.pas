@@ -26,6 +26,8 @@
   driver keeps one: a terminal's says a read would not wait), or for a
   device opened only for writing its WritableEvent (a pseudo-terminal's
   master side: room to type). The
+  pseudo-handle NotificationsHandle stands for the calling process's
+  notification queue (its ReadyEvent: a notification waits). The
   objects are held for the wait, which is alertable: ending or stopping
   the process ends it (ErrorInterrupted).
 
@@ -97,6 +99,27 @@ begin
   end;
 end;
 
+{ Takes a reference to what Handle names, and the event that says it
+  is ready: Event is nil for a handle that cannot be waited on, and
+  the result nil for no such handle. }
+function ReferenceWaitable(Handle: Int64; out Event: PEvent): Pointer;
+var
+  Kind: THandleKind;
+  Process: PProcess;
+begin
+  Event := nil;
+  if Handle = NotificationsHandle then
+  begin
+    Process := CurrentProcess;
+    ReferenceObject(Process);
+    Event := @Process^.Notifications.ReadyEvent;
+    Exit(Process);
+  end;
+  Result := ReferenceHandle(Handle, Kind);
+  if Result <> nil then
+    Event := ReadinessEvent(Kind, Result);
+end;
+
 { Waits on the events of the handles; the result as the call returns it. }
 function WaitForEvents(Events: PPEvent; Count: LongInt; TimeoutMilliseconds: QWord; WaitForAll: Boolean): Int64;
 var
@@ -123,7 +146,6 @@ var
   Events: array[0..MaximumWaitHandles - 1] of PEvent;
   Held: LongInt;
   Index: LongInt;
-  Kind: THandleKind;
   Error: LongInt;
   TimeoutMilliseconds: QWord;
 begin
@@ -135,12 +157,11 @@ begin
   Held := 0;
   while (Error = ErrorNone) and (QWord(Held) < Count) do
   begin
-    Bodies[Held] := ReferenceHandle(Handles[Held], Kind);
+    Bodies[Held] := ReferenceWaitable(Handles[Held], Events[Held]);
     if Bodies[Held] = nil then
       Error := ErrorBadHandle
     else
     begin
-      Events[Held] := ReadinessEvent(Kind, Bodies[Held]);
       Inc(Held);
       if Events[Held - 1] = nil then
         Error := ErrorUnsupported;

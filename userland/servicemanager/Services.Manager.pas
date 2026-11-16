@@ -20,9 +20,10 @@
   The manager's loop.
 
   It wants the services of the boot mode, then waits in one place for
-  whatever comes first: the kernel's shutdown event, a connection or a
-  request at its port, a service's program ending, or the next deadline
-  (a restart due, a wait for readiness running out). After each, it
+  whatever comes first: the kernel's shutdown event, a request to end
+  the manager itself (its notifications), a connection or a request at
+  its port, a service's program ending, or the next deadline (a restart
+  due, a wait for readiness or a stop running out). After each, it
   starts what can start - or, once shutting down, stops what may stop -
   and when shutting down and nothing runs any more, it returns.
 }
@@ -43,6 +44,7 @@ implementation
 uses
   SysUtils,
   Abi.SystemCalls,
+  Sys.Notifications,
   Sys.Objects,
   Sys.Processes,
   Services.Definitions,
@@ -53,7 +55,7 @@ uses
   Services.Shutdown;
 
 type
-  TWaitSource = (SourceShutdown, SourcePort, SourceClient, SourceService);
+  TWaitSource = (SourceShutdown, SourceNotifications, SourcePort, SourceClient, SourceService);
 
   TWaitList = record
     Handles: array[0..MaximumWaitHandles - 1] of Int64;
@@ -83,6 +85,7 @@ begin
   List.Count := 0;
   if (ShutdownEvent <> NoHandle) and not ShuttingDown then
     AddToWaitList(List, ShutdownEvent, SourceShutdown, 0, nil);
+  AddToWaitList(List, NotificationsHandle, SourceNotifications, 0, nil);
   if ControlPort <> NoHandle then
     AddToWaitList(List, ControlPort, SourcePort, 0, nil);
   for Index := 0 to ClientCount - 1 do
@@ -108,11 +111,23 @@ begin
   end;
 end;
 
+{ A request to end the manager stops every service in order, as a
+  shutdown does; the manager then ends. }
+procedure ActOnNotifications;
+var
+  Notification: TAbiNotification;
+begin
+  while ReceiveNotification(Notification) do
+    if (Notification.Kind = NotificationEndRequested) and not ShuttingDown then
+      BeginShutdown('asked to end (' + EndReasonName(Notification.Reason) + ')', EndReasonServiceStop);
+end;
+
 procedure RunServices(const BootMode: string; ShutdownEvent: Int64);
 var
   List: TWaitList;
   Ready: Int64;
 begin
+  TakeNotifications(NotifyEndRequests);
   WantBootModeServices(BootMode);
   repeat
     if ShuttingDown then
@@ -127,7 +142,8 @@ begin
     Ready := WaitForHandles(Slice(List.Handles, List.Count), MillisecondsToNextDeadline);
     if (Ready >= 0) and (Ready < List.Count) then
       case List.Sources[Ready] of
-        SourceShutdown: BeginShutdown;
+        SourceShutdown: BeginShutdown('the system is shutting down', EndReasonShutdown);
+        SourceNotifications: ActOnNotifications;
         SourcePort: AcceptClients;
         SourceClient: ServeClient(List.Clients[Ready]);
         SourceService: ServiceProcessEnded(List.ProcessServices[Ready]);
