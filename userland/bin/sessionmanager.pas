@@ -41,8 +41,14 @@
   The display server is given the user's mouse settings before their
   desktop starts, and the system's once the session has ended.
 
-  It serves the port "session" for the desktop: log off, shut down and
-  restart (see Session.Requests). Runs as root, as it starts programs as
+  The screen can be locked (the desktop asks: its Start menu's Lock,
+  Super+L, Ctrl+Alt+L; or after the minutes without input the user's
+  settings name, and before suspending): a lock screen with the clock
+  and a password box covers everything, and the display server shows
+  nothing else until the user's password is typed (Session.ScreenLock).
+
+  It serves the port "session" for the desktop: log off, lock, shut
+  down, restart and suspend (see Session.Requests). Runs as root, as it starts programs as
   other users and may turn the computer off.
 
   Prints (to its log, /var/log/session.log, which the desktop's lines go
@@ -54,10 +60,16 @@
   time: ending them", "session: session of NAME ended (status S)",
   "session: mouse settings of NAME (or the system): speed S,
   acceleration A, left-handed on|off", "session: shutting down",
-  "session: asked to end (REASON)".
+  "session: asked to end (REASON)", "session: screen locked (REASON)"
+  with the places of the lock screen's password box and button
+  ("session: place lock-password X Y", lock-unlock), "session: unlock
+  refused for NAME", "session: lock password refused" (when the refusal
+  shows), "session: screen unlocked by NAME", "session: lock clock
+  HH:MM", "session: suspending", "session: resumed".
 
   Its units are in userland/sessionmanager: Session.LoginWindow,
-  Session.UserSession, Session.UserSettings, Session.Requests and
+  Session.UserSession, Session.UserSettings, Session.LockWindow,
+  Session.ScreenLock, Session.Suspend, Session.Requests and
   Session.Report.
 }
 program sessionmanager;
@@ -78,6 +90,7 @@ uses
   Session.LoginWindow,
   Session.Report,
   Session.Requests,
+  Session.ScreenLock,
   Session.UserSession;
 
 type
@@ -85,8 +98,9 @@ type
   private
     FWindow: TLoginWindow;
     FSession: TUserSession;
+    FLock: TScreenLock;
     FQuitting: Boolean;
-    function LoginAttempted(const Name, Password: string): Boolean;
+    function LoginAttempted(const Name: string; Password: PChar): Boolean;
     procedure SessionEnded(ExitCode: LongInt);
     function StartSessionOf(const Name: string): Boolean;
     procedure EndRequested(Reason: LongWord);
@@ -95,6 +109,7 @@ type
     { Logs the automatic user in, or asks. }
     procedure Start;
     property Session: TUserSession read FSession;
+    property Lock: TScreenLock read FLock;
     { It was asked to end, and has (or the session is ending first). }
     property Quitting: Boolean read FQuitting;
   end;
@@ -104,6 +119,7 @@ begin
   inherited Create;
   FSession := TUserSession.Create;
   FSession.OnEnded := @SessionEnded;
+  FLock := TScreenLock.Create(FSession);
   FWindow := TLoginWindow.Create;
   FWindow.OnLogin := @LoginAttempted;
   OnEndRequested := @EndRequested;
@@ -133,11 +149,11 @@ begin
   Result := FindLoginAccount(Name, Account) and FSession.Start(Account);
 end;
 
-function TSessionManager.LoginAttempted(const Name, Password: string): Boolean;
+function TSessionManager.LoginAttempted(const Name: string; Password: PChar): Boolean;
 var
   Account: TLoginAccount;
 begin
-  Result := FindLoginAccount(Name, Account) and PasswordIsRight(Account, PChar(Password));
+  Result := FindLoginAccount(Name, Account) and PasswordIsRight(Account, Password);
   if not Result then
   begin
     Say('login refused for ' + Name);
@@ -151,6 +167,7 @@ end;
 
 procedure TSessionManager.SessionEnded(ExitCode: LongInt);
 begin
+  FLock.Release;
   if FQuitting then
     QuitMessageLoop(0)
   else
@@ -182,7 +199,7 @@ begin
   { The login window comes and goes; the manager stays. }
   QuitWhenLastWindowCloses := False;
   Manager := TSessionManager.Create;
-  if not OpenSessionPort(Manager.Session) then
+  if not OpenSessionPort(Manager.Session, Manager.Lock) then
     Fail(1, 'another session manager is running');
   Manager.Start;
   RunMessageLoop;

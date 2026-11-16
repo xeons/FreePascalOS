@@ -41,6 +41,10 @@
   Server.PointerAreas), and a resize arrow stays while a border is
   dragged.
 
+  While the screen is locked (Server.ScreenLock) only the lock screen's
+  windows are under the pointer, capture it or get keys; the shell's
+  keys are swallowed and Alt+F4 does nothing.
+
   A disabled window (the owner of a modal dialog) gets nothing: the
   pointer over it is over no window, and pressing a button on it (its
   frame too) brings its dialog forward instead (ActivateWindow).
@@ -69,6 +73,8 @@ procedure SetPointerCapture(Window: TServerWindow; Capture: Boolean);
 procedure ForgetWindowInInput(Window: TServerWindow);
 { Ends a drag of a frame, if one goes on (the scale changed). }
 procedure CancelDrag;
+{ Ends any drag, capture and hover (the screen was locked or unlocked). }
+procedure ReleasePointer;
 { Gives the pointer the shape for where it is now (call before
   composing: windows may have moved or changed their shapes). }
 procedure RefreshPointerShape;
@@ -95,7 +101,8 @@ uses
   Server.PointerAreas,
   Server.WindowStates,
   Server.WindowMoves,
-  Server.Hotkeys;
+  Server.Hotkeys,
+  Server.ScreenLock;
 
 const
   EventsPath: PChar = '/dev/events';
@@ -136,7 +143,10 @@ end;
 procedure SetPointerCapture(Window: TServerWindow; Capture: Boolean);
 begin
   if Capture then
-    Captured := Window
+  begin
+    if WindowUsable(Window) then
+      Captured := Window;
+  end
   else if Captured = Window then
     Captured := nil;
 end;
@@ -151,6 +161,17 @@ begin
     AddDamage(Outline);
     OutlineVisible := False;
   end;
+end;
+
+procedure SendPointerEvent(Window: TServerWindow; Kind: LongWord; Code: LongWord; Value: LongInt); forward;
+
+procedure ReleasePointer;
+begin
+  CancelDrag;
+  Captured := nil;
+  if Hovered <> nil then
+    SendPointerEvent(Hovered, EventPointerLeave, 0, 0);
+  Hovered := nil;
 end;
 
 procedure ForgetWindowInInput(Window: TServerWindow);
@@ -475,10 +496,13 @@ begin
     is active (Server.Hotkeys). }
   if TakeHotkeyEvent(Event) then
     Exit;
-  if (ActiveWindow = nil) or ActiveWindow.Disabled then
+  if (ActiveWindow = nil) or ActiveWindow.Disabled or not WindowUsable(ActiveWindow) then
     Exit;
   if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then
   begin
+    { The lock screen is not closed. }
+    if ScreenLocked then
+      Exit;
     Message := NewMessage(EventCloseRequested, ActiveWindow.Id);
     SendToProgram(ActiveWindow, Message);
     Exit;
@@ -512,6 +536,7 @@ begin
   Got := KernelRead(InputHandle, @Events[0], SizeOf(Events));
   if Got <= 0 then
     Exit;
+  NoteInput;
   for Index := 0 to Got div SizeOf(TAbiInputEvent) - 1 do
   begin
     OldCursor := CursorRectangle;

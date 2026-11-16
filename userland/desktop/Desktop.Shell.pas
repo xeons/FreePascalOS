@@ -33,7 +33,8 @@
   Ctrl+Shift+Escape is the shell's for the whole desktop (a key it takes
   from the display server): it opens the task manager, or brings the
   one it opened before forward, as do the Start menu's entry and the
-  taskbar's own menu.
+  taskbar's own menu. Super+L and Ctrl+Alt+L lock the screen
+  (Desktop.Locking), as the Start menu's Lock does.
 
   Asked to end (the user logs off, the system shuts down), the shell
   simply ends: its windows hold nothing to save, and its end tells the
@@ -83,6 +84,7 @@ uses
   Windowing.Windows,
   Controls.Keys,
   Desktop.Programs,
+  Desktop.Locking,
   Desktop.Report;
 
 procedure TShell.EndRequested(Reason: LongWord);
@@ -99,6 +101,8 @@ begin
   OnShellEvent := @ShellEvent;
   OnEndRequested := @EndRequested;
   RegisterHotkey(KeyEscape, ModifierControl or ModifierShift, True);
+  RegisterHotkey(KeyL, ModifierSuper, True);
+  RegisterHotkey(KeyL, ModifierControl or ModifierAlt, True);
   LayOut;
   FTaskbar.OnTaskManagerChosen := @OpenTaskManager;
 end;
@@ -177,6 +181,11 @@ begin
       begin
         Say('hotkey task manager');
         OpenTaskManager;
+      end
+      else if Message.Code = KeyL then
+      begin
+        Say('hotkey lock');
+        LockDesktop;
       end;
   end;
 end;

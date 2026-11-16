@@ -90,6 +90,8 @@ type
     { The user it runs as. }
     function UserId: LongWord;
     function UserName: string;
+    { The account it runs as (to check its password). }
+    property Account: TLoginAccount read FAccount;
     property OnEnded: TSessionEndedEvent read FOnEnded write FOnEnded;
   end;
 
