@@ -334,10 +334,13 @@ def midtone_picture(width, height):
 
 
 def reference_conversion(image, profile_bytes):
+    """LittleCMS unoptimised: its optimised 8-bit transforms sample the
+    curves into coarse tables, which near black (where a linear-to-sRGB
+    curve is steepest) is off by up to 10 levels."""
     source = ImageCms.ImageCmsProfile(io.BytesIO(profile_bytes))
     target = ImageCms.createProfile("sRGB")
     return ImageCms.profileToProfile(image, source, target, renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
-                                     outputMode="RGB")
+                                     outputMode="RGB", flags=ImageCms.Flags.NOOPTIMIZE)
 
 
 def save_icc_fixture(name, image, profile_bytes):

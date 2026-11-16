@@ -103,6 +103,8 @@ type
     FWork: array[0..WorkSize - 1] of Byte;
     FFilterStrengths: array[0..SegmentCount - 1, Boolean] of TFilterInfo;
     FFilterInfo: array of TFilterInfo;
+    FPlaneRows: LongInt;  { macroblock rows the planes have room for }
+    procedure ReservePlaneRows(MacroblockY: LongInt);
     procedure ReadModes(MacroblockX: LongInt);
     function ReadResiduals(Reader: TBoolDecoder; MacroblockX: LongInt): Boolean;
     procedure DecodeMacroblock(Reader: TBoolDecoder; MacroblockX, MacroblockY: LongInt);
@@ -678,6 +680,28 @@ begin
   end;
 end;
 
+{ The planes grow (doubling, up to the frame's rows) as rows are
+  decoded rather than being allocated whole at the start: a damaged
+  header can claim a frame of 128 million pixels whose data runs out
+  after a few rows, and that is refused before most of the 192 MB is
+  ever asked for. }
+procedure TLossyFrameDecoder.ReservePlaneRows(MacroblockY: LongInt);
+var
+  NewRows: LongInt;
+begin
+  if MacroblockY < FPlaneRows then
+    Exit;
+  NewRows := FPlaneRows * 2;
+  if NewRows < 4 then
+    NewRows := 4;
+  if NewRows > FHeader.MacroblockRows then
+    NewRows := FHeader.MacroblockRows;
+  SetLength(FPlanes.Luma, PtrInt(FPlanes.LumaStride) * NewRows * 16);
+  SetLength(FPlanes.ChromaU, PtrInt(FPlanes.ChromaStride) * NewRows * 8);
+  SetLength(FPlanes.ChromaV, PtrInt(FPlanes.ChromaStride) * NewRows * 8);
+  FPlaneRows := NewRows;
+end;
+
 function TLossyFrameDecoder.Decode: TLossyPlanes;
 var
   Columns: LongInt;
@@ -693,9 +717,7 @@ begin
   FPlanes.Height := FHeader.Height;
   FPlanes.LumaStride := Columns * 16;
   FPlanes.ChromaStride := Columns * 8;
-  SetLength(FPlanes.Luma, PtrInt(FPlanes.LumaStride) * Rows * 16);
-  SetLength(FPlanes.ChromaU, PtrInt(FPlanes.ChromaStride) * Rows * 8);
-  SetLength(FPlanes.ChromaV, PtrInt(FPlanes.ChromaStride) * Rows * 8);
+  FPlaneRows := 0;
   SetLength(FModes, Columns);
   SetLength(FTopModes, Columns * 4);
   SetLength(FTopNonZero, Columns);
@@ -714,6 +736,7 @@ begin
   end;
   for MacroblockY := 0 to Rows - 1 do
   begin
+    ReservePlaneRows(MacroblockY);
     for Index := 0 to 3 do
       FLeftModes[Index] := ModeDc;
     FLeftNonZero := 0;

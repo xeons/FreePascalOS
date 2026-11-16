@@ -91,7 +91,7 @@ begin
   TopLeft := Top[-1];
   for Y := 0 to Size - 1 do
     for X := 0 to Size - 1 do
-      Target[Y * WorkStride + X] := ClipByte(Top[X] + Target[Y * WorkStride - 1] - TopLeft);
+      Target[Y * WorkStride + X] := ClipByte(LongInt(Top[X]) + LongInt(Target[Y * WorkStride - 1]) - TopLeft);
 end;
 
 procedure Vertical(Target: PByte; Size: LongInt);

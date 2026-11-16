@@ -101,8 +101,10 @@ end;
 
 function MitchellKernel(X: Double): Double;
 const
-  B = 1.0 / 3.0;
-  C = 1.0 / 3.0;
+  { Free Pascal folds 1.0 / 3.0 in single precision; Double(1) keeps
+    the constants exact enough for weights that sum to 1. }
+  B = Double(1) / 3;
+  C = Double(1) / 3;
 begin
   X := Abs(X);
   if X < 1 then
