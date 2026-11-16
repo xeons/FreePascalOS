@@ -25,19 +25,17 @@
 }
 program cat;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Input,
-  Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: cat [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: cat [OPTION]... [FILE]...'#10 +
     'Concatenate FILE(s) to standard output.'#10 +
     #10 +
     'With no FILE, or when FILE is -, read standard input.'#10 +
@@ -81,7 +79,7 @@ end;
 
 procedure CopyRaw(Stream: PInputStream);
 var
-  Buffer: array[0..4095] of Char;
+  Buffer: array[0..4095] of Byte;
   Count: QWord;
 begin
   repeat
@@ -137,7 +135,7 @@ begin
       if NumberLines and not (NumberNonblank and LineIsBlank) then
       begin
         Inc(LineNumber);
-        WriteFormatted(StandardOutput, '%6d'#9, [ArgumentNumber(LineNumber)]);
+        PrintString(Format('%6d'#9, [LineNumber]));
       end;
       AtLineStart := False;
     end;
@@ -154,25 +152,25 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
+  Path: string;
   Stream: PInputStream;
   ExitStatus: LongInt;
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('A', 'show-all', False, OptionShowAll),
-    OptionDefinition('b', 'number-nonblank', False, OptionNumberNonblank),
-    OptionDefinition('e', nil, False, OptionE),
-    OptionDefinition('E', 'show-ends', False, OptionShowEnds),
-    OptionDefinition('n', 'number', False, OptionNumber),
-    OptionDefinition('s', 'squeeze-blank', False, OptionSqueeze),
-    OptionDefinition('t', nil, False, OptionT),
-    OptionDefinition('T', 'show-tabs', False, OptionShowTabs),
-    OptionDefinition('u', nil, False, 0),
-    OptionDefinition('v', 'show-nonprinting', False, OptionShowNonprinting)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('A', 'show-all', False, OptionShowAll),
+    CommandOption('b', 'number-nonblank', False, OptionNumberNonblank),
+    CommandOption('e', '', False, OptionE),
+    CommandOption('E', 'show-ends', False, OptionShowEnds),
+    CommandOption('n', 'number', False, OptionNumber),
+    CommandOption('s', 'squeeze-blank', False, OptionSqueeze),
+    CommandOption('t', '', False, OptionT),
+    CommandOption('T', 'show-tabs', False, OptionShowTabs),
+    CommandOption('u', '', False, 0),
+    CommandOption('v', 'show-nonprinting', False, OptionShowNonprinting)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionShowAll:
         begin
@@ -202,19 +200,16 @@ begin
       OptionShowNonprinting: ShowNonprinting := True;
     end;
 
-  if Parser.OperandCount = 0 then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+  if CommandLine.OperandCount = 0 then
+    CommandLine.Operands := ['-'];
 
   LineNumber := 0;
   AtLineStart := True;
   PreviousLineBlank := False;
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Path in CommandLine.Operands do
   begin
-    Stream := OpenInput(Parser.Operands[Index]);
+    Stream := OpenInput(Path);
     if Stream = nil then
     begin
       ExitStatus := 1;

@@ -29,24 +29,20 @@
 }
 program chmod;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.FileTree,
   Util.Messages,
   Util.Modes,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: chmod [OPTION]... MODE[,MODE]... FILE...'#10 +
+  Usage = 'Usage: chmod [OPTION]... MODE[,MODE]... FILE...'#10 +
     '  or:  chmod [OPTION]... OCTAL-MODE FILE...'#10 +
     '  or:  chmod [OPTION]... --reference=RFILE FILE...'#10 +
     'Change the mode of each FILE to MODE.'#10#10 +
@@ -63,125 +59,156 @@ const
   OptionReference = 4;
   OptionRecursive = 5;
 
-var
-  Change: TModeChange;
-  ReportChanges: Boolean;
-  Silent: Boolean;
-  Verbose: Boolean;
+type
+  { Applies one mode change to files, reporting as the options ask. }
+  TModeChanger = class
+  public
+    Change: TModeChange;
+    ReportChanges: Boolean;
+    Silent: Boolean;
+    Verbose: Boolean;
+    function ChangeOne(const Path: string): Boolean;
+    { During a recursive walk symbolic links are skipped. }
+    function VisitInWalk(const Path: string; IsDirectory: Boolean): Boolean;
+  end;
 
-function ChangeOne(Path: PChar; IsDirectory: Boolean; Context: Pointer): Boolean;
+{ Mode bits as four octal digits ("0644"). }
+function OctalMode(Mode: LongWord): string;
+var
+  Digit: Integer;
+begin
+  Result := '';
+  for Digit := 1 to 4 do
+  begin
+    Result := Char(Ord('0') + (Mode and 7)) + Result;
+    Mode := Mode shr 3;
+  end;
+end;
+
+function TModeChanger.ChangeOne(const Path: string): Boolean;
 var
   Information: TFileInformation;
+  OldMode: LongWord;
   NewMode: LongWord;
   Error: LongInt;
-  OldText: array[0..9] of Char;
-  NewText: array[0..9] of Char;
 begin
   Result := True;
-  Error := GetFileInformation(Path, Information);
+  Error := GetFileInformation(PChar(Path), Information);
   if Error <> ErrorNone then
   begin
     if not Silent then
-      ReportError(Error, 'cannot access ''%s''', [ArgumentText(Path)]);
+      ReportError(Error, Format('cannot access ''%s''', [Path]));
     Exit(False);
   end;
+  OldMode := Information.Mode and $FFF;
   NewMode := ApplyModeChange(Change, Information.Mode, Information.Kind = KindDirectory);
-  if NewMode <> (Information.Mode and $FFF) then
+  if NewMode <> OldMode then
   begin
-    Error := ChangeMode(Path, NewMode);
+    Error := ChangeMode(PChar(Path), NewMode);
     if Error <> ErrorNone then
     begin
       if not Silent then
-        ReportError(Error, 'changing permissions of ''%s''', [ArgumentText(Path)]);
+        ReportError(Error, Format('changing permissions of ''%s''', [Path]));
       Exit(False);
     end;
   end;
-  if Verbose or (ReportChanges and (NewMode <> (Information.Mode and $FFF))) then
+  if Verbose or (ReportChanges and (NewMode <> OldMode)) then
   begin
-    if NewMode = (Information.Mode and $FFF) then
-      WriteFormatted(StandardOutput, 'mode of ''%s'' retained as %04o (%s)'#10, [ArgumentText(Path),
-        ArgumentUnsigned(NewMode), ArgumentText(FormatModeText(NewMode, @NewText[0]))])
+    if NewMode = OldMode then
+      PrintString(Format('mode of ''%s'' retained as %s (%s)'#10, [Path, OctalMode(NewMode),
+        FormatModeText(NewMode)]))
     else
-      WriteFormatted(StandardOutput, 'mode of ''%s'' changed from %04o (%s) to %04o (%s)'#10, [ArgumentText(Path),
-        ArgumentUnsigned(Information.Mode and $FFF), ArgumentText(FormatModeText(Information.Mode, @OldText[0])),
-        ArgumentUnsigned(NewMode), ArgumentText(FormatModeText(NewMode, @NewText[0]))]);
+      PrintString(Format('mode of ''%s'' changed from %s (%s) to %s (%s)'#10, [Path,
+        OctalMode(OldMode), FormatModeText(Information.Mode), OctalMode(NewMode),
+        FormatModeText(NewMode)]));
   end;
 end;
 
-{ During a recursive walk symbolic links are skipped. }
-function VisitInWalk(Path: PChar; IsDirectory: Boolean; Context: Pointer): Boolean;
+function TModeChanger.VisitInWalk(const Path: string; IsDirectory: Boolean): Boolean;
 var
   Information: TFileInformation;
 begin
-  if (GetLinkInformation(Path, Information) = ErrorNone) and (Information.Kind = KindSymbolicLink) then
+  if (GetLinkInformation(PChar(Path), Information) = ErrorNone) and
+     (Information.Kind = KindSymbolicLink) then
     Exit(True);
-  Result := ChangeOne(Path, IsDirectory, Context);
+  Result := ChangeOne(Path);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
+  Changer: TModeChanger;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Recursive: Boolean;
-  Reference: PChar;
-  First: Integer;
+  HasReference: Boolean;
+  Reference: string;
+  FirstFile: Integer;
   Index: Integer;
   ExitStatus: LongInt;
   Information: TFileInformation;
-  OctalText: array[0..7] of Char;
-  ModeText: PChar;
+  ModeText: string;
 begin
+  Changer := TModeChanger.Create;
   Recursive := False;
-  Reference := nil;
-  BeginOptions(Parser, [
-    OptionDefinition('c', 'changes', False, OptionChanges),
-    OptionDefinition('f', 'silent', False, OptionSilent),
-    OptionDefinition(#0, 'quiet', False, OptionSilent),
-    OptionDefinition('v', 'verbose', False, OptionVerbose),
-    OptionDefinition(#0, 'reference', True, OptionReference),
-    OptionDefinition('R', 'recursive', False, OptionRecursive)], Usage);
+  HasReference := False;
+  CommandLine := TCommandLine.Create([
+    CommandOption('c', 'changes', False, OptionChanges),
+    CommandOption('f', 'silent', False, OptionSilent),
+    CommandOption(#0, 'quiet', False, OptionSilent),
+    CommandOption('v', 'verbose', False, OptionVerbose),
+    CommandOption(#0, 'reference', True, OptionReference),
+    CommandOption('R', 'recursive', False, OptionRecursive)], Usage);
   { "-w" or "-x" are modes, not options. }
-  Parser.NegativeNumbersAreOperands := True;
-  while NextOption(Parser, Code, Value) do
+  CommandLine.NegativeNumbersAreOperands := True;
+  while CommandLine.NextOption(Code, Value) do
     case Code of
-      OptionChanges: ReportChanges := True;
-      OptionSilent: Silent := True;
-      OptionVerbose: Verbose := True;
-      OptionReference: Reference := Value;
+      OptionChanges: Changer.ReportChanges := True;
+      OptionSilent: Changer.Silent := True;
+      OptionVerbose: Changer.Verbose := True;
+      OptionReference:
+        begin
+          HasReference := True;
+          Reference := Value;
+        end;
       OptionRecursive: Recursive := True;
     end;
 
-  First := 0;
-  if Reference <> nil then
+  FirstFile := 0;
+  if HasReference then
   begin
-    if GetFileInformation(Reference, Information) <> ErrorNone then
-      Fail(1, 'failed to get attributes of ''%s''', [ArgumentText(Reference)]);
-    OctalText[0] := #0;
-    Change.IsOctal := True;
-    Change.OctalValue := Information.Mode and $FFF;
-    Change.Text := @OctalText[0];
+    if GetFileInformation(PChar(Reference), Information) <> ErrorNone then
+      Fail(1, Format('failed to get attributes of ''%s''', [Reference]));
+    Changer.Change.Symbolic := '';
+    Changer.Change.Text := PChar(Changer.Change.Symbolic);
+    Changer.Change.IsOctal := True;
+    Changer.Change.OctalValue := Information.Mode and $FFF;
   end
   else
   begin
-    if Parser.OperandCount = 0 then
-      FailWithUsageHint('missing operand', []);
-    ModeText := Parser.Operands[0];
-    if not ParseModeChange(ModeText, Change) then
-      Fail(1, 'invalid mode: ''%s''', [ArgumentText(ModeText)]);
-    First := 1;
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('missing operand');
+    ModeText := CommandLine.Operands[0];
+    if not ParseModeChange(ModeText, Changer.Change) then
+      Fail(1, Format('invalid mode: ''%s''', [ModeText]));
+    FirstFile := 1;
   end;
-  if First >= Parser.OperandCount then
-    FailWithUsageHint('missing operand after ''%s''', [ArgumentText(Parser.Operands[0])]);
+  if FirstFile >= CommandLine.OperandCount then
+  begin
+    { With --reference and no files there is no operand to name. }
+    if CommandLine.OperandCount = 0 then
+      FailWithUsageHint('missing operand after ''(null)''');
+    FailWithUsageHint(Format('missing operand after ''%s''', [CommandLine.Operands[0]]));
+  end;
 
   ExitStatus := 0;
-  for Index := First to Parser.OperandCount - 1 do
+  for Index := FirstFile to CommandLine.OperandCount - 1 do
   begin
     if Recursive then
     begin
-      if not WalkTree(Parser.Operands[Index], @VisitInWalk, nil) then
+      if not WalkTree(CommandLine.Operands[Index], @Changer.VisitInWalk) then
         ExitStatus := 1;
     end
-    else if not ChangeOne(Parser.Operands[Index], False, nil) then
+    else if not Changer.ChangeOne(CommandLine.Operands[Index]) then
       ExitStatus := 1;
   end;
   Halt(ExitStatus);

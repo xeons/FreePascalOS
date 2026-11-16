@@ -28,25 +28,22 @@
 }
 program cksum;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Crypto.Checksums,
   Crypto.Digests,
   Sys.Errors,
   Sys.Files,
-  Sys.Format,
-  Sys.Memory,
-  Sys.Streams,
+  Util.CommandLine,
   Util.DigestTool,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: cksum [OPTION]... [FILE]...'#10 +
+  Usage = 'Usage: cksum [OPTION]... [FILE]...'#10 +
     'Print CRC checksum and byte counts of each FILE.'#10#10 +
     '  -a, --algorithm=TYPE  select the digest type to use:'#10 +
     '                          crc (default), crc32b, sysv, bsd, md5, sha1,'#10 +
@@ -56,6 +53,8 @@ const
   OptionAlgorithm = 1;
   OptionUntagged = 2;
 
+  ReadSize = 65536;
+
 type
   TChecksumKind = (ChecksumPosixCrc, ChecksumCrc32, ChecksumSystemV, ChecksumBsd, ChecksumDigest);
 
@@ -64,40 +63,31 @@ var
   Algorithm: TDigestAlgorithm;
   Untagged: Boolean;
 
-procedure SelectAlgorithm(Name: PChar);
+procedure SelectAlgorithm(const Name: string);
 begin
   Kind := ChecksumDigest;
-  if TextIsEqual(Name, 'crc') then
-    Kind := ChecksumPosixCrc
-  else if TextIsEqual(Name, 'crc32b') then
-    Kind := ChecksumCrc32
-  else if TextIsEqual(Name, 'sysv') then
-    Kind := ChecksumSystemV
-  else if TextIsEqual(Name, 'bsd') then
-    Kind := ChecksumBsd
-  else if TextIsEqual(Name, 'md5') then
-    Algorithm := DigestMd5
-  else if TextIsEqual(Name, 'sha1') then
-    Algorithm := DigestSha1
-  else if TextIsEqual(Name, 'sha224') then
-    Algorithm := DigestSha224
-  else if TextIsEqual(Name, 'sha256') then
-    Algorithm := DigestSha256
-  else if TextIsEqual(Name, 'sha384') then
-    Algorithm := DigestSha384
-  else if TextIsEqual(Name, 'sha512') then
-    Algorithm := DigestSha512
-  else if TextIsEqual(Name, 'blake2b') then
-    Algorithm := DigestBlake2b
+  case Name of
+    'crc': Kind := ChecksumPosixCrc;
+    'crc32b': Kind := ChecksumCrc32;
+    'sysv': Kind := ChecksumSystemV;
+    'bsd': Kind := ChecksumBsd;
+    'md5': Algorithm := DigestMd5;
+    'sha1': Algorithm := DigestSha1;
+    'sha224': Algorithm := DigestSha224;
+    'sha256': Algorithm := DigestSha256;
+    'sha384': Algorithm := DigestSha384;
+    'sha512': Algorithm := DigestSha512;
+    'blake2b': Algorithm := DigestBlake2b;
   else
-    FailWithUsageHint('invalid argument ''%s'' for ''--algorithm''', [ArgumentText(Name)]);
+    FailWithUsageHint(Format('invalid argument ''%s'' for ''--algorithm''', [Name]));
+  end;
 end;
 
 { Feeds a file through the selected checksum; False on error. }
-function ChecksumFile(Path: PChar; out Value: QWord; out ByteCount: QWord): Boolean;
+function ChecksumFile(const Path: string; out Value: QWord; out ByteCount: QWord): Boolean;
 var
   Handle: Int64;
-  Buffer: PByte;
+  Buffer: array of Byte;
   Count: Int64;
   Crc: LongWord;
   BsdSum: Word;
@@ -105,14 +95,14 @@ var
 begin
   Value := 0;
   ByteCount := 0;
-  if TextIsEqual(Path, '-') then
+  if Path = '-' then
     Handle := StandardInputHandle
   else
   begin
-    Handle := OpenFile(Path, OpenRead);
+    Handle := OpenFile(PChar(Path), OpenRead);
     if Handle < 0 then
     begin
-      ReportError(ErrorCodeOf(Handle), '%s', [ArgumentText(Path)]);
+      ReportError(ErrorCodeOf(Handle), Path);
       Exit(False);
     end;
   end;
@@ -122,25 +112,25 @@ begin
     Crc := Crc32PosixInitial;
   BsdSum := 0;
   SystemVSum := 0;
-  Buffer := PByte(AllocateMemory(65536));
+  Buffer := nil;
+  SetLength(Buffer, ReadSize);
   Result := True;
   repeat
-    Count := ReadFile(Handle, Buffer, 65536);
+    Count := ReadFile(Handle, @Buffer[0], ReadSize);
     if Count < 0 then
     begin
-      ReportError(ErrorCodeOf(Count), '%s', [ArgumentText(Path)]);
+      ReportError(ErrorCodeOf(Count), Path);
       Result := False;
       Break;
     end;
     case Kind of
-      ChecksumPosixCrc: Crc := Crc32PosixUpdate(Crc, Buffer, QWord(Count));
-      ChecksumCrc32: Crc := Crc32Update(Crc, Buffer, QWord(Count));
-      ChecksumSystemV: SystemVSum := SystemVSumUpdate(SystemVSum, Buffer, QWord(Count));
-      ChecksumBsd: BsdSum := BsdSumUpdate(BsdSum, Buffer, QWord(Count));
+      ChecksumPosixCrc: Crc := Crc32PosixUpdate(Crc, @Buffer[0], QWord(Count));
+      ChecksumCrc32: Crc := Crc32Update(Crc, @Buffer[0], QWord(Count));
+      ChecksumSystemV: SystemVSum := SystemVSumUpdate(SystemVSum, @Buffer[0], QWord(Count));
+      ChecksumBsd: BsdSum := BsdSumUpdate(BsdSum, @Buffer[0], QWord(Count));
     end;
     ByteCount := ByteCount + QWord(Count);
   until Count = 0;
-  FreeMemory(Buffer);
   if Handle <> StandardInputHandle then
     CloseFile(Handle);
   case Kind of
@@ -151,56 +141,60 @@ begin
   end;
 end;
 
-procedure PrintDigest(Path: PChar; var ExitStatus: LongInt);
+{ Bytes as lower case hexadecimal digits. }
+function HexText(const Bytes: array of Byte; Count: Integer): string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  for Index := 0 to Count - 1 do
+    Result := Result + LowerCase(IntToHex(Bytes[Index], 2));
+end;
+
+procedure PrintDigest(const Path: string; var ExitStatus: LongInt);
 var
   Output: TDigestOutput;
-  Hex: array[0..2 * MaximumDigestSize] of Char;
+  Hex: string;
 begin
-  if not DigestFile(Algorithm, Path, Output) then
+  if not DigestFile(Algorithm, PChar(Path), Output) then
   begin
     ExitStatus := 1;
     Exit;
   end;
-  FormatHexBytes(@Output[0], DigestSize(Algorithm), @Hex[0]);
+  Hex := HexText(Output, DigestSize(Algorithm));
   if Untagged then
-    WriteFormatted(StandardOutput, '%s  %s'#10, [ArgumentText(@Hex[0]), ArgumentText(Path)])
+    PrintString(Hex + '  ' + Path + #10)
   else
-    WriteFormatted(StandardOutput, '%s (%s) = %s'#10, [ArgumentText(DigestTagName(Algorithm)),
-      ArgumentText(Path), ArgumentText(@Hex[0])]);
+    PrintString(Format('%s (%s) = %s'#10, [string(DigestTagName(Algorithm)), Path, Hex]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  Index: Integer;
+  Value: string;
   Checksum: QWord;
   ByteCount: QWord;
-  Name: PChar;
+  Name: string;
   ExitStatus: LongInt;
   IsStandardInput: Boolean;
 begin
   Kind := ChecksumPosixCrc;
   Untagged := False;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'algorithm', True, OptionAlgorithm),
-    OptionDefinition(#0, 'untagged', False, OptionUntagged)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'algorithm', True, OptionAlgorithm),
+    CommandOption(#0, 'untagged', False, OptionUntagged)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionAlgorithm: SelectAlgorithm(Value);
       OptionUntagged: Untagged := True;
     end;
-  IsStandardInput := Parser.OperandCount = 0;
+  IsStandardInput := CommandLine.OperandCount = 0;
   if IsStandardInput then
-  begin
-    Parser.Operands[0] := '-';
-    Parser.OperandCount := 1;
-  end;
+    CommandLine.Operands := ['-'];
 
   ExitStatus := 0;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Name in CommandLine.Operands do
   begin
-    Name := Parser.Operands[Index];
     if Kind = ChecksumDigest then
     begin
       PrintDigest(Name, ExitStatus);
@@ -213,17 +207,15 @@ begin
     end;
     case Kind of
       ChecksumSystemV:
-        WriteFormatted(StandardOutput, '%u %u', [ArgumentUnsigned(Checksum),
-          ArgumentUnsigned((ByteCount + 511) div 512)]);
+        PrintString(Format('%u %u', [Checksum, (ByteCount + 511) div 512]));
       ChecksumBsd:
-        WriteFormatted(StandardOutput, '%05u %5u', [ArgumentUnsigned(Checksum),
-          ArgumentUnsigned((ByteCount + 1023) div 1024)]);
+        PrintString(Format('%.5u %5u', [Checksum, (ByteCount + 1023) div 1024]));
     else
-      WriteFormatted(StandardOutput, '%u %u', [ArgumentUnsigned(Checksum), ArgumentUnsigned(ByteCount)]);
+      PrintString(Format('%u %u', [Checksum, ByteCount]));
     end;
     if not IsStandardInput then
-      WriteFormatted(StandardOutput, ' %s', [ArgumentText(Name)]);
-    WriteCharacter(StandardOutput, #10);
+      PrintString(' ' + Name);
+    PrintString(#10);
   end;
   Halt(ExitStatus);
 end.

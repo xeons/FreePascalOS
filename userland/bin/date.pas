@@ -35,29 +35,26 @@
 }
 program date;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Runtime.Time,
-  Sys.Format,
-  Sys.Streams,
-  Sys.Text,
   Sys.Files,
   Sys.Time,
   Sys.TimeZones,
   Sys.LocalTime,
   Sys.SystemSettings,
   Sys.Environment,
+  Util.CommandLine,
   Util.Dates,
   Util.SystemRequests,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: date [OPTION]... [+FORMAT]'#10 +
+  Usage = 'Usage: date [OPTION]... [+FORMAT]'#10 +
     'Display the current time in the given FORMAT.'#10 +
     #10 +
     '  -d, --date=STRING     display time described by STRING, not ''now'''#10 +
@@ -74,23 +71,15 @@ const
   OptionReference = 3;
   OptionSet = 4;
 
-procedure WritePadded(Value: Int64; Width: Integer; Padding: Char);
-var
-  NumberText: TNumberText;
-  Digits: PChar;
-  Count: Integer;
+{ Value in decimal, padded on the left with Padding to Width characters. }
+function Padded(Value: Int64; Width: Integer; Padding: Char): string;
 begin
-  Digits := FormatSignedDecimal(Value, NumberText);
-  Count := Integer(TextLength(Digits));
-  while Count < Width do
-  begin
-    WriteCharacter(StandardOutput, Padding);
-    Inc(Count);
-  end;
-  WriteText(StandardOutput, Digits);
+  Result := IntToStr(Value);
+  if Length(Result) < Width then
+    Result := StringOfChar(Padding, Width - Length(Result)) + Result;
 end;
 
-function DayOfYear(const DateTime: TDateTime): Int64;
+function DayOfYear(const DateTime: Sys.Time.TDateTime): Int64;
 begin
   Result := DaysSinceUnixEpoch(DateTime.Year, DateTime.Month, DateTime.Day) -
     DaysSinceUnixEpoch(DateTime.Year, 1, 1) + 1;
@@ -100,56 +89,57 @@ var
   { -u: UTC rather than the current zone. }
   ShowUniversal: Boolean;
 
-procedure WriteTime(Format: PChar; Time: TUnixTime);
+{ Time written as TimeFormat says. }
+function FormatTime(const TimeFormat: string; Time: TUnixTime): string;
 var
   Local: TLocalTime;
-  DateTime: TDateTime;
+  DateTime: Sys.Time.TDateTime;
   Position: Integer;
-  OffsetText: array[0..7] of Char;
+  OffsetBuffer: array[0..7] of Char;
+  OffsetText: string;
 begin
   if ShowUniversal then
     DecodeTimeInZone(UtcTimeZone, Time, Local)
   else
     DecodeLocalTime(Time, Local);
   DateTime := Local.DateTime;
-  FormatUtcOffset(Local.Offset, @OffsetText[0]);
-  Position := 0;
-  while Format[Position] <> #0 do
+  FormatUtcOffset(Local.Offset, @OffsetBuffer[0]);
+  OffsetText := PChar(@OffsetBuffer[0]);
+  Result := '';
+  Position := 1;
+  while Position <= Length(TimeFormat) do
   begin
-    if (Format[Position] <> '%') or (Format[Position + 1] = #0) then
+    if (TimeFormat[Position] <> '%') or (Position = Length(TimeFormat)) then
     begin
-      WriteCharacter(StandardOutput, Format[Position]);
+      Result := Result + TimeFormat[Position];
       Inc(Position);
       Continue;
     end;
     Inc(Position);
-    case Format[Position] of
-      'Y': WritePadded(DateTime.Year, 4, '0');
-      'y': WritePadded(DateTime.Year mod 100, 2, '0');
-      'm': WritePadded(DateTime.Month, 2, '0');
-      'd': WritePadded(DateTime.Day, 2, '0');
-      'e': WritePadded(DateTime.Day, 2, ' ');
-      'H': WritePadded(DateTime.Hour, 2, '0');
-      'M': WritePadded(DateTime.Minute, 2, '0');
-      'S': WritePadded(DateTime.Second, 2, '0');
-      'j': WritePadded(DayOfYear(DateTime), 3, '0');
-      'a': WriteText(StandardOutput, DayName(DateTime.DayOfWeek));
-      'b', 'h': WriteText(StandardOutput, MonthName(DateTime.Month));
-      's': WriteDecimal(StandardOutput, Time);
-      'Z': WriteText(StandardOutput, Local.Abbreviation);
-      'z': WriteText(StandardOutput, @OffsetText[0]);
-      'F': WriteTime('%Y-%m-%d', Time);
-      'T': WriteTime('%H:%M:%S', Time);
-      'D': WriteTime('%m/%d/%y', Time);
-      'R': WriteTime('%H:%M', Time);
-      'n': WriteCharacter(StandardOutput, #10);
-      't': WriteCharacter(StandardOutput, #9);
-      '%': WriteCharacter(StandardOutput, '%');
+    case TimeFormat[Position] of
+      'Y': Result := Result + Padded(DateTime.Year, 4, '0');
+      'y': Result := Result + Padded(DateTime.Year mod 100, 2, '0');
+      'm': Result := Result + Padded(DateTime.Month, 2, '0');
+      'd': Result := Result + Padded(DateTime.Day, 2, '0');
+      'e': Result := Result + Padded(DateTime.Day, 2, ' ');
+      'H': Result := Result + Padded(DateTime.Hour, 2, '0');
+      'M': Result := Result + Padded(DateTime.Minute, 2, '0');
+      'S': Result := Result + Padded(DateTime.Second, 2, '0');
+      'j': Result := Result + Padded(DayOfYear(DateTime), 3, '0');
+      'a': Result := Result + DayName(DateTime.DayOfWeek);
+      'b', 'h': Result := Result + MonthName(DateTime.Month);
+      's': Result := Result + IntToStr(Time);
+      'Z': Result := Result + Local.Abbreviation;
+      'z': Result := Result + OffsetText;
+      'F': Result := Result + FormatTime('%Y-%m-%d', Time);
+      'T': Result := Result + FormatTime('%H:%M:%S', Time);
+      'D': Result := Result + FormatTime('%m/%d/%y', Time);
+      'R': Result := Result + FormatTime('%H:%M', Time);
+      'n': Result := Result + #10;
+      't': Result := Result + #9;
+      '%': Result := Result + '%';
     else
-      begin
-        WriteCharacter(StandardOutput, '%');
-        WriteCharacter(StandardOutput, Format[Position]);
-      end;
+      Result := Result + '%' + TimeFormat[Position];
     end;
     Inc(Position);
   end;
@@ -165,31 +155,34 @@ begin
   Request.Time := Time;
   Error := SendSystemRequest(Request, True);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot set date', []);
+    FailWithError(1, Error, 'cannot set date');
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Time: TUnixTime;
-  Format: PChar;
+  TimeFormat: string;
   Information: TFileInformation;
-  SetText: PChar;
-  DateText: PChar;
+  HasSetText: Boolean;
+  SetText: string;
+  HasDateText: Boolean;
+  DateText: string;
+  Operand: string;
 begin
   Time := CurrentTime;
-  Format := DefaultFormat;
-  SetText := nil;
-  DateText := nil;
+  TimeFormat := DefaultFormat;
+  HasSetText := False;
+  HasDateText := False;
   ShowUniversal := False;
-  BeginOptions(Parser, [
-    OptionDefinition('d', 'date', True, OptionDate),
-    OptionDefinition('s', 'set', True, OptionSet),
-    OptionDefinition('u', 'utc', False, OptionUniversal),
-    OptionDefinition(#0, 'universal', False, OptionUniversal),
-    OptionDefinition('r', 'reference', True, OptionReference)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('d', 'date', True, OptionDate),
+    CommandOption('s', 'set', True, OptionSet),
+    CommandOption('u', 'utc', False, OptionUniversal),
+    CommandOption(#0, 'universal', False, OptionUniversal),
+    CommandOption('r', 'reference', True, OptionReference)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionUniversal:
         begin
@@ -198,35 +191,41 @@ begin
           SetVariable('TZ', 'UTC');
         end;
       OptionSet:
-        SetText := Value;
+        begin
+          HasSetText := True;
+          SetText := Value;
+        end;
       OptionDate:
-        DateText := Value;
+        begin
+          HasDateText := True;
+          DateText := Value;
+        end;
       OptionReference:
         begin
-          if GetFileInformation(Value, Information) <> 0 then
-            Fail(1, '%s: No such file or directory', [ArgumentText(Value)]);
+          if GetFileInformation(PChar(Value), Information) <> 0 then
+            Fail(1, Value + ': No such file or directory');
           Time := Information.ModificationTime;
         end;
     end;
 
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if CommandLine.OperandCount = 1 then
   begin
-    if Parser.Operands[0][0] <> '+' then
-      Fail(1, 'setting the date is not supported; invalid date ''%s''', [ArgumentText(Parser.Operands[0])]);
-    Format := Parser.Operands[0] + 1;
+    Operand := CommandLine.Operands[0];
+    if (Operand = '') or (Operand[1] <> '+') then
+      Fail(1, Format('setting the date is not supported; invalid date ''%s''', [Operand]));
+    TimeFormat := Copy(Operand, 2, MaxInt);
   end;
 
-  if (DateText <> nil) and not ParseDateText(DateText, Time) then
-    Fail(1, 'invalid date ''%s''', [ArgumentText(DateText)]);
-  if SetText <> nil then
+  if HasDateText and not ParseDateText(DateText, Time) then
+    Fail(1, Format('invalid date ''%s''', [DateText]));
+  if HasSetText then
   begin
     if not ParseDateText(SetText, Time) then
-      Fail(1, 'invalid date ''%s''', [ArgumentText(SetText)]);
+      Fail(1, Format('invalid date ''%s''', [SetText]));
     SetClock(Time);
   end;
 
-  WriteTime(Format, Time);
-  WriteCharacter(StandardOutput, #10);
+  PrintString(FormatTime(TimeFormat, Time) + #10);
 end.

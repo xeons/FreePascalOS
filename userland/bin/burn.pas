@@ -29,24 +29,24 @@
 }
 program burn;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Memory,
   Sys.Notifications,
   Sys.Processes,
   Sys.Streams,
-  Sys.Text,
   Sys.Threads,
   Sys.Time,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: burn [-t THREADS] [-s SECONDS] [-m MEBIBYTES] [-i]'#10 +
+  Usage = 'Usage: burn [-t THREADS] [-s SECONDS] [-m MEBIBYTES] [-i]'#10 +
     'Keep THREADS threads busy for SECONDS (for ever), after taking and touching'#10 +
     'MEBIBYTES of memory. -i: ignore requests to end.'#10;
 
@@ -90,7 +90,7 @@ begin
   Length := Mebibytes * 1024 * 1024;
   Block := PByte(AllocateMemory(Length));
   if Block = nil then
-    Fail(1, 'cannot take %u MiB', [ArgumentUnsigned(Mebibytes)]);
+    Fail(1, Format('cannot take %u MiB', [Mebibytes]));
   Offset := 0;
   while Offset < Length do
   begin
@@ -99,34 +99,34 @@ begin
   end;
 end;
 
-function ParseCount(Value: PChar; What: PChar): QWord;
+function ParseCount(const Value, What: string): QWord;
 begin
-  if not ParseUnsigned(Value, Result) then
-    FailWithUsageHint('invalid %s ''%s''', [ArgumentText(What), ArgumentText(Value)]);
+  if not ParseUnsignedDecimal(Value, Result) then
+    FailWithUsageHint(Format('invalid %s ''%s''', [What, Value]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   ThreadCount: QWord;
   Seconds: QWord;
   Mebibytes: QWord;
   IgnoreEndRequests: Boolean;
-  Handles: array[0..MaximumThreads - 1] of Int64;
-  Index: QWord;
+  Handles: array of Int64;
+  Index: Integer;
   ExitCode: LongInt;
 begin
   ThreadCount := 1;
   Seconds := 0;
   Mebibytes := 0;
   IgnoreEndRequests := False;
-  BeginOptions(Parser, [
-    OptionDefinition('t', 'threads', True, OptionThreads),
-    OptionDefinition('s', 'seconds', True, OptionSeconds),
-    OptionDefinition('m', 'memory', True, OptionMemory),
-    OptionDefinition('i', 'ignore-end', False, OptionIgnore)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('t', 'threads', True, OptionThreads),
+    CommandOption('s', 'seconds', True, OptionSeconds),
+    CommandOption('m', 'memory', True, OptionMemory),
+    CommandOption('i', 'ignore-end', False, OptionIgnore)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionThreads: ThreadCount := ParseCount(Value, 'number of threads');
       OptionSeconds: Seconds := ParseCount(Value, 'number of seconds');
@@ -134,7 +134,7 @@ begin
       OptionIgnore: IgnoreEndRequests := True;
     end;
   if (ThreadCount = 0) or (ThreadCount > MaximumThreads) then
-    FailWithUsageHint('the number of threads must be 1 to %u', [ArgumentUnsigned(MaximumThreads)]);
+    FailWithUsageHint(Format('the number of threads must be 1 to %d', [MaximumThreads]));
   { Taken but never read: the system leaves such a request to the
     program, which does nothing about it. }
   if IgnoreEndRequests then
@@ -143,12 +143,14 @@ begin
   StopAt := 0;
   if Seconds > 0 then
     StopAt := UptimeMilliseconds + Seconds * 1000;
-  WriteFormatted(StandardOutput, 'burn: ready %d'#10, [ArgumentNumber(CurrentProcessId)]);
+  PrintString(Format('burn: ready %d'#10, [CurrentProcessId]));
   FlushStream(StandardOutput);
-  for Index := 1 to ThreadCount - 1 do
+  Handles := nil;
+  SetLength(Handles, ThreadCount);
+  for Index := 1 to High(Handles) do
     Handles[Index] := CreateThread(@Spin, nil);
   Spin(nil);
-  for Index := 1 to ThreadCount - 1 do
+  for Index := 1 to High(Handles) do
     if Handles[Index] >= 0 then
     begin
       WaitForThread(Handles[Index], InfiniteWait, ExitCode);
