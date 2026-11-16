@@ -17,8 +17,9 @@
 }
 
 {
-  The contents of libcryptography.so: hashes, checksums, ciphers and
-  random numbers. Compiling this unit compiles all of them.
+  The contents of libcryptography.so: hashes, checksums, ciphers,
+  authenticated encryption, key derivation and exchange, signature
+  checks and random numbers. Compiling this unit compiles all of them.
 }
 unit Crypto.Contents;
 
@@ -38,7 +39,18 @@ uses
   Crypto.Checksums,
   Crypto.ChaCha20,
   Crypto.Aes,
-  Crypto.Random;
+  Crypto.AesInstructions,
+  Crypto.Random,
+  Crypto.Poly1305,
+  Crypto.ChaCha20Poly1305,
+  Crypto.Ghash,
+  Crypto.AesGcm,
+  Crypto.Hkdf,
+  Crypto.X25519,
+  Crypto.BigNumbers,
+  Crypto.Rsa,
+  Crypto.EllipticCurves,
+  Crypto.Ecdsa;
 
 implementation
 

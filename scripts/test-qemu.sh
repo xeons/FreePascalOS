@@ -38,7 +38,8 @@ architecture="$1"
 esp_directory="$2"
 test_disk_image="${3:-}"
 system_disk_image="${4:-}"
-timeout_seconds=180
+# (wgettest adds up to a minute under TCG.)
+timeout_seconds=240
 expected_file_systems=(fat12 fat16 fat32 exfat ext2 ext3 ext4)
 
 build_directory=$(dirname "$esp_directory")
@@ -160,10 +161,39 @@ if [[ -n "$system_disk_image" ]]; then
     fi
 fi
 
+# The web servers of the wget test (wgettest): scripts/test-web-server.py
+# runs for each connection the guest makes to one of their addresses,
+# over HTTP or HTTPS with the test certificates of tools/TlsTest; behind
+# 10.0.2.103 is OpenSSL's s_server -www (reached through the same
+# script as a relay). They need Python 3 with its ssl module and openssl
+# on the host.
+if ! python3 -c 'import ssl' 2> /dev/null; then
+    echo "TEST FAILED: the wget test needs Python 3 with its ssl module on the host"
+    exit 1
+fi
+if ! command -v openssl > /dev/null; then
+    echo "TEST FAILED: the wget test needs openssl on the host (for openssl s_server)"
+    exit 1
+fi
+web_server="python3 $(cd "$(dirname "$0")" && pwd)/test-web-server.py"
+certificate_directory="$(cd "$(dirname "$0")/.." && pwd)/tools/TlsTest/certificates"
+s_server_port=$((20000 + $$ % 20000))
+openssl s_server -quiet -www -tls1_3 -accept "$s_server_port" -cert "$certificate_directory/server-rsa.pem" \
+    -key "$certificate_directory/server-rsa.key" < /dev/null > /dev/null 2>&1 &
+s_server_process=$!
+trap 'kill "$s_server_process" 2> /dev/null' EXIT
+web_forwards="guestfwd=tcp:10.0.2.101:443-cmd:$web_server https server-chain.pem server.key"
+web_forwards+=",guestfwd=tcp:10.0.2.102:80-cmd:$web_server http"
+web_forwards+=",guestfwd=tcp:10.0.2.103:443-cmd:$web_server relay $s_server_port"
+web_forwards+=",guestfwd=tcp:10.0.2.104:443-cmd:$web_server https wrong-name-chain.pem wrong-name.key"
+web_forwards+=",guestfwd=tcp:10.0.2.105:443-cmd:$web_server https other-server.pem other-server.key"
+web_forwards+=",guestfwd=tcp:10.0.2.106:443-cmd:$web_server https expired-chain.pem expired.key"
+
 # A virtio network card on QEMU's user networking (the guest is
 # 10.0.2.15, the gateway 10.0.2.2 answers pings); a TCP connection to
-# 10.0.2.100 port 7 reaches "cat", an echo service for networktest.
-network_arguments=(-netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat
+# 10.0.2.100 port 7 reaches "cat", an echo service for networktest, and
+# 10.0.2.101 to 10.0.2.106 the web servers above.
+network_arguments=(-netdev "user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat,$web_forwards"
     -device virtio-net-pci,netdev=net0)
 
 # ACCEL=kvm runs on the real processor (faster, and with the processor's

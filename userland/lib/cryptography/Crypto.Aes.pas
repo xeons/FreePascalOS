@@ -24,9 +24,13 @@
          input by 1 to 16 bytes
     CTR  a stream mode: the same call encrypts and decrypts
 
-  The S-box is a table, so the time taken can depend on the data; this
-  implementation is meant for files at rest, not for situations where an
-  attacker can time it.
+  Encryption uses the processor's AES instructions when it has them
+  (Crypto.AesInstructions), which take the same time whatever the key
+  and data; the key expansion reads the S-box without indexing it by the
+  key. Without the instructions, and for decryption, the S-box is a
+  table indexed by the data, so the time taken can depend on it: that
+  path is meant for files at rest, not for situations where an attacker
+  can time it (the TLS library offers AES only with the instructions).
 }
 unit Crypto.Aes;
 
@@ -46,7 +50,14 @@ type
     { Round keys for encryption and decryption, 4 words per round. }
     EncryptionKeys: array[0..59] of LongWord;
     DecryptionKeys: array[0..59] of LongWord;
+    { The encryption keys as bytes, for the AES instructions. }
+    EncryptionKeyBytes: array[0..239] of Byte;
+    UsesInstructions: Boolean;
   end;
+
+{ True when encryption runs on the processor's AES instructions, in
+  constant time. }
+function AesIsConstantTime: Boolean;
 
 { KeyLength is 16, 24 or 32 bytes; returns False otherwise. }
 function ExpandAesKey(out Key: TAesKey; KeyBytes: PByte; KeyLength: Integer): Boolean;
@@ -73,20 +84,26 @@ implementation
 
 uses
   Runtime.Memory,
-  Crypto.Bits;
+  Crypto.Bits,
+  Crypto.AesInstructions;
 
 var
   SubstitutionBox: array[0..255] of Byte;
   InverseSubstitutionBox: array[0..255] of Byte;
   TablesReady: Boolean = False;
 
-{ Multiplication by x in GF(2^8). }
+{ Multiplication by x in GF(2^8), without a branch on the value. }
 function TimesX(Value: Byte): Byte;
+var
+  ReductionMask: Byte;
 begin
-  if (Value and $80) <> 0 then
-    Result := Byte((Value shl 1) xor $1B)
-  else
-    Result := Byte(Value shl 1);
+  ReductionMask := Byte(0 - (Value shr 7));
+  Result := Byte((Value shl 1) xor ($1B and ReductionMask));
+end;
+
+function AesIsConstantTime: Boolean;
+begin
+  Result := ProcessorHasAesInstructions;
 end;
 
 function Multiply(A, B: Byte): Byte;
@@ -134,12 +151,30 @@ begin
   TablesReady := True;
 end;
 
+{ S-box lookup that reads every entry and keeps the wanted one by a
+  mask, so which cache lines are touched does not depend on the key. }
+function SubstituteByteInConstantTime(Value: Byte): Byte;
+var
+  Candidate: Integer;
+  Difference: LongWord;
+  KeepMask: Byte;
+begin
+  Result := 0;
+  for Candidate := 0 to 255 do
+  begin
+    Difference := LongWord(Candidate) xor Value;
+    { All ones when Difference is zero. }
+    KeepMask := Byte(((Difference - 1) shr 8) and 1) * $FF;
+    Result := Result or (SubstitutionBox[Candidate] and KeepMask);
+  end;
+end;
+
 function SubstituteWord(Value: LongWord): LongWord;
 begin
-  Result := (LongWord(SubstitutionBox[Value shr 24]) shl 24) or
-    (LongWord(SubstitutionBox[(Value shr 16) and $FF]) shl 16) or
-    (LongWord(SubstitutionBox[(Value shr 8) and $FF]) shl 8) or
-    LongWord(SubstitutionBox[Value and $FF]);
+  Result := (LongWord(SubstituteByteInConstantTime(Byte(Value shr 24))) shl 24) or
+    (LongWord(SubstituteByteInConstantTime(Byte(Value shr 16))) shl 16) or
+    (LongWord(SubstituteByteInConstantTime(Byte(Value shr 8))) shl 8) or
+    LongWord(SubstituteByteInConstantTime(Byte(Value)));
 end;
 
 { InvMixColumns of one word, used to derive the decryption keys. }
@@ -202,6 +237,9 @@ begin
         Temporary := InverseMixWord(Temporary);
       Key.DecryptionKeys[4 * Round + Column] := Temporary;
     end;
+  for Index := 0 to TotalWords - 1 do
+    StoreBigEndian32(@Key.EncryptionKeyBytes[4 * Index], Key.EncryptionKeys[Index]);
+  Key.UsesInstructions := ProcessorHasAesInstructions;
   Result := True;
 end;
 
@@ -287,6 +325,11 @@ var
   State: TAesBlock;
   Round: Integer;
 begin
+  if Key.UsesInstructions then
+  begin
+    EncryptBlockWithAesInstructions(@Key.EncryptionKeyBytes[0], Key.RoundCount, Source, Destination);
+    Exit;
+  end;
   CopyMemory(@State[0], Source, AesBlockSize);
   AddRoundKey(State, Key.EncryptionKeys, 0);
   for Round := 1 to Key.RoundCount do

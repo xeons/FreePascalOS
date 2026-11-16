@@ -2695,6 +2695,226 @@ change refused; ping allowed), and `ifconfig`, `route`, `arp` and
 configured eth0. The QEMU command lines of all tests and `make run`
 have a virtio-net card on user networking.
 
+### TLS and wget
+
+**libtls** (`userland/lib/tls`, units `Tls.*`) is a TLS 1.3 client
+(RFC 8446) with X.509 certificate checking; **wget** fetches over HTTP
+and, through it, HTTPS. TLS 1.2 and older are not spoken: a server that
+cannot do 1.3 is refused with "protocol version" (most servers can).
+
+```
+  wget (userland/wget: Wget.Urls, .Headers, .Chunks, .Connections,
+        .Requests, .Bodies, .Transfer, .Progress, .Files, .Settings)
+=========== Tls.Sessions: over a socket, the system's roots and clock ======
+  Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
+  Tls.Client           create, handshake, read, write, close, errors
+  Tls.Handshake        the client's state machine
+  Tls.RecordLayer      records, alerts, handshake reassembly
+  Tls.RecordProtection AEAD per direction    Tls.KeySchedule  Tls.Transcript
+  Tls.ClientHello      Tls.ServerMessages    Tls.CipherSuites
+  Tls.CertificateChains  Tls.Signatures  Tls.HostNames  Tls.TrustStore
+  Tls.Certificates  Tls.CertificateExtensions  Tls.Asn1  Tls.Pem
+  Tls.ByteBuffers  Tls.Errors  Tls.Constants  Tls.ObjectIdentifiers
+=========== libcryptography ================================================
+```
+
+Everything below `Tls.Sessions` but the socket transport and the trust
+store file is plain Pascal over a transport (two routines that send and
+receive bytes), so it builds on the host and is tested there.
+
+**Cryptography** (libcryptography). Secret data never decides a branch
+or a memory address:
+
+- *Poly1305* in five 26-bit limbs (every product fits in 64 bits), the
+  final reduction chosen by masks; *ChaCha20-Poly1305* (RFC 8439 2.8)
+  checks the tag in constant time before decrypting anything.
+- *AES-GCM* (SP 800-38D, 96-bit nonces): AES on AES-NI
+  (`Crypto.AesInstructions`, used whenever CPUID says so), the key
+  expansion reading the whole S-box for every byte; GHASH bit by bit
+  with masks (no tables). Without AES-NI the table driven AES is still
+  there for files at rest, but TLS then offers only ChaCha20-Poly1305.
+- *HKDF* (RFC 5869) over any digest; SHA-384 was already there.
+- *X25519* (RFC 7748): sixteen 16-bit limbs in signed 64-bit integers, a
+  Montgomery ladder with masked swaps and a fixed inversion chain; an
+  all-zero result (a small-order point) is refused.
+- *Signature checks only*, on public data: `Crypto.BigNumbers` (32-bit
+  limbs, Montgomery multiplication, up to 8192 bits), RSA PKCS #1 v1.5
+  and PSS with MGF1 (`Crypto.Rsa`: exact DigestInfo and padding
+  comparisons, a signature as long as the modulus and below it), and
+  ECDSA on P-256 and P-384 (`Crypto.EllipticCurves`: Jacobian
+  coordinates in Montgomery form, the a = -3 doubling; `Crypto.Ecdsa`:
+  r and s in [1, n-1], the digest cut to the order's length, public
+  points checked to be on the curve). Nothing signs.
+
+**The handshake** (`Tls.Handshake`). The ClientHello offers TLS 1.3
+only (supported_versions), x25519 only (supported_groups and its
+key_share), the signature schemes ECDSA P-256/SHA-256, P-384/SHA-384,
+RSA-PSS (rsae and pss, SHA-256/384/512) and RSA PKCS #1 (for
+certificates only), server_name (unless the host is an IP address),
+ALPN when the program names a protocol (wget: http/1.1), a random
+32-byte legacy session id and a dummy change_cipher_spec before the
+client's second flight (middlebox compatibility, appendix D.4). Cipher
+suites: TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256 and
+TLS_AES_256_GCM_SHA384 in that order with AES-NI, ChaCha20-Poly1305
+alone without; a program may choose (wget `--ciphers`).
+
+- A HelloRetryRequest is answered once: only a cookie can change (the
+  client has no other group), so one asking for x25519 again, or for
+  nothing, is an illegal parameter; the transcript then starts with
+  message_hash(ClientHello1). A second retry is an unexpected message.
+- The ServerHello must echo the session id and pick an offered suite
+  (the retry's, after one), TLS 1.3, no compression and an x25519
+  share; only offered extensions may come back, each once (in every
+  server message). The shared secret feeds the key schedule
+  (`Tls.KeySchedule`: Derive-Secret, HKDF-Expand-Label with "tls13 ");
+  the transcript hash (`Tls.Transcript`) keeps the ClientHello until
+  the suite says which hash to use.
+- EncryptedExtensions; a CertificateRequest is answered with an empty
+  Certificate (the client has none); the Certificate (no request
+  context, no entry extensions, 1 to 16 certificates) is checked at
+  once (below); CertificateVerify must use an offered scheme other than
+  PKCS #1, fit the key's kind, and verify over 64 spaces, "TLS 1.3,
+  server CertificateVerify", a zero and the transcript hash; the
+  server's Finished is an HMAC of the transcript compared in constant
+  time.
+- Then the application traffic keys; the handshake secrets are wiped.
+  After the handshake NewSessionTicket is read and dropped (no
+  resumption, no 0-RTT); a KeyUpdate moves the read keys on and, when
+  asked, the client answers with its own and moves its write keys;
+  post-handshake authentication was not offered and is refused.
+
+**Records** (`Tls.RecordLayer`, `Tls.RecordProtection`). A record's
+length is checked before it is read (2^14 + 256 protected, 2^14
+plain); protected records are opened with the AEAD (nonce = IV XOR the
+64-bit sequence number, the header as additional data), the zero
+padding stripped and the inner type found. change_cipher_spec is
+dropped only between the ClientHello and the server's Finished, and
+only as the single byte 1; plaintext after the keys are set (but for an
+alert), application data during the handshake, empty handshake records
+and handshake messages straddling a key change are refused. Handshake
+messages are put together across records, at most 256 KiB. Alerts:
+close_notify ends the stream (reads return 0), user_canceled is
+ignored, every other alert fails the connection. A failure sends the
+matching alert (decode_error, bad_certificate, unknown_ca,
+certificate_expired, decrypt_error...) once, encrypted when keys are
+set; every later call returns the same error. Errors are negative codes
+with messages (`Tls.Errors`); certificate errors say which certificate
+or host they are about.
+
+**Certificates** (`Tls.Asn1`, `Tls.Certificates`,
+`Tls.CertificateExtensions`). The DER reader refuses indefinite and
+non-minimal lengths, high tag numbers, elements running past their
+parent, negative or padded integers, booleans other than 00/FF and set
+unused bits; times are UTCTime (1950-2049) or GeneralizedTime, in Z,
+calendar-checked. A certificate's inner and outer signature algorithms
+must be the same. Kept: issuer and subject (DER, compared byte for
+byte) and their first common names, the validity, the key (RSA,
+RSA-PSS, EC P-256/P-384; others parse but cannot be used), and the
+extensions basic constraints, key usage, extended key usage, subject
+alternative names, key identifiers and certificate policies
+(recognized, not acted on). No extension twice; any other critical
+extension - name constraints included, which are not supported - makes
+the certificate unusable.
+
+**The chain check** (`Tls.CertificateChains`, at the system clock's
+time): the server's certificate must be valid, carry no unknown
+critical extension and, where it says, allow digital signatures and TLS
+servers. A path is then searched from it to a trust anchor: each step
+to an anchor (first) or a sent certificate whose subject is the issuer
+before and whose key verifies its signature, trying every candidate in
+turn (cross-signed roots), at most 8 issuers; a sent certificate that
+is itself an anchor ends the path (so a pinned server certificate
+works). Each issuer must be an authority (basic constraints), may sign
+certificates (key usage), must be valid, must allow the path below it
+(path length) and, if it restricts extended key usage, must allow TLS
+servers; anchors are trusted as they are (only their validity and path
+length count). Signatures (`Tls.Signatures`): RSA keys of 2048 bits or
+more, no SHA-1, the key's kind fitting the algorithm. Last, the host
+name (`Tls.HostNames`, RFC 6125/9525): subject alternative names only,
+never the common name; an IPv4 literal matches only an iPAddress; DNS
+names compare without case and without a final dot; a wildcard only as
+the whole leftmost label, for exactly one label, with two more labels
+after it. Without a path the most telling reason found on the way is
+reported (an expired issuer, a bad signature), else "unknown issuer".
+The errors: expired, not yet valid, unknown issuer, name mismatch, bad
+signature, not an authority, malformed, unsupported, chain too long,
+wrong usage, missing.
+
+**Roots.** `/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA list
+as a PEM bundle (userland/etc/ssl/certs, MPL-2.0, see its README),
+installed by `make system-disk`; `Tls.SystemTrust` reads it (or a file
+the program names) into a trust store (`Tls.TrustStore`, `Tls.Pem`)
+for each session. A root that does not parse is left out.
+
+**The interface.** `Tls.Client` works over any transport:
+`CreateTlsClient` (server name, trust store, whether to verify, the
+time, ALPN, cipher suites), `TlsHandshake`, `TlsRead` (0 at the end;
+`TlsClosedCleanly` tells a close_notify from the transport just
+ending), `TlsWrite`, `TlsClose` (close_notify), `TlsDescribeError`
+("the certificate has expired (certificate: example.com)", "the server
+sent an alert: handshake failure") and `TlsIgnoredCertificateError`
+(what the chain check said when not verifying). `Tls.Sessions` puts it
+over a connected socket with a timeout, the system's roots and clock:
+`OpenTlsSession(Socket, Options, Session)`, `ReadTlsSession`,
+`WriteTlsSession`, `CloseTlsSession`, `FreeTlsSession`.
+
+**wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
+HTTP/1.1, one request per connection ("Connection: close"): the URL
+(`Wget.Urls`: http and https, no user names or IPv6 literals, unsafe
+bytes percent-encoded, a Location resolved as RFC 3986 says), the host
+looked up by `Sys.HostNames` (numeric addresses need no DNS), a
+non-blocking connect within the timeout and TLS for https
+(`Wget.Connections`), the request (`Wget.Requests`: Host, User-Agent,
+Accept, identity encoding, Range when continuing), the head
+(`Wget.Headers`: 1xx skipped; a Content-Length that is not a number,
+two that differ, and transfer codings other than chunked are refused)
+and the body (`Wget.Bodies`, `Wget.Chunks`: by length, chunked with
+extensions and trailers skipped, or to the end of the connection).
+Redirects 301/302/303/307/308 are followed to http or https URLs only,
+at most 20, the file keeping the first URL's name; the file is named
+after the URL's last segment (index.html for a directory), with .1,
+.2 ... when the name is taken, or as -O says (`-O -` is standard
+output; several URLs go into one -O file). `-c` continues with a Range
+(a 206 must start where asked; a whole file sent back is refused rather
+than the file truncated; 416 means it is complete). A transfer that
+breaks or times out is tried again (`-t`, 20 by default, waiting a
+second more each time up to ten), continuing where it broke when it
+can; unknown hosts, refused connections, certificate failures and
+error responses are not tried again. `-S` shows the response heads,
+`-q` nothing at all, `-T` limits every wait, `-U` sets the User-Agent,
+`--no-check-certificate` warns instead of refusing, `--ca-certificate`
+names other roots, `--ciphers` the suites. On a terminal a progress
+line (`Wget.Progress`: name, percent, bar, size, speed, estimate) is
+redrawn five times a second; elsewhere there is none. Messages and exit
+statuses are GNU wget's (4 network, 5 certificate, 7 protocol, 8 server
+error...).
+
+**Tests.** On the host: `make crypto-test` (RFC 8439's Poly1305 and
+AEAD vectors with the reduction edge cases, the GCM specification's
+test cases with and without AES-NI, FIPS 180 SHA-384, RFC 5869 HKDF,
+RFC 7748 X25519 with 1000 iterations, RFC 6979's ECDSA P-256 and P-384
+signatures, RSA PKCS #1 and PSS signatures of 2048 to 4096-bit keys
+made by OpenSSL, each also tampered with), `make tls-test` (strict DER,
+the host name rules, RFC 8448's whole 1-RTT handshake through the key
+schedule, transcript, record protection, CertificateVerify and both
+Finished messages, its HelloRetryRequest transcript, retries against a
+scripted server, the test certificates of tools/TlsTest/certificates in
+good and failing chains, all 118 Mozilla roots parsed and their
+self-signatures checked; then `run-interop.sh`: whole connections to
+OpenSSL's s_server with every suite, ECDSA and RSA-PSS servers, a
+certificate request, key updates both ways and each failure) and
+`make wget-test` (URLs with RFC 3986's resolution examples, file names,
+response heads, chunked bodies fed in pieces of every size). In QEMU,
+coretest runs `wgettest`, which fetches from test servers on the host
+that QEMU's user network reaches through `guestfwd`
+(scripts/test-web-server.py over HTTP and HTTPS with the test
+certificates, and `openssl s_server -www`): contents by sha256sum,
+every suite, redirects, chunked and close-delimited bodies, continuing,
+-S, the user agent, a timeout, a 404, and a name mismatch, an unknown
+authority and an expired certificate each refused (and accepted with
+--no-check-certificate). test-qemu.sh says so and stops when python3
+with ssl or openssl is missing on the host.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a
@@ -4209,9 +4429,17 @@ independent) against the Free Pascal runtime library:
   passes the program's unit tables and the initial stack to System.
 - **libcryptography.so** – digests (`Crypto.Md5`, `Crypto.Sha1`,
   `Crypto.Sha256`, `Crypto.Sha512`, `Crypto.Blake2b` behind
-  `Crypto.Digests`), `Crypto.Hmac`, `Crypto.Checksums`, `Crypto.Aes`,
-  `Crypto.ChaCha20` and `Crypto.Random`. Every algorithm is checked
-  against its published test vectors.
+  `Crypto.Digests`), `Crypto.Hmac`, `Crypto.Checksums`, `Crypto.Aes`
+  (on the processor's AES instructions when it has them,
+  `Crypto.AesInstructions`), `Crypto.ChaCha20` and `Crypto.Random`; for
+  TLS also `Crypto.Poly1305`, `Crypto.ChaCha20Poly1305`, `Crypto.Ghash`,
+  `Crypto.AesGcm`, `Crypto.Hkdf`, `Crypto.X25519`, and for checking
+  signatures `Crypto.BigNumbers`, `Crypto.Rsa`, `Crypto.EllipticCurves`
+  and `Crypto.Ecdsa` (see "TLS and wget"). Every algorithm is checked
+  against its published test vectors (`make crypto-test`).
+- **libtls.so** – a TLS 1.3 client with X.509 certificate checking, the
+  `Tls.*` units (see "TLS and wget"); it needs libcryptography and
+  libsystem. wget uses it.
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error), `Sys.Format` (printf style),
