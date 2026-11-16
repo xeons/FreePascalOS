@@ -936,7 +936,7 @@ kept_log = bytes(received[remember_from:])
 type_on_serial(b'displayserver &\r')
 restarted = wait_for('displayserver: ready (1024x768, 80 DPI, scale 100%)', 20)
 restarted_log = bytes(received[remember_from:])
-type_on_serial(b'kill %1; wait; settings delete -s Display; ls /etc/settings | wc -l; m=DONE; echo FORGOTTEN $m\r')
+type_on_serial(b'kill %1; wait; settings delete -s Display; ls /etc/settings | grep -c Display; m=DONE; echo FORGOTTEN $m\r')
 forgotten = wait_for('FORGOTTEN DONE', 15)
 type_on_serial(b'displayserver &\r')
 defaults_back = wait_for_count('displayserver: ready (1280x800, 100 DPI, scale 100%)',
