@@ -23,7 +23,10 @@
   content's signature (never the file's name) and gives a TImage (a
   TAnimatedImage for an animation; check with "is"); the caller frees
   it. With ImageLoadApplyOrientation a picture whose EXIF says to turn
-  it comes back turned, its orientation normal. Problems raise
+  it comes back turned, its orientation normal; with
+  ImageLoadConvertToSrgb its colours come back converted from its ICC
+  profile (or PNG gamma) to sRGB (Image.ColorProfiles; a profile that
+  cannot be used is left as it is). Problems raise
   EImageError with a reason: ImageErrorUnknownFormat for content no
   decoder takes, ImageErrorFile when the file cannot be read, and the decoder's own.
   TryLoadImage gives False and the reason instead.
@@ -48,7 +51,7 @@ uses
   Image.Codecs;
 
 type
-  TImageLoadOption = (ImageLoadApplyOrientation);
+  TImageLoadOption = (ImageLoadApplyOrientation, ImageLoadConvertToSrgb);
   TImageLoadOptions = set of TImageLoadOption;
 
 function LoadImage(const FileName: string; Options: TImageLoadOptions = []): TImage; overload;
@@ -136,6 +139,15 @@ begin
     Result := Decoder.Decode(Data);
   finally
     Decoder.Free;
+  end;
+  if ImageLoadConvertToSrgb in Options then
+  begin
+    try
+      Result.ConvertToSrgb;
+    except
+      Result.Free;
+      raise;
+    end;
   end;
   if (ImageLoadApplyOrientation in Options) and (Result.Orientation <> OrientationNormal) and
     not (Result is TAnimatedImage) then
