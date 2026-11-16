@@ -58,6 +58,9 @@
       resolver (dnstest: /etc/hosts and a DNS server of its own on
       127.0.0.1); ifconfig, route, arp, ping, host, nslookup and
       hostname, netstat and nc,
+    * wget over HTTP and HTTPS against test servers on the host
+      (wgettest): contents, cipher suites, redirects, chunked bodies,
+      continuing, timeouts and each certificate failure,
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
@@ -99,7 +102,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..353] of TCommandTest = (
+  CommandTests: array[0..354] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -470,6 +473,8 @@ const
     { --- networking (networktest, ifconfig, route, arp, ping) ----------- }
     (Command: 'networktest > net.log; echo $?; grep FAIL net.log; tail -n 1 net.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'su user -c "networktest --unprivileged" > netu.log; echo $?; grep FAIL netu.log; tail -n 1 netu.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { wget and libtls against the test web servers on the host. }
+    (Command: 'wgettest > wget.log; echo $?; grep FAIL wget.log; tail -n 1 wget.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'ifconfig lo | head -n 3'; ExpectedOutput: 'lo: flags=<UP,LOOPBACK,RUNNING>  mtu 1500'#10'        inet 127.0.0.1  netmask 255.0.0.0'#10'        loop'#10; ExpectedStatus: 0),
     (Command: 'ifconfig eth0 | head -n 2'; ExpectedOutput: 'eth0: flags=<UP,BROADCAST,RUNNING>  mtu 1500'#10'        inet 10.0.2.15  netmask 255.255.255.0  broadcast 10.0.2.255'#10; ExpectedStatus: 0),
     (Command: 'ifconfig nosuch 2>&1; echo $?'; ExpectedOutput: 'ifconfig: nosuch: error fetching interface information: Device not found'#10'1'#10; ExpectedStatus: 0),

@@ -235,6 +235,9 @@ how the existing pieces fit together.
       $( ), $(( )), globbing, quoting, scripts, builtins
 - [x] Core utilities: all of GNU coreutils (104 commands) except chcon and runcon
 - [x] libcryptography: MD5, SHA-1/2, BLAKE2b, HMAC, CRCs, AES, ChaCha20, random
+- [x] libcryptography for TLS: Poly1305, ChaCha20-Poly1305, AES-GCM (AES-NI,
+      constant-time GHASH), HKDF, X25519, big numbers, RSA PKCS #1 / PSS and
+      ECDSA P-256 / P-384 signature checks
 - [x] Regular expressions (POSIX BRE and ERE) in libcoreutils
 - [x] Named pipes in the file systems (mkfifo, mknod; ext only)
 - [x] Scheduling priorities for programs (nice, renice), load averages (uptime)
@@ -487,7 +490,19 @@ normalized (0-65535), not pixels.
 - [ ] `ss` (on top of netstat's pieces)
 - [ ] Reverse lookups and a services list for `netstat` without `-n`
       (`Netstat.Names`)
-- [ ] `wget`
+- [x] `wget` (HTTP/1.1 and HTTPS: -O, -q, -S, -c, -T, -t, -U, redirects,
+      chunked bodies, --no-check-certificate, --ca-certificate, --ciphers,
+      a progress line); `wgettest` in QEMU against test servers on the host
+- [x] TLS: libtls, a TLS 1.3 client (x25519; AES-GCM and ChaCha20-Poly1305;
+      HelloRetryRequest, KeyUpdate, alerts) with X.509 chain, signature,
+      validity and host name checks against the Mozilla CA list in
+      /etc/ssl/certs; host tests with RFC 8448's handshake and OpenSSL
+- [ ] TLS: name constraints (certificates with them are refused for now),
+      P-256 key exchange (only x25519 is offered), session resumption,
+      OCSP / revocation, TLS 1.2 for servers without 1.3, Ed25519 and P-521
+      certificates
+- [ ] wget: keep-alive (one request per connection now), IPv6, cookies,
+      authentication, recursion (-r), --trust-server-names, gzip
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no

@@ -25,6 +25,7 @@
 #                  libsystem <- libconfiguration (settings, per user and system)
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
+#                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
 #                  libwindowing <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -73,6 +74,7 @@ FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
 WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
 CONTROLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/controls
 CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
+TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -83,6 +85,7 @@ FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
 WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
 CONTROLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcontrols.so
 CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
+TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -120,7 +123,8 @@ FONT_RENDERER := tools/RenderFont/render-font.py
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(DEJAVU_SANS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
 		shared/Abi.ErrorMessages.inc
@@ -198,6 +202,15 @@ $(CONFIGURATION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/configuratio
 		-FU$(CONFIGURATION_LIBRARY_OBJECTS) userland/lib/configuration/Configuration.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libconfiguration.so -o $@ \
 		$(CONFIGURATION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libtls: a TLS 1.3 client with X.509 certificate checking.
+$(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
+	@rm -rf $(TLS_LIBRARY_OBJECTS)
+	@mkdir -p $(TLS_LIBRARY_OBJECTS)
+	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/tls -FU$(TLS_LIBRARY_OBJECTS) userland/lib/tls/Tls.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
+		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
 # libwindowing: the display server's protocol and windows for programs.
 $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
@@ -279,6 +292,11 @@ SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest n
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
+# wget speaks TLS through libtls.
+TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
+$(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
+$(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
+$(TLS_PROGRAMS): $(TLS_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 # The system settings service keeps what it changes in the settings and
 # sets the sound outputs.
@@ -304,5 +322,6 @@ $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userlan
 system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
+		$(wildcard userland/etc/*/*/*) \
 		$(wildcard userland/pointers/*)
 	scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@

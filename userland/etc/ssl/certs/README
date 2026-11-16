@@ -1,0 +1,17 @@
+ca-certificates.crt - the trusted root certificates of FreePascalOS
+
+This is the Mozilla CA certificate list (the roots Mozilla's NSS trusts
+for TLS servers, from its certdata.txt) as a PEM bundle. This copy was
+taken from the ca-certificates-mozilla package 3.131.1 (NSS 3.131.1),
+as extracted by p11-kit into tls-ca-bundle.pem.
+
+  Source:  https://hg.mozilla.org/projects/nss/raw-file/default/lib/ckfw/builtins/certdata.txt
+  Licence: Mozilla Public License, version 2.0 (MPL-2.0),
+           https://mozilla.org/MPL/2.0/
+
+The list is data distributed under the MPL-2.0, not under the GNU
+General Public License of the rest of FreePascalOS. It is installed as
+/etc/ssl/certs/ca-certificates.crt, where libtls (Tls.SystemTrust) and
+wget read it. To update it, replace the file with a newer extract of
+certdata.txt (for example /etc/ssl/certs/ca-certificates.crt of a
+current Linux distribution) and change the version above.

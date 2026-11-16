@@ -92,6 +92,16 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   UDP queries with random ids and ports, TCP for truncated answers,
   CNAME chains, the search domain, reverse lookups), with `host`,
   `nslookup` and `hostname`, and names everywhere (`ping example.com`).
+- **TLS and wget**: `libtls.so`, a TLS 1.3 client (x25519;
+  AES-128/256-GCM on AES-NI and ChaCha20-Poly1305; HelloRetryRequest,
+  key updates, alerts) that checks the server's certificate chain
+  (X.509 v3 in strict DER, RSA PKCS #1 and PSS, ECDSA P-256 and P-384,
+  basic constraints, key usage, validity, host names with the wildcard
+  rules) against the Mozilla CA list in
+  `/etc/ssl/certs/ca-certificates.crt`; and `wget` over HTTP/1.1 and
+  HTTPS (`-O`, `-q`, `-S`, `-c`, `-T`, `-t`, `-U`, redirects, chunked
+  bodies, `--no-check-certificate`, `--ca-certificate`, a progress line
+  on a terminal).
 - USB keyboards next to PS/2 ones, with dead keys for the German and
   French layouts; a framebuffer console with UTF-8 and escape sequences.
 - A kernel debug shell (kernel option `kshell`).
@@ -215,8 +225,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - `libsystem.so`: system calls, heap, buffered streams, printf style
     formatting, files, processes, environment, time, console settings
   - `libcryptography.so`: MD5, SHA-1, SHA-224/256/384/512, BLAKE2b, HMAC,
-    CRC-32 / CRC-32C / cksum CRC / BSD and System V sums, AES (CBC, CTR),
-    ChaCha20 and a random number generator seeded from RDRAND
+    CRC-32 / CRC-32C / cksum CRC / BSD and System V sums, AES (CBC, CTR,
+    GCM; AES-NI when the processor has it), ChaCha20, Poly1305 and
+    ChaCha20-Poly1305, HKDF, X25519, RSA (PKCS #1 v1.5 and PSS) and ECDSA
+    (P-256, P-384) signature checks, and a random number generator
+    seeded from RDRAND
+  - `libtls.so`: the TLS 1.3 client and X.509 certificate checks (above)
   - `libcoreutils.so`: GNU style option parsing, messages, sorting, tree
     walking and copying, POSIX regular expressions (BRE and ERE), shell
     style wildcards, chmod modes, date parsing, base64/32/16/2/z85, accounts
@@ -261,7 +275,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
     `-r`, the interfaces and their counters `-i`, the protocol counters
     `-s`), in the manner of net-tools; `nc` with OpenBSD's options
     (connect, `-l` listen and `-k` keep listening, `-u` UDP, `-z` port
-    scans with ranges, `-v`, `-w`, `-q`, `-N`, `-n`, `-p`, `-d`)
+    scans with ranges, `-v`, `-w`, `-q`, `-N`, `-n`, `-p`, `-d`); `wget`
+    (HTTP and HTTPS, see above)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
@@ -271,8 +286,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   `make test` then runs `coretest` in user mode, which drives the shell and
   every utility through about 210 command lines and checks their output
   (networking included: `networktest` over loopback and over QEMU's user
-  network, DHCP from QEMU, and `dnstest` against a DNS server of its
-  own).
+  network, DHCP from QEMU, `dnstest` against a DNS server of its own,
+  and `wgettest`: wget over HTTP and HTTPS against test servers on the
+  host). `make test` also checks the cryptography, libtls (with RFC
+  8448's handshake and connections to OpenSSL) and wget's parsing on the
+  host first (`make crypto-test tls-test wget-test`).
 
 ## Requirements
 
@@ -284,12 +302,14 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 - `sfdisk` and mtools, for `make image`
 - dosfstools, exfatprogs, e2fsprogs and Python 3, for the test disk used by
   `make run` and `make test`
+- OpenSSL (`openssl`) and Python 3's ssl module, for the HTTPS tests of
+  `make test` (the test servers on the host)
 - The system's fonts: Terminus (`terminus-font`), and DejaVu Sans
   (`ttf-dejavu`) with Python's Pillow (`python-pillow`), which renders it
   into the interface's anti-aliased bitmap fonts at build time
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python terminus-font ttf-dejavu python-pillow`.
+`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font ttf-dejavu python-pillow`.
 
 ## Building and running
 
@@ -417,6 +437,7 @@ kernel/
 userland/
   lib/system/       libsystem.so: the Sys.* units
   lib/cryptography/ libcryptography.so: the Crypto.* units
+  lib/tls/          libtls.so: the Tls.* units (TLS 1.3 client, certificates)
   lib/coreutils/    libcoreutils.so: the Util.* units shared by the tools
   lib/configuration/ libconfiguration.so: the Configuration.* units (settings)
   lib/plugin/       libplugin.so, loaded at run time by coretest
@@ -431,6 +452,9 @@ userland/
   network/          The network service's units (settings, the DHCP client,
                     its messages and leases, the interfaces, state files)
   dnstest/          dnstest's DNS server and its fixed zone
+  wget/             wget's units (URLs, HTTP, connections, progress)
+  etc/              Files installed in /etc (accounts, services, settings,
+                    the Mozilla CA list in ssl/certs)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
@@ -438,6 +462,10 @@ tools/DrawingTest/  Checks libdrawing and libfont on the host
 tools/TextTest/     Checks the multi-line edit box's logic on the host
 tools/SettingsTest/ Checks the settings library on the host
 tools/FilesTest/    Checks the file manager's plain logic on the host
+tools/CryptoTest/   Checks libcryptography's TLS algorithms on the host
+tools/TlsTest/      Checks libtls on the host (with test certificates,
+                    and against OpenSSL)
+tools/WgetTest/     Checks wget's URL, header and chunked parsing on the host
 scripts/            QEMU launcher, test runner, disk image builders
 firmware/           Device firmware from linux-firmware, with its vendors'
                     licences and WHENCE (installed as /lib/firmware)
@@ -471,3 +499,9 @@ firmware in `rtl_nic/`, under `LICENSE.r8169`). It is not covered by the
 GNU General Public License; it is distributed alongside FreePascalOS
 under its vendors' terms, and installed with its licences as
 /lib/firmware.
+
+`userland/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA
+certificate list (from NSS's certdata.txt, as packaged in
+ca-certificates-mozilla), distributed under the Mozilla Public License
+2.0; its README in the same directory says where it came from. It is
+installed as /etc/ssl/certs/ca-certificates.crt.

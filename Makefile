@@ -31,6 +31,11 @@
 #   make settings-test  Check the settings library on the host (files, escaping,
 #                   layering, two writers, damaged files, the network's
 #                   settings and state files)
+#   make crypto-test  Check libcryptography's TLS algorithms on the host against
+#                   published known answers
+#   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
+#                   handshake, and whole connections to OpenSSL's s_server
+#   make wget-test  Check wget's URL, header and chunked decoding logic on the host
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
@@ -110,7 +115,8 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test files-test suspend-stress
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test files-test suspend-stress \
+	crypto-test tls-test wget-test
 
 all: esp
 
@@ -207,7 +213,8 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test text-test settings-test files-test esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test drawing-test text-test settings-test files-test crypto-test tls-test wget-test esp $(TEST_DISK) \
+		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -333,6 +340,60 @@ settings-test: $(SETTINGS_TEST)
 	@$(SETTINGS_TEST) > build/tools/settings-test.out || \
 		{ grep -A2 FAIL build/tools/settings-test.out; echo "SETTINGS TEST FAILED (build/tools/settings-test.out)"; exit 1; }
 	@echo "SETTINGS TEST PASSED: $$(tail -n 1 build/tools/settings-test.out | cut -d ' ' -f 2-)"
+
+# libcryptography's algorithms for TLS (all but Crypto.Random, which needs
+# the kernel) build for the host too, and are checked there against
+# published known answers.
+CRYPTO_TEST := build/tools/CryptoTest
+CRYPTO_TEST_SOURCES := $(wildcard tools/CryptoTest/*.pas) tools/CryptoTest/CryptoTest.RsaVectors.inc \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
+
+$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES)
+	@mkdir -p build/tools/crypto-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/CryptoTest -Fuuserland/lib/cryptography -Fushared -Fishared \
+		-FUbuild/tools/crypto-test-units -o$@ tools/CryptoTest/CryptoTest.pas
+
+crypto-test: $(CRYPTO_TEST)
+	@$(CRYPTO_TEST) > build/tools/crypto-test.out || \
+		{ grep -A2 FAIL build/tools/crypto-test.out; echo "CRYPTO TEST FAILED (build/tools/crypto-test.out)"; exit 1; }
+	@echo "CRYPTO TEST PASSED: $$(tail -n 1 build/tools/crypto-test.out | cut -d ' ' -f 3-)"
+
+# libtls but for its socket, file and clock units builds for the host too
+# (with a Crypto.Random of the host's), and is checked there; then its
+# client connects to OpenSSL's s_server (skipped without openssl).
+TLS_TEST := build/tools/TlsTest
+TLS_TEST_SOURCES := $(wildcard tools/TlsTest/*.pas) $(wildcard tools/TlsTest/*.inc) \
+	tools/CryptoTest/TestChecks.pas $(filter-out %/Crypto.Random.pas,$(wildcard userland/lib/cryptography/*.pas)) \
+	$(filter-out %/Tls.SocketTransport.pas %/Tls.SystemTrust.pas %/Tls.Sessions.pas %/Tls.Contents.pas, \
+		$(wildcard userland/lib/tls/*.pas))
+
+$(TLS_TEST): $(TLS_TEST_SOURCES)
+	@mkdir -p build/tools/tls-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/TlsTest -Futools/CryptoTest -Fuuserland/lib/tls -Fuuserland/lib/cryptography \
+		-Fushared -Fishared -FUbuild/tools/tls-test-units -o$@ tools/TlsTest/TlsTest.pas
+
+tls-test: $(TLS_TEST)
+	@$(TLS_TEST) tools/TlsTest/certificates userland/etc/ssl/certs/ca-certificates.crt > build/tools/tls-test.out || \
+		{ grep -A2 FAIL build/tools/tls-test.out; echo "TLS TEST FAILED (build/tools/tls-test.out)"; exit 1; }
+	@echo "TLS TEST PASSED: $$(tail -n 1 build/tools/tls-test.out | cut -d ' ' -f 3-)"
+	@tools/TlsTest/run-interop.sh $(TLS_TEST) > build/tools/tls-interop.out 2>&1 || \
+		{ grep FAIL build/tools/tls-interop.out; echo "TLS INTEROP TEST FAILED (build/tools/tls-interop.out)"; exit 1; }
+	@tail -n 1 build/tools/tls-interop.out
+
+# wget's URLs, response heads and chunked decoding build for the host too.
+WGET_TEST := build/tools/WgetTest
+WGET_TEST_SOURCES := tools/WgetTest/WgetTest.pas tools/CryptoTest/TestChecks.pas userland/wget/Wget.Urls.pas \
+	userland/wget/Wget.Headers.pas userland/wget/Wget.Chunks.pas
+
+$(WGET_TEST): $(WGET_TEST_SOURCES)
+	@mkdir -p build/tools/wget-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget \
+		-FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
+
+wget-test: $(WGET_TEST)
+	@$(WGET_TEST) > build/tools/wget-test.out || \
+		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
+	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
 
 clean:
 	rm -rf build
