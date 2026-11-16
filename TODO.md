@@ -495,8 +495,10 @@ normalized (0-65535), not pixels.
   - [ ] Colour management basics (ICC profiles to sRGB) and scaling with
         good filtering for thumbnails (scaling done: `Image.Scaling` on
         libdrawing's area averaging)
-- [ ] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
-      so any DPI)
+- [x] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
+      so any DPI): DejaVu Sans (the interface's) and DejaVu Sans Mono at every
+      size, light vertical autohinting, gamma-correct blending; CFF outlines and
+      the fonts' own bytecode hinting not done
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits
 - [ ] Clipboard (text and images) and drag and drop
