@@ -99,10 +99,9 @@ type
     ServerIdentifier: TInternetAddress;
     HasSubnetMask: Boolean;
     PrefixLength: LongWord;
-    RouterCount: Integer;
-    Routers: array[0..MaximumDhcpAddresses - 1] of TInternetAddress;
-    DnsServerCount: Integer;
-    DnsServers: array[0..MaximumDhcpAddresses - 1] of TInternetAddress;
+    { Up to MaximumDhcpAddresses of each. }
+    Routers: TInternetAddressArray;
+    DnsServers: TInternetAddressArray;
     DomainName: string;
     HasLeaseTime: Boolean;
     LeaseSeconds: LongWord;
@@ -124,8 +123,7 @@ implementation
 
 uses
   SysUtils,
-  Abi.SystemCalls,
-  Runtime.Memory;
+  Abi.SystemCalls;
 
 const
   OperationRequest = 1;
@@ -245,7 +243,7 @@ begin
   Length := 0;
   if Capacity < OptionsOffset then
     Exit(False);
-  FillMemory(Buffer, OptionsOffset, 0);
+  FillChar(Buffer^, OptionsOffset, 0);
   Buffer[0] := OperationRequest;
   Buffer[1] := HardwareTypeEthernet;
   Buffer[2] := 6;
@@ -254,9 +252,9 @@ begin
   if Parameters.BroadcastReply then
     WriteWordAt(Buffer, 10, FlagBroadcast);
   if Parameters.ClientAddress.Family = AddressFamilyIPv4 then
-    CopyMemory(Buffer + 12, @Parameters.ClientAddress.Bytes[0], 4);
-  CopyMemory(Buffer + 28, @Parameters.HardwareAddress[0], 6);
-  CopyMemory(Buffer + MagicCookieOffset, @MagicCookie[0], 4);
+    Move(Parameters.ClientAddress.Bytes[0], Buffer[12], 4);
+  Move(Parameters.HardwareAddress[0], Buffer[28], 6);
+  Move(MagicCookie[0], Buffer[MagicCookieOffset], 4);
 
   Writer.Buffer := Buffer;
   Writer.Capacity := Capacity;
@@ -321,17 +319,16 @@ begin
   Result := Mask = 0;
 end;
 
-procedure ReadAddressList(Data: PByte; Position, OptionLength: LongWord; var Addresses: array of TInternetAddress;
-  var Count: Integer);
+function ReadAddressList(Data: PByte; Position, OptionLength: LongWord): TInternetAddressArray;
 var
   Offset: LongWord;
 begin
-  Count := 0;
+  Result := nil;
   Offset := 0;
-  while (Offset + 4 <= OptionLength) and (Count <= High(Addresses)) do
+  while (Offset + 4 <= OptionLength) and (System.Length(Result) < MaximumDhcpAddresses) do
   begin
-    Addresses[Count] := AddressAt(Data, Position + Offset);
-    Inc(Count);
+    SetLength(Result, System.Length(Result) + 1);
+    Result[High(Result)] := AddressAt(Data, Position + Offset);
     Offset := Offset + 4;
   end;
 end;
@@ -345,8 +342,8 @@ begin
     OptionSubnetMask:
       if OptionLength = 4 then
         Reply.HasSubnetMask := MaskToPrefix(Data, Position, Reply.PrefixLength);
-    OptionRouter: ReadAddressList(Data, Position, OptionLength, Reply.Routers, Reply.RouterCount);
-    OptionDnsServers: ReadAddressList(Data, Position, OptionLength, Reply.DnsServers, Reply.DnsServerCount);
+    OptionRouter: Reply.Routers := ReadAddressList(Data, Position, OptionLength);
+    OptionDnsServers: Reply.DnsServers := ReadAddressList(Data, Position, OptionLength);
     OptionDomainName:
       begin
         SetString(Reply.DomainName, PChar(Data + Position), OptionLength);
@@ -383,22 +380,9 @@ end;
 
 procedure ClearReply(out Reply: TDhcpReply);
 begin
-  Reply.Kind := 0;
-  Reply.TransactionId := 0;
+  Reply := Default(TDhcpReply);
   Reply.YourAddress := AnyIpv4Address;
-  Reply.HasServerIdentifier := False;
   Reply.ServerIdentifier := AnyIpv4Address;
-  Reply.HasSubnetMask := False;
-  Reply.PrefixLength := 0;
-  Reply.RouterCount := 0;
-  Reply.DnsServerCount := 0;
-  Reply.DomainName := '';
-  Reply.HasLeaseTime := False;
-  Reply.LeaseSeconds := 0;
-  Reply.HasRenewalTime := False;
-  Reply.RenewalSeconds := 0;
-  Reply.HasRebindingTime := False;
-  Reply.RebindingSeconds := 0;
 end;
 
 function ParseDhcpReply(Data: PByte; Length: LongWord; constref HardwareAddress: TEthernetAddress;
@@ -411,8 +395,8 @@ begin
   ClearReply(Reply);
   Result := False;
   if (Length < OptionsOffset) or (Data[0] <> OperationReply) or (Data[1] <> HardwareTypeEthernet) or
-     (Data[2] <> 6) or not MemoryIsEqual(Data + 28, @HardwareAddress[0], 6) or
-     not MemoryIsEqual(Data + MagicCookieOffset, @MagicCookie[0], 4) then
+     (Data[2] <> 6) or not CompareMem(Data + 28, @HardwareAddress[0], 6) or
+     not CompareMem(Data + MagicCookieOffset, @MagicCookie[0], 4) then
     Exit;
   Reply.TransactionId := ReadLongWordAt(Data, 4);
   Reply.YourAddress := AddressAt(Data, 16);

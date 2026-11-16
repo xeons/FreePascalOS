@@ -79,7 +79,7 @@ type
 
   TNetworkSettings = record
     Interfaces: array of TInterfaceSettings;
-    DnsServers: array of TInternetAddress;
+    DnsServers: TInternetAddressArray;
     SearchDomain: string;
     HostName: string;
     { Lines about values that were left out. }
@@ -98,7 +98,8 @@ implementation
 
 uses
   Configuration.Settings,
-  Configuration.Locations;
+  Configuration.Locations,
+  Sys.AddressText;
 
 const
   InterfacesSection = 'Network/Interfaces';
@@ -140,7 +141,7 @@ begin
   AddressText := Store.ReadString(Section + '/Address', '');
   if AddressText <> '' then
   begin
-    if not ParseAddressWithPrefix(PChar(AddressText), Entry.Address, Entry.PrefixLength, HasPrefix) then
+    if not TextToAddressWithPrefix(AddressText, Entry.Address, Entry.PrefixLength, HasPrefix) then
     begin
       Entry.Problem := 'the address "' + AddressText + '" is not an address with a prefix';
       Exit;
@@ -152,7 +153,7 @@ begin
   GatewayText := Store.ReadString(Section + '/Gateway', '');
   if GatewayText <> '' then
   begin
-    if not ParseIpv4Address(PChar(GatewayText), Entry.Gateway) then
+    if not TextToIpv4Address(GatewayText, Entry.Gateway) then
     begin
       Entry.Problem := 'the gateway "' + GatewayText + '" is not an address';
       Exit;
@@ -192,7 +193,7 @@ begin
   Names := Store.ReadList(DnsServersSetting, nil);
   Settings.DnsServers := nil;
   for Index := 0 to High(Names) do
-    if ParseInternetAddress(PChar(Names[Index]), Address) then
+    if TextToAddress(Names[Index], Address) then
     begin
       SetLength(Settings.DnsServers, Length(Settings.DnsServers) + 1);
       Settings.DnsServers[High(Settings.DnsServers)] := Address;

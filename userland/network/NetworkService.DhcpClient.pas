@@ -146,6 +146,7 @@ uses
   Sys.Sockets,
   Sys.Information,
   Sys.RandomNumbers,
+  Sys.AddressText,
   NetworkService.Log,
   NetworkService.AddressProbe;
 
@@ -312,7 +313,7 @@ begin
   Parameters.RequestedAddress := FOffer.YourAddress;
   Parameters.HasServerIdentifier := FOffer.HasServerIdentifier;
   Parameters.ServerIdentifier := FOffer.ServerIdentifier;
-  Say('DHCPREQUEST for ' + AddressText(FOffer.YourAddress) + ' to ' + AddressText(FOffer.ServerIdentifier));
+  Say('DHCPREQUEST for ' + AddressToText(FOffer.YourAddress) + ' to ' + AddressToText(FOffer.ServerIdentifier));
   Send(Parameters, BroadcastIpv4Address);
 end;
 
@@ -324,7 +325,7 @@ begin
   Parameters.BroadcastReply := True;
   Parameters.HasRequestedAddress := True;
   Parameters.RequestedAddress := FPreviousAddress;
-  Say('DHCPREQUEST for ' + AddressText(FPreviousAddress) + ' (the previous lease)');
+  Say('DHCPREQUEST for ' + AddressToText(FPreviousAddress) + ' (the previous lease)');
   Send(Parameters, BroadcastIpv4Address);
 end;
 
@@ -336,12 +337,12 @@ begin
   Parameters.ClientAddress := FLease.Address;
   if Broadcast then
   begin
-    Say('DHCPREQUEST for ' + AddressText(FLease.Address) + ' to everyone (rebinding)');
+    Say('DHCPREQUEST for ' + AddressToText(FLease.Address) + ' to everyone (rebinding)');
     Send(Parameters, BroadcastIpv4Address);
   end
   else
   begin
-    Say('DHCPREQUEST for ' + AddressText(FLease.Address) + ' to ' + AddressText(FLease.Server) + ' (renewing)');
+    Say('DHCPREQUEST for ' + AddressToText(FLease.Address) + ' to ' + AddressToText(FLease.Server) + ' (renewing)');
     Send(Parameters, FLease.Server);
   end;
 end;
@@ -355,7 +356,7 @@ begin
   Parameters.RequestedAddress := FCandidate.Address;
   Parameters.HasServerIdentifier := True;
   Parameters.ServerIdentifier := FCandidate.Server;
-  Say('DHCPDECLINE of ' + AddressText(FCandidate.Address) + ': another host has it');
+  Say('DHCPDECLINE of ' + AddressToText(FCandidate.Address) + ': another host has it');
   Send(Parameters, BroadcastIpv4Address);
 end;
 
@@ -474,7 +475,7 @@ begin
     Parameters.ClientAddress := FLease.Address;
     Parameters.HasServerIdentifier := True;
     Parameters.ServerIdentifier := FLease.Server;
-    Say('DHCPRELEASE of ' + AddressText(FLease.Address) + ' to ' + AddressText(FLease.Server));
+    Say('DHCPRELEASE of ' + AddressToText(FLease.Address) + ' to ' + AddressToText(FLease.Server));
     Send(Parameters, FLease.Server);
     LoseLease('released');
   end;
@@ -510,9 +511,9 @@ begin
   FPreviousAddress := Lease.Address;
   FSearchStarted := 0;
   if Lease.LeaseSeconds = InfiniteLease then
-    Say('bound to ' + LeaseAddressText(Lease) + ' by ' + AddressText(Lease.Server) + ', for ever')
+    Say('bound to ' + LeaseAddressText(Lease) + ' by ' + AddressToText(Lease.Server) + ', for ever')
   else
-    Say('bound to ' + LeaseAddressText(Lease) + ' by ' + AddressText(Lease.Server) + ', lease ' +
+    Say('bound to ' + LeaseAddressText(Lease) + ' by ' + AddressToText(Lease.Server) + ', lease ' +
       IntToStr(Lease.LeaseSeconds) + ' s');
   FDeadline := RenewalTime(FLease);
   { The owner applies the lease before anyone can read "configured" in
@@ -529,7 +530,7 @@ procedure TDhcpClient.LoseLease(const Why: string);
 begin
   if not FHasLease then
     Exit;
-  Say('lease of ' + AddressText(FLease.Address) + ' ' + Why);
+  Say('lease of ' + AddressToText(FLease.Address) + ' ' + Why);
   FHasLease := False;
   if Assigned(FOnLeaseLost) then
     FOnLeaseLost(Self);
@@ -543,7 +544,7 @@ begin
     DhcpSelecting:
       if (Reply.Kind = DhcpOffer) and not AddressIsUnspecified(Reply.YourAddress) then
       begin
-        Say('DHCPOFFER of ' + AddressText(Reply.YourAddress) + ' from ' + AddressText(Reply.ServerIdentifier));
+        Say('DHCPOFFER of ' + AddressToText(Reply.YourAddress) + ' from ' + AddressToText(Reply.ServerIdentifier));
         FOffer := Reply;
         FRetransmitInterval := FirstRetransmitMilliseconds;
         FTransmissions := 1;
@@ -554,14 +555,14 @@ begin
     DhcpRequesting, DhcpRebooting, DhcpRenewing, DhcpRebinding:
       if Reply.Kind = DhcpAcknowledge then
       begin
-        Say('DHCPACK of ' + AddressText(Reply.YourAddress) + ' from ' + AddressText(Reply.ServerIdentifier));
+        Say('DHCPACK of ' + AddressToText(Reply.YourAddress) + ' from ' + AddressToText(Reply.ServerIdentifier));
         if AddressIsUnspecified(Reply.YourAddress) then
           Exit;
         BeginProbe(Reply);
       end
       else if Reply.Kind = DhcpNegativeAcknowledge then
       begin
-        Say('DHCPNAK from ' + AddressText(Reply.ServerIdentifier));
+        Say('DHCPNAK from ' + AddressToText(Reply.ServerIdentifier));
         LoseLease('refused by the server');
         FHasPreviousAddress := False;
         EnterInit(NakWaitMilliseconds);

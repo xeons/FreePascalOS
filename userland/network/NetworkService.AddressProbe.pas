@@ -54,11 +54,11 @@ function AddressAnswered(const InterfaceName: string; constref Address: TInterne
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Sockets,
-  Sys.NetworkInterfaces;
+  Sys.NetworkInterfaces,
+  Sys.InterfaceText;
 
 const
   DiscardPort = 9;
@@ -80,8 +80,8 @@ begin
   if ListArpEntries(Entries) <> ErrorNone then
     Exit;
   for Index := 0 to High(Entries) do
-    if (Entries[Index].State = ArpStateReachable) and MemoryIsEqual(@Entries[Index].Address[0], @Address.Bytes[0], 4) and
-       TextIsEqual(@Entries[Index].InterfaceName[0], PChar(InterfaceName)) then
+    if (Entries[Index].State = ArpStateReachable) and CompareMem(@Entries[Index].Address[0], @Address.Bytes[0], 4) and
+       (InterfaceNameToText(Entries[Index].InterfaceName) = InterfaceName) then
       Exit(True);
 end;
 
