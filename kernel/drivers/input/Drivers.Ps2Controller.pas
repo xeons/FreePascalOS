@@ -43,6 +43,16 @@
   alone: otherwise one running on another processor could take the
   answer first, and the setup would fail (the mouse would stay off after
   waking from suspend to RAM, say).
+
+  The keyboard's own commands (its lights and repeat) are answered
+  through the same output byte, one interrupt at a time. An answer still
+  to come when a driver starts polling would be read as the answer to
+  the poller's command: the configuration byte read as the keyboard's
+  acknowledgement (FAh) turns the keyboard's port and interrupt off for
+  good. So polling first lets a keyboard command under way finish (its
+  answers taken here if no interrupt takes them), starts no new one,
+  and throws away whatever is still waiting; once it ends the keyboard
+  sends what it was kept from sending.
 }
 unit Drivers.Ps2Controller;
 
@@ -94,6 +104,20 @@ type
 { Where the keyboard's and the mouse's bytes go (nil: dropped). }
 procedure SetPs2KeyboardRoutine(Routine: TPs2ByteRoutine);
 procedure SetPs2MouseRoutine(Routine: TPs2ByteRoutine);
+
+type
+  TPs2Routine = procedure;
+  TPs2Check = function: Boolean;
+
+{ The keyboard driver's part in polling: CommandUnderWay says whether a
+  command of its own still waits for answers (polling waits for it);
+  ResumeCommands, run in turn with the interrupts as polling ends, sends
+  the commands held back meanwhile. }
+procedure SetPs2KeyboardCommandRoutines(CommandUnderWay: TPs2Check; ResumeCommands: TPs2Routine);
+{ True while a driver polls (from the start of Ps2BeginPolling): the
+  keyboard starts no command then. }
+function Ps2PollingIsRequested: Boolean;
+
 { While a driver sets the controller or the mouse up by polling, the
   interrupts leave every byte to it. Begin waits for an interrupt
   already taking bytes to finish; End hands the bytes that came
@@ -102,9 +126,6 @@ procedure Ps2BeginPolling;
 procedure Ps2EndPolling;
 { Takes every waiting byte to its routine: both interrupts call this. }
 procedure Ps2ServiceController;
-
-type
-  TPs2Routine = procedure;
 
 { Calls Routine with interrupts off and the bytes' lock held, in turn
   with the keyboard's and the mouse's routines: for a driver starting a
@@ -126,10 +147,17 @@ const
   { Waits for a mouse answer: the mouse may take a while (a reset takes
     hundreds of milliseconds). }
   MouseAnswerIterations = 2000000;
+  { Waits for the keyboard to answer a command under way. }
+  KeyboardAnswerIterations = 2000000;
 
 var
   KeyboardRoutine: TPs2ByteRoutine;
   MouseRoutine: TPs2ByteRoutine;
+  KeyboardCommandUnderWay: TPs2Check;
+  ResumeKeyboardCommands: TPs2Routine;
+  { From the start of Ps2BeginPolling to the end of Ps2EndPolling. }
+  PollingRequested: Boolean;
+  { The interrupts leave every byte alone. }
   Polling: Boolean;
   ServiceLock: TSpinLock;
   ServiceLockReady: Boolean;
@@ -152,6 +180,17 @@ end;
 procedure SetPs2MouseRoutine(Routine: TPs2ByteRoutine);
 begin
   MouseRoutine := Routine;
+end;
+
+procedure SetPs2KeyboardCommandRoutines(CommandUnderWay: TPs2Check; ResumeCommands: TPs2Routine);
+begin
+  KeyboardCommandUnderWay := CommandUnderWay;
+  ResumeKeyboardCommands := ResumeCommands;
+end;
+
+function Ps2PollingIsRequested: Boolean;
+begin
+  Result := PollingRequested;
 end;
 
 procedure Ps2ServiceController;
@@ -184,11 +223,36 @@ begin
   ReleaseSpinLockAtCurrentLevel(ServiceLock);
 end;
 
+{ Lets a keyboard command under way get its answers: taken here as well
+  as by the interrupts, so it ends even with interrupts off (waking from
+  suspend to RAM). Gives up if the keyboard does not answer. }
+procedure WaitForKeyboardCommand;
+var
+  Iteration: LongWord;
+  WereEnabled: Boolean;
+begin
+  if not Assigned(KeyboardCommandUnderWay) then
+    Exit;
+  Iteration := 0;
+  while KeyboardCommandUnderWay() and (Iteration < KeyboardAnswerIterations) do
+  begin
+    WereEnabled := SaveAndDisableInterrupts;
+    Ps2ServiceController;
+    RestoreInterrupts(WereEnabled);
+    CpuRelax;
+    Inc(Iteration);
+  end;
+end;
+
 procedure Ps2BeginPolling;
 var
   WereEnabled: Boolean;
 begin
   PrepareServiceLock;
+  { No new keyboard command from here on; one under way ends first, so
+    none of its answers is taken for the poller's. }
+  PollingRequested := True;
+  WaitForKeyboardCommand;
   Polling := True;
   { An interrupt that took the lock before it saw the flag finishes
     first. Interrupts off: one on this processor must not wait for the
@@ -197,6 +261,8 @@ begin
   AcquireSpinLockAtCurrentLevel(ServiceLock);
   ReleaseSpinLockAtCurrentLevel(ServiceLock);
   RestoreInterrupts(WereEnabled);
+  { A key or a late answer still waiting is not the poller's. }
+  Ps2FlushOutputBuffer;
 end;
 
 procedure Ps2RunInTurnWithInterrupts(Routine: TPs2Routine);
@@ -216,9 +282,18 @@ var
   WereEnabled: Boolean;
 begin
   Polling := False;
+  PollingRequested := False;
+  WereEnabled := SaveAndDisableInterrupts;
+  { The keyboard's commands held back meanwhile go now, in turn with the
+    interrupts that follow their answers. }
+  if Assigned(ResumeKeyboardCommands) then
+  begin
+    AcquireSpinLockAtCurrentLevel(ServiceLock);
+    ResumeKeyboardCommands();
+    ReleaseSpinLockAtCurrentLevel(ServiceLock);
+  end;
   { A byte that came after the poller's last read raised its interrupt,
     which left it; the interrupt does not come again for it. }
-  WereEnabled := SaveAndDisableInterrupts;
   Ps2ServiceController;
   RestoreInterrupts(WereEnabled);
 end;
@@ -276,6 +351,8 @@ end;
 function Ps2ReadConfiguration(out Configuration: Byte): Boolean;
 begin
   Configuration := 0;
+  { Anything already waiting would be read as the answer. }
+  Ps2FlushOutputBuffer;
   Ps2SendCommand(Ps2CommandReadConfiguration);
   Result := Ps2WaitUntilReadable;
   if Result then

@@ -220,6 +220,9 @@ if kernel_shell_ok:
     kernel_shell_ok = kernel_shell_ok and wait_for('root:x:0:0:', 10)
     type_on_serial(b'ls /disk1p1/bin\r')
     kernel_shell_ok = kernel_shell_ok and wait_for('coretest', 10)
+    # The level triggered lines (AC'97, e1000, RTL8139) with their counts.
+    type_on_serial(b'interrupts\r')
+    kernel_shell_ok = kernel_shell_ok and wait_for(' handlers, fired ', 10)
     type_on_serial(b'frobnicate\r')
     kernel_shell_ok = kernel_shell_ok and wait_for('frobnicate: unknown command', 10)
     type_on_serial(b'exit\r')

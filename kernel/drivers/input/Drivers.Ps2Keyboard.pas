@@ -160,7 +160,9 @@ end;
   as the keyboard answers. }
 procedure SendNextCommand;
 begin
-  if CommandState <> CommandIdle then
+  { While a driver polls the controller, its answers would be taken for
+    the poller's: the command waits for the end of polling. }
+  if (CommandState <> CommandIdle) or Ps2PollingIsRequested then
     Exit;
   if LightsOutdated then
   begin
@@ -187,6 +189,28 @@ end;
 procedure UpdateTypematic;
 begin
   TypematicOutdated := True;
+  SendNextCommand;
+end;
+
+{ For Drivers.Ps2Controller: a command still waits for answers. }
+function CommandIsUnderWay: Boolean;
+begin
+  Result := CommandState <> CommandIdle;
+end;
+
+{ For Drivers.Ps2Controller, as polling ends: the commands held back go
+  now. One whose answers never came (the keyboard did not answer in
+  time) is sent again from its start. }
+procedure ResumeCommands;
+begin
+  if CommandState <> CommandIdle then
+  begin
+    CommandState := CommandIdle;
+    if CommandBeingSent = CommandLights then
+      LightsOutdated := True
+    else
+      TypematicOutdated := True;
+  end;
   SendNextCommand;
 end;
 
@@ -340,6 +364,12 @@ end;
 { Waking from suspend to RAM reset the controller. }
 procedure ResumeKeyboard(Context: Pointer);
 begin
+  { A command under way before sleeping is not answered after it, and
+    nothing is sent before the port is on again (StartKeyboard sends
+    both commands). }
+  CommandState := CommandIdle;
+  LightsOutdated := False;
+  TypematicOutdated := False;
   if ConfigureController then
     StartKeyboard;
 end;
@@ -356,6 +386,7 @@ begin
   if not CreateKeyboardDevice then
     Exit;
   SetPs2KeyboardRoutine(@HandleScanCode);
+  SetPs2KeyboardCommandRoutines(@CommandIsUnderWay, @ResumeCommands);
   SetKeyRepeatChangedRoutine(@KeyRepeatChanged);
   if not ConnectIsaInterrupt(KeyboardIrq, @HandleKeyboardInterrupt, nil) then
     Exit;

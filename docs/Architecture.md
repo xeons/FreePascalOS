@@ -541,7 +541,14 @@ global system interrupt the line arrives on, level triggered with the
 table's polarity (`ConnectGlobalInterrupt`; an ISA IRQ goes through the
 MADT's overrides first), and clears the device's interrupt disable bit.
 Lines can be shared: a line's vector calls every handler on it, and each
-handler checks and quiets its own device.
+handler checks and quiets its own device. A level triggered line that
+nobody quiets fires again as soon as its handler returns, and as equal
+priority interrupts are taken highest vector first, it starves every
+lower device vector on its processor; `Io.LineInterruptStorms` counts
+each line's interrupts and logs once when one fires 20000 times within a
+second (`[interrupts] GSI 22 (vector 0x3A) fired 20000 times in one
+second: an interrupt storm ...`). The kernel debug shell's `interrupts`
+lists each line with its vector, handlers and count.
 
 ### The ACPI namespace and its AML
 
@@ -938,6 +945,22 @@ controller's own answers come marked as the keyboard's and raise its
 interrupt, which, on another processor, could take the answer first and
 make the setup fail. Ending, the bytes that came meanwhile are handed
 on, as their interrupt has come and gone.
+
+The keyboard's own commands (its lights and its repeat, two bytes each)
+are answered through that byte too, one interrupt at a time, so they
+must not overlap polling either: at start-up the keyboard sends its
+first commands just before the mouse is set up, and an acknowledgement
+(FAh) still to come would be read as the controller's configuration
+byte, whose write-back then turns the keyboard's port and interrupt off
+for good (under TCG the interrupt on another processor can easily lag
+that far behind). So Ps2BeginPolling first lets a keyboard command under
+way finish (taking its answers itself if no interrupt does, so it works
+with interrupts off after waking; it gives up if the keyboard never
+answers), keeps the keyboard from starting another
+(`Ps2PollingIsRequested`), and throws away whatever is still waiting;
+reading the configuration byte also empties the output byte first.
+Ps2EndPolling has the keyboard send what it held back (a command cut
+off without its answers starts over).
 
 USB keyboards (Drivers.UsbKeyboard, on the xHCI driver) use the HID boot
 protocol. Their interrupt IN endpoint is read over and over (a report
@@ -5130,7 +5153,7 @@ test run leaves its explanation in the log.
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
 once the system is up, before the first program: `help`, `echo`, `ls`,
-`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `uptime`, and `exit` to go
+`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`, `uptime`, and `exit` to go
 on with the boot. It reads lines through the console like a program
 (with line editing) and writes through the kernel debug output, so it
 works on the serial port and the screen. The input test starts with a
