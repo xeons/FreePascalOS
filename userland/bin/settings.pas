@@ -24,6 +24,7 @@
   settings delete [-s] PATH
   settings list [-s | -u] [PATH]
   settings check [-s | -u] GROUP
+  settings watch [-s | -u] [-n COUNT] [-T SECONDS] GROUP...
 
   PATH names a setting: GROUP/KEY or GROUP/SECTION.../KEY, such as
   Notepad/WordWrap or Display/0/Scale; for delete and list it may name a
@@ -40,10 +41,20 @@
     list     the groups (no PATH), or a group's or section's sections
              (NAME/) and keys (KEY = VALUE, "fixed" before fixed ones)
     check    the lines of a group's file that cannot be read
+    watch    prints "watching GROUP..." and then a line for every key of
+             the groups that changes, as programs see it (a burst of
+             writes is one change; a rewrite that changes nothing
+             prints nothing): "PATH = VALUE (was OLD)", "PATH = VALUE
+             (was not set)", "PATH removed (was OLD)", "fixed" before
+             fixed values. Ends after COUNT keys changed (-n), or
+             after SECONDS (-T; status 1 if COUNT keys had not changed
+             by then), or when killed
 
   -s, --system   the system's settings (only root may change them)
   -u, --user     the user's alone
   -f, --fixed    with set -s: users cannot change it
+  -n, --count    with watch: how many changed keys to wait for
+  -T, --timeout  with watch: how long to watch
 }
 program settings;
 
@@ -59,7 +70,11 @@ uses
   Configuration.Values,
   Configuration.Scopes,
   Configuration.Settings,
-  Configuration.Locations;
+  Configuration.Locations,
+  Configuration.FileStorage,
+  Configuration.Changes,
+  Configuration.Watcher,
+  Sys.Time;
 
 const
   Usage = 'Usage: settings get [-s | -u] PATH'#10 +
@@ -67,15 +82,20 @@ const
     '       settings delete [-s] PATH'#10 +
     '       settings list [-s | -u] [PATH]'#10 +
     '       settings check [-s | -u] GROUP'#10 +
+    '       settings watch [-s | -u] [-n COUNT] [-T SECONDS] GROUP...'#10 +
     'Read and change settings: the user''s ($HOME/.settings) over the system''s (/etc/settings).'#10 +
     '  -s, --system      the system''s settings (only root may change them)'#10 +
     '  -u, --user        the user''s alone'#10 +
     '  -f, --fixed       with set -s: users cannot change it'#10 +
-    '  -t, --type KIND   read VALUE as a string, integer, boolean or list'#10;
+    '  -t, --type KIND   read VALUE as a string, integer, boolean or list'#10 +
+    '  -n, --count N     watch: end after N keys changed'#10 +
+    '  -T, --timeout S   watch: end after S seconds'#10;
   OptionSystem = 1;
   OptionUser = 2;
   OptionFixed = 3;
   OptionType = 4;
+  OptionCount = 5;
+  OptionTimeout = 6;
 
 type
   TScopeChoice = (ChoiceBoth, ChoiceUser, ChoiceSystem);
@@ -86,6 +106,9 @@ var
   KindName: string;
   Operands: TStringArray;
   Store: TSettings;
+  { watch: 0 for no limit. }
+  ChangeCount: Integer;
+  TimeoutSeconds: Integer;
 
 procedure ReadOptions;
 var
@@ -95,11 +118,15 @@ var
 begin
   Choice := ChoiceBoth;
   Fixed := False;
+  ChangeCount := 0;
+  TimeoutSeconds := 0;
   KindName := '';
   CommandLine := TCommandLine.Create([CommandOption('s', 'system', False, OptionSystem),
     CommandOption('u', 'user', False, OptionUser),
     CommandOption('f', 'fixed', False, OptionFixed),
-    CommandOption('t', 'type', True, OptionType)], Usage);
+    CommandOption('t', 'type', True, OptionType),
+    CommandOption('n', 'count', True, OptionCount),
+    CommandOption('T', 'timeout', True, OptionTimeout)], Usage);
   try
     CommandLine.NegativeNumbersAreOperands := True;
     while CommandLine.NextOption(Code, OptionValue) do
@@ -108,13 +135,19 @@ begin
         OptionUser: Choice := ChoiceUser;
         OptionFixed: Fixed := True;
         OptionType: KindName := LowerCase(OptionValue);
+        OptionCount:
+          if not TryStrToInt(OptionValue, ChangeCount) or (ChangeCount < 1) then
+            FailWithUsageHint(OptionValue + ': not a count');
+        OptionTimeout:
+          if not TryStrToInt(OptionValue, TimeoutSeconds) or (TimeoutSeconds < 1) then
+            FailWithUsageHint(OptionValue + ': not a number of seconds');
       end;
     Operands := CommandLine.Operands;
   finally
     CommandLine.Free;
   end;
   if Length(Operands) = 0 then
-    FailWithUsageHint('a command is needed: get, set, delete, list or check');
+    FailWithUsageHint('a command is needed: get, set, delete, list, check or watch');
   if Fixed and (Choice <> ChoiceSystem) then
     FailWithUsageHint('--fixed is for the system''s settings (-s)');
 end;
@@ -330,6 +363,89 @@ begin
     Halt(1);
 end;
 
+{ --- watch ------------------------------------------------------------------------------------ }
+
+type
+  TChangePrinter = class
+  public
+    Printed: Integer;
+    procedure GroupChanged(const Group: string; const Changes: TSettingChanges);
+  end;
+
+procedure TChangePrinter.GroupChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Changes) do
+  begin
+    WriteLn(DescribeSettingChange(Changes[Index]));
+    Inc(Printed);
+  end;
+  Flush(Output);
+end;
+
+function OpenWatcher: TSettingsWatcher;
+begin
+  case Choice of
+    ChoiceSystem: Result := OpenSystemSettingsWatcher;
+    ChoiceUser:
+      begin
+        if CurrentHome = '' then
+          Fail(1, 'there are no user settings here (HOME is not set)');
+        Result := TSettingsWatcher.Create(TSettings.Create(TSettingsScope.Create(TFileSettingsStorage.Create(
+          UserSettingsFolder(CurrentHome), UserSettingsFileMode, UserSettingsFolderMode), True), nil));
+      end;
+  else
+    Result := OpenSettingsWatcher;
+  end;
+end;
+
+procedure WatchCommand;
+var
+  Watcher: TSettingsWatcher;
+  Printer: TChangePrinter;
+  Index: Integer;
+  Watched: string;
+  Deadline: QWord;
+  Now: QWord;
+  Timeout: Int64;
+begin
+  NeedOperands(1, MaxInt);
+  for Index := 1 to High(Operands) do
+    if not IsSettingsName(Operands[Index]) then
+      Fail(2, Operands[Index] + ': not the name of a group');
+  Watcher := OpenWatcher;
+  Printer := TChangePrinter.Create;
+  Watcher.OnChanged := @Printer.GroupChanged;
+  Watched := '';
+  for Index := 1 to High(Operands) do
+  begin
+    Watcher.Watch(Operands[Index]);
+    Watched := Watched + ' ' + Operands[Index];
+  end;
+  WriteLn('watching', Watched);
+  Flush(Output);
+  Deadline := 0;
+  if TimeoutSeconds > 0 then
+    Deadline := UptimeMilliseconds + QWord(TimeoutSeconds) * 1000;
+  repeat
+    Timeout := InfiniteWait;
+    if Deadline > 0 then
+    begin
+      Now := UptimeMilliseconds;
+      if Now >= Deadline then
+        Break;
+      Timeout := Int64(Deadline - Now);
+    end;
+    Watcher.WaitForChanges(Timeout);
+  until (ChangeCount > 0) and (Printer.Printed >= ChangeCount);
+  Index := Printer.Printed;
+  Watcher.Free;
+  Printer.Free;
+  if (ChangeCount > 0) and (Index < ChangeCount) then
+    Halt(1);
+end;
+
 begin
   ReadOptions;
   if Choice = ChoiceSystem then
@@ -346,7 +462,9 @@ begin
     ListCommand
   else if Operands[0] = 'check' then
     CheckCommand
+  else if Operands[0] = 'watch' then
+    WatchCommand
   else
-    FailWithUsageHint(Operands[0] + ': not a command (get, set, delete, list or check)');
+    FailWithUsageHint(Operands[0] + ': not a command (get, set, delete, list, check or watch)');
   Store.Free;
 end.
