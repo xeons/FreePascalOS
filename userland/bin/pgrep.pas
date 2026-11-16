@@ -104,15 +104,17 @@ var
 
 function Selected(const Information: TAbiProcessInformation): Boolean;
 var
+  Name: string;
   Match: TMatch;
 begin
   if Information.ProcessId = Own then
     Exit(False);
   if HaveUser and (Information.EffectiveUserId <> UserId) then
     Exit(False);
-  if not SearchExpression(Pattern, @Information.Name[0], Match) then
+  Name := PChar(@Information.Name[0]);
+  if not SearchExpression(Pattern, Name, Match) then
     Exit(False);
-  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> Length(string(PChar(@Information.Name[0]))))) then
+  if Exact and ((Match.Starts[0] <> 0) or (Match.Ends[0] <> Length(Name))) then
     Exit(False);
   Result := True;
 end;
