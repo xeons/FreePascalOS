@@ -26,6 +26,7 @@
 unit Audio.Formats;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -40,7 +41,7 @@ const
 function BytesPerSample(Kind: LongWord): LongWord;
 function SampleKindIsValid(Kind: LongWord): Boolean;
 { The kind called Name (u8, s16, s24, s32, float); 0 if none. }
-function SampleKindOfName(Name: PChar): LongWord;
+function SampleKindOfName(const Name: string): LongWord;
 function SampleKindName(Kind: LongWord): PChar;
 { Writes Value (-1 to 1, clipped) as one sample of Kind at Destination. }
 procedure EncodeSample(Value: Single; Kind: LongWord; Destination: PByte);
@@ -48,9 +49,6 @@ procedure EncodeSample(Value: Single; Kind: LongWord; Destination: PByte);
 function DecodeSample(Kind: LongWord; Source: PByte): Single;
 
 implementation
-
-uses
-  Runtime.Text;
 
 function BytesPerSample(Kind: LongWord): LongWord;
 begin
@@ -68,17 +66,17 @@ begin
   Result := (Kind >= SampleUnsigned8) and (Kind <= SampleFloat32);
 end;
 
-function SampleKindOfName(Name: PChar): LongWord;
+function SampleKindOfName(const Name: string): LongWord;
 begin
-  if TextIsEqual(Name, 'u8') then
+  if Name = 'u8' then
     Result := SampleUnsigned8
-  else if TextIsEqual(Name, 's16') then
+  else if Name = 's16' then
     Result := SampleSigned16
-  else if TextIsEqual(Name, 's24') then
+  else if Name = 's24' then
     Result := SampleSigned24
-  else if TextIsEqual(Name, 's32') then
+  else if Name = 's32' then
     Result := SampleSigned32
-  else if TextIsEqual(Name, 'float') then
+  else if Name = 'float' then
     Result := SampleFloat32
   else
     Result := 0;
