@@ -75,7 +75,8 @@ uses
   Sys.HostsFile,
   Sys.HostNames,
   Sys.Sockets,
-  Sys.NetworkInterfaces;
+  Sys.NetworkInterfaces,
+  Sys.AddressText;
 
 implementation
 
