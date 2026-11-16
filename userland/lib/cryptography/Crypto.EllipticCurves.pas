@@ -28,6 +28,7 @@
 unit Crypto.EllipticCurves;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -76,24 +77,24 @@ function AffineX(constref Curve: TEllipticCurve; constref Point: TCurvePoint; ou
 implementation
 
 const
-  P256Prime: PChar = 'ffffffff00000001000000000000000000000000ffffffffffffffffffffffff';
-  P256B: PChar = '5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b';
-  P256GeneratorX: PChar = '6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296';
-  P256GeneratorY: PChar = '4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5';
-  P256Order: PChar = 'ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551';
+  P256Prime = 'ffffffff00000001000000000000000000000000ffffffffffffffffffffffff';
+  P256B = '5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b';
+  P256GeneratorX = '6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296';
+  P256GeneratorY = '4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5';
+  P256Order = 'ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551';
 
-  P384Prime: PChar = 'fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe' +
+  P384Prime = 'fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe' +
     'ffffffff0000000000000000ffffffff';
-  P384B: PChar = 'b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875a' +
+  P384B = 'b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875a' +
     'c656398d8a2ed19d2a85c8edd3ec2aef';
-  P384GeneratorX: PChar = 'aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a38' +
+  P384GeneratorX = 'aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a38' +
     '5502f25dbf55296c3a545e3872760ab7';
-  P384GeneratorY: PChar = '3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c0' +
+  P384GeneratorY = '3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c0' +
     '0a60b1ce1d7e819d7a431d7c90ea0e5f';
-  P384Order: PChar = 'ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf' +
+  P384Order = 'ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf' +
     '581a0db248b0a77aecec196accc52973';
 
-procedure LoadMontgomery(constref Field: TMontgomeryModulus; Digits: PChar; out Value: TBigNumber);
+procedure LoadMontgomery(constref Field: TMontgomeryModulus; const Digits: string; out Value: TBigNumber);
 var
   Ordinary: TBigNumber;
 begin
@@ -104,7 +105,7 @@ end;
 procedure PrepareCurve(Name: TCurveName; out Curve: TEllipticCurve);
 var
   Prime, Order: TBigNumber;
-  BDigits, XDigits, YDigits: PChar;
+  BDigits, XDigits, YDigits: string;
 begin
   FillChar(Curve, SizeOf(Curve), 0);
   Curve.Name := Name;

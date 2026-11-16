@@ -33,6 +33,7 @@
 unit Crypto.BigNumbers;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -68,7 +69,7 @@ procedure SetBigNumberSmall(out Number: TBigNumber; Value: LongWord);
 function BigNumberFromBytes(out Number: TBigNumber; Bytes: PByte; Count: PtrUInt): Boolean;
 { From hexadecimal digits (most significant first); False for anything
   else or when too large. }
-function BigNumberFromHex(out Number: TBigNumber; Digits: PChar): Boolean;
+function BigNumberFromHex(out Number: TBigNumber; const Digits: string): Boolean;
 { To exactly Count big endian bytes; False when it does not fit. }
 function BigNumberToBytes(constref Number: TBigNumber; Bytes: PByte; Count: PtrUInt): Boolean;
 
@@ -169,7 +170,7 @@ begin
   end;
 end;
 
-function BigNumberFromHex(out Number: TBigNumber; Digits: PChar): Boolean;
+function BigNumberFromHex(out Number: TBigNumber; const Digits: string): Boolean;
 var
   DigitCount: PtrUInt;
   Index: PtrUInt;
@@ -177,15 +178,13 @@ var
   Value: Byte;
 begin
   SetBigNumberZero(Number);
-  DigitCount := 0;
-  while Digits[DigitCount] <> #0 do
-    Inc(DigitCount);
+  DigitCount := Length(Digits);
   if DigitCount > 8 * BigNumberMaximumLimbs then
     Exit(False);
   Index := 0;
   while Index < DigitCount do
   begin
-    if not HexDigitValue(Digits[Index], Value) then
+    if not HexDigitValue(Digits[Index + 1], Value) then
       Exit(False);
     { Digit Index from the end is bits 4 * position up. }
     Position := DigitCount - 1 - Index;

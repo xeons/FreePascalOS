@@ -31,6 +31,7 @@
 unit Crypto.Digests;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -77,8 +78,9 @@ function DigestBlockSize(Algorithm: TDigestAlgorithm): Integer;
 { "MD5", "SHA256", "BLAKE2b" (as in BSD style checksum lines). }
 function DigestTagName(Algorithm: TDigestAlgorithm): PChar;
 
-{ Lower case hexadecimal text of the first ByteCount bytes. Buffer needs
-  2 * ByteCount + 1 characters. }
+{ Lower case hexadecimal text of the first ByteCount bytes. }
+function HexText(Bytes: PByte; ByteCount: Integer): string;
+{ The same into Buffer, which needs 2 * ByteCount + 1 characters. }
 function FormatHexBytes(Bytes: PByte; ByteCount: Integer; Buffer: PChar): PChar;
 
 implementation
@@ -125,16 +127,27 @@ begin
   end;
 end;
 
-function FormatHexBytes(Bytes: PByte; ByteCount: Integer; Buffer: PChar): PChar;
+function HexText(Bytes: PByte; ByteCount: Integer): string;
 var
   Index: Integer;
 begin
+  Result := '';
+  SetLength(Result, 2 * ByteCount);
   for Index := 0 to ByteCount - 1 do
   begin
-    Buffer[2 * Index] := HexDigits[Bytes[Index] shr 4];
-    Buffer[2 * Index + 1] := HexDigits[Bytes[Index] and 15];
+    Result[2 * Index + 1] := HexDigits[Bytes[Index] shr 4];
+    Result[2 * Index + 2] := HexDigits[Bytes[Index] and 15];
   end;
-  Buffer[2 * ByteCount] := #0;
+end;
+
+function FormatHexBytes(Bytes: PByte; ByteCount: Integer; Buffer: PChar): PChar;
+var
+  Text: string;
+begin
+  Text := HexText(Bytes, ByteCount);
+  if Text <> '' then
+    Move(Text[1], Buffer^, Length(Text));
+  Buffer[Length(Text)] := #0;
   Result := Buffer;
 end;
 
