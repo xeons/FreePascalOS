@@ -27,20 +27,18 @@
 }
 program basename;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
-  Sys.Format,
-  Runtime.Text,
-  Sys.Streams,
-  Sys.Text,
+  SysUtils,
+  StrUtils,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Util.Paths;
 
 const
-  Usage: PChar = 'Usage: basename NAME [SUFFIX]'#10 +
+  Usage = 'Usage: basename NAME [SUFFIX]'#10 +
     '  or:  basename OPTION... NAME...'#10 +
     'Print NAME with any leading directory components removed.'#10 +
     #10 +
@@ -53,42 +51,34 @@ const
   OptionZero = 3;
 
 var
-  Parser: TOptionParser;
-  Code: Integer;
-  Value: PChar;
   Multiple: Boolean;
-  Suffix: PChar;
+  Suffix: string;
   LineEnd: Char;
 
-procedure PrintBaseName(Name: PChar);
+procedure PrintBaseName(const Name: string);
 var
-  Base: PChar;
-  BaseLength: PtrUInt;
-  SuffixLength: PtrUInt;
+  Base: string;
 begin
   Base := Util.Paths.BaseName(Name);
-  if Suffix <> nil then
-  begin
-    BaseLength := TextLength(Base);
-    SuffixLength := TextLength(Suffix);
-    if (SuffixLength < BaseLength) and TextEndsWith(Base, Suffix) then
-      Base[BaseLength - SuffixLength] := #0;
-  end;
-  WriteText(StandardOutput, Base);
-  WriteCharacter(StandardOutput, LineEnd);
+  if (Length(Suffix) < Length(Base)) and EndsStr(Suffix, Base) then
+    SetLength(Base, Length(Base) - Length(Suffix));
+  PrintString(Base + LineEnd);
 end;
 
 var
-  Index: Integer;
+  CommandLine: TCommandLine;
+  Code: Integer;
+  Value: string;
+  Operand: string;
 begin
   Multiple := False;
-  Suffix := nil;
+  Suffix := '';
   LineEnd := #10;
-  BeginOptions(Parser, [
-    OptionDefinition('a', 'multiple', False, OptionMultiple),
-    OptionDefinition('s', 'suffix', True, OptionSuffix),
-    OptionDefinition('z', 'zero', False, OptionZero)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('a', 'multiple', False, OptionMultiple),
+    CommandOption('s', 'suffix', True, OptionSuffix),
+    CommandOption('z', 'zero', False, OptionZero)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionMultiple: Multiple := True;
       OptionSuffix:
@@ -99,17 +89,18 @@ begin
       OptionZero: LineEnd := #0;
     end;
 
-  if Parser.OperandCount = 0 then
-    FailWithUsageHint('missing operand', []);
+  if CommandLine.OperandCount = 0 then
+    FailWithUsageHint('missing operand');
   if not Multiple then
   begin
-    if Parser.OperandCount > 2 then
-      FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[2])]);
-    if Parser.OperandCount = 2 then
-      Suffix := Parser.Operands[1];
-    PrintBaseName(Parser.Operands[0]);
+    if CommandLine.OperandCount > 2 then
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[2]]));
+    if CommandLine.OperandCount = 2 then
+      Suffix := CommandLine.Operands[1];
+    PrintBaseName(CommandLine.Operands[0]);
   end
   else
-    for Index := 0 to Parser.OperandCount - 1 do
-      PrintBaseName(Parser.Operands[Index]);
+    for Operand in CommandLine.Operands do
+      PrintBaseName(Operand);
+  CommandLine.Free;
 end.
