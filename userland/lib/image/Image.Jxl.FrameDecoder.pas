@@ -246,7 +246,8 @@ begin
     Frame.SavedPlanes := ClonePlanes(Frame.Planes);
   case Header.ColorTransform of
     JxlColorTransformXyb:
-      ConvertJxlXybToSrgb(Copy(Frame.Planes, 0, 3), Headers.Transform, Headers.Metadata.ToneMapping.IntensityTarget);
+      ConvertJxlXybToSrgb(Copy(Frame.Planes, 0, 3), Headers.Transform, Headers.Metadata.ToneMapping.IntensityTarget,
+        JxlIsGrey(Headers.Metadata));
     JxlColorTransformYCbCr:
       ConvertJxlYCbCrToRgb(Copy(Frame.Planes, 0, 3));
   end;
