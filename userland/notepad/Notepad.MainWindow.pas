@@ -484,7 +484,7 @@ var
 begin
   Format := RememberedFormat(FEditor);
   if (Format.WordWrap = FEditor.WordWrap) and (Format.StatusBar = FStatusBar.Visible) and
-     (Format.FontFamilyIsFixed = (FEditor.FontFamily = FontFamilyFixed)) and
+     (Format.FontFamily = FEditor.FontFamily) and
      (Format.FontPointTenths = FEditor.FontPointTenths) and (Format.FontBold = FEditor.FontBold) then
     Exit;
   ApplyRememberedFormat;

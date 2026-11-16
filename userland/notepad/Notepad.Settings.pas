@@ -22,7 +22,7 @@
 
     WordWrap = true|false
     StatusBar = true|false
-    Font/Family = "text" | "fixed"     the interface's face or the fixed one
+    Font/Family = "text" | "fixed" | "mono"   the interface face, Terminus or DejaVu Sans Mono
     Font/Size = 110                    tenths of a point
     Font/Bold = true|false
 
