@@ -489,7 +489,8 @@ normalized (0-65535), not pixels.
   - [ ] TIFF: CCITT Group 3/4, the floating point predictor and float
         samples, old-style JPEG
   - [ ] WebP (lossy VP8, lossless VP8L, alpha, animation)
-  - [ ] JPEG XL (VarDCT and modular modes, animation)
+  - [x] JPEG XL (VarDCT and modular modes, animation; decoding only,
+        splines refused)
   - [ ] HEIC (HEIF container, HEVC intra-frame decoding; HEVC is covered by
         patent pools, so check licensing before shipping it)
   - [ ] Colour management basics (ICC profiles to sRGB) and scaling with

@@ -60,7 +60,8 @@ type
     ImageFormatGif,
     ImageFormatJpeg,
     ImageFormatPng,
-    ImageFormatTiff
+    ImageFormatTiff,
+    ImageFormatJxl
   );
 
   TImageDecoder = class
@@ -138,6 +139,7 @@ begin
     ImageFormatJpeg: Result := 'JPEG';
     ImageFormatPng: Result := 'PNG';
     ImageFormatTiff: Result := 'TIFF';
+    ImageFormatJxl: Result := 'JPEG XL';
   else
     Result := 'unknown';
   end;
@@ -166,6 +168,8 @@ begin
     Result := ImageFormatPng
   else if (Lower = 'tiff') or (Lower = 'tif') then
     Result := ImageFormatTiff
+  else if Lower = 'jxl' then
+    Result := ImageFormatJxl
   else
     Result := ImageFormatUnknown;
 end;

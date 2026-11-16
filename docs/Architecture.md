@@ -5181,7 +5181,8 @@ independent) against the Free Pascal runtime library:
   (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, the
   codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
   and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
-  (`Image.Ico.*`), GIF (`Image.Gif.*`) and JPEG (`Image.Jpeg.*`). It
+  (`Image.Ico.*`), GIF (`Image.Gif.*`), JPEG (`Image.Jpeg.*`), PNG,
+  TIFF and JPEG XL (`Image.Jxl.*`, decoding only). It
   needs libdrawing and libsystem; `imageinfo` uses it. It builds on the
   host too: `make image-test` (part of `make test`).
 - **libconfiguration.so** – settings, the user's over the system's (see
@@ -5444,8 +5445,75 @@ end. `ScaleImage` and `ThumbnailImage` use libdrawing's smooth scaling
   several pages, the registered encoder one, deflate with the
   predictor.
 
+- *JPEG XL* (`Image.Jxl.*`, ISO/IEC 18181, decoding only): a bare
+  codestream or the container (`Image.Jxl.Container`: `jxlc`, or
+  `jxlp` parts put together in order; `Exif`, `xml `, `jumb`, `jbrd`
+  and Brotli `brob` boxes are named in the metadata as `JxlBoxes`,
+  `jxll` and `jxli` passed over). `Image.Jxl.BitReader` reads the
+  codestream's bits and field codings (U32, U64, F16, enums,
+  extensions); `Image.Jxl.Headers` the size, the image metadata
+  (orientation, preview, animation, bit depth, extra channels, XYB,
+  colour encoding, tone mapping) and the custom transform data (the
+  inverse opsin matrix, upsampling weights, `Image.Jxl.UpsamplingWeights`
+  holding the defaults); `Image.Jxl.Icc` the embedded profile (entropy
+  coded, then rebuilt from its header prediction, tag list and
+  commands exactly as libjxl does). Entropy coding
+  (`Image.Jxl.Entropy`, `Image.Jxl.Prefix`, `Image.Jxl.AnsHistograms`):
+  context maps (simple or entropy coded with move-to-front), hybrid
+  integer configurations, prefix codes (Brotli's, canonical, a 9-bit
+  table then bit by bit) or ANS with libjxl's alias tables and its
+  final state check, and LZ77 with the 120 two-dimensional special
+  distances; `Image.Jxl.Permutation` decodes Lehmer coded permutations
+  (the table of contents, coefficient orders). A frame
+  (`Image.Jxl.FrameHeader`, `Image.Jxl.FrameDecoder`): its header, the
+  table of contents (permuted or not; one section for a single group
+  and pass), the LF global section, the LF groups, the HF global
+  section and the pass groups. Modular data (`Image.Jxl.Modular.*`,
+  `Image.Jxl.ModularFrame`): MA trees (all sixteen properties and the
+  references to earlier channels), the fourteen predictors including
+  the self-correcting weighted one (libjxl's fixed point arithmetic to
+  the bit), and the transforms: every RCT, palettes with the implicit
+  colour cubes, delta entries and their predictors, and squeezes with
+  the default parameters; the global stream decodes what fits in a
+  group, the LF groups the channels shifted three times or more and the
+  pass groups the rest by each pass's shifts, so lossless images come
+  out exact. VarDCT (`Image.Jxl.VarDct*`) follows libjxl: the
+  quantizer, block context map and chroma from luma maps, LF groups
+  (the LF image, adaptive smoothing, AC metadata: transforms, quant
+  field, EPF sharpness), the dequantization matrices of every
+  encoding, coefficient orders, AC coefficients over the passes, and
+  the inverse transforms of every block size and kind (DCT 2x2 to
+  256x256, 4x8, identity, AFV); then gaborish (`Image.Jxl.Gaborish`),
+  the edge preserving filter (`Image.Jxl.EdgePreserving`, also for
+  modular frames that ask for it), upsampling by 2, 4 or 8
+  (`Image.Jxl.Upsampling`), patches (`Image.Jxl.Patches`), noise
+  (`Image.Jxl.Noise`), and XYB to linear sRGB to sRGB or YCbCr to RGB
+  (`Image.Jxl.Xyb`). Splines are refused as unsupported (libjxl's
+  encoder does not make them). Frames (`Image.Jxl.Decoder`,
+  `Image.Jxl.Canvas`, `Image.Jxl.Blending`): LF frames are kept for
+  the frames whose low frequencies they hold, frames saved in the four
+  reference slots for later blending and patches; each regular frame,
+  at its offset and crop, is blended onto the canvas with libjxl's
+  modes (replace, add, multiply, alpha blending above or below with
+  straight or premultiplied alpha, alpha weighted add) per colour and
+  extra channel; progressive passes are all decoded (the final image).
+  An animation is a `TAnimatedImage` whose frames are each the whole
+  canvas (replacing, so a compositor shows them as they are), delays
+  the ticks in milliseconds, the loop count the header's; a still
+  image shows its last frame. `Image.Jxl.Output` brings samples to 8
+  bits: integer samples of B bits as (V x 255 + (2^B - 1) div 2) div
+  (2^B - 1) (exact for lossless images, 16-bit ones rounded as PNG's),
+  premultiplied alpha divided out. The orientation is noted (pixels as
+  stored); a lossless image with a profile keeps the profile and its
+  coded pixels, an XYB (lossy) image is turned into sRGB and keeps no
+  profile; `ColorSpace` (sRGB, ICC, Linear sRGB, Display P3,
+  Grey...) and `JxlEncoding` (VarDCT or Modular) go into the metadata.
+  A frame that fails after an animation's first ends the animation
+  there. There is no encoder.
+
 `imageinfo FILE...` prints a file's format, size, depth, alpha, frames,
-orientation, resolution, profile and a TIFF's pages.
+orientation, resolution, profile, a TIFF's pages and a JPEG XL file's coding,
+colour space and boxes.
 
 **Tests.** libimage builds on the host with libdrawing and
 libcompression, and `make image-test` (part of `make test`) runs
@@ -5474,7 +5542,16 @@ each compression, page and metadata, and are put together byte by byte
 for big endian, BigTIFF, tiles, the predictor, old-style LZW, every
 depth, planar RGBA, associated alpha, CMYK, subsampled YCbCr and JPEG
 with JPEGTables, their references worked out from the samples (or
-Pillow's decoding of each JPEG chunk). PNG image data is also damaged
+Pillow's decoding of each JPEG chunk). JPEG XL files (`make-jxl-fixtures.py`)
+are made with the host's `cjxl` (left out, and the checks skipped,
+without it) from pictures Pillow draws: lossless at several efforts,
+with every predictor forced, palettes, grey, 16 bits, alpha, several
+group sizes; VarDCT at several distances, odd sizes, resampling,
+progressive, with and without the restoration filters, with noise;
+lossy modular; animations (lossless and lossy, cropped frames with
+offsets); an orientation, an ICC profile, metadata boxes and a JPEG
+reconstruction box. Their references are `djxl`'s decoding: lossless
+ones must match exactly, lossy ones within a few levels. PNG image data is also damaged
 behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged

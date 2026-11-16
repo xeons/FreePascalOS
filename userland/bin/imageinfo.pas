@@ -96,6 +96,11 @@ begin
       Line := Line + Format(', colour profile of %d bytes', [Length(Image.IccProfile)]);
     if Image.Metadata.Contains(MetadataKeyPageCount) then
       Line := Line + ', ' + Image.Metadata.GetValue(MetadataKeyPageCount) + ' pages';
+    if Image.Metadata.Contains('JxlEncoding') then
+      Line := Line + ', ' + Image.Metadata.GetValue('JxlEncoding') + ', colour space ' +
+        Image.Metadata.GetValue(MetadataKeyColorSpace);
+    if Image.Metadata.Contains('JxlBoxes') then
+      Line := Line + ', boxes ' + Image.Metadata.GetValue('JxlBoxes');
     PrintStringLine(Line);
   finally
     Image.Free;

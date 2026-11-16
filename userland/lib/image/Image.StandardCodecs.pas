@@ -22,8 +22,9 @@
   shape, last. Calling RegisterStandardImageCodecs again does nothing;
   Image.Files calls it before it looks for a codec.
 
-  PNG and TIFF use libcompression's deflate. ICO's PNG entries find the
-  PNG decoder through the embedded image hook (Image.Codecs).
+  PNG and TIFF use libcompression's deflate. JPEG XL is decoded only.
+  ICO's PNG entries find the PNG decoder through the embedded image
+  hook (Image.Codecs).
 }
 unit Image.StandardCodecs;
 
@@ -43,7 +44,8 @@ uses
   Image.Gif.Codec,
   Image.Jpeg.Codec,
   Image.Png.Codec,
-  Image.Tiff.Codec;
+  Image.Tiff.Codec,
+  Image.Jxl.Codec;
 
 var
   Registered: Boolean = False;
@@ -60,6 +62,7 @@ begin
   RegisterImageDecoder(TGifDecoder);
   RegisterImageDecoder(TJpegDecoder);
   RegisterImageDecoder(TTiffDecoder);
+  RegisterImageDecoder(TJxlDecoder);
   RegisterImageDecoder(TDibDecoder);
   RegisterImageEncoder(TBmpEncoder);
   RegisterImageEncoder(TDibEncoder);
