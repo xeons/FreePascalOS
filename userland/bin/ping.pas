@@ -63,7 +63,6 @@ uses
   Sys.HostLookup,
   Sys.AddressText,
   Sys.Streams,
-  Sys.Text,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
@@ -152,7 +151,7 @@ end;
 
 procedure ParseSeconds(const Text: string; out Milliseconds: QWord);
 begin
-  if not ParseThousandths(PChar(Text), Milliseconds) then
+  if not ParseThousandths(Text, Milliseconds) then
     FailWithUsageHint(Format('invalid number of seconds: ''%s''', [Text]));
 end;
 

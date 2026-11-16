@@ -71,7 +71,8 @@ function StringsFrom(List: TStrings; First: Integer): TStringArray;
 implementation
 
 uses
-  Sys.Text;
+  Sys.Text,
+  Util.Numbers;
 
 function CharAt(const Text: string; Index: Integer): Char;
 begin
@@ -94,7 +95,7 @@ end;
 
 function TryParseInteger(const Text: string; out Value: Int64): Boolean;
 begin
-  Result := ParseInteger(PChar(Text), Value);
+  Result := ParseDecimal(Text, Value);
 end;
 
 function IsNameStart(Character: Char): Boolean;

@@ -20,7 +20,8 @@
   Text handling for programs: character classes, comparison, searching,
   number parsing and a growable text buffer.
 
-  Strings are zero terminated UTF-8 (PChar). The basic routines
+  Strings are zero terminated UTF-8 (PChar); numbers in text are
+  Util.Numbers'. The basic routines
   (TextLength, TextIsEqual, CopyText, number formatting) come from
   Runtime.Text, which this library also contains.
 }
@@ -62,18 +63,6 @@ function FindCharacter(Text: PChar; Character: Char): PtrInt;
 function FindLastCharacter(Text: PChar; Character: Char): PtrInt;
 { Index of the first occurrence of Pattern, or -1. }
 function FindText(Text, Pattern: PChar): PtrInt;
-
-{ Parses an optionally signed decimal integer; the whole text must be a
-  number (surrounding spaces are allowed). }
-function ParseInteger(Text: PChar; out Value: Int64): Boolean;
-function ParseUnsigned(Text: PChar; out Value: QWord): Boolean;
-{ Hexadecimal digits (no prefix), the whole text. }
-function ParseHexadecimal(Text: PChar; out Value: QWord): Boolean;
-{ A size written WIDTHxHEIGHT ("1024x768"), both above 0. }
-function ParseSize(Text: PChar; out Width, Height: LongWord): Boolean;
-{ A decimal number with up to three places after the point ("1.5"), in
-  thousandths. }
-function ParseThousandths(Text: PChar; out Value: QWord): Boolean;
 
 procedure BeginText(out Builder: TTextBuilder);
 procedure AppendText(var Builder: TTextBuilder; Text: PChar);
@@ -228,155 +217,6 @@ begin
     Inc(Index);
   end;
   Result := -1;
-end;
-
-function ParseThousandths(Text: PChar; out Value: QWord): Boolean;
-var
-  Position: Integer;
-  Scale: QWord;
-begin
-  Value := 0;
-  Position := 0;
-  if not IsDigit(Text[0]) then
-    Exit(False);
-  while IsDigit(Text[Position]) do
-  begin
-    Value := Value * 10 + QWord(Ord(Text[Position]) - Ord('0'));
-    Inc(Position);
-  end;
-  Value := Value * 1000;
-  if Text[Position] = '.' then
-  begin
-    Inc(Position);
-    Scale := 100;
-    while IsDigit(Text[Position]) do
-    begin
-      Value := Value + QWord(Ord(Text[Position]) - Ord('0')) * Scale;
-      Scale := Scale div 10;
-      Inc(Position);
-    end;
-  end;
-  Result := Text[Position] = #0;
-end;
-
-function ParseUnsigned(Text: PChar; out Value: QWord): Boolean;
-var
-  Index: PtrUInt;
-  SawDigit: Boolean;
-  Digit: QWord;
-begin
-  Value := 0;
-  Index := 0;
-  SawDigit := False;
-  while IsSpace(Text[Index]) do
-    Inc(Index);
-  if Text[Index] = '+' then
-    Inc(Index);
-  while IsDigit(Text[Index]) do
-  begin
-    Digit := Ord(Text[Index]) - Ord('0');
-    if Value > (High(QWord) - Digit) div 10 then
-      Exit(False); { overflow }
-    Value := Value * 10 + Digit;
-    SawDigit := True;
-    Inc(Index);
-  end;
-  while IsSpace(Text[Index]) do
-    Inc(Index);
-  Result := SawDigit and (Text[Index] = #0);
-end;
-
-{ Digits from Text[Index] on, at least one, up to a value of High
-  (LongWord); Index ends after them. }
-function ParseDimension(Text: PChar; var Index: PtrUInt; out Value: LongWord): Boolean;
-var
-  Number: QWord;
-  SawDigit: Boolean;
-begin
-  Value := 0;
-  Number := 0;
-  SawDigit := False;
-  while IsDigit(Text[Index]) do
-  begin
-    Number := Number * 10 + QWord(Ord(Text[Index]) - Ord('0'));
-    if Number > High(LongWord) then
-      Exit(False);
-    SawDigit := True;
-    Inc(Index);
-  end;
-  Value := LongWord(Number);
-  Result := SawDigit and (Value > 0);
-end;
-
-function ParseSize(Text: PChar; out Width, Height: LongWord): Boolean;
-var
-  Index: PtrUInt;
-begin
-  Width := 0;
-  Height := 0;
-  Index := 0;
-  if not ParseDimension(Text, Index, Width) or ((Text[Index] <> 'x') and (Text[Index] <> 'X')) then
-    Exit(False);
-  Inc(Index);
-  Result := ParseDimension(Text, Index, Height) and (Text[Index] = #0);
-end;
-
-function HexadecimalDigit(Character: Char; out Digit: QWord): Boolean;
-begin
-  Result := True;
-  case Character of
-    '0'..'9': Digit := Ord(Character) - Ord('0');
-    'a'..'f': Digit := Ord(Character) - Ord('a') + 10;
-    'A'..'F': Digit := Ord(Character) - Ord('A') + 10;
-  else
-    Digit := 0;
-    Result := False;
-  end;
-end;
-
-function ParseHexadecimal(Text: PChar; out Value: QWord): Boolean;
-var
-  Index: PtrUInt;
-  Digit: QWord;
-begin
-  Value := 0;
-  Index := 0;
-  while HexadecimalDigit(Text[Index], Digit) do
-  begin
-    if (Value shr 60) <> 0 then
-      Exit(False); { overflow }
-    Value := (Value shl 4) or Digit;
-    Inc(Index);
-  end;
-  Result := (Index > 0) and (Text[Index] = #0);
-end;
-
-function ParseInteger(Text: PChar; out Value: Int64): Boolean;
-var
-  Magnitude: QWord;
-  IsNegative: Boolean;
-begin
-  Value := 0;
-  while IsSpace(Text^) do
-    Inc(Text);
-  IsNegative := Text^ = '-';
-  if IsNegative then
-    Inc(Text);
-  Result := ParseUnsigned(Text, Magnitude);
-  if not Result then
-    Exit;
-  if IsNegative then
-  begin
-    if Magnitude > QWord(High(Int64)) + 1 then
-      Exit(False);
-    Value := -Int64(Magnitude - 1) - 1;
-  end
-  else
-  begin
-    if Magnitude > QWord(High(Int64)) then
-      Exit(False);
-    Value := Int64(Magnitude);
-  end;
 end;
 
 { --- Builder --------------------------------------------------------- }

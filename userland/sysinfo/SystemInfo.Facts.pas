@@ -160,14 +160,10 @@ end;
 function TerminalText: string;
 var
   Number: Int64;
-  Path: array[0..PathCapacity - 1] of Char;
 begin
   Number := TerminalNumber(StandardInputHandle);
   if Number >= 0 then
-  begin
-    PseudoTerminalPath(Number, @Path[0]);
-    Exit(string(PChar(@Path[0])));
-  end;
+    Exit(PseudoTerminalPath(Number));
   if IsConsole(StandardInputHandle) then
     Result := 'console'
   else
@@ -175,18 +171,10 @@ begin
 end;
 
 function ProcessorText(Processors: LongWord): string;
-var
-  Model: array[0..ProcessorModelCapacity - 1] of Char;
-  Vendor: array[0..ProcessorVendorCapacity - 1] of Char;
 begin
-  GetProcessorModel(@Model[0]);
-  if Model[0] = #0 then
-  begin
-    GetProcessorVendor(@Vendor[0]);
-    Result := string(PChar(@Vendor[0]));
-  end
-  else
-    Result := string(PChar(@Model[0]));
+  Result := ProcessorModel;
+  if Result = '' then
+    Result := ProcessorVendor;
   Result := Result + ' (' + IntToStr(Processors) + ')';
 end;
 

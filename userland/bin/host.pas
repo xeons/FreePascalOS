@@ -41,7 +41,6 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Streams,
-  Sys.Text,
   Sys.InternetAddresses,
   Sys.AddressText,
   Sys.DnsNames,
@@ -102,7 +101,7 @@ begin
         OptionVerbose: Verbose := True;
         OptionTcp: Options.TcpOnly := True;
         OptionWait:
-          if not ParseThousandths(PChar(Value), Number) or (Number = 0) or (Number > 600000) then
+          if not ParseThousandths(Value, Number) or (Number = 0) or (Number > 600000) then
             Fail(2, Format('invalid wait: %s', [Value]))
           else
             Options.TimeoutMilliseconds := LongWord(Number);

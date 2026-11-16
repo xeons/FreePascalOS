@@ -140,7 +140,7 @@ begin
   AddRow('Command line:', CommandLineText(Details));
   AddRow('Terminal:', TerminalText(Details));
   AddRow('Session, group:', IntToStr(Details.SessionId) + ', ' + IntToStr(Details.GroupId));
-  AddRow('State:', StrPas(ProcessStateName(Details.State)));
+  AddRow('State:', ProcessStateName(Details.State));
   AddRow('Started:', StartedText(Details));
   AddRow('Threads, handles:', IntToStr(Details.ThreadCount) + ', ' + IntToStr(Details.HandleCount));
   AddRow('Priority:', IntToStr(Details.Priority) + ' (nice ' + IntToStr(Details.Nice) + ')');

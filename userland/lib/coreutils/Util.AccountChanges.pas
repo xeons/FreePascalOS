@@ -81,7 +81,7 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
-  Sys.Text,
+  Util.Numbers,
   Util.AccountFiles,
   Util.Accounts,
   Util.FileTree,
@@ -174,7 +174,7 @@ var
 begin
   Result := -1;
   Fields := SplitAccountLine(Line);
-  if (Length(Fields) >= 3) and ParseInteger(PChar(Fields[2]), Value) then
+  if (Length(Fields) >= 3) and ParseDecimal(Fields[2], Value) then
     Result := Value;
 end;
 
@@ -324,7 +324,7 @@ begin
   if Length(Fields) >= 6 then
     Home := Fields[5];
   PrimaryGroupId := -1;
-  if (Length(Fields) >= 4) and not ParseInteger(PChar(Fields[3]), PrimaryGroupId) then
+  if (Length(Fields) >= 4) and not ParseDecimal(Fields[3], PrimaryGroupId) then
     PrimaryGroupId := -1;
   DeleteAccountLine(Tables.Users, UserIndex);
   DeleteAccountLine(Tables.Shadow, FindAccountLine(Tables.Shadow, Name));

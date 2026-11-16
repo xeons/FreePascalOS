@@ -36,7 +36,6 @@ program tone;
 uses
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Text,
   Util.CommandLine,
   Util.Messages,
   Util.Numbers,
@@ -132,7 +131,7 @@ begin
   if not ParseUnsignedDecimal(CommandLine.Operands[0], Frequency) or (Frequency = 0) or
      (Frequency >= Rate div 2) then
     FailWithUsageHint('invalid frequency ''' + CommandLine.Operands[0] + '''');
-  if not ParseThousandths(PChar(CommandLine.Operands[1]), Thousandths) then
+  if not ParseThousandths(CommandLine.Operands[1], Thousandths) then
     FailWithUsageHint('invalid length ''' + CommandLine.Operands[1] + '''');
 
   FramesLeft := Rate * Thousandths div 1000;
