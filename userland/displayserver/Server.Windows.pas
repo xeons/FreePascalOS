@@ -43,6 +43,7 @@
 unit Server.Windows;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -52,6 +53,7 @@ uses
   Windowing.Protocol,
   Server.Screen;
 
+
 type
   { A rectangle of a client area with a pointer shape of its own. }
   TPointerArea = record
@@ -60,15 +62,15 @@ type
     Shape: LongWord;
   end;
 
-  PServerWindow = ^TServerWindow;
-  TServerWindow = record
+  TServerWindow = class
+  public
     Id: LongWord;
-    { The program that made it (a PClient, Server.Clients). }
-    Client: Pointer;
+    { The program that made it (a TClient, Server.Clients). }
+    Client: TObject;
     { The window it belongs to, kept above (nil: none). }
-    OwnerWindow: PServerWindow;
+    OwnerWindow: TServerWindow;
     Flags: LongWord;
-    Title: array[0..TitleCapacity - 1] of Char;
+    Title: string;
     { The screen it is on (its number). }
     ScreenNumber: LongInt;
     { The client area's top left on the desktop, in pixels. }
@@ -89,49 +91,50 @@ type
     ToldShell: Boolean;
     ToldFlags: LongWord;
     ToldScreen: LongInt;
-    ToldTitle: array[0..TitleCapacity - 1] of Char;
+    ToldTitle: string;
     { The client area before it was maximized. }
     RestoreBounds: TRectangle;
     { The pointer's shape over the client area, and over the areas the
       program set (Server.PointerAreas). }
     PointerShape: LongWord;
     PointerAreas: array[1..MaximumPointerAreas] of TPointerArea;
+    constructor Create(WindowId: LongWord; Owner: TObject; WindowFlags: LongWord; OwningWindow: TServerWindow);
   end;
 
-const
-  MaximumWindows = 256;
+  TServerWindowArray = array of TServerWindow;
 
 var
-  Windows: array[0..MaximumWindows - 1] of PServerWindow;
-  WindowCount: LongInt;
+  { Every window, in stacking order, bottom first. }
+  Windows: TServerWindowArray;
 
-{ A new window record of Client's at the top (below topmost ones; owned
-  by OwnerWindow if not nil), or nil. }
-function AddWindow(Client: Pointer; Flags: LongWord; OwnerWindow: PServerWindow): PServerWindow;
+function WindowCount: LongInt;
+{ A new window of Client's at the top (below topmost ones; owned by
+  OwnerWindow if not nil). }
+function AddWindow(Client: TObject; Flags: LongWord; OwnerWindow: TServerWindow): TServerWindow;
 { Takes it out of the list and frees it (its surface already unmapped);
   the windows it owned have no owner any more. }
-procedure RemoveWindow(Window: PServerWindow);
+procedure RemoveWindow(Window: TServerWindow);
 { Brings the window to the top of its layer, and the windows it owns
   (and theirs) above it. }
-procedure RaiseWindow(Window: PServerWindow);
+procedure RaiseWindow(Window: TServerWindow);
 { True if Window belongs to Owner, directly or through other windows. }
-function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
+function IsOwnedBy(Window, Owner: TServerWindow): Boolean;
 { Gives the window another owner (nil: none; never one it owns), and
   raises it if that leaves it below its owner or in the wrong layer. }
-procedure ChangeOwner(Window, Owner: PServerWindow);
-function FindWindow(Id: LongWord): PServerWindow;
+procedure ChangeOwner(Window, Owner: TServerWindow);
+function FindWindow(Id: LongWord): TServerWindow;
 
 { The screen it is on, and that screen's scale. }
-function WindowScreen(Window: PServerWindow): PScreen;
-function WindowScale(Window: PServerWindow): LongWord;
+function WindowScreen(Window: TServerWindow): PScreen;
+function WindowScale(Window: TServerWindow): LongWord;
 { A metric (logical units) in pixels at the window's scale. }
-function WindowMetric(Window: PServerWindow; Value: LongInt): LongInt;
-function ClientRectangle(Window: PServerWindow): TRectangle;
+function WindowMetric(Window: TServerWindow; Value: LongInt): LongInt;
+function ClientRectangle(Window: TServerWindow): TRectangle;
 { The whole window, frame included. }
-function FrameRectangle(Window: PServerWindow): TRectangle;
-function IsFramed(Window: PServerWindow): Boolean;
+function FrameRectangle(Window: TServerWindow): TRectangle;
+function IsFramed(Window: TServerWindow): Boolean;
 { The topmost visible window whose frame holds (X, Y), or nil. }
-function WindowAt(X, Y: LongInt): PServerWindow;
+function WindowAt(X, Y: LongInt): TServerWindow;
 
 implementation
 
@@ -142,193 +145,178 @@ uses
 var
   NextWindowId: LongWord = 1;
 
-type
-  TLayer = (LayerDesktop, LayerOrdinary, LayerTopmost);
-
-{ Topmost itself, or owned by a topmost window (it must stay above it). }
-function IsTopmost(Window: PServerWindow): Boolean;
+constructor TServerWindow.Create(WindowId: LongWord; Owner: TObject; WindowFlags: LongWord;
+  OwningWindow: TServerWindow);
 begin
-  Result := False;
-  while Window <> nil do
-  begin
-    if (Window^.Flags and WindowTopmost) <> 0 then
-      Exit(True);
-    Window := Window^.OwnerWindow;
-  end;
+  inherited Create;
+  Id := WindowId;
+  Client := Owner;
+  Flags := WindowFlags;
+  OwnerWindow := OwningWindow;
+  Section := -1;
 end;
 
-function LayerOf(Window: PServerWindow): TLayer;
+function WindowCount: LongInt;
 begin
-  if IsTopmost(Window) then
-    Result := LayerTopmost
-  else if (Window^.Flags and WindowDesktop) <> 0 then
-    Result := LayerDesktop
-  else
-    Result := LayerOrdinary;
+  Result := Length(Windows);
 end;
 
-function IsOwnedBy(Window, Owner: PServerWindow): Boolean;
-begin
-  Result := False;
-  if Window = nil then
-    Exit;
-  Window := Window^.OwnerWindow;
-  while Window <> nil do
-  begin
-    if Window = Owner then
-      Exit(True);
-    Window := Window^.OwnerWindow;
-  end;
-end;
-
-function IndexOf(Window: PServerWindow): LongInt;
+function IndexOfWindow(Window: TServerWindow): LongInt;
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowCount - 1 do
+  for Index := 0 to High(Windows) do
     if Windows[Index] = Window then
       Exit(Index);
   Result := -1;
 end;
 
+procedure TakeOut(Window: TServerWindow);
+var
+  Index: LongInt;
+begin
+  Index := IndexOfWindow(Window);
+  if Index >= 0 then
+    Delete(Windows, Index, 1);
+end;
+
+type
+  TLayer = (LayerDesktop, LayerOrdinary, LayerTopmost);
+
+{ Topmost itself, or owned by a topmost window (it must stay above it). }
+function IsTopmost(Window: TServerWindow): Boolean;
+begin
+  Result := False;
+  while Window <> nil do
+  begin
+    if (Window.Flags and WindowTopmost) <> 0 then
+      Exit(True);
+    Window := Window.OwnerWindow;
+  end;
+end;
+
+function LayerOf(Window: TServerWindow): TLayer;
+begin
+  if IsTopmost(Window) then
+    Result := LayerTopmost
+  else if (Window.Flags and WindowDesktop) <> 0 then
+    Result := LayerDesktop
+  else
+    Result := LayerOrdinary;
+end;
+
+function IsOwnedBy(Window, Owner: TServerWindow): Boolean;
+begin
+  Result := False;
+  if Window = nil then
+    Exit;
+  Window := Window.OwnerWindow;
+  while Window <> nil do
+  begin
+    if Window = Owner then
+      Exit(True);
+    Window := Window.OwnerWindow;
+  end;
+end;
+
+
 { Where a window goes when it is raised: the top of its layer, below
   every window of a higher layer. }
-function TopPlaceFor(Window: PServerWindow): LongInt;
+function TopPlaceFor(Window: TServerWindow): LongInt;
 var
   Layer: TLayer;
 begin
   Layer := LayerOf(Window);
-  Result := WindowCount;
+  Result := Length(Windows);
   while (Result > 0) and (LayerOf(Windows[Result - 1]) > Layer) do
     Dec(Result);
 end;
 
-procedure InsertAt(Window: PServerWindow; Place: LongInt);
-var
-  Index: LongInt;
+function AddWindow(Client: TObject; Flags: LongWord; OwnerWindow: TServerWindow): TServerWindow;
 begin
-  Index := WindowCount;
-  while Index > Place do
-  begin
-    Windows[Index] := Windows[Index - 1];
-    Dec(Index);
-  end;
-  Windows[Place] := Window;
-  Inc(WindowCount);
-end;
-
-procedure TakeOut(Window: PServerWindow);
-var
-  Index: LongInt;
-begin
-  Index := IndexOf(Window);
-  if Index < 0 then
-    Exit;
-  while Index + 1 < WindowCount do
-  begin
-    Windows[Index] := Windows[Index + 1];
-    Inc(Index);
-  end;
-  Dec(WindowCount);
-end;
-
-function AddWindow(Client: Pointer; Flags: LongWord; OwnerWindow: PServerWindow): PServerWindow;
-begin
-  if WindowCount = MaximumWindows then
-    Exit(nil);
-  New(Result);
-  FillChar(Result^, SizeOf(Result^), 0);
-  Result^.Id := NextWindowId;
+  Result := TServerWindow.Create(NextWindowId, Client, Flags, OwnerWindow);
   Inc(NextWindowId);
-  Result^.Client := Client;
-  Result^.OwnerWindow := OwnerWindow;
-  Result^.Flags := Flags;
-  Result^.Section := -1;
-  InsertAt(Result, TopPlaceFor(Result));
+  Insert(Result, Windows, TopPlaceFor(Result));
 end;
 
-procedure RemoveWindow(Window: PServerWindow);
+procedure RemoveWindow(Window: TServerWindow);
 var
   Index: LongInt;
 begin
   TakeOut(Window);
-  for Index := 0 to WindowCount - 1 do
-    if Windows[Index]^.OwnerWindow = Window then
-      Windows[Index]^.OwnerWindow := nil;
-  Dispose(Window);
+  for Index := 0 to High(Windows) do
+    if Windows[Index].OwnerWindow = Window then
+      Windows[Index].OwnerWindow := nil;
+  Window.Free;
 end;
 
-procedure RaiseWindow(Window: PServerWindow);
+procedure RaiseWindow(Window: TServerWindow);
 var
-  Owned: array[0..MaximumWindows - 1] of PServerWindow;
-  OwnedCount: LongInt;
+  Owned: TServerWindowArray;
   Index: LongInt;
 begin
   TakeOut(Window);
-  InsertAt(Window, TopPlaceFor(Window));
+  Insert(Window, Windows, TopPlaceFor(Window));
   { The windows it owns directly, bottom first, each raised in turn (with
     the ones they own), so they end above it in the order they had. }
-  OwnedCount := 0;
-  for Index := 0 to WindowCount - 1 do
-    if Windows[Index]^.OwnerWindow = Window then
-    begin
-      Owned[OwnedCount] := Windows[Index];
-      Inc(OwnedCount);
-    end;
-  for Index := 0 to OwnedCount - 1 do
+  Owned := nil;
+  for Index := 0 to High(Windows) do
+    if Windows[Index].OwnerWindow = Window then
+      Insert(Windows[Index], Owned, Length(Owned));
+  for Index := 0 to High(Owned) do
     RaiseWindow(Owned[Index]);
 end;
 
-procedure ChangeOwner(Window, Owner: PServerWindow);
+procedure ChangeOwner(Window, Owner: TServerWindow);
 var
   OldLayer: TLayer;
 begin
   if (Owner = Window) or IsOwnedBy(Owner, Window) then
     Exit;
   OldLayer := LayerOf(Window);
-  Window^.OwnerWindow := Owner;
-  if (OldLayer <> LayerOf(Window)) or ((Owner <> nil) and (IndexOf(Window) < IndexOf(Owner))) then
+  Window.OwnerWindow := Owner;
+  if (OldLayer <> LayerOf(Window)) or ((Owner <> nil) and (IndexOfWindow(Window) < IndexOfWindow(Owner))) then
     RaiseWindow(Window);
 end;
 
-function FindWindow(Id: LongWord): PServerWindow;
+function FindWindow(Id: LongWord): TServerWindow;
 var
   Index: LongInt;
 begin
-  for Index := 0 to WindowCount - 1 do
-    if Windows[Index]^.Id = Id then
+  for Index := 0 to High(Windows) do
+    if Windows[Index].Id = Id then
       Exit(Windows[Index]);
   Result := nil;
 end;
 
-function IsFramed(Window: PServerWindow): Boolean;
+function IsFramed(Window: TServerWindow): Boolean;
 begin
-  Result := (Window^.Flags and WindowFramed) <> 0;
+  Result := (Window.Flags and WindowFramed) <> 0;
 end;
 
-function WindowScreen(Window: PServerWindow): PScreen;
+function WindowScreen(Window: TServerWindow): PScreen;
 begin
-  Result := ScreenByNumber(Window^.ScreenNumber);
+  Result := ScreenByNumber(Window.ScreenNumber);
   if Result = nil then
     Result := @Screens[0];
 end;
 
-function WindowScale(Window: PServerWindow): LongWord;
+function WindowScale(Window: TServerWindow): LongWord;
 begin
   Result := WindowScreen(Window)^.ScalePercent;
 end;
 
-function WindowMetric(Window: PServerWindow; Value: LongInt): LongInt;
+function WindowMetric(Window: TServerWindow; Value: LongInt): LongInt;
 begin
   Result := ScaledMetric(Value, WindowScale(Window));
 end;
 
-function ClientRectangle(Window: PServerWindow): TRectangle;
+function ClientRectangle(Window: TServerWindow): TRectangle;
 begin
-  Result := MakeRectangle(Window^.ClientLeft, Window^.ClientTop, Window^.Surface.Width, Window^.Surface.Height);
+  Result := MakeRectangle(Window.ClientLeft, Window.ClientTop, Window.Surface.Width, Window.Surface.Height);
 end;
 
-function FrameRectangle(Window: PServerWindow): TRectangle;
+function FrameRectangle(Window: TServerWindow): TRectangle;
 var
   Border: LongInt;
 begin
@@ -342,12 +330,12 @@ begin
   Result.Top := Result.Top - Border - WindowMetric(Window, Theme.TitleHeight);
 end;
 
-function WindowAt(X, Y: LongInt): PServerWindow;
+function WindowAt(X, Y: LongInt): TServerWindow;
 var
   Index: LongInt;
 begin
   for Index := WindowCount - 1 downto 0 do
-    if Windows[Index]^.Visible and RectangleContainsPoint(FrameRectangle(Windows[Index]), X, Y) then
+    if Windows[Index].Visible and RectangleContainsPoint(FrameRectangle(Windows[Index]), X, Y) then
       Exit(Windows[Index]);
   Result := nil;
 end;

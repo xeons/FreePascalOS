@@ -29,6 +29,7 @@
 unit Server.WindowList;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -38,9 +39,9 @@ uses
 
 { Sends Client an EventWindowListed for each top-level window of the
   other programs it may see, then the one that ends the list. }
-procedure ListWindowsFor(Client: PClient);
+procedure ListWindowsFor(Client: TClient);
 { Whether Client may activate, minimize, close... Window. }
-function MayManageWindow(Client: PClient; Window: PServerWindow): Boolean;
+function MayManageWindow(Client: TClient; Window: TServerWindow): Boolean;
 
 implementation
 
@@ -52,39 +53,39 @@ const
   RootUserId = 0;
 
 { Client may see what the program behind Window does. }
-function MaySeeProgramOf(Client: PClient; Window: PServerWindow): Boolean;
+function MaySeeProgramOf(Client: TClient; Window: TServerWindow): Boolean;
 var
-  Owner: PClient;
+  Owner: TClient;
 begin
-  Owner := PClient(Window^.Client);
-  Result := (Owner = Client) or (Client^.UserId = RootUserId) or (Owner^.UserId = Client^.UserId);
+  Owner := TClient(Window.Client);
+  Result := (Owner = Client) or (Client.UserId = RootUserId) or (Owner.UserId = Client.UserId);
 end;
 
-procedure ListWindowsFor(Client: PClient);
+procedure ListWindowsFor(Client: TClient);
 var
   Index: LongInt;
-  Window: PServerWindow;
+  Window: TServerWindow;
   Message: TWindowMessage;
 begin
   for Index := 0 to WindowCount - 1 do
   begin
     Window := Windows[Index];
-    if (Window^.Client = Pointer(Client)) or not IsTopLevelWindow(Window) or not MaySeeProgramOf(Client, Window) then
+    if (Window.Client = Client) or not IsTopLevelWindow(Window) or not MaySeeProgramOf(Client, Window) then
       Continue;
-    Message := NewMessage(EventWindowListed, Window^.Id);
+    Message := NewMessage(EventWindowListed, Window.Id);
     Message.Flags := WindowStateFlags(Window);
-    Message.Code := LongWord(Window^.ScreenNumber);
-    Message.Value := LongInt(PClient(Window^.Client)^.ProcessId);
-    Move(Window^.Title, Message.Text, SizeOf(Message.Text));
+    Message.Code := LongWord(Window.ScreenNumber);
+    Message.Value := LongInt(TClient(Window.Client).ProcessId);
+    SetMessageText(Message, PChar(Window.Title));
     SendToClient(Client, Message);
   end;
   Message := NewMessage(EventWindowListed, 0);
   SendToClient(Client, Message);
 end;
 
-function MayManageWindow(Client: PClient; Window: PServerWindow): Boolean;
+function MayManageWindow(Client: TClient; Window: TServerWindow): Boolean;
 begin
-  if (Window^.Client = Pointer(Client)) or IsShell(Client) then
+  if (Window.Client = Client) or IsShell(Client) then
     Exit(True);
   Result := IsTopLevelWindow(Window) and MaySeeProgramOf(Client, Window);
 end;

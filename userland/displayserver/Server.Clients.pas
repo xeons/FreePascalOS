@@ -39,6 +39,7 @@
 unit Server.Clients;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -50,22 +51,26 @@ const
   MaximumClients = 62;
 
 type
-  PClient = ^TClient;
-  TClient = record
+  { A connected program. }
+  TClient = class
+  public
     Channel: Int64;
     { The program at the other end, and its effective user when it
       connected. }
     ProcessId: QWord;
     UserId: LongWord;
+    constructor Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
   end;
 
 var
-  Clients: array[0..MaximumClients - 1] of PClient;
-  ClientCount: LongInt;
+  { Every connected program. }
+  Clients: array of TClient;
+
+function ClientCount: LongInt;
 
 procedure AcceptClients(Port: Int64);
-procedure ServeClient(Client: PClient);
-procedure SendToClient(Client: PClient; var Message: TWindowMessage);
+procedure ServeClient(Client: TClient);
+procedure SendToClient(Client: TClient; var Message: TWindowMessage);
 
 implementation
 
@@ -96,16 +101,40 @@ uses
   Server.WindowList,
   Server.Notifications;
 
-procedure SendToClient(Client: PClient; var Message: TWindowMessage);
+constructor TClient.Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
+begin
+  inherited Create;
+  Channel := ClientChannel;
+  ProcessId := ClientProcessId;
+  UserId := ClientUserId;
+end;
+
+function ClientCount: LongInt;
+begin
+  Result := Length(Clients);
+end;
+
+procedure SendToClient(Client: TClient; var Message: TWindowMessage);
 begin
   if Client <> nil then
-    SendMessage(Client^.Channel, @Message, SizeOf(Message), []);
+    SendMessage(Client.Channel, @Message, SizeOf(Message), []);
+end;
+
+{ The message's text (a title or a tooltip), up to its end or the
+  field's last character, whichever comes first. }
+function MessageText(const Message: TWindowMessage): string;
+var
+  TextLength: LongInt;
+begin
+  TextLength := 0;
+  while (TextLength < TitleCapacity - 1) and (Message.Text[TextLength] <> #0) do
+    Inc(TextLength);
+  SetString(Result, PChar(@Message.Text[0]), TextLength);
 end;
 
 procedure AcceptClients(Port: Int64);
 var
   Channel: Int64;
-  Client: PClient;
   Peer: TAbiChannelPeer;
 begin
   repeat
@@ -124,39 +153,35 @@ begin
       Peer.ProcessId := 0;
       Peer.UserId := High(LongWord);
     end;
-    New(Client);
-    Client^.Channel := Channel;
-    Client^.ProcessId := Peer.ProcessId;
-    Client^.UserId := Peer.UserId;
-    Clients[ClientCount] := Client;
-    Inc(ClientCount);
+    Insert(TClient.Create(Channel, Peer.ProcessId, Peer.UserId), Clients, Length(Clients));
   until False;
 end;
 
-procedure DisconnectClient(Client: PClient);
+procedure DisconnectClient(Client: TClient);
 var
   Index: LongInt;
 begin
   for Index := WindowCount - 1 downto 0 do
-    if (Index < WindowCount) and (Windows[Index]^.Client = Client) then
+    if (Index < WindowCount) and (Windows[Index].Client = Client) then
       DestroyWindow(Windows[Index]);
   ForgetClientNotificationIcons(Client);
   if IsShell(Client) then
     ForgetHotkeys;
   ForgetClientInShell(Client);
-  CloseHandle(Client^.Channel);
-  for Index := 0 to ClientCount - 1 do
+  CloseHandle(Client.Channel);
+  { The last client takes its place, as it always has. }
+  for Index := 0 to High(Clients) do
     if Clients[Index] = Client then
     begin
-      Clients[Index] := Clients[ClientCount - 1];
-      Dec(ClientCount);
+      Clients[Index] := Clients[High(Clients)];
+      SetLength(Clients, Length(Clients) - 1);
       Break;
     end;
-  Dispose(Client);
+  Client.Free;
 end;
 
 { Maps Section as the window's surface (Width x Height pixels). }
-function TakeSurface(Window: PServerWindow; Section: Int64; Width, Height: LongInt): Boolean;
+function TakeSurface(Window: TServerWindow; Section: Int64; Width, Height: LongInt): Boolean;
 var
   Pixels: Pointer;
 begin
@@ -167,29 +192,29 @@ begin
   if Pixels = nil then
     Exit;
   ReleaseSurface(Window);
-  Window^.Section := Section;
-  Window^.Surface := SurfaceOnPixels(Pixels, Width, Height, Width * 4);
+  Window.Section := Section;
+  Window.Surface := SurfaceOnPixels(Pixels, Width, Height, Width * 4);
   Result := True;
 end;
 
 { Window number Id, if it is this client's. }
-function OwnWindowNumbered(Client: PClient; Id: LongWord): PServerWindow;
+function OwnWindowNumbered(Client: TClient; Id: LongWord): TServerWindow;
 begin
   Result := FindWindow(Id);
-  if (Result <> nil) and (Result^.Client <> Client) then
+  if (Result <> nil) and (Result.Client <> Client) then
     Result := nil;
 end;
 
 { The window Message names, if it is this client's. }
-function OwnWindow(Client: PClient; const Message: TWindowMessage): PServerWindow;
+function OwnWindow(Client: TClient; const Message: TWindowMessage): TServerWindow;
 begin
   Result := OwnWindowNumbered(Client, Message.Window);
 end;
 
-procedure CreateWindowFor(Client: PClient; var Message: TWindowMessage; Section: Int64);
+procedure CreateWindowFor(Client: TClient; var Message: TWindowMessage; Section: Int64);
 var
-  Window: PServerWindow;
-  OwnerWindow: PServerWindow;
+  Window: TServerWindow;
+  OwnerWindow: TServerWindow;
   Reply: TWindowMessage;
 begin
   { Only a window of the same program can own it. }
@@ -206,21 +231,20 @@ begin
     RemoveWindow(Window);
     Exit;
   end;
-  LogicalToDesktop(Message.Left, Message.Top, Window^.ClientLeft, Window^.ClientTop);
-  Message.Text[TitleCapacity - 1] := #0;
-  Move(Message.Text, Window^.Title, SizeOf(Window^.Title));
-  Reply := NewMessage(EventWindowCreated, Window^.Id);
+  LogicalToDesktop(Message.Left, Message.Top, Window.ClientLeft, Window.ClientTop);
+  Window.Title := MessageText(Message);
+  Reply := NewMessage(EventWindowCreated, Window.Id);
   SendToClient(Client, Reply);
   { The program drew it at display 0's scale (what it was welcomed with);
     on another display it is told that one's. Then it is kept out of the
     shell's taskbar. }
-  Window^.ScreenNumber := 0;
+  Window.ScreenNumber := 0;
   SettleWindowOnScreen(Window);
   PlaceWindowInWorkArea(Window);
   SettleWindowOnScreen(Window);
 end;
 
-procedure DescribeScreen(Client: PClient; Number: LongInt);
+procedure DescribeScreen(Client: TClient; Number: LongInt);
 var
   Reply: TWindowMessage;
   Screen: PScreen;
@@ -242,7 +266,7 @@ begin
   SendToClient(Client, Reply);
 end;
 
-procedure DescribeScreenMode(Client: PClient; Number, Index: LongInt);
+procedure DescribeScreenMode(Client: TClient; Number, Index: LongInt);
 var
   Reply: TWindowMessage;
   Screen: PScreen;
@@ -261,7 +285,7 @@ begin
   SendToClient(Client, Reply);
 end;
 
-procedure DescribeWorkArea(Client: PClient; Number: LongInt);
+procedure DescribeWorkArea(Client: TClient; Number: LongInt);
 var
   Reply: TWindowMessage;
   Screen: PScreen;
@@ -282,7 +306,7 @@ begin
   SendToClient(Client, Reply);
 end;
 
-procedure AnswerShellRegistration(Client: PClient);
+procedure AnswerShellRegistration(Client: TClient);
 var
   Reply: TWindowMessage;
 begin
@@ -295,7 +319,7 @@ begin
     TellShellAllNotificationIcons;
 end;
 
-procedure SendWelcome(Client: PClient);
+procedure SendWelcome(Client: TClient);
 var
   Reply: TWindowMessage;
 begin
@@ -307,7 +331,7 @@ begin
   SendToClient(Client, Reply);
 end;
 
-procedure SendMouseSettings(Client: PClient);
+procedure SendMouseSettings(Client: TClient);
 var
   Reply: TWindowMessage;
 begin
@@ -319,7 +343,7 @@ begin
   SendToClient(Client, Reply);
 end;
 
-procedure SendKeyboardSettings(Client: PClient);
+procedure SendKeyboardSettings(Client: TClient);
 var
   Reply: TWindowMessage;
   Settings: TKeyboardSettings;
@@ -346,7 +370,7 @@ end;
   the displays, the mouse's and keyboards' settings, the shell and
   notification icons;
   False if Message is not one. }
-function CarryOutDisplayRequest(Client: PClient; var Message: TWindowMessage): Boolean;
+function CarryOutDisplayRequest(Client: TClient; var Message: TWindowMessage): Boolean;
 var
   Screen: PScreen;
 begin
@@ -403,10 +427,7 @@ begin
     RequestDescribeWorkArea:
       DescribeWorkArea(Client, LongInt(Message.Code));
     RequestSetNotificationIcon:
-      begin
-        Message.Text[TitleCapacity - 1] := #0;
-        SetNotificationIcon(Client, Message.Code, Message.Value <> 0, Message.Flags, @Message.Text[0]);
-      end;
+      SetNotificationIcon(Client, Message.Code, Message.Value <> 0, Message.Flags, MessageText(Message));
     RequestListWindows:
       ListWindowsFor(Client);
     RequestRegisterHotkey:
@@ -417,9 +438,9 @@ begin
   end;
 end;
 
-procedure CarryOut(Client: PClient; var Message: TWindowMessage; Handle: Int64);
+procedure CarryOut(Client: TClient; var Message: TWindowMessage; Handle: Int64);
 var
-  Window: PServerWindow;
+  Window: TServerWindow;
   Changed: TRectangle;
   Left: LongInt;
   Top: LongInt;
@@ -466,24 +487,23 @@ begin
       end;
     RequestSetTitle:
       begin
-        Message.Text[TitleCapacity - 1] := #0;
-        Move(Message.Text, Window^.Title, SizeOf(Window^.Title));
-        if Window^.Visible then
+        Window.Title := MessageText(Message);
+        if Window.Visible then
           DamageWindow(Window);
       end;
     RequestSetSurface:
       if Handle >= 0 then
       begin
-        if Window^.Visible then
+        if Window.Visible then
           DamageWindow(Window);
         if not TakeSurface(Window, Handle, Message.SurfaceWidth, Message.SurfaceHeight) then
           CloseHandle(Handle);
-        if Window^.Visible then
+        if Window.Visible then
           DamageWindow(Window);
       end;
     RequestDamage:
-      if Window^.Visible and IntersectRectangles(MakeRectangle(Window^.ClientLeft + Message.Left,
-         Window^.ClientTop + Message.Top, Message.Width, Message.Height), ClientRectangle(Window), Changed) then
+      if Window.Visible and IntersectRectangles(MakeRectangle(Window.ClientLeft + Message.Left,
+         Window.ClientTop + Message.Top, Message.Width, Message.Height), ClientRectangle(Window), Changed) then
         AddDamage(Changed);
     RequestActivate:
       ActivateWindow(Window);
@@ -501,7 +521,7 @@ begin
   end;
 end;
 
-procedure ServeClient(Client: PClient);
+procedure ServeClient(Client: TClient);
 var
   Message: TWindowMessage;
   Handles: array[0..0] of Int64;
@@ -511,7 +531,7 @@ var
 begin
   repeat
     Handles[0] := -1;
-    Error := ReceiveMessage(Client^.Channel, @Message, SizeOf(Message), Length, Handles, HandleCount);
+    Error := ReceiveMessage(Client.Channel, @Message, SizeOf(Message), Length, Handles, HandleCount);
     if Error = ErrorWouldBlock then
       Exit;
     if Error <> ErrorNone then
