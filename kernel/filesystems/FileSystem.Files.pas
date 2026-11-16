@@ -43,6 +43,21 @@
 
   An open file is an object of type "File" holding a reference to its node
   and the current position. Closing it drops the reference.
+
+  Changes
+    Every change is reported to the watches (FileSystem.Watches) once it
+    worked, with the trail of the folder it happened in (the nodes the
+    path went through, FileSystem.NodeTrails). Name changes build a
+    trail only while some watch exists; an open file on a writable
+    volume always keeps the trail of its node, since a watch made later
+    must still hear of its writes. A write is reported in the folder the
+    file was opened in, under the name it was opened by.
+
+  Volumes going away
+    A volume whose disk was unplugged is marked gone (FileSystem.Volumes):
+    every operation on it fails with StatusVolumeGone, except closing.
+    Its driver data is given back once the last node besides the root
+    is released (FinishGoneVolume).
 }
 unit FileSystem.Files;
 
@@ -53,7 +68,9 @@ interface
 
 uses
   Kernel.Mutex,
-  FileSystem.Types;
+  FileSystem.Types,
+  FileSystem.NodeTrails,
+  FileSystem.Watches;
 
 const
   MaximumPathBytes = 1024;
@@ -77,6 +94,9 @@ type
     Flags: LongWord;
     Position: QWord;
     Cursor: TDirectoryCursor;
+    { The trail of Node as it was opened (nil on the root and on
+      read-only volumes), for reporting its changes. }
+    Trail: PSavedTrail;
   end;
 
 procedure InitializeFileObjects;
@@ -139,6 +159,16 @@ function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
 { False if the volume's driver cannot tell. }
 function GetVolumeFreeSpace(Volume: PVolume; out FreeBytes: QWord): Boolean;
 
+{ Makes a watch (FileSystem.Watches) on the folder or file at Path ("/"
+  is the list of volumes), for a caller who may read it. Flags are Abi
+  Watch* flags. }
+function WatchPath(Path: PChar; Flags: LongWord; out Watch: PWatch): TFileSystemStatus;
+
+{ Marks Volume gone (FileSystem.Volumes takes it off its list first):
+  waits for the operation running on it, fails every later one, and
+  gives its driver data back as soon as no node of it is in use. }
+procedure MarkVolumeGone(Volume: PVolume);
+
 procedure SyncAllVolumes;
 
 implementation
@@ -147,8 +177,10 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Runtime.LinkedList,
+  Abi.SystemCalls,
   Memory.KernelHeap,
   Objects.Manager,
+
   Io.BlockCache,
   FileSystem.Volumes,
   FileSystem.Security;
@@ -171,6 +203,8 @@ type
   TParentAndName = record
     Volume: PVolume;
     Parent: PNode;
+    { The trail of Parent, when the change is to be reported. }
+    Trail: PNodeTrail;
     Name: array[0..MaximumNameLengthInBytes] of Char;
     { The volume relative path, normalized, for loop checks in rename. }
     NormalizedPath: array[0..MaximumPathBytes - 1] of Char;
@@ -210,12 +244,25 @@ begin
 
   Fresh^.ReferenceCount := 1;
   InsertAtTail(Volume^.NodeCache, @Fresh^.CacheLink);
+  Inc(Volume^.NodesInUse);
   Result := Fresh;
 end;
 
 procedure ReferenceNode(Node: PNode);
 begin
   Inc(Node^.ReferenceCount);
+end;
+
+{ Gives a gone volume's driver data back once no node besides the root
+  is in use any more. Volume lock held. }
+procedure FinishGoneVolume(Volume: PVolume);
+begin
+  if not Volume^.IsGone or Volume^.IsUnmounted or (Volume^.NodesInUse > 0) then
+    Exit;
+  RemoveListEntry(@Volume^.RootNode^.CacheLink);
+  if Assigned(Volume^.Driver^.Unmount) then
+    Volume^.Driver^.Unmount(Volume);
+  Volume^.IsUnmounted := True;
 end;
 
 { Called with the volume lock held. A node removed while it was open
@@ -233,7 +280,21 @@ begin
     if Node^.RemovalPending and not Volume^.IsReadOnly then
       Volume^.Driver^.FinishRemoval(Node);
     Volume^.Driver^.ReleaseNode(Node);
+    Dec(Volume^.NodesInUse);
+    FinishGoneVolume(Volume);
   end;
+end;
+
+{ Takes the volume's lock for an operation, unless the volume is gone. }
+function LockVolume(Volume: PVolume): TFileSystemStatus;
+begin
+  AcquireMutex(Volume^.Lock);
+  if Volume^.IsGone then
+  begin
+    ReleaseMutex(Volume^.Lock);
+    Exit(StatusVolumeGone);
+  end;
+  Result := StatusSuccess;
 end;
 
 { Takes a node that lost its last name out of the cache, so that a new
@@ -329,12 +390,12 @@ end;
 { --- Resolution within a volume (volume lock held) -------------------- }
 
 function ResolveInVolume(Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
-  Depth: Integer; out Found: PNode): TFileSystemStatus; forward;
+  Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus; forward;
 
 { Builds the path that results from replacing component LinkIndex of
   Split by the link target, and resolves it. }
 function FollowLink(Volume: PVolume; LinkNode: PNode; Split: PSplitPath; LinkIndex: Integer;
-  FollowFinalLink: Boolean; Depth: Integer; out Found: PNode): TFileSystemStatus;
+  FollowFinalLink: Boolean; Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus;
 var
   Target: PChar;
   NewPath: PChar;
@@ -369,15 +430,18 @@ begin
     for ComponentIndex := LinkIndex + 1 to Split^.ComponentCount - 1 do
       AppendComponent(NewPath, Split^.Components[ComponentIndex]);
 
-    Result := ResolveInVolume(Volume, NewPath, FollowFinalLink, Depth + 1, Found);
+    { The path is resolved afresh from the root, and so is the trail. }
+    Result := ResolveInVolume(Volume, NewPath, FollowFinalLink, Depth + 1, Trail, Found);
   end;
 
   FreeKernelMemory(Target);
   FreeKernelMemory(NewPath);
 end;
 
+{ Resolves RelativePath from the volume's root. Trail (if not nil)
+  receives the nodes passed through, ending with Found. }
 function ResolveInVolume(Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
-  Depth: Integer; out Found: PNode): TFileSystemStatus;
+  Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus;
 var
   Split: PSplitPath;
   Node: PNode;
@@ -394,6 +458,8 @@ begin
   Node := Volume^.RootNode;
   ReferenceNode(Node);
   ComponentIndex := 0;
+  if Trail <> nil then
+    StartTrail(Trail, Node^.Information.NodeNumber);
 
   while (Result = StatusSuccess) and (ComponentIndex < Split^.ComponentCount) do
   begin
@@ -418,7 +484,7 @@ begin
     if (NextNode^.Information.Kind = NodeKindSymbolicLink) and
        ((not IsFinalComponent) or FollowFinalLink) then
     begin
-      Result := FollowLink(Volume, NextNode, Split, ComponentIndex, FollowFinalLink, Depth, Node);
+      Result := FollowLink(Volume, NextNode, Split, ComponentIndex, FollowFinalLink, Depth, Trail, Node);
       ReleaseNodeReference(Volume, NextNode);
       FreeKernelMemory(Split);
       if Result = StatusSuccess then
@@ -427,6 +493,8 @@ begin
     end;
 
     Node := NextNode;
+    if Trail <> nil then
+      ExtendTrail(Trail, Node^.Information.NodeNumber, Split^.Components[ComponentIndex]);
     Inc(ComponentIndex);
   end;
 
@@ -528,7 +596,7 @@ begin
   if Result <> StatusSuccess then
     Exit;
 
-  Result := ResolveInVolume(Volume, @ParentPath[0], True, 0, Target^.Parent);
+  Result := ResolveInVolume(Volume, @ParentPath[0], True, 0, Target^.Trail, Target^.Parent);
   if (Result = StatusSuccess) and (Target^.Parent^.Information.Kind <> NodeKindDirectory) then
   begin
     ReleaseNodeReference(Volume, Target^.Parent);
@@ -555,10 +623,81 @@ begin
   Volume := OpenedFile^.Volume;
   if Volume <> nil then
   begin
+    { Also on a volume that is gone: the node must be given back. }
     AcquireMutex(Volume^.Lock);
     ReleaseNodeReference(Volume, OpenedFile^.Node);
     ReleaseMutex(Volume^.Lock);
   end;
+  FreeKernelMemory(OpenedFile^.Trail);
+end;
+
+{ --- Reporting changes ------------------------------------------------- }
+
+function IsDirectoryNode(Node: PNode): Boolean;
+begin
+  Result := Node^.Information.Kind = NodeKindDirectory;
+end;
+
+{ A change to the name Target^.Name in Target^.Parent, about Node. }
+procedure ReportNameChange(Target: PParentAndName; Kind: Word; Node: PNode);
+var
+  Report: TChangeReport;
+begin
+  if Target^.Trail = nil then
+    Exit;
+  ZeroMemory(@Report, SizeOf(Report));
+  Report.Volume := Target^.Volume;
+  Report.Kind := Kind;
+  Report.IsDirectory := IsDirectoryNode(Node);
+  Report.ParentTrail := Target^.Trail;
+  Report.Name := @Target^.Name[0];
+  Report.NodeNumber := Node^.Information.NodeNumber;
+  ReportChange(Report);
+end;
+
+{ A change to Node itself, whose trail (ending with Node) is Trail; the
+  trail is shortened to its folder's on the way. }
+procedure ReportNodeChange(Volume: PVolume; Trail: PNodeTrail; Kind: Word; Node: PNode);
+var
+  Report: TChangeReport;
+  Name: array[0..MaximumNameLengthInBytes] of Char;
+begin
+  ZeroMemory(@Report, SizeOf(Report));
+  CopyLastTrailName(Trail, @Name[0], SizeOf(Name));
+  ShortenTrail(Trail);
+  Report.Volume := Volume;
+  Report.Kind := Kind;
+  Report.IsDirectory := IsDirectoryNode(Node);
+  Report.ParentTrail := Trail;
+  Report.Name := @Name[0];
+  Report.NodeNumber := Node^.Information.NodeNumber;
+  ReportChange(Report);
+end;
+
+{ A change to the node of an open file, reported with the trail it was
+  opened by. }
+procedure ReportOpenFileChange(OpenedFile: POpenFile; Kind: Word);
+var
+  Trail: PNodeTrail;
+begin
+  if (OpenedFile^.Trail = nil) or not WatchesExist then
+    Exit;
+  Trail := AllocateTrail;
+  if Trail = nil then
+    Exit;
+  RestoreTrail(OpenedFile^.Trail, Trail);
+  ReportNodeChange(OpenedFile^.Volume, Trail, Kind, OpenedFile^.Node);
+  FreeTrail(Trail);
+end;
+
+{ A trail for a name change, while watches exist (volume lock held, so
+  no watch on the volume can be made meanwhile); nil otherwise or if
+  memory ran out (then the change is not reported). }
+function TrailForReporting: PNodeTrail;
+begin
+  Result := nil;
+  if WatchesExist then
+    Result := AllocateTrail;
 end;
 
 procedure InitializeFileObjects;
@@ -571,8 +710,9 @@ begin
   Result := (Flags and (OpenForWriting or OpenCreate or OpenTruncate or OpenAppend)) <> 0;
 end;
 
-{ Finds or creates the file for OpenFile. Volume lock held. }
-function ResolveForOpen(Volume: PVolume; RemainingPath: PChar; Flags: LongWord;
+{ Finds or creates the file for OpenFile. Volume lock held. Trail (if
+  not nil) receives the trail of the node. }
+function ResolveForOpen(Volume: PVolume; RemainingPath: PChar; Flags: LongWord; Trail: PNodeTrail;
   out Node: PNode; out WasCreated: Boolean): TFileSystemStatus;
 var
   Target: PParentAndName;
@@ -581,12 +721,13 @@ begin
   Node := nil;
   WasCreated := False;
   if (Flags and OpenCreate) = 0 then
-    Exit(ResolveInVolume(Volume, RemainingPath, True, 0, Node));
+    Exit(ResolveInVolume(Volume, RemainingPath, True, 0, Trail, Node));
 
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   if Target = nil then
     Exit(StatusOutOfMemory);
 
+  Target^.Trail := Trail;
   Result := ResolveParent(Volume, RemainingPath, Target);
   if Result = StatusSuccess then
   begin
@@ -604,8 +745,10 @@ begin
         { Open what the link points at. }
         ReleaseNodeReference(Volume, Node);
         Node := nil;
-        Result := ResolveInVolume(Volume, RemainingPath, True, 0, Node);
-      end;
+        Result := ResolveInVolume(Volume, RemainingPath, True, 0, Trail, Node);
+      end
+      else if Trail <> nil then
+        ExtendTrail(Trail, Node^.Information.NodeNumber, @Target^.Name[0]);
     end
     else if Result = StatusNotFound then
     begin
@@ -619,6 +762,10 @@ begin
           Node := InternNode(Volume, Created);
           ApplyCreationAttributes(Node, DefaultFileMode, True);
           WasCreated := True;
+          if (Trail <> nil) and WatchesExist then
+            ReportNameChange(Target, WatchChangeCreated, Node);
+          if Trail <> nil then
+            ExtendTrail(Trail, Node^.Information.NodeNumber, @Target^.Name[0]);
         end;
       end;
     end;
@@ -652,9 +799,12 @@ var
   RemainingPath: PChar;
   Node: PNode;
   WasCreated: Boolean;
+  Trail: PNodeTrail;
+  SavedTrail: PSavedTrail;
 begin
   OpenedFile := nil;
   Node := nil;
+  SavedTrail := nil;
   Result := SelectVolume(Path, Volume, RemainingPath);
   if Result <> StatusSuccess then
     Exit;
@@ -669,8 +819,22 @@ begin
     if WantsWriteAccess(Flags) and Volume^.IsReadOnly then
       Exit(StatusReadOnly);
 
-    AcquireMutex(Volume^.Lock);
-    Result := ResolveForOpen(Volume, RemainingPath, Flags, Node, WasCreated);
+    { Nothing on a read-only volume changes, so there is nothing to
+      report about the file. }
+    Trail := nil;
+    if not Volume^.IsReadOnly then
+    begin
+      Trail := AllocateTrail;
+      if Trail = nil then
+        Exit(StatusOutOfMemory);
+    end;
+    Result := LockVolume(Volume);
+    if Result <> StatusSuccess then
+    begin
+      FreeTrail(Trail);
+      Exit;
+    end;
+    Result := ResolveForOpen(Volume, RemainingPath, Flags, Trail, Node, WasCreated);
     if (Result = StatusSuccess) and WantsWriteAccess(Flags) and
        (Node^.Information.Kind = NodeKindDirectory) then
       Result := StatusIsADirectory;
@@ -680,15 +844,32 @@ begin
       Result := StatusAccessDenied;
     if (Result = StatusSuccess) and ((Flags and OpenTruncate) <> 0) and
        (Node^.Information.SizeInBytes <> 0) then
+    begin
       Result := Volume^.Driver^.SetFileSize(Node, 0);
+      if (Result = StatusSuccess) and (Trail <> nil) and WatchesExist then
+      begin
+        SavedTrail := SaveTrail(Trail);
+        ReportNodeChange(Volume, Trail, WatchChangeWritten, Node);
+      end;
+    end;
+    if (Result = StatusSuccess) and (Trail <> nil) and (SavedTrail = nil) then
+    begin
+      SavedTrail := SaveTrail(Trail);
+      if SavedTrail = nil then
+        Result := StatusOutOfMemory;
+    end;
     if (Result <> StatusSuccess) and (Node <> nil) then
     begin
       ReleaseNodeReference(Volume, Node);
       Node := nil;
     end;
     ReleaseMutex(Volume^.Lock);
+    FreeTrail(Trail);
     if Result <> StatusSuccess then
+    begin
+      FreeKernelMemory(SavedTrail);
       Exit;
+    end;
     if ((Flags and OpenTruncate) <> 0) and Assigned(FileChangedHook) then
       FileChangedHook(Volume, Node^.Information.NodeNumber);
   end;
@@ -702,6 +883,7 @@ begin
       ReleaseNodeReference(Volume, Node);
       ReleaseMutex(Volume^.Lock);
     end;
+    FreeKernelMemory(SavedTrail);
     Exit(StatusOutOfMemory);
   end;
 
@@ -709,6 +891,7 @@ begin
   OpenedFile^.Node := Node;
   OpenedFile^.Flags := Flags;
   OpenedFile^.Position := 0;
+  OpenedFile^.Trail := SavedTrail;
 end;
 
 function OpenPath(Path: PChar; out OpenedFile: POpenFile): TFileSystemStatus;
@@ -737,7 +920,9 @@ begin
     Exit(StatusIsADirectory);
 
   Volume := OpenedFile^.Volume;
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
   Result := Volume^.Driver^.ReadFile(OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
     BytesRead);
   if Result = StatusSuccess then
@@ -749,6 +934,7 @@ procedure NoteFileChanged(OpenedFile: POpenFile);
 begin
   if Assigned(FileChangedHook) then
     FileChangedHook(OpenedFile^.Volume, OpenedFile^.Node^.Information.NodeNumber);
+  ReportOpenFileChange(OpenedFile, WatchChangeWritten);
 end;
 
 function WriteToFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
@@ -765,7 +951,9 @@ begin
     Exit(StatusSuccess);
 
   Volume := OpenedFile^.Volume;
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
   if (OpenedFile^.Flags and OpenAppend) <> 0 then
     OpenedFile^.Position := OpenedFile^.Node^.Information.SizeInBytes;
   Result := Volume^.Driver^.WriteFile(OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
@@ -786,7 +974,9 @@ begin
     Exit(StatusReadOnly);
 
   Volume := OpenedFile^.Volume;
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
   Result := Volume^.Driver^.SetFileSize(OpenedFile^.Node, NewSize);
   ReleaseMutex(Volume^.Lock);
   NoteFileChanged(OpenedFile);
@@ -827,7 +1017,9 @@ begin
     Exit(StatusNotADirectory);
 
   Volume := OpenedFile^.Volume;
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
   Result := Volume^.Driver^.ReadDirectory(OpenedFile^.Node, OpenedFile^.Cursor, Entry);
   ReleaseMutex(Volume^.Lock);
 end;
@@ -845,6 +1037,7 @@ begin
     DescribeRootDirectory(Information)
   else
   begin
+    { The node's information stays readable on a gone volume. }
     AcquireMutex(OpenedFile^.Volume^.Lock);
     Information := OpenedFile^.Node^.Information;
     ReleaseMutex(OpenedFile^.Volume^.Lock);
@@ -868,8 +1061,10 @@ begin
     Exit;
   end;
 
-  AcquireMutex(Volume^.Lock);
-  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, Node);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, nil, Node);
   if Result = StatusSuccess then
   begin
     Information := Node^.Information;
@@ -900,8 +1095,10 @@ begin
   if Volume = nil then
     Exit(StatusInvalidPath);
 
-  AcquireMutex(Volume^.Lock);
-  Result := ResolveInVolume(Volume, RemainingPath, False, 0, Node);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ResolveInVolume(Volume, RemainingPath, False, 0, nil, Node);
   if Result = StatusSuccess then
   begin
     if Node^.Information.Kind <> NodeKindSymbolicLink then
@@ -927,6 +1124,7 @@ var
 begin
   Target^.Volume := nil;
   Target^.Parent := nil;
+  Target^.Trail := nil;
   Result := SelectVolume(Path, Volume, RemainingPath);
   if Result <> StatusSuccess then
     Exit;
@@ -935,16 +1133,25 @@ begin
   if Volume^.IsReadOnly then
     Exit(StatusReadOnly);
 
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Target^.Trail := TrailForReporting;
   Result := ResolveParent(Volume, RemainingPath, Target);
   if Result <> StatusSuccess then
+  begin
+    FreeTrail(Target^.Trail);
+    Target^.Trail := nil;
     ReleaseMutex(Volume^.Lock);
+  end;
 end;
 
 procedure FinishNameOperation(Target: PParentAndName);
 begin
   ReleaseNodeReference(Target^.Volume, Target^.Parent);
   ReleaseMutex(Target^.Volume^.Lock);
+  FreeTrail(Target^.Trail);
+  Target^.Trail := nil;
 end;
 
 function CreateNamedNode(Path: PChar; Kind: TNodeKind; LinkTarget: PChar): TFileSystemStatus;
@@ -983,6 +1190,7 @@ begin
         else
           ApplyCreationAttributes(Created, DefaultFileMode, True);
         end;
+        ReportNameChange(Target, WatchChangeCreated, Created);
         ReleaseNodeReference(Target^.Volume, Created);
       end;
     end;
@@ -1041,6 +1249,8 @@ begin
     if Result = StatusSuccess then
     begin
       Result := RemoveName(Target^.Volume, Target^.Parent, @Target^.Name[0], Node);
+      if Result = StatusSuccess then
+        ReportNameChange(Target, WatchChangeRemoved, Node);
       ReleaseNodeReference(Target^.Volume, Node);
     end;
     FinishNameOperation(Target);
@@ -1076,14 +1286,38 @@ begin
     Volume^.Driver^.BeginAtomicChange(Volume);
   Result := RemoveName(Volume, Target^.Parent, @Target^.Name[0], Existing);
   if Result = StatusSuccess then
+  begin
+    ReportNameChange(Target, WatchChangeRemoved, Existing);
     Result := Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node, Target^.Parent,
       @Target^.Name[0]);
+  end;
   if Assigned(Volume^.Driver^.EndAtomicChange) then
   begin
     EndStatus := Volume^.Driver^.EndAtomicChange(Volume);
     if Result = StatusSuccess then
       Result := EndStatus;
   end;
+end;
+
+{ Reports a rename that worked: Node went from Source to Target, and
+  was numbered OldNodeNumber before. }
+procedure ReportRename(Source, Target: PParentAndName; Node: PNode; OldNodeNumber: QWord);
+var
+  Report: TChangeReport;
+begin
+  if (Source^.Trail = nil) or (Target^.Trail = nil) then
+    Exit;
+  ZeroMemory(@Report, SizeOf(Report));
+  Report.Volume := Source^.Volume;
+  Report.Kind := WatchChangeRenamed;
+  Report.IsDirectory := IsDirectoryNode(Node);
+  Report.ParentTrail := Source^.Trail;
+  Report.Name := @Source^.Name[0];
+  Report.NodeNumber := OldNodeNumber;
+  Report.TargetTrail := Target^.Trail;
+  Report.TargetName := @Target^.Name[0];
+  Report.NewNodeNumber := Node^.Information.NodeNumber;
+  ReportChange(Report);
 end;
 
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
@@ -1094,6 +1328,7 @@ var
   RemainingTargetPath: PChar;
   Node: PNode;
   Existing: PNode;
+  OldNodeNumber: QWord;
 begin
   Source := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
@@ -1111,6 +1346,9 @@ begin
     if (Result = StatusSuccess) and (TargetVolume <> Source^.Volume) then
       Result := StatusUnsupported; { moving between volumes means copying }
 
+    Target^.Trail := nil;
+    if (Result = StatusSuccess) and (Source^.Trail <> nil) then
+      Target^.Trail := AllocateTrail;
     if Result = StatusSuccess then
       Result := ResolveParent(Source^.Volume, RemainingTargetPath, Target);
 
@@ -1119,6 +1357,7 @@ begin
       Result := LookupAndIntern(Source^.Parent, @Source^.Name[0], Node);
       if Result = StatusSuccess then
       begin
+        OldNodeNumber := Node^.Information.NodeNumber;
         Existing := nil;
         if LookupAndIntern(Target^.Parent, @Target^.Name[0], Existing) <> StatusSuccess then
           Existing := nil;
@@ -1131,19 +1370,25 @@ begin
         else if (Node^.Information.Kind = NodeKindDirectory) and
                 PathIsInside(@Target^.NormalizedPath[0], @Source^.NormalizedPath[0]) then
           Result := StatusInvalidPath
-        else if (Existing <> nil) and (Existing <> Node) then
-          Result := ReplaceByRename(Source, Target, Node, Existing)
         else
-          { Includes changing only the letter case of a name on file
-            systems that ignore case, where the lookup above finds Node. }
-          Result := Source^.Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node,
-            Target^.Parent, @Target^.Name[0]);
+        begin
+          if (Existing <> nil) and (Existing <> Node) then
+            Result := ReplaceByRename(Source, Target, Node, Existing)
+          else
+            { Includes changing only the letter case of a name on file
+              systems that ignore case, where the lookup above finds Node. }
+            Result := Source^.Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node,
+              Target^.Parent, @Target^.Name[0]);
+          if Result = StatusSuccess then
+            ReportRename(Source, Target, Node, OldNodeNumber);
+        end;
         if Existing <> nil then
           ReleaseNodeReference(Source^.Volume, Existing);
         ReleaseNodeReference(Source^.Volume, Node);
       end;
       ReleaseNodeReference(Source^.Volume, Target^.Parent);
     end;
+    FreeTrail(Target^.Trail);
     FinishNameOperation(Source);
   end;
 
@@ -1157,6 +1402,7 @@ var
   Volume: PVolume;
   RemainingPath: PChar;
   Node: PNode;
+  Trail: PNodeTrail;
 begin
   Result := SelectVolume(Path, Volume, RemainingPath);
   if Result <> StatusSuccess then
@@ -1168,14 +1414,20 @@ begin
   if not Assigned(Volume^.Driver^.SetAttributes) then
     Exit(StatusUnsupported);
 
-  AcquireMutex(Volume^.Lock);
-  Result := ResolveInVolume(Volume, RemainingPath, FollowLinks, 0, Node);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Trail := TrailForReporting;
+  Result := ResolveInVolume(Volume, RemainingPath, FollowLinks, 0, Trail, Node);
   if Result = StatusSuccess then
   begin
     Result := Volume^.Driver^.SetAttributes(Node, Changes);
+    if (Result = StatusSuccess) and (Trail <> nil) then
+      ReportNodeChange(Volume, Trail, WatchChangeAttributes, Node);
     ReleaseNodeReference(Volume, Node);
   end;
   ReleaseMutex(Volume^.Lock);
+  FreeTrail(Trail);
 end;
 
 function SetFileAttributes(OpenedFile: POpenFile; const Changes: TAttributeChanges): TFileSystemStatus;
@@ -1189,9 +1441,13 @@ begin
     Exit(StatusReadOnly);
   if not Assigned(Volume^.Driver^.SetAttributes) then
     Exit(StatusUnsupported);
-  AcquireMutex(Volume^.Lock);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
   Result := Volume^.Driver^.SetAttributes(OpenedFile^.Node, Changes);
   ReleaseMutex(Volume^.Lock);
+  if Result = StatusSuccess then
+    ReportOpenFileChange(OpenedFile, WatchChangeAttributes);
 end;
 
 function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
@@ -1220,7 +1476,7 @@ begin
       Result := StatusUnsupported
     else
     begin
-      Result := ResolveInVolume(ExistingVolume, RemainingExistingPath, False, 0, Node);
+      Result := ResolveInVolume(ExistingVolume, RemainingExistingPath, False, 0, nil, Node);
       if Result = StatusSuccess then
       begin
         if Node^.Information.Kind = NodeKindDirectory then
@@ -1233,7 +1489,11 @@ begin
           Result := StatusAlreadyExists;
         end
         else
+        begin
           Result := Target^.Volume^.Driver^.CreateHardLink(Target^.Parent, @Target^.Name[0], Node);
+          if Result = StatusSuccess then
+            ReportNameChange(Target, WatchChangeCreated, Node);
+        end;
         ReleaseNodeReference(ExistingVolume, Node);
       end;
     end;
@@ -1247,8 +1507,63 @@ begin
   FreeBytes := 0;
   if not Assigned(Volume^.Driver^.GetFreeSpace) then
     Exit(False);
-  AcquireMutex(Volume^.Lock);
+  if LockVolume(Volume) <> StatusSuccess then
+    Exit(False);
   Result := Volume^.Driver^.GetFreeSpace(Volume, FreeBytes) = StatusSuccess;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+{ The watch for WatchPath on a node: read permission on it. Volume lock
+  held. }
+function WatchNode(Volume: PVolume; Node: PNode; Flags: LongWord; out Watch: PWatch): TFileSystemStatus;
+begin
+  Watch := nil;
+  if not MayAccess(Node^.Information, AccessRead) then
+    Exit(StatusAccessDenied);
+  Watch := CreateWatch(Volume, Node^.Information.NodeNumber, IsDirectoryNode(Node), Flags);
+  if Watch = nil then
+    Exit(StatusOutOfMemory);
+  Result := StatusSuccess;
+end;
+
+function WatchPath(Path: PChar; Flags: LongWord; out Watch: PWatch): TFileSystemStatus;
+var
+  Volume: PVolume;
+  RemainingPath: PChar;
+  Node: PNode;
+begin
+  Watch := nil;
+  Result := SelectVolume(Path, Volume, RemainingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if Volume = nil then
+  begin
+    { The list of volumes is there for everyone to see. }
+    Watch := CreateWatch(nil, 0, True, Flags);
+    if Watch = nil then
+      Exit(StatusOutOfMemory);
+    Exit(StatusSuccess);
+  end;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ResolveInVolume(Volume, RemainingPath, True, 0, nil, Node);
+  if Result = StatusSuccess then
+  begin
+    Result := WatchNode(Volume, Node, Flags, Watch);
+    ReleaseNodeReference(Volume, Node);
+  end;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+procedure MarkVolumeGone(Volume: PVolume);
+begin
+  AcquireMutex(Volume^.Lock);
+  Volume^.IsGone := True;
+  { Nothing is written back to a disk that is not there; ext keeps
+    nodes removed while open on its orphan list, which this skips. }
+  Volume^.IsReadOnly := True;
+  FinishGoneVolume(Volume);
   ReleaseMutex(Volume^.Lock);
 end;
 
@@ -1260,9 +1575,10 @@ begin
   for Index := 0 to VolumeCount - 1 do
   begin
     Volume := VolumeAt(Index);
-    if Volume^.IsReadOnly then
+    if (Volume = nil) or Volume^.IsReadOnly then
       Continue;
-    AcquireMutex(Volume^.Lock);
+    if LockVolume(Volume) <> StatusSuccess then
+      Continue;
     Volume^.Driver^.Sync(Volume);
     ReleaseMutex(Volume^.Lock);
   end;

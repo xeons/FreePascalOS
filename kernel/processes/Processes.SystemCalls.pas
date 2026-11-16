@@ -38,6 +38,7 @@ implementation
 
 uses
   Processes.ObjectCalls,
+  Processes.WatchCalls,
   Processes.WaitCalls,
   Processes.MappingCalls,
   Runtime.Memory,
@@ -721,6 +722,9 @@ begin
     CallGetChannelPeer: Result := PerformGetChannelPeer(Int64(Argument0), Argument1);
     CallTerminateSession: Result := PerformTerminateSession(Argument0, Argument1);
     CallWatchShutdown: Result := PerformWatchShutdown;
+    { Watching files and folders (Processes.WatchCalls). }
+    CallCreateWatch: Result := PerformCreateWatch(Argument0, Argument1);
+    CallReadWatch: Result := PerformReadWatch(Int64(Argument0), Argument1, Argument2);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

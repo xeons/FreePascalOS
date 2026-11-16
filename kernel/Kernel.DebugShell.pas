@@ -195,6 +195,8 @@ begin
   for Index := 0 to VolumeCount - 1 do
   begin
     Volume := VolumeAt(Index);
+    if Volume = nil then
+      Break;
     DebugBeginMessage;
     DebugWrite(@Volume^.Name[0]);
     DebugWrite('  ');

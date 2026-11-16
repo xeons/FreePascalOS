@@ -277,7 +277,27 @@ const
     another living process has taken it. }
   CallWatchShutdown = 90;
 
-  CallCount = 91;
+  { --- Watching files and folders for changes ------------------------------ }
+
+  { (PathAddress, Flags): a watch on the folder or file at Path: a handle
+    that is ready (CallWaitForHandles) while change records wait in it.
+    Flags choose what is reported (WatchNames, WatchContents,
+    WatchAttributes; at least one) and WatchSubtree, which also reports
+    changes in every folder below a watched folder. Records about the
+    watched item itself (removed, moved, its volume gone) and the
+    overflow record always come. Watching needs read permission on the
+    item. "/volumes" is the list of volumes: a watch on it reports a
+    volume arriving (WatchChangeCreated) and going away
+    (WatchChangeRemoved). ErrorNotFound, ErrorAccessDenied,
+    ErrorUnsupported (/dev). }
+  CallCreateWatch = 91;
+  { (Handle, BufferAddress, Capacity): moves the oldest change records
+    that fit into the buffer, one TAbiWatchRecord after another, and
+    returns how many bytes they take. Never waits: ErrorWouldBlock if
+    there is none; ErrorMessageTooLong if the first does not fit. }
+  CallReadWatch = 92;
+
+  CallCount = 93;
 
   { How long a shutdown waits for the process watching it. }
   ShutdownCoordinatorSeconds = 30;
@@ -482,6 +502,45 @@ const
     Without it a process belongs to its parent's session. }
   ProcessNewSession = $01;
 
+  { Flags of CallCreateWatch: what to report. }
+  { Names created, removed and renamed (files, folders, links). }
+  WatchNames = $01;
+  { A file's contents or size changed. }
+  WatchContents = $02;
+  { Permissions, owner, group or times changed. }
+  WatchAttributes = $04;
+  { Changes in every folder below the watched one too; their names are
+    paths relative to the watched folder ("sub/file"). }
+  WatchSubtree = $08;
+
+  { TAbiWatchRecord.Kind. Names are relative to the watched folder; a
+    record about the watched item itself has an empty name. }
+  WatchChangeCreated = 1;
+  WatchChangeRemoved = 2;
+  { Name is the new name, OldName the old one (both inside the watched
+    folder; moving out of it is reported as removed, into it as
+    created). }
+  WatchChangeRenamed = 3;
+  WatchChangeWritten = 4;
+  WatchChangeAttributes = 5;
+  { The watched item was removed: the watch reports nothing more. }
+  WatchChangeWatchedItemRemoved = 6;
+  { The watched item was renamed or moved (Name: its new name); the
+    watch follows it. }
+  WatchChangeWatchedItemMoved = 7;
+  { The watched item's volume went away (unplugged): nothing more
+    comes. }
+  WatchChangeVolumeGone = 8;
+  { Records were lost because nobody read them: look at the folder
+    again. }
+  WatchChangeOverflow = 9;
+
+  { TAbiWatchRecord.Flags: the item is a folder. }
+  WatchRecordDirectory = $01;
+  { At most this many records wait in a watch; then comes the overflow
+    record. }
+  MaximumQueuedWatchRecords = 64;
+
   { --- Error codes (returned negated) ---------------------------------- }
 
   ErrorNone = 0;
@@ -519,6 +578,8 @@ const
   ErrorWouldBlock = 11;
   { A message larger than the buffer given for it. }
   ErrorMessageTooLong = 90;
+  { The volume (or the device) went away: a USB disk was unplugged. }
+  ErrorNoDevice = 19;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -567,6 +628,7 @@ const
   HandleKindSection = 10;
   HandleKindPort = 11;
   HandleKindChannel = 12;
+  HandleKindWatch = 13;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -673,9 +735,26 @@ type
     IsReadOnly: LongWord;
     IsSystemVolume: LongWord;
     HasFreeSpace: LongWord;
-    Reserved: LongWord;
+    { On a disk that can be unplugged (a USB disk). }
+    IsRemovable: LongWord;
   end;
   PAbiVolumeInformation = ^TAbiVolumeInformation;
+
+  { One change record of a watch (CallReadWatch). The name follows the
+    record, then (renames) the old name, each ended by a zero. }
+  TAbiWatchRecord = record
+    { Bytes from the start of this record to the next one (a multiple
+      of 8). }
+    Size: LongWord;
+    { WatchChange*. }
+    Kind: Word;
+    { WatchRecord*. }
+    Flags: Word;
+    { Bytes of the name and of the old name, without their zeros. }
+    NameLength: LongWord;
+    OldNameLength: LongWord;
+  end;
+  PAbiWatchRecord = ^TAbiWatchRecord;
 
   { A user to start a program as (TAbiProcessCreation.Identity). }
   TAbiProcessIdentity = record

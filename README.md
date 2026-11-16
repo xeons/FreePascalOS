@@ -47,6 +47,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   metadata checksums, htree directories for reading, sparse files, fast and
   slow symbolic links). ext3 and ext4 are written through their journal
   (ordered mode, with disk flushes), and replayed after a crash.
+- Watching files and folders for changes made by any program (names
+  created, removed and renamed, files written, attributes changed; a
+  whole subtree if wanted) through waitable handles, on every file system
+  (`watch PATH`); USB disks plugged in while the system runs are mounted
+  under `/volumes` at once and announced, and unplugging one takes its
+  volumes away cleanly (`volumes`, `volumes -w`).
 - Sound: an audio framework (`/dev/audio`) with an Intel HD Audio driver,
   `libaudio`, and the `tone`, `play` and `mixer` programs.
 - USB keyboards next to PS/2 ones, with dead keys for the German and
@@ -130,7 +136,9 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - everyday tools beyond the core utilities: `grep` (with `egrep` and
     `fgrep`), `sed`, `find`, `xargs`, `diff` (normal, unified and context
     output, recursive), the pager `less` (also started as `more`), `ps`,
-    `pgrep`, `pkill`, `renice`, `taskset`, `su` and `passwd`
+    `pgrep`, `pkill`, `renice`, `taskset`, `su`, `passwd`, `watch`
+    (changes to files and folders as they happen) and `volumes` (the
+    mounted volumes, and with `-w` volumes arriving and leaving)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and
@@ -200,7 +208,8 @@ autologin=root` to a root shell. `init=/bin/program` runs another first
 program instead of the service manager (the tests use `init=/bin/coretest`);
 `init=/bin/sh` gives a root shell on the console with no services. Programs
 see the system volume as `/`; every mounted volume is also reachable as
-`/volumes/disk1p1`, `/volumes/disk1p2`, ... The services' output is in
+`/volumes/disk1p1`, `/volumes/disk1p2`, ... (a USB disk plugged in later
+appears there too). The services' output is in
 `/var/log/NAME.log`.
 
 The system volume has two accounts: `root` (password `root`) and `user`

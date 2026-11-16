@@ -57,6 +57,7 @@ begin
     ErrorUnsupported: AbiErrorMessage := 'Operation not supported';
     ErrorWouldBlock: AbiErrorMessage := 'Resource temporarily unavailable';
     ErrorMessageTooLong: AbiErrorMessage := 'Message too long';
+    ErrorNoDevice: AbiErrorMessage := 'No such device';
     ErrorCorrupted: AbiErrorMessage := 'Structure needs cleaning';
   else
     AbiErrorMessage := 'Unknown error';

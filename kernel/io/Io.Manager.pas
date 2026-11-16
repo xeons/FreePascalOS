@@ -67,7 +67,9 @@
   whatever level the request completed at, up to DispatchLevel, so they
   may only take spin locks and queue deferred calls.
 
-  Devices are never removed.
+  A device whose hardware went away (an unplugged disk) leaves /dev
+  with UnlistDevice; the object stays, since open handles and device
+  stacks may still name it, and its driver fails requests from then on.
 }
 unit Io.Manager;
 
@@ -231,6 +233,9 @@ function CreateDriver(Name: PChar; const Dispatch: TDispatchTable): PDriverObjec
 function CreateDevice(Driver: PDriverObject; Name: PChar; Kind: TDeviceKind; Mode: LongWord;
   ExtensionSize: QWord): PDeviceObject;
 
+{ Takes a named device off the list (out of /dev). }
+procedure UnlistDevice(Device: PDeviceObject);
+
 { Named devices only. }
 function FindDevice(Name: PChar): PDeviceObject;
 function DeviceCount: Integer;
@@ -368,6 +373,26 @@ begin
     DereferenceObject(Result);
     Exit(nil);
   end;
+end;
+
+procedure UnlistDevice(Device: PDeviceObject);
+var
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+  Kept: Integer;
+begin
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Kept := 0;
+  for Index := 0 to DeviceTotal - 1 do
+    if Devices[Index] <> Device then
+    begin
+      Devices[Kept] := Devices[Index];
+      Inc(Kept);
+    end;
+  for Index := Kept to DeviceTotal - 1 do
+    Devices[Index] := nil;
+  DeviceTotal := Kept;
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
 end;
 
 function FindDevice(Name: PChar): PDeviceObject;

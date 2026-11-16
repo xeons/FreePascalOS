@@ -31,6 +31,9 @@
     * threads, thread-local storage and initialization order (threadtest),
     * events, timers, waiting on several handles, channels, ports and a
       section shared between two processes (ipctest),
+    * watching files and folders for changes made by other processes,
+      on several file system types (watchtest), and the permission a
+      watch needs,
     * pseudo-terminals: a shell on one, typed into through the master
       side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
     * the service manager: definitions, the start order, readiness,
@@ -77,7 +80,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..299] of TCommandTest = (
+  CommandTests: array[0..301] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -433,6 +436,10 @@ const
     (Command: 'HEAP_CHECKS=fill heaptest --write-past-end 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err'; ExpectedOutput: '204'#10' memory was written past the end of a block'#10'  offset:    20 holds $00 instead of $FD'#10; ExpectedStatus: 0),
     (Command: '/bin/coretest --error-order 2>&1 | cat'; ExpectedOutput: 'error first'#10'output second'#10; ExpectedStatus: 0),
     (Command: 'ipctest > ipc.log; echo $?; grep FAIL ipc.log; tail -n 1 ipc.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Watching files and folders: changes another process makes, on
+      several file system types, and a folder the user may not read. }
+    (Command: 'watchtest > watch.log; echo $?; grep -E ''FAIL|expected:|got:'' watch.log; tail -n 1 watch.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -m 700 unreadable; su user -c "watch -t 100 unreadable" 2>&1; echo $?; su user -c "watch -t 100 ."; echo $?; rmdir unreadable'; ExpectedOutput: 'watch: unreadable: Permission denied'#10'1'#10'2'#10; ExpectedStatus: 0),
     (Command: 'ptytest > pty.log; echo $?; grep -E ''FAIL|received'' pty.log; tail -n 1 pty.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { The service manager and the service command (a second manager). }
     (Command: 'servicetest > svc.log; echo $?; grep -E ''FAIL|received'' svc.log; tail -n 1 svc.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),

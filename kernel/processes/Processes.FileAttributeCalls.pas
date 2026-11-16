@@ -58,6 +58,7 @@ uses
   Kernel.Mutex,
   FileSystem.Files,
   FileSystem.Security,
+  Io.BlockDevice,
   Processes.Process,
   Processes.Handles,
   Processes.Paths,
@@ -134,6 +135,7 @@ begin
   Information.HasFreeSpace := Ord(GetVolumeFreeSpace(Volume, Information.FreeBytes));
   Information.IsReadOnly := Ord(Volume^.IsReadOnly);
   Information.IsSystemVolume := Ord(TextIsEqual(@Volume^.Name[0], SystemVolumeName));
+  Information.IsRemovable := Ord(BlockDeviceIsRemovable(Volume^.Device));
 end;
 
 function PerformSetHandleAttributes(Handle: Int64; ChangesAddress: QWord): Int64;

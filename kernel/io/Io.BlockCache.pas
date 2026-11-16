@@ -315,6 +315,13 @@ begin
   Result := True;
   if not Line^.IsDirty then
     Exit;
+  { Changes for a disk that was unplugged are lost; keeping them dirty
+    would only have them tried again and again. }
+  if BlockDeviceIsRemoved(Line^.Device) then
+  begin
+    Line^.IsDirty := False;
+    Exit(False);
+  end;
   Result := WriteBlocks(Line^.Device, Line^.LineNumber * BlocksPerLine(Line^.Device),
     LongWord(BlocksInLine(Line^.Device, Line^.LineNumber)), Line^.Data);
   if Result then
@@ -627,7 +634,9 @@ begin
   Result := True;
   if Batch.Count = 0 then
     Exit;
-  Writes := PBlockWrite(AllocateKernelMemory(Batch.Count * SizeOf(TBlockWrite)));
+  Writes := nil;
+  if not BlockDeviceIsRemoved(Batch.Device) then
+    Writes := PBlockWrite(AllocateKernelMemory(Batch.Count * SizeOf(TBlockWrite)));
   if Writes = nil then
   begin
     { One at a time instead. }
@@ -709,11 +718,17 @@ end;
 function FlushAllCachedDevices: Boolean;
 var
   Index: Integer;
+  Device: PBlockDevice;
 begin
+
   Result := WriteBackLines(nil, High(QWord));
   for Index := 0 to BlockDeviceCount - 1 do
-    if not BlockDeviceIsPartition(BlockDeviceAt(Index)) then
-      Result := FlushBlockDevice(BlockDeviceAt(Index)) and Result;
+  begin
+    Device := BlockDeviceAt(Index);
+    { The list closes up when a disk is unplugged meanwhile. }
+    if (Device <> nil) and not BlockDeviceIsPartition(Device) then
+      Result := FlushBlockDevice(Device) and Result;
+  end;
 end;
 
 procedure InvalidateCachedDevice(Device: PBlockDevice);

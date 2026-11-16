@@ -45,6 +45,7 @@ const
   TrbTypeIsochronous = 5;
   TrbTypeLink = 6;
   TrbTypeEnableSlot = 9;
+  TrbTypeDisableSlot = 10;
   TrbTypeAddressDevice = 11;
   TrbTypeConfigureEndpoint = 12;
   TrbTypeEvaluateContext = 13;
