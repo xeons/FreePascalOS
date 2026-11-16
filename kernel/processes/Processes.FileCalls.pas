@@ -270,6 +270,7 @@ begin
   UserInformation.ModificationTime := Information.ModificationTime;
   UserInformation.AccessTime := Information.AccessTime;
   UserInformation.ChangeTime := Information.ChangeTime;
+  UserInformation.VolumeNumber := Information.VolumeNumber;
 end;
 
 { --- Handles --------------------------------------------------------- }

@@ -113,9 +113,25 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   mode and scale (`displaymode -r`, `displayscale -r`), the session
   manager gives it the user's mouse settings at login (`mousesettings
   -r`), Notepad remembers word wrap, the status bar and the font, the
-  terminal its size. The `settings` tool reads and changes them:
+  terminal its size, the file manager its view, order and window. The `settings` tool reads and changes them:
   `settings get|set|delete|list|check [-s] PATH [VALUE]`, e.g.
   `settings set Terminal/FontSize 140`, `settings list -s Display`.
+- **A file manager** (`files [FOLDER]`, also on the desktop and in the
+  Start menu): a folder as large icons, a list or details (size, type,
+  time, permissions, owner), sorted by any column, hidden files on
+  request; places at the left (home, the file system, every volume,
+  disks plugged in appearing and leaving as it happens), Back, Forward,
+  Up and an address box. Folders open with a double click, programs
+  run, text opens in Notepad. New folder, rename in place (F2), delete
+  (asked, permanent), cut, copy and paste (file lists on the clipboard,
+  a documented text format), drag and drop (a move within a volume, a
+  copy onto another; Ctrl copies), and a properties dialog (sizes added
+  up in the background, times, owner, and permissions changed with
+  check boxes). Copies, moves and deletes run on a thread of their own
+  with a progress window and Cancel, ask about names already taken
+  (replace, skip, rename, for every one) and about errors (skip or
+  stop), keep permissions and times, and copy links as links. The folder
+  shown follows changes made by any program.
 - **Processes and scheduling**: a process list (`ps`, `pgrep`, `pkill`)
   with CPU time counted per thread, nice values mapped to thread
   priorities (`nice`, `renice`), processor affinity (`taskset`), per
@@ -309,12 +325,14 @@ userland/
   bin/              One file per program (/bin/<name>)
   sh/               The shell's units (lexer, parser, expansion, execution)
   notepad/          Notepad's units (files, the document, menus, Go To)
+  files/            The file manager's units (views, places, operations)
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/RenderFont/   Renders a TrueType font into coverage fonts (.cvf)
 tools/DrawingTest/  Checks libdrawing and libfont on the host
 tools/TextTest/     Checks the multi-line edit box's logic on the host
 tools/SettingsTest/ Checks the settings library on the host
+tools/FilesTest/    Checks the file manager's plain logic on the host
 scripts/            QEMU launcher, test runner, disk image builders
 docs/               Architecture notes
 ```

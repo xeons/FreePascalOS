@@ -17,17 +17,18 @@
 }
 
 {
-  Drawing the desktop's pictures on a design grid.
+  Drawing pictures on a design grid: the desktop's program icons, the
+  taskbar's marks and the stock icons of files, programs and disks
+  (Controls.FileIcons).
 
-  Every picture (program icons, notification icons, the Start button's
-  mark) is designed on a square grid GridSize steps across and drawn
-  into whatever box the display's scale makes of it, with libdrawing's
-  anti-aliased shapes, so it is as smooth at 32 pixels as at 64. A
-  TPictureGrid maps the design's points (fractions of a step allowed)
-  to the box's pixels; the helpers fill and outline shapes given in
-  those points.
+  Every such picture is designed on a square grid GridSize steps across
+  and drawn into whatever box the display's scale makes of it, with
+  libdrawing's anti-aliased shapes, so it is as smooth at 32 pixels as
+  at 64. A TPictureGrid maps the design's points (fractions of a step
+  allowed) to the box's pixels; the helpers fill and outline shapes
+  given in those points.
 }
-unit Desktop.Shapes;
+unit Controls.PictureGrid;
 
 {$mode objfpc}
 

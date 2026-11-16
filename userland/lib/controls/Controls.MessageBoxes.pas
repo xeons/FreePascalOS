@@ -26,6 +26,13 @@
   Escape and the close button give the cancelling one (Cancel, No, or
   OK when it is the only button). Given an owner, the box is centred on
   it and stays above it; the owner is disabled while the box is open.
+
+  ShowChoiceBox is the same with buttons of the caller's own (each as
+  wide as its caption needs) and, if asked for, a check box under the
+  text ("Do this for every file"): it returns the index of the button
+  pressed and leaves whether the box was checked in the options. Its
+  OnShowing hears of the dialog just before it appears (to tell where
+  its buttons are, say).
 }
 unit Controls.MessageBoxes;
 
@@ -35,14 +42,32 @@ unit Controls.MessageBoxes;
 interface
 
 uses
-  Windowing.Windows;
+  Windowing.Windows,
+  Controls.Dialogs;
 
 type
   TMessageButtons = (MessageOk, MessageOkCancel, MessageYesNo, MessageYesNoCancel);
   TMessageSign = (SignNone, SignInformation, SignWarning, SignError, SignQuestion);
+  TChoiceBoxEvent = procedure(Dialog: TDialog) of object;
+
+  TChoiceBoxOptions = record
+    { The buttons' captions, left to right (mnemonics allowed); the
+      first is pressed by Enter. }
+    Captions: array of string;
+    { The button Escape and the close button press. }
+    CancelIndex: LongInt;
+    { A check box under the text ('' for none), and whether it is
+      checked (when the box opens, and as it was left). }
+    CheckBoxText: string;
+    Checked: Boolean;
+    OnShowing: TChoiceBoxEvent;
+  end;
 
 function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons = MessageOk;
   Sign: TMessageSign = SignInformation; Owner: TWindow = nil): LongInt;
+{ The index of the button pressed. }
+function ShowChoiceBox(const Title, Text: string; var Options: TChoiceBoxOptions; Sign: TMessageSign = SignQuestion;
+  Owner: TWindow = nil): LongInt;
 
 implementation
 
@@ -60,7 +85,7 @@ uses
   Controls.Text,
   Controls.Labels,
   Controls.Buttons,
-  Controls.Dialogs;
+  Controls.Toggles;
 
 const
   Margin = 12;
@@ -68,6 +93,10 @@ const
   ButtonWidth = 75;
   ButtonHeight = 23;
   ButtonGap = 6;
+  CheckBoxHeight = 20;
+  { Dialog results of the buttons: the first is this, the next one more
+    (clear of ResultCancel, which the close button gives). }
+  FirstChoiceResult = 100;
   InformationColor = $FF2F6DB5;
   WarningColor = $FFE8B400;
   ErrorColor = $FFC0302C;
@@ -162,32 +191,38 @@ begin
   Lines.Add(Copy(Text, Start, Length(Text) - Start + 1));
 end;
 
-function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons; Sign: TMessageSign;
+{ How wide a button must be for Caption. }
+function ButtonWidthFor(const Caption: string): LongInt;
+begin
+  Result := Unscaled(TextWidth(ControlFace, TextWithoutMnemonic(Caption))) + 20;
+  if Result < ButtonWidth then
+    Result := ButtonWidth;
+end;
+
+function ShowChoiceBox(const Title, Text: string; var Options: TChoiceBoxOptions; Sign: TMessageSign;
   Owner: TWindow): LongInt;
-const
-  { OK and Cancel need no mnemonic: Enter and Escape press them. }
-  Captions: array[TMessageButtons, 0..2] of string = (('OK', '', ''), ('OK', 'Cancel', ''), ('&Yes', '&No', ''),
-    ('&Yes', '&No', 'Cancel'));
-  Results: array[TMessageButtons, 0..2] of LongInt = ((ResultOk, 0, 0), (ResultOk, ResultCancel, 0),
-    (ResultYes, ResultNo, 0), (ResultYes, ResultNo, ResultCancel));
-  Counts: array[TMessageButtons] of LongInt = (1, 2, 2, 3);
 var
   Dialog: TDialog;
   Lines: TStringList;
   Index: LongInt;
+  Count: LongInt;
   LineHeight: LongInt;
   TextWidthLogical: LongInt;
   TextHeightLogical: LongInt;
   TextLeft: LongInt;
   ContentHeight: LongInt;
+  CheckRoom: LongInt;
   Width: LongInt;
   Height: LongInt;
   ButtonsWidth: LongInt;
   ButtonLeft: LongInt;
   SignControl: TSignControl;
   LineLabel: TLabel;
+  CheckBox: TCheckBox;
+  Chosen: LongInt;
 begin
   ConnectToDisplay;
+  Count := Length(Options.Captions);
   Lines := TStringList.Create;
   try
     SplitLines(Text, Lines);
@@ -196,6 +231,13 @@ begin
     for Index := 0 to Lines.Count - 1 do
       if Unscaled(TextWidth(ControlFace, Lines[Index])) > TextWidthLogical then
         TextWidthLogical := Unscaled(TextWidth(ControlFace, Lines[Index])) + 2;
+    CheckRoom := 0;
+    if Options.CheckBoxText <> '' then
+    begin
+      CheckRoom := CheckBoxHeight + 6;
+      if Unscaled(TextWidth(ControlFace, TextWithoutMnemonic(Options.CheckBoxText))) + 28 > TextWidthLogical then
+        TextWidthLogical := Unscaled(TextWidth(ControlFace, TextWithoutMnemonic(Options.CheckBoxText))) + 28;
+    end;
     TextHeightLogical := Lines.Count * LineHeight;
     TextLeft := Margin;
     if Sign <> SignNone then
@@ -203,11 +245,15 @@ begin
     ContentHeight := TextHeightLogical;
     if (Sign <> SignNone) and (SignSize > ContentHeight) then
       ContentHeight := SignSize;
-    ButtonsWidth := Counts[Buttons] * ButtonWidth + (Counts[Buttons] - 1) * ButtonGap;
+    ButtonsWidth := 0;
+    for Index := 0 to Count - 1 do
+      ButtonsWidth := ButtonsWidth + ButtonWidthFor(Options.Captions[Index]) + ButtonGap;
+    if Count > 0 then
+      ButtonsWidth := ButtonsWidth - ButtonGap;
     Width := TextLeft + TextWidthLogical + Margin;
     if Width < ButtonsWidth + 2 * Margin then
       Width := ButtonsWidth + 2 * Margin;
-    Height := Margin + ContentHeight + Margin + ButtonHeight + Margin;
+    Height := Margin + ContentHeight + CheckRoom + Margin + ButtonHeight + Margin;
     Dialog := TDialog.CreateDialog(Title, Width, Height, Owner);
     try
       if Sign <> SignNone then
@@ -224,22 +270,59 @@ begin
         LineLabel.SetBounds(TextLeft, Margin + (ContentHeight - TextHeightLogical) div 2 + Index * LineHeight,
           TextWidthLogical, LineHeight);
       end;
+      CheckBox := nil;
+      if Options.CheckBoxText <> '' then
+      begin
+        CheckBox := TCheckBox.Create(Dialog.Root);
+        CheckBox.Text := Options.CheckBoxText;
+        CheckBox.Checked := Options.Checked;
+        CheckBox.SetBounds(TextLeft, Margin + ContentHeight + 6, TextWidthLogical, CheckBoxHeight);
+      end;
       ButtonLeft := (Width - ButtonsWidth) div 2;
-      for Index := 0 to Counts[Buttons] - 1 do
-        Dialog.AddButton(Captions[Buttons, Index], Results[Buttons, Index],
-          ButtonLeft + Index * (ButtonWidth + ButtonGap), Height - Margin - ButtonHeight, ButtonWidth, ButtonHeight,
-          Index = 0, Index = Counts[Buttons] - 1);
+      for Index := 0 to Count - 1 do
+      begin
+        Dialog.AddButton(Options.Captions[Index], FirstChoiceResult + Index, ButtonLeft,
+          Height - Margin - ButtonHeight, ButtonWidthFor(Options.Captions[Index]), ButtonHeight, Index = 0,
+          Index = Options.CancelIndex);
+        ButtonLeft := ButtonLeft + ButtonWidthFor(Options.Captions[Index]) + ButtonGap;
+      end;
       Dialog.FocusControl(Dialog.DefaultControl);
-      Result := Dialog.ShowModal;
+      if Assigned(Options.OnShowing) then
+        Options.OnShowing(Dialog);
+      Chosen := Dialog.ShowModal - FirstChoiceResult;
       { The close button means the cancelling button. }
-      if Result = ResultCancel then
-        Result := Results[Buttons, Counts[Buttons] - 1];
+      if (Chosen < 0) or (Chosen >= Count) then
+        Chosen := Options.CancelIndex;
+      if CheckBox <> nil then
+        Options.Checked := CheckBox.Checked;
+      Result := Chosen;
     finally
       Dialog.Free;
     end;
   finally
     Lines.Free;
   end;
+end;
+
+function ShowMessageBox(const Title, Text: string; Buttons: TMessageButtons; Sign: TMessageSign;
+  Owner: TWindow): LongInt;
+const
+  { OK and Cancel need no mnemonic: Enter and Escape press them. }
+  Captions: array[TMessageButtons, 0..2] of string = (('OK', '', ''), ('OK', 'Cancel', ''), ('&Yes', '&No', ''),
+    ('&Yes', '&No', 'Cancel'));
+  Results: array[TMessageButtons, 0..2] of LongInt = ((ResultOk, 0, 0), (ResultOk, ResultCancel, 0),
+    (ResultYes, ResultNo, 0), (ResultYes, ResultNo, ResultCancel));
+  Counts: array[TMessageButtons] of LongInt = (1, 2, 2, 3);
+var
+  Options: TChoiceBoxOptions;
+  Index: LongInt;
+begin
+  Options := Default(TChoiceBoxOptions);
+  SetLength(Options.Captions, Counts[Buttons]);
+  for Index := 0 to Counts[Buttons] - 1 do
+    Options.Captions[Index] := Captions[Buttons, Index];
+  Options.CancelIndex := Counts[Buttons] - 1;
+  Result := Results[Buttons, ShowChoiceBox(Title, Text, Options, Sign, Owner)];
 end;
 
 end.

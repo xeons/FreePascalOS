@@ -1453,14 +1453,37 @@ character), combo box (its text always the chosen item's, also when the
 items change under it), menu bar and pop-up menus (`Controls.Menus`),
 toolbar, tab control, tree view (dotted lines joining nodes to their
 parents and siblings, drawn a row at a time, as thick as the display's
-scale makes a logical unit) and list view. Controls that own children
+scale makes a logical unit; a small stock icon before a node's text if
+it has one; nodes taken away again with `DeleteNode`, the choice going
+to the parent; `NodeAt` and `DropTarget` for context menus and drops),
+splitter (`Controls.Splitter`: dragged to give the pane docked before
+it another width) and list view. Controls that own children
 place them in their `Layout` with `AssignBounds` (which, unlike
 `SetBounds`, does not ask the parent to lay out again) and keep their
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
 
+**Context menus and dragging** belong to every control
+(`Controls.Base`, `Controls.Window`). A right click, when the button is
+let go over the control it was pressed on, and Shift+F10 or the menu key
+for the focused control, call `ContextMenu` (`OnContextMenu`, with the
+point in the control's pixels: the pointer's, or `KeyboardContextPoint`,
+which a list view puts on its focused item). A control starts a drag of
+some data while a button is held (`BeginDrag` with a `TDragData`:
+`Controls.DragData`, text with a format naming it, "text" or
+"file-list", and the control it came from); the window then owns the
+data, and as the pointer moves asks the control under it, then its
+parents until one answers, what a drop there would do (`DragOver`,
+`OnDragOver`: nothing, copy or move, given the modifiers; asked again
+when Ctrl or Shift change), tells the one that answered when the pointer
+leaves it (`DragLeave`), and on the button's release hands it the data
+(`DragDrop`, `OnDragDrop`) once the drag is over (so a drop may ask in a
+dialog). Escape, or the window losing the keyboard, ends a drag without
+a drop.
+
 The list view shows its items (`Controls.ListItems`: texts by column,
-an icon, selected or not, a pointer for the program) in four views:
+an icon with a mark over it for a symbolic link, selected or not, a
+pointer for the program) in four views:
 details (columns under a header that can be clicked and resized), list
 (names in columns flowing down, then across), small and large icons.
 Every view is a grid of equal cells (`Controls.ListViewLayout`): one
@@ -1468,9 +1491,16 @@ per line in details; filled across, then down, for icons; down, then
 across, in the list, which scrolls sideways. A "line" is a row of cells
 or a column of them, so scrolling, the arrow keys and hit testing are
 the same code in every view; `Controls.ListViewPainting` draws the
-header and an item in each view. Icons (`Controls.Icons`) are the
-program's own surface, stretched to the size the view and the display
-scale need, or a stock document or folder drawn as shapes at that size.
+header and an item in each view (details rows with the small icons too
+if `IconsInDetails`; under a large icon a name that does not fit takes
+two lines, broken after a space, dot, dash or underscore where one is
+in reach). Icons (`Controls.Icons`) are the program's own surface,
+stretched to the size the view and the display scale need, or a stock
+icon drawn as shapes at that size: a text document, a folder, and in
+`Controls.FileIcons` a plain file, a program, a fixed and a removable
+disk, the home folder, the computer, and the arrow over a link's icon,
+drawn on the design grid `Controls.PictureGrid` (the desktop's
+pictures use it too).
 With `MultiSelect` several items are selected (Ctrl+click toggles one,
 Shift+click and Shift with the moving keys select from the anchor,
 Ctrl+A all; `Selected[Row]`, `SelectedCount`); `ItemIndex` is the item
@@ -1479,6 +1509,19 @@ with the focus. `SortByColumn` sorts by a column's texts, as numbers
 that column's header; `SortWith` takes any comparison. The sort is a
 stable merge sort (`Controls.ListSorting`), so ties keep their order.
 With `SortOnHeaderClick` a header click sorts (again: the other way).
+Typing a name's first letters goes to it (`Controls.TypeAhead`: letters
+typed within a second make a prefix, the same letter again steps
+through the names starting with it). `EditItem` renames an item in
+place: an edit box over its name (`Controls.ListEditing`, the name
+without its extension selected), Enter or a click elsewhere takes the
+new name (`OnEdited` may refuse it), Escape keeps the old one. A right
+press selects the item under the pointer unless it is selected already
+(the context menu is then for the selection). With `DragEnabled`, moving
+the pointer four units with the button held on an item starts a drag
+(`OnStartDrag` gives the data); a press on one of several selected items
+keeps them all selected until the button is let go without a drag, so
+they can be dragged together; `DropTarget` shows the item a drop would
+go to.
 
 A click with Ctrl or Shift is told by the modifiers: the display server
 puts the keyboard's modifiers (from the newest key event) in every
@@ -1491,7 +1534,20 @@ Shift+Insert pastes, Ctrl+A selects all, and a right click shows the
 same in a context menu (when the button is let go, so the release does
 not choose an item), greyed when they cannot be done. They go through
 `Controls.Clipboard`: text in a store behind `ClipboardText` and
-`SetClipboardText`. For now the store keeps the text in the program;
+`SetClipboardText`. Files cut or copied are a file list on it
+(`Controls.FileLists`), a text any program can read:
+
+    file-list copy
+    file:///home/user/notes.txt
+    file:///home/user/My%20Pictures
+
+The first line says what pasting does ("copy", or "cut": move the
+files); each line after it is a file URI (RFC 8089: "file://", the
+absolute path with every byte but letters, digits, "-", ".", "_", "~"
+and "/" written as "%" and two hexadecimal digits). Reading also takes
+plain absolute paths and skips empty lines; text without the header is
+not a file list. Dragged files carry the same text (format
+"file-list"). For now the store keeps the text in the program;
 the system clipboard (step 8) will be a store that asks the display
 server, set with `SetClipboardStore`, and the controls stay as they are.
 A one line box pastes up to the first line break; the multi-line box
@@ -1564,7 +1620,10 @@ Accelerators (`AddAccelerator`, Ctrl+M say) run before the focused
 control sees the key. `ShowMessageBox` lays a message box out for its
 text with a sign (information, warning, error, question: shapes drawn
 at any size) and OK, OK/Cancel, Yes/No or Yes/No/Cancel, with an
-optional owner.
+optional owner. `ShowChoiceBox` is the same with buttons of the
+caller's own (each as wide as its caption) and an optional check box
+under the text ("do this for every file"), and tells the caller just
+before it appears (`OnShowing`).
 
 The common dialogs are built from the same controls, on a
 `TCommonDialog` (`Controls.CommonDialogs`: OK and Cancel at the bottom
@@ -1693,6 +1752,117 @@ are chosen, and Notepad starts with them (it prints `settings word-wrap
 on|off, status-bar on|off, font ...`); the input test turns word wrap on,
 ends Notepad and checks that the next one starts with it on.
 
+### The file manager
+
+`files [FOLDER]` (`userland/bin/files.pas`, units in `userland/files`)
+shows a folder (relative to the current one; the user's home without
+one) in one window that goes from folder to folder:
+
+- **The window** (`FileManager.BrowserWindow`): the menu bar, a
+  toolbar (Back, Forward, Up; Icons, List, Details), an address box
+  (type a folder and Enter; Ctrl+L or Alt+D), the places at the left
+  beside the folder's items with a splitter between them, and a status
+  bar (how many items; how many selected and their size). Going to a
+  folder adds it to the history (`FileManager.History`). The title is
+  the folder's name.
+- **The places** (`FileManager.PlacesPane`, a tree view): home, the file
+  system, and Volumes with each volume (label and name; a removable
+  disk's icon for one that can be unplugged). It watches `/volumes`
+  (`Sys.Volumes`): a disk plugged in appears at once, one unplugged
+  goes, and a window showing a folder on it moves to the nearest folder
+  above that is still there (or home), forgetting it from the history.
+- **The items** (`FileManager.FolderView`, a list view): large icons
+  with names (two lines for a long one), a list, or details (name, size,
+  type, modified, permissions, owner), sorted by any column either way
+  round, folders first (`FileManager.ItemOrder`), hidden files (names
+  starting with a dot) on request. Items are read by
+  `FileManager.FolderReading` (a link described by what it points to,
+  with its arrow; a broken one as itself); their type and icon come
+  from `FileManager.FileTypes` (folders, programs: an execute bit, text
+  documents by extension, pipes, devices, other files by extension).
+  The folder shown is watched: any program changing it has it read
+  again (once for changes that come together, never under a rename in
+  place), keeping the selection, the focus and the scrolling by name.
+- **Opening** (`FileManager.Associations`, the one place that decides):
+  a folder is shown; a text document (by its extension) opens in
+  Notepad; a file with an execute bit that is an ELF program or starts
+  with `#!` runs; any other file whose first 4 KiB are UTF-8 without a
+  zero byte opens in Notepad; anything else says there is no program
+  for it. `FileManager.Launching` starts the program in a process group
+  of its own; "Open with Notepad" opens any file as text.
+- **Commands** (`FileManager.CommandWindow`, from the menus, the keys,
+  the context menus or the mouse): New folder ("New folder", "New
+  folder (2)": `FileManager.ConflictNames`, put up for renaming at
+  once), Rename in place (F2; a name with a slash, ".", ".." or one
+  taken is refused with the reason), Delete (asked first, saying it is
+  permanent: there is no recycle bin), Cut, Copy and Paste (file lists
+  on the clipboard; after a paste of cut files the clipboard is
+  emptied), Select All, Properties, Refresh (F5), and drag and drop:
+  files dropped on a folder item, on the folder shown, or on a place
+  move within a volume and are copied onto another, Ctrl copying and
+  Shift moving (`FileManager.DropRules`; volumes are told apart by the
+  file information's volume number). The keys that edit text act on
+  files only while the items have the focus, so the address box keeps
+  them.
+- **Copy, move and delete** run one after another on a thread of their
+  own (`FileManager.OperationRunner`, `FileManager.OperationWorker`),
+  so the window stays usable. The worker counts what there is to do,
+  then copies folders recursively and files in 64 KiB pieces
+  (`Sys.FileCopies`), keeping permissions and times (and owners, for
+  root) where the file system holds them, links as links, a folder's
+  own permissions and times set after its contents; moves within a
+  volume by renaming, onto another by copying and then removing what
+  was copied whole; deletes everything below a folder, then the folder.
+  A name already taken is a question (`FileManager.OperationQuestions`:
+  the worker posts a message and sleeps on an event until the window's
+  thread answers): Replace, Skip, Rename ("name (2).txt"), Stop, and
+  "do this for every conflict"; a folder onto a folder merges, a copy
+  into its own folder gets a numbered name without asking. An error
+  (`FileManager.ErrorTexts`: no permission, the disk full, the volume
+  unplugged...) asks Skip or Stop ("skip every error"). The progress
+  window (`FileManager.ProgressWindow`, `FileManager.OperationProgress`
+  shared under a lock) shows the file being done, a bar, files and
+  bytes, and Cancel, which stops at the next piece (a file stopped half
+  way is removed); it appears only once an operation has run for
+  `Files/ProgressDelay` milliseconds. Closing the window, or a request
+  to end, while one runs asks whether to stop it; Yes stops it and the
+  window closes once it has stopped cleanly.
+- **Properties** (`FileManager.PropertiesDialog`): name, type, location,
+  size (a folder's added up by `FileManager.FolderSizeCounter` on a
+  thread, the count running), link target, the three times, owner and
+  group, and permissions as check boxes (read, write, execute for the
+  owner, the group and others) that change the mode at once for the
+  owner or root and are greyed for others. A volume's
+  (`FileManager.VolumeProperties`, from its place's context menu):
+  label, file system, where it is, removable, read only, size, free
+  space with a bar.
+- **Settings** (`FileManager.Settings`, group `Files`): the view, the
+  order and hidden files as they are chosen; the window's place and
+  size and the places' width when it closes; the progress window's
+  delay.
+
+It prints what happens (`folder PATH COUNT`, `selected N`, `view ...`,
+`sort ...`, `refreshed`, `new-folder`, `renamed OLD NEW`, `copied N`,
+`moved N`, `deleted N`, `question ...`, `properties ...`, `mode PATH
+OCTAL`, `volume-added NAME`, `volume-removed NAME`, `folder-gone PATH`,
+`error ...`) and where the things to click are (`place NAME X Y`). The
+input test prepares a folder over the serial shell and switches views,
+sorts by a header, opens a subfolder with a double click and goes Back,
+makes a new folder and renames it with F2, copies a file with Ctrl+C and
+Ctrl+V (the copy's digest the same), drags a file onto a folder (moved),
+deletes one after the question, sees a file the serial shell makes
+appear without a refresh, changes a permission in the properties (stat
+reads the new mode), copies a folder tree onto the virtio disk's ext4
+volume with the progress window (read back), answers Skip and then
+Replace to a name already there, opens a text file in Notepad with a
+double click (Notepad's title in the log), and asks it to end; and in
+the USB hot-plug part sees the plugged disk among the places, opens it,
+and sees it go (the window back at `/volumes`) when it is unplugged.
+`make files-test` (part of `make test`) builds the plain logic on the
+host (`tools/FilesTest`): paths, numbered names, the history, the order
+and types of items, permission texts, what a drop does, file lists and
+finding a name by typing.
+
 ### The terminal window
 
 `terminal` (`userland/bin/terminal.pas`, units in `userland/terminal`)
@@ -1777,7 +1947,7 @@ lightening downwards, a pale moon with a halo and three translucent
 bands of rolling water, all anti-aliased, drawn once per size into a
 surface of its own and copied from when the window paints. `-w IMAGE`
 names a wallpaper image, kept for when libimage can read one (step 8).
-On the first display the programs' icons (`Desktop.Programs`: Terminal,
+On the first display the programs' icons (`Desktop.Programs`: Files, Terminal,
 Notepad, Controls tour, Controls demo, Dialogs) stand in a grid of
 equal cells in columns from the top left, all in logical units: a
 picture above a caption, the selected one tinted with its caption on
@@ -1787,7 +1957,7 @@ selection. A program is started with `StartProgram` in a process group
 of its own; one that is not installed, or cannot start, is reported in
 a message box. The pictures (`Desktop.ProgramPictures`,
 `Desktop.SmallPictures`) are the shell's own designs on a 32-step grid
-(`Desktop.Shapes`: rounded boxes, polygons, lines, discs and rings in
+(`Controls.PictureGrid`: rounded boxes, polygons, lines, discs and rings in
 design units, scaled to the box with libdrawing's anti-aliased shapes).
 
 The taskbar (`Desktop.Taskbar`): a topmost window that never takes the
@@ -2634,7 +2804,11 @@ in their own resolution and refuse owners other than 0 and hard links.
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
 
-File information includes `AllocatedBytes`, the space a node takes on its
+File information includes the volume a node is on (`VolumeNumber`: a
+number each volume gets as it is mounted, never given to another until
+the system starts again, so two paths are on one volume, and a rename
+can move between them, exactly when their numbers are equal; `stat -c
+%d`), and `AllocatedBytes`, the space a node takes on its
 volume: for ext the inode's block count (512-byte units, or file system
 blocks with the huge file flag), for FAT and exFAT the size rounded up to
 whole clusters.
@@ -3037,6 +3211,7 @@ as soon as a file changes, and programs need no change.
 | notepad | user | `Notepad/WordWrap`, `Notepad/StatusBar`, `Notepad/Font/Family`, `Notepad/Font/Size`, `Notepad/Font/Bold` |
 | terminal | user | `Terminal/Rows`, `Terminal/Columns` (its size when it closed), `Terminal/FontSize` |
 | desktop | user | `Desktop/Wallpaper` (`-w`, kept for when images can be read) |
+| files | user | `Files/View`, `Files/SortColumn`, `Files/SortAscending`, `Files/ShowHidden` (as chosen), `Files/Window/*` and `Files/PlacesWidth` (when it closes), `Files/ProgressDelay` |
 
 A display's mode and scale are the machine's (the screen in front of
 it, whoever logs in), so the display server, which runs as root, keeps
@@ -3151,7 +3326,11 @@ independent) against the Free Pascal runtime library:
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
   `Sys.FileWatches` (watching files and folders: a watch, its changes
-  read and handed out one by one), `Sys.Volumes` (the volumes with
+  read and handed out one by one), `Sys.FileCopies` (a file's contents
+  copied in pieces with a progress routine that may stop it, no
+  half-written file left behind, the side that failed told; links
+  copied as links; permissions, times and, where allowed, owners kept),
+  `Sys.Volumes` (the volumes with
   their labels, file systems, sizes, free space and mount points, and a
   watch on them coming and going),
 
@@ -3271,7 +3450,7 @@ independent) against the Free Pascal runtime library:
   options, long options with abbreviations, `--help` and `--version`),
   `Util.Messages` ("program: message: error" diagnostics), `Util.Input`,
   `Util.Paths`, `Util.Sorting` (stable merge sort), `Util.Sizes`,
-  `Util.Directories`, `Util.FileTree` (copying, removing and walking
+  `Util.Directories`, `Util.FileTree` (copying, on `Sys.FileCopies`, removing and walking
   trees), `Util.RegularExpressions` (POSIX BRE and ERE with groups),
   `Util.Modes` (chmod modes), `Util.Dates`, `Util.BaseEncoding`,
   `Util.DigestTool`, `Util.Accounts` (/etc/passwd and /etc/group),

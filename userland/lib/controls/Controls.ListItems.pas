@@ -18,8 +18,8 @@
 
 {
   The items of a list view: a row of texts (one per column, the first
-  is the item's name), an icon, whether it is selected, and a pointer
-  for the program.
+  is the item's name), an icon (with a mark over it, for a link),
+  whether it is selected, and a pointer for the program.
 
   An item tells the control it belongs to whenever it changes, so the
   control repaints (and announces a new selection) however the item was
@@ -53,12 +53,14 @@ type
     FCells: TStringList;
     FIcon: TSurface;
     FIconKind: TStockIcon;
+    FOverlay: TIconOverlay;
     FSelected: Boolean;
     FData: Pointer;
     function GetCell(Column: LongInt): string;
     procedure SetCell(Column: LongInt; const Value: string);
     procedure SetIcon(const Value: TSurface);
     procedure SetIconKind(Value: TStockIcon);
+    procedure SetOverlay(Value: TIconOverlay);
     procedure SetSelected(Value: Boolean);
     function GetCaption: string;
   public
@@ -73,6 +75,8 @@ type
       the stock icon IconKind is drawn. }
     property Icon: TSurface read FIcon write SetIcon;
     property IconKind: TStockIcon read FIconKind write SetIconKind;
+    { A mark over the icon (a symbolic link's arrow). }
+    property Overlay: TIconOverlay read FOverlay write SetOverlay;
     property Selected: Boolean read FSelected write SetSelected;
     property Data: Pointer read FData write FData;
   end;
@@ -132,6 +136,13 @@ end;
 procedure TListItem.SetIconKind(Value: TStockIcon);
 begin
   FIconKind := Value;
+  if FOwner <> nil then
+    FOwner.ItemChanged(Self, False);
+end;
+
+procedure TListItem.SetOverlay(Value: TIconOverlay);
+begin
+  FOverlay := Value;
   if FOwner <> nil then
     FOwner.ItemChanged(Self, False);
 end;

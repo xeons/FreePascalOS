@@ -49,6 +49,9 @@ const
   KeyX = $2D;
   KeyY = $15;
   KeyZ = $2C;
+  KeyD = $20;
+  KeyL = $26;
+  KeyF2 = $3C;
   KeyF3 = $3D;
   KeyF4 = $3E;
   KeyF5 = $3F;
@@ -64,6 +67,13 @@ const
   KeyPageDown = $51 or KeyCodeExtended;
   KeyInsert = $52 or KeyCodeExtended;
   KeyDelete = $53 or KeyCodeExtended;
+  { The key that opens a context menu (beside the right Windows-logo
+    key on PC keyboards). }
+  KeyMenu = $5D or KeyCodeExtended;
+  KeyLeftShift = $2A;
+  KeyRightShift = $36;
+  KeyLeftControl = $1D;
+  KeyRightControl = $1D or KeyCodeExtended;
 
 function IsEnterKey(Code: LongWord): Boolean;
 

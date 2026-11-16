@@ -33,6 +33,12 @@
   text. They are drawn a row at a time, with a dot pattern fixed to the
   window's pixels, so the pieces meet without a seam; their thickness
   follows the display's scale.
+
+  A node may have a small stock icon before its text (SetIcon). Nodes
+  can be taken away again (DeleteNode, DeleteChildren); a chosen node
+  taken away leaves the choice to its parent. NodeAt tells which node
+  is at a point (for a context menu, or a drop), and DropTarget shows
+  the node a drag would drop on.
 }
 unit Controls.TreeView;
 
@@ -43,9 +49,11 @@ interface
 
 uses
   Classes,
+  Drawing.Rectangles,
   Drawing.Canvas,
   Windowing.Messages,
   Controls.Base,
+  Controls.Icons,
   Controls.ScrollBar;
 
 type
@@ -59,6 +67,8 @@ type
     FExpanded: Boolean;
     FData: Pointer;
     FTree: TTreeView;
+    FHasIcon: Boolean;
+    FIconKind: TStockIcon;
     function GetChild(Index: LongInt): TTreeNode;
     function GetCount: LongInt;
     procedure SetExpanded(Value: Boolean);
@@ -70,12 +80,18 @@ type
     function Depth: LongInt;
     { Whether another node follows it under the same parent. }
     function HasNextSibling: Boolean;
+    { Shows the stock icon Kind before the text. }
+    procedure SetIcon(Kind: TStockIcon);
+    { Whether Node is this node or one below it. }
+    function Contains(Node: TTreeNode): Boolean;
     property Text: string read FText write SetText;
     property Parent: TTreeNode read FParent;
     property Count: LongInt read GetCount;
     property Children[Index: LongInt]: TTreeNode read GetChild; default;
     property Expanded: Boolean read FExpanded write SetExpanded;
     property Data: Pointer read FData write FData;
+    property HasIcon: Boolean read FHasIcon;
+    property IconKind: TStockIcon read FIconKind;
   end;
 
   TTreeNodeEvent = procedure(Sender: TTreeView; Node: TTreeNode) of object;
@@ -90,7 +106,9 @@ type
     FLastClickTime: QWord;
     FLastClickNode: TTreeNode;
     FShowLines: Boolean;
+    FDropTarget: TTreeNode;
     FOnExpandChanged: TTreeNodeEvent;
+    procedure SetDropTarget(Value: TTreeNode);
     procedure Rebuild;
     procedure AddVisible(Node: TTreeNode);
     function RowHeight: LongInt;
@@ -113,11 +131,19 @@ type
     procedure Layout; override;
   public
     constructor Create(AParent: TControl); override;
+    function KeyboardContextPoint: TPoint; override;
     destructor Destroy; override;
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { A node at the top level. }
     function AddRoot(const AText: string): TTreeNode;
     procedure Clear;
+    { Takes Node (and the nodes below it) out of the tree and frees it. }
+    procedure DeleteNode(Node: TTreeNode);
+    procedure DeleteChildren(Node: TTreeNode);
+    { Where Node's text starts (this control's pixels). }
+    function NodeTextLeft(Node: TTreeNode): LongInt;
+    { The node on the line at (X, Y) of this control's pixels, or nil. }
+    function NodeAt(X, Y: LongInt): TTreeNode;
     { The node shown on line Index (counting what is visible). }
     function VisibleNode(Index: LongInt): TTreeNode;
     function VisibleCount: LongInt;
@@ -126,6 +152,8 @@ type
     function RowMiddle(Index: LongInt): LongInt;
     property Selected: TTreeNode read FSelected write SetSelected;
     property ShowLines: Boolean read FShowLines write SetShowLines;
+    { The node shown as where a drop would go (nil: none). }
+    property DropTarget: TTreeNode read FDropTarget write SetDropTarget;
     property OnExpandChanged: TTreeNodeEvent read FOnExpandChanged write FOnExpandChanged;
   end;
 
@@ -134,7 +162,6 @@ implementation
 uses
   Abi.SystemCalls,
   Sys.Time,
-  Drawing.Rectangles,
   Drawing.Shapes,
   Drawing.Bevels,
   Windowing.Theme,
@@ -204,6 +231,25 @@ begin
   Result := (FParent <> nil) and (FParent.FChildren.IndexOf(Self) < FParent.FChildren.Count - 1);
 end;
 
+procedure TTreeNode.SetIcon(Kind: TStockIcon);
+begin
+  FHasIcon := True;
+  FIconKind := Kind;
+  if FTree <> nil then
+    FTree.Invalidate;
+end;
+
+function TTreeNode.Contains(Node: TTreeNode): Boolean;
+begin
+  while Node <> nil do
+  begin
+    if Node = Self then
+      Exit(True);
+    Node := Node.FParent;
+  end;
+  Result := False;
+end;
+
 procedure TTreeNode.SetExpanded(Value: Boolean);
 begin
   if FExpanded = Value then
@@ -254,7 +300,73 @@ begin
   FRoots := TTreeNode.Create(Self, nil, '');
   FRoots.FExpanded := True;
   FSelected := nil;
+  FDropTarget := nil;
+  FLastClickNode := nil;
   NodeChanged;
+end;
+
+procedure TTreeView.DeleteNode(Node: TTreeNode);
+var
+  SelectionGoes: Boolean;
+begin
+  if (Node = nil) or (Node = FRoots) or (Node.FParent = nil) then
+    Exit;
+  SelectionGoes := Node.Contains(FSelected);
+  if SelectionGoes then
+  begin
+    FSelected := Node.FParent;
+    if FSelected = FRoots then
+      FSelected := nil;
+  end;
+  if Node.Contains(FDropTarget) then
+    FDropTarget := nil;
+  if Node.Contains(FLastClickNode) then
+    FLastClickNode := nil;
+  Node.FParent.FChildren.Remove(Node);
+  Node.Free;
+  Rebuild;
+  if SelectionGoes then
+    Changed;
+end;
+
+procedure TTreeView.DeleteChildren(Node: TTreeNode);
+begin
+  while Node.Count > 0 do
+    DeleteNode(Node[Node.Count - 1]);
+end;
+
+function TTreeView.NodeAt(X, Y: LongInt): TTreeNode;
+begin
+  if (Y < 2) or (X < 0) or (X >= RectangleWidth(PixelBounds)) then
+    Exit(nil);
+  Result := VisibleNode(FTopIndex + (Y - 2) div RowHeight);
+end;
+
+procedure TTreeView.SetDropTarget(Value: TTreeNode);
+begin
+  if Value = FDropTarget then
+    Exit;
+  FDropTarget := Value;
+  Invalidate;
+end;
+
+{ Where Node's text starts: after its box, and its icon if it has one. }
+function TTreeView.NodeTextLeft(Node: TTreeNode): LongInt;
+begin
+  Result := BoxRectangleLeft(Node) + Scaled(BoxSize) + Scaled(5);
+  if Node.HasIcon then
+    Result := Result + Scaled(SmallIconSize + 3);
+end;
+
+function TTreeView.KeyboardContextPoint: TPoint;
+var
+  Index: LongInt;
+begin
+  Index := FVisible.IndexOf(FSelected);
+  if Index < 0 then
+    Exit(inherited KeyboardContextPoint);
+  EnsureVisible(Index);
+  Result := MakePoint(NodeTextLeft(FSelected) + Scaled(8), RowMiddle(Index));
 end;
 
 procedure TTreeView.AddVisible(Node: TTreeNode);
@@ -506,13 +618,16 @@ begin
       if not Node.Expanded then
         DrawVerticalLine(Inner, Toggle.Left + Size div 2, Toggle.Top + 2, Toggle.Bottom - 2, Theme.FieldText);
     end;
-    TextBox := MakeRectangle(Left + Size + Scaled(5), Top, TextWidth(ControlFace, Node.Text) + Scaled(4), RowHeight);
-    if Node = FSelected then
+    if Node.HasIcon then
+      DrawStockIcon(Inner, Node.IconKind, MakeRectangle(Left + Size + Scaled(4), Top + (RowHeight -
+        Scaled(SmallIconSize)) div 2, Scaled(SmallIconSize), Scaled(SmallIconSize)));
+    TextBox := MakeRectangle(NodeTextLeft(Node), Top, TextWidth(ControlFace, Node.Text) + Scaled(4), RowHeight);
+    if (Node = FSelected) or (Node = FDropTarget) then
     begin
       FillRectangle(Inner, TextBox, Theme.Selection);
       DrawTextInBox(Inner, ControlFace, Node.Text, InflateRectangle(TextBox, -Scaled(2)), AlignTextLeft,
         Theme.SelectionText);
-      if Focused then
+      if Focused and (Node = FSelected) then
         DrawFocusFrame(Inner, TextBox, Theme.SelectionText);
     end
     else

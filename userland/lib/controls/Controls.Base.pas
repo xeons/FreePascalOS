@@ -39,6 +39,19 @@
 
   The pointer takes a control's PointerShape over it (the arrow unless
   it says otherwise: a text beam over the edit boxes).
+
+  A right click, when the button is let go, or Shift+F10 or the menu
+  key while it has the focus, asks a control for its context menu
+  (ContextMenu, OnContextMenu): at the pointer, or at the place the
+  control picks for the keyboard (KeyboardContextPoint).
+
+  Dragging with the mouse: a control starts a drag of some data
+  (BeginDrag, Controls.DragData) while a button is held; the window
+  then asks the control under the pointer, and its parents in turn
+  until one answers, what a drop there would do (DragOver,
+  OnDragOver), tells it when the pointer leaves it (DragLeave), and
+  hands it the data when the button is let go over it (DragDrop,
+  OnDragDrop). Escape ends the drag without a drop.
 }
 unit Controls.Base;
 
@@ -52,7 +65,8 @@ uses
   Drawing.Colors,
   Drawing.Rectangles,
   Drawing.Canvas,
-  Windowing.Messages;
+  Windowing.Messages,
+  Controls.DragData;
 
 type
   TControl = class;
@@ -64,6 +78,14 @@ type
   TKeyEvent = procedure(Sender: TControl; Code, Character, Modifiers: LongWord; var Handled: Boolean) of object;
   TPaintEvent = procedure(Sender: TControl; var Canvas: TCanvas) of object;
   TNotifyEvent = procedure(Sender: TControl; Child: TControl; Code: LongWord) of object;
+  { (X, Y): the control's own pixels; FromKeyboard: Shift+F10 or the menu
+    key rather than a right click. }
+  TContextMenuEvent = procedure(Sender: TControl; X, Y: LongInt; FromKeyboard: Boolean) of object;
+  { Effect starts as what the control itself would do; the handler may
+    change it. }
+  TDragOverEvent = procedure(Sender: TControl; Data: TDragData; X, Y: LongInt; Modifiers: LongWord;
+    var Effect: TDropEffect) of object;
+  TDragDropEvent = procedure(Sender: TControl; Data: TDragData; X, Y: LongInt; Effect: TDropEffect) of object;
 
   { What a control needs of the window it is in (Controls.Window). }
   TControlHost = class(TMessageReceiver)
@@ -78,6 +100,9 @@ type
     procedure FocusControlAfter(Control: TControl); virtual; abstract;
     { The window the controls are in (to post messages to, say). }
     function OwnerWindow: TMessageReceiver; virtual; abstract;
+    { Control starts dragging Data (the host owns it from now on). False
+      if no drag can start now (no button is held). }
+    function BeginDrag(Control: TControl; Data: TDragData): Boolean; virtual; abstract;
   end;
 
   TControl = class(TMessageReceiver)
@@ -102,6 +127,10 @@ type
     FOnNotify: TNotifyEvent;
     FOnFocusChanged: TControlEvent;
     FOnResize: TControlEvent;
+    FOnContextMenu: TContextMenuEvent;
+    FOnDragOver: TDragOverEvent;
+    FOnDragLeave: TControlEvent;
+    FOnDragDrop: TDragDropEvent;
     function GetChild(Index: LongInt): TControl;
     function GetChildCount: LongInt;
     procedure SetVisible(Value: Boolean);
@@ -134,6 +163,13 @@ type
     { Whether Character is the mnemonic in this control's Text: for the
       controls whose text is a caption to override MatchesMnemonic with. }
     function TextMatchesMnemonic(Character: LongWord): Boolean;
+    { A context menu is wanted at (X, Y), own pixels: the default calls
+      OnContextMenu. }
+    procedure ContextMenu(X, Y: LongInt; FromKeyboard: Boolean); virtual;
+    { What dropping Data at (X, Y) would do; the default takes nothing. }
+    function DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect; virtual;
+    procedure DragLeave; virtual;
+    procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); virtual;
   public
     constructor Create(AParent: TControl); virtual;
     destructor Destroy; override;
@@ -172,6 +208,19 @@ type
     procedure ActivateMnemonic(Character: LongWord); virtual;
     procedure HandleKeyUp(Code, Modifiers: LongWord);
     procedure HandleFocusChanged;
+    { Where a context menu asked for from the keyboard opens (own
+      pixels): the middle, unless the control knows better (a list's
+      focused item). }
+    function KeyboardContextPoint: TPoint; virtual;
+    { (X, Y) in the window's pixels; the window calls these. }
+    procedure HandleContextMenu(X, Y: LongInt; FromKeyboard: Boolean);
+    function HandleDragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+    procedure HandleDragLeave;
+    procedure HandleDragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+    { Starts dragging Data from this control while a button is held (the
+      window owns Data from now on, and frees it if the drag cannot
+      start). }
+    function BeginDrag(Data: TDragData): Boolean;
     property Parent: TControl read FParent;
     property Host: TControlHost read FHost;
     property ChildCount: LongInt read GetChildCount;
@@ -198,6 +247,10 @@ type
     property OnNotify: TNotifyEvent read FOnNotify write FOnNotify;
     property OnFocusChanged: TControlEvent read FOnFocusChanged write FOnFocusChanged;
     property OnResize: TControlEvent read FOnResize write FOnResize;
+    property OnContextMenu: TContextMenuEvent read FOnContextMenu write FOnContextMenu;
+    property OnDragOver: TDragOverEvent read FOnDragOver write FOnDragOver;
+    property OnDragLeave: TControlEvent read FOnDragLeave write FOnDragLeave;
+    property OnDragDrop: TDragDropEvent read FOnDragDrop write FOnDragDrop;
   end;
 
   TControlClass = class of TControl;
@@ -613,6 +666,71 @@ begin
   FocusChanged;
   if Assigned(FOnFocusChanged) then
     FOnFocusChanged(Self);
+end;
+
+{ --- Context menus and dragging ------------------------------------------------- }
+
+procedure TControl.ContextMenu(X, Y: LongInt; FromKeyboard: Boolean);
+begin
+  if Assigned(FOnContextMenu) then
+    FOnContextMenu(Self, X, Y, FromKeyboard);
+end;
+
+function TControl.KeyboardContextPoint: TPoint;
+begin
+  Result := MakePoint(RectangleWidth(FPixelBounds) div 2, RectangleHeight(FPixelBounds) div 2);
+end;
+
+function TControl.DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+begin
+  Result := DropNone;
+end;
+
+procedure TControl.DragLeave;
+begin
+end;
+
+procedure TControl.DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+begin
+end;
+
+procedure TControl.HandleContextMenu(X, Y: LongInt; FromKeyboard: Boolean);
+begin
+  if FEnabled then
+    ContextMenu(X - FPixelBounds.Left, Y - FPixelBounds.Top, FromKeyboard);
+end;
+
+function TControl.HandleDragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
+begin
+  if not FEnabled then
+    Exit(DropNone);
+  Result := DragOver(Data, X - FPixelBounds.Left, Y - FPixelBounds.Top, Modifiers);
+  if Assigned(FOnDragOver) then
+    FOnDragOver(Self, Data, X - FPixelBounds.Left, Y - FPixelBounds.Top, Modifiers, Result);
+end;
+
+procedure TControl.HandleDragLeave;
+begin
+  DragLeave;
+  if Assigned(FOnDragLeave) then
+    FOnDragLeave(Self);
+end;
+
+procedure TControl.HandleDragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect);
+begin
+  DragDrop(Data, X - FPixelBounds.Left, Y - FPixelBounds.Top, Effect);
+  if Assigned(FOnDragDrop) then
+    FOnDragDrop(Self, Data, X - FPixelBounds.Left, Y - FPixelBounds.Top, Effect);
+end;
+
+function TControl.BeginDrag(Data: TDragData): Boolean;
+begin
+  if FHost = nil then
+  begin
+    Data.Free;
+    Exit(False);
+  end;
+  Result := FHost.BeginDrag(Self, Data);
 end;
 
 { --- The root ------------------------------------------------------------------- }

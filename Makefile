@@ -107,7 +107,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test suspend-stress
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test text-test settings-test files-test suspend-stress
 
 all: esp
 
@@ -204,7 +204,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test text-test settings-test esp $(TEST_DISK) $(SYSTEM_DISK)
+test: aml-test drawing-test text-test settings-test files-test esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -287,6 +287,30 @@ text-test: $(TEXT_TEST)
 	@$(TEXT_TEST) > build/tools/text-test.out || \
 		{ grep FAIL build/tools/text-test.out; echo "TEXT TEST FAILED (build/tools/text-test.out)"; exit 1; }
 	@echo "TEXT TEST PASSED: $$(tail -n 1 build/tools/text-test.out | cut -d ' ' -f 2-)"
+
+# The file manager's plain logic (paths, numbered names, the history,
+# the order and types of items, permissions, what a drop does) and the
+# libraries' file lists and typing to find a name build for the host
+# too, and are checked there.
+FILES_TEST := build/tools/FilesTest
+FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Controls.DragData.pas \
+	userland/lib/controls/Controls.FileLists.pas userland/lib/controls/Controls.Clipboard.pas \
+	userland/lib/controls/Controls.TypeAhead.pas userland/lib/controls/Controls.TextPositions.pas \
+	userland/lib/controls/Controls.FileNames.pas userland/files/FileManager.Items.pas \
+	userland/files/FileManager.Paths.pas userland/files/FileManager.ConflictNames.pas \
+	userland/files/FileManager.History.pas userland/files/FileManager.FileTypes.pas \
+	userland/files/FileManager.ItemOrder.pas userland/files/FileManager.Permissions.pas \
+	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas
+
+$(FILES_TEST): $(FILES_TEST_SOURCES)
+	@mkdir -p build/tools/files-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
+		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
+
+files-test: $(FILES_TEST)
+	@$(FILES_TEST) > build/tools/files-test.out || \
+		{ grep FAIL build/tools/files-test.out; echo "FILES TEST FAILED (build/tools/files-test.out)"; exit 1; }
+	@echo "FILES TEST PASSED: $$(tail -n 1 build/tools/files-test.out | cut -d ' ' -f 2-)"
 
 # The settings library (libconfiguration) but for its files builds for
 # the host too, and is checked there over a storage in memory.

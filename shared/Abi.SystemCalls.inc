@@ -743,7 +743,12 @@ type
     LinkCount: LongWord;
     OwnerId: LongWord;
     GroupId: LongWord;
-    Reserved: LongWord;
+    { The volume it is on: a number given to each volume as it is
+      mounted and never to another until the system starts again, so
+      two paths are on one volume (a rename can move between them)
+      exactly when their numbers are equal. 0 for /volumes itself and
+      for devices. }
+    VolumeNumber: LongWord;
     ModificationTime: Int64;
     AccessTime: Int64;
     ChangeTime: Int64;

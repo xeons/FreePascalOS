@@ -1439,6 +1439,231 @@ checks.append(('notepad: word wrap is remembered for the next Notepad (the user\
                re.search(rb'\ntrue\r?\n', again_log) is not None and
                b'settings word-wrap on, status-bar on' in again_log))
 
+# The file manager (files), on a folder made over the serial shell:
+# icon, list and details views; sorting by a column's header; a folder
+# opened with a double click and Back; a new folder (Ctrl+Shift+N)
+# renamed with F2; a file copied with Ctrl+C and pasted with Ctrl+V into
+# another folder (the copy read back the same); a file dragged onto a
+# folder (moved); a file deleted after the question; a file another
+# program makes shows without a refresh; the properties of a file (its
+# size and mode) and a permission's check box changing its mode (stat
+# reads it back); a folder tree copied onto another volume (the virtio
+# disk's ext4) with the progress window, and read back; a name already
+# there asked about (Skip keeps it, Replace takes the new one); a text
+# file opened in Notepad with a double click (Notepad prints its title
+# into the same log). It prints where the things to click are.
+files_log_text = b''
+
+
+def files_log(marker):
+    # The log so far: only what was added since the last look is read
+    # (tail from the bytes seen; the serial line turns each line feed
+    # into a carriage return and a line feed), so a long log does not
+    # make every look slow under TCG.
+    global files_log_text
+    offset = len(files_log_text.replace(b'\r\n', b'\n'))
+    command = b'm=DONE; tail -c +' + str(offset + 1).encode() + b' /tmp/f.log; echo ' + marker.encode() + b' $m'
+    type_on_serial(command + b'\r')
+    wait_for(marker + ' DONE', 15)
+    output = bytes(received[received.rfind(command):])
+    output = output[output.find(b'\n') + 1:]
+    end = output.find((marker + ' DONE').encode())
+    if end >= 0:
+        files_log_text += output[:end]
+    return files_log_text
+
+
+def wait_for_files_log(texts, seconds):
+    # The log until every text has come since the last look (the log
+    # only grows, so what is past the last look's length is new):
+    # operations run in the background, and under TCG take a while.
+    seen = len(files_log_text)
+    deadline = time.time() + seconds
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        log = files_log('FLOOK' + str(attempt))
+        if all(text.encode() in log[seen:] for text in texts):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def shell_output(command, marker, seconds=20):
+    # What the serial shell printed for command (a long command line is
+    # echoed scrolled sideways, so what follows the typing is taken).
+    start = len(received)
+    type_on_serial(command.encode() + b'; m=DONE; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', seconds)
+    return bytes(received[start:])
+
+
+type_on_serial(b'mkdir -p /tmp/fm/sub /tmp/fm/tree/a/b; echo hello > /tmp/fm/alpha.txt; echo world > /tmp/fm/beta.txt; '
+               b'echo deep > /tmp/fm/tree/a/b/deep.txt; dd if=/dev/zero of=/tmp/fm/tree/big.bin bs=65536 count=32 '
+               b'2>/dev/null; chmod 644 /tmp/fm/alpha.txt /tmp/fm/beta.txt; settings set -t integer '
+               b'Files/ProgressDelay 0; m=DONE; echo FILES-PREPARED $m\r')
+wait_for('FILES-PREPARED DONE', 30)
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'files /tmp/fm >> /tmp/f.log &\r')
+files_started = wait_for_files_log(['folder /tmp/fm 4', 'place item-alpha.txt', 'place view-details'], 30)
+checks.append(('files: a folder shown at start (its items, the places to click)', files_started))
+place = places()
+views_ok = sorted_ok = back_ok = new_folder_ok = renamed_ok = False
+if files_started:
+    click_at(*place['view-list'])
+    click_at(*place['view-icons'])
+    click_at(*place['view-details'])
+    views_ok = wait_for_files_log(['view list', 'view icons', 'view details', 'place header-size'], 20)
+    place = places()
+    # Sorted by size (a header click), then by name again.
+    click_at(*place['header-size'])
+    sorted_ok = wait_for_files_log(['sort size ascending'], 15)
+    click_at(*places()['header-name'])
+    wait_for_files_log(['sort name ascending'], 15)
+    place = places()
+    double_click_at(*place['item-sub'])
+    back_ok = wait_for_files_log(['folder /tmp/fm/sub 0'], 15)
+    press('alt-left')
+    back_ok = back_ok and wait_for_files_log(['folder /tmp/fm 4'], 15)
+    # A new folder, put up for renaming at once: Escape keeps its name,
+    # F2 renames it.
+    press('ctrl-shift-n')
+    new_folder_ok = wait_for_files_log(['new-folder New folder'], 15)
+    press('esc')
+    time.sleep(0.5)
+    press('f2')
+    time.sleep(0.5)
+    type_on_keyboard('made')
+    press('ret')
+    renamed_ok = wait_for_files_log(['renamed New folder made'], 15)
+checks.append(('files: icon, list and details views; sorted by a header click', views_ok and sorted_ok))
+checks.append(('files: a folder opened with a double click, and Back (Alt+Left)', back_ok))
+output = shell_output('test -d "/tmp/fm/made" && echo MADE-OK', 'FILES-MADE')
+checks.append(('files: a new folder (Ctrl+Shift+N) renamed in place with F2',
+               new_folder_ok and renamed_ok and b'\nMADE-OK' in output))
+
+# Copy and paste: beta.txt into the new folder.
+copied_ok = False
+place = places()
+if renamed_ok and 'item-beta.txt' in place and 'item-made' in place:
+    click_at(*place['item-beta.txt'])
+    press('ctrl-c')
+    wait_for_files_log(['clipboard copy 1'], 10)
+    double_click_at(*places()['item-made'])
+    wait_for_files_log(['folder /tmp/fm/made 0'], 15)
+    press('ctrl-v')
+    copied_ok = wait_for_files_log(['copied 1'], 30)
+output = shell_output('sha256sum /tmp/fm/beta.txt /tmp/fm/made/beta.txt', 'FILES-COPIED')
+digests = re.findall(rb'([0-9a-f]{64})  /tmp/fm/', output)
+checks.append(('files: a file copied (Ctrl+C) and pasted (Ctrl+V) into another folder, the same',
+               copied_ok and len(digests) == 2 and digests[0] == digests[1]))
+
+# Dragged with the mouse onto a folder of the same volume: moved.
+moved_ok = False
+press('alt-left')
+wait_for_files_log(['folder /tmp/fm 5'], 15)
+place = places()
+if 'item-alpha.txt' in place and 'item-sub' in place:
+    drag(place['item-alpha.txt'][0], place['item-alpha.txt'][1], place['item-sub'][0], place['item-sub'][1])
+    moved_ok = wait_for_files_log(['dropped move 1 /tmp/fm/sub', 'moved 1', 'refreshed'], 30)
+output = shell_output('test -f /tmp/fm/sub/alpha.txt && test ! -e /tmp/fm/alpha.txt && echo MOVED-OK', 'FILES-MOVED')
+checks.append(('files: a file dragged onto a folder is moved there', moved_ok and b'\nMOVED-OK' in output))
+
+# Deleted after the question (Enter: Yes).
+deleted_ok = False
+place = places()
+if 'item-beta.txt' in place:
+    click_at(*place['item-beta.txt'])
+    press('delete')
+    asked = wait_for_files_log(['asking delete 1'], 10)
+    press('ret')
+    deleted_ok = asked and wait_for_files_log(['deleted 1', 'refreshed'], 30)
+output = shell_output('test ! -e /tmp/fm/beta.txt && echo DELETED-OK', 'FILES-DELETED')
+checks.append(('files: a file deleted after asking', deleted_ok and b'\nDELETED-OK' in output))
+
+# Another program makes a file: it shows without a refresh.
+type_on_serial(b'echo gamma > /tmp/fm/gamma.txt\r')
+appeared = wait_for_files_log(['refreshed', 'place item-gamma.txt'], 20)
+checks.append(('files: a file made by another program appears without a refresh', appeared))
+
+# Properties: the size and mode; the group's write box changes the mode.
+properties_ok = mode_changed = False
+place = places()
+if appeared and 'item-gamma.txt' in place:
+    click_at(*place['item-gamma.txt'])
+    press('alt-ret')
+    properties_ok = wait_for_files_log(['properties /tmp/fm/gamma.txt size 6 mode 0644', 'place permission-group-write'],
+                                       15)
+    if properties_ok:
+        click_at(*places()['permission-group-write'])
+        mode_changed = wait_for_files_log(['mode /tmp/fm/gamma.txt 0664'], 15)
+        press('esc')
+        time.sleep(1)
+output = shell_output('stat -c %a /tmp/fm/gamma.txt', 'FILES-MODE')
+checks.append(('files: properties show the size and permissions; a check box changes the mode',
+               properties_ok and mode_changed and b'\n664' in output))
+
+# A folder tree copied onto another volume, with the progress window.
+tree_copied = progress_shown = False
+place = places()
+if 'item-tree' in place:
+    click_at(*place['item-tree'])
+    press('ctrl-c')
+    press('ctrl-l')
+    time.sleep(0.5)
+    type_on_keyboard('/volumes/disk3p1')
+    press('ret')
+    if wait_for_files_log(['folder /volumes/disk3p1'], 15):
+        press('ctrl-v')
+        tree_copied = wait_for_files_log(['operation copying 1', 'copied 1'], 60)
+        progress_shown = b'progress-shown copying' in files_log_text[files_log_text.rfind(b'folder /volumes/disk3p1'):]
+output = shell_output('sha256sum /tmp/fm/tree/big.bin /volumes/disk3p1/tree/big.bin; cat /volumes/disk3p1/tree/a/b/deep.txt',
+                      'FILES-TREE', 30)
+digests = re.findall(rb'([0-9a-f]{64})  /', output)
+checks.append(('files: a folder tree copied onto another volume with the progress window, the same',
+               tree_copied and progress_shown and len(digests) == 2 and digests[0] == digests[1] and
+               b'\ndeep' in output))
+
+# A name already there: Skip leaves the one there, Replace takes the new.
+skipped_ok = replaced_ok = False
+press('alt-left')
+if wait_for_files_log(['folder /tmp/fm 4'], 15):
+    place = places()
+    click_at(*place['item-gamma.txt'])
+    press('ctrl-c')
+    press('alt-right')
+    wait_for_files_log(['folder /volumes/disk3p1'], 15)
+    press('ctrl-v')
+    wait_for_files_log(['copied 1', 'refreshed'], 30)
+    type_on_serial(b'echo changed > /tmp/fm/gamma.txt\r')
+    press('ctrl-v')
+    if wait_for_files_log(['question conflict gamma.txt', 'place question-skip'], 30):
+        click_at(*places()['question-skip'])
+        skipped_ok = wait_for_files_log(['answer skip', 'copied 0'], 30)
+    output = shell_output('cat /volumes/disk3p1/gamma.txt', 'FILES-SKIPPED')
+    skipped_ok = skipped_ok and b'\ngamma' in output
+    press('ctrl-v')
+    if wait_for_files_log(['question conflict gamma.txt', 'place question-replace'], 30):
+        click_at(*places()['question-replace'])
+        replaced_ok = wait_for_files_log(['answer replace', 'copied 1'], 30)
+    output = shell_output('cat /volumes/disk3p1/gamma.txt', 'FILES-REPLACED')
+    replaced_ok = replaced_ok and b'\nchanged' in output
+checks.append(('files: a name already there is asked about (Skip keeps it, Replace takes the new one)',
+               skipped_ok and replaced_ok))
+
+# A text file opened in Notepad with a double click.
+notepad_opened = False
+press('alt-left')
+if wait_for_files_log(['folder /tmp/fm 4'], 15):
+    double_click_at(*places()['item-gamma.txt'])
+    notepad_opened = wait_for_files_log(['opened-with-notepad /tmp/fm/gamma.txt', 'title gamma.txt - Notepad'], 30)
+checks.append(('files: a text file opened in Notepad with a double click', notepad_opened))
+type_on_serial(b'kill $(pgrep notepad); kill %2; wait %2; settings delete Files; rm -r /volumes/disk3p1/tree '
+               b'/volumes/disk3p1/gamma.txt; kill %1; wait; m=DONE; echo FILES-ENDED $m\r')
+files_ended = wait_for('FILES-ENDED DONE', 30)
+checks.append(('files: asked to end, it closes (exit)', files_ended and b'\nexit' in files_log('FILES-LAST')))
+
 # The terminal window (terminal: the shell on a pseudo-terminal, drawn
 # in Terminus at 11 points: 10x18 cells at 100 DPI). Keys typed on the PS/2 keyboard
 # go to the active window, so a command typed there writes a file the
@@ -1715,6 +1940,13 @@ checks.append(('desktop: the server ended, the console has the screen again',
 # without harm, and the system goes on.
 hotplug_image = os.path.abspath(os.path.join(work, 'usb-hotplug.img'))
 shutil.copyfile(os.path.join(build_directory, 'test-disk-nvme.img'), hotplug_image)
+# The file manager runs meanwhile: its places show the disk as it
+# arrives (shown, then opened) and drop it when it is unplugged, and the
+# folder shown on it is left for the volumes.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'files /volumes > /tmp/f2.log &\r')
+time.sleep(3)
 start = len(received)
 type_on_serial(b'volumes -w -n 1 -t 60000; m=DONE; echo ARRIVED $m\r')
 waiting = wait_for('waiting for volumes', 20)
@@ -1731,6 +1963,22 @@ type_on_serial(('cat /volumes/' + hotplug_volume + '/fstype.txt; volumes | grep 
 read_ok = wait_for('READ DONE', 30)
 checks.append(('a USB disk plugged in: its files read, the volume removable',
                read_ok and re.search(rb'\nfat32\r?\n1\r?\n', bytes(received[start:])) is not None))
+
+
+def hotplug_files_log(marker):
+    type_on_serial(b'm=DONE; cat /tmp/f2.log; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', 15)
+    return bytes(received[received.rfind(marker.encode() + b' $m'):])
+
+
+files_log_now = hotplug_files_log('HOTPLUG-FILES')
+volume_place = 'tree-volume-' + hotplug_volume
+place = places()
+volume_shown = ('volume-added ' + hotplug_volume).encode() in files_log_now and volume_place in place
+if volume_shown:
+    click_at(*place[volume_place])
+    volume_shown = ('folder /volumes/' + hotplug_volume).encode() in hotplug_files_log('HOTPLUG-OPENED')
+checks.append(('files: a USB disk plugged in shows among the places, and opens', volume_shown))
 start = len(received)
 type_on_serial(('sleep 4 < /volumes/' + hotplug_volume + '/fstype.txt & watch -n 2 -t 60000 /volumes/' +
                 hotplug_volume + ' /volumes; m=DONE; echo UNPLUGGED $m\r').encode())
@@ -1738,6 +1986,13 @@ time.sleep(2)
 send_to_monitor('device_del usbdisk1\n')
 unplugged = wait_for('UNPLUGGED DONE', 60)
 after_unplug = bytes(received[start:])
+files_log_now = hotplug_files_log('HOTPLUG-GONE')
+checks.append(('files: an unplugged disk leaves the places; the folder shown on it is left',
+               ('volume-removed ' + hotplug_volume).encode() in files_log_now and
+               ('folder-gone /volumes/' + hotplug_volume).encode() in files_log_now and
+               b'folder /volumes ' in files_log_now[files_log_now.find(b'folder-gone'):]))
+type_on_serial(b'kill %2; wait %2; kill %1; wait %1; m=DONE; echo HOTPLUG-FILES-ENDED $m\r')
+wait_for('HOTPLUG-FILES-ENDED DONE', 20)
 checks.append(('a USB disk unplugged: its watch hears the volume is gone, the list that it left',
                unplugged and ('/volumes/' + hotplug_volume + ': volume gone').encode() in after_unplug and
                ('/volumes: removed: ' + hotplug_volume + ' (directory)').encode() in after_unplug))
