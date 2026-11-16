@@ -114,8 +114,6 @@ procedure FreeCertificate(var Certificate: PTlsCertificate);
 { A common name as text ("?" for characters outside printable ASCII);
   "(no common name)" when there is none. }
 function CommonNameText(constref Name: TTlsByteRange): string;
-{ The same into a buffer of Capacity characters (cut short to fit). }
-procedure FormatCommonName(constref Name: TTlsByteRange; Buffer: PChar; Capacity: PtrUInt);
 
 implementation
 
@@ -558,13 +556,6 @@ begin
     else
       Result[Index + 1] := '?';
   end;
-end;
-
-procedure FormatCommonName(constref Name: TTlsByteRange; Buffer: PChar; Capacity: PtrUInt);
-begin
-  if Capacity = 0 then
-    Exit;
-  StrPLCopy(Buffer, CommonNameText(Name), Capacity - 1);
 end;
 
 end.

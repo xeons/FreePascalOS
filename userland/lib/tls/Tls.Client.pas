@@ -20,7 +20,7 @@
   A TLS 1.3 client connection over any transport:
 
     CreateTlsClient(Transport, Options, Connection);
-    if TlsHandshake(Connection) <> TlsErrorNone then ... TlsDescribeError
+    if TlsHandshake(Connection) <> TlsErrorNone then ... TlsErrorDescription
     TlsWrite(Connection, Request, Length);
     Count := TlsRead(Connection, @Buffer, SizeOf(Buffer));   (0: closed)
     TlsClose(Connection);
@@ -63,8 +63,6 @@ function TlsLastError(Connection: PTlsConnection): LongInt;
   host it is about: "the certificate has expired (certificate:
   example.com)". }
 function TlsErrorDescription(Connection: PTlsConnection; Error: LongInt): string;
-{ The same into a buffer of Capacity characters (cut short to fit). }
-function TlsDescribeError(Connection: PTlsConnection; Error: LongInt; Buffer: PChar; Capacity: PtrUInt): PChar;
 { With VerifyCertificates off: what the check would have refused. }
 function TlsIgnoredCertificateError(Connection: PTlsConnection): LongInt;
 function TlsCipherSuiteName(Connection: PTlsConnection): string;
@@ -283,14 +281,6 @@ begin
     Result := Result + ': ' + TlsAlertName(Connection^.ReceivedAlert);
   if TlsErrorIsCertificateError(Error) and (Connection^.ErrorDetail <> '') then
     Result := Result + ' (' + Connection^.ErrorDetail + ')';
-end;
-
-function TlsDescribeError(Connection: PTlsConnection; Error: LongInt; Buffer: PChar; Capacity: PtrUInt): PChar;
-begin
-  Result := Buffer;
-  if Capacity = 0 then
-    Exit;
-  StrPLCopy(Buffer, TlsErrorDescription(Connection, Error), Capacity - 1);
 end;
 
 function TlsIgnoredCertificateError(Connection: PTlsConnection): LongInt;

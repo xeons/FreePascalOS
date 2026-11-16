@@ -111,7 +111,6 @@ var
   Buffer: array[0..4095] of Byte;
   Count: Int64;
   Total: Int64;
-  Message: array[0..511] of Char;
   Clean: string;
 begin
   Result := 1;
@@ -144,7 +143,7 @@ begin
   if CipherName <> '' then
   begin
     Options.CipherSuites.Count := 1;
-    Options.CipherSuites.Identifiers[0] := CipherSuiteByName(PChar(CipherName));
+    Options.CipherSuites.Identifiers[0] := CipherSuiteByName(CipherName);
   end;
 
   Error := CreateTlsClient(Transport, Options, Connection);
@@ -152,7 +151,7 @@ begin
     Error := TlsHandshake(Connection);
   if Error <> TlsErrorNone then
   begin
-    WriteLn('error ', Error, ' ', TlsDescribeError(Connection, Error, @Message[0], SizeOf(Message)));
+    WriteLn('error ', Error, ' ', TlsErrorDescription(Connection, Error));
     FreeTlsClient(Connection);
     CloseSocket(Socket.Handle);
     FreeTrustStore(Store);
@@ -170,7 +169,7 @@ begin
     until Count <= 0;
   if Count < 0 then
   begin
-    WriteLn('error ', Count, ' ', TlsDescribeError(Connection, Count, @Message[0], SizeOf(Message)));
+    WriteLn('error ', Count, ' ', TlsErrorDescription(Connection, Count));
   end
   else
   begin
