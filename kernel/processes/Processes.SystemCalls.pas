@@ -38,6 +38,7 @@ implementation
 
 uses
   Processes.ObjectCalls,
+  Processes.WatchCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
   Processes.MappingCalls,
@@ -726,6 +727,9 @@ begin
     CallSelectNotifications: Result := PerformSelectNotifications(Argument0);
     CallReceiveNotification: Result := PerformReceiveNotification(Argument0);
     CallRequestEnd: Result := PerformRequestEnd(Argument0, Argument1, Argument2);
+    { Watching files and folders (Processes.WatchCalls). }
+    CallCreateWatch: Result := PerformCreateWatch(Argument0, Argument1);
+    CallReadWatch: Result := PerformReadWatch(Int64(Argument0), Argument1, Argument2);
     { --- Thread control (Processes.ThreadControl) --- }
     CallSuspendThread: Result := PerformSuspendThread(Int64(Argument0));
     CallResumeThread: Result := PerformResumeThread(Int64(Argument0));

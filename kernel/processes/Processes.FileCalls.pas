@@ -698,6 +698,7 @@ begin
     HandleKindSection: Result := Abi.SystemCalls.HandleKindSection;
     HandleKindPort: Result := Abi.SystemCalls.HandleKindPort;
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
+    HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -1010,6 +1011,9 @@ begin
   if Index >= QWord(VolumeCount) then
     Exit(0);
   Volume := VolumeAt(Integer(Index));
+  { The list closes up when a volume goes away meanwhile. }
+  if Volume = nil then
+    Exit(0);
   FillVolumeInformation(Volume, Information);
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
   if Result = 0 then

@@ -27,6 +27,14 @@
   Each volume appears in the file namespace as a directory under the
   root, named after its block device: /disk1p2, /disk0p1 and so on.
 
+  Disks plugged in later (USB disks) are mounted the same way by
+  MountVolumesOfDisk (Io.DiskArrival), and their volumes taken away by
+  RemoveVolumesOfDisk when they are unplugged: off the list, marked gone
+  (FileSystem.Files: operations on them fail from then on), and
+  watchers told (FileSystem.Watches). A gone volume's record is never
+  freed: open files, named pipes and image sections may still name it,
+  and none of them must ever mistake a later volume for it.
+
   A volume is mounted read-write when its driver implements the write
   routines, its device accepts writes, the driver did not ask for
   read-only (for example because of unknown on-disk features), and the
@@ -54,6 +62,13 @@ procedure MountAllVolumes;
 { Tries every driver on Device. Returns the new volume or nil. }
 function MountVolume(Device: PBlockDevice): PVolume;
 
+{ Mounts the volumes of a disk that arrived after startup: every
+  partition, or the whole disk if it has none. Returns how many. }
+function MountVolumesOfDisk(Disk: PBlockDevice): Integer;
+{ Takes away every volume on Disk and its partitions (the disk is
+  gone). }
+procedure RemoveVolumesOfDisk(Disk: PBlockDevice);
+
 function VolumeCount: Integer;
 function VolumeAt(Index: Integer): PVolume;
 function FindVolumeByName(Name: PChar): PVolume;
@@ -67,6 +82,7 @@ uses
   Kernel.Mutex,
   Kernel.Options,
   FileSystem.Files,
+  FileSystem.Watches,
   Io.BlockCache,
   FileSystem.Fat,
   FileSystem.ExFat,
@@ -182,6 +198,7 @@ begin
     ReleaseMutex(VolumeListLock);
 
     ReportMountedVolume(Volume);
+    ReportVolumeArrival(Volume);
     Exit(Volume);
   end;
 end;
@@ -214,6 +231,94 @@ begin
   end;
 end;
 
+function MountVolumesOfDisk(Disk: PBlockDevice): Integer;
+var
+  DeviceIndex: Integer;
+  Device: PBlockDevice;
+begin
+  Result := 0;
+  if not DiskHasPartitions(Disk) then
+  begin
+    if MountVolume(Disk) <> nil then
+      Inc(Result);
+    Exit;
+  end;
+  for DeviceIndex := 0 to BlockDeviceCount - 1 do
+  begin
+    Device := BlockDeviceAt(DeviceIndex);
+    if (Device <> nil) and (Device^.Parent = Disk) and (MountVolume(Device) <> nil) then
+      Inc(Result);
+  end;
+end;
+
+procedure ReportRemovedVolume(Volume: PVolume);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('fs');
+  DebugWrite(@Volume^.Name[0]);
+  DebugWriteLine(': gone (its disk was removed)');
+  DebugEndMessage;
+end;
+
+{ Takes Volume off the list; False if it was not on it. }
+function TakeOffList(Volume: PVolume): Boolean;
+var
+  Index: Integer;
+  Found: Integer;
+begin
+  AcquireMutex(VolumeListLock);
+  Found := -1;
+  for Index := 0 to MountedVolumeCount - 1 do
+    if Volumes[Index] = Volume then
+      Found := Index;
+  if Found >= 0 then
+  begin
+    for Index := Found to MountedVolumeCount - 2 do
+      Volumes[Index] := Volumes[Index + 1];
+    Dec(MountedVolumeCount);
+    Volumes[MountedVolumeCount] := nil;
+  end;
+  ReleaseMutex(VolumeListLock);
+  Result := Found >= 0;
+end;
+
+{ The volume on Disk or one of its partitions, or nil. }
+function FindVolumeOnDisk(Disk: PBlockDevice): PVolume;
+var
+  Index: Integer;
+  Volume: PVolume;
+begin
+  AcquireMutex(VolumeListLock);
+  Result := nil;
+  for Index := 0 to MountedVolumeCount - 1 do
+  begin
+    Volume := Volumes[Index];
+    if (Volume^.Device = Disk) or (Volume^.Device^.Parent = Disk) then
+    begin
+      Result := Volume;
+      Break;
+    end;
+  end;
+  ReleaseMutex(VolumeListLock);
+end;
+
+procedure RemoveVolumesOfDisk(Disk: PBlockDevice);
+var
+  Volume: PVolume;
+begin
+  Volume := FindVolumeOnDisk(Disk);
+  while Volume <> nil do
+  begin
+    if TakeOffList(Volume) then
+    begin
+      MarkVolumeGone(Volume);
+      ReportRemovedVolume(Volume);
+      ReportVolumeDeparture(Volume);
+    end;
+    Volume := FindVolumeOnDisk(Disk);
+  end;
+end;
+
 function VolumeCount: Integer;
 begin
   Result := MountedVolumeCount;
@@ -230,12 +335,19 @@ function FindVolumeByName(Name: PChar): PVolume;
 var
   Index: Integer;
 begin
+  { Under the lock: the list closes up when a volume goes away. }
+  AcquireMutex(VolumeListLock);
+  Result := nil;
   for Index := 0 to MountedVolumeCount - 1 do
   begin
     if TextIsEqual(@Volumes[Index]^.Name[0], Name) then
-      Exit(Volumes[Index]);
+    begin
+      Result := Volumes[Index];
+      Break;
+    end;
   end;
-  Result := nil;
+  ReleaseMutex(VolumeListLock);
 end;
+
 
 end.

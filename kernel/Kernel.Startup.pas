@@ -85,6 +85,8 @@ uses
   Drivers.UsbKeyboard,
   Kernel.DebugShell,
   FileSystem.Files,
+  FileSystem.Watches,
+  Drivers.Xhci,
   Processes.Process,
   Processes.Thread,
   Kernel.Events,
@@ -203,6 +205,7 @@ begin
   InitializeProcessManager;
   InitializeThreadManager;
   InitializeFileObjects;
+  InitializeWatches;
   InitializeImageSections;
   InitializeTerminalSignals;
   InitializeConsole;
@@ -304,6 +307,9 @@ begin
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
+  if (XhciControllerCount > 0) and
+     (CreateSystemThread(@RunUsbPortWatcher, nil, PhaseOneThreadPriority, 'UsbPorts', False) = nil) then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the USB port watcher', 0, 0, 0, 0);
   StartAudioThreads;
   StartTerminalSignalHandler;
   StartHangWatch;

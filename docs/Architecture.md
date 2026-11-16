@@ -374,15 +374,26 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    every connected port is reset and its device enumerated: a slot is
    enabled, the device addressed, its descriptors read and its first
    configuration set. The device is then offered to the class drivers
-   (`RegisterUsbClassDriver`). Hot plugging is not handled yet. Transfers
+   (`RegisterUsbClassDriver`). Devices come and go while the system
+   runs: a port whose connection changes raises a port status change
+   event, which wakes the `UsbPorts` thread (`RunUsbPortWatcher`; it also
+   looks at every port once a second, for polled controllers). A port
+   that lost its connection has its device taken away: marked gone (its
+   transfers fail, the one being waited for at once), its slot disabled
+   and its class driver told (`UsbSetRemovalHandler`). A port that gained
+   one is enumerated as at startup once the connection has settled
+   (100 ms). The record of a device taken away is kept, since its class
+   driver may still hold it. Transfers
    move through each device's DMA pages (64 KiB), and only events for the
    TRBs being waited for count. USB mass storage (`Drivers.UsbStorage`,
    Bulk-Only Transport) sends SCSI commands in command block wrappers:
    INQUIRY, TEST UNIT READY with REQUEST SENSE, READ CAPACITY(10),
    READ/WRITE(10) and SYNCHRONIZE CACHE(10). Each device becomes a disk of
-   the `usb-storage` driver, whose requests run in the caller's thread.
-   The tests attach a USB stick holding a copy of the exFAT test
-   partition.
+   the `usb-storage` driver, whose requests run in the caller's thread,
+   marked removable. Unplugged, its requests fail and its removal is
+   announced (below). The tests attach a USB stick holding a copy of the
+   exFAT test partition, and the input test plugs a second one in and
+   out while the system runs.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
@@ -390,6 +401,18 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    see below).
 6. **File systems** are mounted on every partition (and on disks without a
    partition table) by the first driver whose probe accepts it.
+
+From then on a disk that arrives (a USB disk plugged in) goes through
+steps 4 to 6 on its own (`Io.DiskArrival.AnnounceDiskArrival`): its
+partitions are read, it and they appear in `/dev`, and their volumes are
+mounted, as `/volumes/<name>` for programs. A disk that goes
+(`AnnounceDiskRemoval`) is marked removed, so every read, write and
+flush of it and its partitions fails at once; its volumes are taken away
+(see "Volumes going away"), the block cache forgets it (dirty lines of
+a removed disk are dropped, not written), and it and its partitions
+leave `/dev` (`UnlistDevice`) and the list of block devices. The
+objects stay, since the cache and the file systems may still hold their
+addresses.
 
 Block devices are objects of type `BlockDevice`. All file system metadata
 and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
@@ -442,8 +465,9 @@ range regardless of the device's block size.
   request out of the queue and completes it with `ErrorInterrupted`,
   and the call is restarted after a stop. Drivers that wait themselves
   (the console) wait alertably too. Buffers are always kernel memory
-  (system calls copy through their transfer buffer), and devices are
-  never removed.
+  (system calls copy through their transfer buffer). A device whose
+  hardware went away (an unplugged disk) leaves `/dev` with
+  `UnlistDevice`; the object stays, as handles and stacks may name it.
 
 `Kernel.IoSelfTest` checks the asynchronous paths on every boot with a
 test driver that holds its reads: completion from a deferred call,
@@ -2159,6 +2183,84 @@ checks every partition on the host with the format's own consistency
 checker and reads the written files back through independent
 implementations.
 
+### Watching for changes
+
+Programs watch folders and files for changes (`FileSystem.Watches`,
+`FileSystem.NodeTrails`; `CallCreateWatch`, `CallReadWatch`). A watch is
+an object behind a handle of its own kind, ready for
+`CallWaitForHandles` while change records wait in it, so a window
+program's message loop waits on it like on any handle
+(`Windowing.HandleWatches`).
+
+- **What is reported.** The VFS reports every change once it worked,
+  whoever made it and whichever driver carried it out, so every file
+  system reports the same way: names created (files, folders, links,
+  hard links, named pipes), removed and renamed (with both names), file
+  contents written or resized (`WatchContents`), and permissions,
+  owners and times changed (`WatchAttributes`). Moving a name into a
+  watched folder is reported as created, out of it as removed. A watch
+  asks for any of the three groups; with `WatchSubtree` a folder's watch
+  also reports every folder below it, the names being paths from the
+  watched folder (`sub/file`). Records about the watched item itself
+  have an empty name: written, attributes, moved (renamed, and the
+  watch follows it), removed (the watch ends), and its volume gone (the
+  watch ends).
+- **Finding the watch.** A watch knows its folder or file by node
+  number, not by path: a path may go through a symbolic link, use
+  another letter case on FAT and exFAT, or one of several hard links,
+  and a folder above may be renamed while it is watched. Every name
+  change is reported with the trail of its folder: the node numbers and
+  names the path resolution passed through from the volume's root
+  (`ResolveInVolume` fills it). A watch finds its node anywhere on the
+  trail and takes the names below it for the record. FAT and exFAT
+  number nodes by their directory entry, which a rename changes, so a
+  rename reports the number before and after, and the watch follows.
+  Trails are only built while some watch exists; an open file on a
+  writable volume always keeps the trail of its node (a compact copy),
+  since its writes are reported in the folder it was opened in, under
+  the name it was opened by.
+- **The queue.** Up to `MaximumQueuedWatchRecords` (64) records wait;
+  when it is full the last place goes to an overflow record, and
+  nothing else is queued until the program has read it: it must look
+  at the folder again. A write or attribute change repeating the newest
+  record waiting (a file written in many pieces) is not queued again.
+  `CallReadWatch` moves whole records (`TAbiWatchRecord`: size, kind,
+  flags, the name and for renames the old name) into the program's
+  buffer and never waits.
+- **Permission.** A watch needs read permission on what it watches
+  (and search permission on the folders of its path, as any path does).
+  A subtree watch reports names in folders below that the watcher could
+  not list itself.
+- **Volumes.** `/volumes` (the namespace root) is the list of volumes: a
+  watch on it reports a volume arriving (created) and going away
+  (removed), named after it; with `WatchSubtree`, everything on every
+  volume. Devices under `/dev` are not files of any volume and are not
+  watched (`ErrorUnsupported`).
+- **Locking.** One mutex guards every watch; changes are reported with
+  the volume's lock held, and watches are made with it held too, so a
+  change cannot slip by between resolving the path and watching it.
+
+`watchtest` (run by coretest) checks it with a shell making the changes
+in another process, on the system volume (ext4) and on the FAT16,
+exFAT and ext2 test volumes; `watch` prints the changes of any path and
+`volumes -w` the volumes coming and going.
+
+### Volumes going away
+
+When a disk is unplugged, `FileSystem.Volumes.RemoveVolumesOfDisk` takes
+its volumes off the list (they leave `/volumes`), marks each gone
+(`MarkVolumeGone`: under the volume's lock, so it waits for the
+operation running), and tells the watchers: watches on the volume get
+"volume gone" and end, watches on the list of volumes "removed". From
+then on every operation on the volume fails with `StatusVolumeGone`
+(`ErrorNoDevice`, "No such device"), except closing: open files go on
+existing until their programs close them. The driver's data is given
+back (its `Unmount`) once no node of the volume besides the root is in
+use (`TVolume.NodesInUse`), which may be right away or when the last
+open file is closed. The volume record itself is never freed: open
+files, named pipes and image sections name volumes by address, and none
+of them must take a later volume for it.
+
 The ext3 and ext4 partitions are built needing journal recovery: debugfs
 leaves committed transactions in their journals (plain on ext3; v3
 checksums and 64-bit block numbers on ext4). These hold a replayed block,
@@ -2313,6 +2415,7 @@ test copies to an unmapped user address.
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync |
+| Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
 
 There is no fork: `CreateProcess` starts a program directly, with an
 argument list, an environment, a working directory, the three handles
@@ -2626,7 +2729,8 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
 with a timeout: an event or timer signaled, a process or thread ended, a
 pipe's read end or a channel readable (data, or the other end gone), a
 pipe's write end writable (room, or no reader left), a port with a
-connection waiting, a device with input (a driver may keep a
+connection waiting, a watch with change records waiting, a device with
+input (a driver may keep a
 `ReadyEvent`: `/dev/events` does, and a terminal's says a read would
 not wait - a line read but not handed out, or typed input, in line
 editing mode a whole line), or a device opened only for writing with
@@ -2972,8 +3076,8 @@ the next login.
 ### Handles
 
 A process has a table of 64 handles, each naming a referenced object and
-its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread
-or the null device. Handles 0-2 are standard input, output and error.
+its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread,
+watch or the null device. Handles 0-2 are standard input, output and error.
 `DuplicateHandle` copies one onto another number, which is how the shell
 redirects its own output for builtins. A pipe counts its open ends
 separately from object references, so a reader sees end of file once the
@@ -2984,8 +3088,9 @@ reader is left.
 
 Programs see a Unix style tree: `/` is the root of the system volume (the
 one labelled `FPOSROOT`, or named by `root=`), and `/volumes/<name>`
-leads to every mounted volume. `/dev` holds the devices (see "The I/O
-manager").
+leads to every mounted volume, also those of disks plugged in later
+(and they leave it when unplugged). `/dev` holds the devices (see "The
+I/O manager").
 `Processes.Paths` normalizes a path against the current directory and
 translates it to the kernel's namespace.
 
@@ -3045,6 +3150,11 @@ independent) against the Free Pascal runtime library:
   (buffered standard input, output and error), `Sys.Format` (printf style),
   `Sys.Text`, `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
   `Sys.Environment`, `Sys.Time`, `Sys.Libraries`, `Sys.Information`,
+  `Sys.FileWatches` (watching files and folders: a watch, its changes
+  read and handed out one by one), `Sys.Volumes` (the volumes with
+  their labels, file systems, sizes, free space and mount points, and a
+  watch on them coming and going),
+
   `Sys.Display` (the display devices: a framebuffer mapped, its size,
   format, DPI and modes), `Sys.Console` (terminal modes and size, on
   any terminal), `Sys.PseudoTerminals` (creating one, starting a

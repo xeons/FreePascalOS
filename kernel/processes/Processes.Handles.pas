@@ -50,7 +50,9 @@ type
     HandleKindTimer,
     HandleKindSection,
     HandleKindPort,
-    HandleKindChannel
+    HandleKindChannel,
+    { A watch on a folder or file (Processes.WatchCalls). }
+    HandleKindWatch
   );
 
   THandleEntry = record

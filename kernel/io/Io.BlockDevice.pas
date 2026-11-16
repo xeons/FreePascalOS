@@ -40,6 +40,13 @@
   Every request passes a gate counting those in flight: suspending to
   RAM closes it (new requests wait for resume) once the last one is
   done, so the storage drivers are idle when they are suspended.
+
+  A disk that can be unplugged (a USB disk) is marked removable by its
+  driver. When it goes, MarkDiskRemoved makes every later read, write
+  and flush of it and its partitions fail at once, and
+  UnlistBlockDevices takes them off the list. The objects themselves
+  stay: the block cache and file systems may still hold their
+  addresses.
 }
 unit Io.BlockDevice;
 
@@ -68,6 +75,9 @@ type
     { Supplied by the driver for whole devices; nil for partitions. }
     StorageDevice: PDeviceObject;
     WriteProtected: Boolean;
+    { Whole disks: can be unplugged; has been. }
+    IsRemovable: Boolean;
+    IsRemoved: Boolean;
 
     { Partitions only. }
     Parent: PBlockDevice;
@@ -117,6 +127,14 @@ function FlushBlockDevice(Device: PBlockDevice): Boolean;
 
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;
 function BlockDeviceIsReadOnly(Device: PBlockDevice): Boolean;
+{ These look at the disk for a partition. }
+function BlockDeviceIsRemovable(Device: PBlockDevice): Boolean;
+function BlockDeviceIsRemoved(Device: PBlockDevice): Boolean;
+
+{ The disk was unplugged: its I/O (and its partitions') fails from now. }
+procedure MarkDiskRemoved(Disk: PBlockDevice);
+{ Takes Disk and its partitions off the list of block devices. }
+procedure UnlistBlockDevices(Disk: PBlockDevice);
 function BlockDeviceSizeInBytes(Device: PBlockDevice): QWord;
 
 function BlockDeviceCount: Integer;
@@ -316,7 +334,7 @@ end;
 function ReadBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
   Buffer: Pointer): Boolean;
 begin
-  if not RangeIsValid(Device, FirstBlock, BlockCount) then
+  if not RangeIsValid(Device, FirstBlock, BlockCount) or BlockDeviceIsRemoved(Device) then
     Exit(False);
 
   if Device^.Parent <> nil then
@@ -328,7 +346,8 @@ end;
 function WriteBlocks(Device: PBlockDevice; FirstBlock: QWord; BlockCount: LongWord;
   Buffer: Pointer): Boolean;
 begin
-  if (not RangeIsValid(Device, FirstBlock, BlockCount)) or BlockDeviceIsReadOnly(Device) then
+  if (not RangeIsValid(Device, FirstBlock, BlockCount)) or BlockDeviceIsReadOnly(Device) or
+     BlockDeviceIsRemoved(Device) then
     Exit(False);
 
   if Device^.Parent <> nil then
@@ -347,7 +366,7 @@ begin
   for Index := 0 to Count - 1 do
     if not RangeIsValid(Device, Writes[Index].FirstBlock, Writes[Index].BlockCount) then
       Exit(False);
-  if BlockDeviceIsReadOnly(Device) then
+  if BlockDeviceIsReadOnly(Device) or BlockDeviceIsRemoved(Device) then
     Exit(False);
   { Partitions forward to their disk, shifted. }
   Disk := Device;
@@ -390,6 +409,8 @@ begin
     Exit(FlushBlockDevice(Device^.Parent));
   if Device^.StorageDevice = nil then
     Exit(True);
+  if Device^.IsRemoved then
+    Exit(False);
   FillMemory(@Request, SizeOf(Request), 0);
   Request.Operation := IoFunctionFlush;
   EnterGate;
@@ -411,8 +432,49 @@ begin
     Result := Device^.WriteProtected;
 end;
 
+function BlockDeviceIsRemovable(Device: PBlockDevice): Boolean;
+begin
+  if Device^.Parent <> nil then
+    Result := BlockDeviceIsRemovable(Device^.Parent)
+  else
+    Result := Device^.IsRemovable;
+end;
+
+function BlockDeviceIsRemoved(Device: PBlockDevice): Boolean;
+begin
+  if Device^.Parent <> nil then
+    Result := BlockDeviceIsRemoved(Device^.Parent)
+  else
+    Result := Device^.IsRemoved;
+end;
+
+procedure MarkDiskRemoved(Disk: PBlockDevice);
+begin
+  Disk^.IsRemoved := True;
+end;
+
+procedure UnlistBlockDevices(Disk: PBlockDevice);
+var
+  Index: Integer;
+  Kept: Integer;
+begin
+  AcquireMutex(DeviceListLock);
+  Kept := 0;
+  for Index := 0 to DeviceCount - 1 do
+    if (Devices[Index] <> Disk) and (Devices[Index]^.Parent <> Disk) then
+    begin
+      Devices[Kept] := Devices[Index];
+      Inc(Kept);
+    end;
+  for Index := Kept to DeviceCount - 1 do
+    Devices[Index] := nil;
+  DeviceCount := Kept;
+  ReleaseMutex(DeviceListLock);
+end;
+
 function BlockDeviceSizeInBytes(Device: PBlockDevice): QWord;
 begin
+
   Result := Device^.BlockCount * Device^.BlockSize;
 end;
 

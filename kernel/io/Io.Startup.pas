@@ -81,6 +81,7 @@ uses
   Drivers.Ac97,
   Drivers.UsbAudio,
   FileSystem.Volumes,
+  Io.DiskArrival,
   Debug.Output,
   Io.InterruptRouting,
   Drivers.SerialDevice,
@@ -164,6 +165,9 @@ begin
 
   InitializeFileSystems;
   MountAllVolumes;
+  { Disks found from now on (USB disks plugged in) are brought up one by
+    one as they come. }
+  EnableDiskArrival;
 end;
 
 procedure WriteKeyboardSummary;

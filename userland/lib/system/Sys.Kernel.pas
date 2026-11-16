@@ -117,6 +117,9 @@ function KernelCreateChannel(out First, Second: Int64): Int64;
 function KernelSendMessage(Channel: Int64; var Message: TAbiMessage): Int64;
 function KernelReceiveMessage(Channel: Int64; var Message: TAbiMessage): Int64;
 function KernelCreateFifo(Path: PChar): Int64;
+{ Watching files and folders. }
+function KernelCreateWatch(Path: PChar; Flags: LongWord): Int64;
+function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
 { Job control: Target is a process id, -group, or 0 for the own group. }
 function KernelStopProcesses(Target: Int64): Int64;
 function KernelContinueProcesses(Target: Int64): Int64;
@@ -464,6 +467,16 @@ end;
 function KernelCreateSection(Length: QWord): Int64;
 begin
   Result := SystemCall(CallCreateSection, Length, 0, 0, 0, 0, 0);
+end;
+
+function KernelCreateWatch(Path: PChar; Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallCreateWatch, QWord(Path), Flags, 0, 0, 0, 0);
+end;
+
+function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallReadWatch, QWord(Handle), QWord(Buffer), Capacity, 0, 0, 0);
 end;
 
 function KernelCreatePort(Name: PChar): Int64;

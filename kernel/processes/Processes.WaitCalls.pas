@@ -22,7 +22,8 @@
   Each handle stands for an event that says it is ready: an event or
   timer object's own event, a process's or thread's exit event, a pipe
   read end's or channel end's Readable event, a pipe write end's
-  Writable event, a port's Pending event, a device's ReadyEvent (if its
+  Writable event, a port's Pending event, a watch's Ready event (change
+  records waiting), a device's ReadyEvent (if its
   driver keeps one: a terminal's says a read would not wait), or for a
   device opened only for writing its WritableEvent (a pseudo-terminal's
   master side: room to type). The
@@ -61,7 +62,8 @@ uses
   Processes.Thread,
   Processes.UserAccess,
   Processes.Channels,
-  Processes.ObjectCalls;
+  Processes.ObjectCalls,
+  FileSystem.Watches;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -92,6 +94,7 @@ begin
     HandleKindPipeWriteEnd: Result := @PPipe(ObjectBody)^.Writable;
     HandleKindChannel: Result := @PChannelEnd(ObjectBody)^.Readable;
     HandleKindPort: Result := @PPort(ObjectBody)^.Pending;
+    HandleKindWatch: Result := @PWatch(ObjectBody)^.Ready;
     HandleKindDevice:
       Result := DeviceReadinessEvent(PDeviceFile(ObjectBody));
   else

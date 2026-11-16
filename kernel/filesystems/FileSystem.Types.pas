@@ -98,7 +98,9 @@ type
     StatusNoSpace,
     StatusInUse,
     StatusInvalidName,
-    StatusAccessDenied
+    StatusAccessDenied,
+    { The volume went away (its disk was unplugged). }
+    StatusVolumeGone
   );
 
   { The advisory lock an open file holds (FileSystem.Locks). }
@@ -276,6 +278,16 @@ type
     Lock: TMutex;
     { Nodes currently in use, see "Nodes" above. }
     NodeCache: TListEntry;
+    { Set (under Lock) when the volume went away: every operation on it
+      fails with StatusVolumeGone from then on. The record itself is
+      kept for good, since open files and other kernel tables may still
+      name it; the driver's data is given back (Unmount) once the last
+      node other than the root is released, which IsUnmounted records. }
+    IsGone: Boolean;
+    IsUnmounted: Boolean;
+    { Nodes in the node cache besides the root, and nodes removed while
+      open (out of the cache, still held). }
+    NodesInUse: LongInt;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;
@@ -318,6 +330,7 @@ begin
     StatusInUse: Result := 'in use';
     StatusInvalidName: Result := 'invalid name';
     StatusAccessDenied: Result := 'access denied';
+    StatusVolumeGone: Result := 'volume gone';
   else
     Result := 'unknown status';
   end;

@@ -163,6 +163,7 @@ begin
     StatusNoSpace: Result := ErrorNoSpace;
     StatusInUse: Result := ErrorBusy;
     StatusAccessDenied: Result := ErrorAccessDenied;
+    StatusVolumeGone: Result := ErrorNoDevice;
   else
     Result := ErrorIo;
   end;

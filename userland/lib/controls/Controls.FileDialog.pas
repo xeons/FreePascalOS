@@ -34,6 +34,11 @@
   (in a message box) before a file is replaced, and wants the folder to
   exist. Either ends with the chosen file's absolute path.
 
+  The folder shown is watched (Sys.FileWatches): when any program
+  creates, removes, renames or writes something in it, the list is read
+  again, keeping the row chosen and what was typed. If the folder itself
+  goes away, the root is shown instead.
+
   ChooseFileToOpen and ChooseFileToSave do it all in one call; the
   classes are there for a program that wants more (OnFolderShown, say,
   to know when the list changed).
@@ -66,7 +71,18 @@ type
     FNameEdit: TEditBox;
     FFilterBox: TComboBox;
     FOnFolderShown: TCommonDialogEvent;
+    FOnFolderChanged: TCommonDialogEvent;
+    { The watch on the folder shown, -1 if none; set while the list is
+      filled again, so the row chosen anew changes nothing typed. }
+    FWatch: Int64;
+    FIsRefreshing: Boolean;
     procedure BuildControls;
+    { Shows Entries (those that fit the filter) in the list. }
+    procedure FillList(const Entries: TFolderEntries);
+    procedure WatchFolder(const AFolder: string);
+    procedure StopWatchingFolder;
+    { The folder changed: the list is read again. }
+    procedure FolderChanged(Handle: Int64);
     function CurrentFilter: string;
     procedure FolderEditKeyDown(Sender: TControl; Code, Character, Modifiers: LongWord; var Handled: Boolean);
     procedure FileListChanged(Sender: TControl);
@@ -85,6 +101,7 @@ type
   public
     { Filter: patterns like "*.txt;*.md" ('' for every file). }
     constructor CreateFileDialog(const ATitle, StartFolder, Filter: string);
+    destructor Destroy; override;
     { Shows AFolder (False, and a message, if it cannot be read). }
     function ShowFolder(const AFolder: string): Boolean;
     { The row showing Name, or -1. }
@@ -99,6 +116,8 @@ type
     { The list shows a new folder (the first one too, before the dialog
       appears). }
     property OnFolderShown: TCommonDialogEvent read FOnFolderShown write FOnFolderShown;
+    { The list was read again: something in the folder changed. }
+    property OnFolderChanged: TCommonDialogEvent read FOnFolderChanged write FOnFolderChanged;
   end;
 
   TOpenFileDialog = class(TFileDialog)
@@ -125,7 +144,11 @@ implementation
 
 uses
   SysUtils,
+  Abi.SystemCalls,
   Sys.Files,
+  Sys.FileWatches,
+  Sys.Objects,
+  Windowing.HandleWatches,
   Controls.Keys,
   Controls.Dialogs,
   Controls.MessageBoxes,
@@ -150,6 +173,7 @@ const
 constructor TFileDialog.CreateFileDialog(const ATitle, StartFolder, Filter: string);
 begin
   inherited CreateDialog(ATitle, DialogWidth, DialogHeight);
+  FWatch := -1;
   BuildControls;
   if (Filter <> '') and (Filter <> EveryFileFilter) then
     FFilterBox.Items.Add(Filter);
@@ -201,12 +225,60 @@ begin
     Result := '';
 end;
 
+destructor TFileDialog.Destroy;
+begin
+  StopWatchingFolder;
+  inherited Destroy;
+end;
+
+procedure TFileDialog.WatchFolder(const AFolder: string);
+begin
+  StopWatchingFolder;
+  FWatch := WatchPath(PChar(AFolder), WatchNames or WatchContents);
+  { Without a watch (too many handles) the list is simply not kept up
+    to date. }
+  if FWatch < 0 then
+    FWatch := -1
+  else if not WatchHandle(FWatch, @FolderChanged) then
+    StopWatchingFolder;
+end;
+
+procedure TFileDialog.StopWatchingFolder;
+begin
+  if FWatch < 0 then
+    Exit;
+  StopWatchingHandle(FWatch);
+  CloseHandle(FWatch);
+  FWatch := -1;
+end;
+
+procedure TFileDialog.FolderChanged(Handle: Int64);
+var
+  Reader: TFileChangeReader;
+  Change: TFileChange;
+  FolderIsGone: Boolean;
+  Entries: TFolderEntries;
+begin
+  { Whatever changed, the list is read again; the changes only tell
+    whether the folder itself is still there. }
+  FolderIsGone := False;
+  while ReadFileChanges(Reader, Handle) = ErrorNone do
+    while NextFileChange(Reader, Change) do
+      if (Change.Kind = FileChangeWatchedItemRemoved) or (Change.Kind = FileChangeVolumeGone) then
+        FolderIsGone := True;
+  if FolderIsGone or not ReadFolder(FFolder, Entries) then
+  begin
+    ShowFolder('/');
+    Exit;
+  end;
+  FillList(Entries);
+  if Assigned(FOnFolderChanged) then
+    FOnFolderChanged(Self);
+end;
+
 function TFileDialog.ShowFolder(const AFolder: string): Boolean;
 var
   Entries: TFolderEntries;
-  Index: LongInt;
-  Filter: string;
-  Shown: LongInt;
 begin
   if not ReadFolder(AFolder, Entries) then
   begin
@@ -218,6 +290,25 @@ begin
   end;
   FFolder := AFolder;
   FFolderEdit.Text := AFolder;
+  { Nothing is chosen in a folder shown afresh. }
+  FFileList.Clear;
+  FillList(Entries);
+  WatchFolder(AFolder);
+  if Assigned(FOnFolderShown) then
+    FOnFolderShown(Self);
+  Result := True;
+end;
+
+procedure TFileDialog.FillList(const Entries: TFolderEntries);
+var
+  Index: LongInt;
+  Filter: string;
+  Shown: LongInt;
+  ChosenName: string;
+begin
+  ChosenName := '';
+  if FFileList.ItemIndex >= 0 then
+    ChosenName := FFileList.Cells[FFileList.ItemIndex, 0];
   Filter := CurrentFilter;
   { Folders are always shown, so a user can go on looking; files only
     if they fit the filter. }
@@ -231,7 +322,7 @@ begin
     end;
   SetLength(FEntries, Shown);
   FFileList.Clear;
-  FHasParentRow := AFolder <> '/';
+  FHasParentRow := FFolder <> '/';
   if FHasParentRow then
     FFileList.AddRow([ParentRowName, '', 'Folder']);
   for Index := 0 to High(FEntries) do
@@ -239,9 +330,13 @@ begin
       FFileList.AddRow([FEntries[Index].Name, '', FEntries[Index].KindText])
     else
       FFileList.AddRow([FEntries[Index].Name, SizeText(FEntries[Index].SizeInBytes), FEntries[Index].KindText]);
-  if Assigned(FOnFolderShown) then
-    FOnFolderShown(Self);
-  Result := True;
+  { The same row stays chosen when the list is read again. }
+  if ChosenName <> '' then
+  begin
+    FIsRefreshing := True;
+    FFileList.ItemIndex := RowOfName(ChosenName);
+    FIsRefreshing := False;
+  end;
 end;
 
 function TFileDialog.EntryOfRow(Row: LongInt): LongInt;
@@ -283,10 +378,13 @@ var
   Entry: LongInt;
 begin
   { A file chosen in the list is the one OK will take; choosing a folder
-    leaves a typed name alone. }
+    leaves a typed name alone, and so does the list being read again. }
+  if FIsRefreshing then
+    Exit;
   Entry := EntryOfRow(FFileList.ItemIndex);
   if (FFileList.ItemIndex < 0) or (Entry < 0) then
     Exit;
+
   if not FEntries[Entry].IsFolder then
     FNameEdit.Text := FEntries[Entry].Name;
 end;

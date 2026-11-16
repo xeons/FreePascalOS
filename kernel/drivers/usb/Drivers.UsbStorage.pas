@@ -28,8 +28,13 @@
   READ(10), WRITE(10) and SYNCHRONIZE CACHE(10).
 
   Each device becomes a disk of the driver "usb-storage" (logical unit 0
-  only). Its requests are carried out synchronously by the thread that
-  sends them, one at a time, up to UsbMaximumTransfer bytes per command.
+  only), marked removable. Its requests are carried out synchronously by
+  the thread that sends them, one at a time, up to UsbMaximumTransfer
+  bytes per command.
+
+  A disk plugged in after startup is announced (Io.DiskArrival), which
+  mounts its volumes. When it is unplugged, its requests fail from then
+  on and its removal is announced, which takes its volumes away.
 }
 unit Drivers.UsbStorage;
 
@@ -53,6 +58,7 @@ uses
   Kernel.Scheduler,
   Io.Manager,
   Io.BlockDevice,
+  Io.DiskArrival,
   Drivers.Xhci,
   Debug.Output;
 
@@ -107,6 +113,9 @@ type
     BlockCount: QWord;
     Lock: TMutex;
     Device: PDeviceObject;
+    BlockDevice: PBlockDevice;
+    { Unplugged: requests fail. }
+    IsGone: Boolean;
   end;
 
 var
@@ -279,7 +288,9 @@ begin
   Disk := PUsbDisk(Device^.Extension);
   AcquireMutex(Disk^.Lock);
   Result := ErrorNone;
-  if Request.Operation = IoFunctionFlush then
+  if Disk^.IsGone then
+    Result := ErrorIo
+  else if Request.Operation = IoFunctionFlush then
   begin
     ClearCommand(Command);
     Command[0] := ScsiSynchronizeCache10;
@@ -382,6 +393,20 @@ begin
   WaitUntilReady(PUsbDisk(Context));
 end;
 
+{ The disk was unplugged. Taking its lock waits for the request running
+  (which fails, its transfers do); every later one fails at once. }
+procedure RemoveStorage(Usb: PUsbDevice; Context: Pointer);
+var
+  Disk: PUsbDisk;
+begin
+  Disk := PUsbDisk(Context);
+  AcquireMutex(Disk^.Lock);
+  Disk^.IsGone := True;
+  ReleaseMutex(Disk^.Lock);
+  if Disk^.BlockDevice <> nil then
+    AnnounceDiskRemoval(Disk^.BlockDevice);
+end;
+
 function ProbeUsbStorage(Usb: PUsbDevice): Boolean;
 var
   Disk: PUsbDisk;
@@ -425,10 +450,16 @@ begin
   BlockDevice^.BlockSize := Disk^.BlockSize;
   BlockDevice^.BlockCount := Disk^.BlockCount;
   BlockDevice^.StorageDevice := Disk^.Device;
+  BlockDevice^.IsRemovable := True;
+  Disk^.BlockDevice := BlockDevice;
   RegisterBlockDevice(BlockDevice);
   WriteBlockDeviceDescription(BlockDevice);
   UsbSetResumeHandler(Usb, @ResumeStorage, Disk);
+  UsbSetRemovalHandler(Usb, @RemoveStorage, Disk);
+  if DiskArrivalIsEnabled then
+    AnnounceDiskArrival(BlockDevice);
 end;
+
 
 procedure RegisterUsbStorageDriver;
 begin

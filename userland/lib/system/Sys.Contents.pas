@@ -49,6 +49,8 @@ uses
   Sys.Time,
   Sys.Libraries,
   Sys.Information,
+  Sys.FileWatches,
+  Sys.Volumes,
   Sys.Console,
   Sys.PseudoTerminals,
   Sys.Display,

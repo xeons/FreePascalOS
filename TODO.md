@@ -166,7 +166,8 @@ how the existing pieces fit together.
   - [ ] Hubs: USB 2 hubs (transaction translators for low and full speed
         devices behind them) and USB 3 hubs, nested to the five tiers allowed
   - [ ] Hot plugging and removal (port status change events), on root ports and
-        hubs; class drivers told when their device goes
+        hubs; class drivers told when their device goes (root ports are done,
+        with USB disks mounted and taken away; hubs remain)
   - [ ] Composite devices: a class driver per interface, several per device
   - [ ] EHCI (USB 2.0) host controllers, with their companion controllers
   - [ ] UHCI and OHCI (USB 1.x) host controllers
@@ -387,7 +388,7 @@ normalized (0-65535), not pixels.
 - [ ] Task Manager: processes, CPU and memory
 - [ ] Graphical login, locking, log off, shut down and suspend from the desktop
       (login, log off and shut down are done; locking and suspend remain)
-- [ ] File change notifications (folders refresh), volume arrival
+- [x] File change notifications (folders refresh), volume arrival
 - [x] Per-user settings store (libconfiguration): typed settings in text
       files, the user's over the system's over defaults, fixed values, safe
       writes under an advisory file lock (new kernel feature); the display

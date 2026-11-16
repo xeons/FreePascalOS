@@ -28,7 +28,18 @@
   device addressed (with its default control endpoint), its device and
   configuration descriptors read and its first configuration set. The
   class drivers registered with RegisterUsbClassDriver are offered it in
-  turn. Devices plugged in later are not noticed.
+  turn.
+
+  Plugging in and unplugging: a port whose connection changes raises a
+  port status change event, which wakes the port watcher thread
+  (RunUsbPortWatcher, which also looks at every port once a second, for
+  polled controllers and changes that raised no event). A device on a
+  port that lost its connection is taken away: it is marked gone (its
+  transfers fail, the one waited for at once), its slot disabled, and
+  its class driver told (UsbSetRemovalHandler). A port that gained a
+  connection gets its device enumerated as at startup, after the
+  connection has settled. The record of a device taken away is kept,
+  since its class driver may still hold it.
 
   Commands and transfers are waited for: the interrupt's deferred call
   takes the events off the event ring and wakes whoever waits for them.
@@ -76,6 +87,9 @@ type
     address, configuration and endpoints again: the class driver's own
     setup (an interface's alternate setting, say). }
   TUsbResumeHandler = procedure(Device: PUsbDevice; Context: Pointer);
+  { Called in the port watcher thread when the device was unplugged:
+    its transfers fail from then on. }
+  TUsbRemovalHandler = procedure(Device: PUsbDevice; Context: Pointer);
   TUsbDevice = record
     Controller: Pointer;
     SlotId: LongWord;
@@ -127,6 +141,10 @@ type
     EndpointAverages: array[1..MaximumEndpointContexts - 1] of Word;
     ResumeHandler: TUsbResumeHandler;
     ResumeContext: Pointer;
+    { Unplugged: every transfer fails. }
+    IsGone: Boolean;
+    RemovalHandler: TUsbRemovalHandler;
+    RemovalContext: Pointer;
   end;
 
   { Returns True if it took the device. }
@@ -159,6 +177,12 @@ function UsbOpenIsochronousOut(Device: PUsbDevice; Address: Byte; MaximumPacket:
 procedure UsbStartIsochronous(Device: PUsbDevice);
 { The class driver's part of setting the device up after waking. }
 procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
+{ What the class driver does when the device is unplugged. }
+procedure UsbSetRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
+{ How many controllers run (the port watcher is needed if any). }
+function XhciControllerCount: Integer;
+{ The port watcher thread: notices devices plugged in and unplugged. }
+procedure RunUsbPortWatcher(Context: Pointer);
 procedure UsbStopIsochronous(Device: PUsbDevice);
 { Moves up to Length (at most UsbMaximumTransfer) bytes on the bulk
   endpoint EndpointAddress; Transferred says how many moved. }
@@ -194,6 +218,16 @@ const
 
   MaximumClassDrivers = 8;
   MaximumEnabledSlots = 16;
+  MaximumControllers = 4;
+  MaximumRootPorts = 255;
+  { A new connection settles for this long before the port is reset
+    (the USB specification's debounce interval). }
+  ConnectionSettleMilliseconds = 100;
+  { The watcher looks at the ports at least this often. }
+  PortWatchIntervalMilliseconds = 1000;
+  { What a transfer of an unplugged device ends with (a USB transaction
+    error). }
+  CompletionDeviceGone = 4;
   CommandTimeoutMilliseconds = 5000;
   TransferTimeoutMilliseconds = 5000;
 
@@ -274,11 +308,25 @@ type
     CommandCode: LongWord;
     CommandSlot: LongWord;
     Devices: array[0..MaximumEnabledSlots] of PUsbDevice;
+    { The device on each root port, and the ports whose device could not
+      be set up (not tried again until it is unplugged). Guarded by
+      PortLock, which the port watcher and waking hold. }
+    PortDevices: array[1..MaximumRootPorts] of PUsbDevice;
+    PortFailed: array[1..MaximumRootPorts] of Boolean;
+    PortLock: TMutex;
+    { From suspending until the controller is set up again after waking:
+      its ports say nothing about the devices then, and are not looked
+      at. }
+    IsAsleep: Boolean;
   end;
 
 var
   ClassDrivers: array[0..MaximumClassDrivers - 1] of TUsbClassProbe;
   ClassDriverCount: Integer;
+  Controllers: array[0..MaximumControllers - 1] of PXhciController;
+  ControllerCount: Integer;
+  { Signaled by port status change events. }
+  PortsChanged: TEvent;
 
 procedure RegisterUsbClassDriver(Probe: TUsbClassProbe);
 begin
@@ -422,6 +470,8 @@ begin
         Device^.PendingCount := 0;
         SignalEvent(Device^.TransferDone);
       end;
+    TrbTypePortStatusChangeEvent:
+      SignalEvent(PortsChanged);
   end;
 end;
 
@@ -582,6 +632,13 @@ begin
     CopyMemory(Device^.DmaPages[0], Buffer, Length);
   ResetEvent(Device^.TransferDone);
   PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  { Checked under the event lock, which taking a device away holds. }
+  if Device^.IsGone then
+  begin
+    ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+    ReleaseMutex(Device^.TransferLock);
+    Exit(False);
+  end;
   Device^.PendingCount := 0;
   EnqueueTrb(Device^.Rings[1], Setup, 8,
     (TrbTypeSetupStage shl TrbTypeShift) or TrbImmediateData or (TransferType shl 16));
@@ -640,6 +697,12 @@ begin
     end;
   ResetEvent(Device^.TransferDone);
   PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  if Device^.IsGone then
+  begin
+    ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+    ReleaseMutex(Device^.TransferLock);
+    Exit(False);
+  end;
   Device^.PendingCount := 0;
   Remaining := Length;
   PageIndex := 0;
@@ -999,6 +1062,9 @@ begin
   DebugWriteLine('');
   DebugEndMessage;
 
+  { Before the class drivers: one may wait long enough for the device
+    to be unplugged meanwhile. }
+  Controller^.PortDevices[PortNumber] := Device;
   for Index := 0 to ClassDriverCount - 1 do
     if ClassDrivers[Index](Device) then
       Break;
@@ -1152,6 +1218,19 @@ begin
   ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
 end;
 
+{ Before sleeping: the port watcher leaves the ports alone until the
+  controller is set up again, since the firmware resets it on waking
+  and the ports look empty until then. }
+procedure SuspendController(Context: Pointer);
+var
+  Controller: PXhciController;
+begin
+  Controller := PXhciController(Context);
+  AcquireMutex(Controller^.PortLock);
+  Controller^.IsAsleep := True;
+  ReleaseMutex(Controller^.PortLock);
+end;
+
 { Waking reset the controller and every device on it (the transfers
   were finished before: block I/O and audio stopped). The controller
   gets its rings again, emptied, in the same pages; then each device is
@@ -1163,9 +1242,16 @@ var
   Slot: LongWord;
 begin
   Controller := PXhciController(Context);
+  { The port watcher waits meanwhile; a device that does not come back
+    is taken away by it afterwards. }
+  AcquireMutex(Controller^.PortLock);
   TakeOverFromFirmware(Controller);
+  Controller^.IsAsleep := False;
   if not ResetHostController(Controller) then
+  begin
+    ReleaseMutex(Controller^.PortLock);
     Exit;
+  end;
   for Slot := 0 to MaximumEnabledSlots do
   begin
     Known[Slot] := Controller^.Devices[Slot];
@@ -1177,18 +1263,159 @@ begin
   ResetEventRing(Controller^.EventRing);
   Controller^.PendingCommandTrb := 0;
   if not RunHostController(Controller) then
+  begin
+    ReleaseMutex(Controller^.PortLock);
     Exit;
+  end;
   { Devices need a moment after the ports power up. }
   SleepMilliseconds(100);
   for Slot := 1 to MaximumEnabledSlots do
     if Known[Slot] <> nil then
       ResumeDevice(Controller, Known[Slot]);
+  ReleaseMutex(Controller^.PortLock);
 end;
 
 procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
 begin
   Device^.ResumeContext := Context;
   Device^.ResumeHandler := Handler;
+end;
+
+procedure UsbSetRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
+begin
+  Device^.RemovalContext := Context;
+  Device^.RemovalHandler := Handler;
+end;
+
+{ --- Plugging in and unplugging ------------------------------------------------ }
+
+function PortOffset(PortNumber: LongWord): LongWord;
+begin
+  Result := PortRegisterBase + (PortNumber - 1) * PortRegisterStride;
+end;
+
+{ Clears the change bits that are set in Status (writing 1 clears them;
+  writing 1 to the enable bit would disable the port). }
+procedure ClearPortChanges(Controller: PXhciController; PortNumber: LongWord; Status: LongWord);
+begin
+  if (Status and PortChangeBits) = 0 then
+    Exit;
+  Write32(Controller^.Operational, PortOffset(PortNumber),
+    (Status and not (PortChangeBits or PortEnabled)) or (Status and PortChangeBits));
+end;
+
+procedure ReportPortEvent(PortNumber: LongWord; What: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('usb');
+  DebugWrite('Port ');
+  DebugWriteDecimal(PortNumber);
+  DebugWriteLine(What);
+  DebugEndMessage;
+end;
+
+{ The device was unplugged: its transfers fail (the one waited for at
+  once), the controller forgets its slot, and its class driver is told. }
+procedure TakeDeviceAway(Controller: PXhciController; Device: PUsbDevice);
+var
+  PreviousLevel: TPriorityLevel;
+  OwnsSlot: Boolean;
+  Ignored: LongWord;
+begin
+  PreviousLevel := AcquireSpinLock(Controller^.EventLock);
+  Device^.IsGone := True;
+  { After waking from suspend the slot may belong to another device. }
+  OwnsSlot := Controller^.Devices[Device^.SlotId] = Device;
+  if OwnsSlot then
+    Controller^.Devices[Device^.SlotId] := nil;
+  Device^.InterruptTrb := 0;
+  Device^.Isochronous.Streaming := False;
+  if Device^.PendingCount > 0 then
+  begin
+    Device^.EventCode := CompletionDeviceGone;
+    Device^.PendingCount := 0;
+    SignalEvent(Device^.TransferDone);
+  end;
+  ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
+  if OwnsSlot then
+  begin
+    RunCommand(Controller, 0, (TrbTypeDisableSlot shl TrbTypeShift) or (Device^.SlotId shl 24), Ignored);
+    Controller^.ContextArray[Device^.SlotId] := 0;
+  end;
+  ReportPortEvent(Device^.PortNumber, ': device unplugged');
+  if Assigned(Device^.RemovalHandler) then
+    Device^.RemovalHandler(Device, Device^.RemovalContext);
+end;
+
+{ A port gained a connection: once it has settled, the device is set
+  up as at startup. }
+procedure SetUpPluggedDevice(Controller: PXhciController; PortNumber: LongWord);
+begin
+  SleepMilliseconds(ConnectionSettleMilliseconds);
+  if (Read32(Controller^.Operational, PortOffset(PortNumber)) and PortConnected) = 0 then
+    Exit;
+  ReportPortEvent(PortNumber, ': device plugged in');
+  if not EnumerateDevice(Controller, PortNumber) then
+  begin
+    Controller^.PortFailed[PortNumber] := True;
+    ReportPortEvent(PortNumber, ': the device could not be set up');
+  end;
+end;
+
+procedure CheckPort(Controller: PXhciController; PortNumber: LongWord);
+var
+  Status: LongWord;
+  IsConnected: Boolean;
+begin
+  Status := Read32(Controller^.Operational, PortOffset(PortNumber));
+  ClearPortChanges(Controller, PortNumber, Status);
+  IsConnected := (Status and PortConnected) <> 0;
+  if not IsConnected then
+  begin
+    Controller^.PortFailed[PortNumber] := False;
+    if Controller^.PortDevices[PortNumber] <> nil then
+    begin
+      TakeDeviceAway(Controller, Controller^.PortDevices[PortNumber]);
+      Controller^.PortDevices[PortNumber] := nil;
+    end;
+  end
+  else if (Controller^.PortDevices[PortNumber] = nil) and not Controller^.PortFailed[PortNumber] then
+    SetUpPluggedDevice(Controller, PortNumber);
+end;
+
+procedure CheckPorts(Controller: PXhciController);
+var
+  PortNumber: LongWord;
+begin
+  AcquireMutex(Controller^.PortLock);
+  if Controller^.IsAsleep then
+  begin
+    ReleaseMutex(Controller^.PortLock);
+    Exit;
+  end;
+  { Without an interrupt nobody else takes the port events off the ring. }
+  if not Controller^.UsesInterrupts then
+    ProcessEvents(Controller);
+  for PortNumber := 1 to Controller^.MaximumPorts do
+    CheckPort(Controller, PortNumber);
+  ReleaseMutex(Controller^.PortLock);
+end;
+
+function XhciControllerCount: Integer;
+begin
+  Result := ControllerCount;
+end;
+
+procedure RunUsbPortWatcher(Context: Pointer);
+var
+  Index: Integer;
+begin
+  while True do
+  begin
+    WaitForEventWithOptions(PortsChanged, PortWatchIntervalMilliseconds, False);
+    for Index := 0 to ControllerCount - 1 do
+      CheckPorts(Controllers[Index]);
+  end;
 end;
 
 function StartController(Pci: PPciDevice): Integer;
@@ -1219,6 +1446,9 @@ begin
   if Controller^.MaximumSlots > MaximumEnabledSlots then
     Controller^.MaximumSlots := MaximumEnabledSlots;
   Controller^.MaximumPorts := Parameters shr 24;
+  if Controller^.MaximumPorts > MaximumRootPorts then
+    Controller^.MaximumPorts := MaximumRootPorts;
+  InitializeMutex(Controller^.PortLock);
   Controller^.ContextSize := 32;
   if (Read32(Controller^.Capabilities, CapabilityParameters1) and 4) <> 0 then
     Controller^.ContextSize := 64;
@@ -1253,13 +1483,21 @@ begin
     DebugWriteLine(' ports, polled');
   DebugEndMessage;
 
-  RegisterPowerHandler('xHCI', PowerStageBuses, nil, @ResumeController, Controller);
+  RegisterPowerHandler('xHCI', PowerStageBuses, @SuspendController, @ResumeController, Controller);
   { Devices need a moment after the ports power up. }
   SleepMilliseconds(100);
   for PortNumber := 1 to Controller^.MaximumPorts do
     if ((Read32(Controller^.Operational, PortRegisterBase + (PortNumber - 1) * PortRegisterStride) and
         PortConnected) <> 0) and EnumerateDevice(Controller, PortNumber) then
       Inc(Result);
+  { From here on a change bit means a device came or went. }
+  for PortNumber := 1 to Controller^.MaximumPorts do
+    ClearPortChanges(Controller, PortNumber, Read32(Controller^.Operational, PortOffset(PortNumber)));
+  if ControllerCount < MaximumControllers then
+  begin
+    Controllers[ControllerCount] := Controller;
+    Inc(ControllerCount);
+  end;
 end;
 
 function InitializeXhciControllers: Integer;
@@ -1267,6 +1505,8 @@ var
   Index: Integer;
 begin
   Result := 0;
+  InitializeEvent(PortsChanged, EventKindSynchronization, False);
+
   Index := FindPciDeviceByClass(PciClassSerialBus, PciSubclassUsb, PciInterfaceXhci, 0);
   while Index >= 0 do
   begin

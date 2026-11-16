@@ -79,6 +79,7 @@ type
     procedure ColorClicked(Sender: TControl);
     procedure FontClicked(Sender: TControl);
     procedure FolderShown(Dialog: TCommonDialog);
+    procedure FolderChanged(Dialog: TCommonDialog);
     procedure ColorDialogShowing(Dialog: TCommonDialog);
     procedure FontDialogShowing(Dialog: TCommonDialog);
     procedure Report(const Text: string);
@@ -166,6 +167,19 @@ begin
   TellMiddle('file-ok', Dialog, Dialog.OkButton);
 end;
 
+{ The list was read again (another program changed the folder): every
+  row it has now. }
+procedure TTourWindow.FolderChanged(Dialog: TCommonDialog);
+var
+  List: TListView;
+  Row: LongInt;
+begin
+  List := TFileDialog(Dialog).FileList;
+  Say('folder changed');
+  for Row := 0 to List.RowCount - 1 do
+    Say('row ' + List.Cells[Row, 0]);
+end;
+
 procedure TTourWindow.OpenClicked(Sender: TControl);
 var
   Dialog: TOpenFileDialog;
@@ -173,6 +187,7 @@ begin
   Dialog := TOpenFileDialog.CreateFileDialog('Open', '/', '');
   try
     Dialog.OnFolderShown := @FolderShown;
+    Dialog.OnFolderChanged := @FolderChanged;
     FolderShown(Dialog);
     if Dialog.Execute then
       Report('opened ' + Dialog.Path)

@@ -1222,10 +1222,18 @@ def dialog_places(marker):
 
 place = dialog_places('DIALOGS')
 dialogs_started = all(name in place for name in ('open-button', 'save-button', 'color-button', 'font-button'))
+dialog_refreshed = False
 if dialogs_started:
     click_at(*place['open-button'])
     time.sleep(1)
     place = dialog_places('OPEN')
+    # Another program adds a file to the folder shown: the list is read
+    # again (the dialog watches its folder).
+    type_on_serial(b'touch /dialog-refresh.txt\r')
+    time.sleep(1.5)
+    dialog_places('REFRESHED')
+    refreshed_log = bytes(received[received.rfind(b'REFRESHED $m'):])
+    dialog_refreshed = b'folder changed' in refreshed_log and b'row dialog-refresh.txt' in refreshed_log
     if 'file-etc' in place:
         click_at(*place['file-etc'])
         press('ret')
@@ -1266,9 +1274,13 @@ if dialogs_started:
         click_at(*place['bold'])
         click_at(*place['font-ok'])
     time.sleep(1)
-type_on_serial(b'm=DONE; cat /tmp/d.log; kill %1; wait; echo DIALOGS $m\r')
-dialogs_ok = dialogs_started and wait_for('DIALOGS DONE', 15)
-log_from_here = bytes(received[received.rfind(b'DIALOGS $m'):])
+# (A marker of its own: "DIALOGS DONE" was already printed once above.)
+type_on_serial(b'm=DONE; cat /tmp/d.log; kill %1; wait; echo DIALOGS-ENDED $m\r')
+dialogs_ok = dialogs_started and wait_for('DIALOGS-ENDED DONE', 15)
+log_from_here = bytes(received[received.rfind(b'DIALOGS-ENDED $m'):])
+type_on_serial(b'rm /dialog-refresh.txt\r')
+checks.append(('common dialogs: the file list follows a change another program made',
+               dialogs_started and dialog_refreshed))
 checks.append(('common dialogs: open a file (a folder opened, a file chosen)',
                dialogs_ok and b'opened /etc/passwd' in log_from_here))
 checks.append(('common dialogs: save a file (a name typed; replacing refused)',
@@ -1694,9 +1706,53 @@ type_on_serial(b'kill %4 %2; kill %1; wait; m=DONE; echo DESKTOP $m\r')
 checks.append(('desktop: the server ended, the console has the screen again',
                wait_for('DESKTOP DONE', 20) and screen_pixel(2, 400) == '101830'))
 
+# A USB disk plugged in while the system runs (a copy of the FAT32 test
+# partition): the xHCI driver notices the port, the disk's volume is
+# mounted under /volumes and announced to a watch on the list of volumes
+# (volumes -w), and it reads. Then it is unplugged while a program has a
+# file on it open and a watch on it: the watch hears that its volume is
+# gone, the list of volumes that it left, the open file is closed later
+# without harm, and the system goes on.
+hotplug_image = os.path.abspath(os.path.join(work, 'usb-hotplug.img'))
+shutil.copyfile(os.path.join(build_directory, 'test-disk-nvme.img'), hotplug_image)
+start = len(received)
+type_on_serial(b'volumes -w -n 1 -t 60000; m=DONE; echo ARRIVED $m\r')
+waiting = wait_for('waiting for volumes', 20)
+send_to_monitor('drive_add 0 if=none,id=usbdisk1,format=raw,file=' + hotplug_image + '\n')
+send_to_monitor('device_add usb-storage,bus=xhci.0,drive=usbdisk1,id=usbdisk1\n')
+arrived = wait_for('ARRIVED DONE', 60)
+arrival = re.search(rb'arrived: (disk\d+p1) fat32 "FAT32TEST" \S+ at /volumes/(disk\d+p1)', bytes(received[start:]))
+hotplug_volume = arrival.group(1).decode() if arrival else 'none'
+checks.append(('a USB disk plugged in: announced on the list of volumes and mounted',
+               waiting and arrived and arrival is not None))
+start = len(received)
+type_on_serial(('cat /volumes/' + hotplug_volume + '/fstype.txt; volumes | grep ' + hotplug_volume +
+                ' | grep -c removable; m=DONE; echo READ $m\r').encode())
+read_ok = wait_for('READ DONE', 30)
+checks.append(('a USB disk plugged in: its files read, the volume removable',
+               read_ok and re.search(rb'\nfat32\r?\n1\r?\n', bytes(received[start:])) is not None))
+start = len(received)
+type_on_serial(('sleep 4 < /volumes/' + hotplug_volume + '/fstype.txt & watch -n 2 -t 60000 /volumes/' +
+                hotplug_volume + ' /volumes; m=DONE; echo UNPLUGGED $m\r').encode())
+time.sleep(2)
+send_to_monitor('device_del usbdisk1\n')
+unplugged = wait_for('UNPLUGGED DONE', 60)
+after_unplug = bytes(received[start:])
+checks.append(('a USB disk unplugged: its watch hears the volume is gone, the list that it left',
+               unplugged and ('/volumes/' + hotplug_volume + ': volume gone').encode() in after_unplug and
+               ('/volumes: removed: ' + hotplug_volume + ' (directory)').encode() in after_unplug))
+time.sleep(3)
+start = len(received)
+type_on_serial(('wait; cat /volumes/' + hotplug_volume + '/fstype.txt; m=DONE; echo STILL $m\r').encode())
+still = wait_for('STILL DONE', 30)
+checks.append(('a USB disk unplugged: its volume is gone, its open file closed, the system goes on',
+               still and b'No such file or directory' in bytes(received[start:]) and
+               b'gone (its disk was removed)' in after_unplug + bytes(received[start:])))
+
 # Suspend to RAM: the machine sleeps (QEMU says so), wakes on request,
 # and every device works again: the disks (a file written and read back
 # on each), the three sound outputs (recorded), and the display.
+
 type_on_serial(b'suspend; echo RESUMED $?\r')
 asleep = wait_for('suspending to RAM', 20)
 time.sleep(2)

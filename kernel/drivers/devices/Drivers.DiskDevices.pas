@@ -36,9 +36,17 @@ unit Drivers.DiskDevices;
 
 interface
 
+uses
+  Io.BlockDevice;
+
 { Creates a device for every block device there is (after partitions
   were scanned). }
 procedure InitializeDiskDevices;
+{ For a disk that arrived later: devices for it and its partitions. }
+procedure CreateDiskDevicesOf(Disk: PBlockDevice);
+{ For a disk that was unplugged: its devices and its partitions' leave
+  /dev. }
+procedure UnlistDiskDevicesOf(Disk: PBlockDevice);
 
 implementation
 
@@ -47,7 +55,6 @@ uses
   Abi.SystemCalls,
   Memory.KernelHeap,
   Io.Manager,
-  Io.BlockDevice,
   Io.BlockCache,
   FileSystem.Types,
   FileSystem.Volumes;
@@ -118,7 +125,7 @@ begin
   for Index := 0 to VolumeCount - 1 do
   begin
     Volume := VolumeAt(Index);
-    if (Volume^.Device = Disk) or (Volume^.Device^.Parent = Disk) then
+    if (Volume <> nil) and ((Volume^.Device = Disk) or (Volume^.Device^.Parent = Disk)) then
       Exit(True);
   end;
   Result := False;
@@ -132,7 +139,7 @@ var
 begin
   InvalidateCachedDevice(Disk);
   for Index := 0 to BlockDeviceCount - 1 do
-    if BlockDeviceAt(Index)^.Parent = Disk then
+    if (BlockDeviceAt(Index) <> nil) and (BlockDeviceAt(Index)^.Parent = Disk) then
       InvalidateCachedDevice(BlockDeviceAt(Index));
 end;
 
@@ -185,28 +192,70 @@ begin
   Request.Information := Int64(Total);
 end;
 
-procedure InitializeDiskDevices;
+var
+  DiskDriver: PDriverObject;
+
 const
   OwnerReadWrite = $180; { rw------- }
+
+procedure CreateDiskDevice(Disk: PBlockDevice);
+var
+  Device: PDeviceObject;
+begin
+  Device := CreateDevice(DiskDriver, @Disk^.Name[0], DeviceKindBlock, OwnerReadWrite, 0);
+  if Device = nil then
+    Exit;
+  Device^.Extension := Disk;
+  Device^.SizeInBytes := BlockDeviceSizeInBytes(Disk);
+end;
+
+procedure InitializeDiskDevices;
 var
   Dispatch: TDispatchTable;
-  Driver: PDriverObject;
   Index: Integer;
-  Disk: PBlockDevice;
-  Device: PDeviceObject;
 begin
   FillMemory(@Dispatch, SizeOf(Dispatch), 0);
   Dispatch[IoFunctionRead] := @ReadDiskDevice;
   Dispatch[IoFunctionWrite] := @WriteDiskDevice;
-  Driver := CreateDriver('disk', Dispatch);
+  DiskDriver := CreateDriver('disk', Dispatch);
+  for Index := 0 to BlockDeviceCount - 1 do
+    CreateDiskDevice(BlockDeviceAt(Index));
+end;
+
+procedure CreateDiskDevicesOf(Disk: PBlockDevice);
+var
+  Index: Integer;
+  Device: PBlockDevice;
+begin
+  CreateDiskDevice(Disk);
   for Index := 0 to BlockDeviceCount - 1 do
   begin
-    Disk := BlockDeviceAt(Index);
-    Device := CreateDevice(Driver, @Disk^.Name[0], DeviceKindBlock, OwnerReadWrite, 0);
-    if Device = nil then
+    Device := BlockDeviceAt(Index);
+    if (Device <> nil) and (Device^.Parent = Disk) then
+      CreateDiskDevice(Device);
+  end;
+end;
+
+procedure UnlistDiskDevicesOf(Disk: PBlockDevice);
+var
+  Index: Integer;
+  Device: PDeviceObject;
+  Candidate: PBlockDevice;
+begin
+  Index := 0;
+  while Index < DeviceCount do
+  begin
+    Device := DeviceAt(Index);
+    Inc(Index);
+    if (Device = nil) or (Device^.Driver <> DiskDriver) then
       Continue;
-    Device^.Extension := Disk;
-    Device^.SizeInBytes := BlockDeviceSizeInBytes(Disk);
+    Candidate := BlockDeviceOf(Device);
+    if (Candidate = Disk) or (Candidate^.Parent = Disk) then
+    begin
+      UnlistDevice(Device);
+      { The list closed up over it. }
+      Dec(Index);
+    end;
   end;
 end;
 
