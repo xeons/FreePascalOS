@@ -161,14 +161,19 @@ end;
 
 { A random port from the dynamic range, so that replies cannot be
   guessed at; the kernel's choice if every try is taken. }
-procedure BindToRandomPort(Socket: Int64);
+procedure BindToRandomPort(Socket: Int64; Family: Word);
 var
   Attempt: Integer;
   Address: TAbiSocketAddress;
+  Any: TInternetAddress;
 begin
+  if Family = AddressFamilyIPv6 then
+    Any := AnyIpv6Address
+  else
+    Any := AnyIpv4Address;
   for Attempt := 1 to PortTries do
   begin
-    Address := MakeSocketAddress(AnyIpv4Address, Word(FirstRandomPort + RandomBelow(RandomPortCount)));
+    Address := MakeSocketAddress(Any, Word(FirstRandomPort + RandomBelow(RandomPortCount)));
     if BindSocket(Socket, Address) = ErrorNone then
       Exit;
   end;
@@ -205,10 +210,11 @@ var
   Received: Int64;
 begin
   ReplyLength := 0;
-  Socket := CreateSocket(AddressFamilyIPv4, SocketKindDatagram, ProtocolUdp);
+  { A socket of the server's family: servers may be IPv4 or IPv6. }
+  Socket := CreateSocket(Server.Family, SocketKindDatagram, ProtocolUdp);
   if Socket < 0 then
     Exit(ErrorCodeOf(Socket));
-  BindToRandomPort(Socket);
+  BindToRandomPort(Socket, Server.Family);
   Result := ConnectSocket(Socket, Server);
   if Result = ErrorNone then
   begin
@@ -279,7 +285,7 @@ var
   Expected: LongWord;
 begin
   ReplyLength := 0;
-  Socket := CreateSocket(AddressFamilyIPv4, SocketKindStream, ProtocolTcp);
+  Socket := CreateSocket(Server.Family, SocketKindStream, ProtocolTcp);
   if Socket < 0 then
     Exit(ErrorCodeOf(Socket));
   SetSocketOption(Socket, SocketOptionSendTimeout, Timeout);

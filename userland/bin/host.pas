@@ -126,7 +126,7 @@ var
 begin
   if ServerText = nil then
     Exit;
-  Error := LookUpHost(ServerText, Address);
+  Error := LookUpAnyHostAddress(ServerText, Address);
   if Error <> ErrorNone then
     Fail(1, 'couldn''t get address for ''%s'': %s', [ArgumentText(ServerText),
       ArgumentText(HostLookupErrorMessage(Error))]);

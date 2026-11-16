@@ -65,6 +65,10 @@ type
 
 { ErrorNone with the (first IPv4) address of Host. }
 function LookUpHost(Host: PChar; out Address: TInternetAddress): LongInt;
+{ ErrorNone with the first address of Host of either family (an IPv4
+  one if it has one): for naming a server, such as a DNS server. To
+  connect, Sys.HostLookup orders the addresses better. }
+function LookUpAnyHostAddress(Host: PChar; out Address: TInternetAddress): LongInt;
 { Every address of Host of the families asked for. }
 function LookUpHostAddresses(Host: PChar; Families: LongWord; out Found: THostAddresses): LongInt;
 { The name of Address (reverse lookup): /etc/hosts, then a PTR record.
@@ -236,10 +240,13 @@ begin
         AddAddress(Found, FromFile.Addresses[Index]);
     Exit(ErrorNone);
   end;
-  if DnsNamesAreEqual(Host, 'localhost') and ((Families and HostFamilyIpv4) <> 0) then
+  if DnsNamesAreEqual(Host, 'localhost') then
   begin
     CopyText(@Found.CanonicalName[0], 'localhost', DnsNameCapacity);
-    AddAddress(Found, LoopbackIpv4Address);
+    if (Families and HostFamilyIpv4) <> 0 then
+      AddAddress(Found, LoopbackIpv4Address);
+    if (Families and HostFamilyIpv6) <> 0 then
+      AddAddress(Found, LoopbackIpv6Address);
     Exit(ErrorNone);
   end;
   Result := LookUpInDns(Host, Families, Found);
@@ -251,6 +258,16 @@ var
 begin
   Address := AnyIpv4Address;
   Result := LookUpHostAddresses(Host, HostFamilyIpv4, Found);
+  if (Result = ErrorNone) and (Found.Count > 0) then
+    Address := Found.Addresses[0];
+end;
+
+function LookUpAnyHostAddress(Host: PChar; out Address: TInternetAddress): LongInt;
+var
+  Found: THostAddresses;
+begin
+  Address := AnyIpv4Address;
+  Result := LookUpHostAddresses(Host, HostFamilyAny, Found);
   if (Result = ErrorNone) and (Found.Count > 0) then
     Address := Found.Addresses[0];
 end;

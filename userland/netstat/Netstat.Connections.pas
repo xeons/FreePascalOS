@@ -66,14 +66,37 @@ begin
     Result := Entry.PeerAddress.Port = 0;
 end;
 
-function ProtocolIsSelected(Protocol: Word; constref Selection: TNetstatSelection): Boolean;
+function ProtocolIsSelected(constref Entry: TAbiSocketInformation; constref Selection: TNetstatSelection): Boolean;
 begin
-  case Protocol of
+  if (Entry.Family = AddressFamilyIPv6) and not Selection.ShowIpv6 then
+    Exit(False);
+  if (Entry.Family = AddressFamilyIPv4) and not Selection.ShowIpv4 then
+    Exit(False);
+  case Entry.Protocol of
     ProtocolTcp: Result := Selection.ShowTcp;
     ProtocolUdp: Result := Selection.ShowUdp;
-    ProtocolIcmp: Result := Selection.ShowRaw;
+    ProtocolIcmp, ProtocolIcmpv6: Result := Selection.ShowRaw;
   else
     Result := False;
+  end;
+end;
+
+{ "tcp", "tcp6", "udp", "udp6", "icmp", "icmp6". }
+function EntryProtocolName(constref Entry: TAbiSocketInformation; Buffer: PChar; Capacity: PtrUInt): PChar;
+var
+  Length: PtrUInt;
+begin
+  Result := Buffer;
+  if Entry.Protocol = ProtocolIcmpv6 then
+  begin
+    CopyText(Buffer, 'icmp6', Capacity);
+    Exit;
+  end;
+  CopyText(Buffer, ProtocolName(Entry.Protocol), Capacity);
+  if Entry.Family = AddressFamilyIPv6 then
+  begin
+    Length := TextLength(Buffer);
+    CopyText(Buffer + Length, '6', Capacity - Length);
   end;
 end;
 
@@ -86,7 +109,7 @@ end;
 
 function EntryIsShown(constref Entry: TAbiSocketInformation; constref Selection: TNetstatSelection): Boolean;
 begin
-  if not ProtocolIsSelected(Entry.Protocol, Selection) or IsUnplaced(Entry) then
+  if not ProtocolIsSelected(Entry, Selection) or IsUnplaced(Entry) then
     Exit(False);
   if Selection.ListeningOnly then
     Result := IsServer(Entry)
@@ -154,10 +177,12 @@ var
   LocalText: array[0..EndpointTextCapacity - 1] of Char;
   ForeignText: array[0..EndpointTextCapacity - 1] of Char;
   OwnerText: array[0..OwnerTextCapacity - 1] of Char;
+  ProtocolText: array[0..7] of Char;
 begin
   FormatEndpoint(Entry.LocalAddress, Selection.Numeric, @LocalText[0], SizeOf(LocalText));
   FormatEndpoint(Entry.PeerAddress, Selection.Numeric, @ForeignText[0], SizeOf(ForeignText));
-  WriteFormatted(StandardOutput, '%-4s  %6u %6u %-23s ', [ArgumentText(ProtocolName(Entry.Protocol)),
+  WriteFormatted(StandardOutput, '%-5s %6u %6u %-23s ', [ArgumentText(EntryProtocolName(Entry, @ProtocolText[0],
+    SizeOf(ProtocolText))),
     ArgumentUnsigned(Entry.ReceiveQueued), ArgumentUnsigned(Entry.SendQueued), ArgumentText(@LocalText[0])]);
   if Selection.ShowOwners then
   begin
@@ -172,13 +197,14 @@ begin
     WriteFormatted(StandardOutput, '%-23s %s'#10, [ArgumentText(@ForeignText[0]), ArgumentText(StateText(Entry))]);
 end;
 
-procedure WriteEntriesOf(Protocol: Word; const Entries: TSocketInformationList;
+procedure WriteEntriesOf(Family, Protocol: Word; const Entries: TSocketInformationList;
   constref Selection: TNetstatSelection; const Processes: TProcessSnapshot);
 var
   Index: Integer;
 begin
   for Index := 0 to High(Entries) do
-    if (Entries[Index].Protocol = Protocol) and EntryIsShown(Entries[Index], Selection) then
+    if (Entries[Index].Family = Family) and (Entries[Index].Protocol = Protocol) and
+       EntryIsShown(Entries[Index], Selection) then
       WriteEntry(Entries[Index], Selection, Processes);
 end;
 
@@ -199,9 +225,12 @@ begin
       ReportError(Error, 'cannot read the list of processes', []);
   end;
   WriteTitle(Selection);
-  WriteEntriesOf(ProtocolTcp, Entries, Selection, Processes);
-  WriteEntriesOf(ProtocolUdp, Entries, Selection, Processes);
-  WriteEntriesOf(ProtocolIcmp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv4, ProtocolTcp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv6, ProtocolTcp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv4, ProtocolUdp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv6, ProtocolUdp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv4, ProtocolIcmp, Entries, Selection, Processes);
+  WriteEntriesOf(AddressFamilyIPv6, ProtocolIcmpv6, Entries, Selection, Processes);
   FreeProcessSnapshot(Processes);
 end;
 

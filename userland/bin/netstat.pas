@@ -20,18 +20,20 @@
   netstat - show network connections, the routing table, the interfaces
   and the protocols' statistics
 
-  netstat [-tuwlanp]
-  netstat -r
+  netstat [-tuwlanp] [-4|-6]
+  netstat -r [-4|-6]
   netstat -i
-  netstat -s [-t|-u]
+  netstat -s [-t|-u] [-4|-6]
 
   In the manner of net-tools' netstat. Without -r, -i or -s it lists
   the sockets: the connected ones, the listening ones with -l, both
   with -a; TCP and UDP unless -t, -u or -w (ICMP) name some. -p adds
   the process each socket belongs to (the one that made it, or accepted
   its connection). -r is the routing table (as route -n), -i the
-  interfaces with their counters, -s the counters of IP, ICMP, TCP and
-  UDP. Addresses are numeric whatever -n says, until reverse lookups
+  interfaces with their counters, -s the counters of IP, ICMP, IPv6,
+  ICMPv6, TCP and UDP. IPv6 sockets are tcp6, udp6 and icmp6, and IPv6
+  routes follow IPv4's in a table of their own; -4 or -6 keeps to one
+  IP version. Addresses are numeric whatever -n says, until reverse lookups
   exist; the names would come through Netstat.Names alone.
 
   The pieces are in userland/netstat (Netstat.*).
@@ -68,7 +70,9 @@ const
     '  -p, --programs     the process id and name of each socket''s owner'#10 +
     '  -r, --route        the routing table'#10 +
     '  -i, --interfaces   the interfaces and their counters'#10 +
-    '  -s, --statistics   the counters of IP, ICMP, TCP and UDP'#10;
+    '  -s, --statistics   the counters of IP, ICMP, IPv6, ICMPv6, TCP and UDP'#10 +
+    '  -4, --inet         IPv4 only'#10 +
+    '  -6, --inet6        IPv6 only'#10;
 
   OptionTcp = 1;
   OptionUdp = 2;
@@ -80,6 +84,8 @@ const
   OptionRoute = 8;
   OptionInterfaces = 9;
   OptionStatistics = 10;
+  OptionIpv4 = 11;
+  OptionIpv6 = 12;
 
 type
   TNetstatView = (ViewConnections, ViewRoutes, ViewInterfaces, ViewStatistics);
@@ -114,7 +120,9 @@ begin
     OptionDefinition('p', 'programs', False, OptionPrograms),
     OptionDefinition('r', 'route', False, OptionRoute),
     OptionDefinition('i', 'interfaces', False, OptionInterfaces),
-    OptionDefinition('s', 'statistics', False, OptionStatistics)], Usage);
+    OptionDefinition('s', 'statistics', False, OptionStatistics),
+    OptionDefinition('4', 'inet', False, OptionIpv4),
+    OptionDefinition('6', 'inet6', False, OptionIpv6)], Usage);
   while NextOption(Parser, Code, Value) do
     case Code of
       OptionTcp: Selection.ShowTcp := True;
@@ -127,7 +135,14 @@ begin
       OptionRoute: ChooseView(ViewRoutes);
       OptionInterfaces: ChooseView(ViewInterfaces);
       OptionStatistics: ChooseView(ViewStatistics);
+      OptionIpv4: Selection.ShowIpv4 := True;
+      OptionIpv6: Selection.ShowIpv6 := True;
     end;
+  if not Selection.ShowIpv4 and not Selection.ShowIpv6 then
+  begin
+    Selection.ShowIpv4 := True;
+    Selection.ShowIpv6 := True;
+  end;
   if Parser.OperandCount > 0 then
     FailWithUsageHint('unexpected operand ''%s''', [ArgumentText(Parser.Operands[0])]);
   if not Selection.ShowTcp and not Selection.ShowUdp and not Selection.ShowRaw then
@@ -140,7 +155,7 @@ end;
 begin
   ParseArguments;
   case View of
-    ViewRoutes: ShowRoutingTable;
+    ViewRoutes: ShowRoutingTable(Selection);
     ViewInterfaces: ShowInterfaceTable;
     ViewStatistics: ShowProtocolStatistics(Selection);
   else

@@ -57,7 +57,7 @@ const
   UdpProbeMilliseconds = 1000;
 
 var
-  HostAddressText: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  HostAddressText: array[0..InternetAddressTextCapacity - 1] of Char;
 
 procedure ReportConnected(Port: Word);
 begin
@@ -112,8 +112,14 @@ end;
 
 { Tries Port; the socket stays open and connected (Socket) on success. }
 function TryPort(constref Address: TInternetAddress; Port: Word; out Socket: Int64): LongInt;
+var
+  Local: TInternetAddress;
 begin
-  Socket := OpenSocket(AnyIpv4Address, Settings.LocalPort);
+  if Address.Family = AddressFamilyIPv6 then
+    Local := AnyIpv6Address
+  else
+    Local := AnyIpv4Address;
+  Socket := OpenSocket(Local, Settings.LocalPort);
   Result := ConnectWithin(Socket, MakeSocketAddress(Address, Port));
   if (Result = ErrorNone) and Settings.Datagrams and Settings.ScanOnly then
     Result := ProbeUdpPort(Socket);

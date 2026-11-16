@@ -125,6 +125,12 @@ begin
   WriteCharacter(StandardOutput, #10);
 end;
 
+function AddressIsShown(constref Address: TAbiInterfaceAddress): Boolean;
+begin
+  Result := not AddressIsLinkLocal(InterfaceAddressHost(Address)) and
+    ((Address.Flags and InterfaceAddressFlagTentative) = 0);
+end;
+
 procedure ShowAllAddresses;
 var
   Interfaces: TNetworkInterfaceList;
@@ -142,6 +148,9 @@ begin
       Continue;
     for AddressIndex := 0 to Integer(Interfaces[Position].AddressCount) - 1 do
     begin
+      { As Linux's: no IPv6 link-local addresses, nor ones not ready. }
+      if not AddressIsShown(Interfaces[Position].Addresses[AddressIndex]) then
+        Continue;
       WriteText(StandardOutput, FormatInternetAddress(InterfaceAddressHost(Interfaces[Position].Addresses[AddressIndex]),
         @Text[0], SizeOf(Text)));
       WriteCharacter(StandardOutput, ' ');

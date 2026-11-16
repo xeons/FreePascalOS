@@ -21,8 +21,10 @@
 
     [http:// | https://]host[:port][/path][?query][#fragment]
 
-  A URL without a scheme is http. The host is a name or an IPv4 address
-  (user names and IPv6 literals are refused); the fragment is dropped;
+  A URL without a scheme is http. The host is a name, an IPv4 address
+  or an IPv6 address in brackets ([::1]:8080; kept without them in
+  Host, and put back in the Host header); user names are refused, and
+  so are IPv6 zones (fe80::1%25eth0). The fragment is dropped;
   characters that may not appear in a request line (controls, spaces,
   bytes above 127) are percent-encoded. A redirect's Location is
   resolved against the URL it came from, relative paths and dot
@@ -61,7 +63,10 @@ function ResolveUrl(constref Base: TUrl; Reference: PChar; out Resolved: TUrl): 
 function DefaultPort(Scheme: TUrlScheme): Word;
 { "https://host:port/path" (the port only when not the default). }
 procedure FormatUrl(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
-{ The Host header: the host, and the port when not the default. }
+{ True if the URL's host is an IPv6 address (it has a colon). }
+function UrlHostIsIpv6(constref Url: TUrl): Boolean;
+{ The Host header: the host (an IPv6 address in brackets), and the port
+  when not the default. }
 procedure FormatHostHeader(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
 { The local file name: the last path segment, decoded, or
   "index.html"; never with a "/" or a leading dot only. }
@@ -159,19 +164,37 @@ begin
   Result := True;
 end;
 
-function ParseAuthority(Text: PChar; Count: PtrUInt; var Url: TUrl): Boolean;
+{ "[ipv6]" at the start of the authority: the address (hexadecimal
+  digits, colons and dots) goes into Url.Host without the brackets;
+  HostEnd is where what follows the closing bracket begins. }
+function ParseBracketedHost(Text: PChar; Count: PtrUInt; var Url: TUrl; out HostEnd: PtrUInt): Boolean;
 var
-  HostEnd: PtrUInt;
+  Closing: PtrUInt;
   Index: PtrUInt;
-  Port: LongWord;
 begin
   Result := False;
-  if Count = 0 then
+  Closing := 1;
+  while (Closing < Count) and (Text[Closing] <> ']') do
+    Inc(Closing);
+  if (Closing >= Count) or (Closing = 1) or (Closing - 1 > MaximumHostLength) then
     Exit;
-  { No user names, no IPv6 literals. }
-  for Index := 0 to Count - 1 do
-    if Text[Index] in ['@', '[', ']'] then
+  for Index := 1 to Closing - 1 do
+  begin
+    if not (Text[Index] in ['0'..'9', 'a'..'f', 'A'..'F', ':', '.']) then
       Exit;
+    Url.Host[Index - 1] := LowerCharacter(Text[Index]);
+  end;
+  Url.Host[Closing - 1] := #0;
+  HostEnd := Closing + 1;
+  Result := (HostEnd = Count) or (Text[HostEnd] = ':');
+end;
+
+{ A name or an IPv4 address up to the port's colon. }
+function ParsePlainHost(Text: PChar; Count: PtrUInt; var Url: TUrl; out HostEnd: PtrUInt): Boolean;
+var
+  Index: PtrUInt;
+begin
+  Result := False;
   HostEnd := 0;
   while (HostEnd < Count) and (Text[HostEnd] <> ':') do
     Inc(HostEnd);
@@ -184,6 +207,29 @@ begin
     Url.Host[Index] := LowerCharacter(Text[Index]);
   end;
   Url.Host[HostEnd] := #0;
+  Result := True;
+end;
+
+function ParseAuthority(Text: PChar; Count: PtrUInt; var Url: TUrl): Boolean;
+var
+  HostEnd: PtrUInt;
+  Index: PtrUInt;
+  Port: LongWord;
+begin
+  Result := False;
+  if Count = 0 then
+    Exit;
+  { No user names. }
+  for Index := 0 to Count - 1 do
+    if Text[Index] = '@' then
+      Exit;
+  if Text[0] = '[' then
+  begin
+    if not ParseBracketedHost(Text, Count, Url, HostEnd) then
+      Exit;
+  end
+  else if not ParsePlainHost(Text, Count, Url, HostEnd) then
+    Exit;
   Url.Port := DefaultPort(Url.Scheme);
   if HostEnd < Count then
   begin
@@ -399,6 +445,20 @@ begin
   Result := True;
 end;
 
+function UrlHostIsIpv6(constref Url: TUrl): Boolean;
+var
+  Index: PtrUInt;
+begin
+  Index := 0;
+  while Url.Host[Index] <> #0 do
+  begin
+    if Url.Host[Index] = ':' then
+      Exit(True);
+    Inc(Index);
+  end;
+  Result := False;
+end;
+
 procedure FormatHostHeader(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
 var
   Position: PtrUInt;
@@ -411,7 +471,14 @@ begin
   if Capacity = 0 then
     Exit;
   Buffer[0] := #0;
-  AppendLimited(Buffer, Capacity, Position, @Url.Host[0], TextLength(@Url.Host[0]));
+  if UrlHostIsIpv6(Url) then
+  begin
+    AppendLimited(Buffer, Capacity, Position, '[', 1);
+    AppendLimited(Buffer, Capacity, Position, @Url.Host[0], TextLength(@Url.Host[0]));
+    AppendLimited(Buffer, Capacity, Position, ']', 1);
+  end
+  else
+    AppendLimited(Buffer, Capacity, Position, @Url.Host[0], TextLength(@Url.Host[0]));
   if Url.Port <> DefaultPort(Url.Scheme) then
   begin
     Port := Url.Port;

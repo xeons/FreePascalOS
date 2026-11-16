@@ -21,34 +21,42 @@
 
   ifconfig [-a] [-s] [INTERFACE]
   ifconfig INTERFACE [ADDRESS[/PREFIX]] [netmask MASK] [mtu N] [up|down]
+  ifconfig INTERFACE [inet6] add|del IPV6ADDRESS[/PREFIX]
+  ifconfig INTERFACE inet6 auto|linklocal|off
 
   Without arguments (or with -a) shows every interface: its state, MTU,
-  address, netmask and broadcast address, hardware address and what
-  went through it, in the manner of net-tools' ifconfig; -s a table of
-  the counters. With an interface and settings, changes it (root
-  only): an address with a prefix or a netmask (0.0.0.0 removes the
-  address), the MTU, and turning it on or off, in the order given.
+  address, netmask and broadcast address, its IPv6 addresses with their
+  prefix length and scope, hardware address and what went through it,
+  in the manner of net-tools' ifconfig; -s a table of the counters.
+  With an interface and settings, changes it (root only): an address
+  with a prefix or a netmask (0.0.0.0 removes the address), an IPv6
+  address added or removed (a prefix of 64 if none is given), IPv6's
+  mode (auto: router advertisements and SLAAC; linklocal: only the
+  link-local and manual addresses; off), the MTU, and turning it on or
+  off, in the order given.
 }
 program ifconfig;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
+  Sys.AddressText,
   Sys.Streams,
   Sys.Text,
+  Sys.Format,
   Util.Messages,
   Util.Options;
 
 const
   Usage: PChar = 'Usage: ifconfig [-a] [-s] [INTERFACE]'#10 +
     '  or:  ifconfig INTERFACE [ADDRESS[/PREFIX]] [netmask MASK] [mtu N] [up|down]'#10 +
+    '  or:  ifconfig INTERFACE [inet6] add|del IPV6ADDRESS[/PREFIX]'#10 +
+    '  or:  ifconfig INTERFACE inet6 auto|linklocal|off'#10 +
     'Show the network interfaces, or configure one (root only).'#10 +
     #10 +
     '  -a, --all     show every interface (the default)'#10 +
@@ -56,121 +64,154 @@ const
 
   OptionAll = 1;
   OptionShort = 2;
+  DefaultIpv6PrefixLength = 64;
 
 var
   ShortListing: Boolean = False;
 
-procedure ShowCounters(constref Description: TAbiNetworkInterface);
+procedure Say(const Line: string);
 begin
-  WriteFormatted(StandardOutput, '        RX packets %u  bytes %u'#10, [
-    ArgumentUnsigned(Description.Counters.ReceivedPackets), ArgumentUnsigned(Description.Counters.ReceivedBytes)]);
-  WriteFormatted(StandardOutput, '        RX errors %u  dropped %u'#10, [
-    ArgumentUnsigned(Description.Counters.ReceiveErrors), ArgumentUnsigned(Description.Counters.ReceiveDrops)]);
-  WriteFormatted(StandardOutput, '        TX packets %u  bytes %u'#10, [
-    ArgumentUnsigned(Description.Counters.SentPackets), ArgumentUnsigned(Description.Counters.SentBytes)]);
-  WriteFormatted(StandardOutput, '        TX errors %u  dropped %u'#10, [
-    ArgumentUnsigned(Description.Counters.SendErrors), ArgumentUnsigned(Description.Counters.SendDrops)]);
+  WriteLine(StandardOutput, PChar(Line));
 end;
 
-procedure ShowAddress(constref Description: TAbiNetworkInterface; Index: LongWord);
+procedure ShowCounters(constref Description: TAbiNetworkInterface);
+begin
+  Say(Format('        RX packets %u  bytes %u', [Description.Counters.ReceivedPackets,
+    Description.Counters.ReceivedBytes]));
+  Say(Format('        RX errors %u  dropped %u', [Description.Counters.ReceiveErrors,
+    Description.Counters.ReceiveDrops]));
+  Say(Format('        TX packets %u  bytes %u', [Description.Counters.SentPackets, Description.Counters.SentBytes]));
+  Say(Format('        TX errors %u  dropped %u', [Description.Counters.SendErrors, Description.Counters.SendDrops]));
+end;
+
+function NetmaskText(PrefixLength: LongWord): string;
+var
+  Buffer: array[0..InternetAddressTextCapacity - 1] of Char;
+begin
+  Result := StrPas(FormatNetmask(PrefixLength, @Buffer[0], SizeOf(Buffer)));
+end;
+
+procedure ShowIpv4Address(constref Description: TAbiNetworkInterface; constref Entry: TAbiInterfaceAddress);
 var
   Address: TInternetAddress;
-  PrefixLength: LongWord;
-  AddressText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  MaskText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  BroadcastText: array[0..Ipv4AddressTextCapacity - 1] of Char;
+  Line: string;
   Mask: LongWord;
 begin
-  Address := InterfaceAddressHost(Description.Addresses[Index]);
-  PrefixLength := Description.Addresses[Index].PrefixLength;
-  FormatInternetAddress(Address, @AddressText[0], SizeOf(AddressText));
-  FormatNetmask(PrefixLength, @MaskText[0], SizeOf(MaskText));
-  WriteFormatted(StandardOutput, '        inet %s  netmask %s', [ArgumentText(@AddressText[0]),
-    ArgumentText(@MaskText[0])]);
-  if ((Description.Flags and InterfaceFlagBroadcast) <> 0) and (PrefixLength < 31) then
+  Address := InterfaceAddressHost(Entry);
+  Line := Format('        inet %s  netmask %s', [AddressToText(Address), NetmaskText(Entry.PrefixLength)]);
+  if ((Description.Flags and InterfaceFlagBroadcast) <> 0) and (Entry.PrefixLength < 31) then
   begin
     Mask := 0;
-    if PrefixLength > 0 then
-      Mask := LongWord($FFFFFFFF shl (32 - PrefixLength));
-    FormatInternetAddress(Ipv4AddressFromValue(Ipv4AddressValue(Address) or not Mask), @BroadcastText[0],
-      SizeOf(BroadcastText));
-    WriteFormatted(StandardOutput, '  broadcast %s', [ArgumentText(@BroadcastText[0])]);
+    if Entry.PrefixLength > 0 then
+      Mask := LongWord($FFFFFFFF shl (32 - Entry.PrefixLength));
+    Line := Line + '  broadcast ' + AddressToText(Ipv4AddressFromValue(Ipv4AddressValue(Address) or not Mask));
   end;
-  WriteCharacter(StandardOutput, #10);
+  Say(Line);
+end;
+
+{ The scope as net-tools shows it: "0x20<link>". }
+function ScopeText(constref Address: TInternetAddress): string;
+begin
+  if AddressIsLoopback(Address) then
+    Result := '0x10<host>'
+  else if AddressIsLinkLocal(Address) then
+    Result := '0x20<link>'
+  else if (Address.Bytes[0] = $FE) and ((Address.Bytes[1] and $C0) = $C0) then
+    Result := '0x40<site>'
+  else
+    Result := '0x0<global>';
+end;
+
+procedure ShowIpv6Address(constref Entry: TAbiInterfaceAddress);
+var
+  Address: TInternetAddress;
+  Line: string;
+begin
+  Address := InterfaceAddressHost(Entry);
+  Line := Format('        inet6 %s  prefixlen %d  scopeid %s', [AddressToText(Address), Entry.PrefixLength,
+    ScopeText(Address)]);
+  if (Entry.Flags and InterfaceAddressFlagTentative) <> 0 then
+    Line := Line + '  tentative';
+  if (Entry.Flags and InterfaceAddressFlagDeprecated) <> 0 then
+    Line := Line + '  deprecated';
+  Say(Line);
+end;
+
+function HardwareText(constref Description: TAbiNetworkInterface): string;
+var
+  Buffer: array[0..31] of Char;
+begin
+  Result := StrPas(FormatHardwareAddress(@Description.HardwareAddress[0], Description.HardwareAddressLength,
+    @Buffer[0], SizeOf(Buffer)));
+end;
+
+function FlagsText(constref Description: TAbiNetworkInterface): string;
+var
+  Buffer: array[0..63] of Char;
+begin
+  Result := StrPas(FormatInterfaceFlags(Description.Flags, @Buffer[0], SizeOf(Buffer)));
+end;
+
+function InterfaceName(constref Description: TAbiNetworkInterface): string;
+begin
+  Result := StrPas(PChar(@Description.Name[0]));
 end;
 
 procedure ShowInterface(constref Description: TAbiNetworkInterface);
 var
-  FlagsText: array[0..63] of Char;
-  HardwareText: array[0..31] of Char;
   Index: LongWord;
 begin
-  FormatInterfaceFlags(Description.Flags, @FlagsText[0], SizeOf(FlagsText));
-  WriteFormatted(StandardOutput, '%s: flags=<%s>  mtu %u'#10, [ArgumentText(@Description.Name[0]),
-    ArgumentText(@FlagsText[0]), ArgumentUnsigned(Description.Mtu)]);
+  Say(Format('%s: flags=<%s>  mtu %u', [InterfaceName(Description), FlagsText(Description), Description.Mtu]));
   Index := 0;
-  while Index < Description.AddressCount do
+  while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
   begin
-    ShowAddress(Description, Index);
+    if Description.Addresses[Index].Family = AddressFamilyIPv6 then
+      ShowIpv6Address(Description.Addresses[Index])
+    else
+      ShowIpv4Address(Description, Description.Addresses[Index]);
     Inc(Index);
   end;
   if (Description.Flags and InterfaceFlagLoopback) <> 0 then
-    WriteLine(StandardOutput, '        loop')
+    Say('        loop')
   else
-  begin
-    FormatHardwareAddress(@Description.HardwareAddress[0], Description.HardwareAddressLength, @HardwareText[0],
-      SizeOf(HardwareText));
-    WriteFormatted(StandardOutput, '        ether %s  (%s)'#10, [ArgumentText(@HardwareText[0]),
-      ArgumentText(@Description.Description[0])]);
-  end;
+    Say(Format('        ether %s  (%s)', [HardwareText(Description),
+      StrPas(PChar(@Description.Description[0]))]));
   ShowCounters(Description);
-  WriteCharacter(StandardOutput, #10);
+  Say('');
 end;
 
 procedure ShowShortHeading;
 begin
-  WriteLine(StandardOutput, 'Iface      MTU    RX-OK RX-ERR RX-DRP    TX-OK TX-ERR TX-DRP Flg');
+  Say('Iface      MTU    RX-OK RX-ERR RX-DRP    TX-OK TX-ERR TX-DRP Flg');
 end;
 
 procedure ShowShortLine(constref Description: TAbiNetworkInterface);
 var
-  Flags: array[0..7] of Char;
-  Length: Integer;
+  Flags: string;
 begin
-  Length := 0;
+  Flags := '';
   if (Description.Flags and InterfaceFlagBroadcast) <> 0 then
-  begin
-    Flags[Length] := 'B';
-    Inc(Length);
-  end;
+    Flags := Flags + 'B';
   if (Description.Flags and InterfaceFlagLoopback) <> 0 then
-  begin
-    Flags[Length] := 'L';
-    Inc(Length);
-  end;
+    Flags := Flags + 'L';
   if (Description.Flags and InterfaceFlagRunning) <> 0 then
-  begin
-    Flags[Length] := 'R';
-    Inc(Length);
-  end;
+    Flags := Flags + 'R';
   if (Description.Flags and InterfaceFlagUp) <> 0 then
-  begin
-    Flags[Length] := 'U';
-    Inc(Length);
-  end;
-  Flags[Length] := #0;
-  WriteFormatted(StandardOutput, '%-8s %5u %8u %6u %6u %8u %6u %6u %s'#10, [
-    ArgumentText(@Description.Name[0]), ArgumentUnsigned(Description.Mtu),
-    ArgumentUnsigned(Description.Counters.ReceivedPackets), ArgumentUnsigned(Description.Counters.ReceiveErrors),
-    ArgumentUnsigned(Description.Counters.ReceiveDrops), ArgumentUnsigned(Description.Counters.SentPackets),
-    ArgumentUnsigned(Description.Counters.SendErrors), ArgumentUnsigned(Description.Counters.SendDrops),
-    ArgumentText(@Flags[0])]);
+    Flags := Flags + 'U';
+  Say(Format('%-8s %5u %8u %6u %6u %8u %6u %6u %s', [InterfaceName(Description), Description.Mtu,
+    Description.Counters.ReceivedPackets, Description.Counters.ReceiveErrors, Description.Counters.ReceiveDrops,
+    Description.Counters.SentPackets, Description.Counters.SendErrors, Description.Counters.SendDrops, Flags]));
 end;
 
-procedure Show(Name: PChar);
+procedure FailNoDevice(const Name: string);
+begin
+  Fail(1, '%s: error fetching interface information: Device not found', [ArgumentText(PChar(Name))]);
+end;
+
+procedure Show(const Name: string);
 var
   Interfaces: TNetworkInterfaceList;
-  Index: Integer;
+  Description: TAbiNetworkInterface;
   Found: Boolean;
   Error: LongInt;
 begin
@@ -180,91 +221,182 @@ begin
   if ShortListing then
     ShowShortHeading;
   Found := False;
-  for Index := 0 to High(Interfaces) do
+  for Description in Interfaces do
   begin
-    if (Name <> nil) and not TextIsEqual(@Interfaces[Index].Name[0], Name) then
+    if (Name <> '') and (InterfaceName(Description) <> Name) then
       Continue;
     Found := True;
     if ShortListing then
-      ShowShortLine(Interfaces[Index])
+      ShowShortLine(Description)
     else
-      ShowInterface(Interfaces[Index]);
+      ShowInterface(Description);
   end;
-  if (Name <> nil) and not Found then
-    Fail(1, '%s: error fetching interface information: Device not found', [ArgumentText(Name)]);
+  if (Name <> '') and not Found then
+    FailNoDevice(Name);
 end;
 
-procedure CheckChange(Name: PChar; Error: LongInt);
+procedure CheckChange(const Name: string; Error: LongInt);
 begin
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(Name)]);
+    FailWithError(1, Error, '%s', [ArgumentText(PChar(Name))]);
 end;
 
-{ Applies the settings in the operands after the interface's name. }
-procedure Configure(const Operands: PPChar; Count: Integer);
+{ The settings after the interface's name, taken one by one. }
+type
+  TSettingReader = record
+    Operands: PPChar;
+    Count: Integer;
+    Index: Integer;
+  end;
+
+function HasMore(constref Reader: TSettingReader): Boolean;
+begin
+  Result := Reader.Index < Reader.Count;
+end;
+
+function TakeSetting(var Reader: TSettingReader): string;
+begin
+  Result := Reader.Operands[Reader.Index];
+  Inc(Reader.Index);
+end;
+
+{ The value a setting needs. }
+function TakeValueOf(var Reader: TSettingReader; const Setting: string): string;
+begin
+  if not HasMore(Reader) then
+    FailWithUsageHint('''%s'' needs a value', [ArgumentText(PChar(Setting))]);
+  Result := TakeSetting(Reader);
+end;
+
+{ "add" or "del" an IPv6 address. }
+procedure ChangeIpv6Address(const Name, Operation, Text: string);
 var
-  Name: PChar;
-  Index: Integer;
-  Setting: PChar;
   Address: TInternetAddress;
   PrefixLength: LongWord;
   HasPrefix: Boolean;
-  Mtu: QWord;
+begin
+  if not TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix) or (Address.Family <> AddressFamilyIPv6) then
+    Fail(1, '%s: invalid IPv6 address ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(Text))]);
+  if not HasPrefix then
+    PrefixLength := DefaultIpv6PrefixLength;
+  if Operation = 'add' then
+    CheckChange(Name, AddInterfaceIpv6Address(PChar(Name), Address, PrefixLength))
+  else
+    CheckChange(Name, RemoveInterfaceIpv6Address(PChar(Name), Address));
+end;
+
+{ "auto", "linklocal" or "off". }
+procedure ChangeIpv6Mode(const Name, ModeName: string);
+var
+  Mode: LongWord;
+begin
+  if ModeName = 'auto' then
+    Mode := Ipv6ModeAutomatic
+  else if ModeName = 'linklocal' then
+    Mode := Ipv6ModeLinkLocal
+  else if ModeName = 'off' then
+    Mode := Ipv6ModeOff
+  else
+  begin
+    Fail(1, '%s: unknown IPv6 setting ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(ModeName))]);
+    Exit;
+  end;
+  CheckChange(Name, SetInterfaceIpv6Mode(PChar(Name), Mode));
+end;
+
+procedure ChangeMtu(const Name, Text: string);
+var
+  Mtu: LongInt;
+begin
+  if not TryStrToInt(Text, Mtu) or (Mtu <= 0) then
+    Fail(1, 'invalid MTU ''%s''', [ArgumentText(PChar(Text))]);
+  CheckChange(Name, SetInterfaceMtu(PChar(Name), LongWord(Mtu)));
+end;
+
+procedure ChangeNetmask(const Name, Text: string);
+var
+  PrefixLength: LongWord;
+  Description: TAbiNetworkInterface;
+  Current: TAbiInterfaceAddress;
+begin
+  if not ParseNetmask(PChar(Text), PrefixLength) then
+    Fail(1, 'invalid netmask ''%s''', [ArgumentText(PChar(Text))]);
+  if not FindNetworkInterface(PChar(Name), Description) or not FindInterfaceIpv4Address(Description, Current) then
+    Fail(1, '%s: no address to apply the netmask to', [ArgumentText(PChar(Name))]);
+  CheckChange(Name, SetInterfaceAddress(PChar(Name), InterfaceAddressHost(Current), PrefixLength));
+end;
+
+{ The prefix of an IPv4 address given without one: its class's, as
+  ifconfig always did. }
+function ClassPrefixLength(constref Address: TInternetAddress): LongWord;
+begin
+  if Address.Bytes[0] < 128 then
+    Result := 8
+  else if Address.Bytes[0] < 192 then
+    Result := 16
+  else
+    Result := 24;
+end;
+
+{ An address operand: IPv6 is added, IPv4 replaces (0.0.0.0: removed). }
+function ChangeAddress(const Name, Text: string): Boolean;
+var
+  Address: TInternetAddress;
+  PrefixLength: LongWord;
+  HasPrefix: Boolean;
+begin
+  Result := TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix);
+  if not Result then
+    Exit;
+  if Address.Family = AddressFamilyIPv6 then
+    ChangeIpv6Address(Name, 'add', Text)
+  else if AddressIsUnspecified(Address) then
+    CheckChange(Name, RemoveInterfaceAddress(PChar(Name)))
+  else
+  begin
+    if not HasPrefix then
+      PrefixLength := ClassPrefixLength(Address);
+    CheckChange(Name, SetInterfaceAddress(PChar(Name), Address, PrefixLength));
+  end;
+end;
+
+procedure Configure(Operands: PPChar; Count: Integer);
+var
+  Name: string;
+  Reader: TSettingReader;
+  Setting: string;
+  Operation: string;
   Description: TAbiNetworkInterface;
 begin
   Name := Operands[0];
-  if not FindNetworkInterface(Name, Description) then
-    Fail(1, '%s: error fetching interface information: Device not found', [ArgumentText(Name)]);
-  Index := 1;
-  while Index < Count do
+  if not FindNetworkInterface(PChar(Name), Description) then
+    FailNoDevice(Name);
+  Reader.Operands := Operands;
+  Reader.Count := Count;
+  Reader.Index := 1;
+  while HasMore(Reader) do
   begin
-    Setting := Operands[Index];
-    if TextIsEqual(Setting, 'up') then
-      CheckChange(Name, SetInterfaceUp(Name, True))
-    else if TextIsEqual(Setting, 'down') then
-      CheckChange(Name, SetInterfaceUp(Name, False))
-    else if TextIsEqual(Setting, 'mtu') or TextIsEqual(Setting, 'netmask') then
+    Setting := TakeSetting(Reader);
+    if Setting = 'inet6' then
     begin
-      if Index + 1 >= Count then
-        FailWithUsageHint('''%s'' needs a value', [ArgumentText(Setting)]);
-      Inc(Index);
-      if TextIsEqual(Setting, 'mtu') then
-      begin
-        if not ParseUnsigned(Operands[Index], Mtu) or (Mtu > High(LongWord)) then
-          Fail(1, 'invalid MTU ''%s''', [ArgumentText(Operands[Index])]);
-        CheckChange(Name, SetInterfaceMtu(Name, LongWord(Mtu)));
-      end
+      Operation := TakeValueOf(Reader, Setting);
+      if (Operation = 'add') or (Operation = 'del') then
+        ChangeIpv6Address(Name, Operation, TakeValueOf(Reader, Operation))
       else
-      begin
-        if not ParseNetmask(Operands[Index], PrefixLength) then
-          Fail(1, 'invalid netmask ''%s''', [ArgumentText(Operands[Index])]);
-        if not FindNetworkInterface(Name, Description) or (Description.AddressCount = 0) then
-          Fail(1, '%s: no address to apply the netmask to', [ArgumentText(Name)]);
-        CheckChange(Name, SetInterfaceAddress(Name, InterfaceAddressHost(Description.Addresses[0]), PrefixLength));
-      end;
+        ChangeIpv6Mode(Name, Operation);
     end
-    else if ParseAddressWithPrefix(Setting, Address, PrefixLength, HasPrefix) then
-    begin
-      if AddressIsUnspecified(Address) then
-        CheckChange(Name, RemoveInterfaceAddress(Name))
-      else
-      begin
-        { Without a prefix: the class's, as ifconfig always did. }
-        if not HasPrefix then
-        begin
-          if Address.Bytes[0] < 128 then
-            PrefixLength := 8
-          else if Address.Bytes[0] < 192 then
-            PrefixLength := 16
-          else
-            PrefixLength := 24;
-        end;
-        CheckChange(Name, SetInterfaceAddress(Name, Address, PrefixLength));
-      end;
-    end
-    else
-      Fail(1, '%s: unknown setting ''%s''', [ArgumentText(Name), ArgumentText(Setting)]);
-    Inc(Index);
+    else if (Setting = 'add') or (Setting = 'del') then
+      ChangeIpv6Address(Name, Setting, TakeValueOf(Reader, Setting))
+    else if Setting = 'up' then
+      CheckChange(Name, SetInterfaceUp(PChar(Name), True))
+    else if Setting = 'down' then
+      CheckChange(Name, SetInterfaceUp(PChar(Name), False))
+    else if Setting = 'mtu' then
+      ChangeMtu(Name, TakeValueOf(Reader, Setting))
+    else if Setting = 'netmask' then
+      ChangeNetmask(Name, TakeValueOf(Reader, Setting))
+    else if not ChangeAddress(Name, Setting) then
+      Fail(1, '%s: unknown setting ''%s''', [ArgumentText(PChar(Name)), ArgumentText(PChar(Setting))]);
   end;
 end;
 
@@ -281,7 +413,7 @@ begin
     if Code = OptionShort then
       ShortListing := True;
   case Parser.OperandCount of
-    0: Show(nil);
+    0: Show('');
     1: Show(Parser.Operands[0]);
   else
     Configure(Parser.Operands, Parser.OperandCount);

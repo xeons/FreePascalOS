@@ -2114,7 +2114,9 @@ any network adapter (`NotificationPictureNetwork*`). The network
 service's state folder is watched, and the kernel's link looked at
 every second with the clock. A click on it opens the list of interfaces
 (`Desktop.NetworkPopup`): each with its picture, name and state,
-address and adapter, and Network settings..., which opens the Control
+address and adapter, a third line with its global IPv6 addresses when
+it has any (the row grows by a line, in logical units like the rest),
+and Network settings..., which opens the Control
 Panel's Network page. The desktop has no notification balloons yet, so
 a link going down or up is only shown by the icon.
 
@@ -2234,7 +2236,7 @@ at every scale.
 | Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate, and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
 | Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
 | Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
-| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
+| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
 
 **Root's changes from a user's Control Panel.** The Control Panel runs
@@ -2275,11 +2277,15 @@ icon's tooltip names eth0's address and a click lists the interfaces.
 **The Network page** (`ControlPanel.NetworkPage`,
 `ControlPanel.NetworkDetails`): a list of the interfaces (the adapter's
 description, the Ethernet address, the link, the state; the kernel does
-not report a link speed yet) and three tabs for the one chosen:
+not report a link speed yet) and four tabs for the one chosen:
 Address (Enable this interface; Obtain an address automatically (DHCP),
 Use this address with address, prefix or netmask and gateway boxes, or
 Leave this interface unconfigured - the three methods of the settings),
-DNS (the same for every interface: obtained automatically, which writes
+IPv6 (`ControlPanel.Ipv6Tab`: Get IPv6 addresses from routers
+automatically, Use a fixed IPv6 address with an address box taking
+"fd00::10/64" and a gateway box, or Turn IPv6 off - `Ipv6Method` auto,
+static or none - and below them the interface's global and link-local
+IPv6 addresses and its IPv6 default router, kept up to date), DNS (the same for every interface: obtained automatically, which writes
 an empty `DnsServers`, or these servers, and the search domain), and
 Status. What is chosen for each interface is kept while moving between
 them until Apply. Apply checks the values with the same code the
@@ -2777,23 +2783,32 @@ has `GetNodeName` and `SetNodeName`.
 **The desktop's side.** The settings file and the network service's
 state files (`/var/lib/network/NAME.state`: `Method`, `State` - down,
 no-link, configuring, configured, failed - `Address`, `Gateway`,
-`DnsServers`, `Domain`, `LeaseSeconds`, `LeaseObtained`, `DhcpServer`)
+`DnsServers`, `Domain`, `LeaseSeconds`, `LeaseObtained`, `DhcpServer`,
+`Ipv6Method`, `Ipv6Addresses`, `Ipv6Gateway`, `Ipv6DnsServers`)
 are read in one place, libconfiguration: `Configuration.NetworkSettings`
 reads, checks and writes `Network.settings` (method names; a static
 address needs a prefix of 1-30 and must be a host of its network, not
 0/8, loopback, multicast, its network's address or broadcast; a
-gateway must be another host on that network; DNS servers are host
-addresses, at most four; the search domain a domain name; an empty
-`DnsServers` means those DHCP gives), `Configuration.NetworkState`
-parses a state file, and `Configuration.NetworkStatus` puts each
-interface's state beside the kernel's facts (link, Ethernet address,
-MTU, counters) as one record with a condition (disabled, not
-configured, no link, failed, connecting, connected) and watches the
-state folder. The Control Panel's Network page and the taskbar's
+gateway must be another host on that network; `Ipv6Method` is auto,
+static or none, a static IPv6 address (`Configuration.Ipv6Checks`)
+needs a prefix of 1-128 and must be unicast and not link-local, ::
+or ::1, its gateway any unicast IPv6 address (link-local ones too) but
+the address itself; DNS servers are IPv4 host addresses or unicast
+IPv6 ones, at most four; the search domain a domain name; an empty
+`DnsServers` means those DHCP and the routers give),
+`Configuration.NetworkState` parses a state file, and
+`Configuration.NetworkStatus` puts each interface's state beside the
+kernel's facts (link, Ethernet address, MTU, counters, its IPv4
+address, every IPv6 address with its flags, the IPv6 mode and default
+router) as one record with a condition (disabled, not configured, no
+link, failed, connecting, connected; IPv4's) and watches the state
+folder. The Control Panel's Network page and the taskbar's
 network icon show them (see "The Control Panel" and "The desktop
 shell"). Changes go through the system settings service
 (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`,
-`SystemSettings.Network`): administrators only, every value checked
+`SystemSettings.Network`; the request's `NetworkIpv6Method`,
+`NetworkIpv6Address` and `NetworkIpv6Gateway`, an empty method leaving
+the interface's IPv6 settings as they are): administrators only, every value checked
 again there, the interface one the kernel has (not loopback); it only
 writes the file, which the network service watches and applies.
 
@@ -2824,7 +2839,8 @@ the clients' next deadline (at least every 5 s).
 **Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
 
     HostName = "freepascalos"       optional: the node name
-    DnsServers = []                 empty: those DHCP gives; a list overrides them
+    DnsServers = []                 empty: those DHCP and routers give; a list
+                                    (IPv4 or IPv6) overrides them
     SearchDomain = ""               empty: the domain DHCP gives
 
     [Interfaces/eth0]
@@ -2832,6 +2848,9 @@ the clients' next deadline (at least every 5 s).
     Address = "10.0.2.15/24"        static only
     Gateway = "10.0.2.2"            static only
     Up = true
+    Ipv6Method = "auto"             auto, static or none (no Ipv6Method: auto)
+    Ipv6Address = "fd00::10/64"     Ipv6Method static only (no prefix: /64)
+    Ipv6Gateway = "fd00::1"         Ipv6Method static only, optional
 
 The default suits QEMU's user networking: eth0 by DHCP, the other cards
 left alone. Address and Gateway are read only for `static` (the Control
@@ -2850,8 +2869,28 @@ service set is removed with its routes - then:
 
 A link that comes or goes, or an interface turned off or on by hand, is
 passed to its DHCP client; an adapter that appears later is taken in
-like the others. The DNS servers given to the kernel are the settings'
-list if it is not empty, else every lease's servers (each once, four at
+like the others.
+
+IPv6 (`NetworkService.Ipv6Settings`, `NetworkService.Ipv6Configuration`)
+is applied apart from IPv4, so changing it leaves a lease alone; the
+kernel does the protocol work itself (link-local address, router
+solicitation, SLAAC, the default route and RDNSS from advertisements),
+and the service only sets the interface's IPv6 mode:
+
+| Ipv6Method | What the service does |
+|---|---|
+| auto | `Ipv6ModeAutomatic` (the kernel's own start, so usually nothing) |
+| static | `Ipv6ModeLinkLocal` (advertisements ignored), the address added, and a default route `::/0` through `Ipv6Gateway` on the interface (the IPv4 metric) |
+| none | `Ipv6ModeOff`: the kernel drops every IPv6 address and route of the interface |
+
+When the IPv6 settings change, a static address and its default route
+are removed first. The mode is set only when the kernel's differs, and
+whatever the kernel learns later (new addresses, routes, RDNSS) is
+taken from its change notifications into the state files.
+
+The DNS servers given to the kernel are the settings'
+list if it is not empty, else every lease's servers, then the DNS
+servers the interfaces' routers advertised (each once, four at
 most); the search domain is the settings', else the first lease's
 domain; they are set only when they change. Asked to end, the service
 gives every lease back (the addresses go), writes the state files and
@@ -2916,6 +2955,10 @@ settings files (read it with `TSettingsDocument`):
 | `LeaseSeconds` | integer | the lease's length; 0 for static, none and an endless lease |
 | `LeaseObtained` | integer | Unix time the lease was acknowledged (renewals too); 0 without one |
 | `DhcpServer` | string | the server that gave the lease, or `""` |
+| `Ipv6Method` | string | `auto`, `static` or `none` |
+| `Ipv6Addresses` | list of strings | the kernel's IPv6 addresses with prefixes (`fe80::5054:ff:fe12:3456/64`, `fec0::5054:ff:fe12:3456/64`), tentative ones left out |
+| `Ipv6Gateway` | string | the gateway of the interface's IPv6 default route (`fe80::2`), or `""` |
+| `Ipv6DnsServers` | list of strings | the DNS servers its routers advertised (RDNSS) |
 
 `State` is `down` while the interface is off (also for dhcp after the
 service stopped, and for none without an address), `no-link` while it

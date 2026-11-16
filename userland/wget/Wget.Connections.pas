@@ -17,9 +17,11 @@
 }
 
 {
-  wget's connection to a server: the host looked up (Sys.HostNames,
-  numeric addresses without DNS), a TCP connection made within the
-  timeout, and for https a TLS session over it (libtls, Tls.Sessions).
+  wget's connection to a server: the host looked up (Sys.HostLookup:
+  numeric addresses without DNS, IPv6 first when this machine can reach
+  it), a TCP connection made within the timeout to each address in turn
+  until one takes it, and for https a TLS session over it (libtls,
+  Tls.Sessions).
   Reads go through a buffer, so the response head can be looked for and
   what follows it handed to the body.
 }
@@ -87,6 +89,8 @@ uses
   Sys.Errors,
   Sys.Format,
   Sys.HostNames,
+  Sys.HostLookup,
+  Sys.AddressText,
   Sys.Sockets,
   Sys.Streams,
   Tls.Client,
@@ -167,49 +171,64 @@ begin
   Result := True;
 end;
 
-function OpenConnection(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+{ The addresses of the URL's host in the order to try them, saying so
+  as wget does ("Resolving host... address, address"). }
+function ResolveUrlHost(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings;
+  out Addresses: TInternetAddressArray): Boolean;
 var
   Error: LongInt;
-  Target: TAbiSocketAddress;
-  AddressText: array[0..SocketAddressTextCapacity - 1] of Char;
   Numeric: TInternetAddress;
+  IsName: Boolean;
+  Index: Integer;
 begin
-  FillChar(Connection, SizeOf(Connection), 0);
-  Connection.Socket := -1;
-  Connection.UsesTls := Url.Scheme = SchemeHttps;
-  Connection.TimeoutMilliseconds := Settings.TimeoutMilliseconds;
-  Result := False;
-
-  if not ParseIpv4Address(@Url.Host[0], Numeric) and not Settings.Quiet then
+  IsName := not ParseInternetAddress(@Url.Host[0], Numeric);
+  if IsName and not Settings.Quiet then
     WriteFormatted(StandardError, 'Resolving %s... ', [ArgumentText(@Url.Host[0])]);
-  Error := LookUpHost(@Url.Host[0], Connection.Address);
-  if Error <> ErrorNone then
+  Error := ResolveHost(AnsiString(PChar(@Url.Host[0])), HostFamilyAny, Addresses);
+  if (Error = ErrorNone) and (Length(Addresses) = 0) then
+    Error := ErrorNotFound;
+  Result := Error = ErrorNone;
+  if not Result then
   begin
-    if not ParseIpv4Address(@Url.Host[0], Numeric) and not Settings.Quiet then
+    if IsName and not Settings.Quiet then
       WriteFormatted(StandardError, 'failed: %s.'#10, [ArgumentText(ErrorMessage(Error))]);
     SetFailure(Connection, FailureLookUp, Error, 'unable to resolve host address');
     Exit;
   end;
-  FormatInternetAddress(Connection.Address, @AddressText[0], SizeOf(AddressText));
-  if not Settings.Quiet then
+  if not IsName or Settings.Quiet then
+    Exit;
+  for Index := 0 to High(Addresses) do
   begin
-    if not ParseIpv4Address(@Url.Host[0], Numeric) then
-      WriteFormatted(StandardError, '%s'#10, [ArgumentText(@AddressText[0])]);
-    WriteFormatted(StandardError, 'Connecting to %s|%s|:%d... ', [ArgumentText(@Url.Host[0]),
-      ArgumentText(@AddressText[0]), ArgumentNumber(Url.Port)]);
+    if Index > 0 then
+      WriteText(StandardError, ', ');
+    WriteText(StandardError, PChar(AddressToText(Addresses[Index])));
   end;
+  WriteCharacter(StandardError, #10);
+end;
 
-  Connection.Socket := CreateSocket(AddressFamilyIPv4, SocketKindStream or SocketKindNonBlocking, ProtocolDefault);
+{ One attempt: a socket of the address's family connected within the
+  timeout. False (the failure recorded) if it did not connect. }
+function ConnectToAddress(var Connection: TConnection; constref Url: TUrl; constref Address: TInternetAddress;
+  constref Settings: TConnectionSettings): Boolean;
+var
+  Error: LongInt;
+begin
+  Result := False;
+  Connection.Address := Address;
+  if not Settings.Quiet then
+    WriteFormatted(StandardError, 'Connecting to %s|%s|:%d... ', [ArgumentText(@Url.Host[0]),
+      ArgumentText(PChar(AddressToText(Address))), ArgumentNumber(Url.Port)]);
+  Connection.Socket := CreateSocket(Address.Family, SocketKindStream or SocketKindNonBlocking, ProtocolDefault);
   if Connection.Socket < 0 then
   begin
     Error := ErrorCodeOf(Connection.Socket);
+    Connection.Socket := -1;
     if not Settings.Quiet then
       WriteFormatted(StandardError, 'failed: %s.'#10, [ArgumentText(ErrorMessage(Error))]);
     SetFailure(Connection, FailureConnect, Error, ErrorMessage(Error));
     Exit;
   end;
-  Target := MakeSocketAddress(Connection.Address, Url.Port);
-  Error := ConnectWithTimeout(Connection, Target);
+  Error := ConnectWithTimeout(Connection, MakeSocketAddress(Address, Url.Port));
   if Error <> ErrorNone then
   begin
     if not Settings.Quiet then
@@ -223,6 +242,31 @@ begin
   end;
   if not Settings.Quiet then
     WriteLine(StandardError, 'connected.');
+  Result := True;
+end;
+
+function OpenConnection(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+var
+  Addresses: TInternetAddressArray;
+  Index: Integer;
+  Connected: Boolean;
+begin
+  FillChar(Connection, SizeOf(Connection), 0);
+  Connection.Socket := -1;
+  Connection.UsesTls := Url.Scheme = SchemeHttps;
+  Connection.TimeoutMilliseconds := Settings.TimeoutMilliseconds;
+  Result := False;
+  if not ResolveUrlHost(Connection, Url, Settings, Addresses) then
+    Exit;
+  Connected := False;
+  for Index := 0 to High(Addresses) do
+  begin
+    Connected := ConnectToAddress(Connection, Url, Addresses[Index], Settings);
+    if Connected then
+      Break;
+  end;
+  if not Connected then
+    Exit;
 
   if Connection.UsesTls and not OpenTls(Connection, Url, Settings) then
   begin

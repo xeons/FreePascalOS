@@ -192,8 +192,12 @@ web_forwards+=",guestfwd=tcp:10.0.2.106:443-cmd:$web_server https expired-chain.
 # A virtio network card on QEMU's user networking (the guest is
 # 10.0.2.15, the gateway 10.0.2.2 answers pings); a TCP connection to
 # 10.0.2.100 port 7 reaches "cat", an echo service for networktest, and
-# 10.0.2.101 to 10.0.2.106 the web servers above.
-network_arguments=(-netdev "user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat,$web_forwards"
+# 10.0.2.101 to 10.0.2.106 the web servers above. IPv6 too: QEMU's
+# router advertises fec0::/64 (the guest makes fec0::5054:ff:fe12:3456
+# from its Ethernet address), fec0::2 answers pings and fec0::3 is the
+# DNS server it advertises.
+ipv6_network="ipv6=on,ipv6-net=fec0::/64,ipv6-host=fec0::2,ipv6-dns=fec0::3"
+network_arguments=(-netdev "user,id=net0,$ipv6_network,guestfwd=tcp:10.0.2.100:7-cmd:cat,$web_forwards"
     -device virtio-net-pci,netdev=net0)
 
 # ACCEL=kvm runs on the real processor (faster, and with the processor's

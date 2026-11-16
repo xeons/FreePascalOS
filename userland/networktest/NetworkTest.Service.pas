@@ -45,6 +45,9 @@ function WaitForStateValue(const InterfaceName, Key, Expected: string; Milliseco
 
 { Gives InterfaceName a static address in the system's settings. }
 function SetStaticAddressSetting(const InterfaceName, AddressWithPrefix: string): Boolean;
+{ Gives InterfaceName a static IPv6 address (Ipv6Method static) and
+  leaves IPv4 alone (Method none). }
+function SetStaticIpv6Setting(const InterfaceName, AddressWithPrefix: string): Boolean;
 { Removes InterfaceName's section from the system's settings. }
 function RemoveInterfaceSetting(const InterfaceName: string): Boolean;
 
@@ -176,6 +179,24 @@ begin
     Section := 'Network/Interfaces/' + InterfaceName;
     Store.WriteString(Section + '/Method', 'static', ScopeSystem);
     Store.WriteString(Section + '/Address', AddressWithPrefix, ScopeSystem);
+    Store.WriteBoolean(Section + '/Up', True, ScopeSystem);
+    Result := Store.Flush = ErrorNone;
+  finally
+    Store.Free;
+  end;
+end;
+
+function SetStaticIpv6Setting(const InterfaceName, AddressWithPrefix: string): Boolean;
+var
+  Store: TSettings;
+  Section: string;
+begin
+  Store := OpenSystemSettings;
+  try
+    Section := 'Network/Interfaces/' + InterfaceName;
+    Store.WriteString(Section + '/Method', 'none', ScopeSystem);
+    Store.WriteString(Section + '/Ipv6Method', 'static', ScopeSystem);
+    Store.WriteString(Section + '/Ipv6Address', AddressWithPrefix, ScopeSystem);
     Store.WriteBoolean(Section + '/Up', True, ScopeSystem);
     Result := Store.Flush = ErrorNone;
   finally

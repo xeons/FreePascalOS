@@ -33,7 +33,9 @@
   TCP, an answer whose name compression points at itself (refused, not
   followed for ever), a reply with a wrong id (ignored), a server that
   is not there passed over for the next, and new random ids and source
-  ports for every query. Nothing here needs the internet.
+  ports for every query; the server asked over IPv6 ([::1]:53), and
+  localhost tried over ::1 first when connecting (Sys.HostLookup).
+  Nothing here needs the internet.
 
   --serve and --wait are for coretest's host and nslookup command lines.
 
@@ -57,6 +59,7 @@ uses
   Sys.Environment,
   Sys.Notifications,
   Sys.InternetAddresses,
+  Sys.HostLookup,
   Sys.NetworkInterfaces,
   Sys.DnsNames,
   Sys.DnsMessages,
@@ -204,6 +207,23 @@ begin
   Check('every query leaves from a new port', ServerRecord.LastPorts[0] <> ServerRecord.LastPorts[1]);
 end;
 
+procedure TestIpv6Server;
+var
+  Options: TDnsQueryOptions;
+  Details: TDnsQueryDetails;
+  Error: LongInt;
+  Ordered: TInternetAddressArray;
+begin
+  SystemDnsQueryOptions(Options);
+  UseOnlyDnsServer(Options, MakeSocketAddress(LoopbackIpv6Address, TestServerPort));
+  Error := QueryDns('www.test.example', DnsTypeAaaa, Options, Message, Details);
+  Check('a DNS server over IPv6 ([::1]:53) answers AAAA', (Error = ErrorNone) and (Message.RecordCount = 1) and
+    (Message.Records[0].RecordType = DnsTypeAaaa) and (Details.Server.Family = AddressFamilyIPv6));
+  Check('to connect, localhost is ::1 first, then 127.0.0.1',
+    (ResolveHost('localhost', HostFamilyAny, Ordered) = ErrorNone) and (Length(Ordered) = 2) and
+    AddressesAreEqual(Ordered[0], LoopbackIpv6Address) and AddressesAreEqual(Ordered[1], LoopbackIpv4Address));
+end;
+
 procedure TestMissingServer;
 var
   Servers: TAbiDnsServers;
@@ -232,6 +252,7 @@ begin
   Check('the test server becomes the system''s', SetDnsServers(TestServers('test.example', False)) = ErrorNone);
   TestNames;
   TestQueries;
+  TestIpv6Server;
   TestMissingServer;
   Check('the DNS servers before are put back', SetDnsServers(Saved) = ErrorNone);
   SetEvent(StopEvent);

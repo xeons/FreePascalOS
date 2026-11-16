@@ -40,6 +40,9 @@ type
     Numeric: Boolean;
     { -p: the process each socket belongs to. }
     ShowOwners: Boolean;
+    { -4, -6: one IP version; neither given: both. }
+    ShowIpv4: Boolean;
+    ShowIpv6: Boolean;
   end;
 
 implementation
