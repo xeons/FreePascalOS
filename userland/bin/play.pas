@@ -28,12 +28,10 @@
 program play;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Runtime.Text,
   Sys.Format,
-  Sys.Memory,
   Util.Messages,
   Util.Options,
   Audio.Device,
@@ -51,7 +49,7 @@ var
   Status: TWaveStatus;
   Device: Int64;
   Format: TAudioFormat;
-  Buffer: PByte;
+  Buffer: array of Byte;
   Count: QWord;
   Error: LongInt;
   Failed: Boolean;
@@ -62,7 +60,7 @@ begin
   Device := OpenAudioOutput(nil);
   if Device < 0 then
     FailWithError(1, LongInt(-Device), '%s', [ArgumentText(DefaultAudioDevice)]);
-  Buffer := PByte(AllocateMemory(ChunkBytes));
+  SetLength(Buffer, ChunkBytes);
   Failed := False;
   for Index := 0 to Parser.OperandCount - 1 do
   begin
@@ -87,10 +85,10 @@ begin
       Continue;
     end;
     repeat
-      Count := ReadWaveSamples(Wave, Buffer, ChunkBytes);
+      Count := ReadWaveSamples(Wave, @Buffer[0], ChunkBytes);
       if Count > 0 then
       begin
-        Error := WriteAudio(Device, Buffer, Count);
+        Error := WriteAudio(Device, @Buffer[0], Count);
         if Error <> 0 then
           FailWithError(1, Error, 'writing to %s', [ArgumentText(DefaultAudioDevice)]);
       end;

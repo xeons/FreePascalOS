@@ -42,11 +42,11 @@
 program mixer;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Format,
   Sys.Streams,
   Sys.Text,
@@ -69,13 +69,25 @@ const
   OptionDefault = 4;
   OptionRemember = 5;
 
+procedure PrintText(const Text: string);
+begin
+  WriteText(StandardOutput, PChar(Text));
+end;
+
+function MutedSuffix(Muted: Boolean): string;
+begin
+  if Muted then
+    Result := ', muted'
+  else
+    Result := '';
+end;
+
 procedure ListOutputs;
 var
   Number: Integer;
   State: TAudioOutputState;
   Default: Integer;
-  Mark: PChar;
-  Muted: PChar;
+  Mark: string;
 begin
   Default := DefaultAudioOutput;
   Number := 0;
@@ -85,30 +97,25 @@ begin
       Mark := ', default'
     else
       Mark := '';
-    if State.Muted then
-      Muted := ', muted'
-    else
-      Muted := '';
-    WriteFormatted(StandardOutput, '%d %s %s: volume %u%%%s%s'#10, [ArgumentNumber(Number),
-      ArgumentText(AudioOutputPath(Number)), ArgumentText(AudioOutputKindName(State.Kind)),
-      ArgumentUnsigned(State.Volume), ArgumentText(Muted), ArgumentText(Mark)]);
+    PrintText(Format('%d %s %s: volume %d%%%s%s'#10, [Number, string(AudioOutputPath(Number)),
+      string(AudioOutputKindName(State.Kind)), State.Volume, MutedSuffix(State.Muted), Mark]));
     Inc(Number);
   end;
 end;
 
-function NumberIn(Text: PChar; Highest: Int64; What: PChar): Integer;
+function NumberIn(const Text: string; Highest: Int64; const What: string): Integer;
 var
   Value: Int64;
 begin
-  if not ParseInteger(Text, Value) or (Value < 0) or (Value > Highest) then
-    FailWithUsageHint('%s must be a number from 0 to %d', [ArgumentText(What), ArgumentNumber(Highest)]);
+  if not ParseInteger(PChar(Text), Value) or (Value < 0) or (Value > Highest) then
+    FailWithUsageHint('%s must be a number from 0 to %d', [ArgumentText(PChar(What)), ArgumentNumber(Highest)]);
   Result := Integer(Value);
 end;
 
-procedure Check(Error: LongInt; What: PChar);
+procedure Check(Error: LongInt; const What: string);
 begin
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(What)]);
+    FailWithError(1, Error, '%s', [ArgumentText(PChar(What))]);
 end;
 
 { The volume and mute of Output through the service, which applies and
@@ -140,16 +147,16 @@ var
   Value: PChar;
   Output: Integer;
   NewDefault: Integer;
-  MuteText: PChar;
+  { 'on', 'off', or empty when -m was not given. }
+  MuteText: string;
   List: Boolean;
   Remember: Boolean;
   State: TAudioOutputState;
   Changed: Boolean;
-  Muted: PChar;
 begin
   Output := -1;
   NewDefault := -1;
-  MuteText := nil;
+  MuteText := '';
   List := False;
   Remember := False;
   BeginOptions(Parser, [OptionDefinition('o', 'output', True, OptionOutput),
@@ -165,9 +172,9 @@ begin
       OptionRemember: Remember := True;
       OptionMute:
         begin
-          if (CompareText(Value, 'on') <> 0) and (CompareText(Value, 'off') <> 0) then
-            FailWithUsageHint('--mute takes on or off', []);
           MuteText := Value;
+          if (MuteText <> 'on') and (MuteText <> 'off') then
+            FailWithUsageHint('--mute takes on or off', []);
         end;
     end;
   if Parser.OperandCount > 1 then
@@ -196,9 +203,9 @@ begin
     State.Volume := LongWord(NumberIn(Parser.Operands[0], 100, 'the volume'));
     Changed := True;
   end;
-  if MuteText <> nil then
+  if MuteText <> '' then
   begin
-    State.Muted := CompareText(MuteText, 'on') = 0;
+    State.Muted := MuteText = 'on';
     Changed := True;
   end;
   if Remember then
@@ -210,9 +217,5 @@ begin
   end;
   if Changed or Remember then
     Halt(0);
-  if State.Muted then
-    Muted := ', muted'
-  else
-    Muted := '';
-  WriteFormatted(StandardOutput, 'volume %u%%%s'#10, [ArgumentUnsigned(State.Volume), ArgumentText(Muted)]);
+  PrintText(Format('volume %d%%%s'#10, [State.Volume, MutedSuffix(State.Muted)]));
 end.

@@ -28,12 +28,11 @@
 program sleep;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
   Sys.Format,
   Sys.Processes,
-  Sys.Text,
   Util.Messages,
   Util.Options;
 
@@ -43,50 +42,63 @@ const
     '''m'' for minutes, ''h'' for hours or ''d'' for days. NUMBER may be a'#10 +
     'decimal fraction. Given two or more arguments, pause for their sum.'#10;
 
+  MillisecondsPerSecond = 1000;
+  { Three decimals are as precise as the clock. }
+  FractionDigitLimit = 3;
+
+function UnitMultiplier(const Suffix: string; out Multiplier: QWord): Boolean;
+begin
+  Result := True;
+  if (Suffix = '') or (Suffix = 's') then
+    Multiplier := MillisecondsPerSecond
+  else if Suffix = 'm' then
+    Multiplier := 60 * MillisecondsPerSecond
+  else if Suffix = 'h' then
+    Multiplier := 60 * 60 * MillisecondsPerSecond
+  else if Suffix = 'd' then
+    Multiplier := 24 * 60 * 60 * MillisecondsPerSecond
+  else
+    Result := False;
+end;
+
 { Parses "1.5m" into milliseconds. }
-function ParseDuration(Text: PChar; out Milliseconds: QWord): Boolean;
+function ParseDuration(const Text: string; out Milliseconds: QWord): Boolean;
 var
   Position: Integer;
   Whole: QWord;
   Fraction: QWord;
   FractionScale: QWord;
+  FractionDigits: Integer;
   Multiplier: QWord;
 begin
   Milliseconds := 0;
-  Position := 0;
   Whole := 0;
   Fraction := 0;
   FractionScale := 1;
-  if not IsDigit(Text[0]) and (Text[0] <> '.') then
+  FractionDigits := 0;
+  if (Text = '') or not (Text[1] in ['0'..'9', '.']) then
     Exit(False);
-  while IsDigit(Text[Position]) do
+  Position := 1;
+  while (Position <= Length(Text)) and (Text[Position] in ['0'..'9']) do
   begin
     Whole := Whole * 10 + QWord(Ord(Text[Position]) - Ord('0'));
     Inc(Position);
   end;
-  if Text[Position] = '.' then
+  if (Position <= Length(Text)) and (Text[Position] = '.') then
   begin
     Inc(Position);
-    while IsDigit(Text[Position]) do
+    while (Position <= Length(Text)) and (Text[Position] in ['0'..'9']) do
     begin
-      { Three decimals are as precise as the clock. }
-      if FractionScale < 1000 then
+      if FractionDigits < FractionDigitLimit then
       begin
         Fraction := Fraction * 10 + QWord(Ord(Text[Position]) - Ord('0'));
         FractionScale := FractionScale * 10;
+        Inc(FractionDigits);
       end;
       Inc(Position);
     end;
   end;
-  case Text[Position] of
-    #0, 's': Multiplier := 1000;
-    'm': Multiplier := 60 * 1000;
-    'h': Multiplier := 60 * 60 * 1000;
-    'd': Multiplier := 24 * 60 * 60 * 1000;
-  else
-    Exit(False);
-  end;
-  if (Text[Position] <> #0) and (Text[Position + 1] <> #0) then
+  if not UnitMultiplier(Copy(Text, Position, MaxInt), Multiplier) then
     Exit(False);
   Milliseconds := Whole * Multiplier + (Fraction * Multiplier) div FractionScale;
   Result := True;
