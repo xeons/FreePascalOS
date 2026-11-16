@@ -133,13 +133,8 @@ end;
 function UserAndHost: string;
 var
   Information: TSystemInformation;
-  UserName: PChar;
 begin
-  UserName := UserNameOf(CurrentUserId);
-  if UserName = nil then
-    Result := IntToStr(CurrentUserId)
-  else
-    Result := UserName;
+  Result := UserNameOrNumber(CurrentUserId);
   if GetSystemInformation(Information) = 0 then
     Result := Result + '@' + string(PChar(@Information.NodeName[0]));
 end;
@@ -269,7 +264,6 @@ var
   Information: TSystemInformation;
   Usage: TSystemUsage;
   HaveUsage: Boolean;
-  Shell: PChar;
   Programs: LongInt;
 begin
   Result := nil;
@@ -284,9 +278,8 @@ begin
   Programs := CountPrograms;
   if Programs > 0 then
     AddFact(Result, 'Programs', IntToStr(Programs) + ' (' + ProgramFolder + ')');
-  Shell := ShellOf(CurrentUserId);
-  if Shell <> nil then
-    AddFact(Result, 'Shell', string(Shell));
+  { Every account has one (/bin/sh when its entry names none). }
+  AddFact(Result, 'Shell', UserShell(CurrentUserId));
   AddDisplayFacts(Result);
   AddFact(Result, 'Terminal', TerminalText);
   AddFact(Result, 'CPU', ProcessorText(Information.ProcessorCount));

@@ -40,13 +40,13 @@ implementation
 
 uses
   SysUtils,
-  Sys.Format,
   Sys.Streams,
+  Util.Output,
   Windowing.Connection;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, 'session: %s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine('session: ' + Text);
   FlushStream(StandardOutput);
 end;
 

@@ -38,15 +38,14 @@ uses
   Abi.SystemCalls,
   Sys.Console,
   Sys.Environment,
-  Sys.Format,
-  Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   SystemInfo.Facts,
   SystemInfo.Logo;
 
 const
-  Usage: PChar = 'Usage: sysinfo [OPTION]...'#10 +
+  Usage = 'Usage: sysinfo [OPTION]...'#10 +
     'Show information about the system beside its logo.'#10#10 +
     '  -l, --no-logo    leave out the logo'#10 +
     '  -c, --color      use colours even when not writing to a terminal'#10 +
@@ -71,7 +70,7 @@ var
 
 procedure Write(const Text: string);
 begin
-  WriteText(StandardOutput, PChar(Text));
+  PrintString(Text);
 end;
 
 function Coloured(const Colour, Text: string): string;
@@ -163,23 +162,23 @@ begin
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   ShowLogo := True;
   UseColours := OutputIsTerminal and (GetVariable('NO_COLOR') = nil);
-  BeginOptions(Parser, [
-    OptionDefinition('l', 'no-logo', False, OptionNoLogo),
-    OptionDefinition('c', 'color', False, OptionColor),
-    OptionDefinition('C', 'no-color', False, OptionNoColor)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('l', 'no-logo', False, OptionNoLogo),
+    CommandOption('c', 'color', False, OptionColor),
+    CommandOption('C', 'no-color', False, OptionNoColor)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionNoLogo: ShowLogo := False;
       OptionColor: UseColours := True;
       OptionNoColor: UseColours := False;
     end;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[0])]);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[0]]));
   ShowEverything;
 end.

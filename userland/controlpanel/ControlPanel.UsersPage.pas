@@ -121,21 +121,17 @@ end;
 
 function GroupListOf(UserId: LongWord): string;
 var
-  Groups: array[0..63] of LongWord;
-  Count: LongInt;
-  Index: LongInt;
-  Name: PChar;
+  GroupId: LongWord;
+  Name: string;
 begin
   Result := '';
-  Count := GroupsOfUser(UserId, @Groups[0], Length(Groups));
-  for Index := 0 to Count - 1 do
+  for GroupId in GroupsOfUser(UserId) do
   begin
-    Name := GroupNameOf(Groups[Index]);
-    if Name = nil then
+    if not FindGroupName(GroupId, Name) then
       Continue;
     if Result <> '' then
       Result := Result + ', ';
-    Result := Result + string(Name);
+    Result := Result + Name;
   end;
 end;
 
@@ -211,7 +207,7 @@ var
   RemoveHome: Boolean;
   Request: TSystemSettingsRequest;
 begin
-  if not ChosenUser(Name) or not FindUserId(PChar(Name), UserId) then
+  if not ChosenUser(Name) or not FindUserId(Name, UserId) then
     Exit;
   if not AskToRemoveUser(Window, Name, string(HomeDirectoryOf(UserId)), RemoveHome) then
     Exit;
@@ -261,7 +257,7 @@ var
   Error: LongInt;
   OldFullName: string;
 begin
-  if not ChosenUser(Name) or not FindUserId(PChar(Name), UserId) then
+  if not ChosenUser(Name) or not FindUserId(Name, UserId) then
     Exit;
   if not PrimaryGroupOf(UserId, PrimaryGroup) then
     PrimaryGroup := UserId;

@@ -37,7 +37,7 @@ implementation
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Errors;
+  Util.Messages;
 
 function ReasonText(Error: LongInt): string;
 begin
@@ -55,7 +55,7 @@ begin
     ErrorInvalidArgument: Result := 'That cannot be done to it.';
     ErrorUnsupported: Result := 'The file system cannot do that.';
   else
-    Result := StrPas(ErrorMessage(Error)) + '.';
+    Result := ErrorText(Error) + '.';
   end;
 end;
 

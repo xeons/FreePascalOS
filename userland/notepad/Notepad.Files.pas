@@ -62,7 +62,8 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Errors;
+  Sys.Errors,
+  Util.Messages;
 
 const
   ByteOrderMark = #$EF#$BB#$BF;
@@ -74,9 +75,10 @@ begin
   Result.HasByteOrderMark := False;
 end;
 
-function ErrorText(CallResult: Int64): string;
+{ The text of a failed call's result (a negative error code). }
+function CallErrorText(CallResult: Int64): string;
 begin
-  Result := StrPas(ErrorMessage(ErrorCodeOf(CallResult)));
+  Result := ErrorText(ErrorCodeOf(CallResult));
 end;
 
 function TextFromStored(const Stored: string; out Format: TTextFileFormat): string;
@@ -118,7 +120,7 @@ begin
   Format := DefaultTextFileFormat;
   Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
-    Exit(ErrorText(Handle));
+    Exit(CallErrorText(Handle));
   { Read in chunks until the end: the size is not asked first, as a
     file can be something that has none (a pipe). }
   Stored := '';
@@ -132,7 +134,7 @@ begin
   until Got <= 0;
   CloseFile(Handle);
   if Got < 0 then
-    Exit(ErrorText(Got));
+    Exit(CallErrorText(Got));
   SetLength(Stored, Used);
   Text := TextFromStored(Stored, Format);
   Result := '';
@@ -146,14 +148,14 @@ var
 begin
   Handle := OpenFile(PChar(Path), OpenWrite or OpenCreate or OpenTruncate);
   if Handle < 0 then
-    Exit(ErrorText(Handle));
+    Exit(CallErrorText(Handle));
   Stored := StoredText(Text, Format);
   Error := 0;
   if Stored <> '' then
     Error := WriteAll(Handle, @Stored[1], Length(Stored));
   CloseFile(Handle);
   if Error <> 0 then
-    Exit(StrPas(ErrorMessage(Error)));
+    Exit(ErrorText(Error));
   Result := '';
 end;
 

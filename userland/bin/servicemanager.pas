@@ -68,15 +68,14 @@ program servicemanager;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
-  Sys.Format,
   Sys.KernelOptions,
   Sys.Kernel,
   Sys.Processes,
   Sys.ServiceControl,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Output,
   Services.Definitions,
   Services.Catalog,
   Services.Control,
@@ -85,7 +84,7 @@ uses
   Services.Manager;
 
 const
-  Usage: PChar = 'Usage: servicemanager [OPTION]...'#10 +
+  Usage = 'Usage: servicemanager [OPTION]...'#10 +
     'Start the services of the boot mode and keep them running.'#10#10 +
     '      --mode=MODE                the boot mode (default: the kernel option mode=, or graphical)'#10 +
     '      --directory=DIRECTORY      the service definitions (/etc/services)'#10 +
@@ -108,21 +107,21 @@ var
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   RequestedMode := '';
   ServiceDirectory := DefaultServiceDirectory;
   ControlPortName := ServiceManagerPortName;
   CheckOnly := False;
-  BeginOptions(Parser, [
-    OptionDefinition(#0, 'mode', True, OptionMode),
-    OptionDefinition(#0, 'directory', True, OptionDirectory),
-    OptionDefinition(#0, 'log-directory', True, OptionLogDirectory),
-    OptionDefinition(#0, 'port', True, OptionPort),
-    OptionDefinition(#0, 'check', False, OptionCheck)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption(#0, 'mode', True, OptionMode),
+    CommandOption(#0, 'directory', True, OptionDirectory),
+    CommandOption(#0, 'log-directory', True, OptionLogDirectory),
+    CommandOption(#0, 'port', True, OptionPort),
+    CommandOption(#0, 'check', False, OptionCheck)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionMode: RequestedMode := Value;
       OptionDirectory: ServiceDirectory := Value;
@@ -130,8 +129,9 @@ begin
       OptionPort: ControlPortName := Value;
       OptionCheck: CheckOnly := True;
     end;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('no operands are taken', []);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint('no operands are taken');
+  CommandLine.Free;
 end;
 
 function ChooseBootMode: string;
@@ -147,7 +147,7 @@ end;
 
 procedure Print(const Text: string);
 begin
-  WriteLine(StandardOutput, PChar(Text));
+  PrintStringLine(Text);
 end;
 
 function JoinWords(const Words: array of string): string;
@@ -251,7 +251,7 @@ begin
   PrepareLogDirectory;
   Error := OpenControlPort(ControlPortName);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the port %s', [ArgumentText(PChar(ControlPortName))]);
+    FailWithError(1, Error, 'the port ' + ControlPortName);
   ShutdownEvent := WatchForShutdown;
   Say('boot mode ' + BootMode + ', ' + IntToStr(Length(ServiceTable)) + ' services in ' + ServiceDirectory);
   RunServices(BootMode, ShutdownEvent);

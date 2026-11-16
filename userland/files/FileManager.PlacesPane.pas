@@ -96,7 +96,6 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Objects,
-  Sys.Files,
   Sys.Environment,
   Sys.FileWatches,
   Sys.Volumes,
@@ -113,12 +112,12 @@ uses
 
 function HomeFolder: string;
 var
-  Home: PChar;
+  Home: string;
 begin
   Home := GetVariable('HOME');
-  if (Home = nil) or (Home^ = #0) then
+  if Home = '' then
     Exit('/');
-  Result := CleanPath(StrPas(Home));
+  Result := CleanPath(Home);
 end;
 
 constructor TPlacesPane.Create(AParent: TControl);

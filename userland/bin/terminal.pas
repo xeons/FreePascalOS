@@ -45,8 +45,8 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Windowing.Connection,
   Windowing.Windows,
   Terminal.View,
@@ -54,7 +54,7 @@ uses
   Terminal.Window;
 
 const
-  Usage: PChar = 'Usage: terminal [-x LEFT] [-y TOP] [-e PROGRAM]'#10 +
+  Usage = 'Usage: terminal [-x LEFT] [-y TOP] [-e PROGRAM]'#10 +
     'Open a terminal window running the shell.'#10#10 +
     '  -x LEFT      where the window goes across (default 100)'#10 +
     '  -y TOP       and down (default 80)'#10 +
@@ -66,9 +66,9 @@ const
   DefaultShell = '/bin/sh';
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
   Left: LongInt;
   Top: LongInt;
   ProgramPath: string;
@@ -78,23 +78,24 @@ begin
   Left := 100;
   Top := 80;
   ProgramPath := DefaultShell;
-  BeginOptions(Parser, [
-    OptionDefinition('x', 'left', True, OptionLeft),
-    OptionDefinition('y', 'top', True, OptionTop),
-    OptionDefinition('e', 'execute', True, OptionProgram)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('x', 'left', True, OptionLeft),
+    CommandOption('y', 'top', True, OptionTop),
+    CommandOption('e', 'execute', True, OptionProgram)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
-      OptionLeft: Left := StrToIntDef(string(Value), Left);
-      OptionTop: Top := StrToIntDef(string(Value), Top);
-      OptionProgram: ProgramPath := string(Value);
+      OptionLeft: Left := StrToIntDef(Value, Left);
+      OptionTop: Top := StrToIntDef(Value, Top);
+      OptionProgram: ProgramPath := Value;
     end;
+  CommandLine.Free;
   if ConnectToDisplay <> ErrorNone then
-    Fail(1, 'no display server', []);
+    Fail(1, 'no display server');
   Remembered := RememberedTerminalSettings;
   TerminalPointTenths := Remembered.FontPointTenths;
   Window := TTerminalWindow.Create(Left, Top, Remembered.Rows, Remembered.Columns);
   Window.Show;
-  if not Window.StartShell(PChar(ProgramPath)) then
+  if not Window.StartShell(ProgramPath) then
     Halt(1);
   RunMessageLoop;
 end.

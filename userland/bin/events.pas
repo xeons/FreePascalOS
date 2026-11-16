@@ -37,24 +37,26 @@
 program events;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Files,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Numbers,
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: events [-n COUNT]'#10 +
+  Usage = 'Usage: events [-n COUNT]'#10 +
     'Show the input events of the keyboards and pointing devices.'#10 +
     '  -n COUNT   stop after COUNT events'#10;
   OptionCount = 1;
-  EventsPath: PChar = '/dev/events';
+  EventsPath = '/dev/events';
 
-function PressText(Value: LongInt): PChar;
+function PressText(Value: LongInt): string;
 begin
   if Value <> 0 then
     Result := 'press'
@@ -64,40 +66,33 @@ end;
 
 procedure PrintEvent(const Event: TAbiInputEvent);
 var
-  Character: array[0..4] of Char;
+  Line: string;
 begin
   case Event.Kind of
     InputEventKey:
       begin
-        WriteFormatted(StandardOutput, 'key 0x%s %s', [ArgumentText(FormatText('%X', [ArgumentUnsigned(Event.Code)])),
-          ArgumentText(PressText(Event.Value))]);
+        Line := Format('key 0x%X %s', [Event.Code, PressText(Event.Value)]);
         if (Event.Character >= 32) and (Event.Character < 127) then
-        begin
-          Character[0] := ' ';
-          Character[1] := Char(Event.Character);
-          Character[2] := #0;
-          WriteFormatted(StandardOutput, '%s', [ArgumentText(@Character[0])]);
-        end;
-        WriteFormatted(StandardOutput, #10, []);
+          Line := Line + ' ' + Char(Event.Character);
       end;
     InputEventMotion:
-      WriteFormatted(StandardOutput, 'motion %d %d'#10, [ArgumentNumber(Event.X), ArgumentNumber(Event.Y)]);
+      Line := Format('motion %d %d', [Event.X, Event.Y]);
     InputEventPosition:
-      WriteFormatted(StandardOutput, 'position %d %d'#10, [ArgumentNumber(Event.X), ArgumentNumber(Event.Y)]);
+      Line := Format('position %d %d', [Event.X, Event.Y]);
     InputEventButton:
-      WriteFormatted(StandardOutput, 'button %u %s'#10, [ArgumentUnsigned(Event.Code),
-        ArgumentText(PressText(Event.Value))]);
+      Line := Format('button %u %s', [Event.Code, PressText(Event.Value)]);
     InputEventWheel:
-      WriteFormatted(StandardOutput, 'wheel %d'#10, [ArgumentNumber(Event.Value)]);
+      Line := Format('wheel %d', [Event.Value]);
   else
-    WriteFormatted(StandardOutput, 'event %u'#10, [ArgumentUnsigned(Event.Kind)]);
+    Line := Format('event %u', [Event.Kind]);
   end;
+  PrintStringLine(Line);
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Limit: QWord;
   Shown: QWord;
   Handle: Int64;
@@ -106,21 +101,21 @@ var
   Index: Integer;
 begin
   Limit := 0;
-  BeginOptions(Parser, [OptionDefinition('n', 'count', True, OptionCount)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('n', 'count', True, OptionCount)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     if Code = OptionCount then
-      if not ParseUnsigned(OptionValue, Limit) or (Limit = 0) then
-        FailWithUsageHint('the count must be a positive number', []);
-  if Parser.OperandCount <> 0 then
-    FailWithUsageHint('no operands are taken', []);
+      if not ParseUnsignedDecimal(OptionValue, Limit) or (Limit = 0) then
+        FailWithUsageHint('the count must be a positive number');
+  if CommandLine.OperandCount <> 0 then
+    FailWithUsageHint('no operands are taken');
   Handle := OpenFile(EventsPath, OpenRead);
   if Handle < 0 then
-    FailWithError(1, LongInt(-Handle), '%s', [ArgumentText(EventsPath)]);
+    FailWithError(1, LongInt(-Handle), EventsPath);
   Shown := 0;
   repeat
     Got := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
     if Got <= 0 then
-      FailWithError(1, LongInt(-Got), 'reading %s', [ArgumentText(EventsPath)]);
+      FailWithError(1, LongInt(-Got), 'reading ' + EventsPath);
     for Index := 0 to Got div SizeOf(TAbiInputEvent) - 1 do
     begin
       PrintEvent(Buffer[Index]);

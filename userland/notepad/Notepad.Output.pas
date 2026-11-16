@@ -32,12 +32,12 @@ procedure Say(const Text: string);
 implementation
 
 uses
-  Sys.Format,
-  Sys.Streams;
+  Sys.Streams,
+  Util.Output;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine(Text);
   FlushStream(StandardOutput);
 end;
 

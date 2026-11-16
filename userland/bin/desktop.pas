@@ -89,8 +89,8 @@ program DesktopShell;
 
 uses
   Abi.SystemCalls,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Windowing.Connection,
   Windowing.Windows,
   Windowing.Shell,
@@ -101,7 +101,7 @@ uses
   Configuration.Locations;
 
 const
-  Usage: PChar = 'Usage: desktop [-w IMAGE]'#10 +
+  Usage = 'Usage: desktop [-w IMAGE]'#10 +
     'Show the desktop and the taskbar (the display server''s shell).'#10 +
     '  -w IMAGE  a wallpaper image (shown once images can be read)'#10;
   OptionWallpaper = 1;
@@ -109,16 +109,20 @@ const
 
 procedure ReadOptions;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
 begin
-  BeginOptions(Parser, [OptionDefinition('w', 'wallpaper', True, OptionWallpaper)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
-    if Code = OptionWallpaper then
-      WallpaperImagePath := OptionValue;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('no operands are taken', []);
+  CommandLine := TCommandLine.Create([CommandOption('w', 'wallpaper', True, OptionWallpaper)], Usage);
+  try
+    while CommandLine.NextOption(Code, OptionValue) do
+      if Code = OptionWallpaper then
+        WallpaperImagePath := OptionValue;
+    if CommandLine.OperandCount > 0 then
+      FailWithUsageHint('no operands are taken');
+  finally
+    CommandLine.Free;
+  end;
 end;
 
 { A wallpaper named with -w is kept for the next time; without one, the
@@ -144,9 +148,9 @@ begin
   ReadOptions;
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the display server', []);
+    FailWithError(1, Error, 'the display server');
   if not RegisterAsShell then
-    Fail(1, 'another shell is running', []);
+    Fail(1, 'another shell is running');
   RememberWallpaper;
   { The desktop's windows never close by themselves; it runs until the
     display server goes. }

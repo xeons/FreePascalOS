@@ -56,8 +56,8 @@ program ControlsTour;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
+  Util.Output,
   Drawing.Rectangles,
   Windowing.Protocol,
   Windowing.Connection,
@@ -119,7 +119,7 @@ type
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, '%s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine(Text);
   FlushStream(StandardOutput);
 end;
 

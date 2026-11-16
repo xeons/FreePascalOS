@@ -45,7 +45,6 @@ implementation
 uses
   SysUtils,
   Sys.LocalTime,
-  Sys.TimeZones,
   Audio.Outputs,
   Util.Accounts,
   Util.AccountChanges,
@@ -117,12 +116,11 @@ end;
 function RemoveAccount(const Peer: TAbiChannelPeer; const Request: TSystemSettingsRequest): LongInt;
 var
   Name: string;
-  Caller: PChar;
+  Caller: string;
 begin
   Name := TextOf(Request.UserName);
   { The caller's own account stays while they are using it. }
-  Caller := UserNameOf(Peer.UserId);
-  if (Caller <> nil) and (string(Caller) = Name) then
+  if FindUserName(Peer.UserId, Caller) and (Caller = Name) then
     Exit(ErrorBusy);
   Result := RemoveUser(Name, (Request.Flags and SystemFlagRemoveHome) <> 0);
   if Result = ErrorNone then

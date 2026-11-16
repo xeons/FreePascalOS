@@ -40,19 +40,22 @@
 program ShowDisplayModes;
 
 {$mode objfpc}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Format,
   Sys.Streams,
   Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Windowing.Connection,
   Windowing.Displays;
 
 const
-  Usage: PChar = 'Usage: displaymode [-d NUMBER] [-l | [-r] WIDTHxHEIGHT]'#10 +
+  Usage = 'Usage: displaymode [-d NUMBER] [-l | [-r] WIDTHxHEIGHT]'#10 +
     'Show the displays, list a display''s modes, or set one, in the display server.'#10 +
     '  -d NUMBER       the display (0, the first, by default)'#10 +
     '  -l              list its modes'#10 +
@@ -63,11 +66,9 @@ const
 
 procedure SayDisplay(Number: LongInt; const Information: TDisplayInformation);
 begin
-  WriteFormatted(StandardOutput, 'display %d: %dx%d, at %d,%d size %dx%d, scale %u%%, %u DPI'#10,
-    [ArgumentNumber(Number), ArgumentNumber(Information.Width), ArgumentNumber(Information.Height),
-     ArgumentNumber(Information.Left), ArgumentNumber(Information.Top), ArgumentNumber(Information.LogicalWidth),
-     ArgumentNumber(Information.LogicalHeight), ArgumentUnsigned(Information.ScalePercent),
-     ArgumentUnsigned(Information.Dpi)]);
+  PrintStringLine(Format('display %d: %dx%d, at %d,%d size %dx%d, scale %u%%, %u DPI',
+    [Number, Information.Width, Information.Height, Information.Left, Information.Top,
+     Information.LogicalWidth, Information.LogicalHeight, Information.ScalePercent, Information.Dpi]));
   FlushStream(StandardOutput);
 end;
 
@@ -90,7 +91,7 @@ var
   Width: LongInt;
   Height: LongInt;
   Current: Boolean;
-  Mark: PChar;
+  Mark: string;
 begin
   Index := 0;
   while DescribeDisplayMode(Number, Index, Width, Height, Current) do
@@ -98,7 +99,7 @@ begin
     Mark := '';
     if Current then
       Mark := ' *';
-    WriteFormatted(StandardOutput, '%dx%d%s'#10, [ArgumentNumber(Width), ArgumentNumber(Height), ArgumentText(Mark)]);
+    PrintStringLine(Format('%dx%d%s', [Width, Height, Mark]));
     Inc(Index);
   end;
 end;
@@ -108,17 +109,16 @@ var
   Information: TDisplayInformation;
 begin
   if not SetDisplayMode(Number, Width, Height, Information, Remember) then
-    Fail(1, 'there is no display %d', [ArgumentNumber(Number)]);
+    Fail(1, Format('there is no display %d', [Number]));
   SayDisplay(Number, Information);
   if (Information.Width <> LongInt(Width)) or (Information.Height <> LongInt(Height)) then
-    Fail(1, 'display %d cannot be set to %ux%u', [ArgumentNumber(Number), ArgumentUnsigned(Width),
-      ArgumentUnsigned(Height)]);
+    Fail(1, Format('display %d cannot be set to %ux%u', [Number, Width, Height]));
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Number: QWord;
   List: Boolean;
   Width: LongWord;
@@ -129,28 +129,28 @@ begin
   Number := 0;
   List := False;
   Remember := False;
-  BeginOptions(Parser, [OptionDefinition('d', 'display', True, OptionNumber),
-    OptionDefinition('l', 'list', False, OptionList),
-    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('d', 'display', True, OptionNumber),
+    CommandOption('l', 'list', False, OptionList),
+    CommandOption('r', 'remember', False, OptionRemember)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionNumber:
-        if not ParseUnsigned(OptionValue, Number) or (Number > 63) then
-          FailWithUsageHint('the display must be a number', []);
+        if not ParseUnsignedDecimal(OptionValue, Number) or (Number > 63) then
+          FailWithUsageHint('the display must be a number');
       OptionList:
         List := True;
       OptionRemember:
         Remember := True;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('one mode at most', []);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint('one mode at most');
   Width := 0;
   Height := 0;
-  if (Parser.OperandCount = 1) and not ParseSize(Parser.Operands[0], Width, Height) then
-    FailWithUsageHint('the mode must be WIDTHxHEIGHT', []);
+  if (CommandLine.OperandCount = 1) and not ParseSize(PChar(CommandLine.Operands[0]), Width, Height) then
+    FailWithUsageHint('the mode must be WIDTHxHEIGHT');
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the display server', []);
+    FailWithError(1, Error, 'the display server');
   if Width > 0 then
     ChangeMode(LongInt(Number), Width, Height, Remember)
   else if List then

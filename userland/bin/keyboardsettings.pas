@@ -46,21 +46,21 @@ program ShowKeyboardSettings;
 {$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
   Sys.Keyboard,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Windowing.Connection,
   Windowing.KeyboardSettings,
   Configuration.Settings,
   Configuration.Locations;
 
 const
-  Usage: PChar = 'Usage: keyboardsettings [-r] [-d DELAY] [-s RATE] [LAYOUT]'#10 +
+  Usage = 'Usage: keyboardsettings [-r] [-d DELAY] [-s RATE] [LAYOUT]'#10 +
     '       keyboardsettings -l'#10 +
     'Show the keyboards'' layout and key repeat, or change them:'#10 +
     '  LAYOUT              us, uk, de or fr (-l lists them)'#10 +
@@ -74,12 +74,12 @@ const
 
 procedure SaySettings(const Settings: TKeyboardSettings);
 begin
-  WriteFormatted(StandardOutput, 'layout %s, repeat delay %u, rate %u'#10,
-    [ArgumentText(@Settings.Layout[0]), ArgumentUnsigned(Settings.RepeatDelay), ArgumentUnsigned(Settings.RepeatRate)]);
+  PrintStringLine(Format('layout %s, repeat delay %u, rate %u',
+    [string(PChar(@Settings.Layout[0])), Settings.RepeatDelay, Settings.RepeatRate]));
   FlushStream(StandardOutput);
 end;
 
-function IsKnownLayout(Name: PChar): Boolean;
+function IsKnownLayout(const Name: string): Boolean;
 var
   Index: Integer;
   Layout: TKeyboardLayoutDescription;
@@ -87,7 +87,7 @@ begin
   Index := 0;
   while DescribeKeyboardLayout(Index, Layout) do
   begin
-    if TextIsEqual(@Layout.Name[0], Name) then
+    if string(PChar(@Layout.Name[0])) = Name then
       Exit(True);
     Inc(Index);
   end;
@@ -102,16 +102,15 @@ begin
   Index := 0;
   while DescribeKeyboardLayout(Index, Layout) do
   begin
-    WriteFormatted(StandardOutput, '%s %s'#10, [ArgumentText(@Layout.Name[0]), ArgumentText(@Layout.Description[0])]);
+    PrintStringLine(string(PChar(@Layout.Name[0])) + ' ' + string(PChar(@Layout.Description[0])));
     Inc(Index);
   end;
 end;
 
-function NumberIn(Text: PChar; Lowest, Highest: Int64; What: PChar): Int64;
+function NumberIn(const Text: string; Lowest, Highest: Int64; const What: string): Int64;
 begin
-  if not ParseInteger(Text, Result) or (Result < Lowest) or (Result > Highest) then
-    FailWithUsageHint('the %s must be a number from %d to %d', [ArgumentText(What), ArgumentNumber(Lowest),
-      ArgumentNumber(Highest)]);
+  if not ParseDecimal(Text, Result) or (Result < Lowest) or (Result > Highest) then
+    FailWithUsageHint(Format('the %s must be a number from %d to %d', [What, Lowest, Highest]));
 end;
 
 procedure RememberForUser(const Settings: TKeyboardSettings);
@@ -121,18 +120,18 @@ var
 begin
   Store := OpenSettings;
   if not Store.HasScope(ScopeUser) then
-    Fail(1, 'there are no user settings to keep them in (HOME is not set)', []);
+    Fail(1, 'there are no user settings to keep them in (HOME is not set)');
   RememberKeyboardSettings(Store, Settings);
   Error := Store.Flush;
   if Error <> ErrorNone then
-    FailWithError(1, Error, '%s', [ArgumentText(PChar(Store.Scopes[ScopeUser].Storage.Location))]);
+    FailWithError(1, Error, Store.Scopes[ScopeUser].Storage.Location);
   Store.Free;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  OptionValue: PChar;
+  OptionValue: string;
   Delay: Int64;
   Rate: Int64;
   Remember: Boolean;
@@ -145,11 +144,11 @@ begin
   Delay := -1;
   Rate := -1;
   Remember := False;
-  BeginOptions(Parser, [OptionDefinition('d', 'delay', True, OptionDelay),
-    OptionDefinition('s', 'rate', True, OptionRate),
-    OptionDefinition('l', 'list', False, OptionList),
-    OptionDefinition('r', 'remember', False, OptionRemember)], Usage);
-  while NextOption(Parser, Code, OptionValue) do
+  CommandLine := TCommandLine.Create([CommandOption('d', 'delay', True, OptionDelay),
+    CommandOption('s', 'rate', True, OptionRate),
+    CommandOption('l', 'list', False, OptionList),
+    CommandOption('r', 'remember', False, OptionRemember)], Usage);
+  while CommandLine.NextOption(Code, OptionValue) do
     case Code of
       OptionDelay:
         Delay := NumberIn(OptionValue, MinimumKeyRepeatDelay, MaximumKeyRepeatDelay, 'delay');
@@ -163,25 +162,26 @@ begin
       OptionRemember:
         Remember := True;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if (Parser.OperandCount = 1) and not IsKnownLayout(Parser.Operands[0]) then
-    Fail(1, 'there is no keyboard layout ''%s'' (keyboardsettings -l lists them)', [ArgumentText(Parser.Operands[0])]);
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if (CommandLine.OperandCount = 1) and not IsKnownLayout(CommandLine.Operands[0]) then
+    Fail(1, Format('there is no keyboard layout ''%s'' (keyboardsettings -l lists them)',
+      [CommandLine.Operands[0]]));
 
   ThroughServer := ConnectToDisplay = ErrorNone;
   if ThroughServer then
   begin
     if not AskKeyboardSettings(Settings) then
-      Fail(1, 'the display server did not say its keyboard settings', []);
+      Fail(1, 'the display server did not say its keyboard settings');
   end
   else
     GetKeyboardSettings(Settings);
   Applied := Settings;
-  Changing := (Parser.OperandCount = 1) or (Delay >= 0) or (Rate >= 0);
+  Changing := (CommandLine.OperandCount = 1) or (Delay >= 0) or (Rate >= 0);
   if Changing then
   begin
-    if Parser.OperandCount = 1 then
-      CopyText(@Settings.Layout[0], Parser.Operands[0], KeyboardLayoutNameCapacity);
+    if CommandLine.OperandCount = 1 then
+      StrPLCopy(@Settings.Layout[0], CommandLine.Operands[0], KeyboardLayoutNameCapacity - 1);
     if Delay >= 0 then
       Settings.RepeatDelay := LongWord(Delay);
     if Rate >= 0 then
@@ -189,13 +189,13 @@ begin
     if ThroughServer then
     begin
       if not ChangeKeyboardSettings(Settings, Applied) then
-        Fail(1, 'the display server did not change its keyboard settings', []);
+        Fail(1, 'the display server did not change its keyboard settings');
     end
     else
     begin
       Error := SetKeyboardSettings(Settings);
       if Error <> ErrorNone then
-        FailWithError(1, Error, 'cannot change the keyboard settings', []);
+        FailWithError(1, Error, 'cannot change the keyboard settings');
       GetKeyboardSettings(Applied);
     end;
   end;

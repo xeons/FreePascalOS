@@ -56,7 +56,8 @@ uses
   Abi.SystemCalls,
   Sys.Files,
   Sys.Streams,
-  Sys.Time;
+  Sys.Time,
+  Util.Output;
 
 const
   ManagerLogName = 'servicemanager';
@@ -93,7 +94,7 @@ end;
 
 procedure Say(const Text: string);
 begin
-  WriteLine(StandardOutput, PChar('servicemanager: ' + Text));
+  PrintStringLine('servicemanager: ' + Text);
   FlushStream(StandardOutput);
   if ManagerLog = NoHandle then
     ManagerLog := OpenFile(PChar(LogDirectory + '/' + ManagerLogName + '.log'), LogMode);

@@ -48,6 +48,7 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
+  Util.Paths,
   Controls.FileNames,
   FileManager.Paths;
 
@@ -79,7 +80,7 @@ end;
 function DescribeItem(const Path: string; out Item: TFolderItem): LongInt;
 var
   Information: TFileInformation;
-  Target: array[0..PathCapacity - 1] of Char;
+  Target: string;
 begin
   Item := Default(TFolderItem);
   Item.Name := LastPartOf(Path);
@@ -90,8 +91,8 @@ begin
   if Information.Kind <> KindSymbolicLink then
     Exit;
   Item.IsLink := True;
-  if ReadSymbolicLink(PChar(Path), @Target[0], PathCapacity) = ErrorNone then
-    Item.LinkTarget := StrPas(@Target[0]);
+  if ReadLinkTarget(Path, Target) = ErrorNone then
+    Item.LinkTarget := Target;
   { Described by what it points to; if it leads nowhere, as itself. }
   if GetFileInformation(PChar(Path), Information) = ErrorNone then
     TakeInformation(Item, Information)

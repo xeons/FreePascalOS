@@ -77,7 +77,9 @@ implementation
 
 uses
   SysUtils,
+  Abi.SystemCalls,
   Sys.Files,
+  Util.Paths,
   Windowing.Windows,
   Controls.Base,
   Controls.Dialogs,
@@ -122,14 +124,11 @@ end;
 { Where the file dialogs start: the document's folder, or the current
   one. }
 function TDocumentWindow.StartFolder: string;
-var
-  Buffer: array[0..PathCapacity - 1] of Char;
 begin
   if FPath <> '' then
     Exit(ParentFolderOf(FPath));
-  if GetCurrentDirectory(@Buffer[0], PathCapacity) < 0 then
-    Exit('/');
-  Result := StrPas(@Buffer[0]);
+  if CurrentDirectoryPath(Result) <> ErrorNone then
+    Result := '/';
 end;
 
 function TDocumentWindow.ConfirmDiscard: Boolean;

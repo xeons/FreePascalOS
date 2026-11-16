@@ -130,14 +130,14 @@ function TSessionManager.StartSessionOf(const Name: string): Boolean;
 var
   Account: TLoginAccount;
 begin
-  Result := FindLoginAccount(PChar(Name), Account) and FSession.Start(Account);
+  Result := FindLoginAccount(Name, Account) and FSession.Start(Account);
 end;
 
 function TSessionManager.LoginAttempted(const Name, Password: string): Boolean;
 var
   Account: TLoginAccount;
 begin
-  Result := FindLoginAccount(PChar(Name), Account) and PasswordIsRight(Account, PChar(Password));
+  Result := FindLoginAccount(Name, Account) and PasswordIsRight(Account, PChar(Password));
   if not Result then
   begin
     Say('login refused for ' + Name);
@@ -159,12 +159,12 @@ end;
 
 procedure TSessionManager.Start;
 var
-  AutomaticName: array[0..LoginNameCapacity - 1] of Char;
+  AutomaticName: string;
 begin
-  if AutomaticLoginUser(@AutomaticName[0], LoginNameCapacity) then
+  if AutomaticLoginName(AutomaticName) then
   begin
-    Say('logging ' + string(PChar(@AutomaticName[0])) + ' in automatically');
-    if StartSessionOf(string(PChar(@AutomaticName[0]))) then
+    Say('logging ' + AutomaticName + ' in automatically');
+    if StartSessionOf(AutomaticName) then
       Exit;
   end;
   FWindow.Present;
@@ -175,15 +175,15 @@ var
   Error: LongInt;
 begin
   if CurrentUserId <> RootId then
-    Fail(1, 'only root may run the session manager', []);
+    Fail(1, 'only root may run the session manager');
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'the display server', []);
+    FailWithError(1, Error, 'the display server');
   { The login window comes and goes; the manager stays. }
   QuitWhenLastWindowCloses := False;
   Manager := TSessionManager.Create;
   if not OpenSessionPort(Manager.Session) then
-    Fail(1, 'another session manager is running', []);
+    Fail(1, 'another session manager is running');
   Manager.Start;
   RunMessageLoop;
   if Manager.Quitting then

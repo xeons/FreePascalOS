@@ -87,10 +87,10 @@ uses
   SysUtils,
   Drawing.Rectangles,
   Abi.SystemCalls,
-  Sys.Errors,
   Sys.ProcessList,
   Sys.Notifications,
   Sys.Processes,
+  Util.Messages,
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.Shell,
@@ -270,8 +270,8 @@ begin
   Error := AskProcessToEnd(Window.ProcessId, EndReasonAsked);
   if Error <> ErrorNone then
   begin
-    Say('error ' + Window.Title + ': ' + StrPas(ErrorMessage(Error)));
-    ShowMessageBox('Task Manager', 'Could not end ' + Window.Title + ':'#10#10 + StrPas(ErrorMessage(Error)),
+    Say('error ' + Window.Title + ': ' + ErrorText(Error));
+    ShowMessageBox('Task Manager', 'Could not end ' + Window.Title + ':'#10#10 + ErrorText(Error),
       MessageOk, SignError, FWindow);
     Exit;
   end;

@@ -77,6 +77,7 @@ uses
   Sys.Notifications,
   Sys.Processes,
   Util.Accounts,
+  Util.Messages,
   Controls.Dialogs,
   Controls.MessageBoxes,
   TaskManager.EndWatch,
@@ -106,7 +107,7 @@ procedure NoteFailure(var Failures: string; const Target: TProcessTarget; Error:
 var
   Line: string;
 begin
-  Line := Describe(Target) + ': ' + StrPas(ErrorMessage(Error));
+  Line := Describe(Target) + ': ' + ErrorText(Error);
   Say('error ' + Line);
   if Failures <> '' then
     Failures := Failures + #10;

@@ -256,7 +256,7 @@ begin
   for Index := 0 to IconCount - 1 do
   begin
     Picture := PictureBounds(Index);
-    SayPlace('icon-' + string(DesktopPrograms[Index].Command), Self, (Picture.Left + Picture.Right) div 2,
+    SayPlace('icon-' + DesktopPrograms[Index].Command, Self, (Picture.Left + Picture.Right) div 2,
       (Picture.Top + Picture.Bottom) div 2);
   end;
 end;

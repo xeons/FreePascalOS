@@ -33,12 +33,12 @@ procedure Say(const Text: string);
 implementation
 
 uses
-  Sys.Format,
-  Sys.Streams;
+  Sys.Streams,
+  Util.Output;
 
 procedure Say(const Text: string);
 begin
-  WriteFormatted(StandardOutput, 'systemsettings: %s'#10, [ArgumentText(PChar(Text))]);
+  PrintStringLine('systemsettings: ' + Text);
   FlushStream(StandardOutput);
 end;
 
