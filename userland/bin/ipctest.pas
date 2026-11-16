@@ -87,6 +87,7 @@ var
   Manual: Int64;
   Third: Int64;
   NotWaitable: Int64;
+  AlwaysReady: Int64;
 begin
   Automatic := CreateEvent(False, False);
   Manual := CreateEvent(True, False);
@@ -102,9 +103,12 @@ begin
   Check('manual reset: reset', TimedOut(WaitForHandles([Manual], 20)));
   SetEvent(Third);
   Check('several handles: the signaled one', WaitForHandles([Automatic, Manual, Third], 1000) = 2);
-  NotWaitable := KernelOpen('/bin/ipctest', OpenRead);
+  AlwaysReady := KernelOpen('/bin/ipctest', OpenRead);
+  Check('a file is always ready', WaitForHandles([AlwaysReady], 0) = 0);
+  KernelClose(AlwaysReady);
+  NotWaitable := CreateSection(4096);
   Check('a handle that cannot be waited on', WaitForHandles([NotWaitable], 0) = -ErrorUnsupported);
-  KernelClose(NotWaitable);
+  CloseHandle(NotWaitable);
   Check('a bad handle', WaitForHandles([60], 0) = -ErrorBadHandle);
   CloseHandle(Automatic);
   CloseHandle(Manual);

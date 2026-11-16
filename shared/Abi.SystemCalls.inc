@@ -424,10 +424,10 @@ const
     TAbiKeyboardLayout; ErrorNotFound after the last. }
   CallDescribeKeyboardLayout = 103;
 
-  { 104-123: networking (sockets, interfaces, routes), in
+  { 104-124: networking (sockets, interfaces, routes, statistics), in
     Abi.Networking.inc. }
 
-  CallCount = 124;
+  CallCount = 125;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;

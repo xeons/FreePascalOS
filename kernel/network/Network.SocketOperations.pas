@@ -37,12 +37,13 @@ uses
   Network.Sockets;
 
 { A new socket (referenced once). CallerIsRoot: raw sockets are root's. }
-function CreateSocket(Family, Kind, Protocol: LongWord; OwnerUserId: LongWord; CallerIsRoot: Boolean;
+function CreateSocket(Family, Kind, Protocol: LongWord; constref Owner: TSocketOwner; CallerIsRoot: Boolean;
   out Socket: PSocket): LongInt;
 function BindSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint; CallerIsRoot: Boolean): LongInt;
 function ListenOnSocket(Socket: PSocket; Backlog: LongWord): LongInt;
-{ NewSocket is referenced once, for its handle. }
-function AcceptOnSocket(Socket: PSocket; out NewSocket: PSocket; out Peer: TNetworkEndpoint): LongInt;
+{ NewSocket is referenced once, for its handle, and belongs to Owner. }
+function AcceptOnSocket(Socket: PSocket; constref Owner: TSocketOwner; out NewSocket: PSocket;
+  out Peer: TNetworkEndpoint): LongInt;
 function ConnectSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint): LongInt;
 { Destination nil: the connected peer. }
 function SendOnSocket(Socket: PSocket; Data: PByte; Length: LongWord; Flags: LongWord;
@@ -75,7 +76,7 @@ uses
   Network.DatagramSockets,
   Network.TcpSockets;
 
-function CreateSocket(Family, Kind, Protocol: LongWord; OwnerUserId: LongWord; CallerIsRoot: Boolean;
+function CreateSocket(Family, Kind, Protocol: LongWord; constref Owner: TSocketOwner; CallerIsRoot: Boolean;
   out Socket: PSocket): LongInt;
 var
   BaseKind: LongWord;
@@ -113,7 +114,7 @@ begin
     Exit(ErrorInvalidArgument);
   end;
   LockNetwork;
-  Socket := AllocateSocket(BaseKind, SocketProtocol, OwnerUserId);
+  Socket := AllocateSocket(BaseKind, SocketProtocol, Owner);
   if Socket <> nil then
     Socket^.NonBlocking := (Kind and SocketKindNonBlocking) <> 0;
   UnlockNetwork;
@@ -172,14 +173,15 @@ begin
   UnlockNetwork;
 end;
 
-function AcceptOnSocket(Socket: PSocket; out NewSocket: PSocket; out Peer: TNetworkEndpoint): LongInt;
+function AcceptOnSocket(Socket: PSocket; constref Owner: TSocketOwner; out NewSocket: PSocket;
+  out Peer: TNetworkEndpoint): LongInt;
 begin
   NewSocket := nil;
   Peer := MakeEndpoint(AnyAddress, 0);
   if Socket^.Protocol <> SocketProtocolTcp then
     Exit(ErrorUnsupported);
   LockNetwork;
-  Result := AcceptOnTcpSocket(Socket, NewSocket);
+  Result := AcceptOnTcpSocket(Socket, Owner, NewSocket);
   if Result = ErrorNone then
     Peer := NewSocket^.Peer;
   UnlockNetwork;

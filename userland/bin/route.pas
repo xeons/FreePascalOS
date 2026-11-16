@@ -69,39 +69,6 @@ type
 var
   HostRoute: Boolean = False;
 
-function ComesBefore(constref First, Second: TAbiRoute): Boolean;
-var
-  FirstDestination: LongWord;
-  SecondDestination: LongWord;
-begin
-  if (First.Destination.PrefixLength = 0) <> (Second.Destination.PrefixLength = 0) then
-    Exit(First.Destination.PrefixLength = 0);
-  FirstDestination := Ipv4AddressValue(InterfaceAddressHost(First.Destination));
-  SecondDestination := Ipv4AddressValue(InterfaceAddressHost(Second.Destination));
-  if FirstDestination <> SecondDestination then
-    Exit(FirstDestination < SecondDestination);
-  Result := First.Destination.PrefixLength > Second.Destination.PrefixLength;
-end;
-
-procedure SortRoutes(var Routes: TRouteList);
-var
-  Index: Integer;
-  Place: Integer;
-  Held: TAbiRoute;
-begin
-  for Index := 1 to High(Routes) do
-  begin
-    Held := Routes[Index];
-    Place := Index;
-    while (Place > 0) and ComesBefore(Held, Routes[Place - 1]) do
-    begin
-      Routes[Place] := Routes[Place - 1];
-      Dec(Place);
-    end;
-    Routes[Place] := Held;
-  end;
-end;
-
 procedure ShowRoutes;
 var
   Routes: TRouteList;
@@ -111,7 +78,6 @@ var
   GatewayText: array[0..Ipv4AddressTextCapacity - 1] of Char;
   MaskText: array[0..Ipv4AddressTextCapacity - 1] of Char;
   Flags: array[0..7] of Char;
-  Gateway: TInternetAddress;
 begin
   Error := ListRoutes(Routes);
   if Error <> ErrorNone then
@@ -123,20 +89,9 @@ begin
   begin
     FormatInternetAddress(InterfaceAddressHost(Routes[Index].Destination), @DestinationText[0],
       SizeOf(DestinationText));
-    Gateway := AnyIpv4Address;
-    Gateway.Bytes[0] := Routes[Index].Gateway[0];
-    Gateway.Bytes[1] := Routes[Index].Gateway[1];
-    Gateway.Bytes[2] := Routes[Index].Gateway[2];
-    Gateway.Bytes[3] := Routes[Index].Gateway[3];
-    FormatInternetAddress(Gateway, @GatewayText[0], SizeOf(GatewayText));
+    FormatInternetAddress(RouteGateway(Routes[Index]), @GatewayText[0], SizeOf(GatewayText));
     FormatNetmask(Routes[Index].Destination.PrefixLength, @MaskText[0], SizeOf(MaskText));
-    Flags[0] := #0;
-    if (Routes[Index].Flags and RouteFlagUp) <> 0 then
-      CopyText(@Flags[0], 'U', SizeOf(Flags));
-    if (Routes[Index].Flags and RouteFlagGateway) <> 0 then
-      CopyText(@Flags[TextLength(@Flags[0])], 'G', SizeOf(Flags) - TextLength(@Flags[0]));
-    if Routes[Index].Destination.PrefixLength = 32 then
-      CopyText(@Flags[TextLength(@Flags[0])], 'H', SizeOf(Flags) - TextLength(@Flags[0]));
+    FormatRouteFlags(Routes[Index], @Flags[0], SizeOf(Flags));
     WriteFormatted(StandardOutput, '%-15s %-15s %-15s %-5s %-6u %s'#10, [ArgumentText(@DestinationText[0]),
       ArgumentText(@GatewayText[0]), ArgumentText(@MaskText[0]), ArgumentText(@Flags[0]),
       ArgumentUnsigned(Routes[Index].Metric), ArgumentText(@Routes[Index].InterfaceName[0])]);

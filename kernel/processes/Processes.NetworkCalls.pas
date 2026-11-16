@@ -19,8 +19,9 @@
 {
   System calls that list and configure the network: the interfaces,
   the routes, the ARP cache, the sockets and connections, and the DNS
-  servers (CallListNetworkInterfaces to CallSetDnsServers). Anyone may
-  list; changing is root's (ErrorNotPermitted), as for the clock.
+  servers (CallListNetworkInterfaces to CallSetDnsServers), and the
+  protocols' counters (CallGetNetworkStatistics). Anyone may list;
+  changing is root's (ErrorNotPermitted), as for the clock.
 
   A listing is made in a kernel buffer under the network lock and then
   copied out, so the program sees one consistent moment.
@@ -40,6 +41,7 @@ function PerformListArpEntries(BufferAddress, Capacity: QWord): Int64;
 function PerformListSockets(BufferAddress, Capacity: QWord): Int64;
 function PerformGetDnsServers(ServersAddress: QWord): Int64;
 function PerformSetDnsServers(ServersAddress: QWord): Int64;
+function PerformGetNetworkStatistics(StatisticsAddress: QWord): Int64;
 
 implementation
 
@@ -57,11 +59,8 @@ uses
   Network.Routing,
   Network.Arp,
   Network.SocketListing,
+  Network.Statistics,
   Network.Dns;
-
-const
-  { The most records one listing call returns. }
-  MaximumListedRecords = 256;
 
 type
   TListKind = (ListInterfaces, ListRoutes, ListArpEntries, ListSocketEntries);
@@ -138,8 +137,8 @@ var
   Copied: QWord;
   Error: LongInt;
 begin
-  if Capacity > MaximumListedRecords then
-    Capacity := MaximumListedRecords;
+  if Capacity > MaximumListedNetworkRecords then
+    Capacity := MaximumListedNetworkRecords;
   Records := nil;
   if Capacity > 0 then
   begin
@@ -150,6 +149,10 @@ begin
       Exit(Failure(ErrorOutOfMemory));
   end;
   Count := FillRecords(Kind, Records, LongWord(Capacity));
+  { More than a listing holds: the program sees a full listing, not a
+    count it could never be given. }
+  if Count > MaximumListedNetworkRecords then
+    Count := MaximumListedNetworkRecords;
   Copied := Count;
   if Copied > Capacity then
     Copied := Capacity;
@@ -260,6 +263,16 @@ begin
   if Error = ErrorNone then
     Error := SetDnsServers(Servers);
   Result := Failure(Error);
+end;
+
+function PerformGetNetworkStatistics(StatisticsAddress: QWord): Int64;
+var
+  Statistics: TAbiNetworkStatistics;
+begin
+  LockNetwork;
+  TakeNetworkStatistics(Statistics);
+  UnlockNetwork;
+  Result := Failure(CopyToUser(StatisticsAddress, @Statistics, SizeOf(Statistics)));
 end;
 
 end.

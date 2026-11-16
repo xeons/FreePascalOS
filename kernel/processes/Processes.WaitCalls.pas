@@ -26,7 +26,10 @@
   records waiting), a socket's Readable event, a device's ReadyEvent (if its
   driver keeps one: a terminal's says a read would not wait), or for a
   device opened only for writing its WritableEvent (a pseudo-terminal's
-  master side: room to type). The
+  master side: room to type). A file, and a device whose driver keeps
+  no such event, is always ready, as poll says of them elsewhere: a
+  read of it does not wait for anyone else (so a program can wait on
+  its standard input and a socket together whatever the input is). The
   pseudo-handle NotificationsHandle stands for the calling process's
   notification queue (its ReadyEvent: a notification waits). The
   objects are held for the wait, which is alertable: ending or stopping
@@ -43,6 +46,8 @@ unit Processes.WaitCalls;
 
 interface
 
+{ Once, before the first system call. }
+procedure InitializeWaitCalls;
 function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 
 implementation
@@ -66,9 +71,18 @@ uses
   FileSystem.Watches,
   Network.Sockets;
 
+var
+  { Signaled from the start and never reset: what files wait on. }
+  AlwaysReadyEvent: TEvent;
+
 function Failure(Error: LongInt): Int64;
 begin
   Result := -Int64(Error);
+end;
+
+procedure InitializeWaitCalls;
+begin
+  InitializeEvent(AlwaysReadyEvent, EventKindNotification, True);
 end;
 
 { A device opened only for writing is ready when a write would not
@@ -81,12 +95,15 @@ begin
     Result := PEvent(OpenFile^.Device^.WritableEvent)
   else
     Result := PEvent(OpenFile^.Device^.ReadyEvent);
+  if Result = nil then
+    Result := @AlwaysReadyEvent;
 end;
 
 { The event that says the object is ready; nil if it cannot be waited on. }
 function ReadinessEvent(Kind: THandleKind; ObjectBody: Pointer): PEvent;
 begin
   case Kind of
+    HandleKindFile: Result := @AlwaysReadyEvent;
     HandleKindEvent: Result := @PEventObject(ObjectBody)^.Event;
     HandleKindTimer: Result := @PTimerObject(ObjectBody)^.Event;
     HandleKindProcess: Result := @PProcess(ObjectBody)^.ExitEvent;

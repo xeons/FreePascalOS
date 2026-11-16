@@ -72,7 +72,8 @@ uses
   Network.Interfaces,
   Network.IcmpSockets,
   Network.Udp,
-  Network.TcpInput;
+  Network.TcpInput,
+  Network.Statistics;
 
 const
   { The original header and the first 8 bytes of its payload. }
@@ -133,9 +134,12 @@ procedure IcmpInput(constref Datagram: TIpv4Datagram; Message: PByte; Length: Lo
 begin
   if (Length < IcmpHeaderBytes) or (InternetChecksum(Message, Length) <> 0) then
   begin
+    Inc(NetworkStatistics.Icmp.Received);
+    Inc(NetworkStatistics.Icmp.ReceiveErrors);
     CountReceiveError(Datagram.ArrivalInterface);
     Exit;
   end;
+  CountIcmpReceived(Message[0]);
   DeliverToRawSockets(Datagram, Message, Length);
   case Message[0] of
     IcmpTypeEchoRequest:

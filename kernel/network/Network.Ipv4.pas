@@ -102,6 +102,7 @@ uses
   Network.Icmp,
   Network.Udp,
   Network.TcpInput,
+  Network.Statistics,
   Memory.KernelHeap;
 
 const
@@ -137,11 +138,14 @@ var
 begin
   Payload := Datagram.Header + Datagram.HeaderLength;
   PayloadLength := Datagram.TotalLength - Datagram.HeaderLength;
+  if Datagram.Protocol in [IpProtocolIcmp, IpProtocolUdp, IpProtocolTcp] then
+    Inc(NetworkStatistics.Ip.Delivered);
   case Datagram.Protocol of
     IpProtocolIcmp: IcmpInput(Datagram, Payload, PayloadLength);
     IpProtocolUdp: UdpInput(Datagram, Payload, PayloadLength);
     IpProtocolTcp: TcpInput(Datagram, Payload, PayloadLength);
   else
+    Inc(NetworkStatistics.Ip.UnknownProtocols);
     if not Datagram.IsBroadcast then
       SendIcmpError(Datagram.Header, Datagram.TotalLength, IcmpTypeDestinationUnreachable,
         IcmpCodeProtocolUnreachable);
@@ -156,8 +160,10 @@ var
   Whole: PByte;
   WholeLength: LongWord;
 begin
+  Inc(NetworkStatistics.Ip.Received);
   if (Length < Ipv4HeaderBytes) or ((Data[0] shr 4) <> 4) then
   begin
+    Inc(NetworkStatistics.Ip.HeaderErrors);
     CountReceiveError(NetworkInterface);
     Exit;
   end;
@@ -166,6 +172,7 @@ begin
   if (Datagram.HeaderLength < Ipv4HeaderBytes) or (Datagram.TotalLength < Datagram.HeaderLength) or
      (Datagram.TotalLength > Length) or (InternetChecksum(Data, Datagram.HeaderLength) <> 0) then
   begin
+    Inc(NetworkStatistics.Ip.HeaderErrors);
     CountReceiveError(NetworkInterface);
     Exit;
   end;
@@ -179,6 +186,7 @@ begin
      IsMulticastAddress(Datagram.Destination) or
      not AcceptsDestination(NetworkInterface, Datagram.Destination, Datagram.Protocol) then
   begin
+    Inc(NetworkStatistics.Ip.AddressErrors);
     CountReceiveDrop(NetworkInterface);
     Exit;
   end;
@@ -191,6 +199,7 @@ begin
     DeliverDatagram(Datagram);
     Exit;
   end;
+  Inc(NetworkStatistics.Ip.ReassemblyFragments);
   if not AddFragment(Datagram, ReadBigEndian16(Data + 4), FragmentOffset,
        (Flags and FlagMoreFragments) <> 0, Whole, WholeLength) then
     Exit;
@@ -198,6 +207,7 @@ begin
   Datagram.Header := Whole;
   Datagram.HeaderLength := Ipv4HeaderBytes;
   Datagram.TotalLength := WholeLength;
+  Inc(NetworkStatistics.Ip.Reassembled);
   DeliverDatagram(Datagram);
   FreeKernelMemory(Whole);
 end;
@@ -326,22 +336,33 @@ var
   RoutedSource: TIpv4Address;
   Header: PByte;
 begin
+  Inc(NetworkStatistics.Ip.SendRequests);
+  if (Protocol = IpProtocolIcmp) and (Packet^.Length > 0) then
+    CountIcmpSent(PacketData(Packet)[0]);
   Result := RouteDatagram(Destination, BoundInterface, NetworkInterface, NextHop, RoutedSource);
-  if Result = ErrorNone then
+  if Result <> ErrorNone then
+    Inc(NetworkStatistics.Ip.NoRoutes)
+  else
   begin
     if Source = AnyAddress then
       Source := RoutedSource;
     if Packet^.Length + Ipv4HeaderBytes > NetworkInterface^.Mtu then
+    begin
+      Inc(NetworkStatistics.Ip.SendDiscards);
       Result := ErrorMessageTooLong;
+    end;
   end;
   if Result <> ErrorNone then
   begin
+    if Protocol = IpProtocolIcmp then
+      Inc(NetworkStatistics.Icmp.SendErrors);
     FreePacket(Packet);
     Exit;
   end;
   Header := PrependToPacket(Packet, Ipv4HeaderBytes);
   if Header = nil then
   begin
+    Inc(NetworkStatistics.Ip.SendDiscards);
     FreePacket(Packet);
     Exit(ErrorOutOfMemory);
   end;

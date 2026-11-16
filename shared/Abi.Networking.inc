@@ -113,6 +113,9 @@ const
   CallGetDnsServers = 122;
   { (ServersAddress): new DNS servers. Root only. }
   CallSetDnsServers = 123;
+  { (StatisticsAddress): the protocols' counters since the start, a
+    TAbiNetworkStatistics (netstat -s). Anyone may read them. }
+  CallGetNetworkStatistics = 124;
 
   AddressFamilyUnspecified = 0;
   AddressFamilyIPv4 = 2;
@@ -182,6 +185,9 @@ const
   SocketOptionReadableBytes = 12;
 
   MaximumListenBacklog = 64;
+  { The most records a listing (interfaces, routes, ARP entries,
+    sockets) returns; a longer list is cut short there. }
+  MaximumListedNetworkRecords = 1024;
   { The largest UDP datagram sent: one Ethernet frame without fragments. }
   MaximumDatagramBytes = 1472;
 
@@ -334,8 +340,97 @@ type
       not yet sent. }
     ReceiveQueued: LongWord;
     SendQueued: LongWord;
+    { The process that made the socket, or accepted the connection (0
+      for a connection that has no socket left). It may have ended
+      since while a process it handed the socket to keeps it open. }
+    OwnerProcessId: QWord;
   end;
   PAbiSocketInformation = ^TAbiSocketInformation;
+
+  { Counters of IP. Nothing is forwarded yet, so Forwarded stays 0. }
+  TAbiIpStatistics = record
+    { Every datagram that arrived, the damaged ones included. }
+    Received: QWord;
+    { A bad version, length or header checksum. }
+    HeaderErrors: QWord;
+    { Not addressed to this machine (or from a broadcast or multicast
+      source). }
+    AddressErrors: QWord;
+    UnknownProtocols: QWord;
+    { Handed to ICMP, UDP or TCP. }
+    Delivered: QWord;
+    Forwarded: QWord;
+    { Datagrams the protocols asked to send. }
+    SendRequests: QWord;
+    { Not sent: too large for the interface, or no memory. }
+    SendDiscards: QWord;
+    { Not sent: no route to the destination. }
+    NoRoutes: QWord;
+    { Fragments received, datagrams put together from them, and those
+      that never were (timed out, or pushed out by newer ones). }
+    ReassemblyFragments: QWord;
+    Reassembled: QWord;
+    ReassemblyFailures: QWord;
+  end;
+
+const
+  { ICMP types counted one by one (0 to 18; larger ones are counted only
+    in the totals). }
+  IcmpTypesCounted = 19;
+
+type
+  TAbiIcmpStatistics = record
+    Received: QWord;
+    { Too short, or a bad checksum. }
+    ReceiveErrors: QWord;
+    Sent: QWord;
+    SendErrors: QWord;
+    ReceivedByType: array[0..IcmpTypesCounted - 1] of QWord;
+    SentByType: array[0..IcmpTypesCounted - 1] of QWord;
+  end;
+
+  TAbiTcpStatistics = record
+    { Connections begun by connect (CLOSED to SYN_SENT), and taken by
+      listeners (LISTEN to SYN_RECEIVED). }
+    ActiveOpens: QWord;
+    PassiveOpens: QWord;
+    { Connections that failed while being set up (SYN_SENT or
+      SYN_RECEIVED to CLOSED). }
+    FailedAttempts: QWord;
+    { ESTABLISHED or CLOSE_WAIT ended at once: by a reset either way,
+      or given up. }
+    EstablishedResets: QWord;
+    { Connections in ESTABLISHED or CLOSE_WAIT now. }
+    CurrentlyEstablished: QWord;
+    SegmentsReceived: QWord;
+    { Retransmissions are counted apart, in SegmentsRetransmitted. }
+    SegmentsSent: QWord;
+    SegmentsRetransmitted: QWord;
+    { Too short, or a bad checksum. }
+    ReceiveErrors: QWord;
+    ResetsSent: QWord;
+  end;
+
+  TAbiUdpStatistics = record
+    { Delivered to a socket. }
+    Received: QWord;
+    { For a port no socket has. }
+    NoPorts: QWord;
+    { Damaged (lengths, checksum), or no room in the socket's queue. }
+    ReceiveErrors: QWord;
+    { Of the errors, those for want of room in a socket's queue. }
+    ReceiveQueueErrors: QWord;
+    Sent: QWord;
+  end;
+
+  { CallGetNetworkStatistics. }
+  TAbiNetworkStatistics = record
+    Ip: TAbiIpStatistics;
+    Icmp: TAbiIcmpStatistics;
+    Tcp: TAbiTcpStatistics;
+    Udp: TAbiUdpStatistics;
+  end;
+  PAbiNetworkStatistics = ^TAbiNetworkStatistics;
 
   TAbiDnsServers = record
     Count: LongWord;

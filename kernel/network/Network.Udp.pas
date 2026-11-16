@@ -65,7 +65,26 @@ uses
   Network.Packets,
   Network.Interfaces,
   Network.DatagramSockets,
-  Network.Icmp;
+  Network.Icmp,
+  Network.Statistics;
+
+procedure CountUdpReceiveError;
+begin
+  Inc(NetworkStatistics.Udp.ReceiveErrors);
+end;
+
+{ Queues the datagram for Socket and counts what became of it. }
+procedure DeliverToSocket(Socket: PSocket; constref Source: TNetworkEndpoint; TimeToLive: Byte;
+  Data: PByte; Length: LongWord);
+begin
+  if QueueDatagramForSocket(Socket, Source, TimeToLive, Data, Length) then
+    Inc(NetworkStatistics.Udp.Received)
+  else if not Socket^.ReceiveIsShut then
+  begin
+    CountUdpReceiveError;
+    Inc(NetworkStatistics.Udp.ReceiveQueueErrors);
+  end;
+end;
 
 function IsBroadcastAddress(Destination: TIpv4Address; BoundInterface: Pointer): Boolean;
 var
@@ -98,6 +117,7 @@ var
 begin
   if Length < UdpHeaderBytes then
   begin
+    CountUdpReceiveError;
     CountReceiveError(Datagram.ArrivalInterface);
     Exit;
   end;
@@ -105,6 +125,7 @@ begin
   Checksum := ReadBigEndian16(Payload + 6);
   if (DatagramLength < UdpHeaderBytes) or (DatagramLength > Length) then
   begin
+    CountUdpReceiveError;
     CountReceiveError(Datagram.ArrivalInterface);
     Exit;
   end;
@@ -113,6 +134,7 @@ begin
     Sum := PseudoHeaderSum(Datagram.Source, Datagram.Destination, IpProtocolUdp, DatagramLength);
     if FinishChecksum(AddToChecksum(Sum, Payload, DatagramLength)) <> 0 then
     begin
+      CountUdpReceiveError;
       CountReceiveError(Datagram.ArrivalInterface);
       Exit;
     end;
@@ -131,7 +153,7 @@ begin
     begin
       if Datagram.IsBroadcast then
       begin
-        QueueDatagramForSocket(Socket, Source, Datagram.TimeToLive, Payload + UdpHeaderBytes,
+        DeliverToSocket(Socket, Source, Datagram.TimeToLive, Payload + UdpHeaderBytes,
           DatagramLength - UdpHeaderBytes);
         Delivered := True;
       end
@@ -143,10 +165,12 @@ begin
   end;
   if Best <> nil then
   begin
-    QueueDatagramForSocket(Best, Source, Datagram.TimeToLive, Payload + UdpHeaderBytes,
+    DeliverToSocket(Best, Source, Datagram.TimeToLive, Payload + UdpHeaderBytes,
       DatagramLength - UdpHeaderBytes);
     Exit;
   end;
+  if not Delivered then
+    Inc(NetworkStatistics.Udp.NoPorts);
   if not Delivered and not Datagram.IsBroadcast then
     SendIcmpError(Datagram.Header, Datagram.TotalLength, IcmpTypeDestinationUnreachable, IcmpCodePortUnreachable);
 end;
@@ -221,6 +245,7 @@ begin
     Socket^.BoundInterface);
   if Error <> ErrorNone then
     Exit(-Error);
+  Inc(NetworkStatistics.Udp.Sent);
   Result := Length;
 end;
 

@@ -78,8 +78,8 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   over a virtio-net driver and a loopback interface (`lo`, 127.0.0.1).
   Programs use BSD-style sockets (`Sys.Sockets`: TCP streams, UDP
   datagrams, ICMP echo for ping) that are handles like any other
-  (closed, waited for, non-blocking); `ping`, `ifconfig`, `route` and
-  `arp`; the network service gives the interfaces the static
+  (closed, waited for, non-blocking); `ping`, `ifconfig`, `route`,
+  `arp`, `netstat` and `nc`; the network service gives the interfaces the static
   configuration of `/etc/settings/Network.settings` at start (QEMU's
   user networking: 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3).
 - USB keyboards next to PS/2 ones, with dead keys for the German and
@@ -239,8 +239,12 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   - network tools: `ping` (`-c`, `-i`, `-W`, `-s`, `-t`, `-q`; replies and
     the summary as iputils prints them), `ifconfig` (show; `ifconfig eth0
     10.0.2.15/24 up`, `down`, `mtu`, `netmask`), `route` (show; `route add
-    default gw 10.0.2.2`, `route del ...`) and `arp` (the ARP cache), in
-    the manner of net-tools
+    default gw 10.0.2.2`, `route del ...`), `arp` (the ARP cache) and
+    `netstat` (sockets with `-t -u -w -l -a -n -p`, the routing table
+    `-r`, the interfaces and their counters `-i`, the protocol counters
+    `-s`), in the manner of net-tools; `nc` with OpenBSD's options
+    (connect, `-l` listen and `-k` keep listening, `-u` UDP, `-z` port
+    scans with ranges, `-v`, `-w`, `-q`, `-N`, `-n`, `-p`, `-d`)
 - Debug output to the serial port and to a text console drawn on the
   framebuffer.
 - Kernel self tests that run on every boot, including file system read and

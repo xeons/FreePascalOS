@@ -69,7 +69,8 @@ uses
   Network.TcpConnections,
   Network.TcpSegments,
   Network.TcpStates,
-  Network.TcpOutput;
+  Network.TcpOutput,
+  Network.Statistics;
 
 const
   IcmpTypeDestinationUnreachable = 3;
@@ -136,6 +137,7 @@ begin
   Child^.SendNext := Child^.InitialSendSequence;
   Child^.SendMaximum := Child^.InitialSendSequence;
   Child^.State := TcpSynReceived;
+  Inc(NetworkStatistics.Tcp.PassiveOpens);
   TcpOutput(Child);
 end;
 
@@ -540,9 +542,11 @@ var
 begin
   if not ParseTcpSegment(Datagram, Payload, Length, Segment) then
   begin
+    Inc(NetworkStatistics.Tcp.ReceiveErrors);
     CountReceiveError(Datagram.ArrivalInterface);
     Exit;
   end;
+  Inc(NetworkStatistics.Tcp.SegmentsReceived);
   if Datagram.IsBroadcast then
     Exit;
   Connection := FindTcpConnection(Datagram.Destination, Segment.DestinationPort, Datagram.Source,

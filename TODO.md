@@ -458,8 +458,12 @@ normalized (0-65535), not pixels.
 - [ ] DNS resolver in libsystem (`Sys.HostNames.LookUpHost`), with the
       kernel's server list
 - [ ] `host` and `nslookup`
-- [ ] `netstat` (`CallListSockets` is there)
-- [ ] `nc`
+- [x] `netstat` (`-tuwlanp`, `-r`, `-i`, `-s`; the socket listing gives
+      the owner process, protocol counters in the kernel)
+- [x] `nc` (OpenBSD options: `-l -k -u -z -v -w -n -N -q -p -d`)
+- [ ] `ss` (on top of netstat's pieces)
+- [ ] Reverse lookups and a services list for `netstat` without `-n`
+      (`Netstat.Names`)
 - [ ] `wget`
 - [ ] Control Panel network page
 - [ ] Taskbar network icon

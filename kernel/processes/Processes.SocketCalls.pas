@@ -112,6 +112,13 @@ begin
     Result := Failure(ErrorTooManyHandles);
 end;
 
+{ The calling process, as the owner of the sockets it makes or accepts. }
+function CallerAsOwner: TSocketOwner;
+begin
+  Result.UserId := CurrentProcess^.Credentials.EffectiveUserId;
+  Result.ProcessId := CurrentProcess^.ProcessId;
+end;
+
 function PerformCreateSocket(Family, Kind, Protocol: QWord): Int64;
 var
   Socket: PSocket;
@@ -119,8 +126,8 @@ var
 begin
   if (Family > $FFFF) or (Kind > $FFFF) or (Protocol > $FF) then
     Exit(Failure(ErrorInvalidArgument));
-  Error := CreateSocket(LongWord(Family), LongWord(Kind), LongWord(Protocol),
-    CurrentProcess^.Credentials.EffectiveUserId, CallerIsRoot, Socket);
+  Error := CreateSocket(LongWord(Family), LongWord(Kind), LongWord(Protocol), CallerAsOwner, CallerIsRoot,
+    Socket);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := InsertSocketHandle(Socket);
@@ -166,7 +173,7 @@ begin
   Socket := ReferenceSocket(Handle);
   if Socket = nil then
     Exit(Failure(ErrorBadHandle));
-  Error := AcceptOnSocket(Socket, NewSocket, Peer);
+  Error := AcceptOnSocket(Socket, CallerAsOwner, NewSocket, Peer);
   DereferenceObject(Socket);
   if Error <> ErrorNone then
     Exit(Failure(Error));
