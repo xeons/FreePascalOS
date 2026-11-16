@@ -55,7 +55,7 @@ type
     { The IPv6 default route's gateway on this interface, or empty. }
     Gateway: string;
     { From the routers' advertisements (RDNSS). }
-    DnsServers: array of TInternetAddress;
+    DnsServers: TInternetAddressArray;
   end;
 
 function ReadIpv6Facts(constref Description: TAbiNetworkInterface; constref Routes: TRouteList): TIpv6Facts;
@@ -70,6 +70,7 @@ implementation
 
 uses
   Sys.AddressText,
+  Sys.InterfaceText,
   NetworkService.Log;
 
 function ReadIpv6Facts(constref Description: TAbiNetworkInterface; constref Routes: TRouteList): TIpv6Facts;
@@ -94,7 +95,7 @@ begin
   for Position := 0 to High(Routes) do
     if (Routes[Position].Destination.Family = AddressFamilyIPv6) and
        (Routes[Position].Destination.PrefixLength = 0) and
-       (string(PChar(@Routes[Position].InterfaceName[0])) = string(PChar(@Description.Name[0]))) then
+       (InterfaceNameToText(Routes[Position].InterfaceName) = InterfaceNameToText(Description.Name)) then
     begin
       Result.Gateway := AddressToText(RouteGateway(Routes[Position]));
       Break;
@@ -173,7 +174,7 @@ begin
     if (Routes[Position].Destination.Family = AddressFamilyIPv6) and
        (Routes[Position].Destination.PrefixLength = 0) and
        AddressesAreEqual(RouteGateway(Routes[Position]), Gateway) and
-       (string(PChar(@Routes[Position].InterfaceName[0])) = Name) then
+       (InterfaceNameToText(Routes[Position].InterfaceName) = Name) then
       Exit(True);
 end;
 

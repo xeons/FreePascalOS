@@ -36,13 +36,12 @@ implementation
 
 uses
   Sys.Errors,
-  Sys.Streams;
+  Sys.Streams,
+  Util.Output;
 
 procedure Say(const Text: string);
 begin
-  WriteText(StandardOutput, 'network: ');
-  WriteText(StandardOutput, PChar(Text));
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine('network: ' + Text);
   FlushStream(StandardOutput);
 end;
 

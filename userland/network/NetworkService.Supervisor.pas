@@ -45,7 +45,6 @@ implementation
 uses
   SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
   Sys.Kernel,
   Sys.Objects,
   Sys.Notifications,
@@ -115,8 +114,8 @@ begin
     while NextFileChange(Reader, Change) do
     begin
       if (Change.Kind = FileChangeOverflow) or
-         ((Change.Name <> nil) and TextIsEqual(Change.Name, SettingsFileName)) or
-         ((Change.OldName <> nil) and TextIsEqual(Change.OldName, SettingsFileName)) then
+         (string(Change.Name) = SettingsFileName) or
+         (string(Change.OldName) = SettingsFileName) then
         Result := True;
       if (Change.Kind = FileChangeWatchedItemRemoved) or (Change.Kind = FileChangeVolumeGone) then
       begin

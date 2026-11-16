@@ -45,6 +45,13 @@ function SocketHostToText(constref Address: TAbiSocketAddress): string;
 
 { An IPv4 or IPv6 address, nothing else. }
 function TextToAddress(const Text: string; out Address: TInternetAddress): Boolean;
+{ A dotted quad only. }
+function TextToIpv4Address(const Text: string; out Address: TInternetAddress): Boolean;
+{ "255.255.255.0" for 24. }
+function NetmaskToText(PrefixLength: LongWord): string;
+{ A netmask (255.255.255.0) as a prefix length; False if its ones are
+  not all in front. }
+function TextToNetmask(const Text: string; out PrefixLength: LongWord): Boolean;
 { "A.B.C.D/N" or "IPv6/N"; without "/N" HasPrefix is False and the
   prefix the whole address. }
 function TextToAddressWithPrefix(const Text: string; out Address: TInternetAddress; out PrefixLength: LongWord;
@@ -113,6 +120,23 @@ end;
 function TextToAddress(const Text: string; out Address: TInternetAddress): Boolean;
 begin
   Result := ParseInternetAddress(PChar(Text), Address);
+end;
+
+function TextToIpv4Address(const Text: string; out Address: TInternetAddress): Boolean;
+begin
+  Result := ParseIpv4Address(PChar(Text), Address);
+end;
+
+function NetmaskToText(PrefixLength: LongWord): string;
+var
+  Buffer: array[0..Ipv4AddressTextCapacity - 1] of Char;
+begin
+  Result := StrPas(FormatNetmask(PrefixLength, @Buffer[0], SizeOf(Buffer)));
+end;
+
+function TextToNetmask(const Text: string; out PrefixLength: LongWord): Boolean;
+begin
+  Result := ParseNetmask(PChar(Text), PrefixLength);
 end;
 
 function TextToAddressWithPrefix(const Text: string; out Address: TInternetAddress; out PrefixLength: LongWord;

@@ -37,33 +37,33 @@
 unit Wget.Transfer;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
-  Wget.Files,
   Wget.Settings,
   Wget.Urls;
 
-{ Output is the -O target, or nil; AppendOutput adds to it (every URL
-  after the first goes into the same file). }
-function FetchUrl(constref Settings: TWgetSettings; constref RequestedUrl: TUrl; Output: PChar;
-  AppendOutput: Boolean): Integer;
+{ Without HasOutput the file is named after the URL; Output is the -O
+  target otherwise. AppendOutput adds to it (every URL after the first
+  goes into the same file). }
+function FetchUrl(constref Settings: TWgetSettings; constref RequestedUrl: TUrl; HasOutput: Boolean;
+  const Output: string; AppendOutput: Boolean): Integer;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
-  Sys.Format,
   Sys.LocalTime,
-  Sys.Streams,
   Sys.Processes,
   Sys.Time,
-  Tls.Errors,
+  Util.Messages,
+  Util.Output,
   Wget.Bodies,
   Wget.Connections,
+  Wget.Files,
   Wget.Headers,
   Wget.Progress,
   Wget.Requests;
@@ -84,16 +84,11 @@ type
     AppendOutput: Boolean;
   end;
 
-procedure Complain(constref Fetch: TFetch; Format: PChar; const Arguments: array of TFormatArgument);
+{ Text on error output unless quiet. }
+procedure Say(constref Fetch: TFetch; const Text: string);
 begin
   if not Fetch.Settings.Quiet then
-    WriteFormatted(StandardError, Format, Arguments);
-end;
-
-procedure Say(constref Fetch: TFetch; Text: PChar);
-begin
-  if not Fetch.Settings.Quiet then
-    WriteText(StandardError, Text);
+    PrintErrorString(Text);
 end;
 
 procedure WriteTimestamp;
@@ -101,44 +96,37 @@ var
   Local: TLocalTime;
 begin
   DecodeLocalTime(CurrentTime, Local);
-  WriteFormatted(StandardError, '%04d-%02d-%02d %02d:%02d:%02d', [ArgumentNumber(Local.DateTime.Year),
-    ArgumentNumber(Local.DateTime.Month), ArgumentNumber(Local.DateTime.Day), ArgumentNumber(Local.DateTime.Hour),
-    ArgumentNumber(Local.DateTime.Minute), ArgumentNumber(Local.DateTime.Second)]);
+  PrintErrorString(Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d', [Local.DateTime.Year, Local.DateTime.Month,
+    Local.DateTime.Day, Local.DateTime.Hour, Local.DateTime.Minute, Local.DateTime.Second]));
 end;
 
 procedure AnnounceRequest(constref Fetch: TFetch);
-var
-  Text: array[0..MaximumPathLength + MaximumHostLength + 32] of Char;
 begin
   if Fetch.Settings.Quiet then
     Exit;
-  FormatUrl(Fetch.Url, @Text[0], SizeOf(Text));
-  WriteText(StandardError, '--');
+  PrintErrorString('--');
   WriteTimestamp;
-  WriteFormatted(StandardError, '--  %s'#10, [ArgumentText(@Text[0])]);
+  PrintErrorString('--  ' + FormatUrl(Fetch.Url) + #10);
 end;
 
-procedure ReportConnectionFailure(var Fetch: TFetch; constref Connection: TConnection);
+procedure ReportConnectionFailure(var Fetch: TFetch; Connection: TConnection);
 begin
   case Connection.Failure of
     FailureLookUp:
       begin
-        Complain(Fetch, 'wget: unable to resolve host address ''%s''.'#10,
-          [ArgumentText(@Fetch.Url.Host[0])]);
+        Say(Fetch, Format('wget: unable to resolve host address ''%s''.'#10, [Fetch.Url.Host]));
         Fetch.ExitStatus := ExitNetworkFailure;
       end;
     FailureCertificate:
       begin
-        Complain(Fetch, 'ERROR: cannot verify %s''s certificate: %s.'#10 +
+        Say(Fetch, Format('ERROR: cannot verify %s''s certificate: %s.'#10 +
           '  To connect to %s insecurely, use ''--no-check-certificate''.'#10,
-          [ArgumentText(@Fetch.Url.Host[0]), ArgumentText(@Connection.ErrorText[0]),
-           ArgumentText(@Fetch.Url.Host[0])]);
+          [Fetch.Url.Host, Connection.ErrorText, Fetch.Url.Host]));
         Fetch.ExitStatus := ExitTlsVerificationFailure;
       end;
     FailureTls:
       begin
-        Complain(Fetch, 'ERROR: TLS connection to %s failed: %s.'#10,
-          [ArgumentText(@Fetch.Url.Host[0]), ArgumentText(@Connection.ErrorText[0])]);
+        Say(Fetch, Format('ERROR: TLS connection to %s failed: %s.'#10, [Fetch.Url.Host, Connection.ErrorText]));
         Fetch.ExitStatus := ExitNetworkFailure;
       end;
   else
@@ -148,53 +136,45 @@ end;
 
 procedure ReportSaved(constref Fetch: TFetch; Received: Int64; Total: Int64; Milliseconds: QWord);
 var
-  Speed: array[0..31] of Char;
+  Speed: string;
+  Text: string;
 begin
   if Fetch.Settings.Quiet then
     Exit;
   if Milliseconds = 0 then
     Milliseconds := 1;
-  FormatSpeed((Received * 1000) div Int64(Milliseconds), @Speed[0]);
+  Speed := FormatSpeed((Received * 1000) div Int64(Milliseconds));
   WriteTimestamp;
   if Fetch.Target.IsStandardOutput then
-    Complain(Fetch, ' (%s) - written to stdout [%d', [ArgumentText(@Speed[0]),
-      ArgumentNumber(Fetch.StartingBytes + Received)])
+    Text := Format(' (%s) - written to stdout [%d', [Speed, Fetch.StartingBytes + Received])
   else
-    Complain(Fetch, ' (%s) - ''%s'' saved [%d', [ArgumentText(@Speed[0]),
-      ArgumentText(@Fetch.Target.Name[0]), ArgumentNumber(Fetch.StartingBytes + Received)]);
+    Text := Format(' (%s) - ''%s'' saved [%d', [Speed, Fetch.Target.Name, Fetch.StartingBytes + Received]);
   if Total >= 0 then
-    Complain(Fetch, '/%d', [ArgumentNumber(Total)]);
-  Complain(Fetch, ']'#10#10, []);
+    Text := Text + '/' + IntToStr(Total);
+  PrintErrorString(Text + ']'#10#10);
 end;
 
 { Length: 1234 (1.2K) [text/html] }
 procedure AnnounceLength(constref Fetch: TFetch; constref Response: THttpResponseHead);
 var
-  Size: array[0..31] of Char;
+  Text: string;
 begin
   if Fetch.Settings.Quiet then
     Exit;
-  if Response.ContentLength >= 0 then
-  begin
-    FormatSize(Response.ContentLength, @Size[0]);
-    if Fetch.StartingBytes > 0 then
-    begin
-      Complain(Fetch, 'Length: %d (%s), %d remaining', [ArgumentNumber(Fetch.StartingBytes +
-        Response.ContentLength), ArgumentText(@Size[0]), ArgumentNumber(Response.ContentLength)]);
-    end
-    else
-      Complain(Fetch, 'Length: %d (%s)', [ArgumentNumber(Response.ContentLength),
-        ArgumentText(@Size[0])]);
-  end
+  if Response.ContentLength < 0 then
+    Text := 'Length: unspecified'
+  else if Fetch.StartingBytes > 0 then
+    Text := Format('Length: %d (%s), %d remaining', [Fetch.StartingBytes + Response.ContentLength,
+      FormatSize(Response.ContentLength), Response.ContentLength])
   else
-    Complain(Fetch, 'Length: unspecified', []);
-  if Response.ContentType[0] <> #0 then
-    Complain(Fetch, ' [%s]', [ArgumentText(@Response.ContentType[0])]);
-  WriteCharacter(StandardError, #10);
+    Text := Format('Length: %d (%s)', [Response.ContentLength, FormatSize(Response.ContentLength)]);
+  if Response.ContentType <> '' then
+    Text := Text + ' [' + Response.ContentType + ']';
+  PrintErrorStringLine(Text);
   if Fetch.Target.IsStandardOutput then
-    WriteText(StandardError, 'Saving to: ''STDOUT'''#10#10)
+    PrintErrorString('Saving to: ''STDOUT'''#10#10)
   else
-    Complain(Fetch, 'Saving to: ''%s'''#10#10, [ArgumentText(@Fetch.Target.Name[0])]);
+    PrintErrorString('Saving to: ''' + Fetch.Target.Name + ''''#10#10);
 end;
 
 function HandleRedirect(var Fetch: TFetch; constref Response: THttpResponseHead): TAttemptOutcome;
@@ -203,37 +183,65 @@ var
 begin
   if not Response.HasLocation then
   begin
-    Complain(Fetch, 'ERROR %d: redirection without a location.'#10,
-      [ArgumentNumber(Response.StatusCode)]);
+    Say(Fetch, Format('ERROR %d: redirection without a location.'#10, [Response.StatusCode]));
     Fetch.ExitStatus := ExitProtocolError;
     Exit(AttemptFailed);
   end;
-  if not ResolveUrl(Fetch.Url, @Response.Location[0], Next) then
+  if not ResolveUrl(Fetch.Url, Response.Location, Next) then
   begin
-    Complain(Fetch, 'wget: cannot follow the redirection to ''%s'' (only http and https).'#10,
-      [ArgumentText(@Response.Location[0])]);
+    Say(Fetch, Format('wget: cannot follow the redirection to ''%s'' (only http and https).'#10,
+      [Response.Location]));
     Fetch.ExitStatus := ExitProtocolError;
     Exit(AttemptFailed);
   end;
   Inc(Fetch.Redirects);
   if Fetch.Redirects > MaximumRedirects then
   begin
-    Complain(Fetch, '%d redirections exceeded.'#10, [ArgumentNumber(MaximumRedirects)]);
+    Say(Fetch, Format('%d redirections exceeded.'#10, [MaximumRedirects]));
     Fetch.ExitStatus := ExitProtocolError;
     Exit(AttemptFailed);
   end;
-  if not Fetch.Settings.Quiet then
-    Complain(Fetch, 'Location: %s [following]'#10, [ArgumentText(@Response.Location[0])]);
+  Say(Fetch, 'Location: ' + Response.Location + ' [following]'#10);
   Fetch.Url := Next;
   Result := AttemptRedirect;
+end;
+
+{ A 2xx answer to a Range request: what it means for the file. }
+function CheckRangeAnswer(var Fetch: TFetch; constref Response: THttpResponseHead;
+  RangeStart: Int64): TAttemptOutcome;
+begin
+  Result := AttemptDone;
+  if Response.StatusCode = 206 then
+  begin
+    if not Response.HasContentRange or (Response.RangeStart <> RangeStart) then
+    begin
+      Say(Fetch, 'wget: the server sent another part of the file than asked for.'#10);
+      Fetch.ExitStatus := ExitProtocolError;
+      Exit(AttemptFailed);
+    end;
+    Fetch.ResumeAllowed := True;
+  end
+  else if Fetch.Settings.ContinueDownload and not Fetch.ResumeAllowed then
+  begin
+    { The whole file came back: truncating would lose what is there. }
+    Say(Fetch, Format(#10'    Continued download failed on this file, which conflicts with -c.'#10 +
+      'Refusing to truncate existing file ''%s''.'#10#10, [Fetch.Target.Name]));
+    Fetch.ExitStatus := ExitGenericError;
+    Exit(AttemptFailed);
+  end
+  else
+  begin
+    { A retry that has to start again from the beginning: the file is
+      opened again, emptied. }
+    Fetch.StartingBytes := 0;
+    CloseOutput(Fetch.Target);
+  end;
 end;
 
 { What the status of a response means before any body is read. }
 function CheckStatus(var Fetch: TFetch; constref Response: THttpResponseHead; RangeStart: Int64): TAttemptOutcome;
 begin
-  if not Fetch.Settings.Quiet then
-    Complain(Fetch, '%d %s'#10, [ArgumentNumber(Response.StatusCode),
-      ArgumentText(@Response.Reason[0])]);
+  Say(Fetch, Format('%d %s'#10, [Response.StatusCode, Response.Reason]));
   if StatusIsRedirect(Response.StatusCode) then
     Exit(HandleRedirect(Fetch, Response));
   if (Response.StatusCode = 416) and (RangeStart > 0) then
@@ -246,43 +254,42 @@ begin
   begin
     if not Fetch.Settings.Quiet then
       WriteTimestamp;
-    Complain(Fetch, ' ERROR %d: %s.'#10, [ArgumentNumber(Response.StatusCode),
-      ArgumentText(@Response.Reason[0])]);
+    Say(Fetch, Format(' ERROR %d: %s.'#10, [Response.StatusCode, Response.Reason]));
     Fetch.ExitStatus := ExitServerError;
     Exit(AttemptFailed);
   end;
   if RangeStart > 0 then
-  begin
-    if Response.StatusCode = 206 then
-    begin
-      if not Response.HasContentRange or (Response.RangeStart <> RangeStart) then
-      begin
-        Complain(Fetch, 'wget: the server sent another part of the file than asked for.'#10, []);
-        Fetch.ExitStatus := ExitProtocolError;
-        Exit(AttemptFailed);
-      end;
-      Fetch.ResumeAllowed := True;
-    end
-    else if Fetch.Settings.ContinueDownload and not Fetch.ResumeAllowed then
-    begin
-      { The whole file came back: truncating would lose what is there. }
-      Complain(Fetch, #10'    Continued download failed on this file, which conflicts with -c.'#10 +
-        'Refusing to truncate existing file ''%s''.'#10#10, [ArgumentText(@Fetch.Target.Name[0])]);
-      Fetch.ExitStatus := ExitGenericError;
-      Exit(AttemptFailed);
-    end
-    else
-    begin
-      { A retry that has to start again from the beginning: the file is
-        opened again, emptied. }
-      Fetch.StartingBytes := 0;
-      CloseOutput(Fetch.Target);
-    end;
-  end;
+    Exit(CheckRangeAnswer(Fetch, Response, RangeStart));
   Result := AttemptDone;
 end;
 
-function ReceiveInto(var Fetch: TFetch; var Connection: TConnection; constref Response: THttpResponseHead): TAttemptOutcome;
+{ A body that broke off: said, and the next try set up to continue
+  where it broke if the server takes ranges. }
+function HandleBrokenBody(var Fetch: TFetch; Connection: TConnection; constref Response: THttpResponseHead;
+  Outcome: TBodyOutcome; Received: Int64): TAttemptOutcome;
+begin
+  if not Fetch.Settings.Quiet then
+  begin
+    WriteTimestamp;
+    if Outcome = BodyEndedEarly then
+      PrintErrorString(Format(' (%d bytes) - Connection closed at byte %d. ', [Received,
+        Fetch.StartingBytes + Received]))
+    else
+      PrintErrorString(Format(' - Read error at byte %d (%s). ', [Fetch.StartingBytes + Received,
+        Connection.ErrorText]));
+  end;
+  Fetch.ExitStatus := ExitNetworkFailure;
+  if not Fetch.Target.IsStandardOutput and ((Response.StatusCode = 206) or (Response.ContentLength >= 0)) then
+    Fetch.StartingBytes := Fetch.StartingBytes + Received
+  else
+  begin
+    Fetch.StartingBytes := 0;
+    CloseOutput(Fetch.Target);
+  end;
+  Result := AttemptRetry;
+end;
+
+function ReceiveInto(var Fetch: TFetch; Connection: TConnection; constref Response: THttpResponseHead): TAttemptOutcome;
 var
   Progress: TProgress;
   Received: Int64;
@@ -295,15 +302,14 @@ begin
   Error := OpenOutput(Fetch.Target, (Fetch.StartingBytes > 0) or Fetch.AppendOutput);
   if Error <> ErrorNone then
   begin
-    Complain(Fetch, 'wget: %s: %s'#10, [ArgumentText(@Fetch.Target.Name[0]),
-      ArgumentText(ErrorMessage(Error))]);
+    Say(Fetch, Format('wget: %s: %s'#10, [Fetch.Target.Name, ErrorText(Error)]));
     Fetch.ExitStatus := ExitFileError;
     Exit(AttemptFailed);
   end;
   Total := -1;
   if Response.ContentLength >= 0 then
     Total := Fetch.StartingBytes + Response.ContentLength;
-  BeginProgress(Progress, @Fetch.Target.Name[0], Total, Fetch.StartingBytes, Fetch.Settings.Quiet);
+  BeginProgress(Progress, Fetch.Target.Name, Total, Fetch.StartingBytes, Fetch.Settings.Quiet);
   Started := UptimeMilliseconds;
   Outcome := ReceiveBody(Connection, Response, Fetch.Target, Progress, Received, WriteError);
   FinishProgress(Progress);
@@ -316,73 +322,37 @@ begin
       end;
     BodyWriteFailed:
       begin
-        Complain(Fetch, 'wget: cannot write to ''%s'' (%s).'#10, [ArgumentText(@Fetch.Target.Name[0]),
-          ArgumentText(ErrorMessage(WriteError))]);
+        Say(Fetch, Format('wget: cannot write to ''%s'' (%s).'#10, [Fetch.Target.Name, ErrorText(WriteError)]));
         Fetch.ExitStatus := ExitFileError;
         Result := AttemptFailed;
       end;
     BodyMalformed:
       begin
-        Complain(Fetch, 'wget: the server sent a malformed chunked body.'#10, []);
+        Say(Fetch, 'wget: the server sent a malformed chunked body.'#10);
         Fetch.ExitStatus := ExitProtocolError;
         Result := AttemptFailed;
       end;
   else
-    if not Fetch.Settings.Quiet then
-    begin
-      WriteTimestamp;
-      if Outcome = BodyEndedEarly then
-        Complain(Fetch, ' (%d bytes) - Connection closed at byte %d. ', [ArgumentNumber(Received),
-          ArgumentNumber(Fetch.StartingBytes + Received)])
-      else
-        Complain(Fetch, ' - Read error at byte %d (%s). ', [ArgumentNumber(Fetch.StartingBytes +
-          Received), ArgumentText(@Connection.ErrorText[0])]);
-    end;
-    Fetch.ExitStatus := ExitNetworkFailure;
-    { Continue from here next time, if the server takes ranges. }
-    if not Fetch.Target.IsStandardOutput and ((Response.StatusCode = 206) or (Response.ContentLength >= 0)) then
-      Fetch.StartingBytes := Fetch.StartingBytes + Received
-    else
-    begin
-      Fetch.StartingBytes := 0;
-      CloseOutput(Fetch.Target);
-    end;
-    Result := AttemptRetry;
+    Result := HandleBrokenBody(Fetch, Connection, Response, Outcome, Received);
   end;
 end;
 
-function Attempt(var Fetch: TFetch): TAttemptOutcome;
+{ The request sent, the head read and the body received over an open
+  connection. }
+function Exchange(var Fetch: TFetch; Connection: TConnection): TAttemptOutcome;
 var
-  Connection: TConnection;
-  ConnectionSettings: TConnectionSettings;
   Response: THttpResponseHead;
   Head: THeadOutcome;
   RangeStart: Int64;
 begin
-  AnnounceRequest(Fetch);
-  FillChar(ConnectionSettings, SizeOf(ConnectionSettings), 0);
-  ConnectionSettings.TimeoutMilliseconds := Fetch.Settings.TimeoutMilliseconds;
-  ConnectionSettings.VerifyCertificates := Fetch.Settings.VerifyCertificates;
-  ConnectionSettings.TrustFile := Fetch.Settings.TrustFile;
-  ConnectionSettings.CipherSuites := Fetch.Settings.CipherSuites;
-  ConnectionSettings.Quiet := Fetch.Settings.Quiet;
-  if not OpenConnection(Connection, Fetch.Url, ConnectionSettings) then
-  begin
-    ReportConnectionFailure(Fetch, Connection);
-    if Connection.Failure = FailureTimeout then
-      Exit(AttemptRetry);
-    Exit(AttemptFailed);
-  end;
-
   RangeStart := 0;
   if not Fetch.Target.IsStandardOutput then
     RangeStart := Fetch.StartingBytes;
   Result := AttemptFailed;
   if not SendRequest(Connection, Fetch.Url, Fetch.Settings, RangeStart) then
   begin
-    Complain(Fetch, 'wget: cannot send the request: %s.'#10, [ArgumentText(@Connection.ErrorText[0])]);
+    Say(Fetch, Format('wget: cannot send the request: %s.'#10, [Connection.ErrorText]));
     Fetch.ExitStatus := ExitNetworkFailure;
-    CloseConnection(Connection);
     Exit(AttemptRetry);
   end;
   Say(Fetch, 'HTTP request sent, awaiting response... ');
@@ -405,53 +375,87 @@ begin
       begin
         if Head = HeadNoData then
           Say(Fetch, 'No data received.'#10)
-        else if not Fetch.Settings.Quiet then
-          Complain(Fetch, 'Read error (%s) in headers.'#10, [ArgumentText(@Connection.ErrorText[0])]);
+        else
+          Say(Fetch, Format('Read error (%s) in headers.'#10, [Connection.ErrorText]));
         Fetch.ExitStatus := ExitNetworkFailure;
         Result := AttemptRetry;
       end;
     HeadUnsupportedEncoding:
       begin
-        Complain(Fetch, 'wget: the server used a transfer encoding other than chunked.'#10, []);
+        Say(Fetch, 'wget: the server used a transfer encoding other than chunked.'#10);
         Fetch.ExitStatus := ExitProtocolError;
       end;
   else
-    Complain(Fetch, 'wget: the server sent a malformed response.'#10, []);
+    Say(Fetch, 'wget: the server sent a malformed response.'#10);
     Fetch.ExitStatus := ExitProtocolError;
   end;
-  CloseConnection(Connection);
 end;
 
-function FetchUrl(constref Settings: TWgetSettings; constref RequestedUrl: TUrl; Output: PChar;
-  AppendOutput: Boolean): Integer;
+function Attempt(var Fetch: TFetch): TAttemptOutcome;
+var
+  Connection: TConnection;
+  ConnectionSettings: TConnectionSettings;
+begin
+  AnnounceRequest(Fetch);
+  ConnectionSettings := Default(TConnectionSettings);
+  ConnectionSettings.TimeoutMilliseconds := Fetch.Settings.TimeoutMilliseconds;
+  ConnectionSettings.VerifyCertificates := Fetch.Settings.VerifyCertificates;
+  ConnectionSettings.HasTrustFile := Fetch.Settings.HasTrustFile;
+  ConnectionSettings.TrustFile := Fetch.Settings.TrustFile;
+  ConnectionSettings.CipherSuites := Fetch.Settings.CipherSuites;
+  ConnectionSettings.Quiet := Fetch.Settings.Quiet;
+  Connection := TConnection.Create;
+  try
+    if not Connection.Open(Fetch.Url, ConnectionSettings) then
+    begin
+      ReportConnectionFailure(Fetch, Connection);
+      if Connection.Failure = FailureTimeout then
+        Exit(AttemptRetry);
+      Exit(AttemptFailed);
+    end;
+    Result := Exchange(Fetch, Connection);
+  finally
+    Connection.Free;
+  end;
+end;
+
+{ The file to write: -O's, or one named after the URL. }
+procedure ChooseTarget(var Fetch: TFetch; HasOutput: Boolean; const Output: string);
+var
+  Name: string;
+begin
+  if HasOutput then
+  begin
+    Fetch.Target.IsStandardOutput := Output = StandardOutputName;
+    if not Fetch.Target.IsStandardOutput then
+      Fetch.Target.Name := Output;
+  end
+  else
+  begin
+    Name := DefaultFileName(Fetch.Url);
+    if Fetch.Settings.ContinueDownload then
+      Fetch.Target.Name := Name
+    else
+      Fetch.Target.Name := ChooseUniqueName(Name);
+  end;
+  if Fetch.Settings.ContinueDownload and not Fetch.Target.IsStandardOutput then
+    Fetch.StartingBytes := ExistingFileSize(Fetch.Target.Name);
+end;
+
+function FetchUrl(constref Settings: TWgetSettings; constref RequestedUrl: TUrl; HasOutput: Boolean;
+  const Output: string; AppendOutput: Boolean): Integer;
 var
   Fetch: TFetch;
-  Name: array[0..FileNameCapacity - 1] of Char;
   Tries: Integer;
   Outcome: TAttemptOutcome;
   WaitSeconds: Integer;
 begin
-  FillChar(Fetch, SizeOf(Fetch), 0);
+  Fetch := Default(TFetch);
   Fetch.Settings := Settings;
   Fetch.Url := RequestedUrl;
   Fetch.ExitStatus := ExitSuccess;
   Fetch.AppendOutput := AppendOutput;
-  if Output <> nil then
-  begin
-    Fetch.Target.IsStandardOutput := (Output[0] = '-') and (Output[1] = #0);
-    if not Fetch.Target.IsStandardOutput then
-      SetOutputName(Fetch.Target, Output);
-  end
-  else
-  begin
-    DefaultFileName(RequestedUrl, @Name[0], SizeOf(Name));
-    if Settings.ContinueDownload then
-      SetOutputName(Fetch.Target, @Name[0])
-    else
-      ChooseUniqueName(@Name[0], @Fetch.Target.Name[0], SizeOf(Fetch.Target.Name));
-  end;
-  if Settings.ContinueDownload and not Fetch.Target.IsStandardOutput then
-    Fetch.StartingBytes := ExistingFileSize(@Fetch.Target.Name[0]);
+  ChooseTarget(Fetch, HasOutput, Output);
 
   Tries := 0;
   repeat

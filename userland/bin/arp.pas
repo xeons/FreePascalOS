@@ -29,21 +29,21 @@
 program arp;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
-  Sys.Streams,
+  Sys.AddressText,
+  Sys.InterfaceText,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: arp [-n] [-i INTERFACE] [ADDRESS]'#10 +
+  Usage = 'Usage: arp [-n] [-i INTERFACE] [ADDRESS]'#10 +
     'Show the ARP cache: the Ethernet addresses of the neighbours.'#10 +
     #10 +
     '  -n, --numeric          numeric addresses (always)'#10 +
@@ -53,63 +53,67 @@ const
   OptionInterface = 2;
   EthernetAddressBytes = 6;
 
+function EntryAddress(constref Entry: TAbiArpEntry): TInternetAddress;
+begin
+  Result := AnyIpv4Address;
+  Move(Entry.Address[0], Result.Bytes[0], 4);
+end;
+
+procedure ShowEntry(constref Entry: TAbiArpEntry);
 var
-  Parser: TOptionParser;
+  AddressText: string;
+  InterfaceName: string;
+begin
+  AddressText := AddressToText(EntryAddress(Entry));
+  InterfaceName := InterfaceNameToText(Entry.InterfaceName);
+  if Entry.State = ArpStateReachable then
+    PrintStringLine(Format('%-16s ether   %-18s %-9s %us', [AddressText,
+      HardwareAddressToText(Entry.HardwareAddress, EthernetAddressBytes), InterfaceName,
+      Entry.ExpiresInSeconds]))
+  else
+    PrintStringLine(Format('%-16s         %-18s %s', [AddressText, '(incomplete)', InterfaceName]));
+end;
+
+var
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
-  InterfaceName: PChar = nil;
+  Value: string;
+  InterfaceName: string = '';
   Wanted: TInternetAddress;
   HasWanted: Boolean = False;
   Entries: TArpEntryList;
-  Index: Integer;
+  Entry: TAbiArpEntry;
   Error: LongInt;
-  Address: TInternetAddress;
-  AddressText: array[0..Ipv4AddressTextCapacity - 1] of Char;
-  HardwareText: array[0..31] of Char;
   Shown: Integer = 0;
 
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('n', 'numeric', False, OptionNumeric),
-    OptionDefinition('i', 'device', True, OptionInterface)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('n', 'numeric', False, OptionNumeric),
+    CommandOption('i', 'device', True, OptionInterface)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     if Code = OptionInterface then
       InterfaceName := Value;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
+  if CommandLine.OperandCount > 1 then
+    FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+  if CommandLine.OperandCount = 1 then
   begin
-    if not ParseIpv4Address(Parser.Operands[0], Wanted) then
-      Fail(1, '%s: Unknown host', [ArgumentText(Parser.Operands[0])]);
+    if not TextToIpv4Address(CommandLine.Operands[0], Wanted) then
+      Fail(1, Format('%s: Unknown host', [CommandLine.Operands[0]]));
     HasWanted := True;
   end;
   Error := ListArpEntries(Entries);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the ARP cache', []);
-  WriteLine(StandardOutput, 'Address          HWtype  HWaddress          Iface     Expires');
-  for Index := 0 to High(Entries) do
+    FailWithError(1, Error, 'cannot read the ARP cache');
+  PrintStringLine('Address          HWtype  HWaddress          Iface     Expires');
+  for Entry in Entries do
   begin
-    Address := AnyIpv4Address;
-    Move(Entries[Index].Address[0], Address.Bytes[0], 4);
-    if HasWanted and not AddressesAreEqual(Address, Wanted) then
+    if HasWanted and not AddressesAreEqual(EntryAddress(Entry), Wanted) then
       Continue;
-    if (InterfaceName <> nil) and not TextIsEqual(@Entries[Index].InterfaceName[0], InterfaceName) then
+    if (InterfaceName <> '') and (InterfaceNameToText(Entry.InterfaceName) <> InterfaceName) then
       Continue;
-    FormatInternetAddress(Address, @AddressText[0], SizeOf(AddressText));
-    if Entries[Index].State = ArpStateReachable then
-    begin
-      FormatHardwareAddress(@Entries[Index].HardwareAddress[0], EthernetAddressBytes, @HardwareText[0],
-        SizeOf(HardwareText));
-      WriteFormatted(StandardOutput, '%-16s ether   %-18s %-9s %us'#10, [ArgumentText(@AddressText[0]),
-        ArgumentText(@HardwareText[0]), ArgumentText(@Entries[Index].InterfaceName[0]),
-        ArgumentUnsigned(Entries[Index].ExpiresInSeconds)]);
-    end
-    else
-      WriteFormatted(StandardOutput, '%-16s         %-18s %s'#10, [ArgumentText(@AddressText[0]),
-        ArgumentText('(incomplete)'), ArgumentText(@Entries[Index].InterfaceName[0])]);
+    ShowEntry(Entry);
     Inc(Shown);
   end;
-  FlushStream(StandardOutput);
   if HasWanted and (Shown = 0) then
-    Fail(1, '%s: no entry', [ArgumentText(Parser.Operands[0])]);
+    Fail(1, Format('%s: no entry', [CommandLine.Operands[0]]));
 end.

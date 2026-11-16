@@ -25,6 +25,7 @@
 unit Wget.Bodies;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
@@ -40,7 +41,7 @@ type
 
 { Received counts the body bytes written. WriteError is the system's
   error code when writing failed. }
-function ReceiveBody(var Connection: TConnection; constref Response: THttpResponseHead; var Target: TOutputTarget;
+function ReceiveBody(Connection: TConnection; constref Response: THttpResponseHead; var Target: TOutputTarget;
   var Progress: TProgress; out Received: Int64; out WriteError: LongInt): TBodyOutcome;
 
 implementation
@@ -66,7 +67,7 @@ begin
   Result := True;
 end;
 
-function ReceiveChunkedBody(var Connection: TConnection; var Target: TOutputTarget; var Progress: TProgress;
+function ReceiveChunkedBody(Connection: TConnection; var Target: TOutputTarget; var Progress: TProgress;
   var Received: Int64; out WriteError: LongInt): TBodyOutcome;
 var
   Decoder: TChunkDecoder;
@@ -80,7 +81,7 @@ begin
   BeginChunkDecoder(Decoder);
   while not ChunkDecoderFinished(Decoder) do
   begin
-    RawLength := ReceiveFromConnection(Connection, @Raw[0], SizeOf(Raw));
+    RawLength := Connection.Receive(@Raw[0], SizeOf(Raw));
     if RawLength < 0 then
       Exit(BodyConnectionFailed);
     if RawLength = 0 then
@@ -99,7 +100,7 @@ begin
   Result := BodyComplete;
 end;
 
-function ReceiveBody(var Connection: TConnection; constref Response: THttpResponseHead; var Target: TOutputTarget;
+function ReceiveBody(Connection: TConnection; constref Response: THttpResponseHead; var Target: TOutputTarget;
   var Progress: TProgress; out Received: Int64; out WriteError: LongInt): TBodyOutcome;
 var
   Buffer: array[0..ReadSize - 1] of Byte;
@@ -117,7 +118,7 @@ begin
     Wanted := SizeOf(Buffer);
     if (Response.ContentLength >= 0) and (Response.ContentLength - Received < Wanted) then
       Wanted := Response.ContentLength - Received;
-    Count := ReceiveFromConnection(Connection, @Buffer[0], Wanted);
+    Count := Connection.Receive(@Buffer[0], Wanted);
     if Count < 0 then
       Exit(BodyConnectionFailed);
     if Count = 0 then

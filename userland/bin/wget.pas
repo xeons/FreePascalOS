@@ -38,21 +38,22 @@
 program wget;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
-  Sys.Text,
   Tls.CipherSuites,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
+  Util.Output,
   Wget.Settings,
   Wget.Transfer,
   Wget.Urls;
 
 const
-  Usage: PChar = 'Usage: wget [OPTION]... URL...'#10 +
+  Usage = 'Usage: wget [OPTION]... URL...'#10 +
     'Fetch files over HTTP and HTTPS.'#10 +
     #10 +
     '  -O, --output-document=FILE  write everything to FILE ("-": standard output)'#10 +
@@ -82,93 +83,83 @@ const
   OptionCaCertificate = 9;
   OptionCiphers = 10;
 
+  MaximumTimeoutSeconds = 24 * 3600;
+  MaximumTries = 1000000;
+
 { "A:B:C" into the list of cipher suites. }
-procedure ParseCipherList(Text: PChar; var Settings: TWgetSettings);
+procedure ParseCipherList(const Text: string; var Settings: TWgetSettings);
 var
-  Name: array[0..63] of Char;
-  Position, Length: Integer;
+  Name: string;
   Identifier: Word;
 begin
   Settings.CipherSuites.Count := 0;
-  Position := 0;
-  while True do
+  for Name in Text.Split([':']) do
   begin
-    Length := 0;
-    while (Text[Position] <> #0) and (Text[Position] <> ':') do
-    begin
-      if Length < High(Name) then
-      begin
-        Name[Length] := Text[Position];
-        Inc(Length);
-      end;
-      Inc(Position);
-    end;
-    Name[Length] := #0;
-    if Length > 0 then
-    begin
-      Identifier := CipherSuiteByName(@Name[0]);
-      if Identifier = 0 then
-        Fail(ExitParseError, 'unknown cipher suite ''%s''', [ArgumentText(@Name[0])]);
-      if Settings.CipherSuites.Count >= MaximumCipherSuites then
-        Fail(ExitParseError, 'too many cipher suites', []);
-      Settings.CipherSuites.Identifiers[Settings.CipherSuites.Count] := Identifier;
-      Inc(Settings.CipherSuites.Count);
-    end;
-    if Text[Position] = #0 then
-      Break;
-    Inc(Position);
+    if Name = '' then
+      Continue;
+    Identifier := CipherSuiteByName(PChar(Name));
+    if Identifier = 0 then
+      Fail(ExitParseError, Format('unknown cipher suite ''%s''', [Name]));
+    if Settings.CipherSuites.Count >= MaximumCipherSuites then
+      Fail(ExitParseError, 'too many cipher suites');
+    Settings.CipherSuites.Identifiers[Settings.CipherSuites.Count] := Identifier;
+    Inc(Settings.CipherSuites.Count);
   end;
   if Settings.CipherSuites.Count = 0 then
-    Fail(ExitParseError, 'no cipher suites given', []);
+    Fail(ExitParseError, 'no cipher suites given');
 end;
 
-procedure ParseOptions(var Parser: TOptionParser; var Settings: TWgetSettings);
+procedure ParseTimeout(const Value: string; var Settings: TWgetSettings);
 var
-  Code: Integer;
-  Value: PChar;
   Number: Int64;
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('O', 'output-document', True, OptionOutput),
-    OptionDefinition('q', 'quiet', False, OptionQuiet),
-    OptionDefinition('S', 'server-response', False, OptionServerResponse),
-    OptionDefinition('c', 'continue', False, OptionContinue),
-    OptionDefinition('T', 'timeout', True, OptionTimeout),
-    OptionDefinition('t', 'tries', True, OptionTries),
-    OptionDefinition('U', 'user-agent', True, OptionUserAgent),
-    OptionDefinition(#0, 'no-check-certificate', False, OptionNoCheckCertificate),
-    OptionDefinition(#0, 'ca-certificate', True, OptionCaCertificate),
-    OptionDefinition(#0, 'ciphers', True, OptionCiphers)], Usage);
-  while NextOption(Parser, Code, Value) do
+  if not ParseDecimal(Value, Number) or (Number < 0) or (Number > MaximumTimeoutSeconds) then
+    Fail(ExitParseError, Format('invalid timeout ''%s''', [Value]));
+  Settings.TimeoutMilliseconds := Number * 1000;
+end;
+
+procedure ParseTries(const Value: string; var Settings: TWgetSettings);
+var
+  Number: Int64;
+begin
+  if SameText(Value, 'inf') then
+    Settings.Tries := 0
+  else if not ParseDecimal(Value, Number) or (Number < 0) or (Number > MaximumTries) then
+    Fail(ExitParseError, Format('invalid number of tries ''%s''', [Value]))
+  else
+    Settings.Tries := Number;
+end;
+
+procedure ParseOptions(CommandLine: TCommandLine; var Settings: TWgetSettings);
+var
+  Code: Integer;
+  Value: string;
+begin
+  while CommandLine.NextOption(Code, Value) do
     case Code of
-      OptionOutput: Settings.OutputDocument := Value;
+      OptionOutput:
+        begin
+          Settings.HasOutputDocument := True;
+          Settings.OutputDocument := Value;
+        end;
       OptionQuiet: Settings.Quiet := True;
       OptionServerResponse: Settings.ShowServerResponse := True;
       OptionContinue: Settings.ContinueDownload := True;
-      OptionTimeout:
-        begin
-          if not ParseInteger(Value, Number) or (Number < 0) or (Number > 24 * 3600) then
-            Fail(ExitParseError, 'invalid timeout ''%s''', [ArgumentText(Value)]);
-          Settings.TimeoutMilliseconds := Number * 1000;
-        end;
-      OptionTries:
-        begin
-          if CompareTextIgnoringCase(Value, 'inf') = 0 then
-            Settings.Tries := 0
-          else if not ParseInteger(Value, Number) or (Number < 0) or (Number > 1000000) then
-            Fail(ExitParseError, 'invalid number of tries ''%s''', [ArgumentText(Value)])
-          else
-            Settings.Tries := Number;
-        end;
+      OptionTimeout: ParseTimeout(Value, Settings);
+      OptionTries: ParseTries(Value, Settings);
       OptionUserAgent: Settings.UserAgent := Value;
       OptionNoCheckCertificate: Settings.VerifyCertificates := False;
-      OptionCaCertificate: Settings.TrustFile := Value;
+      OptionCaCertificate:
+        begin
+          Settings.HasTrustFile := True;
+          Settings.TrustFile := Value;
+        end;
       OptionCiphers: ParseCipherList(Value, Settings);
     end;
 end;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Settings: TWgetSettings;
   Url: TUrl;
   Index: Integer;
@@ -176,29 +167,41 @@ var
   ExitStatus: Integer;
 begin
   InitializeSettings(Settings);
-  ParseOptions(Parser, Settings);
-  if Parser.OperandCount = 0 then
+  CommandLine := TCommandLine.Create([
+    CommandOption('O', 'output-document', True, OptionOutput),
+    CommandOption('q', 'quiet', False, OptionQuiet),
+    CommandOption('S', 'server-response', False, OptionServerResponse),
+    CommandOption('c', 'continue', False, OptionContinue),
+    CommandOption('T', 'timeout', True, OptionTimeout),
+    CommandOption('t', 'tries', True, OptionTries),
+    CommandOption('U', 'user-agent', True, OptionUserAgent),
+    CommandOption(#0, 'no-check-certificate', False, OptionNoCheckCertificate),
+    CommandOption(#0, 'ca-certificate', True, OptionCaCertificate),
+    CommandOption(#0, 'ciphers', True, OptionCiphers)], Usage);
+  ParseOptions(CommandLine, Settings);
+  if CommandLine.OperandCount = 0 then
   begin
-    Report('missing URL', []);
-    WriteLine(StandardError, 'Usage: wget [OPTION]... URL...'#10#10'Try ''wget --help'' for more options.');
+    Report('missing URL');
+    PrintErrorStringLine('Usage: wget [OPTION]... URL...'#10#10'Try ''wget --help'' for more options.');
     Halt(ExitGenericError);
   end;
-  if Settings.ContinueDownload and (Settings.OutputDocument <> nil) and
-     (Settings.OutputDocument[0] = '-') and (Settings.OutputDocument[1] = #0) then
-    Fail(ExitParseError, 'cannot continue (-c) when writing to standard output', []);
+  if Settings.ContinueDownload and Settings.HasOutputDocument and
+     (Settings.OutputDocument = StandardOutputName) then
+    Fail(ExitParseError, 'cannot continue (-c) when writing to standard output');
   ExitStatus := ExitSuccess;
-  for Index := 0 to Parser.OperandCount - 1 do
+  for Index := 0 to CommandLine.OperandCount - 1 do
   begin
-    if not ParseUrl(Parser.Operands[Index], Url) then
+    if not ParseUrl(CommandLine.Operands[Index], Url) then
     begin
-      Report('%s: invalid URL (only http:// and https:// are supported)', [ArgumentText(Parser.Operands[Index])]);
+      Report(Format('%s: invalid URL (only http:// and https:// are supported)', [CommandLine.Operands[Index]]));
       ExitStatus := ExitParseError;
       Continue;
     end;
-    Status := FetchUrl(Settings, Url, Settings.OutputDocument, Index > 0);
+    Status := FetchUrl(Settings, Url, Settings.HasOutputDocument, Settings.OutputDocument, Index > 0);
     if Status <> ExitSuccess then
       ExitStatus := Status;
   end;
+  CommandLine.Free;
   FlushStandardStreams;
   Halt(ExitStatus);
 end.

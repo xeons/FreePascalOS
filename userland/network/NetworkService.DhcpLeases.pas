@@ -52,7 +52,7 @@ type
     PrefixLength: LongWord;
     HasGateway: Boolean;
     Gateway: TInternetAddress;
-    DnsServers: array of TInternetAddress;
+    DnsServers: TInternetAddressArray;
     DomainName: string;
     Server: TInternetAddress;
     LeaseSeconds: LongWord;
@@ -71,23 +71,17 @@ function RebindingTime(constref Lease: TDhcpLease): QWord;
 function ExpiryTime(constref Lease: TDhcpLease): QWord;
 { "10.0.2.15/24". }
 function LeaseAddressText(constref Lease: TDhcpLease): string;
-function AddressText(constref Address: TInternetAddress): string;
 { The same address, gateway, DNS servers and domain (a renewal that
   changes nothing that is applied). }
 function SameLeaseConfiguration(constref First, Second: TDhcpLease): Boolean;
 
 implementation
 
+uses
+  Sys.AddressText;
+
 const
   MillisecondsPerSecond = 1000;
-
-function AddressText(constref Address: TInternetAddress): string;
-var
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
-begin
-  FormatInternetAddress(Address, @Text[0], SizeOf(Text));
-  Result := string(PChar(@Text[0]));
-end;
 
 function ClassPrefix(constref Address: TInternetAddress): LongWord;
 begin
@@ -100,22 +94,18 @@ begin
 end;
 
 function LeaseFromReply(constref Reply: TDhcpReply; ObtainedAt: QWord; ObtainedWallClock: Int64): TDhcpLease;
-var
-  Index: Integer;
 begin
   Result.Address := Reply.YourAddress;
   if Reply.HasSubnetMask then
     Result.PrefixLength := Reply.PrefixLength
   else
     Result.PrefixLength := ClassPrefix(Reply.YourAddress);
-  Result.HasGateway := Reply.RouterCount > 0;
+  Result.HasGateway := Length(Reply.Routers) > 0;
   if Result.HasGateway then
     Result.Gateway := Reply.Routers[0]
   else
     Result.Gateway := AnyIpv4Address;
-  SetLength(Result.DnsServers, Reply.DnsServerCount);
-  for Index := 0 to Reply.DnsServerCount - 1 do
-    Result.DnsServers[Index] := Reply.DnsServers[Index];
+  Result.DnsServers := Copy(Reply.DnsServers);
   Result.DomainName := Reply.DomainName;
   Result.Server := Reply.ServerIdentifier;
   if Reply.HasLeaseTime then
@@ -159,7 +149,7 @@ end;
 
 function LeaseAddressText(constref Lease: TDhcpLease): string;
 begin
-  Result := AddressText(Lease.Address) + '/' + IntToStr(Lease.PrefixLength);
+  Result := AddressToText(Lease.Address) + '/' + IntToStr(Lease.PrefixLength);
 end;
 
 function SameLeaseConfiguration(constref First, Second: TDhcpLease): Boolean;

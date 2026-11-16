@@ -25,6 +25,7 @@
 unit Netstat.Statistics;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -37,23 +38,28 @@ procedure ShowProtocolStatistics(constref Selection: TNetstatSelection);
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
-  Sys.Format,
   Sys.NetworkInterfaces,
-  Sys.Streams,
-  Util.Messages;
+  Util.Messages,
+  Util.Output;
 
-procedure WriteCounter(Value: QWord; Text: PChar);
+type
+  { net-tools' name of a message type; '' for those it has none for. }
+  TTypeName = function(MessageType: Integer): string;
+  { The message type counted in a slot. }
+  TSlotType = function(Slot: Integer): Integer;
+
+procedure WriteCounter(Value: QWord; const Text: string);
 begin
-  WriteFormatted(StandardOutput, '    %u %s'#10, [ArgumentUnsigned(Value), ArgumentText(Text)]);
+  PrintStringLine('    ' + IntToStr(Value) + ' ' + Text);
 end;
 
-procedure ShowIp(Title: PChar; constref Ip: TAbiIpStatistics);
+procedure ShowIp(const Title: string; constref Ip: TAbiIpStatistics);
 begin
-  WriteLine(StandardOutput, Title);
+  PrintStringLine(Title);
   { 2: not a router (RFC 1213's ipForwarding). }
-  WriteLine(StandardOutput, '    Forwarding: 2');
+  PrintStringLine('    Forwarding: 2');
   WriteCounter(Ip.Received, 'total packets received');
   WriteCounter(Ip.HeaderErrors, 'with invalid headers');
   WriteCounter(Ip.AddressErrors, 'with invalid addresses');
@@ -68,8 +74,8 @@ begin
   WriteCounter(Ip.ReassemblyFailures, 'packet reassemblies failed');
 end;
 
-{ net-tools' name for each ICMP type; nil for those it has none for. }
-function IcmpTypeName(IcmpType: Integer): PChar;
+{ net-tools' name for each ICMP type. }
+function IcmpTypeName(IcmpType: Integer): string;
 begin
   case IcmpType of
     0: Result := 'echo replies';
@@ -86,43 +92,14 @@ begin
     17: Result := 'address mask request';
     18: Result := 'address mask replies';
   else
-    Result := nil;
+    Result := '';
   end;
 end;
 
-{ The types that were seen, one line each. }
-procedure WriteIcmpHistogram(Title: PChar; const Counts: array of QWord);
-var
-  IcmpType: Integer;
-  Name: PChar;
-  Written: Boolean;
+{ ICMP counts each type in the slot of its number. }
+function IcmpTypeOfSlot(Slot: Integer): Integer;
 begin
-  Written := False;
-  for IcmpType := 0 to High(Counts) do
-  begin
-    if Counts[IcmpType] = 0 then
-      Continue;
-    if not Written then
-      WriteFormatted(StandardOutput, '    %s'#10, [ArgumentText(Title)]);
-    Written := True;
-    Name := IcmpTypeName(IcmpType);
-    if Name <> nil then
-      WriteFormatted(StandardOutput, '        %s: %u'#10, [ArgumentText(Name), ArgumentUnsigned(Counts[IcmpType])])
-    else
-      WriteFormatted(StandardOutput, '        type %d: %u'#10, [ArgumentNumber(IcmpType),
-        ArgumentUnsigned(Counts[IcmpType])]);
-  end;
-end;
-
-procedure ShowIcmp(constref Icmp: TAbiIcmpStatistics);
-begin
-  WriteLine(StandardOutput, 'Icmp:');
-  WriteCounter(Icmp.Received, 'ICMP messages received');
-  WriteCounter(Icmp.ReceiveErrors, 'input ICMP message failed');
-  WriteIcmpHistogram('ICMP input histogram:', Icmp.ReceivedByType);
-  WriteCounter(Icmp.Sent, 'ICMP messages sent');
-  WriteCounter(Icmp.SendErrors, 'ICMP messages failed');
-  WriteIcmpHistogram('ICMP output histogram:', Icmp.SentByType);
+  Result := Slot;
 end;
 
 { The ICMPv6 type counted in Slot (Abi.Networking.inc: the errors 1-4,
@@ -135,7 +112,7 @@ begin
     Result := Icmpv6FirstInformationalType + Slot - Icmpv6FirstInformationalSlot;
 end;
 
-function Icmpv6TypeName(IcmpType: Integer): PChar;
+function Icmpv6TypeName(IcmpType: Integer): string;
 begin
   case IcmpType of
     1: Result := 'destination unreachable';
@@ -154,15 +131,17 @@ begin
     137: Result := 'redirect';
     143: Result := 'MLDv2 report';
   else
-    Result := nil;
+    Result := '';
   end;
 end;
 
-procedure WriteIcmpv6Histogram(Title: PChar; const Counts: array of QWord);
+{ The types that were seen, one line each. }
+procedure WriteHistogram(const Title: string; const Counts: array of QWord; TypeOfSlot: TSlotType;
+  TypeName: TTypeName);
 var
   Slot: Integer;
-  IcmpType: Integer;
-  Name: PChar;
+  MessageType: Integer;
+  Name: string;
   Written: Boolean;
 begin
   Written := False;
@@ -171,32 +150,42 @@ begin
     if Counts[Slot] = 0 then
       Continue;
     if not Written then
-      WriteFormatted(StandardOutput, '    %s'#10, [ArgumentText(Title)]);
+      PrintStringLine('    ' + Title);
     Written := True;
-    IcmpType := Icmpv6TypeOfSlot(Slot);
-    Name := Icmpv6TypeName(IcmpType);
-    if Name <> nil then
-      WriteFormatted(StandardOutput, '        %s: %u'#10, [ArgumentText(Name), ArgumentUnsigned(Counts[Slot])])
+    MessageType := TypeOfSlot(Slot);
+    Name := TypeName(MessageType);
+    if Name <> '' then
+      PrintStringLine('        ' + Name + ': ' + IntToStr(Counts[Slot]))
     else
-      WriteFormatted(StandardOutput, '        type %d: %u'#10, [ArgumentNumber(IcmpType),
-        ArgumentUnsigned(Counts[Slot])]);
+      PrintStringLine('        type ' + IntToStr(MessageType) + ': ' + IntToStr(Counts[Slot]));
   end;
+end;
+
+procedure ShowIcmp(constref Icmp: TAbiIcmpStatistics);
+begin
+  PrintStringLine('Icmp:');
+  WriteCounter(Icmp.Received, 'ICMP messages received');
+  WriteCounter(Icmp.ReceiveErrors, 'input ICMP message failed');
+  WriteHistogram('ICMP input histogram:', Icmp.ReceivedByType, @IcmpTypeOfSlot, @IcmpTypeName);
+  WriteCounter(Icmp.Sent, 'ICMP messages sent');
+  WriteCounter(Icmp.SendErrors, 'ICMP messages failed');
+  WriteHistogram('ICMP output histogram:', Icmp.SentByType, @IcmpTypeOfSlot, @IcmpTypeName);
 end;
 
 procedure ShowIcmpv6(constref Icmp: TAbiIcmpv6Statistics);
 begin
-  WriteLine(StandardOutput, 'Icmp6:');
+  PrintStringLine('Icmp6:');
   WriteCounter(Icmp.Received, 'ICMPv6 messages received');
   WriteCounter(Icmp.ReceiveErrors, 'input ICMPv6 message failed');
-  WriteIcmpv6Histogram('ICMPv6 input histogram:', Icmp.ReceivedByType);
+  WriteHistogram('ICMPv6 input histogram:', Icmp.ReceivedByType, @Icmpv6TypeOfSlot, @Icmpv6TypeName);
   WriteCounter(Icmp.Sent, 'ICMPv6 messages sent');
   WriteCounter(Icmp.SendErrors, 'ICMPv6 messages failed');
-  WriteIcmpv6Histogram('ICMPv6 output histogram:', Icmp.SentByType);
+  WriteHistogram('ICMPv6 output histogram:', Icmp.SentByType, @Icmpv6TypeOfSlot, @Icmpv6TypeName);
 end;
 
 procedure ShowTcp(constref Tcp: TAbiTcpStatistics);
 begin
-  WriteLine(StandardOutput, 'Tcp:');
+  PrintStringLine('Tcp:');
   WriteCounter(Tcp.ActiveOpens, 'active connection openings');
   WriteCounter(Tcp.PassiveOpens, 'passive connection openings');
   WriteCounter(Tcp.FailedAttempts, 'failed connection attempts');
@@ -211,7 +200,7 @@ end;
 
 procedure ShowUdp(constref Udp: TAbiUdpStatistics);
 begin
-  WriteLine(StandardOutput, 'Udp:');
+  PrintStringLine('Udp:');
   WriteCounter(Udp.Received, 'packets received');
   WriteCounter(Udp.NoPorts, 'packets to unknown port received');
   WriteCounter(Udp.ReceiveErrors, 'packet receive errors');
@@ -227,7 +216,7 @@ var
 begin
   Error := GetNetworkStatistics(Statistics);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the network statistics', []);
+    FailWithError(1, Error, 'cannot read the network statistics');
   Everything := Selection.ShowTcp and Selection.ShowUdp;
   if Everything and Selection.ShowIpv4 then
   begin

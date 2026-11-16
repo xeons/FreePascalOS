@@ -43,28 +43,26 @@
 }
 program DnsTest;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.Streams,
   Sys.Objects,
   Sys.Threads,
   Sys.Processes,
-  Sys.Environment,
   Sys.Notifications,
   Sys.InternetAddresses,
+  Sys.AddressText,
   Sys.HostLookup,
   Sys.NetworkInterfaces,
-  Sys.DnsNames,
   Sys.DnsMessages,
   Sys.DnsQueries,
   Sys.HostNames,
+  Util.CommandLine,
+  Util.Messages,
+  Util.Output,
   DnsTest.Zone,
   DnsTest.Server;
 
@@ -74,14 +72,14 @@ var
   StopEvent: Int64;
   Message: TDnsMessage;
 
-procedure Check(Name: PChar; Passed: Boolean);
+procedure Check(const Name: string; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'dnstest: pass: %s'#10, [ArgumentText(Name)])
+    PrintStringLine('dnstest: pass: ' + Name)
   else
   begin
-    WriteFormatted(StandardOutput, 'dnstest: FAIL: %s'#10, [ArgumentText(Name)]);
+    PrintStringLine('dnstest: FAIL: ' + Name);
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -98,16 +96,29 @@ begin
   Result := AddressesAreEqual(Address, Ipv4Address(A, B, C, D));
 end;
 
-function HostIs(Host: PChar; A, B, C, D: Byte): Boolean;
+function HostIs(const Host: string; A, B, C, D: Byte): Boolean;
 var
   Address: TInternetAddress;
 begin
   Result := (LookUpHost(Host, Address) = ErrorNone) and SameAddress(Address, A, B, C, D);
 end;
 
-function TestServers(SearchDomain: PChar; WithMissingServer: Boolean): TAbiDnsServers;
+{ The address the text stands for (it is a valid one). }
+function AddressOf(const Text: string): TInternetAddress;
 begin
-  FillMemory(@Result, SizeOf(Result), 0);
+  TextToAddress(Text, Result);
+end;
+
+function AddressNameIs(constref Address: TInternetAddress; const Expected: string): Boolean;
+var
+  Name: string;
+begin
+  Result := (LookUpAddressName(Address, Name) = ErrorNone) and (Name = Expected);
+end;
+
+function TestServers(const SearchDomain: string; WithMissingServer: Boolean): TAbiDnsServers;
+begin
+  Result := Default(TAbiDnsServers);
   if WithMissingServer then
   begin
     { Nobody listens on 5399: the port is unreachable at once. }
@@ -116,57 +127,51 @@ begin
   end;
   Result.Servers[Result.Count] := MakeSocketAddress(LoopbackIpv4Address, TestServerPort);
   Inc(Result.Count);
-  CopyText(@Result.SearchDomain[0], SearchDomain, DnsDomainCapacity);
+  StrPLCopy(PChar(@Result.SearchDomain[0]), SearchDomain, High(Result.SearchDomain));
 end;
 
 procedure TestHostsFile;
 var
   Found: THostAddresses;
-  Name: array[0..255] of Char;
-  Ipv6Loopback: TInternetAddress;
-  Index: Integer;
+  Address: TInternetAddress;
   HasIpv6: Boolean;
 begin
   Check('/etc/hosts: localhost is 127.0.0.1', HostIs('localhost', 127, 0, 0, 1));
   Check('/etc/hosts: LOCALHOST (any case) too', HostIs('LOCALHOST', 127, 0, 0, 1));
   HasIpv6 := False;
-  ParseIpv6Address('::1', Ipv6Loopback);
   if LookUpHostAddresses('localhost', HostFamilyAny, Found) = ErrorNone then
-    for Index := 0 to Found.Count - 1 do
-      if AddressesAreEqual(Found.Addresses[Index], Ipv6Loopback) then
+    for Address in Found.Addresses do
+      if AddressesAreEqual(Address, AddressOf('::1')) then
         HasIpv6 := True;
   Check('/etc/hosts: localhost is ::1 as well', HasIpv6);
-  Check('/etc/hosts: 127.0.0.1 is named localhost',
-    (LookUpAddressName(LoopbackIpv4Address, @Name[0], SizeOf(Name)) = ErrorNone) and TextIsEqual(@Name[0], 'localhost'));
+  Check('/etc/hosts: 127.0.0.1 is named localhost', AddressNameIs(LoopbackIpv4Address, 'localhost'));
   Check('a numeric address needs no lookup', HostIs('10.0.2.15', 10, 0, 2, 15));
 end;
 
 procedure TestNames;
 var
   Found: THostAddresses;
-  Name: array[0..255] of Char;
   Address: TInternetAddress;
-  Expected: TInternetAddress;
 begin
   Check('A: www.test.example is 192.0.2.10', HostIs('www.test.example', 192, 0, 2, 10));
   Check('CNAME in the same answer: alias.test.example',
-    (LookUpHostAddresses('alias.test.example', HostFamilyIpv4, Found) = ErrorNone) and (Found.Count = 1) and
-    SameAddress(Found.Addresses[0], 192, 0, 2, 10) and TextIsEqual(@Found.CanonicalName[0], 'www.test.example'));
+    (LookUpHostAddresses('alias.test.example', HostFamilyIpv4, Found) = ErrorNone) and
+    (Length(Found.Addresses) = 1) and SameAddress(Found.Addresses[0], 192, 0, 2, 10) and
+    (Found.CanonicalName = 'www.test.example'));
   Check('CNAME asked for again: far.test.example', HostIs('far.test.example', 192, 0, 2, 10));
   Check('the search domain: www is www.test.example', HostIs('www', 192, 0, 2, 10));
   Check('a final dot: www.test.example.', HostIs('www.test.example.', 192, 0, 2, 10));
   Check('two addresses: multi.test.example',
-    (LookUpHostAddresses('multi.test.example', HostFamilyIpv4, Found) = ErrorNone) and (Found.Count = 2) and
-    SameAddress(Found.Addresses[0], 192, 0, 2, 21) and SameAddress(Found.Addresses[1], 192, 0, 2, 22));
-  ParseIpv6Address('2001:db8::10', Expected);
+    (LookUpHostAddresses('multi.test.example', HostFamilyIpv4, Found) = ErrorNone) and
+    (Length(Found.Addresses) = 2) and SameAddress(Found.Addresses[0], 192, 0, 2, 21) and
+    SameAddress(Found.Addresses[1], 192, 0, 2, 22));
   Check('AAAA: www.test.example is 2001:db8::10',
-    (LookUpHostAddresses('www.test.example', HostFamilyIpv6, Found) = ErrorNone) and (Found.Count = 1) and
-    AddressesAreEqual(Found.Addresses[0], Expected));
+    (LookUpHostAddresses('www.test.example', HostFamilyIpv6, Found) = ErrorNone) and
+    (Length(Found.Addresses) = 1) and AddressesAreEqual(Found.Addresses[0], AddressOf('2001:db8::10')));
   Check('a name that does not exist: ErrorNotFound',
     LookUpHost('nosuch.test.example', Address) = ErrorNotFound);
   Check('reverse: 192.0.2.10 is www.test.example',
-    (LookUpAddressName(Ipv4Address(192, 0, 2, 10), @Name[0], SizeOf(Name)) = ErrorNone) and
-    TextIsEqual(@Name[0], 'www.test.example'));
+    AddressNameIs(Ipv4Address(192, 0, 2, 10), 'www.test.example'));
   Check('a reply with a wrong id is ignored: spoof.test.example is 192.0.2.99',
     HostIs('spoof.test.example', 192, 0, 2, 99));
 end;
@@ -185,7 +190,7 @@ begin
   Options.TcpOnly := True;
   Error := QueryDns('www.test.example', DnsTypeMx, Options, Message, Details);
   Check('over TCP from the start: MX 10 mail.test.example', (Error = ErrorNone) and (Message.RecordCount = 1) and
-    (Message.Records[0].Preference = 10) and TextIsEqual(@Message.Records[0].Target[0], 'mail.test.example'));
+    (Message.Records[0].Preference = 10) and (Message.Records[0].Target = 'mail.test.example'));
   Options.TcpOnly := False;
   Options.Attempts := 1;
   Error := QueryDns('loop.test.example', DnsTypeA, Options, Message, Details);
@@ -193,7 +198,7 @@ begin
   Options.Attempts := DefaultDnsAttempts;
   Error := QueryDns('test.example', DnsTypeSoa, Options, Message, Details);
   Check('SOA of test.example', (Error = ErrorNone) and (Message.RecordCount = 1) and
-    (Message.Records[0].Serial = 2026111601) and TextIsEqual(@Message.Records[0].Mailbox[0], 'hostmaster.test.example'));
+    (Message.Records[0].Serial = 2026111601) and (Message.Records[0].Mailbox = 'hostmaster.test.example'));
   Error := QueryDns('nosuch.test.example', DnsTypeA, Options, Message, Details);
   Check('NXDOMAIN comes with the zone''s SOA', (Error = ErrorNone) and
     (Message.ResponseCode = DnsResponseNameError) and (Message.AuthorityCount = 1));
@@ -268,8 +273,7 @@ begin
   Error := OpenTestServer;
   if Error <> ErrorNone then
   begin
-    WriteFormatted(StandardError, 'dnstest: cannot serve on 127.0.0.1 port 53: %s'#10,
-      [ArgumentText(ErrorMessage(Error))]);
+    PrintErrorStringLine('dnstest: cannot serve on 127.0.0.1 port 53: ' + ErrorText(Error));
     FlushStream(StandardError);
     Halt(1);
   end;
@@ -297,18 +301,20 @@ begin
 end;
 
 var
-  Mode: PChar;
+  Arguments: TStringArray;
+  Mode: string = '';
 begin
-  Mode := Argument(1);
-  if TextIsEqual(Mode, '--serve') then
+  Arguments := ProgramArguments;
+  if Length(Arguments) > 0 then
+    Mode := Arguments[0];
+  if Mode = '--serve' then
     Serve
-  else if TextIsEqual(Mode, '--wait') then
+  else if Mode = '--wait' then
     WaitForServer
   else
   begin
     RunChecks;
-    WriteFormatted(StandardOutput, 'dnstest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-      ArgumentNumber(Checks)]);
+    PrintStringLine(Format('dnstest: %d of %d checks passed', [Checks - Failures, Checks]));
     if Failures > 0 then
       Halt(1);
   end;

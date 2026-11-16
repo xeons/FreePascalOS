@@ -27,6 +27,7 @@
 unit Netcat.Listener;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -39,11 +40,11 @@ function RunListener(constref LocalAddress: TInternetAddress; Port: Word): Integ
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
+  Sys.AddressText,
   Sys.Errors,
-  Sys.Format,
   Sys.Kernel,
-  Sys.Memory,
   Sys.Sockets,
   Util.Messages,
   Netcat.Settings,
@@ -55,11 +56,8 @@ const
   FirstDatagramBytes = 65536;
 
 procedure ReportPeer(constref Peer: TAbiSocketAddress);
-var
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
-  ReportProgress('Connection received on %s %u', [ArgumentText(HostText(Peer, @Text[0])),
-    ArgumentUnsigned(Peer.Port)]);
+  ReportProgress('Connection received on ' + HostText(Peer) + ' ' + IntToStr(Peer.Port));
 end;
 
 function RunStreamListener(Listener: Int64): Integer;
@@ -72,7 +70,7 @@ begin
     Connection := AcceptOnSocket(Listener, Peer);
     if Connection < 0 then
     begin
-      ReportError(ErrorCodeOf(Connection), 'accept failed', []);
+      ReportError(ErrorCodeOf(Connection), 'accept failed');
       Exit(1);
     end;
     ReportPeer(Peer);
@@ -87,24 +85,23 @@ end;
 function RunDatagramListener(Socket: Int64): Integer;
 var
   Peer: TAbiSocketAddress;
-  Data: PByte;
+  Data: array of Byte;
   Count: Int64;
   Error: LongInt;
 begin
-  Data := PByte(AllocateMemory(FirstDatagramBytes));
-  Count := ReceiveSocketFrom(Socket, Data, FirstDatagramBytes, 0, Peer);
+  SetLength(Data, FirstDatagramBytes);
+  Count := ReceiveSocketFrom(Socket, @Data[0], FirstDatagramBytes, 0, Peer);
   if Count >= 0 then
   begin
     Error := ConnectSocket(Socket, Peer);
     if Error = ErrorNone then
-      KernelWrite(StandardOutputHandle, Data, QWord(Count));
+      KernelWrite(StandardOutputHandle, @Data[0], QWord(Count));
   end
   else
     Error := ErrorCodeOf(Count);
-  FreeMemory(Data);
   if Error <> ErrorNone then
   begin
-    ReportError(Error, 'cannot receive the first datagram', []);
+    ReportError(Error, 'cannot receive the first datagram');
     Exit(1);
   end;
   ReportPeer(Peer);
@@ -118,17 +115,15 @@ function RunListener(constref LocalAddress: TInternetAddress; Port: Word): Integ
 var
   Socket: Int64;
   Error: LongInt;
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   Socket := OpenSocket(LocalAddress, Port);
   if not Settings.Datagrams then
   begin
     Error := ListenOnSocket(Socket, ListenBacklog);
     if Error <> ErrorNone then
-      FailWithError(1, Error, 'cannot listen on port %u', [ArgumentUnsigned(Port)]);
+      FailWithError(1, Error, 'cannot listen on port ' + IntToStr(Port));
   end;
-  ReportProgress('Listening on %s %u', [ArgumentText(FormatInternetAddress(LocalAddress, @Text[0], SizeOf(Text))),
-    ArgumentUnsigned(Port)]);
+  ReportProgress('Listening on ' + AddressToText(LocalAddress) + ' ' + IntToStr(Port));
   if Settings.Datagrams then
     Result := RunDatagramListener(Socket)
   else

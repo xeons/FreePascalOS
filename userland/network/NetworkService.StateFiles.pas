@@ -94,7 +94,7 @@ uses
 const
   StateFileMode = $1A4;   { rw-r--r-- }
   FolderMode = $1ED;      { rwxr-xr-x }
-  MaximumStateFileBytes = 16384;
+  ReadChunkBytes = 4096;
 
 type
   TWrittenState = record
@@ -212,19 +212,24 @@ end;
 function ReadFileText(const Path: string; out Text: string): Boolean;
 var
   Handle: Int64;
-  Buffer: array[0..MaximumStateFileBytes - 1] of Char;
+  Chunk: array[0..ReadChunkBytes - 1] of Byte;
+  ChunkText: string;
   Read: Int64;
 begin
   Text := '';
   Handle := OpenFile(PChar(Path), OpenRead);
   if Handle < 0 then
     Exit(False);
-  Read := ReadFile(Handle, @Buffer[0], SizeOf(Buffer));
+  repeat
+    Read := ReadFile(Handle, @Chunk[0], SizeOf(Chunk));
+    if Read > 0 then
+    begin
+      SetString(ChunkText, PChar(@Chunk[0]), Read);
+      Text := Text + ChunkText;
+    end;
+  until Read <= 0;
   CloseFile(Handle);
-  if Read <= 0 then
-    Exit(False);
-  SetString(Text, PChar(@Buffer[0]), Read);
-  Result := True;
+  Result := Text <> '';
 end;
 
 function ReadString(Document: TSettingsDocument; const Key: string): string;

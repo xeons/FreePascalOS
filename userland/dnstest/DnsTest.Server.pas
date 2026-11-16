@@ -55,7 +55,6 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Runtime.Memory,
   Sys.Objects,
   Sys.Sockets,
   Sys.InternetAddresses,

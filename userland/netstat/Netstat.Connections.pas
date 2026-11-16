@@ -32,6 +32,7 @@
 unit Netstat.Connections;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -43,20 +44,14 @@ procedure ShowConnections(constref Selection: TNetstatSelection);
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.NetworkInterfaces,
   Sys.ProcessList,
   Sys.Sockets,
-  Sys.Streams,
-  Sys.Text,
   Util.Messages,
+  Util.Output,
   Netstat.Names;
-
-const
-  OwnerTextCapacity = 64;
 
 function IsServer(constref Entry: TAbiSocketInformation): Boolean;
 begin
@@ -82,22 +77,13 @@ begin
 end;
 
 { "tcp", "tcp6", "udp", "udp6", "icmp", "icmp6". }
-function EntryProtocolName(constref Entry: TAbiSocketInformation; Buffer: PChar; Capacity: PtrUInt): PChar;
-var
-  Length: PtrUInt;
+function EntryProtocolName(constref Entry: TAbiSocketInformation): string;
 begin
-  Result := Buffer;
   if Entry.Protocol = ProtocolIcmpv6 then
-  begin
-    CopyText(Buffer, 'icmp6', Capacity);
-    Exit;
-  end;
-  CopyText(Buffer, ProtocolName(Entry.Protocol), Capacity);
+    Exit('icmp6');
+  Result := ProtocolName(Entry.Protocol);
   if Entry.Family = AddressFamilyIPv6 then
-  begin
-    Length := TextLength(Buffer);
-    CopyText(Buffer + Length, '6', Capacity - Length);
-  end;
+    Result := Result + '6';
 end;
 
 { A TCP socket made but neither bound nor connected is nowhere yet. }
@@ -121,7 +107,7 @@ end;
 
 { "ESTABLISHED", "LISTEN"...; a connected UDP socket is ESTABLISHED, an
   unconnected one has no state. }
-function StateText(constref Entry: TAbiSocketInformation): PChar;
+function StateText(constref Entry: TAbiSocketInformation): string;
 begin
   if Entry.Protocol = ProtocolTcp then
     Result := TcpStateName(Entry.State)
@@ -132,69 +118,52 @@ begin
 end;
 
 { "412/nc", or "-" when the socket has no owner or it is gone. }
-function FormatOwner(constref Entry: TAbiSocketInformation; const Processes: TProcessSnapshot;
-  Buffer: PChar; Capacity: PtrUInt): PChar;
+function OwnerText(constref Entry: TAbiSocketInformation; const Processes: TProcessSnapshot): string;
 var
   Details: PProcessDetails;
-  Builder: TTextBuilder;
 begin
-  Result := Buffer;
   if Entry.OwnerProcessId = 0 then
-  begin
-    CopyText(Buffer, '-', Capacity);
-    Exit;
-  end;
-  BeginText(Builder);
-  AppendDecimal(Builder, Int64(Entry.OwnerProcessId));
+    Exit('-');
+  Result := IntToStr(Int64(Entry.OwnerProcessId)) + '/';
   Details := FindProcessInSnapshot(Processes, Entry.OwnerProcessId);
-  AppendCharacter(Builder, '/');
   if Details <> nil then
-    AppendText(Builder, @Details^.Name[0])
+    Result := Result + StrPas(PChar(@Details^.Name[0]))
   else
-    AppendCharacter(Builder, '-');
-  CopyText(Buffer, Builder.Text, Capacity);
-  DiscardText(Builder);
+    Result := Result + '-';
 end;
 
 procedure WriteTitle(constref Selection: TNetstatSelection);
 begin
   if Selection.ListeningOnly then
-    WriteLine(StandardOutput, 'Active Internet connections (only servers)')
+    PrintStringLine('Active Internet connections (only servers)')
   else if Selection.All then
-    WriteLine(StandardOutput, 'Active Internet connections (servers and established)')
+    PrintStringLine('Active Internet connections (servers and established)')
   else
-    WriteLine(StandardOutput, 'Active Internet connections (w/o servers)');
-  WriteText(StandardOutput, 'Proto Recv-Q Send-Q Local Address           Foreign Address         ');
+    PrintStringLine('Active Internet connections (w/o servers)');
+  PrintString('Proto Recv-Q Send-Q Local Address           Foreign Address         ');
   if Selection.ShowOwners then
-    WriteLine(StandardOutput, 'State       PID/Program name')
+    PrintStringLine('State       PID/Program name')
   else
-    WriteLine(StandardOutput, 'State');
+    PrintStringLine('State');
 end;
 
 procedure WriteEntry(constref Entry: TAbiSocketInformation; constref Selection: TNetstatSelection;
   const Processes: TProcessSnapshot);
 var
-  LocalText: array[0..EndpointTextCapacity - 1] of Char;
-  ForeignText: array[0..EndpointTextCapacity - 1] of Char;
-  OwnerText: array[0..OwnerTextCapacity - 1] of Char;
-  ProtocolText: array[0..7] of Char;
+  ForeignText: string;
+  State: string;
 begin
-  FormatEndpoint(Entry.LocalAddress, Selection.Numeric, @LocalText[0], SizeOf(LocalText));
-  FormatEndpoint(Entry.PeerAddress, Selection.Numeric, @ForeignText[0], SizeOf(ForeignText));
-  WriteFormatted(StandardOutput, '%-5s %6u %6u %-23s ', [ArgumentText(EntryProtocolName(Entry, @ProtocolText[0],
-    SizeOf(ProtocolText))),
-    ArgumentUnsigned(Entry.ReceiveQueued), ArgumentUnsigned(Entry.SendQueued), ArgumentText(@LocalText[0])]);
+  ForeignText := EndpointText(Entry.PeerAddress, Selection.Numeric);
+  State := StateText(Entry);
+  PrintString(Format('%-5s %6u %6u %-23s ', [EntryProtocolName(Entry), QWord(Entry.ReceiveQueued),
+    QWord(Entry.SendQueued), EndpointText(Entry.LocalAddress, Selection.Numeric)]));
   if Selection.ShowOwners then
-  begin
-    FormatOwner(Entry, Processes, @OwnerText[0], SizeOf(OwnerText));
-    WriteFormatted(StandardOutput, '%-23s %-11s %s'#10, [ArgumentText(@ForeignText[0]),
-      ArgumentText(StateText(Entry)), ArgumentText(@OwnerText[0])]);
-  end
-  else if StateText(Entry)[0] = #0 then
+    PrintString(Format('%-23s %-11s %s'#10, [ForeignText, State, OwnerText(Entry, Processes)]))
+  else if State = '' then
     { No state: no padding at the end of the line. }
-    WriteLine(StandardOutput, @ForeignText[0])
+    PrintStringLine(ForeignText)
   else
-    WriteFormatted(StandardOutput, '%-23s %s'#10, [ArgumentText(@ForeignText[0]), ArgumentText(StateText(Entry))]);
+    PrintString(Format('%-23s %s'#10, [ForeignText, State]));
 end;
 
 procedure WriteEntriesOf(Family, Protocol: Word; const Entries: TSocketInformationList;
@@ -216,22 +185,25 @@ var
 begin
   Error := ListSockets(Entries);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the list of sockets', []);
+    FailWithError(1, Error, 'cannot read the list of sockets');
   InitializeProcessSnapshot(Processes);
-  if Selection.ShowOwners then
-  begin
-    Error := TakeProcessSnapshot(Processes);
-    if Error <> ErrorNone then
-      ReportError(Error, 'cannot read the list of processes', []);
+  try
+    if Selection.ShowOwners then
+    begin
+      Error := TakeProcessSnapshot(Processes);
+      if Error <> ErrorNone then
+        ReportError(Error, 'cannot read the list of processes');
+    end;
+    WriteTitle(Selection);
+    WriteEntriesOf(AddressFamilyIPv4, ProtocolTcp, Entries, Selection, Processes);
+    WriteEntriesOf(AddressFamilyIPv6, ProtocolTcp, Entries, Selection, Processes);
+    WriteEntriesOf(AddressFamilyIPv4, ProtocolUdp, Entries, Selection, Processes);
+    WriteEntriesOf(AddressFamilyIPv6, ProtocolUdp, Entries, Selection, Processes);
+    WriteEntriesOf(AddressFamilyIPv4, ProtocolIcmp, Entries, Selection, Processes);
+    WriteEntriesOf(AddressFamilyIPv6, ProtocolIcmpv6, Entries, Selection, Processes);
+  finally
+    FreeProcessSnapshot(Processes);
   end;
-  WriteTitle(Selection);
-  WriteEntriesOf(AddressFamilyIPv4, ProtocolTcp, Entries, Selection, Processes);
-  WriteEntriesOf(AddressFamilyIPv6, ProtocolTcp, Entries, Selection, Processes);
-  WriteEntriesOf(AddressFamilyIPv4, ProtocolUdp, Entries, Selection, Processes);
-  WriteEntriesOf(AddressFamilyIPv6, ProtocolUdp, Entries, Selection, Processes);
-  WriteEntriesOf(AddressFamilyIPv4, ProtocolIcmp, Entries, Selection, Processes);
-  WriteEntriesOf(AddressFamilyIPv6, ProtocolIcmpv6, Entries, Selection, Processes);
-  FreeProcessSnapshot(Processes);
 end;
 
 end.

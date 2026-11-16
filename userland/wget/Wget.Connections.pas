@@ -21,18 +21,19 @@
   numeric addresses without DNS, IPv6 first when this machine can reach
   it), a TCP connection made within the timeout to each address in turn
   until one takes it, and for https a TLS session over it (libtls,
-  Tls.Sessions).
+  TTlsSocketSession).
   Reads go through a buffer, so the response head can be looked for and
   what follows it handed to the body.
 }
 unit Wget.Connections;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 uses
+  Abi.SystemCalls,
   Sys.InternetAddresses,
   Tls.CipherSuites,
   Tls.Sessions,
@@ -46,8 +47,9 @@ type
     { 0: no limit. }
     TimeoutMilliseconds: Int64;
     VerifyCertificates: Boolean;
-    { nil: the system's roots. }
-    TrustFile: PChar;
+    { Without it the system's roots. }
+    HasTrustFile: Boolean;
+    TrustFile: string;
     CipherSuites: TCipherSuiteList;
     Quiet: Boolean;
   end;
@@ -55,335 +57,363 @@ type
   TConnectionFailure = (FailureNone, FailureLookUp, FailureConnect, FailureTimeout, FailureTls,
     FailureCertificate, FailureTransfer);
 
-  TConnection = record
-    Socket: Int64;
-    Session: PTlsSession;
-    UsesTls: Boolean;
-    TimeoutMilliseconds: Int64;
-    Address: TInternetAddress;
-    Buffer: array[0..ConnectionBufferSize - 1] of Byte;
-    BufferStart, BufferEnd: PtrUInt;
-    Failure: TConnectionFailure;
+  TConnection = class
+  private
+    FSocket: Int64;
+    FSession: TTlsSocketSession;
+    FUsesTls: Boolean;
+    FTimeoutMilliseconds: Int64;
+    FBuffer: array[0..ConnectionBufferSize - 1] of Byte;
+    FBufferStart, FBufferEnd: PtrUInt;
+    FFailure: TConnectionFailure;
+    FErrorCode: LongInt;
+    FErrorText: string;
+    procedure SetFailure(Failure: TConnectionFailure; Code: LongInt; const Text: string);
+    function ConnectWithTimeout(constref Target: TAbiSocketAddress): LongInt;
+    function OpenTls(constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+    function ResolveUrlHost(constref Url: TUrl; constref Settings: TConnectionSettings;
+      out Addresses: TInternetAddressArray): Boolean;
+    function ConnectToAddress(constref Url: TUrl; constref Address: TInternetAddress;
+      constref Settings: TConnectionSettings): Boolean;
+    function ReceiveRaw(Buffer: Pointer; Length: PtrUInt): Int64;
+    function GetBufferedData: PChar;
+    function GetBufferedCount: PtrUInt;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    { Looks the host up, connects and (https) runs the TLS handshake,
+      telling the user what it does unless quiet. On failure Failure and
+      ErrorText say why. }
+    function Open(constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+    procedure Close;
+    function Send(const Data: string): Boolean;
+    { Bytes read (from the buffer first), 0 at the end, -1 on failure. }
+    function Receive(Buffer: Pointer; Length: PtrUInt): Int64;
+    { Reads more into the buffer (moving what is there to the front); the
+      same results. }
+    function FillBuffer: Int64;
+    procedure ConsumeBuffer(Count: PtrUInt);
+    { What the buffer holds that was not consumed yet. }
+    property BufferedData: PChar read GetBufferedData;
+    property BufferedCount: PtrUInt read GetBufferedCount;
+    property Failure: TConnectionFailure read FFailure;
     { A system error code, or a TLS error code, of the failure. }
-    ErrorCode: LongInt;
-    ErrorText: array[0..511] of Char;
+    property ErrorCode: LongInt read FErrorCode;
+    property ErrorText: string read FErrorText;
   end;
-
-{ Looks the host up, connects and (https) runs the TLS handshake,
-  telling the user what it does unless quiet. On failure Failure and
-  ErrorText say why. }
-function OpenConnection(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
-procedure CloseConnection(var Connection: TConnection);
-function SendToConnection(var Connection: TConnection; Data: Pointer; Length: PtrUInt): Boolean;
-{ Bytes read (from the buffer first), 0 at the end, -1 on failure. }
-function ReceiveFromConnection(var Connection: TConnection; Buffer: Pointer; Length: PtrUInt): Int64;
-{ Reads more into the buffer (moving what is there to the front); the
-  same results. }
-function FillConnectionBuffer(var Connection: TConnection): Int64;
-procedure ConsumeConnectionBuffer(var Connection: TConnection; Count: PtrUInt);
 
 implementation
 
 uses
-  Abi.SystemCalls,
+  SysUtils,
   Sys.Errors,
-  Sys.Format,
   Sys.HostNames,
   Sys.HostLookup,
   Sys.AddressText,
   Sys.Sockets,
-  Sys.Streams,
-  Tls.Client,
-  Tls.Errors;
+  Tls.Errors,
+  Util.Output;
 
-procedure SetFailure(var Connection: TConnection; Failure: TConnectionFailure; Code: LongInt; Text: PChar);
-var
-  Index: Integer;
+const
+  TimeoutText = 'Read error (Connection timed out)';
+
+{ The words for a system error code ("Connection refused"). }
+function SystemErrorText(Code: LongInt): string;
 begin
-  Connection.Failure := Failure;
-  Connection.ErrorCode := Code;
-  Index := 0;
-  while (Text[Index] <> #0) and (Index < High(Connection.ErrorText)) do
-  begin
-    Connection.ErrorText[Index] := Text[Index];
-    Inc(Index);
-  end;
-  Connection.ErrorText[Index] := #0;
+  Result := ErrorMessage(Code);
+end;
+
+constructor TConnection.Create;
+begin
+  inherited Create;
+  FSocket := -1;
+end;
+
+destructor TConnection.Destroy;
+begin
+  Close;
+  inherited Destroy;
+end;
+
+procedure TConnection.SetFailure(Failure: TConnectionFailure; Code: LongInt; const Text: string);
+begin
+  FFailure := Failure;
+  FErrorCode := Code;
+  FErrorText := Text;
 end;
 
 { A non-blocking connect, waited for at most the timeout. }
-function ConnectWithTimeout(var Connection: TConnection; constref Target: TAbiSocketAddress): LongInt;
+function TConnection.ConnectWithTimeout(constref Target: TAbiSocketAddress): LongInt;
 var
   Waited: Int64;
   Pending: Int64;
   Timeout: Int64;
 begin
-  Result := ConnectSocket(Connection.Socket, Target);
+  Result := ConnectSocket(FSocket, Target);
   if Result = ErrorInProgress then
   begin
-    Timeout := Connection.TimeoutMilliseconds;
+    Timeout := FTimeoutMilliseconds;
     if Timeout <= 0 then
       Timeout := InfiniteWait;
-    Waited := WaitForSocket(Connection.Socket, SocketWritable, Timeout);
+    Waited := WaitForSocket(FSocket, SocketWritable, Timeout);
     if Waited < 0 then
       Exit(ErrorCodeOf(Waited));
-    Result := GetSocketOption(Connection.Socket, SocketOptionError, Pending);
+    Result := GetSocketOption(FSocket, SocketOptionError, Pending);
     if Result = ErrorNone then
       Result := LongInt(Pending);
   end;
   if Result = ErrorNone then
-    SetSocketOption(Connection.Socket, SocketOptionNonBlocking, 0);
+    SetSocketOption(FSocket, SocketOptionNonBlocking, 0);
 end;
 
-function OpenTls(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+function TConnection.OpenTls(constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
 var
-  Options: TTlsSessionOptions;
   Error: LongInt;
-  Message: array[0..383] of Char;
   Ignored: LongInt;
 begin
-  InitializeTlsSessionOptions(Options);
-  Options.ServerName := @Url.Host[0];
-  Options.VerifyCertificates := Settings.VerifyCertificates;
-  Options.TrustFile := Settings.TrustFile;
-  Options.TimeoutMilliseconds := Settings.TimeoutMilliseconds;
-  Options.ApplicationProtocol := 'http/1.1';
-  Options.CipherSuites := Settings.CipherSuites;
-  Error := OpenTlsSession(Connection.Socket, Options, Connection.Session);
+  FSession := TTlsSocketSession.Create;
+  FSession.ServerName := Url.Host;
+  FSession.VerifyCertificates := Settings.VerifyCertificates;
+  if Settings.HasTrustFile then
+    FSession.TrustFile := Settings.TrustFile;
+  FSession.TimeoutMilliseconds := Settings.TimeoutMilliseconds;
+  FSession.ApplicationProtocol := 'http/1.1';
+  FSession.CipherSuites := Settings.CipherSuites;
+  Error := FSession.Open(FSocket);
   if Error <> TlsErrorNone then
   begin
-    DescribeTlsSessionError(Connection.Session, Error, @Message[0], SizeOf(Message));
     if TlsErrorIsCertificateError(Error) then
-      SetFailure(Connection, FailureCertificate, Error, @Message[0])
+      SetFailure(FailureCertificate, Error, FSession.DescribeError(Error))
     else if Error = TlsErrorTimedOut then
-      SetFailure(Connection, FailureTimeout, Error, @Message[0])
+      SetFailure(FailureTimeout, Error, FSession.DescribeError(Error))
     else
-      SetFailure(Connection, FailureTls, Error, @Message[0]);
+      SetFailure(FailureTls, Error, FSession.DescribeError(Error));
     Exit(False);
   end;
-  Ignored := TlsIgnoredCertificateError(Connection.Session^.Connection);
+  Ignored := FSession.IgnoredCertificateError;
   if (Ignored <> TlsErrorNone) and not Settings.Quiet then
-  begin
-    DescribeTlsSessionError(Connection.Session, Ignored, @Message[0], SizeOf(Message));
-    WriteFormatted(StandardError, 'WARNING: cannot verify %s''s certificate: %s.'#10,
-      [ArgumentText(@Url.Host[0]), ArgumentText(@Message[0])]);
-  end;
+    PrintErrorString(Format('WARNING: cannot verify %s''s certificate: %s.'#10,
+      [Url.Host, FSession.DescribeError(Ignored)]));
   Result := True;
 end;
 
 { The addresses of the URL's host in the order to try them, saying so
   as wget does ("Resolving host... address, address"). }
-function ResolveUrlHost(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings;
+function TConnection.ResolveUrlHost(constref Url: TUrl; constref Settings: TConnectionSettings;
   out Addresses: TInternetAddressArray): Boolean;
 var
   Error: LongInt;
   Numeric: TInternetAddress;
   IsName: Boolean;
   Index: Integer;
+  Line: string;
 begin
-  IsName := not ParseInternetAddress(@Url.Host[0], Numeric);
+  IsName := not TextToAddress(Url.Host, Numeric);
   if IsName and not Settings.Quiet then
-    WriteFormatted(StandardError, 'Resolving %s... ', [ArgumentText(@Url.Host[0])]);
-  Error := ResolveHost(AnsiString(PChar(@Url.Host[0])), HostFamilyAny, Addresses);
+    PrintErrorString(Format('Resolving %s... ', [Url.Host]));
+  Error := ResolveHost(Url.Host, HostFamilyAny, Addresses);
   if (Error = ErrorNone) and (Length(Addresses) = 0) then
     Error := ErrorNotFound;
   Result := Error = ErrorNone;
   if not Result then
   begin
     if IsName and not Settings.Quiet then
-      WriteFormatted(StandardError, 'failed: %s.'#10, [ArgumentText(ErrorMessage(Error))]);
-    SetFailure(Connection, FailureLookUp, Error, 'unable to resolve host address');
+      PrintErrorString(Format('failed: %s.'#10, [SystemErrorText(Error)]));
+    SetFailure(FailureLookUp, Error, 'unable to resolve host address');
     Exit;
   end;
   if not IsName or Settings.Quiet then
     Exit;
+  Line := '';
   for Index := 0 to High(Addresses) do
   begin
     if Index > 0 then
-      WriteText(StandardError, ', ');
-    WriteText(StandardError, PChar(AddressToText(Addresses[Index])));
+      Line := Line + ', ';
+    Line := Line + AddressToText(Addresses[Index]);
   end;
-  WriteCharacter(StandardError, #10);
+  PrintErrorStringLine(Line);
 end;
 
 { One attempt: a socket of the address's family connected within the
   timeout. False (the failure recorded) if it did not connect. }
-function ConnectToAddress(var Connection: TConnection; constref Url: TUrl; constref Address: TInternetAddress;
+function TConnection.ConnectToAddress(constref Url: TUrl; constref Address: TInternetAddress;
   constref Settings: TConnectionSettings): Boolean;
 var
   Error: LongInt;
 begin
   Result := False;
-  Connection.Address := Address;
   if not Settings.Quiet then
-    WriteFormatted(StandardError, 'Connecting to %s|%s|:%d... ', [ArgumentText(@Url.Host[0]),
-      ArgumentText(PChar(AddressToText(Address))), ArgumentNumber(Url.Port)]);
-  Connection.Socket := CreateSocket(Address.Family, SocketKindStream or SocketKindNonBlocking, ProtocolDefault);
-  if Connection.Socket < 0 then
+    PrintErrorString(Format('Connecting to %s|%s|:%d... ', [Url.Host, AddressToText(Address), Url.Port]));
+  FSocket := CreateSocket(Address.Family, SocketKindStream or SocketKindNonBlocking, ProtocolDefault);
+  if FSocket < 0 then
   begin
-    Error := ErrorCodeOf(Connection.Socket);
-    Connection.Socket := -1;
+    Error := ErrorCodeOf(FSocket);
+    FSocket := -1;
     if not Settings.Quiet then
-      WriteFormatted(StandardError, 'failed: %s.'#10, [ArgumentText(ErrorMessage(Error))]);
-    SetFailure(Connection, FailureConnect, Error, ErrorMessage(Error));
+      PrintErrorString(Format('failed: %s.'#10, [SystemErrorText(Error)]));
+    SetFailure(FailureConnect, Error, SystemErrorText(Error));
     Exit;
   end;
-  Error := ConnectWithTimeout(Connection, MakeSocketAddress(Address, Url.Port));
+  Error := ConnectWithTimeout(MakeSocketAddress(Address, Url.Port));
   if Error <> ErrorNone then
   begin
     if not Settings.Quiet then
-      WriteFormatted(StandardError, 'failed: %s.'#10, [ArgumentText(ErrorMessage(Error))]);
+      PrintErrorString(Format('failed: %s.'#10, [SystemErrorText(Error)]));
     if Error = ErrorTimedOut then
-      SetFailure(Connection, FailureTimeout, Error, ErrorMessage(Error))
+      SetFailure(FailureTimeout, Error, SystemErrorText(Error))
     else
-      SetFailure(Connection, FailureConnect, Error, ErrorMessage(Error));
-    CloseConnection(Connection);
+      SetFailure(FailureConnect, Error, SystemErrorText(Error));
+    Close;
     Exit;
   end;
   if not Settings.Quiet then
-    WriteLine(StandardError, 'connected.');
+    PrintErrorStringLine('connected.');
   Result := True;
 end;
 
-function OpenConnection(var Connection: TConnection; constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
+function TConnection.Open(constref Url: TUrl; constref Settings: TConnectionSettings): Boolean;
 var
   Addresses: TInternetAddressArray;
-  Index: Integer;
+  Address: TInternetAddress;
   Connected: Boolean;
 begin
-  FillChar(Connection, SizeOf(Connection), 0);
-  Connection.Socket := -1;
-  Connection.UsesTls := Url.Scheme = SchemeHttps;
-  Connection.TimeoutMilliseconds := Settings.TimeoutMilliseconds;
+  FUsesTls := Url.Scheme = SchemeHttps;
+  FTimeoutMilliseconds := Settings.TimeoutMilliseconds;
   Result := False;
-  if not ResolveUrlHost(Connection, Url, Settings, Addresses) then
+  if not ResolveUrlHost(Url, Settings, Addresses) then
     Exit;
   Connected := False;
-  for Index := 0 to High(Addresses) do
+  for Address in Addresses do
   begin
-    Connected := ConnectToAddress(Connection, Url, Addresses[Index], Settings);
+    Connected := ConnectToAddress(Url, Address, Settings);
     if Connected then
       Break;
   end;
   if not Connected then
     Exit;
 
-  if Connection.UsesTls and not OpenTls(Connection, Url, Settings) then
+  if FUsesTls and not OpenTls(Url, Settings) then
   begin
-    CloseConnection(Connection);
+    Close;
     Exit;
   end;
   Result := True;
 end;
 
-procedure CloseConnection(var Connection: TConnection);
+procedure TConnection.Close;
 begin
-  if Connection.Session <> nil then
+  if FSession <> nil then
   begin
-    CloseTlsSession(Connection.Session);
-    FreeTlsSession(Connection.Session);
+    FSession.Close;
+    FreeAndNil(FSession);
   end;
-  if Connection.Socket >= 0 then
-    CloseSocket(Connection.Socket);
-  Connection.Socket := -1;
+  if FSocket >= 0 then
+    CloseSocket(FSocket);
+  FSocket := -1;
 end;
 
-function SendToConnection(var Connection: TConnection; Data: Pointer; Length: PtrUInt): Boolean;
+function TConnection.Send(const Data: string): Boolean;
 var
   Error: LongInt;
 begin
-  if Connection.UsesTls then
+  if FUsesTls then
   begin
-    Result := WriteTlsSession(Connection.Session, Data, Length) = Int64(Length);
+    Result := FSession.Write(PChar(Data), Length(Data)) = Int64(Length(Data));
     if not Result then
-      SetFailure(Connection, FailureTransfer, TlsErrorTransportFailed, 'the TLS connection failed');
+      SetFailure(FailureTransfer, TlsErrorTransportFailed, 'the TLS connection failed');
     Exit;
   end;
-  Error := SendAll(Connection.Socket, Data, Length);
+  Error := SendAll(FSocket, PChar(Data), Length(Data));
   Result := Error = ErrorNone;
   if not Result then
-    SetFailure(Connection, FailureTransfer, Error, ErrorMessage(Error));
+    SetFailure(FailureTransfer, Error, SystemErrorText(Error));
 end;
 
 { Straight from the socket or the TLS session. }
-function ReceiveRaw(var Connection: TConnection; Buffer: Pointer; Length: PtrUInt): Int64;
+function TConnection.ReceiveRaw(Buffer: Pointer; Length: PtrUInt): Int64;
 var
   Waited: Int64;
-  Message: array[0..383] of Char;
 begin
-  if Connection.UsesTls then
+  if FUsesTls then
   begin
-    Result := ReadTlsSession(Connection.Session, Buffer, Length);
+    Result := FSession.Read(Buffer, Length);
     if Result < 0 then
     begin
-      DescribeTlsSessionError(Connection.Session, LongInt(Result), @Message[0], SizeOf(Message));
       if Result = TlsErrorTimedOut then
-        SetFailure(Connection, FailureTimeout, LongInt(Result), 'Read error (Connection timed out)')
+        SetFailure(FailureTimeout, LongInt(Result), TimeoutText)
       else
-        SetFailure(Connection, FailureTransfer, LongInt(Result), @Message[0]);
+        SetFailure(FailureTransfer, LongInt(Result), FSession.DescribeError(LongInt(Result)));
       Result := -1;
     end;
     Exit;
   end;
-  if Connection.TimeoutMilliseconds > 0 then
+  if FTimeoutMilliseconds > 0 then
   begin
-    Waited := WaitForSocket(Connection.Socket, SocketReadable, Connection.TimeoutMilliseconds);
+    Waited := WaitForSocket(FSocket, SocketReadable, FTimeoutMilliseconds);
     if Waited < 0 then
     begin
       if ErrorCodeOf(Waited) = ErrorTimedOut then
-        SetFailure(Connection, FailureTimeout, ErrorTimedOut, 'Read error (Connection timed out)')
+        SetFailure(FailureTimeout, ErrorTimedOut, TimeoutText)
       else
-        SetFailure(Connection, FailureTransfer, ErrorCodeOf(Waited), ErrorMessage(ErrorCodeOf(Waited)));
+        SetFailure(FailureTransfer, ErrorCodeOf(Waited), SystemErrorText(ErrorCodeOf(Waited)));
       Exit(-1);
     end;
   end;
-  Result := ReceiveOnSocket(Connection.Socket, Buffer, Length, 0);
+  Result := ReceiveOnSocket(FSocket, Buffer, Length, 0);
   if Result < 0 then
   begin
-    SetFailure(Connection, FailureTransfer, ErrorCodeOf(Result), ErrorMessage(ErrorCodeOf(Result)));
+    SetFailure(FailureTransfer, ErrorCodeOf(Result), SystemErrorText(ErrorCodeOf(Result)));
     Result := -1;
   end;
 end;
 
-function FillConnectionBuffer(var Connection: TConnection): Int64;
+function TConnection.GetBufferedData: PChar;
 begin
-  if Connection.BufferStart > 0 then
+  Result := PChar(@FBuffer[FBufferStart]);
+end;
+
+function TConnection.GetBufferedCount: PtrUInt;
+begin
+  Result := FBufferEnd - FBufferStart;
+end;
+
+function TConnection.FillBuffer: Int64;
+begin
+  if FBufferStart > 0 then
   begin
-    if Connection.BufferEnd > Connection.BufferStart then
-      Move(Connection.Buffer[Connection.BufferStart], Connection.Buffer[0],
-        Connection.BufferEnd - Connection.BufferStart);
-    Connection.BufferEnd := Connection.BufferEnd - Connection.BufferStart;
-    Connection.BufferStart := 0;
+    if FBufferEnd > FBufferStart then
+      Move(FBuffer[FBufferStart], FBuffer[0], FBufferEnd - FBufferStart);
+    FBufferEnd := FBufferEnd - FBufferStart;
+    FBufferStart := 0;
   end;
-  if Connection.BufferEnd >= ConnectionBufferSize then
+  if FBufferEnd >= ConnectionBufferSize then
     Exit(0);
-  Result := ReceiveRaw(Connection, @Connection.Buffer[Connection.BufferEnd], ConnectionBufferSize -
-    Connection.BufferEnd);
+  Result := ReceiveRaw(@FBuffer[FBufferEnd], ConnectionBufferSize - FBufferEnd);
   if Result > 0 then
-    Connection.BufferEnd := Connection.BufferEnd + PtrUInt(Result);
+    FBufferEnd := FBufferEnd + PtrUInt(Result);
 end;
 
-procedure ConsumeConnectionBuffer(var Connection: TConnection; Count: PtrUInt);
+procedure TConnection.ConsumeBuffer(Count: PtrUInt);
 begin
-  if Count > Connection.BufferEnd - Connection.BufferStart then
-    Count := Connection.BufferEnd - Connection.BufferStart;
-  Connection.BufferStart := Connection.BufferStart + Count;
+  if Count > BufferedCount then
+    Count := BufferedCount;
+  FBufferStart := FBufferStart + Count;
 end;
 
-function ReceiveFromConnection(var Connection: TConnection; Buffer: Pointer; Length: PtrUInt): Int64;
+function TConnection.Receive(Buffer: Pointer; Length: PtrUInt): Int64;
 var
   Available: PtrUInt;
 begin
-  Available := Connection.BufferEnd - Connection.BufferStart;
+  Available := BufferedCount;
   if Available > 0 then
   begin
     if Available > Length then
       Available := Length;
-    Move(Connection.Buffer[Connection.BufferStart], Buffer^, Available);
-    Connection.BufferStart := Connection.BufferStart + Available;
+    Move(FBuffer[FBufferStart], Buffer^, Available);
+    FBufferStart := FBufferStart + Available;
     Exit(Available);
   end;
-  Result := ReceiveRaw(Connection, Buffer, Length);
+  Result := ReceiveRaw(Buffer, Length);
 end;
 
 end.

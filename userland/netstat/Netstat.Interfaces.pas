@@ -25,6 +25,7 @@
 unit Netstat.Interfaces;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -33,47 +34,37 @@ procedure ShowInterfaceTable;
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Sys.Errors,
-  Sys.Format,
   Sys.NetworkInterfaces,
-  Sys.Streams,
-  Util.Messages;
-
-procedure AppendFlagLetter(Flags: LongWord; Flag: LongWord; Letter: Char; Text: PChar; var Length: Integer);
-begin
-  if (Flags and Flag) = 0 then
-    Exit;
-  Text[Length] := Letter;
-  Inc(Length);
-end;
+  Sys.InterfaceText,
+  Util.Messages,
+  Util.Output;
 
 { "BRU", "LRU": net-tools' letters, in its order. }
-function FormatShortFlags(Flags: LongWord; Buffer: PChar): PChar;
-var
-  Length: Integer;
+function ShortFlagsText(Flags: LongWord): string;
 begin
-  Length := 0;
-  AppendFlagLetter(Flags, InterfaceFlagBroadcast, 'B', Buffer, Length);
-  AppendFlagLetter(Flags, InterfaceFlagLoopback, 'L', Buffer, Length);
-  AppendFlagLetter(Flags, InterfaceFlagRunning, 'R', Buffer, Length);
-  AppendFlagLetter(Flags, InterfaceFlagUp, 'U', Buffer, Length);
-  Buffer[Length] := #0;
-  Result := Buffer;
+  Result := '';
+  if (Flags and InterfaceFlagBroadcast) <> 0 then
+    Result := Result + 'B';
+  if (Flags and InterfaceFlagLoopback) <> 0 then
+    Result := Result + 'L';
+  if (Flags and InterfaceFlagRunning) <> 0 then
+    Result := Result + 'R';
+  if (Flags and InterfaceFlagUp) <> 0 then
+    Result := Result + 'U';
 end;
 
 procedure WriteInterface(constref Description: TAbiNetworkInterface);
 var
-  Flags: array[0..7] of Char;
   Counters: TAbiInterfaceCounters;
 begin
-  FormatShortFlags(Description.Flags, @Flags[0]);
   Counters := Description.Counters;
-  WriteFormatted(StandardOutput, '%-15s %5u %8u %6u %6u %6u %8u %6u %6u %6u %s'#10, [
-    ArgumentText(@Description.Name[0]), ArgumentUnsigned(Description.Mtu), ArgumentUnsigned(Counters.ReceivedPackets),
-    ArgumentUnsigned(Counters.ReceiveErrors), ArgumentUnsigned(Counters.ReceiveDrops), ArgumentUnsigned(0),
-    ArgumentUnsigned(Counters.SentPackets), ArgumentUnsigned(Counters.SendErrors),
-    ArgumentUnsigned(Counters.SendDrops), ArgumentUnsigned(0), ArgumentText(@Flags[0])]);
+  PrintString(Format('%-15s %5u %8u %6u %6u %6u %8u %6u %6u %6u %s'#10, [
+    InterfaceNameToText(Description.Name), QWord(Description.Mtu), QWord(Counters.ReceivedPackets),
+    QWord(Counters.ReceiveErrors), QWord(Counters.ReceiveDrops), 0,
+    QWord(Counters.SentPackets), QWord(Counters.SendErrors),
+    QWord(Counters.SendDrops), 0, ShortFlagsText(Description.Flags)]));
 end;
 
 procedure ShowInterfaceTable;
@@ -84,9 +75,9 @@ var
 begin
   Error := ListNetworkInterfaces(Interfaces);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot read the interfaces', []);
-  WriteLine(StandardOutput, 'Kernel Interface table');
-  WriteLine(StandardOutput, 'Iface             MTU    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg');
+    FailWithError(1, Error, 'cannot read the interfaces');
+  PrintStringLine('Kernel Interface table');
+  PrintStringLine('Iface             MTU    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg');
   for Index := 0 to High(Interfaces) do
     WriteInterface(Interfaces[Index]);
 end;

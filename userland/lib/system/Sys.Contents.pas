@@ -77,6 +77,7 @@ uses
   Sys.Sockets,
   Sys.NetworkInterfaces,
   Sys.AddressText,
+  Sys.InterfaceText,
   Sys.HostLookup;
 
 implementation

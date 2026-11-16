@@ -41,12 +41,13 @@
 program netstat;
 
 {$mode objfpc}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.Streams,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
   Netstat.Selection,
   Netstat.Connections,
   Netstat.Routes,
@@ -54,7 +55,7 @@ uses
   Netstat.Statistics;
 
 const
-  Usage: PChar = 'Usage: netstat [-tuwlanp]'#10 +
+  Usage = 'Usage: netstat [-tuwlanp]'#10 +
     '  or:  netstat -r'#10 +
     '  or:  netstat -i'#10 +
     '  or:  netstat -s [-t|-u]'#10 +
@@ -97,33 +98,33 @@ var
 procedure ChooseView(Chosen: TNetstatView);
 begin
   if (View <> ViewConnections) and (View <> Chosen) then
-    FailWithUsageHint('-r, -i and -s cannot be combined', []);
+    FailWithUsageHint('-r, -i and -s cannot be combined');
   View := Chosen;
 end;
 
 procedure ParseArguments;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
-  FillChar(Selection, SizeOf(Selection), 0);
+  Selection := Default(TNetstatSelection);
   { No reverse lookups yet: numeric whatever is asked. }
   Selection.Numeric := True;
-  BeginOptions(Parser, [
-    OptionDefinition('t', 'tcp', False, OptionTcp),
-    OptionDefinition('u', 'udp', False, OptionUdp),
-    OptionDefinition('w', 'raw', False, OptionRaw),
-    OptionDefinition('l', 'listening', False, OptionListening),
-    OptionDefinition('a', 'all', False, OptionAll),
-    OptionDefinition('n', 'numeric', False, OptionNumeric),
-    OptionDefinition('p', 'programs', False, OptionPrograms),
-    OptionDefinition('r', 'route', False, OptionRoute),
-    OptionDefinition('i', 'interfaces', False, OptionInterfaces),
-    OptionDefinition('s', 'statistics', False, OptionStatistics),
-    OptionDefinition('4', 'inet', False, OptionIpv4),
-    OptionDefinition('6', 'inet6', False, OptionIpv6)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('t', 'tcp', False, OptionTcp),
+    CommandOption('u', 'udp', False, OptionUdp),
+    CommandOption('w', 'raw', False, OptionRaw),
+    CommandOption('l', 'listening', False, OptionListening),
+    CommandOption('a', 'all', False, OptionAll),
+    CommandOption('n', 'numeric', False, OptionNumeric),
+    CommandOption('p', 'programs', False, OptionPrograms),
+    CommandOption('r', 'route', False, OptionRoute),
+    CommandOption('i', 'interfaces', False, OptionInterfaces),
+    CommandOption('s', 'statistics', False, OptionStatistics),
+    CommandOption('4', 'inet', False, OptionIpv4),
+    CommandOption('6', 'inet6', False, OptionIpv6)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionTcp: Selection.ShowTcp := True;
       OptionUdp: Selection.ShowUdp := True;
@@ -143,13 +144,14 @@ begin
     Selection.ShowIpv4 := True;
     Selection.ShowIpv6 := True;
   end;
-  if Parser.OperandCount > 0 then
-    FailWithUsageHint('unexpected operand ''%s''', [ArgumentText(Parser.Operands[0])]);
+  if CommandLine.OperandCount > 0 then
+    FailWithUsageHint(Format('unexpected operand ''%s''', [CommandLine.Operands[0]]));
   if not Selection.ShowTcp and not Selection.ShowUdp and not Selection.ShowRaw then
   begin
     Selection.ShowTcp := True;
     Selection.ShowUdp := True;
   end;
+  CommandLine.Free;
 end;
 
 begin

@@ -61,6 +61,9 @@ function Ipv6MethodName(Method: TIpv6Method): string;
 
 implementation
 
+uses
+  Sys.AddressText;
+
 const
   DefaultIpv6PrefixLength = 64;
 
@@ -94,7 +97,7 @@ begin
     Settings.Problem := 'Ipv6Method static needs an Ipv6Address';
     Exit;
   end;
-  if not ParseAddressWithPrefix(PChar(AddressText), Settings.Address, Settings.PrefixLength, HasPrefix) or
+  if not TextToAddressWithPrefix(AddressText, Settings.Address, Settings.PrefixLength, HasPrefix) or
      (Settings.Address.Family <> AddressFamilyIPv6) then
   begin
     Settings.Problem := 'the IPv6 address "' + AddressText + '" is not an IPv6 address with a prefix';
@@ -106,7 +109,7 @@ begin
   GatewayText := Trim(Store.ReadString(Section + '/Ipv6Gateway', ''));
   if GatewayText = '' then
     Exit;
-  if not ParseIpv6Address(PChar(GatewayText), Settings.Gateway) then
+  if not TextToAddress(GatewayText, Settings.Gateway) or (Settings.Gateway.Family <> AddressFamilyIPv6) then
   begin
     Settings.Problem := 'the IPv6 gateway "' + GatewayText + '" is not an IPv6 address';
     Exit;

@@ -31,98 +31,58 @@
   segments included. The file a URL is saved to is the last segment of
   its path, decoded, or index.html.
 
-  Plain Pascal over fixed buffers, so tools/WgetTest checks it on the
-  host.
+  Plain Pascal (the RTL only), so tools/WgetTest checks it on the host.
 }
 unit Wget.Urls;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
 const
+  { The longest host name DNS allows. }
   MaximumHostLength = 255;
-  MaximumPathLength = 4095;
 
 type
   TUrlScheme = (SchemeHttp, SchemeHttps);
 
   TUrl = record
     Scheme: TUrlScheme;
-    Host: array[0..MaximumHostLength] of Char;
+    Host: string;
     Port: Word;
     { From the first "/" on, the query included; at least "/". }
-    Path: array[0..MaximumPathLength] of Char;
+    Path: string;
   end;
 
-function ParseUrl(Text: PChar; out Url: TUrl): Boolean;
+function ParseUrl(const Text: string; out Url: TUrl): Boolean;
 { Reference (absolute, "//host/...", "/path" or a relative path)
   against Base. False when the result is not an http or https URL. }
-function ResolveUrl(constref Base: TUrl; Reference: PChar; out Resolved: TUrl): Boolean;
+function ResolveUrl(constref Base: TUrl; const Reference: string; out Resolved: TUrl): Boolean;
 function DefaultPort(Scheme: TUrlScheme): Word;
 { "https://host:port/path" (the port only when not the default). }
-procedure FormatUrl(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
+function FormatUrl(constref Url: TUrl): string;
 { True if the URL's host is an IPv6 address (it has a colon). }
 function UrlHostIsIpv6(constref Url: TUrl): Boolean;
 { The Host header: the host (an IPv6 address in brackets), and the port
   when not the default. }
-procedure FormatHostHeader(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
+function FormatHostHeader(constref Url: TUrl): string;
 { The local file name: the last path segment, decoded, or
   "index.html"; never with a "/" or a leading dot only. }
-procedure DefaultFileName(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
+function DefaultFileName(constref Url: TUrl): string;
 
 implementation
 
-function TextLength(Text: PChar): PtrUInt;
-begin
-  Result := 0;
-  if Text <> nil then
-    while Text[Result] <> #0 do
-      Inc(Result);
-end;
+uses
+  SysUtils,
+  StrUtils;
 
-function LowerCharacter(Character: Char): Char;
-begin
-  if Character in ['A'..'Z'] then
-    Result := Chr(Ord(Character) + 32)
-  else
-    Result := Character;
-end;
-
-function StartsWithIgnoringCase(Text, Prefix: PChar): Boolean;
-var
-  Index: PtrUInt;
-begin
-  Index := 0;
-  while Prefix[Index] <> #0 do
-  begin
-    if LowerCharacter(Text[Index]) <> LowerCharacter(Prefix[Index]) then
-      Exit(False);
-    Inc(Index);
-  end;
-  Result := True;
-end;
-
-{ Appends Text to a buffer of Capacity characters at Position; False
-  when it does not fit. }
-function AppendLimited(Buffer: PChar; Capacity: PtrUInt; var Position: PtrUInt; Text: PChar;
-  Count: PtrUInt): Boolean;
-var
-  Index: PtrUInt;
-begin
-  if Position + Count + 1 > Capacity then
-    Exit(False);
-  Index := 0;
-  while Index < Count do
-  begin
-    Buffer[Position] := Text[Index];
-    Inc(Position);
-    Inc(Index);
-  end;
-  Buffer[Position] := #0;
-  Result := True;
-end;
+const
+  SchemeCharacters = ['a'..'z', 'A'..'Z', '0'..'9', '+', '-', '.'];
+  UnsafePathCharacters = ['"', '<', '>', '\', '^', '`', '{', '|', '}'];
+  HttpPrefix = 'http://';
+  HttpsPrefix = 'https://';
+  IndexName = 'index.html';
 
 function DefaultPort(Scheme: TUrlScheme): Word;
 begin
@@ -132,384 +92,282 @@ begin
     Result := 80;
 end;
 
-const
-  HexDigits: array[0..15] of Char = '0123456789ABCDEF';
-
-{ Copies a path, percent-encoding what may not be sent as it is. }
-function CopyEncodedPath(Source: PChar; Count: PtrUInt; Destination: PChar; Capacity: PtrUInt): Boolean;
+{ A path, percent-encoding what may not be sent as it is. }
+function EncodePath(const Source: string): string;
 var
-  Index, Position: PtrUInt;
-  Character: Byte;
-  Encoded: array[0..2] of Char;
+  Character: Char;
 begin
-  Position := 0;
-  Destination[0] := #0;
-  Index := 0;
-  while Index < Count do
-  begin
-    Character := Ord(Source[Index]);
-    if (Character <= 32) or (Character >= 127) or (Chr(Character) in ['"', '<', '>', '\', '^', '`', '{', '|', '}'])
-    then
-    begin
-      Encoded[0] := '%';
-      Encoded[1] := HexDigits[Character shr 4];
-      Encoded[2] := HexDigits[Character and 15];
-      if not AppendLimited(Destination, Capacity, Position, @Encoded[0], 3) then
-        Exit(False);
-    end
-    else if not AppendLimited(Destination, Capacity, Position, @Source[Index], 1) then
-      Exit(False);
-    Inc(Index);
-  end;
-  Result := True;
+  Result := '';
+  for Character in Source do
+    if (Ord(Character) <= 32) or (Ord(Character) >= 127) or (Character in UnsafePathCharacters) then
+      Result := Result + '%' + IntToHex(Ord(Character), 2)
+    else
+      Result := Result + Character;
 end;
 
 { "[ipv6]" at the start of the authority: the address (hexadecimal
   digits, colons and dots) goes into Url.Host without the brackets;
   HostEnd is where what follows the closing bracket begins. }
-function ParseBracketedHost(Text: PChar; Count: PtrUInt; var Url: TUrl; out HostEnd: PtrUInt): Boolean;
+function ParseBracketedHost(const Authority: string; var Url: TUrl; out HostEnd: Integer): Boolean;
 var
-  Closing: PtrUInt;
-  Index: PtrUInt;
-begin
-  Result := False;
-  Closing := 1;
-  while (Closing < Count) and (Text[Closing] <> ']') do
-    Inc(Closing);
-  if (Closing >= Count) or (Closing = 1) or (Closing - 1 > MaximumHostLength) then
-    Exit;
-  for Index := 1 to Closing - 1 do
-  begin
-    if not (Text[Index] in ['0'..'9', 'a'..'f', 'A'..'F', ':', '.']) then
-      Exit;
-    Url.Host[Index - 1] := LowerCharacter(Text[Index]);
-  end;
-  Url.Host[Closing - 1] := #0;
-  HostEnd := Closing + 1;
-  Result := (HostEnd = Count) or (Text[HostEnd] = ':');
-end;
-
-{ A name or an IPv4 address up to the port's colon. }
-function ParsePlainHost(Text: PChar; Count: PtrUInt; var Url: TUrl; out HostEnd: PtrUInt): Boolean;
-var
-  Index: PtrUInt;
+  Closing: Integer;
+  Index: Integer;
 begin
   Result := False;
   HostEnd := 0;
-  while (HostEnd < Count) and (Text[HostEnd] <> ':') do
-    Inc(HostEnd);
-  if (HostEnd = 0) or (HostEnd > MaximumHostLength) then
+  Closing := Pos(']', Authority);
+  if (Closing = 0) or (Closing = 2) or (Closing - 2 > MaximumHostLength) then
     Exit;
-  for Index := 0 to HostEnd - 1 do
-  begin
-    if not (Text[Index] in ['a'..'z', 'A'..'Z', '0'..'9', '-', '.', '_']) then
+  for Index := 2 to Closing - 1 do
+    if not (Authority[Index] in ['0'..'9', 'a'..'f', 'A'..'F', ':', '.']) then
       Exit;
-    Url.Host[Index] := LowerCharacter(Text[Index]);
-  end;
-  Url.Host[HostEnd] := #0;
+  Url.Host := LowerCase(Copy(Authority, 2, Closing - 2));
+  HostEnd := Closing + 1;
+  Result := (HostEnd > Length(Authority)) or (Authority[HostEnd] = ':');
+end;
+
+{ A name or an IPv4 address up to the port's colon. }
+function ParsePlainHost(const Authority: string; var Url: TUrl; out HostEnd: Integer): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  HostEnd := Pos(':', Authority);
+  if HostEnd = 0 then
+    HostEnd := Length(Authority) + 1;
+  if (HostEnd = 1) or (HostEnd - 1 > MaximumHostLength) then
+    Exit;
+  for Index := 1 to HostEnd - 1 do
+    if not (Authority[Index] in ['a'..'z', 'A'..'Z', '0'..'9', '-', '.', '_']) then
+      Exit;
+  Url.Host := LowerCase(Copy(Authority, 1, HostEnd - 1));
   Result := True;
 end;
 
-function ParseAuthority(Text: PChar; Count: PtrUInt; var Url: TUrl): Boolean;
+{ ":port" after the host: 1 to 65535; an empty port means the default. }
+function ParsePort(const Text: string; var Url: TUrl): Boolean;
 var
-  HostEnd: PtrUInt;
-  Index: PtrUInt;
   Port: LongWord;
+  Character: Char;
 begin
   Result := False;
-  if Count = 0 then
-    Exit;
-  { No user names. }
-  for Index := 0 to Count - 1 do
-    if Text[Index] = '@' then
-      Exit;
-  if Text[0] = '[' then
+  if Text = '' then
+    Exit(True);
+  Port := 0;
+  for Character in Text do
   begin
-    if not ParseBracketedHost(Text, Count, Url, HostEnd) then
+    if not (Character in ['0'..'9']) then
+      Exit;
+    Port := Port * 10 + LongWord(Ord(Character) - Ord('0'));
+    if Port > 65535 then
+      Exit;
+  end;
+  if Port = 0 then
+    Exit;
+  Url.Port := Port;
+  Result := True;
+end;
+
+function ParseAuthority(const Authority: string; var Url: TUrl): Boolean;
+var
+  HostEnd: Integer;
+begin
+  Result := False;
+  { No user names. }
+  if (Authority = '') or (Pos('@', Authority) > 0) then
+    Exit;
+  if Authority[1] = '[' then
+  begin
+    if not ParseBracketedHost(Authority, Url, HostEnd) then
       Exit;
   end
-  else if not ParsePlainHost(Text, Count, Url, HostEnd) then
+  else if not ParsePlainHost(Authority, Url, HostEnd) then
     Exit;
   Url.Port := DefaultPort(Url.Scheme);
-  if HostEnd < Count then
-  begin
-    { ":port", 1 to 65535; an empty port means the default. }
-    Port := 0;
-    Index := HostEnd + 1;
-    if Index < Count then
-    begin
-      while Index < Count do
-      begin
-        if not (Text[Index] in ['0'..'9']) then
-          Exit;
-        Port := Port * 10 + LongWord(Ord(Text[Index]) - Ord('0'));
-        if Port > 65535 then
-          Exit;
-        Inc(Index);
-      end;
-      if Port = 0 then
-        Exit;
-      Url.Port := Port;
-    end;
-  end;
-  Result := True;
+  Result := ParsePort(Copy(Authority, HostEnd + 1, MaxInt), Url);
 end;
 
-function ParseUrl(Text: PChar; out Url: TUrl): Boolean;
-var
-  Position: PChar;
-  AuthorityEnd, PathEnd: PtrUInt;
+{ The position of the first of Characters in Text from Start on, or
+  just past its end. }
+function FindAny(const Text: string; Start: Integer; Characters: TSysCharSet): Integer;
 begin
-  FillChar(Url, SizeOf(Url), 0);
+  Result := Start;
+  while (Result <= Length(Text)) and not (Text[Result] in Characters) do
+    Inc(Result);
+end;
+
+{ Text starts with "scheme://" of a scheme other than http(s). }
+function HasOtherScheme(const Text: string): Boolean;
+var
+  SchemeEnd: Integer;
+begin
+  SchemeEnd := 1;
+  while (SchemeEnd <= Length(Text)) and (Text[SchemeEnd] in SchemeCharacters) do
+    Inc(SchemeEnd);
+  Result := Copy(Text, SchemeEnd, 3) = '://';
+end;
+
+function ParseUrl(const Text: string; out Url: TUrl): Boolean;
+var
+  Rest: string;
+  AuthorityEnd, PathEnd: Integer;
+  PathText: string;
+begin
+  Url := Default(TUrl);
   Result := False;
-  if (Text = nil) or (Text[0] = #0) then
+  if Text = '' then
     Exit;
   Url.Scheme := SchemeHttp;
-  Position := Text;
-  if StartsWithIgnoringCase(Position, 'https://') then
+  if StartsText(HttpsPrefix, Text) then
   begin
     Url.Scheme := SchemeHttps;
-    Position := Position + 8;
+    Rest := Copy(Text, Length(HttpsPrefix) + 1, MaxInt);
   end
-  else if StartsWithIgnoringCase(Position, 'http://') then
-    Position := Position + 7
+  else if StartsText(HttpPrefix, Text) then
+    Rest := Copy(Text, Length(HttpPrefix) + 1, MaxInt)
   else
   begin
     { Another scheme ("ftp:") is refused; "host:port" is not a scheme. }
-    AuthorityEnd := 0;
-    while Position[AuthorityEnd] in ['a'..'z', 'A'..'Z', '0'..'9', '+', '-', '.'] do
-      Inc(AuthorityEnd);
-    if (Position[AuthorityEnd] = ':') and (Position[AuthorityEnd + 1] = '/') and
-       (Position[AuthorityEnd + 2] = '/') then
+    if HasOtherScheme(Text) then
       Exit;
+    Rest := Text;
   end;
-  AuthorityEnd := 0;
-  while not (Position[AuthorityEnd] in [#0, '/', '?', '#']) do
-    Inc(AuthorityEnd);
-  if not ParseAuthority(Position, AuthorityEnd, Url) then
+  AuthorityEnd := FindAny(Rest, 1, ['/', '?', '#']);
+  if not ParseAuthority(Copy(Rest, 1, AuthorityEnd - 1), Url) then
     Exit;
-  Position := Position + AuthorityEnd;
-  PathEnd := 0;
-  while not (Position[PathEnd] in [#0, '#']) do
-    Inc(PathEnd);
-  if PathEnd = 0 then
-  begin
-    Url.Path[0] := '/';
-    Url.Path[1] := #0;
-    Exit(True);
-  end;
-  if Position[0] = '?' then
-  begin
+  PathEnd := FindAny(Rest, AuthorityEnd, ['#']);
+  PathText := Copy(Rest, AuthorityEnd, PathEnd - AuthorityEnd);
+  if PathText = '' then
+    Url.Path := '/'
+  else if PathText[1] = '?' then
     { "host?query": the path is "/". }
-    Url.Path[0] := '/';
-    Result := CopyEncodedPath(Position, PathEnd, @Url.Path[1], MaximumPathLength);
-    Exit;
-  end;
-  Result := CopyEncodedPath(Position, PathEnd, @Url.Path[0], MaximumPathLength + 1);
+    Url.Path := '/' + EncodePath(PathText)
+  else
+    Url.Path := EncodePath(PathText);
+  Result := True;
 end;
 
-{ RFC 3986 section 5.2.4, in place on a path that starts with "/" (the
-  query, if any, left alone). }
-procedure RemoveDotSegments(Path: PChar);
+{ Drops the last segment (and its "/") of Output. }
+procedure DropLastSegment(var Output: string);
 var
-  Output: array[0..MaximumPathLength] of Char;
-  Input, OutputLength, QueryStart, SegmentEnd: PtrUInt;
-  PathLength: PtrUInt;
+  Cut: Integer;
 begin
-  PathLength := TextLength(Path);
-  QueryStart := 0;
-  while (QueryStart < PathLength) and (Path[QueryStart] <> '?') do
-    Inc(QueryStart);
-  OutputLength := 0;
-  Input := 0;
+  Cut := Length(Output);
+  while (Cut > 0) and (Output[Cut] <> '/') do
+    Dec(Cut);
+  if Cut > 0 then
+    Dec(Cut);
+  SetLength(Output, Cut);
+end;
+
+{ RFC 3986 section 5.2.4 on a path that starts with "/" (the query, if
+  any, left alone). }
+function RemoveDotSegments(const Path: string): string;
+var
+  QueryStart, Input, SegmentEnd: Integer;
+  Segment: string;
+begin
+  QueryStart := FindAny(Path, 1, ['?']);
+  Result := '';
+  Input := 1;
   while Input < QueryStart do
   begin
     { Path[Input] is "/" here. }
-    SegmentEnd := Input + 1;
-    while (SegmentEnd < QueryStart) and (Path[SegmentEnd] <> '/') do
-      Inc(SegmentEnd);
-    if (SegmentEnd - Input = 2) and (Path[Input + 1] = '.') then
+    SegmentEnd := FindAny(Path, Input + 1, ['/']);
+    if SegmentEnd > QueryStart then
+      SegmentEnd := QueryStart;
+    Segment := Copy(Path, Input, SegmentEnd - Input);
+    if (Segment = '/.') or (Segment = '/..') then
     begin
-      { "/." }
+      if Segment = '/..' then
+        DropLastSegment(Result);
       if SegmentEnd = QueryStart then
-      begin
-        Output[OutputLength] := '/';
-        Inc(OutputLength);
-      end;
-    end
-    else if (SegmentEnd - Input = 3) and (Path[Input + 1] = '.') and (Path[Input + 2] = '.') then
-    begin
-      { "/..": drop the last output segment. }
-      while (OutputLength > 0) and (Output[OutputLength - 1] <> '/') do
-        Dec(OutputLength);
-      if OutputLength > 0 then
-        Dec(OutputLength);
-      if SegmentEnd = QueryStart then
-      begin
-        Output[OutputLength] := '/';
-        Inc(OutputLength);
-      end;
+        Result := Result + '/';
     end
     else
-    begin
-      Move(Path[Input], Output[OutputLength], SegmentEnd - Input);
-      OutputLength := OutputLength + SegmentEnd - Input;
-    end;
+      Result := Result + Segment;
     Input := SegmentEnd;
   end;
-  if OutputLength = 0 then
-  begin
-    Output[0] := '/';
-    OutputLength := 1;
-  end;
-  Move(Path[QueryStart], Output[OutputLength], PathLength - QueryStart);
-  OutputLength := OutputLength + PathLength - QueryStart;
-  Move(Output[0], Path[0], OutputLength);
-  Path[OutputLength] := #0;
+  if Result = '' then
+    Result := '/';
+  Result := Result + Copy(Path, QueryStart, MaxInt);
 end;
 
-function ResolveUrl(constref Base: TUrl; Reference: PChar; out Resolved: TUrl): Boolean;
+{ The base path without its query. }
+function PathWithoutQuery(const Path: string): string;
+begin
+  Result := Copy(Path, 1, FindAny(Path, 1, ['?']) - 1);
+end;
+
+{ The base path up to and including its last "/" (before the query). }
+function PathDirectory(const Path: string): string;
+begin
+  Result := PathWithoutQuery(Path);
+  SetLength(Result, RPos('/', Result));
+end;
+
+function ResolveUrl(constref Base: TUrl; const Reference: string; out Resolved: TUrl): Boolean;
 var
-  Merged: array[0..2 * MaximumPathLength + 2] of Char;
-  Position, DirectoryEnd, Index: PtrUInt;
-  Scheme: array[0..15] of Char;
-  ReferenceLength: PtrUInt;
+  Merged: string;
+  SchemeEnd: Integer;
 begin
   Resolved := Base;
   Result := False;
-  if (Reference = nil) or (Reference[0] = #0) then
+  if Reference = '' then
     Exit;
-  ReferenceLength := TextLength(Reference);
-  if StartsWithIgnoringCase(Reference, 'http://') or StartsWithIgnoringCase(Reference, 'https://') then
+  if StartsText(HttpPrefix, Reference) or StartsText(HttpsPrefix, Reference) then
     Exit(ParseUrl(Reference, Resolved));
   { Another scheme: refused. }
-  Index := 0;
-  while Reference[Index] in ['a'..'z', 'A'..'Z', '0'..'9', '+', '-', '.'] do
-    Inc(Index);
-  if (Index > 0) and (Reference[Index] = ':') then
+  SchemeEnd := 1;
+  while (SchemeEnd <= Length(Reference)) and (Reference[SchemeEnd] in SchemeCharacters) do
+    Inc(SchemeEnd);
+  if (SchemeEnd > 1) and (SchemeEnd <= Length(Reference)) and (Reference[SchemeEnd] = ':') then
     Exit;
-  if (Reference[0] = '/') and (Reference[1] = '/') then
+  if StartsStr('//', Reference) then
   begin
     { Network path: the base's scheme. }
     if Base.Scheme = SchemeHttps then
-      Scheme := 'https:'
+      Exit(ParseUrl('https:' + Reference, Resolved))
     else
-      Scheme := 'http:';
-    Position := 0;
-    Merged[0] := #0;
-    if not AppendLimited(@Merged[0], SizeOf(Merged), Position, @Scheme[0], TextLength(@Scheme[0])) or
-       not AppendLimited(@Merged[0], SizeOf(Merged), Position, Reference, ReferenceLength) then
-      Exit;
-    Exit(ParseUrl(@Merged[0], Resolved));
+      Exit(ParseUrl('http:' + Reference, Resolved));
   end;
 
-  Position := 0;
-  Merged[0] := #0;
-  if Reference[0] = '/' then
-  begin
-    if not AppendLimited(@Merged[0], SizeOf(Merged), Position, Reference, ReferenceLength) then
-      Exit;
-  end
-  else if Reference[0] = '?' then
-  begin
+  if Reference[1] = '/' then
+    Merged := Reference
+  else if Reference[1] = '?' then
     { The base path with a new query. }
-    Index := 0;
-    while (Base.Path[Index] <> #0) and (Base.Path[Index] <> '?') do
-      Inc(Index);
-    if not AppendLimited(@Merged[0], SizeOf(Merged), Position, @Base.Path[0], Index) or
-       not AppendLimited(@Merged[0], SizeOf(Merged), Position, Reference, ReferenceLength) then
-      Exit;
-  end
+    Merged := PathWithoutQuery(Base.Path) + Reference
   else
-  begin
     { The base path up to its last "/", then the reference. }
-    Index := 0;
-    DirectoryEnd := 0;
-    while (Base.Path[Index] <> #0) and (Base.Path[Index] <> '?') do
-    begin
-      if Base.Path[Index] = '/' then
-        DirectoryEnd := Index + 1;
-      Inc(Index);
-    end;
-    if not AppendLimited(@Merged[0], SizeOf(Merged), Position, @Base.Path[0], DirectoryEnd) or
-       not AppendLimited(@Merged[0], SizeOf(Merged), Position, Reference, ReferenceLength) then
-      Exit;
-  end;
+    Merged := PathDirectory(Base.Path) + Reference;
   { Drop a fragment. }
-  Index := 0;
-  while (Merged[Index] <> #0) and (Merged[Index] <> '#') do
-    Inc(Index);
-  if not CopyEncodedPath(@Merged[0], Index, @Resolved.Path[0], MaximumPathLength + 1) then
-    Exit;
-  RemoveDotSegments(@Resolved.Path[0]);
+  Merged := Copy(Merged, 1, FindAny(Merged, 1, ['#']) - 1);
+  Resolved.Path := RemoveDotSegments(EncodePath(Merged));
   Result := True;
 end;
 
 function UrlHostIsIpv6(constref Url: TUrl): Boolean;
-var
-  Index: PtrUInt;
 begin
-  Index := 0;
-  while Url.Host[Index] <> #0 do
-  begin
-    if Url.Host[Index] = ':' then
-      Exit(True);
-    Inc(Index);
-  end;
-  Result := False;
+  Result := Pos(':', Url.Host) > 0;
 end;
 
-procedure FormatHostHeader(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
-var
-  Position: PtrUInt;
-  Digits: array[0..7] of Char;
-  DigitCount: Integer;
-  Port: LongWord;
-  Index: Integer;
+function FormatHostHeader(constref Url: TUrl): string;
 begin
-  Position := 0;
-  if Capacity = 0 then
-    Exit;
-  Buffer[0] := #0;
   if UrlHostIsIpv6(Url) then
-  begin
-    AppendLimited(Buffer, Capacity, Position, '[', 1);
-    AppendLimited(Buffer, Capacity, Position, @Url.Host[0], TextLength(@Url.Host[0]));
-    AppendLimited(Buffer, Capacity, Position, ']', 1);
-  end
+    Result := '[' + Url.Host + ']'
   else
-    AppendLimited(Buffer, Capacity, Position, @Url.Host[0], TextLength(@Url.Host[0]));
+    Result := Url.Host;
   if Url.Port <> DefaultPort(Url.Scheme) then
-  begin
-    Port := Url.Port;
-    DigitCount := 0;
-    repeat
-      Digits[DigitCount] := Chr(Ord('0') + Port mod 10);
-      Port := Port div 10;
-      Inc(DigitCount);
-    until Port = 0;
-    AppendLimited(Buffer, Capacity, Position, ':', 1);
-    for Index := DigitCount - 1 downto 0 do
-      AppendLimited(Buffer, Capacity, Position, @Digits[Index], 1);
-  end;
+    Result := Result + ':' + IntToStr(Url.Port);
 end;
 
-procedure FormatUrl(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
-var
-  Position: PtrUInt;
-  HostPart: array[0..MaximumHostLength + 8] of Char;
+function FormatUrl(constref Url: TUrl): string;
 begin
-  Position := 0;
-  if Capacity = 0 then
-    Exit;
-  Buffer[0] := #0;
   if Url.Scheme = SchemeHttps then
-    AppendLimited(Buffer, Capacity, Position, 'https://', 8)
+    Result := HttpsPrefix
   else
-    AppendLimited(Buffer, Capacity, Position, 'http://', 7);
-  FormatHostHeader(Url, @HostPart[0], SizeOf(HostPart));
-  AppendLimited(Buffer, Capacity, Position, @HostPart[0], TextLength(@HostPart[0]));
-  AppendLimited(Buffer, Capacity, Position, @Url.Path[0], TextLength(@Url.Path[0]));
+    Result := HttpPrefix;
+  Result := Result + FormatHostHeader(Url) + Url.Path;
 end;
 
 function HexValue(Character: Char): Integer;
@@ -523,49 +381,42 @@ begin
   end;
 end;
 
-procedure DefaultFileName(constref Url: TUrl; Buffer: PChar; Capacity: PtrUInt);
-const
-  IndexName: PChar = 'index.html';
+{ Segment with its %XX escapes decoded, but for those that would put a
+  "/", a NUL or a control character in a file name. }
+function DecodeFileName(const Segment: string): string;
 var
-  SegmentStart, SegmentEnd, Index, Position: PtrUInt;
+  Index: Integer;
   Character: Char;
   Decoded: Integer;
 begin
-  if Capacity = 0 then
-    Exit;
-  SegmentEnd := 0;
-  while (Url.Path[SegmentEnd] <> #0) and (Url.Path[SegmentEnd] <> '?') do
-    Inc(SegmentEnd);
-  SegmentStart := SegmentEnd;
-  while (SegmentStart > 0) and (Url.Path[SegmentStart - 1] <> '/') do
-    Dec(SegmentStart);
-  Position := 0;
-  Buffer[0] := #0;
-  Index := SegmentStart;
-  while Index < SegmentEnd do
+  Result := '';
+  Index := 1;
+  while Index <= Length(Segment) do
   begin
-    Character := Url.Path[Index];
-    if (Character = '%') and (Index + 2 < SegmentEnd) and (HexValue(Url.Path[Index + 1]) >= 0) and
-       (HexValue(Url.Path[Index + 2]) >= 0) then
+    Character := Segment[Index];
+    if (Character = '%') and (Index + 2 <= Length(Segment)) and (HexValue(Segment[Index + 1]) >= 0) and
+       (HexValue(Segment[Index + 2]) >= 0) then
     begin
-      Decoded := HexValue(Url.Path[Index + 1]) * 16 + HexValue(Url.Path[Index + 2]);
-      { Never a "/", a NUL or a control character in a file name: those
-        stay encoded. }
+      Decoded := HexValue(Segment[Index + 1]) * 16 + HexValue(Segment[Index + 2]);
       if (Decoded >= 32) and (Decoded <> Ord('/')) and (Decoded <> 127) then
       begin
         Character := Chr(Decoded);
         Index := Index + 2;
       end;
     end;
-    AppendLimited(Buffer, Capacity, Position, @Character, 1);
+    Result := Result + Character;
     Inc(Index);
   end;
-  if (Position = 0) or ((Position = 1) and (Buffer[0] = '.')) or
-     ((Position = 2) and (Buffer[0] = '.') and (Buffer[1] = '.')) then
-  begin
-    Position := 0;
-    AppendLimited(Buffer, Capacity, Position, IndexName, TextLength(IndexName));
-  end;
+end;
+
+function DefaultFileName(constref Url: TUrl): string;
+var
+  Path: string;
+begin
+  Path := PathWithoutQuery(Url.Path);
+  Result := DecodeFileName(Copy(Path, RPos('/', Path) + 1, MaxInt));
+  if (Result = '') or (Result = '.') or (Result = '..') then
+    Result := IndexName;
 end;
 
 end.

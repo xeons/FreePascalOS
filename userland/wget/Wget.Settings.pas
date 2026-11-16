@@ -23,6 +23,7 @@
 unit Wget.Settings;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -41,23 +42,26 @@ const
 
   MaximumRedirects = 20;
   DefaultTries = 20;
-  DefaultUserAgent: PChar = 'Wget/1.21 (FreePascalOS)';
+  DefaultUserAgent = 'Wget/1.21 (FreePascalOS)';
+  StandardOutputName = '-';
 
 type
   TWgetSettings = record
-    { nil: the name from the URL; "-": standard output. }
-    OutputDocument: PChar;
+    { Without it the name comes from the URL; "-": standard output. }
+    HasOutputDocument: Boolean;
+    OutputDocument: string;
     Quiet: Boolean;
     ShowServerResponse: Boolean;
     ContinueDownload: Boolean;
     VerifyCertificates: Boolean;
     { A PEM file of trusted certificates instead of the system's. }
-    TrustFile: PChar;
+    HasTrustFile: Boolean;
+    TrustFile: string;
     { 0: no limit. }
     TimeoutMilliseconds: Int64;
     { 0: as many as it takes. }
     Tries: Integer;
-    UserAgent: PChar;
+    UserAgent: string;
     CipherSuites: TCipherSuiteList;
   end;
 
@@ -67,7 +71,7 @@ implementation
 
 procedure InitializeSettings(out Settings: TWgetSettings);
 begin
-  FillChar(Settings, SizeOf(Settings), 0);
+  Settings := Default(TWgetSettings);
   Settings.VerifyCertificates := True;
   Settings.Tries := DefaultTries;
   Settings.UserAgent := DefaultUserAgent;

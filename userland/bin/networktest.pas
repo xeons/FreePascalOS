@@ -62,17 +62,15 @@ program NetworkTest;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Runtime.Memory,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
+  Sys.InterfaceText,
   Sys.Objects,
   Sys.Processes,
   Sys.Sockets,
   Sys.Streams,
   Sys.Threads,
+  Util.Output,
   NetworkTest.Service,
   NetworkTest.Ipv6;
 
@@ -81,19 +79,20 @@ const
   TransferBytes = 1024 * 1024;
   ChunkBytes = 8192;
   EchoServicePort = 7;
+  QuitMessage = 'quit';
 
 var
   Failures: Integer = 0;
   Checks: Integer = 0;
 
-procedure Check(Name: PChar; Passed: Boolean);
+procedure Check(const Name: string; Passed: Boolean);
 begin
   Inc(Checks);
   if Passed then
-    WriteFormatted(StandardOutput, 'networktest: pass: %s'#10, [ArgumentText(Name)])
+    PrintStringLine('networktest: pass: ' + Name)
   else
   begin
-    WriteFormatted(StandardOutput, 'networktest: FAIL: %s'#10, [ArgumentText(Name)]);
+    PrintStringLine('networktest: FAIL: ' + Name);
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
@@ -153,7 +152,7 @@ begin
   SetSocketOption(Socket, SocketOptionReceiveTimeout, 1000);
   for Sequence := 1 to Count do
   begin
-    FillMemory(@Request[0], SizeOf(Request), Byte(Sequence));
+    FillChar(Request, SizeOf(Request), Byte(Sequence));
     Request[0] := 8;
     Request[1] := 0;
     Request[6] := 0;
@@ -211,7 +210,7 @@ begin
     Length := ReceiveSocketFrom(UdpServerSocket, @Buffer[0], SizeOf(Buffer), 0, Source);
     if Length < 0 then
       Exit(1);
-    if (Length = 4) and MemoryIsEqual(@Buffer[0], PChar('quit'), 4) then
+    if (Length = System.Length(QuitMessage)) and CompareMem(@Buffer[0], PChar(QuitMessage), Length) then
       Exit(0);
     SendSocketTo(UdpServerSocket, @Buffer[0], QWord(Length), 0, Source);
   until False;
@@ -229,7 +228,7 @@ begin
   if SendSocketTo(Client, @Sent[0], Size, 0, Server) <> Size then
     Exit(False);
   Result := (ReceiveSocketFrom(Client, @Received[0], SizeOf(Received), 0, Source) = Size) and
-    MemoryIsEqual(@Sent[0], @Received[0], Size) and (Source.Port = Server.Port);
+    CompareMem(@Sent[0], @Received[0], Size) and (Source.Port = Server.Port);
 end;
 
 procedure TestUdp;
@@ -255,12 +254,12 @@ begin
   Check('UDP echo of 1 byte', UdpRoundTrip(Client, Server, 1));
   Check('UDP echo of 512 bytes', UdpRoundTrip(Client, Server, 512));
   Check('UDP echo of the largest datagram (1472 bytes)', UdpRoundTrip(Client, Server, 1472));
-  FillMemory(@Large[0], SizeOf(Large), 1);
+  FillChar(Large, SizeOf(Large), 1);
   Check('a datagram of 1473 bytes is too long (no fragments are sent)',
     SendSocketTo(Client, @Large[0], 1473, 0, Server) = -ErrorMessageTooLong);
   Check('a broadcast needs SocketOptionBroadcast',
     SendSocketTo(Client, @Large[0], 4, 0, MakeSocketAddress(BroadcastIpv4Address, 9)) = -ErrorAccessDenied);
-  SendSocketTo(Client, PChar('quit'), 4, 0, Server);
+  SendSocketTo(Client, PChar(QuitMessage), Length(QuitMessage), 0, Server);
   Check('the UDP echo server ends', (WaitForThread(Thread, WaitMilliseconds, ExitCode) = 0) and (ExitCode = 0));
   CloseThreadHandle(Thread);
   CloseSocket(Client);
@@ -445,8 +444,8 @@ begin
     Exit;
   for Index := 0 to High(Routes) do
     if (Routes[Index].Destination.PrefixLength = 0) and
-       MemoryIsEqual(@Routes[Index].Gateway[0], @Gateway.Bytes[0], 4) and
-       TextIsEqual(@Routes[Index].InterfaceName[0], 'eth0') then
+       CompareMem(@Routes[Index].Gateway[0], @Gateway.Bytes[0], 4) and
+       (InterfaceNameToText(Routes[Index].InterfaceName) = 'eth0') then
       Exit(True);
 end;
 
@@ -459,14 +458,14 @@ begin
   if ListArpEntries(Entries) <> ErrorNone then
     Exit;
   for Index := 0 to High(Entries) do
-    if MemoryIsEqual(@Entries[Index].Address[0], @Gateway.Bytes[0], 4) and
+    if CompareMem(@Entries[Index].Address[0], @Gateway.Bytes[0], 4) and
        (Entries[Index].State = ArpStateReachable) then
       Exit(True);
 end;
 
 function EchoServiceAnswers: Boolean;
 const
-  Message: PChar = 'hello network'#10;
+  Message = 'hello network'#10;
 var
   Socket: Int64;
   Buffer: array[0..63] of Byte;
@@ -482,41 +481,42 @@ begin
     CloseSocket(Socket);
     Exit;
   end;
-  if SendAll(Socket, Message, TextLength(Message)) = ErrorNone then
+  if SendAll(Socket, PChar(Message), System.Length(Message)) = ErrorNone then
   begin
     Received := 0;
     repeat
       Length := ReceiveOnSocket(Socket, @Buffer[Received], QWord(SizeOf(Buffer) - Received), 0);
       if Length > 0 then
         Received := Received + Length;
-    until (Length <= 0) or (Received >= Int64(TextLength(Message)));
-    Result := (Received = Int64(TextLength(Message))) and MemoryIsEqual(@Buffer[0], Message, Received);
+    until (Length <= 0) or (Received >= System.Length(Message));
+    Result := (Received = System.Length(Message)) and CompareMem(@Buffer[0], PChar(Message), Received);
   end;
   CloseSocket(Socket);
 end;
 
 { Name's IPv4 address is Address/PrefixLength. }
-function InterfaceHasIpv4Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): Boolean;
+function InterfaceHasIpv4Address(const Name: string; constref Address: TInternetAddress;
+  PrefixLength: LongWord): Boolean;
 var
   Description: TAbiNetworkInterface;
   Current: TAbiInterfaceAddress;
 begin
-  Result := FindNetworkInterface(Name, Description) and FindInterfaceIpv4Address(Description, Current) and
+  Result := FindNetworkInterface(PChar(Name), Description) and FindInterfaceIpv4Address(Description, Current) and
     AddressesAreEqual(InterfaceAddressHost(Current), Address) and (Current.PrefixLength = PrefixLength);
 end;
 
 { Name has no IPv4 address (its IPv6 ones do not count). }
-function InterfaceHasNoAddress(Name: PChar): Boolean;
+function InterfaceHasNoAddress(const Name: string): Boolean;
 var
   Description: TAbiNetworkInterface;
   Current: TAbiInterfaceAddress;
 begin
-  Result := FindNetworkInterface(Name, Description) and not FindInterfaceIpv4Address(Description, Current);
+  Result := FindNetworkInterface(PChar(Name), Description) and not FindInterfaceIpv4Address(Description, Current);
 end;
 
 { Waits until Name has Address/PrefixLength (or, with Wanted False, no
   address at all). }
-function WaitForInterfaceAddress(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+function WaitForInterfaceAddress(const Name: string; constref Address: TInternetAddress; PrefixLength: LongWord;
   Wanted: Boolean; Milliseconds: QWord): Boolean;
 var
   Waited: QWord;
@@ -690,12 +690,12 @@ begin
     SetInterfaceAddress('lo', Ipv4Address(127, 0, 0, 2), 8) = ErrorNotPermitted);
   Check('adding a route is root''s',
     AddRoute(Ipv4Address(10, 9, 0, 0), 16, AnyIpv4Address, 'lo', 0) = ErrorNotPermitted);
-  FillMemory(@Servers, SizeOf(Servers), 0);
+  Servers := Default(TAbiDnsServers);
   Check('setting the DNS servers is root''s', SetDnsServers(Servers) = ErrorNotPermitted);
 end;
 
 begin
-  if (ParamCount = 1) and TextIsEqual(PChar(ParamStr(1)), '--unprivileged') then
+  if (ParamCount = 1) and (ParamStr(1) = '--unprivileged') then
     TestUnprivileged
   else
   begin
@@ -706,8 +706,7 @@ begin
     TestTcpRefusedAndWaits;
     TestNetworkCard;
   end;
-  WriteFormatted(StandardOutput, 'networktest: %d of %d checks passed'#10, [ArgumentNumber(Checks - Failures),
-    ArgumentNumber(Checks)]);
+  PrintStringLine(Format('networktest: %d of %d checks passed', [Checks - Failures, Checks]));
   if Failures > 0 then
     Halt(1);
 end.

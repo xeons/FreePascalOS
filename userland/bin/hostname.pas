@@ -34,25 +34,23 @@
 }
 program hostname;
 
-{$mode objfpc}
-{$pointermath on}
+{$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Abi.SystemCalls,
-  Runtime.Text,
-  Sys.Errors,
-  Sys.Format,
   Sys.Streams,
-  Sys.Text,
   Sys.Information,
   Sys.InternetAddresses,
+  Sys.AddressText,
   Sys.NetworkInterfaces,
   Sys.HostNames,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options;
+  Util.Output;
 
 const
-  Usage: PChar = 'Usage: hostname [-s | -i | -I] | hostname NAME'#10 +
+  Usage = 'Usage: hostname [-s | -i | -I] | hostname NAME'#10 +
     'Show or set the machine''s host name.'#10 +
     #10 +
     '  -s, --short          the name up to its first dot'#10 +
@@ -68,42 +66,62 @@ type
 
 var
   Display: TDisplay = DisplayName;
-  NewName: PChar = nil;
-  NodeName: array[0..AbiTextCapacity - 1] of Char;
+  NewName: string = '';
+  SettingName: Boolean = False;
+  NodeName: string;
 
 procedure ParseArguments;
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
-  BeginOptions(Parser, [
-    OptionDefinition('s', 'short', False, OptionShort),
-    OptionDefinition('i', 'ip-address', False, OptionAddresses),
-    OptionDefinition('I', 'all-ip-addresses', False, OptionAllAddresses)], Usage);
-  while NextOption(Parser, Code, Value) do
-    case Code of
-      OptionShort: Display := DisplayShort;
-      OptionAddresses: Display := DisplayAddresses;
-      OptionAllAddresses: Display := DisplayAllAddresses;
+  CommandLine := TCommandLine.Create([
+    CommandOption('s', 'short', False, OptionShort),
+    CommandOption('i', 'ip-address', False, OptionAddresses),
+    CommandOption('I', 'all-ip-addresses', False, OptionAllAddresses)], Usage);
+  try
+    while CommandLine.NextOption(Code, Value) do
+      case Code of
+        OptionShort: Display := DisplayShort;
+        OptionAddresses: Display := DisplayAddresses;
+        OptionAllAddresses: Display := DisplayAllAddresses;
+      end;
+    if CommandLine.OperandCount > 1 then
+      FailWithUsageHint(Format('extra operand ''%s''', [CommandLine.Operands[1]]));
+    if CommandLine.OperandCount = 1 then
+    begin
+      NewName := CommandLine.Operands[0];
+      SettingName := True;
     end;
-  if Parser.OperandCount > 1 then
-    FailWithUsageHint('extra operand ''%s''', [ArgumentText(Parser.Operands[1])]);
-  if Parser.OperandCount = 1 then
-    NewName := Parser.Operands[0];
+  finally
+    CommandLine.Free;
+  end;
 end;
 
 procedure SetName;
 var
   Error: LongInt;
 begin
-  Error := SetNodeName(NewName);
+  Error := SetNodeName(PChar(NewName));
   if Error = ErrorNotPermitted then
-    Fail(1, 'you must be root to change the host name', []);
+    Fail(1, 'you must be root to change the host name');
   if Error = ErrorInvalidArgument then
-    Fail(1, 'the specified hostname is invalid', []);
+    Fail(1, 'the specified hostname is invalid');
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot set the host name', []);
+    FailWithError(1, Error, 'cannot set the host name');
+end;
+
+{ The node name; False if it cannot be read. }
+function ReadNodeName(out Name: string): Boolean;
+var
+  Buffer: array[0..AbiTextCapacity - 1] of Char;
+begin
+  Result := GetNodeName(@Buffer[0], SizeOf(Buffer)) = ErrorNone;
+  if Result then
+    Name := StrPas(@Buffer[0])
+  else
+    Name := '';
 end;
 
 procedure ShowAddresses;
@@ -111,18 +129,17 @@ var
   Found: THostAddresses;
   Error: LongInt;
   Index: Integer;
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
-  Error := LookUpHostAddresses(@NodeName[0], HostFamilyAny, Found);
+  Error := LookUpHostAddresses(NodeName, HostFamilyAny, Found);
   if Error <> ErrorNone then
-    Fail(1, '%s', [ArgumentText(HostLookupErrorMessage(Error))]);
-  for Index := 0 to Found.Count - 1 do
+    Fail(1, HostLookupErrorMessage(Error));
+  for Index := 0 to High(Found.Addresses) do
   begin
     if Index > 0 then
-      WriteCharacter(StandardOutput, ' ');
-    WriteText(StandardOutput, FormatInternetAddress(Found.Addresses[Index], @Text[0], SizeOf(Text)));
+      PrintString(' ');
+    PrintString(AddressToText(Found.Addresses[Index]));
   end;
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine('');
 end;
 
 function AddressIsShown(constref Address: TAbiInterfaceAddress): Boolean;
@@ -136,12 +153,11 @@ var
   Interfaces: TNetworkInterfaceList;
   Position: Integer;
   AddressIndex: Integer;
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
   Error: LongInt;
 begin
   Error := ListNetworkInterfaces(Interfaces);
   if Error <> ErrorNone then
-    FailWithError(1, Error, 'cannot list the interfaces', []);
+    FailWithError(1, Error, 'cannot list the interfaces');
   for Position := 0 to High(Interfaces) do
   begin
     if (Interfaces[Position].Flags and InterfaceFlagLoopback) <> 0 then
@@ -151,36 +167,34 @@ begin
       { As Linux's: no IPv6 link-local addresses, nor ones not ready. }
       if not AddressIsShown(Interfaces[Position].Addresses[AddressIndex]) then
         Continue;
-      WriteText(StandardOutput, FormatInternetAddress(InterfaceAddressHost(Interfaces[Position].Addresses[AddressIndex]),
-        @Text[0], SizeOf(Text)));
-      WriteCharacter(StandardOutput, ' ');
+      PrintString(AddressToText(InterfaceAddressHost(Interfaces[Position].Addresses[AddressIndex])) + ' ');
     end;
   end;
-  WriteCharacter(StandardOutput, #10);
+  PrintStringLine('');
 end;
 
 procedure ShowName;
 var
-  Dot: PtrInt;
+  Dot: Integer;
 begin
   if Display = DisplayShort then
   begin
-    Dot := FindCharacter(@NodeName[0], '.');
-    if Dot >= 0 then
-      NodeName[Dot] := #0;
+    Dot := Pos('.', NodeName);
+    if Dot > 0 then
+      NodeName := Copy(NodeName, 1, Dot - 1);
   end;
-  WriteLine(StandardOutput, @NodeName[0]);
+  PrintStringLine(NodeName);
 end;
 
 begin
   ParseArguments;
-  if NewName <> nil then
+  if SettingName then
   begin
     SetName;
     Halt(0);
   end;
-  if GetNodeName(@NodeName[0], SizeOf(NodeName)) <> ErrorNone then
-    Fail(1, 'cannot read the host name', []);
+  if not ReadNodeName(NodeName) then
+    Fail(1, 'cannot read the host name');
   case Display of
     DisplayAddresses: ShowAddresses;
     DisplayAllAddresses: ShowAllAddresses;

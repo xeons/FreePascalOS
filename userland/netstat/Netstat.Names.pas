@@ -18,7 +18,7 @@
 
 {
   How netstat writes an endpoint: "10.0.2.15:22", "0.0.0.0:*". Every
-  address and port it shows goes through FormatEndpoint, so names come
+  address and port it shows goes through EndpointText, so names come
   in one place: without -n a host is shown by its name and a port by
   its service's. There is no reverse lookup and no services list yet,
   so only the loopback address has a name ("localhost"); the rest stay
@@ -27,63 +27,47 @@
 unit Netstat.Names;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
 uses
   Abi.SystemCalls;
 
-const
-  { "localhost:65535", or an address (IPv6 too) with its port. }
-  EndpointTextCapacity = 64;
-
 { Address and port as netstat shows them; port 0 is "*". }
-function FormatEndpoint(constref Address: TAbiSocketAddress; Numeric: Boolean; Buffer: PChar;
-  Capacity: PtrUInt): PChar;
+function EndpointText(constref Address: TAbiSocketAddress; Numeric: Boolean): string;
 
 implementation
 
 uses
-  Runtime.Text,
-  Sys.Text,
-  Sys.InternetAddresses;
+  SysUtils,
+  Sys.InternetAddresses,
+  Sys.AddressText;
 
 { The host's name, or its address as a number. }
-procedure AppendHost(var Builder: TTextBuilder; constref Address: TAbiSocketAddress; Numeric: Boolean);
+function HostText(constref Address: TAbiSocketAddress; Numeric: Boolean): string;
 var
   Host: TInternetAddress;
-  Text: array[0..InternetAddressTextCapacity - 1] of Char;
 begin
   Host := SocketAddressHost(Address);
   if not Numeric and AddressIsLoopback(Host) then
-  begin
-    AppendText(Builder, 'localhost');
-    Exit;
-  end;
-  AppendText(Builder, FormatInternetAddress(Host, @Text[0], SizeOf(Text)));
+    Result := 'localhost'
+  else
+    Result := AddressToText(Host);
 end;
 
 { The port's service name would go here; numbers for now. }
-procedure AppendPort(var Builder: TTextBuilder; Port: Word);
+function PortText(Port: Word): string;
 begin
   if Port = 0 then
-    AppendCharacter(Builder, '*')
+    Result := '*'
   else
-    AppendDecimal(Builder, Port);
+    Result := IntToStr(Port);
 end;
 
-function FormatEndpoint(constref Address: TAbiSocketAddress; Numeric: Boolean; Buffer: PChar;
-  Capacity: PtrUInt): PChar;
-var
-  Builder: TTextBuilder;
+function EndpointText(constref Address: TAbiSocketAddress; Numeric: Boolean): string;
 begin
-  BeginText(Builder);
-  AppendHost(Builder, Address, Numeric);
-  AppendCharacter(Builder, ':');
-  AppendPort(Builder, Address.Port);
-  CopyText(Buffer, Builder.Text, Capacity);
-  DiscardText(Builder);
-  Result := Buffer;
+  Result := HostText(Address, Numeric) + ':' + PortText(Address.Port);
 end;
 
 end.

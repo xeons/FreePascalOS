@@ -27,7 +27,7 @@
 unit Wget.Requests;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 interface
 
@@ -42,98 +42,82 @@ type
     HeadUnsupportedEncoding);
 
 { RangeStart > 0 asks for the rest of the resource from there. }
-function SendRequest(var Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
+function SendRequest(Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
   RangeStart: Int64): Boolean;
 { Leaves the bytes after the head in the connection's buffer. }
-function ReceiveResponseHead(var Connection: TConnection; constref Settings: TWgetSettings;
+function ReceiveResponseHead(Connection: TConnection; constref Settings: TWgetSettings;
   out Response: THttpResponseHead): THeadOutcome;
 
 implementation
 
 uses
-  Runtime.Text,
-  Sys.Format,
-  Sys.Streams,
-  Sys.Text,
-  Sys.Memory;
+  SysUtils,
+  Util.Output;
 
-function SendRequest(var Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
+const
+  LineEnd = #13#10;
+
+function SendRequest(Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
   RangeStart: Int64): Boolean;
 var
-  Builder: TTextBuilder;
-  HostHeader: array[0..MaximumHostLength + 8] of Char;
-  Request: PChar;
+  Request: string;
 begin
-  FormatHostHeader(Url, @HostHeader[0], SizeOf(HostHeader));
-  BeginText(Builder);
-  AppendFormatted(Builder, 'GET %s HTTP/1.1'#13#10, [ArgumentText(@Url.Path[0])]);
-  AppendFormatted(Builder, 'Host: %s'#13#10, [ArgumentText(@HostHeader[0])]);
-  AppendFormatted(Builder, 'User-Agent: %s'#13#10, [ArgumentText(Settings.UserAgent)]);
-  AppendText(Builder, 'Accept: */*'#13#10);
-  AppendText(Builder, 'Accept-Encoding: identity'#13#10);
+  Request := 'GET ' + Url.Path + ' HTTP/1.1' + LineEnd +
+    'Host: ' + FormatHostHeader(Url) + LineEnd +
+    'User-Agent: ' + Settings.UserAgent + LineEnd +
+    'Accept: */*' + LineEnd +
+    'Accept-Encoding: identity' + LineEnd;
   if RangeStart > 0 then
-    AppendFormatted(Builder, 'Range: bytes=%d-'#13#10, [ArgumentNumber(RangeStart)]);
-  AppendText(Builder, 'Connection: close'#13#10);
-  AppendText(Builder, #13#10);
-  Request := FinishText(Builder);
-  Result := SendToConnection(Connection, Request, TextLength(Request));
-  FreeMemory(Request);
+    Request := Request + 'Range: bytes=' + IntToStr(RangeStart) + '-' + LineEnd;
+  Request := Request + 'Connection: close' + LineEnd + LineEnd;
+  Result := Connection.Send(Request);
 end;
 
-procedure ShowHead(Head: PChar; Length: PtrUInt);
+{ Each line that is not empty, indented by two spaces. }
+procedure ShowHead(const Head: string);
 var
-  LineStart, LineEnd, ContentEnd: PtrUInt;
+  Line: string;
 begin
-  LineStart := 0;
-  while LineStart < Length do
-  begin
-    LineEnd := LineStart;
-    while (LineEnd < Length) and (Head[LineEnd] <> #10) do
-      Inc(LineEnd);
-    ContentEnd := LineEnd;
-    if (ContentEnd > LineStart) and (Head[ContentEnd - 1] = #13) then
-      Dec(ContentEnd);
-    if ContentEnd > LineStart then
+  for Line in Head.Split([#10]) do
+    if (Line <> '') and (Line <> #13) then
     begin
-      WriteText(StandardError, '  ');
-      WriteBytes(StandardError, Head + LineStart, ContentEnd - LineStart);
-      WriteCharacter(StandardError, #10);
+      if Line[Length(Line)] = #13 then
+        PrintErrorStringLine('  ' + Copy(Line, 1, Length(Line) - 1))
+      else
+        PrintErrorStringLine('  ' + Line);
     end;
-    LineStart := LineEnd + 1;
-  end;
 end;
 
-function ReceiveResponseHead(var Connection: TConnection; constref Settings: TWgetSettings;
+function ReceiveResponseHead(Connection: TConnection; constref Settings: TWgetSettings;
   out Response: THttpResponseHead): THeadOutcome;
 var
   HeadLength: PtrUInt;
   Received: Int64;
-  Head: PChar;
+  Head: string;
   Parsed: THeadParseResult;
 begin
-  FillChar(Response, SizeOf(Response), 0);
+  Response := Default(THttpResponseHead);
   while True do
   begin
     { Gather bytes until the empty line that ends the head. }
     repeat
-      Head := PChar(@Connection.Buffer[Connection.BufferStart]);
-      HeadLength := FindHeadEnd(Head, Connection.BufferEnd - Connection.BufferStart);
+      HeadLength := FindHeadEnd(Connection.BufferedData, Connection.BufferedCount);
       if HeadLength > 0 then
         Break;
-      if Connection.BufferEnd - Connection.BufferStart >= ConnectionBufferSize then
+      if Connection.BufferedCount >= ConnectionBufferSize then
         Exit(HeadTooLarge);
-      Received := FillConnectionBuffer(Connection);
+      Received := Connection.FillBuffer;
       if Received < 0 then
         Exit(HeadConnectionFailed);
       if Received = 0 then
         Exit(HeadNoData);
     until False;
 
-    Head := PChar(@Connection.Buffer[Connection.BufferStart]);
+    SetString(Head, Connection.BufferedData, HeadLength);
     if Settings.ShowServerResponse and not Settings.Quiet then
-      ShowHead(Head, HeadLength);
-    Parsed := ParseResponseHead(Head, HeadLength, Response);
-    ConsumeConnectionBuffer(Connection, HeadLength);
+      ShowHead(Head);
+    Parsed := ParseResponseHead(Head, Response);
+    Connection.ConsumeBuffer(HeadLength);
     if Parsed = HeadUnsupportedCoding then
       Exit(HeadUnsupportedEncoding);
     if Parsed <> HeadParsed then

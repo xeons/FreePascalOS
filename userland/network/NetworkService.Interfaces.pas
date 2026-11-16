@@ -137,10 +137,10 @@ type
 implementation
 
 uses
-  Runtime.Memory,
-  Runtime.Text,
   Sys.Kernel,
   Sys.NetworkInterfaces,
+  Sys.AddressText,
+  Sys.InterfaceText,
   NetworkService.Log,
   NetworkService.StateFiles;
 
@@ -216,14 +216,14 @@ begin
     for Position := 0 to High(Routes) do
       if (Routes[Position].Destination.Family = AddressFamilyIPv4) and
          (Routes[Position].Destination.PrefixLength = 0) and
-         MemoryIsEqual(@Routes[Position].Gateway[0], @Gateway.Bytes[0], 4) and
-         TextIsEqual(@Routes[Position].InterfaceName[0], PChar(Managed.Name)) then
+         CompareMem(@Routes[Position].Gateway[0], @Gateway.Bytes[0], 4) and
+         (InterfaceNameToText(Routes[Position].InterfaceName) = Managed.Name) then
         Exit;
   Error := AddRoute(AnyIpv4Address, 0, Gateway, PChar(Managed.Name), MetricOf(Managed));
   if Error <> ErrorNone then
-    Say(Managed.Name + ': default route through ' + AddressText(Gateway) + ': ' + ErrorText(Error))
+    Say(Managed.Name + ': default route through ' + AddressToText(Gateway) + ': ' + ErrorText(Error))
   else
-    Say(Managed.Name + ': default route through ' + AddressText(Gateway));
+    Say(Managed.Name + ': default route through ' + AddressToText(Gateway));
 end;
 
 procedure TInterfaceManager.ApplyStatic(Managed: TManagedInterface);
@@ -235,12 +235,12 @@ begin
     Error := SetInterfaceAddress(PChar(Managed.Name), Managed.Desired.Address, Managed.Desired.PrefixLength);
     if Error <> ErrorNone then
     begin
-      Managed.Failure := 'address ' + AddressText(Managed.Desired.Address) + ': ' + ErrorText(Error);
+      Managed.Failure := 'address ' + AddressToText(Managed.Desired.Address) + ': ' + ErrorText(Error);
       Say(Managed.Name + ': ' + Managed.Failure);
       Exit;
     end;
     Managed.AddressIsOurs := True;
-    Say(Managed.Name + ': address ' + AddressText(Managed.Desired.Address) + '/' +
+    Say(Managed.Name + ': address ' + AddressToText(Managed.Desired.Address) + '/' +
       IntToStr(Managed.Desired.PrefixLength));
   end;
   Error := SetInterfaceUp(PChar(Managed.Name), Managed.Desired.Up);
@@ -354,7 +354,7 @@ var
   PrefixLength: LongWord;
   HasPrefix: Boolean;
 begin
-  Result := (Text <> '') and ParseAddressWithPrefix(PChar(Text), Address, PrefixLength, HasPrefix);
+  Result := (Text <> '') and TextToAddressWithPrefix(Text, Address, PrefixLength, HasPrefix);
 end;
 
 procedure TInterfaceManager.RefreshInterfaces;
@@ -377,19 +377,19 @@ begin
   begin
     if (Interfaces[Position].Flags and InterfaceFlagLoopback) <> 0 then
       Continue;
-    Name := string(PChar(@Interfaces[Position].Name[0]));
+    Name := InterfaceNameToText(Interfaces[Position].Name);
     Managed := Find(Name);
     if Managed = nil then
     begin
       Managed := TManagedInterface.Create;
       Managed.Name := Name;
       Managed.Index := Interfaces[Position].Index;
-      CopyMemory(@Managed.HardwareAddress[0], @Interfaces[Position].HardwareAddress[0], 6);
+      Move(Interfaces[Position].HardwareAddress[0], Managed.HardwareAddress[0], 6);
       if ReadPreviousInterfaceState(Name, Previous) and (Previous.Method = 'dhcp') then
         Managed.HasPreviousAddress := ParsePreviousAddress(Previous.Address, Managed.PreviousAddress);
       SetLength(FInterfaces, Length(FInterfaces) + 1);
       FInterfaces[High(FInterfaces)] := Managed;
-      Say(Name + ': found (' + string(PChar(@Interfaces[Position].Description[0])) + ')');
+      Say(Name + ': found (' + InterfaceNameToText(Interfaces[Position].Description) + ')');
     end;
     LinkWasUsable := Managed.IsUp and Managed.LinkIsUp;
     Managed.IsUp := (Interfaces[Position].Flags and InterfaceFlagUp) <> 0;
@@ -567,7 +567,7 @@ var
   Error: LongInt;
   Listed: string;
 begin
-  FillMemory(@Servers, SizeOf(Servers), 0);
+  Servers := Default(TAbiDnsServers);
   Domain := FSettings.SearchDomain;
   if Length(FSettings.DnsServers) > 0 then
     for Position := 0 to High(FSettings.DnsServers) do
@@ -590,7 +590,7 @@ begin
     Domain := Copy(Domain, 1, DnsDomainCapacity - 1);
   if Domain <> '' then
     Move(Domain[1], Servers.SearchDomain[0], Length(Domain));
-  if FHasAppliedDns and MemoryIsEqual(@Servers, @FAppliedDns, SizeOf(Servers)) then
+  if FHasAppliedDns and CompareMem(@Servers, @FAppliedDns, SizeOf(Servers)) then
     Exit;
   Error := SetDnsServers(Servers);
   if Error <> ErrorNone then
@@ -605,7 +605,7 @@ begin
   begin
     if Listed <> '' then
       Listed := Listed + ', ';
-    Listed := Listed + AddressText(SocketAddressHost(Servers.Servers[Position]));
+    Listed := Listed + AddressToText(SocketAddressHost(Servers.Servers[Position]));
   end;
   if Listed = '' then
     Listed := 'none';
@@ -621,7 +621,7 @@ begin
   Result := nil;
   SetLength(Result, Length(Addresses));
   for Position := 0 to High(Addresses) do
-    Result[Position] := AddressText(Addresses[Position]);
+    Result[Position] := AddressToText(Addresses[Position]);
 end;
 
 procedure TInterfaceManager.WriteState(Managed: TManagedInterface);
@@ -658,9 +658,9 @@ begin
       if Managed.Failure = '' then
       begin
         if Managed.Desired.HasAddress then
-          State.Address := AddressText(Managed.Desired.Address) + '/' + IntToStr(Managed.Desired.PrefixLength);
+          State.Address := AddressToText(Managed.Desired.Address) + '/' + IntToStr(Managed.Desired.PrefixLength);
         if Managed.Desired.HasGateway then
-          State.Gateway := AddressText(Managed.Desired.Gateway);
+          State.Gateway := AddressToText(Managed.Desired.Gateway);
         State.DnsServers := AddressList(FSettings.DnsServers);
         State.Domain := FSettings.SearchDomain;
       end;
@@ -670,7 +670,7 @@ begin
         Lease := Managed.Dhcp.Lease;
         State.Address := LeaseAddressText(Lease);
         if Lease.HasGateway then
-          State.Gateway := AddressText(Lease.Gateway);
+          State.Gateway := AddressToText(Lease.Gateway);
         State.DnsServers := AddressList(Lease.DnsServers);
         State.Domain := Lease.DomainName;
         if Lease.LeaseSeconds = InfiniteLease then
@@ -678,11 +678,11 @@ begin
         else
           State.LeaseSeconds := Lease.LeaseSeconds;
         State.LeaseObtained := Lease.ObtainedWallClock;
-        State.DhcpServer := AddressText(Lease.Server);
+        State.DhcpServer := AddressToText(Lease.Server);
       end;
   else
     if Managed.KernelHasAddress then
-      State.Address := AddressText(Managed.KernelAddress) + '/' + IntToStr(Managed.KernelPrefixLength);
+      State.Address := AddressToText(Managed.KernelAddress) + '/' + IntToStr(Managed.KernelPrefixLength);
   end;
   State.Ipv6Method := Ipv6MethodName(Managed.Desired.Ipv6.Method);
   State.Ipv6Addresses := Managed.Ipv6Facts.Addresses;

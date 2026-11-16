@@ -41,16 +41,16 @@
 program nc;
 
 {$mode objfpc}
-{$pointermath on}
+{$H+}
 
 uses
-  Sys.Format,
+  SysUtils,
   Sys.HostNames,
   Sys.InternetAddresses,
   Sys.Streams,
-  Sys.Text,
+  Util.CommandLine,
   Util.Messages,
-  Util.Options,
+  Util.Numbers,
   Netcat.Settings,
   Netcat.Ports,
   Netcat.Sockets,
@@ -58,7 +58,7 @@ uses
   Netcat.Listener;
 
 const
-  Usage: PChar = 'Usage: nc [-46dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...'#10 +
+  Usage = 'Usage: nc [-46dNnuvz] [-p PORT] [-q SECONDS] [-w SECONDS] HOST PORT[-PORT]...'#10 +
     '  or:  nc -l [-46dkNnuv] [-q SECONDS] [-w SECONDS] [HOST] [-p] PORT'#10 +
     'Connect to HOST, or listen for a connection, and copy the standard input to'#10 +
     'it and what comes from it to the standard output.'#10 +
@@ -94,16 +94,16 @@ const
   MillisecondsPerSecond = 1000;
 
 var
-  Parser: TOptionParser;
+  CommandLine: TCommandLine;
 
 { Whole seconds, as -w and -q take them; -q also takes a negative
   number (go on until the peer ends). }
-function ParseSeconds(Option: Char; Text: PChar; NegativeAllowed: Boolean): Int64;
+function ParseSeconds(Option: Char; const Text: string; NegativeAllowed: Boolean): Int64;
 var
   Seconds: Int64;
 begin
-  if not ParseInteger(Text, Seconds) or (Seconds > High(LongWord)) or ((Seconds < 0) and not NegativeAllowed) then
-    FailWithUsageHint('-%s: bad number of seconds ''%s''', [ArgumentCharacter(Option), ArgumentText(Text)]);
+  if not ParseDecimal(Text, Seconds) or (Seconds > High(LongWord)) or ((Seconds < 0) and not NegativeAllowed) then
+    FailWithUsageHint(Format('-%s: bad number of seconds ''%s''', [Option, Text]));
   if Seconds < 0 then
     Exit(NoTimeLimit);
   Result := Seconds * MillisecondsPerSecond;
@@ -112,30 +112,30 @@ end;
 procedure ParseArguments;
 var
   Code: Integer;
-  Value: PChar;
+  Value: string;
 begin
   InitializeSettings;
-  BeginOptions(Parser, [
-    OptionDefinition('l', nil, False, OptionListen),
-    OptionDefinition('k', nil, False, OptionKeepListening),
-    OptionDefinition('p', nil, True, OptionLocalPort),
-    OptionDefinition('u', nil, False, OptionDatagrams),
-    OptionDefinition('z', nil, False, OptionScan),
-    OptionDefinition('v', nil, False, OptionVerbose),
-    OptionDefinition('w', nil, True, OptionTimeout),
-    OptionDefinition('q', nil, True, OptionQuitAfter),
-    OptionDefinition('N', nil, False, OptionShutdown),
-    OptionDefinition('n', nil, False, OptionNumeric),
-    OptionDefinition('d', nil, False, OptionIgnoreInput),
-    OptionDefinition('4', nil, False, OptionIpv4),
-    OptionDefinition('6', nil, False, OptionIpv6)], Usage);
-  while NextOption(Parser, Code, Value) do
+  CommandLine := TCommandLine.Create([
+    CommandOption('l', '', False, OptionListen),
+    CommandOption('k', '', False, OptionKeepListening),
+    CommandOption('p', '', True, OptionLocalPort),
+    CommandOption('u', '', False, OptionDatagrams),
+    CommandOption('z', '', False, OptionScan),
+    CommandOption('v', '', False, OptionVerbose),
+    CommandOption('w', '', True, OptionTimeout),
+    CommandOption('q', '', True, OptionQuitAfter),
+    CommandOption('N', '', False, OptionShutdown),
+    CommandOption('n', '', False, OptionNumeric),
+    CommandOption('d', '', False, OptionIgnoreInput),
+    CommandOption('4', '', False, OptionIpv4),
+    CommandOption('6', '', False, OptionIpv6)], Usage);
+  while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionListen: Settings.Listen := True;
       OptionKeepListening: Settings.KeepListening := True;
       OptionLocalPort:
         if not ParsePort(Value, Settings.LocalPort) then
-          FailWithUsageHint('-p: bad port ''%s''', [ArgumentText(Value)]);
+          FailWithUsageHint(Format('-p: bad port ''%s''', [Value]));
       OptionDatagrams: Settings.Datagrams := True;
       OptionScan: Settings.ScanOnly := True;
       OptionVerbose: Settings.Verbose := True;
@@ -148,11 +148,11 @@ begin
       OptionIpv6: Settings.Families := HostFamilyIpv6;
     end;
   if Settings.KeepListening and not Settings.Listen then
-    FailWithUsageHint('-k needs -l', []);
+    FailWithUsageHint('-k needs -l');
   if Settings.KeepListening and Settings.Datagrams then
-    FailWithUsageHint('-k works with TCP only', []);
+    FailWithUsageHint('-k works with TCP only');
   if Settings.Listen and Settings.ScanOnly then
-    FailWithUsageHint('-l and -z cannot be combined', []);
+    FailWithUsageHint('-l and -z cannot be combined');
 end;
 
 { nc -l [HOST] PORT, or nc -l [HOST] -p PORT. }
@@ -166,15 +166,15 @@ begin
   Port := Settings.LocalPort;
   PortOperand := -1;
   if Port = 0 then
-    PortOperand := Parser.OperandCount - 1;
-  if (PortOperand >= 0) and not ParsePort(Parser.Operands[PortOperand], Port) then
-    FailWithUsageHint('bad port ''%s''', [ArgumentText(Parser.Operands[PortOperand])]);
+    PortOperand := CommandLine.OperandCount - 1;
+  if (PortOperand >= 0) and not ParsePort(CommandLine.Operands[PortOperand], Port) then
+    FailWithUsageHint(Format('bad port ''%s''', [CommandLine.Operands[PortOperand]]));
   if Port = 0 then
-    FailWithUsageHint('missing port to listen on', []);
-  if (Parser.OperandCount > 2) or ((Parser.OperandCount = 2) and (PortOperand < 0)) then
-    FailWithUsageHint('too many operands', []);
-  if (Parser.OperandCount = 2) or ((Parser.OperandCount = 1) and (PortOperand < 0)) then
-    LocalAddress := ResolveHost(Parser.Operands[0]);
+    FailWithUsageHint('missing port to listen on');
+  if (CommandLine.OperandCount > 2) or ((CommandLine.OperandCount = 2) and (PortOperand < 0)) then
+    FailWithUsageHint('too many operands');
+  if (CommandLine.OperandCount = 2) or ((CommandLine.OperandCount = 1) and (PortOperand < 0)) then
+    LocalAddress := ResolveHost(CommandLine.Operands[0]);
   { -p named the port to listen on, not a local port to send from. }
   Settings.LocalPort := 0;
   Result := RunListener(LocalAddress, Port);
@@ -182,9 +182,9 @@ end;
 
 function Connect: Integer;
 begin
-  if Parser.OperandCount < 2 then
-    FailWithUsageHint('missing host or port', []);
-  Result := RunClient(Parser.Operands[0], @Parser.Operands[1], Parser.OperandCount - 1);
+  if CommandLine.OperandCount < 2 then
+    FailWithUsageHint('missing host or port');
+  Result := RunClient(CommandLine.Operands[0], Copy(CommandLine.Operands, 1, CommandLine.OperandCount - 1));
 end;
 
 var
