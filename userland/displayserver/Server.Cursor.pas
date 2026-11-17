@@ -30,16 +30,21 @@
   is drawn from its small pattern, each of its pixels a square of
   PointerScale pixels (the scale rounded to a whole number). The
   hotspot is where the pointer is.
+
+  Its picture (CursorPicture) is not composed with the windows: the
+  device draws it, or the server blends it over the picture as it
+  presents (Server.PointerPresenting).
 }
 unit Server.Cursor;
 
 {$mode objfpc}
+{$pointermath on}
 
 interface
 
 uses
   Drawing.Rectangles,
-  Drawing.Canvas;
+  Drawing.Surfaces;
 
 var
   PointerX: LongInt;
@@ -57,15 +62,18 @@ procedure MovePointerToPosition(X, Y: LongInt);
   rectangles. }
 function CursorShape: LongWord;
 procedure SetCursorShape(Shape: LongWord);
-{ Where the pointer is drawn (its pixels), for knowing what to redraw. }
+{ Where the pointer is drawn (its pixels). }
 function CursorRectangle: TRectangle;
-procedure DrawCursor(const Canvas: TCanvas);
+{ The pointer's picture now: straight alpha, kept by this unit (the same
+  pixels for as long as the shape and the scale stay), and its hotspot. }
+procedure CursorPicture(out Image: TSurface; out HotspotX, HotspotY: LongInt);
+{ Different for every shape and scale CursorPicture draws, never 0. }
+function CursorPictureKey: LongWord;
 
 implementation
 
 uses
   Abi.SystemCalls,
-  Drawing.Colors,
   Windowing.Protocol,
   Image.Surfaces,
   Server.PointerShapes,
@@ -77,10 +85,18 @@ const
   BlackColor = $FF000000;
   WhiteColor = $FFFFFFFF;
 
+type
+  { A shape's pattern drawn at a whole number scale. }
+  TDrawnPattern = record
+    Image: TSurface;
+    Scale: LongInt;
+  end;
+
 var
   PointerScale: LongInt;
   PointerScalePercent: LongInt;
   Shape: LongWord;
+  DrawnPatterns: array[0..PointerShapeCount - 1] of TDrawnPattern;
 
 procedure FollowPointerScreen;
 begin
@@ -140,35 +156,63 @@ begin
     Pattern^.Width * PointerScale, Pattern^.Height * PointerScale);
 end;
 
-procedure DrawCursor(const Canvas: TCanvas);
+function CursorPictureKey: LongWord;
+begin
+  Result := (Shape + 1) * 100000 + LongWord(PointerScalePercent);
+end;
+
+{ Each of the pattern's pixels a square of Scale pixels. }
+procedure DrawPattern(const Pattern: TPointerPattern; Scale: LongInt; var Image: TSurface);
 var
-  Pattern: ^TPointerPattern;
-  Bounds: TRectangle;
   Row: LongInt;
   Column: LongInt;
-  Color: TColor;
-  Picture: TPointerPicture;
+  Color: LongWord;
+  Y: LongInt;
+  X: LongInt;
+  Line: PLongWord;
 begin
-  if PointerPictureFor(Shape, PointerScalePercent, Picture) then
-  begin
-    DrawSurface(Canvas, ImageSurface(Picture.Image), MakeRectangle(0, 0, Picture.Image.Width, Picture.Image.Height),
-      PointerX - Picture.HotspotX, PointerY - Picture.HotspotY, True, AlphaOpaque);
+  FreeSurface(Image);
+  if not CreateSurface(Image, Pattern.Width * Scale, Pattern.Height * Scale, 0) then
     Exit;
-  end;
-  Pattern := @PointerPatterns[Shape];
-  Bounds := CursorRectangle;
-  for Row := 0 to Pattern^.Height - 1 do
-    for Column := 1 to Length(Pattern^.Rows[Row]) do
+  for Row := 0 to Pattern.Height - 1 do
+    for Column := 1 to Length(Pattern.Rows[Row]) do
     begin
-      case Pattern^.Rows[Row][Column] of
+      case Pattern.Rows[Row][Column] of
         PointerBlack: Color := BlackColor;
         PointerWhite: Color := WhiteColor;
       else
         Continue;
       end;
-      FillRectangle(Canvas, MakeRectangle(Bounds.Left + (Column - 1) * PointerScale, Bounds.Top + Row * PointerScale,
-        PointerScale, PointerScale), Color);
+      for Y := Row * Scale to (Row + 1) * Scale - 1 do
+      begin
+        Line := SurfaceLine(Image, Y);
+        for X := (Column - 1) * Scale to Column * Scale - 1 do
+          Line[X] := Color;
+      end;
     end;
+end;
+
+procedure CursorPicture(out Image: TSurface; out HotspotX, HotspotY: LongInt);
+var
+  Picture: TPointerPicture;
+  Drawn: ^TDrawnPattern;
+begin
+  if PointerPictureFor(Shape, PointerScalePercent, Picture) then
+  begin
+    Image := ImageSurface(Picture.Image);
+    HotspotX := Picture.HotspotX;
+    HotspotY := Picture.HotspotY;
+    Exit;
+  end;
+  Drawn := @DrawnPatterns[Shape];
+  if (Drawn^.Scale <> PointerScale) or (Drawn^.Image.Pixels = nil) then
+  begin
+    DrawPattern(PointerPatterns[Shape], PointerScale, Drawn^.Image);
+    Drawn^.Scale := PointerScale;
+  end;
+  Image := Drawn^.Image;
+  HotspotX := PointerPatterns[Shape].HotspotX * PointerScale;
+  HotspotY := PointerPatterns[Shape].HotspotY * PointerScale;
 end;
 
 end.

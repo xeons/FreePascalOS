@@ -28,11 +28,12 @@
 
   A pixel can be copied only if the back buffer has it right: it is not
   waiting to be drawn again (pending damage, such as a program's new
-  drawing or the pointer's old place), no window above covers it at the
-  old place or the new one, and both places are on the same screen (each
-  screen has its own back buffer: what crosses from one screen to
-  another is drawn again). The pointer and a resize outline are drawn
-  over everything, so their places are damaged first and never copied.
+  drawing), no window above covers it at the old place or the new one,
+  and both places are on the same screen (each screen has its own back
+  buffer: what crosses from one screen to another is drawn again). A
+  resize outline is drawn over everything, so its place is damaged first
+  and never copied; the pointer is never in the back buffer
+  (Server.Presentation).
 
   The copy may overlap itself, so it goes a line at a time in the order
   that never reads a pixel already written: from the bottom up when the
@@ -77,7 +78,6 @@ uses
   SysUtils,
   Sys.Streams,
   Server.Screen,
-  Server.Cursor,
   Server.Composer;
 
 type
@@ -226,7 +226,6 @@ begin
   NewFrame := FrameRectangle(Window);
   DeltaX := NewFrame.Left - OldFrame.Left;
   DeltaY := NewFrame.Top - OldFrame.Top;
-  AddDamage(CursorRectangle);
   if OutlineVisible then
     AddDamage(Outline);
   CollectCovering(Window, Covering);

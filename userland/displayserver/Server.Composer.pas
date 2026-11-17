@@ -20,11 +20,13 @@
   Composing: putting the desktop, the windows and the pointer together.
 
   What needs drawing again is collected as a region (AddDamage: a window
-  moved, a program drew, the pointer moved). Compose draws only that, in
-  the back buffer: the desktop, then each visible window from the bottom
-  up (its frame, then its surface), then the pointer, all clipped to the
-  damage, so what lies under a window is covered by it; then the damaged
-  parts go to the screen. Each screen is composed in its own back
+  moved, a program drew). Compose draws only that, in the back buffer:
+  the desktop, then each visible window from the bottom up (its frame,
+  then its surface), all clipped to the damage, so what lies under a
+  window is covered by it; then the damaged parts go to the screen
+  (Server.Presentation). The pointer is not composed: the device draws
+  it, or it is blended over the picture as it is presented
+  (Server.PointerPresenting), so moving it composes nothing. Each screen is composed in its own back
   buffer, as much of the damage as is on it: the canvas's origin puts
   desktop pixels where they fall in that buffer, so a window across the
   edge between two screens is drawn on both. Pixels put right in a back
@@ -71,7 +73,7 @@ uses
   Server.Theme,
   Server.Screen,
   Server.Frames,
-  Server.Cursor,
+  Server.Presentation,
   Server.DragFeedback,
   Server.ScreenLock;
 
@@ -142,7 +144,6 @@ begin
     DrawRectangleOutline(Canvas, InflateRectangle(Outline, -1), Theme.DragOutlineLight);
   end;
   DrawDragFeedback(Canvas);
-  DrawCursor(Canvas);
   PresentScreenRegion(Screen, ScreenDamage);
 end;
 
