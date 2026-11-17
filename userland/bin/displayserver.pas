@@ -33,8 +33,10 @@
   keyboards' settings, changed in the system's settings are applied at
   once. Prints a line for each display after the first, then
   "displayserver: ready" (with the first display's size, DPI and scale)
-  once it serves, then how many of the pointer's shapes it read from
-  /lib/pointers; started by the service manager, it tells it it is
+  once it serves, then how each display is presented (damaged rectangles
+  copied to the framebuffer, or also flushed to a device that needs it;
+  the pointer drawn by the device or by the server), then how many of
+  the pointer's shapes it read from /lib/pointers; started by the service manager, it tells it it is
   ready then (Sys.ServiceControl). Ends when told to (killed); the console gets the
   screen and keyboards back, and each display the mode it had.
 
@@ -46,7 +48,8 @@
   The units are in userland/displayserver: Server.Theme (colours and
   metrics), Server.Screen (the displays and their back buffers),
   Server.Desktop (where they are, logical units and pixels),
-  Server.Cursor,
+  Server.Cursor, Server.Presentation and Server.PointerPresenting
+  (putting what changed and the pointer on the screens),
   Server.Windows (the window list), Server.Frames, Server.Composer,
   Server.Actions (what is done to windows), Server.Clients (the
   protocol), Server.Input and Server.Scale (changing the scale);
@@ -78,6 +81,7 @@ uses
   Server.Screen,
   Server.Cursor,
   Server.Composer,
+  Server.PointerPresenting,
   Server.Clients,
   Server.Input,
   Server.Scale,
@@ -134,6 +138,7 @@ begin
     RefreshPointerShape;
     Compose;
     CheckMovesAgainstFullRedraw;
+    PresentPointer;
   until False;
 end;
 
@@ -145,6 +150,15 @@ begin
     WriteString(StandardOutput, Format('displayserver: display %d: %ux%u at %d,%d, %u DPI, scale %u%%'#10,
       [Index, Screens[Index].Device.Width, Screens[Index].Device.Height, Screens[Index].Bounds.Left,
        Screens[Index].Bounds.Top, Screens[Index].Dpi, Screens[Index].ScalePercent]));
+end;
+
+procedure SayPresentation;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to ScreenCount - 1 do
+    WriteString(StandardOutput, Format('displayserver: display %d presents %s'#10,
+      [Index, DescribePresentation(@Screens[Index])]));
 end;
 
 procedure ReadOptions;
@@ -182,11 +196,13 @@ begin
   StartFollowingSettings;
   AddDamage(DesktopBounds);
   Compose;
+  PresentPointer;
   SayOtherScreens;
   WriteString(StandardOutput, Format('displayserver: ready (%ux%u, %u DPI, scale %u%%)'#10,
     [Screens[0].Device.Width, Screens[0].Device.Height, Screens[0].Dpi, Screens[0].ScalePercent]));
   WriteString(StandardOutput, Format('displayserver: %d of %d pointer shapes from %s, %d with pictures'#10,
     [PointerFilesRead, PointerShapeCount, PointerDirectory, PointerPicturesRead]));
+  SayPresentation;
   FlushStream(StandardOutput);
   { Clients can connect now: the session waits for this (when the
     service manager started the server). }

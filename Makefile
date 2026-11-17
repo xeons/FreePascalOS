@@ -230,6 +230,7 @@ test: aml-test drawing-test font-test text-test chart-test settings-test files-t
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Not part of make test (it takes a minute a round under TCG): suspends
 # and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,

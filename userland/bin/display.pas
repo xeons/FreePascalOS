@@ -22,7 +22,8 @@
   display [-d NUMBER] [-l] [-m WIDTHxHEIGHT] [-f RRGGBB [-s SECONDS]]
 
   Without options: the display's size, pixel format, physical size, DPI
-  and scale. -d picks a display (0, the console's, by default; 1 is
+  and scale, and what more it does (a framebuffer flushed to the device
+  by rectangles, a hardware cursor). -d picks a display (0, the console's, by default; 1 is
   /dev/display1). -l lists the modes it can be set to, one a line
   ("1024x768", the one it has marked with *). -m sets a mode for as long
   as the program has the display (what it says and draws is at that
@@ -83,6 +84,10 @@ begin
   if Display.WidthMillimetres > 0 then
     PrintStringLine(Format('%ux%u mm', [Display.WidthMillimetres, Display.HeightMillimetres]));
   PrintStringLine(Format('%u DPI, scale %u%%', [Display.Dpi, Display.ScalePercent]));
+  if DisplayNeedsFlush(Display) then
+    PrintStringLine('framebuffer flushed to the device by rectangles');
+  if DisplayHasHardwareCursor(Display) then
+    PrintStringLine('hardware cursor');
 end;
 
 procedure ListModes(const Display: TDisplay);
@@ -128,12 +133,16 @@ begin
   Inset := Display.Dpi div FrameInsetInches;
   Thickness := (Display.Dpi + PointsPerInch - 1) div PointsPerInch;
   if (2 * (Inset + Thickness) >= Display.Width) or (2 * (Inset + Thickness) >= Display.Height) then
+  begin
+    FlushDisplay(Display, 0, 0, Display.Width, Display.Height);
     Exit;
+  end;
   Frame := DisplayPixel(Display, FrameColor);
   FillRectangle(Display, Inset, Inset, Display.Width - 2 * Inset, Thickness, Frame);
   FillRectangle(Display, Inset, Display.Height - Inset - Thickness, Display.Width - 2 * Inset, Thickness, Frame);
   FillRectangle(Display, Inset, Inset, Thickness, Display.Height - 2 * Inset, Frame);
   FillRectangle(Display, Display.Width - Inset - Thickness, Inset, Thickness, Display.Height - 2 * Inset, Frame);
+  FlushDisplay(Display, 0, 0, Display.Width, Display.Height);
 end;
 
 var

@@ -48,6 +48,14 @@
   gives the first display's DPI at its boot mode instead (other modes
   have it in proportion to their width). The scale is the DPI against
   96, to the nearest quarter, at least 100%.
+
+  A driver may do more (DisplayCapability*): a display whose framebuffer
+  is memory the device copies from (virtio-gpu) shows what was drawn only
+  when the program names the rectangle (ControlDisplayFlush, passed to
+  the adapter's Flush); one with a cursor of its own keeps a cursor image
+  page the program maps (at DisplayCursorImageOffset) and is told the
+  cursor's image, place and visibility (the adapter's UpdateCursor).
+  Closing the display hides the cursor.
 }
 unit Drivers.DisplayDevice;
 
@@ -63,6 +71,22 @@ type
   { Sets the adapter to Width x Height at 4 bytes a pixel; True if it
     took it, with Pitch the bytes from one line to the next. }
   TSetDisplayModeRoutine = function(Adapter: PDisplayAdapter; Width, Height: LongWord; out Pitch: QWord): Boolean;
+  { Shows the rectangle (inside the mode) drawn in the framebuffer. }
+  TFlushDisplayRoutine = function(Adapter: PDisplayAdapter; X, Y, Width, Height: LongWord): Boolean;
+
+  { The device's cursor, as the program last set it. }
+  TDisplayCursor = record
+    { The hotspot's place, in pixels of the mode. }
+    X: LongInt;
+    Y: LongInt;
+    HotspotX: LongWord;
+    HotspotY: LongWord;
+    Visible: Boolean;
+  end;
+  { Tells the device the cursor changed: its image (in the cursor image
+    page) when ImageChanged, else its place or visibility. }
+  TUpdateCursorRoutine = function(Adapter: PDisplayAdapter; const Cursor: TDisplayCursor;
+    ImageChanged: Boolean): Boolean;
 
   TDisplayAdapter = record
     FramebufferPhysical: QWord;
@@ -81,6 +105,14 @@ type
     MaximumHeight: LongWord;
     { nil if the mode cannot be changed (only the one it has is listed). }
     SetMode: TSetDisplayModeRoutine;
+    { DisplayCapability*. }
+    Capabilities: LongWord;
+    { With DisplayCapabilityNeedsFlush. }
+    Flush: TFlushDisplayRoutine;
+    { With DisplayCapabilityHardwareCursor: DisplayCursorImageBytes of
+      memory, physically contiguous, and the routine. }
+    CursorImagePhysical: QWord;
+    UpdateCursor: TUpdateCursorRoutine;
     { The driver's own. }
     Context: Pointer;
   end;
@@ -129,6 +161,9 @@ type
     OpenedWidth: LongWord;
     OpenedHeight: LongWord;
     IsOpen: Boolean;
+    Cursor: TDisplayCursor;
+    { Moves the device was told of since the display was opened. }
+    CursorMoves: QWord;
   end;
 
 var
@@ -241,6 +276,109 @@ begin
     GiveBackOpenedMode(Displays[0]);
 end;
 
+{ --- Flushing and the cursor ------------------------------------------------ }
+
+function UnpackWord(Value: QWord; Shift: LongWord): LongWord;
+begin
+  Result := LongWord((Value shr Shift) and $FFFF);
+end;
+
+{ The rectangle in the argument, cut to the mode. }
+function FlushRectangle(Display: PDisplay; Argument: QWord): LongInt;
+var
+  X: LongWord;
+  Y: LongWord;
+  Width: LongWord;
+  Height: LongWord;
+begin
+  if (Display^.Adapter.Capabilities and DisplayCapabilityNeedsFlush) = 0 then
+    Exit(ErrorNone);
+  X := UnpackWord(Argument, 0);
+  Y := UnpackWord(Argument, 16);
+  Width := UnpackWord(Argument, 32);
+  Height := UnpackWord(Argument, 48);
+  if (X >= Display^.Adapter.Width) or (Y >= Display^.Adapter.Height) or (Width = 0) or (Height = 0) then
+    Exit(ErrorNone);
+  if Width > Display^.Adapter.Width - X then
+    Width := Display^.Adapter.Width - X;
+  if Height > Display^.Adapter.Height - Y then
+    Height := Display^.Adapter.Height - Y;
+  if not Display^.Adapter.Flush(@Display^.Adapter, X, Y, Width, Height) then
+    Exit(ErrorIo);
+  Result := ErrorNone;
+end;
+
+function HasHardwareCursor(Display: PDisplay): Boolean;
+begin
+  Result := (Display^.Adapter.Capabilities and DisplayCapabilityHardwareCursor) <> 0;
+end;
+
+function TellCursor(Display: PDisplay; ImageChanged: Boolean): LongInt;
+begin
+  if not Display^.Adapter.UpdateCursor(@Display^.Adapter, Display^.Cursor, ImageChanged) then
+    Exit(ErrorIo);
+  Result := ErrorNone;
+end;
+
+function SetCursorImage(Display: PDisplay; Argument: QWord): LongInt;
+begin
+  if not HasHardwareCursor(Display) then
+    Exit(ErrorUnsupported);
+  if (UnpackWord(Argument, 0) >= DisplayCursorSize) or (UnpackWord(Argument, 16) >= DisplayCursorSize) then
+    Exit(ErrorInvalidArgument);
+  Display^.Cursor.HotspotX := UnpackWord(Argument, 0);
+  Display^.Cursor.HotspotY := UnpackWord(Argument, 16);
+  Result := TellCursor(Display, True);
+end;
+
+function MoveCursor(Display: PDisplay; Argument: QWord): LongInt;
+begin
+  if not HasHardwareCursor(Display) then
+    Exit(ErrorUnsupported);
+  Display^.Cursor.X := LongInt(LongWord(Argument and $FFFFFFFF));
+  Display^.Cursor.Y := LongInt(LongWord(Argument shr 32));
+  Inc(Display^.CursorMoves);
+  Result := ErrorNone;
+  if Display^.Cursor.Visible then
+    Result := TellCursor(Display, False);
+end;
+
+function ShowCursor(Display: PDisplay; Visible: Boolean): LongInt;
+begin
+  if not HasHardwareCursor(Display) then
+    Exit(ErrorUnsupported);
+  if Display^.Cursor.Visible = Visible then
+    Exit(ErrorNone);
+  Display^.Cursor.Visible := Visible;
+  Result := TellCursor(Display, False);
+end;
+
+procedure HideCursor(Display: PDisplay);
+begin
+  if HasHardwareCursor(Display) then
+    ShowCursor(Display, False);
+end;
+
+function ClampToWord(Value: LongInt): QWord;
+begin
+  if Value < 0 then
+    Exit(0);
+  if Value > $FFFF then
+    Exit($FFFF);
+  Result := QWord(Value);
+end;
+
+function CursorState(Display: PDisplay): Int64;
+var
+  State: QWord;
+begin
+  State := ClampToWord(Display^.Cursor.X) or (ClampToWord(Display^.Cursor.Y) shl 16);
+  if Display^.Cursor.Visible then
+    State := State or (QWord(1) shl 32);
+  State := State or ((Display^.CursorMoves and $3FFFFFFF) shl 33);
+  Result := Int64(State);
+end;
+
 { --- The device ------------------------------------------------------------- }
 
 function OpenDisplay(Device: PDeviceObject; var Request: TIoRequest): LongInt;
@@ -251,6 +389,7 @@ begin
   Display^.OpenedWidth := Display^.Adapter.Width;
   Display^.OpenedHeight := Display^.Adapter.Height;
   Display^.IsOpen := True;
+  Display^.CursorMoves := 0;
   if Display^.Number = 0 then
   begin
     { Between messages, so no line is half drawn over the program's screen. }
@@ -266,6 +405,7 @@ var
   Display: PDisplay;
 begin
   Display := DisplayOfDevice(Device);
+  HideCursor(Display);
   if Display^.Number = 0 then
   begin
     { Resuming sets the boot mode again (RestoreConsoleMode). }
@@ -316,6 +456,18 @@ begin
     ControlDisplaySetMode:
       Result := SetMode(Display, LongWord(Request.ControlArgument and $FFFFFFFF),
         LongWord(Request.ControlArgument shr 32));
+    ControlDisplayGetCapabilities:
+      Request.Information := Display^.Adapter.Capabilities;
+    ControlDisplayFlush:
+      Result := FlushRectangle(Display, Request.ControlArgument);
+    ControlDisplaySetCursorImage:
+      Result := SetCursorImage(Display, Request.ControlArgument);
+    ControlDisplayMoveCursor:
+      Result := MoveCursor(Display, Request.ControlArgument);
+    ControlDisplayShowCursor:
+      Result := ShowCursor(Display, Request.ControlArgument <> 0);
+    ControlDisplayGetCursorState:
+      Request.Information := CursorState(Display);
   else
     Result := ErrorUnsupported;
   end;
@@ -325,13 +477,26 @@ function MapDisplay(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 var
   Display: PDisplay;
   Size: QWord;
+  Offset: QWord;
 begin
   Display := DisplayOfDevice(Device);
+  if Request.Offset >= DisplayCursorImageOffset then
+  begin
+    { The cursor's image page. }
+    Offset := Request.Offset - DisplayCursorImageOffset;
+    Size := RoundUpToPage(DisplayCursorImageBytes);
+    if not HasHardwareCursor(Display) or (Offset >= Size) or (Request.Length > Size - Offset) then
+      Exit(ErrorInvalidArgument);
+    Request.MapPhysical := Display^.Adapter.CursorImagePhysical + Offset;
+    Request.MapWriteCombining := False;
+    Exit(ErrorNone);
+  end;
   Size := RoundUpToPage(Display^.Adapter.Pitch * Display^.Adapter.Height);
   if (Request.Offset >= Size) or (Request.Length > Size - Request.Offset) then
     Exit(ErrorInvalidArgument);
   Request.MapPhysical := Display^.Adapter.FramebufferPhysical + Request.Offset;
-  Request.MapWriteCombining := True;
+  { Video memory has its writes combined; ordinary memory is cached. }
+  Request.MapWriteCombining := (Display^.Adapter.Capabilities and DisplayCapabilityMemoryFramebuffer) = 0;
   Result := ErrorNone;
 end;
 

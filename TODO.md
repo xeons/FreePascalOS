@@ -539,7 +539,12 @@ normalized (0-65535), not pixels.
       volume control (outputs, mutes, peak meters, the default output),
       laid out by docking, tables, flows and split containers;
       `make apps-test`
-- [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
+- [x] Accelerated 2D: a virtio-gpu driver (2D resources on memory
+      framebuffers, damaged rectangles flushed, scanouts and EDID modes,
+      the host's cursor), only damage presented and the pointer never
+      composed (the device's cursor, or blended while presenting);
+      `displaybench`; `scripts/test-virtio-gpu.py` (skipped without
+      QEMU's virtio-gpu module)
 
 ## Networking
 

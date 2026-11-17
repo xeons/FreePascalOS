@@ -59,6 +59,7 @@ const
   VirtioModernDeviceIdBase = $1040;
   VirtioDeviceTypeNetwork = 1;
   VirtioDeviceTypeBlock = 2;
+  VirtioDeviceTypeGpu = 16;
 
   VirtioFeatureVersion1 = 32;
 

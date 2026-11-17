@@ -422,19 +422,17 @@ begin
   Shape := PointerShapeHere;
   if Shape = CursorShape then
     Exit;
-  AddDamage(CursorRectangle);
+  { Shown by Server.PointerPresenting: nothing to compose. }
   SetCursorShape(Shape);
-  AddDamage(CursorRectangle);
 end;
 
 { --- Events ---------------------------------------------------------------------- }
 
-procedure PointerMoved(OldCursor: TRectangle);
+{ The pointer itself is shown after the events (Server.PointerPresenting). }
+procedure PointerMoved;
 var
   Target: TServerWindow;
 begin
-  AddDamage(OldCursor);
-  AddDamage(CursorRectangle);
   if DataDragActive then
   begin
     DataDragPointerMoved(KeyboardModifiers);
@@ -577,7 +575,6 @@ var
   Events: array[0..31] of TAbiInputEvent;
   Got: Int64;
   Index: LongInt;
-  OldCursor: TRectangle;
   DeltaX: LongInt;
   DeltaY: LongInt;
 begin
@@ -587,7 +584,6 @@ begin
   NoteInput;
   for Index := 0 to Got div SizeOf(TAbiInputEvent) - 1 do
   begin
-    OldCursor := CursorRectangle;
     case Events[Index].Kind of
       InputEventMotion:
         begin
@@ -595,12 +591,12 @@ begin
           DeltaY := Events[Index].Y;
           AdjustMotion(DeltaX, DeltaY);
           MovePointerBy(DeltaX, DeltaY);
-          PointerMoved(OldCursor);
+          PointerMoved;
         end;
       InputEventPosition:
         begin
           MovePointerToPosition(Events[Index].X, Events[Index].Y);
-          PointerMoved(OldCursor);
+          PointerMoved;
         end;
       InputEventButton:
         ButtonChanged(Events[Index].Code, Events[Index].Value <> 0, Events[Index].Time);
