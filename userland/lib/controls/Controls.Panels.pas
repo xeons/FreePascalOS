@@ -61,6 +61,9 @@ type
     { Logical units: how far the content is scrolled. }
     FScrollLeft: LongInt;
     FScrollTop: LongInt;
+    { The scroll bars are being given the place scrolled to: what they
+      say as they change is the panel's own doing, not the user's. }
+    FUpdatingBars: Boolean;
     { Pixels, from the last layout: what is shown, and the content. }
     FViewArea: TRectangle;
     FContentWidth: LongInt;
@@ -277,10 +280,17 @@ begin
     Scrolled.Bottom := Scrolled.Top + FContentHeight;
   inherited PlaceChildren(Scrolled);
   PlaceScrollBars(Area, Horizontal, Vertical);
-  FHorizontalBar.SetRange(0, Unscaled(FContentWidth), Unscaled(RectangleWidth(View)));
-  FHorizontalBar.Position := FScrollLeft;
-  FVerticalBar.SetRange(0, Unscaled(FContentHeight), Unscaled(RectangleHeight(View)));
-  FVerticalBar.Position := FScrollTop;
+  { (One bar's change must not scroll back to where the other one still
+    says.) }
+  FUpdatingBars := True;
+  try
+    FHorizontalBar.SetRange(0, Unscaled(FContentWidth), Unscaled(RectangleWidth(View)));
+    FHorizontalBar.Position := FScrollLeft;
+    FVerticalBar.SetRange(0, Unscaled(FContentHeight), Unscaled(RectangleHeight(View)));
+    FVerticalBar.Position := FScrollTop;
+  finally
+    FUpdatingBars := False;
+  end;
 end;
 
 procedure TPanel.ScrollTo(Left, Top: LongInt);
@@ -299,6 +309,8 @@ end;
 
 procedure TPanel.ScrollBarMoved;
 begin
+  if FUpdatingBars then
+    Exit;
   ScrollTo(FHorizontalBar.Position, FVerticalBar.Position);
 end;
 

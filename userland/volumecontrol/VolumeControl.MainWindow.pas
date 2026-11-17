@@ -126,9 +126,9 @@ const
   RefreshTicks = 10;
   { Logical units. }
   WindowWidth = 520;
-  WindowHeight = 260;
-  CompactWidth = 340;
-  CompactHeight = 120;
+  WindowHeight = 210;
+  CompactWidth = 480;
+  CompactHeight = 96;
   Padding = 8;
   ValueColumnWidth = 44;
   MeterColumnWidth = 90;

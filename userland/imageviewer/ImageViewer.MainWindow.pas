@@ -168,6 +168,7 @@ implementation
 
 uses
   SysUtils,
+  Math,
   Abi.SystemCalls,
   Windowing.Windows,
   Windowing.Clipboard,
@@ -201,7 +202,6 @@ const
   SizePanelWidth = 130;
   ZoomPanelWidth = 70;
   FramePanelWidth = 110;
-  ToolButtonWidth = 64;
   { Key codes Controls.Keys does not name. }
   KeyR = $13;
   KeyDigit0 = $0B;
@@ -322,20 +322,20 @@ end;
 procedure TImageViewerWindow.BuildToolBar;
 begin
   FToolBar := TToolBar.Create(Root);
-  FToolBar.AddButton('Open', ToolButtonWidth, @ToolOpen);
+  FToolBar.AddButton('Open', 0, @ToolOpen);
   FToolBar.AddSeparator;
-  FToolBar.AddButton('Previous', ToolButtonWidth, @ToolPrevious);
-  FToolBar.AddButton('Next', ToolButtonWidth, @ToolNext);
+  FToolBar.AddButton('Previous', 0, @ToolPrevious);
+  FToolBar.AddButton('Next', 0, @ToolNext);
   FToolBar.AddSeparator;
-  FToolBar.AddButton('Zoom in', ToolButtonWidth, @ToolZoomIn);
-  FToolBar.AddButton('Zoom out', ToolButtonWidth, @ToolZoomOut);
-  FToolBar.AddButton('100%', ToolButtonWidth, @ToolActualSize);
-  FToolBar.AddButton('Fit', ToolButtonWidth, @ToolFit);
+  FToolBar.AddButton('Zoom in', 0, @ToolZoomIn);
+  FToolBar.AddButton('Zoom out', 0, @ToolZoomOut);
+  FToolBar.AddButton('100%', 0, @ToolActualSize);
+  FToolBar.AddButton('Fit', 0, @ToolFit);
   FToolBar.AddSeparator;
-  FToolBar.AddButton('Rotate left', ToolButtonWidth + 16, @ToolRotateLeft);
-  FToolBar.AddButton('Rotate right', ToolButtonWidth + 16, @ToolRotateRight);
+  FToolBar.AddButton('Rotate left', 0, @ToolRotateLeft);
+  FToolBar.AddButton('Rotate right', 0, @ToolRotateRight);
   FToolBar.AddSeparator;
-  FPlayButton := FToolBar.AddButton('Play', ToolButtonWidth, @ToolPlay);
+  FPlayButton := FToolBar.AddButton('Play', 0, @ToolPlay);
   FPlayButton.IsToggle := True;
 end;
 
@@ -420,7 +420,9 @@ begin
     ExtractFileName(FPath)) + 1) + ' of ' + IntToStr(FFolderImages.Count) + ')';
   FStatusBar.PanelText[1] := ' ' + IntToStr(Picture.Width) + ' x ' + IntToStr(Picture.Height);
   FStatusBar.PanelText[2] := ' ' + ZoomPercentText(FView.Zoom);
-  if IsAnimation then
+  if IsAnimation and FView.Picture.Playing then
+    FStatusBar.PanelText[3] := ' Playing, ' + IntToStr(FView.Picture.FrameCount) + ' frames'
+  else if IsAnimation then
     FStatusBar.PanelText[3] := ' Frame ' + IntToStr(FView.Picture.FrameIndex + 1) + ' of ' +
       IntToStr(FView.Picture.FrameCount)
   else
@@ -512,7 +514,7 @@ begin
   UpdateAnimationCommands;
   ShowStatus;
   Say(Format('opened %s %s %d x %d, %d frames, colour %s', [FullPath, Loaded.SourceFormatName, Loaded.Width,
-    Loaded.Height, FView.Picture.FrameCount, ColorHandlingWords[FColorHandling]]));
+    Loaded.Height, Max(1, FView.Picture.FrameCount), ColorHandlingWords[FColorHandling]]));
 end;
 
 procedure TImageViewerWindow.Navigate(Step: LongInt);
