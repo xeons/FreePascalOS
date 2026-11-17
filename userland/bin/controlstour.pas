@@ -22,10 +22,11 @@
 
   controlstour
 
-  A menu bar (File, Help), a toolbar, a tab control with four pages
+  A menu bar (File, Help), a toolbar, a tab control with five pages
   (a list box and a combo box; a multi-line edit box and two edit boxes
   to copy and paste between; a tree view; a list view, several items
-  selectable and sorted by a header click, with buttons for its views)
+  selectable and sorted by a header click, with buttons for its views;
+  charts of each kind, ControlsTour.ChartsPage)
   and a status bar; Ctrl+M asks a question in a message box, Help >
   About shows one. Menus, items and tabs have mnemonics (Alt+H opens
   Help; F10 or Alt alone picks the menu bar). Prints what happens, a
@@ -46,6 +47,8 @@
     order A,B,...         the list view's items, after sorting
     view N                the list view's view (0 details to 3 large icons)
     answer N              a message box's result
+    chart variant N       the charts switched to variant N (0 or 1)
+    chart toggled NAME S  a chart legend entry hid (0) or showed (1) NAME
   File > Exit ends it.
 }
 program ControlsTour;
@@ -77,10 +80,13 @@ uses
   Controls.ListView,
   Controls.Dialogs,
   Controls.MessageBoxes,
-  Controls.Text;
+  Controls.Text,
+  ControlsTour.ChartsPage;
 
 const
   KeyM = $32;
+  ChartTimer = 1;
+  ChartsPageIndex = 4;
 
 type
   TTourWindow = class(TControlWindow)
@@ -98,6 +104,7 @@ type
     FDetails: TListView;
     FLargeIconsButton: TButton;
     FStatus: TStatusBar;
+    FCharts: TChartsPage;
     procedure MenuChosen(Item: TMenuItem);
     procedure ExitChosen(Item: TMenuItem);
     procedure AboutChosen(Item: TMenuItem);
@@ -111,6 +118,8 @@ type
     procedure AskQuestion(Sender: TControlWindow);
     procedure BuildPages;
     procedure TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
+  protected
+    procedure TimerFired(TimerId: LongWord); override;
   public
     constructor Create;
     procedure TellPlaces;
@@ -210,6 +219,9 @@ begin
   AddViewButton(Page, 'List', ViewList);
   AddViewButton(Page, 'Small', ViewSmallIcons);
   AddViewButton(Page, 'Large', ViewLargeIcons);
+  Page := FTabs.AddPage('Ch&arts');
+  FCharts := TChartsPage.Create(Page);
+  FCharts.Align := AlignClient;
 end;
 
 procedure TTourWindow.AddViewButton(Page: TControl; const Caption: string; Mode: TListViewMode);
@@ -332,6 +344,17 @@ begin
     TellPlace('large-icons', FLargeIconsButton, RectangleWidth(FLargeIconsButton.PixelBounds) div 2,
       RectangleHeight(FLargeIconsButton.PixelBounds) div 2);
   end;
+  if Page = ChartsPageIndex then
+    TellPlace('charts-variant', FCharts.VariantButton, RectangleWidth(FCharts.VariantButton.PixelBounds) div 2,
+      RectangleHeight(FCharts.VariantButton.PixelBounds) div 2);
+end;
+
+procedure TTourWindow.TimerFired(TimerId: LongWord);
+begin
+  if TimerId = ChartTimer then
+    FCharts.Tick
+  else
+    inherited TimerFired(TimerId);
 end;
 
 procedure TTourWindow.ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);
@@ -342,6 +365,11 @@ begin
   begin
     Say('page ' + IntToStr(FTabs.PageIndex));
     TellPagePlaces(FTabs.PageIndex);
+    { The live chart moves on only while it can be seen. }
+    if FTabs.PageIndex = ChartsPageIndex then
+      StartTimer(ChartTimer, ChartTickMilliseconds)
+    else
+      StopTimer(ChartTimer);
   end
   else if (Child = FList) and (FList.ItemIndex >= 0) then
     Say('list ' + FList.Items[FList.ItemIndex])
