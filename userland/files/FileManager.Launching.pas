@@ -17,8 +17,8 @@
 }
 
 {
-  Starting programs for files: a program file itself, or Notepad with a
-  file to open. Each starts in a process group of its own (so it
+  Starting programs for files: a program file itself, or Notepad or the
+  image viewer with a file to open. Each starts in a process group of its own (so it
   outlives the file manager and Ctrl-C on a console does not reach it),
   in the file's folder, with the file manager's standard handles; one
   that cannot start is reported in a message box owned by the window.
@@ -37,6 +37,8 @@ uses
 function RunProgramFile(const Path: string; Owner: TWindow): Boolean;
 { Opens Path in Notepad. }
 function OpenWithNotepad(const Path: string; Owner: TWindow): Boolean;
+{ Opens Path in the image viewer. }
+function OpenWithImageViewer(const Path: string; Owner: TWindow): Boolean;
 
 implementation
 
@@ -52,6 +54,7 @@ uses
 
 const
   NotepadCommand = 'notepad';
+  ImageViewerCommand = 'imageviewer';
 
 function Start(const ProgramPath, Argument: string): Boolean;
 var
@@ -102,6 +105,21 @@ begin
     Say('error cannot start notepad');
     ShowMessageBox('Files', 'Notepad could not be started to open ' + LastPartOf(Path) + '.', MessageOk, SignError,
       Owner);
+  end;
+end;
+
+function OpenWithImageViewer(const Path: string; Owner: TWindow): Boolean;
+var
+  ViewerPath: string;
+begin
+  Result := FindProgramPath(ImageViewerCommand, ViewerPath) and Start(ViewerPath, Path);
+  if Result then
+    Say('opened-with-imageviewer ' + Path)
+  else
+  begin
+    Say('error cannot start imageviewer');
+    ShowMessageBox('Files', 'The image viewer could not be started to open ' + LastPartOf(Path) + '.', MessageOk,
+      SignError, Owner);
   end;
 end;
 

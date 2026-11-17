@@ -36,7 +36,8 @@ interface
 
 type
   TProgramPicture = (PictureFiles, PictureTerminal, PictureNotepad, PictureControlPanel, PictureControls,
-    PictureSwatches, PictureDialogs, PictureTaskManager);
+    PictureSwatches, PictureDialogs, PictureTaskManager, PictureImageViewer, PictureCalculator,
+    PictureVolumeControl);
 
   TDesktopProgram = record
     Command: string;
@@ -45,7 +46,7 @@ type
   end;
 
 const
-  DesktopProgramCount = 8;
+  DesktopProgramCount = 11;
   DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
     (Command: 'files'; Caption: 'Files'; Picture: PictureFiles),
     (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
@@ -54,7 +55,10 @@ const
     (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),
     (Command: 'controlsdemo'; Caption: 'Controls demo'; Picture: PictureSwatches),
     (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs),
-    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager));
+    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager),
+    (Command: 'imageviewer'; Caption: 'Image Viewer'; Picture: PictureImageViewer),
+    (Command: 'calculator'; Caption: 'Calculator'; Picture: PictureCalculator),
+    (Command: 'volumecontrol'; Caption: 'Volume Control'; Picture: PictureVolumeControl));
 
 { Starts DesktopPrograms[Index]; False (after saying why in a message
   box) if it could not be started. ProcessId is the started program's. }

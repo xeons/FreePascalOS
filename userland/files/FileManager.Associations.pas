@@ -24,6 +24,8 @@
     a text document by its extension     opened in Notepad
     a file with an execute bit that is
       an ELF program or starts with #!   run
+    a picture libimage reads (told by
+      its first bytes)                   opened in the image viewer
     any other file whose first 4 KiB
       look like text                     opened in Notepad
     anything else                        nothing (the user is told)
@@ -43,17 +45,22 @@ uses
   FileManager.Items;
 
 type
-  TOpenAction = (OpenActionFolder, OpenActionProgram, OpenActionNotepad, OpenActionNone);
+  TOpenAction = (OpenActionFolder, OpenActionProgram, OpenActionNotepad, OpenActionImageViewer, OpenActionNone);
 
 function OpenActionFor(const Path: string; const Item: TFolderItem): TOpenAction;
 { Whether the start of the file at Path looks like text. }
 function LooksLikeText(const Path: string): Boolean;
+{ Whether the file at Path starts as a picture libimage reads does. }
+function LooksLikeImage(const Path: string): Boolean;
 
 implementation
 
 uses
+  SysUtils,
   Abi.SystemCalls,
   Sys.Files,
+  Image.Codecs,
+  Image.Files,
   FileManager.FileTypes,
   FileManager.Paths;
 
@@ -122,6 +129,21 @@ begin
   Result := (Count >= 0) and IsTextBytes(Bytes, Count);
 end;
 
+function LooksLikeImage(const Path: string): Boolean;
+var
+  Bytes: array[0..SniffSize - 1] of Byte;
+  Count: LongInt;
+  Data: TBytes;
+begin
+  Count := ReadStart(Path, Bytes);
+  if Count <= 0 then
+    Exit(False);
+  Data := nil;
+  SetLength(Data, Count);
+  Move(Bytes[0], Data[0], Count);
+  Result := DetectFileFormat(Data) <> ImageFormatUnknown;
+end;
+
 { An ELF program, or a script naming its interpreter. }
 function LooksRunnable(const Path: string): Boolean;
 var
@@ -144,6 +166,8 @@ begin
   end;
   if ((Item.Mode and ExecutePermissionBits) <> 0) and LooksRunnable(Path) then
     Exit(OpenActionProgram);
+  if LooksLikeImage(Path) then
+    Exit(OpenActionImageViewer);
   if LooksLikeText(Path) then
     Result := OpenActionNotepad
   else

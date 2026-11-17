@@ -21,7 +21,8 @@
   drag asked for it:
 
   * Open: a folder is shown, anything else opened as
-    FileManager.Associations decides (a program run, text in Notepad);
+    FileManager.Associations decides (a program run, text in Notepad,
+    a picture in the image viewer);
     "Open with Notepad" opens any file in Notepad.
   * New folder: "New folder" (or "New folder (2)", ...), made at once
     and put up for renaming.
@@ -154,6 +155,7 @@ begin
     OpenActionFolder: Navigate(Path);
     OpenActionProgram: RunProgramFile(Path, Self);
     OpenActionNotepad: OpenWithNotepad(Path, Self);
+    OpenActionImageViewer: OpenWithImageViewer(Path, Self);
   else
     begin
       Say('error no program for ' + Path);
