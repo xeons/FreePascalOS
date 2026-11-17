@@ -614,7 +614,8 @@ Its start-up line (the tests look for it):
 the FAT16 test partition on an `sdhci-pci` controller (SDHCI 3.00); its
 volume goes through the file system tests and is checked on the host.
 `make arm64-test` does the same with a 64 MiB SDSC card holding the
-exFAT partition, once with `noncoherentdma`.
+ext4 partition (dirty journal and orphan included), once with
+`noncoherentdma`.
 
 ### Platform devices
 
@@ -4761,6 +4762,12 @@ for the last time (the driver routines `RemoveOpenNode` and
 with the same node number is not confused with it). On ext3/ext4 such a
 file goes on the orphan list in the superblock in the same transaction,
 and mounting frees orphans a crash left behind (`FileSystem.Ext.Orphans`).
+The orphan list is linked through the inodes' deletion-time field, so
+e2fsck reads a deletion time smaller than the inode count as a link of a
+damaged list: a freed inode's deletion time is the wall clock but never
+earlier than the inode count or the volume's creation or last write time
+(`EarliestDeletionTime`), as the clock starts at zero on machines without
+a real-time clock (AArch64 today).
 Renaming onto an existing name replaces it as on Unix (a file replaces a
 file, a directory an empty directory); on ext3/ext4 the removal and the
 rename are one transaction (`BeginAtomicChange` / `EndAtomicChange`). In a

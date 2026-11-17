@@ -248,7 +248,7 @@ echo "Wrote $usb_image (34 MiB, partition: exfat)"
 # SD cards for the SDHCI driver (QEMU's sd-card wants a power of two
 # bytes): a 4 GiB SDHC card (block addressed; a sparse file) with a copy
 # of the FAT16 partition, and a 64 MiB SDSC card (byte addressed) with a
-# copy of the exFAT partition.
+# copy of the ext4 partition (dirty journal and orphan included).
 sdhc_image="${output_image%.img}-sdhc.img"
 rm -f "$sdhc_image"
 truncate -s 4G "$sdhc_image"
@@ -261,9 +261,9 @@ sdsc_image="${output_image%.img}-sdsc.img"
 rm -f "$sdsc_image"
 truncate -s 64M "$sdsc_image"
 echo 'label: gpt
-size=32MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="exfat"' | sfdisk --quiet "$sdsc_image"
-dd if="$work_directory/exfat.img" of="$sdsc_image" bs=1M seek=1 conv=notrunc status=none
-echo "Wrote $sdsc_image (64 MiB SD card, partition: exfat)"
+size=32MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="ext4"' | sfdisk --quiet "$sdsc_image"
+dd if="$work_directory/ext4.img" of="$sdsc_image" bs=1M seek=1 conv=notrunc status=none
+echo "Wrote $sdsc_image (64 MiB SD card, partition: ext4)"
 
 # A medium for the ATAPI (CD) drive: 64 blocks of 2048 bytes, each
 # starting with "FreePascalOS CD block NNNN".

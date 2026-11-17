@@ -32,9 +32,9 @@
 # kept in the build directory (test-arm64-el1.log, test-arm64-el2.log).
 #
 # With an SD card image (make-test-disk.sh's test-disk-sdsc.img: an SDSC
-# card holding a copy of the exFAT test partition), each boot also gets a
-# copy of it on an SD host controller and runs the file system tests
-# (fstest) on it; the copy is checked on the host afterwards
+# card holding a copy of the ext4 test partition, with its dirty journal
+# and orphan), each boot also gets a copy of it on an SD host controller
+# and runs the file system tests (fstest) on it; the copy is checked on the host afterwards
 # (verify-test-disk.sh). The EL2 boot treats every device as not cache
 # coherent (noncoherentdma), as on the Raspberry Pi 4, so the SD card's
 # DMA goes through the cache maintenance and the xHCI and mailbox
@@ -92,7 +92,7 @@ run_one() {
         result="failed (not all $processors processors started)"
     elif [[ -n "$sd_card_copy" ]] && ! grep -q '\[sdhci\] disk[0-9]*: SDSC card .*ADMA2.* interrupts' "$serial_log"; then
         result="failed (the SD card was not started with ADMA2 and interrupts)"
-    elif [[ -n "$sd_card_copy" ]] && ! grep -q 'filesystem writes exfat on .*passed' "$serial_log"; then
+    elif [[ -n "$sd_card_copy" ]] && ! grep -q 'filesystem writes ext4 on .*passed' "$serial_log"; then
         result="failed (the file system tests did not pass on the SD card)"
     elif [[ -n "$sd_card_copy" ]] && ! "$script_directory/verify-test-disk.sh" "$sd_card_copy" > /dev/null; then
         result="failed (the SD card's volume did not pass the host side checks)"

@@ -68,6 +68,7 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Memory.KernelHeap,
+  Runtime.Time,
   Kernel.Clock,
   FileSystem.Ext.Structures,
   FileSystem.Ext.Blocks,
@@ -226,13 +227,27 @@ begin
   SetInodeSize(InodeRecord(Node)^, TargetLength);
 end;
 
+{ The deletion time for a freed inode: now, but never so early that it
+  could be taken for an orphan list link (see EarliestDeletionTime). }
+function DeletionTimeNow(Ext: PExtVolume): LongWord;
+var
+  Now: TUnixTime;
+begin
+  Now := CurrentWallClockTime;
+  if (Now < 0) or (Now > High(LongWord)) then
+    Now := 0;
+  Result := LongWord(Now);
+  if Result < Ext^.EarliestDeletionTime then
+    Result := Ext^.EarliestDeletionTime;
+end;
+
 { Gives back everything a half created or deleted inode owns. }
 procedure DiscardInode(Node: PExtNode; IsDirectory: Boolean);
 begin
   if not IsFastSymbolicLink(@Node^.Common) then
     ReleaseBlocksFrom(Node, 0);
   InodeRecord(Node)^.LinksCount := 0;
-  InodeRecord(Node)^.DeletionTime := LongWord(CurrentWallClockTime);
+  InodeRecord(Node)^.DeletionTime := DeletionTimeNow(ExtVolumeOf(@Node^.Common));
   SetInodeSize(InodeRecord(Node)^, 0);
   WriteNodeInode(Node);
   FreeInode(Node^.Common.Volume, Node^.InodeNumber, IsDirectory);
