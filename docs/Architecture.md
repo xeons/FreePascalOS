@@ -1412,7 +1412,8 @@ with libimage (`Controls.IconFiles`: the entry of the frame's pixel
 size, else the nearest larger shrunk, else the largest grown, each size
 made once) and draws the icon at the left of the title bar at the scale
 of the display the window is on, in both themes. A window with no icon
-shows its owner's (a dialog its main window's); one with none at all
+shows its owner's (a dialog its main window's), else its program's
+first unowned window's (a dialog made without an owner); one with none at all
 gets the generic picture where the theme has it (Sunrise) and no icon
 in Classic. Every change gives the window a new icon version, which
 `EventShellWindowChanged` and `EventWindowListed` carry (in `Width`);

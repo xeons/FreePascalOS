@@ -26,7 +26,8 @@
   the largest grown), or pictures the program gave
   (RequestSetWindowIconPictures), kept with the window, of which the
   nearest size is used the same way. A window with neither shows its
-  owner's (a dialog shows its main window's). Each change gives the
+  owner's (a dialog shows its main window's), else that of its
+  program's first window owned by none that has one. Each change gives the
   window a new version, which the shell and the window list hear
   (Server.Shell, Server.WindowList); a program asks for an icon's
   picture with RequestDescribeWindowIcon and gets it in a section.
@@ -66,8 +67,12 @@ type
   not one. }
 function CarryOutIconRequest(Client: TClient; var Message: TWindowMessage; Handle: Int64): Boolean;
 { The window whose icon Window shows: itself if it has one, else the
-  nearest owner with one; nil if none has. }
+  nearest owner with one, else the first window of its program owned by
+  none that has one (a dialog made without an owner); nil if none has. }
 function IconSourceOf(Window: TServerWindow): TServerWindow;
+{ The version of the icon Window shows (0: none), which the shell and
+  the window list hear. }
+function ShownIconVersion(Window: TServerWindow): LongWord;
 { The icon Window shows, PixelSize pixels across (kept here: not to be
   freed); nil if it has none (or its name has no file). }
 function WindowIconPicture(Window: TServerWindow; PixelSize: LongInt): TImage;
@@ -221,6 +226,18 @@ begin
   Result := (Window.IconName <> '') or (Window.IconPictures <> nil);
 end;
 
+{ The first window of the same program, owned by none, with an icon:
+  what a window of that program with none of its own shows. }
+function ProgramIconWindow(Window: TServerWindow): TServerWindow;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to WindowCount - 1 do
+    if (Windows[Index].Client = Window.Client) and (Windows[Index].OwnerWindow = nil) and HasIcon(Windows[Index]) then
+      Exit(Windows[Index]);
+  Result := nil;
+end;
+
 function IconSourceOf(Window: TServerWindow): TServerWindow;
 begin
   Result := Window;
@@ -230,6 +247,19 @@ begin
       Exit;
     Result := Result.OwnerWindow;
   end;
+  if Window <> nil then
+    Result := ProgramIconWindow(Window);
+end;
+
+function ShownIconVersion(Window: TServerWindow): LongWord;
+var
+  Source: TServerWindow;
+begin
+  Source := IconSourceOf(Window);
+  if Source = nil then
+    Result := 0
+  else
+    Result := Source.IconVersion;
 end;
 
 function WindowIconPicture(Window: TServerWindow; PixelSize: LongInt): TImage;

@@ -110,7 +110,8 @@
   draws the size nearest the frame's, shrunk or grown to it), or
   pictures the program gives (RequestSetWindowIconPictures: a few sizes
   in a section). A window with none shows its owner's (a dialog its
-  main window's), else the theme's generic picture (or nothing). The
+  main window's), else that of the program's first window owned by
+  none that has one, else the theme's generic picture (or nothing). The
   shell and the window list hear a number that changes whenever a
   window's icon does (the icon's version), and ask for the icon itself
   (RequestDescribeWindowIcon).

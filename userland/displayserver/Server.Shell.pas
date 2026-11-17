@@ -68,6 +68,7 @@ implementation
 
 uses
   Server.Composer,
+  Server.WindowIcons,
   Server.WorkAreas;
 
 var
@@ -161,18 +162,18 @@ var
 begin
   Flags := WindowStateFlags(Window);
   if Window.ToldShell and (Window.ToldFlags = Flags) and (Window.ToldScreen = Window.ScreenNumber) and
-     (Window.ToldTitle = Window.Title) and (Window.ToldIconVersion = Window.IconVersion) then
+     (Window.ToldTitle = Window.Title) and (Window.ToldIconVersion = ShownIconVersion(Window)) then
     Exit;
   Window.ToldShell := True;
   Window.ToldFlags := Flags;
   Window.ToldScreen := Window.ScreenNumber;
   Window.ToldTitle := Window.Title;
-  Window.ToldIconVersion := Window.IconVersion;
+  Window.ToldIconVersion := ShownIconVersion(Window);
   Message := NewMessage(EventShellWindowChanged, Window.Id);
   Message.Flags := Flags;
   Message.Code := LongWord(Window.ScreenNumber);
   Message.Value := LongInt(TClient(Window.Client).ProcessId);
-  Message.Width := LongInt(Window.IconVersion);
+  Message.Width := LongInt(ShownIconVersion(Window));
   SetMessageText(Message, Window.Title);
   SendToShell(Message);
 end;

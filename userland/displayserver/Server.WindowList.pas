@@ -50,7 +50,8 @@ implementation
 
 uses
   Windowing.Protocol,
-  Server.Shell;
+  Server.Shell,
+  Server.WindowIcons;
 
 const
   RootUserId = 0;
@@ -79,7 +80,7 @@ begin
     Message.Flags := WindowStateFlags(Window);
     Message.Code := LongWord(Window.ScreenNumber);
     Message.Value := LongInt(TClient(Window.Client).ProcessId);
-    Message.Width := LongInt(Window.IconVersion);
+    Message.Width := LongInt(ShownIconVersion(Window));
     SetMessageText(Message, Window.Title);
     SendToClient(Client, Message);
   end;
