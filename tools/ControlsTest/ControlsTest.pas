@@ -266,6 +266,13 @@ begin
   CheckNumber('table: a spanning item widens the automatic columns, first', Sizes[0], 35);
   CheckNumber('table: a spanning item widens the automatic columns, last', Sizes[1], 25);
   CheckNumber('table: a spanning item leaves absolute columns alone', Sizes[2], 10);
+  Spans := nil;
+  AddSpan(Spans, 0, 1, 40);
+  AddSpan(Spans, 0, 2, 150);
+  CheckNumber('table: a spanning item over a percent column leaves the automatic one alone',
+    MeasureTracks(Styles([TrackAutoSize, TrackPercent], [0, 100]), Spans, 300)[0], 40);
+  CheckNumber('table: ... but counts in the content extent',
+    TracksContentExtent(Styles([TrackAutoSize, TrackPercent], [0, 100]), Spans), 150);
   Offsets := TrackOffsets(5, Sizes);
   CheckNumber('table: offsets end after the last column', Offsets[3], 75);
   RowOffsets := TrackOffsets(0, MeasureTracks(Styles([TrackAbsolute, TrackAbsolute], [20, 30]), nil, 0));

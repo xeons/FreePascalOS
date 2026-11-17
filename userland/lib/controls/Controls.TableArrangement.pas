@@ -26,7 +26,7 @@
   relative to each other: two tracks of 50 and 25 take two thirds and
   one third). An item spanning several tracks widens the automatic ones
   among them if it does not fit (the shortfall shared equally, the rest
-  to the last).
+  to the last), unless a percent track among them can take it.
 
   Items without a cell of their own take the first free one, row by
   row; when there is none, the table grows a row or a column (Grow) or
@@ -136,6 +136,7 @@ var
   Shortfall: LongInt;
   Share: LongInt;
   Given: LongInt;
+  SharesRest: Boolean;
 
   function GrowsByContent(TrackIndex: LongInt): Boolean;
   begin
@@ -161,12 +162,19 @@ begin
       Continue;
     Covered := 0;
     Growable := 0;
+    SharesRest := False;
     for Track := First to Last do
     begin
       Covered := Covered + Result[Track];
       if GrowsByContent(Track) then
         Inc(Growable);
+      if Styles[Track].Sizing = TrackPercent then
+        SharesRest := True;
     end;
+    { A percent track it covers takes the room it needs from what is
+      left, rather than the automatic ones growing. }
+    if SharesRest and not PercentByContent then
+      Continue;
     Shortfall := Spans[Index].Extent - Covered;
     if (Shortfall <= 0) or (Growable = 0) then
       Continue;
