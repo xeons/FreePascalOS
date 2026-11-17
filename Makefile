@@ -306,11 +306,12 @@ endif
 # Boot smoke test of the AArch64 build in QEMU's virt machine (not part of
 # make test until qemu-system-aarch64 and the edk2 AArch64 firmware are
 # standard requirements): the kernel must reach the end of its start-up
-# with every self test passed, with the firmware at EL1 and at EL2.
+# with every self test passed, with the firmware at EL1 and at EL2, and
+# run the file system tests on an SD card (SDHCI).
 .PHONY: arm64-test
 arm64-test:
-	@$(MAKE) --no-print-directory ARCH=arm64 esp
-	scripts/test-qemu-arm64.sh build/arm64/esp
+	@$(MAKE) --no-print-directory ARCH=arm64 esp test-disk
+	scripts/test-qemu-arm64.sh build/arm64/esp build/arm64/test-disk-sdsc.img
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

@@ -33,6 +33,8 @@
 #   VIRTUALIZATION=1  start the firmware at EL2, as the Pi's firmware
 #                  does, so the loader's drop to EL1 is exercised
 #   SEMIHOSTING=1  let the kernel end QEMU with an exit status (tests)
+#   SD_CARD=image  an SD card holding the image, on an SD host controller
+#                  (sdhci-pci; the image's size must be a power of two)
 #
 # Serial output (the kernel debug log) appears on this terminal. With
 # --debug QEMU waits for GDB on localhost:1234.
@@ -87,6 +89,11 @@ for disk_image in "${disk_images[@]}"; do
     extra_arguments+=(-device virtio-blk-pci,drive=disk$disk_number)
     disk_number=$((disk_number + 1))
 done
+if [[ -n "${SD_CARD:-}" ]]; then
+    extra_arguments+=(-device sdhci-pci,sd-spec-version=3
+        -drive if=none,format=raw,cache=unsafe,file="$SD_CARD",id=sdcard0
+        -device sd-card,drive=sdcard0)
+fi
 if [[ -n "$headless" ]]; then
     extra_arguments+=(-display none)
 fi
