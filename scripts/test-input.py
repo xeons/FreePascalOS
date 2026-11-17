@@ -1064,7 +1064,10 @@ wait_for('STARTED-AT-150 DONE', 15)
 # sorting by a header as numbers, a click, a Ctrl+click and a
 # Shift+click, then large icons), the pickers (a checked list box item
 # toggled with Space, a numeric up/down box stepped by the wheel, a date
-# picked from the date picker's calendar). The message boxes are owned by the
+# picked from the date picker's calendar), and layout without positions
+# (the Layout page: the window resized by its corner, 60 wider and 40
+# taller, moves the button anchored to the bottom right of the page by
+# as much). The message boxes are owned by the
 # window: a click on its title bar while one is open changes nothing in
 # its client area (the box stays above it) and leaves its title bar
 # inactive (it is disabled), and Enter still goes to the box.
@@ -1090,6 +1093,8 @@ place = places()
 tour_started = all(name in place for name in ('help', 'bold', 'text-tab', 'tree-tab', 'details-tab', 'list-item-3',
                                                'combo', 'combo-second'))
 icon_pixels = []
+anchored_before = None
+anchored_after = None
 if tour_started:
     click_at(*place['bold'])
     click_at(*place['list-item-3'])
@@ -1207,6 +1212,19 @@ if tour_started:
         place = places()
         if 'calendar-day-20' in place:
             click_at(*place['calendar-day-20'])
+    # The Layout page, then the window's bottom right corner (its client
+    # area ends at 540,400; the frame is 4 wide) dragged 60 right and 40
+    # down: the tour says where the anchored button is each time.
+    if 'layout-tab' in place:
+        click_at(*place['layout-tab'])
+        type_on_serial(b'm=DONE; cat /tmp/t.log; echo LAYOUT $m\r')
+        wait_for('LAYOUT DONE', 10)
+        anchored_before = places().get('anchored-apply')
+        drag(542, 402, 602, 442)
+        time.sleep(1)
+        type_on_serial(b'm=DONE; cat /tmp/t.log; echo RESIZED $m\r')
+        wait_for('RESIZED DONE', 10)
+        anchored_after = places().get('anchored-apply')
 type_on_serial(b'm=DONE; cat /tmp/t.log; kill %1; wait; echo TOUR $m\r')
 tour_ok = tour_started and wait_for('TOUR DONE', 15)
 log_from_here = bytes(received[received.rfind(b'TOUR $m'):])
@@ -1238,6 +1256,9 @@ checks.append(('controls tour: checked list box (Space), numeric up/down (the wh
                tour_ok and b'checked Pears 1' in log_from_here and
                (b'quantity 6' in log_from_here or b'quantity 4' in log_from_here) and
                b'date 2026-11-20' in log_from_here))
+checks.append(('controls tour: a button anchored to the bottom right follows the corner of a resized window',
+               tour_ok and anchored_before is not None and anchored_after is not None and
+               anchored_after == (anchored_before[0] + 60, anchored_before[1] + 40)))
 
 # The common dialogs (dialogtour), which prints where the controls of
 # each dialog are when it appears: the open dialog (a click on /etc and

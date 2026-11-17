@@ -380,21 +380,21 @@ normalized (0-65535), not pixels.
 - [x] Owned windows: a dialog stays above its owner; the owner disabled for real
       (the server refuses to activate it)
 - [x] Common dialogs: open and save a file, choose a colour, choose a font
-- [ ] Layout without hand-computed positions:
-  - [ ] Anchors (any of left, top, right, bottom: kept at their distance
+- [x] Layout without hand-computed positions:
+  - [x] Anchors (any of left, top, right, bottom: kept at their distance
         from the parent's edges when it resizes; left and right together
         stretch the control)
-  - [ ] Docking with margins and padding (Align exists: top, bottom, left,
+  - [x] Docking with margins and padding (Align exists: top, bottom, left,
         right, client; add Margin and Padding, and a dock order)
-  - [ ] AutoSize (a control sized to its content: labels, buttons, check
+  - [x] AutoSize (a control sized to its content: labels, buttons, check
         boxes; containers to their children) and minimum and maximum sizes
-  - [ ] FlowLayoutPanel (children in a row or column, wrapping)
-  - [ ] TableLayoutPanel (rows and columns: fixed, automatic or a share of
+  - [x] FlowLayoutPanel (children in a row or column, wrapping)
+  - [x] TableLayoutPanel (rows and columns: fixed, automatic or a share of
         what is left; spanning cells)
-  - [ ] SplitContainer (two panels with a splitter between them, either
+  - [x] SplitContainer (two panels with a splitter between them, either
         orientation, minimum sizes, one panel fixed when resizing; builds
         on TSplitter)
-  - [ ] Panel improvements: scrolling when the content is larger (AutoScroll)
+  - [x] Panel improvements: scrolling when the content is larger (AutoScroll)
 - [ ] More controls:
   - [x] Checked list box (a check box per item, Space toggles, check events)
   - [x] Numeric up/down (an edit box with up and down buttons; minimum,

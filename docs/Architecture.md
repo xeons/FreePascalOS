@@ -1668,11 +1668,66 @@ scale makes a logical unit; a small stock icon before a node's text if
 it has one; nodes taken away again with `DeleteNode`, the choice going
 to the parent; `NodeAt` and `DropTarget` for context menus and drops),
 splitter (`Controls.Splitter`: dragged to give the pane docked before
-it another width) and list view. Controls that own children
+it another width or height; `KeyboardMovable` ones take the focus and
+move with the arrow keys) and list view. Controls that own children
 place them in their `Layout` with `AssignBounds` (which, unlike
 `SetBounds`, does not ask the parent to lay out again) and keep their
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
+
+**Layout without positions.** A control's place comes from its parent's
+`Layout`, which calls `PlaceChildren` with the parent's client area
+(its pixels less its `ContentPadding`). Docked children (`Align`) take
+strips along the sides in `DockOrder` (lower first, nearer the edge;
+equal ones in the order they were made), each with its `Margins` kept
+clear, then the client-docked ones what is left. The rest are where
+their `Bounds` say, and their `Anchors` (default left and top) keep their
+distances to those edges of the client area as it resizes: the client
+area's size is captured the first time it has one after `SetBounds`;
+left and right together stretch, neither keeps the middle at its share
+(as the LCL and WinForms do). `AutoSize` makes a control take
+`PreferredSize` (logical units, virtual: labels, buttons, check and
+radio boxes, edit boxes' and combo boxes' heights, group boxes and
+panels from their children, toolbar, status bar, progress bar, slider,
+tab control, calendar), again whenever its text, its children or the
+scale change; `MinWidth`, `MinHeight`, `MaxWidth` and `MaxHeight` (0: no
+maximum) are kept by docking, anchors, splitters and every container.
+(`Margins` and `ContentPadding` rather than `Margin` and `Padding`: many
+controls have constants of those names, which a property would hide.)
+The arithmetic is apart from the controls, in units that build on the
+host and are checked there (`make controls-test`, tools/ControlsTest):
+`Controls.LayoutRules` (anchors, docking, constraints, a place in a
+cell), `Controls.FlowArrangement`, `Controls.TableArrangement` and
+`Controls.SplitRules`. Changes do not lay out at once: `SetBounds`,
+`Align`, `Visible`, anchors, margins, padding, constraints, `AutoSize`
+and new or freed children call `RequestLayout`, which marks the control
+(and the path to it) and the window's host; the host lays out the marked
+parts once (`PerformPendingLayout`), before the window paints (the new
+`TWindow.BeforePaint`), before it looks for the control under the
+pointer, and whenever someone reads a control's `Bounds` or
+`PixelBounds`, so places read are always current, many changes cost one
+layout, and nothing is painted half laid out. A layout that asks for
+more (a scroll bar appearing) runs again, up to four rounds.
+
+Containers that place their children themselves override
+`PlaceChildren`: `TFlowLayoutPanel` (`Controls.FlowPanel`: children at
+their sizes, with margins, left to right, top down, right to left or
+bottom up, wrapping or not, `AutoSize` to its content);
+`TTableLayoutPanel` (`Controls.TablePanel`: columns and rows Absolute,
+AutoSize or Percent of what is left, children in cells given by
+`SetCell` and `SetSpan` or the next free one, the table growing by rows,
+columns or not at all (`GrowStyle`); a child's anchors place it within
+its cell, docked to the client area it fills it); `TSplitContainer`
+(`Controls.SplitContainer`: `Panel1`, a `TSplitter`, `Panel2`, side by
+side or one above the other, `SplitterDistance`, `Panel1MinSize` and
+`Panel2MinSize`, `FixedPanel` keeping its extent on resize, the share
+kept if none). A `TPanel` with `AutoScroll` shows scroll bars when its
+children need more room, scrolls with them, the wheel and the keys its
+children leave alone, and brings a focused descendant into view (the
+window calls `DescendantFocused` on each ancestor). The controls tour's
+Layout page shows them all; the Control Panel's password dialog is laid
+out by a table (pixel for pixel where it was), and the common dialogs'
+OK and Cancel are anchored to the bottom right.
 
 **Picking values.** A checked list box (`Controls.CheckedListBox`) is a
 list box with a check box before each item (`Controls.CheckMarks`
