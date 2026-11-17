@@ -329,11 +329,18 @@ end;
 
 function FindFreeCell(const Taken: TOccupancy; ColumnCount, RowCount, ColumnSpan, RowSpan: LongInt;
   out Column, Row: LongInt): Boolean;
+var
+  X: LongInt;
+  Y: LongInt;
 begin
-  for Row := 0 to RowCount - 1 do
-    for Column := 0 to ColumnCount - 1 do
-      if SpanIsFree(Taken, Column, Row, ColumnSpan, RowSpan) then
+  for Y := 0 to RowCount - 1 do
+    for X := 0 to ColumnCount - 1 do
+      if SpanIsFree(Taken, X, Y, ColumnSpan, RowSpan) then
+      begin
+        Column := X;
+        Row := Y;
         Exit(True);
+      end;
   Column := -1;
   Row := -1;
   Result := False;
