@@ -45,7 +45,7 @@ type
   end;
 
 const
-  DesktopProgramCount = 8;
+  DesktopProgramCount = 9;
   DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
     (Command: 'files'; Caption: 'Files'; Picture: PictureFiles),
     (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
@@ -54,7 +54,8 @@ const
     (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),
     (Command: 'controlsdemo'; Caption: 'Controls demo'; Picture: PictureSwatches),
     (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs),
-    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager));
+    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager),
+    (Command: 'paint'; Caption: 'Paint'; Picture: PictureSwatches));
 
 { Starts DesktopPrograms[Index]; False (after saying why in a message
   box) if it could not be started. ProcessId is the started program's. }
