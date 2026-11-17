@@ -461,6 +461,9 @@ begin
   finally
     FLayingOut := False;
   end;
+  { Layouts that keep asking for more wait for the next change rather
+    than being run (and painted) again and again. }
+  FLayoutPending := False;
 end;
 
 { --- TControl ----------------------------------------------------------------- }

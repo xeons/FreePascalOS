@@ -21,6 +21,10 @@
   shows dots, OK and Cancel. The box has the keyboard when it appears,
   so the password can simply be typed and Enter pressed. It says
   "password-asked TITLE" when it appears.
+
+  Laid out by a table rather than positions: the explanation across
+  both columns, then the caption in a column of its own and the box
+  filling the rest of its row.
 }
 unit ControlPanel.PasswordDialog;
 
@@ -38,14 +42,21 @@ function AskForPassword(Owner: TWindow; const Title, Explanation: string; out Pa
 implementation
 
 uses
+  Controls.Base,
   Controls.Labels,
   Controls.EditBox,
+  Controls.TablePanel,
+  Controls.TableArrangement,
   Controls.CommonDialogs,
   ControlPanel.Report;
 
 const
   DialogWidth = 340;
   DialogHeight = 118;
+  { The table's rows and its caption column (logical units). }
+  ExplanationRowHeight = 30;
+  PasswordRowHeight = 22;
+  CaptionColumnWidth = 84;
 
 type
   TPasswordDialog = class(TCommonDialog)
@@ -60,20 +71,35 @@ type
 
 constructor TPasswordDialog.CreatePasswordDialog(AOwner: TWindow; const ATitle, Explanation: string);
 var
+  Table: TTableLayoutPanel;
   Message: TLabel;
   Caption: TLabel;
 begin
   inherited CreateDialog(ATitle, DialogWidth, DialogHeight, AOwner);
-  Message := TLabel.Create(Root);
+  Table := TTableLayoutPanel.Create(Root);
+  Table.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin,
+    ExplanationRowHeight + PasswordRowHeight);
+  Table.AddColumn(TrackAbsolute, CaptionColumnWidth);
+  Table.AddColumn(TrackPercent, 100);
+  Table.AddRow(TrackAbsolute, ExplanationRowHeight);
+  Table.AddRow(TrackAbsolute, PasswordRowHeight);
+  Message := TLabel.Create(Table);
   Message.ShowsMnemonic := False;
   Message.Text := Explanation;
-  Message.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin, 18);
-  Caption := TLabel.Create(Root);
+  Message.SetBounds(0, 0, 0, 18);
+  Message.Anchors := [akLeft, akTop, akRight];
+  Table.SetCell(Message, 0, 0);
+  Table.SetSpan(Message, 2, 1);
+  { At the left of its cell, in the middle of the row. }
+  Caption := TLabel.Create(Table);
   Caption.Text := '&Password:';
-  Caption.SetBounds(DialogMargin, DialogMargin + 33, 80, 16);
-  FPasswordEdit := TEditBox.Create(Root);
+  Caption.SetBounds(0, 0, 80, 16);
+  Caption.Anchors := [akLeft];
+  Table.SetCell(Caption, 0, 1);
+  FPasswordEdit := TEditBox.Create(Table);
   FPasswordEdit.HidesText := True;
-  FPasswordEdit.SetBounds(DialogMargin + 84, DialogMargin + 30, DialogWidth - 2 * DialogMargin - 84, 22);
+  FPasswordEdit.Align := AlignClient;
+  Table.SetCell(FPasswordEdit, 1, 1);
   AddOkAndCancel(DialogWidth, DialogHeight);
 end;
 

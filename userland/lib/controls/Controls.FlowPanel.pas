@@ -56,9 +56,11 @@ type
       logical units. }
     function FlowingChildren: TList;
     function FlowItems(Flowing: TList; InPixels: Boolean): TFlowItems;
+    function ExtentToWrapAt: LongInt;
   protected
     procedure PlaceChildren(const Area: TRectangle); override;
     procedure PlaceOneChild(Child: TControl); override;
+    procedure Layout; override;
   public
     constructor Create(AParent: TControl); override;
     function PreferredSize: TSize; override;
@@ -147,17 +149,36 @@ begin
   PlaceChildren(ClientPixelArea);
 end;
 
+{ The extent it has across the flow (logical units): what docking gave
+  it if it is docked along that way, else its Bounds'. }
+function TFlowLayoutPanel.ExtentToWrapAt: LongInt;
+var
+  Rows: Boolean;
+begin
+  Rows := FFlowDirection in [FlowLeftToRight, FlowRightToLeft];
+  if Rows and (Align in [AlignTop, AlignBottom, AlignClient]) then
+    Result := Unscaled(RectangleWidth(PixelBounds))
+  else if not Rows and (Align in [AlignLeft, AlignRight, AlignClient]) then
+    Result := Unscaled(RectangleHeight(PixelBounds))
+  else if Rows then
+    Result := RectangleWidth(Bounds)
+  else
+    Result := RectangleHeight(Bounds);
+end;
+
 function TFlowLayoutPanel.PreferredSize: TSize;
 var
   Flowing: TList;
+  Extent: LongInt;
   WrapExtent: LongInt;
 begin
   { Rows wrap at the width it has, columns at its height. }
+  Extent := ExtentToWrapAt;
   if FFlowDirection in [FlowLeftToRight, FlowRightToLeft] then
-    WrapExtent := RectangleWidth(Bounds) - SpacingWidth(ContentPadding)
+    WrapExtent := Extent - SpacingWidth(ContentPadding)
   else
-    WrapExtent := RectangleHeight(Bounds) - SpacingHeight(ContentPadding);
-  if WrapExtent <= 0 then
+    WrapExtent := Extent - SpacingHeight(ContentPadding);
+  if (WrapExtent <= 0) or not FWrapContents then
     WrapExtent := High(LongInt) div 2;
   Flowing := FlowingChildren;
   try
@@ -167,10 +188,24 @@ begin
   end;
   Result := MakeSize(Result.cx + SpacingWidth(ContentPadding), Result.cy + SpacingHeight(ContentPadding));
   { Wrapping rows keep the width they have (and columns their height). }
-  if FWrapContents and (RectangleWidth(Bounds) > 0) and (FFlowDirection in [FlowLeftToRight, FlowRightToLeft]) then
-    Result.cx := RectangleWidth(Bounds)
-  else if FWrapContents and (RectangleHeight(Bounds) > 0) and (FFlowDirection in [FlowTopDown, FlowBottomUp]) then
-    Result.cy := RectangleHeight(Bounds);
+  if FWrapContents and (Extent > 0) and (FFlowDirection in [FlowLeftToRight, FlowRightToLeft]) then
+    Result.cx := Extent
+  else if FWrapContents and (Extent > 0) and (FFlowDirection in [FlowTopDown, FlowBottomUp]) then
+    Result.cy := Extent;
+end;
+
+{ Docked and sized to its content, its depth follows its width: when that
+  changed what its rows need, its parent places it again. }
+procedure TFlowLayoutPanel.Layout;
+var
+  Wanted: TSize;
+begin
+  inherited Layout;
+  if not AutoSize or (Parent = nil) or not FWrapContents or (Align = AlignNone) then
+    Exit;
+  Wanted := ConstrainSize(PreferredSize, Constraints);
+  if (Wanted.cx <> RectangleWidth(Bounds)) or (Wanted.cy <> RectangleHeight(Bounds)) then
+    Parent.RequestLayout;
 end;
 
 end.

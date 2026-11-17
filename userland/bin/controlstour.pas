@@ -22,11 +22,14 @@
 
   controlstour
 
-  A menu bar (File, Help), a toolbar, a tab control with four pages
+  A menu bar (File, Help), a toolbar, a tab control with five pages
   (a list box and a combo box; a multi-line edit box and two edit boxes
   to copy and paste between; a tree view; a list view, several items
-  selectable and sorted by a header click, with buttons for its views)
-  and a status bar; Ctrl+M asks a question in a message box, Help >
+  selectable and sorted by a header click, with buttons for its views;
+  layout without positions: a split container holding a flow panel of
+  buttons that wrap, a form in a table and a panel that scrolls, over a
+  bar whose button is anchored to the bottom right, so it follows the
+  window's corner when the window is resized) and a status bar; Ctrl+M asks a question in a message box, Help >
   About shows one. Menus, items and tabs have mnemonics (Alt+H opens
   Help; F10 or Alt alone picks the menu bar). Prints what happens, a
   line each:
@@ -45,6 +48,8 @@
     column N              a list view column header was clicked
     order A,B,...         the list view's items, after sorting
     view N                the list view's view (0 details to 3 large icons)
+    place anchored-apply X Y  the anchored button, when the layout page
+                          is shown and whenever the window is resized
     answer N              a message box's result
   File > Exit ends it.
 }
@@ -77,7 +82,16 @@ uses
   Controls.ListView,
   Controls.Dialogs,
   Controls.MessageBoxes,
-  Controls.Text;
+  Controls.Text,
+  Controls.Labels,
+  Controls.Toggles,
+  Controls.Panels,
+  Controls.FlowPanel,
+  Controls.TablePanel,
+  Controls.TableArrangement,
+  Controls.SplitContainer,
+  Controls.SplitRules,
+  Controls.LayoutRules;
 
 const
   KeyM = $32;
@@ -98,6 +112,8 @@ type
     FDetails: TListView;
     FLargeIconsButton: TButton;
     FStatus: TStatusBar;
+    FLayoutBar: TPanel;
+    FAnchoredButton: TButton;
     procedure MenuChosen(Item: TMenuItem);
     procedure ExitChosen(Item: TMenuItem);
     procedure AboutChosen(Item: TMenuItem);
@@ -110,6 +126,10 @@ type
     procedure TellPagePlaces(Page: LongInt);
     procedure AskQuestion(Sender: TControlWindow);
     procedure BuildPages;
+    procedure BuildLayoutPage;
+    procedure BuildFlowAndForm(Area: TControl);
+    procedure BuildScrollingPanel(Area: TControl);
+    procedure LayoutBarResized(Sender: TControl);
     procedure TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
   public
     constructor Create;
@@ -210,6 +230,141 @@ begin
   AddViewButton(Page, 'List', ViewList);
   AddViewButton(Page, 'Small', ViewSmallIcons);
   AddViewButton(Page, 'Large', ViewLargeIcons);
+  BuildLayoutPage;
+end;
+
+{ No positions computed but the anchored button's, placed once from the
+  bar's width: a split container fills the page above a bar docked to
+  its bottom. }
+procedure TTourWindow.BuildLayoutPage;
+var
+  Page: TControl;
+  Note: TLabel;
+  Split: TSplitContainer;
+  BarWidth: LongInt;
+begin
+  Page := FTabs.AddPage('La&yout');
+  Page.OnNotify := @ChildNotified;
+  FLayoutBar := TPanel.Create(Page);
+  FLayoutBar.SetBounds(0, 0, 0, 36);
+  FLayoutBar.Align := AlignBottom;
+  FLayoutBar.OnResize := @LayoutBarResized;
+  Note := TLabel.Create(FLayoutBar);
+  Note.ShowsMnemonic := False;
+  Note.Text := 'Resize the window: the button keeps to the corner';
+  Note.SetBounds(8, 9, 0, 0);
+  Note.AutoSize := True;
+  { The bar's width now (reading it lays the window out), for the button
+    to be put at its right end; its anchors keep it there. }
+  BarWidth := Unscaled(RectangleWidth(FLayoutBar.PixelBounds));
+  FAnchoredButton := TButton.Create(FLayoutBar);
+  FAnchoredButton.Text := 'Apply';
+  FAnchoredButton.SetBounds(BarWidth - 8 - 75, 6, 75, 23);
+  FAnchoredButton.Anchors := [akRight, akBottom];
+  Split := TSplitContainer.Create(Page);
+  Split.Align := AlignClient;
+  Split.FixedPanel := FixedPanel1;
+  Split.Panel1MinSize := 150;
+  Split.Panel2MinSize := 100;
+  Split.SplitterDistance := 270;
+  BuildFlowAndForm(Split.Panel1);
+  BuildScrollingPanel(Split.Panel2);
+end;
+
+{ Buttons in a row that wraps when the panel is narrow (sized to them),
+  and a form in a table under them: captions as wide as the widest, the
+  fields stretched across the rest. }
+procedure TTourWindow.BuildFlowAndForm(Area: TControl);
+const
+  Captions: array[0..4] of string = ('One', 'Two', 'Three', 'Four', 'Five');
+var
+  Flow: TFlowLayoutPanel;
+  Table: TTableLayoutPanel;
+  Button: TButton;
+  Caption: TLabel;
+  Field: TEditBox;
+  Choice: TComboBox;
+  Remember: TCheckBox;
+  Index: LongInt;
+begin
+  Flow := TFlowLayoutPanel.Create(Area);
+  Flow.Align := AlignTop;
+  Flow.AutoSize := True;
+  Flow.ContentPadding := UniformSpacing(4);
+  for Index := Low(Captions) to High(Captions) do
+  begin
+    Button := TButton.Create(Flow);
+    Button.Text := Captions[Index];
+    Button.AutoSize := True;
+    Button.Margins := UniformSpacing(2);
+  end;
+  Table := TTableLayoutPanel.Create(Area);
+  Table.Align := AlignClient;
+  Table.ContentPadding := UniformSpacing(4);
+  Table.AddColumn(TrackAutoSize);
+  Table.AddColumn(TrackPercent, 100);
+  Caption := TLabel.Create(Table);
+  Caption.Text := '&Name:';
+  Caption.AutoSize := True;
+  Caption.Anchors := [akLeft];
+  Caption.Margins := UniformSpacing(3);
+  Field := TEditBox.Create(Table);
+  Field.SetBounds(0, 0, 100, 22);
+  Field.Anchors := [akLeft, akRight];
+  Field.Margins := UniformSpacing(3);
+  Caption := TLabel.Create(Table);
+  Caption.Text := 'C&ity:';
+  Caption.AutoSize := True;
+  Caption.Anchors := [akLeft];
+  Caption.Margins := UniformSpacing(3);
+  Choice := TComboBox.Create(Table);
+  Choice.SetBounds(0, 0, 100, 22);
+  Choice.Anchors := [akLeft, akRight];
+  Choice.Margins := UniformSpacing(3);
+  Choice.Items.Add('Berlin');
+  Choice.Items.Add('Lisbon');
+  Choice.Items.Add('Oslo');
+  Choice.ItemIndex := 0;
+  Remember := TCheckBox.Create(Table);
+  Remember.Text := 'Re&member these';
+  Remember.AutoSize := True;
+  Remember.Margins := UniformSpacing(3);
+  Table.SetSpan(Remember, 2, 1);
+end;
+
+{ More options than fit: the panel scrolls (a control focused with Tab
+  is scrolled into view). }
+procedure TTourWindow.BuildScrollingPanel(Area: TControl);
+var
+  Scroller: TPanel;
+  Heading: TLabel;
+  Box: TCheckBox;
+  Index: LongInt;
+begin
+  Heading := TLabel.Create(Area);
+  Heading.ShowsMnemonic := False;
+  Heading.Text := 'Options (scrolling):';
+  Heading.SetBounds(0, 0, 0, 20);
+  Heading.Align := AlignTop;
+  Heading.Margins := MakeSpacing(4, 2, 4, 0);
+  Scroller := TPanel.Create(Area);
+  Scroller.Align := AlignClient;
+  Scroller.AutoScroll := True;
+  Scroller.ContentPadding := UniformSpacing(4);
+  for Index := 1 to 14 do
+  begin
+    Box := TCheckBox.Create(Scroller);
+    Box.Text := 'Option ' + IntToStr(Index);
+    Box.SetBounds(0, (Index - 1) * 24, 0, 0);
+    Box.AutoSize := True;
+  end;
+end;
+
+procedure TTourWindow.LayoutBarResized(Sender: TControl);
+begin
+  if FTabs.PageIndex = 4 then
+    TellPlace('anchored-apply', FAnchoredButton, RectangleWidth(FAnchoredButton.PixelBounds) div 2,
+      RectangleHeight(FAnchoredButton.PixelBounds) div 2);
 end;
 
 procedure TTourWindow.AddViewButton(Page: TControl; const Caption: string; Mode: TListViewMode);
@@ -234,6 +389,7 @@ end;
 procedure TTourWindow.TellPlaces;
 var
   RowHeight: LongInt;
+  LayoutTab: TRectangle;
 begin
   { Places a test clicks: the Help heading, the Bold button, the tabs,
     the list box's third item, the combo box and its second item when
@@ -244,6 +400,8 @@ begin
   TellPlace('text-tab', FTabs, Scaled(68), Scaled(8));
   TellPlace('tree-tab', FTabs, Scaled(120), Scaled(8));
   TellPlace('details-tab', FTabs, Scaled(170), Scaled(8));
+  LayoutTab := FTabs.TabBounds(4);
+  TellPlace('layout-tab', FTabs, (LayoutTab.Left + LayoutTab.Right) div 2, (LayoutTab.Top + LayoutTab.Bottom) div 2);
   RowHeight := FList.ItemHeight;
   TellPlace('list-item-3', FList, Scaled(30), 2 + 2 * RowHeight + RowHeight div 2);
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
@@ -332,6 +490,8 @@ begin
     TellPlace('large-icons', FLargeIconsButton, RectangleWidth(FLargeIconsButton.PixelBounds) div 2,
       RectangleHeight(FLargeIconsButton.PixelBounds) div 2);
   end;
+  if Page = 4 then
+    LayoutBarResized(FLayoutBar);
 end;
 
 procedure TTourWindow.ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);

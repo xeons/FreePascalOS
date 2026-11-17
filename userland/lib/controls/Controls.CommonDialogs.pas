@@ -87,6 +87,9 @@ begin
   FOkButton.OnClick := @OkClicked;
   FCancelButton := AddButton('Cancel', ResultCancel, CancelLeft, Top, DialogButtonWidth, DialogButtonHeight,
     False, True);
+  { They stay at the corner if the dialog is resized. }
+  FOkButton.Anchors := [akRight, akBottom];
+  FCancelButton.Anchors := [akRight, akBottom];
 end;
 
 procedure TCommonDialog.OkClicked(Sender: TControl);
