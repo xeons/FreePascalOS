@@ -42,7 +42,7 @@
 
     settings colour-management on|off, properties on|off, toolbar on|off,
       status-bar on|off
-    opened PATH FORMAT W x H, N frames, colour off|converted|not-needed|
+    opened PATH FORMAT W x H, frames N, colour off|converted|not-needed|
       approximate|unsupported
     error PATH: REASON      a file that could not be read
     zoom PERCENT            the zoom changed

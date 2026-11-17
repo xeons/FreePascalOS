@@ -513,7 +513,7 @@ begin
   ShowProperties;
   UpdateAnimationCommands;
   ShowStatus;
-  Say(Format('opened %s %s %d x %d, %d frames, colour %s', [FullPath, Loaded.SourceFormatName, Loaded.Width,
+  Say(Format('opened %s %s %d x %d, frames %d, colour %s', [FullPath, Loaded.SourceFormatName, Loaded.Width,
     Loaded.Height, Max(1, FView.Picture.FrameCount), ColorHandlingWords[FColorHandling]]));
 end;
 

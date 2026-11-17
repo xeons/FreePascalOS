@@ -65,6 +65,9 @@
     * heap checking (heaptest): its promises, and that a use after free,
       a write after free, a double free and a write past the end each end
       the program that makes them,
+    * the applications under a display server: the image viewer opening
+      a PNG, the calculator evaluating keys, the volume control listing
+      the outputs,
     * that a crashing program (coretest --crash-on-purpose) only ends
       itself, with an unhandled EAccessViolation (EStackOverflow for a
       stack overflow) and status 217, and that
@@ -104,7 +107,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..375] of TCommandTest = (
+  CommandTests: array[0..378] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -608,7 +611,16 @@ const
     (Command: 'printf "BM\076\000\000\000\000\000\000\000\066\000\000\000\050\000\000\000\002\000\000\000\001\000\000\000\001\000\030\000\000\000\000\000\010\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\377\000\000\000\377\000\000\000" > t.bmp; clipboard --copy-image t.bmp; clipboard -l; clipboard -p -t png > c.png; imageinfo c.png | cut -d, -f1-2; clipboard --paste-image d.png -t bgra; imageinfo d.png | cut -d, -f1-2; clipboard -p -t bgra | wc -c; rm t.bmp c.png d.png'; ExpectedOutput: 'png'#10'bgra'#10'c.png: PNG, 2 x 1'#10'd.png: PNG, 2 x 1'#10'16'#10; ExpectedStatus: 0),
     (Command: 'clipboard -w > w.log & for i in $(seq 200); do grep -q watching w.log 2>/dev/null && break; sleep 0.1; done; clipboard -x; wait; cat w.log; clipboard -l | wc -l; rm w.log; pkill -x displayserver; echo $?'; ExpectedOutput: 'watching'#10'changed empty'#10'0'#10'0'#10; ExpectedStatus: 0),
     { gzip started as zcat and gunzip. }
-    (Command: 'printf zz | gzip > zz.gz; zcat zz.gz; echo; gunzip zz.gz; cat zz; echo; ls zz*'; ExpectedOutput: 'zz'#10'zz'#10'zz'#10; ExpectedStatus: 0)
+    (Command: 'printf zz | gzip > zz.gz; zcat zz.gz; echo; gunzip zz.gz; cat zz; echo; ls zz*'; ExpectedOutput: 'zz'#10'zz'#10'zz'#10; ExpectedStatus: 0),
+
+    { --- the applications start under a display server and say what
+      they did: the image viewer opens a PNG (made through the
+      clipboard from a BMP) and tells its format and size, the
+      calculator evaluates keys typed at start (-k), the volume control
+      lists the outputs there are. Then the server ends. }
+    (Command: 'displayserver > /tmp/ds.log 2>&1 & for i in $(seq 200); do grep -q ready /tmp/ds.log 2>/dev/null && break; sleep 0.1; done; printf "BM\076\000\000\000\000\000\000\000\066\000\000\000\050\000\000\000\002\000\000\000\001\000\000\000\001\000\030\000\000\000\000\000\010\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\377\000\000\000\377\000\000\000" > /tmp/v.bmp; clipboard --copy-image /tmp/v.bmp; clipboard -p -t png > /tmp/v.png; imageviewer /tmp/v.png > /tmp/iv.log 2>&1 & for i in $(seq 200); do grep -q opened /tmp/iv.log && break; sleep 0.1; done; kill $!; wait $!; sed -n "s/^opened [^ ]* //p" /tmp/iv.log'; ExpectedOutput: 'PNG 2 x 1, frames 1, colour not-needed'#10; ExpectedStatus: 0),
+    (Command: 'calculator -k "12*(3+4)=" > /tmp/ca.log 2>&1 & for i in $(seq 200); do grep -q result /tmp/ca.log && break; sleep 0.1; done; kill $!; wait $!; grep result /tmp/ca.log | sed "s/.* = //"; grep -c "^display " /tmp/ca.log'; ExpectedOutput: '84'#10'9'#10; ExpectedStatus: 0),
+    (Command: 'volumecontrol > /tmp/vc.log 2>&1 & for i in $(seq 200); do grep -q outputs /tmp/vc.log && break; sleep 0.1; done; sleep 0.5; kill $!; wait $!; n=$(sed -n "s/^outputs //p" /tmp/vc.log); test "$(grep -c "^output [0-9]" /tmp/vc.log)" = "$n" && echo listed; rm /tmp/v.bmp /tmp/v.png /tmp/iv.log /tmp/ca.log /tmp/vc.log; pkill -x displayserver; echo $?'; ExpectedOutput: 'listed'#10'0'#10; ExpectedStatus: 0)
   );
 
 var
