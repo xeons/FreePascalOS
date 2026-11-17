@@ -75,6 +75,13 @@ type
     { Files removed while open, newest first: the in-memory copy of the
       orphan list that starts at the superblock (FileSystem.Ext.Orphans). }
     FirstOrphan: Pointer;
+    { The earliest deletion time written into a freed inode: the
+      superblock's inode count at least, since e2fsck reads a smaller
+      deletion time as a link of the orphan list (a damaged one, as the
+      inode is not on it), and not before the volume was made or last
+      written. The wall clock starts at zero on machines without a
+      real-time clock, so the uptime alone is no deletion time. }
+    EarliestDeletionTime: LongWord;
   end;
 
   PExtNode = ^TExtNode;

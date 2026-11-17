@@ -436,6 +436,14 @@ begin
   end;
 end;
 
+function LatestOf(First, Second: LongWord): LongWord;
+begin
+  if First > Second then
+    Result := First
+  else
+    Result := Second;
+end;
+
 function ExtMount(Volume: PVolume): TFileSystemStatus;
 var
   Superblock: TSuperblock;
@@ -488,6 +496,8 @@ begin
   Ext^.FirstMetaBlockGroup := Superblock.FirstMetaBlockGroup;
   Ext^.FirstNonReservedInode := Superblock.FirstInode;
   Ext^.WantExtraInodeSize := Superblock.WantExtraInodeSize;
+  Ext^.EarliestDeletionTime := LatestOf(Superblock.InodesCount,
+    LatestOf(Superblock.WriteTime, Superblock.MakeFileSystemTime));
   CopyMemory(@Ext^.Uuid[0], @Superblock.Uuid[0], 16);
   Ext^.HasMetadataChecksums :=
     (Superblock.FeatureReadOnlyCompatible and ReadOnlyCompatibleMetadataChecksum) <> 0;

@@ -725,10 +725,11 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
         Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
   - [ ] GPIO and the PWM audio jack; HDMI audio
-- [ ] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
-      "Inodes that were part of a corrupted orphan linked list found"),
-      with the volume on virtio and on an SD card alike; the same image
-      checks clean after the test on x86-64
+- [x] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
+      "Inodes that were part of a corrupted orphan linked list found"):
+      deletion times came from a wall clock starting at zero (no RTC),
+      which e2fsck takes for orphan links; they are now kept above the
+      inode count and the volume's last write time
 - Raspberry Pi 5 (later): RP1 south bridge drivers (UART, Ethernet, USB),
   its UEFI port's tables, PAN and LSE atomics, its real-time clock
 
