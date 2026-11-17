@@ -522,6 +522,9 @@ normalized (0-65535), not pixels.
       the scale is used, scaled when none fits
 - [x] Clipboard (text and images) and drag and drop
 - [ ] Themes; Paint; image viewer; calculator; volume control
+  - [x] Controls painted in the new look (scaled bevels, header bands, hot,
+        flat, split and drop-down buttons, green and marquee progress bars),
+        the earlier look kept as the classic control look
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
 ## Networking

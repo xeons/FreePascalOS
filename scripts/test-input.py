@@ -1132,6 +1132,12 @@ if tour_started:
     time.sleep(1)
     press('esc')
     time.sleep(0.8)
+    # The split button's arrow opens its menu; its second item.
+    if 'split-arrow' in place and 'split-menu-2' in place:
+        click_at(*place['split-arrow'])
+        time.sleep(0.5)
+        click_at(*place['split-menu-2'])
+        time.sleep(0.5)
     click_at(*place['text-tab'])
     type_on_serial(b'm=DONE; cat /tmp/t.log; echo TEXT $m\r')
     wait_for('TEXT DONE', 10)
@@ -1283,6 +1289,8 @@ checks.append(('controls tour: a hint shows when the pointer rests on a control 
                tour_ok and b'hint Bold / Makes the text bold (stays down)' in log_from_here and
                'f4efd8' in hint_pixels))
 checks.append(('controls tour: a timer ticks', tour_ok and b'tick 3' in log_from_here))
+checks.append(('controls tour: a split button\'s arrow opens its menu',
+               tour_ok and b'looks Second choice' in log_from_here))
 checks.append(('controls tour: a picture box shows an animation read from a file, transparent in its middle',
                tour_ok and b'picture 12' in log_from_here and picture_pixels == ('3060c0', 'cbc6bd')))
 checks.append(('controls tour: a button anchored to the bottom right follows the corner of a resized window',

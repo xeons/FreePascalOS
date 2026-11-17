@@ -18,7 +18,8 @@
 
 {
   What every page of the Control Panel is: a panel on the right of the
-  window, under a heading, that shows the settings as they are now
+  window, under a heading (a navy section band where the theme has
+  bands), that shows the settings as they are now
   (Load) and makes the changes chosen on it (Apply).
 
   A page tells the window when something on it was changed (Modified),
@@ -102,6 +103,8 @@ begin
   inherited Create(AParent);
   FWindow := AWindow;
   Text := ATitle;
+  { Under a navy section band, in themes that show bands. }
+  HeaderStyle := GroupHeaderSectionBand;
 end;
 
 procedure TSettingsPage.Load;

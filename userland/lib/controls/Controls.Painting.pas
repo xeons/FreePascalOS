@@ -20,8 +20,7 @@
   The pieces controls are painted from, in the theme's look: bevels and
   edges whose lines grow with the display scale (when the theme says
   so: Theme.ScaledBevelLines; one pixel each otherwise), etched lines,
-  vertical gradients (a colour per pixel row, nothing allocated), the
-  golden and navy header bands, arrows, and grips.
+  the golden and navy header bands, arrows, and grips.
 
   BevelLine is the width of one line in pixels, BevelWidth that of a
   whole two-line bevel: what a sunken field keeps clear inside its
@@ -65,9 +64,6 @@ procedure DrawEtchedHorizontalLine(const Canvas: TCanvas; Left, Right, Top: Long
 procedure DrawEtchedVerticalLine(const Canvas: TCanvas; Left, Top, Bottom: LongInt);
 { The outline of Rectangle, Thickness pixels wide inside it. }
 procedure DrawThickOutline(const Canvas: TCanvas; const Rectangle: TRectangle; Thickness: LongInt; Color: TColor);
-{ Rectangle filled from TopColor in its first row to BottomColor in its
-  last. }
-procedure FillVerticalGradient(const Canvas: TCanvas; const Rectangle: TRectangle; TopColor, BottomColor: TColor);
 { A header band filling Rectangle: the gradient of its kind with a lit
   top line and a darker edge along the bottom. }
 procedure DrawHeaderBand(const Canvas: TCanvas; const Rectangle: TRectangle; Kind: TBandKind);
@@ -157,29 +153,6 @@ begin
   FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Bottom - Thickness, Width, Thickness), Color);
   FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Top, Thickness, Height), Color);
   FillRectangle(Canvas, MakeRectangle(Rectangle.Right - Thickness, Rectangle.Top, Thickness, Height), Color);
-end;
-
-procedure FillVerticalGradient(const Canvas: TCanvas; const Rectangle: TRectangle; TopColor, BottomColor: TColor);
-var
-  Height: LongInt;
-  Row: LongInt;
-  Weight: LongInt;
-begin
-  Height := RectangleHeight(Rectangle);
-  if (Height <= 0) or (RectangleWidth(Rectangle) <= 0) then
-    Exit;
-  if TopColor = BottomColor then
-  begin
-    FillRectangle(Canvas, Rectangle, TopColor);
-    Exit;
-  end;
-  for Row := 0 to Height - 1 do
-  begin
-    Weight := 0;
-    if Height > 1 then
-      Weight := (Row * 255 + (Height - 1) div 2) div (Height - 1);
-    FillSpan(Canvas, Rectangle.Top + Row, Rectangle.Left, Rectangle.Right, MixColors(TopColor, BottomColor, Weight));
-  end;
 end;
 
 procedure DrawHeaderBand(const Canvas: TCanvas; const Rectangle: TRectangle; Kind: TBandKind);

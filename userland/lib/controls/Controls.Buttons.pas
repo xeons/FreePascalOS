@@ -99,8 +99,9 @@ type
 procedure DrawButtonFace(const Canvas: TCanvas; const Box: TRectangle; Pressed, Outlined: Boolean);
 { The same in any of the looks. }
 procedure DrawButtonFaceLook(const Canvas: TCanvas; const Box: TRectangle; Look: TButtonLook; Outlined: Boolean);
-{ A flat button's look: the face, with a thin raised edge when hot and a
-  sunken one when pressed. }
+{ A flat button's look: nothing of its own as it is (what it sits on
+  shows), the face with a thin raised edge when hot and a sunken one when
+  pressed. }
 procedure DrawFlatButtonFace(const Canvas: TCanvas; const Box: TRectangle; Look: TButtonLook);
 
 implementation
@@ -160,10 +161,18 @@ end;
 
 procedure DrawFlatButtonFace(const Canvas: TCanvas; const Box: TRectangle; Look: TButtonLook);
 begin
-  FillRectangle(Canvas, Box, ButtonFaceColor(Look));
+  { As it is, it shows what it sits on. }
   case Look of
-    ButtonLookHot: DrawRaisedEdge(Canvas, Box);
-    ButtonLookPressed: DrawSunkenEdge(Canvas, Box);
+    ButtonLookHot:
+      begin
+        FillRectangle(Canvas, Box, ButtonFaceColor(Look));
+        DrawRaisedEdge(Canvas, Box);
+      end;
+    ButtonLookPressed:
+      begin
+        FillRectangle(Canvas, Box, ButtonFaceColor(Look));
+        DrawSunkenEdge(Canvas, Box);
+      end;
   end;
 end;
 

@@ -201,7 +201,7 @@ begin
     Start := Well.Left - 2 * Period + Start;
     while Start < Well.Right do
     begin
-      FillSpan(Clipped, Y, Start, Start + Width, Theme.MarqueeStripe);
+      DrawHorizontalLine(Clipped, Start, Start + Width, Y, Theme.MarqueeStripe);
       Start := Start + Period;
     end;
   end;

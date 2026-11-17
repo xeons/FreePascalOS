@@ -1636,6 +1636,34 @@ checked menu item's dot, the message box signs, the list view's stock
 icons, whose straight edges still fall on whole pixels) and scale a
 program's own icons smoothly.
 
+How the controls are painted is part of the theme too: a block of
+`Windowing.Theme` fields (style flags and the colours only some controls
+use) set by `LoadModernControlLook` (the default) or
+`LoadClassicControlLook` (exactly the earlier look, for the Classic
+theme and the pixel tests written for it). `Controls.Painting` holds the
+pieces they are painted from: bevels and edges whose lines grow with the
+scale when `ScaledBevelLines` is set (`BevelLine` pixels a line: one up
+to 150%, two from 175%; `BevelWidth` is a whole two-line bevel, what a
+sunken field keeps clear inside its edge), etched lines, header bands
+(a vertical gradient drawn a pixel row at a time, `Drawing.Canvas`'s
+`FillVerticalGradient`), arrows, a status bar's size grip and a
+splitter's dots. In the modern look buttons light up under the pointer
+(`HotButtonFace`) and darken when held, the default button's outline is
+two lines; `TButton` can also be flat (an edge only when hot), a split
+button (an arrow part behind an etched line opens `DropDownMenu`) or a
+drop-down button. A `TGroupBox` has a `HeaderStyle`: etched (the text
+in the frame), a golden header band or a navy section band over a
+lighter body (the Control Panel's pages); a theme without bands
+(`HeaderBandsShown` false) draws them all etched. Progress bars fill
+with gradient blocks (green) or, with `Marquee`, moving diagonal
+stripes on a timer of their own; pop-up menus have a shaded icon column
+with an etched line beside it; the calendar's month bar is a filled
+blue bar with button arrows (`CalendarHeaderFilled`); status bars are
+one sunken strip with etched separators and a size grip
+(`StatusBarEtched`); tooltips have a thin dark frame
+(`TooltipBorder`). The controls tour's Lists page shows the bands and
+buttons, its Layout page a marquee (`Tour.Looks`).
+
 **libcontrols** builds windows out of controls. `TControl`
 (`Controls.Base`) has a parent, children, bounds in logical units within
 the parent (or a side to dock to, in the order they were made; one
