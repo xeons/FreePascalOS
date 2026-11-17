@@ -224,6 +224,14 @@ var
   BarWidth: LongInt;
 begin
   PickFaces;
+  { Laid out before it is given a size (just after it is made): there is
+    no grid to fit yet, and shrinking the screen to nothing would throw
+    its lines away. }
+  if (RectangleWidth(PixelBounds) <= 0) or (RectangleHeight(PixelBounds) <= 0) then
+  begin
+    inherited Layout;
+    Exit;
+  end;
   BarWidth := Scaled(Theme.ScrollBarWidth);
   FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - BarWidth), 0, Unscaled(BarWidth),
     Unscaled(RectangleHeight(PixelBounds)));

@@ -179,6 +179,9 @@ type
     FAnchorReferenceScale: LongWord;
     FLayoutPending: Boolean;
     FChildLayoutPending: Boolean;
+    { Set once every constructor has run: until then Layout would see a
+      subclass's fields before its constructor makes them. }
+    FConstructed: Boolean;
     FVisible: Boolean;
     FEnabled: Boolean;
     FCanFocus: Boolean;
@@ -286,6 +289,8 @@ type
     procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); virtual;
   public
     constructor Create(AParent: TControl); virtual;
+    { Lays out what was asked for while the constructors ran. }
+    procedure AfterConstruction; override;
     destructor Destroy; override;
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Selects the scale of the window it is in. }
@@ -501,6 +506,18 @@ begin
   end;
 end;
 
+procedure TControl.AfterConstruction;
+begin
+  inherited AfterConstruction;
+  FConstructed := True;
+  if not FLayoutPending then
+    Exit;
+  if FHost = nil then
+    UpdatePixelBounds
+  else
+    RequestLayout;
+end;
+
 destructor TControl.Destroy;
 begin
   while FChildren.Count > 0 do
@@ -581,6 +598,13 @@ procedure TControl.ArrangeContents;
 var
   Outermost: Boolean;
 begin
+  { Children made in a constructor read and set places before the rest
+    of the constructor has run; the layout waits for AfterConstruction. }
+  if not FConstructed then
+  begin
+    FLayoutPending := True;
+    Exit;
+  end;
   FLayoutPending := False;
   FChildLayoutPending := False;
   { A layout started directly (the window resized) is not interrupted by
