@@ -23,12 +23,14 @@
   Everything generic - strings and their reference counting, dynamic
   arrays, exceptions, classes and interfaces, variants, the heap
   manager, text and typed files, threads and threadvars - comes from the
-  Free Pascal sources (rtl/inc and rtl/x86_64 of the compiler's source
+  Free Pascal sources (rtl/inc and rtl/x86_64 or rtl/aarch64 of the compiler's source
   tree). This unit and the include files next to it supply the parts
   that depend on the operating system, on its system calls (Abi):
 
     sysosh.inc    platform types (handles, critical sections, ...)
-    sysos.inc     the system call itself and error codes
+    sysos.inc     the system call itself and error codes, with the
+                  processor's part in syscpu_x86_64.inc or
+                  syscpu_aarch64.inc
     sysheap.inc   memory for the heap manager
     sysheapcheck.inc  heap checking (HEAP_CHECKS), with
                   sysheapchecklevel.inc, sysheapcheckreport.inc and
@@ -244,25 +246,21 @@ begin
     SystemCall(CallExit, QWord(LongWord(ExitCode)), 0, 0, 0, 0, 0);
 end;
 
-function CurrentThreadId: QWord; assembler; nostackframe;
-asm
-  movq %fs:16, %rax
+function CurrentThreadId: QWord;
+begin
+  CurrentThreadId := KernelThreadId;
 end;
 
 { ELF thread-local storage of libraries, for code using the general
-  dynamic model: the kernel lays it out statically below the thread
-  pointer (variant II) and makes a module's id its offset from it. }
+  dynamic model: the kernel lays it out statically next to the thread
+  pointer (below it on x86-64, variant II; above it on AArch64, variant
+  I) and makes a module's id its offset from it. }
 type
   PTlsIndex = ^TTlsIndex;
   TTlsIndex = record
     Module: QWord;
     Offset: QWord;
   end;
-
-function ThreadPointer: Pointer; assembler; nostackframe;
-asm
-  movq %fs:0, %rax
-end;
 
 function TlsGetAddress(Index: PTlsIndex): Pointer; [public, alias: '__tls_get_addr'];
 begin
@@ -272,32 +270,6 @@ end;
 {*****************************************************************************
                              Processor exceptions
 *****************************************************************************}
-
-const
-  { Exception flags of the x87 status word and of MXCSR (same order). }
-  FloatInvalid = $01;
-  FloatDenormal = $02;
-  FloatZeroDivide = $04;
-  FloatOverflow = $08;
-  FloatUnderflow = $10;
-
-function ReadX87StatusWord: Word; assembler; nostackframe;
-asm
-  fnstsw %ax
-end;
-
-{ The runtime error for a floating point exception with these flags. }
-function FloatRuntimeError(Flags: LongWord): LongInt;
-begin
-  if (Flags and FloatZeroDivide) <> 0 then
-    FloatRuntimeError := 208
-  else if (Flags and FloatOverflow) <> 0 then
-    FloatRuntimeError := 205
-  else if (Flags and FloatUnderflow) <> 0 then
-    FloatRuntimeError := 206
-  else
-    FloatRuntimeError := 207;
-end;
 
 { The runtime error Free Pascal reports for an exception. }
 function RuntimeErrorFor(const ExceptionRecord: TAbiExceptionRecord): LongInt;
@@ -309,8 +281,8 @@ begin
     ExceptionIntegerOverflow: RuntimeErrorFor := 215;
     ExceptionBoundRange: RuntimeErrorFor := 201;
     ExceptionAlignment: RuntimeErrorFor := 214;
-    ExceptionFloatingPoint: RuntimeErrorFor := FloatRuntimeError(ReadX87StatusWord);
-    ExceptionSimdFloatingPoint: RuntimeErrorFor := FloatRuntimeError(GetMXCSR);
+    ExceptionFloatingPoint, ExceptionSimdFloatingPoint:
+      RuntimeErrorFor := FloatExceptionRuntimeError(ExceptionRecord.Code);
     ExceptionStackOverflow: RuntimeErrorFor := 202;
   else
     RuntimeErrorFor := 212;
@@ -341,7 +313,7 @@ begin
     the unit would raise it again. }
   if Information.Code in [ExceptionFloatingPoint, ExceptionSimdFloatingPoint] then
     SysResetFPU;
-  HandleErrorAddrFrame(Error, CodePointer(Information.Address), Pointer(Information.Context.Rbp));
+  HandleErrorAddrFrame(Error, CodePointer(Information.Address), ContextFramePointer(Information.Context));
   Halt(Error);
 end;
 

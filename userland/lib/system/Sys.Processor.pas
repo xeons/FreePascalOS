@@ -18,63 +18,41 @@
 
 {
   What the processor is: its maker and its model name, as the processor
-  itself tells them (the CPUID instruction, which every program may run).
+  itself tells them. The kernel asks it (CPUID on x86-64, MIDR_EL1 on
+  AArch64, which user mode cannot read) through
+  CallGetProcessorDescription.
 }
 unit Sys.Processor;
 
 {$mode objfpc}{$H+}
-{$asmmode intel}
 
 interface
 
-{ "GenuineIntel", "AuthenticAMD", ... (12 characters). }
+{ "GenuineIntel", "AuthenticAMD", "ARM", ... }
 function ProcessorVendor: string;
-{ The model name, such as "AMD Ryzen 7 5800X 8-Core Processor", with
-  the spaces some processors pad it with taken away; empty if the
-  processor does not tell it. }
+{ The model name, such as "AMD Ryzen 7 5800X 8-Core Processor" or
+  "Cortex-A72", with the spaces some processors pad it with taken away;
+  empty if the processor does not tell it. }
 function ProcessorModel: string;
 
 implementation
 
-type
-  TCpuidRegisters = record
-    Eax: LongWord;
-    Ebx: LongWord;
-    Ecx: LongWord;
-    Edx: LongWord;
-  end;
+uses
+  Abi.SystemCalls;
 
-const
-  FirstExtendedLeaf = $80000000;
-  FirstModelLeaf = $80000002;
-  LastModelLeaf = $80000004;
-
-{ Runs CPUID for Leaf (sub-leaf 0) and stores what it gives in Registers. }
-procedure RunCpuid(Leaf: LongWord; out Registers: TCpuidRegisters); assembler; nostackframe;
-asm
-  push rbx
-  mov r8, rsi
-  mov eax, edi
-  xor ecx, ecx
-  cpuid
-  mov dword ptr [r8], eax
-  mov dword ptr [r8 + 4], ebx
-  mov dword ptr [r8 + 8], ecx
-  mov dword ptr [r8 + 12], edx
-  pop rbx
+function QueryDescription(out Description: TAbiProcessorDescription): Boolean;
+begin
+  FillChar(Description, SizeOf(Description), 0);
+  Result := SystemCall(CallGetProcessorDescription, QWord(@Description), 0, 0, 0, 0, 0) >= 0;
 end;
 
 function ProcessorVendor: string;
 var
-  Registers: TCpuidRegisters;
+  Description: TAbiProcessorDescription;
 begin
-  RunCpuid(0, Registers);
-  SetLength(Result, 12);
-  Move(Registers.Ebx, Result[1], 4);
-  Move(Registers.Edx, Result[5], 4);
-  Move(Registers.Ecx, Result[9], 4);
-  { A processor that leaves bytes zero ends the name there. }
-  SetLength(Result, StrLen(PChar(Result)));
+  Result := '';
+  if QueryDescription(Description) then
+    Result := string(PChar(@Description.Vendor[0]));
 end;
 
 { Text without the spaces before and after it, and with runs of spaces
@@ -93,24 +71,11 @@ end;
 
 function ProcessorModel: string;
 var
-  Registers: TCpuidRegisters;
-  Leaf: LongWord;
-  Name: string;
+  Description: TAbiProcessorDescription;
 begin
   Result := '';
-  RunCpuid(FirstExtendedLeaf, Registers);
-  if Registers.Eax < LastModelLeaf then
-    Exit;
-  Name := '';
-  for Leaf := FirstModelLeaf to LastModelLeaf do
-  begin
-    RunCpuid(Leaf, Registers);
-    SetLength(Name, Length(Name) + SizeOf(Registers));
-    Move(Registers, Name[Length(Name) - SizeOf(Registers) + 1], SizeOf(Registers));
-  end;
-  { The name ends at its first zero byte. }
-  SetLength(Name, StrLen(PChar(Name)));
-  Result := TidySpaces(Name);
+  if QueryDescription(Description) then
+    Result := TidySpaces(string(PChar(@Description.Model[0])));
 end;
 
 end.

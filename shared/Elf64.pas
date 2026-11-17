@@ -86,6 +86,19 @@ const
   RelocationThreadPointerOffset64 = 18; { R_X86_64_TPOFF64 }
   RelocationThreadPointerOffset32 = 23; { R_X86_64_TPOFF32 }
 
+  { AArch64 relocation types (the dynamic ones). }
+  RelocationAarch64None = 0;
+  RelocationAarch64NoneWithdrawn = 256;
+  RelocationAarch64Absolute64 = 257;     { R_AARCH64_ABS64 }
+  RelocationAarch64Copy = 1024;
+  RelocationAarch64GlobalData = 1025;    { R_AARCH64_GLOB_DAT }
+  RelocationAarch64JumpSlot = 1026;
+  RelocationAarch64Relative = 1027;
+  RelocationAarch64TlsModule64 = 1028;   { R_AARCH64_TLS_DTPMOD64 }
+  RelocationAarch64TlsOffset64 = 1029;   { R_AARCH64_TLS_DTPREL64 }
+  RelocationAarch64ThreadPointerOffset64 = 1030; { R_AARCH64_TLS_TPREL64 }
+  RelocationAarch64TlsDescriptor = 1031; { R_AARCH64_TLSDESC }
+
   SegmentFlagExecute = 1;
   SegmentFlagWrite = 2;
   SegmentFlagRead = 4;

@@ -18,7 +18,8 @@
 
 {
   AES encryption with the processor's AES instructions (AES-NI on
-  x86-64). They take the same time whatever the key and data, unlike a
+  x86-64; on other processors none are used yet, and Crypto.Aes falls
+  back to its tables). They take the same time whatever the key and data, unlike a
   table driven implementation, so Crypto.Aes uses them whenever the
   processor has them, and the TLS library offers AES-GCM only then.
 
@@ -28,7 +29,9 @@
 unit Crypto.AesInstructions;
 
 {$mode objfpc}
+{$ifdef CPUX86_64}
 {$asmmode intel}
+{$endif}
 
 interface
 
@@ -39,6 +42,7 @@ procedure EncryptBlockWithAesInstructions(RoundKeys: PByte; RoundCount: LongInt;
 
 implementation
 
+{$ifdef CPUX86_64}
 var
   Checked: Boolean = False;
   Available: Boolean = False;
@@ -89,5 +93,16 @@ asm
   pxor xmm0, xmm0
   pxor xmm1, xmm1
 end;
+{$else}
+function ProcessorHasAesInstructions: Boolean;
+begin
+  Result := False;
+end;
+
+procedure EncryptBlockWithAesInstructions(RoundKeys: PByte; RoundCount: LongInt; Source, Destination: PByte);
+begin
+  { Never called: ProcessorHasAesInstructions is False. }
+end;
+{$endif}
 
 end.

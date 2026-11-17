@@ -20,7 +20,8 @@
   Random numbers for programs (shuf, mktemp, shred, keys).
 
   A ChaCha20 key stream generator, seeded on first use from the
-  processor's hardware generator (RDRAND) when it has one, mixed through
+  processor's hardware generator (RDRAND on x86-64; none is used on
+  other processors yet) when it has one, mixed through
   SHA-256 with the clock, the uptime and the process id. Without RDRAND
   the seed is guessable; such numbers are fine for shuffling and file
   names but not for keys, which RandomIsStrong reports.
@@ -28,7 +29,9 @@
 unit Crypto.Random;
 
 {$mode objfpc}
+{$ifdef CPUX86_64}
 {$asmmode intel}
+{$endif}
 {$pointermath on}
 
 interface
@@ -57,6 +60,7 @@ var
 const
   RekeyInterval = 1024 * 1024;
 
+{$ifdef CPUX86_64}
 function ProcessorHasRdrand: Boolean; assembler; nostackframe;
 asm
   push rbx
@@ -85,6 +89,18 @@ asm
   mov qword ptr [rdi], rax
   mov eax, 1
 end;
+{$else}
+function ProcessorHasRdrand: Boolean;
+begin
+  Result := False;
+end;
+
+function ReadRdrand(out Value: QWord): Boolean;
+begin
+  Value := 0;
+  Result := False;
+end;
+{$endif}
 
 procedure Seed;
 var

@@ -436,7 +436,13 @@ const
   { 125: CallWatchNetworkChanges, 126: CallGetNetworkStatistics and 127:
     CallListNeighbors, in Abi.Networking.inc. }
 
-  CallCount = 128;
+  { (DescriptionAddress): what the processor is, as a
+    TAbiProcessorDescription: its maker and model as the processor tells
+    them (CPUID on x86-64, MIDR_EL1 on AArch64, which user mode cannot
+    read there). }
+  CallGetProcessorDescription = 128;
+
+  CallCount = 129;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
@@ -527,6 +533,16 @@ const
   DefaultThreadStackSize = 1024 * 1024;
   MaximumThreadStackSize = 64 * 1024 * 1024;
 
+{$ifdef CPUAARCH64}
+  { The thread control block the thread pointer (TPIDR_EL0) of every
+    user thread points at (AArch64 TLS variant I: the control block is
+    the ABI's 16 bytes, and static thread-local storage follows it). The
+    kernel fills in the thread id; the runtime word belongs to the user
+    runtime (libsystem keeps the thread's threadvar block there). }
+  ThreadBlockRuntimeOffset = 0;
+  ThreadBlockIdOffset = 8;
+  ThreadBlockSize = 16;
+{$else}
   { The thread control block the thread pointer (%fs base) of every user
     thread points at (x86-64 TLS variant II: static thread-local storage
     lies just below it). The kernel fills in the self pointer and the
@@ -536,6 +552,7 @@ const
   ThreadBlockRuntimeOffset = 8;
   ThreadBlockIdOffset = 16;
   ThreadBlockSize = 64;
+{$endif}
 
   { Auxiliary vector entries the kernel adds to the initial stack for
     the user runtime: the initializers (DT_INIT, DT_INIT_ARRAY) and
@@ -1052,6 +1069,18 @@ type
   end;
   PAbiDirectoryEntry = ^TAbiDirectoryEntry;
 
+  TAbiProcessorDescription = record
+    { "GenuineIntel", "AuthenticAMD", "ARM", "Broadcom", ... }
+    Vendor: array[0..AbiTextCapacity - 1] of Char;
+    { "AMD Ryzen 7 5800X 8-Core Processor", "Cortex-A72", ...; empty if
+      the processor does not tell it. }
+    Model: array[0..AbiTextCapacity - 1] of Char;
+    { The processor's own identification: CPUID leaf 1 EAX (family,
+      model, stepping) on x86-64, MIDR_EL1 on AArch64. }
+    Identification: QWord;
+  end;
+  PAbiProcessorDescription = ^TAbiProcessorDescription;
+
   TAbiSystemInformation = record
     SystemName: array[0..AbiTextCapacity - 1] of Char;
     Release: array[0..AbiTextCapacity - 1] of Char;
@@ -1192,12 +1221,24 @@ type
   PAbiPseudoTerminal = ^TAbiPseudoTerminal;
 
   { The registers of a thread when it raised an exception. }
+{$ifdef CPUAARCH64}
+  TAbiContext = record
+    { X0-X28, the frame pointer (X29) and the link register (X30). }
+    X: array[0..30] of QWord;
+    Sp: QWord;
+    Pc: QWord;
+    { PSTATE as SPSR holds it; a context may change only the condition
+      flags (N, Z, C, V: bits 31-28). }
+    Pstate: QWord;
+  end;
+{$else}
   TAbiContext = record
     Rax, Rbx, Rcx, Rdx, Rsi, Rdi, Rbp, Rsp: QWord;
     R8, R9, R10, R11, R12, R13, R14, R15: QWord;
     Rip: QWord;
     Rflags: QWord;
   end;
+{$endif}
   PAbiContext = ^TAbiContext;
 
   { What the exception dispatcher gets (CallSetExceptionDispatcher). }

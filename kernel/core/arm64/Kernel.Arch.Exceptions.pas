@@ -346,6 +346,10 @@ begin
   begin
     if Vector <> VectorPageFault then
       FaultAddress := 0;
+    { The program sees a breakpoint as it does on x86-64: at the
+      instruction after it, so continuing there goes on. }
+    if Vector = VectorBreakpoint then
+      Frame^.Elr := Frame^.Elr + InstructionLength;
     UserExceptionHandler(Frame, ExceptionName(Vector), FaultAddress);
     Exit;
   end;

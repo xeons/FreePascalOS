@@ -20,21 +20,18 @@
   Per-thread data of user threads: the thread control block and static
   thread-local storage.
 
-  Every user thread gets one region holding, from low to high addresses,
-  the TLS blocks of the program and its startup libraries and then the
-  thread control block, which the thread pointer (%fs base) points at:
-
-      region start                                   thread pointer
-      | ... library TLS blocks ... | program TLS block | control block |
-
-  This is the x86-64 "variant II" layout: a module's block starts
-  TlsOffset bytes below the thread pointer (see Processes.ImageLoader).
-  Each block starts as a fresh copy of the module's TLS image (.tdata)
+  Every user thread gets one region holding the TLS blocks of the program
+  and its startup libraries and the thread control block, which the
+  thread pointer points at. On x86-64 (%fs base, "variant II") the
+  blocks lie below the control block; on AArch64 (TPIDR_EL0, "variant
+  I") they follow it (Processes.Arch.ImageFormat has the layout). Each
+  block starts as a fresh copy of the module's TLS image (.tdata)
   followed by zeros (.tbss).
 
   The control block's layout is part of the ABI (ThreadBlock* in
-  Abi.SystemCalls): a pointer to itself, as %fs:0 must hold, a word for
-  the user runtime and the thread id.
+  Abi.SystemCalls): on x86-64 a pointer to itself, as %fs:0 must hold,
+  then a word for the user runtime and the thread id; on AArch64 the
+  runtime word and the thread id.
 }
 unit Processes.ThreadStorage;
 
@@ -63,7 +60,8 @@ uses
   Memory.KernelHeap,
   Kernel.Mutex,
   Processes.AddressSpace,
-  Processes.ImageLoader;
+  Processes.ImageLoader,
+  Processes.Arch.ImageFormat;
 
 const
   MinimumThreadPointerAlignment = 16;
@@ -81,15 +79,17 @@ begin
     Exit(ErrorOutOfMemory);
   Result := ReadFromAddressSpace(Space, Module^.TlsImageAddress, Buffer, Module^.TlsImageSize);
   if Result = ErrorNone then
-    Result := WriteIntoAddressSpace(Space, ThreadPointer - Module^.TlsOffset, Buffer,
-      Module^.TlsImageSize);
+    Result := WriteIntoAddressSpace(Space, ThreadPointer + QWord(TlsBlockDisplacement(Module^.TlsOffset)),
+      Buffer, Module^.TlsImageSize);
   FreeKernelMemory(Buffer);
 end;
 
 function FillThreadStorage(Process: PProcess; List: PModuleList; ThreadPointer: QWord): LongInt;
 var
   Index: Integer;
+{$ifdef CPUX86_64}
   SelfPointer: QWord;
+{$endif}
 begin
   Result := ErrorNone;
   if List <> nil then
@@ -103,16 +103,20 @@ begin
         Exit;
     end;
   end;
+{$ifdef CPUX86_64}
   SelfPointer := ThreadPointer;
   Result := WriteIntoAddressSpace(Process^.AddressSpace, ThreadPointer + ThreadBlockSelfOffset,
     @SelfPointer, SizeOf(SelfPointer));
+{$endif}
 end;
 
 function CreateThreadStorage(Process: PProcess; out RegionStart, ThreadPointer: QWord): LongInt;
 var
   List: PModuleList;
   Alignment: QWord;
-  TlsAreaSize: QWord;
+  StaticTlsSize: QWord;
+  RegionSize: QWord;
+  ThreadPointerOffset: QWord;
 begin
   RegionStart := 0;
   ThreadPointer := 0;
@@ -121,21 +125,19 @@ begin
   AcquireMutex(Process^.Lock);
   List := PModuleList(Process^.Modules);
   Alignment := MinimumThreadPointerAlignment;
-  TlsAreaSize := 0;
+  StaticTlsSize := 0;
   if List <> nil then
   begin
     if List^.StaticTlsAlignment > Alignment then
       Alignment := List^.StaticTlsAlignment;
-    TlsAreaSize := (List^.StaticTlsSize + Alignment - 1) and not (Alignment - 1);
+    StaticTlsSize := List^.StaticTlsSize;
   end;
+  LayOutThreadRegion(StaticTlsSize, Alignment, RegionSize, ThreadPointerOffset);
 
-  { The region starts on a page, and alignments are at most a page, so
-    the thread pointer ends up aligned for every block. }
-  Result := AllocateGuardedUserMemory(Process^.AddressSpace, TlsAreaSize + ThreadBlockSize,
-    RegionKindThreadData, RegionStart);
+  Result := AllocateGuardedUserMemory(Process^.AddressSpace, RegionSize, RegionKindThreadData, RegionStart);
   if Result = ErrorNone then
   begin
-    ThreadPointer := RegionStart + TlsAreaSize;
+    ThreadPointer := RegionStart + ThreadPointerOffset;
     Result := FillThreadStorage(Process, List, ThreadPointer);
     if Result <> ErrorNone then
     begin

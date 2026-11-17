@@ -23,6 +23,13 @@
   number in RAX and up to six arguments in RDI, RSI, RDX, R10, R8, R9.
   The result comes back in RAX: a value of zero or more is success, and a
   negative value is an error, minus one of the Error* codes below.
+  RCX and R11 are lost (the instruction uses them); every other register
+  is kept.
+
+  Calling convention (AArch64): "svc #0" with the call number in X8 and up
+  to six arguments in X0-X5; the result comes back in X0 with the same
+  meaning. Every other general purpose register, SP, the condition flags
+  and the floating point and SIMD registers are kept.
 
   Paths passed to the kernel are UTF-8 and may be absolute or relative to
   the process's current directory. "/" is the root of the system volume;

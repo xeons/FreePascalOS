@@ -92,13 +92,14 @@ uses
   { Job control. }
   Processes.Stopping,
   { The kernel's command line, for the service manager. }
-  Kernel.Options;
+  Kernel.Options,
+  { What the processor is (CallGetProcessorDescription). }
+  Kernel.Arch.ProcessorIdentity;
 
 const
   SystemName = 'FreePascalOS';
   SystemRelease = '0.2.0';
   SystemVersion = '#1 FreePascalOS kernel';
-  MachineName = 'x86_64';
   MaximumArgumentBytes = 64 * 1024;
 
 function Failure(Error: LongInt): Int64;
@@ -590,7 +591,7 @@ begin
   CopyText(@Information.SystemName[0], SystemName, AbiTextCapacity);
   CopyText(@Information.Release[0], SystemRelease, AbiTextCapacity);
   CopyText(@Information.Version[0], SystemVersion, AbiTextCapacity);
-  CopyText(@Information.Machine[0], MachineName, AbiTextCapacity);
+  CopyText(@Information.Machine[0], MachineArchitectureName, AbiTextCapacity);
   GetNodeName(@Information.NodeName[0], AbiTextCapacity);
   GetPhysicalMemoryStatistics(Statistics);
   Information.TotalMemory := Statistics.TotalUsablePages * PageSize;
@@ -601,6 +602,14 @@ begin
     Information.LoadAverages[2]);
   Information.RunnableThreads := RunnableThreadCount;
   Result := -Int64(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
+end;
+
+function PerformGetProcessorDescription(DescriptionAddress: QWord): Int64;
+var
+  Description: TAbiProcessorDescription;
+begin
+  DescribeProcessor(Description);
+  Result := -Int64(CopyToUser(DescriptionAddress, @Description, SizeOf(Description)));
 end;
 
 { The options the system started with: the service manager reads its
@@ -786,6 +795,7 @@ begin
     CallGetDnsServers: Result := PerformGetDnsServers(Argument0);
     CallSetDnsServers: Result := PerformSetDnsServers(Argument0);
     CallSetNodeName: Result := PerformSetNodeName(Argument0);
+    CallGetProcessorDescription: Result := PerformGetProcessorDescription(Argument0);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
   else

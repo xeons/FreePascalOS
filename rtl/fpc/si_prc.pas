@@ -68,6 +68,20 @@ begin
   SysEntry(Information);
 end;
 
+{$ifdef CPUAARCH64}
+procedure ProgramEntry; assembler; nostackframe; [public, alias: '_start'];
+asm
+  mov x0, sp
+  and x1, x0, #-16
+  mov sp, x1
+  { No frame and no return address: the end of every stack trace. }
+  mov x29, xzr
+  mov x30, xzr
+  bl EnterProgram
+.LNeverReturns:
+  b .LNeverReturns
+end;
+{$else}
 procedure ProgramEntry; assembler; nostackframe; [public, alias: '_start'];
 asm
   movq %rsp, %rdi
@@ -76,5 +90,6 @@ asm
 .LNeverReturns:
   jmp .LNeverReturns
 end;
+{$endif}
 
 end.

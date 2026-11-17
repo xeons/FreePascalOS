@@ -39,18 +39,22 @@
   LoadLibraryImage does steps 2 and 3 for a library requested at run time
   (dlopen), and FindExportedSymbol looks a symbol up in it (dlsym).
 
-  Thread-local storage (PT_TLS) uses the static model of x86-64 variant
-  II: the TLS blocks of the program and of the libraries loaded with it
-  sit at fixed negative offsets from each thread's thread pointer, in
-  load order (the program's block nearest to it, as the linker expects).
-  The layout is fixed once the program is loaded; a library with a TLS
+  Thread-local storage (PT_TLS) uses the static model: the TLS blocks of
+  the program and of the libraries loaded with it sit at fixed offsets
+  from each thread's thread pointer, in load order (the program's block
+  nearest to it, as the linker expects) - below it on x86-64 (variant
+  II), above it on AArch64 (variant I); Processes.Arch.ImageFormat has
+  the layout and the relocation numbers of the processor. The layout is
+  fixed once the program is loaded; a library with a TLS
   segment (or with initializers, which only the startup code runs) can
   then no longer be loaded and LoadLibraryImage returns ErrorUnsupported.
   Processes.ThreadStorage builds each thread's copy of the blocks.
 
   The "module id" of a TLS relocation (DTPMOD64) is the module's offset
   from the thread pointer, so __tls_get_addr in libsystem simply adds the
-  thread pointer, that offset and the variable's offset.
+  thread pointer, that offset and the variable's offset. A TLS
+  descriptor (AArch64) gets libsystem's static resolver and the
+  variable's offset from the thread pointer.
 
   Each module keeps kernel copies of its symbol, string and hash tables
   so symbols can be found later without touching user memory.
@@ -146,7 +150,8 @@ uses
   FileSystem.Files,
   Processes.AddressSpace,
   Processes.ImageSections,
-  Processes.Paths;
+  Processes.Paths,
+  Processes.Arch.ImageFormat;
 
 const
   MaximumImageSize = 64 * 1024 * 1024;
@@ -254,7 +259,7 @@ var
 begin
   Header := Image.Header;
   Result := (Header^.Magic = ElfMagic) and (Header^.FileClass = ElfClass64) and
-    (Header^.DataEncoding = ElfDataLittleEndian) and (Header^.Machine = ElfMachineAmd64) and
+    (Header^.DataEncoding = ElfDataLittleEndian) and (Header^.Machine = ImageMachine) and
     ((Header^.FileType = ElfTypeExecutable) or (Header^.FileType = ElfTypeSharedObject)) and
     (Header^.ProgramHeaderEntrySize = SizeOf(TElf64ProgramHeader)) and
     (Header^.ProgramHeaderOffset + QWord(Header^.ProgramHeaderCount) * SizeOf(TElf64ProgramHeader) <= Image.Size);
@@ -488,13 +493,14 @@ begin
   Result := nil;
 end;
 
-{ Gives the module a place in the static TLS area, below the blocks
-  placed before it. }
+{ Gives the module a place in the static TLS area, after (further from
+  the thread pointer than) the blocks placed before it. }
 function PlaceThreadLocalStorage(List: PModuleList; Module: PLoadedModule;
   Segment: PElf64ProgramHeader; Bias: QWord): LongInt;
 var
   Alignment: QWord;
   Offset: QWord;
+  StaticTlsSize: QWord;
 begin
   Alignment := Segment^.Alignment;
   if Alignment = 0 then
@@ -503,8 +509,9 @@ begin
      (Segment^.FileSize > Segment^.MemorySize) or (Segment^.MemorySize > MaximumStaticTlsSize) then
     Exit(ErrorBadExecutable);
 
-  Offset := (List^.StaticTlsSize + Segment^.MemorySize + Alignment - 1) and not (Alignment - 1);
-  if Offset > MaximumStaticTlsSize then
+  StaticTlsSize := List^.StaticTlsSize;
+  Offset := PlaceStaticTlsBlock(StaticTlsSize, Segment^.MemorySize, Alignment);
+  if StaticTlsSize > MaximumStaticTlsSize then
     Exit(ErrorOutOfMemory);
   Module^.HasThreadLocalStorage := True;
   Module^.TlsImageAddress := Bias + Segment^.VirtualAddress;
@@ -512,7 +519,7 @@ begin
   Module^.TlsSize := Segment^.MemorySize;
   Module^.TlsAlignment := Alignment;
   Module^.TlsOffset := Offset;
-  List^.StaticTlsSize := Offset;
+  List^.StaticTlsSize := StaticTlsSize;
   if Alignment > List^.StaticTlsAlignment then
     List^.StaticTlsAlignment := Alignment;
   Result := ErrorNone;
@@ -926,20 +933,24 @@ begin
 end;
 
 { The TLS relocations: Offset is the variable's offset in the TLS block
-  of DefiningModule. }
-function ThreadLocalRelocationValue(Kind: LongWord; DefiningModule: PLoadedModule; Offset: QWord;
+  of DefiningModule. A descriptor's value is its argument, the
+  variable's offset from the thread pointer. }
+function ThreadLocalRelocationValue(Kind: TRelocationKind; DefiningModule: PLoadedModule; Offset: QWord;
   out Value: QWord): LongInt;
+var
+  Displacement: QWord;
 begin
   Value := 0;
   if (DefiningModule = nil) or not DefiningModule^.HasThreadLocalStorage then
     Exit(ErrorBadExecutable);
+  Displacement := QWord(TlsBlockDisplacement(DefiningModule^.TlsOffset));
   case Kind of
-    RelocationTlsModule64:
-      Value := QWord(-Int64(DefiningModule^.TlsOffset));
-    RelocationTlsOffset64:
+    RelocationKindTlsModule:
+      Value := Displacement;
+    RelocationKindTlsOffset:
       Value := Offset;
-    RelocationThreadPointerOffset64, RelocationThreadPointerOffset32:
-      Value := Offset - DefiningModule^.TlsOffset;
+    RelocationKindThreadPointerOffset64, RelocationKindThreadPointerOffset32, RelocationKindTlsDescriptor:
+      Value := Offset + Displacement;
   end;
   Result := ErrorNone;
 end;
@@ -981,11 +992,25 @@ begin
   Result := ErrorNone;
 end;
 
+{ A TLS descriptor: the static resolver (in libsystem) and Argument. }
+function WriteTlsDescriptor(List: PModuleList; var Writer: TRelocationWriter; Target, Argument: QWord): LongInt;
+var
+  Descriptor: array[0..1] of QWord;
+  ResolverSize: QWord;
+  ResolverModule: PLoadedModule;
+begin
+  if (TlsDescriptorResolverName = '') or
+     not ResolveSymbol(List, TlsDescriptorResolverName, Descriptor[0], ResolverSize, nil, ResolverModule) then
+    Exit(ErrorBadExecutable);
+  Descriptor[1] := Argument;
+  Result := WriteRelocatedValue(Writer, Target, @Descriptor[0], SizeOf(Descriptor));
+end;
+
 function ApplyRelocation(Process: PProcess; Module: PLoadedModule; const Relocation: TElf64Rela;
   var Writer: TRelocationWriter): LongInt;
 var
   List: PModuleList;
-  Kind: LongWord;
+  Kind: TRelocationKind;
   SymbolIndex: LongWord;
   Symbol: PElf64Symbol;
   SymbolAddress: QWord;
@@ -999,7 +1024,7 @@ begin
   List := ModuleList(Process);
   { Without a symbol, a TLS relocation refers to the module's own block. }
   DefiningModule := Module;
-  Kind := RelocationType(Relocation);
+  Kind := ClassifyRelocation(RelocationType(Relocation));
   SymbolIndex := RelocationSymbolIndex(Relocation);
   Target := Module^.Base + Relocation.Offset;
   SymbolAddress := 0;
@@ -1011,7 +1036,7 @@ begin
       Exit(ErrorBadExecutable);
     Symbol := SymbolAt(Module, SymbolIndex);
     { A copy relocation must take the data from another module. }
-    if Kind = RelocationCopy then
+    if Kind = RelocationKindCopy then
     begin
       if not ResolveSymbol(List, SymbolName(Module, Symbol), SymbolAddress, SymbolSize, Module,
         DefiningModule) then
@@ -1027,22 +1052,30 @@ begin
   end;
 
   case Kind of
-    RelocationNone:
+    RelocationKindNone:
       Exit(ErrorNone);
-    RelocationRelative:
+    RelocationKindRelative:
       Value := Module^.Base + QWord(Relocation.Addend);
-    Relocation64:
+    RelocationKindAbsolute64:
       Value := SymbolAddress + QWord(Relocation.Addend);
-    RelocationGlobalData, RelocationJumpSlot:
+    RelocationKindSymbol:
       Value := SymbolAddress;
-    RelocationTlsModule64, RelocationTlsOffset64, RelocationThreadPointerOffset64:
+    RelocationKindTlsModule, RelocationKindTlsOffset, RelocationKindThreadPointerOffset64:
       begin
         Result := ThreadLocalRelocationValue(Kind, DefiningModule,
           SymbolAddress + QWord(Relocation.Addend), Value);
         if Result <> ErrorNone then
           Exit;
       end;
-    RelocationThreadPointerOffset32:
+    RelocationKindTlsDescriptor:
+      begin
+        Result := ThreadLocalRelocationValue(Kind, DefiningModule,
+          SymbolAddress + QWord(Relocation.Addend), Value);
+        if Result <> ErrorNone then
+          Exit;
+        Exit(WriteTlsDescriptor(List, Writer, Target, Value));
+      end;
+    RelocationKindThreadPointerOffset32:
       begin
         Result := ThreadLocalRelocationValue(Kind, DefiningModule,
           SymbolAddress + QWord(Relocation.Addend), Value);
@@ -1051,7 +1084,7 @@ begin
         Value32 := LongWord(Value);
         Exit(WriteRelocatedValue(Writer, Target, @Value32, SizeOf(Value32)));
       end;
-    RelocationCopy:
+    RelocationKindCopy:
       begin
         CopyBuffer := AllocateKernelMemory(SymbolSize);
         if (SymbolSize > 0) and (CopyBuffer = nil) then

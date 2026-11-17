@@ -32,7 +32,9 @@
 unit Sys.Locks;
 
 {$mode objfpc}
+{$ifdef CPUX86_64}
 {$asmmode intel}
+{$endif}
 
 interface
 
@@ -68,6 +70,7 @@ const
   LockHeld = 1;
   LockHeldWithWaiters = 2;
 
+{$ifdef CPUX86_64}
 function AtomicCompareExchange32(var Target: LongInt; NewValue, Comparand: LongInt): LongInt;
   assembler; nostackframe;
 asm
@@ -89,6 +92,24 @@ asm
   lock xadd dword ptr [rdi], eax
   add eax, esi
 end;
+{$else}
+{ Other processors: the runtime's interlocked operations (exclusive
+  load and store pairs on AArch64), which are full barriers. }
+function AtomicCompareExchange32(var Target: LongInt; NewValue, Comparand: LongInt): LongInt;
+begin
+  Result := System.InterlockedCompareExchange(Target, NewValue, Comparand);
+end;
+
+function AtomicExchange32(var Target: LongInt; NewValue: LongInt): LongInt;
+begin
+  Result := System.InterlockedExchange(Target, NewValue);
+end;
+
+function AtomicAdd32(var Target: LongInt; Amount: LongInt): LongInt;
+begin
+  Result := System.InterlockedExchangeAdd(Target, Amount) + Amount;
+end;
+{$endif}
 
 procedure InitializeLock(out Lock: TLock);
 begin

@@ -27,21 +27,12 @@
 
 {$include Abi.SystemCalls.inc}
 
-function SystemCall(Number: QWord; Argument1, Argument2, Argument3, Argument4,
-  Argument5, Argument6: QWord): Int64; assembler; nostackframe;
-asm
-  { Our arguments arrive in RDI, RSI, RDX, RCX, R8, R9 and on the stack;
-    the kernel wants the number in RAX and the arguments in RDI, RSI,
-    RDX, R10, R8, R9. }
-  movq %rdi, %rax
-  movq %rsi, %rdi
-  movq %rdx, %rsi
-  movq %rcx, %rdx
-  movq %r8, %r10
-  movq %r9, %r8
-  movq 8(%rsp), %r9
-  syscall
-end;
+{ SystemCall, the thread control block and processor exception details. }
+{$ifdef CPUAARCH64}
+{$include syscpu_aarch64.inc}
+{$else}
+{$include syscpu_x86_64.inc}
+{$endif}
 
 threadvar
   LastSystemError: LongInt;

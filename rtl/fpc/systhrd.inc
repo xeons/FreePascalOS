@@ -25,7 +25,7 @@
   Threadvars: until the first thread starts, threadvars are ordinary
   globals. BeginThread then gives every thread its own zeroed block
   (copying the main thread's values into the main thread's block), kept
-  in the runtime word of the thread control block (%fs:8). A thread that
+  in the runtime word of the thread control block (ThreadBlockRuntimeOffset). A thread that
   touches a threadvar without one gets it then.
 
   BeginThread returns the thread's handle (what WaitForThreadTerminate
@@ -48,23 +48,6 @@ const
 
 var
   ThreadVarBlockSize: DWord = 0;
-
-{ --- Thread control block ------------------------------------------------- }
-
-function ReadRuntimeWord: Pointer; assembler; nostackframe;
-asm
-  movq %fs:8, %rax
-end;
-
-procedure WriteRuntimeWord(Value: Pointer); assembler; nostackframe;
-asm
-  movq %rdi, %fs:8
-end;
-
-function KernelThreadId: QWord; assembler; nostackframe;
-asm
-  movq %fs:16, %rax
-end;
 
 { --- Waiting on a word -------------------------------------------------- }
 

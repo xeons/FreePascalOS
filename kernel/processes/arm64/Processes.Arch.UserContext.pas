@@ -18,13 +18,10 @@
 
 {
   A program's register context on AArch64, for passing processor
-  exceptions to it (Processes.UserExceptions).
-
-  The exception record's context (TAbiContext) is x86-64's register set
-  so far; until the AArch64 user mode ABI gives it AArch64's (X0-X30,
-  SP, PC, PSTATE: the next phase of the port), the record carries X0-X15
-  in the places of RAX-R15, SP, PC and PSTATE, and a program cannot
-  continue at a context (CallContinue fails with ErrorUnsupported).
+  exceptions to it (Processes.UserExceptions): which exceptions are
+  passed on and as what, the context in the exception record (X0-X30,
+  SP, PC and PSTATE), starting the program's dispatcher, and continuing
+  at a context (CallContinue).
 }
 unit Processes.Arch.UserContext;
 
@@ -50,7 +47,8 @@ function FrameIsPageFault(Frame: PTrapFrame): Boolean;
 function PageFaultAccessKind(Frame: PTrapFrame): LongWord;
 
 procedure CaptureUserContext(Frame: PTrapFrame; out Context: TAbiContext);
-{ Not supported yet (see above): ErrorUnsupported. }
+{ Replaces Frame's registers with Context; ErrorInvalidArgument (Frame
+  unchanged) if it does not lead back into user memory. }
 function RestoreUserContext(Frame: PTrapFrame; const Context: TAbiContext): LongInt;
 
 { Makes the thread continue in Dispatcher with the record's address in X0
@@ -61,11 +59,15 @@ procedure EnterExceptionDispatcher(Frame: PTrapFrame; Dispatcher, RecordAddress,
 implementation
 
 uses
-  Kernel.Arch.Cpu,
+  Memory.Arch.PageTables,
   Kernel.Arch.Exceptions;
 
 const
   LinkRegister = 30;
+  { SPSR: the condition flags N, Z, C and V, the only bits a program's
+    context may set; everything else returns to EL0 with SP_EL0 and
+    nothing masked. }
+  SavedConditionFlags = QWord($F0000000);
 
 function ExceptionCodeOfFrame(Frame: PTrapFrame): LongWord;
 begin
@@ -76,6 +78,9 @@ begin
     VectorAlignmentFault: Result := ExceptionAlignment;
     VectorFloatingPoint: Result := ExceptionSimdFloatingPoint;
     VectorPrivilegedOperation: Result := ExceptionPrivilegedOperation;
+    { Any other synchronous exception of a program (an illegal execution
+      state, for one) is the program's fault. }
+    VectorOtherSynchronous: Result := ExceptionIllegalInstruction;
   else
     Result := 0;
   end;
@@ -102,30 +107,28 @@ begin
 end;
 
 procedure CaptureUserContext(Frame: PTrapFrame; out Context: TAbiContext);
+var
+  Index: Integer;
 begin
-  Context.Rax := Frame^.X[0];
-  Context.Rbx := Frame^.X[1];
-  Context.Rcx := Frame^.X[2];
-  Context.Rdx := Frame^.X[3];
-  Context.Rsi := Frame^.X[4];
-  Context.Rdi := Frame^.X[5];
-  Context.Rbp := Frame^.X[6];
-  Context.Rsp := Frame^.Sp;
-  Context.R8 := Frame^.X[8];
-  Context.R9 := Frame^.X[9];
-  Context.R10 := Frame^.X[10];
-  Context.R11 := Frame^.X[11];
-  Context.R12 := Frame^.X[12];
-  Context.R13 := Frame^.X[13];
-  Context.R14 := Frame^.X[14];
-  Context.R15 := Frame^.X[15];
-  Context.Rip := Frame^.Elr;
-  Context.Rflags := Frame^.Spsr;
+  for Index := 0 to 30 do
+    Context.X[Index] := Frame^.X[Index];
+  Context.Sp := Frame^.Sp;
+  Context.Pc := Frame^.Elr;
+  Context.Pstate := Frame^.Spsr;
 end;
 
 function RestoreUserContext(Frame: PTrapFrame; const Context: TAbiContext): LongInt;
+var
+  Index: Integer;
 begin
-  Result := ErrorUnsupported;
+  if (Context.Pc >= UserSpaceLimit) or (Context.Sp >= UserSpaceLimit) or (Context.Sp = 0) then
+    Exit(ErrorInvalidArgument);
+  for Index := 0 to 30 do
+    Frame^.X[Index] := Context.X[Index];
+  Frame^.Sp := Context.Sp;
+  Frame^.Elr := Context.Pc;
+  Frame^.Spsr := Context.Pstate and SavedConditionFlags;
+  Result := ErrorNone;
 end;
 
 procedure EnterExceptionDispatcher(Frame: PTrapFrame; Dispatcher, RecordAddress, ReturnSlot: QWord);
@@ -133,9 +136,11 @@ begin
   Frame^.Sp := RecordAddress and not QWord(15);
   Frame^.Elr := Dispatcher;
   Frame^.X[0] := RecordAddress;
+  { A null return address, as on x86-64; the frame pointer still leads
+    to the faulting code's frames. }
   Frame^.X[LinkRegister] := 0;
-  { Interrupts enabled in the program. }
-  Frame^.Spsr := Frame^.Spsr and not InterruptMaskBit;
+  { EL0, interrupts enabled, single stepping off; the flags as they were. }
+  Frame^.Spsr := Frame^.Spsr and SavedConditionFlags;
 end;
 
 end.

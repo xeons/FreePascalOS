@@ -484,21 +484,55 @@ var
 begin
   Quotient := 1;
   Quotient := Quotient / Zero;
+{$ifdef CPUX86_64}
   { x87 exceptions are reported at the next waiting instruction. }
   asm
     fwait
   end;
+{$endif}
   if Quotient = 0 then
     Exit;
 end;
 
+{$ifdef CPUAARCH64}
+const
+  { FPSR's cumulative division by zero flag. }
+  FloatZeroDivideFlag = $02;
+
+function ReadFloatStatus: QWord; assembler; nostackframe;
+asm
+  mrs x0, fpsr
+end;
+
+procedure WriteFloatStatus(Value: QWord); assembler; nostackframe;
+asm
+  msr fpsr, x0
+end;
+
+{ UDF #0: permanently undefined. }
+procedure ExecuteInvalidInstruction; assembler; nostackframe;
+asm
+  .long 0
+end;
+{$else}
 const
   FloatZeroDivideFlag = $04;
+
+function ReadFloatStatus: QWord;
+begin
+  Result := GetMXCSR;
+end;
+
+procedure WriteFloatStatus(Value: QWord);
+begin
+  SetMXCSR(LongWord(Value));
+end;
 
 procedure ExecuteInvalidInstruction; assembler;
 asm
   ud2
 end;
+{$endif}
 
 { --- Stack overflows and continuing ---------------------------------------- }
 
@@ -530,6 +564,7 @@ var
   Buffer: array[0..8191] of Byte;
 begin
   Handle := ZeroDevice;
+{$ifdef CPUX86_64}
   asm
     movq $2, %rax           { CallRead }
     movq Handle, %rdi
@@ -538,6 +573,10 @@ begin
     syscall
     movq %rax, ReadResult
   end ['rax', 'rcx', 'rdx', 'rsi', 'rdi', 'r11'];
+{$else}
+  { A call (BL) touches no stack, and SystemCall uses none. }
+  ReadResult := SystemCall(CallRead, QWord(Handle), QWord(@Buffer), SizeOf(Buffer), 0, 0, 0);
+{$endif}
   if ReadResult <> SizeOf(Buffer) then
     Inc(FailedReads);
   Result := RecurseThroughSystemCalls(Depth + 1) + Buffer[Depth and 8191];
@@ -573,6 +612,7 @@ var
   Huge: array[0..HugeFrameSize - 1] of Byte;
 begin
   Handle := ZeroDevice;
+{$ifdef CPUX86_64}
   asm
     movq $2, %rax           { CallRead }
     movq Handle, %rdi
@@ -581,6 +621,9 @@ begin
     syscall
     movq %rax, ReadResult
   end ['rax', 'rcx', 'rdx', 'rsi', 'rdi', 'r11'];
+{$else}
+  ReadResult := SystemCall(CallRead, QWord(Handle), QWord(@Huge), 4096, 0, 0, 0);
+{$endif}
   HugeFrameReadResult := ReadResult;
   if Huge[0] <> 0 then
     Exit;
@@ -647,6 +690,26 @@ begin
   FCaught := ExceptionClassOf(@OverflowWithGiantFrame);
 end;
 
+{$ifdef CPUAARCH64}
+{ Clears X0, then runs an invalid instruction (at offset 4). }
+function ClearThenFault: QWord; assembler; nostackframe;
+asm
+  mov x0, xzr
+  .long 0
+end;
+
+const
+  { Where the invalid instruction is in ClearThenFault, and its length. }
+  InvalidInstructionOffset = 4;
+  InvalidInstructionLength = 4;
+
+{ Skips the invalid instruction and puts Value in the result register. }
+procedure RepairContext(var Context: TAbiContext; Value: QWord);
+begin
+  Context.Pc := Context.Pc + InvalidInstructionLength;
+  Context.X[0] := Value;
+end;
+{$else}
 { Clears EAX, then runs an invalid instruction (at offset 2). }
 function ClearThenFault: QWord; assembler; nostackframe;
 asm
@@ -659,6 +722,16 @@ const
   { Where the invalid instruction is in ClearThenFault, and its length. }
   InvalidInstructionOffset = 2;
   InvalidInstructionLength = 2;
+
+{ Skips the invalid instruction and puts Value in the result register. }
+procedure RepairContext(var Context: TAbiContext; Value: QWord);
+begin
+  Context.Rip := Context.Rip + InvalidInstructionLength;
+  Context.Rax := Value;
+end;
+{$endif}
+
+const
   RepairedValue = 42;
 
 { Deals with the invalid instruction in ClearThenFault only: skips it and
@@ -669,8 +742,7 @@ begin
     (ExceptionRecord.Address = PtrUInt(@ClearThenFault) + InvalidInstructionOffset);
   if not Result then
     Exit;
-  ExceptionRecord.Context.Rip := ExceptionRecord.Context.Rip + InvalidInstructionLength;
-  ExceptionRecord.Context.Rax := RepairedValue;
+  RepairContext(ExceptionRecord.Context, RepairedValue);
 end;
 
 procedure TestStackOverflowAndContinuing;
@@ -726,11 +798,11 @@ begin
   Check(ExceptionClassOf(@TouchNil) = 'EAccessViolation', 'a nil dereference raises EAccessViolation');
   Check(ExceptionClassOf(@DivideIntegerByZero) = 'EDivByZero', 'integer division by zero raises EDivByZero');
   Raised := ExceptionClassOf(@DivideFloatByZero);
-  if (Raised = '') and ((GetMXCSR and FloatZeroDivideFlag) <> 0) then
+  if (Raised = '') and ((ReadFloatStatus and FloatZeroDivideFlag) <> 0) then
   begin
     { The processor set the flag instead of trapping (QEMU's emulator
       does that); nothing the kernel could pass on. }
-    SetMXCSR(GetMXCSR and not FloatZeroDivideFlag);
+    WriteFloatStatus(ReadFloatStatus and not FloatZeroDivideFlag);
     Check(True, 'SSE division by zero: the processor does not trap, not checked');
   end
   else

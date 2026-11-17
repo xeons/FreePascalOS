@@ -55,9 +55,15 @@ USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX
 FPC_SOURCE ?= /usr/lib/fpc/src
 FPC_RTL_SOURCE := $(FPC_SOURCE)/rtl
 FPC_PACKAGE_SOURCE := $(FPC_SOURCE)/packages
+# The processor specific part of the generic RTL (rtl/x86_64, rtl/aarch64).
+ifeq ($(ARCH),arm64)
+  FPC_RTL_CPU := aarch64
+else
+  FPC_RTL_CPU := x86_64
+endif
 # Upstream sources warn a lot; only errors are shown for them.
 USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
-	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/x86_64 \
+	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/$(FPC_RTL_CPU) \
 	-Fi$(FPC_RTL_SOURCE)/objpas -Fi$(FPC_RTL_SOURCE)/objpas/sysutils -Fi$(FPC_RTL_SOURCE)/objpas/classes \
 	-Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \
 	-Furtl/fpc -Fu$(FPC_RTL_SOURCE)/objpas -Fu$(FPC_RTL_SOURCE)/inc \
@@ -144,9 +150,9 @@ $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.i
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
 	@rm -rf $(RTL_USER_DIRECTORY)
 	@mkdir -p $(RTL_USER_DIRECTORY)
-	$(FPC) $(USER_RTL_FLAGS) -Us -FU$(RTL_USER_DIRECTORY) rtl/fpc/system.pp
-	$(FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/buildrtl.pp
-	$(FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_prc.pas
+	$(TARGET_FPC) $(USER_RTL_FLAGS) -Us -FU$(RTL_USER_DIRECTORY) rtl/fpc/system.pp
+	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/buildrtl.pp
+	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_prc.pas
 	@rm -f $(RTL_USER_DIRECTORY)/buildrtl.o
 
 # libsystem: the runtime library (System, SysUtils, Classes, ...), the
@@ -155,7 +161,7 @@ $(SYSTEM_LIBRARY): $(RTL_USER_DIRECTORY)/si_prc.ppu $(wildcard userland/lib/syst
 		shared/Runtime.Memory.pas shared/Runtime.Text.pas shared/Runtime.Time.pas shared/Abi.SystemCalls.pas
 	@rm -rf $(SYSTEM_LIBRARY_OBJECTS)
 	@mkdir -p $(SYSTEM_LIBRARY_OBJECTS) $(USER_LIBRARY_OUTPUT)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fushared -Fuuserland/lib/system \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fushared -Fuuserland/lib/system \
 		-FU$(SYSTEM_LIBRARY_OBJECTS) userland/lib/system/Sys.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libsystem.so -o $@ \
 		$(SYSTEM_LIBRARY_OBJECTS)/*.o $(filter-out %/si_prc.o,$(wildcard $(RTL_USER_DIRECTORY)/*.o))
@@ -164,7 +170,7 @@ $(SYSTEM_LIBRARY): $(RTL_USER_DIRECTORY)/si_prc.ppu $(wildcard userland/lib/syst
 $(CRYPTO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/cryptography/*.pas)
 	@rm -rf $(CRYPTO_LIBRARY_OBJECTS)
 	@mkdir -p $(CRYPTO_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/cryptography \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/cryptography \
 		-FU$(CRYPTO_LIBRARY_OBJECTS) userland/lib/cryptography/Crypto.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcryptography.so -o $@ \
 		$(CRYPTO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
@@ -173,7 +179,7 @@ $(CRYPTO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/cryptography/*.pas)
 $(CORE_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/coreutils/*.pas)
 	@rm -rf $(CORE_LIBRARY_OBJECTS)
 	@mkdir -p $(CORE_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/coreutils -FU$(CORE_LIBRARY_OBJECTS) userland/lib/coreutils/Util.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcoreutils.so -o $@ \
 		$(CORE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
@@ -182,7 +188,7 @@ $(CORE_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/coreutils/*.pas)
 $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 	@rm -rf $(AUDIO_LIBRARY_OBJECTS)
 	@mkdir -p $(AUDIO_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/audio \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/audio \
 		-FU$(AUDIO_LIBRARY_OBJECTS) userland/lib/audio/Audio.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
 		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
@@ -191,7 +197,7 @@ $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 $(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
 	@rm -rf $(DRAWING_LIBRARY_OBJECTS)
 	@mkdir -p $(DRAWING_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fuuserland/lib/drawing \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fuuserland/lib/drawing \
 		-FU$(DRAWING_LIBRARY_OBJECTS) userland/lib/drawing/Drawing.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdrawing.so -o $@ \
 		$(DRAWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
@@ -201,7 +207,7 @@ $(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
 $(IMAGE_LIBRARY): $(DRAWING_LIBRARY) $(COMPRESSION_LIBRARY) $(wildcard userland/lib/image/*.pas)
 	@rm -rf $(IMAGE_LIBRARY_OBJECTS)
 	@mkdir -p $(IMAGE_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fuuserland/lib/image -FU$(IMAGE_LIBRARY_OBJECTS) \
 		userland/lib/image/Image.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libimage.so -o $@ \
@@ -212,7 +218,7 @@ $(IMAGE_LIBRARY): $(DRAWING_LIBRARY) $(COMPRESSION_LIBRARY) $(wildcard userland/
 $(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
 	@rm -rf $(FONT_LIBRARY_OBJECTS)
 	@mkdir -p $(FONT_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/font -FU$(FONT_LIBRARY_OBJECTS) userland/lib/font/Font.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libfont.so -o $@ \
 		$(FONT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ldrawing -lsystem
@@ -221,7 +227,7 @@ $(FONT_LIBRARY): $(DRAWING_LIBRARY) $(wildcard userland/lib/font/*.pas)
 $(CONFIGURATION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/configuration/*.pas)
 	@rm -rf $(CONFIGURATION_LIBRARY_OBJECTS)
 	@mkdir -p $(CONFIGURATION_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/configuration \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/configuration \
 		-FU$(CONFIGURATION_LIBRARY_OBJECTS) userland/lib/configuration/Configuration.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libconfiguration.so -o $@ \
 		$(CONFIGURATION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
@@ -230,7 +236,7 @@ $(CONFIGURATION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/configuratio
 $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 	@rm -rf $(TLS_LIBRARY_OBJECTS)
 	@mkdir -p $(TLS_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/tls -FU$(TLS_LIBRARY_OBJECTS) userland/lib/tls/Tls.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
 		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
@@ -240,7 +246,7 @@ $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
 	@rm -rf $(COMPRESSION_LIBRARY_OBJECTS)
 	@mkdir -p $(COMPRESSION_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/compression \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/compression \
 		-FU$(COMPRESSION_LIBRARY_OBJECTS) userland/lib/compression/Compression.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcompression.so -o $@ \
 		$(COMPRESSION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
@@ -249,7 +255,7 @@ $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.
 $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
 	@rm -rf $(WINDOWING_LIBRARY_OBJECTS)
 	@mkdir -p $(WINDOWING_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fuuserland/lib/windowing \
 		-FU$(WINDOWING_LIBRARY_OBJECTS) userland/lib/windowing/Windowing.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwindowing.so -o $@ \
@@ -260,7 +266,7 @@ $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userla
 $(CONTROLS_LIBRARY): $(WINDOWING_LIBRARY) $(IMAGE_LIBRARY) $(wildcard userland/lib/controls/*.pas)
 	@rm -rf $(CONTROLS_LIBRARY_OBJECTS)
 	@mkdir -p $(CONTROLS_LIBRARY_OBJECTS)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
 		-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/controls -FU$(CONTROLS_LIBRARY_OBJECTS) userland/lib/controls/Controls.Contents.pas
@@ -296,16 +302,18 @@ $(ICONS_STAMP): $(ICON_SOURCES)
 $(PLUGIN_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/plugin/Plugin.pas
 	@rm -rf $(USER_BUILD_DIRECTORY)/plugin
 	@mkdir -p $(USER_BUILD_DIRECTORY)/plugin
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) \
 		-FU$(USER_BUILD_DIRECTORY)/plugin userland/lib/plugin/Plugin.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libplugin.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/plugin/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # A library in assembly with thread-local storage and initializers, which
 # Free Pascal does not produce; used by threadtest.
-$(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
+# One source per architecture (TlsTest.s for x86-64, TlsTest.arm64.s).
+TLSTEST_SOURCE := $(firstword $(wildcard userland/lib/tlstest/TlsTest.$(ARCH).s) userland/lib/tlstest/TlsTest.s)
+$(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) $(TLSTEST_SOURCE)
 	@mkdir -p $(USER_BUILD_DIRECTORY)/tlstest
-	as --64 -o $(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o userland/lib/tlstest/TlsTest.s
+	$(TARGET_AS) -o $(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o $(TLSTEST_SOURCE)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtlstest.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
@@ -371,7 +379,7 @@ $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)
 $(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
 	@rm -rf $(USER_BUILD_DIRECTORY)/programs/$*
 	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(USER_PROGRAM_OUTPUT)
-	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
 		-Fu$(CORE_LIBRARY_OBJECTS) $(EXTRA_PROGRAM_UNITS) -Fuuserland/$* \
 		-FU$(USER_BUILD_DIRECTORY)/programs/$* -FE$(USER_BUILD_DIRECTORY)/programs/$* $<
 	$(LD) -pie --no-dynamic-linker $(USER_LINK_FLAGS) -e _start -o $@ \
