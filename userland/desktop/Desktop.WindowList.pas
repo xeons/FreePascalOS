@@ -19,10 +19,12 @@
 {
   The other programs' top-level windows, as the display server tells the
   shell about them (EventShellWindowChanged, EventShellWindowGone): each
-  one's number, title, state, display and process, in the order they appeared,
-  which is the order of the taskbar's buttons. Each change is said on
-  the standard output ("task N STATE TITLE", "task-gone N"), and
-  OnChange lets the taskbar follow.
+  one's number, title, state, display, process and icon (its version;
+  the icon itself is asked for when that is new, Desktop.TaskIcons), in
+  the order they appeared, which is the order of the taskbar's buttons.
+  Each change is said on the standard output ("task N STATE TITLE",
+  "task-icon N NAME" - the theme's name, pictures or none -
+  "task-gone N"), and OnChange lets the taskbar follow.
 }
 unit Desktop.WindowList;
 
@@ -43,6 +45,8 @@ type
     DisplayNumber: LongInt;
     { The process of the program it belongs to. }
     ProcessId: QWord;
+    { Its icon's version (Desktop.TaskIcons draws it). }
+    IconVersion: LongWord;
   end;
 
   TWindowListEvent = procedure of object;
@@ -75,6 +79,7 @@ implementation
 
 uses
   SysUtils,
+  Desktop.TaskIcons,
   Desktop.Report;
 
 function StateName(Flags: LongWord): string;
@@ -145,7 +150,10 @@ begin
   FWindows[Index].Flags := Message.Flags;
   FWindows[Index].DisplayNumber := LongInt(Message.Code);
   FWindows[Index].ProcessId := QWord(LongWord(Message.Value));
+  FWindows[Index].IconVersion := LongWord(Message.Width);
   Say(Format('task %u %s %s', [Message.Window, StateName(Message.Flags), FWindows[Index].Title]));
+  if UpdateTaskIcon(Message.Window, FWindows[Index].IconVersion) then
+    Say(Format('task-icon %u %s', [Message.Window, TaskIconDescription(Message.Window)]));
   Changed;
 end;
 
@@ -162,6 +170,7 @@ begin
     Inc(Index);
   end;
   SetLength(FWindows, Length(FWindows) - 1);
+  ForgetTaskIcon(Id);
   Say(Format('task-gone %u', [Id]));
   Changed;
 end;

@@ -150,6 +150,7 @@ begin
     Height := CompactHeight;
   end;
   inherited Create(ProgramName, 160, 120, Width, Height);
+  IconName := 'app-volume-control';
   Root.ContentPadding := MakeSpacing(0, 0, 0, 0);
   if not Compact then
     BuildMenus;

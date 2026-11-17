@@ -213,7 +213,7 @@ begin
   BootInformation^.BootStackSizeInBytes := BootStackSizeInBytes;
 
   PhysicalCoverage := DeterminePhysicalCoverage(BootInformation^.Framebuffer);
-  PageTableRoot := BuildInitialPageTables(PhysicalCoverage, KernelImage);
+  PageTableRoot := BuildInitialPageTables(BootInformation^, PhysicalCoverage, KernelImage);
   if PageTableRoot = 0 then
   begin
     PrintErrorAndStatus('could not build the kernel page tables', EfiOutOfResources);

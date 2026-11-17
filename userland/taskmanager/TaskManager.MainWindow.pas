@@ -116,6 +116,7 @@ var
 begin
   Settings := RememberedSettings;
   inherited Create(ProgramName, 60, 40, Settings.Width, Settings.Height);
+  IconName := 'app-task-manager';
   FSampler := TUsageSampler.Create;
   BuildMenus;
   FStatusBar := TStatusBar.Create(Root);

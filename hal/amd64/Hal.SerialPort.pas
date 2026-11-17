@@ -40,6 +40,19 @@ function TryReadSerialCharacter(out Character: Char): Boolean;
 { Makes the port raise its interrupt (IRQ 4) when data arrives. }
 procedure EnableSerialReceiveInterrupt;
 
+type
+  { The line the port interrupts on. }
+  TSerialInterrupt = record
+    { An ISA IRQ (ConnectIsaInterrupt), else a global system interrupt. }
+    IsIsaIrq: Boolean;
+    LevelTriggered: Boolean;
+    ActiveLow: Boolean;
+    Number: LongWord;
+  end;
+
+{ COM1 interrupts on ISA IRQ 4. }
+function SerialPortInterrupt: TSerialInterrupt;
+
 implementation
 
 uses
@@ -129,6 +142,16 @@ begin
 
   WaitUntilTransmitterIsEmpty;
   WritePortByte(Com1BasePort + RegisterData, Byte(Character));
+end;
+
+function SerialPortInterrupt: TSerialInterrupt;
+const
+  Com1Irq = 4;
+begin
+  Result.IsIsaIrq := True;
+  Result.LevelTriggered := False;
+  Result.ActiveLow := False;
+  Result.Number := Com1Irq;
 end;
 
 procedure EnableSerialReceiveInterrupt;

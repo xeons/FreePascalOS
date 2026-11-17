@@ -162,6 +162,7 @@ begin
     CopySurfaceSwappingRedAndBlue(Drawing, Screen);
     FreeSurface(Drawing);
   end;
+  FlushDisplay(Display, 0, 0, Display.Width, Display.Height);
   KernelSleep(Seconds * 1000);
   CloseDisplay(Display);
   WriteString(StandardOutput, Format('%u DPI: title %u px bold, text %u px'#10,

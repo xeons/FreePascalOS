@@ -42,12 +42,16 @@ uses
 procedure ListWindowsFor(Client: TClient);
 { Whether Client may activate, minimize, close... Window. }
 function MayManageWindow(Client: TClient; Window: TServerWindow): Boolean;
+{ Whether Client may hear about Window (its icon): its own, any for the
+  shell, else a top-level window it could list. }
+function MayListWindow(Client: TClient; Window: TServerWindow): Boolean;
 
 implementation
 
 uses
   Windowing.Protocol,
-  Server.Shell;
+  Server.Shell,
+  Server.WindowIcons;
 
 const
   RootUserId = 0;
@@ -76,6 +80,7 @@ begin
     Message.Flags := WindowStateFlags(Window);
     Message.Code := LongWord(Window.ScreenNumber);
     Message.Value := LongInt(TClient(Window.Client).ProcessId);
+    Message.Width := LongInt(ShownIconVersion(Window));
     SetMessageText(Message, Window.Title);
     SendToClient(Client, Message);
   end;
@@ -88,6 +93,11 @@ begin
   if (Window.Client = Client) or IsShell(Client) then
     Exit(True);
   Result := IsTopLevelWindow(Window) and MaySeeProgramOf(Client, Window);
+end;
+
+function MayListWindow(Client: TClient; Window: TServerWindow): Boolean;
+begin
+  Result := MayManageWindow(Client, Window);
 end;
 
 end.

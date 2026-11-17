@@ -18,7 +18,8 @@
 
 {
   The Programs tab: the programs with windows, by their windows'
-  titles, as the display server lists them (the windows of this user's
+  icons (TaskManager.ProgramIcons) and titles, as the display server
+  lists them (the windows of this user's
   programs, every program's for root), with what state each window is
   in and its process.
 
@@ -41,7 +42,8 @@ uses
   Controls.Buttons,
   Controls.ListView,
   Windowing.WindowList,
-  TaskManager.Sampler;
+  TaskManager.Sampler,
+  TaskManager.ProgramIcons;
 
 type
   TProgramsPage = class(TControl)
@@ -49,6 +51,7 @@ type
     FWindow: TControlWindow;
     FSampler: TUsageSampler;
     FList: TListView;
+    FIcons: TProgramIcons;
     FSwitchButton: TButton;
     FEndButton: TButton;
     FWindows: TListedWindows;
@@ -67,6 +70,7 @@ type
     procedure Layout; override;
   public
     constructor CreatePage(AParent: TControl; Window: TControlWindow; Sampler: TUsageSampler);
+    destructor Destroy; override;
     { Lists the windows again. }
     procedure Update;
     { The wait for a program asked to end is over: if it still runs,
@@ -116,6 +120,9 @@ begin
   FWindow := Window;
   FSampler := Sampler;
   FList := TListView.Create(Self);
+  FIcons := TProgramIcons.Create;
+  FList.Images := FIcons.Images;
+  FList.IconsInDetails := True;
   FList.AddColumn('Program', 300);
   FList.AddColumn('Status', 90);
   FList.AddColumn('PID', 60);
@@ -127,6 +134,13 @@ begin
   FEndButton := TButton.Create(Self);
   FEndButton.Text := '&End Program';
   FEndButton.OnClick := @EndClicked;
+end;
+
+destructor TProgramsPage.Destroy;
+begin
+  inherited Destroy;
+  { The list (a child, freed above) showed its pictures. }
+  FIcons.Free;
 end;
 
 procedure TProgramsPage.Layout;
@@ -191,6 +205,7 @@ begin
       FList.Items[Listed].Data := Pointer(PtrUInt(FWindows[Index].Id));
     end;
     FList.Cells[Listed, ColumnTitle] := FWindows[Index].Title;
+    FList.Items[Listed].ImageIndex := FIcons.ImageIndexOf(FWindows[Index].Id, FWindows[Index].IconVersion);
     FList.Cells[Listed, ColumnStatus] := StatusOf(FWindows[Index].Flags);
     FList.Cells[Listed, ColumnProcess] := IntToStr(FWindows[Index].ProcessId);
   end;

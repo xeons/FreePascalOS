@@ -131,7 +131,7 @@ end;
 procedure SetClassicStyle(var Values: TTheme);
 begin
   Values.TitleGradientVertical := False;
-  Values.TitleIcon := False;
+  Values.TitleIcon := True;
   Values.TintedTitleButtons := False;
   Values.StartMenuBand := False;
   Values.TintedStartButton := False;

@@ -88,22 +88,12 @@ implementation
 uses
   Runtime.Atomic,
   Kernel.Arch.TrapFrame,
-  Memory.Layout,
-  Memory.DeviceMapping,
   Hal.InterruptVectors,
-  Hal.IoApic,
+  Hal.InterruptController,
   Firmware.Madt,
   Kernel.Processors,
   Io.LineInterruptStorms,
   Debug.Output;
-
-const
-  StandardIoApicAddress = $FEC00000;
-  { Messages written into this window reach a local APIC; bits 12-19
-    pick which one. The data is the vector (fixed delivery, edge). }
-  MessageAddressBase = $FEE00000;
-  MessageDestinationShift = 12;
-  IoApicRegisterWindowSize = $1000;
 
 var
   Available: Boolean = False;
@@ -111,42 +101,10 @@ var
   LastTargetIndex: LongWord = 0;
   NextVector: Integer = DeviceInterruptVectorFirst;
 
-procedure AddMappedIoApic(PhysicalAddress: TPhysicalAddress; GlobalInterruptBase: LongWord);
-var
-  Registers: Pointer;
-begin
-  Registers := MapDeviceMemory(PhysicalAddress, IoApicRegisterWindowSize);
-  if Registers = nil then
-    Exit;
-  if AddIoApic(Registers, GlobalInterruptBase) then
-    Available := True;
-end;
-
 procedure InitializeInterruptRouting;
-var
-  Index: Integer;
-  Description: TIoApicDescription;
 begin
-  if ParseMadt then
-    for Index := 0 to IoApicCount - 1 do
-    begin
-      Description := IoApicDescription(Index);
-      AddMappedIoApic(Description.PhysicalAddress, Description.GlobalInterruptBase);
-    end
-  else
-    AddMappedIoApic(StandardIoApicAddress, 0);
-
-  DebugBeginMessage;
-  DebugWriteTag('interrupts');
-  if Available then
-  begin
-    DebugWrite('I/O APIC routing, ');
-    DebugWriteDecimal(IoApicInputCount);
-    DebugWriteLine(' inputs');
-  end
-  else
-    DebugWriteLine('No I/O APIC; device interrupts unavailable');
-  DebugEndMessage;
+  Available := InitializeDeviceInterruptRouting(ParseMadt);
+  WriteDeviceInterruptRouting;
 end;
 
 function InterruptRoutingIsAvailable: Boolean;
@@ -218,7 +176,7 @@ begin
     Exit(False);
   Routing := RoutingOfIsaInterrupt(Irq);
   Target := ChooseTargetProcessor;
-  if not RouteGlobalInterrupt(Routing.GlobalInterrupt, Vector, Byte(Target^.ApicId),
+  if not RouteDeviceInterrupt(Routing.GlobalInterrupt, Vector, Target^.ApicId,
     Routing.ActiveLow, Routing.LevelTriggered) then
   begin
     ReleaseLastVector(Vector);
@@ -305,7 +263,7 @@ begin
     Exit;
   Line^.Vector := Vector;
   Target := ChooseTargetProcessor;
-  if not RouteGlobalInterrupt(Gsi, Vector, Byte(Target^.ApicId), ActiveLow, LevelTriggered) then
+  if not RouteDeviceInterrupt(Gsi, Vector, Target^.ApicId, ActiveLow, LevelTriggered) then
   begin
     ReleaseLastVector(Vector);
     Exit;
@@ -348,8 +306,11 @@ begin
   if not AllocateVector(Handler, Context, Vector) then
     Exit(False);
   Target := ChooseTargetProcessor;
-  Message.Address := MessageAddressBase or (QWord(Target^.ApicId and $FF) shl MessageDestinationShift);
-  Message.Data := Vector;
+  if not ComposeMessageInterrupt(Vector, Target^.ApicId, Message.Address, Message.Data) then
+  begin
+    ReleaseLastVector(Vector);
+    Exit(False);
+  end;
   ReportConnection('Message interrupt', -1, Vector, Target);
   Result := True;
 end;

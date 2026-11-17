@@ -180,6 +180,7 @@ var
   Settings: TCalculatorSettings;
 begin
   inherited Create(ProgramName, 120, 80, WindowWidth, WindowHeight);
+  IconName := 'app-calculator';
   FEngine := TCalculatorEngine.Create;
   Settings := RememberedSettings;
   FEngine.Mode := Settings.Mode;

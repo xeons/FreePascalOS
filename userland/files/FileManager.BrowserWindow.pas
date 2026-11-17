@@ -144,6 +144,7 @@ begin
   FSettings := RememberedSettings;
   inherited Create(ProgramTitle, FSettings.WindowLeft, FSettings.WindowTop, FSettings.WindowWidth,
     FSettings.WindowHeight);
+  IconName := 'app-file-manager';
   FHistory := TNavigationHistory.Create;
   { Docked in the order made: the bars at the top, the status bar at the
     bottom, the places at the left, the splitter on their edge, and the

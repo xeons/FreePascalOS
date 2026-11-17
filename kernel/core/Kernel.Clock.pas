@@ -112,27 +112,27 @@ var
   and in kernel mode the top of the stack (within the running thread's
   stack). }
 procedure RecordInterruptedPlace(Frame: PTrapFrame);
-const
-  KernelModeMask = 3;
 var
   Processor: PProcessor;
   Words: QWord;
   StackTop: QWord;
+  StackPointer: QWord;
   Index: LongWord;
 begin
   Processor := CurrentProcessor;
-  Processor^.InterruptedAddress := Frame^.Rip;
+  Processor^.InterruptedAddress := TrapFrameInstructionPointer(Frame);
   Processor^.InterruptedStackWords := 0;
-  if (Frame^.Cs and KernelModeMask) <> 0 then
+  if ArchFrameIsFromUserMode(Frame) then
     Exit;
+  StackPointer := TrapFrameStackPointer(Frame);
   StackTop := Processor^.RunningThread^.StackTop;
-  if (Frame^.Rsp >= StackTop) or (Frame^.Rsp < Processor^.RunningThread^.StackBase) then
+  if (StackPointer >= StackTop) or (StackPointer < Processor^.RunningThread^.StackBase) then
     Exit;
-  Words := (StackTop - Frame^.Rsp) div 8;
+  Words := (StackTop - StackPointer) div 8;
   if Words > Length(Processor^.InterruptedStack) then
     Words := Length(Processor^.InterruptedStack);
   for Index := 0 to Words - 1 do
-    Processor^.InterruptedStack[Index] := PQWord(Frame^.Rsp + Index * 8)^;
+    Processor^.InterruptedStack[Index] := PQWord(StackPointer + Index * 8)^;
   Processor^.InterruptedStackWords := Words;
 end;
 

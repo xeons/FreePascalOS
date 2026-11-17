@@ -40,6 +40,11 @@
   says, so a window hidden along with its owner, or minimized, is not
   Visible (VisibilityChanged).
 
+  A window's icon (at the left of its title bar, and on the taskbar) is
+  a name of the icon theme (IconName: app-terminal) or pictures the
+  program gives (SetIconPictures); a window without one shows its
+  owner's (Windowing.WindowIcons).
+
   The pointer's shape over the client area is the window's to choose
   (SetPointerShape for all of it, SetPointerShapeInArea for rectangles
   of it).
@@ -86,7 +91,8 @@ uses
   Drawing.Canvas,
   Windowing.Protocol,
   Windowing.Messages,
-  Windowing.DragAndDrop;
+  Windowing.DragAndDrop,
+  Windowing.WindowIcons;
 
 type
   TWindow = class(TMessageReceiver)
@@ -94,6 +100,7 @@ type
     FId: LongWord;
     FFlags: LongWord;
     FTitle: string;
+    FIconName: string;
     FSection: Int64;
     FSurface: TSurface;
     FInvalid: TRegion;
@@ -115,6 +122,7 @@ type
     procedure TakeNewSize(Width, Height: LongInt; ScaleWasChanged: Boolean);
     procedure TakeNewScale(NewScale, NewDpi: LongWord);
     procedure SetTitle(const Value: string);
+    procedure SetIconName(const Value: string);
     procedure SetEnabled(Value: Boolean);
     procedure SetOwner(Value: TWindow);
     function GetClientWidth: LongInt;
@@ -200,6 +208,10 @@ type
     procedure PaintNow;
     procedure SetCapture(Capture: Boolean);
     { The pointer's shape (Pointer*) over the whole client area. }
+    { Gives the window an icon of its own pictures (a few sizes, each
+      at most MaximumIconSide across; the server draws the nearest);
+      none takes it away. IconName becomes ''. False if refused. }
+    function SetIconPictures(const Pictures: TIconPictures): Boolean;
     procedure SetPointerShape(Shape: LongWord);
     { The shape over Area (surface pixels) instead, where it lies; Number
       1 to MaximumPointerAreas picks which of the window's areas this is
@@ -216,6 +228,9 @@ type
     property Scale: LongWord read FScale;
     property Dpi: LongWord read FDpi;
     property Title: string read FTitle write SetTitle;
+    { The icon theme's name for its icon (app-text-editor), '' for none
+      (it shows its owner's); setting it replaces pictures given. }
+    property IconName: string read FIconName write SetIconName;
     property Surface: TSurface read FSurface;
     { The client area in pixels, and in logical units. }
     property PixelWidth: LongInt read FSurface.Width;
@@ -408,6 +423,9 @@ begin
     raise EInOutError.Create('the display server did not create the window');
   FId := Message.Window;
   AddToList(Self);
+  { A name set before the window was made goes now. }
+  if FIconName <> '' then
+    SendWindowIconName(FId, FIconName);
 end;
 
 destructor TWindow.Destroy;
@@ -530,6 +548,19 @@ begin
   Message := NewMessage(RequestSetTitle, FId);
   SetMessageText(Message, FTitle);
   SendRequest(Message, -1);
+end;
+
+procedure TWindow.SetIconName(const Value: string);
+begin
+  FIconName := Value;
+  if FId <> 0 then
+    SendWindowIconName(FId, FIconName);
+end;
+
+function TWindow.SetIconPictures(const Pictures: TIconPictures): Boolean;
+begin
+  FIconName := '';
+  Result := (FId <> 0) and SendWindowIconPictures(FId, Pictures);
 end;
 
 procedure TWindow.SetEnabled(Value: Boolean);

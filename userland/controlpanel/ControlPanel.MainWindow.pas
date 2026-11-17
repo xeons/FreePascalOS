@@ -135,6 +135,7 @@ var
   ButtonLeft: LongInt;
 begin
   inherited Create('Control Panel', CentredLeft, CentredTop, WindowWidth, WindowHeight, WindowFramed);
+  IconName := 'app-control-panel';
   FPageList := TPageList.Create(Root);
   FPageList.SetBounds(DialogMargin, DialogMargin + 6, ListWidth, PageHeight - 6);
   AddPage(TDisplayPage.CreatePage(Root, Self, 'Display'));

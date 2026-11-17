@@ -56,7 +56,8 @@
     exit                    the program ends
 
   The units are in userland/taskmanager: TaskManager.MainWindow (menus,
-  tabs, status bar, the update timer), TaskManager.ProgramsPage,
+  tabs, status bar, the update timer), TaskManager.ProgramsPage (and
+  TaskManager.ProgramIcons, its windows' icons),
   TaskManager.ProcessesPage, TaskManager.PerformancePage,
   TaskManager.Sampler (the looks and the shares), TaskManager.History,
   TaskManager.UsageGraph, TaskManager.ProcessActions (ending, stopping,

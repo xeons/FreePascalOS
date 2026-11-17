@@ -66,6 +66,8 @@ type
 
 function TrapFrameVector(Frame: PTrapFrame): Byte;
 function TrapFrameInstructionPointer(Frame: PTrapFrame): QWord;
+{ The stack pointer of the interrupted code. }
+function TrapFrameStackPointer(Frame: PTrapFrame): QWord;
 
 implementation
 
@@ -77,6 +79,11 @@ end;
 function TrapFrameInstructionPointer(Frame: PTrapFrame): QWord;
 begin
   Result := Frame^.Rip;
+end;
+
+function TrapFrameStackPointer(Frame: PTrapFrame): QWord;
+begin
+  Result := Frame^.Rsp;
 end;
 
 end.

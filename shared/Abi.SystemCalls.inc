@@ -640,6 +640,33 @@ const
     it was opened. ErrorUnsupported if the display's mode cannot be
     changed (a firmware framebuffer without a driver). }
   ControlDisplaySetMode = 208;
+  { DisplayCapability*: what the display does beyond a plain framebuffer. }
+  ControlDisplayGetCapabilities = 209;
+  { The rectangle the argument gives (X or (Y shl 16) or (Width shl 32)
+    or (Height shl 48), pixels of the mode) was drawn in the framebuffer:
+    a display with DisplayCapabilityNeedsFlush shows it only now (its
+    framebuffer is memory the device copies from). Nothing to do, and
+    ErrorNone, on any other display. }
+  ControlDisplayFlush = 210;
+  { Displays with DisplayCapabilityHardwareCursor: the pointer drawn by
+    the device over the picture, moved without drawing anything. Its
+    image is DisplayCursorSize x DisplayCursorSize pixels ($AARRGGBB,
+    straight alpha, lines from the top, no gap between them), written
+    into the cursor area, mapped with CallMapHandle at
+    DisplayCursorImageOffset (DisplayCursorImageBytes long); this request
+    makes the device take it, the argument the hotspot (X or (Y shl
+    16)). }
+  ControlDisplaySetCursorImage = 211;
+  { Where the hotspot is (pixels of the mode, X or (Y shl 32), each a
+    signed 32-bit number: the image may hang off the edge). }
+  ControlDisplayMoveCursor = 212;
+  { Shows the cursor (argument 1) or hides it (0); it starts hidden, and
+    closing the display hides it. }
+  ControlDisplayShowCursor = 213;
+  { Where the cursor is and whether it shows: X or (Y shl 16) (each
+    clamped to 0..65535) or (1 shl 32 when shown), and the moves the
+    device was told of since the display was opened from bit 33 up. }
+  ControlDisplayGetCursorState = 214;
   { Requests of CallControlHandle on a file or directory handle: an
     advisory lock on the whole file, as flock does it. The lock belongs
     to the open file (shared by handles duplicated from it, passed to
@@ -665,6 +692,19 @@ const
   DisplayFormatRedGreenBlue = 2;
   { The DPI that is scale 100%. }
   DisplayBaseDpi = 96;
+  { Capabilities of a display (ControlDisplayGetCapabilities). }
+  { What is drawn in the framebuffer shows only after ControlDisplayFlush
+    names it (virtio-gpu). }
+  DisplayCapabilityNeedsFlush = $01;
+  { A cursor the device draws (ControlDisplaySetCursorImage...). }
+  DisplayCapabilityHardwareCursor = $02;
+  { The framebuffer is ordinary memory (cheap to read), not video
+    memory. }
+  DisplayCapabilityMemoryFramebuffer = $04;
+  DisplayCursorSize = 64;
+  DisplayCursorImageBytes = DisplayCursorSize * DisplayCursorSize * 4;
+  { Far past any framebuffer: the cursor's area, not the picture's. }
+  DisplayCursorImageOffset = QWord($10000000000);
   AudioSampleUnsigned8 = 1;
   AudioSampleSigned16 = 2;
   AudioSampleSigned24 = 3;

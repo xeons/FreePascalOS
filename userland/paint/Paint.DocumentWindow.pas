@@ -149,6 +149,7 @@ var
   Preferences: TPaintPreferences;
 begin
   inherited Create(ProgramName, WindowLeft, WindowTop, WindowWidth, WindowHeight);
+  IconName := 'app-paint';
   Preferences := RememberedPreferences;
   FJpegQuality := Preferences.JpegQuality;
   FSession := TPaintSession.Create(NewWhitePicture(Preferences.NewWidth, Preferences.NewHeight));

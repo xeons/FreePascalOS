@@ -17,11 +17,12 @@
 }
 
 {
-  The icon at the left of a title bar (when the theme has one,
-  TTheme.TitleIcon): windows do not give the server an icon, so every
-  window gets the same small application picture - a little window
-  with a navy title strip, a light body and a shaded edge, drawn in
-  the square it is given, its lines a logical unit wide.
+  The icon at the left of a title bar: the window's own (or its
+  owner's, Server.WindowIcons), at the box's size in pixels - so at the
+  scale of the display the window is on. A window with none gets, when
+  the theme has it (TTheme.TitleIcon), the generic application picture
+  - a little window with a navy title strip, a light body and a shaded
+  edge, drawn in the square it is given, its lines a logical unit wide.
 }
 unit Server.TitleIcon;
 
@@ -31,17 +32,35 @@ interface
 
 uses
   Drawing.Rectangles,
-  Drawing.Canvas;
+  Drawing.Canvas,
+  Server.Windows;
 
 { Draws the icon in Box (a square); Pixel is a logical unit in pixels,
   at least 1. }
 procedure DrawTitleIcon(const Canvas: TCanvas; const Box: TRectangle; Pixel: LongInt);
+{ Draws the icon Window shows in Box (a square); False (nothing drawn)
+  if it has none. }
+function DrawWindowIcon(const Canvas: TCanvas; Window: TServerWindow; const Box: TRectangle): Boolean;
 
 implementation
 
 uses
   Drawing.Colors,
-  Windowing.Theme;
+  Image.Model,
+  Image.Surfaces,
+  Windowing.Theme,
+  Server.WindowIcons;
+
+function DrawWindowIcon(const Canvas: TCanvas; Window: TServerWindow; const Box: TRectangle): Boolean;
+var
+  Picture: TImage;
+begin
+  Picture := WindowIconPicture(Window, RectangleWidth(Box));
+  Result := Picture <> nil;
+  if Result then
+    DrawSurface(Canvas, ImageSurface(Picture), MakeRectangle(0, 0, Picture.Width, Picture.Height), Box.Left, Box.Top,
+      True, AlphaOpaque);
+end;
 
 procedure DrawTitleIcon(const Canvas: TCanvas; const Box: TRectangle; Pixel: LongInt);
 var
@@ -50,6 +69,7 @@ var
   Inner: TRectangle;
   Strip: TRectangle;
   StripHeight: LongInt;
+  ButtonColor: TColor;
 begin
   Size := RectangleWidth(Box);
   if Size < 6 * Pixel then
@@ -62,10 +82,22 @@ begin
   FillVerticalGradient(Canvas, Inner, Theme.Field, Theme.Face);
   StripHeight := RectangleHeight(Inner) div 3;
   Strip := MakeRectangle(Inner.Left, Inner.Top, RectangleWidth(Inner), StripHeight);
-  FillVerticalGradient(Canvas, Strip, Theme.SectionBandTop, Theme.SectionBandBottom);
+  { Sunrise: a navy strip (its section bands') with a gold spot; Classic
+    (whose bands are plain face): its own title bar's navy, face-grey
+    buttons. }
+  if Theme.HeaderBandsShown then
+  begin
+    FillVerticalGradient(Canvas, Strip, Theme.SectionBandTop, Theme.SectionBandBottom);
+    ButtonColor := Theme.HeaderBandTop;
+  end
+  else
+  begin
+    FillHorizontalGradient(Canvas, Strip, Theme.ActiveTitleStart, Theme.ActiveTitleEnd);
+    ButtonColor := Theme.TitleButtonFace;
+  end;
   { A spot of gold at the strip's right: the window's buttons. }
   FillRectangle(Canvas, MakeRectangle(Strip.Right - 2 * Pixel - Pixel, Strip.Top + (StripHeight - 2 * Pixel) div 2,
-    2 * Pixel, 2 * Pixel), Theme.HeaderBandTop);
+    2 * Pixel, 2 * Pixel), ButtonColor);
 end;
 
 end.

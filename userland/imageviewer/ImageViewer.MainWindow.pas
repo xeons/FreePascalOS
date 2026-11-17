@@ -213,6 +213,7 @@ var
   Settings: TImageViewerSettings;
 begin
   inherited Create(ProgramName, 100, 60, WindowWidth, WindowHeight);
+  IconName := 'app-image-viewer';
   FFolderImages := TStringList.Create;
   FTurn := NoTurn;
   Settings := RememberedSettings;

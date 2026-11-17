@@ -254,6 +254,9 @@ begin
   begin
     Bounds := Button(Index).PixelBounds;
     SayPlace('task-' + Button(Index).Text, Self, (Bounds.Left + Bounds.Right) div 2, (Bounds.Top + Bounds.Bottom) div 2);
+    Bounds := OffsetRectangle(Button(Index).IconBox, Bounds.Left, Bounds.Top);
+    SayPlace('task-icon-' + Button(Index).Text, Self, (Bounds.Left + Bounds.Right) div 2,
+      (Bounds.Top + Bounds.Bottom) div 2);
   end;
   for Index := 0 to FNotificationArea.IconCount - 1 do
   begin
@@ -312,7 +315,7 @@ begin
       TaskButton.OnContextMenu := @TaskContextMenu;
     end;
     TaskButton.ShowState(Entry.Title, (Entry.Flags and ShellWindowActive) <> 0,
-      (Entry.Flags and ShellWindowMinimized) <> 0);
+      (Entry.Flags and ShellWindowMinimized) <> 0, Entry.IconVersion);
     Ordered.Add(TaskButton);
   end;
   FButtons.Free;

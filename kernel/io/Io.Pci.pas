@@ -383,6 +383,10 @@ begin
   begin
     Bar.PhysicalAddress := (QWord(OriginalHigh) shl 32) or (OriginalLow and $FFFFFFF0);
     SizeMask := (QWord(SizeHigh) shl 32) or (SizeLow and $FFFFFFF0);
+    { A 32-bit BAR the device does not implement reads back as zeros:
+      no size (the all-ones high half is only assumed). }
+    if not Bar.Is64Bit and ((SizeLow and $FFFFFFF0) = 0) then
+      Exit;
   end;
 
   if SizeMask = 0 then

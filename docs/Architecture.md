@@ -44,21 +44,24 @@ its own directory (`kernel/core/amd64`, `kernel/memory/amd64`, `hal/amd64`,
 selected architecture's directories on the unit search path, so the rest of
 the kernel never contains `{$ifdef CPU...}` blocks.
 
-An AArch64 port would add, among others:
+The AArch64 port (`ARCH=arm64`, see "The AArch64 port" below) supplies,
+among others:
 
-| Unit                          | x86-64 implementation           | AArch64 equivalent            |
-|-------------------------------|---------------------------------|-------------------------------|
-| `Kernel.Arch.Cpu`             | cli/sti, CR registers, MSRs     | DAIF, system registers        |
-| `Kernel.Arch.PriorityLevel`   | CR8 task priority register      | GIC priority mask register    |
-| `Kernel.Arch.ContextSwitch`   | saves RBX, RBP, R12-R15, RFLAGS | saves X19-X30, SP             |
-| `Kernel.Arch.TrapFrame` etc.  | IDT, interrupt stubs, TSS       | exception vector table        |
-| `Memory.Arch.PageTables`      | 4-level x86-64 paging           | 4-level AArch64 translation   |
-| `Hal.Platform`                | local APIC, PIT                 | GIC, generic timer            |
-| `Hal.SerialPort`              | 16550 UART                      | PL011 UART                    |
+| Unit                          | x86-64 implementation           | AArch64 implementation             |
+|-------------------------------|---------------------------------|------------------------------------|
+| `Kernel.Arch.Cpu`             | cli/sti, CR registers, MSRs     | DAIF, system registers (`.s`)      |
+| `Kernel.Arch.PriorityLevel`   | CR8 task priority register      | GIC priority mask register         |
+| `Kernel.Arch.ContextSwitch`   | saves RBX, RBP, R12-R15, RFLAGS | saves X19-X30, DAIF                |
+| `Kernel.Arch.TrapFrame` etc.  | IDT, interrupt stubs, TSS       | exception vector table (VBAR_EL1)  |
+| `Memory.Arch.PageTables`      | 4-level x86-64 paging           | 4-level AArch64 translation        |
+| `Hal.Platform`                | local APIC, PIT                 | GICv2, generic timer, PSCI         |
+| `Hal.InterruptController`     | I/O APICs, MSI to a local APIC  | GIC SPIs, MSI through GICv2m       |
+| `Hal.SerialPort`              | 16550 UART                      | PL011 / mini UART from ACPI SPCR   |
+| `Processes.Arch.UserContext`  | x86 exception context           | AArch64 exception context          |
 
-Building an AArch64 UEFI loader also needs a toolchain that can produce
-AArch64 PE images (Free Pascal 3.2.2 cannot; the trunk compiler or binutils
-`objcopy` conversion can).
+Code that cannot be Pascal is in GNU assembler files next to the units
+(`kernel/core/<arch>/*.s`, `boot/uefi/<arch>/*.s`); the Makefile
+assembles every one of them.
 
 ## Toolchain approach
 
@@ -81,11 +84,38 @@ Unit initialization sections are never used; every subsystem has an explicit
 `Initialize...` routine called in a defined order from `Kernel.Startup`.
 
 The kernel does not save floating point or SIMD registers, so `make` fails if
-the compiler ever emits SSE instructions in kernel code (`check-kernel`).
+the compiler ever emits SSE instructions in kernel code (`check-kernel`;
+on AArch64, any V/Q/D/S register outside the routines that save and
+restore a thread's registers).
+
+For AArch64 the same two targets are borrowed from the AArch64 cross
+compiler, which `scripts/build-cross-compiler.sh` builds from the Free
+Pascal 3.2.2 compiler sources into `build/toolchain/ppcrossa64` (`make
+toolchain ARCH=arm64`; it takes seconds and installs nothing). Release
+3.2.2 has no win64 target for AArch64 and no internal AArch64 assembler,
+so GNU binutils for AArch64 (`aarch64-linux-gnu-as`, `-ld`, `-objcopy`)
+do the assembling and linking:
+
+- The **loader** is compiled for `linux` (AAPCS64 is also the UEFI calling
+  convention on AArch64), linked by `ld -pie` into a position independent
+  ELF (`boot/uefi/arm64/loader.ld`) and converted by `objcopy -O
+  pei-aarch64-little --subsystem efi-app` into `BOOTAA64.EFI`. The
+  conversion makes no PE base relocations, so the image relocates itself
+  first thing (`LoaderEntry.s` applies the ELF's `R_AARCH64_RELATIVE`
+  relocations found through `_DYNAMIC`) and carries one empty `.reloc`
+  block so the firmware loads it anywhere.
+- The **kernel** is compiled for `linux` and linked by `ld` with
+  `kernel/link/arm64.ld`, as on x86-64.
+
+AArch64 division does not trap, so the compiler checks divisors itself
+and calls `fpc_divbyzero`, which the freestanding System unit provides
+(the kernel panics); it also calls `Move` for large copies, which the
+System unit provides too.
 
 ## Boot sequence
 
-1. **Firmware** loads `\EFI\BOOT\BOOTX64.EFI` (the loader).
+1. **Firmware** loads `\EFI\BOOT\BOOTX64.EFI` (the loader;
+   `BOOTAA64.EFI` on AArch64, see "The AArch64 port").
 2. **Loader** (`boot/uefi/OsLoader.pas`):
    - records the GOP framebuffer and the ACPI RSDP,
    - reads `\FreePascalOS\kernel.elf` and copies its segments into one
@@ -522,7 +552,10 @@ The legacy 8259 PICs are masked; device interrupts go through the I/O
 APICs listed in the ACPI MADT (Firmware.Madt, Hal.IoApic). A driver asks
 `ConnectIsaInterrupt` (Io.InterruptRouting) for its IRQ: the MADT's
 interrupt source overrides give the real input, polarity and trigger
-mode, and the driver gets one of the device vectors 0x30-0x3F. Its handler
+mode, and the driver gets one of the device vectors 0x30-0x3F.
+Io.InterruptRouting picks vectors and processors and shares lines; the
+hardware is the HAL's (Hal.InterruptController: I/O APIC entries and MSI
+addresses on x86-64, GIC SPIs and GICv2m on AArch64). Its handler
 runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
@@ -1069,10 +1102,31 @@ size in millimetres, the DPI and the scale; they list the display's
 modes (`ControlDisplayGetModeCount`, `ControlDisplayGetMode`, each a
 width and height at 4 bytes a pixel, smallest first) and set one
 (`ControlDisplaySetMode`). The framebuffer is mapped into the program
-with `CallMapHandle` (offset 0), its writes combined; after a new mode
-it is mapped again. `Sys.Display` in libsystem wraps all of it
-(OpenDisplay with a display's number, CloseDisplay, DisplayModeCount,
-DisplayModeAt, SetDisplayMode, DisplayPixel).
+with `CallMapHandle` (offset 0), its writes combined (cached when it is
+ordinary memory); after a new mode it is mapped again. `Sys.Display` in
+libsystem wraps all of it (OpenDisplay with a display's number,
+CloseDisplay, DisplayModeCount, DisplayModeAt, SetDisplayMode,
+DisplayPixel, and the requests below).
+
+What a display does beyond a plain framebuffer is in its capabilities
+(`ControlDisplayGetCapabilities` = 209, `DisplayCapability*`):
+`DisplayCapabilityNeedsFlush` (what is drawn shows only once
+`ControlDisplayFlush` = 210 names the rectangle, packed as X, Y, width
+and height in 16 bits each; on other displays the request does nothing,
+so programs flush on any display: `FlushDisplay`),
+`DisplayCapabilityHardwareCursor` (a cursor the device draws over the
+picture) and `DisplayCapabilityMemoryFramebuffer` (the framebuffer is
+ordinary memory). The hardware cursor's image is 64x64 pixels
+(`DisplayCursorSize`, $AARRGGBB with straight alpha), written into a
+cursor area mapped at `DisplayCursorImageOffset` (2^40) and taken with
+`ControlDisplaySetCursorImage` = 211 (the hotspot);
+`ControlDisplayMoveCursor` = 212 places its hotspot (signed 32-bit X and
+Y), `ControlDisplayShowCursor` = 213 shows or hides it (hidden at first
+and when the display is closed), and `ControlDisplayGetCursorState` =
+214 tells where it is, whether it shows and how many moves the device
+was told of since opening (`SetDisplayCursorImage`, `MoveDisplayCursor`,
+`ShowDisplayCursor` in Sys.Display). A driver gives the adapter a Flush
+routine, a cursor image page and an UpdateCursor routine for these.
 
 A display driver describes each display it has (a `TDisplayAdapter`:
 the framebuffer and its memory, the mode it has, its EDID, the largest
@@ -1094,6 +1148,37 @@ linear framebuffer. The largest mode is read with the "capabilities"
 bit set. The device holding the firmware's framebuffer keeps the
 firmware's mode; another starts in the mode its EDID prefers (else
 1024x768).
+
+The virtio GPU (Drivers.VirtioGpu, virtio 1.x on PCI, 1AF4:1050; 2D
+only) makes each enabled scanout a display, after the Bochs devices (the
+first display when the firmware left no framebuffer: its own graphics
+output on a virtio GPU only blits). The device has no video memory: a
+scanout shows a resource the host keeps, copied from guest memory. Each
+scanout gets a physically contiguous framebuffer of ordinary memory big
+enough for the largest mode offered (2560x1600, else 1920x1200 or
+1280x1024 if that much is not to be had) as the resource's backing, its
+lines the width times 4 bytes; a flushed rectangle is copied to the host
+(transfer to host) and shown (resource flush) in one batch of commands,
+the only ones copied. The display information gives each scanout's
+preferred mode, the EDID (when the device offers it) the rest of the
+list and the DPI; setting a mode makes a resource of that size on the
+same memory, shows it on the scanout and drops the old one. The cursor
+is the host's: a 64x64 resource backed by the display's cursor image
+page, copied to the host and given to the cursor queue with its hotspot
+when the image changes, moved with move-cursor commands
+(Drivers.VirtioGpuCursor). The driver logs each scanout ("scanout 0:
+1024x768, up to 2560x1600, EDID, hardware cursor"), the cursor shown,
+hidden or given an image with its place, and where it comes to rest
+after moving (a quarter of a second after the last move, so the test can
+follow it without a line a move). Control commands go in batches on the
+control queue (one page a command, the request then the answer) and are
+waited for on an event the queue interrupt signals (MSI-X), polling
+without one (Drivers.VirtioGpuQueues; the protocol's records in
+Drivers.VirtioGpuProtocol, resources in Drivers.VirtioGpuResources). A
+virtio GPU whose BAR 0 holds the firmware's framebuffer (virtio-vga used
+as VGA) is left alone, so the console keeps it. Waking from suspend
+resets the device: its queues are given again and every resource made
+again on the memory it had, shown and flushed, the cursor too.
 
 The mode list (Drivers.DisplayModes) is the EDID's modes (detailed
 timing descriptors, standard timings and established timings,
@@ -1133,6 +1218,27 @@ DPI), the boot mode and the console back after it; and a second display
 (QEMU's bochs-display, which has no firmware picture) driven natively
 in the mode its EDID prefers.
 
+`displaybench [-d NUMBER] [-s SECONDS]` takes a free display and
+measures the frames a second it shows the way the display server does
+(drawn in memory, the changed rectangle copied and flushed): the whole
+screen, then a moving 256x256 square, then cursor moves on a display
+with a hardware cursor; its first line says how the display is driven.
+The virtio GPU test (`scripts/test-virtio-gpu.py`, part of `make test`;
+skipped when QEMU has no `virtio-gpu-pci` device, its display module not
+installed) boots with the standard VGA and a virtio GPU (1024x768) and
+checks the scanout in the kernel's log, `display -d 1` (flushed, with a
+hardware cursor), a filled picture in the device's screen dump,
+`displaybench`, and the display server: its presentation line, the
+desktop and a window in the device's screen dump, the hardware cursor
+shown and moved with the tablet (QEMU's screen dump leaves the host's
+cursor out, so the driver's log says where it is and the dump must show
+no pointer drawn by the server there), hidden with the server drawing
+the arrow once the pointer is back on the first display, a mode set
+and set back, and suspend to RAM with the cursor shown on the virtio
+display (the window in the dump and the cursor shown and moving after
+waking). Under KVM `displaybench -d 1` gives about 1400 full frames, 15000
+256x256 frames and 160000 cursor moves a second.
+
 ### The display server
 
 `displayserver` is an ordinary program that owns the display and the
@@ -1154,17 +1260,35 @@ desktop windows (`WindowDesktop`, the shell's) at the bottom, then
 ordinary windows, then topmost ones (the taskbar, pop-ups); raising a
 window brings it to the top of its layer only. It draws their frames itself (a raised
 bevel, a title bar with the theme's gradient - across, or down with an
-edge and a shine - the window icon where the theme shows one
-(`Server.TitleIcon`), the title in a bold face of the
+edge and a shine - the window's icon (`Server.TitleIcon`: its own,
+else its owner's, else the generic picture where the theme shows one),
+the title in a bold face of the
 theme's text family picked by point size and DPI, minimize, maximize
 (restore on a maximized window) and close buttons, plain or tinted as
 the theme says (`Server.TitleButtonPainting`), pale on inactive
 windows; all sizes from the theme's metrics in logical units,
 `Server.Theme`), and composes in a
 back buffer: what needs drawing again is collected as a region (a window
-moved, a program drew, the pointer moved), and only that is drawn, the
-desktop, the windows from the bottom up and the pointer, clipped to it,
-then copied to the framebuffer (`Server.Composer`, `Server.Screen`).
+moved, a program drew), and only that is drawn, the desktop and the
+windows from the bottom up, clipped to it, then copied to the
+framebuffer (`Server.Composer`, `Server.Presentation`) and, on a display
+that needs it, flushed by those rectangles (their bounding rectangle
+past eight).
+
+The pointer is never composed (`Server.PointerPresenting`): on the
+screen it is on, a display with a hardware cursor draws it, given the
+pointer's picture for that screen's scale when the shape or the scale
+changes and the hotspot's place when it moves, so a move costs one
+request and nothing is drawn; a picture larger than the device's cursor
+(above 200 %) is drawn by the server instead. Elsewhere the server
+draws it: its image is blended over the back buffer's pixels as they
+are copied to the framebuffer (the back buffer never holds it), so a
+move presents its old and new places again from the back buffer and
+composes nothing. Where the picture hangs over onto the next screen the
+server draws that part. A device's cursor is hidden while the pointer is
+on another screen. At start the server prints how each display is
+presented ("displayserver: display 1 presents damaged rectangles copied
+and flushed to the device, hardware pointer").
 
 Input (`Server.Input`): the pointer moves the arrow (drawn at the
 display's scale rounded to a whole number) and goes to the window under
@@ -1279,8 +1403,9 @@ written: bottom up when moving down, from the right when moving right),
 and only the rest of the old and new places is damaged. Each display
 has its own back buffer, so this is done display by display, and only
 for pixels that stay on the same display: what crosses from one display
-to the other is drawn again. The pointer and a resize outline are drawn
-over everything, so their places are damaged first and never copied.
+to the other is drawn again. A resize outline is drawn over everything,
+so its place is damaged first and never copied; the pointer is never in
+the back buffer.
 The copied pixels go to the screen with the next compose
 (`AddPresentOnly`). `displayserver --check-moves` draws every display
 again after every compose that followed a move and compares it with
@@ -1405,8 +1530,35 @@ Other programs' windows (`Server.WindowList`): any program may list the
 top-level windows of the other programs of its user (root: of all;
 another user's titles may say what that user is doing) with
 `RequestListWindows`, answered by an `EventWindowListed` per window
-(its title, state, display and process) and one for window 0 that ends
-the list (`ListOtherWindows` in `Windowing.WindowList`).
+(its title, state, display, process and icon version) and one for
+window 0 that ends the list (`ListOtherWindows` in
+`Windowing.WindowList`).
+
+Window icons (`Server.WindowIcons`): a program gives its window an icon
+as a name of the icon theme (`RequestSetWindowIcon`; `TWindow.IconName`
+in libwindowing: every program names its `app-*` icon), or as pictures
+of a few sizes (`RequestSetWindowIconPictures`: up to
+`MaximumIconPictures` raw BGRA images of at most `MaximumIconSide`
+pixels, one after another in a section, as the clipboard's raw images
+travel; `TWindow.SetIconPictures`, `TControlWindow.SetIcon(TImage)`
+through `Controls.WindowIcons`). The server reads a named icon's file
+with libimage (`Controls.IconFiles`: the entry of the frame's pixel
+size, else the nearest larger shrunk, else the largest grown, each size
+made once) and draws the icon at the left of the title bar at the scale
+of the display the window is on, in both themes. A window with no icon
+shows its owner's (a dialog its main window's), else its program's
+first unowned window's (a dialog made without an owner); one with none at all
+gets the generic picture (a little window; both themes have it). Every change gives the window a new icon version, which
+`EventShellWindowChanged` and `EventWindowListed` carry (in `Width`);
+a program asks for an icon with `RequestDescribeWindowIcon` (any
+window it may list; the shell any), answered by
+`EventWindowIconDescribed`: whether it is named (and the name) or
+pictures, its version, and its picture at the size asked in a section
+(`DescribeWindowIcon` in `Windowing.WindowIcons`). The desktop draws it
+on each taskbar button (`Desktop.TaskIcons`: a theme name from the
+theme's file at the button's size, pictures resized; it logs
+`task-icon N NAME`), the task manager on each row of its Programs tab
+(`TaskManager.ProgramIcons`).
 
 Keys for the whole desktop (`Server.Hotkeys`): the shell may take a key
 with the modifiers that must be held with it (`RequestRegisterHotkey`;
@@ -1462,7 +1614,9 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestRegisterHotkey` = 26, `RequestGetKeyboardSettings` = 27,
 `RequestSetKeyboardSettings` = 28; the screen lock's in a range of
 their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
-`RequestRepaintDisplays` = 42; the clipboard and drag and drop 29 to
+`RequestRepaintDisplays` = 42; window icons `RequestSetWindowIcon` =
+43, `RequestSetWindowIconPictures` = 44, `RequestDescribeWindowIcon` =
+45; the clipboard and drag and drop 29 to
 36: `RequestOfferData` = 29, `RequestProvideData` = 30,
 `RequestAskData` = 31, `RequestWatchClipboard` = 32,
 `RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
@@ -1478,7 +1632,8 @@ and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
 127, `EventClipboardChanged` = 128, `EventClipboardFormats` = 129,
 `EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
 132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
-135; `EventScreenLock` = 140, `EventIdleDescribed` = 141).
+135; `EventScreenLock` = 140, `EventIdleDescribed` = 141,
+`EventWindowIconDescribed` = 142).
 
 The clipboard (`Server.DataOffers`) is the server's. A program offers
 data in one or more formats (`RequestOfferData` with
@@ -6526,6 +6681,170 @@ behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
+
+## The AArch64 port
+
+The target is the **Raspberry Pi 4** (and the Pi 400 and the Compute
+Module 4) booting the community UEFI firmware (the EDK2 "RPi4 UEFI"
+port, run in ACPI mode): it offers UEFI boot services, a GOP framebuffer,
+ACPI tables, PSCI (ARM Trusted Firmware), a GIC-400 (GICv2), the ARM
+generic timer, the PL011 UART0 and the mini UART. That firmware does not
+run in QEMU, so development uses `qemu-system-aarch64 -machine
+virt,gic-version=2 -cpu cortex-a72` with the edk2 AArch64 firmware
+(`scripts/run-qemu-arm64.sh`, `make run ARCH=arm64`): the same processor,
+GIC version, UART and UEFI/ACPI boot path. Nothing about either machine
+is built in: every address comes from the firmware, so one image runs on
+both.
+
+```
+make toolchain ARCH=arm64    # build/toolchain/ppcrossa64 from the FPC sources
+make ARCH=arm64              # build/arm64/esp: BOOTAA64.EFI and kernel.elf
+make run ARCH=arm64          # QEMU virt, serial log on the terminal
+make arm64-test              # boot smoke test (not part of make test yet)
+```
+
+What runs today: the loader, the kernel's phase 0 and phase 1 on every
+processor, the drivers that are bus generic (virtio block and network,
+NVMe, xHCI with USB keyboards, pointers and storage, e1000/e1000e, HD
+Audio, on PCIe with message interrupts), the file systems, the network
+stack and every kernel self test. User mode is the next step: the
+user-mode entry, the system call path (SVC, number in X8, arguments in
+X0-X5, result in X0) and user copies are written, but programs, the
+runtime library and the ABI's exception context are still x86-64 only,
+so the kernel stops after its self tests ("no system volume").
+
+### Boot path
+
+1. The firmware runs `\EFI\BOOT\BOOTAA64.EFI`, at EL1 (QEMU) or EL2 (the
+   Pi's firmware). `LoaderEntry.s` relocates the image for the address
+   it was loaded at and calls `EfiMain`.
+2. The loader does what it does on x86-64 (framebuffer, RSDP, kernel
+   image, boot stack, memory map) and builds two translation table
+   roots (`Loader.Arch.PageTables`):
+   - the kernel's (TTBR1_EL1, kept by the kernel): the physical memory
+     window over every range of real memory in the UEFI memory map
+     (normal write-back), the framebuffer (normal non-cacheable) and the
+     UART the ACPI SPCR names (device-nGnRE), and the kernel image at its
+     linked address with per-segment permissions (text read-only and
+     executable, the rest execute-never);
+   - an identity mapping of real memory (TTBR0_EL1) for the hand-off.
+   Ranges get 2 MiB blocks where they cover a whole block and 4 KiB pages
+   at their edges, so nothing beyond memory is mapped as memory.
+3. After ExitBootServices the loader cleans everything the kernel reads
+   first (its own memory types: kernel image, boot data, tables) and the
+   hand-off code to the point of coherency, then `LoaderHandoff.s`:
+   masks interrupts; at EL2 turns the firmware's EL2 translation off,
+   sets EL1 up to run AArch64 untrapped (HCR_EL2.RW, counter and timer
+   access, no FP traps) and drops to EL1; turns the firmware's EL1
+   translation off; loads MAIR_EL1, TCR_EL1 (48-bit halves, 4 KiB
+   granules, the processor's own physical address size), both roots and
+   CPACR_EL1 (FP/SIMD untrapped); turns translation and caches on; and
+   jumps to the kernel with X0 = the boot information, SP = the boot
+   stack.
+4. `ArchKernelEntry` (`KernelEntry.s`) keeps the boot information for the
+   HAL, points VBAR_EL1 at the vector table and continues in
+   `KernelEntryPoint`, the same as on x86-64.
+
+### Discovery
+
+| What                         | Where from                                         |
+|------------------------------|----------------------------------------------------|
+| RAM                          | the UEFI memory map                                |
+| framebuffer                  | UEFI GOP                                           |
+| serial console               | ACPI SPCR (PL011, SBSA UART, BCM2835 mini UART, 16550 with 32-bit registers) |
+| GIC distributor, CPU interface, GICv2m frame | ACPI MADT (GICD, GICC, MSI frame entries) |
+| processors                   | ACPI MADT GICC entries (MPIDR affinity)            |
+| timer interrupt              | ACPI GTDT (the virtual timer's PPI)                |
+| PSCI and its conduit         | ACPI FADT ARM boot flags (HVC under QEMU, SMC on the Pi) |
+| PCIe configuration space     | ACPI MCFG (ECAM), as on x86-64                     |
+| PCI interrupt lines          | DSDT `_PRT`, as on x86-64                          |
+
+The HAL reads the tables from its first moments (the serial port before
+anything else) through `Hal.FirmwareTables`; they are in memory the
+loader mapped into the window.
+
+### Memory
+
+The same layout as x86-64 (`shared/arm64/Boot.AddressLayout.pas`): user
+space below `0000_8000_0000_0000` through TTBR0_EL1, the window at
+`FFFF_8000_0000_0000`, the dynamic region at `FFFF_C000_0000_0000` and the
+kernel image at `FFFF_FFFF_8000_0000` through TTBR1_EL1. The table format
+is shared by the loader and the kernel
+(`shared/arm64/Boot.TranslationTableFormat.pas`). MAIR_EL1 holds normal
+write-back (index 0), device-nGnRE (1, `MapDeviceMemory`), normal
+non-cacheable (2, write-combining: framebuffers) and device-nGnRnE (3).
+Unlike x86-64 the window holds no devices: device registers mapped as
+normal memory could be read speculatively, so every device is mapped on
+demand with device attributes.
+
+A user address space is only a TTBR0 table; the "kernel address space"
+loads an empty one. Kernel mappings are global and user mappings are not;
+without address space identifiers yet, switching TTBR0 invalidates the
+local TLB. Removing a mapping invalidates it on every processor at once
+(TLBI ...IS); the architecture independent shootdown IPIs still go out
+and only repeat that. Page faults reach the resolver with the x86 fault
+code bits (present, write, user, fetch), made from the abort syndrome.
+
+### Exceptions, interrupts and priority levels
+
+One vector table (`ExceptionVectors.s`) builds a trap frame (X0-X30, the
+interrupted SP, ELR, SPSR, ESR, FAR) on SP_EL1 for exceptions from the
+kernel and from user mode and calls `ArchHandleException`: an IRQ is
+acknowledged at the GIC and dispatched like any interrupt; an SVC from
+EL0 is a system call; other synchronous exceptions get one of the
+kernel's exception vectors from their syndrome (`Kernel.Arch.Exceptions`);
+SError and FIQ are fatal. TPIDR_EL1 holds the processor block (user mode
+cannot read it, so nothing is swapped on entry); TPIDR_EL0 is the user
+thread pointer.
+
+The kernel's vectors and levels are those of x86-64 (level = vector div
+16). The GIC's INTIDs are given vectors by the HAL (SGI 0 dispatch, SGI 1
+inter-processor requests, SGI 2 stop on panic, the timer PPI the clock,
+SPIs the device vectors) and each INTID the GIC priority of its level,
+(15 - level) x 16; the priority level is the CPU interface's priority mask
+register, so the GIC holds off exactly what CR8 does on x86-64. GICv2
+addresses processors by CPU interface number: each records its own from
+the distributor's banked target register. Device interrupts are SPIs;
+message interrupts go through the GICv2m frame when there is one (QEMU),
+otherwise PCIe devices use their INTx lines.
+
+The clock is the generic timer: the counter (the same on all processors)
+gives the time, each processor's virtual timer the one-shot clock
+interrupt.
+
+### Processors
+
+PSCI CPU_ON starts a processor at the physical address of
+`ArchSecondaryEntry` with the MMU off, at EL2 on the Pi and EL1 under
+QEMU, with the physical address of a start-up record (memory attributes,
+translation control, system control, the kernel root, an identity
+mapping of the entry's page, and the processor's stack, block and entry
+point), cleaned to the point of coherency. The entry drops to EL1 if
+needed, turns translation on, continues at its linked address and calls
+`SecondaryProcessorEntry`, the same as on x86-64. Power off and reset go
+to PSCI SYSTEM_OFF and SYSTEM_RESET (the ACPI tables of these machines
+have no fixed hardware). Under test (`test-exit`) the kernel ends QEMU
+through semihosting with the x86-64 exit codes.
+
+### Raspberry Pi 4 notes, and the Pi 5
+
+- The firmware must be in ACPI mode (its "System Table Selection"); the
+  loader reads no device tree. In ACPI mode it limits RAM to 3 GiB by
+  default.
+- Its SPCR names the mini UART by default (the PL011 goes to Bluetooth);
+  both are driven.
+- The Pi 4's own devices need drivers of their own, for later (see
+  TODO.md): the BCM2711 PCIe bridge with the VL805 xHCI behind it,
+  GENET Ethernet, the EMMC2 SD controller, and the GPU mailbox. Its PCIe
+  and these devices are not cache coherent with the processors, so DMA
+  buffers will need cache maintenance (or non-cacheable mappings), and
+  some of them reach only the low 1 or 3 GiB.
+- A Raspberry Pi 5 (BCM2712, Cortex-A76) would differ in: most I/O behind
+  the RP1 south bridge on PCIe (its own UARTs, Ethernet, USB), so the
+  console and devices need RP1 drivers; a different (younger) UEFI port
+  whose ACPI tables need checking; ARMv8.2 features worth using (PAN
+  around user copies, LSE atomics); a battery-backed real-time clock. The
+  core code (GIC, generic timer, PSCI, translation tables) carries over.
 
 ## Heap checking
 

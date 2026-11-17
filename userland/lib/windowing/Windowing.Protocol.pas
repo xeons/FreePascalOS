@@ -103,6 +103,18 @@
   Any program may ask how long nobody has touched the keyboard or the
   pointer (RequestDescribeIdle), which is what locks the screen after a
   while.
+
+  A window may have an icon, drawn at the left of its title bar and on
+  the shell's taskbar button: a name of the icon theme
+  (RequestSetWindowIcon: the server reads /usr/share/icons/NAME.ico and
+  draws the size nearest the frame's, shrunk or grown to it), or
+  pictures the program gives (RequestSetWindowIconPictures: a few sizes
+  in a section). A window with none shows its owner's (a dialog its
+  main window's), else that of the program's first window owned by
+  none that has one, else the theme's generic picture (or nothing). The
+  shell and the window list hear a number that changes whenever a
+  window's icon does (the icon's version), and ask for the icon itself
+  (RequestDescribeWindowIcon).
 }
 unit Windowing.Protocol;
 
@@ -241,6 +253,25 @@ const
     from suspend, when the display's memory may not have kept its
     picture). Not answered. }
   RequestRepaintDisplays = 42;
+  { Window icons (Server.WindowIcons). Window: one of this program's;
+    Text: the icon theme's name for its icon (app-terminal: the server
+    reads /usr/share/icons/app-terminal.ico; letters, digits, '-', '_'
+    and '.' only), '' for none. Replaces pictures given before. Not
+    answered; a name with no file shows as no icon. }
+  RequestSetWindowIcon = 43;
+  { Window: one of this program's; Code: how many pictures (0: none, up
+    to MaximumIconPictures); Width: their length in bytes (at most
+    MaximumIconPictureBytes); Handle: a section holding them, one after
+    another, each as DataFormatBgra (its width and height, each 1 to
+    MaximumIconSide, then its pixels). The server copies them (the
+    program may close its section) and draws the one nearest the size
+    it wants, shrunk or grown to it. Replaces a name given before. Not
+    answered. }
+  RequestSetWindowIconPictures = 44;
+  { Window: one of this program's, or a window it may list or manage
+    (RequestListWindows; the shell: any); Code: the size wanted, in
+    pixels (1 to MaximumIconSide). Answered by EventWindowIconDescribed. }
+  RequestDescribeWindowIcon = 45;
 
   { The clipboard and drag and drop (Windowing.DataTransfer): data in
     formats (DataFormat*), offered by one program and asked for by
@@ -353,7 +384,9 @@ const
   { To the shell. Window: a top-level window (framed, owned by no window)
     of another program, which is new or changed; Text: its title; Flags:
     ShellWindow*; Code: the display it is on; Value: the process of the
-    program it belongs to. }
+    program it belongs to; Width: its icon's version (a number that
+    changes whenever its icon does, 0 if it never had one: ask for the
+    icon with RequestDescribeWindowIcon). }
   EventShellWindowChanged = 118;
   { To the shell. Window: a window it was told about is gone (or is no
     longer a top-level window: it was given an owner). }
@@ -371,7 +404,8 @@ const
   EventNotificationIconChanged = 122;
   { The answer to RequestListWindows, one per window. Window: the
     window (0: the list is over); Text: its title; Flags: ShellWindow*;
-    Code: the display it is on; Value: the process its program runs as. }
+    Code: the display it is on; Value: the process its program runs as;
+    Width: its icon's version, as in EventShellWindowChanged. }
   EventWindowListed = 123;
   { Window 0, to the shell: a key it took (RequestRegisterHotkey) was
     pressed. Code: the key; Modifiers: as in EventKey. }
@@ -423,6 +457,15 @@ const
   { The answer to RequestDescribeIdle. Value: the milliseconds since the
     last input (at most High(LongInt)). }
   EventIdleDescribed = 141;
+  { The answer to RequestDescribeWindowIcon. Window: as asked (0 if the
+    program may not see it); Flags: WindowIconNamed or
+    WindowIconPictures, which the window's icon is (its own, or the
+    owner's it shows), 0 if it has none; Text: the icon's name, if
+    named; Value: the icon's version; Width, Height: its picture at the
+    size asked (0 if none could be made: no icon, or a name with no
+    file); Handle: a section of Width x Height pixels (blue, green, red,
+    alpha), the program's to close. }
+  EventWindowIconDescribed = 142;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -459,6 +502,16 @@ const
   DropEffectCopy = $01;
   DropEffectMove = $02;
   DropEffectLink = $04;
+
+  { --- Window icons ------------------------------------------------------ }
+
+  WindowIconNamed = $01;
+  WindowIconPictures = $02;
+  MaximumIconPictures = 8;
+  MaximumIconSide = 256;
+  MaximumIconPictureBytes = 1024 * 1024;
+  { The longest icon name (it travels in Text). }
+  MaximumIconNameLength = TitleCapacity - 1;
 
   { --- Window flags ----------------------------------------------------- }
 
@@ -586,6 +639,10 @@ procedure SetMessageText(var Message: TWindowMessage; const Text: string);
 { The message's text, up to its terminating zero (at most
   TitleCapacity - 1 characters). }
 function MessageText(const Message: TWindowMessage): string;
+{ Whether Name may name a window's icon (RequestSetWindowIcon): not
+  empty, at most MaximumIconNameLength characters, of letters, digits,
+  '-', '_' and '.', and not starting with '.' (so never a path). }
+function IsValidIconName(const Name: string): Boolean;
 
 implementation
 
@@ -641,6 +698,19 @@ begin
   while (Count < TitleCapacity - 1) and (Message.Text[Count] <> #0) do
     Inc(Count);
   SetString(Result, PChar(@Message.Text[0]), Count);
+end;
+
+function IsValidIconName(const Name: string): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  if (Name = '') or (Length(Name) > MaximumIconNameLength) or (Name[1] = '.') then
+    Exit;
+  for Index := 1 to Length(Name) do
+    if not (Name[Index] in ['a'..'z', 'A'..'Z', '0'..'9', '-', '_', '.']) then
+      Exit;
+  Result := True;
 end;
 
 end.

@@ -34,7 +34,8 @@ unit Kernel.Threads;
 interface
 
 uses
-  Runtime.LinkedList;
+  Runtime.LinkedList,
+  Kernel.Arch.ContextSwitch;
 
 const
   IdlePriority = 0;
@@ -48,9 +49,10 @@ const
   { An affinity mask that allows every processor. }
   AllProcessors = High(QWord);
 
-  { The x87/SSE register image saved by FXSAVE, which needs 16-byte
-    alignment; the field holds 15 spare bytes to align it in. }
-  FpuStateSize = 512;
+  { The floating point and SIMD register image (x86-64: FXSAVE's, 512
+    bytes; AArch64: V0-V31, FPCR, FPSR), which needs 16-byte alignment;
+    the field holds 15 spare bytes to align it in. }
+  FpuStateSize = ArchFpuStateSize;
 
 type
   TThreadState = (

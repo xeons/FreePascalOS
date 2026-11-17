@@ -19,7 +19,8 @@
 {
   The serial port as an input device: /dev/serial0.
 
-  COM1 raises IRQ 4 when received data is waiting. The handler empties
+  The port (COM1 on IRQ 4; on AArch64 the SPCR UART on its GSI) raises
+  its interrupt when received data is waiting. The handler empties
   the port's receive buffer into the device's input (Io.InputDevice);
   the console keeps the device open and reads it (Io.ConsoleInput).
 
@@ -50,7 +51,6 @@ uses
   Io.Console;
 
 const
-  SerialIrq = 4;
   { Bounds the work of one interrupt if data keeps arriving. }
   MaximumCharactersPerInterrupt = 64;
 
@@ -99,6 +99,18 @@ begin
   EnableSerialReceiveInterrupt;
 end;
 
+function ConnectSerialInterrupt: Boolean;
+var
+  Line: TSerialInterrupt;
+begin
+  Line := SerialPortInterrupt;
+  if Line.IsIsaIrq then
+    Result := ConnectIsaInterrupt(Byte(Line.Number), @HandleSerialInterrupt, nil)
+  else
+    Result := ConnectGlobalInterrupt(Line.Number, Line.LevelTriggered, Line.ActiveLow,
+      @HandleSerialInterrupt, nil);
+end;
+
 function InitializeSerialDevice: Boolean;
 begin
   Result := False;
@@ -106,7 +118,7 @@ begin
     Exit;
   if not CreateSerialDevice then
     Exit;
-  if not ConnectIsaInterrupt(SerialIrq, @HandleSerialInterrupt, nil) then
+  if not ConnectSerialInterrupt then
     Exit;
   SetSerialInputInterruptDriven;
   EnableSerialReceiveInterrupt;

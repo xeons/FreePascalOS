@@ -45,6 +45,10 @@ type
     { The display it is on. }
     Display: LongInt;
     Title: string;
+    { Its icon's version: changes whenever its icon does (0: it never
+      had one); Windowing.WindowIcons' DescribeWindowIcon gives the
+      icon. }
+    IconVersion: LongWord;
   end;
   TListedWindows = array of TListedWindow;
 
@@ -82,6 +86,7 @@ begin
     Windows[Count].Flags := Message.Flags;
     Windows[Count].Display := LongInt(Message.Code);
     Windows[Count].Title := MessageText(Message);
+    Windows[Count].IconVersion := LongWord(Message.Width);
     Inc(Count);
   until False;
   Result := True;

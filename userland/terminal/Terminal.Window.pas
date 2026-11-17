@@ -103,6 +103,7 @@ begin
   Measure.SizeForGrid(Rows, Columns, Width, Height);
   Measure.Free;
   inherited Create(DefaultTitle, Left, Top, Unscaled(Width), Unscaled(Height));
+  IconName := 'app-terminal';
   FLeft := Left;
   FTop := Top;
   { The session first: laying the view out tells it the grid's size. }

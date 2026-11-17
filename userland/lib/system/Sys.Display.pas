@@ -33,6 +33,15 @@
   Pixels are LongWords, Pitch bytes from one line to the next; Format
   says where red and blue are. Dpi and ScalePercent are for sizing what
   is drawn: a 12 point font is 12 * Dpi / 72 pixels high.
+
+  Capabilities (DisplayCapability*) say what more the display does. On a
+  display that needs flushing (virtio-gpu) what is drawn shows only once
+  FlushDisplay names it; elsewhere FlushDisplay costs nothing, so a
+  program calls it after drawing on any display. A display with a
+  hardware cursor has its cursor image area mapped too (CursorPixels,
+  DisplayCursorSize pixels square): SetDisplayCursorImage copies an image
+  there and gives it to the device, MoveDisplayCursor and
+  ShowDisplayCursor move and show it.
 }
 unit Sys.Display;
 
@@ -57,6 +66,10 @@ type
     ScalePercent: LongWord;
     WidthMillimetres: LongWord;
     HeightMillimetres: LongWord;
+    { DisplayCapability*. }
+    Capabilities: LongWord;
+    { With DisplayCapabilityHardwareCursor: the cursor image area. }
+    CursorPixels: PLongWord;
   end;
 
 { Returns ErrorNone or an error code (ErrorBusy: another program has
@@ -71,6 +84,19 @@ function DisplayModeAt(const Display: TDisplay; Index: LongInt; out Width, Heigh
 function SetDisplayMode(var Display: TDisplay; Width, Height: LongWord): LongInt;
 { The display's pixel value for a colour given as $RRGGBB. }
 function DisplayPixel(const Display: TDisplay; Color: LongWord): LongWord;
+{ Shows the rectangle drawn in the framebuffer (pixels, cut to the mode);
+  ErrorNone or an error code. }
+function FlushDisplay(const Display: TDisplay; X, Y, Width, Height: LongInt): LongInt;
+function DisplayNeedsFlush(const Display: TDisplay): Boolean;
+function DisplayHasHardwareCursor(const Display: TDisplay): Boolean;
+{ Image: Width x Height pixels ($AARRGGBB, straight alpha, lines of
+  Width), at most DisplayCursorSize square, put in the cursor's top left
+  (the rest clear) with the hotspot at HotspotX, HotspotY. }
+function SetDisplayCursorImage(const Display: TDisplay; Image: PLongWord; Width, Height, HotspotX,
+  HotspotY: LongInt): LongInt;
+{ The hotspot's place, pixels of the mode. }
+function MoveDisplayCursor(const Display: TDisplay; X, Y: LongInt): LongInt;
+function ShowDisplayCursor(const Display: TDisplay; Visible: Boolean): LongInt;
 
 implementation
 
@@ -112,11 +138,29 @@ begin
   Value := KernelControlHandle(Display.Handle, ControlDisplayGetPhysicalSize, 0);
   Display.WidthMillimetres := LongWord(QWord(Value) and $FFFFFFFF);
   Display.HeightMillimetres := LongWord(QWord(Value) shr 32);
+  Value := KernelControlHandle(Display.Handle, ControlDisplayGetCapabilities, 0);
+  if Value < 0 then
+    Value := 0;
+  Display.Capabilities := LongWord(Value);
   Address := KernelMapHandle(Display.Handle, 0, QWord(Display.Pitch) * Display.Height);
   if Address < 0 then
     Exit(ErrorCodeOf(Address));
   Display.Pixels := PLongWord(Address);
   Result := ErrorNone;
+end;
+
+{ The cursor image area, once (it does not change with the mode). }
+procedure MapCursorImage(var Display: TDisplay);
+var
+  Address: Int64;
+begin
+  if not DisplayHasHardwareCursor(Display) or (Display.CursorPixels <> nil) then
+    Exit;
+  Address := KernelMapHandle(Display.Handle, DisplayCursorImageOffset, DisplayCursorImageBytes);
+  if Address < 0 then
+    Display.Capabilities := Display.Capabilities and not LongWord(DisplayCapabilityHardwareCursor)
+  else
+    Display.CursorPixels := PLongWord(Address);
 end;
 
 function OpenDisplay(out Display: TDisplay; Number: LongInt): LongInt;
@@ -133,7 +177,9 @@ begin
   begin
     KernelClose(Display.Handle);
     Display.Handle := -1;
+    Exit;
   end;
+  MapCursorImage(Display);
 end;
 
 function DisplayModeCount(const Display: TDisplay): LongInt;
@@ -174,15 +220,19 @@ begin
     KernelFreeMemory(Display.Pixels);
   Display.Pixels := nil;
   Result := ReadAndMap(Display);
+  MapCursorImage(Display);
 end;
 
 procedure CloseDisplay(var Display: TDisplay);
 begin
   if Display.Pixels <> nil then
     KernelFreeMemory(Display.Pixels);
+  if Display.CursorPixels <> nil then
+    KernelFreeMemory(Display.CursorPixels);
   if Display.Handle >= 0 then
     KernelClose(Display.Handle);
   Display.Pixels := nil;
+  Display.CursorPixels := nil;
   Display.Handle := -1;
 end;
 
@@ -192,6 +242,75 @@ begin
     Result := ((Color and $FF) shl 16) or (Color and $FF00) or ((Color shr 16) and $FF)
   else
     Result := Color and $FFFFFF;
+end;
+
+function DisplayNeedsFlush(const Display: TDisplay): Boolean;
+begin
+  Result := (Display.Capabilities and DisplayCapabilityNeedsFlush) <> 0;
+end;
+
+function DisplayHasHardwareCursor(const Display: TDisplay): Boolean;
+begin
+  Result := (Display.Capabilities and DisplayCapabilityHardwareCursor) <> 0;
+end;
+
+function ControlResult(Value: Int64): LongInt;
+begin
+  if Value < 0 then
+    Exit(ErrorCodeOf(Value));
+  Result := ErrorNone;
+end;
+
+function FlushDisplay(const Display: TDisplay; X, Y, Width, Height: LongInt): LongInt;
+var
+  Right: LongInt;
+  Bottom: LongInt;
+begin
+  if not DisplayNeedsFlush(Display) then
+    Exit(ErrorNone);
+  Right := X + Width;
+  Bottom := Y + Height;
+  if X < 0 then
+    X := 0;
+  if Y < 0 then
+    Y := 0;
+  if Right > LongInt(Display.Width) then
+    Right := LongInt(Display.Width);
+  if Bottom > LongInt(Display.Height) then
+    Bottom := LongInt(Display.Height);
+  if (Right <= X) or (Bottom <= Y) then
+    Exit(ErrorNone);
+  Result := ControlResult(KernelControlHandle(Display.Handle, ControlDisplayFlush, QWord(X) or (QWord(Y) shl 16) or
+    (QWord(Right - X) shl 32) or (QWord(Bottom - Y) shl 48)));
+end;
+
+function SetDisplayCursorImage(const Display: TDisplay; Image: PLongWord; Width, Height, HotspotX,
+  HotspotY: LongInt): LongInt;
+var
+  Row: LongInt;
+begin
+  if (Display.CursorPixels = nil) or (Width < 0) or (Height < 0) or (Width > DisplayCursorSize) or
+     (Height > DisplayCursorSize) then
+    Exit(ErrorInvalidArgument);
+  if (HotspotX < 0) or (HotspotY < 0) or (HotspotX >= DisplayCursorSize) or (HotspotY >= DisplayCursorSize) then
+    Exit(ErrorInvalidArgument);
+  ZeroMemory(Display.CursorPixels, DisplayCursorImageBytes);
+  for Row := 0 to Height - 1 do
+    CopyMemory(PByte(Display.CursorPixels) + PtrUInt(Row) * DisplayCursorSize * SizeOf(LongWord),
+      PByte(Image) + PtrUInt(Row) * PtrUInt(Width) * SizeOf(LongWord), PtrUInt(Width) * SizeOf(LongWord));
+  Result := ControlResult(KernelControlHandle(Display.Handle, ControlDisplaySetCursorImage,
+    QWord(HotspotX) or (QWord(HotspotY) shl 16)));
+end;
+
+function MoveDisplayCursor(const Display: TDisplay; X, Y: LongInt): LongInt;
+begin
+  Result := ControlResult(KernelControlHandle(Display.Handle, ControlDisplayMoveCursor,
+    QWord(LongWord(X)) or (QWord(LongWord(Y)) shl 32)));
+end;
+
+function ShowDisplayCursor(const Display: TDisplay; Visible: Boolean): LongInt;
+begin
+  Result := ControlResult(KernelControlHandle(Display.Handle, ControlDisplayShowCursor, Ord(Visible)));
 end;
 
 end.

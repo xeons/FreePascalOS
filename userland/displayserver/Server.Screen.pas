@@ -29,9 +29,9 @@
   units (Server.Desktop converts).
 
   Composing happens in ordinary memory (reading video memory is slow,
-  and a half drawn picture never shows); PresentScreenRegion copies the
-  parts that changed to the screen's framebuffer, swapping red and blue
-  for a display that keeps red in the low byte.
+  and a half drawn picture never shows); Server.Presentation copies the
+  parts that changed to the screen's framebuffer, with the pointer over
+  them when the device does not draw it.
 }
 unit Server.Screen;
 
@@ -73,6 +73,18 @@ type
       Right and Bottom hold their widths), in logical units at this
       screen's scale: the rest is its work area (Server.WorkAreas). }
     Reserved: TRectangle;
+    { The pointer drawn over the picture by the server (Server.Presentation):
+      its place in desktop pixels (empty when it is not on this screen) and
+      its image (straight alpha; not this record's). }
+    SoftwareCursorPlace: TRectangle;
+    SoftwareCursorImage: TSurface;
+    { The device's own cursor (Server.PointerPresenting): whether it shows,
+      the picture it was given (its CursorPictureKey, 0: none yet) and the
+      hotspot's place in the screen's pixels. }
+    HardwareCursorShown: Boolean;
+    HardwareCursorKey: LongWord;
+    HardwareCursorX: LongInt;
+    HardwareCursorY: LongInt;
   end;
 
 var
@@ -92,8 +104,6 @@ procedure ArrangeScreens;
 { Sets the display to Width x Height and gives it a back buffer of that
   size; the caller arranges the screens again. ErrorNone or an error. }
 function SetScreenMode(Screen: PScreen; Width, Height: LongInt): LongInt;
-{ Copies the part of Region (desktop pixels) on Screen to its display. }
-procedure PresentScreenRegion(Screen: PScreen; const Region: TRegion);
 
 implementation
 
@@ -199,42 +209,8 @@ begin
   Screen^.BackBuffer := NewBuffer;
   Screen^.NativeScalePercent := Screen^.Device.ScalePercent;
   Screen^.NativeDpi := Screen^.Device.Dpi;
-end;
-
-procedure PresentRectangle(Screen: PScreen; const Rectangle: TRectangle);
-var
-  Visible: TRectangle;
-  Y: LongInt;
-  X: LongInt;
-  Source: PLongWord;
-  Target: PLongWord;
-  Pixel: LongWord;
-begin
-  if not IntersectRectangles(Rectangle, Screen^.Bounds, Visible) then
-    Exit;
-  { From desktop pixels to the screen's own. }
-  Visible := OffsetRectangle(Visible, -Screen^.Bounds.Left, -Screen^.Bounds.Top);
-  for Y := Visible.Top to Visible.Bottom - 1 do
-  begin
-    Source := SurfaceLine(Screen^.BackBuffer, Y);
-    Target := PLongWord(PByte(Screen^.Device.Pixels) + PtrUInt(Y) * Screen^.Device.Pitch);
-    if Screen^.Device.Format = DisplayFormatBlueGreenRed then
-      Move(Source[Visible.Left], Target[Visible.Left], RectangleWidth(Visible) * SizeOf(LongWord))
-    else
-      for X := Visible.Left to Visible.Right - 1 do
-      begin
-        Pixel := Source[X];
-        Target[X] := (Pixel and $FF00FF00) or ((Pixel and $FF) shl 16) or ((Pixel shr 16) and $FF);
-      end;
-  end;
-end;
-
-procedure PresentScreenRegion(Screen: PScreen; const Region: TRegion);
-var
-  Index: LongInt;
-begin
-  for Index := 0 to Region.Count - 1 do
-    PresentRectangle(Screen, Region.Rectangles[Index]);
+  { The device's cursor is kept across modes; its place is told again. }
+  Screen^.HardwareCursorX := Low(LongInt);
 end;
 
 end.

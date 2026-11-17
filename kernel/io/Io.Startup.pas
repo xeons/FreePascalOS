@@ -129,7 +129,7 @@ begin
   DebugBeginMessage;
   DebugWriteTag('input');
   if SerialByInterrupt then
-    DebugWriteLine('Serial console input from /dev/serial0 (IRQ 4)')
+    DebugWriteLine('Serial console input from /dev/serial0, interrupt driven')
   else
     DebugWriteLine('Serial console input is polled');
   DebugEndMessage;
