@@ -47,6 +47,7 @@ implementation
 uses
   Windowing.Fonts,
   Controls.Base,
+  Controls.LayoutRules,
   Controls.Labels,
   Controls.EditBox,
   Controls.Buttons,
@@ -62,6 +63,7 @@ const
   RowHeight = 28;
   CaptionColumnWidth = 50;
   ButtonColumnWidth = 84;
+  FieldHeight = 22;
 
 type
   TTextDialog = class(TCommonDialog)
@@ -117,7 +119,6 @@ begin
   FBold := ABold;
   Table := TTableLayoutPanel.Create(Root);
   Table.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin, 2 * RowHeight);
-  Table.Anchors := [akLeft, akTop, akRight];
   Table.AddColumn(TrackAbsolute, CaptionColumnWidth);
   Table.AddColumn(TrackPercent, 100);
   Table.AddColumn(TrackAbsolute, ButtonColumnWidth);
@@ -127,9 +128,10 @@ begin
   Caption.Text := '&Text:';
   Caption.AutoSize := True;
   Caption.Anchors := [akLeft];
+  Table.SetCell(Caption, 0, 0);
   FTextBox := TEditBox.Create(Table);
   FTextBox.Text := AText;
-  FTextBox.AutoSize := True;
+  FTextBox.SetBounds(0, 0, 100, FieldHeight);
   FTextBox.Anchors := [akLeft, akRight];
   Table.SetCell(FTextBox, 1, 0);
   Table.SetSpan(FTextBox, 2, 1);
@@ -143,7 +145,8 @@ begin
   FontButton := TButton.Create(Table);
   FontButton.Text := '&Font...';
   FontButton.AutoSize := True;
-  FontButton.Anchors := [akLeft, akRight];
+  FontButton.Anchors := [akRight];
+  FontButton.Margins := MakeSpacing(6, 0, 0, 0);
   FontButton.OnClick := @FontClicked;
   Table.SetCell(FontButton, 2, 1);
   AddOkAndCancel(DialogWidth, DialogHeight);

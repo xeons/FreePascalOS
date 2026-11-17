@@ -57,13 +57,15 @@ const
   RowHeight = 26;
   DetailsRowHeight = 36;
   CaptionColumnWidth = 70;
+  FieldWidth = 100;
+  FieldHeight = 22;
 
 type
   TImageSizeDialog = class(TCommonDialog)
   private
     FWidthBox: TNumericUpDown;
     FHeightBox: TNumericUpDown;
-    function AddSizeRow(Table: TTableLayoutPanel; const Caption: string; Value: LongInt): TNumericUpDown;
+    function AddSizeRow(Table: TTableLayoutPanel; const Caption: string; Value, Row: LongInt): TNumericUpDown;
   protected
     procedure Showing; override;
   public
@@ -83,13 +85,13 @@ var
   Table: TTableLayoutPanel;
   Message: TLabel;
   Height: LongInt;
+  FirstRow: LongInt;
 begin
   Height := DialogHeightFor(Details);
   inherited CreateDialog(ATitle, DialogWidth, Height, AOwner);
   Table := TTableLayoutPanel.Create(Root);
   Table.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin,
     Height - 3 * DialogMargin - DialogButtonHeight);
-  Table.Anchors := [akLeft, akTop, akRight, akBottom];
   Table.AddColumn(TrackAbsolute, CaptionColumnWidth);
   Table.AddColumn(TrackPercent, 100);
   if Details <> '' then
@@ -103,14 +105,16 @@ begin
     Table.SetCell(Message, 0, 0);
     Table.SetSpan(Message, 2, 1);
   end;
+  FirstRow := Table.RowCount;
   Table.AddRow(TrackAbsolute, RowHeight);
   Table.AddRow(TrackAbsolute, RowHeight);
-  FWidthBox := AddSizeRow(Table, '&Width:', AWidth);
-  FHeightBox := AddSizeRow(Table, '&Height:', AHeight);
+  FWidthBox := AddSizeRow(Table, '&Width:', AWidth, FirstRow);
+  FHeightBox := AddSizeRow(Table, '&Height:', AHeight, FirstRow + 1);
   AddOkAndCancel(DialogWidth, Height);
 end;
 
-function TImageSizeDialog.AddSizeRow(Table: TTableLayoutPanel; const Caption: string; Value: LongInt): TNumericUpDown;
+function TImageSizeDialog.AddSizeRow(Table: TTableLayoutPanel; const Caption: string; Value,
+  Row: LongInt): TNumericUpDown;
 var
   Text: TLabel;
 begin
@@ -118,8 +122,10 @@ begin
   Text.Text := Caption;
   Text.AutoSize := True;
   Text.Anchors := [akLeft];
+  Table.SetCell(Text, 0, Row);
   Result := TNumericUpDown.Create(Table);
-  Result.AutoSize := True;
+  Table.SetCell(Result, 1, Row);
+  Result.SetBounds(0, 0, FieldWidth, FieldHeight);
   Result.Anchors := [akLeft, akRight];
   Result.SetRange(1, LargestPictureSide);
   Result.Value := Value;

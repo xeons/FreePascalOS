@@ -53,6 +53,7 @@ const
   RowHeight = 30;
   CaptionColumnWidth = 60;
   NumberColumnWidth = 64;
+  FieldHeight = 22;
 
 type
   TQualityDialog = class(TCommonDialog)
@@ -76,7 +77,6 @@ begin
   inherited CreateDialog('JPEG quality', DialogWidth, DialogHeight, AOwner);
   Table := TTableLayoutPanel.Create(Root);
   Table.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin, 2 * RowHeight);
-  Table.Anchors := [akLeft, akTop, akRight];
   Table.AddColumn(TrackAbsolute, CaptionColumnWidth);
   Table.AddColumn(TrackPercent, 100);
   Table.AddColumn(TrackAbsolute, NumberColumnWidth);
@@ -85,19 +85,22 @@ begin
   Caption.Text := '&Quality:';
   Caption.AutoSize := True;
   Caption.Anchors := [akLeft];
+  Table.SetCell(Caption, 0, 0);
   FSlider := TSlider.Create(Table);
-  FSlider.AutoSize := True;
+  FSlider.Align := AlignClient;
   FSlider.Anchors := [akLeft, akRight];
   FSlider.SetRange(1, 100);
   FSlider.PageStep := 10;
   FSlider.Position := Quality;
   FSlider.OnChange := @SliderChanged;
+  Table.SetCell(FSlider, 1, 0);
   FNumberBox := TNumericUpDown.Create(Table);
-  FNumberBox.AutoSize := True;
+  FNumberBox.SetBounds(0, 0, NumberColumnWidth - 4, FieldHeight);
   FNumberBox.Anchors := [akLeft, akRight];
   FNumberBox.SetRange(1, 100);
   FNumberBox.Value := Quality;
   FNumberBox.OnValueChanged := @NumberChanged;
+  Table.SetCell(FNumberBox, 2, 0);
   AddOkAndCancel(DialogWidth, DialogHeight);
 end;
 

@@ -58,10 +58,12 @@ uses
   Paint.Output;
 
 const
-  DialogWidth = 300;
+  DialogWidth = 330;
   DialogHeight = 210;
   RowHeight = 26;
-  CaptionColumnWidth = 150;
+  CaptionColumnWidth = 170;
+  FieldWidth = 100;
+  FieldHeight = 22;
   LargestSkew = 89;
   LargestPercent = 1000;
   LargestSide = 16384;
@@ -80,7 +82,7 @@ type
     FSkewVerticalBox: TNumericUpDown;
     FMatching: Boolean;
     function Units: TResizeUnit;
-    function AddRow(Table: TTableLayoutPanel; const Caption: string; Minimum, Maximum: LongInt): TNumericUpDown;
+    function AddRow(Table: TTableLayoutPanel; const Caption: string; Minimum, Maximum, Row: LongInt): TNumericUpDown;
     procedure UnitsChanged(Sender: TControl);
     procedure HorizontalChanged(Sender: TControl);
     procedure VerticalChanged(Sender: TControl);
@@ -102,7 +104,6 @@ begin
   Table := TTableLayoutPanel.Create(Root);
   Table.SetBounds(DialogMargin, DialogMargin, DialogWidth - 2 * DialogMargin,
     DialogHeight - 3 * DialogMargin - DialogButtonHeight);
-  Table.Anchors := [akLeft, akTop, akRight, akBottom];
   Table.AddColumn(TrackAbsolute, CaptionColumnWidth);
   Table.AddColumn(TrackPercent, 100);
   for Row := 1 to 6 do
@@ -113,15 +114,17 @@ begin
   FPercentButton.Anchors := [akLeft];
   FPercentButton.Checked := True;
   FPercentButton.OnChange := @UnitsChanged;
+  Table.SetCell(FPercentButton, 0, 0);
   FPixelsButton := TRadioButton.Create(Table);
   FPixelsButton.Text := 'By pi&xels';
   FPixelsButton.AutoSize := True;
   FPixelsButton.Anchors := [akLeft];
   FPixelsButton.OnChange := @UnitsChanged;
-  FHorizontalBox := AddRow(Table, '&Horizontal:', 1, LargestPercent);
+  Table.SetCell(FPixelsButton, 1, 0);
+  FHorizontalBox := AddRow(Table, '&Horizontal:', 1, LargestPercent, 1);
   FHorizontalBox.Value := 100;
   FHorizontalBox.OnValueChanged := @HorizontalChanged;
-  FVerticalBox := AddRow(Table, '&Vertical:', 1, LargestPercent);
+  FVerticalBox := AddRow(Table, '&Vertical:', 1, LargestPercent, 2);
   FVerticalBox.Value := 100;
   FVerticalBox.OnValueChanged := @VerticalChanged;
   FKeepBox := TCheckBox.Create(Table);
@@ -131,13 +134,13 @@ begin
   FKeepBox.Checked := True;
   Table.SetCell(FKeepBox, 0, 3);
   Table.SetSpan(FKeepBox, 2, 1);
-  FSkewHorizontalBox := AddRow(Table, 'Skew hori&zontally (deg.):', -LargestSkew, LargestSkew);
-  FSkewVerticalBox := AddRow(Table, 'Skew ve&rtically (deg.):', -LargestSkew, LargestSkew);
+  FSkewHorizontalBox := AddRow(Table, 'Skew hori&zontally (deg.):', -LargestSkew, LargestSkew, 4);
+  FSkewVerticalBox := AddRow(Table, 'Skew ve&rtically (deg.):', -LargestSkew, LargestSkew, 5);
   AddOkAndCancel(DialogWidth, DialogHeight);
 end;
 
-function TResizeDialog.AddRow(Table: TTableLayoutPanel; const Caption: string; Minimum,
-  Maximum: LongInt): TNumericUpDown;
+function TResizeDialog.AddRow(Table: TTableLayoutPanel; const Caption: string; Minimum, Maximum,
+  Row: LongInt): TNumericUpDown;
 var
   Text: TLabel;
 begin
@@ -145,10 +148,12 @@ begin
   Text.Text := Caption;
   Text.AutoSize := True;
   Text.Anchors := [akLeft];
+  Table.SetCell(Text, 0, Row);
   Result := TNumericUpDown.Create(Table);
-  Result.AutoSize := True;
+  Result.SetBounds(0, 0, FieldWidth, FieldHeight);
   Result.Anchors := [akLeft, akRight];
   Result.SetRange(Minimum, Maximum);
+  Table.SetCell(Result, 1, Row);
 end;
 
 function TResizeDialog.Units: TResizeUnit;
