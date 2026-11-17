@@ -82,7 +82,24 @@ uses
   Controls.FileDialog,
   Controls.ColorDialog,
   Controls.FontDialog,
-  Controls.FindDialog;
+  Controls.FindDialog,
+  Controls.ChartScale,
+  Controls.ChartFormat,
+  Controls.ChartSeries,
+  Controls.ChartAxes,
+  Controls.ChartModel,
+  Controls.ChartValues,
+  Controls.ChartPalette,
+  Controls.ChartStyle,
+  Controls.ChartLegend,
+  Controls.ChartLayout,
+  Controls.ChartAxisPainting,
+  Controls.ChartSeriesPainting,
+  Controls.ChartPiePainting,
+  Controls.ChartHitTesting,
+  Controls.ChartTooltip,
+  Controls.ChartPainting,
+  Controls.Charts;
 
 implementation
 
