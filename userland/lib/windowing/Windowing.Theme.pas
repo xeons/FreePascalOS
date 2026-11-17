@@ -88,17 +88,8 @@ type
     FaceText: TColor;
     DisabledText: TColor;
     DisabledTextEmboss: TColor;
-    { A button's face under the pointer (hot) and held down (pressed). }
-    HotFace: TColor;
-    PressedFace: TColor;
-    { The extra outer border of the default button (the one Enter
-      presses), and the focus frame's colour (dotted or solid as
-      DottedFocus says). }
-    DefaultButtonFrame: TColor;
+    { The focus frame's colour (a dotted frame). }
     Focus: TColor;
-    { A panel's lighter body: a group box's or section panel's inside,
-      beside the plain face. }
-    PanelBody: TColor;
 
     { --- Fields: where text is typed and lists are --------------------- }
     Field: TColor;
@@ -117,17 +108,15 @@ type
     { --- Tooltips ---------------------------------------------------- }
     Tooltip: TColor;
     TooltipText: TColor;
-    TooltipBorder: TColor;
 
     { --- Menus ------------------------------------------------------- }
     { The menu bar's face and text. }
     MenuBar: TColor;
     MenuBarText: TColor;
-    { A pop-up menu's face, text, the icon column at its left (when
-      MenuIconColumn is set), and the selected item's bar and text. }
+    { A pop-up menu's face and text, and the selected item's bar and
+      text (its icon column is MenuIconColumn, below). }
     Menu: TColor;
     MenuText: TColor;
-    MenuIconColumnFace: TColor;
     MenuSelection: TColor;
     MenuSelectionText: TColor;
 
@@ -161,34 +150,6 @@ type
       contents: two lines, Dark outside and Light inside. }
     DragOutlineDark: TColor;
     DragOutlineLight: TColor;
-
-    { --- Header bands (group boxes, section panels) ------------------- }
-    { The gold band across a banded group box's top (the title bar's
-      look), its edge and its bold text. }
-    HeaderBandStart: TColor;
-    HeaderBandEnd: TColor;
-    HeaderBandEdge: TColor;
-    HeaderBandText: TColor;
-    { The navy variant (section headers, e.g. the Control Panel's
-      categories, the Start menu's side band). }
-    NavyBandStart: TColor;
-    NavyBandEnd: TColor;
-    NavyBandEdge: TColor;
-    NavyBandText: TColor;
-
-    { --- Progress and scrolling ---------------------------------------- }
-    { A progress bar's trough, and its blocks: a segment's body, its
-      lighter top and darker bottom (alike for flat blocks). }
-    ProgressTrough: TColor;
-    ProgressSegment: TColor;
-    ProgressSegmentLight: TColor;
-    ProgressSegmentDark: TColor;
-    { The marquee (progress of unknown length): diagonal stripes of
-      Stripe on StripeGap. }
-    MarqueeStripe: TColor;
-    MarqueeStripeGap: TColor;
-    { A scroll bar's trough. }
-    ScrollTrough: TColor;
 
     { --- The taskbar and Start menu (desktop shell) -------------------- }
     { The taskbar's face and text; a task button's face when its window
@@ -230,14 +191,6 @@ type
     TitleGradientVertical: Boolean;
     TitleIcon: Boolean;
     TintedTitleButtons: Boolean;
-    { Controls: the focus frame is dotted (else solid); progress is
-      drawn as separate segments (else one bar); group boxes with a
-      title get the gold header band (else they are etched); pop-up
-      menus have an icon column. }
-    DottedFocus: Boolean;
-    SegmentedProgress: Boolean;
-    BandedGroupBoxes: Boolean;
-    MenuIconColumn: Boolean;
     { The Start menu has the band down its side; the Start button is
       drawn in its gradient (else as a face button). }
     StartMenuBand: Boolean;
@@ -256,15 +209,6 @@ type
     ScrollBarWidth: LongInt;
     MenuBarHeight: LongInt;
     MenuItemHeight: LongInt;
-    { The width of a pop-up menu's icon column (when MenuIconColumn). }
-    MenuIconColumnWidth: LongInt;
-    { A header band's height. }
-    HeaderBandHeight: LongInt;
-    { A progress segment's width and the gap between two; a marquee
-      stripe's width. }
-    ProgressSegmentWidth: LongInt;
-    ProgressSegmentGap: LongInt;
-    MarqueeStripeWidth: LongInt;
     { The Start menu's side band's width. }
     StartMenuBandWidth: LongInt;
 
@@ -277,6 +221,59 @@ type
       as in a multi-line edit box). }
     TextFamily: PChar;
     FixedFamily: PChar;
+
+    { --- How controls are painted (libcontrols): style flags and the
+      colours only some controls use. --- }
+    { Bevel and edge lines grow with the display scale (a line is
+      BevelLineWidth pixels), rather than staying one pixel. }
+    ScaledBevelLines: Boolean;
+    { A push button's face under the pointer, and while held down. }
+    HotButtonFace: TColor;
+    PressedButtonFace: TColor;
+    { Logical units: the dark outline of the default button. }
+    DefaultButtonOutline: LongInt;
+    { Group boxes may have a header band (HeaderBandsShown; otherwise
+      every group box is etched): a golden band (header, the title
+      bars' look), and a navy one (section: the Control Panel's
+      categories, taskbar pop-ups), each a vertical gradient with an
+      edge and bold text, over a lighter body. Header bands elsewhere
+      (Controls.HeaderBands, the login window, the lock panel's accent)
+      follow HeaderBandsShown too. }
+    HeaderBandsShown: Boolean;
+    HeaderBandTop: TColor;
+    HeaderBandBottom: TColor;
+    HeaderBandEdge: TColor;
+    HeaderBandText: TColor;
+    SectionBandTop: TColor;
+    SectionBandBottom: TColor;
+    SectionBandEdge: TColor;
+    SectionBandText: TColor;
+    BandedGroupBody: TColor;
+    { A progress bar's well, its blocks (a gradient from Light at the
+      top to the colour), and a marquee's stripes on their background. }
+    ProgressTrough: TColor;
+    ProgressBlock: TColor;
+    ProgressBlockLight: TColor;
+    MarqueeStripe: TColor;
+    MarqueeBackground: TColor;
+    { A pop-up menu's icon column, shaded (MenuIconColumnShown) in this
+      colour with an etched line beside it. }
+    MenuIconColumnShown: Boolean;
+    MenuIconColumn: TColor;
+    { The calendar's month bar (and the text and arrows on it), and
+      whether it is a filled bar with button arrows. }
+    CalendarHeaderFilled: Boolean;
+    CalendarHeader: TColor;
+    CalendarHeaderText: TColor;
+    { The thin frame around a tooltip (and the drag label). }
+    TooltipBorder: TColor;
+    { The status bar: panels separated by etched lines and a size grip
+      at the right (otherwise sunken panels side by side). }
+    StatusBarEtched: Boolean;
+    { A splitter shows a grip of dots in its middle. }
+    SplitterGrip: Boolean;
+    { A scroll bar's track. }
+    ScrollTrack: TColor;
   end;
 
 const
@@ -298,6 +295,13 @@ function LoadThemeByKey(const Key: string): Boolean;
   preview them without using them). }
 function BuiltInThemeCount: LongInt;
 function BuiltInTheme(Index: LongInt): TTheme;
+{ Only the control painting fields (the block "How controls are
+  painted") of Sunrise (the new look) or of Classic (exactly the
+  earlier look) into Theme. }
+procedure LoadModernControlLook;
+procedure LoadClassicControlLook;
+{ Pixels: one line of a bevel or edge at the display's scale. }
+function BevelLineWidth(ScalePercent: LongWord): LongInt;
 { The bevel colours of the theme's raised and sunken edges. }
 function RaisedThemeBevel: TBevelColors;
 function SunkenThemeBevel: TBevelColors;
@@ -342,6 +346,59 @@ begin
   end;
   LoadDefaultTheme;
   Result := False;
+end;
+
+{ The control painting fields of Source into Target. }
+procedure CopyControlLook(var Target: TTheme; const Source: TTheme);
+begin
+  Target.ScaledBevelLines := Source.ScaledBevelLines;
+  Target.HotButtonFace := Source.HotButtonFace;
+  Target.PressedButtonFace := Source.PressedButtonFace;
+  Target.DefaultButtonOutline := Source.DefaultButtonOutline;
+  Target.HeaderBandsShown := Source.HeaderBandsShown;
+  Target.HeaderBandTop := Source.HeaderBandTop;
+  Target.HeaderBandBottom := Source.HeaderBandBottom;
+  Target.HeaderBandEdge := Source.HeaderBandEdge;
+  Target.HeaderBandText := Source.HeaderBandText;
+  Target.SectionBandTop := Source.SectionBandTop;
+  Target.SectionBandBottom := Source.SectionBandBottom;
+  Target.SectionBandEdge := Source.SectionBandEdge;
+  Target.SectionBandText := Source.SectionBandText;
+  Target.BandedGroupBody := Source.BandedGroupBody;
+  Target.ProgressTrough := Source.ProgressTrough;
+  Target.ProgressBlock := Source.ProgressBlock;
+  Target.ProgressBlockLight := Source.ProgressBlockLight;
+  Target.MarqueeStripe := Source.MarqueeStripe;
+  Target.MarqueeBackground := Source.MarqueeBackground;
+  Target.MenuIconColumnShown := Source.MenuIconColumnShown;
+  Target.MenuIconColumn := Source.MenuIconColumn;
+  Target.CalendarHeaderFilled := Source.CalendarHeaderFilled;
+  Target.CalendarHeader := Source.CalendarHeader;
+  Target.CalendarHeaderText := Source.CalendarHeaderText;
+  Target.TooltipBorder := Source.TooltipBorder;
+  Target.StatusBarEtched := Source.StatusBarEtched;
+  Target.SplitterGrip := Source.SplitterGrip;
+  Target.ScrollTrack := Source.ScrollTrack;
+end;
+
+procedure LoadModernControlLook;
+begin
+  CopyControlLook(Theme, SunriseThemeValues);
+end;
+
+procedure LoadClassicControlLook;
+begin
+  CopyControlLook(Theme, ClassicThemeValues);
+end;
+
+function BevelLineWidth(ScalePercent: LongWord): LongInt;
+begin
+  Result := 1;
+  { One pixel up to 150%, two from 175%, and so on. }
+  if Theme.ScaledBevelLines then
+    Result := (LongInt(ScalePercent) + 25) div 100;
+  if Result < 1 then
+    Result := 1;
 end;
 
 function RaisedThemeBevel: TBevelColors;

@@ -19,11 +19,11 @@
 {
   A header band: a heading across the top of a window, pop-up or page,
   in the theme's band colours - the gold of the title bars
-  (HeaderBandStart, HeaderBandEnd, HeaderBandEdge, HeaderBandText) or
-  the navy variant (NavyBand...) - a gradient from top to bottom, an
+  (HeaderBandTop, HeaderBandBottom, HeaderBandEdge, HeaderBandText) or
+  the navy variant (SectionBand...) - a gradient from top to bottom, an
   edge line along its bottom and the text in bold, indented.
 
-  Where the theme does not band its panels (TTheme.BandedGroupBoxes
+  Where the theme does not band its panels (TTheme.HeaderBandsShown
   off, as in Classic) it is a plain label instead: the text in the
   ordinary face and colour, drawn as a TLabel would, so a window laid
   out for both looks as it always did there.
@@ -70,7 +70,7 @@ const
 
 class function THeaderBand.ThemeBands: Boolean;
 begin
-  Result := Theme.BandedGroupBoxes;
+  Result := Theme.HeaderBandsShown;
 end;
 
 procedure THeaderBand.SetText(const Value: string);
@@ -97,15 +97,15 @@ begin
   end;
   if FStyle = HeaderBandNavy then
   begin
-    StartColor := Theme.NavyBandStart;
-    EndColor := Theme.NavyBandEnd;
-    EdgeColor := Theme.NavyBandEdge;
-    TextColor := Theme.NavyBandText;
+    StartColor := Theme.SectionBandTop;
+    EndColor := Theme.SectionBandBottom;
+    EdgeColor := Theme.SectionBandEdge;
+    TextColor := Theme.SectionBandText;
   end
   else
   begin
-    StartColor := Theme.HeaderBandStart;
-    EndColor := Theme.HeaderBandEnd;
+    StartColor := Theme.HeaderBandTop;
+    EndColor := Theme.HeaderBandBottom;
     EdgeColor := Theme.HeaderBandEdge;
     TextColor := Theme.HeaderBandText;
   end;

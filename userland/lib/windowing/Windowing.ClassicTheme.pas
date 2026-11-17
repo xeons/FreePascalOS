@@ -62,11 +62,7 @@ begin
   Values.FaceText := $FF000000;
   Values.DisabledText := $FF7E7A72;
   Values.DisabledTextEmboss := $FFFFFFFF;
-  Values.HotFace := $FFE2DED6;
-  Values.PressedFace := $FFCBC6BD;
-  Values.DefaultButtonFrame := $FF35322D;
   Values.Focus := $FF000000;
-  Values.PanelBody := $FFCBC6BD;
 
   Values.Field := $FFFFFFFF;
   Values.FieldText := $FF000000;
@@ -78,13 +74,11 @@ begin
 
   Values.Tooltip := $FFF4EFD8;
   Values.TooltipText := $FF000000;
-  Values.TooltipBorder := $FF35322D;
 
   Values.MenuBar := $FFCBC6BD;
   Values.MenuBarText := $FF000000;
   Values.Menu := $FFCBC6BD;
   Values.MenuText := $FF000000;
-  Values.MenuIconColumnFace := $FFCBC6BD;
   Values.MenuSelection := $FF17375E;
   Values.MenuSelectionText := $FFFFFFFF;
 end;
@@ -110,27 +104,10 @@ begin
   Values.InactiveTitleButtonGlyph := $FF000000;
   Values.DragOutlineDark := $FF35322D;
   Values.DragOutlineLight := $FFFFFFFF;
-
-  Values.HeaderBandStart := $FF17375E;
-  Values.HeaderBandEnd := $FF6A97C9;
-  Values.HeaderBandEdge := $FF35322D;
-  Values.HeaderBandText := $FFFFFFFF;
-  Values.NavyBandStart := $FF17375E;
-  Values.NavyBandEnd := $FF17375E;
-  Values.NavyBandEdge := $FF35322D;
-  Values.NavyBandText := $FFFFFFFF;
 end;
 
 procedure SetClassicShellColors(var Values: TTheme);
 begin
-  Values.ProgressTrough := $FFCBC6BD;
-  Values.ProgressSegment := $FF17375E;
-  Values.ProgressSegmentLight := $FF17375E;
-  Values.ProgressSegmentDark := $FF17375E;
-  Values.MarqueeStripe := $FF17375E;
-  Values.MarqueeStripeGap := $FFCBC6BD;
-  Values.ScrollTrough := $FFE5E3DE;
-
   Values.TaskbarFace := $FFCBC6BD;
   Values.TaskbarText := $FF000000;
   Values.TaskButtonActiveFace := $FFE2DED6;
@@ -156,10 +133,6 @@ begin
   Values.TitleGradientVertical := False;
   Values.TitleIcon := False;
   Values.TintedTitleButtons := False;
-  Values.DottedFocus := True;
-  Values.SegmentedProgress := True;
-  Values.BandedGroupBoxes := False;
-  Values.MenuIconColumn := False;
   Values.StartMenuBand := False;
   Values.TintedStartButton := False;
 end;
@@ -177,16 +150,46 @@ begin
   Values.ScrollBarWidth := 16;
   Values.MenuBarHeight := 19;
   Values.MenuItemHeight := 18;
-  Values.MenuIconColumnWidth := 0;
-  Values.HeaderBandHeight := 20;
-  Values.ProgressSegmentWidth := 8;
-  Values.ProgressSegmentGap := 2;
-  Values.MarqueeStripeWidth := 8;
   Values.StartMenuBandWidth := 0;
   Values.TitlePoints := 90;
   Values.TextPoints := 90;
   Values.TextFamily := 'dejavu-sans';
   Values.FixedFamily := 'terminus';
+end;
+
+{ Every control painting value as the controls were painted before the
+  new look. }
+procedure SetClassicControlLook(var Values: TTheme);
+begin
+  Values.ScaledBevelLines := False;
+  Values.HotButtonFace := $FFCBC6BD;
+  Values.PressedButtonFace := $FFCBC6BD;
+  Values.DefaultButtonOutline := 1;
+  Values.HeaderBandsShown := False;
+  Values.HeaderBandTop := $FFCBC6BD;
+  Values.HeaderBandBottom := $FFCBC6BD;
+  Values.HeaderBandEdge := $FF7E7A72;
+  Values.HeaderBandText := $FF000000;
+  Values.SectionBandTop := $FFCBC6BD;
+  Values.SectionBandBottom := $FFCBC6BD;
+  Values.SectionBandEdge := $FF7E7A72;
+  Values.SectionBandText := $FF000000;
+  Values.BandedGroupBody := $FFCBC6BD;
+  Values.ProgressTrough := $FFCBC6BD;
+  Values.ProgressBlock := $FF17375E;
+  Values.ProgressBlockLight := $FF17375E;
+  Values.MarqueeStripe := $FF17375E;
+  Values.MarqueeBackground := $FFCBC6BD;
+  Values.MenuIconColumnShown := False;
+  Values.MenuIconColumn := $FFCBC6BD;
+  Values.CalendarHeaderFilled := False;
+  Values.CalendarHeader := $FFCBC6BD;
+  Values.CalendarHeaderText := $FF000000;
+  Values.TooltipBorder := $FF35322D;
+  Values.StatusBarEtched := False;
+  Values.SplitterGrip := False;
+  { Half way between the face and the highlight. }
+  Values.ScrollTrack := $FFE5E3DE;
 end;
 
 function ClassicThemeValues: TTheme;
@@ -199,6 +202,7 @@ begin
   SetClassicShellColors(Result);
   SetClassicStyle(Result);
   SetClassicMetrics(Result);
+  SetClassicControlLook(Result);
 end;
 
 end.

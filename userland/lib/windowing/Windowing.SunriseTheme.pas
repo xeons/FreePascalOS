@@ -73,11 +73,7 @@ begin
   Values.FaceText := $FF000000;
   Values.DisabledText := $FF8C8CA6;
   Values.DisabledTextEmboss := $FFFFFFFF;
-  Values.HotFace := $FFE6E6F1;
-  Values.PressedFace := $FFC8C8DB;
-  Values.DefaultButtonFrame := $FF1E1E34;
   Values.Focus := $FF000000;
-  Values.PanelBody := $FFE3E3EF;
 
   Values.Field := $FFFFFFFF;
   Values.FieldText := $FF000000;
@@ -89,13 +85,11 @@ begin
 
   Values.Tooltip := $FFFFF7D2;
   Values.TooltipText := $FF000000;
-  Values.TooltipBorder := $FF4A4636;
 
   Values.MenuBar := Lavender;
   Values.MenuBarText := $FF000000;
   Values.Menu := $FFEEEEF6;
   Values.MenuText := $FF000000;
-  Values.MenuIconColumnFace := $FFDEDEEC;
   Values.MenuSelection := Navy;
   Values.MenuSelectionText := $FFFFFFFF;
 end;
@@ -121,27 +115,10 @@ begin
   Values.InactiveTitleButtonGlyph := $FF5E5948;
   Values.DragOutlineDark := $FF3A3A52;
   Values.DragOutlineLight := $FFFFE88A;
-
-  Values.HeaderBandStart := GoldTop;
-  Values.HeaderBandEnd := GoldBottom;
-  Values.HeaderBandEdge := GoldEdge;
-  Values.HeaderBandText := $FF141008;
-  Values.NavyBandStart := NavyTop;
-  Values.NavyBandEnd := NavyBottom;
-  Values.NavyBandEdge := NavyEdge;
-  Values.NavyBandText := $FFFFFFFF;
 end;
 
 procedure SetSunriseShellColors(var Values: TTheme);
 begin
-  Values.ProgressTrough := $FFF4F4F9;
-  Values.ProgressSegment := $FF2EA83A;
-  Values.ProgressSegmentLight := $FF86DE7E;
-  Values.ProgressSegmentDark := $FF1A7424;
-  Values.MarqueeStripe := $FF4C74DA;
-  Values.MarqueeStripeGap := $FFC4D2F4;
-  Values.ScrollTrough := $FFE9E9F3;
-
   Values.TaskbarFace := Lavender;
   Values.TaskbarText := $FF000000;
   Values.TaskButtonActiveFace := $FFEDEDF6;
@@ -167,10 +144,6 @@ begin
   Values.TitleGradientVertical := True;
   Values.TitleIcon := True;
   Values.TintedTitleButtons := True;
-  Values.DottedFocus := True;
-  Values.SegmentedProgress := True;
-  Values.BandedGroupBoxes := True;
-  Values.MenuIconColumn := True;
   Values.StartMenuBand := True;
   Values.TintedStartButton := True;
 end;
@@ -188,16 +161,44 @@ begin
   Values.ScrollBarWidth := 16;
   Values.MenuBarHeight := 19;
   Values.MenuItemHeight := 18;
-  Values.MenuIconColumnWidth := 22;
-  Values.HeaderBandHeight := 20;
-  Values.ProgressSegmentWidth := 9;
-  Values.ProgressSegmentGap := 2;
-  Values.MarqueeStripeWidth := 8;
   Values.StartMenuBandWidth := 26;
   Values.TitlePoints := 90;
   Values.TextPoints := 90;
   Values.TextFamily := 'dejavu-sans';
   Values.FixedFamily := 'terminus';
+end;
+
+{ How controls are painted in the new look. }
+procedure SetSunriseControlLook(var Values: TTheme);
+begin
+  Values.ScaledBevelLines := True;
+  Values.HotButtonFace := $FFE6E6F1;
+  Values.PressedButtonFace := $FFBDBDD0;
+  Values.DefaultButtonOutline := 2;
+  Values.HeaderBandsShown := True;
+  Values.HeaderBandTop := GoldTop;
+  Values.HeaderBandBottom := GoldBottom;
+  Values.HeaderBandEdge := GoldEdge;
+  Values.HeaderBandText := $FF141008;
+  Values.SectionBandTop := NavyTop;
+  Values.SectionBandBottom := NavyBottom;
+  Values.SectionBandEdge := NavyEdge;
+  Values.SectionBandText := $FFFFFFFF;
+  Values.BandedGroupBody := $FFE3E3EF;
+  Values.ProgressTrough := $FFF3F3F8;
+  Values.ProgressBlock := $FF2FA83A;
+  Values.ProgressBlockLight := $FF9BE69E;
+  Values.MarqueeStripe := $FF4F74D2;
+  Values.MarqueeBackground := $FFC4D2F2;
+  Values.MenuIconColumnShown := True;
+  Values.MenuIconColumn := $FFDDDDEA;
+  Values.CalendarHeaderFilled := True;
+  Values.CalendarHeader := Navy;
+  Values.CalendarHeaderText := $FFFFFFFF;
+  Values.TooltipBorder := $FF2A2A38;
+  Values.StatusBarEtched := True;
+  Values.SplitterGrip := True;
+  Values.ScrollTrack := $FFE9E9F2;
 end;
 
 function SunriseThemeValues: TTheme;
@@ -210,6 +211,7 @@ begin
   SetSunriseShellColors(Result);
   SetSunriseStyle(Result);
   SetSunriseMetrics(Result);
+  SetSunriseControlLook(Result);
 end;
 
 end.

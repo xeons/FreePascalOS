@@ -130,9 +130,9 @@ begin
   Line := Scaled(14);
   { A header band (or a plain heading). }
   Band := MakeRectangle(Client.Left + Scaled(4), Client.Top + Scaled(4), RectangleWidth(Client) - Scaled(8), Line);
-  if FShown.BandedGroupBoxes then
+  if FShown.HeaderBandsShown then
   begin
-    FillVerticalGradient(Canvas, Band, FShown.HeaderBandStart, FShown.HeaderBandEnd);
+    FillVerticalGradient(Canvas, Band, FShown.HeaderBandTop, FShown.HeaderBandBottom);
     DrawTextInBox(Canvas, ControlBoldFace, ' Section', Band, AlignTextLeft, FShown.HeaderBandText);
   end
   else
@@ -154,7 +154,7 @@ begin
   while X + Scaled(6) < Progress.Left + RectangleWidth(Progress) * 2 div 3 do
   begin
     FillVerticalGradient(Canvas, MakeRectangle(X, Progress.Top + Scaled(2), Scaled(6), Line - Scaled(4)),
-      FShown.ProgressSegmentLight, FShown.ProgressSegmentDark);
+      FShown.ProgressBlockLight, FShown.ProgressBlock);
     X := X + Scaled(8);
   end;
   Button := MakeRectangle(Progress.Left, List.Bottom - Line - Scaled(6), RectangleWidth(Progress), Line + Scaled(6));

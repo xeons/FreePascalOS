@@ -62,10 +62,10 @@ begin
   FillVerticalGradient(Canvas, Inner, Theme.Field, Theme.Face);
   StripHeight := RectangleHeight(Inner) div 3;
   Strip := MakeRectangle(Inner.Left, Inner.Top, RectangleWidth(Inner), StripHeight);
-  FillVerticalGradient(Canvas, Strip, Theme.NavyBandStart, Theme.NavyBandEnd);
+  FillVerticalGradient(Canvas, Strip, Theme.SectionBandTop, Theme.SectionBandBottom);
   { A spot of gold at the strip's right: the window's buttons. }
   FillRectangle(Canvas, MakeRectangle(Strip.Right - 2 * Pixel - Pixel, Strip.Top + (StripHeight - 2 * Pixel) div 2,
-    2 * Pixel, 2 * Pixel), Theme.HeaderBandStart);
+    2 * Pixel, 2 * Pixel), Theme.HeaderBandTop);
 end;
 
 end.
