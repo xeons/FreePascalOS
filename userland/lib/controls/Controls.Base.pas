@@ -33,6 +33,20 @@
   Sizes in pixels come from the display's scale (Scaled), so controls
   are the same size on every display.
 
+  Layout: a control's place comes from its parent. Docked (Align) it
+  takes a strip along a side of what is left of the parent, in
+  DockOrder, its Margins kept clear; otherwise it is where its Bounds put
+  it within the parent's client area (inside the parent's ContentPadding), and
+  its Anchors keep its distances to those edges as the parent resizes.
+  A control with AutoSize takes its PreferredSize; minimum and maximum
+  sizes are kept by every way of placing it. Containers of their own
+  (Controls.FlowPanel, Controls.TablePanel, Controls.SplitContainer)
+  place their children themselves (PlaceChildren). A change asks for a
+  layout (RequestLayout) rather than doing one: it is done once, before
+  the window paints or anyone reads a place, so many changes cost one
+  layout and nothing is painted half laid out. Everything is in logical
+  units and laid out again in pixels when the scale changes.
+
   A control whose caption can carry a mnemonic ("&OK", Controls.Text)
   says whether a character picks it (MatchesMnemonic) and what picking
   it does (ActivateMnemonic); the window asks them on Alt and a letter.
@@ -66,12 +80,34 @@ uses
   Drawing.Rectangles,
   Drawing.Canvas,
   Windowing.Messages,
-  Controls.DragData;
+  Controls.DragData,
+  Controls.LayoutRules;
 
 type
   TControl = class;
 
-  TAlign = (AlignNone, AlignTop, AlignBottom, AlignLeft, AlignRight, AlignClient);
+  { The layout types (Controls.LayoutRules), here too so a program needs
+    only this unit to use them. }
+  TAlign = Controls.LayoutRules.TAlign;
+  TAnchorKind = Controls.LayoutRules.TAnchorKind;
+  TAnchors = Controls.LayoutRules.TAnchors;
+  TSpacing = Controls.LayoutRules.TSpacing;
+  TSizeConstraints = Controls.LayoutRules.TSizeConstraints;
+  TSize = Controls.LayoutRules.TSize;
+
+const
+  AlignNone = Controls.LayoutRules.AlignNone;
+  AlignTop = Controls.LayoutRules.AlignTop;
+  AlignBottom = Controls.LayoutRules.AlignBottom;
+  AlignLeft = Controls.LayoutRules.AlignLeft;
+  AlignRight = Controls.LayoutRules.AlignRight;
+  AlignClient = Controls.LayoutRules.AlignClient;
+  akLeft = Controls.LayoutRules.akLeft;
+  akTop = Controls.LayoutRules.akTop;
+  akRight = Controls.LayoutRules.akRight;
+  akBottom = Controls.LayoutRules.akBottom;
+
+type
 
   TControlEvent = procedure(Sender: TControl) of object;
   TPointerEvent = procedure(Sender: TControl; X, Y: LongInt; Button: LongWord) of object;
@@ -103,6 +139,17 @@ type
     { Control starts dragging Data (the host owns it from now on). False
       if no drag can start now (no button is held). }
     function BeginDrag(Control: TControl; Data: TDragData): Boolean; virtual; abstract;
+  private
+    FRoot: TControl;
+    FLayoutPending: Boolean;
+    FLayingOut: Boolean;
+  public
+    { Places whatever asked to be laid out again (RequestLayout) since the
+      last time: the window calls this before painting and before it
+      looks for the control under the pointer, and reading a control's
+      Bounds or PixelBounds does it too, so they are always up to date. }
+    procedure PerformPendingLayout;
+    property LayoutPending: Boolean read FLayoutPending;
   end;
 
   TControl = class(TMessageReceiver)
@@ -113,6 +160,20 @@ type
     FBounds: TRectangle;
     FPixelBounds: TRectangle;
     FAlign: TAlign;
+    FDockOrder: LongInt;
+    FAnchors: TAnchors;
+    FMargin: TSpacing;
+    FPadding: TSpacing;
+    FConstraints: TSizeConstraints;
+    FAutoSize: Boolean;
+    { The parent's client area (logical units, and pixels at the scale
+      then) that Bounds were given for: what anchors keep distances to. }
+    FHasAnchorReference: Boolean;
+    FAnchorReference: TSize;
+    FAnchorReferencePixels: TSize;
+    FAnchorReferenceScale: LongWord;
+    FLayoutPending: Boolean;
+    FChildLayoutPending: Boolean;
     FVisible: Boolean;
     FEnabled: Boolean;
     FCanFocus: Boolean;
@@ -137,7 +198,23 @@ type
     procedure SetEnabled(Value: Boolean);
     procedure SetText(const Value: string);
     procedure SetAlign(Value: TAlign);
+    procedure SetDockOrder(Value: LongInt);
+    procedure SetAnchors(Value: TAnchors);
+    procedure SetMargin(const Value: TSpacing);
+    procedure SetPadding(const Value: TSpacing);
+    procedure SetAutoSize(Value: Boolean);
+    procedure SetMinWidth(Value: LongInt);
+    procedure SetMinHeight(Value: LongInt);
+    procedure SetMaxWidth(Value: LongInt);
+    procedure SetMaxHeight(Value: LongInt);
+    function GetBounds: TRectangle;
+    function GetPixelBounds: TRectangle;
     function GetFocused: Boolean;
+    procedure ArrangeContents;
+    procedure ArrangePending;
+    procedure ApplyAutoSize;
+    procedure BakeAnchoredPlace;
+    function AnchoredPlacement(Child: TControl; const Area: TRectangle): TRectangle;
   protected
     procedure Paint(var Canvas: TCanvas); virtual;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); virtual;
@@ -152,10 +229,37 @@ type
     procedure FocusChanged; virtual;
     procedure EnabledChanged; virtual;
     procedure TextChanged; virtual;
-    { The size changed: place the children (the default docks those with
-      an Align to a side, in order, then gives what is left to those
-      aligned to the client area, whenever they were made). }
+    { The size changed: place the children (PlaceChildren, in the client
+      area), then lay each of them out in turn. }
     procedure Layout; virtual;
+    { Where the children go: the control's pixels, less its ContentPadding (a
+      scrolling panel less its scroll bars). }
+    function ClientPixelArea: TRectangle; virtual;
+    { Places the children in Area (pixels). The default docks those with
+      an Align to a side, in DockOrder (lower first, the outermost; equal
+      ones in the order they were made), each with its Margins kept clear,
+      gives what is left to those aligned to the client area, and puts
+      the rest where their Bounds and Anchors say (relative to Area; a
+      margin does not move them). AutoSize children take their
+      PreferredSize first; every child's constraints are kept. }
+    procedure PlaceChildren(const Area: TRectangle); virtual;
+    { Places one child that is not docked again (UpdatePixelBounds): by
+      default by its anchors; a container arranging its children itself
+      places them all again. }
+    procedure PlaceOneChild(Child: TControl); virtual;
+    { Puts Child at Rectangle (window pixels): for PlaceChildren. }
+    procedure PlaceChild(Child: TControl; const Rectangle: TRectangle);
+    { The size a child wants when laid out (logical units): its
+      PreferredSize if AutoSize (taken into its Bounds), else its Bounds',
+      within its constraints. }
+    function ChildSize(Child: TControl): TSize;
+    { What the children need (logical units, ContentPadding included): the
+      furthest right and bottom of those placed by bounds, and the strips
+      of the docked ones around the largest client one. }
+    function ChildrenExtent: TSize;
+    { Moves Child to the end of the children: drawn last, found first
+      under the pointer (a scrolling panel's bars stay over its content). }
+    procedure KeepChildOnTop(Child: TControl);
     { Tells the parent (MessageNotify) and OnNotify listeners. }
     procedure Notify(Code: LongWord);
     procedure Click; virtual;
@@ -176,7 +280,8 @@ type
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Selects the scale of the window it is in. }
     procedure PrepareToReceive; override;
-    { Logical units, within the parent. }
+    { Logical units, within the parent's client area (inside its
+      ContentPadding); where anchors keep the control as the parent resizes. }
     procedure SetBounds(Left, Top, Width, Height: LongInt);
     { The same without asking the parent to lay out again: for a parent's
       own Layout, placing its children (which it then lays out). }
@@ -189,8 +294,27 @@ type
       none. }
     function ControlAt(X, Y: LongInt): TControl;
     { Places itself (pixels) within the parent's pixels, then lays out its
-      children. }
+      children, now. }
     procedure UpdatePixelBounds;
+    { Its children are to be placed again: done once, before the window
+      next paints or someone looks at a place (coalesced: any number of
+      changes, one layout). A control with AutoSize asks its parent too,
+      as its own size may change with its children. Changing Bounds,
+      Align, Visible, Anchors, Margins, ContentPadding, constraints or AutoSize
+      asks for this already. }
+    procedure RequestLayout;
+    { The size the control would like, in logical units: what its
+      content needs (a caption's text and the frame around it, a
+      container's children). The default is its size now. AutoSize makes
+      the control take it. }
+    function PreferredSize: TSize; virtual;
+    { A descendant got the focus (the window tells each of its ancestors,
+      nearest first): a scrolling panel brings it into view. }
+    procedure DescendantFocused(Control: TControl); virtual;
+    { Margins and ContentPadding in pixels at the scale now. }
+    function ScaledMargin: TSpacing;
+    function ScaledPadding: TSpacing;
+    function ScaledConstraints: TSizeConstraints;
     { Draws itself and its children (the window calls this). }
     procedure PaintAll(var Canvas: TCanvas);
     { The window's handlers call these. }
@@ -225,10 +349,32 @@ type
     property Host: TControlHost read FHost;
     property ChildCount: LongInt read GetChildCount;
     property Children[Index: LongInt]: TControl read GetChild;
-    property Bounds: TRectangle read FBounds;
+    property Bounds: TRectangle read GetBounds;
     { Where it is in the window's surface. }
-    property PixelBounds: TRectangle read FPixelBounds;
+    property PixelBounds: TRectangle read GetPixelBounds;
     property Align: TAlign read FAlign write SetAlign;
+    { Among the docked children of a parent: lower docks first (nearer the
+      parent's edge); equal ones in the order they were made. }
+    property DockOrder: LongInt read FDockOrder write SetDockOrder;
+    { The parent's edges it keeps its distance to ([akLeft, akTop] unless
+      set): left and right together stretch it, neither keeps its middle
+      at the same share of the parent. Only when not docked. }
+    property Anchors: TAnchors read FAnchors write SetAnchors;
+    { Logical units kept clear around it when docked, flowed or in a
+      table cell (Margins and ContentPadding rather than Margin and
+      Padding: many controls have constants of those names). }
+    property Margins: TSpacing read FMargin write SetMargin;
+    { Logical units inside it that its children keep clear of. }
+    property ContentPadding: TSpacing read FPadding write SetPadding;
+    { Takes its PreferredSize (again whenever its text, its children or
+      the display's scale change). }
+    property AutoSize: Boolean read FAutoSize write SetAutoSize;
+    { Logical units; a maximum of 0 is none. Every layout keeps them. }
+    property MinWidth: LongInt read FConstraints.MinWidth write SetMinWidth;
+    property MinHeight: LongInt read FConstraints.MinHeight write SetMinHeight;
+    property MaxWidth: LongInt read FConstraints.MaxWidth write SetMaxWidth;
+    property MaxHeight: LongInt read FConstraints.MaxHeight write SetMaxHeight;
+    property Constraints: TSizeConstraints read FConstraints;
     property Visible: Boolean read FVisible write SetVisible;
     property Enabled: Boolean read FEnabled write SetEnabled;
     property CanFocus: Boolean read FCanFocus write FCanFocus;
@@ -265,6 +411,8 @@ function CreateRootControl(Host: TControlHost): TControl;
 { The control's place on the canvas of the window: the canvas's origin
   moved to its top left and its clip narrowed to it. }
 procedure EnterControl(var Canvas: TCanvas; Control: TControl);
+{ Logical units for Pixels, rounded up (a text's width, so it fits). }
+function PixelsToLogicalCeiling(Pixels: LongInt): LongInt;
 
 implementation
 
@@ -272,6 +420,45 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Text;
+
+const
+  { Layouts that ask for more layout (a scroll bar shown as the content
+    grew) are run again, this many times at most. }
+  MaximumLayoutRounds = 4;
+
+function PixelsToLogicalCeiling(Pixels: LongInt): LongInt;
+begin
+  Result := Unscaled(Pixels);
+  while Scaled(Result) < Pixels do
+    Inc(Result);
+end;
+
+{ --- TControlHost --------------------------------------------------------------- }
+
+procedure TControlHost.PerformPendingLayout;
+var
+  Rounds: LongInt;
+begin
+  if FLayingOut or not FLayoutPending then
+    Exit;
+  if FRoot = nil then
+  begin
+    FLayoutPending := False;
+    Exit;
+  end;
+  FLayingOut := True;
+  try
+    Rounds := 0;
+    while FLayoutPending and (Rounds < MaximumLayoutRounds) do
+    begin
+      FLayoutPending := False;
+      FRoot.ArrangePending;
+      Inc(Rounds);
+    end;
+  finally
+    FLayingOut := False;
+  end;
+end;
 
 { --- TControl ----------------------------------------------------------------- }
 
@@ -281,11 +468,13 @@ begin
   FChildren := TList.Create;
   FVisible := True;
   FEnabled := True;
+  FAnchors := DefaultAnchors;
   FParent := AParent;
   if FParent <> nil then
   begin
     FHost := FParent.FHost;
     FParent.FChildren.Add(Self);
+    FParent.RequestLayout;
   end;
 end;
 
@@ -294,11 +483,16 @@ begin
   while FChildren.Count > 0 do
     TControl(FChildren[FChildren.Count - 1]).Free;
   if FHost <> nil then
+  begin
     FHost.ControlRemoved(Self);
+    if FHost.FRoot = Self then
+      FHost.FRoot := nil;
+  end;
   if FParent <> nil then
   begin
     FParent.FChildren.Remove(Self);
     FParent.Invalidate;
+    FParent.RequestLayout;
   end;
   FChildren.Free;
   inherited Destroy;
@@ -314,107 +508,449 @@ begin
   Result := FChildren.Count;
 end;
 
+function TControl.GetBounds: TRectangle;
+begin
+  if (FHost <> nil) and FHost.FLayoutPending then
+    FHost.PerformPendingLayout;
+  Result := FBounds;
+end;
+
+function TControl.GetPixelBounds: TRectangle;
+begin
+  if (FHost <> nil) and FHost.FLayoutPending then
+    FHost.PerformPendingLayout;
+  Result := FPixelBounds;
+end;
+
 procedure TControl.SetBounds(Left, Top, Width, Height: LongInt);
 begin
-  if FParent <> nil then
-    FParent.Invalidate;
   FBounds := MakeRectangle(Left, Top, Width, Height);
+  FHasAnchorReference := False;
   if FParent <> nil then
-    FParent.UpdatePixelBounds;
-  Invalidate;
+    FParent.RequestLayout;
 end;
 
 procedure TControl.AssignBounds(Left, Top, Width, Height: LongInt);
 begin
   FBounds := MakeRectangle(Left, Top, Width, Height);
+  FHasAnchorReference := False;
 end;
 
 procedure TControl.SetPixelBounds(const Area: TRectangle);
 begin
   FPixelBounds := Area;
   FBounds := MakeRectangle(0, 0, Unscaled(RectangleWidth(Area)), Unscaled(RectangleHeight(Area)));
-  Layout;
-  if Assigned(FOnResize) then
-    FOnResize(Self);
+  ArrangeContents;
   Invalidate;
 end;
 
 procedure TControl.UpdatePixelBounds;
-var
-  Origin: TRectangle;
 begin
-  { The root keeps the pixels it was given. }
-  if FParent = nil then
-  begin
+  { The root keeps the pixels it was given; docked controls were placed
+    by the parent's Layout. }
+  if (FParent <> nil) and (FAlign = AlignNone) then
+    FParent.PlaceOneChild(Self);
+  ArrangeContents;
+end;
+
+{ Lays out the children (now) and says the size may have changed. }
+procedure TControl.ArrangeContents;
+var
+  Outermost: Boolean;
+begin
+  FLayoutPending := False;
+  FChildLayoutPending := False;
+  { A layout started directly (the window resized) is not interrupted by
+    the pending ones (reading a place while laying out). }
+  Outermost := (FHost <> nil) and not FHost.FLayingOut;
+  if Outermost then
+    FHost.FLayingOut := True;
+  try
     Layout;
-    Exit;
+  finally
+    if Outermost then
+      FHost.FLayingOut := False;
   end;
-  Origin := FParent.FPixelBounds;
-  if FAlign = AlignNone then
-    FPixelBounds := MakeRectangle(Origin.Left + Scaled(FBounds.Left), Origin.Top + Scaled(FBounds.Top),
-      Scaled(RectangleWidth(FBounds)), Scaled(RectangleHeight(FBounds)));
-  { (Docked controls were placed by the parent's Layout.) }
-  Layout;
   if Assigned(FOnResize) then
     FOnResize(Self);
 end;
 
-procedure TControl.Layout;
+{ The parts of the tree that asked for layout, laid out now. }
+procedure TControl.ArrangePending;
+var
+  Index: LongInt;
+begin
+  if FLayoutPending then
+  begin
+    Invalidate;
+    ArrangeContents;
+    Invalidate;
+  end
+  else if FChildLayoutPending then
+  begin
+    FChildLayoutPending := False;
+    Index := 0;
+    while Index < FChildren.Count do
+    begin
+      TControl(FChildren[Index]).ArrangePending;
+      Inc(Index);
+    end;
+  end;
+end;
+
+procedure TControl.RequestLayout;
+var
+  Ancestor: TControl;
+begin
+  if FHost = nil then
+  begin
+    UpdatePixelBounds;
+    Exit;
+  end;
+  FLayoutPending := True;
+  FHost.FLayoutPending := True;
+  Ancestor := FParent;
+  while (Ancestor <> nil) and not Ancestor.FChildLayoutPending do
+  begin
+    Ancestor.FChildLayoutPending := True;
+    Ancestor := Ancestor.FParent;
+  end;
+  { Its size follows its children: its parent places it again. }
+  if FAutoSize and (FParent <> nil) and not FParent.FLayoutPending then
+    FParent.RequestLayout;
+end;
+
+function TControl.ScaledMargin: TSpacing;
+begin
+  Result := MakeSpacing(Scaled(FMargin.Left), Scaled(FMargin.Top), Scaled(FMargin.Right), Scaled(FMargin.Bottom));
+end;
+
+function TControl.ScaledPadding: TSpacing;
+begin
+  Result := MakeSpacing(Scaled(FPadding.Left), Scaled(FPadding.Top), Scaled(FPadding.Right),
+    Scaled(FPadding.Bottom));
+end;
+
+function TControl.ScaledConstraints: TSizeConstraints;
+begin
+  Result := MakeConstraints(Scaled(FConstraints.MinWidth), Scaled(FConstraints.MinHeight),
+    Scaled(FConstraints.MaxWidth), Scaled(FConstraints.MaxHeight));
+end;
+
+function TControl.ClientPixelArea: TRectangle;
+begin
+  Result := DeflateBySpacing(FPixelBounds, ScaledPadding);
+end;
+
+function TControl.PreferredSize: TSize;
+begin
+  Result := MakeSize(RectangleWidth(FBounds), RectangleHeight(FBounds));
+end;
+
+procedure TControl.DescendantFocused(Control: TControl);
+begin
+end;
+
+{ An AutoSize control takes its preferred size; anchored to the right
+  (bottom) only, it grows to the left (upwards). }
+procedure TControl.ApplyAutoSize;
+var
+  Size: TSize;
+  Left: LongInt;
+  Top: LongInt;
+begin
+  if not FAutoSize then
+    Exit;
+  Size := ConstrainSize(PreferredSize, FConstraints);
+  Left := FBounds.Left;
+  Top := FBounds.Top;
+  if (akRight in FAnchors) and not (akLeft in FAnchors) then
+    Left := FBounds.Right - Size.cx;
+  if (akBottom in FAnchors) and not (akTop in FAnchors) then
+    Top := FBounds.Bottom - Size.cy;
+  FBounds := MakeRectangle(Left, Top, Size.cx, Size.cy);
+end;
+
+function TControl.ChildSize(Child: TControl): TSize;
+begin
+  Child.ApplyAutoSize;
+  Result := ConstrainSize(MakeSize(RectangleWidth(Child.FBounds), RectangleHeight(Child.FBounds)),
+    Child.FConstraints);
+end;
+
+function TControl.ChildrenExtent: TSize;
 var
   Index: LongInt;
   Child: TControl;
-  Remaining: TRectangle;
-  Size: LongInt;
+  Size: TSize;
+  Placed: TSize;
+  Sides: TSize;
+  Inner: TSize;
 begin
-  Remaining := FPixelBounds;
+  Placed := MakeSize(0, 0);
+  Sides := MakeSize(0, 0);
+  Inner := MakeSize(0, 0);
   for Index := 0 to FChildren.Count - 1 do
   begin
     Child := TControl(FChildren[Index]);
     if not Child.FVisible then
       Continue;
-    case Child.FAlign of
-      AlignTop:
-        begin
-          Size := Scaled(RectangleHeight(Child.FBounds));
-          Child.FPixelBounds := MakeRectangle(Remaining.Left, Remaining.Top, RectangleWidth(Remaining), Size);
-          Remaining.Top := Remaining.Top + Size;
-        end;
-      AlignBottom:
-        begin
-          Size := Scaled(RectangleHeight(Child.FBounds));
-          Child.FPixelBounds := MakeRectangle(Remaining.Left, Remaining.Bottom - Size, RectangleWidth(Remaining), Size);
-          Remaining.Bottom := Remaining.Bottom - Size;
-        end;
-      AlignLeft:
-        begin
-          Size := Scaled(RectangleWidth(Child.FBounds));
-          Child.FPixelBounds := MakeRectangle(Remaining.Left, Remaining.Top, Size, RectangleHeight(Remaining));
-          Remaining.Left := Remaining.Left + Size;
-        end;
-      AlignRight:
-        begin
-          Size := Scaled(RectangleWidth(Child.FBounds));
-          Child.FPixelBounds := MakeRectangle(Remaining.Right - Size, Remaining.Top, Size, RectangleHeight(Remaining));
-          Remaining.Right := Remaining.Right - Size;
-        end;
+    Size := ChildSize(Child);
+    if Child.FAlign = AlignNone then
+    begin
+      if Child.FBounds.Left + Size.cx > Placed.cx then
+        Placed.cx := Child.FBounds.Left + Size.cx;
+      if Child.FBounds.Top + Size.cy > Placed.cy then
+        Placed.cy := Child.FBounds.Top + Size.cy;
+      Continue;
     end;
+    Size := MakeSize(Size.cx + SpacingWidth(Child.FMargin), Size.cy + SpacingHeight(Child.FMargin));
+    case Child.FAlign of
+      AlignTop, AlignBottom:
+        begin
+          Sides.cy := Sides.cy + Size.cy;
+          if Size.cx > Inner.cx then
+            Inner.cx := Size.cx;
+        end;
+      AlignLeft, AlignRight:
+        begin
+          Sides.cx := Sides.cx + Size.cx;
+          if Size.cy > Inner.cy then
+            Inner.cy := Size.cy;
+        end;
+    else
+      begin
+        if Size.cx > Inner.cx then
+          Inner.cx := Size.cx;
+        if Size.cy > Inner.cy then
+          Inner.cy := Size.cy;
+      end;
+    end;
+  end;
+  Result := MakeSize(Sides.cx + Inner.cx, Sides.cy + Inner.cy);
+  if Placed.cx > Result.cx then
+    Result.cx := Placed.cx;
+  if Placed.cy > Result.cy then
+    Result.cy := Placed.cy;
+  Result := MakeSize(Result.cx + SpacingWidth(FPadding), Result.cy + SpacingHeight(FPadding));
+end;
+
+procedure TControl.PlaceChild(Child: TControl; const Rectangle: TRectangle);
+begin
+  Child.FPixelBounds := Rectangle;
+end;
+
+procedure TControl.KeepChildOnTop(Child: TControl);
+var
+  Index: LongInt;
+begin
+  Index := FChildren.IndexOf(Child);
+  if (Index >= 0) and (Index <> FChildren.Count - 1) then
+    FChildren.Move(Index, FChildren.Count - 1);
+end;
+
+{ Where a child that is not docked goes in Area: by its anchors, from the
+  client area it was placed in (captured the first time the area has a
+  size). }
+function TControl.AnchoredPlacement(Child: TControl; const Area: TRectangle): TRectangle;
+var
+  ClientWidth: LongInt;
+  ClientHeight: LongInt;
+  Size: TSize;
+  Placed: TRectangle;
+  ReferenceWidth: LongInt;
+  ReferenceHeight: LongInt;
+begin
+  ClientWidth := RectangleWidth(Area);
+  ClientHeight := RectangleHeight(Area);
+  Size := ChildSize(Child);
+  if not Child.FHasAnchorReference and (ClientWidth > 0) and (ClientHeight > 0) then
+  begin
+    Child.FHasAnchorReference := True;
+    Child.FAnchorReference := MakeSize(Unscaled(ClientWidth), Unscaled(ClientHeight));
+    Child.FAnchorReferencePixels := MakeSize(ClientWidth, ClientHeight);
+    Child.FAnchorReferenceScale := DisplayScale;
+  end;
+  Placed := MakeRectangle(Scaled(Child.FBounds.Left), Scaled(Child.FBounds.Top), Scaled(Size.cx), Scaled(Size.cy));
+  if not Child.FHasAnchorReference then
+    Exit(OffsetRectangle(Placed, Area.Left, Area.Top));
+  if Child.FAnchorReferenceScale = DisplayScale then
+  begin
+    ReferenceWidth := Child.FAnchorReferencePixels.cx;
+    ReferenceHeight := Child.FAnchorReferencePixels.cy;
+  end
+  else
+  begin
+    ReferenceWidth := Scaled(Child.FAnchorReference.cx);
+    ReferenceHeight := Scaled(Child.FAnchorReference.cy);
+  end;
+  Result := OffsetRectangle(AnchoredRectangle(Child.FAnchors, Placed, ReferenceWidth, ReferenceHeight, ClientWidth,
+    ClientHeight, Child.ScaledConstraints), Area.Left, Area.Top);
+end;
+
+{ The children docked to a side, in the order they dock: by DockOrder,
+  then as made. }
+function DockingOrder(Children: TList): TList;
+var
+  Index: LongInt;
+  Position: LongInt;
+  Child: TControl;
+begin
+  Result := TList.Create;
+  for Index := 0 to Children.Count - 1 do
+  begin
+    Child := TControl(Children[Index]);
+    if not Child.Visible or (Child.Align = AlignNone) or (Child.Align = AlignClient) then
+      Continue;
+    Position := Result.Count;
+    while (Position > 0) and (TControl(Result[Position - 1]).DockOrder > Child.DockOrder) do
+      Dec(Position);
+    Result.Insert(Position, Child);
+  end;
+end;
+
+procedure TControl.PlaceChildren(const Area: TRectangle);
+var
+  Index: LongInt;
+  Child: TControl;
+  Remaining: TRectangle;
+  Docked: TList;
+  Size: TSize;
+begin
+  Remaining := Area;
+  Docked := DockingOrder(FChildren);
+  try
+    for Index := 0 to Docked.Count - 1 do
+    begin
+      Child := TControl(Docked[Index]);
+      Size := ChildSize(Child);
+      Child.FPixelBounds := DockRectangle(Child.FAlign, Remaining, Child.ScaledMargin,
+        MakeSize(Scaled(Size.cx), Scaled(Size.cy)), Child.ScaledConstraints);
+    end;
+  finally
+    Docked.Free;
   end;
   for Index := 0 to FChildren.Count - 1 do
   begin
     Child := TControl(FChildren[Index]);
     if Child.FVisible and (Child.FAlign = AlignClient) then
-      Child.FPixelBounds := Remaining;
+      Child.FPixelBounds := DockRectangle(AlignClient, Remaining, Child.ScaledMargin, MakeSize(0, 0),
+        Child.ScaledConstraints)
+    else if Child.FAlign = AlignNone then
+      Child.FPixelBounds := AnchoredPlacement(Child, Area);
   end;
+end;
+
+procedure TControl.PlaceOneChild(Child: TControl);
+begin
+  Child.FPixelBounds := AnchoredPlacement(Child, ClientPixelArea);
+end;
+
+procedure TControl.Layout;
+var
+  Index: LongInt;
+begin
+  PlaceChildren(ClientPixelArea);
   for Index := 0 to FChildren.Count - 1 do
-    TControl(FChildren[Index]).UpdatePixelBounds;
+    TControl(FChildren[Index]).ArrangeContents;
 end;
 
 procedure TControl.SetAlign(Value: TAlign);
 begin
+  if FAlign = Value then
+    Exit;
   FAlign := Value;
   if FParent <> nil then
-    FParent.UpdatePixelBounds;
-  Invalidate;
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetDockOrder(Value: LongInt);
+begin
+  if FDockOrder = Value then
+    Exit;
+  FDockOrder := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+{ Where it is now becomes its Bounds, for new anchors to keep distances
+  from (rather than from where it was first put). }
+procedure TControl.BakeAnchoredPlace;
+var
+  Area: TRectangle;
+begin
+  if not FHasAnchorReference or (FParent = nil) or (FAlign <> AlignNone) then
+    Exit;
+  Area := FParent.ClientPixelArea;
+  FBounds := MakeRectangle(Unscaled(FPixelBounds.Left - Area.Left), Unscaled(FPixelBounds.Top - Area.Top),
+    Unscaled(RectangleWidth(FPixelBounds)), Unscaled(RectangleHeight(FPixelBounds)));
+  FHasAnchorReference := False;
+end;
+
+procedure TControl.SetAnchors(Value: TAnchors);
+begin
+  if FAnchors = Value then
+    Exit;
+  if (FHost <> nil) and FHost.FLayoutPending then
+    FHost.PerformPendingLayout;
+  BakeAnchoredPlace;
+  FAnchors := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetMargin(const Value: TSpacing);
+begin
+  if SpacingsAreEqual(FMargin, Value) then
+    Exit;
+  FMargin := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetPadding(const Value: TSpacing);
+begin
+  if SpacingsAreEqual(FPadding, Value) then
+    Exit;
+  FPadding := Value;
+  RequestLayout;
+end;
+
+procedure TControl.SetAutoSize(Value: Boolean);
+begin
+  if FAutoSize = Value then
+    Exit;
+  FAutoSize := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetMinWidth(Value: LongInt);
+begin
+  FConstraints.MinWidth := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetMinHeight(Value: LongInt);
+begin
+  FConstraints.MinHeight := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetMaxWidth(Value: LongInt);
+begin
+  FConstraints.MaxWidth := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
+end;
+
+procedure TControl.SetMaxHeight(Value: LongInt);
+begin
+  FConstraints.MaxHeight := Value;
+  if FParent <> nil then
+    FParent.RequestLayout;
 end;
 
 procedure TControl.SetVisible(Value: Boolean);
@@ -424,7 +960,7 @@ begin
   FVisible := Value;
   if FParent <> nil then
   begin
-    FParent.UpdatePixelBounds;
+    FParent.RequestLayout;
     FParent.Invalidate;
   end;
 end;
@@ -445,6 +981,9 @@ begin
   FText := Value;
   TextChanged;
   Invalidate;
+  { Its preferred size follows its text. }
+  if FAutoSize and (FParent <> nil) then
+    FParent.RequestLayout;
 end;
 
 function TControl.GetFocused: Boolean;
@@ -469,6 +1008,8 @@ var
   Index: LongInt;
   Child: TControl;
 begin
+  if (FParent = nil) and (FHost <> nil) and FHost.FLayoutPending then
+    FHost.PerformPendingLayout;
   { Last added on top. }
   for Index := FChildren.Count - 1 downto 0 do
   begin
@@ -750,6 +1291,8 @@ function CreateRootControl(Host: TControlHost): TControl;
 begin
   Result := TRootControl.Create(nil);
   Result.FHost := Host;
+  if Host <> nil then
+    Host.FRoot := Result;
 end;
 
 end.

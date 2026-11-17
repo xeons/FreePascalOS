@@ -146,6 +146,7 @@ type
     procedure SetPopup(Value: TControlWindow);
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
+    procedure BeforePaint; override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
     procedure KeyUp(Code, Modifiers: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
@@ -331,6 +332,12 @@ begin
     FRoot.PaintAll(Canvas);
 end;
 
+procedure TControlWindow.BeforePaint;
+begin
+  { The layouts asked for since the last paint, done once. }
+  FHost.PerformPendingLayout;
+end;
+
 procedure TControlWindow.Resized;
 begin
   { In pixels exactly: through logical units a pixel might be lost. }
@@ -352,6 +359,7 @@ end;
 procedure TControlWindow.FocusControl(Control: TControl);
 var
   Previous: TControl;
+  Ancestor: TControl;
 begin
   if Control = FFocused then
     Exit;
@@ -361,6 +369,15 @@ begin
     Previous.HandleFocusChanged;
   if Control <> nil then
     Control.HandleFocusChanged;
+  { A scrolling panel it is in brings it into view. }
+  Ancestor := nil;
+  if Control <> nil then
+    Ancestor := Control.Parent;
+  while Ancestor <> nil do
+  begin
+    Ancestor.DescendantFocused(Control);
+    Ancestor := Ancestor.Parent;
+  end;
 end;
 
 procedure TControlWindow.ActiveChanged;

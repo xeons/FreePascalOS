@@ -120,6 +120,10 @@ type
     { Draws Area (surface pixels; the canvas is clipped to what needs it).
       The default fills with the theme's face colour. }
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); virtual;
+    { Just before the window paints what is invalid (at its scale): a
+      last chance to change what is to be painted (the controls lay
+      themselves out here). }
+    procedure BeforePaint; virtual;
     procedure KeyDown(Code, Character, Modifiers: LongWord); virtual;
     procedure KeyUp(Code, Modifiers: LongWord); virtual;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); virtual;
@@ -617,9 +621,12 @@ var
   Bounds: TRectangle;
   Message: TWindowMessage;
 begin
-  if RegionIsEmpty(FInvalid) or (FSurface.Pixels = nil) then
+  if FSurface.Pixels = nil then
     Exit;
   PrepareToReceive;
+  BeforePaint;
+  if RegionIsEmpty(FInvalid) then
+    Exit;
   Bounds := RegionBounds(FInvalid);
   BeginCanvas(Canvas, FSurface);
   SetCanvasClip(Canvas, FInvalid);
@@ -673,6 +680,10 @@ begin
       Dec(TimerCount);
       Exit;
     end;
+end;
+
+procedure TWindow.BeforePaint;
+begin
 end;
 
 procedure TWindow.Paint(var Canvas: TCanvas; const Area: TRectangle);
