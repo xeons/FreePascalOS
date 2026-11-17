@@ -94,6 +94,10 @@ procedure HalHaltOtherProcessors;
   if neither worked. }
 procedure HalResetMachine;
 
+{ Powers the machine off without ACPI: there is no such way on a PC, so
+  this returns at once (it powers off through ACPI's S5, Io.AcpiSleep). }
+procedure HalPowerOff;
+
 procedure HalWriteDescription;
 
 type
@@ -284,6 +288,10 @@ begin
   WritePortByte(ResetControlPort, ResetControlHardReset);
   for Tries := 1 to 1000000 do
     CpuRelax;
+end;
+
+procedure HalPowerOff;
+begin
 end;
 
 procedure HalHaltOtherProcessors;

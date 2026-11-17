@@ -52,6 +52,12 @@
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make clean      Remove all build output
+#
+#   make toolchain ARCH=arm64  Build the AArch64 cross compiler from the Free
+#                   Pascal sources (build/toolchain/ppcrossa64)
+#   make ARCH=arm64 Build the AArch64 loader and kernel (build/arm64/esp)
+#   make run ARCH=arm64  Boot it in QEMU's virt machine (GICv2, Cortex-A72)
+#   make arm64-test Boot smoke test of the AArch64 build (not in make test)
 
 ARCH ?= amd64
 
@@ -281,11 +287,30 @@ RUN_SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk-interactive.img
 $(RUN_SYSTEM_DISK): $(SYSTEM_DISK)
 	cp $(SYSTEM_DISK) $@
 
+ifeq ($(ARCH),arm64)
+# The AArch64 build boots without the disks for now (user mode on AArch64
+# is the next step of the port).
+run: esp
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY)
+
+debug: esp
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug
+else
 run: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 
 debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
+endif
+
+# Boot smoke test of the AArch64 build in QEMU's virt machine (not part of
+# make test until qemu-system-aarch64 and the edk2 AArch64 firmware are
+# standard requirements): the kernel must reach the end of its start-up
+# with every self test passed, with the firmware at EL1 and at EL2.
+.PHONY: arm64-test
+arm64-test:
+	@$(MAKE) --no-print-directory ARCH=arm64 esp
+	scripts/test-qemu-arm64.sh build/arm64/esp
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

@@ -19,7 +19,8 @@
 {
   The serial port as an input device: /dev/serial0.
 
-  COM1 raises IRQ 4 when received data is waiting. The handler empties
+  The port (COM1 on IRQ 4; on AArch64 the SPCR UART on its GSI) raises
+  its interrupt when received data is waiting. The handler empties
   the port's receive buffer into the device's input (Io.InputDevice);
   the console keeps the device open and reads it (Io.ConsoleInput).
 
