@@ -17,18 +17,24 @@
 }
 
 {
-  Icons: a program's own (a surface) or a stock one drawn as shapes.
+  Icons: a program's own (a surface) or a stock one.
 
-  Stock icons (a text document, a folder, a plain file, a program, a
-  fixed or removable disk, the home folder, the computer:
-  Controls.FileIcons has the newer ones) are drawn for the box they are
-  given, so they are sharp at any size and display scale; there are no
-  pictures of them to load. A symbolic link shows as what it points to
-  with a small arrow over it (DrawIconOverlay). Their shapes are anti-aliased, so slanted
-  edges are smooth while straight ones stay on whole pixels. A
-  program's own icon is a surface scaled smoothly to the box (and
-  blended by its alpha), so one picture serves the small and the large
-  size.
+  A stock icon (a text document, a folder and the folders with an
+  emblem, files of each kind, a program, the drives, the home folder,
+  the computer...) is the icon theme's picture of it (StockIconNames:
+  /usr/share/icons/NAME.ico, Controls.IconTheme) at the box's size in
+  pixels, so the size made for the display's scale. Without the
+  theme's file the older stock icons are drawn as shapes for the box
+  (here and in Controls.FileIcons: sharp at any size, anti-aliased),
+  and the newer ones as the nearest older one (a music folder as a
+  folder, a picture as a plain file).
+
+  Marks go over an icon (DrawIconOverlay): a symbolic link shows as what
+  it points to with a small arrow over it; locked, synced, updating and
+  needing attention have their marks too (only the link's is drawn
+  without the theme). A program's own icon is a surface scaled smoothly
+  to the box (and blended by its alpha), so one picture serves the
+  small and the large size.
 }
 unit Controls.Icons;
 
@@ -43,9 +49,28 @@ uses
 
 type
   TStockIcon = (StockIconDocument, StockIconFolder, StockIconFile, StockIconProgram, StockIconFixedDisk,
-    StockIconRemovableDisk, StockIconHome, StockIconComputer);
+    StockIconRemovableDisk, StockIconHome, StockIconComputer,
+    { Only in the theme (drawn as an older one without it). }
+    StockIconFolderOpen, StockIconFolderDocuments, StockIconFolderPictures, StockIconFolderMusic,
+    StockIconFolderVideos, StockIconFolderDownloads, StockIconFolderProjects, StockIconFolderPublic,
+    StockIconFolderTemplates, StockIconFolderCompressed, StockIconRichDocument, StockIconSpreadsheet,
+    StockIconPresentation, StockIconPdf, StockIconImage, StockIconAudio, StockIconVideo, StockIconArchive,
+    StockIconSettingsFile, StockIconFont, StockIconUnknown, StockIconOpticalDisk, StockIconUsbDisk,
+    StockIconMemoryCard, StockIconSolidStateDisk, StockIconNetwork, StockIconInternet, StockIconTrash,
+    StockIconTrashFull, StockIconFavourites, StockIconApplications);
   { Marks drawn over an icon. }
-  TIconOverlay = (OverlayNone, OverlayLink);
+  TIconOverlay = (OverlayNone, OverlayLink, OverlayLocked, OverlaySynced, OverlayUpdating, OverlayAttention);
+
+const
+  { The theme's name of each stock icon (its file is NAME.ico). }
+  StockIconNames: array[TStockIcon] of string = ('file-text', 'folder', 'file', 'file-executable', 'drive',
+    'drive-removable', 'home', 'computer', 'folder-open', 'folder-documents', 'folder-pictures', 'folder-music',
+    'folder-videos', 'folder-downloads', 'folder-projects', 'folder-public', 'folder-templates', 'folder-compressed',
+    'file-document', 'file-spreadsheet', 'file-presentation', 'file-pdf', 'file-image', 'file-audio', 'file-video',
+    'file-archive', 'file-settings', 'file-font', 'file-unknown', 'drive-optical', 'drive-usb', 'memory-card',
+    'drive-ssd', 'network', 'internet', 'trash-empty', 'trash-full', 'favourites', 'applications');
+  OverlayNames: array[TIconOverlay] of string = ('', 'overlay-shortcut', 'overlay-locked', 'overlay-synced',
+    'overlay-updating', 'overlay-attention');
 
 const
   { Sizes in logical units: small icons (beside text), large icons
@@ -54,6 +79,9 @@ const
   LargeIconSize = 32;
 
 procedure DrawStockIcon(const Canvas: TCanvas; Icon: TStockIcon; const Box: TRectangle);
+{ The older stock icon drawn as shapes for Icon when the theme has no
+  picture of it. }
+function DrawnStockIcon(Icon: TStockIcon): TStockIcon;
 { Icon if it has pixels, else the stock icon Fallback. }
 procedure DrawIcon(const Canvas: TCanvas; const Icon: TSurface; Fallback: TStockIcon; const Box: TRectangle);
 procedure DrawIconOverlay(const Canvas: TCanvas; Overlay: TIconOverlay; const Box: TRectangle);
@@ -65,7 +93,8 @@ uses
   Drawing.Rasterizer,
   Drawing.SmoothShapes,
   Drawing.Scaling,
-  Controls.FileIcons;
+  Controls.FileIcons,
+  Controls.IconTheme;
 
 const
   { The stock icons are designed on a grid this many steps across. }
@@ -159,11 +188,35 @@ begin
   DrawOutlinedShape(Canvas, Body, FolderColor, FolderOutlineColor);
 end;
 
+function DrawnStockIcon(Icon: TStockIcon): TStockIcon;
+begin
+  case Icon of
+    StockIconFolderOpen..StockIconFolderCompressed:
+      Result := StockIconFolder;
+    StockIconRichDocument..StockIconPdf:
+      Result := StockIconDocument;
+    StockIconImage..StockIconUnknown, StockIconTrash, StockIconTrashFull:
+      Result := StockIconFile;
+    StockIconOpticalDisk, StockIconSolidStateDisk:
+      Result := StockIconFixedDisk;
+    StockIconUsbDisk, StockIconMemoryCard:
+      Result := StockIconRemovableDisk;
+    StockIconNetwork, StockIconInternet:
+      Result := StockIconComputer;
+    StockIconFavourites, StockIconApplications:
+      Result := StockIconProgram;
+  else
+    Result := Icon;
+  end;
+end;
+
 procedure DrawStockIcon(const Canvas: TCanvas; Icon: TStockIcon; const Box: TRectangle);
 begin
   if RectangleIsEmpty(Box) then
     Exit;
-  case Icon of
+  if DrawThemeIcon(Canvas, StockIconNames[Icon], Box) then
+    Exit;
+  case DrawnStockIcon(Icon) of
     StockIconDocument: DrawDocument(Canvas, Box);
     StockIconFolder: DrawFolder(Canvas, Box);
     StockIconFile: DrawBlankPage(Canvas, Box);
@@ -172,12 +225,18 @@ begin
     StockIconRemovableDisk: DrawRemovableDisk(Canvas, Box);
     StockIconHome: DrawHome(Canvas, Box);
     StockIconComputer: DrawComputer(Canvas, Box);
+  else
+    DrawBlankPage(Canvas, Box);
   end;
 end;
 
 procedure DrawIconOverlay(const Canvas: TCanvas; Overlay: TIconOverlay; const Box: TRectangle);
 begin
-  if (Overlay = OverlayLink) and not RectangleIsEmpty(Box) then
+  if (Overlay = OverlayNone) or RectangleIsEmpty(Box) then
+    Exit;
+  if DrawThemeIcon(Canvas, OverlayNames[Overlay], Box) then
+    Exit;
+  if Overlay = OverlayLink then
     DrawLinkOverlay(Canvas, Box);
 end;
 

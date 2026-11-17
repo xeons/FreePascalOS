@@ -85,7 +85,8 @@ uses
   Controls.Text,
   Controls.Labels,
   Controls.Buttons,
-  Controls.Toggles;
+  Controls.Toggles,
+  Controls.IconTheme;
 
 const
   Margin = 12;
@@ -113,8 +114,14 @@ type
     procedure Paint(var Canvas: TCanvas); override;
   end;
 
-{ The signs are anti-aliased: round and slanted edges come out smooth at
-  any size; the marks' upright bars stay on whole pixels. }
+const
+  { The theme's icon of each sign (drawn as shapes without it). }
+  SignIconNames: array[TMessageSign] of string = ('', 'dialog-information', 'dialog-warning', 'dialog-error',
+    'dialog-question');
+
+{ The theme's picture of the sign at the control's size; without it the
+  sign is drawn anti-aliased: round and slanted edges come out smooth at
+  any size, the marks' upright bars stay on whole pixels. }
 procedure TSignControl.Paint(var Canvas: TCanvas);
 var
   Size: LongInt;
@@ -128,6 +135,8 @@ var
 begin
   Size := RectangleHeight(PixelBounds);
   Box := MakeRectangle(0, 0, Size, Size);
+  if (FSign <> SignNone) and DrawThemeIcon(Canvas, SignIconNames[FSign], Box) then
+    Exit;
   Middle := Size div 2;
   Stroke := Size div 8;
   case FSign of

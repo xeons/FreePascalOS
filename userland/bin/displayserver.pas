@@ -52,8 +52,8 @@
   protocol), Server.Input and Server.Scale (changing the scale);
   Server.WindowMoves (copying a moved window), Server.TitleButtons and
   Server.DoubleClicks (title bars), Server.MouseSettings,
-  Server.PointerShapes, Server.PointerFiles and Server.PointerAreas
-  (the pointer's shapes); Server.WindowStates (minimizing and the
+  Server.PointerShapes, Server.PointerFiles, Server.PointerPictures and
+  Server.PointerAreas (the pointer's shapes); Server.WindowStates (minimizing and the
   shell's commands), Server.Shell (the shell's list of windows),
   Server.WorkAreas (what the taskbar leaves), Server.Notifications
   (the notification area's icons), Server.ScreenLock (the screen lock
@@ -82,6 +82,7 @@ uses
   Server.Scale,
   Server.Shell,
   Server.PointerFiles,
+  Server.PointerPictures,
   Server.RememberedSettings,
   Server.LiveSettings,
   Server.WindowMoves;
@@ -95,6 +96,7 @@ var
   Port: Int64;
   Error: LongInt;
   PointerFilesRead: LongInt;
+  PointerPicturesRead: LongInt;
 
 procedure ServeForever;
 var
@@ -173,6 +175,7 @@ begin
     FailWithError(1, LongInt(-Port), Format('the port %s', [WindowingPortName]));
   InitializeCursor;
   PointerFilesRead := LoadPointerFiles;
+  PointerPicturesRead := LoadPointerPictures;
   ApplyRememberedSettings;
   StartFollowingSettings;
   AddDamage(DesktopBounds);
@@ -180,8 +183,8 @@ begin
   SayOtherScreens;
   WriteString(StandardOutput, Format('displayserver: ready (%ux%u, %u DPI, scale %u%%)'#10,
     [Screens[0].Device.Width, Screens[0].Device.Height, Screens[0].Dpi, Screens[0].ScalePercent]));
-  WriteString(StandardOutput, Format('displayserver: %d of %d pointer shapes from %s'#10,
-    [PointerFilesRead, PointerShapeCount, PointerDirectory]));
+  WriteString(StandardOutput, Format('displayserver: %d of %d pointer shapes from %s, %d with pictures'#10,
+    [PointerFilesRead, PointerShapeCount, PointerDirectory, PointerPicturesRead]));
   FlushStream(StandardOutput);
   { Clients can connect now: the session waits for this (when the
     service manager started the server). }

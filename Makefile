@@ -124,7 +124,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -223,7 +223,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
-		imaging-controls-test esp $(TEST_DISK) \
+		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -581,6 +581,25 @@ imaging-controls-test: $(IMAGING_CONTROLS_TEST)
 	@$(IMAGING_CONTROLS_TEST) > build/tools/imaging-controls-test.out || \
 		{ grep -A1 FAIL build/tools/imaging-controls-test.out; echo "IMAGING CONTROLS TEST FAILED (build/tools/imaging-controls-test.out)"; exit 1; }
 	@tail -n 1 build/tools/imaging-controls-test.out
+
+# The icon theme and the pointer's pictures as the build draws them
+# (userland/icons): every file at every size, decoding with alpha, and
+# libcontrols' lookup of the size for a logical size and scale
+# (Controls.IconFiles), on the host with libimage.
+ICON_TEST := build/tools/IconTest
+ICON_TEST_SOURCES := $(wildcard tools/IconTest/*.pas) userland/lib/controls/Controls.IconFiles.pas \
+	$(wildcard userland/lib/drawing/*.pas) $(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas))
+
+$(ICON_TEST): $(ICON_TEST_SOURCES)
+	@mkdir -p build/tools/icon-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/IconTest -Fuuserland/lib/controls -Fuuserland/lib/image \
+		-Fuuserland/lib/drawing -Fuuserland/lib/compression -FUbuild/tools/icon-test-units -o$@ \
+		tools/IconTest/IconTest.pas
+
+icon-test: $(ICON_TEST) $(ICONS_STAMP)
+	@$(ICON_TEST) $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT) > build/tools/icon-test.out || \
+		{ grep -A3 FAIL build/tools/icon-test.out; echo "ICON TEST FAILED (build/tools/icon-test.out)"; exit 1; }
+	@tail -n 1 build/tools/icon-test.out
 
 clean:
 	rm -rf build

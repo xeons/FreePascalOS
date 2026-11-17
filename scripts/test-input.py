@@ -590,6 +590,16 @@ def screen_pixel(x, y):
     return take_screen()(x, y)
 
 
+def is_blue(colour, margin):
+    """A clearly blue pixel ('rrggbb'): blue above red by margin and not
+    below green. Icons are drawn smoothly from the icon theme's pictures,
+    so their colours are told apart this way rather than exactly."""
+    if len(colour) != 6:
+        return False
+    red, green, blue = (int(colour[i:i + 2], 16) for i in (0, 2, 4))
+    return blue - red >= margin and blue >= green
+
+
 # The display device: QEMU's EDID says 325x203 mm, which at 1280 pixels
 # across is 100 DPI. A program filling it shows on the screen, with its
 # frame a quarter inch (25 pixels) in; once it ends the console's screen
@@ -717,7 +727,7 @@ def drag(from_x, from_y, to_x, to_y):
 type_on_serial(b'displayserver --check-moves &\r')
 server_ready = wait_for('displayserver: ready (1280x800, 100 DPI, scale 100%)', 20)
 checks.append(('display server: the pointer\'s shapes read from files',
-               wait_for('displayserver: 7 of 7 pointer shapes from /lib/pointers', 10)))
+               wait_for('displayserver: 11 of 11 pointer shapes from /lib/pointers, 11 with pictures', 10)))
 type_on_serial(b'wintest -t First -x 100 -y 100 > /tmp/w1.log &\r')
 time.sleep(1.5)
 type_on_serial(b'wintest -t Second -x 250 -y 200 -c D0E8F0 -b > /tmp/w2.log &\r')
@@ -726,16 +736,18 @@ pixel = take_screen()
 checks.append(('display server: two windows, stacked, the top one active',
                server_ready and pixel(400, 300) == 'd0e8f0' and pixel(150, 150) == 'f0e8d0' and
                pixel(249, 185) == '17375e' and pixel(99, 85) == '7c7a76'))
-# The text beam's hotspot is in the middle of its stem: its top bar, 7
-# pixels up, is black either side of a white middle. The arrow's tip is
-# black, the pixel below and right of it white.
+# The pointer is drawn from its 32 pixel pictures at 100% (the build
+# draws them, /lib/pointers/*.cur). The text beam's hotspot is in the
+# middle of its stem, one white pixel between black ones: so it is 7
+# pixels up. The arrow's left edge below its tip is black, the pixel
+# inside it (one right, four down) white.
 point_tablet_at(320, 330)
 beam = take_screen()
 point_tablet_at(480, 330)
 arrow = take_screen()
 checks.append(('pointer shapes: the text beam over a window\'s pointer area, the arrow beside it',
                beam(319, 323) == '000000' and beam(320, 323) == 'ffffff' and beam(321, 323) == '000000' and
-               arrow(480, 330) == '000000' and arrow(481, 332) == 'ffffff' and arrow(319, 323) == 'd0e8f0'))
+               arrow(480, 331) == '000000' and arrow(481, 334) == 'ffffff' and arrow(319, 323) == 'd0e8f0'))
 drag(300, 190, 400, 240)
 pixel = take_screen()
 checks.append(('display server: a window dragged by its title bar',
@@ -845,7 +857,7 @@ time.sleep(0.5)
 pixel = take_screen()
 type_on_serial(b'mousesettings -s 10; m=DONE; echo SPEED $m\r')
 checks.append(('mouse settings: the speed multiplies relative motion',
-               speed_set and pixel(680, 500) == '000000' and pixel(681, 502) == 'ffffff' and
+               speed_set and pixel(680, 501) == '000000' and pixel(681, 504) == 'ffffff' and
                pixel(600, 500) == '2f5f7a' and wait_for('SPEED DONE', 10)))
 type_on_serial(b'kill %1; wait; m=DONE; echo SERVER $m\r')
 checks.append(('display server: ended, the console has the screen again',
@@ -1012,7 +1024,7 @@ press('alt-n')
 press('x')
 time.sleep(0.5)
 # Over the edit box (196-396 x 92-114) the pointer is the text beam: its
-# top bar, 7 pixels above the hotspot, black either side of the middle.
+# stem, 7 pixels above the hotspot, black either side of the middle.
 point_tablet_at(350, 103)
 time.sleep(0.5)
 pixel = take_screen()
@@ -1278,9 +1290,9 @@ checks.append(('controls tour: list view sorted by a header (as numbers)',
 checks.append(('controls tour: list view selection with Ctrl+click and Shift+click',
                tour_ok and b'selected notes.txt,picture.bmp' in log_from_here and
                b'selected tour,picture.bmp' in log_from_here))
-# The document icon's lines of text are this blue.
+# The document icon's lines of text are blue.
 checks.append(('controls tour: list view large icons',
-               tour_ok and b'view 3' in log_from_here and '5b87c0' in icon_pixels))
+               tour_ok and b'view 3' in log_from_here and any(is_blue(colour, 60) for colour in icon_pixels)))
 checks.append(('controls tour: checked list box (Space), numeric up/down (the wheel), a date from the calendar pop-up',
                tour_ok and b'checked Pears 1' in log_from_here and
                (b'quantity 6' in log_from_here or b'quantity 4' in log_from_here) and
@@ -1959,7 +1971,8 @@ checks.append(('terminal: the next window starts at the size the last one closed
 # The desktop shell (desktop): a wallpaper on both displays (its sky
 # starts 0f2c42 at the top), the taskbar along the bottom of the first (30 high: 770-799) with the
 # Start button, the clock and the shell's own notification icons (a
-# loudspeaker, then the network's); a second shell is refused. A window
+# loudspeaker with its blue sound waves, then the network's); a second
+# shell is refused. A window
 # (wintest First, with a notification icon of its own, the third) gets a taskbar button: a click
 # on the wallpaper takes the keyboard from it, a click on its button
 # gives it back, another minimizes it (it is hidden, the program told)
@@ -2023,8 +2036,8 @@ checks.append(('desktop: the clock shows the time',
                shell_started and clock_shown is not None and int(clock_shown.group(1)) < 24 and
                '000000' in near_pixels(first, place['clock'][0], place['clock'][1], 8)))
 checks.append(('desktop: the Start button and the shell\'s notification icon',
-               shell_started and '4a5360' in near_pixels(first, place['notification-1'][0],
-                                                          place['notification-1'][1], 7) and
+               shell_started and any(is_blue(colour, 80) for colour in
+                                     near_pixels(first, place['notification-1'][0], place['notification-1'][1], 7)) and
                first(place['start'][0], place['start'][1] - 9) == 'cbc6bd'))
 type_on_serial(b'desktop 2>&1; echo REFUSED-$?\r')
 checks.append(('desktop: a second shell is refused',

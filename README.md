@@ -308,9 +308,11 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
   Sans Mono come with the source (`userland/fonts`)
 - Python's Pillow (`python-pillow`) and FreeType (`freetype2`, which
   Pillow uses; or `python-freetype-py`), for the host tests' fixtures
+- Python's cairo bindings (`python-cairo`), which draw the icons and the
+  pointer's pictures when the system disk is built
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2`.
+`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
 
 ## Building and running
 
