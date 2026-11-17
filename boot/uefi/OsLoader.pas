@@ -45,6 +45,7 @@ uses
   Loader.KernelImage,
   Loader.Graphics,
   Loader.MemoryMap,
+  Loader.Clock,
   Loader.Arch.PageTables,
   Loader.Arch.Handoff;
 
@@ -171,6 +172,7 @@ begin
     PrintLine('Framebuffer: none (serial output only)');
 
   BootInformation^.AcpiRootPointer := FindAcpiRootPointer;
+  BootInformation^.FirmwareTime := ReadFirmwareTime;
   LoadKernelOptions(BootInformation^);
 
   PrintText('Loading ');

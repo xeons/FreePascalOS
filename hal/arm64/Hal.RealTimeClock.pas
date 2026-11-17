@@ -17,13 +17,16 @@
 }
 
 {
-  The real-time clock on AArch64: none yet.
+  The real-time clock on AArch64.
 
-  The Raspberry Pi 4 has no battery-backed clock (the Pi 5 has one, on
-  its RP1/PMIC); QEMU's virt machine has a PL031, which its ACPI tables
-  do not list. The UEFI runtime service GetTime would cover both once
-  the kernel calls runtime services. Until then the time starts at zero
-  and the network time (or the user) sets it.
+  The Raspberry Pi 4 has no battery-backed clock (its UEFI firmware
+  keeps the time in a variable; the Pi 5 has one, on its RP1/PMIC);
+  QEMU's virt machine has a PL031, which its ACPI tables do not list.
+  So the time comes from the firmware's GetTime runtime service, which
+  the loader calls before it hands over (TBootInformation.FirmwareTime):
+  the clock reads that time plus the time since the kernel started.
+  Setting it changes nothing kept: the network time (or the user) sets
+  the system's time again after the next start.
 }
 unit Hal.RealTimeClock;
 
@@ -42,9 +45,24 @@ procedure WriteRealTimeClock(Time: TUnixTime);
 
 implementation
 
+uses
+  Boot.Information,
+  Kernel.Arch.Cpu;
+
+var
+  ArchBootInformation: PBootInformation; external name 'ArchBootInformation';
+
 function ReadRealTimeClock: TUnixTime;
+var
+  Frequency: QWord;
 begin
   Result := 0;
+  if (ArchBootInformation = nil) or (ArchBootInformation^.FirmwareTime = 0) then
+    Exit;
+  Frequency := ReadCounterFrequency;
+  Result := TUnixTime(ArchBootInformation^.FirmwareTime);
+  if Frequency <> 0 then
+    Result := Result + TUnixTime(ReadTimeStampCounter div Frequency);
 end;
 
 procedure WriteRealTimeClock(Time: TUnixTime);

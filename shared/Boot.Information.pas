@@ -37,7 +37,7 @@ interface
 const
   { 'FPOSBOOT' in little endian ASCII. }
   BootInformationSignature = QWord($544F4F42534F5046);
-  BootInformationVersion = 3;
+  BootInformationVersion = 4;
 
   MaximumMemoryRegions = 512;
 
@@ -115,6 +115,11 @@ type
     { Options for the kernel, read by the loader from the optional file
       \FreePascalOS\options.txt. Words are separated by spaces. }
     CommandLine: array[0..CommandLineCapacity - 1] of Char;
+
+    { The time of day the firmware told the loader (its GetTime runtime
+      service), in seconds since 1970-01-01 UTC; zero if it did not. For
+      machines whose clock the kernel cannot read (AArch64). }
+    FirmwareTime: Int64;
 
     MemoryRegionCount: QWord;
     MemoryRegions: array[0..MaximumMemoryRegions - 1] of TMemoryRegion;

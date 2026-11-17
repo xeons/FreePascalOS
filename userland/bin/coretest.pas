@@ -105,6 +105,13 @@ type
 const
   WorkDirectory = '/tmp/coretest';
 
+  { What uname -m, arch and sysinfo call this processor architecture. }
+{$ifdef CPUAARCH64}
+  MachineName = 'aarch64';
+{$else}
+  MachineName = 'x86_64';
+{$endif}
+
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
   CommandTests: array[0..378] of TCommandTest = (
@@ -158,8 +165,8 @@ const
     (Command: '/bin/true; echo $?; /bin/false; echo $?'; ExpectedOutput: '0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'basename /usr/lib/libfoo.so .so; basename -a a/b c/d/'; ExpectedOutput: 'libfoo'#10'b'#10'd'#10; ExpectedStatus: 0),
     (Command: 'dirname /usr/lib/x dir/file file /'; ExpectedOutput: '/usr/lib'#10'dir'#10'.'#10'/'#10; ExpectedStatus: 0),
-    (Command: 'uname; uname -m'; ExpectedOutput: 'FreePascalOS'#10'x86_64'#10; ExpectedStatus: 0),
-    (Command: 'sysinfo -l | grep -c -e ''^OS: FreePascalOS x86_64$'' -e ''^Kernel: FreePascalOS '' -e ''^CPU: .* ([0-9]*)$'' -e ''^Memory: .* MiB'' -e ''^Disk (/): ''; sysinfo -C | grep -c ''|__|''; sysinfo -c | grep -c 107m; sysinfo extra 2>/dev/null; echo $?'; ExpectedOutput: '5'#10'1'#10'1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'uname; uname -m'; ExpectedOutput: 'FreePascalOS'#10 + MachineName + #10; ExpectedStatus: 0),
+    (Command: 'sysinfo -l | grep -c -e ''^OS: FreePascalOS ' + MachineName + '$'' -e ''^Kernel: FreePascalOS '' -e ''^CPU: .* ([0-9]*)$'' -e ''^Memory: .* MiB'' -e ''^Disk (/): ''; sysinfo -C | grep -c ''|__|''; sysinfo -c | grep -c 107m; sysinfo extra 2>/dev/null; echo $?'; ExpectedOutput: '5'#10'1'#10'1'#10'1'#10; ExpectedStatus: 0),
     (Command: 'date -d @0 +%Y-%m-%d_%H:%M:%S_%a_%j'; ExpectedOutput: '1970-01-01_00:00:00_Thu_001'#10; ExpectedStatus: 0),
     (Command: 'date -d @1700000000'; ExpectedOutput: 'Tue Nov 14 22:13:20 UTC 2023'#10; ExpectedStatus: 0),
     (Command: 'env -i A=1 B=2 /bin/env'; ExpectedOutput: 'A=1'#10'B=2'#10; ExpectedStatus: 0),
@@ -268,7 +275,7 @@ const
     (Command: 'id; id -un; id -g; whoami; groups; groups root'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root)'#10'root'#10'0'#10'root'#10'root'#10'root : root wheel'#10; ExpectedStatus: 0),
     (Command: 'id nobody; logname; users'; ExpectedOutput: 'uid=65534(nobody) gid=65534(nobody) groups=65534(nobody)'#10'root'#10'root'#10; ExpectedStatus: 0),
     (Command: 'who | cut -c 1-16; who -q'; ExpectedOutput: 'root     console'#10'root'#10'# users=1'#10; ExpectedStatus: 0),
-    (Command: 'test "$(nproc)" -ge 1 && test "$(nproc --ignore=99)" = 1 && echo processors; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: 'processors'#10'x86_64'#10'9'#10'up '#10; ExpectedStatus: 0),
+    (Command: 'test "$(nproc)" -ge 1 && test "$(nproc --ignore=99)" = 1 && echo processors; arch; hostid | wc -c; uptime -p | cut -c 1-3'; ExpectedOutput: 'processors'#10 + MachineName + #10'9'#10'up '#10; ExpectedStatus: 0),
     (Command: 'printenv HOME; printenv NOPE; echo $?'; ExpectedOutput: '/'#10'1'#10; ExpectedStatus: 0),
     (Command: 'tty; tty < /dev/null; echo $?'; ExpectedOutput: '/dev/console'#10'not a tty'#10'1'#10; ExpectedStatus: 0),
     (Command: 'stty | tail -n 1; stty -echo; stty | tail -n 1; stty sane; stty | tail -n 1'; ExpectedOutput: 'isig icanon echo'#10'isig icanon -echo'#10'isig icanon echo'#10; ExpectedStatus: 0),

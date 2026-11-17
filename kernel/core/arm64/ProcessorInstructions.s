@@ -125,6 +125,14 @@ ROUTINE ArchWriteUserTableRoot
     isb
     ret
 
+// Loads TTBR0_EL1 with a root and its ASID (bits 63-48); entries of
+// other ASIDs stay in the TLB (Memory.Arch.AddressSpaceIds).
+ROUTINE ArchLoadUserTableRoot
+    dsb     ish
+    msr     ttbr0_el1, x0
+    isb
+    ret
+
 ROUTINE ArchReadKernelTableRoot
     mrs     x0, ttbr1_el1
     ret
@@ -264,6 +272,38 @@ ROUTINE ArchCleanDataCache
     b.lo    1b
     dsb     sy
 2:  ret
+
+// Makes code written to [x0, x0 + x1) through the data side visible to
+// instruction fetches on every processor: cleans the data cache to the
+// point of unification, then invalidates the instruction cache lines
+// (by address: the instruction caches are physically indexed, so any
+// mapping of the memory does).
+ROUTINE ArchSynchronizeInstructionCache
+    cbz     x1, 3f
+    mrs     x3, ctr_el0
+    add     x5, x0, x1
+    ubfx    x4, x3, #16, #4               // DminLine: log2 of words
+    mov     x2, #4
+    lsl     x2, x2, x4
+    sub     x6, x2, #1
+    bic     x7, x0, x6
+1:  dc      cvau, x7
+    add     x7, x7, x2
+    cmp     x7, x5
+    b.lo    1b
+    dsb     ish
+    and     x4, x3, #0xF                  // IminLine
+    mov     x2, #4
+    lsl     x2, x2, x4
+    sub     x6, x2, #1
+    bic     x7, x0, x6
+2:  ic      ivau, x7
+    add     x7, x7, x2
+    cmp     x7, x5
+    b.lo    2b
+    dsb     ish
+    isb
+3:  ret
 
 ROUTINE ArchInvalidateInstructionCache
     dsb     ish

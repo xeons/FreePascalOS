@@ -86,6 +86,9 @@ function ReadMainId: QWord;
 function ReadCurrentExceptionLevel: QWord;
 procedure CleanDataCache(Address: Pointer; SizeInBytes: QWord);
 procedure InvalidateInstructionCache;
+{ Makes code just written to memory visible to instruction fetches (user
+  code pages before they are mapped executable). }
+procedure SynchronizeInstructionCache(Address: Pointer; SizeInBytes: QWord);
 
 { Firmware calls with the SMC calling convention (PSCI), by HVC or SMC. }
 function CallFirmwareHypervisor(FunctionId, Argument1, Argument2, Argument3: QWord): QWord;
@@ -115,6 +118,8 @@ function ArchReadMainId: QWord; external name 'ArchReadMainId';
 function ArchReadCurrentLevel: QWord; external name 'ArchReadCurrentLevel';
 procedure ArchCleanDataCache(Address: Pointer; SizeInBytes: QWord); external name 'ArchCleanDataCache';
 procedure ArchInvalidateInstructionCache; external name 'ArchInvalidateInstructionCache';
+procedure ArchSynchronizeInstructionCache(Address: Pointer; SizeInBytes: QWord);
+  external name 'ArchSynchronizeInstructionCache';
 function ArchCallFirmwareHypervisor(FunctionId, Argument1, Argument2, Argument3: QWord): QWord;
   external name 'ArchCallFirmwareHypervisor';
 function ArchCallFirmwareSecure(FunctionId, Argument1, Argument2, Argument3: QWord): QWord;
@@ -257,6 +262,11 @@ end;
 function CallFirmwareSecure(FunctionId, Argument1, Argument2, Argument3: QWord): QWord;
 begin
   Result := ArchCallFirmwareSecure(FunctionId, Argument1, Argument2, Argument3);
+end;
+
+procedure SynchronizeInstructionCache(Address: Pointer; SizeInBytes: QWord);
+begin
+  ArchSynchronizeInstructionCache(Address, SizeInBytes);
 end;
 
 end.

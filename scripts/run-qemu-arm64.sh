@@ -20,6 +20,7 @@
 # virt machine with the edk2 AArch64 UEFI firmware (AAVMF / QEMU_EFI).
 #
 #   run-qemu-arm64.sh <esp-directory> [--debug] [--headless] [disk-image]...
+#                     [-- qemu-argument...]
 #
 # The machine is chosen to match a Raspberry Pi 4 as far as QEMU can:
 # Cortex-A72 processors, a GICv2 interrupt controller (the Pi's GIC-400),
@@ -33,6 +34,11 @@
 #   VIRTUALIZATION=1  start the firmware at EL2, as the Pi's firmware
 #                  does, so the loader's drop to EL1 is exercised
 #   SEMIHOSTING=1  let the kernel end QEMU with an exit status (tests)
+#   SERIAL         where the serial port goes (default stdio, e.g.
+#                  file:log.txt)
+#
+# Arguments after "--" go to QEMU as they are (devices, a network of
+# its own instead of the default virtio network card).
 #
 # Serial output (the kernel debug log) appears on this terminal. With
 # --debug QEMU waits for GDB on localhost:1234.
@@ -43,10 +49,17 @@ esp_directory="$1"
 debug_mode=""
 headless=""
 disk_images=()
+qemu_arguments=()
+taking_qemu_arguments=""
 for argument in "${@:2}"; do
+    if [[ -n "$taking_qemu_arguments" ]]; then
+        qemu_arguments+=("$argument")
+        continue
+    fi
     case "$argument" in
         --debug) debug_mode=yes ;;
         --headless) headless=yes ;;
+        --) taking_qemu_arguments=yes ;;
         *) disk_images+=("$argument") ;;
     esac
 done
@@ -108,6 +121,7 @@ exec qemu-system-aarch64 \
     -drive if=none,format=raw,file=fat:rw:"$esp_directory",id=esp \
     -device virtio-blk-pci,drive=esp \
     -device ramfb \
-    -serial stdio \
+    -serial "${SERIAL:-stdio}" \
     -no-reboot \
-    "${extra_arguments[@]}"
+    "${extra_arguments[@]}" \
+    "${qemu_arguments[@]}"

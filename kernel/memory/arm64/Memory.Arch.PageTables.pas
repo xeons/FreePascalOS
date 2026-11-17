@@ -27,14 +27,23 @@
   "kernel address space" (root 0, or the kernel root) loads an empty
   table into TTBR0_EL1, so no user mapping stays reachable.
 
-  Kernel mappings are global; user mappings are not global, and since no
-  address space identifiers are used yet, switching TTBR0_EL1 invalidates
-  this processor's TLB. Removing a mapping invalidates it on every
-  processor at once (TLBI ...IS); the architecture independent shootdown
-  requests still go out (Kernel.InterProcessor) and only repeat that.
+  Kernel mappings are global; user mappings are not global and are
+  tagged with the address space's ASID (Memory.Arch.AddressSpaceIds), so
+  switching TTBR0_EL1 invalidates nothing. The ASID's context is kept in
+  the user root table's last entry, which translation never uses (user
+  space ends at 2^47), with its valid bit clear. Removing a mapping
+  invalidates it on every processor at once, for every ASID (TLBI
+  ...IS); the architecture independent shootdown requests still go out
+  (Kernel.InterProcessor) and only repeat that.
 
   Device memory is device-nGnRE, write-combining memory (framebuffers)
   normal non-cacheable, everything else normal write-back memory.
+
+  The instruction caches do not see what the kernel writes through the
+  data side (reading a program's code from its file, for one), so a page
+  mapped executable for user mode has its code synchronized first: its
+  data cache lines cleaned to the point of unification and its
+  instruction cache lines invalidated, on every processor.
 }
 unit Memory.Arch.PageTables;
 
@@ -152,7 +161,13 @@ uses
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Panic,
-  Kernel.Processors;
+  Kernel.Processors,
+  Memory.Arch.AddressSpaceIds;
+
+const
+  { The root table entry holding the address space's ASID context. }
+  AddressSpaceIdEntry = EntriesPerTable - 1;
+  AsidPosition = 48;
 
 type
   TPageTable = array[0..EntriesPerTable - 1] of QWord;
@@ -170,6 +185,8 @@ function ArchReadKernelTableRoot: QWord; external name 'ArchReadKernelTableRoot'
 function ArchReadUserTableRoot: QWord; external name 'ArchReadUserTableRoot';
 procedure ArchWriteUserTableRoot(Root: QWord); external name 'ArchWriteUserTableRoot';
 procedure ArchPublishTableEntry; external name 'ArchPublishTableEntry';
+procedure ArchLoadUserTableRoot(Root: QWord); external name 'ArchLoadUserTableRoot';
+procedure ArchInvalidateLocalPages; external name 'ArchInvalidateLocalPages';
 
 function KernelPageTableRoot: TPhysicalAddress;
 begin
@@ -309,6 +326,8 @@ begin
   if EntryIsValid(Table^[Index]) then
     KernelPanicWithCode(PanicPageTableFailure, 'virtual page is already mapped',
       VirtualAddress, Table^[Index], 0, 0);
+  if (Attributes and (MappingUser or MappingExecutable or MappingDevice)) = (MappingUser or MappingExecutable) then
+    SynchronizeInstructionCache(PhysicalToVirtual(PhysicalAddress), PageSize);
   Table^[Index] := EncodeEntry(VirtualAddress, PhysicalAddress, Attributes);
   ArchPublishTableEntry;
   ReleaseSpinLock(PageTableLock, PreviousLevel);
@@ -558,21 +577,31 @@ end;
 
 procedure ActivateAddressSpace(Root: TPhysicalAddress);
 var
-  UserTable: TPhysicalAddress;
+  TableRoot: QWord;
+  Asid: LongWord;
+  MustFlushTlb: Boolean;
 begin
   if Root = 0 then
     Root := KernelTopLevelTablePhysical;
+  MustFlushTlb := False;
   if Root = KernelTopLevelTablePhysical then
-    UserTable := EmptyUserTablePhysical
+    TableRoot := EmptyUserTablePhysical or (QWord(KernelAsid) shl AsidPosition)
   else
-    UserTable := Root;
-  if (ArchReadUserTableRoot and DescriptorAddressMask) <> UserTable then
+  begin
+    Asid := AddressSpaceIdFor(PtrUInt(TableFromRoot(Root)^[AddressSpaceIdEntry]), MustFlushTlb);
+    TableRoot := Root or (QWord(Asid) shl AsidPosition);
+  end;
+  if (ArchReadUserTableRoot <> TableRoot) or MustFlushTlb then
   begin
     { Published before the switch, so a processor removing a mapping of
       Root either sees it here or we see the removal
       (Kernel.InterProcessor). }
     CurrentProcessor^.ActiveAddressSpace := Root;
-    ArchWriteUserTableRoot(UserTable);
+    ArchLoadUserTableRoot(TableRoot);
+    { A new generation of ASIDs began since this processor last loaded
+      one: entries cached under the old numbers must go. }
+    if MustFlushTlb then
+      ArchInvalidateLocalPages;
   end;
 end;
 
