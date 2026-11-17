@@ -1885,9 +1885,73 @@ owner's moves after the pop-up closes go to the control under the
 pointer again. `MeasurePopupMenu` and `PopupMenuItemTop` tell how big a
 pop-up menu will be and where its items are, so it can be opened where
 it fits (above a taskbar). Tooltips (`Controls.Tooltips`): a line of
-text in a small box (`Theme.Tooltip`) without a frame, owned by the
-window it describes and placed above the point it is about, kept on the
-display; when to show and hide it is the caller's.
+text, or several (a line break starts one), in a small box
+(`Theme.Tooltip`) without a frame, owned by the window it describes and
+placed above the point it is about, kept on the display, or below the
+pointer when there is no room above (`ShowTooltipNear`).
+
+**Hints.** Every control has a `Hint` (several lines allowed) and
+`ShowHint` (True unless set); a control with parts says which part's
+hint is at a point and what area it is about (the virtual `HintAt`: the
+taskbar's notification area gives each icon's tooltip). Each control
+window has a hint manager (`TControlWindow.Hints`, `Controls.Hints`)
+told of the pointer's moves (not while a button is held), presses, keys,
+the pointer leaving and the window going inactive: the hint under the
+pointer is the deepest control's that has one, else its parent's (a
+control with `ShowHint` False shows none). The timing is a state
+machine over a clock it is given (`Controls.HintTiming`, tried on the
+host): shown after the pointer rests 500 ms (moving on the target starts
+the wait again), gone on another target, on leaving, on a press or key
+(then not again until another target) or after 10 s; from one shown
+hint to the next target the next shows after 50 ms (also within 500 ms
+of leaving one). `Hints.OnShown` tells the program (the taskbar and the
+controls tour print it).
+
+**Timers.** `TTimer` (`Controls.Timers`): `Interval` (ms), `Enabled`,
+`OnTimer`, an optional `Owner` whose display scale is selected first.
+Every timer of a program shares one kernel timer that the message loop
+waits on through `Windowing.HandleWatches`, set for the earliest due
+(`Controls.TimerQueue`), so timers take none of the loop's 32 window
+timers and need no window; a timer keeps its rhythm and skips ticks
+missed while the program was busy. The hint manager and picture boxes
+run on them.
+
+**Pictures.** libcontrols links libimage (and libcompression through
+it); a program with controls links them too. A paint box
+(`Controls.PaintBox`) is drawn by the program in `OnPaint`: no focus, no
+background unless `Color` is set (the parent shows through), painted
+whole when its size changes, `Repaint` paints at once. A picture box
+(`Controls.PictureBox`) shows a `TImage` it takes (`TakeImage`) or reads
+(`LoadFromFile`, with orientation and sRGB applied); an image's pixels
+count as logical units, so it is scaled with the display. `SizeMode`
+(`Controls.PictureGeometry`, tried on the host): normal (top left),
+stretch, zoom (fit, proportions kept, centred), centre, auto-size (the
+box takes the picture's size). A picture shown at another size is
+resampled (`Image.Resampling`: Mitchell for stills, triangle for
+animation frames) once per size and frame and kept. Transparent pixels
+are blended over what the parent drew. Animations (GIF, APNG, WebP, JPEG
+XL) play through `TFrameCompositor` on a `TTimer`, each frame for its
+delay (under 20 ms: 100 ms), `LoopCount` times (0: for ever); `Play`,
+`Stop`, `Playing`, `FrameIndex`; frames are only invalidated while the
+box is on the screen. A file that cannot be read leaves a placeholder
+(an outline, a file icon) with `ErrorText`. An image list
+(`Controls.ImageList`) holds pictures of one logical size, each in any
+number of pixel sizes: `Add`/`AddVariant` (copies), `AddIcon` (every
+size of an ICO file, the deepest entry of each, through
+`TIconDirectory`), `AddFromFile` (ICO or any image), `AddStrip` and
+`AddStripVariants` (pictures side by side). Drawing picks the exact
+pixel size, else the nearest larger, else the largest
+(`Controls.ImageSizes`, tried on the host), resampled when not exact,
+and greyed (disabled) or tinted with `Theme.Selection` (selected)
+(`Controls.ImageEffects`); each size and look is kept. `Draw` draws at
+the logical size scaled, `DrawInBox` fitted into a box. List views
+(`TListItemOwner.Images`, `TListItem.ImageIndex`), tree views
+(`TTreeView.Images`, `TTreeNode.ImageIndex`), toolbars (`TToolBar.Images`,
+`TToolButton.ImageIndex`, `AddImageButton`), tab controls (`Images`,
+`PageImageIndex`) and menus (`TMenuItem.Images` for the items below it,
+`ImageIndex`; drawn in the check column, a checked item framed) draw
+from them; without an image list or index the stock icons and surfaces
+draw as before. The list does not belong to the controls showing it.
 
 Dialogs (`Controls.Dialogs`): a dialog takes an owner, the window it asks
 for: it is centred on it (on the screen without one) and stays above it.
