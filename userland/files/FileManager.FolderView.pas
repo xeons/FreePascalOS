@@ -149,6 +149,7 @@ uses
   Controls.FileNames,
   Controls.FolderListing,
   Controls.FileLists,
+  Controls.FileTypeIcons,
   Util.Accounts,
   FileManager.FileTypes,
   FileManager.TimeTexts,
@@ -172,14 +173,17 @@ const
   { Items whose places are told (a test needs the first few). }
   MostPlacesTold = 60;
 
+{ The kind's icon; folders named for what they hold and files whose
+  extension tells their kind get that one's (Controls.FileTypeIcons). }
 function IconOfItem(const Item: TFolderItem): TStockIcon;
 begin
   case FileTypeOf(Item) of
-    FileTypeFolder: Result := StockIconFolder;
+    FileTypeFolder: Result := IconForFolderName(Item.Name);
     FileTypeProgram: Result := StockIconProgram;
-    FileTypeText: Result := StockIconDocument;
+    FileTypeText: Result := IconForFileName(Item.Name, StockIconDocument);
+    FileTypeBrokenLink: Result := StockIconUnknown;
   else
-    Result := StockIconFile;
+    Result := IconForFileName(Item.Name, StockIconFile);
   end;
 end;
 

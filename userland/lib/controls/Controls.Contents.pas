@@ -127,7 +127,10 @@ uses
   Controls.ChartHitTesting,
   Controls.ChartTooltip,
   Controls.ChartPainting,
-  Controls.Charts;
+  Controls.Charts,
+  Controls.IconFiles,
+  Controls.IconTheme,
+  Controls.FileTypeIcons;
 
 implementation
 

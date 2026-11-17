@@ -29,7 +29,9 @@
 #          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
 #   /var/lib/network  the network service's state of each interface
-#   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes
+#   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes (its
+#                   pictures too, from <user-build-directory>/pointers)
+#   /usr/share/icons   the icon theme (from <user-build-directory>/icons)
 #   /lib/firmware   firmware devices load (from firmware/, with its
 #                   vendors' licences and WHENCE)
 #   /tmp, /home
@@ -63,6 +65,18 @@ fi
 if compgen -G "$source_directory/userland/pointers/*.pointer" > /dev/null; then
     mkdir -p "$staging_directory/lib/pointers"
     cp "$source_directory"/userland/pointers/*.pointer "$staging_directory/lib/pointers/"
+fi
+# The pointer's pictures in several sizes (drawn at build time), which
+# the display server prefers to the patterns above.
+if compgen -G "$user_build_directory/pointers/*.cur" > /dev/null; then
+    mkdir -p "$staging_directory/lib/pointers"
+    cp "$user_build_directory"/pointers/*.cur "$staging_directory/lib/pointers/"
+fi
+# The icon theme (drawn at build time); programs draw their own pictures
+# for any icon missing here.
+if compgen -G "$user_build_directory/icons/*.ico" > /dev/null; then
+    mkdir -p "$staging_directory/usr/share/icons"
+    cp "$user_build_directory"/icons/*.ico "$user_build_directory"/icons/index.txt "$staging_directory/usr/share/icons/"
 fi
 # Firmware that drivers load into their devices, laid out as
 # linux-firmware is, licences and WHENCE included.

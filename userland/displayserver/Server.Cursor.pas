@@ -23,10 +23,13 @@
   0-65535 across the whole desktop, every screen side by side) events;
   it is in desktop pixels and stays on the screens, going from one to
   the next across their shared edge. Its shape (an arrow, resize arrows,
-  a text beam... Server.PointerShapes) is drawn from a small pattern,
-  each of its pixels a square of PointerScale pixels (the scale of the
-  screen it is on, rounded to a whole number), so it is about the same
-  size on every display; the pattern's hotspot is where the pointer is.
+  a text beam... Server.PointerShapes) is its picture for the scale of
+  the screen it is on (Server.PointerPictures: drawn in several sizes,
+  the nearest used and scaled when none fits, blended by its alpha), so
+  it is about the same size on every display. A shape without pictures
+  is drawn from its small pattern, each of its pixels a square of
+  PointerScale pixels (the scale rounded to a whole number). The
+  hotspot is where the pointer is.
 }
 unit Server.Cursor;
 
@@ -64,7 +67,9 @@ uses
   Abi.SystemCalls,
   Drawing.Colors,
   Windowing.Protocol,
+  Image.Surfaces,
   Server.PointerShapes,
+  Server.PointerPictures,
   Server.Screen,
   Server.Desktop;
 
@@ -74,12 +79,14 @@ const
 
 var
   PointerScale: LongInt;
+  PointerScalePercent: LongInt;
   Shape: LongWord;
 
 procedure FollowPointerScreen;
 begin
   KeepPointOnScreens(PointerX, PointerY);
-  PointerScale := (LongInt(NearestScreen(PointerX, PointerY)^.ScalePercent) + 50) div 100;
+  PointerScalePercent := NearestScreen(PointerX, PointerY)^.ScalePercent;
+  PointerScale := (PointerScalePercent + 50) div 100;
   if PointerScale < 1 then
     PointerScale := 1;
 end;
@@ -123,7 +130,11 @@ end;
 function CursorRectangle: TRectangle;
 var
   Pattern: ^TPointerPattern;
+  Picture: TPointerPicture;
 begin
+  if PointerPictureFor(Shape, PointerScalePercent, Picture) then
+    Exit(MakeRectangle(PointerX - Picture.HotspotX, PointerY - Picture.HotspotY, Picture.Image.Width,
+      Picture.Image.Height));
   Pattern := @PointerPatterns[Shape];
   Result := MakeRectangle(PointerX - Pattern^.HotspotX * PointerScale, PointerY - Pattern^.HotspotY * PointerScale,
     Pattern^.Width * PointerScale, Pattern^.Height * PointerScale);
@@ -136,7 +147,14 @@ var
   Row: LongInt;
   Column: LongInt;
   Color: TColor;
+  Picture: TPointerPicture;
 begin
+  if PointerPictureFor(Shape, PointerScalePercent, Picture) then
+  begin
+    DrawSurface(Canvas, ImageSurface(Picture.Image), MakeRectangle(0, 0, Picture.Image.Width, Picture.Image.Height),
+      PointerX - Picture.HotspotX, PointerY - Picture.HotspotY, True, AlphaOpaque);
+    Exit;
+  end;
   Pattern := @PointerPatterns[Shape];
   Bounds := CursorRectangle;
   for Row := 0 to Pattern^.Height - 1 do
