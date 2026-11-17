@@ -101,6 +101,7 @@ uses
   Controls.Calendar,
   Controls.DateTimePicker,
   Controls.ImageList,
+  Controls.IconTheme,
   Controls.Text,
   Controls.Toggles,
   Controls.Panels,
@@ -199,11 +200,13 @@ begin
   HelpMenu.Images := FImages;
   HelpMenu.Add('&About', @AboutChosen).ImageIndex := PicturePicture;
   FMenuBar.OnChoose := @MenuChosen;
+  { The toolbar's pictures are the icon theme's (none without it). }
   FToolBar := TToolBar.Create(Root);
-  FToolBar.AddButton('New', 40, @ToolClicked).Hint := 'Start a new document';
-  FToolBar.AddButton('Open', 44, @ToolClicked).Hint := 'Open a document';
+  FToolBar.Images := FImages;
+  FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-new'), 'New', 'Start a new document', 62, @ToolClicked);
+  FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-open'), 'Open', 'Open a document', 66, @ToolClicked);
   FToolBar.AddSeparator;
-  FBold := FToolBar.AddButton('Bold', 40, @ToolClicked);
+  FBold := FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-bold'), 'Bold', '', 62, @ToolClicked);
   FBold.IsToggle := True;
   FBold.Hint := 'Bold'#10'Makes the text bold (stays down)';
   FStatus := TStatusBar.Create(Root);

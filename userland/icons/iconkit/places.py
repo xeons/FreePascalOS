@@ -122,9 +122,11 @@ def draw_internet(pen):
 def drive_box(pen, colour=SILVER):
     """The hard disk's slab: (projection, width, height)."""
     width, depth, height = 32.0, 14.0, 9.0
+    origin = (4.0, 40.0)
     if pen.small:
-        width, depth, height = 34.0, 12.0, 11.0
-    projection = slab(pen, 4.0, 40.0, width, depth, height, colour)
+        width, depth, height = 36.0, 10.0, 15.0
+        origin = (3.0, 41.0)
+    projection = slab(pen, origin[0], origin[1], width, depth, height, colour)
     return projection, width, height
 
 

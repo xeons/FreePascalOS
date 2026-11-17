@@ -129,12 +129,11 @@ def draw_arrow(pen):
 
 @pointer('text-beam', 8, 12)
 def draw_text_beam(pen):
-    ctx = pen.ctx
-    ctx.new_path()
-    # An I with serifs, as one outlined shape.
-    pen.polygon([(4.5, 1.5), (7.0, 1.5), (8.0, 2.6), (9.0, 1.5), (11.5, 1.5), (11.5, 3.5), (9.0, 3.5), (9.0, 20.5),
-                 (11.5, 20.5), (11.5, 22.5), (9.0, 22.5), (8.0, 21.4), (7.0, 22.5), (4.5, 22.5), (4.5, 20.5),
-                 (7.0, 20.5), (7.0, 3.5), (4.5, 3.5)])
+    # An I with serifs, as one outlined shape: its stem one white pixel
+    # between black ones at 32, the hotspot on the white.
+    pen.polygon([(4.5, 1.5), (7.0, 1.5), (8.5, 2.6), (10.0, 1.5), (12.5, 1.5), (12.5, 3.5), (9.5, 3.5), (9.5, 20.5),
+                 (12.5, 20.5), (12.5, 22.5), (10.0, 22.5), (8.5, 21.4), (7.0, 22.5), (4.5, 22.5), (4.5, 20.5),
+                 (7.5, 20.5), (7.5, 3.5), (4.5, 3.5)])
     pen.outlined()
 
 
@@ -195,17 +194,20 @@ def draw_busy(pen):
 
 
 def double_arrow(pen, angle):
-    """A resize arrow through the grid's middle at angle degrees."""
+    """A resize arrow through the grid's middle at angle degrees; upright
+    or level, its shaft is two white pixels between black ones at 32."""
     length = 10.5
-    shaft = 1.6
-    head = 4.6
-    head_length = 4.5
+    shaft = 1.5
+    head = 4.5
+    head_length = 5.0
     points = [(-length, 0), (-length + head_length, -head), (-length + head_length, -shaft),
               (length - head_length, -shaft), (length - head_length, -head), (length, 0),
               (length - head_length, head), (length - head_length, shaft), (-length + head_length, shaft),
               (-length + head_length, head)]
     a = math.radians(angle)
-    placed = [(12.0 + x * math.cos(a) - y * math.sin(a), 12.0 + x * math.sin(a) + y * math.cos(a)) for x, y in points]
+    cosine = round(math.cos(a), 9)
+    sine = round(math.sin(a), 9)
+    placed = [(12.0 + x * cosine - y * sine, 12.0 + x * sine + y * cosine) for x, y in points]
     pen.polygon(placed)
     pen.outlined()
 
@@ -277,10 +279,14 @@ def draw_not_allowed(pen):
 
 @pointer('crosshair', 12, 12)
 def draw_crosshair(pen):
-    half = 0.9
-    gap = 2.5
-    reach = 10.5
-    for x0, y0, x1, y1 in ((12 - reach, 12 - half, 12 - gap, 12 + half), (12 + gap, 12 - half, 12 + reach, 12 + half),
-                           (12 - half, 12 - reach, 12 + half, 12 - gap), (12 - half, 12 + gap, 12 + half, 12 + reach)):
+    # Four arms round a gap, each one white pixel between black ones at
+    # 32, centred on the hotspot's pixel.
+    middle = 12.5
+    reach = 11.0
+    gap = 3.0
+    for x0, y0, x1, y1 in ((middle - reach, middle - 1, middle - gap, middle + 1),
+                           (middle + gap, middle - 1, middle + reach, middle + 1),
+                           (middle - 1, middle - reach, middle + 1, middle - gap),
+                           (middle - 1, middle + gap, middle + 1, middle + reach)):
         pen.polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
         pen.outlined()

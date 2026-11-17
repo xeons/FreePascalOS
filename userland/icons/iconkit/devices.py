@@ -128,6 +128,9 @@ def draw_audio_device(pen):
 def draw_keyboard(pen):
     projection = Projection(2.0, 38.0)
     width, depth, height = 36.0, 16.0, 3.0
+    if pen.small:
+        projection = Projection(1.0, 42.0)
+        width, depth, height = 36.0, 24.0, 5.0
     box(pen, projection, width, depth, height, '#e4e8ee', SILVER_OUTLINE, top='#f4f6fa', side=SILVER_SIDE)
     ctx = pen.ctx
     rows, columns = (3, 9) if not pen.small else (2, 5)
