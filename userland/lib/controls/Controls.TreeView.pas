@@ -34,7 +34,8 @@
   window's pixels, so the pieces meet without a seam; their thickness
   follows the display's scale.
 
-  A node may have a small stock icon before its text (SetIcon). Nodes
+  A node may have a small picture before its text: one of the tree's
+  image list (Images, ImageIndex), or a stock icon (SetIcon). Nodes
   can be taken away again (DeleteNode, DeleteChildren); a chosen node
   taken away leaves the choice to its parent. NodeAt tells which node
   is at a point (for a context menu, or a drop), and DropTarget shows
@@ -54,6 +55,7 @@ uses
   Windowing.Messages,
   Controls.Base,
   Controls.Icons,
+  Controls.ImageList,
   Controls.ScrollBar;
 
 type
@@ -69,6 +71,9 @@ type
     FTree: TTreeView;
     FHasIcon: Boolean;
     FIconKind: TStockIcon;
+    FImageIndex: LongInt;
+    function GetHasIcon: Boolean;
+    procedure SetImageIndex(Value: LongInt);
     function GetChild(Index: LongInt): TTreeNode;
     function GetCount: LongInt;
     procedure SetExpanded(Value: Boolean);
@@ -90,8 +95,11 @@ type
     property Children[Index: LongInt]: TTreeNode read GetChild; default;
     property Expanded: Boolean read FExpanded write SetExpanded;
     property Data: Pointer read FData write FData;
-    property HasIcon: Boolean read FHasIcon;
+    { A picture shows before the text (of the image list or a stock icon). }
+    property HasIcon: Boolean read GetHasIcon;
     property IconKind: TStockIcon read FIconKind;
+    { Its picture in the tree's Images (-1, the default: none). }
+    property ImageIndex: LongInt read FImageIndex write SetImageIndex;
   end;
 
   TTreeNodeEvent = procedure(Sender: TTreeView; Node: TTreeNode) of object;
@@ -107,7 +115,9 @@ type
     FLastClickNode: TTreeNode;
     FShowLines: Boolean;
     FDropTarget: TTreeNode;
+    FImages: TImageList;
     FOnExpandChanged: TTreeNodeEvent;
+    procedure SetImages(Value: TImageList);
     procedure SetDropTarget(Value: TTreeNode);
     procedure Rebuild;
     procedure AddVisible(Node: TTreeNode);
@@ -154,6 +164,9 @@ type
     property ShowLines: Boolean read FShowLines write SetShowLines;
     { The node shown as where a drop would go (nil: none). }
     property DropTarget: TTreeNode read FDropTarget write SetDropTarget;
+    { The pictures nodes show by ImageIndex (shared: the tree does not
+      own it). }
+    property Images: TImageList read FImages write SetImages;
     property OnExpandChanged: TTreeNodeEvent read FOnExpandChanged write FOnExpandChanged;
   end;
 
@@ -183,6 +196,7 @@ begin
   FParent := AParent;
   FText := AText;
   FChildren := TList.Create;
+  FImageIndex := -1;
 end;
 
 destructor TTreeNode.Destroy;
@@ -235,6 +249,18 @@ procedure TTreeNode.SetIcon(Kind: TStockIcon);
 begin
   FHasIcon := True;
   FIconKind := Kind;
+  if FTree <> nil then
+    FTree.Invalidate;
+end;
+
+function TTreeNode.GetHasIcon: Boolean;
+begin
+  Result := FHasIcon or ((FTree <> nil) and (FTree.FImages <> nil) and FTree.FImages.ValidIndex(FImageIndex));
+end;
+
+procedure TTreeNode.SetImageIndex(Value: LongInt);
+begin
+  FImageIndex := Value;
   if FTree <> nil then
     FTree.Invalidate;
 end;
@@ -340,6 +366,12 @@ begin
   if (Y < 2) or (X < 0) or (X >= RectangleWidth(PixelBounds)) then
     Exit(nil);
   Result := VisibleNode(FTopIndex + (Y - 2) div RowHeight);
+end;
+
+procedure TTreeView.SetImages(Value: TImageList);
+begin
+  FImages := Value;
+  Invalidate;
 end;
 
 procedure TTreeView.SetDropTarget(Value: TTreeNode);
@@ -575,8 +607,20 @@ begin
   Changed;
 end;
 
+{ How a node's picture looks: greyed when the tree is disabled, tinted
+  when the node is chosen. }
+function NodeImageState(Node: TTreeNode): TImageDrawState;
+begin
+  Result := ImageDrawNormal;
+  if not Node.FTree.Enabled then
+    Result := ImageDrawDisabled
+  else if (Node = Node.FTree.FSelected) or (Node = Node.FTree.FDropTarget) then
+    Result := ImageDrawSelected;
+end;
+
 procedure TTreeView.Paint(var Canvas: TCanvas);
 var
+  IconBox: TRectangle;
   Box: TRectangle;
   Inner: TCanvas;
   Index: LongInt;
@@ -619,8 +663,14 @@ begin
         DrawVerticalLine(Inner, Toggle.Left + Size div 2, Toggle.Top + 2, Toggle.Bottom - 2, Theme.FieldText);
     end;
     if Node.HasIcon then
-      DrawStockIcon(Inner, Node.IconKind, MakeRectangle(Left + Size + Scaled(4), Top + (RowHeight -
-        Scaled(SmallIconSize)) div 2, Scaled(SmallIconSize), Scaled(SmallIconSize)));
+    begin
+      IconBox := MakeRectangle(Left + Size + Scaled(4), Top + (RowHeight - Scaled(SmallIconSize)) div 2,
+        Scaled(SmallIconSize), Scaled(SmallIconSize));
+      if (FImages <> nil) and FImages.ValidIndex(Node.ImageIndex) then
+        FImages.DrawInBox(Inner, Node.ImageIndex, IconBox, NodeImageState(Node))
+      else
+        DrawStockIcon(Inner, Node.IconKind, IconBox);
+    end;
     TextBox := MakeRectangle(NodeTextLeft(Node), Top, TextWidth(ControlFace, Node.Text) + Scaled(4), RowHeight);
     if (Node = FSelected) or (Node = FDropTarget) then
     begin

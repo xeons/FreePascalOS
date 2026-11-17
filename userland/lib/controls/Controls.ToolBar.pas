@@ -19,7 +19,9 @@
 {
   Toolbars: a strip of flat buttons along the top of a window.
 
-  A tool button shows its text (or whatever its OnPaint draws); it looks
+  A tool button shows its picture from the toolbar's image list
+  (Images, ImageIndex) and its text beside it (either may be left out,
+  or OnPaint may draw it); a hint (Hint) says what it does. It looks
   raised while the pointer is over it, pressed while held, and clicks
   when let go on it, or on Alt and its mnemonic ("&Bold"). A toggle
   button stays down until clicked again (Down). Separators are gaps
@@ -34,7 +36,8 @@ interface
 
 uses
   Drawing.Canvas,
-  Controls.Base;
+  Controls.Base,
+  Controls.ImageList;
 
 type
   TToolButton = class(TControl)
@@ -44,7 +47,10 @@ type
     FIsToggle: Boolean;
     FDown: Boolean;
     FIsSeparator: Boolean;
+    FImageIndex: LongInt;
     procedure SetDown(Value: Boolean);
+    procedure SetImageIndex(Value: LongInt);
+    function Images: TImageList;
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerEnter; override;
@@ -52,23 +58,33 @@ type
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
   public
+    constructor Create(AParent: TControl); override;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
     property IsToggle: Boolean read FIsToggle write FIsToggle;
     property Down: Boolean read FDown write SetDown;
     property IsSeparator: Boolean read FIsSeparator;
+    { Its picture in the toolbar's Images (-1, the default: none). }
+    property ImageIndex: LongInt read FImageIndex write SetImageIndex;
   end;
 
   TToolBar = class(TControl)
   private
     FNextLeft: LongInt;
+    FImages: TImageList;
+    procedure SetImages(Value: TImageList);
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
     constructor Create(AParent: TControl); override;
     { A button of Width logical units after the last. }
     function AddButton(const AText: string; Width: LongInt; AOnClick: TControlEvent = nil): TToolButton;
+    { The same with picture ImageIndex of Images, and a hint. }
+    function AddImageButton(ImageIndex: LongInt; const AText, AHint: string; Width: LongInt;
+      AOnClick: TControlEvent = nil): TToolButton;
     procedure AddSeparator;
+    { The buttons' pictures (shared: the toolbar does not own it). }
+    property Images: TImageList read FImages write SetImages;
   end;
 
 implementation
@@ -79,6 +95,7 @@ uses
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
+  Controls.Icons,
   Controls.Text;
 
 const
@@ -95,10 +112,35 @@ begin
   Changed;
 end;
 
+constructor TToolButton.Create(AParent: TControl);
+begin
+  inherited Create(AParent);
+  FImageIndex := -1;
+end;
+
+procedure TToolButton.SetImageIndex(Value: LongInt);
+begin
+  FImageIndex := Value;
+  Invalidate;
+end;
+
+function TToolButton.Images: TImageList;
+begin
+  Result := nil;
+  if Parent is TToolBar then
+    Result := TToolBar(Parent).Images;
+  if (Result <> nil) and not Result.ValidIndex(FImageIndex) then
+    Result := nil;
+end;
+
 procedure TToolButton.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
   Shift: LongInt;
+  Pictures: TImageList;
+  ImageBox: TRectangle;
+  ImageSize: LongInt;
+  State: TImageDrawState;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   if FIsSeparator then
@@ -117,12 +159,31 @@ begin
   end
   else if FHovered and Enabled then
     DrawEdge(Canvas, Box, Theme.Highlight, Theme.Shadow);
+  Pictures := Images;
+  if Pictures <> nil then
+  begin
+    { The picture at the left (in the middle without a text), the text
+      in what is left. }
+    ImageSize := Scaled(SmallIconSize);
+    if Text = '' then
+      ImageBox := MakeRectangle((RectangleWidth(Box) - ImageSize) div 2, (RectangleHeight(Box) - ImageSize) div 2,
+        ImageSize, ImageSize)
+    else
+      ImageBox := MakeRectangle(Scaled(3), (RectangleHeight(Box) - ImageSize) div 2, ImageSize, ImageSize);
+    State := ImageDrawNormal;
+    if not Enabled then
+      State := ImageDrawDisabled;
+    Pictures.DrawInBox(Canvas, FImageIndex, OffsetRectangle(ImageBox, Shift, Shift), State);
+    Box.Left := ImageBox.Right;
+    if Text = '' then
+      Exit;
+  end;
   if Enabled then
     DrawMnemonicTextInBox(Canvas, ControlFace, Text, OffsetRectangle(InflateRectangle(Box, -Scaled(3)), Shift, Shift),
       AlignTextCenter, Theme.FaceText)
   else
-    DrawDisabledMnemonicText(Canvas, ControlFace, Text, (RectangleWidth(Box) - MnemonicTextWidth(ControlFace, Text)) div 2,
-      (RectangleHeight(Box) - TextHeight(ControlFace)) div 2);
+    DrawDisabledMnemonicText(Canvas, ControlFace, Text, Box.Left + (RectangleWidth(Box) -
+      MnemonicTextWidth(ControlFace, Text)) div 2, (RectangleHeight(Box) - TextHeight(ControlFace)) div 2);
 end;
 
 function TToolButton.MatchesMnemonic(Character: LongWord): Boolean;
@@ -180,6 +241,23 @@ begin
   SetBounds(0, 0, 0, ToolBarHeight);
   Align := AlignTop;
   FNextLeft := 2;
+end;
+
+procedure TToolBar.SetImages(Value: TImageList);
+var
+  Index: LongInt;
+begin
+  FImages := Value;
+  for Index := 0 to ChildCount - 1 do
+    Children[Index].Invalidate;
+end;
+
+function TToolBar.AddImageButton(ImageIndex: LongInt; const AText, AHint: string; Width: LongInt;
+  AOnClick: TControlEvent): TToolButton;
+begin
+  Result := AddButton(AText, Width, AOnClick);
+  Result.ImageIndex := ImageIndex;
+  Result.Hint := AHint;
 end;
 
 function TToolBar.AddButton(const AText: string; Width: LongInt; AOnClick: TControlEvent): TToolButton;

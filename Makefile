@@ -122,7 +122,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test font-test text-test chart-test settings-test files-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test chart-test settings-test files-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -220,7 +220,8 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test chart-test settings-test files-test date-controls-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
+test: aml-test drawing-test font-test text-test chart-test settings-test files-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
+		imaging-controls-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -538,6 +539,28 @@ image-test: $(IMAGE_TEST) $(IMAGE_FIXTURES_STAMP)
 	@python3 -B tools/ImageTest/check-with-pillow.py $(IMAGE_WRITTEN) > build/tools/image-pillow.out || \
 		{ cat build/tools/image-pillow.out; echo "IMAGE TEST FAILED (Pillow reads what was written differently)"; exit 1; }
 	@echo "IMAGE TEST PASSED: $$(tail -n 1 build/tools/image-test.out | cut -d ' ' -f 2-)"
+
+# libcontrols' picture and timing logic builds for the host too (with
+# libdrawing and libimage): an image list's choice of pixel size, a
+# picture box's placement, the disabled and selected looks, the
+# tooltips' timing against a clock of the test's own, the timers' queue.
+IMAGING_CONTROLS_TEST := build/tools/ImagingControlsTest
+IMAGING_CONTROLS_TEST_SOURCES := $(wildcard tools/ImagingControlsTest/*.pas) \
+	userland/lib/controls/Controls.ImageSizes.pas userland/lib/controls/Controls.PictureGeometry.pas \
+	userland/lib/controls/Controls.ImageEffects.pas userland/lib/controls/Controls.HintTiming.pas \
+	userland/lib/controls/Controls.TimerQueue.pas $(wildcard userland/lib/drawing/*.pas) \
+	$(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas))
+
+$(IMAGING_CONTROLS_TEST): $(IMAGING_CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/imaging-controls-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ImagingControlsTest -Fuuserland/lib/controls -Fuuserland/lib/image \
+		-Fuuserland/lib/drawing -Fuuserland/lib/compression -FUbuild/tools/imaging-controls-test-units -o$@ \
+		tools/ImagingControlsTest/ImagingControlsTest.pas
+
+imaging-controls-test: $(IMAGING_CONTROLS_TEST)
+	@$(IMAGING_CONTROLS_TEST) > build/tools/imaging-controls-test.out || \
+		{ grep -A1 FAIL build/tools/imaging-controls-test.out; echo "IMAGING CONTROLS TEST FAILED (build/tools/imaging-controls-test.out)"; exit 1; }
+	@tail -n 1 build/tools/imaging-controls-test.out
 
 clean:
 	rm -rf build

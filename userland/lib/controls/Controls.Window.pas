@@ -35,6 +35,9 @@
   handler wherever the focus is (Ctrl+S to save, say): they are looked
   at before the focused control gets the key.
 
+  The controls' hints (TControl.Hint) show in tooltips while the
+  pointer rests on them (Hints, Controls.Hints).
+
   A right click asks the control under the pointer for its context
   menu when the button is let go; Shift+F10 and the menu key ask the
   focused one.
@@ -75,7 +78,8 @@ uses
   Windowing.Windows,
   Windowing.DragAndDrop,
   Controls.DragData,
-  Controls.Base;
+  Controls.Base,
+  Controls.Hints;
 
 type
   TControlWindow = class;
@@ -115,6 +119,7 @@ type
     FCancelControl: TControl;
     FPopup: TControlWindow;
     FMenuBar: TWindowMenuBar;
+    FHints: TWindowHints;
     { Alt is down and no other key has been since it went down. }
     FAltPressedAlone: Boolean;
     { The pointer shape the server was last asked for. }
@@ -180,6 +185,8 @@ type
     property Popup: TControlWindow read FPopup write SetPopup;
     { The window's menu bar, if it has one (it sets this itself). }
     property MenuBar: TWindowMenuBar read FMenuBar write FMenuBar;
+    { Shows the controls' hints. }
+    property Hints: TWindowHints read FHints;
   end;
 
 implementation
@@ -264,6 +271,8 @@ begin
     FWindow.FFocused := nil;
   if FWindow.FHovered = Control then
     FWindow.FHovered := nil;
+  if FWindow.FHints <> nil then
+    FWindow.FHints.ControlRemoved(Control);
   if FWindow.FPressed = Control then
     FWindow.FPressed := nil;
   if FWindow.FDefaultControl = Control then
@@ -303,6 +312,7 @@ begin
   ConnectToDisplay;
   FRoot.SetPixelBounds(MakeRectangle(0, 0, Scaled(Width), Scaled(Height)));
   inherited Create(ATitle, Left, Top, Width, Height, AFlags, AOwner);
+  FHints := TWindowHints.Create(Self);
   { The surface as made (at the scale of the display the window is on),
     exactly; painted whole before it is shown. }
   FRoot.SetPixelBounds(MakeRectangle(0, 0, PixelWidth, PixelHeight));
@@ -316,6 +326,8 @@ begin
   FDragData := nil;
   FRoot.Free;
   FRoot := nil;
+  FHints.Free;
+  FHints := nil;
   { A pop-up still open (a context menu: the menu bar closed its own
     menus as it went) goes with the window rather than staying on the
     screen with nothing behind it. }
@@ -366,7 +378,11 @@ end;
 procedure TControlWindow.ActiveChanged;
 begin
   if not Active then
+  begin
     CancelDrag;
+    if FHints <> nil then
+      FHints.PointerLeft;
+  end;
   if FFocused <> nil then
     FFocused.Invalidate;
   { Keys that went to another window in between do not count. }
@@ -724,6 +740,7 @@ procedure TControlWindow.KeyDown(Code, Character, Modifiers: LongWord);
 var
   Control: TControl;
 begin
+  FHints.Dismiss;
   if HandleDragKey(Code) then
     Exit;
   { (Alt repeats while held: still alone.) Alt pressed with Ctrl or
@@ -823,6 +840,7 @@ begin
     Exit;
   end;
   Target := FRoot.ControlAt(X, Y);
+  FHints.PointerMoved(Target, X, Y);
   ShowPointerShapeOf(Target);
   if Target <> FHovered then
   begin
@@ -845,6 +863,7 @@ begin
   FAltPressedAlone := False;
   FPointerX := X;
   FPointerY := Y;
+  FHints.Dismiss;
   if (FMenuBar <> nil) and FMenuBar.InMenuMode and (FPopup = nil) then
     FMenuBar.LeaveMenuMode;
   Target := FRoot.ControlAt(X, Y);
@@ -882,6 +901,7 @@ end;
 
 procedure TControlWindow.PointerLeave;
 begin
+  FHints.PointerLeft;
   if FHovered <> nil then
     FHovered.HandlePointerLeave;
   FHovered := nil;

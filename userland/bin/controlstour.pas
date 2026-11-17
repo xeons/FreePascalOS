@@ -22,13 +22,15 @@
 
   controlstour
 
-  A menu bar (File, Help), a toolbar, a tab control with six pages
+  A menu bar (File, Help), a toolbar, a tab control with seven pages
   (a list box and a combo box; a multi-line edit box and two edit boxes
   to copy and paste between; a tree view; a list view, several items
   selectable and sorted by a header click, with buttons for its views;
   a checked list box, numeric up/down boxes, date and time pickers and
-  a month calendar; charts of each kind, ControlsTour.ChartsPage) and a
-  status bar; Ctrl+M asks a question in a message box, Help >
+  a month calendar; pictures: an animated picture box, a paint box moved
+  on by a timer, an image list in a toolbar and a list view,
+  Tour.Pictures; charts of each kind, Tour.Charts) and a status bar; controls have hints (tooltips);
+  Ctrl+M asks a question in a message box, Help >
   About shows one. Menus, items and tabs have mnemonics (Alt+H opens
   Help; F10 or Alt alone picks the menu bar). Prints what happens, a
   line each:
@@ -54,9 +56,9 @@
     date YYYY-MM-DD       the date picker's date
     time TEXT|none        the time picker's time (none: unchecked)
     calendar FIRST LAST   the calendar's selected dates
-    chart variant N       the charts switched to variant N (0 or 1)
-    chart toggled NAME S  a chart legend entry hid (0) or showed (1) NAME
-  File > Exit ends it.
+    hint TEXT             a tooltip was shown (its lines joined by " / ")
+  and what the Pictures and Charts pages print (Tour.Pictures,
+  Tour.Charts). File > Exit ends it.
 }
 program ControlsTour;
 
@@ -66,7 +68,6 @@ program ControlsTour;
 uses
   SysUtils,
   Abi.SystemCalls,
-  Sys.Streams,
   Drawing.Rectangles,
   Windowing.Protocol,
   Windowing.Connection,
@@ -93,12 +94,15 @@ uses
   Controls.CalendarDates,
   Controls.Calendar,
   Controls.DateTimePicker,
+  Controls.ImageList,
   Controls.Text,
-  ControlsTour.ChartsPage;
+  Tour.Artwork,
+  Tour.Output,
+  Tour.Pictures,
+  Tour.Charts;
 
 const
   KeyM = $32;
-  ChartTimer = 1;
 
 type
   TTourWindow = class(TControlWindow)
@@ -122,8 +126,11 @@ type
     FTimePicker: TDateTimePicker;
     FCalendar: TCalendar;
     FStatus: TStatusBar;
+    FImages: TImageList;
+    FPictures: TPicturesPage;
     FCharts: TChartsPage;
     FChartsPageIndex: LongInt;
+    procedure HintShown(Sender: TControl; const Text: string);
     procedure MenuChosen(Item: TMenuItem);
     procedure ExitChosen(Item: TMenuItem);
     procedure AboutChosen(Item: TMenuItem);
@@ -145,18 +152,11 @@ type
     procedure CalendarChanged(Sender: TControl);
     procedure CalendarDropped(Sender: TControl);
     procedure TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
-  protected
-    procedure TimerFired(TimerId: LongWord); override;
   public
     constructor Create;
+    destructor Destroy; override;
     procedure TellPlaces;
   end;
-
-procedure Say(const Text: string);
-begin
-  PrintStringLine(Text);
-  FlushStream(StandardOutput);
-end;
 
 constructor TTourWindow.Create;
 var
@@ -164,6 +164,8 @@ var
   HelpMenu: TMenuItem;
 begin
   inherited Create('Controls tour', 60, 40, 480, 360);
+  FImages := MakeTourImages;
+  Hints.OnShown := @HintShown;
   FMenuBar := TMenuBar.Create(Root);
   FileMenu := FMenuBar.Menu.Add('&File');
   FileMenu.Add('&New', nil, 'Ctrl+N');
@@ -173,18 +175,21 @@ begin
   FileMenu.AddSeparator;
   FileMenu.Add('E&xit', @ExitChosen);
   HelpMenu := FMenuBar.Menu.Add('&Help');
-  HelpMenu.Add('&About', @AboutChosen);
+  HelpMenu.Images := FImages;
+  HelpMenu.Add('&About', @AboutChosen).ImageIndex := PicturePicture;
   FMenuBar.OnChoose := @MenuChosen;
   FToolBar := TToolBar.Create(Root);
-  FToolBar.AddButton('New', 40, @ToolClicked);
-  FToolBar.AddButton('Open', 44, @ToolClicked);
+  FToolBar.AddButton('New', 40, @ToolClicked).Hint := 'Start a new document';
+  FToolBar.AddButton('Open', 44, @ToolClicked).Hint := 'Open a document';
   FToolBar.AddSeparator;
   FBold := FToolBar.AddButton('Bold', 40, @ToolClicked);
   FBold.IsToggle := True;
+  FBold.Hint := 'Bold'#10'Makes the text bold (stays down)';
   FStatus := TStatusBar.Create(Root);
   FStatus.PanelText[0] := 'Ready';
   FTabs := TTabControl.Create(Root);
   FTabs.Align := AlignClient;
+  FTabs.Images := FImages;
   BuildPages;
   Root.OnNotify := @ChildNotified;
   AddAccelerator(KeyM, ModifierControl, @AskQuestion);
@@ -247,6 +252,8 @@ begin
   AddViewButton(Page, 'Small', ViewSmallIcons);
   AddViewButton(Page, 'Large', ViewLargeIcons);
   BuildPickersPage;
+  FPictures := TPicturesPage.Create(Self, FTabs, FImages);
+  FPictures.Page.OnNotify := @ChildNotified;
   BuildChartsPage;
 end;
 
@@ -260,6 +267,18 @@ begin
   FChartsPageIndex := FTabs.PageCount - 1;
   FCharts := TChartsPage.Create(Page);
   FCharts.Align := AlignClient;
+end;
+
+destructor TTourWindow.Destroy;
+begin
+  FPictures.Free;
+  inherited Destroy;
+  FImages.Free;
+end;
+
+procedure TTourWindow.HintShown(Sender: TControl; const Text: string);
+begin
+  Say('hint ' + StringReplace(Text, #10, ' / ', [rfReplaceAll]));
 end;
 
 procedure TTourWindow.AddCaption(Page: TControl; const Caption: string; Left, Top: LongInt);
@@ -347,13 +366,13 @@ end;
 
 procedure TTourWindow.TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
 begin
-  Say(Format('place %s %d %d', [Name, Scaled(ScreenLeft) + Control.PixelBounds.Left + X,
-    Scaled(ScreenTop) + Control.PixelBounds.Top + Y]));
+  Tour.Output.TellPlace(Self, Name, Control, X, Y);
 end;
 
 procedure TTourWindow.TellPlaces;
 var
   RowHeight: LongInt;
+  Tab: TRectangle;
 begin
   { Places a test clicks: the Help heading, the Bold button, the tabs,
     the list box's third item, the combo box and its second item when
@@ -365,8 +384,10 @@ begin
   TellPlace('tree-tab', FTabs, Scaled(120), Scaled(8));
   TellPlace('details-tab', FTabs, Scaled(170), Scaled(8));
   TellPlace('pickers-tab', FTabs, (FTabs.TabBounds(4).Left + FTabs.TabBounds(4).Right) div 2, Scaled(8));
-  TellPlace('charts-tab', FTabs, (FTabs.TabBounds(FChartsPageIndex).Left + FTabs.TabBounds(FChartsPageIndex).Right)
-    div 2, Scaled(8));
+  Tab := FTabs.TabBounds(FPictures.PageIndex);
+  TellPlace('pictures-tab', FTabs, (Tab.Left + Tab.Right) div 2, (Tab.Top + Tab.Bottom) div 2);
+  Tab := FTabs.TabBounds(FChartsPageIndex);
+  TellPlace('charts-tab', FTabs, (Tab.Left + Tab.Right) div 2, (Tab.Top + Tab.Bottom) div 2);
   RowHeight := FList.ItemHeight;
   TellPlace('list-item-3', FList, Scaled(30), 2 + 2 * RowHeight + RowHeight div 2);
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
@@ -499,6 +520,8 @@ begin
     TellPlace('date-button', FDatePicker, RectangleWidth(FDatePicker.PixelBounds) - Scaled(9),
       RectangleHeight(FDatePicker.PixelBounds) div 2);
   end;
+  if (FPictures <> nil) and (Page = FPictures.PageIndex) then
+    FPictures.TellPlaces;
   if Page = 3 then
   begin
     TellPlace('details-row-1', FDetails, Scaled(40), FDetails.RowMiddle(0));
@@ -514,14 +537,6 @@ begin
       RectangleHeight(FCharts.VariantButton.PixelBounds) div 2);
 end;
 
-procedure TTourWindow.TimerFired(TimerId: LongWord);
-begin
-  if TimerId = ChartTimer then
-    FCharts.Tick
-  else
-    inherited TimerFired(TimerId);
-end;
-
 procedure TTourWindow.ChildNotified(Sender: TControl; Child: TControl; Code: LongWord);
 begin
   if Code <> NotifyChanged then
@@ -530,11 +545,6 @@ begin
   begin
     Say('page ' + IntToStr(FTabs.PageIndex));
     TellPagePlaces(FTabs.PageIndex);
-    { The live chart moves on only while it can be seen. }
-    if FTabs.PageIndex = FChartsPageIndex then
-      StartTimer(ChartTimer, ChartTickMilliseconds)
-    else
-      StopTimer(ChartTimer);
   end
   else if (Child = FList) and (FList.ItemIndex >= 0) then
     Say('list ' + FList.Items[FList.ItemIndex])

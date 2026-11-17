@@ -34,7 +34,7 @@
   Clicking a legend entry hides or shows its series; the page prints
   "chart toggled NAME 0|1" and "chart variant N" (0 or 1).
 }
-unit ControlsTour.ChartsPage;
+unit Tour.Charts;
 
 {$mode objfpc}
 {$H+}
@@ -44,6 +44,7 @@ interface
 uses
   Controls.Base,
   Controls.Buttons,
+  Controls.Timers,
   Controls.Charts;
 
 type
@@ -56,6 +57,8 @@ type
     FVariantButton: TButton;
     FVariant: LongInt;
     FTicks: LongInt;
+    FTimer: TTimer;
+    procedure TimerTicked(Sender: TTimer);
     procedure BuildLive;
     procedure BuildAreas;
     procedure BuildBars;
@@ -67,27 +70,25 @@ type
     procedure Layout; override;
   public
     constructor Create(AParent: TControl); override;
-    { A new value for the scrolling chart (every half second). }
+    destructor Destroy; override;
+    { A new value for the scrolling chart (every half second, while the
+      page is shown). }
     procedure Tick;
     property Live: TChart read FLive;
     property VariantButton: TButton read FVariantButton;
   end;
 
-const
-  { How often Tick should be called. }
-  ChartTickMilliseconds = 500;
-
 implementation
 
 uses
   SysUtils,
-  Sys.Streams,
   Drawing.Rectangles,
   Windowing.Connection,
   Controls.ChartSeries,
   Controls.ChartModel,
   Controls.ChartFormat,
-  Controls.ChartScale;
+  Controls.ChartScale,
+  Tour.Output;
 
 const
   { Logical units. }
@@ -96,13 +97,8 @@ const
   ButtonWidth = 90;
   ButtonHeight = 23;
   LiveWindowSeconds = 15;
+  TickMilliseconds = 500;
   Mebibyte = 1024 * 1024;
-
-procedure Say(const Text: string);
-begin
-  PrintStringLine(Text);
-  FlushStream(StandardOutput);
-end;
 
 constructor TChartsPage.Create(AParent: TControl);
 begin
@@ -114,6 +110,22 @@ begin
   FVariantButton := TButton.Create(Self);
   FVariantButton.Text := '&Variant';
   FVariantButton.OnClick := @VariantClicked;
+  FTimer := TTimer.Create;
+  FTimer.Interval := TickMilliseconds;
+  FTimer.OnTimer := @TimerTicked;
+end;
+
+destructor TChartsPage.Destroy;
+begin
+  FTimer.Free;
+  inherited Destroy;
+end;
+
+{ The live chart moves on only while its page is shown. }
+procedure TChartsPage.TimerTicked(Sender: TTimer);
+begin
+  if (Parent <> nil) and Parent.Visible then
+    Tick;
 end;
 
 { The value the live chart shows at tick Tick: two waves together. }
