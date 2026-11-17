@@ -44,6 +44,9 @@ uses
   Paint.FileFormats,
   Paint.UndoHistory,
   Paint.Document,
+  Paint.ResizeMath,
+  Paint.Session,
+  Paint.ImageCommands,
   PaintTest.Checks;
 
 procedure TestZoomLevels;
@@ -237,6 +240,54 @@ begin
   end;
 end;
 
+procedure TestResizeMath;
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  ResizedSize(200, 100, ResizeByPercent, 50, 150, Width, Height);
+  Check('resize by percent', (Width = 100) and (Height = 150));
+  ResizedSize(200, 100, ResizeByPixels, 30, 0, Width, Height);
+  Check('resize by pixels, at least one pixel', (Width = 30) and (Height = 1));
+  CheckNumber('proportions kept in pixels', MatchingVertical(200, 100, ResizeByPixels, 50), 25);
+  CheckNumber('proportions kept the other way', MatchingHorizontal(200, 100, ResizeByPixels, 25), 50);
+  CheckNumber('percent is the same both ways', MatchingVertical(200, 100, ResizeByPercent, 70), 70);
+end;
+
+procedure TestImageCommands;
+var
+  Session: TPaintSession;
+  Area: TRectangle;
+begin
+  Session := TPaintSession.Create(SolidImage(30, 20, ColorWhite));
+  try
+    Session.Document.Image.SetPixel(0, 0, ColorBlack);
+    Session.SecondaryColor := RgbColor(1, 2, 3);
+    ChangeCanvasSize(Session, 40, 25);
+    Check('canvas enlarged, the picture kept at the top left',
+      (Session.Document.Image.Width = 40) and (Session.Document.Image.GetPixel(0, 0) = ColorBlack));
+    CheckColor('the new part in the secondary colour', Session.Document.Image.GetPixel(35, 22), RgbColor(1, 2, 3));
+    TurnPicture(Session, TurnClockwise);
+    Check('turned: the sides swapped, the corner moved',
+      (Session.Document.Image.Width = 25) and (Session.Document.Image.GetPixel(24, 0) = ColorBlack));
+    FlipPicture(Session, True);
+    CheckColor('flipped back across', Session.Document.Image.GetPixel(0, 0), ColorBlack);
+    ResizePicture(Session, 50, 80, 0, 0);
+    Check('resized', (Session.Document.Image.Width = 50) and (Session.Document.Image.Height = 80));
+    CheckNumber('each command one step', Session.Document.History.UndoCount, 4);
+    Session.Document.Undo(Area);
+    Session.Document.Undo(Area);
+    Session.Document.Undo(Area);
+    Session.Document.Undo(Area);
+    Check('all undone: the first picture', (Session.Document.Image.Width = 30) and
+      (Session.Document.Image.GetPixel(0, 0) = ColorBlack) and not Session.Document.Modified);
+    ClearPicture(Session);
+    CheckColor('cleared to the secondary colour', Session.Document.Image.GetPixel(0, 0), RgbColor(1, 2, 3));
+  finally
+    Session.Free;
+  end;
+end;
+
 procedure TestPaintLogic;
 begin
   TestZoomLevels;
@@ -245,6 +296,8 @@ begin
   TestFileFormats;
   TestUndoHistory;
   TestUndoBudget;
+  TestResizeMath;
+  TestImageCommands;
 end;
 
 end.
