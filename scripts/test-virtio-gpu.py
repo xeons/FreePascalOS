@@ -26,7 +26,9 @@ the desktop and a window in a screen dump of the device, a mode set, and
 the hardware cursor shown and moved when the pointer goes there (QEMU's
 screen dump leaves the host's cursor out: the driver's log says where it
 is, and the dump has no pointer drawn by the server there), hidden when
-the pointer goes back to the first display, where the server draws it.
+the pointer goes back to the first display, where the server draws it;
+a mode set, and suspend to RAM with the cursor shown (picture and cursor
+back after waking).
 
     test-virtio-gpu.py <esp-directory> <system-disk-image>
 

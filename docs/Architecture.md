@@ -1190,8 +1190,11 @@ desktop and a window in the device's screen dump, the hardware cursor
 shown and moved with the tablet (QEMU's screen dump leaves the host's
 cursor out, so the driver's log says where it is and the dump must show
 no pointer drawn by the server there), hidden with the server drawing
-the arrow once the pointer is back on the first display, and a mode set
-and set back.
+the arrow once the pointer is back on the first display, a mode set
+and set back, and suspend to RAM with the cursor shown on the virtio
+display (the window in the dump and the cursor shown and moving after
+waking). Under KVM `displaybench -d 1` gives about 1400 full frames, 15000
+256x256 frames and 160000 cursor moves a second.
 
 ### The display server
 
