@@ -29,6 +29,8 @@ interface
 uses
   Windowing.Protocol,
   Windowing.Theme,
+  Windowing.SunriseTheme,
+  Windowing.ClassicTheme,
   Windowing.Connection,
   Windowing.Displays,
   Windowing.MouseSettings,
