@@ -57,6 +57,7 @@ type
   private
     FWindow: TControlWindow;
     FPage: TControl;
+    FPageIndex: LongInt;
     FToolBar: TToolBar;
     FPicture: TPictureBox;
     FPaintBox: TPaintBox;
@@ -77,6 +78,8 @@ type
     { Where its controls are (the page is shown). }
     procedure TellPlaces;
     property Page: TControl read FPage;
+    { Its place among the tab control's pages. }
+    property PageIndex: LongInt read FPageIndex;
   end;
 
 implementation
@@ -100,8 +103,9 @@ constructor TPicturesPage.Create(Window: TControlWindow; Tabs: TTabControl; Imag
 begin
   inherited Create;
   FWindow := Window;
-  FPage := Tabs.AddPage('&Pictures');
-  Tabs.PageImageIndex[Tabs.PageCount - 1] := PicturePicture;
+  FPage := Tabs.AddPage('Pict&ures');
+  FPageIndex := Tabs.PageCount - 1;
+  Tabs.PageImageIndex[FPageIndex] := PicturePicture;
   FToolBar := TToolBar.Create(FPage);
   FToolBar.Images := Images;
   FToolBar.AddImageButton(PlayPicture, '', 'Play the animation', 26, @PlayClicked);

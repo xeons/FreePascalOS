@@ -92,7 +92,18 @@ uses
   Controls.FileDialog,
   Controls.ColorDialog,
   Controls.FontDialog,
-  Controls.FindDialog;
+  Controls.FindDialog,
+  Controls.CheckMarks,
+  Controls.CheckedListBox,
+  Controls.AutoRepeat,
+  Controls.SpinButtons,
+  Controls.NumericValues,
+  Controls.NumericUpDown,
+  Controls.CalendarDates,
+  Controls.CalendarLayout,
+  Controls.Calendar,
+  Controls.DateFormats,
+  Controls.DateTimePicker;
 
 implementation
 

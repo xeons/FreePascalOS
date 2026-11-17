@@ -122,7 +122,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test settings-test files-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test settings-test files-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -220,7 +220,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test settings-test files-test crypto-test tls-test wget-test image-test compression-test \
+test: aml-test drawing-test font-test text-test settings-test files-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
 		imaging-controls-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -357,6 +357,25 @@ files-test: $(FILES_TEST)
 	@$(FILES_TEST) > build/tools/files-test.out || \
 		{ grep FAIL build/tools/files-test.out; echo "FILES TEST FAILED (build/tools/files-test.out)"; exit 1; }
 	@echo "FILES TEST PASSED: $$(tail -n 1 build/tools/files-test.out | cut -d ' ' -f 2-)"
+
+# The date and number logic behind libcontrols' calendar, date and time
+# picker and numeric up/down box (and where the calendar's parts go)
+# builds for the host too, and is checked there.
+DATE_CONTROLS_TEST := build/tools/DateControlsTest
+DATE_CONTROLS_TEST_SOURCES := tools/DateControlsTest/DateControlsTest.pas \
+	userland/lib/controls/Controls.CalendarDates.pas userland/lib/controls/Controls.CalendarLayout.pas \
+	userland/lib/controls/Controls.DateFormats.pas userland/lib/controls/Controls.NumericValues.pas \
+	userland/lib/drawing/Drawing.Rectangles.pas
+
+$(DATE_CONTROLS_TEST): $(DATE_CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/date-controls-test-units
+	fpc -Mobjfpc -O2 -vew -Futools/DateControlsTest -Fuuserland/lib/controls -Fuuserland/lib/drawing \
+		-FUbuild/tools/date-controls-test-units -o$@ tools/DateControlsTest/DateControlsTest.pas
+
+date-controls-test: $(DATE_CONTROLS_TEST)
+	@$(DATE_CONTROLS_TEST) > build/tools/date-controls-test.out || \
+		{ grep FAIL build/tools/date-controls-test.out; echo "DATE CONTROLS TEST FAILED (build/tools/date-controls-test.out)"; exit 1; }
+	@echo "DATE CONTROLS TEST PASSED: $$(tail -n 1 build/tools/date-controls-test.out | cut -d ' ' -f 2-)"
 
 # The settings library (libconfiguration) but for its files builds for
 # the host too, and is checked there over a storage in memory.

@@ -1062,7 +1062,9 @@ wait_for('STARTED-AT-150 DONE', 15)
 # from the context menu, lines pasted into the multi-line edit box), the
 # tree view (a click, Right, Down) and the list view (a row, a header,
 # sorting by a header as numbers, a click, a Ctrl+click and a
-# Shift+click, then large icons). The message boxes are owned by the
+# Shift+click, then large icons), the pickers (a checked list box item
+# toggled with Space, a numeric up/down box stepped by the wheel, a date
+# picked from the date picker's calendar). The message boxes are owned by the
 # window: a click on its title bar while one is open changes nothing in
 # its client area (the box stays above it) and leaves its title bar
 # inactive (it is disabled), and Enter still goes to the box.
@@ -1185,6 +1187,28 @@ if tour_started:
             icon_x, icon_y = place['details-icon-1']
             pixel = take_screen()
             icon_pixels = [pixel(x, y) for x in range(icon_x - 8, icon_x + 9) for y in range(icon_y - 8, icon_y + 9)]
+    # The Pickers page: an item of the checked list box picked by a click
+    # on its text and toggled with Space, the numeric up/down box stepped
+    # by the wheel (a PS/2 notch, the pointer resting on the box), and a
+    # day picked from the date picker's dropped calendar (a pop-up, whose
+    # 20th the tour says where it is when it drops).
+    click_at(*place['pickers-tab'])
+    type_on_serial(b'm=DONE; cat /tmp/t.log; echo PICKERS $m\r')
+    wait_for('PICKERS DONE', 10)
+    place = places()
+    if all(name in place for name in ('checked-item-2', 'quantity', 'date-button')):
+        click_at(*place['checked-item-2'])
+        press('spc')
+        point_tablet_at(*place['quantity'])
+        move_ps2_mouse('mouse_move 0 0 1\n')
+        time.sleep(0.5)
+        click_at(*place['date-button'])
+        time.sleep(1)
+        type_on_serial(b'm=DONE; cat /tmp/t.log; echo DROPPED $m\r')
+        wait_for('DROPPED DONE', 10)
+        place = places()
+        if 'calendar-day-20' in place:
+            click_at(*place['calendar-day-20'])
     # Hints, timers and pictures: the pointer resting on the Bold button
     # shows its hint (two lines, in a tooltip above it); the Pictures
     # page's timer ticks; its picture box shows the animation the tour
@@ -1233,6 +1257,10 @@ checks.append(('controls tour: list view selection with Ctrl+click and Shift+cli
 # The document icon's lines of text are this blue.
 checks.append(('controls tour: list view large icons',
                tour_ok and b'view 3' in log_from_here and '5b87c0' in icon_pixels))
+checks.append(('controls tour: checked list box (Space), numeric up/down (the wheel), a date from the calendar pop-up',
+               tour_ok and b'checked Pears 1' in log_from_here and
+               (b'quantity 6' in log_from_here or b'quantity 4' in log_from_here) and
+               b'date 2026-11-20' in log_from_here))
 checks.append(('controls tour: a hint shows when the pointer rests on a control (two lines, in a tooltip)',
                tour_ok and b'hint Bold / Makes the text bold (stays down)' in log_from_here and
                'f4efd8' in hint_pixels))
