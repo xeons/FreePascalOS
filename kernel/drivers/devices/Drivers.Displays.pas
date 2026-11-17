@@ -23,7 +23,10 @@
   native driver knows its adapter (Drivers.BochsDisplay) it drives it
   and its modes can be changed; otherwise the firmware's framebuffer is
   used as it is, in the one mode the firmware set. Then every other
-  adapter a native driver finds is a display of its own.
+  adapter a native driver finds is a display of its own: the other Bochs
+  devices, then each scanout of a virtio GPU (Drivers.VirtioGpu), which
+  is the first display when the firmware left no framebuffer (its own
+  graphics output on a virtio GPU only blits).
 }
 unit Drivers.Displays;
 
@@ -42,7 +45,8 @@ uses
   Abi.SystemCalls,
   Runtime.Memory,
   Drivers.DisplayDevice,
-  Drivers.BochsDisplay;
+  Drivers.BochsDisplay,
+  Drivers.VirtioGpu;
 
 const
   BytesPerPixel = 4;
@@ -79,6 +83,7 @@ begin
   if not RegisterBochsConsoleDisplay(Framebuffer) then
     RegisterFirmwareDisplay(Framebuffer);
   RegisterOtherBochsDisplays;
+  RegisterVirtioGpuDisplays(Framebuffer);
 end;
 
 end.
