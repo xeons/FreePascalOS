@@ -22,7 +22,10 @@ suspends and wakes it many times in a row, waiting a different time
 before each wake-up (none, a moment, two seconds). A wake that does not
 come back is reported with what QEMU says about the processors. With
 POINTERS=1, each round then also checks that the PS/2 mouse and the USB
-tablet still deliver input events.
+tablet still deliver input events. With LOAD=1, background shell loops
+start and end programs all the time, also across each suspend: every
+program that ends frees kernel memory, so processors that wake shoot
+down translations at once, while the others are still being woken.
 
     stress-suspend.py <esp-directory> <system-disk-image> [rounds]
 
@@ -218,6 +221,11 @@ def pointers_work(round_number):
     expected_position = 'position %d 32768' % (tablet_x * 2)
     return finished and b'motion -3 5' in shown and expected_position.encode() in shown
 
+
+if os.environ.get('LOAD') == '1':
+    for loop in range(3):
+        type_on_serial(b'sh -c "while true; do /bin/true; done" &\r')
+        collect(0.5)
 
 delays = [0, 0.1, 2]
 pointer_failures = 0

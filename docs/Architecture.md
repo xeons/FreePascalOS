@@ -316,7 +316,15 @@ Rules that follow from this:
   register and then the command register, and an interrupt in between
   that sends an IPI of its own (the clock asking for a dispatch
   interrupt) would redirect it, so `Hal.LocalApic` sends with interrupts
-  disabled.
+  disabled. Each target has a pending flag of its own, which the sender
+  sets and the target clears; a target that never answers is named in
+  the panic (parameter 4, its processor index). A processor frozen for
+  suspend to RAM does not answer requests: before halting it clears its
+  flag and stops answering, so senders skip it, and once woken (its
+  local APIC set up again) it answers again and only then flushes its
+  TLB. Processors woken first run and shoot down while the others are
+  still frozen, and INIT would throw away a request waiting at a frozen
+  one.
 - **Panic.** The panicking processor stops the others with an NMI before
   printing; the debug output lock records its owner's processor number,
   so nested messages on one processor and messages from different
@@ -679,7 +687,8 @@ runs it on a thread pinned to the boot processor:
    - **Platform:** PCI configuration space is saved.
 3. Processors (`Kernel.ProcessorPower`).
    - Every other processor freezes in its dispatch interrupt, where it
-     holds no spin lock: it saves its state (`Kernel.Arch.Suspend`:
+     holds no spin lock: it stops answering TLB shootdowns (see above),
+     saves its state (`Kernel.Arch.Suspend`:
      callee-saved registers, stack, flags, FS and swapped GS bases, the
      priority level, FPU state, like `setjmp`) and halts.
    - The boot processor saves the I/O APIC entries, pauses the clock and
@@ -703,7 +712,8 @@ runs it on a thread pinned to the boot processor:
      switching threads. At level 0 a clock interrupt there would start
      the dispatch interrupt again on top of itself, waiting forever for
      the lock its own processor holds, and every other processor after
-     it.
+     it. The interrupt flag, off in the saved state, is turned on again
+     as it was in the dispatch interrupt.
 5. The wall clock is read again (the uptime leaves the sleep out), and
    every power handler resumes, first stage first:
    - **Platform:** PCI configuration (BARs, bridges, capabilities, then

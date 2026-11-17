@@ -42,6 +42,26 @@
   an interrupt in the middle of an xAPIC send could redirect it
   (Hal.LocalApic).
 
+  Each target has a flag of its own (ShootdownPending): the sender sets
+  it and sends the interrupt, the target clears it once it invalidated,
+  and the sender waits until every flag it set is clear (a stuck one
+  names its processor in the panic).
+
+  Suspend to RAM: a processor frozen for it (Kernel.ProcessorPower)
+  halts with interrupts off and is later started again with INIT, which
+  throws away any interrupt still waiting at its interrupt controller.
+  A request sent to it would never be answered, and processors woken
+  first run (and shoot down) while the others are still frozen. So a
+  freezing processor stops answering requests (StopAnsweringRequests):
+  it clears the flag of a request already sent to it, and senders skip
+  it from then on. That is safe, as it starts again with empty
+  translation caches. Woken, once its interrupt controller works again,
+  it answers requests again (ResumeAnsweringRequests) and only then
+  throws away what it cached meanwhile. Flag and AnswersRequests are
+  each written before the other is read, with full barriers, on both
+  sides, so either the sender sees that the target stopped answering
+  or the target sees the request and clears it.
+
   Rescheduling: RequestDispatchOnProcessor makes another processor run its
   dispatch interrupt, for example to pick up a thread that just became
   ready while it was idle.
@@ -63,6 +83,13 @@ procedure InitializeInterProcessorRequests;
   at or below DispatchLevel with interrupts enabled, holding no lock
   another processor might spin on with interrupts disabled. }
 procedure InvalidateRemoteTranslations(Root: QWord; StartAddress: QWord; PageCount: LongWord);
+
+{ Suspend to RAM. A processor about to freeze, with interrupts
+  disabled, stops answering requests (and any waiting for it ends); a
+  woken processor, once its interrupt controller is set up again,
+  answers them again and empties its translation caches. }
+procedure StopAnsweringRequests;
+procedure ResumeAnsweringRequests;
 
 procedure RequestDispatchOnProcessor(Processor: PProcessor);
 
@@ -89,7 +116,6 @@ var
   ShootdownRoot: QWord;
   ShootdownAddress: QWord;
   ShootdownPageCount: LongWord;
-  PendingAcknowledgements: Int64;
 
 procedure HandleRequestInterrupt(Frame: PTrapFrame; Context: Pointer);
 var
@@ -100,7 +126,60 @@ begin
   if (ShootdownRoot = 0) or (Processor^.ActiveAddressSpace = ShootdownRoot) then
     for PageIndex := 1 to ShootdownPageCount do
       InvalidateTlbEntry(ShootdownAddress + QWord(PageIndex - 1) * PageSize);
-  AtomicDecrement(PendingAcknowledgements);
+  AtomicStore(Processor^.ShootdownPending, 0);
+end;
+
+procedure StopAnsweringRequests;
+var
+  Processor: PProcessor;
+begin
+  Processor := CurrentProcessor;
+  AtomicExchange(Processor^.AnswersRequests, 0);
+  { Its translation caches go with the power: what was asked of it is
+    done. }
+  AtomicExchange(Processor^.ShootdownPending, 0);
+end;
+
+procedure ResumeAnsweringRequests;
+begin
+  AtomicExchange(CurrentProcessor^.AnswersRequests, 1);
+  { Translations cached between starting and now may have been changed
+    by a sender that skipped this processor. }
+  FlushEntireTlb;
+end;
+
+{ Asks Target to invalidate the translations of the current request.
+  The flag is set before AnswersRequests is read (the exchange is a full
+  barrier): a target that stopped answering in between clears it, one
+  that stopped before is seen here. }
+procedure SendShootdownRequest(Target: PProcessor);
+begin
+  AtomicExchange(Target^.ShootdownPending, 1);
+  if AtomicLoad(Target^.AnswersRequests) <> 0 then
+    HalSendRequestInterrupt(Target^.ApicId)
+  else
+    AtomicStore(Target^.ShootdownPending, 0);
+end;
+
+{ Waits until every processor answered; panics naming the first one that
+  did not. }
+procedure WaitForShootdownAnswers(Root: QWord; StartAddress: QWord; PageCount: LongWord);
+var
+  Index: LongWord;
+  Spins: QWord;
+begin
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Spins := 0;
+    while AtomicLoad(ProcessorByIndex(Index)^.ShootdownPending) <> 0 do
+    begin
+      CpuRelax;
+      Inc(Spins);
+      if Spins = AcknowledgementSpinLimit then
+        KernelPanicWithCode(PanicSchedulerFailure, 'a processor did not answer a TLB shootdown',
+          StartAddress, Root, PageCount, Index);
+    end;
+  end;
 end;
 
 procedure InitializeInterProcessorRequests;
@@ -116,7 +195,6 @@ var
   Self: PProcessor;
   Other: PProcessor;
   Index: LongWord;
-  Spins: QWord;
 begin
   if OnlineProcessorCount <= 1 then
     Exit;
@@ -138,7 +216,6 @@ begin
     loaded address spaces are read: one switching to Root either shows
     up here or already sees the changed table. }
   FullMemoryBarrier;
-  PendingAcknowledgements := 0;
   for Index := 0 to ProcessorTotal - 1 do
   begin
     Other := ProcessorByIndex(Index);
@@ -146,18 +223,9 @@ begin
       Continue;
     if (Root <> 0) and (Other^.ActiveAddressSpace <> Root) then
       Continue;
-    AtomicIncrement(PendingAcknowledgements);
-    HalSendRequestInterrupt(Other^.ApicId);
+    SendShootdownRequest(Other);
   end;
-  Spins := 0;
-  while AtomicFetchAndAdd(PendingAcknowledgements, 0) > 0 do
-  begin
-    CpuRelax;
-    Inc(Spins);
-    if Spins = AcknowledgementSpinLimit then
-      KernelPanicWithCode(PanicSchedulerFailure, 'a processor did not answer a TLB shootdown',
-        StartAddress, Root, PageCount, 0);
-  end;
+  WaitForShootdownAnswers(Root, StartAddress, PageCount);
   ReleaseSpinLock(ShootdownLock, PreviousLevel);
 end;
 

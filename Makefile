@@ -233,7 +233,8 @@ test: aml-test drawing-test font-test text-test chart-test settings-test files-t
 
 # Not part of make test (it takes a minute a round under TCG): suspends
 # and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,
-# POINTERS=1 to check the mouse and tablet after each wake).
+# POINTERS=1 to check the mouse and tablet after each wake, LOAD=1 to keep
+# programs starting and ending across each suspend).
 ROUNDS ?= 30
 suspend-stress: esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/stress-suspend.py $(ESP_DIRECTORY) $(SYSTEM_DISK) $(ROUNDS)

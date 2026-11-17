@@ -22,8 +22,10 @@
   Suspend to RAM turns every processor off; only memory keeps its
   contents. Before, every processor but the boot one is frozen: asked
   (FreezeRequested) and made to run its dispatch interrupt, it notices
-  there, where it holds no spin lock, saves its state
-  (Kernel.Arch.Suspend) and halts with interrupts off. The boot
+  there, where it holds no spin lock, stops answering requests from
+  the other processors (Kernel.InterProcessor: a TLB shootdown would
+  otherwise wait for it forever), saves its state (Kernel.Arch.Suspend)
+  and halts with interrupts off. The boot
   processor then saves its own state and calls the routine that puts
   the machine to sleep.
 
@@ -34,8 +36,11 @@
   call registers, interrupt controllers, the clock continued from where
   it paused, and its clock interrupt) and resumes its
   saved state: the saving call returns once more. Then each frozen
-  processor is started again the same way (INIT, STARTUP) and resumes
-  where it froze, inside its dispatch interrupt.
+  processor is started again the same way (INIT, STARTUP), answers
+  requests again and resumes where it froze, inside its dispatch
+  interrupt, with interrupts enabled again as they were there. The
+  processors woken first run threads while the later ones are still
+  frozen, which is why frozen ones must not be waited for.
 
   Between freezing the others and starting them again the boot
   processor runs with interrupts off and takes no lock, since a frozen
@@ -73,6 +78,7 @@ uses
   Kernel.Arch.Suspend,
   Kernel.Arch.ProcessorStartup,
   Kernel.Processors,
+  Kernel.InterProcessor,
   Kernel.Clock,
   Hal.Platform,
   Debug.Output;
@@ -94,11 +100,13 @@ end;
 procedure FreezeThisProcessorIfRequested;
 var
   Processor: PProcessor;
+  InterruptsWereEnabled: Boolean;
 begin
   Processor := CurrentProcessor;
   if not Processor^.FreezeRequested then
     Exit;
-  DisableInterrupts;
+  InterruptsWereEnabled := SaveAndDisableInterrupts;
+  StopAnsweringRequests;
   if ArchSaveSuspendContext(Processor^.SuspendContext) = 0 then
   begin
     FullMemoryBarrier;
@@ -112,6 +120,9 @@ begin
     level), as the rest of it takes the dispatcher lock. }
   Processor^.FreezeRequested := False;
   Processor^.Frozen := False;
+  { The saved state has interrupts off (they were disabled to save it);
+    the rest of the dispatch interrupt runs as it would have. }
+  RestoreInterrupts(InterruptsWereEnabled);
 end;
 
 function FreezeOtherProcessors: Boolean;
@@ -154,7 +165,10 @@ begin
   if Processor^.Index = 0 then
     HalResumeBootProcessor
   else
+  begin
     HalInitializeSecondaryProcessor;
+    ResumeAnsweringRequests;
+  end;
   { The clock continues where it paused (the boot processor resumes
     first), so each processor's next tick and due times still hold. }
   StartClockOnThisProcessor;

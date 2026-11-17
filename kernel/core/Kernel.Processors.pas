@@ -89,8 +89,11 @@ type
     { The address space this processor has loaded (TLB shootdowns are
       only sent where it matters). }
     ActiveAddressSpace: QWord;
-    { Requests from other processors (Kernel.InterProcessor). }
-    PendingRequests: LongWord;
+    { Requests from other processors (Kernel.InterProcessor): 1 while
+      it answers them (0 while frozen for suspend to RAM), and 1 while a
+      TLB shootdown waits for it. }
+    AnswersRequests: PtrUInt;
+    ShootdownPending: PtrUInt;
     { Processor time (Kernel.ProcessorTime), in clock nanoseconds:
       since when the running thread runs, and the time spent idle (in
       the idle thread) and busy so far. Changed at every switch, under
@@ -179,6 +182,8 @@ end;
 
 procedure MarkProcessorOnline(Processor: PProcessor);
 begin
+  { Its interrupt controller is set up by now. }
+  AtomicStore(Processor^.AnswersRequests, 1);
   Processor^.IsOnline := True;
   AtomicIncrement(ProcessorsOnline);
 end;
