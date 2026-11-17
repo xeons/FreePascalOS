@@ -25,8 +25,10 @@
   package of two-element packages, a property name (a string) and its
   value (an integer, a string, a buffer, or a package of them), such as
 
-    Package () { "local-mac-address", Buffer (6) { ... } }
-    Package () { "phy-mode", "rgmii-rxid" }
+    Package ("local-mac-address", Buffer (6) holding the address)
+    Package ("phy-mode", "rgmii-rxid")
+
+  (written here with parentheses for the braces ASL uses)
 
   Plain Pascal over the interpreter's values, so the host test
   (tools/AcpiDeviceTest) builds it too.

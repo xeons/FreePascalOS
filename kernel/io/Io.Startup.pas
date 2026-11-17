@@ -77,6 +77,7 @@ uses
   Drivers.VirtioBlock,
   Drivers.VirtioNet,
   Drivers.Nvme,
+  Drivers.Sdhci,
   Drivers.Xhci,
   Drivers.UsbStorage,
   Drivers.UsbKeyboard,
@@ -87,6 +88,7 @@ uses
   Drivers.Rtl8139,
   Drivers.Rtl8168,
   Drivers.Rtl8125,
+  Drivers.Genet,
   Io.Firmware,
   FileSystem.Volumes,
   Io.DiskArrival,
@@ -175,11 +177,15 @@ begin
   InitializeRtl8139Adapters;
   InitializeRtl8168Adapters;
   InitializeRtl8125Adapters;
+  { The Raspberry Pi 4's own Ethernet (an ACPI platform device). }
+  InitializeGenetAdapters;
   RegisterUsbStorageDriver;
   RegisterUsbKeyboardDriver;
   RegisterUsbPointerDriver;
   RegisterUsbAudioDriver;
   InitializeXhciControllers;
+  { After the other disks, so their names stay as they were. }
+  InitializeSdhciControllers;
   AttachDiskStatistics;
   ScanAllDisksForPartitions;
   InitializeDiskDevices;
