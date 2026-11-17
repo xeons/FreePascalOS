@@ -27,9 +27,11 @@
   and choose a font. Prints what happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels): the
-                          buttons at start; a dialog's controls when it
-                          appears (and the file dialogs' rows whenever
-                          they show a folder)
+                          buttons and the client area's top left
+                          (tour-client) at start; a dialog's controls when it
+                          appears (and the file dialogs' rows and client
+                          area, dialog-client, whenever they show a
+                          folder)
     opened PATH           the open dialog's choice
     saved PATH            the save dialog's choice
     color RRGGBB          the colour dialog's choice
@@ -137,6 +139,7 @@ begin
   TellMiddle('save-button', Self, FSaveButton);
   TellMiddle('color-button', Self, FColorButton);
   TellMiddle('font-button', Self, FFontButton);
+  TellPlace('tour-client', Self, Root, 0, 0);
 end;
 
 procedure TTourWindow.Report(const Text: string);
@@ -165,6 +168,7 @@ begin
       TellPlace('file-' + Name, Dialog, List, Scaled(40), List.RowMiddle(Row));
   end;
   TellMiddle('file-ok', Dialog, Dialog.OkButton);
+  TellPlace('dialog-client', Dialog, Dialog.Root, 0, 0);
 end;
 
 { The list was read again (another program changed the folder): every

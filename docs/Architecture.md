@@ -1144,8 +1144,9 @@ desktop windows (`WindowDesktop`, the shell's) at the bottom, then
 ordinary windows, then topmost ones (the taskbar, pop-ups); raising a
 window brings it to the top of its layer only. It draws their frames itself (a raised
 bevel, a title bar with the theme's gradient - across, or down with an
-edge and a shine - the window icon where the theme shows one
-(`Server.TitleIcon`), the title in a bold face of the
+edge and a shine - the window's icon (`Server.TitleIcon`: its own,
+else its owner's, else the generic picture where the theme shows one),
+the title in a bold face of the
 theme's text family picked by point size and DPI, minimize, maximize
 (restore on a maximized window) and close buttons, plain or tinted as
 the theme says (`Server.TitleButtonPainting`), pale on inactive
@@ -1395,8 +1396,35 @@ Other programs' windows (`Server.WindowList`): any program may list the
 top-level windows of the other programs of its user (root: of all;
 another user's titles may say what that user is doing) with
 `RequestListWindows`, answered by an `EventWindowListed` per window
-(its title, state, display and process) and one for window 0 that ends
-the list (`ListOtherWindows` in `Windowing.WindowList`).
+(its title, state, display, process and icon version) and one for
+window 0 that ends the list (`ListOtherWindows` in
+`Windowing.WindowList`).
+
+Window icons (`Server.WindowIcons`): a program gives its window an icon
+as a name of the icon theme (`RequestSetWindowIcon`; `TWindow.IconName`
+in libwindowing: every program names its `app-*` icon), or as pictures
+of a few sizes (`RequestSetWindowIconPictures`: up to
+`MaximumIconPictures` raw BGRA images of at most `MaximumIconSide`
+pixels, one after another in a section, as the clipboard's raw images
+travel; `TWindow.SetIconPictures`, `TControlWindow.SetIcon(TImage)`
+through `Controls.WindowIcons`). The server reads a named icon's file
+with libimage (`Controls.IconFiles`: the entry of the frame's pixel
+size, else the nearest larger shrunk, else the largest grown, each size
+made once) and draws the icon at the left of the title bar at the scale
+of the display the window is on, in both themes. A window with no icon
+shows its owner's (a dialog its main window's); one with none at all
+gets the generic picture where the theme has it (Sunrise) and no icon
+in Classic. Every change gives the window a new icon version, which
+`EventShellWindowChanged` and `EventWindowListed` carry (in `Width`);
+a program asks for an icon with `RequestDescribeWindowIcon` (any
+window it may list; the shell any), answered by
+`EventWindowIconDescribed`: whether it is named (and the name) or
+pictures, its version, and its picture at the size asked in a section
+(`DescribeWindowIcon` in `Windowing.WindowIcons`). The desktop draws it
+on each taskbar button (`Desktop.TaskIcons`: a theme name from the
+theme's file at the button's size, pictures resized; it logs
+`task-icon N NAME`), the task manager on each row of its Programs tab
+(`TaskManager.ProgramIcons`).
 
 Keys for the whole desktop (`Server.Hotkeys`): the shell may take a key
 with the modifiers that must be held with it (`RequestRegisterHotkey`;
@@ -1452,7 +1480,9 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 `RequestRegisterHotkey` = 26, `RequestGetKeyboardSettings` = 27,
 `RequestSetKeyboardSettings` = 28; the screen lock's in a range of
 their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
-`RequestRepaintDisplays` = 42; the clipboard and drag and drop 29 to
+`RequestRepaintDisplays` = 42; window icons `RequestSetWindowIcon` =
+43, `RequestSetWindowIconPictures` = 44, `RequestDescribeWindowIcon` =
+45; the clipboard and drag and drop 29 to
 36: `RequestOfferData` = 29, `RequestProvideData` = 30,
 `RequestAskData` = 31, `RequestWatchClipboard` = 32,
 `RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
@@ -1468,7 +1498,8 @@ and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
 127, `EventClipboardChanged` = 128, `EventClipboardFormats` = 129,
 `EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
 132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
-135; `EventScreenLock` = 140, `EventIdleDescribed` = 141).
+135; `EventScreenLock` = 140, `EventIdleDescribed` = 141,
+`EventWindowIconDescribed` = 142).
 
 The clipboard (`Server.DataOffers`) is the server's. A program offers
 data in one or more formats (`RequestOfferData` with

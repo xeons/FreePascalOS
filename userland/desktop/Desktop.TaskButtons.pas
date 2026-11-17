@@ -33,6 +33,7 @@ unit Desktop.TaskButtons;
 interface
 
 uses
+  Drawing.Rectangles,
   Drawing.Canvas,
   Controls.Base;
 
@@ -53,6 +54,8 @@ type
   public
     { Takes what the window list says of the window. }
     procedure ShowState(const Title: string; Active, Minimized: Boolean; IconVersion: LongWord);
+    { Where the window's icon is drawn (its pixels). }
+    function IconBox: TRectangle;
     property WindowId: LongWord read FWindowId write FWindowId;
     property Active: Boolean read FActive;
     property Minimized: Boolean read FMinimized;
@@ -65,7 +68,6 @@ implementation
 uses
   Abi.SystemCalls,
   Drawing.Colors,
-  Drawing.Rectangles,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
@@ -94,6 +96,17 @@ begin
   Invalidate;
 end;
 
+function TTaskButton.IconBox: TRectangle;
+var
+  Shift: LongInt;
+begin
+  Shift := 0;
+  if FActive or FHeld then
+    Shift := 1;
+  Result := MakeRectangle(Scaled(Spacing) + Shift, (RectangleHeight(PixelBounds) - Scaled(MarkSize)) div 2 + Shift,
+    Scaled(MarkSize), Scaled(MarkSize));
+end;
+
 procedure TTaskButton.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
@@ -117,8 +130,7 @@ begin
     FillRectangle(Canvas, Box, Theme.TaskbarFace);
     DrawBevel(Canvas, Box, RaisedThemeBevel);
   end;
-  Mark := MakeRectangle(Scaled(Spacing) + Shift, (RectangleHeight(Box) - Scaled(MarkSize)) div 2 + Shift,
-    Scaled(MarkSize), Scaled(MarkSize));
+  Mark := IconBox;
   if not DrawTaskIcon(Canvas, FWindowId, Mark) then
     DrawTaskWindowMark(Canvas, Mark);
   Caption := MakeRectangle(Mark.Right + Scaled(Spacing), Shift,

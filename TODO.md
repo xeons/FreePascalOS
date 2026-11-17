@@ -522,8 +522,9 @@ normalized (0-65535), not pixels.
       the scale is used, scaled when none fits: an isometric icon set and
       the pointer's pictures drawn by code at build time (16 to 96 px),
       read through the icon theme (`Controls.IconFiles`,
-      `Controls.IconTheme`) and the display server; window title icons
-      not yet
+      `Controls.IconTheme`) and the display server; window icons (a theme
+      name or pictures, `RequestSetWindowIcon`) in title bars, on taskbar
+      buttons and in the task manager, dialogs showing their owner's
 - [x] Clipboard (text and images) and drag and drop
 - [x] Themes: the theme as data (Sunrise, the default, and Classic), chosen by
       Appearance/Theme and followed live; Control Panel Appearance page

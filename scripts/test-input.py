@@ -1356,6 +1356,7 @@ if dialogs_started:
     click_at(*place['open-button'])
     time.sleep(1)
     place = dialog_places('OPEN')
+    open_screen = take_screen()
     # Another program adds a file to the folder shown: the list is read
     # again (the dialog watches its folder).
     type_on_serial(b'touch /dialog-refresh.txt\r')
@@ -1417,6 +1418,28 @@ checks.append(('common dialogs: save a file (a name typed; replacing refused)',
                b'saved /etc/passwd' not in log_from_here))
 checks.append(('common dialogs: choose a colour and a font',
                dialogs_ok and b'color 00FF00' in log_from_here and b'font 110 bold' in log_from_here))
+# Window icons: dialogtour names its window's icon (app-dialogs), drawn
+# at the left of its title bar (16 pixels, 3 right of the client area's
+# left and 20 above its top); the open dialog, owned by it, names none
+# and shows its owner's: the opaque pixels of the two icons are alike
+# (the owner's bar is inactive, the dialog's active, so only the icon's
+# own pixels match), and the owner's has the white of its little
+# windows, which the plain navy bar has not.
+def title_icon_pixels(screen, client):
+    left, top = client[0] + 3, client[1] - 20
+    return [screen(x, y) for y in range(top, top + 16) for x in range(left, left + 16)]
+
+
+if dialogs_started and 'tour-client' in place and 'dialog-client' in place:
+    owner_icon = title_icon_pixels(open_screen, place['tour-client'])
+    dialog_icon = title_icon_pixels(open_screen, place['dialog-client'])
+    alike = sum(1 for a, b in zip(owner_icon, dialog_icon) if a == b)
+    owner_has_icon = any(len(colour) == 6 and all(int(colour[i:i + 2], 16) >= 0xdc for i in (0, 2, 4))
+                         for colour in owner_icon)
+else:
+    alike, owner_has_icon = 0, False
+checks.append(('window icons: a window\'s icon in its title bar, and its dialog shows the same',
+               owner_has_icon and alike >= 40))
 
 # Notepad, from the keyboard: /etc/passwd opened from the command line
 # (its name in the title, its first line shown); words typed at its end,
@@ -2197,6 +2220,24 @@ tour_log = log_since('ICONS $m')
 checks.append(('desktop: a double click on an icon starts its program',
                b'started controlstour' in tour_log and b'place help' in tour_log and
                re.search(rb'task \d+ active Controls tour', tour_log) is not None))
+# Window icons: controlstour names its icon (app-components: red, gold,
+# blue and green blocks); the desktop hears it ("task-icon N
+# app-components") and draws it on the window's button, and the display
+# server at the left of its title bar (its client area at 60,40: the
+# icon at 63-78, 20-35). Red is in neither the Classic title bar nor the
+# taskbar.
+def is_red(colour):
+    return len(colour) == 6 and int(colour[0:2], 16) >= 0xa0 and int(colour[2:4], 16) <= 0x80 and \
+        int(colour[4:6], 16) <= 0x80
+
+
+tour_screen = take_screen()
+title_icon_red = any(is_red(tour_screen(x, y)) for x in range(63, 79) for y in range(20, 36))
+button_icon_red = 'task-icon-Controls-tour' in place and \
+    any(is_red(colour) for colour in near_pixels(tour_screen, *place['task-icon-Controls-tour'], 8))
+checks.append(('window icons: a program\'s icon in its title bar and on its taskbar button',
+               re.search(rb'task-icon \d+ app-components', tour_log) is not None and title_icon_red and
+               button_icon_red))
 if 'task-Controls-tour' in place:
     right_click_at(*place['task-Controls-tour'])
     place = shell_places('TOURMENU')
