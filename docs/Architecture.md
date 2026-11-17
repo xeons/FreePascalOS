@@ -1689,7 +1689,8 @@ left and right together stretch, neither keeps the middle at its share
 `PreferredSize` (logical units, virtual: labels, buttons, check and
 radio boxes, edit boxes' and combo boxes' heights, group boxes and
 panels from their children, toolbar, status bar, progress bar, slider,
-tab control, calendar), again whenever its text, its children or the
+tab control, calendar, checked list box, numeric up/down, date and time
+picker, picture box, chart), again whenever its text, its children or the
 scale change; `MinWidth`, `MinHeight`, `MaxWidth` and `MaxHeight` (0: no
 maximum) are kept by docking, anchors, splitters and every container.
 (`Margins` and `ContentPadding` rather than `Margin` and `Padding`: many
