@@ -112,7 +112,8 @@ uses
   Controls.Text,
   Controls.Clipboard,
   Controls.SystemDrag,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 constructor TEditBox.Create(AParent: TControl);
 begin
@@ -433,12 +434,12 @@ begin
     FillRectangle(Canvas, Box, Theme.Field)
   else
     FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   if ControlFace = nil then
     Exit;
   { Text stays inside the bevel. }
   Inner := Canvas;
-  Face := InflateRectangle(Box, -2);
+  Face := InflateRectangle(Box, -BevelWidth);
   NarrowCanvasClip(Inner, Face);
   TextTop := (RectangleHeight(Box) - TextHeight(ControlFace)) div 2;
   if Enabled then

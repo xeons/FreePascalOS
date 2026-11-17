@@ -190,7 +190,8 @@ uses
   Windowing.Windows,
   Controls.Keys,
   Controls.ListBox,
-  Controls.ListViewLayout;
+  Controls.ListViewLayout,
+  Controls.Painting;
 
 const
   MinimumColumnWidth = 16;
@@ -576,7 +577,7 @@ var
   Now: QWord;
 begin
   EndEditing(True);
-  if ShowsHeader and (Y < 2 + HeaderHeight) then
+  if ShowsHeader and (Y < BevelWidth + HeaderHeight) then
   begin
     if Button = ButtonLeft then
       ClickHeader(X);

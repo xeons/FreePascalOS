@@ -60,7 +60,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Windowing.Displays,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 const
   { Logical units: around the text, and between the box and the point. }

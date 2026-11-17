@@ -34,6 +34,7 @@ uses
   Controls.Window,
   Controls.Labels,
   Controls.Panels,
+  Controls.Painting,
   Controls.Buttons,
   Controls.Toggles,
   Controls.Clipboard,

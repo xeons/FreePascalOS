@@ -117,7 +117,8 @@ uses
   Font.Text,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Labels;
+  Controls.Labels,
+  Controls.Painting;
 
 const
   SampleText = 'AaBbYyZz 0123';
@@ -190,7 +191,7 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   Face := FamilyFontFace(FFamily, FPointTenths, FBold);
   if Face = nil then
     Exit;

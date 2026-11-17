@@ -214,7 +214,8 @@ uses
   Windowing.Displays,
   Controls.Keys,
   Controls.Icons,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 const
   SeparatorHeight = 8;
@@ -403,7 +404,7 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, RaisedThemeBevel);
+  DrawRaisedBevel(Canvas, Box);
   for Index := 0 to FMenu.Count - 1 do
   begin
     Item := FMenu[Index];

@@ -106,7 +106,8 @@ uses
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Labels;
+  Controls.Labels,
+  Controls.Painting;
 
 const
   { Row by row: strong colours, light ones, dark ones, and greys. }
@@ -162,7 +163,7 @@ var
   Box: TRectangle;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   FillRectangle(Canvas, InflateRectangle(Box, -2), FColor);
   { The chosen one is ringed in the face text colour, a pixel outside
     the colour, so it shows whatever the colour is. }

@@ -82,7 +82,8 @@ uses
   Controls.Text,
   Controls.Buttons,
   Controls.Icons,
-  Controls.ImageList;
+  Controls.ImageList,
+  Controls.Painting;
 
 const
   { Logical units. }

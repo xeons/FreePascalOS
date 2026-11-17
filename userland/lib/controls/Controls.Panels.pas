@@ -95,10 +95,26 @@ type
     property ScrollTop: LongInt read FScrollTop;
   end;
 
+  { A group box's frame: etched with the text in its top edge, or a
+    bevelled panel under a header band (golden, or navy for a section)
+    in themes that show bands (etched otherwise). }
+  TGroupHeaderStyle = (GroupHeaderEtched, GroupHeaderBand, GroupHeaderSectionBand);
+
   TGroupBox = class(TControl)
+  private
+    FHeaderStyle: TGroupHeaderStyle;
+    procedure SetHeaderStyle(Value: TGroupHeaderStyle);
+    procedure PaintEtched(var Canvas: TCanvas; const Box: TRectangle);
+    procedure PaintBanded(var Canvas: TCanvas; const Box: TRectangle);
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
+    { The style shows as a band now (the theme shows bands). }
+    function ShowsBand: Boolean;
+    { Pixels: the height of the band, or of the text in the etched top
+      edge; children placed below it are clear of it. }
+    function HeaderHeight: LongInt;
+    property HeaderStyle: TGroupHeaderStyle read FHeaderStyle write SetHeaderStyle;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
     { Its children, the frame around them, and room for its text. }
@@ -116,7 +132,8 @@ uses
   Controls.Keys,
   Controls.Text,
   Controls.LayoutRules,
-  Controls.SplitRules;
+  Controls.SplitRules,
+  Controls.Painting;
 
 const
   { Logical units: a step of the arrows (and each wheel step, three of
@@ -152,8 +169,8 @@ begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
   case FEdge of
-    PanelRaised: DrawEdge(Canvas, Box, Theme.Highlight, Theme.Shadow);
-    PanelSunken: DrawEdge(Canvas, Box, Theme.Shadow, Theme.Highlight);
+    PanelRaised: DrawRaisedEdge(Canvas, Box);
+    PanelSunken: DrawSunkenEdge(Canvas, Box);
   end;
 end;
 
@@ -402,23 +419,74 @@ begin
     Result.cx := Caption;
 end;
 
-{ The outline of Rectangle, Thickness pixels wide inside it. }
-procedure DrawThickOutline(const Canvas: TCanvas; const Rectangle: TRectangle; Thickness: LongInt; Color: TColor);
-var
-  Width: LongInt;
-  Height: LongInt;
+procedure TGroupBox.SetHeaderStyle(Value: TGroupHeaderStyle);
 begin
-  Width := RectangleWidth(Rectangle);
-  Height := RectangleHeight(Rectangle);
-  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Top, Width, Thickness), Color);
-  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Bottom - Thickness, Width, Thickness), Color);
-  FillRectangle(Canvas, MakeRectangle(Rectangle.Left, Rectangle.Top, Thickness, Height), Color);
-  FillRectangle(Canvas, MakeRectangle(Rectangle.Right - Thickness, Rectangle.Top, Thickness, Height), Color);
+  FHeaderStyle := Value;
+  Invalidate;
+end;
+
+function TGroupBox.ShowsBand: Boolean;
+begin
+  Result := (FHeaderStyle <> GroupHeaderEtched) and Theme.HeaderBandsShown;
+end;
+
+function TGroupBox.HeaderHeight: LongInt;
+begin
+  if ShowsBand then
+    Result := TextHeight(ControlBoldFace) + Scaled(4) + BevelLine
+  else
+    Result := TextHeight(ControlFace);
 end;
 
 procedure TGroupBox.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
+begin
+  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
+  if ShowsBand then
+    PaintBanded(Canvas, Box)
+  else
+    PaintEtched(Canvas, Box);
+end;
+
+{ A raised panel of the lighter body colour, the band across its top
+  (inside the outline) with the bold text, the top corners rounded off
+  a little. }
+procedure TGroupBox.PaintBanded(var Canvas: TCanvas; const Box: TRectangle);
+var
+  Line: LongInt;
+  Band: TRectangle;
+  Body: TRectangle;
+  Kind: TBandKind;
+  Corner: LongInt;
+begin
+  Line := BevelLine;
+  Kind := BandHeader;
+  if FHeaderStyle = GroupHeaderSectionBand then
+    Kind := BandSection;
+  FillRectangle(Canvas, Box, Theme.BandedGroupBody);
+  DrawThickOutline(Canvas, Box, Line, Theme.Shadow);
+  Body := InflateRectangle(Box, -Line);
+  DrawThemeEdge(Canvas, Body, Theme.Highlight, Theme.Light);
+  Band := MakeRectangle(Line, Line, RectangleWidth(Box) - 2 * Line, HeaderHeight - Line);
+  DrawHeaderBand(Canvas, Band, Kind);
+  { The rounded corners: the face shows through the outermost pixels,
+    the outline turns one step in. }
+  Corner := 2 * Line;
+  FillRectangle(Canvas, MakeRectangle(0, 0, Corner, Line), Theme.Face);
+  FillRectangle(Canvas, MakeRectangle(0, 0, Line, Corner), Theme.Face);
+  FillRectangle(Canvas, MakeRectangle(Box.Right - Corner, 0, Corner, Line), Theme.Face);
+  FillRectangle(Canvas, MakeRectangle(Box.Right - Line, 0, Line, Corner), Theme.Face);
+  FillRectangle(Canvas, MakeRectangle(Line, Line, Line, Line), Theme.Shadow);
+  FillRectangle(Canvas, MakeRectangle(Box.Right - 2 * Line, Line, Line, Line), Theme.Shadow);
+  if Text = '' then
+    Exit;
+  DrawMnemonicTextInBox(Canvas, ControlBoldFace, Text, MakeRectangle(Band.Left + Scaled(7), Band.Top,
+    RectangleWidth(Band) - Scaled(9), RectangleHeight(Band) - Line), AlignTextLeft, HeaderBandText(Kind));
+end;
+
+procedure TGroupBox.PaintEtched(var Canvas: TCanvas; const Box: TRectangle);
+var
   ShadowFrame: TRectangle;
   HighlightFrame: TRectangle;
   LineWidth: LongInt;
@@ -426,10 +494,13 @@ var
   Indent: LongInt;
   Width: LongInt;
 begin
-  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
   TextTop := TextHeight(ControlFace) div 2;
-  LineWidth := Scaled(1);
+  { The groove's lines: as the theme's bevel lines, or (the classic
+    look) as one logical unit. }
+  LineWidth := BevelLine;
+  if not Theme.ScaledBevelLines then
+    LineWidth := Scaled(1);
   if LineWidth < 1 then
     LineWidth := 1;
   { Etched (a groove): a highlight outline a line down and right of a

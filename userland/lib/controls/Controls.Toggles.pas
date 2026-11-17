@@ -82,7 +82,8 @@ uses
   Controls.Keys,
   Controls.Text,
   Controls.LayoutRules,
-  Controls.CheckMarks;
+  Controls.CheckMarks,
+  Controls.Painting;
 
 constructor TToggle.Create(AParent: TControl);
 begin

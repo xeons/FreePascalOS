@@ -79,12 +79,67 @@ type
       as in a multi-line edit box). }
     TextFamily: PChar;
     FixedFamily: PChar;
+    { --- How controls are painted (libcontrols): style flags and the
+      colours only some controls use. Both looks set all of them:
+      LoadModernControlLook (the default) and LoadClassicControlLook
+      (exactly the earlier look). --- }
+    { Bevel and edge lines grow with the display scale (a line is
+      BevelLineWidth pixels), rather than staying one pixel. }
+    ScaledBevelLines: Boolean;
+    { A push button's face under the pointer, and while held down. }
+    HotButtonFace: TColor;
+    PressedButtonFace: TColor;
+    { Logical units: the dark outline of the default button. }
+    DefaultButtonOutline: LongInt;
+    { Group boxes may have a header band (HeaderBandsShown; otherwise
+      every group box is etched): a golden band (header), and a navy one
+      (section), each a vertical gradient with an edge and bold text,
+      over a lighter body. }
+    HeaderBandsShown: Boolean;
+    HeaderBandTop: TColor;
+    HeaderBandBottom: TColor;
+    HeaderBandEdge: TColor;
+    HeaderBandText: TColor;
+    SectionBandTop: TColor;
+    SectionBandBottom: TColor;
+    SectionBandEdge: TColor;
+    SectionBandText: TColor;
+    BandedGroupBody: TColor;
+    { A progress bar's blocks (a gradient from Light at the top to the
+      colour), and a marquee's stripes on their background. }
+    ProgressBlock: TColor;
+    ProgressBlockLight: TColor;
+    MarqueeStripe: TColor;
+    MarqueeBackground: TColor;
+    { A pop-up menu's icon column, shaded (MenuIconColumnShown) in this
+      colour with an etched line beside it. }
+    MenuIconColumnShown: Boolean;
+    MenuIconColumn: TColor;
+    { The calendar's month bar (and the text and arrows on it), and
+      whether it is a filled bar with button arrows. }
+    CalendarHeaderFilled: Boolean;
+    CalendarHeader: TColor;
+    CalendarHeaderText: TColor;
+    { The thin frame around a tooltip. }
+    TooltipBorder: TColor;
+    { The status bar: panels separated by etched lines and a size grip
+      at the right (otherwise sunken panels side by side). }
+    StatusBarEtched: Boolean;
+    { A splitter shows a grip of dots in its middle. }
+    SplitterGrip: Boolean;
+    { A scroll bar's track. }
+    ScrollTrack: TColor;
   end;
 
 var
   Theme: TTheme;
 
 procedure LoadDefaultTheme;
+{ The control painting fields: the new look, and the earlier one. }
+procedure LoadModernControlLook;
+procedure LoadClassicControlLook;
+{ Pixels: one line of a bevel or edge at the display's scale. }
+function BevelLineWidth(ScalePercent: LongWord): LongInt;
 function RaisedThemeBevel: TBevelColors;
 function SunkenThemeBevel: TBevelColors;
 
@@ -126,6 +181,81 @@ begin
   Theme.TextPoints := 90;
   Theme.TextFamily := 'dejavu-sans';
   Theme.FixedFamily := 'terminus';
+  LoadModernControlLook;
+end;
+
+procedure LoadModernControlLook;
+begin
+  Theme.ScaledBevelLines := True;
+  Theme.HotButtonFace := $FFE6E5F0;
+  Theme.PressedButtonFace := $FFBDBCCF;
+  Theme.DefaultButtonOutline := 2;
+  Theme.HeaderBandsShown := True;
+  Theme.HeaderBandTop := $FFFFEA8C;
+  Theme.HeaderBandBottom := $FFF0B424;
+  Theme.HeaderBandEdge := $FFA87410;
+  Theme.HeaderBandText := $FF141414;
+  Theme.SectionBandTop := $FF4A64BE;
+  Theme.SectionBandBottom := $FF1E3088;
+  Theme.SectionBandEdge := $FF121E58;
+  Theme.SectionBandText := $FFFFFFFF;
+  Theme.BandedGroupBody := $FFE4E3EE;
+  Theme.ProgressBlock := $FF2FA83A;
+  Theme.ProgressBlockLight := $FF9BE69E;
+  Theme.MarqueeStripe := $FF4F74D2;
+  Theme.MarqueeBackground := $FFC4D2F2;
+  Theme.MenuIconColumnShown := True;
+  Theme.MenuIconColumn := $FFDCDBE8;
+  Theme.CalendarHeaderFilled := True;
+  Theme.CalendarHeader := $FF24409C;
+  Theme.CalendarHeaderText := $FFFFFFFF;
+  Theme.TooltipBorder := $FF2A2A38;
+  Theme.StatusBarEtched := True;
+  Theme.SplitterGrip := True;
+  Theme.ScrollTrack := $FFE8E7F0;
+end;
+
+{ Every value as the controls were painted before the new look. }
+procedure LoadClassicControlLook;
+begin
+  Theme.ScaledBevelLines := False;
+  Theme.HotButtonFace := $FFCBC6BD;
+  Theme.PressedButtonFace := $FFCBC6BD;
+  Theme.DefaultButtonOutline := 1;
+  Theme.HeaderBandsShown := False;
+  Theme.HeaderBandTop := $FFCBC6BD;
+  Theme.HeaderBandBottom := $FFCBC6BD;
+  Theme.HeaderBandEdge := $FF7E7A72;
+  Theme.HeaderBandText := $FF000000;
+  Theme.SectionBandTop := $FFCBC6BD;
+  Theme.SectionBandBottom := $FFCBC6BD;
+  Theme.SectionBandEdge := $FF7E7A72;
+  Theme.SectionBandText := $FF000000;
+  Theme.BandedGroupBody := $FFCBC6BD;
+  Theme.ProgressBlock := $FF17375E;
+  Theme.ProgressBlockLight := $FF17375E;
+  Theme.MarqueeStripe := $FF17375E;
+  Theme.MarqueeBackground := $FFCBC6BD;
+  Theme.MenuIconColumnShown := False;
+  Theme.MenuIconColumn := $FFCBC6BD;
+  Theme.CalendarHeaderFilled := False;
+  Theme.CalendarHeader := $FFCBC6BD;
+  Theme.CalendarHeaderText := $FF000000;
+  Theme.TooltipBorder := $FF35322D;
+  Theme.StatusBarEtched := False;
+  Theme.SplitterGrip := False;
+  { Half way between the face and the highlight. }
+  Theme.ScrollTrack := $FFE5E3DE;
+end;
+
+function BevelLineWidth(ScalePercent: LongWord): LongInt;
+begin
+  Result := 1;
+  { One pixel up to 150%, two from 175%, and so on. }
+  if Theme.ScaledBevelLines then
+    Result := (LongInt(ScalePercent) + 25) div 100;
+  if Result < 1 then
+    Result := 1;
 end;
 
 function RaisedThemeBevel: TBevelColors;

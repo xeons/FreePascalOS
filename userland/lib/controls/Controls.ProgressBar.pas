@@ -56,7 +56,8 @@ uses
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   { Logical units. }

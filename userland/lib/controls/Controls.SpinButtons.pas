@@ -77,7 +77,8 @@ uses
   Drawing.Shapes,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.Painting;
 
 procedure DrawSpinArrow(const Canvas: TCanvas; const Box: TRectangle; Up, Enabled: Boolean);
 var

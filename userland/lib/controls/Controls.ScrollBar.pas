@@ -86,7 +86,8 @@ uses
   Drawing.Shapes,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.Painting;
 
 constructor TScrollBar.Create(AParent: TControl);
 begin

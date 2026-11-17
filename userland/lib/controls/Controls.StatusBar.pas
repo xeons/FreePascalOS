@@ -57,7 +57,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Text,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 constructor TStatusBar.Create(AParent: TControl);
 begin

@@ -98,7 +98,8 @@ uses
   Windowing.Connection,
   Controls.Icons,
   Controls.Text,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   ToolBarHeight = 26;

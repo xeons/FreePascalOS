@@ -96,7 +96,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 constructor TSplitter.Create(AParent: TControl);
 begin

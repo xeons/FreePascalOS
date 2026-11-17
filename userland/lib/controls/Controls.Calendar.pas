@@ -192,7 +192,8 @@ uses
   Windowing.Windows,
   Controls.Keys,
   Controls.Text,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.Painting;
 
 function LocalToday: TCalendarDate;
 var
@@ -898,7 +899,7 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   if ControlFace = nil then
     Exit;
   Parts := PartsLayout;
