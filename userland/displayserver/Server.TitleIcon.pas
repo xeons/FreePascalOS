@@ -17,11 +17,12 @@
 }
 
 {
-  The icon at the left of a title bar (when the theme has one,
-  TTheme.TitleIcon): windows do not give the server an icon, so every
-  window gets the same small application picture - a little window
-  with a navy title strip, a light body and a shaded edge, drawn in
-  the square it is given, its lines a logical unit wide.
+  The icon at the left of a title bar: the window's own (or its
+  owner's, Server.WindowIcons), at the box's size in pixels - so at the
+  scale of the display the window is on. A window with none gets, when
+  the theme has it (TTheme.TitleIcon), the generic application picture
+  - a little window with a navy title strip, a light body and a shaded
+  edge, drawn in the square it is given, its lines a logical unit wide.
 }
 unit Server.TitleIcon;
 
@@ -31,17 +32,35 @@ interface
 
 uses
   Drawing.Rectangles,
-  Drawing.Canvas;
+  Drawing.Canvas,
+  Server.Windows;
 
 { Draws the icon in Box (a square); Pixel is a logical unit in pixels,
   at least 1. }
 procedure DrawTitleIcon(const Canvas: TCanvas; const Box: TRectangle; Pixel: LongInt);
+{ Draws the icon Window shows in Box (a square); False (nothing drawn)
+  if it has none. }
+function DrawWindowIcon(const Canvas: TCanvas; Window: TServerWindow; const Box: TRectangle): Boolean;
 
 implementation
 
 uses
   Drawing.Colors,
-  Windowing.Theme;
+  Image.Model,
+  Image.Surfaces,
+  Windowing.Theme,
+  Server.WindowIcons;
+
+function DrawWindowIcon(const Canvas: TCanvas; Window: TServerWindow; const Box: TRectangle): Boolean;
+var
+  Picture: TImage;
+begin
+  Picture := WindowIconPicture(Window, RectangleWidth(Box));
+  Result := Picture <> nil;
+  if Result then
+    DrawSurface(Canvas, ImageSurface(Picture), MakeRectangle(0, 0, Picture.Width, Picture.Height), Box.Left, Box.Top,
+      True, AlphaOpaque);
+end;
 
 procedure DrawTitleIcon(const Canvas: TCanvas; const Box: TRectangle; Pixel: LongInt);
 var

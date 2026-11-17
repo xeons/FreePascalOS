@@ -22,7 +22,8 @@
   Outside in: a raised bevel, the face colour to the border's width, the
   title bar (a gradient, across or down as the theme says, with its edge
   and a shine along its top when the theme has them; the window's icon
-  when the theme shows one, the title, and the minimize, maximize - a
+  - its owner's if it has none, else the generic picture when the
+  theme shows one, Server.TitleIcon - the title, and the minimize, maximize - a
   restore glyph on a maximized window - and close buttons at its right
   end, Server.TitleButtonPainting) above the client area. An inactive
   window's bar and buttons take the theme's inactive colours. Sizes come from the
@@ -198,8 +199,10 @@ begin
     MixColors(StartColor, Theme.Highlight, 150));
 end;
 
-{ Draws the window's icon when the theme shows one; returns where the
-  title's text starts (after the icon, if any). }
+{ Draws the window's icon (its own, or its owner's: Server.WindowIcons)
+  at the bar's left, or the generic picture when it has none and the
+  theme shows one; returns where the title's text starts (after the
+  icon, if any). }
 function DrawTitleIconOf(const Canvas: TCanvas; Window: TServerWindow; const Bar: TRectangle): LongInt;
 var
   Size: LongInt;
@@ -208,14 +211,17 @@ var
 begin
   Indent := WindowMetric(Window, Theme.TitleTextIndent);
   Result := Bar.Left + Indent;
-  if not Theme.TitleIcon then
-    Exit;
   Size := WindowMetric(Window, 16);
   if Size > RectangleHeight(Bar) - 2 * WindowMetric(Window, 2) then
     Size := RectangleHeight(Bar) - 2 * WindowMetric(Window, 2);
   Box := MakeRectangle(Bar.Left + Indent, Bar.Top + (RectangleHeight(Bar) - Size) div 2, Size, Size);
-  DrawTitleIcon(Canvas, Box, WindowPixel(Window));
-  Result := Box.Right + WindowMetric(Window, 4);
+  if DrawWindowIcon(Canvas, Window, Box) then
+    Result := Box.Right + WindowMetric(Window, 4)
+  else if Theme.TitleIcon then
+  begin
+    DrawTitleIcon(Canvas, Box, WindowPixel(Window));
+    Result := Box.Right + WindowMetric(Window, 4);
+  end;
 end;
 
 procedure DrawFrame(const Canvas: TCanvas; Window: TServerWindow; Active: Boolean);

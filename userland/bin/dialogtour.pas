@@ -109,6 +109,7 @@ end;
 constructor TTourWindow.Create;
 begin
   inherited Create('Dialog tour', 60, 40, 240, 180);
+  IconName := 'app-dialogs';
   FOpenButton := AddTourButton('Open...', 12);
   FOpenButton.OnClick := @OpenClicked;
   FSaveButton := AddTourButton('Save...', 42);

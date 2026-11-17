@@ -77,6 +77,7 @@ uses
   Windowing.Connection,
   Windowing.Windows,
   Windowing.DragAndDrop,
+  Image.Model,
   Controls.DragData,
   Controls.Base,
   Controls.Hints;
@@ -175,6 +176,11 @@ type
     { Code (a key code, Controls.Keys) with Modifiers (ModifierShift,
       ModifierControl, ModifierAlt) runs Handler. }
     procedure AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
+    { Gives the window an icon of its own pictures: one image, or a few
+      sizes of it (the server draws the nearest; Controls.WindowIcons).
+      For an icon of the theme set IconName instead. False if refused. }
+    function SetIcon(Image: TImage): Boolean; overload;
+    function SetIcon(const Images: array of TImage): Boolean; overload;
     { The controls' parent. }
     property Root: TControl read FRoot;
     property FocusedControl: TControl read FFocused;
@@ -195,6 +201,7 @@ implementation
 uses
   SysUtils,
   Abi.SystemCalls,
+  Controls.WindowIcons,
   Windowing.Messages,
   Windowing.DataTransfer,
   Controls.Keys,
@@ -930,6 +937,16 @@ begin
     FHovered.HandleWheel(Steps)
   else if FFocused <> nil then
     FFocused.HandleWheel(Steps);
+end;
+
+function TControlWindow.SetIcon(Image: TImage): Boolean;
+begin
+  Result := SetIcon([Image]);
+end;
+
+function TControlWindow.SetIcon(const Images: array of TImage): Boolean;
+begin
+  Result := SetIconPictures(IconPicturesOfImages(Images));
 end;
 
 end.

@@ -44,6 +44,7 @@ uses
   Windowing.SettingsChanges,
   Windowing.Shell,
   Windowing.WindowList,
+  Windowing.WindowIcons,
   Windowing.Sessions,
   Windowing.Notifications,
   Windowing.EndRequests,

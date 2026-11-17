@@ -135,6 +135,7 @@ var
   Group: TGroupBox;
 begin
   inherited Create('Controls', 120, 80, 360, 300);
+  IconName := 'app-themes';
   Caption := TLabel.Create(Root);
   Caption.Text := '&Name:';
   Caption.SetBounds(12, 14, 60, 20);

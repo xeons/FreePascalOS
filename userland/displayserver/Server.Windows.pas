@@ -92,6 +92,14 @@ type
     ToldFlags: LongWord;
     ToldScreen: LongInt;
     ToldTitle: string;
+    ToldIconVersion: LongWord;
+    { Its icon (Server.WindowIcons): a name of the icon theme, or the
+      pictures its program gave (a TWindowIconPictures, owned), or
+      neither; and its version, new whenever it changes (0: never had
+      one). }
+    IconName: string;
+    IconPictures: TObject;
+    IconVersion: LongWord;
     { The client area before it was maximized. }
     RestoreBounds: TRectangle;
     { The pointer's shape over the client area, and over the areas the
@@ -99,6 +107,7 @@ type
     PointerShape: LongWord;
     PointerAreas: array[1..MaximumPointerAreas] of TPointerArea;
     constructor Create(WindowId: LongWord; Owner: TObject; WindowFlags: LongWord; OwningWindow: TServerWindow);
+    destructor Destroy; override;
   end;
 
   TServerWindowArray = array of TServerWindow;
@@ -157,6 +166,12 @@ begin
   Flags := WindowFlags;
   OwnerWindow := OwningWindow;
   Section := -1;
+end;
+
+destructor TServerWindow.Destroy;
+begin
+  IconPictures.Free;
+  inherited Destroy;
 end;
 
 function WindowCount: LongInt;

@@ -312,7 +312,7 @@ begin
       TaskButton.OnContextMenu := @TaskContextMenu;
     end;
     TaskButton.ShowState(Entry.Title, (Entry.Flags and ShellWindowActive) <> 0,
-      (Entry.Flags and ShellWindowMinimized) <> 0);
+      (Entry.Flags and ShellWindowMinimized) <> 0, Entry.IconVersion);
     Ordered.Add(TaskButton);
   end;
   FButtons.Free;

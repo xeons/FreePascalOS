@@ -192,6 +192,7 @@ var
   HelpMenu: TMenuItem;
 begin
   inherited Create('Controls tour', 60, 40, 480, 360);
+  IconName := 'app-components';
   FImages := MakeTourImages;
   Hints.OnShown := @HintShown;
   FMenuBar := TMenuBar.Create(Root);

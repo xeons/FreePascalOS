@@ -123,7 +123,7 @@ var
 { Whether a handle coming with a message of Kind is kept for the program. }
 function KeepsHandle(Kind: LongWord): Boolean;
 begin
-  Result := Kind = EventDataDelivered;
+  Result := (Kind = EventDataDelivered) or (Kind = EventWindowIconDescribed);
 end;
 
 function StoreReceivedHandle(Handle: Int64): LongWord;

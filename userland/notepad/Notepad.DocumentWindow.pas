@@ -95,6 +95,7 @@ const
 constructor TDocumentWindow.Create;
 begin
   inherited Create(ProgramName, 80, 60, 560, 400);
+  IconName := 'app-text-editor';
   FFormat := DefaultTextFileFormat;
   FEditor := TTextEdit.Create(Root);
   FEditor.Align := AlignClient;

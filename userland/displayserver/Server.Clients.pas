@@ -101,6 +101,7 @@ uses
   Server.WindowList,
   Server.Notifications,
   Server.DataOffers,
+  Server.WindowIcons,
   Server.ScreenLock;
 
 constructor TClient.Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
@@ -439,6 +440,9 @@ var
 begin
   { The clipboard and drags (Server.DataOffers): sections come with them. }
   if CarryOutDataRequest(Client, Message, Handle) then
+    Exit;
+  { Window icons (Server.WindowIcons): pictures come in sections. }
+  if CarryOutIconRequest(Client, Message, Handle) then
     Exit;
   if CarryOutDisplayRequest(Client, Message) or CarryOutLockRequest(Client, Message) then
   begin

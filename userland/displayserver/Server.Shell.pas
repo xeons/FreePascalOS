@@ -23,7 +23,8 @@
   The first program to ask becomes the shell; others are refused while
   it lives. It is told about each top-level window of the other programs
   (framed, owned by no window, not a desktop): its title, whether it is
-  shown, minimized, active or maximized, and the display it is on.
+  shown, minimized, active or maximized, the display it is on, and its
+  icon's version (Server.WindowIcons).
   Rather than every place that changes a window telling the shell,
   TellShellAboutWindows compares each window with what the shell last
   heard of it (kept in the window: ToldFlags, ToldTitle...) once per
@@ -160,16 +161,18 @@ var
 begin
   Flags := WindowStateFlags(Window);
   if Window.ToldShell and (Window.ToldFlags = Flags) and (Window.ToldScreen = Window.ScreenNumber) and
-     (Window.ToldTitle = Window.Title) then
+     (Window.ToldTitle = Window.Title) and (Window.ToldIconVersion = Window.IconVersion) then
     Exit;
   Window.ToldShell := True;
   Window.ToldFlags := Flags;
   Window.ToldScreen := Window.ScreenNumber;
   Window.ToldTitle := Window.Title;
+  Window.ToldIconVersion := Window.IconVersion;
   Message := NewMessage(EventShellWindowChanged, Window.Id);
   Message.Flags := Flags;
   Message.Code := LongWord(Window.ScreenNumber);
   Message.Value := LongInt(TClient(Window.Client).ProcessId);
+  Message.Width := LongInt(Window.IconVersion);
   SetMessageText(Message, Window.Title);
   SendToShell(Message);
 end;

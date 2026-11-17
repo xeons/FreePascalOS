@@ -56,6 +56,9 @@
                           volume-settings (the volume control's)
     task N STATE TITLE    a window of another program is new or changed
                           (STATE: shown, active, minimized, hidden)
+    task-icon N NAME      its icon is new: the icon theme's NAME
+                          (app-text-editor), pictures (its program's
+                          own), or none
     task-gone N           that window is gone
     started COMMAND       a program was started (cannot start COMMAND:
                           it is not installed)
@@ -88,7 +91,7 @@
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),
   Desktop.Programs (what it offers and starting it), Desktop.Taskbar,
   Desktop.StartButton, Desktop.StartMenu, Desktop.TaskButtons,
-  Desktop.WindowList, Desktop.NotificationArea, Desktop.Clock,
+  Desktop.TaskIcons, Desktop.WindowList, Desktop.NotificationArea, Desktop.Clock,
   Desktop.VolumeIndicator, Desktop.VolumePopup, Desktop.NetworkIndicator
   and Desktop.NetworkPopup (the taskbar), Controls.PictureGrid, Desktop.ProgramPictures and
   Desktop.SmallPictures (the pictures), Desktop.Locking (locking and

@@ -134,6 +134,7 @@ uses
   Controls.Charts,
   Controls.IconFiles,
   Controls.IconTheme,
+  Controls.WindowIcons,
   Controls.FileTypeIcons;
 
 implementation
