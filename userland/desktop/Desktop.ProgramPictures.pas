@@ -45,7 +45,7 @@ const
   { The theme's icon of each program (/usr/share/icons/NAME.ico). }
   ProgramIconNames: array[TProgramPicture] of string = ('app-file-manager', 'app-terminal', 'app-text-editor',
     'app-control-panel', 'app-components', 'app-themes', 'app-dialogs', 'app-task-manager', 'app-image-viewer',
-    'app-calculator', 'app-volume-control');
+    'app-calculator', 'app-volume-control', 'app-paint');
 
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 
@@ -254,6 +254,10 @@ begin
       DrawCalculator(Canvas, Grid);
     PictureVolumeControl:
       DrawVolumeControl(Canvas, Grid);
+    { Paint's own picture comes from the icon theme; without it, the
+      swatches stand in. }
+    PicturePaint:
+      DrawSwatches(Canvas, Grid);
   end;
 end;
 

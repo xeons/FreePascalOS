@@ -177,6 +177,9 @@ uses
   Image.Jxl.Decoder,
   Image.Jxl.Codec,
   Image.StandardCodecs,
+  Image.FloodFill,
+  Image.Areas,
+  Image.Transforms,
   Image.Files;
 
 implementation

@@ -2328,6 +2328,72 @@ on|off, status-bar on|off, font ...`, and again when the settings
 change while it runs and differ from the window's); the input test turns word wrap on,
 ends Notepad and checks that the next one starts with it on.
 
+### Paint
+
+`paint` (userland/paint, `userland/bin/paint.pas`) draws and edits
+pictures: a TImage (libimage) in a view that zooms from 12.5% to 800%
+(one image pixel to one pixel of the display at 100%, whatever its
+scale) and scrolls, transparency over a checkerboard and a grid between
+pixels from 400% (`Paint.ZoomMapping`, `Paint.ViewRendering`,
+`Paint.CanvasView`). The window is laid out with the layout features
+alone: the menu bar and status bar docked, the colour box along the
+bottom (a flow layout panel: the primary colour over the secondary,
+a click swapping them; the palette in a table of swatches, left click
+for the primary, right for the secondary, double click to change one
+through the colour dialog; Edit colours), and a split container with
+the tool box (the tools' buttons in a flow layout panel, their pictures
+drawn with libdrawing at any scale, `Paint.ToolIcons`; the current
+tool's options in a table: size, shape fill, tolerance, font) beside the
+view. The dialogs (new picture and properties, resize and skew, JPEG
+quality, text) are tables of captions and fields.
+
+The tools (`Paint.Tools` and a unit for each kind, made by
+`Paint.ToolFactory`) work in image coordinates, the left button with
+the primary colour and the right with the secondary: select (a
+rectangle, Shift square) and free-form select, eraser (the secondary
+colour in squares), fill (`Image.FloodFill` within the tolerance),
+colour picker (back to the previous tool), pencil (exact pixels), brush
+(round, anti-aliased), airbrush, text (TrueType through libfont, the
+font from the font dialog, floated as a selection to drag into place),
+line (Shift at 45 degrees), curve (three drags: the line, then two
+bends, quadratic then cubic), rectangle (crisp edges), polygon (a click
+a corner; Enter, a click on the first corner or a double click closes
+it), ellipse and rounded rectangle (outline, fill or both,
+`Paint.ShapeDrawing`). An edit is made straight on the picture from a
+copy of it taken first, a shape being dragged putting back what it
+drew last each time; when it ends one undo step records the rectangle
+the edit touched, before and after (`Paint.Document`,
+`Paint.UndoHistory`: up to 1000 steps within 256 MiB, the oldest
+forgotten; a step of another size keeps the whole picture). The
+selection (`Paint.Selection`, `Paint.SelectionEditing`) lifts its pixels
+to float when dragged (Ctrl copies, the arrow keys nudge), and putting
+them down is one undo step; Cut, Copy and Paste go through the system
+clipboard as PNG and raw BGRA pixels (`Controls.ImageClipboard`, in
+libcontrols for any program), Paste floating the picture at the top
+left of what is shown; Delete and Crop to Selection. The Image menu
+(`Paint.ImageCommands`) turns, flips, inverts, resizes and skews the
+picture, changes its canvas size (Properties) and clears it, each one
+step. Files open in any format libimage reads (from the command line,
+the file dialog, or dropped on the window from the file manager) and
+save as their extension says (`Paint.FileFormats`,
+`Paint.PictureFiles`: PNG, also for a name without one; BMP; JPEG with
+a quality, put on white; GIF; TIFF; WebP); New, Open, a drop and closing
+ask to save changes first, as Notepad does. The pixel grid, the status
+bar, the JPEG quality, the last new size and the text's font are kept
+in the user's settings (group `Paint`). It is in the Start menu (and on
+the desktop, where a picture dropped on its icon opens in it).
+
+`make paint-test` (part of `make test`) runs `tools/PaintTest` on the
+host over Paint's plain units and libimage's and libdrawing's: the zoom
+mapping, Shift's constraints and stroke extents, file formats by name,
+the undo history (versions, saved or changed, the memory budget), flood
+fill with tolerances, shapes and strokes pixel by pixel, the selection
+(free-form masks, lifting, moving, copying, pasting, cropping, undo),
+the transforms and the rendered view. The input test starts Paint,
+picks the rectangle tool by its button, drags a rectangle, saves it as
+a PNG through the save dialog and reads its pixels back with
+`imageinfo -p X,Y`, then has `kill` end it.
+
 ### The file manager
 
 `files [FOLDER]` (`userland/bin/files.pas`, units in `userland/files`)
@@ -5792,7 +5858,11 @@ independent) against the Free Pascal runtime library:
   (Bresenham lines with both ends, ellipses and polygons filling the
   pixels whose centres are inside, dotted lines of any thickness whose
   dots lie on a checkerboard of the surface, so pieces drawn apart
-  meet without a seam) and
+  meet without a seam), round-ended anti-aliased strokes through any
+  points (`Drawing.SmoothStrokes`: a brush's mark, one shape so
+  overlaps blend once), quadratic and cubic Bezier curves as points
+  (`Drawing.Curves`), anti-aliased rectangles with rounded corners
+  (`Drawing.SmoothRoundedRectangles`) and
   `Drawing.Bevels` (raised and sunken edges, the focus frame). Every
   shape is drawn as horizontal spans through one routine (`FillSpan`),
   which clips them and blends translucent colours. It needs only the
@@ -5936,6 +6006,10 @@ independent) against the Free Pascal runtime library:
   model (`Image.Model`, `Image.Metadata`, `Image.Frames`), handing
   pixels to libdrawing (`Image.Surfaces`), playing animations
   (`Image.Compositing`), `Image.Orientation`, `Image.Scaling`, `Image.Resampling`,
+  parts of images copied, put, blended, filled and flattened
+  (`Image.Areas`), flood fill with a tolerance (`Image.FloodFill`, a
+  scanline fill with a mask), turning, mirroring, inverting and skewing
+  (`Image.Transforms`),
   colour management (`Image.ColorProfiles.*`), the
   codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
   and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR

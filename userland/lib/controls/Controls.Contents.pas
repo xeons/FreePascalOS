@@ -96,6 +96,7 @@ uses
   Controls.TablePanel,
   Controls.SplitContainer,
   Controls.FileLists,
+  Controls.ImageClipboard,
   Controls.SystemDrag,
   Controls.CommonDialogs,
   Controls.FileNames,
