@@ -525,6 +525,11 @@ begin
     Left := Left + FList.ColumnWidth(Column);
   SayPlace('cpu-header', FWindow, FList.PixelBounds.Left + 2 + Scaled(Left + FList.ColumnWidth(ColumnProcessor) div 2),
     FList.PixelBounds.Top + FList.HeaderMiddle);
+  { The middle of the Name column's header (sorted by name, rows keep
+    their places while their figures change and other processes come and
+    go elsewhere in the list). }
+  SayPlace('name-header', FWindow, FList.PixelBounds.Left + 2 + Scaled(FList.ColumnWidth(ColumnName) div 2),
+    FList.PixelBounds.Top + FList.HeaderMiddle);
 end;
 
 end.

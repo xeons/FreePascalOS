@@ -2355,6 +2355,22 @@ checks.append(('task manager: the busy programs are at the top when sorted by CP
                len(top_rows) >= 2 and {top_rows[0][0], top_rows[1][0]} == {polite_burn, stubborn_burn} and
                top_rows[0][2] >= 10 and top_rows[1][2] >= 10))
 # End (ask): the polite one ends.
+# Sorted by CPU the rows trade places at every refresh (the two burns
+# are near equal), so a row's place could change between reading it and
+# clicking it; and by PID, every command the serial shell runs (a new,
+# highest PID) pushes the rows down. Sorted by name (ascending, equal
+# names by PID) the burns come first and stay put: other programs come
+# and go after them. Task Manager's lines reach the serial log only when
+# /tmp/s.log is shown, so it is shown before the direction is looked at.
+if 'name-header' in place:
+    click_at(*place['name-header'])
+    time.sleep(1.5)
+    place = shell_places('BYNAME1')
+    sorted_log = log_since('BYNAME1 $m')
+    if sorted_log.rfind(b'sort 0 descending') > sorted_log.rfind(b'sort 0 ascending'):
+        click_at(*place['name-header'])
+        time.sleep(1.5)
+    place = shell_places('BYNAME')
 if 'row-' + str(polite_burn) in place:
     right_click_at(*place['row-' + str(polite_burn)])
     place = shell_places('MENU1')
