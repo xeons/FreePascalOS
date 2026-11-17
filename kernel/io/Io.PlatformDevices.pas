@@ -47,21 +47,22 @@ uses
   Kernel.Interrupts,
   Firmware.AmlValues,
   Firmware.AcpiResourceList,
+  Firmware.AcpiDeviceWalk,
   Io.Pci,
   Io.Dma;
 
 const
-  PlatformIdLength = 16;
-  MaximumCompatibleIds = 4;
-  PlatformPathLength = 64;
+  PlatformIdLength = AcpiIdLength;
+  MaximumCompatibleIds = AcpiMaximumCompatibleIds;
+  PlatformPathLength = AcpiPathLength;
   MaximumPlatformDevices = 256;
 
   { _STA bits. }
-  DeviceStatusPresent = 1;
-  DeviceStatusFunctioning = 8;
+  DeviceStatusPresent = AcpiStatusPresent;
+  DeviceStatusFunctioning = AcpiStatusFunctioning;
 
 type
-  TPlatformId = array[0..PlatformIdLength - 1] of Char;
+  TPlatformId = TAcpiIdText;
 
   PPlatformDevice = ^TPlatformDevice;
   TPlatformDevice = record
