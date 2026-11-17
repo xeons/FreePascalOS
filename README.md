@@ -12,7 +12,10 @@ specific units; see [docs/Architecture.md](docs/Architecture.md).
 
 ## Screenshots
 
-The desktop in the default theme, running in QEMU at 1280×800.
+The desktop in the default theme, running in QEMU at 1280×800. They are
+taken by `scripts/take-screenshots.py` from the plans in
+[docs/screenshots/plans](docs/screenshots/plans), e.g.
+`scripts/take-screenshots.py docs/screenshots/plans/sysinfo.json`.
 
 | | |
 |---|---|

@@ -1,0 +1,3 @@
+[["sh", "files /volumes/disk0p1 > /dev/null 2>&1 &"], ["sleep", 4],
+ ["sh", "imageviewer /volumes/disk0p1/sample.png > /dev/null 2>&1 &"], ["sleep", 5],
+ ["drag", 400, 47, 812, 210], ["sleep", 1], ["move", 1250, 760], ["sleep", 1], ["shot", "files-viewer"]]
