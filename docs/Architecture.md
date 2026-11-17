@@ -4767,7 +4767,8 @@ e2fsck reads a deletion time smaller than the inode count as a link of a
 damaged list: a freed inode's deletion time is the wall clock but never
 earlier than the inode count or the volume's creation or last write time
 (`EarliestDeletionTime`), as the clock starts at zero on machines without
-a real-time clock (AArch64 today).
+a real-time clock (an AArch64 machine whose firmware does not tell the
+time: see `TBootInformation.FirmwareTime`).
 Renaming onto an existing name replaces it as on Unix (a file replaces a
 file, a directory an empty directory); on ext3/ext4 the removal and the
 rename are one transaction (`BeginAtomicChange` / `EndAtomicChange`). In a
