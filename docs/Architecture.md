@@ -1674,6 +1674,54 @@ place them in their `Layout` with `AssignBounds` (which, unlike
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
 
+**Picking values.** A checked list box (`Controls.CheckedListBox`) is a
+list box with a check box before each item (`Controls.CheckMarks`
+draws the box for check boxes too; the list box draws each item through
+a virtual `PaintItem` after an `ItemIndent`): Space toggles the item
+with the focus, a click on its box toggles it, `AllowMixed` adds a third
+state; `OnItemCheck(Index, Checked)` and `NotifyItemChecked` tell of a
+toggle, `Checked[Index]`, `State[Index]`, `CheckAll` and `UncheckAll`
+are for programs; an item's state is kept in `Items.Objects`, so it
+follows the item. A numeric up/down box (`Controls.NumericUpDown`) is
+an edit box that takes only the characters of a number, with spin
+buttons (`Controls.SpinButtons`) beside it: `Minimum`, `Maximum`,
+`Increment`, `DecimalPlaces`, `ThousandsSeparator` and `Hexadecimal`
+(`Controls.NumericValues` rounds, clamps, shows and reads); the arrows,
+Page Up and Down, the wheel and the buttons step it, what was typed is
+taken when the box loses the focus or Enter is pressed (put back if it
+is no number), and `OnValueChanged` tells of a new value. A held spin
+button repeats (`Controls.AutoRepeat`: a kernel timer the message loop
+waits on through `Windowing.HandleWatches`, so a control needs no
+window timer of its own). The month calendar (`Controls.Calendar`)
+shows six weeks starting on `FirstDayOfWeek`, with ISO week numbers
+(`ShowWeekNumbers`), today outlined (in the program's time zone) and a
+line to go to it (`ShowToday`), bold dates, `MinDate` and `MaxDate`,
+and a run of up to `MaxSelectionCount` dates picked with Shift or by
+dragging; the header's buttons move a month, its title zooms out to the
+months and then the years (a click or Enter zooms back in); the arrows,
+Page Up and Down (a month; with Ctrl a year), Home and End move the
+date with the focus frame. `OnDateChanged` tells of a new selection,
+`OnDatePicked` of a date clicked or Enter. Its date arithmetic
+(`Controls.CalendarDates`: day numbers, days of the week, the grid's
+first cell, ISO weeks, months added with the day kept within the month)
+and where its parts go (`Controls.CalendarLayout`) are plain units. The
+date and time picker (`Controls.DateTimePicker`) shows a value as the
+fields of a pattern (`Controls.DateFormats`: `yyyy-MM-dd`,
+`dddd, d MMMM yyyy`, `HH:mm:ss`, `h:mm tt`, text in quotes; the short or
+long pattern of `DateTimeKindDate`, `DateTimeKindTime` or
+`DateTimeKindDateTime`, or the program's own), one picked at a time:
+Left and Right (or a separator typed) move between them, Up and Down
+(the wheel, the spin buttons beside a time) step one, wrapping within
+its range and keeping the day within the month, digits type it and go
+on when it is full, A and P choose the half of the day. A picker with a
+date drops a calendar in a pop-up (the button, Alt+Down or F4); a day
+clicked there is taken. `ShowCheckBox` adds a check box for "no value"
+(`Checked`); `MinDate` and `MaxDate` hold the date; values are local
+times of `TimeZone` (the program's zone unless set: `SetToNow`,
+`UnixTime`, `SetUnixTime`). `tools/DateControlsTest` (make
+date-controls-test, part of make test) checks the plain units on the
+host.
+
 **Context menus and dragging** belong to every control
 (`Controls.Base`, `Controls.Window`). A right click, when the button is
 let go over the control it was pressed on, and Shift+F10 or the menu key
@@ -1941,7 +1989,9 @@ prints its size in `ScaleChanged`) and the swatch is where its logical
 place is at each scale. `controlstour` has the
 rest (a menu bar, a toolbar, a tab control with a list box and combo
 box, a multi-line edit box and edit boxes to copy and paste between, a
-tree view and a list view with buttons for its views, message boxes);
+tree view and a list view with buttons for its views, a page of
+pickers: a checked list box, numeric up/down boxes, date and time
+pickers and a month calendar; message boxes);
 it prints where its controls are on the screen, and the input test
 clicks them there and checks what it printed: text copied with Ctrl+C
 and pasted with Ctrl+V and from the context menu, the list view sorted
@@ -2375,10 +2425,10 @@ at every scale.
 | Page | What it changes | How |
 |---|---|---|
 | Display | each display's resolution (its modes) and scale (100% to 300%) | the display server (`Windowing.Displays`); then "Keep these display settings?" counts 15 seconds down (`ControlPanel.KeepSettingsDialog`): Keep asks again with `DisplayRemember` (the system's settings), anything else - Revert, Escape, the time running out - sets them back |
-| Mouse | the pointer's speed and acceleration, left-handed buttons | the display server, kept in the user's settings (`Windowing.MouseSettings`) |
-| Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate, and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
+| Mouse | the pointer's speed and acceleration (a slider and a numeric up/down box each), left-handed buttons | the display server, kept in the user's settings (`Windowing.MouseSettings`) |
+| Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate (a slider and a numeric up/down box each), and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
 | Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
-| Date and Time | the time zone (from the database, with each zone's offset now), the date and time (a local time of the zone chosen) | the system settings service, as an administrator |
+| Date and Time | the time zone (from the database, with each zone's offset now), the date (a date picker with a calendar that drops down) and the time (a time picker), a local time of the zone chosen | the system settings service, as an administrator |
 | Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
 | Screen Lock | locking by itself after 1 to 60 minutes without input (off at first), locking before suspending (on at first) | kept in the user's settings (`Windowing.LockSettings`), which the session manager reads |

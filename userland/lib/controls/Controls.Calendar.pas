@@ -140,6 +140,9 @@ type
     procedure AddBoldDate(const Day: TCalendarDate);
     procedure ClearBoldDates;
     function IsBoldDate(const Day: TCalendarDate): Boolean;
+    { Where Day's cell is (own pixels); empty if the days view does not
+      show it. }
+    function DateBounds(const Day: TCalendarDate): TRectangle;
     { Shows the month of Date without selecting it. }
     procedure ShowMonth(Year, Month: LongInt);
     { The selected date (the first of a run); setting it selects it
@@ -437,6 +440,18 @@ begin
     if SameDate(FBoldDates[Index], Day) then
       Exit(True);
   Result := False;
+end;
+
+function TCalendar.DateBounds(const Day: TCalendarDate): TRectangle;
+var
+  Cell: LongInt;
+begin
+  Cell := -1;
+  if FView = CalendarViewDays then
+    Cell := GridIndexOfDate(FShownYear, FShownMonth, FFirstDayOfWeek, Day);
+  if Cell < 0 then
+    Exit(MakeRectangle(0, 0, 0, 0));
+  Result := CalendarCellBounds(PartsLayout, Cell);
 end;
 
 { The date of a days cell; the first of the month or of the year of a

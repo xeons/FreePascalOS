@@ -92,6 +92,8 @@ type
     FSpin: TSpinButtons;
     FPopup: TPopupWindow;
     FCalendar: TPickerCalendar;
+    FOnDropDown: TControlEvent;
+    FOnCloseUp: TControlEvent;
     procedure SetKind(Value: TDateTimeKind);
     procedure SetFormat(Value: TDateTimeFormat);
     procedure SetCustomPattern(const Value: string);
@@ -163,6 +165,9 @@ type
     property TimeZone: PTimeZone read FTimeZone write FTimeZone;
     { The calendar while it is dropped (nil otherwise). }
     property DroppedCalendar: TPickerCalendar read FCalendar;
+    { The calendar has dropped (it is shown), or closed. }
+    property OnDropDown: TControlEvent read FOnDropDown write FOnDropDown;
+    property OnCloseUp: TControlEvent read FOnCloseUp write FOnCloseUp;
   end;
 
 implementation
@@ -728,6 +733,8 @@ begin
   FCalendar.SetFocus;
   FPopup.Popup;
   Invalidate;
+  if Assigned(FOnDropDown) then
+    FOnDropDown(Self);
 end;
 
 procedure TDateTimePicker.CloseUp;
@@ -741,6 +748,8 @@ begin
   FPopup := nil;
   FCalendar := nil;
   Invalidate;
+  if Assigned(FOnCloseUp) then
+    FOnCloseUp(Self);
 end;
 
 procedure TDateTimePicker.CalendarPicked(Sender: TControl);
