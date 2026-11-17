@@ -34,6 +34,10 @@
 #                  loader when the program starts
 #
 # --hash-style=sysv: the kernel loader looks symbols up through DT_HASH.
+#
+# With ARCH=arm64 the same rules build for AArch64: the cross compiler
+# (TARGET_FPC), GNU ld for AArch64 (LD) and the generic RTL's
+# rtl/aarch64; libtlstest.so comes from TlsTest.arm64.s.
 
 USER_BUILD_DIRECTORY := $(BUILD_DIRECTORY)/user
 RTL_USER_DIRECTORY := $(BUILD_DIRECTORY)/rtl-user

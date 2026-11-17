@@ -4865,6 +4865,9 @@ DTPOFF64, TPOFF64 and TPOFF32; a module's "id" is its offset from the
 thread pointer, so `__tls_get_addr` in the System unit is one addition.
 Libraries opened with `LoadLibrary` after startup may not have a TLS
 segment or initializers (`ErrorUnsupported`): the layout is fixed by then.
+On AArch64 the layout is variant I instead (see "The AArch64 port"); the
+processor's layout and relocation numbers are in
+`kernel/processes/<arch>/Processes.Arch.ImageFormat`.
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
 `FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
@@ -4891,7 +4894,9 @@ is no lazy PLT binding.
 Programs enter the kernel with the `syscall` instruction. The number is in
 RAX and the arguments in RDI, RSI, RDX, R10, R8 and R9, as on Linux; the
 result comes back in RAX, with errors as negative values (`-ErrorNotFound`,
-...). The numbers, error codes and the records passed to the kernel are in
+...). On AArch64 it is `svc #0` with the number in X8, the arguments in
+X0-X5 and the result in X0, also as on Linux; every other register is
+kept. The numbers, error codes and the records passed to the kernel are in
 `shared/Abi.SystemCalls.pas`, which the kernel and `libsystem` both compile.
 
 The entry code switches to the thread's kernel stack, builds a trap frame
@@ -4925,7 +4930,7 @@ test copies to an unmapped user address.
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
-| System | GetTime, GetSystemInformation, ListVolumes, Sync |
+| System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
 | Clock, time zone, keyboard (98-103) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
@@ -6699,19 +6704,25 @@ both.
 ```
 make toolchain ARCH=arm64    # build/toolchain/ppcrossa64 from the FPC sources
 make ARCH=arm64              # build/arm64/esp: BOOTAA64.EFI and kernel.elf
-make run ARCH=arm64          # QEMU virt, serial log on the terminal
-make arm64-test              # boot smoke test (not part of make test yet)
+make ARCH=arm64 userland system-disk   # build/arm64/system-disk.img
+make run ARCH=arm64          # QEMU virt with the system disk, serial on the terminal
+make arm64-test              # boot, coretest and session tests (not in make test)
 ```
 
-What runs today: the loader, the kernel's phase 0 and phase 1 on every
-processor, the drivers that are bus generic (virtio block and network,
-NVMe, xHCI with USB keyboards, pointers and storage, e1000/e1000e, HD
-Audio, on PCIe with message interrupts), the file systems, the network
-stack and every kernel self test. User mode is the next step: the
-user-mode entry, the system call path (SVC, number in X8, arguments in
-X0-X5, result in X0) and user copies are written, but programs, the
-runtime library and the ABI's exception context are still x86-64 only,
-so the kernel stops after its self tests ("no system volume").
+What runs today: the loader, the kernel on every processor, the drivers
+that are bus generic (virtio block and network, NVMe, xHCI with USB
+keyboards, pointers and storage, e1000/e1000e, HD Audio, on PCIe with
+message interrupts), the file systems, the network stack, every kernel
+self test, and all of user mode: the runtime library, every library and
+program, the service manager, shells on the serial console, coretest
+(`scripts/test-qemu-arm64-user.sh`), and the graphical session on the
+GOP framebuffer (QEMU's ramfb) with a USB keyboard and tablet
+(`scripts/test-arm64-session.py`: the desktop comes up, a double click
+opens a terminal, typed commands run). Not working yet on QEMU's virt
+machine: AHCI finds no drives, and PCI devices on interrupt lines (INTx:
+AC'97, the plain e1000) get no interrupts; floating point exceptions do
+not trap (the Cortex-A72 cannot), so a floating point division by zero
+gives an infinity instead of `EZeroDivide`.
 
 ### Boot path
 
@@ -6778,12 +6789,64 @@ normal memory could be read speculatively, so every device is mapped on
 demand with device attributes.
 
 A user address space is only a TTBR0 table; the "kernel address space"
-loads an empty one. Kernel mappings are global and user mappings are not;
-without address space identifiers yet, switching TTBR0 invalidates the
-local TLB. Removing a mapping invalidates it on every processor at once
+loads an empty one. Kernel mappings are global and user mappings are not:
+they are tagged with the address space's ASID, so switching TTBR0
+invalidates nothing (`Memory.Arch.AddressSpaceIds`). The 8-bit ASIDs are
+handed out by generations, as Linux does: a context (ASID and generation,
+kept in the never valid last entry of the user root table) of the current
+generation is loaded without a lock; otherwise the space gets a new ASID
+under the lock, and when none is left a new generation begins, keeping
+the ASIDs the processors run with and making each processor invalidate
+its TLB before it next loads one. ASID 0 is the empty table's. A user
+page mapped executable has its code synchronized first (data cache
+cleaned to the point of unification, instruction cache invalidated by
+address), since the kernel wrote it through the data side. Removing a mapping invalidates it on every processor at once
 (TLBI ...IS); the architecture independent shootdown IPIs still go out
 and only repeat that. Page faults reach the resolver with the x86 fault
 code bits (present, write, user, fetch), made from the abort syndrome.
+
+### User mode
+
+Programs and libraries are AArch64 ELF files built by the same rules as
+on x86-64 (`userland/userland.mk` with `ARCH=arm64`: the cross compiler,
+`-Cg`, GNU ld for AArch64, `--hash-style=sysv`); the generic Free Pascal
+RTL comes from `rtl/aarch64` of the compiler's sources, and the
+processor's part of the System unit is `rtl/fpc/syscpu_aarch64.inc`
+(`syscpu_x86_64.inc` on x86-64): the system call stub, the thread
+control block, the exception record's frame pointer. `si_prc` starts a
+program with SP at the argument count, as on x86-64.
+
+- **System calls:** `svc #0`, number in X8, arguments X0-X5, result X0
+  (`Kernel.Arch.SystemCallEntry`); the trap frame is the exception's, so
+  `CallContinue` restores every register by ERET.
+- **Thread pointer:** TPIDR_EL0, set at each switch. TLS is variant I:
+  TPIDR_EL0 points at a 16-byte control block (the runtime word at 0,
+  the thread id at 8: `ThreadBlock*` in `Abi.SystemCalls`), followed by
+  the program's TLS block at `align(16, alignment)` and the libraries'
+  after it. The loader handles R_AARCH64_RELATIVE, ABS64, GLOB_DAT,
+  JUMP_SLOT, COPY, TLS_DTPMOD64, TLS_DTPREL64, TLS_TPREL64 and TLSDESC
+  (descriptors get libsystem's `__tlsdesc_static`, which returns the
+  descriptor's offset from the thread pointer); `libtlstest.so` exercises
+  the descriptors, `__tls_get_addr` and the initial exec model.
+- **Exceptions:** the record's context is AArch64's (`TAbiContext`: X0-X30,
+  SP, PC, PSTATE, of which a context may change only the condition
+  flags). Data and instruction aborts are access violations (or stack
+  overflows), alignment faults `ExceptionAlignment`, undefined
+  instructions `ExceptionIllegalInstruction`, trapped system register
+  accesses `ExceptionPrivilegedOperation`, `BRK` a breakpoint reported
+  at the next instruction (as INT3 on x86-64). The dispatcher starts
+  with X0 = the record, LR = 0. AAPCS64 has no red zone.
+- **Floating point:** V0-V31, FPCR and FPSR are saved and restored at
+  every thread switch (eagerly). Free Pascal 3.2.2 does not check FPSR
+  after floating point operations, and the Cortex-A72 does not trap, so
+  floating point exceptions go unnoticed.
+- **The processor:** `CallGetProcessorDescription` reads MIDR_EL1 for
+  `sysinfo` ("Cortex-A72 r0p3"); `uname -m` says `aarch64`. Without AES
+  or RDRAND equivalents used yet, AES runs from tables and random
+  numbers are seeded from the clock (`RandomIsStrong` is False).
+- **Time of day:** the loader reads the firmware's GetTime and passes it
+  in `TBootInformation.FirmwareTime`; `Hal.RealTimeClock` adds the
+  counter's time to it.
 
 ### Exceptions, interrupts and priority levels
 

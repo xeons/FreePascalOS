@@ -669,10 +669,24 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       firmware at EL1 and at EL2 (`make arm64-test`, not in `make test`)
 - [ ] Wire `make arm64-test` into `make test` once qemu-system-aarch64 and
       edk2-aarch64 are standard requirements
-- [ ] User mode: an AArch64 exception context in the ABI (X0-X30, SP, PC,
+- [x] User mode: an AArch64 exception context in the ABI (X0-X30, SP, PC,
       PSTATE; CallContinue), the user runtime library and programs built for
-      AArch64, the ELF loader accepting AArch64 programs, the system disk
-- [ ] Address space identifiers (no TLB flush on every address space switch)
+      AArch64, the ELF loader accepting AArch64 programs (TLS variant I,
+      TLS descriptors), the system disk; text shells, coretest, the
+      graphical session with a USB keyboard and tablet
+      (`scripts/test-qemu-arm64-user.sh`, `scripts/test-arm64-session.py`)
+- [x] Address space identifiers (no TLB flush on every address space switch)
+- [x] Instruction cache synchronized for user code pages
+- [x] The time of day from the firmware's GetTime (passed by the loader)
+- [ ] 16-bit ASIDs where the processor has them (TCR_EL1.AS)
+- [ ] AHCI finds no drives on QEMU's virt machine; PCI line interrupts
+      (INTx: AC'97, e1000) never arrive there (coretest's AC'97 and optical
+      drive checks fail on AArch64 for that)
+- [ ] The AES instructions (ARMv8 Crypto Extension, where present: not on
+      the Pi 4) and a hardware random seed (RNDR on ARMv8.5, or a kernel
+      entropy call) for libcryptography on AArch64
+- [ ] Floating point exceptions on AArch64: check FPSR in the runtime
+      (Free Pascal 3.2.2 does not), so division by zero raises EZeroDivide
 - [ ] Suspend to RAM (PSCI SYSTEM_SUSPEND) and the real-time clock (UEFI
       runtime GetTime, or PL031 / the Pi 5's RTC)
 - [ ] GICv3 (system register CPU interface, redistributors, ITS) for
