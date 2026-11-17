@@ -17,8 +17,16 @@
 }
 
 {
-  USB through xHCI controllers (PCI class 0Ch, subclass 03h, interface
-  30h), and the little of the USB core that goes with it.
+  USB through xHCI controllers, and the little of the USB core that goes
+  with it. A controller is found on PCI (class 0Ch, subclass 03h,
+  interface 30h) or as an ACPI platform device (PNP0D10: the Raspberry
+  Pi 4's VL805, which its firmware set up behind the BCM2711 PCIe bridge
+  and describes by its registers, interrupt, _CCA and _DMA). Both
+  attachments share everything past finding the registers and the
+  interrupt. All of the controller's memory (contexts, rings,
+  scratchpads, each device's DMA pages) is DMA memory shared with it
+  (Io.Dma): uncached for a controller that does not snoop the caches,
+  and handed over at its bus address.
 
   Starting a controller: take it over from the firmware, stop and reset
   it, give it the device context array (and the scratchpad pages it asks
@@ -102,13 +110,13 @@ type
 
     { Private to the xHCI driver. }
     InputContext: PByte;
-    InputContextPhysical: QWord;
+    InputContextBusAddress: QWord;
     OutputContext: PByte;
-    OutputContextPhysical: QWord;
+    OutputContextBusAddress: QWord;
     Rings: array[1..MaximumEndpointContexts - 1] of TProducerRing;
     EndpointMaximumPacket: array[1..MaximumEndpointContexts - 1] of Word;
     DmaPages: array[0..UsbDmaPages - 1] of PByte;
-    DmaPagesPhysical: array[0..UsbDmaPages - 1] of QWord;
+    DmaPagesBusAddress: array[0..UsbDmaPages - 1] of QWord;
     TransferLock: TMutex;
     TransferDone: TEvent;
     { The TRBs of the transfer waited for, and how its event came out. }
@@ -124,7 +132,7 @@ type
       the TRB in flight and who gets the reports. }
     InterruptContext: LongWord;
     InterruptBuffer: PByte;
-    InterruptBufferPhysical: QWord;
+    InterruptBufferBusAddress: QWord;
     InterruptLength: LongWord;
     InterruptTrb: QWord;
     InterruptHandler: TUsbReportHandler;
@@ -151,8 +159,8 @@ type
   TUsbClassProbe = function(Device: PUsbDevice): Boolean;
 
 procedure RegisterUsbClassDriver(Probe: TUsbClassProbe);
-{ Starts every xHCI controller and enumerates its devices; returns how
-  many devices were found. }
+{ Starts every xHCI controller (on PCI, then the ACPI platform ones) and
+  enumerates its devices; returns how many devices were found. }
 function InitializeXhciControllers: Integer;
 
 { A control transfer on endpoint 0: the setup packet's fields, and Length
@@ -209,6 +217,8 @@ uses
   Kernel.Clock,
   Io.Pci,
   Io.PciMessageInterrupts,
+  Io.Dma,
+  Io.PlatformDevices,
   Debug.Output;
 
 const
@@ -287,7 +297,11 @@ const
 type
   PXhciController = ^TXhciController;
   TXhciController = record
+    { How it was found: on PCI, or as an ACPI platform device. }
     Pci: PPciDevice;
+    Platform: PPlatformDevice;
+    { What its DMA reaches and whether it snoops (Io.Dma). }
+    Dma: TDmaAttributes;
     Capabilities: PByte;
     Operational: PByte;
     Runtime: PByte;
@@ -296,7 +310,7 @@ type
     MaximumPorts: LongWord;
     ContextSize: LongWord;
     ContextArray: PQWord;
-    ContextArrayPhysical: QWord;
+    ContextArrayBusAddress: QWord;
     CommandRing: TProducerRing;
     EventRing: TEventRing;
     EventLock: TSpinLock;
@@ -401,7 +415,7 @@ end;
   Caller holds the event lock. }
 procedure QueueInterruptRead(Device: PUsbDevice);
 begin
-  Device^.InterruptTrb := EnqueueTrb(Device^.Rings[Device^.InterruptContext], Device^.InterruptBufferPhysical,
+  Device^.InterruptTrb := EnqueueTrb(Device^.Rings[Device^.InterruptContext], Device^.InterruptBufferBusAddress,
     Device^.InterruptLength, (TrbTypeNormal shl TrbTypeShift) or TrbInterruptOnCompletion or
     TrbInterruptOnShortPacket);
   FullMemoryBarrier;
@@ -569,18 +583,18 @@ begin
 end;
 
 procedure FillEndpointContext(Context: PLongWord; EndpointType: LongWord; MaximumPacket: Word;
-  RingPhysical: QWord; AverageLength: Word);
+  RingBusAddress: QWord; AverageLength: Word);
 const
   ErrorCount = 3;
 begin
   FillMemory(Context, 32, 0);
   Context[1] := (ErrorCount shl 1) or (EndpointType shl 3) or (LongWord(MaximumPacket) shl 16);
-  Context[2] := LongWord(RingPhysical) or 1; { dequeue cycle state }
-  Context[3] := LongWord(RingPhysical shr 32);
+  Context[2] := LongWord(RingBusAddress) or 1; { dequeue cycle state }
+  Context[3] := LongWord(RingBusAddress shr 32);
   Context[4] := AverageLength;
 end;
 
-function AllocatePage(out Physical: QWord): PByte; forward;
+function AllocateDmaPage(Controller: Pointer; out BusAddress: QWord): PByte; forward;
 
 { --- Transfers ---------------------------------------------------------------- }
 
@@ -645,10 +659,10 @@ begin
   if Length > 0 then
   begin
     if IsIn then
-      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesPhysical[0], Length,
+      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length,
         (TrbTypeDataStage shl TrbTypeShift) or DirectionIn)
     else
-      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesPhysical[0], Length, TrbTypeDataStage shl TrbTypeShift);
+      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length, TrbTypeDataStage shl TrbTypeShift);
   end;
   { The status stage goes the other way (in, without data). }
   StatusDirection := DirectionIn;
@@ -717,7 +731,7 @@ begin
       Control := Control or TrbChain
     else
       Control := Control or TrbInterruptOnCompletion;
-    Trb := EnqueueTrb(Device^.Rings[ContextIndex], Device^.DmaPagesPhysical[PageIndex], Chunk, Control);
+    Trb := EnqueueTrb(Device^.Rings[ContextIndex], Device^.DmaPagesBusAddress[PageIndex], Chunk, Control);
     NotePending(Device, Trb, Chunk);
     Inc(PageIndex);
   end;
@@ -768,7 +782,7 @@ begin
   InputSlotContext(Device)[0] := (InputSlotContext(Device)[0] and not (LongWord($1F) shl 27)) or
     (Device^.HighestContext shl 27);
   Context := InputEndpointContext(Device, ContextIndex);
-  FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].Physical,
+  FillEndpointContext(Context, EndpointType, MaximumPacket, Device^.Rings[ContextIndex].BusAddress,
     Device^.EndpointAverages[ContextIndex]);
   Context[0] := Device^.EndpointIntervals[ContextIndex] shl 16;
   if EndpointType in [EndpointTypeInterruptIn, EndpointTypeIsochronousOut] then
@@ -777,7 +791,7 @@ begin
   if EndpointType = EndpointTypeIsochronousOut then
     { Isochronous transfers are not retried: the error count is 0. }
     Context[1] := Context[1] and not (LongWord(3) shl 1);
-  Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
+  Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextBusAddress,
     (TrbTypeConfigureEndpoint shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
 end;
 
@@ -789,7 +803,8 @@ var
   ContextIndex: LongWord;
 begin
   ContextIndex := ContextIndexOf(Address);
-  if (ContextIndex >= MaximumEndpointContexts) or not AllocateProducerRing(Device^.Rings[ContextIndex]) then
+  if (ContextIndex >= MaximumEndpointContexts) or
+     not AllocateProducerRing(PXhciController(Device^.Controller)^.Dma, Device^.Rings[ContextIndex]) then
     Exit(False);
   Device^.EndpointTypes[ContextIndex] := EndpointType;
   Device^.EndpointMaximumPacket[ContextIndex] := MaximumPacket;
@@ -831,7 +846,7 @@ begin
   Controller := PXhciController(Device^.Controller);
   if (Device^.InterruptContext <> 0) or (MaximumPacket = 0) or (MaximumPacket > 1024) then
     Exit(False);
-  Device^.InterruptBuffer := AllocatePage(Device^.InterruptBufferPhysical);
+  Device^.InterruptBuffer := AllocateDmaPage(Controller, Device^.InterruptBufferBusAddress);
   if (Device^.InterruptBuffer = nil) or
      not ConfigureEndpoint(Device, Address, EndpointTypeInterruptIn, MaximumPacket,
        IntervalExponentFor(Device, Interval), MaximumPacket) then
@@ -858,7 +873,8 @@ begin
   if not Result then
     Exit;
   ContextIndex := ContextIndexOf(Address);
-  InitializeIsochronousStream(Device^.Isochronous, Device^.Rings[ContextIndex], Routines, Context);
+  InitializeIsochronousStream(Device^.Isochronous, Device^.Rings[ContextIndex],
+    @PXhciController(Device^.Controller)^.Dma, Routines, Context);
   Device^.IsochronousContext := ContextIndex;
 end;
 
@@ -888,12 +904,17 @@ end;
 
 { --- Enumeration ---------------------------------------------------------------- }
 
-function AllocatePage(out Physical: QWord): PByte;
+{ A zeroed page of DMA memory shared with the controller (uncached if it
+  does not snoop the caches, so nothing else needs maintenance). }
+function AllocateDmaPage(Controller: Pointer; out BusAddress: QWord): PByte;
+var
+  Buffer: TDmaBuffer;
 begin
-  Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Physical = 0 then
+  BusAddress := 0;
+  if not AllocateDmaBuffer(PXhciController(Controller)^.Dma, PageSize, DmaShared, Buffer) then
     Exit(nil);
-  Result := PByte(PhysicalToVirtual(Physical));
+  BusAddress := Buffer.DeviceAddress;
+  Result := Buffer.Address;
 end;
 
 function DefaultControlPacketSize(Speed: LongWord): Word;
@@ -977,7 +998,7 @@ begin
   InputControlContext(Device)[1] := LongWord(1) shl 1;
   CopyMemory(InputEndpointContext(Device, 1), Device^.OutputContext + PXhciController(Device^.Controller)^.ContextSize, 32);
   InputEndpointContext(Device, 1)[1] := (InputEndpointContext(Device, 1)[1] and $FFFF) or (LongWord(Start[7]) shl 16);
-  Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextPhysical,
+  Result := RunCommand(PXhciController(Device^.Controller), Device^.InputContextBusAddress,
     (TrbTypeEvaluateContext shl TrbTypeShift) or (Device^.SlotId shl 24), Slot);
 end;
 
@@ -990,15 +1011,15 @@ var
   Ignored: LongWord;
 begin
   Device^.SlotId := Slot;
-  Controller^.ContextArray[Slot] := Device^.OutputContextPhysical;
+  Controller^.ContextArray[Slot] := Device^.OutputContextBusAddress;
   Controller^.Devices[Slot] := Device;
   FillMemory(Device^.InputContext, 4096, 0);
   InputControlContext(Device)[1] := 3;
   InputSlotContext(Device)[0] := (LongWord(1) shl 27) or (Device^.Speed shl 20);
   InputSlotContext(Device)[1] := Device^.PortNumber shl 16;
   FillEndpointContext(InputEndpointContext(Device, 1), EndpointTypeControl,
-    DefaultControlPacketSize(Device^.Speed), Device^.Rings[1].Physical, 8);
-  Result := RunCommand(Controller, Device^.InputContextPhysical,
+    DefaultControlPacketSize(Device^.Speed), Device^.Rings[1].BusAddress, 8);
+  Result := RunCommand(Controller, Device^.InputContextBusAddress,
     (TrbTypeAddressDevice shl TrbTypeShift) or (Slot shl 24), Ignored);
   if not Result then
     Exit;
@@ -1032,14 +1053,14 @@ begin
   Device^.Speed := (PortStatus shr PortSpeedShift) and $F;
   InitializeMutex(Device^.TransferLock);
   InitializeEvent(Device^.TransferDone, EventKindNotification, False);
-  Device^.InputContext := AllocatePage(Device^.InputContextPhysical);
-  Device^.OutputContext := AllocatePage(Device^.OutputContextPhysical);
+  Device^.InputContext := AllocateDmaPage(Controller, Device^.InputContextBusAddress);
+  Device^.OutputContext := AllocateDmaPage(Controller, Device^.OutputContextBusAddress);
   if (Device^.InputContext = nil) or (Device^.OutputContext = nil) or
-     not AllocateProducerRing(Device^.Rings[1]) then
+     not AllocateProducerRing(Controller^.Dma, Device^.Rings[1]) then
     Exit;
   for Index := 0 to UsbDmaPages - 1 do
   begin
-    Device^.DmaPages[Index] := AllocatePage(Device^.DmaPagesPhysical[Index]);
+    Device^.DmaPages[Index] := AllocateDmaPage(Controller, Device^.DmaPagesBusAddress[Index]);
     if Device^.DmaPages[Index] = nil then
       Exit;
   end;
@@ -1101,7 +1122,7 @@ function AllocateScratchpads(Controller: PXhciController): Boolean;
 var
   Parameters: LongWord;
   Count: LongWord;
-  ArrayPhysical: QWord;
+  ArrayBusAddress: QWord;
   ScratchArray: PQWord;
   Index: LongWord;
 begin
@@ -1109,16 +1130,15 @@ begin
   Count := (((Parameters shr 21) and $1F) shl 5) or ((Parameters shr 27) and $1F);
   if Count = 0 then
     Exit(True);
-  ScratchArray := PQWord(AllocatePage(ArrayPhysical));
+  ScratchArray := PQWord(AllocateDmaPage(Controller, ArrayBusAddress));
   if (ScratchArray = nil) or (Count > 512) then
     Exit(False);
   for Index := 0 to Count - 1 do
   begin
-    ScratchArray[Index] := AllocateZeroedPhysicalPage(PageUsageGeneral);
-    if ScratchArray[Index] = 0 then
+    if AllocateDmaPage(Controller, ScratchArray[Index]) = nil then
       Exit(False);
   end;
-  Controller^.ContextArray[0] := ArrayPhysical;
+  Controller^.ContextArray[0] := ArrayBusAddress;
   Result := True;
 end;
 
@@ -1139,11 +1159,11 @@ end;
 function RunHostController(Controller: PXhciController): Boolean;
 begin
   Write32(Controller^.Operational, ConfigureRegister, Controller^.MaximumSlots);
-  Write64(Controller^.Operational, ContextArrayPointer, Controller^.ContextArrayPhysical);
-  Write64(Controller^.Operational, CommandRingControl, Controller^.CommandRing.Physical or 1);
+  Write64(Controller^.Operational, ContextArrayPointer, Controller^.ContextArrayBusAddress);
+  Write64(Controller^.Operational, CommandRingControl, Controller^.CommandRing.BusAddress or 1);
   Write32(Interrupter(Controller), InterrupterSegmentTableSize, 1);
-  Write64(Interrupter(Controller), InterrupterDequeuePointer, Controller^.EventRing.Physical);
-  Write64(Interrupter(Controller), InterrupterSegmentTableBase, Controller^.EventRing.SegmentTablePhysical);
+  Write64(Interrupter(Controller), InterrupterDequeuePointer, Controller^.EventRing.BusAddress);
+  Write64(Interrupter(Controller), InterrupterSegmentTableBase, Controller^.EventRing.SegmentTableBusAddress);
   Write32(Interrupter(Controller), InterrupterManagement, ManagementEnable or ManagementPending);
   Write32(Controller^.Operational, UsbCommand, CommandRun or CommandInterrupterEnable);
   Result := WaitForBits(Controller^.Operational, UsbStatus, StatusHalted, 0, 1000);
@@ -1418,24 +1438,45 @@ begin
   end;
 end;
 
-function StartController(Pci: PPciDevice): Integer;
+{ Describes the controller for its start-up line. }
+procedure WriteControllerName(Controller: PXhciController);
+begin
+  if Controller^.Pci <> nil then
+  begin
+    DebugWriteHex(Controller^.Pci^.VendorId, 4);
+    DebugWrite(':');
+    DebugWriteHex(Controller^.Pci^.DeviceId, 4);
+  end
+  else
+  begin
+    DebugWrite(@Controller^.Platform^.Path[0]);
+    DebugWrite(' (ACPI ');
+    DebugWrite(@Controller^.Platform^.HardwareId[0]);
+    DebugWrite(')');
+  end;
+end;
+
+{ Connects the controller's interrupt: MSI-X or MSI on PCI, the _CRS
+  interrupt of a platform device. False if it is to be polled. }
+function ConnectControllerInterrupt(Controller: PXhciController): Boolean;
+begin
+  if Controller^.Pci <> nil then
+    Result := ConnectPciInterrupt(Controller^.Pci, @HandleXhciInterrupt, Controller) <> PciInterruptNone
+  else
+    Result := ConnectPlatformInterrupt(Controller^.Platform, 0, @HandleXhciInterrupt, Controller);
+end;
+
+{ Starts a controller whose registers are mapped at Capabilities (and
+  whose Pci or Platform, and Dma, are filled in); returns how many
+  devices it found. }
+function StartController(Controller: PXhciController): Integer;
+const
+  CapabilityAddresses64 = 1;
 var
-  Controller: PXhciController;
-  Bar: TPciBar;
   Parameters: LongWord;
   PortNumber: LongWord;
 begin
   Result := 0;
-  if not PciReadBar(Pci, 0, Bar) or Bar.IsIoPort then
-    Exit;
-  Controller := PXhciController(AllocateZeroedKernelMemory(SizeOf(TXhciController)));
-  if Controller = nil then
-    Exit;
-  Controller^.Pci := Pci;
-  PciEnableDevice(Pci, True);
-  Controller^.Capabilities := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
-  if Controller^.Capabilities = nil then
-    Exit;
   Controller^.Operational := Controller^.Capabilities + Controller^.Capabilities[CapabilityLengthRegister];
   Controller^.Runtime := Controller^.Capabilities +
     (Read32(Controller^.Capabilities, RuntimeOffsetRegister) and not LongWord($1F));
@@ -1452,6 +1493,9 @@ begin
   Controller^.ContextSize := 32;
   if (Read32(Controller^.Capabilities, CapabilityParameters1) and 4) <> 0 then
     Controller^.ContextSize := 64;
+  { A controller without 64-bit addressing reaches only the low 4 GiB. }
+  if (Read32(Controller^.Capabilities, CapabilityParameters1) and CapabilityAddresses64) = 0 then
+    LimitDmaBusAddresses(Controller^.Dma, QWord(1) shl 32);
   InitializeSpinLock(Controller^.EventLock);
   InitializeMutex(Controller^.CommandLock);
   InitializeEvent(Controller^.CommandDone, EventKindNotification, False);
@@ -1460,27 +1504,31 @@ begin
   TakeOverFromFirmware(Controller);
   if not ResetHostController(Controller) then
     Exit;
-  Controller^.ContextArray := PQWord(AllocatePage(Controller^.ContextArrayPhysical));
+  Controller^.ContextArray := PQWord(AllocateDmaPage(Controller, Controller^.ContextArrayBusAddress));
   if (Controller^.ContextArray = nil) or not AllocateScratchpads(Controller) or
-     not AllocateProducerRing(Controller^.CommandRing) or not AllocateEventRing(Controller^.EventRing) then
+     not AllocateProducerRing(Controller^.Dma, Controller^.CommandRing) or
+     not AllocateEventRing(Controller^.Dma, Controller^.EventRing) then
     Exit;
-  Controller^.UsesInterrupts :=
-    ConnectPciInterrupt(Pci, @HandleXhciInterrupt, Controller) <> PciInterruptNone;
+  Controller^.UsesInterrupts := ConnectControllerInterrupt(Controller);
   if not RunHostController(Controller) then
     Exit;
 
   DebugBeginMessage;
   DebugWriteTag('xhci');
   DebugWrite('Controller ');
-  DebugWriteHex(Pci^.VendorId, 4);
-  DebugWrite(':');
-  DebugWriteHex(Pci^.DeviceId, 4);
+  WriteControllerName(Controller);
   DebugWrite(', ');
   DebugWriteDecimal(Controller^.MaximumPorts);
   if Controller^.UsesInterrupts then
-    DebugWriteLine(' ports, interrupts')
+    DebugWrite(' ports, interrupts')
   else
-    DebugWriteLine(' ports, polled');
+    DebugWrite(' ports, polled');
+  if not Controller^.Dma.Coherent then
+  begin
+    DebugWrite(', ');
+    DebugWrite(DmaCoherenceText(Controller^.Dma));
+  end;
+  DebugWriteLine('');
   DebugEndMessage;
 
   RegisterPowerHandler('xHCI', PowerStageBuses, @SuspendController, @ResumeController, Controller);
@@ -1500,6 +1548,56 @@ begin
   end;
 end;
 
+function StartPciController(Pci: PPciDevice): Integer;
+var
+  Controller: PXhciController;
+  Bar: TPciBar;
+begin
+  Result := 0;
+  if not PciReadBar(Pci, 0, Bar) or Bar.IsIoPort then
+    Exit;
+  Controller := PXhciController(AllocateZeroedKernelMemory(SizeOf(TXhciController)));
+  if Controller = nil then
+    Exit;
+  Controller^.Pci := Pci;
+  GetPciDmaAttributes(Pci, Controller^.Dma);
+  PciEnableDevice(Pci, True);
+  Controller^.Capabilities := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
+  if Controller^.Capabilities = nil then
+    Exit;
+  Result := StartController(Controller);
+end;
+
+var
+  { The devices the platform controllers found, for the caller. }
+  PlatformDevicesFound: Integer;
+
+function ProbePlatformController(Device: PPlatformDevice): Boolean;
+var
+  Controller: PXhciController;
+  Length: QWord;
+begin
+  Result := False;
+  Controller := PXhciController(AllocateZeroedKernelMemory(SizeOf(TXhciController)));
+  if Controller = nil then
+    Exit;
+  Controller^.Platform := Device;
+  Controller^.Dma := Device^.Dma;
+  Controller^.Capabilities := PByte(MapPlatformMemory(Device, 0, Length));
+  if (Controller^.Capabilities = nil) or (Length < PortRegisterBase) then
+    Exit;
+  PlatformDevicesFound := PlatformDevicesFound + StartController(Controller);
+  Result := True;
+end;
+
+const
+  { xHCI controllers with and without the USB debug capability. }
+  PlatformControllerIds: array[0..2] of PChar = ('PNP0D10', 'PNP0D15', nil);
+  PlatformControllerDriver: TPlatformDriver = (
+    Name: 'xhci';
+    Ids: @PlatformControllerIds[0];
+    Probe: @ProbePlatformController);
+
 function InitializeXhciControllers: Integer;
 var
   Index: Integer;
@@ -1510,9 +1608,12 @@ begin
   Index := FindPciDeviceByClass(PciClassSerialBus, PciSubclassUsb, PciInterfaceXhci, 0);
   while Index >= 0 do
   begin
-    Result := Result + StartController(PciDeviceAt(Index));
+    Result := Result + StartPciController(PciDeviceAt(Index));
     Index := FindPciDeviceByClass(PciClassSerialBus, PciSubclassUsb, PciInterfaceXhci, Index + 1);
   end;
+  PlatformDevicesFound := 0;
+  BindPlatformDriver(PlatformControllerDriver);
+  Result := Result + PlatformDevicesFound;
 end;
 
 end.
