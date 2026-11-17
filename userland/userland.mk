@@ -145,7 +145,7 @@ userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
-		shared/Abi.ErrorMessages.inc
+		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
 	@rm -rf $(RTL_USER_DIRECTORY)

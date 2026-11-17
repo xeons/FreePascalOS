@@ -111,6 +111,16 @@ const
 {$else}
   MachineName = 'x86_64';
 {$endif}
+  { /dev/keyboard is the PS/2 keyboard (USB ones are usbkeyboardN), which
+    AArch64 machines do not have: ls lists it and stat describes it only
+    on x86-64. }
+{$ifdef CPUAARCH64}
+  KeyboardListed = '';
+  KeyboardDescribed = '';
+{$else}
+  KeyboardListed = 'keyboard'#10;
+  KeyboardDescribed = 'character special file 600'#10;
+{$endif}
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
@@ -456,7 +466,7 @@ const
     (Command: 'dd if=/dev/zero of=/dev/full count=1 2>/dev/null; echo $?; test "$(ls /dev | grep -c "^disk")" -gt 0 && echo disks; ls /dev | grep -x -e null -e tty -e random'; ExpectedOutput: '1'#10'disks'#10'null'#10'random'#10'tty'#10; ExpectedStatus: 0),
     (Command: 'test -b /dev/disk1p1 && stat -c "%F %a" /dev/disk1p1; dd if=/dev/disk1p1 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk1p1 bs=1 skip=54 count=5 2>/dev/null'; ExpectedOutput: 'block special file 600'#10'512'#10'FAT12'; ExpectedStatus: 0),
     (Command: 'dd if=/dev/zero of=/dev/disk1p1 count=1 2>/dev/null; echo $?; su user -c "head -c 1 /dev/disk1p1" 2>/dev/null; echo $?; find /dev -type b -name "disk1p1"'; ExpectedOutput: '1'#10'1'#10'/dev/disk1p1'#10; ExpectedStatus: 0),
-    (Command: 'ls /dev | grep -x -e keyboard -e serial0; stat -c "%F %a" /dev/keyboard; cat /dev/keyboard 2>/dev/null; echo $?; ls /dev | grep ahci || echo hidden'; ExpectedOutput: 'keyboard'#10'serial0'#10'character special file 600'#10'1'#10'hidden'#10; ExpectedStatus: 0),
+    (Command: 'ls /dev | grep -x -e keyboard -e serial0; stat -c "%F %a" /dev/keyboard; cat /dev/keyboard 2>/dev/null; echo $?; ls /dev | grep ahci || echo hidden'; ExpectedOutput: KeyboardListed + 'serial0'#10 + KeyboardDescribed + '1'#10'hidden'#10; ExpectedStatus: 0),
     (Command: 'dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; echo $?; dd if=/dev/disk3 bs=512 count=1 2>/dev/null | wc -c; dd if=/dev/disk3 bs=512 skip=100 count=1 2>/dev/null; dd if=/dev/disk3 bs=512 skip=99 count=1 2>/dev/null | wc -c'; ExpectedOutput: '1'#10'512'#10'512'#10; ExpectedStatus: 0),
     { Sound (HD Audio, recorded by QEMU and checked by the host): the
       mixer, a tone, and a WAV file written by tone and played by play. }

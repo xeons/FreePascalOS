@@ -26,7 +26,9 @@
 # Cortex-A72 processors, a GICv2 interrupt controller (the Pi's GIC-400),
 # the ARM generic timer, a PL011 UART, UEFI with ACPI tables. The
 # framebuffer is QEMU's ramfb (a plain UEFI GOP framebuffer in memory,
-# like the Pi firmware's), the boot volume a virtio disk on PCIe.
+# like the Pi firmware's), the boot volume a virtio disk on PCIe, the
+# keyboard and the pointer (a tablet) USB devices on an xHCI controller,
+# as on the Pi (whose VL805 is an xHCI controller).
 #
 # Environment:
 #   PROCESSORS     number of processors (default 2)
@@ -121,6 +123,7 @@ exec qemu-system-aarch64 \
     -drive if=none,format=raw,file=fat:rw:"$esp_directory",id=esp \
     -device virtio-blk-pci,drive=esp \
     -device ramfb \
+    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
     -serial "${SERIAL:-stdio}" \
     -no-reboot \
     "${extra_arguments[@]}" \

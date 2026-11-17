@@ -57,7 +57,8 @@
 #                   Pascal sources (build/toolchain/ppcrossa64)
 #   make ARCH=arm64 Build the AArch64 loader and kernel (build/arm64/esp)
 #   make run ARCH=arm64  Boot it in QEMU's virt machine (GICv2, Cortex-A72)
-#   make arm64-test Boot smoke test of the AArch64 build (not in make test)
+#   make arm64-test Tests of the AArch64 build: boot, coretest, the session
+#                   (not in make test)
 
 ARCH ?= amd64
 
@@ -288,13 +289,11 @@ $(RUN_SYSTEM_DISK): $(SYSTEM_DISK)
 	cp $(SYSTEM_DISK) $@
 
 ifeq ($(ARCH),arm64)
-# The AArch64 build boots without the disks for now (user mode on AArch64
-# is the next step of the port).
-run: esp
-	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY)
+run: esp $(RUN_SYSTEM_DISK)
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) $(RUN_SYSTEM_DISK)
 
-debug: esp
-	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug
+debug: esp $(RUN_SYSTEM_DISK)
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug $(RUN_SYSTEM_DISK)
 else
 run: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
@@ -303,14 +302,19 @@ debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 endif
 
-# Boot smoke test of the AArch64 build in QEMU's virt machine (not part of
-# make test until qemu-system-aarch64 and the edk2 AArch64 firmware are
+# Tests of the AArch64 build in QEMU's virt machine (not part of make
+# test until qemu-system-aarch64 and the edk2 AArch64 firmware are
 # standard requirements): the kernel must reach the end of its start-up
-# with every self test passed, with the firmware at EL1 and at EL2.
+# with every self test passed, with the firmware at EL1 and at EL2;
+# coretest must pass (scripts/test-qemu-arm64-user.sh); and the
+# graphical session must come up with a shell on the serial console
+# (scripts/test-arm64-session.py).
 .PHONY: arm64-test
 arm64-test:
-	@$(MAKE) --no-print-directory ARCH=arm64 esp
+	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk build/arm64/test-disk.img
 	scripts/test-qemu-arm64.sh build/arm64/esp
+	scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img
+	scripts/test-arm64-session.py build/arm64/esp build/arm64/system-disk.img
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

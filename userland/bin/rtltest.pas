@@ -808,7 +808,19 @@ begin
   else
     Check(Raised = 'EZeroDivide', 'SSE division by zero raises EZeroDivide (got ' + Raised + ')');
   Raised := ExceptionClassOf(@DivideExtendedByZero);
+{$ifdef CPUX86_64}
   Check(Raised = 'EZeroDivide', 'x87 division by zero raises EZeroDivide (got ' + Raised + ')');
+{$else}
+  { No x87 here: Extended is Double, and the processor sets the flag
+    without trapping, as above. }
+  if (Raised = '') and ((ReadFloatStatus and FloatZeroDivideFlag) <> 0) then
+  begin
+    WriteFloatStatus(ReadFloatStatus and not FloatZeroDivideFlag);
+    Check(True, 'Extended division by zero: the processor does not trap, not checked');
+  end
+  else
+    Check(Raised = 'EZeroDivide', 'Extended division by zero raises EZeroDivide (got ' + Raised + ')');
+{$endif}
   Check(Abs(1.0 / (Zero + 4) - 0.25) < 1e-12, 'floating point works after an exception');
   Check(ExceptionClassOf(@ExecuteInvalidInstruction) = 'EAccessViolation', 'an invalid instruction raises EAccessViolation');
   AllCaught := True;
