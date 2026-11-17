@@ -1414,8 +1414,7 @@ made once) and draws the icon at the left of the title bar at the scale
 of the display the window is on, in both themes. A window with no icon
 shows its owner's (a dialog its main window's), else its program's
 first unowned window's (a dialog made without an owner); one with none at all
-gets the generic picture where the theme has it (Sunrise) and no icon
-in Classic. Every change gives the window a new icon version, which
+gets the generic picture (a little window; both themes have it). Every change gives the window a new icon version, which
 `EventShellWindowChanged` and `EventWindowListed` carry (in `Width`);
 a program asks for an icon with `RequestDescribeWindowIcon` (any
 window it may list; the shell any), answered by

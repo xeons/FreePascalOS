@@ -69,6 +69,7 @@ var
   Inner: TRectangle;
   Strip: TRectangle;
   StripHeight: LongInt;
+  ButtonColor: TColor;
 begin
   Size := RectangleWidth(Box);
   if Size < 6 * Pixel then
@@ -81,10 +82,22 @@ begin
   FillVerticalGradient(Canvas, Inner, Theme.Field, Theme.Face);
   StripHeight := RectangleHeight(Inner) div 3;
   Strip := MakeRectangle(Inner.Left, Inner.Top, RectangleWidth(Inner), StripHeight);
-  FillVerticalGradient(Canvas, Strip, Theme.SectionBandTop, Theme.SectionBandBottom);
+  { Sunrise: a navy strip (its section bands') with a gold spot; Classic
+    (whose bands are plain face): its own title bar's navy, face-grey
+    buttons. }
+  if Theme.HeaderBandsShown then
+  begin
+    FillVerticalGradient(Canvas, Strip, Theme.SectionBandTop, Theme.SectionBandBottom);
+    ButtonColor := Theme.HeaderBandTop;
+  end
+  else
+  begin
+    FillHorizontalGradient(Canvas, Strip, Theme.ActiveTitleStart, Theme.ActiveTitleEnd);
+    ButtonColor := Theme.TitleButtonFace;
+  end;
   { A spot of gold at the strip's right: the window's buttons. }
   FillRectangle(Canvas, MakeRectangle(Strip.Right - 2 * Pixel - Pixel, Strip.Top + (StripHeight - 2 * Pixel) div 2,
-    2 * Pixel, 2 * Pixel), Theme.HeaderBandTop);
+    2 * Pixel, 2 * Pixel), ButtonColor);
 end;
 
 end.
