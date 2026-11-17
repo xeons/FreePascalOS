@@ -69,6 +69,7 @@ type
     procedure FocusChanged; override;
   public
     constructor Create(AParent: TControl); override;
+    function PreferredSize: TSize; override;
     procedure SetRange(Minimum, Maximum: LongInt);
     { The thumb's middle at Value, in the control's pixels: where a click
       sets that value. }
@@ -90,7 +91,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.LayoutRules;
 
 const
   { Logical units. }
@@ -106,6 +108,20 @@ begin
   FMaximum := 100;
   FPageStep := 10;
   FTickStep := 10;
+end;
+
+const
+  DefaultSliderWidth = 150;
+
+{ As wide as it is (or a default); the thumb, and the ticks under it. }
+function TSlider.PreferredSize: TSize;
+var
+  Width: LongInt;
+begin
+  Width := RectangleWidth(Bounds);
+  if Width <= 0 then
+    Width := DefaultSliderWidth;
+  Result := MakeSize(Width, ThumbLogicalHeight + 2 + TickLogicalLength + 2);
 end;
 
 procedure TSlider.SetRange(Minimum, Maximum: LongInt);

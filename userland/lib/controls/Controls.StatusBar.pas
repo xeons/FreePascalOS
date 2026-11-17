@@ -45,6 +45,7 @@ type
     constructor Create(AParent: TControl); override;
     { Panels of these widths (the last one's is ignored). }
     procedure SetPanels(const Widths: array of LongInt);
+    function PreferredSize: TSize; override;
     property PanelText[Index: LongInt]: string read GetPanelText write SetPanelText;
   end;
 
@@ -55,7 +56,8 @@ uses
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Text;
+  Controls.Text,
+  Controls.LayoutRules;
 
 constructor TStatusBar.Create(AParent: TControl);
 begin
@@ -63,6 +65,35 @@ begin
   SetBounds(0, 0, 0, 20);
   Align := AlignBottom;
   SetPanels([0]);
+end;
+
+const
+  { Logical units: the bar's height at least, room around a panel's text,
+    the width the last panel needs at least. }
+  MinimumStatusHeight = 20;
+  StatusRoomDown = 6;
+  LastPanelWidth = 100;
+
+{ Every panel at its width (the last at what its text needs); a line of
+  text high. }
+function TStatusBar.PreferredSize: TSize;
+var
+  Index: LongInt;
+  Width: LongInt;
+  Height: LongInt;
+  Last: LongInt;
+begin
+  Width := 0;
+  for Index := 0 to High(FWidths) - 1 do
+    Width := Width + FWidths[Index];
+  Last := LastPanelWidth;
+  if High(FTexts) >= 0 then
+    if PixelsToLogicalCeiling(TextWidth(ControlFace, FTexts[High(FTexts)])) + StatusRoomDown > Last then
+      Last := PixelsToLogicalCeiling(TextWidth(ControlFace, FTexts[High(FTexts)])) + StatusRoomDown;
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + StatusRoomDown;
+  if Height < MinimumStatusHeight then
+    Height := MinimumStatusHeight;
+  Result := MakeSize(Width + Last, Height);
 end;
 
 procedure TStatusBar.SetPanels(const Widths: array of LongInt);

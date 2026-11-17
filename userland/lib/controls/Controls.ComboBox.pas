@@ -77,6 +77,7 @@ type
     { The list chose Index. }
     procedure Choose(Index: LongInt);
     function DroppedDown: Boolean;
+    function PreferredSize: TSize; override;
     property Items: TStringList read FItems;
     property ItemIndex: LongInt read FItemIndex write SetItemIndex;
   end;
@@ -93,7 +94,8 @@ uses
   Controls.Keys,
   Controls.Text,
   Controls.Window,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.LayoutRules;
 
 const
   MaximumDroppedItems = 8;
@@ -257,6 +259,29 @@ begin
   end
   else
     DrawTextInBox(Canvas, ControlFace, Text, InflateRectangle(Field, -Scaled(2)), AlignTextLeft, Theme.FieldText);
+end;
+
+const
+  { Logical units: room around the text in the field, above and below. }
+  ComboFieldRoom = 12;
+  ComboRoomDown = 8;
+  MinimumComboHeight = 22;
+
+{ The widest item, the drop button beside it; a line high. }
+function TComboBox.PreferredSize: TSize;
+var
+  Index: LongInt;
+  Widest: LongInt;
+  Height: LongInt;
+begin
+  Widest := TextWidth(ControlFace, Text);
+  for Index := 0 to FItems.Count - 1 do
+    if TextWidth(ControlFace, FItems[Index]) > Widest then
+      Widest := TextWidth(ControlFace, FItems[Index]);
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + ComboRoomDown;
+  if Height < MinimumComboHeight then
+    Height := MinimumComboHeight;
+  Result := MakeSize(PixelsToLogicalCeiling(Widest) + Theme.ScrollBarWidth + ComboFieldRoom, Height);
 end;
 
 procedure TComboBox.PointerDown(X, Y: LongInt; Button: LongWord);

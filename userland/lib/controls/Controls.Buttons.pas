@@ -53,6 +53,7 @@ type
     constructor Create(AParent: TControl); override;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
+    function PreferredSize: TSize; override;
     { Drawn with the default outline (whether Enter presses it is the
       window's DefaultControl). }
     property IsDefault: Boolean read FIsDefault write SetIsDefault;
@@ -69,7 +70,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
+  Controls.Text,
+  Controls.LayoutRules;
 
 procedure DrawButtonFace(const Canvas: TCanvas; const Box: TRectangle; Pressed, Outlined: Boolean);
 var
@@ -123,6 +125,27 @@ begin
       MnemonicTextWidth(ControlFace, Text)) div 2, TextBox.Top + (RectangleHeight(TextBox) - TextHeight(ControlFace)) div 2);
   if Focused then
     DrawFocusFrame(Canvas, InflateRectangle(Box, -Scaled(4)), Theme.FaceText);
+end;
+
+const
+  { The smallest button (a dialog's OK), and the room around its text. }
+  MinimumButtonWidth = 75;
+  MinimumButtonHeight = 23;
+  ButtonTextRoomAcross = 24;
+  ButtonTextRoomDown = 8;
+
+function TButton.PreferredSize: TSize;
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Width := PixelsToLogicalCeiling(MnemonicTextWidth(ControlFace, Text)) + ButtonTextRoomAcross;
+  if Width < MinimumButtonWidth then
+    Width := MinimumButtonWidth;
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + ButtonTextRoomDown;
+  if Height < MinimumButtonHeight then
+    Height := MinimumButtonHeight;
+  Result := MakeSize(Width, Height);
 end;
 
 procedure TButton.PointerDown(X, Y: LongInt; Button: LongWord);

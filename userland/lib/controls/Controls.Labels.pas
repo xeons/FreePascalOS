@@ -48,6 +48,7 @@ type
     constructor Create(AParent: TControl); override;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
+    function PreferredSize: TSize; override;
     property Alignment: THorizontalAlignment read FAlignment write SetAlignment;
     { True (the default): an ampersand in the text marks the mnemonic. }
     property ShowsMnemonic: Boolean read FShowsMnemonic write SetShowsMnemonic;
@@ -57,7 +58,8 @@ implementation
 
 uses
   Drawing.Rectangles,
-  Windowing.Theme;
+  Windowing.Theme,
+  Controls.LayoutRules;
 
 constructor TLabel.Create(AParent: TControl);
 begin
@@ -86,6 +88,18 @@ procedure TLabel.ActivateMnemonic(Character: LongWord);
 begin
   if Host <> nil then
     Host.FocusControlAfter(Self);
+end;
+
+{ The text, and a little room above and below it. }
+function TLabel.PreferredSize: TSize;
+var
+  Width: LongInt;
+begin
+  if FShowsMnemonic then
+    Width := MnemonicTextWidth(ControlFace, Text)
+  else
+    Width := TextWidth(ControlFace, Text);
+  Result := MakeSize(PixelsToLogicalCeiling(Width), PixelsToLogicalCeiling(TextHeight(ControlFace)) + 2);
 end;
 
 procedure TLabel.Paint(var Canvas: TCanvas);

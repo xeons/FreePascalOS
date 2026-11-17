@@ -52,6 +52,7 @@ type
     constructor Create(AParent: TControl); override;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
+    function PreferredSize: TSize; override;
     property Checked: Boolean read FChecked write SetChecked;
   end;
 
@@ -79,7 +80,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
+  Controls.Text,
+  Controls.LayoutRules;
 
 constructor TToggle.Create(AParent: TControl);
 begin
@@ -136,6 +138,25 @@ end;
 function TToggle.MarkSize: LongInt;
 begin
   Result := Scaled(13);
+end;
+
+const
+  { Logical units: the box or circle, the gap before the text, the room
+    after it (for the focus frame) and above and below. }
+  MarkLogicalSize = 13;
+  MarkTextGap = 5;
+  TextRoomAfter = 4;
+  ToggleRoomDown = 4;
+
+function TToggle.PreferredSize: TSize;
+var
+  Height: LongInt;
+begin
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace));
+  if Height < MarkLogicalSize then
+    Height := MarkLogicalSize;
+  Result := MakeSize(MarkLogicalSize + MarkTextGap + PixelsToLogicalCeiling(MnemonicTextWidth(ControlFace, Text)) +
+    TextRoomAfter, Height + ToggleRoomDown);
 end;
 
 procedure TToggle.PaintText(var Canvas: TCanvas);

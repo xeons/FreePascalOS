@@ -63,6 +63,7 @@ type
     function TabBounds(Index: LongInt): TRectangle;
     function MatchesMnemonic(Character: LongWord): Boolean; override;
     procedure ActivateMnemonic(Character: LongWord); override;
+    function PreferredSize: TSize; override;
     property PageCount: LongInt read GetPageCount;
     property Pages[Index: LongInt]: TControl read GetPage;
     property PageIndex: LongInt read FPageIndex write SetPageIndex;
@@ -77,7 +78,8 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Text,
-  Controls.Panels;
+  Controls.Panels,
+  Controls.LayoutRules;
 
 constructor TTabControl.Create(AParent: TControl);
 begin
@@ -159,6 +161,31 @@ begin
       PageIndex := Index;
       Exit;
     end;
+end;
+
+{ Every tab in a row, and the largest page's preferred size under them,
+  inside the frame. }
+function TTabControl.PreferredSize: TSize;
+var
+  Index: LongInt;
+  Tabs: LongInt;
+  Page: TSize;
+  Largest: TSize;
+begin
+  Tabs := 0;
+  Largest := MakeSize(0, 0);
+  for Index := 0 to FPages.Count - 1 do
+  begin
+    Tabs := Tabs + PixelsToLogicalCeiling(TabWidth(Index));
+    Page := Pages[Index].PreferredSize;
+    if Page.cx > Largest.cx then
+      Largest.cx := Page.cx;
+    if Page.cy > Largest.cy then
+      Largest.cy := Page.cy;
+  end;
+  if Largest.cx + 6 > Tabs + 4 then
+    Tabs := Largest.cx + 2;
+  Result := MakeSize(Tabs + 4, PixelsToLogicalCeiling(TabHeight) + Largest.cy + 6);
 end;
 
 procedure TTabControl.Layout;

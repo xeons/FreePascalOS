@@ -69,6 +69,7 @@ type
     { A button of Width logical units after the last. }
     function AddButton(const AText: string; Width: LongInt; AOnClick: TControlEvent = nil): TToolButton;
     procedure AddSeparator;
+    function PreferredSize: TSize; override;
   end;
 
 implementation
@@ -79,7 +80,8 @@ uses
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Text;
+  Controls.Text,
+  Controls.LayoutRules;
 
 const
   ToolBarHeight = 26;
@@ -172,6 +174,12 @@ begin
   if FIsToggle then
     Down := not FDown;
   Click;
+end;
+
+{ Its buttons in a row, and its own height. }
+function TToolBar.PreferredSize: TSize;
+begin
+  Result := MakeSize(FNextLeft + 2, ToolBarHeight);
 end;
 
 constructor TToolBar.Create(AParent: TControl);

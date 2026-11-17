@@ -43,6 +43,7 @@ type
     procedure Paint(var Canvas: TCanvas); override;
   public
     constructor Create(AParent: TControl); override;
+    function PreferredSize: TSize; override;
     property Minimum: LongInt read FMinimum write FMinimum;
     property Maximum: LongInt read FMaximum write SetMaximum;
     property Position: LongInt read FPosition write SetPosition;
@@ -54,7 +55,24 @@ uses
   Drawing.Rectangles,
   Drawing.Bevels,
   Windowing.Theme,
-  Windowing.Connection;
+  Windowing.Connection,
+  Controls.LayoutRules;
+
+const
+  { Logical units. }
+  DefaultProgressWidth = 150;
+  ProgressHeight = 18;
+
+{ As wide as it is (or a default), a block high. }
+function TProgressBar.PreferredSize: TSize;
+var
+  Width: LongInt;
+begin
+  Width := RectangleWidth(Bounds);
+  if Width <= 0 then
+    Width := DefaultProgressWidth;
+  Result := MakeSize(Width, ProgressHeight);
+end;
 
 constructor TProgressBar.Create(AParent: TControl);
 begin

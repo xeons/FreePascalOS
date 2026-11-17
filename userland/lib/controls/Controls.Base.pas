@@ -257,6 +257,9 @@ type
       furthest right and bottom of those placed by bounds, and the strips
       of the docked ones around the largest client one. }
     function ChildrenExtent: TSize;
+    { Whether Child counts in ChildrenExtent (all visible ones by default;
+      not a scrolling panel's own scroll bars). }
+    function CountsInExtent(Child: TControl): Boolean; virtual;
     { Moves Child to the end of the children: drawn last, found first
       under the pointer (a scrolling panel's bars stay over its content). }
     procedure KeepChildOnTop(Child: TControl);
@@ -693,7 +696,7 @@ begin
   for Index := 0 to FChildren.Count - 1 do
   begin
     Child := TControl(FChildren[Index]);
-    if not Child.FVisible then
+    if not Child.FVisible or not CountsInExtent(Child) then
       Continue;
     Size := ChildSize(Child);
     if Child.FAlign = AlignNone then
@@ -733,6 +736,11 @@ begin
   if Placed.cy > Result.cy then
     Result.cy := Placed.cy;
   Result := MakeSize(Result.cx + SpacingWidth(FPadding), Result.cy + SpacingHeight(FPadding));
+end;
+
+function TControl.CountsInExtent(Child: TControl): Boolean;
+begin
+  Result := True;
 end;
 
 procedure TControl.PlaceChild(Child: TControl; const Rectangle: TRectangle);

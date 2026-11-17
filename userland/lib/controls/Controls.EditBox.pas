@@ -79,6 +79,7 @@ type
     procedure DragDrop(Data: TDragData; X, Y: LongInt; Effect: TDropEffect); override;
   public
     constructor Create(AParent: TControl); override;
+    function PreferredSize: TSize; override;
     procedure SelectAll;
     { Selects Count characters from character First (the caret at their
       end). }
@@ -110,13 +111,36 @@ uses
   Controls.Keys,
   Controls.Text,
   Controls.Clipboard,
-  Controls.SystemDrag;
+  Controls.SystemDrag,
+  Controls.LayoutRules;
 
 constructor TEditBox.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   CanFocus := True;
   PointerShape := PointerTextBeam;
+end;
+
+const
+  { Logical units: the width a box without one of its own gets, and the
+    room above and below a line of text (the bevel and a gap). }
+  DefaultEditWidth = 120;
+  EditRoomDown = 8;
+  MinimumEditHeight = 22;
+
+{ Its width is the program's (what it is now); its height fits a line. }
+function TEditBox.PreferredSize: TSize;
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Width := RectangleWidth(Bounds);
+  if Width <= 0 then
+    Width := DefaultEditWidth;
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + EditRoomDown;
+  if Height < MinimumEditHeight then
+    Height := MinimumEditHeight;
+  Result := MakeSize(Width, Height);
 end;
 
 function TEditBox.TextLeft: LongInt;
