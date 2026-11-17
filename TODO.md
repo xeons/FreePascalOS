@@ -415,7 +415,7 @@ normalized (0-65535), not pixels.
         list views, tree views, toolbars, tabs and menus)
   - [ ] Timer component (OnTimer at an interval, Enabled; over the message
         loop's window timers)
-  - [ ] Chart control (line, bar, area and pie; axes, legends, scaling;
+  - [x] Chart control (line, bar, area and pie; axes, legends, scaling;
         Task Manager's graphs could move to it)
 
 ### 6. Desktop shell

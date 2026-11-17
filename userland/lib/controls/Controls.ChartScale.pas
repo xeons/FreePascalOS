@@ -23,7 +23,9 @@
   smallest that keeps the ticks to the number that fit. For sizes in
   bytes the steps are nice in their unit instead (1, 2, 5, 10, 20, 50,
   100, 200 or 500 B, KiB, MiB, GiB...), so the labels read "256 MiB"
-  rather than "268.4 MB". An automatic range runs from the tick at or
+  rather than "268.4 MB"; for durations in seconds they are steps of a
+  clock (1, 2, 5, 10, 15, 30 s; 1, 2, 5, 10, 15, 30 min; 1, 2, 3, 6,
+  12 h; then whole days). An automatic range runs from the tick at or
   below the smallest value to the one at or above the largest; a fixed
   one keeps its ends and only picks the step.
 
@@ -37,7 +39,7 @@ unit Controls.ChartScale;
 interface
 
 type
-  TTickBase = (TickBaseDecimal, TickBaseBinary);
+  TTickBase = (TickBaseDecimal, TickBaseBinary, TickBaseTime);
 
   TAxisRange = record
     Minimum: Double;
@@ -53,6 +55,8 @@ type
 function NiceStep(RoughStep: Double): Double;
 { The same in units of 1024 (see above). }
 function BinaryNiceStep(RoughStep: Double): Double;
+{ The same in seconds, a clock's steps (see above). }
+function TimeNiceStep(RoughStep: Double): Double;
 { A nice step that cuts Span into at most MaximumTicks pieces. }
 function StepFor(Span: Double; MaximumTicks: LongInt; Base: TTickBase): Double;
 { From a tick at or below DataMinimum to one at or above DataMaximum
@@ -121,6 +125,22 @@ begin
   Result := InUnits * UnitSize;
 end;
 
+function TimeNiceStep(RoughStep: Double): Double;
+const
+  ClockSteps: array[0..17] of Double = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800,
+    21600, 43200, 86400);
+  Day = 86400.0;
+var
+  Index: LongInt;
+begin
+  if RoughStep < 1 then
+    Exit(NiceStep(RoughStep));
+  for Index := 0 to High(ClockSteps) do
+    if RoughStep <= ClockSteps[Index] * (1 + Slack) then
+      Exit(ClockSteps[Index]);
+  Result := NiceStep(RoughStep / Day) * Day;
+end;
+
 function StepFor(Span: Double; MaximumTicks: LongInt; Base: TTickBase): Double;
 begin
   if MaximumTicks < 1 then
@@ -129,6 +149,8 @@ begin
     Span := 1;
   if Base = TickBaseBinary then
     Result := BinaryNiceStep(Span / MaximumTicks)
+  else if Base = TickBaseTime then
+    Result := TimeNiceStep(Span / MaximumTicks)
   else
     Result := NiceStep(Span / MaximumTicks);
 end;

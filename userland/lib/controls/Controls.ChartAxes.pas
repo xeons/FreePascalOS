@@ -77,6 +77,10 @@ type
     procedure Changed;
   public
     constructor Create;
+    { The range of an X axis: as the automatic one, but from the first
+      value to the last exactly (a line runs edge to edge), the ticks
+      the nice multiples within. Fixed ranges and windows as above. }
+    function ResolvePositionRange(DataMinimum, DataMaximum: Double; MaximumTicks: LongInt): TAxisRange;
     { A fixed range (AutoRange becomes False). }
     procedure SetRange(AMinimum, AMaximum: Double);
     { The range shown for data from DataMinimum to DataMaximum, with at
@@ -168,6 +172,16 @@ begin
     if Result.Maximum <= Result.Minimum then
       Result.Maximum := Result.Minimum + FStep;
   end;
+end;
+
+function TChartAxis.ResolvePositionRange(DataMinimum, DataMaximum: Double; MaximumTicks: LongInt): TAxisRange;
+begin
+  if (FWindow > 0) or not FAutoRange or (DataMaximum <= DataMinimum) then
+    Exit(ResolveRange(DataMinimum, DataMaximum, MaximumTicks));
+  if FStep > 0 then
+    Result := MakeRange(DataMinimum, DataMaximum, FStep)
+  else
+    Result := MakeRange(DataMinimum, DataMaximum, StepFor(DataMaximum - DataMinimum, MaximumTicks, FTickBase));
 end;
 
 function TChartAxis.TickLabel(const Range: TAxisRange; Value: Double): string;

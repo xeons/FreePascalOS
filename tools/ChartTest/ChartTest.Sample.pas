@@ -151,6 +151,7 @@ begin
   Model.Title := 'Memory';
   Model.LegendPosition := LegendTop;
   Model.XAxis.Format := ChartFormatDuration;
+  Model.XAxis.TickBase := TickBaseTime;
   Model.YAxis.Format := ChartFormatBytes;
   Model.YAxis.TickBase := TickBaseBinary;
   for Index := 0 to 2 do

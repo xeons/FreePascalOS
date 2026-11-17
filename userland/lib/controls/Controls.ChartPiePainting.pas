@@ -146,12 +146,12 @@ begin
   Width := ChartTextWidth(Style.LabelFace, Text);
   Height := ChartTextHeight(Style.LabelFace);
   { Beside the slice: to the right of a slice on the right half, to the
-    left of one on the left; above the top, below the bottom. }
+    left of one on the left, centred on the slice's middle line. }
   if Angle < 180 then
     X := Round(Anchor.X)
   else
     X := Round(Anchor.X) - Width;
-  Y := Round(Anchor.Y - Height / 2 - Cos(Angle * Pi / 180) * Height / 2);
+  Y := Round(Anchor.Y - Height / 2);
   DrawChartText(Canvas, Style.LabelFace, X, Y, Text, Style.Foreground);
 end;
 

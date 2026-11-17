@@ -29,7 +29,7 @@
     bars of three series by quarter, grouped (the variant: stacked, on
       their side)
     a pie with percentages and a slice drawn out (the variant: a
-      doughnut with the slices' names and percentages)
+      doughnut with the slices' names and percentages beside it)
 
   Clicking a legend entry hides or shows its series; the page prints
   "chart toggled NAME 0|1" and "chart variant N" (0 or 1).
@@ -130,10 +130,11 @@ begin
   FLive := TChart.Create(Self);
   FLive.BeginUpdate;
   FLive.Title := 'Live';
-  FLive.LegendPosition := LegendBottom;
+  FLive.LegendPosition := LegendRight;
   FLive.XAxis.Window := LiveWindowSeconds;
   FLive.XAxis.CountsBack := True;
   FLive.XAxis.Format := ChartFormatDuration;
+  FLive.XAxis.TickBase := TickBaseTime;
   FLive.YAxis.SetRange(0, 100);
   FLive.YAxis.Format := ChartFormatPercent;
   Series := FLive.AddSeries('Busy', SeriesLine);
@@ -162,9 +163,9 @@ begin
   FAreas := TChart.Create(Self);
   FAreas.BeginUpdate;
   FAreas.Title := 'Memory';
-  FAreas.LegendPosition := LegendBottom;
+  FAreas.LegendPosition := LegendRight;
   FAreas.XAxis.Format := ChartFormatDuration;
-  FAreas.XAxis.Title := 'Time';
+  FAreas.XAxis.TickBase := TickBaseTime;
   FAreas.YAxis.Format := ChartFormatBytes;
   FAreas.YAxis.TickBase := TickBaseBinary;
   for Index := 0 to High(Names) do
@@ -247,12 +248,14 @@ begin
   if Other then
   begin
     FPie.Series[0].HoleRatio := 0.55;
+    FPie.Series[0].ExplodedIndex := -1;
     FPie.PieLabels := PieLabelsNamesAndPercent;
     FPie.LegendPosition := LegendNone;
   end
   else
   begin
     FPie.Series[0].HoleRatio := 0;
+    FPie.Series[0].ExplodedIndex := 1;
     FPie.PieLabels := PieLabelsPercent;
     FPie.LegendPosition := LegendRight;
   end;

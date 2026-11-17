@@ -61,7 +61,7 @@ const
   AloneAreaAlpha = 56;
   StackedAreaAlpha = 170;
   { Logical units. }
-  MarkerRadius = 3.0;
+  MarkerRadius = 2.5;
   MarkerRing = 1.5;
   { Lit bars go this far towards white. }
   HoverLightening = 70;

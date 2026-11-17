@@ -1722,6 +1722,35 @@ times of `TimeZone` (the program's zone unless set: `SetToNow`,
 date-controls-test, part of make test) checks the plain units on the
 host.
 
+**Charts** (`Controls.Charts`: `TChart`) draw lines, areas, bars and
+pies from a model (`Controls.ChartModel`: series, two axes, a title,
+the legend's place, `Horizontal` bars, `PieLabels`, `Framed`). A series
+(`Controls.ChartSeries`) is a kind, a name, a colour (0: the palette's,
+`Controls.ChartPalette`, eight hues lightened on a dark field) and its
+points, (X, Y) or a category and a value (`AddCategoryValue`); lines
+may have markers or go in steps, areas and bars may be stacked (bars
+grouped otherwise), a pie may have an exploded slice and a hole (a
+doughnut, `HoleRatio`). `MaxPoints` keeps the newest points only and an
+axis with a `Window` shows the newest stretch, so a scrolling graph adds
+a point at every look for the cost of a repaint of its own rectangle.
+Axes (`Controls.ChartAxes`) are automatic (ticks of 1, 2 or 5 x 10^n;
+steps nice in KiB/MiB for bytes, a clock's for durations:
+`Controls.ChartScale`), fixed, or a window counted back from the newest
+value (a time axis), with grid lines, a title and labels in a format
+(number, percent, bytes, duration: `Controls.ChartFormat`) or by
+`OnFormat`. The pointer shows a crosshair at the nearest X with a
+tooltip of the values (over a bar or a slice, its value); a click on a
+legend entry hides or shows its series or slice (`OnSeriesToggled`).
+Laying out (`Controls.ChartLayout`), stacking and pie angles
+(`Controls.ChartValues`), painting (`Controls.ChartPainting` and the
+`Chart...Painting` units, anti-aliased through libdrawing, slices by
+`Drawing.SmoothArcs`) and hit testing (`Controls.ChartHitTesting`)
+need no window, only libdrawing and libfont (`Controls.ChartStyle`
+carries the colours, faces and scale), so `tools/ChartTest` (make
+chart-test, part of make test) checks the logic and draws charts on
+surfaces on the host, looking at their pixels. The controls tour has a
+Charts page with one of each kind; Task Manager's graphs are charts.
+
 **Context menus and dragging** belong to every control
 (`Controls.Base`, `Controls.Window`). A right click, when the button is
 let go over the control it was pressed on, and Shift+F10 or the menu key
@@ -2378,10 +2407,11 @@ status bar shows the number of processes, CPU usage and memory in use.
   Delete key ask the selection to end.
 - **Performance** (`TaskManager.PerformancePage`): a graph of all the
   processors, one for each processor, one of the memory in use
-  (`TaskManager.UsageGraph`: a sunken field with a light grid, the
-  newest sample at the right, the line and the area under it
-  anti-aliased with libdrawing's new `DrawSmoothPolyline` and
-  `FillSmoothPolygon`, all measured at the window's scale), and the
+  (`TaskManager.UsageGraph`: a chart, `Controls.Charts`, of one area
+  series that scrolls - a sunken field with a light grid, the newest
+  sample at the right, a percent scale on the large graphs, the value
+  under the pointer in a tooltip; each look adds the samples the
+  history has had since, by `TUsageHistory.Total`), and the
   numbers: processes, threads, up time, processors, context switches,
   and what the memory is used for.
 

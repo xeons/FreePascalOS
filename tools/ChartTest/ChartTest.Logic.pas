@@ -61,6 +61,11 @@ begin
   CheckNear('binary step 300 MiB', BinaryNiceStep(300 * Mebibyte), 500 * Mebibyte);
   CheckNear('binary step 700 MiB is 1 GiB', BinaryNiceStep(700 * Mebibyte), Gibibyte);
   CheckNear('binary step 3 KiB', BinaryNiceStep(3 * 1024), 5 * 1024);
+  CheckNear('time step 40 s', TimeNiceStep(40), 60);
+  CheckNear('time step 4 min', TimeNiceStep(240), 300);
+  CheckNear('time step 2.5 h', TimeNiceStep(9000), 10800);
+  CheckNear('time step 3 days', TimeNiceStep(3 * 86400), 5 * 86400);
+  CheckNear('time step 0.3 s', TimeNiceStep(0.3), 0.5);
   CheckNear('step for 100 in 4', StepFor(100, 4, TickBaseDecimal), 50);
   CheckNear('step for 100 in 5', StepFor(100, 5, TickBaseDecimal), 20);
   CheckNumber('decimals for 0.25', DecimalsForStep(0.25), 2);
@@ -312,6 +317,10 @@ begin
     Range := Axis.ResolveRange(0, 37, 4);
     CheckNear('automatic range', Range.Maximum, 40);
     CheckText('percent label', Axis.TickLabel(Range, 20), '20%');
+    Range := Axis.ResolvePositionRange(3, 97, 5);
+    CheckNear('an X range runs from the first value', Range.Minimum, 3);
+    CheckNear('an X range runs to the last value', Range.Maximum, 97);
+    CheckNear('an X range has nice ticks', TickAt(Range, 0), 20);
   finally
     Axis.Free;
   end;

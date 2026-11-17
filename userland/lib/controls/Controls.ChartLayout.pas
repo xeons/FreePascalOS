@@ -28,8 +28,8 @@
   the title above, the legend (a column beside, or rows above or below),
   then the axes. The value axis (Y) is on the left and the X axis below,
   or the other way round for bars on their side (Horizontal). Ticks are
-  as many as fit their labels: on an axis up the side every two and a
-  half lines of text, on one across as wide as the widest label and a
+  as many as fit their labels: on an axis up the side every two lines
+  of text, on one across as wide as the widest label and a
   gap. The left labels' width is measured from the range they get, so
   the plot is as wide as it can be.
 
@@ -323,7 +323,7 @@ function TicksAlongSide(const Style: TChartStyle; Length: LongInt): LongInt;
 var
   Spacing: LongInt;
 begin
-  Spacing := Max(ChartTextHeight(Style.LabelFace) * 5 div 2, ChartPixels(Style, MinimumTickSpacing) div 2);
+  Spacing := Max(ChartTextHeight(Style.LabelFace) * 2, ChartPixels(Style, MinimumTickSpacing) div 2);
   Result := Max(1, Length div Max(1, Spacing));
 end;
 
@@ -408,7 +408,9 @@ begin
   if Widest > 0 then
   begin
     RoomX := RoomX - Widest - ChartPixels(Style, PieLabelGap);
-    RoomY := RoomY - TextHeight - ChartPixels(Style, PieLabelGap) div 2;
+    { Labels above and below the pie stand beside its top and bottom:
+      half a line each is enough. }
+    RoomY := RoomY - TextHeight div 2 - ChartPixels(Style, PieLabelGap) div 2;
   end;
   Layout.PieRadius := Min(RoomX, RoomY) - ChartPixels(Style, 2);
   Layout.ExplodeDistance := 0;
@@ -430,7 +432,7 @@ begin
   if Layout.Categorical then
     Result := MakeRange(Round(Extents.XMinimum) - 0.5, Round(Extents.XMaximum) + 0.5, 1)
   else
-    Result := Model.XAxis.ResolveRange(Extents.XMinimum, Extents.XMaximum, MaximumTicks);
+    Result := Model.XAxis.ResolvePositionRange(Extents.XMinimum, Extents.XMaximum, MaximumTicks);
 end;
 
 procedure LayOutAxes(Model: TChartModel; const Style: TChartStyle; var Layout: TChartLayout; Content: TRectangle);

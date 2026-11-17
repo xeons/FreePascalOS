@@ -365,6 +365,8 @@ begin
   TellPlace('tree-tab', FTabs, Scaled(120), Scaled(8));
   TellPlace('details-tab', FTabs, Scaled(170), Scaled(8));
   TellPlace('pickers-tab', FTabs, (FTabs.TabBounds(4).Left + FTabs.TabBounds(4).Right) div 2, Scaled(8));
+  TellPlace('charts-tab', FTabs, (FTabs.TabBounds(FChartsPageIndex).Left + FTabs.TabBounds(FChartsPageIndex).Right)
+    div 2, Scaled(8));
   RowHeight := FList.ItemHeight;
   TellPlace('list-item-3', FList, Scaled(30), 2 + 2 * RowHeight + RowHeight div 2);
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
