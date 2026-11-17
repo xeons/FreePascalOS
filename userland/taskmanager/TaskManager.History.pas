@@ -39,6 +39,9 @@ type
     { Where the next sample goes, and how many there are so far. }
     Next: LongInt;
     Count: LongInt;
+    { How many samples were ever added (the newest one's number plus
+      one): a graph adds those it has not had yet. }
+    Total: QWord;
   end;
   PUsageHistory = ^TUsageHistory;
 
@@ -59,6 +62,7 @@ begin
     History.Samples[Index] := 0;
   History.Next := 0;
   History.Count := 0;
+  History.Total := 0;
 end;
 
 procedure AddSample(var History: TUsageHistory; Tenths: LongWord);
@@ -69,6 +73,7 @@ begin
   History.Next := (History.Next + 1) mod HistoryLength;
   if History.Count < HistoryLength then
     Inc(History.Count);
+  Inc(History.Total);
 end;
 
 function SampleAt(const History: TUsageHistory; Age: LongInt): LongWord;

@@ -21,9 +21,10 @@
   the programs' notification icons (Windowing.Notifications; the display
   server passes them on as EventNotificationIconChanged) and the clock.
 
-  Icons stand left to right in the order they came. The pointer resting
-  on one is told to the taskbar (OnHoverChanged), which shows its
-  tooltip after a moment; a click on one is told too (OnIconClicked:
+  Icons stand left to right in the order they came. An icon's tooltip
+  is its hint (HintAt), which the taskbar window's hints show when the
+  pointer rests on it (Controls.Hints); a click on one is told
+  (OnIconClicked:
   the volume's opens the volume control, the network's the list of
   interfaces). Changes are said on the standard output
   ("notification N TEXT", "notification-gone N").
@@ -52,22 +53,16 @@ type
   private
     FIcons: array of TNotificationIcon;
     FClock: string;
-    FHovered: LongInt;
-    FOnHoverChanged: TControlEvent;
     FOnIconClicked: TControlEvent;
     FClicked: LongInt;
     function GetIconCount: LongInt;
     function GetIcon(Index: LongInt): TNotificationIcon;
     function IconAt(X, Y: LongInt): LongInt;
-    procedure SetHovered(Index: LongInt);
     procedure RemoveIcon(Index: LongInt);
   protected
     procedure Paint(var Canvas: TCanvas); override;
-    procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
-    procedure PointerLeave; override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
   public
-    constructor Create(AParent: TControl); override;
     { Takes an EventNotificationIconChanged. }
     procedure TakeChange(const Message: TWindowMessage);
     procedure SetClock(const TimeText: string);
@@ -79,9 +74,8 @@ type
     property IconCount: LongInt read GetIconCount;
     property Icons[Index: LongInt]: TNotificationIcon read GetIcon;
     property Clock: string read FClock;
-    { The icon under the pointer, -1 for none. }
-    property Hovered: LongInt read FHovered;
-    property OnHoverChanged: TControlEvent read FOnHoverChanged write FOnHoverChanged;
+    { An icon's tooltip, about the icon. }
+    function HintAt(X, Y: LongInt; out Area: TRectangle): string; override;
     { The icon clicked last (for OnIconClicked). }
     property Clicked: LongInt read FClicked;
     property OnIconClicked: TControlEvent read FOnIconClicked write FOnIconClicked;
@@ -105,12 +99,6 @@ const
   IconSize = 16;
   IconGap = 4;
   Padding = 6;
-
-constructor TNotificationArea.Create(AParent: TControl);
-begin
-  inherited Create(AParent);
-  FHovered := -1;
-end;
 
 function TNotificationArea.GetIconCount: LongInt;
 begin
@@ -151,13 +139,17 @@ begin
   Result := -1;
 end;
 
-procedure TNotificationArea.SetHovered(Index: LongInt);
+function TNotificationArea.HintAt(X, Y: LongInt; out Area: TRectangle): string;
+var
+  Index: LongInt;
 begin
-  if Index = FHovered then
+  Area := MakeRectangle(0, 0, 0, 0);
+  Result := '';
+  Index := IconAt(X, Y);
+  if Index < 0 then
     Exit;
-  FHovered := Index;
-  if Assigned(FOnHoverChanged) then
-    FOnHoverChanged(Self);
+  Area := IconBounds(Index);
+  Result := FIcons[Index].Tooltip;
 end;
 
 procedure TNotificationArea.SetClock(const TimeText: string);
@@ -203,8 +195,6 @@ begin
     FIcons[Index].Tooltip := MessageText(Message);
     Say(Format('notification %u %s', [Message.Code, FIcons[Index].Tooltip]));
   end;
-  { The icon under the pointer may be another one now. }
-  SetHovered(-1);
   Invalidate;
 end;
 
@@ -219,16 +209,6 @@ begin
   for Index := 0 to High(FIcons) do
     DrawNotificationPicture(Canvas, FIcons[Index].Picture, IconBounds(Index));
   DrawTextInBox(Canvas, ControlFace, FClock, ClockBounds, AlignTextRight, Theme.FaceText);
-end;
-
-procedure TNotificationArea.PointerMove(X, Y: LongInt; Buttons: LongWord);
-begin
-  SetHovered(IconAt(X, Y));
-end;
-
-procedure TNotificationArea.PointerLeave;
-begin
-  SetHovered(-1);
 end;
 
 procedure TNotificationArea.PointerUp(X, Y: LongInt; Button: LongWord);

@@ -66,6 +66,11 @@
   OnDragOver), tells it when the pointer leaves it (DragLeave), and
   hands it the data when the button is let go over it (DragDrop,
   OnDragDrop). Escape ends the drag without a drop.
+
+  Hints: a control's Hint shows in a tooltip while the pointer rests on
+  it (Controls.Hints times it), if ShowHint; one without a hint shows
+  its parent's. A control whose parts have hints of their own says
+  which at a point (HintAt).
 }
 unit Controls.Base;
 
@@ -180,6 +185,8 @@ type
     FText: string;
     FTag: PtrInt;
     FPointerShape: LongWord;
+    FHint: string;
+    FShowHint: Boolean;
     FOnClick: TControlEvent;
     FOnChange: TControlEvent;
     FOnPointerDown: TPointerEvent;
@@ -348,6 +355,10 @@ type
       window owns Data from now on, and frees it if the drag cannot
       start). }
     function BeginDrag(Data: TDragData): Boolean;
+    { The hint for (X, Y) of its own pixels ('' for none) and the part
+      of it (own pixels) the hint is about: the default is Hint, about
+      the whole control, if ShowHint. }
+    function HintAt(X, Y: LongInt; out Area: TRectangle): string; virtual;
     property Parent: TControl read FParent;
     property Host: TControlHost read FHost;
     property ChildCount: LongInt read GetChildCount;
@@ -388,6 +399,11 @@ type
     { The pointer's shape over it (Pointer* in Windowing.Protocol; the
       arrow unless set). }
     property PointerShape: LongWord read FPointerShape write FPointerShape;
+    { Shown in a tooltip while the pointer rests on it (line breaks
+      start new lines). }
+    property Hint: string read FHint write FHint;
+    { Whether its hints show (True unless set). }
+    property ShowHint: Boolean read FShowHint write FShowHint;
     property OnClick: TControlEvent read FOnClick write FOnClick;
     property OnChange: TControlEvent read FOnChange write FOnChange;
     property OnPointerDown: TPointerEvent read FOnPointerDown write FOnPointerDown;
@@ -475,6 +491,7 @@ begin
   FVisible := True;
   FEnabled := True;
   FAnchors := DefaultAnchors;
+  FShowHint := True;
   FParent := AParent;
   if FParent <> nil then
   begin
@@ -1283,6 +1300,14 @@ begin
     Exit(False);
   end;
   Result := FHost.BeginDrag(Self, Data);
+end;
+
+function TControl.HintAt(X, Y: LongInt; out Area: TRectangle): string;
+begin
+  Area := MakeRectangle(0, 0, RectangleWidth(FPixelBounds), RectangleHeight(FPixelBounds));
+  Result := '';
+  if FShowHint then
+    Result := FHint;
 end;
 
 { --- The root ------------------------------------------------------------------- }

@@ -81,7 +81,8 @@ uses
   Windowing.Connection,
   Controls.Text,
   Controls.Buttons,
-  Controls.Icons;
+  Controls.Icons,
+  Controls.ImageList;
 
 const
   { Logical units. }
@@ -144,8 +145,24 @@ end;
 
 { The icon of Item in Box, with its overlay. }
 procedure PaintItemIcon(const Canvas: TCanvas; Item: TListItem; const Box: TRectangle);
+var
+  Images: TImageList;
+  State: TImageDrawState;
 begin
-  DrawIcon(Canvas, Item.Icon, Item.IconKind, Box);
+  Images := nil;
+  if Item.Owner <> nil then
+    Images := Item.Owner.Images;
+  if (Images <> nil) and Images.ValidIndex(Item.ImageIndex) then
+  begin
+    State := ImageDrawNormal;
+    if not Item.Owner.Enabled then
+      State := ImageDrawDisabled
+    else if Item.Selected then
+      State := ImageDrawSelected;
+    Images.DrawInBox(Canvas, Item.ImageIndex, Box, State);
+  end
+  else
+    DrawIcon(Canvas, Item.Icon, Item.IconKind, Box);
   DrawIconOverlay(Canvas, Item.Overlay, Box);
 end;
 

@@ -18,8 +18,10 @@
 
 {
   The items of a list view: a row of texts (one per column, the first
-  is the item's name), an icon (with a mark over it, for a link),
-  whether it is selected, and a pointer for the program.
+  is the item's name), an icon (with a mark over it, for a link): a
+  picture of the list view's image list (ImageIndex), else its own
+  surface or a stock icon; whether it is selected, and a pointer for
+  the program.
 
   An item tells the control it belongs to whenever it changes, so the
   control repaints (and announces a new selection) however the item was
@@ -36,15 +38,23 @@ uses
   Classes,
   Drawing.Surfaces,
   Controls.Base,
-  Controls.Icons;
+  Controls.Icons,
+  Controls.ImageList;
 
 type
   TListItem = class;
 
   { What an item needs of its list view. }
   TListItemOwner = class(TControl)
+  private
+    FImages: TImageList;
+    procedure SetImages(Value: TImageList);
   protected
     procedure ItemChanged(Item: TListItem; SelectionChanged: Boolean); virtual; abstract;
+  public
+    { The pictures items show by ImageIndex (shared: the list view does
+      not own it). }
+    property Images: TImageList read FImages write SetImages;
   end;
 
   TListItem = class
@@ -54,6 +64,7 @@ type
     FIcon: TSurface;
     FIconKind: TStockIcon;
     FOverlay: TIconOverlay;
+    FImageIndex: LongInt;
     FSelected: Boolean;
     FData: Pointer;
     function GetCell(Column: LongInt): string;
@@ -61,6 +72,7 @@ type
     procedure SetIcon(const Value: TSurface);
     procedure SetIconKind(Value: TStockIcon);
     procedure SetOverlay(Value: TIconOverlay);
+    procedure SetImageIndex(Value: LongInt);
     procedure SetSelected(Value: Boolean);
     function GetCaption: string;
   public
@@ -77,11 +89,21 @@ type
     property IconKind: TStockIcon read FIconKind write SetIconKind;
     { A mark over the icon (a symbolic link's arrow). }
     property Overlay: TIconOverlay read FOverlay write SetOverlay;
+    { Its picture in the list view's Images (-1, the default: none; Icon
+      or IconKind is drawn). }
+    property ImageIndex: LongInt read FImageIndex write SetImageIndex;
+    property Owner: TListItemOwner read FOwner;
     property Selected: Boolean read FSelected write SetSelected;
     property Data: Pointer read FData write FData;
   end;
 
 implementation
+
+procedure TListItemOwner.SetImages(Value: TImageList);
+begin
+  FImages := Value;
+  Invalidate;
+end;
 
 constructor TListItem.Create(AOwner: TListItemOwner);
 begin
@@ -89,6 +111,7 @@ begin
   FOwner := AOwner;
   FCells := TStringList.Create;
   FIconKind := StockIconDocument;
+  FImageIndex := -1;
 end;
 
 destructor TListItem.Destroy;
@@ -143,6 +166,13 @@ end;
 procedure TListItem.SetOverlay(Value: TIconOverlay);
 begin
   FOverlay := Value;
+  if FOwner <> nil then
+    FOwner.ItemChanged(Self, False);
+end;
+
+procedure TListItem.SetImageIndex(Value: LongInt);
+begin
+  FImageIndex := Value;
   if FOwner <> nil then
     FOwner.ItemChanged(Self, False);
 end;

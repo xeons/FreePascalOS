@@ -19,7 +19,8 @@
 {
   The Performance tab: how busy the processors have been over the last
   minute (all of them together, then each one) and how much memory was
-  in use, as graphs that move on at every look; and the numbers - how
+  in use, as graphs (charts that scroll: TaskManager.UsageGraph) that
+  move on at every look; and the numbers - how
   many processes and threads there are, how long the system has run,
   and what the memory is used for.
 
@@ -116,11 +117,13 @@ begin
   FSampler := Sampler;
   FAllProcessors := TUsageGraph.Create(Self);
   FAllProcessors.History := Sampler.AllProcessorsHistory;
-  FAllProcessors.Text := 'CPU usage';
+  FAllProcessors.Title := 'CPU usage';
+  FAllProcessors.ShowScale := True;
   FMemory := TUsageGraph.Create(Self);
   FMemory.History := Sampler.MemoryHistory;
   FMemory.LineColor := MemoryLineColor;
-  FMemory.Text := 'Memory';
+  FMemory.Title := 'Memory';
+  FMemory.ShowScale := True;
   AddNumber('Processes:');
   AddNumber('Threads:');
   AddNumber('Up time:');
@@ -247,16 +250,17 @@ begin
   Usage := FSampler.Usage;
   AllBusy := FSampler.AllProcessorsBusy;
   MemoryShare := FSampler.MemoryInUseTenths;
-  FAllProcessors.Text := 'CPU usage ' + FormatPercent(AllBusy);
-  FAllProcessors.Invalidate;
+  FAllProcessors.Title := 'CPU usage ' + FormatPercent(AllBusy);
+  FAllProcessors.Refresh;
   for Index := 0 to FProcessorCount - 1 do
   begin
-    FProcessors[Index].Text := 'CPU ' + IntToStr(Index) + '  ' + FormatPercent(NewestSample(FSampler.ProcessorHistory[Index]^));
-    FProcessors[Index].Invalidate;
+    FProcessors[Index].Title := 'CPU ' + IntToStr(Index) + '  ' +
+      FormatPercent(NewestSample(FSampler.ProcessorHistory[Index]^));
+    FProcessors[Index].Refresh;
   end;
-  FMemory.Text := 'Memory ' + FormatPercent(MemoryShare) + '  (' + FormatBytes(UsedMemory(Usage)) + ' of ' +
+  FMemory.Title := 'Memory ' + FormatPercent(MemoryShare) + '  (' + FormatBytes(UsedMemory(Usage)) + ' of ' +
     FormatBytes(Usage.TotalMemory) + ')';
-  FMemory.Invalidate;
+  FMemory.Refresh;
   SetNumber(NumberProcesses, IntToStr(Usage.ProcessCount));
   SetNumber(NumberThreads, IntToStr(Usage.ThreadCount));
   SetNumber(NumberUptime, FormatDuration(Usage.UptimeNanoseconds div 1000000000));

@@ -135,6 +135,7 @@ type
     procedure Layout; override;
   public
     constructor Create(AParent: TControl); override;
+    function PreferredSize: TSize; override;
     destructor Destroy; override;
     { Its spin buttons' notifications are its own business. }
     procedure ReceiveMessage(var Message: TPostedMessage); override;
@@ -183,7 +184,8 @@ uses
   Controls.Text,
   Controls.Window,
   Controls.Buttons,
-  Controls.CheckMarks;
+  Controls.CheckMarks,
+  Controls.LayoutRules;
 
 function TPickerCalendar.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 begin
@@ -277,6 +279,30 @@ begin
   else
     Result := DatePattern + ' ' + TimePattern;
   end;
+end;
+
+const
+  { Logical units: room around the text, the check box's room, the drop
+    button, and the height. }
+  PickerTextRoom = 12;
+  PickerCheckRoom = 20;
+  MinimumPickerHeight = 22;
+
+{ Its value as shown now (with some room for longer ones), the check box
+  and the drop button; a line high. }
+function TDateTimePicker.PreferredSize: TSize;
+var
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Width := PixelsToLogicalCeiling(TextWidth(ControlFace, ValueText + '00')) + PickerTextRoom +
+    Theme.ScrollBarWidth;
+  if FShowCheckBox then
+    Width := Width + PickerCheckRoom;
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + 8;
+  if Height < MinimumPickerHeight then
+    Height := MinimumPickerHeight;
+  Result := MakeSize(Width, Height);
 end;
 
 function TDateTimePicker.ValueText: string;

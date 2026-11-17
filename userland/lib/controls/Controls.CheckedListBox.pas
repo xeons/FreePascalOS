@@ -65,6 +65,7 @@ type
     procedure ItemChecked(Index: LongInt); virtual;
   public
     function ItemHeight: LongInt; override;
+    function PreferredSize: TSize; override;
     { As Space or a click does: the next state, announced. }
     procedure ToggleItem(Index: LongInt);
     procedure CheckAll;
@@ -86,7 +87,36 @@ implementation
 uses
   Abi.SystemCalls,
   Windowing.Connection,
-  Controls.Keys;
+  Controls.Keys,
+  Controls.LayoutRules,
+  Controls.Text,
+  Windowing.Theme;
+
+const
+  { Logical units: the rows shown when it sizes itself, at most. }
+  PreferredVisibleRows = 8;
+  CheckedListRoom = 8;
+
+{ The widest item after its check box, the scroll bar beside them, and
+  up to PreferredVisibleRows rows. }
+function TCheckedListBox.PreferredSize: TSize;
+var
+  Index: LongInt;
+  Widest: LongInt;
+  Rows: LongInt;
+begin
+  Widest := 0;
+  for Index := 0 to Items.Count - 1 do
+    if TextWidth(ControlFace, Items[Index]) > Widest then
+      Widest := TextWidth(ControlFace, Items[Index]);
+  Rows := Items.Count;
+  if Rows > PreferredVisibleRows then
+    Rows := PreferredVisibleRows;
+  if Rows < 1 then
+    Rows := 1;
+  Result := MakeSize(PixelsToLogicalCeiling(ItemIndent + Widest) + Theme.ScrollBarWidth + CheckedListRoom,
+    PixelsToLogicalCeiling(Rows * ItemHeight + 4));
+end;
 
 function TCheckedListBox.ItemHeight: LongInt;
 var

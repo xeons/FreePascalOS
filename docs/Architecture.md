@@ -1777,6 +1777,35 @@ times of `TimeZone` (the program's zone unless set: `SetToNow`,
 date-controls-test, part of make test) checks the plain units on the
 host.
 
+**Charts** (`Controls.Charts`: `TChart`) draw lines, areas, bars and
+pies from a model (`Controls.ChartModel`: series, two axes, a title,
+the legend's place, `Horizontal` bars, `PieLabels`, `Framed`). A series
+(`Controls.ChartSeries`) is a kind, a name, a colour (0: the palette's,
+`Controls.ChartPalette`, eight hues lightened on a dark field) and its
+points, (X, Y) or a category and a value (`AddCategoryValue`); lines
+may have markers or go in steps, areas and bars may be stacked (bars
+grouped otherwise), a pie may have an exploded slice and a hole (a
+doughnut, `HoleRatio`). `MaxPoints` keeps the newest points only and an
+axis with a `Window` shows the newest stretch, so a scrolling graph adds
+a point at every look for the cost of a repaint of its own rectangle.
+Axes (`Controls.ChartAxes`) are automatic (ticks of 1, 2 or 5 x 10^n;
+steps nice in KiB/MiB for bytes, a clock's for durations:
+`Controls.ChartScale`), fixed, or a window counted back from the newest
+value (a time axis), with grid lines, a title and labels in a format
+(number, percent, bytes, duration: `Controls.ChartFormat`) or by
+`OnFormat`. The pointer shows a crosshair at the nearest X with a
+tooltip of the values (over a bar or a slice, its value); a click on a
+legend entry hides or shows its series or slice (`OnSeriesToggled`).
+Laying out (`Controls.ChartLayout`), stacking and pie angles
+(`Controls.ChartValues`), painting (`Controls.ChartPainting` and the
+`Chart...Painting` units, anti-aliased through libdrawing, slices by
+`Drawing.SmoothArcs`) and hit testing (`Controls.ChartHitTesting`)
+need no window, only libdrawing and libfont (`Controls.ChartStyle`
+carries the colours, faces and scale), so `tools/ChartTest` (make
+chart-test, part of make test) checks the logic and draws charts on
+surfaces on the host, looking at their pixels. The controls tour has a
+Charts page with one of each kind; Task Manager's graphs are charts.
+
 **Context menus and dragging** belong to every control
 (`Controls.Base`, `Controls.Window`). A right click, when the button is
 let go over the control it was pressed on, and Shift+F10 or the menu key
@@ -1940,9 +1969,73 @@ owner's moves after the pop-up closes go to the control under the
 pointer again. `MeasurePopupMenu` and `PopupMenuItemTop` tell how big a
 pop-up menu will be and where its items are, so it can be opened where
 it fits (above a taskbar). Tooltips (`Controls.Tooltips`): a line of
-text in a small box (`Theme.Tooltip`) without a frame, owned by the
-window it describes and placed above the point it is about, kept on the
-display; when to show and hide it is the caller's.
+text, or several (a line break starts one), in a small box
+(`Theme.Tooltip`) without a frame, owned by the window it describes and
+placed above the point it is about, kept on the display, or below the
+pointer when there is no room above (`ShowTooltipNear`).
+
+**Hints.** Every control has a `Hint` (several lines allowed) and
+`ShowHint` (True unless set); a control with parts says which part's
+hint is at a point and what area it is about (the virtual `HintAt`: the
+taskbar's notification area gives each icon's tooltip). Each control
+window has a hint manager (`TControlWindow.Hints`, `Controls.Hints`)
+told of the pointer's moves (not while a button is held), presses, keys,
+the pointer leaving and the window going inactive: the hint under the
+pointer is the deepest control's that has one, else its parent's (a
+control with `ShowHint` False shows none). The timing is a state
+machine over a clock it is given (`Controls.HintTiming`, tried on the
+host): shown after the pointer rests 500 ms (moving on the target starts
+the wait again), gone on another target, on leaving, on a press or key
+(then not again until another target) or after 10 s; from one shown
+hint to the next target the next shows after 50 ms (also within 500 ms
+of leaving one). `Hints.OnShown` tells the program (the taskbar and the
+controls tour print it).
+
+**Timers.** `TTimer` (`Controls.Timers`): `Interval` (ms), `Enabled`,
+`OnTimer`, an optional `Owner` whose display scale is selected first.
+Every timer of a program shares one kernel timer that the message loop
+waits on through `Windowing.HandleWatches`, set for the earliest due
+(`Controls.TimerQueue`), so timers take none of the loop's 32 window
+timers and need no window; a timer keeps its rhythm and skips ticks
+missed while the program was busy. The hint manager and picture boxes
+run on them.
+
+**Pictures.** libcontrols links libimage (and libcompression through
+it); a program with controls links them too. A paint box
+(`Controls.PaintBox`) is drawn by the program in `OnPaint`: no focus, no
+background unless `Color` is set (the parent shows through), painted
+whole when its size changes, `Repaint` paints at once. A picture box
+(`Controls.PictureBox`) shows a `TImage` it takes (`TakeImage`) or reads
+(`LoadFromFile`, with orientation and sRGB applied); an image's pixels
+count as logical units, so it is scaled with the display. `SizeMode`
+(`Controls.PictureGeometry`, tried on the host): normal (top left),
+stretch, zoom (fit, proportions kept, centred), centre, auto-size (the
+box takes the picture's size). A picture shown at another size is
+resampled (`Image.Resampling`: Mitchell for stills, triangle for
+animation frames) once per size and frame and kept. Transparent pixels
+are blended over what the parent drew. Animations (GIF, APNG, WebP, JPEG
+XL) play through `TFrameCompositor` on a `TTimer`, each frame for its
+delay (under 20 ms: 100 ms), `LoopCount` times (0: for ever); `Play`,
+`Stop`, `Playing`, `FrameIndex`; frames are only invalidated while the
+box is on the screen. A file that cannot be read leaves a placeholder
+(an outline, a file icon) with `ErrorText`. An image list
+(`Controls.ImageList`) holds pictures of one logical size, each in any
+number of pixel sizes: `Add`/`AddVariant` (copies), `AddIcon` (every
+size of an ICO file, the deepest entry of each, through
+`TIconDirectory`), `AddFromFile` (ICO or any image), `AddStrip` and
+`AddStripVariants` (pictures side by side). Drawing picks the exact
+pixel size, else the nearest larger, else the largest
+(`Controls.ImageSizes`, tried on the host), resampled when not exact,
+and greyed (disabled) or tinted with `Theme.Selection` (selected)
+(`Controls.ImageEffects`); each size and look is kept. `Draw` draws at
+the logical size scaled, `DrawInBox` fitted into a box. List views
+(`TListItemOwner.Images`, `TListItem.ImageIndex`), tree views
+(`TTreeView.Images`, `TTreeNode.ImageIndex`), toolbars (`TToolBar.Images`,
+`TToolButton.ImageIndex`, `AddImageButton`), tab controls (`Images`,
+`PageImageIndex`) and menus (`TMenuItem.Images` for the items below it,
+`ImageIndex`; drawn in the check column, a checked item framed) draw
+from them; without an image list or index the stock icons and surfaces
+draw as before. The list does not belong to the controls showing it.
 
 Dialogs (`Controls.Dialogs`): a dialog takes an owner, the window it asks
 for: it is centred on it (on the screen without one) and stays above it.
@@ -2433,10 +2526,11 @@ status bar shows the number of processes, CPU usage and memory in use.
   Delete key ask the selection to end.
 - **Performance** (`TaskManager.PerformancePage`): a graph of all the
   processors, one for each processor, one of the memory in use
-  (`TaskManager.UsageGraph`: a sunken field with a light grid, the
-  newest sample at the right, the line and the area under it
-  anti-aliased with libdrawing's new `DrawSmoothPolyline` and
-  `FillSmoothPolygon`, all measured at the window's scale), and the
+  (`TaskManager.UsageGraph`: a chart, `Controls.Charts`, of one area
+  series that scrolls - a sunken field with a light grid, the newest
+  sample at the right, a percent scale on the large graphs, the value
+  under the pointer in a tooltip; each look adds the samples the
+  history has had since, by `TUsageHistory.Total`), and the
   numbers: processes, threads, up time, processors, context switches,
   and what the memory is used for.
 

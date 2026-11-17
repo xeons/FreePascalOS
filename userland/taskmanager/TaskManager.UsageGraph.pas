@@ -18,15 +18,19 @@
 
 {
   A graph of a history over time (TaskManager.History): how busy a
-  processor was, how much memory was in use.
+  processor was, how much memory was in use. It is a chart (Controls.
+  Charts) of one area series that scrolls.
 
   In a sunken box on the field colour, a light grid (a line every
-  quarter up, every ten samples across) under the history: the newest
-  sample at the right edge, older ones to the left, as a line with the
-  area under it lightly filled, both anti-aliased (libdrawing). The
-  caption (what it shows and the newest value: "CPU 37%") sits at the
-  top left. Everything is measured at the window's scale, so the graph
-  is as sharp and as thick at 150% as at 100%.
+  quarter up, every ten samples back from the newest) under the
+  history: the newest sample at the right edge, older ones to the left,
+  as a line with the area under it lightly filled, both anti-aliased.
+  The caption (what it shows and the newest value: "CPU 37%") sits at
+  the top left, the chart's title inside the plot. With ShowScale the
+  percentages are written up the left side. The series keeps the last
+  HistoryLength samples and the X axis shows that window, so each
+  Refresh adds only the samples that are new and the graph moves on.
+  The pointer over it shows the value at the nearest sample.
 }
 unit TaskManager.UsageGraph;
 
@@ -37,24 +41,32 @@ interface
 
 uses
   Drawing.Colors,
-  Drawing.Canvas,
   Controls.Base,
+  Controls.ChartSeries,
+  Controls.ChartAxes,
+  Controls.Charts,
   TaskManager.History;
 
 type
-  TUsageGraph = class(TControl)
+  TUsageGraph = class(TChart)
   private
     FHistory: PUsageHistory;
-    FLineColor: TColor;
-    procedure PaintGrid(const Canvas: TCanvas; Left, Top, Right, Bottom: LongInt);
-    procedure PaintHistory(const Canvas: TCanvas; Left, Top, Right, Bottom: LongInt);
-  protected
-    procedure Paint(var Canvas: TCanvas); override;
+    FUsage: TChartSeries;
+    { The number of samples of the history the series has had. }
+    FTaken: QWord;
+    function GetLineColor: TColor;
+    procedure SetLineColor(Value: TColor);
+    function GetShowScale: Boolean;
+    procedure SetShowScale(Value: Boolean);
+    procedure SetHistory(Value: PUsageHistory);
+    function FormatSamplesBack(Sender: TChartAxis; Value, Step: Double): string;
   public
     constructor Create(AParent: TControl); override;
-    { The history drawn (the caption is the control's Text). }
-    property History: PUsageHistory read FHistory write FHistory;
-    property LineColor: TColor read FLineColor write FLineColor;
+    { Adds the samples the history has had since the last time. }
+    procedure Refresh;
+    property History: PUsageHistory read FHistory write SetHistory;
+    property LineColor: TColor read GetLineColor write SetLineColor;
+    property ShowScale: Boolean read GetShowScale write SetShowScale;
   end;
 
 const
@@ -64,99 +76,90 @@ const
 implementation
 
 uses
-  Drawing.Rectangles,
-  Drawing.Bevels,
-  Drawing.Rasterizer,
-  Drawing.SmoothLines,
-  Drawing.SmoothShapes,
-  Windowing.Theme,
-  Windowing.Connection,
-  Controls.Text;
+  SysUtils,
+  Controls.ChartFormat,
+  Controls.ChartModel;
 
 const
-  { Logical units: the line's width, the caption's margin. }
-  LineWidth = 1.5;
-  CaptionMargin = 4;
-  { Samples between the grid's vertical lines. }
+  { Samples between the grid's vertical lines; percent between the
+    level ones. }
   SamplesPerGridLine = 10;
-  { How strongly the grid and the filled area show over the field. }
-  GridWeight = 40;
-  AreaAlpha = 56;
+  PercentPerGridLine = 25;
 
 constructor TUsageGraph.Create(AParent: TControl);
 begin
   inherited Create(AParent);
-  FLineColor := ProcessorLineColor;
+  BeginUpdate;
+  TitlePlacement := TitleInside;
+  LegendPosition := LegendNone;
+  XAxis.Visible := False;
+  XAxis.Window := HistoryLength - 1;
+  XAxis.Step := SamplesPerGridLine;
+  XAxis.CountsBack := True;
+  XAxis.OnFormat := @FormatSamplesBack;
+  YAxis.Visible := False;
+  YAxis.SetRange(0, 100);
+  YAxis.Step := PercentPerGridLine;
+  YAxis.Format := ChartFormatPercent;
+  FUsage := AddSeries('', SeriesArea);
+  FUsage.MaxPoints := HistoryLength;
+  FUsage.Color := ProcessorLineColor;
+  EndUpdate;
 end;
 
-procedure TUsageGraph.PaintGrid(const Canvas: TCanvas; Left, Top, Right, Bottom: LongInt);
-var
-  GridColor: TColor;
-  Quarter: LongInt;
-  Line: LongInt;
-  X: LongInt;
+function TUsageGraph.FormatSamplesBack(Sender: TChartAxis; Value, Step: Double): string;
 begin
-  GridColor := MixColors(Theme.Field, FLineColor, GridWeight);
-  for Quarter := 1 to 3 do
-    DrawHorizontalLine(Canvas, Left, Right - 1, Top + (Bottom - Top) * Quarter div 4, GridColor);
-  for Line := 1 to (HistoryLength - 1) div SamplesPerGridLine do
-  begin
-    X := Right - 1 - (Right - Left - 1) * Line * SamplesPerGridLine div (HistoryLength - 1);
-    DrawVerticalLine(Canvas, X, Top, Bottom - 1, GridColor);
-  end;
+  if Value < 0.5 then
+    Exit('Now');
+  Result := IntToStr(Round(Value)) + ' samples ago';
 end;
 
-procedure TUsageGraph.PaintHistory(const Canvas: TCanvas; Left, Top, Right, Bottom: LongInt);
+procedure TUsageGraph.SetHistory(Value: PUsageHistory);
+begin
+  FHistory := Value;
+  FUsage.Clear;
+  FTaken := 0;
+  Refresh;
+end;
+
+procedure TUsageGraph.Refresh;
 var
-  Points: array of TPrecisePoint;
-  Area: array of TPrecisePoint;
-  Count: LongInt;
+  Fresh: QWord;
   Age: LongInt;
-  X: Double;
-  Y: Double;
 begin
-  if (FHistory = nil) or (FHistory^.Count < 2) then
+  if FHistory = nil then
     Exit;
-  Count := FHistory^.Count;
-  SetLength(Points, Count);
-  SetLength(Area, Count + 2);
-  for Age := 0 to Count - 1 do
-  begin
-    { Oldest first, so the line runs left to right. }
-    X := (Right - 1) - (Right - Left - 1) * Age / (HistoryLength - 1);
-    Y := (Bottom - 1) - (Bottom - Top - 1) * SampleAt(FHistory^, Age) / 1000;
-    Points[Count - 1 - Age] := PrecisePoint(X, Y);
-  end;
-  { The area: the line, then down to the bottom and back (rasterizer
-    coordinates start at a pixel's corner, the line's at its centre). }
-  for Age := 0 to Count - 1 do
-    Area[Age] := PrecisePoint(Points[Age].X + 0.5, Points[Age].Y + 0.5);
-  Area[Count] := PrecisePoint(Points[Count - 1].X + 0.5, Bottom);
-  Area[Count + 1] := PrecisePoint(Points[0].X + 0.5, Bottom);
-  FillSmoothPolygon(Canvas, Area, WithAlpha(FLineColor, AreaAlpha));
-  DrawSmoothPolyline(Canvas, Points, LineWidth * DisplayScale / 100, FLineColor);
+  Fresh := FHistory^.Total - FTaken;
+  if Fresh = 0 then
+    Exit;
+  if Fresh > QWord(FHistory^.Count) then
+    Fresh := FHistory^.Count;
+  BeginUpdate;
+  { Oldest first; each sample's X is its number in the history. }
+  for Age := LongInt(Fresh) - 1 downto 0 do
+    FUsage.AddPoint(FHistory^.Total - 1 - QWord(Age), SampleAt(FHistory^, Age) / 10);
+  FTaken := FHistory^.Total;
+  EndUpdate;
 end;
 
-procedure TUsageGraph.Paint(var Canvas: TCanvas);
-var
-  Box: TRectangle;
-  Plot: TRectangle;
-  PlotCanvas: TCanvas;
-  Caption: TRectangle;
+function TUsageGraph.GetLineColor: TColor;
 begin
-  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  DrawBevel(Canvas, Box, SunkenBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
-  Plot := InflateRectangle(Box, -2);
-  if RectangleIsEmpty(Plot) then
-    Exit;
-  FillRectangle(Canvas, Plot, Theme.Field);
-  PlotCanvas := Canvas;
-  NarrowCanvasClip(PlotCanvas, Plot);
-  PaintGrid(PlotCanvas, Plot.Left, Plot.Top, Plot.Right, Plot.Bottom);
-  PaintHistory(PlotCanvas, Plot.Left, Plot.Top, Plot.Right, Plot.Bottom);
-  Caption := MakeRectangle(Plot.Left + Scaled(CaptionMargin), Plot.Top + Scaled(CaptionMargin div 2),
-    RectangleWidth(Plot) - 2 * Scaled(CaptionMargin), TextHeight(ControlFace));
-  DrawTextInBox(PlotCanvas, ControlFace, Text, Caption, AlignTextLeft, Theme.FieldText);
+  Result := FUsage.Color;
+end;
+
+procedure TUsageGraph.SetLineColor(Value: TColor);
+begin
+  FUsage.Color := Value;
+end;
+
+function TUsageGraph.GetShowScale: Boolean;
+begin
+  Result := YAxis.Visible;
+end;
+
+procedure TUsageGraph.SetShowScale(Value: Boolean);
+begin
+  YAxis.Visible := Value;
 end;
 
 end.

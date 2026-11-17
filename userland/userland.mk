@@ -28,7 +28,7 @@
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
-#                  libwindowing <- libcontrols (controls and dialogs)
+#                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -247,14 +247,17 @@ $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userla
 		$(WINDOWING_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lconfiguration -lfont -ldrawing -lsystem
 
 # libcontrols: controls, control windows and dialogs.
-$(CONTROLS_LIBRARY): $(WINDOWING_LIBRARY) $(wildcard userland/lib/controls/*.pas)
+# Pictures (picture boxes, image lists) come from libimage.
+$(CONTROLS_LIBRARY): $(WINDOWING_LIBRARY) $(IMAGE_LIBRARY) $(wildcard userland/lib/controls/*.pas)
 	@rm -rf $(CONTROLS_LIBRARY_OBJECTS)
 	@mkdir -p $(CONTROLS_LIBRARY_OBJECTS)
 	$(FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
+		-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/controls -FU$(CONTROLS_LIBRARY_OBJECTS) userland/lib/controls/Controls.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcontrols.so -o $@ \
-		$(CONTROLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lwindowing -lconfiguration -lfont -ldrawing -lsystem
+		$(CONTROLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lwindowing -lconfiguration -lfont -limage \
+		-lcompression -ldrawing -lsystem
 
 $(SYSTEM_FONTS_STAMP):
 	@test -f $(TERMINUS_LICENSE) || { echo "The Terminus licence is needed in $(TERMINUS_LICENSE) (set TERMINUS_LICENSE)"; exit 1; }
@@ -295,16 +298,19 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) userland/lib/tlstest/TlsTest.s
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
 GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest controlsdemo controlstour dialogtour notepad files terminal sessionmanager taskmanager sysinfo)
-$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -ldrawing
+$(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
+	-ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
-	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS)
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS)
 $(GRAPHICAL_PROGRAMS): $(CONTROLS_LIBRARY)
 # Graphical programs that set the sound outputs too.
 GRAPHICAL_SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,controlpanel desktop)
-$(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -ldrawing -laudio
+$(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage \
+	-lcompression -ldrawing -laudio
 $(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
 	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
-	-Fu$(AUDIO_LIBRARY_OBJECTS)
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(GRAPHICAL_SOUND_PROGRAMS): $(CONTROLS_LIBRARY) $(AUDIO_LIBRARY)
 # The network service reads its configuration from the settings.
 SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest network networktest)

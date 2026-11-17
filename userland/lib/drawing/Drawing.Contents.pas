@@ -41,6 +41,7 @@ uses
   Drawing.CoverageBlending,
   Drawing.SmoothLines,
   Drawing.SmoothShapes,
+  Drawing.SmoothArcs,
   Drawing.Scaling,
   Drawing.Bevels;
 

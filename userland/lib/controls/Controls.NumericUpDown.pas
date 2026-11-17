@@ -91,6 +91,7 @@ type
     procedure ValueChanged; virtual;
   public
     constructor Create(AParent: TControl); override;
+    function PreferredSize: TSize; override;
     { Its edit box's and buttons' notifications are its own business. }
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Takes what was typed (or puts the value back if it is not a
@@ -121,7 +122,9 @@ implementation
 uses
   Abi.SystemCalls,
   Windowing.Theme,
-  Controls.Keys;
+  Controls.Keys,
+  Controls.LayoutRules,
+  Controls.Text;
 
 function TNumericEdit.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 begin
@@ -154,6 +157,27 @@ begin
   FEdit.FUpDown := Self;
   FEdit.Align := AlignClient;
   ShowValue;
+end;
+
+const
+  { Logical units: room around the number in the box, and its height. }
+  NumberRoom = 12;
+  MinimumNumberHeight = 22;
+
+{ The widest of its minimum and maximum as shown, the buttons beside it;
+  a line high. }
+function TNumericUpDown.PreferredSize: TSize;
+var
+  Widest: LongInt;
+  Height: LongInt;
+begin
+  Widest := TextWidth(ControlFace, FormatNumber(FMinimum, NumberFormat));
+  if TextWidth(ControlFace, FormatNumber(FMaximum, NumberFormat)) > Widest then
+    Widest := TextWidth(ControlFace, FormatNumber(FMaximum, NumberFormat));
+  Height := PixelsToLogicalCeiling(TextHeight(ControlFace)) + 8;
+  if Height < MinimumNumberHeight then
+    Height := MinimumNumberHeight;
+  Result := MakeSize(PixelsToLogicalCeiling(Widest) + NumberRoom + Theme.ScrollBarWidth, Height);
 end;
 
 function TNumericUpDown.NumberFormat: TNumberFormat;

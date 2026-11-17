@@ -24,7 +24,8 @@
   right (shown only: the window's accelerators do the work, and
   AddItemAccelerator makes one that chooses the item), whether it is
   enabled or checked, a separator, or the head of a submenu (its own
-  items). Choosing one closes every open menu, then runs its OnClick
+  items); a picture in its check column, of the image list of its menu
+  or a menu above it (Images, ImageIndex). Choosing one closes every open menu, then runs its OnClick
   and the OnChoose of whoever opened the menu. A menu's OnOpening runs
   just before it opens (and before an accelerator chooses one of its
   items), for the program to enable and check its items as things are
@@ -62,7 +63,8 @@ uses
   Drawing.Canvas,
   Controls.Base,
   Controls.Window,
-  Controls.Popups;
+  Controls.Popups,
+  Controls.ImageList;
 
 type
   TMenuItem = class;
@@ -80,6 +82,8 @@ type
     FParent: TMenuItem;
     FOnClick: TMenuItemEvent;
     FOnOpening: TMenuItemEvent;
+    FImages: TImageList;
+    FImageIndex: LongInt;
     function GetItem(Index: LongInt): TMenuItem;
     function GetCount: LongInt;
   public
@@ -89,6 +93,9 @@ type
     procedure AddSeparator;
     { The text as shown ("Open..." for "&Open..."). }
     function Caption: string;
+    { The image list its picture is in: its menu's, or the nearest one
+      above (nil: none). }
+    function ImageListOf: TImageList;
     { The text with its mnemonic mark ("&Open..."). }
     property Text: string read FText write FText;
     property ShortcutText: string read FShortcutText write FShortcutText;
@@ -98,6 +105,11 @@ type
     property Count: LongInt read GetCount;
     property Items[Index: LongInt]: TMenuItem read GetItem; default;
     property Tag: PtrInt read FTag write FTag;
+    { The pictures of the items below it, and of theirs unless they have
+      their own (shared: the menu does not own it). }
+    property Images: TImageList read FImages write FImages;
+    { Its picture (-1, the default: none). }
+    property ImageIndex: LongInt read FImageIndex write FImageIndex;
     { The menu it is in (nil for the top of a menu bar or pop-up). }
     property Parent: TMenuItem read FParent;
     property OnClick: TMenuItemEvent read FOnClick write FOnClick;
@@ -201,6 +213,7 @@ uses
   Windowing.Connection,
   Windowing.Displays,
   Controls.Keys,
+  Controls.Icons,
   Controls.Text;
 
 const
@@ -217,6 +230,7 @@ begin
   inherited Create;
   FText := AText;
   FEnabled := True;
+  FImageIndex := -1;
   FItems := TList.Create;
 end;
 
@@ -252,6 +266,20 @@ end;
 function TMenuItem.Caption: string;
 begin
   Result := TextWithoutMnemonic(FText);
+end;
+
+function TMenuItem.ImageListOf: TImageList;
+var
+  Menu: TMenuItem;
+begin
+  Menu := FParent;
+  while Menu <> nil do
+  begin
+    if Menu.FImages <> nil then
+      Exit(Menu.FImages);
+    Menu := Menu.FParent;
+  end;
+  Result := nil;
 end;
 
 procedure TMenuItem.AddSeparator;
@@ -368,6 +396,10 @@ var
   TextColor: TColor;
   Arrow: array[0..2] of TPoint;
   Middle: LongInt;
+  Pictures: TImageList;
+  Picture: TRectangle;
+  Size: LongInt;
+  State: TImageDrawState;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
@@ -391,7 +423,23 @@ begin
     end;
     if not Item.Enabled then
       TextColor := Theme.DisabledText;
-    if Item.Checked then
+    Pictures := Item.ImageListOf;
+    if (Pictures <> nil) and Pictures.ValidIndex(Item.ImageIndex) then
+    begin
+      Size := Scaled(SmallIconSize);
+      if Size > RectangleHeight(Row) - 2 then
+        Size := RectangleHeight(Row) - 2;
+      Picture := MakeRectangle(Row.Left + (Scaled(CheckColumn) - Size) div 2, Row.Top + (RectangleHeight(Row) - Size) div 2,
+        Size, Size);
+      State := ImageDrawNormal;
+      if not Item.Enabled then
+        State := ImageDrawDisabled;
+      Pictures.DrawInBox(Canvas, Item.ImageIndex, Picture, State);
+      { Checked: a frame around its picture. }
+      if Item.Checked then
+        DrawRectangleOutline(Canvas, InflateRectangle(Picture, 1), TextColor);
+    end
+    else if Item.Checked then
       FillSmoothEllipse(Canvas, MakeRectangle(Row.Left + Scaled(7), Row.Top + RectangleHeight(Row) div 2 - Scaled(3),
         Scaled(6), Scaled(6)), TextColor);
     DrawMnemonicTextInBox(Canvas, ControlFace, Item.Text, MakeRectangle(Row.Left + Scaled(CheckColumn), Row.Top,

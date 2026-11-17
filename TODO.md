@@ -403,19 +403,19 @@ normalized (0-65535), not pixels.
         of the week, moving by month and year, keyboard navigation)
   - [x] Date and time picker (an edit box with fields for each part, a drop
         down calendar; date, time, or both; formats; uses the time zone)
-  - [ ] Picture box (shows an image: normal, stretched, zoomed to fit,
+  - [x] Picture box (shows an image: normal, stretched, zoomed to fit,
         centred; needs libimage from step 8 for files, surfaces before then)
-  - [ ] Paint box (a control the program draws in OnPaint: no focus, no
+  - [x] Paint box (a control the program draws in OnPaint: no focus, no
         background of its own, repainted when resized; every control has
         OnPaint already, this packages it like the picture box)
-  - [ ] Tooltip component (a Hint text on any control, shown after the
+  - [x] Tooltip component (a Hint text on any control, shown after the
         pointer rests and hidden when it leaves or a key is pressed; the
         tooltip window exists, the timing is left to each program now)
-  - [ ] Image list (images of one size, several sizes for DPI, shared by
+  - [x] Image list (images of one size, several sizes for DPI, shared by
         list views, tree views, toolbars, tabs and menus)
-  - [ ] Timer component (OnTimer at an interval, Enabled; over the message
+  - [x] Timer component (OnTimer at an interval, Enabled; over the message
         loop's window timers)
-  - [ ] Chart control (line, bar, area and pie; axes, legends, scaling;
+  - [x] Chart control (line, bar, area and pie; axes, legends, scaling;
         Task Manager's graphs could move to it)
 
 ### 6. Desktop shell

@@ -1078,6 +1078,8 @@ def client_area_of_tour(pixel):
 
 owned_box_above = False
 menus_survived = False
+hint_pixels = []
+picture_pixels = ('', '')
 def places():
     return {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
             for match in re.finditer(rb'place (\S+) (\d+) (\d+)', bytes(received))}
@@ -1212,6 +1214,27 @@ if tour_started:
         place = places()
         if 'calendar-day-20' in place:
             click_at(*place['calendar-day-20'])
+    # Hints, timers and pictures: the pointer resting on the Bold button
+    # shows its hint (two lines, in a tooltip above it); the Pictures
+    # page's timer ticks; its picture box shows the animation the tour
+    # wrote and read back, zoomed: its blue frame, and the page through
+    # its transparent middle.
+    if 'pictures-tab' in place:
+        bold_x, bold_y = place['bold']
+        point_tablet_at(bold_x, bold_y)
+        time.sleep(1.5)
+        pixel = take_screen()
+        hint_pixels = [pixel(x, y) for x in range(bold_x - 40, bold_x + 41, 2) for y in range(bold_y - 60, bold_y - 8, 2)]
+        click_at(*place['pictures-tab'])
+        type_on_serial(b'm=DONE; cat /tmp/t.log; echo PICTURES $m\r')
+        wait_for('PICTURES DONE', 10)
+        place = places()
+        if all(name in place for name in ('picture-border', 'picture-inside')):
+            # (The pointer off the picture, so no hint covers it.)
+            point_tablet_at(80, 30)
+            time.sleep(0.8)
+            pixel = take_screen()
+            picture_pixels = (pixel(*place['picture-border']), pixel(*place['picture-inside']))
     # The Layout page, then the window's bottom right corner (its client
     # area ends at 540,400; the frame is 4 wide) dragged 60 right and 40
     # down: the tour says where the anchored button is each time.
@@ -1256,6 +1279,12 @@ checks.append(('controls tour: checked list box (Space), numeric up/down (the wh
                tour_ok and b'checked Pears 1' in log_from_here and
                (b'quantity 6' in log_from_here or b'quantity 4' in log_from_here) and
                b'date 2026-11-20' in log_from_here))
+checks.append(('controls tour: a hint shows when the pointer rests on a control (two lines, in a tooltip)',
+               tour_ok and b'hint Bold / Makes the text bold (stays down)' in log_from_here and
+               'f4efd8' in hint_pixels))
+checks.append(('controls tour: a timer ticks', tour_ok and b'tick 3' in log_from_here))
+checks.append(('controls tour: a picture box shows an animation read from a file, transparent in its middle',
+               tour_ok and b'picture 12' in log_from_here and picture_pixels == ('3060c0', 'cbc6bd')))
 checks.append(('controls tour: a button anchored to the bottom right follows the corner of a resized window',
                tour_ok and anchored_before is not None and anchored_after is not None and
                anchored_after == (anchored_before[0] + 60, anchored_before[1] + 40)))

@@ -124,7 +124,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test font-test text-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -222,7 +222,8 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
+test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
+		imaging-controls-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -334,6 +335,25 @@ text-test: $(TEXT_TEST)
 	@$(TEXT_TEST) > build/tools/text-test.out || \
 		{ grep FAIL build/tools/text-test.out; echo "TEXT TEST FAILED (build/tools/text-test.out)"; exit 1; }
 	@echo "TEXT TEST PASSED: $$(tail -n 1 build/tools/text-test.out | cut -d ' ' -f 2-)"
+
+# The chart control's plain logic (nice ticks, ranges, formats, stacking,
+# pie angles, what is under the pointer) and its drawing, which needs
+# only libdrawing and libfont, build for the host too: checked there,
+# charts drawn on surfaces and looked at pixel by pixel; a sample picture
+# with DejaVu Sans is written to build/tools/chart-sample.ppm.
+CHART_TEST := build/tools/ChartTest
+CHART_TEST_SOURCES := $(wildcard tools/ChartTest/*.pas) $(wildcard userland/lib/controls/Controls.Chart?*.pas) \
+	$(wildcard userland/lib/drawing/*.pas) $(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+
+$(CHART_TEST): $(CHART_TEST_SOURCES)
+	@mkdir -p build/tools/chart-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ChartTest -Fuuserland/lib/controls -Fuuserland/lib/drawing \
+		-Fuuserland/lib/font -FUbuild/tools/chart-test-units -o$@ tools/ChartTest/ChartTest.pas
+
+chart-test: $(CHART_TEST) $(DEJAVU_SANS_STAMP)
+	@$(CHART_TEST) $(DEJAVU_SANS_DIRECTORY) build/tools/chart-sample.ppm > build/tools/chart-test.out || \
+		{ grep FAIL build/tools/chart-test.out; echo "CHART TEST FAILED (build/tools/chart-test.out)"; exit 1; }
+	@echo "CHART TEST PASSED: $$(tail -n 1 build/tools/chart-test.out)"
 
 # The file manager's plain logic (paths, numbered names, the history,
 # the order and types of items, permissions, what a drop does) and the
@@ -539,6 +559,28 @@ image-test: $(IMAGE_TEST) $(IMAGE_FIXTURES_STAMP)
 	@python3 -B tools/ImageTest/check-with-pillow.py $(IMAGE_WRITTEN) > build/tools/image-pillow.out || \
 		{ cat build/tools/image-pillow.out; echo "IMAGE TEST FAILED (Pillow reads what was written differently)"; exit 1; }
 	@echo "IMAGE TEST PASSED: $$(tail -n 1 build/tools/image-test.out | cut -d ' ' -f 2-)"
+
+# libcontrols' picture and timing logic builds for the host too (with
+# libdrawing and libimage): an image list's choice of pixel size, a
+# picture box's placement, the disabled and selected looks, the
+# tooltips' timing against a clock of the test's own, the timers' queue.
+IMAGING_CONTROLS_TEST := build/tools/ImagingControlsTest
+IMAGING_CONTROLS_TEST_SOURCES := $(wildcard tools/ImagingControlsTest/*.pas) \
+	userland/lib/controls/Controls.ImageSizes.pas userland/lib/controls/Controls.PictureGeometry.pas \
+	userland/lib/controls/Controls.ImageEffects.pas userland/lib/controls/Controls.HintTiming.pas \
+	userland/lib/controls/Controls.TimerQueue.pas $(wildcard userland/lib/drawing/*.pas) \
+	$(filter-out %/Image.Contents.pas,$(wildcard userland/lib/image/*.pas))
+
+$(IMAGING_CONTROLS_TEST): $(IMAGING_CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/imaging-controls-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ImagingControlsTest -Fuuserland/lib/controls -Fuuserland/lib/image \
+		-Fuuserland/lib/drawing -Fuuserland/lib/compression -FUbuild/tools/imaging-controls-test-units -o$@ \
+		tools/ImagingControlsTest/ImagingControlsTest.pas
+
+imaging-controls-test: $(IMAGING_CONTROLS_TEST)
+	@$(IMAGING_CONTROLS_TEST) > build/tools/imaging-controls-test.out || \
+		{ grep -A1 FAIL build/tools/imaging-controls-test.out; echo "IMAGING CONTROLS TEST FAILED (build/tools/imaging-controls-test.out)"; exit 1; }
+	@tail -n 1 build/tools/imaging-controls-test.out
 
 clean:
 	rm -rf build
