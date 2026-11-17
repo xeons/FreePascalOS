@@ -1507,7 +1507,7 @@ lock hides.
 (status 1 if the clipboard has no such format), `-l` lists the formats,
 `-x` empties it, `--copy-image FILE` puts an image (any format libimage
 reads) on it as PNG and raw pixels, made only when asked for
-(`ClipboardTool.Images`), `--paste-image FILE` saves its image (from
+(libcontrols' `Controls.ImageClipboard`, which the image viewer uses too), `--paste-image FILE` saves its image (from
 PNG, or `-t bgra`) as a PNG file, `--copy-files PATH...` puts files on it
 (a file list, and the paths as text), and `-w` waits for a change and
 says what the clipboard holds then. Coretest starts a display server and

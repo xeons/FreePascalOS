@@ -38,6 +38,7 @@ uses
   Controls.Toggles,
   Controls.Clipboard,
   Controls.SystemClipboard,
+  Controls.ImageClipboard,
   Controls.EditCommands,
   Controls.EditBox,
   Controls.PasswordBox,

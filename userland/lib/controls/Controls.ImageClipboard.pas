@@ -25,9 +25,11 @@
 
   TImageOffer offers both and makes each only when it is asked for
   (encoding a PNG takes a while), as the clipboard's delayed rendering
-  allows.
+  allows. CopyImageToClipboard puts an image there that way (the
+  clipboard tool, the image viewer); ReadClipboardImage takes one back
+  from either format.
 }
-unit ClipboardTool.Images;
+unit Controls.ImageClipboard;
 
 {$mode objfpc}
 {$H+}
@@ -56,11 +58,20 @@ function ImageToBgra(Image: TImage): TBytes;
 function BgraToImage(const Data: TBytes): TImage;
 { The image as a PNG file. }
 function ImageToPng(Image: TImage): TBytes;
+{ Puts Image on the system clipboard (the clipboard takes it as its own). }
+procedure CopyImageToClipboard(Image: TImage);
+{ Whether the clipboard holds an image. }
+function ClipboardHoldsImage: Boolean;
+{ The clipboard's image (raw pixels preferred, else PNG); nil if it holds
+  none, or a malformed one. }
+function ReadClipboardImage: TImage;
 
 implementation
 
 uses
   Windowing.Protocol,
+  Windowing.Clipboard,
+  Image.Errors,
   Image.Codecs,
   Image.Files;
 
@@ -117,6 +128,29 @@ end;
 function ImageToPng(Image: TImage): TBytes;
 begin
   Result := EncodeImage(Image, ImageFormatPng);
+end;
+
+procedure CopyImageToClipboard(Image: TImage);
+begin
+  WriteClipboard(TImageOffer.Create(Image));
+end;
+
+function ClipboardHoldsImage: Boolean;
+begin
+  Result := ClipboardHasFormat(DataFormatBgra) or ClipboardHasFormat(DataFormatPng);
+end;
+
+function ReadClipboardImage: TImage;
+var
+  Data: TBytes;
+  Reason: TImageErrorReason;
+begin
+  Result := nil;
+  if ReadClipboard(DataFormatBgra, Data) then
+    Result := BgraToImage(Data);
+  if (Result = nil) and ReadClipboard(DataFormatPng, Data) then
+    if not TryLoadImage(Data, Result, Reason) then
+      Result := nil;
 end;
 
 constructor TImageOffer.Create(AImage: TImage);
