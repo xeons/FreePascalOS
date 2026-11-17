@@ -38,13 +38,15 @@ unit Loader.Arch.PageTables;
 interface
 
 uses
+  Boot.Information,
   Loader.KernelImage;
 
 { Returns the physical address of the new top level table (PML4), or zero
   if memory ran out. PhysicalCoverage is how many bytes of physical
-  address space the window and identity mapping should cover. }
-function BuildInitialPageTables(PhysicalCoverage: QWord;
-  const KernelImage: TLoadedKernelImage): QWord;
+  address space the window and identity mapping should cover. The boot
+  information (framebuffer, ACPI tables) is not needed on x86-64. }
+function BuildInitialPageTables(const BootInformation: TBootInformation;
+  PhysicalCoverage: QWord; const KernelImage: TLoadedKernelImage): QWord;
 
 implementation
 
@@ -204,8 +206,8 @@ begin
   end;
 end;
 
-function BuildInitialPageTables(PhysicalCoverage: QWord;
-  const KernelImage: TLoadedKernelImage): QWord;
+function BuildInitialPageTables(const BootInformation: TBootInformation;
+  PhysicalCoverage: QWord; const KernelImage: TLoadedKernelImage): QWord;
 var
   TopLevelTable: PPageTable;
 begin

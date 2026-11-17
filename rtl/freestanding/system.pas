@@ -41,6 +41,15 @@ procedure fpc_initializeunits; compilerproc;
 { Called by the compiler at the end of a "program" main block. }
 procedure fpc_do_exit; compilerproc;
 
+{ Called by code the compiler checks for division by zero itself, where
+  the processor does not trap (AArch64). }
+procedure fpc_divbyzero; compilerproc;
+
+var
+  { What fpc_divbyzero does: the kernel installs its panic; without one
+    the processor stops here. }
+  DivisionByZeroHandler: procedure = nil;
+
 implementation
 
 procedure fpc_initializeunits; [public, alias: 'FPC_INITIALIZEUNITS']; compilerproc;
@@ -51,6 +60,14 @@ end;
 procedure fpc_do_exit; [public, alias: 'FPC_DO_EXIT']; compilerproc;
 begin
   { There is nothing to return to. }
+end;
+
+procedure fpc_divbyzero; [public, alias: 'FPC_DIVBYZERO']; compilerproc;
+begin
+  if Assigned(DivisionByZeroHandler) then
+    DivisionByZeroHandler;
+  while True do
+    ;
 end;
 
 end.

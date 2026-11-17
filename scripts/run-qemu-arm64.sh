@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# FreePascalOS
+# Copyright (C) 2026 Brandon Scott
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+#
+# Boots the AArch64 build (an EFI system partition directory) in QEMU's
+# virt machine with the edk2 AArch64 UEFI firmware (AAVMF / QEMU_EFI).
+#
+#   run-qemu-arm64.sh <esp-directory> [--debug] [--headless] [disk-image]...
+#
+# The machine is chosen to match a Raspberry Pi 4 as far as QEMU can:
+# Cortex-A72 processors, a GICv2 interrupt controller (the Pi's GIC-400),
+# the ARM generic timer, a PL011 UART, UEFI with ACPI tables. The
+# framebuffer is QEMU's ramfb (a plain UEFI GOP framebuffer in memory,
+# like the Pi firmware's), the boot volume a virtio disk on PCIe.
+#
+# Environment:
+#   PROCESSORS     number of processors (default 2)
+#   MEMORY         memory size (default 1G)
+#   VIRTUALIZATION=1  start the firmware at EL2, as the Pi's firmware
+#                  does, so the loader's drop to EL1 is exercised
+#   SEMIHOSTING=1  let the kernel end QEMU with an exit status (tests)
+#
+# Serial output (the kernel debug log) appears on this terminal. With
+# --debug QEMU waits for GDB on localhost:1234.
+
+set -euo pipefail
+
+esp_directory="$1"
+debug_mode=""
+headless=""
+disk_images=()
+for argument in "${@:2}"; do
+    case "$argument" in
+        --debug) debug_mode=yes ;;
+        --headless) headless=yes ;;
+        *) disk_images+=("$argument") ;;
+    esac
+done
+
+find_first_existing_file() {
+    for candidate in "$@"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+firmware_code=$(find_first_existing_file \
+    /usr/share/edk2/aarch64/QEMU_EFI.fd \
+    /usr/share/AAVMF/AAVMF_CODE.fd \
+    /usr/share/qemu-efi-aarch64/QEMU_EFI.fd) || { echo "AArch64 UEFI firmware (edk2-aarch64) not found"; exit 1; }
+firmware_variables_template=$(find_first_existing_file \
+    /usr/share/edk2/aarch64/QEMU_VARS.fd \
+    /usr/share/AAVMF/AAVMF_VARS.fd) || { echo "AArch64 UEFI variable store not found"; exit 1; }
+
+build_directory=$(dirname "$esp_directory")
+firmware_variables="$build_directory/QEMU_VARS.fd"
+if [[ ! -f "$firmware_variables" ]]; then
+    cp "$firmware_variables_template" "$firmware_variables"
+fi
+
+machine="virt,gic-version=2"
+if [[ "${VIRTUALIZATION:-}" == 1 ]]; then
+    machine="$machine,virtualization=on"
+fi
+
+extra_arguments=()
+disk_number=0
+for disk_image in "${disk_images[@]}"; do
+    extra_arguments+=(-drive if=none,format=raw,file="$disk_image",id=disk$disk_number)
+    extra_arguments+=(-device virtio-blk-pci,drive=disk$disk_number)
+    disk_number=$((disk_number + 1))
+done
+if [[ -n "$headless" ]]; then
+    extra_arguments+=(-display none)
+fi
+if [[ "${SEMIHOSTING:-}" == 1 ]]; then
+    extra_arguments+=(-semihosting-config enable=on,target=native)
+fi
+if [[ -n "$debug_mode" ]]; then
+    extra_arguments+=(-s -S)
+    echo "Waiting for GDB: gdb-multiarch $build_directory/kernel.elf -ex 'target remote :1234'"
+fi
+
+exec qemu-system-aarch64 \
+    -machine "$machine" \
+    -cpu cortex-a72 \
+    -m "${MEMORY:-1G}" \
+    -smp "${PROCESSORS:-2}" \
+    -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
+    -drive if=pflash,format=raw,file="$firmware_variables" \
+    -drive if=none,format=raw,file=fat:rw:"$esp_directory",id=esp \
+    -device virtio-blk-pci,drive=esp \
+    -device ramfb \
+    -serial stdio \
+    -no-reboot \
+    "${extra_arguments[@]}"
