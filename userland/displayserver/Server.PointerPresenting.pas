@@ -77,7 +77,8 @@ begin
     ErrorNone;
 end;
 
-function UseDeviceCursor(Screen: PScreen; const Image: TSurface; HotspotX, HotspotY: LongInt): Boolean;
+{ The picture (when it changed), the place and showing, told the device. }
+function TellDeviceCursor(Screen: PScreen; const Image: TSurface; HotspotX, HotspotY: LongInt): Boolean;
 var
   X: LongInt;
   Y: LongInt;
@@ -105,6 +106,15 @@ begin
     Screen^.HardwareCursorShown := True;
   end;
   Result := True;
+end;
+
+{ Shows the device's cursor with the picture at the pointer; False if the
+  device refused, which leaves the pointer to the server from then on. }
+function UseDeviceCursor(Screen: PScreen; const Image: TSurface; HotspotX, HotspotY: LongInt): Boolean;
+begin
+  Result := TellDeviceCursor(Screen, Image, HotspotX, HotspotY);
+  if not Result then
+    Screen^.Device.Capabilities := Screen^.Device.Capabilities and not LongWord(DisplayCapabilityHardwareCursor);
 end;
 
 procedure HideDeviceCursor(Screen: PScreen);

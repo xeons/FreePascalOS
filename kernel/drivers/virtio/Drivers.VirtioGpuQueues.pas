@@ -34,6 +34,10 @@
   slots, offered and notified at once; a slot is free again when the
   device has used it.
 
+  A batch not answered within two seconds marks the device failed: its
+  queue can no longer be trusted, so nothing more is sent until waking
+  from suspend resets it.
+
   The caller holds the device's lock around a batch or a cursor command.
 }
 unit Drivers.VirtioGpuQueues;
@@ -81,6 +85,9 @@ type
     PollOnly: Boolean;
     HasEdid: Boolean;
     NextResourceId: LongWord;
+    { A batch was not answered in time: the queue cannot be trusted, so
+      nothing more is sent (until waking resets the device). }
+    Failed: Boolean;
   end;
 
 { Sets up both queues of a device that is open with its features
@@ -181,6 +188,7 @@ begin
   for Index := 0 to GpuCursorSlots - 1 do
     Device^.CursorSlotBusy[Index] := False;
   Result := RestartVirtioDeviceQueues(Device^.Virtio, @Queues[0], 2);
+  Device^.Failed := not Result;
 end;
 
 function BeginGpuCommand(Device: PGpuDevice; CommandType: LongWord; RequestBytes: LongWord): Pointer;
@@ -251,6 +259,8 @@ var
 begin
   Count := Device^.BatchCount;
   Device^.BatchCount := 0;
+  if Device^.Failed then
+    Exit(False);
   if Count = 0 then
     Exit(True);
   for Index := 0 to Count - 1 do
@@ -258,7 +268,10 @@ begin
   NotifyVirtqueue(Device^.ControlQueue);
   Result := WaitForAnswers(Device, Count);
   if not Result then
+  begin
+    Device^.Failed := True;
     Exit;
+  end;
   for Index := 0 to Count - 1 do
   begin
     AnswerType := PLongWord(GpuAnswer(Device, Index))^;
@@ -293,13 +306,18 @@ var
   Deadline: QWord;
   Descriptor: PVirtqueueDescriptor;
 begin
+  if Device^.Failed then
+    Exit(False);
   ReclaimCursorSlots(Device);
   Slot := FreeCursorSlot(Device);
   Deadline := ClockTickCount + MillisecondsToTicks(AnswerTimeoutMilliseconds);
   while Slot < 0 do
   begin
     if ClockTickCount > Deadline then
+    begin
+      Device^.Failed := True;
       Exit(False);
+    end;
     CpuRelax;
     ReclaimCursorSlots(Device);
     Slot := FreeCursorSlot(Device);
