@@ -641,14 +641,50 @@ normalized (0-65535), not pixels.
 
 ## ARM64 port
 
-- [ ] Toolchain: AArch64 Free Pascal cross compiler (and a way to produce
-      AArch64 PE images for the loader: FPC trunk or binutils `objcopy`)
-- [ ] `boot/uefi/arm64`: page tables and hand-off
-- [ ] `kernel/core/arm64`: exception vectors, context switch, priority levels
-      (GIC priority mask)
-- [ ] `kernel/memory/arm64`: translation tables
-- [ ] `hal/arm64`: GIC, generic timer, PL011 UART
-- [ ] Run under `qemu-system-aarch64 -machine virt` with AAVMF firmware
+Target: Raspberry Pi 4 / 400 / CM4 with the EDK2 RPi4 UEFI firmware (ACPI
+mode); developed on `qemu-system-aarch64 -machine virt,gic-version=2 -cpu
+cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
+
+- [x] Toolchain: AArch64 cross compiler built from the FPC 3.2.2 sources
+      (`make toolchain ARCH=arm64`), binutils for AArch64; the loader linked
+      as a self-relocating PIE and converted to PE by `objcopy`
+- [x] `ARCH=arm64` build (`build/arm64`), `make run ARCH=arm64`
+- [x] `boot/uefi/arm64`: translation tables (RAM-only window, framebuffer
+      write-combining, SPCR UART), EL2 to EL1 drop, hand-off
+- [x] `kernel/core/arm64`: exception vectors, trap frames, context switch,
+      priority levels (GIC priority mask), FP/SIMD state, user copies,
+      SVC system call entry, cache and TLB maintenance
+- [x] `kernel/memory/arm64`: translation tables (4 KiB granule, 48-bit,
+      TTBR0 user / TTBR1 kernel, MAIR normal / device / non-cacheable)
+- [x] `hal/arm64`: GICv2 (MADT), generic timer (GTDT), PL011 and mini UART
+      (SPCR), PSCI (FADT): secondary processors, power off, reset
+- [x] Device interrupts: GIC SPIs, message interrupts through GICv2m
+- [x] Boots to the end of the kernel self tests under QEMU virt, with the
+      firmware at EL1 and at EL2 (`make arm64-test`, not in `make test`)
+- [ ] Wire `make arm64-test` into `make test` once qemu-system-aarch64 and
+      edk2-aarch64 are standard requirements
+- [ ] User mode: an AArch64 exception context in the ABI (X0-X30, SP, PC,
+      PSTATE; CallContinue), the user runtime library and programs built for
+      AArch64, the ELF loader accepting AArch64 programs, the system disk
+- [ ] Address space identifiers (no TLB flush on every address space switch)
+- [ ] Suspend to RAM (PSCI SYSTEM_SUSPEND) and the real-time clock (UEFI
+      runtime GetTime, or PL031 / the Pi 5's RTC)
+- [ ] GICv3 (system register CPU interface, redistributors, ITS) for
+      machines that have it
+- [ ] PCIe I/O space window (`Hal.PortIo.SetPortIoWindow`) from the root
+      bridge's `_CRS`
+- [ ] Boot test on a real Raspberry Pi 4
+- Raspberry Pi 4 drivers (later phase; its PCIe and these devices are not
+  cache coherent, so DMA needs cache maintenance, and some reach only the
+  low 1 or 3 GiB):
+  - [ ] BCM2711 PCIe host bridge (its own ECAM and MSI controller), for the
+        VL805 xHCI behind it (USB keyboards, mice, disks)
+  - [ ] GENET v5 Gigabit Ethernet
+  - [ ] EMMC2 SD card controller (SDHCI), the boot medium
+  - [ ] VideoCore mailbox (clocks, power, firmware properties, display)
+  - [ ] GPIO and the PWM audio jack; HDMI audio
+- Raspberry Pi 5 (later): RP1 south bridge drivers (UART, Ethernet, USB),
+  its UEFI port's tables, PAN and LSE atomics, its real-time clock
 
 ## Tooling
 

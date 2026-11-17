@@ -44,21 +44,24 @@ its own directory (`kernel/core/amd64`, `kernel/memory/amd64`, `hal/amd64`,
 selected architecture's directories on the unit search path, so the rest of
 the kernel never contains `{$ifdef CPU...}` blocks.
 
-An AArch64 port would add, among others:
+The AArch64 port (`ARCH=arm64`, see "The AArch64 port" below) supplies,
+among others:
 
-| Unit                          | x86-64 implementation           | AArch64 equivalent            |
-|-------------------------------|---------------------------------|-------------------------------|
-| `Kernel.Arch.Cpu`             | cli/sti, CR registers, MSRs     | DAIF, system registers        |
-| `Kernel.Arch.PriorityLevel`   | CR8 task priority register      | GIC priority mask register    |
-| `Kernel.Arch.ContextSwitch`   | saves RBX, RBP, R12-R15, RFLAGS | saves X19-X30, SP             |
-| `Kernel.Arch.TrapFrame` etc.  | IDT, interrupt stubs, TSS       | exception vector table        |
-| `Memory.Arch.PageTables`      | 4-level x86-64 paging           | 4-level AArch64 translation   |
-| `Hal.Platform`                | local APIC, PIT                 | GIC, generic timer            |
-| `Hal.SerialPort`              | 16550 UART                      | PL011 UART                    |
+| Unit                          | x86-64 implementation           | AArch64 implementation             |
+|-------------------------------|---------------------------------|------------------------------------|
+| `Kernel.Arch.Cpu`             | cli/sti, CR registers, MSRs     | DAIF, system registers (`.s`)      |
+| `Kernel.Arch.PriorityLevel`   | CR8 task priority register      | GIC priority mask register         |
+| `Kernel.Arch.ContextSwitch`   | saves RBX, RBP, R12-R15, RFLAGS | saves X19-X30, DAIF                |
+| `Kernel.Arch.TrapFrame` etc.  | IDT, interrupt stubs, TSS       | exception vector table (VBAR_EL1)  |
+| `Memory.Arch.PageTables`      | 4-level x86-64 paging           | 4-level AArch64 translation        |
+| `Hal.Platform`                | local APIC, PIT                 | GICv2, generic timer, PSCI         |
+| `Hal.InterruptController`     | I/O APICs, MSI to a local APIC  | GIC SPIs, MSI through GICv2m       |
+| `Hal.SerialPort`              | 16550 UART                      | PL011 / mini UART from ACPI SPCR   |
+| `Processes.Arch.UserContext`  | x86 exception context           | AArch64 exception context          |
 
-Building an AArch64 UEFI loader also needs a toolchain that can produce
-AArch64 PE images (Free Pascal 3.2.2 cannot; the trunk compiler or binutils
-`objcopy` conversion can).
+Code that cannot be Pascal is in GNU assembler files next to the units
+(`kernel/core/<arch>/*.s`, `boot/uefi/<arch>/*.s`); the Makefile
+assembles every one of them.
 
 ## Toolchain approach
 
@@ -81,11 +84,38 @@ Unit initialization sections are never used; every subsystem has an explicit
 `Initialize...` routine called in a defined order from `Kernel.Startup`.
 
 The kernel does not save floating point or SIMD registers, so `make` fails if
-the compiler ever emits SSE instructions in kernel code (`check-kernel`).
+the compiler ever emits SSE instructions in kernel code (`check-kernel`;
+on AArch64, any V/Q/D/S register outside the routines that save and
+restore a thread's registers).
+
+For AArch64 the same two targets are borrowed from the AArch64 cross
+compiler, which `scripts/build-cross-compiler.sh` builds from the Free
+Pascal 3.2.2 compiler sources into `build/toolchain/ppcrossa64` (`make
+toolchain ARCH=arm64`; it takes seconds and installs nothing). Release
+3.2.2 has no win64 target for AArch64 and no internal AArch64 assembler,
+so GNU binutils for AArch64 (`aarch64-linux-gnu-as`, `-ld`, `-objcopy`)
+do the assembling and linking:
+
+- The **loader** is compiled for `linux` (AAPCS64 is also the UEFI calling
+  convention on AArch64), linked by `ld -pie` into a position independent
+  ELF (`boot/uefi/arm64/loader.ld`) and converted by `objcopy -O
+  pei-aarch64-little --subsystem efi-app` into `BOOTAA64.EFI`. The
+  conversion makes no PE base relocations, so the image relocates itself
+  first thing (`LoaderEntry.s` applies the ELF's `R_AARCH64_RELATIVE`
+  relocations found through `_DYNAMIC`) and carries one empty `.reloc`
+  block so the firmware loads it anywhere.
+- The **kernel** is compiled for `linux` and linked by `ld` with
+  `kernel/link/arm64.ld`, as on x86-64.
+
+AArch64 division does not trap, so the compiler checks divisors itself
+and calls `fpc_divbyzero`, which the freestanding System unit provides
+(the kernel panics); it also calls `Move` for large copies, which the
+System unit provides too.
 
 ## Boot sequence
 
-1. **Firmware** loads `\EFI\BOOT\BOOTX64.EFI` (the loader).
+1. **Firmware** loads `\EFI\BOOT\BOOTX64.EFI` (the loader;
+   `BOOTAA64.EFI` on AArch64, see "The AArch64 port").
 2. **Loader** (`boot/uefi/OsLoader.pas`):
    - records the GOP framebuffer and the ACPI RSDP,
    - reads `\FreePascalOS\kernel.elf` and copies its segments into one
@@ -514,7 +544,10 @@ The legacy 8259 PICs are masked; device interrupts go through the I/O
 APICs listed in the ACPI MADT (Firmware.Madt, Hal.IoApic). A driver asks
 `ConnectIsaInterrupt` (Io.InterruptRouting) for its IRQ: the MADT's
 interrupt source overrides give the real input, polarity and trigger
-mode, and the driver gets one of the device vectors 0x30-0x3F. Its handler
+mode, and the driver gets one of the device vectors 0x30-0x3F.
+Io.InterruptRouting picks vectors and processors and shares lines; the
+hardware is the HAL's (Hal.InterruptController: I/O APIC entries and MSI
+addresses on x86-64, GIC SPIs and GICv2m on AArch64). Its handler
 runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
@@ -6516,6 +6549,170 @@ behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
+
+## The AArch64 port
+
+The target is the **Raspberry Pi 4** (and the Pi 400 and the Compute
+Module 4) booting the community UEFI firmware (the EDK2 "RPi4 UEFI"
+port, run in ACPI mode): it offers UEFI boot services, a GOP framebuffer,
+ACPI tables, PSCI (ARM Trusted Firmware), a GIC-400 (GICv2), the ARM
+generic timer, the PL011 UART0 and the mini UART. That firmware does not
+run in QEMU, so development uses `qemu-system-aarch64 -machine
+virt,gic-version=2 -cpu cortex-a72` with the edk2 AArch64 firmware
+(`scripts/run-qemu-arm64.sh`, `make run ARCH=arm64`): the same processor,
+GIC version, UART and UEFI/ACPI boot path. Nothing about either machine
+is built in: every address comes from the firmware, so one image runs on
+both.
+
+```
+make toolchain ARCH=arm64    # build/toolchain/ppcrossa64 from the FPC sources
+make ARCH=arm64              # build/arm64/esp: BOOTAA64.EFI and kernel.elf
+make run ARCH=arm64          # QEMU virt, serial log on the terminal
+make arm64-test              # boot smoke test (not part of make test yet)
+```
+
+What runs today: the loader, the kernel's phase 0 and phase 1 on every
+processor, the drivers that are bus generic (virtio block and network,
+NVMe, xHCI with USB keyboards, pointers and storage, e1000/e1000e, HD
+Audio, on PCIe with message interrupts), the file systems, the network
+stack and every kernel self test. User mode is the next step: the
+user-mode entry, the system call path (SVC, number in X8, arguments in
+X0-X5, result in X0) and user copies are written, but programs, the
+runtime library and the ABI's exception context are still x86-64 only,
+so the kernel stops after its self tests ("no system volume").
+
+### Boot path
+
+1. The firmware runs `\EFI\BOOT\BOOTAA64.EFI`, at EL1 (QEMU) or EL2 (the
+   Pi's firmware). `LoaderEntry.s` relocates the image for the address
+   it was loaded at and calls `EfiMain`.
+2. The loader does what it does on x86-64 (framebuffer, RSDP, kernel
+   image, boot stack, memory map) and builds two translation table
+   roots (`Loader.Arch.PageTables`):
+   - the kernel's (TTBR1_EL1, kept by the kernel): the physical memory
+     window over every range of real memory in the UEFI memory map
+     (normal write-back), the framebuffer (normal non-cacheable) and the
+     UART the ACPI SPCR names (device-nGnRE), and the kernel image at its
+     linked address with per-segment permissions (text read-only and
+     executable, the rest execute-never);
+   - an identity mapping of real memory (TTBR0_EL1) for the hand-off.
+   Ranges get 2 MiB blocks where they cover a whole block and 4 KiB pages
+   at their edges, so nothing beyond memory is mapped as memory.
+3. After ExitBootServices the loader cleans everything the kernel reads
+   first (its own memory types: kernel image, boot data, tables) and the
+   hand-off code to the point of coherency, then `LoaderHandoff.s`:
+   masks interrupts; at EL2 turns the firmware's EL2 translation off,
+   sets EL1 up to run AArch64 untrapped (HCR_EL2.RW, counter and timer
+   access, no FP traps) and drops to EL1; turns the firmware's EL1
+   translation off; loads MAIR_EL1, TCR_EL1 (48-bit halves, 4 KiB
+   granules, the processor's own physical address size), both roots and
+   CPACR_EL1 (FP/SIMD untrapped); turns translation and caches on; and
+   jumps to the kernel with X0 = the boot information, SP = the boot
+   stack.
+4. `ArchKernelEntry` (`KernelEntry.s`) keeps the boot information for the
+   HAL, points VBAR_EL1 at the vector table and continues in
+   `KernelEntryPoint`, the same as on x86-64.
+
+### Discovery
+
+| What                         | Where from                                         |
+|------------------------------|----------------------------------------------------|
+| RAM                          | the UEFI memory map                                |
+| framebuffer                  | UEFI GOP                                           |
+| serial console               | ACPI SPCR (PL011, SBSA UART, BCM2835 mini UART, 16550 with 32-bit registers) |
+| GIC distributor, CPU interface, GICv2m frame | ACPI MADT (GICD, GICC, MSI frame entries) |
+| processors                   | ACPI MADT GICC entries (MPIDR affinity)            |
+| timer interrupt              | ACPI GTDT (the virtual timer's PPI)                |
+| PSCI and its conduit         | ACPI FADT ARM boot flags (HVC under QEMU, SMC on the Pi) |
+| PCIe configuration space     | ACPI MCFG (ECAM), as on x86-64                     |
+| PCI interrupt lines          | DSDT `_PRT`, as on x86-64                          |
+
+The HAL reads the tables from its first moments (the serial port before
+anything else) through `Hal.FirmwareTables`; they are in memory the
+loader mapped into the window.
+
+### Memory
+
+The same layout as x86-64 (`shared/arm64/Boot.AddressLayout.pas`): user
+space below `0000_8000_0000_0000` through TTBR0_EL1, the window at
+`FFFF_8000_0000_0000`, the dynamic region at `FFFF_C000_0000_0000` and the
+kernel image at `FFFF_FFFF_8000_0000` through TTBR1_EL1. The table format
+is shared by the loader and the kernel
+(`shared/arm64/Boot.TranslationTableFormat.pas`). MAIR_EL1 holds normal
+write-back (index 0), device-nGnRE (1, `MapDeviceMemory`), normal
+non-cacheable (2, write-combining: framebuffers) and device-nGnRnE (3).
+Unlike x86-64 the window holds no devices: device registers mapped as
+normal memory could be read speculatively, so every device is mapped on
+demand with device attributes.
+
+A user address space is only a TTBR0 table; the "kernel address space"
+loads an empty one. Kernel mappings are global and user mappings are not;
+without address space identifiers yet, switching TTBR0 invalidates the
+local TLB. Removing a mapping invalidates it on every processor at once
+(TLBI ...IS); the architecture independent shootdown IPIs still go out
+and only repeat that. Page faults reach the resolver with the x86 fault
+code bits (present, write, user, fetch), made from the abort syndrome.
+
+### Exceptions, interrupts and priority levels
+
+One vector table (`ExceptionVectors.s`) builds a trap frame (X0-X30, the
+interrupted SP, ELR, SPSR, ESR, FAR) on SP_EL1 for exceptions from the
+kernel and from user mode and calls `ArchHandleException`: an IRQ is
+acknowledged at the GIC and dispatched like any interrupt; an SVC from
+EL0 is a system call; other synchronous exceptions get one of the
+kernel's exception vectors from their syndrome (`Kernel.Arch.Exceptions`);
+SError and FIQ are fatal. TPIDR_EL1 holds the processor block (user mode
+cannot read it, so nothing is swapped on entry); TPIDR_EL0 is the user
+thread pointer.
+
+The kernel's vectors and levels are those of x86-64 (level = vector div
+16). The GIC's INTIDs are given vectors by the HAL (SGI 0 dispatch, SGI 1
+inter-processor requests, SGI 2 stop on panic, the timer PPI the clock,
+SPIs the device vectors) and each INTID the GIC priority of its level,
+(15 - level) x 16; the priority level is the CPU interface's priority mask
+register, so the GIC holds off exactly what CR8 does on x86-64. GICv2
+addresses processors by CPU interface number: each records its own from
+the distributor's banked target register. Device interrupts are SPIs;
+message interrupts go through the GICv2m frame when there is one (QEMU),
+otherwise PCIe devices use their INTx lines.
+
+The clock is the generic timer: the counter (the same on all processors)
+gives the time, each processor's virtual timer the one-shot clock
+interrupt.
+
+### Processors
+
+PSCI CPU_ON starts a processor at the physical address of
+`ArchSecondaryEntry` with the MMU off, at EL2 on the Pi and EL1 under
+QEMU, with the physical address of a start-up record (memory attributes,
+translation control, system control, the kernel root, an identity
+mapping of the entry's page, and the processor's stack, block and entry
+point), cleaned to the point of coherency. The entry drops to EL1 if
+needed, turns translation on, continues at its linked address and calls
+`SecondaryProcessorEntry`, the same as on x86-64. Power off and reset go
+to PSCI SYSTEM_OFF and SYSTEM_RESET (the ACPI tables of these machines
+have no fixed hardware). Under test (`test-exit`) the kernel ends QEMU
+through semihosting with the x86-64 exit codes.
+
+### Raspberry Pi 4 notes, and the Pi 5
+
+- The firmware must be in ACPI mode (its "System Table Selection"); the
+  loader reads no device tree. In ACPI mode it limits RAM to 3 GiB by
+  default.
+- Its SPCR names the mini UART by default (the PL011 goes to Bluetooth);
+  both are driven.
+- The Pi 4's own devices need drivers of their own, for later (see
+  TODO.md): the BCM2711 PCIe bridge with the VL805 xHCI behind it,
+  GENET Ethernet, the EMMC2 SD controller, and the GPU mailbox. Its PCIe
+  and these devices are not cache coherent with the processors, so DMA
+  buffers will need cache maintenance (or non-cacheable mappings), and
+  some of them reach only the low 1 or 3 GiB.
+- A Raspberry Pi 5 (BCM2712, Cortex-A76) would differ in: most I/O behind
+  the RP1 south bridge on PCIe (its own UARTs, Ethernet, USB), so the
+  console and devices need RP1 drivers; a different (younger) UEFI port
+  whose ACPI tables need checking; ARMv8.2 features worth using (PAN
+  around user copies, LSE atomics); a battery-backed real-time clock. The
+  core code (GIC, generic timer, PSCI, translation tables) carries over.
 
 ## Heap checking
 
