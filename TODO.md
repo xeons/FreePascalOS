@@ -699,6 +699,9 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] System disk (ext4, FPOSROOT) built from the userland without root rights
 - [ ] Continuous integration running `make test`
 - [ ] GDB helper script (load symbols, break on panic)
+- [ ] Suspend: a cancel handshake when a processor fails to freeze (the
+      "not suspending" path leaves its FreezeRequested set, so it would
+      freeze later and never be woken)
 - [ ] Rare hang under TCG (about 1 run in 10, seen twice): during the sound tests
       two threads (sh creating a process, tone writing to /dev/audio) spin in
       CpuRelax with the other processors idle. The hang dump now prints the
