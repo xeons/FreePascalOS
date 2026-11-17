@@ -1059,10 +1059,31 @@ size in millimetres, the DPI and the scale; they list the display's
 modes (`ControlDisplayGetModeCount`, `ControlDisplayGetMode`, each a
 width and height at 4 bytes a pixel, smallest first) and set one
 (`ControlDisplaySetMode`). The framebuffer is mapped into the program
-with `CallMapHandle` (offset 0), its writes combined; after a new mode
-it is mapped again. `Sys.Display` in libsystem wraps all of it
-(OpenDisplay with a display's number, CloseDisplay, DisplayModeCount,
-DisplayModeAt, SetDisplayMode, DisplayPixel).
+with `CallMapHandle` (offset 0), its writes combined (cached when it is
+ordinary memory); after a new mode it is mapped again. `Sys.Display` in
+libsystem wraps all of it (OpenDisplay with a display's number,
+CloseDisplay, DisplayModeCount, DisplayModeAt, SetDisplayMode,
+DisplayPixel, and the requests below).
+
+What a display does beyond a plain framebuffer is in its capabilities
+(`ControlDisplayGetCapabilities` = 209, `DisplayCapability*`):
+`DisplayCapabilityNeedsFlush` (what is drawn shows only once
+`ControlDisplayFlush` = 210 names the rectangle, packed as X, Y, width
+and height in 16 bits each; on other displays the request does nothing,
+so programs flush on any display: `FlushDisplay`),
+`DisplayCapabilityHardwareCursor` (a cursor the device draws over the
+picture) and `DisplayCapabilityMemoryFramebuffer` (the framebuffer is
+ordinary memory). The hardware cursor's image is 64x64 pixels
+(`DisplayCursorSize`, $AARRGGBB with straight alpha), written into a
+cursor area mapped at `DisplayCursorImageOffset` (2^40) and taken with
+`ControlDisplaySetCursorImage` = 211 (the hotspot);
+`ControlDisplayMoveCursor` = 212 places its hotspot (signed 32-bit X and
+Y), `ControlDisplayShowCursor` = 213 shows or hides it (hidden at first
+and when the display is closed), and `ControlDisplayGetCursorState` =
+214 tells where it is, whether it shows and how many moves the device
+was told of since opening (`SetDisplayCursorImage`, `MoveDisplayCursor`,
+`ShowDisplayCursor` in Sys.Display). A driver gives the adapter a Flush
+routine, a cursor image page and an UpdateCursor routine for these.
 
 A display driver describes each display it has (a `TDisplayAdapter`:
 the framebuffer and its memory, the mode it has, its EDID, the largest
@@ -1084,6 +1105,37 @@ linear framebuffer. The largest mode is read with the "capabilities"
 bit set. The device holding the firmware's framebuffer keeps the
 firmware's mode; another starts in the mode its EDID prefers (else
 1024x768).
+
+The virtio GPU (Drivers.VirtioGpu, virtio 1.x on PCI, 1AF4:1050; 2D
+only) makes each enabled scanout a display, after the Bochs devices (the
+first display when the firmware left no framebuffer: its own graphics
+output on a virtio GPU only blits). The device has no video memory: a
+scanout shows a resource the host keeps, copied from guest memory. Each
+scanout gets a physically contiguous framebuffer of ordinary memory big
+enough for the largest mode offered (2560x1600, else 1920x1200 or
+1280x1024 if that much is not to be had) as the resource's backing, its
+lines the width times 4 bytes; a flushed rectangle is copied to the host
+(transfer to host) and shown (resource flush) in one batch of commands,
+the only ones copied. The display information gives each scanout's
+preferred mode, the EDID (when the device offers it) the rest of the
+list and the DPI; setting a mode makes a resource of that size on the
+same memory, shows it on the scanout and drops the old one. The cursor
+is the host's: a 64x64 resource backed by the display's cursor image
+page, copied to the host and given to the cursor queue with its hotspot
+when the image changes, moved with move-cursor commands
+(Drivers.VirtioGpuCursor). The driver logs each scanout ("scanout 0:
+1024x768, up to 2560x1600, EDID, hardware cursor"), the cursor shown,
+hidden or given an image with its place, and where it comes to rest
+after moving (a quarter of a second after the last move, so the test can
+follow it without a line a move). Control commands go in batches on the
+control queue (one page a command, the request then the answer) and are
+waited for on an event the queue interrupt signals (MSI-X), polling
+without one (Drivers.VirtioGpuQueues; the protocol's records in
+Drivers.VirtioGpuProtocol, resources in Drivers.VirtioGpuResources). A
+virtio GPU whose BAR 0 holds the firmware's framebuffer (virtio-vga used
+as VGA) is left alone, so the console keeps it. Waking from suspend
+resets the device: its queues are given again and every resource made
+again on the memory it had, shown and flushed, the cursor too.
 
 The mode list (Drivers.DisplayModes) is the EDID's modes (detailed
 timing descriptors, standard timings and established timings,
@@ -1123,6 +1175,24 @@ DPI), the boot mode and the console back after it; and a second display
 (QEMU's bochs-display, which has no firmware picture) driven natively
 in the mode its EDID prefers.
 
+`displaybench [-d NUMBER] [-s SECONDS]` takes a free display and
+measures the frames a second it shows the way the display server does
+(drawn in memory, the changed rectangle copied and flushed): the whole
+screen, then a moving 256x256 square, then cursor moves on a display
+with a hardware cursor; its first line says how the display is driven.
+The virtio GPU test (`scripts/test-virtio-gpu.py`, part of `make test`;
+skipped when QEMU has no `virtio-gpu-pci` device, its display module not
+installed) boots with the standard VGA and a virtio GPU (1024x768) and
+checks the scanout in the kernel's log, `display -d 1` (flushed, with a
+hardware cursor), a filled picture in the device's screen dump,
+`displaybench`, and the display server: its presentation line, the
+desktop and a window in the device's screen dump, the hardware cursor
+shown and moved with the tablet (QEMU's screen dump leaves the host's
+cursor out, so the driver's log says where it is and the dump must show
+no pointer drawn by the server there), hidden with the server drawing
+the arrow once the pointer is back on the first display, and a mode set
+and set back.
+
 ### The display server
 
 `displayserver` is an ordinary program that owns the display and the
@@ -1152,9 +1222,26 @@ the theme says (`Server.TitleButtonPainting`), pale on inactive
 windows; all sizes from the theme's metrics in logical units,
 `Server.Theme`), and composes in a
 back buffer: what needs drawing again is collected as a region (a window
-moved, a program drew, the pointer moved), and only that is drawn, the
-desktop, the windows from the bottom up and the pointer, clipped to it,
-then copied to the framebuffer (`Server.Composer`, `Server.Screen`).
+moved, a program drew), and only that is drawn, the desktop and the
+windows from the bottom up, clipped to it, then copied to the
+framebuffer (`Server.Composer`, `Server.Presentation`) and, on a display
+that needs it, flushed by those rectangles (their bounding rectangle
+past eight).
+
+The pointer is never composed (`Server.PointerPresenting`): on the
+screen it is on, a display with a hardware cursor draws it, given the
+pointer's picture for that screen's scale when the shape or the scale
+changes and the hotspot's place when it moves, so a move costs one
+request and nothing is drawn; a picture larger than the device's cursor
+(above 200 %) is drawn by the server instead. Elsewhere the server
+draws it: its image is blended over the back buffer's pixels as they
+are copied to the framebuffer (the back buffer never holds it), so a
+move presents its old and new places again from the back buffer and
+composes nothing. Where the picture hangs over onto the next screen the
+server draws that part. A device's cursor is hidden while the pointer is
+on another screen. At start the server prints how each display is
+presented ("displayserver: display 1 presents damaged rectangles copied
+and flushed to the device, hardware pointer").
 
 Input (`Server.Input`): the pointer moves the arrow (drawn at the
 display's scale rounded to a whole number) and goes to the window under
@@ -1269,8 +1356,9 @@ written: bottom up when moving down, from the right when moving right),
 and only the rest of the old and new places is damaged. Each display
 has its own back buffer, so this is done display by display, and only
 for pixels that stay on the same display: what crosses from one display
-to the other is drawn again. The pointer and a resize outline are drawn
-over everything, so their places are damaged first and never copied.
+to the other is drawn again. A resize outline is drawn over everything,
+so its place is damaged first and never copied; the pointer is never in
+the back buffer.
 The copied pixels go to the screen with the next compose
 (`AddPresentOnly`). `displayserver --check-moves` draws every display
 again after every compose that followed a move and compares it with
