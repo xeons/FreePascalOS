@@ -521,7 +521,13 @@ normalized (0-65535), not pixels.
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits
 - [x] Clipboard (text and images) and drag and drop
-- [ ] Themes; Paint; image viewer; calculator; volume control
+- [ ] Themes; Paint
+- [x] Image viewer (zoom, pan, turns, animations, the folder's images,
+      properties, colour management, copy, save as), calculator
+      (standard, scientific, programmer; exact display; history) and
+      volume control (outputs, mutes, peak meters, the default output),
+      laid out by docking, tables, flows and split containers;
+      `make apps-test`
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
 ## Networking
