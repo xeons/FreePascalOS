@@ -680,15 +680,41 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] PCIe I/O space window (`Hal.PortIo.SetPortIoWindow`) from the root
       bridge's `_CRS`
 - [ ] Boot test on a real Raspberry Pi 4
-- Raspberry Pi 4 drivers (later phase; its PCIe and these devices are not
-  cache coherent, so DMA needs cache maintenance, and some reach only the
-  low 1 or 3 GiB):
-  - [ ] BCM2711 PCIe host bridge (its own ECAM and MSI controller), for the
-        VL805 xHCI behind it (USB keyboards, mice, disks)
-  - [ ] GENET v5 Gigabit Ethernet
-  - [ ] EMMC2 SD card controller (SDHCI), the boot medium
-  - [ ] VideoCore mailbox (clocks, power, firmware properties, display)
+- Raspberry Pi 4 drivers (its PCIe and these devices are not cache
+  coherent, and some reach only the low 1 GiB; none of this has run on a
+  Pi yet, see "Trying it on a Raspberry Pi 4" in docs/Architecture.md):
+  - [x] ACPI platform devices: the namespace walk (_HID, _CID, _UID, _STA,
+        _CRS, inherited _CCA and _DMA, _DSD properties), drivers bound by
+        id, `devices` in the kernel debug shell, `make acpi-device-test`
+  - [x] DMA attributes and cache maintenance (`Io.Dma`,
+        `Hal.DmaCoherency`): uncached shared buffers, cleaned/invalidated
+        streaming buffers, _DMA bus address translation; the
+        `noncoherentdma` option exercises them under QEMU
+  - [x] xHCI as an ACPI platform device (the VL805 as the firmware set it
+        up), sharing the core with the PCI attachment
+  - [ ] BCM2711 PCIe host bridge (its own configuration access and MSI
+        controller), for firmware that does not describe the xHCI and
+        for the Compute Module 4's PCIe slot
+  - [x] GENET v5 Gigabit Ethernet: written, untested
+  - [ ] GENET on hardware: check the register offsets, reset sequence and
+        RGMII delays; suspend to RAM
+  - [x] EMMC2 and Arasan SD controllers (SDHCI, PIO and ADMA2, SDSC and
+        SDHC/SDXC, 4-bit high speed, card detect, quirks), tested on
+        QEMU's sdhci-pci in `make test` and `make arm64-test`
+  - [ ] SD: UHS-I (1.8 V through the firmware's regulator), eMMC
+        (Compute Module 4: MMC initialisation, 8-bit bus), SDIO (Wi-Fi)
+  - [x] VideoCore mailbox: firmware properties (board, serial, Ethernet
+        address, clocks, temperature, power domains), `board` in the
+        kernel debug shell
+  - [ ] VideoCore mailbox: display (framebuffer modes), and the "notify
+        xHCI reset" tag should the VL805 ever be reset through PCIe
+  - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
+        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
   - [ ] GPIO and the PWM audio jack; HDMI audio
+- [ ] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
+      "Inodes that were part of a corrupted orphan linked list found"),
+      with the volume on virtio and on an SD card alike; the same image
+      checks clean after the test on x86-64
 - Raspberry Pi 5 (later): RP1 south bridge drivers (UART, Ethernet, USB),
   its UEFI port's tables, PAN and LSE atomics, its real-time clock
 
