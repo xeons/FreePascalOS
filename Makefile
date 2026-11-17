@@ -30,6 +30,8 @@
 #                   cache on the host against FreeType (fixtures made by Python)
 #   make text-test  Check the multi-line edit box's plain logic on the host (undo,
 #                   word wrap, search)
+#   make controls-test  Check libcontrols' layout arithmetic on the host (anchors,
+#                   docking, flow and table panels, split containers)
 #   make settings-test  Check the settings library on the host (files, escaping,
 #                   layering, two writers, damaged files, the network's
 #                   settings and state files)
@@ -122,7 +124,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test font-test text-test settings-test files-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel aml-test drawing-test font-test text-test settings-test files-test controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -220,7 +222,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test settings-test files-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
+test: aml-test drawing-test font-test text-test settings-test files-test controls-test crypto-test tls-test wget-test image-test compression-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -356,6 +358,24 @@ files-test: $(FILES_TEST)
 	@$(FILES_TEST) > build/tools/files-test.out || \
 		{ grep FAIL build/tools/files-test.out; echo "FILES TEST FAILED (build/tools/files-test.out)"; exit 1; }
 	@echo "FILES TEST PASSED: $$(tail -n 1 build/tools/files-test.out | cut -d ' ' -f 2-)"
+
+# libcontrols' layout arithmetic (anchors, docking, constraints, flow and
+# table arrangement, split containers, scrolling) builds for the host
+# too, and is checked there.
+CONTROLS_TEST := build/tools/ControlsTest
+CONTROLS_TEST_SOURCES := tools/ControlsTest/ControlsTest.pas userland/lib/controls/Controls.LayoutRules.pas \
+	userland/lib/controls/Controls.FlowArrangement.pas userland/lib/controls/Controls.TableArrangement.pas \
+	userland/lib/controls/Controls.SplitRules.pas userland/lib/drawing/Drawing.Rectangles.pas
+
+$(CONTROLS_TEST): $(CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/controls-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ControlsTest -Fuuserland/lib/controls -Fuuserland/lib/drawing \
+		-FUbuild/tools/controls-test-units -o$@ tools/ControlsTest/ControlsTest.pas
+
+controls-test: $(CONTROLS_TEST)
+	@$(CONTROLS_TEST) > build/tools/controls-test.out || \
+		{ grep FAIL build/tools/controls-test.out; echo "CONTROLS TEST FAILED (build/tools/controls-test.out)"; exit 1; }
+	@echo "CONTROLS TEST PASSED: $$(tail -n 1 build/tools/controls-test.out | cut -d ' ' -f 2-)"
 
 # The settings library (libconfiguration) but for its files builds for
 # the host too, and is checked there over a storage in memory.
