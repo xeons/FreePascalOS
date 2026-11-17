@@ -19,7 +19,7 @@
 {
   imageinfo - describe image files
 
-  imageinfo FILE...
+  imageinfo [-p X,Y]... FILE...
 
   For each file prints its format (from its content, not its name), its
   size, the bits per pixel it is stored in, and what else it says:
@@ -30,6 +30,12 @@
     t.bmp: BMP, 2 x 1, 24 bits per pixel
     a.gif: GIF, 40 x 30, 4 bits per pixel, alpha, 5 frames, 0.42 s, 3 loops
     s.tif: TIFF, 1700 x 2200, 1 bits per pixel, 300 dpi, 3 pages
+
+  -p X,Y, --pixel=X,Y   also print the colour of the pixel at (X, Y),
+                        counted from 0 at the top left, as it is seen
+                        (upright, in sRGB), a line after the file's:
+                        "t.png: pixel 3,4 FFFF0000" (alpha, red, green,
+                        blue); may be given more than once
 }
 program imageinfo;
 
@@ -41,6 +47,7 @@ uses
   Util.CommandLine,
   Util.Messages,
   Sys.Streams,
+  Drawing.Rectangles,
   Image.Errors,
   Image.Model,
   Image.Metadata,
@@ -48,8 +55,44 @@ uses
   Image.Files;
 
 const
-  Usage = 'Usage: imageinfo FILE...'#10 +
-    'Describe image files: format, size, depth, frames and what else they say.'#10;
+  Usage = 'Usage: imageinfo [-p X,Y]... FILE...'#10 +
+    'Describe image files: format, size, depth, frames and what else they say.'#10 +
+    '  -p, --pixel=X,Y   also print the colour of the pixel at X,Y'#10;
+  OptionPixel = 1;
+
+var
+  PixelsAsked: array of TPoint;
+
+{ "X,Y" as a point; False if it is not two numbers. }
+function ParsePixel(const Text: string; out Pixel: TPoint): Boolean;
+var
+  Comma: LongInt;
+begin
+  Comma := Pos(',', Text);
+  Result := (Comma > 1) and TryStrToInt(Copy(Text, 1, Comma - 1), Pixel.X) and
+    TryStrToInt(Copy(Text, Comma + 1, Length(Text) - Comma), Pixel.Y);
+end;
+
+procedure PrintPixels(const Path: string);
+var
+  Image: TImage;
+  Pixel: TPoint;
+begin
+  if Length(PixelsAsked) = 0 then
+    Exit;
+  try
+    Image := LoadImage(Path, [ImageLoadApplyOrientation, ImageLoadConvertToSrgb]);
+  except
+    on EImageError do
+      Exit;
+  end;
+  try
+    for Pixel in PixelsAsked do
+      PrintStringLine(Format('%s: pixel %d,%d %.8x', [Path, Pixel.X, Pixel.Y, Image.GetPixel(Pixel.X, Pixel.Y)]));
+  finally
+    Image.Free;
+  end;
+end;
 
 function AnimationText(Animation: TAnimatedImage): string;
 var
@@ -107,6 +150,7 @@ begin
   finally
     Image.Free;
   end;
+  PrintPixels(Path);
   Result := True;
 end;
 
@@ -114,9 +158,20 @@ var
   CommandLine: TCommandLine;
   Operand: string;
   Status: Integer;
+  Code: Integer;
+  Value: string;
+  Pixel: TPoint;
 begin
-  CommandLine := TCommandLine.Create([], Usage);
-  CommandLine.ReadOperandsOnly;
+  CommandLine := TCommandLine.Create([CommandOption('p', 'pixel', True, OptionPixel)], Usage);
+  PixelsAsked := nil;
+  while CommandLine.NextOption(Code, Value) do
+    if Code = OptionPixel then
+    begin
+      if not ParsePixel(Value, Pixel) then
+        FailWithUsageHint('not a pixel: ' + Value);
+      SetLength(PixelsAsked, Length(PixelsAsked) + 1);
+      PixelsAsked[High(PixelsAsked)] := Pixel;
+    end;
   if CommandLine.OperandCount = 0 then
     FailWithUsageHint('no files given');
   Status := 0;

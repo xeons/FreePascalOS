@@ -1526,6 +1526,62 @@ checks.append(('notepad: word wrap is remembered for the next Notepad (the user\
                re.search(rb'\ntrue\r?\n', again_log) is not None and
                b'settings word-wrap on, status-bar on' in again_log))
 
+# Paint on a new picture (480x320, white): the rectangle tool picked by
+# its button in the tool box, a rectangle dragged with the pointer from
+# (20, 20) to (120, 80) of the picture (Paint prints where its top left
+# pixel and the buttons are), saved as a PNG through the save dialog
+# (File > Save As from the keyboard, the name typed, Enter), and read
+# back with imageinfo -p: the outline (2 pixels wide, the primary colour,
+# black) on the left and top edges, white inside and outside it (a pixel
+# either way allowed, for the tablet's rounding). kill asks Paint to end:
+# with the picture saved it asks nothing and ends.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'paint > /tmp/p.log &\r')
+time.sleep(4)
+type_on_serial(b'm=DONE; cat /tmp/p.log; echo PAINT-STARTED $m\r')
+wait_for('PAINT-STARTED DONE', 15)
+paint_log = bytes(received[received.rfind(b'PAINT-STARTED $m'):])
+paint_place = {match.group(1).decode(): (int(match.group(2)), int(match.group(3)))
+               for match in re.finditer(rb'place (\S+) (\d+) (\d+)', paint_log)}
+paint_started = b'title Untitled - Paint' in paint_log and 'canvas' in paint_place and \
+    'tool-rectangle' in paint_place
+paint_output = b''
+if paint_started:
+    click_at(*paint_place['tool-rectangle'])
+    canvas_left, canvas_top = paint_place['canvas']
+    drag(canvas_left + 20, canvas_top + 20, canvas_left + 120, canvas_top + 80)
+    press('alt-f')
+    time.sleep(0.5)
+    press('a')
+    time.sleep(1.5)
+    for key in ('slash', 't', 'm', 'p', 'slash', 'r', 'e', 'c', 't', 'dot', 'p', 'n', 'g', 'ret'):
+        press(key)
+    time.sleep(2)
+    paint_output = shell_output('cat /tmp/p.log; imageinfo -p 19,50 -p 20,50 -p 21,50 -p 22,50 -p 70,19 -p 70,20 '
+                                '-p 70,21 -p 70,22 -p 70,50 -p 10,50 -p 150,50 /tmp/rect.png', 'PAINT-SAVED')
+
+
+def paint_pixel(x, y):
+    found = re.search(rb'/tmp/rect.png: pixel ' + str(x).encode() + b',' + str(y).encode() + rb' ([0-9A-F]{8})',
+                      paint_output)
+    return found.group(1).decode() if found else ''
+
+
+checks.append(('paint: started on a new picture (the title, where the picture and the tools are)', paint_started))
+checks.append(('paint: the rectangle tool picked, a rectangle dragged, saved as a PNG through the save dialog',
+               paint_started and b'tool rectangle' in paint_output and b'saved /tmp/rect.png' in paint_output and
+               b'title rect.png - Paint' in paint_output and b'/tmp/rect.png: PNG, 480 x 320' in paint_output))
+checks.append(('paint: the saved picture has the rectangle (black outline, white inside and outside)',
+               any(paint_pixel(x, 50) == 'FF000000' for x in (19, 20, 21, 22)) and
+               any(paint_pixel(70, y) == 'FF000000' for y in (19, 20, 21, 22)) and
+               paint_pixel(70, 50) == 'FFFFFFFF' and paint_pixel(10, 50) == 'FFFFFFFF' and
+               paint_pixel(150, 50) == 'FFFFFFFF'))
+type_on_serial(b'kill %2; wait %2; echo PAINT-ASKED $?; kill %1; wait; m=DONE; echo PAINT-ENDED $m\r')
+paint_ended = wait_for('PAINT-ENDED DONE', 30)
+checks.append(('paint: kill asks it to end, and with the picture saved it ends by itself (status 0)',
+               paint_ended and b'PAINT-ASKED 0' in received))
+
 # The file manager (files), on a folder made over the serial shell:
 # icon, list and details views; sorting by a column's header; a folder
 # opened with a double click and Back; a new folder (Ctrl+Shift+N)
