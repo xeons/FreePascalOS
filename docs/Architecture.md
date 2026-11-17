@@ -1221,11 +1221,22 @@ lasts until the server ends, so the tests' many changes leave nothing
 behind.
 
 Pointer shapes: the arrow, the four resize arrows (left-right, up-down
-and the two diagonals), a text beam and a busy hourglass
-(`Pointer*` in the protocol). Each is a small pattern of black, white
+and the two diagonals), a text beam, a busy hourglass, a hand, move,
+not allowed and a crosshair (`Pointer*` in the protocol, 0 to 10;
+`PointerShapeCount` 11). Each is drawn from its pictures when it has
+them (`Server.PointerPictures`): `/lib/pointers/NAME.cur`, cursor files
+the build draws with the icons (`userland/icons`, white shapes with a
+black outline and a soft shadow) in 24, 32, 40, 48, 64 and 96 pixels,
+each entry with its hotspot. The picture for the display the pointer is
+on is 32 pixels at 100 % (40 at 125 %, 48 at 150 %, 64 at 200 %): that
+entry, else the nearest larger shrunk (the largest grown) to it, its
+hotspot moved in proportion, made once and kept; it is blended by its
+alpha. Outlines fall on whole pixels at 32 and 64, so the 100 % arrow,
+text beam and resize arrows have exact black and white pixels the tests
+look at. Without pictures a shape is a small pattern of black, white
 and clear pixels with a hotspot (`Server.PointerShapes`), scaled by a
 whole number like the arrow always was: the scale of the display the
-pointer is on, rounded. They are read at start from
+pointer is on, rounded. The patterns are read at start from
 `/lib/pointers/NAME.pointer` (`Server.PointerFiles`): text files, so a
 shape can be changed without building anything:
 
@@ -1239,7 +1250,8 @@ shape can be changed without building anything:
 Every line after the hotspot is a row: `#` black, `.` white, a space or
 `-` clear. A missing or malformed file leaves that shape built in (the
 built-in patterns are the same as the files `make-system-disk.sh`
-installs from `userland/pointers`); the server says how many it read.
+installs from `userland/pointers`); the server says how many it read
+("11 of 11 pointer shapes from /lib/pointers, 11 with pictures").
 Which shape shows (`Server.PointerAreas`): over a frame the server's
 choice, a resize arrow on the borders and corners of a resizable window
 (and while one is dragged), the arrow elsewhere; over a client area the
@@ -1661,6 +1673,34 @@ checked menu item's dot, the message box signs, the list view's stock
 icons, whose straight edges still fall on whole pixels) and scale a
 program's own icons smoothly.
 
+How the controls are painted is part of the theme too: a block of
+`Windowing.Theme` fields (style flags and the colours only some controls
+use) set by `LoadModernControlLook` (the default) or
+`LoadClassicControlLook` (exactly the earlier look, for the Classic
+theme and the pixel tests written for it). `Controls.Painting` holds the
+pieces they are painted from: bevels and edges whose lines grow with the
+scale when `ScaledBevelLines` is set (`BevelLine` pixels a line: one up
+to 150%, two from 175%; `BevelWidth` is a whole two-line bevel, what a
+sunken field keeps clear inside its edge), etched lines, header bands
+(a vertical gradient drawn a pixel row at a time, `Drawing.Canvas`'s
+`FillVerticalGradient`), arrows, a status bar's size grip and a
+splitter's dots. In the modern look buttons light up under the pointer
+(`HotButtonFace`) and darken when held, the default button's outline is
+two lines; `TButton` can also be flat (an edge only when hot), a split
+button (an arrow part behind an etched line opens `DropDownMenu`) or a
+drop-down button. A `TGroupBox` has a `HeaderStyle`: etched (the text
+in the frame), a golden header band or a navy section band over a
+lighter body (the Control Panel's pages); a theme without bands
+(`HeaderBandsShown` false) draws them all etched. Progress bars fill
+with gradient blocks (green) or, with `Marquee`, moving diagonal
+stripes on a timer of their own; pop-up menus have a shaded icon column
+with an etched line beside it; the calendar's month bar is a filled
+blue bar with button arrows (`CalendarHeaderFilled`); status bars are
+one sunken strip with etched separators and a size grip
+(`StatusBarEtched`); tooltips have a thin dark frame
+(`TooltipBorder`). The controls tour's Lists page shows the bands and
+buttons, its Layout page a marquee (`Tour.Looks`).
+
 **libcontrols** builds windows out of controls. `TControl`
 (`Controls.Base`) has a parent, children, bounds in logical units within
 the parent (or a side to dock to, in the order they were made; one
@@ -1865,11 +1905,70 @@ if `IconsInDetails`; under a large icon a name that does not fit takes
 two lines, broken after a space, dot, dash or underscore where one is
 in reach). Icons (`Controls.Icons`) are the program's own surface,
 stretched to the size the view and the display scale need, or a stock
-icon drawn as shapes at that size: a text document, a folder, and in
+icon: the icon theme's picture of it (`StockIconNames`, below) at the
+box's size in pixels; without the theme's file the older stock icons
+are drawn as shapes at that size (a text document, a folder, and in
 `Controls.FileIcons` a plain file, a program, a fixed and a removable
 disk, the home folder, the computer, and the arrow over a link's icon,
-drawn on the design grid `Controls.PictureGrid` (the desktop's
-pictures use it too).
+on the design grid `Controls.PictureGrid`, which the desktop's
+pictures use too) and the newer ones as the nearest older one. The
+stock icons: documents of each kind (text, document, spreadsheet,
+presentation, PDF, image, audio, video, archive, settings, font,
+unknown), the folder, the open folder and the folders with an emblem
+(documents, pictures, music, videos, downloads, projects, public,
+templates, compressed), the drives (fixed, removable, optical, USB,
+memory card, solid state), the network, the internet, the trash empty
+and full, the favourites and the applications. Overlays
+(`TIconOverlay`, `DrawIconOverlay`) are drawn over an icon: a link's
+arrow, locked, synced, updating and attention.
+`Controls.FileTypeIcons` picks the stock icon of a file from its
+extension (`IconForFileName`: png a picture, wav a note, zip an
+archive...) and of a folder from its name (`IconForFolderName`:
+Documents, Pictures, Music, Videos, Downloads, Projects, Public,
+Templates, Archives); Files uses both.
+
+The icon theme: every icon is `/usr/share/icons/NAME.ico` (an index of
+them in `index.txt`), holding the same picture at 16, 20, 24, 32, 40,
+48, 64 and 96 pixels with alpha (32-bit DIB entries up to 48, PNG above).
+The set is the project's own, drawn with vector shapes when the system
+is built (`userland/icons/make-icons.py` with pycairo; the definitions
+in `userland/icons/iconkit`, one module a group: places, folders, file
+types, programs, actions, status, devices, overlays, and the pointers),
+in one three-quarter view (fronts rising a little to the right, depth
+going back up and right), lit from the top left, dark outlines and a
+gloss; the 16, 20 and 24 pixel pictures are simplified (fewer lines,
+thicker marks) so they stay crisp. `make-icons.py --sheet FILE.png`
+draws a contact sheet of the set. Names: places (`computer`, `home`,
+`network`, `internet`, `drive`, `drive-removable`, `drive-optical`,
+`drive-usb`, `memory-card`, `drive-ssd`, `trash-empty`, `trash-full`,
+`applications`, `favourites`, `library`), `folder-*`, `file-*`,
+`overlay-*`, programs `app-*`, actions `action-*` (back, forward, up,
+down, refresh, delete, add, remove, search, find, options, info,
+warning, error, question, new, open, save, print, cut, copy, paste,
+undo, redo, bold, play, stop, pause, zoom, lock, log-off, suspend,
+shut-down), message boxes' `dialog-*`, `status-*` (network online,
+connecting, limited, no-link, offline; sound on and muted; battery
+levels and charging; mains power; security; notification) and
+`device-*` (printer, scanner, camera, webcam, audio, keyboard, mouse,
+display). `Controls.IconFiles` reads them (only libimage, so the host
+checks it: `make icon-test`): an icon wanted at a logical size and
+scale is `IconPixelSize` pixels (16 at 125 % is 20), drawn from the
+file's entry of that size, else the nearest larger shrunk (Mitchell),
+else the largest grown (`TIconDirectory.NearestEntry`); only the entry
+asked for is decoded, each file read once and each size made once, and
+a name without a file remembered as such (`LoadThemeIcon`,
+`IconPicture`, `FindIconFile`, `ForgetIconFiles`; `SetIconDirectory`
+for the test). `Controls.IconTheme` draws one into a box
+(`DrawThemeIcon`, `DrawThemeIconAt`) or adds every size to an image
+list (`AddThemeIcon`), each saying whether the icon was there so the
+caller can draw its own picture instead. From the theme: the stock
+icons, the desktop's icons and the Start menu's
+(`Desktop.ProgramPictures.ProgramIconNames`; Lock, Log off, Suspend and
+Shut down too), the notification area's pictures (the
+`NotificationPicture*` numbers are unchanged: information, warning,
+sound on and muted, network online, connecting, limited, no cable, no
+adapter), the message boxes' signs, the Files and controls tour
+toolbars and the Control Panel's page list (`ControlPanel.PageList`).
 With `MultiSelect` several items are selected (Ctrl+click toggles one,
 Shift+click and Shift with the moving keys select from the anchor,
 Ctrl+A all; `Selected[Row]`, `SelectedCount`); `ItemIndex` is the item

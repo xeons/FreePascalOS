@@ -181,7 +181,8 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Text,
-  Controls.ListBox;
+  Controls.ListBox,
+  Controls.Painting;
 
 const
   IndentStep = 16;
@@ -363,9 +364,9 @@ end;
 
 function TTreeView.NodeAt(X, Y: LongInt): TTreeNode;
 begin
-  if (Y < 2) or (X < 0) or (X >= RectangleWidth(PixelBounds)) then
+  if (Y < BevelWidth) or (X < 0) or (X >= RectangleWidth(PixelBounds)) then
     Exit(nil);
-  Result := VisibleNode(FTopIndex + (Y - 2) div RowHeight);
+  Result := VisibleNode(FTopIndex + (Y - BevelWidth) div RowHeight);
 end;
 
 procedure TTreeView.SetImages(Value: TImageList);
@@ -457,7 +458,7 @@ end;
 
 function TTreeView.RowMiddle(Index: LongInt): LongInt;
 begin
-  Result := 2 + (Index - FTopIndex) * RowHeight + RowHeight div 2;
+  Result := BevelWidth + (Index - FTopIndex) * RowHeight + RowHeight div 2;
 end;
 
 function TTreeView.RowHeight: LongInt;
@@ -469,7 +470,7 @@ end;
 
 function TTreeView.VisibleRows: LongInt;
 begin
-  Result := (RectangleHeight(PixelBounds) - 4) div RowHeight;
+  Result := (RectangleHeight(PixelBounds) - 2 * BevelWidth) div RowHeight;
   if Result < 1 then
     Result := 1;
 end;
@@ -532,8 +533,8 @@ var
   Width: LongInt;
 begin
   Width := Scaled(Theme.ScrollBarWidth);
-  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - 2 - Width), Unscaled(2), Unscaled(Width),
-    Unscaled(RectangleHeight(PixelBounds) - 4));
+  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - BevelWidth - Width), Unscaled(BevelWidth), Unscaled(Width),
+    Unscaled(RectangleHeight(PixelBounds) - 2 * BevelWidth));
   UpdateScrollBar;
   inherited Layout;
 end;
@@ -635,12 +636,12 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
-  Right := RectangleWidth(Box) - 2;
+  DrawSunkenBevel(Canvas, Box);
+  Right := RectangleWidth(Box) - BevelWidth;
   if FScrollBar.Visible then
     Right := Right - RectangleWidth(FScrollBar.PixelBounds);
   Inner := Canvas;
-  NarrowCanvasClip(Inner, MakeRectangle(2, 2, Right - 2, RectangleHeight(Box) - 4));
+  NarrowCanvasClip(Inner, MakeRectangle(BevelWidth, BevelWidth, Right - BevelWidth, RectangleHeight(Box) - 2 * BevelWidth));
   Size := Scaled(BoxSize);
   for Index := FTopIndex to FVisible.Count - 1 do
   begin
@@ -693,9 +694,9 @@ var
   Left: LongInt;
   Now: QWord;
 begin
-  if (Button <> ButtonLeft) or (Y < 2) then
+  if (Button <> ButtonLeft) or (Y < BevelWidth) then
     Exit;
-  Index := FTopIndex + (Y - 2) div RowHeight;
+  Index := FTopIndex + (Y - BevelWidth) div RowHeight;
   Node := VisibleNode(Index);
   if Node = nil then
     Exit;

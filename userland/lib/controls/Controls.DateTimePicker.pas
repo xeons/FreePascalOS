@@ -185,7 +185,8 @@ uses
   Controls.Window,
   Controls.Buttons,
   Controls.CheckMarks,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 function TPickerCalendar.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 begin
@@ -453,7 +454,8 @@ var
   Width: LongInt;
 begin
   Width := Scaled(Theme.ScrollBarWidth);
-  Result := MakeRectangle(RectangleWidth(PixelBounds) - 2 - Width, 2, Width, RectangleHeight(PixelBounds) - 4);
+  Result := MakeRectangle(RectangleWidth(PixelBounds) - BevelWidth - Width, BevelWidth, Width,
+    RectangleHeight(PixelBounds) - 2 * BevelWidth);
 end;
 
 function TDateTimePicker.FieldsLeft: LongInt;
@@ -838,11 +840,11 @@ begin
     FillRectangle(Canvas, Box, Theme.Field)
   else
     FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   if ControlFace = nil then
     Exit;
   Button := ButtonBounds;
-  Right := RectangleWidth(Box) - 2;
+  Right := RectangleWidth(Box) - BevelWidth;
   if HasDateFields then
   begin
     DrawButtonFace(Canvas, Button, DroppedDown, False);
@@ -854,7 +856,7 @@ begin
   if FShowCheckBox then
     DrawCheckMark(Canvas, CheckBoxBounds, States[FChecked], Enabled);
   Inner := Canvas;
-  NarrowCanvasClip(Inner, MakeRectangle(2, 2, Right - 2, RectangleHeight(Box) - 4));
+  NarrowCanvasClip(Inner, MakeRectangle(BevelWidth, BevelWidth, Right - BevelWidth, RectangleHeight(Box) - 2 * BevelWidth));
   PaintFields(Inner, Box);
   if Focused and FShowCheckBox and (FFieldIndex < 0) then
     DrawFocusFrame(Canvas, InflateRectangle(CheckBoxBounds, Scaled(1)), Theme.FieldText);

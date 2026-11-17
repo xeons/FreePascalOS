@@ -47,13 +47,16 @@ interface
 uses
   Controls.Base,
   Controls.Window,
+  Controls.ImageList,
   Controls.Menus;
 
 type
   TStartMenu = class
   private
     FMenu: TMenuItem;
+    FImages: TImageList;
     FOnClosed: TControlEvent;
+    procedure SetItemIcon(Item: TMenuItem; const IconName: string);
     procedure ProgramChosen(Item: TMenuItem);
     procedure ShutDownChosen(Item: TMenuItem);
     procedure LogOffChosen(Item: TMenuItem);
@@ -84,7 +87,10 @@ uses
   Controls.Dialogs,
   Controls.MessageBoxes,
   Windowing.Sessions,
+  Controls.Icons,
+  Controls.IconTheme,
   Desktop.Programs,
+  Desktop.ProgramPictures,
   Desktop.Locking,
   Desktop.Report;
 
@@ -104,26 +110,40 @@ begin
   FMenu := TMenuItem.Create('');
   { The band down its side, where the theme draws one. }
   FMenu.SideBand := 'FreePascalOS';
+  { Each item with its icon from the theme (none without it). }
+  FImages := TImageList.Create(SmallIconSize, SmallIconSize);
+  FMenu.Images := FImages;
   for Index := 0 to DesktopProgramCount - 1 do
   begin
     Item := FMenu.Add(DesktopPrograms[Index].Caption, @ProgramChosen);
     Item.Tag := Index;
+    SetItemIcon(Item, ProgramIconNames[DesktopPrograms[Index].Picture]);
   end;
   FMenu.AddSeparator;
   Item := FMenu.Add('Loc&k', @LockChosen);
   Item.Tag := LockTag;
+  SetItemIcon(Item, 'action-lock');
   Item := FMenu.Add('&Log off...', @LogOffChosen);
   Item.Tag := LogOffTag;
+  SetItemIcon(Item, 'action-log-off');
   Item := FMenu.Add('S&uspend', @SuspendChosen);
   Item.Tag := SuspendTag;
+  SetItemIcon(Item, 'action-suspend');
   Item := FMenu.Add('&Shut down...', @ShutDownChosen);
   Item.Tag := ShutDownTag;
+  SetItemIcon(Item, 'action-shut-down');
 end;
 
 destructor TStartMenu.Destroy;
 begin
   FMenu.Free;
+  FImages.Free;
   inherited Destroy;
+end;
+
+procedure TStartMenu.SetItemIcon(Item: TMenuItem; const IconName: string);
+begin
+  Item.ImageIndex := AddThemeIcon(FImages, IconName);
 end;
 
 procedure TStartMenu.TellPlaces(List: TMenuList);

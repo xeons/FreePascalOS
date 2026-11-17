@@ -93,7 +93,8 @@ uses
   Controls.Text,
   Controls.Icons,
   Controls.Panels,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   { Logical units between a tab's picture and its caption. }
@@ -276,13 +277,13 @@ begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
   Frame := MakeRectangle(0, TabHeight, RectangleWidth(Box), RectangleHeight(Box) - TabHeight);
-  DrawBevel(Canvas, Frame, RaisedThemeBevel);
+  DrawRaisedBevel(Canvas, Frame);
   for Index := 0 to FPages.Count - 1 do
   begin
     Tab := MakeRectangle(TabLeft(Index), Scaled(2), TabWidth(Index), TabHeight - Scaled(2));
     if Index = FPageIndex then
       { The chosen tab stands out and joins its page. }
-      Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + 2);
+      Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + BevelWidth);
     FillRectangle(Canvas, Tab, Theme.Face);
     DrawHorizontalLine(Canvas, Tab.Left + 2, Tab.Right - 2, Tab.Top, Theme.Highlight);
     DrawVerticalLine(Canvas, Tab.Left, Tab.Top + 2, Tab.Bottom, Theme.Highlight);

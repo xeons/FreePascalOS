@@ -84,7 +84,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 const
   { U+2022, the bullet, in UTF-8: what each character shows as. }
@@ -250,11 +251,11 @@ begin
     FillRectangle(Canvas, Box, Theme.Field)
   else
     FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   if ControlFace = nil then
     Exit;
   Inner := Canvas;
-  NarrowCanvasClip(Inner, InflateRectangle(Box, -2));
+  NarrowCanvasClip(Inner, InflateRectangle(Box, -BevelWidth));
   Dots := '';
   for Index := 1 to CharacterCount do
     Dots := Dots + HiddenCharacter;

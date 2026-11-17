@@ -95,7 +95,8 @@ uses
   Controls.Text,
   Controls.Window,
   Controls.Buttons,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   MaximumDroppedItems = 8;
@@ -232,25 +233,17 @@ var
   Box: TRectangle;
   Button: TRectangle;
   Field: TRectangle;
-  Arrow: array[0..2] of TPoint;
-  CentreX: LongInt;
-  CentreY: LongInt;
-  Size: LongInt;
+  Inset: LongInt;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
+  Inset := BevelWidth;
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
-  Button := MakeRectangle(Box.Right - 2 - Scaled(Theme.ScrollBarWidth), 2, Scaled(Theme.ScrollBarWidth),
-    RectangleHeight(Box) - 4);
+  DrawSunkenBevel(Canvas, Box);
+  Button := MakeRectangle(Box.Right - Inset - Scaled(Theme.ScrollBarWidth), Inset, Scaled(Theme.ScrollBarWidth),
+    RectangleHeight(Box) - 2 * Inset);
   DrawButtonFace(Canvas, Button, DroppedDown, False);
-  CentreX := Button.Left + RectangleWidth(Button) div 2;
-  CentreY := Button.Top + RectangleHeight(Button) div 2;
-  Size := RectangleWidth(Button) div 4;
-  Arrow[0] := MakePoint(CentreX - Size, CentreY - Size div 2);
-  Arrow[1] := MakePoint(CentreX + Size, CentreY - Size div 2);
-  Arrow[2] := MakePoint(CentreX, CentreY + Size div 2 + 1);
-  FillPolygon(Canvas, Arrow, Theme.FaceText);
-  Field := MakeRectangle(3, 3, Button.Left - 4, RectangleHeight(Box) - 6);
+  DrawArrowGlyph(Canvas, Button, ArrowDown, RectangleWidth(Button) div 4, Theme.FaceText);
+  Field := MakeRectangle(Inset + 1, Inset + 1, Button.Left - Inset - 2, RectangleHeight(Box) - 2 * Inset - 2);
   if Focused and not DroppedDown then
   begin
     FillRectangle(Canvas, Field, Theme.Selection);

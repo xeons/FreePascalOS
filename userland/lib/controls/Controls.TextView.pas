@@ -191,7 +191,8 @@ uses
   Windowing.Protocol,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 const
   { Rows the wheel scrolls by a step. }
@@ -249,7 +250,7 @@ end;
 
 function TTextView.VisibleRows: LongInt;
 begin
-  Result := (RectangleHeight(PixelBounds) - 4) div LineHeight;
+  Result := (RectangleHeight(PixelBounds) - 2 * BevelWidth) div LineHeight;
   if Result < 1 then
     Result := 1;
 end;
@@ -265,7 +266,7 @@ begin
     Exit(0);
   { The scroll bar's room is always left, so rows do not wrap again as
     it comes and goes. }
-  Result := RectangleWidth(PixelBounds) - 2 * TextLeft - Scaled(Theme.ScrollBarWidth) - 4;
+  Result := RectangleWidth(PixelBounds) - 2 * TextLeft - Scaled(Theme.ScrollBarWidth) - 2 * BevelWidth;
   if Result < 1 then
     Result := 1;
 end;
@@ -454,8 +455,8 @@ var
   Width: LongInt;
 begin
   Width := Scaled(Theme.ScrollBarWidth);
-  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - 2 - Width), Unscaled(2), Unscaled(Width),
-    Unscaled(RectangleHeight(PixelBounds) - 4));
+  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - BevelWidth - Width), Unscaled(BevelWidth), Unscaled(Width),
+    Unscaled(RectangleHeight(PixelBounds) - 2 * BevelWidth));
   UpdateScrollBar;
   inherited Layout;
 end;
@@ -596,10 +597,10 @@ var
   RowsDown: LongInt;
   Place: TRowPlace;
 begin
-  if Y < 2 then
+  if Y < BevelWidth then
     RowsDown := -1
   else
-    RowsDown := (Y - 2) div LineHeight;
+    RowsDown := (Y - BevelWidth) div LineHeight;
   Place := StepRows(FTop, RowsDown);
   Result := MakePosition(Place.Line, ColumnNearestX(LayoutOf(Place.Line), Place.Row, X - TextLeft + FScrollX));
 end;
@@ -960,19 +961,19 @@ begin
     FillRectangle(Canvas, Box, Theme.Field)
   else
     FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   Face := EditFace;
   if Face = nil then
     Exit;
-  Right := RectangleWidth(Box) - 2;
+  Right := RectangleWidth(Box) - BevelWidth;
   if FScrollBar.Visible then
     Right := Right - RectangleWidth(FScrollBar.PixelBounds);
   Inner := Canvas;
-  NarrowCanvasClip(Inner, MakeRectangle(2, 2, Right - 2, RectangleHeight(Box) - 4));
+  NarrowCanvasClip(Inner, MakeRectangle(BevelWidth, BevelWidth, Right - BevelWidth, RectangleHeight(Box) - 2 * BevelWidth));
   Caret := PlaceOfCaret;
   Height := LineHeight;
   Place := FTop;
-  Top := 2;
+  Top := BevelWidth;
   while (Place.Line < FLines.Count) and (Top < RectangleHeight(Box)) do
   begin
     LineLayout := LayoutOf(Place.Line);

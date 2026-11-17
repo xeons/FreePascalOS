@@ -60,7 +60,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Windowing.Displays,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 const
   { Logical units: around the text, and between the box and the point. }
@@ -106,7 +107,7 @@ var
 begin
   Box := MakeRectangle(0, 0, PixelWidth, PixelHeight);
   FillRectangle(Canvas, Box, Theme.Tooltip);
-  DrawRectangleOutline(Canvas, Box, Theme.DarkShadow);
+  DrawThickOutline(Canvas, Box, BevelLine, Theme.TooltipBorder);
   Inner := InflateRectangle(Box, -Scaled(Padding));
   LineHeight := TextHeight(ControlFace);
   { One line is centred; several are read from the left. }

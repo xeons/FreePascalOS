@@ -49,7 +49,8 @@ uses
   Drawing.Bevels,
   Drawing.Shapes,
   Windowing.Theme,
-  Windowing.Connection;
+  Windowing.Connection,
+  Controls.Painting;
 
 function CheckMarkSize: LongInt;
 begin
@@ -89,7 +90,7 @@ begin
     FillRectangle(Canvas, Box, Theme.Face);
     MarkColor := Theme.DisabledText;
   end;
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   case State of
     CheckChecked: DrawTick(Canvas, Box, MarkColor);
     CheckMixed: FillRectangle(Canvas, InflateRectangle(Box, -Scaled(4)), MarkColor);

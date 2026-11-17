@@ -18,7 +18,9 @@
 
 {
   Progress bars: how far along something is, as blocks filling a sunken
-  well from the left.
+  well from the left (each block a gradient in the theme's colours). A
+  marquee (Marquee) says only that something is going on: diagonal
+  stripes that move along the well, on a timer of its own.
 }
 unit Controls.ProgressBar;
 
@@ -29,7 +31,9 @@ interface
 
 uses
   Drawing.Canvas,
-  Controls.Base;
+  Drawing.Rectangles,
+  Controls.Base,
+  Controls.Timers;
 
 type
   TProgressBar = class(TControl)
@@ -37,31 +41,50 @@ type
     FMinimum: LongInt;
     FMaximum: LongInt;
     FPosition: LongInt;
+    FMarquee: Boolean;
+    FMarqueeTimer: TTimer;
+    { Pixels: how far the stripes have moved. }
+    FMarqueeOffset: LongInt;
     procedure SetPosition(Value: LongInt);
     procedure SetMaximum(Value: LongInt);
+    procedure SetMarquee(Value: Boolean);
+    procedure MarqueeTicked(Sender: TTimer);
+    procedure PaintBlocks(const Canvas: TCanvas; const Well: TRectangle);
+    procedure PaintStripes(const Canvas: TCanvas; const Well: TRectangle);
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
     constructor Create(AParent: TControl); override;
+    destructor Destroy; override;
     function PreferredSize: TSize; override;
     property Minimum: LongInt read FMinimum write FMinimum;
     property Maximum: LongInt read FMaximum write SetMaximum;
     property Position: LongInt read FPosition write SetPosition;
+    { Moving stripes instead of blocks (Position is not shown). }
+    property Marquee: Boolean read FMarquee write SetMarquee;
   end;
 
 implementation
 
 uses
-  Drawing.Rectangles,
+  Drawing.Colors,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   { Logical units. }
   DefaultProgressWidth = 150;
   ProgressHeight = 18;
+  { Logical units: a block and the gap after it; the stripes' period
+    and width. Milliseconds between the stripes' steps. }
+  BlockWidth = 8;
+  BlockGap = 2;
+  StripePeriod = 16;
+  StripeWidth = 8;
+  MarqueeInterval = 40;
 
 { As wide as it is (or a default), a block high. }
 function TProgressBar.PreferredSize: TSize;
@@ -100,32 +123,103 @@ begin
   Invalidate;
 end;
 
+destructor TProgressBar.Destroy;
+begin
+  FMarqueeTimer.Free;
+  inherited Destroy;
+end;
+
+procedure TProgressBar.SetMarquee(Value: Boolean);
+begin
+  if FMarquee = Value then
+    Exit;
+  FMarquee := Value;
+  if FMarqueeTimer = nil then
+  begin
+    FMarqueeTimer := TTimer.Create(Self);
+    FMarqueeTimer.Enabled := False;
+    FMarqueeTimer.Interval := MarqueeInterval;
+    FMarqueeTimer.OnTimer := @MarqueeTicked;
+  end;
+  if Value then
+    FMarqueeTimer.Start
+  else
+    FMarqueeTimer.Stop;
+  Invalidate;
+end;
+
+procedure TProgressBar.MarqueeTicked(Sender: TTimer);
+begin
+  FMarqueeOffset := (FMarqueeOffset + Scaled(1)) mod Scaled(StripePeriod);
+  Invalidate;
+end;
+
+procedure TProgressBar.PaintBlocks(const Canvas: TCanvas; const Well: TRectangle);
+var
+  Filled: LongInt;
+  Width: LongInt;
+  X: LongInt;
+begin
+  if FMaximum <= FMinimum then
+    Exit;
+  Filled := Int64(RectangleWidth(Well)) * (FPosition - FMinimum) div (FMaximum - FMinimum);
+  X := 0;
+  while X < Filled do
+  begin
+    Width := Scaled(BlockWidth);
+    if X + Width > Filled then
+      Width := Filled - X;
+    FillVerticalGradient(Canvas, MakeRectangle(Well.Left + X, Well.Top, Width, RectangleHeight(Well)),
+      Theme.ProgressBlockLight, Theme.ProgressBlock);
+    X := X + Width + Scaled(BlockGap);
+  end;
+end;
+
+{ Stripes leaning right: on each row they start a pixel further left
+  than on the row above, and all move right with the offset. }
+procedure TProgressBar.PaintStripes(const Canvas: TCanvas; const Well: TRectangle);
+var
+  Clipped: TCanvas;
+  Period: LongInt;
+  Width: LongInt;
+  Y: LongInt;
+  Start: LongInt;
+begin
+  Clipped := Canvas;
+  NarrowCanvasClip(Clipped, Well);
+  FillRectangle(Clipped, Well, Theme.MarqueeBackground);
+  Period := Scaled(StripePeriod);
+  Width := Scaled(StripeWidth);
+  if Period <= 0 then
+    Exit;
+  for Y := Well.Top to Well.Bottom - 1 do
+  begin
+    { The first start at or left of Well.Left - Period. }
+    Start := (FMarqueeOffset - (Y - Well.Top)) mod Period;
+    if Start < 0 then
+      Start := Start + Period;
+    Start := Well.Left - 2 * Period + Start;
+    while Start < Well.Right do
+    begin
+      DrawHorizontalLine(Clipped, Start, Start + Width, Y, Theme.MarqueeStripe);
+      Start := Start + Period;
+    end;
+  end;
+end;
+
 procedure TProgressBar.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
   Well: TRectangle;
-  Filled: LongInt;
-  BlockWidth: LongInt;
-  Gap: LongInt;
-  X: LongInt;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  FillRectangle(Canvas, Box, Theme.Face);
-  DrawEdge(Canvas, Box, Theme.Shadow, Theme.Highlight);
+  FillRectangle(Canvas, Box, Theme.ProgressTrough);
+  DrawSunkenEdge(Canvas, Box);
   Well := InflateRectangle(Box, -Scaled(2));
-  if FMaximum <= FMinimum then
-    Exit;
-  Filled := Int64(RectangleWidth(Well)) * (FPosition - FMinimum) div (FMaximum - FMinimum);
-  BlockWidth := Scaled(8);
-  Gap := Scaled(2);
-  X := 0;
-  while X < Filled do
-  begin
-    if X + BlockWidth > Filled then
-      BlockWidth := Filled - X;
-    FillRectangle(Canvas, MakeRectangle(Well.Left + X, Well.Top, BlockWidth, RectangleHeight(Well)), Theme.Selection);
-    X := X + BlockWidth + Gap;
-  end;
+  if FMarquee then
+    PaintStripes(Canvas, Well)
+  else
+    PaintBlocks(Canvas, Well);
 end;
 
 end.

@@ -23,7 +23,10 @@
 
   The shapes built in here are the ones the system disk's files in
   /lib/pointers start as (Server.PointerFiles reads those over them),
-  so the pointer has every shape even without the files.
+  so the pointer has every shape even without the files. The pictures
+  in several sizes there (Server.PointerPictures) are drawn instead
+  when they could be read; these patterns are what is left without
+  them.
 }
 unit Server.PointerShapes;
 
@@ -180,6 +183,74 @@ const
     ' #..###..# ',
     '###########');
 
+  Hand: array[0..15] of TPointerRow = (
+    '    ##         ',
+    '   #..#        ',
+    '   #..#        ',
+    '   #..#        ',
+    '   #..###      ',
+    '   #..#..###   ',
+    ' ###..#..#..#  ',
+    '#..#..#..#..## ',
+    '#..#........#.#',
+    ' #...........# ',
+    '  #..........# ',
+    '  #.........#  ',
+    '   #........#  ',
+    '   #.......#   ',
+    '    #......#   ',
+    '    ########   ');
+  Move: array[0..16] of TPointerRow = (
+    '        #        ',
+    '       #.#       ',
+    '      #...#      ',
+    '     ##...##     ',
+    '       #.#       ',
+    '   #   #.#   #   ',
+    '  ##   #.#   ##  ',
+    ' #..###...###..# ',
+    '#...............#',
+    ' #..###...###..# ',
+    '  ##   #.#   ##  ',
+    '   #   #.#   #   ',
+    '       #.#       ',
+    '     ##...##     ',
+    '      #...#      ',
+    '       #.#       ',
+    '        #        ');
+  NotAllowed: array[0..14] of TPointerRow = (
+    '     #####     ',
+    '   ##.....##   ',
+    '  #.........#  ',
+    ' #....####...# ',
+    ' #...#    #..# ',
+    '#...#.#    #..#',
+    '#..# #.#   #..#',
+    '#..#  #.#  #..#',
+    '#..#   #.# #..#',
+    '#..#    #.#...#',
+    ' #..#    #...# ',
+    ' #...####....# ',
+    '  #.........#  ',
+    '   ##.....##   ',
+    '     #####     ');
+  Crosshair: array[0..14] of TPointerRow = (
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ',
+    '               ',
+    '......   ......',
+    '######   ######',
+    '......   ......',
+    '               ',
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ',
+    '      .#.      ');
+
 function MakePointerPattern(const Rows: array of TPointerRow; HotspotX, HotspotY: LongInt;
   out Pattern: TPointerPattern): Boolean;
 var
@@ -211,6 +282,10 @@ begin
   MakePointerPattern(ResizeDiagonalUp, 8, 8, PointerPatterns[PointerResizeDiagonalUp]);
   MakePointerPattern(TextBeam, 4, 8, PointerPatterns[PointerTextBeam]);
   MakePointerPattern(Busy, 5, 6, PointerPatterns[PointerBusy]);
+  MakePointerPattern(Hand, 4, 0, PointerPatterns[PointerHand]);
+  MakePointerPattern(Move, 8, 8, PointerPatterns[PointerMove]);
+  MakePointerPattern(NotAllowed, 7, 7, PointerPatterns[PointerNotAllowed]);
+  MakePointerPattern(Crosshair, 7, 7, PointerPatterns[PointerCrosshair]);
 end;
 
 initialization

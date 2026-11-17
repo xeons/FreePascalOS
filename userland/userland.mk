@@ -119,6 +119,15 @@ OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*.ttf) $(wildcard $(OU
 DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
 DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
 
+# The icon theme (/usr/share/icons/NAME.ico, 16 to 96 pixels) and the
+# pointer's pictures (/lib/pointers/NAME.cur, several sizes): drawn
+# with vector shapes by userland/icons/make-icons.py (pycairo) when
+# the system is built; the drawings are the project's own.
+ICON_SOURCES := userland/icons/make-icons.py $(wildcard userland/icons/iconkit/*.py)
+ICON_OUTPUT := $(USER_BUILD_DIRECTORY)/icons
+POINTER_PICTURE_OUTPUT := $(USER_BUILD_DIRECTORY)/pointers
+ICONS_STAMP := $(ICON_OUTPUT)/.drawn
+
 
 
 .PHONY: userland system-disk
@@ -127,7 +136,7 @@ DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
-	$(DEJAVU_SANS_STAMP)
+	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
 		shared/Abi.ErrorMessages.inc
@@ -275,6 +284,12 @@ $(DEJAVU_SANS_STAMP): $(OUTLINE_FONT_FILES)
 		mkdir -p $(USER_BUILD_DIRECTORY)/fonts/$$family; \
 		cp $(OUTLINE_FONT_SOURCE)/$$family/* $(USER_BUILD_DIRECTORY)/fonts/$$family/; \
 	done
+	@touch $@
+
+$(ICONS_STAMP): $(ICON_SOURCES)
+	@python3 -c 'import cairo' 2>/dev/null || { echo "Python 3 with pycairo is needed to draw the icons (python-cairo)"; exit 1; }
+	@rm -rf $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT)
+	python3 -B userland/icons/make-icons.py $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT)
 	@touch $@
 
 # A library loaded at run time by the tests.

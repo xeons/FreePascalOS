@@ -90,7 +90,8 @@ uses
   Controls.Keys,
   Controls.LayoutRules,
   Controls.Text,
-  Windowing.Theme;
+  Windowing.Theme,
+  Controls.Painting;
 
 const
   { Logical units: the rows shown when it sizes itself, at most. }
@@ -241,7 +242,7 @@ begin
   Index := ItemAt(Y);
   inherited PointerDown(X, Y, Button);
   { The box (and the space either side of it) toggles. }
-  if (Button = ButtonLeft) and (Index >= 0) and (X < 2 + ItemIndent) then
+  if (Button = ButtonLeft) and (Index >= 0) and (X < BevelWidth + ItemIndent) then
     ToggleItem(Index);
 end;
 

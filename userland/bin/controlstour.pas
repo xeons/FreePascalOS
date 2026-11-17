@@ -29,7 +29,9 @@
   a checked list box, numeric up/down boxes, date and time pickers and
   a month calendar; pictures: an animated picture box, a paint box moved
   on by a timer, an image list in a toolbar and a list view,
-  Tour.Pictures; charts of each kind, Tour.Charts; layout without positions: a split
+  Tour.Pictures; charts of each kind, Tour.Charts; the theme's looks
+  (banded group boxes, flat, split and drop-down buttons, a progress bar
+  and a marquee), Tour.Looks; layout without positions: a split
   container holding a flow panel of buttons that wrap, a form in a table
   and a panel that scrolls, over a bar whose button is anchored to the
   bottom right, so it follows the window's corner when the window is
@@ -40,6 +42,7 @@
   line each:
 
     place NAME X Y        where NAME is on the screen (pixels), at start
+    looks TEXT            an item of the split button's menu was chosen
     menu TEXT             a menu item was chosen
     toolbar TEXT 0|1      a tool button (and whether it is down)
     page N                the tab control shows page N
@@ -78,6 +81,7 @@ uses
   Windowing.Protocol,
   Windowing.Connection,
   Windowing.Windows,
+  Windowing.Theme,
   Controls.Keys,
   Controls.Base,
   Controls.Window,
@@ -101,6 +105,7 @@ uses
   Controls.Calendar,
   Controls.DateTimePicker,
   Controls.ImageList,
+  Controls.IconTheme,
   Controls.Text,
   Controls.Toggles,
   Controls.Panels,
@@ -113,7 +118,8 @@ uses
   Tour.Artwork,
   Tour.Output,
   Tour.Pictures,
-  Tour.Charts;
+  Tour.Charts,
+  Tour.Looks;
 
 const
   KeyM = $32;
@@ -146,6 +152,7 @@ type
     FImages: TImageList;
     FPictures: TPicturesPage;
     FCharts: TChartsPage;
+    FLooks: TLooksShowcase;
     FChartsPageIndex: LongInt;
     procedure HintShown(Sender: TControl; const Text: string);
     procedure MenuChosen(Item: TMenuItem);
@@ -199,11 +206,13 @@ begin
   HelpMenu.Images := FImages;
   HelpMenu.Add('&About', @AboutChosen).ImageIndex := PicturePicture;
   FMenuBar.OnChoose := @MenuChosen;
+  { The toolbar's pictures are the icon theme's (none without it). }
   FToolBar := TToolBar.Create(Root);
-  FToolBar.AddButton('New', 40, @ToolClicked).Hint := 'Start a new document';
-  FToolBar.AddButton('Open', 44, @ToolClicked).Hint := 'Open a document';
+  FToolBar.Images := FImages;
+  FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-new'), 'New', 'Start a new document', 62, @ToolClicked);
+  FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-open'), 'Open', 'Open a document', 66, @ToolClicked);
   FToolBar.AddSeparator;
-  FBold := FToolBar.AddButton('Bold', 40, @ToolClicked);
+  FBold := FToolBar.AddImageButton(AddThemeIcon(FImages, 'action-bold'), 'Bold', '', 62, @ToolClicked);
   FBold.IsToggle := True;
   FBold.Hint := 'Bold'#10'Makes the text bold (stays down)';
   FStatus := TStatusBar.Create(Root);
@@ -234,6 +243,7 @@ begin
   FCombo.Items.Add('Second');
   FCombo.Items.Add('Third');
   FCombo.ItemIndex := 0;
+  FLooks := TLooksShowcase.Create(Page);
   Page := FTabs.AddPage('&Text');
   Page.OnNotify := @ChildNotified;
   FEdit := TTextEdit.Create(Page);
@@ -388,6 +398,7 @@ var
   Box: TCheckBox;
   Index: LongInt;
 begin
+  AddMarquee(Area);
   Heading := TLabel.Create(Area);
   Heading.ShowsMnemonic := False;
   Heading.Text := 'Options (scrolling):';
@@ -431,6 +442,7 @@ begin
   FPictures.Free;
   inherited Destroy;
   FImages.Free;
+  FLooks.Free;
 end;
 
 procedure TTourWindow.HintShown(Sender: TControl; const Text: string);
@@ -551,6 +563,12 @@ begin
   TellPlace('list-item-3', FList, Scaled(30), 2 + 2 * RowHeight + RowHeight div 2);
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
   TellPlace('combo-second', FCombo, Scaled(30), RectangleHeight(FCombo.PixelBounds) + 2 + RowHeight + RowHeight div 2);
+  { The split button's arrow, and the second item of the menu it opens
+    (below the button: 2 in, items a menu line high). }
+  TellPlace('split-arrow', FLooks.SplitButton, RectangleWidth(FLooks.SplitButton.PixelBounds) - Scaled(8),
+    RectangleHeight(FLooks.SplitButton.PixelBounds) div 2);
+  TellPlace('split-menu-2', FLooks.SplitButton, Scaled(30), RectangleHeight(FLooks.SplitButton.PixelBounds) +
+    Scaled(2 + Theme.MenuItemHeight + Theme.MenuItemHeight div 2));
 end;
 
 procedure TTourWindow.ItemChecked(Sender: TControl; Index: LongInt; Checked: Boolean);

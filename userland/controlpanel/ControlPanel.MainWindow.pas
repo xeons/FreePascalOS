@@ -17,7 +17,8 @@
 }
 
 {
-  The Control Panel's window: the list of pages on the left, the page
+  The Control Panel's window: the list of pages on the left (each with
+  its icon: ControlPanel.PageList), the page
   chosen on the right, and OK, Cancel and Apply along the bottom.
 
   Apply makes the changes of every page that has some (it can be
@@ -43,12 +44,13 @@ uses
   Controls.Window,
   Controls.ListBox,
   Controls.Buttons,
-  ControlPanel.Pages;
+  ControlPanel.Pages,
+  ControlPanel.PageList;
 
 type
   TControlPanelWindow = class(TControlWindow)
   private
-    FPageList: TListBox;
+    FPageList: TPageList;
     FPages: array of TSettingsPage;
     FOkButton: TButton;
     FCancelButton: TButton;
@@ -133,7 +135,7 @@ var
   ButtonLeft: LongInt;
 begin
   inherited Create('Control Panel', CentredLeft, CentredTop, WindowWidth, WindowHeight, WindowFramed);
-  FPageList := TListBox.Create(Root);
+  FPageList := TPageList.Create(Root);
   FPageList.SetBounds(DialogMargin, DialogMargin + 6, ListWidth, PageHeight - 6);
   AddPage(TDisplayPage.CreatePage(Root, Self, 'Display'));
   AddPage(TMousePage.CreatePage(Root, Self, 'Mouse'));
@@ -221,7 +223,7 @@ begin
   Page.OnModified := @PageModified;
   SetLength(FPages, Length(FPages) + 1);
   FPages[High(FPages)] := Page;
-  FPageList.Items.Add(Page.Text);
+  FPageList.AddPage(Page.Text, Page.PageName);
 end;
 
 procedure TControlPanelWindow.ShowPage(Index: LongInt);

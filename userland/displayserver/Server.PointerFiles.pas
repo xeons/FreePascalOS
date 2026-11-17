@@ -41,8 +41,16 @@ unit Server.PointerFiles;
 
 interface
 
+uses
+  Windowing.Protocol;
+
 const
   PointerDirectory: PChar = '/lib/pointers';
+  { Each shape's file name, without its extension (.pointer for the
+    pattern, .cur for the pictures: Server.PointerPictures). }
+  PointerFileNames: array[0..PointerShapeCount - 1] of PChar = (
+    'arrow', 'resize-horizontal', 'resize-vertical', 'resize-diagonal-down', 'resize-diagonal-up', 'text-beam',
+    'busy', 'hand', 'move', 'not-allowed', 'crosshair');
 
 { Reads every shape's file over the built-in shape; the number read. }
 function LoadPointerFiles: LongInt;
@@ -54,14 +62,10 @@ uses
   Abi.SystemCalls,
   Sys.Files,
   Sys.Text,
-  Windowing.Protocol,
   Server.PointerShapes;
 
 const
   MaximumPointerFileSize = 16384;
-  PointerFileNames: array[0..PointerShapeCount - 1] of PChar = (
-    'arrow', 'resize-horizontal', 'resize-vertical', 'resize-diagonal-down', 'resize-diagonal-up', 'text-beam',
-    'busy');
   ClearMark = '-';
   CommentMark = ';';
 

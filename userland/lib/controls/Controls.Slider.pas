@@ -92,7 +92,8 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Buttons,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.Painting;
 
 const
   { Logical units. }
@@ -206,7 +207,7 @@ var
 begin
   Groove := MakeRectangle(TrackStart - Scaled(2), GrooveTop, TrackLength + Scaled(4), Scaled(GrooveLogicalHeight));
   FillRectangle(Canvas, Groove, Theme.Field);
-  DrawBevel(Canvas, Groove, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Groove);
   if (FTickStep > 0) and (FMaximum > FMinimum) then
   begin
     TickTop := ThumbHeight + Scaled(2);

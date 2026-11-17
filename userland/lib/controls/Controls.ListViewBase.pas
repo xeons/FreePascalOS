@@ -151,7 +151,8 @@ uses
   Windowing.Connection,
   Controls.Text,
   Controls.Icons,
-  Controls.ListViewPainting;
+  Controls.ListViewPainting,
+  Controls.Painting;
 
 const
   EdgeGrip = 3;
@@ -338,7 +339,7 @@ function TListViewBase.ColumnLeft(Column: LongInt): LongInt;
 var
   Index: LongInt;
 begin
-  Result := 2;
+  Result := BevelWidth;
   for Index := 0 to Column - 1 do
     Result := Result + Scaled(FWidths[Index]);
 end;
@@ -377,7 +378,8 @@ end;
 { Inside the bevel, below the header, beside (or above) the scroll bar. }
 function TListViewBase.ItemArea(WithScrollBar: Boolean): TRectangle;
 begin
-  Result := MakeRectangle(2, 2, RectangleWidth(PixelBounds) - 4, RectangleHeight(PixelBounds) - 4);
+  Result := MakeRectangle(BevelWidth, BevelWidth, RectangleWidth(PixelBounds) - 2 * BevelWidth,
+    RectangleHeight(PixelBounds) - 2 * BevelWidth);
   if ShowsHeader then
     Result.Top := Result.Top + HeaderHeight;
   if WithScrollBar and (FViewMode = ViewList) then
@@ -449,7 +451,7 @@ end;
 
 function TListViewBase.HeaderMiddle: LongInt;
 begin
-  Result := 2 + HeaderHeight div 2;
+  Result := BevelWidth + HeaderHeight div 2;
 end;
 
 function TListViewBase.ItemBounds(Index: LongInt): TRectangle;
@@ -625,12 +627,12 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
+  DrawSunkenBevel(Canvas, Box);
   Inner := Canvas;
-  NarrowCanvasClip(Inner, InflateRectangle(Box, -2));
+  NarrowCanvasClip(Inner, InflateRectangle(Box, -BevelWidth));
   Widths := PixelWidths;
   if ShowsHeader then
-    PaintListHeader(Inner, MakeRectangle(2, 2, RectangleWidth(Box) - 4, HeaderHeight), FCaptions, Widths,
+    PaintListHeader(Inner, MakeRectangle(BevelWidth, BevelWidth, RectangleWidth(Box) - 2 * BevelWidth, HeaderHeight), FCaptions, Widths,
       FSortColumn, FSortAscending);
   Shown := Grid;
   NarrowCanvasClip(Inner, Shown.Area);

@@ -100,7 +100,8 @@ uses
   Windowing.Theme,
   Windowing.Connection,
   Controls.Keys,
-  Controls.Text;
+  Controls.Text,
+  Controls.Painting;
 
 constructor TListBox.Create(AParent: TControl);
 begin
@@ -130,15 +131,15 @@ end;
 
 function TListBox.VisibleCount: LongInt;
 begin
-  Result := (RectangleHeight(PixelBounds) - 4) div ItemHeight;
+  Result := (RectangleHeight(PixelBounds) - 2 * BevelWidth) div ItemHeight;
   if Result < 1 then
     Result := 1;
 end;
 
 function TListBox.ItemAt(Y: LongInt): LongInt;
 begin
-  Result := FTopIndex + (Y - 2) div ItemHeight;
-  if (Y < 2) or (Result >= FItems.Count) then
+  Result := FTopIndex + (Y - BevelWidth) div ItemHeight;
+  if (Y < BevelWidth) or (Result >= FItems.Count) then
     Result := -1;
 end;
 
@@ -148,8 +149,8 @@ var
 begin
   Width := Scaled(Theme.ScrollBarWidth);
   { The scroll bar inside the bevel, along the right. }
-  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - 2 - Width), Unscaled(2), Unscaled(Width),
-    Unscaled(RectangleHeight(PixelBounds) - 4));
+  FScrollBar.AssignBounds(Unscaled(RectangleWidth(PixelBounds) - BevelWidth - Width), Unscaled(BevelWidth), Unscaled(Width),
+    Unscaled(RectangleHeight(PixelBounds) - 2 * BevelWidth));
   UpdateScrollBar;
   inherited Layout;
 end;
@@ -247,15 +248,15 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Field);
-  DrawBevel(Canvas, Box, SunkenThemeBevel);
-  Right := RectangleWidth(Box) - 2;
+  DrawSunkenBevel(Canvas, Box);
+  Right := RectangleWidth(Box) - BevelWidth;
   if FScrollBar.Visible then
     Right := Right - RectangleWidth(FScrollBar.PixelBounds);
   Inner := Canvas;
-  NarrowCanvasClip(Inner, MakeRectangle(2, 2, Right - 2, RectangleHeight(Box) - 4));
+  NarrowCanvasClip(Inner, MakeRectangle(BevelWidth, BevelWidth, Right - BevelWidth, RectangleHeight(Box) - 2 * BevelWidth));
   for Index := FTopIndex to FItems.Count - 1 do
   begin
-    Row := MakeRectangle(2, 2 + (Index - FTopIndex) * ItemHeight, Right - 2, ItemHeight);
+    Row := MakeRectangle(BevelWidth, BevelWidth + (Index - FTopIndex) * ItemHeight, Right - BevelWidth, ItemHeight);
     if Row.Top >= RectangleHeight(Box) then
       Break;
     PaintItem(Inner, Index, Row);

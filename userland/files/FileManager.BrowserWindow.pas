@@ -52,6 +52,7 @@ uses
   Controls.EditBox,
   Controls.Menus,
   Controls.ToolBar,
+  Controls.ImageList,
   Controls.StatusBar,
   Controls.Splitter,
   FileManager.Settings,
@@ -82,6 +83,8 @@ type
     FSettings: TFileManagerSettings;
     FMenuBar: TMenuBar;
     FToolBar: TToolBar;
+    { The toolbar's pictures (the theme's icons; none without them). }
+    FToolImages: TImageList;
     FAddressBox: TEditBox;
     FPlaces: TPlacesPane;
     FSplitter: TSplitter;
@@ -123,6 +126,8 @@ uses
   Windowing.Windows,
   Controls.Keys,
   Controls.MessageBoxes,
+  Controls.Icons,
+  Controls.IconTheme,
   Controls.FileNames,
   Controls.FolderListing,
   FileManager.Paths,
@@ -145,9 +150,12 @@ begin
     items in what is left. }
   FMenuBar := TMenuBar.Create(Root);
   FToolBar := TToolBar.Create(Root);
-  FBackButton := FToolBar.AddButton('Back', 56, @BackClicked);
-  FForwardButton := FToolBar.AddButton('Forward', 64, @ForwardClicked);
-  FUpButton := FToolBar.AddButton('Up', 40, @UpClicked);
+  FToolImages := TImageList.Create(SmallIconSize, SmallIconSize);
+  FToolBar.Images := FToolImages;
+  FBackButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'action-back'), 'Back', '', 74, @BackClicked);
+  FForwardButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'action-forward'), 'Forward', '', 84,
+    @ForwardClicked);
+  FUpButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'action-up'), 'Up', '', 52, @UpClicked);
   FAddressPanel := TPanel.Create(Root);
   FAddressPanel.SetBounds(0, 0, 0, AddressHeight);
   FAddressPanel.Align := AlignTop;
@@ -178,9 +186,14 @@ begin
 end;
 
 destructor TBrowserWindow.Destroy;
+var
+  Images: TImageList;
 begin
   FHistory.Free;
+  { The toolbar goes with the window, before its pictures. }
+  Images := FToolImages;
   inherited Destroy;
+  Images.Free;
 end;
 
 procedure TBrowserWindow.PlaceStatusPanels;

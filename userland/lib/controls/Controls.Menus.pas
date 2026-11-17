@@ -220,7 +220,8 @@ uses
   Controls.Keys,
   Controls.Icons,
   Controls.Text,
-  Controls.MenuBand;
+  Controls.MenuBand,
+  Controls.Painting;
 
 const
   SeparatorHeight = 8;
@@ -423,19 +424,30 @@ var
   Picture: TRectangle;
   Size: LongInt;
   State: TImageDrawState;
+  ColumnRight: LongInt;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
-  DrawBevel(Canvas, Box, RaisedThemeBevel);
+  DrawRaisedBevel(Canvas, Box);
+  ColumnRight := Scaled(2) + Scaled(CheckColumn);
+  if Theme.MenuIconColumnShown then
+  begin
+    { The icon column, shaded, with an etched line beside it. }
+    FillRectangle(Canvas, MakeRectangle(BevelWidth, BevelWidth, ColumnRight - BevelWidth,
+      RectangleHeight(Box) - 2 * BevelWidth), Theme.MenuIconColumn);
+    DrawEtchedVerticalLine(Canvas, ColumnRight - BevelLine, BevelWidth, RectangleHeight(Box) - BevelWidth);
+  end;
   for Index := 0 to FMenu.Count - 1 do
   begin
     Item := FMenu[Index];
     Row := MakeRectangle(Scaled(2), ItemTop(Index), RectangleWidth(Box) - Scaled(4), ItemTop(Index + 1) - ItemTop(Index));
     if Item.IsSeparator then
     begin
-      Middle := Row.Top + RectangleHeight(Row) div 2 - 1;
-      DrawHorizontalLine(Canvas, Row.Left + 1, Row.Right - 1, Middle, Theme.Shadow);
-      DrawHorizontalLine(Canvas, Row.Left + 1, Row.Right - 1, Middle + 1, Theme.Highlight);
+      Middle := Row.Top + RectangleHeight(Row) div 2 - BevelLine;
+      if Theme.MenuIconColumnShown then
+        DrawEtchedHorizontalLine(Canvas, ColumnRight + Scaled(2), Row.Right - 1, Middle)
+      else
+        DrawEtchedHorizontalLine(Canvas, Row.Left + 1, Row.Right - 1, Middle);
       Continue;
     end;
     TextColor := Theme.FaceText;

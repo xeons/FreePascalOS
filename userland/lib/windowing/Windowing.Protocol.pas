@@ -532,7 +532,15 @@ const
   PointerTextBeam = 5;
   { The program is busy. }
   PointerBusy = 6;
-  PointerShapeCount = 7;
+  { A link or something else to click. }
+  PointerHand = 7;
+  { Something being moved any way. }
+  PointerMove = 8;
+  { What is dragged cannot go here. }
+  PointerNotAllowed = 9;
+  { Picking a point precisely. }
+  PointerCrosshair = 10;
+  PointerShapeCount = 11;
   { Areas of a window with a shape of their own (RequestSetPointerShape). }
   MaximumPointerAreas = 15;
 

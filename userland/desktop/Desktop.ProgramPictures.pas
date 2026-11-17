@@ -23,8 +23,10 @@
   a slider), swatches (a window with colour samples), the dialogs (a
   window with a folder and colour discs), the Control Panel (a window of
   three sliders, as on a mixing desk) and the task manager (a window
-  with a graph of how busy the processors are). Each is drawn with shapes on
-  the design grid (Controls.PictureGrid), at any size.
+  with a graph of how busy the processors are). Each is the icon
+  theme's picture of the program (ProgramIconNames, Controls.IconTheme)
+  when it has one, else drawn here with shapes on the design grid
+  (Controls.PictureGrid), at any size.
 }
 unit Desktop.ProgramPictures;
 
@@ -37,6 +39,11 @@ uses
   Drawing.Canvas,
   Desktop.Programs;
 
+const
+  { The theme's icon of each program (/usr/share/icons/NAME.ico). }
+  ProgramIconNames: array[TProgramPicture] of string = ('app-file-manager', 'app-terminal', 'app-text-editor',
+    'app-control-panel', 'app-components', 'app-themes', 'app-dialogs', 'app-task-manager');
+
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 
 implementation
@@ -44,7 +51,8 @@ implementation
 uses
   Drawing.Colors,
   Drawing.Rasterizer,
-  Controls.PictureGrid;
+  Controls.PictureGrid,
+  Controls.IconTheme;
 
 const
   OutlineColor = $FF262A30;
@@ -176,6 +184,8 @@ procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; co
 var
   Grid: TPictureGrid;
 begin
+  if DrawThemeIcon(Canvas, ProgramIconNames[Picture], Box) then
+    Exit;
   Grid := GridFor(Box);
   case Picture of
     PictureFiles:
