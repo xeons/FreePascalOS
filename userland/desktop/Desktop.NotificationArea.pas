@@ -204,11 +204,11 @@ var
   Index: LongInt;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  FillRectangle(Canvas, Box, Theme.Face);
+  FillRectangle(Canvas, Box, Theme.TrayFace);
   DrawEdge(Canvas, Box, Theme.Shadow, Theme.Highlight);
   for Index := 0 to High(FIcons) do
     DrawNotificationPicture(Canvas, FIcons[Index].Picture, IconBounds(Index));
-  DrawTextInBox(Canvas, ControlFace, FClock, ClockBounds, AlignTextRight, Theme.FaceText);
+  DrawTextInBox(Canvas, ControlFace, FClock, ClockBounds, AlignTextRight, Theme.TrayText);
 end;
 
 procedure TNotificationArea.PointerUp(X, Y: LongInt; Button: LongWord);

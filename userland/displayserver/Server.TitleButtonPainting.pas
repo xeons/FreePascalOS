@@ -188,6 +188,8 @@ var
   Face: TColor;
   GlyphColor: TColor;
   FrameColor: TColor;
+  HighlightColor: TColor;
+  ShadowColor: TColor;
   Pixel: LongInt;
 begin
   Pixel := Look.Pixel;
@@ -196,12 +198,17 @@ begin
     Face := Theme.TitleButtonFace;
     GlyphColor := Theme.TitleButtonGlyph;
     FrameColor := Theme.TitleButtonFrame;
+    HighlightColor := Theme.TitleButtonHighlight;
+    ShadowColor := Theme.TitleButtonShadow;
   end
   else
   begin
+    { Pale, edged in the inactive bar's colours. }
     Face := Theme.InactiveTitleButtonFace;
     GlyphColor := Theme.InactiveTitleButtonGlyph;
     FrameColor := Theme.InactiveTitleEdge;
+    HighlightColor := Theme.Highlight;
+    ShadowColor := Theme.InactiveTitleEdge;
   end;
   if Look.Hot then
     Face := Theme.TitleButtonHotFace
@@ -216,14 +223,19 @@ begin
   if Look.Pressed then
   begin
     FillRectangle(Canvas, Inner, Face);
-    DrawWideEdge(Canvas, Inner, Pixel, Theme.TitleButtonShadow, Face);
+    DrawWideEdge(Canvas, Inner, Pixel, ShadowColor, Face);
   end
   else
   begin
-    FillVerticalGradient(Canvas, Inner, MixColors(Face, Theme.TitleButtonHighlight, 150), Face);
-    DrawWideEdge(Canvas, Inner, Pixel, Theme.TitleButtonHighlight, Theme.TitleButtonShadow);
+    FillVerticalGradient(Canvas, Inner, MixColors(Face, HighlightColor, 150), Face);
+    DrawWideEdge(Canvas, Inner, Pixel, HighlightColor, ShadowColor);
   end;
-  DrawGlyph(Canvas, GlyphSquare(Box, Look), Look.Glyph, 2 * Pixel, Pixel, GlyphColor, Face);
+  { Heavy glyphs: the cross's strokes a pixel wider than a window's
+    sides. }
+  if Look.Glyph = GlyphClose then
+    DrawGlyph(Canvas, GlyphSquare(Box, Look), GlyphClose, 3 * Pixel, Pixel, GlyphColor, Face)
+  else
+    DrawGlyph(Canvas, GlyphSquare(Box, Look), Look.Glyph, 2 * Pixel, Pixel, GlyphColor, Face);
 end;
 
 procedure PaintTitleButton(const Canvas: TCanvas; const Box: TRectangle; const Look: TTitleButtonLook);

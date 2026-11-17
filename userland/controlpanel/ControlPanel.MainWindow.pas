@@ -102,6 +102,7 @@ uses
   ControlPanel.NetworkPage,
   ControlPanel.UsersPage,
   ControlPanel.LockPage,
+  ControlPanel.AppearancePage,
   ControlPanel.Report;
 
 const
@@ -142,6 +143,7 @@ begin
   AddPage(TNetworkPage.CreatePage(Root, Self, 'Network'));
   AddPage(TUsersPage.CreatePage(Root, Self, 'Users'));
   AddPage(TLockPage.CreatePage(Root, Self, 'Screen Lock'));
+  AddPage(TAppearancePage.CreatePage(Root, Self, 'Appearance'));
   FPageList.OnChange := @PageChosen;
   ButtonTop := WindowHeight - DialogMargin - DialogButtonHeight;
   ButtonLeft := WindowWidth - DialogMargin - 3 * DialogButtonWidth - 2 * DialogButtonGap;

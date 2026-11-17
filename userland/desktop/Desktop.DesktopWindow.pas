@@ -72,6 +72,7 @@ type
   protected
     procedure Paint(var Canvas: TCanvas; const Area: TRectangle); override;
     procedure Resized; override;
+    procedure ThemeChanged; override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
     procedure CloseRequested; override;
@@ -119,8 +120,8 @@ const
   CaptionTop = 42;
   CaptionHeight = 18;
   DoubleClickMilliseconds = 500;
-  CaptionColor = $FFFFFFFF;
-  CaptionShadowColor = $C0000000;
+  { How dark the shadow under a caption's letters is. }
+  CaptionShadowAlpha = $C0;
   { What a selected picture is tinted with. }
   SelectedTint = $60284C82;
 
@@ -239,11 +240,12 @@ begin
   begin
     FillRectangle(Canvas, Picture, SelectedTint);
     FillRectangle(Canvas, Caption, Theme.Selection);
-  end
-  else
-    DrawTextInBox(Canvas, ControlFace, DesktopPrograms[Index].Caption, OffsetRectangle(Caption, 1, 1),
-      AlignTextCenter, CaptionShadowColor);
-  DrawTextInBox(Canvas, ControlFace, DesktopPrograms[Index].Caption, Caption, AlignTextCenter, CaptionColor);
+    DrawTextInBox(Canvas, ControlFace, DesktopPrograms[Index].Caption, Caption, AlignTextCenter, Theme.SelectionText);
+    Exit;
+  end;
+  DrawTextInBox(Canvas, ControlFace, DesktopPrograms[Index].Caption, OffsetRectangle(Caption, 1, 1),
+    AlignTextCenter, WithAlpha(Theme.DesktopIconTextShadow, CaptionShadowAlpha));
+  DrawTextInBox(Canvas, ControlFace, DesktopPrograms[Index].Caption, Caption, AlignTextCenter, Theme.DesktopIconText);
 end;
 
 procedure TDesktopWindow.Paint(var Canvas: TCanvas; const Area: TRectangle);
@@ -276,6 +278,13 @@ begin
   end;
   FreeSurface(FWallpaper);
   Invalidate;
+end;
+
+{ The wallpaper's colours are the theme's: drawn again. }
+procedure TDesktopWindow.ThemeChanged;
+begin
+  FreeSurface(FWallpaper);
+  inherited ThemeChanged;
 end;
 
 procedure TDesktopWindow.Resized;

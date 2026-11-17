@@ -102,6 +102,8 @@ var
 begin
   inherited Create;
   FMenu := TMenuItem.Create('');
+  { The band down its side, where the theme draws one. }
+  FMenu.SideBand := 'FreePascalOS';
   for Index := 0 to DesktopProgramCount - 1 do
   begin
     Item := FMenu.Add(DesktopPrograms[Index].Caption, @ProgramChosen);

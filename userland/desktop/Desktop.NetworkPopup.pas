@@ -18,8 +18,9 @@
 
 {
   What the network icon opens: a small pop-up above the taskbar listing
-  the network interfaces, each with the picture of its state, its name
-  and state, and its address and adapter (Configuration.NetworkStatus),
+  the network interfaces under its heading (Desktop.PopupHeading), each
+  with the picture of its state, its name and state, and its address
+  and adapter (Configuration.NetworkStatus),
   and a button that opens the Control Panel's Network page. A press
   outside it closes it, like a menu.
 
@@ -82,6 +83,7 @@ uses
   Controls.Panels,
   Desktop.SmallPictures,
   Desktop.NetworkIndicator,
+  Desktop.PopupHeading,
   Desktop.Programs,
   Desktop.Report;
 
@@ -183,10 +185,7 @@ begin
   Frame := TPanel.Create(Root);
   Frame.Edge := PanelRaised;
   Frame.Align := AlignClient;
-  Caption := TLabel.Create(Root);
-  Caption.ShowsMnemonic := False;
-  Caption.Text := 'Network';
-  Caption.SetBounds(Margin, Margin, PopupWidth - 2 * Margin, 18);
+  CreatePopupHeading(Root, 'Network', PopupWidth, Margin, 18);
   if Length(FList) = 0 then
   begin
     Caption := TLabel.Create(Root);

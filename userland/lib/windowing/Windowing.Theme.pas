@@ -56,9 +56,17 @@ type
     { The screen behind every window where nothing else is drawn (and
       the wallpaper's colour when it is one colour). }
     Desktop: TColor;
-    { The drawn wallpaper: a gradient from top to bottom. }
+    { The drawn wallpaper: a gradient from top to bottom, a glow (a
+      moon or a low sun, laid over the sky with its own alpha, a fainter
+      halo round it) high on the right, and
+      three waves of hills across the bottom, far to near (colours with
+      their own alpha, laid over what is behind). }
     WallpaperTop: TColor;
     WallpaperBottom: TColor;
+    WallpaperGlow: TColor;
+    WallpaperWaveFar: TColor;
+    WallpaperWaveMiddle: TColor;
+    WallpaperWaveNear: TColor;
     { A desktop icon's label and the shadow under its letters. }
     DesktopIconText: TColor;
     DesktopIconTextShadow: TColor;

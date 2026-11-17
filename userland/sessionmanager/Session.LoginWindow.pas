@@ -18,7 +18,8 @@
 
 {
   The login window: a user name, a password (shown as dots) and OK, in
-  the middle of the first display, before anyone has logged in.
+  the middle of the first display, before anyone has logged in, under
+  a heading (Controls.HeaderBands: gold where the theme bands panels).
 
   OK (or Enter) hands the name and the password (the password box's own
   buffer, Controls.PasswordBox: never a string) to OnLogin, which says
@@ -39,7 +40,8 @@ uses
   Controls.Labels,
   Controls.EditBox,
   Controls.PasswordBox,
-  Controls.Buttons;
+  Controls.Buttons,
+  Controls.HeaderBands;
 
 type
   { True if Name and Password let the user in. }
@@ -77,12 +79,18 @@ const
 constructor TLoginWindow.Create;
 var
   Caption: TLabel;
+  Heading: THeaderBand;
 begin
   inherited Create('Log in to FreePascalOS', (Unscaled(ScreenWidth) - WindowWidth) div 2,
     (Unscaled(ScreenHeight) - WindowHeight) div 2, WindowWidth, WindowHeight, WindowFramed);
-  Caption := TLabel.Create(Root);
-  Caption.Text := 'Type your user name and password.';
-  Caption.SetBounds(16, 14, 328, 20);
+  { The heading: a gold band across the top where the theme bands its
+    panels, otherwise a label. }
+  Heading := THeaderBand.Create(Root);
+  Heading.Text := 'Type your user name and password.';
+  if THeaderBand.ThemeBands then
+    Heading.SetBounds(0, 0, WindowWidth, 36)
+  else
+    Heading.SetBounds(16, 14, 328, 20);
   Caption := TLabel.Create(Root);
   Caption.Text := '&User name:';
   Caption.SetBounds(16, 46, 90, 20);

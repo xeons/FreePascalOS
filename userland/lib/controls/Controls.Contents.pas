@@ -55,6 +55,8 @@ uses
   Controls.TextEdit,
   Controls.Popups,
   Controls.ComboBox,
+  Controls.MenuBand,
+  Controls.HeaderBands,
   Controls.Menus,
   Controls.ToolBar,
   Controls.TabControl,

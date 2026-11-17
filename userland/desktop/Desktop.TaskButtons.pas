@@ -104,13 +104,13 @@ begin
   Shift := 0;
   if Pressed then
   begin
-    FillRectangle(Canvas, Box, Theme.Light);
+    FillRectangle(Canvas, Box, Theme.TaskButtonActiveFace);
     DrawBevel(Canvas, Box, SunkenThemeBevel);
     Shift := 1;
   end
   else
   begin
-    FillRectangle(Canvas, Box, Theme.Face);
+    FillRectangle(Canvas, Box, Theme.TaskbarFace);
     DrawBevel(Canvas, Box, RaisedThemeBevel);
   end;
   Mark := MakeRectangle(Scaled(Spacing) + Shift, (RectangleHeight(Box) - Scaled(MarkSize)) div 2 + Shift,
@@ -118,7 +118,7 @@ begin
   DrawTaskWindowMark(Canvas, Mark);
   Caption := MakeRectangle(Mark.Right + Scaled(Spacing), Shift,
     RectangleWidth(Box) - Mark.Right - 2 * Scaled(Spacing), RectangleHeight(Box));
-  TextColor := Theme.FaceText;
+  TextColor := Theme.TaskbarText;
   if FMinimized then
     TextColor := Theme.Shadow;
   if FActive then

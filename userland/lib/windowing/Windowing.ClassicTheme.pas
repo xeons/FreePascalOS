@@ -47,6 +47,10 @@ begin
   Values.Desktop := $FF2F5F7A;
   Values.WallpaperTop := $FF0F2C42;
   Values.WallpaperBottom := $FF3F7E95;
+  Values.WallpaperGlow := $38F4F1E6;
+  Values.WallpaperWaveFar := $3C9CC9D8;
+  Values.WallpaperWaveMiddle := $70204F66;
+  Values.WallpaperWaveNear := $A0102E40;
   Values.DesktopIconText := $FFFFFFFF;
   Values.DesktopIconTextShadow := $FF000000;
 

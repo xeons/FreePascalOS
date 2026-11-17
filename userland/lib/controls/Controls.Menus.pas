@@ -84,6 +84,7 @@ type
     FOnOpening: TMenuItemEvent;
     FImages: TImageList;
     FImageIndex: LongInt;
+    FSideBand: string;
     function GetItem(Index: LongInt): TMenuItem;
     function GetCount: LongInt;
   public
@@ -115,6 +116,10 @@ type
     property OnClick: TMenuItemEvent read FOnClick write FOnClick;
     { Its items are about to show (it is a menu, or a submenu's head). }
     property OnOpening: TMenuItemEvent read FOnOpening write FOnOpening;
+    { The text of a band down the left of its pop-up, where the theme
+      draws one (TTheme.StartMenuBand: Controls.MenuBand); '' (the
+      default): none. }
+    property SideBand: string read FSideBand write FSideBand;
   end;
 
   TMenuBar = class;
@@ -214,7 +219,8 @@ uses
   Windowing.Displays,
   Controls.Keys,
   Controls.Icons,
-  Controls.Text;
+  Controls.Text,
+  Controls.MenuBand;
 
 const
   SeparatorHeight = 8;
@@ -303,6 +309,15 @@ begin
     Result := Theme.MenuItemHeight;
 end;
 
+{ The width of the band down Menu's pop-up (logical units; 0: none). }
+function SideBandWidth(Menu: TMenuItem): LongInt;
+begin
+  if (Menu.SideBand <> '') and Theme.StartMenuBand then
+    Result := Theme.StartMenuBandWidth
+  else
+    Result := 0;
+end;
+
 procedure MeasurePopupMenu(Menu: TMenuItem; out Width, Height: LongInt);
 var
   Index: LongInt;
@@ -323,7 +338,7 @@ begin
     if Measured > ShortcutPart then
       ShortcutPart := Measured;
   end;
-  Width := 4 + CheckColumn + TextPart + ColumnGap + ShortcutPart + ArrowColumn;
+  Width := 4 + CheckColumn + TextPart + ColumnGap + ShortcutPart + ArrowColumn + SideBandWidth(Menu);
 end;
 
 function PopupMenuItemTop(Menu: TMenuItem; Index: LongInt): LongInt;
@@ -341,6 +356,7 @@ var
   Width: LongInt;
   Height: LongInt;
   Popup: TPopupWindow;
+  Band: TMenuBand;
 begin
   if Assigned(Menu.OnOpening) then
     Menu.OnOpening(Menu);
@@ -348,6 +364,13 @@ begin
   { Kept on the display it opens on. }
   KeepOnDisplay(Left, Top, Width, Height);
   Popup := TPopupWindow.CreatePopup(Owner, Left, Top, Width, Height);
+  if SideBandWidth(Menu) > 0 then
+  begin
+    Band := TMenuBand.Create(Popup.Root);
+    Band.Text := Menu.SideBand;
+    Band.Align := AlignLeft;
+    Band.SetBounds(0, 0, SideBandWidth(Menu), Height);
+  end;
   Result := TMenuList.Create(Popup.Root);
   Result.Align := AlignClient;
   Result.CanFocus := True;
@@ -495,7 +518,7 @@ begin
     Exit;
   Window := FPopup.OwnerWindow;
   FSubmenu := OpenMenuList(Window, FMenu[FHighlighted],
-    FPopup.ScreenLeft + Unscaled(RectangleWidth(PixelBounds)) - 4,
+    FPopup.ScreenLeft + Unscaled(PixelBounds.Right) - 4,
     FPopup.ScreenTop + Unscaled(ItemTop(FHighlighted)) - 2);
   FSubmenu.FParentList := Self;
   FSubmenu.FMenuBar := FMenuBar;
@@ -560,7 +583,7 @@ var
   LocalY: LongInt;
 begin
   Result := False;
-  ScreenX := Scaled(FPopup.ScreenLeft) + X;
+  ScreenX := Scaled(FPopup.ScreenLeft) + PixelBounds.Left + X;
   ScreenY := Scaled(FPopup.ScreenTop) + Y;
   List := FParentList;
   while List <> nil do

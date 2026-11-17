@@ -27,6 +27,9 @@
   for a moment (RefusalDelayMilliseconds, with the box and the button
   disabled), then says it was wrong: passwords cannot be tried quickly.
   The clock is looked at every second. The window cannot be closed.
+  Its colours are the theme's (LockTop, LockBottom, LockText,
+  LockDimText, LockWarningText), and the panel gets a gold accent where
+  the theme bands its panels.
 
   The display server keeps everything else off the screen while it is
   locked (Windowing.ScreenLock); this window is only what shows.
@@ -116,12 +119,9 @@ const
   BoxWidth = 220;
   ButtonWidth = 80;
   ControlHeight = 24;
-  { The colours drawn over: a night sky, white text, a soft red. }
-  SkyTop = $FF0E2236;
-  SkyBottom = $FF27465E;
-  LockText = $FFFFFFFF;
-  DimText = $FFC8D4DE;
-  WarningText = $FFFFB0A8;
+  { The panel's gold accent along its top, where the theme bands its
+    panels. }
+  AccentHeight = 4;
   ClockPoints = 480;
   DatePoints = 140;
   NamePoints = 140;
@@ -139,32 +139,35 @@ var
 begin
   Width := RectangleWidth(PixelBounds);
   Height := RectangleHeight(PixelBounds);
-  FillVerticalGradient(Canvas, MakeRectangle(0, 0, Width, Height), SkyTop, SkyBottom);
+  FillVerticalGradient(Canvas, MakeRectangle(0, 0, Width, Height), Theme.LockTop, Theme.LockBottom);
   Middle := Height div 2;
   { The clock and the date above the middle. }
   LineHeight := TextHeight(FontFace(ClockPoints, False));
   Line := Middle - Scaled(150);
   DrawTextInBox(Canvas, FontFace(ClockPoints, False), FClock, MakeRectangle(0, Line, Width, LineHeight),
-    AlignTextCenter, LockText);
+    AlignTextCenter, Theme.LockText);
   Line := Line + LineHeight;
   LineHeight := TextHeight(FontFace(DatePoints, False));
   DrawTextInBox(Canvas, FontFace(DatePoints, False), FDate, MakeRectangle(0, Line, Width, LineHeight),
-    AlignTextCenter, DimText);
+    AlignTextCenter, Theme.LockDimText);
   { Whose session it is, and what to do, just above the panel. }
   LineHeight := TextHeight(FontFace(NamePoints, True));
   Line := FPanel.Top - Scaled(8) - TextHeight(FontFace(TextPoints, False)) - LineHeight;
   DrawTextInBox(Canvas, FontFace(NamePoints, True), FUserName, MakeRectangle(0, Line, Width, LineHeight),
-    AlignTextCenter, LockText);
+    AlignTextCenter, Theme.LockText);
   Line := Line + LineHeight;
   LineHeight := TextHeight(FontFace(TextPoints, False));
   DrawTextInBox(Canvas, FontFace(TextPoints, False), 'This computer is locked. Type your password to unlock it.',
-    MakeRectangle(0, Line, Width, LineHeight), AlignTextCenter, DimText);
+    MakeRectangle(0, Line, Width, LineHeight), AlignTextCenter, Theme.LockDimText);
   { The panel the password box and the button sit on. }
   FillRectangle(Canvas, FPanel, Theme.Face);
+  if Theme.BandedGroupBoxes then
+    FillVerticalGradient(Canvas, MakeRectangle(FPanel.Left, FPanel.Top, RectangleWidth(FPanel), Scaled(AccentHeight)),
+      Theme.HeaderBandStart, Theme.HeaderBandEnd);
   DrawBevel(Canvas, FPanel, RaisedThemeBevel);
   if FMessage <> '' then
     DrawTextInBox(Canvas, FontFace(TextPoints, False), FMessage, MakeRectangle(0, FPanel.Bottom + Scaled(10),
-      Width, LineHeight), AlignTextCenter, WarningText);
+      Width, LineHeight), AlignTextCenter, Theme.LockWarningText);
 end;
 
 { --- The window ------------------------------------------------------------ }

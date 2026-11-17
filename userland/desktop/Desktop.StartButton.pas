@@ -86,7 +86,14 @@ var
   Caption: TRectangle;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  FillRectangle(Canvas, Box, Theme.Face);
+  { The theme's gold (lighter at the top; held down, the other way
+    round) or the plain face. }
+  if not Theme.TintedStartButton then
+    FillRectangle(Canvas, Box, Theme.Face)
+  else if FDown then
+    FillVerticalGradient(Canvas, Box, Theme.StartButtonEnd, Theme.StartButtonStart)
+  else
+    FillVerticalGradient(Canvas, Box, Theme.StartButtonStart, Theme.StartButtonEnd);
   Shift := 0;
   if FDown then
   begin
@@ -100,7 +107,7 @@ begin
   DrawStartMark(Canvas, Mark);
   Caption := MakeRectangle(Mark.Right + Scaled(Spacing), Shift, RectangleWidth(Box) - Mark.Right - Scaled(Spacing),
     RectangleHeight(Box));
-  DrawTextInBox(Canvas, ControlBoldFace, Text, Caption, AlignTextLeft, Theme.FaceText);
+  DrawTextInBox(Canvas, ControlBoldFace, Text, Caption, AlignTextLeft, Theme.StartButtonText);
 end;
 
 procedure TStartButton.PointerDown(X, Y: LongInt; Button: LongWord);

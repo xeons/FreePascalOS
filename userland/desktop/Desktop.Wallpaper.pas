@@ -19,9 +19,12 @@
 {
   The wallpaper: a drawn design behind the desktop's icons.
 
-  A night-blue sky darkening upwards, a pale moon high on the right, and
-  three bands of rolling water along the bottom, each a translucent
-  shape over the ones behind it, all anti-aliased. It is drawn once for
+  A sky darkening upwards, a faint glow high on the right, and three
+  bands of rolling hills (or water) along the bottom, each a translucent
+  shape over the ones behind it, all anti-aliased. The colours are the
+  theme's (WallpaperTop, WallpaperBottom, WallpaperGlow and the three
+  WallpaperWave colours): Classic's is a night sea under a pale moon,
+  Sunrise's soft blue-violet hills under a golden dawn. It is drawn once for
   a size into a surface of its own, which the desktop window copies
   from whenever it paints (drawing the shapes again for every small
   repaint would be slow).
@@ -54,13 +57,13 @@ uses
   Drawing.Rectangles,
   Drawing.Canvas,
   Drawing.Rasterizer,
-  Drawing.SmoothShapes;
+  Drawing.SmoothShapes,
+  Windowing.Theme;
 
 const
-  SkyTopColor = $FF0F2C42;
-  SkyBottomColor = $FF3F7E95;
-  MoonColor = $38F4F1E6;
-  HaloColor = $0CF4F1E6;
+  { The halo around the glow: this fraction of the glow's alpha. }
+  HaloShare = 12;
+  HaloShareOf = 56;
   { Points along each wave's crest. }
   WaveSteps = 96;
 
@@ -72,16 +75,26 @@ type
     Swell: Double;
     Crests: Double;
     Phase: Double;
-    Color: TColor;
   end;
 
 const
+  { Far to near. }
   Waves: array[0..2] of TWave = (
-    (Level: 0.70; Swell: 0.035; Crests: 1.3; Phase: 0.6; Color: $3C9CC9D8),
-    (Level: 0.79; Swell: 0.030; Crests: 2.1; Phase: 2.2; Color: $70204F66),
-    (Level: 0.88; Swell: 0.022; Crests: 2.9; Phase: 4.0; Color: $A0102E40));
+    (Level: 0.70; Swell: 0.035; Crests: 1.3; Phase: 0.6),
+    (Level: 0.79; Swell: 0.030; Crests: 2.1; Phase: 2.2),
+    (Level: 0.88; Swell: 0.022; Crests: 2.9; Phase: 4.0));
 
-procedure DrawWave(const Canvas: TCanvas; const Wave: TWave; Width, Height: LongInt);
+function WaveColor(Index: LongInt): TColor;
+begin
+  case Index of
+    0: Result := Theme.WallpaperWaveFar;
+    1: Result := Theme.WallpaperWaveMiddle;
+  else
+    Result := Theme.WallpaperWaveNear;
+  end;
+end;
+
+procedure DrawWave(const Canvas: TCanvas; const Wave: TWave; Color: TColor; Width, Height: LongInt);
 var
   Points: array[0..WaveSteps + 2] of TPrecisePoint;
   Step: LongInt;
@@ -96,7 +109,7 @@ begin
   end;
   Points[WaveSteps + 1] := PrecisePoint(Width, Height);
   Points[WaveSteps + 2] := PrecisePoint(0, Height);
-  FillSmoothPolygon(Canvas, Points, Wave.Color);
+  FillSmoothPolygon(Canvas, Points, Color);
 end;
 
 procedure DrawMoon(const Canvas: TCanvas; Width, Height: LongInt);
@@ -110,9 +123,9 @@ begin
   CenterY := Height div 8 + Diameter div 2;
   { A soft halo, then the moon over it. }
   FillSmoothEllipse(Canvas, MakeRectangle(CenterX - Diameter, CenterY - Diameter, 2 * Diameter, 2 * Diameter),
-    HaloColor);
+    WithAlpha(Theme.WallpaperGlow, AlphaOf(Theme.WallpaperGlow) * HaloShare div HaloShareOf));
   FillSmoothEllipse(Canvas, MakeRectangle(CenterX - Diameter div 2, CenterY - Diameter div 2, Diameter, Diameter),
-    MoonColor);
+    Theme.WallpaperGlow);
 end;
 
 function RenderWallpaper(var Surface: TSurface; Width, Height: LongInt): Boolean;
@@ -121,14 +134,14 @@ var
   Index: LongInt;
 begin
   FreeSurface(Surface);
-  Result := CreateSurface(Surface, Width, Height, SkyBottomColor);
+  Result := CreateSurface(Surface, Width, Height, Theme.WallpaperBottom);
   if not Result then
     Exit;
   BeginCanvas(Canvas, Surface);
-  FillVerticalGradient(Canvas, SurfaceBounds(Surface), SkyTopColor, SkyBottomColor);
+  FillVerticalGradient(Canvas, SurfaceBounds(Surface), Theme.WallpaperTop, Theme.WallpaperBottom);
   DrawMoon(Canvas, Width, Height);
   for Index := 0 to High(Waves) do
-    DrawWave(Canvas, Waves[Index], Width, Height);
+    DrawWave(Canvas, Waves[Index], WaveColor(Index), Width, Height);
 end;
 
 end.
