@@ -21,8 +21,9 @@
   zone, from the database (Sys.TimeZones, each with its offset now);
   and the date and time, to set the clock.
 
-  The date and time boxes follow the clock until one is edited; what is
-  typed is a local time of the zone chosen above. Both changes are
+  The date and time pickers (the date's with a calendar that drops
+  down) follow the clock until one is edited; what they show is a local
+  time of the zone chosen above. Both changes are
   root's: applying sends them to the system settings service as an
   administrator (ControlPanel.Administrator asks for the password once).
 }
@@ -39,7 +40,7 @@ uses
   Controls.Window,
   Controls.Labels,
   Controls.ListBox,
-  Controls.EditBox,
+  Controls.DateTimePicker,
   Sys.TimeZones,
   ControlPanel.Pages;
 
@@ -48,14 +49,15 @@ type
   private
     FNow: TLabel;
     FZones: TListBox;
-    FDateBox: TEditBox;
-    FTimeBox: TEditBox;
+    FDateBox: TDateTimePicker;
+    FTimeBox: TDateTimePicker;
     FLoadedZone: PTimeZone;
     FClockEdited: Boolean;
     FFillingClock: Boolean;
     procedure ClockEdited(Sender: TControl);
     procedure ShowNow;
     procedure FillClockBoxes;
+    function ClockBoxesInUse: Boolean;
     function ChosenZone: PTimeZone;
     function ApplyZone(Zone: PTimeZone): Boolean;
     function ApplyClock(Zone: PTimeZone): Boolean;
@@ -120,18 +122,21 @@ begin
   Caption := TLabel.Create(Self);
   Caption.Text := '&Date:';
   Caption.SetBounds(PageMargin, 246, LabelWidth - 6, 18);
-  FDateBox := TEditBox.Create(Self);
+  FDateBox := TDateTimePicker.Create(Self);
+  FDateBox.Kind := DateTimeKindDate;
   FDateBox.SetBounds(ControlLeft, 244, 110, 22);
   FDateBox.OnChange := @ClockEdited;
   Caption := TLabel.Create(Self);
   Caption.Text := 'T&ime:';
   Caption.SetBounds(ControlLeft + 124, 246, 40, 18);
-  FTimeBox := TEditBox.Create(Self);
+  FTimeBox := TDateTimePicker.Create(Self);
+  FTimeBox.Kind := DateTimeKindTime;
+  FTimeBox.Format := DateTimeFormatLong;
   FTimeBox.SetBounds(ControlLeft + 166, 244, 90, 22);
   FTimeBox.OnChange := @ClockEdited;
   Caption := TLabel.Create(Self);
   Caption.ShowsMnemonic := False;
-  Caption.Text := 'YYYY-MM-DD and HH:MM:SS, local time.';
+  Caption.Text := 'Local time in the zone chosen above.';
   Caption.SetBounds(ControlLeft, 272, PageWidth - ControlLeft - PageMargin, 18);
 end;
 
@@ -167,14 +172,18 @@ begin
 end;
 
 procedure TDateTimePage.FillClockBoxes;
-var
-  Local: TLocalTime;
 begin
-  DecodeTimeInZone(ChosenZone, CurrentTime, Local);
   FFillingClock := True;
-  FDateBox.Text := Format('%.4d-%.2d-%.2d', [Local.DateTime.Year, Local.DateTime.Month, Local.DateTime.Day]);
-  FTimeBox.Text := Format('%.2d:%.2d:%.2d', [Local.DateTime.Hour, Local.DateTime.Minute, Local.DateTime.Second]);
+  FDateBox.TimeZone := ChosenZone;
+  FDateBox.SetToNow;
+  FTimeBox.TimeZone := ChosenZone;
+  FTimeBox.SetToNow;
   FFillingClock := False;
+end;
+
+function TDateTimePage.ClockBoxesInUse: Boolean;
+begin
+  Result := FDateBox.Focused or FTimeBox.Focused or FDateBox.DroppedDown;
 end;
 
 procedure TDateTimePage.ClockEdited(Sender: TControl);
@@ -188,7 +197,7 @@ end;
 procedure TDateTimePage.Tick;
 begin
   ShowNow;
-  if not FClockEdited and not FDateBox.Focused and not FTimeBox.Focused then
+  if not FClockEdited and not ClockBoxesInUse then
     FillClockBoxes;
 end;
 
@@ -224,35 +233,18 @@ begin
       SignError, Window);
 end;
 
-{ Reads YYYY-MM-DD and HH:MM:SS (or HH:MM). }
-function ReadClockBoxes(const DateText, TimeText: string; out Year, Month, Day, Hour, Minute, Second: LongInt): Boolean;
-begin
-  Result := (Length(DateText) = 10) and (DateText[5] = '-') and (DateText[8] = '-') and
-    TryStrToInt(Copy(DateText, 1, 4), Year) and TryStrToInt(Copy(DateText, 6, 2), Month) and
-    TryStrToInt(Copy(DateText, 9, 2), Day) and (Length(TimeText) >= 5) and (TimeText[3] = ':') and
-    TryStrToInt(Copy(TimeText, 1, 2), Hour) and TryStrToInt(Copy(TimeText, 4, 2), Minute);
-  Second := 0;
-  if Result and (Length(TimeText) = 8) then
-    Result := (TimeText[6] = ':') and TryStrToInt(Copy(TimeText, 7, 2), Second)
-  else if Result then
-    Result := Length(TimeText) = 5;
-  Result := Result and (Month >= 1) and (Month <= 12) and (Day >= 1) and (Day <= 31) and (Hour >= 0) and
-    (Hour <= 23) and (Minute >= 0) and (Minute <= 59) and (Second >= 0) and (Second <= 59);
-end;
-
 function TDateTimePage.ApplyClock(Zone: PTimeZone): Boolean;
 var
   Year, Month, Day, Hour, Minute, Second: LongInt;
   Request: TSystemSettingsRequest;
   Error: LongInt;
 begin
-  Result := ReadClockBoxes(Trim(FDateBox.Text), Trim(FTimeBox.Text), Year, Month, Day, Hour, Minute, Second);
-  if not Result then
-  begin
-    ShowMessageBox('Date and Time', 'Write the date as YYYY-MM-DD and the time as HH:MM:SS.', MessageOk, SignWarning,
-      Window);
-    Exit;
-  end;
+  Year := FDateBox.Date.Year;
+  Month := FDateBox.Date.Month;
+  Day := FDateBox.Date.Day;
+  Hour := FTimeBox.Value.Hour;
+  Minute := FTimeBox.Value.Minute;
+  Second := FTimeBox.Value.Second;
   Request := NewSystemSettingsRequest(SystemRequestSetClock);
   Request.Time := ZoneLocalTimeToUnixTime(Zone, Year, Month, Day, Hour, Minute, Second);
   Error := SendAsAdministrator(Window, Request);

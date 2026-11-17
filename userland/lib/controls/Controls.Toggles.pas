@@ -81,7 +81,8 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Text,
-  Controls.LayoutRules;
+  Controls.LayoutRules,
+  Controls.CheckMarks;
 
 constructor TToggle.Create(AParent: TControl);
 begin
@@ -137,7 +138,7 @@ end;
 
 function TToggle.MarkSize: LongInt;
 begin
-  Result := Scaled(13);
+  Result := CheckMarkSize;
 end;
 
 const
@@ -181,31 +182,14 @@ begin
 end;
 
 procedure TCheckBox.Paint(var Canvas: TCanvas);
+const
+  States: array[Boolean] of TCheckState = (CheckUnchecked, CheckChecked);
 var
-  Mark: TRectangle;
   Size: LongInt;
-  Thickness: LongInt;
-  Offset: LongInt;
-  Tick: TRectangle;
 begin
   Size := MarkSize;
-  Mark := MakeRectangle(0, (RectangleHeight(PixelBounds) - Size) div 2, Size, Size);
-  FillRectangle(Canvas, Mark, Theme.Field);
-  DrawBevel(Canvas, Mark, SunkenThemeBevel);
-  if Checked then
-  begin
-    { A tick: from the left middle down to a third across, then up to
-      the top right; Thickness pixels thick. }
-    Tick := InflateRectangle(Mark, -Scaled(3));
-    Thickness := Scaled(2);
-    for Offset := 0 to Thickness - 1 do
-    begin
-      DrawLine(Canvas, Tick.Left, Tick.Top + RectangleHeight(Tick) div 2 + Offset,
-        Tick.Left + RectangleWidth(Tick) div 3, Tick.Bottom - Thickness + Offset, Theme.FieldText);
-      DrawLine(Canvas, Tick.Left + RectangleWidth(Tick) div 3, Tick.Bottom - Thickness + Offset,
-        Tick.Right - 1, Tick.Top + Offset, Theme.FieldText);
-    end;
-  end;
+  DrawCheckMark(Canvas, MakeRectangle(0, (RectangleHeight(PixelBounds) - Size) div 2, Size, Size), States[Checked],
+    True);
   PaintText(Canvas);
 end;
 

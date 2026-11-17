@@ -396,12 +396,12 @@ normalized (0-65535), not pixels.
         on TSplitter)
   - [ ] Panel improvements: scrolling when the content is larger (AutoScroll)
 - [ ] More controls:
-  - [ ] Checked list box (a check box per item, Space toggles, check events)
-  - [ ] Numeric up/down (an edit box with up and down buttons; minimum,
+  - [x] Checked list box (a check box per item, Space toggles, check events)
+  - [x] Numeric up/down (an edit box with up and down buttons; minimum,
         maximum, step, decimal places; arrow keys and the wheel)
-  - [ ] Calendar (a month grid: today, a selected date or range, first day
+  - [x] Calendar (a month grid: today, a selected date or range, first day
         of the week, moving by month and year, keyboard navigation)
-  - [ ] Date and time picker (an edit box with fields for each part, a drop
+  - [x] Date and time picker (an edit box with fields for each part, a drop
         down calendar; date, time, or both; formats; uses the time zone)
   - [ ] Picture box (shows an image: normal, stretched, zoomed to fit,
         centred; needs libimage from step 8 for files, surfaces before then)

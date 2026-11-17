@@ -17,8 +17,8 @@
 }
 
 {
-  The Mouse page: the pointer's speed and acceleration, and left-handed
-  buttons. Applying gives them to the display server and keeps them in
+  The Mouse page: the pointer's speed and acceleration (a slider and a
+  numeric up/down box each, kept together), and left-handed buttons. Applying gives them to the display server and keeps them in
   the user's settings (Windowing.MouseSettings), where the session
   manager finds them at the next login.
 }
@@ -37,17 +37,20 @@ uses
   Controls.Labels,
   Controls.Toggles,
   Controls.Slider,
+  Controls.NumericUpDown,
   ControlPanel.Pages;
 
 type
   TMousePage = class(TSettingsPage)
   private
     FSpeed: TSlider;
-    FSpeedValue: TLabel;
+    FSpeedValue: TNumericUpDown;
     FAcceleration: TSlider;
-    FAccelerationValue: TLabel;
+    FAccelerationValue: TNumericUpDown;
     FLeftHanded: TCheckBox;
     procedure SliderChanged(Sender: TControl);
+    procedure ValueBoxChanged(Sender: TControl);
+    procedure ShowValues;
     procedure ShowSettings(const Settings: TMouseSettings);
   protected
     procedure LoadSettings; override;
@@ -90,8 +93,10 @@ begin
   FSpeed.TickStep := 1;
   FSpeed.PageStep := 5;
   FSpeed.OnChange := @SliderChanged;
-  FSpeedValue := TLabel.Create(Self);
-  FSpeedValue.SetBounds(SliderLeft + SliderWidth + 10, 32, 40, 18);
+  FSpeedValue := TNumericUpDown.Create(Self);
+  FSpeedValue.SetBounds(SliderLeft + SliderWidth + 10, 34, 56, 22);
+  FSpeedValue.SetRange(MinimumMouseSpeed, MaximumMouseSpeed);
+  FSpeedValue.OnValueChanged := @ValueBoxChanged;
   Caption := TLabel.Create(Self);
   Caption.Text := '&Acceleration:';
   Caption.SetBounds(PageMargin, 80, LabelWidth - 6, 18);
@@ -101,8 +106,10 @@ begin
   FAcceleration.TickStep := 1;
   FAcceleration.PageStep := 2;
   FAcceleration.OnChange := @SliderChanged;
-  FAccelerationValue := TLabel.Create(Self);
-  FAccelerationValue.SetBounds(SliderLeft + SliderWidth + 10, 80, 40, 18);
+  FAccelerationValue := TNumericUpDown.Create(Self);
+  FAccelerationValue.SetBounds(SliderLeft + SliderWidth + 10, 82, 56, 22);
+  FAccelerationValue.SetRange(0, MaximumMouseAcceleration);
+  FAccelerationValue.OnValueChanged := @ValueBoxChanged;
   FLeftHanded := TCheckBox.Create(Self);
   FLeftHanded.Text := 'Switch the &left and right buttons (left-handed)';
   FLeftHanded.SetBounds(PageMargin, 128, PageWidth - 2 * PageMargin, 20);
@@ -121,11 +128,26 @@ begin
   Result := 'mouse';
 end;
 
+procedure TMousePage.ShowValues;
+begin
+  FSpeedValue.Value := FSpeed.Position;
+  FAccelerationValue.Value := FAcceleration.Position;
+end;
+
 procedure TMousePage.SliderChanged(Sender: TControl);
 begin
-  FSpeedValue.Text := IntToStr(FSpeed.Position);
-  FAccelerationValue.Text := IntToStr(FAcceleration.Position);
+  ShowValues;
   MarkModified;
+end;
+
+{ A value typed or stepped moves its slider (which marks the page
+  modified). }
+procedure TMousePage.ValueBoxChanged(Sender: TControl);
+begin
+  if Sender = FSpeedValue then
+    FSpeed.Position := FSpeedValue.IntegerValue
+  else
+    FAcceleration.Position := FAccelerationValue.IntegerValue;
 end;
 
 procedure TMousePage.LoadSettings;
@@ -152,8 +174,7 @@ begin
   FSpeed.Position := Settings.Speed;
   FAcceleration.Position := Settings.Acceleration;
   FLeftHanded.Checked := Settings.LeftHanded;
-  FSpeedValue.Text := IntToStr(FSpeed.Position);
-  FAccelerationValue.Text := IntToStr(FAcceleration.Position);
+  ShowValues;
 end;
 
 function TMousePage.Apply: Boolean;
