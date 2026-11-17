@@ -1526,6 +1526,28 @@ checks.append(('notepad: word wrap is remembered for the next Notepad (the user\
                re.search(rb'\ntrue\r?\n', again_log) is not None and
                b'settings word-wrap on, status-bar on' in again_log))
 
+# The calculator, from the keyboard: 12*(3+4) typed on the keyboard
+# (Shift for * and the parentheses) and Enter give 84, the expression
+# shown above it; Ctrl+C copies the number (read back
+# with the clipboard tool). Its settings are deleted afterwards.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'calculator > /tmp/calc.log &\r')
+time.sleep(3)
+for key in ('1', '2', 'shift-8', 'shift-9', '3', 'shift-equal', '4', 'shift-0', 'ret'):
+    press(key)
+time.sleep(1)
+press('ctrl-c')
+time.sleep(0.8)
+calculator_from = len(received)
+type_on_serial(b'clipboard -p; echo; kill %2; wait %2; cat /tmp/calc.log; settings delete Calculator; kill %1; wait; '
+               b'm=DONE; echo CALCULATOR $m\r')
+calculator_ok = wait_for('CALCULATOR DONE', 30)
+calculator_log = bytes(received[calculator_from:])
+checks.append(('calculator: 12*(3+4) typed on the keyboard and Enter give 84; Ctrl+C copies it',
+               calculator_ok and re.search(rb'result 12 \xc3\x97 \(3 \+ 4\) = 84', calculator_log) is not None and
+               re.search(rb'\n84\r?\n', calculator_log) is not None and b'copied 84' in calculator_log))
+
 # The file manager (files), on a folder made over the serial shell:
 # icon, list and details views; sorting by a column's header; a folder
 # opened with a double click and Back; a new folder (Ctrl+Shift+N)
