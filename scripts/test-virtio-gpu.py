@@ -153,6 +153,15 @@ def wait_for_pattern(pattern, seconds):
     return None
 
 
+def wait_for_count(text, count, seconds):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        collect(0.2)
+        if received.count(text.encode()) >= count:
+            return True
+    return False
+
+
 def type_on_serial(data):
     try:
         for byte in data:
@@ -376,6 +385,28 @@ mode_back = wait_for('display 1: 1024x768, at 1280,0', 15)
 time.sleep(1.5)
 checks.append(('display modes: the virtio display back at 1024x768',
                mode_back and take_screen('video1').size == (1024, 768)))
+
+# Suspend to RAM with the pointer on the virtio display: waking resets
+# the device, and the driver makes its resources again on the memory
+# that kept the picture (the window is in the screen dump without the
+# server drawing anything) and shows the cursor again where it was.
+point_tablet_at(1280 + 500, 400)
+shown_before = wait_for_count('scanout 0 cursor shown at 500,400', 2, 10)
+type_on_serial(b'suspend; echo RESUMED $?\r')
+asleep = wait_for('suspending to RAM', 20)
+time.sleep(2)
+status = ask_monitor('info status\n')
+send_to_monitor('system_wakeup\n')
+woke = wait_for('RESUMED 0', 90)
+cursor_back = wait_for_count('scanout 0 cursor shown at 500,400', 3, 10)
+time.sleep(1)
+after_waking = take_screen('video1')
+checks.append(('suspend to RAM: the virtio display\'s picture and cursor back after waking',
+               shown_before and asleep and 'suspended' in status and woke and cursor_back and
+               after_waking.size == (1024, 768) and after_waking(window_x, window_y) == '80c0f0'))
+point_tablet_at(1280 + 300, 500)
+checks.append(('suspend to RAM: the hardware cursor moves after waking',
+               wait_for('scanout 0 cursor moved at 300,500', 10)))
 
 type_on_serial(b'kill %2; kill %1; wait; m=DONE; echo ENDED $m\r')
 checks.append(('the display server ended', wait_for('ENDED DONE', 15)))

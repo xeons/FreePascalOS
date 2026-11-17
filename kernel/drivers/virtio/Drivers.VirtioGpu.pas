@@ -213,6 +213,7 @@ var
   Bar: TPciBar;
 begin
   Result := (Physical <> 0) and PciReadBar(Pci, VgaFramebufferBar, Bar) and not Bar.IsIoPort and
+    (Bar.PhysicalAddress <> 0) and
     (Bar.SizeInBytes > 0) and (Physical >= Bar.PhysicalAddress) and (Physical < Bar.PhysicalAddress + Bar.SizeInBytes);
 end;
 
@@ -281,6 +282,15 @@ begin
   Result := False;
 end;
 
+{ Why a device or a scanout is not used. }
+procedure LogFailure(What: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('virtio-gpu');
+  DebugWriteLine(What);
+  DebugEndMessage;
+end;
+
 procedure LogScanout(Scanout: PGpuScanout; const Adapter: TDisplayAdapter; UsesInterrupts: Boolean);
 begin
   DebugBeginMessage;
@@ -336,9 +346,15 @@ begin
     Height := FallbackHeight;
   end;
   if not AllocateFramebuffer(Scanout, Width, Height, Adapter.MaximumWidth, Adapter.MaximumHeight) then
+  begin
+    LogFailure('no contiguous memory for a framebuffer');
     Exit;
+  end;
   if not ShowNewResource(Scanout, Width, Height) then
+  begin
+    LogFailure('the device refused the scanout''s resource');
     Exit;
+  end;
   Adapter.FramebufferPhysical := Scanout^.FramebufferPhysical;
   Adapter.FramebufferBytes := Scanout^.FramebufferBytes;
   Adapter.PixelFormat := DisplayFormatBlueGreenRed;
@@ -376,16 +392,21 @@ begin
   if Device = nil then
     Exit;
   if not OpenVirtioDevice(Pci, Device^.Virtio) then
+  begin
+    LogFailure('not a virtio 1.x device');
     Exit;
+  end;
   if not NegotiateVirtioFeatures(Device^.Virtio, QWord(1) shl GpuFeatureEdid, Accepted) or
      not SetUpGpuQueues(Device) then
   begin
+    LogFailure('the features or the queues were refused');
     FailVirtioDevice(Device^.Virtio);
     Exit;
   end;
   Device^.HasEdid := (Accepted and (QWord(1) shl GpuFeatureEdid)) <> 0;
   if not ReadDisplayInfo(Device, Info) then
   begin
+    LogFailure('no answer to the display information');
     FailVirtioDevice(Device^.Virtio);
     Exit;
   end;
