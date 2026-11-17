@@ -35,6 +35,7 @@ interface
 
 uses
   Classes,
+  Drawing.Rectangles,
   Drawing.Canvas,
   Windowing.Messages,
   Controls.Base,
@@ -63,6 +64,12 @@ type
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
     procedure Layout; override;
     procedure Activate; virtual;
+    { Draws item Index in Row (pixels, the full width of a line); the
+      default draws its text after ItemIndent, highlighted when it is
+      the choice, with the focus frame. }
+    procedure PaintItem(var Canvas: TCanvas; Index: LongInt; const Row: TRectangle); virtual;
+    { Pixels left free before each item's text (for a check box, say). }
+    function ItemIndent: LongInt; virtual;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
@@ -70,7 +77,7 @@ type
       to OnNotify as usual. }
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Pixels, and how many whole lines fit. }
-    function ItemHeight: LongInt;
+    function ItemHeight: LongInt; virtual;
     function VisibleCount: LongInt;
     function ItemAt(Y: LongInt): LongInt;
     property Items: TStringList read FItems;
@@ -89,7 +96,6 @@ implementation
 uses
   Abi.SystemCalls,
   Sys.Time,
-  Drawing.Rectangles,
   Drawing.Bevels,
   Windowing.Theme,
   Windowing.Connection,
@@ -252,18 +258,32 @@ begin
     Row := MakeRectangle(2, 2 + (Index - FTopIndex) * ItemHeight, Right - 2, ItemHeight);
     if Row.Top >= RectangleHeight(Box) then
       Break;
-    if Index = FItemIndex then
-    begin
-      FillRectangle(Inner, Row, Theme.Selection);
-      DrawTextInBox(Inner, ControlFace, FItems[Index], InflateRectangle(Row, -Scaled(2)), AlignTextLeft,
-        Theme.SelectionText);
-      if Focused then
-        DrawFocusFrame(Inner, Row, Theme.SelectionText);
-    end
-    else
-      DrawTextInBox(Inner, ControlFace, FItems[Index], InflateRectangle(Row, -Scaled(2)), AlignTextLeft,
-        Theme.FieldText);
+    PaintItem(Inner, Index, Row);
   end;
+end;
+
+function TListBox.ItemIndent: LongInt;
+begin
+  Result := 0;
+end;
+
+procedure TListBox.PaintItem(var Canvas: TCanvas; Index: LongInt; const Row: TRectangle);
+var
+  TextRow: TRectangle;
+begin
+  TextRow := Row;
+  TextRow.Left := TextRow.Left + ItemIndent;
+  if Index = FItemIndex then
+  begin
+    FillRectangle(Canvas, TextRow, Theme.Selection);
+    DrawTextInBox(Canvas, ControlFace, FItems[Index], InflateRectangle(TextRow, -Scaled(2)), AlignTextLeft,
+      Theme.SelectionText);
+    if Focused then
+      DrawFocusFrame(Canvas, TextRow, Theme.SelectionText);
+  end
+  else
+    DrawTextInBox(Canvas, ControlFace, FItems[Index], InflateRectangle(TextRow, -Scaled(2)), AlignTextLeft,
+      Theme.FieldText);
 end;
 
 procedure TListBox.PointerDown(X, Y: LongInt; Button: LongWord);
