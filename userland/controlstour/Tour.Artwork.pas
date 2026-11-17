@@ -21,7 +21,8 @@
   picture files on the system to show):
 
   - an image list of four 16 x 16 pictures (play, stop, zoom, a
-    picture) in 16, 24 and 32 pixels: the first three from strips, the
+    picture): the first three the icon theme's (every size it has;
+    without the theme drawn in strips of 16, 24 and 32 pixels), the
     last from an icon file the tour writes (/tmp/controlstour.ico) and
     reads back, as a program would load its icons;
   - an animation written as an APNG (/tmp/controlstour.png) for the
@@ -70,7 +71,8 @@ uses
   Image.Codecs,
   Image.Files,
   Image.Surfaces,
-  Image.Ico.Writing;
+  Image.Ico.Writing,
+  Controls.IconTheme;
 
 const
   StripPictures = 3;
@@ -202,6 +204,14 @@ var
   Size: LongInt;
 begin
   Result := TImageList.Create(16, 16);
+  if ThemeIconExists('action-play') and ThemeIconExists('action-stop') and ThemeIconExists('action-zoom') then
+  begin
+    AddThemeIcon(Result, 'action-play');
+    AddThemeIcon(Result, 'action-stop');
+    AddThemeIcon(Result, 'action-zoom');
+    AddLandscape(Result);
+    Exit;
+  end;
   First := -1;
   for Size in [16, 24, 32] do
   begin

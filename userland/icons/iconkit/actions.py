@@ -23,10 +23,12 @@ print, cut, copy, paste, bold, play, stop, zoom."""
 
 import math
 
+import cairo
+
 from .catalog import icon, group
 from .pen import Projection, lighter, darker, outline_of
 from .shapes import (box, plane_shape, plane_stroke, poly_path, rect_path, circle_path, block_arrow, curved_arrow,
-                     gear, badge, sphere, sphere_gloss, magnifier, warning_triangle, glyph_info, glyph_cross,
+                     gear, badge, sphere, sphere_gloss, magnifier, warning_triangle, padlock, glyph_plus, glyph_info, glyph_cross,
                      glyph_question, glyph_exclamation, BLUE, BLUE_LIGHT, BLUE_DEEP, GREEN, GREEN_LIGHT, GREEN_DEEP,
                      RED, RED_LIGHT, RED_DEEP, INK, SILVER, SILVER_TOP, SILVER_SIDE, SILVER_OUTLINE, CHARCOAL, GOLD,
                      GOLD_LIGHT, GOLD_DEEP, GOLD_OUTLINE, PAPER)
@@ -334,7 +336,6 @@ def draw_bold(pen):
     ctx.line_to(25.5, 35.5)
     ctx.curve_to(30.5, 35.5, 30.5, 26.0, 25.5, 26.0)
     ctx.close_path()
-    import cairo
     ctx.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
     pen.fill(pen.vertical('#5a6478', INK, top, bottom), INK)
     ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
@@ -361,5 +362,65 @@ def draw_pause(pen):
 @icon('action-zoom', 'Zoom')
 def draw_zoom(pen):
     magnifier(pen, 19.0, 19.0, 12.0 if not pen.small else 13.0, 1.0)
-    from .shapes import glyph_plus
     glyph_plus(pen, 19.0, 19.0, 11.0, GREEN_DEEP)
+
+
+# --- the session's commands (the Start menu) -------------------------------------------------
+
+@icon('action-lock', 'Lock')
+def draw_lock(pen):
+    size = 30.0 if not pen.small else 34.0
+    padlock(pen, 24.0 - size / 2, 46.0 - size * 1.1 - 2.0, size, GOLD)
+
+
+@icon('action-log-off', 'Log off')
+def draw_log_off(pen):
+    # A door standing open and an arrow going out through it.
+    projection = Projection(6.0, 44.0)
+    box(pen, projection, 20.0, 3.0, 36.0, '#c08a4a', '#4a2a0c', top='#e8b878', side='#8a5a28', gloss=False)
+    face = projection.front_matrix(0)
+    plane_shape(pen, face, rect_path(3.0, -33.0, 14.0, 33.0), pen.vertical('#2a2f3a', '#4a5262', -33, 0), None)
+    plane_shape(pen, face, poly_path([(3.0, 0), (3.0, -33.0), (11.0, -30.0), (11.0, 3.0)]),
+                pen.vertical('#e0a860', '#a86a2a', -33, 3), '#4a2a0c', pen.thin)
+    block_arrow(pen, 31.0, 24.0, 0, GREEN, length=26.0 if not pen.small else 30.0, shaft=9.0, head=20.0,
+                head_length=12.0, depth=1.6)
+
+
+def crescent_path(radius):
+    def path(pen):
+        pen.circle(24.0, 24.0, radius)
+        pen.ctx.new_sub_path()
+        pen.ctx.arc_negative(33.0, 17.0, radius * 0.82, 2 * math.pi, 0)
+    return path
+
+
+@icon('action-suspend', 'Suspend')
+def draw_suspend(pen):
+    # A crescent moon: a disc with a smaller one taken out of it.
+    radius = 18.0 if not pen.small else 20.0
+    ctx = pen.ctx
+    ctx.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+    ctx.save()
+    ctx.new_path()
+    pen.circle(24.0, 24.0, radius)
+    ctx.clip()
+    pen.shape(crescent_path(radius), pen.radial(16.0, 18.0, radius * 1.6, [(0, '#fff6c0'), (0.5, GOLD),
+                                                                          (1, GOLD_DEEP)]), GOLD_OUTLINE)
+    ctx.restore()
+    ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
+
+
+def glyph_power(pen, x, y, r, colour=(1, 1, 1)):
+    ctx = pen.ctx
+    ctx.new_path()
+    ctx.arc(x, y + r * 0.05, r * 0.5, math.radians(-55), math.radians(235))
+    pen.stroke(colour, r * 0.22)
+    ctx.new_path()
+    ctx.move_to(x, y - r * 0.62)
+    ctx.line_to(x, y - r * 0.05)
+    pen.stroke(colour, r * 0.22)
+
+
+@icon('action-shut-down', 'Shut down')
+def draw_shut_down(pen):
+    round_badge(pen, RED, glyph_power)

@@ -22,9 +22,12 @@
   icons' pictures (information, a warning, a loudspeaker for the volume,
   crossed out when it is muted, two linked screens for the network -
   dots of waiting while connecting, a warning sign without an address,
-  a red cross without a cable, grey screens without any adapter). Drawn
-  with shapes on the design grid (Controls.PictureGrid), usually 16
-  logical units square.
+  a red cross without a cable, grey screens without any adapter). The
+  notification pictures are the icon theme's (status-sound-on,
+  status-network-online...: Controls.IconTheme) when it has them, else
+  drawn here with shapes on the design grid (Controls.PictureGrid),
+  usually 16 logical units square; the picture numbers stay the
+  protocol's.
 }
 unit Desktop.SmallPictures;
 
@@ -48,7 +51,8 @@ uses
   Drawing.Colors,
   Drawing.Rasterizer,
   Windowing.Protocol,
-  Controls.PictureGrid;
+  Controls.PictureGrid,
+  Controls.IconTheme;
 
 const
   OutlineColor = $FF262A30;
@@ -167,10 +171,29 @@ begin
   DrawScreens(Canvas, Grid, AbsentScreenColor, AbsentOutlineColor);
 end;
 
+{ The theme's icon of a notification picture. }
+function NotificationIconName(Picture: LongWord): string;
+begin
+  case Picture of
+    NotificationPictureWarning: Result := 'action-warning';
+    NotificationPictureVolume: Result := 'status-sound-on';
+    NotificationPictureVolumeMuted: Result := 'status-sound-muted';
+    NotificationPictureNetwork: Result := 'status-network-online';
+    NotificationPictureNetworkConnecting: Result := 'status-network-connecting';
+    NotificationPictureNetworkLimited: Result := 'status-network-limited';
+    NotificationPictureNetworkNoLink: Result := 'status-network-no-link';
+    NotificationPictureNetworkNone: Result := 'status-network-offline';
+  else
+    Result := 'action-info';
+  end;
+end;
+
 procedure DrawNotificationPicture(const Canvas: TCanvas; Picture: LongWord; const Box: TRectangle);
 var
   Grid: TPictureGrid;
 begin
+  if DrawThemeIcon(Canvas, NotificationIconName(Picture), Box) then
+    Exit;
   Grid := GridFor(Box);
   case Picture of
     NotificationPictureWarning:
