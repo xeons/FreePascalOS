@@ -631,6 +631,14 @@ checks.append(('display modes: a second display, driven natively',
                second_ok and b'1024x768 pixels, 4096 bytes a line' in received and
                take_screen('video1').size == (1024, 768)))
 
+# The graphical checks below look at exact pixels of the Classic theme
+# (the look the system had first: its colours are what they name), so
+# the system's theme setting is Classic from here on; the display
+# server's own section switches to the default (Sunrise) and back while
+# it runs, to check the theme is followed live.
+type_on_serial(b'settings set -s Appearance/Theme classic; m=DONE; echo CLASSIC $m\r')
+checks.append(('theme: the system\'s setting set to Classic', wait_for('CLASSIC DONE', 10)))
+
 # Drawing with libdrawing and libfont: drawtest draws a window (at 100
 # DPI everything is its logical size: the window at 80,60, 400 wide). The
 # desktop, the window's face, the title bar's gradient and its white text
@@ -781,6 +789,20 @@ checks.append(('title buttons: hot, pressed, and up again off the button',
                hot(382, 86) == 'e2ded6' and hot(380, 80) == 'ffffff' and
                pressed(382, 86) == 'cbc6bd' and pressed(379, 79) == '7e7a72' and pressed(380, 80) == '35322d' and
                let_up(382, 86) == 'cbc6bd' and let_up(380, 80) == 'ffffff'))
+# The theme followed live: set to Sunrise, the display server draws the
+# active window's title bar gold (its edge a dark gold line along the
+# bar's left, 3 pixels into the frame, at x 99) and the bare desktop in
+# Sunrise's blue-violet; set back to Classic, the navy gradient (which
+# starts with 17375e at the bar's left) and the teal desktop return.
+type_on_serial(b'settings set -s Appearance/Theme sunrise\r')
+time.sleep(2)
+sunrise = take_screen()
+type_on_serial(b'settings set -s Appearance/Theme classic\r')
+time.sleep(2)
+classic_again = take_screen()
+checks.append(('theme: the display server follows the setting live (Sunrise, then Classic again)',
+               sunrise(99, 89) == 'ae7a06' and sunrise(500, 350) == '6c78b4' and
+               classic_again(99, 89) == '17375e' and classic_again(500, 350) == '2f5f7a'))
 # Over the right border the pointer is the left-right resize arrow: its
 # hotspot in the middle of a white shaft (the arrow's tip is black).
 point_tablet_at(402, 150)

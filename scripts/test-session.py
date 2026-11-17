@@ -356,6 +356,13 @@ def places(log):
 
 checks = []
 
+# The default theme's colours (Windowing.SunriseTheme), which the session
+# shows: nothing sets Appearance/Theme on this system. The taskbar's face
+# (the window face), the wallpaper's top and the lock screen's.
+TASKBAR_FACE = 'd8d8e7'
+WALLPAPER_TOP = '4a5a9e'
+LOCK_TOP = '1e2656'
+
 # The system comes up by itself: the service manager starts the display
 # server, then (once it is ready) the session, and the serial console.
 started = wait_for('servicemanager: started session', 90) and wait_for('fpos login: ', 30)
@@ -388,7 +395,7 @@ checks.append(('the desktop started by itself for the automatic user',
                b'logging user in automatically' in log and b'session: user logged in' in log and
                b'login window shown' not in log))
 checks.append(('the taskbar and the wallpaper are on the screen',
-               screen(640, 785) == 'cbc6bd' and colour_near(screen(640, 4), '0f2c42', 4)))
+               screen(640, 785) == TASKBAR_FACE and colour_near(screen(640, 4), WALLPAPER_TOP, 4)))
 start = len(received)
 type_on_serial(b'ps -e -o user= -o comm= | grep -e desktop -e manager -e display; service list\r')
 wait_for('serialconsole', 15, start)
@@ -567,9 +574,9 @@ def choose_from_start_menu(name):
 
 
 def lock_screen_shows(screen):
-    """The lock screen covers the display: its night sky at the top, no
+    """The lock screen covers the display: its sky at the top, no
     taskbar at the bottom."""
-    return colour_near(screen(640, 4), '0e2236', 6) and screen(640, 785) != 'cbc6bd'
+    return colour_near(screen(640, 4), LOCK_TOP, 6) and screen(640, 785) != TASKBAR_FACE
 
 
 def unlock_with(password):
@@ -597,7 +604,7 @@ screen = take_screen()
 scale_kept = run_and_read('settings get -s Display/0/Scale')
 checks.append(('Display: a scale of 150% is applied, kept and remembered (the taskbar 1.5 times as high)',
                kept and b'applied display 0 mode 1280 x 800 scale 150' in part and b'scale 150' in part and
-               re.search(rb'\n150\r?\n', scale_kept) is not None and screen(640, 760) == 'cbc6bd'))
+               re.search(rb'\n150\r?\n', scale_kept) is not None and screen(640, 760) == TASKBAR_FACE))
 choose_in_combo(found, 'display-scales', 'up', 2)
 kept = apply_and_keep(found, 1)
 part, found = control_panel_part()
@@ -876,7 +883,7 @@ log = wait_for_session_log(['screen unlocked by user'], 20)
 time.sleep(1.5)
 screen = take_screen()
 checks.append(('the right password unlocks the screen: the desktop is back',
-               b'screen unlocked by user' in log and screen(640, 785) == 'cbc6bd'))
+               b'screen unlocked by user' in log and screen(640, 785) == TASKBAR_FACE))
 press('meta_l-l')
 log = wait_for_session_log(['screen locked (asked)'], 20, after=1)
 time.sleep(1.5)
@@ -897,7 +904,7 @@ log = wait_for_session_log(['screen unlocked by user'], 20, after=2)
 time.sleep(1.5)
 screen = take_screen()
 checks.append(('the Start menu\'s Lock locks the screen, and the password unlocks it',
-               locked_from_menu and log.count(b'screen unlocked by user') >= 3 and screen(640, 785) == 'cbc6bd'))
+               locked_from_menu and log.count(b'screen unlocked by user') >= 3 and screen(640, 785) == TASKBAR_FACE))
 exits = log.count(b'\nexit')
 answers = log.count(b'answer ')
 press('alt-f4')
@@ -936,7 +943,7 @@ after = run_and_read('date +%H:%M')
 all_clocks = re.findall(rb'\nclock (\d\d:\d\d)', log)
 times_now = re.findall(rb'\n(\d\d:\d\d)\r?\n', before + after)
 checks.append(('after waking the desktop is back and its clock shows the time',
-               log.count(b'screen unlocked by user') >= 4 and screen(640, 785) == 'cbc6bd' and
+               log.count(b'screen unlocked by user') >= 4 and screen(640, 785) == TASKBAR_FACE and
                bool(all_clocks) and all_clocks[-1] in times_now))
 
 # Log off with Notepad holding unsaved text: the session's programs are
@@ -963,7 +970,7 @@ logoff_part = log[log.rfind(b'logging off user'):]
 checks.append(('Log off ends the session and shows the login window',
                b'asking log off' in log and b'logging off user' in log and
                b'session of user ended' in log and b'login window shown' in log and
-               screen(640, 785) != 'cbc6bd'))
+               screen(640, 785) != TASKBAR_FACE))
 checks.append(('Log off asks the programs to end: Notepad asks to save its text, and ends when told No',
                notepad_open and b'asking session' in logoff_part and b'to end (log-off)' in logoff_part and
                b'desktop: asked to end (log-off)' in logoff_part and b'answer no' in logoff_part and
@@ -1006,7 +1013,7 @@ place = places(log[log.rfind(b'session: user logged in'):])
 screen = take_screen()
 checks.append(('the right password starts the desktop again',
                log.count(b'session: user logged in') == 2 and log.count(b'desktop: ready') == 3 and
-               screen(640, 785) == 'cbc6bd'))
+               screen(640, 785) == TASKBAR_FACE))
 start = len(received)
 type_on_serial(b'mousesettings; m=DONE; echo MOUSE $m\r')
 mouse_asked = wait_for('MOUSE DONE', 15, start)
