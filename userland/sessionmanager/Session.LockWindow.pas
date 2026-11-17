@@ -161,10 +161,10 @@ begin
     MakeRectangle(0, Line, Width, LineHeight), AlignTextCenter, Theme.LockDimText);
   { The panel the password box and the button sit on. }
   FillRectangle(Canvas, FPanel, Theme.Face);
-  if Theme.BandedGroupBoxes then
-    FillVerticalGradient(Canvas, MakeRectangle(FPanel.Left, FPanel.Top, RectangleWidth(FPanel), Scaled(AccentHeight)),
-      Theme.HeaderBandStart, Theme.HeaderBandEnd);
   DrawBevel(Canvas, FPanel, RaisedThemeBevel);
+  if Theme.BandedGroupBoxes then
+    FillVerticalGradient(Canvas, MakeRectangle(FPanel.Left + 2, FPanel.Top + 2, RectangleWidth(FPanel) - 4,
+      Scaled(AccentHeight)), Theme.HeaderBandStart, Theme.HeaderBandEnd);
   if FMessage <> '' then
     DrawTextInBox(Canvas, FontFace(TextPoints, False), FMessage, MakeRectangle(0, FPanel.Bottom + Scaled(10),
       Width, LineHeight), AlignTextCenter, Theme.LockWarningText);

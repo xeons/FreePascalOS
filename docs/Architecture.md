@@ -1143,9 +1143,13 @@ The server keeps the windows in stacking order, in three layers:
 desktop windows (`WindowDesktop`, the shell's) at the bottom, then
 ordinary windows, then topmost ones (the taskbar, pop-ups); raising a
 window brings it to the top of its layer only. It draws their frames itself (a raised
-bevel, a title bar with a gradient, the title in a bold face of the
+bevel, a title bar with the theme's gradient - across, or down with an
+edge and a shine - the window icon where the theme shows one
+(`Server.TitleIcon`), the title in a bold face of the
 theme's text family picked by point size and DPI, minimize, maximize
-and close buttons; all sizes from the theme's metrics in logical units,
+(restore on a maximized window) and close buttons, plain or tinted as
+the theme says (`Server.TitleButtonPainting`), pale on inactive
+windows; all sizes from the theme's metrics in logical units,
 `Server.Theme`), and composes in a
 back buffer: what needs drawing again is collected as a region (a window
 moved, a program drew, the pointer moved), and only that is drawn, the
@@ -1616,8 +1620,29 @@ Codes below `MessageUser` are the libraries' (`MessageNotify`: a control
 telling its parent something); programs number theirs from there. A
 receiver that is freed takes its queued messages with it.
 
-`Windowing.Theme` holds the colours and metrics (logical units), shared
-by the display server's frames and the controls, and the font families:
+`Windowing.Theme` holds the theme as data: every colour, metric
+(logical units) and style flag the display server's frames, the desktop
+shell and the controls use, documented field by field in the unit. Two
+themes are built in, filling the same record: Sunrise
+(`Windowing.SunriseTheme`, the default: golden title bars running down,
+gold bevelled title buttons with heavy glyphs and a window icon, a
+lavender-grey face, gold header bands and a navy section variant, a
+navy selection, a blue-violet wallpaper) and Classic
+(`Windowing.ClassicTheme`: the first look, pixel for pixel). Which one
+is used is the system's setting `Appearance/Theme` (`sunrise`,
+`classic`; `Windowing.ThemeSettings`), the same for every user. Anyone
+may change it: the Control Panel's Appearance page (a list and a
+preview, `ControlPanel.AppearancePage`, `ControlPanel.ThemePreview`)
+asks the system settings service (`SystemRequestSetTheme` = 13), and
+root may also run `settings set -s Appearance/Theme classic`. It
+changes live: the display server follows it (`Server.LiveSettings`:
+every frame drawn again), every window program applies it when it
+connects (`Windowing.Connection`) and follows it from its first window
+on (`Windowing.Windows`: `TWindow.ThemeChanged`, which repaints; the
+desktop draws its wallpaper again). Header bands are
+`Controls.HeaderBands` (gold or navy; a plain label where the theme
+does not band panels), the Start menu's side band `Controls.MenuBand`
+(a menu's `SideBand` text). The theme also holds the font families:
 the interface's text (`TextFamily`, DejaVu Sans, proportional, TrueType)
 and a monospaced one (`FixedFamily`, Terminus, bitmap). `Windowing.Fonts`
 lists each family once and picks faces from them at the display's DPI:
