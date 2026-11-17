@@ -242,7 +242,7 @@ end;
 function TCalendar.PartsLayout: TCalendarLayout;
 begin
   Result := ComputeCalendarLayout(InflateRectangle(MakeRectangle(0, 0, RectangleWidth(PixelBounds),
-    RectangleHeight(PixelBounds)), -2), Metrics);
+    RectangleHeight(PixelBounds)), -BevelWidth), Metrics);
 end;
 
 procedure TCalendar.GetPreferredSize(out Width, Height: LongInt);
@@ -716,13 +716,12 @@ begin
 end;
 
 { A small solid triangle pointing left (or right) in the middle of Box. }
-procedure DrawSideArrow(const Canvas: TCanvas; const Box: TRectangle; Right, Enabled: Boolean);
+procedure DrawSideArrow(const Canvas: TCanvas; const Box: TRectangle; Right: Boolean; Color: TColor);
 var
   Arrow: array[0..2] of TPoint;
   CentreX: LongInt;
   CentreY: LongInt;
   Size: LongInt;
-  Color: TColor;
 begin
   CentreX := Box.Left + RectangleWidth(Box) div 2;
   CentreY := Box.Top + RectangleHeight(Box) div 2;
@@ -739,11 +738,23 @@ begin
     Arrow[1] := MakePoint(CentreX + Size div 2, CentreY + Size + 1);
     Arrow[2] := MakePoint(CentreX - Size div 2 - 1, CentreY);
   end;
-  if Enabled then
-    Color := Theme.FaceText
-  else
-    Color := Theme.DisabledText;
   FillPolygon(Canvas, Arrow, Color);
+end;
+
+{ An arrow button on the filled month bar: a lighter square of the bar's
+  colour with a lit or (pressed) shaded edge. }
+procedure DrawBarButton(const Canvas: TCanvas; const Box: TRectangle; Pressed: Boolean);
+var
+  Light: TColor;
+  Shade: TColor;
+begin
+  Light := MixColors(Theme.CalendarHeader, $FFFFFFFF, 150);
+  Shade := MixColors(Theme.CalendarHeader, $FF000000, 110);
+  FillRectangle(Canvas, Box, MixColors(Theme.CalendarHeader, $FFFFFFFF, 60));
+  if Pressed then
+    DrawThemeEdge(Canvas, Box, Shade, Light)
+  else
+    DrawThemeEdge(Canvas, Box, Light, Shade);
 end;
 
 procedure TCalendar.PaintCell(var Canvas: TCanvas; const Cell: TRectangle; const Caption: string; Selected, Current,
@@ -781,12 +792,27 @@ procedure TCalendar.PaintHeader(var Canvas: TCanvas; const Parts: TCalendarLayou
 var
   Title: string;
   Decade: LongInt;
+  ArrowColor: TColor;
 begin
-  FillRectangle(Canvas, Parts.Header, Theme.Face);
-  DrawButtonFace(Canvas, Parts.Previous, FPressedPart = CalendarPartPrevious, False);
-  DrawButtonFace(Canvas, Parts.Next, FPressedPart = CalendarPartNext, False);
-  DrawSideArrow(Canvas, OffsetPressed(Parts.Previous, FPressedPart = CalendarPartPrevious), False, Enabled);
-  DrawSideArrow(Canvas, OffsetPressed(Parts.Next, FPressedPart = CalendarPartNext), True, Enabled);
+  if Theme.CalendarHeaderFilled then
+  begin
+    { A bar of the selection's blue, lighter at the top. }
+    FillVerticalGradient(Canvas, Parts.Header, MixColors(Theme.CalendarHeader, $FFFFFFFF, 70), Theme.CalendarHeader);
+    DrawBarButton(Canvas, Parts.Previous, FPressedPart = CalendarPartPrevious);
+    DrawBarButton(Canvas, Parts.Next, FPressedPart = CalendarPartNext);
+    ArrowColor := Theme.CalendarHeaderText;
+  end
+  else
+  begin
+    FillRectangle(Canvas, Parts.Header, Theme.CalendarHeader);
+    DrawButtonFace(Canvas, Parts.Previous, FPressedPart = CalendarPartPrevious, False);
+    DrawButtonFace(Canvas, Parts.Next, FPressedPart = CalendarPartNext, False);
+    ArrowColor := Theme.FaceText;
+  end;
+  if not Enabled then
+    ArrowColor := Theme.DisabledText;
+  DrawSideArrow(Canvas, OffsetPressed(Parts.Previous, FPressedPart = CalendarPartPrevious), False, ArrowColor);
+  DrawSideArrow(Canvas, OffsetPressed(Parts.Next, FPressedPart = CalendarPartNext), True, ArrowColor);
   case FView of
     CalendarViewDays: Title := MonthNames[FShownMonth] + ' ' + IntToStr(FShownYear);
     CalendarViewMonths: Title := IntToStr(FShownYear);
@@ -796,7 +822,7 @@ begin
       Title := IntToStr(Decade) + '-' + IntToStr(Decade + 9);
     end;
   end;
-  DrawTextInBox(Canvas, ControlBoldFace, Title, Parts.Title, AlignTextCenter, Theme.FaceText);
+  DrawTextInBox(Canvas, ControlBoldFace, Title, Parts.Title, AlignTextCenter, Theme.CalendarHeaderText);
 end;
 
 procedure TCalendar.PaintDays(var Canvas: TCanvas; const Parts: TCalendarLayout);

@@ -224,8 +224,8 @@ begin
   { Anti-aliased, each ring blended over the one outside it, so the
     circle is round at any size. }
   FillSmoothEllipse(Canvas, Mark, Theme.Shadow);
-  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -1), Theme.DarkShadow);
-  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -2), Theme.Field);
+  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -BevelLine), Theme.DarkShadow);
+  FillSmoothEllipse(Canvas, InflateRectangle(Mark, -BevelWidth), Theme.Field);
   if Checked then
     FillSmoothEllipse(Canvas, InflateRectangle(Mark, -(Size div 3)), Theme.FieldText);
   PaintText(Canvas);

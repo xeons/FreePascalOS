@@ -201,6 +201,8 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
+  if Theme.SplitterGrip then
+    DrawGripDots(Canvas, Box, IsVertical);
   if Focused then
     DrawFocusFrame(Canvas, InflateRectangle(Box, -1), Theme.FaceText);
 end;

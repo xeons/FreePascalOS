@@ -283,7 +283,7 @@ begin
     Tab := MakeRectangle(TabLeft(Index), Scaled(2), TabWidth(Index), TabHeight - Scaled(2));
     if Index = FPageIndex then
       { The chosen tab stands out and joins its page. }
-      Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + 2);
+      Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + BevelWidth);
     FillRectangle(Canvas, Tab, Theme.Face);
     DrawHorizontalLine(Canvas, Tab.Left + 2, Tab.Right - 2, Tab.Top, Theme.Highlight);
     DrawVerticalLine(Canvas, Tab.Left, Tab.Top + 2, Tab.Bottom, Theme.Highlight);

@@ -235,9 +235,9 @@ end;
 
 procedure TScrollBar.Paint(var Canvas: TCanvas);
 begin
-  { The track: a light checker of face and highlight. }
+  { The track: lighter than the face. }
   FillRectangle(Canvas, MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds)),
-    MixColors(Theme.Face, Theme.Highlight, 128));
+    Theme.ScrollTrack);
   DrawArrow(Canvas, SpanRectangle(0, ArrowLength), True);
   DrawArrow(Canvas, SpanRectangle(Length - ArrowLength, ArrowLength), False);
   if Enabled and (FMaximum - FMinimum > FPageSize) then

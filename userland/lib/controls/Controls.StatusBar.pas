@@ -18,8 +18,10 @@
 
 {
   Status bars: a strip along the bottom of a window, in panels, each a
-  sunken box with a text. Panel widths are logical units; the last one
-  takes what is left.
+  sunken box with a text, or (Theme.StatusBarEtched) one sunken strip
+  with the panels separated by etched lines and a size grip at the
+  right. Panel widths are logical units; the last one takes what is
+  left.
 }
 unit Controls.StatusBar;
 
@@ -39,6 +41,9 @@ type
     FWidths: array of LongInt;
     function GetPanelText(Index: LongInt): string;
     procedure SetPanelText(Index: LongInt; const Value: string);
+    procedure PaintSunkenPanels(var Canvas: TCanvas);
+    procedure PaintEtched(var Canvas: TCanvas);
+    function PanelWidth(Index, Left: LongInt): LongInt;
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
@@ -124,30 +129,74 @@ begin
 end;
 
 procedure TStatusBar.Paint(var Canvas: TCanvas);
+begin
+  FillRectangle(Canvas, MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds)), Theme.Face);
+  if Theme.StatusBarEtched then
+    PaintEtched(Canvas)
+  else
+    PaintSunkenPanels(Canvas);
+end;
+
+{ Each panel sunken on its own, a gap after it. }
+procedure TStatusBar.PaintSunkenPanels(var Canvas: TCanvas);
 var
-  Box: TRectangle;
   Index: LongInt;
   Left: LongInt;
   Width: LongInt;
   Panel: TRectangle;
   Gap: LongInt;
 begin
-  Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
-  FillRectangle(Canvas, Box, Theme.Face);
   Gap := Scaled(2);
   Left := 0;
   for Index := 0 to High(FWidths) do
   begin
-    if Index = High(FWidths) then
-      Width := RectangleWidth(Box) - Left
-    else
-      Width := Scaled(FWidths[Index]);
-    Panel := MakeRectangle(Left, Gap, Width - Gap, RectangleHeight(Box) - Gap);
-    DrawEdge(Canvas, Panel, Theme.Shadow, Theme.Highlight);
+    Width := PanelWidth(Index, Left);
+    Panel := MakeRectangle(Left, Gap, Width - Gap, RectangleHeight(PixelBounds) - Gap);
+    DrawSunkenEdge(Canvas, Panel);
     DrawTextInBox(Canvas, ControlFace, FTexts[Index], InflateRectangle(Panel, -Scaled(3)), AlignTextLeft,
       Theme.FaceText);
     Left := Left + Width;
   end;
+end;
+
+{ One sunken strip, the panels in it separated by etched lines, and the
+  size grip in the bottom right corner. }
+procedure TStatusBar.PaintEtched(var Canvas: TCanvas);
+var
+  Strip: TRectangle;
+  Index: LongInt;
+  Left: LongInt;
+  Width: LongInt;
+  Panel: TRectangle;
+  Grip: LongInt;
+begin
+  Strip := MakeRectangle(0, Scaled(2), RectangleWidth(PixelBounds), RectangleHeight(PixelBounds) - Scaled(2));
+  DrawSunkenEdge(Canvas, Strip);
+  Grip := Scaled(14);
+  Left := 0;
+  for Index := 0 to High(FWidths) do
+  begin
+    Width := PanelWidth(Index, Left);
+    Panel := MakeRectangle(Left, Strip.Top, Width, RectangleHeight(Strip));
+    if Index = High(FWidths) then
+      Panel.Right := Panel.Right - Grip;
+    if Index > 0 then
+      DrawEtchedVerticalLine(Canvas, Left, Strip.Top + Scaled(3), Strip.Bottom - Scaled(3));
+    DrawTextInBox(Canvas, ControlFace, FTexts[Index], MakeRectangle(Panel.Left + Scaled(5), Panel.Top,
+      RectangleWidth(Panel) - Scaled(8), RectangleHeight(Panel)), AlignTextLeft, Theme.FaceText);
+    Left := Left + Width;
+  end;
+  DrawSizeGrip(Canvas, InflateRectangle(Strip, -BevelLine));
+end;
+
+{ Pixels: panel Index's width, starting at Left (the last takes the
+  rest). }
+function TStatusBar.PanelWidth(Index, Left: LongInt): LongInt;
+begin
+  if Index = High(FWidths) then
+    Result := RectangleWidth(PixelBounds) - Left
+  else
+    Result := Scaled(FWidths[Index]);
 end;
 
 end.

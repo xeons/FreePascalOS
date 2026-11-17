@@ -105,8 +105,9 @@ type
     SectionBandEdge: TColor;
     SectionBandText: TColor;
     BandedGroupBody: TColor;
-    { A progress bar's blocks (a gradient from Light at the top to the
-      colour), and a marquee's stripes on their background. }
+    { A progress bar's well, its blocks (a gradient from Light at the
+      top to the colour), and a marquee's stripes on their background. }
+    ProgressTrough: TColor;
     ProgressBlock: TColor;
     ProgressBlockLight: TColor;
     MarqueeStripe: TColor;
@@ -200,6 +201,7 @@ begin
   Theme.SectionBandEdge := $FF121E58;
   Theme.SectionBandText := $FFFFFFFF;
   Theme.BandedGroupBody := $FFE4E3EE;
+  Theme.ProgressTrough := $FFF2F1F7;
   Theme.ProgressBlock := $FF2FA83A;
   Theme.ProgressBlockLight := $FF9BE69E;
   Theme.MarqueeStripe := $FF4F74D2;
@@ -232,6 +234,7 @@ begin
   Theme.SectionBandEdge := $FF7E7A72;
   Theme.SectionBandText := $FF000000;
   Theme.BandedGroupBody := $FFCBC6BD;
+  Theme.ProgressTrough := $FFCBC6BD;
   Theme.ProgressBlock := $FF17375E;
   Theme.ProgressBlockLight := $FF17375E;
   Theme.MarqueeStripe := $FF17375E;

@@ -148,8 +148,7 @@ begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   if FIsSeparator then
   begin
-    DrawVerticalLine(Canvas, RectangleWidth(Box) div 2 - 1, 2, RectangleHeight(Box) - 2, Theme.Shadow);
-    DrawVerticalLine(Canvas, RectangleWidth(Box) div 2, 2, RectangleHeight(Box) - 2, Theme.Highlight);
+    DrawEtchedVerticalLine(Canvas, RectangleWidth(Box) div 2 - BevelLine, 2, RectangleHeight(Box) - 2);
     Exit;
   end;
   Shift := 0;
@@ -157,11 +156,14 @@ begin
   begin
     if FDown and not FHeld then
       FillRectangle(Canvas, Box, Theme.Light);
-    DrawEdge(Canvas, Box, Theme.Shadow, Theme.Highlight);
+    DrawSunkenEdge(Canvas, Box);
     Shift := 1;
   end
   else if FHovered and Enabled then
-    DrawEdge(Canvas, Box, Theme.Highlight, Theme.Shadow);
+  begin
+    FillRectangle(Canvas, Box, Theme.HotButtonFace);
+    DrawRaisedEdge(Canvas, Box);
+  end;
   Pictures := Images;
   if Pictures <> nil then
   begin
@@ -294,8 +296,7 @@ var
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
-  DrawHorizontalLine(Canvas, 0, Box.Right, Box.Bottom - 2, Theme.Shadow);
-  DrawHorizontalLine(Canvas, 0, Box.Right, Box.Bottom - 1, Theme.Highlight);
+  DrawEtchedHorizontalLine(Canvas, 0, Box.Right, Box.Bottom - 2 * BevelLine);
 end;
 
 end.
