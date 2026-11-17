@@ -1,0 +1,2 @@
+[["sh", "terminal -x 160 -y 60 > /dev/null 2>&1 &"], ["sleep", 4], ["keys", "sysinfo\n"], ["sleep", 3],
+ ["shot", "sysinfo"]]

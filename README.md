@@ -10,6 +10,20 @@ The first target is x86-64. The code is arranged so that a 64-bit ARM
 (AArch64) port only has to supply its own versions of the architecture
 specific units; see [docs/Architecture.md](docs/Architecture.md).
 
+## Screenshots
+
+The desktop in the default theme, running in QEMU at 1280×800. They are
+taken by `scripts/take-screenshots.py` from the plans in
+[docs/screenshots/plans](docs/screenshots/plans), e.g.
+`scripts/take-screenshots.py docs/screenshots/plans/sysinfo.json`.
+
+| | |
+|---|---|
+| ![A terminal running sysinfo](docs/screenshots/sysinfo.png) | ![The controls tour](docs/screenshots/controls.png) |
+| A terminal running `sysinfo` | The controls tour: banded group boxes, split buttons, progress |
+| ![Files and the image viewer](docs/screenshots/files-viewer.png) | ![Paint and the calculator](docs/screenshots/paint-calculator.png) |
+| Files and the image viewer | Paint and the calculator |
+
 ## What works today
 
 - A UEFI loader that finds the framebuffer and ACPI tables, loads the kernel
