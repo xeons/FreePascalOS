@@ -46,8 +46,8 @@ function DrawThemeIcon(const Canvas: TCanvas; const Name: string; const Box: TRe
 { Draws it LogicalSize units across (at the display's scale) with its
   top left at (X, Y), pixels. }
 function DrawThemeIconAt(const Canvas: TCanvas; const Name: string; X, Y, LogicalSize: LongInt): Boolean;
-{ A new picture in List with every size of icon Name; -1 if it has no
-  file. }
+{ A new picture in List with the sizes of icon Name the list can use
+  (up to three times its logical size: 300 %); -1 if it has no file. }
 function AddThemeIcon(List: TImageList; const Name: string): LongInt;
 function ThemeIconExists(const Name: string): Boolean;
 
@@ -59,6 +59,10 @@ uses
   Image.Surfaces,
   Windowing.Connection,
   Controls.IconFiles;
+
+const
+  { The largest scale an image list's pictures are wanted at. }
+  MostUsefulScale = 3;
 
 function ThemeIconExists(const Name: string): Boolean;
 begin
@@ -97,10 +101,41 @@ begin
 end;
 
 function AddThemeIcon(List: TImageList; const Name: string): LongInt;
+var
+  IconFile: TIconFile;
+  Largest: LongInt;
+  Entry: LongInt;
+  Picture: TImage;
 begin
   Result := -1;
-  if (List <> nil) and IconFileExists(Name) then
-    Result := List.AddFromFile(IconFileName(Name));
+  if List = nil then
+    Exit;
+  IconFile := FindIconFile(Name);
+  if IconFile = nil then
+    Exit;
+  Largest := List.Width;
+  if List.Height > Largest then
+    Largest := List.Height;
+  Largest := Largest * MostUsefulScale;
+  for Entry := 0 to IconFile.EntryCount - 1 do
+  begin
+    if IconFile.EntryWidth(Entry) > Largest then
+      Continue;
+    Picture := IconFile.Picture(IconFile.EntryWidth(Entry));
+    if Picture = nil then
+      Continue;
+    if Result < 0 then
+      Result := List.Add(Picture)
+    else
+      List.AddVariant(Result, Picture);
+  end;
+  { No entry small enough: the smallest there is. }
+  if Result < 0 then
+  begin
+    Picture := IconFile.Picture(IconFile.EntryWidth(IconFile.EntryForSize(Largest)));
+    if Picture <> nil then
+      Result := List.Add(Picture);
+  end;
 end;
 
 end.
