@@ -122,13 +122,19 @@ begin
     Report('only S5 (soft off) can be entered');
     Exit;
   end;
+  { Without ACPI's fixed hardware (hardware-reduced ACPI, as on AArch64)
+    the firmware powers off (PSCI). }
   if not AcpiNamespaceIsLoaded or not AcpiHardware.Present then
+  begin
+    HalPowerOff;
     Exit;
+  end;
   LockAmlInterpreter;
   if not SleepTypeOf(State, TypeA, TypeB) then
   begin
     UnlockAmlInterpreter;
     Report('the firmware has no S5');
+    HalPowerOff;
     Exit;
   end;
   PrepareToSleep(State);

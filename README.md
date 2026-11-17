@@ -6,9 +6,11 @@ layered in the style of Windows NT: a hardware abstraction layer at the
 bottom, a kernel core for scheduling and synchronization, and executive-style
 subsystems (memory, objects, processes) on top.
 
-The first target is x86-64. The code is arranged so that a 64-bit ARM
-(AArch64) port only has to supply its own versions of the architecture
-specific units; see [docs/Architecture.md](docs/Architecture.md).
+The first target is x86-64. A 64-bit ARM (AArch64) port for the Raspberry
+Pi 4 with UEFI firmware has begun: it supplies its own versions of the
+architecture specific units, and the kernel boots to the end of its self
+tests in QEMU's virt machine; see "The AArch64 port" in
+[docs/Architecture.md](docs/Architecture.md).
 
 ## Screenshots
 
@@ -328,6 +330,19 @@ taken by `scripts/take-screenshots.py` from the plans in
 On Arch based systems:
 `pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
 
+For the AArch64 (Raspberry Pi 4) build, `ARCH=arm64`, also:
+
+- the Free Pascal compiler sources (`fpc-src`, as above): `make toolchain
+  ARCH=arm64` builds the AArch64 cross compiler from them into
+  `build/toolchain/ppcrossa64` (the first `make ARCH=arm64` does it too)
+- GNU binutils for AArch64 (`aarch64-linux-gnu-as`, `-ld`, `-objcopy`,
+  `-objdump`; `CROSS_PREFIX` names another prefix)
+- QEMU for AArch64 (`qemu-system-aarch64`) and the edk2 AArch64 UEFI
+  firmware (`QEMU_EFI.fd`, `QEMU_VARS.fd`), for `make run ARCH=arm64` and
+  `make arm64-test`
+
+On Arch based systems: `pacman -S aarch64-linux-gnu-binutils qemu-system-aarch64 edk2-aarch64`.
+
 ## Building and running
 
 ```
@@ -346,6 +361,12 @@ make test         # boot headless, run every self test and coretest, type
                   # TEST PASSED, INPUT TEST PASSED and SESSION TEST PASSED
 make image        # build build/amd64/FreePascalOS.img (GPT, one EFI partition)
 make clean
+
+make ARCH=arm64       # build build/arm64/esp for AArch64 (BOOTAA64.EFI, kernel.elf)
+make run ARCH=arm64   # boot it in QEMU's virt machine (GICv2, Cortex-A72); the
+                      # kernel runs its self tests (user mode on AArch64 is next)
+make arm64-test       # boot smoke test of the AArch64 build, with the firmware
+                      # at EL1 and at EL2 (not part of make test yet)
 ```
 
 `ACCEL=kvm make test` (or `make run`) uses KVM: much faster, and with the

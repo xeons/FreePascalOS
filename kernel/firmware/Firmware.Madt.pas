@@ -55,8 +55,25 @@ type
     LevelTriggered: Boolean;
   end;
 
-{ Reads the table. Returns False if there is none. }
+  { The ARM generic interrupt controller (GIC) the MADT describes on
+    AArch64 machines: its distributor, the CPU interface (GICv2, the
+    same address for every processor: it is banked) and a GICv2m frame
+    that turns PCIe message writes into SPIs, if there is one. Zero
+    where absent. }
+  TGicDescription = record
+    Version: Byte;
+    DistributorAddress: TPhysicalAddress;
+    CpuInterfaceAddress: TPhysicalAddress;
+    MessageFrameAddress: TPhysicalAddress;
+    MessageFrameFirstSpi: LongWord;
+    MessageFrameSpiCount: LongWord;
+  end;
+
+{ Reads the table. Returns False if there is none, or it lists neither an
+  I/O APIC nor a GIC distributor. }
 function ParseMadt: Boolean;
+
+function GicDescription: TGicDescription;
 function IoApicCount: Integer;
 function IoApicDescription(Index: Integer): TIoApicDescription;
 { Where ISA IRQ Irq arrives: the override if there is one, otherwise
@@ -73,6 +90,7 @@ function ListedProcessorApicId(Index: Integer): LongWord;
 implementation
 
 uses
+  Runtime.Memory,
   Firmware.Acpi;
 
 const
@@ -80,6 +98,14 @@ const
   EntryTypeIoApic = 1;
   EntryTypeSourceOverride = 2;
   EntryTypeLocalX2Apic = 9;
+  EntryTypeGicCpuInterface = $0B;
+  EntryTypeGicDistributor = $0C;
+  EntryTypeGicMessageFrame = $0D;
+
+  { A GIC CPU interface's flags: bit 0 enabled, bit 3 online capable. }
+  GicProcessorOnlineCapable = 8;
+  { MPIDR affinity Aff2.Aff1.Aff0, the processor's id. }
+  AffinityMask = $FFFFFF;
 
   { Flags of a processor: enabled, or "online capable" (may be enabled). }
   ProcessorEnabled = 1;
@@ -142,6 +168,45 @@ type
   end;
   PSourceOverrideEntry = ^TSourceOverrideEntry;
 
+  TGicCpuInterfaceEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    CpuInterfaceNumber: LongWord;
+    ProcessorUid: LongWord;
+    Flags: LongWord;
+    ParkingVersion: LongWord;
+    PerformanceInterrupt: LongWord;
+    ParkedAddress: QWord;
+    PhysicalBaseAddress: QWord;
+    VirtualInterfaceAddress: QWord;
+    HypervisorInterfaceAddress: QWord;
+    MaintenanceInterrupt: LongWord;
+    RedistributorAddress: QWord;
+    Affinity: QWord;
+  end;
+  PGicCpuInterfaceEntry = ^TGicCpuInterfaceEntry;
+
+  TGicDistributorEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    GicId: LongWord;
+    PhysicalBaseAddress: QWord;
+    SystemVectorBase: LongWord;
+    Version: Byte;
+  end;
+  PGicDistributorEntry = ^TGicDistributorEntry;
+
+  TGicMessageFrameEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    FrameId: LongWord;
+    PhysicalBaseAddress: QWord;
+    Flags: LongWord;
+    SpiCount: Word;
+    SpiBase: Word;
+  end;
+  PGicMessageFrameEntry = ^TGicMessageFrameEntry;
+
   TOverride = record
     Source: Byte;
     Routing: TIsaInterruptRouting;
@@ -154,6 +219,7 @@ var
   OverrideTotal: Integer;
   ProcessorApicIds: array[0..MaximumListedProcessors - 1] of LongWord;
   ProcessorTotal: Integer;
+  Gic: TGicDescription;
 
 procedure AddProcessor(ApicId: LongWord; Flags: LongWord);
 var
@@ -172,6 +238,33 @@ begin
   end;
 end;
 
+procedure AddGicCpuInterface(Entry: PGicCpuInterfaceEntry);
+var
+  Flags: LongWord;
+begin
+  Flags := Entry^.Flags and ProcessorEnabled;
+  if (Entry^.Flags and GicProcessorOnlineCapable) <> 0 then
+    Flags := Flags or ProcessorOnlineCapable;
+  AddProcessor(LongWord(Entry^.Affinity and AffinityMask), Flags);
+  if Gic.CpuInterfaceAddress = 0 then
+    Gic.CpuInterfaceAddress := Entry^.PhysicalBaseAddress;
+end;
+
+procedure AddGicDistributor(Entry: PGicDistributorEntry);
+begin
+  Gic.DistributorAddress := Entry^.PhysicalBaseAddress;
+  Gic.Version := Entry^.Version;
+end;
+
+procedure AddGicMessageFrame(Entry: PGicMessageFrameEntry);
+begin
+  if Gic.MessageFrameAddress <> 0 then
+    Exit;
+  Gic.MessageFrameAddress := Entry^.PhysicalBaseAddress;
+  Gic.MessageFrameFirstSpi := Entry^.SpiBase;
+  Gic.MessageFrameSpiCount := Entry^.SpiCount;
+end;
+
 function ParseMadt: Boolean;
 var
   Table: PMadtHeader;
@@ -184,6 +277,7 @@ begin
   IoApicTotal := 0;
   OverrideTotal := 0;
   ProcessorTotal := 0;
+  ZeroMemory(@Gic, SizeOf(Gic));
   Table := PMadtHeader(FindAcpiTable('APIC', 0));
   if Table = nil then
     Exit(False);
@@ -202,6 +296,15 @@ begin
       EntryTypeLocalX2Apic:
         if Entry^.Length >= SizeOf(TLocalX2ApicEntry) then
           AddProcessor(PLocalX2ApicEntry(Entry)^.ApicId, PLocalX2ApicEntry(Entry)^.Flags);
+      EntryTypeGicCpuInterface:
+        if Entry^.Length >= SizeOf(TGicCpuInterfaceEntry) then
+          AddGicCpuInterface(PGicCpuInterfaceEntry(Entry));
+      EntryTypeGicDistributor:
+        if Entry^.Length >= SizeOf(TGicDistributorEntry) then
+          AddGicDistributor(PGicDistributorEntry(Entry));
+      EntryTypeGicMessageFrame:
+        if Entry^.Length >= SizeOf(TGicMessageFrameEntry) then
+          AddGicMessageFrame(PGicMessageFrameEntry(Entry));
       EntryTypeIoApic:
         if (Entry^.Length >= SizeOf(TIoApicEntry)) and (IoApicTotal < MaximumIoApics) then
         begin
@@ -226,7 +329,12 @@ begin
     end;
     Position := Position + Entry^.Length;
   end;
-  Result := IoApicTotal > 0;
+  Result := (IoApicTotal > 0) or (Gic.DistributorAddress <> 0);
+end;
+
+function GicDescription: TGicDescription;
+begin
+  Result := Gic;
 end;
 
 function IoApicCount: Integer;

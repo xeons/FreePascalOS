@@ -52,6 +52,12 @@
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make clean      Remove all build output
+#
+#   make toolchain ARCH=arm64  Build the AArch64 cross compiler from the Free
+#                   Pascal sources (build/toolchain/ppcrossa64)
+#   make ARCH=arm64 Build the AArch64 loader and kernel (build/arm64/esp)
+#   make run ARCH=arm64  Boot it in QEMU's virt machine (GICv2, Cortex-A72)
+#   make arm64-test Boot smoke test of the AArch64 build (not in make test)
 
 ARCH ?= amd64
 
@@ -64,9 +70,28 @@ BUILD_DIRECTORY := build/$(ARCH)
 ESP_DIRECTORY := $(BUILD_DIRECTORY)/esp
 
 ifeq ($(ARCH),amd64)
+  TARGET_FPC := $(FPC)
+  TARGET_AS := $(AS) --64
   LOADER_TARGET := -Twin64
   KERNEL_TARGET := -Tlinux
   EFI_BOOT_FILE := BOOTX64.EFI
+else ifeq ($(ARCH),arm64)
+  # Free Pascal's AArch64 cross compiler, built from the compiler sources
+  # into the build tree (make toolchain ARCH=arm64), and GNU binutils for
+  # AArch64 (aarch64-linux-gnu-*), which the compiler runs to assemble.
+  CROSS_COMPILER := build/toolchain/ppcrossa64
+  CROSS_PREFIX ?= aarch64-linux-gnu-
+  TARGET_FPC := $(CROSS_COMPILER) -XP$(CROSS_PREFIX)
+  TARGET_AS := $(CROSS_PREFIX)as
+  LD := $(CROSS_PREFIX)ld
+  OBJCOPY := $(CROSS_PREFIX)objcopy
+  OBJDUMP := $(CROSS_PREFIX)objdump
+  # Both are compiled for linux (AAPCS64, which is also the UEFI calling
+  # convention on AArch64); the loader is linked as a position
+  # independent ELF and converted to a PE image (see boot/uefi/arm64).
+  LOADER_TARGET := -Tlinux
+  KERNEL_TARGET := -Tlinux
+  EFI_BOOT_FILE := BOOTAA64.EFI
 else
   $(error Architecture '$(ARCH)' is not supported yet)
 endif
@@ -92,7 +117,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/core kernel/core/$(ARCH) \
 	kernel/memory kernel/memory/$(ARCH) \
 	kernel/objects \
-	kernel/processes \
+	kernel/processes kernel/processes/$(ARCH) \
 	kernel/firmware \
 	kernel/io \
 	kernel/network \
@@ -139,55 +164,104 @@ all: esp
 # Arguments: output directory, System unit directory, compiler flags.
 define build-rtl
 	@mkdir -p $(1)
-	$(FPC) $(COMMON_FLAGS) $(3) -Firtl/common -Us -FU$(1) $(2)/system.pas
-	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/objpas.pas
-	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/sysinit.pas
-	$(FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/fpintres.pas
+	$(TARGET_FPC) $(COMMON_FLAGS) $(3) -Firtl/common -Us -FU$(1) $(2)/system.pas
+	$(TARGET_FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/objpas.pas
+	$(TARGET_FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/sysinit.pas
+	$(TARGET_FPC) $(COMMON_FLAGS) $(3) -Fu$(1) -FU$(1) rtl/common/fpintres.pas
 endef
 
 RTL_SOURCES := $(wildcard rtl/common/*) $(wildcard rtl/freestanding/*.pas)
 
-$(RTL_LOADER_DIRECTORY)/system.ppu: $(RTL_SOURCES)
+$(RTL_LOADER_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
 	$(call build-rtl,$(RTL_LOADER_DIRECTORY),rtl/freestanding,$(LOADER_TARGET))
 
-$(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES)
+$(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
 	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET))
+
+# --- Cross compiler ----------------------------------------------------------
+
+# Built from the Free Pascal compiler sources with the installed compiler;
+# nothing is installed (only for ARCH=arm64).
+.PHONY: toolchain
+toolchain: $(CROSS_COMPILER)
+
+ifneq ($(CROSS_COMPILER),)
+$(CROSS_COMPILER): scripts/build-cross-compiler.sh
+	scripts/build-cross-compiler.sh aarch64 $@
+endif
 
 # --- Loader ----------------------------------------------------------------
 
 loader: $(LOADER_EFI)
 
+ifeq ($(ARCH),arm64)
+# Free Pascal 3.2.2 cannot write AArch64 PE images: the loader is compiled
+# for linux, linked as a position independent ELF that relocates itself
+# (LoaderEntry.s), and converted to a PE image by objcopy.
+LOADER_ELF := $(BUILD_DIRECTORY)/OsLoader.elf
+LOADER_ASSEMBLY_OBJECTS := $(patsubst boot/uefi/$(ARCH)/%.s,$(LOADER_OBJECT_DIRECTORY)/%.o,\
+	$(wildcard boot/uefi/$(ARCH)/*.s))
+
+$(LOADER_OBJECT_DIRECTORY)/%.o: boot/uefi/$(ARCH)/%.s
+	@mkdir -p $(LOADER_OBJECT_DIRECTORY)
+	$(TARGET_AS) -o $@ $<
+
+$(LOADER_EFI): $(RTL_LOADER_DIRECTORY)/system.ppu $(LOADER_ASSEMBLY_OBJECTS) FORCE
+	@mkdir -p $(LOADER_OBJECT_DIRECTORY)
+	$(TARGET_FPC) $(COMMON_FLAGS) $(LOADER_TARGET) -Cn -Cg- \
+		-Fu$(RTL_LOADER_DIRECTORY) $(addprefix -Fu,$(LOADER_UNIT_DIRECTORIES)) \
+		-FU$(LOADER_OBJECT_DIRECTORY) -FE$(LOADER_OBJECT_DIRECTORY) boot/uefi/OsLoader.pas
+	$(LD) -nostdlib -pie --no-dynamic-linker -z nocombreloc -z max-page-size=4096 \
+		-T boot/uefi/$(ARCH)/loader.ld -o $(LOADER_ELF) \
+		$(LOADER_OBJECT_DIRECTORY)/*.o $(RTL_LOADER_DIRECTORY)/system.o
+	$(OBJCOPY) -j .text -j .data -j .dynamic -j .rela -j .reloc \
+		-O pei-aarch64-little --subsystem efi-app $(LOADER_ELF) $@
+else
 $(LOADER_EFI): $(RTL_LOADER_DIRECTORY)/system.ppu FORCE
 	@mkdir -p $(LOADER_OBJECT_DIRECTORY)
-	$(FPC) $(LOADER_FLAGS) boot/uefi/OsLoader.pas
+	$(TARGET_FPC) $(LOADER_FLAGS) boot/uefi/OsLoader.pas
 	$(OBJCOPY) --subsystem efi-app $(BUILD_DIRECTORY)/OsLoader.exe $@
+endif
 
 # --- Kernel ----------------------------------------------------------------
 
 kernel: $(KERNEL_ELF)
 
-# Code that cannot be written in Pascal (16-bit start-up code for the
-# secondary processors).
-KERNEL_ASSEMBLY_OBJECTS := $(KERNEL_OBJECT_DIRECTORY)/ProcessorTrampoline.o
+# Code that cannot be written in Pascal: on x86-64 the 16-bit start-up
+# code of the secondary processors, on AArch64 the exception vectors,
+# the entry points and the system register accesses.
+KERNEL_ASSEMBLY_OBJECTS := $(patsubst kernel/core/$(ARCH)/%.s,$(KERNEL_OBJECT_DIRECTORY)/%.o,\
+	$(wildcard kernel/core/$(ARCH)/*.s))
 
 $(KERNEL_OBJECT_DIRECTORY)/%.o: kernel/core/$(ARCH)/%.s
 	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
-	$(AS) --64 -o $@ $<
+	$(TARGET_AS) -o $@ $<
 
 $(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
 	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
-	$(FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+	$(TARGET_FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
 	$(LD) -nostdlib -static --gc-sections -z max-page-size=4096 \
 		-T $(KERNEL_LINKER_SCRIPT) -o $@ \
 		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o
 	@$(MAKE) --no-print-directory check-kernel
 
 # The kernel does not save floating point / SIMD registers on interrupts or
-# context switches, so the compiler must never have used them.
+# context switches, so the compiler must never have used them (only the
+# routines that save and restore a thread's registers at a switch may).
+ifeq ($(ARCH),arm64)
+KERNEL_SIMD_PATTERN := [[:space:],][qdsvbh][0-9]+([].,[:space:]]|$$)
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState
+else
+KERNEL_SIMD_PATTERN := %(x|y|z)mm[0-9]
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchInitializeFpuState
+endif
+KERNEL_DISASSEMBLY = $(OBJDUMP) -d $(KERNEL_ELF) | \
+	awk '/^[0-9a-f]+ <($(KERNEL_FPU_ROUTINES))>:/ { skip = 1; next } /^[0-9a-f]+ <.*>:/ { skip = 0 } !skip' | cut -f3-
+
 check-kernel:
-	@if $(OBJDUMP) -d $(KERNEL_ELF) | grep -qE '%(x|y|z)mm[0-9]'; then \
-		echo "error: kernel code uses SSE registers, which the kernel does not preserve"; \
-		$(OBJDUMP) -d $(KERNEL_ELF) | grep -E '%(x|y|z)mm[0-9]' | head; \
+	@if $(KERNEL_DISASSEMBLY) | grep -qE '$(KERNEL_SIMD_PATTERN)'; then \
+		echo "error: kernel code uses floating point / SIMD registers, which the kernel does not preserve"; \
+		$(KERNEL_DISASSEMBLY) | grep -E '$(KERNEL_SIMD_PATTERN)' | head; \
 		exit 1; \
 	fi
 
@@ -213,11 +287,30 @@ RUN_SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk-interactive.img
 $(RUN_SYSTEM_DISK): $(SYSTEM_DISK)
 	cp $(SYSTEM_DISK) $@
 
+ifeq ($(ARCH),arm64)
+# The AArch64 build boots without the disks for now (user mode on AArch64
+# is the next step of the port).
+run: esp
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY)
+
+debug: esp
+	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug
+else
 run: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 
 debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
+endif
+
+# Boot smoke test of the AArch64 build in QEMU's virt machine (not part of
+# make test until qemu-system-aarch64 and the edk2 AArch64 firmware are
+# standard requirements): the kernel must reach the end of its start-up
+# with every self test passed, with the firmware at EL1 and at EL2.
+.PHONY: arm64-test
+arm64-test:
+	@$(MAKE) --no-print-directory ARCH=arm64 esp
+	scripts/test-qemu-arm64.sh build/arm64/esp
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@

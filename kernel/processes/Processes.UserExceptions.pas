@@ -26,8 +26,9 @@
   floating point exception and so on - the kernel writes a
   TAbiExceptionRecord (what happened, and every register) onto the
   thread's stack below the red zone and lets the thread continue in the
-  dispatcher, with RDI pointing at the record, as if the faulting
-  instruction had called it. The runtime turns the record into a Pascal
+  dispatcher, with the record's address as its argument (RDI; X0), as if
+  the faulting instruction had called it (the register context and how
+  the dispatcher starts are the architecture's: Processes.Arch.UserContext). The runtime turns the record into a Pascal
   exception (EAccessViolation, EDivByZero, ...) that try/except can catch.
 
   The dispatcher reports with CallExceptionDispatched once it has the
@@ -105,8 +106,8 @@ uses
   Abi.SystemCalls,
   Memory.Layout,
   Kernel.Arch.Cpu,
-  Kernel.Arch.PrivilegedInstructions,
   Memory.Arch.PageTables,
+  Processes.Arch.UserContext,
   Processes.Process,
   Processes.Thread,
   Processes.AddressSpace,
@@ -115,93 +116,18 @@ uses
   Debug.Output;
 
 const
-  VectorDivideError = 0;
-  VectorBreakpoint = 3;
-  VectorOverflow = 4;
-  VectorBoundRange = 5;
-  VectorInvalidOpcode = 6;
-  VectorSegmentNotPresent = 11;
-  VectorStackSegmentFault = 12;
-  VectorGeneralProtection = 13;
-  VectorPageFault = 14;
-  VectorFloatingPoint = 16;
-  VectorAlignmentCheck = 17;
-  VectorSimdFloatingPoint = 19;
-
-  PageFaultWrite = 2;
-  PageFaultInstructionFetch = 16;
-
-  RedZoneSize = 128;
   { A stack access below the stack (a huge frame) is taken for one if it
     lands in the stack's guard. }
   LargeFrameReach = StackGuardSize;
-  { Flags the dispatcher must not start with: trap, direction, alignment
-    check. Interrupts stay enabled. }
-  RflagsTrap = QWord(1) shl 8;
-  RflagsDirection = QWord(1) shl 10;
-  RflagsAlignmentCheck = QWord(1) shl 18;
-  RflagsInterruptEnable = QWord(1) shl 9;
   StackOverflowDistance = 64 * 1024;
-  { The flags a context may set: carry, parity, adjust, zero, sign,
-    direction, overflow. Bit 1 is always set. }
-  RflagsUserSettable = $0CD5;
-  RflagsAlwaysOne = $0002;
-
-{ The Abi code for an exception vector, 0 for one not passed on. }
-function ExceptionCode(Vector: Byte): LongWord;
-begin
-  case Vector of
-    VectorDivideError: Result := ExceptionIntegerDivide;
-    VectorBreakpoint: Result := ExceptionBreakpoint;
-    VectorOverflow: Result := ExceptionIntegerOverflow;
-    VectorBoundRange: Result := ExceptionBoundRange;
-    VectorInvalidOpcode: Result := ExceptionIllegalInstruction;
-    VectorSegmentNotPresent, VectorStackSegmentFault, VectorPageFault: Result := ExceptionAccessViolation;
-    VectorGeneralProtection: Result := ExceptionPrivilegedOperation;
-    VectorFloatingPoint: Result := ExceptionFloatingPoint;
-    VectorAlignmentCheck: Result := ExceptionAlignment;
-    VectorSimdFloatingPoint: Result := ExceptionSimdFloatingPoint;
-  else
-    Result := 0;
-  end;
-end;
-
-procedure CaptureContext(Frame: PTrapFrame; out Context: TAbiContext);
-begin
-  Context.Rax := Frame^.Rax;
-  Context.Rbx := Frame^.Rbx;
-  Context.Rcx := Frame^.Rcx;
-  Context.Rdx := Frame^.Rdx;
-  Context.Rsi := Frame^.Rsi;
-  Context.Rdi := Frame^.Rdi;
-  Context.Rbp := Frame^.Rbp;
-  Context.Rsp := Frame^.Rsp;
-  Context.R8 := Frame^.R8;
-  Context.R9 := Frame^.R9;
-  Context.R10 := Frame^.R10;
-  Context.R11 := Frame^.R11;
-  Context.R12 := Frame^.R12;
-  Context.R13 := Frame^.R13;
-  Context.R14 := Frame^.R14;
-  Context.R15 := Frame^.R15;
-  Context.Rip := Frame^.Rip;
-  Context.Rflags := Frame^.Rflags;
-end;
-
-function AccessKindOf(ErrorCode: QWord): LongWord;
-begin
-  if (ErrorCode and PageFaultInstructionFetch) <> 0 then
-    Result := AccessKindExecute
-  else if (ErrorCode and PageFaultWrite) <> 0 then
-    Result := AccessKindWrite
-  else
-    Result := AccessKindRead;
-end;
 
 function LooksLikeStackOverflow(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
+var
+  StackPointer: QWord;
 begin
-  Result := (TrapFrameVector(Frame) = VectorPageFault) and (FaultAddress < Frame^.Rsp + PageSize) and
-    (FaultAddress + StackOverflowDistance > Frame^.Rsp);
+  StackPointer := TrapFrameStackPointer(Frame);
+  Result := FrameIsPageFault(Frame) and (FaultAddress < StackPointer + PageSize) and
+    (FaultAddress + StackOverflowDistance > StackPointer);
 end;
 
 { Writes the exception record for Frame onto the user stack and changes
@@ -220,6 +146,7 @@ var
   WereEnabled: Boolean;
   RecordTop: QWord;
   ReserveTop: QWord;
+  StackPointer: QWord;
 begin
   Result := False;
   Process := CurrentProcess;
@@ -230,19 +157,20 @@ begin
   ExceptionRecord.Code := Code;
   ExceptionRecord.Access := Access;
   ExceptionRecord.FaultAddress := FaultAddress;
-  ExceptionRecord.Address := Frame^.Rip;
-  CaptureContext(Frame, ExceptionRecord.Context);
+  ExceptionRecord.Address := TrapFrameInstructionPointer(Frame);
+  CaptureUserContext(Frame, ExceptionRecord.Context);
 
   { Below the red zone, 16-byte aligned, with a null return address under
     it, so the dispatcher starts as if called. A stack overflow's record
     goes no lower than the top of the opened reserve: a frame that jumped
     past the reserve leaves the stack pointer outside the stack. }
-  RecordTop := Frame^.Rsp - RedZoneSize;
+  StackPointer := TrapFrameStackPointer(Frame);
+  RecordTop := StackPointer - UserStackRedZoneSize;
   if (Code = ExceptionStackOverflow) and (Thread^.OpenedStackReserve <> 0) then
   begin
     ReserveTop := StackReserveTop(Process^.AddressSpace, Thread^.OpenedStackReserve);
     if (ReserveTop <> 0) and
-       (Frame^.Rsp < Thread^.OpenedStackReserve + RedZoneSize + 2 * SizeOf(ExceptionRecord)) then
+       (StackPointer < Thread^.OpenedStackReserve + UserStackRedZoneSize + 2 * SizeOf(ExceptionRecord)) then
       RecordTop := ReserveTop;
   end;
   RecordAddress := (RecordTop - SizeOf(ExceptionRecord)) and not QWord(15);
@@ -252,7 +180,7 @@ begin
     interrupts. }
   WereEnabled := SaveAndDisableInterrupts;
   EnableInterrupts;
-  Written := ((RecordAddress < Frame^.Rsp) or (Code = ExceptionStackOverflow)) and
+  Written := ((RecordAddress < StackPointer) or (Code = ExceptionStackOverflow)) and
     (CopyToUser(RecordAddress, @ExceptionRecord, SizeOf(ExceptionRecord)) = ErrorNone) and
     (CopyToUser(ReturnSlot, @NoReturnAddress, SizeOf(NoReturnAddress)) = ErrorNone);
   DisableInterrupts;
@@ -260,11 +188,7 @@ begin
   if not Written then
     Exit;
 
-  Frame^.Rsp := ReturnSlot;
-  Frame^.Rip := Process^.ExceptionDispatcher;
-  Frame^.Rdi := RecordAddress;
-  Frame^.Rflags := (Frame^.Rflags and not (RflagsTrap or RflagsDirection or RflagsAlignmentCheck)) or
-    RflagsInterruptEnable;
+  EnterExceptionDispatcher(Frame, Process^.ExceptionDispatcher, RecordAddress, ReturnSlot);
   Thread^.IsDispatchingException := True;
   Result := True;
 end;
@@ -298,32 +222,11 @@ begin
   Space := CurrentProcess^.AddressSpace;
   if (FaultAddress >= Thread^.UserStackStart) or
      (FaultAddress + LargeFrameReach < Thread^.UserStackStart) or
-     (FaultAddress + RedZoneSize < StackPointer) or AddressIsInUsableRegion(Space, FaultAddress) then
+     (FaultAddress + UserStackRedZoneSize < StackPointer) or AddressIsInUsableRegion(Space, FaultAddress) then
     Exit;
   Result := OpenStackReserveOfRegion(Space, Thread^.UserStackStart);
   if Result then
     Thread^.OpenedStackReserve := Thread^.UserStackStart;
-end;
-
-{ A general protection fault is a privileged instruction only if the
-  instruction is one (Kernel.Arch.PrivilegedInstructions); otherwise it
-  was a memory access through a non-canonical address, an access
-  violation. Called with interrupts enabled (reading user memory may
-  fault the page in). }
-function GeneralProtectionCode(Frame: PTrapFrame): LongWord;
-var
-  Instruction: array[0..LongestInstruction - 1] of Byte;
-  Count: Integer;
-begin
-  { The instruction may end before the end of its page; read less until
-    the read works. }
-  Count := LongestInstruction;
-  while (Count > 0) and (CopyFromUser(@Instruction[0], Frame^.Rip, QWord(Count)) <> ErrorNone) do
-    Dec(Count);
-  if IsPrivilegedInstruction(@Instruction[0], Count) then
-    Result := ExceptionPrivilegedOperation
-  else
-    Result := ExceptionAccessViolation;
 end;
 
 function DispatchUserException(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
@@ -332,22 +235,22 @@ var
   Access: LongWord;
 begin
   Result := False;
-  Code := ExceptionCode(TrapFrameVector(Frame));
+  Code := ExceptionCodeOfFrame(Frame);
   if Code = 0 then
     Exit;
   Access := 0;
   EnableInterrupts;
-  RearmStackReserveIfClear(Frame^.Rsp);
-  if TrapFrameVector(Frame) = VectorPageFault then
+  RearmStackReserveIfClear(TrapFrameStackPointer(Frame));
+  if FrameIsPageFault(Frame) then
   begin
-    Access := AccessKindOf(Frame^.ErrorCode);
-    if OpenOwnStackReserve(FaultAddress) or OpenReserveForLargeFrame(FaultAddress, Frame^.Rsp) then
+    Access := PageFaultAccessKind(Frame);
+    if OpenOwnStackReserve(FaultAddress) or
+       OpenReserveForLargeFrame(FaultAddress, TrapFrameStackPointer(Frame)) then
       Code := ExceptionStackOverflow;
   end
   else
   begin
-    if TrapFrameVector(Frame) = VectorGeneralProtection then
-      Code := GeneralProtectionCode(Frame);
+    Code := RefineExceptionCode(Frame, Code);
     FaultAddress := 0;
   end;
   DisableInterrupts;
@@ -364,7 +267,8 @@ begin
   { A buffer in a frame that jumped past the reserve: there is no memory
     there, so the copy fails, but the program learns why. }
   CallFrame := PTrapFrame(Thread^.SystemCallFrame);
-  if not Result and (CallFrame <> nil) and OpenReserveForLargeFrame(FaultAddress, CallFrame^.Rsp) then
+  if not Result and (CallFrame <> nil) and
+     OpenReserveForLargeFrame(FaultAddress, TrapFrameStackPointer(CallFrame)) then
   begin
     Thread^.StackOverflowPending := True;
     Thread^.PendingOverflowAddress := FaultAddress;
@@ -421,28 +325,7 @@ begin
   Result := CopyFromUser(@Context, ContextAddress, SizeOf(Context));
   if Result <> ErrorNone then
     Exit;
-  if (Context.Rip >= UserSpaceLimit) or (Context.Rsp >= UserSpaceLimit) or (Context.Rsp = 0) then
-    Exit(ErrorInvalidArgument);
-  Frame^.Rax := Context.Rax;
-  Frame^.Rbx := Context.Rbx;
-  Frame^.Rcx := Context.Rcx;
-  Frame^.Rdx := Context.Rdx;
-  Frame^.Rsi := Context.Rsi;
-  Frame^.Rdi := Context.Rdi;
-  Frame^.Rbp := Context.Rbp;
-  Frame^.Rsp := Context.Rsp;
-  Frame^.R8 := Context.R8;
-  Frame^.R9 := Context.R9;
-  Frame^.R10 := Context.R10;
-  Frame^.R11 := Context.R11;
-  Frame^.R12 := Context.R12;
-  Frame^.R13 := Context.R13;
-  Frame^.R14 := Context.R14;
-  Frame^.R15 := Context.R15;
-  Frame^.Rip := Context.Rip;
-  Frame^.Rflags := (Context.Rflags and RflagsUserSettable) or RflagsAlwaysOne or RflagsInterruptEnable;
-  { The selectors stay the user ones the system call frame holds. }
-  Result := ErrorNone;
+  Result := RestoreUserContext(Frame, Context);
 end;
 
 function PerformSetExceptionDispatcher(Address: QWord): Int64;

@@ -6,4 +6,6 @@ build/
 # Hand-written assembly sources are kept.
 !userland/lib/tlstest/*.s
 !kernel/core/amd64/*.s
+!kernel/core/arm64/*.s
+!boot/uefi/arm64/*.s
 __pycache__/

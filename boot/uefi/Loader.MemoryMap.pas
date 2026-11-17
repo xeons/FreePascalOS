@@ -39,6 +39,14 @@ uses
   and firmware runtime areas) in the current memory map, or zero on error. }
 function FindHighestMemoryAddress: QWord;
 
+type
+  TMemoryRangeVisitor = procedure(PhysicalStart, SizeInBytes: QWord; Context: Pointer);
+
+{ Calls Visitor for every range of real memory (as FindHighestMemoryAddress
+  counts it) in the current memory map. False if the map could not be
+  read. }
+function VisitRealMemoryRanges(Visitor: TMemoryRangeVisitor; Context: Pointer): Boolean;
+
 { Captures the final memory map into BootInformation and exits boot
   services. On success the firmware console is no longer usable. }
 function ExitBootServicesAndRecordMemoryMap(var BootInformation: TBootInformation): TEfiStatus;
@@ -120,14 +128,13 @@ begin
   end;
 end;
 
-function FindHighestMemoryAddress: QWord;
+function VisitRealMemoryRanges(Visitor: TMemoryRangeVisitor; Context: Pointer): Boolean;
 var
   Map: TFirmwareMemoryMap;
   DescriptorIndex: QWord;
   Descriptor: PEfiMemoryDescriptor;
-  RangeEnd: QWord;
 begin
-  Result := 0;
+  Result := False;
   if EfiIsError(AllocateMemoryMapBuffer(Map)) then
     Exit;
 
@@ -138,15 +145,29 @@ begin
     begin
       Descriptor := GetDescriptor(Map, DescriptorIndex);
       Inc(DescriptorIndex);
-      if not IsRealMemory(Descriptor^.MemoryType) then
-        Continue;
-      RangeEnd := Descriptor^.PhysicalStart + Descriptor^.NumberOfPages * LoaderPageSize;
-      if RangeEnd > Result then
-        Result := RangeEnd;
+      if IsRealMemory(Descriptor^.MemoryType) then
+        Visitor(Descriptor^.PhysicalStart, Descriptor^.NumberOfPages * LoaderPageSize, Context);
     end;
+    Result := True;
   end;
 
   FreeTemporaryBuffer(Map.Buffer);
+end;
+
+procedure NoteRangeEnd(PhysicalStart, SizeInBytes: QWord; Context: Pointer);
+var
+  HighestEnd: PQWord;
+begin
+  HighestEnd := PQWord(Context);
+  if PhysicalStart + SizeInBytes > HighestEnd^ then
+    HighestEnd^ := PhysicalStart + SizeInBytes;
+end;
+
+function FindHighestMemoryAddress: QWord;
+begin
+  Result := 0;
+  if not VisitRealMemoryRanges(@NoteRangeEnd, @Result) then
+    Result := 0;
 end;
 
 function TranslateMemoryType(FirmwareType: LongWord): LongWord;

@@ -35,6 +35,9 @@ interface
 uses
   Kernel.Arch.TrapFrame;
 
+const
+  VectorPageFault = 14;
+
 type
   { Returns True if it made the faulting access valid (for example by
     providing a page on demand), so the instruction can be retried. }
@@ -68,7 +71,6 @@ uses
 const
   VectorNonMaskableInterrupt = 2;
   VectorBreakpoint = 3;
-  VectorPageFault = 14;
 
   PageFaultPresent = 1;
   PageFaultWrite = 2;
