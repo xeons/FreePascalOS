@@ -24,7 +24,9 @@
   clicking a tab, or Ctrl+Tab and the Left and Right arrows while the
   tab control has the focus, shows another page, as does Alt and the
   mnemonic in a page's caption ("&Lists"). A new page shown is
-  announced (OnChange, NotifyChanged).
+  announced (OnChange, NotifyChanged). A tab may show a picture of the
+  tab control's image list before its caption (Images,
+  PageImageIndex).
 }
 unit Controls.TabControl;
 
@@ -37,13 +39,20 @@ uses
   Classes,
   Drawing.Rectangles,
   Drawing.Canvas,
-  Controls.Base;
+  Controls.Base,
+  Controls.ImageList;
 
 type
   TTabControl = class(TControl)
   private
     FPages: TList;
     FPageIndex: LongInt;
+    FImages: TImageList;
+    FPageImages: array of LongInt;
+    procedure SetImages(Value: TImageList);
+    function GetPageImageIndex(Index: LongInt): LongInt;
+    procedure SetPageImageIndex(Index, Value: LongInt);
+    function TabHasImage(Index: LongInt): Boolean;
     function TabHeight: LongInt;
     function TabLeft(Index: LongInt): LongInt;
     function TabWidth(Index: LongInt): LongInt;
@@ -66,6 +75,10 @@ type
     property PageCount: LongInt read GetPageCount;
     property Pages[Index: LongInt]: TControl read GetPage;
     property PageIndex: LongInt read FPageIndex write SetPageIndex;
+    { The tabs' pictures (shared: the tab control does not own it). }
+    property Images: TImageList read FImages write SetImages;
+    { Page Index's tab's picture in Images (-1, the default: none). }
+    property PageImageIndex[Index: LongInt]: LongInt read GetPageImageIndex write SetPageImageIndex;
   end;
 
 implementation
@@ -77,7 +90,12 @@ uses
   Windowing.Connection,
   Controls.Keys,
   Controls.Text,
+  Controls.Icons,
   Controls.Panels;
+
+const
+  { Logical units between a tab's picture and its caption. }
+  ImageGap = 4;
 
 constructor TTabControl.Create(AParent: TControl);
 begin
@@ -111,6 +129,34 @@ end;
 function TTabControl.TabWidth(Index: LongInt): LongInt;
 begin
   Result := MnemonicTextWidth(ControlFace, Pages[Index].Text) + Scaled(16);
+  if TabHasImage(Index) then
+    Result := Result + Scaled(SmallIconSize + ImageGap);
+end;
+
+function TTabControl.TabHasImage(Index: LongInt): Boolean;
+begin
+  Result := (FImages <> nil) and FImages.ValidIndex(GetPageImageIndex(Index));
+end;
+
+procedure TTabControl.SetImages(Value: TImageList);
+begin
+  FImages := Value;
+  Invalidate;
+end;
+
+function TTabControl.GetPageImageIndex(Index: LongInt): LongInt;
+begin
+  Result := -1;
+  if (Index >= 0) and (Index < Length(FPageImages)) then
+    Result := FPageImages[Index];
+end;
+
+procedure TTabControl.SetPageImageIndex(Index, Value: LongInt);
+begin
+  if (Index < 0) or (Index >= Length(FPageImages)) then
+    Exit;
+  FPageImages[Index] := Value;
+  Invalidate;
 end;
 
 function TTabControl.TabLeft(Index: LongInt): LongInt;
@@ -132,6 +178,8 @@ begin
   Result := TPanel.Create(Self);
   Result.Text := Caption;
   FPages.Add(Result);
+  SetLength(FPageImages, FPages.Count);
+  FPageImages[FPages.Count - 1] := -1;
   Result.Visible := FPages.Count = 1;
   if FPageIndex < 0 then
     FPageIndex := 0;
@@ -193,6 +241,10 @@ var
   Frame: TRectangle;
   Index: LongInt;
   Tab: TRectangle;
+  Caption: TRectangle;
+  Picture: TRectangle;
+  Size: LongInt;
+  State: TImageDrawState;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
@@ -210,7 +262,23 @@ begin
     DrawPixel(Canvas, Tab.Left + 1, Tab.Top + 1, Theme.Highlight);
     DrawVerticalLine(Canvas, Tab.Right - 1, Tab.Top + 2, Tab.Bottom, Theme.DarkShadow);
     DrawVerticalLine(Canvas, Tab.Right - 2, Tab.Top + 1, Tab.Bottom, Theme.Shadow);
-    DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Tab, AlignTextCenter, Theme.FaceText);
+    Caption := Tab;
+    if TabHasImage(Index) then
+    begin
+      Size := Scaled(SmallIconSize);
+      { The picture and the caption together in the middle of the tab. }
+      Picture := MakeRectangle(Tab.Left + (RectangleWidth(Tab) - Size - Scaled(ImageGap) -
+        MnemonicTextWidth(ControlFace, Pages[Index].Text)) div 2, Tab.Top + (RectangleHeight(Tab) - Size) div 2,
+        Size, Size);
+      State := ImageDrawNormal;
+      if not Enabled then
+        State := ImageDrawDisabled;
+      FImages.DrawInBox(Canvas, FPageImages[Index], Picture, State);
+      Caption.Left := Picture.Right + Scaled(ImageGap);
+      DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Caption, AlignTextLeft, Theme.FaceText);
+    end
+    else
+      DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Tab, AlignTextCenter, Theme.FaceText);
     if (Index = FPageIndex) and Focused then
       DrawFocusFrame(Canvas, InflateRectangle(Tab, -Scaled(3)), Theme.FaceText);
   end;

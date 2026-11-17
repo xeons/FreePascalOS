@@ -31,7 +31,8 @@
   MaximumButtonWidth wide. The clock is checked every second and drawn
   when the minute changes, and the volume and network icons with it
   (Desktop.VolumeIndicator, Desktop.NetworkIndicator); a notification
-  icon's tooltip shows when the pointer has rested on it for a moment, a
+  icon's tooltip shows when the pointer has rested on it for a moment
+  (the window's hints, Controls.Hints: the icon's hint), a
   click on a volume icon opens the volume control (Desktop.VolumePopup)
   and on a network icon the list of interfaces (Desktop.NetworkPopup).
   The clock follows the user's settings as they change (its format,
@@ -96,8 +97,7 @@ type
     procedure ContextChosen(Item: TMenuItem);
     procedure ShowTaskbarMenu(X, Y: LongInt);
     procedure TaskManagerChosen(Item: TMenuItem);
-    procedure HoverChanged(Sender: TControl);
-    procedure ShowHoveredTooltip;
+    procedure HintShown(Sender: TControl; const Text: string);
     procedure TellPlaces;
     procedure ClockSettingsChanged(const Group: string; const Changes: TSettingChanges);
   protected
@@ -131,7 +131,6 @@ uses
   Windowing.Shell,
   Windowing.SettingsChanges,
   Controls.Popups,
-  Controls.Tooltips,
   Desktop.Clock,
   Desktop.Settings,
   Desktop.VolumePopup,
@@ -140,9 +139,7 @@ uses
 
 const
   ClockTimer = 1;
-  TooltipTimer = 2;
   ClockCheckMilliseconds = 1000;
-  TooltipDelayMilliseconds = 500;
   { Logical units: around and between the parts, the buttons' height. }
   Margin = 3;
   Gap = 4;
@@ -162,7 +159,7 @@ begin
   FStartMenu := TStartMenu.Create;
   FStartMenu.OnClosed := @StartMenuClosed;
   FNotificationArea := TNotificationArea.Create(Root);
-  FNotificationArea.OnHoverChanged := @HoverChanged;
+  Hints.OnShown := @HintShown;
   FNotificationArea.OnIconClicked := @IconClicked;
   ClockFormat := RememberedClockFormat;
   FNotificationArea.SetClock(ClockText);
@@ -179,7 +176,6 @@ end;
 destructor TTaskbarWindow.Destroy;
 begin
   UnsubscribeFromSettings(@ClockSettingsChanged);
-  HideTooltip;
   FStartMenu.Free;
   FContextMenu.Free;
   FTaskbarMenu.Free;
@@ -327,7 +323,8 @@ end;
 procedure TTaskbarWindow.NotificationIconChanged(const Message: TWindowMessage);
 begin
   FNotificationArea.TakeChange(Message);
-  HideTooltip;
+  { The icon under the pointer may be another one now. }
+  Hints.Dismiss;
   ArrangeControls;
 end;
 
@@ -434,27 +431,9 @@ begin
     FOnTaskManagerChosen();
 end;
 
-procedure TTaskbarWindow.HoverChanged(Sender: TControl);
+procedure TTaskbarWindow.HintShown(Sender: TControl; const Text: string);
 begin
-  HideTooltip;
-  StopTimer(TooltipTimer);
-  if FNotificationArea.Hovered >= 0 then
-    StartTimer(TooltipTimer, TooltipDelayMilliseconds);
-end;
-
-procedure TTaskbarWindow.ShowHoveredTooltip;
-var
-  Index: LongInt;
-  Icon: TRectangle;
-begin
-  Index := FNotificationArea.Hovered;
-  if Index < 0 then
-    Exit;
-  Icon := FNotificationArea.IconBounds(Index);
-  Icon := OffsetRectangle(Icon, FNotificationArea.PixelBounds.Left, FNotificationArea.PixelBounds.Top);
-  ShowTooltip(Self, FNotificationArea.Icons[Index].Tooltip, ScreenLeft + Unscaled((Icon.Left + Icon.Right) div 2),
-    ScreenTop);
-  Say('tooltip ' + FNotificationArea.Icons[Index].Tooltip);
+  Say('tooltip ' + Text);
 end;
 
 procedure TTaskbarWindow.TimerFired(TimerId: LongWord);
@@ -464,11 +443,6 @@ begin
     FNotificationArea.SetClock(ClockText);
     FVolumeIndicator.Refresh;
     FNetworkIndicator.Refresh;
-  end
-  else if TimerId = TooltipTimer then
-  begin
-    StopTimer(TooltipTimer);
-    ShowHoveredTooltip;
   end;
 end;
 
@@ -514,15 +488,9 @@ begin
     FNotificationArea.PixelBounds.Top);
   Left := ScreenLeft + Unscaled((Icon.Left + Icon.Right) div 2);
   if Picture in [NotificationPictureVolume, NotificationPictureVolumeMuted] then
-  begin
-    HideTooltip;
-    OpenVolumePopup(Left);
-  end
+    OpenVolumePopup(Left)
   else if IsNetworkPicture(Picture) then
-  begin
-    HideTooltip;
     OpenNetworkPopup(Left);
-  end;
 end;
 
 procedure TTaskbarWindow.CloseRequested;
