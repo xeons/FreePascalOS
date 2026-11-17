@@ -112,7 +112,8 @@ end;
 
 function TNotificationArea.PreferredWidth: LongInt;
 begin
-  Result := Padding + Length(FIcons) * (IconSize + IconGap) + Unscaled(TextWidth(ControlFace, WidestClockText)) + Padding;
+  Result := Padding + Length(FIcons) * (IconSize + IconGap) +
+    PixelsToLogicalCeiling(TextWidth(ControlFace, WidestClockText)) + Padding;
 end;
 
 function TNotificationArea.IconBounds(Index: LongInt): TRectangle;
