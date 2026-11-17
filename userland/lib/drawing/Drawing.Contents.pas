@@ -43,6 +43,9 @@ uses
   Drawing.SmoothShapes,
   Drawing.SmoothArcs,
   Drawing.Scaling,
+  Drawing.Curves,
+  Drawing.SmoothStrokes,
+  Drawing.SmoothRoundedRectangles,
   Drawing.Bevels;
 
 implementation

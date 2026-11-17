@@ -124,7 +124,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test aml-test drawing-test font-test text-test chart-test paint-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -222,7 +222,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
+test: aml-test drawing-test font-test text-test chart-test paint-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
 		imaging-controls-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -354,6 +354,26 @@ chart-test: $(CHART_TEST) $(DEJAVU_SANS_STAMP)
 	@$(CHART_TEST) $(DEJAVU_SANS_DIRECTORY) build/tools/chart-sample.ppm > build/tools/chart-test.out || \
 		{ grep FAIL build/tools/chart-test.out; echo "CHART TEST FAILED (build/tools/chart-test.out)"; exit 1; }
 	@echo "CHART TEST PASSED: $$(tail -n 1 build/tools/chart-test.out)"
+
+# Paint's plain logic (zoom mapping, the geometry of dragging, file
+# formats, the undo history) and its work on pixels (flood fill with a
+# tolerance, shapes and strokes and their extents, the selection, the
+# Image menu's transforms, the zoomed view) need only libimage and
+# libdrawing, so they build for the host too and are checked there.
+PAINT_TEST := build/tools/PaintTest
+PAINT_TEST_SOURCES := $(wildcard tools/PaintTest/*.pas) $(wildcard userland/paint/*.pas) \
+	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/image/*.pas) \
+	$(wildcard userland/lib/compression/*.pas)
+
+$(PAINT_TEST): $(PAINT_TEST_SOURCES)
+	@mkdir -p build/tools/paint-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/PaintTest -Fuuserland/paint -Fuuserland/lib/image -Fuuserland/lib/drawing \
+		-Fuuserland/lib/compression -FUbuild/tools/paint-test-units -o$@ tools/PaintTest/PaintTest.pas
+
+paint-test: $(PAINT_TEST)
+	@$(PAINT_TEST) > build/tools/paint-test.out || \
+		{ grep FAIL build/tools/paint-test.out; echo "PAINT TEST FAILED (build/tools/paint-test.out)"; exit 1; }
+	@echo "PAINT TEST PASSED: $$(tail -n 1 build/tools/paint-test.out)"
 
 # The file manager's plain logic (paths, numbered names, the history,
 # the order and types of items, permissions, what a drop does) and the
