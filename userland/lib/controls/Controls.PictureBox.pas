@@ -317,10 +317,25 @@ begin
   FTimer.Stop;
 end;
 
+{ Whether it is on the screen: it and every parent visible (not on a
+  tab control's hidden page, say). }
+function ShownOnScreen(Control: TControl): Boolean;
+begin
+  while Control <> nil do
+  begin
+    if not Control.Visible then
+      Exit(False);
+    Control := Control.Parent;
+  end;
+  Result := True;
+end;
+
 procedure TPictureBox.ShowFrameChanged;
 begin
   Inc(FFrameSerial);
-  Invalidate;
+  { (A frame not on the screen needs no painting.) }
+  if ShownOnScreen(Self) then
+    Invalidate;
 end;
 
 procedure TPictureBox.TimerTicked(Sender: TTimer);

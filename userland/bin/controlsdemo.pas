@@ -25,7 +25,7 @@
   A label and an edit box, a check box, two radio buttons in a group
   box, a scroll bar driving a progress bar, a colour swatch (a control
   made here, from the base every control uses), OK and Cancel (Enter
-  and Escape), and a status bar. The captions have mnemonics: Alt+N
+  and Escape), and a status bar; the swatch and the buttons have hints. The captions have mnemonics: Alt+N
   goes to the edit box, Alt+R toggles the check box, Alt+S and Alt+L
   choose a size, Alt+O presses OK. Prints what happens, a line each:
 
@@ -161,13 +161,16 @@ begin
   FProgress.SetBounds(12, 178, 260, 18);
   FSwatch := TSwatch.Create(Root);
   FSwatch.SetBounds(290, 12, 56, 56);
+  FSwatch.Hint := 'A control made by this program'#10'(click it for another colour)';
   FOk := TButton.Create(Root);
   FOk.Text := '&OK';
   FOk.IsDefault := True;
   FOk.SetBounds(190, 220, 75, 23);
+  FOk.Hint := 'Close the window (Enter)';
   FCancel := TButton.Create(Root);
   FCancel.Text := 'Cancel';
   FCancel.SetBounds(272, 220, 75, 23);
+  FCancel.Hint := 'Close the window (Escape)';
   FStatus := TStatusBar.Create(Root);
   FStatus.SetPanels([120, 0]);
   FStatus.PanelText[0] := 'Ready';
