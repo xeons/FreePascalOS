@@ -22,12 +22,13 @@
 
   controlstour
 
-  A menu bar (File, Help), a toolbar, a tab control with five pages
+  A menu bar (File, Help), a toolbar, a tab control with six pages
   (a list box and a combo box; a multi-line edit box and two edit boxes
   to copy and paste between; a tree view; a list view, several items
   selectable and sorted by a header click, with buttons for its views;
-  charts of each kind, ControlsTour.ChartsPage)
-  and a status bar; Ctrl+M asks a question in a message box, Help >
+  a checked list box, numeric up/down boxes, date and time pickers and
+  a month calendar; charts of each kind, ControlsTour.ChartsPage) and a
+  status bar; Ctrl+M asks a question in a message box, Help >
   About shows one. Menus, items and tabs have mnemonics (Alt+H opens
   Help; F10 or Alt alone picks the menu bar). Prints what happens, a
   line each:
@@ -47,6 +48,12 @@
     order A,B,...         the list view's items, after sorting
     view N                the list view's view (0 details to 3 large icons)
     answer N              a message box's result
+    checked TEXT 0|1      a checked list box item was toggled
+    quantity N            the numeric up/down box's value
+    hex N                 the hexadecimal up/down box's value
+    date YYYY-MM-DD       the date picker's date
+    time TEXT|none        the time picker's time (none: unchecked)
+    calendar FIRST LAST   the calendar's selected dates
     chart variant N       the charts switched to variant N (0 or 1)
     chart toggled NAME S  a chart legend entry hid (0) or showed (1) NAME
   File > Exit ends it.
@@ -80,13 +87,18 @@ uses
   Controls.ListView,
   Controls.Dialogs,
   Controls.MessageBoxes,
+  Controls.Labels,
+  Controls.CheckedListBox,
+  Controls.NumericUpDown,
+  Controls.CalendarDates,
+  Controls.Calendar,
+  Controls.DateTimePicker,
   Controls.Text,
   ControlsTour.ChartsPage;
 
 const
   KeyM = $32;
   ChartTimer = 1;
-  ChartsPageIndex = 4;
 
 type
   TTourWindow = class(TControlWindow)
@@ -103,8 +115,15 @@ type
     FTree: TTreeView;
     FDetails: TListView;
     FLargeIconsButton: TButton;
+    FChecklist: TCheckedListBox;
+    FQuantity: TNumericUpDown;
+    FHexValue: TNumericUpDown;
+    FDatePicker: TDateTimePicker;
+    FTimePicker: TDateTimePicker;
+    FCalendar: TCalendar;
     FStatus: TStatusBar;
     FCharts: TChartsPage;
+    FChartsPageIndex: LongInt;
     procedure MenuChosen(Item: TMenuItem);
     procedure ExitChosen(Item: TMenuItem);
     procedure AboutChosen(Item: TMenuItem);
@@ -117,6 +136,14 @@ type
     procedure TellPagePlaces(Page: LongInt);
     procedure AskQuestion(Sender: TControlWindow);
     procedure BuildPages;
+    procedure BuildPickersPage;
+    procedure BuildChartsPage;
+    procedure AddCaption(Page: TControl; const Caption: string; Left, Top: LongInt);
+    procedure ItemChecked(Sender: TControl; Index: LongInt; Checked: Boolean);
+    procedure NumberChanged(Sender: TControl);
+    procedure PickerChanged(Sender: TControl);
+    procedure CalendarChanged(Sender: TControl);
+    procedure CalendarDropped(Sender: TControl);
     procedure TellPlace(const Name: string; Control: TControl; X, Y: LongInt);
   protected
     procedure TimerFired(TimerId: LongWord); override;
@@ -219,9 +246,90 @@ begin
   AddViewButton(Page, 'List', ViewList);
   AddViewButton(Page, 'Small', ViewSmallIcons);
   AddViewButton(Page, 'Large', ViewLargeIcons);
+  BuildPickersPage;
+  BuildChartsPage;
+end;
+
+{ The charts, last: its place among the pages is remembered rather than
+  fixed, so pages added before it move nothing. }
+procedure TTourWindow.BuildChartsPage;
+var
+  Page: TControl;
+begin
   Page := FTabs.AddPage('Ch&arts');
+  FChartsPageIndex := FTabs.PageCount - 1;
   FCharts := TChartsPage.Create(Page);
   FCharts.Align := AlignClient;
+end;
+
+procedure TTourWindow.AddCaption(Page: TControl; const Caption: string; Left, Top: LongInt);
+var
+  CaptionLabel: TLabel;
+begin
+  CaptionLabel := TLabel.Create(Page);
+  CaptionLabel.Text := Caption;
+  CaptionLabel.SetBounds(Left, Top, 130, 16);
+end;
+
+{ The checked list box, the numeric up/down boxes, the date and time
+  pickers and the calendar. The date picker starts on a fixed date, so
+  its calendar shows the same month whenever the tour runs. }
+procedure TTourWindow.BuildPickersPage;
+var
+  Page: TControl;
+  Width: LongInt;
+  Height: LongInt;
+begin
+  Page := FTabs.AddPage('&Pickers');
+  AddCaption(Page, 'To &buy:', 8, 6);
+  FChecklist := TCheckedListBox.Create(Page);
+  FChecklist.SetBounds(8, 24, 130, 100);
+  FChecklist.Items.Add('Apples');
+  FChecklist.Items.Add('Pears');
+  FChecklist.Items.Add('Plums');
+  FChecklist.Items.Add('Cherries');
+  FChecklist.Items.Add('Grapes');
+  FChecklist.Checked[0] := True;
+  FChecklist.AllowMixed := True;
+  FChecklist.OnItemCheck := @ItemChecked;
+  AddCaption(Page, '&Quantity:', 8, 132);
+  FQuantity := TNumericUpDown.Create(Page);
+  FQuantity.SetBounds(8, 150, 90, 22);
+  FQuantity.SetRange(0, 1000000);
+  FQuantity.ThousandsSeparator := True;
+  FQuantity.Value := 5;
+  FQuantity.OnValueChanged := @NumberChanged;
+  AddCaption(Page, 'He&x value:', 8, 180);
+  FHexValue := TNumericUpDown.Create(Page);
+  FHexValue.SetBounds(8, 198, 90, 22);
+  FHexValue.Hexadecimal := True;
+  FHexValue.SetRange(0, 4095);
+  FHexValue.Value := 255;
+  FHexValue.OnValueChanged := @NumberChanged;
+  AddCaption(Page, 'D&ate:', 150, 6);
+  FDatePicker := TDateTimePicker.Create(Page);
+  FDatePicker.SetBounds(150, 24, 150, 22);
+  FDatePicker.Date := MakeCalendarDate(2026, 11, 16);
+  FDatePicker.OnChange := @PickerChanged;
+  FDatePicker.OnDropDown := @CalendarDropped;
+  AddCaption(Page, 'Ti&me:', 310, 6);
+  FTimePicker := TDateTimePicker.Create(Page);
+  FTimePicker.Kind := DateTimeKindTime;
+  FTimePicker.Format := DateTimeFormatCustom;
+  FTimePicker.CustomPattern := 'h:mm:ss tt';
+  FTimePicker.ShowCheckBox := True;
+  FTimePicker.SetBounds(310, 24, 140, 22);
+  FTimePicker.OnChange := @PickerChanged;
+  AddCaption(Page, '&Calendar:', 150, 54);
+  FCalendar := TCalendar.Create(Page);
+  FCalendar.ShowWeekNumbers := True;
+  FCalendar.ShowToday := False;
+  FCalendar.MaxSelectionCount := 7;
+  FCalendar.AddBoldDate(MakeCalendarDate(LocalToday.Year, LocalToday.Month, 1));
+  FCalendar.AddBoldDate(MakeCalendarDate(LocalToday.Year, LocalToday.Month, 15));
+  FCalendar.GetPreferredSize(Width, Height);
+  FCalendar.SetBounds(150, 72, Width, Height);
+  FCalendar.OnDateChanged := @CalendarChanged;
 end;
 
 procedure TTourWindow.AddViewButton(Page: TControl; const Caption: string; Mode: TListViewMode);
@@ -256,10 +364,58 @@ begin
   TellPlace('text-tab', FTabs, Scaled(68), Scaled(8));
   TellPlace('tree-tab', FTabs, Scaled(120), Scaled(8));
   TellPlace('details-tab', FTabs, Scaled(170), Scaled(8));
+  TellPlace('pickers-tab', FTabs, (FTabs.TabBounds(4).Left + FTabs.TabBounds(4).Right) div 2, Scaled(8));
   RowHeight := FList.ItemHeight;
   TellPlace('list-item-3', FList, Scaled(30), 2 + 2 * RowHeight + RowHeight div 2);
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
   TellPlace('combo-second', FCombo, Scaled(30), RectangleHeight(FCombo.PixelBounds) + 2 + RowHeight + RowHeight div 2);
+end;
+
+procedure TTourWindow.ItemChecked(Sender: TControl; Index: LongInt; Checked: Boolean);
+begin
+  Say(Format('checked %s %d', [FChecklist.Items[Index], Ord(Checked)]));
+end;
+
+procedure TTourWindow.NumberChanged(Sender: TControl);
+begin
+  if Sender = FQuantity then
+    Say('quantity ' + FQuantity.Editor.Text)
+  else
+    Say('hex ' + FHexValue.Editor.Text);
+end;
+
+procedure TTourWindow.PickerChanged(Sender: TControl);
+begin
+  if Sender = FDatePicker then
+    Say('date ' + DateToIsoText(FDatePicker.Date))
+  else if FTimePicker.Checked then
+    Say('time ' + FTimePicker.ValueText)
+  else
+    Say('time none');
+end;
+
+procedure TTourWindow.CalendarChanged(Sender: TControl);
+begin
+  Say('calendar ' + DateToIsoText(FCalendar.SelectionStart) + ' ' + DateToIsoText(FCalendar.SelectionEnd));
+end;
+
+{ Where a day of the dropped calendar is (it is in its own pop-up
+  window): the 20th, to click. }
+procedure TTourWindow.CalendarDropped(Sender: TControl);
+var
+  Dropped: TCalendar;
+  PopupWindow: TControlWindow;
+  Cell: TRectangle;
+begin
+  Dropped := FDatePicker.DroppedCalendar;
+  if (Dropped = nil) or not (Dropped.Host.OwnerWindow is TControlWindow) then
+    Exit;
+  PopupWindow := TControlWindow(Dropped.Host.OwnerWindow);
+  Cell := Dropped.DateBounds(MakeCalendarDate(Dropped.ShownYear, Dropped.ShownMonth, 20));
+  if RectangleIsEmpty(Cell) then
+    Exit;
+  Say(Format('place calendar-day-20 %d %d', [Scaled(PopupWindow.ScreenLeft) + Dropped.PixelBounds.Left +
+    (Cell.Left + Cell.Right) div 2, Scaled(PopupWindow.ScreenTop) + Dropped.PixelBounds.Top + (Cell.Top + Cell.Bottom) div 2]));
 end;
 
 procedure TTourWindow.MenuChosen(Item: TMenuItem);
@@ -334,6 +490,13 @@ begin
   end;
   if Page = 2 then
     TellPlace('tree-line-1', FTree, Scaled(40), FTree.RowMiddle(0));
+  if Page = 4 then
+  begin
+    TellPlace('checked-item-2', FChecklist, Scaled(60), 2 + FChecklist.ItemHeight + FChecklist.ItemHeight div 2);
+    TellPlace('quantity', FQuantity, Scaled(30), RectangleHeight(FQuantity.PixelBounds) div 2);
+    TellPlace('date-button', FDatePicker, RectangleWidth(FDatePicker.PixelBounds) - Scaled(9),
+      RectangleHeight(FDatePicker.PixelBounds) div 2);
+  end;
   if Page = 3 then
   begin
     TellPlace('details-row-1', FDetails, Scaled(40), FDetails.RowMiddle(0));
@@ -344,7 +507,7 @@ begin
     TellPlace('large-icons', FLargeIconsButton, RectangleWidth(FLargeIconsButton.PixelBounds) div 2,
       RectangleHeight(FLargeIconsButton.PixelBounds) div 2);
   end;
-  if Page = ChartsPageIndex then
+  if Page = FChartsPageIndex then
     TellPlace('charts-variant', FCharts.VariantButton, RectangleWidth(FCharts.VariantButton.PixelBounds) div 2,
       RectangleHeight(FCharts.VariantButton.PixelBounds) div 2);
 end;
@@ -366,7 +529,7 @@ begin
     Say('page ' + IntToStr(FTabs.PageIndex));
     TellPagePlaces(FTabs.PageIndex);
     { The live chart moves on only while it can be seen. }
-    if FTabs.PageIndex = ChartsPageIndex then
+    if FTabs.PageIndex = FChartsPageIndex then
       StartTimer(ChartTimer, ChartTickMilliseconds)
     else
       StopTimer(ChartTimer);

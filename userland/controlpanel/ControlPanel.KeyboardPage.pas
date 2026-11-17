@@ -19,7 +19,8 @@
 {
   The Keyboard page: the layout (the kernel's tables: US, UK, German,
   French), the delay before a held key repeats and how fast it then
-  repeats, and a box to try them in. Applying gives them to the display
+  repeats (a slider and a numeric up/down box each, kept together), and
+  a box to try them in. Applying gives them to the display
   server (which asks the kernel: the next key typed anywhere uses them)
   and keeps them in the user's settings (Windowing.KeyboardSettings),
   where the session manager finds them at the next login.
@@ -40,6 +41,7 @@ uses
   Controls.ListBox,
   Controls.EditBox,
   Controls.Slider,
+  Controls.NumericUpDown,
   ControlPanel.Pages;
 
 type
@@ -48,11 +50,12 @@ type
     FLayouts: TListBox;
     FLayoutNames: array of string;
     FDelay: TSlider;
-    FDelayValue: TLabel;
+    FDelayValue: TNumericUpDown;
     FRate: TSlider;
-    FRateValue: TLabel;
+    FRateValue: TNumericUpDown;
     FTryBox: TEditBox;
     procedure SliderChanged(Sender: TControl);
+    procedure ValueBoxChanged(Sender: TControl);
     procedure TryBoxChanged(Sender: TControl);
     procedure ShowValues;
     procedure ShowSettings(const Settings: TKeyboardSettings);
@@ -80,7 +83,10 @@ uses
 
 const
   SliderLeft = PageMargin + LabelWidth;
-  SliderWidth = 200;
+  SliderWidth = 180;
+  ValueLeft = SliderLeft + SliderWidth + 10;
+  ValueWidth = 56;
+  UnitLeft = ValueLeft + ValueWidth + 4;
   { The delay goes in quarter seconds, what PS/2 keyboards can do. }
   DelayStep = 250;
 
@@ -114,8 +120,15 @@ begin
   FDelay.TickStep := 1;
   FDelay.PageStep := 1;
   FDelay.OnChange := @SliderChanged;
-  FDelayValue := TLabel.Create(Self);
-  FDelayValue.SetBounds(SliderLeft + SliderWidth + 10, 142, 90, 18);
+  FDelayValue := TNumericUpDown.Create(Self);
+  FDelayValue.SetBounds(ValueLeft, 144, ValueWidth, 22);
+  FDelayValue.SetRange(MinimumKeyRepeatDelay, MaximumKeyRepeatDelay);
+  FDelayValue.Increment := DelayStep;
+  FDelayValue.OnValueChanged := @ValueBoxChanged;
+  Caption := TLabel.Create(Self);
+  Caption.ShowsMnemonic := False;
+  Caption.Text := 'ms';
+  Caption.SetBounds(UnitLeft, 146, PageWidth - PageMargin - UnitLeft, 18);
   Caption := TLabel.Create(Self);
   Caption.Text := 'Repeat &rate:';
   Caption.SetBounds(PageMargin, 186, LabelWidth - 6, 18);
@@ -125,8 +138,14 @@ begin
   FRate.TickStep := 4;
   FRate.PageStep := 4;
   FRate.OnChange := @SliderChanged;
-  FRateValue := TLabel.Create(Self);
-  FRateValue.SetBounds(SliderLeft + SliderWidth + 10, 186, 90, 18);
+  FRateValue := TNumericUpDown.Create(Self);
+  FRateValue.SetBounds(ValueLeft, 188, ValueWidth, 22);
+  FRateValue.SetRange(MinimumKeyRepeatRate, MaximumKeyRepeatRate);
+  FRateValue.OnValueChanged := @ValueBoxChanged;
+  Caption := TLabel.Create(Self);
+  Caption.ShowsMnemonic := False;
+  Caption.Text := 'a second';
+  Caption.SetBounds(UnitLeft, 190, PageWidth - PageMargin - UnitLeft, 18);
   Caption := TLabel.Create(Self);
   Caption.Text := '&Try them here:';
   Caption.SetBounds(PageMargin, 234, LabelWidth - 6, 18);
@@ -155,8 +174,21 @@ end;
 
 procedure TKeyboardPage.ShowValues;
 begin
-  FDelayValue.Text := IntToStr(FDelay.Position * DelayStep) + ' ms';
-  FRateValue.Text := IntToStr(FRate.Position) + ' a second';
+  FDelayValue.Value := FDelay.Position * DelayStep;
+  FRateValue.Value := FRate.Position;
+end;
+
+{ A value typed or stepped moves its slider (which marks the page
+  modified); a delay between the quarter seconds goes to the nearest. }
+procedure TKeyboardPage.ValueBoxChanged(Sender: TControl);
+begin
+  if Sender = FDelayValue then
+  begin
+    FDelay.Position := (FDelayValue.IntegerValue + DelayStep div 2) div DelayStep;
+    FDelayValue.Value := FDelay.Position * DelayStep;
+  end
+  else
+    FRate.Position := FRateValue.IntegerValue;
 end;
 
 procedure TKeyboardPage.SliderChanged(Sender: TControl);
