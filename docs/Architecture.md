@@ -1523,7 +1523,8 @@ lock hides.
 (status 1 if the clipboard has no such format), `-l` lists the formats,
 `-x` empties it, `--copy-image FILE` puts an image (any format libimage
 reads) on it as PNG and raw pixels, made only when asked for
-(`ClipboardTool.Images`), `--paste-image FILE` saves its image (from
+(libcontrols' `Controls.ImageClipboard`, which the image viewer uses
+too), `--paste-image FILE` saves its image (from
 PNG, or `-t bgra`) as a PNG file, `--copy-files PATH...` puts files on it
 (a file list, and the paths as text), and `-w` waits for a change and
 says what the clipboard holds then. Coretest starts a display server and
@@ -1787,7 +1788,11 @@ its cell, docked to the client area it fills it); `TSplitContainer`
 (`Controls.SplitContainer`: `Panel1`, a `TSplitter`, `Panel2`, side by
 side or one above the other, `SplitterDistance`, `Panel1MinSize` and
 `Panel2MinSize`, `FixedPanel` keeping its extent on resize, the share
-kept if none). A `TPanel` with `AutoScroll` shows scroll bars when its
+kept if none; `Panel2Collapsed` hides the second panel and the splitter
+until it comes back with the extents it had). A scrolling panel gives
+both scroll bars their new place before either may scroll it, so one
+bar's change cannot scroll back to where the other still was. A text
+toolbar button added with width 0 is as wide as its caption. A `TPanel` with `AutoScroll` shows scroll bars when its
 children need more room, scrolls with them, the wheel and the keys its
 children leave alone, and brings a focused descendant into view (the
 window calls `DescendantFocused` on each ancestor). The controls tour's
@@ -2142,8 +2147,18 @@ are blended over what the parent drew. Animations (GIF, APNG, WebP, JPEG
 XL) play through `TFrameCompositor` on a `TTimer`, each frame for its
 delay (under 20 ms: 100 ms), `LoopCount` times (0: for ever); `Play`,
 `Stop`, `Playing`, `FrameIndex`; frames are only invalidated while the
-box is on the screen. A file that cannot be read leaves a placeholder
-(an outline, a file icon) with `ErrorText`. An image list
+box is on the screen. `Zoom` shows the picture at a multiple of its
+size in the normal, centre and auto-size modes, its preferred size
+following, so in a scrolling panel it scrolls; a picture shown larger
+than 4 megapixels or enlarged three times or more is drawn as the clip
+leaves it, pixel by pixel, rather than resampled whole, so 3200 % of a
+photo costs no more than the window. `Orientation` turns what is shown
+(EXIF's eight, every frame of an animation too), `CurrentPicture` is
+the picture as shown, `ShowFrame` stops on one frame. A file that cannot
+be read leaves a placeholder (an outline, a file icon) with
+`ErrorText`. Images go on the system clipboard as PNG and raw pixels
+through `Controls.ImageClipboard` (`CopyImageToClipboard`,
+`ReadClipboardImage`). An image list
 (`Controls.ImageList`) holds pictures of one logical size, each in any
 number of pixel sizes: `Add`/`AddVariant` (copies), `AddIcon` (every
 size of an ICO file, the deepest entry of each, through
@@ -2348,9 +2363,11 @@ one) in one window that goes from folder to folder:
   a folder is shown; a text document (by its extension) opens in
   Notepad; a file with an execute bit that is an ELF program or starts
   with `#!` runs; any other file whose first 4 KiB are UTF-8 without a
-  zero byte opens in Notepad; anything else says there is no program
-  for it. `FileManager.Launching` starts the program in a process group
-  of its own; "Open with Notepad" opens any file as text.
+  zero byte opens in Notepad; a picture libimage reads (told by its
+  first bytes, `DetectFileFormat`) opens in the image viewer; anything
+  else says there is no program for it. `FileManager.Launching` starts
+  the program in a process group of its own; "Open with Notepad" opens
+  any file as text.
 - **Commands** (`FileManager.CommandWindow`, from the menus, the keys,
   the context menus or the mouse): New folder ("New folder", "New
   folder (2)": `FileManager.ConflictNames`, put up for renaming at
@@ -2512,7 +2529,8 @@ bands of rolling water, all anti-aliased, drawn once per size into a
 surface of its own and copied from when the window paints. `-w IMAGE`
 names a wallpaper image, kept for when libimage can read one (step 8).
 On the first display the programs' icons (`Desktop.Programs`: Files, Terminal,
-Notepad, Control Panel, Controls tour, Controls demo, Dialogs, Task Manager) stand in a grid of
+Notepad, Control Panel, Controls tour, Controls demo, Dialogs, Task Manager, Image Viewer, Calculator,
+Volume Control) stand in a grid of
 equal cells in columns from the top left, all in logical units: a
 picture above a caption, the selected one tinted with its caption on
 the selection colour. A click selects, a double click (two presses
@@ -2567,8 +2585,8 @@ default output's, looked at every second with the clock, a loudspeaker
 crossed out when muted, its tooltip "Volume: 80%". A click on a volume
 icon opens the volume control (`Desktop.VolumePopup`): a pop-up above
 it, like a menu, with the volume on a slider and Mute, which act on the
-output at once, and Settings..., which opens the Control Panel's Sound
-page (`controlpanel sound`); when it closes, a change is kept by the
+output at once, and Mixer..., which opens the volume control's window
+(`volumecontrol`); when it closes, a change is kept by the
 system settings service. The second is the network
 (`Desktop.NetworkIndicator`): how the most connected interface is doing
 (`Configuration.NetworkStatus`) - two linked screens when connected, its
@@ -2679,6 +2697,87 @@ moves on from one screen dump to the next, that the Programs tab lists
 Notepad, Switch To brings it forward and End Program makes it ask
 about saving (No) and end, and that the taskbar's menu brings the task
 manager forward and, closed with Alt+F4, it has kept its tab and size.
+
+### The image viewer, the calculator and the volume control
+
+The three are laid out without a single position of their own: docking,
+AutoSize, table and flow panels and split containers place everything,
+in logical units, so they follow the display's scale. Each keeps its
+choices in the user's settings (groups ImageViewer, Calculator,
+VolumeControl) as soon as they are made, takes them again when they
+change elsewhere, and prints what it does a line at a time for the
+tests. Their plain logic builds on the host too (`make apps-test`,
+tools/AppsTest, part of `make test`: "APPS TEST PASSED: N passed, 0
+failed").
+
+`imageviewer [FILE]` (`userland/imageviewer`) shows any picture libimage
+reads, from the command line, the open dialog or files dropped on the
+window; Files opens pictures with it and its desktop icon takes dropped
+files. The view (`ImageViewer.ImageView`) is a scrolling panel holding a
+picture box that fills it and takes the zoomed size: centred while
+smaller, scrolled with bars, wheel, keys and dragging when larger.
+Fitting (the default) follows the window; +, -, Ctrl+wheel (about the
+pointer), Ctrl+0 and Ctrl+F zoom in steps from 5 % to 3200 %
+(`ImageViewer.ViewGeometry`: the steps, fitting, centring, keeping the
+spot under the pointer, dragging). Turns and flips compose into one of
+EXIF's orientations for the picture box (`ImageViewer.Orientations`);
+animations play, pause (Space) and step (. and ,); Right and Left (while
+the picture fits) and Page Down and Up go through the folder's images in
+natural name order (`ImageViewer.FolderImages`); F11 is full screen
+(menus and bars hidden, maximized). Colour management (on unless turned
+off) converts from the file's ICC profile or PNG gamma to sRGB
+(`TImage.ConvertToSrgb`), and the properties panel (Alt+Enter, the
+second panel of a split container) says what it did, beside the format,
+size, depth, frames, time, loops, resolution, profile and every metadata
+entry (`ImageViewer.Properties`). Ctrl+C copies the picture as shown;
+Save As (`ImageViewer.Saving`) writes PNG, JPEG (a quality asked in a
+dialog laid out by a table), BMP, WebP, TIFF or GIF by the name's
+extension: the whole animation for PNG and WebP when it is not turned,
+else the picture as shown.
+
+`calculator [-k KEYS]` (`userland/calculator`) has three modes: standard
+(left to right, as a pocket calculator: 2 + 3 x 4 is 20), scientific
+(precedence, parentheses, trigonometry in degrees, radians or gradians,
+powers, roots, logarithms, factorials, pi and e) and programmer
+(integers of 8 to 64 bits, two's complement, in base 2, 8, 10 or 16, bit
+operators and shifts). `Calculator.Numbers` shows doubles to 15
+significant digits (exponent from 1e15 and below 1e-9), and what is
+shown is exactly what is calculated with next, so binary fractions never
+show (0.1 + 0.2 is 0.3); sums far smaller than their terms are zero and
+whole quarter turns have exact sines (`Calculator.MathFunctions`, which
+reports division by zero, domain errors and overflow rather than NaN).
+`Calculator.Expressions` evaluates text by precedence climbing (or left
+to right), `Calculator.Engine` is the keys' logic (typing, operators
+replacing one another, functions applied at once, implicit
+multiplication before a parenthesis, percent of the number before + or
+-, Equals repeating, memory, a history of 100), `Calculator.Actions`
+maps buttons and characters to it. The window types from the keyboard
+wherever the focus is (Enter is Equals, Escape clears, Delete clears the
+entry, F9 negates); the keypad is a table of equal cells per mode
+(`Calculator.Keypad`), the history the collapsible second panel of a
+split container; Ctrl+C and Ctrl+V copy the number and paste a number
+or an expression.
+
+`volumecontrol [-c]` (`userland/volumecontrol`) is a mixer: a table row
+per sound output (`VolumeControl.OutputRow`: name, slider, percent,
+Mute, a peak meter per side), the default output chosen in a list,
+Sound Settings opening the Control Panel's page. Changes apply at once
+(`Audio.Outputs`) and are kept for the next boot by the system settings
+service a moment later and on closing; changes made elsewhere show
+within a second, and at once when the system's Sound settings change.
+The meters read the output's monitor input (`VolumeControl.PeakMonitor`:
+only what is queued, so it never waits) and show peaks on a -60 to 0 dB
+scale falling 24 dB a second (`VolumeControl.Levels`). The kernel has no
+per-channel volumes, so there is no balance, and a stream's volume is
+its own program's, so there are no per-stream sliders. `-c` is the
+compact kind (the default output alone, a button to the mixer); the
+desktop's volume pop-up opens the mixer.
+
+Coretest starts each under a display server (the viewer opening a PNG
+made through the clipboard, the calculator evaluating keys given with
+`-k`, the volume control listing the outputs); the input test types
+12*(3+4) and Enter into the calculator on the keyboard and copies the
+84.
 
 ### The Control Panel
 

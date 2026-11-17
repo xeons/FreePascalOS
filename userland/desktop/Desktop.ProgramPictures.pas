@@ -23,10 +23,12 @@
   a slider), swatches (a window with colour samples), the dialogs (a
   window with a folder and colour discs), the Control Panel (a window of
   three sliders, as on a mixing desk) and the task manager (a window
-  with a graph of how busy the processors are). Each is the icon
-  theme's picture of the program (ProgramIconNames, Controls.IconTheme)
-  when it has one, else drawn here with shapes on the design grid
-  (Controls.PictureGrid), at any size.
+  with a graph of how busy the processors are), the image viewer (a
+  framed landscape), the calculator (a display over keys) and the volume
+  control (a loudspeaker sounding). Each is the icon theme's picture of
+  the program (ProgramIconNames, Controls.IconTheme) when it has one,
+  else drawn here with shapes on the design grid (Controls.PictureGrid),
+  at any size.
 }
 unit Desktop.ProgramPictures;
 
@@ -42,7 +44,8 @@ uses
 const
   { The theme's icon of each program (/usr/share/icons/NAME.ico). }
   ProgramIconNames: array[TProgramPicture] of string = ('app-file-manager', 'app-terminal', 'app-text-editor',
-    'app-control-panel', 'app-components', 'app-themes', 'app-dialogs', 'app-task-manager');
+    'app-control-panel', 'app-components', 'app-themes', 'app-dialogs', 'app-task-manager', 'app-image-viewer',
+    'app-calculator', 'app-volume-control');
 
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 
@@ -180,6 +183,47 @@ begin
   DrawGridLine(Canvas, Grid, 21.5, 18.5, 25, 16, 1.2, PromptColor);
 end;
 
+procedure DrawImageViewer(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawRoundedBox(Canvas, Grid, 3, 6, 29, 27, 1, $FF8A6A44, OutlineColor, 1);
+  DrawRoundedBox(Canvas, Grid, 5.5, 8.5, 26.5, 24.5, 0.3, $FF9CCBEF, ColorTransparent, 0);
+  DrawGridDisc(Canvas, Grid, 21, 13, 2.4, PencilColor);
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(5.5, 24.5), PrecisePoint(5.5, 20), PrecisePoint(11, 14.5),
+    PrecisePoint(17, 20.5), PrecisePoint(20, 18), PrecisePoint(26.5, 23), PrecisePoint(26.5, 24.5)], $FF4E9A4A,
+    ColorTransparent, 0);
+end;
+
+procedure DrawCalculator(const Canvas: TCanvas; const Grid: TPictureGrid);
+var
+  Row: LongInt;
+  Column: LongInt;
+  KeyColor: LongWord;
+begin
+  DrawRoundedBox(Canvas, Grid, 7, 3, 25, 29, 2, ScreenFrameColor, OutlineColor, 1);
+  DrawRoundedBox(Canvas, Grid, 9.5, 5.5, 22.5, 11, 0.6, $FFBFD8B0, OutlineColor, 0.6);
+  for Row := 0 to 3 do
+    for Column := 0 to 2 do
+    begin
+      KeyColor := $FFE6E3DC;
+      if Column = 2 then
+        KeyColor := BindingColor;
+      DrawRoundedBox(Canvas, Grid, 9.5 + Column * 4.5, 13 + Row * 3.9, 12.7 + Column * 4.5, 15.9 + Row * 3.9, 0.5,
+        KeyColor, ColorTransparent, 0);
+    end;
+end;
+
+procedure DrawVolumeControl(const Canvas: TCanvas; const Grid: TPictureGrid);
+begin
+  DrawGridPolygon(Canvas, Grid, [PrecisePoint(4, 12.5), PrecisePoint(9, 12.5), PrecisePoint(16, 6),
+    PrecisePoint(16, 26), PrecisePoint(9, 19.5), PrecisePoint(4, 19.5)], ScreenFrameColor, OutlineColor, 1);
+  DrawGridLine(Canvas, Grid, 19.5, 12.5, 20.5, 16, 1.4, WindowTitleColor);
+  DrawGridLine(Canvas, Grid, 20.5, 16, 19.5, 19.5, 1.4, WindowTitleColor);
+  DrawGridLine(Canvas, Grid, 23, 9.5, 25, 16, 1.4, WindowTitleColor);
+  DrawGridLine(Canvas, Grid, 25, 16, 23, 22.5, 1.4, WindowTitleColor);
+  DrawGridLine(Canvas, Grid, 26.5, 6.5, 29.5, 16, 1.4, WindowTitleColor);
+  DrawGridLine(Canvas, Grid, 29.5, 16, 26.5, 25.5, 1.4, WindowTitleColor);
+end;
+
 procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
 var
   Grid: TPictureGrid;
@@ -204,6 +248,12 @@ begin
       DrawTaskManager(Canvas, Grid);
     PictureControlPanel:
       DrawControlPanel(Canvas, Grid);
+    PictureImageViewer:
+      DrawImageViewer(Canvas, Grid);
+    PictureCalculator:
+      DrawCalculator(Canvas, Grid);
+    PictureVolumeControl:
+      DrawVolumeControl(Canvas, Grid);
   end;
 end;
 

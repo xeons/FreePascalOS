@@ -57,7 +57,7 @@ uses
   { Its initialization puts the display server's clipboard behind
     Controls.FileLists' file lists. }
   Controls.SystemClipboard,
-  ClipboardTool.Images;
+  Controls.ImageClipboard;
 
 const
   Usage = 'Usage: clipboard -c|-p [-t FORMAT] | -l | -x | -w | --copy-image FILE | --paste-image FILE [-t png|bgra]'#10 +

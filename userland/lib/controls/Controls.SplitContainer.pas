@@ -30,7 +30,9 @@
   with the mouse, or takes the focus (Tab) and moves with the arrow
   keys; OnSplitterMoved tells when it was moved. Built from docking: a
   panel docked to the left (or top), a TSplitter after it, the other
-  panel filling the rest.
+  panel filling the rest. Panel2Collapsed hides the second panel and the
+  splitter, the first filling the container, until it is shown again
+  with the extents it had (a fixed panel's kept).
 }
 unit Controls.SplitContainer;
 
@@ -61,6 +63,9 @@ type
     { Logical units along the split at the last layout (-1: none yet). }
     FLastTotal: LongInt;
     FOnSplitterMoved: TControlEvent;
+    FPanel2Collapsed: Boolean;
+    procedure SetPanel2Collapsed(Value: Boolean);
+    function DockedPanel1Align: TAlign;
     procedure SetOrientation(Value: TSplitOrientation);
     procedure SetPanel1MinSize(Value: LongInt);
     procedure SetPanel2MinSize(Value: LongInt);
@@ -87,6 +92,8 @@ type
     property Panel1MinSize: LongInt read FPanel1MinSize write SetPanel1MinSize;
     property Panel2MinSize: LongInt read FPanel2MinSize write SetPanel2MinSize;
     property OnSplitterMoved: TControlEvent read FOnSplitterMoved write FOnSplitterMoved;
+    { Panel2 and the splitter hidden, Panel1 filling the container. }
+    property Panel2Collapsed: Boolean read FPanel2Collapsed write SetPanel2Collapsed;
   end;
 
 implementation
@@ -127,19 +134,35 @@ begin
     Exit;
   Distance := SplitterDistance;
   FOrientation := Value;
-  if Value = SplitVertical then
-  begin
-    FPanel1.Align := AlignLeft;
-    FSplitter.Align := AlignLeft;
-  end
-  else
-  begin
-    FPanel1.Align := AlignTop;
-    FSplitter.Align := AlignTop;
-  end;
+  FSplitter.Align := DockedPanel1Align;
+  if not FPanel2Collapsed then
+    FPanel1.Align := DockedPanel1Align;
   FLastTotal := -1;
   AssignPanel1Extent(Distance);
   RequestLayout;
+end;
+
+function TSplitContainer.DockedPanel1Align: TAlign;
+begin
+  if FOrientation = SplitVertical then
+    Result := AlignLeft
+  else
+    Result := AlignTop;
+end;
+
+procedure TSplitContainer.SetPanel2Collapsed(Value: Boolean);
+begin
+  if FPanel2Collapsed = Value then
+    Exit;
+  FPanel2Collapsed := Value;
+  FPanel2.Visible := not Value;
+  FSplitter.Visible := not Value;
+  if Value then
+    FPanel1.Align := AlignClient
+  else
+    FPanel1.Align := DockedPanel1Align;
+  RequestLayout;
+  Invalidate;
 end;
 
 procedure TSplitContainer.SetPanel1MinSize(Value: LongInt);
@@ -199,7 +222,9 @@ var
   Distance: LongInt;
 begin
   Total := TotalExtent;
-  if Total > 0 then
+  { Collapsed: the extents wait, as they were, for the panel to come back
+    (the last total kept, so a fixed panel keeps its extent). }
+  if (Total > 0) and not FPanel2Collapsed then
   begin
     Distance := GetSplitterDistance;
     if (FLastTotal > 0) and (Total <> FLastTotal) then
@@ -229,6 +254,8 @@ var
   Second: TSize;
 begin
   First := FPanel1.PreferredSize;
+  if FPanel2Collapsed then
+    Exit(First);
   Second := FPanel2.PreferredSize;
   if FOrientation = SplitVertical then
   begin

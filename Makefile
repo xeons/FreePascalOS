@@ -30,6 +30,8 @@
 #                   cache on the host against FreeType (fixtures made by Python)
 #   make text-test  Check the multi-line edit box's plain logic on the host (undo,
 #                   word wrap, search)
+#   make apps-test  Check the calculator's, image viewer's and volume control's
+#                   plain logic on the host
 #   make controls-test  Check libcontrols' layout arithmetic on the host (anchors,
 #                   docking, flow and table panels, split containers)
 #   make settings-test  Check the settings library on the host (files, escaping,
@@ -124,7 +126,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -222,7 +224,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test crypto-test tls-test wget-test image-test compression-test \
+test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test crypto-test tls-test wget-test image-test compression-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -396,6 +398,24 @@ controls-test: $(CONTROLS_TEST)
 	@$(CONTROLS_TEST) > build/tools/controls-test.out || \
 		{ grep FAIL build/tools/controls-test.out; echo "CONTROLS TEST FAILED (build/tools/controls-test.out)"; exit 1; }
 	@echo "CONTROLS TEST PASSED: $$(tail -n 1 build/tools/controls-test.out | cut -d ' ' -f 2-)"
+
+# The plain logic of the calculator (numbers, arithmetic, expressions,
+# keys), the image viewer (zoom and pan, turning, the folder's images)
+# and the volume control (peak levels) builds for the host too, and is
+# checked there.
+APPS_TEST := build/tools/AppsTest
+APPS_TEST_SOURCES := $(wildcard tools/AppsTest/*.pas) $(wildcard userland/calculator/Calculator.*.pas) \
+	$(wildcard userland/imageviewer/ImageViewer.*.pas) $(wildcard userland/volumecontrol/VolumeControl.*.pas)
+
+$(APPS_TEST): $(APPS_TEST_SOURCES)
+	@mkdir -p build/tools/apps-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/AppsTest -Fuuserland/calculator -Fuuserland/imageviewer \
+		-Fuuserland/volumecontrol -FUbuild/tools/apps-test-units -o$@ tools/AppsTest/AppsTest.pas
+
+apps-test: $(APPS_TEST)
+	@$(APPS_TEST) > build/tools/apps-test.out || \
+		{ grep FAIL build/tools/apps-test.out; echo "APPS TEST FAILED (build/tools/apps-test.out)"; exit 1; }
+	@echo "APPS TEST PASSED: $$(tail -n 1 build/tools/apps-test.out | cut -d ' ' -f 2-)"
 
 # The date and number logic behind libcontrols' calendar, date and time
 # picker and numeric up/down box (and where the calendar's parts go)

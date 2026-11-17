@@ -19,7 +19,7 @@
 {
   The volume control the volume icon opens: a small pop-up above the
   taskbar with the default output's volume on a slider, Mute, and a
-  button that opens the Control Panel's Sound page.
+  button that opens the mixer (volumecontrol).
 
   The slider and Mute act at once on the output (Audio.Outputs: anyone
   may); when the pop-up closes, a change is kept for the next boot by
@@ -121,7 +121,7 @@ begin
   FMute.SetBounds(Margin, PopupHeight - Margin - 23, 80, 23);
   FMute.OnChange := @MuteChanged;
   FSettingsButton := TButton.Create(Root);
-  FSettingsButton.Text := '&Settings...';
+  FSettingsButton.Text := '&Mixer...';
   FSettingsButton.SetBounds(PopupWidth - Margin - 90, PopupHeight - Margin - 23, 90, 23);
   FSettingsButton.OnClick := @SettingsClicked;
   FValue.Text := IntToStr(FSlider.Position) + '%';
@@ -169,7 +169,7 @@ end;
 procedure TVolumePopup.SettingsClicked(Sender: TControl);
 begin
   Dismiss;
-  StartCommand('controlpanel', 'sound', 'Control Panel');
+  StartCommand('volumecontrol', '', 'Volume Control');
 end;
 
 { The change is kept for the next boot by the service (anyone may). }

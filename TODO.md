@@ -530,7 +530,13 @@ normalized (0-65535), not pixels.
   - [x] Controls painted in the new look (scaled bevels, header bands, hot,
         flat, split and drop-down buttons, green and marquee progress bars),
         the earlier look kept as the classic control look
-- [ ] Paint; image viewer; calculator; volume control
+- [ ] Paint
+- [x] Image viewer (zoom, pan, turns, animations, the folder's images,
+      properties, colour management, copy, save as), calculator
+      (standard, scientific, programmer; exact display; history) and
+      volume control (outputs, mutes, peak meters, the default output),
+      laid out by docking, tables, flows and split containers;
+      `make apps-test`
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
 ## Networking

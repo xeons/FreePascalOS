@@ -31,7 +31,17 @@
   only copies it.
 
   Transparent pixels show what is behind the box (its parent) unless
-  Color is set, which fills the box first. An animation (GIF, APNG,
+  Color is set, which fills the box first.
+
+  Zoom (1 unless set) shows the picture at that multiple of its size in
+  the normal, centred and AutoSize modes, and the box's preferred size
+  follows it, so a zoomed picture in a scrolling panel scrolls (the
+  image viewer). Large or strongly enlarged pictures are not resampled
+  whole: only what the clip leaves visible is drawn, pixel by pixel
+  (nearest neighbour), so 3200 % of a large photo costs no more than
+  the window. Orientation turns or mirrors what is shown (EXIF's eight,
+  Image.Orientation), every frame of an animation too; ShowFrame shows
+  one frame of an animation, stopped. An animation (GIF, APNG,
   animated WebP, JPEG XL) plays (TFrameCompositor, frame by frame on a
   timer, each shown for its delay, as many times as the file says or
   for ever); Play and Stop start and stop it. A file that cannot be
@@ -76,6 +86,15 @@ type
     { The frame resampled for the size it is shown at. }
     FResampled: TImage;
     FResampledSerial: LongWord;
+    FZoom: Double;
+    FOrientation: TImageOrientation;
+    { The frame turned as Orientation says, for FOrientedSerial. }
+    FOriented: TImage;
+    FOrientedSerial: LongWord;
+    procedure SetZoom(Value: Double);
+    procedure SetOrientation(Value: TImageOrientation);
+    function ZoomedSize(Logical: LongInt): LongInt;
+    procedure PreferredSizeChanged;
     procedure SetSizeMode(Value: TPictureSizeMode);
     procedure SetColor(Value: TColor);
     procedure ForgetResampled;
@@ -106,6 +125,11 @@ type
     procedure Play;
     { Stops it at the frame shown. }
     procedure Stop;
+    { Stops the animation and shows its frame Index (0 to FrameCount - 1). }
+    procedure ShowFrame(Index: LongInt);
+    { The picture as shown now: the image, or the animation's frame,
+      turned as Orientation says (the box's; nil if none). }
+    function CurrentPicture: TImage;
     { Where the picture is drawn now (own pixels; empty if none). }
     function PictureBounds: TRectangle;
     { The picture's size in logical units (0 x 0 if none). }
@@ -123,6 +147,11 @@ type
     { The animation's frame shown, and how many it has (0 for a still). }
     property FrameIndex: LongInt read GetFrameIndex;
     property FrameCount: LongInt read GetFrameCount;
+    { The multiple of its size the picture is shown at (normal, centre
+      and AutoSize; above 0). }
+    property Zoom: Double read FZoom write SetZoom;
+    { How what is shown is turned (normal unless set). }
+    property Orientation: TImageOrientation read FOrientation write SetOrientation;
   end;
 
 implementation
@@ -135,6 +164,7 @@ uses
   Image.Files,
   Image.Surfaces,
   Image.Resampling,
+  Image.Orientation,
   Controls.Icons,
   Controls.Text,
   Controls.LayoutRules;
@@ -144,6 +174,11 @@ const
     as browsers do. }
   ShortestFrameDelay = 20;
   DefaultFrameDelay = 100;
+  { Pixels: a picture shown larger than this is drawn as the clip
+    leaves it (nearest neighbour) rather than resampled whole. }
+  LargestResampledPixels = 4 * 1024 * 1024;
+  { Enlarged this many times or more, pixels are shown as squares. }
+  PixelatedZoom = 3.0;
 
 constructor TPictureBox.Create(AParent: TControl);
 begin
@@ -151,6 +186,7 @@ begin
   FColor := ColorTransparent;
   FAutoPlay := True;
   FSizeMode := PictureSizeNormal;
+  FZoom := 1;
   FTimer := TTimer.Create(Self);
   FTimer.Enabled := False;
   FTimer.OnTimer := @TimerTicked;
@@ -166,6 +202,67 @@ end;
 procedure TPictureBox.ForgetResampled;
 begin
   FreeAndNil(FResampled);
+  FreeAndNil(FOriented);
+end;
+
+{ The box's preferred size changed: its parent places it again. }
+procedure TPictureBox.PreferredSizeChanged;
+begin
+  if AutoSize and (Parent <> nil) then
+    Parent.RequestLayout;
+end;
+
+procedure TPictureBox.SetZoom(Value: Double);
+begin
+  if (Value <= 0) or (Value = FZoom) then
+    Exit;
+  FZoom := Value;
+  ForgetResampled;
+  FitBoxToPicture;
+  PreferredSizeChanged;
+  Invalidate;
+end;
+
+procedure TPictureBox.SetOrientation(Value: TImageOrientation);
+begin
+  if Value = FOrientation then
+    Exit;
+  FOrientation := Value;
+  ForgetResampled;
+  Inc(FFrameSerial);
+  FitBoxToPicture;
+  PreferredSizeChanged;
+  Invalidate;
+end;
+
+{ The frame as it is shown: turned as Orientation says (kept until the
+  frame or the orientation changes). }
+function TPictureBox.CurrentPicture: TImage;
+var
+  Stored: TImageOrientation;
+begin
+  if (FFrame = nil) or (FOrientation = OrientationNormal) then
+    Exit(FFrame);
+  if (FOriented <> nil) and (FOrientedSerial = FFrameSerial) then
+    Exit(FOriented);
+  FreeAndNil(FOriented);
+  Stored := FFrame.Orientation;
+  FFrame.Orientation := FOrientation;
+  try
+    FOriented := OrientedImage(FFrame);
+  finally
+    FFrame.Orientation := Stored;
+  end;
+  FOrientedSerial := FFrameSerial;
+  Result := FOriented;
+end;
+
+{ Logical units: a size of the picture zoomed. }
+function TPictureBox.ZoomedSize(Logical: LongInt): LongInt;
+begin
+  Result := Round(Logical * FZoom);
+  if Result < 1 then
+    Result := 1;
 end;
 
 procedure TPictureBox.ReleaseImage;
@@ -183,6 +280,7 @@ procedure TPictureBox.Clear;
 begin
   ReleaseImage;
   FErrorText := '';
+  PreferredSizeChanged;
   Invalidate;
 end;
 
@@ -201,6 +299,7 @@ begin
   FLoopsDone := 0;
   Inc(FFrameSerial);
   FitBoxToPicture;
+  PreferredSizeChanged;
   Invalidate;
   if FAutoPlay then
     Play;
@@ -252,14 +351,22 @@ end;
 function TPictureBox.PictureWidth: LongInt;
 begin
   Result := 0;
-  if FFrame <> nil then
+  if FFrame = nil then
+    Exit;
+  if OrientationSwapsSides(FOrientation) then
+    Result := FFrame.Height
+  else
     Result := FFrame.Width;
 end;
 
 function TPictureBox.PictureHeight: LongInt;
 begin
   Result := 0;
-  if FFrame <> nil then
+  if FFrame = nil then
+    Exit;
+  if OrientationSwapsSides(FOrientation) then
+    Result := FFrame.Width
+  else
     Result := FFrame.Height;
 end;
 
@@ -270,14 +377,14 @@ begin
   if (PictureWidth <= 0) or (PictureHeight <= 0) then
     Result := inherited PreferredSize
   else
-    Result := MakeSize(PictureWidth, PictureHeight);
+    Result := MakeSize(ZoomedSize(PictureWidth), ZoomedSize(PictureHeight));
 end;
 
 procedure TPictureBox.FitBoxToPicture;
 begin
   if (FSizeMode <> PictureSizeAuto) or (FFrame = nil) then
     Exit;
-  SetBounds(Bounds.Left, Bounds.Top, PictureWidth, PictureHeight);
+  SetBounds(Bounds.Left, Bounds.Top, ZoomedSize(PictureWidth), ZoomedSize(PictureHeight));
 end;
 
 function TPictureBox.GetFrameIndex: LongInt;
@@ -326,6 +433,15 @@ procedure TPictureBox.Stop;
 begin
   FPlaying := False;
   FTimer.Stop;
+end;
+
+procedure TPictureBox.ShowFrame(Index: LongInt);
+begin
+  if (FCompositor = nil) or (Index < 0) or (Index >= FAnimation.FrameCount) then
+    Exit;
+  Stop;
+  FFrame := FCompositor.RenderFrame(Index);
+  ShowFrameChanged;
 end;
 
 { Whether it is on the screen: it and every parent visible (not on a
@@ -377,8 +493,12 @@ function TPictureBox.PictureBounds: TRectangle;
 begin
   if FFrame = nil then
     Exit(MakeRectangle(0, 0, 0, 0));
-  Result := PicturePlacement(FSizeMode, Scaled(FFrame.Width), Scaled(FFrame.Height), RectangleWidth(PixelBounds),
-    RectangleHeight(PixelBounds));
+  if FSizeMode in [PictureSizeStretch, PictureSizeZoom] then
+    Result := PicturePlacement(FSizeMode, Scaled(PictureWidth), Scaled(PictureHeight), RectangleWidth(PixelBounds),
+      RectangleHeight(PixelBounds))
+  else
+    Result := PicturePlacement(FSizeMode, Scaled(ZoomedSize(PictureWidth)), Scaled(ZoomedSize(PictureHeight)),
+      RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
 end;
 
 { The frame at Width x Height: itself at its own size, else resampled
@@ -387,17 +507,19 @@ end;
 function TPictureBox.ResampledFrame(Width, Height: LongInt): TImage;
 var
   Filter: TResamplingFilter;
+  Shown: TImage;
 begin
-  if (Width = FFrame.Width) and (Height = FFrame.Height) then
-    Exit(FFrame);
+  Shown := CurrentPicture;
+  if (Width = Shown.Width) and (Height = Shown.Height) then
+    Exit(Shown);
   if (FResampled <> nil) and (FResampledSerial = FFrameSerial) and (FResampled.Width = Width) and
      (FResampled.Height = Height) then
     Exit(FResampled);
-  ForgetResampled;
+  FreeAndNil(FResampled);
   Filter := ResamplingMitchell;
   if FAnimation <> nil then
     Filter := ResamplingTriangle;
-  FResampled := ResampleImage(FFrame, Width, Height, Filter);
+  FResampled := ResampleImage(Shown, Width, Height, Filter);
   FResampledSerial := FFrameSerial;
   Result := FResampled;
 end;
@@ -437,6 +559,14 @@ begin
   Place := PictureBounds;
   if RectangleIsEmpty(Place) then
     Exit;
+  { Large or much enlarged: only what shows, pixel by pixel. }
+  Shown := CurrentPicture;
+  if (Int64(RectangleWidth(Place)) * RectangleHeight(Place) > LargestResampledPixels) or
+     (RectangleWidth(Place) >= PixelatedZoom * Shown.Width) then
+  begin
+    DrawSurfaceStretched(Canvas, ImageSurface(Shown), MakeRectangle(0, 0, Shown.Width, Shown.Height), Place, True);
+    Exit;
+  end;
   Shown := ResampledFrame(RectangleWidth(Place), RectangleHeight(Place));
   DrawSurface(Canvas, ImageSurface(Shown), MakeRectangle(0, 0, Shown.Width, Shown.Height), Place.Left, Place.Top,
     True, AlphaOpaque);

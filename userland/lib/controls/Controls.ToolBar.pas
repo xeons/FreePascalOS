@@ -77,7 +77,8 @@ type
     procedure Paint(var Canvas: TCanvas); override;
   public
     constructor Create(AParent: TControl); override;
-    { A button of Width logical units after the last. }
+    { A button of Width logical units after the last (0: as wide as its
+      text needs). }
     function AddButton(const AText: string; Width: LongInt; AOnClick: TControlEvent = nil): TToolButton;
     { The same with picture ImageIndex of Images, and a hint. }
     function AddImageButton(ImageIndex: LongInt; const AText, AHint: string; Width: LongInt;
@@ -100,6 +101,10 @@ uses
   Controls.Text,
   Controls.LayoutRules,
   Controls.Painting;
+
+const
+  { Logical units either side of a text button's caption. }
+  TextButtonPadding = 16;
 
 const
   ToolBarHeight = 26;
@@ -273,6 +278,8 @@ end;
 
 function TToolBar.AddButton(const AText: string; Width: LongInt; AOnClick: TControlEvent): TToolButton;
 begin
+  if Width <= 0 then
+    Width := Unscaled(MnemonicTextWidth(ControlFace, AText)) + TextButtonPadding;
   Result := TToolButton.Create(Self);
   Result.Text := AText;
   Result.OnClick := AOnClick;
