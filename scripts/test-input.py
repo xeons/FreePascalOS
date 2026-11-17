@@ -1568,6 +1568,15 @@ checks.append(('notepad: word wrap is remembered for the next Notepad (the user\
                re.search(rb'\ntrue\r?\n', again_log) is not None and
                b'settings word-wrap on, status-bar on' in again_log))
 
+def shell_output(command, marker, seconds=20):
+    # What the serial shell printed for command (a long command line is
+    # echoed scrolled sideways, so what follows the typing is taken).
+    start = len(received)
+    type_on_serial(command.encode() + b'; m=DONE; echo ' + marker.encode() + b' $m\r')
+    wait_for(marker + ' DONE', seconds)
+    return bytes(received[start:])
+
+
 # The calculator, from the keyboard: 12*(3+4) typed on the keyboard
 # (Shift for * and the parentheses) and Enter give 84, the expression
 # shown above it; Ctrl+C copies the number (read back
@@ -1693,15 +1702,6 @@ def wait_for_files_log(texts, seconds):
             return True
         time.sleep(0.5)
     return False
-
-
-def shell_output(command, marker, seconds=20):
-    # What the serial shell printed for command (a long command line is
-    # echoed scrolled sideways, so what follows the typing is taken).
-    start = len(received)
-    type_on_serial(command.encode() + b'; m=DONE; echo ' + marker.encode() + b' $m\r')
-    wait_for(marker + ' DONE', seconds)
-    return bytes(received[start:])
 
 
 type_on_serial(b'mkdir -p /tmp/fm/sub /tmp/fm/tree/a/b; echo hello > /tmp/fm/alpha.txt; echo world > /tmp/fm/beta.txt; '
