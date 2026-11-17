@@ -744,6 +744,28 @@ pixel = take_screen()
 checks.append(('display server: two windows, stacked, the top one active',
                server_ready and pixel(400, 300) == 'd0e8f0' and pixel(150, 150) == 'f0e8d0' and
                pixel(249, 185) == '17375e' and pixel(99, 85) == '7c7a76'))
+# wintest names no icon, so each title bar shows the generic picture (a
+# little window: a light body under a navy strip) 16 pixels square, 3
+# right of the client area's left and 20 above its top: First's at
+# 103-118 x 80-95, Second's at 253-268 x 180-195. On First's inactive
+# grey bar its navy strip stands out (no grey of the bar or its title
+# is blue), on Second's navy bar its light body.
+def icon_box(screen, left, top):
+    return [tuple(int(screen(x, y)[i:i + 2], 16) for i in (0, 2, 4))
+            for x in range(left, left + 16) for y in range(top, top + 16)]
+
+
+def has_navy(colours):
+    return any(blue - red >= 0x30 and red < 0x70 for red, green, blue in colours)
+
+
+def has_light(colours):
+    return any(min(colour) >= 0xb8 for colour in colours)
+
+
+checks.append(('window icons: a window without one shows the generic picture (Classic)',
+               has_navy(icon_box(pixel, 103, 80)) and has_light(icon_box(pixel, 253, 180)) and
+               not has_navy(icon_box(pixel, 140, 80))))
 # The pointer is drawn from its 32 pixel pictures at 100% (the build
 # draws them, /lib/pointers/*.cur). The text beam's hotspot is in the
 # middle of its stem, one white pixel between black ones: so it is 7
