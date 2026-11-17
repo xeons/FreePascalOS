@@ -37,6 +37,10 @@ unit Kernel.Arch.ContextSwitch;
 
 interface
 
+const
+  { The FXSAVE area. }
+  ArchFpuStateSize = 512;
+
 { Saves the current thread's state on its stack, stores its stack pointer
   in SavedStackPointer, then resumes the thread whose state is on top of
   NewStackPointer. Returns when the original thread is resumed again. }

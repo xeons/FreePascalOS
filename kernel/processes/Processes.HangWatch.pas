@@ -42,6 +42,7 @@ implementation
 uses
   Runtime.Text,
   Kernel.Arch.TrapFrame,
+  Kernel.Arch.SystemCallEntry,
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Processors,
@@ -83,13 +84,13 @@ begin
   DebugBeginMessage;
   DebugWriteTag('hang');
   DebugWrite('      user rip 0x');
-  DebugWriteHex(UserFrame^.Rip, 1);
+  DebugWriteHex(TrapFrameInstructionPointer(UserFrame), 1);
   DebugWrite(', rsp 0x');
-  DebugWriteHex(UserFrame^.Rsp, 1);
+  DebugWriteHex(TrapFrameStackPointer(UserFrame), 1);
   if CallFrame <> nil then
   begin
     DebugWrite(', in system call ');
-    DebugWriteDecimal(CallFrame^.Rax);
+    DebugWriteDecimal(SystemCallNumber(CallFrame));
   end
   else
     DebugWrite(', not in a system call');

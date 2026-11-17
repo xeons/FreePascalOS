@@ -813,7 +813,7 @@ begin
   CurrentThreadObject^.SystemCallFrame := Frame;
   { A stack overflow's reserve is armed again once the stack is clear. }
   if StackReserveIsOpen then
-    RearmStackReserveIfClear(Frame^.Rsp);
+    RearmStackReserveIfClear(TrapFrameStackPointer(Frame));
 
   { Continuing at a context replaces the whole frame; on success there is
     no result to return. }

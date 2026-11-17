@@ -164,8 +164,8 @@ begin
   DebugWrite('): ');
   DebugWrite(Description);
   DebugWrite(' at ');
-  DebugWriteAddress(Frame^.Rip);
-  if TrapFrameVector(Frame) = 14 then
+  DebugWriteAddress(TrapFrameInstructionPointer(Frame));
+  if TrapFrameVector(Frame) = VectorPageFault then
   begin
     DebugWrite(' accessing ');
     DebugWriteAddress(FaultAddress);

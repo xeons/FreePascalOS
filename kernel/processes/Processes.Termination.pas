@@ -112,7 +112,7 @@ begin
   if (Process <> nil) and Process^.IsUserProcess and StackReserveIsOpen then
   begin
     EnableInterrupts;
-    RearmStackReserveIfClear(Frame^.Rsp);
+    RearmStackReserveIfClear(TrapFrameStackPointer(Frame));
     DisableInterrupts;
   end;
   { A thread suspended or asked to end by another (Processes.ThreadControl). }

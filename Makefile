@@ -111,7 +111,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/core kernel/core/$(ARCH) \
 	kernel/memory kernel/memory/$(ARCH) \
 	kernel/objects \
-	kernel/processes \
+	kernel/processes kernel/processes/$(ARCH) \
 	kernel/firmware \
 	kernel/io \
 	kernel/network \
@@ -240,17 +240,22 @@ $(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FOR
 	@$(MAKE) --no-print-directory check-kernel
 
 # The kernel does not save floating point / SIMD registers on interrupts or
-# context switches, so the compiler must never have used them.
+# context switches, so the compiler must never have used them (only the
+# routines that save and restore a thread's registers at a switch may).
 ifeq ($(ARCH),arm64)
 KERNEL_SIMD_PATTERN := [[:space:],][qdsvbh][0-9]+([].,[:space:]]|$$)
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState
 else
 KERNEL_SIMD_PATTERN := %(x|y|z)mm[0-9]
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchInitializeFpuState
 endif
+KERNEL_DISASSEMBLY = $(OBJDUMP) -d $(KERNEL_ELF) | \
+	awk '/^[0-9a-f]+ <($(KERNEL_FPU_ROUTINES))>:/ { skip = 1; next } /^[0-9a-f]+ <.*>:/ { skip = 0 } !skip' | cut -f3-
 
 check-kernel:
-	@if $(OBJDUMP) -d $(KERNEL_ELF) | grep -qE '$(KERNEL_SIMD_PATTERN)'; then \
+	@if $(KERNEL_DISASSEMBLY) | grep -qE '$(KERNEL_SIMD_PATTERN)'; then \
 		echo "error: kernel code uses floating point / SIMD registers, which the kernel does not preserve"; \
-		$(OBJDUMP) -d $(KERNEL_ELF) | grep -E '$(KERNEL_SIMD_PATTERN)' | head; \
+		$(KERNEL_DISASSEMBLY) | grep -E '$(KERNEL_SIMD_PATTERN)' | head; \
 		exit 1; \
 	fi
 

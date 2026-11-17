@@ -45,6 +45,10 @@ procedure fpc_do_exit; compilerproc;
   the processor does not trap (AArch64). }
 procedure fpc_divbyzero; compilerproc;
 
+{ Copies Count bytes (the areas may overlap). The AArch64 code generator
+  calls it to copy large records and arrays, which x86-64 does inline. }
+procedure Move(const Source; var Dest; Count: SizeInt);
+
 var
   { What fpc_divbyzero does: the kernel installs its panic; without one
     the processor stops here. }
@@ -60,6 +64,36 @@ end;
 procedure fpc_do_exit; [public, alias: 'FPC_DO_EXIT']; compilerproc;
 begin
   { There is nothing to return to. }
+end;
+
+procedure Move(const Source; var Dest; Count: SizeInt); [public, alias: 'FPC_MOVE'];
+var
+  SourceBytes: PByte;
+  DestinationBytes: PByte;
+  Index: SizeInt;
+begin
+  if Count <= 0 then
+    Exit;
+  SourceBytes := PByte(@Source);
+  DestinationBytes := PByte(@Dest);
+  if (DestinationBytes < SourceBytes) or (DestinationBytes >= SourceBytes + Count) then
+  begin
+    Index := 0;
+    while Index < Count do
+    begin
+      DestinationBytes[Index] := SourceBytes[Index];
+      Inc(Index);
+    end;
+  end
+  else
+  begin
+    Index := Count;
+    while Index > 0 do
+    begin
+      Dec(Index);
+      DestinationBytes[Index] := SourceBytes[Index];
+    end;
+  end;
 end;
 
 procedure fpc_divbyzero; [public, alias: 'FPC_DIVBYZERO']; compilerproc;

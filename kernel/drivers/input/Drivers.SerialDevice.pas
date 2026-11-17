@@ -50,7 +50,6 @@ uses
   Io.Console;
 
 const
-  SerialIrq = 4;
   { Bounds the work of one interrupt if data keeps arriving. }
   MaximumCharactersPerInterrupt = 64;
 
@@ -99,6 +98,18 @@ begin
   EnableSerialReceiveInterrupt;
 end;
 
+function ConnectSerialInterrupt: Boolean;
+var
+  Line: TSerialInterrupt;
+begin
+  Line := SerialPortInterrupt;
+  if Line.IsIsaIrq then
+    Result := ConnectIsaInterrupt(Byte(Line.Number), @HandleSerialInterrupt, nil)
+  else
+    Result := ConnectGlobalInterrupt(Line.Number, Line.LevelTriggered, Line.ActiveLow,
+      @HandleSerialInterrupt, nil);
+end;
+
 function InitializeSerialDevice: Boolean;
 begin
   Result := False;
@@ -106,7 +117,7 @@ begin
     Exit;
   if not CreateSerialDevice then
     Exit;
-  if not ConnectIsaInterrupt(SerialIrq, @HandleSerialInterrupt, nil) then
+  if not ConnectSerialInterrupt then
     Exit;
   SetSerialInputInterruptDriven;
   EnableSerialReceiveInterrupt;
