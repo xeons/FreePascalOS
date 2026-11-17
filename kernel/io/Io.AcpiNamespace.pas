@@ -27,8 +27,9 @@
   writes), the scheduler's sleep and the clock.
 
   LoadAcpiNamespace loads the DSDT and every SSDT, runs the devices'
-  initialization (_STA, _INI) and builds the PCI interrupt routing
-  (Firmware.AcpiPciRouting). The interpreter recurses as AML nests, so
+  initialization (_STA, _INI), builds the PCI interrupt routing
+  (Firmware.AcpiPciRouting) and records the platform devices
+  (Io.AcpiDevices). The interpreter recurses as AML nests, so
   it is run on a thread with a large stack (Kernel.Startup does that).
 }
 unit Io.AcpiNamespace;
@@ -66,6 +67,7 @@ uses
   Firmware.AmlInterpreter,
   Firmware.AcpiPciRouting,
   Io.Pci,
+  Io.AcpiDevices,
   Debug.Output;
 
 const
@@ -364,6 +366,15 @@ begin
   DebugEndMessage;
 end;
 
+procedure ReportPlatformDevices(Count: Integer);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('acpi');
+  DebugWriteDecimal(Count);
+  DebugWriteLine(' platform devices (with a _HID)');
+  DebugEndMessage;
+end;
+
 procedure LoadAcpiNamespace(Context: Pointer);
 var
   Table: PByte;
@@ -401,6 +412,7 @@ begin
     Exit;
   InitializeAmlDevices;
   ReportLoad(Tables, Failures, BuildPciRouting);
+  ReportPlatformDevices(EnumerateAcpiDevices);
   Loaded := True;
 end;
 

@@ -57,6 +57,7 @@ among others:
 | `Hal.Platform`                | local APIC, PIT                 | GICv2, generic timer, PSCI         |
 | `Hal.InterruptController`     | I/O APICs, MSI to a local APIC  | GIC SPIs, MSI through GICv2m       |
 | `Hal.SerialPort`              | 16550 UART                      | PL011 / mini UART from ACPI SPCR   |
+| `Hal.DmaCoherency`            | nothing (DMA snoops the caches) | DC CVAC / CIVAC / IVAC by address  |
 | `Processes.Arch.UserContext`  | x86 exception context           | AArch64 exception context          |
 
 Code that cannot be Pascal is in GNU assembler files next to the units
@@ -374,7 +375,9 @@ Started from phase 1 by `Io.Startup`, in dependency order:
 2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
    Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
    Then the **ACPI namespace** is loaded (see below), which needs PCI
-   configuration space and gives the routing of PCI interrupt lines.
+   configuration space and gives the routing of PCI interrupt lines and
+   the **platform devices**: the devices only the namespace describes
+   (see "Platform devices" below).
 3. **Storage drivers** (`Drivers.Ahci`) register whole-disk block devices
    named `disk0`, `disk1`, ... Each disk has a device object of the `ahci`
    driver, without a name; the block device sends it read and write
@@ -446,6 +449,9 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    announced (below). The tests attach a USB stick holding a copy of the
    exFAT test partition, and the input test plugs a second one in and
    out while the system runs.
+
+   SD cards (`Drivers.Sdhci`, see "SD cards" below) come last, so the
+   other disks keep their names.
 4. **Partitions** (`Io.Partitions`) are read from GPT (with CRC checks) or
    MBR (including logical partitions) and registered as `disk1p2` etc. A
    partition device forwards requests to its disk with an offset.
@@ -538,6 +544,7 @@ The drivers so far:
 | `serial` (`Drivers.SerialDevice`) | `serial0`, exclusive, `rw-------`: the characters received on COM1 |
 | `events` (`Io.InputEvents`) | `events`, one opener at a time, `rw-------`: every keyboard's and pointing device's input events (`TAbiInputEvent`); while open, the keyboards stop typing into the console |
 | `ahci` (`Drivers.AhciRequests`) | one unnamed device per SATA disk, asynchronous |
+| `sdhci` (`Drivers.Sdhci`) | one unnamed device per SD card, requests in the caller's thread |
 | `diskstats` (`Drivers.DiskStatistics`) | a filter on each disk's storage device counting completed reads and writes, their bytes, and failures; written to the kernel log after the self tests and at the end |
 
 Programs reach every device as `/dev/<name>`, whatever their root
@@ -545,6 +552,146 @@ directory: `Processes.FileCalls` recognizes those paths (and `/dev`
 itself, which lists the devices), checks the permission bits on open and
 sends reads, writes, seeks (block devices) and control requests to the
 device. The first program's standard handles are opened on `console`.
+
+### SD cards
+
+`Drivers.Sdhci` drives SD host controllers (the SD Host Controller
+Simplified Specification, versions 2.00 and 3.00) and makes the SD
+memory card in a slot a disk of 512-byte blocks.
+
+- **Finding them.** On PCI, class 08h subclass 05h (QEMU's
+  `sdhci-pci`): the first slot, whose BAR the slot information register
+  names, interrupts by MSI or the PCI line. As ACPI platform devices: the
+  Raspberry Pi 4's EMMC2 (`BRCME88C`, its SD card slot) and its Arasan
+  controller (`BCM2847`; usually wired to the Wi-Fi chip, but the
+  firmware can route the SD card to it), interrupts from `_CRS`.
+- **The host** (`Drivers.Sdhci.Host`): reset, 3.3 V bus power (the card
+  is powered off a moment first, so a card left at 1.8 V by whoever ran
+  before comes back to 3.3 V signalling; 1.8 V UHS-I modes are not
+  used), the card clock from the base clock (the 10-bit divider of
+  version 3, powers of two before), commands that wait for "command
+  complete" (and "transfer complete" for busy signalling and data) by
+  interrupt - the handler takes and clears the status bits, a deferred
+  call wakes the waiter - or by polling. An error resets the command
+  line, and the data line for data errors (a failed multiple-block
+  transfer is ended with CMD12).
+- **Data** moves by ADMA2 (32-bit descriptors, up to 32 KiB each)
+  through the slot's bounce buffer: 128 KiB, physically contiguous, a
+  streaming DMA buffer (`Io.Dma`) below the controller's limits, cleaned
+  before the controller reads it and invalidated after it wrote it. A
+  controller without ADMA2 (or with `QuirkNoDma`, or the kernel option
+  `sdhcipio`) moves data through the buffer data port, a block at a time
+  as "buffer read/write ready" says.
+- **The card** (`Drivers.Sdhci.Card`): CMD0, CMD8 (a version 2 card
+  answers), ACMD41 until ready (offering high capacity; CCS says SDHC/SDXC
+  addressed by block, or SDSC by byte), CMD2 (CID: the product name for
+  the model), CMD3 (relative address), CMD9 (CSD: the capacity, version
+  1 or 2), CMD7, CMD16, ACMD51 (SCR: bus widths, specification version),
+  ACMD6 to a 4-bit bus, CMD6 to high speed and 50 MHz where card and host
+  can (else 25 MHz). Blocks move by CMD17/18 and CMD24/25 (multiple
+  blocks with auto CMD12), at most 128 KiB a command; a failed piece is
+  tried once more. Flushes have nothing to do.
+- **Card detect.** Where the slot has it, insertion and removal
+  interrupts (or a look every second) wake the slot's `SdCards` thread:
+  a removed card's disk fails its requests and goes away, an inserted
+  one is brought up and arrives (`Io.DiskArrival`). The Pi's slots have
+  no usable card detect: a card is assumed present.
+- **Quirks** (`TSdhciQuirks`): `QuirkRegisters32Bit` (narrow writes
+  become read-modify-writes of the 32-bit word; block size with count,
+  transfer mode with command and the status word are always written
+  whole), `QuirkWriteDelay` (a pause after each write: the Arasan loses
+  writes closer than two SD clocks), `QuirkBrokenCardDetect`,
+  `QuirkNoHighSpeedBit`, `QuirkNoDma`, `QuirkVoltage33Only`,
+  `QuirkDmaBelow1GiB` (EMMC2 without a `_DMA` saying more) and
+  `QuirkClockFromFirmware` (the base clock from the VideoCore mailbox:
+  clock 12 for EMMC2, 1 for the Arasan; EMMC2 falls back to 100 MHz).
+
+Its start-up line (the tests look for it):
+
+    [sdhci] disk6: SDHC card "QEMU!", 4096 MiB, on 1B36:0007 (SDHCI 3.00), ADMA2, 4-bit high speed at 26 MHz, interrupts
+
+`make test` attaches a 4 GiB SDHC card (a sparse file) holding a copy of
+the FAT16 test partition on an `sdhci-pci` controller (SDHCI 3.00); its
+volume goes through the file system tests and is checked on the host.
+`make arm64-test` does the same with a 64 MiB SDSC card holding the
+exFAT partition, once with `noncoherentdma`.
+
+### Platform devices
+
+Devices that are not found by enumerating a bus - on a Raspberry Pi 4
+the SD controllers, the Ethernet controller, the VideoCore mailbox and
+the xHCI controller its firmware set up behind the PCIe bridge - are
+described only by the ACPI namespace.
+
+- **The walk** (`Firmware.AcpiDeviceWalk`, plain Pascal over the
+  interpreter) goes down from the root through scopes and devices,
+  skipping a device (and everything below it) whose `_STA` says it is
+  neither present nor working, and describes each device with a `_HID`:
+  `_CID` (an id or a package), `_UID`, `_STA`, `_CRS`, `_CCA` and `_DMA`
+  (each from the device or the nearest device above that has one, as
+  ACPI has children inherit them), `_DSD` and `_SEG`. Objects are
+  looked for among the device's own children only.
+- **Resources** (`Firmware.AcpiResourceList`): memory from the 24-bit,
+  32-bit and fixed 32-bit memory descriptors and the word, double word,
+  quad word and extended address space descriptors (with their
+  translation offset: the processor's address and the bus address);
+  I/O ports; every interrupt of the IRQ and extended interrupt
+  descriptors with trigger mode and polarity.
+- **Properties** (`Firmware.AcpiProperties`): the device properties
+  UUID's name/value pairs of `_DSD`, read as an integer, text, or bytes
+  (a buffer, or a package of integers: `local-mac-address`).
+- **The list** (`Io.PlatformDevices`, filled by `Io.AcpiDevices` while
+  the namespace loads) keeps each device with its DMA attributes (below)
+  and its `_DSD`. Drivers bind by id: a `TPlatformDriver` names its ids
+  and a probe routine, and `BindPlatformDriver` offers it every free,
+  present and working device whose `_HID` or a `_CID` is one of them;
+  each driver binds from its own start routine, so start order and
+  device names stay as `Io.Startup` has them. Helpers map a memory
+  range, connect an interrupt (a GSI is a GIC INTID on AArch64) and give
+  a PCI device the DMA attributes of its segment's root bridge. The
+  kernel debug shell's `devices` lists them all.
+
+The drivers that bind: `xhci` (`PNP0D10`, `PNP0D15`), `sdhci`
+(`BRCME88C`, `BCM2847`), `videocore-mailbox` (`BCM2849`) and `genet`
+(`BCM6E4E`). `make acpi-device-test` (run by `make test`) walks, on the
+host, a DSDT that `tools/AcpiDeviceTest/make-table.py` assembles in the
+Raspberry Pi 4 firmware's layout and checks what it finds.
+
+### DMA and cache coherency
+
+x86 devices snoop the processors' caches; the Raspberry Pi 4's do not
+(`_CCA` = 0), and some of them reach only part of memory, at addresses
+of their own. `Io.Dma` gives drivers what they need for that:
+
+- **DMA attributes** (`TDmaAttributes`): coherent or not (from `_CCA`;
+  without one the architecture's default, `Hal.DmaCoherency`: coherent
+  on x86-64, not on AArch64 as ACPI wants), the windows of `_DMA` (a
+  range of physical memory seen at a bus address of its own: the Pi's
+  VideoCore side sees the low 1 GiB at C0000000h) and the device's own
+  address limit (32-bit DMA engines).
+- **Shared buffers** (descriptor rings, contexts, anything both sides
+  read and write while the device runs) are zeroed, cleaned out of the
+  caches and, for a device that does not snoop, mapped uncached (normal
+  non-cacheable memory) in the dynamic region, so neither side ever sees
+  stale data.
+- **Streaming buffers** (data) stay cached; the driver brackets each
+  transfer: `PrepareDmaToDevice` (clean) before the device reads,
+  `PrepareDmaFromDevice` (clean and invalidate) before it writes,
+  `FinishDmaFromDevice` (invalidate; partial lines at the edges are
+  cleaned and invalidated, never thrown away) after it wrote. For a
+  coherent device these do nothing.
+- Allocations come from below the device's reach and are given to it at
+  their bus address (`TranslateDmaAddress`).
+- The kernel option `noncoherentdma` treats every device as not
+  coherent, which exercises the uncached mappings and the cache
+  maintenance under QEMU, whose devices all snoop.
+
+Converted so far: xHCI (all its memory is shared, uncached for a
+controller that does not snoop; isochronous packets from the audio
+buffers are cleaned and translated before they are queued), SDHCI, the
+VideoCore mailbox and GENET. The other PCI drivers (AHCI, NVMe, virtio,
+e1000, Realtek, HD Audio, AC'97) still assume coherent DMA at physical
+addresses, which holds on every machine they are found on today.
 
 ## Device interrupts
 
@@ -639,7 +786,8 @@ for now the routing of PCI interrupt lines.
   from the `_ADR` above it and its bus from `_BBN`.
 - **Loading** (`Io.AcpiNamespace`) gives the interpreter the kernel as
   its host and loads the DSDT (through the FADT) and every SSDT. It then
-  runs the devices' `_STA` and `_INI` and builds the routing. The
+  runs the devices' `_STA` and `_INI`, builds the routing and records
+  the platform devices (`Io.AcpiDevices`, see "Platform devices"). The
   interpreter recurses as the AML nests, so it runs on a thread with a
   256 KiB stack (`CreateSystemThread` takes a stack size; a kernel
   thread's exit event is signalled when its routine returns, so it can
@@ -4545,6 +4693,36 @@ is applied with the card's configuration lock held (the PHY is set up
 again, and autonegotiation restarted, right after), and again on every
 set-up after that (waking from suspend to RAM).
 
+### Broadcom GENET v5 (untested)
+
+The Raspberry Pi 4's Gigabit Ethernet (`Drivers.Genet`, registers in
+`Drivers.Genet.Registers`, the PHY in `Drivers.Genet.Phy`), an ACPI
+platform device (`BCM6E4E`). **It has never run**: QEMU has no GENET,
+and it was written from the register layout of Linux's bcmgenet driver
+(used as documentation) without a Pi at hand.
+
+- Start-up: the version register must say v5 (major field 6); the UMAC
+  is reset and set up (2-byte receive alignment, no status blocks,
+  promiscuous: the network layer filters), the port set for an external
+  RGMII PHY, the PHY found on MDIO (address 1 first, then a scan) and
+  reset, autonegotiation advertising 10/100/1000.
+- The station address: `_DSD` `local-mac-address` (or `mac-address`),
+  else the VideoCore mailbox's board address, else what the MAC
+  registers hold.
+- DMA: the default queue (ring 16) each way, 256 descriptors (in the
+  controller's own register space, so they are MMIO writes), each with a
+  2 KiB streaming buffer below 4 GiB with cache maintenance around every
+  frame (`Io.Dma`).
+- Interrupts from `_CRS` interrupt 0 (receive and transmit done); a
+  deferred call takes received frames and reclaims sent ones; without
+  the interrupt a 10 ms timer polls. The link is read from the PHY every
+  second; UMAC speed and duplex follow it.
+- Uncertain (check first on hardware): the per-ring and DMA engine
+  register offsets, the reset sequence, the RGMII delay setup for
+  `rgmii-rxid` (receive delay in the PHY through its shadow registers,
+  transmit delay by the MAC), and whether the receive length counts the
+  2-byte pad. No suspend to RAM handling.
+
 ## File systems
 
 The VFS (`kernel/filesystems`) has three parts:
@@ -6706,23 +6884,27 @@ make toolchain ARCH=arm64    # build/toolchain/ppcrossa64 from the FPC sources
 make ARCH=arm64              # build/arm64/esp: BOOTAA64.EFI and kernel.elf
 make ARCH=arm64 userland system-disk   # build/arm64/system-disk.img
 make run ARCH=arm64          # QEMU virt with the system disk, serial on the terminal
-make arm64-test              # boot, coretest and session tests (not in make test)
+make arm64-test              # boot (with an SD card), coretest and session tests (not in make test)
 ```
 
 What runs today: the loader, the kernel on every processor, the drivers
 that are bus generic (virtio block and network, NVMe, xHCI with USB
-keyboards, pointers and storage, e1000/e1000e, HD Audio, on PCIe with
-message interrupts), the file systems, the network stack, every kernel
-self test, and all of user mode: the runtime library, every library and
-program, the service manager, shells on the serial console, coretest
+keyboards, pointers and storage, SD cards on SDHCI, e1000/e1000e, HD
+Audio, on PCIe with message interrupts), the ACPI platform devices, the
+file systems, the network stack, every kernel self test, and all of
+user mode: the runtime library, every library and program, the service
+manager, shells on the serial console, coretest
 (`scripts/test-qemu-arm64-user.sh`), and the graphical session on the
 GOP framebuffer (QEMU's ramfb) with a USB keyboard and tablet
 (`scripts/test-arm64-session.py`: the desktop comes up, a double click
-opens a terminal, typed commands run). Not working yet on QEMU's virt
-machine: AHCI finds no drives, and PCI devices on interrupt lines (INTx:
-AC'97, the plain e1000) get no interrupts; floating point exceptions do
-not trap (the Cortex-A72 cannot), so a floating point division by zero
-gives an infinity instead of `EZeroDivide`.
+opens a terminal, typed commands run). The Raspberry Pi 4's own devices
+have drivers (xHCI as a platform device, EMMC2, the VideoCore mailbox,
+GENET) that cannot run in QEMU; see "Trying it on a Raspberry Pi 4".
+Not working yet on QEMU's virt machine: AHCI finds no drives, and PCI
+devices on interrupt lines (INTx: AC'97, the plain e1000) get no
+interrupts; floating point exceptions do not trap (the Cortex-A72
+cannot), so a floating point division by zero gives an infinity instead
+of `EZeroDivide`.
 
 ### Boot path
 
@@ -6769,6 +6951,7 @@ gives an infinity instead of `EZeroDivide`.
 | PSCI and its conduit         | ACPI FADT ARM boot flags (HVC under QEMU, SMC on the Pi) |
 | PCIe configuration space     | ACPI MCFG (ECAM), as on x86-64                     |
 | PCI interrupt lines          | DSDT `_PRT`, as on x86-64                          |
+| platform devices             | DSDT devices: `_HID`, `_CRS`, `_CCA`, `_DMA`, `_DSD` |
 
 The HAL reads the tables from its first moments (the serial port before
 anything else) through `Hal.FirmwareTables`; they are in memory the
@@ -6896,18 +7079,84 @@ through semihosting with the x86-64 exit codes.
   default.
 - Its SPCR names the mini UART by default (the PL011 goes to Bluetooth);
   both are driven.
-- The Pi 4's own devices need drivers of their own, for later (see
-  TODO.md): the BCM2711 PCIe bridge with the VL805 xHCI behind it,
-  GENET Ethernet, the EMMC2 SD controller, and the GPU mailbox. Its PCIe
-  and these devices are not cache coherent with the processors, so DMA
-  buffers will need cache maintenance (or non-cacheable mappings), and
-  some of them reach only the low 1 or 3 GiB.
+- The Pi 4's own devices are ACPI platform devices in that mode: the
+  VL805 xHCI (the firmware initialises the BCM2711 PCIe bridge and the
+  VL805 and describes the controller by its registers), EMMC2, the
+  Arasan SD controller, GENET and the VideoCore mailbox. None of them
+  snoops the processors' caches (`_CCA` 0) and some reach only the low
+  1 GiB (`_DMA`): see "DMA and cache coherency". The BCM2711 PCIe bridge
+  itself is not driven (its configuration space is not ECAM).
+- The VideoCore mailbox (`Drivers.VideoCoreMailbox`, `BCM2849`) asks the
+  GPU firmware through the property channel (an uncached message page
+  below 1 GiB, given at the GPU's bus address) for board model,
+  revision, serial number, Ethernet address, clock rates (EMMC2's base
+  clock), temperature and power domains; `Drivers.RaspberryPiBoard`
+  writes the board's line at start-up and for the kernel debug shell's
+  `board`.
 - A Raspberry Pi 5 (BCM2712, Cortex-A76) would differ in: most I/O behind
   the RP1 south bridge on PCIe (its own UARTs, Ethernet, USB), so the
   console and devices need RP1 drivers; a different (younger) UEFI port
   whose ACPI tables need checking; ARMv8.2 features worth using (PAN
   around user copies, LSE atomics); a battery-backed real-time clock. The
   core code (GIC, generic timer, PSCI, translation tables) carries over.
+
+### Trying it on a Raspberry Pi 4
+
+What can be tried, and what to look for. Untested on hardware so far:
+everything Pi specific (the mailbox, EMMC2 and the Arasan quirks, xHCI
+as a platform device, GENET, non-coherent DMA on real non-coherent
+devices, the GIC-400 and the mini UART on the real chip). User mode is
+not there yet on AArch64, so the kernel stops after its self tests.
+
+1. **Firmware.** The community UEFI firmware for the Pi 4
+   (pftf/RPi4 on GitHub), release v1.35 or later. Unzip it onto a
+   FAT32-formatted SD card (MBR partition table, partition type 0Ch): it
+   holds `RPI_EFI.fd`, `config.txt`, `start4.elf`, `fixup4.dat` and the
+   device tree files.
+2. **The system.** `make ARCH=arm64`, then copy `build/arm64/esp/EFI`
+   and `build/arm64/esp/FreePascalOS` to the root of the same FAT32
+   partition (it is the EFI system partition too). For a first run put
+   `kshell` in `FreePascalOS/options.txt` to get the kernel debug shell.
+3. **Firmware settings** (Esc at the Raspberry Pi logo, Device Manager →
+   Raspberry Pi Configuration):
+   - Advanced Configuration → System Table Selection: **ACPI** (not
+     "Device Tree", not "ACPI + Devicetree");
+   - Advanced Configuration → Limit RAM to 3 GB: **enabled** (the
+     default; the 1 GiB DMA limits are handled, but leave it);
+   - SD/MMC Configuration → uSD/eMMC Routing: **eMMC2** (the default on
+     the Pi 4: the SD card on EMMC2, `BRCME88C`);
+   - Save (F10), reset, and boot from the SD card (Boot Manager, or let
+     it find `\EFI\BOOT\BOOTAA64.EFI`).
+4. **The serial console.** A 3.3 V USB serial adapter on the GPIO
+   header: ground to pin 6, the adapter's RX to pin 8 (GPIO 14, TXD),
+   its TX to pin 10 (GPIO 15, RXD); 115200 baud, 8N1. Leave
+   `enable_uart=1` in `config.txt`. The firmware's SPCR names whichever
+   UART is on those pins - the PL011 with the `dtoverlay=miniuart-bt`
+   the firmware's `config.txt` comes with, otherwise the mini UART - and
+   the kernel drives either.
+5. **What to look for** in the log:
+   - `[acpi] N platform devices`, and `devices` in the debug shell: the
+     `BRCME88C`, `BCM2849`, `PNP0D10` and `BCM6E4E` devices with their
+     memory, GSIs, "not coherent" and `dma ... at bus C0000000` (if the
+     tables have `_DMA`);
+   - `[mailbox] VideoCore mailbox, ...firmware revision ...` and the
+     `[board] Raspberry Pi 4 Model B rev 1.x, ... MiB` lines (`board` in
+     the shell gives clocks and temperature again);
+   - `[sdhci] diskN: SDHC card "...", ... on \_SB_....SDC3 (ACPI
+     BRCME88C) ..., ADMA2, 4-bit high speed at 50 MHz, interrupts,
+     non-coherent DMA`, then the card's partitions and `[fs] ... fat32
+     ... mounted` (the ESP itself; `ls` and `cat` in the shell);
+   - `[xhci] Controller \_SB_....XHC0 (ACPI PNP0D10), N ports,
+     interrupts, non-coherent DMA` and `[usb] Port N: device ...` for a
+     USB keyboard (typing in the shell then works on the HDMI screen);
+   - `[genet] ...` and `[net] eth0: Broadcom GENET v5, address
+     DC:A6:32:..., ... interrupts by line`, then a link line when a
+     cable is in.
+   - Problems to report: a missing line above, `the card did not come
+     up` (with the step), a panic, or nothing after `kernel starting`.
+6. **Without a serial adapter** the same log appears on the HDMI
+   screen (the framebuffer console), which is enough for the start-up
+   lines.
 
 ## Heap checking
 
@@ -7065,7 +7314,10 @@ test run leaves its explanation in the log.
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
 once the system is up, before the first program: `help`, `echo`, `ls`,
-`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`, `uptime`, and `exit` to go
+`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`,
+`devices` (the ACPI platform devices: ids, resources, DMA, driver),
+`board` (the Raspberry Pi's model, revision, serial, firmware, clocks
+and temperature, from the VideoCore mailbox), `uptime`, and `exit` to go
 on with the boot. It reads lines through the console like a program
 (with line editing) and writes through the kernel debug output, so it
 works on the serial port and the screen. The input test starts with a

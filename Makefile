@@ -25,6 +25,9 @@
 #                   session as it normally starts; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
+#   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
+#                   Python) for platform devices on the host: ids, resources,
+#                   _CCA, _DMA, _DSD properties
 #   make drawing-test  Check libdrawing and libfont on the host, pixel by pixel
 #   make font-test  Check libfont's TrueType reading, rendering, hinting and glyph
 #                   cache on the host against FreeType (fixtures made by Python)
@@ -152,7 +155,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test
 
 all: esp
@@ -305,14 +308,14 @@ endif
 # Tests of the AArch64 build in QEMU's virt machine (not part of make
 # test until qemu-system-aarch64 and the edk2 AArch64 firmware are
 # standard requirements): the kernel must reach the end of its start-up
-# with every self test passed, with the firmware at EL1 and at EL2;
-# coretest must pass (scripts/test-qemu-arm64-user.sh); and the
-# graphical session must come up with a shell on the serial console
-# (scripts/test-arm64-session.py).
+# with every self test passed, with the firmware at EL1 and at EL2, and
+# run the file system tests on an SD card (SDHCI); coretest must pass
+# (scripts/test-qemu-arm64-user.sh); and the graphical session must come
+# up with a shell on the serial console (scripts/test-arm64-session.py).
 .PHONY: arm64-test
 arm64-test:
-	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk build/arm64/test-disk.img
-	scripts/test-qemu-arm64.sh build/arm64/esp
+	@$(MAKE) --no-print-directory ARCH=arm64 esp test-disk system-disk
+	scripts/test-qemu-arm64.sh build/arm64/esp build/arm64/test-disk-sdsc.img
 	scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img
 	scripts/test-arm64-session.py build/arm64/esp build/arm64/system-disk.img
 
@@ -321,7 +324,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test \
+test: aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -367,6 +370,22 @@ aml-test: $(AML_TEST)
 		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
 		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
 	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
+
+# The platform device walk (kernel/firmware) on the host, over a table
+# tools/AcpiDeviceTest/make-table.py assembles.
+ACPI_DEVICE_TEST := build/tools/AcpiDeviceTest
+ACPI_DEVICE_TABLE := build/tools/acpi-device-test.aml
+
+$(ACPI_DEVICE_TEST): tools/AcpiDeviceTest/AcpiDeviceTest.pas $(AML_TEST_SOURCES)
+	@mkdir -p build/tools/acpi-device-units
+	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/acpi-device-units $<
+
+$(ACPI_DEVICE_TABLE): tools/AcpiDeviceTest/make-table.py
+	@mkdir -p build/tools
+	python3 -I $< $@
+
+acpi-device-test: $(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
+	$(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)

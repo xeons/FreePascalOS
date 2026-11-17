@@ -35,6 +35,9 @@ unit Drivers.XhciRings;
 
 interface
 
+uses
+  Io.Dma;
+
 const
   TrbsPerRing = 256;
 
@@ -75,34 +78,37 @@ type
   { A ring the driver produces TRBs on. }
   TProducerRing = record
     Trbs: PTrb;
-    Physical: QWord;
+    { Where the controller finds the ring (Io.Dma). }
+    BusAddress: QWord;
     Enqueue: LongWord;
     Cycle: LongWord;
   end;
 
   TEventRing = record
     Trbs: PTrb;
-    Physical: QWord;
+    BusAddress: QWord;
     { The segment table (one segment). }
     SegmentTable: PQWord;
-    SegmentTablePhysical: QWord;
+    SegmentTableBusAddress: QWord;
     Dequeue: LongWord;
     Cycle: LongWord;
   end;
 
-function AllocateProducerRing(out Ring: TProducerRing): Boolean;
+{ Rings are DMA memory of the controller (Dma: its attributes), shared
+  with it: uncached for a controller that does not snoop. }
+function AllocateProducerRing(constref Dma: TDmaAttributes; out Ring: TProducerRing): Boolean;
 { Empties a ring in its page (as a controller that was reset expects it). }
 procedure ResetProducerRing(var Ring: TProducerRing);
 { Puts a TRB on Ring (its cycle bit set for the ring) and returns its
-  physical address. }
+  bus address. }
 function EnqueueTrb(var Ring: TProducerRing; Parameter: QWord; Status: LongWord;
   Control: LongWord): QWord;
 
-function AllocateEventRing(out Ring: TEventRing): Boolean;
+function AllocateEventRing(constref Dma: TDmaAttributes; out Ring: TEventRing): Boolean;
 procedure ResetEventRing(var Ring: TEventRing);
 { The next event, if the controller has written one. }
 function NextEvent(var Ring: TEventRing; out Event: TTrb): Boolean;
-{ The physical address of the event ring's dequeue position. }
+{ The bus address of the event ring's dequeue position. }
 function EventDequeuePointer(const Ring: TEventRing): QWord;
 
 function TrbType(const Trb: TTrb): LongWord;
@@ -112,16 +118,17 @@ implementation
 
 uses
   Runtime.Memory,
-  Runtime.Atomic,
-  Memory.Layout,
-  Memory.PhysicalPages;
+  Runtime.Atomic;
 
-function AllocateRingPage(out Physical: QWord): PTrb;
+function AllocateRingPage(constref Dma: TDmaAttributes; out BusAddress: QWord): PTrb;
+var
+  Buffer: TDmaBuffer;
 begin
-  Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Physical = 0 then
+  BusAddress := 0;
+  if not AllocateDmaBuffer(Dma, SizeOf(TTrb) * TrbsPerRing, DmaShared, Buffer) then
     Exit(nil);
-  Result := PTrb(PhysicalToVirtual(Physical));
+  BusAddress := Buffer.DeviceAddress;
+  Result := PTrb(Buffer.Address);
 end;
 
 procedure ResetProducerRing(var Ring: TProducerRing);
@@ -130,13 +137,13 @@ begin
   Ring.Enqueue := 0;
   Ring.Cycle := TrbCycle;
   { The last TRB links back to the first and flips the cycle bit. }
-  Ring.Trbs[TrbsPerRing - 1].Parameter := Ring.Physical;
+  Ring.Trbs[TrbsPerRing - 1].Parameter := Ring.BusAddress;
   Ring.Trbs[TrbsPerRing - 1].Control := (TrbTypeLink shl TrbTypeShift) or TrbToggleCycle;
 end;
 
-function AllocateProducerRing(out Ring: TProducerRing): Boolean;
+function AllocateProducerRing(constref Dma: TDmaAttributes; out Ring: TProducerRing): Boolean;
 begin
-  Ring.Trbs := AllocateRingPage(Ring.Physical);
+  Ring.Trbs := AllocateRingPage(Dma, Ring.BusAddress);
   Result := Ring.Trbs <> nil;
   if Result then
     ResetProducerRing(Ring);
@@ -149,7 +156,7 @@ var
   LinkControl: LongWord;
 begin
   Trb := @Ring.Trbs[Ring.Enqueue];
-  Result := Ring.Physical + Ring.Enqueue * SizeOf(TTrb);
+  Result := Ring.BusAddress + Ring.Enqueue * SizeOf(TTrb);
   Trb^.Parameter := Parameter;
   Trb^.Status := Status;
   { The cycle bit last, so the controller never sees half a TRB. }
@@ -170,15 +177,14 @@ begin
   end;
 end;
 
-function AllocateEventRing(out Ring: TEventRing): Boolean;
+function AllocateEventRing(constref Dma: TDmaAttributes; out Ring: TEventRing): Boolean;
 begin
-  Ring.Trbs := AllocateRingPage(Ring.Physical);
-  Ring.SegmentTablePhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  Result := (Ring.Trbs <> nil) and (Ring.SegmentTablePhysical <> 0);
+  Ring.Trbs := AllocateRingPage(Dma, Ring.BusAddress);
+  Ring.SegmentTable := PQWord(AllocateRingPage(Dma, Ring.SegmentTableBusAddress));
+  Result := (Ring.Trbs <> nil) and (Ring.SegmentTable <> nil);
   if not Result then
     Exit;
-  Ring.SegmentTable := PQWord(PhysicalToVirtual(Ring.SegmentTablePhysical));
-  Ring.SegmentTable[0] := Ring.Physical;
+  Ring.SegmentTable[0] := Ring.BusAddress;
   Ring.SegmentTable[1] := TrbsPerRing;
   Ring.Dequeue := 0;
   Ring.Cycle := TrbCycle;
@@ -208,7 +214,7 @@ end;
 
 function EventDequeuePointer(const Ring: TEventRing): QWord;
 begin
-  Result := Ring.Physical + Ring.Dequeue * SizeOf(TTrb);
+  Result := Ring.BusAddress + Ring.Dequeue * SizeOf(TTrb);
 end;
 
 function TrbType(const Trb: TTrb): LongWord;

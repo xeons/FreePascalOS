@@ -111,6 +111,20 @@ if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-usb.img" ]]; then
 else
     run_usb_disk_image=""
 fi
+# An SD card on an SD host controller (SDHCI 3.00) for the SDHCI driver:
+# 4 GiB (SDHC) holding a copy of the FAT16 partition. Its controller
+# goes on the command line after every other PCI device, so theirs keep
+# their places, and the card is the last disk.
+run_sd_card_image="$build_directory/test-disk-sdhc-run.img"
+sd_card_arguments=()
+if [[ -n "$test_disk_image" && -f "${test_disk_image%.img}-sdhc.img" ]]; then
+    cp -f --sparse=always "${test_disk_image%.img}-sdhc.img" "$run_sd_card_image"
+    sd_card_arguments+=(-device sdhci-pci,sd-spec-version=3
+        -drive if=none,id=sdcard0,format=raw,cache=unsafe,file="$run_sd_card_image"
+        -device sd-card,drive=sdcard0)
+else
+    run_sd_card_image=""
+fi
 run_system_disk_image="$build_directory/system-disk-run.img"
 if [[ -n "$system_disk_image" ]]; then
     cp -f "$system_disk_image" "$run_system_disk_image"
@@ -236,6 +250,7 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     -netdev user,id=net1 -device e1000e,netdev=net1 \
     -netdev user,id=net2 -device e1000,netdev=net2 \
     -netdev user,id=net3 -device rtl8139,netdev=net3 \
+    "${sd_card_arguments[@]}" \
     -serial file:"$serial_log" \
     -display none -no-reboot \
     < /dev/null > /dev/null 2>&1
@@ -300,6 +315,16 @@ case "$qemu_status" in
             fi
             if ! "$(dirname "$0")/verify-test-disk.sh" "$run_usb_disk_image"; then
                 echo "TEST FAILED: the volume on the USB stick did not pass the host side checks"
+                exit 1
+            fi
+        fi
+        if [[ -n "$run_sd_card_image" ]]; then
+            if ! grep -q '\[sdhci\] disk[0-9]*: SDHC card .*ADMA2.* interrupts' "$serial_log"; then
+                echo "TEST FAILED: the SD card was not started (SDHC, ADMA2, interrupts)"
+                exit 1
+            fi
+            if ! "$(dirname "$0")/verify-test-disk.sh" "$run_sd_card_image"; then
+                echo "TEST FAILED: the volume on the SD card did not pass the host side checks"
                 exit 1
             fi
         fi

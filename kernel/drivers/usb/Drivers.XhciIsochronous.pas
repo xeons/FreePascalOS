@@ -27,7 +27,10 @@
   transfer descriptor of an isochronous TRB (and a chained normal TRB
   for a second piece), started as soon as possible and interrupting when
   done; as each completes the next is queued. Stopping only stops
-  queueing: what is in flight still completes.
+  queueing: what is in flight still completes. The packets' memory is
+  the class driver's: for a controller that does not snoop the caches it
+  is cleaned before it is queued, and every piece is given to the
+  controller at its bus address (Io.Dma).
 
   Everything here runs under the controller's event lock (the caller
   takes it), at dispatch level.
@@ -40,6 +43,7 @@ unit Drivers.XhciIsochronous;
 interface
 
 uses
+  Io.Dma,
   Drivers.XhciRings;
 
 const
@@ -62,6 +66,8 @@ type
 
   TIsochronousStream = record
     Ring: ^TProducerRing;
+    { The controller's DMA attributes. }
+    Dma: PDmaAttributes;
     Routines: TIsochronousRoutines;
     Context: Pointer;
     Streaming: Boolean;
@@ -74,7 +80,7 @@ type
   end;
 
 procedure InitializeIsochronousStream(out Stream: TIsochronousStream; var Ring: TProducerRing;
-  const Routines: TIsochronousRoutines; Context: Pointer);
+  Dma: PDmaAttributes; const Routines: TIsochronousRoutines; Context: Pointer);
 { Queues packets until PacketsInFlight are on the ring (if streaming);
   True if it queued any (the caller rings the doorbell). }
 function FillIsochronousStream(var Stream: TIsochronousStream): Boolean;
@@ -86,19 +92,31 @@ function IsochronousEventArrived(var Stream: TIsochronousStream; const Event: TT
 implementation
 
 uses
-  Runtime.Memory;
+  Runtime.Memory,
+  Memory.Layout;
 
 const
   { Start the transfer descriptor as soon as possible. }
   TrbStartAsSoonAsPossible = LongWord(1) shl 31;
 
 procedure InitializeIsochronousStream(out Stream: TIsochronousStream; var Ring: TProducerRing;
-  const Routines: TIsochronousRoutines; Context: Pointer);
+  Dma: PDmaAttributes; const Routines: TIsochronousRoutines; Context: Pointer);
 begin
   ZeroMemory(@Stream, SizeOf(Stream));
   Stream.Ring := @Ring;
+  Stream.Dma := Dma;
   Stream.Routines := Routines;
   Stream.Context := Context;
+end;
+
+{ The bus address of a piece, its bytes written out of the caches first
+  (the physical address itself if the controller cannot be told it,
+  which a controller reaching all of memory never refuses). }
+function PreparePiece(var Stream: TIsochronousStream; Physical: QWord; Length: LongWord): QWord;
+begin
+  PrepareDmaToDevice(Stream.Dma^, PhysicalToVirtual(Physical), Length);
+  if not TranslateDmaAddress(Stream.Dma^, Physical, Length, Result) then
+    Result := Physical;
 end;
 
 { Puts Packet on the ring as one transfer descriptor; returns the TRB
@@ -122,8 +140,8 @@ begin
       Control := Control or TrbChain
     else
       Control := Control or TrbInterruptOnCompletion;
-    Result := EnqueueTrb(Stream.Ring^, Packet.Physical[Piece], Packet.Length[Piece] or (Remaining shl 17),
-      Control);
+    Result := EnqueueTrb(Stream.Ring^, PreparePiece(Stream, Packet.Physical[Piece], Packet.Length[Piece]),
+      Packet.Length[Piece] or (Remaining shl 17), Control);
   end;
 end;
 
