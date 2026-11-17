@@ -96,7 +96,9 @@ uses
   Drivers.Ps2Keyboard,
   Io.ConsoleInput,
   Drivers.DiskDevices,
-  Drivers.DiskStatistics;
+  Drivers.DiskStatistics,
+  Drivers.VideoCoreMailbox,
+  Drivers.RaspberryPiBoard;
 
 procedure ScanAllDisksForPartitions;
 var
@@ -154,6 +156,10 @@ end;
 
 procedure InitializeIoSystem;
 begin
+  { The Raspberry Pi's firmware first: the drivers ask it for clocks and
+    addresses. }
+  if InitializeVideoCoreMailbox then
+    WriteBoardInformation;
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
   InitializeAhciControllers;
