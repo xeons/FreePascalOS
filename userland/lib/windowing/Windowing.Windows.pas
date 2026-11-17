@@ -58,6 +58,9 @@
   (ScaleChanged, then Resized, then painted whole), so what is laid out
   in logical units looks the same.
 
+  The theme is followed too: when the setting Appearance/Theme changes,
+  Theme takes the new one and every window is told (ThemeChanged).
+
   RunMessageLoop serves every window until QuitMessageLoop, or until the
   last window is gone (if QuitWhenLastWindowCloses), the program's
   own handles it watches (Windowing.HandleWatches), and requests to end
@@ -139,6 +142,10 @@ type
       has a new surface for its logical size; Resized and painting
       follow. Anything kept in pixels is picked again here. }
     procedure ScaleChanged; virtual;
+    { The theme changed (the setting Appearance/Theme,
+      Windowing.ThemeSettings): Theme has the new one. The default
+      paints the whole window again. }
+    procedure ThemeChanged; virtual;
     procedure ActiveChanged; virtual;
     { The server showed or hid the window (Visible says which): asked
       for, or along with its owner, or minimized. }
@@ -256,7 +263,10 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Objects,
+  Configuration.Changes,
   Windowing.Theme,
+  Windowing.ThemeSettings,
+  Windowing.SettingsChanges,
   Windowing.Connection,
   Windowing.HandleWatches,
   Windowing.EndRequests,
@@ -321,6 +331,39 @@ begin
     end;
 end;
 
+{ --- Following the theme ------------------------------------------------------- }
+
+type
+  TThemeFollower = class
+  public
+    procedure AppearanceChanged(const Group: string; const Changes: TSettingChanges);
+  end;
+
+var
+  ThemeFollower: TThemeFollower;
+
+procedure TThemeFollower.AppearanceChanged(const Group: string; const Changes: TSettingChanges);
+var
+  Index: LongInt;
+begin
+  if not ApplySystemTheme then
+    Exit;
+  for Index := 0 to High(WindowList) do
+  begin
+    WindowList[Index].PrepareToReceive;
+    WindowList[Index].ThemeChanged;
+  end;
+end;
+
+{ From the first window on, the theme setting is followed. }
+procedure StartFollowingTheme;
+begin
+  if ThemeFollower <> nil then
+    Exit;
+  ThemeFollower := TThemeFollower.Create;
+  SubscribeToSettings(AppearanceGroup, @ThemeFollower.AppearanceChanged);
+end;
+
 { --- TWindow ------------------------------------------------------------------ }
 
 constructor TWindow.Create(const ATitle: string; Left, Top, Width, Height: LongInt; AFlags: LongWord;
@@ -341,6 +384,7 @@ begin
   ClearRegion(FInvalid);
   if ConnectToDisplay <> ErrorNone then
     raise EInOutError.Create('no display server');
+  StartFollowingTheme;
   { It starts at the first display's scale; the server says if it is on
     another display with another. }
   FScale := DefaultScale;
@@ -725,6 +769,11 @@ end;
 
 procedure TWindow.ScaleChanged;
 begin
+end;
+
+procedure TWindow.ThemeChanged;
+begin
+  Invalidate;
 end;
 
 procedure TWindow.ActiveChanged;

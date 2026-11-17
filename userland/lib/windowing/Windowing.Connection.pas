@@ -104,7 +104,8 @@ implementation
 uses
   Abi.SystemCalls,
   Sys.Objects,
-  Sys.Processes;
+  Sys.Processes,
+  Windowing.ThemeSettings;
 
 const
   ConnectAttempts = 50;
@@ -289,6 +290,8 @@ begin
   end;
   TakeScaleChange(Message);
   UseScale(DefaultScale, DefaultDpi);
+  { The theme the system's settings name, before anything is drawn. }
+  ApplySystemTheme;
   Result := ErrorNone;
 end;
 

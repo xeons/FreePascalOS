@@ -75,10 +75,6 @@ uses
   Server.DragFeedback,
   Server.ScreenLock;
 
-const
-  { Behind the lock screen, where it does not cover a display. }
-  LockedBackground = $FF0B1724;
-
 var
   Damage: TRegion;
   PresentOnly: TRegion;
@@ -126,7 +122,7 @@ begin
   SetCanvasOrigin(Canvas, -Screen^.Bounds.Left, -Screen^.Bounds.Top);
   SetCanvasClip(Canvas, ScreenDamage);
   if ScreenLocked then
-    FillRectangle(Canvas, Screen^.Bounds, LockedBackground)
+    FillRectangle(Canvas, Screen^.Bounds, Theme.LockedBackground)
   else
     FillRectangle(Canvas, Screen^.Bounds, Theme.Desktop);
   for Index := 0 to WindowCount - 1 do
@@ -142,8 +138,8 @@ begin
   end;
   if OutlineVisible then
   begin
-    DrawRectangleOutline(Canvas, Outline, Theme.DarkShadow);
-    DrawRectangleOutline(Canvas, InflateRectangle(Outline, -1), Theme.Highlight);
+    DrawRectangleOutline(Canvas, Outline, Theme.DragOutlineDark);
+    DrawRectangleOutline(Canvas, InflateRectangle(Outline, -1), Theme.DragOutlineLight);
   end;
   DrawDragFeedback(Canvas);
   DrawCursor(Canvas);

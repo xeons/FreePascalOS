@@ -66,7 +66,6 @@ const
   MaximumCharacters = 40;
   NothingColor = $FFC0392B;
   CopyColor = $FF2E7D32;
-  ActionColor = $FF17375E;
 
 var
   Visible: Boolean;
@@ -149,18 +148,19 @@ begin
   if Bent then
   begin
     { Up from the bottom left, then along to the head. }
-    FillRectangle(Canvas, MakeRectangle(ShaftLeft, MiddleY, Thickness, Box.Bottom - Metric(2) - MiddleY), ActionColor);
+    FillRectangle(Canvas, MakeRectangle(ShaftLeft, MiddleY, Thickness, Box.Bottom - Metric(2) - MiddleY),
+      Theme.Selection);
     ShaftLeft := ShaftLeft + Thickness;
   end;
   FillRectangle(Canvas, MakeRectangle(ShaftLeft, MiddleY - Thickness div 2, Box.Right - Metric(6) - ShaftLeft,
-    Thickness), ActionColor);
+    Thickness), Theme.Selection);
   Head[0].X := Box.Right - Metric(7);
   Head[0].Y := MiddleY - Metric(5);
   Head[1].X := Box.Right - Metric(1);
   Head[1].Y := MiddleY;
   Head[2].X := Box.Right - Metric(7);
   Head[2].Y := MiddleY + Metric(5);
-  FillPolygon(Canvas, Head, ActionColor);
+  FillPolygon(Canvas, Head, Theme.Selection);
 end;
 
 procedure DrawNothing(const Canvas: TCanvas; const Box: TRectangle);
@@ -185,7 +185,7 @@ begin
   if not Visible then
     Exit;
   FillRectangle(Canvas, Bounds, Theme.Tooltip);
-  DrawRectangleOutline(Canvas, Bounds, Theme.DarkShadow);
+  DrawRectangleOutline(Canvas, Bounds, Theme.TooltipBorder);
   Sign := MakeRectangle(Bounds.Left + Metric(Padding), Bounds.Top + (RectangleHeight(Bounds) - Metric(SignSize)) div 2,
     Metric(SignSize), Metric(SignSize));
   if (ShownEffect and DropEffectMove) <> 0 then

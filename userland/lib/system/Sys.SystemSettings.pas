@@ -29,7 +29,8 @@
   the password a request carries (Authorization):
     - root may ask for anything, without a password;
     - anyone may set the sound (the volumes, the mute, the default
-      output), as anyone at the machine could turn its knobs;
+      output), as anyone at the machine could turn its knobs, and the
+      theme (the look of every window);
     - a user may change their own password and full name with their own
       password;
     - everything else needs an administrator: root's password, or the
@@ -101,6 +102,11 @@ const
     DHCP gives); SearchDomain: where names without a dot are looked up
     (or empty). Written to Network.settings as above. }
   SystemRequestSetDnsServers = 12;
+  { Text: the theme's key (Windowing.Theme: "sunrise", "classic"), a
+    short name of lower-case letters, digits and hyphens; remembered as
+    Appearance/Theme, which the display server and every program
+    follow. Anyone may, as the look is the machine's. }
+  SystemRequestSetTheme = 13;
 
   SystemFlagMuted = $01;
   SystemFlagAdministrator = $02;

@@ -26,6 +26,8 @@
                                       it has already is left alone, so
                                       the server's own remembering
                                       changes nothing
+    Appearance/Theme                  the theme (Windowing.ThemeSettings):
+                                      every frame is drawn again in it
     Mouse/..., Keyboard/...           each value the server still has
                                       from the system's settings takes
                                       the new one; a value someone set
@@ -66,12 +68,15 @@ uses
   Sys.Streams,
   Configuration.Changes,
   Configuration.Watcher,
+  Windowing.Theme,
+  Windowing.ThemeSettings,
   Windowing.MouseSettings,
   Windowing.KeyboardSettings,
   Server.Screen,
   Server.MouseSettings,
   Server.KeyboardSettings,
-  Server.RememberedSettings;
+  Server.RememberedSettings,
+  Server.Composer;
 
 const
   DisplayGroup = 'Display';
@@ -157,6 +162,14 @@ begin
     [Present.Layout, Present.RepeatDelay, Present.RepeatRate]));
 end;
 
+procedure FollowTheme;
+begin
+  if not ApplySystemTheme then
+    Exit;
+  AddDamage(DesktopBounds);
+  Say('the theme changed: ' + Theme.Key);
+end;
+
 procedure TSettingsFollower.GroupChanged(const Group: string; const Changes: TSettingChanges);
 begin
   if Group = DisplayGroup then
@@ -164,7 +177,9 @@ begin
   else if Group = MouseGroup then
     FollowMouse
   else if Group = KeyboardGroup then
-    FollowKeyboard;
+    FollowKeyboard
+  else if Group = AppearanceGroup then
+    FollowTheme;
 end;
 
 procedure StartFollowingSettings;
@@ -177,6 +192,7 @@ begin
   Watcher.Watch(DisplayGroup);
   Watcher.Watch(MouseGroup);
   Watcher.Watch(KeyboardGroup);
+  Watcher.Watch(AppearanceGroup);
   SystemMouse := RememberedMouseSettings(Watcher.Settings);
   SystemKeyboard := RememberedKeyboardSettings(Watcher.Settings);
 end;

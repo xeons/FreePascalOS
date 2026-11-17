@@ -24,6 +24,7 @@
     Sound/N/Volume        output N's volume, 0-100
     Sound/N/Muted         whether output N is muted
     Sound/DefaultOutput   the default output's number
+    Appearance/Theme      the theme's key (sunrise, classic)
 
   At start the service gives the kernel what is kept (the kernel starts
   in UTC, every output at its driver's volume, the first output the
@@ -43,6 +44,7 @@ procedure ApplyRememberedSettings;
 function RememberTimeZone(const Name: string): LongInt;
 function RememberOutput(Output: Integer; Volume: LongWord; Muted: Boolean): LongInt;
 function RememberDefaultOutput(Output: Integer): LongInt;
+function RememberTheme(const Key: string): LongInt;
 
 implementation
 
@@ -59,6 +61,7 @@ uses
 const
   TimeZoneSetting = 'Time/Zone';
   DefaultOutputSetting = 'Sound/DefaultOutput';
+  ThemeSetting = 'Appearance/Theme';
 
 function VolumeSetting(Output: Integer): string;
 begin
@@ -152,6 +155,15 @@ var
 begin
   Store := OpenSystemSettings;
   Store.WriteInteger(DefaultOutputSetting, Output, ScopeSystem);
+  Result := Keep(Store);
+end;
+
+function RememberTheme(const Key: string): LongInt;
+var
+  Store: TSettings;
+begin
+  Store := OpenSystemSettings;
+  Store.WriteString(ThemeSetting, Key, ScopeSystem);
   Result := Keep(Store);
 end;
 

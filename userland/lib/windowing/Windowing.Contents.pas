@@ -31,6 +31,7 @@ uses
   Windowing.Theme,
   Windowing.SunriseTheme,
   Windowing.ClassicTheme,
+  Windowing.ThemeSettings,
   Windowing.Connection,
   Windowing.Displays,
   Windowing.MouseSettings,

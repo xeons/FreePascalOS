@@ -74,6 +74,7 @@ uses
   Util.Messages,
   Drawing.Rectangles,
   Windowing.Protocol,
+  Windowing.ThemeSettings,
   Server.Screen,
   Server.Cursor,
   Server.Composer,
@@ -174,6 +175,7 @@ begin
   InitializeCursor;
   PointerFilesRead := LoadPointerFiles;
   ApplyRememberedSettings;
+  ApplySystemTheme;
   StartFollowingSettings;
   AddDamage(DesktopBounds);
   Compose;

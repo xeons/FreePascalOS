@@ -20,8 +20,12 @@
   Window frames: drawing them, and what part of one a point is on.
 
   Outside in: a raised bevel, the face colour to the border's width, the
-  title bar (a gradient, the title, and the minimize, maximize and close
-  buttons at its right end) above the client area. Sizes come from the
+  title bar (a gradient, across or down as the theme says, with its edge
+  and a shine along its top when the theme has them; the window's icon
+  when the theme shows one, the title, and the minimize, maximize - a
+  restore glyph on a maximized window - and close buttons at its right
+  end, Server.TitleButtonPainting) above the client area. An inactive
+  window's bar and buttons take the theme's inactive colours. Sizes come from the
   theme in logical units; the title's font from its size in points at
   the DPI of the screen the window is on. A title button under the
   pointer is drawn hot (a lighter face), and pressed (sunken, its glyph
@@ -60,7 +64,9 @@ uses
   Windowing.Protocol,
   Server.Theme,
   Server.Screen,
-  Server.TitleButtons;
+  Server.TitleButtons,
+  Server.TitleButtonPainting,
+  Server.TitleIcon;
 
 function TitleBarRectangle(Window: TServerWindow): TRectangle;
 var
@@ -91,7 +97,7 @@ begin
     too, whole pixels at every scale. }
   if Odd(Width - Height) then
     Inc(Width);
-  Gap := WindowMetric(Window, 2);
+  Gap := WindowMetric(Window, Theme.TitleButtonGap);
   Right := Bar.Right - Gap;
   if Button <> HitClose then
   begin
@@ -117,72 +123,99 @@ begin
     Result := HitClose;
 end;
 
-procedure DrawGlyphLine(const Canvas: TCanvas; const Box: TRectangle; FromX, FromY, ToX, ToY, Thickness: LongInt);
-var
-  Offset: LongInt;
+{ A logical unit in pixels at the window's scale, at least 1. }
+function WindowPixel(Window: TServerWindow): LongInt;
 begin
-  for Offset := 0 to Thickness - 1 do
-    DrawLine(Canvas, Box.Left + FromX + Offset, Box.Top + FromY, Box.Left + ToX + Offset, Box.Top + ToY,
-      Theme.FaceText);
+  Result := WindowMetric(Window, 1);
+  if Result < 1 then
+    Result := 1;
 end;
 
-{ The outline of Box, Thickness pixels wide inside it. }
-procedure DrawGlyphOutline(const Canvas: TCanvas; const Box: TRectangle; Thickness: LongInt);
+procedure DrawTitleButton(const Canvas: TCanvas; Window: TServerWindow; Button: THitArea; Active: Boolean);
 var
-  Width: LongInt;
-  Height: LongInt;
+  Look: TTitleButtonLook;
 begin
-  Width := RectangleWidth(Box);
-  Height := RectangleHeight(Box);
-  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Top, Width, Thickness), Theme.FaceText);
-  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Bottom - Thickness, Width, Thickness), Theme.FaceText);
-  FillRectangle(Canvas, MakeRectangle(Box.Left, Box.Top, Thickness, Height), Theme.FaceText);
-  FillRectangle(Canvas, MakeRectangle(Box.Right - Thickness, Box.Top, Thickness, Height), Theme.FaceText);
-end;
-
-procedure DrawTitleButton(const Canvas: TCanvas; Window: TServerWindow; Button: THitArea);
-var
-  Box: TRectangle;
-  Glyph: TRectangle;
-  Thickness: LongInt;
-  Size: LongInt;
-  Pressed: Boolean;
-begin
-  Box := TitleButtonRectangle(Window, Button);
-  Pressed := TitleButtonIsPressed(Window, Button);
-  if TitleButtonIsHot(Window, Button) then
-    FillRectangle(Canvas, Box, Theme.Light)
-  else
-    FillRectangle(Canvas, Box, Theme.Face);
-  if Pressed then
-    DrawBevel(Canvas, Box, SunkenBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow))
-  else
-    DrawBevel(Canvas, Box, RaisedBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
-  Thickness := WindowMetric(Window, 1);
-  if Thickness < 1 then
-    Thickness := 1;
-  { The glyph in a square in the middle; pressed, it moves as if pushed
-    in. }
-  Size := RectangleHeight(Box) - 2 * WindowMetric(Window, 4);
-  Glyph := MakeRectangle(Box.Left + (RectangleWidth(Box) - Size) div 2, Box.Top + (RectangleHeight(Box) - Size) div 2,
-    Size, Size);
-  if Pressed then
-    Glyph := OffsetRectangle(Glyph, Thickness, Thickness);
   case Button of
-    HitClose:
-      begin
-        DrawGlyphLine(Canvas, Glyph, 0, 0, Size - Thickness, Size - 1, Thickness);
-        DrawGlyphLine(Canvas, Glyph, Size - Thickness, 0, 0, Size - 1, Thickness);
-      end;
-    HitMaximize:
-      begin
-        DrawGlyphOutline(Canvas, Glyph, Thickness);
-        FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Top, Size, 2 * Thickness), Theme.FaceText);
-      end;
     HitMinimize:
-      FillRectangle(Canvas, MakeRectangle(Glyph.Left, Glyph.Bottom - 2 * Thickness, Size - Size div 4, 2 * Thickness),
-        Theme.FaceText);
+      Look.Glyph := GlyphMinimize;
+    HitMaximize:
+      if Window.Maximized then
+        Look.Glyph := GlyphRestore
+      else
+        Look.Glyph := GlyphMaximize;
+  else
+    Look.Glyph := GlyphClose;
   end;
+  Look.Hot := TitleButtonIsHot(Window, Button);
+  Look.Pressed := TitleButtonIsPressed(Window, Button);
+  Look.Active := Active;
+  Look.Pixel := WindowPixel(Window);
+  Look.GlyphMargin := WindowMetric(Window, 4);
+  PaintTitleButton(Canvas, TitleButtonRectangle(Window, Button), Look);
+end;
+
+{ The bar's background: the theme's gradient, across or down; running
+  down, also its edge (when the theme has one) and a lighter line along
+  its top. }
+procedure DrawTitleBackground(const Canvas: TCanvas; Window: TServerWindow; const Bar: TRectangle; Active: Boolean);
+var
+  StartColor: TColor;
+  EndColor: TColor;
+  EdgeColor: TColor;
+  Pixel: LongInt;
+  Inside: TRectangle;
+begin
+  if Active then
+  begin
+    StartColor := Theme.ActiveTitleStart;
+    EndColor := Theme.ActiveTitleEnd;
+    EdgeColor := Theme.ActiveTitleEdge;
+  end
+  else
+  begin
+    StartColor := Theme.InactiveTitleStart;
+    EndColor := Theme.InactiveTitleEnd;
+    EdgeColor := Theme.InactiveTitleEdge;
+  end;
+  if not Theme.TitleGradientVertical then
+  begin
+    FillHorizontalGradient(Canvas, Bar, StartColor, EndColor);
+    Exit;
+  end;
+  FillVerticalGradient(Canvas, Bar, StartColor, EndColor);
+  Pixel := WindowPixel(Window);
+  Inside := Bar;
+  if EdgeColor <> ColorTransparent then
+  begin
+    FillRectangle(Canvas, MakeRectangle(Bar.Left, Bar.Top, RectangleWidth(Bar), Pixel), EdgeColor);
+    FillRectangle(Canvas, MakeRectangle(Bar.Left, Bar.Bottom - Pixel, RectangleWidth(Bar), Pixel), EdgeColor);
+    FillRectangle(Canvas, MakeRectangle(Bar.Left, Bar.Top, Pixel, RectangleHeight(Bar)), EdgeColor);
+    FillRectangle(Canvas, MakeRectangle(Bar.Right - Pixel, Bar.Top, Pixel, RectangleHeight(Bar)), EdgeColor);
+    Inside := InflateRectangle(Bar, -Pixel);
+  end;
+  { A shine along the top. }
+  FillRectangle(Canvas, MakeRectangle(Inside.Left, Inside.Top, RectangleWidth(Inside), Pixel),
+    MixColors(StartColor, Theme.Highlight, 150));
+end;
+
+{ Draws the window's icon when the theme shows one; returns where the
+  title's text starts (after the icon, if any). }
+function DrawTitleIconOf(const Canvas: TCanvas; Window: TServerWindow; const Bar: TRectangle): LongInt;
+var
+  Size: LongInt;
+  Indent: LongInt;
+  Box: TRectangle;
+begin
+  Indent := WindowMetric(Window, Theme.TitleTextIndent);
+  Result := Bar.Left + Indent;
+  if not Theme.TitleIcon then
+    Exit;
+  Size := WindowMetric(Window, 16);
+  if Size > RectangleHeight(Bar) - 2 * WindowMetric(Window, 2) then
+    Size := RectangleHeight(Bar) - 2 * WindowMetric(Window, 2);
+  Box := MakeRectangle(Bar.Left + Indent, Bar.Top + (RectangleHeight(Bar) - Size) div 2, Size, Size);
+  DrawTitleIcon(Canvas, Box, WindowPixel(Window));
+  Result := Box.Right + WindowMetric(Window, 4);
 end;
 
 procedure DrawFrame(const Canvas: TCanvas; Window: TServerWindow; Active: Boolean);
@@ -192,6 +225,7 @@ var
   TextColor: TColor;
   Client: TRectangle;
   TextClip: TCanvas;
+  TextLeft: LongInt;
   TextRight: LongInt;
   TitleFace: PFontFace;
 begin
@@ -204,18 +238,14 @@ begin
     Theme.Face);
   FillRectangle(Canvas, MakeRectangle(Frame.Left, Client.Bottom, RectangleWidth(Frame), Frame.Bottom - Client.Bottom),
     Theme.Face);
-  DrawBevel(Canvas, Frame, RaisedBevel(Theme.Highlight, Theme.Light, Theme.Shadow, Theme.DarkShadow));
+  DrawBevel(Canvas, Frame, RaisedThemeBevel);
   Bar := TitleBarRectangle(Window);
+  DrawTitleBackground(Canvas, Window, Bar, Active);
   if Active then
-  begin
-    FillHorizontalGradient(Canvas, Bar, Theme.ActiveTitleStart, Theme.ActiveTitleEnd);
-    TextColor := Theme.ActiveTitleText;
-  end
+    TextColor := Theme.ActiveTitleText
   else
-  begin
-    FillHorizontalGradient(Canvas, Bar, Theme.InactiveTitleStart, Theme.InactiveTitleEnd);
     TextColor := Theme.InactiveTitleText;
-  end;
+  TextLeft := DrawTitleIconOf(Canvas, Window, Bar);
   TitleFace := WindowScreen(Window)^.TitleFace;
   if TitleFace <> nil then
   begin
@@ -223,14 +253,14 @@ begin
     TextClip := Canvas;
     TextRight := TitleButtonRectangle(Window, LeftmostTitleButton(Window)).Left - WindowMetric(Window, 2);
     NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top, TextRight - Bar.Left, RectangleHeight(Bar)));
-    DrawText(TextClip, TitleFace^, Bar.Left + WindowMetric(Window, Theme.TitleTextIndent),
-      Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title, TextColor);
+    DrawText(TextClip, TitleFace^, TextLeft, Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title,
+      TextColor);
   end;
-  DrawTitleButton(Canvas, Window, HitClose);
+  DrawTitleButton(Canvas, Window, HitClose, Active);
   if HasSizeButtons(Window) then
   begin
-    DrawTitleButton(Canvas, Window, HitMaximize);
-    DrawTitleButton(Canvas, Window, HitMinimize);
+    DrawTitleButton(Canvas, Window, HitMaximize, Active);
+    DrawTitleButton(Canvas, Window, HitMinimize, Active);
   end;
 end;
 

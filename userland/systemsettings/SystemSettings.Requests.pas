@@ -102,6 +102,29 @@ begin
     Say(Format('default sound output %d kept', [Request.Output]));
 end;
 
+{ A theme's key: 1 to 32 lower-case letters, digits and hyphens. }
+function IsThemeKey(const Key: string): Boolean;
+var
+  Index: Integer;
+begin
+  Result := (Length(Key) >= 1) and (Length(Key) <= 32);
+  for Index := 1 to Length(Key) do
+    if not (Key[Index] in ['a'..'z', '0'..'9', '-']) then
+      Result := False;
+end;
+
+function SetTheme(const Request: TSystemSettingsRequest): LongInt;
+var
+  Key: string;
+begin
+  Key := TextOf(Request.Text);
+  if not IsThemeKey(Key) then
+    Exit(ErrorInvalidArgument);
+  Result := RememberTheme(Key);
+  if Result = ErrorNone then
+    Say('theme ' + Key + ' kept');
+end;
+
 function AddAccount(const Request: TSystemSettingsRequest): LongInt;
 var
   Name: string;
@@ -172,6 +195,7 @@ begin
     SystemRequestSetGroups: Result := SetGroups(Request);
     SystemRequestSetNetworkInterface: Result := SetNetworkInterface(Request);
     SystemRequestSetDnsServers: Result := SetDnsServers(Request);
+    SystemRequestSetTheme: Result := SetTheme(Request);
   else
     Result := ErrorInvalidArgument;
   end;

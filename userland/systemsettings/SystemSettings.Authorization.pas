@@ -95,7 +95,7 @@ begin
   if Peer.UserId = RootId then
     Exit(ErrorNone);
   case Request.Code of
-    SystemRequestSetVolume, SystemRequestSetDefaultOutput:
+    SystemRequestSetVolume, SystemRequestSetDefaultOutput, SystemRequestSetTheme:
       Exit(ErrorNone);
   end;
   Password := @Request.Authorization[0];
