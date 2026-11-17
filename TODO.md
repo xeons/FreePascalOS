@@ -521,7 +521,9 @@ normalized (0-65535), not pixels.
 - [ ] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits
 - [x] Clipboard (text and images) and drag and drop
-- [ ] Themes; Paint; image viewer; calculator; volume control
+- [ ] Themes; image viewer; calculator; volume control
+- [x] Paint (raster editing: tools, selection and the clipboard, undo, zoom,
+      files in every format libimage writes)
 - [ ] Accelerated 2D (virtio-gpu or bochs-display blits), hardware cursor
 
 ## Networking
