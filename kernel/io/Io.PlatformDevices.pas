@@ -76,6 +76,14 @@ type
   TPlatformId = array[0..PlatformIdLength - 1] of Char;
 
   PPlatformDevice = ^TPlatformDevice;
+
+  { Connects interrupt Index of Device (its number in Device's resources
+    is the controller's own) to Handler: for devices whose interrupts go
+    through a controller of their own rather than straight to the
+    interrupt routing (RP1's peripherals). }
+  TPlatformInterruptConnect = function(Controller: Pointer; Device: PPlatformDevice; Index: Integer;
+    Handler: TInterruptHandler; Context: Pointer): Boolean;
+
   TPlatformDevice = record
     { The namespace node (PAmlNode), nil for a device tree's device. }
     Node: Pointer;
@@ -101,6 +109,10 @@ type
     Segment: Word;
     { The driver that took it, or nil. }
     DriverName: PChar;
+    { nil: the interrupts are global system interrupts. Otherwise they
+      are numbered by another controller, which connects them. }
+    InterruptConnect: TPlatformInterruptConnect;
+    InterruptController: Pointer;
   end;
 
   { Returns True if it took the device. }
@@ -303,6 +315,8 @@ var
 begin
   if (Index < 0) or (Index >= Device^.Resources.InterruptCount) then
     Exit(False);
+  if Assigned(Device^.InterruptConnect) then
+    Exit(Device^.InterruptConnect(Device^.InterruptController, Device, Index, Handler, Context));
   Interrupt := Device^.Resources.Interrupts[Index];
   if Interrupt.IsIsaIrq then
     Result := ConnectGlobalInterrupt(GlobalInterruptOfIsaIrq(Byte(Interrupt.Number)), Interrupt.LevelTriggered,
@@ -360,7 +374,9 @@ begin
   end;
   for Index := 0 to Device^.Resources.InterruptCount - 1 do
   begin
-    if Device^.Resources.Interrupts[Index].IsIsaIrq then
+    if Assigned(Device^.InterruptConnect) then
+      DebugWrite(' line ')
+    else if Device^.Resources.Interrupts[Index].IsIsaIrq then
       DebugWrite(' irq ')
     else
       DebugWrite(' gsi ');

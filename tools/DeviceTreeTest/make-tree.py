@@ -27,6 +27,15 @@
 # interrupt-map as QEMU's virt machine has, a node using
 # interrupts-extended and a disabled node with a child.
 #
+# Below the RP1 root complex (pcie2, as bcm2712-rpi-5-b.dtb has it): its
+# three inbound windows (RP1's own BAR, all RAM at 10_0000_0000, the
+# MIP's doorbell at FF_FFFF_F000), msi-parent naming the MIP
+# (brcm,bcm2712-mip, with its msi-ranges of 64 SPIs from 128), and the
+# "rp1" node: its peripheral window C0_4000_0000 at PCI address 0, its
+# dma-ranges, the Ethernet controller with its PHY, a USB controller, a
+# UART, a disabled display controller and the shared memory with a
+# child of its own.
+#
 #   make-tree.py <output.dtb>
 
 import struct
@@ -34,6 +43,9 @@ import sys
 
 GIC = 1
 INTC2 = 2
+RP1 = 3
+MIP = 4
+PHY = 5
 
 
 def cells(*values):
@@ -135,20 +147,103 @@ TREE = node('', [
         ('#address-cells', cells(2)), ('#size-cells', cells(2)),
         ('ranges', cells(0x10, 0, 0x10, 0, 0x1, 0) + cells(0x1f, 0, 0x1f, 0, 0x1, 0) +
          cells(0x1c, 0, 0x1c, 0, 0x3, 0)),
-        ('dma-ranges', cells(0, 0, 0, 0, 0x10, 0)),
+        ('dma-ranges', cells(0, 0, 0, 0, 0x10, 0) + cells(0x10, 0, 0x10, 0, 0x1, 0) +
+         cells(0x14, 0, 0x14, 0, 0x4, 0) + cells(0x18, 0, 0x18, 0, 0x4, 0) + cells(0x1c, 0, 0x1c, 0, 0x4, 0)),
     ], [
         node('pcie@1000120000', [
             ('compatible', text('brcm,bcm2712-pcie')),
             ('reg', cells(0x10, 0x00120000, 0, 0x9310)),
             ('device_type', text('pci')),
+            ('linux,pci-domain', cells(2)),
+            ('max-link-speed', cells(2)),
             ('#address-cells', cells(3)), ('#size-cells', cells(2)),
             ('#interrupt-cells', cells(1)),
+            ('interrupts', cells(0, 233, 4, 0, 234, 4)),
+            ('interrupt-names', strings('pcie', 'msi')),
             ('interrupt-map-mask', cells(0, 0, 0, 7)),
             ('interrupt-map', cells(0, 0, 0, 1, GIC, 0, 229, 4) + cells(0, 0, 0, 2, GIC, 0, 230, 4)),
+            ('resets', cells(6, 7, 44)),
+            ('reset-names', strings('rescal', 'bridge')),
+            ('msi-controller', b''),
+            ('msi-parent', cells(MIP)),
             ('ranges', cells(0x02000000, 0, 0, 0x1f, 0, 0, 0xfffffffc) +
              cells(0x43000000, 0x4, 0, 0x1c, 0, 0x3, 0)),
-            ('dma-ranges', cells(0x02000000, 0x10, 0, 0, 0, 0x10, 0)),
-            ('dma-coherent', b''),
+            ('dma-ranges', cells(0x02000000, 0, 0, 0x1f, 0, 0, 0x400000) +
+             cells(0x43000000, 0x10, 0, 0, 0, 0x10, 0) +
+             cells(0x03000000, 0xff, 0xfffff000, 0x10, 0x130000, 0, 0x1000)),
+            ('aspm-no-l0s', b''),
+        ], [
+            node('rp1', [
+                ('compatible', text('simple-bus')),
+                ('#address-cells', cells(2)), ('#size-cells', cells(2)),
+                ('#interrupt-cells', cells(2)), ('interrupt-controller', b''),
+                ('interrupt-parent', cells(RP1)),
+                ('ranges', cells(0xc0, 0x40000000, 0x02000000, 0, 0, 0, 0x410000)),
+                ('dma-ranges', cells(0x10, 0, 0x43000000, 0x10, 0, 0x10, 0) +
+                 cells(0xc0, 0x40000000, 0x02000000, 0, 0, 0, 0x410000) +
+                 cells(0, 0, 0x02000000, 0x10, 0, 0x10, 0)),
+                ('phandle', cells(RP1)),
+            ], [
+                node('serial@30000', [
+                    ('compatible', text('arm,pl011-axi')),
+                    ('reg', cells(0xc0, 0x40030000, 0, 0x100)),
+                    ('interrupts', cells(25, 4)),
+                ]),
+                node('ethernet@100000', [
+                    ('reg', cells(0xc0, 0x40100000, 0, 0x4000)),
+                    ('compatible', strings('raspberrypi,rp1-gem', 'cdns,macb')),
+                    ('#address-cells', cells(1)), ('#size-cells', cells(0)),
+                    ('interrupts', cells(6, 4)),
+                    ('phy-mode', text('rgmii-id')),
+                    ('cdns,aw2w-max-pipe', bytes([8])),
+                    ('cdns,ar2r-max-pipe', bytes([8])),
+                    ('cdns,use-aw2b-fill', b''),
+                    ('local-mac-address', bytes([0x2c, 0xcf, 0x67, 0x12, 0x34, 0x56])),
+                    ('phy-handle', cells(PHY)),
+                    ('phy-reset-gpios', cells(0x2e, 32, 1)),
+                    ('phy-reset-duration', cells(5)),
+                ], [
+                    node('ethernet-phy@1', [
+                        ('reg', cells(1)), ('brcm,powerdown-enable', b''), ('phandle', cells(PHY)),
+                    ]),
+                ]),
+                node('usb@200000', [
+                    ('reg', cells(0xc0, 0x40200000, 0, 0x100000)),
+                    ('compatible', text('snps,dwc3')),
+                    ('dr_mode', text('host')),
+                    ('snps,axi-pipe-limit', bytes([8])),
+                    ('snps,dis_rxdet_inp3_quirk', b''),
+                    ('snps,parkmode-disable-ss-quirk', b''),
+                    ('snps,tx-max-burst', bytes([8])),
+                    ('snps,tx-thr-num-pkt', bytes([2])),
+                    ('interrupts', cells(31, 1)),
+                ]),
+                node('dsi@110000', [
+                    ('compatible', text('raspberrypi,rp1dsi')),
+                    ('status', text('disabled')),
+                    ('reg', cells(0xc0, 0x40118000, 0, 0x1000)),
+                    ('interrupts', cells(47, 4)),
+                ]),
+                node('sram@400000', [
+                    ('compatible', text('mmio-sram')),
+                    ('reg', cells(0xc0, 0x40400000, 0, 0x10000)),
+                    ('#address-cells', cells(1)), ('#size-cells', cells(1)),
+                    ('ranges', cells(0, 0xc0, 0x40400000, 0x10000)),
+                ], [
+                    node('shmem@ff00', [
+                        ('compatible', text('raspberrypi,rp1-shmem')),
+                        ('reg', cells(0xff00, 0x100)),
+                    ]),
+                ]),
+            ]),
+        ]),
+        node('msi-controller@1000130000', [
+            ('compatible', text('brcm,bcm2712-mip')),
+            ('reg', cells(0x10, 0x130000, 0, 0xc0, 0xff, 0xfffff000, 0, 0x1000)),
+            ('msi-controller', b''),
+            ('msi-ranges', cells(GIC, 0, 0x80, 1, 0x40)),
+            ('brcm,msi-offset', cells(0)),
+            ('phandle', cells(MIP)),
         ]),
         node('mmc@1000fff000', [
             ('compatible', text('brcm,bcm2712-sdhci')),

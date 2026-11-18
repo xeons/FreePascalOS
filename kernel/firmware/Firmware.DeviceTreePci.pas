@@ -76,6 +76,11 @@ type
 
 function DeviceTreePciHostCount: Integer;
 function GetDeviceTreePciHost(Index: Integer; out Host: TDeviceTreePciHost): Boolean;
+{ Any PCI host node's segment ("linux,pci-domain", else DefaultSegment),
+  "bus-range", "dma-coherent" and "ranges" windows; its "reg" is not
+  read (ConfigurationBase stays 0): for host bridges that are not ECAM
+  (brcm,bcm2712-pcie). }
+procedure DescribeDeviceTreePciHost(Node: LongInt; DefaultSegment: Word; out Host: TDeviceTreePciHost);
 { Where line Pin (0 for INTA .. 3 for INTD) of Device on the host's root
   bus (Bus) arrives. }
 function FindDeviceTreePciRoute(Segment: Word; Bus, Device, Pin: Byte; out Gic: TGicInterrupt): Boolean;
@@ -138,37 +143,49 @@ begin
   end;
 end;
 
-function GetDeviceTreePciHost(Index: Integer; out Host: TDeviceTreePciHost): Boolean;
+procedure DescribeDeviceTreePciHost(Node: LongInt; DefaultSegment: Word; out Host: TDeviceTreePciHost);
 var
   Tree: PDeviceTree;
   Prop: TDeviceTreeProperty;
   Domain: LongWord;
-  Size: QWord;
 begin
   Tree := SystemDeviceTree;
-  Host.Node := FindHostNode(Index);
-  Host.Segment := Word(Index);
+  Host.Node := Node;
+  Host.Segment := DefaultSegment;
   Host.StartBus := 0;
   Host.EndBus := 255;
   Host.ConfigurationBase := 0;
   Host.Coherent := False;
   Host.WindowCount := 0;
-  Result := False;
-  if (Host.Node = NoNode) or not NodeRegisterPhysical(Tree^, Host.Node, 0, Host.ConfigurationBase, Size) then
+  if Node = NoNode then
     Exit;
-  if ReadCellProperty(Tree^, Host.Node, 'linux,pci-domain', Domain) then
+  if ReadCellProperty(Tree^, Node, 'linux,pci-domain', Domain) then
     Host.Segment := Word(Domain);
-  if FindProperty(Tree^, Host.Node, 'bus-range', Prop) and (PropertyCellCount(Prop) >= 2) then
+  if FindProperty(Tree^, Node, 'bus-range', Prop) and (PropertyCellCount(Prop) >= 2) then
   begin
     Host.StartBus := Byte(PropertyCell(Prop, 0));
     Host.EndBus := Byte(PropertyCell(Prop, 1));
   end;
+  Host.Coherent := NodeIsDmaCoherent(Tree^, Node);
+  ReadWindows(Node, Host);
+end;
+
+function GetDeviceTreePciHost(Index: Integer; out Host: TDeviceTreePciHost): Boolean;
+var
+  Node: LongInt;
+  Size: QWord;
+  Base: QWord;
+begin
+  Node := FindHostNode(Index);
+  DescribeDeviceTreePciHost(Node, Word(Index), Host);
+  Result := False;
+  if (Node = NoNode) or not NodeRegisterPhysical(SystemDeviceTree^, Node, 0, Base, Size) then
+    Exit;
+  Host.ConfigurationBase := Base;
   { No more buses than the ECAM area holds (1 MiB each). }
   if (Size shr 20) > 0 then
     if Host.EndBus - Host.StartBus + 1 > (Size shr 20) then
       Host.EndBus := Byte(Host.StartBus + (Size shr 20) - 1);
-  Host.Coherent := NodeIsDmaCoherent(Tree^, Host.Node);
-  ReadWindows(Host.Node, Host);
   Result := True;
 end;
 
