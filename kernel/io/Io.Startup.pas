@@ -97,6 +97,7 @@ uses
   Drivers.Rtl8168,
   Drivers.Rtl8125,
   Drivers.Genet,
+  Drivers.CadenceGem,
   Io.Firmware,
   FileSystem.Volumes,
   Io.DiskArrival,
@@ -228,6 +229,9 @@ begin
   InitializeRtl8125Adapters;
   { The Raspberry Pi 4's own Ethernet (an ACPI platform device). }
   InitializeGenetAdapters;
+  { The Raspberry Pi 5's Ethernet, in RP1 (a device tree platform
+    device once Drivers.Rp1 described it). }
+  InitializeCadenceGemAdapters;
   RegisterUsbStorageDriver;
   RegisterUsbKeyboardDriver;
   RegisterUsbPointerDriver;
