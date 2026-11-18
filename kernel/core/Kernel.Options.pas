@@ -50,6 +50,10 @@
                 a network boot puts it first, with the base URL the files
                 came from, and its system image is the RAM disk
                 (Drivers.RamDisk).
+    ramdisksize=MIB
+                The decompressed size of a compressed RAM disk image, for a
+                gzip image whose trailer cannot say it (over 4 GiB);
+                otherwise the image states it (Drivers.RamDiskDecompression).
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by

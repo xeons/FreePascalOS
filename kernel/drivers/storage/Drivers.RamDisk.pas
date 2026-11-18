@@ -29,6 +29,10 @@
 
   Its partitions (the system image has one) are scanned like any disk's,
   and the system volume is preferably the RAM disk's (Processes.Paths).
+
+  A compressed image (xz or gzip: a Raspberry Pi 5 fetches it over slow
+  TFTP) is unpacked first, into pages of its own, and the compressed
+  copy's pages freed (Drivers.RamDiskDecompression).
 }
 unit Drivers.RamDisk;
 
@@ -60,21 +64,44 @@ uses
   Abi.SystemCalls,
   Memory.Layout,
   Io.Manager,
+  Drivers.RamDiskDecompression,
   Debug.Output;
 
 const
   SectorSize = 512;
 
 var
+  BootImage: TRamDiskImage;
   ImagePhysicalBase: QWord;
   ImageSizeInBytes: QWord;
   ImageContents: PByte;
   RamDiskDevice: PBlockDevice;
 
 procedure RecordBootRamDisk(const BootInformation: TBootInformation);
+var
+  Index: QWord;
+  Region: PMemoryRegion;
+  RegionEnd: QWord;
 begin
-  ImagePhysicalBase := BootInformation.RamDiskPhysicalBase;
-  ImageSizeInBytes := BootInformation.RamDiskSizeInBytes;
+  BootImage.PhysicalBase := BootInformation.RamDiskPhysicalBase;
+  BootImage.SizeInBytes := BootInformation.RamDiskSizeInBytes;
+  BootImage.RegionStart := 0;
+  BootImage.RegionEnd := 0;
+  { The memory map's region holding the image: its pages are freed once
+    a compressed image is unpacked. }
+  Index := 0;
+  while Index < BootInformation.MemoryRegionCount do
+  begin
+    Region := @BootInformation.MemoryRegions[Index];
+    RegionEnd := Region^.PhysicalStart + Region^.PageCount * Boot.Information.PageSize;
+    if (Region^.Kind = MemoryRegionRamDisk) and (BootImage.PhysicalBase >= Region^.PhysicalStart) and
+       (BootImage.PhysicalBase < RegionEnd) then
+    begin
+      BootImage.RegionStart := Region^.PhysicalStart;
+      BootImage.RegionEnd := RegionEnd;
+    end;
+    Inc(Index);
+  end;
 end;
 
 function RequestIsValid(var Request: TIoRequest): Boolean;
@@ -123,8 +150,12 @@ var
   Device: PDeviceObject;
 begin
   Result := False;
-  if (ImagePhysicalBase = 0) or (ImageSizeInBytes < SectorSize) then
+  if (BootImage.PhysicalBase = 0) or (BootImage.SizeInBytes < SectorSize) then
     Exit;
+  if not ExpandRamDiskImage(BootImage) then
+    Exit;
+  ImagePhysicalBase := BootImage.PhysicalBase;
+  ImageSizeInBytes := BootImage.SizeInBytes;
   ImageContents := PByte(PhysicalToVirtual(ImagePhysicalBase));
   Device := CreateRamDiskDevice;
   if Device = nil then
@@ -146,7 +177,7 @@ begin
   DebugWrite(RamDiskName);
   DebugWrite(': ');
   DebugWriteDecimal(ImageSizeInBytes div 1024);
-  DebugWrite(' KiB image from the loader at physical ');
+  DebugWrite(' KiB image at physical ');
   DebugWriteAddress(ImagePhysicalBase);
   DebugWriteLine(', writable, lost at reset');
   DebugEndMessage;
