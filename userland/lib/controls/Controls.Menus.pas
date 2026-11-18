@@ -68,7 +68,9 @@ uses
 
 type
   TMenuItem = class;
+  TMenuList = class;
   TMenuItemEvent = procedure(Item: TMenuItem) of object;
+  TMenuListEvent = procedure(List: TMenuList) of object;
 
   TMenuItem = class
   private
@@ -82,6 +84,7 @@ type
     FParent: TMenuItem;
     FOnClick: TMenuItemEvent;
     FOnOpening: TMenuItemEvent;
+    FOnOpened: TMenuListEvent;
     FImages: TImageList;
     FImageIndex: LongInt;
     FSideBand: string;
@@ -116,6 +119,9 @@ type
     property OnClick: TMenuItemEvent read FOnClick write FOnClick;
     { Its items are about to show (it is a menu, or a submenu's head). }
     property OnOpening: TMenuItemEvent read FOnOpening write FOnOpening;
+    { Its items have just shown, in List's pop-up (where they are on the
+      screen is known now). }
+    property OnOpened: TMenuListEvent read FOnOpened write FOnOpened;
     { The text of a band down the left of its pop-up, where the theme
       draws one (TTheme.StartMenuBand: Controls.MenuBand); '' (the
       default): none. }
@@ -381,6 +387,8 @@ begin
   Popup.OnPressedOutside := @Result.PressedOutside;
   Result.SetFocus;
   Popup.Popup;
+  if Assigned(Menu.OnOpened) then
+    Menu.OnOpened(Result);
 end;
 
 function ShowPopupMenu(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt;

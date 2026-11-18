@@ -28,7 +28,9 @@
   (Configuration.Watcher) and the network's status as the kernel and
   the network service tell it (Configuration.NetworkStatus) needs only
   the runtime library and libsystem's address parsing, so it builds
-  and is tested on the host as well (tools/SettingsTest).
+  and is tested on the host as well (tools/SettingsTest). The installed
+  programs' folders and descriptions (Configuration.ProgramFolders,
+  Configuration.ProgramInfo) are here too.
 }
 unit Configuration.Contents;
 
@@ -51,7 +53,9 @@ uses
   Configuration.Ipv6Checks,
   Configuration.NetworkSettings,
   Configuration.NetworkState,
-  Configuration.NetworkStatus;
+  Configuration.NetworkStatus,
+  Configuration.ProgramInfo,
+  Configuration.ProgramFolders;
 
 implementation
 
