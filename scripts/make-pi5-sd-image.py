@@ -127,6 +127,11 @@ def config_text(with_framebuffer_overlay):
         "# RP1 not reset before the kernel starts, for a serial adapter.",
         "enable_rp1_uart=1",
         "",
+        "# Keep the PCIe x4 link to RP1 (USB, Ethernet) that the bootloader",
+        "# trained instead of resetting it before the kernel starts, so the",
+        "# kernel inherits a working link.",
+        "pciex4_reset=0",
+        "",
     ]
     return "\n".join(lines)
 
