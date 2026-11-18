@@ -42,7 +42,8 @@ uses
   Ssh.PublicKeys,
   Ssh.ServerTransport,
   Ssh.UserAuthentication,
-  Ssh.Connection;
+  Ssh.Connection,
+  Ssh.TerminalOutput;
 
 implementation
 

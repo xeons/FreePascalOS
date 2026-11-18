@@ -32,7 +32,8 @@
   ending the channel ends everything it started, and with HOME, USER,
   SHELL, PATH, TERM, SSH_CONNECTION, SSH_CLIENT and SSH_TTY (on a
   terminal). Its output (standard error apart, without a terminal) is
-  sent as channel data; what the client sends goes to its input through
+  sent as channel data (from a terminal with a carriage return before
+  each line feed, Ssh.TerminalOutput, as the client's terminal expects); what the client sends goes to its input through
   an input writer (Sshd.InputWriters). When the program has ended and
   its output is read to the end (on a terminal: what is there when it
   ends), the channel ends with its exit status.
@@ -49,6 +50,7 @@ uses
   Util.Logins,
   Ssh.Wire,
   Ssh.Connection,
+  Ssh.TerminalOutput,
   Sshd.Configuration,
   Sshd.InputWriters;
 
@@ -81,6 +83,8 @@ type
     FRows, FColumns: LongInt;
     FTerminal: TAbiPseudoTerminal;
     FHasTerminal: Boolean;
+    { Line feeds from the terminal get their carriage returns. }
+    FTerminalOutput: TTerminalOutputTranslator;
     FVariables: TStringArray;
     FStarted: Boolean;
     FProcess: Int64;
@@ -482,6 +486,8 @@ begin
   begin
     if Extended then
       SendErrorData(BytesToString(@Buffer[0], Integer(Count)))
+    else if FHasTerminal then
+      SendData(TranslateTerminalOutput(FTerminalOutput, BytesToString(@Buffer[0], Integer(Count))))
     else
       SendData(BytesToString(@Buffer[0], Integer(Count)));
   end

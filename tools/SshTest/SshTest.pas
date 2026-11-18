@@ -32,7 +32,8 @@ uses
   TestChecks,
   SshTest.KnownAnswers,
   SshTest.Framing,
-  SshTest.Handshake;
+  SshTest.Handshake,
+  SshTest.TerminalOutput;
 
 begin
   TestWireEncoding;
@@ -42,5 +43,6 @@ begin
   TestPublicKeyVectors;
   TestPacketFraming;
   TestHandshake;
+  TestTerminalOutput;
   FinishChecks('ssh test');
 end.
