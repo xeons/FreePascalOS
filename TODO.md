@@ -838,6 +838,12 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         controllers as xHCI hosts (`Drivers.Dwc3`), the SD slot
         (`Drivers.Sdhci.Bcm2712`), the PM watchdog by its DT node; the
         kernel DHCP says "no network card" once
+  - [x] Pi 5 PCIe cold start must not hang: no root complex access while
+        the bridge reset line is asserted (PERST# was written then), resets
+        through the tree's reset controllers (`Drivers.BrcmResets`), every
+        wait timed out, `FAILED at step N` plus registers and the boot goes
+        on; the watchdog armed before PCIe with its timer pets suspended
+        during the probe; SErrors unmasked during the probe
   - [ ] Pi 5, first boot with the drivers: read the `[pcie]`, `[mip]`,
         `[rp1]`, `[gem]`, `[dwc3]` lines (docs/Architecture.md, "What the
         Pi 5 drivers log"); then netlog, SSH

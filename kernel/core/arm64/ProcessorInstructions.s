@@ -47,6 +47,26 @@ ROUTINE ArchWriteInterruptMask
     msr     daif, x0
     ret
 
+// --- Asynchronous aborts (PSTATE.A) ---
+
+// SErrors stay masked in general; a driver that touches a bus able to
+// raise one opens a window so it is taken (and panics) instead of
+// staying pending for good.
+ROUTINE ArchEnableAsynchronousAborts
+    msr     daifclr, #4
+    isb
+    ret
+
+// Anything still pending is taken before the mask goes back: the
+// barriers finish outstanding accesses, ESB (a NOP without RAS)
+// synchronizes errors, ISB lets the unmasked SError in.
+ROUTINE ArchDisableAsynchronousAborts
+    dsb     sy
+    hint    #16
+    isb
+    msr     daifset, #4
+    ret
+
 // WFI wakes for a pending interrupt even while PSTATE.I masks it, so
 // waiting with interrupts masked and unmasking afterwards cannot miss
 // one: it is taken right after the unmask.

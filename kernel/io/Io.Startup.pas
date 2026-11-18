@@ -30,7 +30,9 @@
   Then the other processors are started (Kernel.SecondaryProcessors), so
   device interrupts can be spread over them, and InitializeBuses goes on:
 
-    1. Input devices (keyboard, serial port), attached to the console
+    1. Input devices (keyboard, serial port), attached to the console,
+       and a device tree's watchdog (the Pi 5's), armed before any bus
+       bring-up can hang the machine
     2. PCI enumeration (the Pi 5's PCIe root complexes bring their links
        up and add their functions; then RP1 presents its peripherals)
 
@@ -184,6 +186,10 @@ end;
 procedure InitializeBuses;
 begin
   InitializeInputDevices;
+  { A device tree's watchdog (the Pi 5's) armed before any bus is
+    brought up, so a bring-up that hangs the machine resets it. }
+  if InitializeBcm2835WatchdogFromDeviceTree then
+    StartWatchdogPolicy;
   InitializePci;
   { Root complexes that are not ECAM (the Raspberry Pi 5's) add their
     functions themselves. }
@@ -205,11 +211,15 @@ begin
     addresses. }
   if InitializeVideoCoreMailbox then
     WriteBoardInformation;
-  { The hardware watchdog as early as it can be found (the Pi's needs
-    the mailbox), armed if the options or its driver say so. }
-  if not InitializeBcm2835Watchdog then
-    InitializeI6300EsbWatchdog;
-  StartWatchdogPolicy;
+  { The hardware watchdog as early as it can be found (the Pi 3/4's
+    needs the mailbox), armed if the options or its driver say so;
+    a device tree's is armed already (InitializeBuses). }
+  if not WatchdogIsPresent then
+  begin
+    if not InitializeBcm2835Watchdog then
+      InitializeI6300EsbWatchdog;
+    StartWatchdogPolicy;
+  end;
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
   { The image a network boot brought (ramdisk0), the system volume. }

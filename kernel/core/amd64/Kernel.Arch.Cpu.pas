@@ -69,6 +69,11 @@ procedure EnableInterruptsAndHalt;
 { Hint to the processor that the caller is in a spin-wait loop. }
 procedure CpuRelax;
 
+{ AArch64 opens a window for asynchronous aborts (SError) with these;
+  x86-64 reports machine checks by itself, so they do nothing. }
+procedure EnableAsynchronousAborts;
+procedure DisableAsynchronousAborts;
+
 function ReadControlRegister0: QWord;
 procedure WriteControlRegister0(Value: QWord);
 function ReadControlRegister2: QWord;
@@ -151,6 +156,14 @@ end;
 procedure CpuRelax; assembler; nostackframe;
 asm
   pause
+end;
+
+procedure EnableAsynchronousAborts;
+begin
+end;
+
+procedure DisableAsynchronousAborts;
+begin
 end;
 
 function ReadControlRegister0: QWord; assembler; nostackframe;

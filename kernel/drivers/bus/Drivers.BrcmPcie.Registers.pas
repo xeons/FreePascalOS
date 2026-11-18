@@ -129,6 +129,9 @@ const
 
   RcConfigRetryTimeout = $405C;
 
+  { PCIE_CTRL: on the 7712 generation PERST# is its PERSTB bit (set:
+    released, clear: held). It is a register of the root complex, so
+    it cannot be written while the bridge is in reset. }
   PcieControl = $4064;
   PcieControlPerstDeasserted = $00000004;
 
@@ -179,17 +182,6 @@ const
   { Bridge reset when no reset controller is named. }
   SoftwareInit1 = $9210;
   SoftwareInitGeneric = $2;
-
-  { The rescal block (brcm,bcm7216-pcie-sata-rescal). }
-  RescalStart = $0;
-  RescalStartBit = $1;
-  RescalStatus = $8;
-  RescalStatusBit = $1;
-
-  { The STB reset controller (brcm,brcmstb-reset): banks of 32 lines. }
-  ResetBankBytes = $18;
-  ResetSet = $00;
-  ResetClear = $04;
 
 { The RC BAR register offsets of inbound window Window (1-based). }
 function InboundConfigOffset(Window: LongWord): LongWord;
