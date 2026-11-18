@@ -24,6 +24,10 @@
   test run, started with -no-reboot, would have ended); the test also
   checks that the timer did pet it. Afterwards the watchdog is put back
   as it was (armed by the watchdog option, or not).
+
+  It takes 9 seconds, so it runs only under test (the test-exit option)
+  or when the option watchdogtest asks for it, not at every boot of a
+  Raspberry Pi.
 }
 unit Kernel.WatchdogSelfTest;
 
@@ -36,6 +40,7 @@ procedure RunWatchdogSelfTest;
 implementation
 
 uses
+  Kernel.Options,
   Kernel.Scheduler,
   Kernel.SelfTest,
   Io.Watchdog;
@@ -52,7 +57,8 @@ var
   WasArmed: Boolean;
   PreviousTimeout: LongWord;
 begin
-  if not WatchdogIsPresent then
+  if not WatchdogIsPresent or
+     not (KernelOptionIsSet(OptionTestExit) or KernelOptionIsSet('watchdogtest')) then
     Exit;
   WasArmed := WatchdogIsArmed;
   PreviousTimeout := WatchdogTimeoutSeconds;

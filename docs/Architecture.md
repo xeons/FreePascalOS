@@ -7492,7 +7492,9 @@ the first lines arrived (the replay), the `[netlog]` line and lines
 written after it, with no reboot seen. It also gives the machine an
 `i6300esb`: the kernel self test `Kernel.WatchdogSelfTest` arms it for 4
 seconds and sleeps 9 while the timer pets it (a reset would end QEMU,
-which runs with `-no-reboot`), and checks the pets were counted.
+which runs with `-no-reboot`), and checks the pets were counted. It runs
+only under `test-exit` or with the option `watchdogtest` (on a Pi too),
+so ordinary boots do not wait for it.
 
 ## The kernel debug shell
 
