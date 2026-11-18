@@ -21,34 +21,44 @@
   pcie-brcmstb.c does it for the 7712 generation (implemented from its
   description, not copied):
 
-  1. The bridge out of reset (its "bridge" line of the STB reset
-     controller, else the SW_INIT bit), the SerDes calibrated (the
-     "rescal" reset controller: start, wait for done, stop).
-  2. The bridge reset once more, PERST# held, the SerDes out of IDDQ;
-     MISC_CTRL: SCB access, unsupported-request reads, 512-byte bursts,
-     RCB settings.
-  3. Inbound windows, one per "dma-ranges" entry (the 7712 generation
-     maps each by itself: an RC BAR with its PCI address and size, a
-     remap register with the memory address); the root complex mode
-     checked; ASPM L1 (and L0s unless "aspm-no-l0s") advertised; the
-     class code of a PCI bridge; outbound windows, one per memory
-     "ranges" entry (PCI address, then base and limit in megabytes);
-     little endian inbound.
-  4. BCM2712 tuning: the SerDes told of the 54 MHz reference clock over
-     its MDIO bus, the L1 substate timers, AXI error replies turned into
+  1. Resources: the node's reset lines (Drivers.BrcmResets): "bridge"
+     (a line of the brcm,brcmstb-reset controller; without one, the
+     SW_INIT bit of the root complex itself), "swinit" if named, and
+     "rescal" (the brcm,bcm7216-pcie-sata-rescal calibration). The
+     pcie nodes name no clock (the firmware leaves theirs running) and
+     no PERST# GPIO or supply (PERST# is the root complex's own pin).
+  2. The bridge out of reset, a "swinit" pulse, the SerDes calibrated.
+  3. The bridge reset once more: asserted, 150 us during which nothing
+     of the root complex is touched (on the 7712 generation its
+     registers do not answer then: an access stalls the bus and the
+     processor with it), deasserted. Only then PERST# held (PCIE_CTRL's
+     PERSTB bit, 0 = asserted), the SerDes out of IDDQ; MISC_CTRL: SCB
+     access, unsupported-request reads, 512-byte bursts, RCB settings.
+  4. Inbound windows, one per "dma-ranges" entry (an RC BAR with its PCI
+     address and size, a remap register with the memory address); the
+     root complex mode checked; ASPM L1 (and L0s unless "aspm-no-l0s")
+     advertised; the class code of a PCI bridge; outbound windows, one
+     per memory "ranges" entry; little endian inbound.
+  5. BCM2712 tuning: the SerDes told of the 54 MHz reference clock over
+     its MDIO bus, the L1 substate timer, AXI error replies turned into
      reads of all ones (so a dead link does not abort the processor),
      250 ms timeouts, the QoS workarounds and "brcm,vdm-qos-map".
-  5. The link: the generation of "max-link-speed", CLKREQ# ignored,
+  6. The link: the generation of "max-link-speed", CLKREQ# ignored,
      PERST# released, 100 ms, then up to 100 ms more for the PHY link
-     and the data link to come up; the clock request mode
-     ("brcm,clkreq-mode", default: L1 substates on); retry status
-     visibility for configuration requests.
+     and the data link; the clock request mode ("brcm,clkreq-mode",
+     default: L1 substates on); retry status visibility.
 
-  A link the firmware left up (a network boot, enable_rp1_uart=1) is
-  kept: only the windows and the step 4 settings that do not touch the
-  SerDes are written again (Drivers.BrcmPcie chooses).
+  Every wait has a timeout. The configuration space behind the root
+  port (8000h) is not touched here at all: Drivers.BrcmPcie reaches it
+  only once the link is up.
 
-  Every failure says which step and the registers that tell why.
+  A link the firmware left up (pciex4_reset=0, a network boot,
+  enable_rp1_uart=1) is kept: only the windows and the step 5 settings
+  that do not touch the SerDes are written again.
+
+  Every failure is one "FAILED at step N (name)" line, then a line of
+  registers - or, if the bridge is in reset, a line saying they were not
+  read. The caller leaves the host down and the boot goes on.
 }
 unit Drivers.BrcmPcie.Setup;
 
@@ -59,7 +69,16 @@ interface
 
 uses
   Firmware.DeviceTreePci,
-  Io.PlatformDevices;
+  Io.PlatformDevices,
+  Drivers.BrcmResets;
+
+const
+  StepResources = 1;
+  StepCalibration = 2;
+  StepBridgeReset = 3;
+  StepWindows = 4;
+  StepTuning = 5;
+  StepLink = 6;
 
 type
   PBrcmPcieHost = ^TBrcmPcieHost;
@@ -75,6 +94,15 @@ type
     KeptFirmwareLink: Boolean;
     LinkSpeed: LongWord;
     LinkWidth: LongWord;
+    BridgeLine: TResetLine;
+    SwinitLine: TResetLine;
+    RescalLine: TResetLine;
+    HasBridgeLine: Boolean;
+    HasSwinitLine: Boolean;
+    HasRescalLine: Boolean;
+    { The bridge is (or may be) in reset: the root complex's registers
+      must not be read or written. }
+    BridgeInReset: Boolean;
   end;
 
 function ReadHostRegister(Host: PBrcmPcieHost; Offset: LongWord): LongWord;
@@ -86,16 +114,25 @@ function HostLinkIsUp(Host: PBrcmPcieHost): Boolean;
 
 { "[pcie] NAME: TEXT" with a register value if Value is not -1. }
 procedure ReportHost(Host: PBrcmPcieHost; Text: PChar; Value: Int64);
-{ "[pcie] NAME: FAILED at STEP: what, status S (PHY link P, data link D)". }
-procedure ReportHostFailure(Host: PBrcmPcieHost; Step: PChar; What: PChar);
+{ "[pcie] NAME: FAILED at step N (STEP NAME): WHAT", then the registers
+  (if the bridge is out of reset). }
+procedure ReportHostFailure(Host: PBrcmPcieHost; Step: Integer; What: PChar);
 
-{ Steps 1 to 4 from cold. False (and a line saying where) on failure. }
+{ Step 1: the reset lines. False (and the FAILED line) if one the node
+  names cannot be driven. Touches no register of the root complex. }
+function FindHostResources(Host: PBrcmPcieHost): Boolean;
+{ The firmware left the bridge in reset (its STB line's status). }
+function BridgeIsHeldInReset(Host: PBrcmPcieHost): Boolean;
+{ Steps 2 to 5 from cold. False (and the FAILED lines) on failure. }
 function ResetAndSetUpBridge(Host: PBrcmPcieHost): Boolean;
-{ Step 5. }
+{ Step 6. }
 function StartLink(Host: PBrcmPcieHost): Boolean;
 { For a link the firmware left up: the windows and the tuning that does
   not touch the SerDes. }
 procedure RefreshKeptLink(Host: PBrcmPcieHost);
+{ After a failure: PERST# held (if the registers answer), so the device
+  behind stays in reset. }
+procedure LeaveHostDown(Host: PBrcmPcieHost);
 { The negotiated speed (generation) and width. }
 procedure ReadLinkState(Host: PBrcmPcieHost);
 
@@ -106,7 +143,6 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Clock,
   Kernel.Scheduler,
-  Memory.DeviceMapping,
   DeviceTree.Blob,
   DeviceTree.Addresses,
   Firmware.DeviceTree,
@@ -115,15 +151,16 @@ uses
 
 const
   ResetSettleMicroseconds = 150;
-  RescalTimeoutMicroseconds = 2000;
+  SerdesSettleMicroseconds = 200;
   MdioTimeoutMicroseconds = 200;
   PerstWaitMilliseconds = 100;
   LinkPollMilliseconds = 5;
   LinkPollLimitMilliseconds = 100;
-  MaximumResetEntries = 8;
-  ResetControllerBytes = $30;
-  RescalBytes = $10;
   MaximumQosEntries = 8;
+
+  StepNames: array[StepResources..StepLink] of PChar = (
+    'resources', 'bridge out of reset, SerDes calibration', 'bridge reset', 'windows',
+    'SerDes and bus tuning', 'link');
 
 { --- Register access ------------------------------------------------------- }
 
@@ -191,152 +228,174 @@ begin
   DebugEndMessage;
 end;
 
-procedure ReportHostFailure(Host: PBrcmPcieHost; Step: PChar; What: PChar);
+procedure WriteBridgeLineState(Host: PBrcmPcieHost);
+begin
+  if not Host^.HasBridgeLine then
+  begin
+    DebugWrite('; bridge reset by SW_INIT');
+    Exit;
+  end;
+  DebugWrite('; bridge reset line ');
+  DebugWriteDecimal(Host^.BridgeLine.Line);
+  if ResetLineIsAsserted(Host^.BridgeLine) then
+    DebugWrite(' asserted')
+  else
+    DebugWrite(' deasserted');
+end;
+
+procedure ReportHostFailure(Host: PBrcmPcieHost; Step: Integer; What: PChar);
 var
   Status: LongWord;
 begin
-  Status := ReadHostRegister(Host, PcieStatus);
   DebugBeginMessage;
   DebugWriteTag('pcie');
   DebugWrite(Host^.Name);
-  DebugWrite(': FAILED at ');
-  DebugWrite(Step);
+  DebugWrite(': FAILED at step ');
+  DebugWriteDecimal(Step);
+  if (Step >= StepResources) and (Step <= StepLink) then
+  begin
+    DebugWrite(' (');
+    DebugWrite(StepNames[Step]);
+    DebugWrite(')');
+  end;
   DebugWrite(': ');
-  DebugWrite(What);
-  DebugWrite(', status 0x');
-  DebugWriteHex(Status, 2);
-  DebugWrite(' (PHY link ');
-  DebugWriteDecimal(Ord((Status and StatusPhyLinkUp) <> 0));
-  DebugWrite(', data link ');
-  DebugWriteDecimal(Ord((Status and StatusDataLinkActive) <> 0));
-  DebugWrite(', RC mode ');
-  DebugWriteDecimal(Ord((Status and StatusRootComplexMode) <> 0));
-  DebugWrite('), debug 0x');
-  DebugWriteHex(ReadHostRegister(Host, HardDebug2712), 8);
-  DebugWrite(', ctrl 0x');
-  DebugWriteHex(ReadHostRegister(Host, PcieControl), 1);
+  DebugWriteLine(What);
+
+  DebugWriteTag('pcie');
+  DebugWrite(Host^.Name);
+  if Host^.BridgeInReset then
+    DebugWrite(':   registers not read (the bridge is in reset)')
+  else
+  begin
+    Status := ReadHostRegister(Host, PcieStatus);
+    DebugWrite(':   status 0x');
+    DebugWriteHex(Status, 2);
+    DebugWrite(' (PHY link ');
+    DebugWriteDecimal(Ord((Status and StatusPhyLinkUp) <> 0));
+    DebugWrite(', data link ');
+    DebugWriteDecimal(Ord((Status and StatusDataLinkActive) <> 0));
+    DebugWrite(', RC mode ');
+    DebugWriteDecimal(Ord((Status and StatusRootComplexMode) <> 0));
+    DebugWrite('), ctrl 0x');
+    DebugWriteHex(ReadHostRegister(Host, PcieControl), 1);
+    DebugWrite(', debug 0x');
+    DebugWriteHex(ReadHostRegister(Host, HardDebug2712), 8);
+    DebugWrite(', misc 0x');
+    DebugWriteHex(ReadHostRegister(Host, MiscControl), 8);
+    DebugWrite(', rev 0x');
+    DebugWriteHex(ReadHostRegister(Host, MiscRevision), 1);
+  end;
+  WriteBridgeLineState(Host);
   DebugWriteLine('');
   DebugEndMessage;
 end;
 
-{ --- Reset controllers ------------------------------------------------------- }
+{ --- Step 1: resources --------------------------------------------------------- }
 
-{ The controller node and line of the "resets" entry named Name. }
-function FindResetLine(Host: PBrcmPcieHost; Name: PChar; out Controller: LongInt; out Line: LongWord): Boolean;
+{ Looks up one line; False only if the node names it but it cannot be
+  driven. }
+function FindOneLine(Host: PBrcmPcieHost; Name: PChar; out Line: TResetLine; out Found: Boolean): Boolean;
 var
-  Tree: PDeviceTree;
-  Names: TDeviceTreeProperty;
-  Resets: TDeviceTreeProperty;
-  Entry: LongWord;
-  Cell: LongWord;
-  Cells: LongWord;
-  Candidate: LongInt;
+  Problem: PChar;
 begin
-  Controller := NoNode;
-  Line := 0;
-  Result := False;
-  Tree := SystemDeviceTree;
-  if not FindProperty(Tree^, Host^.Node, 'reset-names', Names) or
-     not FindProperty(Tree^, Host^.Node, 'resets', Resets) then
-    Exit;
-  Entry := 0;
-  Cell := 0;
-  while (Entry < MaximumResetEntries) and (Cell < PropertyCellCount(Resets)) do
+  Found := FindResetLine(Host^.Node, Name, Line, Problem);
+  Result := Found or (Problem = nil);
+  if not Result then
   begin
-    Candidate := FindNodeByPhandle(Tree^, PropertyCell(Resets, Cell));
-    if (Candidate = NoNode) or not ReadCellProperty(Tree^, Candidate, '#reset-cells', Cells) then
-      Exit;
-    if DeviceTreeTextIsEqual(PropertyString(Names, Entry), Name) then
-    begin
-      Controller := Candidate;
-      if (Cells > 0) and (Cell + 1 < PropertyCellCount(Resets)) then
-        Line := PropertyCell(Resets, Cell + 1);
-      Exit(True);
-    end;
-    Cell := Cell + 1 + Cells;
-    Inc(Entry);
+    DebugBeginMessage;
+    DebugWriteTag('pcie');
+    DebugWrite(Host^.Name);
+    DebugWrite(': reset line "');
+    DebugWrite(Name);
+    DebugWrite('": ');
+    DebugWriteLine(Problem);
+    DebugEndMessage;
   end;
 end;
 
-function MapNode(Node: LongInt; Bytes: QWord; out Physical: QWord): PByte;
+procedure NoteUndrivenProperties(Host: PBrcmPcieHost);
+const
+  Names: array[0..4] of PChar = ('clocks', 'reset-gpios', 'pwr-gpios', 'vpcie3v3-supply', 'vpcie12v-supply');
 var
-  Size: QWord;
+  Index: Integer;
 begin
-  Result := nil;
-  if not NodeRegisterPhysical(SystemDeviceTree^, Node, 0, Physical, Size) then
-    Exit;
-  Result := PByte(MapDeviceMemory(Physical, Bytes));
-end;
-
-{ The bridge reset: its line of the STB reset controller, else the
-  SW_INIT bit of the bridge itself. }
-procedure SetBridgeReset(Host: PBrcmPcieHost; Asserted: Boolean);
-var
-  Controller: LongInt;
-  Line: LongWord;
-  Base: PByte;
-  Physical: QWord;
-  Offset: LongWord;
-begin
-  if FindResetLine(Host, 'bridge', Controller, Line) then
-  begin
-    Base := MapNode(Controller, ResetControllerBytes + (Line shr 5) * ResetBankBytes, Physical);
-    if Base <> nil then
+  for Index := 0 to High(Names) do
+    if NodeHasProperty(SystemDeviceTree^, Host^.Node, Names[Index]) then
     begin
-      Offset := (Line shr 5) * ResetBankBytes;
-      FullMemoryBarrier;
-      if Asserted then
-        PLongWord(Base + Offset + ResetSet)^ := LongWord(1) shl (Line and 31)
-      else
-        PLongWord(Base + Offset + ResetClear)^ := LongWord(1) shl (Line and 31);
-      FullMemoryBarrier;
-      UnmapDeviceMemory(Base, ResetControllerBytes + (Line shr 5) * ResetBankBytes);
-      WaitMicroseconds(ResetSettleMicroseconds);
-      Exit;
+      DebugBeginMessage;
+      DebugWriteTag('pcie');
+      DebugWrite(Host^.Name);
+      DebugWrite(': "');
+      DebugWrite(Names[Index]);
+      DebugWriteLine('" is not driven; left as the firmware set it');
+      DebugEndMessage;
     end;
-  end;
-  if Asserted then
-    ChangeHostRegister(Host, SoftwareInit1, 0, SoftwareInitGeneric)
-  else
-    ChangeHostRegister(Host, SoftwareInit1, SoftwareInitGeneric, 0);
-  WaitMicroseconds(ResetSettleMicroseconds);
 end;
 
-{ The SerDes resistor calibration: started, waited for, stopped. False
-  if it never reports done (no rescal controller named is fine). }
-function CalibrateSerdes(Host: PBrcmPcieHost): Boolean;
-var
-  Controller: LongInt;
-  Line: LongWord;
-  Base: PByte;
-  Physical: QWord;
-  Deadline: QWord;
-  Status: LongWord;
+function FindHostResources(Host: PBrcmPcieHost): Boolean;
 begin
-  Result := True;
-  if not FindResetLine(Host, 'rescal', Controller, Line) then
-    Exit;
-  Base := MapNode(Controller, RescalBytes, Physical);
-  if Base = nil then
-    Exit;
-  FullMemoryBarrier;
-  PLongWord(Base + RescalStart)^ := PLongWord(Base + RescalStart)^ or RescalStartBit;
-  FullMemoryBarrier;
-  Deadline := ClockNanoseconds + RescalTimeoutMicroseconds * 1000;
-  repeat
-    Status := PLongWord(Base + RescalStatus)^;
-    if (Status and RescalStatusBit) <> 0 then
-      Break;
-    CpuRelax;
-  until ClockNanoseconds > Deadline;
-  PLongWord(Base + RescalStart)^ := PLongWord(Base + RescalStart)^ and not RescalStartBit;
-  FullMemoryBarrier;
-  UnmapDeviceMemory(Base, RescalBytes);
-  if (Status and RescalStatusBit) = 0 then
+  Result := FindOneLine(Host, 'bridge', Host^.BridgeLine, Host^.HasBridgeLine) and
+    FindOneLine(Host, 'swinit', Host^.SwinitLine, Host^.HasSwinitLine) and
+    FindOneLine(Host, 'rescal', Host^.RescalLine, Host^.HasRescalLine);
+  if Result and Host^.HasBridgeLine and (Host^.BridgeLine.Kind <> ResetControllerStbLines) then
   begin
-    ReportHost(Host, 'rescal never finished, status', Status);
+    ReportHost(Host, 'its "bridge" reset is not a brcm,brcmstb-reset line', -1);
     Result := False;
   end;
+  if Result and Host^.HasSwinitLine and (Host^.SwinitLine.Kind <> ResetControllerStbLines) then
+  begin
+    ReportHost(Host, 'its "swinit" reset is not a brcm,brcmstb-reset line', -1);
+    Result := False;
+  end;
+  if Result and Host^.HasRescalLine and (Host^.RescalLine.Kind <> ResetControllerRescal) then
+  begin
+    ReportHost(Host, 'its "rescal" reset is not a brcm,bcm7216-pcie-sata-rescal', -1);
+    Result := False;
+  end;
+  if not Result then
+  begin
+    { Nothing known about the bridge: its registers stay untouched. }
+    Host^.BridgeInReset := True;
+    ReportHostFailure(Host, StepResources, 'a reset line the node names cannot be driven');
+    Exit;
+  end;
+  NoteUndrivenProperties(Host);
+end;
+
+function BridgeIsHeldInReset(Host: PBrcmPcieHost): Boolean;
+begin
+  Result := Host^.HasBridgeLine and ResetLineIsAsserted(Host^.BridgeLine);
+end;
+
+{ --- The bridge reset ------------------------------------------------------------ }
+
+{ Asserting marks the registers off limits until the deassert; nothing
+  in between may touch them (the SW_INIT fallback is itself a register
+  of the root complex, which still answers while it is set). }
+procedure SetBridgeReset(Host: PBrcmPcieHost; Asserted: Boolean);
+begin
+  if Host^.HasBridgeLine then
+  begin
+    if Asserted then
+    begin
+      Host^.BridgeInReset := True;
+      AssertResetLine(Host^.BridgeLine);
+    end
+    else
+    begin
+      DeassertResetLine(Host^.BridgeLine);
+      Host^.BridgeInReset := False;
+    end;
+  end
+  else
+  begin
+    if Asserted then
+      ChangeHostRegister(Host, SoftwareInit1, 0, SoftwareInitGeneric)
+    else
+      ChangeHostRegister(Host, SoftwareInit1, SoftwareInitGeneric, 0);
+    Host^.BridgeInReset := False;
+  end;
+  WaitMicroseconds(ResetSettleMicroseconds);
 end;
 
 { --- The SerDes's MDIO bus ---------------------------------------------------- }
@@ -430,7 +489,7 @@ begin
   end;
 end;
 
-{ --- Step 4: BCM2712 tuning ----------------------------------------------------- }
+{ --- Step 5: BCM2712 tuning ----------------------------------------------------- }
 
 function TuneSerdes(Host: PBrcmPcieHost): Boolean;
 const
@@ -447,7 +506,7 @@ begin
     Result := MdioWrite(Host, 0, RegisterNumbers[Index], Values[Index]);
     Inc(Index);
   end;
-  WaitMicroseconds(200);
+  WaitMicroseconds(SerdesSettleMicroseconds);
 end;
 
 { The QoS map: "brcm,fifo-qos-map" (4 bytes) or "brcm,vdm-qos-map" (8). }
@@ -481,7 +540,7 @@ begin
   end;
 end;
 
-{ Everything of step 4 but the SerDes: safe on a running link. }
+{ Everything of step 5 but the SerDes: safe on a running link. }
 procedure TuneBus(Host: PBrcmPcieHost);
 var
   Value: LongWord;
@@ -502,7 +561,7 @@ begin
   ApplyQosMaps(Host);
 end;
 
-{ --- Steps 1 to 3 --------------------------------------------------------------- }
+{ --- Steps 2 to 5 --------------------------------------------------------------- }
 
 function AspmToAdvertise(Host: PBrcmPcieHost): LongWord;
 begin
@@ -511,38 +570,66 @@ begin
     Result := Result or AspmL0s;
 end;
 
-function ResetAndSetUpBridge(Host: PBrcmPcieHost): Boolean;
+{ 2. Out of reset, a swinit pulse, SerDes calibrated. }
+function ReleaseAndCalibrate(Host: PBrcmPcieHost): Boolean;
 var
-  InboundCount: LongWord;
+  Status: LongWord;
 begin
   Result := False;
-  { 1. Out of reset, SerDes calibrated. }
   SetBridgeReset(Host, False);
-  if not CalibrateSerdes(Host) then
+  if Host^.HasSwinitLine then
+    PulseResetLine(Host^.SwinitLine, Status);
+  if Host^.HasRescalLine and not PulseResetLine(Host^.RescalLine, Status) then
   begin
-    ReportHostFailure(Host, 'step 1 (rescal)', 'SerDes calibration timed out');
+    ReportHost(Host, 'rescal status', Status);
+    ReportHostFailure(Host, StepCalibration, 'the SerDes calibration did not finish within 1 ms');
     Exit;
   end;
-  { 2. Reset again with PERST# held; SerDes powered. }
+  Result := True;
+end;
+
+{ 3. The bridge reset with no register access while it is asserted; then
+  PERST# held and the SerDes powered. }
+function CycleBridgeReset(Host: PBrcmPcieHost): Boolean;
+var
+  Revision: LongWord;
+begin
+  Result := False;
   SetBridgeReset(Host, True);
-  ChangeHostRegister(Host, PcieControl, PcieControlPerstDeasserted, 0);
-  WaitMicroseconds(ResetSettleMicroseconds);
   SetBridgeReset(Host, False);
+  if BridgeIsHeldInReset(Host) then
+  begin
+    Host^.BridgeInReset := True;
+    ReportHostFailure(Host, StepBridgeReset, 'the bridge reset line does not deassert');
+    Exit;
+  end;
+  Revision := ReadHostRegister(Host, MiscRevision);
+  if (Revision = 0) or (Revision = $FFFFFFFF) then
+  begin
+    ReportHostFailure(Host, StepBridgeReset, 'the root complex does not answer after its reset');
+    Exit;
+  end;
+  ChangeHostRegister(Host, PcieControl, PcieControlPerstDeasserted, 0);
   ChangeHostRegister(Host, HardDebug2712, HardDebugSerdesIddq, 0);
-  WaitMicroseconds(ResetSettleMicroseconds);
+  WaitMicroseconds(SerdesSettleMicroseconds);
   ChangeHostRegister(Host, MiscControl, MiscControlMaximumBurstMask,
     MiscControlScbAccessEnable or MiscControlConfigReadUrMode or MiscControlRcbMpsMode or
     MiscControlRcb64Bytes or (MiscControlBurst512 shl MiscControlMaximumBurstShift));
-  { 3. Windows and identity. }
-  InboundCount := ProgramInboundWindows(Host);
-  if InboundCount = 0 then
+  Result := True;
+end;
+
+{ 4. Windows and identity. }
+function SetUpWindows(Host: PBrcmPcieHost): Boolean;
+begin
+  Result := False;
+  if ProgramInboundWindows(Host) = 0 then
   begin
-    ReportHostFailure(Host, 'step 3 (inbound windows)', 'the node has no usable dma-ranges');
+    ReportHostFailure(Host, StepWindows, 'the node has no usable dma-ranges');
     Exit;
   end;
   if (ReadHostRegister(Host, PcieStatus) and StatusRootComplexMode) = 0 then
   begin
-    ReportHostFailure(Host, 'step 3 (mode)', 'the controller is strapped as an endpoint');
+    ReportHostFailure(Host, StepWindows, 'the controller is strapped as an endpoint (status bit 7 clear)');
     Exit;
   end;
   ChangeHostRegister(Host, PrivateLinkCapability, LinkCapabilityAspmMask,
@@ -550,10 +637,18 @@ begin
   ChangeHostRegister(Host, PrivateIdValue3, PrivateClassCodeMask, ClassCodePciBridge);
   ProgramOutboundWindows(Host);
   ChangeHostRegister(Host, VendorSpecificRegister1, VendorSpecificEndianBar2Mask, 0);
-  { 4. Tuning. }
+  Result := True;
+end;
+
+function ResetAndSetUpBridge(Host: PBrcmPcieHost): Boolean;
+begin
+  Result := False;
+  if not ReleaseAndCalibrate(Host) or not CycleBridgeReset(Host) or not SetUpWindows(Host) then
+    Exit;
+  { 5. Tuning. }
   if not TuneSerdes(Host) then
   begin
-    ReportHostFailure(Host, 'step 4 (SerDes MDIO)', 'the SerDes did not take its clock settings');
+    ReportHostFailure(Host, StepTuning, 'the SerDes MDIO bus did not take its 54 MHz clock settings within 200 us');
     Exit;
   end;
   TuneBus(Host);
@@ -568,7 +663,14 @@ begin
   ChangeHostRegister(Host, PrivateIdValue3, PrivateClassCodeMask, ClassCodePciBridge);
 end;
 
-{ --- Step 5 --------------------------------------------------------------------- }
+procedure LeaveHostDown(Host: PBrcmPcieHost);
+begin
+  if not Host^.BridgeInReset then
+    ChangeHostRegister(Host, PcieControl, PcieControlPerstDeasserted, 0);
+  ReportHost(Host, 'left down: no devices behind it (for pcie2: no RP1, so no USB, Ethernet or RP1 peripherals)', -1);
+end;
+
+{ --- Step 6 --------------------------------------------------------------------- }
 
 procedure LimitGeneration(Host: PBrcmPcieHost);
 var
@@ -626,7 +728,7 @@ begin
   end;
   if not HostLinkIsUp(Host) then
   begin
-    ReportHostFailure(Host, 'step 5 (link)', 'no link 200 ms after PERST# was released');
+    ReportHostFailure(Host, StepLink, 'no link 200 ms after PERST# was released');
     Exit(False);
   end;
   ConfigureClockRequest(Host);

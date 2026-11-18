@@ -49,6 +49,9 @@ interface
 
 { Registers the watchdog if this is a Raspberry Pi 3, 4 or 5. }
 function InitializeBcm2835Watchdog: Boolean;
+{ Only the device tree's power manager block (no mailbox needed): early
+  enough to guard the Pi 5's PCIe bring-up. }
+function InitializeBcm2835WatchdogFromDeviceTree: Boolean;
 
 implementation
 
@@ -211,6 +214,11 @@ begin
       RegisterDevice(Physical, 'BCM2835 PM watchdog', Ids[IdIndex]);
     Exit(True);
   end;
+end;
+
+function InitializeBcm2835WatchdogFromDeviceTree: Boolean;
+begin
+  Result := WatchdogIsPresent or InitializeFromDeviceTree;
 end;
 
 function InitializeBcm2835Watchdog: Boolean;

@@ -8028,22 +8028,61 @@ are written from Linux's and **untested on the board**.
    [mip] msi-controller@1000130000: 64 vectors on SPIs 128-191, doorbell 0xfffffff000 (bus), registers 0x1000130000
    [pci] 01:00.0 1de4:0001 network controller
    ```
+   The watchdog comes first now (`[watchdog] BCM2712 PM watchdog at
+   ...` and `... armed for 15 s ...`, item 6): it is armed before any
+   bus is brought up, and while the root complexes are probed the
+   kernel timer stops petting it (only the probe pets it, between
+   steps), so a bring-up that stalls the bus resets the board within
+   15 s instead of freezing it. SErrors are unmasked during the probe:
+   an asynchronous abort shows the panic screen (`SError (asynchronous
+   abort)` with ESR) instead of staying pending.
+
    The status word: bit 4 PHY link up, bit 5 data link up, bit 7 root
-   complex mode (B0h = all three). After the network boot the firmware
-   leaves the link up and it is kept; with the kernel option `pcireset`
-   (or a link found down) it starts from cold and says `link down,
-   starting it`, then `link up, gen 2 x4`. A `(was 0x...)` after a BAR
-   means the firmware had put it elsewhere. Failures:
-   - `FAILED at step 1 (rescal)`: the SerDes calibration never finished;
-   - `FAILED at step 3 (inbound windows)` / `(mode)`: the tree's
-     `dma-ranges` are missing, or the controller is strapped as an
-     endpoint (status bit 7 clear);
-   - `FAILED at step 4 (SerDes MDIO)`: the SerDes did not take its
-     54 MHz clock settings;
-   - `FAILED at step 5 (link): no link 200 ms after PERST# was released,
-     status 0x80 (PHY link 0, data link 0, RC mode 1), debug 0x...,
-     ctrl 0x4`: RP1 did not train; `debug` is HARD_DEBUG (bit 27 SerDes
-     still in IDDQ), `ctrl` PCIE_CTRL (bit 2 PERST# released);
+   complex mode (B0h = all three). With `pciex4_reset=0` in config.txt
+   (the config.txt that make-pi5-sd-image.py writes has it) the firmware
+   leaves the link to RP1 up and it is kept, as above. With the kernel
+   option `pcireset`, or a link found down, it starts from cold and says
+   `link down, starting it` (or `the firmware left the bridge in reset:
+   starting it from cold` if the bridge's reset line is asserted, in
+   which case not a register of the root complex is read before the
+   reset sequence), then `link up, gen 2 x4`. A `(was 0x...)` after a
+   BAR means the firmware had put it elsewhere.
+
+   The cold sequence (`Drivers.BrcmPcie.Setup`, after Linux's
+   pcie-brcmstb.c for the 7712 generation) drives the resets through
+   the tree's reset controllers (`Drivers.BrcmResets`): the "bridge"
+   line of `brcm,brcmstb-reset` (pcie2: line 44 of
+   reset-controller@1504318), "swinit" if named, and the
+   `brcm,bcm7216-pcie-sata-rescal` calibration. While the bridge line is
+   asserted nothing of the root complex is touched: on this generation
+   its registers do not answer then and an access stalls the processor
+   (that is what froze the first cold boot, which wrote PERST# in
+   PCIE_CTRL during the bridge reset). PERST# is PCIE_CTRL's PERSTB bit
+   (bit 2, 0 = held). The pcie nodes name no clock, PERST# GPIO or
+   supply; if a tree did, a line says it is left as the firmware set it.
+
+   A failure is two lines and then the boot goes on without the host
+   (no RP1: no USB, Ethernet or RP1 peripherals):
+   ```
+   [pcie] pcie@1000120000: FAILED at step 6 (link): no link 200 ms after PERST# was released
+   [pcie] pcie@1000120000:   status 0x1e080 (PHY link 0, data link 0, RC mode 1), ctrl 0x4, debug 0x00200000, misc 0x00303480, rev 0x500; bridge reset line 44 deasserted
+   [pcie] pcie@1000120000: left down: no devices behind it (for pcie2: no RP1, so no USB, Ethernet or RP1 peripherals)
+   ```
+   `ctrl` is PCIE_CTRL (bit 2 PERST# released), `debug` HARD_DEBUG (bit
+   27 SerDes still in IDDQ), `misc` MISC_CTRL. When the bridge is in
+   reset the second line says `registers not read (the bridge is in
+   reset)` instead. The steps:
+   - `step 1 (resources)`: a reset line the node names cannot be driven
+     (a preceding `reset line "bridge": ...` line says why);
+   - `step 2 (bridge out of reset, SerDes calibration)`: the rescal
+     calibration did not finish within 1 ms (`rescal status 0x...`);
+   - `step 3 (bridge reset)`: the bridge line does not deassert, or the
+     root complex reads 0 or all ones after its reset;
+   - `step 4 (windows)`: the tree's `dma-ranges` are missing, or the
+     controller is strapped as an endpoint (status bit 7 clear);
+   - `step 5 (SerDes and bus tuning)`: the SerDes MDIO bus did not take
+     its 54 MHz clock settings within 200 us;
+   - `step 6 (link)`: RP1 did not train within 200 ms;
    - `the link is up but nothing answers at 01:00.0, read 0xffffffff`.
 2. **RP1** (`Drivers.Rp1`, `Drivers.Rp1Interrupts`):
    ```

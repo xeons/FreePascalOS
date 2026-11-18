@@ -54,6 +54,14 @@ procedure EnableInterruptsAndHalt;
 { Hint to the processor that the caller is in a spin-wait loop. }
 procedure CpuRelax;
 
+{ SErrors (asynchronous external aborts) are masked unless a driver
+  opens a window around accesses that may raise one: then one is taken,
+  and the kernel panics with its syndrome, instead of staying pending.
+  Disabling first takes any error still in flight. Per thread (DAIF is
+  saved with the thread). }
+procedure EnableAsynchronousAborts;
+procedure DisableAsynchronousAborts;
+
 { Invalidates the translation of one page on every processor (TLB
   maintenance is broadcast in hardware on AArch64). }
 procedure InvalidateTlbEntry(VirtualAddress: QWord);
@@ -102,6 +110,8 @@ function ArchReadInterruptMask: QWord; external name 'ArchReadInterruptMask';
 procedure ArchEnableInterruptsAndWait; external name 'ArchEnableInterruptsAndWait';
 procedure ArchWaitForInterrupt; external name 'ArchWaitForInterrupt';
 procedure ArchYield; external name 'ArchYield';
+procedure ArchEnableAsynchronousAborts; external name 'ArchEnableAsynchronousAborts';
+procedure ArchDisableAsynchronousAborts; external name 'ArchDisableAsynchronousAborts';
 procedure ArchInvalidatePage(VirtualAddress: QWord); external name 'ArchInvalidatePage';
 procedure ArchInvalidateAllPages; external name 'ArchInvalidateAllPages';
 function ArchReadCounter: QWord; external name 'ArchReadCounter';
@@ -169,6 +179,16 @@ end;
 procedure CpuRelax;
 begin
   ArchYield;
+end;
+
+procedure EnableAsynchronousAborts;
+begin
+  ArchEnableAsynchronousAborts;
+end;
+
+procedure DisableAsynchronousAborts;
+begin
+  ArchDisableAsynchronousAborts;
 end;
 
 procedure InvalidateTlbEntry(VirtualAddress: QWord);

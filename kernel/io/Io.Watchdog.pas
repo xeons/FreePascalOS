@@ -48,6 +48,12 @@
   the watchdog, then resets through the HAL (PSCI SYSTEM_RESET on
   AArch64), and if that returns, through the watchdog at once.
 
+  A driver about to touch hardware that can stall the bus (the Pi 5's
+  PCIe bring-up) suspends the timer's pets: another processor's timer
+  would otherwise keep petting while the stalled one hangs, and the
+  machine would never reset. It pets by hand (PetWatchdogNow) between
+  steps and resumes the timer afterwards.
+
   Io.AcpiSleep's ResetMachine uses ResetThroughWatchdog when the other
   ways did not reset the machine.
 }
@@ -99,6 +105,14 @@ function WatchdogTimeoutSeconds: LongWord;
 { How often it has been petted since it was last armed. }
 function WatchdogPetCount: QWord;
 
+{ Around code that can hang the processor it runs on: the timer stops
+  petting (suspending pets once now), so only PetWatchdogNow keeps the
+  machine from resetting. Not nested; harmless without an armed
+  watchdog. }
+procedure SuspendWatchdogTimerPets;
+procedure ResumeWatchdogTimerPets;
+procedure PetWatchdogNow;
+
 { Resets the machine through the watchdog, if it can; returns if not. }
 procedure ResetThroughWatchdog;
 
@@ -127,6 +141,7 @@ var
   TimeoutSeconds: LongWord;
   PetIntervalMilliseconds: QWord;
   PetCount: QWord;
+  TimerPetsSuspended: Boolean;
   PetTimer: TTimer;
   PetCall: TDeferredCall;
   { The panic policy, decided at start-up. }
@@ -164,9 +179,32 @@ procedure PetFromTimer(Context: Pointer);
 begin
   if not Armed then
     Exit;
+  if not TimerPetsSuspended then
+  begin
+    Device.Routines.Pet(Device.Context);
+    Inc(PetCount);
+  end;
+  SetTimer(PetTimer, PetIntervalMilliseconds, PetCall);
+end;
+
+procedure PetWatchdogNow;
+begin
+  if not Armed then
+    Exit;
   Device.Routines.Pet(Device.Context);
   Inc(PetCount);
-  SetTimer(PetTimer, PetIntervalMilliseconds, PetCall);
+end;
+
+procedure SuspendWatchdogTimerPets;
+begin
+  PetWatchdogNow;
+  TimerPetsSuspended := True;
+end;
+
+procedure ResumeWatchdogTimerPets;
+begin
+  TimerPetsSuspended := False;
+  PetWatchdogNow;
 end;
 
 function ArmWatchdog(Seconds: LongWord): Boolean;

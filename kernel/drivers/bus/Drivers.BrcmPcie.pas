@@ -22,10 +22,20 @@
   unless config.txt asks for it). Each is a platform device of the
   device tree; bringing one up (Drivers.BrcmPcie.Setup):
 
-  - a link the firmware left up (it network booted through RP1, or
-    config.txt has enable_rp1_uart=1) is kept, its windows written
+  - its reset lines are found first (step 1); a bridge the firmware
+    left in reset is not touched until the cold sequence takes it out;
+  - a link the firmware left up (config.txt pciex4_reset=0, a network
+    boot through RP1, enable_rp1_uart=1) is kept, its windows written
     again; the kernel option "pcireset" brings it up from cold instead;
   - otherwise the full sequence, ending with the link wait.
+
+  The bring-up must never hang the machine: every wait has a timeout,
+  nothing behind the root port is read before the link is up, the
+  watchdog's timer pets are suspended meanwhile (only the probe itself
+  pets it, so a stalled bus resets the board) and SErrors are unmasked
+  (an asynchronous abort panics with its syndrome instead of staying
+  pending). After a failure the host is left down with PERST# held and
+  the boot goes on without it.
 
   Then the bus: the root port's own configuration space (registers
   0-FFFh) is bus 0 device 0; its bridge registers get bus 1 and the
@@ -41,8 +51,8 @@
   "msi-parent", if it names a MIP (Drivers.Bcm2712Mip), becomes the
   segment's message controller.
 
-  Every step logs a line tagged "pcie"; failures say "FAILED at" the
-  step with the status register decoded.
+  Every step logs a line tagged "pcie"; failures say "FAILED at step N"
+  with the registers on the next line.
 }
 unit Drivers.BrcmPcie;
 
@@ -68,6 +78,8 @@ uses
   Io.Pci,
   Io.PciMessageInterrupts,
   Io.PlatformDevices,
+  Io.Watchdog,
+  Kernel.Arch.Cpu,
   Drivers.BrcmPcie.Registers,
   Drivers.BrcmPcie.Setup,
   Drivers.Bcm2712Mip,
@@ -418,6 +430,11 @@ end;
 
 procedure ReportFirstLook(Host: PBrcmPcieHost; Status: LongWord);
 begin
+  if Host^.BridgeInReset then
+  begin
+    ReportHost(Host, 'the firmware left the bridge in reset: starting it from cold', -1);
+    Exit;
+  end;
   DebugBeginMessage;
   DebugWriteTag('pcie');
   DebugWrite(Host^.Name);
@@ -467,16 +484,38 @@ begin
   if ReadCellProperty(SystemDeviceTree^, Host^.Node, 'max-link-speed', Generation) then
     Host^.Generation := Generation;
   Result := True;
+  PetWatchdogNow;
 
-  Status := ReadHostRegister(Host, PcieStatus);
+  if not FindHostResources(Host) then
+  begin
+    LeaveHostDown(Host);
+    Exit;
+  end;
+  Host^.BridgeInReset := BridgeIsHeldInReset(Host);
+  Status := 0;
+  if not Host^.BridgeInReset then
+    Status := ReadHostRegister(Host, PcieStatus);
   ReportFirstLook(Host, Status);
-  if HostLinkIsUp(Host) and not KernelOptionIsSet(OptionPciReset) then
+  if not Host^.BridgeInReset and HostLinkIsUp(Host) and not KernelOptionIsSet(OptionPciReset) then
   begin
     Host^.KeptFirmwareLink := True;
     RefreshKeptLink(Host);
   end
-  else if not ResetAndSetUpBridge(Host) or not StartLink(Host) then
-    Exit;
+  else
+  begin
+    if not ResetAndSetUpBridge(Host) then
+    begin
+      LeaveHostDown(Host);
+      Exit;
+    end;
+    PetWatchdogNow;
+    if not StartLink(Host) then
+    begin
+      LeaveHostDown(Host);
+      Exit;
+    end;
+  end;
+  PetWatchdogNow;
   ReadLinkState(Host);
   ReportLink(Host);
   Inc(LinksUp);
@@ -500,7 +539,11 @@ const
 function InitializeBrcmPcieHosts: Integer;
 begin
   LinksUp := 0;
+  SuspendWatchdogTimerPets;
+  EnableAsynchronousAborts;
   BindPlatformDriver(BrcmPcieDriver);
+  DisableAsynchronousAborts;
+  ResumeWatchdogTimerPets;
   Result := LinksUp;
 end;
 
