@@ -33,6 +33,10 @@
   "clocks" (a fixed 200 MHz clock). The card runs at 3.3 V, 4 bits,
   high speed (50 MHz): no voltage switch, so the tree's UHS modes are
   not used.
+
+  The BCM2712's second controller of the same kind (sdio2) carries the
+  Wi-Fi chip, described as a child node (wifi@1): it is no SD slot and
+  is left alone.
 }
 unit Drivers.Sdhci.Bcm2712;
 
@@ -43,6 +47,9 @@ interface
 
 uses
   Io.PlatformDevices;
+
+{ The controller has an SDIO device below it in the tree (the Wi-Fi). }
+function Bcm2712SlotHoldsSdioDevice(Device: PPlatformDevice): Boolean;
 
 { Points the configuration block at SD timing and forces presence; the
   base clock the tree gives (0 if none). False if the block is not
@@ -66,6 +73,19 @@ const
   PinSelectMask = $3;
   PinSelectSd = $2;
   ConfigBytes = $200;
+
+function Bcm2712SlotHoldsSdioDevice(Device: PPlatformDevice): Boolean;
+begin
+  Result := (Device^.DeviceTreeNode <> NoDeviceTreeNode) and
+    (FirstChildNode(SystemDeviceTree^, Device^.DeviceTreeNode) <> NoNode);
+  if not Result then
+    Exit;
+  DebugBeginMessage;
+  DebugWriteTag('sdhci');
+  DebugWrite(@Device^.Path[0]);
+  DebugWriteLine(': an SDIO device (Wi-Fi) below it, not an SD slot: left alone');
+  DebugEndMessage;
+end;
 
 { The clock-frequency of the first clock "clocks" names. }
 function TreeClock(Device: PPlatformDevice): LongWord;

@@ -458,6 +458,8 @@ var
   Length: QWord;
 begin
   Result := False;
+  if PlatformDeviceHasId(Device, 'brcm,bcm2712-sdhci') and Bcm2712SlotHoldsSdioDevice(Device) then
+    Exit;
   Slot := PSdSlot(AllocateZeroedKernelMemory(SizeOf(TSdSlot)));
   if Slot = nil then
     Exit;
