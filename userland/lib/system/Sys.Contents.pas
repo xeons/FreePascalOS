@@ -45,6 +45,7 @@ uses
   Sys.Files,
   Sys.FileCopies,
   Sys.Environment,
+  Sys.ProgramFolders,
   Sys.Processes,
   Sys.Processor,
   Sys.ProcessList,

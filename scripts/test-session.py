@@ -453,16 +453,32 @@ def wait_for_control_panel(text, seconds, after=0):
         time.sleep(1)
 
 
-def start_control_panel(login_marker):
-    """Opens the Control Panel from the Start menu of the session that
-    `login_marker` began."""
-    log = session_log()
-    found = places(log[log.rfind(login_marker):])
+def open_start_submenu(login_marker, found, category):
+    """Opens the Start menu of the session that `login_marker` began
+    (`found`: its places so far) and its submenu of `category` (in lower
+    case: the programs are in a submenu for each category); the places
+    then, the submenu's programs' (start-COMMAND) among them."""
     if 'start' in found:
         click_at(*found['start'])
         time.sleep(1)
         log = session_log()
         found = places(log[log.rfind(login_marker):])
+    if 'start-category-' + category in found:
+        click_at(*found['start-category-' + category])
+        time.sleep(1)
+        log = session_log()
+        found = places(log[log.rfind(login_marker):])
+    else:
+        print('[session] no place start-category-' + category)
+    return found
+
+
+def start_control_panel(login_marker):
+    """Opens the Control Panel from the Start menu of the session that
+    `login_marker` began."""
+    log = session_log()
+    found = places(log[log.rfind(login_marker):])
+    found = open_start_submenu(login_marker, found, 'settings')
     if 'start-controlpanel' in found:
         click_at(*found['start-controlpanel'])
     return wait_for_control_panel('page display', 30)
@@ -540,11 +556,7 @@ def open_notepad(after):
     started before. True once it has its window."""
     log = session_log()
     found = places(log[log.rfind(b'session: user logged in'):])
-    if 'start' in found:
-        click_at(*found['start'])
-        time.sleep(1)
-        log = session_log()
-        found = places(log[log.rfind(b'session: user logged in'):])
+    found = open_start_submenu(b'session: user logged in', found, 'accessories')
     if 'start-notepad' in found:
         click_at(*found['start-notepad'])
     log = wait_for_session_log(['title Untitled - Notepad'], 30, after=after)
@@ -649,10 +661,7 @@ part, found = wait_for_control_panel('typed yz\u00e4', 20)
 typed = 'typed yz\u00e4'.encode() in part
 log = session_log()
 desktop_places = places(log[log.rfind(b'session: user logged in'):])
-click_place(desktop_places, 'start')
-time.sleep(1)
-log = session_log()
-desktop_places = places(log[log.rfind(b'session: user logged in'):])
+desktop_places = open_start_submenu(b'session: user logged in', desktop_places, 'accessories')
 click_place(desktop_places, 'start-terminal')
 time.sleep(3)
 # German keys for "echo yz\u00e4 > /tmp/kb": z and y swapped, the a umlaut

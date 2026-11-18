@@ -1,0 +1,11 @@
+# Calculator: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/calculator/program.info.
+
+[Program]
+Name = Calculator
+Description = Standard, scientific and programmer calculations
+Category = Accessories
+Icon = app-calculator
+Executable = calculator
+Keywords = ["math", "numbers", "arithmetic"]
+Version = 1.0

@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..378] of TCommandTest = (
+  CommandTests: array[0..380] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -637,7 +637,11 @@ const
       lists the outputs there are. Then the server ends. }
     (Command: 'displayserver > /tmp/ds.log 2>&1 & for i in $(seq 200); do grep -q ready /tmp/ds.log 2>/dev/null && break; sleep 0.1; done; printf "BM\076\000\000\000\000\000\000\000\066\000\000\000\050\000\000\000\002\000\000\000\001\000\000\000\001\000\030\000\000\000\000\000\010\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\377\000\000\000\377\000\000\000" > /tmp/v.bmp; clipboard --copy-image /tmp/v.bmp; clipboard -p -t png > /tmp/v.png; imageviewer /tmp/v.png > /tmp/iv.log 2>&1 & for i in $(seq 200); do grep -q opened /tmp/iv.log && break; sleep 0.1; done; kill $!; wait $!; sed -n "s/^opened [^ ]* //p" /tmp/iv.log'; ExpectedOutput: 'PNG 2 x 1, frames 1, colour not-needed'#10; ExpectedStatus: 0),
     (Command: 'calculator -k "12*(3+4)=" > /tmp/ca.log 2>&1 & for i in $(seq 200); do grep -q result /tmp/ca.log && break; sleep 0.1; done; kill $!; wait $!; grep result /tmp/ca.log | sed "s/.* = //"; grep -c "^display " /tmp/ca.log'; ExpectedOutput: '84'#10'9'#10; ExpectedStatus: 0),
-    (Command: 'volumecontrol > /tmp/vc.log 2>&1 & for i in $(seq 200); do grep -q outputs /tmp/vc.log && break; sleep 0.1; done; sleep 0.5; kill $!; wait $!; n=$(sed -n "s/^outputs //p" /tmp/vc.log); test "$(grep -c "^output [0-9]" /tmp/vc.log)" = "$n" && echo listed; rm /tmp/v.bmp /tmp/v.png /tmp/iv.log /tmp/ca.log /tmp/vc.log; pkill -x displayserver; echo $?'; ExpectedOutput: 'listed'#10'0'#10; ExpectedStatus: 0)
+    (Command: 'volumecontrol > /tmp/vc.log 2>&1 & for i in $(seq 200); do grep -q outputs /tmp/vc.log && break; sleep 0.1; done; sleep 0.5; kill $!; wait $!; n=$(sed -n "s/^outputs //p" /tmp/vc.log); test "$(grep -c "^output [0-9]" /tmp/vc.log)" = "$n" && echo listed; rm /tmp/v.bmp /tmp/v.png /tmp/iv.log /tmp/ca.log /tmp/vc.log; pkill -x displayserver; echo $?'; ExpectedOutput: 'listed'#10'0'#10; ExpectedStatus: 0),
+    { Graphical programs are installed in folders of their own (/app/NAME,
+      with program.info), not in /bin, and are still found by name. }
+    (Command: 'test -f /app/notepad/program.info && test -f /app/notepad/notepad && test ! -e /bin/notepad && grep "^Executable" /app/notepad/program.info'; ExpectedOutput: 'Executable = notepad'#10; ExpectedStatus: 0),
+    (Command: 'command -v notepad; command -v imageviewer; type controlpanel'; ExpectedOutput: '/app/notepad/notepad'#10'/app/imageviewer/imageviewer'#10'controlpanel is /app/controlpanel/controlpanel'#10; ExpectedStatus: 0)
   );
 
 var

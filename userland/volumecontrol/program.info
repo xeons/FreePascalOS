@@ -1,0 +1,11 @@
+# Volume Control: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/volumecontrol/program.info.
+
+[Program]
+Name = Volume Control
+Description = Set the volume of each sound output
+Category = Multimedia
+Icon = app-volume-control
+Executable = volumecontrol
+Keywords = ["sound", "audio", "mixer", "mute"]
+Version = 1.0

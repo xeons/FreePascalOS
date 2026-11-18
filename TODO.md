@@ -424,6 +424,14 @@ normalized (0-65535), not pixels.
 - [x] Desktop: wallpaper, icons
 - [x] Terminal window running the shell
 - [x] Notepad
+- [x] Program folders: graphical programs installed in /app/NAME with a
+      program.info (name, description, category, icon, executable,
+      keywords, version, hidden) and their own icons; the desktop's icons
+      and the Start menu (a submenu per category) built from them; still
+      started by name (FindProgramPath falls back to /app)
+- [ ] Start menu: descriptions as tooltips (the menus have no tooltips
+      yet), searching by name and keywords, programs installed while the
+      desktop runs (it reads /app once)
 
 ### 7. Applications and session
 - [x] Service manager (the first user process): service definitions in

@@ -2270,15 +2270,21 @@ place = shell_places('CLOSED')
 checks.append(('desktop: a taskbar button\'s menu closes its window',
                b'context close' in log_since('TOUR $m') and
                re.search(rb'task-gone \d+', log_since('TOURMENU $m')) is not None))
+# The programs are in a submenu for each category: the Dialogs tour in
+# Development's.
 if 'start' in place:
     click_at(*place['start'])
     place = shell_places('START')
+    if 'start-category-development' in place:
+        click_at(*place['start-category-development'])
+        place = shell_places('SUBMENU')
     if 'start-dialogtour' in place:
         click_at(*place['start-dialogtour'])
         wait_for_shell_log(['place open-button', 'place task-Dialog-tour'], 30)
 place = shell_places('STARTED')
-checks.append(('desktop: the Start menu starts a program',
-               b'menu Dialogs' in log_since('CLOSED $m') and b'started dialogtour' in log_since('CLOSED $m') and
+checks.append(('desktop: the Start menu starts a program from its category\'s submenu',
+               b'place start-category-development' in log_since('CLOSED $m') and
+               b'menu Dialogs tour' in log_since('CLOSED $m') and b'started dialogtour' in log_since('CLOSED $m') and
                b'place open-button' in log_since('CLOSED $m')))
 if 'start' in place:
     click_at(*place['start'])

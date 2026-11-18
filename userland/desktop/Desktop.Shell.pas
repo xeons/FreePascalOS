@@ -103,6 +103,8 @@ begin
   RegisterHotkey(KeyEscape, ModifierControl or ModifierShift, True);
   RegisterHotkey(KeyL, ModifierSuper, True);
   RegisterHotkey(KeyL, ModifierControl or ModifierAlt, True);
+  { The programs offered on the desktop and in the Start menu. }
+  LoadDesktopPrograms;
   LayOut;
   FTaskbar.OnTaskManagerChosen := @OpenTaskManager;
 end;
@@ -204,7 +206,7 @@ begin
       Exit;
     end;
   end;
-  StartDesktopProgram(IndexOfDesktopProgram('taskmanager'), FTaskManagerProcessId);
+  StartCommand('taskmanager', '', 'Task Manager', FTaskManagerProcessId);
 end;
 
 procedure TShell.WindowsChanged;

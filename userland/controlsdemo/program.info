@@ -1,0 +1,11 @@
+# Controls demo: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/controlsdemo/program.info.
+
+[Program]
+Name = Controls demo
+Description = A window of basic controls, for trying them
+Category = Development
+Icon = app-themes
+Executable = controlsdemo
+Keywords = ["controls", "widgets", "demo"]
+Version = 1.0

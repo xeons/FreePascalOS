@@ -348,7 +348,7 @@ On Arch based systems: `pacman -S aarch64-linux-gnu-binutils qemu-system-aarch64
 ```
 make              # build build/amd64/esp (loader + kernel)
 make userland     # build the libraries and programs into build/amd64/user
-make system-disk  # build the ext4 system volume (/bin, /lib, /etc, /tmp, /home)
+make system-disk  # build the ext4 system volume (/bin, /app, /lib, /etc, /tmp, /home)
 make run          # boot in QEMU with the test and system disks; the kernel log
                   # and then the shell appear on the terminal (the test disk
                   # is a fresh copy each time; the system disk is a copy of
@@ -502,8 +502,10 @@ userland/
   lib/configuration/ libconfiguration.so: the Configuration.* units (settings)
   lib/plugin/       libplugin.so, loaded at run time by coretest
   bin/              One file per program (/bin/<name>)
+  <name>/program.info  A graphical program's folder: <name>.pas, its units,
+                    program.info and own icons, installed as /app/<name>
   sh/               The shell's units (lexer, parser, expansion, execution)
-  notepad/          Notepad's units (files, the document, menus, Go To)
+  notepad/          Notepad (files, the document, menus, Go To)
   files/            The file manager's units (views, places, operations)
   controlpanel/     The Control Panel's units (the window, one per page,
                     the dialogs, asking for an administrator's password)

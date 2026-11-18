@@ -223,8 +223,10 @@ checks.append(('the USB keyboard and tablet were found',
                b'keyboard\n' in output and b'USB keyboard' in received and b'USB tablet' in received))
 
 # The tablet: a double click on the Terminal icon (the desktop's first
-# column, second row, on the 800x600 ramfb screen). The keyboard: a
-# command typed into the terminal.
+# column, fourth row, on the 800x600 ramfb screen: the icons are in the
+# Start menu's order, and Terminal is the fourth of Accessories, after
+# Calculator, Files and Notepad). The keyboard: a command typed into the
+# terminal.
 control = socket.socket(socket.AF_UNIX)
 control.connect(control_path)
 control.recv(65536)
@@ -249,7 +251,7 @@ def click():
     time.sleep(0.1)
 
 
-place_tablet(59, 112)
+place_tablet(59, 264)
 click()
 click()
 deadline = time.time() + 60

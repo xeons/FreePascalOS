@@ -22,7 +22,8 @@
   A program is started with an argument list, an environment, an
   optional working directory and the three standard handles it should
   receive. Bare program names (without a '/') are looked up in the
-  directories listed in the PATH variable.
+  directories listed in the PATH variable, then in the program folders
+  (/app/NAME/NAME: Sys.ProgramFolders).
 }
 unit Sys.Processes;
 
@@ -54,8 +55,9 @@ type
 { Options with the standard handles and environment of this program. }
 procedure DefaultProcessOptions(out Options: TProcessOptions);
 
-{ Finds Name in PATH (or takes it as a path if it contains '/'); False
-  (and Path empty) if it is not there. }
+{ Finds Name in PATH, then in the program folders under /app (or takes
+  it as a path if it contains '/'); False (and Path empty) if it is not
+  there. }
 function FindProgramPath(const Name: string; out Path: string): Boolean;
 
 { Starts a program; returns a process handle or a negative error. }
@@ -120,7 +122,8 @@ uses
   Sys.Kernel,
   Sys.Errors,
   Sys.Files,
-  Sys.Environment;
+  Sys.Environment,
+  Sys.ProgramFolders;
 
 procedure DefaultProcessOptions(out Options: TProcessOptions);
 begin
@@ -177,7 +180,7 @@ begin
     end;
     Start := Finish + 1;
   end;
-  Result := False;
+  Result := FindInProgramFolders(Name, Path);
 end;
 
 function StartProgram(Path: PChar; Arguments: PPChar; const Options: TProcessOptions): Int64;

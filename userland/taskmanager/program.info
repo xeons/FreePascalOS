@@ -1,0 +1,11 @@
+# Task Manager: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/taskmanager/program.info.
+
+[Program]
+Name = Task Manager
+Description = The running programs, processes and performance
+Category = System
+Icon = app-task-manager
+Executable = taskmanager
+Keywords = ["processes", "performance", "end program"]
+Version = 1.0

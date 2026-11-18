@@ -23,8 +23,9 @@
 
   Becomes the display server's shell (one runs at a time) and shows a
   desktop on every display (a drawn wallpaper; on the first, an icon for
-  each program: a double click or Enter starts it) and a taskbar along
-  the bottom of the first display: the Start menu (the programs, Lock,
+  each installed program, from its folder under /app: a double click or
+  Enter starts it) and a taskbar along the bottom of the first display:
+  the Start menu (the programs by category, Lock,
   Log off, Suspend and Shut down, through the session manager that
   started it), a
   button for each window of the other programs (a click
@@ -46,9 +47,11 @@
   Prints what happens, a line each:
 
     place NAME X Y        where NAME is on the screen (pixels): start,
-                          start-COMMAND, start-lock, start-logoff,
-                          start-suspend and start-shutdown (when the
-                          menu opens), icon-COMMAND, task-TITLE,
+                          start-category-CATEGORY, start-lock,
+                          start-logoff, start-suspend and
+                          start-shutdown (when the menu opens),
+                          start-COMMAND (when its category's submenu
+                          opens), icon-COMMAND, task-TITLE,
                           context-ITEM (a button's menu),
                           taskbar-task-manager (the taskbar's menu),
                           clock, notification-N, network-settings (the
@@ -60,6 +63,9 @@
                           (app-text-editor), pictures (its program's
                           own), or none
     task-gone N           that window is gone
+    programs N            how many programs it offers (the folders
+                          under /app); skipped program folder PATH:
+                          WHY for a folder that describes none
     started COMMAND       a program was started (cannot start COMMAND:
                           it is not installed)
     menu TEXT             a Start menu item was chosen

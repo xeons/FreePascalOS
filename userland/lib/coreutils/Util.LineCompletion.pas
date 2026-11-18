@@ -40,6 +40,7 @@ type
     FIsCommand: Boolean;
     procedure CollectMatches(const Directory: string; OnlyFiles: Boolean);
     procedure CollectCommands;
+    procedure CollectProgramFolderCommands;
     function GetMatchCount: Integer;
     function GetMatch(Index: Integer): string;
   public
@@ -69,6 +70,7 @@ uses
   Abi.SystemCalls,
   Sys.Environment,
   Sys.Files,
+  Sys.ProgramFolders,
   Util.Directories,
   Util.Paths;
 
@@ -172,6 +174,21 @@ begin
   for Directory in SplitString(SearchPath, ':') do
     if Directory <> '' then
       CollectMatches(Directory, True);
+  CollectProgramFolderCommands;
+end;
+
+{ The programs in folders of their own (/app/NAME/NAME), which are
+  started by name as well. }
+procedure TCompletion.CollectProgramFolderCommands;
+var
+  Folders: TProgramFolderNames;
+  Name: string;
+begin
+  Folders := ListProgramFolders;
+  for Name in Folders do
+    if StartsStr(FPrefix, Name) and (FMatches.IndexOf(Name) < 0) and
+       IsKind(ProgramFoldersRoot + '/' + Name + '/' + Name, KindFile) then
+      FMatches.Add(Name);
 end;
 
 function TCompletion.CommonPrefix: string;

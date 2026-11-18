@@ -2726,7 +2726,7 @@ ends Notepad and checks that the next one starts with it on.
 
 ### Paint
 
-`paint` (userland/paint, `userland/bin/paint.pas`) draws and edits
+`paint` (userland/paint, `userland/paint/paint.pas`, installed as `/app/paint`) draws and edits
 pictures: a TImage (libimage) in a view that zooms from 12.5% to 800%
 (one image pixel to one pixel of the display at 100%, whatever its
 scale) and scrolls, transparency over a checkerboard and a grid between
@@ -2792,7 +2792,7 @@ a PNG through the save dialog and reads its pixels back with
 
 ### The file manager
 
-`files [FOLDER]` (`userland/bin/files.pas`, units in `userland/files`)
+`files [FOLDER]` (`userland/files/files.pas` with its units, installed as `/app/files`)
 shows a folder (relative to the current one; the user's home without
 one) in one window that goes from folder to folder:
 
@@ -2905,7 +2905,7 @@ finding a name by typing.
 
 ### The terminal window
 
-`terminal` (`userland/bin/terminal.pas`, units in `userland/terminal`)
+`terminal` (`userland/terminal/terminal.pas` with its units, installed as `/app/terminal`)
 is a window running the shell on a pseudo-terminal of its own;
 `terminal` with no arguments opens one (`-x`, `-y` place it, `-e` runs
 another program). Its parts:
@@ -2990,9 +2990,10 @@ lightening downwards, a pale moon with a halo and three translucent
 bands of rolling water, all anti-aliased, drawn once per size into a
 surface of its own and copied from when the window paints. `-w IMAGE`
 names a wallpaper image, kept for when libimage can read one (step 8).
-On the first display the programs' icons (`Desktop.Programs`: Files, Terminal,
-Notepad, Control Panel, Controls tour, Controls demo, Dialogs, Task Manager, Image Viewer, Calculator,
-Volume Control) stand in a grid of
+On the first display the programs' icons (`Desktop.Programs`: every
+program installed in a folder under `/app` and not hidden, read once
+when the desktop starts; see "Program folders") stand, in the Start
+menu's order, in a grid of
 equal cells in columns from the top left, all in logical units: a
 picture above a caption, the selected one tinted with its caption on
 the selection colour. A click selects, a double click (two presses
@@ -3011,7 +3012,9 @@ which the shell keeps out of that display's work area
 (and the desktops too) when the server says the displays changed. The
 Start button (`Desktop.StartButton`: a sunrise mark and a bold caption,
 pressed in while its menu is open) opens the Start menu on the press
-(`Desktop.StartMenu`: the programs, then Lock, Log off, Suspend and Shut down, opened
+(`Desktop.StartMenu`: a submenu for each category with programs, in
+the categories' order, its programs by name, each with its icon; then
+Lock, Log off, Suspend and Shut down, opened
 just above the taskbar). Both ask in a message box, then ask the
 session manager (`Windowing.Sessions`, see "Startup, services and
 sessions"): Log off ends the session, Shut down turns the computer off
@@ -6343,6 +6346,81 @@ I/O manager").
 `Processes.Paths` normalizes a path against the current directory and
 translates it to the kernel's namespace.
 
+### Program folders
+
+Graphical programs are not in `/bin` with the command line tools: each
+is installed in a folder of its own under `/app`, named after the
+program in lower case, holding its executable, a description of it
+(`program.info`) and, if it has them, its own icons:
+
+    /app/notepad/notepad          the executable
+    /app/notepad/program.info     what it is (below)
+    /app/notepad/icons/NAME.ico   its own icons (optional)
+
+Installed so: `notepad`, `calculator`, `paint`, `terminal`, `files`,
+`taskmanager`, `imageviewer`, `volumecontrol`, `controlpanel` (its
+pages are part of it), `controlstour`, `controlsdemo` and `dialogtour`.
+System programs with windows (`displayserver`, `desktop`,
+`sessionmanager`), the tests' window programs (`wintest`, `ownertest`,
+`drawtest`) and command line tools, graphical settings included
+(`displayscale`, `displaymode`, `mousesettings`, `keyboardsettings`,
+`sysinfo`), stay in `/bin`.
+
+`program.info` is a settings file (the format of "Settings":
+`Configuration.Documents`, `Configuration.Values`) with one section:
+
+    [Program]
+    Name = Notepad                          the name shown
+    Description = Write and edit plain text files
+    Category = Accessories
+    Icon = app-text-editor                  an icon name
+    Executable = notepad                    the file in the folder
+    Keywords = ["text", "editor", "write"]  optional
+    Version = 1.0                           optional
+    Hidden = false                          optional
+
+Name, Category and Executable are required; the Executable is a file
+name in the folder (no path). Category is one of Accessories, Games,
+Graphics, Internet, Multimedia, Development, System and Settings (the
+order the Start menu shows them in). Icon defaults to `app-generic`;
+the folder's `icons/ICON.ico` (one ICO file with the theme's sizes, 16
+to 96 pixels) is used before the theme's `/usr/share/icons/ICON.ico`.
+Keywords are a list (or one string split at `;` and `,`). `Hidden =
+true` (or `NoMenu = true`) keeps a program, a helper or an applet,
+out of the menu and off the desktop while it can still be started by
+name. Keys and category names are read in any case; an unknown key or a
+line that cannot be read is reported but not fatal; a missing or wrong
+required key makes the folder no program.
+
+Reading them is libconfiguration's: `Configuration.ProgramInfo`
+(`ParseProgramInfo`: the record, whether it is valid, the problems)
+and `Configuration.ProgramFolders` (`DiscoverPrograms`: every folder
+of `/app` whose description is valid and whose executable is there,
+sorted by category, then name, the folders left out with why;
+`ShownPrograms`, `FindProgramByExecutable`, `FindProgramByFolder`,
+`ProgramExecutablePath`, `ProgramIconName`: the folder's icon file as a
+full path, else the theme's name, which `Controls.IconFiles` both
+takes). Neither uses anything but the runtime library, so both are
+checked on the host (`make settings-test`, `SettingsTest.Programs`,
+which also checks every `program.info` of the source tree). The
+desktop builds its icons and its Start menu from the list
+(`Desktop.Programs`) and logs `programs N`, and `skipped program folder
+PATH: WHY` for each folder left out.
+
+Programs are still started by name. `FindProgramPath`
+(`Sys.Processes`) looks in `PATH` first, then in the program folders
+(`Sys.ProgramFolders.FindInProgramFolders`: `/app/NAME/NAME`, else the
+first `/app/*/NAME`), so typing `notepad` in the shell or a terminal,
+`env`, the desktop, Files' file associations and the Volume Control's
+Sound Settings all find them, and the shell completes their names.
+
+In the source tree each such program is a folder `userland/NAME/`
+with `NAME.pas` (the program), its units, its `program.info` and its
+optional `icons/`. `userland/userland.mk` builds every folder that has
+a `program.info` (`APP_NAMES`) into `build/ARCH/user/app/NAME/`, and
+`scripts/make-system-disk.sh` copies that to `/app` on the system disk,
+for both architectures.
+
 ### Executables and shared libraries
 
 Programs and libraries are position independent ELF files (`ld -pie` and
@@ -6410,7 +6488,8 @@ independent) against the Free Pascal runtime library:
 - **libsystem.so** – `Sys.Kernel` (one wrapper per system call),
   `Sys.Memory` (the runtime's heap: one heap per process), `Sys.Streams`
   (buffered standard input, output and error, with strings written and
-  lines read as strings), `Sys.Text` (character classes), `Sys.Files`, `Sys.Processes` (PATH search, start, wait),
+  lines read as strings), `Sys.Text` (character classes), `Sys.Files`, `Sys.Processes` (PATH search, then the
+  program folders, start, wait), `Sys.ProgramFolders` (executables under `/app`),
   `Sys.Environment`, `Sys.Time`, `Sys.TimeZones` (the time zone
   database) and `Sys.LocalTime` (local times, the system's zone, setting
   it and the clock), `Sys.Libraries`, `Sys.Information`,

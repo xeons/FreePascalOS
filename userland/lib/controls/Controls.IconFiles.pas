@@ -30,7 +30,9 @@
   decoded, and whatever is made is kept: a file is read once, a size
   made once (until ForgetIconFiles). A name with no file is remembered
   too, so asking again costs nothing; the caller then draws its own
-  picture (Controls.IconTheme keeps the drawn stock icons for that).
+  picture (Controls.IconTheme keeps the drawn stock icons for that). A
+  full path in place of a name is that icon file: a program's own icon
+  in its folder (Configuration.ProgramFolders.ProgramIconName).
 
   No windows here (only libimage), so the host checks it on the real
   files (make icon-test).
@@ -218,16 +220,30 @@ begin
   Result := CurrentDirectory + '/' + Name + IconFileExtension;
 end;
 
+{ The file of icon Name: the theme's, or Name itself when it is a full
+  path (a program's own icon, Configuration.ProgramFolders); '' for a
+  name that is neither. }
+function IconSourceFile(const Name: string): string;
+begin
+  Result := '';
+  if Name = '' then
+    Exit;
+  if Name[1] = '/' then
+    Result := Name
+  else if Pos('/', Name) = 0 then
+    Result := IconFileName(Name);
+end;
+
 function ReadIconFile(const Name: string): TIconFile;
 var
   Data: TBytes;
   Directory: TIconDirectory;
 begin
   Result := nil;
-  if (Name = '') or (Pos('/', Name) > 0) then
+  if IconSourceFile(Name) = '' then
     Exit;
   try
-    Data := ReadFileBytes(IconFileName(Name));
+    Data := ReadFileBytes(IconSourceFile(Name));
   except
     on Exception do
       Exit;

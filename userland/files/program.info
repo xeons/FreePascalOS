@@ -1,0 +1,11 @@
+# Files: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/files/program.info.
+
+[Program]
+Name = Files
+Description = Browse, open and organise files and folders
+Category = Accessories
+Icon = app-file-manager
+Executable = files
+Keywords = ["folders", "file manager", "browse"]
+Version = 1.0

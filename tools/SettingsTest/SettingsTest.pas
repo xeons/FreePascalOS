@@ -33,7 +33,8 @@
   safe writes' renames, rewrites that change nothing kept silent
   (SettingsTest.Changes); the network's
   settings and the network service's state files
-  (SettingsTest.Network). Every check
+  (SettingsTest.Network); the programs' folders and their program.info
+  files (SettingsTest.Programs). Every check
   prints a line; the exit code is 1 if any failed.
 
   This is a host tool, built with the normal Free Pascal runtime library.
@@ -56,7 +57,8 @@ uses
   Configuration.Settings,
   SettingsTest.MemoryStorage,
   SettingsTest.Network,
-  SettingsTest.Changes;
+  SettingsTest.Changes,
+  SettingsTest.Programs;
 
 var
   Failures: Integer = 0;
@@ -530,6 +532,9 @@ begin
   TestChangeDetection(@Check);
   TestNetworkSettings(@Check);
   TestNetworkState(@Check);
+  TestProgramInfo(@Check);
+  TestProgramFolders(@Check);
+  TestSourceProgramInfo(@Check);
   WriteLn('[settings] ', Checks - Failures, ' passed, ', Failures, ' failed');
   if Failures > 0 then
     Halt(1);

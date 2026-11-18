@@ -1,0 +1,11 @@
+# Dialogs tour: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/dialogtour/program.info.
+
+[Program]
+Name = Dialogs tour
+Description = The common dialogs: open, save, colour and font
+Category = Development
+Icon = app-dialogs
+Executable = dialogtour
+Keywords = ["dialogs", "demo"]
+Version = 1.0

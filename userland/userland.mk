@@ -113,6 +113,16 @@ TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 USER_PROGRAM_SOURCES := $(wildcard userland/bin/*.pas)
 USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_PROGRAM_SOURCES))
 
+# Graphical programs live in folders of their own: every userland/<name>/
+# with a program.info (its description: Configuration.ProgramInfo) is
+# built from userland/<name>/<name>.pas and installed as /app/<name>/,
+# the executable, program.info and the folder's own icons (icons/*.ico).
+APP_PROGRAM_OUTPUT := $(USER_BUILD_DIRECTORY)/app-programs
+APP_OUTPUT := $(USER_BUILD_DIRECTORY)/app
+APP_NAMES := $(patsubst userland/%/program.info,%,$(wildcard userland/*/program.info))
+APP_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,$(APP_NAMES))
+APP_FOLDERS := $(addsuffix /.installed,$(addprefix $(APP_OUTPUT)/,$(APP_NAMES)))
+
 # The system's fonts (/lib/fonts/terminus): Terminus in the sizes it comes
 # in, regular and bold, unpacked; with its licence (SIL Open Font
 # License), which has to go with it.
@@ -149,7 +159,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
-	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP)
+	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
 		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
@@ -337,7 +347,8 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) $(TLSTEST_SOURCE)
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
-GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest controlsdemo controlstour dialogtour notepad files terminal sessionmanager taskmanager sysinfo calculator imageviewer paint)
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest sessionmanager sysinfo) \
+	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad files terminal taskmanager calculator imageviewer paint)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
 	-ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
@@ -345,7 +356,7 @@ $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS)
 $(GRAPHICAL_PROGRAMS): $(CONTROLS_LIBRARY)
 # Graphical programs that set the sound outputs too.
-GRAPHICAL_SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,controlpanel desktop volumecontrol)
+GRAPHICAL_SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,desktop) $(addprefix $(APP_PROGRAM_OUTPUT)/,controlpanel volumecontrol)
 $(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage \
 	-lcompression -ldrawing -laudio
 $(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
@@ -398,15 +409,34 @@ $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)
 
-$(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
+# Compiles program $* from $< (its other units in userland/$*) and links
+# it as $@: a /bin program or a program folder's executable.
+define BUILD_USER_PROGRAM
 	@rm -rf $(USER_BUILD_DIRECTORY)/programs/$*
-	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(USER_PROGRAM_OUTPUT)
+	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(dir $@)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
 		-Fu$(CORE_LIBRARY_OBJECTS) $(EXTRA_PROGRAM_UNITS) -Fuuserland/$* \
 		-FU$(USER_BUILD_DIRECTORY)/programs/$* -FE$(USER_BUILD_DIRECTORY)/programs/$* $<
 	$(LD) -pie --no-dynamic-linker $(USER_LINK_FLAGS) -e _start -o $@ \
 		$(USER_BUILD_DIRECTORY)/programs/$*/*.o $(RTL_USER_DIRECTORY)/si_prc.o \
 		-L$(USER_LIBRARY_OUTPUT) $(EXTRA_PROGRAM_LIBRARIES) -lcoreutils -lcryptography -lsystem
+endef
+
+$(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
+	$(BUILD_USER_PROGRAM)
+
+$(APP_PROGRAM_OUTPUT)/%: userland/$$*/$$*.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
+	$(BUILD_USER_PROGRAM)
+
+# A program's folder as installed (/app/<name>). A copy of the program
+# an older build left in /bin, before it had a folder, goes.
+$(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% userland/%/program.info $$(wildcard userland/$$*/icons/*.ico)
+	@rm -rf $(APP_OUTPUT)/$*
+	@rm -f $(USER_PROGRAM_OUTPUT)/$*
+	@mkdir -p $(APP_OUTPUT)/$*
+	cp $(APP_PROGRAM_OUTPUT)/$* userland/$*/program.info $(APP_OUTPUT)/$*/
+	@if [ -d userland/$*/icons ]; then mkdir -p $(APP_OUTPUT)/$*/icons; cp userland/$*/icons/*.ico $(APP_OUTPUT)/$*/icons/; fi
+	@touch $@
 
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)

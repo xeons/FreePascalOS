@@ -1,0 +1,11 @@
+# Paint: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/paint/program.info.
+
+[Program]
+Name = Paint
+Description = Draw and edit pictures
+Category = Graphics
+Icon = app-paint
+Executable = paint
+Keywords = ["draw", "picture", "image editor"]
+Version = 1.0

@@ -1,0 +1,11 @@
+# Image Viewer: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/imageviewer/program.info.
+
+[Program]
+Name = Image Viewer
+Description = Look at pictures in any format the system reads
+Category = Graphics
+Icon = app-image-viewer
+Executable = imageviewer
+Keywords = ["pictures", "photos", "images"]
+Version = 1.0
