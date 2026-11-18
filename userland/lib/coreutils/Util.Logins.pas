@@ -65,6 +65,11 @@ function AutomaticLoginName(out Name: string): Boolean;
   Options say. A process handle, or minus an error. }
 function StartAsUser(const Account: TLoginAccount; const Arguments: array of string;
   const Options: TProcessOptions): Int64;
+{ The same with Variables ("NAME=value") added to the user's
+  environment, replacing those of the same name (the SSH server's TERM,
+  SSH_CONNECTION, LANG, ...). }
+function StartAsUserWithVariables(const Account: TLoginAccount; const Arguments: array of string;
+  const Variables: array of string; const Options: TProcessOptions): Int64;
 
 implementation
 
@@ -140,15 +145,32 @@ begin
   Result[5] := 'TERM=' + Terminal;
 end;
 
-function StartAsUser(const Account: TLoginAccount; const Arguments: array of string;
-  const Options: TProcessOptions): Int64;
+{ Sets NAME=value in Environment, in place of a variable of that name. }
+procedure PutVariable(var Environment: TStringArray; const Assignment: string);
 var
-  Environment: TStringArray;
+  NameLength: Integer;
+  Index: Integer;
+begin
+  NameLength := Pos('=', Assignment);
+  if NameLength <= 1 then
+    Exit;
+  for Index := 0 to High(Environment) do
+    if Copy(Environment[Index], 1, NameLength) = Copy(Assignment, 1, NameLength) then
+    begin
+      Environment[Index] := Assignment;
+      Exit;
+    end;
+  SetLength(Environment, Length(Environment) + 1);
+  Environment[High(Environment)] := Assignment;
+end;
+
+function StartWithEnvironment(const Account: TLoginAccount; const Arguments: array of string;
+  const Environment: TStringArray; const Options: TProcessOptions): Int64;
+var
   EnvironmentVector: TTextVector;
   ArgumentVector: TTextVector;
   UserOptions: TProcessOptions;
 begin
-  Environment := LoginEnvironment(Account);
   EnvironmentVector := TextVector(Environment);
   ArgumentVector := TextVector(Arguments);
   UserOptions := Options;
@@ -156,6 +178,24 @@ begin
   UserOptions.WorkingDirectory := PChar(Account.Home);
   UserOptions.Identity := @Account.Identity;
   Result := StartProgram(ArgumentVector[0], @ArgumentVector[0], UserOptions);
+end;
+
+function StartAsUser(const Account: TLoginAccount; const Arguments: array of string;
+  const Options: TProcessOptions): Int64;
+begin
+  Result := StartWithEnvironment(Account, Arguments, LoginEnvironment(Account), Options);
+end;
+
+function StartAsUserWithVariables(const Account: TLoginAccount; const Arguments: array of string;
+  const Variables: array of string; const Options: TProcessOptions): Int64;
+var
+  Environment: TStringArray;
+  Index: Integer;
+begin
+  Environment := LoginEnvironment(Account);
+  for Index := 0 to High(Variables) do
+    PutVariable(Environment, Variables[Index]);
+  Result := StartWithEnvironment(Account, Arguments, Environment, Options);
 end;
 
 end.

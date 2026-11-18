@@ -46,11 +46,14 @@ uses
   Crypto.Ghash,
   Crypto.AesGcm,
   Crypto.Hkdf,
+  Crypto.Curve25519Field,
   Crypto.X25519,
+  Crypto.Ed25519,
   Crypto.BigNumbers,
   Crypto.Rsa,
   Crypto.EllipticCurves,
-  Crypto.Ecdsa;
+  Crypto.Ecdsa,
+  Crypto.KeyGeneration;
 
 implementation
 
