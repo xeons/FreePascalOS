@@ -21,9 +21,11 @@
   with it. A controller is found on PCI (class 0Ch, subclass 03h,
   interface 30h) or as an ACPI platform device (PNP0D10: the Raspberry
   Pi 4's VL805, which its firmware set up behind the BCM2711 PCIe bridge
-  and describes by its registers, interrupt, _CCA and _DMA). Both
-  attachments share everything past finding the registers and the
-  interrupt. All of the controller's memory (contexts, rings,
+  and describes by its registers, interrupt, _CCA and _DMA), or as a
+  device tree platform device: "snps,dwc3", the Raspberry Pi 5's two
+  DesignWare USB3 controllers in RP1, whose global registers
+  Drivers.Dwc3 sets up for host mode first. All attachments share
+  everything past finding the registers and the interrupt. All of the controller's memory (contexts, rings,
   scratchpads, each device's DMA pages) is DMA memory shared with it
   (Io.Dma): uncached for a controller that does not snoop the caches,
   and handed over at its bus address.
@@ -219,6 +221,7 @@ uses
   Io.PciMessageInterrupts,
   Io.Dma,
   Io.PlatformDevices,
+  Drivers.Dwc3,
   Debug.Output;
 
 const
@@ -1450,7 +1453,10 @@ begin
   else
   begin
     DebugWrite(@Controller^.Platform^.Path[0]);
-    DebugWrite(' (ACPI ');
+    if Controller^.Platform^.DeviceTreeNode = NoDeviceTreeNode then
+      DebugWrite(' (ACPI ')
+    else
+      DebugWrite(' (DT ');
     DebugWrite(@Controller^.Platform^.HardwareId[0]);
     DebugWrite(')');
   end;
@@ -1586,13 +1592,17 @@ begin
   Controller^.Capabilities := PByte(MapPlatformMemory(Device, 0, Length));
   if (Controller^.Capabilities = nil) or (Length < PortRegisterBase) then
     Exit;
+  { A DesignWare USB3 block (the Pi 5's RP1 has two): its global
+    registers set up for host mode first. }
+  if PlatformDeviceHasId(Device, 'snps,dwc3') and not PrepareDwc3Host(Device, Controller^.Capabilities) then
+    Exit;
   PlatformDevicesFound := PlatformDevicesFound + StartController(Controller);
   Result := True;
 end;
 
 const
   { xHCI controllers with and without the USB debug capability. }
-  PlatformControllerIds: array[0..2] of PChar = ('PNP0D10', 'PNP0D15', nil);
+  PlatformControllerIds: array[0..3] of PChar = ('PNP0D10', 'PNP0D15', 'snps,dwc3', nil);
   PlatformControllerDriver: TPlatformDriver = (
     Name: 'xhci';
     Ids: @PlatformControllerIds[0];

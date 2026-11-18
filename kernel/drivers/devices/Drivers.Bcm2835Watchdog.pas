@@ -35,6 +35,11 @@
   peripheral base + B880h on the same chips: the board is a Raspberry Pi,
   and the revision word (Drivers.RaspberryPiBoard) names a BCM2837 or a
   BCM2711. On those it is armed by default (Io.Watchdog), for 15 s.
+
+  After a native boot the device tree names the block itself: the
+  Raspberry Pi 5's "brcm,bcm2712-pm" (at 10_7D20_0000), or a Pi 3 or 4
+  tree's "brcm,bcm2835-pm"/"brcm,bcm2835-pm-wdt"; the same registers,
+  armed by default too.
 }
 unit Drivers.Bcm2835Watchdog;
 
@@ -42,7 +47,7 @@ unit Drivers.Bcm2835Watchdog;
 
 interface
 
-{ Registers the watchdog if this is a Raspberry Pi 3 or 4. }
+{ Registers the watchdog if this is a Raspberry Pi 3, 4 or 5. }
 function InitializeBcm2835Watchdog: Boolean;
 
 implementation
@@ -52,6 +57,7 @@ uses
   Kernel.Arch.Cpu,
   Hal.Platform,
   Memory.DeviceMapping,
+  Io.PlatformDevices,
   Drivers.VideoCoreMailbox,
   Io.Watchdog,
   Debug.Output;
@@ -145,27 +151,16 @@ begin
   Result := (Processor = ProcessorBcm2837) or (Processor = ProcessorBcm2711);
 end;
 
-function InitializeBcm2835Watchdog: Boolean;
+procedure RegisterDevice(Physical: QWord; Name: PChar; Source: PChar);
 var
-  MailboxAddress: QWord;
-  PeripheralBase: QWord;
   Device: TWatchdogDevice;
 begin
-  Result := False;
-  MailboxAddress := VideoCoreMailboxPhysicalAddress;
-  if (MailboxAddress = 0) or ((MailboxAddress and $FFFF) <> MailboxOffset) or not IsSupportedBoard then
-    Exit;
-  PeripheralBase := MailboxAddress - MailboxOffset;
-  Registers := PByte(MapDeviceMemory(PeripheralBase + PowerManagerOffset, RegisterSpan));
-  if Registers = nil then
-    Exit;
-
   Device.Routines.Start := @StartWatchdog;
   Device.Routines.Pet := @PetWatchdog;
   Device.Routines.Stop := @StopWatchdog;
   Device.Routines.ResetNow := @ResetNow;
   Device.Context := nil;
-  Device.Name := 'BCM2835 PM watchdog';
+  Device.Name := Name;
   Device.MaximumSeconds := MaximumSeconds;
   Device.ArmByDefault := True;
   Device.DefaultSeconds := MaximumSeconds;
@@ -173,16 +168,67 @@ begin
 
   DebugBeginMessage;
   DebugWriteTag('watchdog');
-  DebugWrite('BCM2835 PM watchdog at ');
-  DebugWriteHex(PeripheralBase + PowerManagerOffset, 8);
-  DebugWrite(' (from the mailbox at ');
-  DebugWriteHex(MailboxAddress, 8);
+  DebugWrite(Name);
+  DebugWrite(' at ');
+  DebugWriteHex(Physical, 8);
+  DebugWrite(' (');
+  DebugWrite(Source);
   DebugWrite('), up to ');
   DebugWriteDecimal(MaximumSeconds);
   DebugWrite(' s; reset status ');
   DebugWriteHex(ReadRegister(ResetStatus), 8);
   DebugWriteLine('');
   DebugEndMessage;
+end;
+
+{ The device tree's power manager block, if there is one. }
+function InitializeFromDeviceTree: Boolean;
+const
+  Ids: array[0..2] of PChar = ('brcm,bcm2712-pm', 'brcm,bcm2835-pm', 'brcm,bcm2835-pm-wdt');
+var
+  IdIndex: Integer;
+  Index: Integer;
+  Device: PPlatformDevice;
+  Physical: QWord;
+  Length: QWord;
+begin
+  Result := False;
+  for IdIndex := 0 to High(Ids) do
+  begin
+    Index := FindPlatformDevice(Ids[IdIndex], 0);
+    if Index < 0 then
+      Continue;
+    Device := PlatformDeviceAt(Index);
+    if not PlatformMemoryRange(Device, 0, Physical, Length) or (Length < WatchdogCount + 4) then
+      Continue;
+    Registers := PByte(MapDeviceMemory(Physical, RegisterSpan));
+    if Registers = nil then
+      Continue;
+    Device^.DriverName := 'watchdog';
+    if IdIndex = 0 then
+      RegisterDevice(Physical, 'BCM2712 PM watchdog', Ids[IdIndex])
+    else
+      RegisterDevice(Physical, 'BCM2835 PM watchdog', Ids[IdIndex]);
+    Exit(True);
+  end;
+end;
+
+function InitializeBcm2835Watchdog: Boolean;
+var
+  MailboxAddress: QWord;
+  PeripheralBase: QWord;
+begin
+  Result := InitializeFromDeviceTree;
+  if Result then
+    Exit;
+  MailboxAddress := VideoCoreMailboxPhysicalAddress;
+  if (MailboxAddress = 0) or ((MailboxAddress and $FFFF) <> MailboxOffset) or not IsSupportedBoard then
+    Exit;
+  PeripheralBase := MailboxAddress - MailboxOffset;
+  Registers := PByte(MapDeviceMemory(PeripheralBase + PowerManagerOffset, RegisterSpan));
+  if Registers = nil then
+    Exit;
+  RegisterDevice(PeripheralBase + PowerManagerOffset, 'BCM2835 PM watchdog', 'from the mailbox');
   Result := True;
 end;
 

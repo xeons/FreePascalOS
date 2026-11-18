@@ -34,7 +34,12 @@
       PPI, PSCI by SMC, the four processors by MPIDR;
     - interrupts: an SPI, interrupts-extended with a controller that is
       not the GIC, the interrupt-maps of both PCI host bridges;
-    - the ECAM host bridge: configuration space, buses, windows.
+    - the ECAM host bridge: configuration space, buses, windows;
+    - the RP1 root complex as a host that is not ECAM (segment, windows,
+      inbound windows, the MIP it sends messages to) and RP1's own node
+      (Firmware.DeviceTreeRp1): its peripheral window, peripherals'
+      registers as offsets into it and as the processor's addresses,
+      their RP1 interrupt numbers and triggers, their DMA windows.
 
   Prints every failed check and exits with 1 if there was one.
 }
@@ -50,7 +55,8 @@ uses
   Firmware.DeviceTree,
   Firmware.DeviceTreeInterrupts,
   Firmware.DeviceTreeMachine,
-  Firmware.DeviceTreePci;
+  Firmware.DeviceTreePci,
+  Firmware.DeviceTreeRp1;
 
 var
   Failures: Integer = 0;
@@ -164,9 +170,14 @@ begin
   CheckNumber(PciAddressSpace(Child), PciSpaceMemory64, 'the second window''s space');
   CheckNumber(AddressValue(Child), $400000000, 'the second window''s bus address');
   CheckNumber(Physical, $1C00000000, 'the second window''s address');
-  Check(NodeIsDmaCoherent(Tree^, Node), 'the root complex snoops');
-  Check(ReadDmaRange(Tree^, Node, 0, BusStart, Physical, Size) and (BusStart = $1000000000) and
-    (Physical = 0), 'the root complex''s inbound window');
+  Check(not NodeIsDmaCoherent(Tree^, Node), 'the root complex does not snoop');
+  Check(ReadDmaRange(Tree^, Node, 0, BusStart, Physical, Size) and (BusStart = 0) and
+    (Physical = $1F00000000) and (Size = $400000), 'the root complex''s inbound window onto RP1');
+  Check(ReadDmaRange(Tree^, Node, 1, BusStart, Physical, Size) and (BusStart = $1000000000) and
+    (Physical = 0) and (Size = $1000000000), 'the root complex''s inbound window onto RAM');
+  Check(ReadDmaRange(Tree^, Node, 2, BusStart, Physical, Size) and (BusStart = $FFFFFFF000) and
+    (Physical = $1000130000) and (Size = $1000), 'the root complex''s inbound window onto the MIP');
+  Check(not ReadDmaRange(Tree^, Node, 3, BusStart, Physical, Size), 'three inbound windows');
 end;
 
 procedure TestMachine;
@@ -233,6 +244,86 @@ begin
   Check(not FindDeviceTreePciRoute(0, 0, 2, 0, Gic), 'slot 2 is not mapped');
 end;
 
+procedure TestRp1;
+var
+  Host: LongInt;
+  Rp1: LongInt;
+  Node: LongInt;
+  Window: TRp1Window;
+  Offset: QWord;
+  Size: QWord;
+  Physical: QWord;
+  BusStart: QWord;
+  Interrupt: TRp1Interrupt;
+  PciHost: TDeviceTreePciHost;
+  Address: TDeviceTreeAddress;
+  Mip: LongInt;
+  Bus: LongInt;
+begin
+  Host := FindNodeByPath(Tree^, '/axi/pcie@1000120000');
+  DescribeDeviceTreePciHost(Host, 0, PciHost);
+  CheckNumber(PciHost.Segment, 2, 'the RP1 host''s segment');
+  CheckNumber(PciHost.ConfigurationBase, 0, 'the RP1 host is not ECAM');
+  CheckNumber(PciHost.WindowCount, 2, 'the RP1 host''s windows');
+  CheckNumber(PciHost.Windows[0].PhysicalAddress, $1F00000000, 'the RP1 host''s 32-bit window');
+  Check(PciHost.Windows[1].Prefetchable, 'the 64-bit window is prefetchable');
+  CheckNumber(DeviceTreePciHostCount, 1, 'the RP1 host is not an ECAM host');
+
+  Mip := FindNodeByPhandle(Tree^, 4);
+  Check(NodeIsCompatible(Tree^, Mip, 'brcm,bcm2712-mip'), 'msi-parent names the MIP');
+  Check(ReadRegister(Tree^, Mip, 1, Address, Size) and (AddressValue(Address) = $FFFFFFF000) and
+    (Size = $1000), 'the MIP''s doorbell as the PCI bus sees it');
+  Check(NodeRegisterPhysical(Tree^, Mip, 0, Physical, Size) and (Physical = $1000130000), 'the MIP''s registers');
+
+  Rp1 := FindRp1Node(Tree^, Host);
+  Check(DeviceTreeTextIsEqual(NodeName(Tree^, Rp1), 'rp1'), 'the RP1 node');
+  Check(FindRp1Node(Tree^, FindNodeByPath(Tree^, '/pcie@10000000')) = NoNode, 'no RP1 on the ECAM host');
+  ReadRp1Window(Tree^, Rp1, Window);
+  Check(Window.FromRanges, 'RP1''s window from its ranges');
+  CheckNumber(Window.ChildBase, $C040000000, 'RP1''s window''s own address');
+  CheckNumber(Window.PciAddress, 0, 'RP1''s window''s bus address');
+  CheckNumber(Window.PciSpace, PciSpaceMemory32, 'RP1''s window''s space');
+  CheckNumber(Window.Size, $410000, 'RP1''s window''s size');
+
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/ethernet@100000');
+  Check(NodeIsWithin(Tree^, Node, Rp1), 'the Ethernet controller is RP1''s');
+  Check(not NodeIsWithin(Tree^, Host, Rp1), 'the host is not RP1''s');
+  Check(Rp1RegisterOffset(Tree^, Window, Node, 0, Offset, Size), 'the Ethernet controller''s registers');
+  CheckNumber(Offset, $100000, 'the Ethernet controller''s offset in RP1''s window');
+  CheckNumber(Size, $4000, 'the Ethernet controller''s register size');
+  Check(NodeRegisterPhysical(Tree^, Node, 0, Physical, Size), 'the Ethernet controller through the ranges');
+  CheckNumber(Physical, $1F00100000, 'the Ethernet controller''s address for the processor');
+  CheckNumber(Rp1NodeInterruptCount(Tree^, Node), 1, 'the Ethernet controller''s interrupts');
+  Check(ReadRp1Interrupt(Tree^, Window, Node, 0, Interrupt), 'the Ethernet controller''s interrupt');
+  CheckNumber(Interrupt.Number, 6, 'the Ethernet controller''s RP1 interrupt');
+  Check(Interrupt.LevelTriggered, 'the Ethernet controller''s interrupt is level triggered');
+  Bus := FindDmaRangesBus(Tree^, Node);
+  Check(Bus = Rp1, 'the Ethernet controller''s DMA goes through RP1''s dma-ranges');
+  Check(ReadDmaRange(Tree^, Bus, 0, BusStart, Physical, Size) and (BusStart = $1000000000) and
+    (Physical = 0) and (Size = $1000000000), 'RP1 sees RAM at 10_0000_0000');
+  Check(ReadDmaRange(Tree^, Bus, 1, BusStart, Physical, Size) and (BusStart = $C040000000) and
+    (Physical = $1F00000000), 'RP1 sees its own window');
+  Check(not NodeIsDmaCoherent(Tree^, Node), 'RP1''s devices do not snoop');
+
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/usb@200000');
+  Check(Rp1RegisterOffset(Tree^, Window, Node, 0, Offset, Size) and (Offset = $200000) and
+    (Size = $100000), 'the USB controller''s registers');
+  Check(ReadRp1Interrupt(Tree^, Window, Node, 0, Interrupt) and (Interrupt.Number = 31) and
+    not Interrupt.LevelTriggered, 'the USB controller''s edge interrupt 31');
+
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/serial@30000');
+  Check(ReadRp1Interrupt(Tree^, Window, Node, 0, Interrupt) and (Interrupt.Number = 25), 'the UART''s interrupt');
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/dsi@110000');
+  Check(not NodeIsEnabled(Tree^, Node), 'the display controller is disabled');
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/sram@400000');
+  Check(Rp1RegisterOffset(Tree^, Window, Node, 0, Offset, Size) and (Offset = $400000) and
+    (Size = $10000), 'the shared memory, in BAR2''s part of the window');
+  Node := FindNodeByPath(Tree^, '/axi/pcie@1000120000/rp1/sram@400000/shmem@ff00');
+  Check(not Rp1RegisterOffset(Tree^, Window, Node, 0, Offset, Size), 'a grandchild is not read as RP1''s');
+  Check(not ReadRp1Interrupt(Tree^, Window, FindNodeByPath(Tree^, '/soc/serial'), 0, Interrupt),
+    'a GIC interrupt is not RP1''s');
+end;
+
 begin
   if ParamCount < 1 then
   begin
@@ -250,6 +341,7 @@ begin
     TestMachine;
     TestInterrupts;
     TestPci;
+    TestRp1;
   end;
   if Failures > 0 then
   begin

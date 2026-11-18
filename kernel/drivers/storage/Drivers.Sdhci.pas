@@ -30,7 +30,11 @@
       it), with their quirks (Drivers.Sdhci.Host): the base clock from
       the VideoCore firmware, no card detect, DMA only below 1 GiB
       without a _DMA saying more (EMMC2); 32-bit register writes with a
-      pause after each, no DMA, no high speed bit, 3.3 V (Arasan).
+      pause after each, no DMA, no high speed bit, 3.3 V (Arasan);
+    - as device tree platform devices: the Raspberry Pi 5's SD card slot
+      (brcm,bcm2712-sdhci, Drivers.Sdhci.Bcm2712: its cfg block set for
+      SD and presence forced, the card taken as present, the base clock
+      from the capabilities or the tree's clock).
 
   The card in a slot (Drivers.Sdhci.Card) becomes a whole disk of 512-byte
   blocks (disk0, disk1, ...; partitions and file systems follow as for
@@ -77,6 +81,7 @@ uses
   Drivers.Sdhci.Registers,
   Drivers.Sdhci.Host,
   Drivers.Sdhci.Card,
+  Drivers.Sdhci.Bcm2712,
   Drivers.VideoCoreMailbox,
   Debug.Output;
 
@@ -182,7 +187,10 @@ begin
   else
   begin
     DebugWrite(@Slot^.Platform^.Path[0]);
-    DebugWrite(' (ACPI ');
+    if Slot^.Platform^.DeviceTreeNode = NoDeviceTreeNode then
+      DebugWrite(' (ACPI ')
+    else
+      DebugWrite(' (DT ');
     DebugWrite(@Slot^.Platform^.HardwareId[0]);
     DebugWrite(')');
   end;
@@ -417,10 +425,18 @@ var
   { Cards the platform probe brought up, for the caller. }
   PlatformCardsFound: Integer;
 
-{ The quirks of the ACPI devices this driver takes. }
+{ The quirks of the platform devices this driver takes. }
 procedure SetPlatformQuirks(Device: PPlatformDevice; var Quirks: TSdhciQuirks);
+var
+  TreeClockHertz: LongWord;
 begin
-  if PlatformDeviceHasId(Device, 'BRCME88C') then
+  if PlatformDeviceHasId(Device, 'brcm,bcm2712-sdhci') then
+  begin
+    PrepareBcm2712Slot(Device, TreeClockHertz);
+    Quirks.Flags := QuirkBrokenCardDetect;
+    Quirks.FallbackClockHertz := TreeClockHertz;
+  end
+  else if PlatformDeviceHasId(Device, 'BRCME88C') then
   begin
     Quirks.Flags := QuirkBrokenCardDetect or QuirkClockFromFirmware;
     if not Device^.HasDmaObject then
@@ -442,6 +458,8 @@ var
   Length: QWord;
 begin
   Result := False;
+  if PlatformDeviceHasId(Device, 'brcm,bcm2712-sdhci') and Bcm2712SlotHoldsSdioDevice(Device) then
+    Exit;
   Slot := PSdSlot(AllocateZeroedKernelMemory(SizeOf(TSdSlot)));
   if Slot = nil then
     Exit;
@@ -458,7 +476,7 @@ begin
 end;
 
 const
-  PlatformSlotIds: array[0..2] of PChar = ('BRCME88C', 'BCM2847', nil);
+  PlatformSlotIds: array[0..3] of PChar = ('BRCME88C', 'BCM2847', 'brcm,bcm2712-sdhci', nil);
   PlatformSlotDriver: TPlatformDriver = (
     Name: 'sdhci';
     Ids: @PlatformSlotIds[0];

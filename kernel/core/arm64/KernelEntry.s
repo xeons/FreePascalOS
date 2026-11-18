@@ -56,6 +56,11 @@ ArchKernelEntry:
     .set START_PROCESSOR, 48
     .set START_ENTRY_POINT, 56
 
+    // Only the page this code is on is identity mapped while it turns
+    // translation on (Kernel.Arch.ProcessorStartup), so the code and its
+    // literal pool (.ltorg below) must not cross into the next page:
+    // they start a page of their own.
+    .balign 4096
     .global ArchSecondaryEntry
     .type ArchSecondaryEntry, %function
 ArchSecondaryEntry:

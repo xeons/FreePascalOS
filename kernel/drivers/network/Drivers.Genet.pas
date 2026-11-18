@@ -85,6 +85,7 @@ uses
   Drivers.VideoCoreMailbox,
   Drivers.Genet.Registers,
   Drivers.Genet.Phy,
+  Drivers.EthernetPhy,
   Debug.Output;
 
 const
@@ -111,6 +112,7 @@ type
     Registers: PByte;
     Dma: TDmaAttributes;
     Address: TEthernetAddress;
+    Mdio: TMdioBus;
     PhyAddress: LongWord;
     PhyId: LongWord;
     UsesInterrupts: Boolean;
@@ -603,7 +605,7 @@ var
   Link: TNetworkLinkState;
 begin
   Card := PGenetCard(Context);
-  ReadPhyLink(Card^.Registers, Card^.PhyAddress, Link);
+  ReadPhyLink(Card^.Mdio, Card^.PhyAddress, Link);
   if LinksDiffer(Link, Card^.MacLink) then
     ConfigureMacForLink(Card, Link);
   UpdateNetworkCardLink(@Card^.Card, Link);
@@ -658,6 +660,7 @@ var
   Major: LongWord;
   Minor: LongWord;
   Routines: TNetworkDriverRoutines;
+  PhyStep: PChar;
 begin
   Result := False;
   Card := PGenetCard(AllocateZeroedKernelMemory(SizeOf(TGenetCard)));
@@ -704,13 +707,14 @@ begin
   ResetMac(Card);
   SetUpPort(Card);
   WriteMacAddress(Card);
-  if not FindPhy(Card^.Registers, DefaultPhyAddress, Card^.PhyAddress, Card^.PhyId) then
+  Card^.Mdio := GenetMdioBus(Card^.Registers);
+  if not FindPhy(Card^.Mdio, DefaultPhyAddress, Card^.PhyAddress, Card^.PhyId) then
   begin
     ReportFailure(Device, 'no PHY answers on the MDIO bus');
     Exit;
   end;
   ReportPhy(Card);
-  if not StartPhy(Card^.Registers, Card^.PhyAddress, Card^.PhyId) then
+  if not StartPhy(Card^.Mdio, Card^.PhyAddress, Card^.PhyId, RgmiiReceiveDelay, PhyStep) then
   begin
     ReportFailure(Device, 'the PHY could not be reset');
     Exit;
@@ -721,7 +725,7 @@ begin
     Exit;
   end;
   { Running at gigabit speed with the link down until the PHY says. }
-  ReadPhyLink(Card^.Registers, Card^.PhyAddress, Card^.Card.Link);
+  ReadPhyLink(Card^.Mdio, Card^.PhyAddress, Card^.Card.Link);
   ConfigureMacForLink(Card, Card^.Card.Link);
 
   Card^.UsesInterrupts := ConnectPlatformInterrupt(Device, 0, @HandleGenetInterrupt, Card);

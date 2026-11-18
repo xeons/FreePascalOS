@@ -29,6 +29,13 @@
   MSI, bit 7 means 64-bit addresses, bits 4-6 how many vectors are in
   use - left at one), then the address (low, and high if 64-bit) and the
   16-bit data value.
+
+  Where the messages go: by default to the interrupt routing's own
+  receiver (Io.InterruptRouting: the local APIC, a GICv2m frame). A host
+  bridge whose devices write their messages somewhere else (the Pi 5's
+  PCIe, into the BCM2712's MIP) registers a message controller for its
+  segment (RegisterPciMessageController), and every vector of a device
+  on that segment comes from it.
 }
 unit Io.PciMessageInterrupts;
 
@@ -38,10 +45,26 @@ interface
 
 uses
   Kernel.Interrupts,
+  Io.InterruptRouting,
   Io.Pci;
 
 type
   TPciInterruptKind = (PciInterruptNone, PciInterruptMessage, PciInterruptExtendedMessage);
+
+  { Connects Handler to a fresh vector of a message controller and says
+    what a device writes, and where, to raise it. }
+  TPciMessageControllerConnect = function(Controller: Pointer; Handler: TInterruptHandler; Context: Pointer;
+    out Message: TInterruptMessage): Boolean;
+
+{ The messages of the devices on Segment go to Controller. }
+procedure RegisterPciMessageController(Segment: Word; Connect: TPciMessageControllerConnect;
+  Controller: Pointer);
+
+{ A vector for Device, from its segment's message controller (or the
+  interrupt routing's): Handler runs when Device writes Message. For
+  drivers that program the device's table themselves (RP1's MSI-X). }
+function ConnectPciMessageVector(Device: PPciDevice; Handler: TInterruptHandler; Context: Pointer;
+  out Message: TInterruptMessage): Boolean;
 
 { Connects Handler to Device's interrupt by MSI and turns its legacy
   interrupt line off. Returns False if the device has no MSI capability
@@ -69,8 +92,43 @@ implementation
 
 uses
   Memory.DeviceMapping,
-  Io.InterruptRouting,
   Io.PowerManagement;
+
+const
+  MaximumMessageControllers = 8;
+
+type
+  TMessageControllerEntry = record
+    Segment: Word;
+    Connect: TPciMessageControllerConnect;
+    Controller: Pointer;
+  end;
+
+var
+  MessageControllers: array[0..MaximumMessageControllers - 1] of TMessageControllerEntry;
+  MessageControllerCount: Integer;
+
+procedure RegisterPciMessageController(Segment: Word; Connect: TPciMessageControllerConnect;
+  Controller: Pointer);
+begin
+  if MessageControllerCount >= MaximumMessageControllers then
+    Exit;
+  MessageControllers[MessageControllerCount].Segment := Segment;
+  MessageControllers[MessageControllerCount].Connect := Connect;
+  MessageControllers[MessageControllerCount].Controller := Controller;
+  Inc(MessageControllerCount);
+end;
+
+function ConnectPciMessageVector(Device: PPciDevice; Handler: TInterruptHandler; Context: Pointer;
+  out Message: TInterruptMessage): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to MessageControllerCount - 1 do
+    if MessageControllers[Index].Segment = Device^.Segment then
+      Exit(MessageControllers[Index].Connect(MessageControllers[Index].Controller, Handler, Context, Message));
+  Result := ConnectMessageInterrupt(Handler, Context, Message);
+end;
 
 const
   MessageControlOffset = 2;
@@ -103,7 +161,7 @@ begin
   Capability := FindPciCapability(Device, PciCapabilityMessageInterrupts);
   if Capability = 0 then
     Exit;
-  if not ConnectMessageInterrupt(Handler, Context, Message) then
+  if not ConnectPciMessageVector(Device, Handler, Context, Message) then
     Exit;
 
   Control := PciRead16(Device, Capability + MessageControlOffset);
@@ -210,7 +268,7 @@ begin
   if Table = nil then
     Exit;
   Table := Table + MapOffset;
-  if not ConnectMessageInterrupt(Handler, Context, Message) then
+  if not ConnectPciMessageVector(Device, Handler, Context, Message) then
     Exit;
 
   Programmed.Device := Device;

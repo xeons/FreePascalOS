@@ -825,14 +825,27 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         compatible (`Io.DeviceTreeDevices`, `Io.PlatformProperties`),
         `make arm64-native-test` (QEMU -kernel/-initrd, EL1 and EL2,
         netlog and the TCP shell over virtio-net)
-  - [ ] Pi 5 drivers, next: the BCM2712 PCIe root complex
-        (`brcm,bcm2712-pcie`: its own configuration access, link
-        training, the outbound windows its ranges give, its MSI
-        controller), then RP1 behind it (a PCIe endpoint whose BAR holds
-        the peripherals its DT node describes): its USB (DWC3 in host
-        mode, i.e. xHCI: `Drivers.Xhci` as a platform device) and its
-        Cadence GEM Ethernet (`cdns,macb`), and the BCM2712 SD
-        controller (`brcm,bcm2712-sdhci`, SDHCI: `Drivers.Sdhci`)
+  - [x] Pi 5 drivers, written from Linux's and NOT yet tested on the
+        board (QEMU has no Pi 5): the BCM2712 PCIe root complex
+        (`Drivers.BrcmPcie`: the firmware's link kept or a cold start,
+        windows from ranges/dma-ranges, config space through the
+        index/data window, BARs placed as the tree expects), the MIP
+        (`Drivers.Bcm2712Mip`) as pcie2's message controller, RP1
+        (`Drivers.Rp1`, `Drivers.Rp1Interrupts`: BARs, chip id, MSI-X
+        through MSIX_CFG, its DT peripherals as platform devices with
+        working memory and interrupts), the Cadence GEM Ethernet
+        (`Drivers.CadenceGem`, `Drivers.EthernetPhy`), the DWC3 USB
+        controllers as xHCI hosts (`Drivers.Dwc3`), the SD slot
+        (`Drivers.Sdhci.Bcm2712`), the PM watchdog by its DT node; the
+        kernel DHCP says "no network card" once
+  - [ ] Pi 5, first boot with the drivers: read the `[pcie]`, `[mip]`,
+        `[rp1]`, `[gem]`, `[dwc3]` lines (docs/Architecture.md, "What the
+        Pi 5 drivers log"); then netlog, SSH
+  - [ ] Pi 5: the PHY reset line (RP1 GPIO 32, "phy-reset-gpios") if the
+        PHY does not answer; an RP1 GPIO driver
+  - [ ] Pi 5: UHS-I on the SD slot (1.8 V through the SD_IOVDD_SEL GPIO,
+        tuning); RP1's UARTs (`arm,pl011-axi`), I2C, SPI; pcie1's INTx
+        and devices behind a switch (only 01:00.0 is used)
   - [ ] Framebuffer fallback through the VideoCore mailbox (allocate a
         framebuffer as Circle does) when the firmware gives no
         simple-framebuffer

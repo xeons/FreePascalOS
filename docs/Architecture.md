@@ -4989,7 +4989,8 @@ set-up after that (waking from suspend to RAM).
 ### Broadcom GENET v5 (untested)
 
 The Raspberry Pi 4's Gigabit Ethernet (`Drivers.Genet`, registers in
-`Drivers.Genet.Registers`, the PHY in `Drivers.Genet.Phy`), an ACPI
+`Drivers.Genet.Registers`, its MDIO bus in `Drivers.Genet.Phy`, the PHY
+handling shared with the Pi 5's GEM in `Drivers.EthernetPhy`), an ACPI
 platform device (`BCM6E4E`). **It has never run**: QEMU has no GENET,
 and it was written from the register layout of Linux's bcmgenet driver
 (used as documentation) without a Pi at hand.
@@ -5015,6 +5016,54 @@ and it was written from the register layout of Linux's bcmgenet driver
   `rgmii-rxid` (receive delay in the PHY through its shadow registers,
   transmit delay by the MAC), and whether the receive length counts the
   2-byte pad. No suspend to RAM handling.
+
+### Cadence GEM, the Raspberry Pi 5's Ethernet (untested)
+
+The Ethernet controller inside RP1 (`Drivers.CadenceGem`, registers in
+`.Registers`, descriptors in `.Descriptors`, the MDIO bus in `.Mdio`), a
+device tree platform device (`raspberrypi,rp1-gem`, `cdns,macb`) that
+`Drivers.Rp1` gave its memory and interrupt. Written from Linux's
+macb_main.c; **it has not run**: QEMU has no Pi 5.
+
+- Start-up: the module id must say GEM and design config 6 must offer
+  64-bit DMA (RP1 sees RAM at bus address 10_0000_0000). Reset (receive
+  and transmit off, statistics cleared, all interrupts off), then the
+  network configuration (MDC = 200 MHz / 96, bus width from design
+  config 1, 2-byte receive offset, check sequence dropped, promiscuous,
+  1536-byte frames), RGMII in the user I/O register, the management port
+  on, the AXI pipeline from `cdns,aw2w-max-pipe`/`cdns,ar2r-max-pipe`/
+  `cdns,use-aw2b-fill`, 50 us interrupt moderation, DMA configuration (2
+  KiB receive buffers, bursts of 16, full packet buffers, 64-bit
+  addresses, no timestamp words, no checksum offload).
+- The address: `local-mac-address` (the firmware fills in the zeros of
+  the .dtb), else the specific address 1 registers the firmware's
+  network boot left.
+- The PHY (`Drivers.EthernetPhy`, shared with GENET): the address of the
+  node `phy-handle` names (1 on the Pi 5: the BCM54213PE), else a scan;
+  reset, the RGMII delays of `phy-mode` (`rgmii-id`: both in the PHY,
+  through the Broadcom shadow registers), autonegotiation for
+  10/100/1000.
+- Rings: 128 descriptors each way, 16 bytes (address low with the
+  used/wrap bits, control or status, address high), in one shared DMA
+  buffer (uncached for this non-coherent device) with an idle pair for
+  the GEM's other queues; 2 KiB streaming buffers. Turning the MAC off
+  rewinds its queue pointers, so each link up fills both rings afresh
+  (frames queued while the link was down are dropped). Receiving takes
+  descriptors the GEM marked used; transmitting writes the control word
+  last and sets "start transmission".
+- The interrupt is RP1's 6 (level), a MIP vector; the handler reads and
+  clears the interrupt status, a deferred call does the work, RP1's
+  IACK follows. Without it a 10 ms timer polls. The link is read every
+  second.
+- Diagnostics: if the link has been up 10 s and nothing was received,
+  one `[gem] ... nothing received` line gives the controller's frame,
+  FCS, no-buffer and overrun counters, receive and transmit status,
+  control, configuration and interrupt mask and the bus errors seen;
+  `gemdebug` logs that line every 10 s.
+- `make gem-descriptor-test` checks the descriptor words on the host.
+- Uncertain: whether RP1's clocks for the GEM are running as the
+  firmware left them (no RP1 clock driver), the PHY reset line (RP1 GPIO
+  32) being released, and the interrupt moderation units.
 
 ## File systems
 
@@ -7537,6 +7586,8 @@ trigger and polarity from the flags).
 | timer (`Hal.GenericTimer`) | `arm,armv8-timer`: the third interrupt (virtual timer), `clock-frequency` if CNTFRQ_EL0 is 0 |
 | PSCI (`Hal.Psci`) | `arm,psci-1.0`/`-0.2` (`method` `hvc` or `smc`), `arm,psci` 0.1 with its `cpu_on` id |
 | PCI (`Io.Pci`, `Firmware.DeviceTreePci`) | `pci-host-ecam-generic`: ECAM `reg`, `bus-range`, `linux,pci-domain`; `ranges` windows (bus to processor addresses: `PciReadBar` gives the processor's); `interrupt-map` for INTx (`Io.PciLineInterrupts`); BARs nobody assigned get addresses from the windows (`Io.PciResources`, root bus only) |
+| PCIe that is not ECAM (`Drivers.BrcmPcie`) | `brcm,bcm2712-pcie`: its registers, `ranges` (outbound windows), `dma-ranges` (inbound windows), `resets`/`reset-names` ("bridge", "rescal"), `max-link-speed`, `aspm-no-l0s`, `brcm,clkreq-mode`, `brcm,vdm-qos-map`, `msi-parent` (a `brcm,bcm2712-mip`: its `msi-ranges`, `brcm,msi-offset` and doorbell `reg`) |
+| RP1's peripherals (`Drivers.Rp1`, `Firmware.DeviceTreeRp1`) | the `rp1` node below pcie2: its `ranges` (C0_4000_0000 = PCI 0), each child's `reg` as an offset into BAR1/BAR2, its `interrupts` as RP1 numbers with their trigger |
 | platform devices (`Io.DeviceTreeDevices`) | every enabled node with `compatible` (not below a disabled node, not `/chosen`, `/aliases`, `/cpus`, `/memory`, `/reserved-memory`): ids = the compatible strings, memory = translated `reg` entries, interrupts = those resolving to the GIC, DMA = `dma-coherent` (above too) and the nearest `dma-ranges`, `DeviceTreeNode` for the rest |
 
 A 16-bit framebuffer (`PixelFormatRedGreenBlue565`, what a Pi's firmware
@@ -7566,10 +7617,10 @@ node says so). Anything else is in the node: `Device^.DeviceTreeNode`
 with `SystemDeviceTree^` and the `DeviceTree.*` units (`ReadRangeEntry`
 gives a PCIe host's outbound windows; `ReadDmaRange` its inbound ones;
 `ResolveInterrupt` goes through an `interrupt-map`). RP1's own devices
-sit below the PCIe node with addresses relative to RP1's BAR and
-interrupts of RP1's controller: their `reg` does not translate to the
-processor and their interrupts do not reach the GIC, so the RP1 driver
-reads those nodes itself once it has mapped the BAR.
+sit below the PCIe node with addresses relative to RP1's own bus and
+interrupts of RP1's controller: `Drivers.Rp1` rewrites their memory from
+RP1's BARs and gives them RP1 interrupts (`TPlatformDevice.InterruptConnect`),
+so their drivers bind and connect like any other platform device's.
 
 ### Raspberry Pi 4 notes, and the Pi 5
 
@@ -7942,8 +7993,10 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    mode NETWORK 2 order f12 ...`), then the kernel's console. Over the
    network: `scripts/netlog.py --output pi5.log` on the PC (UDP 5140),
    with `netlog=SERVER` in `cmdline.txt`, as on the Pi 4 (step 6 of the
-   Pi 4 section). This works once the kernel drives the Pi 5's Ethernet,
-   which is behind RP1.
+   Pi 4 section). The kernel drives the Pi 5's Ethernet (behind pcie2
+   and RP1; see "What the Pi 5 drivers log" below for the lines to look
+   for on the screen until netlog works); the debug shell answers on
+   `netshell=2323` once there is an address.
 5. **Iterating.** Leave `make pi5-netboot-serve` running. After a change,
    rebuild the native kernel and/or `make ARCH=arm64 system-disk`, then
    reset the Pi (power, or `reboot`, or the watchdog). The files are read
@@ -7953,6 +8006,109 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    the server, the bootloader gives up on the network after the DHCP or
    TFTP timeout and boots the card. With no card either, it shows its
    diagnostics screen and tries again.
+
+### What the Pi 5 drivers log
+
+Without a serial adapter the HDMI console is the only witness until
+Ethernet works, so every driver on the way says what it found and, when
+something fails, `FAILED at` the step with the registers that tell why.
+The lines appear in this order; a photo of the screen after the
+`[pci]` lines and another after `[net]` cover them. All of these drivers
+are written from Linux's and **untested on the board**.
+
+1. **The PCIe root complex** (`Drivers.BrcmPcie`, pcie2 where RP1 is;
+   pcie1, the external connector, only if `dtparam=pciex1` enabled it):
+   ```
+   [pcie] pcie@1000120000: rev 0x304, status 0xb0: the firmware left the link up
+   [pcie] pcie@1000120000: link kept from firmware, gen 2 x4, segment 2
+   [pcie] pcie@1000120000: 01:00.0 1de4:0001 rev 02 class 0200
+   [pcie] pcie@1000120000: 01:00.0 BAR1 4 MiB bus 0x0 = 0x1f00000000
+   [pcie] pcie@1000120000: 01:00.0 BAR2 64 KiB bus 0x400000 = 0x1f00400000
+   [pcie] pcie@1000120000: 01:00.0 BAR0 16 KiB bus 0x410000 = 0x1f00410000
+   [mip] msi-controller@1000130000: 64 vectors on SPIs 128-191, doorbell 0xfffffff000 (bus), registers 0x1000130000
+   [pci] 01:00.0 1de4:0001 network controller
+   ```
+   The status word: bit 4 PHY link up, bit 5 data link up, bit 7 root
+   complex mode (B0h = all three). After the network boot the firmware
+   leaves the link up and it is kept; with the kernel option `pcireset`
+   (or a link found down) it starts from cold and says `link down,
+   starting it`, then `link up, gen 2 x4`. A `(was 0x...)` after a BAR
+   means the firmware had put it elsewhere. Failures:
+   - `FAILED at step 1 (rescal)`: the SerDes calibration never finished;
+   - `FAILED at step 3 (inbound windows)` / `(mode)`: the tree's
+     `dma-ranges` are missing, or the controller is strapped as an
+     endpoint (status bit 7 clear);
+   - `FAILED at step 4 (SerDes MDIO)`: the SerDes did not take its
+     54 MHz clock settings;
+   - `FAILED at step 5 (link): no link 200 ms after PERST# was released,
+     status 0x80 (PHY link 0, data link 0, RC mode 1), debug 0x...,
+     ctrl 0x4`: RP1 did not train; `debug` is HARD_DEBUG (bit 27 SerDes
+     still in IDDQ), `ctrl` PCIE_CTRL (bit 2 PERST# released);
+   - `the link is up but nothing answers at 01:00.0, read 0xffffffff`.
+2. **RP1** (`Drivers.Rp1`, `Drivers.Rp1Interrupts`):
+   ```
+   [rp1] RP1 at 2:01:00.0 rev 02
+   [rp1] BAR1 4 MiB at 0x1f00000000 (bus 0x0), BAR2 64 KiB at 0x1f00400000
+   [rp1] chip id 0x20001927, platform 0x2 (RP1 C0)
+   [rp1] MSI-X on: 61 vectors, table in BAR0 at 0x1f00410000
+   [rp1] 30 peripherals; window 0xc040000000 = bus 0x0
+   ```
+   `not found on the PCI buses` means pcie2 failed above; `BAR1 too
+   small` that RP1's own firmware is not running; `SYSINFO reads all
+   ones` that BAR1 does not reach RP1 (window or BAR wrong); `NOT where
+   BAR1 is: offsets used` that the tree's `rp1` ranges and the BARs
+   disagree (the BARs win). Each peripheral interrupt connected later
+   adds `[rp1] interrupt 6 (/axi/pcie@1000120000/rp1/ethernet@100000):
+   MSI-X data 0x0 to 0xfffffff000, level, cfg 0x9` and the routing's
+   `[interrupts] GSI 160 on vector 0x3., processor N` (MIP vector N is
+   SPI 128 + N, INTID 160 + N); `cfg` is RP1's MSIX_CFG (bit 0 enabled,
+   bit 3 level).
+3. **Ethernet** (`Drivers.CadenceGem`):
+   ```
+   [gem] ethernet@100000: id 0x0007...., dcfg1 0x........, dcfg6 0x........, 4 queues, non-coherent DMA
+   [gem] ethernet@100000: PHY 0x600d84a2 at 1 (BCM54213PE), rgmii-id, address 2C:CF:67:..:..:..
+   [net] eth0: Cadence GEM (RP1), address 2C:CF:67:..:..:.., link down, interrupts by RP1 MSI-X
+   [net] eth0 (Cadence GEM (RP1)): link up, 1000 Mbit/s full duplex
+   [netaddr] eth0: kernel DHCP lease 192.168.1.50/24 via 192.168.1.1 from 192.168.1.1
+   ```
+   (the DHCP line 30 seconds after networking started, `netdhcp=`).
+   Failures: `identification: not a GEM (all ones: RP1 unreachable)`,
+   `design: no 64-bit DMA`, `address: no usable Ethernet address`, `PHY
+   search: no PHY answers on MDIO (held in reset by RP1 GPIO 32?)`, the
+   PHY steps `reset write`, `reset wait`, `autonegotiation start` with
+   the PHY's control and status words (high and low 16 bits). If the
+   link is up and nothing arrives for 10 s, one line `link up 10 s,
+   nothing received: rx 0 tx N fcs F nobuf B ovr O rsr .. tsr .. ncr ..
+   cfg .. imr .. bus errors E`: `rx` 0 with `fcs` counting means the
+   RGMII delays are wrong; `nobuf` counting means the receive ring is
+   not being given back; `bus errors` means the GEM's DMA cannot reach
+   RAM (inbound windows); `tx` 0 means transmission never started.
+   `gemdebug` logs that line every 10 s. With no card at all the kernel
+   DHCP says once: `[netaddr] no network card: no kernel DHCP (netlog,
+   netshell) until one appears`.
+4. **USB** (`Drivers.Dwc3`, then `Drivers.Xhci`), twice:
+   ```
+   [dwc3] usb@200000: GSNPSID 0x5533....., design mode 2 (0 device, 1 host, 2 dual), GCTL 0x........
+   [xhci] Controller /axi/pcie@1000120000/rp1/usb@200000 (DT snps,dwc3), 2 ports, interrupts, non-coherent DMA
+   ```
+   Failures: `FAILED at identification (GSNPSID; all ones: RP1
+   unreachable)`, `core soft reset (DCTL still resetting after
+   100 ms)`; then the xHCI driver's own lines.
+5. **The SD card** (`Drivers.Sdhci.Bcm2712`, then `Drivers.Sdhci`):
+   ```
+   [sdhci] /soc@107c000000/mmc@fff000: BCM2712 cfg: pin select 0x. -> SD, ctrl 0x........ -> card forced present; tree clock 200 MHz
+   [sdhci] /axi/mmc@1100000: an SDIO device (Wi-Fi) below it, not an SD slot: left alone
+   [sdhci] diskN: SDHC card "...", ... (DT brcm,bcm2712-sdhci) ..., ADMA2, 4-bit high speed at 50 MHz, ...
+   ```
+   The card runs at 3.3 V high speed; UHS modes are not used.
+6. **The watchdog**: `[watchdog] BCM2712 PM watchdog at 107D200000
+   (brcm,bcm2712-pm), up to 15 s; reset status ...`, armed by default
+   as on the Pi 4 (`watchdog=0` leaves it off); `reboot` resets through
+   PSCI.
+
+The kernel debug shell's `devices` lists RP1's peripherals with their
+memory (`mem 1f00100000+4000`) and RP1 interrupts (`line 6 level`), and
+the driver that took each.
 
 Why TFTP and not HTTP: the Pi 5 bootloader's HTTP boot (`BOOT_ORDER`
 mode 7, `HTTP_HOST`, `HTTP_PATH`) fetches `boot.img`, a FAT image of the

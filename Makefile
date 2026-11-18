@@ -26,6 +26,7 @@
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
+#   make gem-descriptor-test  The Pi 5 Ethernet's (Cadence GEM) DMA descriptors (host)
 #   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
 #                   Python) for platform devices on the host: ids, resources,
 #                   _CCA, _DMA, _DSD properties
@@ -149,6 +150,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/drivers/network \
 	kernel/drivers/input \
 	kernel/drivers/devices \
+	kernel/drivers/bus \
 	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \
@@ -173,7 +175,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
 
 all: esp
@@ -484,7 +486,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -566,6 +568,16 @@ $(DEVICE_TREE_BLOB): tools/DeviceTreeTest/make-tree.py
 
 device-tree-test: $(DEVICE_TREE_TEST) $(DEVICE_TREE_BLOB)
 	$(DEVICE_TREE_TEST) $(DEVICE_TREE_BLOB)
+
+# The Raspberry Pi 5 Ethernet's descriptors (Drivers.CadenceGem.Descriptors).
+GEM_DESCRIPTOR_TEST := build/tools/GemDescriptorTest
+
+$(GEM_DESCRIPTOR_TEST): tools/GemDescriptorTest/GemDescriptorTest.pas kernel/drivers/network/Drivers.CadenceGem.Descriptors.pas
+	@mkdir -p build/tools/gem-descriptor-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/network -FEbuild/tools -FUbuild/tools/gem-descriptor-units $<
+
+gem-descriptor-test: $(GEM_DESCRIPTOR_TEST)
+	$(GEM_DESCRIPTOR_TEST)
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)

@@ -38,7 +38,10 @@
   starts: setting an interface's address drops the routes through it). If
   port 68 is taken, the network service's DHCP client is running, and
   the kernel leaves it to it. Tries are repeated every minute until some
-  interface has an address.
+  interface has an address. Each reason for waiting is said once, not at
+  every try: with no network card at all ("no network card"), or no link,
+  the thread waits quietly for one to come (a USB adapter, a cable) and
+  says so again only when the reason changes.
 }
 unit Network.FallbackAddress;
 
@@ -124,6 +127,8 @@ var
   StaticGateway: TIpv4Address;
   DhcpDelaySeconds: QWord;
   TransactionId: LongWord;
+  { The last reason for waiting that was said, so it is said once. }
+  LastSaid: PChar;
 
 procedure Say(What: PChar; NetworkInterface: PNetworkInterface);
 begin
@@ -136,6 +141,15 @@ begin
   end;
   DebugWriteLine(What);
   DebugEndMessage;
+end;
+
+{ Says What unless it was the last thing said. }
+procedure SayOnce(What: PChar);
+begin
+  if What = LastSaid then
+    Exit;
+  LastSaid := What;
+  Say(What, nil);
 end;
 
 { A.B.C.D/PREFIX, then optionally ,GATEWAY. }
@@ -182,6 +196,19 @@ begin
     if not Candidate^.IsLoopback and Candidate^.HasAddress then
       Result := True;
   end;
+  UnlockNetwork;
+end;
+
+{ Any interface but the loopback, link or not. }
+function AnyNetworkCard: Boolean;
+var
+  Position: Integer;
+begin
+  Result := False;
+  LockNetwork;
+  for Position := 0 to NetworkInterfaceCount - 1 do
+    if not NetworkInterfaceAt(Position)^.IsLoopback then
+      Result := True;
   UnlockNetwork;
 end;
 
@@ -434,7 +461,7 @@ begin
   UnlockNetwork;
   if NetworkInterface = nil then
   begin
-    Say('no Ethernet interface has a link; DHCP waits', nil);
+    SayOnce('no Ethernet interface has a link; DHCP waits');
     Exit;
   end;
   if not OpenDhcpSocket(NetworkInterface^.Index, Socket) then
@@ -477,7 +504,14 @@ begin
   SleepMilliseconds(DhcpDelaySeconds * 1000);
   while not AnyInterfaceHasAddress do
   begin
-    Say('no interface has an address; asking for one by DHCP', nil);
+    if not AnyNetworkCard then
+    begin
+      { Said once; a card may still come (USB). }
+      SayOnce('no network card: no kernel DHCP (netlog, netshell) until one appears');
+      SleepMilliseconds(InterfaceWaitMilliseconds * 5);
+      Continue;
+    end;
+    SayOnce('no interface has an address; asking for one by DHCP');
     TryDhcp;
     if AnyInterfaceHasAddress then
       Break;

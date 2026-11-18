@@ -33,6 +33,11 @@
   the same (Firmware.DeviceTreePci). Their memory windows may put a
   device's registers at another address for the processor than on the
   bus: PciReadBar gives the processor's (AddPciAddressTranslation).
+
+  Host bridges whose configuration space is not ECAM (the Raspberry Pi
+  5's BCM2712 PCIe, Drivers.BrcmPcie) bring the link up themselves and
+  hand each function in with AddPciFunction, its configuration space
+  already reachable at the pointer they give.
 }
 unit Io.Pci;
 
@@ -123,6 +128,11 @@ function PciReadBar(Device: PPciDevice; BarIndex: Integer; out Bar: TPciBar): Bo
 { Memory of Segment's buses at [BusStart, BusStart + Size) is at
   PhysicalStart for the processor (a host bridge's window). }
 procedure AddPciAddressTranslation(Segment: Word; BusStart, Size, PhysicalStart: QWord);
+
+{ For host bridge drivers without ECAM: records a function whose
+  configuration space the driver made reachable at Configuration (4 KiB,
+  staying mapped). Returns the entry, or nil if the list is full. }
+function AddPciFunction(Segment: Word; Bus, Device, FunctionNumber: Byte; Configuration: PByte): PPciDevice;
 
 procedure PciEnableDevice(Device: PPciDevice; EnableBusMastering: Boolean);
 
@@ -271,6 +281,16 @@ begin
   Entry^.ClassCode := Configuration[PciConfigurationRevision + 3];
   Entry^.HeaderType := Configuration[PciConfigurationHeaderType] and HeaderTypeMask;
   Inc(DeviceCount);
+end;
+
+function AddPciFunction(Segment: Word; Bus, Device, FunctionNumber: Byte; Configuration: PByte): PPciDevice;
+begin
+  Result := nil;
+  if DeviceCount >= MaximumPciDevices then
+    Exit;
+  ConfigurationMechanismFound := True;
+  RecordFunction(Segment, Bus, Device, FunctionNumber, Configuration);
+  Result := @Devices[DeviceCount - 1];
 end;
 
 { Scans one bus. Returns True if any function was found (the mapping is
@@ -463,8 +483,10 @@ begin
   else
   begin
     Bar.PhysicalAddress := (QWord(OriginalHigh) shl 32) or (OriginalLow and $FFFFFFF0);
-    if Bar.PhysicalAddress <> 0 then
-      Bar.PhysicalAddress := TranslateBusAddress(Device^.Segment, Bar.PhysicalAddress);
+    { Bus address 0 is a real place where a host's window starts there
+      (the Pi 5's RP1 has its peripherals at bus address 0); with no
+      window holding it, it stays 0, unassigned. }
+    Bar.PhysicalAddress := TranslateBusAddress(Device^.Segment, Bar.PhysicalAddress);
     SizeMask := (QWord(SizeHigh) shl 32) or (SizeLow and $FFFFFFF0);
     { A 32-bit BAR the device does not implement reads back as zeros:
       no size (the all-ones high half is only assumed). }
