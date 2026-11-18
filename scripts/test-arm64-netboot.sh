@@ -36,7 +36,8 @@
 # Each boot must load the kernel and the system image over the network,
 # run from the RAM disk (the system volume /ramdisk0p1) and start user
 # mode: the served options are "test-exit init=/bin/true", so the kernel
-# ends QEMU (semihosting) once /bin/true exits. The serial logs stay in
+# ends QEMU (semihosting) once /bin/true exits. A compressed system image
+# (.xz or .gz, as make serves it) must be unpacked by the kernel. The serial logs stay in
 # the build directory (test-arm64-netboot-http.log, -tftp.log).
 # Not part of make test; run it with make arm64-netboot-test.
 
@@ -50,6 +51,11 @@ work_directory="$build_directory/test-netboot"
 timeout_seconds=${TIMEOUT:-600}
 served_options="test-exit init=/bin/true"
 failures=0
+case "$system_disk_image" in
+    *.xz) compressed_kind=xz ;;
+    *.gz) compressed_kind=gzip ;;
+    *) compressed_kind= ;;
+esac
 
 rm -rf "$work_directory"
 mkdir -p "$work_directory"
@@ -63,6 +69,10 @@ check_boot() {
     grep -aq "Loading ${source}FreePascalOS/kernel.elf" "$log" || missing+=("kernel loaded from $source")
     grep -aq "RAM disk: " "$log" || missing+=("system image loaded by the loader")
     grep -aq "\[ramdisk\] ramdisk0: " "$log" || missing+=("RAM disk device")
+    if [[ -n "$compressed_kind" ]]; then
+        grep -aq "\[ramdisk\] $compressed_kind image: compressed " "$log" ||
+            missing+=("the $compressed_kind system image unpacked by the kernel")
+    fi
     grep -aq "System volume: /ramdisk0" "$log" || missing+=("system volume on the RAM disk")
     grep -aq "Kernel options: netboot=${source} ${served_options}" "$log" || missing+=("served options")
     grep -aq "/bin/true exited with code 0" "$log" || missing+=("user mode ran /bin/true")

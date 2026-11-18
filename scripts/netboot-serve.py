@@ -29,7 +29,9 @@ Serves the boot files of a build over HTTP, and over TFTP with --tftp:
                                ESP's options.txt; none: the loader keeps
                                the options of its own boot volume)
     FreePascalOS/system.img    the system volume  (--system-image), which
-                               the kernel runs from as a RAM disk
+                               the kernel runs from as a RAM disk; the
+                               build serves it compressed (system-disk.img.xz:
+                               the kernel unpacks xz and gzip images)
 
 Files are read at each request, so a rebuild takes effect at the next
 boot without restarting the server. HTTP needs no root; TFTP's port 69
@@ -42,8 +44,10 @@ Prints this machine's addresses and the options.txt line to use.
 With --pi5 DIR it serves a Raspberry Pi 5's native network boot instead:
 the boot directory make-pi5-sd-image.py --boot-files-only writes
 (config.txt, cmdline.txt, the device trees, overlays/, fpos.img and
-system.img, the last two links to the build), over TFTP (always) and
-HTTP. The Pi's EEPROM bootloader first asks for <serial>/config.txt and
+system.img, the last two links to the build; system.img is the
+compressed image), over TFTP (always) and HTTP. The firmware's TFTP
+manages a few hundred KiB/s and gives up on a file after 60 s, so a
+file that would take longer is pointed out. The Pi's EEPROM bootloader first asks for <serial>/config.txt and
 keeps that prefix for every file if it is found; a requested path that
 does not exist is looked up again without its first directory, so the
 files are found with or without the prefix.
@@ -61,6 +65,10 @@ import threading
 import time
 
 SYSTEM_IMAGE_PATH = "FreePascalOS/system.img"
+# What a Raspberry Pi 5's EEPROM bootloader was seen to manage over TFTP,
+# and how long it waits for one file (TFTP_FILE_TIMEOUT).
+PI5_TFTP_BYTES_PER_SECOND = 230 * 1000
+PI5_TFTP_FILE_TIMEOUT = 60
 OPTIONS_PATH = "FreePascalOS/options.txt"
 
 
@@ -335,8 +343,9 @@ def local_addresses():
 def main():
     parser = argparse.ArgumentParser(description="Serve FreePascalOS boot files for a network boot.")
     parser.add_argument("--esp", default="build/arm64/esp", help="the ESP directory of the build")
-    parser.add_argument("--system-image", default="build/arm64/system-disk.img",
-                        help="the system volume image served as FreePascalOS/system.img")
+    parser.add_argument("--system-image", default="build/arm64/system-disk.img.xz",
+                        help="the system volume image served as FreePascalOS/system.img "
+                             "(compressed with xz or gzip, or not)")
     parser.add_argument("--no-system-image", action="store_true",
                         help="serve no system image (the kernel then uses its disks)")
     parser.add_argument("--options-file", help="served as FreePascalOS/options.txt")
@@ -356,7 +365,7 @@ def main():
         sys.exit(f"No ESP directory {arguments.esp}: build first (make ARCH=arm64)")
     system_image = None if arguments.no_system_image else arguments.system_image
     if system_image and not os.path.isfile(system_image):
-        print(f"Warning: {system_image} does not exist yet (make ARCH=arm64 system-disk)")
+        print(f"Warning: {system_image} does not exist yet (make ARCH=arm64 served-system-image)")
     boot_files = BootFiles(arguments.esp, system_image, arguments.options_file)
 
     if arguments.tftp:
@@ -374,7 +383,7 @@ def main():
         print(f"or, over TFTP (port {arguments.tftp_port}): netboot=tftp://{first}/")
         print(f"For a PXE boot by the firmware, the DHCP server names next-server {first}"
               " and boot file EFI/BOOT/BOOTAA64.EFI")
-    print("Rebuild (make ARCH=arm64 esp system-disk) and reset the Pi; Ctrl-C ends the server.",
+    print("Rebuild (make ARCH=arm64 esp served-system-image) and reset the Pi; Ctrl-C ends the server.",
           flush=True)
     try:
         server.serve_forever()
@@ -402,6 +411,10 @@ def serve_pi5(arguments):
         elif os.path.isfile(path):
             target = f" -> {os.path.realpath(path)}" if os.path.islink(path) else ""
             print(f"    {name} ({describe_size(os.path.getsize(path))}){target}")
+            seconds = os.path.getsize(path) / PI5_TFTP_BYTES_PER_SECOND
+            if seconds > PI5_TFTP_FILE_TIMEOUT * 0.8:
+                print(f"      Warning: about {seconds:.0f} s at the firmware's TFTP speed; it gives up "
+                      f"after {PI5_TFTP_FILE_TIMEOUT} s (serve the compressed image)")
         else:
             print(f"    {name}: missing ({os.path.realpath(path)} is not built)")
     with open(os.path.join(directory, "cmdline.txt")) as cmdline:

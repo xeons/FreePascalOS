@@ -18,7 +18,7 @@
 """Builds the Raspberry Pi 5 boot files and an SD card image (native boot).
 
     make-pi5-sd-image.py [--kernel build/arm64/native/fpos.img]
-                         [--system-image build/arm64/system-disk.img]
+                         [--system-image build/arm64/system-disk.img.xz]
                          [--firmware-files ~/Downloads/pi5/boot]
                          [--boot-directory build/arm64/pi5-boot]
                          [--output build/arm64/pi5-sd.img]
@@ -38,7 +38,12 @@ the boot volume holds only
                         (vc4-kms-v3d-pi5.dtbo, see below),
     fpos.img            the native kernel (Linux arm64 Image format),
     system.img          the system image, loaded after the kernel as the
-                        RAM disk.
+                        RAM disk: compressed (xz by default; the kernel
+                        unpacks xz and gzip images), since the firmware
+                        passes it on as it is and, over the network,
+                        fetches it at a few hundred KiB/s and gives up
+                        on a file after 60 s. The plain image works
+                        too (make SYSTEM_IMAGE_COMPRESSION=none).
 
 The boot directory (default build/arm64/pi5-boot) gets these files, the
 kernel and system image as symbolic links to the build, so
@@ -155,7 +160,8 @@ def write_boot_directory(arguments, options):
 def main():
     parser = argparse.ArgumentParser(description="Build the Raspberry Pi 5 boot files and SD card image.")
     parser.add_argument("--kernel", default="build/arm64/native/fpos.img", help="the native kernel")
-    parser.add_argument("--system-image", default="build/arm64/system-disk.img", help="the system image")
+    parser.add_argument("--system-image", default="build/arm64/system-disk.img.xz",
+                        help="the system image, compressed or not (served as system.img)")
     parser.add_argument("--firmware-files", default="~/Downloads/pi5/boot",
                         help="the downloaded device trees (and overlays/)")
     parser.add_argument("--boot-directory", default="build/arm64/pi5-boot",
@@ -174,7 +180,7 @@ def main():
         if not os.path.isfile(arguments.kernel):
             fail(f"no native kernel {arguments.kernel}: the native (device tree) kernel is not built yet")
         if not os.path.isfile(arguments.system_image):
-            fail(f"no system image {arguments.system_image}: make ARCH=arm64 system-disk")
+            fail(f"no system image {arguments.system_image}: make ARCH=arm64 served-system-image")
         check_firmware_files(arguments.firmware_files)
         server = arguments.server or pi_boot_media.default_server_address()
         options = [f"netlog={arguments.netlog or server}"]

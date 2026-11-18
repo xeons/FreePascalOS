@@ -74,6 +74,8 @@
 #   make pi5-sd-image      An SD card image for the Raspberry Pi 5 (native boot)
 #   make pi5-eeprom-image  A Pi 5 bootloader recovery card: network boot (once)
 #   make pi5-netboot-serve Serve the native build to a network booted Pi 5
+#   (the RAM disk is served as build/arm64/system-disk.img.xz;
+#   SYSTEM_IMAGE_COMPRESSION=gzip or none for the others)
 
 ARCH ?= amd64
 
@@ -333,6 +335,36 @@ image: esp
 TEST_DISK := $(BUILD_DIRECTORY)/test-disk.img
 SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk.img
 
+# The system image as a network boot or the Raspberry Pi 5 is served it,
+# the RAM disk: compressed (the Pi's firmware fetches it over TFTP at a
+# few hundred KiB/s and gives up on a file after 60 s), which the kernel
+# unpacks (Drivers.RamDiskDecompression). SYSTEM_IMAGE_COMPRESSION=xz
+# (the default, the smallest), gzip, or none for the plain image.
+SYSTEM_IMAGE_COMPRESSION ?= xz
+XZ_SYSTEM_IMAGE_FLAGS := -6 -T0 --check=crc32
+ifeq ($(SYSTEM_IMAGE_COMPRESSION),none)
+SYSTEM_IMAGE_SUFFIX :=
+else ifeq ($(SYSTEM_IMAGE_COMPRESSION),gzip)
+SYSTEM_IMAGE_SUFFIX := .gz
+else ifeq ($(SYSTEM_IMAGE_COMPRESSION),xz)
+SYSTEM_IMAGE_SUFFIX := .xz
+else
+$(error SYSTEM_IMAGE_COMPRESSION must be xz, gzip or none)
+endif
+SERVED_SYSTEM_IMAGE := $(SYSTEM_DISK)$(SYSTEM_IMAGE_SUFFIX)
+ARM64_SERVED_SYSTEM_IMAGE := build/arm64/system-disk.img$(SYSTEM_IMAGE_SUFFIX)
+
+$(SYSTEM_DISK).xz: $(SYSTEM_DISK)
+	xz $(XZ_SYSTEM_IMAGE_FLAGS) -c $< > $@.tmp
+	@mv $@.tmp $@
+
+$(SYSTEM_DISK).gz: $(SYSTEM_DISK)
+	gzip -9 -n -c $< > $@.tmp
+	@mv $@.tmp $@
+
+.PHONY: served-system-image
+served-system-image: $(SERVED_SYSTEM_IMAGE)
+
 # make run and make debug boot a system disk of their own, so what is
 # done there (files, passwords, logs in /var/log) stays from one run to
 # the next but never reaches the built image the tests copy. It is made
@@ -375,6 +407,8 @@ arm64-test:
 # and the system image over HTTP (TFTP=1: TFTP too, port 69 needs root;
 # NETBOOT_PORT, NETBOOT_OPTIONS=file for the served options.txt).
 # arm64-netboot-test boots QEMU from the network, over HTTP and TFTP.
+# The system image is served compressed (SYSTEM_IMAGE_COMPRESSION, xz
+# by default; none serves build/arm64/system-disk.img as it is).
 # pi-sd-image writes build/arm64/pi-sd.img(.xz) to flash once: the Pi 4
 # UEFI firmware (PI_FIRMWARE=zip, default the newest
 # ~/Downloads/RPi4_UEFI_Firmware_v*.zip), the loader and an options.txt
@@ -386,18 +420,18 @@ arm64-test:
 # checks netlog and the TCP debug shell over virtio-net
 # (scripts/test-arm64-native.py).
 arm64-native-test:
-	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
-	scripts/test-arm64-native.py $(NATIVE_IMAGE) build/arm64/system-disk.img
+	@$(MAKE) --no-print-directory ARCH=arm64 native served-system-image
+	scripts/test-arm64-native.py $(NATIVE_IMAGE) $(ARM64_SERVED_SYSTEM_IMAGE)
 
 pi-netboot-serve:
-	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk
-	scripts/netboot-serve.py --esp build/arm64/esp --system-image build/arm64/system-disk.img \
+	@$(MAKE) --no-print-directory ARCH=arm64 esp served-system-image
+	scripts/netboot-serve.py --esp build/arm64/esp --system-image $(ARM64_SERVED_SYSTEM_IMAGE) \
 		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT)) $(if $(NETBOOT_OPTIONS),--options-file $(NETBOOT_OPTIONS)) \
 		$(if $(TFTP),--tftp)
 
 arm64-netboot-test:
-	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk
-	scripts/test-arm64-netboot.sh build/arm64/esp build/arm64/system-disk.img
+	@$(MAKE) --no-print-directory ARCH=arm64 esp served-system-image
+	scripts/test-arm64-netboot.sh build/arm64/esp $(ARM64_SERVED_SYSTEM_IMAGE)
 
 pi-sd-image:
 	@$(MAKE) --no-print-directory ARCH=arm64 esp $(if $(filter standalone,$(PI_IMAGE)),system-disk)
@@ -411,18 +445,21 @@ pi-sd-image:
 # pi5-sd-image writes build/arm64/pi5-sd.img(.xz): config.txt,
 # cmdline.txt (netlog=SERVER, default this machine; PI5_OPTIONS=more),
 # the device trees from PI5_FIRMWARE (default ~/Downloads/pi5/boot),
-# build/arm64/native/fpos.img and the system image. pi5-eeprom-image
+# build/arm64/native/fpos.img and the system image as system.img
+# (compressed as SYSTEM_IMAGE_COMPRESSION says, xz by default: the
+# firmware's TFTP is slow and gives up after 60 s). pi5-eeprom-image
 # writes build/arm64/pi5-eeprom.img(.xz), a recovery card setting the
 # EEPROM to boot from TFTP at SERVER first, then the SD card (the files
 # from PI5_EEPROM, default ~/Downloads/pi5/eeprom). pi5-netboot-serve
 # serves build/arm64/pi5-boot over TFTP (port 69: root, or
 # net.ipv4.ip_unprivileged_port_start=69) and HTTP.
-PI5_SD_IMAGE_ARGUMENTS = $(if $(PI5_FIRMWARE),--firmware-files $(PI5_FIRMWARE)) \
+PI5_SD_IMAGE_ARGUMENTS = --system-image $(ARM64_SERVED_SYSTEM_IMAGE) \
+	$(if $(PI5_FIRMWARE),--firmware-files $(PI5_FIRMWARE)) \
 	$(if $(SERVER),--server $(SERVER)) $(if $(NETLOG),--netlog $(NETLOG)) \
 	$(if $(PI5_OPTIONS),--options "$(PI5_OPTIONS)")
 .PHONY: pi5-sd-image pi5-eeprom-image pi5-netboot-serve pi5-eeprom-test
 pi5-sd-image:
-	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
+	@$(MAKE) --no-print-directory ARCH=arm64 native served-system-image
 	scripts/make-pi5-sd-image.py $(PI5_SD_IMAGE_ARGUMENTS)
 
 pi5-eeprom-image:
@@ -430,7 +467,7 @@ pi5-eeprom-image:
 		$(if $(SERVER),--server $(SERVER))
 
 pi5-netboot-serve:
-	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
+	@$(MAKE) --no-print-directory ARCH=arm64 native served-system-image
 	scripts/make-pi5-sd-image.py --boot-files-only $(PI5_SD_IMAGE_ARGUMENTS)
 	scripts/netboot-serve.py --pi5 build/arm64/pi5-boot $(if $(TFTP_PORT),--tftp-port $(TFTP_PORT)) \
 		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT))

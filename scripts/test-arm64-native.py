@@ -39,7 +39,8 @@ firmware, no ACPI: everything comes from the device tree QEMU makes.
 Each boot must show the stub's messages, the device tree's platform
 devices, the GIC, timer and PSCI, every processor, the PCI devices with
 the BARs the kernel assigned, the framebuffer, and the system volume on
-the RAM disk. Serial logs stay next to the image
+the RAM disk. A compressed system image (.xz or .gz, as make serves it)
+must be unpacked by the kernel, which logs the sizes and the time. Serial logs stay next to the image
 (test-arm64-native-el1.log, -el2.log, -network.log). Not part of make
 test; make arm64-native-test runs it.
 """
@@ -82,6 +83,17 @@ def check(name, log_path, expectations, status=None):
         return False
     print('ARM64 NATIVE (%s): passed (%s)' % (name, log_path))
     return True
+
+
+COMPRESSED_IMAGE_KINDS = {'.xz': 'xz', '.gz': 'gzip'}
+
+
+def unpacking_expectations(system_image):
+    """The kernel's unpacking of a compressed RAM disk image."""
+    kind = COMPRESSED_IMAGE_KINDS.get(os.path.splitext(system_image)[1])
+    if kind is None:
+        return []
+    return [('the %s RAM disk image unpacked' % kind, '[ramdisk] %s image: compressed ' % kind)]
 
 
 def boot_expectations(psci_conduit):
@@ -185,12 +197,12 @@ def main():
     if 'el1' in cases:
         log = os.path.join(directory, 'test-arm64-native-el1.log')
         status = run_to_exit(qemu_command(image, system_image, 'test-exit init=/bin/true', log, extra=network))
-        passed &= check('EL1', log, boot_expectations('HVC'), status)
+        passed &= check('EL1', log, boot_expectations('HVC') + unpacking_expectations(system_image), status)
     if 'el2' in cases:
         log = os.path.join(directory, 'test-arm64-native-el2.log')
         status = run_to_exit(qemu_command(image, system_image, 'test-exit init=/bin/true', log, el2=True,
                                           extra=network))
-        passed &= check('EL2', log, boot_expectations('SMC'), status)
+        passed &= check('EL2', log, boot_expectations('SMC') + unpacking_expectations(system_image), status)
     if 'network' in cases:
         passed &= network_case(image, system_image, os.path.join(directory, 'test-arm64-native-network.log'))
     sys.exit(0 if passed else 1)
