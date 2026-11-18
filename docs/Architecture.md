@@ -119,7 +119,9 @@ System unit provides too.
    `BOOTAA64.EFI` on AArch64, see "The AArch64 port").
 2. **Loader** (`boot/uefi/OsLoader.pas`):
    - records the GOP framebuffer and the ACPI RSDP,
-   - reads `\FreePascalOS\kernel.elf` and copies its segments into one
+   - reads `\FreePascalOS\options.txt` and `\FreePascalOS\kernel.elf`
+     (or fetches them, and the system image, from a server: see
+     "Network boot") and copies the kernel's segments into one
      physically contiguous block,
    - allocates the boot information record and a 64 KiB boot stack,
    - builds page tables: the physical memory window, an identity mapping of
@@ -144,8 +146,88 @@ System unit provides too.
    sessions".
 
 The loader tags its own allocations with OS-reserved UEFI memory types
-(`0x80000001`-`0x80000003`), so the memory map tells the kernel exactly which
-pages hold the kernel image, boot data and page tables.
+(`0x80000001`-`0x80000004`), so the memory map tells the kernel exactly which
+pages hold the kernel image, boot data, page tables and the RAM disk.
+
+### Network boot
+
+The loader can take everything but itself from a server, so a rebuild
+on the development machine takes effect at the next reset of the board
+(the Raspberry Pi 4 workflow, see "Trying it on a Raspberry Pi 4"). It
+boots from the network (`Loader.NetworkBoot`)
+
+- when the firmware loaded it by HTTP boot (its device path ends in the
+  URI it came from),
+- when the firmware loaded it by PXE (the PXE client holds the DHCP
+  answer: the server's address and the boot file's name),
+- when `options.txt` on its boot volume says `netboot=URL`, with URL
+  `http://host[:port]/path/` or `tftp://a.b.c.d/path/` - the usual setup:
+  the loader on the SD card, nothing to change on the network's DHCP
+  server.
+
+The base URL is the directory holding `EFI/` and `FreePascalOS/` (for a
+boot file `.../EFI/BOOT/BOOTAA64.EFI` the part before `EFI/`). From it
+the loader reads `FreePascalOS/options.txt` (if the server has one it
+replaces the boot volume's options), `FreePascalOS/kernel.elf` and
+`FreePascalOS/system.img`, and puts `netboot=<base URL>` first on the
+kernel command line. If the network or the kernel cannot be had it falls
+back to the boot volume; without a system image the kernel uses its
+disks as usual.
+
+Everything goes through the firmware's network stack, so it works before
+any driver of ours does (the Pi's GENET driver is untested):
+
+- **The interface** (`Loader.NetworkInterface`): the handle with
+  EFI_IP4_CONFIG2_PROTOCOL the loader came from, else the first. The
+  firmware binds its network stack only to devices it boots from, so the
+  loader connects the drivers to the network cards, or to every device,
+  when there is none. Without an address the loader sets the interface's
+  policy to DHCP (the firmware keeps that setting) and waits up to 30
+  seconds. edk2's network drivers since 2024 also need EFI_RNG_PROTOCOL
+  (the Pi has its RNG; QEMU's virt machine needs `-device
+  virtio-rng-pci`).
+- **HTTP** (`Loader.HttpTransfer`, EFI_HTTP_PROTOCOL): a fresh child of
+  the interface's HTTP service binding for each file, GET, the headers
+  first (no body) so the size is known from Content-Length, then the body
+  straight into its memory, polling the client until each piece is done
+  (20 seconds without progress is an error). A host name works where the
+  firmware's DNS does; an address is safer.
+- **TFTP** (`Loader.TftpTransfer`, the PXE client's Mtftp): the size with
+  the `tsize` option, then the file in 1468-byte blocks. The PXE client
+  is started with the interface's address (`SetStationIp`) rather than
+  its own DHCP, which ignores offers that name no boot file - what a
+  home router sends. Without a gateway the server must be on the same
+  network; the port is always 69.
+
+The system image is read into pages of the loader's memory type
+`0x80000004`, reported as `MemoryRegionRamDisk`, and handed over in
+`TBootInformation.RamDiskPhysicalBase`/`RamDiskSizeInBytes` (boot
+information version 5; both zero otherwise, so x86-64 and disk boots are
+unchanged). The kernel never gives those pages away (they count as
+driver memory) and `Drivers.RamDisk` offers them as the block device
+`ramdisk0`: writable, its changes lost at reset. Its partition is scanned
+like any disk's, and the system volume is an FPOSROOT volume on the RAM
+disk in preference to one on a disk (`Processes.Paths`), unless `root=`
+names another. The image is the whole 64 MiB system disk; the Pi in ACPI
+mode has 3 GiB, of which the firmware gives the image any free range.
+
+`scripts/netboot-serve.py` (`make pi-netboot-serve`) serves a build:
+`EFI/` and `FreePascalOS/` from the ESP directory (names matched without
+regard to case, as on FAT), `FreePascalOS/system.img` from the system
+disk image and `FreePascalOS/options.txt` from `NETBOOT_OPTIONS=file`
+(else the ESP's, if any). It reads each file at each request, so it
+never needs restarting; HTTP/1.0 with Content-Length on port 8000 (no
+root), and with `TFTP=1` a built-in TFTP server (`blksize`, `tsize`,
+block numbers wrapping past 65535) on port 69, which needs root. It
+prints the machine's addresses and the `netboot=` line to use.
+`make arm64-netboot-test` (`scripts/test-arm64-netboot.sh`, not in
+`make test`) boots QEMU's virt machine at EL2 with a boot volume holding
+only the loader and `options.txt`, once over HTTP from netboot-serve.py
+and once over TFTP from QEMU's own server, and checks that the kernel,
+the served options and the system image came over the network, that the
+system volume is `/ramdisk0p1` and that user mode ran. The firmware's
+own PXE or HTTP boot of the loader is not tested: QEMU's edk2 offers no
+network boot option on the virt machine.
 
 ## Virtual address space (x86-64)
 
@@ -7119,20 +7201,71 @@ through semihosting with the x86-64 exit codes.
 What can be tried, and what to look for. Untested on hardware so far:
 everything Pi specific (the mailbox, EMMC2 and the Arasan quirks, xHCI
 as a platform device, GENET, non-coherent DMA on real non-coherent
-devices, the GIC-400 and the mini UART on the real chip). User mode is
-not there yet on AArch64, so the kernel stops after its self tests.
+devices, the GIC-400 and the mini UART on the real chip, the firmware's
+network boot clients). User mode runs on AArch64 as on x86-64 (coretest
+and the graphical session pass in QEMU), so a board whose devices work
+goes on to the service manager and the desktop.
 
-1. **Firmware.** The community UEFI firmware for the Pi 4
-   (pftf/RPi4 on GitHub), release v1.35 or later. Unzip it onto a
-   FAT32-formatted SD card (MBR partition table, partition type 0Ch): it
-   holds `RPI_EFI.fd`, `config.txt`, `start4.elf`, `fixup4.dat` and the
-   device tree files.
-2. **The system.** `make ARCH=arm64`, then copy `build/arm64/esp/EFI`
-   and `build/arm64/esp/FreePascalOS` to the root of the same FAT32
-   partition (it is the EFI system partition too). For a first run put
-   `kshell` in `FreePascalOS/options.txt` to get the kernel debug shell.
-3. **Firmware settings** (Esc at the Raspberry Pi logo, Device Manager →
-   Raspberry Pi Configuration):
+The SD card is written once; after that the Pi fetches the kernel, its
+options and the whole system from your PC at every reset (see "Network
+boot"), so a rebuild is all an iteration takes.
+
+1. **The SD card, once.** Download the community UEFI firmware for the
+   Pi 4, `RPi4_UEFI_Firmware_v1.xx.zip` (v1.35 or later) from
+   github.com/pftf/RPi4/releases, into `~/Downloads` (or name it with
+   `PI_FIRMWARE=path`). Then
+   ```
+   make pi-sd-image                      # SERVER=<PC address> if the guess is wrong
+   lsblk                                 # find the card: /dev/sdX or /dev/mmcblkN
+   xzcat build/arm64/pi-sd.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+   ```
+   Check the device name with `lsblk` before and after inserting the
+   card: dd overwrites whatever it is given. Raspberry Pi Imager works
+   too ("Choose OS" → "Use custom" → `pi-sd.img.xz`). The image
+   (`scripts/make-pi-sd-image.py`, Python and mtools, no root, no
+   download) is 257 MiB: an MBR partition table with one bootable FAT32
+   partition (type 0Ch, 256 MiB) holding the firmware zip's files as
+   they are (`RPI_EFI.fd`, `start4.elf`, `fixup4.dat`, the device trees,
+   `overlays/`, `firmware/`, its `config.txt` with `enable_uart=1`),
+   `EFI/BOOT/BOOTAA64.EFI`, `FreePascalOS/kernel.elf` (used only if the
+   network boot fails) and `FreePascalOS/options.txt` with
+   `netboot=http://SERVER:8000/` and `netlog=SERVER`, SERVER being the
+   PC's address on its default route when the image was made. The rest
+   of a larger card (a 128 GB one, say) stays unused. SDXC cards come
+   formatted exFAT, which the Pi's boot ROM cannot read; the image
+   brings its own FAT32 partition, so no formatting is needed. Since the
+   partition is FAT32, `options.txt` can be edited later on any PC (one
+   line or several; the loader joins them). `PI_IMAGE=standalone` makes
+   a card that needs no server instead: no `netboot=`, and a second
+   (ext4) partition with the system volume.
+
+   By hand instead: unzip the firmware onto a FAT32 partition (MBR,
+   type 0Ch), copy `build/arm64/esp/EFI` and `build/arm64/esp/FreePascalOS`
+   to it, and write the `netboot=` line into `FreePascalOS/options.txt`.
+2. **The server, on your PC.** `make pi-netboot-serve` builds the arm64
+   loader, kernel and system image and serves them over HTTP on port
+   8000 (no root needed); it prints the PC's addresses and the
+   `netboot=` line the card should have. Let TCP port 8000 in through the
+   PC's firewall (`sudo ufw allow 8000/tcp`, or `sudo firewall-cmd
+   --add-port=8000/tcp`), and UDP 5140 for the log (step 6). Leave it
+   running; in another terminal, `make ARCH=arm64 esp system-disk` after
+   each change, then reset the Pi. Options for the Pi's kernel go in a
+   file on the PC, `make pi-netboot-serve NETBOOT_OPTIONS=pi-options.txt`
+   (read at each boot; if the server has an options file it replaces
+   the card's, so repeat `netlog=` there). The Pi gets its address from
+   the network's DHCP server; nothing needs changing there. The loader
+   prints its steps on the HDMI screen and the serial console: `Network:
+   address ...`, `Loading http://.../FreePascalOS/kernel.elf`, `Loading
+   .../system.img` with a dot per 8 MiB, `RAM disk: 65536 KiB at ...`.
+   TFTP works too (`TFTP=1`, root for port 69, `netboot=tftp://PC/`, the
+   PC on the Pi's own network), and so does a PXE or HTTP boot by the
+   firmware itself, the card then holding only the firmware (the DHCP
+   server must name the PC and `EFI/BOOT/BOOTAA64.EFI`; untested).
+3. **Firmware settings.** The firmware's defaults are what the system
+   needs (v1.53: ACPI, 3 GB), so normally nothing is set; they live in
+   `RPI_EFI.fd` itself and there is no `config.txt` switch for them. To
+   check (Esc at the Raspberry Pi logo, Device Manager → Raspberry Pi
+   Configuration):
    - Advanced Configuration → System Table Selection: **ACPI** (not
      "Device Tree", not "ACPI + Devicetree");
    - Advanced Configuration → Limit RAM to 3 GB: **enabled** (the
@@ -7149,6 +7282,9 @@ not there yet on AArch64, so the kernel stops after its self tests.
    the firmware's `config.txt` comes with, otherwise the mini UART - and
    the kernel drives either.
 5. **What to look for** in the log:
+   - the loader's network lines (step 2), then `[ramdisk] ramdisk0: 65536
+     KiB image from the loader ...`, `[fs] ramdisk0p1: ext4 "FPOSROOT"`
+     and `[init] System volume: /ramdisk0p1`;
    - `[acpi] N platform devices`, and `devices` in the debug shell: the
      `BRCME88C`, `BCM2849`, `PNP0D10` and `BCM6E4E` devices with their
      memory, GSIs, "not coherent" and `dma ... at bus C0000000` (if the
@@ -7212,6 +7348,26 @@ not there yet on AArch64, so the kernel stops after its self tests.
    afar. A board that panics at every boot restarts again and again
    (netlog.py says `REBOOT` each time); changing the options then needs
    the SD card, or a network boot.
+8. **Iterating, and getting out of trouble.** A rebuild on the PC is
+   picked up at the next reset: `reboot` in the debug shell (`netshell=`)
+   or user mode, the watchdog after a hang or a panic, or the power. The
+   system runs from the RAM disk, so whatever it writes (logs, settings,
+   passwords) is gone at the next boot, and a broken system image cannot
+   damage the card. Without the server (or the network) the loader says
+   `no network for the network boot, using the boot volume` and boots
+   the card's own kernel, which then has no system volume and stops
+   after its self tests (`kshell` for the debug shell); with the server
+   but no system image (`netboot-serve.py --no-system-image`) the kernel
+   looks for one on its disks. Kernel options are changed in the
+   server's options file without touching the card; the card's
+   `options.txt` (any PC, FAT32) is needed only to change the server's
+   address. To update the loader itself, copy a new `BOOTAA64.EFI` to
+   the card, or flash a new image. Things to watch on the first boots:
+   the firmware's network stack needs its random number generator (on
+   the Pi it has one); the loader switches the firmware's IPv4 setting
+   for the Ethernet port to DHCP and the firmware keeps that; with no
+   address after 30 seconds (cable, DHCP server) the loader falls back
+   to the card.
 
 ## Heap checking
 

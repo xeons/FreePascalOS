@@ -738,6 +738,16 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         at the call); the Pi's firmware does them through PSCI anyway
   - [ ] Service output (standard error) to the network log; the service
         manager's own messages already reach it through the console
+  - [x] Network boot: the loader fetches options.txt, the kernel and the
+        system image (a RAM disk, `ramdisk0`) from `netboot=http://` or
+        `tftp://`, or after a firmware PXE/HTTP boot
+        (`scripts/netboot-serve.py`, `make pi-netboot-serve`,
+        `make arm64-netboot-test`); `make pi-sd-image` builds the card
+  - [ ] Network boot on the Pi: check the firmware's HTTP and PXE
+        clients on GENET; the firmware's own PXE/HTTP boot of the loader
+        is untested (QEMU's edk2 offers no network boot option)
+  - [ ] Network boot: a compressed system image (64 MiB now, about 4 s
+        over HTTP in QEMU), and HTTPS (the firmware has TLS)
 - [x] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
       "Inodes that were part of a corrupted orphan linked list found"):
       deletion times came from a wall clock starting at zero (no RTC),

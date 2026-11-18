@@ -20,7 +20,8 @@
   Kernel command line options.
 
   The loader passes a line of space separated words (from the file
-  \FreePascalOS\options.txt on the boot volume). Options are either flags
+  \FreePascalOS\options.txt on the boot volume, or FreePascalOS/options.txt
+  on the network boot server). Options are either flags
   ("test-exit") or name=value pairs ("root=disk0p2").
 
   Known options:
@@ -45,6 +46,10 @@
     watchdog=SECONDS, panicreset=SECONDS
                 The hardware watchdog and the reset after a panic
                 (Io.Watchdog).
+    netboot=URL The loader's: boot from this server (Loader.NetworkBoot);
+                a network boot puts it first, with the base URL the files
+                came from, and its system image is the RAM disk
+                (Drivers.RamDisk).
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by
