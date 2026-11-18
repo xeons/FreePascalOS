@@ -34,6 +34,10 @@
   in ordinary memory (StartFramebufferShadow): every pixel is written to
   both, and scrolling moves the copy and writes the framebuffer, never
   reading video memory, which is very slow to read.
+
+  Pixels are 32 bits everywhere but in the framebuffer itself, which may
+  be 16 bits (r5g6b5: a Raspberry Pi firmware's simple-framebuffer):
+  every write to it goes through WriteScanLine, which narrows them.
 }
 unit Debug.FramebufferConsole;
 
@@ -116,7 +120,9 @@ type
 
   TConsoleState = record
     IsAvailable: Boolean;
-    Pixels: PLongWord;
+    { The framebuffer: BytesPerPixel 4, or 2 (PixelFormatRedGreenBlue565). }
+    Pixels: PByte;
+    BytesPerPixel: LongWord;
     PixelsPerScanLine: LongWord;
     WidthInPixels: LongWord;
     HeightInPixels: LongWord;
@@ -150,6 +156,18 @@ var
 
 { --- Pixels ------------------------------------------------------------------ }
 
+{ A 32-bit pixel (blue in the low byte) as r5g6b5. }
+function NarrowPixel(Pixel: LongWord): Word;
+begin
+  Result := Word(((Pixel shr 8) and $F800) or ((Pixel shr 5) and $07E0) or ((Pixel shr 3) and $001F));
+end;
+
+function WidenPixel(Pixel: Word): LongWord;
+begin
+  Result := (LongWord(Pixel and $F800) shl 8) or (LongWord(Pixel and $07E0) shl 5) or
+    (LongWord(Pixel and $001F) shl 3);
+end;
+
 function EncodePixel(const Color: TColor): LongWord;
 begin
   if Console.PixelFormat = PixelFormatRedGreenBlue then
@@ -158,9 +176,49 @@ begin
     Result := LongWord(Color.Blue) or (LongWord(Color.Green) shl 8) or (LongWord(Color.Red) shl 16);
 end;
 
-function ScanLineAddress(PixelRow: LongWord): PLongWord;
+function ScanLineAddress(PixelRow: LongWord): PByte;
 begin
-  Result := Console.Pixels + QWord(PixelRow) * Console.PixelsPerScanLine;
+  Result := Console.Pixels + QWord(PixelRow) * Console.PixelsPerScanLine * Console.BytesPerPixel;
+end;
+
+{ Count 32-bit pixels to the framebuffer's line PixelRow at Left. }
+procedure WriteScanLine(PixelRow, Left: LongWord; Source: PLongWord; Count: LongWord);
+var
+  Line: PWord;
+  Index: LongWord;
+begin
+  if Console.BytesPerPixel = 4 then
+  begin
+    CopyMemory(PLongWord(ScanLineAddress(PixelRow)) + Left, Source, Count * SizeOf(LongWord));
+    Exit;
+  end;
+  Line := PWord(ScanLineAddress(PixelRow)) + Left;
+  Index := 0;
+  while Index < Count do
+  begin
+    Line[Index] := NarrowPixel(Source[Index]);
+    Inc(Index);
+  end;
+end;
+
+{ The framebuffer's line PixelRow as Count 32-bit pixels. }
+procedure ReadScanLine(PixelRow: LongWord; Destination: PLongWord; Count: LongWord);
+var
+  Line: PWord;
+  Index: LongWord;
+begin
+  if Console.BytesPerPixel = 4 then
+  begin
+    CopyMemory(Destination, ScanLineAddress(PixelRow), Count * SizeOf(LongWord));
+    Exit;
+  end;
+  Line := PWord(ScanLineAddress(PixelRow));
+  Index := 0;
+  while Index < Count do
+  begin
+    Destination[Index] := WidenPixel(Line[Index]);
+    Inc(Index);
+  end;
 end;
 
 function ShadowLineAddress(PixelRow: LongWord): PLongWord;
@@ -175,7 +233,7 @@ begin
   if Console.Shadow <> nil then
     CopyMemory(ShadowLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
   if not Console.DrawingSuspended then
-    CopyMemory(ScanLineAddress(PixelRow) + Left, Source, Count * SizeOf(LongWord));
+    WriteScanLine(PixelRow, Left, Source, Count);
 end;
 
 procedure FillRectangle(Left, Top, Width, Height: LongWord; Pixel: LongWord);
@@ -183,15 +241,27 @@ var
   RowOffset: LongWord;
   ColumnOffset: LongWord;
   Line: PLongWord;
+  NarrowLine: PWord;
+  Narrow: Word;
 begin
+  Narrow := NarrowPixel(Pixel);
   RowOffset := 0;
   while RowOffset < Height do
   begin
     if not Console.DrawingSuspended then
     begin
-      Line := ScanLineAddress(Top + RowOffset);
-      for ColumnOffset := 0 to Width - 1 do
-        Line[Left + ColumnOffset] := Pixel;
+      if Console.BytesPerPixel = 4 then
+      begin
+        Line := PLongWord(ScanLineAddress(Top + RowOffset));
+        for ColumnOffset := 0 to Width - 1 do
+          Line[Left + ColumnOffset] := Pixel;
+      end
+      else
+      begin
+        NarrowLine := PWord(ScanLineAddress(Top + RowOffset));
+        for ColumnOffset := 0 to Width - 1 do
+          NarrowLine[Left + ColumnOffset] := Narrow;
+      end;
     end;
     if Console.Shadow <> nil then
     begin
@@ -211,7 +281,11 @@ begin
      (Framebuffer.Height < 2 * ConsoleMargin + ConsoleFontHeight) then
     Exit;
 
-  Console.Pixels := PLongWord(FramebufferVirtualBase);
+  Console.Pixels := PByte(FramebufferVirtualBase);
+  if Framebuffer.PixelFormat = PixelFormatRedGreenBlue565 then
+    Console.BytesPerPixel := 2
+  else
+    Console.BytesPerPixel := 4;
   Console.PixelsPerScanLine := Framebuffer.PixelsPerScanLine;
   Console.WidthInPixels := Framebuffer.Width;
   Console.HeightInPixels := Framebuffer.Height;
@@ -245,8 +319,7 @@ begin
     Exit;
   { The one time the framebuffer is read. }
   for PixelRow := 0 to Console.HeightInPixels - 1 do
-    CopyMemory(Shadow + QWord(PixelRow) * Console.WidthInPixels, ScanLineAddress(PixelRow),
-      Console.WidthInPixels * SizeOf(LongWord));
+    ReadScanLine(PixelRow, Shadow + QWord(PixelRow) * Console.WidthInPixels, Console.WidthInPixels);
   Console.Shadow := Shadow;
 end;
 
@@ -257,8 +330,8 @@ begin
   if not Console.IsAvailable or (Console.Shadow = nil) or Console.DrawingSuspended then
     Exit;
   for PixelRow := 0 to Console.HeightInPixels - 1 do
-    CopyMemory(ScanLineAddress(PixelRow), Console.Shadow + QWord(PixelRow) * Console.WidthInPixels,
-      Console.WidthInPixels * SizeOf(LongWord));
+    WriteScanLine(PixelRow, 0, Console.Shadow + QWord(PixelRow) * Console.WidthInPixels,
+      Console.WidthInPixels);
 end;
 
 procedure SuspendConsoleDrawing;
@@ -395,12 +468,11 @@ begin
       QWord(ScanLinesToMove) * Console.WidthInPixels * SizeOf(LongWord));
     if not Console.DrawingSuspended then
       for PixelRow := TextAreaTop to TextAreaTop + ScanLinesToMove - 1 do
-        CopyMemory(ScanLineAddress(PixelRow), ShadowLineAddress(PixelRow),
-          Console.WidthInPixels * SizeOf(LongWord));
+        WriteScanLine(PixelRow, 0, ShadowLineAddress(PixelRow), Console.WidthInPixels);
   end
   else if not Console.DrawingSuspended then
     MoveMemory(ScanLineAddress(TextAreaTop), ScanLineAddress(TextAreaTop + ConsoleFontHeight),
-      QWord(ScanLinesToMove) * Console.PixelsPerScanLine * SizeOf(LongWord));
+      QWord(ScanLinesToMove) * Console.PixelsPerScanLine * Console.BytesPerPixel);
   FillRectangle(0, TextAreaTop + ScanLinesToMove, Console.WidthInPixels,
     ConsoleFontHeight, Console.BackgroundPixel);
 end;

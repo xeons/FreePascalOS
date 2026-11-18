@@ -46,6 +46,7 @@ uses
   Runtime.Memory,
   Drivers.DisplayDevice,
   Drivers.BochsDisplay,
+  Drivers.NarrowFramebuffer,
   Drivers.VirtioGpu;
 
 const
@@ -58,6 +59,12 @@ var
 begin
   if (Framebuffer.PhysicalBase = 0) or (Framebuffer.Width = 0) then
     Exit;
+  { 16 bits a pixel: through a 32-bit copy. }
+  if Framebuffer.PixelFormat = PixelFormatRedGreenBlue565 then
+  begin
+    RegisterNarrowFramebufferDisplay(Framebuffer);
+    Exit;
+  end;
   ZeroMemory(@Adapter, SizeOf(Adapter));
   Adapter.FramebufferPhysical := Framebuffer.PhysicalBase;
   Adapter.Width := Framebuffer.Width;
