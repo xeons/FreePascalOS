@@ -25,6 +25,7 @@
 #                   session as it normally starts; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
+#   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
 #   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
 #                   Python) for platform devices on the host: ids, resources,
 #                   _CCA, _DMA, _DSD properties
@@ -166,7 +167,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test ssh-test
 
 all: esp
@@ -442,7 +443,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -505,6 +506,25 @@ $(ACPI_DEVICE_TABLE): tools/AcpiDeviceTest/make-table.py
 
 acpi-device-test: $(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
 	$(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
+
+# The device tree reading (shared/DeviceTree.*, kernel/firmware) on the
+# host, over a tree in the Raspberry Pi 5's layout that
+# tools/DeviceTreeTest/make-tree.py encodes.
+DEVICE_TREE_TEST := build/tools/DeviceTreeTest
+DEVICE_TREE_BLOB := build/tools/device-tree-test.dtb
+DEVICE_TREE_TEST_SOURCES := tools/DeviceTreeTest/DeviceTreeTest.pas $(wildcard shared/DeviceTree.*.pas) \
+	$(wildcard kernel/firmware/Firmware.DeviceTree*.pas)
+
+$(DEVICE_TREE_TEST): $(DEVICE_TREE_TEST_SOURCES)
+	@mkdir -p build/tools/device-tree-units
+	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/device-tree-units $<
+
+$(DEVICE_TREE_BLOB): tools/DeviceTreeTest/make-tree.py
+	@mkdir -p build/tools
+	python3 -I $< $@
+
+device-tree-test: $(DEVICE_TREE_TEST) $(DEVICE_TREE_BLOB)
+	$(DEVICE_TREE_TEST) $(DEVICE_TREE_BLOB)
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)
