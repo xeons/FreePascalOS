@@ -73,6 +73,9 @@ procedure MultiplyPoint(constref Curve: TEllipticCurve; constref Scalar: TBigNum
   out Product: TCurvePoint);
 { The affine x coordinate in ordinary form; False for infinity. }
 function AffineX(constref Curve: TEllipticCurve; constref Point: TCurvePoint; out X: TBigNumber): Boolean;
+{ The point as uncompressed bytes (04 || x || y), 1 + 2 CoordinateBytes
+  of them; False for infinity. }
+function EncodeCurvePoint(constref Curve: TEllipticCurve; constref Point: TCurvePoint; Bytes: PByte): Boolean;
 
 implementation
 
@@ -356,6 +359,26 @@ begin
   FieldMultiply(Curve, Point.X, ZInverseSquared, MontgomeryX);
   FromMontgomeryForm(Curve.Field, MontgomeryX, X);
   Result := True;
+end;
+
+function EncodeCurvePoint(constref Curve: TEllipticCurve; constref Point: TCurvePoint; Bytes: PByte): Boolean;
+var
+  ZInverse, ZInverseSquared, ZInverseCubed: TBigNumber;
+  MontgomeryX, MontgomeryY, X, Y: TBigNumber;
+begin
+  if Point.IsInfinity or BigNumberIsZero(Point.Z) then
+    Exit(False);
+  { Jacobian coordinates: x = X / Z^2, y = Y / Z^3. }
+  MontgomeryInverseForPrime(Curve.Field, Point.Z, ZInverse);
+  FieldSquare(Curve, ZInverse, ZInverseSquared);
+  FieldMultiply(Curve, ZInverseSquared, ZInverse, ZInverseCubed);
+  FieldMultiply(Curve, Point.X, ZInverseSquared, MontgomeryX);
+  FieldMultiply(Curve, Point.Y, ZInverseCubed, MontgomeryY);
+  FromMontgomeryForm(Curve.Field, MontgomeryX, X);
+  FromMontgomeryForm(Curve.Field, MontgomeryY, Y);
+  Bytes[0] := 4;
+  Result := BigNumberToBytes(X, Bytes + 1, Curve.CoordinateBytes) and
+    BigNumberToBytes(Y, Bytes + 1 + Curve.CoordinateBytes, Curve.CoordinateBytes);
 end;
 
 end.

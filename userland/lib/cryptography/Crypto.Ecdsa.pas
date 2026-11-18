@@ -17,11 +17,18 @@
 }
 
 {
-  Checking ECDSA signatures (FIPS 186-4 section 6.4, SEC 1 section 4.1.4)
-  on P-256 and P-384. The caller hashes the message and passes the
-  digest, the public key as an uncompressed point (04 || x || y) and the
+  ECDSA signatures (FIPS 186-4 section 6.4, SEC 1 section 4.1.4) on
+  P-256 and P-384. The caller hashes the message and passes the digest,
+  the public key as an uncompressed point (04 || x || y) and the
   signature's r and s as big endian integers (as taken out of the DER
-  Ecdsa-Sig-Value). Nothing here signs.
+  Ecdsa-Sig-Value, or an SSH signature blob).
+
+  Signing takes the private key d as a big endian integer and makes the
+  per signature secret k deterministically from d and the digest (RFC
+  6979, HMAC with the digest's own algorithm), so no random numbers are
+  needed and a weak generator cannot leak the key. The point arithmetic
+  takes time that depends on k (Crypto.EllipticCurves multiplies by
+  doubling and adding).
 }
 unit Crypto.Ecdsa;
 
@@ -31,16 +38,29 @@ unit Crypto.Ecdsa;
 interface
 
 uses
-  Crypto.EllipticCurves;
+  Crypto.EllipticCurves,
+  Crypto.Digests;
 
 function VerifyEcdsaSignature(Curve: TCurveName; PublicKey: PByte; PublicKeyLength: PtrUInt; Digest: PByte;
   DigestLength: PtrUInt; SignatureR: PByte; SignatureRLength: PtrUInt; SignatureS: PByte;
   SignatureSLength: PtrUInt): Boolean;
 
+{ d G as an uncompressed point (1 + 2 coordinate bytes: 65 for P-256)
+  into PublicKey. False when d is not in [1, n - 1]. }
+function EcdsaPublicKey(Curve: TCurveName; PrivateKey: PByte; PrivateKeyLength: PtrUInt; PublicKey: PByte): Boolean;
+{ Signs Digest (made with Algorithm, which RFC 6979 also uses) with the
+  private key d; r and s go to SignatureR and SignatureS as big endian
+  integers of the curve's coordinate size each (32 bytes for P-256).
+  False when d is not in [1, n - 1]. }
+function SignEcdsa(Curve: TCurveName; PrivateKey: PByte; PrivateKeyLength: PtrUInt; Algorithm: TDigestAlgorithm;
+  Digest: PByte; DigestLength: PtrUInt; SignatureR: PByte; SignatureS: PByte): Boolean;
+
 implementation
 
 uses
-  Crypto.BigNumbers;
+  Crypto.BigNumbers,
+  Crypto.Bits,
+  Crypto.Hmac;
 
 { The digest as an integer, cut to the leftmost bits of n's length, and
   reduced mod n (it is below 2n, so once is enough). }
@@ -120,6 +140,165 @@ begin
   if not ReduceOnce(Parameters.Order, X, V) then
     Exit;
   Result := BigNumbersEqual(V, R);
+end;
+
+{ d from big endian bytes, in [1, n - 1]. }
+function ReadPrivateKey(constref Curve: TEllipticCurve; PrivateKey: PByte; PrivateKeyLength: PtrUInt;
+  out Value: TBigNumber): Boolean;
+begin
+  Result := ReadScalar(Curve, PrivateKey, PrivateKeyLength, Value);
+end;
+
+function EcdsaPublicKey(Curve: TCurveName; PrivateKey: PByte; PrivateKeyLength: PtrUInt; PublicKey: PByte): Boolean;
+var
+  Parameters: TEllipticCurve;
+  D: TBigNumber;
+  Generator, KeyPoint: TCurvePoint;
+begin
+  Result := False;
+  PrepareCurve(Curve, Parameters);
+  if not ReadPrivateKey(Parameters, PrivateKey, PrivateKeyLength, D) then
+    Exit;
+  GeneratorPoint(Parameters, Generator);
+  MultiplyPoint(Parameters, D, Generator, KeyPoint);
+  Result := EncodeCurvePoint(Parameters, KeyPoint, PublicKey);
+  WipeMemory(@D, SizeOf(D));
+end;
+
+type
+  { The HMAC_DRBG state of RFC 6979 section 3.2. }
+  TNonceGenerator = record
+    Algorithm: TDigestAlgorithm;
+    HashSize: Integer;
+    Key: TDigestOutput;
+    Value: TDigestOutput;
+  end;
+
+{ HMAC_K(V || Separator || Extra) when Separator >= 0, else HMAC_K(V). }
+procedure NonceHmac(var Generator: TNonceGenerator; Separator: Integer; Extra: PByte; ExtraLength: PtrUInt;
+  out Output: TDigestOutput);
+var
+  Context: THmacContext;
+  SeparatorByte: Byte;
+begin
+  BeginHmac(Context, Generator.Algorithm, @Generator.Key[0], Generator.HashSize);
+  UpdateHmac(Context, @Generator.Value[0], Generator.HashSize);
+  if Separator >= 0 then
+  begin
+    SeparatorByte := Byte(Separator);
+    UpdateHmac(Context, @SeparatorByte, 1);
+    if ExtraLength > 0 then
+      UpdateHmac(Context, Extra, ExtraLength);
+  end;
+  FinishHmac(Context, Output);
+end;
+
+{ K = HMAC_K(V || Separator || Extra); V = HMAC_K(V) }
+procedure ReseedNonceGenerator(var Generator: TNonceGenerator; Separator: Integer; Extra: PByte;
+  ExtraLength: PtrUInt);
+var
+  Output: TDigestOutput;
+begin
+  NonceHmac(Generator, Separator, Extra, ExtraLength, Output);
+  Generator.Key := Output;
+  NonceHmac(Generator, -1, nil, 0, Output);
+  Generator.Value := Output;
+  WipeMemory(@Output[0], SizeOf(Output));
+end;
+
+{ Starts the generator from int2octets(d) || bits2octets(h1). }
+procedure BeginNonceGenerator(out Generator: TNonceGenerator; constref Curve: TEllipticCurve;
+  Algorithm: TDigestAlgorithm; constref D: TBigNumber; Digest: PByte; DigestLength: PtrUInt);
+var
+  Seed: array[0..2 * BigNumberMaximumBytes - 1] of Byte;
+  Reduced: TBigNumber;
+  Size: Integer;
+begin
+  Generator.Algorithm := Algorithm;
+  Generator.HashSize := DigestSize(Algorithm);
+  FillChar(Generator.Key, SizeOf(Generator.Key), 0);
+  FillChar(Generator.Value, SizeOf(Generator.Value), 1);
+  Size := Curve.CoordinateBytes;
+  BigNumberToBytes(D, @Seed[0], Size);
+  { bits2octets: the digest as an integer mod n. }
+  DigestToInteger(Curve, Digest, DigestLength, Reduced);
+  BigNumberToBytes(Reduced, @Seed[Size], Size);
+  ReseedNonceGenerator(Generator, 0, @Seed[0], 2 * Size);
+  ReseedNonceGenerator(Generator, 1, @Seed[0], 2 * Size);
+  WipeMemory(@Seed[0], SizeOf(Seed));
+end;
+
+{ The next candidate k in [1, n - 1]. The curves here have orders of a
+  whole number of bytes, so bits2int needs no shift. }
+procedure NextNonce(var Generator: TNonceGenerator; constref Curve: TEllipticCurve; out K: TBigNumber);
+var
+  Candidate: array[0..BigNumberMaximumBytes - 1] of Byte;
+  Filled, Part: Integer;
+  Output: TDigestOutput;
+begin
+  repeat
+    Filled := 0;
+    while Filled < Curve.CoordinateBytes do
+    begin
+      NonceHmac(Generator, -1, nil, 0, Output);
+      Generator.Value := Output;
+      Part := Generator.HashSize;
+      if Part > Curve.CoordinateBytes - Filled then
+        Part := Curve.CoordinateBytes - Filled;
+      Move(Output[0], Candidate[Filled], Part);
+      Filled := Filled + Part;
+    end;
+    BigNumberFromBytes(K, @Candidate[0], Curve.CoordinateBytes);
+    if (not BigNumberIsZero(K)) and (CompareBigNumbers(K, Curve.Order.Modulus) < 0) then
+      Break;
+    ReseedNonceGenerator(Generator, 0, nil, 0);
+  until False;
+  WipeMemory(@Candidate[0], SizeOf(Candidate));
+  WipeMemory(@Output[0], SizeOf(Output));
+end;
+
+function SignEcdsa(Curve: TCurveName; PrivateKey: PByte; PrivateKeyLength: PtrUInt; Algorithm: TDigestAlgorithm;
+  Digest: PByte; DigestLength: PtrUInt; SignatureR: PByte; SignatureS: PByte): Boolean;
+var
+  Parameters: TEllipticCurve;
+  Generator: TNonceGenerator;
+  D, E, K, X, R, S: TBigNumber;
+  MontgomeryK, MontgomeryKInverse, MontgomeryR, RD, Sum: TBigNumber;
+  BasePoint, Commitment: TCurvePoint;
+begin
+  Result := False;
+  PrepareCurve(Curve, Parameters);
+  if not ReadPrivateKey(Parameters, PrivateKey, PrivateKeyLength, D) then
+    Exit;
+  DigestToInteger(Parameters, Digest, DigestLength, E);
+  BeginNonceGenerator(Generator, Parameters, Algorithm, D, Digest, DigestLength);
+  GeneratorPoint(Parameters, BasePoint);
+  repeat
+    NextNonce(Generator, Parameters, K);
+    { r = x(k G) mod n }
+    MultiplyPoint(Parameters, K, BasePoint, Commitment);
+    if not AffineX(Parameters, Commitment, X) then
+      Continue;
+    if not ReduceOnce(Parameters.Order, X, R) or BigNumberIsZero(R) then
+      Continue;
+    { s = (e + r d) / k mod n. A number in Montgomery form multiplied
+      by an ordinary one gives an ordinary product. }
+    ToMontgomeryForm(Parameters.Order, R, MontgomeryR);
+    MontgomeryMultiply(Parameters.Order, MontgomeryR, D, RD);
+    ModularAdd(Parameters.Order, E, RD, Sum);
+    ToMontgomeryForm(Parameters.Order, K, MontgomeryK);
+    MontgomeryInverseForPrime(Parameters.Order, MontgomeryK, MontgomeryKInverse);
+    MontgomeryMultiply(Parameters.Order, MontgomeryKInverse, Sum, S);
+    if not BigNumberIsZero(S) then
+      Break;
+  until False;
+  Result := BigNumberToBytes(R, SignatureR, Parameters.CoordinateBytes) and
+    BigNumberToBytes(S, SignatureS, Parameters.CoordinateBytes);
+  WipeMemory(@D, SizeOf(D));
+  WipeMemory(@K, SizeOf(K));
+  WipeMemory(@MontgomeryK, SizeOf(MontgomeryK));
+  WipeMemory(@MontgomeryKInverse, SizeOf(MontgomeryKInverse));
+  WipeMemory(@Generator, SizeOf(Generator));
 end;
 
 end.
