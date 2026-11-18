@@ -28,6 +28,11 @@
   At startup every bus in the MCFG range is scanned one bus (1 MiB) at a
   time. Buses without devices are unmapped again; buses with devices stay
   mapped so drivers can reach their configuration space later.
+
+  Without ACPI (a native boot) the device tree's ECAM host bridges give
+  the same (Firmware.DeviceTreePci). Their memory windows may put a
+  device's registers at another address for the processor than on the
+  bus: PciReadBar gives the processor's (AddPciAddressTranslation).
 }
 unit Io.Pci;
 
@@ -111,8 +116,13 @@ procedure PciWrite8(Device: PPciDevice; Offset: Word; Value: Byte);
 procedure PciWrite16(Device: PPciDevice; Offset: Word; Value: Word);
 procedure PciWrite32(Device: PPciDevice; Offset: Word; Value: LongWord);
 
-{ Decodes base address register BarIndex (0..5), including its size. }
+{ Decodes base address register BarIndex (0..5), including its size;
+  PhysicalAddress is where the processor reaches it. }
 function PciReadBar(Device: PPciDevice; BarIndex: Integer; out Bar: TPciBar): Boolean;
+
+{ Memory of Segment's buses at [BusStart, BusStart + Size) is at
+  PhysicalStart for the processor (a host bridge's window). }
+procedure AddPciAddressTranslation(Segment: Word; BusStart, Size, PhysicalStart: QWord);
 
 procedure PciEnableDevice(Device: PPciDevice; EnableBusMastering: Boolean);
 
@@ -133,6 +143,7 @@ uses
   Memory.Layout,
   Memory.DeviceMapping,
   Firmware.Acpi,
+  Firmware.DeviceTreePci,
   Debug.Output;
 
 const
@@ -159,10 +170,45 @@ type
   end;
   PMcfgAllocation = ^TMcfgAllocation;
 
+const
+  MaximumAddressTranslations = 16;
+
+type
+  TAddressTranslation = record
+    Segment: Word;
+    BusStart: QWord;
+    Size: QWord;
+    PhysicalStart: QWord;
+  end;
+
 var
   Devices: array[0..MaximumPciDevices - 1] of TPciDevice;
   DeviceCount: Integer;
   ConfigurationMechanismFound: Boolean;
+  Translations: array[0..MaximumAddressTranslations - 1] of TAddressTranslation;
+  TranslationCount: Integer = 0;
+
+procedure AddPciAddressTranslation(Segment: Word; BusStart, Size, PhysicalStart: QWord);
+begin
+  if (TranslationCount >= MaximumAddressTranslations) or (BusStart = PhysicalStart) then
+    Exit;
+  Translations[TranslationCount].Segment := Segment;
+  Translations[TranslationCount].BusStart := BusStart;
+  Translations[TranslationCount].Size := Size;
+  Translations[TranslationCount].PhysicalStart := PhysicalStart;
+  Inc(TranslationCount);
+end;
+
+function TranslateBusAddress(Segment: Word; BusAddress: QWord): QWord;
+var
+  Index: Integer;
+begin
+  for Index := 0 to TranslationCount - 1 do
+    if (Translations[Index].Segment = Segment) and (BusAddress >= Translations[Index].BusStart) and
+       (BusAddress - Translations[Index].BusStart < Translations[Index].Size) then
+      Exit(BusAddress - Translations[Index].BusStart + Translations[Index].PhysicalStart);
+  Result := BusAddress;
+end;
 
 function PciDeviceCount: Integer;
 begin
@@ -277,6 +323,32 @@ begin
   end;
 end;
 
+{ The ECAM host bridges of a device tree, as MCFG allocations. }
+procedure ScanDeviceTreeHosts;
+var
+  Index: Integer;
+  Host: TDeviceTreePciHost;
+  Allocation: TMcfgAllocation;
+  WindowIndex: Integer;
+begin
+  for Index := 0 to DeviceTreePciHostCount - 1 do
+  begin
+    if not GetDeviceTreePciHost(Index, Host) then
+      Continue;
+    ConfigurationMechanismFound := True;
+    for WindowIndex := 0 to Host.WindowCount - 1 do
+      if Host.Windows[WindowIndex].Space >= 2 then
+        AddPciAddressTranslation(Host.Segment, Host.Windows[WindowIndex].BusAddress,
+          Host.Windows[WindowIndex].Size, Host.Windows[WindowIndex].PhysicalAddress);
+    Allocation.BaseAddress := Host.ConfigurationBase;
+    Allocation.Segment := Host.Segment;
+    Allocation.StartBus := Host.StartBus;
+    Allocation.EndBus := Host.EndBus;
+    Allocation.Reserved := 0;
+    ScanAllocation(@Allocation);
+  end;
+end;
+
 procedure InitializePci;
 const
   McfgReservedBytes = 8;
@@ -291,7 +363,10 @@ begin
 
   Table := FindAcpiTable('MCFG', 0);
   if Table = nil then
+  begin
+    ScanDeviceTreeHosts;
     Exit;
+  end;
   ConfigurationMechanismFound := True;
 
   AllocationCount := (Table^.Length - SizeOf(TAcpiTableHeader) - McfgReservedBytes) div
@@ -388,6 +463,8 @@ begin
   else
   begin
     Bar.PhysicalAddress := (QWord(OriginalHigh) shl 32) or (OriginalLow and $FFFFFFF0);
+    if Bar.PhysicalAddress <> 0 then
+      Bar.PhysicalAddress := TranslateBusAddress(Device^.Segment, Bar.PhysicalAddress);
     SizeMask := (QWord(SizeHigh) shl 32) or (SizeLow and $FFFFFFF0);
     { A 32-bit BAR the device does not implement reads back as zeros:
       no size (the all-ones high half is only assumed). }
@@ -483,7 +560,7 @@ begin
   if not ConfigurationMechanismFound then
   begin
     DebugWriteTag('pci');
-    DebugWriteLine('No MCFG table, PCI devices are not available');
+    DebugWriteLine('No MCFG table or ECAM host bridge, PCI devices are not available');
     DebugEndMessage;
     Exit;
   end;

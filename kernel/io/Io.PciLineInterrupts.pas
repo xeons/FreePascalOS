@@ -26,6 +26,10 @@
   device number (the PCI-to-PCI bridge "swizzle": line + device, modulo
   four), and so on up until a bridge with a table.
 
+  Without ACPI (a native boot) the device tree's host bridge maps them
+  instead ("interrupt-map", Firmware.DeviceTreePci), the lines of devices
+  behind bridges swizzled up to the root bus the same way.
+
   Lines are level triggered and may be shared, so a handler must check
   that its device raised the interrupt and quiet it before returning.
 }
@@ -48,6 +52,8 @@ implementation
 
 uses
   Firmware.AcpiPciRouting,
+  Firmware.DeviceTreeInterrupts,
+  Firmware.DeviceTreePci,
   Io.InterruptRouting,
   Debug.Output;
 
@@ -100,6 +106,29 @@ begin
   Result := nil;
 end;
 
+{ The device tree's route of Device's line Pin, swizzled up to the root
+  bus. }
+function DeviceTreeRouteOf(Device: PPciDevice; Pin: Byte; out Gic: TGicInterrupt): Boolean;
+var
+  Bus: Byte;
+  Slot: Byte;
+  Hops: Integer;
+  Bridge: PPciDevice;
+begin
+  Bus := Device^.Bus;
+  Slot := Device^.Device;
+  for Hops := 0 to MaximumBridgeHops do
+  begin
+    Bridge := BridgeTo(Device^.Segment, Bus);
+    if Bridge = nil then
+      Exit(FindDeviceTreePciRoute(Device^.Segment, Bus, Slot, Pin, Gic));
+    Pin := (Pin + Slot) mod 4;
+    Bus := Bridge^.Bus;
+    Slot := Bridge^.Device;
+  end;
+  Result := False;
+end;
+
 procedure ReportLine(Device: PPciDevice; Pin: Byte; Gsi: LongWord);
 begin
   DebugBeginMessage;
@@ -122,18 +151,32 @@ var
   Pin: Byte;
   Route: PPciRoute;
   Gsi: LongWord;
+  LevelTriggered: Boolean;
+  ActiveLow: Boolean;
+  Gic: TGicInterrupt;
 begin
   Result := False;
   Pin := PciRead8(Device, PciConfigurationInterruptPin);
   if (Pin < 1) or (Pin > 4) then
     Exit;
   Route := RouteOf(Device, Pin - 1);
-  if Route = nil then
+  if Route <> nil then
+  begin
+    Gsi := Route^.GlobalInterrupt;
+    if Route^.IsaInterrupt then
+      Gsi := GlobalInterruptOfIsaIrq(Byte(Gsi));
+    LevelTriggered := Route^.LevelTriggered;
+    ActiveLow := Route^.ActiveLow;
+  end
+  else if DeviceTreeRouteOf(Device, Pin - 1, Gic) then
+  begin
+    Gsi := Gic.Intid;
+    LevelTriggered := Gic.LevelTriggered;
+    ActiveLow := Gic.ActiveLow;
+  end
+  else
     Exit;
-  Gsi := Route^.GlobalInterrupt;
-  if Route^.IsaInterrupt then
-    Gsi := GlobalInterruptOfIsaIrq(Byte(Gsi));
-  if not ConnectGlobalInterrupt(Gsi, Route^.LevelTriggered, Route^.ActiveLow, Handler, Context) then
+  if not ConnectGlobalInterrupt(Gsi, LevelTriggered, ActiveLow, Handler, Context) then
     Exit;
   { Let the device assert its line. }
   PciWrite16(Device, PciConfigurationCommand,

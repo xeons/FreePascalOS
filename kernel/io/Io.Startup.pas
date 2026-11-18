@@ -71,6 +71,7 @@ uses
   Io.PciMessageInterrupts,
   Firmware.Acpi,
   Io.Pci,
+  Io.PciResources,
   Io.BlockDevice,
   Io.Partitions,
   Drivers.Ahci,
@@ -154,6 +155,8 @@ procedure InitializeBuses;
 begin
   InitializeInputDevices;
   InitializePci;
+  { After a native boot nobody gave the devices addresses yet. }
+  AssignPciResources;
   WritePciSummary;
   { Suspend to RAM: configuration space first, then the MSI-X tables. }
   RegisterPciPowerHandler;
