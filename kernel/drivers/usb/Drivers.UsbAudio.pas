@@ -24,7 +24,9 @@
   48 kHz (format type I) through an isochronous OUT endpoint, and for
   the audio control interface's feature unit (mute and volume). It
   selects that setting, sets the endpoint's sampling rate and registers
-  an audio output (Io.AudioOutput).
+  an audio output (Io.AudioOutput). The driver is offered the audio
+  control interface (Drivers.UsbInterfaces) and claims the streaming
+  interface with it.
 
   While the output plays, the endpoint's isochronous stream
   (Drivers.XhciIsochronous) takes packets straight from the framework's
@@ -50,6 +52,8 @@ uses
   Io.AudioOutput,
   Drivers.Xhci,
   Drivers.XhciIsochronous,
+  Drivers.UsbDescriptors,
+  Drivers.UsbInterfaces,
   Debug.Output;
 
 const
@@ -341,13 +345,15 @@ begin
   ChooseStreamingSetting(PUsbAudio(Context));
 end;
 
-function ProbeUsbAudio(Device: PUsbDevice): Boolean;
+function ProbeUsbAudio(Device: PUsbDevice; UsbInterface: PUsbInterfaceInfo): Boolean;
 var
   Audio: PUsbAudio;
   Packets: TIsochronousRoutines;
   Routines: TAudioDriverRoutines;
 begin
   Result := False;
+  if (UsbInterface^.InterfaceClass <> ClassAudio) or (UsbInterface^.Subclass <> SubclassAudioControl) then
+    Exit;
   Audio := PUsbAudio(AllocateZeroedKernelMemory(SizeOf(TUsbAudio)));
   if Audio = nil then
     Exit;
@@ -358,13 +364,14 @@ begin
     Exit;
   end;
   Audio^.PacketBytes := PacketBytesFor(Audio);
+  { The streaming interface goes with the control interface offered. }
   if (Audio^.PacketBytes = 0) or (Audio^.PacketBytes > Audio^.MaximumPacket) or
-     not ChooseStreamingSetting(Audio) then
+     not ChooseStreamingSetting(Audio) or not UsbClaimInterface(Device, Audio^.StreamingInterface) then
   begin
     FreeKernelMemory(Audio);
     Exit;
   end;
-  UsbSetResumeHandler(Device, @ResumeAudioDevice, Audio);
+  UsbAddResumeHandler(Device, @ResumeAudioDevice, Audio);
   Packets.NextPacket := @NextPacket;
   Packets.PacketDone := @PacketDone;
   if not UsbOpenIsochronousOut(Device, Audio^.Endpoint, Audio^.MaximumPacket, Audio^.Interval, Packets, Audio) then
@@ -393,7 +400,7 @@ end;
 
 procedure RegisterUsbAudioDriver;
 begin
-  RegisterUsbClassDriver(@ProbeUsbAudio);
+  RegisterUsbClassDriver('audio', @ProbeUsbAudio);
 end;
 
 end.

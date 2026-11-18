@@ -17,19 +17,20 @@
 }
 
 {
-  USB keyboards (HID class 03h, boot interface subclass 01h, keyboard
-  protocol 01h), driven through the boot protocol.
+  USB keyboards: the keyboard half of a HID interface (Drivers.UsbHid
+  finds the interface and hands its keyboard reports here).
 
-  In the boot protocol a keyboard sends an 8-byte report on its
-  interrupt IN endpoint whenever a key goes down or up: a byte of
-  modifier bits (Ctrl, Shift, Alt, GUI, left and right), a reserved
-  byte, and the usage codes of up to six keys held. Comparing a report
-  with the one before gives the keys pressed and released; they are
-  mapped onto the PS/2 scan codes and go through the same translation as
-  the PS/2 keyboard (Drivers.KeyboardTranslation: layout, dead keys,
-  locks). Each keyboard has an input device "usbkeyboardN" that the
-  console reads like the PS/2 keyboard. Keys do not repeat while held,
-  and the lock lights stay off.
+  Reports come in the boot protocol's form: a byte of modifier bits
+  (Ctrl, Shift, Alt, GUI, left and right), a reserved byte, and the
+  usage codes of up to six keys held. A boot keyboard sends that itself;
+  a keyboard in the report protocol has its reports turned into it
+  (Drivers.HidReports.ReadKeyboardAsBoot). Comparing a report with the
+  one before gives the keys pressed and released; they are mapped onto
+  the PS/2 scan codes and go through the same translation as the PS/2
+  keyboard (Drivers.KeyboardTranslation: layout, dead keys, locks).
+  Each keyboard has an input device "usbkeyboardN" that the console
+  reads like the PS/2 keyboard. Keys do not repeat while held, and the
+  lock lights stay off.
 }
 unit Drivers.UsbKeyboard;
 
@@ -38,9 +39,25 @@ unit Drivers.UsbKeyboard;
 
 interface
 
-{ Registers the class driver with the USB core (before the controllers
-  start). }
-procedure RegisterUsbKeyboardDriver;
+uses
+  Drivers.HidReports,
+  Drivers.KeyboardTranslation;
+
+type
+  PUsbKeyboard = ^TUsbKeyboard;
+  TUsbKeyboard = record
+    Keys: TKeyboardState;
+    Previous: TBootKeyboardReport;
+  end;
+
+{ A new keyboard with its input device (usbkeyboardN), attached to the
+  console; nil if there are too many already. }
+function CreateUsbKeyboard: PUsbKeyboard;
+{ A report from the keyboard, in the boot protocol's form (called at
+  dispatch level). }
+procedure HandleUsbKeyboardReport(Keyboard: PUsbKeyboard; const Report: TBootKeyboardReport);
+{ Every key counts as released (after waking from suspend to RAM). }
+procedure ResetUsbKeyboard(Keyboard: PUsbKeyboard);
 { Keys pressed on every USB keyboard so far. }
 function UsbKeyboardKeyCount: QWord;
 
@@ -53,19 +70,9 @@ uses
   Io.Manager,
   Io.InputDevice,
   Io.ConsoleInput,
-  Drivers.Xhci,
-  Drivers.KeyboardTranslation,
   Debug.Output;
 
 const
-  ClassHid = $03;
-  SubclassBoot = $01;
-  ProtocolKeyboard = $01;
-  RequestSetIdle = $0A;
-  RequestSetProtocol = $0B;
-  ClassRequestToInterface = $21;
-  BootProtocol = 0;
-  ReportSize = 8;
   MaximumKeyboards = 4;
   Extended = $100;
 
@@ -91,15 +98,6 @@ const
   ModifierScanCodes: array[0..7] of Word = (
     $1D, $2A, $38, Extended or $5B, Extended or $1D, $36, Extended or $38, Extended or $5C);
 
-type
-  PUsbKeyboard = ^TUsbKeyboard;
-  TUsbKeyboard = record
-    Usb: PUsbDevice;
-    InterfaceNumber: Byte;
-    Keys: TKeyboardState;
-    Previous: array[0..ReportSize - 1] of Byte;
-  end;
-
 var
   KeyboardDriver: PDriverObject;
   Keyboards: array[0..MaximumKeyboards - 1] of PUsbKeyboard;
@@ -120,11 +118,11 @@ begin
     TranslateKey(Keyboard^.Keys, Byte(ScanCode), (ScanCode and Extended) <> 0, Released);
 end;
 
-function ReportHolds(const Report: array of Byte; Usage: Byte): Boolean;
+function ReportHolds(const Report: TBootKeyboardReport; Usage: Byte): Boolean;
 var
   Index: Integer;
 begin
-  for Index := 2 to ReportSize - 1 do
+  for Index := 2 to BootKeyboardReportSize - 1 do
     if Report[Index] = Usage then
       Exit(True);
   Result := False;
@@ -132,76 +130,36 @@ end;
 
 { Compares a report with the one before: modifiers first (so Shift is
   down before the letter it shifts), then released and pressed keys. }
-procedure HandleReport(Device: PUsbDevice; Data: PByte; Length: LongWord; Context: Pointer);
-const
-  ErrorRollOver = $01;
+procedure HandleUsbKeyboardReport(Keyboard: PUsbKeyboard; const Report: TBootKeyboardReport);
 var
-  Keyboard: PUsbKeyboard;
-  Report: array[0..ReportSize - 1] of Byte;
   Bit: Integer;
   Index: Integer;
   Usage: Byte;
 begin
-  Keyboard := PUsbKeyboard(Context);
-  if Length < ReportSize then
-    Exit;
-  CopyMemory(@Report[0], Data, ReportSize);
   { Too many keys at once: the keyboard cannot tell which. }
-  if Report[2] = ErrorRollOver then
+  if Report[2] = KeyUsageErrorRollOver then
     Exit;
   for Bit := 0 to 7 do
     if ((Report[0] xor Keyboard^.Previous[0]) and (1 shl Bit)) <> 0 then
       SendKey(Keyboard, ModifierScanCodes[Bit], (Report[0] and (1 shl Bit)) = 0);
-  for Index := 2 to ReportSize - 1 do
+  for Index := 2 to BootKeyboardReportSize - 1 do
   begin
     Usage := Keyboard^.Previous[Index];
     if (Usage <= High(UsageToScanCode)) and (Usage <> 0) and not ReportHolds(Report, Usage) then
       SendKey(Keyboard, UsageToScanCode[Usage], True);
   end;
-  for Index := 2 to ReportSize - 1 do
+  for Index := 2 to BootKeyboardReportSize - 1 do
   begin
     Usage := Report[Index];
     if (Usage <= High(UsageToScanCode)) and (Usage <> 0) and not ReportHolds(Keyboard^.Previous, Usage) then
       SendKey(Keyboard, UsageToScanCode[Usage], False);
   end;
-  CopyMemory(@Keyboard^.Previous[0], @Report[0], ReportSize);
+  Keyboard^.Previous := Report;
 end;
 
-{ The boot keyboard interface: its number and interrupt IN endpoint. }
-function FindKeyboardInterface(Usb: PUsbDevice; out InterfaceNumber, Endpoint: Byte;
-  out MaximumPacket: Word; out Interval: Byte): Boolean;
-const
-  EndpointTransferInterrupt = 3;
-var
-  Position: LongWord;
-  Descriptor: PByte;
-  InKeyboard: Boolean;
+procedure ResetUsbKeyboard(Keyboard: PUsbKeyboard);
 begin
-  Result := False;
-  InKeyboard := False;
-  InterfaceNumber := 0;
-  Position := 0;
-  while Position + 2 <= Usb^.ConfigurationLength do
-  begin
-    Descriptor := Usb^.Configuration + Position;
-    if (Descriptor[0] < 2) or (Position + Descriptor[0] > Usb^.ConfigurationLength) then
-      Break;
-    if (Descriptor[1] = UsbDescriptorInterface) and (Descriptor[0] >= 9) then
-    begin
-      InKeyboard := (Descriptor[5] = ClassHid) and (Descriptor[6] = SubclassBoot) and
-        (Descriptor[7] = ProtocolKeyboard);
-      InterfaceNumber := Descriptor[2];
-    end
-    else if InKeyboard and (Descriptor[1] = UsbDescriptorEndpoint) and (Descriptor[0] >= 7) and
-            ((Descriptor[2] and $80) <> 0) and ((Descriptor[3] and 3) = EndpointTransferInterrupt) then
-    begin
-      Endpoint := Descriptor[2];
-      MaximumPacket := Descriptor[4] or (Word(Descriptor[5]) shl 8);
-      Interval := Descriptor[6];
-      Exit(True);
-    end;
-    Position := Position + Descriptor[0];
-  end;
+  FillMemory(@Keyboard^.Previous[0], SizeOf(Keyboard^.Previous), 0);
 end;
 
 function CreateKeyboardDevice(Name: PChar): PInputDevice;
@@ -226,56 +184,28 @@ begin
   InitializeInputDevice(Result^);
 end;
 
-{ Boot reports, and only when something changes. }
-procedure ChooseBootReports(Usb: PUsbDevice; Keyboard: PUsbKeyboard);
-begin
-  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetProtocol, BootProtocol, Keyboard^.InterfaceNumber,
-    nil, 0);
-  UsbControlTransfer(Usb, ClassRequestToInterface, RequestSetIdle, 0, Keyboard^.InterfaceNumber, nil, 0);
-end;
-
-{ After waking from suspend to RAM: the keyboard forgot its protocol;
-  every key counts as released. }
-procedure ResumeKeyboard(Usb: PUsbDevice; Context: Pointer);
+function CreateUsbKeyboard: PUsbKeyboard;
 var
   Keyboard: PUsbKeyboard;
-begin
-  Keyboard := PUsbKeyboard(Context);
-  FillMemory(@Keyboard^.Previous[0], SizeOf(Keyboard^.Previous), 0);
-  ChooseBootReports(Usb, Keyboard);
-end;
-
-function ProbeUsbKeyboard(Usb: PUsbDevice): Boolean;
-var
-  Keyboard: PUsbKeyboard;
-  InterfaceNumber: Byte;
-  Endpoint: Byte;
-  MaximumPacket: Word;
-  Interval: Byte;
   Input: PInputDevice;
   Name: array[0..15] of Char;
 begin
-  Result := False;
-  if (KeyboardCount = MaximumKeyboards) or
-     not FindKeyboardInterface(Usb, InterfaceNumber, Endpoint, MaximumPacket, Interval) then
+  Result := nil;
+  if KeyboardCount = MaximumKeyboards then
     Exit;
-  Result := True;
   Keyboard := PUsbKeyboard(AllocateZeroedKernelMemory(SizeOf(TUsbKeyboard)));
   if Keyboard = nil then
     Exit;
-  Keyboard^.Usb := Usb;
   CopyText(@Name[0], 'usbkeyboard', SizeOf(Name));
   Name[11] := Char(Ord('0') + KeyboardCount);
   Name[12] := #0;
   Input := CreateKeyboardDevice(@Name[0]);
   if Input = nil then
+  begin
+    FreeKernelMemory(Keyboard);
     Exit;
+  end;
   InitializeKeyboardState(Keyboard^.Keys, Input);
-  Keyboard^.InterfaceNumber := InterfaceNumber;
-  ChooseBootReports(Usb, Keyboard);
-  UsbSetResumeHandler(Usb, @ResumeKeyboard, Keyboard);
-  if not UsbStartInterruptIn(Usb, Endpoint, MaximumPacket, Interval, @HandleReport, Keyboard) then
-    Exit;
   Keyboards[KeyboardCount] := Keyboard;
   Inc(KeyboardCount);
   AttachConsoleInput(@Name[0]);
@@ -284,11 +214,7 @@ begin
   DebugWrite('USB keyboard ');
   DebugWriteLine(@Name[0]);
   DebugEndMessage;
-end;
-
-procedure RegisterUsbKeyboardDriver;
-begin
-  RegisterUsbClassDriver(@ProbeUsbKeyboard);
+  Result := Keyboard;
 end;
 
 end.

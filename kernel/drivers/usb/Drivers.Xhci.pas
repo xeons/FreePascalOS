@@ -36,9 +36,10 @@
   or MSI; else events are polled) and run it. Then every port with a
   device is reset and its device enumerated: a slot is enabled, the
   device addressed (with its default control endpoint), its device and
-  configuration descriptors read and its first configuration set. The
-  class drivers registered with RegisterUsbClassDriver are offered it in
-  turn.
+  configuration descriptors read and its first configuration set. Then
+  Drivers.UsbInterfaces offers each of its interfaces to the class
+  drivers: a driver takes an interface, not the device, so a composite
+  device (a keyboard and mouse receiver) gets a driver per interface.
 
   Plugging in and unplugging: a port whose connection changes raises a
   port status change event, which wakes the port watcher thread
@@ -46,14 +47,15 @@
   polled controllers and changes that raised no event). A device on a
   port that lost its connection is taken away: it is marked gone (its
   transfers fail, the one waited for at once), its slot disabled, and
-  its class driver told (UsbSetRemovalHandler). A port that gained a
+  its class drivers told (UsbAddRemovalHandler). A port that gained a
   connection gets its device enumerated as at startup, after the
   connection has settled. The record of a device taken away is kept,
   since its class driver may still hold it.
 
   Commands and transfers are waited for: the interrupt's deferred call
   takes the events off the event ring and wakes whoever waits for them.
-  A device may also have one repeating interrupt IN endpoint (reports
+  A device may also have repeating interrupt IN endpoints (up to
+  MaximumInterruptPipes, one per interface that wants one: reports
   handed to a routine) and one isochronous OUT stream
   (Drivers.XhciIsochronous: packets fed by the class driver).
   A device does one transfer at a time; its data goes through DMA pages
@@ -70,6 +72,7 @@ interface
 uses
   Kernel.Mutex,
   Kernel.Events,
+  Drivers.UsbDescriptors,
   Drivers.XhciRings,
   Drivers.XhciIsochronous;
 
@@ -83,10 +86,11 @@ const
   UsbSpeedHigh = 3;
   UsbSpeedSuper = 4;
 
-  UsbDescriptorDevice = 1;
-  UsbDescriptorConfiguration = 2;
-  UsbDescriptorInterface = 4;
-  UsbDescriptorEndpoint = 5;
+  { Interrupt IN endpoints read over and over, per device. }
+  MaximumInterruptPipes = 8;
+  { Resume and removal handlers per device (one per class driver of an
+    interface, at most). }
+  MaximumDeviceHandlers = 8;
 
 type
   PUsbDevice = ^TUsbDevice;
@@ -100,6 +104,29 @@ type
   { Called in the port watcher thread when the device was unplugged:
     its transfers fail from then on. }
   TUsbRemovalHandler = procedure(Device: PUsbDevice; Context: Pointer);
+
+  { A repeating interrupt IN transfer: its endpoint context, buffer,
+    length, the TRB in flight and who gets the reports. }
+  TUsbInterruptPipe = record
+    ContextIndex: LongWord;
+    Buffer: PByte;
+    BufferBusAddress: QWord;
+    Length: LongWord;
+    Trb: QWord;
+    Handler: TUsbReportHandler;
+    HandlerContext: Pointer;
+  end;
+
+  TUsbResumeEntry = record
+    Handler: TUsbResumeHandler;
+    Context: Pointer;
+  end;
+
+  TUsbRemovalEntry = record
+    Handler: TUsbRemovalHandler;
+    Context: Pointer;
+  end;
+
   TUsbDevice = record
     Controller: Pointer;
     SlotId: LongWord;
@@ -109,6 +136,13 @@ type
     { The whole configuration descriptor, interfaces and endpoints. }
     Configuration: PByte;
     ConfigurationLength: LongWord;
+    { Its interfaces (Drivers.UsbDescriptors), and the name of the class
+      driver that took each (nil: none). }
+    Interfaces: TUsbConfigurationInfo;
+    InterfaceDrivers: array[0..MaximumUsbInterfaces - 1] of PChar;
+    { The class driver being offered an interface (UsbClaimInterface
+      claims more for it). }
+    ProbingDriver: PChar;
 
     { Private to the xHCI driver. }
     InputContext: PByte;
@@ -130,37 +164,28 @@ type
     EventResidue: LongWord;
     { The highest endpoint context in use (for the slot context). }
     HighestContext: LongWord;
-    { A repeating interrupt IN transfer: its endpoint, buffer, length,
-      the TRB in flight and who gets the reports. }
-    InterruptContext: LongWord;
-    InterruptBuffer: PByte;
-    InterruptBufferBusAddress: QWord;
-    InterruptLength: LongWord;
-    InterruptTrb: QWord;
-    InterruptHandler: TUsbReportHandler;
-    InterruptHandlerContext: Pointer;
+    { The repeating interrupt IN transfers (filled before they count;
+      the count goes up under the event lock). }
+    InterruptPipes: array[0..MaximumInterruptPipes - 1] of TUsbInterruptPipe;
+    InterruptPipeCount: Integer;
     { An isochronous OUT stream: its endpoint context (0 if none). }
     IsochronousContext: LongWord;
     Isochronous: TIsochronousStream;
     { What suspend to RAM needs to set the device up again: the
       configuration chosen, each endpoint opened (its type, 0 if none;
-      interval exponent; average length) and the class driver's part. }
+      interval exponent; average length) and the class drivers' part. }
     ConfigurationValue: Byte;
     EndpointTypes: array[1..MaximumEndpointContexts - 1] of LongWord;
     EndpointIntervals: array[1..MaximumEndpointContexts - 1] of LongWord;
     EndpointAverages: array[1..MaximumEndpointContexts - 1] of Word;
-    ResumeHandler: TUsbResumeHandler;
-    ResumeContext: Pointer;
+    ResumeHandlers: array[0..MaximumDeviceHandlers - 1] of TUsbResumeEntry;
+    ResumeHandlerCount: Integer;
     { Unplugged: every transfer fails. }
     IsGone: Boolean;
-    RemovalHandler: TUsbRemovalHandler;
-    RemovalContext: Pointer;
+    RemovalHandlers: array[0..MaximumDeviceHandlers - 1] of TUsbRemovalEntry;
+    RemovalHandlerCount: Integer;
   end;
 
-  { Returns True if it took the device. }
-  TUsbClassProbe = function(Device: PUsbDevice): Boolean;
-
-procedure RegisterUsbClassDriver(Probe: TUsbClassProbe);
 { Starts every xHCI controller (on PCI, then the ACPI platform ones) and
   enumerates its devices; returns how many devices were found. }
 function InitializeXhciControllers: Integer;
@@ -173,8 +198,8 @@ function UsbControlTransfer(Device: PUsbDevice; RequestType, Request: Byte; Valu
 function UsbOpenBulkEndpoints(Device: PUsbDevice; InAddress, OutAddress: Byte;
   InMaximumPacket, OutMaximumPacket: Word): Boolean;
 { Starts reading the interrupt IN endpoint Address (Interval as in its
-  endpoint descriptor) over and over; Handler gets every report. One
-  such endpoint per device. }
+  endpoint descriptor) over and over; Handler gets every report. Each
+  interface may have its own (up to MaximumInterruptPipes a device). }
 function UsbStartInterruptIn(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
   Handler: TUsbReportHandler; Context: Pointer): Boolean;
 { Makes the isochronous OUT endpoint Address (Interval as in its
@@ -185,10 +210,11 @@ function UsbOpenIsochronousOut(Device: PUsbDevice; Address: Byte; MaximumPacket:
 { Starts and stops queueing the stream's packets (callable at dispatch
   level). }
 procedure UsbStartIsochronous(Device: PUsbDevice);
-{ The class driver's part of setting the device up after waking. }
-procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
-{ What the class driver does when the device is unplugged. }
-procedure UsbSetRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
+{ A class driver's part of setting the device up after waking (each
+  driver of an interface adds its own; they run in the order added). }
+procedure UsbAddResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
+{ What a class driver does when the device is unplugged. }
+procedure UsbAddRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
 { How many controllers run (the port watcher is needed if any). }
 function XhciControllerCount: Integer;
 { The port watcher thread: notices devices plugged in and unplugged. }
@@ -222,6 +248,7 @@ uses
   Io.Dma,
   Io.PlatformDevices,
   Drivers.Dwc3,
+  Drivers.UsbInterfaces,
   Debug.Output;
 
 const
@@ -229,7 +256,6 @@ const
   PciSubclassUsb = $03;
   PciInterfaceXhci = $30;
 
-  MaximumClassDrivers = 8;
   MaximumEnabledSlots = 16;
   MaximumControllers = 4;
   MaximumRootPorts = 255;
@@ -338,21 +364,10 @@ type
   end;
 
 var
-  ClassDrivers: array[0..MaximumClassDrivers - 1] of TUsbClassProbe;
-  ClassDriverCount: Integer;
   Controllers: array[0..MaximumControllers - 1] of PXhciController;
   ControllerCount: Integer;
   { Signaled by port status change events. }
   PortsChanged: TEvent;
-
-procedure RegisterUsbClassDriver(Probe: TUsbClassProbe);
-begin
-  if ClassDriverCount < MaximumClassDrivers then
-  begin
-    ClassDrivers[ClassDriverCount] := Probe;
-    Inc(ClassDriverCount);
-  end;
-end;
 
 { --- Registers -------------------------------------------------------------- }
 
@@ -414,33 +429,42 @@ begin
   Result := False;
 end;
 
-{ Puts the next read of the device's interrupt endpoint on its ring.
-  Caller holds the event lock. }
-procedure QueueInterruptRead(Device: PUsbDevice);
+{ Puts the next read of one of the device's interrupt endpoints on its
+  ring. Caller holds the event lock. }
+procedure QueueInterruptRead(Device: PUsbDevice; var Pipe: TUsbInterruptPipe);
 begin
-  Device^.InterruptTrb := EnqueueTrb(Device^.Rings[Device^.InterruptContext], Device^.InterruptBufferBusAddress,
-    Device^.InterruptLength, (TrbTypeNormal shl TrbTypeShift) or TrbInterruptOnCompletion or
-    TrbInterruptOnShortPacket);
+  Pipe.Trb := EnqueueTrb(Device^.Rings[Pipe.ContextIndex], Pipe.BufferBusAddress, Pipe.Length,
+    (TrbTypeNormal shl TrbTypeShift) or TrbInterruptOnCompletion or TrbInterruptOnShortPacket);
   FullMemoryBarrier;
-  PXhciController(Device^.Controller)^.Doorbells[Device^.SlotId] := Device^.InterruptContext;
+  PXhciController(Device^.Controller)^.Doorbells[Device^.SlotId] := Pipe.ContextIndex;
+end;
+
+{ The interrupt pipe whose read is the TRB Trb, or nil. }
+function InterruptPipeOf(Device: PUsbDevice; Trb: QWord): Pointer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Device^.InterruptPipeCount - 1 do
+    if (Device^.InterruptPipes[Index].Trb <> 0) and (Device^.InterruptPipes[Index].Trb = Trb) then
+      Exit(@Device^.InterruptPipes[Index]);
+  Result := nil;
 end;
 
 { A report arrived: the handler gets it and the next read is queued (a
   failed read ends the reading). }
-procedure HandleInterruptReport(Controller: PXhciController; Device: PUsbDevice; const Event: TTrb);
+procedure HandleInterruptReport(Device: PUsbDevice; var Pipe: TUsbInterruptPipe; const Event: TTrb);
 var
   Code: LongWord;
   Residue: LongWord;
 begin
   Code := CompletionCode(Event);
-  Device^.InterruptTrb := 0;
+  Pipe.Trb := 0;
   if (Code <> CompletionSuccess) and (Code <> CompletionShortPacket) then
     Exit;
   Residue := Event.Status and $FFFFFF;
-  if Residue <= Device^.InterruptLength then
-    Device^.InterruptHandler(Device, Device^.InterruptBuffer, Device^.InterruptLength - Residue,
-      Device^.InterruptHandlerContext);
-  QueueInterruptRead(Device);
+  if Residue <= Pipe.Length then
+    Pipe.Handler(Device, Pipe.Buffer, Pipe.Length - Residue, Pipe.HandlerContext);
+  QueueInterruptRead(Device, Pipe);
 end;
 
 procedure HandleEvent(Controller: PXhciController; const Event: TTrb);
@@ -448,6 +472,7 @@ var
   Slot: LongWord;
   Device: PUsbDevice;
   Index: Integer;
+  Pipe: ^TUsbInterruptPipe;
 begin
   case TrbType(Event) of
     TrbTypeCommandCompletionEvent:
@@ -466,9 +491,10 @@ begin
         Device := Controller^.Devices[Slot];
         if Device = nil then
           Exit;
-        if (Device^.InterruptTrb <> 0) and (Event.Parameter = Device^.InterruptTrb) then
+        Pipe := InterruptPipeOf(Device, Event.Parameter);
+        if Pipe <> nil then
         begin
-          HandleInterruptReport(Controller, Device, Event);
+          HandleInterruptReport(Device, Pipe^, Event);
           Exit;
         end;
         if (Device^.IsochronousContext <> 0) and
@@ -616,6 +642,27 @@ begin
   Inc(Device^.PendingCount);
 end;
 
+{ An endpoint whose transfer stalled (or failed with a babble or
+  transaction error) is halted, and takes no more transfers until reset:
+  a Reset Endpoint command, then Set TR Dequeue Pointer past the failed
+  transfer's TRBs (to where the next one goes). A device that refuses a
+  request it does not support (SET_IDLE on many mice) answers the next
+  one again. Caller holds the transfer lock. }
+procedure RecoverHaltedEndpoint(Device: PUsbDevice; ContextIndex: LongWord);
+var
+  Controller: PXhciController;
+  Ring: ^TProducerRing;
+  Target: LongWord;
+  Ignored: LongWord;
+begin
+  Controller := PXhciController(Device^.Controller);
+  Target := (ContextIndex shl 16) or (Device^.SlotId shl 24);
+  RunCommand(Controller, 0, (TrbTypeResetEndpoint shl TrbTypeShift) or Target, Ignored);
+  Ring := @Device^.Rings[ContextIndex];
+  RunCommand(Controller, (Ring^.BusAddress + QWord(Ring^.Enqueue) * SizeOf(TTrb)) or Ring^.Cycle,
+    (TrbTypeSetDequeuePointer shl TrbTypeShift) or Target, Ignored);
+end;
+
 function UsbControlTransfer(Device: PUsbDevice; RequestType, Request: Byte; Value, Index: Word;
   Buffer: Pointer; Length: Word): Boolean;
 const
@@ -631,6 +678,7 @@ var
   StatusDirection: LongWord;
   StatusTrb: QWord;
   PreviousLevel: TPriorityLevel;
+  Completed: Boolean;
 begin
   Controller := PXhciController(Device^.Controller);
   if Length > 4096 then
@@ -657,15 +705,18 @@ begin
     Exit(False);
   end;
   Device^.PendingCount := 0;
-  EnqueueTrb(Device^.Rings[1], Setup, 8,
-    (TrbTypeSetupStage shl TrbTypeShift) or TrbImmediateData or (TransferType shl 16));
+  { Every stage is noted: a stall ends the transfer with an event for the
+    stage it hit. }
+  NotePending(Device, EnqueueTrb(Device^.Rings[1], Setup, 8,
+    (TrbTypeSetupStage shl TrbTypeShift) or TrbImmediateData or (TransferType shl 16)), 0);
   if Length > 0 then
   begin
     if IsIn then
-      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length,
-        (TrbTypeDataStage shl TrbTypeShift) or DirectionIn)
+      NotePending(Device, EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length,
+        (TrbTypeDataStage shl TrbTypeShift) or DirectionIn), 0)
     else
-      EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length, TrbTypeDataStage shl TrbTypeShift);
+      NotePending(Device, EnqueueTrb(Device^.Rings[1], Device^.DmaPagesBusAddress[0], Length,
+        TrbTypeDataStage shl TrbTypeShift), 0);
   end;
   { The status stage goes the other way (in, without data). }
   StatusDirection := DirectionIn;
@@ -676,8 +727,11 @@ begin
   NotePending(Device, StatusTrb, 0);
   ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
   RingDoorbell(Device, 1);
-  Result := WaitForCompletion(Controller, Device^.TransferDone, TransferTimeoutMilliseconds) and
-    (Device^.EventCode = CompletionSuccess);
+  Completed := WaitForCompletion(Controller, Device^.TransferDone, TransferTimeoutMilliseconds);
+  Result := Completed and (Device^.EventCode = CompletionSuccess);
+  if Completed and not Device^.IsGone and
+     (Device^.EventCode in [CompletionStall, CompletionBabble, CompletionTransactionError]) then
+    RecoverHaltedEndpoint(Device, 1);
   if Result and (Length > 0) and IsIn then
     CopyMemory(Buffer, Device^.DmaPages[0], Length);
   ReleaseMutex(Device^.TransferLock);
@@ -840,26 +894,45 @@ begin
     Inc(Result);
 end;
 
+{ True if one of the device's interrupt pipes reads endpoint context
+  ContextIndex already. }
+function HasInterruptPipe(Device: PUsbDevice; ContextIndex: LongWord): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Device^.InterruptPipeCount - 1 do
+    if Device^.InterruptPipes[Index].ContextIndex = ContextIndex then
+      Exit(True);
+  Result := False;
+end;
+
 function UsbStartInterruptIn(Device: PUsbDevice; Address: Byte; MaximumPacket: Word; Interval: Byte;
   Handler: TUsbReportHandler; Context: Pointer): Boolean;
 var
   Controller: PXhciController;
   PreviousLevel: TPriorityLevel;
+  Pipe: ^TUsbInterruptPipe;
 begin
   Controller := PXhciController(Device^.Controller);
-  if (Device^.InterruptContext <> 0) or (MaximumPacket = 0) or (MaximumPacket > 1024) then
+  if (Device^.InterruptPipeCount = MaximumInterruptPipes) or ((Address and $80) = 0) or
+     HasInterruptPipe(Device, ContextIndexOf(Address)) or (MaximumPacket = 0) or (MaximumPacket > 1024) then
     Exit(False);
-  Device^.InterruptBuffer := AllocateDmaPage(Controller, Device^.InterruptBufferBusAddress);
-  if (Device^.InterruptBuffer = nil) or
+  { Filled before it counts: the event processing looks at the pipes
+    counted. }
+  Pipe := @Device^.InterruptPipes[Device^.InterruptPipeCount];
+  Pipe^.Buffer := AllocateDmaPage(Controller, Pipe^.BufferBusAddress);
+  if (Pipe^.Buffer = nil) or
      not ConfigureEndpoint(Device, Address, EndpointTypeInterruptIn, MaximumPacket,
        IntervalExponentFor(Device, Interval), MaximumPacket) then
     Exit(False);
-  Device^.InterruptLength := MaximumPacket;
-  Device^.InterruptHandler := Handler;
-  Device^.InterruptHandlerContext := Context;
+  Pipe^.ContextIndex := ContextIndexOf(Address);
+  Pipe^.Length := MaximumPacket;
+  Pipe^.Handler := Handler;
+  Pipe^.HandlerContext := Context;
+  Pipe^.Trb := 0;
   PreviousLevel := AcquireSpinLock(Controller^.EventLock);
-  Device^.InterruptContext := ContextIndexOf(Address);
-  QueueInterruptRead(Device);
+  Inc(Device^.InterruptPipeCount);
+  QueueInterruptRead(Device, Pipe^);
   ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
   Result := True;
 end;
@@ -1089,9 +1162,7 @@ begin
   { Before the class drivers: one may wait long enough for the device
     to be unplugged meanwhile. }
   Controller^.PortDevices[PortNumber] := Device;
-  for Index := 0 to ClassDriverCount - 1 do
-    if ClassDrivers[Index](Device) then
-      Break;
+  BindUsbInterfaces(Device);
   Result := True;
 end;
 
@@ -1199,6 +1270,7 @@ var
   Slot: LongWord;
   ContextIndex: LongWord;
   PreviousLevel: TPriorityLevel;
+  Index: Integer;
 begin
   { The port comes back after the controller's reset (a USB 3 link takes
     a while to train). }
@@ -1229,15 +1301,15 @@ begin
       ResetProducerRing(Device^.Rings[ContextIndex]);
       ProgramEndpoint(Device, ContextIndex);
     end;
-  { The class driver's settings before reports flow again. }
-  if Assigned(Device^.ResumeHandler) then
-    Device^.ResumeHandler(Device, Device^.ResumeContext);
+  { The class drivers' settings before reports flow again. }
+  for Index := 0 to Device^.ResumeHandlerCount - 1 do
+    Device^.ResumeHandlers[Index].Handler(Device, Device^.ResumeHandlers[Index].Context);
   PreviousLevel := AcquireSpinLock(Controller^.EventLock);
   Device^.Isochronous.Oldest := 0;
   Device^.Isochronous.InFlight := 0;
   Device^.Isochronous.Streaming := False;
-  if Device^.InterruptContext <> 0 then
-    QueueInterruptRead(Device);
+  for Index := 0 to Device^.InterruptPipeCount - 1 do
+    QueueInterruptRead(Device, Device^.InterruptPipes[Index]);
   ReleaseSpinLock(Controller^.EventLock, PreviousLevel);
 end;
 
@@ -1298,16 +1370,22 @@ begin
   ReleaseMutex(Controller^.PortLock);
 end;
 
-procedure UsbSetResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
+procedure UsbAddResumeHandler(Device: PUsbDevice; Handler: TUsbResumeHandler; Context: Pointer);
 begin
-  Device^.ResumeContext := Context;
-  Device^.ResumeHandler := Handler;
+  if Device^.ResumeHandlerCount = MaximumDeviceHandlers then
+    Exit;
+  Device^.ResumeHandlers[Device^.ResumeHandlerCount].Handler := Handler;
+  Device^.ResumeHandlers[Device^.ResumeHandlerCount].Context := Context;
+  Inc(Device^.ResumeHandlerCount);
 end;
 
-procedure UsbSetRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
+procedure UsbAddRemovalHandler(Device: PUsbDevice; Handler: TUsbRemovalHandler; Context: Pointer);
 begin
-  Device^.RemovalContext := Context;
-  Device^.RemovalHandler := Handler;
+  if Device^.RemovalHandlerCount = MaximumDeviceHandlers then
+    Exit;
+  Device^.RemovalHandlers[Device^.RemovalHandlerCount].Handler := Handler;
+  Device^.RemovalHandlers[Device^.RemovalHandlerCount].Context := Context;
+  Inc(Device^.RemovalHandlerCount);
 end;
 
 { --- Plugging in and unplugging ------------------------------------------------ }
@@ -1344,6 +1422,7 @@ var
   PreviousLevel: TPriorityLevel;
   OwnsSlot: Boolean;
   Ignored: LongWord;
+  Index: Integer;
 begin
   PreviousLevel := AcquireSpinLock(Controller^.EventLock);
   Device^.IsGone := True;
@@ -1351,7 +1430,8 @@ begin
   OwnsSlot := Controller^.Devices[Device^.SlotId] = Device;
   if OwnsSlot then
     Controller^.Devices[Device^.SlotId] := nil;
-  Device^.InterruptTrb := 0;
+  for Index := 0 to Device^.InterruptPipeCount - 1 do
+    Device^.InterruptPipes[Index].Trb := 0;
   Device^.Isochronous.Streaming := False;
   if Device^.PendingCount > 0 then
   begin
@@ -1366,8 +1446,8 @@ begin
     Controller^.ContextArray[Device^.SlotId] := 0;
   end;
   ReportPortEvent(Device^.PortNumber, ': device unplugged');
-  if Assigned(Device^.RemovalHandler) then
-    Device^.RemovalHandler(Device, Device^.RemovalContext);
+  for Index := 0 to Device^.RemovalHandlerCount - 1 do
+    Device^.RemovalHandlers[Index].Handler(Device, Device^.RemovalHandlers[Index].Context);
 end;
 
 { A port gained a connection: once it has settled, the device is set

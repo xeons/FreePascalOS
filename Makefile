@@ -175,7 +175,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
 
 all: esp
@@ -486,7 +486,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -578,6 +578,19 @@ $(GEM_DESCRIPTOR_TEST): tools/GemDescriptorTest/GemDescriptorTest.pas kernel/dri
 
 gem-descriptor-test: $(GEM_DESCRIPTOR_TEST)
 	$(GEM_DESCRIPTOR_TEST)
+
+# USB configuration descriptors walked into interfaces, and HID report
+# descriptors and reports routed by id (Drivers.UsbDescriptors,
+# Drivers.HidReports), over a keyboard and mouse receiver's descriptors.
+USB_DESCRIPTOR_TEST := build/tools/UsbDescriptorTest
+
+$(USB_DESCRIPTOR_TEST): tools/UsbDescriptorTest/UsbDescriptorTest.pas kernel/drivers/usb/Drivers.UsbDescriptors.pas \
+		kernel/drivers/usb/Drivers.HidReports.pas shared/Runtime.Memory.pas
+	@mkdir -p build/tools/usb-descriptor-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/usb -Fushared -FEbuild/tools -FUbuild/tools/usb-descriptor-units $<
+
+usb-descriptor-test: $(USB_DESCRIPTOR_TEST)
+	$(USB_DESCRIPTOR_TEST)
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)

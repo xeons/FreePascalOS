@@ -66,7 +66,7 @@ procedure WriteKeyboardSummary;
 implementation
 
 uses
-  Drivers.UsbPointer,
+  Drivers.UsbHid,
   Drivers.Ps2Mouse,
   Io.InputEvents,
   Io.PciMessageInterrupts,
@@ -233,8 +233,7 @@ begin
     device once Drivers.Rp1 described it). }
   InitializeCadenceGemAdapters;
   RegisterUsbStorageDriver;
-  RegisterUsbKeyboardDriver;
-  RegisterUsbPointerDriver;
+  RegisterUsbHidDriver;
   RegisterUsbAudioDriver;
   InitializeXhciControllers;
   { After the other disks, so their names stay as they were. }

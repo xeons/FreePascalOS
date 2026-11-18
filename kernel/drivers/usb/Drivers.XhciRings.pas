@@ -52,6 +52,8 @@ const
   TrbTypeAddressDevice = 11;
   TrbTypeConfigureEndpoint = 12;
   TrbTypeEvaluateContext = 13;
+  TrbTypeResetEndpoint = 14;
+  TrbTypeSetDequeuePointer = 16;
   TrbTypeTransferEvent = 32;
   TrbTypeCommandCompletionEvent = 33;
   TrbTypePortStatusChangeEvent = 34;
@@ -65,6 +67,10 @@ const
   TrbTypeShift = 10;
 
   CompletionSuccess = 1;
+  { These halt the endpoint: it needs a Reset Endpoint command. }
+  CompletionBabble = 3;
+  CompletionTransactionError = 4;
+  CompletionStall = 6;
   CompletionShortPacket = 13;
 
 type
