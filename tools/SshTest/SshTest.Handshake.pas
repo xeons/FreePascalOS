@@ -319,6 +319,9 @@ begin
     Derive('A', CipherInitialValueSize(FCipher))));
   if Strict then
     FPackets.ResetSendSequence;
+  { The server takes the NEWKEYS now, so that the exchange is over on
+    both sides when this returns. }
+  Pump;
   Result := True;
 end;
 
