@@ -167,12 +167,10 @@ end;
 procedure ReadMemoryNodes(constref Tree: TDeviceTree);
 var
   Node: LongInt;
-  Depth: Integer;
   Index: LongWord;
   Start: QWord;
   Size: QWord;
 begin
-  Depth := 0;
   Node := FirstChildNode(Tree, RootNode(Tree));
   while Node <> NoNode do
   begin

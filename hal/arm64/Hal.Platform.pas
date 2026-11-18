@@ -116,7 +116,7 @@ end;
 procedure InitializeHal;
 begin
   if not InitializeGic then
-    KernelPanicWithCode(PanicHardwareMissing, 'no GICv2 interrupt controller in the ACPI MADT', 0, 0, 0, 0);
+    KernelPanicWithCode(PanicHardwareMissing, 'no GICv2 interrupt controller (ACPI MADT or device tree)', 0, 0, 0, 0);
   SetInterruptAcknowledger(@AcknowledgeGicInterrupt);
   InitializeGenericTimer;
   if CounterFrequency = 0 then

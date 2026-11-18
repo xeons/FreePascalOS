@@ -30,6 +30,12 @@
     BCM2835 mini UART the Pi 4's firmware uses by default; type 12h, a
     16550 with a given access width): registers 4 bytes apart.
 
+  After a native boot the device tree's /chosen stdout-path names the
+  UART instead (DeviceTree.Chosen: a PL011 such as the Raspberry Pi 5's
+  debug UART, or a 16550 with its register spacing and width), with its
+  interrupt in "interrupts"; the boot stub mapped its registers into
+  the window as the loader does for the SPCR's.
+
   The firmware set the line up (speed, format); the kernel leaves it as
   it is, since the UART's clock is not known here.
 }
@@ -65,6 +71,9 @@ implementation
 uses
   Firmware.Acpi,
   Memory.Layout,
+  DeviceTree.Chosen,
+  Firmware.DeviceTree,
+  Firmware.DeviceTreeInterrupts,
   Hal.FirmwareTables;
 
 type
@@ -110,7 +119,8 @@ const
   LineStatusDataReady = $01;
   LineStatusTransmitterEmpty = $20;
   InterruptEnableDataAvailable = $01;
-  RegisterStride = 4;
+  { The SPCR's 16550s: registers 4 bytes apart, 32 bits wide. }
+  WideRegisterShift = 2;
 
   MaximumTransmitWaitIterations = 100000;
 
@@ -118,6 +128,10 @@ var
   Kind: TUartKind = UartNone;
   Registers: PByte = nil;
   InterruptNumber: LongWord = 0;
+  InterruptLevelTriggered: Boolean = True;
+  InterruptActiveLow: Boolean = False;
+  RegisterShift: LongWord = WideRegisterShift;
+  RegistersAreBytes: Boolean = False;
 
 function ReadRegister(Offset: LongWord): LongWord;
 begin
@@ -127,6 +141,52 @@ end;
 procedure WriteRegister(Offset: LongWord; Value: LongWord);
 begin
   PLongWord(Registers + Offset)^ := Value;
+end;
+
+{ 16550 register Index, at its spacing and width. }
+function Read16550(Index: LongWord): LongWord;
+begin
+  if RegistersAreBytes then
+    Result := (Registers + (Index shl RegisterShift))^
+  else
+    Result := ReadRegister(Index shl RegisterShift);
+end;
+
+procedure Write16550(Index: LongWord; Value: LongWord);
+begin
+  if RegistersAreBytes then
+    (Registers + (Index shl RegisterShift))^ := Byte(Value)
+  else
+    WriteRegister(Index shl RegisterShift, Value);
+end;
+
+{ The console UART of the device tree, when there is no SPCR. }
+procedure UseDeviceTreeConsole;
+var
+  Uart: TDeviceTreeUart;
+  Gic: TGicInterrupt;
+begin
+  if not FirmwareDeviceTreeIsPresent or not FindConsoleUart(SystemDeviceTree^, Uart) then
+    Exit;
+  case Uart.Kind of
+    DeviceTreeUartPl011:
+      Kind := UartPl011;
+    DeviceTreeUart16550:
+      begin
+        Kind := UartWide16550;
+        RegisterShift := Uart.RegisterShift;
+        RegistersAreBytes := Uart.RegisterWidth = 1;
+      end;
+  else
+    Exit;
+  end;
+  Registers := PByte(PhysicalToVirtual(Uart.PhysicalAddress));
+  if NodeGicInterrupt(SystemDeviceTree^, Uart.Node, 0, Gic) then
+  begin
+    InterruptNumber := Gic.Intid;
+    InterruptLevelTriggered := Gic.LevelTriggered;
+    InterruptActiveLow := Gic.ActiveLow;
+  end;
 end;
 
 function SerialPortIsPresent: Boolean;
@@ -140,7 +200,12 @@ var
 begin
   Kind := UartNone;
   Table := PSerialPortTable(FindFirmwareTable('SPCR', 0));
-  if (Table = nil) or (Table^.AddressSpace <> AddressSpaceSystemMemory) or (Table^.Address = 0) then
+  if Table = nil then
+  begin
+    UseDeviceTreeConsole;
+    Exit;
+  end;
+  if (Table^.AddressSpace <> AddressSpaceSystemMemory) or (Table^.Address = 0) then
     Exit;
   case Table^.InterfaceType of
     InterfacePl011, InterfaceSbsa32Bit, InterfaceSbsaGeneric:
@@ -169,10 +234,10 @@ begin
       end;
     UartWide16550:
       begin
-        while ((ReadRegister(Uart16550LineStatus * RegisterStride) and LineStatusTransmitterEmpty) = 0) and
+        while ((Read16550(Uart16550LineStatus) and LineStatusTransmitterEmpty) = 0) and
               (Iteration < MaximumTransmitWaitIterations) do
           Inc(Iteration);
-        WriteRegister(Uart16550Data * RegisterStride, Ord(Character));
+        Write16550(Uart16550Data, Ord(Character));
       end;
   end;
 end;
@@ -189,9 +254,9 @@ begin
         Result := True;
       end;
     UartWide16550:
-      if (ReadRegister(Uart16550LineStatus * RegisterStride) and LineStatusDataReady) <> 0 then
+      if (Read16550(Uart16550LineStatus) and LineStatusDataReady) <> 0 then
       begin
-        Character := Char(ReadRegister(Uart16550Data * RegisterStride) and $FF);
+        Character := Char(Read16550(Uart16550Data) and $FF);
         Result := True;
       end;
   end;
@@ -206,15 +271,15 @@ begin
         WriteRegister(Pl011InterruptMask, Pl011ReceiveInterrupts);
       end;
     UartWide16550:
-      WriteRegister(Uart16550InterruptEnable * RegisterStride, InterruptEnableDataAvailable);
+      Write16550(Uart16550InterruptEnable, InterruptEnableDataAvailable);
   end;
 end;
 
 function SerialPortInterrupt: TSerialInterrupt;
 begin
   Result.IsIsaIrq := False;
-  Result.LevelTriggered := True;
-  Result.ActiveLow := False;
+  Result.LevelTriggered := InterruptLevelTriggered;
+  Result.ActiveLow := InterruptActiveLow;
   Result.Number := InterruptNumber;
 end;
 

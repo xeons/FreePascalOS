@@ -21,7 +21,8 @@
   starts and stops processors and powers the machine off or resets it.
   On the Raspberry Pi 4 it is the ARM Trusted Firmware inside the UEFI
   firmware, called with SMC; under QEMU it is QEMU itself, called with
-  HVC (or SMC with an emulated EL3). The FADT's ARM boot flags say which.
+  HVC (or SMC with an emulated EL3). The FADT's ARM boot flags say which,
+  or after a native boot the device tree's psci node ("method").
 }
 unit Hal.Psci;
 
@@ -47,6 +48,7 @@ implementation
 
 uses
   Firmware.Acpi,
+  Firmware.DeviceTreeMachine,
   Kernel.Arch.Cpu,
   Hal.FirmwareTables;
 
@@ -67,6 +69,8 @@ const
 var
   Available: Boolean = False;
   UseHypervisorCall: Boolean = False;
+  { PSCI 0.1 (a device tree's "arm,psci") names its own. }
+  CpuOnFunction: QWord = FunctionCpuOn;
 
 function CallPsci(FunctionId, Argument1, Argument2, Argument3: QWord): QWord;
 begin
@@ -80,6 +84,7 @@ function InitializePsci: Boolean;
 var
   Fadt: PAcpiTableHeader;
   Flags: Word;
+  Description: TDeviceTreePsci;
 begin
   Available := False;
   Fadt := FindFirmwareTable('FACP', 0);
@@ -88,6 +93,12 @@ begin
     Flags := PWord(PByte(Fadt) + ArmBootFlagsOffset)^;
     Available := (Flags and ArmBootPsciCompliant) <> 0;
     UseHypervisorCall := (Flags and ArmBootPsciUseHypervisorCall) <> 0;
+  end
+  else if FirmwareDeviceTreeIsPresent and DescribeDeviceTreePsci(Description) then
+  begin
+    Available := True;
+    UseHypervisorCall := Description.UseHypervisorCall;
+    CpuOnFunction := Description.CpuOnFunction;
   end;
   Result := Available;
 end;
@@ -115,7 +126,7 @@ var
 begin
   if not Available then
     Exit(False);
-  Status := CallPsci(FunctionCpuOn, ProcessorId, EntryPoint, Context);
+  Status := CallPsci(CpuOnFunction, ProcessorId, EntryPoint, Context);
   Result := (Status = ResultSuccess) or (Status = ResultAlreadyOn);
 end;
 

@@ -64,13 +64,17 @@ type
     Version: Byte;
     DistributorAddress: TPhysicalAddress;
     CpuInterfaceAddress: TPhysicalAddress;
+    { GICv3 (from a device tree; the HAL drives only GICv2 so far). }
+    RedistributorAddress: TPhysicalAddress;
     MessageFrameAddress: TPhysicalAddress;
     MessageFrameFirstSpi: LongWord;
     MessageFrameSpiCount: LongWord;
   end;
 
 { Reads the table. Returns False if there is none, or it lists neither an
-  I/O APIC nor a GIC distributor. }
+  I/O APIC nor a GIC distributor. Without ACPI tables the device tree of
+  a native boot gives the GIC and the processors instead
+  (Firmware.DeviceTreeMachine). }
 function ParseMadt: Boolean;
 
 function GicDescription: TGicDescription;
@@ -91,7 +95,9 @@ implementation
 
 uses
   Runtime.Memory,
-  Firmware.Acpi;
+  Firmware.Acpi,
+  Firmware.DeviceTree,
+  Firmware.DeviceTreeMachine;
 
 const
   EntryTypeLocalApic = 0;
@@ -265,6 +271,29 @@ begin
   Gic.MessageFrameSpiCount := Entry^.SpiCount;
 end;
 
+function DescribeFromDeviceTree: Boolean;
+var
+  Description: TDeviceTreeGic;
+  Affinities: array[0..MaximumListedProcessors - 1] of LongWord;
+  Count: Integer;
+  Index: Integer;
+begin
+  Result := False;
+  if not DeviceTreeIsAvailable or not DescribeDeviceTreeGic(Description) then
+    Exit;
+  Gic.Version := Description.Version;
+  Gic.DistributorAddress := Description.DistributorAddress;
+  Gic.CpuInterfaceAddress := Description.CpuInterfaceAddress;
+  Gic.RedistributorAddress := Description.RedistributorAddress;
+  Gic.MessageFrameAddress := Description.MessageFrameAddress;
+  Gic.MessageFrameFirstSpi := Description.MessageFrameFirstSpi;
+  Gic.MessageFrameSpiCount := Description.MessageFrameSpiCount;
+  Count := ListDeviceTreeProcessors(Affinities);
+  for Index := 0 to Count - 1 do
+    AddProcessor(Affinities[Index], ProcessorEnabled);
+  Result := True;
+end;
+
 function ParseMadt: Boolean;
 var
   Table: PMadtHeader;
@@ -280,7 +309,7 @@ begin
   ZeroMemory(@Gic, SizeOf(Gic));
   Table := PMadtHeader(FindAcpiTable('APIC', 0));
   if Table = nil then
-    Exit(False);
+    Exit(DescribeFromDeviceTree);
 
   Position := PByte(Table) + SizeOf(TMadtHeader);
   TableEnd := PByte(Table) + Table^.Header.Length;

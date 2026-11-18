@@ -68,6 +68,8 @@
 #   make pi-netboot-serve  Serve the AArch64 build to a network booted Pi 4
 #   make pi-sd-image       An SD card image for the Pi 4 (flashed once)
 #   make arm64-netboot-test  Network boot of the AArch64 build in QEMU
+#   make ARCH=arm64 native  The native (device tree) boot image, build/arm64/native/fpos.img
+#   make arm64-native-test  Native boot of fpos.img in QEMU (EL1 and EL2)
 #   make pi5-sd-image      An SD card image for the Raspberry Pi 5 (native boot)
 #   make pi5-eeprom-image  A Pi 5 bootloader recovery card: network boot (once)
 #   make pi5-netboot-serve Serve the native build to a network booted Pi 5
@@ -278,6 +280,44 @@ check-kernel:
 		exit 1; \
 	fi
 
+# --- Native boot image (AArch64) ---------------------------------------------
+
+# build/arm64/native/fpos.img: what firmware that loads a Linux kernel
+# directly and passes a device tree (a Raspberry Pi 5, QEMU -kernel)
+# boots. A stub (boot/native/arm64) with the Linux arm64 Image header,
+# linked as a self-relocating position independent ELF like the UEFI
+# loader, carrying kernel.elf (without debug information) after it;
+# objcopy makes it a flat binary.
+NATIVE_DIRECTORY := build/arm64/native
+NATIVE_OBJECT_DIRECTORY := build/arm64/native-objects
+NATIVE_IMAGE := $(NATIVE_DIRECTORY)/fpos.img
+NATIVE_ELF := $(NATIVE_OBJECT_DIRECTORY)/fpos.elf
+NATIVE_STRIPPED_KERNEL := $(NATIVE_OBJECT_DIRECTORY)/kernel-stripped.elf
+NATIVE_UNIT_DIRECTORIES := shared shared/arm64 boot/native/arm64
+
+.PHONY: native
+ifeq ($(ARCH),arm64)
+native: $(NATIVE_IMAGE)
+
+$(NATIVE_IMAGE): $(RTL_LOADER_DIRECTORY)/system.ppu $(KERNEL_ELF) FORCE
+	@mkdir -p $(NATIVE_DIRECTORY) $(NATIVE_OBJECT_DIRECTORY)
+	$(CROSS_PREFIX)strip --strip-all -o $(NATIVE_STRIPPED_KERNEL) $(KERNEL_ELF)
+	$(TARGET_AS) -o $(NATIVE_OBJECT_DIRECTORY)/NativeEntry.o boot/native/arm64/NativeEntry.s
+	$(TARGET_AS) -o $(NATIVE_OBJECT_DIRECTORY)/LoaderHandoff.o boot/uefi/arm64/LoaderHandoff.s
+	$(TARGET_AS) -I $(NATIVE_OBJECT_DIRECTORY) -o $(NATIVE_OBJECT_DIRECTORY)/KernelPayload.o \
+		boot/native/arm64/KernelPayload.s
+	$(TARGET_FPC) $(COMMON_FLAGS) $(LOADER_TARGET) -Cn -Cg- \
+		-Fu$(RTL_LOADER_DIRECTORY) $(addprefix -Fu,$(NATIVE_UNIT_DIRECTORIES)) \
+		-FU$(NATIVE_OBJECT_DIRECTORY) -FE$(NATIVE_OBJECT_DIRECTORY) boot/native/arm64/NativeBoot.pas
+	$(LD) -nostdlib -pie --no-dynamic-linker -z nocombreloc -z max-page-size=4096 \
+		-T boot/native/arm64/native.ld -o $(NATIVE_ELF) \
+		$(NATIVE_OBJECT_DIRECTORY)/*.o $(RTL_LOADER_DIRECTORY)/system.o
+	$(OBJCOPY) -O binary $(NATIVE_ELF) $@
+else
+native:
+	@$(MAKE) --no-print-directory ARCH=arm64 native
+endif
+
 # --- EFI system partition --------------------------------------------------
 
 esp: $(LOADER_EFI) $(KERNEL_ELF)
@@ -372,7 +412,7 @@ PI5_SD_IMAGE_ARGUMENTS = $(if $(PI5_FIRMWARE),--firmware-files $(PI5_FIRMWARE)) 
 	$(if $(PI5_OPTIONS),--options "$(PI5_OPTIONS)")
 .PHONY: pi5-sd-image pi5-eeprom-image pi5-netboot-serve pi5-eeprom-test
 pi5-sd-image:
-	@$(MAKE) --no-print-directory ARCH=arm64 system-disk
+	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
 	scripts/make-pi5-sd-image.py $(PI5_SD_IMAGE_ARGUMENTS)
 
 pi5-eeprom-image:
@@ -380,7 +420,7 @@ pi5-eeprom-image:
 		$(if $(SERVER),--server $(SERVER))
 
 pi5-netboot-serve:
-	@$(MAKE) --no-print-directory ARCH=arm64 system-disk
+	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
 	scripts/make-pi5-sd-image.py --boot-files-only $(PI5_SD_IMAGE_ARGUMENTS)
 	scripts/netboot-serve.py --pi5 build/arm64/pi5-boot $(if $(TFTP_PORT),--tftp-port $(TFTP_PORT)) \
 		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT))

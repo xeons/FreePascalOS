@@ -24,7 +24,9 @@
   one-shot clock interrupt, as the local APIC timer is on x86-64.
 
   The virtual timer's interrupt (a PPI) is the one the ACPI GTDT names
-  (27 on QEMU's virt machine and the Pi 4).
+  (27 on QEMU's virt machine and the Pi 4), or after a native boot the
+  device tree's timer node (Firmware.DeviceTreeMachine), whose
+  "clock-frequency" stands in for a CNTFRQ_EL0 the firmware left unset.
 }
 unit Hal.GenericTimer;
 
@@ -56,6 +58,7 @@ implementation
 
 uses
   Firmware.Acpi,
+  Firmware.DeviceTreeMachine,
   Kernel.Arch.Cpu,
   Hal.FirmwareTables;
 
@@ -98,6 +101,7 @@ procedure ArchWriteTimerControl(Value: QWord); external name 'ArchWriteTimerCont
 procedure InitializeGenericTimer;
 var
   Table: PGenericTimerTable;
+  Timer: TDeviceTreeTimer;
 begin
   Frequency := ReadCounterFrequency;
   CounterOrigin := ReadTimeStampCounter;
@@ -106,6 +110,13 @@ begin
   begin
     Interrupt := Table^.VirtualInterrupt;
     LevelTriggered := (Table^.VirtualFlags and TimerFlagEdgeTriggered) = 0;
+  end
+  else if FirmwareDeviceTreeIsPresent and DescribeDeviceTreeTimer(Timer) then
+  begin
+    Interrupt := Timer.Intid;
+    LevelTriggered := Timer.LevelTriggered;
+    if Frequency = 0 then
+      Frequency := Timer.Frequency;
   end;
 end;
 

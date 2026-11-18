@@ -57,18 +57,37 @@ implementation
 
 uses
   Firmware.Madt,
+  Memory.DeviceMapping,
   Hal.Gic,
   Debug.Output;
 
 const
   { Writing an SPI number here raises it. }
   MessageFrameSetSpi = $40;
+  { The frame's own count: first SPI in bits 25-16, how many in 9-0. }
+  MessageFrameType = $008;
+  MessageFrameBytes = $1000;
 
 var
   Available: Boolean = False;
   MessageFrameAddress: QWord = 0;
   NextMessageSpi: LongWord = 0;
   LastMessageSpi: LongWord = 0;
+
+{ A device tree may leave the frame's SPIs to its type register. }
+procedure ReadMessageFrameType(var Description: TGicDescription);
+var
+  Frame: PByte;
+  Value: LongWord;
+begin
+  Frame := PByte(MapDeviceMemory(Description.MessageFrameAddress, MessageFrameBytes));
+  if Frame = nil then
+    Exit;
+  Value := PLongWord(Frame + MessageFrameType)^;
+  UnmapDeviceMemory(Frame, MessageFrameBytes);
+  Description.MessageFrameFirstSpi := (Value shr 16) and $3FF;
+  Description.MessageFrameSpiCount := Value and $3FF;
+end;
 
 function InitializeDeviceInterruptRouting(MadtWasParsed: Boolean): Boolean;
 var
@@ -78,6 +97,8 @@ begin
   if MadtWasParsed then
   begin
     Description := GicDescription;
+    if (Description.MessageFrameAddress <> 0) and (Description.MessageFrameSpiCount = 0) then
+      ReadMessageFrameType(Description);
     if (Description.MessageFrameAddress <> 0) and (Description.MessageFrameSpiCount > 0) then
     begin
       MessageFrameAddress := Description.MessageFrameAddress;

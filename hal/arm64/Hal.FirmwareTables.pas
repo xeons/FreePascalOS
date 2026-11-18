@@ -27,6 +27,12 @@
   moments - the serial port before anything else - through the boot
   information the kernel entry remembered (KernelEntry.s); the tables lie
   in memory the loader mapped into the physical memory window.
+
+  After a native boot (boot/native) there are no ACPI tables but a
+  device tree, which the boot stub copied into boot data in the window:
+  it is made the kernel's here too (Firmware.DeviceTree), and the HAL
+  units fall back to it (Firmware.DeviceTreeMachine, DeviceTree.Chosen)
+  where a table is missing.
 }
 unit Hal.FirmwareTables;
 
@@ -39,11 +45,15 @@ uses
 
 { The Instance'th table with Signature, or nil (also without ACPI). }
 function FindFirmwareTable(Signature: PChar; Instance: Integer): PAcpiTableHeader;
+{ True if the firmware gave a device tree (Firmware.DeviceTree has it). }
+function FirmwareDeviceTreeIsPresent: Boolean;
 
 implementation
 
 uses
-  Boot.Information;
+  Boot.Information,
+  Memory.Layout,
+  Firmware.DeviceTree;
 
 var
   ArchBootInformation: PBootInformation; external name 'ArchBootInformation';
@@ -54,8 +64,17 @@ begin
   if TablesFound then
     Exit;
   TablesFound := True;
-  if ArchBootInformation <> nil then
-    InitializeAcpi(ArchBootInformation^.AcpiRootPointer);
+  if ArchBootInformation = nil then
+    Exit;
+  InitializeAcpi(ArchBootInformation^.AcpiRootPointer);
+  if ArchBootInformation^.DeviceTreePhysicalBase <> 0 then
+    UseDeviceTree(Pointer(PhysicalToVirtual(ArchBootInformation^.DeviceTreePhysicalBase)));
+end;
+
+function FirmwareDeviceTreeIsPresent: Boolean;
+begin
+  FindTablesOnce;
+  Result := DeviceTreeIsAvailable;
 end;
 
 function FindFirmwareTable(Signature: PChar; Instance: Integer): PAcpiTableHeader;
