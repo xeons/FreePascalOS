@@ -19,6 +19,7 @@
 
     netboot-serve.py [--esp DIR] [--system-image FILE] [--options-file FILE]
                      [--port 8000] [--bind ADDRESS] [--tftp] [--tftp-port 69]
+    netboot-serve.py --pi5 build/arm64/pi5-boot [--tftp-port 69]
 
 Serves the boot files of a build over HTTP, and over TFTP with --tftp:
 
@@ -37,6 +38,15 @@ netboot=tftp:// cannot name: it always uses 69). The TFTP server is
 built in (read requests with the blksize and tsize options).
 
 Prints this machine's addresses and the options.txt line to use.
+
+With --pi5 DIR it serves a Raspberry Pi 5's native network boot instead:
+the boot directory make-pi5-sd-image.py --boot-files-only writes
+(config.txt, cmdline.txt, the device trees, overlays/, fpos.img and
+system.img, the last two links to the build), over TFTP (always) and
+HTTP. The Pi's EEPROM bootloader first asks for <serial>/config.txt and
+keeps that prefix for every file if it is found; a requested path that
+does not exist is looked up again without its first directory, so the
+files are found with or without the prefix.
 """
 
 import argparse
@@ -57,10 +67,11 @@ OPTIONS_PATH = "FreePascalOS/options.txt"
 class BootFiles:
     """Maps a requested path to a file of the build."""
 
-    def __init__(self, esp_directory, system_image, options_file):
+    def __init__(self, esp_directory, system_image, options_file, strip_device_prefix=False):
         self.esp_directory = os.path.realpath(esp_directory)
         self.system_image = system_image
         self.options_file = options_file
+        self.strip_device_prefix = strip_device_prefix
 
     def resolve(self, requested):
         path = requested.split("?", 1)[0].replace("\\", "/").lstrip("/")
@@ -76,6 +87,11 @@ class BootFiles:
         candidate = self.find_ignoring_case(parts)
         if candidate and os.path.isfile(candidate):
             return candidate
+        if self.strip_device_prefix and len(parts) > 1:
+            # A Pi 5 bootloader's serial number (or MAC address) directory.
+            candidate = self.find_ignoring_case(parts[1:])
+            if candidate and os.path.isfile(candidate):
+                return candidate
         return None
 
     def find_ignoring_case(self, parts):
@@ -104,6 +120,8 @@ def log(message):
 def describe_size(size):
     if size >= 1024 * 1024:
         return f"{size / (1024 * 1024):.1f} MiB"
+    if size < 1024:
+        return f"{size} bytes"
     return f"{size / 1024:.1f} KiB"
 
 
@@ -262,10 +280,23 @@ def serve_tftp_transfer(boot_files, request, address):
         sock.close()
 
 
-def run_tftp_server(boot_files, bind_address, port):
+def open_tftp_socket(bind_address, port):
+    """Binds the TFTP port here, so a refusal (port 69 without root) is
+    reported before the server runs."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((bind_address, port))
+    try:
+        sock.bind((bind_address, port))
+    except PermissionError:
+        sys.exit(f"TFTP port {port}: permission denied. Ports below 1024 need root; for example\n"
+                 f"    sudo sysctl net.ipv4.ip_unprivileged_port_start={port}\n"
+                 "(until the next reboot), or run this with sudo.")
+    except OSError as error:
+        sys.exit(f"TFTP port {port}: {error}")
+    return sock
+
+
+def run_tftp_server(boot_files, sock):
     while True:
         request, address = sock.recvfrom(65536)
         if len(request) < 4 or struct.unpack("!H", request[:2])[0] != TFTP_READ_REQUEST:
@@ -313,7 +344,13 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="HTTP port")
     parser.add_argument("--tftp", action="store_true", help="serve TFTP as well")
     parser.add_argument("--tftp-port", type=int, default=69, help="TFTP port (69 needs root)")
+    parser.add_argument("--pi5", metavar="DIR",
+                        help="serve a Raspberry Pi 5's native network boot from this boot directory")
     arguments = parser.parse_args()
+
+    if arguments.pi5:
+        serve_pi5(arguments)
+        return
 
     if not os.path.isdir(arguments.esp):
         sys.exit(f"No ESP directory {arguments.esp}: build first (make ARCH=arm64)")
@@ -323,11 +360,8 @@ def main():
     boot_files = BootFiles(arguments.esp, system_image, arguments.options_file)
 
     if arguments.tftp:
-        try:
-            threading.Thread(target=run_tftp_server,
-                             args=(boot_files, arguments.bind, arguments.tftp_port), daemon=True).start()
-        except OSError as error:
-            sys.exit(f"TFTP port {arguments.tftp_port}: {error}")
+        tftp_socket = open_tftp_socket(arguments.bind, arguments.tftp_port)
+        threading.Thread(target=run_tftp_server, args=(boot_files, tftp_socket), daemon=True).start()
 
     server = ThreadingHttpServer((arguments.bind, arguments.port), make_http_handler(boot_files))
     addresses = local_addresses()
@@ -342,6 +376,40 @@ def main():
               " and boot file EFI/BOOT/BOOTAA64.EFI")
     print("Rebuild (make ARCH=arm64 esp system-disk) and reset the Pi; Ctrl-C ends the server.",
           flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+def serve_pi5(arguments):
+    directory = arguments.pi5
+    if not os.path.isfile(os.path.join(directory, "config.txt")):
+        sys.exit(f"No config.txt in {directory}: make pi5-netboot-serve writes it "
+                 "(scripts/make-pi5-sd-image.py --boot-files-only)")
+    boot_files = BootFiles(directory, None, None, strip_device_prefix=True)
+    tftp_socket = open_tftp_socket(arguments.bind, arguments.tftp_port)
+    threading.Thread(target=run_tftp_server, args=(boot_files, tftp_socket), daemon=True).start()
+    server = ThreadingHttpServer((arguments.bind, arguments.port), make_http_handler(boot_files))
+
+    addresses = local_addresses()
+    print(f"Serving the Raspberry Pi 5 boot files in {directory} over TFTP (port {arguments.tftp_port})"
+          f" and HTTP (port {arguments.port}, for checking with curl):")
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if os.path.isdir(path):
+            print(f"    {name}/")
+        elif os.path.isfile(path):
+            target = f" -> {os.path.realpath(path)}" if os.path.islink(path) else ""
+            print(f"    {name} ({describe_size(os.path.getsize(path))}){target}")
+        else:
+            print(f"    {name}: missing ({os.path.realpath(path)} is not built)")
+    with open(os.path.join(directory, "cmdline.txt")) as cmdline:
+        print(f"cmdline.txt: {cmdline.read().strip()}")
+    print("This machine's addresses: " + (", ".join(addresses) if addresses else "none found"))
+    first = addresses[0] if addresses else "<this-machine>"
+    print(f"The Pi's EEPROM needs TFTP_IP={first} (make pi5-eeprom-image SERVER={first}).")
+    print("Rebuild and reset the Pi; files are read at each request. Ctrl-C ends the server.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

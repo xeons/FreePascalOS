@@ -68,6 +68,9 @@
 #   make pi-netboot-serve  Serve the AArch64 build to a network booted Pi 4
 #   make pi-sd-image       An SD card image for the Pi 4 (flashed once)
 #   make arm64-netboot-test  Network boot of the AArch64 build in QEMU
+#   make pi5-sd-image      An SD card image for the Raspberry Pi 5 (native boot)
+#   make pi5-eeprom-image  A Pi 5 bootloader recovery card: network boot (once)
+#   make pi5-netboot-serve Serve the native build to a network booted Pi 5
 
 ARCH ?= amd64
 
@@ -353,12 +356,45 @@ pi-sd-image:
 		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT)) $(if $(NETLOG),--netlog $(NETLOG)) \
 		$(if $(filter standalone,$(PI_IMAGE)),--standalone --system-image build/arm64/system-disk.img)
 
+# The Raspberry Pi 5, booted natively by its EEPROM bootloader with a
+# device tree (docs/Architecture.md, "Trying it on a Raspberry Pi 5").
+# pi5-sd-image writes build/arm64/pi5-sd.img(.xz): config.txt,
+# cmdline.txt (netlog=SERVER, default this machine; PI5_OPTIONS=more),
+# the device trees from PI5_FIRMWARE (default ~/Downloads/pi5/boot),
+# build/arm64/native/fpos.img and the system image. pi5-eeprom-image
+# writes build/arm64/pi5-eeprom.img(.xz), a recovery card setting the
+# EEPROM to boot from TFTP at SERVER first, then the SD card (the files
+# from PI5_EEPROM, default ~/Downloads/pi5/eeprom). pi5-netboot-serve
+# serves build/arm64/pi5-boot over TFTP (port 69: root, or
+# net.ipv4.ip_unprivileged_port_start=69) and HTTP.
+PI5_SD_IMAGE_ARGUMENTS = $(if $(PI5_FIRMWARE),--firmware-files $(PI5_FIRMWARE)) \
+	$(if $(SERVER),--server $(SERVER)) $(if $(NETLOG),--netlog $(NETLOG)) \
+	$(if $(PI5_OPTIONS),--options "$(PI5_OPTIONS)")
+.PHONY: pi5-sd-image pi5-eeprom-image pi5-netboot-serve pi5-eeprom-test
+pi5-sd-image:
+	@$(MAKE) --no-print-directory ARCH=arm64 system-disk
+	scripts/make-pi5-sd-image.py $(PI5_SD_IMAGE_ARGUMENTS)
+
+pi5-eeprom-image:
+	scripts/make-pi5-eeprom-image.py $(if $(PI5_EEPROM),--eeprom-files $(PI5_EEPROM)) \
+		$(if $(SERVER),--server $(SERVER))
+
+pi5-netboot-serve:
+	@$(MAKE) --no-print-directory ARCH=arm64 system-disk
+	scripts/make-pi5-sd-image.py --boot-files-only $(PI5_SD_IMAGE_ARGUMENTS)
+	scripts/netboot-serve.py --pi5 build/arm64/pi5-boot $(if $(TFTP_PORT),--tftp-port $(TFTP_PORT)) \
+		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT))
+
+# The EEPROM configuration embedding, on a made-up image (no download).
+pi5-eeprom-test:
+	scripts/test-pi5-eeprom-image.py
+
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
+test: aml-test acpi-device-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
