@@ -71,6 +71,9 @@ uses
   Io.PciMessageInterrupts,
   Firmware.Acpi,
   Io.Pci,
+  Memory.Layout,
+  Firmware.DeviceTree,
+  Io.DeviceTreeDevices,
   Io.PciResources,
   Io.BlockDevice,
   Io.Partitions,
@@ -144,10 +147,33 @@ begin
   DebugEndMessage;
 end;
 
+procedure WriteDeviceTreeSummary(DeviceCount: Integer);
+var
+  Model: PChar;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('dt');
+  DebugWrite('Device tree');
+  Model := DeviceTreeModel;
+  if Model <> nil then
+  begin
+    DebugWrite(' of ');
+    DebugWrite(Model);
+  end;
+  DebugWrite(': ');
+  DebugWriteDecimal(DeviceCount);
+  DebugWriteLine(' platform devices');
+  DebugEndMessage;
+end;
+
 procedure InitializePlatformTables(const BootInformation: TBootInformation);
 begin
   InitializeAcpi(BootInformation.AcpiRootPointer);
   WriteAcpiSummary;
+  { A native boot's device tree (the HAL took it already on AArch64). }
+  if (BootInformation.DeviceTreePhysicalBase <> 0) and
+     UseDeviceTree(PhysicalToVirtual(BootInformation.DeviceTreePhysicalBase)) then
+    WriteDeviceTreeSummary(EnumerateDeviceTreeDevices);
   InitializeInterruptRouting;
 end;
 

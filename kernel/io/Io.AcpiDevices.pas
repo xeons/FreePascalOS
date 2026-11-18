@@ -42,6 +42,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Runtime.Text,
   Firmware.AmlValues,
   Firmware.AcpiResourceList,
   Firmware.AcpiDeviceWalk,
@@ -74,11 +75,12 @@ var
 begin
   ZeroMemory(@Device, SizeOf(Device));
   Device.Node := Description.Node;
+  Device.DeviceTreeNode := NoDeviceTreeNode;
   CopyMemory(@Device.Path[0], @Description.Path[0], SizeOf(Device.Path));
-  Device.HardwareId := Description.HardwareId;
+  CopyText(@Device.HardwareId[0], @Description.HardwareId[0], PlatformIdLength);
   Device.CompatibleIdCount := Description.CompatibleIdCount;
   for Index := 0 to Description.CompatibleIdCount - 1 do
-    Device.CompatibleIds[Index] := Description.CompatibleIds[Index];
+    CopyText(@Device.CompatibleIds[Index][0], @Description.CompatibleIds[Index][0], PlatformIdLength);
   Device.UniqueId := Description.UniqueId;
   Device.Status := Description.Status;
   Device.Resources := Description.Resources;

@@ -77,7 +77,7 @@ uses
   Kernel.DeferredCalls,
   Kernel.Timers,
   Kernel.Clock,
-  Firmware.AcpiProperties,
+  Io.PlatformProperties,
   Io.Dma,
   Io.PlatformDevices,
   Io.NetworkAdapters,
@@ -279,11 +279,11 @@ function FindMacAddress(Card: PGenetCard): Boolean;
 var
   Length: LongWord;
 begin
-  if DevicePropertyBytes(Card^.Device^.Properties, 'local-mac-address', @Card^.Address[0],
+  if PlatformPropertyBytes(Card^.Device, 'local-mac-address', @Card^.Address[0],
        EthernetAddressLength, Length) and (Length = EthernetAddressLength) and
      EthernetAddressIsUsable(Card^.Address) then
     Exit(True);
-  if DevicePropertyBytes(Card^.Device^.Properties, 'mac-address', @Card^.Address[0],
+  if PlatformPropertyBytes(Card^.Device, 'mac-address', @Card^.Address[0],
        EthernetAddressLength, Length) and (Length = EthernetAddressLength) and
      EthernetAddressIsUsable(Card^.Address) then
     Exit(True);

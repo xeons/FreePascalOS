@@ -22,6 +22,14 @@
   controllers, the Ethernet controller, the VideoCore mailbox, the xHCI
   controller the firmware set up behind its PCIe bridge).
 
+  After a native boot the device tree describes them instead:
+  Io.DeviceTreeDevices adds each enabled node with a "compatible" (its
+  strings are the ids, the first the hardware id), its "reg" translated
+  to physical memory ranges, its interrupts that end at the GIC (as
+  global system interrupts: INTIDs), "dma-coherent" and "dma-ranges" as
+  the DMA attributes, and the node itself (DeviceTreeNode) for the rest
+  of its properties (Io.PlatformProperties reads both kinds).
+
   Io.AcpiDevices fills the list while the namespace loads: each present
   device with a hardware id (_HID), its compatible ids (_CID), unique id
   (_UID), status (_STA), resources (_CRS: memory, I/O ports,
@@ -52,23 +60,29 @@ uses
   Io.Dma;
 
 const
-  PlatformIdLength = AcpiIdLength;
+  { Long enough for device tree compatible strings
+    ("raspberrypi,rp1-dwc3"). }
+  PlatformIdLength = 48;
   MaximumCompatibleIds = AcpiMaximumCompatibleIds;
   PlatformPathLength = AcpiPathLength;
-  MaximumPlatformDevices = 256;
+  MaximumPlatformDevices = 512;
+  NoDeviceTreeNode = -1;
 
   { _STA bits. }
   DeviceStatusPresent = AcpiStatusPresent;
   DeviceStatusFunctioning = AcpiStatusFunctioning;
 
 type
-  TPlatformId = TAcpiIdText;
+  TPlatformId = array[0..PlatformIdLength - 1] of Char;
 
   PPlatformDevice = ^TPlatformDevice;
   TPlatformDevice = record
-    { The namespace node (PAmlNode). }
+    { The namespace node (PAmlNode), nil for a device tree's device. }
     Node: Pointer;
-    { "\_SB_.GDV0.SDC3" }
+    { The device tree node (DeviceTree.Blob), NoDeviceTreeNode for an
+      ACPI device. }
+    DeviceTreeNode: LongInt;
+    { "\_SB_.GDV0.SDC3", or the device tree path "/soc/serial@7d001000" }
     Path: array[0..PlatformPathLength - 1] of Char;
     HardwareId: TPlatformId;
     CompatibleIdCount: Integer;
@@ -83,7 +97,7 @@ type
     HasDmaObject: Boolean;
     { What _DSD returned (AmlNone if nothing); kept for the drivers. }
     Properties: TAmlValue;
-    { PCI root bridges: their segment (_SEG). }
+    { PCI root bridges: their segment (_SEG, linux,pci-domain). }
     Segment: Word;
     { The driver that took it, or nil. }
     DriverName: PChar;
@@ -313,7 +327,8 @@ begin
   for Index := 0 to DeviceCount - 1 do
   begin
     Device := Devices[Index];
-    if (PlatformDeviceHasId(Device, 'PNP0A08') or PlatformDeviceHasId(Device, 'PNP0A03')) and
+    if (PlatformDeviceHasId(Device, 'PNP0A08') or PlatformDeviceHasId(Device, 'PNP0A03') or
+        PlatformDeviceHasId(Device, 'pci-host-ecam-generic')) and
        (Device^.Segment = Pci^.Segment) then
     begin
       Attributes := Device^.Dma;
@@ -388,13 +403,16 @@ begin
   DebugBeginMessage;
   if DeviceCount = 0 then
   begin
-    DebugWriteTag('acpi');
+    DebugWriteTag('devices');
     DebugWriteLine('no platform devices');
   end;
   for Index := 0 to DeviceCount - 1 do
   begin
     Device := Devices[Index];
-    DebugWriteTag('acpi');
+    if Device^.DeviceTreeNode = NoDeviceTreeNode then
+      DebugWriteTag('acpi')
+    else
+      DebugWriteTag('dt');
     DebugWrite(@Device^.Path[0]);
     DebugWrite(' ');
     DebugWrite(@Device^.HardwareId[0]);
