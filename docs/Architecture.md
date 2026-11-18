@@ -4659,7 +4659,13 @@ with the login environment plus `SSH_CONNECTION`, `SSH_CLIENT`, `TERM`,
 - `pty-req` then `shell` or `exec`: a pseudo-terminal of the size asked
   for, the program in a new foreground group with the terminal as its
   controlling terminal, as a terminal window starts its shell;
-  `window-change` sets the terminal's size; `signal INT` types Ctrl-C;
+  `window-change` sets the terminal's size; `signal INT` types Ctrl-C.
+  The terminal's output gets a carriage return before each bare line
+  feed (`Ssh.TerminalOutput`): a pseudo-terminal passes a line feed on
+  as written, for the terminal window to move to the next line's
+  start, but the client's terminal (xterm, PuTTY) only moves down, as
+  a Unix terminal's ONLCR would have added the return; without it every
+  program's lines stepped to the right over SSH;
 - without a terminal: three pipes, standard error sent as extended data;
 - `subsystem sftp`: the configured `sftp-server`;
 - `signal`: otherwise the program ends with 128 plus the signal number.
@@ -5601,8 +5607,12 @@ command line (`args`; another user's shows as `[name]`); `top` the
 busiest processes since its last look, again every few seconds (`-b`
 batch, `-d` delay, `-n` count). `sysinfo` shows the system at a glance
 beside a logo (units in `userland/sysinfo`: `SystemInfo.Facts` gathers,
-`SystemInfo.Logo` holds the ASCII logo): user and machine, system and
-kernel, uptime, the programs in /bin, the shell, each display (only if
+`SystemInfo.Logo` holds the ASCII logo): user and machine, system, the
+machine's model as "Host" (`CallGetMachineModel`, kernel
+`Drivers.MachineModel`: the device tree's root `model`, "Raspberry Pi 5
+Model B Rev 1.0", else the Raspberry Pi firmware's board revision through
+the VideoCore mailbox, else nothing: left out on PCs until SMBIOS is
+read), the host name, kernel, uptime, the programs in /bin, the shell, each display (only if
 the display server already runs: `ConnectToDisplay(False)` tries once
 rather than waiting for one), the terminal, the processor's model
 (`Sys.Processor`, from CPUID: the processor tells every program), the

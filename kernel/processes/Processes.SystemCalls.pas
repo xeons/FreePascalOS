@@ -94,7 +94,9 @@ uses
   { The kernel's command line, for the service manager. }
   Kernel.Options,
   { What the processor is (CallGetProcessorDescription). }
-  Kernel.Arch.ProcessorIdentity;
+  Kernel.Arch.ProcessorIdentity,
+  { What the machine is (CallGetMachineModel). }
+  Drivers.MachineModel;
 
 const
   SystemName = 'FreePascalOS';
@@ -612,30 +614,40 @@ begin
   Result := -Int64(CopyToUser(DescriptionAddress, @Description, SizeOf(Description)));
 end;
 
-{ The options the system started with: the service manager reads its
-  boot mode there, login the user to log in automatically. }
-function PerformGetKernelOptions(BufferAddress, Capacity: QWord): Int64;
+{ Text into a caller's buffer of Capacity bytes (cut short and ended by a
+  zero); returns the whole text's length. }
+function CopyTextToUser(Text: PChar; BufferAddress, Capacity: QWord): Int64;
 var
-  Line: PChar;
   Length: QWord;
   Copied: QWord;
   Terminator: Char;
   Error: LongInt;
 begin
-  Line := KernelCommandLine;
-  Length := TextLength(Line);
+  Length := TextLength(Text);
   if Capacity = 0 then
     Exit(Int64(Length));
   Copied := Length;
   if Copied > Capacity - 1 then
     Copied := Capacity - 1;
-  Error := CopyToUser(BufferAddress, Line, Copied);
+  Error := CopyToUser(BufferAddress, Text, Copied);
   Terminator := #0;
   if Error = ErrorNone then
     Error := CopyToUser(BufferAddress + Copied, @Terminator, 1);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := Int64(Length);
+end;
+
+{ The options the system started with: the service manager reads its
+  boot mode there, login the user to log in automatically. }
+function PerformGetKernelOptions(BufferAddress, Capacity: QWord): Int64;
+begin
+  Result := CopyTextToUser(KernelCommandLine, BufferAddress, Capacity);
+end;
+
+function PerformGetMachineModel(BufferAddress, Capacity: QWord): Int64;
+begin
+  Result := CopyTextToUser(MachineModel, BufferAddress, Capacity);
 end;
 
 function PerformTerminateSession(SessionId: QWord; ExitCode: QWord): Int64;
@@ -796,6 +808,7 @@ begin
     CallSetDnsServers: Result := PerformSetDnsServers(Argument0);
     CallSetNodeName: Result := PerformSetNodeName(Argument0);
     CallGetProcessorDescription: Result := PerformGetProcessorDescription(Argument0);
+    CallGetMachineModel: Result := PerformGetMachineModel(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
   else

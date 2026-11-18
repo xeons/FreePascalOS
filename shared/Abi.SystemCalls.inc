@@ -442,7 +442,14 @@ const
     read there). }
   CallGetProcessorDescription = 128;
 
-  CallCount = 129;
+  { (BufferAddress, Capacity): what machine this is, as its maker names
+    it ("Raspberry Pi 5 Model B Rev 1.0": the device tree's model, or the
+    Raspberry Pi firmware's board), into the buffer, at most Capacity - 1
+    characters ended by a zero; returns the whole model's length (0 when
+    it is not known, as on PCs for now). Anyone may read it. }
+  CallGetMachineModel = 129;
+
+  CallCount = 130;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
