@@ -73,7 +73,19 @@ const
   EfiUnsupported = EfiErrorBit or 3;
   EfiBufferTooSmall = EfiErrorBit or 5;
   EfiOutOfResources = EfiErrorBit or 9;
+  EfiNotReady = EfiErrorBit or 6;
+  EfiDeviceError = EfiErrorBit or 7;
   EfiNotFound = EfiErrorBit or 14;
+  EfiAccessDenied = EfiErrorBit or 15;
+  EfiNoResponse = EfiErrorBit or 16;
+  EfiNoMapping = EfiErrorBit or 17;
+  EfiTimeout = EfiErrorBit or 18;
+  EfiNotStarted = EfiErrorBit or 19;
+  EfiAlreadyStarted = EfiErrorBit or 20;
+  EfiAborted = EfiErrorBit or 21;
+  EfiIcmpError = EfiErrorBit or 22;
+  EfiTftpError = EfiErrorBit or 23;
+  EfiHttpError = EfiErrorBit or 35;
 
   { EFI_ALLOCATE_TYPE }
   EfiAllocateAnyPages = 0;
@@ -103,6 +115,8 @@ const
   LoaderMemoryTypeKernelImage = LongWord($80000001);
   LoaderMemoryTypeBootData = LongWord($80000002);
   LoaderMemoryTypePageTables = LongWord($80000003);
+  { The RAM disk image the loader read (a netbooted system volume). }
+  LoaderMemoryTypeRamDisk = LongWord($80000004);
 
 function EfiIsError(Status: TEfiStatus): Boolean;
 function EfiGuidsAreEqual(const First, Second: TEfiGuid): Boolean;

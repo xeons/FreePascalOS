@@ -75,6 +75,7 @@ uses
   Io.Partitions,
   Drivers.Ahci,
   Drivers.VirtioBlock,
+  Drivers.RamDisk,
   Drivers.VirtioNet,
   Drivers.Nvme,
   Drivers.Sdhci,
@@ -164,6 +165,8 @@ begin
     WriteBoardInformation;
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
+  { The image a network boot brought (ramdisk0), the system volume. }
+  InitializeRamDisk;
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
   InitializeNvmeControllers;

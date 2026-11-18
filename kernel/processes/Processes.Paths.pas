@@ -26,7 +26,8 @@
   process's current directory.
 
   The system volume is the one named by the kernel option "root=", or else
-  the first volume labelled FPOSROOT.
+  the first volume labelled FPOSROOT, preferring one on the RAM disk (a
+  network boot's system image, Drivers.RamDisk) to those on disks.
 
   A process may have its own root directory (chroot): its paths are then
   taken relative to that directory, and ".." never leads above it.
@@ -78,7 +79,8 @@ uses
   Memory.KernelHeap,
   Kernel.Options,
   FileSystem.Types,
-  FileSystem.Volumes;
+  FileSystem.Volumes,
+  Drivers.RamDisk;
 
 const
   MaximumComponents = 128;
@@ -98,6 +100,16 @@ begin
   begin
     CopyText(@SystemVolume[0], @RequestedName[0], VolumeNameLength);
     Exit(True);
+  end;
+
+  for Index := 0 to VolumeCount - 1 do
+  begin
+    Volume := VolumeAt(Index);
+    if TextIsEqual(@Volume^.VolumeLabel[0], SystemVolumeLabel) and IsRamDiskDevice(Volume^.Device) then
+    begin
+      CopyText(@SystemVolume[0], @Volume^.Name[0], VolumeNameLength);
+      Exit(True);
+    end;
   end;
 
   for Index := 0 to VolumeCount - 1 do

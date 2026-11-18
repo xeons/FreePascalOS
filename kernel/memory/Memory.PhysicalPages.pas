@@ -188,7 +188,8 @@ begin
     MemoryRegionUsable,
     MemoryRegionKernelImage,
     MemoryRegionBootData,
-    MemoryRegionBootPageTables:
+    MemoryRegionBootPageTables,
+    MemoryRegionRamDisk:
       Result := True;
   else
     Result := False;
@@ -202,6 +203,8 @@ begin
     MemoryRegionKernelImage: Result := PageUsageKernelImage;
     MemoryRegionBootData: Result := PageUsageBootData;
     MemoryRegionBootPageTables: Result := PageUsagePageTable;
+    { The RAM disk's storage, a driver's for good (Drivers.RamDisk). }
+    MemoryRegionRamDisk: Result := PageUsageGeneral;
   else
     Result := PageUsageReserved;
   end;

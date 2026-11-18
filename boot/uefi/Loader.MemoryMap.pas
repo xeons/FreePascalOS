@@ -121,7 +121,8 @@ begin
     EfiRuntimeServicesCode, EfiRuntimeServicesData,
     EfiConventionalMemory,
     EfiAcpiReclaimMemory, EfiAcpiMemoryNvs,
-    LoaderMemoryTypeKernelImage, LoaderMemoryTypeBootData, LoaderMemoryTypePageTables:
+    LoaderMemoryTypeKernelImage, LoaderMemoryTypeBootData, LoaderMemoryTypePageTables,
+    LoaderMemoryTypeRamDisk:
       Result := True;
   else
     Result := False;
@@ -201,6 +202,8 @@ begin
 
     LoaderMemoryTypePageTables:
       Result := MemoryRegionBootPageTables;
+    LoaderMemoryTypeRamDisk:
+      Result := MemoryRegionRamDisk;
   else
     Result := MemoryRegionReserved;
   end;

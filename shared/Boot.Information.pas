@@ -37,7 +37,7 @@ interface
 const
   { 'FPOSBOOT' in little endian ASCII. }
   BootInformationSignature = QWord($544F4F42534F5046);
-  BootInformationVersion = 4;
+  BootInformationVersion = 5;
 
   MaximumMemoryRegions = 512;
 
@@ -51,6 +51,8 @@ const
   MemoryRegionBootData = 7;
   MemoryRegionBootPageTables = 8;
   MemoryRegionUnusable = 9;
+  { The RAM disk image (RamDiskPhysicalBase): RAM the kernel must keep. }
+  MemoryRegionRamDisk = 10;
 
   PixelFormatRedGreenBlue = 1;
   PixelFormatBlueGreenRed = 2;
@@ -120,6 +122,13 @@ type
       service), in seconds since 1970-01-01 UTC; zero if it did not. For
       machines whose clock the kernel cannot read (AArch64). }
     FirmwareTime: Int64;
+
+    { A disk image the loader read into memory - the system volume of a
+      network boot - which the kernel offers as a writable RAM disk
+      (Drivers.RamDisk); both zero if there is none. Its pages are a
+      MemoryRegionRamDisk region of the memory map. }
+    RamDiskPhysicalBase: QWord;
+    RamDiskSizeInBytes: QWord;
 
     MemoryRegionCount: QWord;
     MemoryRegions: array[0..MaximumMemoryRegions - 1] of TMemoryRegion;

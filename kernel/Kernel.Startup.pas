@@ -108,6 +108,7 @@ uses
   Drivers.ConsoleDevice,
   Drivers.PseudoTerminalDevices,
   Drivers.DiskStatistics,
+  Drivers.RamDisk,
   Io.Pipes,
   Debug.Output,
   Debug.FramebufferConsole;
@@ -412,6 +413,7 @@ begin
   WriteProcessorDescription;
 
   InitializeMemoryManagement(BootInformation);
+  RecordBootRamDisk(BootInformation^);
   InitializeExecutiveServices;
 
   InitializeHal;
