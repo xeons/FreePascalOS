@@ -69,6 +69,11 @@ procedure ForgetInterfaceNeighbours(NetworkInterface: PNetworkInterface);
 { On the network thread: retries, expiries. }
 procedure RunArpTimers(Now: QWord);
 
+{ The Ethernet address of a neighbour whose answer is known; False if
+  it is not (yet). }
+function FindNeighbourAddress(NetworkInterface: PNetworkInterface; Address: TIpv4Address;
+  out HardwareAddress: TEthernetAddress): Boolean;
+
 function ArpEntryCount: Integer;
 { The entry at Position (from 0) as the system call shows it. }
 function DescribeArpEntry(Position: Integer; out Description: TAbiArpEntry): Boolean;
@@ -343,6 +348,18 @@ begin
     end;
     RequestNetworkWakeAt(Entry^.Deadline);
   end;
+end;
+
+function FindNeighbourAddress(NetworkInterface: PNetworkInterface; Address: TIpv4Address;
+  out HardwareAddress: TEthernetAddress): Boolean;
+var
+  Entry: PArpEntry;
+begin
+  FillMemory(@HardwareAddress[0], EthernetAddressLength, 0);
+  Entry := FindEntry(NetworkInterface, Address);
+  Result := (Entry <> nil) and (Entry^.State = ArpReachable);
+  if Result then
+    HardwareAddress := Entry^.HardwareAddress;
 end;
 
 function ArpEntryCount: Integer;

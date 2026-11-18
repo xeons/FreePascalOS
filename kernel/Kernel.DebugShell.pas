@@ -36,6 +36,7 @@
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
+    watchdog          the hardware watchdog: which, armed, timeout, pets
     suspend           suspends to RAM (ACPI S3) until woken
     poweroff          shuts down and powers off (ACPI S5)
     reboot            shuts down and resets the machine
@@ -50,6 +51,10 @@ interface
 
 { Runs the shell on the console until "exit". }
 procedure RunDebugShell;
+
+{ Carries out one command line (for the network debug shell,
+  Kernel.NetworkShell); False for "exit", "poweroff" and "reboot". }
+function RunDebugShellCommand(Line: PChar): Boolean;
 
 implementation
 
@@ -74,6 +79,7 @@ uses
   Io.InterruptRouting,
   Io.PlatformDevices,
   Drivers.RaspberryPiBoard,
+  Io.Watchdog,
   Debug.Output;
 
 const
@@ -125,7 +131,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('netcards, interrupts, devices, board, uptime, suspend, poweroff, reboot, exit');
+  WriteLine('netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -261,6 +267,25 @@ begin
   DebugEndMessage;
 end;
 
+procedure ShowWatchdog;
+begin
+  DebugBeginMessage;
+  DebugWrite('watchdog: ');
+  DebugWrite(WatchdogName);
+  if WatchdogIsArmed then
+  begin
+    DebugWrite(', armed for ');
+    DebugWriteDecimal(WatchdogTimeoutSeconds);
+    DebugWrite(' s, petted ');
+    DebugWriteDecimal(WatchdogPetCount);
+    DebugWrite(' times');
+  end
+  else if WatchdogIsPresent then
+    DebugWrite(', not armed');
+  DebugWriteLine('');
+  DebugEndMessage;
+end;
+
 { Carries out one line; returns False for "exit". }
 function RunCommand(Line: PChar): Boolean;
 var
@@ -306,6 +331,8 @@ begin
     WriteBoardInformation
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
+  else if TextIsEqual(@Command[0], 'watchdog') then
+    ShowWatchdog
   else if TextIsEqual(@Command[0], 'suspend') then
   begin
     if SuspendToRam <> 0 then
@@ -353,6 +380,11 @@ begin
   until False;
   Line[Length] := #0;
   Result := True;
+end;
+
+function RunDebugShellCommand(Line: PChar): Boolean;
+begin
+  Result := RunCommand(Line);
 end;
 
 procedure RunDebugShell;
