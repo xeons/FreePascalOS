@@ -45,6 +45,9 @@
 #   make compression-test  Check libcompression on the host against zlib's
 #                   output (made by Python), and have Python's zlib
 #                   decompress what it compresses
+#   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
+#                   exchange hash and keys, host keys and signatures against Python's
+#                   and OpenSSL's answers, and the server against a client in memory
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
@@ -156,7 +159,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test
+	crypto-test tls-test wget-test image-test compression-test ssh-test
 
 all: esp
 
@@ -324,13 +327,14 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test \
+test: aml-test acpi-device-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Not part of make test (it takes a minute a round under TCG): suspends
 # and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,
@@ -659,6 +663,32 @@ tls-test: $(TLS_TEST)
 	@tools/TlsTest/run-interop.sh $(TLS_TEST) > build/tools/tls-interop.out 2>&1 || \
 		{ grep FAIL build/tools/tls-interop.out; echo "TLS INTEROP TEST FAILED (build/tools/tls-interop.out)"; exit 1; }
 	@tail -n 1 build/tools/tls-interop.out
+
+# libssh builds for the host too (with TlsTest's Crypto.Random) and is
+# checked there against known answers that Python and OpenSSL work out
+# when the test is built, and against a small client in memory.
+SSH_TEST := build/tools/SshTest
+SSH_TEST_UNITS := build/tools/ssh-test-units
+SSH_VECTORS := $(SSH_TEST_UNITS)/SshTest.Vectors.inc
+SSH_TEST_SOURCES := $(wildcard tools/SshTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
+	$(filter-out %/Ssh.Contents.pas,$(wildcard userland/lib/ssh/*.pas))
+
+$(SSH_VECTORS): tools/SshTest/make-vectors.py
+	@mkdir -p $(SSH_TEST_UNITS)
+	@python3 -c 'import cryptography' 2>/dev/null || { echo "Python 3 with the cryptography package is needed for the SSH test's vectors (python-cryptography)"; exit 1; }
+	python3 tools/SshTest/make-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(SSH_TEST): $(SSH_TEST_SOURCES) $(SSH_VECTORS)
+	@mkdir -p $(SSH_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/SshTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/ssh \
+		-Fuuserland/lib/cryptography -Fushared -Fishared -Fi$(SSH_TEST_UNITS) -FU$(SSH_TEST_UNITS) -o$@ tools/SshTest/SshTest.pas
+
+ssh-test: $(SSH_TEST)
+	@$(SSH_TEST) > build/tools/ssh-test.out || \
+		{ grep -A2 FAIL build/tools/ssh-test.out; echo "SSH TEST FAILED (build/tools/ssh-test.out)"; exit 1; }
+	@echo "SSH HOST TEST PASSED: $$(tail -n 1 build/tools/ssh-test.out | cut -d ' ' -f 3-)"
 
 # wget's URLs, response heads and chunked decoding build for the host too.
 WGET_TEST := build/tools/WgetTest
