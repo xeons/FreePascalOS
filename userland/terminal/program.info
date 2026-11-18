@@ -1,0 +1,11 @@
+# Terminal: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/terminal/program.info.
+
+[Program]
+Name = Terminal
+Description = A command line in a window
+Category = Accessories
+Icon = app-terminal
+Executable = terminal
+Keywords = ["shell", "console", "command line"]
+Version = 1.0

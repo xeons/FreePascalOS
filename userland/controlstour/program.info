@@ -1,0 +1,11 @@
+# Controls tour: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/controlstour/program.info.
+
+[Program]
+Name = Controls tour
+Description = Every control of the controls library in one window
+Category = Development
+Icon = app-components
+Executable = controlstour
+Keywords = ["controls", "widgets", "demo"]
+Version = 1.0

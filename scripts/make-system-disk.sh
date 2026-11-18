@@ -23,6 +23,7 @@
 #
 # Layout:
 #   /bin   programs (from <user-build-directory>/bin)
+#   /app   graphical programs, a folder each (from <user-build-directory>/app)
 #   /lib   shared libraries (from <user-build-directory>/lib)
 #   /etc   configuration (from userland/etc), with the service
 #          definitions in /etc/services and the system's settings in
@@ -55,6 +56,14 @@ rm -rf "$staging_directory"
 mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log,var/lib/network}
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
+# The graphical programs, each in a folder of its own (/app/NAME: the
+# executable, program.info and its own icons), without the build's
+# stamps.
+if [[ -d "$user_build_directory/app" ]]; then
+    mkdir -p "$staging_directory/app"
+    cp -r "$user_build_directory"/app/* "$staging_directory/app/"
+    find "$staging_directory/app" -name .installed -delete
+fi
 # The fonts graphical programs draw with (libfont).
 if [[ -d "$user_build_directory/fonts" ]]; then
     mkdir -p "$staging_directory/lib/fonts"

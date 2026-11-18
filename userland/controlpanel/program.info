@@ -1,0 +1,11 @@
+# Control Panel: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/controlpanel/program.info.
+
+[Program]
+Name = Control Panel
+Description = The system's settings: display, mouse, keyboard, sound, network and more
+Category = Settings
+Icon = app-control-panel
+Executable = controlpanel
+Keywords = ["settings", "display", "mouse", "keyboard", "sound", "network"]
+Version = 1.0

@@ -1,0 +1,11 @@
+# Notepad: how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as /app/notepad/program.info.
+
+[Program]
+Name = Notepad
+Description = Write and edit plain text files
+Category = Accessories
+Icon = app-text-editor
+Executable = notepad
+Keywords = ["text", "editor", "write"]
+Version = 1.0
