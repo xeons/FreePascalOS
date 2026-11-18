@@ -66,8 +66,10 @@ begin
   while Index < Information^.MemoryRegionCount do
   begin
     Region := @Information^.MemoryRegions[Index];
+    { The RAM disk too: nothing may stay only in the caches while
+      they are off around the hand-off. }
     if (Region^.Kind = MemoryRegionKernelImage) or (Region^.Kind = MemoryRegionBootData) or
-       (Region^.Kind = MemoryRegionBootPageTables) then
+       (Region^.Kind = MemoryRegionBootPageTables) or (Region^.Kind = MemoryRegionRamDisk) then
       ArchCleanDataCacheRange(Region^.PhysicalStart, Region^.PageCount * PageSize);
     Inc(Index);
   end;
