@@ -68,6 +68,14 @@ procedure DebugWriteTag(Component: PChar);
 procedure DebugSetColor(const Color: TColor);
 procedure DebugResetColor;
 
+type
+  TDebugOutputCopy = procedure(Character: Char);
+
+{ Every character written from now on is also given to Copy (nil: to
+  nobody), with the output lock held, at HighLevel: it must only store
+  it. Used by the network debug shell to see what a command writes. }
+procedure SetDebugOutputCopy(Copy: TDebugOutputCopy);
+
 { Used only by the panic path: forgets any lock holder (who may be the
   very code that crashed) so the panic message can always be printed. }
 procedure DebugForceUnlockForPanic;
@@ -88,6 +96,7 @@ var
   LockNestingDepth: LongWord;
   { The processor holding the lock (meaningful while it is held). }
   LockOwner: LongInt;
+  OutputCopy: TDebugOutputCopy = nil;
 
 procedure InitializeDebugOutput;
 begin
@@ -138,8 +147,16 @@ begin
     ReleaseSpinLock(OutputLock, LockPreviousLevel);
 end;
 
+procedure SetDebugOutputCopy(Copy: TDebugOutputCopy);
+begin
+  DebugBeginMessage;
+  OutputCopy := Copy;
+  DebugEndMessage;
+end;
+
 procedure DebugForceUnlockForPanic;
 begin
+  OutputCopy := nil;
   LockNestingDepth := 0;
   InitializeSpinLock(OutputLock);
   ForceUnlockLogRingForPanic;
@@ -150,6 +167,8 @@ begin
   WriteSerialCharacter(Character);
   ConsoleWriteCharacter(Character);
   CaptureLogCharacter(Character);
+  if Assigned(OutputCopy) then
+    OutputCopy(Character);
 end;
 
 procedure DebugWriteCharacter(Character: Char);
