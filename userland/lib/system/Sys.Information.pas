@@ -42,6 +42,9 @@ function ReadNodeName(out Name: string): LongInt;
 { A new node name (root only): letters, digits, hyphens and dots,
   starting with a letter or digit, 63 at most. }
 function SetNodeName(Name: PChar): LongInt;
+{ What machine this is, as its maker names it ("Raspberry Pi 5 Model B
+  Rev 1.0"); '' when the kernel does not know (PCs, for now). }
+function MachineModel: string;
 
 implementation
 
@@ -84,6 +87,17 @@ begin
   Result := GetNodeName(@Buffer[0], SizeOf(Buffer));
   if Result = ErrorNone then
     Name := PChar(@Buffer[0]);
+end;
+
+function MachineModel: string;
+const
+  Capacity = 128;
+var
+  Buffer: array[0..Capacity - 1] of Char;
+begin
+  if SystemCall(CallGetMachineModel, QWord(@Buffer[0]), Capacity, 0, 0, 0, 0) <= 0 then
+    Exit('');
+  Result := string(PChar(@Buffer[0]));
 end;
 
 end.

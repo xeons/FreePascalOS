@@ -17,15 +17,17 @@
 }
 
 {
-  USB pointing devices: mice, tablets, anything HID with X and Y.
+  USB pointing devices: mice, tablets, anything HID with X and Y. The
+  pointer half of a HID interface (Drivers.UsbHid finds the interface,
+  parses its report descriptor and hands the pointer's reports here,
+  only those: a receiver's consumer and system control reports, by
+  their report ids, go elsewhere or nowhere).
 
-  The device's HID interface (not a keyboard: that driver takes those
-  first) has a report descriptor, read with GET_DESCRIPTOR and parsed
-  (Drivers.HidReports) for where X, Y, the wheel and the buttons are in
-  its reports. A mouse (relative X and Y) gives motion events, a tablet
-  (absolute, like QEMU's usb-tablet) position events normalized to
-  0-65535; button changes and wheel steps give their events too. Boot
-  mice are put in report protocol, the format the descriptor describes.
+  The layout (Drivers.HidReports) says where X, Y, the wheel and the
+  buttons are in a report. A mouse (relative X and Y) gives motion
+  events, a tablet (absolute, like QEMU's usb-tablet) position events
+  normalized to 0-65535; button changes and wheel steps give their
+  events too.
 }
 unit Drivers.UsbPointer;
 
@@ -34,8 +36,26 @@ unit Drivers.UsbPointer;
 
 interface
 
-{ Offers the driver to the USB core (after the keyboard's). }
-procedure RegisterUsbPointerDriver;
+uses
+  Drivers.HidReports;
+
+type
+  PUsbPointer = ^TUsbPointer;
+  TUsbPointer = record
+    Layout: THidPointerLayout;
+    Source: Word;
+    ButtonsHeld: LongWord;
+    LastX: LongInt;
+    LastY: LongInt;
+  end;
+
+{ A new pointing device with this layout (logged as a USB mouse or
+  tablet); nil if there are too many already. }
+function CreateUsbPointer(const Layout: THidPointerLayout): PUsbPointer;
+{ One of its reports (called at dispatch level). }
+procedure HandleUsbPointerReport(Pointer: PUsbPointer; Report: PByte; Length: LongWord);
+{ Every button counts as released (after waking from suspend to RAM). }
+procedure ResetUsbPointer(Pointer: PUsbPointer);
 
 implementation
 
@@ -44,41 +64,13 @@ uses
   Abi.SystemCalls,
   Memory.KernelHeap,
   Io.InputEvents,
-  Drivers.Xhci,
-  Drivers.HidReports,
   Debug.Output;
 
 const
-  ClassHid = 3;
-  SubclassBoot = 1;
-  DescriptorHid = $21;
-  DescriptorReport = $22;
-  EndpointTransferInterrupt = 3;
-  RequestGetDescriptor = 6;
-  RequestSetProtocol = $0B;
-  StandardFromInterface = $81;
-  ClassRequestToInterface = $21;
-  ReportProtocol = 1;
-  MaximumReportDescriptor = 1024;
   MaximumPointers = 4;
-
-type
-  PUsbPointer = ^TUsbPointer;
-  TUsbPointer = record
-    Usb: PUsbDevice;
-    InterfaceNumber: Byte;
-    IsBootDevice: Boolean;
-    Layout: THidPointerLayout;
-    Source: Word;
-    ButtonsHeld: LongWord;
-    LastX: LongInt;
-    LastY: LongInt;
-  end;
 
 var
   PointerCount: Integer;
-
-{ --- Reports ------------------------------------------------------------------ }
 
 procedure SendEvent(Pointer: PUsbPointer; Kind: Word; Code: LongWord; Value, X, Y: LongInt);
 var
@@ -110,155 +102,61 @@ begin
     Result := InputPositionMaximum;
 end;
 
-procedure HandleReport(Device: PUsbDevice; Data: PByte; Length: LongWord; Context: Pointer);
+procedure SendMotion(Pointer: PUsbPointer; const State: THidPointerState);
 var
-  Pointer: PUsbPointer;
-  Layout: ^THidPointerLayout;
   X: LongInt;
   Y: LongInt;
-  Wheel: LongInt;
+begin
+  if Pointer^.Layout.X.Relative then
+  begin
+    if (State.X <> 0) or (State.Y <> 0) then
+      SendEvent(Pointer, InputEventMotion, 0, 0, State.X, State.Y);
+    Exit;
+  end;
+  X := Normalized(Pointer^.Layout.X, State.X);
+  Y := Normalized(Pointer^.Layout.Y, State.Y);
+  if (X <> Pointer^.LastX) or (Y <> Pointer^.LastY) then
+    SendEvent(Pointer, InputEventPosition, 0, 0, X, Y);
+  Pointer^.LastX := X;
+  Pointer^.LastY := Y;
+end;
+
+procedure HandleUsbPointerReport(Pointer: PUsbPointer; Report: PByte; Length: LongWord);
+var
+  State: THidPointerState;
   Button: Integer;
-  Held: LongWord;
+  Mask: LongWord;
 begin
-  Pointer := PUsbPointer(Context);
-  Layout := @Pointer^.Layout;
-  if Layout^.UsesReportIds and ((Length = 0) or (Data[0] <> Layout^.ReportId)) then
-    Exit;
-  X := ReadHidField(Layout^, Layout^.X, Data, Length);
-  Y := ReadHidField(Layout^, Layout^.Y, Data, Length);
-  if Layout^.X.Relative then
-  begin
-    if (X <> 0) or (Y <> 0) then
-      SendEvent(Pointer, InputEventMotion, 0, 0, X, Y);
-  end
-  else
-  begin
-    X := Normalized(Layout^.X, X);
-    Y := Normalized(Layout^.Y, Y);
-    if (X <> Pointer^.LastX) or (Y <> Pointer^.LastY) then
-      SendEvent(Pointer, InputEventPosition, 0, 0, X, Y);
-    Pointer^.LastX := X;
-    Pointer^.LastY := Y;
-  end;
-  Held := 0;
+  ReadPointerState(Pointer^.Layout, Report, Length, State);
+  SendMotion(Pointer, State);
   for Button := 1 to MaximumPointerButtons do
-    if Layout^.Buttons[Button].Present and (ReadHidField(Layout^, Layout^.Buttons[Button], Data, Length) <> 0) then
-      Held := Held or (LongWord(1) shl Button);
-  for Button := 1 to MaximumPointerButtons do
-    if ((Held xor Pointer^.ButtonsHeld) and (LongWord(1) shl Button)) <> 0 then
-      SendEvent(Pointer, InputEventButton, Button, Ord((Held and (LongWord(1) shl Button)) <> 0), 0, 0);
-  Pointer^.ButtonsHeld := Held;
-  if Layout^.Wheel.Present then
   begin
-    Wheel := ReadHidField(Layout^, Layout^.Wheel, Data, Length);
-    if Wheel <> 0 then
-      SendEvent(Pointer, InputEventWheel, 0, Wheel, 0, 0);
+    Mask := LongWord(1) shl Button;
+    if ((State.Buttons xor Pointer^.ButtonsHeld) and Mask) <> 0 then
+      SendEvent(Pointer, InputEventButton, Button, Ord((State.Buttons and Mask) <> 0), 0, 0);
   end;
+  Pointer^.ButtonsHeld := State.Buttons;
+  if State.Wheel <> 0 then
+    SendEvent(Pointer, InputEventWheel, 0, State.Wheel, 0, 0);
 end;
 
-{ --- Finding the interface ---------------------------------------------------- }
-
-{ The first HID interface's number, its report descriptor's length, its
-  interrupt IN endpoint, and whether it is a boot device. }
-function FindPointerInterface(Usb: PUsbDevice; out InterfaceNumber: Byte; out ReportLength: Word;
-  out Endpoint: Byte; out MaximumPacket: Word; out Interval: Byte; out IsBootDevice: Boolean): Boolean;
-var
-  Position: LongWord;
-  Descriptor: PByte;
-  InHid: Boolean;
+procedure ResetUsbPointer(Pointer: PUsbPointer);
 begin
-  Result := False;
-  InHid := False;
-  InterfaceNumber := 0;
-  ReportLength := 0;
-  IsBootDevice := False;
-  Position := 0;
-  while Position + 2 <= Usb^.ConfigurationLength do
-  begin
-    Descriptor := Usb^.Configuration + Position;
-    if (Descriptor[0] < 2) or (Position + Descriptor[0] > Usb^.ConfigurationLength) then
-      Break;
-    if (Descriptor[1] = UsbDescriptorInterface) and (Descriptor[0] >= 9) then
-    begin
-      if InHid and (ReportLength > 0) then
-        Break;
-      InHid := Descriptor[5] = ClassHid;
-      InterfaceNumber := Descriptor[2];
-      IsBootDevice := Descriptor[6] = SubclassBoot;
-      ReportLength := 0;
-    end
-    else if InHid and (Descriptor[1] = DescriptorHid) and (Descriptor[0] >= 9) and (Descriptor[6] = DescriptorReport) then
-      ReportLength := Descriptor[7] or (Word(Descriptor[8]) shl 8)
-    else if InHid and (Descriptor[1] = UsbDescriptorEndpoint) and (Descriptor[0] >= 7) and
-            ((Descriptor[2] and $80) <> 0) and ((Descriptor[3] and 3) = EndpointTransferInterrupt) then
-    begin
-      Endpoint := Descriptor[2];
-      MaximumPacket := Descriptor[4] or (Word(Descriptor[5]) shl 8);
-      Interval := Descriptor[6];
-      Result := ReportLength > 0;
-      if Result then
-        Exit;
-    end;
-    Position := Position + Descriptor[0];
-  end;
+  Pointer^.ButtonsHeld := 0;
 end;
 
-procedure ChooseReportProtocol(Pointer: PUsbPointer);
+function CreateUsbPointer(const Layout: THidPointerLayout): PUsbPointer;
 begin
-  if Pointer^.IsBootDevice then
-    UsbControlTransfer(Pointer^.Usb, ClassRequestToInterface, RequestSetProtocol, ReportProtocol,
-      Pointer^.InterfaceNumber, nil, 0);
-end;
-
-{ After waking from suspend to RAM. }
-procedure ResumePointer(Usb: PUsbDevice; Context: Pointer);
-begin
-  PUsbPointer(Context)^.ButtonsHeld := 0;
-  ChooseReportProtocol(PUsbPointer(Context));
-end;
-
-function ProbeUsbPointer(Usb: PUsbDevice): Boolean;
-var
-  Pointer: PUsbPointer;
-  InterfaceNumber: Byte;
-  ReportLength: Word;
-  Endpoint: Byte;
-  MaximumPacket: Word;
-  Interval: Byte;
-  IsBootDevice: Boolean;
-  Descriptor: PByte;
-  Layout: THidPointerLayout;
-begin
-  Result := False;
-  if (PointerCount = MaximumPointers) or
-     not FindPointerInterface(Usb, InterfaceNumber, ReportLength, Endpoint, MaximumPacket, Interval, IsBootDevice) or
-     (ReportLength > MaximumReportDescriptor) then
+  Result := nil;
+  if PointerCount = MaximumPointers then
     Exit;
-  Descriptor := PByte(AllocateKernelMemory(ReportLength));
-  if Descriptor = nil then
+  Result := PUsbPointer(AllocateZeroedKernelMemory(SizeOf(TUsbPointer)));
+  if Result = nil then
     Exit;
-  if not UsbControlTransfer(Usb, StandardFromInterface, RequestGetDescriptor, Word(DescriptorReport) shl 8,
-       InterfaceNumber, Descriptor, ReportLength) or not ParsePointerLayout(Descriptor, ReportLength, Layout) then
-  begin
-    FreeKernelMemory(Descriptor);
-    Exit;
-  end;
-  FreeKernelMemory(Descriptor);
-  Result := True;
-  Pointer := PUsbPointer(AllocateZeroedKernelMemory(SizeOf(TUsbPointer)));
-  if Pointer = nil then
-    Exit;
-  Pointer^.Usb := Usb;
-  Pointer^.InterfaceNumber := InterfaceNumber;
-  Pointer^.IsBootDevice := IsBootDevice;
-  Pointer^.Layout := Layout;
-  Pointer^.Source := NewInputSource;
-  Pointer^.LastX := -1;
-  Pointer^.LastY := -1;
-  ChooseReportProtocol(Pointer);
-  UsbSetResumeHandler(Usb, @ResumePointer, Pointer);
-  if not UsbStartInterruptIn(Usb, Endpoint, MaximumPacket, Interval, @HandleReport, Pointer) then
-    Exit;
+  Result^.Layout := Layout;
+  Result^.Source := NewInputSource;
+  Result^.LastX := -1;
+  Result^.LastY := -1;
   Inc(PointerCount);
   DebugBeginMessage;
   DebugWriteTag('input');
@@ -270,11 +168,6 @@ begin
     DebugWrite(', with a wheel');
   DebugWriteLine('');
   DebugEndMessage;
-end;
-
-procedure RegisterUsbPointerDriver;
-begin
-  RegisterUsbClassDriver(@ProbeUsbPointer);
 end;
 
 end.

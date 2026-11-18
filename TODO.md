@@ -168,7 +168,11 @@ how the existing pieces fit together.
   - [ ] Hot plugging and removal (port status change events), on root ports and
         hubs; class drivers told when their device goes (root ports are done,
         with USB disks mounted and taken away; hubs remain)
-  - [ ] Composite devices: a class driver per interface, several per device
+  - [x] Composite devices: a class driver per interface, several per device
+        (Drivers.UsbInterfaces; interrupt IN endpoints on several interfaces;
+        a driver may claim more interfaces of its function: audio)
+  - [ ] Interface association descriptors (IAD) for binding a function's
+        interfaces, instead of each driver claiming its own
   - [ ] EHCI (USB 2.0) host controllers, with their companion controllers
   - [ ] UHCI and OHCI (USB 1.x) host controllers
   - [ ] Interrupt, bulk, control and isochronous transfers on every controller
@@ -305,6 +309,11 @@ normalized (0-65535), not pixels.
 - [x] PS/2 mouse (8042 second port, IntelliMouse wheel)
 - [x] USB HID mouse and USB tablet (report descriptor parsed; absolute
       coordinates: QEMU's usb-tablet, for testing)
+- [x] USB keyboard and mouse receivers (composite HID: a boot keyboard interface
+      and a mouse interface with report ids; reports routed by id; report
+      protocol keyboards, key arrays and bitmaps, turned into boot reports)
+- [ ] USB consumer and system control reports (volume, play, sleep keys of
+      receivers and keyboards: parsed but ignored)
 - [x] Input event device (/dev/events): timestamped key and pointer events
       (press/release, key code, character, relative motion, absolute position
       normalized to 0-65535, buttons, wheel)

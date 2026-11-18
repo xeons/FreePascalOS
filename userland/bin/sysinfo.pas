@@ -22,7 +22,8 @@
   sysinfo [-l] [-c|-C]
 
   Prints the user and machine, then the system's facts (SystemInfo.Facts:
-  the system and kernel, uptime, programs, shell, displays, terminal,
+  the system, the machine, its host name, the kernel, uptime, programs,
+  shell, displays, terminal,
   processor, memory, processes, disks, time zone) to the right of the
   logo, and two rows of the terminal's sixteen colours.
 

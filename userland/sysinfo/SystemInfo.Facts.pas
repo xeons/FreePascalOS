@@ -258,6 +258,9 @@ begin
   HaveUsage := GetSystemUsage(Usage) = 0;
 
   AddFact(Result, 'OS', 'FreePascalOS ' + string(PChar(@Information.Machine[0])));
+  { The machine as its maker names it (left out where it is not known). }
+  AddFact(Result, 'Host', MachineModel);
+  AddFact(Result, 'Hostname', string(PChar(@Information.NodeName[0])));
   AddFact(Result, 'Kernel', string(PChar(@Information.SystemName[0])) + ' ' +
     string(PChar(@Information.Release[0])));
   AddFact(Result, 'Uptime', UptimeText(UptimeMilliseconds));

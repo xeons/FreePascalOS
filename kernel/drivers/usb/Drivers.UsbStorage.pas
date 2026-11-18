@@ -60,10 +60,11 @@ uses
   Io.BlockDevice,
   Io.DiskArrival,
   Drivers.Xhci,
+  Drivers.UsbDescriptors,
+  Drivers.UsbInterfaces,
   Debug.Output;
 
 const
-  ClassMassStorage = $08;
   SubclassScsi = $06;
   ProtocolBulkOnly = $50;
 
@@ -337,52 +338,13 @@ end;
 
 { --- Finding the interface --------------------------------------------------------- }
 
-{ Looks through the configuration for a Bulk-Only SCSI interface and its
-  two bulk endpoints. }
-function FindStorageInterface(Usb: PUsbDevice; out BulkIn, BulkOut: Byte;
-  out InPacket, OutPacket: Word): Boolean;
-const
-  EndpointTransferBulk = 2;
-var
-  Position: LongWord;
-  Length: Byte;
-  Kind: Byte;
-  Descriptor: PByte;
-  InStorageInterface: Boolean;
+{ True if the interface is Bulk-Only SCSI with its two bulk endpoints. }
+function FindStorageEndpoints(UsbInterface: PUsbInterfaceInfo; out BulkIn, BulkOut: TUsbEndpointInfo): Boolean;
 begin
-  BulkIn := 0;
-  BulkOut := 0;
-  InPacket := 0;
-  OutPacket := 0;
-  InStorageInterface := False;
-  Position := 0;
-  while Position + 2 <= Usb^.ConfigurationLength do
-  begin
-    Descriptor := Usb^.Configuration + Position;
-    Length := Descriptor[0];
-    Kind := Descriptor[1];
-    if (Length < 2) or (Position + Length > Usb^.ConfigurationLength) then
-      Break;
-    if (Kind = UsbDescriptorInterface) and (Length >= 9) then
-      InStorageInterface := (Descriptor[5] = ClassMassStorage) and (Descriptor[6] = SubclassScsi) and
-        (Descriptor[7] = ProtocolBulkOnly)
-    else if InStorageInterface and (Kind = UsbDescriptorEndpoint) and (Length >= 7) and
-            ((Descriptor[3] and 3) = EndpointTransferBulk) then
-    begin
-      if (Descriptor[2] and $80) <> 0 then
-      begin
-        BulkIn := Descriptor[2];
-        InPacket := Descriptor[4] or (Word(Descriptor[5]) shl 8);
-      end
-      else
-      begin
-        BulkOut := Descriptor[2];
-        OutPacket := Descriptor[4] or (Word(Descriptor[5]) shl 8);
-      end;
-    end;
-    Position := Position + Length;
-  end;
-  Result := (BulkIn <> 0) and (BulkOut <> 0);
+  Result := (UsbInterface^.InterfaceClass = UsbClassMassStorage) and (UsbInterface^.Subclass = SubclassScsi) and
+    (UsbInterface^.Protocol = ProtocolBulkOnly) and
+    FindUsbEndpoint(UsbInterface^, UsbTransferBulk, True, BulkIn) and
+    FindUsbEndpoint(UsbInterface^, UsbTransferBulk, False, BulkOut);
 end;
 
 { After waking from suspend to RAM: the disk was reset, and answers its
@@ -407,27 +369,26 @@ begin
     AnnounceDiskRemoval(Disk^.BlockDevice);
 end;
 
-function ProbeUsbStorage(Usb: PUsbDevice): Boolean;
+function ProbeUsbStorage(Usb: PUsbDevice; UsbInterface: PUsbInterfaceInfo): Boolean;
 var
   Disk: PUsbDisk;
-  InPacket: Word;
-  OutPacket: Word;
+  BulkIn: TUsbEndpointInfo;
+  BulkOut: TUsbEndpointInfo;
   BlockDevice: PBlockDevice;
   Name: array[0..BlockDeviceNameLength - 1] of Char;
 begin
   Result := False;
+  if not FindStorageEndpoints(UsbInterface, BulkIn, BulkOut) then
+    Exit;
   Disk := PUsbDisk(AllocateZeroedKernelMemory(SizeOf(TUsbDisk)));
   if Disk = nil then
     Exit;
   Disk^.Usb := Usb;
-  if not FindStorageInterface(Usb, Disk^.BulkIn, Disk^.BulkOut, InPacket, OutPacket) then
-  begin
-    FreeKernelMemory(Disk);
-    Exit;
-  end;
+  Disk^.BulkIn := BulkIn.Address;
+  Disk^.BulkOut := BulkOut.Address;
   Result := True;
   InitializeMutex(Disk^.Lock);
-  if not UsbOpenBulkEndpoints(Usb, Disk^.BulkIn, Disk^.BulkOut, InPacket, OutPacket) or
+  if not UsbOpenBulkEndpoints(Usb, Disk^.BulkIn, Disk^.BulkOut, BulkIn.MaximumPacket, BulkOut.MaximumPacket) or
      not WaitUntilReady(Disk) or not ReadCapacity(Disk) then
   begin
     DebugBeginMessage;
@@ -454,8 +415,8 @@ begin
   Disk^.BlockDevice := BlockDevice;
   RegisterBlockDevice(BlockDevice);
   WriteBlockDeviceDescription(BlockDevice);
-  UsbSetResumeHandler(Usb, @ResumeStorage, Disk);
-  UsbSetRemovalHandler(Usb, @RemoveStorage, Disk);
+  UsbAddResumeHandler(Usb, @ResumeStorage, Disk);
+  UsbAddRemovalHandler(Usb, @RemoveStorage, Disk);
   if DiskArrivalIsEnabled then
     AnnounceDiskArrival(BlockDevice);
 end;
@@ -463,7 +424,7 @@ end;
 
 procedure RegisterUsbStorageDriver;
 begin
-  RegisterUsbClassDriver(@ProbeUsbStorage);
+  RegisterUsbClassDriver('usb-storage', @ProbeUsbStorage);
 end;
 
 end.

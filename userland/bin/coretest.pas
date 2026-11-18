@@ -176,7 +176,7 @@ const
     (Command: 'basename /usr/lib/libfoo.so .so; basename -a a/b c/d/'; ExpectedOutput: 'libfoo'#10'b'#10'd'#10; ExpectedStatus: 0),
     (Command: 'dirname /usr/lib/x dir/file file /'; ExpectedOutput: '/usr/lib'#10'dir'#10'.'#10'/'#10; ExpectedStatus: 0),
     (Command: 'uname; uname -m'; ExpectedOutput: 'FreePascalOS'#10 + MachineName + #10; ExpectedStatus: 0),
-    (Command: 'sysinfo -l | grep -c -e ''^OS: FreePascalOS ' + MachineName + '$'' -e ''^Kernel: FreePascalOS '' -e ''^CPU: .* ([0-9]*)$'' -e ''^Memory: .* MiB'' -e ''^Disk (/): ''; sysinfo -C | grep -c ''|__|''; sysinfo -c | grep -c 107m; sysinfo extra 2>/dev/null; echo $?'; ExpectedOutput: '5'#10'1'#10'1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'sysinfo -l | grep -c -e ''^OS: FreePascalOS ' + MachineName + '$'' -e ''^Kernel: FreePascalOS '' -e ''^CPU: .* ([0-9]*)$'' -e ''^Memory: .* MiB'' -e ''^Disk (/): '' -e ''^Hostname: [a-z0-9]''; sysinfo -C | grep -c ''|__|''; sysinfo -c | grep -c 107m; sysinfo extra 2>/dev/null; echo $?'; ExpectedOutput: '6'#10'1'#10'1'#10'1'#10; ExpectedStatus: 0),
     (Command: 'date -d @0 +%Y-%m-%d_%H:%M:%S_%a_%j'; ExpectedOutput: '1970-01-01_00:00:00_Thu_001'#10; ExpectedStatus: 0),
     (Command: 'date -d @1700000000'; ExpectedOutput: 'Tue Nov 14 22:13:20 UTC 2023'#10; ExpectedStatus: 0),
     (Command: 'env -i A=1 B=2 /bin/env'; ExpectedOutput: 'A=1'#10'B=2'#10; ExpectedStatus: 0),

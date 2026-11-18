@@ -564,19 +564,55 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    the ring and wakes whoever waits for the command or transfer. At start
    every connected port is reset and its device enumerated: a slot is
    enabled, the device addressed, its descriptors read and its first
-   configuration set. The device is then offered to the class drivers
-   (`RegisterUsbClassDriver`). Devices come and go while the system
+   configuration set. Class drivers bind to interfaces, not devices
+   (`Drivers.UsbInterfaces`): the configuration descriptor is walked
+   into its interfaces (`Drivers.UsbDescriptors`: one entry per
+   interface number with setting 0's class, subclass, protocol and
+   endpoints, its HID report descriptor length, how many alternate
+   settings it has and where its descriptors are), and each interface
+   is offered to the class drivers (`RegisterUsbClassDriver(Name,
+   Probe)`, in registration order: storage, HID, audio) until one takes
+   it. A composite device thus gets a driver per interface: a wireless
+   keyboard and mouse receiver's boot keyboard and mouse interfaces are
+   two HID interfaces. A driver may claim more interfaces of the
+   function it drives from its probe (`UsbClaimInterface`: the audio
+   driver, offered the audio control interface, claims the streaming
+   interface with it). Each driver of an interface adds its own resume
+   and removal handlers (`UsbAddResumeHandler`, `UsbAddRemovalHandler`),
+   and a device has up to eight interrupt IN endpoints read over and
+   over (one per interface that wants one, each with its own buffer and
+   handler). After the offers, each interface is logged on one line:
+
+   ```
+   [usb] Port 2: device 3554:FC03, speed 1
+   [usb] Port 2: interface 0: HID boot protocol keyboard
+   [input] USB keyboard usbkeyboard0
+   [usb] Port 2: interface 1: HID report protocol, report ids 1 2 3: keyboard none, pointer report 1
+   [input] USB mouse, with a wheel
+   [usb] Port 2: interface 0 class 03/01/01 (HID boot keyboard), endpoint 81 interrupt IN 8 bytes, report descriptor 63 bytes, driver hid
+   [usb] Port 2: interface 1 class 03/01/02 (HID boot mouse), endpoint 82 interrupt IN 8 bytes, report descriptor 118 bytes, driver hid
+   ```
+
+   (class/subclass/protocol in hex; "no driver" for an interface nobody
+   took, with the HID driver's reason on a line before it when it was a
+   HID interface: its report descriptor not read or not understood, or
+   describing neither a keyboard nor a pointer.) Devices come and go
+   while the system
    runs: a port whose connection changes raises a port status change
    event, which wakes the `UsbPorts` thread (`RunUsbPortWatcher`; it also
    looks at every port once a second, for polled controllers). A port
    that lost its connection has its device taken away: marked gone (its
    transfers fail, the one being waited for at once), its slot disabled
-   and its class driver told (`UsbSetRemovalHandler`). A port that gained
+   and its class drivers told. A port that gained
    one is enumerated as at startup once the connection has settled
    (100 ms). The record of a device taken away is kept, since its class
-   driver may still hold it. Transfers
+   drivers may still hold it. Transfers
    move through each device's DMA pages (64 KiB), and only events for the
-   TRBs being waited for count. USB mass storage (`Drivers.UsbStorage`,
+   TRBs being waited for count. A control request the device STALLs (a
+   request it does not support, like SET_IDLE on many mice), or that
+   ends in a babble or transaction error, halts endpoint 0: it is reset
+   (Reset Endpoint, then Set TR Dequeue Pointer past the failed
+   request's TRBs) so the next request goes through. USB mass storage (`Drivers.UsbStorage`,
    Bulk-Only Transport) sends SCSI commands in command block wrappers:
    INQUIRY, TEST UNIT READY with REQUEST SENSE, READ CAPACITY(10),
    READ/WRITE(10) and SYNCHRONIZE CACHE(10). Each device becomes a disk of
@@ -1301,8 +1337,28 @@ reading the configuration byte also empties the output byte first.
 Ps2EndPolling has the keyboard send what it held back (a command cut
 off without its answers starts over).
 
-USB keyboards (Drivers.UsbKeyboard, on the xHCI driver) use the HID boot
-protocol. Their interrupt IN endpoint is read over and over (a report
+USB HID interfaces (Drivers.UsbHid, the class driver "hid") feed a
+keyboard (Drivers.UsbKeyboard) and a pointer (Drivers.UsbPointer). The
+driver takes any HID interface with an interrupt IN endpoint, reads its
+report descriptor and picks how to drive it (`ChooseHidMode` in
+Drivers.HidReports): a boot keyboard interface (03/01/01) in the boot
+protocol, unless its descriptor puts a pointer beside the keyboard by
+report id; anything whose descriptor has a keyboard or a pointer report
+in the report protocol (SET_PROTOCOL on boot interfaces, since the
+firmware may have left them in the boot one); a boot mouse whose
+descriptor is of no use in the boot mouse protocol (3-byte reports).
+In the report protocol each report goes by its id to the keyboard, the
+pointer, or nowhere: a receiver's mouse interface typically has report
+1 the mouse, 2 consumer control and 3 system control, and only report 1
+is used. Keyboard reports in the report protocol (a key array or a
+bitmap of keys, and the modifier bits) are turned into the boot form
+(`ReadKeyboardAsBoot`), so the keyboard code is the same for both.
+`make usb-descriptor-test` checks the configuration walking, report
+routing and both keyboard forms on the host, over a two-interface
+receiver's descriptors written from the HID specification's examples
+(QEMU has no composite HID device).
+
+USB keyboards' interrupt IN endpoint is read over and over (a report
 handler called from the xHCI event processing, which queues the next
 read). Each 8-byte report is compared with the one before: modifier bits
 and the usage codes of up to six held keys give the keys pressed and
@@ -1343,17 +1399,18 @@ reset and given its defaults, then the IntelliMouse sample rate knock
 byte of every packet has bit 3 set, which keeps the packets in step.
 Waking from S3 sets it up again.
 
-USB pointing devices (Drivers.UsbPointer) are any HID interface the
-keyboard driver did not take whose report descriptor has X and Y. The
-descriptor (GET_DESCRIPTOR 22h on the interface) is parsed by
+USB pointing devices (Drivers.UsbPointer) are the pointer report of a
+HID interface (Drivers.UsbHid, above) whose report descriptor has X and
+Y. The descriptor (GET_DESCRIPTOR 22h on the interface) is parsed by
 Drivers.HidReports: global items (usage page, logical range, report
 size, count and id, push and pop), local items (usages and usage
 ranges, reset by each main item), and Input main items laying out their
-fields bit by bit. The report holding X and Y gives where X, Y, the
-wheel and buttons 1-5 are. Relative X and Y (a mouse) give motion
-events; absolute ones (a tablet, like QEMU's usb-tablet) give position
-events scaled from the logical range to 0-65535. Boot devices are put
-in report protocol, the format the descriptor describes, again after
+fields bit by bit, report by report. The report holding X and Y gives
+where X, Y, the wheel and buttons 1-5 are; the report holding keyboard
+page usages gives the modifiers and the key array or bitmap. Relative X
+and Y (a mouse) give motion events; absolute ones (a tablet, like
+QEMU's usb-tablet) give position events scaled from the logical range
+to 0-65535. Boot interfaces are put in the protocol chosen again after
 waking.
 
 `events [-n COUNT]` prints the events as text. The input test runs it
@@ -4602,7 +4659,13 @@ with the login environment plus `SSH_CONNECTION`, `SSH_CLIENT`, `TERM`,
 - `pty-req` then `shell` or `exec`: a pseudo-terminal of the size asked
   for, the program in a new foreground group with the terminal as its
   controlling terminal, as a terminal window starts its shell;
-  `window-change` sets the terminal's size; `signal INT` types Ctrl-C;
+  `window-change` sets the terminal's size; `signal INT` types Ctrl-C.
+  The terminal's output gets a carriage return before each bare line
+  feed (`Ssh.TerminalOutput`): a pseudo-terminal passes a line feed on
+  as written, for the terminal window to move to the next line's
+  start, but the client's terminal (xterm, PuTTY) only moves down, as
+  a Unix terminal's ONLCR would have added the return; without it every
+  program's lines stepped to the right over SSH;
 - without a terminal: three pipes, standard error sent as extended data;
 - `subsystem sftp`: the configured `sftp-server`;
 - `signal`: otherwise the program ends with 128 plus the signal number.
@@ -5544,8 +5607,12 @@ command line (`args`; another user's shows as `[name]`); `top` the
 busiest processes since its last look, again every few seconds (`-b`
 batch, `-d` delay, `-n` count). `sysinfo` shows the system at a glance
 beside a logo (units in `userland/sysinfo`: `SystemInfo.Facts` gathers,
-`SystemInfo.Logo` holds the ASCII logo): user and machine, system and
-kernel, uptime, the programs in /bin, the shell, each display (only if
+`SystemInfo.Logo` holds the ASCII logo): user and machine, system, the
+machine's model as "Host" (`CallGetMachineModel`, kernel
+`Drivers.MachineModel`: the device tree's root `model`, "Raspberry Pi 5
+Model B Rev 1.0", else the Raspberry Pi firmware's board revision through
+the VideoCore mailbox, else nothing: left out on PCs until SMBIOS is
+read), the host name, kernel, uptime, the programs in /bin, the shell, each display (only if
 the display server already runs: `ConnectToDisplay(False)` tries once
 rather than waiting for one), the terminal, the processor's model
 (`Sys.Processor`, from CPUID: the processor tells every program), the
