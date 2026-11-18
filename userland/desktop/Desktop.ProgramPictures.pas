@@ -25,14 +25,16 @@
   three sliders, as on a mixing desk) and the task manager (a window
   with a graph of how busy the processors are), the image viewer (a
   framed landscape), the calculator (a display over keys) and the volume
-  control (a loudspeaker sounding). Each is the icon theme's picture of
-  the program (ProgramIconNames, Controls.IconTheme) when it has one,
-  else drawn here with shapes on the design grid (Controls.PictureGrid),
-  at any size.
+  control (a loudspeaker sounding). Each is the program's own icon (in
+  its folder) or the icon theme's picture of it (Controls.IconTheme)
+  when there is one, else drawn here with shapes on the design grid
+  (Controls.PictureGrid), at any size, chosen by the theme icon's name
+  the program's description gives.
 }
 unit Desktop.ProgramPictures;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -41,13 +43,10 @@ uses
   Drawing.Canvas,
   Desktop.Programs;
 
-const
-  { The theme's icon of each program (/usr/share/icons/NAME.ico). }
-  ProgramIconNames: array[TProgramPicture] of string = ('app-file-manager', 'app-terminal', 'app-text-editor',
-    'app-control-panel', 'app-components', 'app-themes', 'app-dialogs', 'app-task-manager', 'app-image-viewer',
-    'app-calculator', 'app-volume-control', 'app-paint');
-
-procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
+{ Draws Item's icon into Box: its folder's or the theme's, else the
+  picture drawn here for its theme icon's name (a little window for a
+  name without one). }
+procedure DrawProgramPicture(const Canvas: TCanvas; const Item: TDesktopProgram; const Box: TRectangle);
 
 implementation
 
@@ -224,41 +223,41 @@ begin
   DrawGridLine(Canvas, Grid, 29.5, 16, 26.5, 25.5, 1.4, WindowTitleColor);
 end;
 
-procedure DrawProgramPicture(const Canvas: TCanvas; Picture: TProgramPicture; const Box: TRectangle);
+procedure DrawProgramPicture(const Canvas: TCanvas; const Item: TDesktopProgram; const Box: TRectangle);
 var
   Grid: TPictureGrid;
+  Name: string;
 begin
-  if DrawThemeIcon(Canvas, ProgramIconNames[Picture], Box) then
+  if DrawThemeIcon(Canvas, Item.IconName, Box) then
+    Exit;
+  if (Item.ThemeIconName <> Item.IconName) and DrawThemeIcon(Canvas, Item.ThemeIconName, Box) then
     Exit;
   Grid := GridFor(Box);
-  case Picture of
-    PictureFiles:
-      DrawFiles(Canvas, Grid);
-    PictureTerminal:
-      DrawTerminal(Canvas, Grid);
-    PictureNotepad:
-      DrawNotepad(Canvas, Grid);
-    PictureControls:
-      DrawControls(Canvas, Grid);
-    PictureSwatches:
-      DrawSwatches(Canvas, Grid);
-    PictureDialogs:
-      DrawDialogs(Canvas, Grid);
-    PictureTaskManager:
-      DrawTaskManager(Canvas, Grid);
-    PictureControlPanel:
-      DrawControlPanel(Canvas, Grid);
-    PictureImageViewer:
-      DrawImageViewer(Canvas, Grid);
-    PictureCalculator:
-      DrawCalculator(Canvas, Grid);
-    PictureVolumeControl:
-      DrawVolumeControl(Canvas, Grid);
-    { Paint's own picture comes from the icon theme; without it, the
-      swatches stand in. }
-    PicturePaint:
-      DrawSwatches(Canvas, Grid);
-  end;
+  Name := Item.ThemeIconName;
+  if Name = 'app-file-manager' then
+    DrawFiles(Canvas, Grid)
+  else if Name = 'app-terminal' then
+    DrawTerminal(Canvas, Grid)
+  else if (Name = 'app-text-editor') or (Name = 'app-notepad') then
+    DrawNotepad(Canvas, Grid)
+  else if Name = 'app-components' then
+    DrawControls(Canvas, Grid)
+  else if (Name = 'app-themes') or (Name = 'app-paint') then
+    DrawSwatches(Canvas, Grid)
+  else if Name = 'app-dialogs' then
+    DrawDialogs(Canvas, Grid)
+  else if Name = 'app-task-manager' then
+    DrawTaskManager(Canvas, Grid)
+  else if (Name = 'app-control-panel') or (Name = 'app-settings') then
+    DrawControlPanel(Canvas, Grid)
+  else if Name = 'app-image-viewer' then
+    DrawImageViewer(Canvas, Grid)
+  else if Name = 'app-calculator' then
+    DrawCalculator(Canvas, Grid)
+  else if Name = 'app-volume-control' then
+    DrawVolumeControl(Canvas, Grid)
+  else
+    DrawLittleWindow(Canvas, Grid);
 end;
 
 end.

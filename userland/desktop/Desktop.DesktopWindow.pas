@@ -235,7 +235,7 @@ var
 begin
   Picture := PictureBounds(Index);
   Caption := CaptionBounds(Index);
-  DrawProgramPicture(Canvas, DesktopPrograms[Index].Picture, Picture);
+  DrawProgramPicture(Canvas, DesktopPrograms[Index], Picture);
   if Index = FSelected then
   begin
     FillRectangle(Canvas, Picture, SelectedTint);

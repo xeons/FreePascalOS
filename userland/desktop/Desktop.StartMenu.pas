@@ -17,7 +17,9 @@
 }
 
 {
-  The Start menu: the programs (Desktop.Programs), then Lock, Log off,
+  The Start menu: the programs (Desktop.Programs) in a submenu for each
+  category that has any (Accessories, Graphics, ... in
+  TProgramCategory's order; in each, by name), then Lock, Log off,
   Suspend and Shut down.
 
   Lock and Suspend act at once (Desktop.Locking: the session manager
@@ -33,9 +35,12 @@
   program asked to end, the disks written out). A desktop started by
   hand, with no session manager, ends itself to log off and calls the
   system's shutdown itself (only root may). Where each item is on the
-  screen is said when it opens ("place start-COMMAND X Y",
+  screen is said when its menu opens: "place start-category-NAME X Y"
+  (NAME the category's, in lower case: start-category-accessories),
   "place start-lock X Y", "place start-logoff X Y", "place
-  start-suspend X Y", "place start-shutdown X Y").
+  start-suspend X Y", "place start-shutdown X Y" when the Start menu
+  does, "place start-COMMAND X Y" for each program when its category's
+  submenu does.
 }
 unit Desktop.StartMenu;
 
@@ -57,6 +62,7 @@ type
     FImages: TImageList;
     FOnClosed: TControlEvent;
     procedure SetItemIcon(Item: TMenuItem; const IconName: string);
+    procedure AddPrograms;
     procedure ProgramChosen(Item: TMenuItem);
     procedure ShutDownChosen(Item: TMenuItem);
     procedure LogOffChosen(Item: TMenuItem);
@@ -89,37 +95,55 @@ uses
   Windowing.Sessions,
   Controls.Icons,
   Controls.IconTheme,
+  Configuration.ProgramInfo,
   Desktop.Programs,
-  Desktop.ProgramPictures,
   Desktop.Locking,
   Desktop.Report;
 
 const
-  { The tags of Log off and Shut down: past the programs. }
+  { The tags of Log off and Shut down: past the programs (whose tags are
+    their indexes in DesktopPrograms). }
   ShutDownTag = -1;
   LogOffTag = -2;
   LockTag = -3;
   SuspendTag = -4;
+  { A category's submenu: this less the category's number. }
+  FirstCategoryTag = -100;
+
+  { The icon beside each category's submenu. }
+  CategoryIconNames: array[TProgramCategory] of string = ('folder', 'folder', 'folder-pictures', 'folder-public',
+    'folder-music', 'folder-projects', 'app-system-info', 'app-settings');
+
+function CategoryTag(Category: TProgramCategory): PtrInt;
+begin
+  Result := FirstCategoryTag - Ord(Category);
+end;
+
+function IsCategoryTag(Tag: PtrInt): Boolean;
+begin
+  Result := (Tag <= FirstCategoryTag) and (Tag > FirstCategoryTag - 1 - Ord(High(TProgramCategory)));
+end;
+
+function CategoryOfTag(Tag: PtrInt): TProgramCategory;
+begin
+  Result := TProgramCategory(FirstCategoryTag - Tag);
+end;
 
 constructor TStartMenu.Create;
 var
-  Index: LongInt;
   Item: TMenuItem;
 begin
   inherited Create;
   FMenu := TMenuItem.Create('');
+  FMenu.OnOpened := @TellPlaces;
   { The band down its side, where the theme draws one. }
   FMenu.SideBand := 'FreePascalOS';
   { Each item with its icon from the theme (none without it). }
   FImages := TImageList.Create(SmallIconSize, SmallIconSize);
   FMenu.Images := FImages;
-  for Index := 0 to DesktopProgramCount - 1 do
-  begin
-    Item := FMenu.Add(DesktopPrograms[Index].Caption, @ProgramChosen);
-    Item.Tag := Index;
-    SetItemIcon(Item, ProgramIconNames[DesktopPrograms[Index].Picture]);
-  end;
-  FMenu.AddSeparator;
+  AddPrograms;
+  if FMenu.Count > 0 then
+    FMenu.AddSeparator;
   Item := FMenu.Add('Loc&k', @LockChosen);
   Item.Tag := LockTag;
   SetItemIcon(Item, 'action-lock');
@@ -146,30 +170,73 @@ begin
   Item.ImageIndex := AddThemeIcon(FImages, IconName);
 end;
 
+{ A submenu for each category with programs, holding them in order
+  (DesktopPrograms is sorted by category, then name). }
+procedure TStartMenu.AddPrograms;
+var
+  Index: LongInt;
+  Category: TProgramCategory;
+  Submenu: TMenuItem;
+  Item: TMenuItem;
+begin
+  Submenu := nil;
+  for Index := 0 to DesktopProgramCount - 1 do
+  begin
+    Category := DesktopPrograms[Index].Category;
+    if (Submenu = nil) or (CategoryOfTag(Submenu.Tag) <> Category) then
+    begin
+      Submenu := FMenu.Add(ProgramCategoryNames[Category]);
+      Submenu.Tag := CategoryTag(Category);
+      Submenu.OnOpened := @TellPlaces;
+      SetItemIcon(Submenu, CategoryIconNames[Category]);
+    end;
+    Item := Submenu.Add(DesktopPrograms[Index].Caption, @ProgramChosen);
+    Item.Tag := Index;
+    SetItemIcon(Item, DesktopPrograms[Index].IconName);
+    if Item.ImageIndex < 0 then
+      SetItemIcon(Item, DesktopPrograms[Index].ThemeIconName);
+  end;
+end;
+
+{ The name an item's place is said under. }
+function PlaceName(Item: TMenuItem): string;
+begin
+  if Item.Tag = ShutDownTag then
+    Result := 'start-shutdown'
+  else if Item.Tag = LogOffTag then
+    Result := 'start-logoff'
+  else if Item.Tag = LockTag then
+    Result := 'start-lock'
+  else if Item.Tag = SuspendTag then
+    Result := 'start-suspend'
+  else if IsCategoryTag(Item.Tag) then
+    Result := 'start-category-' + LowerCase(ProgramCategoryNames[CategoryOfTag(Item.Tag)])
+  else if (Item.Tag >= 0) and (Item.Tag < DesktopProgramCount) then
+    Result := 'start-' + DesktopPrograms[Item.Tag].Command
+  else
+    Result := '';
+end;
+
+{ The Start menu or a category's submenu has opened in List. }
 procedure TStartMenu.TellPlaces(List: TMenuList);
 var
   Popup: TWindow;
+  Menu: TMenuItem;
   Index: LongInt;
   Name: string;
   Top: LongInt;
 begin
   Popup := TWindow(List.Host.OwnerWindow);
   Popup.PrepareToReceive;
-  for Index := 0 to FMenu.Count - 1 do
+  Menu := List.Menu;
+  for Index := 0 to Menu.Count - 1 do
   begin
-    if FMenu[Index].IsSeparator then
+    if Menu[Index].IsSeparator then
       Continue;
-    if FMenu[Index].Tag = ShutDownTag then
-      Name := 'start-shutdown'
-    else if FMenu[Index].Tag = LogOffTag then
-      Name := 'start-logoff'
-    else if FMenu[Index].Tag = LockTag then
-      Name := 'start-lock'
-    else if FMenu[Index].Tag = SuspendTag then
-      Name := 'start-suspend'
-    else
-      Name := 'start-' + DesktopPrograms[FMenu[Index].Tag].Command;
-    Top := PopupMenuItemTop(FMenu, Index);
+    Name := PlaceName(Menu[Index]);
+    if Name = '' then
+      Continue;
+    Top := PopupMenuItemTop(Menu, Index);
     SayPlace(Name, Popup, Scaled(40), Scaled(Top + Theme.MenuItemHeight div 2));
   end;
 end;
@@ -182,9 +249,9 @@ var
 begin
   Owner.PrepareToReceive;
   MeasurePopupMenu(FMenu, Width, Height);
+  { Its places are said as it opens (TellPlaces). }
   List := ShowPopupMenu(Owner, FMenu, Left, Bottom - Height);
   TPopupWindow(List.Host.OwnerWindow).OnDismiss := FOnClosed;
-  TellPlaces(List);
 end;
 
 procedure TStartMenu.ProgramChosen(Item: TMenuItem);

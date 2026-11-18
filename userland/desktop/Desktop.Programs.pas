@@ -20,12 +20,17 @@
   The programs the desktop offers, as icons and in the Start menu, and
   starting them.
 
-  Each has the command that starts it (looked up in PATH), the caption
-  shown, and the picture drawn for it. A program is started in a process
-  group of its own, so it outlives the desktop and Ctrl-C on the console
-  does not reach it; it inherits the desktop's standard handles. One
-  that is not installed (or cannot start) is reported in a message box
-  rather than failing silently.
+  They are the installed programs' folders under /app, each described
+  by its program.info (Configuration.ProgramFolders): the name shown,
+  a description, a category, an icon and the executable. Hidden ones
+  are left out; the rest are in the menu's order, by category, then by
+  name. Each is known by its executable's name (Command: notepad), as
+  it is started and reported ("started notepad").
+
+  A program is started in a process group of its own, so it outlives
+  the desktop and Ctrl-C on the console does not reach it; it inherits
+  the desktop's standard handles. One that is not installed (or cannot
+  start) is reported in a message box rather than failing silently.
 }
 unit Desktop.Programs;
 
@@ -34,33 +39,32 @@ unit Desktop.Programs;
 
 interface
 
-type
-  TProgramPicture = (PictureFiles, PictureTerminal, PictureNotepad, PictureControlPanel, PictureControls,
-    PictureSwatches, PictureDialogs, PictureTaskManager, PictureImageViewer, PictureCalculator,
-    PictureVolumeControl, PicturePaint);
+uses
+  Configuration.ProgramInfo;
 
+type
   TDesktopProgram = record
+    { The executable's name, as started (notepad). }
     Command: string;
+    { Its full path (/app/notepad/notepad). }
+    Path: string;
     Caption: string;
-    Picture: TProgramPicture;
+    Description: string;
+    Category: TProgramCategory;
+    { The icon to draw: the folder's own icon file, or the theme's
+      icon of that name (Controls.IconFiles takes both). }
+    IconName: string;
+    { The theme's name for it (app-text-editor), even when the folder
+      has its own picture, for the pictures drawn without the theme. }
+    ThemeIconName: string;
   end;
 
-const
-  DesktopProgramCount = 12;
-  DesktopPrograms: array[0..DesktopProgramCount - 1] of TDesktopProgram = (
-    (Command: 'files'; Caption: 'Files'; Picture: PictureFiles),
-    (Command: 'terminal'; Caption: 'Terminal'; Picture: PictureTerminal),
-    (Command: 'notepad'; Caption: 'Notepad'; Picture: PictureNotepad),
-    (Command: 'controlpanel'; Caption: 'Control Panel'; Picture: PictureControlPanel),
-    (Command: 'controlstour'; Caption: 'Controls tour'; Picture: PictureControls),
-    (Command: 'controlsdemo'; Caption: 'Controls demo'; Picture: PictureSwatches),
-    (Command: 'dialogtour'; Caption: 'Dialogs'; Picture: PictureDialogs),
-    (Command: 'taskmanager'; Caption: 'Task Manager'; Picture: PictureTaskManager),
-    (Command: 'imageviewer'; Caption: 'Image Viewer'; Picture: PictureImageViewer),
-    (Command: 'calculator'; Caption: 'Calculator'; Picture: PictureCalculator),
-    (Command: 'volumecontrol'; Caption: 'Volume Control'; Picture: PictureVolumeControl),
-    (Command: 'paint'; Caption: 'Paint'; Picture: PicturePaint));
+var
+  DesktopPrograms: array of TDesktopProgram;
 
+{ Reads the installed programs again (the desktop does once, starting). }
+procedure LoadDesktopPrograms;
+function DesktopProgramCount: LongInt;
 { Starts DesktopPrograms[Index]; False (after saying why in a message
   box) if it could not be started. ProcessId is the started program's. }
 function StartDesktopProgram(Index: LongInt): Boolean;
@@ -81,8 +85,40 @@ uses
   Sys.Objects,
   Sys.Processes,
   Util.Commands,
+  Configuration.ProgramFolders,
   Controls.MessageBoxes,
   Desktop.Report;
+
+function DesktopProgramFrom(const Info: TProgramInfo): TDesktopProgram;
+begin
+  Result.Command := Info.Executable;
+  Result.Path := ProgramExecutablePath(Info);
+  Result.Caption := Info.Name;
+  Result.Description := Info.Description;
+  Result.Category := Info.Category;
+  Result.IconName := ProgramIconName(Info);
+  Result.ThemeIconName := Info.Icon;
+end;
+
+procedure LoadDesktopPrograms;
+var
+  Found: TProgramList;
+  Skipped: TProgramFolderProblems;
+  Index: LongInt;
+begin
+  Found := ShownPrograms(DiscoverPrograms(DefaultProgramFoldersRoot, Skipped));
+  for Index := 0 to High(Skipped) do
+    Say('skipped program folder ' + Skipped[Index].Folder + ': ' + Skipped[Index].Problem);
+  SetLength(DesktopPrograms, Length(Found));
+  for Index := 0 to High(Found) do
+    DesktopPrograms[Index] := DesktopProgramFrom(Found[Index]);
+  Say('programs ' + IntToStr(Length(DesktopPrograms)));
+end;
+
+function DesktopProgramCount: LongInt;
+begin
+  Result := Length(DesktopPrograms);
+end;
 
 procedure ReportFailure(const Caption, Command, Reason: string);
 begin
@@ -90,27 +126,15 @@ begin
   ShowMessageBox('Cannot start ' + Caption, Caption + ' (' + Command + ') ' + Reason, MessageOk, SignError);
 end;
 
-function StartCommand(const Command, Argument, Caption: string): Boolean;
+{ Starts the program at FullPath as Command, with Argument. }
+function StartProgramFile(const FullPath, Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
 var
-  ProcessId: QWord;
-begin
-  Result := StartCommand(Command, Argument, Caption, ProcessId);
-end;
-
-function StartCommand(const Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
-var
-  FullPath: string;
   Arguments: TTextVector;
   Options: TProcessOptions;
   Process: Int64;
 begin
   Result := False;
   ProcessId := 0;
-  if not FindProgramPath(Command, FullPath) then
-  begin
-    ReportFailure(Caption, Command, 'is not installed.');
-    Exit;
-  end;
   if Argument <> '' then
     Arguments := TextVector([Command, Argument])
   else
@@ -133,6 +157,27 @@ begin
   Result := True;
 end;
 
+function StartCommand(const Command, Argument, Caption: string): Boolean;
+var
+  ProcessId: QWord;
+begin
+  Result := StartCommand(Command, Argument, Caption, ProcessId);
+end;
+
+function StartCommand(const Command, Argument, Caption: string; out ProcessId: QWord): Boolean;
+var
+  FullPath: string;
+begin
+  ProcessId := 0;
+  { In PATH, else in its program folder (Sys.ProgramFolders). }
+  if not FindProgramPath(Command, FullPath) then
+  begin
+    ReportFailure(Caption, Command, 'is not installed.');
+    Exit(False);
+  end;
+  Result := StartProgramFile(FullPath, Command, Argument, Caption, ProcessId);
+end;
+
 function StartDesktopProgram(Index: LongInt): Boolean;
 var
   ProcessId: QWord;
@@ -145,7 +190,8 @@ begin
   ProcessId := 0;
   if (Index < 0) or (Index >= DesktopProgramCount) then
     Exit(False);
-  Result := StartCommand(DesktopPrograms[Index].Command, '', DesktopPrograms[Index].Caption, ProcessId);
+  Result := StartProgramFile(DesktopPrograms[Index].Path, DesktopPrograms[Index].Command, '',
+    DesktopPrograms[Index].Caption, ProcessId);
 end;
 
 function IndexOfDesktopProgram(const Command: string): LongInt;
