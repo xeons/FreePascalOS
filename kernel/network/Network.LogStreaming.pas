@@ -116,6 +116,7 @@ var
   IsStreaming: Boolean;
   NeighbourWaitStart: QWord;
   NeighbourIsKnown: Boolean;
+  NeighbourWasKnown: Boolean;
   PanicRoute: TPanicRoute;
 
 function NetworkLogIsWanted: Boolean;
@@ -242,6 +243,11 @@ begin
        not NetworkInterface^.HasAddress or not InterfaceIsUsable(NetworkInterface) then
       Exit;
     NeighbourIsKnown := FindNeighbourAddress(NetworkInterface, NextHop, Route.DestinationHardware);
+    { Forgotten (expired, or the address changed): asked again, so wait
+      for the answer before sending a burst. }
+    if NeighbourWasKnown and not NeighbourIsKnown then
+      NeighbourWaitStart := HalClockNanoseconds;
+    NeighbourWasKnown := NeighbourIsKnown;
     if not NeighbourIsKnown then
       { Better than nothing: hosts take an IP datagram for them in a
         broadcast frame. }

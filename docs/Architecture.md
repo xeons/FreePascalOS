@@ -6960,6 +6960,7 @@ of `EZeroDivide`.
 | PCIe configuration space     | ACPI MCFG (ECAM), as on x86-64                     |
 | PCI interrupt lines          | DSDT `_PRT`, as on x86-64                          |
 | platform devices             | DSDT devices: `_HID`, `_CRS`, `_CCA`, `_DMA`, `_DSD` |
+| watchdog (Pi)                | the VideoCore mailbox's address (the tables have no device for it) |
 
 The HAL reads the tables from its first moments (the serial port before
 anything else) through `Hal.FirmwareTables`; they are in memory the
@@ -7077,7 +7078,12 @@ point), cleaned to the point of coherency. The entry drops to EL1 if
 needed, turns translation on, continues at its linked address and calls
 `SecondaryProcessorEntry`, the same as on x86-64. Power off and reset go
 to PSCI SYSTEM_OFF and SYSTEM_RESET (the ACPI tables of these machines
-have no fixed hardware). Under test (`test-exit`) the kernel ends QEMU
+have no fixed hardware); a reset that PSCI does not carry out falls back
+to the hardware watchdog (on the Pi, the PM watchdog with a count of 10
+ticks). The UEFI ResetSystem runtime service is not used: after
+ExitBootServices without SetVirtualAddressMap it would need the runtime
+regions mapped at their physical addresses for the call, and the Pi's
+firmware implements it with PSCI anyway. Under test (`test-exit`) the kernel ends QEMU
 through semihosting with the x86-64 exit codes.
 
 ### Raspberry Pi 4 notes, and the Pi 5
@@ -7162,9 +7168,50 @@ not there yet on AArch64, so the kernel stops after its self tests.
      cable is in.
    - Problems to report: a missing line above, `the card did not come
      up` (with the step), a panic, or nothing after `kernel starting`.
-6. **Without a serial adapter** the same log appears on the HDMI
-   screen (the framebuffer console), which is enough for the start-up
-   lines.
+6. **Without a serial adapter: the log over the network.** The log
+   also appears on the HDMI screen (the framebuffer console), but it
+   scrolls away, and a panic later on is lost. The kernel can send every
+   line to your PC instead (see "Diagnostics over the network"):
+   - connect the Pi's Ethernet port to the network your PC is on;
+   - find your PC's IPv4 address (`ip -4 addr` on Linux, `ipconfig` on
+     Windows), say 192.168.1.20, let UDP port 5140 in through its
+     firewall (`sudo ufw allow 5140/udp`, or `sudo firewall-cmd
+     --add-port=5140/udp`), and run the listener from this repository:
+     `scripts/netlog.py --output pi.log` (Python 3, nothing else);
+   - add `netlog=192.168.1.20` to `FreePascalOS/options.txt` on the SD
+     card, on the one line with the other options, for example
+     `kshell netlog=192.168.1.20 netshell=2323`.
+
+   The Pi needs an address of its own first: from the network service
+   by DHCP once user mode is up, otherwise from the kernel's own DHCP
+   client 30 seconds after networking started (`netdhcp=SECONDS`), or a
+   fixed one, `netaddr=192.168.1.50/24,192.168.1.1`. Then netlog.py shows
+   the whole log from the first line (it was kept in memory until then)
+   and every line after it, each with the Pi's address, its number and
+   the uptime; `REBOOT` when the numbers start again, `GAP` where lines
+   were lost. A panic is sent too. If nothing arrives: look on the
+   screen for the `[netlog]` and `[netaddr]` lines and `[net] eth0: ...
+   link up`; try `netlog=broadcast` (no address of your PC needed, but
+   the Pi still needs one of its own); check the firewall.
+
+   With `netshell=2323` the kernel debug shell answers on TCP port 2323:
+   `nc 192.168.1.50 2323` (the Pi's address is in the `configured` or
+   `kernel DHCP lease` line of the log). It has **no authentication**:
+   anyone on the network can read files and reset the board, so only on
+   a network you trust.
+7. **Getting back without touching the board.** The PM watchdog is armed
+   at start-up (15 seconds, the most it can count; `[watchdog] BCM2835
+   PM watchdog ... armed`) and petted by a kernel timer, so a kernel that
+   hangs resets the board. After a panic the message is shown and sent,
+   and the watchdog, no longer petted, resets the board about 15 seconds
+   later; `panicreset=SECONDS` resets after that many seconds instead
+   (through PSCI), `panicreset=0` keeps the panic on the screen, and
+   `watchdog=0` does not arm the watchdog at all. `reboot` (the debug
+   shell, or user mode) resets through PSCI SYSTEM_RESET; `poweroff`
+   halts the board until its power is cycled, so prefer `reboot` from
+   afar. A board that panics at every boot restarts again and again
+   (netlog.py says `REBOOT` each time); changing the options then needs
+   the SD card, or a network boot.
 
 ## Heap checking
 
@@ -7318,6 +7365,135 @@ at the top of its kernel stack) and the system call it is in - and what
 each processor runs. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
 
+## Diagnostics over the network
+
+For a board without a serial cable (the Raspberry Pi: see "Trying it on a
+Raspberry Pi 4"), the kernel sends its log over the network, serves its
+debug shell over TCP, and keeps a hardware watchdog that resets the board
+when the kernel hangs or panics. Kernel options:
+
+| Option | What it does |
+|---|---|
+| `netlog=HOST[:PORT]`, `netlog=broadcast[:PORT]` | every kernel log line as a UDP datagram to HOST (an IPv4 address) or 255.255.255.255, port 5140 by default |
+| `netshell=PORT` | the kernel debug shell on TCP PORT; no authentication, off by default |
+| `netaddr=A.B.C.D/PREFIX[,GATEWAY]` | a fixed address (and default route) for the first Ethernet interface |
+| `netdhcp=SECONDS` | the kernel's own DHCP client, if no interface has an address that long after networking started; default 30 with netlog or netshell (and no netaddr), 0 off |
+| `watchdog=SECONDS` | arm the hardware watchdog (0: never); default on the Pi: 15 s |
+| `panicreset=SECONDS` | reset that long after a panic (0: never, and stop the watchdog); default: when the watchdog runs out |
+
+**The log in memory** (`Debug.LogRing`). Everything `Debug.Output` writes
+is also gathered into lines, each with a sequence number (from 1 each
+boot) and the uptime when it ended; lines longer than 112 characters are
+cut (the rest marked as continued). The first 1024 lines of the boot are
+kept for good, the later ones go round a ring of 3072 slots (512 KiB in
+all, in the kernel's BSS, so it works from the first line, before the
+heap). Slots are found from the number, so a reader keeps only the
+number it wants next and sees a gap when the ring overtook it. Capturing
+only copies into a slot under a spin lock at high level: safe in
+interrupt handlers and inside any lock.
+
+**Sending it** (`Network.LogStreaming`). A system thread (`NetworkLog`)
+opens a kernel UDP socket and, every 100 ms, checks under the network
+lock that the host has a route through an interface with an address
+(for broadcast: any interface with one), notes the route a panic would
+take (adapter, Ethernet addresses - the next hop's from the ARP cache -
+IP addresses and ports), and sends what it has not sent yet: the whole
+memory log the first time ("[netlog] sending the kernel log to ... from
+line N"), then new lines. While the next hop's Ethernet address is being
+asked for (up to 3 s), it sends one line per round, since the ARP entry
+holds only a few datagrams; then bursts of 16 with a millisecond between
+them. A send that fails (no route now) is tried again later. Writers
+never wait on it, so nothing changes for code that logs.
+
+A datagram is one line: `SEQUENCE UPTIME TEXT`, `SEQUENCE+` for a
+continued line, the uptime in seconds with six decimals:
+
+    42 3.141592 [network] eth0: configured 192.168.1.50/24
+
+**After a panic** the thread cannot run (interrupts are off, the other
+processors stopped). `Kernel.Panic` calls, after the message: the reset
+policy's announcement ("The machine resets in 15 seconds"), the flush
+routine (`FlushNetworkLogAtPanic`), the panic hook (leaving QEMU under
+test), then the reset. The flush sends the unsent lines - at most the
+last 200 - through `Network.PanicTransmit`: it builds Ethernet, IPv4 and
+UDP headers itself (no UDP checksum) on the route noted beforehand and
+calls the driver's `Transmit` at dispatch level with interrupts still
+off, waiting up to 50 ms for room per frame (the virtio-net, e1000 and
+GENET drivers reclaim finished frames inside `Transmit`). Best effort: if
+a stopped processor held the driver's transmit lock, the flush never
+returns, and the watchdog resets the board. A panic before any interface
+had an address sends nothing.
+
+**An address without user mode** (`Network.FallbackAddress`). The network
+service normally configures eth0 by DHCP, but when user mode does not
+come up nobody would. With `netaddr` the first Ethernet interface gets
+the fixed address as soon as it exists. Otherwise, with netlog or
+netshell on and no interface addressed after `netdhcp` seconds, the
+kernel runs a minimal DHCP exchange (DISCOVER, OFFER, REQUEST, ACK,
+broadcast replies; address, mask, router) on the first Ethernet interface
+with a link, brings it up, sets the address and default route
+(`[netaddr] eth0: kernel DHCP lease ...`), and tries again every minute
+until some interface has an address. The lease is not renewed: it is a
+diagnostic address, and the network service, when it starts, sets its
+own lease (setting an address drops the routes through the interface).
+If UDP port 68 is taken, the network service's own client is running and
+the kernel leaves it to it. The test runs use `netdhcp=0`, since
+networktest checks the service's DHCP from an unconfigured interface.
+
+**The listener** (`scripts/netlog.py [--port 5140] [--bind ADDRESS]
+[--output FILE]`) prints `SOURCE SEQUENCE UPTIME TEXT` for each datagram
+and notes (lines starting with `#`) for the first line from a source, a
+reboot (numbers starting again) and a gap; `--output` adds the same lines
+to a file.
+
+**The debug shell over TCP** (`Kernel.NetworkShell`). With `netshell=PORT`
+a system thread listens on PORT and serves one connection at a time
+(`nc BOARD PORT`, or telnet: its option bytes are skipped). Each line is
+run by `Kernel.DebugShell` (`RunDebugShellCommand`); while it runs,
+everything written to the log is copied (`SetDebugOutputCopy`) into a 64
+KiB buffer that is sent afterwards, LF as CR LF - so other log lines
+written meanwhile come along. `exit` closes the connection; `poweroff`
+and `reboot` do what they say. It has no authentication and no
+encryption: only for a trusted local network.
+
+**Hardware watchdogs** (`Io.Watchdog`). A driver registers its watchdog
+with routines to arm it for a number of seconds, pet it, stop it and
+reset the machine at once; the first one registered is used. At start-up
+(`StartWatchdogPolicy`, right after the drivers that find watchdogs) it
+is armed if `watchdog=` says so, or by default if the driver asks for it,
+and a kernel timer pets it every third of its timeout from a deferred
+call - a kernel stuck with interrupts off or at a high level stops
+petting it. The panic policy: with `panicreset=N` the panic path waits N
+seconds (petting the watchdog, so N may exceed what it can count), then
+resets through the HAL (`HalResetMachine`: PSCI SYSTEM_RESET on AArch64,
+the keyboard controller and port CF9h on x86-64) and then through the
+watchdog; without it an armed watchdog simply runs out (the HAL is tried
+two seconds after it should have); `panicreset=0` stops the watchdog so
+the message stays. `Io.AcpiSleep.ResetMachine` (reboot) also falls back
+to the watchdog. Drivers:
+
+- `Drivers.Bcm2835Watchdog`: the PM block of the BCM2837 and BCM2711 at
+  peripheral base + 100000h (FE100000h on the Pi 4): PM_WDOG (24h) holds
+  the count in 1/65536 s (20 bits, so at most 15 s), PM_RSTC (1Ch) the
+  reset kind (full reset) or 102h to stop, every write with the password
+  5Ah in the top byte. The community firmware's ACPI tables describe no
+  watchdog, so it is found from the VideoCore mailbox's address (ACPI
+  BCM2849, peripheral base + B880h) on a board whose revision word names
+  a BCM2837 or BCM2711. Armed by default, for 15 s.
+- `Drivers.I6300EsbWatchdog`: the Intel 6300ESB's (PCI 8086:25AB), which
+  QEMU emulates (`-device i6300esb`): two stages at about 1 kHz, each
+  given half the timeout, written after an unlock sequence; the reset
+  output on, no interrupt. Not armed by default.
+
+**Tests.** `scripts/test-qemu.sh` boots with `netlog=10.0.2.2:PORT
+netdhcp=0` (QEMU's user networking hands 10.0.2.2 to the host's
+loopback) and runs `scripts/netlog.py` on that port: the run fails unless
+the first lines arrived (the replay), the `[netlog]` line and lines
+written after it, with no reboot seen. It also gives the machine an
+`i6300esb`: the kernel self test `Kernel.WatchdogSelfTest` arms it for 4
+seconds and sleeps 9 while the timer pets it (a reset would end QEMU,
+which runs with `-no-reboot`), and checks the pets were counted.
+
 ## The kernel debug shell
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
@@ -7325,8 +7501,10 @@ once the system is up, before the first program: `help`, `echo`, `ls`,
 `cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`,
 `devices` (the ACPI platform devices: ids, resources, DMA, driver),
 `board` (the Raspberry Pi's model, revision, serial, firmware, clocks
-and temperature, from the VideoCore mailbox), `uptime`, and `exit` to go
-on with the boot. It reads lines through the console like a program
+and temperature, from the VideoCore mailbox), `uptime`, `watchdog` (the
+hardware watchdog: which, armed, its timeout, how often it was petted),
+and `exit` to go on with the boot. With `netshell=PORT` the same commands
+are served over TCP (see "Diagnostics over the network"). It reads lines through the console like a program
 (with line editing) and writes through the kernel debug output, so it
 works on the serial port and the screen. The input test starts with a
 few of its commands.
