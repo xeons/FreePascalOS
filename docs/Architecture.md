@@ -153,8 +153,10 @@ pages hold the kernel image, boot data, page tables and the RAM disk.
 
 The loader can take everything but itself from a server, so a rebuild
 on the development machine takes effect at the next reset of the board
-(the Raspberry Pi 4 workflow, see "Trying it on a Raspberry Pi 4"). It
-boots from the network (`Loader.NetworkBoot`)
+(the Raspberry Pi 4 workflow, see "Trying it on a Raspberry Pi 4"; the
+Pi 5 boots natively over TFTP from its EEPROM bootloader instead, see
+"Trying it on a Raspberry Pi 5"). It boots from the network
+(`Loader.NetworkBoot`)
 
 - when the firmware loaded it by HTTP boot (its device path ends in the
   URI it came from),
@@ -7595,6 +7597,185 @@ boot"), so a rebuild is all an iteration takes.
    for the Ethernet port to DHCP and the firmware keeps that; with no
    address after 30 seconds (cable, DHCP server) the loader falls back
    to the card.
+
+### Trying it on a Raspberry Pi 5
+
+The Pi 5 boots differently from the Pi 4, so the Pi 4 section above
+(UEFI firmware, the loader, ACPI) stays for Pi 4 owners only. There is
+no UEFI port to use here. The Pi 5's own EEPROM bootloader loads the
+native kernel `fpos.img` (Linux arm64 Image format) and the system image
+as its RAM disk, and starts it with the firmware's device tree
+(`bcm2712-rpi-5-b.dtb`, edited by the firmware: memory, the command
+line, the RAM disk's place, the framebuffer). There is no ACPI. The
+bootloader in the EEPROM includes the GPU firmware, so the card needs no
+`start*.elf`, `fixup*.dat`, `bootcode.bin` or armstub.
+
+The plan has three steps: (1) an SD card that boots on its own, to see
+the HDMI log; (2) once, an EEPROM configuration that tries the network
+(TFTP from your PC) before the card; (3) after that, a rebuild and a
+reset is all an iteration takes, and the card is only the fallback.
+
+**Downloads** (into `~/Downloads/pi5/`; the scripts name what is
+missing; nothing of this goes into the repository):
+
+- `~/Downloads/pi5/boot/`: `bcm2712-rpi-5-b.dtb` and
+  `bcm2712d0-rpi-5-b.dtb` from
+  https://github.com/raspberrypi/firmware/tree/master/boot (raw:
+  `https://github.com/raspberrypi/firmware/raw/master/boot/<name>`).
+  Both go on the card, for the C1 and D0 steppings (8 GB boards come
+  with either); the firmware chooses.
+- `~/Downloads/pi5/boot/overlays/vc4-kms-v3d-pi5.dtbo` from
+  https://github.com/raspberrypi/firmware/raw/master/boot/overlays/vc4-kms-v3d-pi5.dtbo,
+  for the HDMI framebuffer (see below). Whatever is in `overlays/` goes on
+  the card.
+- `~/Downloads/pi5/eeprom/`: the newest `pieeprom-YYYY-MM-DD.bin` and
+  `recovery.bin` from
+  https://github.com/raspberrypi/rpi-eeprom/tree/master/firmware-2712/default
+  (the stable channel; `latest/` is newer and less tested). Needed for
+  step 2 only.
+
+`PI5_FIRMWARE=dir` and `PI5_EEPROM=dir` name other directories.
+
+**The HDMI framebuffer.** HDMI is the only screen, so the kernel needs
+the framebuffer the firmware sets up. The firmware describes it with a
+`simple-framebuffer` node (`reg`, `width`, `height`, `stride`, `format`)
+that it adds to the device tree it passes on. Linux on a Pi 5 reports
+one at `3f800000` (`simple-framebuffer 3f800000.framebuffer`). It adds
+that node when the KMS overlay `vc4-kms-v3d-pi5` is loaded: the overlay
+disables the old `bcm2708-fb` node (`/soc@107c000000/fb`) and enables
+the `vc4` display nodes. The firmware then leaves a simple framebuffer
+for the kernel to show its console on until a KMS driver takes over.
+FreePascalOS has no vc4 driver, so that framebuffer stays. Without the
+overlay the `bcm2708-fb` node stays enabled and the firmware may add no
+`simple-framebuffer` node at all (Linux would then ask the firmware for a
+framebuffer through the mailbox). `config.txt` therefore loads the
+overlay when it was downloaded, and the script warns when it is missing.
+The other settings:
+
+- `hdmi_force_hotplug=1`: use HDMI even if the hotplug signal is not
+  seen;
+- `disable_overscan=1`: no black border;
+- `disable_fw_kms_setup=1`: no `video=` options appended to the command
+  line (the Pi 5's default anyway);
+- `framebuffer_depth=32` and `framebuffer_ignore_alpha=1`: 32-bit pixels.
+  The firmware's default is 16 (`r5g6b5`, as in the Linux log above).
+  These are legacy options that the KMS firmware may ignore, so the
+  kernel takes whatever `format` the node names (`r5g6b5`, `x8r8g8b8`,
+  `a8r8g8b8`);
+- `max_framebuffers` is left alone: one display, on the HDMI port next to
+  the USB-C power socket (HDMI0).
+
+The rest of `config.txt`: `arm_64bit=1`, `kernel=fpos.img`, `initramfs
+system.img followkernel` (the RAM disk right after the kernel, its place
+in `/chosen` as `linux,initrd-start`/`-end`), `os_check=0` (otherwise
+the Pi 5 firmware checks for a device tree compatible with the kernel
+before booting, meant for Raspberry Pi OS kernels), and
+`enable_rp1_uart=1`. That last one sets up RP1's UART0 at 115200 on GPIO
+14/15 (header pins 8 and 10) and leaves RP1, the south bridge with the
+Ethernet, USB and UARTs, as the bootloader set it up instead of
+resetting its PCIe link. This helps a serial adapter later, and early
+RP1 drivers.
+
+`cmdline.txt` holds the kernel options in the format of `options.txt`:
+`netlog=SERVER` and whatever `PI5_OPTIONS="..."` adds (for example
+`PI5_OPTIONS="kshell netshell=2323"`). The firmware merges in options of
+its own (`reboot=w coherent_pool=1M ...` from the device tree's
+`bootargs`), which the kernel ignores.
+
+1. **The SD card (plain SD boot, no EEPROM change).**
+   ```
+   make pi5-sd-image                     # SERVER=<PC address> if the guess is wrong
+   lsblk                                 # find the card: /dev/sdX or /dev/mmcblkN
+   xzcat build/arm64/pi5-sd.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+   ```
+   It needs `build/arm64/native/fpos.img`, the native kernel (if it is
+   missing the script says so), and builds the system image. The image
+   (`scripts/make-pi5-sd-image.py`, Python and mtools, no root) is
+   257 MiB: an MBR with one bootable FAT32 partition (type 0Ch, 256 MiB)
+   holding `config.txt`, `cmdline.txt`, the two device trees,
+   `overlays/`, `fpos.img` and `system.img`. A Pi 5 with its factory
+   EEPROM settings (`BOOT_ORDER=0xf461`: SD, NVMe, USB) boots it as it
+   is. The bootloader's own screen (its version, the board, `boot: mode
+   SD ...`) shows on HDMI first, then the kernel's log. Raspberry Pi
+   Imager works too ("Use custom"). Since the partition is FAT32,
+   `cmdline.txt` can be edited on any PC.
+2. **The EEPROM, once: network first.**
+   ```
+   make pi5-eeprom-image                 # SERVER=<PC address>
+   xzcat build/arm64/pi5-eeprom.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+   ```
+   This is a bootloader recovery card (`scripts/make-pi5-eeprom-image.py`):
+   `recovery.bin`, `pieeprom.bin` (the downloaded release with its
+   configuration replaced) and `pieeprom.sig` (its SHA-256, `ts:` and
+   `target-soc: 2712`). The configuration lives inside the EEPROM image
+   as a file, `bootconf.txt` (see `scripts/pi5_eeprom_image.py` for the
+   format), which the script replaces without the `rpi-eeprom-config`
+   tool or Raspberry Pi OS:
+   ```
+   [all]
+   BOOT_UART=1
+   BOOT_ORDER=0xf12            network, then SD, then start again
+   TFTP_IP=<SERVER>            the TFTP server, whatever DHCP says
+   DHCP_TIMEOUT=15000          15 s without an address: on to the card
+   TFTP_FILE_TIMEOUT=60000     room for the 64 MiB system image
+   NET_INSTALL_AT_POWER_ON=0   no network install screen at power on
+   ```
+   (`make-pi5-eeprom-image.py --client-ip A.B.C.D --subnet MASK` sets a
+   fixed address instead of DHCP, `--gateway` too if the PC is on
+   another network; `--sd-first` makes it `0xf21`.) Put the card in the
+   Pi 5 and power it on. The boot ROM runs `recovery.bin`, which writes
+   the EEPROM. When the green LED blinks rapidly without end and an
+   HDMI screen turns green, it is done (red, or another blink pattern,
+   is a failure). Power off, then flash the card again with
+   `pi5-sd-image` as the fallback for when the PC does not answer. To
+   undo, the factory settings come back with Raspberry Pi Imager's "Misc
+   utility images > Bootloader > SD Card Boot". The Pi 5's address comes
+   from the network's DHCP server as usual: a home router needs no
+   change, because `TFTP_IP` names the server.
+3. **The server, on your PC.**
+   ```
+   sudo sysctl net.ipv4.ip_unprivileged_port_start=69   # once per PC boot
+   make pi5-netboot-serve
+   ```
+   This writes `build/arm64/pi5-boot/` (the card's files; `fpos.img`
+   and `system.img` as links into the build) and serves it with
+   `scripts/netboot-serve.py --pi5`: TFTP on UDP port 69 (the Pi's
+   bootloader has no other port) and HTTP on 8000, for checking with
+   curl. It prints the files, their sizes, `cmdline.txt` and the PC's
+   address. Port 69 is below 1024, so it needs one of: the `sysctl` above
+   (lets anyone bind ports from 69 up, until the next reboot); running
+   the server with `sudo`; or `sudo setcap cap_net_bind_service=+ep` on
+   the Python binary (`readlink -f $(which python3)`, which then lets
+   every Python program do it). Let UDP 69 and 5140 in through the
+   firewall (`sudo ufw allow 69/udp`, or `sudo firewall-cmd
+   --add-service=tftp`). The bootloader first asks for
+   `<serial>/config.txt` (`TFTP_PREFIX=0`, the default) and keeps the
+   prefix for every file if that is found. The server answers files with
+   or without such a directory, so no per-board directory is needed. Each
+   request is logged (`TFTP 192.168.1.50 2c3a1b0f/fpos.img: 3.1 MiB in
+   0.4 s`).
+4. **The log.** On the HDMI screen: the bootloader's diagnostics (`boot:
+   mode NETWORK 2 order f12 ...`), then the kernel's console. Over the
+   network: `scripts/netlog.py --output pi5.log` on the PC (UDP 5140),
+   with `netlog=SERVER` in `cmdline.txt`, as on the Pi 4 (step 6 of the
+   Pi 4 section). This works once the kernel drives the Pi 5's Ethernet,
+   which is behind RP1.
+5. **Iterating.** Leave `make pi5-netboot-serve` running. After a change,
+   rebuild the native kernel and/or `make ARCH=arm64 system-disk`, then
+   reset the Pi (power, or `reboot`, or the watchdog). The files are read
+   at each request, so the next boot takes the new build. Kernel options
+   change in `build/arm64/pi5-boot/cmdline.txt` (rewritten by the next
+   `make pi5-netboot-serve`; make it stick with `PI5_OPTIONS=`). Without
+   the server, the bootloader gives up on the network after the DHCP or
+   TFTP timeout and boots the card. With no card either, it shows its
+   diagnostics screen and tries again.
+
+Why TFTP and not HTTP: the Pi 5 bootloader's HTTP boot (`BOOT_ORDER`
+mode 7, `HTTP_HOST`, `HTTP_PATH`) fetches `boot.img`, a FAT image of the
+boot files, and `boot.sig`. Every HTTP download must be signed: with a
+custom `HTTP_HOST` that means an RSA-2048 key of our own written into
+the EEPROM (`rpi-eeprom-config -p`), and the key is lost again with the
+next official EEPROM update. TFTP needs no signature.
 
 ## Heap checking
 

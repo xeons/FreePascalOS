@@ -783,6 +783,26 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       inode count and the volume's last write time
 - Raspberry Pi 5 (later): RP1 south bridge drivers (UART, Ethernet, USB),
   its UEFI port's tables, PAN and LSE atomics, its real-time clock
+- Raspberry Pi 5, native boot (EEPROM bootloader, device tree, no UEFI;
+  see "Trying it on a Raspberry Pi 5" in docs/Architecture.md):
+  - [x] Boot media: `make pi5-sd-image` (config.txt, cmdline.txt, the
+        device trees, fpos.img, system.img as the RAM disk),
+        `make pi5-eeprom-image` (a recovery card setting BOOT_ORDER=0xf12
+        and TFTP_IP; the bootconf.txt embedding in
+        `scripts/pi5_eeprom_image.py`, `make pi5-eeprom-test`),
+        `make pi5-netboot-serve` (TFTP with the serial number prefix)
+  - [ ] First boot on the board: check that the firmware passes a
+        simple-framebuffer node with `dtoverlay=vc4-kms-v3d-pi5`, and
+        without it; which pixel format (framebuffer_depth=32 honoured?)
+  - [ ] Network boot on the board: the bootloader's TFTP requests (the
+        prefix probe, block size, whether the 64 MiB system image fits
+        in TFTP_FILE_TIMEOUT with the Python server), the SD fallback
+        time with the PC off
+  - [ ] HTTP boot instead of TFTP (no root on the PC): boot.img/boot.sig
+        signed with a key of our own written into the EEPROM (pubkey.bin:
+        the RSA-2048 modulus and exponent, little endian)
+  - [ ] A compressed system image or kernel (the firmware unpacks a gzip
+        kernel; the RAM disk is passed on as it is)
 
 ## Tooling
 
