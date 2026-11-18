@@ -81,6 +81,9 @@ const
   one (only on a Raspberry Pi). }
 function InitializeVideoCoreMailbox: Boolean;
 function VideoCoreMailboxIsAvailable: Boolean;
+{ The physical address of the mailbox's registers (0 without one): the
+  other peripherals are found from it (the Pi's PM watchdog). }
+function VideoCoreMailboxPhysicalAddress: QWord;
 
 { Sends one tag: Words holds RequestWords words of request and room for
   ValueWords words of answer (at most MaximumTagWords). True if the
@@ -135,6 +138,7 @@ const
 
 var
   Registers: PByte;
+  RegistersPhysical: QWord;
   Message: TDmaBuffer;
   { The mailbox's DMA: never coherent, through the GPU's window. }
   MailboxDma: TDmaAttributes;
@@ -334,6 +338,7 @@ begin
   Registers := PByte(MapPlatformMemory(Device, 0, Length));
   if Registers = nil then
     Exit;
+  RegistersPhysical := Start;
   { (The _CRS may name only the first 24h bytes; the page is mapped.) }
   MailboxDma := Device^.Dma;
   { The GPU never looks at the processors' caches. }
@@ -384,6 +389,14 @@ end;
 function VideoCoreMailboxIsAvailable: Boolean;
 begin
   Result := Available;
+end;
+
+function VideoCoreMailboxPhysicalAddress: QWord;
+begin
+  if Available then
+    Result := RegistersPhysical
+  else
+    Result := 0;
 end;
 
 end.

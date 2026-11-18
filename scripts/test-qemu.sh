@@ -66,9 +66,16 @@ cp -r "$esp_directory" "$test_esp_directory"
 # With a system disk the user mode test program runs as the first
 # process; its exit code decides the result. heapchecks: the kernel heap
 # and every program check their heap (fill patterns, guards, quarantine).
+# netlog: the kernel log goes to scripts/netlog.py on the host as well
+# (QEMU's user networking hands 10.0.2.2 to the host's loopback); the
+# address comes from the network service networktest starts, not from the
+# kernel's own DHCP (netdhcp=0), which would get in its way.
+netlog_port=$((40000 + $$ % 20000))
+netlog_received="$build_directory/test-netlog.log"
 if [[ -n "${system_disk_image:-}" ]]; then
     # hangdump: if the tests stop making progress, the log shows why.
-    echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20 netlog=10.0.2.2:$netlog_port netdhcp=0" \
+        > "$test_esp_directory/FreePascalOS/options.txt"
 else
     echo "test-exit fstest heapchecks" > "$test_esp_directory/FreePascalOS/options.txt"
 fi
@@ -195,7 +202,11 @@ s_server_port=$((20000 + $$ % 20000))
 openssl s_server -quiet -www -tls1_3 -accept "$s_server_port" -cert "$certificate_directory/server-rsa.pem" \
     -key "$certificate_directory/server-rsa.key" < /dev/null > /dev/null 2>&1 &
 s_server_process=$!
-trap 'kill "$s_server_process" 2> /dev/null' EXIT
+rm -f "$netlog_received"
+python3 -I "$(dirname "$0")/netlog.py" --bind 127.0.0.1 --port "$netlog_port" --output "$netlog_received" \
+    --no-color > /dev/null 2>&1 &
+netlog_process=$!
+trap 'kill "$s_server_process" "$netlog_process" 2> /dev/null' EXIT
 web_forwards="guestfwd=tcp:10.0.2.101:443-cmd:$web_server https server-chain.pem server.key"
 web_forwards+=",guestfwd=tcp:10.0.2.102:80-cmd:$web_server http"
 web_forwards+=",guestfwd=tcp:10.0.2.103:443-cmd:$web_server relay $s_server_port"
@@ -251,10 +262,14 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     -netdev user,id=net2 -device e1000,netdev=net2 \
     -netdev user,id=net3 -device rtl8139,netdev=net3 \
     "${sd_card_arguments[@]}" \
+    -device i6300esb \
     -serial file:"$serial_log" \
     -display none -no-reboot \
     < /dev/null > /dev/null 2>&1
 qemu_status=$?
+# The last datagrams may still be on their way.
+sleep 1
+kill "$netlog_process" 2> /dev/null
 
 # Strip the firmware's terminal control sequences for readability.
 sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | sed -n '/kernel starting/,$p'
@@ -409,6 +424,44 @@ case "$qemu_status" in
                 exit 1
             fi
         done
+        # The hardware watchdog (QEMU's i6300esb, after every other PCI
+        # device): found, and kept from resetting the machine by the
+        # kernel timer during the self test (a reset would have ended
+        # QEMU, which runs with -no-reboot).
+        if ! grep -q '\[watchdog\] Intel 6300ESB watchdog at' "$serial_log" ||
+           ! grep -q '\[selftest\] watchdog: passed' "$serial_log"; then
+            echo "TEST FAILED: the i6300esb watchdog was not found or its self test did not pass"
+            exit 1
+        fi
+        # The network log: the replay from the first line once eth0 had
+        # an address, then lines as they were written, all from one boot.
+        if [[ -n "$system_disk_image" ]] &&
+           ! python3 -I - "$netlog_received" <<'CHECK'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+entries = []
+for line in lines:
+    match = re.match(r"(\S+) (\d+)\+? [0-9.]+ (.*)$", line)
+    if match and not line.startswith("#"):
+        entries.append((int(match.group(2)), match.group(3)))
+problems = []
+if any(line.startswith("#") and "REBOOT" in line for line in lines):
+    problems.append("the sequence numbers started again")
+if not any(sequence <= 5 and "kernel starting" in text for sequence, text in entries):
+    problems.append("no replay of the first lines")
+announced = [sequence for sequence, text in entries if "[netlog] sending the kernel log to 10.0.2.2" in text]
+if not announced:
+    problems.append("no line saying where the log goes")
+elif not any(sequence > announced[0] + 20 for sequence, text in entries):
+    problems.append("no lines written after streaming began")
+if problems:
+    print("netlog: " + "; ".join(problems) + " (%d lines received)" % len(entries))
+    sys.exit(1)
+CHECK
+        then
+            echo "TEST FAILED: the network log (netlog) did not arrive as it should"
+            exit 1
+        fi
         echo "TEST PASSED"
         exit 0
         ;;

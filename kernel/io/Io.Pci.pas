@@ -107,6 +107,7 @@ function FindPciDeviceByClass(ClassCode, Subclass, ProgrammingInterface: Byte;
 function PciRead8(Device: PPciDevice; Offset: Word): Byte;
 function PciRead16(Device: PPciDevice; Offset: Word): Word;
 function PciRead32(Device: PPciDevice; Offset: Word): LongWord;
+procedure PciWrite8(Device: PPciDevice; Offset: Word; Value: Byte);
 procedure PciWrite16(Device: PPciDevice; Offset: Word; Value: Word);
 procedure PciWrite32(Device: PPciDevice; Offset: Word; Value: LongWord);
 
@@ -186,6 +187,11 @@ end;
 function PciRead32(Device: PPciDevice; Offset: Word): LongWord;
 begin
   Result := PLongWord(Device^.Configuration + Offset)^;
+end;
+
+procedure PciWrite8(Device: PPciDevice; Offset: Word; Value: Byte);
+begin
+  PByte(Device^.Configuration + Offset)^ := Value;
 end;
 
 procedure PciWrite16(Device: PPciDevice; Offset: Word; Value: Word);

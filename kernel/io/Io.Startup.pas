@@ -100,7 +100,10 @@ uses
   Drivers.DiskDevices,
   Drivers.DiskStatistics,
   Drivers.VideoCoreMailbox,
-  Drivers.RaspberryPiBoard;
+  Drivers.RaspberryPiBoard,
+  Drivers.Bcm2835Watchdog,
+  Drivers.I6300EsbWatchdog,
+  Io.Watchdog;
 
 procedure ScanAllDisksForPartitions;
 var
@@ -162,6 +165,11 @@ begin
     addresses. }
   if InitializeVideoCoreMailbox then
     WriteBoardInformation;
+  { The hardware watchdog as early as it can be found (the Pi's needs
+    the mailbox), armed if the options or its driver say so. }
+  if not InitializeBcm2835Watchdog then
+    InitializeI6300EsbWatchdog;
+  StartWatchdogPolicy;
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
   InitializeAhciControllers;

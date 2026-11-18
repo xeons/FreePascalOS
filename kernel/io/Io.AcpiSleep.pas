@@ -66,6 +66,7 @@ uses
   Firmware.AcpiSleepStates,
   Io.AcpiHardware,
   Io.AcpiNamespace,
+  Io.Watchdog,
   Debug.Output;
 
 const
@@ -212,6 +213,8 @@ begin
     Report('reset through the reset register did not work');
   end;
   HalResetMachine;
+  { The firmware did not reset it (or there is none to ask). }
+  ResetThroughWatchdog;
 end;
 
 end.

@@ -76,6 +76,9 @@ uses
   Objects.Manager,
   Io.Startup,
   Network.Startup,
+  Network.LogStreaming,
+  Network.FallbackAddress,
+  Kernel.NetworkShell,
   Kernel.NetworkSelfTest,
   Io.BlockCache,
   Io.AudioOutput,
@@ -101,6 +104,7 @@ uses
   Io.Manager,
   Io.DeviceFiles,
   Kernel.IoSelfTest,
+  Kernel.WatchdogSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -307,6 +311,10 @@ begin
   InitializeIoSystem;
   { The network adapters registered with the drivers above. }
   StartNetworking;
+  { Diagnostics over the network (netlog, netshell, netaddr, netdhcp). }
+  StartNetworkLog;
+  StartNetworkShell;
+  StartFallbackAddressing(NetworkLogIsWanted or NetworkShellIsWanted);
   InitializeDisplays(PBootInformation(Context)^.Framebuffer);
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
@@ -321,6 +329,7 @@ begin
   RunKernelSelfTests;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
+  RunWatchdogSelfTest;
   RunNetworkSelfTests;
   RunFileSystemSelfTests;
   { Only when asked: the write tests change the test volumes, and end

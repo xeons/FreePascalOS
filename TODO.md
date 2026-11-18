@@ -745,6 +745,19 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
         Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
   - [ ] GPIO and the PWM audio jack; HDMI audio
+  - [x] Debugging without a serial cable: the kernel log over UDP
+        (`netlog=`, `scripts/netlog.py`, replayed from the first line,
+        sent on after a panic), the debug shell over TCP (`netshell=`),
+        an address of the kernel's own (`netaddr=`, `netdhcp=`)
+  - [x] The PM watchdog (armed by default for 15 s, petted by a kernel
+        timer, `watchdog=`, `panicreset=`), behind a generic watchdog
+        interface (`Io.Watchdog`; the i6300ESB driver tests it in QEMU);
+        reset falls back to it after PSCI
+  - [ ] Reset and power off through the UEFI runtime services (needs the
+        runtime regions mapped: SetVirtualAddressMap or an identity map
+        at the call); the Pi's firmware does them through PSCI anyway
+  - [ ] Service output (standard error) to the network log; the service
+        manager's own messages already reach it through the console
 - [x] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
       "Inodes that were part of a corrupted orphan linked list found"):
       deletion times came from a wall clock starting at zero (no RTC),

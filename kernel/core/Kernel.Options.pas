@@ -35,6 +35,16 @@
                 of freed blocks. It is also the default for user programs
                 that have no HEAP_CHECKS in their environment.
     fstest, hangdump=SECONDS, keymap=LAYOUT, root=VOLUME: see their units.
+    netlog=HOST[:PORT] | broadcast[:PORT]
+                The kernel log as UDP datagrams (Network.LogStreaming).
+    netshell=PORT
+                The debug shell over TCP, unauthenticated (Kernel.NetworkShell).
+    netaddr=A.B.C.D/PREFIX[,GATEWAY], netdhcp=SECONDS
+                An address for those without user mode
+                (Network.FallbackAddress).
+    watchdog=SECONDS, panicreset=SECONDS
+                The hardware watchdog and the reset after a panic
+                (Io.Watchdog).
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by
