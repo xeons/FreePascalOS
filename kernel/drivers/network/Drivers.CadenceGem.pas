@@ -465,30 +465,46 @@ begin
   WriteMacAddress(Card);
 end;
 
+{ Sets the MAC's speed and duplex for Link and runs it. Turning
+  receive and transmit off sends the GEM's queue pointers back to the
+  rings' starts, so on every link up both rings start afresh (frames
+  queued while the link was down are dropped), as Linux did before it
+  learnt to rotate its rings. }
 procedure ConfigureMacForLink(Card: PGemCard; const Link: TNetworkLinkState);
 var
   Configuration: LongWord;
-  PreviousLevel: TPriorityLevel;
+  ReceiveLevel: TPriorityLevel;
+  TransmitLevel: TPriorityLevel;
+  TellNetworkLayer: Boolean;
 begin
-  { The transmit path sets "start" in the same register. }
-  PreviousLevel := AcquireSpinLock(Card^.TransmitLock);
-  Configuration := ReadGem(Card, GemNetworkConfiguration) and
-    not (ConfigurationSpeed100 or ConfigurationFullDuplex or ConfigurationGigabit or ConfigurationPauseEnable);
-  case Link.SpeedMegabits of
-    100: Configuration := Configuration or ConfigurationSpeed100;
-    10: ;
-  else
-    Configuration := Configuration or ConfigurationGigabit;
-  end;
-  if Link.FullDuplex or not Link.IsUp then
-    Configuration := Configuration or ConfigurationFullDuplex;
-  WriteGem(Card, GemNetworkConfiguration, Configuration);
+  TellNetworkLayer := False;
+  ReceiveLevel := AcquireSpinLock(Card^.ReceiveLock);
+  TransmitLevel := AcquireSpinLock(Card^.TransmitLock);
+  ChangeGem(Card, GemNetworkControl, ControlReceiveEnable or ControlTransmitEnable, 0);
   if Link.IsUp then
-    ChangeGem(Card, GemNetworkControl, 0, ControlReceiveEnable or ControlTransmitEnable)
-  else
-    ChangeGem(Card, GemNetworkControl, ControlReceiveEnable or ControlTransmitEnable, 0);
+  begin
+    Configuration := ReadGem(Card, GemNetworkConfiguration) and
+      not (ConfigurationSpeed100 or ConfigurationFullDuplex or ConfigurationGigabit or ConfigurationPauseEnable);
+    case Link.SpeedMegabits of
+      100: Configuration := Configuration or ConfigurationSpeed100;
+      10: ;
+    else
+      Configuration := Configuration or ConfigurationGigabit;
+    end;
+    if Link.FullDuplex then
+      Configuration := Configuration or ConfigurationFullDuplex;
+    WriteGem(Card, GemNetworkConfiguration, Configuration);
+    FillRings(Card);
+    PointQueues(Card);
+    ChangeGem(Card, GemNetworkControl, 0, ControlReceiveEnable or ControlTransmitEnable);
+    TellNetworkLayer := Card^.WaitingForRoom;
+    Card^.WaitingForRoom := False;
+  end;
   Card^.MacLink := Link;
-  ReleaseSpinLock(Card^.TransmitLock, PreviousLevel);
+  ReleaseSpinLock(Card^.TransmitLock, TransmitLevel);
+  ReleaseSpinLock(Card^.ReceiveLock, ReceiveLevel);
+  if TellNetworkLayer and (Card^.Card.Adapter <> nil) then
+    NetworkTransmitReady(Card^.Card.Adapter);
 end;
 
 { --- Receiving and transmitting ------------------------------------------------------ }
