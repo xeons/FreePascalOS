@@ -56,6 +56,10 @@ const
 
   PixelFormatRedGreenBlue = 1;
   PixelFormatBlueGreenRed = 2;
+  { 16 bits per pixel: red in bits 15-11, green 10-5, blue 4-0 (a
+    Raspberry Pi firmware's simple-framebuffer, r5g6b5). The others are
+    32 bits per pixel. }
+  PixelFormatRedGreenBlue565 = 3;
 
   PageSize = 4096;
 

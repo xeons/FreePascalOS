@@ -67,8 +67,9 @@ type
     Height: LongWord;
     StrideInBytes: LongWord;
     BitsPerPixel: LongWord;
-    { The bytes of a pixel in memory are blue, green, red (a8r8g8b8 and
-      x8r8g8b8 on a little endian machine) rather than red, green, blue. }
+    { 32 bits per pixel: the bytes of a pixel in memory are blue, green,
+      red (a8r8g8b8 and x8r8g8b8 on a little endian machine) rather than
+      red, green, blue. 16 (r5g6b5): red in the top five bits. }
     IsBlueGreenRed: Boolean;
   end;
 
@@ -87,7 +88,8 @@ function DescribeUart(constref Tree: TDeviceTree; Node: LongInt; out Uart: TDevi
   none. }
 function FindConsoleUart(constref Tree: TDeviceTree; out Uart: TDeviceTreeUart): Boolean;
 
-{ The first enabled simple-framebuffer of 32 bits per pixel. }
+{ The first enabled simple-framebuffer in a format the kernel draws
+  (32 bits per pixel, or r5g6b5). }
 function FindSimpleFramebuffer(constref Tree: TDeviceTree; out Framebuffer: TDeviceTreeFramebuffer): Boolean;
 
 implementation
@@ -196,12 +198,15 @@ begin
     Result := DescribeUart(Tree, FindCompatibleNode(Tree, NoNode, 'arm,pl011'), Uart);
 end;
 
-{ The pixel format's name: 32-bit ones only. }
+{ The pixel format's name: the 32-bit ones and r5g6b5 (what a Raspberry
+  Pi's firmware sets up unless config.txt asks for 32 bits). }
 function DescribeFormat(Format: PChar; var Framebuffer: TDeviceTreeFramebuffer): Boolean;
 begin
   Result := True;
   Framebuffer.BitsPerPixel := 32;
-  if DeviceTreeTextIsEqual(Format, 'a8r8g8b8') or DeviceTreeTextIsEqual(Format, 'x8r8g8b8') then
+  if DeviceTreeTextIsEqual(Format, 'r5g6b5') then
+    Framebuffer.BitsPerPixel := 16
+  else if DeviceTreeTextIsEqual(Format, 'a8r8g8b8') or DeviceTreeTextIsEqual(Format, 'x8r8g8b8') then
     Framebuffer.IsBlueGreenRed := True
   else if DeviceTreeTextIsEqual(Format, 'a8b8g8r8') or DeviceTreeTextIsEqual(Format, 'x8b8g8r8') then
     Framebuffer.IsBlueGreenRed := False
@@ -240,7 +245,7 @@ begin
     ReadCellProperty(Tree, Node, 'stride', Framebuffer.StrideInBytes) and
     DescribeFormat(ReadTextProperty(Tree, Node, 'format'), Framebuffer) and
     (Framebuffer.Width > 0) and (Framebuffer.Height > 0) and
-    (Framebuffer.StrideInBytes >= Framebuffer.Width * 4) and
+    (Framebuffer.StrideInBytes >= Framebuffer.Width * (Framebuffer.BitsPerPixel div 8)) and
     (QWord(Framebuffer.StrideInBytes) * Framebuffer.Height <= Framebuffer.SizeInBytes);
 end;
 
