@@ -378,7 +378,15 @@ arm64-test:
 # ~/Downloads/RPi4_UEFI_Firmware_v*.zip), the loader and an options.txt
 # with netboot= and netlog= for SERVER (default this machine);
 # PI_IMAGE=standalone adds the system volume instead of netboot=.
-.PHONY: pi-netboot-serve arm64-netboot-test pi-sd-image
+.PHONY: pi-netboot-serve arm64-netboot-test pi-sd-image arm64-native-test
+# arm64-native-test boots build/arm64/native/fpos.img in QEMU without
+# firmware (-kernel, -initrd, a device tree), at EL1 and at EL2, and
+# checks netlog and the TCP debug shell over virtio-net
+# (scripts/test-arm64-native.py).
+arm64-native-test:
+	@$(MAKE) --no-print-directory ARCH=arm64 native system-disk
+	scripts/test-arm64-native.py $(NATIVE_IMAGE) build/arm64/system-disk.img
+
 pi-netboot-serve:
 	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk
 	scripts/netboot-serve.py --esp build/arm64/esp --system-image build/arm64/system-disk.img \
