@@ -54,6 +54,12 @@ partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
 mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log,var/lib/network}
+# AUTHORIZED_KEYS (a public key file, e.g. ~/.ssh/id_ed25519.pub) lets
+# that key log in as "user" over SSH: for a board on the desk.
+if [[ -n "${AUTHORIZED_KEYS:-}" ]]; then
+    mkdir -p "$staging_directory/home/user/.ssh"
+    cp "$AUTHORIZED_KEYS" "$staging_directory/home/user/.ssh/authorized_keys"
+fi
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
 # The graphical programs, each in a folder of its own (/app/NAME: the
@@ -133,6 +139,14 @@ ownership_script="$partition_image.debugfs"
     echo 'set_inode_field /home/user uid 1000'
     echo 'set_inode_field /home/user gid 1000'
     echo 'set_inode_field /home/user mode 040755'
+    if [[ -n "${AUTHORIZED_KEYS:-}" ]]; then
+        echo 'set_inode_field /home/user/.ssh uid 1000'
+        echo 'set_inode_field /home/user/.ssh gid 1000'
+        echo 'set_inode_field /home/user/.ssh mode 040700'
+        echo 'set_inode_field /home/user/.ssh/authorized_keys uid 1000'
+        echo 'set_inode_field /home/user/.ssh/authorized_keys gid 1000'
+        echo 'set_inode_field /home/user/.ssh/authorized_keys mode 0100600'
+    fi
     echo 'set_inode_field /tmp mode 041777'
     echo 'set_inode_field /etc/settings mode 040755'
     echo 'set_inode_field /etc/shadow mode 0100600'

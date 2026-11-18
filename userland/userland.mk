@@ -443,5 +443,5 @@ system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
 		$(wildcard userland/etc/*/*/*) \
-		$(wildcard userland/pointers/*)
-	scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@
+		$(wildcard userland/pointers/*) $(AUTHORIZED_KEYS)
+	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@
