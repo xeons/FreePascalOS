@@ -131,12 +131,14 @@ begin
   Result := ByteCount div PageSize + MinimumMemoryLeft div PageSize < Statistics.FreePages;
 end;
 
-{ The compressed copy's pages: those of the RAM disk region it is in. }
-procedure FreeCompressedPages(const Image: TRamDiskImage);
+{ The compressed copy's pages: those of the RAM disk region it is in.
+  Returns how many bytes were freed. }
+function FreeCompressedPages(const Image: TRamDiskImage): QWord;
 var
   Page: QWord;
   Last: QWord;
 begin
+  Result := 0;
   if Image.RegionEnd <= Image.RegionStart then
     Exit;
   Page := Image.RegionStart;
@@ -144,13 +146,16 @@ begin
   while Page < Last do
   begin
     if PageUsageOf(Page) = PageUsageGeneral then
+    begin
       FreePhysicalPage(Page);
+      Inc(Result, PageSize);
+    end;
     Inc(Page, PageSize);
   end;
 end;
 
 procedure ReportExpansion(Kind: TCompressedImageKind; CompressedSize: QWord; ExpandedSize: QWord;
-  Nanoseconds: QWord);
+  Nanoseconds: QWord; FreedBytes: QWord);
 begin
   DebugBeginMessage;
   DebugWriteTag('ramdisk');
@@ -161,7 +166,9 @@ begin
   WriteMebibytes(ExpandedSize);
   DebugWrite(' in ');
   DebugWriteDecimal(Nanoseconds div 1000000);
-  DebugWriteLine(' ms, checksum verified');
+  DebugWrite(' ms, checksum verified; ');
+  DebugWriteDecimal(FreedBytes div 1024);
+  DebugWriteLine(' KiB of the compressed copy freed');
   DebugEndMessage;
 end;
 
@@ -175,6 +182,7 @@ var
   Started: QWord;
   Outcome: TDecodeResult;
   Page: QWord;
+  Elapsed: QWord;
 begin
   Contents := PByte(PhysicalToVirtual(Image.PhysicalBase));
   Kind := DetectCompressedImage(Contents, Image.SizeInBytes);
@@ -210,9 +218,8 @@ begin
     end;
     Exit;
   end;
-  ReportExpansion(Kind, Image.SizeInBytes, ExpandedSize, ClockNanoseconds - Started);
-
-  FreeCompressedPages(Image);
+  Elapsed := ClockNanoseconds - Started;
+  ReportExpansion(Kind, Image.SizeInBytes, ExpandedSize, Elapsed, FreeCompressedPages(Image));
   Image.PhysicalBase := ExpandedBase;
   Image.SizeInBytes := ExpandedSize;
   Image.RegionStart := 0;

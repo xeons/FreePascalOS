@@ -213,10 +213,62 @@ disk in preference to one on a disk (`Processes.Paths`), unless `root=`
 names another. The image is the whole 64 MiB system disk; the Pi in ACPI
 mode has 3 GiB, of which the firmware gives the image any free range.
 
+**A compressed RAM disk.** The image is served compressed: a Raspberry
+Pi 5's EEPROM bootloader fetches it over TFTP at about 230 KB/s and gives
+up on a file after 60 s (`TFTP_FILE_TIMEOUT`), which cut the plain
+64 MiB image off at 14 MB. Of its 64 MiB only 24 MiB are not zero (ext4
+leaves its free blocks zero, mke2fs writes a fresh sparse file), and
+those are the files themselves. `make served-system-image` writes
+`build/<arch>/system-disk.img.xz` (`xz -6 -T0 --check=crc32`: 4.9 MB,
+about 21 s at that speed; `xz -9` saves 70 KB more, gzip -9 makes
+7.6 MB, about 33 s). `SYSTEM_IMAGE_COMPRESSION=gzip` serves
+`system-disk.img.gz`, `none` the plain image; the network boot targets,
+the Pi 5 boot files and the native and network boot tests take it.
+Neither loader looks inside: the UEFI loader fetches the file into its
+RAM disk pages and the Pi's firmware passes the initramfs on untouched,
+so the kernel gets the compressed bytes.
+
+`Drivers.RamDiskDecompression`, called by `Drivers.RamDisk` in phase 1
+(MMU and caches on; the native stub runs with the data cache off, which
+would make it many times slower), tells the format by its magic
+(`Compression.MemoryImages`: xz `FD 37 7A 58 5A 00`, gzip `1F 8B`; zstd
+`28 B5 2F FD` is recognized and refused), takes the decompressed size
+from the format (the xz index, read from the footer back; gzip's ISIZE
+trailer, or `ramdisksize=MIB` for an image over 4 GiB), allocates that
+many physically contiguous pages, decompresses into them and frees the
+pages of the boot memory map's `MemoryRegionRamDisk` region. It logs
+`[ramdisk] xz image: compressed 4.7 MiB -> 64.0 MiB in N ms, checksum
+verified; 4776 KiB of the compressed copy freed` (1.5 s in QEMU's
+emulated Cortex-A76); a damaged image is reported and no RAM disk is offered (the
+disks' system volume is used instead). The same path serves the UEFI
+network boot (x86-64 and AArch64) and the device tree initrd.
+
+The decoders are the freestanding part of libcompression
+(`userland/lib/compression`, on the kernel's unit path; no heap, no
+strings, the caller's 40 KiB workspace): `Compression.XzDecoder` (stream
+header and footer, index, block headers, each block's CRC-32 or CRC-64;
+LZMA2 as the only filter, no BCJ, no SHA-256), `Compression.Lzma2Decoder`
+(chunks: stored, LZMA with state, property and dictionary resets),
+`Compression.LzmaDecoder` and `Compression.RangeDecoder` (the LZMA
+decoder over a flat output that is its own dictionary, every distance
+and length checked), `Compression.GzipDecoder` and
+`Compression.BufferInflate` (deflate into a flat buffer, sharing the
+streaming decoder's Huffman tables, `Compression.HuffmanDecoding`), and
+`Compression.CyclicRedundancy` (CRC-32, also behind
+`Compression.Checksums`, and CRC-64). On the host they decode the 64 MiB
+xz image in about 0.4 s (`-Cr`), xz's own tool in 0.17 s.
+`make decompression-test` (in `make test`) checks them over fixtures
+Python's lzma and gzip write at build time
+(`tools/DecompressionTest/make-fixtures.py`): random, disk-like, text,
+tiny and empty data, several blocks with and without sizes in their
+headers, stream padding, truncated streams, damaged checks and data,
+junk after a gzip member, a BCJ filter, an SHA-256 check and a zstd
+frame.
+
 `scripts/netboot-serve.py` (`make pi-netboot-serve`) serves a build:
 `EFI/` and `FreePascalOS/` from the ESP directory (names matched without
-regard to case, as on FAT), `FreePascalOS/system.img` from the system
-disk image and `FreePascalOS/options.txt` from `NETBOOT_OPTIONS=file`
+regard to case, as on FAT), `FreePascalOS/system.img` from the
+compressed system disk image and `FreePascalOS/options.txt` from `NETBOOT_OPTIONS=file`
 (else the ESP's, if any). It reads each file at each request, so it
 never needs restarting; HTTP/1.0 with Content-Length on port 8000 (no
 root), and with `TFTP=1` a built-in TFTP server (`blksize`, `tsize`,
@@ -7599,7 +7651,7 @@ boot"), so a rebuild is all an iteration takes.
    `netboot=` line the card should have. Let TCP port 8000 in through the
    PC's firewall (`sudo ufw allow 8000/tcp`, or `sudo firewall-cmd
    --add-port=8000/tcp`), and UDP 5140 for the log (step 6). Leave it
-   running; in another terminal, `make ARCH=arm64 esp system-disk` after
+   running; in another terminal, `make ARCH=arm64 esp served-system-image` after
    each change, then reset the Pi. Options for the Pi's kernel go in a
    file on the PC, `make pi-netboot-serve NETBOOT_OPTIONS=pi-options.txt`
    (read at each boot; if the server has an options file it replaces
@@ -7607,7 +7659,8 @@ boot"), so a rebuild is all an iteration takes.
    the network's DHCP server; nothing needs changing there. The loader
    prints its steps on the HDMI screen and the serial console: `Network:
    address ...`, `Loading http://.../FreePascalOS/kernel.elf`, `Loading
-   .../system.img` with a dot per 8 MiB, `RAM disk: 65536 KiB at ...`.
+   .../system.img` with a dot per 8 MiB, `RAM disk: 4773 KiB at ...` (the
+   compressed image; the kernel unpacks it).
    TFTP works too (`TFTP=1`, root for port 69, `netboot=tftp://PC/`, the
    PC on the Pi's own network), and so does a PXE or HTTP boot by the
    firmware itself, the card then holding only the firmware (the DHCP
@@ -7633,8 +7686,9 @@ boot"), so a rebuild is all an iteration takes.
    the firmware's `config.txt` comes with, otherwise the mini UART - and
    the kernel drives either.
 5. **What to look for** in the log:
-   - the loader's network lines (step 2), then `[ramdisk] ramdisk0: 65536
-     KiB image from the loader ...`, `[fs] ramdisk0p1: ext4 "FPOSROOT"`
+   - the loader's network lines (step 2), then `[ramdisk] xz image:
+     compressed 4.7 MiB -> 64.0 MiB in ... ms`, `[ramdisk] ramdisk0: 65536
+     KiB image at physical ...`, `[fs] ramdisk0p1: ext4 "FPOSROOT"`
      and `[init] System volume: /ramdisk0p1`;
    - `[acpi] N platform devices`, and `devices` in the debug shell: the
      `BRCME88C`, `BCM2849`, `PNP0D10` and `BCM6E4E` devices with their
@@ -7789,7 +7843,9 @@ The other settings:
 
 The rest of `config.txt`: `arm_64bit=1`, `kernel=fpos.img`, `initramfs
 system.img followkernel` (the RAM disk right after the kernel, its place
-in `/chosen` as `linux,initrd-start`/`-end`), `os_check=0` (otherwise
+in `/chosen` as `linux,initrd-start`/`-end`; `system.img` is the
+xz-compressed system image, which the firmware passes on as it is and
+the kernel unpacks, see "A compressed RAM disk"), `os_check=0` (otherwise
 the Pi 5 firmware checks for a device tree compatible with the kernel
 before booting, meant for Raspberry Pi OS kernels), and
 `enable_rp1_uart=1`. That last one sets up RP1's UART0 at 115200 on GPIO
@@ -7812,7 +7868,8 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    ```
    It builds `build/arm64/native/fpos.img`, the native kernel (`make
    ARCH=arm64 native`, see "Native boot (device tree)"), and the system
-   image. The image
+   image, compressed (`system-disk.img.xz`, copied as `system.img`). The
+   image
    (`scripts/make-pi5-sd-image.py`, Python and mtools, no root) is
    257 MiB: an MBR with one bootable FAT32 partition (type 0Ch, 256 MiB)
    holding `config.txt`, `cmdline.txt`, the two device trees,
@@ -7840,7 +7897,9 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    BOOT_ORDER=0xf12            network, then SD, then start again
    TFTP_IP=<SERVER>            the TFTP server, whatever DHCP says
    DHCP_TIMEOUT=15000          15 s without an address: on to the card
-   TFTP_FILE_TIMEOUT=60000     room for the 64 MiB system image
+   TFTP_FILE_TIMEOUT=60000     the longest one file may take (the
+                               compressed system image, 4.9 MB, takes
+                               about 21 s at the bootloader's 230 KB/s)
    NET_INSTALL_AT_POWER_ON=0   no network install screen at power on
    ```
    (`make-pi5-eeprom-image.py --client-ip A.B.C.D --subnet MASK` sets a
@@ -7861,7 +7920,9 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    make pi5-netboot-serve
    ```
    This writes `build/arm64/pi5-boot/` (the card's files; `fpos.img`
-   and `system.img` as links into the build) and serves it with
+   and `system.img` as links into the build, `system.img` to the
+   compressed `system-disk.img.xz`; `SYSTEM_IMAGE_COMPRESSION=none` links
+   the plain image, which takes too long over TFTP) and serves it with
    `scripts/netboot-serve.py --pi5`: TFTP on UDP port 69 (the Pi's
    bootloader has no other port) and HTTP on 8000, for checking with
    curl. It prints the files, their sizes, `cmdline.txt` and the PC's

@@ -54,6 +54,9 @@
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
+#   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
+#   make served-system-image  The system image compressed for network boot
+#                   (SYSTEM_IMAGE_COMPRESSION=xz, gzip or none)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick

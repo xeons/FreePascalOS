@@ -774,8 +774,10 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] Network boot on the Pi: check the firmware's HTTP and PXE
         clients on GENET; the firmware's own PXE/HTTP boot of the loader
         is untested (QEMU's edk2 offers no network boot option)
-  - [ ] Network boot: a compressed system image (64 MiB now, about 4 s
-        over HTTP in QEMU), and HTTPS (the firmware has TLS)
+  - [x] Network boot: a compressed system image (xz, 4.9 MB for the
+        64 MiB image; the kernel unpacks xz and gzip,
+        `Drivers.RamDiskDecompression`, `make decompression-test`)
+  - [ ] Network boot over HTTPS (the firmware has TLS)
 - [x] The ext4 write test leaves a damaged orphan list on AArch64 (e2fsck:
       "Inodes that were part of a corrupted orphan linked list found"):
       deletion times came from a wall clock starting at zero (no RTC),
@@ -801,8 +803,17 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] HTTP boot instead of TFTP (no root on the PC): boot.img/boot.sig
         signed with a key of our own written into the EEPROM (pubkey.bin:
         the RSA-2048 modulus and exponent, little endian)
-  - [ ] A compressed system image or kernel (the firmware unpacks a gzip
-        kernel; the RAM disk is passed on as it is)
+  - [x] A compressed system image: system.img is
+        build/arm64/system-disk.img.xz (4.9 MB, about 21 s at the
+        firmware's 230 KB/s TFTP, where the plain 64 MiB image was cut
+        off at 14 MB by TFTP_FILE_TIMEOUT); the kernel unpacks it
+        (`SYSTEM_IMAGE_COMPRESSION=gzip|none` for the others)
+  - [ ] A compressed kernel (the firmware unpacks a gzip kernel=); fpos.img
+        is under 1 MiB, so not needed yet
+  - [ ] Smaller system image content: the 24 MiB that is not free space
+        is the files themselves (libsystem.so 4.3 MiB, the icon theme
+        4.5 MiB of .ico, unstripped programs); ext4 leaves its free
+        blocks zero, so they cost nothing compressed
   - [x] Native boot image and device tree foundation: `make ARCH=arm64
         native` (build/arm64/native/fpos.img: Linux arm64 Image header, a
         self-relocating stub carrying kernel.elf, boot information 6 with
