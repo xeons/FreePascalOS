@@ -235,7 +235,7 @@ const
     (Command: 'ls -S -r big lines.txt newfile'; ExpectedOutput: 'newfile'#10'lines.txt'#10'big'#10; ExpectedStatus: 0),
     (Command: 'ls -l lines.txt | cut -d " " -f 1,5'; ExpectedOutput: '-rw-r--r-- 24'#10; ExpectedStatus: 0),
     (Command: 'ls -R tree | head -n 4'; ExpectedOutput: 'tree:'#10'a'#10#10'tree/a:'#10; ExpectedStatus: 0),
-    (Command: 'cd /; ls | head -n 3'; ExpectedOutput: 'bin'#10'dev'#10'etc'#10; ExpectedStatus: 0),
+    (Command: 'cd /; ls | head -n 3'; ExpectedOutput: 'app'#10'bin'#10'dev'#10; ExpectedStatus: 0),
     (Command: 'df | head -n 1 | cut -c 1-10'; ExpectedOutput: 'Filesystem'#10; ExpectedStatus: 0),
     (Command: 'ls /volumes > /dev/null && echo volumes-listed'; ExpectedOutput: 'volumes-listed'#10; ExpectedStatus: 0),
     (Command: 'sync && echo synced'; ExpectedOutput: 'synced'#10; ExpectedStatus: 0),
