@@ -1,0 +1,21 @@
+# The SSH server's configuration (see sshd in docs/Architecture.md).
+# Keywords as OpenSSH's; a change takes effect when the service starts
+# again: service restart sshd
+
+Port 22
+
+# Logging in: with a key listed in ~/.ssh/authorized_keys, and with the
+# account's password.
+PubkeyAuthentication yes
+PasswordAuthentication yes
+PermitRootLogin yes
+
+# Made on the first start when missing (mode 0600).
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+
+Subsystem sftp /bin/sftp-server
+
+# Seconds a client has to log in, and channels per connection.
+LoginGraceTime 120
+MaxSessions 8

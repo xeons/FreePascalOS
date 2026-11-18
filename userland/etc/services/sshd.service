@@ -1,0 +1,14 @@
+# The SSH server: logins, commands and file copies (scp, sftp) from
+# other machines over port 22, as /etc/ssh/sshd_config says. Makes the
+# host keys in /etc/ssh on its first start. Each connection is a
+# process of its own in this service's session, so stopping the
+# service ends them too.
+description   = SSH server
+program       = /bin/sshd
+modes         = text graphical
+ready         = notify
+ready-timeout = 60
+restart       = on-failure
+restart-limit = 3
+restart-delay = 2
+stop-timeout  = 5

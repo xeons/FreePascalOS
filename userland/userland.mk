@@ -28,6 +28,7 @@
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
+#                  libsystem <- libcryptography <- libssh (SSH server; sshd)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -89,6 +90,7 @@ CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
+SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -102,6 +104,7 @@ CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
+SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -145,7 +148,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -244,6 +247,16 @@ $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 		-Fuuserland/lib/tls -FU$(TLS_LIBRARY_OBJECTS) userland/lib/tls/Tls.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
 		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
+
+# libssh: the SSH protocol, the server's side (transport, key exchange,
+# host keys, user authentication, channels).
+$(SSH_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/ssh/*.pas)
+	@rm -rf $(SSH_LIBRARY_OBJECTS)
+	@mkdir -p $(SSH_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/ssh -FU$(SSH_LIBRARY_OBJECTS) userland/lib/ssh/Ssh.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libssh.so -o $@ \
+		$(SSH_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
@@ -349,6 +362,11 @@ TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
 $(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
 $(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
 $(TLS_PROGRAMS): $(TLS_LIBRARY)
+# The SSH server and its SFTP subsystem speak SSH through libssh.
+SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server)
+$(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
+$(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
+$(SSH_PROGRAMS): $(SSH_LIBRARY)
 # gzip compresses through libcompression.
 COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
