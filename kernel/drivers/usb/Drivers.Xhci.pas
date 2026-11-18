@@ -1450,7 +1450,10 @@ begin
   else
   begin
     DebugWrite(@Controller^.Platform^.Path[0]);
-    DebugWrite(' (ACPI ');
+    if Controller^.Platform^.DeviceTreeNode = NoDeviceTreeNode then
+      DebugWrite(' (ACPI ')
+    else
+      DebugWrite(' (DT ');
     DebugWrite(@Controller^.Platform^.HardwareId[0]);
     DebugWrite(')');
   end;
