@@ -48,6 +48,13 @@ type
     DataSize: QWord; WatchdogData: PWideChar): TEfiStatus;
   TEfiLocateProtocol = function(Protocol: PEfiGuid; Registration: Pointer;
     ProtocolInterface: Pointer): TEfiStatus;
+  TEfiLocateHandleBuffer = function(SearchType: LongWord; Protocol: PEfiGuid;
+    SearchKey: Pointer; HandleCount: PQWord; Buffer: Pointer): TEfiStatus;
+  TEfiConnectController = function(ControllerHandle: TEfiHandle; DriverImageHandle: PEfiHandle;
+    RemainingDevicePath: Pointer; Recursive: Byte): TEfiStatus;
+  TEfiCreateEvent = function(EventType: LongWord; NotifyPriority: QWord; NotifyFunction: Pointer;
+    NotifyContext: Pointer; Event: Pointer): TEfiStatus;
+  TEfiEventFunction = function(Event: TEfiEvent): TEfiStatus;
 
   TEfiBootServices = record
     Header: TEfiTableHeader;
@@ -64,12 +71,12 @@ type
     FreePool: TEfiFreePool;
 
     { Event and timer services }
-    CreateEvent: Pointer;
+    CreateEvent: TEfiCreateEvent;
     SetTimer: Pointer;
     WaitForEvent: Pointer;
     SignalEvent: Pointer;
-    CloseEvent: Pointer;
-    CheckEvent: Pointer;
+    CloseEvent: TEfiEventFunction;
+    CheckEvent: TEfiEventFunction;
 
     { Protocol handler services }
     InstallProtocolInterface: Pointer;
@@ -95,7 +102,7 @@ type
     SetWatchdogTimer: TEfiSetWatchdogTimer;
 
     { Driver support services }
-    ConnectController: Pointer;
+    ConnectController: TEfiConnectController;
     DisconnectController: Pointer;
 
     { Open and close protocol services }
@@ -105,7 +112,7 @@ type
 
     { Library services }
     ProtocolsPerHandle: Pointer;
-    LocateHandleBuffer: Pointer;
+    LocateHandleBuffer: TEfiLocateHandleBuffer;
     LocateProtocol: TEfiLocateProtocol;
     InstallMultipleProtocolInterfaces: Pointer;
     UninstallMultipleProtocolInterfaces: Pointer;
@@ -144,6 +151,10 @@ type
   PEfiSystemTable = ^TEfiSystemTable;
 
 const
+  { EFI_LOCATE_SEARCH_TYPE }
+  EfiLocateAllHandles = 0;
+  EfiLocateByProtocol = 2;
+
   Acpi20TableGuid: TEfiGuid = (
     Data1: $8868E871; Data2: $E4F1; Data3: $11D3;
     Data4: ($BC, $22, $00, $80, $C7, $3C, $88, $81));

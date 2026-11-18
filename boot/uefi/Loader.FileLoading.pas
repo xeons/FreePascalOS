@@ -32,13 +32,24 @@ type
   TLoadedFile = record
     Contents: Pointer;
     SizeInBytes: QWord;
+    { Zero: a temporary buffer from the firmware's pool. Otherwise
+      whole pages of this memory type, kept for the kernel. }
+    MemoryType: LongWord;
   end;
+
+const
+  TemporaryFileMemory = 0;
 
 { Reads an entire file into a temporary buffer. Path uses backslashes, for
   example '\FreePascalOS\kernel.elf'. }
 function LoadFileFromBootVolume(Path: PChar; out LoadedFile: TLoadedFile): TEfiStatus;
 
 procedure ReleaseLoadedFile(var LoadedFile: TLoadedFile);
+
+{ Gives LoadedFile room for SizeInBytes bytes: a temporary buffer, or
+  pages of MemoryType. False if there is not enough memory. }
+function AllocateLoadedFile(var LoadedFile: TLoadedFile; SizeInBytes: QWord;
+  MemoryType: LongWord): Boolean;
 
 implementation
 
@@ -96,6 +107,7 @@ var
 begin
   LoadedFile.Contents := nil;
   LoadedFile.SizeInBytes := 0;
+  LoadedFile.MemoryType := TemporaryFileMemory;
 
   if not ConvertAsciiToUtf16(Path, @WidePath[0], Length(WidePath)) then
     Exit(EfiInvalidParameter);
@@ -112,12 +124,8 @@ begin
   end;
 
   Result := QueryFileSize(FileHandle, FileSize);
-  if not EfiIsError(Result) then
-  begin
-    LoadedFile.Contents := AllocateTemporaryBuffer(FileSize);
-    if LoadedFile.Contents = nil then
-      Result := EfiOutOfResources;
-  end;
+  if (not EfiIsError(Result)) and not AllocateLoadedFile(LoadedFile, FileSize, TemporaryFileMemory) then
+    Result := EfiOutOfResources;
 
   if not EfiIsError(Result) then
   begin
@@ -136,9 +144,30 @@ begin
   Root^.Close(Root);
 end;
 
+function AllocateLoadedFile(var LoadedFile: TLoadedFile; SizeInBytes: QWord;
+  MemoryType: LongWord): Boolean;
+begin
+  LoadedFile.MemoryType := MemoryType;
+  LoadedFile.SizeInBytes := 0;
+  if MemoryType = TemporaryFileMemory then
+    LoadedFile.Contents := AllocateTemporaryBuffer(SizeInBytes)
+  else
+    LoadedFile.Contents := Pointer(AllocateLoaderPages(PagesNeededFor(SizeInBytes), MemoryType));
+  Result := LoadedFile.Contents <> nil;
+  if Result then
+    LoadedFile.SizeInBytes := SizeInBytes;
+end;
+
 procedure ReleaseLoadedFile(var LoadedFile: TLoadedFile);
 begin
-  FreeTemporaryBuffer(LoadedFile.Contents);
+  if LoadedFile.Contents <> nil then
+  begin
+    if LoadedFile.MemoryType = TemporaryFileMemory then
+      FreeTemporaryBuffer(LoadedFile.Contents)
+    else
+      FirmwareBootServices^.FreePages(TEfiPhysicalAddress(LoadedFile.Contents),
+        PagesNeededFor(LoadedFile.SizeInBytes));
+  end;
   LoadedFile.Contents := nil;
   LoadedFile.SizeInBytes := 0;
 end;

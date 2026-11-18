@@ -21,7 +21,10 @@
 
   Responsibilities, in order:
     1. Find the framebuffer and the ACPI tables.
-    2. Read the kernel executable from the boot volume and load it.
+    2. Read the options and the kernel executable from the boot volume,
+       or from a server when booting from the network
+       (Loader.NetworkBoot), and load the kernel; a network boot also
+       reads the system volume's image into memory (the RAM disk).
     3. Allocate the boot information record and the kernel boot stack.
     4. Build the initial page tables.
     5. Capture the final memory map and exit boot services.
@@ -42,6 +45,8 @@ uses
   Loader.Console,
   Loader.Memory,
   Loader.FileLoading,
+  Loader.Options,
+  Loader.NetworkBoot,
   Loader.KernelImage,
   Loader.Graphics,
   Loader.MemoryMap,
@@ -52,6 +57,10 @@ uses
 const
   KernelFilePath = '\FreePascalOS\kernel.elf';
   OptionsFilePath = '\FreePascalOS\options.txt';
+  { The same files on a network boot server, and the system volume. }
+  NetworkKernelPath = 'FreePascalOS/kernel.elf';
+  NetworkOptionsPath = 'FreePascalOS/options.txt';
+  NetworkSystemImagePath = 'FreePascalOS/system.img';
   BootStackSizeInBytes = 64 * 1024;
   FailureDisplayMicroseconds = 10 * 1000 * 1000;
 
@@ -86,39 +95,94 @@ begin
   Result := (Coverage + OneGibibyte - 1) and not (OneGibibyte - 1);
 end;
 
-{ Copies the options file (if there is one) into the command line,
-  turning line breaks and tabs into spaces. }
-procedure LoadKernelOptions(var BootInformation: TBootInformation);
+{ Copies the options file of the boot volume (if there is one) into the
+  command line. }
+procedure LoadLocalOptions(var BootInformation: TBootInformation);
 var
   OptionsFile: TLoadedFile;
-  SourceBytes: PChar;
-  Index: QWord;
-  Length: QWord;
-  Character: Char;
 begin
   BootInformation.CommandLine[0] := #0;
   if EfiIsError(LoadFileFromBootVolume(OptionsFilePath, OptionsFile)) then
     Exit;
-
-  SourceBytes := PChar(OptionsFile.Contents);
-  Length := OptionsFile.SizeInBytes;
-  if Length > CommandLineCapacity - 1 then
-    Length := CommandLineCapacity - 1;
-
-  Index := 0;
-  while Index < Length do
-  begin
-    Character := SourceBytes[Index];
-    if (Character = #10) or (Character = #13) or (Character = #9) then
-      Character := ' ';
-    BootInformation.CommandLine[Index] := Character;
-    Inc(Index);
-  end;
-  BootInformation.CommandLine[Length] := #0;
+  SetCommandLineFromFile(BootInformation, OptionsFile);
   ReleaseLoadedFile(OptionsFile);
+end;
 
-  PrintText('Kernel options: ');
-  PrintLine(@BootInformation.CommandLine[0]);
+{ Starts a network boot if one is wanted: the server's options file
+  (if it has one) replaces the boot volume's. False if the boot files
+  come from the boot volume. }
+function StartBootFromNetwork(var BootInformation: TBootInformation): Boolean;
+var
+  Status: TEfiStatus;
+  OptionsFile: TLoadedFile;
+begin
+  Result := False;
+  if not DetectNetworkBoot(@BootInformation.CommandLine[0]) then
+    Exit;
+  Status := StartNetworkBoot;
+  if EfiIsError(Status) then
+  begin
+    PrintErrorAndStatus('no network for the network boot, using the boot volume', Status);
+    Exit;
+  end;
+
+  Status := FetchNetworkBootFile(NetworkOptionsPath, TemporaryFileMemory, OptionsFile);
+  if not EfiIsError(Status) then
+  begin
+    SetCommandLineFromFile(BootInformation, OptionsFile);
+    ReleaseLoadedFile(OptionsFile);
+  end
+  else if Status <> EfiNotFound then
+    PrintErrorAndStatus('could not read the server''s options.txt', Status);
+  PutNetworkBootFirst(BootInformation, NetworkBootBaseUrl);
+  Result := True;
+end;
+
+function LoadKernelFile(BootingFromNetwork: Boolean; out KernelFile: TLoadedFile): TEfiStatus;
+begin
+  if BootingFromNetwork then
+  begin
+    PrintText('Loading ');
+    PrintText(NetworkBootBaseUrl);
+    PrintLine(NetworkKernelPath);
+    Result := FetchNetworkBootFile(NetworkKernelPath, TemporaryFileMemory, KernelFile);
+    if not EfiIsError(Result) then
+      Exit;
+    PrintErrorAndStatus('could not read the kernel from the server, trying the boot volume', Result);
+  end;
+  PrintText('Loading ');
+  PrintLine(KernelFilePath);
+  Result := LoadFileFromBootVolume(KernelFilePath, KernelFile);
+end;
+
+{ A network boot's system volume: the server's system image, kept in
+  memory as the RAM disk. Without one the kernel uses its disks. }
+procedure LoadSystemImage(var BootInformation: TBootInformation);
+var
+  ImageFile: TLoadedFile;
+  Status: TEfiStatus;
+begin
+  PrintText('Loading ');
+  PrintText(NetworkBootBaseUrl);
+  PrintLine(NetworkSystemImagePath);
+  Status := FetchNetworkBootFile(NetworkSystemImagePath, LoaderMemoryTypeRamDisk, ImageFile);
+  if Status = EfiNotFound then
+  begin
+    PrintLine('No system image on the server: the system volume comes from the disks');
+    Exit;
+  end;
+  if EfiIsError(Status) then
+  begin
+    PrintErrorAndStatus('could not read the system image', Status);
+    Exit;
+  end;
+  BootInformation.RamDiskPhysicalBase := QWord(ImageFile.Contents);
+  BootInformation.RamDiskSizeInBytes := ImageFile.SizeInBytes;
+  PrintText('RAM disk: ');
+  PrintDecimal(ImageFile.SizeInBytes div 1024);
+  PrintText(' KiB at physical ');
+  PrintHexadecimal(BootInformation.RamDiskPhysicalBase);
+  PrintLine('');
 end;
 
 procedure PrintBanner;
@@ -136,6 +200,7 @@ var
   BootInformation: PBootInformation;
   KernelFile: TLoadedFile;
   KernelImage: TLoadedKernelImage;
+  BootingFromNetwork: Boolean;
   BootStackPhysicalBase: QWord;
   PhysicalCoverage: QWord;
   PageTableRoot: QWord;
@@ -173,11 +238,15 @@ begin
 
   BootInformation^.AcpiRootPointer := FindAcpiRootPointer;
   BootInformation^.FirmwareTime := ReadFirmwareTime;
-  LoadKernelOptions(BootInformation^);
+  LoadLocalOptions(BootInformation^);
+  BootingFromNetwork := StartBootFromNetwork(BootInformation^);
+  if BootInformation^.CommandLine[0] <> #0 then
+  begin
+    PrintText('Kernel options: ');
+    PrintLine(@BootInformation^.CommandLine[0]);
+  end;
 
-  PrintText('Loading ');
-  PrintLine(KernelFilePath);
-  Result := LoadFileFromBootVolume(KernelFilePath, KernelFile);
+  Result := LoadKernelFile(BootingFromNetwork, KernelFile);
   if EfiIsError(Result) then
   begin
     PrintErrorAndStatus('could not read the kernel file', Result);
@@ -203,6 +272,9 @@ begin
   BootInformation^.KernelImage.PhysicalBase := KernelImage.PhysicalBase;
   BootInformation^.KernelImage.VirtualBase := KernelImage.VirtualBase;
   BootInformation^.KernelImage.SizeInBytes := KernelImage.SizeInBytes;
+
+  if BootingFromNetwork then
+    LoadSystemImage(BootInformation^);
 
   BootStackPhysicalBase := AllocateLoaderPages(PagesNeededFor(BootStackSizeInBytes),
     LoaderMemoryTypeBootData);

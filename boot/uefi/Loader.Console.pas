@@ -139,6 +139,15 @@ begin
     EfiBufferTooSmall: PrintText('buffer too small');
     EfiOutOfResources: PrintText('out of resources');
     EfiNotFound: PrintText('not found');
+    EfiDeviceError: PrintText('device error');
+    EfiNoResponse: PrintText('no response');
+    EfiNoMapping: PrintText('no IP address');
+    EfiTimeout: PrintText('timed out');
+    EfiAccessDenied: PrintText('access denied');
+    EfiAborted: PrintText('aborted');
+    EfiIcmpError: PrintText('ICMP error: host unreachable');
+    EfiTftpError: PrintText('TFTP error');
+    EfiHttpError: PrintText('HTTP error');
   else
     PrintHexadecimal(Status);
   end;
