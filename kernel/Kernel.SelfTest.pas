@@ -44,6 +44,7 @@ uses
   Memory.Layout,
   Memory.PhysicalPages,
   Memory.KernelHeap,
+  Kernel.PriorityLevel,
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Events,
@@ -446,25 +447,48 @@ end;
 
 { --- Processor affinity ------------------------------------------------ }
 
+const
+  { A sighting packs the pin generation above the processor index. }
+  SightingGenerationShift = 16;
+  SightingProcessorMask = (PtrUInt(1) shl SightingGenerationShift) - 1;
+  PinnedMoveTimeoutMilliseconds = 5000;
+
 var
   PinnedWanted: Int64;
+  PinnedGeneration: Int64;
+  PinnedSighting: PtrUInt;
   PinnedMisplaced: Int64;
   PinnedChecks: Int64;
   PinnedStop: Int64;
   PinnedFinished: TEvent;
 
 { Keeps checking that it runs where it is pinned (PinnedWanted, -1 while
-  the pin changes), giving the scheduler chances to move it. }
+  the pin changes), giving the scheduler chances to move it, and reports
+  where it was last seen (PinnedSighting) with the pin generation it saw
+  then.
+
+  The pin and the processor are read with thread switches held off: a
+  thread that read the old pin and was then moved by the new one must
+  not compare the two, since the move was right. }
 procedure PinnedThreadMain(Context: Pointer);
 var
+  PreviousLevel: TPriorityLevel;
+  Generation: Int64;
   Wanted: Int64;
+  Processor: LongWord;
 begin
   while PinnedStop = 0 do
   begin
+    PreviousLevel := RaisePriorityLevel(DispatchLevel);
+    Generation := PinnedGeneration;
     Wanted := PinnedWanted;
+    Processor := CurrentProcessorIndex;
+    LowerPriorityLevel(PreviousLevel);
+
+    AtomicStore(PinnedSighting, (PtrUInt(Generation) shl SightingGenerationShift) or PtrUInt(Processor));
     if Wanted >= 0 then
     begin
-      if Int64(CurrentProcessorIndex) <> Wanted then
+      if Int64(Processor) <> Wanted then
         AtomicIncrement(PinnedMisplaced);
       AtomicIncrement(PinnedChecks);
     end;
@@ -474,6 +498,31 @@ begin
   SignalEvent(PinnedFinished);
 end;
 
+{ Pins the thread to Processor and waits until it has been seen there
+  under the new pin; from then on it may run nowhere else. The move is
+  asynchronous (the thread's processor gives it away at its next
+  dispatch), so the wait has no fixed length. }
+function PinThreadAndWaitForMove(Thread: PThread; Processor: LongWord): Boolean;
+var
+  Generation: Int64;
+  Expected: PtrUInt;
+  Deadline: QWord;
+begin
+  PinnedWanted := -1;
+  SetThreadAffinity(@Thread^.ControlBlock, QWord(1) shl Processor);
+  Generation := AtomicIncrement(PinnedGeneration);
+  Expected := (PtrUInt(Generation) shl SightingGenerationShift) or PtrUInt(Processor);
+  Deadline := DeadlineAfterMilliseconds(PinnedMoveTimeoutMilliseconds);
+  while AtomicLoad(PinnedSighting) <> Expected do
+  begin
+    if ClockNanoseconds >= Deadline then
+      Exit(False);
+    SleepMilliseconds(1);
+  end;
+  PinnedWanted := Processor;
+  Result := True;
+end;
+
 { Pins a busy thread to the last processor, then moves it to the first
   while it runs; it must never be seen anywhere else. }
 procedure TestAffinity;
@@ -481,15 +530,15 @@ const
   CheckMilliseconds = 100;
 var
   Thread: PThread;
-  Last: LongWord;
 begin
   if OnlineProcessorCount < 2 then
   begin
     ReportPassed('processor affinity (one processor: nothing to check)');
     Exit;
   end;
-  Last := ProcessorTotal - 1;
   PinnedWanted := -1;
+  PinnedGeneration := 0;
+  PinnedSighting := SightingProcessorMask;
   PinnedMisplaced := 0;
   PinnedChecks := 0;
   PinnedStop := 0;
@@ -497,16 +546,11 @@ begin
   Thread := CreateSystemThread(@PinnedThreadMain, nil, DefaultThreadPriority, 'Pinned', True);
   Check(Thread <> nil, 'could not create the pinned thread');
 
-  SetThreadAffinity(@Thread^.ControlBlock, QWord(1) shl Last);
-  { The move happens at its processor's next dispatch. }
-  SleepMilliseconds(20);
-  PinnedWanted := Last;
+  Check(PinThreadAndWaitForMove(Thread, ProcessorTotal - 1),
+    'a pinned thread did not move to the last processor');
   SleepMilliseconds(CheckMilliseconds);
-
-  PinnedWanted := -1;
-  SetThreadAffinity(@Thread^.ControlBlock, 1);
-  SleepMilliseconds(20);
-  PinnedWanted := 0;
+  Check(PinThreadAndWaitForMove(Thread, 0),
+    'a pinned thread did not move to the first processor');
   SleepMilliseconds(CheckMilliseconds);
 
   PinnedStop := 1;
