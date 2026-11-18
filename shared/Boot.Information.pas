@@ -37,7 +37,7 @@ interface
 const
   { 'FPOSBOOT' in little endian ASCII. }
   BootInformationSignature = QWord($544F4F42534F5046);
-  BootInformationVersion = 5;
+  BootInformationVersion = 6;
 
   MaximumMemoryRegions = 512;
 
@@ -61,8 +61,10 @@ const
 
   { The display's EDID (its base block): what the firmware read. }
   EdidBlockSize = 128;
-  { Room for the kernel command line, including the terminating zero. }
-  CommandLineCapacity = 256;
+  { Room for the kernel command line, including the terminating zero
+    (a Raspberry Pi's firmware puts a few hundred characters of its own
+    before the options of cmdline.txt). }
+  CommandLineCapacity = 1024;
 
 type
   TMemoryRegion = record
@@ -115,7 +117,8 @@ type
     AcpiRootPointer: QWord;
 
     { Options for the kernel, read by the loader from the optional file
-      \FreePascalOS\options.txt. Words are separated by spaces. }
+      \FreePascalOS\options.txt (a native boot: the device tree's
+      /chosen bootargs). Words are separated by spaces. }
     CommandLine: array[0..CommandLineCapacity - 1] of Char;
 
     { The time of day the firmware told the loader (its GetTime runtime
@@ -129,6 +132,13 @@ type
       MemoryRegionRamDisk region of the memory map. }
     RamDiskPhysicalBase: QWord;
     RamDiskSizeInBytes: QWord;
+
+    { The flattened device tree a native boot (boot/native) was given,
+      copied into boot data pages (they stay the kernel's); both zero on
+      a UEFI boot, which describes the machine with ACPI
+      (AcpiRootPointer) instead. }
+    DeviceTreePhysicalBase: QWord;
+    DeviceTreeSizeInBytes: QWord;
 
     MemoryRegionCount: QWord;
     MemoryRegions: array[0..MaximumMemoryRegions - 1] of TMemoryRegion;
