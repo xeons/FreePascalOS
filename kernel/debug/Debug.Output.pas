@@ -19,8 +19,9 @@
 {
   Kernel debug log.
 
-  Text written here goes to the serial port and, once it is initialized,
-  to the framebuffer console. A lock taken at HighLevel keeps lines from
+  Text written here goes to the serial port, once it is initialized to
+  the framebuffer console, and to the in-memory log (Debug.LogRing) that
+  the network log sends on. A lock taken at HighLevel keeps lines from
   different processors and interrupt handlers from interleaving.
 
   Messages are built from several calls, for example:
@@ -78,7 +79,8 @@ uses
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Processors,
-  Hal.SerialPort;
+  Hal.SerialPort,
+  Debug.LogRing;
 
 var
   OutputLock: TSpinLock;
@@ -140,12 +142,14 @@ procedure DebugForceUnlockForPanic;
 begin
   LockNestingDepth := 0;
   InitializeSpinLock(OutputLock);
+  ForceUnlockLogRingForPanic;
 end;
 
 procedure WriteCharacterToAllOutputs(Character: Char);
 begin
   WriteSerialCharacter(Character);
   ConsoleWriteCharacter(Character);
+  CaptureLogCharacter(Character);
 end;
 
 procedure DebugWriteCharacter(Character: Char);

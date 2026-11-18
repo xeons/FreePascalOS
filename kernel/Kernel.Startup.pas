@@ -76,6 +76,8 @@ uses
   Objects.Manager,
   Io.Startup,
   Network.Startup,
+  Network.LogStreaming,
+  Network.FallbackAddress,
   Kernel.NetworkSelfTest,
   Io.BlockCache,
   Io.AudioOutput,
@@ -307,6 +309,9 @@ begin
   InitializeIoSystem;
   { The network adapters registered with the drivers above. }
   StartNetworking;
+  { Diagnostics over the network (netlog, netaddr, netdhcp). }
+  StartNetworkLog;
+  StartFallbackAddressing(NetworkLogIsWanted);
   InitializeDisplays(PBootInformation(Context)^.Framebuffer);
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then

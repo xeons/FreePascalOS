@@ -26,6 +26,12 @@
   The panic is split into BeginKernelPanic and FinishKernelPanic so that
   architecture specific code (for example the processor exception handler)
   can print extra details such as a register dump in between.
+
+  FinishKernelPanic then, in this order: lets the reset policy say what
+  will happen (Kernel.Watchdog: "resets in N seconds"), lets the network
+  log send what it has not sent yet (Network.LogStreaming), runs the panic
+  hook (leaving the emulator under test), and lets the reset policy reset
+  the machine after its delay; if nothing resets it, it halts.
 }
 unit Kernel.Panic;
 
@@ -65,6 +71,13 @@ type
   message has been printed (used to leave the emulator during tests). }
 procedure SetPanicHook(Hook: TPanicHook);
 
+{ The routine that sends the log on after the message (the network log).
+  It runs with interrupts disabled and the other processors stopped. }
+procedure SetPanicFlushRoutine(Routine: TPanicHook);
+{ The reset policy: Announce writes what will happen before the log is
+  sent on, Perform resets the machine (it returns only if it does not). }
+procedure SetPanicResetRoutines(Announce, Perform: TPanicHook);
+
 function PanicIsInProgress: Boolean;
 
 implementation
@@ -82,10 +95,24 @@ uses
 var
   PanicCount: Int64 = 0;
   PanicHook: TPanicHook = nil;
+  PanicFlushRoutine: TPanicHook = nil;
+  PanicResetAnnounce: TPanicHook = nil;
+  PanicResetPerform: TPanicHook = nil;
 
 procedure SetPanicHook(Hook: TPanicHook);
 begin
   PanicHook := Hook;
+end;
+
+procedure SetPanicFlushRoutine(Routine: TPanicHook);
+begin
+  PanicFlushRoutine := Routine;
+end;
+
+procedure SetPanicResetRoutines(Announce, Perform: TPanicHook);
+begin
+  PanicResetAnnounce := Announce;
+  PanicResetPerform := Perform;
 end;
 
 function PanicIsInProgress: Boolean;
@@ -140,8 +167,14 @@ procedure FinishKernelPanic; noreturn;
 begin
   DebugWriteLine('');
   DebugWriteLine('System halted.');
+  if Assigned(PanicResetAnnounce) then
+    PanicResetAnnounce;
+  if Assigned(PanicFlushRoutine) then
+    PanicFlushRoutine;
   if Assigned(PanicHook) then
     PanicHook;
+  if Assigned(PanicResetPerform) then
+    PanicResetPerform;
   HaltForever;
 end;
 
