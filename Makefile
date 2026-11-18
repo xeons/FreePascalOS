@@ -62,6 +62,9 @@
 #   make run ARCH=arm64  Boot it in QEMU's virt machine (GICv2, Cortex-A72)
 #   make arm64-test Tests of the AArch64 build: boot, coretest, the session
 #                   (not in make test)
+#   make pi-netboot-serve  Serve the AArch64 build to a network booted Pi 4
+#   make pi-sd-image       An SD card image for the Pi 4 (flashed once)
+#   make arm64-netboot-test  Network boot of the AArch64 build in QEMU
 
 ARCH ?= amd64
 
@@ -318,6 +321,34 @@ arm64-test:
 	scripts/test-qemu-arm64.sh build/arm64/esp build/arm64/test-disk-sdsc.img
 	scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img
 	scripts/test-arm64-session.py build/arm64/esp build/arm64/system-disk.img
+
+# Network boot of the AArch64 build (docs/Architecture.md, "Trying it on
+# a Raspberry Pi 4"). pi-netboot-serve builds, then serves the boot files
+# and the system image over HTTP (TFTP=1: TFTP too, port 69 needs root;
+# NETBOOT_PORT, NETBOOT_OPTIONS=file for the served options.txt).
+# arm64-netboot-test boots QEMU from the network, over HTTP and TFTP.
+# pi-sd-image writes build/arm64/pi-sd.img(.xz) to flash once: the Pi 4
+# UEFI firmware (PI_FIRMWARE=zip, default the newest
+# ~/Downloads/RPi4_UEFI_Firmware_v*.zip), the loader and an options.txt
+# with netboot= and netlog= for SERVER (default this machine);
+# PI_IMAGE=standalone adds the system volume instead of netboot=.
+.PHONY: pi-netboot-serve arm64-netboot-test pi-sd-image
+pi-netboot-serve:
+	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk
+	scripts/netboot-serve.py --esp build/arm64/esp --system-image build/arm64/system-disk.img \
+		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT)) $(if $(NETBOOT_OPTIONS),--options-file $(NETBOOT_OPTIONS)) \
+		$(if $(TFTP),--tftp)
+
+arm64-netboot-test:
+	@$(MAKE) --no-print-directory ARCH=arm64 esp system-disk
+	scripts/test-arm64-netboot.sh build/arm64/esp build/arm64/system-disk.img
+
+pi-sd-image:
+	@$(MAKE) --no-print-directory ARCH=arm64 esp $(if $(filter standalone,$(PI_IMAGE)),system-disk)
+	scripts/make-pi-sd-image.py --esp build/arm64/esp --output build/arm64/pi-sd.img \
+		$(if $(PI_FIRMWARE),--firmware $(PI_FIRMWARE)) $(if $(SERVER),--server $(SERVER)) \
+		$(if $(NETBOOT_PORT),--port $(NETBOOT_PORT)) $(if $(NETLOG),--netlog $(NETLOG)) \
+		$(if $(filter standalone,$(PI_IMAGE)),--standalone --system-image build/arm64/system-disk.img)
 
 $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 	scripts/make-test-disk.sh $@
