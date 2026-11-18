@@ -147,7 +147,8 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \
-	hal/$(ARCH)
+	hal/$(ARCH) \
+	userland/lib/compression
 
 # -WR     emit base relocations so the firmware can load the image anywhere
 # -Xs     strip symbols
@@ -168,7 +169,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test ssh-test
+	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
 
 all: esp
 
@@ -443,7 +444,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -776,6 +777,28 @@ compression-test: $(COMPRESSION_TEST)
 	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
 		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }
 	@echo "COMPRESSION TEST PASSED: $$(tail -n 1 build/tools/compression-test.out | cut -d ' ' -f 3-)"
+
+# The whole-buffer decoders the kernel unpacks a compressed RAM disk
+# with (xz/LZMA2 and gzip, userland/lib/compression), on the host, over
+# fixtures Python's lzma and gzip make at build time.
+DECOMPRESSION_TEST := build/tools/DecompressionTest
+DECOMPRESSION_TEST_UNITS := build/tools/decompression-test-units
+DECOMPRESSION_FIXTURES := build/tools/decompression-fixtures
+DECOMPRESSION_TEST_SOURCES := tools/DecompressionTest/DecompressionTest.pas tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
+
+$(DECOMPRESSION_FIXTURES)/manifest.txt: tools/DecompressionTest/make-fixtures.py
+	python3 -I $< $(DECOMPRESSION_FIXTURES)
+
+$(DECOMPRESSION_TEST): $(DECOMPRESSION_TEST_SOURCES)
+	@mkdir -p $(DECOMPRESSION_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/DecompressionTest -Futools/CryptoTest -Fuuserland/lib/compression \
+		-FU$(DECOMPRESSION_TEST_UNITS) -o$@ tools/DecompressionTest/DecompressionTest.pas
+
+decompression-test: $(DECOMPRESSION_TEST) $(DECOMPRESSION_FIXTURES)/manifest.txt
+	@$(DECOMPRESSION_TEST) $(DECOMPRESSION_FIXTURES) > build/tools/decompression-test.out || \
+		{ grep FAIL build/tools/decompression-test.out; echo "DECOMPRESSION TEST FAILED (build/tools/decompression-test.out)"; exit 1; }
+	@echo "DECOMPRESSION TEST PASSED: $$(tail -n 1 build/tools/decompression-test.out | cut -d ' ' -f 3-)"
 
 # libtls but for its socket, file and clock units builds for the host too
 # (with a Crypto.Random of the host's), and is checked there; then its

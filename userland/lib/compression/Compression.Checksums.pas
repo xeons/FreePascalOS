@@ -21,8 +21,7 @@
 
     Adler-32 (RFC 1950), summed in runs of 5552 bytes so that the sums
     are reduced modulo 65521 only once a run
-    CRC-32 (IEEE 802.3, RFC 1952), eight bytes a step through eight
-    tables ("slicing by eight")
+    CRC-32 (IEEE 802.3, RFC 1952), from Compression.CyclicRedundancy
 
   Both take the value of a previous call and return the finished value,
   so data can be fed in pieces: start with Adler32Initial or
@@ -52,74 +51,18 @@ function Crc32OfBytes(const Data: TBytes): LongWord;
 
 implementation
 
+uses
+  Compression.CyclicRedundancy;
+
 const
   AdlerModulus = 65521;
   { The most bytes that can be summed before the second sum can
     overflow 32 bits. }
   AdlerRunLength = 5552;
-  Crc32Polynomial = LongWord($EDB88320);
-
-var
-  CrcTablesReady: Boolean = False;
-  CrcTables: array[0..7, 0..255] of LongWord;
-
-procedure PrepareCrcTables;
-var
-  Index: Integer;
-  Bit: Integer;
-  Slice: Integer;
-  Value: LongWord;
-begin
-  for Index := 0 to 255 do
-  begin
-    Value := Index;
-    for Bit := 1 to 8 do
-      if (Value and 1) <> 0 then
-        Value := (Value shr 1) xor Crc32Polynomial
-      else
-        Value := Value shr 1;
-    CrcTables[0, Index] := Value;
-  end;
-  for Slice := 1 to 7 do
-    for Index := 0 to 255 do
-    begin
-      Value := CrcTables[Slice - 1, Index];
-      CrcTables[Slice, Index] := (Value shr 8) xor CrcTables[0, Value and $FF];
-    end;
-  CrcTablesReady := True;
-end;
 
 function Crc32(Crc: LongWord; Data: PByte; Count: SizeInt): LongWord;
-var
-  Value: LongWord;
-  LowWord: LongWord;
-  HighWord: LongWord;
 begin
-  if not CrcTablesReady then
-    PrepareCrcTables;
-  Value := not Crc;
-  while Count >= 8 do
-  begin
-    LowWord := PLongWord(Data)^ xor Value;
-    HighWord := PLongWord(Data + 4)^;
-    Value := CrcTables[7, LowWord and $FF] xor
-      CrcTables[6, (LowWord shr 8) and $FF] xor
-      CrcTables[5, (LowWord shr 16) and $FF] xor
-      CrcTables[4, LowWord shr 24] xor
-      CrcTables[3, HighWord and $FF] xor
-      CrcTables[2, (HighWord shr 8) and $FF] xor
-      CrcTables[1, (HighWord shr 16) and $FF] xor
-      CrcTables[0, HighWord shr 24];
-    Inc(Data, 8);
-    Dec(Count, 8);
-  end;
-  while Count > 0 do
-  begin
-    Value := CrcTables[0, (Value xor Data^) and $FF] xor (Value shr 8);
-    Inc(Data);
-    Dec(Count);
-  end;
-  Result := not Value;
+  Result := Compression.CyclicRedundancy.Crc32(Crc, Data, Count);
 end;
 
 function Adler32(Adler: LongWord; Data: PByte; Count: SizeInt): LongWord;
