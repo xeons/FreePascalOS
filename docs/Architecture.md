@@ -4373,6 +4373,153 @@ authority and an expired certificate each refused (and accepted with
 --no-check-certificate). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
+### The SSH server
+
+`sshd` lets another machine log in, run commands and copy files with a
+stock OpenSSH client (`ssh`, `scp`, `sftp` of OpenSSH 9 and later); the
+use in mind is a Raspberry Pi 4 run from a Linux PC. The protocol is in
+**libssh** (`userland/lib/ssh`, libsystem <- libcryptography <- libssh),
+the server program in `userland/sshd`, the SFTP subsystem in
+`userland/sftp-server`.
+
+**libssh** does no input or output: bytes go in, bytes and messages
+come out, so the host test drives it from memory as sshd drives it
+from a socket.
+
+| Unit | What it is |
+|---|---|
+| `Ssh.Wire` | byte, boolean, uint32, uint64, string, mpint, name-list (RFC 4251); `TSshReader` raises `ESshProtocolError` on short or bad data; byte strings are plain `string`s |
+| `Ssh.PacketCiphers`, `Ssh.ChaChaPolyCipher`, `Ssh.AesGcmCipher`, `Ssh.CipherSuites` | what protects a direction: plain, `chacha20-poly1305@openssh.com` (two ChaCha20 keys, the length encrypted apart, Poly1305 over both; the original 64-bit nonce ChaCha20 is the IETF one with nonce 00000000 \|\| sequence number), `aes256-gcm@openssh.com` and `aes128-gcm@openssh.com` (RFC 5647: the length as additional data, the invocation counter in the nonce) |
+| `Ssh.PacketLayer` | the binary packet protocol (RFC 4253 section 6): random padding of 4 or more bytes to whole blocks (the length left out for the authenticated ciphers), 32-bit sequence numbers, packets up to 256 KiB, counts for rekeying |
+| `Ssh.Algorithms` | KEXINIT made and read; the client's first choice the server has |
+| `Ssh.KeyExchange` | curve25519-sha256 (RFC 8731): X25519, the exchange hash H, the keys derived from K and H (RFC 4253 section 7.2) |
+| `Ssh.HostKeys`, `Ssh.KeyFiles` | host keys `ssh-ed25519` and `ecdsa-sha2-nistp256`: blobs, signatures, new keys; OpenSSH's unencrypted private key format (`openssh-key-v1`) |
+| `Ssh.PublicKeys` | client keys (`ssh-ed25519`, `ecdsa-sha2-nistp256`, `ssh-rsa`) and their signatures (`rsa-sha2-256`/`512`, not SHA-1 `ssh-rsa`), authorized_keys lines, SHA256 fingerprints |
+| `Ssh.ServerTransport` | the server's transport: version lines, the first key exchange and every rekeying, NEWKEYS, the transport's own messages, messages held back during an exchange |
+| `Ssh.UserAuthentication` | RFC 4252: `none` (the list), `publickey` (PK_OK for a query, the signature over the session id and the request), `password`; who may log in is a `TSshAccountPolicy`'s to say; ten failures end the connection |
+| `Ssh.Connection` | RFC 4254: channels, windows and the largest packet each way, requests with replies, global requests refused; programs derive their channels from `TSshChannel` |
+
+The server offers `curve25519-sha256` and `curve25519-sha256@libssh.org`,
+the host key algorithms it has keys for, the three ciphers and no
+compression. Every cipher is authenticated encryption, so no MAC is
+chosen (as OpenSSH does for them); `hmac-sha2-256` is listed only so the
+MAC lists are not empty. Two OpenSSH extensions matter to its clients:
+
+- **ext-info** (RFC 8308): with `ext-info-c` in the client's first
+  KEXINIT, SSH_MSG_EXT_INFO follows the server's first NEWKEYS with
+  `server-sig-algs` = `ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256`,
+  without which clients would sign with SHA-1 RSA. `publickey-hostbound`
+  is not offered, so clients use plain `publickey`.
+- **strict key exchange** (`kex-strict-s-v00@openssh.com`, always
+  offered; on when the client offers `kex-strict-c-v00@openssh.com`):
+  during the first exchange only its own messages may come and the
+  client's KEXINIT must be its first packet, and the sequence numbers
+  start again at 0 after every NEWKEYS, sent and received. That closes
+  the Terrapin attack (a man in the middle removing packets during the
+  unprotected handshake by shifting sequence numbers).
+
+The server starts a new key exchange after 1 GiB or 2^28 packets in
+either direction and takes the client's whenever it comes; messages the
+layers above send meanwhile wait until its NEWKEYS is out.
+
+**sshd** runs as the `sshd` service (`/etc/services/sshd.service`, text
+and graphical modes, `ready = notify`; `service stop|start|restart
+sshd`). The listening process (`Sshd.Listener`) reads
+`/etc/ssh/sshd_config` (`Sshd.Configuration`), makes missing host keys
+(`Sshd.HostKeyStore`: the kind from the file's name, written with mode
+0600 set before the key goes in, `PATH.pub` next to it; `/etc/ssh` by
+default), listens on IPv4 and, when it can, IPv6, and starts itself
+again as `sshd --connection -f CONFIG` for each connection, the socket
+as its standard input (at most 32 at once). So each connection is a
+process of its own in the service's session: one that fails takes
+nothing else with it, and stopping the service ends them all.
+
+`sshd_config` takes OpenSSH's keywords: `Port`,
+`PasswordAuthentication`, `PubkeyAuthentication`, `PermitRootLogin`,
+`HostKey` (one per key), `Subsystem sftp PROGRAM`, `LoginGraceTime`
+(seconds to log in, 120) and `MaxSessions` (channels per connection, 8).
+`sshd -t` checks it and the host keys.
+
+A connection's process (`Sshd.ConnectionLoop`) waits on the socket, the
+input writers' progress event and every session's output and program at
+once (`WaitForHandles`). Accounts (`Sshd.Accounts`): an existing user
+whose password is not locked, whose shell is not `/bin/false` (and root
+only with `PermitRootLogin yes`); a key from `~/.ssh/authorized_keys`,
+read as root - a line with options (`command=`, `from=`) is not taken,
+since they are not carried out; the account's password (`Util.Logins`),
+never an empty one, a wrong one answered after a second.
+
+Each **session channel** (`Sshd.Sessions`) runs one program as the user
+(`StartAsUserWithVariables` in `Util.Logins`, in a session of its own),
+with the login environment plus `SSH_CONNECTION`, `SSH_CLIENT`, `TERM`,
+`SSH_TTY` and the client's `LANG`/`LC_*`:
+
+- `pty-req` then `shell` or `exec`: a pseudo-terminal of the size asked
+  for, the program in a new foreground group with the terminal as its
+  controlling terminal, as a terminal window starts its shell;
+  `window-change` sets the terminal's size; `signal INT` types Ctrl-C;
+- without a terminal: three pipes, standard error sent as extended data;
+- `subsystem sftp`: the configured `sftp-server`;
+- `signal`: otherwise the program ends with 128 plus the signal number.
+
+What the client sends goes to the program through an **input writer**
+(`Sshd.InputWriters`), a thread per session: a pipe write waits until
+every byte is in, and a program writing its own output (which the
+connection has to keep reading) would otherwise stop the connection -
+scp and sftp keep many requests in flight while replies come back. The
+thread signals the connection after each write, and only then is the
+channel's window opened again, so a client never has more in flight
+than the program takes. The program's output is read only while less
+than 64 KiB waits for the client's window. When the program ends (and,
+on pipes, its output is read to the end), the channel sends EOF,
+`exit-status` and CLOSE; whatever the program left running in its
+session is ended, and on a terminal the master side is closed (hang-up).
+Closing the channel or losing the connection ends the program too. The
+log (`/var/log/sshd.log`) says who connected, logged in with what,
+which key (fingerprint), what ran and how it ended; never a password.
+
+**sftp-server** speaks SFTP version 3 (the draft OpenSSH follows) on its
+standard input and output, as the user: open, close, read, write, stat,
+lstat, fstat, setstat, fsetstat, opendir, readdir (with `ls -l` lines),
+mkdir, rmdir, remove, rename (not over an existing file), realpath,
+readlink and symlink (OpenSSH's argument order), and the extensions
+`posix-rename@openssh.com`, `expand-path@openssh.com` (scp's `~/` paths),
+`fsync@openssh.com` and `limits@openssh.com` (64 KiB reads and writes).
+Since OpenSSH 9, `scp` uses SFTP; the old scp protocol (a remote `scp`
+program) is not there.
+
+**libcryptography** gained what the host keys need: Ed25519 (RFC 8032,
+`Crypto.Ed25519`; extended coordinates, a ladder that swaps by masks,
+reduction mod L by folding bytes) on the field arithmetic now shared
+with X25519 (`Crypto.Curve25519Field`); ECDSA signing (`SignEcdsa`,
+`EcdsaPublicKey` in `Crypto.Ecdsa`) with k made by RFC 6979 from the key
+and the digest, so no random numbers are needed (the P-256 arithmetic
+takes time that depends on k); and `Crypto.KeyGeneration` for new
+Ed25519 seeds and ECDSA keys.
+
+**Tests.** The crypto host test checks Ed25519 against RFC 8032's
+vectors (and refuses changed signatures and S + L) and ECDSA signing
+against RFC 6979 A.2.5 and A.2.6. `make ssh-test` (`tools/SshTest`)
+checks libssh on the host: RFC 4251's mpint examples, base64, the
+packet layer of every cipher (sizes from 1 to 40000 bytes, a byte at a
+time, the padding rules, changed packets and bad lengths refused), a
+chacha20-poly1305 and two AES-GCM packets, the curve25519-sha256 hash
+and derived keys, host key signatures, OpenSSH key files, RSA
+signatures and authorized_keys lines against answers
+`make-vectors.py` works out with Python and OpenSSL when the test is
+built; and the server's layers against a small client in memory (the
+host key's signature over H, strict kex, EXT_INFO, passwords, publickey
+with PK_OK and the signed request, a channel with a request, data, a
+rekeying and its orderly end, a stray packet before KEXINIT refused).
+`scripts/test-ssh.py` (the last part of `make test`) boots the system
+with QEMU forwarding a free port to port 22 and uses the host's
+OpenSSH: exec with each cipher, host key and client key kind (ed25519,
+ecdsa, rsa-sha2-512), 300 KB through `cat`, `ssh -tt` (tty, `stty
+size`, the exit status), two channels over one connection
+(ControlMaster), `scp` both ways, an `sftp` batch, password logins for
+the user and root, and a wrong key, a wrong password and a locked
+account refused.
+
 ### Compression
 
 **libcompression** (`userland/lib/compression`, units `Compression.*`)
@@ -5607,6 +5754,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `session` | graphical | the session manager (needs `displayserver`) |
 | `systemsettings` | text, graphical | the system settings service: the machine's remembered settings at start, root's changes for the users who may |
 | `network` | text, graphical | the network service: the interfaces' addresses (static or DHCP), routes, DNS servers and host name, kept as Network.settings says (see "Networking") |
+| `sshd` | text, graphical | the SSH server on port 22 (see "The SSH server") |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
 `userland/etc/services`), lines of `key = value` (`Services.Definitions`):

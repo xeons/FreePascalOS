@@ -404,6 +404,28 @@ The Control Panel (Start menu, or `controlpanel [display|mouse|keyboard|
 sound|datetime|users]`) changes the machine's settings; as `user` it asks
 for root's password where it must.
 
+### Remote access
+
+The SSH server (`sshd`, the `sshd` service, on by default) listens on
+port 22, so another machine - say, a Linux PC controlling a Raspberry Pi
+4 that runs the system - logs in with OpenSSH's own tools:
+
+```
+ssh user@fpos-machine                 # a shell in a pseudo-terminal
+ssh user@fpos-machine 'ls -l /bin'    # one command
+scp notes.txt user@fpos-machine:      # copy files (SFTP underneath)
+sftp user@fpos-machine
+```
+
+Passwords work (`user`/`user`, `root`/`root` on a fresh system); for key
+logins put your public key (`~/.ssh/id_ed25519.pub`) in
+`~/.ssh/authorized_keys` on the system (`/home/user/.ssh`, root's is
+`/.ssh`). The server makes its host keys in `/etc/ssh` on its first
+start; `/etc/ssh/sshd_config` sets the port, whether passwords and root
+logins are allowed, and the host key files (`service restart sshd`
+applies a change). Under QEMU, `make run` does not forward a port; the
+SSH test does it with `hostfwd=tcp::PORT-:22`.
+
 Settings live in `/etc/settings` (the system's) and in `.settings` in each
 user's home (`/home/user/.settings`; root's home is `/`, so `/.settings`),
 one text file per group (`Notepad.settings`, `Display.settings`, ...),

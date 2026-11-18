@@ -644,6 +644,26 @@ normalized (0-65535), not pixels.
       WPA2/WPA3 (802.11 frames, the 4-way handshake, CCMP), and choosing
       a network from the desktop
 - [ ] TCP window scaling and SACK; keep-alives
+- [x] SSH server: libssh (transport with rekeying, curve25519-sha256
+      and its libssh.org name, strict key exchange, ext-info with
+      server-sig-algs; chacha20-poly1305@openssh.com, aes256-gcm and
+      aes128-gcm; ssh-ed25519 and ecdsa-sha2-nistp256 host keys made on
+      the first start, in OpenSSH's key file format; publickey with
+      ed25519, ecdsa and rsa-sha2-256/512 keys from
+      ~/.ssh/authorized_keys, and password; session channels with
+      pty-req, shell, exec, env, window-change, signal, flow control and
+      exit-status, several per connection), `sshd` (a process per
+      connection, the `sshd` service, /etc/ssh/sshd_config) and
+      `sftp-server` (SFTP 3 with posix-rename, expand-path, fsync and
+      limits); Ed25519 and deterministic ECDSA signing in
+      libcryptography; host tests (RFC 8032, RFC 6979, packets, the kex
+      hash, an in-memory client) and scripts/test-ssh.py with OpenSSH's
+      ssh, scp and sftp
+- [ ] SSH later: port forwarding (direct-tcpip, tcpip-forward), agent
+      forwarding, the authorized_keys options (command=, from=; such
+      keys are refused now), certificates, keyboard-interactive,
+      publickey-hostbound, server keep-alives, sshd_config Match blocks,
+      constant time P-256 signing, an ssh client
 
 ## ARM64 port
 
