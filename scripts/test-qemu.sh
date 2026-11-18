@@ -262,6 +262,7 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     -netdev user,id=net2 -device e1000,netdev=net2 \
     -netdev user,id=net3 -device rtl8139,netdev=net3 \
     "${sd_card_arguments[@]}" \
+    -device i6300esb \
     -serial file:"$serial_log" \
     -display none -no-reboot \
     < /dev/null > /dev/null 2>&1
@@ -423,6 +424,15 @@ case "$qemu_status" in
                 exit 1
             fi
         done
+        # The hardware watchdog (QEMU's i6300esb, after every other PCI
+        # device): found, and kept from resetting the machine by the
+        # kernel timer during the self test (a reset would have ended
+        # QEMU, which runs with -no-reboot).
+        if ! grep -q '\[watchdog\] Intel 6300ESB watchdog at' "$serial_log" ||
+           ! grep -q '\[selftest\] watchdog: passed' "$serial_log"; then
+            echo "TEST FAILED: the i6300esb watchdog was not found or its self test did not pass"
+            exit 1
+        fi
         # The network log: the replay from the first line once eth0 had
         # an address, then lines as they were written, all from one boot.
         if [[ -n "$system_disk_image" ]] &&

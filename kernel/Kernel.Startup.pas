@@ -103,6 +103,7 @@ uses
   Io.Manager,
   Io.DeviceFiles,
   Kernel.IoSelfTest,
+  Kernel.WatchdogSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -326,6 +327,7 @@ begin
   RunKernelSelfTests;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
+  RunWatchdogSelfTest;
   RunNetworkSelfTests;
   RunFileSystemSelfTests;
   { Only when asked: the write tests change the test volumes, and end
