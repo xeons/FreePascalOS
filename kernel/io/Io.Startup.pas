@@ -31,7 +31,8 @@
   device interrupts can be spread over them, and InitializeBuses goes on:
 
     1. Input devices (keyboard, serial port), attached to the console
-    2. PCI enumeration
+    2. PCI enumeration (the Pi 5's PCIe root complexes bring their links
+       up and add their functions; then RP1 presents its peripherals)
 
   Kernel.Startup then loads the ACPI namespace (Io.AcpiNamespace: the
   AML, and with it PCI interrupt routing), which needs PCI configuration
@@ -75,6 +76,8 @@ uses
   Firmware.DeviceTree,
   Io.DeviceTreeDevices,
   Io.PciResources,
+  Drivers.BrcmPcie,
+  Drivers.Rp1,
   Io.BlockDevice,
   Io.Partitions,
   Drivers.Ahci,
@@ -181,9 +184,15 @@ procedure InitializeBuses;
 begin
   InitializeInputDevices;
   InitializePci;
+  { Root complexes that are not ECAM (the Raspberry Pi 5's) add their
+    functions themselves. }
+  InitializeBrcmPcieHosts;
   { After a native boot nobody gave the devices addresses yet. }
   AssignPciResources;
   WritePciSummary;
+  { The Pi 5's south bridge: its peripherals become platform devices
+    with working memory and interrupts before any driver binds them. }
+  InitializeRp1;
   { Suspend to RAM: configuration space first, then the MSI-X tables. }
   RegisterPciPowerHandler;
   RegisterMessageInterruptPowerHandler;

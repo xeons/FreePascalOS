@@ -144,6 +144,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/drivers/network \
 	kernel/drivers/input \
 	kernel/drivers/devices \
+	kernel/drivers/bus \
 	kernel/filesystems \
 	kernel/runtime kernel/runtime/$(ARCH) \
 	kernel/debug \
