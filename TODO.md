@@ -799,3 +799,9 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       CpuRelax with the other processors idle. The hang dump now prints the
       kernel return addresses on the spinning stack: catch it again and follow
       them
+- [ ] Rare boot hang under KVM: the SSH test once saw no shell prompt within
+      180 s (it then passed 11 runs in a row); the serial log was lost, so
+      catch it again
+- [ ] Self test "exited threads did not release their stacks"
+      (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
+      machines running at once: probably a fixed wait too short under load
