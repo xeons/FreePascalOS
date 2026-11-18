@@ -203,7 +203,7 @@ any driver of ours does (the Pi's GENET driver is untested):
 
 The system image is read into pages of the loader's memory type
 `0x80000004`, reported as `MemoryRegionRamDisk`, and handed over in
-`TBootInformation.RamDiskPhysicalBase`/`RamDiskSizeInBytes` (boot
+`TBootInformation.RamDiskPhysicalBase`/`RamDiskSizeInBytes` (since boot
 information version 5; both zero otherwise, so x86-64 and disk boots are
 unchanged). The kernel never gives those pages away (they count as
 driver memory) and `Drivers.RamDisk` offers them as the block device
@@ -735,6 +735,12 @@ described only by the ACPI namespace.
   range, connect an interrupt (a GSI is a GIC INTID on AArch64) and give
   a PCI device the DMA attributes of its segment's root bridge. The
   kernel debug shell's `devices` lists them all.
+
+After a native boot the device tree's nodes are the platform devices
+instead (`Io.DeviceTreeDevices`, see "Native boot (device tree)"), with
+the same driver-facing shape: ids (the compatible strings), memory
+ranges, interrupts as GSIs, DMA attributes; `Io.PlatformProperties`
+reads a property from either `_DSD` or the node.
 
 The drivers that bind: `xhci` (`PNP0D10`, `PNP0D15`), `sdhci`
 (`BRCME88C`, `BCM2847`), `videocore-mailbox` (`BCM2849`) and `genet`
@@ -7275,7 +7281,9 @@ of `EZeroDivide`.
 
 The HAL reads the tables from its first moments (the serial port before
 anything else) through `Hal.FirmwareTables`; they are in memory the
-loader mapped into the window.
+loader mapped into the window. After a native boot there are no tables:
+every row comes from the device tree instead (see "Native boot (device
+tree)").
 
 ### Memory
 
@@ -7396,6 +7404,120 @@ ExitBootServices without SetVirtualAddressMap it would need the runtime
 regions mapped at their physical addresses for the call, and the Pi's
 firmware implements it with PSCI anyway. Under test (`test-exit`) the kernel ends QEMU
 through semihosting with the x86-64 exit codes.
+
+### Native boot (device tree)
+
+Firmware that loads a Linux kernel directly and describes the machine
+with a flattened device tree - a Raspberry Pi 5's EEPROM bootloader
+(UEFI on the Pi 5 is unmaintained), QEMU's `-kernel` - boots
+`build/arm64/native/fpos.img` (`make ARCH=arm64 native`; `make
+pi5-sd-image` and `make pi5-netboot-serve` build it). No UEFI, no ACPI.
+
+**The image** is a flat binary with the Linux arm64 Image header
+(`b` to the entry, text_offset 0, image_size = the whole file, flags
+0xA: little endian, 4 KiB pages, anywhere in memory, magic `ARM\x64`).
+It is a small stub (`boot/native/arm64`) linked like the UEFI loader as a
+self-relocating position independent ELF (`native.ld`, `objcopy -O
+binary`), with `kernel.elf` (stripped) carried at its end
+(`KernelPayload.s`, `.incbin`, page aligned). The kernel stays the same
+ELF the UEFI loader loads: the stub is a loader, not a second kernel.
+Nothing is written beyond the file (the stub's stack and data are in
+it), so `initramfs system.img followkernel` right after it is safe.
+
+**The stub**, entered with x0 = the tree, MMU and data cache off, at EL2
+(Pi) or EL1 (QEMU; EL2 with `virtualization=on`):
+
+1. `NativeEntry.s`: turns the instruction cache on (data stays uncached:
+   every value is read a byte at a time where it could be unaligned, as
+   an unaligned access to memory with the MMU off faults), lets FP/SIMD
+   run, takes its stack, applies its R_AARCH64_RELATIVE relocations and
+   calls `NativeMain` (`NativeBoot.pas`).
+2. The console UART from `/chosen` `stdout-path` (an alias or a path,
+   options after `:`), for its messages (`Native.Console`).
+3. RAM from the `/memory` nodes, less `/memreserve/` entries, the
+   `/reserved-memory` nodes with a `reg`, the framebuffer and the first
+   512 KiB (the Pi's TF-A); its own image and the firmware's copy of the
+   tree claimed for the boot only, the initrd as the RAM disk
+   (`Native.MemoryMap`). Allocations are first fit, page aligned, zeroed.
+4. The boot information (version 6): the command line from `/chosen`
+   `bootargs` (on the Pi: the firmware's words, then `cmdline.txt`; the
+   kernel ignores options it does not know; room for 1023 characters),
+   the RAM disk from `linux,initrd-start`/`-end` (the system volume, as
+   after a network boot), the framebuffer from the first enabled
+   `simple-framebuffer` anywhere in the tree (`reg`, `width`, `height`,
+   `stride`, `format`: `a8r8g8b8`, `x8r8g8b8`, `a8b8g8r8`, `x8b8g8r8` or
+   `r5g6b5`; a node in `/chosen` without `ranges` has a physical `reg`),
+   else QEMU's ramfb (`-device ramfb`, set up through fw_cfg as edk2
+   would, 1024 x 768 XRGB8888, `Native.QemuFramebuffer`); no RSDP; a
+   copy of the tree in boot data pages (`DeviceTreePhysicalBase`,
+   `DeviceTreeSizeInBytes`).
+5. The kernel ELF copied to its block (`Boot.KernelElf`, shared with the
+   UEFI loader), a boot stack, the translation tables
+   (`Native.PageTables` over `Boot.TranslationTableBuilder`, shared with
+   the UEFI loader: the window over all RAM but the reserved parts, the
+   framebuffer non-cacheable, the UART as device memory - on the Pi 5 at
+   `10_7D00_1000`, above RAM - and the kernel image; an identity mapping
+   of RAM), the memory map, then the UEFI loader's hand-off
+   (`LoaderHandoff.s`: EL2 to EL1, translation on, into the kernel).
+
+**The tree in the kernel.** The shared units (`shared/DeviceTree.Blob`:
+the token stream, nodes by structure offset, paths and aliases,
+properties, phandles, compatible matching, status; `DeviceTree.Addresses`:
+`#address-cells`/`#size-cells`, `reg`, `ranges` translation up to the
+root - PCI's three-cell addresses matched by space code - `dma-ranges`,
+`dma-coherent`; `DeviceTree.Chosen`: bootargs, initrd, console UART,
+simple-framebuffer) are plain Pascal used by the stub, the kernel and
+`make device-tree-test` (a tree in the Pi 5's layout encoded by
+`tools/DeviceTreeTest/make-tree.py`). `Firmware.DeviceTree` holds the
+kernel's tree (`Hal.FirmwareTables` takes it from the boot information
+first thing). `Firmware.DeviceTreeInterrupts`: `interrupts`,
+`interrupts-extended`, `interrupt-parent` (inherited), nexus
+`interrupt-map`/`interrupt-map-mask` (as many levels as there are), the
+GIC's three-cell specifiers as INTIDs (SPI n = n + 32, PPI n = n + 16;
+trigger and polarity from the flags).
+
+**Discovery without ACPI**, each where the ACPI table would be read:
+
+| What | From the tree |
+|---|---|
+| console (`Hal.SerialPort`) | `stdout-path`: `arm,pl011`/`arm,sbsa-uart` (QEMU; the Pi 5's debug UART at `10_7D00_1000`), `brcm,bcm2835-aux-uart`, `ns16550a`/`snps,dw-apb-uart` (`reg-shift`, `reg-io-width`); its interrupt |
+| GIC and processors (`Firmware.Madt`, `Firmware.DeviceTreeMachine`) | `arm,gic-400`/`arm,cortex-a15-gic` (distributor, CPU interface), `arm,gic-v2m-frame` (its SPIs from `arm,msi-base-spi`/`-num-spis` or the frame's type register); `arm,gic-v3` is read but not driven; `/cpus/cpu@N` `reg` as the MPIDR affinity, `enable-method` `psci` |
+| timer (`Hal.GenericTimer`) | `arm,armv8-timer`: the third interrupt (virtual timer), `clock-frequency` if CNTFRQ_EL0 is 0 |
+| PSCI (`Hal.Psci`) | `arm,psci-1.0`/`-0.2` (`method` `hvc` or `smc`), `arm,psci` 0.1 with its `cpu_on` id |
+| PCI (`Io.Pci`, `Firmware.DeviceTreePci`) | `pci-host-ecam-generic`: ECAM `reg`, `bus-range`, `linux,pci-domain`; `ranges` windows (bus to processor addresses: `PciReadBar` gives the processor's); `interrupt-map` for INTx (`Io.PciLineInterrupts`); BARs nobody assigned get addresses from the windows (`Io.PciResources`, root bus only) |
+| platform devices (`Io.DeviceTreeDevices`) | every enabled node with `compatible` (not below a disabled node, not `/chosen`, `/aliases`, `/cpus`, `/memory`, `/reserved-memory`): ids = the compatible strings, memory = translated `reg` entries, interrupts = those resolving to the GIC, DMA = `dma-coherent` (above too) and the nearest `dma-ranges`, `DeviceTreeNode` for the rest |
+
+A 16-bit framebuffer (`PixelFormatRedGreenBlue565`, what a Pi's firmware
+gives unless `framebuffer_depth=32` takes) is drawn by the framebuffer
+console through `WriteScanLine`, and shown to programs as a 32-bit
+display whose flushes are narrowed into it (`Drivers.NarrowFramebuffer`,
+`DisplayCapabilityNeedsFlush`).
+
+**Testing.** `make arm64-native-test` (`scripts/test-arm64-native.py`,
+not in `make test`) boots `qemu-system-aarch64 -machine virt,gic-version=2
+-cpu cortex-a76 -smp 4 -m 2G -kernel fpos.img -initrd system-disk.img
+-append "test-exit init=/bin/true"` with virtio-net and ramfb, at EL1 and
+at EL2, and checks the stub, the tree's devices, GIC/timer/PSCI, four
+processors, the assigned BARs, the framebuffer, the system volume on
+`/ramdisk0p1` and user mode; a third boot sends the kernel log with
+`netlog=` over virtio-net (the kernel's own DHCP) and has the TCP debug
+shell (`netshell=`) answer. The r5g6b5 path was checked by hand with a
+QEMU tree given an r5g6b5 `simple-framebuffer` in `/chosen` (`-dtb`).
+virtio-mmio devices are listed but have no transport driver.
+
+**For Pi 5 drivers.** Bind a `TPlatformDriver` by compatible string
+(`brcm,bcm2712-pcie`, `brcm,bcm2712-sdhci`, ...), map
+`PlatformMemoryRange` entries (already physical: `/soc` and `/axi`
+ranges applied), connect interrupts with `ConnectPlatformInterrupt`, use
+`Device^.Dma` (the Pi 5's devices are not `dma-coherent` unless their
+node says so). Anything else is in the node: `Device^.DeviceTreeNode`
+with `SystemDeviceTree^` and the `DeviceTree.*` units (`ReadRangeEntry`
+gives a PCIe host's outbound windows; `ReadDmaRange` its inbound ones;
+`ResolveInterrupt` goes through an `interrupt-map`). RP1's own devices
+sit below the PCIe node with addresses relative to RP1's BAR and
+interrupts of RP1's controller: their `reg` does not translate to the
+processor and their interrupts do not reach the GIC, so the RP1 driver
+reads those nodes itself once it has mapped the BAR.
 
 ### Raspberry Pi 4 notes, and the Pi 5
 
@@ -7688,8 +7810,9 @@ its own (`reboot=w coherent_pool=1M ...` from the device tree's
    lsblk                                 # find the card: /dev/sdX or /dev/mmcblkN
    xzcat build/arm64/pi5-sd.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
    ```
-   It needs `build/arm64/native/fpos.img`, the native kernel (if it is
-   missing the script says so), and builds the system image. The image
+   It builds `build/arm64/native/fpos.img`, the native kernel (`make
+   ARCH=arm64 native`, see "Native boot (device tree)"), and the system
+   image. The image
    (`scripts/make-pi5-sd-image.py`, Python and mtools, no root) is
    257 MiB: an MBR with one bootable FAT32 partition (type 0Ch, 256 MiB)
    holding `config.txt`, `cmdline.txt`, the two device trees,

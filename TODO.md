@@ -803,6 +803,34 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         the RSA-2048 modulus and exponent, little endian)
   - [ ] A compressed system image or kernel (the firmware unpacks a gzip
         kernel; the RAM disk is passed on as it is)
+  - [x] Native boot image and device tree foundation: `make ARCH=arm64
+        native` (build/arm64/native/fpos.img: Linux arm64 Image header, a
+        self-relocating stub carrying kernel.elf, boot information 6 with
+        the tree), the device tree reader shared by stub and kernel
+        (`shared/DeviceTree.*`, `make device-tree-test`), discovery
+        without ACPI (GIC, timer, PSCI, processors, console UART,
+        simple-framebuffer incl. r5g6b5, ECAM PCI hosts with BAR
+        assignment and interrupt-map), DT platform devices bound by
+        compatible (`Io.DeviceTreeDevices`, `Io.PlatformProperties`),
+        `make arm64-native-test` (QEMU -kernel/-initrd, EL1 and EL2,
+        netlog and the TCP shell over virtio-net)
+  - [ ] Pi 5 drivers, next: the BCM2712 PCIe root complex
+        (`brcm,bcm2712-pcie`: its own configuration access, link
+        training, the outbound windows its ranges give, its MSI
+        controller), then RP1 behind it (a PCIe endpoint whose BAR holds
+        the peripherals its DT node describes): its USB (DWC3 in host
+        mode, i.e. xHCI: `Drivers.Xhci` as a platform device) and its
+        Cadence GEM Ethernet (`cdns,macb`), and the BCM2712 SD
+        controller (`brcm,bcm2712-sdhci`, SDHCI: `Drivers.Sdhci`)
+  - [ ] Framebuffer fallback through the VideoCore mailbox (allocate a
+        framebuffer as Circle does) when the firmware gives no
+        simple-framebuffer
+  - [ ] GICv3 driver (the tree's `arm,gic-v3` is parsed; the HAL drives
+        GICv2 only), spin-table processors, virtio-mmio devices (listed
+        as platform devices, no transport driver)
+  - [ ] PCI bridges below an ECAM root bus get no windows assigned (QEMU
+        virt has none); I/O BARs are assigned but the port window
+        (`Hal.PortIo.SetPortIoWindow`) is not set
 
 ## Tooling
 

@@ -129,6 +129,7 @@ procedure PrintHexadecimal(Value: QWord);
 var
   Buffer: TNumberText;
 begin
+  PrintText('0x');
   PrintText(FormatHexadecimal(Value, 1, Buffer));
 end;
 
