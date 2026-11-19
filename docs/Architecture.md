@@ -868,7 +868,9 @@ of their own. `Io.Dma` gives drivers what they need for that:
 Converted so far: xHCI (all its memory is shared, uncached for a
 controller that does not snoop; isochronous packets from the audio
 buffers are cleaned and translated before they are queued), SDHCI, the
-VideoCore mailbox and GENET. The other PCI drivers (AHCI, NVMe, virtio,
+VideoCore mailbox, GENET, the Cadence GEM and the BCM2712 DMA (its
+control blocks shared, the HDMI audio slots streaming, cleaned after each
+is written). The other PCI drivers (AHCI, NVMe, virtio,
 e1000, Realtek, HD Audio, AC'97) still assume coherent DMA at physical
 addresses, which holds on every machine they are found on today.
 
@@ -3453,7 +3455,11 @@ sound that does not depend on the hardware:
   start and stop playing, report where the hardware is in the ring, and
   set the volume. The output gets a ring of 16 page-sized periods, played
   as 16-bit stereo at 48 kHz, and a device file: the first output is
-  `/dev/audio`.
+  `/dev/audio`. Hardware without a volume control (HDMI) gives no volume
+  routine and the mixer scales the samples by the master volume (by the
+  square of the fraction). A driver that plays its own copy of the ring
+  or must clean it out of the caches gives `PeriodWritten`, called after
+  each period is mixed with its number since the start.
 - **Streams.** Every open of the device is a stream of its own, so any
   number of programs play at once. A stream's format is 8, 16, 24 or
   32-bit integer or 32-bit float samples, 1 to 8 channels (WAVE order)
@@ -3528,6 +3534,129 @@ crosses a page. Packets come straight from the output's ring, 48 frames
 a millisecond, and the bytes completed are the output's position.
 Built-in sound starts before the USB controllers, so it keeps the first
 device names.
+
+### HDMI audio (Raspberry Pi 5)
+
+The Pi 5 has no analogue output: HDMI is its only built-in sound.
+`Drivers.HdmiAudio` binds the tree's `brcm,bcm2712-hdmi0` and `-hdmi1`
+(enabled by `dtoverlay=vc4-kms-v3d-pi5`). Written from Linux's
+`vc4_hdmi.c`, untested on the board.
+
+**The link stays the firmware's.** The firmware brought HDMI up for its
+framebuffer; audio rides on that link, so no mode, PHY or clock is
+changed. Per port, in steps that each log (see "What the Pi 5 drivers
+log" for the lines):
+1. *resources*: the node's register blocks by `reg-names` (`hdmi`, the
+   core; `packet`, the packet RAM; `hd`, shared by both ports, with each
+   port's MAI and frame counter), and its `dmas` (empty with the
+   overlay's `noaudio`: no audio);
+2. *clocks*: the HDMI state machine clock (`hdmi`, firmware clock 13)
+   from the firmware over the VideoCore mailbox. Linux found that
+   reading the controller with it off stalls the processor, so at 0 (no
+   display at boot) nothing of the controller is read. The audio clock
+   (`audio`: a gate of the DVP over the 108 MHz fixed clock) from the
+   tree;
+3. *the DVP* (`brcm,brcm2711-dvp`, behind `resets`): the port's reset
+   line (held: the firmware did not use the port) and its audio clock
+   gate (turned on if off);
+4. *hot plug*: HDMI_HOTPLUG bit 0;
+5. *the link*: HDMI, not DVI (SCHEDULER_CONTROL bit 0: the firmware read
+   the EDID and chose; a DVI sink takes no audio), and the packet RAM on;
+6. *the mode*: the TMDS character clock is not a clock the firmware
+   names (the PHY's PLL makes it), so `Drivers.HdmiAudio.Link` measures
+   it: the whole frame from the timing registers (HORZA/B, VERTA0/B0)
+   times the frame rate from the port's frame counter (counter changes
+   about 400 ms apart, timed by the generic timer, whose crystal also
+   drives the PLL), times 10/8 or 12/8 for deep colour (the general
+   control packet). That lands within a few ppm, enough to tell 148.5
+   MHz from 148.35 (148.5 / 1.001). A counter that does not move means
+   60 Hz is assumed, and logged;
+7. *N and CTS* (`Drivers.HdmiAudio.Format`): the HDMI specification's
+   table for 25.2, 27, 54, 74.25, 148.5, 297 and 594 MHz and each / 1.001
+   (a clock within 300 ppm takes the table's values), otherwise N = 128
+   x fs / 1000 and CTS = f x N / (128 x fs); 88.2/96 and 176.4/192 kHz
+   take twice and four times N;
+8. *DMA*: a 40-bit channel of the controller the `dmas` phandle names
+   (`Drivers.Bcm2712Dma`, below), the buffer, and the MAI data register's
+   bus address (its physical address: the controller sees the 40-bit
+   space as it is);
+9. *the MAI and the packets*, as Linux's startup and prepare: MAI reset
+   and flush; the sample clock N/M of the audio clock (108 MHz / 48 kHz
+   = 2250/1, / 44.1 kHz = 120000/49); MAI_CTL two channels, whole
+   samples, aligned, enabled; MAI_FMT PCM at the rate's code; the FIFO
+   thresholds (fields moved on the D0 stepping, told from the tree's
+   `brcm,bcm2712d0-*` nodes); MAI_CONFIG bit and format reversed with the
+   channel mask; the channel map; AUDIO_PACKET_CONFIG (B frame
+   identifier 8, zero data on flat and inactive channels, channels 0-1);
+   CRP_CFG external CTS with N, CTS_0 and CTS_1; the audio InfoFrame
+   (type 84h: two channels, the rest "refer to the stream", speakers
+   front left and right) in packet 4 of the packet RAM;
+10. *the DMA started* and checked: about 4800 frames must go in 100 ms,
+    or the step fails with the channel's and the MAI's registers and no
+    output is registered.
+
+Then the port registers an output (kind HDMI, no volume routine). The
+EDID is not read (DDC needs an I2C driver the kernel lacks): the
+firmware's choice of HDMI over DVI stands for it, and the sink is assumed
+to take two-channel PCM, as every HDMI sink with audio does.
+
+**IEC 60958 subframes.** The MAI takes one 32-bit word a sample, ALSA's
+`IEC958_SUBFRAME_LE`: bits 0-3 the preamble (8 = Z, a block's first
+left sample; 2 = X, left; 4 = Y, right), 4-27 the sample (16-bit samples
+in 12-27), 28 validity, 29 user data, 30 the channel status bit, 31 even
+parity over 4-30. Frame n of a 192-frame block carries bit n of the
+channel status: consumer, linear PCM, copying permitted, original, the
+rate, 16-bit words.
+
+**The ring.** So the driver plays its own copy of the mixer's ring: 48
+slots of 1024 frames (8 KiB of subframes, one mixer period each), 256
+whole blocks, so a slot's place says which frame of a block it starts
+with and the DMA going round keeps the blocks' rhythm. The DMA runs round
+the slots from start-up, playing silence when nothing plays, so the sink
+keeps its audio locked and sounds start at once. When the mixer starts,
+its period 0 goes into the slot two ahead of the DMA and period N into
+the Nth after it; each period is converted as it is mixed
+(`PeriodWritten`) and the slot cleaned out of the caches. A 10 ms timer
+follows the DMA's source address: it tells the mixer where it is
+(`AudioPeriodsElapsed`) and silences the slots that played, so a mixer
+that falls behind leaves silence rather than old sound. The position the
+mixer sees stays 0 until the DMA reaches the first slot. The output runs
+at the mixer's 48 kHz; 44.1 kHz streams are converted by the mixer, and
+the N/CTS, MAI and channel status code take 44.1 kHz (and the others) for
+the day the mixer's rate can change.
+
+Kernel options: `hdmiaudio=off` leaves HDMI audio alone; `hdmiaudio=force`
+goes on without the firmware's word that the clocks run (no mailbox, or
+it says 0), at the risk of a stall the watchdog ends.
+
+**The BCM2712 DMA** (`Drivers.Bcm2712Dma`, written from Linux's
+`bcm2835-dma.c`). One controller at `10_0001_0000` appears as two nodes:
+`dma@10000`, channels 0-5 (the older kind, not driven), and `dma@10600`,
+channels 6-11, the 40-bit "DMA4" kind; each node's
+`brcm,dma-channel-mask` says which the operating system may use (6-10).
+Channel N's registers are 100h * N from the controller's base. A cyclic
+transfer is a ring of 32-byte control blocks (`Drivers.Bcm2712Dma.Blocks`:
+TI with the DREQ in bits 9-13, writes paced by it, waiting for write
+responses; SRC/SRCI with address bits 32-39, increment, width and burst;
+DEST/DESTI the same for the fixed FIFO register; LEN; the next block's
+address / 32, so blocks lie below 128 GiB), the last pointing back at the
+first. The client's `dmas` cell (41FA000Ah for hdmi0 on C1) gives the
+DREQ (bits 0-4), the QoS and panic QoS (16-19, 20-23, straight into CS),
+128-bit source reads (bit 24) and bursts of 3 (bit 30). Started with the
+first block's address / 32 in CB and CS = active, protection, QoS; stopped
+by clearing active, waiting for outstanding transactions and resetting the
+channel through DEBUG. No interrupts: the client follows the source
+address. Control blocks are shared (uncached); the data is the client's
+streaming buffer.
+
+`make hdmi-audio-test` (in `make test`) checks on the host what needs no
+hardware: N and CTS against the HDMI table for every clock it lists at
+32 to 192 kHz, measured clocks a few ppm off, clocks it does not list;
+the MAI's sample rate codes and sample clock fractions; subframe
+preambles, parity, channel status bits and blocks across slots; the
+InfoFrame, its checksum and packet RAM words; the DMA control blocks and
+the Pi 5's HDMI `dmas` cells. The driver itself can only be tried on the
+board (QEMU has no BCM2712): see "What the Pi 5 drivers log".
 
 **Volumes, mute and the default output.** Each output's volume (its
 hardware's, `ControlAudioSetMasterVolume`) can be muted
@@ -8211,6 +8340,70 @@ are written from Linux's and **untested on the board**.
    (brcm,bcm2712-pm), up to 15 s; reset status ...`, armed by default
    as on the Pi 4 (`watchdog=0` leaves it off); `reboot` resets through
    PSCI.
+7. **The VideoCore mailbox** (`brcm,bcm2835-mbox`), before the storage
+   drivers:
+   ```
+   [mailbox] VideoCore mailbox, message at bus address 0000.000, firmware revision ........
+   [board] Raspberry Pi 5 rev 1.0, ...
+   ```
+   The message's bus address is its physical address (below 1 GiB). `the
+   firmware does not answer: mailbox not used` means the firmware wants
+   another address; HDMI audio then stops at its step 2.
+8. **HDMI audio** (`Drivers.Bcm2712Dma`, `Drivers.HdmiAudio`; see "HDMI
+   audio (Raspberry Pi 5)"), after the mailbox, for a display on HDMI0:
+   ```
+   [dma] dma@10000: BCM2712 DMA at 0x1000010000, channels 0,1,2,3,4,5 free (40-bit: none), enable 0x........, not coherent
+   [dma] dma@10600: BCM2712 DMA at 0x1000010000, channels 6,7,8,9,10 free (40-bit: 6,7,8,9,10), enable 0x........, not coherent
+   [hdmi-audio] hdmi0: clocks: HDMI state machine ... Hz, pixel BVB ... Hz, firmware pixel clock ... Hz (from the firmware); audio 108000000 Hz (from the tree)
+   [hdmi-audio] hdmi0: display connected, 1920x1080 (2200x1125 total) at 60.000 Hz (measured), 24-bit colour, pixel clock 148.5 MHz (148500... Hz from the timing and frame rate), audio on
+   [hdmi-audio] hdmi0: N 6144 CTS 148500 for 48000 Hz (the HDMI table's, TMDS clock 148500000 Hz)
+   [hdmi-audio] hdmi0: MAI sample clock 2250/1 of 108000000 Hz, C1 thresholds, audio InfoFrame sent; MAI_CTL 0x... MAI_THR 0x101C1C?? ...
+   [dma] dma@10600 channel 6: cyclic, 48 periods of 8192 bytes from 0x... to 0x107C72001C, DREQ 10, CS 0x00FA0301
+   [hdmi-audio] hdmi0: DMA moving: 4800 frames in 100 ms = 48000 Hz (48000 expected), MAI_CTL 0x........
+   [audio] /dev/audio: HDMI (hdmi0), 2 channels, 48000 Hz, volume by the mixer
+   [hdmi-audio] hdmi1: clocks: ...
+   [hdmi-audio] hdmi1: no display connected (HOTPLUG 0x...): no audio on this port
+   ```
+   (hdmi1 may instead say `held in reset (DVP SW_INIT 0x...)`.) Then
+   each sound adds `[hdmi-audio] hdmi0: playing from slot N, DMA in slot
+   M, MAI_CTL 0x...` and, half a second after it ends, `stopped after N
+   periods in all, MAI_CTL 0x...`. A failure is one line, `[hdmi-audio]
+   hdmi0: FAILED at step N (name): ...` with the registers that tell
+   why, and the port registers no output:
+   - `step 1 (resources)`: a register block missing from `reg-names`;
+     `no "dmas" in the tree` is the overlay's `noaudio` (not a failure);
+   - `step 2 (clocks)`: no mailbox, or the state machine clock reads 0
+     (`hdmiaudio=force` goes on regardless), or no rate for "audio";
+   - `step 5 (link)`: the firmware drives the display as DVI;
+   - `step 6 (mode)`: the timing registers hold no mode; `(ASSUMED: the
+     frame counter did not move)` in the mode line is not a failure but
+     means 60 Hz was taken;
+   - `step 7 (N and CTS)`, `step 9 (MAI)`: no values for the clocks;
+   - `step 8 (DMA)`: no channel, memory or bus address (`[dma] hdmi0:
+     FAILED at channel request: ...`);
+   - `step 10 (DMA moving)`: the DMA did not move at the sample rate;
+     the line has the channel's CS, CB, DEBUG, TI, SRC, DEST, LEN and the
+     controller's enable register, then the MAI's and the core's
+     registers. CS bit 0 clear: the channel stopped (bit 10 error, then
+     DEBUG bits 0-3 say which); CS bit 3 (DREQ) never set with SRC at the
+     first block: the MAI asks for nothing (MAI_CTL bit 3 enable, bits
+     1-2 FIFO errors).
+   `InfoFrame NOT sending` in the MAI line means packet 4 never started
+   (the packet RAM's status); audio may still play.
+
+   **Testing it.** Boot with a TV or monitor with speakers on HDMI0
+   (the port next to the USB-C socket), then over SSH:
+   ```
+   mixer -l                  # /dev/audio is listed as HDMI
+   tone 440 2                # two seconds of 440 Hz
+   tone -r 44100 1000 1      # a 44.1 kHz stream (the mixer converts it)
+   tone -o /tmp/a.wav 660 2 && play /tmp/a.wav && soundinfo /tmp/a.wav
+   mixer 30; tone 440 1      # quieter (the mixer scales the samples)
+   ```
+   and send the `[dma]`, `[mailbox]` and `[hdmi-audio]` lines and the
+   `[audio] /dev/audio` line from netlog (`grep -E
+   'dma|mailbox|hdmi-audio|audio\]' pi5.log`), with what was heard
+   (nothing, clicks, the tone, the tone at the wrong pitch).
 
 The kernel debug shell's `devices` lists RP1's peripherals with their
 memory (`mem 1f00100000+4000`) and RP1 interrupts (`line 6 level`), and
