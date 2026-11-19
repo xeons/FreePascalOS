@@ -3858,8 +3858,9 @@ for a whole frame after 128 bytes of headroom: each layer on the way
 down prepends its header without copying. Received data is handled in
 place and copied only where it is kept: into a socket's datagram queue
 (at most 64 datagrams or 128 KiB), into a TCP connection's receive ring
-(64 KiB), or into a reassembly buffer. TCP keeps sent data in a 64 KiB
-send ring until it is acknowledged and retransmits from there.
+(64 KiB, growing up to 4 MiB), or into a reassembly buffer. TCP keeps
+sent data in a send ring (likewise) until it is acknowledged and
+retransmits from there.
 
 **Ethernet and ARP.** Frames for another station are dropped, and so is
 multicast but IPv6's (33:33 and a group's last four bytes, which IPv6
@@ -4003,7 +4004,8 @@ and a neighbour that never answered; never about an ICMPv6 error, a
 datagram to a group or from a non-unicast address; they quote what fits
 in 1280 bytes.
 
-**TCP** (RFC 793 with RFC 1122, 5681, 6298). Connections
+**TCP** (RFC 793 with RFC 1122, 5681, 6298, 7323, 2018, 6675, 6582).
+Connections
 (`TTcpConnection`) live apart from sockets: a listener makes a child in
 SYN_RECEIVED for each SYN while the backlog has room (counting children
 not yet accepted), and the child joins the accept queue when the
@@ -4015,23 +4017,83 @@ handshake completes; a connection outlives its socket while it closes.
   resets, the acknowledgment frees the send ring and moves FIN_WAIT_1,
   CLOSING and LAST_ACK on, the send window is updated by the RFC 793
   rule, data in order goes to the receive ring and segments that arrive
-  ahead (up to 32) wait to be joined, a FIN in order ends the stream.
+  ahead (as many bytes as the receive ring holds) wait to be joined, a
+  FIN in order ends the stream.
+- *Options* (`Network.TcpOptions`): our SYN carries the MSS, SACK
+  permitted, timestamps and a window scale of 7; a SYN-ACK only what the
+  peer's SYN had, and each is used only when both sides sent it
+  (`SocketOptionTcpFeatures` shows which). Laid out as other stacks do
+  (20 bytes on a SYN; 12 for timestamps and 4 + 8 per SACK block after,
+  data and options within the MSS, RFC 6691).
+- *Window scaling* (RFC 7323, `Network.TcpWindows`): windows we
+  advertise are in 128-byte units (up to 8 MiB), rounded so that the
+  right edge never moves back; the peer's are shifted by its scale.
+  Without scaling windows stay at most 64 KiB.
+- *Timestamps* (RFC 7323): every segment but a reset carries TSval (a
+  millisecond clock) and echoes TS.Recent, kept from segments that reach
+  back to our last acknowledgment; PAWS drops (with an ACK) a segment
+  whose TSval is older than TS.Recent, unless the connection was idle
+  for 24 days; RTTM takes a round trip sample from the echoed TSval once
+  a round trip (retransmissions too, which Karn's rule otherwise
+  excludes).
+- *SACK* (RFC 2018, `Network.TcpReceivedBlocks`, `Network.TcpScoreboard`):
+  an acknowledgment carries up to four blocks (three beside timestamps)
+  of what waits out of order, the block holding the latest arrival
+  first; the sender keeps a scoreboard of up to 32 SACKed ranges above
+  its acknowledgment (blocks outside what was sent are ignored), cleared
+  on a timeout. No D-SACK.
 - *Output* sends what fits in the smaller of the peer's window and the
   congestion window, in segments of at most the MSS (the peer's MSS
   option, or 536, never more than our MTU allows; ours is advertised on
-  the SYN), then the FIN. Nagle holds back small segments while data is
-  in flight unless `SocketOptionNoDelay`.
+  the SYN) less 12 bytes with timestamps, then the FIN. Nagle holds back
+  small segments while data is in flight unless `SocketOptionNoDelay`.
 - *Retransmission*: one timer per connection while anything is
   unacknowledged; its timeout is the smoothed round trip plus four times
   its variance, at least 200 ms, at most 60 s, doubled on each expiry;
-  one segment at a time is timed, never a retransmitted one (Karn). An
-  expiry goes back to the first unacknowledged byte and drops the
-  congestion window to one segment; three duplicate ACKs retransmit at
-  once and halve it. After 12 expiries (5 for a SYN) the connection is
-  given up (`ErrorTimedOut`). A zero window is probed with one byte on
-  each expiry.
+  one sample a round trip (from timestamps, else one segment at a time
+  and never a retransmitted one, Karn); the 200 ms floor is Linux's
+  rather than RFC 6298's second. A SYN sent again leaves the data a
+  timeout of at least 3 s (RFC 6298 5.7). An expiry goes back to the
+  first unacknowledged byte, halves the slow start threshold (once per
+  loss, RFC 5681) and drops the congestion window to one segment, ends
+  loss recovery and clears the SACK scoreboard. After 12 expiries (5 for
+  a SYN) the connection is given up (`ErrorTimedOut`). A zero window is
+  probed with one byte on each expiry.
 - *Congestion control*: slow start from ten segments, then congestion
-  avoidance (a segment per round trip).
+  avoidance (a segment per round trip), up to 16 MiB. Loss recovery
+  (`Network.TcpRecovery`) starts at three duplicate ACKs, or with SACK
+  as soon as RFC 6675's IsLost says the first unacknowledged segment is
+  lost, at most once per window of data ("recover", RFC 6582): the
+  threshold becomes half the flight and the first hole goes again at
+  once. Without SACK it is NewReno (window inflation by duplicates,
+  partial ACKs resend the next hole and deflate the window, the full ACK
+  ends it). With SACK it is RFC 6675's: while the congestion window
+  exceeds the pipe (unSACKed bytes not taken as lost, plus holes resent)
+  by a segment, the next lost hole goes, else new data, else a hole not
+  yet known lost - only missing segments are resent. No CUBIC.
+- *Buffers* (`Network.TcpBuffers`): both rings start at 64 KiB. The
+  receive ring grows (doubling, up to 4 MiB) to four times what the
+  reader takes in a round trip (measured from echoed timestamps, else
+  the sender's estimate, at least 4 ms), with window scaling only; the
+  send ring grows when a writer finds it full and the connection could
+  keep more in flight. `SocketOptionReceiveBuffer` and
+  `SocketOptionSendBuffer` fix a size (2 KiB-4 MiB; set before connect or
+  listen, an accepted connection takes its listener's).
+- *Keep-alives* (`Network.TcpKeepAlive`, RFC 1122 4.2.3.6) with
+  `SocketOptionKeepAlive`: after `SocketOptionKeepIdle` seconds (7200)
+  without hearing from the peer, an ACK with the sequence number before
+  the next goes every `SocketOptionKeepInterval` seconds (75); after
+  `SocketOptionKeepCount` (9) unanswered the connection is reset and the
+  socket gets `ErrorTimedOut`. Anything from the peer answers; while data
+  waits the retransmission timer watches instead. An accepted
+  connection takes its listener's settings. sshd turns them on
+  (`TCPKeepAlive`).
+- *Path MTU* (`Network.TcpPathMtu`): `TcpPathMtuChanged(Destination,
+  PathMtu)` is the entry point for path MTU discovery: every
+  synchronized connection to that address whose MSS no longer fits
+  lowers it (never below 536, or 1220 over IPv6) and resends what is in
+  flight in the new size, without touching the windows. ICMP
+  "fragmentation needed" with a next-hop MTU calls it.
 - *ACKs* of received data wait up to 40 ms, or go at once for every
   second segment, out of order data and FINs; reading that opens the
   window by two segments sends a window update.
@@ -4041,8 +4103,10 @@ handshake completes; a connection outlives its socket while it closes.
   connection without its socket ends after 60 s. A closed listener
   resets the children it had not handed out.
 - Initial sequence numbers follow the clock (4 per microsecond) plus a
-  random offset taken at start. No window scaling or SACK yet: windows
-  are at most 64 KiB.
+  random offset taken at start.
+- *Test hook*: `SocketOptionTestDropEvery` (root's) drops every Nth data
+  segment that arrives on the connection, as if lost on the way;
+  networktest uses it to make loss over lo.
 
 **Sockets** (`Network.Sockets`) are objects of type `Socket`, so
 `CallClose`, inheritance, `CallDuplicateHandle` and passing them in
@@ -4443,14 +4507,23 @@ dig prints them, `-T` for TCP, `-W`, `-R`, a server to ask),
 `-timeout=`, `-vc`) and `hostname` (show, `-s`, `-i`, `-I`; set as
 root).
 
-**Tests.** A kernel self test on every boot checks the Internet
+**Tests.** `make tcp-test` (in `make test`) builds the TCP's pure units
+on the host (`tools/TcpTest`): options written byte for byte and read
+back (malformed ones too), scaled window fields and buffer growth, the
+SACK scoreboard (merging, IsLost, the pipe and NextSeg over a loss
+scenario near the sequence wrap) and the receiver's SACK blocks. A
+kernel self test on every boot checks the Internet
 checksum, sequence number comparison, a UDP datagram over lo, a refused
 connection and a TCP connection's states from the handshake to
 TIME_WAIT, with data both ways. coretest runs `networktest` (loopback
 ping; UDP echo with the largest datagram and one too large; a refused
 broadcast; port unreachable; a megabyte of TCP echo through many windows
 with a sender and a server thread; a refused connection; non-blocking
-connect and waits; the socket listing; then the network service, started
+connect and waits; the socket listing; window scaling, SACK and
+timestamps agreed over lo, the keep-alive options set, refused and
+inherited by an accepted connection, 512 KiB through a forced 4 KiB
+receive window and 2 MiB with every 20th data segment lost; then the
+network service, started
 as a child: eth0 configured by QEMU's DHCP server within 20 s with
 10.0.2.15/24, the default route through 10.0.2.2 and the DNS server
 10.0.2.3, the whole of `eth0.state`; pings to and the ARP entry of
@@ -4768,7 +4841,8 @@ nothing else with it, and stopping the service ends them all.
 `sshd_config` takes OpenSSH's keywords: `Port`,
 `PasswordAuthentication`, `PubkeyAuthentication`, `PermitRootLogin`,
 `HostKey` (one per key), `Subsystem sftp PROGRAM`, `LoginGraceTime`
-(seconds to log in, 120) and `MaxSessions` (channels per connection, 8).
+(seconds to log in, 120), `MaxSessions` (channels per connection, 8) and
+`TCPKeepAlive` (TCP keep-alives on the connections, yes).
 `sshd -t` checks it and the host keys.
 
 A connection's process (`Sshd.ConnectionLoop`) waits on the socket, the

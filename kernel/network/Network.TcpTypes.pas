@@ -30,6 +30,7 @@
     Network.TcpInput        the state machine for arriving segments
     Network.TcpOutput       sending: windows, Nagle, retransmission, RTT
     Network.TcpTimers       retransmission, delayed ACKs, TIME_WAIT
+    Network.TcpRecovery     loss recovery: NewReno, SACK (RFC 6675)
     Network.TcpKeepAlive    keep-alive probes
     Network.TcpBuffers      buffers that grow, socket buffer sizes
     Network.TcpPathMtu      a smaller path MTU lowers the MSS
