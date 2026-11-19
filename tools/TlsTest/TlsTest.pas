@@ -29,8 +29,10 @@
         make-fixtures.py made: name constraints, Ed25519 and P-521
         chains, OCSP responses, the TLS 1.2 PRF.
     TlsTest --connect PORT SERVER-NAME TRUST-FILE [CIPHER-SUITE] [--no-verify]
+            [--tls1.2] [--groups=LIST] [--resume]
         A whole connection to a server on 127.0.0.1 (run-interop.sh
-        runs it against OpenSSL).
+        runs it against OpenSSL); --resume connects twice, the second
+        time resuming the first session.
 }
 program TlsTest;
 
@@ -48,20 +50,33 @@ uses
   TlsTest.Retry;
 
 var
-  CipherName: string;
-  VerifyCertificates: Boolean;
+  Settings: TInteropSettings;
+  Argument: string;
   Index: Integer;
 begin
   if (ParamCount >= 4) and (ParamStr(1) = '--connect') then
   begin
-    CipherName := '';
-    VerifyCertificates := True;
+    Settings := Default(TInteropSettings);
+    Settings.Port := StrToInt(ParamStr(2));
+    Settings.ServerName := ParamStr(3);
+    Settings.TrustFile := ParamStr(4);
+    Settings.VerifyCertificates := True;
+    Settings.Connections := 1;
     for Index := 5 to ParamCount do
-      if ParamStr(Index) = '--no-verify' then
-        VerifyCertificates := False
+    begin
+      Argument := ParamStr(Index);
+      if Argument = '--no-verify' then
+        Settings.VerifyCertificates := False
+      else if Argument = '--tls1.2' then
+        Settings.MaximumVersion := $0303
+      else if Argument = '--resume' then
+        Settings.Connections := 2
+      else if Copy(Argument, 1, 9) = '--groups=' then
+        Settings.Groups := Copy(Argument, 10, Length(Argument))
       else
-        CipherName := ParamStr(Index);
-    Halt(RunInteropClient(StrToInt(ParamStr(2)), ParamStr(3), ParamStr(4), CipherName, VerifyCertificates));
+        Settings.CipherName := Argument;
+    end;
+    Halt(RunInteropClient(Settings));
   end;
   if ParamCount < 3 then
   begin

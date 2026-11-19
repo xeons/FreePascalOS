@@ -33,7 +33,9 @@
                      one (draft-ietf-tls-ecdhe-mlkem). TLS 1.3 only.
 
   The default groups, in order of preference: x25519, X25519MLKEM768,
-  secp256r1, secp384r1. Private keys are wiped when the share is.
+  secp256r1, secp384r1, secp521r1 (TLS 1.2 servers with a P-521
+  certificate want its curve listed). Private keys are wiped when the
+  share is.
 }
 unit Tls.KeyShares;
 
@@ -103,7 +105,8 @@ begin
   List.Groups[1] := GroupX25519MlKem768;
   List.Groups[2] := GroupSecp256r1;
   List.Groups[3] := GroupSecp384r1;
-  List.Count := 4;
+  List.Groups[4] := GroupSecp521r1;
+  List.Count := 5;
 end;
 
 function GroupIsSupported(Group: Word): Boolean;
