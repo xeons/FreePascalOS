@@ -91,7 +91,7 @@ const
     ("10.0.2.15/24"; needed for static, otherwise kept for later if
     given); NetworkGateway: the default route's gateway, on that
     network, or empty; Flags: SystemFlagInterfaceUp; NetworkIpv6Method:
-    "auto", "static" or "none" (empty: the IPv6 settings stay as they
+    "auto", "dhcpv6", "static" or "none" (empty: the IPv6 settings stay as they
     are), NetworkIpv6Address ("fd00::10/64", needed for static) and
     NetworkIpv6Gateway (or empty). Checked
     (Configuration.NetworkSettings) and written to

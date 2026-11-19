@@ -23,7 +23,8 @@
   The kernel does most of IPv6 itself: in its automatic mode an
   interface gets a link-local address, asks for routers and takes their
   prefixes (SLAAC), default route and DNS servers. So the service only
-  picks the mode - auto: Ipv6ModeAutomatic; none: Ipv6ModeOff; static:
+  picks the mode - auto and dhcpv6: Ipv6ModeAutomatic (DHCPv6 is the
+  service's own, NetworkService.Dhcpv6Client); none: Ipv6ModeOff; static:
   Ipv6ModeLinkLocal with the address of the settings and, if one is
   given, a default route through the gateway - and undoes a static
   address and route when the settings change.
@@ -56,6 +57,8 @@ type
     Gateway: string;
     { From the routers' advertisements (RDNSS). }
     DnsServers: TInternetAddressArray;
+    { The last advertisement's M and O flags (Ipv6RouterFlag*). }
+    RouterFlags: LongWord;
   end;
 
 function ReadIpv6Facts(constref Description: TAbiNetworkInterface; constref Routes: TRouteList): TIpv6Facts;
@@ -81,6 +84,7 @@ var
 begin
   Result := Default(TIpv6Facts);
   Result.Mode := Description.Ipv6Mode;
+  Result.RouterFlags := Description.Ipv6RouterFlags;
   Index := 0;
   while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
   begin

@@ -65,9 +65,11 @@ const
 
 type
   TNetworkMethod = (NetworkMethodNone, NetworkMethodStatic, NetworkMethodDhcp);
-  { auto: what routers advertise (SLAAC); static: the address given; none:
-    no IPv6 on the interface. }
-  TIpv6Method = (Ipv6MethodAuto, Ipv6MethodStatic, Ipv6MethodNone);
+  { auto: what routers advertise (SLAAC, and DHCPv6 when their M or O
+    flag says); static: the address given; none: no IPv6 on the
+    interface; dhcpv6: an address from a DHCPv6 server whatever the
+    routers say (their routes and prefixes still taken). }
+  TIpv6Method = (Ipv6MethodAuto, Ipv6MethodStatic, Ipv6MethodNone, Ipv6MethodDhcpv6);
 
   TInterfaceSettings = record
     Name: string;
@@ -101,7 +103,8 @@ type
 { "static", "dhcp", "none" (any letter case); False for anything else. }
 function ParseNetworkMethod(const Text: string; out Method: TNetworkMethod): Boolean;
 function NetworkMethodName(Method: TNetworkMethod): string;
-{ "auto", "static", "none" (any letter case); False for anything else. }
+{ "auto", "static", "none", "dhcpv6" (any letter case); False for
+  anything else. }
 function ParseIpv6Method(const Text: string; out Method: TIpv6Method): Boolean;
 function Ipv6MethodName(Method: TIpv6Method): string;
 
@@ -149,7 +152,7 @@ uses
 
 const
   MethodNames: array[TNetworkMethod] of string = ('none', 'static', 'dhcp');
-  Ipv6MethodNames: array[TIpv6Method] of string = ('auto', 'static', 'none');
+  Ipv6MethodNames: array[TIpv6Method] of string = ('auto', 'static', 'none', 'dhcpv6');
   MaximumInterfaceNameLength = NetworkInterfaceNameCapacity - 1;
   MaximumLabelLength = 63;
 
