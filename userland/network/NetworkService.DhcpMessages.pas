@@ -32,9 +32,11 @@
   the largest message it takes (57). Read from replies: the type, the
   offered address (yiaddr), the subnet mask, routers, DNS servers,
   domain name, lease, renewal (T1) and rebinding (T2) times and the
-  server identifier. Option overload (52: options in the file and server
-  name fields) is not followed; servers use it only for very long
-  replies.
+  server identifier. A server short of room may go on in the file and
+  server name fields (option overload, 52: 1 the file, 2 the server
+  name, 3 both); those are read after the options field, the file
+  before the server name (RFC 2131 4.1), and an overload option inside
+  them is ignored.
 }
 unit NetworkService.DhcpMessages;
 
@@ -109,6 +111,8 @@ type
     RenewalSeconds: LongWord;
     HasRebindingTime: Boolean;
     RebindingSeconds: LongWord;
+    { Option 52 (0: none): where else options were found. }
+    Overload: Byte;
   end;
 
 function BuildDhcpMessage(constref Parameters: TDhcpRequestParameters; Buffer: PByte; Capacity: LongWord;
@@ -130,8 +134,14 @@ const
   OperationReply = 2;
   HardwareTypeEthernet = 1;
   FlagBroadcast = $8000;
+  ServerNameOffset = 44;
+  ServerNameBytes = 64;
+  FileOffset = 108;
+  FileBytes = 128;
   MagicCookieOffset = 236;
   OptionsOffset = 240;
+  OverloadFile = 1;
+  OverloadServerName = 2;
 
   OptionPad = 0;
   OptionSubnetMask = 1;
@@ -141,6 +151,7 @@ const
   OptionDomainName = 15;
   OptionRequestedAddress = 50;
   OptionLeaseTime = 51;
+  OptionOverload = 52;
   OptionMessageType = 53;
   OptionServerIdentifier = 54;
   OptionParameterRequestList = 55;
@@ -336,6 +347,9 @@ end;
 procedure ReadOption(Data: PByte; Code: Byte; Position, OptionLength: LongWord; var Reply: TDhcpReply);
 begin
   case Code of
+    OptionOverload:
+      if OptionLength = 1 then
+        Reply.Overload := Data[Position];
     OptionMessageType:
       if OptionLength >= 1 then
         Reply.Kind := Data[Position];
@@ -385,23 +399,19 @@ begin
   Reply.ServerIdentifier := AnyIpv4Address;
 end;
 
-function ParseDhcpReply(Data: PByte; Length: LongWord; constref HardwareAddress: TEthernetAddress;
-  out Reply: TDhcpReply): Boolean;
+{ Reads the options in Data[Start] to Data[Finish - 1], up to the end
+  option. False if one runs past Finish. InOverloadArea: the file or
+  server name field, where option 52 means nothing. }
+function ReadOptionArea(Data: PByte; Start, Finish: LongWord; InOverloadArea: Boolean;
+  var Reply: TDhcpReply): Boolean;
 var
   Position: LongWord;
   Code: Byte;
   OptionLength: LongWord;
 begin
-  ClearReply(Reply);
   Result := False;
-  if (Length < OptionsOffset) or (Data[0] <> OperationReply) or (Data[1] <> HardwareTypeEthernet) or
-     (Data[2] <> 6) or not CompareMem(Data + 28, @HardwareAddress[0], 6) or
-     not CompareMem(Data + MagicCookieOffset, @MagicCookie[0], 4) then
-    Exit;
-  Reply.TransactionId := ReadLongWordAt(Data, 4);
-  Reply.YourAddress := AddressAt(Data, 16);
-  Position := OptionsOffset;
-  while Position < Length do
+  Position := Start;
+  while Position < Finish do
   begin
     Code := Data[Position];
     if Code = OptionEnd then
@@ -411,14 +421,37 @@ begin
       Inc(Position);
       Continue;
     end;
-    if Position + 2 > Length then
+    if Position + 2 > Finish then
       Exit;
     OptionLength := Data[Position + 1];
-    if Position + 2 + OptionLength > Length then
+    if Position + 2 + OptionLength > Finish then
       Exit;
-    ReadOption(Data, Code, Position + 2, OptionLength, Reply);
+    if not (InOverloadArea and (Code = OptionOverload)) then
+      ReadOption(Data, Code, Position + 2, OptionLength, Reply);
     Position := Position + 2 + OptionLength;
   end;
+  Result := True;
+end;
+
+function ParseDhcpReply(Data: PByte; Length: LongWord; constref HardwareAddress: TEthernetAddress;
+  out Reply: TDhcpReply): Boolean;
+begin
+  ClearReply(Reply);
+  Result := False;
+  if (Length < OptionsOffset) or (Data[0] <> OperationReply) or (Data[1] <> HardwareTypeEthernet) or
+     (Data[2] <> 6) or not CompareMem(Data + 28, @HardwareAddress[0], 6) or
+     not CompareMem(Data + MagicCookieOffset, @MagicCookie[0], 4) then
+    Exit;
+  Reply.TransactionId := ReadLongWordAt(Data, 4);
+  Reply.YourAddress := AddressAt(Data, 16);
+  if not ReadOptionArea(Data, OptionsOffset, Length, False, Reply) then
+    Exit;
+  if (Reply.Overload and OverloadFile) <> 0 then
+    if not ReadOptionArea(Data, FileOffset, FileOffset + FileBytes, True, Reply) then
+      Exit;
+  if (Reply.Overload and OverloadServerName) <> 0 then
+    if not ReadOptionArea(Data, ServerNameOffset, ServerNameOffset + ServerNameBytes, True, Reply) then
+      Exit;
   Result := Reply.Kind <> 0;
 end;
 

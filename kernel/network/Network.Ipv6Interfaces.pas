@@ -103,6 +103,7 @@ begin
   NetworkInterface^.Ipv6.Mtu := 0;
   NetworkInterface^.Ipv6.ReachableMilliseconds := DefaultReachableMilliseconds;
   NetworkInterface^.Ipv6.RetransmitMilliseconds := DefaultRetransmitMilliseconds;
+  NetworkInterface^.Ipv6.RouterFlags := 0;
   ForgetRouterDnsServers(NetworkInterface);
 end;
 
@@ -168,11 +169,11 @@ begin
   ScheduleMldReports(NetworkInterface);
 end;
 
-{ Drops what came from routers. }
+{ Drops what came from routers (and the DHCPv6 addresses they led to). }
 procedure ForgetRouters(NetworkInterface: PNetworkInterface);
 begin
   StopRouterSolicitation(NetworkInterface);
-  RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginAutomatic, Ipv6OriginTemporary]);
+  RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginAutomatic, Ipv6OriginTemporary, Ipv6OriginDhcp]);
   RemoveIpv6InterfaceRoutes(NetworkInterface, True);
   ResetRouterInformation(NetworkInterface);
 end;

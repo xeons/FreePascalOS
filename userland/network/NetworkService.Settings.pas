@@ -25,6 +25,9 @@
                                        gives (a list overrides DHCP's)
     SearchDomain = ""                  where names without a dot are looked
                                        up (else the domain DHCP gives)
+    DhcpStartWait = true               a cold start waits 1-10 s before
+                                       the first DHCPDISCOVER (RFC 2131
+                                       4.4.1); false starts at once
 
     [Interfaces/eth0]
     Method = "dhcp"                    dhcp, static or none (a section
@@ -82,6 +85,8 @@ type
     DnsServers: TInternetAddressArray;
     SearchDomain: string;
     HostName: string;
+    { Wait 1 to 10 s before a cold start's first DHCPDISCOVER. }
+    DhcpStartWait: Boolean;
     { Lines about values that were left out. }
     Problems: TStringArray;
   end;
@@ -106,6 +111,7 @@ const
   DnsServersSetting = 'Network/DnsServers';
   SearchDomainSetting = 'Network/SearchDomain';
   HostNameSetting = 'Network/HostName';
+  DhcpStartWaitSetting = 'Network/DhcpStartWait';
   DefaultPrefixLength = 24;
 
 function AddressMethodName(Method: TAddressMethod): string;
@@ -222,6 +228,7 @@ begin
     ReadDnsServers(Store, Result);
     Result.SearchDomain := Store.ReadString(SearchDomainSetting, '');
     Result.HostName := Store.ReadString(HostNameSetting, '');
+    Result.DhcpStartWait := Store.ReadBoolean(DhcpStartWaitSetting, True);
   finally
     Store.Free;
   end;

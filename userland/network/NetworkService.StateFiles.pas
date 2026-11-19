@@ -36,6 +36,12 @@
                                        the kernel's (tentative ones left out)
     Ipv6Gateway = "fe80::2"            the IPv6 default route's, or ""
     Ipv6DnsServers = ["fec0::3"]       what routers advertised (RDNSS)
+    Dhcpv6 = "configured"              off, no-link, configuring,
+                                       configured (an address leased) or
+                                       informed (DNS servers only)
+    Dhcpv6Server = "00:01:00:01:..."   the DUID of the server, or ""
+    Dhcpv6DnsServers = ["2001:db8::53"]  what DHCPv6 gave
+    Dhcpv6Domains = ["example.org"]    the domain search list DHCPv6 gave
 
   A file is written whole as NAME.state.new (mode 0644) and renamed over
   NAME.state, so a reader sees the old state or the new one, never half
@@ -72,6 +78,10 @@ type
     Ipv6Addresses: TStringArray;
     Ipv6Gateway: string;
     Ipv6DnsServers: TStringArray;
+    Dhcpv6: string;
+    Dhcpv6Server: string;
+    Dhcpv6DnsServers: TStringArray;
+    Dhcpv6Domains: TStringArray;
   end;
 
 { An empty state: Method none, State down. }
@@ -120,6 +130,10 @@ begin
   Result.Ipv6Addresses := nil;
   Result.Ipv6Gateway := '';
   Result.Ipv6DnsServers := nil;
+  Result.Dhcpv6 := 'off';
+  Result.Dhcpv6Server := '';
+  Result.Dhcpv6DnsServers := nil;
+  Result.Dhcpv6Domains := nil;
 end;
 
 procedure MakeFolder(const Path: string);
@@ -150,6 +164,10 @@ begin
     Document.SetValue('', 'Ipv6Addresses', ListSetting(State.Ipv6Addresses), False);
     Document.SetValue('', 'Ipv6Gateway', StringSetting(State.Ipv6Gateway), False);
     Document.SetValue('', 'Ipv6DnsServers', ListSetting(State.Ipv6DnsServers), False);
+    Document.SetValue('', 'Dhcpv6', StringSetting(State.Dhcpv6), False);
+    Document.SetValue('', 'Dhcpv6Server', StringSetting(State.Dhcpv6Server), False);
+    Document.SetValue('', 'Dhcpv6DnsServers', ListSetting(State.Dhcpv6DnsServers), False);
+    Document.SetValue('', 'Dhcpv6Domains', ListSetting(State.Dhcpv6Domains), False);
     Result := Document.Serialize;
   finally
     Document.Free;

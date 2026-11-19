@@ -133,6 +133,8 @@ begin
     Line := Line + '  deprecated';
   if (Entry.Flags and InterfaceAddressFlagTemporary) <> 0 then
     Line := Line + '  temporary';
+  if (Entry.Flags and InterfaceAddressFlagDhcp) <> 0 then
+    Line := Line + '  dhcp';
   Say(Line);
 end;
 

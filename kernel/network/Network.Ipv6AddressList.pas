@@ -49,7 +49,8 @@ uses
 
 { Adds an address to the interface, tentative (lo: at once preferred).
   An address the interface has already gets the new lifetimes (if it is
-  an automatic one; ErrorExists otherwise). ErrorAddressInUse if another
+  an automatic or DHCPv6 one added again by the same origin; ErrorExists
+  otherwise). ErrorAddressInUse if another
   interface has it, ErrorNoSpace when the list is full. }
 function AddIpv6Address(NetworkInterface: PNetworkInterface; constref Address: TIpv6Address;
   PrefixLength: LongWord; Origin: TIpv6AddressOrigin; ValidUntil, PreferredUntil: QWord): LongInt;
@@ -185,7 +186,7 @@ begin
   Entry := FindIpv6Address(NetworkInterface, Address);
   if Entry <> nil then
   begin
-    if Entry^.Origin <> Ipv6OriginAutomatic then
+    if not (Entry^.Origin in [Ipv6OriginAutomatic, Ipv6OriginDhcp]) or (Entry^.Origin <> Origin) then
       Exit(ErrorExists);
     Entry^.ValidUntil := ValidUntil;
     Entry^.PreferredUntil := PreferredUntil;
