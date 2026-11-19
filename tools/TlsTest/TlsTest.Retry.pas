@@ -270,7 +270,7 @@ begin
         ScriptRetrySameGroup: AppendRetryRecord(Server^, Server^.FirstHello, True, GroupX25519);
         ScriptRetryNoChange: AppendRetryRecord(Server^, Server^.FirstHello, False, 0);
         ScriptRetryNewGroup: AppendRetryRecord(Server^, Server^.FirstHello, False, GroupSecp256r1);
-        ScriptRetryGroupNotOffered: AppendRetryRecord(Server^, Server^.FirstHello, False, GroupSecp521r1);
+        ScriptRetryGroupNotOffered: AppendRetryRecord(Server^, Server^.FirstHello, False, $001E);   { x448 }
         ScriptDowngradeSentinel: AppendTls12ServerHello(Server^, True, True);
         ScriptTls12WithoutMasterSecretExtension: AppendTls12ServerHello(Server^, False, False);
       end;
