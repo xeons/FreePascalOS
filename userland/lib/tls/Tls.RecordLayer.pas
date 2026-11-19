@@ -35,6 +35,12 @@
 
   Writing: data goes out in records of at most 2^14 bytes, sealed with
   the write keys when they are set.
+
+  Once the server has chosen TLS 1.2 (Connection^.Version) records are
+  protected the TLS 1.2 way (no inner content type), the server's
+  change_cipher_spec switches on the read keys the handshake has made
+  ready (PendingReadProtection), and warning alerts other than
+  close_notify are passed over.
 }
 unit Tls.RecordLayer;
 
@@ -183,12 +189,32 @@ begin
 
     if OuterType = ContentChangeCipherSpec then
     begin
-      if not Connection^.AllowChangeCipherSpec or (Length <> 1) or (Payload[0] <> 1) then
+      if (Length <> 1) or (Payload[0] <> 1) then
+        Exit(TlsErrorUnexpectedMessage);
+      if Connection^.Version = VersionTls12 then
+      begin
+        { The server's keys start here; no handshake message may
+          straddle the change. }
+        if not Connection^.PendingReadProtection.Active or (EnsureNoBufferedHandshake(Connection) <> TlsErrorNone) then
+          Exit(TlsErrorUnexpectedMessage);
+        Connection^.ReadProtection := Connection^.PendingReadProtection;
+        WipeRecordProtection(Connection^.PendingReadProtection);
+        Continue;
+      end;
+      if not Connection^.AllowChangeCipherSpec then
         Exit(TlsErrorUnexpectedMessage);
       Continue;
     end;
 
-    if Connection^.ReadProtection.Active and (OuterType = ContentApplicationData) then
+    if Connection^.ReadProtection.Active and Connection^.ReadProtection.Tls12 then
+    begin
+      if not OpenTls12Record(Connection^.ReadProtection, OuterType, Payload, RecordLength, Payload, Length) then
+        Exit(TlsErrorBadRecordMac);
+      if Length > MaximumPlaintextLength then
+        Exit(TlsErrorRecordOverflow);
+      ContentType := OuterType;
+    end
+    else if Connection^.ReadProtection.Active and (OuterType = ContentApplicationData) then
     begin
       if not OpenRecord(Connection^.ReadProtection, Header, Payload, RecordLength, Length) then
         Exit(TlsErrorBadRecordMac);
@@ -213,6 +239,10 @@ begin
 
     if ContentType = ContentAlert then
     begin
+      { TLS 1.2 warnings (no_renegotiation, say) are passed over. }
+      if (Connection^.Version = VersionTls12) and (Length = 2) and (Payload[0] = 1) and
+         (Payload[1] <> TlsAlertCloseNotify) then
+        Continue;
       Result := HandleAlert(Connection, Payload, Length, Ignore);
       if Ignore then
         Continue;
@@ -317,6 +347,18 @@ var
   Version: Word;
 begin
   Output := Connection^.Output;
+  if Connection^.WriteProtection.Active and Connection^.WriteProtection.Tls12 then
+  begin
+    InnerLength := Length + Tls12RecordExpansion(Connection^.WriteProtection);
+    Output[0] := ContentType;
+    Output[1] := 3;
+    Output[2] := 3;
+    Output[3] := Byte(InnerLength shr 8);
+    Output[4] := Byte(InnerLength);
+    if not SealTls12Record(Connection^.WriteProtection, ContentType, Data, Length, @Output[RecordHeaderLength]) then
+      Exit(TlsErrorInternal);
+    Exit(SendRaw(Connection, Output, RecordHeaderLength + InnerLength));
+  end;
   if Connection^.WriteProtection.Active then
   begin
     { TLSInnerPlaintext: the content, its type, no padding. }
@@ -369,8 +411,9 @@ procedure SendAlert(Connection: PTlsConnection; Description: LongInt);
 var
   Alert: array[0..1] of Byte;
 begin
-  { Level 2 (fatal) except for close_notify. }
-  if Description = TlsAlertCloseNotify then
+  { Level 2 (fatal) except for close_notify and (TLS 1.2's refusal to
+    renegotiate) no_renegotiation. }
+  if (Description = TlsAlertCloseNotify) or (Description = TlsAlertNoRenegotiation) then
     Alert[0] := 1
   else
     Alert[0] := 2;

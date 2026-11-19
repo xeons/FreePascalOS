@@ -22,8 +22,12 @@
   answer read to the end. run-interop.sh starts OpenSSL's s_server with
   the test certificates and checks what this prints:
 
-    ok <cipher suite> <bytes read> <closed cleanly: yes/no>
+    ok <cipher suite> <bytes read> <closed cleanly: yes/no> <version>
+       <group> <OCSP status: none/good/unknown> <resumed: yes/no>
     error <code> <message>
+
+  With TInteropSettings.Connections 2 it connects twice, the second
+  time with the ticket of the first (a line for each).
 }
 unit TlsTest.Interop;
 
@@ -32,9 +36,24 @@ unit TlsTest.Interop;
 
 interface
 
-{ Returns the exit code: 0 when the connection worked. }
-function RunInteropClient(Port: Word; const ServerName, TrustFile, CipherName: string;
-  VerifyCertificates: Boolean): Integer;
+type
+  TInteropSettings = record
+    Port: Word;
+    ServerName: string;
+    TrustFile: string;
+    CipherName: string;
+    VerifyCertificates: Boolean;
+    { 0: the default. }
+    MaximumVersion: Word;
+    { Comma-separated group names (x25519, secp256r1, secp384r1,
+      X25519MLKEM768), or '' for the default. }
+    Groups: string;
+    { 1, or 2 to resume the first session in the second. }
+    Connections: Integer;
+  end;
+
+{ Returns the exit code: 0 when every connection worked. }
+function RunInteropClient(constref Settings: TInteropSettings): Integer;
 
 implementation
 
@@ -46,7 +65,9 @@ uses
   Tls.CipherSuites,
   Tls.Client,
   Tls.Connections,
+  Tls.Constants,
   Tls.Errors,
+  Tls.KeyShares,
   Tls.Transport,
   Tls.TrustStore;
 
@@ -97,53 +118,101 @@ begin
   Close(Source);
 end;
 
-function RunInteropClient(Port: Word; const ServerName, TrustFile, CipherName: string;
-  VerifyCertificates: Boolean): Integer;
+function GroupByName(const Name: string): Word;
+begin
+  if Name = 'x25519' then
+    Result := GroupX25519
+  else if Name = 'secp256r1' then
+    Result := GroupSecp256r1
+  else if Name = 'secp384r1' then
+    Result := GroupSecp384r1
+  else if Name = 'secp521r1' then
+    Result := GroupSecp521r1
+  else if Name = 'X25519MLKEM768' then
+    Result := GroupX25519MlKem768
+  else
+    Result := 0;
+end;
+
+procedure ParseGroups(const Text: string; var List: TTlsGroupList);
+var
+  Names: TStringArray;
+  Index: Integer;
+begin
+  List := Default(TTlsGroupList);
+  if Text = '' then
+    Exit;
+  Names := Text.Split([',']);
+  for Index := 0 to High(Names) do
+    if List.Count < MaximumGroups then
+    begin
+      List.Groups[List.Count] := GroupByName(Names[Index]);
+      Inc(List.Count);
+    end;
+end;
+
+function StatusText(Connection: PTlsConnection): string;
+begin
+  case TlsCertificateStatus(Connection) of
+    StatusGood: Result := 'good';
+    StatusUnknown: Result := 'unknown';
+  else
+    Result := 'none';
+  end;
+end;
+
+function YesNo(Value: Boolean): string;
+begin
+  if Value then
+    Result := 'yes'
+  else
+    Result := 'no';
+end;
+
+{ One connection, a request and the answer read to the end. }
+function ConnectOnce(constref Settings: TInteropSettings; Store: PTlsTrustStore): Integer;
 var
   Socket: THostSocket;
   Address: TInetSockAddr;
   Transport: TTlsTransport;
   Options: TTlsClientOptions;
   Connection: PTlsConnection;
-  Store: PTlsTrustStore;
-  Text, Request: string;
+  Request: string;
   Error: LongInt;
   Buffer: array[0..4095] of Byte;
   Count: Int64;
   Total: Int64;
-  Clean: string;
 begin
   Result := 1;
-  Store := CreateTrustStore;
-  Text := ReadFileText(TrustFile);
-  if Text <> '' then
-    AddPemCertificates(Store, PChar(Text), Length(Text));
-
   Socket.Handle := fpSocket(AF_INET, SOCK_STREAM, 0);
   FillChar(Address, SizeOf(Address), 0);
   Address.sin_family := AF_INET;
-  Address.sin_port := htons(Port);
+  Address.sin_port := htons(Settings.Port);
   Address.sin_addr := StrToNetAddr('127.0.0.1');
   if fpConnect(Socket.Handle, @Address, SizeOf(Address)) <> 0 then
   begin
-    WriteLn('error connect cannot connect to port ', Port);
-    FreeTrustStore(Store);
+    WriteLn('error connect cannot connect to port ', Settings.Port);
+    CloseSocket(Socket.Handle);
     Exit;
   end;
   Transport.Context := @Socket;
   Transport.Send := @SendOnHostSocket;
   Transport.Receive := @ReceiveOnHostSocket;
 
-  FillChar(Options, SizeOf(Options), 0);
-  Options.ServerName := PChar(ServerName);
+  Options := Default(TTlsClientOptions);
+  Options.ServerName := Settings.ServerName;
   Options.TrustStore := Store;
-  Options.VerifyCertificates := VerifyCertificates;
+  Options.VerifyCertificates := Settings.VerifyCertificates;
   Options.VerificationTime := DateTimeToUnix(Now, False);
   Options.ApplicationProtocol := 'http/1.1';
-  if CipherName <> '' then
+  Options.MaximumVersion := Settings.MaximumVersion;
+  ParseGroups(Settings.Groups, Options.Groups);
+  if Settings.Connections > 1 then
+    Options.SessionCacheKey := Settings.ServerName + ':' + IntToStr(Settings.Port);
+  if Settings.CipherName <> '' then
   begin
     Options.CipherSuites.Count := 1;
-    Options.CipherSuites.Identifiers[0] := CipherSuiteByName(CipherName);
+    Options.CipherSuites.Identifiers[0] := CipherSuiteByName(Settings.CipherName);
   end;
 
   Error := CreateTlsClient(Transport, Options, Connection);
@@ -154,11 +223,10 @@ begin
     WriteLn('error ', Error, ' ', TlsErrorDescription(Connection, Error));
     FreeTlsClient(Connection);
     CloseSocket(Socket.Handle);
-    FreeTrustStore(Store);
     Exit;
   end;
 
-  Request := 'GET / HTTP/1.0'#13#10'Host: ' + ServerName + #13#10#13#10;
+  Request := 'GET / HTTP/1.0'#13#10'Host: ' + Settings.ServerName + #13#10#13#10;
   Count := TlsWrite(Connection, @Request[1], Length(Request));
   Total := 0;
   if Count >= 0 then
@@ -168,16 +236,12 @@ begin
         Total := Total + Count;
     until Count <= 0;
   if Count < 0 then
-  begin
-    WriteLn('error ', Count, ' ', TlsErrorDescription(Connection, Count));
-  end
+    WriteLn('error ', Count, ' ', TlsErrorDescription(Connection, Count))
   else
   begin
-    if TlsClosedCleanly(Connection) then
-      Clean := 'yes'
-    else
-      Clean := 'no';
-    WriteLn('ok ', TlsCipherSuiteName(Connection), ' ', Total, ' ', Clean);
+    WriteLn('ok ', TlsCipherSuiteName(Connection), ' ', Total, ' ', YesNo(TlsClosedCleanly(Connection)), ' ',
+      TlsProtocolVersionName(Connection), ' ', TlsKeyExchangeGroupName(Connection), ' ', StatusText(Connection), ' ',
+      YesNo(TlsSessionResumed(Connection)));
     if TlsIgnoredCertificateError(Connection) <> TlsErrorNone then
       WriteLn('ignored ', TlsErrorMessage(TlsIgnoredCertificateError(Connection)));
     Result := 0;
@@ -185,7 +249,27 @@ begin
   TlsClose(Connection);
   FreeTlsClient(Connection);
   CloseSocket(Socket.Handle);
+end;
+
+function RunInteropClient(constref Settings: TInteropSettings): Integer;
+var
+  Store: PTlsTrustStore;
+  Text: string;
+  Round: Integer;
+begin
+  Result := 0;
+  Store := CreateTrustStore;
+  Text := ReadFileText(Settings.TrustFile);
+  if Text <> '' then
+    AddPemCertificates(Store, PChar(Text), Length(Text));
+  for Round := 1 to Settings.Connections do
+    if ConnectOnce(Settings, Store) <> 0 then
+    begin
+      Result := 1;
+      Break;
+    end;
   FreeTrustStore(Store);
 end;
 
+end.
 end.

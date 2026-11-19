@@ -54,9 +54,11 @@ uses
   Crypto.EllipticCurves,
   Crypto.Ecdsa,
   Crypto.KeyGeneration,
-  Crypto.Keccak,
+  Crypto.Ecdh,
+  Crypto.Sha3,
   Crypto.MlKemPolynomials,
   Crypto.MlKem,
+  Crypto.MlKemRandom,
   Crypto.P256;
 
 implementation

@@ -17,7 +17,7 @@
 }
 
 {
-  A TLS 1.3 client connection as an object, over any transport:
+  A TLS client connection as an object, over any transport:
 
     Client := TTlsClientConnection.Create(Transport, Options);
     try

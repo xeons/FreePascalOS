@@ -73,11 +73,11 @@ begin
   Secret := Default(TSshClientExchangeSecret);
   Secret.Method := KeyExchangeMethodMlKem768X25519;
   Secret.X25519.PrivateKey := FromHex(HybridClientX25519);
-  EncapsulationKey := StringOfChar(#0, MlKem768EncapsulationKeySize);
-  Secret.MlKemDecapsulationKey := StringOfChar(#0, MlKem768DecapsulationKeySize);
+  EncapsulationKey := StringOfChar(#0, MlKem768EncapsulationKeyLength);
+  Secret.MlKemDecapsulationKey := StringOfChar(#0, MlKem768DecapsulationKeyLength);
   Seed := FromHex(HybridMlKemSeed);
   MlKem768KeyPairFromSeed(@Seed[1], @EncapsulationKey[1], @Secret.MlKemDecapsulationKey[1]);
-  CheckEqual(Copy(FromHex(HybridClientInit), 1, MlKem768EncapsulationKeySize), EncapsulationKey,
+  CheckEqual(Copy(FromHex(HybridClientInit), 1, MlKem768EncapsulationKeyLength), EncapsulationKey,
     'mlkem768x25519: the client''s ML-KEM key from its seed');
   Check(FinishClientExchange(Secret, FromHex(HybridServerReply), Encoded), 'mlkem768x25519: the server''s reply taken');
   CheckEqual(Encoded, FromHex(HybridEncodedSecret), 'mlkem768x25519: K = SHA-256(ML-KEM secret || X25519 secret) as a string');

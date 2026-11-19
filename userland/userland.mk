@@ -26,7 +26,7 @@
 #                  libsystem <- libconfiguration (settings, per user and system)
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
-#                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
+#                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
@@ -250,7 +250,7 @@ $(CONFIGURATION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/configuratio
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libconfiguration.so -o $@ \
 		$(CONFIGURATION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
-# libtls: a TLS 1.3 client with X.509 certificate checking.
+# libtls: a TLS 1.3 and 1.2 client with X.509 certificate checking.
 $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 	@rm -rf $(TLS_LIBRARY_OBJECTS)
 	@mkdir -p $(TLS_LIBRARY_OBJECTS)

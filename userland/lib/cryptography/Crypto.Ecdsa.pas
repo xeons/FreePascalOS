@@ -18,7 +18,7 @@
 
 {
   ECDSA signatures (FIPS 186-4 section 6.4, SEC 1 section 4.1.4) on
-  P-256 and P-384. The caller hashes the message and passes the digest,
+  P-256, P-384 and P-521. The caller hashes the message and passes the digest,
   the public key as an uncompressed point (04 || x || y) and the
   signature's r and s as big endian integers (as taken out of the DER
   Ecdsa-Sig-Value, or an SSH signature blob).
@@ -241,8 +241,30 @@ begin
   WipeMemory(@Seed[0], SizeOf(Seed));
 end;
 
-{ The next candidate k in [1, n - 1]. The curves here have orders of a
-  whole number of bytes, so bits2int needs no shift. }
+{ bits2int of RFC 6979: the leftmost OrderBits bits of Count bytes.
+  P-521's order is not a whole number of bytes, so its candidates are
+  shifted right by the bits over. }
+procedure BitsToInteger(constref Curve: TEllipticCurve; Bytes: PByte; Count: Integer; out Value: TBigNumber);
+var
+  ExcessBits: Integer;
+  Index: Integer;
+  Carry, Current: Byte;
+begin
+  ExcessBits := Count * 8 - Curve.OrderBits;
+  if ExcessBits > 0 then
+  begin
+    Carry := 0;
+    for Index := 0 to Count - 1 do
+    begin
+      Current := Bytes[Index];
+      Bytes[Index] := Byte((Current shr ExcessBits) or (Carry shl (8 - ExcessBits)));
+      Carry := Current and Byte((1 shl ExcessBits) - 1);
+    end;
+  end;
+  BigNumberFromBytes(Value, Bytes, Count);
+end;
+
+{ The next candidate k in [1, n - 1]. }
 procedure NextNonce(var Generator: TNonceGenerator; constref Curve: TEllipticCurve; out K: TBigNumber);
 var
   Candidate: array[0..BigNumberMaximumBytes - 1] of Byte;
@@ -261,7 +283,7 @@ begin
       Move(Output[0], Candidate[Filled], Part);
       Filled := Filled + Part;
     end;
-    BigNumberFromBytes(K, @Candidate[0], Curve.CoordinateBytes);
+    BitsToInteger(Curve, @Candidate[0], Curve.CoordinateBytes, K);
     if (not BigNumberIsZero(K)) and (CompareBigNumbers(K, Curve.Order.Modulus) < 0) then
       Break;
     ReseedNonceGenerator(Generator, 0, nil, 0);

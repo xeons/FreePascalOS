@@ -40,20 +40,24 @@ const
   OidEcPublicKey: array[0..6] of Byte = ($2A, $86, $48, $CE, $3D, $02, $01);
   OidCurveP256: array[0..7] of Byte = ($2A, $86, $48, $CE, $3D, $03, $01, $07);
   OidCurveP384: array[0..4] of Byte = ($2B, $81, $04, $00, $22);
+  OidCurveP521: array[0..4] of Byte = ($2B, $81, $04, $00, $23);
   OidEcdsaWithSha256: array[0..7] of Byte = ($2A, $86, $48, $CE, $3D, $04, $03, $02);
   OidEcdsaWithSha384: array[0..7] of Byte = ($2A, $86, $48, $CE, $3D, $04, $03, $03);
   OidEcdsaWithSha512: array[0..7] of Byte = ($2A, $86, $48, $CE, $3D, $04, $03, $04);
-  { Ed25519 (RFC 8410), recognized only to name it in errors. }
+  { Ed25519 (RFC 8410): the key and the signature algorithm. }
   OidEd25519: array[0..2] of Byte = ($2B, $65, $70);
 
   { Digests (RFC 5754, NIST). }
   OidSha1: array[0..4] of Byte = ($2B, $0E, $03, $02, $1A);
+  OidSha224: array[0..8] of Byte = ($60, $86, $48, $01, $65, $03, $04, $02, $04);
   OidSha256: array[0..8] of Byte = ($60, $86, $48, $01, $65, $03, $04, $02, $01);
   OidSha384: array[0..8] of Byte = ($60, $86, $48, $01, $65, $03, $04, $02, $02);
   OidSha512: array[0..8] of Byte = ($60, $86, $48, $01, $65, $03, $04, $02, $03);
 
   { Name attributes. }
   OidCommonName: array[0..2] of Byte = ($55, $04, $03);
+  { PKCS #9 emailAddress: 1.2.840.113549.1.9.1 }
+  OidEmailAddress: array[0..8] of Byte = ($2A, $86, $48, $86, $F7, $0D, $01, $09, $01);
 
   { Certificate extensions (RFC 5280): 2.5.29.n }
   OidSubjectKeyIdentifier: array[0..2] of Byte = ($55, $1D, $0E);
@@ -67,6 +71,17 @@ const
   OidAnyExtendedKeyUsage: array[0..3] of Byte = ($55, $1D, $25, $00);
   { id-kp-serverAuth: 1.3.6.1.5.5.7.3.1 }
   OidServerAuthentication: array[0..7] of Byte = ($2B, $06, $01, $05, $05, $07, $03, $01);
+  { id-kp-OCSPSigning: 1.3.6.1.5.5.7.3.9 }
+  OidOcspSigning: array[0..7] of Byte = ($2B, $06, $01, $05, $05, $07, $03, $09);
+  { id-pe-tlsfeature (RFC 7633): 1.3.6.1.5.5.7.1.24 }
+  OidTlsFeature: array[0..7] of Byte = ($2B, $06, $01, $05, $05, $07, $01, $18);
+  { id-pe-authorityInfoAccess: 1.3.6.1.5.5.7.1.1 }
+  OidAuthorityInformationAccess: array[0..7] of Byte = ($2B, $06, $01, $05, $05, $07, $01, $01);
+
+  { OCSP (RFC 6960): id-pkix-ocsp-basic 1.3.6.1.5.5.7.48.1.1 and the
+    nonce extension 1.3.6.1.5.5.7.48.1.2. }
+  OidOcspBasic: array[0..8] of Byte = ($2B, $06, $01, $05, $05, $07, $30, $01, $01);
+  OidOcspNonce: array[0..8] of Byte = ($2B, $06, $01, $05, $05, $07, $30, $01, $02);
 
 implementation
 

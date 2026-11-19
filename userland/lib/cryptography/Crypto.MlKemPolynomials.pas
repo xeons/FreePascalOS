@@ -17,16 +17,15 @@
 }
 
 {
-  The polynomial arithmetic of ML-KEM (FIPS 203 section 4): polynomials
-  of 256 coefficients modulo q = 3329, the number theoretic transform
-  and multiplication in its domain, compression, byte encoding, and the
-  two samplers (uniform from SHAKE128 for the matrix, centered binomial
-  for secrets and errors).
+  The polynomial ring of ML-KEM (FIPS 203): polynomials of degree 255
+  over the integers modulo q = 3329, their number theoretic transform,
+  sampling (uniform in NTT form, and from the centered binomial
+  distribution with eta = 2), compression and byte encoding.
 
-  Coefficients are kept reduced (0 <= c < q). Reduction divides by q
-  with a multiplication and a shift, never a division instruction and
-  never a branch on a secret, so the time taken does not depend on the
-  values (the KyberSlash timing leak came from divisions).
+  Coefficients are 16-bit signed numbers kept within small multiples of
+  q. Products are reduced with Montgomery reduction (R = 2^16), sums
+  with Barrett reduction; neither branches nor looks anything up by a
+  secret value. The zeta table is indexed only by public positions.
 }
 unit Crypto.MlKemPolynomials;
 
@@ -36,343 +35,415 @@ unit Crypto.MlKemPolynomials;
 interface
 
 const
-  MlKemQ = 3329;
-  MlKemN = 256;
-  { Bytes of one polynomial of 12-bit coefficients. }
+  MlKemDegree = 256;
+  MlKemModulus = 3329;
+  MlKemSeedLength = 32;
+  { One polynomial with 12-bit coefficients. }
   MlKemPolynomialBytes = 384;
 
 type
-  TMlKemPolynomial = array[0..MlKemN - 1] of Word;
+  TMlKemPolynomial = array[0..MlKemDegree - 1] of SmallInt;
 
-{ Value mod q for Value < 2^26. }
-function ReduceModQ(Value: QWord): Word; inline;
+procedure PolynomialNtt(var Polynomial: TMlKemPolynomial);
+{ The inverse transform; also multiplies by the Montgomery factor R, so
+  that it undoes the R^-1 a product in NTT form leaves. }
+procedure PolynomialInverseNtt(var Polynomial: TMlKemPolynomial);
+{ Product = First * Second * R^-1, both in NTT form. }
+procedure PolynomialMultiplyNtt(out Product: TMlKemPolynomial; constref First, Second: TMlKemPolynomial);
+{ Multiplies every coefficient by R (into the Montgomery domain). }
+procedure PolynomialToMontgomery(var Polynomial: TMlKemPolynomial);
+{ Barrett-reduces every coefficient to the centered range. }
+procedure PolynomialReduce(var Polynomial: TMlKemPolynomial);
+procedure PolynomialAdd(var Sum: TMlKemPolynomial; constref Addend: TMlKemPolynomial);
+procedure PolynomialSubtract(out Difference: TMlKemPolynomial; constref Minuend, Subtrahend: TMlKemPolynomial);
 
-procedure ForwardNtt(var Polynomial: TMlKemPolynomial);
-procedure InverseNtt(var Polynomial: TMlKemPolynomial);
-{ Sum += First * Second, both in the NTT domain. }
-procedure MultiplyAccumulateNtt(var Sum: TMlKemPolynomial; constref First, Second: TMlKemPolynomial);
-procedure AddPolynomial(var Sum: TMlKemPolynomial; constref Addend: TMlKemPolynomial);
-procedure SubtractPolynomial(var Difference: TMlKemPolynomial; constref Subtrahend: TMlKemPolynomial);
+{ SampleNTT: a uniform polynomial in NTT form from SHAKE128 of the 32
+  byte Seed and the two index bytes. }
+procedure SampleNttPolynomial(out Polynomial: TMlKemPolynomial; Seed: PByte; FirstIndex, SecondIndex: Byte);
+{ SamplePolyCBD with eta = 2 of PRF(Seed, Nonce) = SHAKE256(Seed || Nonce). }
+procedure SampleNoisePolynomial(out Polynomial: TMlKemPolynomial; Seed: PByte; Nonce: Byte);
 
-{ Compress_d and Decompress_d of every coefficient (1 <= d <= 11). }
-procedure CompressPolynomial(var Polynomial: TMlKemPolynomial; Bits: Integer);
-procedure DecompressPolynomial(var Polynomial: TMlKemPolynomial; Bits: Integer);
-function CompressCoefficient(Value: Word; Bits: Integer): Word; inline;
-
-{ ByteEncode_d and ByteDecode_d: 32 * d bytes. Decoding 12-bit values
-  reduces them mod q. }
-procedure EncodePolynomial(constref Polynomial: TMlKemPolynomial; Bits: Integer; Output: PByte);
-procedure DecodePolynomial(Input: PByte; Bits: Integer; out Polynomial: TMlKemPolynomial);
-{ Whether every 12-bit value in Input (384 bytes) is below q: the
-  modulus check of an encapsulation key. }
+{ ByteEncode12 of a reduced polynomial (made non-negative first). }
+procedure PolynomialToBytes(constref Polynomial: TMlKemPolynomial; Output: PByte);
+{ ByteDecode12 without reduction. }
+procedure PolynomialFromBytes(out Polynomial: TMlKemPolynomial; Input: PByte);
+{ True when every 12-bit value in the 384 bytes is below q (the modulus
+  check of FIPS 203 section 7.2). }
 function PolynomialBytesAreReduced(Input: PByte): Boolean;
 
-{ SampleNTT: Seed is rho || j || i (34 bytes). }
-procedure SampleUniformNtt(Seed: PByte; out Polynomial: TMlKemPolynomial);
-{ SamplePolyCBD_eta from 64 * Eta bytes. }
-procedure SampleCenteredBinomial(Bytes: PByte; Eta: Integer; out Polynomial: TMlKemPolynomial);
+{ ByteEncode(Compress(x)) with Bits per coefficient, of a reduced polynomial. }
+procedure CompressPolynomial(constref Polynomial: TMlKemPolynomial; Bits: Integer; Output: PByte);
+procedure DecompressPolynomial(out Polynomial: TMlKemPolynomial; Bits: Integer; Input: PByte);
+
+{ Decompress1(ByteDecode1(Message)) of a 32 byte message. }
+procedure PolynomialFromMessage(out Polynomial: TMlKemPolynomial; Message: PByte);
+{ ByteEncode1(Compress1(x)) of a reduced polynomial into 32 bytes. }
+procedure PolynomialToMessage(constref Polynomial: TMlKemPolynomial; Message: PByte);
 
 implementation
 
 uses
-  Crypto.Keccak;
+  Crypto.Bits,
+  Crypto.Sha3;
 
 const
-  { floor(x / q) = (x * Reciprocal) shr ReciprocalShift for x < 2^26. }
-  Reciprocal = QWord(330282877);
-  ReciprocalShift = 40;
-  { 128^-1 mod q. }
-  InverseOf128 = 3303;
-  Generator = 17;
+  { q^-1 modulo 2^16. }
+  ModulusInverse = 62209;
+  { Round(2^26 / q), for Barrett reduction. }
+  BarrettMultiplier = 20159;
+  { 2^32 mod q: R^2 for PolynomialToMontgomery. }
+  MontgomerySquare = 1353;
+  { R^2 / 128 mod q: scales the inverse transform. }
+  InverseNttScale = 1441;
+  { Round(2^32 / q): turns division by q into a multiplication. }
+  CompressMultiplier = 1290167;
+  HalfModulus = (MlKemModulus + 1) div 2;
 
+  { 17^BitReverse7(i) * R mod q, centered. }
+  Zetas: array[0..127] of SmallInt = (
+    -1044, -758, -359, -1517, 1493, 1422, 287, 202, -171, 622, 1577, 182, 962, -1202, -1474, 1468,
+    573, -1325, 264, 383, -829, 1458, -1602, -130, -681, 1017, 732, 608, -1542, 411, -205, -1571,
+    1223, 652, -552, 1015, -1293, 1491, -282, -1544, 516, -8, -320, -666, -1618, -1162, 126, 1469,
+    -853, -90, -271, 830, 107, -1421, -247, -951, -398, 961, -1508, -725, 448, -1065, 677, -1275,
+    -1103, 430, 555, 843, -1251, 871, 1550, 105, 422, 587, 177, -235, -291, -460, 1574, 1653,
+    -246, 778, 1159, -147, -777, 1483, -602, 1119, -1590, 644, -872, 349, 418, 329, -156, -75,
+    817, 1097, 603, 610, 1322, -1285, -1465, 384, -1215, -136, 1218, -1335, -874, 220, -1187, -1659,
+    -1185, -1530, -1278, 794, -1510, -854, -870, 478, -108, -308, 996, 991, 958, -1460, 1522, 1628);
+
+{ Value * R^-1 mod q, in (-q, q), for |Value| < 2^15 * q. }
+function MontgomeryReduce(Value: LongInt): LongInt; inline;
 var
-  { zeta^BitRev7(i) and, for the base case products, zeta^(2 BitRev7(i) + 1). }
-  Zetas: array[0..127] of Word;
-  Gammas: array[0..127] of Word;
-  TablesReady: Boolean = False;
-
-function ReduceModQ(Value: QWord): Word; inline;
+  LowMultiple: LongInt;
 begin
-  Result := Word(Value - ((Value * Reciprocal) shr ReciprocalShift) * MlKemQ);
+  LowMultiple := SmallInt(Word((QWord(LongWord(Value)) * ModulusInverse) and $FFFF));
+  Result := SarLongint(Value - LowMultiple * MlKemModulus, 16);
 end;
 
-function BitReverse7(Value: Integer): Integer;
-var
-  Index: Integer;
+function MultiplyMontgomery(First, Second: LongInt): LongInt; inline;
 begin
-  Result := 0;
-  for Index := 0 to 6 do
-    if (Value and (1 shl Index)) <> 0 then
-      Result := Result or (1 shl (6 - Index));
+  Result := MontgomeryReduce(First * Second);
 end;
 
-function PowerModQ(Base: QWord; Exponent: Integer): Word;
+{ Value mod q in the centered range, for |Value| < 2^15. }
+function BarrettReduce(Value: LongInt): LongInt; inline;
 var
-  Product: QWord;
+  Quotient: LongInt;
 begin
-  Product := 1;
-  while Exponent > 0 do
-  begin
-    Product := (Product * Base) mod MlKemQ;
-    Dec(Exponent);
-  end;
-  Result := Word(Product);
+  Quotient := SarLongint(BarrettMultiplier * Value + (1 shl 25), 26);
+  Result := Value - Quotient * MlKemModulus;
 end;
 
-{ The tables depend on nothing secret; filling them twice at once
-  writes the same values. }
-procedure PrepareTables;
-var
-  Index: Integer;
+{ A centered residue (|Value| < q) as its representative in [0, q). }
+function MakeNonNegative(Value: LongInt): LongInt; inline;
 begin
-  if TablesReady then
-    Exit;
-  for Index := 0 to 127 do
-  begin
-    Zetas[Index] := PowerModQ(Generator, BitReverse7(Index));
-    Gammas[Index] := PowerModQ(Generator, 2 * BitReverse7(Index) + 1);
-  end;
-  TablesReady := True;
+  Result := Value + (SarLongint(Value, 31) and MlKemModulus);
 end;
 
-procedure ForwardNtt(var Polynomial: TMlKemPolynomial);
+procedure PolynomialNtt(var Polynomial: TMlKemPolynomial);
 var
-  ZetaIndex, Length_, Start, Index: Integer;
-  Zeta, Product: Word;
+  ZetaIndex, Span, Start, Index: Integer;
+  Zeta, Product: LongInt;
 begin
-  PrepareTables;
   ZetaIndex := 1;
-  Length_ := 128;
-  while Length_ >= 2 do
+  Span := 128;
+  while Span >= 2 do
   begin
     Start := 0;
-    while Start < MlKemN do
+    while Start < MlKemDegree do
     begin
       Zeta := Zetas[ZetaIndex];
       Inc(ZetaIndex);
-      for Index := Start to Start + Length_ - 1 do
+      for Index := Start to Start + Span - 1 do
       begin
-        Product := ReduceModQ(QWord(Zeta) * Polynomial[Index + Length_]);
-        Polynomial[Index + Length_] := ReduceModQ(QWord(Polynomial[Index]) + MlKemQ - Product);
-        Polynomial[Index] := ReduceModQ(QWord(Polynomial[Index]) + Product);
+        Product := MultiplyMontgomery(Zeta, Polynomial[Index + Span]);
+        Polynomial[Index + Span] := Polynomial[Index] - Product;
+        Polynomial[Index] := Polynomial[Index] + Product;
       end;
-      Inc(Start, 2 * Length_);
+      Inc(Start, 2 * Span);
     end;
-    Length_ := Length_ div 2;
+    Span := Span div 2;
   end;
+  PolynomialReduce(Polynomial);
 end;
 
-procedure InverseNtt(var Polynomial: TMlKemPolynomial);
+procedure PolynomialInverseNtt(var Polynomial: TMlKemPolynomial);
 var
-  ZetaIndex, Length_, Start, Index: Integer;
-  Zeta, Saved: Word;
+  ZetaIndex, Span, Start, Index: Integer;
+  Zeta, Lower: LongInt;
 begin
-  PrepareTables;
   ZetaIndex := 127;
-  Length_ := 2;
-  while Length_ <= 128 do
+  Span := 2;
+  while Span <= 128 do
   begin
     Start := 0;
-    while Start < MlKemN do
+    while Start < MlKemDegree do
     begin
       Zeta := Zetas[ZetaIndex];
       Dec(ZetaIndex);
-      for Index := Start to Start + Length_ - 1 do
+      for Index := Start to Start + Span - 1 do
       begin
-        Saved := Polynomial[Index];
-        Polynomial[Index] := ReduceModQ(QWord(Saved) + Polynomial[Index + Length_]);
-        Polynomial[Index + Length_] := ReduceModQ(QWord(Zeta) *
-          ReduceModQ(QWord(Polynomial[Index + Length_]) + MlKemQ - Saved));
+        Lower := Polynomial[Index];
+        Polynomial[Index] := BarrettReduce(Lower + Polynomial[Index + Span]);
+        Polynomial[Index + Span] := MultiplyMontgomery(Zeta, Polynomial[Index + Span] - Lower);
       end;
-      Inc(Start, 2 * Length_);
+      Inc(Start, 2 * Span);
     end;
-    Length_ := Length_ * 2;
+    Span := Span * 2;
   end;
-  for Index := 0 to MlKemN - 1 do
-    Polynomial[Index] := ReduceModQ(QWord(Polynomial[Index]) * InverseOf128);
+  for Index := 0 to MlKemDegree - 1 do
+    Polynomial[Index] := MultiplyMontgomery(Polynomial[Index], InverseNttScale);
 end;
 
-procedure MultiplyAccumulateNtt(var Sum: TMlKemPolynomial; constref First, Second: TMlKemPolynomial);
+{ The product of two degree one polynomials modulo X^2 - Zeta. }
+procedure MultiplyPair(Product, First, Second: PSmallInt; Zeta: LongInt);
+var
+  HighProduct: LongInt;
+begin
+  HighProduct := MultiplyMontgomery(First[1], Second[1]);
+  Product[0] := MultiplyMontgomery(HighProduct, Zeta) + MultiplyMontgomery(First[0], Second[0]);
+  Product[1] := MultiplyMontgomery(First[0], Second[1]) + MultiplyMontgomery(First[1], Second[0]);
+end;
+
+procedure PolynomialMultiplyNtt(out Product: TMlKemPolynomial; constref First, Second: TMlKemPolynomial);
 var
   Pair: Integer;
-  A0, A1, B0, B1: QWord;
-  Even, Odd: QWord;
 begin
-  PrepareTables;
-  for Pair := 0 to 127 do
+  for Pair := 0 to MlKemDegree div 4 - 1 do
   begin
-    A0 := First[2 * Pair];
-    A1 := First[2 * Pair + 1];
-    B0 := Second[2 * Pair];
-    B1 := Second[2 * Pair + 1];
-    Even := A0 * B0 + QWord(ReduceModQ(A1 * B1)) * Gammas[Pair] + Sum[2 * Pair];
-    Odd := A0 * B1 + A1 * B0 + Sum[2 * Pair + 1];
-    Sum[2 * Pair] := ReduceModQ(Even);
-    Sum[2 * Pair + 1] := ReduceModQ(Odd);
+    MultiplyPair(@Product[4 * Pair], @First[4 * Pair], @Second[4 * Pair], Zetas[64 + Pair]);
+    MultiplyPair(@Product[4 * Pair + 2], @First[4 * Pair + 2], @Second[4 * Pair + 2], -Zetas[64 + Pair]);
   end;
 end;
 
-procedure AddPolynomial(var Sum: TMlKemPolynomial; constref Addend: TMlKemPolynomial);
+procedure PolynomialToMontgomery(var Polynomial: TMlKemPolynomial);
 var
   Index: Integer;
 begin
-  for Index := 0 to MlKemN - 1 do
-    Sum[Index] := ReduceModQ(QWord(Sum[Index]) + Addend[Index]);
+  for Index := 0 to MlKemDegree - 1 do
+    Polynomial[Index] := MultiplyMontgomery(Polynomial[Index], MontgomerySquare);
 end;
 
-procedure SubtractPolynomial(var Difference: TMlKemPolynomial; constref Subtrahend: TMlKemPolynomial);
+procedure PolynomialReduce(var Polynomial: TMlKemPolynomial);
 var
   Index: Integer;
 begin
-  for Index := 0 to MlKemN - 1 do
-    Difference[Index] := ReduceModQ(QWord(Difference[Index]) + MlKemQ - Subtrahend[Index]);
+  for Index := 0 to MlKemDegree - 1 do
+    Polynomial[Index] := BarrettReduce(Polynomial[Index]);
 end;
 
-{ round(2^d x / q) mod 2^d = floor((2^d x + (q - 1) / 2) / q) mod 2^d,
-  q being odd. }
-function CompressCoefficient(Value: Word; Bits: Integer): Word; inline;
-var
-  Numerator: QWord;
-begin
-  Numerator := (QWord(Value) shl Bits) + (MlKemQ - 1) div 2;
-  Result := Word(((Numerator * Reciprocal) shr ReciprocalShift) and ((QWord(1) shl Bits) - 1));
-end;
-
-procedure CompressPolynomial(var Polynomial: TMlKemPolynomial; Bits: Integer);
+procedure PolynomialAdd(var Sum: TMlKemPolynomial; constref Addend: TMlKemPolynomial);
 var
   Index: Integer;
 begin
-  for Index := 0 to MlKemN - 1 do
-    Polynomial[Index] := CompressCoefficient(Polynomial[Index], Bits);
+  for Index := 0 to MlKemDegree - 1 do
+    Sum[Index] := Sum[Index] + Addend[Index];
 end;
 
-{ round(q y / 2^d) = floor((q y + 2^(d-1)) / 2^d). }
-procedure DecompressPolynomial(var Polynomial: TMlKemPolynomial; Bits: Integer);
+procedure PolynomialSubtract(out Difference: TMlKemPolynomial; constref Minuend, Subtrahend: TMlKemPolynomial);
 var
   Index: Integer;
 begin
-  for Index := 0 to MlKemN - 1 do
-    Polynomial[Index] := Word((LongWord(Polynomial[Index]) * MlKemQ + (LongWord(1) shl (Bits - 1))) shr Bits);
+  for Index := 0 to MlKemDegree - 1 do
+    Difference[Index] := Minuend[Index] - Subtrahend[Index];
 end;
 
-procedure EncodePolynomial(constref Polynomial: TMlKemPolynomial; Bits: Integer; Output: PByte);
+procedure SampleNttPolynomial(out Polynomial: TMlKemPolynomial; Seed: PByte; FirstIndex, SecondIndex: Byte);
+var
+  Context: TSha3Context;
+  Indices: array[0..1] of Byte;
+  Block: array[0..167] of Byte;
+  Count, Offset: Integer;
+  FirstValue, SecondValue: Integer;
+begin
+  BeginShake(Context, 128);
+  AbsorbShake(Context, Seed, MlKemSeedLength);
+  Indices[0] := FirstIndex;
+  Indices[1] := SecondIndex;
+  AbsorbShake(Context, @Indices[0], 2);
+  { Rejection sampling of 12-bit values; the matrix is public, so the
+    branches leak nothing. }
+  Count := 0;
+  while Count < MlKemDegree do
+  begin
+    SqueezeShake(Context, @Block[0], SizeOf(Block));
+    Offset := 0;
+    while (Offset < SizeOf(Block)) and (Count < MlKemDegree) do
+    begin
+      FirstValue := Block[Offset] or ((Block[Offset + 1] and $0F) shl 8);
+      SecondValue := (Block[Offset + 1] shr 4) or (Block[Offset + 2] shl 4);
+      Inc(Offset, 3);
+      if FirstValue < MlKemModulus then
+      begin
+        Polynomial[Count] := FirstValue;
+        Inc(Count);
+      end;
+      if (SecondValue < MlKemModulus) and (Count < MlKemDegree) then
+      begin
+        Polynomial[Count] := SecondValue;
+        Inc(Count);
+      end;
+    end;
+  end;
+  WipeSha3(Context);
+end;
+
+procedure SampleNoisePolynomial(out Polynomial: TMlKemPolynomial; Seed: PByte; Nonce: Byte);
+var
+  Context: TSha3Context;
+  Noise: array[0..127] of Byte;
+  Word32, BitSums: LongWord;
+  Group, Index: Integer;
+  Positive, Negative: LongInt;
+begin
+  BeginShake(Context, 256);
+  AbsorbShake(Context, Seed, MlKemSeedLength);
+  AbsorbShake(Context, @Nonce, 1);
+  SqueezeShake(Context, @Noise[0], SizeOf(Noise));
+  WipeSha3(Context);
+  { Each coefficient is the sum of two bits minus the sum of the next two. }
+  for Group := 0 to MlKemDegree div 8 - 1 do
+  begin
+    Word32 := LoadLittleEndian32(@Noise[4 * Group]);
+    BitSums := (Word32 and $55555555) + ((Word32 shr 1) and $55555555);
+    for Index := 0 to 7 do
+    begin
+      Positive := (BitSums shr (4 * Index)) and 3;
+      Negative := (BitSums shr (4 * Index + 2)) and 3;
+      Polynomial[8 * Group + Index] := Positive - Negative;
+    end;
+  end;
+  Word32 := 0;
+  BitSums := 0;
+  WipeMemory(@Noise[0], SizeOf(Noise));
+end;
+
+{ Packs 256 values of Bits bits each, least significant bit first. }
+procedure PackValues(Values: PWord; Bits: Integer; Output: PByte);
 var
   Accumulator: QWord;
-  Held, Index, Written: Integer;
+  Pending, Index, OutputIndex: Integer;
 begin
   Accumulator := 0;
-  Held := 0;
-  Written := 0;
-  for Index := 0 to MlKemN - 1 do
+  Pending := 0;
+  OutputIndex := 0;
+  for Index := 0 to MlKemDegree - 1 do
   begin
-    Accumulator := Accumulator or (QWord(Polynomial[Index]) shl Held);
-    Inc(Held, Bits);
-    while Held >= 8 do
+    Accumulator := Accumulator or (QWord(Values[Index]) shl Pending);
+    Inc(Pending, Bits);
+    while Pending >= 8 do
     begin
-      Output[Written] := Byte(Accumulator);
-      Inc(Written);
+      Output[OutputIndex] := Byte(Accumulator and $FF);
       Accumulator := Accumulator shr 8;
-      Dec(Held, 8);
+      Dec(Pending, 8);
+      Inc(OutputIndex);
     end;
   end;
 end;
 
-procedure DecodePolynomial(Input: PByte; Bits: Integer; out Polynomial: TMlKemPolynomial);
+procedure UnpackValues(Input: PByte; Bits: Integer; Values: PWord);
 var
-  Accumulator: QWord;
-  Held, Index, Taken: Integer;
-  Mask: QWord;
+  Accumulator, Mask: QWord;
+  Pending, Index, InputIndex: Integer;
 begin
   Accumulator := 0;
-  Held := 0;
-  Taken := 0;
+  Pending := 0;
+  InputIndex := 0;
   Mask := (QWord(1) shl Bits) - 1;
-  for Index := 0 to MlKemN - 1 do
+  for Index := 0 to MlKemDegree - 1 do
   begin
-    while Held < Bits do
+    while Pending < Bits do
     begin
-      Accumulator := Accumulator or (QWord(Input[Taken]) shl Held);
-      Inc(Taken);
-      Inc(Held, 8);
+      Accumulator := Accumulator or (QWord(Input[InputIndex]) shl Pending);
+      Inc(InputIndex);
+      Inc(Pending, 8);
     end;
-    Polynomial[Index] := Word(Accumulator and Mask);
+    Values[Index] := Word(Accumulator and Mask);
     Accumulator := Accumulator shr Bits;
-    Dec(Held, Bits);
-    if Bits = 12 then
-      Polynomial[Index] := ReduceModQ(Polynomial[Index]);
+    Dec(Pending, Bits);
   end;
+end;
+
+procedure PolynomialToBytes(constref Polynomial: TMlKemPolynomial; Output: PByte);
+var
+  Values: array[0..MlKemDegree - 1] of Word;
+  Index: Integer;
+begin
+  for Index := 0 to MlKemDegree - 1 do
+    Values[Index] := Word(MakeNonNegative(Polynomial[Index]));
+  PackValues(@Values[0], 12, Output);
+  WipeMemory(@Values[0], SizeOf(Values));
+end;
+
+procedure PolynomialFromBytes(out Polynomial: TMlKemPolynomial; Input: PByte);
+var
+  Values: array[0..MlKemDegree - 1] of Word;
+  Index: Integer;
+begin
+  UnpackValues(Input, 12, @Values[0]);
+  for Index := 0 to MlKemDegree - 1 do
+    Polynomial[Index] := SmallInt(Values[Index]);
+  WipeMemory(@Values[0], SizeOf(Values));
 end;
 
 function PolynomialBytesAreReduced(Input: PByte): Boolean;
 var
-  Pair: Integer;
-  First, Second: Word;
-  Excess: LongWord;
+  Values: array[0..MlKemDegree - 1] of Word;
+  Index: Integer;
 begin
-  Excess := 0;
-  for Pair := 0 to MlKemN div 2 - 1 do
-  begin
-    First := Word(Input[3 * Pair]) or (Word(Input[3 * Pair + 1] and $0F) shl 8);
-    Second := Word(Input[3 * Pair + 1] shr 4) or (Word(Input[3 * Pair + 2]) shl 4);
-    { The top bit of (q - 1 - c) is set when c >= q. }
-    Excess := Excess or LongWord((LongInt(MlKemQ - 1) - LongInt(First)) shr 31) or
-      LongWord((LongInt(MlKemQ - 1) - LongInt(Second)) shr 31);
-  end;
-  Result := Excess = 0;
+  UnpackValues(Input, 12, @Values[0]);
+  Result := True;
+  for Index := 0 to MlKemDegree - 1 do
+    if Values[Index] >= MlKemModulus then
+      Result := False;
 end;
 
-procedure SampleUniformNtt(Seed: PByte; out Polynomial: TMlKemPolynomial);
+{ Round(2^Bits * Value / q) mod 2^Bits, for Value in [0, q). }
+function CompressValue(Value: LongInt; Bits: Integer): Word; inline;
 var
-  State: TKeccakState;
-  Block: array[0..2] of Byte;
-  Count: Integer;
-  First, Second: Word;
+  Scaled: QWord;
 begin
-  BeginKeccak(State, Shake128Rate, ShakeSuffix);
-  AbsorbKeccak(State, Seed, 34);
-  Count := 0;
-  { Rejection sampling: the matrix is public, so the time it takes
-    tells nothing. }
-  while Count < MlKemN do
-  begin
-    SqueezeKeccak(State, @Block[0], 3);
-    First := Word(Block[0]) or (Word(Block[1] and $0F) shl 8);
-    Second := Word(Block[1] shr 4) or (Word(Block[2]) shl 4);
-    if First < MlKemQ then
-    begin
-      Polynomial[Count] := First;
-      Inc(Count);
-    end;
-    if (Second < MlKemQ) and (Count < MlKemN) then
-    begin
-      Polynomial[Count] := Second;
-      Inc(Count);
-    end;
-  end;
-  WipeKeccak(State);
+  Scaled := ((QWord(LongWord(Value)) shl Bits) + HalfModulus) * CompressMultiplier;
+  Result := Word((Scaled shr 32) and ((QWord(1) shl Bits) - 1));
 end;
 
-function BitAt(Bytes: PByte; Index: Integer): Word; inline;
-begin
-  Result := (Bytes[Index shr 3] shr (Index and 7)) and 1;
-end;
-
-procedure SampleCenteredBinomial(Bytes: PByte; Eta: Integer; out Polynomial: TMlKemPolynomial);
+procedure CompressPolynomial(constref Polynomial: TMlKemPolynomial; Bits: Integer; Output: PByte);
 var
-  Index, Bit: Integer;
-  Positive, Negative: Word;
+  Values: array[0..MlKemDegree - 1] of Word;
+  Index: Integer;
 begin
-  for Index := 0 to MlKemN - 1 do
-  begin
-    Positive := 0;
-    Negative := 0;
-    for Bit := 0 to Eta - 1 do
+  for Index := 0 to MlKemDegree - 1 do
+    Values[Index] := CompressValue(MakeNonNegative(Polynomial[Index]), Bits);
+  PackValues(@Values[0], Bits, Output);
+  WipeMemory(@Values[0], SizeOf(Values));
+end;
+
+procedure DecompressPolynomial(out Polynomial: TMlKemPolynomial; Bits: Integer; Input: PByte);
+var
+  Values: array[0..MlKemDegree - 1] of Word;
+  Index: Integer;
+begin
+  UnpackValues(Input, Bits, @Values[0]);
+  { Round(q * Value / 2^Bits). }
+  for Index := 0 to MlKemDegree - 1 do
+    Polynomial[Index] := SmallInt((LongWord(Values[Index]) * MlKemModulus + (LongWord(1) shl (Bits - 1))) shr Bits);
+end;
+
+procedure PolynomialFromMessage(out Polynomial: TMlKemPolynomial; Message: PByte);
+var
+  ByteIndex, BitIndex: Integer;
+  Bit: LongInt;
+begin
+  for ByteIndex := 0 to 31 do
+    for BitIndex := 0 to 7 do
     begin
-      Inc(Positive, BitAt(Bytes, 2 * Index * Eta + Bit));
-      Inc(Negative, BitAt(Bytes, 2 * Index * Eta + Eta + Bit));
+      Bit := (Message[ByteIndex] shr BitIndex) and 1;
+      Polynomial[8 * ByteIndex + BitIndex] := (-Bit) and HalfModulus;
     end;
-    Polynomial[Index] := ReduceModQ(QWord(Positive) + MlKemQ - Negative);
-  end;
+end;
+
+procedure PolynomialToMessage(constref Polynomial: TMlKemPolynomial; Message: PByte);
+begin
+  CompressPolynomial(Polynomial, 1, Message);
 end;
 
 end.

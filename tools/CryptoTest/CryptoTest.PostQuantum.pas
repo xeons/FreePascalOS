@@ -17,13 +17,11 @@
 }
 
 {
-  SHA-3 and SHAKE against hashlib, and ML-KEM-768 against OpenSSL
-  (CryptoTest.PostQuantumVectors.inc, made by
-  make-post-quantum-vectors.py when the test is built): keys from seeds,
-  OpenSSL's ciphertexts decapsulated, implicit rejection of a changed
-  ciphertext, round trips of the library's own encapsulations, and the
-  modulus check of encapsulation keys. Compression by multiplication is
-  checked against division for every coefficient.
+  SHA-3 and ML-KEM-768 checks. The answers (CryptoTest.PostQuantumVectors.inc)
+  are made at build time by make-post-quantum-vectors.py: SHA3-256,
+  SHA3-512, SHAKE128 and SHAKE256 by Python's hashlib, and ML-KEM-768
+  encapsulation keys, ciphertexts and shared secrets by OpenSSL through
+  Python's cryptography package.
 }
 unit CryptoTest.PostQuantum;
 
@@ -32,145 +30,156 @@ unit CryptoTest.PostQuantum;
 
 interface
 
-procedure TestKeccak;
+procedure TestSha3;
 procedure TestMlKem;
 
 implementation
 
 uses
+  SysUtils,
   TestChecks,
-  Crypto.Keccak,
-  Crypto.MlKemPolynomials,
+  Crypto.Sha3,
   Crypto.MlKem;
 
-{$I CryptoTest.PostQuantumVectors.inc}
+{$i CryptoTest.PostQuantumVectors.inc}
 
-procedure TestKeccak;
+const
+  HashNames: array[THashAlgorithm] of string = ('SHA3-256', 'SHA3-512', 'SHAKE128', 'SHAKE256');
+  { Piece sizes for absorbing and squeezing in several calls. }
+  PieceSizes: array[0..5] of Integer = (1, 7, 64, 3, 136, 29);
+
+{ The same bytes make-post-quantum-vectors.py's test_input makes (and
+  one spare, so that an empty input still has an address). }
+function TestInput(Count: Integer): TByteArray;
 var
-  Input, Output: TByteArray;
-  State: TKeccakState;
   Index: Integer;
 begin
-  Output := nil;
-  SetLength(Output, 400);
-  Input := TextBytes('abc');
-  ComputeSha3_256(nil, 0, @Output[0]);
-  CheckBytes(@Output[0], 32, Sha3_256Empty, 'SHA3-256 ""');
-  ComputeSha3_256(@Input[0], 3, @Output[0]);
-  CheckBytes(@Output[0], 32, Sha3_256Abc, 'SHA3-256 "abc"');
-  ComputeSha3_512(@Input[0], 3, @Output[0]);
-  CheckBytes(@Output[0], 64, Sha3_512Abc, 'SHA3-512 "abc"');
-  ComputeShake256(@Input[0], 3, @Output[0], 64);
-  CheckBytes(@Output[0], 64, Shake256Abc, 'SHAKE256 "abc", 64 bytes');
-  ComputeShake128(nil, 0, @Output[0], 32);
-  CheckBytes(@Output[0], 32, Shake128Empty, 'SHAKE128 "", 32 bytes');
-  Input := HexToBytes(KeccakLongInput);
-  ComputeSha3_256(@Input[0], Length(Input), @Output[0]);
-  CheckBytes(@Output[0], 32, Sha3_256Long, 'SHA3-256 of 500 bytes');
-  ComputeSha3_512(@Input[0], Length(Input), @Output[0]);
-  CheckBytes(@Output[0], 64, Sha3_512Long, 'SHA3-512 of 500 bytes');
-  ComputeShake256(@Input[0], Length(Input), @Output[0], 300);
-  CheckBytes(@Output[0], 300, Shake256Long, 'SHAKE256 of 500 bytes, 300 out');
-  { Absorbed and squeezed a few bytes at a time. }
-  BeginKeccak(State, Shake128Rate, ShakeSuffix);
-  Index := 0;
-  while Index < Length(Input) do
+  Result := nil;
+  SetLength(Result, Count + 1);
+  for Index := 0 to Count - 1 do
+    Result[Index] := Byte((Index * 7 + 3) mod 251);
+end;
+
+procedure ComputeOneShot(constref Vector: TSha3Vector; Input, Output: PByte);
+begin
+  case Vector.Algorithm of
+    HashSha3_256: Sha3_256(Input, Vector.InputLength, Output);
+    HashSha3_512: Sha3_512(Input, Vector.InputLength, Output);
+    HashShake128: Shake128(Input, Vector.InputLength, Output, Vector.OutputLength);
+    HashShake256: Shake256(Input, Vector.InputLength, Output, Vector.OutputLength);
+  end;
+end;
+
+{ The same hash, with the input absorbed and the output squeezed in pieces. }
+procedure ComputeInPieces(constref Vector: TSha3Vector; Input, Output: PByte);
+var
+  Context: TSha3Context;
+  Done, Piece, PieceIndex: Integer;
+  IsShake: Boolean;
+begin
+  IsShake := Vector.Algorithm in [HashShake128, HashShake256];
+  case Vector.Algorithm of
+    HashSha3_256: BeginSha3(Context, 256);
+    HashSha3_512: BeginSha3(Context, 512);
+    HashShake128: BeginShake(Context, 128);
+    HashShake256: BeginShake(Context, 256);
+  end;
+  Done := 0;
+  PieceIndex := 0;
+  while Done < Vector.InputLength do
   begin
-    if Length(Input) - Index >= 7 then
-      AbsorbKeccak(State, @Input[Index], 7)
+    Piece := PieceSizes[PieceIndex mod Length(PieceSizes)];
+    if Piece > Vector.InputLength - Done then
+      Piece := Vector.InputLength - Done;
+    if IsShake then
+      AbsorbShake(Context, Input + Done, Piece)
     else
-      AbsorbKeccak(State, @Input[Index], Length(Input) - Index);
-    Inc(Index, 7);
+      AbsorbSha3(Context, Input + Done, Piece);
+    Inc(Done, Piece);
+    Inc(PieceIndex);
   end;
-  Index := 0;
-  while Index < 400 do
+  if not IsShake then
   begin
-    SqueezeKeccak(State, @Output[Index], 5);
-    Inc(Index, 5);
+    FinishSha3(Context, Output, 8 * Vector.OutputLength);
+    Exit;
   end;
-  CheckBytes(@Output[0], 400, Shake128Long, 'SHAKE128 of 500 bytes in pieces, 400 out in pieces');
+  Done := 0;
+  while Done < Vector.OutputLength do
+  begin
+    Piece := PieceSizes[PieceIndex mod Length(PieceSizes)];
+    if Piece > Vector.OutputLength - Done then
+      Piece := Vector.OutputLength - Done;
+    SqueezeShake(Context, Output + Done, Piece);
+    Inc(Done, Piece);
+    Inc(PieceIndex);
+  end;
+  WipeSha3(Context);
 end;
 
-procedure TestCompression;
+procedure TestSha3;
 var
-  Value: Word;
-  Bits: Integer;
-  Wrong: Integer;
-  Expected: LongWord;
+  Index: Integer;
+  Vector: TSha3Vector;
+  Input, Output: TByteArray;
+  Name: string;
 begin
-  Wrong := 0;
-  for Bits := 1 to 11 do
-    for Value := 0 to MlKemQ - 1 do
-    begin
-      Expected := ((LongWord(Value) shl (Bits + 1)) + MlKemQ) div (2 * MlKemQ) mod (LongWord(1) shl Bits);
-      if CompressCoefficient(Value, Bits) <> Expected then
-        Inc(Wrong);
-    end;
-  Check(Wrong = 0, 'ML-KEM: Compress_d by multiplication equals round(2^d x / q) for every x and d');
-end;
-
-procedure CheckVector(const Name, SeedHex, KeyHex, CiphertextHex, SecretHex, ChangedHex, RejectionHex: string);
-var
-  Seed, Ciphertext, Changed: TByteArray;
-  EncapsulationKey, DecapsulationKey: TByteArray;
-  Secret, OwnCiphertext, OwnSecret: TByteArray;
-begin
-  Seed := HexToBytes(SeedHex);
-  EncapsulationKey := nil;
-  DecapsulationKey := nil;
-  Secret := nil;
-  OwnCiphertext := nil;
-  OwnSecret := nil;
-  SetLength(EncapsulationKey, MlKem768EncapsulationKeySize);
-  SetLength(DecapsulationKey, MlKem768DecapsulationKeySize);
-  SetLength(Secret, MlKem768SharedSecretSize);
-  SetLength(OwnCiphertext, MlKem768CiphertextSize);
-  SetLength(OwnSecret, MlKem768SharedSecretSize);
-  MlKem768KeyPairFromSeed(@Seed[0], @EncapsulationKey[0], @DecapsulationKey[0]);
-  CheckBytes(@EncapsulationKey[0], MlKem768EncapsulationKeySize, KeyHex, Name + ': encapsulation key from d || z');
-  Ciphertext := HexToBytes(CiphertextHex);
-  MlKem768Decapsulate(@DecapsulationKey[0], @Ciphertext[0], @Secret[0]);
-  CheckBytes(@Secret[0], 32, SecretHex, Name + ': OpenSSL''s ciphertext decapsulated');
-  Changed := HexToBytes(ChangedHex);
-  MlKem768Decapsulate(@DecapsulationKey[0], @Changed[0], @Secret[0]);
-  CheckBytes(@Secret[0], 32, RejectionHex, Name + ': a changed ciphertext gives the implicit rejection secret');
-  Check(MlKem768Encapsulate(@EncapsulationKey[0], @OwnCiphertext[0], @OwnSecret[0]),
-    Name + ': encapsulation takes the key');
-  MlKem768Decapsulate(@DecapsulationKey[0], @OwnCiphertext[0], @Secret[0]);
-  Check(CompareByte(Secret[0], OwnSecret[0], 32) = 0, Name + ': own encapsulation decapsulates to the same secret');
+  for Index := 0 to High(Sha3Vectors) do
+  begin
+    Vector := Sha3Vectors[Index];
+    Input := TestInput(Vector.InputLength);
+    Output := nil;
+    SetLength(Output, Vector.OutputLength);
+    Name := Format('%s of %d bytes, %d out', [HashNames[Vector.Algorithm], Vector.InputLength, Vector.OutputLength]);
+    ComputeOneShot(Vector, @Input[0], @Output[0]);
+    CheckBytes(@Output[0], Vector.OutputLength, Vector.Output, Name);
+    FillChar(Output[0], Vector.OutputLength, 0);
+    ComputeInPieces(Vector, @Input[0], @Output[0]);
+    CheckBytes(@Output[0], Vector.OutputLength, Vector.Output, Name + ' in pieces');
+  end;
 end;
 
 procedure TestMlKem;
 var
-  EncapsulationKey, DecapsulationKey, Ciphertext, Secret, Message: TByteArray;
+  Index: Integer;
+  Vector: TMlKemVector;
+  Seed, Ciphertext, Randomness: TByteArray;
+  EncapsulationKey: array[0..MlKem768EncapsulationKeyLength - 1] of Byte;
+  DecapsulationKey: array[0..MlKem768DecapsulationKeyLength - 1] of Byte;
+  OwnCiphertext: array[0..MlKem768CiphertextLength - 1] of Byte;
+  SharedSecret, OwnSecret: array[0..MlKemSharedSecretLength - 1] of Byte;
+  Name: string;
 begin
-  TestCompression;
-  CheckVector('ML-KEM-768 vector 1', MlKemSeed1, MlKemEncapsulationKey1, MlKemCiphertext1, MlKemSharedSecret1,
-    MlKemChangedCiphertext1, MlKemRejectionSecret1);
-  CheckVector('ML-KEM-768 vector 2', MlKemSeed2, MlKemEncapsulationKey2, MlKemCiphertext2, MlKemSharedSecret2,
-    MlKemChangedCiphertext2, MlKemRejectionSecret2);
-  CheckVector('ML-KEM-768 vector 3', MlKemSeed3, MlKemEncapsulationKey3, MlKemCiphertext3, MlKemSharedSecret3,
-    MlKemChangedCiphertext3, MlKemRejectionSecret3);
+  Randomness := nil;
+  for Index := 0 to High(MlKemVectors) do
+  begin
+    Vector := MlKemVectors[Index];
+    Name := Format('ML-KEM-768 seed %d', [Index]);
+    Seed := HexToBytes(Vector.Seed);
+    MlKem768KeyPairFromSeed(@Seed[0], @EncapsulationKey[0], @DecapsulationKey[0]);
+    CheckBytes(@EncapsulationKey[0], MlKem768EncapsulationKeyLength, Vector.EncapsulationKey,
+      Name + ' encapsulation key');
 
-  { A key with a coefficient of q or more fails the modulus check. }
-  EncapsulationKey := HexToBytes(MlKemEncapsulationKey1);
-  Ciphertext := nil;
-  Secret := nil;
-  Message := nil;
-  DecapsulationKey := nil;
-  SetLength(Ciphertext, MlKem768CiphertextSize);
-  SetLength(Secret, MlKem768SharedSecretSize);
-  SetLength(Message, MlKem768MessageSize);
-  SetLength(DecapsulationKey, MlKem768DecapsulationKeySize);
+    Ciphertext := HexToBytes(Vector.Ciphertext);
+    MlKem768Decapsulate(@DecapsulationKey[0], @Ciphertext[0], @SharedSecret[0]);
+    CheckBytes(@SharedSecret[0], MlKemSharedSecretLength, Vector.SharedSecret,
+      Name + ' decapsulates OpenSSL''s ciphertext');
+
+    Ciphertext[Vector.FlippedIndex] := Ciphertext[Vector.FlippedIndex] xor Vector.FlippedMask;
+    MlKem768Decapsulate(@DecapsulationKey[0], @Ciphertext[0], @SharedSecret[0]);
+    CheckBytes(@SharedSecret[0], MlKemSharedSecretLength, Vector.RejectionSecret, Name + ' implicit rejection');
+
+    Randomness := TestInput(32 + Index);
+    Check(MlKem768Encapsulate(@EncapsulationKey[0], @Randomness[Index], @OwnCiphertext[0], @OwnSecret[0]),
+      Name + ' encapsulates');
+    MlKem768Decapsulate(@DecapsulationKey[0], @OwnCiphertext[0], @SharedSecret[0]);
+    Check(CompareMem(@SharedSecret[0], @OwnSecret[0], MlKemSharedSecretLength), Name + ' round trip');
+  end;
+
+  { A 12-bit value of q or more fails the modulus check. }
   EncapsulationKey[0] := $FF;
   EncapsulationKey[1] := EncapsulationKey[1] or $0F;
-  Check(not MlKem768EncapsulateWithMessage(@EncapsulationKey[0], @Message[0], @Ciphertext[0], @Secret[0]),
-    'ML-KEM-768: an encapsulation key with a coefficient of 4095 is refused');
-  { A fresh random pair. }
-  MlKem768GenerateKeyPair(@EncapsulationKey[0], @DecapsulationKey[0]);
-  Check(MlKem768Encapsulate(@EncapsulationKey[0], @Ciphertext[0], @Message[0]), 'ML-KEM-768: random key pair');
-  MlKem768Decapsulate(@DecapsulationKey[0], @Ciphertext[0], @Secret[0]);
-  Check(CompareByte(Secret[0], Message[0], 32) = 0, 'ML-KEM-768: random key pair round trip');
+  Check(not MlKem768Encapsulate(@EncapsulationKey[0], @Randomness[0], @OwnCiphertext[0], @OwnSecret[0]),
+    'ML-KEM-768 refuses an unreduced encapsulation key');
 end;
 
 end.

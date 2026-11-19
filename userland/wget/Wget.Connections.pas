@@ -173,6 +173,8 @@ var
 begin
   FSession := TTlsSocketSession.Create;
   FSession.ServerName := Url.Host;
+  { The ticket cache is keyed by host and port. }
+  FSession.Port := Url.Port;
   FSession.VerifyCertificates := Settings.VerifyCertificates;
   if Settings.HasTrustFile then
     FSession.TrustFile := Settings.TrustFile;

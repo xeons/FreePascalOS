@@ -34,7 +34,15 @@
      certificates (key usage), must be valid at the time, must allow
      the path below it (path length) and, if it restricts the extended
      key usage, must allow TLS servers. At most 8 issuers.
-  3. The server's certificate must be for the host name (Tls.HostNames).
+  3. The name constraints of every authority on a path (anchors
+     included) hold for every certificate below it (Tls.NameConstraints;
+     a self-issued intermediate is not checked, as RFC 5280 section
+     6.1.3 says). A path that breaks them is given up and the search
+     goes on.
+  4. The server's certificate must be for the host name (Tls.HostNames).
+
+  The path found is handed back, the server's certificate first and the
+  anchor last, for the revocation check (Tls.Ocsp needs the issuer).
 
   When no path exists the most telling reason found on the way is given
   (an expired issuer, a bad signature...), else "unknown issuer".
@@ -70,6 +78,10 @@ type
     Error: LongInt;
     { The certificate the error is about (for messages), or nil. }
     Culprit: PTlsCertificate;
+    { The path when Error is TlsErrorNone: the server's certificate
+      first, the anchor last (the server's certificate alone when it is
+      an anchor itself). }
+    Path: array of PTlsCertificate;
   end;
 
 function VerifyCertificateChain(constref Check: TChainCheck): TChainResult;
@@ -80,6 +92,7 @@ uses
   Tls.ByteBuffers,
   Tls.Errors,
   Tls.HostNames,
+  Tls.NameConstraints,
   Tls.Signatures;
 
 type
@@ -87,6 +100,9 @@ type
     Check: TChainCheck;
     { Which presented certificates are on the path being tried. }
     Used: array[0..63] of Boolean;
+    { The path being tried: Path[0] is the server's certificate. }
+    Path: array[0..MaximumChainDepth + 1] of PTlsCertificate;
+    PathLength: Integer;
     BestError: LongInt;
     BestCulprit: PTlsCertificate;
   end;
@@ -147,14 +163,58 @@ begin
   Result := ValidityError(Anchor, Time);
 end;
 
+function IsSelfIssued(constref Certificate: TTlsCertificate): Boolean;
+begin
+  Result := ByteRangesEqual(Certificate.Subject, Certificate.Issuer);
+end;
+
+{ The name constraints of every authority on the path, over the
+  certificates below it. }
+function PathConstraintsHold(var Search: TSearch): Boolean;
+var
+  AuthorityIndex, SubjectIndex: Integer;
+  Authority, Subject: PTlsCertificate;
+  Error: LongInt;
+begin
+  for AuthorityIndex := 1 to Search.PathLength - 1 do
+  begin
+    Authority := Search.Path[AuthorityIndex];
+    if not Authority^.HasNameConstraints then
+      Continue;
+    for SubjectIndex := 0 to AuthorityIndex - 1 do
+    begin
+      Subject := Search.Path[SubjectIndex];
+      if (SubjectIndex > 0) and IsSelfIssued(Subject^) then
+        Continue;
+      Error := CheckNameConstraints(Authority^, Subject^);
+      if Error <> TlsErrorNone then
+      begin
+        NoteFailure(Search, Error, Subject);
+        Exit(False);
+      end;
+    end;
+  end;
+  Result := True;
+end;
+
+{ The path ends at Anchor (at position Depth + 1, or Depth when the
+  last certificate is itself trusted). }
+function CompletePath(var Search: TSearch; Anchor: PTlsCertificate; Position: Integer): Boolean;
+begin
+  Search.Path[Position] := Anchor;
+  Search.PathLength := Position + 1;
+  Result := PathConstraintsHold(Search);
+end;
+
 function FindPath(var Search: TSearch; Current: PTlsCertificate; Depth: Integer): Boolean;
 var
   Index: Integer;
   Candidate: PTlsCertificate;
   Error: LongInt;
 begin
+  Search.Path[Depth] := Current;
   if StoreContainsCertificate(Search.Check.Anchors, Current^) then
-    Exit(True);
+    Exit(CompletePath(Search, Current, Depth));
   if Depth >= MaximumChainDepth then
   begin
     NoteFailure(Search, TlsErrorCertificateChainTooLong, Current);
@@ -172,7 +232,11 @@ begin
       if Error = TlsErrorNone then
         Error := AnchorError(Candidate^, Depth, Search.Check.Time);
       if Error = TlsErrorNone then
-        Exit(True);
+      begin
+        if CompletePath(Search, Candidate, Depth + 1) then
+          Exit(True);
+        Continue;
+      end;
       NoteFailure(Search, Error, Candidate);
     end;
 
@@ -220,9 +284,11 @@ function VerifyCertificateChain(constref Check: TChainCheck): TChainResult;
 var
   Search: TSearch;
   Leaf: PTlsCertificate;
+  Index: Integer;
 begin
   Result.Error := TlsErrorNone;
   Result.Culprit := nil;
+  Result.Path := nil;
   if (Check.Presented = nil) or (Check.PresentedCount < 1) then
   begin
     Result.Error := TlsErrorCertificateMissing;
@@ -250,6 +316,9 @@ begin
     Result.Culprit := Search.BestCulprit;
     Exit;
   end;
+  SetLength(Result.Path, Search.PathLength);
+  for Index := 0 to Search.PathLength - 1 do
+    Result.Path[Index] := Search.Path[Index];
 
   if (Check.HostName <> '') and not CertificateMatchesHost(Leaf^, Check.HostName) then
   begin

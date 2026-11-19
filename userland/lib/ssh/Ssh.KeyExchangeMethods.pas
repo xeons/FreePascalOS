@@ -86,6 +86,7 @@ implementation
 uses
   Crypto.Digests,
   Crypto.MlKem,
+  Crypto.MlKemRandom,
   Crypto.X25519,
   Ssh.Constants,
   Ssh.Wire;
@@ -125,8 +126,8 @@ begin
   if Method = KeyExchangeMethodCurve25519 then
     Exit(Secret.X25519.PublicKey);
   EncapsulationKey := '';
-  SetLength(EncapsulationKey, MlKem768EncapsulationKeySize);
-  SetLength(Secret.MlKemDecapsulationKey, MlKem768DecapsulationKeySize);
+  SetLength(EncapsulationKey, MlKem768EncapsulationKeyLength);
+  SetLength(Secret.MlKemDecapsulationKey, MlKem768DecapsulationKeyLength);
   MlKem768GenerateKeyPair(@EncapsulationKey[1], @Secret.MlKemDecapsulationKey[1]);
   Result := EncapsulationKey + Secret.X25519.PublicKey;
 end;
@@ -163,16 +164,16 @@ begin
       WipeString(X25519Secret);
       Exit(True);
     end;
-    if Length(ClientValue) <> MlKem768EncapsulationKeySize + X25519KeySize then
+    if Length(ClientValue) <> MlKem768EncapsulationKeyLength + X25519KeySize then
       Exit;
-    ClientX25519 := Copy(ClientValue, MlKem768EncapsulationKeySize + 1, X25519KeySize);
+    ClientX25519 := Copy(ClientValue, MlKem768EncapsulationKeyLength + 1, X25519KeySize);
     if not ComputeSharedSecret(Ephemeral, ClientX25519, X25519Secret) then
       Exit;
     Ciphertext := '';
     MlKemSecret := '';
-    SetLength(Ciphertext, MlKem768CiphertextSize);
-    SetLength(MlKemSecret, MlKem768SharedSecretSize);
-    if not MlKem768Encapsulate(@ClientValue[1], @Ciphertext[1], @MlKemSecret[1]) then
+    SetLength(Ciphertext, MlKem768CiphertextLength);
+    SetLength(MlKemSecret, MlKemSharedSecretLength);
+    if not MlKem768EncapsulateRandom(@ClientValue[1], @Ciphertext[1], @MlKemSecret[1]) then
     begin
       WipeString(X25519Secret);
       Exit;
@@ -200,13 +201,13 @@ begin
     WipeString(X25519Secret);
     Exit(True);
   end;
-  if Length(ServerValue) <> MlKem768CiphertextSize + X25519KeySize then
+  if Length(ServerValue) <> MlKem768CiphertextLength + X25519KeySize then
     Exit;
-  ServerX25519 := Copy(ServerValue, MlKem768CiphertextSize + 1, X25519KeySize);
+  ServerX25519 := Copy(ServerValue, MlKem768CiphertextLength + 1, X25519KeySize);
   if not ComputeSharedSecret(Secret.X25519, ServerX25519, X25519Secret) then
     Exit;
   MlKemSecret := '';
-  SetLength(MlKemSecret, MlKem768SharedSecretSize);
+  SetLength(MlKemSecret, MlKemSharedSecretLength);
   MlKem768Decapsulate(@Secret.MlKemDecapsulationKey[1], @ServerValue[1], @MlKemSecret[1]);
   EncodedSecret := HybridSecret(MlKemSecret, X25519Secret);
   Result := True;

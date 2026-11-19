@@ -113,6 +113,7 @@ procedure TestCertificateVerify(var Transcript: TTlsTranscript);
 var
   CertificateBody, VerifyBody: TByteArray;
   Entries: TServerCertificates;
+  Staple: TTlsByteRange;
   Certificate: PTlsCertificate;
   Scheme: Word;
   Signature: TTlsByteRange;
@@ -123,7 +124,7 @@ var
   Index: Integer;
 begin
   CertificateBody := HexToBytes(CertificateMessage);
-  Check(ParseCertificateMessage(@CertificateBody[4], Length(CertificateBody) - 4, Entries) = TlsErrorNone,
+  Check(ParseCertificateMessage(@CertificateBody[4], Length(CertificateBody) - 4, Entries, Staple) = TlsErrorNone,
     'RFC 8448: Certificate message parses');
   Check(Entries.Count = 1, 'RFC 8448: one certificate');
   Check(ParseCertificate(Entries.Entries[0].Data, Entries.Entries[0].Length, Certificate) = TlsErrorNone,
@@ -175,6 +176,8 @@ var
   ServerRead, ClientWrite: TRecordProtection;
   VerifyData: TDigestOutput;
   Selected: TTlsByteRange;
+  TicketLifetime, TicketAgeAdd: LongWord;
+  TicketNonce, TicketBytes: TTlsByteRange;
   ClientFinished: TByteArray;
 begin
   Check(FindCipherSuite(CipherSuiteAes128GcmSha256, Suite), 'RFC 8448: TLS_AES_128_GCM_SHA256');
@@ -249,7 +252,8 @@ begin
   CheckOpenRecord(ServerRead, NewSessionTicketRecord, NewSessionTicketMessage, ContentHandshake,
     'RFC 8448: NewSessionTicket record');
   ClientFinished := HexToBytes(NewSessionTicketMessage);
-  Check(ParseNewSessionTicket(@ClientFinished[4], Length(ClientFinished) - 4) = TlsErrorNone,
+  Check(ParseNewSessionTicket(@ClientFinished[4], Length(ClientFinished) - 4, TicketLifetime, TicketAgeAdd,
+    TicketNonce, TicketBytes) = TlsErrorNone,
     'RFC 8448: NewSessionTicket parses');
   SetRecordProtection(ClientWrite, Suite, Schedule.ClientApplicationTraffic);
   CheckSealRecord(ClientWrite, ClientApplicationData, ContentApplicationData, ClientApplicationRecord,
