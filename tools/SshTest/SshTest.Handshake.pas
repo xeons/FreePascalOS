@@ -48,7 +48,9 @@ uses
   Ssh.KeyExchange,
   Ssh.HostKeys,
   Ssh.PublicKeys,
+  Ssh.Transport,
   Ssh.ServerTransport,
+  Ssh.AuthorizedKeys,
   Ssh.UserAuthentication,
   Ssh.Connection;
 
@@ -61,9 +63,9 @@ type
   TTestPolicy = class(TSshAccountPolicy)
   public
     AuthorizedBlob: string;
-    function PublicKeyAuthenticationAllowed: Boolean; override;
-    function PasswordAuthenticationAllowed: Boolean; override;
-    function PublicKeyIsAuthorized(const User, Blob: string): Boolean; override;
+    function PublicKeyAuthenticationAllowed(const User: string): Boolean; override;
+    function PasswordAuthenticationAllowed(const User: string): Boolean; override;
+    function AuthorizeKey(const User, Blob: string; out Options: TSshKeyOptions): Boolean; override;
     function PasswordIsRight(const User, Password: string): Boolean; override;
   end;
 
@@ -112,18 +114,19 @@ type
     property SessionId: string read FSessionId;
   end;
 
-function TTestPolicy.PublicKeyAuthenticationAllowed: Boolean;
+function TTestPolicy.PublicKeyAuthenticationAllowed(const User: string): Boolean;
 begin
   Result := True;
 end;
 
-function TTestPolicy.PasswordAuthenticationAllowed: Boolean;
+function TTestPolicy.PasswordAuthenticationAllowed(const User: string): Boolean;
 begin
   Result := True;
 end;
 
-function TTestPolicy.PublicKeyIsAuthorized(const User, Blob: string): Boolean;
+function TTestPolicy.AuthorizeKey(const User, Blob: string; out Options: TSshKeyOptions): Boolean;
 begin
+  Options := Default(TSshKeyOptions);
   Result := (User = TestUser) and (Blob = AuthorizedBlob);
 end;
 

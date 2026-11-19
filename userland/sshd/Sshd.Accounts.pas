@@ -36,6 +36,7 @@ unit Sshd.Accounts;
 interface
 
 uses
+  Ssh.AuthorizedKeys,
   Ssh.UserAuthentication,
   Sshd.Configuration;
 
@@ -46,9 +47,9 @@ type
     function MayLogIn(const User: string): Boolean;
   public
     constructor Create(const Configuration: TSshdConfiguration);
-    function PublicKeyAuthenticationAllowed: Boolean; override;
-    function PasswordAuthenticationAllowed: Boolean; override;
-    function PublicKeyIsAuthorized(const User, Blob: string): Boolean; override;
+    function PublicKeyAuthenticationAllowed(const User: string): Boolean; override;
+    function PasswordAuthenticationAllowed(const User: string): Boolean; override;
+    function AuthorizeKey(const User, Blob: string; out Options: TSshKeyOptions): Boolean; override;
     function PasswordIsRight(const User, Password: string): Boolean; override;
     procedure Note(const Text: string); override;
   end;
@@ -75,12 +76,12 @@ begin
   FConfiguration := Configuration;
 end;
 
-function TSystemAccountPolicy.PublicKeyAuthenticationAllowed: Boolean;
+function TSystemAccountPolicy.PublicKeyAuthenticationAllowed(const User: string): Boolean;
 begin
   Result := FConfiguration.PublicKeyAuthentication;
 end;
 
-function TSystemAccountPolicy.PasswordAuthenticationAllowed: Boolean;
+function TSystemAccountPolicy.PasswordAuthenticationAllowed(const User: string): Boolean;
 begin
   Result := FConfiguration.PasswordAuthentication;
 end;
@@ -101,7 +102,7 @@ begin
   Result := (Check <> PasswordLocked) and (Check <> PasswordUnknownUser);
 end;
 
-function TSystemAccountPolicy.PublicKeyIsAuthorized(const User, Blob: string): Boolean;
+function TSystemAccountPolicy.AuthorizeKey(const User, Blob: string; out Options: TSshKeyOptions): Boolean;
 var
   Account: TLoginAccount;
   Lines: TStringList;
@@ -110,6 +111,7 @@ var
   Index: Integer;
 begin
   Result := False;
+  Options := Default(TSshKeyOptions);
   if not MayLogIn(User) or not FindLoginAccount(User, Account) then
     Exit;
   Path := IncludeTrailingPathDelimiter(Account.Home) + '.ssh/authorized_keys';

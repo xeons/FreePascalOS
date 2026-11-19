@@ -16,22 +16,32 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
+
 {
   User authentication, the server's side (RFC 4252): the ssh-userauth
   service and its methods "none" (always refused: it asks for the list),
-  "publickey" and "password".
+  "publickey" (and OpenSSH's publickey-hostbound-v00@openssh.com),
+  "password" and "keyboard-interactive" (RFC 4256, with one password
+  prompt).
 
   Who may log in, with which keys and passwords, is the account policy's
   to say (TSshAccountPolicy, which the server program implements over
-  the system's accounts). Here is the protocol: a publickey query is
-  answered with PK_OK when the key would do; a signed request is
-  accepted when the key is authorized and the signature over
+  the system's accounts and its configuration); it also gives a key's
+  options (authorized_keys options, or a certificate's). Here is the
+  protocol: a publickey query is answered with PK_OK when the key would
+  do; a signed request is accepted when the key is authorized and the
+  signature over
 
     string session id, byte 50, string user, string service,
-    string "publickey", boolean TRUE, string algorithm, string key
+    string method, boolean TRUE, string algorithm, string key
+    [string server host key: publickey-hostbound only]
 
-  is right. A password change request is refused. After too many
-  failures the client is disconnected.
+  is right. The key may be a certificate (Ssh.Certificates): its own key
+  checks the signature, the policy its authority. A hostbound request
+  names one of this server's host keys, so the signature cannot be
+  replayed to another server (OpenSSH's agent restrictions build on
+  this). A password change request is refused. After too many failures
+  the client is disconnected.
 }
 unit Ssh.UserAuthentication;
 
@@ -41,16 +51,26 @@ interface
 
 uses
   Ssh.Wire,
-  Ssh.ServerTransport;
+  Ssh.Transport,
+  Ssh.ServerTransport,
+  Ssh.AuthorizedKeys;
+
+const
+  MethodPublicKey = 'publickey';
+  MethodPublicKeyHostBound = 'publickey-hostbound-v00@openssh.com';
+  MethodPassword = 'password';
+  MethodKeyboardInteractive = 'keyboard-interactive';
 
 type
   TSshAccountPolicy = class
   public
-    function PublicKeyAuthenticationAllowed: Boolean; virtual; abstract;
-    function PasswordAuthenticationAllowed: Boolean; virtual; abstract;
-    { Whether Blob is among the keys User may log in with (and User may
-      log in at all). }
-    function PublicKeyIsAuthorized(const User, Blob: string): Boolean; virtual; abstract;
+    function PublicKeyAuthenticationAllowed(const User: string): Boolean; virtual; abstract;
+    function PasswordAuthenticationAllowed(const User: string): Boolean; virtual; abstract;
+    function KeyboardInteractiveAllowed(const User: string): Boolean; virtual;
+    { Whether Blob (a key or a certificate; its signature is checked
+      apart) may log User in (and User may log in at all), and with
+      which options. }
+    function AuthorizeKey(const User, Blob: string; out Options: TSshKeyOptions): Boolean; virtual; abstract;
     { Whether Password is User's (and User may log in at all). A wrong
       one should take a while to be answered. }
     function PasswordIsRight(const User, Password: string): Boolean; virtual; abstract;
@@ -65,39 +85,111 @@ type
     FSucceeded: Boolean;
     FUserName: string;
     FMethod: string;
+    FOptions: TSshKeyOptions;
     FFailures: Integer;
+    FAwaitingInfoResponse: Boolean;
+    FInfoUser: string;
     procedure HandleServiceRequest(const Payload: string);
     procedure HandleRequest(const Payload: string);
-    function TryPublicKey(const User, Service: string; var Reader: TSshReader): Boolean;
+    procedure HandleInfoResponse(const Payload: string);
+    function TryPublicKey(const User, Service, Method: string; var Reader: TSshReader): Boolean;
     function TryPassword(const User: string; var Reader: TSshReader): Boolean;
-    procedure SendFailure;
+    procedure StartKeyboardInteractive(const User: string; var Reader: TSshReader);
+    procedure Succeed(const User, Method: string);
+    procedure SendFailure(const User: string);
     procedure CountFailure;
-    function MethodList: string;
+    function MethodList(const User: string): string;
   public
     constructor Create(Transport: TSshServerTransport; Policy: TSshAccountPolicy);
-    { Handles SERVICE_REQUEST and USERAUTH_REQUEST; False for any other
-      message (left to the caller). }
+    { Handles SERVICE_REQUEST, USERAUTH_REQUEST and USERAUTH_INFO_RESPONSE;
+      False for any other message (left to the caller). }
     function HandleMessage(const Message: TSshReceivedMessage): Boolean;
     property Succeeded: Boolean read FSucceeded;
     property UserName: string read FUserName;
-    { "publickey" or "password", once succeeded. }
+    { "publickey", "password" or "keyboard-interactive", once succeeded. }
     property Method: string read FMethod;
+    { The key's options (none for a password). }
+    property Options: TSshKeyOptions read FOptions;
   end;
+
+{ The signature check of a publickey request: Blob a key or a
+  certificate, Algorithm the request's. }
+function PublicKeySignatureIsRight(const Blob, Algorithm, SignedData, Signature: string): Boolean;
+{ Whether a publickey request's algorithm fits its key. }
+function PublicKeyAlgorithmFits(const Blob, Algorithm: string): Boolean;
 
 implementation
 
 uses
   SysUtils,
   Ssh.Constants,
-  Ssh.PublicKeys;
+  Ssh.PublicKeys,
+  Ssh.Certificates;
 
 const
   MaximumFailures = 10;
-  MethodPublicKey = 'publickey';
-  MethodPassword = 'password';
+  PasswordPrompt = 'Password: ';
 
 procedure TSshAccountPolicy.Note(const Text: string);
 begin
+end;
+
+function TSshAccountPolicy.KeyboardInteractiveAllowed(const User: string): Boolean;
+begin
+  Result := False;
+end;
+
+function KeyTypeOf(const Blob: string): string;
+var
+  Reader: TSshReader;
+begin
+  try
+    Reader.Start(Blob);
+    Result := Reader.ReadString;
+  except
+    on ESshProtocolError do
+      Result := '';
+  end;
+end;
+
+{ The key that checks the signature and the algorithm in the signature. }
+function SigningKey(const Blob, Algorithm: string; out Key: TSshPublicKey; out PlainAlgorithm: string): Boolean;
+var
+  KeyType: string;
+  Certificate: TSshCertificate;
+begin
+  KeyType := KeyTypeOf(Blob);
+  if IsCertificateKeyType(KeyType) then
+  begin
+    Result := ParseCertificate(Blob, Certificate);
+    if not Result then
+      Exit;
+    Key := Certificate.Key;
+    PlainAlgorithm := PlainSignatureAlgorithm(KeyType, Algorithm);
+    Result := PlainAlgorithm <> '';
+  end
+  else
+  begin
+    Result := ParsePublicKeyBlob(Blob, Key) and SignatureAlgorithmFits(Key, Algorithm);
+    PlainAlgorithm := Algorithm;
+  end;
+end;
+
+function PublicKeyAlgorithmFits(const Blob, Algorithm: string): Boolean;
+var
+  Key: TSshPublicKey;
+  PlainAlgorithm: string;
+begin
+  Result := SigningKey(Blob, Algorithm, Key, PlainAlgorithm);
+end;
+
+function PublicKeySignatureIsRight(const Blob, Algorithm, SignedData, Signature: string): Boolean;
+var
+  Key: TSshPublicKey;
+  PlainAlgorithm: string;
+begin
+  Result := SigningKey(Blob, Algorithm, Key, PlainAlgorithm) and
+    VerifySshSignature(Key, PlainAlgorithm, SignedData, Signature);
 end;
 
 constructor TSshUserAuthenticator.Create(Transport: TSshServerTransport; Policy: TSshAccountPolicy);
@@ -119,6 +211,9 @@ begin
       { Requests after success are ignored (RFC 4252 section 5.1). }
       if not FSucceeded then
         HandleRequest(Message.Payload);
+    MessageUserAuthenticationInfoResponse:
+      if not FSucceeded then
+        HandleInfoResponse(Message.Payload);
   else
     Result := False;
   end;
@@ -137,25 +232,31 @@ begin
   FTransport.Send(SshByte(MessageServiceAccept) + SshString(Service));
 end;
 
-function TSshUserAuthenticator.MethodList: string;
+function TSshUserAuthenticator.MethodList(const User: string): string;
 var
   Methods: string;
-begin
-  Methods := '';
-  if FPolicy.PublicKeyAuthenticationAllowed then
-    Methods := MethodPublicKey;
-  if FPolicy.PasswordAuthenticationAllowed then
+
+  procedure Add(const Name: string);
   begin
     if Methods <> '' then
       Methods := Methods + ',';
-    Methods := Methods + MethodPassword;
+    Methods := Methods + Name;
   end;
+
+begin
+  Methods := '';
+  if FPolicy.PublicKeyAuthenticationAllowed(User) then
+    Add(MethodPublicKey);
+  if FPolicy.PasswordAuthenticationAllowed(User) then
+    Add(MethodPassword);
+  if FPolicy.KeyboardInteractiveAllowed(User) then
+    Add(MethodKeyboardInteractive);
   Result := SshString(Methods);
 end;
 
-procedure TSshUserAuthenticator.SendFailure;
+procedure TSshUserAuthenticator.SendFailure(const User: string);
 begin
-  FTransport.Send(SshByte(MessageUserAuthenticationFailure) + MethodList + SshBoolean(False));
+  FTransport.Send(SshByte(MessageUserAuthenticationFailure) + MethodList(User) + SshBoolean(False));
 end;
 
 procedure TSshUserAuthenticator.CountFailure;
@@ -164,6 +265,14 @@ begin
   if FFailures >= MaximumFailures then
     raise ESshDisconnect.CreateWithReason(DisconnectNoMoreAuthenticationMethods,
       'too many authentication failures');
+end;
+
+procedure TSshUserAuthenticator.Succeed(const User, Method: string);
+begin
+  FSucceeded := True;
+  FUserName := User;
+  FMethod := Method;
+  FTransport.Send(SshByte(MessageUserAuthenticationSuccess));
 end;
 
 procedure TSshUserAuthenticator.HandleRequest(const Payload: string);
@@ -179,45 +288,52 @@ begin
   RequestedMethod := Reader.ReadString;
   if Service <> ServiceConnection then
     raise ESshDisconnect.CreateWithReason(DisconnectServiceNotAvailable, 'service not available: ' + Service);
-  Accepted := False;
-  if (RequestedMethod = MethodPublicKey) and FPolicy.PublicKeyAuthenticationAllowed then
-    Accepted := TryPublicKey(User, Service, Reader)
-  else if (RequestedMethod = MethodPassword) and FPolicy.PasswordAuthenticationAllowed then
+  { A new request ends a keyboard-interactive exchange under way. }
+  FAwaitingInfoResponse := False;
+  FOptions := Default(TSshKeyOptions);
+  if ((RequestedMethod = MethodPublicKey) or (RequestedMethod = MethodPublicKeyHostBound)) and
+    FPolicy.PublicKeyAuthenticationAllowed(User) then
+    Accepted := TryPublicKey(User, Service, RequestedMethod, Reader)
+  else if (RequestedMethod = MethodPassword) and FPolicy.PasswordAuthenticationAllowed(User) then
     Accepted := TryPassword(User, Reader)
+  else if (RequestedMethod = MethodKeyboardInteractive) and FPolicy.KeyboardInteractiveAllowed(User) then
+  begin
+    StartKeyboardInteractive(User, Reader);
+    Exit;
+  end
   else if RequestedMethod = 'none' then
   begin
-    SendFailure;
+    SendFailure(User);
     Exit;
   end
   else
   begin
-    SendFailure;
+    SendFailure(User);
     CountFailure;
     Exit;
   end;
   if Accepted then
-  begin
-    FSucceeded := True;
-    FUserName := User;
-    FMethod := RequestedMethod;
-    FTransport.Send(SshByte(MessageUserAuthenticationSuccess));
-  end;
+    Succeed(User, RequestedMethod);
 end;
 
 { Answers the request itself (PK_OK, or a failure) unless it succeeds. }
-function TSshUserAuthenticator.TryPublicKey(const User, Service: string; var Reader: TSshReader): Boolean;
+function TSshUserAuthenticator.TryPublicKey(const User, Service, Method: string; var Reader: TSshReader): Boolean;
 var
   Signed: Boolean;
-  Algorithm, Blob, Signature, SignedData: string;
-  Key: TSshPublicKey;
+  Algorithm, Blob, HostKeyBlob, Signature, SignedData: string;
   Usable: Boolean;
+  KeyOptions: TSshKeyOptions;
 begin
   Result := False;
   Signed := Reader.ReadBoolean;
   Algorithm := Reader.ReadString;
   Blob := Reader.ReadString;
-  Usable := ParsePublicKeyBlob(Blob, Key) and SignatureAlgorithmFits(Key, Algorithm) and
-    FPolicy.PublicKeyIsAuthorized(User, Blob);
+  HostKeyBlob := '';
+  if Method = MethodPublicKeyHostBound then
+    HostKeyBlob := Reader.ReadString;
+  Usable := PublicKeyAlgorithmFits(Blob, Algorithm) and
+    ((Method = MethodPublicKey) or FTransport.IsOwnHostKey(HostKeyBlob)) and
+    FPolicy.AuthorizeKey(User, Blob, KeyOptions);
   if not Signed then
   begin
     if Usable then
@@ -225,7 +341,7 @@ begin
     else
     begin
       FPolicy.Note('key ' + PublicKeyFingerprint(Blob) + ' refused for ' + User);
-      SendFailure;
+      SendFailure(User);
       CountFailure;
     end;
     Exit;
@@ -234,15 +350,20 @@ begin
   if Usable then
   begin
     SignedData := SshString(FTransport.SessionId) + SshByte(MessageUserAuthenticationRequest) + SshString(User) +
-      SshString(Service) + SshString(MethodPublicKey) + SshBoolean(True) + SshString(Algorithm) + SshString(Blob);
-    Result := VerifySshSignature(Key, Algorithm, SignedData, Signature);
+      SshString(Service) + SshString(Method) + SshBoolean(True) + SshString(Algorithm) + SshString(Blob);
+    if Method = MethodPublicKeyHostBound then
+      SignedData := SignedData + SshString(HostKeyBlob);
+    Result := PublicKeySignatureIsRight(Blob, Algorithm, SignedData, Signature);
   end;
   if Result then
-    FPolicy.Note('accepted key ' + PublicKeyFingerprint(Blob) + ' (' + Algorithm + ') for ' + User)
+  begin
+    FOptions := KeyOptions;
+    FPolicy.Note('accepted key ' + PublicKeyFingerprint(Blob) + ' (' + Algorithm + ') for ' + User);
+  end
   else
   begin
     FPolicy.Note('key ' + PublicKeyFingerprint(Blob) + ' refused for ' + User);
-    SendFailure;
+    SendFailure(User);
     CountFailure;
   end;
 end;
@@ -263,7 +384,52 @@ begin
   else
   begin
     FPolicy.Note('password refused for ' + User);
-    SendFailure;
+    SendFailure(User);
+    CountFailure;
+  end;
+end;
+
+{ RFC 4256: one prompt, not echoed. The language and submethods are
+  read and not used. }
+procedure TSshUserAuthenticator.StartKeyboardInteractive(const User: string; var Reader: TSshReader);
+begin
+  Reader.ReadString;
+  Reader.ReadString;
+  FInfoUser := User;
+  FAwaitingInfoResponse := True;
+  FTransport.Send(SshByte(MessageUserAuthenticationInfoRequest) + SshString('') + SshString('') + SshString('') +
+    SshUInt32(1) + SshString(PasswordPrompt) + SshBoolean(False));
+end;
+
+procedure TSshUserAuthenticator.HandleInfoResponse(const Payload: string);
+var
+  Reader: TSshReader;
+  Count: LongWord;
+  Password: string;
+  Right: Boolean;
+begin
+  if not FAwaitingInfoResponse then
+    raise ESshProtocolError.Create('INFO_RESPONSE without a request');
+  FAwaitingInfoResponse := False;
+  Reader.Start(Payload);
+  Reader.ReadByte;
+  Count := Reader.ReadUInt32;
+  Right := False;
+  if Count = 1 then
+  begin
+    Password := Reader.ReadString;
+    Right := FPolicy.PasswordIsRight(FInfoUser, Password);
+    WipeString(Password);
+  end;
+  if Right then
+  begin
+    FPolicy.Note('accepted keyboard-interactive password for ' + FInfoUser);
+    Succeed(FInfoUser, MethodKeyboardInteractive);
+  end
+  else
+  begin
+    FPolicy.Note('keyboard-interactive password refused for ' + FInfoUser);
+    SendFailure(FInfoUser);
     CountFailure;
   end;
 end;

@@ -53,6 +53,7 @@ uses
   Ssh.Constants,
   Ssh.Wire,
   Ssh.HostKeys,
+  Ssh.Transport,
   Ssh.ServerTransport,
   Ssh.UserAuthentication,
   Ssh.Connection,

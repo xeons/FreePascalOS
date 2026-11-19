@@ -54,6 +54,10 @@ const
   MessageUserAuthenticationBanner = 53;
   { publickey: the key would do (RFC 4252 section 7). }
   MessageUserAuthenticationPublicKeyOk = 60;
+  { keyboard-interactive (RFC 4256): the same numbers as PK_OK and the
+    next, for another method. }
+  MessageUserAuthenticationInfoRequest = 60;
+  MessageUserAuthenticationInfoResponse = 61;
 
   { Connection protocol (RFC 4254). }
   MessageGlobalRequest = 80;
