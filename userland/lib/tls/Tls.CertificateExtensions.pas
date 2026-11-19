@@ -19,10 +19,12 @@
 {
   The extensions of an X.509 v3 certificate (RFC 5280 section 4.2) that
   the chain check acts on: basic constraints, key usage, extended key
-  usage, subject alternative names and the key identifiers. Certificate
-  policies are recognized and not acted on. Any other extension marked
-  critical makes the certificate unusable (name constraints included:
-  they are not supported). An extension may appear only once.
+  usage, subject alternative names, the key identifiers, name
+  constraints (kept for Tls.NameConstraints, checked here to be well
+  formed) and the TLS feature list (RFC 7633: must staple). Certificate
+  policies and authority information access are recognized and not
+  acted on. Any other extension marked critical makes the certificate
+  unusable. An extension may appear only once.
 }
 unit Tls.CertificateExtensions;
 
@@ -50,7 +52,7 @@ const
 type
   TExtensionKind = (ExtensionOther, ExtensionBasicConstraints, ExtensionKeyUsage, ExtensionExtendedKeyUsage,
     ExtensionSubjectAlternativeName, ExtensionSubjectKeyIdentifier, ExtensionAuthorityKeyIdentifier,
-    ExtensionCertificatePolicies);
+    ExtensionCertificatePolicies, ExtensionNameConstraints, ExtensionTlsFeature, ExtensionAuthorityInformation);
 
 function OidIs(constref Element: TAsn1Element; const Identifier: array of Byte): Boolean;
 begin
@@ -73,6 +75,12 @@ begin
     Result := ExtensionAuthorityKeyIdentifier
   else if OidIs(Identifier, OidCertificatePolicies) then
     Result := ExtensionCertificatePolicies
+  else if OidIs(Identifier, OidNameConstraints) then
+    Result := ExtensionNameConstraints
+  else if OidIs(Identifier, OidTlsFeature) then
+    Result := ExtensionTlsFeature
+  else if OidIs(Identifier, OidAuthorityInformationAccess) then
+    Result := ExtensionAuthorityInformation
   else
     Result := ExtensionOther;
 end;
@@ -138,6 +146,8 @@ begin
       Exit;
     if OidIs(Purpose, OidServerAuthentication) or OidIs(Purpose, OidAnyExtendedKeyUsage) then
       Certificate.AllowsServerAuthentication := True;
+    if OidIs(Purpose, OidOcspSigning) then
+      Certificate.AllowsOcspSigning := True;
   end;
   Result := True;
 end;
@@ -214,6 +224,100 @@ begin
     (Policies.ContentsLength > 0);
 end;
 
+{ Only checked to be a well formed, non-empty SEQUENCE. }
+function ReadAuthorityInformation(Reader: TAsn1Reader): Boolean;
+var
+  Descriptions: TAsn1Element;
+begin
+  Result := ReadAsn1Expected(Reader, Asn1Sequence, Descriptions) and Asn1ReaderAtEnd(Reader) and
+    (Descriptions.ContentsLength > 0);
+end;
+
+(* GeneralSubtrees ::= SEQUENCE SIZE (1..MAX) OF GeneralSubtree
+   GeneralSubtree ::= SEQUENCE { base GeneralName,
+     minimum [0] BaseDistance DEFAULT 0, maximum [1] BaseDistance OPTIONAL }
+   Every subtree must be well formed; RFC 5280 allows neither a minimum
+   nor a maximum, and either is refused. *)
+function CheckGeneralSubtrees(constref Subtrees: TAsn1Element): Boolean;
+var
+  ListReader, SubtreeReader: TAsn1Reader;
+  Subtree, Base: TAsn1Element;
+begin
+  Result := False;
+  OpenAsn1Element(ListReader, Subtrees);
+  if Asn1ReaderAtEnd(ListReader) then
+    Exit;
+  while not Asn1ReaderAtEnd(ListReader) do
+  begin
+    if not ReadAsn1Expected(ListReader, Asn1Sequence, Subtree) then
+      Exit;
+    OpenAsn1Element(SubtreeReader, Subtree);
+    if not ReadAsn1Element(SubtreeReader, Base) or ((Base.Tag and Asn1ContextSpecific) = 0) then
+      Exit;
+    if not Asn1ReaderAtEnd(SubtreeReader) then
+      Exit;
+  end;
+  Result := True;
+end;
+
+(* NameConstraints ::= SEQUENCE { permittedSubtrees [0] GeneralSubtrees
+   OPTIONAL, excludedSubtrees [1] GeneralSubtrees OPTIONAL }, at least
+   one of them. *)
+function ReadNameConstraints(Reader: TAsn1Reader; var Certificate: TTlsCertificate): Boolean;
+var
+  Constraints, Permitted, Excluded: TAsn1Element;
+  ConstraintsReader: TAsn1Reader;
+  HasPermitted, HasExcluded: Boolean;
+begin
+  Result := False;
+  if not ReadAsn1Expected(Reader, Asn1Sequence, Constraints) or not Asn1ReaderAtEnd(Reader) then
+    Exit;
+  OpenAsn1Element(ConstraintsReader, Constraints);
+  if not ReadAsn1Optional(ConstraintsReader, Asn1ContextSpecific or Asn1Constructed or 0, Permitted,
+    HasPermitted) then
+    Exit;
+  if not ReadAsn1Optional(ConstraintsReader, Asn1ContextSpecific or Asn1Constructed or 1, Excluded,
+    HasExcluded) then
+    Exit;
+  if not Asn1ReaderAtEnd(ConstraintsReader) or (not HasPermitted and not HasExcluded) then
+    Exit;
+  if HasPermitted then
+  begin
+    if not CheckGeneralSubtrees(Permitted) then
+      Exit;
+    Certificate.PermittedSubtrees := ByteRange(Permitted.Contents, Permitted.ContentsLength);
+  end;
+  if HasExcluded then
+  begin
+    if not CheckGeneralSubtrees(Excluded) then
+      Exit;
+    Certificate.ExcludedSubtrees := ByteRange(Excluded.Contents, Excluded.ContentsLength);
+  end;
+  Certificate.HasNameConstraints := True;
+  Result := True;
+end;
+
+(* Features ::= SEQUENCE OF INTEGER; 5 is status_request. *)
+function ReadTlsFeature(Reader: TAsn1Reader; var Certificate: TTlsCertificate): Boolean;
+var
+  Features, Feature: TAsn1Element;
+  FeatureReader: TAsn1Reader;
+  Value: LongInt;
+begin
+  Result := False;
+  if not ReadAsn1Expected(Reader, Asn1Sequence, Features) or not Asn1ReaderAtEnd(Reader) then
+    Exit;
+  OpenAsn1Element(FeatureReader, Features);
+  while not Asn1ReaderAtEnd(FeatureReader) do
+  begin
+    if not ReadAsn1Expected(FeatureReader, Asn1Integer, Feature) or not ReadAsn1SmallInteger(Feature, Value) then
+      Exit;
+    if Value = 5 then
+      Certificate.RequiresStapledStatus := True;
+  end;
+  Result := True;
+end;
+
 function ReadCertificateExtensions(constref Element: TAsn1Element; var Certificate: TTlsCertificate): Boolean;
 var
   OuterReader, ListReader, ExtensionReader, ValueReader: TAsn1Reader;
@@ -271,6 +375,9 @@ begin
       ExtensionSubjectKeyIdentifier: Understood := ReadSubjectKeyIdentifier(ValueReader, Certificate);
       ExtensionAuthorityKeyIdentifier: Understood := ReadAuthorityKeyIdentifier(ValueReader, Certificate);
       ExtensionCertificatePolicies: Understood := ReadCertificatePolicies(ValueReader);
+      ExtensionNameConstraints: Understood := ReadNameConstraints(ValueReader, Certificate);
+      ExtensionTlsFeature: Understood := ReadTlsFeature(ValueReader, Certificate);
+      ExtensionAuthorityInformation: Understood := ReadAuthorityInformation(ValueReader);
       ExtensionOther:
         if Critical then
           Certificate.HasUnsupportedCriticalExtension := True;

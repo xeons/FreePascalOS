@@ -53,7 +53,12 @@ uses
   Crypto.Rsa,
   Crypto.EllipticCurves,
   Crypto.Ecdsa,
-  Crypto.KeyGeneration;
+  Crypto.KeyGeneration,
+  Crypto.Ecdh,
+  Crypto.Sha3,
+  Crypto.MlKemPolynomials,
+  Crypto.MlKem,
+  Crypto.MlKemRandom;
 
 implementation
 

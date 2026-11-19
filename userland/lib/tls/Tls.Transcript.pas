@@ -54,6 +54,11 @@ procedure TranscriptHash(constref Transcript: TTlsTranscript; out Output: TDiges
 { After a HelloRetryRequest: the transcript so far (the first
   ClientHello) becomes message_hash(Hash(ClientHello1)). }
 procedure ReplaceWithMessageHash(var Transcript: TTlsTranscript);
+{ The hash of the transcript so far followed by Extra, with Hash (the
+  transcript's own once it has started), leaving the transcript as it
+  was: for a PSK binder over a truncated ClientHello. }
+procedure PeekTranscriptHash(constref Transcript: TTlsTranscript; Hash: TDigestAlgorithm; Extra: PByte;
+  ExtraLength: PtrUInt; out Output: TDigestOutput);
 
 implementation
 
@@ -117,6 +122,23 @@ begin
   Header[3] := Byte(HashLength);
   UpdateDigest(Transcript.Running, @Header[0], 4);
   UpdateDigest(Transcript.Running, @FirstHash[0], HashLength);
+end;
+
+procedure PeekTranscriptHash(constref Transcript: TTlsTranscript; Hash: TDigestAlgorithm; Extra: PByte;
+  ExtraLength: PtrUInt; out Output: TDigestOutput);
+var
+  Context: TDigestContext;
+begin
+  if Transcript.Started then
+    Context := Transcript.Running
+  else
+  begin
+    BeginDigest(Context, Hash);
+    if Transcript.Pending.Length > 0 then
+      UpdateDigest(Context, Transcript.Pending.Data, Transcript.Pending.Length);
+  end;
+  UpdateDigest(Context, Extra, ExtraLength);
+  FinishDigest(Context, Output);
 end;
 
 end.

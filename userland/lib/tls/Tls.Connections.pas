@@ -39,6 +39,7 @@ uses
   Tls.Constants,
   Tls.Certificates,
   Tls.CipherSuites,
+  Tls.KeyShares,
   Tls.KeySchedule,
   Tls.RecordProtection,
   Tls.Transcript,
@@ -63,7 +64,19 @@ type
     ApplicationProtocol: string;
     { Count 0: the default list. }
     CipherSuites: TCipherSuiteList;
+    { The key exchange groups, most wanted first; a key share goes out
+      for the first. Count 0: the default list (x25519 first). }
+    Groups: TTlsGroupList;
+    { 0: TLS 1.2 and TLS 1.3 (VersionTls12, VersionTls13). }
+    MinimumVersion: Word;
+    MaximumVersion: Word;
+    { Where session tickets are kept for resumption ("host:port"); empty:
+      no resumption. }
+    SessionCacheKey: string;
   end;
+
+  { What the server's stapled OCSP response said. }
+  TTlsCertificateStatus = (StatusNotChecked, StatusNoResponse, StatusGood, StatusUnknown);
 
   TTlsConnectionState = (ConnectionNew, ConnectionHandshaking, ConnectionOpen, ConnectionClosed, ConnectionFailed);
 
@@ -81,10 +94,19 @@ type
     IgnoredCertificateError: LongInt;
 
     Suite: TCipherSuiteInfo;
+    { The version the server chose (0 before its ServerHello). }
+    Version: Word;
+    { The group of the key exchange. }
+    Group: Word;
+    { The handshake resumed a session (a TLS 1.3 PSK). }
+    Resumed: Boolean;
+    CertificateStatus: TTlsCertificateStatus;
     Schedule: TTlsKeySchedule;
     Transcript: TTlsTranscript;
     ReadProtection: TRecordProtection;
     WriteProtection: TRecordProtection;
+    { TLS 1.2: the server's keys, switched on by its change_cipher_spec. }
+    PendingReadProtection: TRecordProtection;
     { change_cipher_spec records are dropped between the ClientHello and
       the server's Finished (RFC 8446 section 5). }
     AllowChangeCipherSpec: Boolean;
@@ -113,6 +135,9 @@ type
 
     { The server's certificates as it sent them, its own first. }
     ServerCertificates: array of PTlsCertificate;
+    { The issuer of the server's certificate on the path the chain check
+      found (one of ServerCertificates or a root), or nil. }
+    ServerIssuer: PTlsCertificate;
     { The ALPN protocol the server chose, or empty. }
     SelectedProtocol: string;
   end;
@@ -143,6 +168,12 @@ begin
   Connection^.Options := Options;
   if Connection^.Options.CipherSuites.Count = 0 then
     DefaultCipherSuites(Connection^.Options.CipherSuites);
+  if Connection^.Options.Groups.Count = 0 then
+    DefaultGroups(Connection^.Options.Groups);
+  if Connection^.Options.MinimumVersion = 0 then
+    Connection^.Options.MinimumVersion := VersionTls12;
+  if Connection^.Options.MaximumVersion = 0 then
+    Connection^.Options.MaximumVersion := VersionTls13;
   Connection^.State := ConnectionNew;
   Connection^.ReceivedAlert := -1;
   Connection^.IgnoredCertificateError := TlsErrorNone;
@@ -167,6 +198,7 @@ begin
   WipeKeySchedule(Connection^.Schedule);
   WipeRecordProtection(Connection^.ReadProtection);
   WipeRecordProtection(Connection^.WriteProtection);
+  WipeRecordProtection(Connection^.PendingReadProtection);
   WipeMemory(Connection^.Input, InputBufferSize);
   WipeMemory(Connection^.Output, InputBufferSize);
   WipeMemory(Connection^.Plain, MaximumPlaintextLength + 256);

@@ -53,10 +53,12 @@ var
   Candidate: TBigNumber;
 begin
   PrepareCurve(Curve, Parameters);
-  { Rejection sampling: n is just below 2^(8 size) for these curves, so
-    a retry is very rare. }
+  { Rejection sampling: n is just below 2^(bits of n) for these curves,
+    so a retry is very rare once the bits above n's (P-521 has 7) are
+    cleared. }
   repeat
     RandomBytes(PrivateKey, Parameters.CoordinateBytes);
+    PrivateKey[0] := PrivateKey[0] and Byte($FF shr (Parameters.CoordinateBytes * 8 - Parameters.OrderBits));
     BigNumberFromBytes(Candidate, PrivateKey, Parameters.CoordinateBytes);
   until (not BigNumberIsZero(Candidate)) and (CompareBigNumbers(Candidate, Parameters.Order.Modulus) < 0);
   WipeMemory(@Candidate, SizeOf(Candidate));

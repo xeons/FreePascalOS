@@ -34,8 +34,11 @@
 
   The session checks the server's certificate against the system's
   roots (or a PEM file the program names) at the system clock's time,
-  unless told not to. The socket stays the program's: closing the
-  session sends close_notify but leaves the socket open.
+  unless told not to. Session tickets are kept in the process (by
+  "ServerName:Port") and the next session to the same server resumes
+  with one, unless ResumeSessions is turned off. The socket stays the
+  program's: closing the session sends close_notify but leaves the
+  socket open.
 }
 unit Tls.Sessions;
 
@@ -61,6 +64,8 @@ type
     FTimeoutMilliseconds: Int64;
     FApplicationProtocol: string;
     FCipherSuites: TCipherSuiteList;
+    FPort: Word;
+    FResumeSessions: Boolean;
     FTransportContext: TSocketTransportContext;
     FStore: PTlsTrustStore;
     FClient: TTlsClientConnection;
@@ -88,6 +93,10 @@ type
     property ApplicationProtocol: string read FApplicationProtocol write FApplicationProtocol;
     { Count 0: the default. }
     property CipherSuites: TCipherSuiteList read FCipherSuites write FCipherSuites;
+    { The server's port, for the session cache's key (443 unless set). }
+    property Port: Word read FPort write FPort;
+    { On unless turned off. }
+    property ResumeSessions: Boolean read FResumeSessions write FResumeSessions;
     { nil until Open has made the connection. }
     property Client: TTlsClientConnection read FClient;
     property Connection: PTlsConnection read GetConnection;
@@ -107,6 +116,8 @@ constructor TTlsSocketSession.Create;
 begin
   inherited Create;
   FVerifyCertificates := True;
+  FResumeSessions := True;
+  FPort := 443;
 end;
 
 destructor TTlsSocketSession.Destroy;
@@ -151,6 +162,8 @@ begin
   ClientOptions.VerificationTime := CurrentTime;
   ClientOptions.ApplicationProtocol := FApplicationProtocol;
   ClientOptions.CipherSuites := FCipherSuites;
+  if FResumeSessions then
+    ClientOptions.SessionCacheKey := LowerCase(FServerName) + ':' + IntToStr(FPort);
   try
     FClient := TTlsClientConnection.Create(Transport, ClientOptions);
   except

@@ -70,6 +70,12 @@ const
   TlsErrorCertificateChainTooLong = -48;
   TlsErrorCertificateUsage = -49;
   TlsErrorCertificateMissing = -50;
+  TlsErrorCertificateNameConstraint = -51;
+  TlsErrorCertificateRevoked = -52;
+  TlsErrorCertificateStatusInvalid = -53;
+  TlsErrorCertificateStatusMissing = -54;
+  { The last certificate error (TlsErrorIsCertificateError). }
+  TlsErrorLastCertificateError = TlsErrorCertificateStatusMissing;
 
   { Alert descriptions (RFC 8446 section 6). }
   TlsAlertCloseNotify = 0;
@@ -92,6 +98,7 @@ const
   TlsAlertInternalError = 80;
   TlsAlertInappropriateFallback = 86;
   TlsAlertUserCanceled = 90;
+  TlsAlertNoRenegotiation = 100;
   TlsAlertMissingExtension = 109;
   TlsAlertUnsupportedExtension = 110;
   TlsAlertUnrecognizedName = 112;
@@ -146,7 +153,7 @@ begin
     TlsErrorBadRecordMac: Result := 'a record failed authentication';
     TlsErrorRecordOverflow: Result := 'the server sent a record that is too long';
     TlsErrorHandshakeFailure: Result := 'no common cipher suite, key exchange group or signature algorithm';
-    TlsErrorProtocolVersion: Result := 'the server does not support TLS 1.3';
+    TlsErrorProtocolVersion: Result := 'the server supports neither TLS 1.3 nor TLS 1.2';
     TlsErrorIllegalParameter: Result := 'the server sent an illegal parameter';
     TlsErrorUnsupportedExtension: Result := 'the server sent an extension that was not offered';
     TlsErrorMissingExtension: Result := 'the server left out a required extension';
@@ -170,6 +177,11 @@ begin
     TlsErrorCertificateChainTooLong: Result := 'the certificate chain is too long';
     TlsErrorCertificateUsage: Result := 'a certificate is not meant for TLS servers';
     TlsErrorCertificateMissing: Result := 'the server sent no certificate';
+    TlsErrorCertificateNameConstraint:
+      Result := 'a certificate holds a name its issuer may not certify (name constraints)';
+    TlsErrorCertificateRevoked: Result := 'the certificate has been revoked';
+    TlsErrorCertificateStatusInvalid: Result := 'the server''s OCSP response is not valid for its certificate';
+    TlsErrorCertificateStatusMissing: Result := 'the certificate requires an OCSP response and the server sent none';
   else
     Result := 'unknown error';
   end;
@@ -177,7 +189,7 @@ end;
 
 function TlsErrorIsCertificateError(Error: LongInt): Boolean;
 begin
-  Result := (Error <= TlsErrorCertificateExpired) and (Error >= TlsErrorCertificateMissing);
+  Result := (Error <= TlsErrorCertificateExpired) and (Error >= TlsErrorLastCertificateError);
 end;
 
 function TlsAlertForError(Error: LongInt): LongInt;
@@ -200,7 +212,11 @@ begin
     TlsErrorCertificateUnknownIssuer: Result := TlsAlertUnknownCa;
     TlsErrorCertificateNameMismatch, TlsErrorCertificateNotAuthority, TlsErrorCertificateUsage,
     TlsErrorCertificateChainTooLong: Result := TlsAlertCertificateUnknown;
-    TlsErrorCertificateBadSignature, TlsErrorCertificateMalformed: Result := TlsAlertBadCertificate;
+    TlsErrorCertificateBadSignature, TlsErrorCertificateMalformed, TlsErrorCertificateNameConstraint:
+      Result := TlsAlertBadCertificate;
+    TlsErrorCertificateRevoked: Result := TlsAlertCertificateRevoked;
+    TlsErrorCertificateStatusInvalid, TlsErrorCertificateStatusMissing:
+      Result := TlsAlertBadCertificateStatusResponse;
     TlsErrorCertificateUnsupported: Result := TlsAlertUnsupportedCertificate;
   else
     Result := -1;
@@ -230,6 +246,7 @@ begin
     TlsAlertInternalError: Result := 'internal error';
     TlsAlertInappropriateFallback: Result := 'inappropriate fallback';
     TlsAlertUserCanceled: Result := 'user canceled';
+    TlsAlertNoRenegotiation: Result := 'no renegotiation';
     TlsAlertMissingExtension: Result := 'missing extension';
     TlsAlertUnsupportedExtension: Result := 'unsupported extension';
     TlsAlertUnrecognizedName: Result := 'unrecognized name';

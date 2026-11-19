@@ -17,8 +17,9 @@
 }
 
 {
-  The contents of libtls.so: a TLS 1.3 client with X.509 certificate
-  checking. Compiling this unit compiles all of them.
+  The contents of libtls.so: a TLS 1.3 and TLS 1.2 client with X.509
+  certificate checking (name constraints, OCSP stapling) and session
+  resumption. Compiling this unit compiles all of them.
 
   Everything but Tls.SocketTransport, Tls.SystemTrust and Tls.Sessions
   is plain Pascal over a transport and builds on the host too (make
@@ -39,19 +40,28 @@ uses
   Tls.Pem,
   Tls.Certificates,
   Tls.CertificateExtensions,
+  Tls.NameConstraints,
   Tls.HostNames,
   Tls.Signatures,
   Tls.TrustStore,
   Tls.CertificateChains,
+  Tls.Ocsp,
   Tls.CipherSuites,
+  Tls.KeyShares,
   Tls.KeySchedule,
+  Tls.KeySchedule12,
+  Tls.SessionCache,
   Tls.Transcript,
   Tls.RecordProtection,
   Tls.Transport,
   Tls.ClientHello,
   Tls.ServerMessages,
+  Tls.ServerMessages12,
   Tls.Connections,
   Tls.RecordLayer,
+  Tls.HandshakeMessages,
+  Tls.ServerAuthentication,
+  Tls.Handshake12,
   Tls.Handshake,
   Tls.Client,
   Tls.ClientConnections,
