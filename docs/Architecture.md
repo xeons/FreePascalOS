@@ -3386,7 +3386,7 @@ at every scale.
 | Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate (a slider and a numeric up/down box each), and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
 | Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
 | Date and Time | the time zone (from the database, with each zone's offset now), the date (a date picker with a calendar that drops down) and the time (a time picker), a local time of the zone chosen | the system settings service, as an administrator |
-| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
+| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers (and DHCPv6 when they say), always from DHCPv6, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses (DHCPv6 ones marked), the router it has and what DHCPv6 is doing; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
 | Screen Lock | locking by itself after 1 to 60 minutes without input (off at first), locking before suspending (on at first) | kept in the user's settings (`Windowing.LockSettings`), which the session manager reads |
 
@@ -3432,11 +3432,14 @@ not report a link speed yet) and four tabs for the one chosen:
 Address (Enable this interface; Obtain an address automatically (DHCP),
 Use this address with address, prefix or netmask and gateway boxes, or
 Leave this interface unconfigured - the three methods of the settings),
-IPv6 (`ControlPanel.Ipv6Tab`: Get IPv6 addresses from routers
-automatically, Use a fixed IPv6 address with an address box taking
-"fd00::10/64" and a gateway box, or Turn IPv6 off - `Ipv6Method` auto,
-static or none - and below them the interface's global and link-local
-IPv6 addresses and its IPv6 default router, kept up to date), DNS (the same for every interface: obtained automatically, which writes
+IPv6 (`ControlPanel.Ipv6Tab`: Get IPv6 addresses automatically
+(routers, DHCPv6), Always ask a DHCPv6 server for an address, Use a
+fixed IPv6 address with an address box taking "fd00::10/64" and a
+gateway box, or Turn IPv6 off - `Ipv6Method` auto, dhcpv6, static or
+none - and below them the interface's global addresses (a DHCPv6
+lease's marked "(DHCPv6)") and link-local IPv6 addresses and its IPv6
+default router with the state file's `Dhcpv6` when DHCPv6 is on
+("fe80::1 - DHCPv6 configured"), kept up to date), DNS (the same for every interface: obtained automatically, which writes
 an empty `DnsServers`, or these servers, and the search domain), and
 Status. What is chosen for each interface is kept while moving between
 them until Apply. Apply checks the values with the same code the
@@ -3792,8 +3795,8 @@ A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
 beneath BSD-style sockets that are handles like any other.
 
 ```
-  the network service (DHCP, settings, state files)   host nslookup hostname
-  resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages
+  the network service (DHCP, DHCPv6, settings, state files)   host nslookup hostname
+  resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries (Sys.DnsCache) > Sys.DnsMessages
   programs: Sys.Sockets, Sys.NetworkInterfaces,    ping ifconfig route arp ndp
             Sys.AddressText                         netstat nc wget
 =========== system calls 104-127 (Processes.SocketCalls, .NetworkCalls) ====
@@ -3977,12 +3980,18 @@ eth0's router wins among equals), its hop limit, reachable time and
 retransmission timer, the link MTU (option 5), on-link prefix routes
 (L) and SLAAC addresses for 64-bit prefixes (A: the prefix and our
 identifier, with the valid and preferred lifetimes and RFC 4862 5.5.3
-e's two hours), and DNS servers (RDNSS, RFC 8106; listed with the
-interface for the network service). Addresses past their preferred
-lifetime are deprecated, past their valid one removed. When the link
-or the interface goes, the link-local and automatic addresses, what
-routers gave and the neighbours are dropped; manual addresses stay and
-are tested again. The neighbour cache (64 entries) is RFC 4861 7.3's:
+e's two hours), DNS servers (RDNSS, RFC 8106; listed with the
+interface for the network service) and its M and O flags (kept as the
+interface's `Ipv6RouterFlags`, `Ipv6RouterFlagManaged` and
+`Ipv6RouterFlagOtherConfiguration`, for the network service's DHCPv6
+client). Addresses a DHCPv6 server leased come from the network service
+with their lifetimes (`InterfaceChangeAddressLifetimes`, origin
+`Ipv6OriginDhcp`, flag `InterfaceAddressFlagDhcp`; adding one again
+renews its lifetimes) and bring no prefix route. Addresses past their
+preferred lifetime are deprecated, past their valid one removed. When
+the link or the interface goes, the link-local, automatic and DHCPv6
+addresses, what routers gave and the neighbours are dropped; manual
+addresses stay and are tested again. The neighbour cache (64 entries) is RFC 4861 7.3's:
 INCOMPLETE (multicast solicitations once a second, three times; the
 waiting datagrams' senders then get "address unreachable"), REACHABLE
 for the reachable time after a solicited advertisement, STALE (still
@@ -4146,7 +4155,9 @@ limit, link MTU and the DNS servers routers advertised, packets, bytes,
 errors and drops each way), routes of both families (IPv4's first), the
 ARP cache, the neighbour cache and the sockets; only root may change an
 interface (the IPv4 address and prefix, IPv6 addresses added and
-removed one by one, the IPv6 mode, up/down, MTU), the routes (an IPv6
+removed one by one - a DHCPv6 lease's with its valid and preferred
+lifetimes, `ValidSeconds` and `PreferredSeconds` with
+`InterfaceChangeAddressLifetimes` -, the IPv6 mode, up/down, MTU), the routes (an IPv6
 route through a link-local gateway names its interface) or the DNS
 servers (IPv4 or IPv6 addresses). The kernel keeps the DNS
 servers and search domain only for the resolver to read, as it keeps
@@ -4182,13 +4193,14 @@ has `GetNodeName` and `SetNodeName`.
 state files (`/var/lib/network/NAME.state`: `Method`, `State` - down,
 no-link, configuring, configured, failed - `Address`, `Gateway`,
 `DnsServers`, `Domain`, `LeaseSeconds`, `LeaseObtained`, `DhcpServer`,
-`Ipv6Method`, `Ipv6Addresses`, `Ipv6Gateway`, `Ipv6DnsServers`)
+`Ipv6Method`, `Ipv6Addresses`, `Ipv6Gateway`, `Ipv6DnsServers`,
+`Dhcpv6`, `Dhcpv6Server`, `Dhcpv6DnsServers`, `Dhcpv6Domains`)
 are read in one place, libconfiguration: `Configuration.NetworkSettings`
 reads, checks and writes `Network.settings` (method names; a static
 address needs a prefix of 1-30 and must be a host of its network, not
 0/8, loopback, multicast, its network's address or broadcast; a
 gateway must be another host on that network; `Ipv6Method` is auto,
-static or none, a static IPv6 address (`Configuration.Ipv6Checks`)
+dhcpv6, static or none, a static IPv6 address (`Configuration.Ipv6Checks`)
 needs a prefix of 1-128 and must be unicast and not link-local, ::
 or ::1, its gateway any unicast IPv6 address (link-local ones too) but
 the address itself; DNS servers are IPv4 host addresses or unicast
@@ -4232,8 +4244,8 @@ watcher (`Configuration.Watcher` on `/etc/settings`, group `Network`:
 when a value in Network.settings changes - the settings library's and
 the system settings service's `.new` file renamed into place included -
 it is read again whole and applied; a rewrite that changes nothing is
-not), the kernel's network changes, and the DHCP clients' sockets, and wakes at
-the clients' next deadline (at least every 5 s).
+not), the kernel's network changes, and the DHCP and DHCPv6 clients'
+sockets, and wakes at the clients' next deadline (at least every 5 s).
 
 **Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
 
@@ -4241,13 +4253,15 @@ the clients' next deadline (at least every 5 s).
     DnsServers = []                 empty: those DHCP and routers give; a list
                                     (IPv4 or IPv6) overrides them
     SearchDomain = ""               empty: the domain DHCP gives
+    DhcpStartWait = false           true: a cold start waits 1-10 s before
+                                    the first DHCPDISCOVER (no key: true)
 
     [Interfaces/eth0]
     Method = "dhcp"                 dhcp, static or none (no Method: static)
     Address = "10.0.2.15/24"        static only
     Gateway = "10.0.2.2"            static only
     Up = true
-    Ipv6Method = "auto"             auto, static or none (no Ipv6Method: auto)
+    Ipv6Method = "auto"             auto, dhcpv6, static or none (no Ipv6Method: auto)
     Ipv6Address = "fd00::10/64"     Ipv6Method static only (no prefix: /64)
     Ipv6Gateway = "fd00::1"         Ipv6Method static only, optional
 
@@ -4278,7 +4292,8 @@ and the service only sets the interface's IPv6 mode:
 
 | Ipv6Method | What the service does |
 |---|---|
-| auto | `Ipv6ModeAutomatic` (the kernel's own start, so usually nothing) |
+| auto | `Ipv6ModeAutomatic` (the kernel's own start, so usually nothing); DHCPv6 as the routers' M and O flags say (below) |
+| dhcpv6 | `Ipv6ModeAutomatic` (routes, prefixes and SLAAC from the routers still), and stateful DHCPv6 whatever the routers say |
 | static | `Ipv6ModeLinkLocal` (advertisements ignored), the address added, and a default route `::/0` through `Ipv6Gateway` on the interface (the IPv4 metric) |
 | none | `Ipv6ModeOff`: the kernel drops every IPv6 address and route of the interface |
 
@@ -4289,9 +4304,10 @@ taken from its change notifications into the state files.
 
 The DNS servers given to the kernel are the settings'
 list if it is not empty, else every lease's servers, then the DNS
-servers the interfaces' routers advertised (each once, four at
-most); the search domain is the settings', else the first lease's
-domain; they are set only when they change. Asked to end, the service
+servers the interfaces' routers advertised, then those DHCPv6 gave
+(each once, four at most); the search domain is the settings', else
+the first lease's domain, else the first DHCPv6 domain; they are set
+only when they change. Asked to end, the service
 gives every lease back (the addresses go), writes the state files and
 ends with status 0; static addresses stay. Its log is
 `/var/log/network.log`.
@@ -4310,6 +4326,26 @@ broadcasts allowed) and this state machine:
     Renewing, Rebinding -ACK-> Bound; -NAK-> address removed, Init
     any -link lost-> Paused (the lease kept until it runs out) -link back-> InitReboot
 
+Selecting collects the offers for a second after the first
+(`NetworkService.DhcpOffers`) and requests the one offering the address
+had before, else the first that came; an offer of the address had
+before is requested at once. A reply's options may go on in its file
+and server name fields (option overload, 52: 1 the file, 2 the server
+name, 3 both), read after the options field, the file first, an
+overload inside them ignored (RFC 2131 4.1).
+
+The first DHCPDISCOVER of a cold start - the service's first client for
+the interface in this run, without a lease kept from before that has
+not run out (the state file's address, `LeaseObtained` and
+`LeaseSeconds`) - waits 1 to 10 s at random (RFC 2131 4.4.1), so that
+machines powered on together do not all ask at once; a lease still
+valid is confirmed at once (INIT-REBOOT), and an expired one's address
+is asked for in the DISCOVER instead. `DhcpStartWait = false` in
+Network.settings turns the wait off, and the shipped Network.settings
+does: a clean stop gives the lease back, so every boot would be a cold
+start, and the network should be up as soon as the system is. A later
+client (the settings changed, the link came back) never waits.
+
 Messages carry the client identifier (61: type 1 and the Ethernet
 address), the host name (12: the node name), the address asked for
 (50) and the server (54) where they belong, the parameter request list
@@ -4325,9 +4361,54 @@ least a minute. Times run on the uptime clock. A client with no lease a
 minute after it began is "failed" in its state file and goes on trying.
 The previous lease's address comes from the state file left by an
 earlier run (a crash; a clean stop gives the lease back) or from this
-run. Left out: option overload (52), comparing several offers, the
-random 1-10 s wait before the first DISCOVER (so the network is up at
-once).
+run.
+
+**The DHCPv6 client** (`NetworkService.Dhcpv6Client`, RFC 8415;
+messages in `NetworkService.Dhcpv6Messages`, the DUID in
+`NetworkService.Dhcpv6Duid`) has a UDP socket per interface (port 546,
+bound to the interface) and sends to ff02::1:2 port 547 on the link. Its
+mode follows the IPv6 settings and the kernel's `Ipv6RouterFlags`:
+Ipv6Method dhcpv6 is stateful; auto is stateful once an advertisement
+had M (losing M later stops nothing until the settings change),
+stateless with O alone, off with neither; static and none are off, as
+is an interface with IPv6 off. The routers still give the default route
+and the on-link prefixes: DHCPv6 gives none.
+
+    Soliciting -Advertise (best preference; 255 at once)-> Requesting -Reply-> Bound
+    Bound -T1-> Renewing (to the server) -T2-> Rebinding (to any) -valid lifetimes end-> Soliciting
+    Renewing, Rebinding -Reply-> Bound; -NoBinding-> Requesting; -NotOnLink-> Soliciting
+    Requesting -NoAddrsAvail, NotOnLink, 10 requests unanswered-> Soliciting
+    Informing (stateless) -Reply-> Informed -information refresh time-> Informing
+    any -link lost-> Paused (the kernel drops the addresses) -link back-> Soliciting or Informing
+
+Messages carry the machine's DUID (client identifier, 1), the server's
+(2) where they answer one, the elapsed time (8), an IA_NA (3; IAID: the
+Ethernet address's last four bytes) with the addresses had before as
+hints, and the option request (6: DNS servers 23, domain search list
+24; information refresh time 32 with an information-request). A reply
+counts with the transaction id, the client's DUID and a server's DUID.
+Advertises are collected during the Solicit's first retransmission time
+(about a second); one without an address for the IA_NA is ignored. T1
+and T2 of 0 (or T1 above T2) are half and four fifths of the shortest
+preferred lifetime. Retransmissions follow RFC 8415 15 (IRT, doubled,
+each moved by up to a tenth, at most MRT): Solicit 1 s/3600 s after a
+random wait of up to 1 s; Request 1 s/30 s, 10 tries; Renew and Rebind
+10 s/600 s until T2 and the end of the valid lifetimes;
+Information-request 1 s/3600 s after up to 1 s, refreshed after the
+server's refresh time (at least 600 s; 86400 s without one). RELEASE
+goes once when the client stops (the service ends, the IPv6 settings
+change), not retransmitted. The leased addresses go to the kernel as
+/128s with their lifetimes (`AddInterfaceLeasedIpv6Address`), again at
+every renewal; the kernel deprecates and removes them as the lifetimes
+run out, and those the server stops giving are removed. The DUID is a
+DUID-LLT of the first interface that asks, made once and kept in
+`/var/lib/network/dhcpv6.duid` ("00:01:00:01:..."), or a DUID-LL when it
+cannot be kept. Left out: Confirm after the link comes back (it
+solicits again with the old addresses as hints), Reconfigure, rapid
+commit, prefix delegation (IA_PD), temporary addresses (IA_TA), the
+server unicast option, SOL_MAX_RT and INF_MAX_RT from servers, and
+Decline (the kernel's duplicate address detection removes a duplicate
+without telling the server).
 
 **The address probe** (`NetworkService.AddressProbe`): before an
 offered address is taken, an empty datagram goes to its discard port on
@@ -4354,10 +4435,14 @@ settings files (read it with `TSettingsDocument`):
 | `LeaseSeconds` | integer | the lease's length; 0 for static, none and an endless lease |
 | `LeaseObtained` | integer | Unix time the lease was acknowledged (renewals too); 0 without one |
 | `DhcpServer` | string | the server that gave the lease, or `""` |
-| `Ipv6Method` | string | `auto`, `static` or `none` |
-| `Ipv6Addresses` | list of strings | the kernel's IPv6 addresses with prefixes (`fe80::5054:ff:fe12:3456/64`, `fec0::5054:ff:fe12:3456/64`), tentative ones left out |
+| `Ipv6Method` | string | `auto`, `dhcpv6`, `static` or `none` |
+| `Ipv6Addresses` | list of strings | the kernel's IPv6 addresses with prefixes (`fe80::5054:ff:fe12:3456/64`, `fec0::5054:ff:fe12:3456/64`, a DHCPv6 one as `2001:db8::100/128`), tentative ones left out |
 | `Ipv6Gateway` | string | the gateway of the interface's IPv6 default route (`fe80::2`), or `""` |
 | `Ipv6DnsServers` | list of strings | the DNS servers its routers advertised (RDNSS) |
+| `Dhcpv6` | string | `off`, `no-link`, `configuring`, `configured` (an address leased) or `informed` (DNS servers only) |
+| `Dhcpv6Server` | string | the DUID of the DHCPv6 server that gave the lease ("00:03:00:01:..."), or `""` |
+| `Dhcpv6DnsServers` | list of strings | the DNS servers DHCPv6 gave (option 23) |
+| `Dhcpv6Domains` | list of strings | the domain search list DHCPv6 gave (option 24) |
 
 `State` is `down` while the interface is off (also for dhcp after the
 service stopped, and for none without an address), `no-link` while it
@@ -4386,6 +4471,21 @@ address is named by `/etc/hosts`, then by a PTR record. Errors:
 (no server answered), `ErrorWouldBlock` (the servers failed: "try
 again").
 
+Its DNS answers are kept in a cache of the process's own
+(`Sys.DnsCache`, under a lock in `Sys.DnsQueries`, used with
+`UseCache`, which only `Sys.HostNames` sets): 64 answers at most, kept
+under the question (the name without case or final dot, and the type)
+for the shortest time to live of the answer section (a day at most);
+negative answers (NXDOMAIN, and NOERROR without a record of the type)
+for the authority section's SOA, the smaller of its time to live and its
+MINIMUM (RFC 2308 5, three hours at most), and not at all without an
+SOA; server failures, refusals and truncated answers are never kept. A
+cached answer comes back with its records' times to live lowered by the
+seconds it was kept. A new answer pushes out those that ran out, else
+the one that runs out soonest; the cache is emptied whenever the servers
+asked differ from those it was filled from (`ClearDnsCache` empties it
+by hand).
+
 Below it, `Sys.DnsQueries` (which `host` and `nslookup` use directly)
 asks the kernel's servers (or those given) over UDP: each server in
 turn, `Attempts` rounds (2), `TimeoutMilliseconds` each (2.5 s). Every
@@ -4403,9 +4503,16 @@ records (A, AAAA, CNAME, NS, PTR, MX, SOA, TXT; others by length),
 checking every length against the message; `Sys.DnsNames` reads names
 with their compression pointers, only backwards and at most 64 of them,
 so a pointer loop is refused, and makes reverse names (`in-addr.arpa`,
-`ip6.arpa`). No EDNS (UDP answers stop at 512 bytes, TCP takes the
-rest) and no cache yet. `Sys.InternetAddresses` reads and writes IPv6
-addresses too (RFC 5952 form).
+`ip6.arpa`). EDNS(0) (RFC 6891): queries carry an OPT record
+advertising 1232 bytes (`EdnsPayloadSize`, `DefaultEdnsPayloadSize`; 0
+leaves it out), so larger answers come over UDP (the reply buffer is
+1500 bytes); a truncated answer still goes to TCP; a server answering
+FORMERR without an OPT record of its own does not know EDNS and is asked
+again without it. A reply's OPT record is not kept among the records:
+it fills `HasEdns`, `EdnsPayloadSize`, `EdnsVersion` and `EdnsFlags`, and
+its extended response code goes into `ResponseCode` (BADVERS); `host -v`
+shows it as dig's OPT pseudosection. `Sys.InternetAddresses` reads and
+writes IPv6 addresses too (RFC 5952 form).
 
 **netstat** (`userland/netstat`, `Netstat.*`) in the manner of
 net-tools: the sockets (`Netstat.Connections`: TCP, then UDP, then ICMP
@@ -4466,7 +4573,14 @@ none) and makes it the system's for a while: `/etc/hosts` both ways, A,
 a CNAME answered whole and one asked again, the search domain, several
 addresses, AAAA, NXDOMAIN, PTR, a truncated answer asked over TCP, a
 compression loop refused, a reply with a wrong id ignored, a missing
-server passed over, new ids and ports each time. `dnstest --serve` and
+server passed over, new ids and ports each time; the cache (a name
+and a name that does not exist asked again without a query, a query from
+the cache saying so with its time to live lowered, an emptied cache
+asking again); EDNS (medium.test.example's 804-byte TXT whole over UDP,
+the same truncated and asked over TCP without EDNS, old.test.example's
+FORMERR to EDNS asked again without it - the test server answers a
+query's OPT record with its own and truncates at the size advertised).
+`dnstest --serve` and
 `--wait` serve coretest's `host` and `nslookup` command lines; there
 are also `ifconfig`, `route`, `arp`, `ping` (`localhost` from
 `/etc/hosts`), `hostname` and eth0's state file, and netstat and nc ones:
@@ -4475,7 +4589,20 @@ sent both ways by nc over loopback with matching sha256 sums, a UDP
 round trip, `nc -z` on an open and a closed port and a range, two
 ESTABLISHED ends in `netstat -tn`, the default route in `netstat -r`,
 lo and eth0 in `netstat -i`, and the ICMP counters of `netstat -s`
-growing after a ping. The session test checks
+growing after a ping. The network protocol host test (`make network-protocol-test`,
+`tools/NetworkProtocolTest`) checks the OPT record built and read (with
+BADVERS, and one not owned by the root refused), the cache on a clock of
+its own (times to live counted down and run out, RFC 2308's SOA times,
+no data, no SOA, SERVFAIL and truncated answers not kept, case and final
+dots, the bound of 64), DHCP replies with option overload (both fields,
+one, an overload inside a field ignored, an option running past its
+field refused) and the choice of offers, and DHCPv6: DUID-LLT and
+DUID-LL, a Solicit and a Request byte for byte, an Advertise and Replies
+read back (preference, IA_NA, lifetimes, status codes at both levels,
+DNS servers, domain list, refresh time), damaged messages refused, T1
+and T2 worked out. QEMU's user networking has no DHCPv6 server (and its
+advertisements set neither M nor O, so DHCPv6 stays off in the QEMU
+tests); DHCPv6 has host tests only. The session test checks
 that the network service configured eth0. The QEMU command lines of all
 tests and `make run` have a virtio-net card on user networking.
 

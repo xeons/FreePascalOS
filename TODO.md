@@ -616,10 +616,13 @@ normalized (0-65535), not pixels.
       applied live, the lease given back (networktest); the resolver
       against a DNS server of its own (dnstest); host, nslookup and
       hostname command lines
-- [ ] A small per-process cache of DNS answers; EDNS(0) for answers
-      larger than 512 bytes over UDP
-- [ ] DHCP: option overload (52), several offers compared, the random
-      1-10 s wait before the first DISCOVER (left out to start quickly)
+- [x] A small per-process cache of DNS answers (TTLs, RFC 2308 negative
+      caching, 64 answers); EDNS(0) for answers larger than 512 bytes
+      over UDP (1232 advertised, FORMERR asked again without it)
+- [x] DHCP: option overload (52), several offers compared (a second's
+      window, the previous address preferred), the random 1-10 s wait
+      before a cold start's first DISCOVER (`DhcpStartWait`, off in the
+      shipped settings to start quickly)
 - [x] `netstat` (`-tuwlanp`, `-r`, `-i`, `-s`; the socket listing gives
       the owner process, protocol counters in the kernel)
 - [x] `nc` (OpenBSD options: `-l -k -u -z -v -w -n -N -q -p -d`)
@@ -652,7 +655,16 @@ normalized (0-65535), not pixels.
       -6, ifconfig inet6, route -6, ndp, netstat tcp6/udp6, nc -6, wget
       [v6] URLs; per interface Ipv6Method in Network.settings, the Control
       Panel and the network pop-up
-- [ ] IPv6 later: DHCPv6 (stateful addresses, the M and O flags), privacy
+- [x] DHCPv6 (RFC 8415) in the network service: the routers' M and O
+      flags (kernel `Ipv6RouterFlags`), stateful addresses (IA_NA:
+      Solicit/Advertise/Request/Reply, Renew/Rebind/Release) with their
+      lifetimes in the kernel, information-request for DNS servers and
+      the search list, a DUID-LLT kept in /var/lib/network; Ipv6Method
+      dhcpv6; ifconfig, the state files and the Control Panel; host tests
+- [ ] DHCPv6 later: Confirm after the link comes back, Reconfigure,
+      prefix delegation (IA_PD), Decline of a duplicate, an in-QEMU test
+      against a DHCPv6 server of the test script's own
+- [ ] IPv6 later: privacy
       addresses (RFC 8981), sending fragments and path MTU discovery
       (packet too big is ignored), redirects, MLD reports for groups
       programs join (no multicast sockets yet), source address
