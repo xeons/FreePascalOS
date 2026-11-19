@@ -664,12 +664,18 @@ normalized (0-65535), not pixels.
 - [ ] DHCPv6 later: Confirm after the link comes back, Reconfigure,
       prefix delegation (IA_PD), Decline of a duplicate, an in-QEMU test
       against a DHCPv6 server of the test script's own
-- [ ] IPv6 later: privacy
-      addresses (RFC 8981), sending fragments and path MTU discovery
-      (packet too big is ignored), redirects, MLD reports for groups
-      programs join (no multicast sockets yet), source address
-      selection's full RFC 6724 policy table, v4-mapped addresses on IPv6
-      sockets, a stable-privacy identifier (RFC 7217) instead of EUI-64
+- [x] IPv6 later: privacy addresses (RFC 8981), sending fragments and
+      path MTU discovery (Packet Too Big, a destination cache, TCP's MSS),
+      redirects, MLD and IGMP reports for groups programs join with
+      multicast sockets, source address selection's full RFC 6724 policy
+      table (and the resolver's destination order), v4-mapped addresses
+      on IPv6 sockets, a stable-privacy identifier (RFC 7217) instead of
+      EUI-64
+- [ ] IPv6 and multicast later: drivers programming their multicast
+      filters (the hook is there), the IPv6 options kept in
+      Network.settings, IPv4 fragments sent and IPv4 path MTU for UDP,
+      delayed (random) answers to MLD and IGMP queries, ping -s over
+      fragments
 - [ ] Wi-Fi (later, a project of its own): the Intel CNVi driver
       (Alder Lake-P, 8086:51f0) with its firmware from linux-firmware
       (iwlwifi licence, in firmware/ beside the Realtek files), scanning,
