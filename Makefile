@@ -929,14 +929,15 @@ ssh-test: $(SSH_TEST)
 		{ grep -A2 FAIL build/tools/ssh-test.out; echo "SSH TEST FAILED (build/tools/ssh-test.out)"; exit 1; }
 	@echo "SSH HOST TEST PASSED: $$(tail -n 1 build/tools/ssh-test.out | cut -d ' ' -f 3-)"
 
-# wget's URLs, response heads and chunked decoding build for the host too.
+# wget's URLs, response heads, chunked decoding, cookies, authentication
+# and recursion's pieces build for the host too.
 WGET_TEST := build/tools/WgetTest
-WGET_TEST_SOURCES := tools/WgetTest/WgetTest.pas tools/CryptoTest/TestChecks.pas userland/wget/Wget.Urls.pas \
-	userland/wget/Wget.Headers.pas userland/wget/Wget.Chunks.pas
+WGET_TEST_SOURCES := $(wildcard tools/WgetTest/*.pas) tools/CryptoTest/TestChecks.pas $(wildcard userland/wget/*.pas) \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
 
 $(WGET_TEST): $(WGET_TEST_SOURCES)
 	@mkdir -p build/tools/wget-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget \
+	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget -Fuuserland/lib/cryptography -Fushared -Fishared \
 		-FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
 
 wget-test: $(WGET_TEST)
