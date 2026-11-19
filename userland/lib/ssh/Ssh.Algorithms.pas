@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   Algorithm negotiation (RFC 4253 section 7.1): the SSH_MSG_KEXINIT
   message, read and made, and the choice for each kind - the first

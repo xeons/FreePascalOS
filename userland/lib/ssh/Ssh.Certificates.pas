@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   OpenSSH certificates (PROTOCOL.certkeys): a public key signed by a
   certificate authority, with who it is for and when.

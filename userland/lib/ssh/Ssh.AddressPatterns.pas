@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   OpenSSH's pattern lists, as authorized_keys from=, sshd_config Match
   and a certificate's source-address use them:

@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   SHA-3 and SHAKE against hashlib, and ML-KEM-768 against OpenSSL
   (CryptoTest.PostQuantumVectors.inc, made by

@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The connection protocol (RFC 4254), for either side: channels, their
   windows and their requests, several at once over one connection, and

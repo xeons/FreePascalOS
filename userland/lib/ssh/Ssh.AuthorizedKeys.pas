@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The lines of an authorized_keys file with their options (sshd(8),
   "AUTHORIZED_KEYS FILE FORMAT"):

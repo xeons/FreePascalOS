@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   Keccak (FIPS 202): the Keccak-f[1600] permutation and the sponge over
   it, which make SHA3-256, SHA3-512, SHAKE128 and SHAKE256. ML-KEM

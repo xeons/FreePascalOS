@@ -17,8 +17,9 @@
 }
 
 {
-  Feeding a session's program what the client sends, without holding up
-  the connection.
+  Writing what a channel receives to a handle (a program's input pipe, a
+  terminal, a forwarded socket, a client's standard output) without
+  holding up the connection.
 
   A pipe write waits until every byte is in, so a program that is busy
   writing its own output (which the connection must keep reading) would
@@ -29,10 +30,12 @@
   them, counts what went in and signals the connection's progress event,
   and the connection then opens the channel's window by as much
   (TakeWrittenCount), so the client never has more in flight than the
-  program takes. FinishWhenEmpty closes the handle once everything is
-  written: the program reads end of file.
+  program takes. FinishWhenEmpty ends the handle once everything is
+  written, as the writer was told: closed (the program reads end of
+  file), shut down for sending (a socket, which is still read), or left
+  alone (a terminal).
 }
-unit Sshd.InputWriters;
+unit Ssh.HandleWriters;
 
 {$mode objfpc}{$H+}
 
@@ -42,10 +45,12 @@ uses
   Classes;
 
 type
+  TSshWriterEnd = (WriterEndLeaveOpen, WriterEndClose, WriterEndShutdownSocket);
+
   TInputWriter = class(TThread)
   private
     FHandle: Int64;
-    FCloseHandleAtEnd: Boolean;
+    FEnd: TSshWriterEnd;
     FLock: TRTLCriticalSection;
     FQueue: string;
     FWritten: QWord;
@@ -61,6 +66,7 @@ type
     { TargetHandle is written to (and closed at the end when CloseHandleAtEnd);
       ProgressEvent (not owned) is signaled after each write. }
     constructor Create(TargetHandle, ProgressEvent: Int64; CloseHandleAtEnd: Boolean);
+    constructor CreateWithEnd(TargetHandle, ProgressEvent: Int64; EndAction: TSshWriterEnd);
     destructor Destroy; override;
     procedure Write(const Data: string);
     procedure FinishWhenEmpty;
@@ -77,7 +83,8 @@ uses
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.Objects,
-  Sys.Processes;
+  Sys.Processes,
+  Sys.Sockets;
 
 const
   ChunkBytes = 16 * 1024;
@@ -86,9 +93,17 @@ const
 
 constructor TInputWriter.Create(TargetHandle, ProgressEvent: Int64; CloseHandleAtEnd: Boolean);
 begin
+  if CloseHandleAtEnd then
+    CreateWithEnd(TargetHandle, ProgressEvent, WriterEndClose)
+  else
+    CreateWithEnd(TargetHandle, ProgressEvent, WriterEndLeaveOpen);
+end;
+
+constructor TInputWriter.CreateWithEnd(TargetHandle, ProgressEvent: Int64; EndAction: TSshWriterEnd);
+begin
   FHandle := TargetHandle;
   FProgressEvent := ProgressEvent;
-  FCloseHandleAtEnd := CloseHandleAtEnd;
+  FEnd := EndAction;
   InitCriticalSection(FLock);
   FQueue := '';
   FWakeEvent := CreateEvent(False, False);
@@ -222,8 +237,11 @@ begin
       Break;
     end;
   end;
-  if FCloseHandleAtEnd then
-    KernelClose(FHandle);
+  case FEnd of
+    WriterEndClose: KernelClose(FHandle);
+    WriterEndShutdownSocket: ShutdownSocket(FHandle, SocketShutdownSend);
+    WriterEndLeaveOpen: ;
+  end;
 end;
 
 end.

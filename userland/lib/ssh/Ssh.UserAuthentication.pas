@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   User authentication, the server's side (RFC 4252): the ssh-userauth
   service and its methods "none" (always refused: it asks for the list),

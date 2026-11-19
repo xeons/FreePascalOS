@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The client's side of the SSH transport (Ssh.Transport has what both
   sides share): its KEXINIT (with ext-info-c and

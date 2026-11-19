@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   ML-KEM-768 (FIPS 203): the module lattice key encapsulation mechanism
   that SSH's mlkem768x25519-sha256 and TLS's X25519MLKEM768 combine

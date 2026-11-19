@@ -59,7 +59,7 @@ uses
   Ssh.Connection,
   Sshd.Accounts,
   Sshd.HostKeyStore,
-  Sshd.InputWriters,
+  Ssh.HandleWriters,
   Sshd.Sessions,
   Sshd.Log;
 

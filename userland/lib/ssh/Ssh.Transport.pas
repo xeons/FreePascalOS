@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The SSH transport (RFC 4253), what both sides share: the version
   lines, the binary packets, the key exchange's bookkeeping (KEXINIT

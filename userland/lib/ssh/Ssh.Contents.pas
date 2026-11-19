@@ -17,7 +17,7 @@
 }
 
 {
-  libssh: the units of the SSH server library, named here so that
+  libssh: the units of the SSH library (both sides), named here so that
   compiling this unit compiles them all.
 }
 unit Ssh.Contents;
@@ -47,6 +47,13 @@ uses
   Ssh.AddressPatterns,
   Ssh.AuthorizedKeys,
   Ssh.Certificates,
+  Ssh.AgentProtocol,
+  Ssh.ClientIdentities,
+  Ssh.ClientAuthentication,
+  Ssh.KnownHosts,
+  Ssh.PolledChannels,
+  Ssh.HandleWriters,
+  Ssh.SocketChannels,
   Ssh.UserAuthentication,
   Ssh.Connection,
   Ssh.TerminalOutput;

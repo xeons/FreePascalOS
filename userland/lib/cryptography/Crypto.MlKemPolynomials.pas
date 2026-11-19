@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The polynomial arithmetic of ML-KEM (FIPS 203 section 4): polynomials
   of 256 coefficients modulo q = 3329, the number theoretic transform

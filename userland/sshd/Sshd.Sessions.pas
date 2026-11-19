@@ -34,7 +34,7 @@
   terminal). Its output (standard error apart, without a terminal) is
   sent as channel data (from a terminal with a carriage return before
   each line feed, Ssh.TerminalOutput, as the client's terminal expects); what the client sends goes to its input through
-  an input writer (Sshd.InputWriters). When the program has ended and
+  an input writer (Ssh.HandleWriters). When the program has ended and
   its output is read to the end (on a terminal: what is there when it
   ends), the channel ends with its exit status.
 }
@@ -52,7 +52,7 @@ uses
   Ssh.Connection,
   Ssh.TerminalOutput,
   Sshd.Configuration,
-  Sshd.InputWriters;
+  Ssh.HandleWriters;
 
 type
   TSessionContext = record

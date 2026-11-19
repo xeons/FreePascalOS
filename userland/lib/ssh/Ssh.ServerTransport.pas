@@ -16,7 +16,6 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-
 {
   The server's side of the SSH transport (Ssh.Transport has what both
   sides share): its KEXINIT, its half of each key exchange method (the
