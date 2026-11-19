@@ -194,8 +194,9 @@ end;
 
 destructor TPictureBox.Destroy;
 begin
-  FTimer.Free;
+  { ReleaseImage stops the timer: it goes after. }
   ReleaseImage;
+  FTimer.Free;
   inherited Destroy;
 end;
 
