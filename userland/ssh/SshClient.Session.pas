@@ -57,6 +57,7 @@ uses
   Sys.Console,
   Sys.Errors,
   Sys.HostLookup,
+  Sys.HostNames,
   Sys.InternetAddresses,
   Sys.Kernel,
   Sys.Objects,
@@ -171,10 +172,10 @@ var
   Family: LongWord;
 begin
   Result := False;
-  Error := ResolveHost(FOptions.Host, AddressFamilyUnspecified, Addresses);
+  Error := ResolveHost(FOptions.Host, HostFamilyAny, Addresses);
   if (Error <> ErrorNone) or (Length(Addresses) = 0) then
   begin
-    WriteLn(ErrOutput, 'ssh: Could not resolve hostname ', FOptions.Host, ': ', ErrorMessage(Error));
+    WriteLn(ErrOutput, 'ssh: Could not resolve hostname ', FOptions.Host, ': ', HostLookupErrorMessage(Error));
     Exit;
   end;
   OrderAddressesForConnecting(Addresses);

@@ -125,6 +125,7 @@ uses
   Sys.AddressText,
   Sys.Errors,
   Sys.HostLookup,
+  Sys.HostNames,
   Sys.Kernel,
   Sys.Objects,
   Sys.Sockets,
@@ -148,7 +149,7 @@ begin
     Address := LoopbackIpv4Address
   else if not TextToScopedAddress(Host, Address, ScopeId) then
   begin
-    Result := ResolveHost(Host, AddressFamilyUnspecified, Addresses);
+    Result := ResolveHost(Host, HostFamilyAny, Addresses);
     if (Result = ErrorNone) and (Length(Addresses) = 0) then
       Result := ErrorNotFound;
     if Result = ErrorNone then
@@ -254,7 +255,7 @@ var
   Addresses: TInternetAddressArray;
 begin
   Socket := NoHandle;
-  Result := ResolveHost(Host, AddressFamilyUnspecified, Addresses);
+  Result := ResolveHost(Host, HostFamilyAny, Addresses);
   if Result <> ErrorNone then
     Exit;
   if Length(Addresses) = 0 then

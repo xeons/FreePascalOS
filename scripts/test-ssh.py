@@ -54,6 +54,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 esp_directory, system_disk = sys.argv[1], sys.argv[2]
@@ -281,7 +282,10 @@ check('pty session: a terminal of 24 by 80, the exit status',
       text(result))
 
 # Several channels over one connection.
-control = os.path.join(work, 'control')
+# The control socket in a short directory: a socket path holds at most
+# 107 bytes, and ssh adds a temporary suffix to it while it binds.
+control_directory = tempfile.mkdtemp(prefix='fpos-ssh-')
+control = os.path.join(control_directory, 'control')
 master = subprocess.Popen(['ssh', *common, *key_options, '-i', keys['ed25519'], '-p', str(port),
                            '-o', 'ControlMaster=yes', '-o', 'ControlPath=' + control, '-N', 'user@127.0.0.1'],
                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -299,6 +303,7 @@ check('two channels at once over one connection',
 subprocess.run(['ssh', *common, '-o', 'ControlPath=' + control, '-O', 'exit', 'user@127.0.0.1'],
                capture_output=True, timeout=30)
 master.wait(timeout=30)
+shutil.rmtree(control_directory, ignore_errors=True)
 
 # scp, which speaks SFTP underneath.
 original = os.path.join(work, 'original.bin')
