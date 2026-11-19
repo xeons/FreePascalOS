@@ -21,12 +21,19 @@
   who logged in, in a pseudo-terminal when the client asked for one
   (pty-req), else on pipes.
 
-  Requests: pty-req (the terminal type and size), env (LANG and LC_*
+  Requests: pty-req (the terminal type and size; refused by no-pty, a
+  certificate without permit-pty or PermitTTY no), env (LANG and LC_*
   only), shell (the user's shell, interactive on a terminal), exec
   (SHELL -c COMMAND), subsystem sftp (the configured sftp-server),
-  window-change (the terminal's new size) and signal (INT on a terminal
+  window-change (the terminal's new size), signal (INT on a terminal
   is Ctrl-C typed into it; otherwise the program is ended with 128 plus
-  the signal's number).
+  the signal's number) and auth-agent-req@openssh.com (agent
+  forwarding, Sshd.AgentForwarding: SSH_AUTH_SOCK for the program).
+
+  A forced command - the key's command=, a certificate's force-command
+  or ForceCommand, in that order - runs as SHELL -c in place of whatever
+  was asked, which goes in SSH_ORIGINAL_COMMAND. The key's environment=
+  variables are set when PermitUserEnvironment is yes.
 
   The program runs in a session of its own (ProcessNewSession), so
   ending the channel ends everything it started, and with HOME, USER,
@@ -50,32 +57,26 @@ uses
   Util.Logins,
   Ssh.Wire,
   Ssh.Connection,
+  Ssh.PolledChannels,
+  Ssh.AuthorizedKeys,
   Ssh.TerminalOutput,
   Sshd.Configuration,
+  Sshd.AgentForwarding,
   Ssh.HandleWriters;
 
 type
   TSessionContext = record
     Account: TLoginAccount;
     Configuration: TSshdConfiguration;
+    { The options of the key that logged in (none for a password). }
+    Options: TSshKeyOptions;
     { "CLIENT-ADDRESS CLIENT-PORT SERVER-ADDRESS SERVER-PORT" }
     ConnectionText: string;
     { Signaled by the input writers. }
     ProgressEvent: Int64;
   end;
 
-  TSessionHandleRole = (RoleOutput, RoleErrorOutput, RoleProcess);
-
-  TSessionChannel = class;
-
-  TSessionWait = record
-    Handle: Int64;
-    Session: TSessionChannel;
-    Role: TSessionHandleRole;
-  end;
-  TSessionWaitArray = array of TSessionWait;
-
-  TSessionChannel = class(TSshChannel)
+  TSessionChannel = class(TSshPolledChannel)
   private
     FContext: TSessionContext;
     FWantsTerminal: Boolean;
@@ -96,6 +97,13 @@ type
     FWriter: TInputWriter;
     FFinished: Boolean;
     FDescription: string;
+    FAgent: TAgentListener;
+    function ForcedCommand: string;
+    function StartRequested(const Arguments: array of string; const What, Original: string): Boolean;
+    function HandleAgentRequest: Boolean;
+    procedure OutputReady;
+    procedure ErrorOutputReady;
+    procedure ProcessReady;
     function StartProgram(const Arguments: array of string; const What: string): Boolean;
     function OpenTerminal: Boolean;
     function StartOnTerminal(const Arguments: array of string; const Variables: array of string): Int64;
@@ -116,10 +124,9 @@ type
     constructor Create(Owner: TSshConnection; const Context: TSessionContext);
     destructor Destroy; override;
     { The handles to wait on now (output only while little is queued). }
-    procedure CollectWaits(var Waits: TSessionWaitArray);
-    procedure HandleReady(Role: TSessionHandleRole);
+    procedure CollectWaits(var Waits: TSshWaitList); override;
     { After every wait: input written, and whether the program is done. }
-    procedure Poll;
+    procedure Poll; override;
   end;
 
 implementation
@@ -178,6 +185,7 @@ destructor TSessionChannel.Destroy;
 begin
   EndProgram;
   ReleaseHandles;
+  FreeAndNil(FAgent);
   inherited Destroy;
 end;
 
@@ -194,30 +202,72 @@ begin
     Result := HandleWindowChange(Reader)
   else if RequestType = 'signal' then
     Result := HandleSignal(Reader)
+  else if RequestType = 'auth-agent-req@openssh.com' then
+    Result := HandleAgentRequest
   else if FStarted then
     Exit(False)
   else if RequestType = 'shell' then
   begin
     if FWantsTerminal then
-      Result := StartProgram([FContext.Account.Shell, '-i'], 'shell')
+      Result := StartRequested([FContext.Account.Shell, '-i'], 'shell', '')
     else
-      Result := StartProgram([FContext.Account.Shell], 'shell');
+      Result := StartRequested([FContext.Account.Shell], 'shell', '');
   end
   else if RequestType = 'exec' then
   begin
     Command := Reader.ReadString;
     if Length(Command) > MaximumCommandLength then
       Exit(False);
-    Result := StartProgram([FContext.Account.Shell, '-c', Command], 'command "' + Command + '"');
+    Result := StartRequested([FContext.Account.Shell, '-c', Command], 'command "' + Command + '"', Command);
   end
   else if RequestType = 'subsystem' then
   begin
     Subsystem := Reader.ReadString;
     if Subsystem = 'sftp' then
-      Result := StartProgram([FContext.Configuration.SftpServerPath], 'subsystem sftp')
+      Result := StartRequested([FContext.Configuration.SftpServerPath], 'subsystem sftp', Subsystem)
     else
       LogLine('subsystem ' + Subsystem + ' refused');
   end;
+end;
+
+function TSessionChannel.ForcedCommand: string;
+begin
+  Result := FContext.Options.Command;
+  if Result = '' then
+    Result := FContext.Configuration.ForceCommand;
+end;
+
+{ What the client asked for, or the forced command in its place. }
+function TSessionChannel.StartRequested(const Arguments: array of string; const What, Original: string): Boolean;
+var
+  Forced: string;
+begin
+  Forced := ForcedCommand;
+  if Forced = '' then
+    Exit(StartProgram(Arguments, What));
+  SetLength(FVariables, Length(FVariables) + 1);
+  FVariables[High(FVariables)] := 'SSH_ORIGINAL_COMMAND=' + Original;
+  Result := StartProgram([FContext.Account.Shell, '-c', Forced], 'forced command "' + Forced + '"');
+end;
+
+function TSessionChannel.HandleAgentRequest: Boolean;
+begin
+  Result := False;
+  if FStarted or (FAgent <> nil) then
+    Exit;
+  if not FContext.Configuration.AllowAgentForwarding or FContext.Options.NoAgentForwarding then
+  begin
+    LogLine('agent forwarding refused for ' + FContext.Account.Name);
+    Exit;
+  end;
+  FAgent := TAgentListener.Create(Connection, FContext.Account.Identity.UserId);
+  if not FAgent.Open then
+  begin
+    FreeAndNil(FAgent);
+    Exit;
+  end;
+  LogLine('agent forwarding for ' + FContext.Account.Name + ' on ' + FAgent.SocketText);
+  Result := True;
 end;
 
 function TSessionChannel.HandlePseudoTerminalRequest(var Reader: TSshReader): Boolean;
@@ -226,6 +276,11 @@ var
 begin
   if FStarted then
     Exit(False);
+  if FContext.Options.NoPty or not FContext.Configuration.PermitTty then
+  begin
+    LogLine('pseudo-terminal refused for ' + FContext.Account.Name);
+    Exit(False);
+  end;
   FTerminalType := Reader.ReadString;
   Columns := Reader.ReadUInt32;
   Rows := Reader.ReadUInt32;
@@ -384,9 +439,15 @@ function TSessionChannel.StartProgram(const Arguments: array of string; const Wh
 var
   Variables: TStringArray;
   Process: Int64;
+  Index: Integer;
 begin
   FStarted := True;
   Variables := Copy(FVariables);
+  if FContext.Configuration.PermitUserEnvironment then
+    for Index := 0 to High(FContext.Options.Environment) do
+      AddVariable(Variables, FContext.Options.Environment[Index]);
+  if FAgent <> nil then
+    AddVariable(Variables, 'SSH_AUTH_SOCK=' + FAgent.SocketText);
   AddVariable(Variables, 'SSH_CONNECTION=' + FContext.ConnectionText);
   AddVariable(Variables, 'SSH_CLIENT=' + ClientText(FContext.ConnectionText));
   if FWantsTerminal then
@@ -449,28 +510,21 @@ begin
   ReleaseHandles;
 end;
 
-procedure TSessionChannel.CollectWaits(var Waits: TSessionWaitArray);
-
-  procedure Add(Handle: Int64; Role: TSessionHandleRole);
-  begin
-    SetLength(Waits, Length(Waits) + 1);
-    Waits[High(Waits)].Handle := Handle;
-    Waits[High(Waits)].Session := Self;
-    Waits[High(Waits)].Role := Role;
-  end;
-
+procedure TSessionChannel.CollectWaits(var Waits: TSshWaitList);
 begin
   if FFinished or CloseSent then
     Exit;
+  if FAgent <> nil then
+    FAgent.CollectWaits(Waits);
   if PendingOutput < OutputBackLog then
   begin
     if FOutputHandle >= 0 then
-      Add(FOutputHandle, RoleOutput);
+      AddWait(Waits, FOutputHandle, @OutputReady);
     if FErrorHandle >= 0 then
-      Add(FErrorHandle, RoleErrorOutput);
+      AddWait(Waits, FErrorHandle, @ErrorOutputReady);
   end;
   if (FProcess >= 0) and not FProcessEnded then
-    Add(FProcess, RoleProcess);
+    AddWait(Waits, FProcess, @ProcessReady);
 end;
 
 { Reads once (the handle is ready); at the end of the output the handle
@@ -498,24 +552,27 @@ begin
   end;
 end;
 
-procedure TSessionChannel.HandleReady(Role: TSessionHandleRole);
+procedure TSessionChannel.OutputReady;
+begin
+  if FOutputHandle >= 0 then
+    ReadAvailable(FOutputHandle, False);
+end;
+
+procedure TSessionChannel.ErrorOutputReady;
+begin
+  if FErrorHandle >= 0 then
+    ReadAvailable(FErrorHandle, True);
+end;
+
+procedure TSessionChannel.ProcessReady;
 var
   ExitCode: LongInt;
 begin
-  case Role of
-    RoleOutput:
-      if FOutputHandle >= 0 then
-        ReadAvailable(FOutputHandle, False);
-    RoleErrorOutput:
-      if FErrorHandle >= 0 then
-        ReadAvailable(FErrorHandle, True);
-    RoleProcess:
-      if WaitForProgramWithTimeout(FProcess, 0, ExitCode) = ErrorNone then
-      begin
-        FProcessEnded := True;
-        FExitCode := ExitCode;
-        LogLine(Format('%s for %s ended (status %d)', [FDescription, FContext.Account.Name, ExitCode]));
-      end;
+  if WaitForProgramWithTimeout(FProcess, 0, ExitCode) = ErrorNone then
+  begin
+    FProcessEnded := True;
+    FExitCode := ExitCode;
+    LogLine(Format('%s for %s ended (status %d)', [FDescription, FContext.Account.Name, ExitCode]));
   end;
 end;
 

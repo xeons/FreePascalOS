@@ -36,6 +36,10 @@ uses
 { The keys of Paths, made where missing; a path that cannot be read or
   made is logged and left out. Announce logs each key read. }
 function LoadOrCreateHostKeys(const Paths: array of string; Announce: Boolean): THostKeyArray;
+{ Keys with the host certificates of Paths (HostCertificate: one line
+  as ssh-keygen -s writes it) for them in front; a certificate for none
+  of the keys is logged and left out. }
+function AddHostCertificates(const Keys: THostKeyArray; const Paths: array of string): THostKeyArray;
 
 implementation
 
@@ -47,6 +51,8 @@ uses
   Ssh.Wire,
   Ssh.KeyFiles,
   Ssh.PublicKeys,
+  Ssh.AuthorizedKeys,
+  Ssh.Certificates,
   Sshd.Log;
 
 const
@@ -156,6 +162,38 @@ begin
       SetLength(Result, Length(Result) + 1);
       Result[High(Result)] := Key;
     end;
+  end;
+end;
+
+function AddHostCertificates(const Keys: THostKeyArray; const Paths: array of string): THostKeyArray;
+var
+  Index, KeyIndex: Integer;
+  Text, Problem: string;
+  Line: TSshAuthorizedKey;
+  Certificate: TSshCertificate;
+  Certified: TSshHostKey;
+begin
+  Result := nil;
+  for Index := 0 to High(Paths) do
+  begin
+    Certified := nil;
+    if ReadWholeFile(Paths[Index], Text) and ParseAuthorizedKeysLine(Trim(Text), Line, Problem) and
+      ParseCertificate(Line.Blob, Certificate) and (Certificate.CertificateType = CertificateTypeHost) then
+      for KeyIndex := 0 to High(Keys) do
+        if Keys[KeyIndex].PublicBlob = Certificate.Key.Blob then
+          Certified := TSshCertifiedHostKey.Create(Keys[KeyIndex], Certificate.KeyType, Certificate.Blob);
+    if Certified = nil then
+    begin
+      LogLine('host certificate ' + Paths[Index] + ' left out: unreadable, not a host certificate, or for no host key');
+      Continue;
+    end;
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := Certified;
+  end;
+  for Index := 0 to High(Keys) do
+  begin
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := Keys[Index];
   end;
 end;
 

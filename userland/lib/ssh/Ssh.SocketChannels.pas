@@ -31,6 +31,10 @@
   confirms). End of file goes each way on its own (a socket shut down
   for sending, or EOF on the channel); once both ways are done, or the
   socket breaks, the channel closes.
+
+  TSshTcpListener is the listening end of a forwarding (ssh -L on the
+  client, tcpip-forward on the server): each connection it accepts goes
+  to its OnAccept.
 }
 unit Ssh.SocketChannels;
 
@@ -80,6 +84,35 @@ type
     property Description: string read FDescription;
   end;
 
+  TSshTcpListener = class;
+
+  TSshAcceptEvent = procedure(Listener: TSshTcpListener; Socket: Int64; const PeerHost: string;
+    PeerPort: Word) of object;
+
+  TSshTcpListener = class
+  private
+    FSocket: Int64;
+    FBindHost: string;
+    FPort: Word;
+    FOnAccept: TSshAcceptEvent;
+    procedure ConnectionWaiting;
+  public
+    TargetHost: string;
+    TargetPort: Word;
+    { Socket (owned) listens; BindHost and Port are as asked (Port the
+      one bound when 0 was asked). }
+    constructor Create(Socket: Int64; const BindHost: string; Port: Word; OnAccept: TSshAcceptEvent);
+    destructor Destroy; override;
+    procedure CollectWaits(var Waits: TSshWaitList);
+    property BindHost: string read FBindHost;
+    property Port: Word read FPort;
+  end;
+
+{ Listens on Host:Port: '' or '*' every address, 'localhost' the
+  loopback address, else an address or a name. BoundPort is the port
+  bound (Port, or the one chosen for 0). }
+function OpenTcpListener(const Host: string; Port: Word; out Socket: Int64; out BoundPort: Word): LongInt;
+
 { A TCP socket connecting to Address:Port without waiting (its handle);
   minus an error code when it cannot even start. }
 function StartConnecting(constref Address: TInternetAddress; Port: Word): Int64;
@@ -89,6 +122,7 @@ function StartConnectingToHost(const Host: string; Port: Word; out Socket: Int64
 implementation
 
 uses
+  Sys.AddressText,
   Sys.Errors,
   Sys.HostLookup,
   Sys.Kernel,
@@ -100,6 +134,99 @@ uses
 const
   ReadChunkBytes = 16 * 1024;
   OutputBackLog = 64 * 1024;
+  ListenBacklog = 8;
+
+function ListenAddressFor(const Host: string; out Address: TInternetAddress): LongInt;
+var
+  Addresses: TInternetAddressArray;
+  ScopeId: LongWord;
+begin
+  Result := ErrorNone;
+  if (Host = '') or (Host = '*') or (Host = '0.0.0.0') then
+    Address := AnyIpv4Address
+  else if SameText(Host, 'localhost') then
+    Address := LoopbackIpv4Address
+  else if not TextToScopedAddress(Host, Address, ScopeId) then
+  begin
+    Result := ResolveHost(Host, AddressFamilyUnspecified, Addresses);
+    if (Result = ErrorNone) and (Length(Addresses) = 0) then
+      Result := ErrorNotFound;
+    if Result = ErrorNone then
+      Address := Addresses[0];
+  end;
+end;
+
+function OpenTcpListener(const Host: string; Port: Word; out Socket: Int64; out BoundPort: Word): LongInt;
+var
+  Address: TInternetAddress;
+  Family: LongWord;
+  Bound: TAbiSocketAddress;
+begin
+  Socket := NoHandle;
+  BoundPort := Port;
+  Result := ListenAddressFor(Host, Address);
+  if Result <> ErrorNone then
+    Exit;
+  if Address.Family = AddressFamilyIPv6 then
+    Family := AddressFamilyIPv6
+  else
+    Family := AddressFamilyIPv4;
+  Socket := CreateSocket(Family, SocketKindStream, ProtocolDefault);
+  if Socket < 0 then
+  begin
+    Result := LongInt(-Socket);
+    Socket := NoHandle;
+    Exit;
+  end;
+  SetSocketOption(Socket, SocketOptionReuseAddress, 1);
+  Result := BindSocket(Socket, MakeSocketAddress(Address, Port));
+  if Result = ErrorNone then
+    Result := ListenOnSocket(Socket, ListenBacklog);
+  if Result <> ErrorNone then
+  begin
+    CloseSocket(Socket);
+    Socket := NoHandle;
+    Exit;
+  end;
+  if GetLocalSocketAddress(Socket, Bound) = ErrorNone then
+    BoundPort := Bound.Port;
+end;
+
+constructor TSshTcpListener.Create(Socket: Int64; const BindHost: string; Port: Word; OnAccept: TSshAcceptEvent);
+begin
+  inherited Create;
+  FSocket := Socket;
+  FBindHost := BindHost;
+  FPort := Port;
+  FOnAccept := OnAccept;
+end;
+
+destructor TSshTcpListener.Destroy;
+begin
+  if FSocket >= 0 then
+    CloseSocket(FSocket);
+  inherited Destroy;
+end;
+
+procedure TSshTcpListener.CollectWaits(var Waits: TSshWaitList);
+begin
+  if FSocket >= 0 then
+    AddWait(Waits, FSocket, @ConnectionWaiting);
+end;
+
+procedure TSshTcpListener.ConnectionWaiting;
+var
+  Socket: Int64;
+  Peer: TAbiSocketAddress;
+begin
+  Socket := AcceptOnSocket(FSocket, Peer);
+  if Socket < 0 then
+    Exit;
+  if Assigned(FOnAccept) then
+    FOnAccept(Self, Socket, SocketHostToText(Peer), Peer.Port)
+  else
+    CloseSocket(Socket);
+end;
 
 function StartConnecting(constref Address: TInternetAddress; Port: Word): Int64;
 var
