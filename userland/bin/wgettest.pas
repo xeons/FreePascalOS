@@ -160,7 +160,7 @@ const
     (Command: 'wget -q -O - --no-cookies http://10.0.2.102/cookie/redirect'; ExpectedOutput: 'none'#10;
      ExpectedStatus: 0),
     (Command: 'wget -q -O c.out --save-cookies c1.txt http://10.0.2.102/cookie/set && grep -c persistent c1.txt; ' +
-       'grep -c session c1.txt'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
+       'grep -c session c1.txt'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 1),
     (Command: 'wget -q -O c.out --save-cookies c2.txt --keep-session-cookies http://10.0.2.102/cookie/set && ' +
        'grep session c2.txt | cut -f 1,3,5,6,7'; ExpectedOutput: '10.0.2.102'#9'/cookie'#9'0'#9'session'#9'abc123'#10;
      ExpectedStatus: 0),
