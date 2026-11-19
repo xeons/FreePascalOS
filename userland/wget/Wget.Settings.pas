@@ -28,7 +28,8 @@ unit Wget.Settings;
 interface
 
 uses
-  Tls.CipherSuites;
+  Tls.CipherSuites,
+  Wget.Patterns;
 
 const
   ExitSuccess = 0;
@@ -37,6 +38,7 @@ const
   ExitFileError = 3;
   ExitNetworkFailure = 4;
   ExitTlsVerificationFailure = 5;
+  ExitAuthenticationFailure = 6;
   ExitProtocolError = 7;
   ExitServerError = 8;
 
@@ -44,8 +46,14 @@ const
   DefaultTries = 20;
   DefaultUserAgent = 'Wget/1.21 (FreePascalOS)';
   StandardOutputName = '-';
+  DefaultRecursionDepth = 5;
 
 type
+  { --compression: none asks for and decodes nothing (the default, as
+    GNU wget's); auto and gzip ask for gzip and decode it, auto not for
+    files that are gzip files themselves (.gz, .tgz). }
+  TCompressionChoice = (CompressionNone, CompressionAuto, CompressionGzip);
+
   TWgetSettings = record
     { Without it the name comes from the URL; "-": standard output. }
     HasOutputDocument: Boolean;
@@ -63,6 +71,38 @@ type
     Tries: Integer;
     UserAgent: string;
     CipherSuites: TCipherSuiteList;
+    { Several requests over one connection (--no-http-keep-alive: not). }
+    KeepAlive: Boolean;
+    { Cookies kept and sent (--no-cookies: not); files to read them from
+      and write them to; session cookies written too. }
+    UseCookies: Boolean;
+    LoadCookiesFile: string;
+    SaveCookiesFile: string;
+    KeepSessionCookies: Boolean;
+    { --user/--password, overridden by --http-user/--http-password;
+      without them ~/.netrc. }
+    User: string;
+    Password: string;
+    HasUser: Boolean;
+    HasPassword: Boolean;
+    UseNetrc: Boolean;
+    Compression: TCompressionChoice;
+    { Name the file after the URL a redirection ends at. }
+    TrustServerNames: Boolean;
+    { -r, -l (0: no limit), -np, -k, -p, -A, -R, robots.txt (-e
+      robots=off), -P. }
+    Recursive: Boolean;
+    MaximumDepth: Integer;
+    NoParent: Boolean;
+    ConvertLinks: Boolean;
+    PageRequisites: Boolean;
+    AcceptList: TNameList;
+    RejectList: TNameList;
+    RespectRobots: Boolean;
+    DirectoryPrefix: string;
+    { -nH: no folder for the host; -nd: no folders at all. }
+    NoHostFolder: Boolean;
+    NoFolders: Boolean;
   end;
 
 procedure InitializeSettings(out Settings: TWgetSettings);
@@ -75,6 +115,12 @@ begin
   Settings.VerifyCertificates := True;
   Settings.Tries := DefaultTries;
   Settings.UserAgent := DefaultUserAgent;
+  Settings.KeepAlive := True;
+  Settings.UseCookies := True;
+  Settings.UseNetrc := True;
+  Settings.Compression := CompressionNone;
+  Settings.MaximumDepth := DefaultRecursionDepth;
+  Settings.RespectRobots := True;
   { GNU wget's default read timeout. }
   Settings.TimeoutMilliseconds := 900 * 1000;
 end;

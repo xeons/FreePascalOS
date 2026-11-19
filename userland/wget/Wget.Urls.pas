@@ -70,6 +70,9 @@ function FormatHostHeader(constref Url: TUrl): string;
 { The local file name: the last path segment, decoded, or
   "index.html"; never with a "/" or a leading dot only. }
 function DefaultFileName(constref Url: TUrl): string;
+{ A path segment with its %XX escapes decoded, but for those that would
+  put a "/", a NUL or a control character in a file name. }
+function DecodeFileName(const Segment: string): string;
 
 implementation
 
