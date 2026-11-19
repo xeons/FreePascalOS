@@ -59,6 +59,7 @@ type
     function GetPage(Index: LongInt): TControl;
     function GetPageCount: LongInt;
     procedure SetPageIndex(Value: LongInt);
+    procedure PaintTab(var Canvas: TCanvas; Index: LongInt);
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
@@ -263,53 +264,88 @@ begin
   Changed;
 end;
 
+{ Tab Index: a raised tab with rounded top corners, its lit left and top
+  edges and shaded right edge each a bevel line thick. The chosen one is
+  larger, stands higher and runs down over the frame's top edge, so it
+  joins its page with no line between them; its picture and caption
+  stay in the middle of the part above the frame, and the focus frame,
+  when it has the focus, goes around them. }
+procedure TTabControl.PaintTab(var Canvas: TCanvas; Index: LongInt);
+var
+  Tab: TRectangle;
+  Face: TRectangle;
+  Content: TRectangle;
+  Picture: TRectangle;
+  Caption: TRectangle;
+  Line: LongInt;
+  Corner: LongInt;
+  Size: LongInt;
+  ContentWidth: LongInt;
+  TextWidthOfCaption: LongInt;
+  State: TImageDrawState;
+  Chosen: Boolean;
+begin
+  Chosen := Index = FPageIndex;
+  Line := BevelLine;
+  Corner := 2 * Line;
+  Tab := MakeRectangle(TabLeft(Index), Scaled(2), TabWidth(Index), TabHeight - Scaled(2));
+  if Chosen then
+    Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + BevelWidth);
+  { The face, leaving the rounded corners to what is behind. }
+  FillRectangle(Canvas, MakeRectangle(Tab.Left + Line, Tab.Top + Line, RectangleWidth(Tab) - 2 * Line,
+    RectangleHeight(Tab) - Line), Theme.Face);
+  { Left and top edges lit, the corner between them cut by a step. }
+  FillRectangle(Canvas, MakeRectangle(Tab.Left, Tab.Top + Corner, Line, RectangleHeight(Tab) - Corner),
+    Theme.Highlight);
+  FillRectangle(Canvas, MakeRectangle(Tab.Left + Corner, Tab.Top, RectangleWidth(Tab) - 2 * Corner, Line),
+    Theme.Highlight);
+  FillRectangle(Canvas, MakeRectangle(Tab.Left + Line, Tab.Top + Line, Line, Line), Theme.Highlight);
+  { The right edge: a dark outer line and a shadow inside it. }
+  FillRectangle(Canvas, MakeRectangle(Tab.Right - Line, Tab.Top + Corner, Line, RectangleHeight(Tab) - Corner),
+    Theme.DarkShadow);
+  FillRectangle(Canvas, MakeRectangle(Tab.Right - 2 * Line, Tab.Top + Line, Line, RectangleHeight(Tab) - Line),
+    Theme.Shadow);
+  { Where the picture and caption go: the tab above the frame. }
+  Face := MakeRectangle(Tab.Left + Line, Tab.Top + Line, RectangleWidth(Tab) - 3 * Line, TabHeight - Tab.Top - Line);
+  TextWidthOfCaption := MnemonicTextWidth(ControlFace, Pages[Index].Text);
+  ContentWidth := TextWidthOfCaption;
+  Size := Scaled(SmallIconSize);
+  if TabHasImage(Index) then
+    ContentWidth := ContentWidth + Size + Scaled(ImageGap);
+  Content := MakeRectangle(Face.Left + (RectangleWidth(Face) - ContentWidth) div 2, Face.Top, ContentWidth,
+    RectangleHeight(Face));
+  Caption := Content;
+  if TabHasImage(Index) then
+  begin
+    Picture := MakeRectangle(Content.Left, Face.Top + (RectangleHeight(Face) - Size) div 2, Size, Size);
+    State := ImageDrawNormal;
+    if not Enabled then
+      State := ImageDrawDisabled;
+    FImages.DrawInBox(Canvas, FPageImages[Index], Picture, State);
+    Caption.Left := Picture.Right + Scaled(ImageGap);
+  end;
+  DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Caption, AlignTextLeft, Theme.FaceText);
+  if Chosen and Focused then
+    DrawFocusFrame(Canvas, MakeRectangle(Content.Left - Scaled(3), Face.Top + Scaled(2), ContentWidth + Scaled(6),
+      RectangleHeight(Face) - Scaled(4)), Theme.FaceText);
+end;
+
 procedure TTabControl.Paint(var Canvas: TCanvas);
 var
   Box: TRectangle;
   Frame: TRectangle;
   Index: LongInt;
-  Tab: TRectangle;
-  Caption: TRectangle;
-  Picture: TRectangle;
-  Size: LongInt;
-  State: TImageDrawState;
 begin
   Box := MakeRectangle(0, 0, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
   FillRectangle(Canvas, Box, Theme.Face);
   Frame := MakeRectangle(0, TabHeight, RectangleWidth(Box), RectangleHeight(Box) - TabHeight);
   DrawRaisedBevel(Canvas, Frame);
+  { The chosen tab last: it overlaps its neighbours, not they it. }
   for Index := 0 to FPages.Count - 1 do
-  begin
-    Tab := MakeRectangle(TabLeft(Index), Scaled(2), TabWidth(Index), TabHeight - Scaled(2));
-    if Index = FPageIndex then
-      { The chosen tab stands out and joins its page. }
-      Tab := MakeRectangle(Tab.Left - Scaled(2), 0, RectangleWidth(Tab) + Scaled(4), TabHeight + BevelWidth);
-    FillRectangle(Canvas, Tab, Theme.Face);
-    DrawHorizontalLine(Canvas, Tab.Left + 2, Tab.Right - 2, Tab.Top, Theme.Highlight);
-    DrawVerticalLine(Canvas, Tab.Left, Tab.Top + 2, Tab.Bottom, Theme.Highlight);
-    DrawPixel(Canvas, Tab.Left + 1, Tab.Top + 1, Theme.Highlight);
-    DrawVerticalLine(Canvas, Tab.Right - 1, Tab.Top + 2, Tab.Bottom, Theme.DarkShadow);
-    DrawVerticalLine(Canvas, Tab.Right - 2, Tab.Top + 1, Tab.Bottom, Theme.Shadow);
-    Caption := Tab;
-    if TabHasImage(Index) then
-    begin
-      Size := Scaled(SmallIconSize);
-      { The picture and the caption together in the middle of the tab. }
-      Picture := MakeRectangle(Tab.Left + (RectangleWidth(Tab) - Size - Scaled(ImageGap) -
-        MnemonicTextWidth(ControlFace, Pages[Index].Text)) div 2, Tab.Top + (RectangleHeight(Tab) - Size) div 2,
-        Size, Size);
-      State := ImageDrawNormal;
-      if not Enabled then
-        State := ImageDrawDisabled;
-      FImages.DrawInBox(Canvas, FPageImages[Index], Picture, State);
-      Caption.Left := Picture.Right + Scaled(ImageGap);
-      DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Caption, AlignTextLeft, Theme.FaceText);
-    end
-    else
-      DrawMnemonicTextInBox(Canvas, ControlFace, Pages[Index].Text, Tab, AlignTextCenter, Theme.FaceText);
-    if (Index = FPageIndex) and Focused then
-      DrawFocusFrame(Canvas, InflateRectangle(Tab, -Scaled(3)), Theme.FaceText);
-  end;
+    if Index <> FPageIndex then
+      PaintTab(Canvas, Index);
+  if (FPageIndex >= 0) and (FPageIndex < FPages.Count) then
+    PaintTab(Canvas, FPageIndex);
 end;
 
 procedure TTabControl.PointerDown(X, Y: LongInt; Button: LongWord);
