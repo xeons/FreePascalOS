@@ -43,7 +43,8 @@ procedure InitializeTcpConnections;
 { A new connection in the table, closed, without buffers; nil if memory
   is short. }
 function CreateTcpConnection: PTcpConnection;
-{ The send and receive buffers of a connection that will carry data. }
+{ The send and receive buffers of a connection that will carry data:
+  the sizes its socket asked for, else 64 KiB each to grow from. }
 function CreateConnectionBuffers(Connection: PTcpConnection): Boolean;
 { Takes a connection out of the table (and off its listener's queue)
   and frees it with everything it holds. }
@@ -63,6 +64,8 @@ uses
   Memory.KernelHeap,
   Kernel.Arch.Cpu,
   Network.ByteRings,
+  Network.TcpWindows,
+  Network.TcpReceivedBlocks,
   Network.Core;
 
 var
@@ -88,16 +91,29 @@ begin
   Result^.TimeToLive := 64;
   Result^.RetransmissionTimeout := InitialRetransmissionTimeout;
   Result^.MaximumSegment := DefaultPeerMss;
+  Result^.KeepAliveIdleSeconds := DefaultKeepAliveIdleSeconds;
+  Result^.KeepAliveIntervalSeconds := DefaultKeepAliveIntervalSeconds;
+  Result^.KeepAliveCount := DefaultKeepAliveCount;
   InitializeListHead(Result^.AcceptQueue);
   InitializeListHead(Result^.AcceptLink);
   InitializeListHead(Result^.OutOfOrder);
   InsertAtTail(Connections, @Result^.Link);
 end;
 
+function BufferSize(Requested, Initial: LongWord): LongWord;
+begin
+  if Requested <> 0 then
+    Result := Requested
+  else
+    Result := Initial;
+end;
+
 function CreateConnectionBuffers(Connection: PTcpConnection): Boolean;
 begin
-  Result := CreateByteRing(Connection^.SendBuffer, SendBufferBytes) and
-    CreateByteRing(Connection^.ReceiveBuffer, ReceiveBufferBytes);
+  Result := CreateByteRing(Connection^.SendBuffer,
+      BufferSize(Connection^.RequestedSendBuffer, InitialSendBufferBytes)) and
+    CreateByteRing(Connection^.ReceiveBuffer,
+      BufferSize(Connection^.RequestedReceiveBuffer, InitialReceiveBufferBytes));
 end;
 
 procedure DiscardOutOfOrder(Connection: PTcpConnection);
@@ -111,6 +127,8 @@ begin
     Entry := RemoveHeadEntry(Connection^.OutOfOrder);
   end;
   Connection^.OutOfOrderCount := 0;
+  Connection^.OutOfOrderBytes := 0;
+  ClearReceivedBlocks(Connection^.ReceivedBlocks);
 end;
 
 procedure FreeTcpConnection(Connection: PTcpConnection);

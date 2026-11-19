@@ -21,7 +21,7 @@
   buffers that grow with the connection.
 
   With window scaling agreed, the 16-bit window field counts units of
-  2^shift bytes. Ours is ReceiveWindowShift (7: 128-byte units, so the
+  2^shift bytes. Ours is OwnWindowShift (7: 128-byte units, so the
   largest window, 65535 units, is 8 MiB - room for the 4 MiB receive
   buffer). A window rounded down to whole units could move the right
   edge we promised to the left, which RFC 7323 2.4 forbids: the field
@@ -43,7 +43,7 @@ unit Network.TcpWindows;
 interface
 
 const
-  ReceiveWindowShift = 7;
+  OwnWindowShift = 7;
   InitialReceiveBufferBytes = 64 * 1024;
   InitialSendBufferBytes = 64 * 1024;
   MaximumReceiveBufferBytes = 4 * 1024 * 1024;

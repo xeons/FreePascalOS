@@ -239,8 +239,8 @@ end;
 procedure TestWindows;
 begin
   CheckNumber(LargestWindow(0), 65535, 'the largest unscaled window');
-  CheckNumber(LargestWindow(ReceiveWindowShift), 65535 * 128, 'the largest window with our shift');
-  Check(LargestWindow(ReceiveWindowShift) >= MaximumReceiveBufferBytes, 'our shift covers the largest buffer');
+  CheckNumber(LargestWindow(OwnWindowShift), 65535 * 128, 'the largest window with our shift');
+  Check(LargestWindow(OwnWindowShift) >= MaximumReceiveBufferBytes, 'our shift covers the largest buffer');
   CheckNumber(LargestWindow(14), 65535 shl 14, 'the largest window of all (about 1 GiB)');
   CheckNumber(ScaledWindowField(65535, 0, 0), 65535, 'no scaling');
   CheckNumber(ScaledWindowField(100000, 0, 0), 65535, 'unscaled: at most 65535');

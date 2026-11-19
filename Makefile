@@ -614,11 +614,11 @@ TCP_TEST := build/tools/TcpTest
 TCP_TEST_SOURCES := tools/TcpTest/TcpTest.pas kernel/network/Network.TcpSequences.pas \
 	kernel/network/Network.TcpOptions.pas kernel/network/Network.TcpWindows.pas \
 	kernel/network/Network.TcpScoreboard.pas kernel/network/Network.TcpReceivedBlocks.pas \
-	kernel/network/Network.ByteOrder.pas
+	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas
 
 $(TCP_TEST): $(TCP_TEST_SOURCES)
 	@mkdir -p build/tools/tcp-test-units
-	$(FPC) -O2 -Cr -Fukernel/network -FEbuild/tools -FUbuild/tools/tcp-test-units $<
+	$(FPC) -O2 -Cr -Fukernel/network -Fushared -FEbuild/tools -FUbuild/tools/tcp-test-units $<
 
 tcp-test: $(TCP_TEST)
 	$(TCP_TEST)

@@ -86,11 +86,12 @@ function NextRetransmission(constref Board: TSackScoreboard; SendUnacknowledged,
 implementation
 
 uses
+  Runtime.Memory,
   Network.TcpSequences;
 
 procedure ClearScoreboard(out Board: TSackScoreboard);
 begin
-  FillChar(Board, SizeOf(Board), 0);
+  FillMemory(@Board, SizeOf(Board), 0);
 end;
 
 procedure RemoveRange(var Board: TSackScoreboard; Index: LongWord);

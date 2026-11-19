@@ -20,10 +20,14 @@
   TCP for sockets: listen, accept, connect, send, receive, shut down
   and close, under the network lock.
 
-  Sending copies into the connection's send buffer (waiting for room
-  unless the socket does not wait) and lets TcpOutput send what the
-  windows allow. Receiving takes from the receive buffer, and tells the
-  peer when reading opened the window by two segments or more. Closing
+  Sending copies into the connection's send buffer (growing it, or
+  waiting for room unless the socket does not wait) and lets TcpOutput
+  send what the windows allow. Receiving takes from the receive buffer
+  (which may grow, Network.TcpBuffers), and tells the peer when reading
+  opened the window by two segments or more. A connection takes its
+  socket's options (no delay, time to live, keep-alives, buffer sizes)
+  when it is made and whenever they change; connect offers window
+  scaling, SACK and timestamps. Closing
   the socket hands the connection over: with unread data it is reset
   (RFC 2525), otherwise it sends its FIN and finishes on its own; a
   listener resets the connections still waiting to be accepted.
@@ -55,8 +59,12 @@ function TcpPeer(Socket: PSocket; out Peer: TNetworkEndpoint): Boolean;
 { The error the connection ended with (reported once); ErrorNone if
   none. }
 function TakeTcpError(Socket: PSocket): LongInt;
-{ Passes changed options (no delay, time to live) to the connection. }
+{ Passes changed options (no delay, time to live, keep-alives, buffer
+  sizes) to the connection. }
 procedure ApplyTcpOptions(Socket: PSocket);
+{ SocketOptionReceiveBuffer, SocketOptionSendBuffer,
+  SocketOptionTcpFeatures and SocketOptionTcpRetransmissions. }
+function TcpOptionValue(Socket: PSocket; Option: LongWord): Int64;
 
 implementation
 
@@ -73,6 +81,9 @@ uses
   Network.TcpSegments,
   Network.TcpStates,
   Network.TcpOutput,
+  Network.TcpKeepAlive,
+  Network.TcpBuffers,
+  Network.TcpWindows,
   Network.Statistics;
 
 function ConnectionOf(Socket: PSocket): PTcpConnection;
@@ -86,6 +97,21 @@ begin
     Result := First
   else
     Result := Second;
+end;
+
+{ The socket's options onto its connection. }
+procedure CopySocketOptions(Socket: PSocket; Connection: PTcpConnection);
+begin
+  Connection^.BoundInterface := Socket^.BoundInterface;
+  Connection^.TimeToLive := Socket^.TimeToLive;
+  Connection^.NoDelay := Socket^.NoDelay;
+  Connection^.KeepAlive := Socket^.KeepAlive;
+  Connection^.KeepAliveIdleSeconds := Socket^.KeepAliveIdleSeconds;
+  Connection^.KeepAliveIntervalSeconds := Socket^.KeepAliveIntervalSeconds;
+  Connection^.KeepAliveCount := Socket^.KeepAliveCount;
+  Connection^.RequestedReceiveBuffer := Socket^.RequestedReceiveBuffer;
+  Connection^.RequestedSendBuffer := Socket^.RequestedSendBuffer;
+  Connection^.DropEvery := Socket^.DropEvery;
 end;
 
 procedure DescribeTcpReadiness(Socket: PSocket; out IsReadable, IsWritable: Boolean);
@@ -231,9 +257,7 @@ begin
   if Connection = nil then
     Exit(ErrorOutOfMemory);
   Connection^.Local := Socket^.Local;
-  Connection^.BoundInterface := Socket^.BoundInterface;
-  Connection^.TimeToLive := Socket^.TimeToLive;
-  Connection^.NoDelay := Socket^.NoDelay;
+  CopySocketOptions(Socket, Connection);
   Connection^.Backlog := Backlog;
   Connection^.State := TcpListen;
   Connection^.Socket := Socket;
@@ -262,6 +286,13 @@ begin
   NewSocket^.TimeToLive := Socket^.TimeToLive;
   NewSocket^.NoDelay := Socket^.NoDelay;
   NewSocket^.BoundInterface := Socket^.BoundInterface;
+  NewSocket^.KeepAlive := Socket^.KeepAlive;
+  NewSocket^.KeepAliveIdleSeconds := Socket^.KeepAliveIdleSeconds;
+  NewSocket^.KeepAliveIntervalSeconds := Socket^.KeepAliveIntervalSeconds;
+  NewSocket^.KeepAliveCount := Socket^.KeepAliveCount;
+  NewSocket^.RequestedReceiveBuffer := Socket^.RequestedReceiveBuffer;
+  NewSocket^.RequestedSendBuffer := Socket^.RequestedSendBuffer;
+  NewSocket^.DropEvery := Socket^.DropEvery;
   NewSocket^.Connection := Child;
   Child^.Socket := NewSocket;
   UpdateSocketReadiness(NewSocket);
@@ -340,6 +371,7 @@ begin
   Connection := CreateTcpConnection;
   if Connection = nil then
     Exit(ErrorOutOfMemory);
+  CopySocketOptions(Socket, Connection);
   if not CreateConnectionBuffers(Connection) then
   begin
     FreeTcpConnection(Connection);
@@ -347,9 +379,10 @@ begin
   end;
   Connection^.Local := Socket^.Local;
   Connection^.Remote := Remote;
-  Connection^.BoundInterface := Socket^.BoundInterface;
-  Connection^.TimeToLive := Socket^.TimeToLive;
-  Connection^.NoDelay := Socket^.NoDelay;
+  { Offered in the SYN; the answer decides. }
+  Connection^.WindowScaling := True;
+  Connection^.SackPermitted := True;
+  Connection^.Timestamps := True;
   Connection^.MaximumSegment := OwnMaximumSegment(Remote, Socket^.BoundInterface);
   Connection^.InitialSendSequence := GenerateInitialSequence;
   Connection^.SendUnacknowledged := Connection^.InitialSendSequence;
@@ -428,6 +461,8 @@ begin
         Break;
       Exit(-Error);
     end;
+    if StateCanSend(Connection^.State) and (ByteRingFreeSpace(Connection^.SendBuffer) = 0) then
+      GrowSendBuffer(Connection);
     if StateCanSend(Connection^.State) and (ByteRingFreeSpace(Connection^.SendBuffer) > 0) then
     begin
       Written := AppendToByteRing(Connection^.SendBuffer, Data + Total, Length - Total);
@@ -461,7 +496,7 @@ var
 begin
   if not StateCanReceive(Connection^.State) then
     Exit;
-  NewEdge := Connection^.ReceiveNext + ReceiveWindow(Connection);
+  NewEdge := Connection^.ReceiveNext + ReceiveBufferRoom(Connection);
   if SequenceAfterOrEqual(NewEdge, Connection^.AdvertisedEdge + 2 * Connection^.MaximumSegment) or
      ((Connection^.AdvertisedEdge = Connection^.ReceiveNext) and SequenceAfter(NewEdge, Connection^.AdvertisedEdge)) then
     SendAckNow(Connection);
@@ -488,6 +523,7 @@ begin
       if (Flags and SocketFlagPeek) = 0 then
       begin
         DiscardFromByteRing(Connection^.ReceiveBuffer, Count);
+        NoteBytesRead(Connection, Count);
         UpdateWindowAfterRead(Connection);
       end;
       UpdateSocketReadiness(Socket);
@@ -564,14 +600,57 @@ end;
 procedure ApplyTcpOptions(Socket: PSocket);
 var
   Connection: PTcpConnection;
+  KeepAliveChanged: Boolean;
 begin
   Connection := ConnectionOf(Socket);
   if Connection = nil then
     Exit;
-  Connection^.NoDelay := Socket^.NoDelay;
-  Connection^.TimeToLive := Socket^.TimeToLive;
+  KeepAliveChanged := (Connection^.KeepAlive <> Socket^.KeepAlive) or
+    (Connection^.KeepAliveIdleSeconds <> Socket^.KeepAliveIdleSeconds);
+  CopySocketOptions(Socket, Connection);
+  ApplyRequestedBuffers(Connection);
+  if KeepAliveChanged then
+    ArmKeepAlive(Connection);
   if Connection^.NoDelay then
     TcpOutput(Connection);
+  UpdateSocketReadiness(Socket);
+end;
+
+function TcpOptionValue(Socket: PSocket; Option: LongWord): Int64;
+var
+  Connection: PTcpConnection;
+begin
+  Result := 0;
+  Connection := ConnectionOf(Socket);
+  case Option of
+    SocketOptionReceiveBuffer:
+      if (Connection <> nil) and (Connection^.ReceiveBuffer.Data <> nil) then
+        Result := Connection^.ReceiveBuffer.Capacity
+      else if Socket^.RequestedReceiveBuffer <> 0 then
+        Result := Socket^.RequestedReceiveBuffer
+      else
+        Result := InitialReceiveBufferBytes;
+    SocketOptionSendBuffer:
+      if (Connection <> nil) and (Connection^.SendBuffer.Data <> nil) then
+        Result := Connection^.SendBuffer.Capacity
+      else if Socket^.RequestedSendBuffer <> 0 then
+        Result := Socket^.RequestedSendBuffer
+      else
+        Result := InitialSendBufferBytes;
+    SocketOptionTcpFeatures:
+      if (Connection <> nil) and not (Connection^.State in [TcpListen, TcpSynSent]) then
+      begin
+        if Connection^.WindowScaling then
+          Result := Result or TcpFeatureWindowScaling;
+        if Connection^.SackPermitted then
+          Result := Result or TcpFeatureSack;
+        if Connection^.Timestamps then
+          Result := Result or TcpFeatureTimestamps;
+      end;
+    SocketOptionTcpRetransmissions:
+      if Connection <> nil then
+        Result := Connection^.RetransmittedSegments;
+  end;
 end;
 
 end.

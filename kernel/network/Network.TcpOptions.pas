@@ -98,6 +98,7 @@ function SackBlocksThatFit(constref Options: TTcpOptions; Room: LongWord): LongW
 implementation
 
 uses
+  Runtime.Memory,
   Network.ByteOrder;
 
 const
@@ -109,7 +110,7 @@ const
 
 procedure ClearTcpOptions(out Options: TTcpOptions);
 begin
-  FillChar(Options, SizeOf(Options), 0);
+  FillMemory(@Options, SizeOf(Options), 0);
 end;
 
 procedure ReadSackBlocks(Source: PByte; Length: LongWord; var Options: TTcpOptions);

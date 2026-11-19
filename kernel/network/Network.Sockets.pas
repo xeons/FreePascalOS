@@ -83,6 +83,15 @@ type
     NoDelay: Boolean;
     TimeToLive: Byte;
     BoundInterface: PNetworkInterface;
+    { TCP: keep-alives, buffer sizes asked for (0: automatic), and the
+      test hook that drops every Nth arriving data segment. }
+    KeepAlive: Boolean;
+    KeepAliveIdleSeconds: LongWord;
+    KeepAliveIntervalSeconds: LongWord;
+    KeepAliveCount: LongWord;
+    RequestedReceiveBuffer: LongWord;
+    RequestedSendBuffer: LongWord;
+    DropEvery: LongWord;
     { Endpoints. }
     IsBound: Boolean;
     Local: TNetworkEndpoint;
@@ -178,6 +187,9 @@ begin
   Result^.Protocol := Protocol;
   Result^.Owner := Owner;
   Result^.TimeToLive := 64;
+  Result^.KeepAliveIdleSeconds := 7200;
+  Result^.KeepAliveIntervalSeconds := 75;
+  Result^.KeepAliveCount := 9;
   Result^.Local := UnspecifiedEndpoint(Family);
   Result^.Peer := UnspecifiedEndpoint(Family);
   InitializeDatagramQueue(Result^.Datagrams);

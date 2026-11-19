@@ -18,8 +18,8 @@
 
 {
   TCP's timers, run by the network thread: retransmission (and zero
-  window probes), delayed acknowledgments, and the end of TIME_WAIT
-  (and of FIN_WAIT_2 for a connection whose socket is gone). Each
+  window probes), delayed acknowledgments, keep-alives, and the end of
+  TIME_WAIT (and of FIN_WAIT_2 for a connection whose socket is gone). Each
   connection keeps its deadlines; this looks at every connection, acts
   on those due and asks to be woken for the next.
 }
@@ -39,6 +39,7 @@ uses
   Network.TcpTypes,
   Network.TcpConnections,
   Network.TcpStates,
+  Network.TcpKeepAlive,
   Network.TcpOutput;
 
 procedure RequestEarliest(Connection: PTcpConnection);
@@ -49,6 +50,8 @@ begin
     RequestNetworkWakeAt(Connection^.AckDeadline);
   if Connection^.CloseDeadline <> 0 then
     RequestNetworkWakeAt(Connection^.CloseDeadline);
+  if Connection^.KeepAliveDeadline <> 0 then
+    RequestNetworkWakeAt(Connection^.KeepAliveDeadline);
 end;
 
 { True if the connection was freed. }
@@ -73,6 +76,9 @@ begin
   end;
   if (Connection^.RetransmitDeadline <> 0) and (Connection^.RetransmitDeadline <= Now) then
     if RetransmissionTimerExpired(Connection) then
+      Exit(True);
+  if (Connection^.KeepAliveDeadline <> 0) and (Connection^.KeepAliveDeadline <= Now) then
+    if KeepAliveTimerExpired(Connection, Now) then
       Exit(True);
   if Connection^.State <> TcpClosed then
     RequestEarliest(Connection);

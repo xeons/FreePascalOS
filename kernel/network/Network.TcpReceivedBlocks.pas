@@ -54,11 +54,12 @@ procedure ForgetReceivedBlocks(var Blocks: TReceivedBlocks; ReceiveNext: LongWor
 implementation
 
 uses
+  Runtime.Memory,
   Network.TcpSequences;
 
 procedure ClearReceivedBlocks(out Blocks: TReceivedBlocks);
 begin
-  FillChar(Blocks, SizeOf(Blocks), 0);
+  FillMemory(@Blocks, SizeOf(Blocks), 0);
 end;
 
 procedure RemoveBlock(var Blocks: TReceivedBlocks; Index: LongWord);
