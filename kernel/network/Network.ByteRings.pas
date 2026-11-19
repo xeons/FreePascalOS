@@ -51,6 +51,9 @@ function AppendToByteRing(var Ring: TByteRing; Source: PByte; Length: LongWord):
 procedure CopyFromByteRing(constref Ring: TByteRing; Offset: LongWord; Destination: PByte; Length: LongWord);
 { Drops Length bytes from the front. }
 procedure DiscardFromByteRing(var Ring: TByteRing; Length: LongWord);
+{ Gives the ring a new capacity (at least what it holds), keeping its
+  bytes; False (and the ring as it was) if memory is short. }
+function ResizeByteRing(var Ring: TByteRing; Capacity: LongWord): Boolean;
 
 implementation
 
@@ -128,6 +131,26 @@ begin
   Ring.Count := Ring.Count - Length;
   if Ring.Count = 0 then
     Ring.Start := 0;
+end;
+
+function ResizeByteRing(var Ring: TByteRing; Capacity: LongWord): Boolean;
+var
+  Data: PByte;
+begin
+  if Capacity < Ring.Count then
+    Exit(False);
+  if Capacity = Ring.Capacity then
+    Exit(True);
+  Data := PByte(AllocateKernelMemory(Capacity));
+  if Data = nil then
+    Exit(False);
+  CopyFromByteRing(Ring, 0, Data, Ring.Count);
+  if Ring.Data <> nil then
+    FreeKernelMemory(Ring.Data);
+  Ring.Data := Data;
+  Ring.Capacity := Capacity;
+  Ring.Start := 0;
+  Result := True;
 end;
 
 end.

@@ -52,6 +52,9 @@ const
   IcmpCodeHostUnreachable = 1;
   IcmpCodeProtocolUnreachable = 2;
   IcmpCodePortUnreachable = 3;
+  { Fragmentation needed and "don't fragment" set (RFC 1191: the
+    next hop's MTU in bytes 6-7). }
+  IcmpCodeFragmentationNeeded = 4;
 
 procedure IcmpInput(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 { Sends an ICMP error about the datagram at Original (its header first,
@@ -75,6 +78,7 @@ uses
   Network.IcmpSockets,
   Network.Udp,
   Network.TcpInput,
+  Network.TcpPathMtu,
   Network.Statistics;
 
 const
@@ -139,7 +143,13 @@ begin
       if Message[0] = IcmpTypeDestinationUnreachable then
         UdpReportError(Local, Remote, UnreachableError(Message[1]));
     IpProtocolTcp:
-      if Message[0] = IcmpTypeDestinationUnreachable then
+      if (Message[0] = IcmpTypeDestinationUnreachable) and (Message[1] = IcmpCodeFragmentationNeeded) then
+      begin
+        { A router without RFC 1191 says no MTU: nothing to go on. }
+        if ReadBigEndian16(Message + 6) <> 0 then
+          TcpPathMtuChanged(Remote, ReadBigEndian16(Message + 6));
+      end
+      else if Message[0] = IcmpTypeDestinationUnreachable then
         TcpReportError(Local, Remote, ReadBigEndian32(QuotedPayload + 4), UnreachableError(Message[1]));
     IpProtocolIcmp:
       if QuotedPayload[0] = IcmpTypeEchoRequest then

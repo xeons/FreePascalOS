@@ -75,7 +75,11 @@ uses
   Network.IcmpSockets,
   Network.DatagramSockets,
   Network.IpOutput,
+  Network.TcpWindows,
   Network.TcpSockets;
+
+const
+  MaximumKeepAliveCount = 1000;
 
 function CreateSocket(Family, Kind, Protocol: LongWord; constref Owner: TSocketOwner; CallerIsRoot: Boolean;
   out Socket: PSocket): LongInt;
@@ -320,6 +324,17 @@ begin
       if Socket^.BoundInterface <> nil then
         Value := Socket^.BoundInterface^.Index;
     SocketOptionReadableBytes: Value := ReadableBytes(Socket);
+    SocketOptionKeepAlive: Value := Ord(Socket^.KeepAlive);
+    SocketOptionKeepIdle: Value := Socket^.KeepAliveIdleSeconds;
+    SocketOptionKeepInterval: Value := Socket^.KeepAliveIntervalSeconds;
+    SocketOptionKeepCount: Value := Socket^.KeepAliveCount;
+    SocketOptionReceiveBuffer, SocketOptionSendBuffer, SocketOptionTcpFeatures,
+    SocketOptionTcpRetransmissions:
+      if Socket^.Protocol = SocketProtocolTcp then
+        Value := TcpOptionValue(Socket, Option)
+      else
+        Result := ErrorInvalidArgument;
+    SocketOptionTestDropEvery: Value := Socket^.DropEvery;
   else
     Result := ErrorInvalidArgument;
   end;
@@ -349,6 +364,33 @@ begin
         Socket^.TimeToLive := Byte(Value);
     SocketOptionNonBlocking: Socket^.NonBlocking := Value <> 0;
     SocketOptionNoDelay: Socket^.NoDelay := Value <> 0;
+    SocketOptionKeepAlive: Socket^.KeepAlive := Value <> 0;
+    SocketOptionKeepIdle, SocketOptionKeepInterval:
+      if (Value < 1) or (Value > High(LongInt)) then
+        Result := ErrorInvalidArgument
+      else if Option = SocketOptionKeepIdle then
+        Socket^.KeepAliveIdleSeconds := LongWord(Value)
+      else
+        Socket^.KeepAliveIntervalSeconds := LongWord(Value);
+    SocketOptionKeepCount:
+      if (Value < 1) or (Value > MaximumKeepAliveCount) then
+        Result := ErrorInvalidArgument
+      else
+        Socket^.KeepAliveCount := LongWord(Value);
+    SocketOptionReceiveBuffer, SocketOptionSendBuffer:
+      if (Value < MinimumBufferBytes) or (Value > MaximumReceiveBufferBytes) then
+        Result := ErrorInvalidArgument
+      else if Option = SocketOptionReceiveBuffer then
+        Socket^.RequestedReceiveBuffer := LongWord(Value)
+      else
+        Socket^.RequestedSendBuffer := LongWord(Value);
+    SocketOptionTestDropEvery:
+      if not CallerIsRoot then
+        Result := ErrorNotPermitted
+      else if (Value < 0) or (Value > High(LongInt)) then
+        Result := ErrorInvalidArgument
+      else
+        Socket^.DropEvery := LongWord(Value);
     SocketOptionInterface:
       if not CallerIsRoot then
         Result := ErrorNotPermitted

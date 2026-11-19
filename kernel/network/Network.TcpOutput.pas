@@ -26,16 +26,24 @@
   unless SocketOptionNoDelay is set or it carries the FIN.
 
   Every segment sent is kept in the send buffer until acknowledged. The
-  retransmission timer runs while anything is unacknowledged; when it
-  expires, sending starts again from the first unacknowledged byte, the
-  timeout doubles (up to a minute) and the congestion window falls back
-  to one segment. Three duplicate acknowledgments retransmit the first
-  segment at once (fast retransmit). The timeout follows the measured
-  round trip time (RFC 6298: the smoothed time plus four times its
-  variance, at least 200 ms), measured on one segment at a time and
-  never on a retransmitted one (Karn). The congestion window grows by a
-  segment per acknowledgment in slow start and by about a segment per
-  round trip after (RFC 5681).
+  retransmission timer runs while anything is unacknowledged (RFC 6298
+  5.1-5.3); when it expires, sending starts again from the first
+  unacknowledged byte, the timeout doubles (up to a minute), the slow
+  start threshold halves (on the first expiry only) and the congestion
+  window falls back to one segment. Duplicate acknowledgments start loss
+  recovery (Network.TcpRecovery: NewReno, or SACK-based). The timeout
+  follows the measured round trip time (RFC 6298: the smoothed time plus
+  four times its variance, at least 200 ms - Linux's floor rather than
+  the RFC's second), measured once a round trip: from the echoed
+  timestamp when timestamps are on (RFC 7323 4: retransmissions can be
+  timed too), else on one segment at a time and never a retransmitted
+  one (Karn). A SYN sent again leaves a timeout of at least 3 s for the
+  data (RFC 6298 5.7). The congestion window grows by a segment per
+  acknowledgment in slow start and by about a segment per round trip
+  after (RFC 5681), never during recovery.
+
+  Segments carry at most SenderSegmentSize bytes: the MSS less the
+  timestamps option.
 
   A peer that advertises a zero window is probed with one byte each
   time the timer expires, so that a lost window update does not stall
@@ -58,17 +66,25 @@ procedure SendAckNow(Connection: PTcpConnection);
   every second segment. }
 procedure ScheduleAck(Connection: PTcpConnection; Immediately: Boolean);
 { The peer acknowledged up to Acknowledgment, AckedBytes of data: the
-  buffer is trimmed by the caller; this takes the round trip sample,
-  grows the congestion window and sets the timer again. }
-procedure NoteAcknowledgment(Connection: PTcpConnection; Acknowledgment, AckedBytes: LongWord);
-{ The third duplicate acknowledgment. }
-procedure FastRetransmit(Connection: PTcpConnection);
+  buffer is trimmed by the caller; this takes the round trip sample
+  (from EchoedTimestamp, the segment's TSecr, when timestamps are on;
+  0: none), grows the congestion window or moves recovery on, and sets
+  the timer again. }
+procedure NoteAcknowledgment(Connection: PTcpConnection; Acknowledgment, AckedBytes, EchoedTimestamp: LongWord);
 { The retransmission timer expired. True if the connection gave up and
   was freed (it had no socket). }
 function RetransmissionTimerExpired(Connection: PTcpConnection): Boolean;
 { Sets up the congestion state of a connection that becomes
   synchronized. }
 procedure InitializeCongestionState(Connection: PTcpConnection);
+procedure ArmRetransmitTimer(Connection: PTcpConnection);
+{ Bytes sent and not yet acknowledged. }
+function InFlight(Connection: PTcpConnection): LongWord;
+function FinIsSent(Connection: PTcpConnection): Boolean;
+{ The segment size went down (a smaller path MTU): what is in flight is
+  sent again from the first unacknowledged byte, in segments of the new
+  size, without a congestion response (RFC 8201 5.4, RFC 1191). }
+procedure ResendAfterSegmentSizeChange(Connection: PTcpConnection);
 
 implementation
 
@@ -76,12 +92,14 @@ uses
   Abi.SystemCalls,
   Network.Core,
   Network.ByteRings,
+  Network.TcpScoreboard,
   Network.TcpSegments,
+  Network.TcpRecovery,
   Network.TcpStates;
 
 const
   InitialWindowSegments = 10;
-  MaximumCongestionWindow = 1024 * 1024;
+  MaximumCongestionWindow = 16 * 1024 * 1024;
   ClockGranularity = 1 * NanosecondsPerMillisecond;
   MaximumZeroWindowProbes = 60;
 
@@ -95,9 +113,16 @@ end;
 
 procedure InitializeCongestionState(Connection: PTcpConnection);
 begin
-  Connection^.CongestionWindow := InitialWindowSegments * Connection^.MaximumSegment;
+  Connection^.CongestionWindow := InitialWindowSegments * SenderSegmentSize(Connection);
   Connection^.SlowStartThreshold := MaximumCongestionWindow;
   Connection^.DuplicateAcks := 0;
+  Connection^.InRecovery := False;
+  Connection^.RecoveryPoint := Connection^.InitialSendSequence;
+  Connection^.RetransmittedUpTo := Connection^.SendUnacknowledged;
+  ClearScoreboard(Connection^.Scoreboard);
+  Connection^.TimestampSampleMark := Connection^.SendNext;
+  if Connection^.SynRetransmitted and (Connection^.RetransmissionTimeout < SynRetransmittedTimeout) then
+    Connection^.RetransmissionTimeout := SynRetransmittedTimeout;
 end;
 
 procedure ArmRetransmitTimer(Connection: PTcpConnection);
@@ -135,25 +160,40 @@ begin
   Result := Connection^.FinQueued and SequenceAfter(Connection^.SendNext, Connection^.FinSequence);
 end;
 
+{ What the windows let go now: the peer's, and the congestion window
+  less the flight (or, in SACK recovery, less the pipe). }
+function UsableWindow(Connection: PTcpConnection): LongWord;
+var
+  PeerRoom: LongWord;
+  CongestionRoom: LongWord;
+begin
+  if InFlight(Connection) >= Connection^.SendWindow then
+    PeerRoom := 0
+  else
+    PeerRoom := Connection^.SendWindow - InFlight(Connection);
+  if Connection^.InRecovery and Connection^.SackPermitted then
+    CongestionRoom := SackRecoveryRoom(Connection)
+  else if InFlight(Connection) >= Connection^.CongestionWindow then
+    CongestionRoom := 0
+  else
+    CongestionRoom := Connection^.CongestionWindow - InFlight(Connection);
+  Result := Minimum(PeerRoom, CongestionRoom);
+end;
+
 { How many bytes to send next (0: nothing now), and whether the FIN
   goes with them. }
 function NextSegmentLength(Connection: PTcpConnection; Offset: LongWord; out WithFin: Boolean): LongWord;
 var
   Available: LongWord;
-  Window: LongWord;
-  Usable: LongWord;
+  Size: LongWord;
 begin
   WithFin := False;
+  Size := SenderSegmentSize(Connection);
   Available := Connection^.SendBuffer.Count - Offset;
-  Window := Minimum(Connection^.SendWindow, Connection^.CongestionWindow);
-  if InFlight(Connection) >= Window then
-    Usable := 0
-  else
-    Usable := Window - InFlight(Connection);
-  Result := Minimum(Minimum(Available, Usable), Connection^.MaximumSegment);
+  Result := Minimum(Minimum(Available, UsableWindow(Connection)), Size);
   WithFin := Connection^.FinQueued and (Result = Available);
   { Nagle: a small segment waits for what is in flight. }
-  if (Result > 0) and (Result < Connection^.MaximumSegment) and not WithFin and
+  if (Result > 0) and (Result < Size) and not WithFin and
      (InFlight(Connection) > 0) and not Connection^.NoDelay then
     Result := 0;
   if (Result = 0) and (Available > 0) then
@@ -184,6 +224,8 @@ begin
     end;
   end;
 
+  if Connection^.InRecovery and Connection^.SackPermitted then
+    SendDuringSackRecovery(Connection);
   SentAnything := False;
   while not FinIsSent(Connection) do
   begin
@@ -198,7 +240,8 @@ begin
       Flags := Flags or TcpFlagPush;
     if WithFin then
       Flags := Flags or TcpFlagFin;
-    if not Connection^.IsTiming and (Length > 0) and (Connection^.SendNext = Connection^.SendMaximum) then
+    if not Connection^.IsTiming and not Connection^.Timestamps and (Length > 0) and
+       (Connection^.SendNext = Connection^.SendMaximum) then
     begin
       Connection^.IsTiming := True;
       Connection^.TimingSequence := Connection^.SendNext + Length;
@@ -277,60 +320,60 @@ end;
 procedure GrowCongestionWindow(Connection: PTcpConnection; AckedBytes: LongWord);
 var
   Growth: LongWord;
+  Size: LongWord;
 begin
+  Size := SenderSegmentSize(Connection);
   if Connection^.CongestionWindow < Connection^.SlowStartThreshold then
-    Growth := Minimum(AckedBytes, Connection^.MaximumSegment)
+    Growth := Minimum(AckedBytes, Size)
   else
   begin
-    Growth := (Connection^.MaximumSegment * Connection^.MaximumSegment) div Connection^.CongestionWindow;
+    Growth := (Size * Size) div Connection^.CongestionWindow;
     if Growth = 0 then
       Growth := 1;
   end;
   Connection^.CongestionWindow := Minimum(Connection^.CongestionWindow + Growth, MaximumCongestionWindow);
 end;
 
-procedure NoteAcknowledgment(Connection: PTcpConnection; Acknowledgment, AckedBytes: LongWord);
+{ RTTM (RFC 7323 4): the time since the timestamp the peer echoes, once
+  a round trip. False if there was no such sample. }
+function TakeTimestampSample(Connection: PTcpConnection; Acknowledgment, EchoedTimestamp: LongWord): Boolean;
+var
+  Elapsed: LongInt;
 begin
-  if Connection^.IsTiming and SequenceAfterOrEqual(Acknowledgment, Connection^.TimingSequence) then
+  Result := False;
+  if not Connection^.Timestamps or (EchoedTimestamp = 0) or
+     SequenceBefore(Acknowledgment, Connection^.TimestampSampleMark) then
+    Exit;
+  Elapsed := LongInt(TimestampNow - EchoedTimestamp);
+  if Elapsed < 0 then
+    Exit;
+  TakeRoundTripSample(Connection, QWord(Elapsed) * NanosecondsPerMillisecond);
+  Connection^.TimestampSampleMark := Connection^.SendMaximum;
+  Result := True;
+end;
+
+procedure NoteAcknowledgment(Connection: PTcpConnection; Acknowledgment, AckedBytes, EchoedTimestamp: LongWord);
+begin
+  if TakeTimestampSample(Connection, Acknowledgment, EchoedTimestamp) then
+    Connection^.IsTiming := False
+  else if Connection^.IsTiming and SequenceAfterOrEqual(Acknowledgment, Connection^.TimingSequence) then
   begin
     Connection^.IsTiming := False;
     TakeRoundTripSample(Connection, NetworkNow - Connection^.TimingStart);
   end;
   Connection^.RetransmitCount := 0;
-  Connection^.DuplicateAcks := 0;
-  if AckedBytes > 0 then
-    GrowCongestionWindow(Connection, AckedBytes);
+  if Connection^.InRecovery then
+    NoteRecoveryAcknowledgment(Connection, AckedBytes)
+  else
+  begin
+    Connection^.DuplicateAcks := 0;
+    if AckedBytes > 0 then
+      GrowCongestionWindow(Connection, AckedBytes);
+  end;
   if Connection^.SendUnacknowledged = Connection^.SendNext then
     Connection^.RetransmitDeadline := 0
   else
     ArmRetransmitTimer(Connection);
-end;
-
-procedure HalveCongestionWindow(Connection: PTcpConnection);
-var
-  Half: LongWord;
-begin
-  Half := InFlight(Connection) div 2;
-  if Half < 2 * Connection^.MaximumSegment then
-    Half := 2 * Connection^.MaximumSegment;
-  Connection^.SlowStartThreshold := Half;
-end;
-
-procedure FastRetransmit(Connection: PTcpConnection);
-var
-  Length: LongWord;
-  Flags: Byte;
-begin
-  HalveCongestionWindow(Connection);
-  Connection^.CongestionWindow := Connection^.SlowStartThreshold;
-  Connection^.IsTiming := False;
-  Length := Minimum(Minimum(InFlight(Connection), Connection^.MaximumSegment), Connection^.SendBuffer.Count);
-  Flags := 0;
-  if FinIsSent(Connection) and (Length = Connection^.SendBuffer.Count) then
-    Flags := TcpFlagFin;
-  if (Length > 0) or (Flags <> 0) then
-    SendConnectionSegment(Connection, Connection^.SendUnacknowledged, Flags, 0, Length);
-  ArmRetransmitTimer(Connection);
 end;
 
 { Gives the connection up; True if that freed it. }
@@ -374,10 +417,16 @@ begin
   Inc(Connection^.RetransmitCount);
   if Connection^.RetransmitCount > Limit then
     Exit(GiveUp(Connection, Connection^.State <> TcpSynSent));
-  if not (Connection^.State in [TcpSynSent, TcpSynReceived]) then
+  if Connection^.State in [TcpSynSent, TcpSynReceived] then
+    Connection^.SynRetransmitted := True
+  else
   begin
-    HalveCongestionWindow(Connection);
-    Connection^.CongestionWindow := Connection^.MaximumSegment;
+    { RFC 5681 (4): the threshold is lowered once, not again for each
+      expiry of the same loss. }
+    if Connection^.RetransmitCount = 1 then
+      LowerSlowStartThreshold(Connection);
+    Connection^.CongestionWindow := SenderSegmentSize(Connection);
+    AbandonRecovery(Connection);
   end;
   Connection^.DuplicateAcks := 0;
   Connection^.IsTiming := False;
@@ -385,6 +434,17 @@ begin
   Connection^.RetransmissionTimeout := Connection^.RetransmissionTimeout * 2;
   if Connection^.RetransmissionTimeout > MaximumRetransmissionTimeout then
     Connection^.RetransmissionTimeout := MaximumRetransmissionTimeout;
+  TcpOutput(Connection);
+end;
+
+procedure ResendAfterSegmentSizeChange(Connection: PTcpConnection);
+begin
+  if (InFlight(Connection) = 0) or not (Connection^.State in [TcpEstablished, TcpCloseWait, TcpFinWait1,
+     TcpClosing, TcpLastAck]) then
+    Exit;
+  AbandonRecovery(Connection);
+  Connection^.IsTiming := False;
+  Connection^.SendNext := Connection^.SendUnacknowledged;
   TcpOutput(Connection);
 end;
 

@@ -176,7 +176,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test ipv6-test image-test compression-test decompression-test ssh-test
 
 all: esp
@@ -487,7 +487,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -606,6 +606,22 @@ $(USB_DESCRIPTOR_TEST): tools/UsbDescriptorTest/UsbDescriptorTest.pas kernel/dri
 
 usb-descriptor-test: $(USB_DESCRIPTOR_TEST)
 	$(USB_DESCRIPTOR_TEST)
+
+# The kernel TCP's pure parts: options (MSS, window scale, SACK,
+# timestamps) written and read, window scaling and buffer growth, the
+# SACK scoreboard of RFC 6675 and the receiver's SACK blocks.
+TCP_TEST := build/tools/TcpTest
+TCP_TEST_SOURCES := tools/TcpTest/TcpTest.pas kernel/network/Network.TcpSequences.pas \
+	kernel/network/Network.TcpOptions.pas kernel/network/Network.TcpWindows.pas \
+	kernel/network/Network.TcpScoreboard.pas kernel/network/Network.TcpReceivedBlocks.pas \
+	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas
+
+$(TCP_TEST): $(TCP_TEST_SOURCES)
+	@mkdir -p build/tools/tcp-test-units
+	$(FPC) -O2 -Cr -Fukernel/network -Fushared -FEbuild/tools -FUbuild/tools/tcp-test-units $<
+
+tcp-test: $(TCP_TEST)
+	$(TCP_TEST)
 
 font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)

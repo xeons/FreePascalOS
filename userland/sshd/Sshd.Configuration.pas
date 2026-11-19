@@ -29,6 +29,7 @@
     Subsystem sftp /bin/sftp-server
     LoginGraceTime 120                          (seconds to log in)
     MaxSessions 8                               (channels per connection)
+    TCPKeepAlive yes                            (TCP keep-alive probes)
 
   A missing file gives these defaults. An unknown keyword or a wrong
   value is reported and the line ignored.
@@ -58,6 +59,7 @@ type
     SftpServerPath: string;
     LoginGraceSeconds: Integer;
     MaximumSessions: Integer;
+    TcpKeepAlive: Boolean;
   end;
 
 function DefaultConfiguration: TSshdConfiguration;
@@ -80,6 +82,7 @@ begin
   Result.SftpServerPath := DefaultSftpServerPath;
   Result.LoginGraceSeconds := 120;
   Result.MaximumSessions := 8;
+  Result.TcpKeepAlive := True;
 end;
 
 procedure AddText(var Texts: TStringArray; const Text: string);
@@ -199,6 +202,12 @@ begin
         Valid := ParseNumber(Value, 1, 16, Number);
         if Valid then
           Result.MaximumSessions := Number;
+      end
+      else if SameText(Keyword, 'TCPKeepAlive') then
+      begin
+        Valid := ParseYesNo(Value, Flag);
+        if Valid then
+          Result.TcpKeepAlive := Flag;
       end
       else
       begin

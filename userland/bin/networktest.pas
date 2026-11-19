@@ -29,7 +29,10 @@
   a megabyte each way (many windows; a sender thread and a server
   thread), a connection refused, a non-blocking connect waited for with
   WaitForSocket, a listener waited for with WaitForHandles, and the
-  socket listing. Then the network card: the network service (started
+  socket listing; window scaling, SACK and timestamps agreed, the
+  keep-alive options, and transfers through a forced 4 KiB window and
+  with every 20th data segment lost (the test hook
+  SocketOptionTestDropEvery). Then the network card: the network service (started
   here) obtains 10.0.2.15/24 for eth0 from QEMU's DHCP server, with the
   default route through 10.0.2.2 and the DNS server 10.0.2.3, all in
   /var/lib/network/eth0.state; QEMU's gateway 10.0.2.2 answers pings
@@ -71,7 +74,8 @@ uses
   Sys.Streams,
   Sys.Threads,
   NetworkTest.Service,
-  NetworkTest.Ipv6;
+  NetworkTest.Ipv6,
+  NetworkTest.TcpFeatures;
 
 const
   WaitMilliseconds = 5000;
@@ -431,6 +435,22 @@ begin
   CloseSocket(Listener);
 end;
 
+{ --- TCP extensions --------------------------------------------------------- }
+
+procedure TestTcpFeatures;
+var
+  Retransmissions: Int64;
+begin
+  Check('TCP: both ends agree on window scaling, SACK and timestamps', TcpFeaturesAgreed);
+  Check('TCP: keep-alive options read back (off, 7200 s, 75 s, 9; then as set)', KeepAliveOptionsWork);
+  Check('TCP: wrong keep-alive and buffer values are refused', KeepAliveRefusesWrongValues);
+  Check('TCP: an accepted connection takes its listener''s keep-alive options', AcceptedTakesKeepAlive);
+  Check('TCP: 512 KiB through a 4 KiB receive window, in order', TransferThroughSmallWindow(512 * 1024));
+  Check('TCP: 2 MiB with every 20th data segment lost arrives in order',
+    TransferWithLoss(2 * 1024 * 1024, 20, Retransmissions));
+  Check('TCP: the lost segments were sent again', Retransmissions > 0);
+end;
+
 { --- The network card -------------------------------------------------------- }
 
 function HasDefaultRouteThrough(constref Gateway: TInternetAddress): Boolean;
@@ -703,6 +723,7 @@ begin
     TestUdp;
     TestTcpEcho;
     TestTcpRefusedAndWaits;
+    TestTcpFeatures;
     TestNetworkCard;
   end;
   PrintStringLine(Format('networktest: %d of %d checks passed', [Checks - Failures, Checks]));

@@ -61,7 +61,10 @@ var
   Listeners: array of Int64;
   Connections: array of Int64;
 
-function OpenListener(constref Address: TInternetAddress; Port: Word): Int64;
+{ KeepAlive: the connections it accepts take the keep-alive option
+  (OpenSSH's TCPKeepAlive, on by default: a peer that vanished is
+  noticed after about two hours and a quarter). }
+function OpenListener(constref Address: TInternetAddress; Port: Word; KeepAlive: Boolean): Int64;
 var
   Family: LongWord;
   Error: LongInt;
@@ -74,6 +77,7 @@ begin
   if Result < 0 then
     Exit;
   SetSocketOption(Result, SocketOptionReuseAddress, 1);
+  SetSocketOption(Result, SocketOptionKeepAlive, Ord(KeepAlive));
   Error := BindSocket(Result, MakeSocketAddress(Address, Port));
   if Error = ErrorNone then
     Error := ListenOnSocket(Result, ListenBacklog);
@@ -84,11 +88,11 @@ begin
   end;
 end;
 
-procedure AddListener(constref Address: TInternetAddress; Port: Word; Required: Boolean);
+procedure AddListener(constref Address: TInternetAddress; Port: Word; Required, KeepAlive: Boolean);
 var
   Socket: Int64;
 begin
-  Socket := OpenListener(Address, Port);
+  Socket := OpenListener(Address, Port, KeepAlive);
   if Socket < 0 then
   begin
     if Required then
@@ -175,8 +179,8 @@ begin
   for Index := 0 to High(HostKeys) do
     HostKeys[Index].Free;
 
-  AddListener(AnyIpv4Address, Configuration.Port, True);
-  AddListener(AnyIpv6Address, Configuration.Port, False);
+  AddListener(AnyIpv4Address, Configuration.Port, True, Configuration.TcpKeepAlive);
+  AddListener(AnyIpv6Address, Configuration.Port, False, Configuration.TcpKeepAlive);
   if Length(Listeners) = 0 then
     Exit(1);
   NotifyServiceReady;

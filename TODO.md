@@ -663,7 +663,12 @@ normalized (0-65535), not pixels.
       (iwlwifi licence, in firmware/ beside the Realtek files), scanning,
       WPA2/WPA3 (802.11 frames, the 4-way handshake, CCMP), and choosing
       a network from the desktop
-- [ ] TCP window scaling and SACK; keep-alives
+- [x] TCP window scaling and SACK; keep-alives: window scaling,
+      timestamps (PAWS, RTTM), SACK with RFC 6675 recovery and NewReno
+      without, receive/send buffers that grow to 4 MiB, keep-alives
+      (SocketOptionKeepAlive/KeepIdle/KeepInterval/KeepCount; sshd's
+      TCPKeepAlive), TcpPathMtuChanged for path MTU discovery
+  - [ ] D-SACK; CUBIC; limited transmit (RFC 3042)
 - [x] SSH server: libssh (transport with rekeying, curve25519-sha256
       and its libssh.org name, strict key exchange, ext-info with
       server-sig-algs; chacha20-poly1305@openssh.com, aes256-gcm and

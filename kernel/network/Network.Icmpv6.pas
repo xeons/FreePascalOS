@@ -208,7 +208,8 @@ begin
   if not IsLocalIpv6Address(QuotedSource) or IsMulticastIpv6Address(QuotedDestination) then
     Exit;
   if NoteIpv6PacketTooBig(Datagram.ArrivalInterface, QuotedDestination, ReadBigEndian32(Message + 4)) then
-    TcpPathMtuDecreased(QuotedDestination);
+    TcpPathMtuChanged(MakeIpv6Endpoint(QuotedDestination, 0, Datagram.ArrivalInterface^.Index),
+      Ipv6PathMtu(Datagram.ArrivalInterface, QuotedDestination));
 end;
 
 { An error about a datagram we sent: to whoever sent it. }

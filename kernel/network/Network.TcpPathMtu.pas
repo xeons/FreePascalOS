@@ -17,10 +17,18 @@
 }
 
 {
-  Path MTU discovery for TCP (RFC 8201 5.2): when the path MTU to a
-  destination becomes smaller, the connections to it send segments that
-  fit, from the next one on (what was lost is sent again by the
-  retransmission timer, and in the new size). Under the network lock.
+  TCP and path MTU discovery: the entry point the IP layers call when
+  they learn that the path to a destination carries smaller datagrams
+  (an ICMP "fragmentation needed" or ICMPv6 "packet too big", RFC 1191,
+  RFC 8201).
+
+  Every synchronized connection to that address whose MSS no longer
+  fits lowers it to what the new MTU leaves (less the IP and TCP
+  headers; never below 536 bytes for IPv4 or 1220 for IPv6) and sends
+  what is in flight again in segments of the new size - a datagram too
+  large was dropped, and that is not congestion, so the windows stay as
+  they are. A larger MTU is left alone (the next connection uses it).
+  Under the network lock.
 }
 unit Network.TcpPathMtu;
 
@@ -29,11 +37,11 @@ unit Network.TcpPathMtu;
 interface
 
 uses
-  Network.Ipv6Addresses;
+  Network.Addresses;
 
-{ The path MTU to Destination became smaller: its connections' maximum
-  segment size follows. }
-procedure TcpPathMtuDecreased(constref Destination: TIpv6Address);
+{ The path to Destination's address now carries datagrams of at most
+  PathMtu bytes (IP header included). }
+procedure TcpPathMtuChanged(constref Destination: TNetworkEndpoint; PathMtu: LongWord);
 
 implementation
 
@@ -41,22 +49,50 @@ uses
   Abi.SystemCalls,
   Network.TcpTypes,
   Network.TcpConnections,
-  Network.TcpSegments;
+  Network.TcpOutput;
 
-procedure TcpPathMtuDecreased(constref Destination: TIpv6Address);
+const
+  Ipv4HeaderBytes = 20;
+  Ipv6HeaderBytes = 40;
+  { What the smallest MTUs leave: 576 for IPv4, 1280 for IPv6. }
+  MinimumIpv4Segment = 536;
+  MinimumIpv6Segment = 1220;
+
+function SegmentSizeFor(Family: Word; PathMtu: LongWord): LongWord;
+var
+  Headers: LongWord;
+  Minimum: LongWord;
+begin
+  if Family = AddressFamilyIPv6 then
+  begin
+    Headers := Ipv6HeaderBytes + TcpHeaderBytes;
+    Minimum := MinimumIpv6Segment;
+  end
+  else
+  begin
+    Headers := Ipv4HeaderBytes + TcpHeaderBytes;
+    Minimum := MinimumIpv4Segment;
+  end;
+  if PathMtu <= Headers + Minimum then
+    Result := Minimum
+  else
+    Result := PathMtu - Headers;
+end;
+
+procedure TcpPathMtuChanged(constref Destination: TNetworkEndpoint; PathMtu: LongWord);
 var
   Connection: PTcpConnection;
-  Limit: LongWord;
+  Size: LongWord;
 begin
+  Size := SegmentSizeFor(Destination.Family, PathMtu);
   Connection := FirstTcpConnection;
   while Connection <> nil do
   begin
-    if (Connection^.Remote.Family = AddressFamilyIPv6) and
-       Ipv6AddressesEqual(Connection^.Remote.Address6, Destination) then
+    if not (Connection^.State in [TcpClosed, TcpListen, TcpTimeWait]) and
+       EndpointAddressesEqual(Connection^.Remote, Destination) and (Connection^.MaximumSegment > Size) then
     begin
-      Limit := OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface);
-      if Limit < Connection^.MaximumSegment then
-        Connection^.MaximumSegment := Limit;
+      Connection^.MaximumSegment := Size;
+      ResendAfterSegmentSizeChange(Connection);
     end;
     Connection := NextTcpConnection(Connection);
   end;
