@@ -182,6 +182,11 @@ type
     { Set once every constructor has run: until then Layout would see a
       subclass's fields before its constructor makes them. }
     FConstructed: Boolean;
+    { Set before any destructor runs: a subclass's destructor frees its
+      fields before TControl.Destroy frees the children, so a layout
+      started meanwhile (a child reading its place as it goes) must not
+      reach it. }
+    FDestroying: Boolean;
     FVisible: Boolean;
     FEnabled: Boolean;
     FCanFocus: Boolean;
@@ -291,7 +296,11 @@ type
     constructor Create(AParent: TControl); virtual;
     { Lays out what was asked for while the constructors ran. }
     procedure AfterConstruction; override;
+    { Marks the control as going away (no more layouts of it). }
+    procedure BeforeDestruction; override;
     destructor Destroy; override;
+    { True from the start of its or an ancestor's destruction. }
+    function Destroying: Boolean;
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { Selects the scale of the window it is in. }
     procedure PrepareToReceive; override;
@@ -518,6 +527,26 @@ begin
     RequestLayout;
 end;
 
+procedure TControl.BeforeDestruction;
+begin
+  FDestroying := True;
+  inherited BeforeDestruction;
+end;
+
+function TControl.Destroying: Boolean;
+var
+  Control: TControl;
+begin
+  Control := Self;
+  while Control <> nil do
+  begin
+    if Control.FDestroying then
+      Exit(True);
+    Control := Control.FParent;
+  end;
+  Result := False;
+end;
+
 destructor TControl.Destroy;
 begin
   while FChildren.Count > 0 do
@@ -605,6 +634,9 @@ begin
     FLayoutPending := True;
     Exit;
   end;
+  { Being freed: its fields may be gone already. }
+  if Destroying then
+    Exit;
   FLayoutPending := False;
   FChildLayoutPending := False;
   { A layout started directly (the window resized) is not interrupted by
@@ -627,6 +659,8 @@ procedure TControl.ArrangePending;
 var
   Index: LongInt;
 begin
+  if FDestroying then
+    Exit;
   if FLayoutPending then
   begin
     Invalidate;
