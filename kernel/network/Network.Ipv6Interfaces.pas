@@ -20,8 +20,9 @@
   IPv6 on an interface over its life: started when the interface is up
   with its link and its mode is not off, stopped when either goes.
 
-  Starting makes the link-local address (fe80:: and the modified EUI-64
-  identifier of the Ethernet address; lo gets ::1), runs duplicate
+  Starting makes the link-local address (fe80:: and the interface's
+  identifier, stable-privacy or EUI-64: Network.Ipv6Identifiers; lo
+  gets ::1), runs duplicate
   address detection on it and on the manual addresses (RFC 4862 5.4:
   one solicitation from ::, then a second's wait; an answer, or another
   host testing the same address, removes it as a duplicate), reports
@@ -33,7 +34,13 @@
 
   The timers, on the network thread, move detection on and end
   addresses whose lifetimes ran out (preferred: deprecated; valid:
-  removed), and send router solicitations and MLD reports when due.
+  removed), make temporary addresses' successors, and send router
+  solicitations and MLD reports when due.
+
+  A stable-privacy address another host has is made again with the next
+  DAD counter (RFC 7217 6, three times at most); a temporary one is
+  replaced by a new random one. Changing the identifiers (the option,
+  or the secret) starts IPv6 on the interface again.
 }
 unit Network.Ipv6Interfaces;
 
@@ -56,6 +63,11 @@ procedure Ipv6InterfaceChanged(NetworkInterface: PNetworkInterface);
 function SetIpv6Mode(NetworkInterface: PNetworkInterface; Mode: LongWord): LongInt;
 { Another host uses the address Entry is testing: it goes. }
 procedure Ipv6DuplicateAddress(NetworkInterface: PNetworkInterface; Entry: PIpv6InterfaceAddress);
+{ Ipv6Option* (ErrorInvalidArgument for unknown bits, or options on lo). }
+function SetIpv6Options(NetworkInterface: PNetworkInterface; Options: LongWord): LongInt;
+{ A new secret for stable-privacy identifiers (StableSecretBytes): the
+  interfaces that use them start IPv6 again if it changed. }
+procedure SetIpv6StableSecret(Secret: PByte);
 { On the network thread: every interface's IPv6 timers, and the IPv6
   routes' lifetimes. }
 procedure RunIpv6InterfaceTimers(Now: QWord);
@@ -67,6 +79,9 @@ uses
   Network.Core,
   Network.Ipv6Addresses,
   Network.Ipv6AddressList,
+  Network.Ipv6Identifiers,
+  Network.InterfaceIdentifiers,
+  Network.TemporaryAddresses,
   Network.Ipv6Routing,
   Network.NeighborCache,
   Network.NeighborMessages,
@@ -93,9 +108,15 @@ end;
 procedure InitializeIpv6Interface(NetworkInterface: PNetworkInterface);
 begin
   if NetworkInterface^.IsLoopback then
-    NetworkInterface^.Ipv6.Mode := Ipv6ModeLinkLocal
+  begin
+    NetworkInterface^.Ipv6.Mode := Ipv6ModeLinkLocal;
+    NetworkInterface^.Ipv6.Options := 0;
+  end
   else
+  begin
     NetworkInterface^.Ipv6.Mode := Ipv6ModeAutomatic;
+    NetworkInterface^.Ipv6.Options := Ipv6OptionTemporaryAddresses;
+  end;
   ResetRouterInformation(NetworkInterface);
 end;
 
@@ -140,7 +161,7 @@ begin
       Ipv6Forever, Ipv6Forever);
     Exit;
   end;
-  AddIpv6Address(NetworkInterface, LinkLocalAddressFor(NetworkInterface^.HardwareAddress), LinkLocalPrefixLength,
+  AddIpv6Address(NetworkInterface, LinkLocalAddressOf(NetworkInterface), LinkLocalPrefixLength,
     Ipv6OriginLinkLocal, Ipv6Forever, Ipv6Forever);
   RetestManualAddresses(NetworkInterface);
   ScheduleMldReports(NetworkInterface);
@@ -150,7 +171,7 @@ end;
 procedure ForgetRouters(NetworkInterface: PNetworkInterface);
 begin
   StopRouterSolicitation(NetworkInterface);
-  RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginAutomatic]);
+  RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginAutomatic, Ipv6OriginTemporary]);
   RemoveIpv6InterfaceRoutes(NetworkInterface, True);
   ResetRouterInformation(NetworkInterface);
 end;
@@ -215,10 +236,98 @@ begin
   NoteNetworkChange;
 end;
 
-procedure Ipv6DuplicateAddress(NetworkInterface: PNetworkInterface; Entry: PIpv6InterfaceAddress);
+{ A stable-privacy address made again with the next DAD counter, with
+  the lifetimes the duplicate had. }
+procedure RemakeStableAddress(NetworkInterface: PNetworkInterface; constref Duplicate: TIpv6InterfaceAddress);
 begin
+  if NetworkInterface^.Ipv6.StableDadCounter >= StableIdentifierRetries then
+    Exit;
+  Inc(NetworkInterface^.Ipv6.StableDadCounter);
+  if Duplicate.Origin = Ipv6OriginLinkLocal then
+    AddIpv6Address(NetworkInterface, LinkLocalAddressOf(NetworkInterface), LinkLocalPrefixLength,
+      Ipv6OriginLinkLocal, Ipv6Forever, Ipv6Forever)
+  else
+    AddIpv6Address(NetworkInterface, SlaacAddressOf(NetworkInterface, Duplicate.Address), Duplicate.PrefixLength,
+      Ipv6OriginAutomatic, Duplicate.ValidUntil, Duplicate.PreferredUntil);
+end;
+
+procedure Ipv6DuplicateAddress(NetworkInterface: PNetworkInterface; Entry: PIpv6InterfaceAddress);
+var
+  Duplicate: TIpv6InterfaceAddress;
+begin
+  Duplicate := Entry^;
   RemoveIpv6AddressEntry(NetworkInterface, Entry, 'is used by another host: removed');
+  case Duplicate.Origin of
+    Ipv6OriginTemporary:
+      ReplaceDuplicateTemporaryAddress(NetworkInterface, Duplicate.Address, NetworkNow);
+    Ipv6OriginLinkLocal, Ipv6OriginAutomatic:
+      if UsesStableIdentifiers(NetworkInterface) then
+        RemakeStableAddress(NetworkInterface, Duplicate);
+  end;
   ScheduleMldReports(NetworkInterface);
+end;
+
+{ IPv6 starts again on the interface (its identifiers changed). }
+procedure RestartIpv6(NetworkInterface: PNetworkInterface);
+begin
+  if not NetworkInterface^.Ipv6.IsStarted then
+    Exit;
+  StopIpv6(NetworkInterface);
+  Ipv6InterfaceChanged(NetworkInterface);
+end;
+
+function SetIpv6Options(NetworkInterface: PNetworkInterface; Options: LongWord): LongInt;
+const
+  KnownOptions = Ipv6OptionTemporaryAddresses or Ipv6OptionEui64Identifiers;
+var
+  Previous: LongWord;
+begin
+  if (Options and not KnownOptions) <> 0 then
+    Exit(ErrorInvalidArgument);
+  if NetworkInterface^.IsLoopback and (Options <> 0) then
+    Exit(ErrorInvalidArgument);
+  Result := ErrorNone;
+  Previous := NetworkInterface^.Ipv6.Options;
+  if Previous = Options then
+    Exit;
+  NetworkInterface^.Ipv6.Options := Options;
+  DebugBeginMessage;
+  DebugWriteTag('network');
+  DebugWrite(@NetworkInterface^.Name[0]);
+  if (Options and Ipv6OptionEui64Identifiers) <> 0 then
+    DebugWrite(': IPv6 identifiers EUI-64')
+  else
+    DebugWrite(': IPv6 identifiers stable-privacy');
+  if (Options and Ipv6OptionTemporaryAddresses) <> 0 then
+    DebugWriteLine(', temporary addresses')
+  else
+    DebugWriteLine(', no temporary addresses');
+  DebugEndMessage;
+  if ((Previous xor Options) and Ipv6OptionEui64Identifiers) <> 0 then
+    RestartIpv6(NetworkInterface)
+  else if (Options and Ipv6OptionTemporaryAddresses) = 0 then
+    RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginTemporary])
+  else
+    StartTemporaryAddresses(NetworkInterface, NetworkNow);
+  NoteNetworkChange;
+end;
+
+procedure SetIpv6StableSecret(Secret: PByte);
+var
+  Position: Integer;
+  NetworkInterface: PNetworkInterface;
+begin
+  if not ReplaceStableSecret(Secret) then
+    Exit;
+  for Position := 0 to NetworkInterfaceCount - 1 do
+  begin
+    NetworkInterface := NetworkInterfaceAt(Position);
+    if not NetworkInterface^.IsLoopback and UsesStableIdentifiers(NetworkInterface) then
+    begin
+      NetworkInterface^.Ipv6.StableDadCounter := 0;
+      RestartIpv6(NetworkInterface);
+    end;
+  end;
 end;
 
 { Detection of Entry's address is over: it is ready. }
@@ -229,6 +338,8 @@ begin
   else
     Entry^.State := Ipv6AddressPreferred;
   WriteIpv6AddressChange(NetworkInterface, Entry^.Address, Entry^.PrefixLength, 'ready');
+  if Entry^.Origin = Ipv6OriginTemporary then
+    NetworkInterface^.Ipv6.TemporaryRetries := 0;
   if (Entry^.Origin = Ipv6OriginLinkLocal) and (NetworkInterface^.Ipv6.Mode = Ipv6ModeAutomatic) then
     StartRouterSolicitation(NetworkInterface);
   { MLD reports may now go from the link-local address. }
@@ -291,7 +402,9 @@ begin
       Continue;
     RunLifetimes(NetworkInterface, Entry, Now);
     if Entry^.State = Ipv6AddressTentative then
-      RunDetection(NetworkInterface, Entry, Now);
+      RunDetection(NetworkInterface, Entry, Now)
+    else if Entry^.State = Ipv6AddressPreferred then
+      RunTemporaryAddressTimer(NetworkInterface, Entry, Now);
   end;
   RunRouterSolicitationTimer(NetworkInterface, Now);
   RunMldTimer(NetworkInterface, Now);

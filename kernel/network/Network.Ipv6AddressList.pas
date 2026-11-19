@@ -212,6 +212,7 @@ begin
   Entry^.PrefixLength := PrefixLength;
   Entry^.ValidUntil := ValidUntil;
   Entry^.PreferredUntil := PreferredUntil;
+  Entry^.CreatedAt := NetworkNow;
   if NetworkInterface^.IsLoopback then
     Entry^.State := Ipv6AddressPreferred
   else

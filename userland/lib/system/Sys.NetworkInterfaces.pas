@@ -56,6 +56,11 @@ function AddInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress
 function RemoveInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress): LongInt;
 { Ipv6ModeOff, Ipv6ModeLinkLocal or Ipv6ModeAutomatic. }
 function SetInterfaceIpv6Mode(Name: PChar; Mode: LongWord): LongInt;
+{ Ipv6Option* (temporary addresses, EUI-64 identifiers). }
+function SetInterfaceIpv6Options(Name: PChar; Options: LongWord): LongInt;
+{ The secret of every interface's stable-privacy identifiers
+  (StableSecretBytes at Secret). }
+function SetIpv6StableSecret(Secret: PByte): LongInt;
 { The interface's IPv4 address, if it has one. }
 function FindInterfaceIpv4Address(constref Description: TAbiNetworkInterface;
   out Address: TAbiInterfaceAddress): Boolean;
@@ -199,6 +204,28 @@ begin
   Configuration.Changes := InterfaceChangeIpv6Mode;
   Configuration.Ipv6Mode := Mode;
   Result := Configure(Name, Configuration);
+end;
+
+function SetInterfaceIpv6Options(Name: PChar; Options: LongWord): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeIpv6Options;
+  Configuration.Ipv6Options := Options;
+  Result := Configure(Name, Configuration);
+end;
+
+function SetIpv6StableSecret(Secret: PByte): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeStableSecret;
+  CopyMemory(@Configuration.StableSecret[0], Secret, StableSecretBytes);
+  { Any interface will do; lo is always there. }
+  Result := Configure('lo', Configuration);
+  FillMemory(@Configuration.StableSecret[0], StableSecretBytes, 0);
 end;
 
 function FindInterfaceIpv4Address(constref Description: TAbiNetworkInterface;

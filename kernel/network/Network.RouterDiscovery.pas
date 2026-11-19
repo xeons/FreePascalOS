@@ -32,8 +32,10 @@
       link's MTU for IPv6;
     - a prefix with the on-link flag makes or renews the route to the
       prefix for its valid lifetime; one with the autonomous flag and 64
-      bits gets an address (the prefix and our interface identifier)
-      with its lifetimes, an address already made keeping at least two
+      bits gets an address (the prefix and our interface identifier:
+      stable-privacy or EUI-64, Network.Ipv6Identifiers) with its
+      lifetimes, and a temporary one beside it
+      (Network.TemporaryAddresses), an address already made keeping at least two
       hours of the valid one unless the new one is longer (5.5.3 e);
     - DNS servers (RDNSS) are kept for their lifetime (0 forgets one).
   The route metric of an interface's routers is its index, so the first
@@ -77,6 +79,8 @@ uses
   Network.Ipv6Types,
   Network.Ipv6,
   Network.Ipv6AddressList,
+  Network.Ipv6Identifiers,
+  Network.TemporaryAddresses,
   Network.Ipv6Routing,
   Network.NeighborMessages,
   Network.NeighborCache,
@@ -255,7 +259,7 @@ var
   PreferredEnd: QWord;
 begin
   Result := False;
-  Address := AddressFromInterfaceIdentifier(Prefix, NetworkInterface^.HardwareAddress);
+  Address := SlaacAddressOf(NetworkInterface, Prefix);
   PreferredEnd := LifetimeEnd(Now, PreferredLifetime);
   Entry := FindIpv6Address(NetworkInterface, Address);
   if Entry <> nil then
@@ -264,12 +268,15 @@ begin
       Exit;
     ValidEnd := RenewedValidEnd(Entry, ValidLifetime, Now);
     AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, ValidEnd, PreferredEnd);
+    UpdateTemporaryAddresses(NetworkInterface, Prefix, ValidEnd, PreferredEnd, Now);
     Exit;
   end;
   if ValidLifetime = 0 then
     Exit;
-  Result := AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, LifetimeEnd(Now, ValidLifetime),
-    PreferredEnd) = ErrorNone;
+  ValidEnd := LifetimeEnd(Now, ValidLifetime);
+  Result := AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, ValidEnd, PreferredEnd) = ErrorNone;
+  if Result then
+    UpdateTemporaryAddresses(NetworkInterface, Prefix, ValidEnd, PreferredEnd, Now);
 end;
 
 function HandlePrefixOption(NetworkInterface: PNetworkInterface; Option: PByte; OptionLength: LongWord;

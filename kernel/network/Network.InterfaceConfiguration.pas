@@ -27,7 +27,10 @@
   off drops what waits to be sent and its ARP entries; its routes stay
   but are not used while it is off. Turning it on or off starts or
   stops IPv6 on it (Network.Ipv6Interfaces). IPv6 addresses are added
-  and removed one by one beside the others. Every change is written to
+  and removed one by one beside the others; the IPv6 options (temporary
+  addresses, EUI-64 identifiers) are an interface's, the secret of the
+  stable-privacy identifiers every interface's (any interface may be
+  named with it). Every change is written to
   the kernel log. Under the network lock.
 }
 unit Network.InterfaceConfiguration;
@@ -203,7 +206,7 @@ end;
 function ConfigureInterface(constref Configuration: TAbiInterfaceConfiguration): LongInt;
 const
   KnownChanges = InterfaceChangeAddress or InterfaceChangeUp or InterfaceChangeMtu or InterfaceChangeIpv6Mode or
-    InterfaceChangeRemoveAddress;
+    InterfaceChangeRemoveAddress or InterfaceChangeIpv6Options or InterfaceChangeStableSecret;
 var
   Name: array[0..NetworkInterfaceNameCapacity - 1] of Char;
   NetworkInterface: PNetworkInterface;
@@ -215,6 +218,14 @@ begin
   if (Configuration.Changes and not KnownChanges) <> 0 then
     Exit(ErrorInvalidArgument);
   Result := ErrorNone;
+  if (Configuration.Changes and InterfaceChangeStableSecret) <> 0 then
+    SetIpv6StableSecret(@Configuration.StableSecret[0]);
+  if (Configuration.Changes and InterfaceChangeIpv6Options) <> 0 then
+  begin
+    Result := SetIpv6Options(NetworkInterface, Configuration.Ipv6Options);
+    if Result <> ErrorNone then
+      Exit;
+  end;
   if (Configuration.Changes and InterfaceChangeMtu) <> 0 then
   begin
     Result := SetInterfaceMtu(NetworkInterface, Configuration.Mtu);
@@ -252,6 +263,7 @@ begin
   end;
   case Entry^.Origin of
     Ipv6OriginAutomatic: Result := Result or InterfaceAddressFlagAutomatic;
+    Ipv6OriginTemporary: Result := Result or InterfaceAddressFlagAutomatic or InterfaceAddressFlagTemporary;
     Ipv6OriginLinkLocal: Result := Result or InterfaceAddressFlagLinkLocal;
   end;
 end;
@@ -265,6 +277,7 @@ var
   Slot: ^TAbiInterfaceAddress;
 begin
   Description.Ipv6Mode := NetworkInterface^.Ipv6.Mode;
+  Description.Ipv6Options := NetworkInterface^.Ipv6.Options;
   Description.Ipv6HopLimit := NetworkInterface^.Ipv6.HopLimit;
   Description.Ipv6Mtu := Ipv6LinkMtu(NetworkInterface);
   for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
