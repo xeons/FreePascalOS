@@ -412,15 +412,12 @@ procedure TTaskbarWindow.ShowTaskbarMenu(X, Y: LongInt);
 var
   List: TMenuList;
   MenuWindow: TWindow;
-  MenuWidth: LongInt;
-  MenuHeight: LongInt;
 begin
   FTaskbarMenu.Free;
   FTaskbarMenu := TMenuItem.Create('');
   FTaskbarMenu.Add('Task &Manager', @TaskManagerChosen);
   { Above the taskbar, which is at the bottom of the display. }
-  MeasurePopupMenu(FTaskbarMenu, MenuWidth, MenuHeight);
-  List := ShowPopupMenu(Self, FTaskbarMenu, ScreenLeft + Unscaled(X), ScreenTop - MenuHeight);
+  List := ShowPopupMenuAbove(Self, FTaskbarMenu, ScreenLeft + Unscaled(X), ScreenTop);
   MenuWindow := TWindow(List.Host.OwnerWindow);
   MenuWindow.PrepareToReceive;
   SayPlace('taskbar-task-manager', MenuWindow, Scaled(40), Scaled(PopupMenuItemTop(FTaskbarMenu, 0) +

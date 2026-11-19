@@ -243,14 +243,11 @@ end;
 
 procedure TStartMenu.Open(Owner: TControlWindow; Left, Bottom: LongInt);
 var
-  Width: LongInt;
-  Height: LongInt;
   List: TMenuList;
 begin
   Owner.PrepareToReceive;
-  MeasurePopupMenu(FMenu, Width, Height);
   { Its places are said as it opens (TellPlaces). }
-  List := ShowPopupMenu(Owner, FMenu, Left, Bottom - Height);
+  List := ShowPopupMenuAbove(Owner, FMenu, Left, Bottom);
   TPopupWindow(List.Host.OwnerWindow).OnDismiss := FOnClosed;
 end;
 
