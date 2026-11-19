@@ -4482,22 +4482,26 @@ tests and `make run` have a virtio-net card on user networking.
 ### TLS and wget
 
 **libtls** (`userland/lib/tls`, units `Tls.*`) is a TLS 1.3 client
-(RFC 8446) with X.509 certificate checking; **wget** fetches over HTTP
-and, through it, HTTPS. TLS 1.2 and older are not spoken: a server that
-cannot do 1.3 is refused with "protocol version" (most servers can).
+(RFC 8446) that falls back to TLS 1.2 (RFC 5246) for servers without
+1.3, with X.509 certificate checking (name constraints, OCSP stapling)
+and session resumption; **wget** fetches over HTTP and, through it,
+HTTPS. TLS 1.1 and older are not spoken ("protocol version").
 
 ```
   wget (userland/wget: Wget.Urls, .Headers, .Chunks, .Connections,
         .Requests, .Bodies, .Transfer, .Progress, .Files, .Settings)
 =========== Tls.Sessions: over a socket, the system's roots and clock ======
   Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
-  Tls.Client           create, handshake, read, write, close, errors
-  Tls.ClientConnections  the same as an object
-  Tls.Handshake        the client's state machine
+  Tls.Client           create, handshake, read, write, close, errors, tickets
+  Tls.ClientConnections  the same as an object      Tls.SessionCache
+  Tls.Handshake (1.3)  Tls.Handshake12 (1.2)  Tls.HandshakeMessages
+  Tls.ServerAuthentication  chain + OCSP for both   Tls.KeyShares
   Tls.RecordLayer      records, alerts, handshake reassembly
-  Tls.RecordProtection AEAD per direction    Tls.KeySchedule  Tls.Transcript
-  Tls.ClientHello      Tls.ServerMessages    Tls.CipherSuites
-  Tls.CertificateChains  Tls.Signatures  Tls.HostNames  Tls.TrustStore
+  Tls.RecordProtection AEAD per direction (1.3 and 1.2 formats)
+  Tls.KeySchedule  Tls.KeySchedule12 (PRF, EMS)  Tls.Transcript
+  Tls.ClientHello      Tls.ServerMessages  Tls.ServerMessages12  Tls.CipherSuites
+  Tls.CertificateChains  Tls.NameConstraints  Tls.Ocsp  Tls.Signatures
+  Tls.HostNames  Tls.TrustStore
   Tls.Certificates  Tls.CertificateExtensions  Tls.Asn1  Tls.Pem
   Tls.ByteBuffers  Tls.Errors  Tls.Constants  Tls.ObjectIdentifiers
 =========== libcryptography ================================================
@@ -4522,57 +4526,122 @@ or a memory address:
 - *X25519* (RFC 7748): sixteen 16-bit limbs in signed 64-bit integers, a
   Montgomery ladder with masked swaps and a fixed inversion chain; an
   all-zero result (a small-order point) is refused.
-- *Signature checks only*, on public data: `Crypto.BigNumbers` (32-bit
+- *Signature checks*, on public data: `Crypto.BigNumbers` (32-bit
   limbs, Montgomery multiplication, up to 8192 bits), RSA PKCS #1 v1.5
   and PSS with MGF1 (`Crypto.Rsa`: exact DigestInfo and padding
-  comparisons, a signature as long as the modulus and below it), and
-  ECDSA on P-256 and P-384 (`Crypto.EllipticCurves`: Jacobian
+  comparisons, a signature as long as the modulus and below it), ECDSA
+  on P-256, P-384 and P-521 (`Crypto.EllipticCurves`: Jacobian
   coordinates in Montgomery form, the a = -3 doubling; `Crypto.Ecdsa`:
   r and s in [1, n-1], the digest cut to the order's length, public
-  points checked to be on the curve). Nothing signs.
+  points checked to be on the curve; RFC 6979 nonces shifted for
+  P-521's 521-bit order) and Ed25519 (`Crypto.Ed25519`).
+- *Key exchange* besides X25519: ECDH on P-256, P-384 and P-521
+  (`Crypto.Ecdh`): the private scalar made k + n or k + 2n so it has a
+  fixed length, then a Montgomery ladder with masked point swaps (the
+  big number arithmetic under it still takes value-dependent time; the
+  keys are one-handshake keys); the peer's point must be on the curve.
+  ML-KEM-768 (FIPS 203, `Crypto.MlKem` over `Crypto.MlKemPolynomials`
+  and SHAKE/SHA-3 in `Crypto.Sha3`): key pairs from a 64-byte seed,
+  encapsulation with the modulus check, decapsulation with implicit
+  rejection, no secret-dependent branches or table indexes.
 
-**The handshake** (`Tls.Handshake`). The ClientHello offers TLS 1.3
-only (supported_versions), x25519 only (supported_groups and its
-key_share), the signature schemes ECDSA P-256/SHA-256, P-384/SHA-384,
-RSA-PSS (rsae and pss, SHA-256/384/512) and RSA PKCS #1 (for
-certificates only), server_name (unless the host is an IP address),
-ALPN when the program names a protocol (wget: http/1.1), a random
+**The handshake** (`Tls.Handshake`, `Tls.ClientHello`). The
+ClientHello offers TLS 1.3 and TLS 1.2 (supported_versions; a program
+may narrow it with MinimumVersion/MaximumVersion), the groups x25519,
+X25519MLKEM768 (codepoint 0x11EC), secp256r1, secp384r1 and secp521r1
+in that order with a key_share for the first only (x25519), the
+signature schemes ECDSA P-256/SHA-256, P-384/SHA-384, P-521/SHA-512,
+Ed25519, RSA-PSS (rsae and pss, SHA-256/384/512) and RSA PKCS #1 (for
+certificates and TLS 1.2 only), server_name (unless the host is an IP
+address), status_request (an OCSP staple), ALPN when the program names
+a protocol (wget: http/1.1), psk_key_exchange_modes (psk_dhe_ke) when
+resumption is on, and for TLS 1.2 ec_point_formats (uncompressed),
+extended_master_secret and an empty renegotiation_info; a random
 32-byte legacy session id and a dummy change_cipher_spec before the
-client's second flight (middlebox compatibility, appendix D.4). Cipher
+client's second flight (middlebox compatibility, appendix D.4). TLS 1.3
 suites: TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256 and
 TLS_AES_256_GCM_SHA384 in that order with AES-NI, ChaCha20-Poly1305
-alone without; a program may choose (wget `--ciphers`).
+alone without; TLS 1.2 suites after them (below); a program may choose
+(wget `--ciphers`, IANA or OpenSSL names).
 
-- A HelloRetryRequest is answered once: only a cookie can change (the
-  client has no other group), so one asking for x25519 again, or for
-  nothing, is an illegal parameter; the transcript then starts with
+- A HelloRetryRequest is answered once: it may ask for another offered
+  group (a new share is made: a server that wants secp256r1 or the
+  hybrid gets it this way) and/or send a cookie; one asking for the
+  group already shared, for a group not offered, or for nothing, is an
+  illegal parameter; the transcript then starts with
   message_hash(ClientHello1). A second retry is an unexpected message.
-- The ServerHello must echo the session id and pick an offered suite
-  (the retry's, after one), TLS 1.3, no compression and an x25519
-  share; only offered extensions may come back, each once (in every
-  server message). The shared secret feeds the key schedule
-  (`Tls.KeySchedule`: Derive-Secret, HKDF-Expand-Label with "tls13 ");
-  the transcript hash (`Tls.Transcript`) keeps the ClientHello until
-  the suite says which hash to use.
+- The ServerHello must echo the session id and pick an offered TLS 1.3
+  suite (the retry's, after one), no compression and a share in the
+  group that was shared; only offered extensions may come back, each
+  once (in every server message). The shared secret (`Tls.KeyShares`:
+  X25519, the x coordinate of ECDH, or ML-KEM-768's secret then
+  X25519's for the hybrid) feeds the key schedule (`Tls.KeySchedule`:
+  Derive-Secret, HKDF-Expand-Label with "tls13 "); the transcript hash
+  (`Tls.Transcript`) keeps the ClientHello until the suite says which
+  hash to use.
 - EncryptedExtensions; a CertificateRequest is answered with an empty
   Certificate (the client has none); the Certificate (no request
-  context, no entry extensions, 1 to 16 certificates) is checked at
-  once (below); CertificateVerify must use an offered scheme other than
-  PKCS #1, fit the key's kind, and verify over 64 spaces, "TLS 1.3,
-  server CertificateVerify", a zero and the transcript hash; the
-  server's Finished is an HMAC of the transcript compared in constant
-  time.
-- Then the application traffic keys; the handshake secrets are wiped.
-  After the handshake NewSessionTicket is read and dropped (no
-  resumption, no 0-RTT); a KeyUpdate moves the read keys on and, when
-  asked, the client answers with its own and moves its write keys;
-  post-handshake authentication was not offered and is refused.
+  context, 1 to 16 certificates, a status_request staple on the first
+  entry) is checked at once (below); CertificateVerify must use an
+  offered scheme other than PKCS #1, fit the key's kind (and an ECDSA
+  scheme its curve), and verify over 64 spaces, "TLS 1.3, server
+  CertificateVerify", a zero and the transcript hash; the server's
+  Finished is an HMAC of the transcript compared in constant time.
+- Then the application traffic keys; the handshake secrets are wiped
+  and the resumption master secret kept. After the handshake a
+  KeyUpdate moves the read keys on and, when asked, the client answers
+  with its own and moves its write keys; post-handshake authentication
+  was not offered and is refused.
+
+**Resumption** (TLS 1.3 PSK, RFC 8446 sections 2.2 and 4.6.1). With a
+cache key (`TTlsClientOptions.SessionCacheKey`; `TTlsSocketSession`
+uses "host:port") each NewSessionTicket becomes a ticket in
+`Tls.SessionCache`: the ticket, its PSK (HKDF-Expand-Label of the
+resumption master secret, "resumption", the nonce), the suite, age_add
+and lifetime (seven days at most), kept in memory only, at most four
+per key, behind a spin lock - only when the certificate was verified.
+The next handshake to that key takes the newest live ticket (each is
+used once) and offers it last in the ClientHello (pre_shared_key: the
+identity, the obfuscated age, and a binder: HMAC with the "res binder"
+key of the hash of the ClientHello up to the binders); after a
+HelloRetryRequest the ticket goes again only with a suite of its hash.
+A server that takes it (selected identity 0, a suite of the same hash)
+skips Certificate and CertificateVerify; the early secret comes from
+the PSK and a fresh (EC)DHE exchange still happens (psk_dhe_ke). No
+0-RTT.
+
+**TLS 1.2** (`Tls.Handshake12`, RFC 5246 with RFC 7627, RFC 5746 and
+RFC 8422). A ServerHello without supported_versions and with version
+1.2 goes on as TLS 1.2 unless the client wanted only 1.3, it follows a
+HelloRetryRequest, or its random ends in the DOWNGRD sentinel (a TLS
+1.3 server pushed down, RFC 8446 section 4.1.3). Suites, ECDHE and
+AEAD only: TLS_ECDHE_ECDSA/RSA_WITH_AES_128_GCM_SHA256,
+_AES_256_GCM_SHA384 and _CHACHA20_POLY1305_SHA256 (no CBC, no RSA key
+exchange). The server must take extended_master_secret and send an
+empty renegotiation_info (else handshake_failure). Certificate (a
+plain list), an optional CertificateStatus (the OCSP staple),
+ServerKeyExchange (a named curve offered, not the hybrid; its signature
+over both randoms and the curve parameters, by an offered scheme -
+PKCS #1 allowed, ECDSA on any curve - with a key that suits the suite:
+EC or Ed25519 for ECDSA suites, RSA for RSA ones), an optional
+CertificateRequest (answered with an empty Certificate) and
+ServerHelloDone; then ClientKeyExchange, the master secret from the
+session hash (`Tls.KeySchedule12`: the P_SHA256/P_SHA384 PRF,
+"extended master secret"), the key block, change_cipher_spec and
+Finished (12 bytes of PRF), and the server's change_cipher_spec and
+Finished. A HelloRequest later is answered with a no_renegotiation
+warning; there are no session ids or tickets in TLS 1.2.
 
 **Records** (`Tls.RecordLayer`, `Tls.RecordProtection`). A record's
 length is checked before it is read (2^14 + 256 protected, 2^14
 plain); protected records are opened with the AEAD (nonce = IV XOR the
 64-bit sequence number, the header as additional data), the zero
-padding stripped and the inner type found. change_cipher_spec is
+padding stripped and the inner type found. TLS 1.2 records have no
+inner type: the additional data is the sequence number, type, version
+and plaintext length, AES-GCM's nonce a 4-byte implicit IV and the
+8-byte explicit part sent in the record (the sequence number), and the
+server's change_cipher_spec switches its keys on; warning alerts other
+than close_notify are passed over. change_cipher_spec is
 dropped only between the ClientHello and the server's Finished, and
 only as the single byte 1; plaintext after the keys are set (but for an
 alert), application data during the handshake, empty handshake records
@@ -4594,12 +4663,14 @@ unused bits; times are UTCTime (1950-2049) or GeneralizedTime, in Z,
 calendar-checked. A certificate's inner and outer signature algorithms
 must be the same. Kept: issuer and subject (DER, compared byte for
 byte) and their first common names, the validity, the key (RSA,
-RSA-PSS, EC P-256/P-384; others parse but cannot be used), and the
-extensions basic constraints, key usage, extended key usage, subject
-alternative names, key identifiers and certificate policies
+RSA-PSS, EC P-256/P-384/P-521, Ed25519; others parse but cannot be
+used) and the subjectPublicKey bytes (which OCSP hashes), and the
+extensions basic constraints, key usage, extended key usage (server
+authentication, OCSP signing), subject alternative names, key
+identifiers, name constraints, the TLS feature list (RFC 7633: must
+staple), certificate policies and authority information access
 (recognized, not acted on). No extension twice; any other critical
-extension - name constraints included, which are not supported - makes
-the certificate unusable.
+extension makes the certificate unusable.
 
 **The chain check** (`Tls.CertificateChains`, at the system clock's
 time): the server's certificate must be valid, carry no unknown
@@ -4613,8 +4684,22 @@ works). Each issuer must be an authority (basic constraints), may sign
 certificates (key usage), must be valid, must allow the path below it
 (path length) and, if it restricts extended key usage, must allow TLS
 servers; anchors are trusted as they are (only their validity and path
-length count). Signatures (`Tls.Signatures`): RSA keys of 2048 bits or
-more, no SHA-1, the key's kind fitting the algorithm. Last, the host
+length count). Then the name constraints (`Tls.NameConstraints`, RFC
+5280 4.2.1.10) of every authority on the path, the anchor's too, over
+every certificate below it but self-issued intermediates: its subject
+(a directoryName, compared RDN by RDN as DER), any emailAddress in it
+and its subject alternative names. dNSName "example.com" holds the
+name and those below it, ".example.com" only those below; a wildcard
+name must lie wholly inside a permitted subtree and is excluded when
+anything it can stand for is; iPAddress by address and mask (another
+family is outside); rfc822Name as a mailbox, a host or ".domain".
+When the permitted subtrees hold a name's type it must lie in one; it
+must lie in no excluded subtree. A constraint of a type that cannot be
+checked (URI, other names) meeting a name of that type refuses the
+certificate as unsupported. A path that breaks a constraint is given
+up and the search goes on. Signatures (`Tls.Signatures`): RSA keys of
+2048 bits or more, no SHA-1, the key's kind fitting the algorithm,
+Ed25519 over the message itself. Last, the host
 name (`Tls.HostNames`, RFC 6125/9525): subject alternative names only,
 never the common name; an IPv4 literal matches only an iPAddress; DNS
 names compare without case and without a final dot; a wildcard only as
@@ -4623,7 +4708,23 @@ after it. Without a path the most telling reason found on the way is
 reported (an expired issuer, a bad signature), else "unknown issuer".
 The errors: expired, not yet valid, unknown issuer, name mismatch, bad
 signature, not an authority, malformed, unsupported, chain too long,
-wrong usage, missing.
+wrong usage, missing, name constraints (-51), revoked (-52), invalid
+OCSP response (-53) and missing OCSP response (-54).
+
+**Revocation** (`Tls.Ocsp`, `Tls.ServerAuthentication`). A stapled OCSP
+response (RFC 6960; in the TLS 1.3 certificate entry or TLS 1.2's
+CertificateStatus) must be a successful basic response signed by the
+issuer the path went through, or by a responder certificate it carries
+that the issuer signed, that has id-kp-OCSPSigning and is valid; the
+responder id (name or SHA-1 key hash) must name the signer; a single
+response must match the certificate (issuer name and key hashed with
+SHA-1 or SHA-2, the serial) and be current (five minutes of skew;
+without nextUpdate, at most four days old). Revoked fails the
+connection (certificate_revoked); an invalid response fails it too
+(bad_certificate_status_response); unknown is accepted. No staple is a
+soft failure, unless the certificate carries must-staple: then only a
+good staple will do. There is no CRL or OCSP fetching. With certificates not verified these errors are
+only the ignored one.
 
 **Roots.** `/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA list
 as a PEM bundle (userland/etc/ssl/certs, MPL-2.0, see its README),
@@ -4633,17 +4734,20 @@ for each session. A root that does not parse is left out.
 
 **The interface.** `Tls.Client` works over any transport:
 `CreateTlsClient` (server name, trust store, whether to verify, the
-time, ALPN, cipher suites), `TlsHandshake`, `TlsRead` (0 at the end;
+time, ALPN, cipher suites, groups, minimum and maximum version, session
+cache key), `TlsHandshake`, `TlsRead` (0 at the end;
 `TlsClosedCleanly` tells a close_notify from the transport just
 ending), `TlsWrite`, `TlsClose` (close_notify), `TlsErrorDescription`
 ("the certificate has expired (certificate: example.com)", "the server
 sent an alert: handshake failure") and `TlsIgnoredCertificateError`
-(what the chain check said when not verifying). `TTlsClientConnection`
+(what the chain check said when not verifying), and
+`TlsProtocolVersionName`, `TlsKeyExchangeGroupName`, `TlsSessionResumed`
+and `TlsCertificateStatus` for what was negotiated. `TTlsClientConnection`
 (`Tls.ClientConnections`) owns such a connection as an object, and
 `TTlsSocketSession` (`Tls.Sessions`) puts it over a connected socket
 with a timeout, the system's roots and clock (`Open`, `Read`, `Write`,
 `Close`, `DescribeError`), with the server name, trust file and ALPN as
-strings. Names,
+strings, and `Port` and `ResumeSessions` (on) for the ticket cache. Names,
 error details and the server's certificate list are strings and
 dynamic arrays; the DER, keys and records stay bytes.
 
@@ -4683,15 +4787,30 @@ AEAD vectors with the reduction edge cases, the GCM specification's
 test cases with and without AES-NI, FIPS 180 SHA-384, RFC 5869 HKDF,
 RFC 7748 X25519 with 1000 iterations, RFC 6979's ECDSA P-256 and P-384
 signatures, RSA PKCS #1 and PSS signatures of 2048 to 4096-bit keys
-made by OpenSSL, each also tampered with), `make tls-test` (strict DER,
-the host name rules, RFC 8448's whole 1-RTT handshake through the key
-schedule, transcript, record protection, CertificateVerify and both
-Finished messages, its HelloRetryRequest transcript, retries against a
-scripted server, the test certificates of tools/TlsTest/certificates in
-good and failing chains, all 118 Mozilla roots parsed and their
-self-signatures checked; then `run-interop.sh`: whole connections to
-OpenSSL's s_server with every suite, ECDSA and RSA-PSS servers, a
-certificate request, key updates both ways and each failure) and
+made by OpenSSL, each also tampered with; ECDH on P-256/384/521 and
+P-521 ECDSA (deterministic signatures made the same) against OpenSSL
+through Python's cryptography; SHA-3/SHAKE against hashlib and
+ML-KEM-768 key pairs, decapsulation and implicit rejection against
+OpenSSL), `make tls-test` (strict DER, the host name rules, RFC 8448's
+whole 1-RTT handshake through the key schedule, transcript, record
+protection, CertificateVerify and both Finished messages, its
+HelloRetryRequest transcript, its resumption (sections 3 and 4: the
+ticket's PSK, the early secret, the binder, the handshake secrets),
+the session cache, retries (cookie, a new group, refused ones) and TLS
+1.2 answers (downgrade sentinel, no extended master secret) against a
+scripted server, the test certificates of tools/TlsTest/certificates
+in good and failing chains, all 118 Mozilla roots parsed and their
+self-signatures checked, and fixtures tools/TlsTest/make-fixtures.py
+makes with Python's cryptography each run: chains under name
+constraints of every kind, Ed25519 and P-521 chains, OCSP responses
+(good, revoked, unknown, delegated, stale, for another certificate,
+badly signed) and TLS 1.2 PRF outputs; then `run-interop.sh`: whole
+connections to OpenSSL's s_server with every TLS 1.3 and TLS 1.2
+suite, ECDSA, RSA-PSS, Ed25519 and P-521 servers, servers that want
+secp256r1, secp384r1 or X25519MLKEM768 (a HelloRetryRequest),
+resumption, stapled OCSP responses (good, revoked, must-staple with and
+without), a certificate request, key updates both ways and each
+failure) and
 `make wget-test` (URLs with RFC 3986's resolution examples, file names,
 response heads, chunked bodies fed in pieces of every size). In QEMU,
 coretest runs `wgettest`, which fetches from test servers on the host
@@ -6780,9 +6899,12 @@ independent) against the Free Pascal runtime library:
   TLS also `Crypto.Poly1305`, `Crypto.ChaCha20Poly1305`, `Crypto.Ghash`,
   `Crypto.AesGcm`, `Crypto.Hkdf`, `Crypto.X25519`, and for checking
   signatures `Crypto.BigNumbers`, `Crypto.Rsa`, `Crypto.EllipticCurves`
-  and `Crypto.Ecdsa` (see "TLS and wget"). Every algorithm is checked
+  and `Crypto.Ecdsa`, for key exchange `Crypto.Ecdh` and ML-KEM-768
+  (`Crypto.MlKem`, `Crypto.MlKemPolynomials`, `Crypto.MlKemRandom`, over
+  `Crypto.Sha3`) (see "TLS and wget"). Every algorithm is checked
   against its published test vectors (`make crypto-test`).
-- **libtls.so** – a TLS 1.3 client with X.509 certificate checking, the
+- **libtls.so** – a TLS 1.3 and TLS 1.2 client with X.509 certificate
+  checking (name constraints, OCSP stapling) and session resumption, the
   `Tls.*` units (see "TLS and wget"); it needs libcryptography and
   libsystem. wget uses it.
 - **libcompression.so** – deflate compression and decompression with the

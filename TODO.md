@@ -633,10 +633,13 @@ normalized (0-65535), not pixels.
       HelloRetryRequest, KeyUpdate, alerts) with X.509 chain, signature,
       validity and host name checks against the Mozilla CA list in
       /etc/ssl/certs; host tests with RFC 8448's handshake and OpenSSL
-- [ ] TLS: name constraints (certificates with them are refused for now),
+- [x] TLS: name constraints (certificates with them are refused for now),
       P-256 key exchange (only x25519 is offered), session resumption,
       OCSP / revocation, TLS 1.2 for servers without 1.3, Ed25519 and P-521
-      certificates
+      certificates (also secp384r1/secp521r1 and X25519MLKEM768 with
+      ML-KEM-768 and SHA-3 in libcryptography; OCSP is stapling only)
+- [ ] TLS: CRLs and OCSP fetching (only stapled responses are checked),
+      0-RTT early data, TLS 1.2 session resumption
 - [ ] wget: keep-alive (one request per connection now), cookies,
       authentication, recursion (-r), --trust-server-names, gzip
 - [x] Control Panel network page (DHCP or a static address per interface,
