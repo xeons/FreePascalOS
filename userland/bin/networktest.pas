@@ -45,7 +45,8 @@
   IPv6: lo has ::1, which answers pings; UDP and TCP over ::1; an IPv4
   and an IPv6 socket share a port; the listing shows an IPv6 listener.
   eth0 gets its link-local address and, from QEMU's router
-  advertisement, fec0::5054:ff:fe12:3456/64 (SLAAC), the default route
+  advertisement, a stable-privacy (RFC 7217) and a temporary (RFC 8981)
+  address in fec0::/64 (SLAAC), the default route
   through fe80::2 and the DNS server fec0::3 (RDNSS); fec0::2 answers
   pings and is in the neighbour cache. A static IPv6 address set in
   Network.settings is applied and taken away again.
@@ -587,22 +588,28 @@ var
   Description: TAbiNetworkInterface;
   LinkLocal: TInternetAddress;
   Global: TInternetAddress;
+  Temporary: TInternetAddress;
   Router: TInternetAddress;
 begin
-  LinkLocal := Ipv6('fe80::5054:ff:fe12:3456');
-  Global := Ipv6('fec0::5054:ff:fe12:3456');
   Router := Ipv6('fe80::2');
   Check('IPv6: eth0 is automatic', InterfaceIpv6ModeIs('eth0', Ipv6ModeAutomatic));
-  Check('IPv6: eth0 has its link-local address fe80::5054:ff:fe12:3456/64',
-    WaitForIpv6Address('eth0', LinkLocal, 64, True, 10000));
-  Check('IPv6: SLAAC gives eth0 fec0::5054:ff:fe12:3456/64', WaitForIpv6Address('eth0', Global, 64, True, 20000));
+  Check('IPv6: eth0 has a link-local address',
+    WaitForIpv6AddressLike('eth0', Ipv6('fe80::'), InterfaceAddressFlagLinkLocal, 0, 10000, LinkLocal));
+  Check('IPv6: the link-local identifier is stable-privacy, not EUI-64',
+    not AddressesAreEqual(LinkLocal, Ipv6('fe80::5054:ff:fe12:3456')));
+  Check('IPv6: SLAAC gives eth0 a stable address in fec0::/64', WaitForIpv6AddressLike('eth0', Ipv6('fec0::'),
+    InterfaceAddressFlagAutomatic, InterfaceAddressFlagTemporary, 20000, Global));
+  Check('IPv6: and not the EUI-64 one', not AddressesAreEqual(Global, Ipv6('fec0::5054:ff:fe12:3456')));
+  Check('IPv6: and a temporary one beside it', WaitForIpv6AddressLike('eth0', Ipv6('fec0::'),
+    InterfaceAddressFlagTemporary, 0, 10000, Temporary) and not AddressesAreEqual(Temporary, Global));
   Check('IPv6: the default route goes through fe80::2 on eth0', HasIpv6DefaultRoute('eth0', Router));
   Check('IPv6: the router advertised the DNS server fec0::3', InterfaceHasIpv6DnsServer('eth0', Ipv6('fec0::3')));
   Check('IPv6: ping fec0::2 (QEMU''s host) answers', PingIpv6(Ipv6('fec0::2'), 3) > 0);
   Check('IPv6: fec0::2 is in the neighbour cache', NeighborIsKnown(Ipv6('fec0::2')));
-  Check('IPv6: ping our own fec0::5054:ff:fe12:3456 answers', PingIpv6(Global, 1) = 1);
-  Check('IPv6: eth0.state lists the SLAAC address',
-    WaitForStateValue('eth0', 'Ipv6Addresses', 'fe80::5054:ff:fe12:3456/64,fec0::5054:ff:fe12:3456/64', 5000));
+  Check('IPv6: ping our own stable address answers', PingIpv6(Global, 1) = 1);
+  Check('IPv6: ping our own temporary address answers', PingIpv6(Temporary, 1) = 1);
+  Check('IPv6: eth0.state lists the SLAAC addresses',
+    WaitForStateValue('eth0', 'Ipv6Addresses', ReadyIpv6AddressesText('eth0'), 5000));
   Check('eth0 counted what went through it', FindNetworkInterface('eth0', Description) and
     (Description.Counters.SentPackets > 0));
 end;

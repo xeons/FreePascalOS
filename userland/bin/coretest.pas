@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..380] of TCommandTest = (
+  CommandTests: array[0..382] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -506,7 +506,10 @@ const
     { wget and libtls against the test web servers on the host. }
     (Command: 'wgettest > wget.log; echo $?; grep FAIL wget.log; tail -n 1 wget.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'ifconfig lo | head -n 4'; ExpectedOutput: 'lo: flags=<UP,LOOPBACK,RUNNING>  mtu 1500'#10'        inet 127.0.0.1  netmask 255.0.0.0'#10'        inet6 ::1  prefixlen 128  scopeid 0x10<host>'#10'        loop'#10; ExpectedStatus: 0),
-    (Command: 'ifconfig eth0 | grep inet6'; ExpectedOutput: '        inet6 fe80::5054:ff:fe12:3456  prefixlen 64  scopeid 0x20<link>'#10'        inet6 fec0::5054:ff:fe12:3456  prefixlen 64  scopeid 0x40<site>'#10; ExpectedStatus: 0),
+    { eth0's IPv6 addresses: the link-local and a stable one in fec0::/64,
+      both stable-privacy (RFC 7217, not the EUI-64 ...5054:ff:fe12:3456),
+      and a temporary one (RFC 8981). }
+    (Command: 'ifconfig eth0 | grep inet6 | cut -d " " -f 12-; ifconfig eth0 | grep -c 5054:ff:fe12:3456'; ExpectedOutput: 'prefixlen 64  scopeid 0x20<link>'#10'prefixlen 64  scopeid 0x40<site>'#10'prefixlen 64  scopeid 0x40<site>  temporary'#10'0'#10; ExpectedStatus: 0),
     (Command: 'ifconfig eth0 | head -n 2'; ExpectedOutput: 'eth0: flags=<UP,BROADCAST,RUNNING>  mtu 1500'#10'        inet 10.0.2.15  netmask 255.255.255.0  broadcast 10.0.2.255'#10; ExpectedStatus: 0),
     (Command: 'ifconfig nosuch 2>&1; echo $?'; ExpectedOutput: 'ifconfig: nosuch: error fetching interface information: Device not found'#10'1'#10; ExpectedStatus: 0),
     (Command: 'route'; ExpectedOutput: 'Kernel IP routing table'#10'Destination     Gateway         Genmask         Flags Metric Iface'#10'0.0.0.0         10.0.2.2        0.0.0.0         UG    0      eth0'#10'10.0.2.0        0.0.0.0         255.255.255.0   U     0      eth0'#10'127.0.0.0       0.0.0.0         255.0.0.0       U     0      lo'#10; ExpectedStatus: 0),
@@ -531,7 +534,7 @@ const
     (Command: 'dnstest > dns.log; echo $?; grep FAIL dns.log; tail -n 1 dns.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'dnstest --serve & p=$!; dnstest --wait; host www.test.example 127.0.0.1; host alias.test.example 127.0.0.1 | tail -n 4; host -t SOA test.example 127.0.0.1 | tail -n 1; host -t TXT www.test.example 127.0.0.1 | tail -n 1; host 192.0.2.10 127.0.0.1 | tail -n 1; host nosuch.test.example 127.0.0.1 > h.out; echo $?; tail -n 1 h.out; kill $p; wait $p'; ExpectedOutput: 'Using domain server:'#10'Name: 127.0.0.1'#10'Address: 127.0.0.1#53'#10'Aliases: '#10#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'alias.test.example is an alias for www.test.example.'#10'www.test.example has address 192.0.2.10'#10'www.test.example has IPv6 address 2001:db8::10'#10'www.test.example mail is handled by 10 mail.test.example.'#10'test.example has SOA record ns.test.example. hostmaster.test.example. 2026111601 3600 600 86400 300'#10'www.test.example descriptive text "hello world"'#10'10.2.0.192.in-addr.arpa domain name pointer www.test.example.'#10'1'#10'Host nosuch.test.example not found: 3(NXDOMAIN)'#10; ExpectedStatus: 0),
     (Command: 'dnstest --serve & p=$!; dnstest --wait; nslookup www.test.example 127.0.0.1; nslookup -type=MX www.test.example 127.0.0.1 | tail -n 2; nslookup 192.0.2.10 127.0.0.1 | tail -n 2; nslookup nosuch.test.example 127.0.0.1 > n.out; echo $?; grep "can.t find" n.out; kill $p; wait $p'; ExpectedOutput: 'Server:'#9#9'127.0.0.1'#10'Address:'#9'127.0.0.1#53'#10#10'Name:'#9'www.test.example'#10'Address: 192.0.2.10'#10'Name:'#9'www.test.example'#10'Address: 2001:db8::10'#10#10'www.test.example'#9'mail exchanger = 10 mail.test.example.'#10#10'10.2.0.192.in-addr.arpa'#9'name = www.test.example.'#10#10'1'#10'** server can''t find nosuch.test.example: NXDOMAIN'#10; ExpectedStatus: 0),
-    (Command: 'hostname; uname -n; su user -c "hostname other" 2>&1; echo $?; hostname "bad name" 2>&1; hostname test-box.example && hostname && hostname -s && uname -n; hostname freepascalos; hostname -I | cut -d " " -f 1-2'; ExpectedOutput: 'freepascalos'#10'freepascalos'#10'hostname: you must be root to change the host name'#10'1'#10'hostname: the specified hostname is invalid'#10'test-box.example'#10'test-box'#10'test-box.example'#10'10.0.2.15 fec0::5054:ff:fe12:3456'#10; ExpectedStatus: 0),
+    (Command: 'hostname; uname -n; su user -c "hostname other" 2>&1; echo $?; hostname "bad name" 2>&1; hostname test-box.example && hostname && hostname -s && uname -n; hostname freepascalos; hostname -I | cut -d " " -f 1; hostname -I | tr " " "\n" | grep -c "^fec0:"'; ExpectedOutput: 'freepascalos'#10'freepascalos'#10'hostname: you must be root to change the host name'#10'1'#10'hostname: the specified hostname is invalid'#10'test-box.example'#10'test-box'#10'test-box.example'#10'10.0.2.15'#10'2'#10; ExpectedStatus: 0),
     (Command: 'dnstest --serve & p=$!; dnstest --wait; host -t AAAA www.test.example ::1 | head -n 3; host -t AAAA www.test.example ::1 | tail -n 1; kill $p; wait $p'; ExpectedOutput: 'Using domain server:'#10'Name: ::1'#10'Address: ::1#53'#10'www.test.example has IPv6 address 2001:db8::10'#10; ExpectedStatus: 0),
     { netstat and nc: a listener seen by netstat (with its program),
       files both ways checked by their sums, a UDP round trip, port
@@ -550,6 +553,11 @@ const
     (Command: 'nc -6 -l 7108 < /dev/null > n6.got & for i in $(seq 50); do netstat -tln | grep -q ":7108 " && break; sleep 0.1; done; netstat -tln | grep ":7108 " | tr -s " "; echo over6 | nc -N ::1 7108; wait; cat n6.got; rm n6.got'; ExpectedOutput: 'tcp6 0 0 :::7108 :::* LISTEN'#10'over6'#10; ExpectedStatus: 0),
     (Command: 'printf "HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nhello\n" | nc -6 -l 7110 > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":7110 " && break; sleep 0.1; done; wget -q -O - "http://[::1]:7110/"; echo $?; wait'; ExpectedOutput: 'hello'#10'0'#10; ExpectedStatus: 0),
     (Command: 'b=$(netstat -s6 | grep "ICMPv6 messages received" | tr -s " " | cut -d " " -f 2); ping -c 2 -i 0.2 ::1 > /dev/null; a=$(netstat -s6 | grep "ICMPv6 messages received" | tr -s " " | cut -d " " -f 2); test $a -ge $((b + 4)) && echo counted; netstat -s6 | grep -c -E "^Ip6?:"'; ExpectedOutput: 'counted'#10'1'#10; ExpectedStatus: 0),
+    { Multicast sockets (IPv4 and IPv6 groups over lo), v4-mapped
+      addresses on IPv6 sockets, IPv6-only, and a UDP datagram sent to ::1
+      in fragments; then nc listening on :: answers over IPv4. }
+    (Command: 'multicasttest > multicast.log; echo $?; grep FAIL multicast.log; tail -n 1 multicast.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'nc -6 -l 7111 < /dev/null > m4.got & for i in $(seq 50); do netstat -tln | grep -q ":7111 " && break; sleep 0.1; done; echo mapped | nc -N 127.0.0.1 7111; wait; cat m4.got; rm m4.got'; ExpectedOutput: 'mapped'#10; ExpectedStatus: 0),
     { Watching files and folders: changes another process makes, on
       several file system types, and a folder the user may not read. }
     (Command: 'watchtest > watch.log; echo $?; grep -E ''FAIL|expected:|got:'' watch.log; tail -n 1 watch.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),

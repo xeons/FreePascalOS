@@ -64,6 +64,11 @@ function ReceiveSocketFrom(Socket: Int64; Buffer: Pointer; Length: QWord; Flags:
 function ShutdownSocket(Socket: Int64; How: LongWord): LongInt;
 function GetSocketOption(Socket: Int64; Option: LongWord; out Value: Int64): LongInt;
 function SetSocketOption(Socket: Int64; Option: LongWord; Value: Int64): LongInt;
+{ Joins (Join) or leaves a multicast group: Family and the sixteen
+  address bytes of the group (IPv4 in the first four), on the interface
+  with InterfaceIndex (0: the one the routes give). }
+function ChangeMulticastMembership(Socket: Int64; Join: Boolean; Family: Word; Group: PByte;
+  InterfaceIndex: LongWord): LongInt;
 function GetLocalSocketAddress(Socket: Int64; out Address: TAbiSocketAddress): LongInt;
 function GetPeerSocketAddress(Socket: Int64; out Address: TAbiSocketAddress): LongInt;
 { Waits up to Timeout ms (InfiniteWait: as long as it takes) until one
@@ -173,6 +178,23 @@ end;
 function SetSocketOption(Socket: Int64; Option: LongWord; Value: Int64): LongInt;
 begin
   Result := ErrorCodeOf(KernelSetSocketOption(Socket, Option, Value));
+end;
+
+function ChangeMulticastMembership(Socket: Int64; Join: Boolean; Family: Word; Group: PByte;
+  InterfaceIndex: LongWord): LongInt;
+var
+  Request: TAbiMulticastMembership;
+  Option: LongWord;
+begin
+  FillChar(Request, SizeOf(Request), 0);
+  Request.Family := Family;
+  Request.InterfaceIndex := InterfaceIndex;
+  Move(Group^, Request.Group[0], SizeOf(Request.Group));
+  if Join then
+    Option := SocketOptionJoinGroup
+  else
+    Option := SocketOptionLeaveGroup;
+  Result := SetSocketOption(Socket, Option, Int64(PtrUInt(@Request)));
 end;
 
 function GetLocalSocketAddress(Socket: Int64; out Address: TAbiSocketAddress): LongInt;
