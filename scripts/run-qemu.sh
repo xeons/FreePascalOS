@@ -100,6 +100,26 @@ if [[ "$debug_mode" == "--debug" ]]; then
     echo "Waiting for GDB: gdb $build_directory/kernel.elf -ex 'target remote :1234'"
 fi
 
+# Sound: an HD Audio controller with an output and a microphone, played
+# through PipeWire or PulseAudio when this QEMU has that backend
+# (packages qemu-audio-pipewire / qemu-audio-pa), otherwise recorded to
+# a WAV file in the build folder (AUDIO=none leaves sound out).
+audio_arguments=()
+if [[ "${AUDIO:-}" != none ]]; then
+    audio_backends=$("$qemu_binary" -audiodev help 2>/dev/null)
+    if grep -qx pipewire <<< "$audio_backends"; then
+        audio_arguments=(-audiodev pipewire,id=sound0 -audiodev pipewire,id=microphone0)
+    elif grep -qx pa <<< "$audio_backends"; then
+        audio_arguments=(-audiodev pa,id=sound0 -audiodev pa,id=microphone0)
+    else
+        echo "QEMU has no PipeWire or PulseAudio backend: sound goes to $build_directory/run-audio.wav"
+        audio_arguments=(-audiodev wav,id=sound0,path="$build_directory/run-audio.wav"
+            -audiodev none,id=microphone0)
+    fi
+    audio_arguments+=(-device intel-hda -device hda-output,audiodev=sound0
+        -device hda-micro,audiodev=microphone0)
+fi
+
 exec "$qemu_binary" \
     "${machine_arguments[@]}" \
     -m 512M \
@@ -116,4 +136,5 @@ exec "$qemu_binary" \
     -netdev user,id=net1 -device e1000e,netdev=net1 \
     -netdev user,id=net2 -device e1000,netdev=net2 \
     -netdev user,id=net3 -device rtl8139,netdev=net3 \
+    "${audio_arguments[@]}" \
     "${extra_arguments[@]}"
