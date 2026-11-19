@@ -2167,7 +2167,10 @@ changes live: the display server follows it (`Server.LiveSettings`:
 every frame drawn again), every window program applies it when it
 connects (`Windowing.Connection`) and follows it from its first window
 on (`Windowing.Windows`: `TWindow.ThemeChanged`, which repaints; the
-desktop draws its wallpaper again). Header bands are
+desktop draws its wallpaper again; an open pop-up menu measures itself
+again, `TPopupWindow.OnThemeChanged`, its bottom kept in place when it
+was opened above a point with `ShowPopupMenuAbove`, as the Start menu
+is). Header bands are
 `Controls.HeaderBands` (gold or navy; a plain label where the theme
 does not band panels), the Start menu's side band `Controls.MenuBand`
 (a menu's `SideBand` text). The theme also holds the font families:
@@ -2289,7 +2292,12 @@ parts once (`PerformPendingLayout`), before the window paints (the new
 pointer, and whenever someone reads a control's `Bounds` or
 `PixelBounds`, so places read are always current, many changes cost one
 layout, and nothing is painted half laid out. A layout that asks for
-more (a scroll bar appearing) runs again, up to four rounds.
+more (a scroll bar appearing) runs again, up to four rounds. A control
+being freed is never laid out: `BeforeDestruction` marks it before any
+destructor runs (a subclass frees its own fields before `TControl.Destroy`
+frees the children, and a child freed then may read its place), and
+`ArrangePending` and `ArrangeContents` pass over a control with an
+ancestor going away.
 
 Containers that place their children themselves override
 `PlaceChildren`: `TFlowLayoutPanel` (`Controls.FlowPanel`: children at

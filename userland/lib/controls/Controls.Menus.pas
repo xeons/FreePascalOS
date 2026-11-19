@@ -70,6 +70,7 @@ uses
   Controls.Window,
   Controls.Popups,
   Controls.ImageList,
+  Controls.MenuBand,
   Controls.Timers;
 
 type
@@ -154,6 +155,10 @@ type
     FLastPointerX: LongInt;
     FLastPointerY: LongInt;
     FPointerSeen: Boolean;
+    { The band down its side (nil: none), and whether it was opened
+      above a point (its bottom kept there when its size changes). }
+    FBand: TMenuBand;
+    FOpenedAbove: Boolean;
     function ItemTop(Index: LongInt): LongInt;
     function ItemAt(Y: LongInt): LongInt;
     procedure Highlight(Index: LongInt);
@@ -173,6 +178,8 @@ type
     function PassOn(X, Y: LongInt; Pressed: Boolean): Boolean;
     function PressedOutside(X, Y: LongInt; Button: LongWord): Boolean;
     procedure PointerMovedOutside(X, Y: LongInt);
+    procedure FitToTheme;
+    procedure UpdateBand;
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
@@ -230,6 +237,11 @@ function PopupMenuItemTop(Menu: TMenuItem; Index: LongInt): LongInt;
   Owner: a context menu. }
 function ShowPopupMenu(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt;
   OnChoose: TMenuItemEvent = nil): TMenuList;
+{ The same with the menu's bottom left at (Left, Bottom): a menu opened
+  above a taskbar's button. Its bottom stays there when the theme
+  changes its height. }
+function ShowPopupMenuAbove(Owner: TControlWindow; Menu: TMenuItem; Left, Bottom: LongInt;
+  OnChoose: TMenuItemEvent = nil): TMenuList;
 { Code with Modifiers (an accelerator of Window) chooses Item, as a click
   on it would, if it is enabled once its menu's OnOpening has run. The
   item must last as long as the window. }
@@ -249,7 +261,6 @@ uses
   Controls.Keys,
   Controls.Icons,
   Controls.Text,
-  Controls.MenuBand,
   Controls.Painting;
 
 const
@@ -390,36 +401,35 @@ begin
     Result := Result + ItemHeightOf(Menu[Position]);
 end;
 
-{ A menu list in a new pop-up at (Left, Top) of the screen, logical. }
-function OpenMenuList(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt): TMenuList;
+{ A menu list in a new pop-up at (Left, Top) of the screen, logical;
+  Above: Top is where its bottom goes. }
+function OpenMenuList(Owner: TControlWindow; Menu: TMenuItem; Left, Top: LongInt;
+  Above: Boolean = False): TMenuList;
 var
   Width: LongInt;
   Height: LongInt;
   Popup: TPopupWindow;
-  Band: TMenuBand;
 begin
   if Assigned(Menu.OnOpening) then
     Menu.OnOpening(Menu);
   MeasurePopupMenu(Menu, Width, Height);
+  if Above then
+    Top := Top - Height;
   { Kept on the display it opens on. }
   KeepOnDisplay(Left, Top, Width, Height);
   Popup := TPopupWindow.CreatePopup(Owner, Left, Top, Width, Height);
-  if SideBandWidth(Menu) > 0 then
-  begin
-    Band := TMenuBand.Create(Popup.Root);
-    Band.Text := Menu.SideBand;
-    Band.Align := AlignLeft;
-    Band.SetBounds(0, 0, SideBandWidth(Menu), Height);
-  end;
   Result := TMenuList.Create(Popup.Root);
   Result.Align := AlignClient;
   Result.CanFocus := True;
   Result.FMenu := Menu;
   Result.FPopup := Popup;
+  Result.FOpenedAbove := Above;
   Result.FHighlighted := -1;
   Result.FPendingIndex := -1;
+  Result.UpdateBand;
   Popup.OnPressedOutside := @Result.PressedOutside;
   Popup.OnPointerMovedOutside := @Result.PointerMovedOutside;
+  Popup.OnThemeChanged := @Result.FitToTheme;
   Result.SetFocus;
   Popup.Popup;
   if Assigned(Menu.OnOpened) then
@@ -433,7 +443,58 @@ begin
   Result.FOnChoose := OnChoose;
 end;
 
+function ShowPopupMenuAbove(Owner: TControlWindow; Menu: TMenuItem; Left, Bottom: LongInt;
+  OnChoose: TMenuItemEvent): TMenuList;
+begin
+  Result := OpenMenuList(Owner, Menu, Left, Bottom, True);
+  Result.FOnChoose := OnChoose;
+end;
+
 { --- TMenuList ------------------------------------------------------------------------ }
+
+{ The band down the side, there and as wide as the theme says. }
+procedure TMenuList.UpdateBand;
+var
+  Width: LongInt;
+begin
+  Width := SideBandWidth(FMenu);
+  if Width = 0 then
+  begin
+    FBand.Free;
+    FBand := nil;
+    Exit;
+  end;
+  if FBand = nil then
+  begin
+    FBand := TMenuBand.Create(FPopup.Root);
+    FBand.Text := FMenu.SideBand;
+    FBand.Align := AlignLeft;
+  end;
+  FBand.SetBounds(0, 0, Width, FPopup.ClientHeight);
+end;
+
+{ The theme changed while the menu is open: its size and band are the
+  new theme's (the bottom kept in place for a menu opened above a
+  point). A submenu, placed by the old sizes, closes. }
+procedure TMenuList.FitToTheme;
+var
+  Width: LongInt;
+  Height: LongInt;
+  Left: LongInt;
+  Top: LongInt;
+begin
+  CloseSubmenu;
+  MeasurePopupMenu(FMenu, Width, Height);
+  Left := FPopup.ScreenLeft;
+  Top := FPopup.ScreenTop;
+  if FOpenedAbove then
+    Top := Top + FPopup.ClientHeight - Height;
+  KeepOnDisplay(Left, Top, Width, Height);
+  FPopup.SetClientSize(Width, Height);
+  FPopup.MoveTo(Left, Top);
+  UpdateBand;
+  Invalidate;
+end;
 
 function TMenuList.ItemTop(Index: LongInt): LongInt;
 var
