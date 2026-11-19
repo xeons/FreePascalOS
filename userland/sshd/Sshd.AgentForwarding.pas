@@ -27,8 +27,7 @@
   SSH_AUTH_SOCK=port:sshagent-PROCESS-N; the system's ssh and ssh-add
   connect to it. Each connection to the port (by the session's user or
   root; others are turned away) opens an auth-agent@openssh.com channel
-  to the client, and the agent protocol's bytes go through unchanged:
-  channel messages (up to 16 KiB each) one way, channel data the other.
+  to the client (Ssh.AgentChannels relays it).
 }
 unit Sshd.AgentForwarding;
 
@@ -41,32 +40,7 @@ uses
   Ssh.Connection,
   Ssh.PolledChannels;
 
-const
-  AgentChannelType = 'auth-agent@openssh.com';
-
 type
-  { One forwarded agent connection: a local channel end and an SSH
-    channel. }
-  TAgentRelayChannel = class(TSshPolledChannel)
-  private
-    FLocal: Int64;
-    FPendingToLocal: string;
-    FLocalEnded: Boolean;
-    procedure LocalReadable;
-    procedure PushToLocal;
-    procedure ReleaseLocal;
-  protected
-    procedure HandleData(const Data: string); override;
-    procedure HandleEof; override;
-    procedure HandleClose; override;
-    procedure HandleOpenFailed(Reason: LongWord; const Description: string); override;
-  public
-    constructor Create(Owner: TSshConnection; LocalChannel: Int64);
-    destructor Destroy; override;
-    procedure CollectWaits(var Waits: TSshWaitList); override;
-    procedure Poll; override;
-  end;
-
   { The port of one session; owned by the session. }
   TAgentListener = class
   private
@@ -94,118 +68,11 @@ uses
   Sys.Processes,
   Ssh.Wire,
   Ssh.AgentProtocol,
+  Ssh.AgentChannels,
   Sshd.Log;
-
-const
-  OutputBackLog = 64 * 1024;
 
 var
   NextPortNumber: Integer = 1;
-
-constructor TAgentRelayChannel.Create(Owner: TSshConnection; LocalChannel: Int64);
-begin
-  inherited Create(Owner);
-  FLocal := LocalChannel;
-end;
-
-destructor TAgentRelayChannel.Destroy;
-begin
-  ReleaseLocal;
-  inherited Destroy;
-end;
-
-procedure TAgentRelayChannel.ReleaseLocal;
-begin
-  if FLocal >= 0 then
-    CloseHandle(FLocal);
-  FLocal := NoHandle;
-end;
-
-procedure TAgentRelayChannel.LocalReadable;
-var
-  Buffer: array[0..MaximumMessageBytes - 1] of Byte;
-  Handles: array[0..MaximumMessageHandles - 1] of Int64;
-  Length_, HandleCount, Index: QWord;
-  Error: LongInt;
-begin
-  Error := ReceiveMessage(FLocal, @Buffer[0], SizeOf(Buffer), Length_, Handles, HandleCount);
-  if Error = ErrorWouldBlock then
-    Exit;
-  if Error <> ErrorNone then
-  begin
-    FLocalEnded := True;
-    Finish(False, 0);
-    Exit;
-  end;
-  { Handles have no place in the agent protocol. }
-  Index := 0;
-  while Index < HandleCount do
-  begin
-    CloseHandle(Handles[Index]);
-    Inc(Index);
-  end;
-  if Length_ > 0 then
-    SendData(BytesToString(@Buffer[0], Integer(Length_)));
-end;
-
-procedure TAgentRelayChannel.PushToLocal;
-var
-  Chunk: string;
-  Error: LongInt;
-begin
-  while (FPendingToLocal <> '') and (FLocal >= 0) do
-  begin
-    Chunk := Copy(FPendingToLocal, 1, MaximumMessageBytes);
-    Error := SendMessage(FLocal, @Chunk[1], Length(Chunk), []);
-    if Error = ErrorWouldBlock then
-      Exit;
-    if Error <> ErrorNone then
-    begin
-      FPendingToLocal := '';
-      CloseNow;
-      Exit;
-    end;
-    Delete(FPendingToLocal, 1, Length(Chunk));
-    InputConsumed(Length(Chunk));
-  end;
-end;
-
-procedure TAgentRelayChannel.HandleData(const Data: string);
-begin
-  FPendingToLocal := FPendingToLocal + Data;
-  PushToLocal;
-end;
-
-procedure TAgentRelayChannel.HandleEof;
-begin
-  if FPendingToLocal = '' then
-    Finish(False, 0);
-end;
-
-procedure TAgentRelayChannel.HandleClose;
-begin
-  ReleaseLocal;
-end;
-
-procedure TAgentRelayChannel.HandleOpenFailed(Reason: LongWord; const Description: string);
-begin
-  LogLine('the client refused the agent channel: ' + Description);
-  ReleaseLocal;
-end;
-
-procedure TAgentRelayChannel.CollectWaits(var Waits: TSshWaitList);
-begin
-  if (FLocal >= 0) and IsOpen and not FLocalEnded and (PendingOutput < OutputBackLog) then
-    AddWait(Waits, FLocal, @LocalReadable);
-end;
-
-procedure TAgentRelayChannel.Poll;
-begin
-  if FPendingToLocal <> '' then
-    PushToLocal;
-  if EofReceived and (FPendingToLocal = '') then
-    Finish(False, 0);
-end;
 
 constructor TAgentListener.Create(Connection: TSshConnection; UserId: LongWord);
 begin

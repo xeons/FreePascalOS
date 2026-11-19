@@ -54,6 +54,7 @@ uses
   Ssh.PolledChannels,
   Ssh.HandleWriters,
   Ssh.SocketChannels,
+  Ssh.AgentChannels,
   Ssh.UserAuthentication,
   Ssh.Connection,
   Ssh.TerminalOutput;

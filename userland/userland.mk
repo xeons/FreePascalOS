@@ -28,7 +28,7 @@
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
-#                  libsystem <- libcryptography <- libssh (SSH server; sshd)
+#                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -373,8 +373,9 @@ TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
 $(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
 $(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
 $(TLS_PROGRAMS): $(TLS_LIBRARY)
-# The SSH server and its SFTP subsystem speak SSH through libssh.
-SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server)
+# The SSH server, its SFTP subsystem and the client programs speak SSH
+# through libssh.
+SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
 $(SSH_PROGRAMS): $(SSH_LIBRARY)
