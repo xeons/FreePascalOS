@@ -93,6 +93,8 @@ uses
   Drivers.UsbKeyboard,
   Drivers.HdAudio,
   Drivers.Ac97,
+  Drivers.Bcm2712Dma,
+  Drivers.HdmiAudio,
   Drivers.UsbAudio,
   Drivers.E1000,
   Drivers.Rtl8139,
@@ -232,6 +234,10 @@ begin
   { Built-in sound first, so it keeps the first device names. }
   InitializeHdAudioControllers;
   InitializeAc97Controllers;
+  { The Raspberry Pi 5's HDMI audio: its DMA controller first (device
+    tree platform devices; both find nothing elsewhere). }
+  InitializeBcm2712DmaControllers;
+  InitializeHdmiAudio;
   { Network cards register their adapters (eth0, eth1, ...). }
   InitializeE1000Adapters;
   InitializeRtl8139Adapters;
