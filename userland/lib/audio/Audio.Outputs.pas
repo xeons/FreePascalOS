@@ -41,7 +41,7 @@ type
   TAudioOutputState = record
     Volume: LongWord;
     Muted: Boolean;
-    { AudioOutputKind*: HD Audio, AC'97, USB. }
+    { AudioOutputKind*: HD Audio, AC'97, USB, HDMI. }
     Kind: LongWord;
   end;
 
@@ -131,6 +131,7 @@ begin
     AudioOutputKindHdAudio: Result := 'HD Audio';
     AudioOutputKindAc97: Result := 'AC''97';
     AudioOutputKindUsb: Result := 'USB audio';
+    AudioOutputKindHdmi: Result := 'HDMI';
   else
     Result := 'Sound output';
   end;

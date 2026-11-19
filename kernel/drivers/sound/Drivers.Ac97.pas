@@ -325,6 +325,7 @@ begin
   Routines.Position := @PlayingPosition;
   Routines.SetVolume := @SetVolume;
   Routines.Kind := AudioOutputKindAc97;
+  Routines.PeriodWritten := nil;
   InitializeDeferredCall(Controller^.PeriodCall, @PeriodsElapsed, Controller);
   InitializeTimer(Controller^.PollTimer);
   Controller^.Output := RegisterAudioOutput(Routines, Controller, FourGibibytes - 1);

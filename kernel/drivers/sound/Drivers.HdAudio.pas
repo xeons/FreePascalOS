@@ -245,6 +245,7 @@ begin
   Routines.Position := @DirectionPosition;
   Routines.SetVolume := @SetPlaybackVolume;
   Routines.Kind := AudioOutputKindHdAudio;
+  Routines.PeriodWritten := nil;
   Direction^.Output := RegisterAudioOutput(Routines, Direction);
   if (Direction^.Output = nil) or not PrepareStream(Direction^.Stream, Controller^.Registers,
     FirstOutputStream(Controller^.Registers), OutputTag, Direction^.Output^.PeriodsPhysical) then
