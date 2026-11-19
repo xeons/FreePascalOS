@@ -19,7 +19,7 @@
 {
   NetworkProtocolTest - checks the network's message code on the host
   (make network-protocol-test): the resolver's EDNS(0) and cache of
-  answers.
+  answers, the DHCP client's option overload and choice of offers.
 }
 program NetworkProtocolTest;
 
@@ -28,9 +28,11 @@ program NetworkProtocolTest;
 
 uses
   TestChecks,
-  NetworkProtocolTest.Dns;
+  NetworkProtocolTest.Dns,
+  NetworkProtocolTest.Dhcp;
 
 begin
   RunDnsChecks;
+  RunDhcpChecks;
   FinishChecks('network protocol test');
 end.

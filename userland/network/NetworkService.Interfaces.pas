@@ -84,9 +84,15 @@ type
     Failure: string;
     Dhcp: TDhcpClient;
     { A lease's address to ask for again (an earlier run's, from the
-      state file, or this run's). }
+      state file, or this run's), and whether that lease has not run out
+      (it is then confirmed, INIT-REBOOT, without the cold start's
+      wait). }
     HasPreviousAddress: Boolean;
     PreviousAddress: TInternetAddress;
+    PreviousLeaseIsValid: Boolean;
+    { DHCP clients started for it in this run (the first is a cold
+      start). }
+    DhcpStarts: Integer;
     { IPv6, applied apart from IPv4: as the kernel last said, and what
       the service applied. }
     Ipv6Facts: TIpv6Facts;
@@ -267,7 +273,9 @@ begin
   Managed.Dhcp.OnLeaseLost := @LeaseLost;
   Managed.Dhcp.OnStateChanged := @DhcpStateChanged;
   Say(Managed.Name + ': DHCP');
-  Managed.Dhcp.Start(Managed.HasPreviousAddress, Managed.PreviousAddress);
+  Managed.Dhcp.Start(Managed.HasPreviousAddress, Managed.PreviousAddress, Managed.PreviousLeaseIsValid,
+    (Managed.DhcpStarts = 0) and FSettings.DhcpStartWait);
+  Inc(Managed.DhcpStarts);
   if not Managed.LinkIsUp then
     Managed.Dhcp.LinkChanged(False);
 end;
@@ -348,6 +356,20 @@ begin
   ApplyNameServers;
 end;
 
+{ True if the lease of a state file has not run out: an endless one
+  (LeaseSeconds 0), or one obtained less than LeaseSeconds ago. }
+function StoredLeaseIsValid(constref State: TInterfaceState): Boolean;
+var
+  Now: Int64;
+begin
+  if State.LeaseObtained <= 0 then
+    Exit(False);
+  if State.LeaseSeconds = 0 then
+    Exit(True);
+  Now := KernelGetTime(TimeWallClock);
+  Result := (Now >= State.LeaseObtained) and (Now < State.LeaseObtained + State.LeaseSeconds);
+end;
+
 { The address of a state file ("10.0.2.15/24") without its prefix. }
 function ParsePreviousAddress(const Text: string; out Address: TInternetAddress): Boolean;
 var
@@ -386,7 +408,10 @@ begin
       Managed.Index := Interfaces[Position].Index;
       Move(Interfaces[Position].HardwareAddress[0], Managed.HardwareAddress[0], 6);
       if ReadPreviousInterfaceState(Name, Previous) and (Previous.Method = 'dhcp') then
+      begin
         Managed.HasPreviousAddress := ParsePreviousAddress(Previous.Address, Managed.PreviousAddress);
+        Managed.PreviousLeaseIsValid := Managed.HasPreviousAddress and StoredLeaseIsValid(Previous);
+      end;
       SetLength(FInterfaces, Length(FInterfaces) + 1);
       FInterfaces[High(FInterfaces)] := Managed;
       Say(Name + ': found (' + InterfaceNameToText(Interfaces[Position].Description) + ')');
@@ -511,6 +536,7 @@ begin
   Managed.AddressIsOurs := True;
   Managed.HasPreviousAddress := True;
   Managed.PreviousAddress := Lease.Address;
+  Managed.PreviousLeaseIsValid := True;
   if Lease.HasGateway then
     EnsureDefaultRoute(Managed, Lease.Gateway);
   ApplyNameServers;
@@ -524,6 +550,7 @@ begin
   Managed := FindByClient(Client);
   if Managed = nil then
     Exit;
+  Managed.PreviousLeaseIsValid := False;
   RemoveOurAddress(Managed);
   ApplyNameServers;
   WriteState(Managed);

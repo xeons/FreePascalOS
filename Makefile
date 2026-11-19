@@ -952,7 +952,7 @@ NETWORK_PROTOCOL_TEST := build/tools/NetworkProtocolTest
 NETWORK_PROTOCOL_TEST_SOURCES := $(wildcard tools/NetworkProtocolTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	userland/lib/system/Sys.DnsMessages.pas userland/lib/system/Sys.DnsNames.pas \
 	userland/lib/system/Sys.DnsCache.pas userland/lib/system/Sys.InternetAddresses.pas \
-	$(wildcard userland/network/NetworkService.Dhcp*Messages.pas)
+	$(wildcard userland/network/NetworkService.Dhcp*Messages.pas) userland/network/NetworkService.DhcpOffers.pas
 
 $(NETWORK_PROTOCOL_TEST): $(NETWORK_PROTOCOL_TEST_SOURCES)
 	@mkdir -p build/tools/network-protocol-test-units
