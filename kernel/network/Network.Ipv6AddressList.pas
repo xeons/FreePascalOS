@@ -27,14 +27,14 @@
   solicited-node group is listened to. A link-local or manual address
   brings the route to its prefix (on the link) with it.
 
-  The source of a datagram (RFC 6724, simply): an address of the
-  interface it leaves by, of the destination's scope (link-local for a
-  link-local or link-scope multicast destination, else a global one),
-  preferred before deprecated, then the one sharing the longest prefix
-  with the destination. A global destination is never sent from a
-  link-local address; with no global address on the interface, one of
-  another interface is taken (the weak host model). Under the network
-  lock.
+  The source of a datagram follows RFC 6724 (AddressSelection): of the
+  ready addresses of every interface (the weak host model) the rules
+  pick the destination itself, the appropriate scope, not deprecated,
+  the outgoing interface's, a matching label, a temporary one when the
+  outgoing interface makes them, the longest matching prefix. A
+  destination within the link is only sent from the link's own
+  addresses, and one beyond it never from a link-local address (which
+  means nothing there). Under the network lock.
 }
 unit Network.Ipv6AddressList;
 
@@ -86,6 +86,7 @@ uses
   Abi.SystemCalls,
   Runtime.Memory,
   Runtime.Text,
+  AddressSelection,
   Network.Core,
   Network.Ipv6Routing,
   Network.ChangeWatchers,
@@ -317,69 +318,77 @@ begin
     (IsMulticastIpv6Address(Destination) and ((Destination[1] and $0F) <= 2));
 end;
 
-{ How well Entry fits as the source for Destination; negative if it
-  may not be used. }
-function SourceScore(Entry: PIpv6InterfaceAddress; constref Destination: TIpv6Address): LongInt;
-var
-  DestinationIsLinkScope: Boolean;
+{ The entry as RFC 6724's rules see a candidate. }
+procedure DescribeCandidate(Entry: PIpv6InterfaceAddress; IsOnOutgoingInterface: Boolean;
+  out Candidate: TSourceCandidate);
 begin
-  if not (Entry^.State in [Ipv6AddressPreferred, Ipv6AddressDeprecated]) then
-    Exit(-1);
-  if Ipv6AddressesEqual(Entry^.Address, Destination) then
-    Exit(100000);
-  DestinationIsLinkScope := HasLinkScope(Destination);
-  if not DestinationIsLinkScope and IsLinkLocalIpv6Address(Entry^.Address) then
-    Exit(-1);
-  Result := 0;
-  if IsLinkLocalIpv6Address(Entry^.Address) = DestinationIsLinkScope then
-    Result := Result + 1000;
-  if Entry^.State = Ipv6AddressPreferred then
-    Result := Result + 500;
-  Result := Result + LongInt(CommonIpv6PrefixLength(Entry^.Address, Destination));
+  Move(Entry^.Address[0], Candidate.Address[0], Ipv6AddressLength);
+  Candidate.PrefixLength := Entry^.PrefixLength;
+  Candidate.IsDeprecated := Entry^.State = Ipv6AddressDeprecated;
+  Candidate.IsTemporary := Entry^.Origin = Ipv6OriginTemporary;
+  Candidate.IsOnOutgoingInterface := IsOnOutgoingInterface;
 end;
 
-{ The best address of one interface; False if it has none that fits. }
-function BestSourceOn(NetworkInterface: PNetworkInterface; constref Destination: TIpv6Address;
-  out Source: TIpv6Address; out Score: LongInt): Boolean;
-var
-  Index: Integer;
-  Entry: PIpv6InterfaceAddress;
-  EntryScore: LongInt;
+{ May Entry (of an interface, the outgoing one or not) be the source of
+  a datagram to Destination at all? }
+function IsCandidate(Entry: PIpv6InterfaceAddress; IsOnOutgoingInterface, DestinationIsLinkScope: Boolean;
+  constref Destination: TIpv6Address): Boolean;
 begin
-  Score := -1;
-  Source := UnspecifiedIpv6Address;
-  for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
-  begin
-    Entry := @NetworkInterface^.Ipv6.Addresses[Index];
-    EntryScore := SourceScore(Entry, Destination);
-    if EntryScore > Score then
-    begin
-      Score := EntryScore;
-      Source := Entry^.Address;
-    end;
-  end;
-  Result := Score >= 0;
+  if not (Entry^.State in [Ipv6AddressPreferred, Ipv6AddressDeprecated]) then
+    Exit(False);
+  if Ipv6AddressesEqual(Entry^.Address, Destination) then
+    Exit(True);
+  { Within the link only the link's own addresses; a link-local address
+    means nothing off its link. }
+  if DestinationIsLinkScope then
+    Exit(IsOnOutgoingInterface);
+  Result := not IsLinkLocalIpv6Address(Entry^.Address);
 end;
 
 function SelectIpv6Source(NetworkInterface: PNetworkInterface; constref Destination: TIpv6Address;
   out Source: TIpv6Address): Boolean;
 var
   Position: Integer;
+  Index: Integer;
   Candidate: PNetworkInterface;
-  Score: LongInt;
+  Entry: PIpv6InterfaceAddress;
+  IsOutgoing: Boolean;
+  DestinationIsLinkScope: Boolean;
+  PreferTemporary: Boolean;
+  Best: TSourceCandidate;
+  Contender: TSourceCandidate;
+  Target: TSelectionAddress;
+  HasBest: Boolean;
 begin
-  if (NetworkInterface <> nil) and BestSourceOn(NetworkInterface, Destination, Source, Score) then
-    Exit(True);
-  if HasLinkScope(Destination) then
-    Exit(False);
+  Source := UnspecifiedIpv6Address;
+  Move(Destination[0], Target[0], Ipv6AddressLength);
+  DestinationIsLinkScope := HasLinkScope(Destination);
+  PreferTemporary := (NetworkInterface <> nil) and
+    ((NetworkInterface^.Ipv6.Options and Ipv6OptionTemporaryAddresses) <> 0);
+  HasBest := False;
   for Position := 0 to NetworkInterfaceCount - 1 do
   begin
     Candidate := NetworkInterfaceAt(Position);
-    if (Candidate <> NetworkInterface) and not Candidate^.IsLoopback and
-       BestSourceOn(Candidate, Destination, Source, Score) then
-      Exit(True);
+    IsOutgoing := Candidate = NetworkInterface;
+    { lo's ::1 is only for what goes through lo. }
+    if Candidate^.IsLoopback and not IsOutgoing then
+      Continue;
+    for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
+    begin
+      Entry := @Candidate^.Ipv6.Addresses[Index];
+      if not IsCandidate(Entry, IsOutgoing, DestinationIsLinkScope, Destination) then
+        Continue;
+      DescribeCandidate(Entry, IsOutgoing, Contender);
+      if not HasBest or (CompareSourceCandidates(Contender, Best, Target, PreferTemporary) < 0) then
+      begin
+        Best := Contender;
+        HasBest := True;
+      end;
+    end;
   end;
-  Result := False;
+  if HasBest then
+    Move(Best.Address[0], Source[0], Ipv6AddressLength);
+  Result := HasBest;
 end;
 
 function HasIpv6Addresses(NetworkInterface: PNetworkInterface): Boolean;

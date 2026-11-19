@@ -21,12 +21,14 @@
   address of the families asked for (an address written as one, then
   /etc/hosts, then DNS: A and AAAA records), in the order to try them.
 
-  IPv6 addresses come first when this machine can reach them: the
-  kernel finds a route and a source address of the right scope (a
-  global address for a global destination; ::1 always), which is asked
-  by connecting a UDP socket without sending anything. Then the IPv4
-  addresses, then the IPv6 ones that cannot be reached. So with a
-  global IPv6 address and a default route IPv6 is preferred, else IPv4.
+  The order is RFC 6724's destination address selection
+  (AddressSelection): for each address the source the kernel would send
+  from (asked by connecting a UDP socket, which sends nothing; none if
+  there is no route), then the addresses without a source last, a
+  source of the destination's scope and label first, then the policy
+  table's precedence (IPv6 before IPv4), the smaller scope, the longest
+  matching prefix. So with a global IPv6 address and a default route
+  IPv6 is preferred, else IPv4.
 }
 unit Sys.HostLookup;
 
@@ -56,6 +58,7 @@ implementation
 
 uses
   Abi.SystemCalls,
+  AddressSelection,
   Sys.Sockets;
 
 const
@@ -77,36 +80,55 @@ begin
   CloseSocket(Socket);
 end;
 
-procedure AppendAddress(var Addresses: TInternetAddressArray; constref Address: TInternetAddress);
+function SelectionAddressOf(constref Address: TInternetAddress): TSelectionAddress;
 begin
-  SetLength(Addresses, Length(Addresses) + 1);
-  Addresses[High(Addresses)] := Address;
+  if Address.Family = AddressFamilyIPv4 then
+    Result := MappedIpv4SelectionAddress(Address.Bytes[0], Address.Bytes[1], Address.Bytes[2], Address.Bytes[3])
+  else
+    Move(Address.Bytes[0], Result[0], SelectionAddressBytes);
+end;
+
+{ The source the kernel would send to Address from; False if it has no
+  route there. }
+function FindSourceFor(constref Address: TInternetAddress; out Source: TSelectionAddress): Boolean;
+var
+  Socket: Int64;
+  Local: TAbiSocketAddress;
+  LocalAddress: TInternetAddress;
+begin
+  FillChar(Source, SizeOf(Source), 0);
+  Socket := CreateSocket(Address.Family, SocketKindDatagram, ProtocolUdp);
+  if Socket < 0 then
+    Exit(False);
+  Result := (ConnectSocket(Socket, MakeSocketAddress(Address, ProbePort)) = ErrorNone) and
+    (GetLocalSocketAddress(Socket, Local) = ErrorNone);
+  CloseSocket(Socket);
+  if not Result then
+    Exit;
+  LocalAddress.Family := Address.Family;
+  Move(Local.Address[0], LocalAddress.Bytes[0], SizeOf(LocalAddress.Bytes));
+  Source := SelectionAddressOf(LocalAddress);
 end;
 
 procedure OrderAddressesForConnecting(var Addresses: TInternetAddressArray);
 var
-  Reachable: TInternetAddressArray;
-  Ipv4: TInternetAddressArray;
-  Unreachable: TInternetAddressArray;
-  Address: TInternetAddress;
+  Candidates: array of TDestinationCandidate;
+  Original: TInternetAddressArray;
+  Index: Integer;
 begin
-  Reachable := nil;
-  Ipv4 := nil;
-  Unreachable := nil;
-  for Address in Addresses do
-    if Address.Family = AddressFamilyIPv4 then
-      AppendAddress(Ipv4, Address)
-    else if Ipv6AddressIsReachable(Address) then
-      AppendAddress(Reachable, Address)
-    else
-      AppendAddress(Unreachable, Address);
-  Addresses := nil;
-  for Address in Reachable do
-    AppendAddress(Addresses, Address);
-  for Address in Ipv4 do
-    AppendAddress(Addresses, Address);
-  for Address in Unreachable do
-    AppendAddress(Addresses, Address);
+  Candidates := nil;
+  SetLength(Candidates, Length(Addresses));
+  for Index := 0 to High(Addresses) do
+  begin
+    Candidates[Index].Address := SelectionAddressOf(Addresses[Index]);
+    Candidates[Index].HasSource := FindSourceFor(Addresses[Index], Candidates[Index].Source);
+    Candidates[Index].SourceIsDeprecated := False;
+    Candidates[Index].OriginalPosition := Index;
+  end;
+  OrderDestinationCandidates(Candidates);
+  Original := Copy(Addresses);
+  for Index := 0 to High(Candidates) do
+    Addresses[Index] := Original[Candidates[Index].OriginalPosition];
 end;
 
 function ResolveHost(const Host: string; Families: LongWord; out Addresses: TInternetAddressArray): LongInt;
