@@ -37,7 +37,12 @@
   compares its output and exit status: contents (sha256sum), every
   cipher suite, redirects, chunked and close-delimited bodies,
   continuing, -S, -O -, the user agent, timeouts, error responses and
-  each certificate failure. Prints a line per check and
+  each certificate failure; keep-alive (several requests on one
+  connection, over HTTP and HTTPS, after redirections and errors),
+  cookies (kept across a redirection, written to and read from cookie
+  files), Basic and Digest authentication (and ~/.netrc), gzip bodies
+  (--compression), --trust-server-names, and recursion over a small
+  site (-r, -l, -np, -A, -R, -p, -k, robots.txt). Prints a line per check and
   "wgettest: N of N checks passed" at the end; exits with 1 if any
   failed.
 }
@@ -67,7 +72,7 @@ const
   Hello = 'Hello from the FreePascalOS test server'#10;
   Trust = '--ca-certificate=ca.pem ';
 
-  CommandTests: array[0..31] of TCommandTest = (
+  CommandTests: array[0..61] of TCommandTest = (
     { Plain HTTP, and the test root for the rest. }
     (Command: 'wget -q http://10.0.2.102/hello.txt && cat hello.txt'; ExpectedOutput: Hello; ExpectedStatus: 0),
     (Command: 'wget -q http://10.0.2.102/hello.txt && ls hello.txt*'; ExpectedOutput: 'hello.txt'#10'hello.txt.1'#10;
@@ -136,7 +141,96 @@ const
     (Command: 'wget -q --no-check-certificate -O - https://10.0.2.105/hello.txt'; ExpectedOutput: Hello;
      ExpectedStatus: 0),
     (Command: 'wget --no-check-certificate -O w.txt https://10.0.2.104/hello.txt 2>&1 | grep -c "^WARNING: ' +
-       'cannot verify"'; ExpectedOutput: '1'#10; ExpectedStatus: 0));
+       'cannot verify"'; ExpectedOutput: '1'#10; ExpectedStatus: 0),
+    { Keep-alive. }
+    (Command: 'wget -q -O - http://10.0.2.102/count http://10.0.2.102/count http://10.0.2.102/count';
+     ExpectedOutput: '1'#10'2'#10'3'#10; ExpectedStatus: 0),
+    (Command: 'wget -q --no-http-keep-alive -O - http://10.0.2.102/count http://10.0.2.102/count';
+     ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'wget -O r.txt http://10.0.2.102/redirect/2 2>&1 | grep -c "^Reusing existing connection to 10.0.2.102:80."';
+     ExpectedOutput: '3'#10; ExpectedStatus: 0),
+    (Command: 'wget -q ' + Trust + '-O - https://10.0.2.101/count https://10.0.2.101/count';
+     ExpectedOutput: '1'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O - http://10.0.2.102/missing http://10.0.2.102/count; echo $?';
+     ExpectedOutput: '2'#10'8'#10; ExpectedStatus: 0),
+
+    { Cookies. }
+    (Command: 'wget -q -O - http://10.0.2.102/cookie/redirect'; ExpectedOutput: 'session=abc123; persistent=yes'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q -O - --no-cookies http://10.0.2.102/cookie/redirect'; ExpectedOutput: 'none'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q -O c.out --save-cookies c1.txt http://10.0.2.102/cookie/set && grep -c persistent c1.txt; ' +
+       'grep -c session c1.txt'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O c.out --save-cookies c2.txt --keep-session-cookies http://10.0.2.102/cookie/set && ' +
+       'grep session c2.txt | cut -f 1,3,5,6,7'; ExpectedOutput: '10.0.2.102'#9'/cookie'#9'0'#9'session'#9'abc123'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q -O - --load-cookies c2.txt http://10.0.2.102/cookie/show';
+     ExpectedOutput: 'session=abc123; persistent=yes'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O - --load-cookies c1.txt http://10.0.2.102/cookie/show'; ExpectedOutput: 'persistent=yes'#10;
+     ExpectedStatus: 0),
+
+    { Authentication. }
+    (Command: 'wget -q -O - http://10.0.2.102/basic; echo $?'; ExpectedOutput: '6'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O - --user=user --password=secret http://10.0.2.102/basic'; ExpectedOutput: 'basic ok'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q -O - --user=user --password=wrong http://10.0.2.102/basic; echo $?'; ExpectedOutput: '6'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q -O - --user=nobody --password=x --http-user=user --http-password=secret ' +
+       'http://10.0.2.102/digest'; ExpectedOutput: 'digest ok'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O - --user=user --password=secret http://10.0.2.102/digest-md5'; ExpectedOutput: 'digest ok'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -O - --user=user --password=secret http://10.0.2.102/digest http://10.0.2.102/digest > d.out ' +
+       '2> d.err; grep -c "response... 401" d.err; cat d.out'; ExpectedOutput: '1'#10'digest ok'#10'digest ok'#10;
+     ExpectedStatus: 0),
+    (Command: 'printf "machine 10.0.2.102 login user password secret\n" > .netrc; export HOME=/tmp/wgettest; ' +
+       'wget -q -O - http://10.0.2.102/basic; wget -q -O - -e netrc=off http://10.0.2.102/basic; echo $?';
+     ExpectedOutput: 'basic ok'#10'6'#10; ExpectedStatus: 0),
+
+    { gzip. }
+    (Command: 'wget -q -O - http://10.0.2.102/accept-encoding; wget -q -O - --compression=auto ' +
+       'http://10.0.2.102/accept-encoding'; ExpectedOutput: 'identity'#10'gzip'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -O plain.txt http://10.0.2.102/gzip.txt; wget -q -O dec.txt --compression=gzip ' +
+       'http://10.0.2.102/gzip.txt; wget -q -O chk.txt --compression=auto http://10.0.2.102/gzip-chunked.txt; ' +
+       'test "$(sha256sum < plain.txt)" = "$(sha256sum < dec.txt)" && test "$(sha256sum < plain.txt)" = ' +
+       '"$(sha256sum < chk.txt)" && head -n 1 dec.txt && tail -n 1 chk.txt';
+     ExpectedOutput: 'line 1 of the compressible text'#10'line 100 of the compressible text'#10; ExpectedStatus: 0),
+    (Command: 'wget -q --compression=auto http://10.0.2.102/archive.gz && gzip -dc archive.gz | tail -n 1; ' +
+       'wget -q --compression=gzip -O arch.txt http://10.0.2.102/archive.gz && tail -n 1 arch.txt';
+     ExpectedOutput: 'line 100 of the compressible text'#10'line 100 of the compressible text'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q --compression=gzip -O bad.txt http://10.0.2.102/gzip-bad.txt; echo $?'; ExpectedOutput: '7'#10;
+     ExpectedStatus: 0),
+
+    { --trust-server-names. }
+    (Command: 'mkdir names && cd names && wget -q http://10.0.2.102/see-other && wget -q --trust-server-names ' +
+       'http://10.0.2.102/see-other && ls'; ExpectedOutput: 'hello.txt'#10'see-other'#10; ExpectedStatus: 0),
+
+    { Recursion over /site/ (robots.txt keeps /site/private/ out). }
+    (Command: 'mkdir r1 && cd r1 && wget -q -r -np http://10.0.2.102/site/ && find 10.0.2.102 -type f | sort';
+     ExpectedOutput: '10.0.2.102/robots.txt'#10'10.0.2.102/site/index.html'#10'10.0.2.102/site/notes.tmp'#10 +
+       '10.0.2.102/site/page1.html'#10'10.0.2.102/site/pic.png'#10'10.0.2.102/site/style.css'#10 +
+       '10.0.2.102/site/sub/deep/deep.png'#10'10.0.2.102/site/sub/deep/page3.html'#10 +
+       '10.0.2.102/site/sub/page2.html'#10; ExpectedStatus: 0),
+    (Command: 'mkdir r2 && cd r2 && wget -q -r -l 1 -np -R tmp http://10.0.2.102/site/ && ' +
+       'find 10.0.2.102 -type f | sort';
+     ExpectedOutput: '10.0.2.102/robots.txt'#10'10.0.2.102/site/index.html'#10'10.0.2.102/site/page1.html'#10 +
+       '10.0.2.102/site/pic.png'#10'10.0.2.102/site/style.css'#10'10.0.2.102/site/sub/page2.html'#10;
+     ExpectedStatus: 0),
+    (Command: 'mkdir r3 && cd r3 && wget -q -r -np -A html http://10.0.2.102/site/ && find 10.0.2.102 -type f | sort';
+     ExpectedOutput: '10.0.2.102/robots.txt'#10'10.0.2.102/site/index.html'#10'10.0.2.102/site/page1.html'#10 +
+       '10.0.2.102/site/sub/deep/page3.html'#10'10.0.2.102/site/sub/page2.html'#10; ExpectedStatus: 0),
+    (Command: 'mkdir r4 && cd r4 && wget -q -p http://10.0.2.102/site/sub/page2.html && find 10.0.2.102 -type f | sort';
+     ExpectedOutput: '10.0.2.102/robots.txt'#10'10.0.2.102/site/pic.png'#10'10.0.2.102/site/sub/page2.html'#10;
+     ExpectedStatus: 0),
+    (Command: 'mkdir r5 && cd r5 && wget -q -r -np -k http://10.0.2.102/site/ && ' +
+       'grep -o "href=[^ >]*" 10.0.2.102/site/index.html';
+     ExpectedOutput: 'href="style.css"'#10'href="page1.html"'#10'href="sub/page2.html"'#10 +
+       'href="http://10.0.2.102/hello.txt"'#10'href="http://10.0.2.102/site/private/secret.html"'#10 +
+       'href="notes.tmp"'#10'href="http://10.0.2.101/hello.txt"'#10; ExpectedStatus: 0),
+    (Command: 'mkdir r6 && cd r6 && wget -q -r -np -e robots=off http://10.0.2.102/site/ && ' +
+       'find 10.0.2.102 -type f | grep -c secret; test -e 10.0.2.102/robots.txt; echo $?';
+     ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'wget -q -r -O x http://10.0.2.102/site/; echo $?'; ExpectedOutput: '2'#10; ExpectedStatus: 0));
 
 var
   PassedCount: Integer;
