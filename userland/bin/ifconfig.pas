@@ -126,6 +126,8 @@ begin
     Line := Line + '  tentative';
   if (Entry.Flags and InterfaceAddressFlagDeprecated) <> 0 then
     Line := Line + '  deprecated';
+  if (Entry.Flags and InterfaceAddressFlagDhcp) <> 0 then
+    Line := Line + '  dhcp';
   Say(Line);
 end;
 

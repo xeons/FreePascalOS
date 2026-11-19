@@ -65,7 +65,11 @@ uses
   Network.Ipv6AddressList,
   Network.Ipv6Interfaces,
   Network.Ipv6,
+  Network.Core,
   Debug.Output;
+
+const
+  NanosecondsPerSecond = QWord(1000) * 1000 * 1000;
 
 procedure WriteChange(NetworkInterface: PNetworkInterface; What: PChar);
 var
@@ -154,28 +158,48 @@ begin
   CopyMemory(@Result[0], @Address.Address[0], Ipv6AddressLength);
 end;
 
-{ InterfaceChangeAddress: IPv4 replaces the address, IPv6 adds one. }
-function ChangeAddress(NetworkInterface: PNetworkInterface; constref Address: TAbiInterfaceAddress): LongInt;
+{ The NetworkNow time Seconds from now (InfiniteAddressLifetime: for
+  ever). }
+function LifetimeEnd(Seconds: LongWord): QWord;
+begin
+  if Seconds = InfiniteAddressLifetime then
+    Result := Ipv6Forever
+  else
+    Result := NetworkNow + QWord(Seconds) * NanosecondsPerSecond;
+end;
+
+{ InterfaceChangeAddress: IPv4 replaces the address, IPv6 adds one (a
+  DHCPv6 lease's, with InterfaceChangeAddressLifetimes). }
+function ChangeAddress(NetworkInterface: PNetworkInterface; constref Configuration: TAbiInterfaceConfiguration): LongInt;
 var
   Address6: TIpv6Address;
+  ValidUntil: QWord;
+  PreferredUntil: QWord;
 begin
-  case Address.Family of
+  case Configuration.Address.Family of
     AddressFamilyUnspecified:
       begin
         RemoveInterfaceAddress(NetworkInterface);
         Result := ErrorNone;
       end;
     AddressFamilyIPv4:
-      Result := SetInterfaceAddress(NetworkInterface, ReadIpv4Address(@Address.Address[0]), Address.PrefixLength);
+      Result := SetInterfaceAddress(NetworkInterface, ReadIpv4Address(@Configuration.Address.Address[0]), Configuration.Address.PrefixLength);
     AddressFamilyIPv6:
       begin
-        Address6 := Ipv6AddressOf(Address);
+        Address6 := Ipv6AddressOf(Configuration.Address);
         if NetworkInterface^.Ipv6.Mode = Ipv6ModeOff then
           Exit(ErrorNetworkUnreachable);
         if IsLinkLocalIpv6Address(Address6) or IsLoopbackIpv6Address(Address6) then
           Exit(ErrorInvalidArgument);
-        Result := AddIpv6Address(NetworkInterface, Address6, Address.PrefixLength, Ipv6OriginManual, Ipv6Forever,
-          Ipv6Forever);
+        if (Configuration.Changes and InterfaceChangeAddressLifetimes) = 0 then
+          Exit(AddIpv6Address(NetworkInterface, Address6, Configuration.Address.PrefixLength, Ipv6OriginManual, Ipv6Forever,
+            Ipv6Forever));
+        if (Configuration.ValidSeconds = 0) or (Configuration.PreferredSeconds > Configuration.ValidSeconds) then
+          Exit(ErrorInvalidArgument);
+        ValidUntil := LifetimeEnd(Configuration.ValidSeconds);
+        PreferredUntil := LifetimeEnd(Configuration.PreferredSeconds);
+        Result := AddIpv6Address(NetworkInterface, Address6, Configuration.Address.PrefixLength, Ipv6OriginDhcp, ValidUntil,
+          PreferredUntil);
       end;
   else
     Result := ErrorAddressFamilyNotSupported;
@@ -203,7 +227,7 @@ end;
 function ConfigureInterface(constref Configuration: TAbiInterfaceConfiguration): LongInt;
 const
   KnownChanges = InterfaceChangeAddress or InterfaceChangeUp or InterfaceChangeMtu or InterfaceChangeIpv6Mode or
-    InterfaceChangeRemoveAddress;
+    InterfaceChangeRemoveAddress or InterfaceChangeAddressLifetimes;
 var
   Name: array[0..NetworkInterfaceNameCapacity - 1] of Char;
   NetworkInterface: PNetworkInterface;
@@ -235,7 +259,7 @@ begin
   end
   else if (Configuration.Changes and InterfaceChangeAddress) <> 0 then
   begin
-    Result := ChangeAddress(NetworkInterface, Configuration.Address);
+    Result := ChangeAddress(NetworkInterface, Configuration);
     if Result <> ErrorNone then
       Exit;
   end;
@@ -253,6 +277,7 @@ begin
   case Entry^.Origin of
     Ipv6OriginAutomatic: Result := Result or InterfaceAddressFlagAutomatic;
     Ipv6OriginLinkLocal: Result := Result or InterfaceAddressFlagLinkLocal;
+    Ipv6OriginDhcp: Result := Result or InterfaceAddressFlagDhcp;
   end;
 end;
 
@@ -266,6 +291,7 @@ var
 begin
   Description.Ipv6Mode := NetworkInterface^.Ipv6.Mode;
   Description.Ipv6HopLimit := NetworkInterface^.Ipv6.HopLimit;
+  Description.Ipv6RouterFlags := NetworkInterface^.Ipv6.RouterFlags;
   Description.Ipv6Mtu := Ipv6LinkMtu(NetworkInterface);
   for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
   begin
