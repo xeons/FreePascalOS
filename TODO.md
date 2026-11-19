@@ -623,9 +623,12 @@ normalized (0-65535), not pixels.
 - [x] `netstat` (`-tuwlanp`, `-r`, `-i`, `-s`; the socket listing gives
       the owner process, protocol counters in the kernel)
 - [x] `nc` (OpenBSD options: `-l -k -u -z -v -w -n -N -q -p -d`)
-- [ ] `ss` (on top of netstat's pieces)
-- [ ] Reverse lookups and a services list for `netstat` without `-n`
-      (`Netstat.Names`)
+- [x] `ss` (on top of netstat's pieces: -t -u -w -x -l -a -n -r -p -e -H
+      -4/-6 -s, state filters and sport/dport/src/dst expressions)
+- [ ] `ss -i` (TCP internals: the kernel keeps no window or round trip
+      time to show yet); `ss -x` once there are local sockets
+- [x] Reverse lookups and a services list for `netstat` without `-n`
+      (`Netstat.Names`: /etc/hosts, PTR with a short timeout, /etc/ports)
 - [x] `wget` (HTTP/1.1 and HTTPS: -O, -q, -S, -c, -T, -t, -U, redirects,
       chunked bodies, --no-check-certificate, --ca-certificate, --ciphers,
       a progress line); `wgettest` in QEMU against test servers on the host
@@ -637,8 +640,12 @@ normalized (0-65535), not pixels.
       P-256 key exchange (only x25519 is offered), session resumption,
       OCSP / revocation, TLS 1.2 for servers without 1.3, Ed25519 and P-521
       certificates
-- [ ] wget: keep-alive (one request per connection now), cookies,
-      authentication, recursion (-r), --trust-server-names, gzip
+- [x] wget: keep-alive, cookies (RFC 6265, Netscape cookie files),
+      Basic and Digest authentication (RFC 7616) and .netrc, recursion
+      (-r -l -np -k -p -A -R -P -nH -nd, robots.txt), --trust-server-names,
+      gzip (--compression)
+- [ ] wget later: -N (timestamps), -nc, --spider, -H with -D, CSS url()
+      links for -p, --ask-password, SHA-512-256 and auth-int Digest
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no

@@ -3795,7 +3795,7 @@ beneath BSD-style sockets that are handles like any other.
   the network service (DHCP, settings, state files)   host nslookup hostname
   resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages
   programs: Sys.Sockets, Sys.NetworkInterfaces,    ping ifconfig route arp ndp
-            Sys.AddressText                         netstat nc wget
+            Sys.AddressText                         netstat ss nc wget
 =========== system calls 104-127 (Processes.SocketCalls, .NetworkCalls) ====
   Network.SocketOperations   bind listen accept connect send receive ...
   Network.Sockets            the socket object, readiness events, waits
@@ -4414,8 +4414,35 @@ owner as "pid/name" from a process snapshot), `-r` the routes with
 net-tools' columns (the sorting and flags now in
 `Sys.NetworkInterfaces`, shared with route), `-i` the interfaces and
 their counters, `-s` the protocol counters in net-tools' words. Every
-endpoint goes through `Netstat.Names.FormatEndpoint`, where names will
-come once there are reverse lookups; addresses are numeric until then.
+endpoint goes through `Netstat.Names`: without `-n` a host is named by
+`/etc/hosts`, else by a reverse (PTR) lookup through the system's DNS
+servers with a short timeout (one second, one try; answers are kept
+for the run, and after a server fails to answer no more are asked);
+the wildcard address stays a number. A port is named from
+`/etc/ports` (`Netstat.Services`, the services(5) format: "name
+port/protocol aliases"; it is not called /etc/services because that is
+the service manager's folder of definitions), for the socket's
+protocol. The routing table stays numeric.
+
+**ss** (`userland/bin/ss.pas`, units in `userland/ss`, built on
+netstat's units) in the manner of iproute2: the same list of sockets
+(`Ss.Sockets`: netid tcp, udp, or raw for ICMP; ss's states, a UDP or
+ICMP socket with a peer ESTAB, one without UNCONN), connected ones by
+default (no LISTEN, UNCONN, TIME-WAIT or SYN-RECV), `-l` listening and
+unconnected, `-a` all; `-t -u -w -x` the kinds (`-x`, local sockets:
+there are none), `-4 -6`, `-n` ports as numbers, `-r` hosts by name
+(ports are named by default, hosts not, as iproute2 has it), `-p`
+`users:(("nc",pid=412))`, `-e` the owner's user id, `-H` no header,
+`-s` the counts (`Ss.Summary`). The kernel keeps no TCP internals
+(window, round trip time) to show, so `-i` adds nothing yet. The
+table (`Ss.Table`) leaves out Netid when one kind is asked for and
+State when one state is, and sizes each column to its widest cell. The
+filter (`Ss.Filters`) is iproute2's: `state`/`exclude` with state names
+and groups (connected, synchronized, bucket, big, all), then
+`sport`/`dport` compared with = != < > <= >= (or eq, ne, lt, gt, le,
+ge) against `:22` or a service name, `src`/`dst` against an address
+with a prefix and a port (`10.0.0.0/8`, `[::1]:22`, `*:80`), joined
+with and, or, not and parentheses, in separate words or one.
 
 **nc** (`userland/nc`, `Netcat.*`) with OpenBSD's options. One thread
 relays (`Netcat.Relay`): it waits on the standard input and the socket
@@ -4475,7 +4502,14 @@ sent both ways by nc over loopback with matching sha256 sums, a UDP
 round trip, `nc -z` on an open and a closed port and a range, two
 ESTABLISHED ends in `netstat -tn`, the default route in `netstat -r`,
 lo and eth0 in `netstat -i`, and the ICMP counters of `netstat -s`
-growing after a ping. The session test checks
+growing after a ping; names: a listener on 8080 shown as `http-alt` by
+`netstat -tl` and `ss -tl` and picked by `ss sport = :http-alt`, a
+connection over 127.0.0.1 shown as `localhost` by `netstat -t` and `ss
+-r`, ss's state and port filters, its header, `-s` and `-x`, and a
+filter it cannot read. `make netstat-test` checks the ports file's
+parser (and the installed /etc/ports) and ss's filters on the host.
+Reverse DNS is not checked in QEMU: dnstest's server answers PTR, but
+netstat asks the system's DNS servers. The session test checks
 that the network service configured eth0. The QEMU command lines of all
 tests and `make run` have a virtio-net card on user networking.
 
@@ -4488,7 +4522,11 @@ cannot do 1.3 is refused with "protocol version" (most servers can).
 
 ```
   wget (userland/wget: Wget.Urls, .Headers, .Chunks, .Connections,
-        .Requests, .Bodies, .Transfer, .Progress, .Files, .Settings)
+        .Requests, .Bodies, .Sinks, .Transfer, .Progress, .Files,
+        .Settings, .Sessions, .ConnectionPool; .Cookies, .CookieDates,
+        .CookieFiles; .Authentication, .Challenges, .Digest, .Netrc;
+        .Recursion, .Links, .Robots, .RobotsCache, .Patterns,
+        .LocalPaths, .Downloads, .Converter, .LinkConversion, .FileText)
 =========== Tls.Sessions: over a socket, the system's roots and clock ======
   Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
   Tls.Client           create, handshake, read, write, close, errors
@@ -4648,13 +4686,14 @@ error details and the server's certificate list are strings and
 dynamic arrays; the DER, keys and records stay bytes.
 
 **wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
-HTTP/1.1, one request per connection ("Connection: close"): the URL
+HTTP/1.1, keeping a connection alive between requests: the URL
 (`Wget.Urls`: http and https, no user names or IPv6 literals, unsafe
 bytes percent-encoded, a Location resolved as RFC 3986 says), the host
 looked up by `Sys.HostNames` (numeric addresses need no DNS), a
 non-blocking connect within the timeout and TLS for https
 (`Wget.Connections`), the request (`Wget.Requests`: Host, User-Agent,
-Accept, identity encoding, Range when continuing), the head
+Accept, Accept-Encoding, Range when continuing, Authorization, Cookie,
+"Connection: Keep-Alive"), the head
 (`Wget.Headers`: 1xx skipped; a Content-Length that is not a number,
 two that differ, and transfer codings other than chunked are refused)
 and the body (`Wget.Bodies`, `Wget.Chunks`: by length, chunked with
@@ -4675,8 +4714,76 @@ error responses are not tried again. `-S` shows the response heads,
 names other roots, `--ciphers` the suites. On a terminal a progress
 line (`Wget.Progress`: name, percent, bar, size, speed, estimate) is
 redrawn five times a second; elsewhere there is none. Messages and exit
-statuses are GNU wget's (4 network, 5 certificate, 7 protocol, 8 server
-error...).
+statuses are GNU wget's (4 network, 5 certificate, 6 authentication,
+7 protocol, 8 server error...).
+
+What one run keeps from request to request is a `TWgetSession`
+(`Wget.Sessions`): the settings, the cookie jar, the kept connection
+and each server's authentication.
+
+- **Keep-alive** (`Wget.ConnectionPool`): as GNU wget, one connection
+  is kept, for the scheme, host and port it went to; the next request
+  there (a redirection, another URL of the command line, the next file
+  of a recursion) uses it ("Reusing existing connection to host:80.").
+  It is kept only when the response's body had a known end (a length
+  or chunks) and the server did not close (HTTP/1.0 must say
+  keep-alive); the bodies of redirections and errors are read and
+  dropped for that (up to 1 MiB, else the connection is closed). A
+  kept connection the server closed meanwhile shows as a failed send or
+  no answer, and the request goes once more on a new one.
+  `--no-http-keep-alive` sends "Connection: close".
+- **Cookies** (`Wget.Cookies`, `Wget.CookieDates`, `Wget.CookieFiles`):
+  a jar as RFC 6265 has one: Set-Cookie with Expires (its date
+  algorithm), Max-Age (which wins), Domain (domain-matching, no
+  top-level domains, never inside an IP address), Path (the default
+  path is the request's folder), Secure and HttpOnly; a request gets the
+  matching cookies, longer paths first. `--load-cookies` and
+  `--save-cookies` read and write Netscape's cookie file format (tabs,
+  TRUE/FALSE, `#HttpOnly_`, expiry 0 for session cookies, which are
+  written only with `--keep-session-cookies`); `--no-cookies` turns the
+  jar off.
+- **Authentication** (`Wget.Authentication`, `Wget.Challenges`,
+  `Wget.Digest`, `Wget.Netrc`): nothing goes until a 401; then the best
+  challenge wget can answer is taken (Digest SHA-256, Digest MD5, Basic)
+  and the request made again, once (again only for a stale nonce); a
+  server that refuses ends with "Username/Password Authentication
+  Failed." and status 6. Digest is RFC 7616's: MD5, MD5-sess, SHA-256,
+  SHA-256-sess, qop auth or none, userhash, a random client nonce and
+  the count going up on later requests with the same nonce, which carry
+  the credentials at once (Basic too). The credentials are
+  `--http-user`/`--http-password`, else `--user`/`--password`, else the
+  host's line in `~/.netrc` (machine, default, macdef skipped; `-e
+  netrc=off` turns it off).
+- **gzip** (`Wget.Sinks`): bodies go through a sink chain (the file, or
+  nothing, with a decoder in front when wanted). `--compression=auto`
+  or `gzip` asks for gzip (not when continuing) and decodes gzip,
+  x-gzip or deflate on the way through libcompression's `TInflater`;
+  auto leaves .gz and .tgz files as they are; `none` (the default, as
+  GNU wget's) asks for identity. A decoded body that breaks starts
+  again rather than continuing, and damaged data is status 7.
+- **--trust-server-names** names the file after the URL the redirections
+  end at.
+- **Recursion** (`Wget.Recursion`): `-r` breadth first from each URL,
+  into `host/path` files (`Wget.LocalPaths`: a folder's index.html, the
+  query kept in the name, `-P` a folder in front, `-nH` no host folder,
+  `-nd` no folders), overwriting what is there. A page's links
+  (`Wget.Links`: a small tag scanner that skips comments, scripts and
+  styles and decodes character references; followed links are a, area,
+  link, frame, iframe and meta refresh, requisites img, script,
+  stylesheet and icon links, input, embed, audio/video/source/track,
+  object and backgrounds; <base> respected) are followed below `-l` (5;
+  0 or inf: no limit), and requisites are fetched at any depth with
+  `-p` (alone, `-p` fetches one page and what it needs). Only links to
+  the same host are followed, with `-np` none above the starting
+  folder. Each server's robots.txt is fetched first and kept
+  (`Wget.Robots`, RFC 9309: the group naming wget, else *, the longest
+  rule winning, * and $ in rules); `-e robots=off` ignores it. `-A`/`-R`
+  (`Wget.Patterns`) take suffixes or wildcard patterns; a page they
+  reject is fetched for its links and then removed. `-k`
+  (`Wget.Converter`, `Wget.LinkConversion`) rewrites the links of every
+  saved page at the end: to a relative path for what was fetched (with
+  "?" and "#" escaped), to the absolute URL for relative links to what
+  was not. `-O` cannot be used with -r or -p.
 
 **Tests.** On the host: `make crypto-test` (RFC 8439's Poly1305 and
 AEAD vectors with the reduction edge cases, the GCM specification's
@@ -4693,7 +4800,13 @@ self-signatures checked; then `run-interop.sh`: whole connections to
 OpenSSL's s_server with every suite, ECDSA and RSA-PSS servers, a
 certificate request, key updates both ways and each failure) and
 `make wget-test` (URLs with RFC 3986's resolution examples, file names,
-response heads, chunked bodies fed in pieces of every size). In QEMU,
+response heads with their repeated fields and keep-alive rules,
+chunked bodies fed in pieces of every size, RFC 6265's dates, cookie
+parsing, domain and path matching and ordering, Netscape cookie files
+both ways, WWW-Authenticate challenges, Digest against RFC 7616's MD5
+and SHA-256 and RFC 2617's examples, Basic against RFC 7617's, .netrc,
+link extraction, robots.txt, accept and reject lists, local paths,
+relative links and link conversion). In QEMU,
 coretest runs `wgettest`, which fetches from test servers on the host
 that QEMU's user network reaches through `guestfwd`
 (scripts/test-web-server.py over HTTP and HTTPS with the test
@@ -4701,7 +4814,15 @@ certificates, and `openssl s_server -www`): contents by sha256sum,
 every suite, redirects, chunked and close-delimited bodies, continuing,
 -S, the user agent, a timeout, a 404, and a name mismatch, an unknown
 authority and an expired certificate each refused (and accepted with
---no-check-certificate). test-qemu.sh says so and stops when python3
+--no-check-certificate); the server keeps connections alive, so
+wgettest also checks several requests over one connection (HTTP and
+HTTPS, after redirections and a 404, and not with
+--no-http-keep-alive), cookies across a redirection and through cookie
+files, Basic and Digest (both algorithms, the credentials sent at once
+the second time, ~/.netrc), gzip bodies (plain, chunked, a .gz left
+alone, damaged data), --trust-server-names, and recursion over a small
+site under /site/ (-r, -l 1, -np, -A, -R, -p, -k, robots.txt and -e
+robots=off). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
 ### The SSH server
