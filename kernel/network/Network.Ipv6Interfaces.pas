@@ -83,6 +83,7 @@ uses
   Network.InterfaceIdentifiers,
   Network.TemporaryAddresses,
   Network.Ipv6Routing,
+  Network.Ipv6DestinationCache,
   Network.NeighborCache,
   Network.NeighborMessages,
   Network.RouterDiscovery,
@@ -186,6 +187,7 @@ begin
   StopMldReports(NetworkInterface);
   RemoveIpv6AddressesOf(NetworkInterface, [Ipv6OriginLinkLocal, Ipv6OriginLoopback]);
   ForgetIpv6Neighbors(NetworkInterface);
+  ForgetIpv6Destinations(NetworkInterface);
   for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
   begin
     Entry := @NetworkInterface^.Ipv6.Addresses[Index];
@@ -418,6 +420,7 @@ var
 begin
   for Position := 0 to NetworkInterfaceCount - 1 do
     RunInterfaceTimers(NetworkInterfaceAt(Position), Now);
+  RunIpv6DestinationTimers(Now);
   if RunIpv6RouteTimers(Now) then
     NoteNetworkChange;
 end;

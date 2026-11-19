@@ -33,11 +33,13 @@
   lo; one to a link-local address or a multicast group leaves by the
   interface its zone names (the socket's interface, the address's scope
   id, else the first Ethernet interface with IPv6); others follow the
-  routes (Network.Ipv6Routing). Its source is chosen from the
-  addresses of the interface it leaves by (Network.Ipv6AddressList).
-  Multicast goes to its 33:33 Ethernet address, the rest to the next
-  hop's through the neighbour cache. Nothing is sent in fragments: a
-  datagram larger than the link's MTU fails with ErrorMessageTooLong.
+  routes (Network.Ipv6Routing), or the first hop a redirect gave
+  (Network.Ipv6DestinationCache). Its source is chosen by RFC 6724
+  (Network.Ipv6AddressList). Multicast goes to its 33:33 Ethernet
+  address, the rest to the next hop's through the neighbour cache. A
+  datagram larger than the path MTU (the link's, or what a Packet Too
+  Big said) is sent in fragments (Network.FragmentBuilder), each with
+  the same random identification.
 }
 unit Network.Ipv6;
 
@@ -87,8 +89,13 @@ function SendIpv6(Packet: PPacket; constref Source, Destination: TIpv6Address; N
   as duplicate address detection needs). Takes the packet. }
 function TransmitIpv6(Packet: PPacket; constref Source, Destination: TIpv6Address; NextHeader, HopLimit: Byte;
   NetworkInterface: PNetworkInterface; constref NextHop: TIpv6Address): LongInt;
-{ The largest payload a datagram to Destination can carry; 0 if there
-  is no route. }
+{ Sends a payload too large for a packet (Payload, PayloadLength bytes:
+  the upper-layer header and data) in fragments, routed as SendIpv6
+  does. }
+function SendLargeIpv6(Payload: PByte; PayloadLength: LongWord; constref Source, Destination: TIpv6Address;
+  NextHeader, HopLimit: Byte; ScopeInterface: PNetworkInterface): LongInt;
+{ The largest payload a datagram to Destination can carry without
+  fragments (the path MTU less the header); 0 if there is no route. }
 function Ipv6PayloadLimit(constref Destination: TIpv6Address; ScopeInterface: PNetworkInterface): LongWord;
 { The MTU of IPv6 on the interface: what a router advertised, else the
   interface's. }
@@ -108,6 +115,9 @@ uses
   Network.Ipv6Routing,
   Network.Ipv6Headers,
   Network.Ipv6Fragments,
+  Network.Ipv6DestinationCache,
+  Network.FragmentBuilder,
+  Network.RandomNumbers,
   Network.NeighborCache,
   Network.Ethernet,
   Network.Loopback,
@@ -262,6 +272,8 @@ end;
 
 function RouteIpv6Datagram(constref Destination: TIpv6Address; ScopeInterface: PNetworkInterface;
   out NetworkInterface: PNetworkInterface; out NextHop: TIpv6Address; out Source: TIpv6Address): LongInt;
+var
+  Redirected: TIpv6Address;
 begin
   NextHop := Destination;
   Source := UnspecifiedIpv6Address;
@@ -280,8 +292,14 @@ begin
     if (NetworkInterface = nil) or not InterfaceIsUsable(NetworkInterface) then
       Exit(ErrorNetworkUnreachable);
   end
-  else if not LookupIpv6Route(Destination, ScopeInterface, NetworkInterface, NextHop) then
-    Exit(ErrorNetworkUnreachable);
+  else
+  begin
+    if not LookupIpv6Route(Destination, ScopeInterface, NetworkInterface, NextHop) then
+      Exit(ErrorNetworkUnreachable);
+    { A redirect knows a better first hop on the same link. }
+    if FindIpv6Redirect(NetworkInterface, Destination, Redirected) then
+      NextHop := Redirected;
+  end;
   if NetworkInterface^.Ipv6.Mode = Ipv6ModeOff then
     Exit(ErrorNetworkUnreachable);
   if not SelectIpv6Source(NetworkInterface, Destination, Source) then
@@ -297,7 +315,7 @@ var
 begin
   if RouteIpv6Datagram(Destination, ScopeInterface, NetworkInterface, NextHop, Source) <> ErrorNone then
     Exit(0);
-  Result := Ipv6LinkMtu(NetworkInterface) - Ipv6HeaderBytes;
+  Result := Ipv6PathMtu(NetworkInterface, Destination) - Ipv6HeaderBytes;
 end;
 
 { Counts an ICMPv6 message going out (behind a hop-by-hop header too). }
@@ -324,18 +342,64 @@ begin
   CopyMemory(Header + 24, @Destination[0], Ipv6AddressLength);
 end;
 
+{ Hands a whole datagram (header first) to the link: lo, a multicast
+  group's Ethernet address, or the next hop through the neighbour
+  cache. Takes the packet. }
+procedure DeliverToLink(Packet: PPacket; constref Destination: TIpv6Address; NetworkInterface: PNetworkInterface;
+  constref NextHop: TIpv6Address);
+begin
+  Packet^.NetworkInterface := NetworkInterface;
+  if NetworkInterface^.IsLoopback then
+    TransmitInterfaceFrame(NetworkInterface, Packet)
+  else if IsMulticastIpv6Address(Destination) then
+    SendEthernetFrame(NetworkInterface, MulticastEthernetAddress(Destination), EtherTypeIpv6, Packet)
+  else
+    SendToIpv6Neighbor(NetworkInterface, NextHop, Packet);
+end;
+
+{ Cuts the datagram at Datagram (header first, Length bytes) into
+  fragments of at most Mtu bytes and sends each. }
+function SendFragments(Datagram: PByte; Length, Mtu: LongWord; constref Destination: TIpv6Address;
+  NetworkInterface: PNetworkInterface; constref NextHop: TIpv6Address): LongInt;
+var
+  Plan: TFragmentPlan;
+  Identification: LongWord;
+  Index: LongWord;
+  Fragment: PPacket;
+  Space: PByte;
+  FragmentLength: LongWord;
+begin
+  if (Mtu > PacketCapacity - PacketHeadroom) or not PlanIpv6Fragments(Datagram, Length, Mtu, Plan) then
+  begin
+    Inc(NetworkStatistics.Ipv6.SendDiscards);
+    Exit(ErrorMessageTooLong);
+  end;
+  Identification := LongWord(NetworkRandom);
+  Inc(NetworkStatistics.Ipv6.FragmentedDatagrams);
+  for Index := 0 to Plan.FragmentCount - 1 do
+  begin
+    Fragment := AllocatePacket(PacketHeadroom);
+    if Fragment = nil then
+    begin
+      Inc(NetworkStatistics.Ipv6.SendDiscards);
+      Exit(ErrorOutOfMemory);
+    end;
+    Space := AppendToPacket(Fragment, Mtu);
+    FragmentLength := BuildIpv6Fragment(Datagram, Plan, Index, Identification, Space);
+    Fragment^.Length := FragmentLength;
+    Inc(NetworkStatistics.Ipv6.FragmentsCreated);
+    DeliverToLink(Fragment, Destination, NetworkInterface, NextHop);
+  end;
+  Result := ErrorNone;
+end;
+
 function TransmitIpv6(Packet: PPacket; constref Source, Destination: TIpv6Address; NextHeader, HopLimit: Byte;
   NetworkInterface: PNetworkInterface; constref NextHop: TIpv6Address): LongInt;
 var
   Header: PByte;
+  Mtu: LongWord;
 begin
   CountOutgoingIcmpv6(Packet, NextHeader);
-  if Packet^.Length + Ipv6HeaderBytes > Ipv6LinkMtu(NetworkInterface) then
-  begin
-    Inc(NetworkStatistics.Ipv6.SendDiscards);
-    FreePacket(Packet);
-    Exit(ErrorMessageTooLong);
-  end;
   Header := PrependToPacket(Packet, Ipv6HeaderBytes);
   if Header = nil then
   begin
@@ -346,14 +410,53 @@ begin
   if HopLimit = 0 then
     HopLimit := NetworkInterface^.Ipv6.HopLimit;
   WriteHeader(Header, Packet^.Length - Ipv6HeaderBytes, Source, Destination, NextHeader, HopLimit);
-  Packet^.NetworkInterface := NetworkInterface;
-  if NetworkInterface^.IsLoopback then
-    TransmitInterfaceFrame(NetworkInterface, Packet)
-  else if IsMulticastIpv6Address(Destination) then
-    SendEthernetFrame(NetworkInterface, MulticastEthernetAddress(Destination), EtherTypeIpv6, Packet)
-  else
-    SendToIpv6Neighbor(NetworkInterface, NextHop, Packet);
-  Result := ErrorNone;
+  Mtu := Ipv6PathMtu(NetworkInterface, Destination);
+  if Packet^.Length <= Mtu then
+  begin
+    DeliverToLink(Packet, Destination, NetworkInterface, NextHop);
+    Exit(ErrorNone);
+  end;
+  Result := SendFragments(Header, Packet^.Length, Mtu, Destination, NetworkInterface, NextHop);
+  FreePacket(Packet);
+end;
+
+function SendLargeIpv6(Payload: PByte; PayloadLength: LongWord; constref Source, Destination: TIpv6Address;
+  NextHeader, HopLimit: Byte; ScopeInterface: PNetworkInterface): LongInt;
+var
+  NetworkInterface: PNetworkInterface;
+  NextHop: TIpv6Address;
+  RoutedSource: TIpv6Address;
+  ChosenSource: TIpv6Address;
+  Datagram: PByte;
+begin
+  Inc(NetworkStatistics.Ipv6.SendRequests);
+  if PayloadLength > $FFFF then
+  begin
+    Inc(NetworkStatistics.Ipv6.SendDiscards);
+    Exit(ErrorMessageTooLong);
+  end;
+  Result := RouteIpv6Datagram(Destination, ScopeInterface, NetworkInterface, NextHop, RoutedSource);
+  if Result <> ErrorNone then
+  begin
+    Inc(NetworkStatistics.Ipv6.NoRoutes);
+    Exit;
+  end;
+  ChosenSource := Source;
+  if IsUnspecifiedIpv6Address(ChosenSource) then
+    ChosenSource := RoutedSource;
+  Datagram := AllocateKernelMemory(Ipv6HeaderBytes + PayloadLength);
+  if Datagram = nil then
+  begin
+    Inc(NetworkStatistics.Ipv6.SendDiscards);
+    Exit(ErrorOutOfMemory);
+  end;
+  if HopLimit = 0 then
+    HopLimit := NetworkInterface^.Ipv6.HopLimit;
+  WriteHeader(Datagram, PayloadLength, ChosenSource, Destination, NextHeader, HopLimit);
+  CopyMemory(Datagram + Ipv6HeaderBytes, Payload, PayloadLength);
+  Result := SendFragments(Datagram, Ipv6HeaderBytes + PayloadLength, Ipv6PathMtu(NetworkInterface, Destination),
+    Destination, NetworkInterface, NextHop);
+  FreeKernelMemory(Datagram);
 end;
 
 function SendIpv6(Packet: PPacket; constref Source, Destination: TIpv6Address; NextHeader, HopLimit: Byte;

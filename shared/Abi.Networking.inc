@@ -545,6 +545,10 @@ type
     ReassemblyFragments: QWord;
     Reassembled: QWord;
     ReassemblyFailures: QWord;
+    { Datagrams sent in fragments, and the fragments made of them (IPv6:
+      larger than the path MTU). }
+    FragmentedDatagrams: QWord;
+    FragmentsCreated: QWord;
   end;
 
 const

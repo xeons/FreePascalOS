@@ -44,6 +44,10 @@ function ChooseSourceAddress(constref Destination: TNetworkEndpoint; BoundInterf
   Source (unspecified: chosen) to Destination. Takes the packet. }
 function SendIpPacket(Packet: PPacket; constref Source, Destination: TNetworkEndpoint; Protocol, HopLimit: Byte;
   DontFragment: Boolean; BoundInterface: PNetworkInterface): LongInt;
+{ IPv6 only: sends a payload too large for one packet (the protocol's
+  header and data in a buffer of the caller's) in fragments. }
+function SendLargeIpPayload(Payload: PByte; Length: LongWord; constref Source, Destination: TNetworkEndpoint;
+  Protocol, HopLimit: Byte; BoundInterface: PNetworkInterface): LongInt;
 { The largest payload a datagram to Destination can carry; 0 if there
   is no route. }
 function IpPayloadLimit(constref Destination: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
@@ -104,6 +108,15 @@ begin
   else
     Result := SendIpv4(Packet, Source.Address, Destination.Address, Protocol, HopLimit, DontFragment,
       BoundInterface);
+end;
+
+function SendLargeIpPayload(Payload: PByte; Length: LongWord; constref Source, Destination: TNetworkEndpoint;
+  Protocol, HopLimit: Byte; BoundInterface: PNetworkInterface): LongInt;
+begin
+  if Destination.Family <> AddressFamilyIPv6 then
+    Exit(ErrorMessageTooLong);
+  Result := SendLargeIpv6(Payload, Length, Source.Address6, Destination.Address6, Protocol, HopLimit,
+    ScopeInterfaceOf(Destination, BoundInterface));
 end;
 
 function IpPayloadLimit(constref Destination: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;

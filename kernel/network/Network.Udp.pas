@@ -25,8 +25,10 @@
   the sender gets an ICMP port unreachable (not for a broadcast). The
   checksum is checked when the sender gave one.
 
-  Sending: a datagram must fit one frame (no fragments), a broadcast
-  needs SocketOptionBroadcast. A connected socket learns of a port
+  Sending: over IPv4 a datagram must fit one frame (no fragments); over
+  IPv6 it may be as large as an IPv6 payload, and goes in fragments when
+  it is larger than the path MTU. A broadcast needs
+  SocketOptionBroadcast. A connected socket learns of a port
   unreachable that comes back (its next call fails with
   ErrorConnectionRefused), as on other systems.
 }
@@ -64,6 +66,7 @@ uses
   Network.ByteOrder,
   Network.Checksums,
   Network.Packets,
+  Memory.KernelHeap,
   Network.Interfaces,
   Network.DatagramSockets,
   Network.IpOutput,
@@ -211,6 +214,54 @@ begin
   end;
 end;
 
+{ Writes the UDP header (with its checksum) in front of the data at
+  Header + UdpHeaderBytes. }
+procedure WriteUdpHeader(Header: PByte; SourcePort: Word; constref Source, Target: TNetworkEndpoint;
+  Length: LongWord);
+var
+  Sum: LongWord;
+  Checksum: Word;
+begin
+  WriteBigEndian16(Header, SourcePort);
+  WriteBigEndian16(Header + 2, Target.Port);
+  WriteBigEndian16(Header + 4, Word(UdpHeaderBytes + Length));
+  WriteBigEndian16(Header + 6, 0);
+  Sum := TransportPseudoHeaderSum(Source, Target, IpProtocolUdp, UdpHeaderBytes + Length);
+  Checksum := FinishChecksum(AddToChecksum(Sum, Header, UdpHeaderBytes + Length));
+  { Zero means "no checksum"; the same value in ones' complement is all
+    ones. }
+  if Checksum = 0 then
+    Checksum := $FFFF;
+  WriteBigEndian16(Header + 6, Checksum);
+end;
+
+{ An IPv6 datagram too large for one packet: built in a buffer of its
+  own and sent in fragments. }
+function SendLargeUdpDatagram(Socket: PSocket; Data: PByte; Length: LongWord;
+  constref Source, Target: TNetworkEndpoint; HopLimit: Byte; OutInterface: Pointer): LongInt;
+var
+  Buffer: PByte;
+begin
+  Buffer := AllocateKernelMemory(UdpHeaderBytes + Length);
+  if Buffer = nil then
+    Exit(ErrorOutOfMemory);
+  CopyMemory(Buffer + UdpHeaderBytes, Data, Length);
+  WriteUdpHeader(Buffer, Socket^.Local.Port, Source, Target, Length);
+  Result := SendLargeIpPayload(Buffer, UdpHeaderBytes + Length, Source, Target, IpProtocolUdp, HopLimit,
+    PNetworkInterface(OutInterface));
+  FreeKernelMemory(Buffer);
+end;
+
+{ True if the datagram may be sent at all as large as it is. }
+function DatagramSizeIsAllowed(Socket: PSocket; Length: LongWord; constref Target: TNetworkEndpoint;
+  OutInterface: Pointer): Boolean;
+begin
+  if Target.Family = AddressFamilyIPv6 then
+    Exit(Length <= MaximumIpv6DatagramBytes);
+  Result := (Length <= MaximumDatagramBytes) and
+    (Length + UdpHeaderBytes <= IpPayloadLimit(Target, PNetworkInterface(OutInterface)));
+end;
+
 function SendUdpDatagram(Socket: PSocket; Data: PByte; Length: LongWord;
   constref Destination: TNetworkEndpoint): Int64;
 var
@@ -218,8 +269,6 @@ var
   Source: TNetworkEndpoint;
   Packet: PPacket;
   Header: PByte;
-  Sum: LongWord;
-  Checksum: Word;
   Error: LongInt;
 begin
   Target := Destination;
@@ -233,29 +282,23 @@ begin
   Error := DatagramSourceAddress(Socket, Target, Source);
   if Error <> ErrorNone then
     Exit(-Error);
-  if (Length > MaximumDatagramBytes) or
-     (Length + UdpHeaderBytes > IpPayloadLimit(Target, Socket^.BoundInterface)) then
+  if not DatagramSizeIsAllowed(Socket, Length, Target, Socket^.BoundInterface) then
     Exit(-ErrorMessageTooLong);
   Error := BindDatagramSocketImplicitly(Socket);
   if Error <> ErrorNone then
     Exit(-Error);
-  Packet := AllocatePacket(PacketHeadroom);
-  if Packet = nil then
-    Exit(-ErrorOutOfMemory);
-  Header := AppendToPacket(Packet, UdpHeaderBytes + Length);
-  WriteBigEndian16(Header, Socket^.Local.Port);
-  WriteBigEndian16(Header + 2, Target.Port);
-  WriteBigEndian16(Header + 4, UdpHeaderBytes + Length);
-  WriteBigEndian16(Header + 6, 0);
-  CopyMemory(Header + UdpHeaderBytes, Data, Length);
-  Sum := TransportPseudoHeaderSum(Source, Target, IpProtocolUdp, UdpHeaderBytes + Length);
-  Checksum := FinishChecksum(AddToChecksum(Sum, Header, UdpHeaderBytes + Length));
-  { Zero means "no checksum"; the same value in ones' complement is all
-    ones. }
-  if Checksum = 0 then
-    Checksum := $FFFF;
-  WriteBigEndian16(Header + 6, Checksum);
-  Error := SendIpPacket(Packet, Source, Target, IpProtocolUdp, Socket^.TimeToLive, False, Socket^.BoundInterface);
+  if UdpHeaderBytes + Length > PacketCapacity - PacketHeadroom then
+    Error := SendLargeUdpDatagram(Socket, Data, Length, Source, Target, Socket^.TimeToLive, Socket^.BoundInterface)
+  else
+  begin
+    Packet := AllocatePacket(PacketHeadroom);
+    if Packet = nil then
+      Exit(-ErrorOutOfMemory);
+    Header := AppendToPacket(Packet, UdpHeaderBytes + Length);
+    CopyMemory(Header + UdpHeaderBytes, Data, Length);
+    WriteUdpHeader(Header, Socket^.Local.Port, Source, Target, Length);
+    Error := SendIpPacket(Packet, Source, Target, IpProtocolUdp, Socket^.TimeToLive, False, Socket^.BoundInterface);
+  end;
   if Error <> ErrorNone then
     Exit(-Error);
   Inc(NetworkStatistics.Udp.Sent);
