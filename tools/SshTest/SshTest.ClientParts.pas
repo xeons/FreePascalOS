@@ -1,4 +1,20 @@
-{LICENSE}
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
 
 {
   The pieces added with the client and the server's new features:
@@ -49,7 +65,7 @@ uses
 procedure TestHybridKeyExchange;
 var
   Secret: TSshClientExchangeSecret;
-  EncapsulationKey, Encoded, Hash, ServerValue, ServerSecret, Changed: string;
+  EncapsulationKey, Encoded, Hash, ServerValue, ServerSecret, Changed, Seed: string;
   Method: TSshKeyExchangeMethod;
 begin
   Check(FindKeyExchangeMethod('mlkem768x25519-sha256', Method) and (Method = KeyExchangeMethodMlKem768X25519),
@@ -59,7 +75,8 @@ begin
   Secret.X25519.PrivateKey := FromHex(HybridClientX25519);
   EncapsulationKey := StringOfChar(#0, MlKem768EncapsulationKeySize);
   Secret.MlKemDecapsulationKey := StringOfChar(#0, MlKem768DecapsulationKeySize);
-  MlKem768KeyPairFromSeed(@FromHex(HybridMlKemSeed)[1], @EncapsulationKey[1], @Secret.MlKemDecapsulationKey[1]);
+  Seed := FromHex(HybridMlKemSeed);
+  MlKem768KeyPairFromSeed(@Seed[1], @EncapsulationKey[1], @Secret.MlKemDecapsulationKey[1]);
   CheckEqual(Copy(FromHex(HybridClientInit), 1, MlKem768EncapsulationKeySize), EncapsulationKey,
     'mlkem768x25519: the client''s ML-KEM key from its seed');
   Check(FinishClientExchange(Secret, FromHex(HybridServerReply), Encoded), 'mlkem768x25519: the server''s reply taken');

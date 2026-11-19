@@ -1,4 +1,20 @@
-{LICENSE}
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
 
 {
   libssh's client against its server, all in memory: with each key
@@ -63,13 +79,20 @@ type
     procedure HandleEof; override;
   end;
 
-  { The client's end: keeps what comes back. }
-  TClientSide = class(TSshChannel)
+  { What came back on the client's end (which the connection frees once
+    closed). }
+  TClientResults = class
   public
     Received: string;
     ExitStatus: LongInt;
-    Confirmed, ExecAccepted: Boolean;
+    Confirmed, ExecAccepted, Closed: Boolean;
+  end;
+
+  TClientSide = class(TSshChannel)
+  public
+    Results: TClientResults;
   protected
+    procedure HandleClose; override;
     function HandleRequest(const RequestType: string; var Reader: TSshReader): Boolean; override;
     procedure HandleData(const Data: string); override;
     procedure HandleOpenConfirmed; override;
@@ -154,24 +177,29 @@ function TClientSide.HandleRequest(const RequestType: string; var Reader: TSshRe
 begin
   Result := RequestType = 'exit-status';
   if Result then
-    ExitStatus := LongInt(Reader.ReadUInt32);
+    Results.ExitStatus := LongInt(Reader.ReadUInt32);
+end;
+
+procedure TClientSide.HandleClose;
+begin
+  Results.Closed := True;
 end;
 
 procedure TClientSide.HandleData(const Data: string);
 begin
-  Received := Received + Data;
+  Results.Received := Results.Received + Data;
   InputConsumed(Length(Data));
 end;
 
 procedure TClientSide.HandleOpenConfirmed;
 begin
-  Confirmed := True;
+  Results.Confirmed := True;
   SendRequestWithReply('exec', SshString('uname'));
 end;
 
 procedure TClientSide.HandleRequestReply(Succeeded: Boolean);
 begin
-  ExecAccepted := Succeeded;
+  Results.ExecAccepted := Succeeded;
 end;
 
 constructor TPair.Create(const KeyExchange, Cipher: string);
@@ -318,25 +346,31 @@ end;
 procedure TestSession(Pair: TPair; const Name: string);
 var
   Channel: TClientSide;
+  Results: TClientResults;
 begin
-  Pair.ClientConnection := TSshConnection.Create(Pair.Client);
-  Channel := TClientSide.Create(Pair.ClientConnection);
-  Pair.ClientConnection.OpenChannel(Channel, 'session', '');
-  Pair.Pump;
-  Check(Channel.Confirmed and Channel.ExecAccepted, Name + ': session channel confirmed, exec accepted');
-  Channel.SendData('hello from the client');
-  Channel.SendEofWhenFlushed;
-  Pair.ClientConnection.Flush;
-  Pair.Pump;
-  Check((Channel.Received = 'ran: uname'#10'hello from the client') and (Channel.ExitStatus = 3) and
-    Channel.CloseReceived, Name + ': data both ways, exit-status and CLOSE');
-  Pair.ClientConnection.SendGlobalRequest('tcpip-forward', SshString('') + SshUInt32(0), True, @Pair.GlobalReply);
-  Pair.ClientConnection.SendGlobalRequest('no-such-request', '', True, @Pair.GlobalReply);
-  Pair.Pump;
-  Check((Pair.GlobalReplies = 2) and (Pair.GlobalReplyData = SshUInt32(4242)),
-    Name + ': global requests answered in order, with reply data');
-  Pair.Pump;
-  Check(Pair.ClientConnection.ChannelCount = 0, Name + ': the closed channel is gone');
+  Results := TClientResults.Create;
+  try
+    Pair.ClientConnection := TSshConnection.Create(Pair.Client);
+    Channel := TClientSide.Create(Pair.ClientConnection);
+    Channel.Results := Results;
+    Pair.ClientConnection.OpenChannel(Channel, 'session', '');
+    Pair.Pump;
+    Check(Results.Confirmed and Results.ExecAccepted, Name + ': session channel confirmed, exec accepted');
+    Channel.SendData('hello from the client');
+    Channel.SendEofWhenFlushed;
+    Pair.ClientConnection.Flush;
+    Pair.Pump;
+    Check((Results.Received = 'ran: uname'#10'hello from the client') and (Results.ExitStatus = 3) and Results.Closed,
+      Name + ': data both ways, exit-status and CLOSE');
+    Check(Pair.ClientConnection.ChannelCount = 0, Name + ': the closed channel is gone');
+    Pair.ClientConnection.SendGlobalRequest('tcpip-forward', SshString('') + SshUInt32(0), True, @Pair.GlobalReply);
+    Pair.ClientConnection.SendGlobalRequest('no-such-request', '', True, @Pair.GlobalReply);
+    Pair.Pump;
+    Check((Pair.GlobalReplies = 2) and (Pair.GlobalReplyData = SshUInt32(4242)),
+      Name + ': global requests answered in order, with reply data');
+  finally
+    Results.Free;
+  end;
 end;
 
 procedure TestKeyLogin(const KeyExchange, Cipher: string);
@@ -358,7 +392,7 @@ begin
     Check(Pair.Client.ExtensionInformationReceived and Pair.Client.ServerTakesHostBound and
       (Pair.ServerAuthenticator.Method = MethodPublicKeyHostBound),
       Name + ': EXT_INFO taken; the key bound to the host key');
-    Check(Pair.HostKeySeen = Pair.Server.Negotiated.HostKey + '' + '' + Copy(Pair.HostKeySeen, 1, 0) + Pair.HostKeySeen,
+    Check(Pair.Server.IsOwnHostKey(Pair.HostKeySeen) and (Pair.Client.HostKeyBlob = Pair.HostKeySeen),
       Name + ': the host key was checked');
     Check(Pair.ServerAuthenticator.Options.NoPty, Name + ': the key''s options reach the server');
     if Pair.ServerAuthenticator.Succeeded then

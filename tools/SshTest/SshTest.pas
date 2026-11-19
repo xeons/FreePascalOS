@@ -33,7 +33,9 @@ uses
   SshTest.KnownAnswers,
   SshTest.Framing,
   SshTest.Handshake,
-  SshTest.TerminalOutput;
+  SshTest.TerminalOutput,
+  SshTest.ClientParts,
+  SshTest.ClientServer;
 
 begin
   TestWireEncoding;
@@ -44,5 +46,13 @@ begin
   TestPacketFraming;
   TestHandshake;
   TestTerminalOutput;
+  TestHybridKeyExchange;
+  TestAuthorizedKeyOptions;
+  TestCertificates;
+  TestAddressPatterns;
+  TestKnownHosts;
+  TestMatchBlocks;
+  TestAgentFraming;
+  TestClientAgainstServer;
   FinishChecks('ssh test');
 end.

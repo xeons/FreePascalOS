@@ -939,9 +939,10 @@ tls-test: $(TLS_TEST)
 SSH_TEST := build/tools/SshTest
 SSH_TEST_UNITS := build/tools/ssh-test-units
 SSH_VECTORS := $(SSH_TEST_UNITS)/SshTest.Vectors.inc
+SSH_CLIENT_VECTORS := $(SSH_TEST_UNITS)/SshTest.ClientVectors.inc
 SSH_TEST_SOURCES := $(wildcard tools/SshTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
-	$(filter-out %/Ssh.Contents.pas,$(wildcard userland/lib/ssh/*.pas))
+	$(filter-out %/Ssh.Contents.pas,$(wildcard userland/lib/ssh/*.pas)) userland/sshd/Sshd.Configuration.pas
 
 $(SSH_VECTORS): tools/SshTest/make-vectors.py
 	@mkdir -p $(SSH_TEST_UNITS)
@@ -949,9 +950,17 @@ $(SSH_VECTORS): tools/SshTest/make-vectors.py
 	python3 tools/SshTest/make-vectors.py > $@.tmp
 	@mv $@.tmp $@
 
-$(SSH_TEST): $(SSH_TEST_SOURCES) $(SSH_VECTORS)
+# Certificates made with the host's ssh-keygen -s; the hybrid exchange
+# with OpenSSL's ML-KEM.
+$(SSH_CLIENT_VECTORS): tools/SshTest/make-client-vectors.py
 	@mkdir -p $(SSH_TEST_UNITS)
-	fpc -Mobjfpc -O2 -vew -Futools/SshTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/ssh \
+	@command -v ssh-keygen >/dev/null || { echo "OpenSSH's ssh-keygen is needed for the SSH test's certificates"; exit 1; }
+	python3 tools/SshTest/make-client-vectors.py $(SSH_TEST_UNITS)/keys > $@.tmp
+	@mv $@.tmp $@
+
+$(SSH_TEST): $(SSH_TEST_SOURCES) $(SSH_VECTORS) $(SSH_CLIENT_VECTORS)
+	@mkdir -p $(SSH_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/SshTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/ssh -Fuuserland/sshd \
 		-Fuuserland/lib/cryptography -Fushared -Fishared -Fi$(SSH_TEST_UNITS) -FU$(SSH_TEST_UNITS) -o$@ tools/SshTest/SshTest.pas
 
 ssh-test: $(SSH_TEST)
