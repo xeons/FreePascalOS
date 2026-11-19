@@ -819,11 +819,17 @@ settings-test: $(SETTINGS_TEST)
 CRYPTO_TEST := build/tools/CryptoTest
 CRYPTO_TEST_SOURCES := $(wildcard tools/CryptoTest/*.pas) tools/CryptoTest/CryptoTest.RsaVectors.inc \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
+CRYPTO_CURVE_VECTORS := build/tools/crypto-test-units/CryptoTest.CurveVectors.inc
 
-$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES)
+$(CRYPTO_CURVE_VECTORS): tools/CryptoTest/make-curve-vectors.py
+	@mkdir -p build/tools/crypto-test-units
+	python3 -I tools/CryptoTest/make-curve-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES) $(CRYPTO_CURVE_VECTORS)
 	@mkdir -p build/tools/crypto-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/CryptoTest -Fuuserland/lib/cryptography -Fushared -Fishared \
-		-FUbuild/tools/crypto-test-units -o$@ tools/CryptoTest/CryptoTest.pas
+		-Fibuild/tools/crypto-test-units -FUbuild/tools/crypto-test-units -o$@ tools/CryptoTest/CryptoTest.pas
 
 crypto-test: $(CRYPTO_TEST)
 	@$(CRYPTO_TEST) > build/tools/crypto-test.out || \

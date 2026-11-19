@@ -20,7 +20,7 @@
   CryptoTest - checks the algorithms libcryptography gained for TLS on
   the host (make crypto-test): Poly1305, ChaCha20-Poly1305, AES-GCM,
   SHA-384, HKDF, X25519, big numbers, RSA, ECDSA (checking and
-  signing) and Ed25519, each against
+  signing, P-521 among them), ECDH and Ed25519, each against
   published known answers. Prints one line per check and the totals;
   exits with 1 if any failed.
 }
@@ -34,7 +34,8 @@ uses
   CryptoTest.Aead,
   CryptoTest.KeyDerivation,
   CryptoTest.Signatures,
-  CryptoTest.SshSignatures;
+  CryptoTest.SshSignatures,
+  CryptoTest.Curves;
 
 begin
   TestPoly1305;
@@ -48,5 +49,7 @@ begin
   TestEcdsa;
   TestEd25519;
   TestEcdsaSigning;
+  TestEcdh;
+  TestP521Ecdsa;
   FinishChecks('crypto test');
 end.
