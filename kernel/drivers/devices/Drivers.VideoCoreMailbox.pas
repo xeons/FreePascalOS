@@ -388,15 +388,19 @@ const
 function InitializeVideoCoreMailbox: Boolean;
 var
   Revision: LongWord;
+  Answered: Boolean;
 begin
   Result := BindPlatformDriver(MailboxDriver) > 0;
   if not Result then
     Exit;
+  { Asked before the message is begun: a message holds the debug
+    output's spin lock, and a question takes the mailbox's mutex. }
+  Answered := QueryFirmwareWord(FirmwareTagFirmwareRevision, Revision);
   DebugBeginMessage;
   DebugWriteTag('mailbox');
   DebugWrite('VideoCore mailbox, message at bus address ');
   DebugWriteHex(Message.DeviceAddress, 8);
-  if QueryFirmwareWord(FirmwareTagFirmwareRevision, Revision) then
+  if Answered then
   begin
     DebugWrite(', firmware revision ');
     DebugWriteHex(Revision, 8);
