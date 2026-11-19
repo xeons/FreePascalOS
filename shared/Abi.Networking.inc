@@ -24,9 +24,11 @@
   Addresses carry a family (AddressFamily*): an IPv4 address takes the
   first four bytes of the sixteen, in the order it is written (10.0.2.15
   is 10, 0, 2, 15); an IPv6 address all sixteen, in the order of the
-  wire. Ports are in the machine's byte order. IPv4 and IPv6 sockets are
-  separate (an IPv6 socket never sees IPv4 traffic), so a server that
-  wants both binds one of each, on the same port if it likes.
+  wire. Ports are in the machine's byte order. An IPv6 socket also
+  carries IPv4 as v4-mapped addresses (::ffff:a.b.c.d) unless
+  SocketOptionIpv6Only is set, as on Linux: a server that wants both
+  either binds one IPv6 socket to ::, or sets SocketOptionIpv6Only on
+  its IPv6 socket and binds an IPv4 one beside it on the same port.
 }
 const
   { --- Sockets ------------------------------------------------------------- }
@@ -62,7 +64,9 @@ const
     connected peer if AddressAddress is 0. Returns the bytes taken (a
     stream socket may take fewer when non-blocking or interrupted).
     A datagram larger than one frame can carry (1472 bytes of UDP) fails
-    with ErrorMessageTooLong: nothing is sent in fragments. A broadcast
+    with ErrorMessageTooLong over IPv4 (nothing is sent in fragments
+    there); over IPv6 a datagram of up to MaximumIpv6DatagramBytes is
+    sent in fragments when it is larger than the path MTU. A broadcast
     needs SocketOptionBroadcast (ErrorAccessDenied). Flags: SocketFlag*. }
   CallSendSocket = 109;
   { (Handle, Buffer, Length, Flags, AddressAddress or 0): receives, and
@@ -198,13 +202,41 @@ const
   { Read only: bytes waiting to be read (the first datagram's size for a
     datagram socket). }
   SocketOptionReadableBytes = 12;
+  { IPv6 sockets: 1 takes only IPv6 traffic; 0 (the default, as on
+    Linux) also IPv4 as v4-mapped addresses (::ffff:a.b.c.d) - a socket
+    bound to :: then has the port for IPv4 as well. Set before binding. }
+  SocketOptionIpv6Only = 13;
+  { UDP: Value is the address of a TAbiMulticastMembership. Joins the
+    group (IPv6: IPV6_JOIN_GROUP, IPv4: IP_ADD_MEMBERSHIP) on the
+    interface it names (0: the one the routes give), which reports it
+    (MLDv2, IGMPv3) and takes its datagrams; the socket receives the
+    group's datagrams sent to its port. At most
+    MaximumSocketMemberships per socket. Leaving (or closing) drops it. }
+  SocketOptionJoinGroup = 14;
+  SocketOptionLeaveGroup = 15;
+  { UDP: the interface (index; 0: by the routes) multicast is sent on
+    (IPV6_MULTICAST_IF, IP_MULTICAST_IF). }
+  SocketOptionMulticastInterface = 16;
+  { UDP: the hop limit (time to live) of multicast sent, 1-255; 1 at
+    first (IPV6_MULTICAST_HOPS, IP_MULTICAST_TTL). }
+  SocketOptionMulticastHops = 17;
+  { UDP: 1 (the default): multicast sent to a group this machine joined
+    is also delivered here (IPV6_MULTICAST_LOOP, IP_MULTICAST_LOOP). }
+  SocketOptionMulticastLoop = 18;
+
+  { The groups one socket may join. }
+  MaximumSocketMemberships = 8;
 
   MaximumListenBacklog = 64;
   { The most records a listing (interfaces, routes, ARP entries,
     sockets) returns; a longer list is cut short there. }
   MaximumListedNetworkRecords = 1024;
-  { The largest UDP datagram sent: one Ethernet frame without fragments. }
+  { The largest UDP datagram sent over IPv4: one Ethernet frame without
+    fragments. }
   MaximumDatagramBytes = 1472;
+  { Over IPv6, sent in fragments when larger than the path MTU: an IPv6
+    payload of 65535 bytes less the UDP header. }
+  MaximumIpv6DatagramBytes = 65527;
 
   { TCP states (TAbiSocketInformation.State; 0 for other sockets). }
   TcpStateClosed = 1;
@@ -223,8 +255,12 @@ const
   NetworkInterfaceDescriptionCapacity = 48;
   HardwareAddressCapacity = 8;
   { IPv4 and IPv6 addresses together (an Ethernet interface usually has
-    an IPv4 address, an IPv6 link-local one and one or two global ones). }
-  MaximumInterfaceAddresses = 8;
+    an IPv4 address, an IPv6 link-local one and, for each prefix, a
+    stable and a temporary global one, an old temporary one kept until
+    it expires). }
+  MaximumInterfaceAddresses = 12;
+  { The secret of stable-privacy interface identifiers (RFC 7217). }
+  StableSecretBytes = 32;
   MaximumDnsServers = 4;
   DnsDomainCapacity = 64;
 
@@ -248,6 +284,25 @@ const
   { Address is removed (IPv6: that address; IPv4: the interface's
     address if it is Address). ErrorNotFound if it has no such address. }
   InterfaceChangeRemoveAddress = $10;
+  { The interface's IPv6 options become Ipv6Options (Ipv6Option*). }
+  InterfaceChangeIpv6Options = $20;
+  { The secret every interface's stable-privacy identifiers (RFC 7217)
+    are made with becomes StableSecret (the network service keeps it in
+    a file, so the addresses stay the same across restarts). Addresses
+    made with the old one are made again. }
+  InterfaceChangeStableSecret = $40;
+
+  { An interface's IPv6 options (TAbiNetworkInterface.Ipv6Options,
+    TAbiInterfaceConfiguration.Ipv6Options). Ethernet interfaces start
+    with Ipv6OptionTemporaryAddresses. }
+  { Temporary addresses (RFC 8981) beside each SLAAC address, preferred
+    as the source of what this machine starts; a new one every day. }
+  Ipv6OptionTemporaryAddresses = $01;
+  { Interface identifiers from the Ethernet address (modified EUI-64)
+    rather than stable-privacy ones (RFC 7217: a hash of the prefix,
+    the interface and a secret, the same on each network but different
+    between networks). }
+  Ipv6OptionEui64Identifiers = $02;
 
   { How an interface does IPv6 (TAbiNetworkInterface.Ipv6Mode,
     TAbiInterfaceConfiguration.Ipv6Mode). Ethernet interfaces start in
@@ -272,6 +327,9 @@ const
   InterfaceAddressFlagAutomatic = $04;
   { The link-local address the kernel made. }
   InterfaceAddressFlagLinkLocal = $08;
+  { A temporary address (RFC 8981, with a random identifier); also
+    automatic. }
+  InterfaceAddressFlagTemporary = $10;
 
   { TAbiRoute.Flags. }
   { Through a gateway (else the destination is on the link). }
@@ -320,6 +378,20 @@ type
   end;
   PAbiSocketAddress = ^TAbiSocketAddress;
 
+  { SocketOptionJoinGroup and SocketOptionLeaveGroup: a multicast group
+    (AddressFamilyIPv4 in the first four bytes, or AddressFamilyIPv6) and
+    the interface to join it on: InterfaceIndex, else (IPv4) the
+    interface with InterfaceAddress, else the one the routes give. }
+  TAbiMulticastMembership = record
+    Family: Word;
+    Reserved: Word;
+    InterfaceIndex: LongWord;
+    Group: array[0..15] of Byte;
+    InterfaceAddress: array[0..3] of Byte;
+    Reserved2: LongWord;
+  end;
+  PAbiMulticastMembership = ^TAbiMulticastMembership;
+
   { An address with its network prefix (10.0.2.15/24, fec0::1/64). }
   TAbiInterfaceAddress = record
     Family: Word;
@@ -364,7 +436,8 @@ type
     Ipv6HopLimit: LongWord;
     Ipv6Mtu: LongWord;
     Ipv6DnsServerCount: LongWord;
-    Reserved: LongWord;
+    { Ipv6Option*. }
+    Ipv6Options: LongWord;
     Ipv6DnsServers: array[0..MaximumDnsServers - 1] of array[0..15] of Byte;
   end;
   PAbiNetworkInterface = ^TAbiNetworkInterface;
@@ -380,6 +453,11 @@ type
     { Ipv6Mode*, with InterfaceChangeIpv6Mode. }
     Ipv6Mode: LongWord;
     Address: TAbiInterfaceAddress;
+    { Ipv6Option*, with InterfaceChangeIpv6Options. }
+    Ipv6Options: LongWord;
+    Reserved: LongWord;
+    { With InterfaceChangeStableSecret (any interface may be named). }
+    StableSecret: array[0..StableSecretBytes - 1] of Byte;
   end;
 
   { A route: where datagrams to Destination go (prefix 0: the default

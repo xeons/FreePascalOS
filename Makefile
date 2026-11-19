@@ -177,7 +177,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
+	crypto-test tls-test wget-test ipv6-test image-test compression-test decompression-test ssh-test
 
 all: esp
 
@@ -927,6 +927,23 @@ ssh-test: $(SSH_TEST)
 	@$(SSH_TEST) > build/tools/ssh-test.out || \
 		{ grep -A2 FAIL build/tools/ssh-test.out; echo "SSH TEST FAILED (build/tools/ssh-test.out)"; exit 1; }
 	@echo "SSH HOST TEST PASSED: $$(tail -n 1 build/tools/ssh-test.out | cut -d ' ' -f 3-)"
+
+# The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
+# RFC 6724 address selection, the destination cache, fragments.
+IPV6_TEST := build/tools/Ipv6Test
+IPV6_TEST_SOURCES := tools/Ipv6Test/Ipv6Test.pas tools/CryptoTest/TestChecks.pas shared/AddressSelection.pas \
+	kernel/network/Network.Sha256.pas kernel/network/Network.InterfaceIdentifiers.pas \
+	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas
+
+$(IPV6_TEST): $(IPV6_TEST_SOURCES)
+	@mkdir -p build/tools/ipv6-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/Ipv6Test -Futools/CryptoTest -Fukernel/network -Fushared \
+		-FUbuild/tools/ipv6-test-units -o$@ tools/Ipv6Test/Ipv6Test.pas
+
+ipv6-test: $(IPV6_TEST)
+	@$(IPV6_TEST) > build/tools/ipv6-test.out || \
+		{ grep FAIL build/tools/ipv6-test.out; echo "IPV6 TEST FAILED (build/tools/ipv6-test.out)"; exit 1; }
+	@echo "IPV6 TEST PASSED: $$(tail -n 1 build/tools/ipv6-test.out | cut -d ' ' -f 3-)"
 
 # wget's URLs, response heads and chunked decoding build for the host too.
 WGET_TEST := build/tools/WgetTest
