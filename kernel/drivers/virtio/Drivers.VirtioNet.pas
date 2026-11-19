@@ -429,6 +429,8 @@ begin
   Routines.Transmit := @TransmitFrame;
   Routines.LinkUp := @ReportLink;
   Routines.Kind := NetworkAdapterKindEthernet;
+  { Takes all multicast; the network layer filters by group. }
+  Routines.SetMulticastFilter := nil;
   Card^.Adapter := RegisterNetworkAdapter(Routines, Card, Card^.Address, 'virtio network device');
   if Card^.Adapter = nil then
   begin

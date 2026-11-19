@@ -67,6 +67,8 @@ uses
   Network.Checksums,
   Network.Packets,
   Memory.KernelHeap,
+  Network.Loopback,
+  Network.MulticastGroups,
   Network.Interfaces,
   Network.DatagramSockets,
   Network.IpOutput,
@@ -252,6 +254,35 @@ begin
   FreeKernelMemory(Buffer);
 end;
 
+{ Multicast sent with SocketOptionMulticastLoop: when the interface it
+  leaves by (nil: the routes') joined the group, a copy is delivered
+  here through lo. lo itself delivers what is sent on it anyway. }
+procedure LoopMulticastBack(Packet: PPacket; constref Source, Target: TNetworkEndpoint; HopLimit: Byte;
+  OutInterface: Pointer);
+var
+  NetworkInterface: PNetworkInterface;
+  Ignored: TNetworkEndpoint;
+  Copy: PPacket;
+  Joined: Boolean;
+begin
+  NetworkInterface := PNetworkInterface(OutInterface);
+  if NetworkInterface = nil then
+    NetworkInterface := RouteInterfaceFor(Target);
+  if (NetworkInterface = nil) or NetworkInterface^.IsLoopback then
+    Exit;
+  if Target.Family = AddressFamilyIPv6 then
+    Joined := InterfaceJoinedIpv6Group(NetworkInterface, Target.Address6)
+  else
+    Joined := InterfaceJoinedIpv4Group(NetworkInterface, Target.Address);
+  if not Joined then
+    Exit;
+  Copy := CopyPacket(Packet);
+  if Copy = nil then
+    Exit;
+  Ignored := Source;
+  SendIpPacket(Copy, Ignored, Target, IpProtocolUdp, HopLimit, False, LoopbackInterface);
+end;
+
 { True if the datagram may be sent at all as large as it is. }
 function DatagramSizeIsAllowed(Socket: PSocket; Length: LongWord; constref Target: TNetworkEndpoint;
   OutInterface: Pointer): Boolean;
@@ -270,6 +301,8 @@ var
   Packet: PPacket;
   Header: PByte;
   Error: LongInt;
+  OutInterface: Pointer;
+  HopLimit: Byte;
 begin
   Target := Destination;
   if EndpointIsUnspecified(Target) then
@@ -282,13 +315,17 @@ begin
   Error := DatagramSourceAddress(Socket, Target, Source);
   if Error <> ErrorNone then
     Exit(-Error);
-  if not DatagramSizeIsAllowed(Socket, Length, Target, Socket^.BoundInterface) then
+  OutInterface := DatagramOutInterface(Socket, Target);
+  HopLimit := Socket^.TimeToLive;
+  if EndpointIsMulticast(Target) then
+    HopLimit := Socket^.MulticastHops;
+  if not DatagramSizeIsAllowed(Socket, Length, Target, OutInterface) then
     Exit(-ErrorMessageTooLong);
   Error := BindDatagramSocketImplicitly(Socket);
   if Error <> ErrorNone then
     Exit(-Error);
   if UdpHeaderBytes + Length > PacketCapacity - PacketHeadroom then
-    Error := SendLargeUdpDatagram(Socket, Data, Length, Source, Target, Socket^.TimeToLive, Socket^.BoundInterface)
+    Error := SendLargeUdpDatagram(Socket, Data, Length, Source, Target, HopLimit, OutInterface)
   else
   begin
     Packet := AllocatePacket(PacketHeadroom);
@@ -297,7 +334,9 @@ begin
     Header := AppendToPacket(Packet, UdpHeaderBytes + Length);
     CopyMemory(Header + UdpHeaderBytes, Data, Length);
     WriteUdpHeader(Header, Socket^.Local.Port, Source, Target, Length);
-    Error := SendIpPacket(Packet, Source, Target, IpProtocolUdp, Socket^.TimeToLive, False, Socket^.BoundInterface);
+    if EndpointIsMulticast(Target) and Socket^.MulticastLoop then
+      LoopMulticastBack(Packet, Source, Target, HopLimit, OutInterface);
+    Error := SendIpPacket(Packet, Source, Target, IpProtocolUdp, HopLimit, False, PNetworkInterface(OutInterface));
   end;
   if Error <> ErrorNone then
     Exit(-Error);

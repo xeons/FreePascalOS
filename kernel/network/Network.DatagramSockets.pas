@@ -47,6 +47,10 @@ function ReceiveDatagram(Socket: PSocket; Data: PByte; Length: LongWord; Flags: 
 function ConnectDatagramSocket(Socket: PSocket; constref Destination: TNetworkEndpoint): LongInt;
 { Binds a port the kernel chooses if the socket has none. }
 function BindDatagramSocketImplicitly(Socket: PSocket): LongInt;
+{ The interface a datagram to Destination may leave by: for a
+  multicast group the socket's multicast interface, else its bound one
+  (nil: by the routes). }
+function DatagramOutInterface(Socket: PSocket; constref Destination: TNetworkEndpoint): Pointer;
 { The address a datagram to Destination leaves with: the socket's own,
   else that of the interface it goes out of. }
 function DatagramSourceAddress(Socket: PSocket; constref Destination: TNetworkEndpoint;
@@ -133,10 +137,17 @@ begin
   Result := ErrorNone;
 end;
 
+function DatagramOutInterface(Socket: PSocket; constref Destination: TNetworkEndpoint): Pointer;
+begin
+  Result := Socket^.BoundInterface;
+  if EndpointIsMulticast(Destination) and (Socket^.MulticastInterface <> nil) then
+    Result := Socket^.MulticastInterface;
+end;
+
 function DatagramSourceAddress(Socket: PSocket; constref Destination: TNetworkEndpoint;
   out Source: TNetworkEndpoint): LongInt;
 begin
-  Result := ChooseSourceAddress(Destination, Socket^.BoundInterface, Source);
+  Result := ChooseSourceAddress(Destination, PNetworkInterface(DatagramOutInterface(Socket, Destination)), Source);
   if Result <> ErrorNone then
     Exit;
   if EndpointIsUnspecified(Socket^.Local) then
@@ -181,9 +192,15 @@ function DatagramSocketMatches(Socket: PSocket; constref Source, Destination: TN
   IsBroadcast: Boolean; NetworkInterface: Pointer): Boolean;
 begin
   Result := False;
-  if (Socket^.Family <> Destination.Family) or not Socket^.IsBound or (Socket^.Local.Port <> Destination.Port) then
+  if not SocketTakesFamily(Socket, Destination.Family) or not Socket^.IsBound or
+     (Socket^.Local.Port <> Destination.Port) then
     Exit;
   if (Socket^.BoundInterface <> nil) and (Socket^.BoundInterface <> NetworkInterface) then
+    Exit;
+  { A group's datagrams go to sockets bound to every address or to the
+    group (as on Linux, whichever socket joined it). }
+  if EndpointIsMulticast(Destination) and not EndpointIsUnspecified(Socket^.Local) and
+     not EndpointAddressesEqual(Socket^.Local, Destination) then
     Exit;
   if not IsBroadcast and not EndpointIsUnspecified(Socket^.Local) and
      not EndpointAddressesEqual(Socket^.Local, Destination) then

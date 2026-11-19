@@ -20,8 +20,9 @@
   Ethernet II framing: a destination and a source address and the type
   of what follows (IPv4, ARP, IPv6), then the payload. Frames for another
   station are dropped; broadcasts are taken, and IPv6 multicast frames
-  (33:33 and the group's last four bytes), which IPv6 filters by the
-  groups the interface listens to. Other multicast is dropped.
+  (33:33 and the group's last four bytes) and IPv4 ones (01:00:5e and
+  the group's low 23 bits), which IP filters by the groups the
+  interface listens to. Other multicast is dropped.
 }
 unit Network.Ethernet;
 
@@ -65,8 +66,9 @@ begin
     Exit(True);
   if MemoryIsEqual(Destination, @BroadcastEthernetAddress[0], EthernetAddressLength) then
     Exit(True);
-  { An IPv6 multicast group. }
-  Result := (Destination[0] = $33) and (Destination[1] = $33);
+  { An IPv6 multicast group, or an IPv4 one (IP filters by group). }
+  Result := ((Destination[0] = $33) and (Destination[1] = $33)) or
+    ((Destination[0] = $01) and (Destination[1] = $00) and (Destination[2] = $5E) and ((Destination[3] and $80) = 0));
 end;
 
 procedure EthernetInput(NetworkInterface: PNetworkInterface; Packet: PPacket);

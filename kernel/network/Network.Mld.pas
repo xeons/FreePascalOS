@@ -23,7 +23,10 @@
   reported or neighbour solicitations stop reaching us.
 
   A report lists every group the interface listens to but all-nodes
-  (which is never reported), each as "exclude no sources". Two
+  (which is never reported) - the solicited-node groups of its addresses
+  and the groups programs joined (Network.MulticastGroups) - each as
+  "exclude no sources". A group the last program left is reported as
+  "change to include no sources". Two
   unsolicited reports go when the addresses change (the second a second
   later); a query is answered with a report at once. Reports go to
   ff02::16 with hop limit 1 and a hop-by-hop router alert, from the
@@ -37,6 +40,7 @@ unit Network.Mld;
 interface
 
 uses
+  Network.Ipv6Addresses,
   Network.IpDatagrams,
   Network.Interfaces;
 
@@ -47,6 +51,8 @@ const
 { The interface's groups changed: reports are sent. }
 procedure ScheduleMldReports(NetworkInterface: PNetworkInterface);
 procedure StopMldReports(NetworkInterface: PNetworkInterface);
+{ Reports that the interface no longer listens to Group. }
+procedure SendMldGroupLeave(NetworkInterface: PNetworkInterface; constref Group: TIpv6Address);
 procedure HandleMulticastListenerQuery(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 { On the network thread: sends what is due. }
 procedure RunMldTimer(NetworkInterface: PNetworkInterface; Now: QWord);
@@ -59,8 +65,8 @@ uses
   Network.ByteOrder,
   Network.Core,
   Network.Packets,
-  Network.Ipv6Addresses,
   Network.Ipv6Types,
+  Network.MulticastGroups,
   Network.Ipv6,
   Network.Ipv6AddressList,
   Network.Icmpv6;
@@ -69,9 +75,10 @@ const
   ReportHeaderBytes = 8;
   GroupRecordBytes = 20;
   RecordModeIsExclude = 2;
+  RecordChangeToInclude = 3;
   RecordChangeToExclude = 4;
   HopByHopBytes = 8;
-  MaximumGroups = MaximumIpv6InterfaceAddresses;
+  MaximumGroups = MaximumIpv6InterfaceAddresses + MaximumJoinedGroups;
   NanosecondsPerSecond = QWord(1000) * 1000 * 1000;
 
 type
@@ -98,6 +105,7 @@ procedure CollectGroups(NetworkInterface: PNetworkInterface; out List: TGroupLis
 var
   Index: Integer;
   Entry: PIpv6InterfaceAddress;
+  Joined: TIpv6Address;
 begin
   List.Count := 0;
   for Index := 0 to MaximumIpv6InterfaceAddresses - 1 do
@@ -106,11 +114,16 @@ begin
     if Entry^.State <> Ipv6AddressFree then
       AddGroup(List, SolicitedNodeAddress(Entry^.Address));
   end;
+  Index := 0;
+  while ReportedIpv6GroupAt(NetworkInterface, Index, Joined) do
+  begin
+    AddGroup(List, Joined);
+    Inc(Index);
+  end;
 end;
 
-procedure SendReport(NetworkInterface: PNetworkInterface; RecordType: Byte);
+procedure SendGroupList(NetworkInterface: PNetworkInterface; RecordType: Byte; constref List: TGroupList);
 var
-  List: TGroupList;
   Packet: PPacket;
   Message: PByte;
   HopByHop: PByte;
@@ -118,7 +131,6 @@ var
   GroupRecord: PByte;
   Source: TIpv6Address;
 begin
-  CollectGroups(NetworkInterface, List);
   if List.Count = 0 then
     Exit;
   Packet := AllocatePacket(PacketHeadroom);
@@ -157,8 +169,28 @@ begin
     AllMldRoutersIpv6Address);
 end;
 
+procedure SendReport(NetworkInterface: PNetworkInterface; RecordType: Byte);
+var
+  List: TGroupList;
+begin
+  CollectGroups(NetworkInterface, List);
+  SendGroupList(NetworkInterface, RecordType, List);
+end;
+
+procedure SendMldGroupLeave(NetworkInterface: PNetworkInterface; constref Group: TIpv6Address);
+var
+  List: TGroupList;
+begin
+  if not NetworkInterface^.Ipv6.IsStarted then
+    Exit;
+  List.Count := 1;
+  List.Groups[0] := Group;
+  SendGroupList(NetworkInterface, RecordChangeToInclude, List);
+end;
+
 procedure ScheduleMldReports(NetworkInterface: PNetworkInterface);
 begin
+  UpdateMulticastFilter(NetworkInterface);
   if NetworkInterface^.IsLoopback then
     Exit;
   NetworkInterface^.Ipv6.MldReportsLeft := UnsolicitedMldReports;

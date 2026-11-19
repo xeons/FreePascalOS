@@ -35,8 +35,13 @@
   change (WaitOnSocket). Waits are alertable: a program being ended or
   stopped leaves them (ErrorInterrupted).
 
+  An IPv6 socket without Ipv6Only also carries IPv4 (v4-mapped
+  addresses, RFC 4291 2.5.5.2): inside, its endpoints are then IPv4
+  ones, and Network.SocketOperations shows them to programs as
+  ::ffff:a.b.c.d.
+
   Deleting the socket (its last handle closed) closes it: a datagram
-  socket simply goes; a TCP connection is handed to the TCP layer,
+  socket leaves the multicast groups it joined and goes; a TCP connection is handed to the TCP layer,
   which ends it gracefully and frees it later.
 }
 unit Network.Sockets;
@@ -49,6 +54,8 @@ interface
 uses
   Runtime.LinkedList,
   Kernel.Events,
+  Abi.SystemCalls,
+  Network.Ipv6Addresses,
   Network.Addresses,
   Network.Datagrams,
   Network.Interfaces;
@@ -61,6 +68,15 @@ type
   TSocketOwner = record
     UserId: LongWord;
     ProcessId: QWord;
+  end;
+
+  { A multicast group the socket joined (Network.SocketMemberships). }
+  TSocketMembership = record
+    InUse: Boolean;
+    NetworkInterface: PNetworkInterface;
+    Family: Word;
+    Group6: TIpv6Address;
+    Group4: TIpv4Address;
   end;
 
   PSocket = ^TSocket;
@@ -83,6 +99,15 @@ type
     NoDelay: Boolean;
     TimeToLive: Byte;
     BoundInterface: PNetworkInterface;
+    { IPv6 sockets: IPv6 traffic only (no v4-mapped IPv4). }
+    Ipv6Only: Boolean;
+    { Multicast: the interface sent on (nil: by the routes), the hop
+      limit, and whether what is sent comes back to this machine's
+      sockets too. }
+    MulticastInterface: PNetworkInterface;
+    MulticastHops: Byte;
+    MulticastLoop: Boolean;
+    Memberships: array[0..MaximumSocketMemberships - 1] of TSocketMembership;
     { TCP: keep-alives, buffer sizes asked for (0: automatic), and the
       test hook that drops every Nth arriving data segment. }
     KeepAlive: Boolean;
@@ -134,16 +159,20 @@ function SocketWaitDeadline(TimeoutMilliseconds: LongWord): QWord;
 function WaitOnSocket(Event: PEvent; Deadline: QWord): LongInt;
 { Takes the pending error (ErrorNone if there is none). }
 function TakePendingError(Socket: PSocket): LongInt;
+{ True if the socket takes traffic of Family as its local endpoint is
+  now: its own family, or IPv4 too for an IPv6 socket bound to (or not
+  yet bound beyond) :: without Ipv6Only. }
+function SocketTakesFamily(Socket: PSocket; Family: Word): Boolean;
 
 implementation
 
 uses
-  Abi.SystemCalls,
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Clock,
   Objects.Manager,
   Network.Core,
+  Network.SocketMemberships,
   Network.TcpSockets;
 
 var
@@ -155,6 +184,7 @@ begin
   case Socket^.Protocol of
     SocketProtocolTcp: CloseTcpSocket(Socket);
   else
+    LeaveAllSocketGroups(Socket);
     DiscardDatagrams(Socket^.Datagrams);
   end;
 end;
@@ -187,6 +217,8 @@ begin
   Result^.Protocol := Protocol;
   Result^.Owner := Owner;
   Result^.TimeToLive := 64;
+  Result^.MulticastHops := 1;
+  Result^.MulticastLoop := True;
   Result^.KeepAliveIdleSeconds := 7200;
   Result^.KeepAliveIntervalSeconds := 75;
   Result^.KeepAliveCount := 9;
@@ -269,6 +301,14 @@ begin
   else
     Result := ErrorInterrupted;
   end;
+end;
+
+function SocketTakesFamily(Socket: PSocket; Family: Word): Boolean;
+begin
+  if Socket^.Local.Family = Family then
+    Exit(True);
+  Result := (Family = AddressFamilyIPv4) and (Socket^.Family = AddressFamilyIPv6) and not Socket^.Ipv6Only and
+    (Socket^.Local.Family = AddressFamilyIPv6) and EndpointIsUnspecified(Socket^.Local);
 end;
 
 function TakePendingError(Socket: PSocket): LongInt;

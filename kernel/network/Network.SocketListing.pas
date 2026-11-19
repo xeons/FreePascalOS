@@ -57,6 +57,19 @@ begin
   Description.SendQueued := Connection^.SendBuffer.Count;
 end;
 
+{ An IPv6 socket carrying IPv4: its endpoints as ::ffff:a.b.c.d. }
+procedure ShowAsMapped(var Description: TAbiSocketInformation);
+var
+  Endpoint: TNetworkEndpoint;
+begin
+  Description.Family := AddressFamilyIPv6;
+  if EndpointFromAbi(Description.LocalAddress, Endpoint) = ErrorNone then
+    EndpointToAbi(MapIpv4Endpoint(Endpoint), Description.LocalAddress);
+  if (Description.PeerAddress.Family = AddressFamilyIPv4) and
+     (EndpointFromAbi(Description.PeerAddress, Endpoint) = ErrorNone) then
+    EndpointToAbi(MapIpv4Endpoint(Endpoint), Description.PeerAddress);
+end;
+
 procedure DescribeSocket(Socket: PSocket; out Description: TAbiSocketInformation);
 var
   Connection: PTcpConnection;
@@ -89,6 +102,8 @@ begin
     EndpointToAbi(Socket^.Peer, Description.PeerAddress);
     Description.ReceiveQueued := Socket^.Datagrams.Bytes;
   end;
+  if (Socket^.Family = AddressFamilyIPv6) and (Description.Family = AddressFamilyIPv4) then
+    ShowAsMapped(Description);
   Description.OwnerUserId := Socket^.Owner.UserId;
   Description.OwnerProcessId := Socket^.Owner.ProcessId;
 end;

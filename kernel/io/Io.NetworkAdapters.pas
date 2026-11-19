@@ -43,6 +43,7 @@ const
 
 type
   TEthernetAddress = array[0..EthernetAddressLength - 1] of Byte;
+  PEthernetAddress = ^TEthernetAddress;
 
   TNetworkDriverRoutines = record
     { Sends one frame (Length bytes at Frame, at most MaximumFrameBytes;
@@ -55,6 +56,13 @@ type
     LinkUp: function(Context: Pointer): Boolean;
     { NetworkAdapterKind*. }
     Kind: LongWord;
+    { nil, or the receive filter for multicast: the frames for these
+      Count Ethernet addresses (at Addresses) are to be taken, or every
+      multicast frame if AllMulticast. Called at passive level with the
+      network lock held; must not wait. A driver without it takes all
+      multicast. }
+    SetMulticastFilter: procedure(Context: Pointer; Addresses: PEthernetAddress; Count: LongWord;
+      AllMulticast: Boolean);
   end;
 
   PNetworkAdapter = ^TNetworkAdapter;

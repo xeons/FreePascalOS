@@ -51,6 +51,9 @@ function SendLargeIpPayload(Payload: PByte; Length: LongWord; constref Source, D
 { The largest payload a datagram to Destination can carry; 0 if there
   is no route. }
 function IpPayloadLimit(constref Destination: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
+{ The interface a datagram to Destination leaves by when the routes
+  choose; nil if there is none. }
+function RouteInterfaceFor(constref Destination: TNetworkEndpoint): PNetworkInterface;
 { The pseudo-header sum of a UDP, TCP or ICMPv6 checksum. }
 function TransportPseudoHeaderSum(constref Source, Destination: TNetworkEndpoint; Protocol: Byte;
   Length: LongWord): LongWord;
@@ -125,6 +128,22 @@ begin
     Result := Ipv6PayloadLimit(Destination.Address6, ScopeInterfaceOf(Destination, BoundInterface))
   else
     Result := PayloadLimit(Destination.Address, BoundInterface);
+end;
+
+function RouteInterfaceFor(constref Destination: TNetworkEndpoint): PNetworkInterface;
+var
+  NextHop4: TIpv4Address;
+  Source4: TIpv4Address;
+  NextHop6: TIpv6Address;
+  Source6: TIpv6Address;
+  Error: LongInt;
+begin
+  if Destination.Family = AddressFamilyIPv6 then
+    Error := RouteIpv6Datagram(Destination.Address6, ScopeInterfaceOf(Destination, nil), Result, NextHop6, Source6)
+  else
+    Error := RouteDatagram(Destination.Address, nil, Result, NextHop4, Source4);
+  if Error <> ErrorNone then
+    Result := nil;
 end;
 
 function TransportPseudoHeaderSum(constref Source, Destination: TNetworkEndpoint; Protocol: Byte;

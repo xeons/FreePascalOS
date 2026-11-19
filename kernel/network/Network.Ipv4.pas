@@ -22,15 +22,20 @@
   Received datagrams are checked (version, lengths, header checksum)
   and taken if they are for this machine: one of its addresses on any
   interface, the limited broadcast 255.255.255.255, the broadcast
-  address of the network they arrived from, or (UDP only) anything on
-  an interface without an address yet, which a DHCP client needs.
+  address of the network they arrived from, a multicast group joined on
+  the interface (Network.MulticastGroups; lo takes every group) or
+  224.0.0.1, or (UDP only) anything on an interface without an address
+  yet, which a DHCP client needs.
   Nothing is forwarded. Fragments are put together first
-  (Network.Fragments); then the datagram goes to ICMP, UDP or TCP, and
-  a protocol nobody speaks is answered with protocol unreachable.
+  (Network.Fragments); then the datagram goes to ICMP, IGMP, UDP or
+  TCP, and a protocol nobody speaks is answered with protocol
+  unreachable.
 
   Sending picks the route (or the loopback interface for an address of
-  this machine, or for a broadcast the interface it is meant for), the
-  source address if the sender has none, and puts the header in front.
+  this machine, for a broadcast the interface it is meant for, for a
+  multicast group the interface asked for or the routes', sent to its
+  01:00:5e Ethernet address), the source address if the sender has
+  none, and puts the header in front.
   Datagrams are never fragmented: one that does not fit the interface's
   MTU fails with ErrorMessageTooLong. TCP sets "don't fragment".
 }
@@ -71,6 +76,11 @@ function SendIpv4(Packet: PPacket; Source, Destination: TIpv4Address; Protocol, 
 { The largest payload a datagram to Destination can carry; 0 if there
   is no route. }
 function PayloadLimit(Destination: TIpv4Address; BoundInterface: PNetworkInterface): LongWord;
+{ Sends an IGMP message (the packet) to Destination out of the
+  interface, with time to live 1 and the router alert option, from the
+  interface's address. Takes the packet. }
+procedure TransmitIpv4WithRouterAlert(Packet: PPacket; Destination: TIpv4Address; Protocol: Byte;
+  NetworkInterface: PNetworkInterface);
 
 implementation
 
@@ -85,6 +95,8 @@ uses
   Network.Loopback,
   Network.Fragments,
   Network.Icmp,
+  Network.Igmp,
+  Network.MulticastGroups,
   Network.Udp,
   Network.TcpInput,
   Network.Statistics,
@@ -112,6 +124,8 @@ function AcceptsDestination(NetworkInterface: PNetworkInterface; Destination: TI
 begin
   if IsBroadcastFor(NetworkInterface, Destination) then
     Exit(True);
+  if IsMulticastAddress(Destination) then
+    Exit(NetworkInterface^.IsLoopback or InterfaceJoinedIpv4Group(NetworkInterface, Destination));
   if IsLocalAddress(Destination) then
     Exit(True);
   Result := not NetworkInterface^.HasAddress and (Protocol = IpProtocolUdp);
@@ -124,10 +138,11 @@ var
 begin
   Payload := Datagram.Header + Datagram.HeaderLength;
   PayloadLength := Datagram.TotalLength - Datagram.HeaderLength;
-  if Datagram.Protocol in [IpProtocolIcmp, IpProtocolUdp, IpProtocolTcp] then
+  if Datagram.Protocol in [IpProtocolIcmp, IpProtocolIgmp, IpProtocolUdp, IpProtocolTcp] then
     Inc(NetworkStatistics.Ip.Delivered);
   case Datagram.Protocol of
     IpProtocolIcmp: IcmpInput(Datagram, Payload, PayloadLength);
+    IpProtocolIgmp: IgmpInput(Datagram, Payload, PayloadLength);
     IpProtocolUdp: UdpInput(Datagram, Payload, PayloadLength);
     IpProtocolTcp: TcpInput(Datagram, Payload, PayloadLength);
   else
@@ -171,14 +186,14 @@ begin
   Datagram.ArrivalInterface := NetworkInterface;
   Datagram.Header := Data;
   if (Datagram.Source = LimitedBroadcastAddress) or IsMulticastAddress(Datagram.Source) or
-     IsMulticastAddress(Datagram.Destination) or
      not AcceptsDestination(NetworkInterface, Datagram.Destination, Datagram.Protocol) then
   begin
     Inc(NetworkStatistics.Ip.AddressErrors);
     CountReceiveDrop(NetworkInterface);
     Exit;
   end;
-  Datagram.IsBroadcast := IsBroadcastFor(NetworkInterface, Datagram.Destination);
+  Datagram.IsBroadcast := IsBroadcastFor(NetworkInterface, Datagram.Destination) or
+    IsMulticastAddress(Datagram.Destination);
 
   Flags := ReadBigEndian16(Data + 6);
   FragmentOffset := LongWord(Flags and FragmentOffsetMask) * 8;
@@ -229,6 +244,27 @@ begin
   Result := nil;
 end;
 
+{ The interface a datagram to a multicast group leaves by: the one asked
+  for, else the routes' for the group (the default route's), else the
+  first Ethernet interface that is up. }
+function MulticastInterface(Destination: TIpv4Address; BoundInterface: PNetworkInterface): PNetworkInterface;
+var
+  Position: Integer;
+  NextHop: TIpv4Address;
+begin
+  if BoundInterface <> nil then
+    Exit(BoundInterface);
+  if LookupRoute(Destination, Result, NextHop) then
+    Exit;
+  for Position := 0 to NetworkInterfaceCount - 1 do
+  begin
+    Result := NetworkInterfaceAt(Position);
+    if not Result^.IsLoopback and Result^.IsUp then
+      Exit;
+  end;
+  Result := nil;
+end;
+
 function IsBroadcastDestination(Destination: TIpv4Address; BoundInterface: PNetworkInterface): Boolean;
 var
   Position: Integer;
@@ -264,7 +300,13 @@ begin
       Source := LoopbackAddress;
     Exit(ErrorNone);
   end;
-  if IsBroadcastDestination(Destination, BoundInterface) then
+  if IsMulticastAddress(Destination) then
+  begin
+    NetworkInterface := MulticastInterface(Destination, BoundInterface);
+    if NetworkInterface = nil then
+      Exit(ErrorNetworkUnreachable);
+  end
+  else if IsBroadcastDestination(Destination, BoundInterface) then
   begin
     NetworkInterface := BroadcastInterface(Destination, BoundInterface);
     if NetworkInterface = nil then
@@ -358,10 +400,52 @@ begin
   Packet^.NetworkInterface := NetworkInterface;
   if NetworkInterface^.IsLoopback then
     TransmitInterfaceFrame(NetworkInterface, Packet)
+  else if IsMulticastAddress(Destination) then
+    SendEthernetFrame(NetworkInterface, Ipv4MulticastEthernetAddress(Destination), EtherTypeIpv4, Packet)
   else if IsBroadcastDestination(Destination, BoundInterface) then
     SendEthernetFrame(NetworkInterface, BroadcastEthernetAddress, EtherTypeIpv4, Packet)
   else
     SendToNeighbour(NetworkInterface, NextHop, Packet);
+end;
+
+procedure TransmitIpv4WithRouterAlert(Packet: PPacket; Destination: TIpv4Address; Protocol: Byte;
+  NetworkInterface: PNetworkInterface);
+const
+  HeaderWithOptionBytes = Ipv4HeaderBytes + 4;
+var
+  Header: PByte;
+  Source: TIpv4Address;
+begin
+  Inc(NetworkStatistics.Ip.SendRequests);
+  Header := PrependToPacket(Packet, HeaderWithOptionBytes);
+  if Header = nil then
+  begin
+    Inc(NetworkStatistics.Ip.SendDiscards);
+    FreePacket(Packet);
+    Exit;
+  end;
+  Source := AnyAddress;
+  if NetworkInterface^.HasAddress then
+    Source := NetworkInterface^.Address;
+  Header[0] := $46;
+  Header[1] := 0;
+  WriteBigEndian16(Header + 2, Word(Packet^.Length));
+  WriteBigEndian16(Header + 4, NextIdentification);
+  Inc(NextIdentification);
+  WriteBigEndian16(Header + 6, 0);
+  Header[8] := 1;
+  Header[9] := Protocol;
+  WriteBigEndian16(Header + 10, 0);
+  WriteIpv4Address(Header + 12, Source);
+  WriteIpv4Address(Header + 16, Destination);
+  { Router alert (RFC 2113). }
+  Header[20] := $94;
+  Header[21] := 4;
+  Header[22] := 0;
+  Header[23] := 0;
+  WriteBigEndian16(Header + 10, InternetChecksum(Header, HeaderWithOptionBytes));
+  Packet^.NetworkInterface := NetworkInterface;
+  SendEthernetFrame(NetworkInterface, Ipv4MulticastEthernetAddress(Destination), EtherTypeIpv4, Packet);
 end;
 
 end.

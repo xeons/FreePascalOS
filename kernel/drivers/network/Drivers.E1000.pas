@@ -303,6 +303,8 @@ begin
   Routines.Transmit := @TransmitFrame;
   Routines.LinkUp := @LinkIsUp;
   Routines.Kind := NetworkAdapterKindEthernet;
+  { Takes all multicast; the network layer filters by group. }
+  Routines.SetMulticastFilter := nil;
   if not AddNetworkCard(@Card^.Card, Routines, Card, Card^.Address, Model^.Name) then
   begin
     DisableE1000ReceiveAndTransmit(Card^.Registers);

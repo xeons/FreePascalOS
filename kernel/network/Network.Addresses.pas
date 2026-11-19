@@ -82,6 +82,8 @@ function UnspecifiedEndpoint(Family: Word): TNetworkEndpoint;
 function LoopbackEndpoint(Family: Word; Port: Word): TNetworkEndpoint;
 { The address is 0.0.0.0 or ::. }
 function EndpointIsUnspecified(constref Endpoint: TNetworkEndpoint): Boolean;
+{ The address is a multicast group (224.0.0.0/4, ff00::/8). }
+function EndpointIsMulticast(constref Endpoint: TNetworkEndpoint): Boolean;
 { The same family and address (the port and scope are not looked at). }
 function EndpointAddressesEqual(constref First, Second: TNetworkEndpoint): Boolean;
 { The same family, address and port. }
@@ -90,6 +92,12 @@ function EndpointsEqual(constref First, Second: TNetworkEndpoint): Boolean;
   for a family other than IPv4 and IPv6. }
 function EndpointFromAbi(constref Source: TAbiSocketAddress; out Endpoint: TNetworkEndpoint): LongInt;
 procedure EndpointToAbi(constref Endpoint: TNetworkEndpoint; out Destination: TAbiSocketAddress);
+{ An IPv6 endpoint with a v4-mapped address (::ffff:a.b.c.d). }
+function IsMappedIpv4Endpoint(constref Endpoint: TNetworkEndpoint): Boolean;
+{ An IPv4 endpoint as IPv6 sees it: ::ffff:a.b.c.d, the same port. }
+function MapIpv4Endpoint(constref Endpoint: TNetworkEndpoint): TNetworkEndpoint;
+{ A v4-mapped endpoint as the IPv4 one it stands for. }
+function UnmapIpv4Endpoint(constref Endpoint: TNetworkEndpoint): TNetworkEndpoint;
 
 { Writes an address as a dotted quad into Text (16 characters with the
   terminator), for the kernel log. }
@@ -189,6 +197,14 @@ begin
     Result := Endpoint.Address = AnyAddress;
 end;
 
+function EndpointIsMulticast(constref Endpoint: TNetworkEndpoint): Boolean;
+begin
+  if Endpoint.Family = AddressFamilyIPv6 then
+    Result := IsMulticastIpv6Address(Endpoint.Address6)
+  else
+    Result := (Endpoint.Family = AddressFamilyIPv4) and IsMulticastAddress(Endpoint.Address);
+end;
+
 function EndpointAddressesEqual(constref First, Second: TNetworkEndpoint): Boolean;
 begin
   if First.Family <> Second.Family then
@@ -241,6 +257,27 @@ begin
     Destination.Family := AddressFamilyIPv4;
     WriteIpv4Address(@Destination.Address[0], Endpoint.Address);
   end;
+end;
+
+function IsMappedIpv4Endpoint(constref Endpoint: TNetworkEndpoint): Boolean;
+begin
+  Result := (Endpoint.Family = AddressFamilyIPv6) and IsIpv4MappedIpv6Address(Endpoint.Address6);
+end;
+
+function MapIpv4Endpoint(constref Endpoint: TNetworkEndpoint): TNetworkEndpoint;
+var
+  Address6: TIpv6Address;
+begin
+  Address6 := UnspecifiedIpv6Address;
+  Address6[10] := $FF;
+  Address6[11] := $FF;
+  WriteIpv4Address(@Address6[12], Endpoint.Address);
+  Result := MakeIpv6Endpoint(Address6, Endpoint.Port, 0);
+end;
+
+function UnmapIpv4Endpoint(constref Endpoint: TNetworkEndpoint): TNetworkEndpoint;
+begin
+  Result := MakeEndpoint(ReadIpv4Address(@Endpoint.Address6[12]), Endpoint.Port);
 end;
 
 procedure FormatIpv4Address(Address: TIpv4Address; Text: PChar);

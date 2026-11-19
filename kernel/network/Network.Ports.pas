@@ -61,6 +61,7 @@ function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint):
 implementation
 
 uses
+  Abi.SystemCalls,
   Network.TcpTypes,
   Network.TcpConnections;
 
@@ -74,6 +75,23 @@ begin
   Result := EndpointIsUnspecified(First) or EndpointIsUnspecified(Second) or EndpointAddressesEqual(First, Second);
 end;
 
+{ An IPv6 socket on :: without Ipv6Only also has the port for IPv4. }
+function CoversIpv4(Socket: PSocket; constref Address: TNetworkEndpoint): Boolean;
+begin
+  Result := (Socket^.Family = AddressFamilyIPv6) and not Socket^.Ipv6Only and
+    (Address.Family = AddressFamilyIPv6) and EndpointIsUnspecified(Address);
+end;
+
+{ Other's address and the one Socket wants overlap, v4-mapped sharing
+  counted. }
+function SocketAddressesOverlap(Other, Socket: PSocket; constref Address: TNetworkEndpoint): Boolean;
+begin
+  if AddressesOverlap(Other^.Local, Address) then
+    Exit(True);
+  Result := ((Address.Family = AddressFamilyIPv4) and CoversIpv4(Other, Other^.Local)) or
+    ((Other^.Local.Family = AddressFamilyIPv4) and CoversIpv4(Socket, Address));
+end;
+
 function ConflictsWithSocket(Socket, Other: PSocket; constref Address: TNetworkEndpoint; Port: Word;
   AllowReuse: Boolean): Boolean;
 var
@@ -81,7 +99,7 @@ var
 begin
   Result := False;
   if (Other = Socket) or (Other^.Protocol <> Socket^.Protocol) or not Other^.IsBound or
-     (Other^.Local.Port <> Port) or not AddressesOverlap(Other^.Local, Address) then
+     (Other^.Local.Port <> Port) or not SocketAddressesOverlap(Other, Socket, Address) then
     Exit;
   if (Socket^.BoundInterface <> nil) and (Other^.BoundInterface <> nil) and
      (Socket^.BoundInterface <> Other^.BoundInterface) then
