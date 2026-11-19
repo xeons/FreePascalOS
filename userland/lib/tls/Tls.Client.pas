@@ -17,7 +17,8 @@
 }
 
 {
-  A TLS 1.3 client connection over any transport:
+  A TLS client connection (TLS 1.3, or TLS 1.2 with a server that has
+  nothing newer) over any transport:
 
     CreateTlsClient(Transport, Options, Connection);
     if TlsHandshake(Connection) <> TlsErrorNone then ... TlsErrorDescription
@@ -27,9 +28,11 @@
     FreeTlsClient(Connection);
 
   Reading handles what the server sends after the handshake: session
-  tickets are read and dropped (no resumption), a KeyUpdate moves the
-  read keys on and, when the server asks, the write keys too (RFC 8446
-  section 4.6.3). The server's close_notify ends the stream (TlsRead
+  tickets go into the session cache (Tls.SessionCache) when the
+  connection has a cache key and its certificate was verified, a
+  KeyUpdate moves the read keys on and, when the server asks, the write
+  keys too (RFC 8446 section 4.6.3). A TLS 1.2 server's HelloRequest is
+  answered with a no_renegotiation warning. The server's close_notify ends the stream (TlsRead
   returns 0); so does the transport ending without one, which
   TlsClosedCleanly tells apart. Tls.Sessions puts this over a socket
   with the system's trusted roots and clock.
@@ -70,6 +73,14 @@ function TlsCipherSuiteName(Connection: PTlsConnection): string;
 function TlsSelectedProtocol(Connection: PTlsConnection): string;
 { True when the stream ended with the server's close_notify. }
 function TlsClosedCleanly(Connection: PTlsConnection): Boolean;
+{ "TLSv1.3" or "TLSv1.2" ('' before the handshake). }
+function TlsProtocolVersionName(Connection: PTlsConnection): string;
+{ The key exchange group's name ("x25519", "secp256r1", ...). }
+function TlsKeyExchangeGroupName(Connection: PTlsConnection): string;
+{ True when the handshake resumed a session from a ticket. }
+function TlsSessionResumed(Connection: PTlsConnection): Boolean;
+{ What the stapled OCSP response said. }
+function TlsCertificateStatus(Connection: PTlsConnection): TTlsCertificateStatus;
 
 implementation
 
@@ -80,6 +91,8 @@ uses
   Tls.Errors,
   Tls.Handshake,
   Tls.KeySchedule,
+  Tls.KeyShares,
+  Tls.SessionCache,
   Tls.RecordLayer,
   Tls.RecordProtection,
   Tls.ServerMessages;
@@ -142,6 +155,42 @@ begin
   end;
 end;
 
+{ A ticket into the cache, when resumption is on and the certificate
+  that made the session was not merely ignored. }
+function HandleNewSessionTicket(Connection: PTlsConnection; Message: PByte; MessageLength: PtrUInt): LongInt;
+var
+  Lifetime, AgeAdd: LongWord;
+  Nonce, TicketBytes: TTlsByteRange;
+  Ticket: TTlsSessionTicket;
+begin
+  Result := ParseNewSessionTicket(Message + 4, MessageLength - 4, Lifetime, AgeAdd, Nonce, TicketBytes);
+  if Result <> TlsErrorNone then
+    Exit;
+  if (Connection^.Options.SessionCacheKey = '') or (Connection^.IgnoredCertificateError <> TlsErrorNone) then
+    Exit;
+  Ticket := Default(TTlsSessionTicket);
+  SetLength(Ticket.Ticket, TicketBytes.Length);
+  Move(TicketBytes.Data^, Ticket.Ticket[0], TicketBytes.Length);
+  DeriveResumptionPsk(Connection^.Suite.Hash, @Connection^.Schedule.ResumptionMasterSecret[0], Nonce.Data,
+    Nonce.Length, Ticket.Psk);
+  Ticket.Hash := Connection^.Suite.Hash;
+  Ticket.Suite := Connection^.Suite.Identifier;
+  Ticket.AgeAdd := AgeAdd;
+  Ticket.LifetimeSeconds := Lifetime;
+  Ticket.ReceivedAt := Connection^.Options.VerificationTime * 1000;
+  StoreSessionTicket(Connection^.Options.SessionCacheKey, Ticket);
+  WipeSessionTicket(Ticket);
+end;
+
+{ TLS 1.2: a HelloRequest (renegotiation is never done) gets a warning. }
+function HandleTls12Message(Connection: PTlsConnection; MessageType: Byte; MessageLength: PtrUInt): LongInt;
+begin
+  if (MessageType <> HandshakeHelloRequest) or (MessageLength <> 4) then
+    Exit(TlsErrorUnexpectedMessage);
+  SendAlert(Connection, TlsAlertNoRenegotiation);
+  Result := TlsErrorNone;
+end;
+
 { Messages after the handshake. }
 function HandlePostHandshakeMessages(Connection: PTlsConnection): LongInt;
 var
@@ -155,9 +204,16 @@ begin
     Result := TakeBufferedHandshakeMessage(Connection, MessageType, Message, MessageLength, Available);
     if (Result <> TlsErrorNone) or not Available then
       Exit;
+    if Connection^.Version = VersionTls12 then
+    begin
+      Result := HandleTls12Message(Connection, MessageType, MessageLength);
+      if Result <> TlsErrorNone then
+        Exit;
+      Continue;
+    end;
     case MessageType of
       HandshakeNewSessionTicket:
-        Result := ParseNewSessionTicket(Message + 4, MessageLength - 4);
+        Result := HandleNewSessionTicket(Connection, Message, MessageLength);
       HandshakeKeyUpdate:
         Result := HandleKeyUpdate(Connection, Message, MessageLength);
     else
@@ -307,6 +363,36 @@ end;
 function TlsClosedCleanly(Connection: PTlsConnection): Boolean;
 begin
   Result := (Connection <> nil) and Connection^.CloseNotifyReceived;
+end;
+
+function TlsProtocolVersionName(Connection: PTlsConnection): string;
+begin
+  Result := '';
+  if Connection = nil then
+    Exit;
+  if Connection^.Version = VersionTls13 then
+    Result := 'TLSv1.3'
+  else if Connection^.Version = VersionTls12 then
+    Result := 'TLSv1.2';
+end;
+
+function TlsKeyExchangeGroupName(Connection: PTlsConnection): string;
+begin
+  if (Connection = nil) or (Connection^.Group = 0) then
+    Exit('');
+  Result := GroupName(Connection^.Group);
+end;
+
+function TlsSessionResumed(Connection: PTlsConnection): Boolean;
+begin
+  Result := (Connection <> nil) and Connection^.Resumed;
+end;
+
+function TlsCertificateStatus(Connection: PTlsConnection): TTlsCertificateStatus;
+begin
+  if Connection = nil then
+    Exit(StatusNotChecked);
+  Result := Connection^.CertificateStatus;
 end;
 
 end.

@@ -40,6 +40,7 @@ uses
   TlsTest.Certificates,
   TlsTest.Interop,
   TlsTest.KeySchedule,
+  TlsTest.Resumption,
   TlsTest.Retry;
 
 var
@@ -68,6 +69,8 @@ begin
   TestRfc8448Handshake;
   TestRetryTranscript;
   TestRetryExchange;
+  TestRfc8448Resumption;
+  TestSessionCache;
   TestTestCertificates(ParamStr(1));
   TestMozillaBundle(ParamStr(2));
   FinishChecks('tls test');

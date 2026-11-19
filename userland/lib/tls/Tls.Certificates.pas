@@ -107,6 +107,8 @@ type
     KeyUsage: LongWord;
     HasExtendedKeyUsage: Boolean;
     AllowsServerAuthentication: Boolean;
+    { id-kp-OCSPSigning: a delegated OCSP responder. }
+    AllowsOcspSigning: Boolean;
     HasSubjectAlternativeNames: Boolean;
     { The contents of the GeneralNames SEQUENCE. }
     SubjectAlternativeNames: TTlsByteRange;

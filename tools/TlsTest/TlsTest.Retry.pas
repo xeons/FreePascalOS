@@ -21,8 +21,11 @@
   of the first ClientHello) against RFC 8448 section 5, and the client
   itself answering a scripted server in memory: a retry with a cookie
   gets a second ClientHello that is the first plus the cookie; a retry
-  that asks for x25519 again, one that changes nothing and a second
-  retry are refused with the right alert.
+  asking for secp256r1 gets a P-256 key share; a retry that asks for
+  x25519 again, one for a group not offered, one that changes nothing
+  and a second retry are refused with the right alert. Then TLS 1.2
+  answers: a server random with the downgrade sentinel, and a server
+  without the extended master secret, are refused.
 }
 unit TlsTest.Retry;
 
@@ -65,7 +68,7 @@ begin
   ServerHello := HexToBytes(RetryServerHello);
   Shared := HexToBytes(RetrySharedSecret);
 
-  Check(ParseServerHello(@Retry[4], Length(Retry) - 4, Hello) = TlsErrorNone, 'retry: RFC 8448 HelloRetryRequest parses');
+  Check(ParseServerHello(@Retry[4], Length(Retry) - 4, '', Hello) = TlsErrorNone, 'retry: RFC 8448 HelloRetryRequest parses');
   Check(Hello.IsRetryRequest, 'retry: recognized by its random');
   Check(Hello.HasCookie and (Hello.Cookie.Length > 0), 'retry: with a cookie');
   Check(Hello.HasKeyShare and (Hello.KeyShareGroup = $0017), 'retry: asks for secp256r1');
@@ -89,7 +92,8 @@ begin
 end;
 
 type
-  TRetryScript = (ScriptRetryWithCookie, ScriptRetrySameGroup, ScriptRetryNoChange, ScriptRetryTwice);
+  TRetryScript = (ScriptRetryWithCookie, ScriptRetrySameGroup, ScriptRetryNoChange, ScriptRetryTwice,
+    ScriptRetryNewGroup, ScriptRetryGroupNotOffered, ScriptDowngradeSentinel, ScriptTls12WithoutMasterSecretExtension);
 
   TScriptedServer = record
     Script: TRetryScript;
@@ -155,7 +159,8 @@ begin
   end;
 end;
 
-procedure AppendRetryRecord(var Server: TScriptedServer; constref Hello: TByteArray; WithCookie, WithGroup: Boolean);
+procedure AppendRetryRecord(var Server: TScriptedServer; constref Hello: TByteArray; WithCookie: Boolean;
+  Group: Word);
 var
   RecordStart, Body, SessionId, Extensions, Extension, Value: PtrUInt;
   CookieText: string;
@@ -177,11 +182,11 @@ begin
   AppendUInt16(Server.Reply, ExtensionSupportedVersions);
   AppendUInt16(Server.Reply, 2);
   AppendUInt16(Server.Reply, VersionTls13);
-  if WithGroup then
+  if Group <> 0 then
   begin
     AppendUInt16(Server.Reply, ExtensionKeyShare);
     AppendUInt16(Server.Reply, 2);
-    AppendUInt16(Server.Reply, GroupX25519);
+    AppendUInt16(Server.Reply, Group);
   end;
   if WithCookie then
   begin
@@ -192,6 +197,45 @@ begin
     AppendBytes(Server.Reply, @CookieText[1], Length(CookieText));
     EndVector(Server.Reply, Value, 2);
     EndVector(Server.Reply, Extension, 2);
+  end;
+  EndVector(Server.Reply, Extensions, 2);
+  EndVector(Server.Reply, Body, 3);
+  EndVector(Server.Reply, RecordStart, 2);
+end;
+
+{ A TLS 1.2 ServerHello: the last 8 bytes of its random are the
+  downgrade sentinel when Downgrade is set; it takes the extended master
+  secret (and secure renegotiation) only when WithExtensions is set. }
+procedure AppendTls12ServerHello(var Server: TScriptedServer; Downgrade, WithExtensions: Boolean);
+var
+  RecordStart, Body, SessionId, Extensions: PtrUInt;
+  Index: Integer;
+begin
+  AppendByte(Server.Reply, ContentHandshake);
+  AppendUInt16(Server.Reply, VersionTls12);
+  RecordStart := BeginVector(Server.Reply, 2);
+  AppendByte(Server.Reply, HandshakeServerHello);
+  Body := BeginVector(Server.Reply, 3);
+  AppendUInt16(Server.Reply, VersionTls12);
+  for Index := 0 to 23 do
+    AppendByte(Server.Reply, Index);
+  if Downgrade then
+    AppendBytes(Server.Reply, @DowngradeToTls12Sentinel[0], 8)
+  else
+    for Index := 24 to 31 do
+      AppendByte(Server.Reply, Index);
+  SessionId := BeginVector(Server.Reply, 1);
+  EndVector(Server.Reply, SessionId, 1);
+  AppendUInt16(Server.Reply, $C02F);
+  AppendByte(Server.Reply, 0);
+  Extensions := BeginVector(Server.Reply, 2);
+  if WithExtensions then
+  begin
+    AppendUInt16(Server.Reply, ExtensionExtendedMasterSecret);
+    AppendUInt16(Server.Reply, 0);
+    AppendUInt16(Server.Reply, ExtensionRenegotiationInfo);
+    AppendUInt16(Server.Reply, 1);
+    AppendByte(Server.Reply, 0);
   end;
   EndVector(Server.Reply, Extensions, 2);
   EndVector(Server.Reply, Body, 3);
@@ -222,16 +266,20 @@ begin
     begin
       Server^.FirstHello := SentHandshake(Server^, 0);
       case Server^.Script of
-        ScriptRetryWithCookie, ScriptRetryTwice: AppendRetryRecord(Server^, Server^.FirstHello, True, False);
-        ScriptRetrySameGroup: AppendRetryRecord(Server^, Server^.FirstHello, True, True);
-        ScriptRetryNoChange: AppendRetryRecord(Server^, Server^.FirstHello, False, False);
+        ScriptRetryWithCookie, ScriptRetryTwice: AppendRetryRecord(Server^, Server^.FirstHello, True, 0);
+        ScriptRetrySameGroup: AppendRetryRecord(Server^, Server^.FirstHello, True, GroupX25519);
+        ScriptRetryNoChange: AppendRetryRecord(Server^, Server^.FirstHello, False, 0);
+        ScriptRetryNewGroup: AppendRetryRecord(Server^, Server^.FirstHello, False, GroupSecp256r1);
+        ScriptRetryGroupNotOffered: AppendRetryRecord(Server^, Server^.FirstHello, False, GroupSecp521r1);
+        ScriptDowngradeSentinel: AppendTls12ServerHello(Server^, True, True);
+        ScriptTls12WithoutMasterSecretExtension: AppendTls12ServerHello(Server^, False, False);
       end;
     end
     else if Server^.Round = 2 then
     begin
       Server^.SecondHello := SentHandshake(Server^, 1);
       if Server^.Script = ScriptRetryTwice then
-        AppendRetryRecord(Server^, Server^.FirstHello, True, False)
+        AppendRetryRecord(Server^, Server^.FirstHello, True, 0)
       else
         AppendAlertRecord(Server^, TlsAlertHandshakeFailure);
     end
@@ -266,6 +314,13 @@ begin
   FreeTlsClient(Connection);
 end;
 
+function BytesAsText(constref Bytes: TByteArray): string;
+begin
+  SetLength(Result, Length(Bytes));
+  if Length(Bytes) > 0 then
+    Move(Bytes[0], Result[1], Length(Bytes));
+end;
+
 procedure FreeScript(var Server: TScriptedServer);
 begin
   FreeBuilder(Server.Sent);
@@ -278,22 +333,20 @@ var
   Error: LongInt;
   SuitesLength: Integer;
   CookieText: string;
-  CookieAt: Integer;
   Index: Integer;
+  ShareText: string;
 begin
   Error := RunScript(ScriptRetryWithCookie, Server);
   Check(Error = TlsErrorAlertReceived, 'retry exchange: the client answered the retry (the server then gave up)');
   Check((Length(Server.FirstHello) > 0) and (Length(Server.SecondHello) > 0), 'retry exchange: two ClientHellos');
   CookieText := Cookie;
-  { The second ClientHello is the first with the cookie extension added
-    at the end: 2 + 2 + 2 + the cookie. }
+  { The second ClientHello is the first with the cookie extension added:
+    2 + 2 + 2 + the cookie. }
   Check(Length(Server.SecondHello) = Length(Server.FirstHello) + 6 + Length(CookieText),
     'retry exchange: the second ClientHello is longer by the cookie extension');
   if Length(Server.SecondHello) = Length(Server.FirstHello) + 6 + Length(CookieText) then
   begin
-    CookieAt := Length(Server.SecondHello) - Length(CookieText);
-    Check(CompareByte(Server.SecondHello[CookieAt], CookieText[1], Length(CookieText)) = 0,
-      'retry exchange: the cookie comes back');
+    Check(Pos(CookieText, BytesAsText(Server.SecondHello)) > 0, 'retry exchange: the cookie comes back');
     { Random, session id, suites and the key share are unchanged. }
     Check(CompareByte(Server.SecondHello[6], Server.FirstHello[6], 32 + 33) = 0,
       'retry exchange: the same random and session id');
@@ -318,6 +371,28 @@ begin
   Error := RunScript(ScriptRetryTwice, Server);
   Check((Error = TlsErrorUnexpectedMessage) and (LastAlert(Server) = TlsAlertUnexpectedMessage),
     'retry exchange: a second retry is refused (unexpected_message)');
+  FreeScript(Server);
+
+  Error := RunScript(ScriptRetryNewGroup, Server);
+  Check(Error = TlsErrorAlertReceived, 'retry exchange: a retry for secp256r1 is answered');
+  { group 0x0017, a 65-byte key share: 00 17 00 41 04 }
+  ShareText := #$00#$17#$00#$41#$04;
+  Check(Pos(ShareText, BytesAsText(Server.SecondHello)) > 0, 'retry exchange: the second ClientHello has a P-256 share');
+  FreeScript(Server);
+
+  Error := RunScript(ScriptRetryGroupNotOffered, Server);
+  Check((Error = TlsErrorIllegalParameter) and (LastAlert(Server) = TlsAlertIllegalParameter),
+    'retry exchange: a retry for a group not offered is refused');
+  FreeScript(Server);
+
+  Error := RunScript(ScriptDowngradeSentinel, Server);
+  Check((Error = TlsErrorIllegalParameter) and (LastAlert(Server) = TlsAlertIllegalParameter),
+    'TLS 1.2: a server random with the downgrade sentinel is refused');
+  FreeScript(Server);
+
+  Error := RunScript(ScriptTls12WithoutMasterSecretExtension, Server);
+  Check((Error = TlsErrorHandshakeFailure) and (LastAlert(Server) = TlsAlertHandshakeFailure),
+    'TLS 1.2: a server without the extended master secret is refused');
   FreeScript(Server);
 end;
 

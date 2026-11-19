@@ -17,28 +17,38 @@
 }
 
 (*
-  The TLS 1.3 client handshake (RFC 8446 section 2, full handshake
-  with (EC)DHE and certificates, no PSK and no early data):
+  The client handshake. TLS 1.3 (RFC 8446 section 2), with (EC)DHE and
+  certificates, or resuming with a session ticket (a PSK with (EC)DHE,
+  no early data):
 
     ClientHello              -->
+    (+ pre_shared_key)
                              <--  [HelloRetryRequest: once, then a new
-                                   ClientHello with its cookie]
+                                   ClientHello with its cookie and/or
+                                   a share in the group it asks for]
                              <--  ServerHello
                                   {EncryptedExtensions}
-                                  {CertificateRequest}   (optional)
-                                  {Certificate}
-                                  {CertificateVerify}
+                                  {CertificateRequest}   (not resuming)
+                                  {Certificate}          (not resuming)
+                                  {CertificateVerify}    (not resuming)
                                   {Finished}
     [change_cipher_spec]
     {Certificate}  (empty, only when requested)
     {Finished}               -->
 
-  The server's certificate chain is checked when its Certificate
-  arrives (Tls.CertificateChains); the CertificateVerify signature with
-  the server's key over the transcript so far (Tls.Signatures); the
-  server's Finished as an HMAC of the transcript, compared in constant
-  time. After the client's Finished both directions use the
-  application traffic keys.
+  A server that answers with TLS 1.2 goes on in Tls.Handshake12 - unless
+  its random carries the downgrade sentinel (RFC 8446 section 4.1.3),
+  which means something in between removed TLS 1.3.
+
+  The key share sent first is for the first group offered (x25519 by
+  default); a HelloRetryRequest may ask for another of the offered
+  groups. The server's certificate chain and stapled OCSP response are
+  checked when its Certificate arrives (Tls.ServerAuthentication); the
+  CertificateVerify signature with its key over the transcript so far
+  (Tls.Signatures); the server's Finished as an HMAC of the transcript,
+  compared in constant time. After the client's Finished both
+  directions use the application traffic keys, and the resumption
+  master secret is kept for the tickets the server sends (Tls.Client).
 *)
 unit Tls.Handshake;
 
@@ -59,46 +69,75 @@ uses
   Crypto.Bits,
   Crypto.Digests,
   Crypto.Random,
-  Crypto.X25519,
   Tls.ByteBuffers,
-  Tls.Certificates,
-  Tls.CertificateChains,
   Tls.CipherSuites,
   Tls.ClientHello,
   Tls.Constants,
   Tls.Errors,
+  Tls.Handshake12,
+  Tls.HandshakeMessages,
   Tls.HostNames,
   Tls.KeySchedule,
+  Tls.KeyShares,
   Tls.RecordLayer,
   Tls.RecordProtection,
+  Tls.ServerAuthentication,
   Tls.ServerMessages,
+  Tls.SessionCache,
   Tls.Signatures,
   Tls.Transcript;
 
 type
   THandshakeState = record
     Hello: TClientHelloParameters;
-    PrivateKey: array[0..31] of Byte;
+    Share: TTlsKeyShare;
     CookieCopy: TTlsBuilder;
     RetryRequested: Boolean;
     RetrySuite: Word;
     CertificateRequested: Boolean;
     CertificateRequestContext: TTlsBuilder;
+    { A ticket to resume with, and whether the last ClientHello
+      offered it. }
+    HasTicket: Boolean;
+    Ticket: TTlsSessionTicket;
+    OfferedPsk: Boolean;
   end;
 
 const
   CertificateVerifyContext: PChar = 'TLS 1.3, server CertificateVerify';
 
-function SendHandshakeMessage(Connection: PTlsConnection; Message: PByte; Length: PtrUInt): LongInt;
+function CurrentMilliseconds(Connection: PTlsConnection): Int64;
 begin
-  AddToTranscript(Connection^.Transcript, Message, Length);
-  Result := SendRecords(Connection, ContentHandshake, Message, Length);
+  Result := Connection^.Options.VerificationTime * 1000;
+end;
+
+{ HMAC(binder key, hash of the transcript and the truncated ClientHello)
+  into the ClientHello's zeroed binder. }
+procedure FillBinder(Connection: PTlsConnection; var State: THandshakeState; Message: PByte; BindersOffset: PtrUInt);
+var
+  Schedule: TTlsKeySchedule;
+  BinderKey: TTlsSecret;
+  Hash, Binder: TDigestOutput;
+  HashLength: Integer;
+begin
+  HashLength := DigestSize(State.Ticket.Hash);
+  BeginKeyScheduleWithPsk(Schedule, State.Ticket.Hash, @State.Ticket.Psk[0], HashLength);
+  DeriveBinderKey(Schedule, BinderKey);
+  PeekTranscriptHash(Connection^.Transcript, State.Ticket.Hash, Message, BindersOffset, Hash);
+  ComputeFinishedData(State.Ticket.Hash, @BinderKey[0], @Hash[0], Binder);
+  { binders<33..2^16-1> { opaque binder<32..255> } }
+  Move(Binder[0], Message[BindersOffset + 2 + 1], HashLength);
+  WipeKeySchedule(Schedule);
+  WipeMemory(@BinderKey[0], SizeOf(BinderKey));
+  WipeMemory(@Binder[0], SizeOf(Binder));
 end;
 
 function SendClientHello(Connection: PTlsConnection; var State: THandshakeState): LongInt;
 var
   Message: TTlsBuilder;
   Address: array[0..3] of Byte;
+  BindersOffset: PtrUInt;
+  Age: Int64;
 begin
   { No server_name for a numeric address (RFC 6066 section 3). }
   if ParseIpv4Literal(Connection^.Options.ServerName, Address) then
@@ -106,15 +145,39 @@ begin
   else
     State.Hello.ServerName := Connection^.Options.ServerName;
   State.Hello.CipherSuites := Connection^.Options.CipherSuites;
+  State.Hello.Groups := Connection^.Options.Groups;
+  State.Hello.MinimumVersion := Connection^.Options.MinimumVersion;
+  State.Hello.MaximumVersion := Connection^.Options.MaximumVersion;
   State.Hello.ApplicationProtocol := Connection^.Options.ApplicationProtocol;
   State.Hello.Cookie := ByteRange(State.CookieCopy.Data, State.CookieCopy.Length);
+  State.Hello.AllowResumption := Connection^.Options.SessionCacheKey <> '';
+  State.Hello.KeyShareCount := 0;
+  if State.Share.PublicLength > 0 then
+  begin
+    State.Hello.KeyShares[0].Group := State.Share.Group;
+    State.Hello.KeyShares[0].Data := @State.Share.PublicKey[0];
+    State.Hello.KeyShares[0].Length := State.Share.PublicLength;
+    State.Hello.KeyShareCount := 1;
+  end;
+  State.Hello.PskIdentity := nil;
+  State.OfferedPsk := State.HasTicket;
+  if State.OfferedPsk then
+  begin
+    State.Hello.PskIdentity := State.Ticket.Ticket;
+    Age := CurrentMilliseconds(Connection) - State.Ticket.ReceivedAt;
+    State.Hello.ObfuscatedTicketAge := LongWord((QWord(Age) + State.Ticket.AgeAdd) and $FFFFFFFF);
+    State.Hello.BinderLength := DigestSize(State.Ticket.Hash);
+  end;
+
   InitializeBuilder(Message);
-  BuildClientHello(Message, State.Hello);
+  BuildClientHello(Message, State.Hello, BindersOffset);
   if Message.Failed then
   begin
     FreeBuilder(Message);
     Exit(TlsErrorOutOfMemory);
   end;
+  if BindersOffset > 0 then
+    FillBinder(Connection, State, Message.Data, BindersOffset);
   Result := SendHandshakeMessage(Connection, Message.Data, Message.Length);
   FreeBuilder(Message);
 end;
@@ -129,24 +192,33 @@ begin
     Exit(TlsErrorUnexpectedMessage);
   State.RetryRequested := True;
   if not CipherSuiteListContains(Connection^.Options.CipherSuites, Hello.CipherSuite) or
-     not FindCipherSuite(Hello.CipherSuite, Suite) then
+     not FindCipherSuite(Hello.CipherSuite, Suite) or Suite.IsTls12 then
     Exit(TlsErrorIllegalParameter);
-  { Only x25519 is offered, and its share was sent: asking for it again
-    is illegal, asking for another group cannot be met. }
+  { A group that was offered and has no share yet; asking for the
+    share that was sent, or for a group not offered, is illegal. }
   if Hello.HasKeyShare then
   begin
-    if Hello.KeyShareGroup = GroupX25519 then
+    if (Hello.KeyShareGroup = State.Share.Group) or not GroupIsSupported(Hello.KeyShareGroup) or
+       not GroupListContains(Connection^.Options.Groups, Hello.KeyShareGroup) then
       Exit(TlsErrorIllegalParameter);
-    Exit(TlsErrorHandshakeFailure);
-  end;
-  { A retry must change something: here only the cookie can. }
-  if not Hello.HasCookie then
+    WipeKeyShare(State.Share);
+    if not MakeKeyShare(Hello.KeyShareGroup, State.Share) then
+      Exit(TlsErrorInternal);
+  end
+  else if not Hello.HasCookie then
+    { A retry must change something. }
     Exit(TlsErrorIllegalParameter);
   State.RetrySuite := Hello.CipherSuite;
   ClearBuilder(State.CookieCopy);
-  AppendBytes(State.CookieCopy, Hello.Cookie.Data, Hello.Cookie.Length);
-  if State.CookieCopy.Failed then
-    Exit(TlsErrorOutOfMemory);
+  if Hello.HasCookie then
+  begin
+    AppendBytes(State.CookieCopy, Hello.Cookie.Data, Hello.Cookie.Length);
+    if State.CookieCopy.Failed then
+      Exit(TlsErrorOutOfMemory);
+  end;
+  { The ticket can go again only with a suite of its hash. }
+  if State.HasTicket and (State.Ticket.Hash <> Suite.Hash) then
+    State.HasTicket := False;
 
   StartTranscript(Connection^.Transcript, Suite.Hash);
   ReplaceWithMessageHash(Connection^.Transcript);
@@ -157,30 +229,53 @@ begin
   Result := SendClientHello(Connection, State);
 end;
 
+{ The PSK the server took, if it took one. }
+function AcceptPreSharedKey(Connection: PTlsConnection; var State: THandshakeState;
+  constref Hello: TServerHello): LongInt;
+begin
+  Result := TlsErrorNone;
+  if not Hello.HasPreSharedKey then
+  begin
+    BeginKeySchedule(Connection^.Schedule, Connection^.Suite.Hash);
+    Exit;
+  end;
+  if not State.OfferedPsk or (Hello.SelectedIdentity <> 0) or (State.Ticket.Hash <> Connection^.Suite.Hash) then
+    Exit(TlsErrorIllegalParameter);
+  Connection^.Resumed := True;
+  BeginKeyScheduleWithPsk(Connection^.Schedule, Connection^.Suite.Hash, @State.Ticket.Psk[0],
+    DigestSize(State.Ticket.Hash));
+end;
+
 function HandleServerHello(Connection: PTlsConnection; var State: THandshakeState; constref Hello: TServerHello;
   Message: PByte; MessageLength: PtrUInt): LongInt;
 var
-  SharedSecret: array[0..31] of Byte;
+  SharedSecret: array[0..MaximumSharedSecretLength - 1] of Byte;
+  SecretLength: Integer;
   Hash: TDigestOutput;
 begin
   if not CipherSuiteListContains(Connection^.Options.CipherSuites, Hello.CipherSuite) or
-     not FindCipherSuite(Hello.CipherSuite, Connection^.Suite) then
+     not FindCipherSuite(Hello.CipherSuite, Connection^.Suite) or Connection^.Suite.IsTls12 then
     Exit(TlsErrorIllegalParameter);
   if State.RetryRequested and (Hello.CipherSuite <> State.RetrySuite) then
     Exit(TlsErrorIllegalParameter);
-  if (Hello.KeyShareGroup <> GroupX25519) or (Hello.KeyShare.Length <> 32) then
+  if Hello.KeyShareGroup <> State.Share.Group then
     Exit(TlsErrorIllegalParameter);
+  Connection^.Version := VersionTls13;
+  Connection^.Group := Hello.KeyShareGroup;
 
+  Result := AcceptPreSharedKey(Connection, State, Hello);
+  if Result <> TlsErrorNone then
+    Exit;
   StartTranscript(Connection^.Transcript, Connection^.Suite.Hash);
   AddToTranscript(Connection^.Transcript, Message, MessageLength);
 
-  if not X25519SharedSecret(@State.PrivateKey[0], Hello.KeyShare.Data, @SharedSecret[0]) then
-    Exit(TlsErrorIllegalParameter);
-  BeginKeySchedule(Connection^.Schedule, Connection^.Suite.Hash);
+  Result := CompleteKeyShare(State.Share, Hello.KeyShare.Data, Hello.KeyShare.Length, @SharedSecret[0], SecretLength);
+  WipeKeyShare(State.Share);
+  if Result <> TlsErrorNone then
+    Exit;
   TranscriptHash(Connection^.Transcript, Hash);
-  DeriveHandshakeSecrets(Connection^.Schedule, @SharedSecret[0], 32, @Hash[0]);
+  DeriveHandshakeSecrets(Connection^.Schedule, @SharedSecret[0], SecretLength, @Hash[0]);
   WipeMemory(@SharedSecret[0], SizeOf(SharedSecret));
-  WipeMemory(@State.PrivateKey[0], SizeOf(State.PrivateKey));
 
   Result := EnsureNoBufferedHandshake(Connection);
   if Result <> TlsErrorNone then
@@ -188,14 +283,32 @@ begin
   SetRecordProtection(Connection^.ReadProtection, Connection^.Suite, Connection^.Schedule.ServerHandshakeTraffic);
 end;
 
-{ Waits for the ServerHello, going through one HelloRetryRequest. }
-function ReceiveServerHello(Connection: PTlsConnection; var State: THandshakeState): LongInt;
+{ A TLS 1.2 answer: only when it was offered, and never from a TLS 1.3
+  server pushed down. }
+function CheckTls12Answer(Connection: PTlsConnection; var State: THandshakeState;
+  constref Hello: TServerHello): LongInt;
+begin
+  if Connection^.Options.MinimumVersion > VersionTls12 then
+    Exit(TlsErrorProtocolVersion);
+  if State.RetryRequested then
+    Exit(TlsErrorIllegalParameter);
+  if (Connection^.Options.MaximumVersion >= VersionTls13) and
+     ((CompareByte(Hello.Random[24], DowngradeToTls12Sentinel[0], 8) = 0) or
+      (CompareByte(Hello.Random[24], DowngradeToTls11Sentinel[0], 8) = 0)) then
+    Exit(TlsErrorIllegalParameter);
+  Result := TlsErrorNone;
+end;
+
+{ Waits for the ServerHello, going through one HelloRetryRequest; a
+  TLS 1.2 ServerHello hands the rest to Tls.Handshake12 (IsTls12). }
+function ReceiveServerHello(Connection: PTlsConnection; var State: THandshakeState; out IsTls12: Boolean): LongInt;
 var
   MessageType: Byte;
   Message: PByte;
   MessageLength: PtrUInt;
   Hello: TServerHello;
 begin
+  IsTls12 := False;
   while True do
   begin
     Result := NextHandshakeMessage(Connection, MessageType, Message, MessageLength);
@@ -203,9 +316,20 @@ begin
       Exit;
     if MessageType <> HandshakeServerHello then
       Exit(TlsErrorUnexpectedMessage);
-    Result := ParseServerHello(Message + 4, MessageLength - 4, Hello);
+    Result := ParseServerHello(Message + 4, MessageLength - 4, Connection^.Options.ApplicationProtocol, Hello);
     if Result <> TlsErrorNone then
       Exit;
+    if Hello.Version = VersionTls12 then
+    begin
+      Result := CheckTls12Answer(Connection, State, Hello);
+      if Result <> TlsErrorNone then
+        Exit;
+      IsTls12 := True;
+      WipeKeyShare(State.Share);
+      Exit(RunTls12Handshake(Connection, Hello, Message, MessageLength, @State.Hello.Random[0]));
+    end;
+    if Connection^.Options.MaximumVersion < VersionTls13 then
+      Exit(TlsErrorIllegalParameter);
     { The legacy session id comes back as it was sent. }
     if (Hello.SessionIdEcho.Length <> 32) or
        (CompareByte(Hello.SessionIdEcho.Data^, State.Hello.SessionId[0], 32) <> 0) then
@@ -221,75 +345,18 @@ begin
   end;
 end;
 
-{ The next message, which must be of type Expected (or, when
-  Alternative is not 0, of that type). }
-function ExpectMessage(Connection: PTlsConnection; Expected, Alternative: Byte; out MessageType: Byte;
-  out Message: PByte; out MessageLength: PtrUInt): LongInt;
-begin
-  Result := NextHandshakeMessage(Connection, MessageType, Message, MessageLength);
-  if Result <> TlsErrorNone then
-    Exit;
-  if (MessageType <> Expected) and ((Alternative = 0) or (MessageType <> Alternative)) then
-    Result := TlsErrorUnexpectedMessage;
-end;
-
-procedure DescribeCertificate(Connection: PTlsConnection; Certificate: PTlsCertificate; UseIssuer: Boolean);
-begin
-  if Certificate = nil then
-    Exit;
-  if UseIssuer then
-    SetErrorDetail(Connection, 'issuer: ' + CommonNameText(Certificate^.IssuerCommonName))
-  else
-    SetErrorDetail(Connection, 'certificate: ' + CommonNameText(Certificate^.SubjectCommonName));
-end;
-
-function CheckServerCertificates(Connection: PTlsConnection): LongInt;
-var
-  Check: TChainCheck;
-  Outcome: TChainResult;
-begin
-  Check := Default(TChainCheck);
-  Check.Presented := @Connection^.ServerCertificates[0];
-  Check.PresentedCount := Length(Connection^.ServerCertificates);
-  Check.Anchors := Connection^.Options.TrustStore;
-  Check.Time := Connection^.Options.VerificationTime;
-  Check.HostName := Connection^.Options.ServerName;
-  Outcome := VerifyCertificateChain(Check);
-  if Outcome.Error = TlsErrorNone then
-    Exit(TlsErrorNone);
-  if Outcome.Error = TlsErrorCertificateNameMismatch then
-  begin
-    SetErrorDetail(Connection, 'host: ' + Connection^.Options.ServerName);
-  end
-  else
-    DescribeCertificate(Connection, Outcome.Culprit, Outcome.Error = TlsErrorCertificateUnknownIssuer);
-  if not Connection^.Options.VerifyCertificates then
-  begin
-    Connection^.IgnoredCertificateError := Outcome.Error;
-    Exit(TlsErrorNone);
-  end;
-  Result := Outcome.Error;
-end;
-
 function HandleCertificate(Connection: PTlsConnection; Message: PByte; MessageLength: PtrUInt): LongInt;
 var
   Entries: TServerCertificates;
-  Index: Integer;
-  Certificate: PTlsCertificate;
+  Staple: TTlsByteRange;
 begin
-  Result := ParseCertificateMessage(Message + 4, MessageLength - 4, Entries);
+  Result := ParseCertificateMessage(Message + 4, MessageLength - 4, Entries, Staple);
   if Result <> TlsErrorNone then
     Exit;
-  for Index := 0 to Entries.Count - 1 do
-  begin
-    Result := ParseCertificate(Entries.Entries[Index].Data, Entries.Entries[Index].Length, Certificate);
-    if Result <> TlsErrorNone then
-      Exit;
-    Insert(Certificate, Connection^.ServerCertificates, Length(Connection^.ServerCertificates));
-  end;
-  if Connection^.Options.VerifyCertificates and (Connection^.Options.TrustStore = nil) then
-    Exit(TlsErrorNoTrustStore);
-  Result := CheckServerCertificates(Connection);
+  Result := AcceptServerCertificates(Connection, Entries);
+  if Result <> TlsErrorNone then
+    Exit;
+  Result := CheckRevocationStatus(Connection, Staple);
 end;
 
 function HandleCertificateVerify(Connection: PTlsConnection; Message: PByte; MessageLength: PtrUInt): LongInt;
@@ -348,28 +415,6 @@ begin
   Result := TlsErrorNone;
 end;
 
-{ The answer to a CertificateRequest: a Certificate with no entries. }
-function SendEmptyCertificate(Connection: PTlsConnection; var State: THandshakeState): LongInt;
-var
-  Message: TTlsBuilder;
-  Body, Context, List: PtrUInt;
-begin
-  InitializeBuilder(Message);
-  AppendByte(Message, HandshakeCertificate);
-  Body := BeginVector(Message, 3);
-  Context := BeginVector(Message, 1);
-  AppendBytes(Message, State.CertificateRequestContext.Data, State.CertificateRequestContext.Length);
-  EndVector(Message, Context, 1);
-  List := BeginVector(Message, 3);
-  EndVector(Message, List, 3);
-  EndVector(Message, Body, 3);
-  if Message.Failed then
-    Result := TlsErrorOutOfMemory
-  else
-    Result := SendHandshakeMessage(Connection, Message.Data, Message.Length);
-  FreeBuilder(Message);
-end;
-
 function SendClientFinished(Connection: PTlsConnection): LongInt;
 var
   Hash: TDigestOutput;
@@ -389,24 +434,15 @@ begin
   WipeMemory(@VerifyData[0], SizeOf(VerifyData));
 end;
 
-function ReceiveServerFlight(Connection: PTlsConnection; var State: THandshakeState): LongInt;
+{ Certificate (after an optional CertificateRequest) and
+  CertificateVerify: not when resuming. }
+function ReceiveServerAuthentication(Connection: PTlsConnection; var State: THandshakeState): LongInt;
 var
   MessageType: Byte;
   Message: PByte;
   MessageLength: PtrUInt;
-  SelectedProtocol: TTlsByteRange;
   Context: TTlsByteRange;
 begin
-  Result := ExpectMessage(Connection, HandshakeEncryptedExtensions, 0, MessageType, Message, MessageLength);
-  if Result <> TlsErrorNone then
-    Exit;
-  Result := ParseEncryptedExtensions(Message + 4, MessageLength - 4, PChar(Connection^.Options.ApplicationProtocol),
-    SelectedProtocol);
-  if Result <> TlsErrorNone then
-    Exit;
-  SetString(Connection^.SelectedProtocol, PChar(SelectedProtocol.Data), SelectedProtocol.Length);
-  AddToTranscript(Connection^.Transcript, Message, MessageLength);
-
   Result := ExpectMessage(Connection, HandshakeCertificate, HandshakeCertificateRequest, MessageType, Message,
     MessageLength);
   if Result <> TlsErrorNone then
@@ -432,8 +468,31 @@ begin
   if Result <> TlsErrorNone then
     Exit;
   Result := HandleCertificateVerify(Connection, Message, MessageLength);
+end;
+
+function ReceiveServerFlight(Connection: PTlsConnection; var State: THandshakeState): LongInt;
+var
+  MessageType: Byte;
+  Message: PByte;
+  MessageLength: PtrUInt;
+  SelectedProtocol: TTlsByteRange;
+begin
+  Result := ExpectMessage(Connection, HandshakeEncryptedExtensions, 0, MessageType, Message, MessageLength);
   if Result <> TlsErrorNone then
     Exit;
+  Result := ParseEncryptedExtensions(Message + 4, MessageLength - 4, PChar(Connection^.Options.ApplicationProtocol),
+    SelectedProtocol);
+  if Result <> TlsErrorNone then
+    Exit;
+  SetString(Connection^.SelectedProtocol, PChar(SelectedProtocol.Data), SelectedProtocol.Length);
+  AddToTranscript(Connection^.Transcript, Message, MessageLength);
+
+  if not Connection^.Resumed then
+  begin
+    Result := ReceiveServerAuthentication(Connection, State);
+    if Result <> TlsErrorNone then
+      Exit;
+  end;
 
   Result := ExpectMessage(Connection, HandshakeFinished, 0, MessageType, Message, MessageLength);
   if Result <> TlsErrorNone then
@@ -461,7 +520,8 @@ begin
   SetRecordProtection(Connection^.WriteProtection, Connection^.Suite, Connection^.Schedule.ClientHandshakeTraffic);
   if State.CertificateRequested then
   begin
-    Result := SendEmptyCertificate(Connection, State);
+    Result := SendEmptyCertificate(Connection, State.CertificateRequestContext.Data,
+      State.CertificateRequestContext.Length, True);
     if Result <> TlsErrorNone then
       Exit;
   end;
@@ -470,21 +530,46 @@ begin
     Exit;
   SetRecordProtection(Connection^.WriteProtection, Connection^.Suite,
     Connection^.Schedule.ClientApplicationTraffic);
+  { For the tickets to come: the transcript through the client's
+    Finished. }
+  if Connection^.Options.SessionCacheKey <> '' then
+  begin
+    TranscriptHash(Connection^.Transcript, Hash);
+    DeriveResumptionMasterSecret(Connection^.Schedule, @Hash[0]);
+  end;
+end;
+
+{ A ticket for this server, of a suite that may be offered. }
+procedure FindTicket(Connection: PTlsConnection; var State: THandshakeState);
+begin
+  State.HasTicket := False;
+  if (Connection^.Options.SessionCacheKey = '') or (Connection^.Options.MaximumVersion < VersionTls13) then
+    Exit;
+  if not TakeSessionTicket(Connection^.Options.SessionCacheKey, CurrentMilliseconds(Connection), State.Ticket) then
+    Exit;
+  State.HasTicket := CipherSuiteListContains(Connection^.Options.CipherSuites, State.Ticket.Suite);
 end;
 
 function RunHandshake(Connection: PTlsConnection; var State: THandshakeState): LongInt;
+var
+  IsTls12: Boolean;
 begin
   RandomBytes(@State.Hello.Random[0], 32);
   RandomBytes(@State.Hello.SessionId[0], 32);
-  RandomBytes(@State.PrivateKey[0], 32);
-  X25519PublicKey(@State.PrivateKey[0], @State.Hello.KeyShare[0]);
+  if Connection^.Options.MaximumVersion >= VersionTls13 then
+  begin
+    if (Connection^.Options.Groups.Count = 0) or
+       not MakeKeyShare(Connection^.Options.Groups.Groups[0], State.Share) then
+      Exit(TlsErrorInvalidArgument);
+    FindTicket(Connection, State);
+  end;
 
   Result := SendClientHello(Connection, State);
   if Result <> TlsErrorNone then
     Exit;
   Connection^.AllowChangeCipherSpec := True;
-  Result := ReceiveServerHello(Connection, State);
-  if Result <> TlsErrorNone then
+  Result := ReceiveServerHello(Connection, State, IsTls12);
+  if (Result <> TlsErrorNone) or IsTls12 then
     Exit;
   Result := ReceiveServerFlight(Connection, State);
   if Result <> TlsErrorNone then
@@ -511,9 +596,12 @@ begin
   Result := RunHandshake(Connection, State);
   FreeBuilder(State.CookieCopy);
   FreeBuilder(State.CertificateRequestContext);
-  { The strings are let go before the wipe, which would lose them. }
+  WipeKeyShare(State.Share);
+  WipeSessionTicket(State.Ticket);
+  { The managed fields are let go before the wipe, which would lose them. }
   State.Hello.ServerName := '';
   State.Hello.ApplicationProtocol := '';
+  State.Hello.PskIdentity := nil;
   WipeMemory(@State, SizeOf(State));
   if Result <> TlsErrorNone then
   begin
@@ -522,6 +610,7 @@ begin
     Exit;
   end;
   { The handshake secrets are no longer needed. }
+  WipeMemory(@Connection^.Schedule.EarlySecret[0], SizeOf(Connection^.Schedule.EarlySecret));
   WipeMemory(@Connection^.Schedule.HandshakeSecret[0], SizeOf(Connection^.Schedule.HandshakeSecret));
   WipeMemory(@Connection^.Schedule.ClientHandshakeTraffic[0], SizeOf(Connection^.Schedule.ClientHandshakeTraffic));
   WipeMemory(@Connection^.Schedule.ServerHandshakeTraffic[0], SizeOf(Connection^.Schedule.ServerHandshakeTraffic));

@@ -18,12 +18,17 @@
 """Writes TlsTest.Rfc8448.inc (or TlsTest.Rfc8448Retry.inc) from the text of RFC 8448 ("Example
 Handshake Traces for TLS 1.3"): the values of its section 3, "Simple
 1-RTT Handshake", that TlsTest checks the key schedule, the transcript
-hash, the record protection and the Finished messages against, and of
-section 5, "HelloRetryRequest", for the transcript after a retry.
+hash, the record protection and the Finished messages against, of
+section 5, "HelloRetryRequest", for the transcript after a retry, and
+of sections 3 and 4 ("Resumed 0-RTT Handshake") for resumption: the
+resumption secret and PSK of the first connection's ticket, the early
+secret and PSK binder of the second ClientHello and the handshake
+secrets that follow.
 
     curl -o rfc8448.txt https://www.rfc-editor.org/rfc/rfc8448.txt
     python3 tools/TlsTest/make-rfc8448-vectors.py rfc8448.txt > tools/TlsTest/TlsTest.Rfc8448.inc
     python3 tools/TlsTest/make-rfc8448-vectors.py rfc8448.txt retry > tools/TlsTest/TlsTest.Rfc8448Retry.inc
+    python3 tools/TlsTest/make-rfc8448-vectors.py rfc8448.txt resumption > tools/TlsTest/TlsTest.Rfc8448Resumption.inc
 """
 
 import re
@@ -76,6 +81,29 @@ RETRY_WANTED = [
     ("RetryClientHandshakeTraffic", 'server: derive secret "tls13 c hs traffic":', "expanded"),
     ("RetryServerHandshakeTraffic", 'server: derive secret "tls13 s hs traffic":', "expanded"),
 ]
+
+# Sections 3 and 4: resumption (the section each value comes from).
+RESUMPTION_WANTED = [
+    (3, "ResumptionHash", 'client: derive secret "tls13 res master":', "hash"),
+    (3, "ResumptionMasterSecret", 'client: derive secret "tls13 res master":', "expanded"),
+    (3, "ResumptionPsk", 'server: generate resumption secret "tls13 resumption":', "expanded"),
+    (4, "ResumedEarlySecret", 'client: extract secret "early":', "secret"),
+    (4, "ResumedClientHelloPrefix", "client: construct a ClientHello handshake message:", "ClientHello"),
+    (4, "ResumedClientHello", "client: send handshake record:", "payload"),
+    (4, "ResumedBinderHash", "client: calculate PSK binder:", "binder hash"),
+    (4, "ResumedBinder", "client: calculate PSK binder:", "finished"),
+    (4, "ResumedServerHello", "server: construct a ServerHello handshake message:", "ServerHello"),
+    (4, "ResumedSharedSecret", 'server: extract secret "handshake":', "IKM"),
+    (4, "ResumedHandshakeSecret", 'server: extract secret "handshake":', "secret"),
+    (4, "ResumedHelloHash", 'server: derive secret "tls13 c hs traffic":', "hash"),
+    (4, "ResumedClientHandshakeTraffic", 'server: derive secret "tls13 c hs traffic":', "expanded"),
+    (4, "ResumedServerHandshakeTraffic", 'server: derive secret "tls13 s hs traffic":', "expanded"),
+]
+
+SECTION_HEADINGS = {
+    3: ("3.  Simple 1-RTT Handshake", "4.  Resumed 0-RTT Handshake"),
+    4: ("4.  Resumed 0-RTT Handshake", "5.  HelloRetryRequest"),
+}
 
 
 def read_entries(path, first_heading, next_heading):
@@ -136,7 +164,18 @@ def pascal_constant(name, data):
     return f"  {name}: PChar =\n    {body};\n"
 
 
+def main_resumption():
+    print("{ Made by tools/TlsTest/make-rfc8448-vectors.py from RFC 8448 sections 3 and 4. }")
+    print("const")
+    sections = {number: read_entries(sys.argv[1], *headings) for number, headings in SECTION_HEADINGS.items()}
+    for section, name, context, label in RESUMPTION_WANTED:
+        print(pascal_constant(name, find(sections[section], context, label)), end="")
+
+
 def main():
+    if len(sys.argv) > 2 and sys.argv[2] == "resumption":
+        main_resumption()
+        return
     if len(sys.argv) > 2 and sys.argv[2] == "retry":
         wanted_list, section = RETRY_WANTED, 5
         first_heading, next_heading = "5.  HelloRetryRequest", "6.  Client Authentication"

@@ -146,6 +146,8 @@ begin
       Exit;
     if OidIs(Purpose, OidServerAuthentication) or OidIs(Purpose, OidAnyExtendedKeyUsage) then
       Certificate.AllowsServerAuthentication := True;
+    if OidIs(Purpose, OidOcspSigning) then
+      Certificate.AllowsOcspSigning := True;
   end;
   Result := True;
 end;

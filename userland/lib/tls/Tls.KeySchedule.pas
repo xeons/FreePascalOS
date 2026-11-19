@@ -17,12 +17,12 @@
 }
 
 {
-  The TLS 1.3 key schedule (RFC 8446 section 7.1), without pre-shared
-  keys:
+  The TLS 1.3 key schedule (RFC 8446 section 7.1):
 
                  0
                  |
-       0 -> HKDF-Extract = Early Secret
+     PSK -> HKDF-Extract = Early Secret      (PSK: zeros without one)
+                 +--> Derive-Secret(., "res binder", "")
                  |
            Derive-Secret(., "derived", "")
                  |
@@ -34,8 +34,9 @@
        0 -> HKDF-Extract = Master Secret
                  +--> Derive-Secret(., "c ap traffic", CH..server Finished)
                  +--> Derive-Secret(., "s ap traffic", CH..server Finished)
+                 +--> Derive-Secret(., "res master", CH..client Finished)
 
-  plus the traffic keys and IVs of a secret (section 7.3), the Finished
+  plus the PSK of a session ticket (section 4.6.1), the traffic keys and IVs of a secret (section 7.3), the Finished
   verify data (section 4.4.4) and the next secret of a KeyUpdate
   (section 7.2). Every secret is wiped when the schedule is.
 }
@@ -56,12 +57,14 @@ type
   TTlsKeySchedule = record
     Hash: TDigestAlgorithm;
     HashLength: Integer;
+    EarlySecret: TTlsSecret;
     HandshakeSecret: TTlsSecret;
     MasterSecret: TTlsSecret;
     ClientHandshakeTraffic: TTlsSecret;
     ServerHandshakeTraffic: TTlsSecret;
     ClientApplicationTraffic: TTlsSecret;
     ServerApplicationTraffic: TTlsSecret;
+    ResumptionMasterSecret: TTlsSecret;
   end;
 
 { HKDF-Expand-Label(Secret, Label, Context, Length) with "tls13 " put
@@ -73,6 +76,18 @@ procedure DeriveSecret(Hash: TDigestAlgorithm; Secret: PByte; const Label_: stri
   out Output: TTlsSecret);
 
 procedure BeginKeySchedule(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm);
+{ With a pre-shared key (a session ticket's) as the early secret's
+  input. }
+procedure BeginKeyScheduleWithPsk(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm; Psk: PByte;
+  PskLength: Integer);
+{ The binder key of a resumption PSK: Derive-Secret(early, "res binder", ""). }
+procedure DeriveBinderKey(constref Schedule: TTlsKeySchedule; out BinderKey: TTlsSecret);
+{ From the hash of ClientHello..client Finished. }
+procedure DeriveResumptionMasterSecret(var Schedule: TTlsKeySchedule; TranscriptHash: PByte);
+{ A ticket's PSK: HKDF-Expand-Label(resumption_master_secret,
+  "resumption", ticket_nonce, Hash.length). }
+procedure DeriveResumptionPsk(Hash: TDigestAlgorithm; ResumptionMasterSecret: PByte; Nonce: PByte;
+  NonceLength: Integer; out Psk: TTlsSecret);
 { From the shared (EC)DHE secret and the hash of ClientHello..ServerHello. }
 procedure DeriveHandshakeSecrets(var Schedule: TTlsKeySchedule; SharedSecret: PByte; SharedSecretLength: Integer;
   TranscriptHash: PByte);
@@ -131,11 +146,50 @@ begin
   ExpandLabel(Hash, Secret, Label_, TranscriptHash, DigestSize(Hash), @Output[0], DigestSize(Hash));
 end;
 
-procedure BeginKeySchedule(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm);
+procedure BeginKeyScheduleWithPsk(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm; Psk: PByte;
+  PskLength: Integer);
+var
+  Zeros: TTlsSecret;
+  Extracted: TDigestOutput;
 begin
   FillChar(Schedule, SizeOf(Schedule), 0);
   Schedule.Hash := Hash;
   Schedule.HashLength := DigestSize(Hash);
+  FillChar(Zeros, SizeOf(Zeros), 0);
+  if Psk = nil then
+  begin
+    Psk := @Zeros[0];
+    PskLength := Schedule.HashLength;
+  end;
+  HkdfExtract(Hash, @Zeros[0], QWord(Schedule.HashLength), Psk, QWord(PskLength), Extracted);
+  Move(Extracted[0], Schedule.EarlySecret[0], Schedule.HashLength);
+  WipeMemory(@Extracted[0], SizeOf(Extracted));
+end;
+
+procedure BeginKeySchedule(out Schedule: TTlsKeySchedule; Hash: TDigestAlgorithm);
+begin
+  BeginKeyScheduleWithPsk(Schedule, Hash, nil, 0);
+end;
+
+procedure DeriveBinderKey(constref Schedule: TTlsKeySchedule; out BinderKey: TTlsSecret);
+var
+  EmptyHash: TDigestOutput;
+begin
+  ComputeDigest(Schedule.Hash, nil, 0, EmptyHash);
+  DeriveSecret(Schedule.Hash, @Schedule.EarlySecret[0], 'res binder', @EmptyHash[0], BinderKey);
+end;
+
+procedure DeriveResumptionMasterSecret(var Schedule: TTlsKeySchedule; TranscriptHash: PByte);
+begin
+  DeriveSecret(Schedule.Hash, @Schedule.MasterSecret[0], 'res master', TranscriptHash,
+    Schedule.ResumptionMasterSecret);
+end;
+
+procedure DeriveResumptionPsk(Hash: TDigestAlgorithm; ResumptionMasterSecret: PByte; Nonce: PByte;
+  NonceLength: Integer; out Psk: TTlsSecret);
+begin
+  FillChar(Psk, SizeOf(Psk), 0);
+  ExpandLabel(Hash, ResumptionMasterSecret, 'resumption', Nonce, NonceLength, @Psk[0], DigestSize(Hash));
 end;
 
 { Derive-Secret(Secret, "derived", "") }
@@ -150,16 +204,10 @@ end;
 procedure DeriveHandshakeSecrets(var Schedule: TTlsKeySchedule; SharedSecret: PByte; SharedSecretLength: Integer;
   TranscriptHash: PByte);
 var
-  Zeros: TTlsSecret;
-  EarlySecret: TDigestOutput;
   Salt: TTlsSecret;
   Extracted: TDigestOutput;
 begin
-  FillChar(Zeros, SizeOf(Zeros), 0);
-  { Without a PSK the early secret is HKDF-Extract(0, 0). }
-  HkdfExtract(Schedule.Hash, @Zeros[0], QWord(Schedule.HashLength), @Zeros[0], QWord(Schedule.HashLength),
-    EarlySecret);
-  DeriveSalt(Schedule, @EarlySecret[0], Salt);
+  DeriveSalt(Schedule, @Schedule.EarlySecret[0], Salt);
   HkdfExtract(Schedule.Hash, @Salt[0], QWord(Schedule.HashLength), SharedSecret, QWord(SharedSecretLength),
     Extracted);
   Move(Extracted[0], Schedule.HandshakeSecret[0], Schedule.HashLength);
@@ -167,7 +215,7 @@ begin
     Schedule.ClientHandshakeTraffic);
   DeriveSecret(Schedule.Hash, @Schedule.HandshakeSecret[0], 's hs traffic', TranscriptHash,
     Schedule.ServerHandshakeTraffic);
-  WipeMemory(@EarlySecret[0], SizeOf(EarlySecret));
+  WipeMemory(@Schedule.EarlySecret[0], SizeOf(Schedule.EarlySecret));
   WipeMemory(@Salt[0], SizeOf(Salt));
   WipeMemory(@Extracted[0], SizeOf(Extracted));
 end;
