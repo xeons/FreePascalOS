@@ -527,9 +527,26 @@ begin
     StartDrag(Window, Area);
 end;
 
+{ The window a key goes to: the active one, unless a pop-up holds the
+  pointer for a window that is never active (the taskbar's Start menu
+  and other menus): then that window, which gives the key to its
+  pop-up, so the menu can be used from the keyboard (Escape closes it). }
+function KeyboardTarget: TServerWindow;
+var
+  Owner: TServerWindow;
+begin
+  Result := ActiveWindow;
+  if Captured = nil then
+    Exit;
+  Owner := Captured.OwnerWindow;
+  if (Owner <> nil) and Owner.Visible and not Owner.Disabled and ((Owner.Flags and WindowNoActivate) <> 0) then
+    Result := Owner;
+end;
+
 procedure KeyChanged(const Event: TAbiInputEvent);
 var
   Message: TWindowMessage;
+  Target: TServerWindow;
 begin
   { Kept whichever window has the keyboard, for the pointer's events. }
   KeyboardModifiers := Event.Modifiers;
@@ -542,9 +559,12 @@ begin
     is active (Server.Hotkeys). }
   if TakeHotkeyEvent(Event) then
     Exit;
-  if (ActiveWindow = nil) or ActiveWindow.Disabled or not WindowUsable(ActiveWindow) then
+  Target := KeyboardTarget;
+  if (Target = nil) or Target.Disabled or not WindowUsable(Target) then
     Exit;
-  if (Event.Code = ScanF4) and (Event.Value <> 0) and ((Event.Modifiers and ModifierAlt) <> 0) then
+  { Alt+F4 closes the active window (not the taskbar under its menu). }
+  if (Target = ActiveWindow) and (Event.Code = ScanF4) and (Event.Value <> 0) and
+     ((Event.Modifiers and ModifierAlt) <> 0) then
   begin
     { The lock screen is not closed. }
     if ScreenLocked then
@@ -553,12 +573,12 @@ begin
     SendToProgram(ActiveWindow, Message);
     Exit;
   end;
-  Message := NewMessage(EventKey, ActiveWindow.Id);
+  Message := NewMessage(EventKey, Target.Id);
   Message.Code := Event.Code;
   Message.Value := Event.Value;
   Message.Character := Event.Character;
   Message.Modifiers := Event.Modifiers;
-  SendToProgram(ActiveWindow, Message);
+  SendToProgram(Target, Message);
 end;
 
 procedure WheelTurned(Steps: LongInt);
