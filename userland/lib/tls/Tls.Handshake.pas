@@ -125,7 +125,7 @@ begin
   DeriveBinderKey(Schedule, BinderKey);
   PeekTranscriptHash(Connection^.Transcript, State.Ticket.Hash, Message, BindersOffset, Hash);
   ComputeFinishedData(State.Ticket.Hash, @BinderKey[0], @Hash[0], Binder);
-  { binders<33..2^16-1> { opaque binder<32..255> } }
+  (* binders<33..2^16-1>, each opaque binder<32..255> *)
   Move(Binder[0], Message[BindersOffset + 2 + 1], HashLength);
   WipeKeySchedule(Schedule);
   WipeMemory(@BinderKey[0], SizeOf(BinderKey));
