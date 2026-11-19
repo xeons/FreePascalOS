@@ -225,26 +225,27 @@ function LookupRedirect(var Table: TDestinationTable; constref Destination: TDes
   out NextHop: TDestinationAddress; out InterfaceIndex: LongWord): Boolean;
 var
   Position: Integer;
+  Entry: ^TDestinationEntry;
 begin
   NextHop := Destination;
   InterfaceIndex := 0;
   Position := FindEntry(Table, Destination);
   if Position < 0 then
     Exit(False);
-  with Table.Entries[Position] do
+  { No "with" here: the entry's InterfaceIndex field would hide the
+    parameter of the same name. }
+  Entry := @Table.Entries[Position];
+  if Entry^.HasRedirect and (Entry^.RedirectExpiresAt <= Now) then
   begin
-    if HasRedirect and (RedirectExpiresAt <= Now) then
-    begin
-      HasRedirect := False;
-      DropIfEmpty(Table.Entries[Position]);
-    end;
-    Result := HasRedirect;
-    if Result then
-    begin
-      NextHop := RedirectNextHop;
-      InterfaceIndex := Table.Entries[Position].InterfaceIndex;
-      LastUsed := Now;
-    end;
+    Entry^.HasRedirect := False;
+    DropIfEmpty(Entry^);
+  end;
+  Result := Entry^.HasRedirect;
+  if Result then
+  begin
+    NextHop := Entry^.RedirectNextHop;
+    InterfaceIndex := Entry^.InterfaceIndex;
+    Entry^.LastUsed := Now;
   end;
 end;
 
@@ -252,15 +253,18 @@ procedure ForgetRedirectsThrough(var Table: TDestinationTable; constref NextHop:
   InterfaceIndex: LongWord);
 var
   Index: Integer;
+  Entry: ^TDestinationEntry;
 begin
   for Index := 0 to MaximumDestinationEntries - 1 do
-    with Table.Entries[Index] do
-      if InUse and HasRedirect and (Table.Entries[Index].InterfaceIndex = InterfaceIndex) and
-         SameDestination(RedirectNextHop, NextHop) then
-      begin
-        HasRedirect := False;
-        DropIfEmpty(Table.Entries[Index]);
-      end;
+  begin
+    Entry := @Table.Entries[Index];
+    if Entry^.InUse and Entry^.HasRedirect and (Entry^.InterfaceIndex = InterfaceIndex) and
+       SameDestination(Entry^.RedirectNextHop, NextHop) then
+    begin
+      Entry^.HasRedirect := False;
+      DropIfEmpty(Entry^);
+    end;
+  end;
 end;
 
 procedure ForgetDestinationsOn(var Table: TDestinationTable; InterfaceIndex: LongWord);

@@ -351,9 +351,13 @@ begin
   Check(LookupRedirect(Table, Destination('2001:db8::5'), Second, NextHop, InterfaceIndex) and
     CompareMem(@NextHop[0], @Router[0], 16) and (InterfaceIndex = 2), 'a redirect is kept');
   Check(ExpireDestinations(Table, 2 * Second) = 60 * Second, 'the next expiry is the redirect''s');
+  RecordRedirect(Table, Destination('2001:db8::7'), Destination('fe80::9'), 4, 0, 60 * Second);
   ForgetRedirectsThrough(Table, Destination('fe80::9'), 2);
   Check(not LookupRedirect(Table, Destination('2001:db8::5'), 3 * Second, NextHop, InterfaceIndex),
     'redirects through a router that went are forgotten');
+  Check(LookupRedirect(Table, Destination('2001:db8::7'), 3 * Second, NextHop, InterfaceIndex) and
+    (InterfaceIndex = 4), 'but not those through the same address on another interface');
+  ForgetDestinationsOn(Table, 4);
   RecordRedirect(Table, Destination('2001:db8::6'), Destination('fe80::9'), 3, 0, 60 * Second);
   ForgetDestinationsOn(Table, 3);
   Check(DestinationEntryCount(Table) = 0, 'an interface going takes its entries');
