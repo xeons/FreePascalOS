@@ -635,6 +635,7 @@ const
   AudioOutputKindHdAudio = 1;
   AudioOutputKindAc97 = 2;
   AudioOutputKindUsb = 3;
+  AudioOutputKindHdmi = 4;
 
   { The displays (/dev/display, then /dev/display1, /dev/display2...: the
     first is the one the firmware showed the boot on). Opening one takes

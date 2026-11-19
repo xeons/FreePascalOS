@@ -22,7 +22,8 @@
   clock rates, temperature, power domains).
 
   The mailbox is the ACPI device BCM2849 (RPIQ, at FE00B880h on the Pi
-  4). Mailbox 0 carries the firmware's answers to the processors, mailbox
+  4), or the device tree's "brcm,bcm2835-mbox" (at 10_7C01_3880 on the
+  Pi 5). Mailbox 0 carries the firmware's answers to the processors, mailbox
   1 the processors' requests:
 
     00h  mailbox 0 read      18h  mailbox 0 status (bit 30: empty)
@@ -38,7 +39,11 @@
   The message lives in one page below 1 GiB, mapped uncached: the
   firmware reads and writes RAM without looking at the processors'
   caches. Its bus address is what the device's _DMA says (the GPU sees
-  RAM at C0000000h on the Pi 4); without _DMA that alias is used.
+  RAM at C0000000h on the Pi 4); without _DMA that alias is used. After
+  a native boot (the Pi 5) the tree gives the mailbox no dma-ranges and
+  the firmware takes physical addresses as they are (as Linux's
+  raspberrypi firmware driver gives them), so the page's bus address is
+  its physical address.
   Requests are polled, one at a time.
 }
 unit Drivers.VideoCoreMailbox;
@@ -68,7 +73,12 @@ const
   FirmwareClockUart = 2;
   FirmwareClockArm = 3;
   FirmwareClockCore = 4;
+  FirmwareClockPixel = 9;
   FirmwareClockEmmc2 = 12;
+  { The HDMI state machine clock (M2MC) and the pixel valves' clock: the
+    Pi 4/5 trees' "hdmi" and "bvb" clocks of their HDMI nodes. }
+  FirmwareClockHdmiStateMachine = 13;
+  FirmwareClockPixelBvb = 14;
 
   { Power domain ids. }
   FirmwarePowerSdCard = 0;
@@ -144,6 +154,7 @@ var
   MailboxDma: TDmaAttributes;
   Lock: TMutex;
   Available: Boolean;
+  FoundInDeviceTree: Boolean;
 
 function ReadRegister(Offset: LongWord): LongWord;
 begin
@@ -343,7 +354,17 @@ begin
   MailboxDma := Device^.Dma;
   { The GPU never looks at the processors' caches. }
   MailboxDma.Coherent := False;
-  if MailboxDma.WindowCount = 0 then
+  if (MailboxDma.WindowCount = 0) and (Device^.DeviceTreeNode <> NoDeviceTreeNode) then
+  begin
+    { Physical addresses as they are, in the low gigabyte as on the
+      Pi 4 (a request is a 32-bit word). }
+    MailboxDma.WindowCount := 1;
+    MailboxDma.Windows[0].PhysicalStart := 0;
+    MailboxDma.Windows[0].BusStart := 0;
+    MailboxDma.Windows[0].Length := DefaultWindowLength;
+    FoundInDeviceTree := True;
+  end
+  else if MailboxDma.WindowCount = 0 then
   begin
     MailboxDma.WindowCount := 1;
     MailboxDma.Windows[0].PhysicalStart := 0;
@@ -358,7 +379,7 @@ begin
 end;
 
 const
-  MailboxIds: array[0..1] of PChar = ('BCM2849', nil);
+  MailboxIds: array[0..2] of PChar = ('BCM2849', 'brcm,bcm2835-mbox', nil);
   MailboxDriver: TPlatformDriver = (
     Name: 'videocore-mailbox';
     Ids: @MailboxIds[0];
@@ -379,6 +400,13 @@ begin
   begin
     DebugWrite(', firmware revision ');
     DebugWriteHex(Revision, 8);
+  end
+  else if FoundInDeviceTree then
+  begin
+    { Every later question would wait a second for nothing. }
+    DebugWrite(', the firmware does not answer: mailbox not used');
+    Available := False;
+    Result := False;
   end
   else
     DebugWrite(', the firmware does not answer');

@@ -38,8 +38,9 @@
 
   A write waits while its stream's queue is full; draining (on request,
   and when the file is closed) waits until everything the stream wrote
-  has been played. The output's volume (the hardware's) applies to every
-  stream; each stream also has its own. A muted output plays silence
+  has been played. The output's volume (the hardware's, or the mixer's
+  own scaling for hardware without one) applies to every stream; each
+  stream also has its own. A muted output plays silence
   (the mixer writes zeros, so it is silent whatever the hardware's
   amplifier can do) and keeps its volume for when it is unmuted.
 
@@ -74,10 +75,17 @@ type
     Stop: procedure(Context: Pointer);
     { Bytes into the ring the hardware has played. }
     Position: function(Context: Pointer): LongWord;
-    { 0-100 percent. }
+    { 0-100 percent; nil for hardware without a volume control (HDMI):
+      the mixer then scales the samples itself. }
     SetVolume: procedure(Context: Pointer; Percent: LongWord);
     { What the output is (AudioOutputKind*), for programs to name it. }
     Kind: LongWord;
+    { nil, or called after the mixer wrote period Index mod
+      AudioPeriodCount (Index counts the periods since Start; the first
+      MixAheadPeriods come before Start): for hardware that plays its
+      own copy of the ring or needs the period cleaned out of the
+      caches. On the mixer's thread. }
+    PeriodWritten: procedure(Context: Pointer; Index: QWord);
   end;
 
   PAudioOutput = ^TAudioOutput;
@@ -201,6 +209,8 @@ var
   Samples: PSmallInt;
   Position: LongWord;
   Value: Int64;
+  SoftwareGain: Int64;
+  UsesSoftwareVolume: Boolean;
   HadSound: Boolean;
 begin
   State := StateOf(Output);
@@ -218,9 +228,15 @@ begin
     Stream := Stream^.Next;
   end;
   Samples := PSmallInt(Output^.Periods[Index mod AudioPeriodCount]);
+  { Hardware without a volume control: the master volume scales the
+    sum, by the square of the fraction (closer to how loud it sounds). }
+  UsesSoftwareVolume := Output^.Routines.SetVolume = nil;
+  SoftwareGain := Int64(State^.MasterVolume) * State^.MasterVolume;
   for Position := 0 to AudioPeriodFrames * 2 - 1 do
   begin
     Value := State^.Mix[Position] div 65536;
+    if UsesSoftwareVolume then
+      Value := Value * SoftwareGain div (100 * 100);
     if State^.Muted then
       Value := 0;
     if Value > High(SmallInt) then
@@ -231,6 +247,8 @@ begin
   end;
   if State^.Monitor <> nil then
     FeedAudioMonitor(State^.Monitor, Samples, AudioPeriodFrames);
+  if Assigned(Output^.Routines.PeriodWritten) then
+    Output^.Routines.PeriodWritten(Output^.Context, Index);
   if HadSound then
     State^.SilentPeriods := 0
   else
@@ -349,7 +367,8 @@ var
   Index: Integer;
 begin
   for Index := 0 to OutputCount - 1 do
-    Outputs[Index]^.Routines.SetVolume(Outputs[Index]^.Context, StateOf(Outputs[Index])^.MasterVolume);
+    if Assigned(Outputs[Index]^.Routines.SetVolume) then
+      Outputs[Index]^.Routines.SetVolume(Outputs[Index]^.Context, StateOf(Outputs[Index])^.MasterVolume);
   MixingSuspended := False;
   SignalEvent(MixerWake);
 end;
@@ -496,7 +515,8 @@ begin
       else
       begin
         State^.MasterVolume := LongWord(Argument);
-        Output^.Routines.SetVolume(Output^.Context, State^.MasterVolume);
+        if Assigned(Output^.Routines.SetVolume) then
+          Output^.Routines.SetVolume(Output^.Context, State^.MasterVolume);
       end;
     ControlAudioGetMute:
       Request.Information := Ord(State^.Muted);
@@ -577,7 +597,8 @@ begin
   if Result^.Device = nil then
     Exit(nil);
   Result^.Device^.Extension := Result;
-  Routines.SetVolume(Context, DefaultMasterVolume);
+  if Assigned(Routines.SetVolume) then
+    Routines.SetVolume(Context, DefaultMasterVolume);
   State^.Monitor := RegisterAudioMonitor;
   if OutputCount = 0 then
     RegisterPowerHandler('audio outputs', PowerStageServices, @SuspendOutputs, @ResumeOutputs, nil);

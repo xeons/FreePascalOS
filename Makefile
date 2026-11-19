@@ -27,6 +27,7 @@
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
 #   make gem-descriptor-test  The Pi 5 Ethernet's (Cadence GEM) DMA descriptors (host)
+#   make hdmi-audio-test   The Pi 5 HDMI audio's N/CTS, IEC 60958 frames and DMA blocks (host)
 #   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
 #                   Python) for platform devices on the host: ids, resources,
 #                   _CCA, _DMA, _DSD properties
@@ -175,7 +176,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
 
 all: esp
@@ -486,7 +487,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -578,6 +579,20 @@ $(GEM_DESCRIPTOR_TEST): tools/GemDescriptorTest/GemDescriptorTest.pas kernel/dri
 
 gem-descriptor-test: $(GEM_DESCRIPTOR_TEST)
 	$(GEM_DESCRIPTOR_TEST)
+
+# The Raspberry Pi 5's HDMI audio without the hardware: N/CTS against the
+# HDMI table, the MAI's sample clock, IEC 60958 subframes, the audio
+# InfoFrame (Drivers.HdmiAudio.Format) and the BCM2712 DMA's control
+# blocks (Drivers.Bcm2712Dma.Blocks).
+HDMI_AUDIO_TEST := build/tools/HdmiAudioTest
+
+$(HDMI_AUDIO_TEST): tools/HdmiAudioTest/HdmiAudioTest.pas kernel/drivers/sound/Drivers.HdmiAudio.Format.pas \
+		kernel/drivers/bus/Drivers.Bcm2712Dma.Blocks.pas
+	@mkdir -p build/tools/hdmi-audio-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/sound -Fukernel/drivers/bus -FEbuild/tools -FUbuild/tools/hdmi-audio-units $<
+
+hdmi-audio-test: $(HDMI_AUDIO_TEST)
+	$(HDMI_AUDIO_TEST)
 
 # USB configuration descriptors walked into interfaces, and HID report
 # descriptors and reports routed by id (Drivers.UsbDescriptors,

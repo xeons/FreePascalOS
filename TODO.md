@@ -129,6 +129,9 @@ how the existing pieces fit together.
 - [x] Sound: recording (HD Audio input, capture streams in any format, monitor
       inputs for what is played)
 - [x] Sound: USB audio output (audio class 1.0, xHCI isochronous transfers)
+- [x] Sound: HDMI audio on the Raspberry Pi 5 (untested on the board; see
+      the Raspberry Pi section), outputs without a hardware volume (the
+      mixer scales)
 - [x] ACPI AML interpreter (namespace, methods, fields over memory, I/O and PCI
       configuration space), PCI interrupt routing from _PRT, shared level
       triggered lines; AC'97 on its line
@@ -761,7 +764,8 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         xHCI reset" tag should the VL805 ever be reset through PCIe
   - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
         Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
-  - [ ] GPIO and the PWM audio jack; HDMI audio
+  - [ ] GPIO and the PWM audio jack; HDMI audio on the Pi 4 (the Pi 5's
+        driver would carry over: BCM2711 HDMI, legacy DMA channels)
   - [x] Debugging without a serial cable: the kernel log over UDP
         (`netlog=`, `scripts/netlog.py`, replayed from the first line,
         sent on after a panic), the debug shell over TCP (`netshell=`),
@@ -856,6 +860,24 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] Pi 5, first boot with the drivers: read the `[pcie]`, `[mip]`,
         `[rp1]`, `[gem]`, `[dwc3]` lines (docs/Architecture.md, "What the
         Pi 5 drivers log"); then netlog, SSH
+  - [x] Pi 5 HDMI audio, written from Linux's vc4_hdmi.c and NOT yet
+        tested on the board: the mailbox by its DT node, the BCM2712 DMA's
+        40-bit channels with cyclic control blocks (`Drivers.Bcm2712Dma`),
+        `Drivers.HdmiAudio` on the firmware's HDMI link (clocks checked
+        through the mailbox, TMDS clock measured, N/CTS from the HDMI
+        table, MAI, audio packets and InfoFrame, IEC 60958 slots played
+        round by DMA, silence while idle), volume by the mixer;
+        `make hdmi-audio-test`
+  - [ ] Pi 5 HDMI audio on the board: `tone 440 2` over SSH and read the
+        `[mailbox]`, `[dma]`, `[hdmi-audio]` lines (docs/Architecture.md,
+        "What the Pi 5 drivers log")
+  - [ ] HDMI audio: the EDID over DDC (a `brcm,brcmstb-i2c` driver) for
+        the sink's audio formats and speakers; the hot plug interrupts
+        (a display plugged in after boot); DMA interrupts instead of the
+        10 ms timer; more than two channels and rates other than 48 kHz
+        (the mixer's rate is fixed; N/CTS, MAI and channel status already
+        take 32 to 192 kHz); the audio InfoFrame's speaker allocation from
+        the EDID
   - [ ] Pi 5: the PHY reset line (RP1 GPIO 32, "phy-reset-gpios") if the
         PHY does not answer; an RP1 GPIO driver
   - [ ] Pi 5: UHS-I on the SD slot (1.8 V through the SD_IOVDD_SEL GPIO,

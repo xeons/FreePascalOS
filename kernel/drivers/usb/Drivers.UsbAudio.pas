@@ -381,6 +381,7 @@ begin
   Routines.Position := @PlayingPosition;
   Routines.SetVolume := @SetVolume;
   Routines.Kind := AudioOutputKindUsb;
+  Routines.PeriodWritten := nil;
   Audio^.Output := RegisterAudioOutput(Routines, Audio);
   if Audio^.Output = nil then
     Exit;
