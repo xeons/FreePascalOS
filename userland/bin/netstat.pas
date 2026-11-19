@@ -33,8 +33,8 @@
   interfaces with their counters, -s the counters of IP, ICMP, IPv6,
   ICMPv6, TCP and UDP. IPv6 sockets are tcp6, udp6 and icmp6, and IPv6
   routes follow IPv4's in a table of their own; -4 or -6 keeps to one
-  IP version. Addresses are numeric whatever -n says, until reverse lookups
-  exist; the names would come through Netstat.Names alone.
+  IP version. Without -n hosts are named by /etc/hosts or a reverse DNS
+  lookup (a short timeout) and ports by /etc/ports (Netstat.Names).
 
   The pieces are in userland/netstat (Netstat.*).
 }
@@ -67,7 +67,7 @@ const
     '  -w, --raw          ICMP sockets'#10 +
     '  -l, --listening    only listening sockets'#10 +
     '  -a, --all          listening and connected sockets'#10 +
-    '  -n, --numeric      numeric addresses and ports (always, for now)'#10 +
+    '  -n, --numeric      numeric addresses and ports (no names looked up)'#10 +
     '  -p, --programs     the process id and name of each socket''s owner'#10 +
     '  -r, --route        the routing table'#10 +
     '  -i, --interfaces   the interfaces and their counters'#10 +
@@ -109,8 +109,6 @@ var
   Value: string;
 begin
   Selection := Default(TNetstatSelection);
-  { No reverse lookups yet: numeric whatever is asked. }
-  Selection.Numeric := True;
   CommandLine := TCommandLine.Create([
     CommandOption('t', 'tcp', False, OptionTcp),
     CommandOption('u', 'udp', False, OptionUdp),

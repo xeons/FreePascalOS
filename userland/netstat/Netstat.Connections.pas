@@ -153,10 +153,10 @@ var
   ForeignText: string;
   State: string;
 begin
-  ForeignText := EndpointText(Entry.PeerAddress, Selection.Numeric);
+  ForeignText := EndpointText(Entry.PeerAddress, Entry.Protocol, Selection.Numeric);
   State := StateText(Entry);
   PrintString(Format('%-5s %6u %6u %-23s ', [EntryProtocolName(Entry), QWord(Entry.ReceiveQueued),
-    QWord(Entry.SendQueued), EndpointText(Entry.LocalAddress, Selection.Numeric)]));
+    QWord(Entry.SendQueued), EndpointText(Entry.LocalAddress, Entry.Protocol, Selection.Numeric)]));
   if Selection.ShowOwners then
     PrintString(Format('%-23s %-11s %s'#10, [ForeignText, State, OwnerText(Entry, Processes)]))
   else if State = '' then
