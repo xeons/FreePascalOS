@@ -27,10 +27,15 @@ output directory is docs/screenshots. A plan is a JSON list of steps:
 
     ["sh", COMMAND]        run COMMAND on the serial shell (as user); a
                            command ending in & runs in the background
+    ["serial", TEXT]       type TEXT and Enter on the serial console,
+                           without waiting (answering su's password
+                           prompt, say)
     ["keys", TEXT]         type TEXT into the focused window
     ["key", NAME]          press one QEMU key (e.g. "ctrl-c", "ret")
     ["drag", X1, Y1, X2, Y2]  drag with the left button (screen pixels)
     ["move", X, Y]         move the pointer
+    ["click", X, Y]        click the left button there
+    ["rclick", X, Y]       click the right button there
     ["sleep", SECONDS]
     ["shot", NAME]         save the screen as NAME.png
 
@@ -201,9 +206,17 @@ class Machine:
                   {'type': 'abs', 'data': {'axis': 'y', 'value': int(y * 32767 / (SCREEN_HEIGHT - 1))}}]
         self.control_command('input-send-event', {'events': events})
 
-    def press_button(self, down):
+    def press_button(self, down, button='left'):
         self.control_command('input-send-event',
-                             {'events': [{'type': 'btn', 'data': {'down': down, 'button': 'left'}}]})
+                             {'events': [{'type': 'btn', 'data': {'down': down, 'button': button}}]})
+
+    def click(self, x, y, button='left'):
+        self.pointer_to(x, y)
+        time.sleep(0.2)
+        self.press_button(True, button)
+        time.sleep(0.2)
+        self.press_button(False, button)
+        time.sleep(0.4)
 
     def drag(self, x1, y1, x2, y2):
         self.pointer_to(x1, y1)
@@ -244,6 +257,8 @@ def main():
             kind = step[0]
             if kind == 'sh':
                 machine.run(step[1])
+            elif kind == 'serial':
+                machine.type_on_serial(step[1].encode() + b'\r')
             elif kind == 'keys':
                 machine.type_keys(step[1])
             elif kind == 'key':
@@ -252,6 +267,10 @@ def main():
                 machine.drag(*step[1:5])
             elif kind == 'move':
                 machine.pointer_to(step[1], step[2])
+            elif kind == 'click':
+                machine.click(step[1], step[2])
+            elif kind == 'rclick':
+                machine.click(step[1], step[2], 'right')
             elif kind == 'sleep':
                 time.sleep(step[1])
             elif kind == 'shot':

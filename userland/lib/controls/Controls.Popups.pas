@@ -49,11 +49,14 @@ type
   { Answers a press outside the pop-up: True when the answer is taken
     care of, False to have the pop-up simply dismissed. }
   TPressedOutsideEvent = function(X, Y: LongInt; Button: LongWord): Boolean of object;
+  { The pointer moved to (X, Y) of the pop-up, outside it. }
+  TPointerMovedEvent = procedure(X, Y: LongInt) of object;
 
   TPopupWindow = class(TControlWindow)
   private
     FOnDismiss: TControlEvent;
     FOnPressedOutside: TPressedOutsideEvent;
+    FOnPointerMovedOutside: TPointerMovedEvent;
     FClosing: Boolean;
     { How many of its event methods are running (nested loops inside
       them), and whether it is to be freed when the last one ends. }
@@ -87,10 +90,17 @@ type
       never point at a freed window.) }
     function OwnerWindow: TControlWindow;
     property OnDismiss: TControlEvent read FOnDismiss write FOnDismiss;
+    { It was dismissed (and waits to be freed). }
+    property Closing: Boolean read FClosing;
     { Lets what the pop-up shows decide what a press outside it means (a
       menu passes a press on its menu bar's headings on, and closes the
       menus it came from too). }
     property OnPressedOutside: TPressedOutsideEvent read FOnPressedOutside write FOnPressedOutside;
+    { Moves outside it, which it hears while it holds the pointer (a
+      menu passes them to the menus it came from and its menu bar, so
+      pointing at them works as it does over the menu). Without it they
+      go nowhere. }
+    property OnPointerMovedOutside: TPointerMovedEvent read FOnPointerMovedOutside write FOnPointerMovedOutside;
   end;
 
 implementation
@@ -217,7 +227,10 @@ procedure TPopupWindow.PointerMove(X, Y: LongInt; Buttons: LongWord);
 begin
   BeginEvent;
   try
-    inherited PointerMove(X, Y, Buttons);
+    if not ContainsPixel(X, Y) and Assigned(FOnPointerMovedOutside) then
+      FOnPointerMovedOutside(X, Y)
+    else
+      inherited PointerMove(X, Y, Buttons);
   finally
     EndEvent;
   end;
