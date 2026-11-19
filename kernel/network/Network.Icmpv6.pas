@@ -25,8 +25,11 @@
   they came in on). Echo replies, and errors about echo requests, go to
   the IPv6 echo sockets with the request's identifier; raw ICMPv6
   sockets get every message. Destination unreachable about UDP or TCP
-  goes to the socket or connection. Neighbor Discovery's messages go to
-  Network.NeighborDiscovery and Network.RouterDiscovery, MLD queries to
+  goes to the socket or connection. A Packet Too Big about a datagram
+  this machine sent lowers the path MTU to its destination
+  (Network.Ipv6DestinationCache), and TCP's segments to it follow.
+  Neighbor Discovery's messages go to Network.NeighborDiscovery,
+  Network.RouterDiscovery and Network.Ipv6Redirects, MLD queries to
   Network.Mld.
 
   Errors are sent for an unknown next header or option, a routing
@@ -104,6 +107,9 @@ uses
   Network.IcmpSockets,
   Network.NeighborDiscovery,
   Network.RouterDiscovery,
+  Network.Ipv6Redirects,
+  Network.Ipv6DestinationCache,
+  Network.TcpPathMtu,
   Network.Mld,
   Network.Udp,
   Network.TcpInput,
@@ -191,6 +197,21 @@ begin
   end;
 end;
 
+{ A Packet Too Big about a datagram we sent (Quoted: its header). }
+procedure HandlePacketTooBig(constref Datagram: TIpDatagram; Message: PByte; Quoted: PByte);
+var
+  QuotedSource: TIpv6Address;
+  QuotedDestination: TIpv6Address;
+begin
+  CopyMemory(@QuotedSource[0], Quoted + 8, Ipv6AddressLength);
+  CopyMemory(@QuotedDestination[0], Quoted + 24, Ipv6AddressLength);
+  if not IsLocalIpv6Address(QuotedSource) or IsMulticastIpv6Address(QuotedDestination) then
+    Exit;
+  if NoteIpv6PacketTooBig(Datagram.ArrivalInterface, QuotedDestination, ReadBigEndian32(Message + 4)) then
+    TcpPathMtuChanged(MakeIpv6Endpoint(QuotedDestination, 0, Datagram.ArrivalInterface^.Index),
+      Ipv6PathMtu(Datagram.ArrivalInterface, QuotedDestination));
+end;
+
 { An error about a datagram we sent: to whoever sent it. }
 procedure HandleError(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 var
@@ -209,6 +230,8 @@ begin
   CopyMemory(@QuotedDestination[0], Quoted + 24, Ipv6AddressLength);
   QuotedPayload := Quoted + FixedHeaderBytes;
   ScopeId := Datagram.ArrivalInterface^.Index;
+  if Message[0] = Icmpv6TypePacketTooBig then
+    HandlePacketTooBig(Datagram, Message, Quoted);
   case Quoted[6] of
     NextHeaderUdp, NextHeaderTcp:
       begin
@@ -258,6 +281,8 @@ begin
       HandleNeighborAdvertisement(Datagram, Message, Length);
     Icmpv6TypeMulticastListenerQuery:
       HandleMulticastListenerQuery(Datagram, Message, Length);
+    Icmpv6TypeRedirect:
+      HandleRedirect(Datagram, Message, Length);
   end;
 end;
 

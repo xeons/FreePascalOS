@@ -23,6 +23,7 @@
   ifconfig INTERFACE [ADDRESS[/PREFIX]] [netmask MASK] [mtu N] [up|down]
   ifconfig INTERFACE [inet6] add|del IPV6ADDRESS[/PREFIX]
   ifconfig INTERFACE inet6 auto|linklocal|off
+  ifconfig INTERFACE inet6 tempaddr|notempaddr|stable|eui64
 
   Without arguments (or with -a) shows every interface: its state, MTU,
   address, netmask and broadcast address, its IPv6 addresses with their
@@ -32,8 +33,11 @@
   with a prefix or a netmask (0.0.0.0 removes the address), an IPv6
   address added or removed (a prefix of 64 if none is given), IPv6's
   mode (auto: router advertisements and SLAAC; linklocal: only the
-  link-local and manual addresses; off), the MTU, and turning it on or
-  off, in the order given.
+  link-local and manual addresses; off), its options (tempaddr: RFC 8981
+  temporary addresses, the default; notempaddr; stable: RFC 7217
+  stable-privacy identifiers, the default; eui64: identifiers from the
+  Ethernet address), the MTU, and turning it on or off, in the order
+  given. Temporary addresses are marked "temporary".
 }
 program ifconfig;
 
@@ -56,6 +60,7 @@ const
     '  or:  ifconfig INTERFACE [ADDRESS[/PREFIX]] [netmask MASK] [mtu N] [up|down]'#10 +
     '  or:  ifconfig INTERFACE [inet6] add|del IPV6ADDRESS[/PREFIX]'#10 +
     '  or:  ifconfig INTERFACE inet6 auto|linklocal|off'#10 +
+    '  or:  ifconfig INTERFACE inet6 tempaddr|notempaddr|stable|eui64'#10 +
     'Show the network interfaces, or configure one (root only).'#10 +
     #10 +
     '  -a, --all     show every interface (the default)'#10 +
@@ -126,6 +131,10 @@ begin
     Line := Line + '  tentative';
   if (Entry.Flags and InterfaceAddressFlagDeprecated) <> 0 then
     Line := Line + '  deprecated';
+  if (Entry.Flags and InterfaceAddressFlagTemporary) <> 0 then
+    Line := Line + '  temporary';
+  if (Entry.Flags and InterfaceAddressFlagDhcp) <> 0 then
+    Line := Line + '  dhcp';
   Say(Line);
 end;
 
@@ -262,11 +271,37 @@ begin
     CheckChange(Name, RemoveInterfaceIpv6Address(PChar(Name), Address));
 end;
 
-{ "auto", "linklocal" or "off". }
+{ "tempaddr", "notempaddr", "stable" or "eui64": True if it was one. }
+function ChangeIpv6Option(const Name, OptionName: string): Boolean;
+var
+  Description: TAbiNetworkInterface;
+  Options: LongWord;
+begin
+  Result := (OptionName = 'tempaddr') or (OptionName = 'notempaddr') or (OptionName = 'stable') or
+    (OptionName = 'eui64');
+  if not Result then
+    Exit;
+  if not FindNetworkInterface(PChar(Name), Description) then
+    FailNoDevice(Name);
+  Options := Description.Ipv6Options;
+  if OptionName = 'tempaddr' then
+    Options := Options or Ipv6OptionTemporaryAddresses
+  else if OptionName = 'notempaddr' then
+    Options := Options and not Ipv6OptionTemporaryAddresses
+  else if OptionName = 'eui64' then
+    Options := Options or Ipv6OptionEui64Identifiers
+  else
+    Options := Options and not Ipv6OptionEui64Identifiers;
+  CheckChange(Name, SetInterfaceIpv6Options(PChar(Name), Options));
+end;
+
+{ "auto", "linklocal" or "off", or an option. }
 procedure ChangeIpv6Mode(const Name, ModeName: string);
 var
   Mode: LongWord;
 begin
+  if ChangeIpv6Option(Name, ModeName) then
+    Exit;
   if ModeName = 'auto' then
     Mode := Ipv6ModeAutomatic
   else if ModeName = 'linklocal' then

@@ -528,6 +528,8 @@ begin
   Routines.Transmit := @TransmitFrame;
   Routines.LinkUp := @LinkIsUp;
   Routines.Kind := NetworkAdapterKindEthernet;
+  { Takes all multicast; the network layer filters by group. }
+  Routines.SetMulticastFilter := nil;
   if not AddNetworkCard(@Card^.Card, Routines, Card, Card^.Address, @Card^.Description[0]) then
   begin
     StopRealtekRings(Card^.Rings);

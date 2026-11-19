@@ -57,6 +57,7 @@ uses
   NetworkService.Log,
   NetworkService.Settings,
   NetworkService.DhcpLeases,
+  NetworkService.StableSecret,
   NetworkService.Interfaces;
 
 const
@@ -220,6 +221,8 @@ begin
       ChangeWatch := -1;
     end;
     OpenSettingsWatcher;
+    { Before any interface is set up: its IPv6 addresses depend on it. }
+    ApplyStableSecret;
     { The settings first, so each interface is set up once as they say. }
     ReadAndApplySettings;
     Manager.RefreshInterfaces;

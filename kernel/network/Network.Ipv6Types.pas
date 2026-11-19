@@ -23,9 +23,9 @@
   servers), and where router solicitation and MLD reports stand.
 
   Times are NetworkNow times; Ipv6Forever stands for an infinite
-  lifetime. The multicast groups an interface belongs to are not kept:
-  they follow from its addresses (all-nodes, and the solicited-node
-  group of each address).
+  lifetime. The multicast groups an interface belongs to follow from its
+  addresses (all-nodes, and the solicited-node group of each address)
+  and from what programs joined (Network.MulticastGroups).
 }
 unit Network.Ipv6Types;
 
@@ -38,7 +38,7 @@ uses
   Network.Ipv6Addresses;
 
 const
-  MaximumIpv6InterfaceAddresses = 7;
+  MaximumIpv6InterfaceAddresses = 11;
   Ipv6Forever = High(QWord);
   DefaultIpv6HopLimit = 64;
   { RFC 8200: every link carries at least this much. }
@@ -54,8 +54,13 @@ type
     Ipv6OriginAutomatic,
     { Given by hand (ifconfig, the network service). }
     Ipv6OriginManual,
+    { Leased by a DHCPv6 server (the network service), with lifetimes. }
+    Ipv6OriginDhcp,
     { ::1 on lo. }
-    Ipv6OriginLoopback);
+    Ipv6OriginLoopback,
+    { RFC 8981: a router's prefix with a random identifier, beside an
+      automatic address of the same prefix. }
+    Ipv6OriginTemporary);
   TIpv6AddressOrigins = set of TIpv6AddressOrigin;
 
   PIpv6InterfaceAddress = ^TIpv6InterfaceAddress;
@@ -70,6 +75,14 @@ type
       probes sent so far. }
     DadDeadline: QWord;
     DadProbesSent: LongWord;
+    { When it was made. }
+    CreatedAt: QWord;
+    { Temporary addresses: the lifetimes they may never pass (made plus
+      TEMP_VALID_LIFETIME, and plus TEMP_PREFERRED_LIFETIME less the
+      DESYNC_FACTOR drawn for it), and whether its successor was made. }
+    TemporaryValidLimit: QWord;
+    TemporaryPreferredLimit: QWord;
+    HasSuccessor: Boolean;
   end;
 
   TIpv6DnsServer = record
@@ -81,6 +94,15 @@ type
   TIpv6InterfaceState = record
     { Ipv6Mode*. }
     Mode: LongWord;
+    { Ipv6Option*: temporary addresses, EUI-64 identifiers. }
+    Options: LongWord;
+    { RFC 7217's DAD_Counter: counted on when a stable-privacy address
+      turned out to be another host's (at most StableIdentifierRetries);
+      back to 0 when IPv6 starts again. }
+    StableDadCounter: Byte;
+    { Temporary addresses made again after a duplicate, since the last
+      that was not one (RFC 8981 TEMP_IDGEN_RETRIES). }
+    TemporaryRetries: LongWord;
     { The link-local address was made for the link that is up now. }
     IsStarted: Boolean;
     { From router advertisements. }
@@ -89,6 +111,8 @@ type
     Mtu: LongWord;
     ReachableMilliseconds: LongWord;
     RetransmitMilliseconds: LongWord;
+    { The M and O flags of the last advertisement (Ipv6RouterFlag*). }
+    RouterFlags: LongWord;
     Addresses: array[0..MaximumIpv6InterfaceAddresses - 1] of TIpv6InterfaceAddress;
     DnsServers: array[0..MaximumDnsServers - 1] of TIpv6DnsServer;
     { Router solicitations: how many went, and when the next is due (0:

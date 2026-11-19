@@ -503,6 +503,10 @@ var
 begin
   for Index := 0 to 7 do
     Groups[Index] := (Word(Address.Bytes[Index * 2]) shl 8) or Address.Bytes[Index * 2 + 1];
+  { A v4-mapped address ends in its IPv4 address (RFC 5952 5). }
+  if (Groups[0] = 0) and (Groups[1] = 0) and (Groups[2] = 0) and (Groups[3] = 0) and (Groups[4] = 0) and
+     (Groups[5] = $FFFF) then
+    Exit(Format('::ffff:%d.%d.%d.%d', [Address.Bytes[12], Address.Bytes[13], Address.Bytes[14], Address.Bytes[15]]));
   FindLongestZeroRun(Groups, RunFirst, RunCount);
   Result := '';
   Index := 0;

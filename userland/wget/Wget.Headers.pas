@@ -19,7 +19,9 @@
 {
   The head of an HTTP/1.x response (RFC 9112): the status line and the
   header fields wget acts on - Content-Length, Transfer-Encoding,
-  Content-Range, Content-Type, Location and Connection.
+  Content-Range, Content-Type, Content-Encoding, Location, Connection,
+  Set-Cookie and WWW-Authenticate (the last two kept as given, each
+  field on its own).
 
   The head is given whole (up to and including the empty line). Field
   names compare without regard to case; values have their surrounding
@@ -42,6 +44,8 @@ const
   MaximumHeadLength = 64 * 1024;
 
 type
+  THeadTextList = array of string;
+
   THttpResponseHead = record
     MajorVersion, MinorVersion: Integer;
     StatusCode: Integer;
@@ -56,7 +60,14 @@ type
     ContentType: string;
     HasLocation: Boolean;
     Location: string;
+    { "Connection: close", or "keep-alive" (which an HTTP/1.0 server
+      must say for the connection to stay). }
     ConnectionClose: Boolean;
+    ConnectionKeepAlive: Boolean;
+    { Lower case ("gzip"); '' for none (identity). }
+    ContentEncoding: string;
+    SetCookies: THeadTextList;
+    Challenges: THeadTextList;
   end;
 
   THeadParseResult = (HeadParsed, HeadMalformed, HeadUnsupportedCoding);
@@ -68,6 +79,10 @@ function ParseResponseHead(const Head: string; out Response: THttpResponseHead):
 function FindHeadEnd(Data: PChar; Length: PtrUInt): PtrUInt;
 { "bytes 100-199/1000" (or "/*"). }
 function ParseContentRange(const Value: string; out First, Last, Total: Int64): Boolean;
+{ True if the connection may carry another request after this
+  response (whose body has a known end): HTTP/1.1 unless "close",
+  HTTP/1.0 only with "keep-alive". }
+function ConnectionPersists(constref Response: THttpResponseHead): Boolean;
 { True for codes that never have a body (1xx, 204, 304). }
 function StatusHasNoBody(StatusCode: Integer): Boolean;
 function StatusIsRedirect(StatusCode: Integer): Boolean;
@@ -172,6 +187,15 @@ begin
   Result := (Position > Length(Value)) and (First <= Last);
 end;
 
+function ConnectionPersists(constref Response: THttpResponseHead): Boolean;
+begin
+  if Response.ConnectionClose then
+    Exit(False);
+  if (Response.MajorVersion = 1) and (Response.MinorVersion = 0) then
+    Exit(Response.ConnectionKeepAlive);
+  Result := True;
+end;
+
 function StatusHasNoBody(StatusCode: Integer): Boolean;
 begin
   Result := ((StatusCode >= 100) and (StatusCode < 200)) or (StatusCode = 204) or (StatusCode = 304);
@@ -247,6 +271,41 @@ begin
   Result := Response.Chunked;
 end;
 
+procedure AppendText(var List: THeadTextList; const Value: string);
+begin
+  SetLength(List, Length(List) + 1);
+  List[High(List)] := Value;
+end;
+
+{ "close", "keep-alive" among the comma separated options. }
+procedure ReadConnectionOptions(const Value: string; var Response: THttpResponseHead);
+var
+  Option: string;
+begin
+  for Option in SplitString(Value, ',') do
+    if SameText(TrimBlanks(Option), 'close') then
+      Response.ConnectionClose := True
+    else if SameText(TrimBlanks(Option), 'keep-alive') then
+      Response.ConnectionKeepAlive := True;
+end;
+
+{ The codings in the order applied; "identity" is none. Only one coding
+  is kept (a second makes it "unsupported", left as it is). }
+procedure ReadContentEncoding(const Value: string; var Response: THttpResponseHead);
+var
+  Coding: string;
+begin
+  for Coding in SplitString(Value, ',') do
+  begin
+    if (TrimBlanks(Coding) = '') or SameText(TrimBlanks(Coding), 'identity') then
+      Continue;
+    if Response.ContentEncoding = '' then
+      Response.ContentEncoding := LowerCase(TrimBlanks(Coding))
+    else
+      Response.ContentEncoding := Response.ContentEncoding + ',' + LowerCase(TrimBlanks(Coding));
+  end;
+end;
+
 { One "Name: value" line into Response. }
 function ParseField(const Line: string; var Response: THttpResponseHead): THeadParseResult;
 var
@@ -294,10 +353,13 @@ begin
     Response.Location := Value;
   end
   else if SameText(Name, 'connection') then
-  begin
-    if SameText(Value, 'close') then
-      Response.ConnectionClose := True;
-  end;
+    ReadConnectionOptions(Value, Response)
+  else if SameText(Name, 'content-encoding') then
+    ReadContentEncoding(Value, Response)
+  else if SameText(Name, 'set-cookie') then
+    AppendText(Response.SetCookies, Value)
+  else if SameText(Name, 'www-authenticate') then
+    AppendText(Response.Challenges, Value);
   Result := HeadParsed;
 end;
 

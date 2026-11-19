@@ -29,11 +29,16 @@
     mail.test.example     A 192.0.2.25
     test.example          NS ns.test.example, SOA
     big.test.example      TXT of 2000 bytes: truncated over UDP
+    medium.test.example   TXT of 804 bytes: whole over UDP with EDNS(0)
+                          (more than 512 bytes advertised), else truncated
+    old.test.example      A 192.0.2.30, but FORMERR to a query with an
+                          OPT record (a server that does not know EDNS)
     loop.test.example     an answer whose name points at itself
     spoof.test.example    A 192.0.2.99, after a reply with a wrong id
     10.2.0.192.in-addr.arpa   PTR www.test.example
   Other names under test.example do not exist (NXDOMAIN, with the SOA);
-  names elsewhere are refused.
+  names elsewhere are refused. A query with an OPT record (EDNS) gets
+  one back, and over UDP may have as many bytes as it advertised.
 
   BuildAnswer turns a query into the reply (or two, for spoof).
 }
@@ -51,6 +56,8 @@ const
   SpoofedAddress: array[0..3] of Byte = (6, 6, 6, 6);
   BigTextStrings = 10;
   BigTextStringBytes = 200;
+  MediumTextStrings = 4;
+  OldServerAddress: array[0..3] of Byte = (192, 0, 2, 30);
 
 type
   TAnswer = record
@@ -223,14 +230,14 @@ begin
     Inc(Builder.AnswerCount);
 end;
 
-procedure PutBigText(var Builder: TBuilder; const Owner: string);
+procedure PutBigText(var Builder: TBuilder; const Owner: string; Strings: Integer);
 var
   Mark: LongWord;
   StringIndex: Integer;
   Index: Integer;
 begin
   Mark := BeginRecord(Builder, Owner, DnsTypeTxt);
-  for StringIndex := 0 to BigTextStrings - 1 do
+  for StringIndex := 0 to Strings - 1 do
   begin
     PutByte(Builder, BigTextStringBytes);
     for Index := 0 to BigTextStringBytes - 1 do
@@ -302,7 +309,18 @@ begin
   else if IsName(Name, 'big.test.example') then
   begin
     if RecordType = DnsTypeTxt then
-      PutBigText(Builder, Name);
+      PutBigText(Builder, Name, BigTextStrings);
+  end
+  else if IsName(Name, 'medium.test.example') then
+  begin
+    if RecordType = DnsTypeTxt then
+      PutBigText(Builder, Name, MediumTextStrings);
+  end
+  else if IsName(Name, 'old.test.example') then
+  begin
+    if RecordType = DnsTypeA then
+      PutAddressRecord(Builder, Name, OldServerAddress[0], OldServerAddress[1], OldServerAddress[2],
+        OldServerAddress[3]);
   end
   else if IsName(Name, 'loop.test.example') then
     PutLoopingRecord(Builder)
@@ -345,9 +363,26 @@ begin
   Builder.Data[9] := Byte(Builder.AuthorityCount);
 end;
 
+{ The payload size the query's OPT record advertises; 0 without one. }
+function AdvertisedPayloadSize(Query: PByte; Length: LongWord): Word;
+var
+  Parsed: TDnsMessage;
+begin
+  Result := 0;
+  if ParseDnsMessage(Query, Length, Parsed) and Parsed.HasEdns then
+  begin
+    Result := Parsed.EdnsPayloadSize;
+    if Result < MaximumUdpDnsMessage then
+      Result := MaximumUdpDnsMessage;
+  end;
+end;
+
 function BuildAnswer(Query: PByte; Length: LongWord; Truncate: Boolean; out Answer: TAnswer): Boolean;
 var
   Builder: TBuilder;
+  PayloadSize: Word;
+  Limit: LongWord;
+  RecordsEnd: LongWord;
   Id: Word;
   QueryFlags: Word;
   QuestionType: Word;
@@ -373,8 +408,19 @@ begin
   Flags := DnsFlagResponse or DnsFlagAuthoritative or DnsFlagRecursionAvailable or
     (QueryFlags and DnsFlagRecursionDesired);
   WriteHeader(Builder, Id, Flags, QuestionEnd - DnsHeaderBytes, Query);
+  PayloadSize := AdvertisedPayloadSize(Query, Length);
+  if IsName(Builder.QuestionName, 'old.test.example') and (PayloadSize <> 0) then
+  begin
+    { A server from before EDNS: the OPT record is a format error. }
+    Builder.Data[3] := Builder.Data[3] or DnsResponseFormatError;
+    Answer.Length := Builder.Length;
+    Exit(True);
+  end;
   Code := AddRecords(Builder, Builder.QuestionName, QuestionType);
-  if Truncate and (Builder.Length > MaximumUdpDnsMessage) then
+  Limit := MaximumUdpDnsMessage;
+  if PayloadSize <> 0 then
+    Limit := PayloadSize - EdnsRecordBytes;
+  if Truncate and (Builder.Length > Limit) then
   begin
     Builder.AnswerCount := 0;
     Builder.AuthorityCount := 0;
@@ -382,6 +428,9 @@ begin
   end;
   Builder.Data[3] := Builder.Data[3] or Code;
   SetCounts(Builder);
+  RecordsEnd := Builder.Length;
+  if PayloadSize <> 0 then
+    AppendEdnsRecord(Builder.Data, Builder.Capacity, Builder.Length, DefaultEdnsPayloadSize);
   Answer.Length := Builder.Length;
   if IsName(Builder.QuestionName, 'spoof.test.example') and (QuestionType = DnsTypeA) and
      (Builder.Length <= SizeOf(Answer.Decoy)) then
@@ -389,7 +438,7 @@ begin
     { The same reply with another id and another address. }
     Move(Answer.Data[0], Answer.Decoy[0], Builder.Length);
     Answer.Decoy[0] := Answer.Decoy[0] xor $5A;
-    Move(SpoofedAddress[0], Answer.Decoy[Builder.Length - 4], 4);
+    Move(SpoofedAddress[0], Answer.Decoy[RecordsEnd - 4], 4);
     Answer.DecoyLength := Builder.Length;
     Answer.HasDecoy := True;
   end;

@@ -175,7 +175,8 @@ $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.i
 # libsystem: the runtime library (System, SysUtils, Classes, ...), the
 # shared runtime units and Sys.*.
 $(SYSTEM_LIBRARY): $(RTL_USER_DIRECTORY)/si_prc.ppu $(wildcard userland/lib/system/*.pas) \
-		shared/Runtime.Memory.pas shared/Runtime.Text.pas shared/Runtime.Time.pas shared/Abi.SystemCalls.pas
+		shared/Runtime.Memory.pas shared/Runtime.Text.pas shared/Runtime.Time.pas shared/Abi.SystemCalls.pas \
+		shared/AddressSelection.pas
 	@rm -rf $(SYSTEM_LIBRARY_OBJECTS)
 	@mkdir -p $(SYSTEM_LIBRARY_OBJECTS) $(USER_LIBRARY_OUTPUT)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fushared -Fuuserland/lib/system \
@@ -368,11 +369,16 @@ SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest n
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
-# wget speaks TLS through libtls.
+# wget speaks TLS through libtls and decodes gzip bodies through
+# libcompression.
 TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
-$(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls
-$(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS)
-$(TLS_PROGRAMS): $(TLS_LIBRARY)
+$(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls -lcompression
+$(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS)
+$(TLS_PROGRAMS): $(TLS_LIBRARY) $(COMPRESSION_LIBRARY)
+# ss is built on netstat's units (userland/netstat).
+NETSTAT_UNIT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,ss)
+$(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat
+$(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # The SSH server, its SFTP subsystem and the client programs speak SSH
 # through libssh.
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)

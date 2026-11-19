@@ -54,6 +54,9 @@
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
+#   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
+#                   and DHCPv6 messages on the host
+#   make netstat-test  Check the ports list parser and ss's filters on the host
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
@@ -177,7 +180,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
+	crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test
 
 all: esp
 
@@ -487,7 +490,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -956,20 +959,73 @@ ssh-test: $(SSH_TEST)
 		{ grep -A2 FAIL build/tools/ssh-test.out; echo "SSH TEST FAILED (build/tools/ssh-test.out)"; exit 1; }
 	@echo "SSH HOST TEST PASSED: $$(tail -n 1 build/tools/ssh-test.out | cut -d ' ' -f 3-)"
 
+# The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
+# RFC 6724 address selection, the destination cache, fragments.
+IPV6_TEST := build/tools/Ipv6Test
+IPV6_TEST_SOURCES := tools/Ipv6Test/Ipv6Test.pas tools/CryptoTest/TestChecks.pas shared/AddressSelection.pas \
+	kernel/network/Network.Sha256.pas kernel/network/Network.InterfaceIdentifiers.pas \
+	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas
+
+$(IPV6_TEST): $(IPV6_TEST_SOURCES)
+	@mkdir -p build/tools/ipv6-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/Ipv6Test -Futools/CryptoTest -Fukernel/network -Fushared \
+		-FUbuild/tools/ipv6-test-units -o$@ tools/Ipv6Test/Ipv6Test.pas
+
+ipv6-test: $(IPV6_TEST)
+	@$(IPV6_TEST) > build/tools/ipv6-test.out || \
+		{ grep FAIL build/tools/ipv6-test.out; echo "IPV6 TEST FAILED (build/tools/ipv6-test.out)"; exit 1; }
+	@echo "IPV6 TEST PASSED: $$(tail -n 1 build/tools/ipv6-test.out | cut -d ' ' -f 3-)"
+
 # wget's URLs, response heads and chunked decoding build for the host too.
+# wget's URLs, response heads, chunked decoding, cookies, authentication
+# and recursion's pieces build for the host too.
 WGET_TEST := build/tools/WgetTest
-WGET_TEST_SOURCES := tools/WgetTest/WgetTest.pas tools/CryptoTest/TestChecks.pas userland/wget/Wget.Urls.pas \
-	userland/wget/Wget.Headers.pas userland/wget/Wget.Chunks.pas
+WGET_TEST_SOURCES := $(wildcard tools/WgetTest/*.pas) tools/CryptoTest/TestChecks.pas $(wildcard userland/wget/*.pas) \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
 
 $(WGET_TEST): $(WGET_TEST_SOURCES)
 	@mkdir -p build/tools/wget-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget \
+	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget -Fuuserland/lib/cryptography -Fushared -Fishared \
 		-FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
 
 wget-test: $(WGET_TEST)
 	@$(WGET_TEST) > build/tools/wget-test.out || \
 		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
 	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
+
+# The resolver's EDNS(0) and cache of answers (libsystem) and the network
+# service's DHCP and DHCPv6 messages build for the host too, with range
+# checks, and are checked there (RFC examples among the fixtures).
+NETWORK_PROTOCOL_TEST := build/tools/NetworkProtocolTest
+NETWORK_PROTOCOL_TEST_SOURCES := $(wildcard tools/NetworkProtocolTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	userland/lib/system/Sys.DnsMessages.pas userland/lib/system/Sys.DnsNames.pas \
+	userland/lib/system/Sys.DnsCache.pas userland/lib/system/Sys.InternetAddresses.pas \
+	$(wildcard userland/network/NetworkService.Dhcp*Messages.pas) userland/network/NetworkService.DhcpOffers.pas
+
+$(NETWORK_PROTOCOL_TEST): $(NETWORK_PROTOCOL_TEST_SOURCES)
+	@mkdir -p build/tools/network-protocol-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetworkProtocolTest -Futools/CryptoTest -Fuuserland/lib/system \
+		-Fuuserland/network -Fushared -Fishared -FUbuild/tools/network-protocol-test-units -o$@ \
+		tools/NetworkProtocolTest/NetworkProtocolTest.pas
+
+network-protocol-test: $(NETWORK_PROTOCOL_TEST)
+	@$(NETWORK_PROTOCOL_TEST) > build/tools/network-protocol-test.out || \
+		{ grep -A2 FAIL build/tools/network-protocol-test.out; echo "NETWORK PROTOCOL TEST FAILED (build/tools/network-protocol-test.out)"; exit 1; }
+	@echo "NETWORK PROTOCOL TEST PASSED: $$(tail -n 1 build/tools/network-protocol-test.out | cut -d ' ' -f 4-)"
+# netstat's ports list and ss's filters build for the host too.
+NETSTAT_TEST := build/tools/NetstatTest
+NETSTAT_TEST_SOURCES := tools/NetstatTest/NetstatTest.pas tools/CryptoTest/TestChecks.pas \
+	userland/netstat/Netstat.Services.pas userland/ss/Ss.Filters.pas userland/lib/system/Sys.InternetAddresses.pas
+
+$(NETSTAT_TEST): $(NETSTAT_TEST_SOURCES)
+	@mkdir -p build/tools/netstat-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetstatTest -Futools/CryptoTest -Fuuserland/netstat -Fuuserland/ss \
+		-Fuuserland/lib/system -Fushared -Fishared -FUbuild/tools/netstat-test-units -o$@ tools/NetstatTest/NetstatTest.pas
+
+netstat-test: $(NETSTAT_TEST)
+	@$(NETSTAT_TEST) userland/etc/ports > build/tools/netstat-test.out || \
+		{ grep FAIL build/tools/netstat-test.out; echo "NETSTAT TEST FAILED (build/tools/netstat-test.out)"; exit 1; }
+	@echo "NETSTAT TEST PASSED: $$(tail -n 1 build/tools/netstat-test.out | cut -d ' ' -f 2-)"
 
 # libimage builds for the host too (with libdrawing), with range checks,
 # and is checked there against fixtures made at build time with Pillow:

@@ -66,6 +66,8 @@ uses
   Network.ByteRings,
   Network.TcpWindows,
   Network.TcpReceivedBlocks,
+  Abi.SystemCalls,
+  Network.Sockets,
   Network.Core;
 
 var
@@ -177,14 +179,29 @@ begin
   end;
 end;
 
+{ A listener on :: whose IPv6 socket also takes IPv4 (v4-mapped). }
+function ListensForIpv4OnIpv6(Candidate: PTcpConnection; constref Local: TNetworkEndpoint): Boolean;
+var
+  Socket: PSocket;
+begin
+  Socket := PSocket(Candidate^.Socket);
+  Result := (Candidate^.State = TcpListen) and (Local.Family = AddressFamilyIPv4) and
+    (Candidate^.Local.Family = AddressFamilyIPv6) and (Candidate^.Local.Port = Local.Port) and
+    EndpointIsUnspecified(Candidate^.Local) and (Socket <> nil) and not Socket^.Ipv6Only;
+end;
+
 function FindTcpListener(constref Local: TNetworkEndpoint): PTcpConnection;
 var
   Candidate: PTcpConnection;
+  DualStack: PTcpConnection;
 begin
   Result := nil;
+  DualStack := nil;
   Candidate := FirstTcpConnection;
   while Candidate <> nil do
   begin
+    if ListensForIpv4OnIpv6(Candidate, Local) then
+      DualStack := Candidate;
     if (Candidate^.State = TcpListen) and (Candidate^.Local.Family = Local.Family) and
        (Candidate^.Local.Port = Local.Port) then
     begin
@@ -195,6 +212,9 @@ begin
     end;
     Candidate := NextTcpConnection(Candidate);
   end;
+  { An IPv4 listener of the port before an IPv6 one that takes IPv4 too. }
+  if Result = nil then
+    Result := DualStack;
 end;
 
 function GenerateInitialSequence: LongWord;

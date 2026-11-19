@@ -20,7 +20,9 @@
   WgetTest - checks wget's plain logic on the host (make wget-test):
   parsing and resolving URLs (RFC 3986's examples among them), file
   names, response heads, Content-Range, and the chunked coding fed in
-  pieces of every size.
+  pieces of every size; cookies (WgetTest.Cookies), authentication
+  (WgetTest.Authentication) and what recursion is made of
+  (WgetTest.Recursion).
 }
 program WgetTest;
 
@@ -29,6 +31,9 @@ program WgetTest;
 
 uses
   TestChecks,
+  WgetTest.Authentication,
+  WgetTest.Cookies,
+  WgetTest.Recursion,
   Wget.Chunks,
   Wget.Headers,
   Wget.Urls;
@@ -188,6 +193,26 @@ begin
   Check(not ParseContentRange('bytes 5-4/10', First, Last, Total), 'range: backwards refused');
   Check(not ParseContentRange('bytes 0-10/10', First, Last, Total), 'range: past the total refused');
   Check(not ParseContentRange('items 0-1/2', First, Last, Total), 'range: other units refused');
+
+  Check(Parse('HTTP/1.1 401 Unauthorized'#13#10'WWW-Authenticate: Basic realm="a"'#13#10 +
+    'Set-Cookie: a=1; Path=/'#13#10'www-authenticate: Digest realm="b", nonce="n"'#13#10 +
+    'SET-COOKIE: b=2'#13#10#13#10, Response) = HeadParsed, 'head: repeated fields');
+  Check((Length(Response.Challenges) = 2) and (Response.Challenges[1] = 'Digest realm="b", nonce="n"'),
+    'head: each WWW-Authenticate kept');
+  Check((Length(Response.SetCookies) = 2) and (Response.SetCookies[0] = 'a=1; Path=/') and
+    (Response.SetCookies[1] = 'b=2'), 'head: each Set-Cookie kept');
+  Check((Parse('HTTP/1.1 200 OK'#13#10'Content-Encoding: GZIP'#13#10#13#10, Response) = HeadParsed) and
+    (Response.ContentEncoding = 'gzip'), 'head: Content-Encoding, lower case');
+  Check((Parse('HTTP/1.1 200 OK'#13#10'Content-Encoding: identity'#13#10#13#10, Response) = HeadParsed) and
+    (Response.ContentEncoding = ''), 'head: identity is no encoding');
+  Check((Parse('HTTP/1.1 200 OK'#13#10#13#10, Response) = HeadParsed) and ConnectionPersists(Response),
+    'head: HTTP/1.1 persists');
+  Check((Parse('HTTP/1.1 200 OK'#13#10'Connection: Upgrade, close'#13#10#13#10, Response) = HeadParsed) and
+    not ConnectionPersists(Response), 'head: close in a list');
+  Check((Parse('HTTP/1.0 200 OK'#13#10#13#10, Response) = HeadParsed) and not ConnectionPersists(Response),
+    'head: HTTP/1.0 closes');
+  Check((Parse('HTTP/1.0 200 OK'#13#10'Connection: Keep-Alive'#13#10#13#10, Response) = HeadParsed) and
+    ConnectionPersists(Response), 'head: HTTP/1.0 with keep-alive persists');
 end;
 
 { Decodes Encoded in pieces of PieceSize; the data, or 'FAIL'. }
@@ -253,5 +278,8 @@ begin
   TestUrls;
   TestHeads;
   TestChunks;
+  TestCookies;
+  TestAuthentication;
+  TestRecursion;
   FinishChecks('wget test');
 end.

@@ -32,10 +32,14 @@
       link's MTU for IPv6;
     - a prefix with the on-link flag makes or renews the route to the
       prefix for its valid lifetime; one with the autonomous flag and 64
-      bits gets an address (the prefix and our interface identifier)
-      with its lifetimes, an address already made keeping at least two
+      bits gets an address (the prefix and our interface identifier:
+      stable-privacy or EUI-64, Network.Ipv6Identifiers) with its
+      lifetimes, and a temporary one beside it
+      (Network.TemporaryAddresses), an address already made keeping at least two
       hours of the valid one unless the new one is longer (5.5.3 e);
-    - DNS servers (RDNSS) are kept for their lifetime (0 forgets one).
+    - DNS servers (RDNSS) are kept for their lifetime (0 forgets one);
+    - its M (managed) and O (other configuration) flags are kept for the
+      network service, which asks DHCPv6 as they say.
   The route metric of an interface's routers is its index, so the first
   interface's router is the default among equals.
 }
@@ -77,6 +81,8 @@ uses
   Network.Ipv6Types,
   Network.Ipv6,
   Network.Ipv6AddressList,
+  Network.Ipv6Identifiers,
+  Network.TemporaryAddresses,
   Network.Ipv6Routing,
   Network.NeighborMessages,
   Network.NeighborCache,
@@ -87,6 +93,8 @@ const
   PrefixOptionBytes = 32;
   PrefixFlagOnLink = $80;
   PrefixFlagAutonomous = $40;
+  AdvertisementFlagManaged = $80;
+  AdvertisementFlagOtherConfiguration = $40;
   InfiniteLifetime = $FFFFFFFF;
   TwoHoursSeconds = 2 * 60 * 60;
   NanosecondsPerSecond = QWord(1000) * 1000 * 1000;
@@ -255,7 +263,7 @@ var
   PreferredEnd: QWord;
 begin
   Result := False;
-  Address := AddressFromInterfaceIdentifier(Prefix, NetworkInterface^.HardwareAddress);
+  Address := SlaacAddressOf(NetworkInterface, Prefix);
   PreferredEnd := LifetimeEnd(Now, PreferredLifetime);
   Entry := FindIpv6Address(NetworkInterface, Address);
   if Entry <> nil then
@@ -264,12 +272,15 @@ begin
       Exit;
     ValidEnd := RenewedValidEnd(Entry, ValidLifetime, Now);
     AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, ValidEnd, PreferredEnd);
+    UpdateTemporaryAddresses(NetworkInterface, Prefix, ValidEnd, PreferredEnd, Now);
     Exit;
   end;
   if ValidLifetime = 0 then
     Exit;
-  Result := AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, LifetimeEnd(Now, ValidLifetime),
-    PreferredEnd) = ErrorNone;
+  ValidEnd := LifetimeEnd(Now, ValidLifetime);
+  Result := AddIpv6Address(NetworkInterface, Address, 64, Ipv6OriginAutomatic, ValidEnd, PreferredEnd) = ErrorNone;
+  if Result then
+    UpdateTemporaryAddresses(NetworkInterface, Prefix, ValidEnd, PreferredEnd, Now);
 end;
 
 function HandlePrefixOption(NetworkInterface: PNetworkInterface; Option: PByte; OptionLength: LongWord;
@@ -373,6 +384,7 @@ var
   Now: QWord;
   Changed: Boolean;
   Value: LongWord;
+  RouterFlags: LongWord;
 begin
   NetworkInterface := Datagram.ArrivalInterface;
   if (NetworkInterface^.Ipv6.Mode <> Ipv6ModeAutomatic) or not NetworkInterface^.Ipv6.IsStarted or
@@ -396,6 +408,16 @@ begin
   NeighborSeen(NetworkInterface, Datagram.Source6,
     FindLinkAddressOption(Options, OptionsLength, NeighborOptionSourceLinkAddress), True);
   Changed := HandleRouterLifetime(NetworkInterface, Datagram.Source6, ReadBigEndian16(Message + 6), Now);
+  RouterFlags := 0;
+  if (Message[5] and AdvertisementFlagManaged) <> 0 then
+    RouterFlags := RouterFlags or Ipv6RouterFlagManaged;
+  if (Message[5] and AdvertisementFlagOtherConfiguration) <> 0 then
+    RouterFlags := RouterFlags or Ipv6RouterFlagOtherConfiguration;
+  if RouterFlags <> NetworkInterface^.Ipv6.RouterFlags then
+  begin
+    NetworkInterface^.Ipv6.RouterFlags := RouterFlags;
+    Changed := True;
+  end;
   if HandleOptions(NetworkInterface, Options, OptionsLength, Now) then
     Changed := True;
   if Changed then

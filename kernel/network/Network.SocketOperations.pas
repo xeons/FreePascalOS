@@ -25,6 +25,11 @@
   (Network.IcmpSockets). Buffers are kernel memory. Errors are Abi
   error codes; the operations that move data return the byte count or
   minus an error code.
+
+  v4-mapped addresses (::ffff:a.b.c.d) given to an IPv6 socket without
+  Ipv6Only stand for the IPv4 address: the socket's endpoints become
+  IPv4 ones inside, and every endpoint an IPv6 socket hands back is
+  IPv6 again (IPv4 ones mapped).
 }
 unit Network.SocketOperations;
 
@@ -33,6 +38,7 @@ unit Network.SocketOperations;
 interface
 
 uses
+  Abi.SystemCalls,
   Network.Addresses,
   Network.Sockets;
 
@@ -53,6 +59,8 @@ function ReceiveOnSocket(Socket: PSocket; Data: PByte; Length: LongWord; Flags: 
 function ShutdownSocket(Socket: PSocket; How: LongWord): LongInt;
 function GetSocketOption(Socket: PSocket; Option: LongWord; out Value: Int64): LongInt;
 function SetSocketOption(Socket: PSocket; Option: LongWord; Value: Int64; CallerIsRoot: Boolean): LongInt;
+{ SocketOptionJoinGroup or SocketOptionLeaveGroup. }
+function SetSocketMembership(Socket: PSocket; Option: LongWord; constref Request: TAbiMulticastMembership): LongInt;
 { SocketAddressLocal or SocketAddressPeer. }
 function GetSocketEndpoint(Socket: PSocket; Which: LongWord; out Endpoint: TNetworkEndpoint): LongInt;
 { Waits until one of Conditions (SocketReadable, SocketWritable) holds,
@@ -63,7 +71,6 @@ function WaitForSocketConditions(Socket: PSocket; Conditions: LongWord; TimeoutM
 implementation
 
 uses
-  Abi.SystemCalls,
   Kernel.Events,
   Kernel.Threads,
   Kernel.Scheduler,
@@ -75,6 +82,7 @@ uses
   Network.IcmpSockets,
   Network.DatagramSockets,
   Network.IpOutput,
+  Network.SocketMemberships,
   Network.TcpWindows,
   Network.TcpSockets;
 
@@ -131,6 +139,37 @@ begin
   Result := ErrorNone;
 end;
 
+{ An endpoint a program gave, as the socket uses it inside: a v4-mapped
+  one on an IPv6 socket is the IPv4 endpoint (MappedRefused if the
+  socket is Ipv6Only). }
+function InsideEndpoint(Socket: PSocket; constref Given: TNetworkEndpoint; MappedRefused: LongInt;
+  out Inside: TNetworkEndpoint): LongInt;
+begin
+  Inside := Given;
+  Result := ErrorNone;
+  if (Socket^.Family <> AddressFamilyIPv6) or not IsMappedIpv4Endpoint(Given) then
+    Exit;
+  if Socket^.Ipv6Only then
+    Exit(MappedRefused);
+  Inside := UnmapIpv4Endpoint(Given);
+end;
+
+{ An endpoint of the socket as the program sees it. }
+function OutsideEndpoint(Socket: PSocket; constref Inside: TNetworkEndpoint): TNetworkEndpoint;
+begin
+  if (Socket^.Family = AddressFamilyIPv6) and (Inside.Family = AddressFamilyIPv4) then
+    Result := MapIpv4Endpoint(Inside)
+  else
+    Result := Inside;
+end;
+
+{ A socket bound to an address of one family cannot reach the other. }
+function LocalFitsFamily(Socket: PSocket; Family: Word): Boolean;
+begin
+  Result := (Socket^.Local.Family = Family) or (EndpointIsUnspecified(Socket^.Local) and
+    ((Socket^.Local.Family = Family) or SocketTakesFamily(Socket, Family)));
+end;
+
 function AddressIsBindable(Socket: PSocket; constref Endpoint: TNetworkEndpoint): Boolean;
 begin
   if EndpointIsUnspecified(Endpoint) or IsLocalEndpointAddress(Endpoint) then
@@ -139,15 +178,28 @@ begin
     IsBroadcastAddress(Endpoint.Address, nil);
 end;
 
+function BindInside(Socket: PSocket; constref Endpoint: TNetworkEndpoint; CallerIsRoot: Boolean): LongInt;
+  forward;
+
 function BindSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint; CallerIsRoot: Boolean): LongInt;
+var
+  Given: TNetworkEndpoint;
+begin
+  if Endpoint.Family <> Socket^.Family then
+    Exit(ErrorAddressFamilyNotSupported);
+  Result := InsideEndpoint(Socket, Endpoint, ErrorInvalidArgument, Given);
+  if Result <> ErrorNone then
+    Exit;
+  Result := BindInside(Socket, Given, CallerIsRoot);
+end;
+
+function BindInside(Socket: PSocket; constref Endpoint: TNetworkEndpoint; CallerIsRoot: Boolean): LongInt;
 var
   Port: Word;
 begin
   LockNetwork;
   if Socket^.IsBound or (Socket^.Connection <> nil) then
     Result := ErrorInvalidArgument
-  else if Endpoint.Family <> Socket^.Family then
-    Result := ErrorAddressFamilyNotSupported
   else if not AddressIsBindable(Socket, Endpoint) then
     Result := ErrorAddressNotAvailable
   else if (Endpoint.Port <> 0) and (Endpoint.Port < FirstUnprivilegedPort) and not CallerIsRoot and
@@ -196,20 +248,30 @@ begin
   LockNetwork;
   Result := AcceptOnTcpSocket(Socket, Owner, NewSocket);
   if Result = ErrorNone then
-    Peer := NewSocket^.Peer;
+  begin
+    NewSocket^.Ipv6Only := Socket^.Ipv6Only;
+    Peer := OutsideEndpoint(NewSocket, NewSocket^.Peer);
+  end;
   UnlockNetwork;
 end;
 
 function ConnectSocket(Socket: PSocket; constref Endpoint: TNetworkEndpoint): LongInt;
+var
+  Target: TNetworkEndpoint;
 begin
   if (Endpoint.Family <> Socket^.Family) and
      ((Endpoint.Family <> AddressFamilyUnspecified) or (Socket^.Protocol = SocketProtocolTcp)) then
     Exit(ErrorAddressFamilyNotSupported);
+  Result := InsideEndpoint(Socket, Endpoint, ErrorNetworkUnreachable, Target);
+  if Result <> ErrorNone then
+    Exit;
   LockNetwork;
-  if Socket^.Protocol = SocketProtocolTcp then
-    Result := ConnectTcpSocket(Socket, Endpoint)
+  if (Target.Family <> AddressFamilyUnspecified) and not LocalFitsFamily(Socket, Target.Family) then
+    Result := ErrorNetworkUnreachable
+  else if Socket^.Protocol = SocketProtocolTcp then
+    Result := ConnectTcpSocket(Socket, Target)
   else
-    Result := ConnectDatagramSocket(Socket, Endpoint);
+    Result := ConnectDatagramSocket(Socket, Target);
   UnlockNetwork;
 end;
 
@@ -238,11 +300,16 @@ begin
     Result := -ErrorAddressFamilyNotSupported
   else
   begin
+    Error := ErrorNone;
     if Destination = nil then
       Target := Socket^.Peer
     else
-      Target := Destination^;
-    if Socket^.Protocol = SocketProtocolUdp then
+      Error := InsideEndpoint(Socket, Destination^, ErrorNetworkUnreachable, Target);
+    if (Error = ErrorNone) and not LocalFitsFamily(Socket, Target.Family) then
+      Error := ErrorNetworkUnreachable;
+    if Error <> ErrorNone then
+      Result := -Error
+    else if Socket^.Protocol = SocketProtocolUdp then
       Result := SendUdpDatagram(Socket, Data, Length, Target)
     else
       Result := SendIcmpMessage(Socket, Data, Length, Target);
@@ -265,6 +332,7 @@ begin
   end
   else
     Result := ReceiveDatagram(Socket, Data, Length, Flags, Source);
+  Source := OutsideEndpoint(Socket, Source);
   UnlockNetwork;
 end;
 
@@ -335,6 +403,12 @@ begin
       else
         Result := ErrorInvalidArgument;
     SocketOptionTestDropEvery: Value := Socket^.DropEvery;
+    SocketOptionIpv6Only: Value := Ord(Socket^.Ipv6Only);
+    SocketOptionMulticastInterface:
+      if Socket^.MulticastInterface <> nil then
+        Value := Socket^.MulticastInterface^.Index;
+    SocketOptionMulticastHops: Value := Socket^.MulticastHops;
+    SocketOptionMulticastLoop: Value := Ord(Socket^.MulticastLoop);
   else
     Result := ErrorInvalidArgument;
   end;
@@ -406,11 +480,46 @@ begin
         else
           Socket^.BoundInterface := NetworkInterface;
       end;
+    SocketOptionIpv6Only:
+      if Socket^.Family <> AddressFamilyIPv6 then
+        Result := ErrorInvalidArgument
+      else if Socket^.IsBound or (Socket^.Connection <> nil) then
+        Result := ErrorInvalidArgument
+      else
+        Socket^.Ipv6Only := Value <> 0;
+    SocketOptionMulticastInterface:
+      if Value = 0 then
+        Socket^.MulticastInterface := nil
+      else
+      begin
+        NetworkInterface := nil;
+        if (Value > 0) and (Value <= High(LongWord)) then
+          NetworkInterface := FindInterfaceByIndex(LongWord(Value));
+        if NetworkInterface = nil then
+          Result := ErrorNoDevice
+        else
+          Socket^.MulticastInterface := NetworkInterface;
+      end;
+    SocketOptionMulticastHops:
+      if (Value < 0) or (Value > 255) then
+        Result := ErrorInvalidArgument
+      else
+        Socket^.MulticastHops := Byte(Value);
+    SocketOptionMulticastLoop: Socket^.MulticastLoop := Value <> 0;
   else
     Result := ErrorInvalidArgument;
   end;
   if (Result = ErrorNone) and (Socket^.Protocol = SocketProtocolTcp) then
     ApplyTcpOptions(Socket);
+  UnlockNetwork;
+end;
+
+function SetSocketMembership(Socket: PSocket; Option: LongWord; constref Request: TAbiMulticastMembership): LongInt;
+begin
+  if (Option <> SocketOptionJoinGroup) and (Option <> SocketOptionLeaveGroup) then
+    Exit(ErrorInvalidArgument);
+  LockNetwork;
+  Result := ChangeSocketMembership(Socket, Option, Request);
   UnlockNetwork;
 end;
 
@@ -435,6 +544,7 @@ begin
   else
     Result := ErrorInvalidArgument;
   end;
+  Endpoint := OutsideEndpoint(Socket, Endpoint);
   UnlockNetwork;
 end;
 

@@ -2167,7 +2167,10 @@ changes live: the display server follows it (`Server.LiveSettings`:
 every frame drawn again), every window program applies it when it
 connects (`Windowing.Connection`) and follows it from its first window
 on (`Windowing.Windows`: `TWindow.ThemeChanged`, which repaints; the
-desktop draws its wallpaper again). Header bands are
+desktop draws its wallpaper again; an open pop-up menu measures itself
+again, `TPopupWindow.OnThemeChanged`, its bottom kept in place when it
+was opened above a point with `ShowPopupMenuAbove`, as the Start menu
+is). Header bands are
 `Controls.HeaderBands` (gold or navy; a plain label where the theme
 does not band panels), the Start menu's side band `Controls.MenuBand`
 (a menu's `SideBand` text). The theme also holds the font families:
@@ -2289,7 +2292,12 @@ parts once (`PerformPendingLayout`), before the window paints (the new
 pointer, and whenever someone reads a control's `Bounds` or
 `PixelBounds`, so places read are always current, many changes cost one
 layout, and nothing is painted half laid out. A layout that asks for
-more (a scroll bar appearing) runs again, up to four rounds.
+more (a scroll bar appearing) runs again, up to four rounds. A control
+being freed is never laid out: `BeforeDestruction` marks it before any
+destructor runs (a subclass frees its own fields before `TControl.Destroy`
+frees the children, and a child freed then may read its place), and
+`ArrangePending` and `ArrangeContents` pass over a control with an
+ancestor going away.
 
 Containers that place their children themselves override
 `PlaceChildren`: `TFlowLayoutPanel` (`Controls.FlowPanel`: children at
@@ -3386,7 +3394,7 @@ at every scale.
 | Keyboard | the layout (US, UK, German, French: the kernel's tables), the repeat's delay and rate (a slider and a numeric up/down box each), and a box to try them | the display server, which asks the kernel; kept in the user's settings (`Windowing.KeyboardSettings`) |
 | Sound | each output's volume and mute, the default output | the system settings service, which sets and keeps them (anyone may); without it the outputs directly, for this boot |
 | Date and Time | the time zone (from the database, with each zone's offset now), the date (a date picker with a calendar that drops down) and the time (a time picker), a local time of the zone chosen | the system settings service, as an administrator |
-| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses and router it has; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
+| Network | per interface: on or off, an address from DHCP, a static one (address, prefix or netmask, gateway) or none; IPv6 from routers (and DHCPv6 when they say), always from DHCPv6, a fixed IPv6 address (and gateway) or off, with the IPv6 addresses (DHCPv6 ones marked), the router it has and what DHCPv6 is doing; the DNS servers (from DHCP or these) and the search domain; a Status tab with the state, address, gateway, DNS, the lease (obtained, expires, server), the adapter and the packets and bytes each way, kept up to date | the system settings service, as an administrator (`SystemRequestSetNetworkInterface`, `SystemRequestSetDnsServers`), which checks every value again and writes `Network.settings`; the network service applies it |
 | Users | add a user (name, full name, password, administrator), remove one (with their home or not), a new password, the full name and groups | the system settings service (`Util.AccountChanges`), at once when each dialog is accepted (`ControlPanel.UserDialogs`) |
 | Screen Lock | locking by itself after 1 to 60 minutes without input (off at first), locking before suspending (on at first) | kept in the user's settings (`Windowing.LockSettings`), which the session manager reads |
 
@@ -3432,11 +3440,14 @@ not report a link speed yet) and four tabs for the one chosen:
 Address (Enable this interface; Obtain an address automatically (DHCP),
 Use this address with address, prefix or netmask and gateway boxes, or
 Leave this interface unconfigured - the three methods of the settings),
-IPv6 (`ControlPanel.Ipv6Tab`: Get IPv6 addresses from routers
-automatically, Use a fixed IPv6 address with an address box taking
-"fd00::10/64" and a gateway box, or Turn IPv6 off - `Ipv6Method` auto,
-static or none - and below them the interface's global and link-local
-IPv6 addresses and its IPv6 default router, kept up to date), DNS (the same for every interface: obtained automatically, which writes
+IPv6 (`ControlPanel.Ipv6Tab`: Get IPv6 addresses automatically
+(routers, DHCPv6), Always ask a DHCPv6 server for an address, Use a
+fixed IPv6 address with an address box taking "fd00::10/64" and a
+gateway box, or Turn IPv6 off - `Ipv6Method` auto, dhcpv6, static or
+none - and below them the interface's global addresses (a DHCPv6
+lease's marked "(DHCPv6)") and link-local IPv6 addresses and its IPv6
+default router with the state file's `Dhcpv6` when DHCPv6 is on
+("fe80::1 - DHCPv6 configured"), kept up to date), DNS (the same for every interface: obtained automatically, which writes
 an empty `DnsServers`, or these servers, and the search domain), and
 Status. What is chosen for each interface is kept while moving between
 them until Apply. Apply checks the values with the same code the
@@ -3792,10 +3803,10 @@ A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
 beneath BSD-style sockets that are handles like any other.
 
 ```
-  the network service (DHCP, settings, state files)   host nslookup hostname
-  resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries > Sys.DnsMessages
+  the network service (DHCP, DHCPv6, settings, state files)   host nslookup hostname
+  resolver: Sys.HostLookup > Sys.HostNames > Sys.DnsQueries (Sys.DnsCache) > Sys.DnsMessages
   programs: Sys.Sockets, Sys.NetworkInterfaces,    ping ifconfig route arp ndp
-            Sys.AddressText                         netstat nc wget
+            Sys.AddressText                         netstat ss nc wget
 =========== system calls 104-127 (Processes.SocketCalls, .NetworkCalls) ====
   Network.SocketOperations   bind listen accept connect send receive ...
   Network.Sockets            the socket object, readiness events, waits
@@ -3806,6 +3817,9 @@ beneath BSD-style sockets that are handles like any other.
   Network.Ipv6  Network.Ipv6Headers  Network.Ipv6Fragments  Network.Icmpv6
   Network.Ipv6Routing  Network.Ipv6AddressList  Network.Ipv6Interfaces
   Network.NeighborDiscovery  Network.RouterDiscovery  Network.Mld
+  Network.Ipv6Identifiers  Network.TemporaryAddresses  Network.Ipv6Redirects
+  Network.Ipv6DestinationCache  Network.MulticastGroups  Network.Igmp
+  Network.SocketMemberships   (privacy addresses, PMTU, redirects, multicast)
   Network.Arp   Network.NeighborCache   Network.Ethernet   Network.Loopback
   Network.Interfaces          (one per adapter; lo is number 1)
   Network.Statistics          the protocols' counters (netstat -s)
@@ -3863,12 +3877,17 @@ sent data in a send ring (likewise) until it is acknowledged and
 retransmits from there.
 
 **Ethernet and ARP.** Frames for another station are dropped, and so is
-multicast but IPv6's (33:33 and a group's last four bytes, which IPv6
-filters by the groups the interface listens to); every driver already
-takes all multicast (virtio-net is promiscuous in QEMU without
+multicast but IP's (IPv6's 33:33 and a group's last four bytes, IPv4's
+01:00:5e and its low 23 bits, which IP filters by the groups the
+interface listens to). A driver may give `TNetworkDriverRoutines` a
+`SetMulticastFilter` routine: `Network.MulticastGroups` then hands it
+the Ethernet addresses of every group the interface listens to
+(all-nodes, all-hosts, the solicited-node groups, what programs joined;
+all multicast past 64) whenever they change. None does yet: every
+driver takes all multicast (virtio-net is promiscuous in QEMU without
 `VIRTIO_NET_F_CTRL_RX`, the e1000 family sets "multicast promiscuous",
-the Realtek chips fill their multicast filter with ones), so no filter
-is programmed. The ARP cache (64 entries) keeps an answer for ten minutes;
+the Realtek chips fill their multicast filter with ones) and sets the
+routine to nil. The ARP cache (64 entries) keeps an answer for ten minutes;
 a datagram to an unknown neighbour waits on its incomplete entry (up to
 8 per entry) while a request is sent once a second, three times; then
 the datagrams are dropped and each local sender gets an ICMP host
@@ -3905,9 +3924,39 @@ fragment.
 before an unconnected one); a broadcast to every socket bound to the
 port; with none, the sender gets port unreachable. A connected socket
 hears of a port unreachable that comes back (`ErrorConnectionRefused`
-on its next call). Broadcasts need `SocketOptionBroadcast`. Over IPv6 a
-datagram to a multicast group goes to every socket bound to the port,
-and a datagram without a checksum is dropped.
+on its next call). Broadcasts need `SocketOptionBroadcast`. A datagram
+to a multicast group (either version) goes to every socket bound to the
+port and to every address or the group, whichever socket joined it (as
+Linux's default `IP_MULTICAST_ALL`); over IPv6 a datagram without a
+checksum is dropped. Over IPv4 a datagram must fit one frame; over IPv6
+it may be up to `MaximumIpv6DatagramBytes` (65527) and is sent in
+fragments when larger than the path MTU (one too large for a packet is
+built in a buffer of its own, `SendLargeIpPayload`).
+
+**Multicast sockets** (`Network.SocketMemberships`,
+`Network.MulticastGroups`, `Network.Igmp`, `Network.Mld`). A UDP socket
+joins a group with `SocketOptionJoinGroup` (and leaves it with
+`SocketOptionLeaveGroup`): the value is the address of a
+`TAbiMulticastMembership` (family, group, interface index, or an IPv4
+interface address; none: the interface the routes give the group), at
+most 8 per socket, all left when it closes (IPV6_JOIN_GROUP and
+IP_ADD_MEMBERSHIP in one; an IPv6 socket may join IPv4 groups unless it
+is IPv6-only). The interfaces count who joined each group: the first
+join reports it - IPv6 by MLDv2 (the interface's whole state, twice),
+IPv4 by IGMPv3 ("change to exclude", twice a second apart) - and the
+last leave reports it gone ("change to include no sources", twice).
+IGMP answers queries at once and speaks version 2 (membership reports
+to the group, leaves to 224.0.0.2) for 260 s after hearing a v1 or v2
+query; its messages go with time to live 1 and the router alert option.
+Groups of interface-local scope, all-nodes and all-hosts are never
+reported. IPv4 now takes datagrams for 224.0.0.1 and the groups joined
+on the arrival interface (lo takes every group), and sends multicast
+out of `SocketOptionMulticastInterface` (else the routes' interface) to
+the group's 01:00:5e address. `SocketOptionMulticastHops` (1 at first)
+is the hop limit of multicast sent; with `SocketOptionMulticastLoop`
+(on at first) a copy of what is sent to a group the leaving interface
+joined comes back through lo. `Sys.Sockets.ChangeMulticastMembership`
+is the library's call.
 
 **Both IP versions.** Endpoints (`TNetworkEndpoint`) carry the family,
 an IPv4 address or an IPv6 one (`Address6`) with the scope id of a
@@ -3918,9 +3967,23 @@ reach UDP, TCP and the ICMP sockets as a `TIpDatagram`
 sum whichever version brought them; going out, `Network.IpOutput`
 chooses the source address, the payload limit and the pseudo-header sum
 and hands the packet to `Network.Ipv4` or `Network.Ipv6`. A socket is of
-one family (`TSocket.Family`): IPv6 sockets never see IPv4 traffic (no
-v4-mapped addresses), and an IPv4 and an IPv6 socket may bind the same
-port. The ICMP sockets of an IPv6 socket speak ICMPv6 (echo request 128,
+one family (`TSocket.Family`), but an IPv6 socket also carries IPv4 as
+v4-mapped addresses (::ffff:a.b.c.d) unless `SocketOptionIpv6Only` is
+set (off at first, as on Linux; set before binding): bound to :: it
+takes IPv4 datagrams and connections too (`SocketTakesFamily`; a TCP
+listener on :: is found for an IPv4 SYN after any IPv4 listener of the
+port), and binding, connecting or sending to ::ffff:a.b.c.d means the
+IPv4 address. Inside, such a socket's endpoints are IPv4 ones;
+`Network.SocketOperations` maps every endpoint an IPv6 socket hands back
+(accept, receive, local and peer addresses) and the socket listing to
+::ffff:a.b.c.d. A dual-stack socket on :: has the port for IPv4 as
+well, so an IPv4 socket on the same port gets `ErrorAddressInUse`; a
+program that binds both sets `SocketOptionIpv6Only` on its IPv6 socket
+(sshd does, as OpenSSH). An IPv6-only socket refuses v4-mapped
+addresses (`ErrorNetworkUnreachable`, binding: `ErrorInvalidArgument`),
+and a socket bound to an address of one family cannot reach the other.
+`Sys.InternetAddresses` writes v4-mapped addresses as RFC 5952 says
+(::ffff:127.0.0.1). The ICMP sockets of an IPv6 socket speak ICMPv6 (echo request 128,
 reply 129; the kernel fills in every checksum, which covers the
 pseudo-header).
 
@@ -3945,16 +4008,37 @@ Ethernet interface with IPv6); others by the routes
 (`Network.Ipv6Routing`: interface routes for fe80::/64 and manual
 prefixes, on-link prefixes and default routes from routers that expire
 with their lifetimes, routes by hand; the longest prefix on an interface
-that is up and running, the lowest metric among equals). The source is
-chosen from the leaving interface's addresses
-(`Network.Ipv6AddressList`, RFC 6724 simply): of the destination's
-scope (a global destination never gets a link-local source), preferred
-before deprecated, the longest common prefix; with no global address on
-the interface another interface's (weak host). Multicast goes to its
-33:33 address, the rest through the neighbour cache. Nothing is sent in
-fragments (larger than the link MTU: `ErrorMessageTooLong`); the hop
-limit is the socket's (`SocketOptionTimeToLive`) or what a router
-advertised (64).
+that is up and running, the lowest metric among equals), or the first
+hop a redirect gave. The source follows RFC 6724 (`AddressSelection`
+in shared/, used by `Network.Ipv6AddressList`): of the ready addresses
+of every interface (weak host) the rules pick the destination itself,
+the appropriate scope, not deprecated, the outgoing interface's, a
+matching label in the full policy table, a temporary address when the
+outgoing interface makes them, the longest matching prefix; a
+destination within the link only gets the link's own addresses, one
+beyond it never a link-local one. Multicast goes to its 33:33 address,
+the rest through the neighbour cache. A datagram larger than the path
+MTU is sent in fragments (`Network.FragmentBuilder`: the IPv6 header
+and a hop-by-hop header stay in front of each, pieces of a multiple of
+eight bytes, one random identification); the hop limit is the socket's
+(`SocketOptionTimeToLive`, `SocketOptionMulticastHops` for groups) or
+what a router advertised (64).
+
+**Path MTU and the destination cache** (RFC 8201, RFC 4861 5.1;
+`Network.Ipv6DestinationCache` over `Network.DestinationTable`, 64
+entries, the least recently used giving way). A Packet Too Big about a
+datagram from one of our addresses lowers the path MTU to its
+destination (never below 1280) for ten minutes, after which the link's
+is tried again; `Ipv6PayloadLimit` (so TCP's MSS) and fragmenting use
+it, and TCP's connections to the destination are told at once
+(`TcpPathMtuChanged`). A redirect (RFC 4861 8.1: link-local source, hop
+limit 255, code 0, at least 40 bytes, a destination that is not
+multicast, from the router that is the destination's first hop now, a
+target that is link-local or the destination itself, options with
+lengths) gives the destination a first hop of its own for ten minutes
+(`Network.Ipv6Redirects`), and the target's link-layer address goes to
+the neighbour cache. What was learned through an interface goes when
+IPv6 stops on it.
 
 **Addresses and Neighbor Discovery** (RFC 4861, 4862;
 `Network.Ipv6Interfaces`, `Network.NeighborDiscovery`,
@@ -3963,7 +4047,7 @@ Each interface has an IPv6 mode: `Ipv6ModeAutomatic` (Ethernet's at
 first), `Ipv6ModeLinkLocal` (lo's, with ::1; RAs ignored) or
 `Ipv6ModeOff`. IPv6 starts on an interface when it is up with its link
 and its mode is not off: the link-local address (fe80:: with the
-modified EUI-64 identifier of the Ethernet address) is made, and every
+interface's identifier) is made, and every
 new address is tentative while duplicate address detection runs (one
 solicitation from ::, a second's wait; an advertisement for it, or
 another host's probe for it, removes it as a duplicate). The groups are
@@ -3978,19 +4062,56 @@ eth0's router wins among equals), its hop limit, reachable time and
 retransmission timer, the link MTU (option 5), on-link prefix routes
 (L) and SLAAC addresses for 64-bit prefixes (A: the prefix and our
 identifier, with the valid and preferred lifetimes and RFC 4862 5.5.3
-e's two hours), and DNS servers (RDNSS, RFC 8106; listed with the
-interface for the network service). Addresses past their preferred
-lifetime are deprecated, past their valid one removed. When the link
-or the interface goes, the link-local and automatic addresses, what
-routers gave and the neighbours are dropped; manual addresses stay and
-are tested again. The neighbour cache (64 entries) is RFC 4861 7.3's:
+e's two hours, and a temporary address beside it, below), DNS servers (RDNSS, RFC 8106; listed with the
+interface for the network service) and its M and O flags (kept as the
+interface's `Ipv6RouterFlags`, `Ipv6RouterFlagManaged` and
+`Ipv6RouterFlagOtherConfiguration`, for the network service's DHCPv6
+client). Addresses a DHCPv6 server leased come from the network service
+with their lifetimes (`InterfaceChangeAddressLifetimes`, origin
+`Ipv6OriginDhcp`, flag `InterfaceAddressFlagDhcp`; adding one again
+renews its lifetimes) and bring no prefix route. Addresses past their
+preferred lifetime are deprecated, past their valid one removed. When
+the link or the interface goes, the link-local, automatic and DHCPv6
+addresses, what routers gave and the neighbours are dropped; manual
+addresses stay and are tested again. The neighbour cache (64 entries) is RFC 4861 7.3's:
 INCOMPLETE (multicast solicitations once a second, three times; the
 waiting datagrams' senders then get "address unreachable"), REACHABLE
 for the reachable time after a solicited advertisement, STALE (still
 used; the first use waits 5 s, then three unicast probes a second
 apart, unanswered: forgotten; unused for ten minutes: forgotten).
 Solicitations for our addresses are answered and teach us the asker's
-address. Redirects are ignored.
+address.
+
+**Interface identifiers and temporary addresses**
+(`Network.Ipv6Identifiers`, `Network.InterfaceIdentifiers`,
+`Network.TemporaryAddresses`). An interface's `Ipv6Options` say how it
+makes its addresses; Ethernet interfaces start with
+`Ipv6OptionTemporaryAddresses` and stable-privacy identifiers, lo with
+none. The link-local and SLAAC addresses take a stable-privacy
+identifier (RFC 7217): the first 64 bits of SHA-256 over the prefix,
+the Ethernet address, the DAD counter and a 32-byte secret
+(`Network.Sha256`), skipping the identifiers RFC 5453 reserves; the
+same on one network for ever, different on each. A duplicate is made
+again with the next DAD counter (three times at most).
+`Ipv6OptionEui64Identifiers` goes back to the modified EUI-64 one. The
+secret is the network service's: it keeps one in
+/var/lib/network/stable-secret (64 hex digits, readable by root alone,
+made on the first start) and hands it over before it sets anything up
+(`InterfaceChangeStableSecret`, `Sys.NetworkInterfaces.SetIpv6StableSecret`);
+until then a random one stands in, and a new secret starts IPv6 again on
+the interfaces that use it. With temporary addresses (RFC 8981) each
+SLAAC address gets one beside it with a random identifier
+(`Ipv6OriginTemporary`, flags automatic and `InterfaceAddressFlagTemporary`),
+valid at most two days and preferred at most one day less a random
+DESYNC_FACTOR (up to 0.4 day), never longer than its prefix; five
+seconds before it is deprecated its successor is made, and the old one
+stays, deprecated, until its valid lifetime ends (one is dropped to
+make room if the table, now 11 addresses an interface, is full). A
+router renewing the prefix renews them within those limits; a
+duplicate is replaced (three times in a row at most). Source selection
+prefers them (rule 7). `ifconfig eth0 inet6 tempaddr|notempaddr|stable|eui64`
+changes the options (`InterfaceChangeIpv6Options`), and marks temporary
+addresses "temporary". The listing's `MaximumInterfaceAddresses` is 12.
 
 **ICMPv6** (RFC 4443; `Network.Icmpv6`). Echo requests are answered,
 multicast ones too (from an address of the arrival interface). Echo
@@ -4002,7 +4123,8 @@ port: `ErrorConnectionRefused`). Errors are sent for an unknown next
 header or option, a routing header with segments left, a closed UDP port
 and a neighbour that never answered; never about an ICMPv6 error, a
 datagram to a group or from a non-unicast address; they quote what fits
-in 1280 bytes.
+in 1280 bytes. Packet Too Big and redirects (137) are handled as the
+destination cache says.
 
 **TCP** (RFC 793 with RFC 1122, 5681, 6298, 7323, 2018, 6675, 6582).
 Connections
@@ -4176,7 +4298,9 @@ family is `ErrorAddressFamilyNotSupported`. Options: receive and
 send timeouts, broadcast, reuse address, time to live, non-blocking, the
 pending error (how a non-blocking connect ended), no delay, the kind,
 the received time to live (ping shows it), the interface, the bytes
-readable. Send and receive take five arguments; the dispatcher now
+readable, TCP's keep-alives and buffers, IPv6-only (22), joining and
+leaving multicast groups (23, 24), the multicast interface, hops and
+loop (25-27). Send and receive take five arguments; the dispatcher now
 passes R8 on. The ABI is in `shared/Abi.Networking.inc`; the new error
 codes (`ErrorConnectionRefused`, `ErrorAddressInUse`,
 `ErrorNetworkUnreachable`...) take Linux's numbers. `CallGetTime`
@@ -4210,7 +4334,9 @@ limit, link MTU and the DNS servers routers advertised, packets, bytes,
 errors and drops each way), routes of both families (IPv4's first), the
 ARP cache, the neighbour cache and the sockets; only root may change an
 interface (the IPv4 address and prefix, IPv6 addresses added and
-removed one by one, the IPv6 mode, up/down, MTU), the routes (an IPv6
+removed one by one - a DHCPv6 lease's with its valid and preferred
+lifetimes, `ValidSeconds` and `PreferredSeconds` with
+`InterfaceChangeAddressLifetimes` -, the IPv6 mode, up/down, MTU), the routes (an IPv6
 route through a link-local gateway names its interface) or the DNS
 servers (IPv4 or IPv6 addresses). The kernel keeps the DNS
 servers and search domain only for the resolver to read, as it keeps
@@ -4246,13 +4372,14 @@ has `GetNodeName` and `SetNodeName`.
 state files (`/var/lib/network/NAME.state`: `Method`, `State` - down,
 no-link, configuring, configured, failed - `Address`, `Gateway`,
 `DnsServers`, `Domain`, `LeaseSeconds`, `LeaseObtained`, `DhcpServer`,
-`Ipv6Method`, `Ipv6Addresses`, `Ipv6Gateway`, `Ipv6DnsServers`)
+`Ipv6Method`, `Ipv6Addresses`, `Ipv6Gateway`, `Ipv6DnsServers`,
+`Dhcpv6`, `Dhcpv6Server`, `Dhcpv6DnsServers`, `Dhcpv6Domains`)
 are read in one place, libconfiguration: `Configuration.NetworkSettings`
 reads, checks and writes `Network.settings` (method names; a static
 address needs a prefix of 1-30 and must be a host of its network, not
 0/8, loopback, multicast, its network's address or broadcast; a
 gateway must be another host on that network; `Ipv6Method` is auto,
-static or none, a static IPv6 address (`Configuration.Ipv6Checks`)
+dhcpv6, static or none, a static IPv6 address (`Configuration.Ipv6Checks`)
 needs a prefix of 1-128 and must be unicast and not link-local, ::
 or ::1, its gateway any unicast IPv6 address (link-local ones too) but
 the address itself; DNS servers are IPv4 host addresses or unicast
@@ -4296,8 +4423,8 @@ watcher (`Configuration.Watcher` on `/etc/settings`, group `Network`:
 when a value in Network.settings changes - the settings library's and
 the system settings service's `.new` file renamed into place included -
 it is read again whole and applied; a rewrite that changes nothing is
-not), the kernel's network changes, and the DHCP clients' sockets, and wakes at
-the clients' next deadline (at least every 5 s).
+not), the kernel's network changes, and the DHCP and DHCPv6 clients'
+sockets, and wakes at the clients' next deadline (at least every 5 s).
 
 **Settings** (`/etc/settings/Network.settings`, `NetworkService.Settings`):
 
@@ -4305,13 +4432,15 @@ the clients' next deadline (at least every 5 s).
     DnsServers = []                 empty: those DHCP and routers give; a list
                                     (IPv4 or IPv6) overrides them
     SearchDomain = ""               empty: the domain DHCP gives
+    DhcpStartWait = false           true: a cold start waits 1-10 s before
+                                    the first DHCPDISCOVER (no key: true)
 
     [Interfaces/eth0]
     Method = "dhcp"                 dhcp, static or none (no Method: static)
     Address = "10.0.2.15/24"        static only
     Gateway = "10.0.2.2"            static only
     Up = true
-    Ipv6Method = "auto"             auto, static or none (no Ipv6Method: auto)
+    Ipv6Method = "auto"             auto, dhcpv6, static or none (no Ipv6Method: auto)
     Ipv6Address = "fd00::10/64"     Ipv6Method static only (no prefix: /64)
     Ipv6Gateway = "fd00::1"         Ipv6Method static only, optional
 
@@ -4342,7 +4471,8 @@ and the service only sets the interface's IPv6 mode:
 
 | Ipv6Method | What the service does |
 |---|---|
-| auto | `Ipv6ModeAutomatic` (the kernel's own start, so usually nothing) |
+| auto | `Ipv6ModeAutomatic` (the kernel's own start, so usually nothing); DHCPv6 as the routers' M and O flags say (below) |
+| dhcpv6 | `Ipv6ModeAutomatic` (routes, prefixes and SLAAC from the routers still), and stateful DHCPv6 whatever the routers say |
 | static | `Ipv6ModeLinkLocal` (advertisements ignored), the address added, and a default route `::/0` through `Ipv6Gateway` on the interface (the IPv4 metric) |
 | none | `Ipv6ModeOff`: the kernel drops every IPv6 address and route of the interface |
 
@@ -4353,9 +4483,10 @@ taken from its change notifications into the state files.
 
 The DNS servers given to the kernel are the settings'
 list if it is not empty, else every lease's servers, then the DNS
-servers the interfaces' routers advertised (each once, four at
-most); the search domain is the settings', else the first lease's
-domain; they are set only when they change. Asked to end, the service
+servers the interfaces' routers advertised, then those DHCPv6 gave
+(each once, four at most); the search domain is the settings', else
+the first lease's domain, else the first DHCPv6 domain; they are set
+only when they change. Asked to end, the service
 gives every lease back (the addresses go), writes the state files and
 ends with status 0; static addresses stay. Its log is
 `/var/log/network.log`.
@@ -4374,6 +4505,26 @@ broadcasts allowed) and this state machine:
     Renewing, Rebinding -ACK-> Bound; -NAK-> address removed, Init
     any -link lost-> Paused (the lease kept until it runs out) -link back-> InitReboot
 
+Selecting collects the offers for a second after the first
+(`NetworkService.DhcpOffers`) and requests the one offering the address
+had before, else the first that came; an offer of the address had
+before is requested at once. A reply's options may go on in its file
+and server name fields (option overload, 52: 1 the file, 2 the server
+name, 3 both), read after the options field, the file first, an
+overload inside them ignored (RFC 2131 4.1).
+
+The first DHCPDISCOVER of a cold start - the service's first client for
+the interface in this run, without a lease kept from before that has
+not run out (the state file's address, `LeaseObtained` and
+`LeaseSeconds`) - waits 1 to 10 s at random (RFC 2131 4.4.1), so that
+machines powered on together do not all ask at once; a lease still
+valid is confirmed at once (INIT-REBOOT), and an expired one's address
+is asked for in the DISCOVER instead. `DhcpStartWait = false` in
+Network.settings turns the wait off, and the shipped Network.settings
+does: a clean stop gives the lease back, so every boot would be a cold
+start, and the network should be up as soon as the system is. A later
+client (the settings changed, the link came back) never waits.
+
 Messages carry the client identifier (61: type 1 and the Ethernet
 address), the host name (12: the node name), the address asked for
 (50) and the server (54) where they belong, the parameter request list
@@ -4389,9 +4540,54 @@ least a minute. Times run on the uptime clock. A client with no lease a
 minute after it began is "failed" in its state file and goes on trying.
 The previous lease's address comes from the state file left by an
 earlier run (a crash; a clean stop gives the lease back) or from this
-run. Left out: option overload (52), comparing several offers, the
-random 1-10 s wait before the first DISCOVER (so the network is up at
-once).
+run.
+
+**The DHCPv6 client** (`NetworkService.Dhcpv6Client`, RFC 8415;
+messages in `NetworkService.Dhcpv6Messages`, the DUID in
+`NetworkService.Dhcpv6Duid`) has a UDP socket per interface (port 546,
+bound to the interface) and sends to ff02::1:2 port 547 on the link. Its
+mode follows the IPv6 settings and the kernel's `Ipv6RouterFlags`:
+Ipv6Method dhcpv6 is stateful; auto is stateful once an advertisement
+had M (losing M later stops nothing until the settings change),
+stateless with O alone, off with neither; static and none are off, as
+is an interface with IPv6 off. The routers still give the default route
+and the on-link prefixes: DHCPv6 gives none.
+
+    Soliciting -Advertise (best preference; 255 at once)-> Requesting -Reply-> Bound
+    Bound -T1-> Renewing (to the server) -T2-> Rebinding (to any) -valid lifetimes end-> Soliciting
+    Renewing, Rebinding -Reply-> Bound; -NoBinding-> Requesting; -NotOnLink-> Soliciting
+    Requesting -NoAddrsAvail, NotOnLink, 10 requests unanswered-> Soliciting
+    Informing (stateless) -Reply-> Informed -information refresh time-> Informing
+    any -link lost-> Paused (the kernel drops the addresses) -link back-> Soliciting or Informing
+
+Messages carry the machine's DUID (client identifier, 1), the server's
+(2) where they answer one, the elapsed time (8), an IA_NA (3; IAID: the
+Ethernet address's last four bytes) with the addresses had before as
+hints, and the option request (6: DNS servers 23, domain search list
+24; information refresh time 32 with an information-request). A reply
+counts with the transaction id, the client's DUID and a server's DUID.
+Advertises are collected during the Solicit's first retransmission time
+(about a second); one without an address for the IA_NA is ignored. T1
+and T2 of 0 (or T1 above T2) are half and four fifths of the shortest
+preferred lifetime. Retransmissions follow RFC 8415 15 (IRT, doubled,
+each moved by up to a tenth, at most MRT): Solicit 1 s/3600 s after a
+random wait of up to 1 s; Request 1 s/30 s, 10 tries; Renew and Rebind
+10 s/600 s until T2 and the end of the valid lifetimes;
+Information-request 1 s/3600 s after up to 1 s, refreshed after the
+server's refresh time (at least 600 s; 86400 s without one). RELEASE
+goes once when the client stops (the service ends, the IPv6 settings
+change), not retransmitted. The leased addresses go to the kernel as
+/128s with their lifetimes (`AddInterfaceLeasedIpv6Address`), again at
+every renewal; the kernel deprecates and removes them as the lifetimes
+run out, and those the server stops giving are removed. The DUID is a
+DUID-LLT of the first interface that asks, made once and kept in
+`/var/lib/network/dhcpv6.duid` ("00:01:00:01:..."), or a DUID-LL when it
+cannot be kept. Left out: Confirm after the link comes back (it
+solicits again with the old addresses as hints), Reconfigure, rapid
+commit, prefix delegation (IA_PD), temporary addresses (IA_TA), the
+server unicast option, SOL_MAX_RT and INF_MAX_RT from servers, and
+Decline (the kernel's duplicate address detection removes a duplicate
+without telling the server).
 
 **The address probe** (`NetworkService.AddressProbe`): before an
 offered address is taken, an empty datagram goes to its discard port on
@@ -4418,10 +4614,14 @@ settings files (read it with `TSettingsDocument`):
 | `LeaseSeconds` | integer | the lease's length; 0 for static, none and an endless lease |
 | `LeaseObtained` | integer | Unix time the lease was acknowledged (renewals too); 0 without one |
 | `DhcpServer` | string | the server that gave the lease, or `""` |
-| `Ipv6Method` | string | `auto`, `static` or `none` |
-| `Ipv6Addresses` | list of strings | the kernel's IPv6 addresses with prefixes (`fe80::5054:ff:fe12:3456/64`, `fec0::5054:ff:fe12:3456/64`), tentative ones left out |
+| `Ipv6Method` | string | `auto`, `dhcpv6`, `static` or `none` |
+| `Ipv6Addresses` | list of strings | the kernel's IPv6 addresses with prefixes (`fe80::5054:ff:fe12:3456/64`, `fec0::5054:ff:fe12:3456/64`, a DHCPv6 one as `2001:db8::100/128`), tentative ones left out |
 | `Ipv6Gateway` | string | the gateway of the interface's IPv6 default route (`fe80::2`), or `""` |
 | `Ipv6DnsServers` | list of strings | the DNS servers its routers advertised (RDNSS) |
+| `Dhcpv6` | string | `off`, `no-link`, `configuring`, `configured` (an address leased) or `informed` (DNS servers only) |
+| `Dhcpv6Server` | string | the DUID of the DHCPv6 server that gave the lease ("00:03:00:01:..."), or `""` |
+| `Dhcpv6DnsServers` | list of strings | the DNS servers DHCPv6 gave (option 23) |
+| `Dhcpv6Domains` | list of strings | the domain search list DHCPv6 gave (option 24) |
 
 `State` is `down` while the interface is off (also for dhcp after the
 service stopped, and for none without an address), `no-link` while it
@@ -4450,6 +4650,21 @@ address is named by `/etc/hosts`, then by a PTR record. Errors:
 (no server answered), `ErrorWouldBlock` (the servers failed: "try
 again").
 
+Its DNS answers are kept in a cache of the process's own
+(`Sys.DnsCache`, under a lock in `Sys.DnsQueries`, used with
+`UseCache`, which only `Sys.HostNames` sets): 64 answers at most, kept
+under the question (the name without case or final dot, and the type)
+for the shortest time to live of the answer section (a day at most);
+negative answers (NXDOMAIN, and NOERROR without a record of the type)
+for the authority section's SOA, the smaller of its time to live and its
+MINIMUM (RFC 2308 5, three hours at most), and not at all without an
+SOA; server failures, refusals and truncated answers are never kept. A
+cached answer comes back with its records' times to live lowered by the
+seconds it was kept. A new answer pushes out those that ran out, else
+the one that runs out soonest; the cache is emptied whenever the servers
+asked differ from those it was filled from (`ClearDnsCache` empties it
+by hand).
+
 Below it, `Sys.DnsQueries` (which `host` and `nslookup` use directly)
 asks the kernel's servers (or those given) over UDP: each server in
 turn, `Attempts` rounds (2), `TimeoutMilliseconds` each (2.5 s). Every
@@ -4467,9 +4682,16 @@ records (A, AAAA, CNAME, NS, PTR, MX, SOA, TXT; others by length),
 checking every length against the message; `Sys.DnsNames` reads names
 with their compression pointers, only backwards and at most 64 of them,
 so a pointer loop is refused, and makes reverse names (`in-addr.arpa`,
-`ip6.arpa`). No EDNS (UDP answers stop at 512 bytes, TCP takes the
-rest) and no cache yet. `Sys.InternetAddresses` reads and writes IPv6
-addresses too (RFC 5952 form).
+`ip6.arpa`). EDNS(0) (RFC 6891): queries carry an OPT record
+advertising 1232 bytes (`EdnsPayloadSize`, `DefaultEdnsPayloadSize`; 0
+leaves it out), so larger answers come over UDP (the reply buffer is
+1500 bytes); a truncated answer still goes to TCP; a server answering
+FORMERR without an OPT record of its own does not know EDNS and is asked
+again without it. A reply's OPT record is not kept among the records:
+it fills `HasEdns`, `EdnsPayloadSize`, `EdnsVersion` and `EdnsFlags`, and
+its extended response code goes into `ResponseCode` (BADVERS); `host -v`
+shows it as dig's OPT pseudosection. `Sys.InternetAddresses` reads and
+writes IPv6 addresses too (RFC 5952 form).
 
 **netstat** (`userland/netstat`, `Netstat.*`) in the manner of
 net-tools: the sockets (`Netstat.Connections`: TCP, then UDP, then ICMP
@@ -4478,8 +4700,35 @@ owner as "pid/name" from a process snapshot), `-r` the routes with
 net-tools' columns (the sorting and flags now in
 `Sys.NetworkInterfaces`, shared with route), `-i` the interfaces and
 their counters, `-s` the protocol counters in net-tools' words. Every
-endpoint goes through `Netstat.Names.FormatEndpoint`, where names will
-come once there are reverse lookups; addresses are numeric until then.
+endpoint goes through `Netstat.Names`: without `-n` a host is named by
+`/etc/hosts`, else by a reverse (PTR) lookup through the system's DNS
+servers with a short timeout (one second, one try; answers are kept
+for the run, and after a server fails to answer no more are asked);
+the wildcard address stays a number. A port is named from
+`/etc/ports` (`Netstat.Services`, the services(5) format: "name
+port/protocol aliases"; it is not called /etc/services because that is
+the service manager's folder of definitions), for the socket's
+protocol. The routing table stays numeric.
+
+**ss** (`userland/bin/ss.pas`, units in `userland/ss`, built on
+netstat's units) in the manner of iproute2: the same list of sockets
+(`Ss.Sockets`: netid tcp, udp, or raw for ICMP; ss's states, a UDP or
+ICMP socket with a peer ESTAB, one without UNCONN), connected ones by
+default (no LISTEN, UNCONN, TIME-WAIT or SYN-RECV), `-l` listening and
+unconnected, `-a` all; `-t -u -w -x` the kinds (`-x`, local sockets:
+there are none), `-4 -6`, `-n` ports as numbers, `-r` hosts by name
+(ports are named by default, hosts not, as iproute2 has it), `-p`
+`users:(("nc",pid=412))`, `-e` the owner's user id, `-H` no header,
+`-s` the counts (`Ss.Summary`). The kernel keeps no TCP internals
+(window, round trip time) to show, so `-i` adds nothing yet. The
+table (`Ss.Table`) leaves out Netid when one kind is asked for and
+State when one state is, and sizes each column to its widest cell. The
+filter (`Ss.Filters`) is iproute2's: `state`/`exclude` with state names
+and groups (connected, synchronized, bucket, big, all), then
+`sport`/`dport` compared with = != < > <= >= (or eq, ne, lt, gt, le,
+ge) against `:22` or a service name, `src`/`dst` against an address
+with a prefix and a port (`10.0.0.0/8`, `[::1]:22`, `*:80`), joined
+with and, or, not and parentheses, in separate words or one.
 
 **nc** (`userland/nc`, `Netcat.*`) with OpenBSD's options. One thread
 relays (`Netcat.Relay`): it waits on the standard input and the socket
@@ -4539,7 +4788,14 @@ none) and makes it the system's for a while: `/etc/hosts` both ways, A,
 a CNAME answered whole and one asked again, the search domain, several
 addresses, AAAA, NXDOMAIN, PTR, a truncated answer asked over TCP, a
 compression loop refused, a reply with a wrong id ignored, a missing
-server passed over, new ids and ports each time. `dnstest --serve` and
+server passed over, new ids and ports each time; the cache (a name
+and a name that does not exist asked again without a query, a query from
+the cache saying so with its time to live lowered, an emptied cache
+asking again); EDNS (medium.test.example's 804-byte TXT whole over UDP,
+the same truncated and asked over TCP without EDNS, old.test.example's
+FORMERR to EDNS asked again without it - the test server answers a
+query's OPT record with its own and truncates at the size advertised).
+`dnstest --serve` and
 `--wait` serve coretest's `host` and `nslookup` command lines; there
 are also `ifconfig`, `route`, `arp`, `ping` (`localhost` from
 `/etc/hosts`), `hostname` and eth0's state file, and netstat and nc ones:
@@ -4548,7 +4804,28 @@ sent both ways by nc over loopback with matching sha256 sums, a UDP
 round trip, `nc -z` on an open and a closed port and a range, two
 ESTABLISHED ends in `netstat -tn`, the default route in `netstat -r`,
 lo and eth0 in `netstat -i`, and the ICMP counters of `netstat -s`
-growing after a ping. The session test checks
+growing after a ping. The network protocol host test (`make network-protocol-test`,
+`tools/NetworkProtocolTest`) checks the OPT record built and read (with
+BADVERS, and one not owned by the root refused), the cache on a clock of
+its own (times to live counted down and run out, RFC 2308's SOA times,
+no data, no SOA, SERVFAIL and truncated answers not kept, case and final
+dots, the bound of 64), DHCP replies with option overload (both fields,
+one, an overload inside a field ignored, an option running past its
+field refused) and the choice of offers, and DHCPv6: DUID-LLT and
+DUID-LL, a Solicit and a Request byte for byte, an Advertise and Replies
+read back (preference, IA_NA, lifetimes, status codes at both levels,
+DNS servers, domain list, refresh time), damaged messages refused, T1
+and T2 worked out. QEMU's user networking has no DHCPv6 server (and its
+advertisements set neither M nor O, so DHCPv6 stays off in the QEMU
+tests); DHCPv6 has host tests only. The session test checks
+growing after a ping; names: a listener on 8080 shown as `http-alt` by
+`netstat -tl` and `ss -tl` and picked by `ss sport = :http-alt`, a
+connection over 127.0.0.1 shown as `localhost` by `netstat -t` and `ss
+-r`, ss's state and port filters, its header, `-s` and `-x`, and a
+filter it cannot read. `make netstat-test` checks the ports file's
+parser (and the installed /etc/ports) and ss's filters on the host.
+Reverse DNS is not checked in QEMU: dnstest's server answers PTR, but
+netstat asks the system's DNS servers. The session test checks
 that the network service configured eth0. The QEMU command lines of all
 tests and `make run` have a virtio-net card on user networking.
 
@@ -4561,7 +4838,11 @@ cannot do 1.3 is refused with "protocol version" (most servers can).
 
 ```
   wget (userland/wget: Wget.Urls, .Headers, .Chunks, .Connections,
-        .Requests, .Bodies, .Transfer, .Progress, .Files, .Settings)
+        .Requests, .Bodies, .Sinks, .Transfer, .Progress, .Files,
+        .Settings, .Sessions, .ConnectionPool; .Cookies, .CookieDates,
+        .CookieFiles; .Authentication, .Challenges, .Digest, .Netrc;
+        .Recursion, .Links, .Robots, .RobotsCache, .Patterns,
+        .LocalPaths, .Downloads, .Converter, .LinkConversion, .FileText)
 =========== Tls.Sessions: over a socket, the system's roots and clock ======
   Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
   Tls.Client           create, handshake, read, write, close, errors
@@ -4721,13 +5002,14 @@ error details and the server's certificate list are strings and
 dynamic arrays; the DER, keys and records stay bytes.
 
 **wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
-HTTP/1.1, one request per connection ("Connection: close"): the URL
+HTTP/1.1, keeping a connection alive between requests: the URL
 (`Wget.Urls`: http and https, no user names or IPv6 literals, unsafe
 bytes percent-encoded, a Location resolved as RFC 3986 says), the host
 looked up by `Sys.HostNames` (numeric addresses need no DNS), a
 non-blocking connect within the timeout and TLS for https
 (`Wget.Connections`), the request (`Wget.Requests`: Host, User-Agent,
-Accept, identity encoding, Range when continuing), the head
+Accept, Accept-Encoding, Range when continuing, Authorization, Cookie,
+"Connection: Keep-Alive"), the head
 (`Wget.Headers`: 1xx skipped; a Content-Length that is not a number,
 two that differ, and transfer codings other than chunked are refused)
 and the body (`Wget.Bodies`, `Wget.Chunks`: by length, chunked with
@@ -4748,8 +5030,76 @@ error responses are not tried again. `-S` shows the response heads,
 names other roots, `--ciphers` the suites. On a terminal a progress
 line (`Wget.Progress`: name, percent, bar, size, speed, estimate) is
 redrawn five times a second; elsewhere there is none. Messages and exit
-statuses are GNU wget's (4 network, 5 certificate, 7 protocol, 8 server
-error...).
+statuses are GNU wget's (4 network, 5 certificate, 6 authentication,
+7 protocol, 8 server error...).
+
+What one run keeps from request to request is a `TWgetSession`
+(`Wget.Sessions`): the settings, the cookie jar, the kept connection
+and each server's authentication.
+
+- **Keep-alive** (`Wget.ConnectionPool`): as GNU wget, one connection
+  is kept, for the scheme, host and port it went to; the next request
+  there (a redirection, another URL of the command line, the next file
+  of a recursion) uses it ("Reusing existing connection to host:80.").
+  It is kept only when the response's body had a known end (a length
+  or chunks) and the server did not close (HTTP/1.0 must say
+  keep-alive); the bodies of redirections and errors are read and
+  dropped for that (up to 1 MiB, else the connection is closed). A
+  kept connection the server closed meanwhile shows as a failed send or
+  no answer, and the request goes once more on a new one.
+  `--no-http-keep-alive` sends "Connection: close".
+- **Cookies** (`Wget.Cookies`, `Wget.CookieDates`, `Wget.CookieFiles`):
+  a jar as RFC 6265 has one: Set-Cookie with Expires (its date
+  algorithm), Max-Age (which wins), Domain (domain-matching, no
+  top-level domains, never inside an IP address), Path (the default
+  path is the request's folder), Secure and HttpOnly; a request gets the
+  matching cookies, longer paths first. `--load-cookies` and
+  `--save-cookies` read and write Netscape's cookie file format (tabs,
+  TRUE/FALSE, `#HttpOnly_`, expiry 0 for session cookies, which are
+  written only with `--keep-session-cookies`); `--no-cookies` turns the
+  jar off.
+- **Authentication** (`Wget.Authentication`, `Wget.Challenges`,
+  `Wget.Digest`, `Wget.Netrc`): nothing goes until a 401; then the best
+  challenge wget can answer is taken (Digest SHA-256, Digest MD5, Basic)
+  and the request made again, once (again only for a stale nonce); a
+  server that refuses ends with "Username/Password Authentication
+  Failed." and status 6. Digest is RFC 7616's: MD5, MD5-sess, SHA-256,
+  SHA-256-sess, qop auth or none, userhash, a random client nonce and
+  the count going up on later requests with the same nonce, which carry
+  the credentials at once (Basic too). The credentials are
+  `--http-user`/`--http-password`, else `--user`/`--password`, else the
+  host's line in `~/.netrc` (machine, default, macdef skipped; `-e
+  netrc=off` turns it off).
+- **gzip** (`Wget.Sinks`): bodies go through a sink chain (the file, or
+  nothing, with a decoder in front when wanted). `--compression=auto`
+  or `gzip` asks for gzip (not when continuing) and decodes gzip,
+  x-gzip or deflate on the way through libcompression's `TInflater`;
+  auto leaves .gz and .tgz files as they are; `none` (the default, as
+  GNU wget's) asks for identity. A decoded body that breaks starts
+  again rather than continuing, and damaged data is status 7.
+- **--trust-server-names** names the file after the URL the redirections
+  end at.
+- **Recursion** (`Wget.Recursion`): `-r` breadth first from each URL,
+  into `host/path` files (`Wget.LocalPaths`: a folder's index.html, the
+  query kept in the name, `-P` a folder in front, `-nH` no host folder,
+  `-nd` no folders), overwriting what is there. A page's links
+  (`Wget.Links`: a small tag scanner that skips comments, scripts and
+  styles and decodes character references; followed links are a, area,
+  link, frame, iframe and meta refresh, requisites img, script,
+  stylesheet and icon links, input, embed, audio/video/source/track,
+  object and backgrounds; <base> respected) are followed below `-l` (5;
+  0 or inf: no limit), and requisites are fetched at any depth with
+  `-p` (alone, `-p` fetches one page and what it needs). Only links to
+  the same host are followed, with `-np` none above the starting
+  folder. Each server's robots.txt is fetched first and kept
+  (`Wget.Robots`, RFC 9309: the group naming wget, else *, the longest
+  rule winning, * and $ in rules); `-e robots=off` ignores it. `-A`/`-R`
+  (`Wget.Patterns`) take suffixes or wildcard patterns; a page they
+  reject is fetched for its links and then removed. `-k`
+  (`Wget.Converter`, `Wget.LinkConversion`) rewrites the links of every
+  saved page at the end: to a relative path for what was fetched (with
+  "?" and "#" escaped), to the absolute URL for relative links to what
+  was not. `-O` cannot be used with -r or -p.
 
 **Tests.** On the host: `make crypto-test` (RFC 8439's Poly1305 and
 AEAD vectors with the reduction edge cases, the GCM specification's
@@ -4766,7 +5116,13 @@ self-signatures checked; then `run-interop.sh`: whole connections to
 OpenSSL's s_server with every suite, ECDSA and RSA-PSS servers, a
 certificate request, key updates both ways and each failure) and
 `make wget-test` (URLs with RFC 3986's resolution examples, file names,
-response heads, chunked bodies fed in pieces of every size). In QEMU,
+response heads with their repeated fields and keep-alive rules,
+chunked bodies fed in pieces of every size, RFC 6265's dates, cookie
+parsing, domain and path matching and ordering, Netscape cookie files
+both ways, WWW-Authenticate challenges, Digest against RFC 7616's MD5
+and SHA-256 and RFC 2617's examples, Basic against RFC 7617's, .netrc,
+link extraction, robots.txt, accept and reject lists, local paths,
+relative links and link conversion). In QEMU,
 coretest runs `wgettest`, which fetches from test servers on the host
 that QEMU's user network reaches through `guestfwd`
 (scripts/test-web-server.py over HTTP and HTTPS with the test
@@ -4774,7 +5130,15 @@ certificates, and `openssl s_server -www`): contents by sha256sum,
 every suite, redirects, chunked and close-delimited bodies, continuing,
 -S, the user agent, a timeout, a 404, and a name mismatch, an unknown
 authority and an expired certificate each refused (and accepted with
---no-check-certificate). test-qemu.sh says so and stops when python3
+--no-check-certificate); the server keeps connections alive, so
+wgettest also checks several requests over one connection (HTTP and
+HTTPS, after redirections and a 404, and not with
+--no-http-keep-alive), cookies across a redirection and through cookie
+files, Basic and Digest (both algorithms, the credentials sent at once
+the second time, ~/.netrc), gzip bodies (plain, chunked, a .gz left
+alone, damaged data), --trust-server-names, and recursion over a small
+site under /site/ (-r, -l 1, -np, -A, -R, -p, -k, robots.txt and -e
+robots=off). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
 ### The SSH server

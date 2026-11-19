@@ -33,7 +33,11 @@
   TCP, an answer whose name compression points at itself (refused, not
   followed for ever), a reply with a wrong id (ignored), a server that
   is not there passed over for the next, and new random ids and source
-  ports for every query; the server asked over IPv6 ([::1]:53), and
+  ports for every query; the process's cache of answers (a name asked
+  again, and one that does not exist, need no query; emptied, they do);
+  EDNS(0) (an answer of more than 512 bytes whole over UDP, truncated
+  without EDNS; a server answering FORMERR asked again without it);
+  the server asked over IPv6 ([::1]:53), and
   localhost tried over ::1 first when connecting (Sys.HostLookup).
   Nothing here needs the internet.
 
@@ -175,6 +179,52 @@ begin
     HostIs('spoof.test.example', 192, 0, 2, 99));
 end;
 
+procedure TestCache;
+var
+  Before: LongWord;
+  Address: TInternetAddress;
+  Options: TDnsQueryOptions;
+  Details: TDnsQueryDetails;
+  Error: LongInt;
+begin
+  Before := ServerRecord.Queries;
+  Check('cache: www.test.example asked again needs no query',
+    HostIs('www.test.example', 192, 0, 2, 10) and (ServerRecord.Queries = Before));
+  Check('cache: a name that does not exist is remembered (RFC 2308)',
+    (LookUpHost('nosuch.test.example', Address) = ErrorNotFound) and (ServerRecord.Queries = Before));
+  SystemDnsQueryOptions(Options);
+  Options.UseCache := True;
+  Error := QueryDns('www.test.example', DnsTypeA, Options, Message, Details);
+  Check('cache: the answer says it came from the cache, its time to live not above 300 s',
+    (Error = ErrorNone) and Details.FromCache and (Message.RecordCount = 1) and
+    (Message.Records[0].TimeToLive <= 300) and (ServerRecord.Queries = Before));
+  ClearDnsCache;
+  Check('cache: emptied, the name is asked again',
+    HostIs('www.test.example', 192, 0, 2, 10) and (ServerRecord.Queries > Before));
+end;
+
+procedure TestEdns;
+var
+  Options: TDnsQueryOptions;
+  Details: TDnsQueryDetails;
+  Error: LongInt;
+begin
+  SystemDnsQueryOptions(Options);
+  Error := QueryDns('medium.test.example', DnsTypeTxt, Options, Message, Details);
+  Check('EDNS(0): an answer of more than 512 bytes comes whole over UDP', (Error = ErrorNone) and
+    not Details.UsedTcp and Details.UsedEdns and Message.HasEdns and (Message.Length > MaximumUdpDnsMessage) and
+    (Message.RecordCount = 1) and (Message.Records[0].DataLength = MediumTextStrings * (BigTextStringBytes + 1)));
+  Options.EdnsPayloadSize := 0;
+  Error := QueryDns('medium.test.example', DnsTypeTxt, Options, Message, Details);
+  Check('without EDNS the same answer is truncated and asked again over TCP', (Error = ErrorNone) and
+    Details.UsedTcp and not Details.UsedEdns and (Message.RecordCount = 1));
+  Options.EdnsPayloadSize := DefaultEdnsPayloadSize;
+  Error := QueryDns('old.test.example', DnsTypeA, Options, Message, Details);
+  Check('a server answering FORMERR to EDNS is asked again without it', (Error = ErrorNone) and
+    (Message.ResponseCode = DnsResponseNoError) and not Details.UsedEdns and (Message.RecordCount = 1) and
+    SameAddress(Message.Records[0].Address, 192, 0, 2, 30));
+end;
+
 procedure TestQueries;
 var
   Options: TDnsQueryOptions;
@@ -255,7 +305,9 @@ begin
   GetDnsServers(Saved);
   Check('the test server becomes the system''s', SetDnsServers(TestServers('test.example', False)) = ErrorNone);
   TestNames;
+  TestCache;
   TestQueries;
+  TestEdns;
   TestIpv6Server;
   TestMissingServer;
   Check('the DNS servers before are put back', SetDnsServers(Saved) = ErrorNone);

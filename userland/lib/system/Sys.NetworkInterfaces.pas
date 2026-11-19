@@ -52,10 +52,20 @@ function SetInterfaceAddress(Name: PChar; constref Address: TInternetAddress; Pr
 function RemoveInterfaceAddress(Name: PChar): LongInt;
 { Adds an IPv6 address (one that never expires) to the interface. }
 function AddInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): LongInt;
+{ Adds (or renews) an address a DHCPv6 server leased: the kernel
+  deprecates it after PreferredSeconds and removes it after ValidSeconds
+  (InfiniteAddressLifetime: never). }
+function AddInterfaceLeasedIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+  ValidSeconds, PreferredSeconds: LongWord): LongInt;
 { Removes one of the interface's IPv6 addresses. }
 function RemoveInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress): LongInt;
 { Ipv6ModeOff, Ipv6ModeLinkLocal or Ipv6ModeAutomatic. }
 function SetInterfaceIpv6Mode(Name: PChar; Mode: LongWord): LongInt;
+{ Ipv6Option* (temporary addresses, EUI-64 identifiers). }
+function SetInterfaceIpv6Options(Name: PChar; Options: LongWord): LongInt;
+{ The secret of every interface's stable-privacy identifiers
+  (StableSecretBytes at Secret). }
+function SetIpv6StableSecret(Secret: PByte): LongInt;
 { The interface's IPv4 address, if it has one. }
 function FindInterfaceIpv4Address(constref Description: TAbiNetworkInterface;
   out Address: TAbiInterfaceAddress): Boolean;
@@ -178,6 +188,23 @@ begin
   Result := SetInterfaceAddress(Name, Address, PrefixLength);
 end;
 
+function AddInterfaceLeasedIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+  ValidSeconds, PreferredSeconds: LongWord): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  if Address.Family <> AddressFamilyIPv6 then
+    Exit(ErrorAddressFamilyNotSupported);
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeAddress or InterfaceChangeAddressLifetimes;
+  Configuration.Address.Family := AddressFamilyIPv6;
+  Configuration.Address.PrefixLength := Word(PrefixLength);
+  CopyMemory(@Configuration.Address.Address[0], @Address.Bytes[0], 16);
+  Configuration.ValidSeconds := ValidSeconds;
+  Configuration.PreferredSeconds := PreferredSeconds;
+  Result := Configure(Name, Configuration);
+end;
+
 function RemoveInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress): LongInt;
 var
   Configuration: TAbiInterfaceConfiguration;
@@ -199,6 +226,28 @@ begin
   Configuration.Changes := InterfaceChangeIpv6Mode;
   Configuration.Ipv6Mode := Mode;
   Result := Configure(Name, Configuration);
+end;
+
+function SetInterfaceIpv6Options(Name: PChar; Options: LongWord): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeIpv6Options;
+  Configuration.Ipv6Options := Options;
+  Result := Configure(Name, Configuration);
+end;
+
+function SetIpv6StableSecret(Secret: PByte): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeStableSecret;
+  CopyMemory(@Configuration.StableSecret[0], Secret, StableSecretBytes);
+  { Any interface will do; lo is always there. }
+  Result := Configure('lo', Configuration);
+  FillMemory(@Configuration.StableSecret[0], StableSecretBytes, 0);
 end;
 
 function FindInterfaceIpv4Address(constref Description: TAbiNetworkInterface;

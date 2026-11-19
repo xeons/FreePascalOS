@@ -30,7 +30,9 @@
        or by asking again for where they point - up to
        MaximumAliasSteps;
   and "localhost" is 127.0.0.1 even without /etc/hosts. An address is
-  named by /etc/hosts, then by a PTR record.
+  named by /etc/hosts, then by a PTR record. DNS answers are kept in the
+  process's cache for their time to live (negative ones too, RFC 2308;
+  Sys.DnsCache), so asking again costs nothing.
 
   Errors: ErrorNotFound when the name does not exist or has no address
   (or there is no DNS server to ask), ErrorTimedOut when no server
@@ -187,6 +189,7 @@ var
   Ipv6Error: LongInt;
 begin
   SystemDnsQueryOptions(Options);
+  Options.UseCache := True;
   Result := ErrorNotFound;
   if (Families and HostFamilyIpv4) <> 0 then
     Result := QueryAddresses(Host, DnsTypeA, Options, Found);
@@ -288,6 +291,7 @@ begin
   if not ReverseLookupName(Address, Question) then
     Exit(ErrorAddressFamilyNotSupported);
   SystemDnsQueryOptions(Options);
+  Options.UseCache := True;
   Result := QueryDns(Question, DnsTypePtr, Options, Message, Details);
   if Result <> ErrorNone then
     Exit;

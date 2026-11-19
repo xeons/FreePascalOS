@@ -55,6 +55,14 @@ function InterfaceHasIpv6Address(const Name: string; constref Address: TInternet
   False, for the address to be gone). }
 function WaitForIpv6Address(const Name: string; constref Address: TInternetAddress; PrefixLength: LongWord;
   Wanted: Boolean; Milliseconds: QWord): Boolean;
+{ Waits up to Milliseconds for a ready IPv6 address of the interface in
+  Prefix/64 with every flag of Required and none of Forbidden
+  (InterfaceAddressFlag*); Found is it. }
+function WaitForIpv6AddressLike(const Name: string; constref Prefix: TInternetAddress; Required, Forbidden: LongWord;
+  Milliseconds: QWord; out Found: TInternetAddress): Boolean;
+{ The interface's ready IPv6 addresses as the network service's state
+  file lists them: "address/prefix" joined with commas. }
+function ReadyIpv6AddressesText(const Name: string): string;
 { An IPv6 default route through Gateway leaves by the interface. }
 function HasIpv6DefaultRoute(const Name: string; constref Gateway: TInternetAddress): Boolean;
 { The neighbour cache knows Address's Ethernet address. }
@@ -70,6 +78,7 @@ implementation
 
 uses
   Abi.SystemCalls,
+  SysUtils,
   Sys.Errors,
   Sys.Sockets,
   Sys.Processes,
@@ -235,6 +244,8 @@ begin
   try
     Result := (BindSocket(Ipv4Socket, MakeSocketAddress(AnyIpv4Address, 0)) = ErrorNone);
     Port := LocalPortOf(Ipv4Socket);
+    { A dual-stack IPv6 socket would have the IPv4 port too. }
+    Result := Result and (SetSocketOption(Ipv6Socket, SocketOptionIpv6Only, 1) = ErrorNone);
     Result := Result and (BindSocket(Ipv6Socket, MakeSocketAddress(AnyIpv6Address, Port)) = ErrorNone);
   finally
     CloseSocket(Ipv4Socket);
@@ -298,6 +309,68 @@ begin
        (Description.Addresses[Index].PrefixLength = PrefixLength) then
       Exit(not Ready or ((Description.Addresses[Index].Flags and InterfaceAddressFlagTentative) = 0));
     Inc(Index);
+  end;
+end;
+
+function FindIpv6AddressLike(const Name: string; constref Prefix: TInternetAddress; Required, Forbidden: LongWord;
+  out Found: TInternetAddress): Boolean;
+var
+  Description: TAbiNetworkInterface;
+  Index: LongWord;
+  Entry: TAbiInterfaceAddress;
+begin
+  Result := False;
+  Found := Prefix;
+  if not FindDescription(Name, Description) then
+    Exit;
+  Index := 0;
+  while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
+  begin
+    Entry := Description.Addresses[Index];
+    Inc(Index);
+    if (Entry.Family <> AddressFamilyIPv6) or ((Entry.Flags and InterfaceAddressFlagTentative) <> 0) or
+       ((Entry.Flags and Required) <> Required) or ((Entry.Flags and Forbidden) <> 0) or
+       not AddressesSharePrefix(InterfaceAddressHost(Entry), Prefix, 64) then
+      Continue;
+    Found := InterfaceAddressHost(Entry);
+    Exit(True);
+  end;
+end;
+
+function WaitForIpv6AddressLike(const Name: string; constref Prefix: TInternetAddress; Required, Forbidden: LongWord;
+  Milliseconds: QWord; out Found: TInternetAddress): Boolean;
+var
+  Waited: QWord;
+begin
+  Waited := 0;
+  repeat
+    if FindIpv6AddressLike(Name, Prefix, Required, Forbidden, Found) then
+      Exit(True);
+    SleepMilliseconds(PollMilliseconds);
+    Waited := Waited + PollMilliseconds;
+  until Waited >= Milliseconds;
+  Result := False;
+end;
+
+function ReadyIpv6AddressesText(const Name: string): string;
+var
+  Description: TAbiNetworkInterface;
+  Index: LongWord;
+  Entry: TAbiInterfaceAddress;
+begin
+  Result := '';
+  if not FindDescription(Name, Description) then
+    Exit;
+  Index := 0;
+  while (Index < Description.AddressCount) and (Index < MaximumInterfaceAddresses) do
+  begin
+    Entry := Description.Addresses[Index];
+    Inc(Index);
+    if (Entry.Family <> AddressFamilyIPv6) or ((Entry.Flags and InterfaceAddressFlagTentative) <> 0) then
+      Continue;
+    if Result <> '' then
+      Result := Result + ',';
+    Result := Result + AddressToText(InterfaceAddressHost(Entry)) + '/' + IntToStr(Entry.PrefixLength);
   end;
 end;
 

@@ -78,6 +78,10 @@ begin
     Exit;
   SetSocketOption(Result, SocketOptionReuseAddress, 1);
   SetSocketOption(Result, SocketOptionKeepAlive, Ord(KeepAlive));
+  { As OpenSSH does: the IPv6 listener takes IPv6 alone, so an IPv4 one
+    may listen on the same port beside it. }
+  if Family = AddressFamilyIPv6 then
+    SetSocketOption(Result, SocketOptionIpv6Only, 1);
   Error := BindSocket(Result, MakeSocketAddress(Address, Port));
   if Error = ErrorNone then
     Error := ListenOnSocket(Result, ListenBacklog);

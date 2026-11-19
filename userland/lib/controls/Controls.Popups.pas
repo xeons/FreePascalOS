@@ -51,12 +51,15 @@ type
   TPressedOutsideEvent = function(X, Y: LongInt; Button: LongWord): Boolean of object;
   { The pointer moved to (X, Y) of the pop-up, outside it. }
   TPointerMovedEvent = procedure(X, Y: LongInt) of object;
+  { The theme changed while the pop-up is open. }
+  TPopupThemeChangedEvent = procedure of object;
 
   TPopupWindow = class(TControlWindow)
   private
     FOnDismiss: TControlEvent;
     FOnPressedOutside: TPressedOutsideEvent;
     FOnPointerMovedOutside: TPointerMovedEvent;
+    FOnThemeChanged: TPopupThemeChangedEvent;
     FClosing: Boolean;
     { How many of its event methods are running (nested loops inside
       them), and whether it is to be freed when the last one ends. }
@@ -74,6 +77,7 @@ type
     procedure Wheel(Steps: LongInt); override;
     procedure TimerFired(TimerId: LongWord); override;
     procedure CloseRequested; override;
+    procedure ThemeChanged; override;
     { A modal window's pop-ups (a combo box's list in a dialog) work. }
     function AcceptsInputWhileModal: Boolean; override;
   public
@@ -101,6 +105,9 @@ type
       pointing at them works as it does over the menu). Without it they
       go nowhere. }
     property OnPointerMovedOutside: TPointerMovedEvent read FOnPointerMovedOutside write FOnPointerMovedOutside;
+    { The theme changed while it is open: what it shows may measure
+      itself again (a menu sized by the theme's metrics). }
+    property OnThemeChanged: TPopupThemeChangedEvent read FOnThemeChanged write FOnThemeChanged;
   end;
 
 implementation
@@ -289,6 +296,19 @@ end;
 procedure TPopupWindow.CloseRequested;
 begin
   Dismiss;
+end;
+
+procedure TPopupWindow.ThemeChanged;
+begin
+  inherited ThemeChanged;
+  if FClosing or not Assigned(FOnThemeChanged) then
+    Exit;
+  BeginEvent;
+  try
+    FOnThemeChanged();
+  finally
+    EndEvent;
+  end;
 end;
 
 function TPopupWindow.AcceptsInputWhileModal: Boolean;

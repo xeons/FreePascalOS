@@ -616,16 +616,22 @@ normalized (0-65535), not pixels.
       applied live, the lease given back (networktest); the resolver
       against a DNS server of its own (dnstest); host, nslookup and
       hostname command lines
-- [ ] A small per-process cache of DNS answers; EDNS(0) for answers
-      larger than 512 bytes over UDP
-- [ ] DHCP: option overload (52), several offers compared, the random
-      1-10 s wait before the first DISCOVER (left out to start quickly)
+- [x] A small per-process cache of DNS answers (TTLs, RFC 2308 negative
+      caching, 64 answers); EDNS(0) for answers larger than 512 bytes
+      over UDP (1232 advertised, FORMERR asked again without it)
+- [x] DHCP: option overload (52), several offers compared (a second's
+      window, the previous address preferred), the random 1-10 s wait
+      before a cold start's first DISCOVER (`DhcpStartWait`, off in the
+      shipped settings to start quickly)
 - [x] `netstat` (`-tuwlanp`, `-r`, `-i`, `-s`; the socket listing gives
       the owner process, protocol counters in the kernel)
 - [x] `nc` (OpenBSD options: `-l -k -u -z -v -w -n -N -q -p -d`)
-- [ ] `ss` (on top of netstat's pieces)
-- [ ] Reverse lookups and a services list for `netstat` without `-n`
-      (`Netstat.Names`)
+- [x] `ss` (on top of netstat's pieces: -t -u -w -x -l -a -n -r -p -e -H
+      -4/-6 -s, state filters and sport/dport/src/dst expressions)
+- [ ] `ss -i` (TCP internals: the kernel keeps no window or round trip
+      time to show yet); `ss -x` once there are local sockets
+- [x] Reverse lookups and a services list for `netstat` without `-n`
+      (`Netstat.Names`: /etc/hosts, PTR with a short timeout, /etc/ports)
 - [x] `wget` (HTTP/1.1 and HTTPS: -O, -q, -S, -c, -T, -t, -U, redirects,
       chunked bodies, --no-check-certificate, --ca-certificate, --ciphers,
       a progress line); `wgettest` in QEMU against test servers on the host
@@ -637,8 +643,12 @@ normalized (0-65535), not pixels.
       P-256 key exchange (only x25519 is offered), session resumption,
       OCSP / revocation, TLS 1.2 for servers without 1.3, Ed25519 and P-521
       certificates
-- [ ] wget: keep-alive (one request per connection now), cookies,
-      authentication, recursion (-r), --trust-server-names, gzip
+- [x] wget: keep-alive, cookies (RFC 6265, Netscape cookie files),
+      Basic and Digest authentication (RFC 7616) and .netrc, recursion
+      (-r -l -np -k -p -A -R -P -nH -nd, robots.txt), --trust-server-names,
+      gzip (--compression)
+- [ ] wget later: -N (timestamps), -nc, --spider, -H with -D, CSS url()
+      links for -p, --ask-password, SHA-512-256 and auth-int Digest
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no
@@ -652,12 +662,27 @@ normalized (0-65535), not pixels.
       -6, ifconfig inet6, route -6, ndp, netstat tcp6/udp6, nc -6, wget
       [v6] URLs; per interface Ipv6Method in Network.settings, the Control
       Panel and the network pop-up
-- [ ] IPv6 later: DHCPv6 (stateful addresses, the M and O flags), privacy
-      addresses (RFC 8981), sending fragments and path MTU discovery
-      (packet too big is ignored), redirects, MLD reports for groups
-      programs join (no multicast sockets yet), source address
-      selection's full RFC 6724 policy table, v4-mapped addresses on IPv6
-      sockets, a stable-privacy identifier (RFC 7217) instead of EUI-64
+- [x] DHCPv6 (RFC 8415) in the network service: the routers' M and O
+      flags (kernel `Ipv6RouterFlags`), stateful addresses (IA_NA:
+      Solicit/Advertise/Request/Reply, Renew/Rebind/Release) with their
+      lifetimes in the kernel, information-request for DNS servers and
+      the search list, a DUID-LLT kept in /var/lib/network; Ipv6Method
+      dhcpv6; ifconfig, the state files and the Control Panel; host tests
+- [ ] DHCPv6 later: Confirm after the link comes back, Reconfigure,
+      prefix delegation (IA_PD), Decline of a duplicate, an in-QEMU test
+      against a DHCPv6 server of the test script's own
+- [x] IPv6 later: privacy addresses (RFC 8981), sending fragments and
+      path MTU discovery (Packet Too Big, a destination cache, TCP's MSS),
+      redirects, MLD and IGMP reports for groups programs join with
+      multicast sockets, source address selection's full RFC 6724 policy
+      table (and the resolver's destination order), v4-mapped addresses
+      on IPv6 sockets, a stable-privacy identifier (RFC 7217) instead of
+      EUI-64
+- [ ] IPv6 and multicast later: drivers programming their multicast
+      filters (the hook is there), the IPv6 options kept in
+      Network.settings, IPv4 fragments sent and IPv4 path MTU for UDP,
+      delayed (random) answers to MLD and IGMP queries, ping -s over
+      fragments
 - [ ] Wi-Fi (later, a project of its own): the Intel CNVi driver
       (Alder Lake-P, 8086:51f0) with its firmware from linux-firmware
       (iwlwifi licence, in firmware/ beside the Realtek files), scanning,

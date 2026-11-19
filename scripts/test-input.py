@@ -2666,6 +2666,14 @@ checks.append(('no heap check failed' + ''.join('\n    ' + report.decode(errors=
                                                  for report in heap_reports),
                not heap_reports))
 
+# A program that dies of an exception prints it on the console; no
+# check here makes one do that on purpose.
+crash_reports = re.findall(rb'An unhandled exception occurred[^\r\n]*\r?\n[^\r\n]*', bytes(received))
+checks.append(('no program died of an unhandled exception' +
+               ''.join('\n    ' + report.decode(errors='replace').replace('\r', '').replace('\n', ' ')
+                       for report in crash_reports),
+               not crash_reports))
+
 failed = False
 for name, passed in checks:
     print(('[input] pass: ' if passed else '[input] FAIL: ') + name)

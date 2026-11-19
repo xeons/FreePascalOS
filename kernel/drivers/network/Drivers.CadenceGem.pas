@@ -844,6 +844,8 @@ begin
   Routines.Transmit := @TransmitFrame;
   Routines.LinkUp := @LinkIsUp;
   Routines.Kind := NetworkAdapterKindEthernet;
+  { Takes all multicast; the network layer filters by group. }
+  Routines.SetMulticastFilter := nil;
   if not AddNetworkCard(@Card^.Card, Routines, Card, Card^.Address, Description) then
   begin
     ChangeGem(Card, GemNetworkControl, ControlReceiveEnable or ControlTransmitEnable, 0);

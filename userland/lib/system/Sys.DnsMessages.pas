@@ -32,6 +32,14 @@
   Everything read is checked against the message's length, and names
   go through Sys.DnsNames (pointers only backwards), so a damaged or
   hostile message is refused, never read past its end.
+
+  EDNS(0) (RFC 6891): a query may carry an OPT pseudo-record in its
+  additional section - owner the root, type 41, the class the largest
+  UDP reply the asker takes, the time to live the extended response
+  code, the version (0) and the flags, no data - so a server may answer
+  over UDP with more than 512 bytes. A reply's OPT record is not kept
+  with the others: it fills the message's Edns fields, and its extended
+  response code goes into ResponseCode.
 }
 unit Sys.DnsMessages;
 
@@ -48,6 +56,11 @@ const
   DnsHeaderBytes = 12;
   { The largest message over UDP without extensions. }
   MaximumUdpDnsMessage = 512;
+  { What queries advertise with EDNS(0): the size that fits in any
+    path's MTU without fragments (the DNS flag day 2020 choice). }
+  DefaultEdnsPayloadSize = 1232;
+  { An OPT record without options: root, type, class, TTL, length. }
+  EdnsRecordBytes = 11;
   { Over TCP: a two-byte length in front. }
   MaximumTcpDnsMessage = 65535;
   { The records kept of one message, the sections together; more are
@@ -62,6 +75,7 @@ const
   DnsTypeMx = 15;
   DnsTypeTxt = 16;
   DnsTypeAaaa = 28;
+  DnsTypeOpt = 41;
   DnsTypeAny = 255;
   DnsClassInternet = 1;
 
@@ -80,6 +94,8 @@ const
   DnsResponseNameError = 3;
   DnsResponseNotImplemented = 4;
   DnsResponseRefused = 5;
+  { Extended (with EDNS): the server does not speak the version asked. }
+  DnsResponseBadVersion = 16;
 
 type
   TDnsSection = (DnsSectionAnswer, DnsSectionAuthority, DnsSectionAdditional);
@@ -127,12 +143,25 @@ type
     Records: array of TDnsRecord;
     { Bytes the message had. }
     Length: LongWord;
+    { The OPT record (EDNS), if it had one: the largest UDP message its
+      sender takes, the version and the flags (DO is $8000). }
+    HasEdns: Boolean;
+    EdnsPayloadSize: Word;
+    EdnsVersion: Byte;
+    EdnsFlags: Word;
   end;
 
 { A query for Name's records of RecordType (class IN) into Buffer;
   Length is its size. False if the name is not a valid one. }
 function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
   Capacity: LongWord; out Length: LongWord): Boolean;
+{ The same with an OPT record advertising EdnsPayloadSize (0: none). }
+function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean;
+  EdnsPayloadSize: Word; Buffer: PByte; Capacity: LongWord; out Length: LongWord): Boolean;
+{ Appends an OPT record (EDNS version 0, no flags, no options) to the
+  message of Length bytes in Buffer and counts it in the header's
+  additional records. False if it does not fit. }
+function AppendEdnsRecord(Buffer: PByte; Capacity: LongWord; var Length: LongWord; PayloadSize: Word): Boolean;
 { Reads a whole message. False if it is damaged. }
 function ParseDnsMessage(Data: PByte; Length: LongWord; out Message: TDnsMessage): Boolean;
 { Reads only the header and the first question (to match a response
@@ -170,6 +199,32 @@ procedure WriteWord(Data: PByte; Position: LongWord; Value: Word);
 begin
   Data[Position] := Byte(Value shr 8);
   Data[Position + 1] := Byte(Value);
+end;
+
+function AppendEdnsRecord(Buffer: PByte; Capacity: LongWord; var Length: LongWord; PayloadSize: Word): Boolean;
+var
+  Position: LongWord;
+begin
+  if (Length < DnsHeaderBytes) or (Length + EdnsRecordBytes > Capacity) then
+    Exit(False);
+  Position := Length;
+  { The root, the type, the class (the payload size), the TTL (extended
+    response code 0, version 0, flags 0) and no data. }
+  Buffer[Position] := 0;
+  WriteWord(Buffer, Position + 1, DnsTypeOpt);
+  WriteWord(Buffer, Position + 3, PayloadSize);
+  FillChar(Buffer[Position + 5], 6, 0);
+  Length := Position + EdnsRecordBytes;
+  WriteWord(Buffer, 10, ReadWord(Buffer, 10) + 1);
+  Result := True;
+end;
+
+function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean;
+  EdnsPayloadSize: Word; Buffer: PByte; Capacity: LongWord; out Length: LongWord): Boolean;
+begin
+  Result := BuildDnsQuery(Id, Name, RecordType, RecursionDesired, Buffer, Capacity, Length);
+  if Result and (EdnsPayloadSize <> 0) then
+    Result := AppendEdnsRecord(Buffer, Capacity, Length, EdnsPayloadSize);
 end;
 
 function BuildDnsQuery(Id: Word; const Name: string; RecordType: Word; RecursionDesired: Boolean; Buffer: PByte;
@@ -345,6 +400,23 @@ begin
   end;
 end;
 
+{ The OPT record Entry (its class and time to live) into Message's
+  EDNS fields; only the first one counts. }
+procedure TakeEdnsRecord(constref Entry: TDnsRecord; var Message: TDnsMessage);
+var
+  ExtendedCode: LongWord;
+begin
+  if Message.HasEdns then
+    Exit;
+  Message.HasEdns := True;
+  Message.EdnsPayloadSize := Entry.RecordClass;
+  Message.EdnsVersion := Byte(Entry.TimeToLive shr 16);
+  Message.EdnsFlags := Word(Entry.TimeToLive and $FFFF);
+  ExtendedCode := ((Entry.TimeToLive shr 24) shl 4) or Message.ResponseCode;
+  if ExtendedCode <= High(Byte) then
+    Message.ResponseCode := Byte(ExtendedCode);
+end;
+
 function ParseDnsMessage(Data: PByte; Length: LongWord; out Message: TDnsMessage): Boolean;
 var
   Position: LongWord;
@@ -352,6 +424,7 @@ var
   Section: TDnsSection;
   Entry: TDnsRecord;
   Keep: Boolean;
+  RecordStart: LongWord;
 begin
   Result := False;
   Message := Default(TDnsMessage);
@@ -377,8 +450,17 @@ begin
       Keep := Message.RecordCount < MaximumDnsRecords;
       Entry := Default(TDnsRecord);
       Entry.Section := Section;
+      RecordStart := Position;
       if not ReadRecord(Data, Length, Position, Keep, Entry) then
         Exit;
+      if (Section = DnsSectionAdditional) and (Entry.RecordType = DnsTypeOpt) then
+      begin
+        { Owned by the root (a zero byte), else not EDNS's. }
+        if Data[RecordStart] <> 0 then
+          Exit;
+        TakeEdnsRecord(Entry, Message);
+        Continue;
+      end;
       if Keep then
       begin
         SetLength(Message.Records, Message.RecordCount + 1);
@@ -392,9 +474,9 @@ begin
 end;
 
 const
-  DnsTypeNames: array[0..8] of string = ('A', 'NS', 'CNAME', 'SOA', 'PTR', 'MX', 'TXT', 'AAAA', 'ANY');
-  DnsTypeValues: array[0..8] of Word = (DnsTypeA, DnsTypeNs, DnsTypeCname, DnsTypeSoa, DnsTypePtr, DnsTypeMx,
-    DnsTypeTxt, DnsTypeAaaa, DnsTypeAny);
+  DnsTypeNames: array[0..9] of string = ('A', 'NS', 'CNAME', 'SOA', 'PTR', 'MX', 'TXT', 'AAAA', 'OPT', 'ANY');
+  DnsTypeValues: array[0..9] of Word = (DnsTypeA, DnsTypeNs, DnsTypeCname, DnsTypeSoa, DnsTypePtr, DnsTypeMx,
+    DnsTypeTxt, DnsTypeAaaa, DnsTypeOpt, DnsTypeAny);
   UnknownTypePrefix = 'TYPE';
 
 function DnsTypeName(RecordType: Word): string;
@@ -456,6 +538,7 @@ begin
     DnsResponseNameError: Result := 'NXDOMAIN';
     DnsResponseNotImplemented: Result := 'NOTIMP';
     DnsResponseRefused: Result := 'REFUSED';
+    DnsResponseBadVersion: Result := 'BADVERS';
   else
     Result := 'RESERVED';
   end;

@@ -343,6 +343,17 @@ begin
   Result := Value;
 end;
 
+{ SocketOptionJoinGroup and SocketOptionLeaveGroup: Value is the
+  address of a TAbiMulticastMembership. }
+function SetMembershipFromUser(Socket: PSocket; Option: LongWord; Value: Int64): LongInt;
+var
+  Request: TAbiMulticastMembership;
+begin
+  Result := CopyFromUser(@Request, QWord(Value), SizeOf(Request));
+  if Result = ErrorNone then
+    Result := SetSocketMembership(Socket, Option, Request);
+end;
+
 function PerformSetSocketOption(Handle: Int64; Option: QWord; Value: Int64): Int64;
 var
   Socket: PSocket;
@@ -350,7 +361,10 @@ begin
   Socket := ReferenceSocket(Handle);
   if Socket = nil then
     Exit(Failure(ErrorBadHandle));
-  Result := Failure(SetSocketOption(Socket, LongWord(Option), Value, CallerIsRoot));
+  if (Option = SocketOptionJoinGroup) or (Option = SocketOptionLeaveGroup) then
+    Result := Failure(SetMembershipFromUser(Socket, LongWord(Option), Value))
+  else
+    Result := Failure(SetSocketOption(Socket, LongWord(Option), Value, CallerIsRoot));
   DereferenceObject(Socket);
 end;
 
