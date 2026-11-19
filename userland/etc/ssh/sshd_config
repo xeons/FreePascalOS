@@ -19,3 +19,7 @@ Subsystem sftp /bin/sftp-server
 # Seconds a client has to log in, and channels per connection.
 LoginGraceTime 120
 MaxSessions 8
+
+# TCP keep-alive probes find a client that vanished (after two hours of
+# quiet, nine probes 75 seconds apart).
+TCPKeepAlive yes

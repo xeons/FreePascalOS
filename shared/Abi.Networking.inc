@@ -198,6 +198,37 @@ const
   { Read only: bytes waiting to be read (the first datagram's size for a
     datagram socket). }
   SocketOptionReadableBytes = 12;
+  { TCP, 1: keep-alive probes on a quiet connection; one left
+    unanswered SocketOptionKeepCount times resets it (ErrorTimedOut).
+    An accepted connection takes its listener's keep-alive options. }
+  SocketOptionKeepAlive = 13;
+  { TCP: seconds of quiet before the first probe (1-2^31; 7200 at
+    first). }
+  SocketOptionKeepIdle = 14;
+  { TCP: seconds between unanswered probes (1-2^31; 75 at first). }
+  SocketOptionKeepInterval = 15;
+  { TCP: unanswered probes before the connection is dropped (1-1000; 9
+    at first). }
+  SocketOptionKeepCount = 16;
+  { TCP: the receive buffer's size in bytes; set (2 KiB-4 MiB) it stays
+    that size, otherwise it grows with the connection from 64 KiB up to
+    4 MiB. Set it before connect or listen to start with that window. }
+  SocketOptionReceiveBuffer = 17;
+  { TCP: the send buffer's size, likewise. }
+  SocketOptionSendBuffer = 18;
+  { Read only, TCP: what the handshake agreed (TcpFeature*). }
+  SocketOptionTcpFeatures = 19;
+  { Read only, TCP: segments the connection sent again. }
+  SocketOptionTcpRetransmissions = 20;
+  { Root only, for tests, TCP: every Nth data segment that arrives on
+    the connection is dropped as if lost on the way (0: none; an
+    accepted connection takes its listener's). }
+  SocketOptionTestDropEvery = 21;
+
+  { SocketOptionTcpFeatures. }
+  TcpFeatureWindowScaling = $01;
+  TcpFeatureSack = $02;
+  TcpFeatureTimestamps = $04;
 
   MaximumListenBacklog = 64;
   { The most records a listing (interfaces, routes, ARP entries,

@@ -33,10 +33,20 @@
   acknowledgment frees the send buffer, moves the closing states on
   (our FIN acknowledged) and updates the send window. Data in order
   goes to the receive buffer, and what waited out of order behind it
-  follows; data ahead of what is expected waits (a few segments) and is
-  acknowledged at once with what is expected, so the peer's fast
-  retransmit fills the gap. A FIN in order ends the stream for the
+  follows; data ahead of what is expected waits (as much as the receive
+  buffer holds) and is acknowledged at once with what is expected and,
+  with SACK, the blocks of what waits (Network.TcpReceivedBlocks), so
+  the peer resends only the gaps. A FIN in order ends the stream for the
   reader and moves to CLOSE_WAIT, CLOSING or TIME_WAIT.
+
+  The handshake agrees on window scaling, SACK and timestamps: each is
+  used only if both SYNs carry it. With timestamps, a segment whose
+  TSval is older than the one last kept is dropped with an ACK (PAWS,
+  RFC 7323 5), and TS.Recent follows segments up to the last
+  acknowledgment sent (RFC 7323 4.3). SACK blocks of an acknowledgment
+  go on the scoreboard; duplicate acknowledgments (or ones that SACK
+  something new) move loss recovery on (Network.TcpRecovery). Anything
+  that arrives counts as a sign of life for the keep-alives.
 }
 unit Network.TcpInput;
 
@@ -66,14 +76,16 @@ uses
   Network.ByteRings,
   Network.Interfaces,
   Network.TcpTypes,
+  Network.TcpOptions,
+  Network.TcpWindows,
+  Network.TcpScoreboard,
+  Network.TcpReceivedBlocks,
   Network.TcpConnections,
   Network.TcpSegments,
   Network.TcpStates,
   Network.TcpOutput,
+  Network.TcpRecovery,
   Network.Statistics;
-
-const
-  DuplicateAcksForFastRetransmit = 3;
 
 function Minimum(First, Second: LongWord): LongWord;
 begin
@@ -87,12 +99,54 @@ function NegotiatedSegmentSize(constref Segment: TTcpSegment; Connection: PTcpCo
 var
   PeerMss: LongWord;
 begin
-  PeerMss := Segment.PeerMss;
-  if PeerMss = 0 then
+  PeerMss := Segment.Options.MaximumSegment;
+  if not Segment.Options.HasMaximumSegment or (PeerMss = 0) then
     PeerMss := DefaultPeerMss;
   Result := Minimum(PeerMss, OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface));
   if Result < 64 then
     Result := 64;
+end;
+
+{ What a SYN from the peer agrees to, of what the connection offers
+  (a listener's child offers everything). }
+procedure AgreeOnOptions(Connection: PTcpConnection; constref Segment: TTcpSegment);
+begin
+  Connection^.WindowScaling := Connection^.WindowScaling and Segment.Options.HasWindowScale;
+  if Connection^.WindowScaling then
+  begin
+    Connection^.SendWindowShift := Segment.Options.WindowShift;
+    Connection^.ReceiveWindowShift := OwnWindowShift;
+  end
+  else
+  begin
+    Connection^.SendWindowShift := 0;
+    Connection^.ReceiveWindowShift := 0;
+  end;
+  Connection^.SackPermitted := Connection^.SackPermitted and Segment.Options.SackPermitted;
+  Connection^.Timestamps := Connection^.Timestamps and Segment.Options.HasTimestamps;
+  if Connection^.Timestamps then
+  begin
+    Connection^.TimestampRecent := Segment.Options.TimestampValue;
+    Connection^.TimestampRecentTime := NetworkNow;
+  end;
+end;
+
+{ A child takes its listener's options. }
+procedure InheritFromListener(Child, Listener: PTcpConnection);
+begin
+  Child^.BoundInterface := Listener^.BoundInterface;
+  Child^.TimeToLive := Listener^.TimeToLive;
+  Child^.NoDelay := Listener^.NoDelay;
+  Child^.KeepAlive := Listener^.KeepAlive;
+  Child^.KeepAliveIdleSeconds := Listener^.KeepAliveIdleSeconds;
+  Child^.KeepAliveIntervalSeconds := Listener^.KeepAliveIntervalSeconds;
+  Child^.KeepAliveCount := Listener^.KeepAliveCount;
+  Child^.RequestedReceiveBuffer := Listener^.RequestedReceiveBuffer;
+  Child^.RequestedSendBuffer := Listener^.RequestedSendBuffer;
+  Child^.DropEvery := Listener^.DropEvery;
+  Child^.WindowScaling := True;
+  Child^.SackPermitted := True;
+  Child^.Timestamps := True;
 end;
 
 { --- LISTEN --------------------------------------------------------------- }
@@ -114,6 +168,7 @@ begin
   Child := CreateTcpConnection;
   if Child = nil then
     Exit;
+  InheritFromListener(Child, Listener);
   if not CreateConnectionBuffers(Child) then
   begin
     FreeTcpConnection(Child);
@@ -121,9 +176,6 @@ begin
   end;
   Child^.Local := DatagramDestination(Datagram, Segment.DestinationPort);
   Child^.Remote := DatagramSource(Datagram, Segment.SourcePort);
-  Child^.BoundInterface := Listener^.BoundInterface;
-  Child^.TimeToLive := Listener^.TimeToLive;
-  Child^.NoDelay := Listener^.NoDelay;
   Child^.Listener := Listener;
   Inc(Listener^.ChildCount);
   Child^.InitialReceiveSequence := Segment.Sequence;
@@ -131,6 +183,7 @@ begin
   Child^.SendWindow := Segment.Window;
   Child^.SendWindowSequence := Segment.Sequence;
   Child^.MaximumSegment := NegotiatedSegmentSize(Segment, Child);
+  AgreeOnOptions(Child, Segment);
   Child^.InitialSendSequence := GenerateInitialSequence;
   Child^.SendUnacknowledged := Child^.InitialSendSequence;
   Child^.SendNext := Child^.InitialSendSequence;
@@ -165,6 +218,7 @@ begin
   Connection^.InitialReceiveSequence := Segment.Sequence;
   Connection^.ReceiveNext := Segment.Sequence + 1;
   Connection^.MaximumSegment := NegotiatedSegmentSize(Segment, Connection);
+  AgreeOnOptions(Connection, Segment);
   Connection^.SendWindow := Segment.Window;
   Connection^.SendWindowSequence := Segment.Sequence;
   Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
@@ -178,7 +232,7 @@ begin
     Exit;
   end;
   Connection^.SendUnacknowledged := Segment.Acknowledgment;
-  NoteAcknowledgment(Connection, Segment.Acknowledgment, 0);
+  NoteAcknowledgment(Connection, Segment.Acknowledgment, 0, 0);
   InitializeCongestionState(Connection);
   EnterTcpState(Connection, TcpEstablished);
   SendAckNow(Connection);
@@ -271,7 +325,7 @@ begin
      ((Connection^.SendWindowSequence = Segment.Sequence) and
       SequenceBeforeOrEqual(Connection^.SendWindowAcknowledgment, Segment.Acknowledgment)) then
   begin
-    Connection^.SendWindow := Segment.Window;
+    Connection^.SendWindow := SegmentWindow(Connection, Segment);
     Connection^.SendWindowSequence := Segment.Sequence;
     Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
     { A peer that answers our probes is still there. }
@@ -282,11 +336,40 @@ end;
 
 { The acknowledgment of a segment on a synchronized connection. False if
   the rest of the segment must be dropped. }
+{ The SACK blocks of an acknowledgment onto the scoreboard; True if they
+  SACKed something new. }
+function TakeSackBlocks(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
+var
+  Index: LongWord;
+begin
+  Result := False;
+  if not Connection^.SackPermitted then
+    Exit;
+  Index := 0;
+  while Index < Segment.Options.SackBlockCount do
+  begin
+    if AddSackBlock(Connection^.Scoreboard, Segment.Options.SackBlocks[Index].Start,
+       Segment.Options.SackBlocks[Index].Finish, Connection^.SendUnacknowledged, Connection^.SendMaximum) then
+      Result := True;
+    Inc(Index);
+  end;
+end;
+
+function EchoedTimestamp(constref Segment: TTcpSegment): LongWord;
+begin
+  if Segment.Options.HasTimestamps then
+    Result := Segment.Options.TimestampEcho
+  else
+    Result := 0;
+end;
+
 function HandleAcknowledgment(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
 var
   Acked: LongWord;
   DataAcked: LongWord;
   Acknowledgment: LongWord;
+  NewlySacked: Boolean;
+  IsDuplicate: Boolean;
 begin
   Acknowledgment := Segment.Acknowledgment;
   if SequenceAfter(Acknowledgment, Connection^.SendMaximum) then
@@ -306,20 +389,23 @@ begin
     Connection^.SendUnacknowledged := Acknowledgment;
     if SequenceBefore(Connection^.SendNext, Acknowledgment) then
       Connection^.SendNext := Acknowledgment;
+    TrimScoreboard(Connection^.Scoreboard, Acknowledgment);
+    TakeSackBlocks(Connection, Segment);
     UpdateSendWindow(Connection, Segment);
-    NoteAcknowledgment(Connection, Acknowledgment, DataAcked);
+    NoteAcknowledgment(Connection, Acknowledgment, DataAcked, EchoedTimestamp(Segment));
     NotifyConnectionSocket(Connection);
   end
   else
   begin
-    if (Acknowledgment = Connection^.SendUnacknowledged) and (Segment.DataLength = 0) and
-       ((Segment.Flags and (TcpFlagSyn or TcpFlagFin)) = 0) and (Segment.Window = Connection^.SendWindow) and
-       (Connection^.SendNext <> Connection^.SendUnacknowledged) then
-    begin
-      Inc(Connection^.DuplicateAcks);
-      if Connection^.DuplicateAcks = DuplicateAcksForFastRetransmit then
-        FastRetransmit(Connection);
-    end;
+    NewlySacked := (Acknowledgment = Connection^.SendUnacknowledged) and TakeSackBlocks(Connection, Segment);
+    { RFC 5681's duplicate (nothing new, the same window), or one that
+      SACKs something new (RFC 6675). }
+    IsDuplicate := (Acknowledgment = Connection^.SendUnacknowledged) and (Segment.DataLength = 0) and
+       ((Segment.Flags and (TcpFlagSyn or TcpFlagFin)) = 0) and
+       (Connection^.SendNext <> Connection^.SendUnacknowledged) and
+       ((SegmentWindow(Connection, Segment) = Connection^.SendWindow) or NewlySacked);
+    if IsDuplicate then
+      NoteDuplicateAcknowledgment(Connection, NewlySacked);
     if SequenceAfterOrEqual(Acknowledgment, Connection^.SendUnacknowledged) then
       UpdateSendWindow(Connection, Segment);
   end;
@@ -352,13 +438,63 @@ begin
   end;
 end;
 
+function OutOfOrderEntry(Entry: PListEntry): POutOfOrderSegment;
+begin
+  Result := POutOfOrderSegment(ContainingRecord(Entry, FieldOffset(POutOfOrderSegment(nil)^.Link)));
+end;
+
+{ The stretch of data waiting out of order, without a gap, that holds
+  Sequence. False if no stored segment holds it. }
+function OutOfOrderRunAround(Connection: PTcpConnection; Sequence: LongWord; out Start, Finish: LongWord): Boolean;
+var
+  Entry: PListEntry;
+  Stored: POutOfOrderSegment;
+  IsFirst: Boolean;
+begin
+  Result := False;
+  Start := 0;
+  Finish := 0;
+  IsFirst := True;
+  Entry := Connection^.OutOfOrder.Next;
+  while Entry <> @Connection^.OutOfOrder do
+  begin
+    Stored := OutOfOrderEntry(Entry);
+    if IsFirst or SequenceAfter(Stored^.Sequence, Finish) then
+    begin
+      if Result then
+        Exit;
+      Start := Stored^.Sequence;
+      Finish := Stored^.Sequence + Stored^.Length;
+      IsFirst := False;
+    end
+    else if SequenceAfter(Stored^.Sequence + Stored^.Length, Finish) then
+      Finish := Stored^.Sequence + Stored^.Length;
+    if SequenceAfterOrEqual(Sequence, Start) and SequenceBefore(Sequence, Finish) then
+      Result := True;
+    Entry := Entry^.Next;
+  end;
+end;
+
+{ The run that holds a segment just stored leads the SACK blocks. }
+procedure ReportOutOfOrder(Connection: PTcpConnection; Sequence: LongWord);
+var
+  Start: LongWord;
+  Finish: LongWord;
+begin
+  if not Connection^.SackPermitted then
+    Exit;
+  if OutOfOrderRunAround(Connection, Sequence, Start, Finish) then
+    RememberReceivedBlock(Connection^.ReceivedBlocks, Start, Finish);
+end;
+
 procedure StoreOutOfOrder(Connection: PTcpConnection; constref Segment: TTcpSegment);
 var
   Entry: PListEntry;
   Existing: POutOfOrderSegment;
   Stored: POutOfOrderSegment;
 begin
-  if (Segment.DataLength = 0) or (Connection^.OutOfOrderCount >= MaximumOutOfOrderSegments) then
+  if (Segment.DataLength = 0) or (Connection^.OutOfOrderCount >= MaximumOutOfOrderSegments) or
+     (QWord(Connection^.OutOfOrderBytes) + Segment.DataLength > Connection^.ReceiveBuffer.Capacity) then
     Exit;
   { Kept in order of sequence; the same start twice is kept once. }
   Entry := Connection^.OutOfOrder.Next;
@@ -379,6 +515,7 @@ begin
   CopyMemory(PByte(Stored) + SizeOf(TOutOfOrderSegment), Segment.Data, Segment.DataLength);
   InsertBefore(Entry, @Stored^.Link);
   Inc(Connection^.OutOfOrderCount);
+  Connection^.OutOfOrderBytes := Connection^.OutOfOrderBytes + Segment.DataLength;
 end;
 
 { Appends what waited out of order and now follows on. }
@@ -404,9 +541,29 @@ begin
     end;
     RemoveListEntry(Entry);
     Dec(Connection^.OutOfOrderCount);
+    Connection^.OutOfOrderBytes := Connection^.OutOfOrderBytes - Stored^.Length;
     FreeKernelMemory(Stored);
     Entry := FirstListEntry(Connection^.OutOfOrder);
   end;
+end;
+
+{ The receiver's round trip (for growing the receive buffer): the time
+  since the timestamp a data segment echoes, smoothed. }
+procedure NoteReceiveRoundTrip(Connection: PTcpConnection; constref Segment: TTcpSegment);
+var
+  Elapsed: LongInt;
+  Sample: QWord;
+begin
+  if not Connection^.Timestamps or not Segment.Options.HasTimestamps or (Segment.Options.TimestampEcho = 0) then
+    Exit;
+  Elapsed := LongInt(TimestampNow - Segment.Options.TimestampEcho);
+  if Elapsed < 0 then
+    Exit;
+  Sample := QWord(Elapsed) * NanosecondsPerMillisecond;
+  if Connection^.ReceiveRoundTrip = 0 then
+    Connection^.ReceiveRoundTrip := Sample
+  else
+    Connection^.ReceiveRoundTrip := (7 * Connection^.ReceiveRoundTrip + Sample) div 8;
 end;
 
 { Data on a connection that may receive. False if the segment is ahead
@@ -418,9 +575,11 @@ var
 begin
   if Segment.DataLength = 0 then
     Exit(Segment.Sequence = Connection^.ReceiveNext);
+  NoteReceiveRoundTrip(Connection, Segment);
   if Segment.Sequence <> Connection^.ReceiveNext then
   begin
     StoreOutOfOrder(Connection, Segment);
+    ReportOutOfOrder(Connection, Segment.Sequence);
     SendAckNow(Connection);
     Exit(False);
   end;
@@ -429,6 +588,7 @@ begin
   Connection^.ReceiveNext := Connection^.ReceiveNext + Accepted;
   if HadGap then
     TakeOutOfOrder(Connection);
+  ForgetReceivedBlocks(Connection^.ReceivedBlocks, Connection^.ReceiveNext);
   ScheduleAck(Connection, HadGap);
   NotifyConnectionSocket(Connection);
   Result := Accepted = Segment.DataLength;
@@ -467,14 +627,59 @@ begin
     Exit(False);
   end;
   Connection^.SendUnacknowledged := Segment.Acknowledgment;
-  Connection^.SendWindow := Segment.Window;
+  Connection^.SendWindow := SegmentWindow(Connection, Segment);
   Connection^.SendWindowSequence := Segment.Sequence;
   Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
-  NoteAcknowledgment(Connection, Segment.Acknowledgment, 0);
+  NoteAcknowledgment(Connection, Segment.Acknowledgment, 0, 0);
   InitializeCongestionState(Connection);
   EnterTcpState(Connection, TcpEstablished);
   QueueForAccept(Connection);
   Result := True;
+end;
+
+{ The test hook (SocketOptionTestDropEvery): every Nth data segment is
+  lost on the way. }
+function DroppedForTest(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
+begin
+  Result := False;
+  if (Connection^.DropEvery = 0) or (Segment.DataLength = 0) then
+    Exit;
+  Inc(Connection^.DropCounter);
+  Result := (Connection^.DropCounter mod Connection^.DropEvery) = 0;
+end;
+
+{ PAWS (RFC 7323 5.3): True if the segment's timestamp is older than
+  the one kept, so the segment is an old duplicate. }
+function FailsPaws(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
+begin
+  Result := False;
+  if not Connection^.Timestamps or not Segment.Options.HasTimestamps or
+     ((Segment.Flags and TcpFlagReset) <> 0) then
+    Exit;
+  if not SequenceBefore(Segment.Options.TimestampValue, Connection^.TimestampRecent) then
+    Exit;
+  { Idle for more than 24 days: what was kept means nothing now. }
+  if NetworkNow - Connection^.TimestampRecentTime > TimestampRecentLifetime then
+  begin
+    Connection^.TimestampRecent := Segment.Options.TimestampValue;
+    Connection^.TimestampRecentTime := NetworkNow;
+    Exit;
+  end;
+  Result := True;
+end;
+
+{ RFC 7323 4.3: keeps the timestamp of a segment that reaches back to
+  our last acknowledgment, to echo it. }
+procedure KeepRecentTimestamp(Connection: PTcpConnection; constref Segment: TTcpSegment);
+begin
+  if not Connection^.Timestamps or not Segment.Options.HasTimestamps then
+    Exit;
+  if SequenceAfterOrEqual(Segment.Options.TimestampValue, Connection^.TimestampRecent) and
+     SequenceBeforeOrEqual(Segment.Sequence, Connection^.LastAckSent) then
+  begin
+    Connection^.TimestampRecent := Segment.Options.TimestampValue;
+    Connection^.TimestampRecentTime := NetworkNow;
+  end;
 end;
 
 procedure HandleSynchronized(Connection: PTcpConnection; constref Datagram: TIpDatagram;
@@ -482,12 +687,18 @@ procedure HandleSynchronized(Connection: PTcpConnection; constref Datagram: TIpD
 var
   InOrder: Boolean;
 begin
-  if not SegmentIsAcceptable(Connection, Segment) then
+  if DroppedForTest(Connection, Segment) then
+    Exit;
+  { A sign of life for the keep-alives. }
+  Connection^.LastReceived := NetworkNow;
+  Connection^.KeepAliveProbes := 0;
+  if FailsPaws(Connection, Segment) or not SegmentIsAcceptable(Connection, Segment) then
   begin
     if (Segment.Flags and TcpFlagReset) = 0 then
       SendAckNow(Connection);
     Exit;
   end;
+  KeepRecentTimestamp(Connection, Segment);
   TrimToWindow(Connection, Segment);
   if (Segment.Flags and TcpFlagReset) <> 0 then
   begin

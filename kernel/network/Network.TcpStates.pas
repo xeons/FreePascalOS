@@ -55,6 +55,7 @@ uses
   Network.Sockets,
   Network.TcpConnections,
   Network.TcpSegments,
+  Network.TcpKeepAlive,
   Network.Statistics;
 
 { RFC 1213's tcpAttemptFails and tcpEstabResets: the transitions to
@@ -79,7 +80,10 @@ procedure EnterTcpState(Connection: PTcpConnection; State: TTcpState);
 begin
   Connection^.State := State;
   if State = TcpEstablished then
+  begin
     Connection^.WasEstablished := True;
+    ArmKeepAlive(Connection);
+  end;
   NotifyConnectionSocket(Connection);
 end;
 
@@ -107,6 +111,7 @@ begin
   Connection^.AckDeadline := 0;
   Connection^.AckPending := False;
   Connection^.CloseDeadline := 0;
+  Connection^.KeepAliveDeadline := 0;
   if Error <> ErrorNone then
   begin
     Connection^.Error := Error;
@@ -130,6 +135,7 @@ procedure EnterTimeWait(Connection: PTcpConnection);
 begin
   Connection^.State := TcpTimeWait;
   Connection^.RetransmitDeadline := 0;
+  Connection^.KeepAliveDeadline := 0;
   Connection^.CloseDeadline := NetworkNow + TimeWaitNanoseconds;
   RequestNetworkWakeAt(Connection^.CloseDeadline);
   NotifyConnectionSocket(Connection);

@@ -18,10 +18,22 @@
 
 {
   TCP segments: reading an arriving segment's header (with its checksum
-  over the pseudo-header, and the MSS option), and building the ones a
+  over the pseudo-header, and its options), and building the ones a
   connection sends - with the acknowledgment and the window it
-  advertises filled in, and the MSS option on a SYN - and resets for
-  segments that belong to no connection (RFC 793, "Reset Generation").
+  advertises filled in, and resets for segments that belong to no
+  connection (RFC 793, "Reset Generation").
+
+  Options sent (Network.TcpOptions): on a SYN the MSS, and SACK
+  permitted, timestamps and the window scale as far as the connection
+  offers or agreed them; on every other segment but a reset the
+  timestamps if agreed, and on an acknowledgment the SACK blocks of
+  what waits out of order (as many as fit beside the data: data and
+  options together never exceed the MSS, RFC 6691).
+
+  Windows: the field of a SYN is never scaled; on other segments ours
+  is in units of 2^ReceiveWindowShift and never takes back what an
+  earlier advertisement promised (RFC 7323 2.4), and the peer's is
+  shifted by SendWindowShift. Timestamps count milliseconds.
 }
 unit Network.TcpSegments;
 
@@ -35,6 +47,7 @@ uses
   Network.Interfaces,
   Network.Ipv4,
   Network.TcpTypes,
+  Network.TcpOptions,
   Network.IpDatagrams;
 
 type
@@ -44,9 +57,9 @@ type
     Sequence: LongWord;
     Acknowledgment: LongWord;
     Flags: Byte;
+    { The window field as it came (see SegmentWindow). }
     Window: Word;
-    { The MSS option; 0 if there was none. }
-    PeerMss: Word;
+    Options: TTcpOptions;
     Data: PByte;
     DataLength: LongWord;
   end;
@@ -57,8 +70,19 @@ function ParseTcpSegment(constref Datagram: TIpDatagram; Payload: PByte; Length:
 { The sequence space a segment takes: its data, and one each for SYN and
   FIN. }
 function SegmentSequenceLength(constref Segment: TTcpSegment): LongWord;
-{ The window we can advertise: the room in the receive buffer. }
+{ The peer's window a segment gives, in bytes. }
+function SegmentWindow(Connection: PTcpConnection; constref Segment: TTcpSegment): LongWord;
+{ The room in the receive buffer (at most the largest window the
+  connection can advertise). }
+function ReceiveBufferRoom(Connection: PTcpConnection): LongWord;
+{ The window segments are checked against: the room, or what the last
+  advertisement promised if that reaches further. }
 function ReceiveWindow(Connection: PTcpConnection): LongWord;
+{ The most data a segment we send carries: the MSS less the options
+  every segment has (the timestamps). }
+function SenderSegmentSize(Connection: PTcpConnection): LongWord;
+{ Our timestamp clock (milliseconds). }
+function TimestampNow: LongWord;
 { The MSS we advertise: what the route's MTU leaves for data. }
 function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
 { Sends a segment of Connection: Flags (ACK added in every state but
@@ -74,41 +98,14 @@ implementation
 
 uses
   Runtime.Memory,
+  Network.Core,
+  Network.TcpWindows,
   Network.ByteOrder,
   Network.Checksums,
   Network.Packets,
   Network.ByteRings,
   Network.IpOutput,
   Network.Statistics;
-
-const
-  OptionEnd = 0;
-  OptionNoOperation = 1;
-  OptionMaximumSegment = 2;
-
-procedure ReadOptions(Options: PByte; Length: LongWord; var Segment: TTcpSegment);
-var
-  Position: LongWord;
-  OptionLength: LongWord;
-begin
-  Position := 0;
-  while Position < Length do
-  begin
-    case Options[Position] of
-      OptionEnd: Exit;
-      OptionNoOperation: Inc(Position);
-    else
-      if Position + 1 >= Length then
-        Exit;
-      OptionLength := Options[Position + 1];
-      if (OptionLength < 2) or (Position + OptionLength > Length) then
-        Exit;
-      if (Options[Position] = OptionMaximumSegment) and (OptionLength = 4) then
-        Segment.PeerMss := ReadBigEndian16(Options + Position + 2);
-      Position := Position + OptionLength;
-    end;
-  end;
-end;
 
 function ParseTcpSegment(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord;
   out Segment: TTcpSegment): Boolean;
@@ -131,7 +128,7 @@ begin
   Segment.Acknowledgment := ReadBigEndian32(Payload + 8);
   Segment.Flags := Payload[13] and $3F;
   Segment.Window := ReadBigEndian16(Payload + 14);
-  ReadOptions(Payload + TcpHeaderBytes, HeaderLength - TcpHeaderBytes, Segment);
+  ParseTcpOptions(Payload + TcpHeaderBytes, HeaderLength - TcpHeaderBytes, Segment.Options);
   Segment.Data := Payload + HeaderLength;
   Segment.DataLength := Length - HeaderLength;
   Result := True;
@@ -146,13 +143,51 @@ begin
     Inc(Result);
 end;
 
-function ReceiveWindow(Connection: PTcpConnection): LongWord;
+function SegmentWindow(Connection: PTcpConnection; constref Segment: TTcpSegment): LongWord;
+begin
+  if (Segment.Flags and TcpFlagSyn) <> 0 then
+    Result := Segment.Window
+  else
+    Result := WindowFromField(Segment.Window, Connection^.SendWindowShift);
+end;
+
+function ReceiveBufferRoom(Connection: PTcpConnection): LongWord;
+var
+  Limit: LongWord;
 begin
   if Connection^.ReceiveBuffer.Data = nil then
     Exit(0);
   Result := ByteRingFreeSpace(Connection^.ReceiveBuffer);
-  if Result > $FFFF then
-    Result := $FFFF;
+  Limit := LargestWindow(Connection^.ReceiveWindowShift);
+  if Result > Limit then
+    Result := Limit;
+end;
+
+function PromisedWindow(Connection: PTcpConnection): LongWord;
+begin
+  if SequenceAfter(Connection^.AdvertisedEdge, Connection^.ReceiveNext) then
+    Result := Connection^.AdvertisedEdge - Connection^.ReceiveNext
+  else
+    Result := 0;
+end;
+
+function ReceiveWindow(Connection: PTcpConnection): LongWord;
+begin
+  Result := ReceiveBufferRoom(Connection);
+  if PromisedWindow(Connection) > Result then
+    Result := PromisedWindow(Connection);
+end;
+
+function SenderSegmentSize(Connection: PTcpConnection): LongWord;
+begin
+  Result := Connection^.MaximumSegment;
+  if Connection^.Timestamps and (Result > 2 * TimestampOptionBytes) then
+    Result := Result - TimestampOptionBytes;
+end;
+
+function TimestampNow: LongWord;
+begin
+  Result := LongWord(NetworkNow div NanosecondsPerMillisecond);
 end;
 
 function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
@@ -197,9 +232,78 @@ begin
     Inc(NetworkStatistics.Tcp.ResetsSent);
   TakesSequence := (DataLength > 0) or ((Flags and (TcpFlagSyn or TcpFlagFin)) <> 0);
   if TakesSequence and (Connection <> nil) and SequenceBefore(Sequence, Connection^.SendMaximum) then
-    Inc(NetworkStatistics.Tcp.SegmentsRetransmitted)
+  begin
+    Inc(NetworkStatistics.Tcp.SegmentsRetransmitted);
+    Inc(Connection^.RetransmittedSegments);
+  end
   else
     Inc(NetworkStatistics.Tcp.SegmentsSent);
+end;
+
+{ The options a segment of Connection carries. }
+procedure ChooseOptions(Connection: PTcpConnection; Flags: Byte; DataLength: LongWord; out Options: TTcpOptions);
+var
+  Room: LongWord;
+  Count: LongWord;
+  Index: LongWord;
+begin
+  ClearTcpOptions(Options);
+  if (Flags and TcpFlagReset) <> 0 then
+    Exit;
+  if (Flags and TcpFlagSyn) <> 0 then
+  begin
+    Options.HasMaximumSegment := True;
+    Options.MaximumSegment := Word(OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface));
+    Options.SackPermitted := Connection^.SackPermitted;
+    Options.HasWindowScale := Connection^.WindowScaling;
+    Options.WindowShift := OwnWindowShift;
+  end;
+  if Connection^.Timestamps then
+  begin
+    Options.HasTimestamps := True;
+    Options.TimestampValue := TimestampNow;
+    if (Flags and TcpFlagAck) <> 0 then
+      Options.TimestampEcho := Connection^.TimestampRecent;
+  end;
+  if ((Flags and (TcpFlagSyn or TcpFlagAck)) <> TcpFlagAck) or not Connection^.SackPermitted or
+     (Connection^.ReceivedBlocks.Count = 0) then
+    Exit;
+  Room := MaximumTcpOptionBytes;
+  if DataLength > 0 then
+  begin
+    if Connection^.MaximumSegment > DataLength then
+      Room := Connection^.MaximumSegment - DataLength
+    else
+      Room := 0;
+  end;
+  Count := SackBlocksThatFit(Options, Room);
+  if Count > Connection^.ReceivedBlocks.Count then
+    Count := Connection^.ReceivedBlocks.Count;
+  Index := 0;
+  while Index < Count do
+  begin
+    Options.SackBlocks[Index] := Connection^.ReceivedBlocks.Blocks[Index];
+    Inc(Index);
+  end;
+  Options.SackBlockCount := Count;
+end;
+
+{ The window field to send, and the window (in bytes) it gives. }
+function ChooseWindowField(Connection: PTcpConnection; Flags: Byte; out Window: LongWord): Word;
+var
+  Room: LongWord;
+begin
+  Room := ReceiveBufferRoom(Connection);
+  if (Flags and TcpFlagSyn) <> 0 then
+  begin
+    if Room > UnscaledWindowLimit then
+      Room := UnscaledWindowLimit;
+    Result := Word(Room);
+    Window := Room;
+    Exit;
+  end;
+  Result := ScaledWindowField(Room, PromisedWindow(Connection), Connection^.ReceiveWindowShift);
+  Window := WindowFromField(Result, Connection^.ReceiveWindowShift);
 end;
 
 function SendConnectionSegment(Connection: PTcpConnection; Sequence: LongWord; Flags: Byte;
@@ -208,14 +312,17 @@ var
   Packet: PPacket;
   Header: PByte;
   HeaderLength: LongWord;
+  Options: TTcpOptions;
+  IsSyn: Boolean;
+  WindowField: Word;
   Window: LongWord;
   Acknowledgment: LongWord;
 begin
-  HeaderLength := TcpHeaderBytes;
-  if (Flags and TcpFlagSyn) <> 0 then
-    HeaderLength := HeaderLength + TcpMssOptionBytes;
   if Connection^.State <> TcpSynSent then
     Flags := Flags or TcpFlagAck;
+  IsSyn := (Flags and TcpFlagSyn) <> 0;
+  ChooseOptions(Connection, Flags, DataLength, Options);
+  HeaderLength := TcpHeaderBytes + TcpOptionsLength(Options, IsSyn);
   Packet := AllocatePacket(PacketHeadroom);
   if Packet = nil then
     Exit(-1);
@@ -225,25 +332,20 @@ begin
     FreePacket(Packet);
     Exit(-1);
   end;
-  Window := ReceiveWindow(Connection);
+  WindowField := ChooseWindowField(Connection, Flags, Window);
   Acknowledgment := 0;
   if (Flags and TcpFlagAck) <> 0 then
     Acknowledgment := Connection^.ReceiveNext;
   WriteHeader(Header, Connection^.Local.Port, Connection^.Remote.Port, Sequence, Acknowledgment,
-    HeaderLength, Flags, Word(Window));
-  if (Flags and TcpFlagSyn) <> 0 then
-  begin
-    Header[TcpHeaderBytes] := OptionMaximumSegment;
-    Header[TcpHeaderBytes + 1] := TcpMssOptionBytes;
-    WriteBigEndian16(Header + TcpHeaderBytes + 2,
-      Word(OwnMaximumSegment(Connection^.Remote, Connection^.BoundInterface)));
-  end;
+    HeaderLength, Flags, WindowField);
+  WriteTcpOptions(Header + TcpHeaderBytes, Options, IsSyn);
   if DataLength > 0 then
     CopyFromByteRing(Connection^.SendBuffer, DataOffset, Header + HeaderLength, DataLength);
   WriteChecksum(Header, HeaderLength + DataLength, Connection^.Local, Connection^.Remote);
   if (Flags and TcpFlagAck) <> 0 then
   begin
     Connection^.AdvertisedEdge := Connection^.ReceiveNext + Window;
+    Connection^.LastAckSent := Connection^.ReceiveNext;
     Connection^.AckPending := False;
     Connection^.AckDeadline := 0;
     Connection^.SegmentsSinceAck := 0;

@@ -25,7 +25,7 @@
     ForceCommand COMMAND                        (runs whatever is asked)
     ClientAliveInterval 0                       (seconds; 0: no keep-alives)
     ClientAliveCountMax 3
-    TCPKeepAlive yes
+    TCPKeepAlive yes                            (TCP keep-alive probes on connections)
 
     Match User alice,bob Address 10.0.0.0/8     (the lines after it, up to
       AllowTcpForwarding no                      the next Match, for the
