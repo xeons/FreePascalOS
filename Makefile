@@ -818,7 +818,8 @@ settings-test: $(SETTINGS_TEST)
 # published known answers.
 CRYPTO_TEST := build/tools/CryptoTest
 CRYPTO_TEST_SOURCES := $(wildcard tools/CryptoTest/*.pas) tools/CryptoTest/CryptoTest.RsaVectors.inc \
-	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas %/Crypto.MlKemRandom.pas,$(wildcard userland/lib/cryptography/*.pas))
+# ECDH and P-521 answers from Python's cryptography (OpenSSL).
 CRYPTO_CURVE_VECTORS := build/tools/crypto-test-units/CryptoTest.CurveVectors.inc
 
 $(CRYPTO_CURVE_VECTORS): tools/CryptoTest/make-curve-vectors.py
@@ -826,7 +827,16 @@ $(CRYPTO_CURVE_VECTORS): tools/CryptoTest/make-curve-vectors.py
 	python3 -I tools/CryptoTest/make-curve-vectors.py > $@.tmp
 	@mv $@.tmp $@
 
-$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES) $(CRYPTO_CURVE_VECTORS)
+# SHA-3 and ML-KEM-768 answers from Python's hashlib and cryptography.
+CRYPTO_POST_QUANTUM_VECTORS := build/tools/crypto-test-units/CryptoTest.PostQuantumVectors.inc
+
+$(CRYPTO_POST_QUANTUM_VECTORS): tools/CryptoTest/make-post-quantum-vectors.py
+	@mkdir -p build/tools/crypto-test-units
+	@python3 -I -c 'from cryptography.hazmat.primitives.asymmetric import mlkem' 2>/dev/null || { echo "Python 3 with the cryptography package (with ML-KEM) is needed for the crypto test's vectors"; exit 1; }
+	python3 -I tools/CryptoTest/make-post-quantum-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES) $(CRYPTO_POST_QUANTUM_VECTORS) $(CRYPTO_CURVE_VECTORS)
 	@mkdir -p build/tools/crypto-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/CryptoTest -Fuuserland/lib/cryptography -Fushared -Fishared \
 		-Fibuild/tools/crypto-test-units -FUbuild/tools/crypto-test-units -o$@ tools/CryptoTest/CryptoTest.pas
