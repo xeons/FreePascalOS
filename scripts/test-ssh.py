@@ -33,6 +33,15 @@ it with the host's OpenSSH client (/usr/bin/ssh, scp, sftp):
   - sftp batch: mkdir, cd, put, ls, rename, get, rm, rmdir;
   - logging in with a password (SSH_ASKPASS), and as root;
   - a wrong key and a wrong password refused;
+  - mlkem768x25519-sha256 by default (no post-quantum warning) and forced;
+  - -L and -R forwarding to a host side echo server;
+  - agent forwarding with the host's ssh-agent (ssh-add -l in the guest,
+    and the guest's own ssh logging in to its sshd with the key);
+  - the guest's ssh-keygen and ssh over loopback (exec, pty);
+  - an authorized_keys command= key, keyboard-interactive;
+  - after a restart with a new sshd_config: a user certificate
+    (TrustedUserCAKeys), a host certificate (@cert-authority), client
+    keep-alives and a Match block;
   - the server's log.
 
     test-ssh.py <esp-directory> <system-disk-image>
@@ -348,6 +357,208 @@ check('a wrong password is refused',
       text(result))
 result = password_login('nobody', 'x', 'echo should-not-run')
 check('a locked account is refused', result.returncode == 255 and b'should-not-run' not in result.stdout, text(result))
+
+# Post-quantum key exchange: the default is mlkem768x25519-sha256 (no
+# warning from OpenSSH), and it can be asked for alone.
+result = ssh(['echo', 'pq-ok'], extra=['-v'])
+check('the default key exchange is mlkem768x25519-sha256, without the post-quantum warning',
+      result.returncode == 0 and b'kex: algorithm: mlkem768x25519-sha256' in result.stderr and
+      b'post-quantum' not in result.stderr, text(result))
+result = ssh(['echo', 'mlkem-ok'], extra=['-o', 'KexAlgorithms=mlkem768x25519-sha256'])
+check('key exchange mlkem768x25519-sha256 forced', result.returncode == 0 and b'mlkem-ok' in result.stdout,
+      text(result))
+
+
+# A host side echo server for the forwarding tests.
+def start_echo_server():
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(4)
+
+    def serve():
+        while True:
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            with connection:
+                while True:
+                    data = connection.recv(65536)
+                    if not data:
+                        break
+                    connection.sendall(b'echo:' + data)
+
+    import threading
+    threading.Thread(target=serve, daemon=True).start()
+    return listener
+
+
+echo_server = start_echo_server()
+echo_port = echo_server.getsockname()[1]
+
+# -L: a local port forwarded through the guest to the host's echo server
+# (the guest reaches the host as 10.0.2.2).
+local_port = free_port()
+forwarder = subprocess.Popen(['ssh', *common, *key_options, '-i', keys['ed25519'], '-p', str(port), '-N',
+                              '-o', 'ExitOnForwardFailure=yes',
+                              '-L', '%d:10.0.2.2:%d' % (local_port, echo_port), 'user@127.0.0.1'],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+echoed = b''
+deadline = time.time() + 90
+while time.time() < deadline and not echoed:
+    try:
+        with socket.create_connection(('127.0.0.1', local_port), timeout=30) as forwarded:
+            forwarded.sendall(b'through -L')
+            forwarded.shutdown(socket.SHUT_WR)
+            while True:
+                chunk = forwarded.recv(4096)
+                if not chunk:
+                    break
+                echoed += chunk
+    except OSError:
+        time.sleep(1)
+forwarder.terminate()
+forwarder.wait(timeout=30)
+check('-L: a local port forwarded to a host server through the guest', echoed == b'echo:through -L', repr(echoed))
+
+# -R: a port of the guest forwarded back to the host's echo server.
+result = ssh(['sleep 1; printf through-R | nc -N 127.0.0.1 9022'],
+             extra=['-o', 'ExitOnForwardFailure=yes', '-R', '9022:127.0.0.1:%d' % echo_port])
+check('-R: a guest port forwarded to a host server', result.returncode == 0 and b'echo:through-R' in result.stdout,
+      text(result))
+echo_server.close()
+
+# Agent forwarding with the host's ssh-agent: the guest lists its keys,
+# and the guest's own ssh logs in to the guest's sshd over loopback with
+# the forwarded key.
+agent = subprocess.run(['ssh-agent', '-s'], capture_output=True, text=True)
+agent_environment = dict(os.environ)
+for line in agent.stdout.split(';'):
+    line = line.strip()
+    if line.startswith('SSH_AUTH_SOCK=') or line.startswith('SSH_AGENT_PID='):
+        name, value = line.split('=', 1)
+        agent_environment[name] = value
+subprocess.run(['ssh-add', keys['ed25519']], env=agent_environment, capture_output=True)
+fingerprint = subprocess.run(['ssh-keygen', '-l', '-f', keys['ed25519'] + '.pub'], capture_output=True,
+                             text=True).stdout.split()[1].encode()
+
+
+def agent_ssh(arguments, timeout=180):
+    command = ['ssh', *common, '-o', 'BatchMode=yes', '-o', 'PasswordAuthentication=no', '-A', '-p', str(port),
+               'user@127.0.0.1', *arguments]
+    try:
+        return subprocess.run(command, capture_output=True, timeout=timeout, env=agent_environment,
+                              stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, -1, b'', b'timed out')
+
+
+result = agent_ssh(['echo $SSH_AUTH_SOCK; ssh-add -l'])
+check('agent forwarding: SSH_AUTH_SOCK in the session, ssh-add -l lists the host agent\'s key',
+      result.returncode == 0 and b'port:sshagent-' in result.stdout and fingerprint in result.stdout, text(result))
+result = agent_ssh(['ssh -v -o BatchMode=yes -o StrictHostKeyChecking=accept-new '
+                    '-o UserKnownHostsFile=/home/user/.ssh/known_hosts user@127.0.0.1 echo loopback-agent-ok'])
+check('the system\'s ssh logs in to its own sshd with the forwarded agent key (mlkem768x25519)',
+      result.returncode == 0 and b'loopback-agent-ok' in result.stdout and
+      b'key exchange mlkem768x25519-sha256' in result.stderr, text(result))
+subprocess.run(['ssh-agent', '-k'], env=agent_environment, capture_output=True)
+
+# The system's ssh-keygen and ssh: a key made in the guest, then exec
+# and a pseudo-terminal over loopback.
+result = ssh(['rm -f /home/user/.ssh/id_ed25519 /home/user/.ssh/id_ed25519.pub; '
+              'ssh-keygen -q -t ed25519 -N "" -C guest-key -f /home/user/.ssh/id_ed25519 && '
+              'cat /home/user/.ssh/id_ed25519.pub >> /home/user/.ssh/authorized_keys && '
+              'ssh-keygen -l -f /home/user/.ssh/id_ed25519 && '
+              'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new 127.0.0.1 "echo loopback-key-ok; exit 4"; '
+              'echo status=$?'])
+check('ssh-keygen in the guest, and the guest\'s ssh with that key over loopback (exit status passed)',
+      b'guest-key (ED25519)' in result.stdout and b'loopback-key-ok' in result.stdout and b'status=4' in result.stdout,
+      text(result))
+result = ssh(['ssh -tt -o BatchMode=yes 127.0.0.1 "tty; stty size"'], tty=True)
+check('the guest\'s ssh with a pseudo-terminal', b'/dev/pts' in result.stdout, text(result))
+
+# A key with command= runs that command instead (SSH_ORIGINAL_COMMAND
+# set), and no-pty refuses a terminal.
+forced_key = os.path.join(work, 'id_forced')
+subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', forced_key], check=True, stdin=subprocess.DEVNULL)
+keys['forced'] = forced_key
+with open(forced_key + '.pub') as public_file:
+    forced_line = 'command="echo forced:$SSH_ORIGINAL_COMMAND",no-pty ' + public_file.read().strip()
+shell("echo '" + forced_line + "' >> /home/user/.ssh/authorized_keys", 'FORCED-KEY', 60)
+result = ssh(['whoami'], key='forced')
+check('authorized_keys command= runs instead, with SSH_ORIGINAL_COMMAND',
+      result.returncode == 0 and result.stdout.strip() == b'forced:whoami', text(result))
+
+# keyboard-interactive: the password prompt.
+askpass = os.path.join(work, 'askpass-kbd.sh')
+with open(askpass, 'w') as script:
+    script.write('#!/bin/sh\necho "user"\n')
+os.chmod(askpass, stat.S_IRWXU)
+try:
+    result = subprocess.run(['ssh', *common, '-o', 'PreferredAuthentications=keyboard-interactive',
+                             '-o', 'PubkeyAuthentication=no', '-p', str(port), 'user@127.0.0.1', 'echo kbd-ok'],
+                            capture_output=True, timeout=180, stdin=subprocess.DEVNULL,
+                            env=dict(os.environ, SSH_ASKPASS=askpass, SSH_ASKPASS_REQUIRE='force', DISPLAY=':0'))
+except subprocess.TimeoutExpired:
+    result = subprocess.CompletedProcess([], -1, b'', b'timed out')
+check('keyboard-interactive login', result.returncode == 0 and b'kbd-ok' in result.stdout, text(result))
+
+# Certificates: a user certificate against TrustedUserCAKeys, a host
+# certificate against an @cert-authority line, a Match block, and
+# client keep-alives; sshd restarted with the new configuration.
+ca_key = os.path.join(work, 'ssh_ca')
+subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'test-ca', '-f', ca_key], check=True,
+               stdin=subprocess.DEVNULL)
+certified_key = os.path.join(work, 'id_certified')
+subprocess.run(['ssh-keygen', '-q', '-t', 'ecdsa', '-b', '256', '-N', '', '-f', certified_key], check=True,
+               stdin=subprocess.DEVNULL)
+subprocess.run(['ssh-keygen', '-q', '-s', ca_key, '-I', 'test-user', '-n', 'user', '-V', '-5m:+1h',
+                certified_key + '.pub'], check=True, stdin=subprocess.DEVNULL, capture_output=True)
+host_public = ssh(['cat /etc/ssh/ssh_host_ed25519_key.pub']).stdout.decode().strip()
+host_public_path = os.path.join(work, 'ssh_host_ed25519_key.pub')
+with open(host_public_path, 'w') as host_file:
+    host_file.write(host_public + '\n')
+subprocess.run(['ssh-keygen', '-q', '-s', ca_key, '-h', '-I', 'test-host', '-n', '127.0.0.1', host_public_path],
+               check=True, stdin=subprocess.DEVNULL, capture_output=True)
+with open(ca_key + '.pub') as ca_file:
+    ca_line = ca_file.read().strip()
+with open(os.path.join(work, 'ssh_host_ed25519_key-cert.pub')) as cert_file:
+    host_certificate = cert_file.read().strip()
+shell("echo '" + ca_line + "' > /etc/ssh/user_ca.pub", 'CA-KEY', 60)
+shell("echo '" + host_certificate + "' > /etc/ssh/ssh_host_ed25519_key-cert.pub", 'HOST-CERT', 60)
+for line in ('TrustedUserCAKeys /etc/ssh/user_ca.pub', 'HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub',
+             'ClientAliveInterval 2', 'Match User root', '  PasswordAuthentication no'):
+    shell("echo '" + line + "' >> /etc/ssh/sshd_config", 'CONFIG', 30)
+shell('sshd -t; service restart sshd', 'RESTART', 60)
+deadline = time.time() + 120
+while time.time() < deadline:
+    if ssh(['true'], timeout=60).returncode == 0:
+        break
+    time.sleep(2)
+result = subprocess.run(['ssh', *common, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-i', certified_key,
+                         '-p', str(port), 'user@127.0.0.1', 'echo cert-ok'],
+                        capture_output=True, timeout=180, stdin=subprocess.DEVNULL)
+check('a user certificate signed by TrustedUserCAKeys logs in', result.returncode == 0 and b'cert-ok' in result.stdout,
+      text(result))
+known_hosts = os.path.join(work, 'known_hosts_ca')
+with open(known_hosts, 'w') as known_file:
+    known_file.write('@cert-authority [127.0.0.1]:%d %s\n' % (port, ca_line))
+result = subprocess.run(['ssh', '-F', '/dev/null', '-o', 'StrictHostKeyChecking=yes', '-o',
+                         'UserKnownHostsFile=' + known_hosts, '-o', 'HostKeyAlgorithms=ssh-ed25519-cert-v01@openssh.com',
+                         *key_options, '-i', keys['ed25519'], '-p', str(port), 'user@127.0.0.1', 'echo host-cert-ok'],
+                        capture_output=True, timeout=180, stdin=subprocess.DEVNULL)
+check('a host certificate checked against @cert-authority', result.returncode == 0 and b'host-cert-ok' in result.stdout,
+      text(result))
+result = ssh(['sleep 7; echo still-here'])
+check('ClientAliveInterval: keep-alives answered, an idle session stays',
+      result.returncode == 0 and b'still-here' in result.stdout, text(result))
+result = password_login('root', 'root', 'echo should-not-run')
+check('Match User root: PasswordAuthentication no applies to root only',
+      result.returncode == 255 and b'should-not-run' not in result.stdout, text(result))
+result = password_login('user', 'user', 'echo match-user-ok')
+check('Match User root: other users keep their passwords', result.returncode == 0 and b'match-user-ok' in result.stdout,
+      text(result))
 
 # The server's log.
 log = shell('cat /var/log/sshd.log | grep -c "logged in"; ls -l /etc/ssh', 'SSHD-LOG')
