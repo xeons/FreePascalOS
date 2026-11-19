@@ -19,12 +19,15 @@
 {
   TlsTest - checks libtls on the host (make tls-test).
 
-    TlsTest CERTIFICATE-DIRECTORY CA-BUNDLE
+    TlsTest CERTIFICATE-DIRECTORY CA-BUNDLE FIXTURE-DIRECTORY
         DER, host names, the test certificates and their chains, the
         Mozilla bundle, the TLS 1.3 handshake of RFC 8448 through the
         key schedule, transcript, records and Finished messages, and
         HelloRetryRequest (RFC 8448's transcript, and the client against
-        a scripted server).
+        a scripted server), resumption (RFC 8448 sections 3 and 4) and
+        the session cache, TLS 1.2 answers, and the fixtures
+        make-fixtures.py made: name constraints, Ed25519 and P-521
+        chains, OCSP responses, the TLS 1.2 PRF.
     TlsTest --connect PORT SERVER-NAME TRUST-FILE [CIPHER-SUITE] [--no-verify]
         A whole connection to a server on 127.0.0.1 (run-interop.sh
         runs it against OpenSSL).
@@ -39,6 +42,7 @@ uses
   TestChecks,
   TlsTest.Certificates,
   TlsTest.Interop,
+  TlsTest.Fixtures,
   TlsTest.KeySchedule,
   TlsTest.Resumption,
   TlsTest.Retry;
@@ -59,9 +63,9 @@ begin
         CipherName := ParamStr(Index);
     Halt(RunInteropClient(StrToInt(ParamStr(2)), ParamStr(3), ParamStr(4), CipherName, VerifyCertificates));
   end;
-  if ParamCount < 2 then
+  if ParamCount < 3 then
   begin
-    WriteLn('usage: TlsTest CERTIFICATE-DIRECTORY CA-BUNDLE');
+    WriteLn('usage: TlsTest CERTIFICATE-DIRECTORY CA-BUNDLE FIXTURE-DIRECTORY');
     Halt(2);
   end;
   TestAsn1;
@@ -73,5 +77,9 @@ begin
   TestSessionCache;
   TestTestCertificates(ParamStr(1));
   TestMozillaBundle(ParamStr(2));
+  TestNameConstraintRules;
+  TestFixtureChains(ParamStr(1), ParamStr(3));
+  TestOcspResponses(ParamStr(1), ParamStr(3));
+  TestTls12Prf(ParamStr(3));
   FinishChecks('tls test');
 end.
