@@ -327,22 +327,29 @@ end;
 
 { --- Setting the port up ------------------------------------------------- }
 
+{ "148.5 MHz", "74.176 MHz", "27.027 MHz": to the kilohertz, no
+  trailing zeros. }
 procedure WriteMegahertz(Hertz: QWord);
+var
+  Kilohertz: LongWord;
+  Digits: LongWord;
 begin
   DebugWriteDecimal(Hertz div 1000000);
-  if Hertz mod 1000000 <> 0 then
+  Kilohertz := LongWord((Hertz mod 1000000) div 1000);
+  if Kilohertz <> 0 then
   begin
-    DebugWrite('.');
-    if (Hertz mod 1000000) div 1000 mod 10 = 0 then
-      DebugWriteDecimal((Hertz mod 1000000) div 10000)
-    else
+    Digits := 3;
+    while Kilohertz mod 10 = 0 do
     begin
-      if (Hertz mod 1000000) < 100000 then
-        DebugWrite('0');
-      if (Hertz mod 1000000) < 10000 then
-        DebugWrite('0');
-      DebugWriteDecimal((Hertz mod 1000000) div 1000);
+      Kilohertz := Kilohertz div 10;
+      Dec(Digits);
     end;
+    DebugWrite('.');
+    if (Digits >= 2) and (Kilohertz < 10) then
+      DebugWrite('0');
+    if (Digits = 3) and (Kilohertz < 100) then
+      DebugWrite('0');
+    DebugWriteDecimal(Kilohertz);
   end;
   DebugWrite(' MHz');
 end;
