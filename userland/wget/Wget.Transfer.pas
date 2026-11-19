@@ -555,7 +555,10 @@ begin
   if Fetch.Settings.ShowServerResponse then
     Say(Fetch, #10);
   Head := ReceiveResponseHead(Connection, Fetch.Settings, Response);
-  if Reused and (Head in [HeadNoData, HeadConnectionFailed]) then
+  { A kept connection that ends (or breaks) before any answer was closed
+    by the server meanwhile; one that times out is a slow server. }
+  if Reused and ((Head = HeadNoData) or ((Head = HeadConnectionFailed) and
+     (Connection.Failure <> FailureTimeout))) then
   begin
     Say(Fetch, #10);
     Exit(AttemptStale);
