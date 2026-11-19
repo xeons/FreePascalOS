@@ -56,7 +56,8 @@ uses
   Crypto.KeyGeneration,
   Crypto.Keccak,
   Crypto.MlKemPolynomials,
-  Crypto.MlKem;
+  Crypto.MlKem,
+  Crypto.P256;
 
 implementation
 

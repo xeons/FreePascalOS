@@ -188,7 +188,6 @@ function ApplyOption(var Options: TSshClientOptions; const Text: string; out Pro
 var
   Separator: Integer;
   Name, Value: string;
-
   Port: Word;
   Specification: TForwardSpecification;
 begin

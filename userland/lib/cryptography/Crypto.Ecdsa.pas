@@ -26,9 +26,11 @@
   Signing takes the private key d as a big endian integer and makes the
   per signature secret k deterministically from d and the digest (RFC
   6979, HMAC with the digest's own algorithm), so no random numbers are
-  needed and a weak generator cannot leak the key. The point arithmetic
-  takes time that depends on k (Crypto.EllipticCurves multiplies by
-  doubling and adding).
+  needed and a weak generator cannot leak the key. On P-256 the point
+  and scalar arithmetic of signing, and of making a public key, run in
+  constant time (Crypto.P256: complete formulas, a Montgomery ladder,
+  masks rather than branches); on P-384 they take time that depends on
+  k (Crypto.EllipticCurves multiplies by doubling and adding).
 }
 unit Crypto.Ecdsa;
 
@@ -60,7 +62,8 @@ implementation
 uses
   Crypto.BigNumbers,
   Crypto.Bits,
-  Crypto.Hmac;
+  Crypto.Hmac,
+  Crypto.P256;
 
 { The digest as an integer, cut to the leftmost bits of n's length, and
   reduced mod n (it is below 2n, so once is enough). }
@@ -154,11 +157,21 @@ var
   Parameters: TEllipticCurve;
   D: TBigNumber;
   Generator, KeyPoint: TCurvePoint;
+  Scalar: array[0..P256ScalarBytes - 1] of Byte;
 begin
   Result := False;
   PrepareCurve(Curve, Parameters);
   if not ReadPrivateKey(Parameters, PrivateKey, PrivateKeyLength, D) then
     Exit;
+  if Curve = CurveP256 then
+  begin
+    BigNumberToBytes(D, @Scalar[0], P256ScalarBytes);
+    PublicKey[0] := 4;
+    P256MultiplyBase(@Scalar[0], PublicKey + 1, PublicKey + 1 + P256ScalarBytes);
+    WipeMemory(@Scalar[0], SizeOf(Scalar));
+    WipeMemory(@D, SizeOf(D));
+    Exit(True);
+  end;
   GeneratorPoint(Parameters, Generator);
   MultiplyPoint(Parameters, D, Generator, KeyPoint);
   Result := EncodeCurvePoint(Parameters, KeyPoint, PublicKey);
@@ -265,6 +278,7 @@ var
   D, E, K, X, R, S: TBigNumber;
   MontgomeryK, MontgomeryKInverse, MontgomeryR, RD, Sum: TBigNumber;
   BasePoint, Commitment: TCurvePoint;
+  DBytes, KBytes, EBytes: array[0..P256ScalarBytes - 1] of Byte;
 begin
   Result := False;
   PrepareCurve(Curve, Parameters);
@@ -272,6 +286,21 @@ begin
     Exit;
   DigestToInteger(Parameters, Digest, DigestLength, E);
   BeginNonceGenerator(Generator, Parameters, Algorithm, D, Digest, DigestLength);
+  if Curve = CurveP256 then
+  begin
+    BigNumberToBytes(D, @DBytes[0], P256ScalarBytes);
+    BigNumberToBytes(E, @EBytes[0], P256ScalarBytes);
+    repeat
+      NextNonce(Generator, Parameters, K);
+      BigNumberToBytes(K, @KBytes[0], P256ScalarBytes);
+    until P256Sign(@DBytes[0], @KBytes[0], @EBytes[0], SignatureR, SignatureS);
+    WipeMemory(@DBytes[0], SizeOf(DBytes));
+    WipeMemory(@KBytes[0], SizeOf(KBytes));
+    WipeMemory(@D, SizeOf(D));
+    WipeMemory(@K, SizeOf(K));
+    WipeMemory(@Generator, SizeOf(Generator));
+    Exit(True);
+  end;
   GeneratorPoint(Parameters, BasePoint);
   repeat
     NextNonce(Generator, Parameters, K);
