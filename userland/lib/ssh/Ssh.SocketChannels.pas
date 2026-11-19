@@ -30,7 +30,10 @@
   channel opened by this side, the relay starting when the peer
   confirms). End of file goes each way on its own (a socket shut down
   for sending, or EOF on the channel); once both ways are done, or the
-  socket breaks, the channel closes.
+  socket breaks, the channel closes. When the peer closes first, what
+  it sent before its CLOSE may still be on its way into the socket (the
+  peer often sends data, EOF and CLOSE at once): the socket is kept and
+  this side's CLOSE held back until the writer has put it all in.
 
   TSshTcpListener is the listening end of a forwarding (ssh -L on the
   client, tcpip-forward on the server): each connection it accepts goes
@@ -59,6 +62,7 @@ type
     FConnecting: Boolean;
     FRelaying: Boolean;
     FSocketEnded: Boolean;
+    FDraining: Boolean;
     FDescription: string;
     procedure SocketReadable;
     procedure StartRelay;
@@ -334,6 +338,13 @@ end;
 
 procedure TSshSocketChannel.HandleClose;
 begin
+  if (FWriter <> nil) and not FWriter.Finished and not FWriter.Broken then
+  begin
+    FWriter.FinishWhenEmpty;
+    FDraining := True;
+    CloseReplyDeferred := True;
+    Exit;
+  end;
   ReleaseSocket;
 end;
 
@@ -360,7 +371,7 @@ end;
 
 function TSshSocketChannel.WantsQuickPoll: Boolean;
 begin
-  Result := FConnecting;
+  Result := FConnecting or FDraining;
 end;
 
 procedure TSshSocketChannel.Poll;
@@ -385,6 +396,15 @@ begin
     SetSocketOption(FSocket, SocketOptionNonBlocking, 0);
     ConfirmOpen;
     StartRelay;
+    Exit;
+  end;
+  if FDraining then
+  begin
+    if not FWriter.Finished and not FWriter.Broken then
+      Exit;
+    FDraining := False;
+    ReleaseSocket;
+    CloseNow;
     Exit;
   end;
   if not FRelaying then

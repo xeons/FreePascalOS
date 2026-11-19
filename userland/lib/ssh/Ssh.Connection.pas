@@ -77,6 +77,7 @@ type
     FEofReceived: Boolean;
     FCloseSent: Boolean;
     FCloseReceived: Boolean;
+    FCloseReplyDeferred: Boolean;
     FFinishRequested: Boolean;
     FEofRequested: Boolean;
     FHasExitStatus: Boolean;
@@ -99,8 +100,12 @@ type
     procedure HandleExtendedData(DataType: LongWord; const Data: string); virtual;
     procedure HandleEof; virtual;
     { The peer closed the channel: let go of what it uses. This side's
-      CLOSE goes back on its own. }
+      CLOSE goes back on its own, unless HandleClose sets
+      CloseReplyDeferred: then the channel calls CloseNow itself once
+      what it still has to write out (data received before the CLOSE)
+      is out. }
     procedure HandleClose; virtual;
+    property CloseReplyDeferred: Boolean read FCloseReplyDeferred write FCloseReplyDeferred;
     { Channels this side opened: the peer's answer. }
     procedure HandleOpenConfirmed; virtual;
     procedure HandleOpenFailed(Reason: LongWord; const Description: string); virtual;
@@ -436,7 +441,8 @@ begin
     Exit;
   FCloseReceived := True;
   HandleClose;
-  SendCloseNow;
+  if not FCloseReplyDeferred then
+    SendCloseNow;
 end;
 
 constructor TSshConnection.Create(Transport: TSshTransport);
