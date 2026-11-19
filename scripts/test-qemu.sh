@@ -38,8 +38,13 @@ architecture="$1"
 esp_directory="$2"
 test_disk_image="${3:-}"
 system_disk_image="${4:-}"
-# (wgettest adds up to a minute under TCG.)
-timeout_seconds=240
+# Under TCG the user mode tests alone take minutes (wgettest adds up to
+# one more), so TCG gets twice as long; TEST_TIMEOUT overrides both.
+if [[ "${ACCEL:-}" == kvm ]]; then
+    timeout_seconds=${TEST_TIMEOUT:-240}
+else
+    timeout_seconds=${TEST_TIMEOUT:-480}
+fi
 expected_file_systems=(fat12 fat16 fat32 exfat ext2 ext3 ext4)
 
 build_directory=$(dirname "$esp_directory")
