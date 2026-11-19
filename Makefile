@@ -54,6 +54,7 @@
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
+#   make netstat-test  Check the ports list parser and ss's filters on the host
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
@@ -177,7 +178,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
+	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test netstat-test
 
 all: esp
 
@@ -487,7 +488,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test netstat-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -942,6 +943,21 @@ wget-test: $(WGET_TEST)
 	@$(WGET_TEST) > build/tools/wget-test.out || \
 		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
 	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
+
+# netstat's ports list and ss's filters build for the host too.
+NETSTAT_TEST := build/tools/NetstatTest
+NETSTAT_TEST_SOURCES := tools/NetstatTest/NetstatTest.pas tools/CryptoTest/TestChecks.pas \
+	userland/netstat/Netstat.Services.pas userland/ss/Ss.Filters.pas userland/lib/system/Sys.InternetAddresses.pas
+
+$(NETSTAT_TEST): $(NETSTAT_TEST_SOURCES)
+	@mkdir -p build/tools/netstat-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetstatTest -Futools/CryptoTest -Fuuserland/netstat -Fuuserland/ss \
+		-Fuuserland/lib/system -Fushared -Fishared -FUbuild/tools/netstat-test-units -o$@ tools/NetstatTest/NetstatTest.pas
+
+netstat-test: $(NETSTAT_TEST)
+	@$(NETSTAT_TEST) userland/etc/ports > build/tools/netstat-test.out || \
+		{ grep FAIL build/tools/netstat-test.out; echo "NETSTAT TEST FAILED (build/tools/netstat-test.out)"; exit 1; }
+	@echo "NETSTAT TEST PASSED: $$(tail -n 1 build/tools/netstat-test.out | cut -d ' ' -f 2-)"
 
 # libimage builds for the host too (with libdrawing), with range checks,
 # and is checked there against fixtures made at build time with Pillow:
