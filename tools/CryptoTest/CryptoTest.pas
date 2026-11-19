@@ -34,7 +34,8 @@ uses
   CryptoTest.Aead,
   CryptoTest.KeyDerivation,
   CryptoTest.Signatures,
-  CryptoTest.SshSignatures;
+  CryptoTest.SshSignatures,
+  CryptoTest.PostQuantum;
 
 begin
   TestPoly1305;
@@ -48,5 +49,7 @@ begin
   TestEcdsa;
   TestEd25519;
   TestEcdsaSigning;
+  TestKeccak;
+  TestMlKem;
   FinishChecks('crypto test');
 end.

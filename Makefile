@@ -816,14 +816,26 @@ settings-test: $(SETTINGS_TEST)
 # libcryptography's algorithms for TLS (all but Crypto.Random, which needs
 # the kernel) build for the host too, and are checked there against
 # published known answers.
+# ML-KEM's random keys use TlsTest's Crypto.Random of the host; its
+# known answers are made with Python's cryptography package (OpenSSL).
 CRYPTO_TEST := build/tools/CryptoTest
+CRYPTO_TEST_UNITS := build/tools/crypto-test-units
+CRYPTO_POST_QUANTUM_VECTORS := $(CRYPTO_TEST_UNITS)/CryptoTest.PostQuantumVectors.inc
 CRYPTO_TEST_SOURCES := $(wildcard tools/CryptoTest/*.pas) tools/CryptoTest/CryptoTest.RsaVectors.inc \
+	tools/TlsTest/Crypto.Random.pas \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
 
-$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES)
-	@mkdir -p build/tools/crypto-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/CryptoTest -Fuuserland/lib/cryptography -Fushared -Fishared \
-		-FUbuild/tools/crypto-test-units -o$@ tools/CryptoTest/CryptoTest.pas
+$(CRYPTO_POST_QUANTUM_VECTORS): tools/CryptoTest/make-post-quantum-vectors.py
+	@mkdir -p $(CRYPTO_TEST_UNITS)
+	@python3 -c 'from cryptography.hazmat.primitives.asymmetric import mlkem' 2>/dev/null || \
+		{ echo "Python 3 with the cryptography package 46 or later (ML-KEM) is needed for the crypto test's vectors"; exit 1; }
+	python3 tools/CryptoTest/make-post-quantum-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(CRYPTO_TEST): $(CRYPTO_TEST_SOURCES) $(CRYPTO_POST_QUANTUM_VECTORS)
+	@mkdir -p $(CRYPTO_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/cryptography -Fushared -Fishared \
+		-Fi$(CRYPTO_TEST_UNITS) -FU$(CRYPTO_TEST_UNITS) -o$@ tools/CryptoTest/CryptoTest.pas
 
 crypto-test: $(CRYPTO_TEST)
 	@$(CRYPTO_TEST) > build/tools/crypto-test.out || \
