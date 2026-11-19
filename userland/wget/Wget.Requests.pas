@@ -18,10 +18,10 @@
 
 {
   One HTTP/1.1 exchange: the GET request (Host, User-Agent, Accept,
-  identity encoding, a Range when continuing, "Connection: close" - one
-  request per connection, so a body without a length ends with the
-  connection), and the response head read off the connection (interim
-  1xx responses skipped). With -S the head is shown, each line
+  Accept-Encoding, a Range when continuing, Cookie and Authorization
+  when there are any, and "Connection: Keep-Alive", or "close" with
+  --no-http-keep-alive), and the response head read off the connection
+  (interim 1xx responses skipped). With -S the head is shown, each line
   indented by two spaces, as GNU wget does.
 }
 unit Wget.Requests;
@@ -38,12 +38,22 @@ uses
   Wget.Urls;
 
 type
+  { What a request carries besides the URL. }
+  TRequestExtras = record
+    { "identity" or "gzip". }
+    AcceptEncoding: string;
+    KeepAlive: Boolean;
+    { '' for none. }
+    Cookie: string;
+    Authorization: string;
+  end;
+
   THeadOutcome = (HeadReceived, HeadConnectionFailed, HeadNoData, HeadInvalid, HeadTooLarge,
     HeadUnsupportedEncoding);
 
 { RangeStart > 0 asks for the rest of the resource from there. }
 function SendRequest(Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
-  RangeStart: Int64): Boolean;
+  RangeStart: Int64; constref Extras: TRequestExtras): Boolean;
 { Leaves the bytes after the head in the connection's buffer. }
 function ReceiveResponseHead(Connection: TConnection; constref Settings: TWgetSettings;
   out Response: THttpResponseHead): THeadOutcome;
@@ -58,7 +68,7 @@ const
   LineEnd = #13#10;
 
 function SendRequest(Connection: TConnection; constref Url: TUrl; constref Settings: TWgetSettings;
-  RangeStart: Int64): Boolean;
+  RangeStart: Int64; constref Extras: TRequestExtras): Boolean;
 var
   Request: string;
 begin
@@ -66,10 +76,17 @@ begin
     'Host: ' + FormatHostHeader(Url) + LineEnd +
     'User-Agent: ' + Settings.UserAgent + LineEnd +
     'Accept: */*' + LineEnd +
-    'Accept-Encoding: identity' + LineEnd;
+    'Accept-Encoding: ' + Extras.AcceptEncoding + LineEnd;
   if RangeStart > 0 then
     Request := Request + 'Range: bytes=' + IntToStr(RangeStart) + '-' + LineEnd;
-  Request := Request + 'Connection: close' + LineEnd + LineEnd;
+  if Extras.Authorization <> '' then
+    Request := Request + 'Authorization: ' + Extras.Authorization + LineEnd;
+  if Extras.Cookie <> '' then
+    Request := Request + 'Cookie: ' + Extras.Cookie + LineEnd;
+  if Extras.KeepAlive then
+    Request := Request + 'Connection: Keep-Alive' + LineEnd + LineEnd
+  else
+    Request := Request + 'Connection: close' + LineEnd + LineEnd;
   Result := Connection.Send(Request);
 end;
 
