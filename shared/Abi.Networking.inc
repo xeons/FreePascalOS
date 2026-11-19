@@ -279,6 +279,14 @@ const
   { Address is removed (IPv6: that address; IPv4: the interface's
     address if it is Address). ErrorNotFound if it has no such address. }
   InterfaceChangeRemoveAddress = $10;
+  { With InterfaceChangeAddress, IPv6: the address is one a DHCPv6
+    server leased (InterfaceAddressFlagDhcp), valid for ValidSeconds and
+    preferred for PreferredSeconds ($FFFFFFFF: for ever); the kernel
+    deprecates and removes it as its lifetimes run out, and adding it
+    again gives it the new lifetimes (a renewal). }
+  InterfaceChangeAddressLifetimes = $20;
+  { "For ever", in ValidSeconds and PreferredSeconds. }
+  InfiniteAddressLifetime = $FFFFFFFF;
 
   { How an interface does IPv6 (TAbiNetworkInterface.Ipv6Mode,
     TAbiInterfaceConfiguration.Ipv6Mode). Ethernet interfaces start in
@@ -303,6 +311,17 @@ const
   InterfaceAddressFlagAutomatic = $04;
   { The link-local address the kernel made. }
   InterfaceAddressFlagLinkLocal = $08;
+  { Leased by a DHCPv6 server (InterfaceChangeAddressLifetimes); goes
+    when its lifetime ends, or with the routers' addresses when the
+    interface leaves Ipv6ModeAutomatic. }
+  InterfaceAddressFlagDhcp = $20;
+
+  { TAbiNetworkInterface.Ipv6RouterFlags: the flags of the last router
+    advertisement (RFC 4861 4.2), which tell whether to ask DHCPv6. }
+  { M: addresses come from DHCPv6 (stateful). }
+  Ipv6RouterFlagManaged = $01;
+  { O: other configuration (DNS servers, ...) comes from DHCPv6. }
+  Ipv6RouterFlagOtherConfiguration = $02;
 
   { TAbiRoute.Flags. }
   { Through a gateway (else the destination is on the link). }
@@ -395,7 +414,8 @@ type
     Ipv6HopLimit: LongWord;
     Ipv6Mtu: LongWord;
     Ipv6DnsServerCount: LongWord;
-    Reserved: LongWord;
+    { Ipv6RouterFlag* (0 before any advertisement, and off automatic). }
+    Ipv6RouterFlags: LongWord;
     Ipv6DnsServers: array[0..MaximumDnsServers - 1] of array[0..15] of Byte;
   end;
   PAbiNetworkInterface = ^TAbiNetworkInterface;
@@ -411,6 +431,9 @@ type
     { Ipv6Mode*, with InterfaceChangeIpv6Mode. }
     Ipv6Mode: LongWord;
     Address: TAbiInterfaceAddress;
+    { With InterfaceChangeAddressLifetimes. }
+    ValidSeconds: LongWord;
+    PreferredSeconds: LongWord;
   end;
 
   { A route: where datagrams to Destination go (prefix 0: the default

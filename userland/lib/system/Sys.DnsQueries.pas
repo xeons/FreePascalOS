@@ -33,6 +33,18 @@
 
   QueryDnsSearching also tries the search domain for a name of one
   label ("www" is asked as "www.example.com" first, then as it is).
+
+  EDNS(0): queries carry an OPT record advertising EdnsPayloadSize
+  bytes (1232 from SystemDnsQueryOptions), so larger answers come over
+  UDP; a truncated one still goes to TCP. A server that answers FORMERR
+  without an OPT record of its own does not know EDNS, and is asked
+  again without it.
+
+  With UseCache (Sys.HostNames sets it) answers are kept in the
+  process's cache (Sys.DnsCache: times to live, negative answers by RFC
+  2308) and a question asked again is answered from it. The cache is
+  emptied when the servers asked change, so an answer from one set of
+  servers is never given for another.
 }
 unit Sys.DnsQueries;
 
@@ -65,6 +77,10 @@ type
     RecursionDesired: Boolean;
     { Ask over TCP from the start. }
     TcpOnly: Boolean;
+    { The largest UDP answer advertised with EDNS(0); 0: no EDNS. }
+    EdnsPayloadSize: Word;
+    { Answer from, and keep answers in, the process's cache. }
+    UseCache: Boolean;
   end;
 
   { How a query went. }
@@ -74,12 +90,16 @@ type
     { The name asked for (with the search domain, if it was tried). }
     QueriedName: string;
     UsedTcp: Boolean;
+    { The query that was answered carried an OPT record. }
+    UsedEdns: Boolean;
+    { The answer came from the cache (Server is who gave it first). }
+    FromCache: Boolean;
     { From sending the query that was answered to its answer. }
     ElapsedMilliseconds: QWord;
   end;
 
 { The system's servers and search domain, the default timeout and
-  attempts, recursion wanted. }
+  attempts, recursion wanted, EDNS(0) with 1232 bytes; no cache. }
 procedure SystemDnsQueryOptions(out Options: TDnsQueryOptions);
 { Asks only Server from now on. }
 procedure UseOnlyDnsServer(var Options: TDnsQueryOptions; constref Server: TAbiSocketAddress);
@@ -94,6 +114,8 @@ function QueryDns(const Name: string; RecordType: Word; constref Options: TDnsQu
   label (the name as it is follows if that does not exist). }
 function QueryDnsSearching(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
   out Message: TDnsMessage; out Details: TDnsQueryDetails): LongInt;
+{ Empties the process's cache of answers. }
+procedure ClearDnsCache;
 
 implementation
 
@@ -105,6 +127,7 @@ uses
   Sys.InternetAddresses,
   Sys.NetworkInterfaces,
   Sys.RandomNumbers,
+  Sys.DnsCache,
   Sys.DnsNames;
 
 const
@@ -119,10 +142,19 @@ type
   TPendingQuery = record
     Name: string;
     RecordType: Word;
+    RecursionDesired: Boolean;
     Id: Word;
     Query: array[0..MaximumUdpDnsMessage - 1] of Byte;
     QueryLength: LongWord;
+    { The query carries an OPT record. }
+    UsesEdns: Boolean;
   end;
+
+var
+  AnswerCache: TDnsCache = nil;
+  CacheLock: TRTLCriticalSection;
+  { The servers the cached answers came from. }
+  CachedServers: string = '';
 
 function NowMilliseconds: QWord;
 begin
@@ -138,6 +170,7 @@ begin
   Options.TimeoutMilliseconds := DefaultDnsTimeoutMilliseconds;
   Options.Attempts := DefaultDnsAttempts;
   Options.RecursionDesired := True;
+  Options.EdnsPayloadSize := DefaultEdnsPayloadSize;
   if GetDnsServers(Servers) <> ErrorNone then
     Exit;
   if Servers.Count > MaximumDnsServers then
@@ -361,7 +394,96 @@ begin
     Exit(ErrorCorrupted);
   Details.Server := Server;
   Details.UsedTcp := UsedTcp;
+  Details.UsedEdns := Pending.UsesEdns;
+  Details.FromCache := False;
   Details.ElapsedMilliseconds := NowMilliseconds - Started;
+end;
+
+{ The query of Pending again, with an OPT record or without. }
+function BuildPendingQuery(var Pending: TPendingQuery; EdnsPayloadSize: Word): Boolean;
+begin
+  Result := BuildDnsQuery(Pending.Id, Pending.Name, Pending.RecordType, Pending.RecursionDesired, EdnsPayloadSize,
+    @Pending.Query[0], SizeOf(Pending.Query), Pending.QueryLength);
+  Pending.UsesEdns := Result and (EdnsPayloadSize <> 0);
+end;
+
+{ AskServer, and once more without EDNS if the server did not know it
+  (FORMERR and no OPT record in the answer, RFC 6891 section 7). }
+function AskServerWithEdnsFallback(constref Server: TAbiSocketAddress; var Pending: TPendingQuery;
+  constref Options: TDnsQueryOptions; Reply: PByte; out Message: TDnsMessage;
+  var Details: TDnsQueryDetails): LongInt;
+begin
+  Result := AskServer(Server, Pending, Options, Reply, Message, Details);
+  if (Result <> ErrorNone) or not Pending.UsesEdns or (Message.ResponseCode <> DnsResponseFormatError) or
+     Message.HasEdns then
+    Exit;
+  if not BuildPendingQuery(Pending, 0) then
+    Exit;
+  Result := AskServer(Server, Pending, Options, Reply, Message, Details);
+  { Later servers are asked with EDNS again. }
+  BuildPendingQuery(Pending, Options.EdnsPayloadSize);
+end;
+
+{ "10.0.2.3:53 [::1]:53 ...": what the cache's answers depend on. }
+function ServersText(constref Options: TDnsQueryOptions): string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  for Index := 0 to High(Options.Servers) do
+    Result := Result + AddressToText(SocketAddressHost(Options.Servers[Index])) + ':' +
+      IntToStr(Options.Servers[Index].Port) + ' ';
+end;
+
+{ The cache, emptied first if the servers are not those it was filled
+  from. Under CacheLock. }
+procedure SelectCacheFor(constref Options: TDnsQueryOptions);
+var
+  Servers: string;
+begin
+  if AnswerCache = nil then
+    AnswerCache := TDnsCache.Create;
+  Servers := ServersText(Options);
+  if Servers <> CachedServers then
+  begin
+    AnswerCache.Clear;
+    CachedServers := Servers;
+  end;
+end;
+
+function FindCachedAnswer(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
+  out Message: TDnsMessage): Boolean;
+begin
+  EnterCriticalSection(CacheLock);
+  try
+    SelectCacheFor(Options);
+    Result := AnswerCache.Find(Name, RecordType, NowMilliseconds, Message);
+  finally
+    LeaveCriticalSection(CacheLock);
+  end;
+end;
+
+procedure StoreAnswer(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions;
+  constref Message: TDnsMessage);
+begin
+  EnterCriticalSection(CacheLock);
+  try
+    SelectCacheFor(Options);
+    AnswerCache.Store(Name, RecordType, Message, NowMilliseconds);
+  finally
+    LeaveCriticalSection(CacheLock);
+  end;
+end;
+
+procedure ClearDnsCache;
+begin
+  EnterCriticalSection(CacheLock);
+  try
+    if AnswerCache <> nil then
+      AnswerCache.Clear;
+  finally
+    LeaveCriticalSection(CacheLock);
+  end;
 end;
 
 function QueryDns(const Name: string; RecordType: Word; constref Options: TDnsQueryOptions; out Message: TDnsMessage;
@@ -383,10 +505,16 @@ begin
     Exit(ErrorNotFound);
   Pending.Name := Name;
   Pending.RecordType := RecordType;
+  Pending.RecursionDesired := Options.RecursionDesired;
   Pending.Id := 0;
-  if not BuildDnsQuery(0, Name, RecordType, Options.RecursionDesired, @Pending.Query[0], SizeOf(Pending.Query),
-       Pending.QueryLength) then
+  if not BuildPendingQuery(Pending, Options.EdnsPayloadSize) then
     Exit(ErrorInvalidArgument);
+  if Options.UseCache and FindCachedAnswer(Name, RecordType, Options, Message) then
+  begin
+    Details.FromCache := True;
+    Details.Server := Options.Servers[0];
+    Exit(ErrorNone);
+  end;
   Reply := GetMem(MaximumTcpDnsMessage);
   HaveFailure := False;
   Result := ErrorTimedOut;
@@ -394,7 +522,7 @@ begin
     for Attempt := 1 to Options.Attempts do
       for ServerIndex := 0 to High(Options.Servers) do
       begin
-        Error := AskServer(Options.Servers[ServerIndex], Pending, Options, Reply, Message, Details);
+        Error := AskServerWithEdnsFallback(Options.Servers[ServerIndex], Pending, Options, Reply, Message, Details);
         if Error <> ErrorNone then
         begin
           if not HaveFailure then
@@ -402,7 +530,11 @@ begin
           Continue;
         end;
         if not ServerFailed(Message.ResponseCode) then
+        begin
+          if Options.UseCache then
+            StoreAnswer(Name, RecordType, Options, Message);
           Exit(ErrorNone);
+        end;
         { Kept in case no other server does better. }
         Failure := Message;
         FailureDetails := Details;
@@ -430,5 +562,12 @@ begin
   end;
   Result := QueryDns(Name, RecordType, Options, Message, Details);
 end;
+
+initialization
+  InitCriticalSection(CacheLock);
+
+finalization
+  AnswerCache.Free;
+  DoneCriticalSection(CacheLock);
 
 end.

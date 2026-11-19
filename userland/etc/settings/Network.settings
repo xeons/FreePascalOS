@@ -13,8 +13,13 @@
 # DnsServers: empty for those DHCP (and IPv6 routers) give; a list of
 # IPv4 or IPv6 addresses overrides them.
 # SearchDomain: empty for the domain DHCP gives.
+# DhcpStartWait: true waits 1-10 s at random before the first
+# DHCPDISCOVER of a cold start (no lease kept from before), as RFC 2131
+# 4.4.1 asks so that machines powered on together do not all ask at
+# once; it is off here so the network is up as soon as the system is.
 DnsServers = []
 SearchDomain = ""
+DhcpStartWait = false
 
 [Interfaces/eth0]
 Method = "dhcp"

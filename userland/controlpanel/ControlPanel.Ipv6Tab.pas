@@ -18,8 +18,9 @@
 
 {
   The Network page's IPv6 tab: how the chosen interface gets its IPv6
-  addresses (from routers, a fixed address with an optional gateway, or
-  no IPv6 at all), and the addresses and router it has now. The page
+  addresses (from routers - and from DHCPv6 when they say so -, from a
+  DHCPv6 server whatever the routers say, a fixed address with an
+  optional gateway, or no IPv6 at all), and the addresses and router it has now. The page
   keeps what is chosen per interface (TIpv6Choice) and asks the tab to
   show one and to read it back after a change. Sizes are logical units,
   scaled by the controls.
@@ -52,6 +53,7 @@ type
   TIpv6Tab = class
   private
     FAutomatic: TRadioButton;
+    FDhcpv6: TRadioButton;
     FStatic: TRadioButton;
     FOff: TRadioButton;
     FAddress: TEditBox;
@@ -90,7 +92,7 @@ const
   BoxHeight = 22;
   ChoiceWidth = 380;
   ChoiceHeight = 20;
-  StatusTop = 146;
+  StatusTop = 148;
   StatusRowHeight = 16;
   CaptionWidth = 90;
   StatusWidth = 330;
@@ -129,13 +131,14 @@ end;
 constructor TIpv6Tab.Create(Tab: TControl; Handler: TControlEvent);
 begin
   inherited Create;
-  FAutomatic := MakeChoice(Tab, '&Get IPv6 addresses from routers automatically', 8, Handler);
-  FStatic := MakeChoice(Tab, 'Use a &fixed IPv6 address:', 32, Handler);
-  MakeLabel(Tab, 'Address:', IndentedLeft, 60, BoxLeft - IndentedLeft - 4);
-  FAddress := MakeBox(Tab, 58, Handler);
-  MakeLabel(Tab, 'Gateway:', IndentedLeft, 88, BoxLeft - IndentedLeft - 4);
-  FGateway := MakeBox(Tab, 86, Handler);
-  FOff := MakeChoice(Tab, 'Turn IPv6 off on this &interface', 116, Handler);
+  FAutomatic := MakeChoice(Tab, '&Get IPv6 addresses automatically (routers, DHCPv6)', 6, Handler);
+  FDhcpv6 := MakeChoice(Tab, 'Always ask a DHCPv6 se&rver for an address', 26, Handler);
+  FStatic := MakeChoice(Tab, 'Use a &fixed IPv6 address:', 46, Handler);
+  MakeLabel(Tab, 'Address:', IndentedLeft, 70, BoxLeft - IndentedLeft - 4);
+  FAddress := MakeBox(Tab, 68, Handler);
+  MakeLabel(Tab, 'Gateway:', IndentedLeft, 96, BoxLeft - IndentedLeft - 4);
+  FGateway := MakeBox(Tab, 94, Handler);
+  FOff := MakeChoice(Tab, 'Turn IPv6 off on this &interface', 122, Handler);
   MakeLabel(Tab, 'Addresses:', TabMargin, StatusTop, CaptionWidth);
   FGlobalAddresses := MakeLabel(Tab, NoValue, TabMargin + CaptionWidth, StatusTop, StatusWidth);
   MakeLabel(Tab, 'Link-local:', TabMargin, StatusTop + StatusRowHeight, CaptionWidth);
@@ -148,6 +151,7 @@ end;
 procedure TIpv6Tab.ShowChoice(const Choice: TIpv6Choice);
 begin
   FAutomatic.Checked := Choice.Method = Ipv6MethodAuto;
+  FDhcpv6.Checked := Choice.Method = Ipv6MethodDhcpv6;
   FStatic.Checked := Choice.Method = Ipv6MethodStatic;
   FOff.Checked := Choice.Method = Ipv6MethodNone;
   FAddress.Text := Choice.AddressText;
@@ -158,6 +162,8 @@ function TIpv6Tab.ReadChoice: TIpv6Choice;
 begin
   if FStatic.Checked then
     Result.Method := Ipv6MethodStatic
+  else if FDhcpv6.Checked then
+    Result.Method := Ipv6MethodDhcpv6
   else if FOff.Checked then
     Result.Method := Ipv6MethodNone
   else
@@ -178,6 +184,7 @@ var
 begin
   IsStatic := HasInterface and FStatic.Checked;
   FAutomatic.Enabled := HasInterface;
+  FDhcpv6.Enabled := HasInterface;
   FStatic.Enabled := HasInterface;
   FOff.Enabled := HasInterface;
   FAddress.Enabled := IsStatic;
@@ -199,24 +206,46 @@ begin
     Result := NoValue;
 end;
 
+procedure AddText(var Items: TStringArray; const Text: string);
+begin
+  SetLength(Items, Length(Items) + 1);
+  Items[High(Items)] := Text;
+end;
+
+{ "fec0::10 (DHCPv6)" for an address a DHCPv6 server leased. }
+function AddressText(const Address: TIpv6AddressStatus): string;
+begin
+  Result := Address.Text;
+  if (Address.Flags and InterfaceAddressFlagDhcp) <> 0 then
+    Result := AddressWithoutPrefix(Result) + ' (DHCPv6)';
+end;
+
+{ The router, and what DHCPv6 is doing when it is on. }
+function RouterText(const Status: TInterfaceStatus): string;
+begin
+  Result := Status.Ipv6Router;
+  if Result = '' then
+    Result := NoValue;
+  if (Status.State.Dhcpv6 <> '') and (Status.State.Dhcpv6 <> 'off') then
+    Result := Result + ' - DHCPv6 ' + Status.State.Dhcpv6;
+end;
+
 procedure TIpv6Tab.ShowStatus(const Status: TInterfaceStatus);
 var
-  LinkLocal: array of string;
+  LinkLocal: TStringArray;
+  Global: TStringArray;
   Index: Integer;
 begin
   LinkLocal := nil;
+  Global := nil;
   for Index := 0 to High(Status.Ipv6Addresses) do
     if Status.Ipv6Addresses[Index].IsLinkLocal then
-    begin
-      SetLength(LinkLocal, Length(LinkLocal) + 1);
-      LinkLocal[High(LinkLocal)] := AddressWithoutPrefix(Status.Ipv6Addresses[Index].Text);
-    end;
-  FGlobalAddresses.Text := ListOrNoValue(GlobalIpv6Addresses(Status));
+      AddText(LinkLocal, AddressWithoutPrefix(Status.Ipv6Addresses[Index].Text))
+    else if (Status.Ipv6Addresses[Index].Flags and InterfaceAddressFlagTentative) = 0 then
+      AddText(Global, AddressText(Status.Ipv6Addresses[Index]));
+  FGlobalAddresses.Text := ListOrNoValue(Global);
   FLinkLocalAddresses.Text := ListOrNoValue(LinkLocal);
-  if Status.Ipv6Router = '' then
-    FRouter.Text := NoValue
-  else
-    FRouter.Text := Status.Ipv6Router;
+  FRouter.Text := RouterText(Status);
 end;
 
 procedure TIpv6Tab.ShowNoStatus;
@@ -229,6 +258,7 @@ end;
 procedure TIpv6Tab.TellPlaces(Window: TWindow);
 begin
   SayPlace('network-ipv6-auto', Window, FAutomatic, Scaled(6), Scaled(ChoiceHeight div 2));
+  SayPlace('network-ipv6-dhcpv6', Window, FDhcpv6, Scaled(6), Scaled(ChoiceHeight div 2));
   SayPlace('network-ipv6-static', Window, FStatic, Scaled(6), Scaled(ChoiceHeight div 2));
   SayPlace('network-ipv6-none', Window, FOff, Scaled(6), Scaled(ChoiceHeight div 2));
   SayControlPlace('network-ipv6-address', Window, FAddress);

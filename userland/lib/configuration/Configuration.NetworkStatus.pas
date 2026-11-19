@@ -55,7 +55,8 @@ type
   TIpv6AddressStatus = record
     { "fec0::5054:ff:fe12:3456/64". }
     Text: string;
-    { InterfaceAddressFlag* (tentative, deprecated, automatic, link-local). }
+    { InterfaceAddressFlag* (tentative, deprecated, automatic, link-local,
+      DHCPv6). }
     Flags: LongWord;
     IsLinkLocal: Boolean;
   end;

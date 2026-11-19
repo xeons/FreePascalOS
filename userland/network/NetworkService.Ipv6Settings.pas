@@ -19,12 +19,16 @@
 {
   The IPv6 part of an interface's section in Network.settings:
 
-    Ipv6Method = "auto"             auto, static or none (none: IPv6 off)
+    Ipv6Method = "auto"             auto, dhcpv6, static or none (none:
+                                    IPv6 off)
     Ipv6Address = "fec0::10/64"     static only
     Ipv6Gateway = "fec0::2"         static only, optional
 
   An interface without a section, or a section without Ipv6Method, is
-  auto: the kernel takes what the routers advertise.
+  auto: the kernel takes what the routers advertise, and DHCPv6 is asked
+  when their M (addresses) or O (other configuration) flag says so;
+  dhcpv6 asks a DHCPv6 server for an address whatever the routers say
+  (their routes and prefixes are still taken).
 }
 unit NetworkService.Ipv6Settings;
 
@@ -40,7 +44,7 @@ uses
   Configuration.Settings;
 
 type
-  TIpv6Method = (Ipv6MethodAuto, Ipv6MethodStatic, Ipv6MethodNone);
+  TIpv6Method = (Ipv6MethodAuto, Ipv6MethodStatic, Ipv6MethodNone, Ipv6MethodDhcpv6);
 
   TIpv6Settings = record
     Method: TIpv6Method;
@@ -80,6 +84,7 @@ begin
   case Method of
     Ipv6MethodStatic: Result := 'static';
     Ipv6MethodNone: Result := 'none';
+    Ipv6MethodDhcpv6: Result := 'dhcpv6';
   else
     Result := 'auto';
   end;
@@ -127,13 +132,15 @@ begin
     Result.Method := Ipv6MethodAuto
   else if MethodText = 'none' then
     Result.Method := Ipv6MethodNone
+  else if MethodText = 'dhcpv6' then
+    Result.Method := Ipv6MethodDhcpv6
   else if MethodText = 'static' then
   begin
     Result.Method := Ipv6MethodStatic;
     ReadStaticIpv6Address(Store, Section, Result);
   end
   else
-    Result.Problem := 'the IPv6 method "' + MethodText + '" is not one (auto, static or none)';
+    Result.Problem := 'the IPv6 method "' + MethodText + '" is not one (auto, dhcpv6, static or none)';
 end;
 
 function SameIpv6Settings(constref First, Second: TIpv6Settings): Boolean;

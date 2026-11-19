@@ -71,6 +71,7 @@ uses
   Sys.RandomNumbers,
   Sys.DnsNames,
   Sys.DnsMessages,
+  Sys.DnsCache,
   Sys.DnsQueries,
   Sys.HostsFile,
   Sys.HostNames,

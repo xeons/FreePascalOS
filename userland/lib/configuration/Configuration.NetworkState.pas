@@ -79,6 +79,12 @@ type
     Ipv6Gateway: string;
     { What routers advertised (RDNSS). }
     Ipv6DnsServers: TStringArray;
+    { DHCPv6: "off", "no-link", "configuring", "configured" (an address
+      leased) or "informed" (DNS servers only); "" when the file does
+      not say. What it gave: DNS servers and search domains. }
+    Dhcpv6: string;
+    Dhcpv6DnsServers: TStringArray;
+    Dhcpv6Domains: TStringArray;
   end;
 
 { Reads a state file's Text for interface Name; False (and Known False)
@@ -186,6 +192,9 @@ begin
     State.Ipv6Addresses := DocumentList(Document, 'Ipv6Addresses');
     State.Ipv6Gateway := DocumentString(Document, 'Ipv6Gateway');
     State.Ipv6DnsServers := DocumentList(Document, 'Ipv6DnsServers');
+    State.Dhcpv6 := DocumentString(Document, 'Dhcpv6');
+    State.Dhcpv6DnsServers := DocumentList(Document, 'Dhcpv6DnsServers');
+    State.Dhcpv6Domains := DocumentList(Document, 'Dhcpv6Domains');
     State.Known := True;
     Result := True;
   finally

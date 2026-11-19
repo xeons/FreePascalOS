@@ -54,6 +54,8 @@ type
     Ipv6OriginAutomatic,
     { Given by hand (ifconfig, the network service). }
     Ipv6OriginManual,
+    { Leased by a DHCPv6 server (the network service), with lifetimes. }
+    Ipv6OriginDhcp,
     { ::1 on lo. }
     Ipv6OriginLoopback);
   TIpv6AddressOrigins = set of TIpv6AddressOrigin;
@@ -89,6 +91,8 @@ type
     Mtu: LongWord;
     ReachableMilliseconds: LongWord;
     RetransmitMilliseconds: LongWord;
+    { The M and O flags of the last advertisement (Ipv6RouterFlag*). }
+    RouterFlags: LongWord;
     Addresses: array[0..MaximumIpv6InterfaceAddresses - 1] of TIpv6InterfaceAddress;
     DnsServers: array[0..MaximumDnsServers - 1] of TIpv6DnsServer;
     { Router solicitations: how many went, and when the next is due (0:

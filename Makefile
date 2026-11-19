@@ -54,6 +54,8 @@
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
+#   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
+#                   and DHCPv6 messages on the host
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
@@ -177,7 +179,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test
+	crypto-test tls-test wget-test network-protocol-test image-test compression-test decompression-test ssh-test
 
 all: esp
 
@@ -487,7 +489,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test image-test compression-test decompression-test ssh-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test network-protocol-test image-test compression-test decompression-test ssh-test \
 		imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -958,6 +960,26 @@ wget-test: $(WGET_TEST)
 	@$(WGET_TEST) > build/tools/wget-test.out || \
 		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
 	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
+
+# The resolver's EDNS(0) and cache of answers (libsystem) and the network
+# service's DHCP and DHCPv6 messages build for the host too, with range
+# checks, and are checked there (RFC examples among the fixtures).
+NETWORK_PROTOCOL_TEST := build/tools/NetworkProtocolTest
+NETWORK_PROTOCOL_TEST_SOURCES := $(wildcard tools/NetworkProtocolTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	userland/lib/system/Sys.DnsMessages.pas userland/lib/system/Sys.DnsNames.pas \
+	userland/lib/system/Sys.DnsCache.pas userland/lib/system/Sys.InternetAddresses.pas \
+	$(wildcard userland/network/NetworkService.Dhcp*Messages.pas) userland/network/NetworkService.DhcpOffers.pas
+
+$(NETWORK_PROTOCOL_TEST): $(NETWORK_PROTOCOL_TEST_SOURCES)
+	@mkdir -p build/tools/network-protocol-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetworkProtocolTest -Futools/CryptoTest -Fuuserland/lib/system \
+		-Fuuserland/network -Fushared -Fishared -FUbuild/tools/network-protocol-test-units -o$@ \
+		tools/NetworkProtocolTest/NetworkProtocolTest.pas
+
+network-protocol-test: $(NETWORK_PROTOCOL_TEST)
+	@$(NETWORK_PROTOCOL_TEST) > build/tools/network-protocol-test.out || \
+		{ grep -A2 FAIL build/tools/network-protocol-test.out; echo "NETWORK PROTOCOL TEST FAILED (build/tools/network-protocol-test.out)"; exit 1; }
+	@echo "NETWORK PROTOCOL TEST PASSED: $$(tail -n 1 build/tools/network-protocol-test.out | cut -d ' ' -f 4-)"
 
 # libimage builds for the host too (with libdrawing), with range checks,
 # and is checked there against fixtures made at build time with Pillow:

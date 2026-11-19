@@ -52,6 +52,11 @@ function SetInterfaceAddress(Name: PChar; constref Address: TInternetAddress; Pr
 function RemoveInterfaceAddress(Name: PChar): LongInt;
 { Adds an IPv6 address (one that never expires) to the interface. }
 function AddInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord): LongInt;
+{ Adds (or renews) an address a DHCPv6 server leased: the kernel
+  deprecates it after PreferredSeconds and removes it after ValidSeconds
+  (InfiniteAddressLifetime: never). }
+function AddInterfaceLeasedIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+  ValidSeconds, PreferredSeconds: LongWord): LongInt;
 { Removes one of the interface's IPv6 addresses. }
 function RemoveInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress): LongInt;
 { Ipv6ModeOff, Ipv6ModeLinkLocal or Ipv6ModeAutomatic. }
@@ -176,6 +181,23 @@ begin
   if Address.Family <> AddressFamilyIPv6 then
     Exit(ErrorAddressFamilyNotSupported);
   Result := SetInterfaceAddress(Name, Address, PrefixLength);
+end;
+
+function AddInterfaceLeasedIpv6Address(Name: PChar; constref Address: TInternetAddress; PrefixLength: LongWord;
+  ValidSeconds, PreferredSeconds: LongWord): LongInt;
+var
+  Configuration: TAbiInterfaceConfiguration;
+begin
+  if Address.Family <> AddressFamilyIPv6 then
+    Exit(ErrorAddressFamilyNotSupported);
+  FillMemory(@Configuration, SizeOf(Configuration), 0);
+  Configuration.Changes := InterfaceChangeAddress or InterfaceChangeAddressLifetimes;
+  Configuration.Address.Family := AddressFamilyIPv6;
+  Configuration.Address.PrefixLength := Word(PrefixLength);
+  CopyMemory(@Configuration.Address.Address[0], @Address.Bytes[0], 16);
+  Configuration.ValidSeconds := ValidSeconds;
+  Configuration.PreferredSeconds := PreferredSeconds;
+  Result := Configure(Name, Configuration);
 end;
 
 function RemoveInterfaceIpv6Address(Name: PChar; constref Address: TInternetAddress): LongInt;

@@ -31,6 +31,14 @@
     Renewing, Rebinding ---ACK---> Bound; ---NAK, or the lease ran out---> Init
     any ---link lost---> Paused ---link back---> InitReboot (or Init)
 
+  Selecting collects the offers for a second after the first
+  (NetworkService.DhcpOffers) and requests the one offering the address
+  had before, else the first; an offer of the address had before is
+  requested at once. A cold start (Start with RandomStartWait: the
+  service's first client for the interface, no valid lease kept) waits
+  1 to 10 seconds at random before the first DISCOVER (4.4.1), so that
+  machines powered on together do not all ask at once.
+
   Retransmissions wait 4 seconds, then 8, 16, 32 and 64 at most, each
   moved by up to a second either way at random (4.1); while renewing
   and rebinding, half the time left (to T2, or to the end), at least a
@@ -57,6 +65,7 @@ uses
   SysUtils,
   Sys.InternetAddresses,
   NetworkService.DhcpMessages,
+  NetworkService.DhcpOffers,
   NetworkService.DhcpLeases;
 
 type
@@ -83,6 +92,9 @@ type
     FSearchStarted: QWord;
     FHasLease: Boolean;
     FLease: TDhcpLease;
+    { The offers of this round, while the client waits for more. }
+    FChoice: TDhcpOfferChoice;
+    FCollectingOffers: Boolean;
     { The offer being requested, and the acknowledged lease being probed. }
     FOffer: TDhcpReply;
     FCandidate: TDhcpLease;
@@ -108,6 +120,8 @@ type
     procedure EnterInit(Delay: QWord);
     procedure EnterInitReboot;
     procedure BeginProbe(constref Reply: TDhcpReply);
+    procedure TakeOffer(constref Reply: TDhcpReply);
+    procedure RequestChosenOffer;
     procedure Bind(constref Lease: TDhcpLease);
     procedure LoseLease(const Why: string);
     procedure HandleReply(constref Reply: TDhcpReply);
@@ -116,8 +130,12 @@ type
     constructor Create(const InterfaceName: string; InterfaceIndex: LongWord;
       constref HardwareAddress: TEthernetAddress);
     destructor Destroy; override;
-    { Begins (the link is up): asks for PreviousAddress again if given. }
-    procedure Start(HasPreviousAddress: Boolean; constref PreviousAddress: TInternetAddress);
+    { Begins (the link is up). A lease still valid for PreviousAddress is
+      confirmed (INIT-REBOOT); otherwise PreviousAddress, if given, is
+      asked for in the DISCOVER, which RandomStartWait puts off by 1 to
+      10 seconds. }
+    procedure Start(HasPreviousAddress: Boolean; constref PreviousAddress: TInternetAddress;
+      PreviousLeaseIsValid, RandomStartWait: Boolean);
     { The link went (False) or came back (True). }
     procedure LinkChanged(LinkIsUp: Boolean);
     { Gives the lease back (DHCPRELEASE) and stops. }
@@ -160,6 +178,9 @@ const
   DeclineWaitMilliseconds = 10000;
   NakWaitMilliseconds = 1000;
   StartJitterMilliseconds = 500;
+  { RFC 2131 4.4.1: "a random time between one and ten seconds". }
+  FirstRandomWaitMilliseconds = 1000;
+  LastRandomWaitMilliseconds = 10000;
   FailedAfterMilliseconds = 60000;
   SocketRetryMilliseconds = 5000;
   ReceiveBufferBytes = 2048;
@@ -418,14 +439,24 @@ begin
   ChangeState(DhcpInitReboot);
 end;
 
-procedure TDhcpClient.Start(HasPreviousAddress: Boolean; constref PreviousAddress: TInternetAddress);
+procedure TDhcpClient.Start(HasPreviousAddress: Boolean; constref PreviousAddress: TInternetAddress;
+  PreviousLeaseIsValid, RandomStartWait: Boolean);
+var
+  Wait: QWord;
 begin
   FHasPreviousAddress := HasPreviousAddress;
   FPreviousAddress := PreviousAddress;
   FSearchStarted := NowMilliseconds;
   OpenSocket;
-  if FHasPreviousAddress then
+  if FHasPreviousAddress and PreviousLeaseIsValid then
     EnterInitReboot
+  else if RandomStartWait then
+  begin
+    Wait := FirstRandomWaitMilliseconds +
+      RandomBelow(LongWord(LastRandomWaitMilliseconds - FirstRandomWaitMilliseconds + 1));
+    Say('waiting ' + IntToStr(Wait) + ' ms before DHCPDISCOVER (a cold start)');
+    EnterInit(Wait);
+  end
   else
     EnterInit(RandomBelow(StartJitterMilliseconds));
 end;
@@ -536,6 +567,33 @@ begin
     FOnLeaseLost(Self);
 end;
 
+procedure TDhcpClient.RequestChosenOffer;
+begin
+  FOffer := FChoice.Offer;
+  FCollectingOffers := False;
+  if FChoice.Offers > 1 then
+    Say('chose the offer of ' + AddressToText(FOffer.YourAddress) + ' among ' + IntToStr(FChoice.Offers));
+  FRetransmitInterval := FirstRetransmitMilliseconds;
+  FTransmissions := 1;
+  SendSelectingRequest;
+  ScheduleRetransmission;
+  ChangeState(DhcpRequesting);
+end;
+
+procedure TDhcpClient.TakeOffer(constref Reply: TDhcpReply);
+begin
+  Say('DHCPOFFER of ' + AddressToText(Reply.YourAddress) + ' from ' + AddressToText(Reply.ServerIdentifier));
+  ConsiderOffer(FChoice, Reply);
+  if OfferChoiceIsSettled(FChoice) then
+    RequestChosenOffer
+  else if not FCollectingOffers then
+  begin
+    { Others may come for a moment. }
+    FCollectingOffers := True;
+    FDeadline := NowMilliseconds + OfferWindowMilliseconds;
+  end;
+end;
+
 procedure TDhcpClient.HandleReply(constref Reply: TDhcpReply);
 begin
   if Reply.TransactionId <> FTransactionId then
@@ -543,15 +601,7 @@ begin
   case FState of
     DhcpSelecting:
       if (Reply.Kind = DhcpOffer) and not AddressIsUnspecified(Reply.YourAddress) then
-      begin
-        Say('DHCPOFFER of ' + AddressToText(Reply.YourAddress) + ' from ' + AddressToText(Reply.ServerIdentifier));
-        FOffer := Reply;
-        FRetransmitInterval := FirstRetransmitMilliseconds;
-        FTransmissions := 1;
-        SendSelectingRequest;
-        ScheduleRetransmission;
-        ChangeState(DhcpRequesting);
-      end;
+        TakeOffer(Reply);
     DhcpRequesting, DhcpRebooting, DhcpRenewing, DhcpRebinding:
       if Reply.Kind = DhcpAcknowledge then
       begin
@@ -608,11 +658,16 @@ begin
           Exit;
         end;
         BeginRound;
+        BeginOfferChoice(FChoice, FHasPreviousAddress, FPreviousAddress);
+        FCollectingOffers := False;
         SendDiscover;
         ScheduleRetransmission;
         ChangeState(DhcpSelecting);
       end;
     DhcpSelecting:
+      if FCollectingOffers and FChoice.HasOffer then
+        RequestChosenOffer
+      else
       begin
         Inc(FTransmissions);
         SendDiscover;

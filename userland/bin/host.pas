@@ -240,6 +240,15 @@ begin
     PrintString(' ' + Name);
 end;
 
+{ The OPT record's DO flag as dig shows it. }
+function DoFlagText: string;
+begin
+  if (Message.EdnsFlags and $8000) <> 0 then
+    Result := ' do'
+  else
+    Result := '';
+end;
+
 procedure WriteVerboseAnswer(constref Details: TDnsQueryDetails);
 begin
   PrintStringLine(Format(';; ->>HEADER<<- opcode: QUERY, status: %s, id: %d',
@@ -252,6 +261,9 @@ begin
   WriteFlag(DnsFlagRecursionAvailable, 'ra');
   PrintString(Format('; QUERY: %d, ANSWER: %d, AUTHORITY: %d, ADDITIONAL: %d'#10#10,
     [Message.QuestionCount, Message.AnswerCount, Message.AuthorityCount, Message.AdditionalCount]));
+  if Message.HasEdns then
+    PrintString(Format(';; OPT PSEUDOSECTION:'#10'; EDNS: version: %d, flags:%s; udp: %d'#10#10,
+      [Message.EdnsVersion, DoFlagText, Message.EdnsPayloadSize]));
   PrintString(Format(';; QUESTION SECTION:'#10';%s.'#9#9#9'IN'#9'%s'#10#10,
     [Message.QuestionName, DnsTypeName(Message.QuestionType)]));
   WriteSection(DnsSectionAnswer, 'ANSWER');
