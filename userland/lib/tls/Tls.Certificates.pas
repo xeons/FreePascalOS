@@ -24,7 +24,12 @@
   and subject names (kept as DER, compared byte for byte), the validity,
   the public key and the extensions this library acts on (basic
   constraints, key usage, extended key usage, subject alternative names,
-  key identifiers). The extensions are in Tls.CertificateExtensions.
+  key identifiers, name constraints, the TLS feature list). The
+  extensions are in Tls.CertificateExtensions.
+
+  Keys: RSA (and RSA-PSS), ECDSA on P-256, P-384 and P-521, and
+  Ed25519. Signatures: RSA PKCS #1 v1.5 and PSS, ECDSA with SHA-2, and
+  Ed25519 (RFC 8410).
 
   Anything malformed is refused (TlsErrorCertificateMalformed); a
   certificate with an algorithm this library cannot check is still
@@ -41,14 +46,25 @@ interface
 
 uses
   Crypto.Digests,
+  Tls.Asn1,
   Tls.ByteBuffers;
 
 type
   TTlsSignatureAlgorithm = (SignatureUnknown, SignatureRsaPkcs1Sha1, SignatureRsaPkcs1Sha256,
     SignatureRsaPkcs1Sha384, SignatureRsaPkcs1Sha512, SignatureRsaPss, SignatureEcdsaSha256,
-    SignatureEcdsaSha384, SignatureEcdsaSha512);
+    SignatureEcdsaSha384, SignatureEcdsaSha512, SignatureEd25519);
 
-  TTlsPublicKeyKind = (PublicKeyUnknown, PublicKeyRsa, PublicKeyRsaPss, PublicKeyEcP256, PublicKeyEcP384);
+  TTlsPublicKeyKind = (PublicKeyUnknown, PublicKeyRsa, PublicKeyRsaPss, PublicKeyEcP256, PublicKeyEcP384,
+    PublicKeyEcP521, PublicKeyEd25519);
+
+  { A signature algorithm as an AlgorithmIdentifier names it (in a
+    certificate, an OCSP response or a CRL). }
+  TTlsSignatureParameters = record
+    Algorithm: TTlsSignatureAlgorithm;
+    { For RSA-PSS: the digest (MGF1 uses the same) and salt length. }
+    PssDigest: TDigestAlgorithm;
+    PssSaltLength: Integer;
+  end;
 
   TTlsCertificate = record
     { The whole DER encoding, owned by the certificate. }
@@ -74,10 +90,13 @@ type
     NotAfter: Int64;
 
     PublicKeyKind: TTlsPublicKeyKind;
-    { RSA: modulus and exponent. EC: the point in PublicKeyPoint. }
+    { RSA: modulus and exponent. EC: the point in PublicKeyPoint;
+      Ed25519: the 32-byte key there too. }
     RsaModulus: TTlsByteRange;
     RsaExponent: TTlsByteRange;
     PublicKeyPoint: TTlsByteRange;
+    { The subjectPublicKey BIT STRING's bytes (what OCSP hashes). }
+    PublicKeyBits: TTlsByteRange;
 
     { Extensions. }
     HasBasicConstraints: Boolean;
@@ -93,8 +112,16 @@ type
     SubjectAlternativeNames: TTlsByteRange;
     SubjectKeyIdentifier: TTlsByteRange;
     AuthorityKeyIdentifier: TTlsByteRange;
-    { A critical extension this library does not know (name
-      constraints among them): the certificate cannot be used. }
+    { Name constraints (an authority's): the contents of the permitted
+      and excluded GeneralSubtrees (empty when absent). }
+    HasNameConstraints: Boolean;
+    PermittedSubtrees: TTlsByteRange;
+    ExcludedSubtrees: TTlsByteRange;
+    { The TLS feature extension (RFC 7633) lists status_request: the
+      server must staple an OCSP response ("must staple"). }
+    RequiresStapledStatus: Boolean;
+    { A critical extension this library does not know: the certificate
+      cannot be used. }
     HasUnsupportedCriticalExtension: Boolean;
   end;
   PTlsCertificate = ^TTlsCertificate;
@@ -115,12 +142,19 @@ procedure FreeCertificate(var Certificate: PTlsCertificate);
   "(no common name)" when there is none. }
 function CommonNameText(constref Name: TTlsByteRange): string;
 
+{ An AlgorithmIdentifier of a signature (Element is its SEQUENCE).
+  False when malformed; an algorithm this library does not check gives
+  True with SignatureUnknown. }
+function ReadSignatureAlgorithmIdentifier(constref Element: TAsn1Element;
+  out Parameters: TTlsSignatureParameters): Boolean;
+{ The signature parameters of a certificate's own signature. }
+function CertificateSignatureParameters(constref Certificate: TTlsCertificate): TTlsSignatureParameters;
+
 implementation
 
 uses
   SysUtils,
   Crypto.Bits,
-  Tls.Asn1,
   Tls.Errors,
   Tls.ObjectIdentifiers,
   Tls.CertificateExtensions;
@@ -173,7 +207,7 @@ end;
   accepted: the digest must be SHA-256, -384 or -512, MGF1 must use the
   same one and the trailer must be 1. Unusable parameters leave the
   algorithm unknown; malformed ones fail. }
-function ReadPssParameters(var Reader: TAsn1Reader; var Certificate: TTlsCertificate): Boolean;
+function ReadPssParameters(var Reader: TAsn1Reader; var Signature: TTlsSignatureParameters): Boolean;
 var
   Parameters, Field, Inner, Identifier, MaskHash: TAsn1Element;
   ParameterReader, FieldReader, InnerReader: TAsn1Reader;
@@ -185,7 +219,7 @@ begin
   { No parameters: the SHA-1 defaults, which are not accepted. }
   if Asn1ReaderAtEnd(Reader) then
   begin
-    Certificate.SignatureAlgorithm := SignatureUnknown;
+    Signature.Algorithm := SignatureUnknown;
     Exit(True);
   end;
   Result := ReadAsn1Expected(Reader, Asn1Sequence, Parameters) and Asn1ReaderAtEnd(Reader);
@@ -193,7 +227,7 @@ begin
     Exit;
   OpenAsn1Element(ParameterReader, Parameters);
   Usable := True;
-  Certificate.PssDigest := DigestSha1;
+  Signature.PssDigest := DigestSha1;
   MaskDigest := DigestSha1;
   SaltLength := 20;
   Trailer := 1;
@@ -205,7 +239,7 @@ begin
     OpenAsn1Element(FieldReader, Field);
     if not ReadAsn1Element(FieldReader, Inner) or not Asn1ReaderAtEnd(FieldReader) then
       Exit(False);
-    if not ReadHashAlgorithm(Inner, Certificate.PssDigest) then
+    if not ReadHashAlgorithm(Inner, Signature.PssDigest) then
       Usable := False;
   end
   else
@@ -248,17 +282,17 @@ begin
   end;
   if not Asn1ReaderAtEnd(ParameterReader) then
     Exit(False);
-  if (Trailer <> 1) or (MaskDigest <> Certificate.PssDigest) or (SaltLength > 512) then
+  if (Trailer <> 1) or (MaskDigest <> Signature.PssDigest) or (SaltLength > 512) then
     Usable := False;
-  Certificate.PssSaltLength := SaltLength;
+  Signature.PssSaltLength := SaltLength;
   if Usable then
-    Certificate.SignatureAlgorithm := SignatureRsaPss
+    Signature.Algorithm := SignatureRsaPss
   else
-    Certificate.SignatureAlgorithm := SignatureUnknown;
+    Signature.Algorithm := SignatureUnknown;
 end;
 
-{ AlgorithmIdentifier of the signature. }
-function ReadSignatureAlgorithm(constref Element: TAsn1Element; var Certificate: TTlsCertificate): Boolean;
+function ReadSignatureAlgorithmIdentifier(constref Element: TAsn1Element;
+  out Parameters: TTlsSignatureParameters): Boolean;
 var
   Reader: TAsn1Reader;
   Identifier: TAsn1Element;
@@ -268,30 +302,53 @@ begin
   OpenAsn1Element(Reader, Element);
   if not ReadAsn1Expected(Reader, Asn1ObjectIdentifier, Identifier) then
     Exit(False);
-  Certificate.SignatureAlgorithm := SignatureUnknown;
+  Parameters.Algorithm := SignatureUnknown;
+  Parameters.PssDigest := DigestSha256;
+  Parameters.PssSaltLength := 0;
   if OidIs(Identifier, OidRsaPss) then
-    Exit(ReadPssParameters(Reader, Certificate));
+    Exit(ReadPssParameters(Reader, Parameters));
   if OidIs(Identifier, OidSha256WithRsa) then
-    Certificate.SignatureAlgorithm := SignatureRsaPkcs1Sha256
+    Parameters.Algorithm := SignatureRsaPkcs1Sha256
   else if OidIs(Identifier, OidSha384WithRsa) then
-    Certificate.SignatureAlgorithm := SignatureRsaPkcs1Sha384
+    Parameters.Algorithm := SignatureRsaPkcs1Sha384
   else if OidIs(Identifier, OidSha512WithRsa) then
-    Certificate.SignatureAlgorithm := SignatureRsaPkcs1Sha512
+    Parameters.Algorithm := SignatureRsaPkcs1Sha512
   else if OidIs(Identifier, OidSha1WithRsa) then
-    Certificate.SignatureAlgorithm := SignatureRsaPkcs1Sha1
+    Parameters.Algorithm := SignatureRsaPkcs1Sha1
   else if OidIs(Identifier, OidEcdsaWithSha256) then
-    Certificate.SignatureAlgorithm := SignatureEcdsaSha256
+    Parameters.Algorithm := SignatureEcdsaSha256
   else if OidIs(Identifier, OidEcdsaWithSha384) then
-    Certificate.SignatureAlgorithm := SignatureEcdsaSha384
+    Parameters.Algorithm := SignatureEcdsaSha384
   else if OidIs(Identifier, OidEcdsaWithSha512) then
-    Certificate.SignatureAlgorithm := SignatureEcdsaSha512
+    Parameters.Algorithm := SignatureEcdsaSha512
+  else if OidIs(Identifier, OidEd25519) then
+    Parameters.Algorithm := SignatureEd25519
   else
     Exit(True);
-  if Certificate.SignatureAlgorithm in [SignatureEcdsaSha256, SignatureEcdsaSha384, SignatureEcdsaSha512] then
-    { ECDSA has no parameters at all (RFC 5758). }
+  if Parameters.Algorithm in [SignatureEcdsaSha256, SignatureEcdsaSha384, SignatureEcdsaSha512,
+    SignatureEd25519] then
+    { ECDSA and Ed25519 have no parameters at all (RFC 5758, RFC 8410). }
     Result := Asn1ReaderAtEnd(Reader)
   else
     Result := ParametersAreNullOrAbsent(Reader);
+end;
+
+function CertificateSignatureParameters(constref Certificate: TTlsCertificate): TTlsSignatureParameters;
+begin
+  Result.Algorithm := Certificate.SignatureAlgorithm;
+  Result.PssDigest := Certificate.PssDigest;
+  Result.PssSaltLength := Certificate.PssSaltLength;
+end;
+
+{ The certificate's signature algorithm, into its fields. }
+function ReadSignatureAlgorithm(constref Element: TAsn1Element; var Certificate: TTlsCertificate): Boolean;
+var
+  Parameters: TTlsSignatureParameters;
+begin
+  Result := ReadSignatureAlgorithmIdentifier(Element, Parameters);
+  Certificate.SignatureAlgorithm := Parameters.Algorithm;
+  Certificate.PssDigest := Parameters.PssDigest;
+  Certificate.PssSaltLength := Parameters.PssSaltLength;
 end;
 
 (* RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER } *)
@@ -327,6 +384,7 @@ begin
     Exit;
   if not ReadAsn1BitStringBytes(KeyBits, KeyBytes, KeyLength) then
     Exit;
+  Certificate.PublicKeyBits := ByteRange(KeyBytes, KeyLength);
   OpenAsn1Element(AlgorithmReader, Algorithm);
   if not ReadAsn1Expected(AlgorithmReader, Asn1ObjectIdentifier, Identifier) then
     Exit;
@@ -353,7 +411,17 @@ begin
     if OidIs(Curve, OidCurveP256) then
       Certificate.PublicKeyKind := PublicKeyEcP256
     else if OidIs(Curve, OidCurveP384) then
-      Certificate.PublicKeyKind := PublicKeyEcP384;
+      Certificate.PublicKeyKind := PublicKeyEcP384
+    else if OidIs(Curve, OidCurveP521) then
+      Certificate.PublicKeyKind := PublicKeyEcP521;
+    Certificate.PublicKeyPoint := ByteRange(KeyBytes, KeyLength);
+  end
+  else if OidIs(Identifier, OidEd25519) then
+  begin
+    { No parameters, and a 32-byte key (RFC 8410). }
+    if not Asn1ReaderAtEnd(AlgorithmReader) or (KeyLength <> 32) then
+      Exit;
+    Certificate.PublicKeyKind := PublicKeyEd25519;
     Certificate.PublicKeyPoint := ByteRange(KeyBytes, KeyLength);
   end;
   Result := True;
