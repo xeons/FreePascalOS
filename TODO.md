@@ -709,11 +709,20 @@ normalized (0-65535), not pixels.
       libcryptography; host tests (RFC 8032, RFC 6979, packets, the kex
       hash, an in-memory client) and scripts/test-ssh.py with OpenSSH's
       ssh, scp and sftp
-- [ ] SSH later: port forwarding (direct-tcpip, tcpip-forward), agent
-      forwarding, the authorized_keys options (command=, from=; such
-      keys are refused now), certificates, keyboard-interactive,
-      publickey-hostbound, server keep-alives, sshd_config Match blocks,
-      constant time P-256 signing, an ssh client
+- [x] SSH later: post-quantum key exchange (mlkem768x25519-sha256 with
+      ML-KEM-768 in libcryptography, offered first), port forwarding
+      (direct-tcpip, tcpip-forward, AllowTcpForwarding, GatewayPorts,
+      PermitOpen), agent forwarding (a named port per session:
+      SSH_AUTH_SOCK=port:NAME), the authorized_keys options, user
+      certificates (TrustedUserCAKeys, cert-authority) and a host
+      certificate, keyboard-interactive, publickey-hostbound, server
+      keep-alives (ClientAliveInterval/CountMax), sshd_config Match
+      blocks, constant time P-256 signing, an ssh client with
+      ssh-keygen and ssh-add
+- [ ] SSH after that: sntrup761x25519-sha512 (only ML-KEM is there),
+      scp in the system (an SFTP client), encrypted private key files
+      (ssh-keygen -N, bcrypt-pbkdf and aes256-ctr), ssh_config files,
+      a local ssh-agent, X11 forwarding
 
 ## ARM64 port
 

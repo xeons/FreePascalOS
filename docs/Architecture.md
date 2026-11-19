@@ -5148,36 +5148,59 @@ stock OpenSSH client (`ssh`, `scp`, `sftp` of OpenSSH 9 and later); the
 use in mind is a Raspberry Pi 4 run from a Linux PC. The protocol is in
 **libssh** (`userland/lib/ssh`, libsystem <- libcryptography <- libssh),
 the server program in `userland/sshd`, the SFTP subsystem in
-`userland/sftp-server`.
+`userland/sftp-server`, the client programs `ssh`, `ssh-keygen` and
+`ssh-add` in `userland/bin` (the client's units in `userland/ssh`).
 
-**libssh** does no input or output: bytes go in, bytes and messages
-come out, so the host test drives it from memory as sshd drives it
-from a socket.
+**libssh** is both sides. Its protocol units do no input or output:
+bytes go in, bytes and messages come out, so the host test drives them
+from memory (and its client against its server) as the programs drive
+them from sockets. A few units on top do input and output for both
+programs (`Ssh.HandleWriters`, `Ssh.SocketChannels`,
+`Ssh.AgentChannels`); the host test leaves them out.
 
 | Unit | What it is |
 |---|---|
 | `Ssh.Wire` | byte, boolean, uint32, uint64, string, mpint, name-list (RFC 4251); `TSshReader` raises `ESshProtocolError` on short or bad data; byte strings are plain `string`s |
 | `Ssh.PacketCiphers`, `Ssh.ChaChaPolyCipher`, `Ssh.AesGcmCipher`, `Ssh.CipherSuites` | what protects a direction: plain, `chacha20-poly1305@openssh.com` (two ChaCha20 keys, the length encrypted apart, Poly1305 over both; the original 64-bit nonce ChaCha20 is the IETF one with nonce 00000000 \|\| sequence number), `aes256-gcm@openssh.com` and `aes128-gcm@openssh.com` (RFC 5647: the length as additional data, the invocation counter in the nonce) |
 | `Ssh.PacketLayer` | the binary packet protocol (RFC 4253 section 6): random padding of 4 or more bytes to whole blocks (the length left out for the authenticated ciphers), 32-bit sequence numbers, packets up to 256 KiB, counts for rekeying |
-| `Ssh.Algorithms` | KEXINIT made and read; the client's first choice the server has |
-| `Ssh.KeyExchange` | curve25519-sha256 (RFC 8731): X25519, the exchange hash H, the keys derived from K and H (RFC 4253 section 7.2) |
+| `Ssh.Algorithms` | KEXINIT made and read; for each kind the client's first choice the server has, worked out the same on both sides |
+| `Ssh.KeyExchange`, `Ssh.KeyExchangeMethods` | X25519 key pairs; the methods both ways: curve25519-sha256 (RFC 8731, K an mpint) and mlkem768x25519-sha256 (draft-ietf-sshm-mlkem-hybrid-kex: C_INIT = ML-KEM-768 encapsulation key \|\| X25519 key, S_REPLY = ciphertext \|\| X25519 key, K = SHA-256(ML-KEM secret \|\| X25519 secret) as a string); the exchange hash and the keys derived from K and H (RFC 4253 section 7.2) |
 | `Ssh.HostKeys`, `Ssh.KeyFiles` | host keys `ssh-ed25519` and `ecdsa-sha2-nistp256`: blobs, signatures, new keys; OpenSSH's unencrypted private key format (`openssh-key-v1`) |
 | `Ssh.PublicKeys` | client keys (`ssh-ed25519`, `ecdsa-sha2-nistp256`, `ssh-rsa`) and their signatures (`rsa-sha2-256`/`512`, not SHA-1 `ssh-rsa`), authorized_keys lines, SHA256 fingerprints |
+| `Ssh.Transport` | what both sides' transports share: version lines, KEXINIT each way, NEWKEYS and the keys put to use, strict kex, rekeying, held messages, the transport's own messages |
+| `Ssh.ClientTransport` | the client's half of each method, the host key's signature over H checked and the key handed to the program (`OnHostKey`: known_hosts), EXT_INFO read (server-sig-algs, publickey-hostbound) |
 | `Ssh.ServerTransport` | the server's transport: version lines, the first key exchange and every rekeying, NEWKEYS, the transport's own messages, messages held back during an exchange |
 | `Ssh.UserAuthentication` | RFC 4252: `none` (the list), `publickey` (PK_OK for a query, the signature over the session id and the request), `password`; who may log in is a `TSshAccountPolicy`'s to say; ten failures end the connection |
-| `Ssh.Connection` | RFC 4254: channels, windows and the largest packet each way, requests with replies, global requests refused; programs derive their channels from `TSshChannel` |
+| `Ssh.Connection` | RFC 4254 for either side: channels opened by either side (a peer's open may be answered later: `DeferOpenConfirmation`), windows and the largest packet each way, requests with and without replies, EOF on its own (`SendEofWhenFlushed`), global requests both ways (replies in order); programs derive their channels from `TSshChannel` |
+| `Ssh.ClientAuthentication`, `Ssh.ClientIdentities` | the client's side of RFC 4252: `none` for the list, then each key (signed at once; as publickey-hostbound-v00 bound to the host key when the server offers it; RSA keys with rsa-sha2-512/256 from server-sig-algs), keyboard-interactive (the program answers the prompts), password |
+| `Ssh.AuthorizedKeys` | authorized_keys lines and their options (`command=`, `from=`, `environment=`, `expiry-time=`, `permitopen=`, `permitlisten=`, `principals=`, `cert-authority`, `no-*`, `restrict` and what gives back) |
+| `Ssh.Certificates` | OpenSSH certificates (PROTOCOL.certkeys) of ed25519, ecdsa-sha2-nistp256 and rsa keys: read, the CA's signature checked, a user certificate checked for a user and a time (principals, validity, critical options force-command and source-address, extensions as permissions) |
+| `Ssh.AddressPatterns` | OpenSSH pattern lists (`*`, `?`, `!`) and address lists with IPv4 and IPv6 CIDR blocks (an IPv4 mapped address matched as IPv4) |
+| `Ssh.KnownHosts` | known_hosts lookups (name lists, `[host]:port`, hashed names, `@revoked`) and new lines |
+| `Ssh.AgentProtocol` | the agent protocol's messages (list keys, sign) and a reader putting a stream back into messages |
+| `Ssh.PolledChannels` | how a program's one loop serves channels and listeners: each names the handles it waits on and what to do when one is ready, and is polled after every wait |
+| `Ssh.HandleWriters`, `Ssh.SocketChannels`, `Ssh.AgentChannels` | (input and output) writer threads for pipes, terminals and sockets; channels joined to TCP connections (connecting without waiting) and TCP listeners for forwarding; the agent relay and the agent client over named ports |
 
-The server offers `curve25519-sha256` and `curve25519-sha256@libssh.org`,
-the host key algorithms it has keys for, the three ciphers and no
-compression. Every cipher is authenticated encryption, so no MAC is
+Both sides offer `mlkem768x25519-sha256` first, then `curve25519-sha256`
+and `curve25519-sha256@libssh.org`; the server offers the host key
+algorithms it has keys (and certificates) for, the three ciphers and no
+compression. The hybrid method stays secret against someone recording
+the connection now to break it later with a quantum computer as long as
+ML-KEM holds, and against everyone today as long as X25519 does; OpenSSH
+9.9 and later choose it by default and OpenSSH 10 warns about a
+connection without it. Every cipher is authenticated encryption, so no MAC is
 chosen (as OpenSSH does for them); `hmac-sha2-256` is listed only so the
 MAC lists are not empty. Two OpenSSH extensions matter to its clients:
 
 - **ext-info** (RFC 8308): with `ext-info-c` in the client's first
   KEXINIT, SSH_MSG_EXT_INFO follows the server's first NEWKEYS with
   `server-sig-algs` = `ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256`,
-  without which clients would sign with SHA-1 RSA. `publickey-hostbound`
-  is not offered, so clients use plain `publickey`.
+  without which clients would sign with SHA-1 RSA, and
+  `publickey-hostbound@openssh.com` = `0`, so that clients sign their
+  publickey requests over the server's host key too
+  (publickey-hostbound-v00@openssh.com; the server takes it only with
+  one of its own host keys): a signature cannot be replayed to another
+  server, which OpenSSH's agent restrictions build on.
 - **strict key exchange** (`kex-strict-s-v00@openssh.com`, always
   offered; on when the client offers `kex-strict-c-v00@openssh.com`):
   during the first exchange only its own messages may come and the
@@ -5203,20 +5226,43 @@ process of its own in the service's session: one that fails takes
 nothing else with it, and stopping the service ends them all.
 
 `sshd_config` takes OpenSSH's keywords: `Port`,
-`PasswordAuthentication`, `PubkeyAuthentication`, `PermitRootLogin`,
-`HostKey` (one per key), `Subsystem sftp PROGRAM`, `LoginGraceTime`
-(seconds to log in, 120), `MaxSessions` (channels per connection, 8) and
-`TCPKeepAlive` (TCP keep-alives on the connections, yes).
+`PasswordAuthentication`, `PubkeyAuthentication`,
+`KbdInteractiveAuthentication` (yes), `PermitRootLogin`, `HostKey` (one
+per key), `HostCertificate`, `TrustedUserCAKeys`, `AuthorizedKeysFile`
+(`%h`, `%u`), `Subsystem sftp PROGRAM`, `LoginGraceTime` (seconds to log
+in, 120), `MaxSessions` (session channels per connection, 8),
+`AllowTcpForwarding` (yes/all, local, remote, no), `GatewayPorts` (no,
+yes, clientspecified), `PermitOpen` (any, none, host:port ...),
+`AllowAgentForwarding`, `PermitTTY`, `PermitUserEnvironment` (no),
+`ForceCommand`, `ClientAliveInterval` (0) and `ClientAliveCountMax` (3),
+`TCPKeepAlive` (TCP keep-alives on the connections, yes), and **Match**
+blocks: `Match User`, `Group`, `Address` (CIDR too), `LocalPort` (all
+given must match) or `All`, followed by the keywords that can differ per
+connection (the authentication methods, PermitRootLogin, the forwarding
+and agent settings, PermitTTY, ForceCommand, the keep-alives,
+MaxSessions, TrustedUserCAKeys, AuthorizedKeysFile,
+PermitUserEnvironment); for each keyword the first value that applies
+wins, as in OpenSSH. Before the user is known (the method list of a
+`none` request is the user's), only Address and LocalPort can match; the
+connection's configuration is settled once it has logged in.
 `sshd -t` checks it and the host keys.
 
 A connection's process (`Sshd.ConnectionLoop`) waits on the socket, the
 input writers' progress event and every session's output and program at
-once (`WaitForHandles`). Accounts (`Sshd.Accounts`): an existing user
-whose password is not locked, whose shell is not `/bin/false` (and root
-only with `PermitRootLogin yes`); a key from `~/.ssh/authorized_keys`,
-read as root - a line with options (`command=`, `from=`) is not taken,
-since they are not carried out; the account's password (`Util.Logins`),
-never an empty one, a wrong one answered after a second.
+once (`WaitForHandles`), and with them whatever the channels and
+forwardings wait on (`Ssh.PolledChannels`). Accounts (`Sshd.Accounts`):
+an existing user whose password is not locked, whose shell is not
+`/bin/false` (and root only with `PermitRootLogin yes`); a key from the
+AuthorizedKeysFile, read as root, with its options - `from=` must match
+the client's address, `expiry-time=` must not have passed, and the rest
+go with the login (below); a user certificate whose CA is in
+TrustedUserCAKeys or on an authorized_keys line with `cert-authority`
+(and `principals=`), for this user, valid now, from an address its
+`source-address` allows, its `force-command` and missing extensions
+becoming options as authorized_keys ones would; the account's password
+(`Util.Logins`), by `password` or by `keyboard-interactive` (one
+`Password: ` prompt), never an empty one, a wrong one answered after a
+second.
 
 Each **session channel** (`Sshd.Sessions`) runs one program as the user
 (`StartAsUserWithVariables` in `Util.Logins`, in a session of its own),
@@ -5263,6 +5309,84 @@ readlink and symlink (OpenSSH's argument order), and the extensions
 Since OpenSSH 9, `scp` uses SFTP; the old scp protocol (a remote `scp`
 program) is not there.
 
+**More of the server.** A key's options and the configuration act on
+the session (`Sshd.Sessions`): a forced command - the key's `command=`,
+a certificate's force-command, then ForceCommand - runs as `SHELL -c`
+in place of the shell, command or subsystem asked for, which goes in
+`SSH_ORIGINAL_COMMAND`; `no-pty` (or a certificate without permit-pty,
+or PermitTTY no) refuses pty-req; `environment=` lines are set with
+PermitUserEnvironment yes.
+
+- **Forwarding** (`Sshd.Forwarding`): a `direct-tcpip` channel (ssh -L)
+  is allowed by AllowTcpForwarding yes/all/local, PermitOpen and the
+  key's `permitopen=`, refused by `no-port-forwarding`; the server
+  connects without waiting and confirms the channel when the connection
+  is made (a refused connection refuses the channel), the loop looking
+  at connecting sockets every 20 ms. `tcpip-forward` (ssh -R) is allowed
+  by AllowTcpForwarding yes/all/remote and `permitlisten=`; GatewayPorts
+  no listens on the loopback address only, yes on every address,
+  clientspecified where the client says; ports below 1024 only for
+  root; port 0 takes any and the reply names it. Each connection to it
+  opens a `forwarded-tcpip` channel to the client; `cancel-tcpip-forward`
+  stops it. A forwarded socket's channel (`Ssh.SocketChannels`) writes
+  what it receives through a writer thread (the window opening as the
+  socket takes it) and reads the socket only while less than 64 KiB
+  waits for the peer's window; end of file goes each way on its own (the
+  socket shut down for sending, EOF on the channel) and the channel
+  closes once both are done or the socket breaks.
+- **Agent forwarding** (`Sshd.AgentForwarding`, `Ssh.AgentChannels`):
+  OpenSSH makes a Unix domain socket for `auth-agent-req@openssh.com`;
+  the system has none, and the nearest local IPC is a named port
+  (`Processes.Channels`), which also tells who connected. A session that
+  asks (AllowAgentForwarding, no `no-agent-forwarding`) gets a port
+  `sshagent-PROCESS-N` and `SSH_AUTH_SOCK=port:sshagent-PROCESS-N`; a
+  connection to it from the session's user (or root; others are turned
+  away by `GetChannelPeer`) opens an `auth-agent@openssh.com` channel to
+  the client, and the agent protocol's bytes pass unchanged: local
+  messages (up to 16 KiB) one way, channel data the other. The system's
+  `ssh` and `ssh-add` connect to such an `SSH_AUTH_SOCK`.
+- **Host certificates**: each HostCertificate (a line as `ssh-keygen -s
+  -h` writes it) for one of the host keys is offered as its own host key
+  algorithm (`ssh-ed25519-cert-v01@openssh.com`, ...), first; the
+  certificate goes as K_S and the key signs.
+- **Keep-alives**: with ClientAliveInterval, a client silent that long
+  gets a `keepalive@openssh.com` global request (any reply, even a
+  refusal, answers it); after ClientAliveCountMax unanswered ones the
+  connection ends ("Timeout, client not responding"). TCPKeepAlive sets
+  the socket option (`SocketOptionKeepAlive`) on the listening sockets.
+
+**The client.** `ssh` (`SshClient.*` in `userland/ssh`) parses OpenSSH's
+command line (options stop at the destination; `-o` takes the usual
+ssh_config names; no ssh_config file is read), connects, and runs one
+loop like the server's over the socket, standard input, the -L
+listeners and the forwarded sockets:
+
+- the host key is checked against `~/.ssh/known_hosts`
+  (`SshClient.HostKeyCheck`, StrictHostKeyChecking ask/accept-new/no/yes;
+  a changed or revoked key is always refused, with OpenSSH's warning);
+- identities: the agent's keys (SSH_AUTH_SOCK), then `-i` files or
+  `~/.ssh/id_ed25519` and `~/.ssh/id_ecdsa` (unencrypted OpenSSH key
+  files), then keyboard-interactive and the password, asked on the
+  terminal (standard input if it is one, else `/dev/tty`; never with
+  BatchMode);
+- a session channel unless -N: pty-req when -t is given or the session
+  is interactive on a terminal (the local terminal then in raw mode,
+  its size sent again when it changes), `auth-agent-req` with -A, LANG,
+  then exec or shell; standard input to the channel, data to standard
+  output, extended data to standard error, the exit status as ssh's own
+  (255 for an error). On a terminal `~.` at the start of a line
+  disconnects, `~?` lists the escapes, `~~` sends a `~`;
+- -L listens (on the loopback address unless a bind address is given)
+  and opens a direct-tcpip channel per connection; -R asks
+  tcpip-forward and connects each forwarded-tcpip channel to its local
+  target; with -A, agent channels go to the local agent.
+
+`ssh-keygen` makes ed25519 and ecdsa key pairs in OpenSSH's format
+(mode 0600, `.pub` next to it; no passphrase: `-N` must be empty), and
+prints fingerprints (`-l`) and public keys (`-y`); `ssh-add -l`/`-L`
+lists an agent's keys. Not there yet: sntrup761x25519-sha512, scp in the
+system, encrypted key files, ssh_config files, a local agent.
+
 **libcryptography** gained what the host keys need: Ed25519 (RFC 8032,
 `Crypto.Ed25519`; extended coordinates, a ladder that swaps by masks,
 reduction mod L by folding bytes) on the field arithmetic now shared
@@ -5271,6 +5395,21 @@ with X25519 (`Crypto.Curve25519Field`); ECDSA signing (`SignEcdsa`,
 and the digest, so no random numbers are needed (the P-256 arithmetic
 takes time that depends on k); and `Crypto.KeyGeneration` for new
 Ed25519 seeds and ECDSA keys.
+
+For the post-quantum exchange it gained SHA-3 and SHAKE
+(`Crypto.Keccak`, FIPS 202) and ML-KEM-768 (`Crypto.MlKem`,
+`Crypto.MlKemPolynomials`, FIPS 203): key pairs from d || z, encapsulation
+with the modulus check of the key, decapsulation with implicit rejection
+(a changed ciphertext gives J(z || c), chosen by a mask). Coefficients
+stay reduced, and every reduction and compression divides by q with a
+multiplication and a shift - no division instruction, no branch on a
+secret (the KyberSlash leak). ECDSA signing on P-256 and making a P-256
+public key are now constant time (`Crypto.P256`): 8 fixed 32-bit limbs
+mod p and mod n in Montgomery form, subtractions kept or dropped by
+masks, inverses by Fermat (a public exponent), projective points added
+with the complete formulas of Renes, Costello and Batina (a = -3, so the
+point at infinity and doubling need no case), and k G by a Montgomery
+ladder swapping by masks; P-384 still uses the variable time code.
 
 **Tests.** The crypto host test checks Ed25519 against RFC 8032's
 vectors (and refuses changed signatures and S + L) and ECDSA signing
@@ -5293,7 +5432,28 @@ ecdsa, rsa-sha2-512), 300 KB through `cat`, `ssh -tt` (tty, `stty
 size`, the exit status), two channels over one connection
 (ControlMaster), `scp` both ways, an `sftp` batch, password logins for
 the user and root, and a wrong key, a wrong password and a locked
-account refused.
+account refused. Then the additions: mlkem768x25519-sha256 as the
+default (`ssh -v` names it; OpenSSH's post-quantum warning is gone) and
+forced, `-L` and `-R` to an echo server on the host, agent forwarding
+with the host's ssh-agent (`ssh-add -l` in the guest, and the guest's
+own `ssh` logging in to its sshd over loopback with the forwarded key),
+the guest's `ssh-keygen` and `ssh` (a new key, exec with its exit
+status, a pseudo-terminal), a `command=` key, keyboard-interactive, and
+after a restart with a new sshd_config a user certificate
+(TrustedUserCAKeys), a host certificate checked against
+`@cert-authority`, an idle session kept by keep-alives, and a
+`Match User root` block. The SSH host test also checks the
+mlkem768x25519 exchange (its K, H and keys against Python and OpenSSL),
+the authorized_keys parser, certificates made by `ssh-keygen -s` (all
+three key kinds, a bare and an expired one, a host certificate, a
+publickey signature by a certificate's key), address and pattern lists,
+known_hosts (hashed names, `@revoked`), Match blocks, the agent framing,
+and libssh's client against its server in memory with each method and
+cipher (hostbound publickey, keyboard-interactive, password, a refused
+login, a session, global requests, a rekeying the client starts). The
+crypto test checks SHA-3/SHAKE against hashlib and ML-KEM-768 against
+OpenSSL (keys from seeds, OpenSSL's ciphertexts, implicit rejection,
+the modulus check) and compression by multiplication for every value.
 
 ### Compression
 

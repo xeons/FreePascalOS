@@ -415,7 +415,11 @@ ssh user@fpos-machine                 # a shell in a pseudo-terminal
 ssh user@fpos-machine 'ls -l /bin'    # one command
 scp notes.txt user@fpos-machine:      # copy files (SFTP underneath)
 sftp user@fpos-machine
+ssh -L 8080:localhost:80 -A user@fpos-machine   # forward a port and your agent
 ```
+
+The key exchange is post-quantum (mlkem768x25519-sha256, OpenSSH 9.9's
+default), so OpenSSH no longer warns about it.
 
 Passwords work (`user`/`user`, `root`/`root` on a fresh system); for key
 logins put your public key (`~/.ssh/id_ed25519.pub`) in
@@ -423,8 +427,17 @@ logins put your public key (`~/.ssh/id_ed25519.pub`) in
 `/.ssh`). The server makes its host keys in `/etc/ssh` on its first
 start; `/etc/ssh/sshd_config` sets the port, whether passwords and root
 logins are allowed, and the host key files (`service restart sshd`
-applies a change). Under QEMU, `make run` does not forward a port; the
-SSH test does it with `hostfwd=tcp::PORT-:22`.
+applies a change); it also takes OpenSSH's authorized_keys options
+(`command=`, `from=`, `restrict`, ...), user certificates
+(`TrustedUserCAKeys`), a host certificate, `Match` blocks, forwarding
+and keep-alive settings. Under QEMU, `make run` does not forward a port;
+the SSH test does it with `hostfwd=tcp::PORT-:22`.
+
+The system has a client too: `ssh` (exec, an interactive shell with `~.`
+to disconnect, `-L`, `-R`, `-A`, keys from the agent or
+`~/.ssh/id_ed25519`, passwords, `~/.ssh/known_hosts` asked about on
+first use), `ssh-keygen` (ed25519 and ecdsa keys, `-l`, `-y`) and
+`ssh-add -l` for a forwarded agent.
 
 Settings live in `/etc/settings` (the system's) and in `.settings` in each
 user's home (`/home/user/.settings`; root's home is `/`, so `/.settings`),
