@@ -131,6 +131,7 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Drawing.Rectangles,
+  Windowing.Theme,
   Windowing.Connection,
   Windowing.Windows,
   Controls.Keys,
@@ -424,7 +425,8 @@ begin
   for Index := 0 to FContextMenu.Count - 1 do
     if not FContextMenu[Index].IsSeparator then
       Say(Format('place context-%s %d %d', [StringReplace(LowerCase(TextWithoutMnemonic(FContextMenu[Index].Text)),
-        ' ', '-', [rfReplaceAll]), Scaled(Left + 30), Scaled(Top + PopupMenuItemTop(FContextMenu, Index) + 9)]));
+        ' ', '-', [rfReplaceAll]), Scaled(Left + 30),
+        Scaled(Top + PopupMenuItemTop(FContextMenu, Index) + Theme.MenuItemHeight div 2)]));
   ShowPopupMenu(Self, FContextMenu, Left, Top);
 end;
 

@@ -1206,9 +1206,10 @@ if tour_started:
         press('ctrl-v')
         time.sleep(0.5)
         # The context menu opens where the button was let go; Paste is its
-        # third item (18 pixels each, 2 in).
+        # third item (Classic's: 24 pixels each, 5 in: its edge and
+        # padding).
         right_click_at(*place['paste-box'])
-        click_at(place['paste-box'][0] + 30, place['paste-box'][1] + 2 + 2 * 18 + 9)
+        click_at(place['paste-box'][0] + 30, place['paste-box'][1] + 5 + 2 * 24 + 12)
         # Three lines copied from the multi-line edit box and pasted at
         # the end of its last line: five lines.
         click_at(*place['text-edit'])

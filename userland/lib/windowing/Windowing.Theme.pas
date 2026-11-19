@@ -208,7 +208,20 @@ type
     MinimumHeight: LongInt;
     ScrollBarWidth: LongInt;
     MenuBarHeight: LongInt;
+    { A pop-up menu (drop-down, context menu, submenu, Start menu): an
+      item's height (its text in the middle), a separator's (its groove
+      in the middle), the space inside the menu's edge around the items,
+      the column at the left of each item where its picture or check
+      mark sits, the gap from that column to the text, the least gap
+      from the text to the shortcut, and the column at the right where a
+      submenu's arrow sits (also the space after the shortcut). }
     MenuItemHeight: LongInt;
+    MenuSeparatorHeight: LongInt;
+    MenuPadding: LongInt;
+    MenuIconColumnWidth: LongInt;
+    MenuTextGap: LongInt;
+    MenuShortcutGap: LongInt;
+    MenuArrowColumnWidth: LongInt;
     { The Start menu's side band's width. }
     StartMenuBandWidth: LongInt;
 

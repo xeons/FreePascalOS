@@ -149,7 +149,13 @@ begin
   Values.MinimumHeight := 27;
   Values.ScrollBarWidth := 16;
   Values.MenuBarHeight := 19;
-  Values.MenuItemHeight := 18;
+  Values.MenuItemHeight := 24;
+  Values.MenuSeparatorHeight := 9;
+  Values.MenuPadding := 3;
+  Values.MenuIconColumnWidth := 24;
+  Values.MenuTextGap := 6;
+  Values.MenuShortcutGap := 28;
+  Values.MenuArrowColumnWidth := 20;
   Values.StartMenuBandWidth := 0;
   Values.TitlePoints := 90;
   Values.TextPoints := 90;

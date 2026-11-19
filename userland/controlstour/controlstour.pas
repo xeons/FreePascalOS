@@ -565,11 +565,11 @@ begin
   TellPlace('combo', FCombo, RectangleWidth(FCombo.PixelBounds) div 2, RectangleHeight(FCombo.PixelBounds) div 2);
   TellPlace('combo-second', FCombo, Scaled(30), RectangleHeight(FCombo.PixelBounds) + 2 + RowHeight + RowHeight div 2);
   { The split button's arrow, and the second item of the menu it opens
-    (below the button: 2 in, items a menu line high). }
+    (below the button: its edge and padding in, items a menu line high). }
   TellPlace('split-arrow', FLooks.SplitButton, RectangleWidth(FLooks.SplitButton.PixelBounds) - Scaled(8),
     RectangleHeight(FLooks.SplitButton.PixelBounds) div 2);
   TellPlace('split-menu-2', FLooks.SplitButton, Scaled(30), RectangleHeight(FLooks.SplitButton.PixelBounds) +
-    Scaled(2 + Theme.MenuItemHeight + Theme.MenuItemHeight div 2));
+    Scaled(2 + Theme.MenuPadding + Theme.MenuItemHeight + Theme.MenuItemHeight div 2));
 end;
 
 procedure TTourWindow.ItemChecked(Sender: TControl; Index: LongInt; Checked: Boolean);
