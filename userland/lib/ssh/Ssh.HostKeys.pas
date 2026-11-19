@@ -79,6 +79,24 @@ type
     property PublicPoint: string read FPublicPoint;
   end;
 
+  { A host certificate (HostCertificate) with the key it certifies: the
+    certificate's algorithm is offered and it goes as K_S; the key signs
+    (its signature names the plain algorithm, as OpenSSH's do). Owns
+    neither. }
+  TSshCertifiedHostKey = class(TSshHostKey)
+  private
+    FKey: TSshHostKey;
+    FCertificateType: string;
+    FCertificateBlob: string;
+  public
+    constructor Create(Key: TSshHostKey; const CertificateType, CertificateBlob: string);
+    function Algorithm: string; override;
+    function PublicBlob: string; override;
+    function Sign(const Data: string): string; override;
+    function PrivateFields: string; override;
+    property Key: TSshHostKey read FKey;
+  end;
+
   THostKeyArray = array of TSshHostKey;
 
 { The algorithm names of Keys, in order. }
@@ -221,6 +239,34 @@ end;
 function TSshEcdsaP256HostKey.PrivateFields: string;
 begin
   Result := SshString(CurveNameP256) + SshString(FPublicPoint) + SshMpint(FPrivateKey);
+end;
+
+constructor TSshCertifiedHostKey.Create(Key: TSshHostKey; const CertificateType, CertificateBlob: string);
+begin
+  inherited Create;
+  FKey := Key;
+  FCertificateType := CertificateType;
+  FCertificateBlob := CertificateBlob;
+end;
+
+function TSshCertifiedHostKey.Algorithm: string;
+begin
+  Result := FCertificateType;
+end;
+
+function TSshCertifiedHostKey.PublicBlob: string;
+begin
+  Result := FCertificateBlob;
+end;
+
+function TSshCertifiedHostKey.Sign(const Data: string): string;
+begin
+  Result := FKey.Sign(Data);
+end;
+
+function TSshCertifiedHostKey.PrivateFields: string;
+begin
+  Result := FKey.PrivateFields;
 end;
 
 function HostKeyAlgorithms(const Keys: THostKeyArray): TStringArray;
