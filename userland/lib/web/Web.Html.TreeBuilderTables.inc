@@ -305,6 +305,14 @@ begin
   if not CurrentNode.IsHtmlElement(AtomColgroup) then
   begin
     ParseError('unexpected-token-in-column-group');
+    { Only the first character is ignored (a template's column group):
+      the rest of the run is taken afresh. }
+    if Token.Kind = TokenCharacters then
+    begin
+      Delete(Token.Data, 1, FirstCharacterLength(Token.Data));
+      if Token.Data <> '' then
+        DispatchToken(Token);
+    end;
     Exit;
   end;
   FOpenElements.Pop;

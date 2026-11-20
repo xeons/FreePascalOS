@@ -221,3 +221,16 @@
 |         <svg svg>
 |           <svg template>
 |   <body>
+
+#data
+<!DOCTYPE html><template><col>x y</template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <col>
+|         " "
+|   <body>

@@ -21,8 +21,9 @@
   construction against the html5lib-format cases in a directory (whole
   and byte by byte), the encodings, the DOM (mutation algorithms,
   validity checks, collections, attributes, lifetime), event dispatch,
-  serialization, the parser's script hooks, and the parser's speed and
-  memory per node for a generated document.
+  serialization, the parser's script hooks, random documents (whole and
+  byte by byte), and the parser's speed and memory per node for a
+  generated document.
 
     WebTest <tree construction directory>
 
@@ -40,6 +41,7 @@ uses
   WebTest.Dom,
   WebTest.Events,
   WebTest.Serialization,
+  WebTest.Fuzz,
   WebTest.Performance;
 
 begin
@@ -51,6 +53,7 @@ begin
   RunDomTests;
   RunEventTests;
   RunSerializationTests;
+  RunFuzzTests;
   RunPerformanceTests;
   FinishChecks('web test');
 end.

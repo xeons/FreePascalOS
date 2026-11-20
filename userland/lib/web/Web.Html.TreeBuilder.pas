@@ -219,6 +219,15 @@ begin
   Result := Value in [#9, #10, #12, #13, ' '];
 end;
 
+{ The length of the first character of Text (its lead byte and the
+  continuation bytes after it). }
+function FirstCharacterLength(const Text: string): Integer;
+begin
+  Result := 1;
+  while (Result < Length(Text)) and (Result < 4) and ((Ord(Text[Result + 1]) and $C0) = $80) do
+    Inc(Result);
+end;
+
 { The length of the run of whitespace at the start of Text. }
 function LeadingWhitespace(const Text: string): SizeInt;
 begin
