@@ -329,7 +329,13 @@ begin
   FUrlImages[Index].Url := Url;
   FUrlImages[Index].Requested := True;
   if Assigned(FOnImageNeeded) then
+  begin
     FOnImageNeeded(Url, BaseUrl);
+    { A loader that has it at hand gives it at once. }
+    Index := FindUrlImage(Url);
+    if Index >= 0 then
+      Result := FUrlImages[Index].Image;
+  end;
 end;
 
 procedure TDocumentResources.AddListener(Listener: TResourceListener);
