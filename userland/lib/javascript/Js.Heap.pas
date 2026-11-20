@@ -86,7 +86,11 @@ type
     FCellCount: Integer;
     FBytesAllocated: Int64;
     FPeakBytes: Int64;
+    { The interpreter calls its safe point when BytesAllocated passes
+      FThreshold: the collection threshold, or 0 while a sweep is under
+      way (every safe point sweeps a slice). }
     FThreshold: Int64;
+    FCollectThreshold: Int64;
     FMinimumThreshold: Int64;
     FMemoryLimit: Int64;
     FCollections: Integer;
@@ -100,6 +104,7 @@ type
     procedure SweepDyingCells;
     procedure FinishSweep;
     procedure StartCollectionThreshold;
+    procedure SetThreshold(Value: Int64);
   public
     constructor Create;
     destructor Destroy; override;
@@ -122,7 +127,7 @@ type
     property PeakBytes: Int64 read FPeakBytes;
     property CellCount: Integer read FCellCount;
     property Collections: Integer read FCollections;
-    property Threshold: Int64 read FThreshold write FThreshold;
+    property Threshold: Int64 read FThreshold write SetThreshold;
     property MinimumThreshold: Int64 read FMinimumThreshold write FMinimumThreshold;
     { 0: no limit. }
     property MemoryLimit: Int64 read FMemoryLimit write FMemoryLimit;
@@ -141,6 +146,7 @@ begin
   inherited Create;
   FMinimumThreshold := 1024 * 1024;
   FThreshold := FMinimumThreshold;
+  FCollectThreshold := FMinimumThreshold;
 end;
 
 procedure FreeList(Cell: TJsCell);
@@ -223,7 +229,13 @@ end;
 
 function TJsHeap.ShouldCollect: Boolean;
 begin
-  Result := FBytesAllocated >= FThreshold;
+  Result := FBytesAllocated >= FCollectThreshold;
+end;
+
+procedure TJsHeap.SetThreshold(Value: Int64);
+begin
+  FThreshold := Value;
+  FCollectThreshold := Value;
 end;
 
 function TJsHeap.OverLimit: Boolean;
@@ -305,11 +317,12 @@ begin
     { What the survivors hold, measured, and what came since. }
     FSweeping := False;
     FBytesAllocated := FSweepLiveBytes + FBytesSinceSweep;
-    FThreshold := FSweepLiveBytes * 2;
-    if FThreshold < FMinimumThreshold then
-      FThreshold := FMinimumThreshold;
-    if FThreshold < FBytesAllocated then
-      FThreshold := FBytesAllocated + FMinimumThreshold div 2;
+    FCollectThreshold := FSweepLiveBytes * 2;
+    if FCollectThreshold < FMinimumThreshold then
+      FCollectThreshold := FMinimumThreshold;
+    if FCollectThreshold < FBytesAllocated then
+      FCollectThreshold := FBytesAllocated + FMinimumThreshold div 2;
+    FThreshold := FCollectThreshold;
   end;
 end;
 
@@ -328,7 +341,8 @@ begin
   Room := FBytesAllocated div 2;
   if Room < FMinimumThreshold then
     Room := FMinimumThreshold;
-  FThreshold := FBytesAllocated + Room;
+  FCollectThreshold := FBytesAllocated + Room;
+  FThreshold := 0;
 end;
 
 procedure TJsHeap.Collect(Incremental: Boolean);
