@@ -1141,3 +1141,40 @@ Part 2 (style, layout, painting):
 Later phases: loading through libhttp, JavaScript bindings (wrappers in
 the node's rare data, `TScriptHost`, element interface classes via
 `ElementClassFor`).
+
+Part 2, loading side (event loop, fetch, loading, navigation):
+- [x] Event loop: task queues by source, microtasks with an engine hook,
+      delayed tasks, timers with nesting clamps, animation frame callbacks,
+      rendering opportunities, thread-safe posting, WaitForWork
+- [x] Fetch layer over libhttp: modes, credentials, destinations, referrer
+      policy, CORS with preflight cache, mixed content, HSTS, data:,
+      about:blank, file:, MIME sniffing, nosniff, CSP parsed and stored,
+      redirects decided per hop, Sec-Fetch-* fields
+- [x] Document loading: streaming parse, encoding restarts, text and image
+      documents, readyState, DOMContentLoaded/load/pageshow timing, error
+      pages, downloads
+- [x] Subresources: link style sheets with @import chains, img with
+      srcset/sizes/picture (decoded on threads, downscaled), @font-face,
+      favicon, link preload, preload scanner, RFC 9218 priorities
+- [x] Script scheduling (parser-blocking, defer, async, in-order, modules)
+      for a `TScriptExecutor`; nothing runs yet
+- [x] Navigable with session history: navigate, fragments, back/forward,
+      reload, stop, meta refresh, unload events, observer notifications;
+      `TWebPage` for embedders
+- [x] Host test (`make web-load-test`) with an in-process HTTP server
+- [ ] CSP enforcement and Subresource Integrity (stored on requests now)
+- [ ] history.pushState/replaceState and the History/Location bindings
+      (entries have the state slot); bfcache
+- [ ] iframes and nested navigables; form submission (POST navigations are
+      supported by `TNavigateOptions`)
+- [ ] Animated images (only the first frame goes to the sink); decoding
+      images progressively as they arrive
+- [ ] ORB (opaque response blocking) for no-cors responses; blob: URLs
+- [ ] Lazy @font-face loading driven by layout (`TFontLoader.LoadFace`
+      exists; fonts load eagerly by default)
+- [ ] The preload scanner sees only bytes that arrive while the parser
+      waits; the parser's own unparsed input is not scanned
+
+Later phases: libcss adapter and computed style, layout and painting,
+JavaScript bindings (wrappers in the node's rare data, `TScriptHost`,
+element interface classes via `ElementClassFor`).

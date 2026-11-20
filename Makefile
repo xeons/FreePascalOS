@@ -191,7 +191,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test javascript-test web-layout-test webrender
+	quic-test css-test web-test javascript-test web-layout-test webrender web-load-test
 
 all: esp
 
@@ -502,7 +502,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test web-test javascript-test web-layout-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test web-test javascript-test web-layout-test web-load-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -1221,6 +1221,35 @@ http-test: $(HTTP_TEST)
 	@tools/HttpTest/run-interop.sh $(HTTP_TEST) build/tools/http-interop > build/tools/http-interop.out 2>&1 || \
 		{ grep -B2 -A6 "FAIL\|exception" build/tools/http-interop.out; echo "HTTP INTEROP TEST FAILED (build/tools/http-interop.out)"; exit 1; }
 	@tail -n 1 build/tools/http-interop.out
+
+# libweb's loading side on the host (with libhttp, libcss, libimage and
+# what they need): the event loop and timers, the fetch layer's rules
+# (MIME types, data: URLs, sniffing, referrer policy, HSTS, CSP, mixed
+# content, CORS), the fetcher, document loading, subresources and
+# navigation against an in-process HTTP server over in-memory pipes.
+WEB_LOAD_TEST := build/tools/WebLoadTest
+WEB_LOAD_TEST_UNITS := build/tools/web-load-test-units
+WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
+	tools/HttpTest/HttpTest.Pipes.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
+	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
+	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) \
+	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas)
+
+$(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
+	@mkdir -p $(WEB_LOAD_TEST_UNITS)
+	python3 -B userland/lib/web/make-tables.py $(WEB_LOAD_TEST_UNITS)
+	@touch $@
+
+$(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLoadTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest \
+		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fushared -Fishared \
+		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
+
+web-load-test: $(WEB_LOAD_TEST)
+	@$(WEB_LOAD_TEST) > build/tools/web-load-test.out || \
+		{ grep -A2 FAIL build/tools/web-load-test.out | head -100; echo "WEB LOAD TEST FAILED (build/tools/web-load-test.out)"; exit 1; }
+	@echo "WEB LOAD TEST PASSED: $$(tail -n 1 build/tools/web-load-test.out | cut -d ' ' -f 4-)"
 
 # The resolver's EDNS(0) and cache of answers (libsystem) and the network
 # service's DHCP and DHCPv6 messages build for the host too, with range

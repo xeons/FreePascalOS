@@ -9168,11 +9168,13 @@ insertion sort (fine for the dozens of rules that match one element).
 
 libweb (`userland/lib/web`, `libweb.so`, units `Web.*`) is the browser
 engine that both the browser application and the web view control will
-use: the WHATWG Encoding Standard, the HTML parser and the DOM; styling
-through libcss, text through libfont, layout and painting through
-libdrawing and libimage (sections below). Resource loading (through
-libhttp) and the script bindings (libjavascript) are other phases' work.
-`htmldump` and `webrender` (in /bin) are its command line front ends.
+use: the WHATWG Encoding Standard, the HTML parser and the DOM; the
+event loop, fetching through libhttp (the Fetch Standard's rules),
+loading documents and their subresources, and navigation with session
+history; styling through libcss, text through libfont, layout and
+painting through libdrawing and libimage (sections below). The script
+bindings (libjavascript) come with their own units. `htmldump` and
+`webrender` (in /bin) are its command line front ends.
 
 ### Atoms and namespaces
 
@@ -9348,6 +9350,226 @@ tree may be any depth.
 Not yet: the 2025 customizable `<select>` parser changes (the classic
 "in select" modes are implemented), declarative shadow roots on
 `<template shadowrootmode>`, form owners of form-associated elements.
+
+### The event loop
+
+`Web.EventLoop` is a page's event loop (HTML 8.1.7), single threaded:
+everything of its documents runs on the thread that drives it.
+
+- Task queues per task source (`Web.EventLoop.Tasks`: user interaction,
+  DOM manipulation, networking, navigation, history traversal, timer,
+  posted message, rendering). A turn takes the user interaction queue's
+  first task if there is one, otherwise the oldest task of all queues,
+  then does a microtask checkpoint. A task has a group (its document,
+  window or loader); `DiscardTasks` drops a group's tasks when it goes.
+- The microtask queue; the JavaScript engine's jobs go in as
+  microtasks, and `OnMicrotaskCheckpoint` runs after each emptied queue.
+- Delayed tasks (`Web.EventLoop.DelayedTasks`): a binary heap by due
+  time and then by the order set; cancelling by handle leaves the slot
+  to be skipped, and the heap is compacted when cancelled slots
+  outnumber live ones.
+- Timers (`Web.EventLoop.Timers`): setTimeout, setInterval and clear*
+  for a global, with the standard's timer nesting level: above 5 a
+  timeout below 4 ms becomes 4 ms; an interval schedules itself from
+  its own task, so it clamps from its sixth run on; a timer cleared
+  after its task was queued does nothing. Handlers are `TTimerHandler`
+  objects (the bindings will wrap functions and strings).
+- `requestAnimationFrame` (`Web.EventLoop.AnimationFrames`): the
+  callbacks present when a frame starts run, each followed by a
+  microtask checkpoint; ones requested meanwhile wait for the next
+  frame, cancelled ones do not run.
+- Rendering opportunities: the web view calls `RenderingOpportunity`
+  when it can paint; each `TRenderingClient` (a window) runs its frame
+  callbacks and then its `OnUpdateRendering` (layout and paint).
+  `RequestRendering` asks for a frame (`OnRenderingRequested`).
+- Other threads (network completions, image decoders) hand work over
+  with `PostTask`, which is locked: tasks wait in an inbox, and
+  `OnWake` (called on the posting thread) lets a GUI thread post itself
+  a message; `WaitForWork` blocks a dedicated page thread until a task
+  comes or a timer is due. The clock can be replaced (tests drive time
+  by hand).
+
+`Web.IdMaps` is the id to object hash map they use (the system's
+runtime has fgl, not Generics.Collections).
+
+### Fetching
+
+`Web.Fetch.*` is the document side of the Fetch Standard over libhttp,
+decided on the page thread:
+
+| Unit | What it is |
+|---|---|
+| `Web.Fetch.Requests` | `TFetchRequest` (method, URL, fields, body, destination, mode, credentials, redirect and cache modes, referrer and policy, initiator, parser metadata, fetchpriority and the RFC 9218 priority, URL list, tainting) and `TFetchClient` (a document's URL, origin, referrer policy, CSP list, secure context, top-level origin) |
+| `Web.Fetch.Responses` | `TFetchResponse`: type (basic, cors, opaque, opaqueredirect, error), status, fields, URL list, MIME type and the sniffed one |
+| `Web.Fetch.Fetcher` | main fetch, scheme fetch, HTTP fetch, redirects, sniffing before delivery |
+| `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks |
+| `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks) |
+| `Web.Fetch.NetworkContexts` | a profile's libhttp client (connections, cookies, cache), HSTS store, preflight cache, Accept-Language; shared by its pages |
+| `Web.Fetch.MimeTypes` | MIME Sniffing's parser and serializer, Fetch's "extract a MIME type", the type groups |
+| `Web.Fetch.Sniffing` | the MIME type sniffing algorithm, the image context, the Apache bug |
+| `Web.Fetch.DataUrls` | data: URLs with forgiving-base64 |
+| `Web.Fetch.ReferrerPolicy` | the policies, parsing, stripping, "determine request's referrer", potentially trustworthy URLs |
+| `Web.Fetch.Cors` | safelisted methods and headers, preflight decisions and checks, the CORS check, exposed headers, the preflight cache |
+| `Web.Fetch.MixedContent` | upgrades (images, audio, video; everything under upgrade-insecure-requests) and blocking |
+| `Web.Fetch.Hsts` | RFC 6797: the field, known hosts with includeSubDomains, upgrades, saving to text |
+| `Web.Fetch.ContentSecurityPolicy` | CSP 3 policies parsed and stored (field, report-only, meta) |
+| `Web.Fetch.LocalFiles` | file: URL paths, MIME types by extension, folder index pages |
+
+Main fetch computes the Referer (the request's policy, else the
+client's, else strict-origin-when-cross-origin), applies
+upgrade-insecure-requests and the mixed content upgrade, HSTS, then
+blocks the insecure requests left on a secure page (top-level
+navigations excepted). By scheme: about:blank (an empty UTF-8 HTML
+document), data:, file: (only from a file: document or the browser
+itself, read in 64 KiB pieces, folders as an index page), http and
+https. By mode: same-origin requests to another origin fail; no-cors
+ones get an opaque response, which the engine still reads inside
+(images, style sheets) though scripts never will; cors ones need the
+CORS check and, for unsafe methods or headers, a preflight (OPTIONS
+with Access-Control-Request-Method/-Headers, the answer checked and
+cached per origin, URL and credentials for Access-Control-Max-Age, at
+most 7200 s). HTTP fetch adds Accept by destination, Accept-Language,
+Origin (CORS requests and other unsafe methods), Sec-Fetch-Dest, -Mode,
+-Site and -User on trustworthy URLs, cookies and authentication as the
+credentials mode says for that hop, the SameSite context for libhttp's
+jar (top-level navigation, same site as the top-level document, user
+initiated), and the cache mode. libhttp follows no redirect: each one
+is decided here (at most 20, http and https only, no credentials in a
+CORS request's location, the CORS check of a redirect and the origin
+becoming opaque after a cross-origin one, RFC 9110's method changes, a
+Referrer-Policy on the redirect applied) and the new URL goes through
+main fetch again. A response's Strict-Transport-Security is taken
+(https, domain names only), X-Content-Type-Options: nosniff blocks
+scripts and style sheets of the wrong type, the MIME type is extracted,
+and when the request asks (navigations, images) the first 1445 bytes
+are sniffed before the consumer sees the response - only when sniffing
+can change the type (none or unknown, the Apache defaults, images), so
+a typed HTML page streams from its first byte. CSP is parsed into the
+client's list; only upgrade-insecure-requests acts yet.
+
+### Loading documents and subresources
+
+`Web.Loading.Documents` loads one document (`TDocumentLoader`, a
+`TLoadingContext`: the document, window, fetcher, sink, client, base
+URL, settings and the load event delay count that every loader shares):
+
+- HTML streams into the parser as it arrives; a transport charset lets
+  the parser start after three bytes (otherwise it waits for its 1024
+  byte prescan). While the encoding is tentative the bytes are kept; a
+  late meta charset that changes what was decoded empties the tree and
+  parses the kept bytes again in the new encoding (`Restarts`,
+  `OnRestarted`). text/plain and the text-like types become a `<pre>`
+  the decoded text is appended to; images an image document.
+- The end: readyState interactive (readystatechange), the deferred
+  scripts, DOMContentLoaded (bubbling to the window), then, once
+  nothing delays the load event and no async or in-order script waits,
+  readyState complete, load at the window, pageshow. `Abort` stops it
+  all. The DOM's document gained `ReadyState`, `DefaultView` (the window
+  is the parent of its events, except load), `TargetElement` (:target)
+  and a `BrowsingContext` slot.
+- `Web.Loading.Observers` turns tree changes into loads: links, images
+  and picture sources, scripts, base (the base URL is the first base
+  href, kept current), meta (Content-Security-Policy, referrer,
+  refresh), title (title changes are reported once per task).
+
+Subresources, each delaying the load event while it loads:
+
+- Style sheets (`Web.Loading.StyleSheets`): `<link rel=stylesheet>`
+  without alternate or disabled, with its media (non-matching sheets
+  are still fetched, at a low priority), crossorigin and referrerpolicy.
+  The response must be text/css outside quirks mode, is decoded by the
+  CSS fallback rules (`Web.Loading.TextDecoding`: BOM, charset,
+  @charset, the document's encoding), parsed by libcss, and its @import
+  chain loaded (supports() honoured, cycles cut, 16 levels) and hung on
+  the rules before the sink gets the sheet; load or error fires at the
+  link. Parser-inserted sheets block scripts until loaded.
+  `LoadImportsOf` loads the imports of a `<style>` sheet for the style
+  side.
+- Images (`Web.Loading.Images`, `Web.Loading.Srcset`): srcset with x and
+  w descriptors, sizes (media conditions; px, em, rem, vw, vh, vmin,
+  vmax), `<picture>` sources by media and type, chosen for the device
+  pixel ratio; fetched with image sniffing, decoded by libimage on a
+  worker thread (orientation, sRGB), scaled down there when larger than
+  twice the width and height attributes at the pixel ratio (or than
+  MaximumImageSide); the natural size is the original's over the chosen
+  density. load or error at the element; loading=lazy waits for
+  `LoadLazyImage` or the load event. The first six images get the
+  urgency of visible ones.
+- Fonts (`Web.Loading.Fonts`): @font-face src lists (url() and format();
+  local() is the sink's), the first supported source fetched in CORS
+  mode, the next tried on failure; the bytes go to the sink.
+- The favicon (`Web.Loading.Icons`): after parsing, the link rel=icon
+  whose sizes fit 16 CSS pixels at the pixel ratio best (else any, else
+  the last), or /favicon.ico; decoded and handed to the observer.
+- Scripts (`Web.Loading.Scripts`): "prepare the script element" without
+  running anything - a `TScriptExecutor` (the JavaScript engine) runs
+  them; without one scripting is off and noscript parses as markup.
+  Classic, module and importmap types, nomodule, external fetches
+  (classic ones no-cors or by crossorigin, decoded by charset or the
+  document's encoding; modules in CORS mode, UTF-8), and the standard's
+  lists: the pending parsing-blocking script (the parser pauses until it
+  is fetched and no style sheet blocks scripts), deferred scripts and
+  parser-inserted modules after parsing in order, async ones as they
+  come, script-inserted ones in order. load and error at the element.
+  `FetchScript` is for the executor's module imports.
+- `Web.Loading.Preloads`: `<link rel=preload>` and the preload scanner,
+  which reads the bytes that arrive while the parser waits for a script
+  (link stylesheet and preload, script src, img src and srcset, base)
+  and starts their fetches at urgency 6; the real loader claims such a
+  fetch (done or still arriving) instead of fetching again.
+- Priorities (`Web.Loading.Priorities`): the document 0; render-blocking
+  sheets and parser-blocking scripts 1; fonts and other sheets 2;
+  visible images and async scripts 3; deferred scripts 4; other images
+  and non-matching sheets 5; speculative fetches 6; icons 7;
+  fetchpriority moves one step; documents and images are incremental.
+
+The style and layout side gets the results through `TResourceSink`
+(`Web.Loading.ResourceSink`): `StyleSheetLoaded` (the sink owns the
+sheet, imports in place), `StyleSheetRemoved`, `ImportsLoaded`,
+`ImageLoaded` (the sink owns the image; natural size, density, URL),
+`ImageFailed`, `ImageRemoved`, `FontLoaded`, `FontFailed`,
+`FontFormatSupported` and `MediaEnvironment` (viewport, pixel ratio,
+preferences). `TNullResourceSink` drops everything.
+
+### Navigation
+
+`Web.Navigation.Navigables` is a top-level navigable (a tab, a web
+view): its active document, window (`Web.Navigation.Windows`: the event
+target the bindings will wrap, owner of the timers and frame callbacks)
+and session history (`Web.Navigation.SessionHistory`: entries with URL,
+title, scroll position, document id and a pushState slot; at most 50).
+`Navigate` only scrolls for a fragment change (a new entry of the same
+document, :target, hashchange); otherwise it fires beforeunload (asking
+the observer when the page wants to stay), fetches the navigation
+request (navigate mode, credentials included, sniffed) and makes the
+response the new document - HTML, text, an image, a network error page
+(`Web.Navigation.ErrorPages`), nothing for 204 and 205, a download for
+attachments and types it cannot show - after pagehide and unload of the
+old one, whose timers and fetches stop. `Back`, `Forward` and
+`Traverse` go between entries (same-document ones without loading:
+popstate, hashchange; others load again preferring the cache), `Reload`
+revalidates (or bypasses the cache), `Stop` stops, and a meta refresh
+navigates after the load, replacing the entry. The first document is
+about:blank, replaced by the first navigation. `TNavigableObserver`
+tells the browser or web view: `LocationChanged`, `TitleChanged`,
+`LoadingStateChanged` (requesting, receiving, interactive, complete),
+`DocumentChanged`, `FaviconChanged`, `HistoryChanged`,
+`ScrollToFragment`, `RestoreScrollPosition`, `ConfirmUnload`,
+`DownloadRequested`, `NavigationFailed`; the web view saves the scroll
+position with `SaveScrollPosition` before leaving.
+
+`Web.Navigation.Pages` (`TWebPage`) puts a loop, a fetcher over a shared
+`TNetworkContext` and the navigable together for an embedder: set
+`OnWake` (called on any thread: post yourself a message) and
+`OnRenderingRequested`, call `ProcessPendingWork(BudgetMilliseconds)` on
+that message, on a timer after `MillisecondsUntilNextTimer`, or when
+idle, and `RenderingOpportunity` when a frame can be painted. `Run`
+waits for work itself (programs without a GUI loop).
+
+Not yet: CSP enforcement and Subresource Integrity (both are stored on
+the request), ORB, bfcache, pushState/replaceState (the entries have the
+slot), iframes (one navigable per page), form submission, Service
+Workers, blob: URLs, animated images (the first frame is shown).
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
 prints its tree in the html5lib format (`-s` the serialization, `-e`
@@ -9678,6 +9900,28 @@ gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, scrollbars (the web view draws
 them from ScrollContainers), incremental display list updates (it is
 rebuilt whole when anything changes).
+
+`make web-load-test` (in `make test`) builds `tools/WebLoadTest` with
+libhttp, libcss, libimage and what they need, with range checks. It
+checks the event loop with a hand-driven clock (tasks against
+microtasks, sources, timer order, clearing, nesting clamps for
+timeouts and intervals, frame callbacks, 200 tasks posted from another
+thread, dropping a group, the id map), the fetch layer's rules (MIME
+types, data: URLs and base64, sniffing, every referrer policy, HSTS,
+CSP, mixed content, CORS and preflights), the fetcher against an
+in-process site (a libhttp connector of in-memory pipes to HTTP/1.1
+server threads whose routes can send bodies in pieces behind a gate:
+the fields sent, redirects and their limits, CORS with a cached
+preflight, mixed content blocked before any request, HSTS, schemes,
+sniffing, nosniff, file: in pieces, cancelling), and documents through
+a navigable with a recording sink, observer and script executor: the
+first piece parsed before the rest arrives, readyState and events in
+order, style sheets with imports, media, alternate and disabled holding
+the load event, fonts, srcset at a pixel ratio of 2, downscaling, the
+favicon, a late meta charset restarting the parse, text and error
+documents, downloads, scripts in order with the preload scanner
+fetching ahead, unload events, and history (fragments, back, forward,
+reload).
 
 ## The AArch64 port
 

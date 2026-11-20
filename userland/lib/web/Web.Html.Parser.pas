@@ -92,6 +92,7 @@ type
     FCollectErrors: Boolean;
     FUnsupportedEncoding: Boolean;
     procedure DecideEncoding;
+    function TransportCharsetKnown: Boolean;
     procedure DecodeIntoInput(Bytes: PByte; Count: SizeInt; Flush: Boolean);
     procedure Pump;
     procedure HandleScriptEnd(Script: TElement);
@@ -138,6 +139,8 @@ type
     property CollectErrors: Boolean read FCollectErrors write FCollectErrors;
     property ErrorCodes: TStringList read FErrorCodes;
     property Ended: Boolean read FEnded;
+    { The encoding is known and bytes are being decoded. }
+    property EncodingDecided: Boolean read FEncodingDecided;
   end;
 
 { Parses a whole document from bytes: sniffing, and a restart when a meta
@@ -255,6 +258,13 @@ begin
   FInput.Append(FDecoded.Data, FDecoded.Length);
 end;
 
+function THtmlParser.TransportCharsetKnown: Boolean;
+var
+  Labelled: TTextEncoding;
+begin
+  Result := (FTransportCharset <> '') and EncodingForLabel(FTransportCharset, Labelled);
+end;
+
 procedure THtmlParser.WriteBytes(Bytes: PByte; Count: SizeInt);
 var
   Pending: string;
@@ -266,7 +276,10 @@ begin
     SetLength(Pending, Count);
     Move(Bytes^, Pending[1], Count);
     FPendingBytes := FPendingBytes + Pending;
-    if Length(FPendingBytes) < PrescanLength then
+    { A transport charset decides it once a byte order mark could be
+      seen; otherwise the prescan wants its 1024 bytes. }
+    if (Length(FPendingBytes) < PrescanLength) and
+       not ((Length(FPendingBytes) >= 3) and TransportCharsetKnown) then
       Exit;
     DecideEncoding;
     Pending := FPendingBytes;
