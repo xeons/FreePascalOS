@@ -92,6 +92,8 @@ type
     function Add(EventType: TAtom; Callback: TEventListener; const Options: TEventListenerOptions): Boolean;
     function Remove(EventType: TAtom; Callback: TEventListener; Capture: Boolean): Boolean;
     function HasListenersFor(EventType: TAtom): Boolean;
+    { The entry at Index (0 based, below Count). }
+    function EntryAt(Index: Integer): TListenerEntry; inline;
     property Count: Integer read FCount;
   end;
 
@@ -116,6 +118,8 @@ type
     FInitialized: Boolean;
     FTimeStamp: Double;
     FPath: TEventTargetArray;
+    FReferenceCount: Integer;
+    FScriptWrapper: Pointer;
     procedure SetTarget(NewTarget: TEventTarget);
     procedure SetRelatedTarget(NewTarget: TEventTarget);
     function GetEventTypeName: string;
@@ -126,6 +130,11 @@ type
   public
     constructor Create(const TypeName: string; CanBubble: Boolean = False; IsCancelable: Boolean = False);
     destructor Destroy; override;
+    { References: the creator holds the first; Release frees the event at
+      the last (the script bindings hold one per wrapper). Free still
+      works for an event nothing else holds. }
+    procedure Retain;
+    procedure Release;
     procedure StopPropagation;
     procedure StopImmediatePropagation;
     procedure PreventDefault;
@@ -148,6 +157,9 @@ type
     property ReturnValue: Boolean read GetReturnValue write SetReturnValue;
     property TimeStamp: Double read FTimeStamp write FTimeStamp;
     property IsDispatching: Boolean read FDispatching;
+    { The script binding's wrapper (EventDestroyedHook tells it when the
+      event goes). }
+    property ScriptWrapper: Pointer read FScriptWrapper write FScriptWrapper;
   end;
 
   TEventTarget = class
@@ -168,6 +180,8 @@ type
     function RemoveEventListener(const TypeName: string; Callback: TEventListener;
       UseCapture: Boolean = False): Boolean;
     function HasEventListeners(const TypeName: string): Boolean;
+    { The target's listener list (for the script bindings). }
+    function ListenerList(CreateIfMissing: Boolean = False): TEventListenerList;
     { Dispatches an event: False if a listener canceled it. }
     function DispatchEvent(Event: TEvent): Boolean;
   end;
@@ -175,6 +189,8 @@ type
 var
   { How many listener calls ended in an exception (for tests). }
   ListenerExceptionCount: Integer = 0;
+  { Called when an event with a script wrapper is freed. }
+  EventDestroyedHook: procedure(Event: TEvent) = nil;
 
 implementation
 
@@ -292,6 +308,11 @@ begin
     Removed[Index - 1].Free;
 end;
 
+function TEventListenerList.EntryAt(Index: Integer): TListenerEntry;
+begin
+  Result := FEntries[Index];
+end;
+
 function TEventListenerList.HasListenersFor(EventType: TAtom): Boolean;
 var
   Index: Integer;
@@ -309,13 +330,28 @@ begin
   FBubbles := CanBubble;
   FCancelable := IsCancelable;
   FInitialized := True;
+  FReferenceCount := 1;
 end;
 
 destructor TEvent.Destroy;
 begin
+  if (FScriptWrapper <> nil) and Assigned(EventDestroyedHook) then
+    EventDestroyedHook(Self);
   SetTarget(nil);
   SetRelatedTarget(nil);
   inherited Destroy;
+end;
+
+procedure TEvent.Retain;
+begin
+  Inc(FReferenceCount);
+end;
+
+procedure TEvent.Release;
+begin
+  Dec(FReferenceCount);
+  if FReferenceCount <= 0 then
+    Free;
 end;
 
 procedure TEvent.SetTarget(NewTarget: TEventTarget);
@@ -462,6 +498,11 @@ begin
   if (List = nil) or (Callback = nil) then
     Exit(False);
   Result := List.Remove(Atomize(TypeName), Callback, UseCapture);
+end;
+
+function TEventTarget.ListenerList(CreateIfMissing: Boolean): TEventListenerList;
+begin
+  Result := GetListenerList(CreateIfMissing);
 end;
 
 function TEventTarget.HasEventListeners(const TypeName: string): Boolean;

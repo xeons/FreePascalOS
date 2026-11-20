@@ -506,6 +506,7 @@ type
     FTemplateContentsOwner: TDocument;
     FIsTemplateContentsOwner: Boolean;
     FScriptingEnabled: Boolean;
+    FDefaultView: TEventTarget;
     function GetDocumentElement: TElement;
     function GetDoctype: TDocumentType;
     function GetHead: TElement;
@@ -529,6 +530,7 @@ type
     function GetTextContent: string; override;
     procedure SetTextContent(const Value: string); override;
     function CloneSelf(Document: TDocument): TNode; override;
+    function GetTheParent(Event: TEvent): TEventTarget; override;
   public
     { A new document; the caller holds its first reference (Release). }
     constructor CreateDocument(HtmlDocument: Boolean = True);
@@ -573,6 +575,9 @@ type
     property Body: TElement read GetBody;
     property Title: string read GetTitle;
     property ScriptingEnabled: Boolean read FScriptingEnabled write FScriptingEnabled;
+    { The window: the parent of the document in event paths (but for
+      load events). Kept by whoever made it (the script context). }
+    property DefaultView: TEventTarget read FDefaultView write FDefaultView;
   end;
 
   { NodeList: live (a node's children) or a fixed list. }

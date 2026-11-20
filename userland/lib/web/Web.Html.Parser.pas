@@ -328,21 +328,21 @@ end;
 
 procedure THtmlParser.HandleScriptEnd(Script: TElement);
 var
-  HadInsertionPoint: Boolean;
   Blocking: Boolean;
 begin
   if FScriptHost = nil then
     Exit;
-  HadInsertionPoint := FInput.HasInsertionPoint;
+  { The old insertion point comes back after the script (and the limit
+    of a document.write run the script end tag was in). }
+  FInput.SaveInsertionState;
   FInput.SetInsertionPointHere;
   Inc(FScriptNestingLevel);
   try
     Blocking := FScriptHost.ScriptEndTagReached(Self, Script);
   finally
     Dec(FScriptNestingLevel);
+    FInput.RestoreInsertionState;
   end;
-  if not HadInsertionPoint then
-    FInput.ClearInsertionPoint;
   if Blocking then
   begin
     FPaused := True;
@@ -363,11 +363,12 @@ begin
   FInput.InsertAtInsertionPoint(Text);
   if FPaused or not FInput.HasInsertionPoint then
     Exit;
+  FInput.SaveInsertionState;
   FInput.LimitToInsertionPoint;
   try
     FTokenizer.Run;
   finally
-    FInput.RemoveLimit;
+    FInput.RestoreInsertionState;
   end;
 end;
 

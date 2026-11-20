@@ -534,6 +534,14 @@ begin
     FObservers[Index - 1].CharacterDataChanged(Node, OldValue);
 end;
 
+function TDocument.GetTheParent(Event: TEvent): TEventTarget;
+begin
+  if Event.EventType = AtomizeLowerCase('load') then
+    Result := nil
+  else
+    Result := FDefaultView;
+end;
+
 procedure TDocument.SubtreeConnected(Root: TNode);
 var
   Node: TNode;
