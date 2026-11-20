@@ -120,6 +120,9 @@ type
     kwLight, kwDark, kwPanX, kwPanY, kwPinchZoom, kwManipulation, kwScrollPosition,
     kwButton, kwTextfield, kwMenulistButton, kwSearchfield, kwTextarea, kwCheckbox, kwRadio,
     kwMenulist, kwListbox, kwMeter, kwProgressBar, kwPushButton, kwSquareButton, kwBothEdges,
+    { SVG painting }
+    kwNonzero, kwEvenodd, kwButt, kwMiter, kwMiterClip, kwBevel, kwArcs, kwContextFill, kwContextStroke,
+    kwMarkers, kwNonScalingStroke,
     { tables }
     kwSeparate, kwShow, kwHide,
     { transitions and animations }

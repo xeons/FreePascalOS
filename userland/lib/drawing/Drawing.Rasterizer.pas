@@ -66,6 +66,12 @@ type
     Count: LongInt;
   end;
 
+  { Which points an outline encloses: those it winds round at all
+    (non-zero), or those it winds round an odd number of times. }
+  TFillRule = (FillRuleNonZero, FillRuleEvenOdd);
+
+  TCoverageBytes = array of Byte;
+
 function PrecisePoint(X, Y: Double): TPrecisePoint;
 procedure BeginShape(out Shape: TCoverageShape);
 procedure AddShapeEdge(var Shape: TCoverageShape; FromX, FromY, ToX, ToY: Double);
@@ -87,6 +93,12 @@ procedure FillShape(const Canvas: TCanvas; const Shape: TCoverageShape; Color: T
 { How much of each pixel of Area (canvas coordinates) the shape covers,
   0 to 255, row by row: for tests and for masks. }
 procedure ShapeCoverage(const Shape: TCoverageShape; const Area: TRectangle; out Coverage: array of Byte);
+{ The same under either fill rule, in a new array (Area's width times its
+  height), for painting with something other than one colour
+  (Drawing.PaintFilling) and for clipping masks. }
+function ShapeCoverageBytes(const Shape: TCoverageShape; const Area: TRectangle; Rule: TFillRule): TCoverageBytes;
+{ The pixels of the canvas (surface coordinates) the shape's edges reach. }
+function ShapeSurfaceBounds(const Shape: TCoverageShape; OffsetX, OffsetY: LongInt): TRectangle;
 
 implementation
 
@@ -534,6 +546,55 @@ begin
         RunStart := Column;
         RunValue := Value;
       end;
+    end;
+  end;
+end;
+
+{ A running sum under the even-odd rule: odd windings cover, even ones
+  do not, and a pixel between counts as far as it is from even. }
+function EvenOddCoverageOf(Sum: Double): Byte;
+begin
+  Sum := Abs(Sum);
+  Sum := Sum - 2 * Trunc(Sum / 2);
+  if Sum > 1 then
+    Sum := 2 - Sum;
+  Result := Byte(Trunc(Sum * 255 + 0.5));
+end;
+
+function ShapeSurfaceBounds(const Shape: TCoverageShape; OffsetX, OffsetY: LongInt): TRectangle;
+begin
+  Result := ShapeBounds(Shape, OffsetX, OffsetY);
+end;
+
+function ShapeCoverageBytes(const Shape: TCoverageShape; const Area: TRectangle; Rule: TFillRule): TCoverageBytes;
+var
+  Accumulation: TAccumulation;
+  Row: LongInt;
+  Column: LongInt;
+  Sum: Double;
+  Index: LongInt;
+  Width: LongInt;
+begin
+  Result := nil;
+  if RectangleIsEmpty(Area) then
+    Exit;
+  Width := RectangleWidth(Area);
+  SetLength(Result, Width * RectangleHeight(Area));
+  if Shape.Count = 0 then
+    Exit;
+  AccumulateShape(Shape, Area, 0, 0, Accumulation);
+  Index := 0;
+  for Row := 0 to RectangleHeight(Area) - 1 do
+  begin
+    Sum := 0;
+    for Column := 0 to Width - 1 do
+    begin
+      Sum := Sum + Accumulation.Cells[Row * Accumulation.Stride + Column];
+      if Rule = FillRuleEvenOdd then
+        Result[Index] := EvenOddCoverageOf(Sum)
+      else
+        Result[Index] := CoverageOf(Sum);
+      Inc(Index);
     end;
   end;
 end;

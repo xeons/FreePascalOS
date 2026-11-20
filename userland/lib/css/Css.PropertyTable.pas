@@ -314,6 +314,33 @@ const
     (Group: pgUi; Initial: 'auto'; Grammar: 'auto | thin | none'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgUi; Initial: 'auto'; Grammar: 'auto | {stable both-edges}'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgUi; Initial: 'auto'; Grammar: '@scrollbar-color'; Compute: cmpValue; Animation: atColor),
+    { SVG painting, inherited }
+    (Group: pgInheritedSvg; Initial: 'black'; Grammar: '@paint'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'nonzero'; Grammar: 'nonzero | evenodd'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'none'; Grammar: '@paint'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '1px'; Grammar: '<length-percentage+> | <number+>'; Compute: cmpLength;
+      Animation: atLength),
+    (Group: pgInheritedSvg; Initial: 'butt'; Grammar: 'butt | round | square'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'miter'; Grammar: 'miter | miter-clip | round | bevel | arcs';
+      Compute: cmpKeyword; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '4'; Grammar: '<number+>'; Compute: cmpNumber; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'none'; Grammar: '@stroke-dasharray'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '0'; Grammar: '<length-percentage> | <number>'; Compute: cmpLength;
+      Animation: atLength),
+    (Group: pgInheritedSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'nonzero'; Grammar: 'nonzero | evenodd'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'start'; Grammar: 'start | middle | end'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'normal'; Grammar: 'normal | {fill stroke markers}'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    { SVG, not inherited }
+    (Group: pgSvg; Initial: 'black'; Grammar: '<color>'; Compute: cmpColor; Animation: atColor),
+    (Group: pgSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgSvg; Initial: 'none'; Grammar: 'none | non-scaling-stroke'; Compute: cmpKeyword; Animation: atDiscrete),
     { transitions and animations }
     (Group: pgAnimation; Initial: 'all'; Grammar: '@transition-property'; Compute: cmpValue; Animation: atNone),
     (Group: pgAnimation; Initial: '0s'; Grammar: '#<time+>'; Compute: cmpValue; Animation: atNone),
