@@ -41,6 +41,16 @@
 
   MemoryLimit (bytes, 0 for none) and Interrupt (from any thread) stop
   a script with an uncatchable InternalError.
+
+  Binary data without copies: NewArrayBuffer makes a zeroed buffer the
+  host fills through BufferSourceData (which also gives the bytes of a
+  typed array or DataView); NewExternalArrayBuffer wraps memory the
+  host owns, calling its free procedure when the buffer dies or is
+  detached; DetachArrayBuffer takes a buffer's bytes away (transfer).
+  A data pointer is valid until JavaScript next runs (a resizable
+  buffer may move). The element kinds (taUint8...) are in
+  Js.ArrayBuffers; native callbacks, which have only the realm, use its
+  NewArrayBuffer and Js.Builtins.TypedArrays.NewTypedArray directly.
 }
 unit Js.Engine;
 
@@ -65,6 +75,7 @@ uses
   Js.Compiler,
   Js.Inspect,
   Js.Interpreter,
+  Js.ArrayBuffers,
   Js.Intrinsics;
 
 type
@@ -74,6 +85,8 @@ type
   TJsNativeCallback = Js.Functions.TJsNativeCallback;
   TJsNativeMethod = Js.Functions.TJsNativeMethod;
   TJsNativeFunction = Js.Functions.TJsNativeFunction;
+  TJsTypedArrayKind = Js.ArrayBuffers.TJsTypedArrayKind;
+  TJsBufferFreeProc = Js.ArrayBuffers.TJsBufferFreeProc;
 
   { An uncaught JavaScript exception (or a syntax error), as text. }
   EJsError = class(Exception)
@@ -171,6 +184,32 @@ type
     function DefineMethod(Target: TJsObject; const Name: string; Method: TJsNativeMethod;
       Length: Integer): TJsNativeFunction;
     procedure DefineValue(Target: TJsObject; const Name: string; Value: TJsValue);
+
+    { Binary data. A zeroed ArrayBuffer of ByteLength bytes (EJsError
+      RangeError when it cannot be had). }
+    function NewArrayBuffer(ByteLength: SizeInt): TJsValue;
+    { An ArrayBuffer holding a copy of the bytes. }
+    function NewArrayBufferFrom(Data: Pointer; ByteLength: SizeInt): TJsValue;
+    { An ArrayBuffer on the host's memory, no copy; FreeProc (nil: none)
+      is called with Context when the buffer dies or is detached. }
+    function NewExternalArrayBuffer(Data: Pointer; ByteLength: SizeInt; FreeProc: TJsBufferFreeProc;
+      Context: Pointer): TJsValue;
+    { A typed array viewing Buffer (Length < 0: to the end, tracking a
+      resizable buffer); raises EJsError on bad offsets. }
+    function NewTypedArray(Kind: TJsTypedArrayKind; Buffer: TJsValue; ByteOffset: SizeInt;
+      Length: SizeInt = -1): TJsValue;
+    { A new Uint8Array with a copy of the bytes. }
+    function NewUint8Array(Data: Pointer; ByteLength: SizeInt): TJsValue;
+    { The bytes of an ArrayBuffer, SharedArrayBuffer, typed array or
+      DataView (views: their window); False for anything else or a
+      detached one. }
+    function BufferSourceData(Value: TJsValue; out Data: PByte; out ByteLength: SizeInt): Boolean;
+    { Detaches an ArrayBuffer and gives the caller its bytes (free them
+      with FreeMem); False when Value is not an attached ArrayBuffer. }
+    function DetachArrayBuffer(Value: TJsValue; out Data: Pointer; out ByteLength: SizeInt): Boolean;
+    function IsArrayBuffer(Value: TJsValue): Boolean;
+    function IsTypedArray(Value: TJsValue): Boolean;
+
     { A class: a constructor named Name on the global object (Callback
       handles new; nil makes it not constructible from scripts). }
     function DefineClass(const Name: string; Callback: TJsNativeCallback; Length: Integer;
@@ -502,6 +541,85 @@ end;
 procedure TJsEngine.DefineValue(Target: TJsObject; const Name: string; Value: TJsValue);
 begin
   Target.DefineData(FRealm, FRealm.Intern(Name), Value, PropertyHidden);
+end;
+
+function TJsEngine.NewArrayBuffer(ByteLength: SizeInt): TJsValue;
+var
+  Buffer: TJsArrayBuffer;
+begin
+  Buffer := Js.ArrayBuffers.NewArrayBuffer(FRealm, FRealm.Intrinsics[inArrayBufferPrototype], ByteLength);
+  if Buffer = nil then
+    RaiseException;
+  Result := JsObjectValue(Buffer);
+end;
+
+function TJsEngine.NewArrayBufferFrom(Data: Pointer; ByteLength: SizeInt): TJsValue;
+var
+  Bytes: PByte;
+  Count: SizeInt;
+begin
+  Result := NewArrayBuffer(ByteLength);
+  if (ByteLength > 0) and BufferSourceData(Result, Bytes, Count) then
+    Move(Data^, Bytes^, ByteLength);
+end;
+
+function TJsEngine.NewExternalArrayBuffer(Data: Pointer; ByteLength: SizeInt; FreeProc: TJsBufferFreeProc;
+  Context: Pointer): TJsValue;
+begin
+  Result := JsObjectValue(Js.ArrayBuffers.NewExternalArrayBuffer(FRealm, Data, ByteLength, FreeProc, Context));
+end;
+
+function TJsEngine.NewTypedArray(Kind: TJsTypedArrayKind; Buffer: TJsValue; ByteOffset: SizeInt;
+  Length: SizeInt): TJsValue;
+var
+  Arguments: array[0..2] of TJsValue;
+  Count: Integer;
+begin
+  Arguments[0] := Buffer;
+  Arguments[1] := JsNumber(ByteOffset);
+  Arguments[2] := JsNumber(Length);
+  Count := 3;
+  if Length < 0 then
+    Count := 2;
+  Result := Construct(JsObjectValue(FRealm.Intrinsics[TypedArrayConstructors[Kind]]), Arguments[0..Count - 1]);
+end;
+
+function TJsEngine.NewUint8Array(Data: Pointer; ByteLength: SizeInt): TJsValue;
+var
+  Buffer: TJsValue;
+  Mark: Integer;
+begin
+  Buffer := NewArrayBufferFrom(Data, ByteLength);
+  Mark := FRuntime.PushRoot(Buffer);
+  try
+    Result := NewTypedArray(taUint8, Buffer, 0, ByteLength);
+  finally
+    FRuntime.PopRoots(Mark);
+  end;
+end;
+
+function TJsEngine.BufferSourceData(Value: TJsValue; out Data: PByte; out ByteLength: SizeInt): Boolean;
+begin
+  Result := BufferSourceBytes(Value, Data, ByteLength);
+end;
+
+function TJsEngine.DetachArrayBuffer(Value: TJsValue; out Data: Pointer; out ByteLength: SizeInt): Boolean;
+begin
+  Data := nil;
+  ByteLength := 0;
+  if not IsArrayBuffer(Value) or TJsArrayBuffer(JsAsObject(Value)).Shared then
+    Exit(False);
+  Result := TakeArrayBufferData(FRealm, TJsArrayBuffer(JsAsObject(Value)), Data, ByteLength);
+end;
+
+function TJsEngine.IsArrayBuffer(Value: TJsValue): Boolean;
+begin
+  Result := JsIsObject(Value) and (JsAsObject(Value) is TJsArrayBuffer);
+end;
+
+function TJsEngine.IsTypedArray(Value: TJsValue): Boolean;
+begin
+  Result := JsIsObject(Value) and (JsAsObject(Value) is TJsTypedArray);
 end;
 
 function HostConstructorRefused(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;

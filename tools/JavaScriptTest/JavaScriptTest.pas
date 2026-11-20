@@ -45,6 +45,7 @@ uses
   Js.Functions,
   Js.Operations,
   Js.Interpreter,
+  Js.ArrayBuffers,
   Js.Engine;
 
 { The counting memory manager }
@@ -344,6 +345,65 @@ type
 
 var
   PointClass: TJsHostClass;
+  ExternalFreed: Integer;
+
+procedure FreeExternalBytes(Data: Pointer; ByteLength: SizeInt; Context: Pointer);
+begin
+  Inc(ExternalFreed);
+  FreeMem(Data);
+end;
+
+{ ArrayBuffers made and read from Pascal without copies. }
+procedure TestBinaryData;
+var
+  Engine: TJsEngine;
+  Buffer, View, Value: TJsValue;
+  Data: PByte;
+  Taken: Pointer;
+  Length: SizeInt;
+  Memory: PByte;
+  Index: Integer;
+begin
+  ExternalFreed := 0;
+  Engine := TJsEngine.Create;
+  try
+    Buffer := Engine.NewArrayBuffer(4);
+    Check(Engine.BufferSourceData(Buffer, Data, Length) and (Length = 4), 'api: new ArrayBuffer');
+    for Index := 0 to 3 do
+      Data[Index] := Index + 10;
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'hostBuffer', Buffer);
+    Value := Engine.Evaluate('new Uint8Array(hostBuffer).join()');
+    Check(Engine.ToText(Value) = '10,11,12,13', 'api: script sees the host''s bytes');
+    View := Engine.Evaluate('const v = new Uint8Array(8); v.set([1, 2, 3, 4, 5], 2); v.subarray(2, 5)');
+    Check(Engine.IsTypedArray(View) and Engine.BufferSourceData(View, Data, Length) and (Length = 3) and
+      (Data[0] = 1) and (Data[2] = 3), 'api: bytes of a typed array view');
+    Memory := GetMem(3);
+    Memory[0] := 7;
+    Memory[1] := 8;
+    Memory[2] := 9;
+    Buffer := Engine.NewExternalArrayBuffer(Memory, 3, @FreeExternalBytes, nil);
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'external', Buffer);
+    Value := Engine.Evaluate('new Uint8Array(external).reduce((a, b) => a + b) + external.byteLength');
+    Check(Engine.ToNumber(Value) = 27, 'api: external ArrayBuffer');
+    Engine.Evaluate('external.transfer(); external = null');
+    Engine.CollectGarbage;
+    Check(ExternalFreed = 1, 'api: external memory freed once when the buffer goes');
+    View := Engine.NewUint8Array(Memory, 0);
+    Check(Engine.IsTypedArray(View), 'api: empty Uint8Array');
+    Buffer := Engine.Evaluate('globalThis.taken = new Uint8Array([4, 5, 6]).buffer; taken');
+    Check(Engine.DetachArrayBuffer(Buffer, Taken, Length) and (Length = 3) and (PByte(Taken)[2] = 6),
+      'api: detach takes the bytes');
+    FreeMem(Taken);
+    Value := Engine.Evaluate('taken.detached && taken.byteLength === 0');
+    Check(Value = JsTrue, 'api: the detached buffer in the script');
+    View := Engine.NewTypedArray(taInt16, Engine.NewArrayBuffer(8), 2, 2);
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'shorts', View);
+    Value := Engine.Evaluate('shorts.length + shorts.byteOffset + (shorts instanceof Int16Array ? 100 : 0)');
+    Check(Engine.ToNumber(Value) = 104, 'api: typed array on a host buffer');
+  finally
+    Engine.Free;
+  end;
+end;
 
 procedure TApiFixture.Finalize(HostClass: TJsHostClass; NativeData: Pointer);
 begin
@@ -501,6 +561,7 @@ begin
     for Index := 0 to Files.Count - 1 do
       RunScript(Files[Index]);
     TestEmbedding;
+    TestBinaryData;
     Files.Clear;
     if FindFirst(BenchmarkDirectory + '*.js', faAnyFile, Search) = 0 then
     begin

@@ -71,6 +71,7 @@ uses
   Js.Conversions,
   Js.Operations,
   Js.Promises,
+  Js.ArrayBuffers,
   Js.Bytecode;
 
 const
@@ -161,6 +162,8 @@ type
     function ForInNext(Iterator: TJsForInIterator; out Key: TJsValue): Integer;
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
+    function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
+    function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
   public
@@ -176,6 +179,16 @@ type
     WeakState: TObject;
     { For console.time: milliseconds now (Js.Platform). }
     ConsoleIndent: Integer;
+    { What a typed array's length getter is found through, as installed:
+      the kinds' prototypes' shape, %TypedArray%.prototype's shape, the
+      slot of its length accessor and the getter (TypedArrayLengthIntact
+      lets the interpreter read the length directly while they hold). }
+    TypedArrayKindShape: TJsShape;
+    TypedArrayPrototypeShape: TJsShape;
+    TypedArrayLengthSlot: Integer;
+    TypedArrayLengthGetter: TJsValue;
+    { %TypedArray%.prototype.values. }
+    TypedArrayValues: TJsValue;
     constructor Create(ARuntime: TJsRuntime; StackCapacity: Integer = DefaultStackCapacity;
       MaximumFrames: Integer = DefaultMaximumFrames);
     destructor Destroy; override;
@@ -251,6 +264,8 @@ end;
 constructor TJsInterpreterRealm.Create(ARuntime: TJsRuntime; StackCapacity: Integer; MaximumFrames: Integer);
 begin
   inherited Create(ARuntime);
+  TypedArrayLengthGetter := JsUndefined;
+  TypedArrayValues := JsUndefined;
   FStackCapacity := StackCapacity;
   FStack := GetMem(StackCapacity * SizeOf(TJsValue));
   FMaximumFrames := MaximumFrames;
@@ -288,6 +303,10 @@ begin
   end;
   Tracer.MarkCell(FunctionShape);
   Tracer.MarkCell(GlobalLexicals);
+  Tracer.MarkCell(TypedArrayKindShape);
+  Tracer.MarkCell(TypedArrayPrototypeShape);
+  Tracer.MarkValue(TypedArrayLengthGetter);
+  Tracer.MarkValue(TypedArrayValues);
   Tracer.MarkValues(@UnhandledRejections[0], Length(UnhandledRejections));
 end;
 
@@ -361,6 +380,57 @@ begin
     end;
   end;
   Result := True;
+end;
+
+{ The length an array or typed array iterated by index has now. }
+function FastIterationLength(Target: TJsObject): Int64; inline;
+begin
+  if Target.ObjectClass = ocTypedArray then
+    Result := TJsTypedArray(Target).CurrentLength
+  else
+    Result := TJsArray(Target).ArrayLength;
+end;
+
+{ for-of over a typed array whose iteration nobody changed: iterated by
+  index like a plain array. }
+function TJsInterpreterRealm.IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
+var
+  Target, KindPrototype, Prototype: TJsObject;
+  Slot: Integer;
+  Flags: Byte;
+begin
+  Result := False;
+  if not JsIsObject(Value) then
+    Exit;
+  Target := JsAsObject(Value);
+  if (Target.ObjectClass <> ocTypedArray) or TJsTypedArray(Target).IsOutOfBounds then
+    Exit;
+  KindPrototype := Target.Proto;
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShape) then
+    Exit;
+  Prototype := KindPrototype.Proto;
+  if Prototype <> Intrinsics[inTypedArrayPrototype] then
+    Exit;
+  Slot := Prototype.Shape.Find(Runtime.SymbolValue(wsIterator), Flags);
+  if (Slot < 0) or ((Flags and PropertyAccessor) <> 0) or (Prototype.GetSlot(Slot) <> TypedArrayValues) then
+    Exit;
+  Result := IsPlainArrayIterator(Self);
+end;
+
+function TJsInterpreterRealm.TypedArrayLengthIntact(Target: TJsObject): Boolean;
+var
+  KindPrototype, Prototype: TJsObject;
+  Pair: TJsValue;
+begin
+  Result := False;
+  KindPrototype := Target.Proto;
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShape) then
+    Exit;
+  Prototype := KindPrototype.Proto;
+  if (Prototype <> Intrinsics[inTypedArrayPrototype]) or (Prototype.Shape <> TypedArrayPrototypeShape) then
+    Exit;
+  Pair := Prototype.GetSlot(TypedArrayLengthSlot);
+  Result := TJsAccessorPair(JsAsCell(Pair)).Getter = TypedArrayLengthGetter;
 end;
 
 function TJsInterpreterRealm.NotCallable(Value: TJsValue): TJsValue;
@@ -1477,6 +1547,8 @@ var
   PrivateName: TJsSymbol;
   TypeofCache: TJsPropertyCache;
   Descriptor: TJsPropertyDescriptor;
+  TypedArray: TJsTypedArray;
+  Address: PByte;
 label
   ReloadFrame, DispatchLoop, Unwind, DoReturn, Finished;
 begin
@@ -1769,6 +1841,9 @@ DispatchLoop:
           A := Regs[Code[PC + 2]];
           if JsIsObject(A) and (JsAsObject(A).ObjectClass = ocArray) then
             Regs[Code[PC + 1]] := JsNumber(TJsArray(JsAsObject(A)).ArrayLength)
+          else if JsIsObject(A) and (JsAsObject(A).ObjectClass = ocTypedArray) and
+            TypedArrayLengthIntact(JsAsObject(A)) then
+            Regs[Code[PC + 1]] := JsNumber(TJsTypedArray(JsAsObject(A)).CurrentLength)
           else if JsIsString(A) then
             Regs[Code[PC + 1]] := JsInteger(JsAsString(A).Length)
           else
@@ -1830,6 +1905,29 @@ DispatchLoop:
                 Inc(PC, 4);
                 Continue;
               end;
+            end
+            else if (Target.ObjectClass = ocTypedArray) and (X >= 0) then
+            begin
+              TypedArray := TJsTypedArray(Target);
+              if X < TypedArray.CurrentLength then
+              begin
+                Address := TypedArray.ElementAddress(X);
+                case TypedArray.ElementKind of
+                  taUint8, taUint8Clamped: Value := JsInteger(Address^);
+                  taInt8: Value := JsInteger(ShortInt(Address^));
+                  taInt16: Value := JsInteger(PSmallInt(Address)^);
+                  taUint16: Value := JsInteger(PWord(Address)^);
+                  taInt32: Value := JsInteger(PLongInt(Address)^);
+                  taFloat64: Value := JsNumber(PDouble(Address)^);
+                else
+                  Value := ReadElement(Self, TypedArray.ElementKind, Address);
+                end;
+              end
+              else
+                Value := JsUndefined;
+              Regs[Code[PC + 1]] := Value;
+              Inc(PC, 4);
+              Continue;
             end;
           end
           else if JsIsInteger(Key) and JsIsString(A) then
@@ -1863,6 +1961,33 @@ DispatchLoop:
               if (X < Target.ElementCount) and (Target.Elements^[X] <> JsHole) then
               begin
                 Target.Elements^[X] := Regs[Code[PC + 3]];
+                Inc(PC, 4);
+                Continue;
+              end;
+            end
+            else if (Target.ObjectClass = ocTypedArray) and (X >= 0) then
+            begin
+              { A number (a BigInt for the BigInt kinds) needs no
+                conversion that could run JavaScript. }
+              Value := Regs[Code[PC + 3]];
+              TypedArray := TJsTypedArray(Target);
+              if JsIsNumber(Value) <> IsBigIntKind(TypedArray.ElementKind) then
+              begin
+                if X < TypedArray.CurrentLength then
+                begin
+                  Address := TypedArray.ElementAddress(X);
+                  if JsIsInteger(Value) and (TypedArray.ElementKind in [taInt8, taUint8, taInt32, taUint32]) then
+                  begin
+                    if TypedArray.ElementKind <= taUint8 then
+                      Address^ := Byte(JsAsInteger(Value))
+                    else
+                      PLongInt(Address)^ := JsAsInteger(Value);
+                  end
+                  else if TypedArray.ElementKind = taFloat64 then
+                    PDouble(Address)^ := JsNumberValue(Value)
+                  else
+                    WriteElement(Self, TypedArray.ElementKind, Address, Value);
+                end;
                 Inc(PC, 4);
                 Continue;
               end;
@@ -2747,7 +2872,7 @@ DispatchLoop:
         begin
           Index := Code[PC + 1];
           Value := Regs[Code[PC + 2]];
-          if (Code[PC + 3] = 0) and IsPlainArrayIteration(Self, Value) then
+          if (Code[PC + 3] = 0) and (IsPlainArrayIteration(Self, Value) or IsPlainTypedArrayIteration(Value)) then
           begin
             Regs[Index] := Value;
             Regs[Index + 1] := JsInteger(0);
@@ -2771,7 +2896,12 @@ DispatchLoop:
           begin
             ArrayValue := TJsArray(JsAsObject(Regs[Index]));
             X := JsAsInteger(B);
-            if LongWord(X) < ArrayValue.ArrayLength then
+            if (ArrayValue.ObjectClass = ocTypedArray) and TJsTypedArray(TJsObject(ArrayValue)).IsOutOfBounds then
+            begin
+              ThrowTypeError('Cannot perform %ArrayIteratorPrototype%.next on a detached ArrayBuffer');
+              goto Unwind;
+            end;
+            if X < FastIterationLength(ArrayValue) then
             begin
               if (X < ArrayValue.ElementCount) and (ArrayValue.Elements^[X] <> JsHole) then
                 Value := ArrayValue.Elements^[X]
@@ -2852,7 +2982,7 @@ DispatchLoop:
           begin
             Target := JsAsObject(Regs[Index]);
             X := JsAsInteger(B);
-            while LongWord(X) < TJsArray(Target).ArrayLength do
+            while X < FastIterationLength(Target) do
             begin
               Value := Target.Get(Self, JsInteger(X), Regs[Index]);
               if Value = JsException then

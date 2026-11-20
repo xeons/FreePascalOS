@@ -55,6 +55,9 @@ uses
   Js.Builtins.Reflect,
   Js.Builtins.Date,
   Js.Builtins.RegExp,
+  Js.ArrayBuffers,
+  Js.Builtins.ArrayBuffer,
+  Js.Builtins.TypedArrays,
   Js.Intrinsics,
   Js.Engine;
 

@@ -46,6 +46,7 @@ uses
   Js.Functions,
   Js.Conversions,
   Js.Operations,
+  Js.ArrayBuffers,
   Js.Interpreter;
 
 const
@@ -156,7 +157,13 @@ begin
   if Iterator.Done then
     Exit(CreateIterResult(R, JsUndefined, True));
   Target := JsAsObject(Iterator.Target);
-  if not LengthOfArrayLike(R, Target, Length) then
+  if Target is TJsTypedArray then
+  begin
+    if TJsTypedArray(Target).IsOutOfBounds then
+      Exit(R.ThrowTypeError('Cannot perform %ArrayIteratorPrototype%.next on a detached ArrayBuffer'));
+    Length := TJsTypedArray(Target).CurrentLength;
+  end
+  else if not LengthOfArrayLike(R, Target, Length) then
     Exit(JsException);
   Index := Iterator.Position;
   if Index >= Length then

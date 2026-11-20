@@ -60,7 +60,9 @@ uses
   Js.Builtins.Reflect,
   Js.Builtins.BigInt,
   Js.Builtins.Date,
-  Js.Builtins.RegExp;
+  Js.Builtins.RegExp,
+  Js.Builtins.ArrayBuffer,
+  Js.Builtins.TypedArrays;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -146,6 +148,8 @@ begin
   InstallBigInt(R);
   InstallDate(R);
   InstallRegExp(R);
+  InstallArrayBuffer(R);
+  InstallTypedArrays(R);
 end;
 
 end.
