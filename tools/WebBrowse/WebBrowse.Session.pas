@@ -36,6 +36,7 @@ type
     Url: string;
     Width, Height, Scale: Double;
     WholePage: Boolean;
+    ResizeWidth, ResizeHeight: Double;
     ScrollY: Double;
     PngFile: string;
     LayoutFile: string;
@@ -115,6 +116,11 @@ type
     FLog: TNetworkLog;
     FDocument: TDocument;
     FLayout: TDocumentLayout;
+    { Frames paint the viewport here as the web view does (url() images
+      are asked for when the display list is built). }
+    FFramePainter: TDocumentPainter;
+    FFrameSurface: TSurface;
+    FPaintedVersion: LongWord;
     FConsole: TStringList;
     FLastFrame: Double;
     FQuietSince: Double;
@@ -228,6 +234,7 @@ begin
   FNetwork.Free;
   FLog.Free;
   FConsole.Free;
+  FreeSurface(FFrameSurface);
   inherited Destroy;
 end;
 
@@ -249,6 +256,7 @@ end;
 
 procedure TBrowseSession.ReleaseDocument;
 begin
+  FreeAndNil(FFramePainter);
   FreeAndNil(FLayout);
   if FDocument <> nil then
   begin
@@ -270,6 +278,8 @@ begin
     WriteLn(StdErr, Format('%8.0f document %s', [Clock, Document.Url]));
   FSink.PrepareDocument(Document);
   FLayout := TDocumentLayout.Create(Document);
+  FFramePainter := TDocumentPainter.Create(FLayout);
+  FPaintedVersion := High(LongWord);
   FLayout.SetViewport(FOptions.Width, FOptions.Height, FOptions.Scale);
 end;
 
@@ -285,6 +295,15 @@ begin
     FLayout.Update;
     if FFirstLayoutAt < 0 then
       FFirstLayoutAt := Clock;
+  end;
+  if (FLayout <> nil) and (FLayout.PaintVersion <> FPaintedVersion) then
+  begin
+    if FFrameSurface.Pixels = nil then
+      CreateSurface(FFrameSurface, Max(1, Round(FOptions.Width * FOptions.Scale)),
+        Max(1, Round(FOptions.Height * FOptions.Scale)), ColorWhite);
+    if FFrameSurface.Pixels <> nil then
+      FFramePainter.Paint(FFrameSurface, MakeRectangle(0, 0, FFrameSurface.Width, FFrameSurface.Height));
+    FPaintedVersion := FLayout.PaintVersion;
   end;
   Took := Clock - Began;
   Inc(FFrames);
@@ -336,7 +355,7 @@ end;
 function TBrowseSession.Run: Integer;
 var
   Began, Took, Deadline, Wait, Next: Double;
-  Evaluated: Boolean;
+  Evaluated, Resized: Boolean;
 begin
   Result := 0;
   if not FPage.NavigateTo(FOptions.Url) then
@@ -346,6 +365,7 @@ begin
   end;
   Deadline := FOptions.TimeoutSeconds * 1000;
   Evaluated := FOptions.EvalSource = '';
+  Resized := FOptions.ResizeWidth <= 0;
   while True do
   begin
     Beat;
@@ -371,6 +391,22 @@ begin
         FQuietSince := Clock;
       if Clock - FQuietSince >= FOptions.QuietMilliseconds then
       begin
+        if not Resized then
+        begin
+          { The window resized once the page settled (as a user would). }
+          Resized := True;
+          if FOptions.Verbose then
+            WriteLn(StdErr, Format('%8.0f resize to %.0fx%.0f', [Clock, FOptions.ResizeWidth, FOptions.ResizeHeight]));
+          FOptions.Width := FOptions.ResizeWidth;
+          FOptions.Height := FOptions.ResizeHeight;
+          FSink.SetViewport(FOptions.Width, FOptions.Height, FOptions.Scale);
+          FreeSurface(FFrameSurface);
+          FFrameSurface := Default(TSurface);
+          if FLayout <> nil then
+            FLayout.SetViewport(FOptions.Width, FOptions.Height, FOptions.Scale);
+          FQuietSince := -1;
+          Continue;
+        end;
         if Evaluated then
           Break;
         RunEval;

@@ -65,6 +65,10 @@ type
       its border box; Index: a TStickyRun), by an offset that depends
       on the viewport's scroll (Web.Paint.Sticky). }
     diPushSticky, diPopSticky,
+    { A masked subtree (CSS Masking): the items up to diMaskContent draw
+      the mask layers, the ones after it the content, composited at the
+      pop through the layers' alpha. The bounds: the mask's clip. }
+    diPushMask, diMaskContent, diPopMask,
     { Not drawn: where a box is, for hit testing. }
     diHitArea,
     { A control's own text (a text field's value; Index: a string), in

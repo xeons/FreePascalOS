@@ -53,6 +53,7 @@ begin
   CheckHitTesting;
   CheckPainting;
   CheckStickyPainting;
+  CheckMaskPainting;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

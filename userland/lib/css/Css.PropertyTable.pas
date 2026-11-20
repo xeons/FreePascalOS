@@ -277,6 +277,18 @@ const
     (Group: pgEffects; Initial: 'auto'; Grammar: 'auto | isolate'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgEffects; Initial: 'none'; Grammar: '@clip-path'; Compute: cmpValue; Animation: atByComputedValue),
     (Group: pgEffects; Initial: 'auto'; Grammar: '@clip'; Compute: cmpValue; Animation: atByComputedValue),
+    { masking }
+    (Group: pgEffects; Initial: 'none'; Grammar: '#none | <image>'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: '0%'; Grammar: '@background-position-x'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: '0%'; Grammar: '@background-position-y'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: 'auto'; Grammar: '@background-size'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: 'repeat'; Grammar: '@background-repeat'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'border-box'; Grammar: '#border-box | padding-box | content-box';
+      Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'border-box'; Grammar: '#border-box | padding-box | content-box | no-clip';
+      Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'match-source'; Grammar: '#alpha | luminance | match-source'; Compute: cmpValue;
+      Animation: atDiscrete),
     { text decoration }
     (Group: pgText; Initial: 'none'; Grammar: 'none | {underline overline line-through blink spelling-error ' +
       'grammar-error}'; Compute: cmpKeyword; Animation: atDiscrete),
@@ -370,6 +382,8 @@ const
     (Group: pgNone; Initial: '0'; Grammar: '@radius-corner'; Compute: cmpValue; Animation: atLength),
 
     { shorthands (Css.Shorthands expands them) }
+    (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
+    (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),

@@ -130,7 +130,7 @@ type
     { transforms and compositing }
     kwFlat, kwPreserve3d, kwMultiply, kwScreen, kwDarken, kwLighten, kwColorDodge,
     kwColorBurn, kwHardLight, kwSoftLight, kwDifference, kwExclusion, kwSaturation, kwColor,
-    kwLuminosity, kwPlusLighter, kwPlusDarker,
+    kwLuminosity, kwPlusLighter, kwPlusDarker, kwLuminance, kwMatchSource, kwNoClip,
     { media queries }
     kwPrint, kwPortrait, kwLandscape, kwReduce, kwNoPreference, kwFine, kwCoarse,
     kwHover, kwInterlace, kwProgressive, kwFast, kwSlow, kwStandard, kwHigh, kwMore, kwLess,

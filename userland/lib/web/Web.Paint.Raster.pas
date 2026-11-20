@@ -71,11 +71,19 @@ uses
   Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky;
 
 type
+  { A group: drawn into a surface of its own (as big as the clip when it
+    began, at Left, Top of the surface below), then composited. A mask
+    group draws its mask layers first, then (BeginMaskContent) its
+    content into a second surface, composited through the first's
+    alpha. }
   TGroup = record
     Canvas: TCanvas;
     Surface: TSurface;
+    MaskSurface: TSurface;
+    Left, Top: LongInt;
     Opacity: Byte;
   end;
+  PGroup = ^TGroup;
 
   { A rounded clip: what is drawn inside goes to a group composited
     through the clip's coverage. }
@@ -102,6 +110,9 @@ type
     OriginX, OriginY: Single;
     Origins: array of TOrigin;
     OriginDepth: Integer;
+    { Device pixel (0, 0) is at (-ShiftX, -ShiftY) of the surface drawn
+      into (groups are only as big as their clips). }
+    ShiftX, ShiftY: LongInt;
     Glyphs: TPlacedGlyphArray;
   end;
 
@@ -115,12 +126,12 @@ end;
 
 function DeviceX(const Raster: TRaster; X: Single): Double; inline;
 begin
-  Result := (X - Raster.OriginX) * Raster.View.Scale;
+  Result := (X - Raster.OriginX) * Raster.View.Scale - Raster.ShiftX;
 end;
 
 function DeviceY(const Raster: TRaster; Y: Single): Double; inline;
 begin
-  Result := (Y - Raster.OriginY) * Raster.View.Scale;
+  Result := (Y - Raster.OriginY) * Raster.View.Scale - Raster.ShiftY;
 end;
 
 procedure PushOrigin(var Raster: TRaster; X, Y: Single);
@@ -855,8 +866,9 @@ end;
 
 procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem);
 var
-  Group: ^TGroup;
+  Group: PGroup;
   Clip: TRegion;
+  Bounds: TRectangle;
 begin
   if Raster.GroupDepth >= Length(Raster.Groups) then
     SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
@@ -864,71 +876,141 @@ begin
   Inc(Raster.GroupDepth);
   Group^.Canvas := Raster.Canvas;
   Group^.Opacity := Round(EnsureRange(Item.Value, 0, 1) * 255);
-  CopyRegion(Raster.Canvas.Clip, Clip);
-  if not CreateSurface(Group^.Surface, Raster.Canvas.Surface.Width, Raster.Canvas.Surface.Height, ColorTransparent) then
+  Group^.MaskSurface.Pixels := nil;
+  Group^.Surface.Pixels := nil;
+  Bounds := RegionBounds(Raster.Canvas.Clip);
+  Group^.Left := Bounds.Left;
+  Group^.Top := Bounds.Top;
+  if RectangleIsEmpty(Bounds) or not CreateSurface(Group^.Surface, RectangleWidth(Bounds), RectangleHeight(Bounds),
+     ColorTransparent) then
   begin
+    { Drawn straight below (nothing shows when the clip is empty). }
     Group^.Surface.Pixels := nil;
     Exit;
   end;
+  CopyRegion(Raster.Canvas.Clip, Clip);
+  OffsetRegion(Clip, -Bounds.Left, -Bounds.Top);
   BeginCanvas(Raster.Canvas, Group^.Surface);
   SetCanvasClip(Raster.Canvas, Clip);
+  Inc(Raster.ShiftX, Bounds.Left);
+  Inc(Raster.ShiftY, Bounds.Top);
 end;
 
-procedure PopGroup(var Raster: TRaster);
-var
-  Group: ^TGroup;
-  Bounds: TRectangle;
+{ The top group's drawing is over: back to the surface below. False when
+  the group drew straight below. }
+function LeaveGroup(var Raster: TRaster; out Group: PGroup): Boolean;
 begin
+  Result := False;
+  Group := nil;
   if Raster.GroupDepth = 0 then
     Exit;
   Dec(Raster.GroupDepth);
   Group := @Raster.Groups[Raster.GroupDepth];
   if Group^.Surface.Pixels = nil then
+  begin
+    FreeSurface(Group^.MaskSurface);
     Exit;
-  Bounds := RegionBounds(Raster.Canvas.Clip);
+  end;
   Raster.Canvas := Group^.Canvas;
-  if not RectangleIsEmpty(Bounds) then
-    DrawSurface(Raster.Canvas, Group^.Surface, Bounds, Bounds.Left, Bounds.Top, True, Group^.Opacity);
+  Dec(Raster.ShiftX, Group^.Left);
+  Dec(Raster.ShiftY, Group^.Top);
+  Result := True;
+end;
+
+procedure PopGroup(var Raster: TRaster);
+var
+  Group: PGroup;
+begin
+  if not LeaveGroup(Raster, Group) then
+    Exit;
+  DrawSurface(Raster.Canvas, Group^.Surface, MakeRectangle(0, 0, Group^.Surface.Width, Group^.Surface.Height),
+    Group^.Left, Group^.Top, True, Group^.Opacity);
   FreeSurface(Group^.Surface);
 end;
 
 procedure PopGroupMasked(var Raster: TRaster; const Shape: TCoverageShape);
 var
-  Group: ^TGroup;
+  Group: PGroup;
   Bounds: TRectangle;
   Mask: array of Byte;
   Width, Height, Row, Column: LongInt;
   Source, Target: PLongWord;
   Coverage: Byte;
 begin
-  if Raster.GroupDepth = 0 then
+  if not LeaveGroup(Raster, Group) then
     Exit;
-  Dec(Raster.GroupDepth);
-  Group := @Raster.Groups[Raster.GroupDepth];
-  if Group^.Surface.Pixels = nil then
-    Exit;
-  Bounds := RegionBounds(Raster.Canvas.Clip);
-  Raster.Canvas := Group^.Canvas;
-  Width := RectangleWidth(Bounds);
-  Height := RectangleHeight(Bounds);
-  if (Width > 0) and (Height > 0) then
+  Width := Group^.Surface.Width;
+  Height := Group^.Surface.Height;
+  Bounds := MakeRectangle(Group^.Left, Group^.Top, Width, Height);
+  Mask := nil;
+  SetLength(Mask, Width * Height);
+  ShapeCoverage(Shape, Bounds, Mask);
+  for Row := 0 to Height - 1 do
   begin
-    Mask := nil;
-    SetLength(Mask, Width * Height);
-    ShapeCoverage(Shape, Bounds, Mask);
-    for Row := 0 to Height - 1 do
+    Source := SurfaceLine(Group^.Surface, Row);
+    Target := SurfaceLine(Raster.Canvas.Surface, Bounds.Top + Row) + Bounds.Left;
+    for Column := 0 to Width - 1 do
     begin
-      Source := SurfaceLine(Group^.Surface, Bounds.Top + Row) + Bounds.Left;
-      Target := SurfaceLine(Raster.Canvas.Surface, Bounds.Top + Row) + Bounds.Left;
-      for Column := 0 to Width - 1 do
-      begin
-        Coverage := Mask[Row * Width + Column];
-        { The group was drawn within the clip already. }
-        if (Coverage > 0) and (AlphaOf(Source[Column]) > 0) then
-          Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Coverage));
-      end;
+      Coverage := Mask[Row * Width + Column];
+      { The group was drawn within the clip already. }
+      if (Coverage > 0) and (AlphaOf(Source[Column]) > 0) then
+        Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Coverage));
     end;
   end;
+  FreeSurface(Group^.Surface);
+end;
+
+{ ---- masks (CSS Masking: mask-image layers, by alpha) ---- }
+
+{ The mask layers are drawn: keep them, draw the content anew. }
+procedure BeginMaskContent(var Raster: TRaster);
+var
+  Group: PGroup;
+  Clip: TRegion;
+begin
+  if Raster.GroupDepth = 0 then
+    Exit;
+  Group := @Raster.Groups[Raster.GroupDepth - 1];
+  if Group^.Surface.Pixels = nil then
+    Exit;
+  Group^.MaskSurface := Group^.Surface;
+  Group^.Surface.Pixels := nil;
+  CopyRegion(Raster.Canvas.Clip, Clip);
+  if not CreateSurface(Group^.Surface, Group^.MaskSurface.Width, Group^.MaskSurface.Height, ColorTransparent) then
+  begin
+    { No room for the content: it is drawn into the mask surface and
+      dropped at the pop. }
+    Group^.Surface := Group^.MaskSurface;
+    Group^.MaskSurface.Pixels := nil;
+    Exit;
+  end;
+  BeginCanvas(Raster.Canvas, Group^.Surface);
+  SetCanvasClip(Raster.Canvas, Clip);
+end;
+
+procedure PopMask(var Raster: TRaster);
+var
+  Group: PGroup;
+  Row, Column: LongInt;
+  Source, Mask, Target: PLongWord;
+  Alpha: Byte;
+begin
+  if not LeaveGroup(Raster, Group) then
+    Exit;
+  if Group^.MaskSurface.Pixels <> nil then
+    for Row := 0 to Group^.Surface.Height - 1 do
+    begin
+      Source := SurfaceLine(Group^.Surface, Row);
+      Mask := SurfaceLine(Group^.MaskSurface, Row);
+      Target := SurfaceLine(Raster.Canvas.Surface, Group^.Top + Row) + Group^.Left;
+      for Column := 0 to Group^.Surface.Width - 1 do
+      begin
+        Alpha := AlphaOf(Mask[Column]);
+        if (Alpha > 0) and (AlphaOf(Source[Column]) > 0) then
+          Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Alpha));
+      end;
+    end;
+  FreeSurface(Group^.MaskSurface);
   FreeSurface(Group^.Surface);
 end;
 
@@ -950,6 +1032,8 @@ begin
   Raster.OriginY := View.ScrollY;
   Raster.Origins := nil;
   Raster.OriginDepth := 0;
+  Raster.ShiftX := 0;
+  Raster.ShiftY := 0;
   Raster.Glyphs := nil;
   BeginCanvas(Raster.Canvas, Surface);
   SetRegionToRectangle(Region, View.Damage);
@@ -963,6 +1047,9 @@ begin
       diPopClip: PopClip(Raster);
       diPushOpacity: PushGroup(Raster, Item^);
       diPopOpacity: PopGroup(Raster);
+      diPushMask: PushGroup(Raster, Item^);
+      diMaskContent: BeginMaskContent(Raster);
+      diPopMask: PopMask(Raster);
       diPushFixed: PushOrigin(Raster, 0, 0);
       diPushSticky: PushSticky(Raster, Item^);
       diPopFixed, diPopSticky: PopOrigin(Raster);

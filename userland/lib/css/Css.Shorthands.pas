@@ -100,6 +100,9 @@ begin
       cpBackgroundPositionY, cpBackgroundSize, cpBackgroundRepeat, cpBackgroundAttachment, cpBackgroundOrigin,
       cpBackgroundClip]);
     cpBackgroundPosition: Result := Ids([cpBackgroundPositionX, cpBackgroundPositionY]);
+    cpMask: Result := Ids([cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin,
+      cpMaskClip, cpMaskMode]);
+    cpMaskPosition: Result := Ids([cpMaskPositionX, cpMaskPositionY]);
     cpFont: Result := Ids([cpFontStyle, cpFontVariantCaps, cpFontWeight, cpFontStretch, cpFontSize, cpLineHeight,
       cpFontFamily, cpFontVariantLigatures, cpFontVariantNumeric, cpFontVariantEastAsian, cpFontVariantPosition,
       cpFontKerning, cpFontOpticalSizing, cpFontFeatureSettings, cpFontVariationSettings, cpFontSizeAdjust]);
@@ -533,7 +536,7 @@ begin
   end;
 end;
 
-function ExpandBackgroundPosition(var Expansion: TExpansion; var Cursor: TCssTokenCursor): Boolean;
+function ExpandPositionPair(var Expansion: TExpansion; var Cursor: TCssTokenCursor; XId, YId: TCssPropertyId): Boolean;
 var
   X, Y, Position: TCssValue;
 begin
@@ -551,9 +554,127 @@ begin
     Y.Add(Position.Items[1].AddRef);
     Position.Release;
   until not SkipComma(Cursor);
-  Put(Expansion, cpBackgroundPositionX, X);
-  Put(Expansion, cpBackgroundPositionY, Y);
+  Put(Expansion, XId, X);
+  Put(Expansion, YId, Y);
   Result := True;
+end;
+
+{ mask: layers of image, position [/ size], repeat, origin, clip and mode
+  (CSS Masking 1, 7.10). }
+function ExpandMask(var Expansion: TExpansion; var Cursor: TCssTokenCursor): Boolean;
+var
+  Layers: array[0..7] of TCssValue;
+  Image, Position, Size, RepeatValue, Mode, FirstBox, SecondBox, Item: TCssValue;
+  Index: Integer;
+  Progress: Boolean;
+begin
+  Result := False;
+  { Image, position x and y, size, repeat, origin, clip, mode. }
+  for Index := 0 to 7 do
+    Layers[Index] := NewList(lsComma);
+  try
+    repeat
+      Image := nil;
+      Position := nil;
+      Size := nil;
+      RepeatValue := nil;
+      Mode := nil;
+      FirstBox := nil;
+      SecondBox := nil;
+      repeat
+        Progress := False;
+        if Image = nil then
+        begin
+          Image := ParseKeyword(Cursor, [kwNone]);
+          if Image = nil then
+            Image := ParseImage(Cursor);
+          Progress := Image <> nil;
+        end;
+        if not Progress and (Position = nil) then
+        begin
+          Position := ParsePosition(Cursor);
+          if Position <> nil then
+          begin
+            Progress := True;
+            if SkipDelim(Cursor, '/') then
+            begin
+              Size := ParseOneBackgroundSize(Cursor);
+              if Size = nil then
+                Break;
+            end;
+          end;
+        end;
+        if not Progress and (RepeatValue = nil) then
+        begin
+          RepeatValue := ParseOneBackgroundRepeat(Cursor);
+          Progress := RepeatValue <> nil;
+        end;
+        if not Progress and (Mode = nil) then
+        begin
+          Mode := ParseKeyword(Cursor, [kwAlpha, kwLuminance, kwMatchSource]);
+          Progress := Mode <> nil;
+        end;
+        if not Progress and (SecondBox = nil) then
+        begin
+          Item := ParseKeyword(Cursor, [kwBorderBox, kwPaddingBox, kwContentBox, kwNoClip]);
+          if Item <> nil then
+          begin
+            if FirstBox = nil then
+              FirstBox := Item
+            else
+              SecondBox := Item;
+            Progress := True;
+          end;
+        end;
+      until not Progress;
+      if Image = nil then Image := NewKeyword(kwNone);
+      Layers[0].Add(Image);
+      if Position = nil then
+      begin
+        Layers[1].Add(NewPercentage(0));
+        Layers[2].Add(NewPercentage(0));
+      end
+      else
+      begin
+        Layers[1].Add(Position.Items[0].AddRef);
+        Layers[2].Add(Position.Items[1].AddRef);
+        Position.Release;
+      end;
+      if Size = nil then Size := NewKeyword(kwAuto);
+      Layers[3].Add(Size);
+      if RepeatValue = nil then RepeatValue := NewKeyword(kwRepeat);
+      Layers[4].Add(RepeatValue);
+      if FirstBox = nil then
+      begin
+        Layers[5].Add(NewKeyword(kwBorderBox));
+        Layers[6].Add(NewKeyword(kwBorderBox));
+      end
+      else
+      begin
+        Layers[5].Add(FirstBox);
+        if SecondBox = nil then
+          Layers[6].Add(FirstBox.AddRef)
+        else
+          Layers[6].Add(SecondBox);
+      end;
+      if Mode = nil then Mode := NewKeyword(kwMatchSource);
+      Layers[7].Add(Mode);
+    until not SkipComma(Cursor);
+    if not Cursor.AtEndIgnoringWhitespace then
+      Exit;
+    Put(Expansion, cpMaskImage, Layers[0].AddRef);
+    Put(Expansion, cpMaskPositionX, Layers[1].AddRef);
+    Put(Expansion, cpMaskPositionY, Layers[2].AddRef);
+    Put(Expansion, cpMaskSize, Layers[3].AddRef);
+    Put(Expansion, cpMaskRepeat, Layers[4].AddRef);
+    Put(Expansion, cpMaskOrigin, Layers[5].AddRef);
+    Put(Expansion, cpMaskClip, Layers[6].AddRef);
+    Put(Expansion, cpMaskMode, Layers[7].AddRef);
+    Result := True;
+  finally
+    for Index := 0 to 7 do
+      Layers[Index].Release;
+  end;
 end;
 
 { ---- fonts ---- }
@@ -1279,7 +1400,10 @@ begin
     cpOutline, cpFlexFlow, cpTextDecoration, cpColumns, cpColumnRule:
       Result := ExpandAnyOrder(Expansion, Cursor);
     cpBackground: Result := ExpandBackground(Expansion, Cursor);
-    cpBackgroundPosition: Result := ExpandBackgroundPosition(Expansion, Cursor);
+    cpBackgroundPosition: Result := ExpandPositionPair(Expansion, Cursor, cpBackgroundPositionX,
+      cpBackgroundPositionY);
+    cpMask: Result := ExpandMask(Expansion, Cursor);
+    cpMaskPosition: Result := ExpandPositionPair(Expansion, Cursor, cpMaskPositionX, cpMaskPositionY);
     cpFont: Result := ExpandFont(Expansion, Cursor);
     cpFontVariant: Result := ExpandFontVariant(Expansion, Cursor);
     cpFlex: Result := ExpandFlex(Expansion, Cursor);

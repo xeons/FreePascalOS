@@ -31,6 +31,7 @@ interface
 
 procedure CheckPainting;
 procedure CheckStickyPainting;
+procedure CheckMaskPainting;
 procedure ReportPerformance;
 
 implementation
@@ -63,6 +64,16 @@ const
     '<div id=scroller style="position:absolute;left:200px;top:0;width:80px;height:100px;overflow:hidden">' +
     '<div style="height:300px"></div><div style="position:sticky;bottom:0;height:20px;background:#00ff00"></div>' +
     '<div style="height:300px"></div></div></body>';
+
+  { Masks: a gradient from opaque to transparent, an image that never
+    loads (masks everything out), and a mask in a translucent group
+    away from the surface's corner (groups are as small as their clip). }
+  MaskPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="width:100px;height:20px;background:#0000ff;mask-image:linear-gradient(to right, black, transparent)"></div>' +
+    '<div style="width:100px;height:20px;background:#0000ff;-webkit-mask-image:url(nowhere.png)"></div>' +
+    '<div style="margin:30px 0 0 150px;width:60px;height:20px;background:#ff0000;opacity:0.5;border-radius:4px"></div>' +
+    '</body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
 begin
@@ -169,6 +180,31 @@ begin
     CheckPixel(Surface, 50, 5, RgbColor(0, 0, 255), 'sticky: pushed up by the end of its column');
     CheckPixel(Surface, 50, 49, RgbColor(0, 0, 255), 'sticky: bottom at the end of its column');
     CheckPixel(Surface, 50, 52, RgbColor(255, 128, 0), 'sticky: the page after its column');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckMaskPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(MaskPage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 600, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 600));
+    CheckPixel(Surface, 1, 10, RgbColor(2, 2, 255), 'mask: opaque end of a gradient mask');
+    CheckPixel(Surface, 50, 10, RgbColor(126, 126, 255), 'mask: middle of a gradient mask');
+    CheckPixel(Surface, 98, 10, RgbColor(250, 250, 255), 'mask: transparent end of a gradient mask');
+    CheckPixel(Surface, 50, 30, RgbColor(255, 255, 255), 'mask: an image that is not there hides the box');
+    CheckPixel(Surface, 180, 80, RgbColor(255, 128, 128), 'opacity group away from the corner');
+    CheckPixel(Surface, 140, 80, RgbColor(255, 255, 255), 'opacity group: nothing outside it');
   finally
     FreeSurface(Surface);
     Painter.Free;

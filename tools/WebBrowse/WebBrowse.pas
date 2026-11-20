@@ -30,6 +30,7 @@
     -h HEIGHT      viewport height (800)
     -s SCALE       device pixel ratio (1)
     -y OFFSET      scroll the viewport down this far before painting
+    --resize WxH   resize the viewport once the page is quiet, then wait again
     --full         paint the whole document height (up to 30000 px)
     -l FILE        the layout tree ("-": standard output)
     --dom FILE     the document serialized as HTML ("-": standard output)
@@ -95,6 +96,12 @@ begin
       Options.Scale := StrToFloatDef(NextArgument, 1)
     else if Argument = '-y' then
       Options.ScrollY := StrToFloatDef(NextArgument, 0)
+    else if Argument = '--resize' then
+    begin
+      Argument := NextArgument;
+      Options.ResizeWidth := StrToFloatDef(Copy(Argument, 1, Pos('x', Argument) - 1), 0);
+      Options.ResizeHeight := StrToFloatDef(Copy(Argument, Pos('x', Argument) + 1, MaxInt), 0);
+    end
     else if Argument = '--full' then
       Options.WholePage := True
     else if Argument = '-l' then

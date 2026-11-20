@@ -124,6 +124,9 @@ type
     { effects }
     cpOpacity, cpBoxShadow, cpFilter, cpBackdropFilter, cpMixBlendMode, cpIsolation, cpClipPath,
     cpClip,
+    { masking }
+    cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin, cpMaskClip,
+    cpMaskMode,
     { text decoration }
     cpTextDecorationLine, cpTextDecorationStyle, cpTextDecorationColor,
     cpTextDecorationThickness, cpTextUnderlineOffset, cpTextOverflow, cpUnicodeBidi,
@@ -161,7 +164,7 @@ type
     cpBorderInlineEnd, cpBorderBlockWidth, cpBorderBlockStyle, cpBorderBlockColor,
     cpBorderInlineWidth, cpBorderInlineStyle, cpBorderInlineColor, cpMarginBlock, cpMarginInline,
     cpPaddingBlock, cpPaddingInline, cpInsetBlock, cpInsetInline, cpOutline, cpBackground,
-    cpBackgroundPosition, cpFont, cpFontVariant, cpFlex, cpFlexFlow, cpGrid, cpGridTemplate,
+    cpBackgroundPosition, cpMask, cpMaskPosition, cpFont, cpFontVariant, cpFlex, cpFlexFlow, cpGrid, cpGridTemplate,
     cpGridRow, cpGridColumn, cpGridArea, cpGap, cpPlaceContent, cpPlaceItems, cpPlaceSelf,
     cpOverflow, cpListStyle, cpTextDecoration, cpTransition, cpAnimation, cpColumns,
     cpColumnRule, cpContainer,
