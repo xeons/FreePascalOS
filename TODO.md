@@ -1021,6 +1021,27 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Incremental restyle (invalidation by changed class, id, attribute or state
       instead of restyling the subtree)
 
+## JavaScript engine
+
+- [x] libjavascript: NaN-boxed values, Latin-1/UTF-16 strings with ropes, atoms
+- [x] Shapes with weak transitions, dictionary mode, dense elements, inline caches
+- [x] Lexer, parser, scope analysis, register bytecode, interpreter without Pascal recursion for JS calls
+- [x] Precise mark-and-sweep collector at safe points; weak maps, WeakRef, FinalizationRegistry
+- [x] ES5 and ES2015+ language: let/const/TDZ, classes (fields, static blocks, private names, accessors),
+      destructuring, default/rest/spread, template and tagged literals, generators, async/await,
+      async generators and for await, optional chaining, nullish operators, exponent, BigInt
+- [x] Built-ins: Object, Function, Array, String, Number, Boolean, Symbol, Math, JSON, errors,
+      Map/Set (with the set methods), weak collections, Promise, iterator helpers, Reflect, Proxy, Date, RegExp
+- [x] RegExp engine: named groups, lookbehind, unicode and sticky flags, indices
+- [x] Embedding API (Js.Engine): host functions and classes with native data, jobs, memory limit, interrupts
+- [x] js shell with REPL, timers, print/load; host test with scripts, API checks and benchmarks
+- [ ] Modules (import/export, dynamic import), direct eval, with
+- [ ] Typed arrays, ArrayBuffer, DataView, structuredClone
+- [ ] Intl, String.prototype.normalize, Annex B escape/unescape, RegExp legacy statics
+- [ ] Sloppy mode mapped arguments
+- [ ] Incremental or generational collection; lazy compilation of function bodies
+- [ ] Faster property paths: polymorphic inline caches, fused instructions for more cases
+
 ## Tooling
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results

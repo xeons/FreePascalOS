@@ -33,6 +33,7 @@
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
 #                  HTTP/3 connections; h3get, wget)
 #                  libsystem <- libweb (the browser engine; htmldump)
+#                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
 #   programs       ld -pie against the libraries, with si_prc providing
@@ -100,6 +101,7 @@ QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
 CSS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/css
 WEB_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/web
+JAVASCRIPT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/javascript
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -118,6 +120,7 @@ QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
 CSS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcss.so
 WEB_LIBRARY := $(USER_LIBRARY_OUTPUT)/libweb.so
+JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -171,7 +174,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -335,6 +338,15 @@ $(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(WEB_GENERATED)/.generated $(wildcard userlan
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
 		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# libjavascript: the ECMAScript engine (Js.*) and its embedding API.
+$(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pas)
+	@rm -rf $(JAVASCRIPT_LIBRARY_OBJECTS)
+	@mkdir -p $(JAVASCRIPT_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/javascript \
+		-FU$(JAVASCRIPT_LIBRARY_OBJECTS) userland/lib/javascript/Js.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libjavascript.so -o $@ \
+		$(JAVASCRIPT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
 $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
@@ -462,6 +474,12 @@ CSS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,cssdump)
 $(CSS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcss
 $(CSS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CSS_LIBRARY_OBJECTS)
 $(CSS_PROGRAMS): $(CSS_LIBRARY)
+
+# The JavaScript shell runs scripts with libjavascript.
+JAVASCRIPT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,js)
+$(JAVASCRIPT_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ljavascript
+$(JAVASCRIPT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(JAVASCRIPT_LIBRARY_OBJECTS)
+$(JAVASCRIPT_PROGRAMS): $(JAVASCRIPT_LIBRARY)
 # gzip compresses through libcompression.
 COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression

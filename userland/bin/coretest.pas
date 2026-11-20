@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..390] of TCommandTest = (
+  CommandTests: array[0..393] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -664,7 +664,12 @@ const
     (Command: 'printf "margin:1px 2px;color:blue;bogus:1" | cssdump -d'; ExpectedOutput: 'margin: 1px 2px; color: rgb(0, 0, 255);'#10; ExpectedStatus: 0),
     (Command: 'printf "a > b.c, #x:hover {}" | cssdump -s'; ExpectedOutput: '(0,1,2) a > b.c'#10'(1,1,0) #x:hover'#10; ExpectedStatus: 0),
     { libweb: htmldump parses a file into the html5lib tree format and serializes it again. }
-    (Command: 'printf ''<!DOCTYPE html><title>T</title><p class=a>x&amp;y<b>z</p>'' > t.html; htmldump t.html; htmldump -s t.html; echo; rm t.html'; ExpectedOutput: '| <!DOCTYPE html>'#10'| <html>'#10'|   <head>'#10'|     <title>'#10'|       "T"'#10'|   <body>'#10'|     <p>'#10'|       class="a"'#10'|       "x&y"'#10'|       <b>'#10'|         "z"'#10'<!DOCTYPE html><html><head><title>T</title></head><body><p class="a">x&amp;y<b>z</b></p></body></html>'#10; ExpectedStatus: 0)
+    (Command: 'printf ''<!DOCTYPE html><title>T</title><p class=a>x&amp;y<b>z</p>'' > t.html; htmldump t.html; htmldump -s t.html; echo; rm t.html'; ExpectedOutput: '| <!DOCTYPE html>'#10'| <html>'#10'|   <head>'#10'|     <title>'#10'|       "T"'#10'|   <body>'#10'|     <p>'#10'|       class="a"'#10'|       "x&y"'#10'|       <b>'#10'|         "z"'#10'<!DOCTYPE html><html><head><title>T</title></head><body><p class="a">x&amp;y<b>z</b></p></body></html>'#10; ExpectedStatus: 0),
+    { The JavaScript shell (libjavascript): code, a file with a promise job
+      and a timer, and the status of an uncaught exception. }
+    (Command: 'js -e ''console.log([1, 2, 3].map(x => x * 2).join("-"), typeof Symbol(), 2n ** 70n)'''; ExpectedOutput: '2-4-6 symbol 1180591620717411303424n'#10; ExpectedStatus: 0),
+    (Command: 'echo ''setTimeout(() => print("timer"), 10); Promise.resolve().then(() => print("job")); print(new Date(0).toISOString())'' > /tmp/t.js; js /tmp/t.js; rm /tmp/t.js'; ExpectedOutput: '1970-01-01T00:00:00.000Z'#10'job'#10'timer'#10; ExpectedStatus: 0),
+    (Command: 'js -e ''throw new TypeError("bad")'' 2> /tmp/js.err; echo $?; head -n 1 /tmp/js.err; rm /tmp/js.err'; ExpectedOutput: '1'#10'TypeError: bad'#10; ExpectedStatus: 0)
   );
 
 var

@@ -51,6 +51,8 @@
 #   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
 #                   exchange hash and keys, host keys and signatures against Python's
 #                   and OpenSSL's answers, and the server against a client in memory
+#   make javascript-test  Run libjavascript on the host: scripts with their expected
+#                   output, the embedding API, and a benchmark (time and peak bytes)
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
@@ -189,7 +191,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test
+	quic-test css-test web-test javascript-test
 
 all: esp
 
@@ -500,7 +502,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test web-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test web-test javascript-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -1083,6 +1085,27 @@ web-test: $(WEB_TEST)
 		{ grep -A14 FAIL build/tools/web-test.out | head -150; echo "WEB TEST FAILED (build/tools/web-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-test.out || true
 	@echo "WEB TEST PASSED: $$(tail -n 1 build/tools/web-test.out | cut -d ' ' -f 3-)"
+
+# libjavascript builds for the host too (but for its FreePascalOS clock)
+# and runs every tools/JavaScriptTest/scripts/*.js against the output
+# written at its end, checks the embedding API, then times the
+# benchmarks and reports their peak bytes. JS_GC_STRESS=1 collects every
+# 16 KiB.
+JAVASCRIPT_TEST := build/tools/JavaScriptTest
+JAVASCRIPT_TEST_UNITS := build/tools/javascript-test-units
+JAVASCRIPT_TEST_SOURCES := tools/JavaScriptTest/JavaScriptTest.pas \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas))
+
+$(JAVASCRIPT_TEST): $(JAVASCRIPT_TEST_SOURCES)
+	@mkdir -p $(JAVASCRIPT_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/JavaScriptTest -Fuuserland/lib/javascript \
+		-FU$(JAVASCRIPT_TEST_UNITS) -o$@ tools/JavaScriptTest/JavaScriptTest.pas
+
+javascript-test: $(JAVASCRIPT_TEST)
+	@$(JAVASCRIPT_TEST) tools/JavaScriptTest/scripts tools/JavaScriptTest/benchmarks > build/tools/javascript-test.out || \
+		{ grep -A3 FAIL build/tools/javascript-test.out; echo "JAVASCRIPT TEST FAILED (build/tools/javascript-test.out)"; exit 1; }
+	@grep BENCH build/tools/javascript-test.out
+	@echo "JAVASCRIPT TEST PASSED: $$(tail -n 1 build/tools/javascript-test.out | cut -d ' ' -f 2-)"
 
 # The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
 # RFC 6724 address selection, the destination cache, fragments.
