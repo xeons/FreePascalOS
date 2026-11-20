@@ -346,6 +346,13 @@ $(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(JAVASCRIPT_LIBRARY) $(HTTP_LIBRARY) $(CSS_LI
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/web -Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
+	@# The bindings' units use each other in a cycle: compiled again from
+	@# the script units' entry, the ones built against an earlier state of
+	@# another are rebuilt, so programs using them find them consistent.
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
+		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
+		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/web -Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Script.PageScripting.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
 		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ljavascript -lhttp -lcss -lfont -limage -ldrawing -ltls -lcompression \
 		-lcryptography -lsystem
@@ -356,14 +363,14 @@ $(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(wildcard userland/lib/w
 		$(wildcard userland/lib/webview/*.inc)
 	@rm -rf $(WEBVIEW_LIBRARY_OBJECTS)
 	@mkdir -p $(WEBVIEW_LIBRARY_OBJECTS)
-	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
-		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fuuserland/lib/webview -FU$(WEBVIEW_LIBRARY_OBJECTS) \
+		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED) -Fuuserland/lib/webview -FU$(WEBVIEW_LIBRARY_OBJECTS) \
 		userland/lib/webview/WebView.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwebview.so -o $@ \
-		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -lcontrols -lwindowing -lconfiguration -lhttp \
+		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -ljavascript -lcontrols -lwindowing -lconfiguration -lhttp \
 		-lcss -lfont -limage -ldrawing -ltls -lcompression -lcryptography -lsystem
 
 # libjavascript: the ECMAScript engine (Js.*) and its embedding API.

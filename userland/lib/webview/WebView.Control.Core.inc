@@ -27,6 +27,7 @@ constructor TWebView.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   CanFocus := True;
+  FScriptingEnabled := True;
   FZoom := 1;
   FState := LoadingIdle;
   FSink := TLayoutResourceSink.Create;
@@ -58,6 +59,8 @@ begin
     FPage.OnRenderingRequested := nil;
     FPage.Navigable.ObserverObject := nil;
   end;
+  if FExecutor is TPageScriptExecutor then
+    TPageScriptExecutor(FExecutor).Shutdown;
   ReleaseDocument;
   FPage.Free;
   FExecutor.Free;
@@ -83,10 +86,18 @@ begin
   if not Assigned(Factory) then
     Factory := DefaultScriptExecutorFactory;
   if Assigned(Factory) then
+    FExecutor := Factory(Self, FPage)
+  else
   begin
-    FExecutor := Factory(Self, FPage);
-    FPage.Navigable.Executor := FExecutor;
+    FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
+    TPageScriptExecutor(FExecutor).Environment.UserAgentText := WebViewUserAgent;
+    TPageScriptExecutor(FExecutor).OnAlert := @ScriptAlert;
+    TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;
+    TPageScriptExecutor(FExecutor).OnPrompt := @ScriptPrompt;
+    TPageScriptExecutor(FExecutor).OnConsoleMessage := @ScriptConsole;
   end;
+  if FScriptingEnabled then
+    FPage.Navigable.Executor := FExecutor;
   FObserver := TViewObserver.Create;
   TViewObserver(FObserver).View := Self;
   FPage.Navigable.ObserverObject := FObserver;
@@ -206,6 +217,13 @@ var
 begin
   if FPage = nil then
     Exit;
+  if FModalDepth > 0 then
+  begin
+    { A script waits for a prompt's answer: come back when it is given. }
+    FLoopTimer.Interval := 50;
+    FLoopTimer.Enabled := True;
+    Exit;
+  end;
   FPage.ProcessPendingWork(TaskBudgetMilliseconds);
   if FPage.Loop.HasReadyTask then
     PostWake;
@@ -245,7 +263,7 @@ end;
 
 procedure TWebView.RenderFrame;
 begin
-  if FPage = nil then
+  if (FPage = nil) or (FModalDepth > 0) then
     Exit;
   FPage.RenderingOpportunity;
   if FLayout = nil then
@@ -529,4 +547,62 @@ procedure TWebView.NavigableFailed(const Url, Reason: string);
 begin
   if Assigned(FOnNavigationFailed) then
     FOnNavigationFailed(Self, Url, Reason);
+end;
+
+{ ---- scripting ---- }
+
+procedure TWebView.SetScriptingEnabled(Value: Boolean);
+begin
+  FScriptingEnabled := Value;
+  if FPage = nil then
+    Exit;
+  if Value then
+    FPage.Navigable.Executor := FExecutor
+  else
+    FPage.Navigable.Executor := nil;
+end;
+
+procedure TWebView.ScriptAlert(const Message: string);
+begin
+  if not Assigned(FOnScriptAlert) then
+    Exit;
+  Inc(FModalDepth);
+  try
+    FOnScriptAlert(Self, Message);
+  finally
+    Dec(FModalDepth);
+  end;
+end;
+
+function TWebView.ScriptConfirm(const Message: string): Boolean;
+begin
+  Result := False;
+  if not Assigned(FOnScriptConfirm) then
+    Exit;
+  Inc(FModalDepth);
+  try
+    Result := FOnScriptConfirm(Self, Message);
+  finally
+    Dec(FModalDepth);
+  end;
+end;
+
+function TWebView.ScriptPrompt(const Message, Default: string; out Answer: string): Boolean;
+begin
+  Result := False;
+  Answer := '';
+  if not Assigned(FOnScriptPrompt) then
+    Exit;
+  Inc(FModalDepth);
+  try
+    Result := FOnScriptPrompt(Self, Message, Default, Answer);
+  finally
+    Dec(FModalDepth);
+  end;
+end;
+
+procedure TWebView.ScriptConsole(const Level, Line: string);
+begin
+  if Assigned(FOnConsoleMessage) then
+    FOnConsoleMessage(Self, Level, Line);
 end;

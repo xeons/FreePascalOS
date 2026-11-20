@@ -67,13 +67,15 @@ type
     FReadyState: string;
     FScriptCount: Integer;
     FObservedDocuments: array of TDocument;
+    FPreparesScripts: Boolean;
+    FReadyStateFromDocument: Boolean;
     procedure ObserveDocument(Target: TDocument);
     procedure FireSimpleEvent(Target: TEventTarget; const EventType: string; Bubbles: Boolean);
     function ScriptSource(Script: TElement): string;
   protected
     procedure NodeWrapped(Node: TNode); override;
   public
-    constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment = nil);
+    constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment = nil; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Runs a classic script (an inline one, or an external one the
@@ -81,7 +83,7 @@ type
       file and line, then the microtasks run. Element (may be nil) is
       document.currentScript meanwhile; an external script's element
       gets its load event. }
-    procedure ExecuteClassicScript(const Source, Url: string; Element: TElement);
+    procedure ExecuteClassicScript(const Source, Url: string; Element: TElement; FireLoad: Boolean = True);
     { An external script that could not be fetched: its error event. }
     procedure ScriptFetchFailed(Element: TElement);
     { The standard's "prepare the script element". True when the parser
@@ -106,7 +108,16 @@ type
     function ReadyState(Target: TDocument): string; override;
     procedure InvokeEventHandler(EventType: TAtom; Event: TEvent); override;
 
+    { The parser document.write writes to, when a loader parses (it is the
+      parser's script host itself). }
+    procedure AttachParser(Parser: THtmlParser);
     property ActiveParser: THtmlParser read FActiveParser;
+    { False under a loader that prepares and runs script elements
+      itself (Web.Loading.Scripts): the context then only runs what it
+      is given. }
+    property PreparesScripts: Boolean read FPreparesScripts write FPreparesScripts;
+    { document.readyState is the document's own (a loader sets it). }
+    property ReadyStateFromDocument: Boolean read FReadyStateFromDocument write FReadyStateFromDocument;
   end;
 
   { The parser's script host for a context. }
@@ -203,12 +214,13 @@ end;
 
 { TScriptContext }
 
-constructor TScriptContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment);
+constructor TScriptContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
 var
   Global: TJsObject;
   Clone: TJsValue;
 begin
-  inherited Create(ADocument, AEnvironment);
+  inherited Create(ADocument, AEnvironment, AWindow);
+  FPreparesScripts := True;
   FReadyState := 'complete';
   FDocumentObserver := TScriptDocumentObserver.Create(Self);
   InstallBindings(Self);
@@ -277,7 +289,7 @@ begin
   end;
 end;
 
-procedure TScriptContext.ExecuteClassicScript(const Source, Url: string; Element: TElement);
+procedure TScriptContext.ExecuteClassicScript(const Source, Url: string; Element: TElement; FireLoad: Boolean);
 var
   SavedScript: TElement;
   Name: string;
@@ -305,8 +317,13 @@ begin
     CurrentScript := SavedScript;
     LeaveScript;
   end;
-  if (Element <> nil) and Element.HasAttributeAtom(AtomSrc) then
+  if FireLoad and (Element <> nil) and Element.HasAttributeAtom(AtomSrc) then
     FireSimpleEvent(Element, 'load', False);
+end;
+
+procedure TScriptContext.AttachParser(Parser: THtmlParser);
+begin
+  FActiveParser := Parser;
 end;
 
 procedure TScriptContext.ScriptFetchFailed(Element: TElement);
@@ -365,6 +382,8 @@ var
   ParserInserted: Boolean;
 begin
   Result := False;
+  if not FPreparesScripts then
+    Exit;
   State := Script.ElementState;
   if (State and ElementStateAlreadyStarted) <> 0 then
     Exit;
@@ -508,7 +527,9 @@ end;
 
 function TScriptContext.ReadyState(Target: TDocument): string;
 begin
-  if Target = Document then
+  if (Target = Document) and FReadyStateFromDocument then
+    Result := Document.ReadyStateText
+  else if Target = Document then
     Result := FReadyState
   else
     Result := 'complete';

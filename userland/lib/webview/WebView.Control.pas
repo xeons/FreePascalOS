@@ -55,9 +55,12 @@
   - Find in page (FindText), zoom (Ctrl+plus, Ctrl+minus, Ctrl+0,
     Ctrl+wheel: the CSS-to-device scale is the display's times the
     zoom), context menus (OnContextMenu, else a menu of its own).
-  - Scripting: a TScriptExecutor from ScriptExecutorFactory (or
-    DefaultScriptExecutorFactory) when the page is made; none, and
-    scripting is off.
+  - Scripting: libweb's TPageScriptExecutor (the DOM bindings over the
+    page's loop) unless ScriptingEnabled is False, or the executor
+    ScriptExecutorFactory (or DefaultScriptExecutorFactory) makes; the
+    page's prompts come to OnScriptAlert, OnScriptConfirm and
+    OnScriptPrompt (the page's tasks wait meanwhile), its console to
+    OnConsoleMessage.
 }
 unit WebView.Control;
 
@@ -125,6 +128,10 @@ type
   TWebViewFailureEvent = procedure(Sender: TWebView; const Url, Reason: string) of object;
   TWebViewContextEvent = procedure(Sender: TWebView; constref Info: TWebContextInfo; var Handled: Boolean) of object;
   TWebViewConfirmEvent = function(Sender: TWebView): Boolean of object;
+  TWebViewScriptConfirmEvent = function(Sender: TWebView; const Message: string): Boolean of object;
+  TWebViewScriptPromptEvent = function(Sender: TWebView; const Message, Default: string; out Answer: string): Boolean
+    of object;
+  TWebViewConsoleEvent = procedure(Sender: TWebView; const Level, Text: string) of object;
 
   TWebView = class(TControl)
   private
@@ -133,6 +140,13 @@ type
     FObserver: TNavigableObserver;
     FExecutor: TScriptExecutor;
     FScriptExecutorFactory: TScriptExecutorFactory;
+    FScriptingEnabled: Boolean;
+    { Script prompts (modal dialogs) are open: the page waits. }
+    FModalDepth: Integer;
+    FOnScriptAlert: TWebViewTextEvent;
+    FOnScriptConfirm: TWebViewScriptConfirmEvent;
+    FOnScriptPrompt: TWebViewScriptPromptEvent;
+    FOnConsoleMessage: TWebViewConsoleEvent;
     FDocument: TDocument;
     FLayout: TDocumentLayout;
     FPainter: TDocumentPainter;
@@ -201,6 +215,11 @@ type
     FOnNavigationFailed: TWebViewFailureEvent;
     FOnContextMenuRequested: TWebViewContextEvent;
     FOnConfirmUnload: TWebViewConfirmEvent;
+    procedure SetScriptingEnabled(Value: Boolean);
+    procedure ScriptAlert(const Message: string);
+    function ScriptConfirm(const Message: string): Boolean;
+    function ScriptPrompt(const Message, Default: string; out Answer: string): Boolean;
+    procedure ScriptConsole(const Level, Line: string);
     { The page and its document. }
     procedure EnsurePage;
     procedure AdoptDocument(Document: TDocument);
@@ -334,6 +353,15 @@ type
     property Zoom: Double read FZoom write SetZoom;
     { Set before the first navigation (the page is made then). }
     property ScriptExecutorFactory: TScriptExecutorFactory read FScriptExecutorFactory write FScriptExecutorFactory;
+    { JavaScript (on unless set): a change applies from the next document. }
+    property ScriptingEnabled: Boolean read FScriptingEnabled write SetScriptingEnabled;
+    { window.alert, confirm and prompt (unanswered: confirm is False and
+      prompt gives nothing). }
+    property OnScriptAlert: TWebViewTextEvent read FOnScriptAlert write FOnScriptAlert;
+    property OnScriptConfirm: TWebViewScriptConfirmEvent read FOnScriptConfirm write FOnScriptConfirm;
+    property OnScriptPrompt: TWebViewScriptPromptEvent read FOnScriptPrompt write FOnScriptPrompt;
+    { The page's console (console.log, uncaught errors). }
+    property OnConsoleMessage: TWebViewConsoleEvent read FOnConsoleMessage write FOnConsoleMessage;
     property OnTitleChanged: TWebViewTextEvent read FOnTitleChanged write FOnTitleChanged;
     property OnLocationChanged: TWebViewTextEvent read FOnLocationChanged write FOnLocationChanged;
     property OnLoadingStateChanged: TWebViewLoadingEvent read FOnLoadingStateChanged write FOnLoadingStateChanged;
@@ -353,7 +381,8 @@ type
   end;
 
 var
-  { The bindings set this (scripting is off while it is nil). }
+  { A program's own script engine for every view (nil: libweb's
+    TPageScriptExecutor while ScriptingEnabled). }
   DefaultScriptExecutorFactory: TScriptExecutorFactory = nil;
 
 implementation
@@ -378,6 +407,7 @@ uses
   Web.Layout.Resources,
   Web.Paint.DisplayList,
   Web.Text.FontInstances,
+  Web.Script.PageScripting,
   WebView.Network,
   WebView.Zoom,
   WebView.Forms;

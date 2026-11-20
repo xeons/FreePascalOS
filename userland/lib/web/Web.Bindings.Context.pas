@@ -176,7 +176,8 @@ type
   private
     FEngine: TJsEngine;
     FDocument: TDocument;
-    FWindow: TWindowTarget;
+    FWindow: TEventTarget;
+    FOwnsWindow: Boolean;
     FEnvironment: TScriptEnvironment;
     FOwnsEnvironment: Boolean;
     FNodeWrappers: TBindingWrapperArray;
@@ -230,7 +231,10 @@ type
     MutationObservers: TObject;
     { The window's timers (Web.Script.Timers), freed after the engine. }
     Timers: TObject;
-    constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment);
+    { AWindow: the window event target the loader made (the navigable's
+      TWebWindow, whose load event and timers it drives); nil makes one
+      of the context's own. }
+    constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Interfaces }
@@ -328,7 +332,7 @@ type
 
     property Engine: TJsEngine read FEngine;
     property Document: TDocument read FDocument;
-    property Window: TWindowTarget read FWindow;
+    property Window: TEventTarget read FWindow;
     property Environment: TScriptEnvironment read FEnvironment write FEnvironment;
     property CallDepth: Integer read FCallDepth;
     property OnConsoleMessage: TConsoleMessageEvent read FOnConsoleMessage write FOnConsoleMessage;
@@ -506,7 +510,7 @@ end;
 
 { TBindingContext }
 
-constructor TBindingContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment);
+constructor TBindingContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
 var
   Singleton_: TWindowSingleton;
   Options: TJsEngineOptions;
@@ -524,7 +528,10 @@ begin
     FEnvironment := TScriptEnvironment.Create;
     FOwnsEnvironment := True;
   end;
-  FWindow := TWindowTarget.Create;
+  FWindow := AWindow;
+  FOwnsWindow := AWindow = nil;
+  if FOwnsWindow then
+    FWindow := TWindowTarget.Create;
   FDocument.DefaultView := FWindow;
   FWindowHandlers := JsUndefined;
   FTimeOrigin := GetTickCount64;
@@ -546,8 +553,8 @@ var
 begin
   FDestroying := True;
   UnregisterListenerOwner(Self);
-  if FWindow.Listeners <> nil then
-    DisableListeners(FWindow.Listeners, Self);
+  if FWindow.ListenerList(False) <> nil then
+    DisableListeners(FWindow.ListenerList(False), Self);
   { The engine's cells go first: the wrappers release their nodes. }
   FreeAndNil(FEngine);
   FreeAndNil(MutationObservers);
@@ -564,12 +571,13 @@ begin
   for Index := 0 to High(InterfaceClasses) do
     InterfaceClasses[Index].Free;
   EventHandlerAccessors.Free;
-  if FDocument.DefaultView = FWindow then
+  if FOwnsWindow and (FDocument.DefaultView = FWindow) then
     FDocument.DefaultView := nil;
   if FDocumentObserver <> nil then
     FDocument.RemoveObserver(FDocumentObserver);
   FreeAndNil(FDocumentObserver);
-  FWindow.Free;
+  if FOwnsWindow then
+    FWindow.Free;
   FreeFormStates;
   FDocument.Release;
   if FOwnsEnvironment then
@@ -655,7 +663,7 @@ begin
   for Kind := Low(TWindowSingleton) to High(TWindowSingleton) do
     Tracer.MarkValue(FSingletons[Kind]);
   Tracer.MarkValue(FWindowHandlers);
-  TraceListeners(FWindow.Listeners, Tracer);
+  TraceListeners(FWindow.ListenerList(False), Tracer);
   { The window's document: every wrapper of a connected node lives. }
   if FDocument.ScriptWrapper <> nil then
     Tracer.MarkCell(TBindingWrapper(FDocument.ScriptWrapper));

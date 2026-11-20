@@ -190,6 +190,10 @@ type
       back to the entry later loads Url itself. False when the page
       asked to stay (beforeunload). }
     function LoadHtml(const Html: string; constref Url: TUrlRecord): Boolean;
+    { history.pushState / replaceState: the document's URL becomes Url
+      (same origin, checked by the caller) in a new entry of the same
+      document, or the current one. }
+    procedure ChangeUrlFromScript(constref Url: TUrlRecord; ReplaceEntry: Boolean);
     procedure Back;
     procedure Forward;
     procedure Traverse(Delta: Integer);
@@ -610,6 +614,29 @@ begin
   end;
   SetState(LoadingReceiving);
   FLoader.BeginContent(Kind, Charset);
+end;
+
+procedure TNavigable.ChangeUrlFromScript(constref Url: TUrlRecord; ReplaceEntry: Boolean);
+var
+  Entry: TSessionHistoryEntry;
+begin
+  if FLoader = nil then
+    Exit;
+  if ReplaceEntry then
+    FHistory.Current.Url := Url
+  else
+  begin
+    Entry := TSessionHistoryEntry.Create;
+    Entry.Url := Url;
+    Entry.DocumentId := FCurrentDocumentId;
+    FHistory.Push(Entry);
+  end;
+  FLoader.ChangeDocumentUrl(Url);
+  if FObserver <> nil then
+  begin
+    FObserver.LocationChanged(Self, SerializeUrl(Url));
+    FObserver.HistoryChanged(Self);
+  end;
 end;
 
 function TNavigable.LoadHtml(const Html: string; constref Url: TUrlRecord): Boolean;

@@ -87,6 +87,15 @@ var
 begin
   if (Element.Flags and NodeFlagHasId) = 0 then
     Exit(NoAtom);
+  { Only styled (connected) nodes keep data; script may match detached
+    ones (querySelector on a fragment). }
+  if not Element.IsConnected then
+  begin
+    Value := Element.AttributeValueOf(AtomId);
+    if Value = '' then
+      Exit(NoAtom);
+    Exit(InternAtom(Value));
+  end;
   Data := NodeDataOf(Element);
   if not (ndIdKnown in Data^.Flags) then
   begin

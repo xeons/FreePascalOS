@@ -310,10 +310,17 @@ begin
   FEvents := TLoaderEvents.Create(Self);
   FObserver := TLoadingObserver.Create(FEvents);
   FDocument.AddObserver(FObserver);
+  if Executor <> nil then
+    Executor.DocumentStarted(Self);
 end;
 
 destructor TDocumentLoader.Destroy;
 begin
+  if FScripts.Executor <> nil then
+  begin
+    FScripts.Executor.DocumentStopped(Self);
+    FScripts.Executor.DocumentFreed(Self);
+  end;
   FAborted := True;
   FDocument.RemoveObserver(FObserver);
   FFetcher.CancelGroup(Self);
@@ -658,6 +665,8 @@ begin
   if FAborted then
     Exit;
   FAborted := True;
+  if FScripts.Executor <> nil then
+    FScripts.Executor.DocumentStopped(Self);
   FFetcher.CancelGroup(Self);
   FLoop.DiscardTasks(Self);
   FreeAndNil(FParser);

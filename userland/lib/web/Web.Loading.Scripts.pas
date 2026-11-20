@@ -92,6 +92,16 @@ type
       for an inline script). document.currentScript is Script.Element
       for classic scripts. }
     procedure ExecuteScript(Script: TPendingScript); virtual; abstract;
+    { A document loader (Web.Loading.Documents' TDocumentLoader) made
+      its document, before any byte is parsed: the engine makes the
+      document's global (event handler attributes need it even without
+      script elements). }
+    procedure DocumentStarted(Loader: TObject); virtual;
+    { The loader stopped (aborted: the document is being left): timers
+      stop, nothing more runs. Called again when it is freed. }
+    procedure DocumentStopped(Loader: TObject); virtual;
+    { The loader is going: what the engine kept for its document goes. }
+    procedure DocumentFreed(Loader: TObject); virtual;
   end;
 
   TBlockingQuery = function: Boolean of object;
@@ -236,6 +246,18 @@ end;
 function TScriptExecutor.SupportsModules: Boolean;
 begin
   Result := True;
+end;
+
+procedure TScriptExecutor.DocumentStarted(Loader: TObject);
+begin
+end;
+
+procedure TScriptExecutor.DocumentStopped(Loader: TObject);
+begin
+end;
+
+procedure TScriptExecutor.DocumentFreed(Loader: TObject);
+begin
 end;
 
 constructor TScriptScheduler.Create(Context: TLoadingContext; Preloads: TPreloadCache);
