@@ -40,12 +40,14 @@ uses
   QuicTest.Protection,
   QuicTest.Framing,
   QuicTest.Qpack,
-  QuicTest.Loopback;
+  QuicTest.Loopback,
+  QuicTest.Http3;
 
 begin
   RunProtectionTests;
   RunFramingTests;
   RunQpackTests;
   RunLoopbackTests;
+  RunHttp3Tests;
   FinishChecks('QUIC TEST');
 end.
