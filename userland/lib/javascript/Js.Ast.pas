@@ -1,0 +1,389 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  The syntax tree the parser builds and the compiler walks, and the
+  scopes in it.
+
+  One node class serves every construct: a kind, an operator, up to
+  four children (A..D), a list, a name, a number or text, flags and the
+  source position. What the fields mean per kind is written at the
+  kind.
+
+  Scopes are made while parsing: every function, block, catch clause,
+  class body and for-loop head with lexical declarations gets one, the
+  declarations go into it, and every identifier the parser meets is
+  recorded as a reference in the scope it appears in. When the whole
+  program is parsed, Js.Scopes resolves each reference to its variable,
+  marks the variables an inner function uses as captured (they then
+  live in an environment instead of a register) and gives every
+  variable its place.
+}
+unit Js.Ast;
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  Js.Lexer;
+
+type
+  TJsNodeKind = (
+    { Expressions }
+    nkNumber,          { Number }
+    nkBigInt,          { Text: digits, Number: radix }
+    nkString,          { Text }
+    nkTemplate,        { List: pieces (nkString, Raw in Name) and expressions alternating }
+    nkTaggedTemplate,  { A: tag, B: nkTemplate }
+    nkRegExp,          { Text: body, Name: flags }
+    nkIdentifier,      { Text: name; Variable after resolution }
+    nkThis,
+    nkSuperMember,     { A: property expression (computed) or nil; Text: name }
+    nkSuperCall,       { List: arguments }
+    nkNull, nkTrue, nkFalse,
+    nkArray,           { List: elements (nkHole, nkSpread) }
+    nkObject,          { List: nkProperty }
+    nkProperty,        { A: key, B: value; Flags }
+    nkFunction,        { Func: the function }
+    nkClass,           { Text: name; A: heritage; List: members (nkClassMember); B: binding identifier }
+    nkClassMember,     { A: key, B: value (function / field initializer); Flags }
+    nkUnary,           { Op, A }
+    nkUpdate,          { Op (++ / --), A; Flags: prefix }
+    nkBinary,          { Op, A, B }
+    nkLogical,         { Op (&&, ||, ??), A, B }
+    nkAssign,          { Op (= or compound), A: target, B: value }
+    nkConditional,     { A ? B : C }
+    nkCall,            { A: callee, List: arguments; Flags: optional }
+    nkNew,             { A: callee, List: arguments }
+    nkMember,          { A: object; B: property (computed) or nil; Text: name; Flags }
+    nkOptionalChain,   { A: the chain: where an optional link short-circuits to }
+    nkSequence,        { List }
+    nkSpread,          { A }
+    nkYield,           { A (or nil); Flags: delegate }
+    nkAwait,           { A }
+    nkNewTarget,
+    nkImportMeta,
+    nkHole,
+    nkPrivateName,     { Text }
+    nkPrivateIn,       { Text: private name, B: object }
+    nkArrayPattern,    { List: targets (nkHole, nkRest, nkAssignPattern...) }
+    nkObjectPattern,   { List: nkProperty (A key, B target), nkRest }
+    nkAssignPattern,   { A: target, B: default }
+    nkRest,            { A: target }
+    nkDynamicImport,   { A }
+    { Statements }
+    nkProgram,         { List; Scope }
+    nkVariables,       { List: nkDeclarator; Op: tkVar / tkLet... (DeclarationKind) }
+    nkDeclarator,      { A: target, B: initializer }
+    nkExpressionStatement, { A }
+    nkBlock,           { List; Scope }
+    nkEmpty,
+    nkIf,              { A test, B consequent, C alternate }
+    nkFor,             { A init, B test, C update, D body; Scope }
+    nkForIn,           { A left, B right, D body; Scope }
+    nkForOf,           { A left, B right, D body; Scope; Flags: await }
+    nkWhile,           { A test, D body }
+    nkDoWhile,         { D body, A test }
+    nkContinue,        { Text: label }
+    nkBreak,           { Text: label }
+    nkReturn,          { A }
+    nkThrow,           { A }
+    nkTry,             { A block, B catch parameter, C catch block, D finally; Scope: catch scope }
+    nkSwitch,          { A discriminant, List: nkCase; Scope }
+    nkCase,            { A test (nil: default), List: statements }
+    nkLabeled,         { Text: label, A: statement }
+    nkDebugger,
+    nkFunctionDeclaration, { Func }
+    nkClassDeclaration,    { as nkClass }
+    nkWith,            { A object, B body }
+    nkImport,          { module syntax (not compiled yet) }
+    nkExport);
+
+  TJsDeclarationKind = (dkVar, dkLet, dkConst, dkFunction, dkParameter, dkClass,
+    dkCatch, dkImplicit, dkClassInner);
+
+  TJsScope = class;
+  TJsFunctionInfo = class;
+  TJsVariable = class;
+
+  TJsNode = class
+  public
+    Kind: TJsNodeKind;
+    Op: TJsTokenKind;
+    Flags: Word;
+    Line: Integer;
+    Column: Integer;
+    A, B, C, D: TJsNode;
+    List: array of TJsNode;
+    Count: Integer;
+    Text: UnicodeString;
+    Name: UnicodeString;
+    Number: Double;
+    Scope: TJsScope;
+    Func: TJsFunctionInfo;
+    { An identifier's variable (nil: a global by name). }
+    Variable: TJsVariable;
+    { The scope an identifier appears in. }
+    ReferenceScope: TJsScope;
+    procedure Add(Node: TJsNode);
+  end;
+
+  TJsVariable = class
+  public
+    Name: UnicodeString;
+    Kind: TJsDeclarationKind;
+    Scope: TJsScope;
+    { Used by a function nested deeper than the declaring one. }
+    Captured: Boolean;
+    { Register (not captured) or environment slot (captured). }
+    Index: Integer;
+    { Position of the declaration, for the temporal dead zone. }
+    DeclarationStart: Integer;
+    { Var bindings declared by sloppy block functions (Annex B). }
+    IsAnnexB: Boolean;
+    { A declaration of a script's top level: a property of the global
+      object or a binding of the global lexical environment, by name. }
+    IsGlobal: Boolean;
+    function IsLexical: Boolean;
+  end;
+
+  TJsScopeKind = (skScript, skFunction, skBlock, skCatch, skClass, skFor, skSwitch, skEval);
+
+  TJsScope = class
+  public
+    Kind: TJsScopeKind;
+    Parent: TJsScope;
+    { The function (or script) this scope belongs to. }
+    FunctionScope: TJsScope;
+    Func: TJsFunctionInfo;
+    Variables: array of TJsVariable;
+    VariableCount: Integer;
+    References: array of TJsNode;
+    ReferenceCount: Integer;
+    Children: array of TJsScope;
+    ChildCount: Integer;
+    { Captured variables need an environment made when the scope is
+      entered. }
+    EnvironmentSize: Integer;
+    { The scope's environment, at run time, is pushed on entry. }
+    function HasEnvironment: Boolean; inline;
+    function Find(const Name: UnicodeString): TJsVariable;
+    function Declare(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind; Start: Integer): TJsVariable;
+    procedure AddReference(Node: TJsNode);
+    procedure AddChild(Scope: TJsScope);
+    destructor Destroy; override;
+  end;
+
+  TJsFunctionKind = (fkNormal, fkArrow, fkMethod, fkGetter, fkSetter, fkClassConstructor,
+    fkDerivedConstructor, fkClassFieldInitializer, fkScript);
+
+  TJsFunctionInfo = class
+  public
+    Name: UnicodeString;
+    Kind: TJsFunctionKind;
+    IsAsync: Boolean;
+    IsGenerator: Boolean;
+    IsStrict: Boolean;
+    IsExpression: Boolean;
+    Parameters: array of TJsNode;
+    ParameterCount: Integer;
+    { The expected argument count (parameters before the first default or rest). }
+    Length: Integer;
+    HasSimpleParameters: Boolean;
+    Body: array of TJsNode;
+    BodyCount: Integer;
+    { An arrow's expression body. }
+    ExpressionBody: TJsNode;
+    Scope: TJsScope;
+    { The binding of a named function expression's own name. }
+    SelfVariable: TJsVariable;
+    { Implicit variables. }
+    ThisVariable: TJsVariable;
+    ArgumentsVariable: TJsVariable;
+    NewTargetVariable: TJsVariable;
+    HomeVariable: TJsVariable;
+    FunctionVariable: TJsVariable;
+    UsesArguments: Boolean;
+    UsesThis: Boolean;
+    UsesSuper: Boolean;
+    UsesNewTarget: Boolean;
+    ContainsDirectEval: Boolean;
+    SourceStart: Integer;
+    SourceFinish: Integer;
+    Line: Integer;
+    Column: Integer;
+    { Class constructors: the class's field initializers. }
+    FieldInitializer: TJsNode;
+    ClassNode: TJsNode;
+    destructor Destroy; override;
+  end;
+
+  { Owns every node and scope made for one compilation. }
+  TJsAstArena = class
+  private
+    FNodes: array of TJsNode;
+    FNodeCount: Integer;
+    FObjects: array of TObject;
+    FObjectCount: Integer;
+  public
+    destructor Destroy; override;
+    function NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
+    procedure Own(Item: TObject);
+  end;
+
+const
+  { nkProperty / nkClassMember flags }
+  PropertyFlagComputed = 1;
+  PropertyFlagShorthand = 2;
+  PropertyFlagMethod = 4;
+  PropertyFlagGetter = 8;
+  PropertyFlagSetter = 16;
+  PropertyFlagSpread = 32;
+  PropertyFlagStatic = 64;
+  PropertyFlagField = 128;
+  PropertyFlagPrivate = 256;
+  PropertyFlagStaticBlock = 512;
+  PropertyFlagProto = 1024;
+  { nkMember / nkCall flags }
+  MemberFlagComputed = 1;
+  MemberFlagOptional = 2;
+  MemberFlagPrivate = 4;
+  { nkUpdate }
+  UpdateFlagPrefix = 1;
+  { nkYield }
+  YieldFlagDelegate = 1;
+  { nkForOf }
+  ForFlagAwait = 1;
+  { nkFunction: parenthesized (for the name inference rules) }
+  NodeFlagParenthesized = 2048;
+
+function DeclarationIsLexical(Kind: TJsDeclarationKind): Boolean; inline;
+
+implementation
+
+function DeclarationIsLexical(Kind: TJsDeclarationKind): Boolean;
+begin
+  Result := Kind in [dkLet, dkConst, dkClass, dkClassInner];
+end;
+
+procedure TJsNode.Add(Node: TJsNode);
+begin
+  if Count >= Length(List) then
+    SetLength(List, Length(List) * 2 + 4);
+  List[Count] := Node;
+  Inc(Count);
+end;
+
+function TJsVariable.IsLexical: Boolean;
+begin
+  Result := DeclarationIsLexical(Kind);
+end;
+
+function TJsScope.HasEnvironment: Boolean;
+begin
+  Result := EnvironmentSize > 0;
+end;
+
+function TJsScope.Find(const Name: UnicodeString): TJsVariable;
+var
+  Index: Integer;
+begin
+  for Index := 0 to VariableCount - 1 do
+    if Variables[Index].Name = Name then
+      Exit(Variables[Index]);
+  Result := nil;
+end;
+
+function TJsScope.Declare(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind; Start: Integer): TJsVariable;
+begin
+  Result := TJsVariable.Create;
+  Result.Name := Name;
+  Result.Kind := DeclarationKind;
+  Result.Scope := Self;
+  Result.DeclarationStart := Start;
+  Result.Index := -1;
+  if VariableCount >= Length(Variables) then
+    SetLength(Variables, Length(Variables) * 2 + 4);
+  Variables[VariableCount] := Result;
+  Inc(VariableCount);
+end;
+
+procedure TJsScope.AddReference(Node: TJsNode);
+begin
+  if ReferenceCount >= Length(References) then
+    SetLength(References, Length(References) * 2 + 8);
+  References[ReferenceCount] := Node;
+  Inc(ReferenceCount);
+  Node.ReferenceScope := Self;
+end;
+
+procedure TJsScope.AddChild(Scope: TJsScope);
+begin
+  if ChildCount >= Length(Children) then
+    SetLength(Children, Length(Children) * 2 + 4);
+  Children[ChildCount] := Scope;
+  Inc(ChildCount);
+end;
+
+destructor TJsScope.Destroy;
+var
+  Index: Integer;
+begin
+  for Index := 0 to VariableCount - 1 do
+    Variables[Index].Free;
+  inherited Destroy;
+end;
+
+destructor TJsFunctionInfo.Destroy;
+begin
+  inherited Destroy;
+end;
+
+destructor TJsAstArena.Destroy;
+var
+  Index: Integer;
+begin
+  for Index := 0 to FNodeCount - 1 do
+    FNodes[Index].Free;
+  for Index := 0 to FObjectCount - 1 do
+    FObjects[Index].Free;
+  inherited Destroy;
+end;
+
+function TJsAstArena.NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
+begin
+  Result := TJsNode.Create;
+  Result.Kind := Kind;
+  Result.Line := Line;
+  Result.Column := Column;
+  if FNodeCount >= Length(FNodes) then
+    SetLength(FNodes, Length(FNodes) * 2 + 256);
+  FNodes[FNodeCount] := Result;
+  Inc(FNodeCount);
+end;
+
+procedure TJsAstArena.Own(Item: TObject);
+begin
+  if FObjectCount >= Length(FObjects) then
+    SetLength(FObjects, Length(FObjects) * 2 + 64);
+  FObjects[FObjectCount] := Item;
+  Inc(FObjectCount);
+end;
+
+end.
