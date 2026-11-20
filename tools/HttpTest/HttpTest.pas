@@ -33,6 +33,7 @@ uses
   HttpTest.Hpack,
   HttpTest.Http2Frames,
   HttpTest.Loopback,
+  HttpTest.Client,
   HttpTest.Urls;
 
 begin
@@ -40,5 +41,6 @@ begin
   TestHpack;
   TestHttp2Frames;
   TestLoopback;
+  TestClient;
   FinishChecks('http test');
 end.

@@ -60,7 +60,8 @@ type
     VerifyCertificates: Boolean;
     { Unix seconds, for the certificates' validity. }
     VerificationTime: Int64;
-    { One ALPN protocol name ("http/1.1"), or empty. }
+    { ALPN protocol names offered, separated by commas ("h2,http/1.1"),
+      or empty. }
     ApplicationProtocol: string;
     { Count 0: the default list. }
     CipherSuites: TCipherSuiteList;

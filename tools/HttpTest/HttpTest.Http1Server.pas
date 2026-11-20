@@ -34,6 +34,8 @@
                    If-None-Match gets 304
     /auth          Basic authentication (user, secret)
     /alt-svc       an Alt-Svc field
+    /close-after   a response that says nothing of closing, then the
+                   connection closed (a kept connection gone stale)
 }
 unit HttpTest.Http1Server;
 
@@ -202,6 +204,11 @@ begin
   else if Path = '/until-close' then
   begin
     Reply('HTTP/1.0 200 OK'#13#10#13#10'all of it');
+    Exit(False);
+  end
+  else if Path = '/close-after' then
+  begin
+    Response(Self, '200 OK', '', 'closing when idle');
     Exit(False);
   end
   else if Path = '/interim' then

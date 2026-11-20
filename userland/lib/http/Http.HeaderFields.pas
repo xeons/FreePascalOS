@@ -69,6 +69,8 @@ type
     function GetAll(const Name: string): TStringArray;
     { Every field of the name joined with ", " (RFC 9110 5.3). }
     function Combined(const Name: string): string;
+    { A copy of the fields as an array. }
+    function FieldArray: THttpHeaderFieldArray;
     property Count: Integer read FCount;
     property Fields[Index: Integer]: THttpHeaderField read GetField; default;
   end;
@@ -295,6 +297,11 @@ begin
       SetLength(Result, Length(Result) + 1);
       Result[High(Result)] := FFields[Index].Value;
     end;
+end;
+
+function THttpHeaders.FieldArray: THttpHeaderFieldArray;
+begin
+  Result := Copy(FFields, 0, FCount);
 end;
 
 function THttpHeaders.Combined(const Name: string): string;

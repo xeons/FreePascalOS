@@ -225,16 +225,30 @@ begin
   EndVector(Builder, Extension, 2);
 end;
 
+{ Protocol is one ALPN name or several separated by commas ("h2,http/1.1"),
+  offered in that order. }
 procedure AddApplicationProtocol(var Builder: TTlsBuilder; const Protocol: string);
 var
   Extension, List, Name: PtrUInt;
+  Start, Finish: Integer;
 begin
   AppendUInt16(Builder, ExtensionApplicationLayerProtocol);
   Extension := BeginVector(Builder, 2);
   List := BeginVector(Builder, 2);
-  Name := BeginVector(Builder, 1);
-  AppendBytes(Builder, PChar(Protocol), Length(Protocol));
-  EndVector(Builder, Name, 1);
+  Start := 1;
+  while Start <= Length(Protocol) do
+  begin
+    Finish := Start;
+    while (Finish <= Length(Protocol)) and (Protocol[Finish] <> ',') do
+      Inc(Finish);
+    if Finish > Start then
+    begin
+      Name := BeginVector(Builder, 1);
+      AppendBytes(Builder, @Protocol[Start], Finish - Start);
+      EndVector(Builder, Name, 1);
+    end;
+    Start := Finish + 1;
+  end;
   EndVector(Builder, List, 2);
   EndVector(Builder, Extension, 2);
 end;
