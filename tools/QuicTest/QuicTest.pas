@@ -41,9 +41,34 @@ uses
   QuicTest.Framing,
   QuicTest.Qpack,
   QuicTest.Loopback,
-  QuicTest.Http3;
+  QuicTest.Http3,
+  QuicTest.Http3Server,
+  QuicTest.Server;
+
+{ One connection to the test's HTTP/3 server on 127.0.0.1:Port. }
+procedure Serve(Port: Word);
+var
+  Server: TTestServer;
+begin
+  Server := TTestServer.Create(False, ServeHttp3, Port);
+  InstallHttp3Server(Server);
+  Server.Patience := 20000;
+  Server.Start;
+  Server.WaitFor;
+  if Server.Failure <> '' then
+    WriteLn('server: ', Server.Failure)
+  else
+    WriteLn('server: ', Server.StreamsServed, ' requests served, closed with 0x',
+      IntToHex(Server.PeerCloseCode, 1));
+  Server.Free;
+end;
 
 begin
+  if ParamStr(1) = 'serve' then
+  begin
+    Serve(StrToInt(ParamStr(2)));
+    Exit;
+  end;
   RunProtectionTests;
   RunFramingTests;
   RunQpackTests;

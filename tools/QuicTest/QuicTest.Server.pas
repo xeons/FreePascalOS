@@ -70,7 +70,7 @@ type
     PacketsLost: QWord;
     { The HTTP/3 server's routine (set by QuicTest.Http3Server). }
     Http3Handler: TServeProcedure;
-    constructor Create(Ipv6: Boolean; AMode: TServerMode);
+    constructor Create(Ipv6: Boolean; AMode: TServerMode; Port: Word = 0);
     destructor Destroy; override;
     procedure Execute; override;
   end;
@@ -91,7 +91,7 @@ uses
   Quic.StreamTable,
   QuicTest.TlsServer;
 
-constructor TTestServer.Create(Ipv6: Boolean; AMode: TServerMode);
+constructor TTestServer.Create(Ipv6: Boolean; AMode: TServerMode; Port: Word);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -99,7 +99,7 @@ begin
   Protocol := 'h3';
   Patience := 10000;
   Options := Default(TQuicConnectionOptions);
-  if not OpenEndpoint(Endpoint, Ipv6) then
+  if not OpenEndpoint(Endpoint, Ipv6, Port) then
     Failure := 'cannot bind the server socket';
 end;
 

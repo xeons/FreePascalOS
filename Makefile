@@ -54,6 +54,9 @@
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
+#   make quic-test  Check libquic on the host: RFC 9001 and RFC 9204 vectors, frames,
+#                   whole QUIC and HTTP/3 connections over loopback UDP, and curl's
+#                   HTTP/3 against the test server when the host's curl has it
 #   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
 #                   and DHCPv6 messages on the host
 #   make netstat-test  Check the ports list parser and ss's filters on the host
@@ -180,7 +183,8 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test
+	crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+	quic-test
 
 all: esp
 
@@ -491,7 +495,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -978,6 +982,42 @@ ssh-test: $(SSH_TEST)
 	@$(SSH_TEST) > build/tools/ssh-test.out || \
 		{ grep -A2 FAIL build/tools/ssh-test.out; echo "SSH TEST FAILED (build/tools/ssh-test.out)"; exit 1; }
 	@echo "SSH HOST TEST PASSED: $$(tail -n 1 build/tools/ssh-test.out | cut -d ' ' -f 3-)"
+
+# libquic but for its socket and session units builds for the host too
+# (with libtls and TlsTest's Crypto.Random) and is checked there: RFC
+# 9001's packet protection vectors, frames, transport parameters, QPACK
+# (RFC 9204 appendix B), HTTP/3 frames, and whole QUIC and HTTP/3
+# connections over UDP on 127.0.0.1 and ::1 against a small server made
+# for the test (threads: cthreads); then curl, when it has HTTP/3,
+# fetches from that server. make-vectors.py works out the known answers
+# with Python's cryptography and makes the server's certificate.
+QUIC_TEST := build/tools/QuicTest
+QUIC_TEST_UNITS := build/tools/quic-test-units
+QUIC_VECTORS := $(QUIC_TEST_UNITS)/QuicTest.Generated.inc
+QUIC_TEST_SOURCES := $(wildcard tools/QuicTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
+	$(filter-out %/Tls.SocketTransport.pas %/Tls.SystemTrust.pas %/Tls.Sessions.pas %/Tls.Contents.pas, \
+		$(wildcard userland/lib/tls/*.pas)) \
+	$(filter-out %/Quic.UdpSockets.pas %/Quic.Sessions.pas %/Quic.Contents.pas,$(wildcard userland/lib/quic/*.pas))
+
+$(QUIC_VECTORS): tools/QuicTest/make-vectors.py
+	@mkdir -p $(QUIC_TEST_UNITS)
+	@python3 -I -c 'from cryptography import x509' 2>/dev/null || { echo "Python 3 with the cryptography package is needed for the QUIC test's vectors"; exit 1; }
+	python3 -I tools/QuicTest/make-vectors.py $@.tmp
+	@mv $@.tmp $@
+
+$(QUIC_TEST): $(QUIC_TEST_SOURCES) $(QUIC_VECTORS)
+	@mkdir -p $(QUIC_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/QuicTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/quic -Fuuserland/lib/tls \
+		-Fuuserland/lib/cryptography -Fushared -Fishared -Fi$(QUIC_TEST_UNITS) -FU$(QUIC_TEST_UNITS) -o$@ tools/QuicTest/QuicTest.pas
+
+quic-test: $(QUIC_TEST)
+	@$(QUIC_TEST) > build/tools/quic-test.out || \
+		{ grep -A2 FAIL build/tools/quic-test.out; echo "QUIC TEST FAILED (build/tools/quic-test.out)"; exit 1; }
+	@echo "QUIC TEST PASSED: $$(tail -n 1 build/tools/quic-test.out | cut -d ' ' -f 3-)"
+	@tools/QuicTest/run-curl-interop.sh $(QUIC_TEST) build/tools/quic-interop > build/tools/quic-interop.out 2>&1 || \
+		{ grep FAIL build/tools/quic-interop.out; echo "QUIC CURL INTEROP FAILED (build/tools/quic-interop.out)"; exit 1; }
+	@tail -n 1 build/tools/quic-interop.out
 
 # The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
 # RFC 6724 address selection, the destination cache, fragments.

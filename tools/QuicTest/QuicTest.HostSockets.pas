@@ -52,8 +52,9 @@ type
   end;
   PTestEndpoint = ^TTestEndpoint;
 
-{ Binds a socket on the loopback address; False when that fails. }
-function OpenEndpoint(out Endpoint: TTestEndpoint; Ipv6: Boolean): Boolean;
+{ Binds a socket on the loopback address (Port 0: one the system
+  chooses); False when that fails. }
+function OpenEndpoint(out Endpoint: TTestEndpoint; Ipv6: Boolean; Port: Word = 0): Boolean;
 procedure CloseEndpoint(var Endpoint: TTestEndpoint);
 { Sends to the endpoint at Port on the same loopback address. }
 procedure SetPeerPort(var Endpoint: TTestEndpoint; Port: Word);
@@ -70,7 +71,7 @@ uses
   Sockets,
   Quic.Errors;
 
-function OpenEndpoint(out Endpoint: TTestEndpoint; Ipv6: Boolean): Boolean;
+function OpenEndpoint(out Endpoint: TTestEndpoint; Ipv6: Boolean; Port: Word): Boolean;
 var
   Address4: TInetSockAddr;
   Address6: TInetSockAddr6;
@@ -86,6 +87,7 @@ begin
     Address6 := Default(TInetSockAddr6);
     Address6.sin6_family := AF_INET6;
     Address6.sin6_addr.u6_addr8[15] := 1;
+    Address6.sin6_port := HToNs(Port);
     if fpBind(Endpoint.Handle, @Address6, SizeOf(Address6)) <> 0 then
       Exit(False);
     Length := SizeOf(Address6);
@@ -100,6 +102,7 @@ begin
     Address4 := Default(TInetSockAddr);
     Address4.sin_family := AF_INET;
     Address4.sin_addr.s_addr := HToNl($7F000001);
+    Address4.sin_port := HToNs(Port);
     if fpBind(Endpoint.Handle, @Address4, SizeOf(Address4)) <> 0 then
       Exit(False);
     Length := SizeOf(Address4);
