@@ -1010,16 +1010,6 @@ begin
     Text := IsoText(TJsDate(Target).Time);
 end;
 
-var
-  PreviousInspectExtra: TJsInspectExtra = nil;
-
-function InspectDateOrOther(R: TJsRealm; Target: TJsObject; out Text: string): Boolean;
-begin
-  if InspectDate(R, Target, Text) then
-    Exit(True);
-  Result := Assigned(PreviousInspectExtra) and PreviousInspectExtra(R, Target, Text);
-end;
-
 procedure InstallDate(R: TJsInterpreterRealm);
 var
   Prototype: TJsObject;
@@ -1088,8 +1078,7 @@ begin
   DefineMethod(R, Prototype, 'toLocaleTimeString', @DateFormat, 0, 7);
   DefineMethod(R, Prototype, 'toJSON', @DateToJson, 1);
   DefineSymbolMethod(R, Prototype, wsToPrimitive, '[Symbol.toPrimitive]', @DateToPrimitive, 1, PropertyConfigurable);
-  PreviousInspectExtra := JsInspectExtra;
-  JsInspectExtra := @InspectDateOrOther;
+  RegisterInspectExtra(@InspectDate);
 end;
 
 end.

@@ -55,7 +55,9 @@ type
 
 var
   JsCollectionEntries: TJsCollectionEntries = nil;
-  JsInspectExtra: TJsInspectExtra = nil;
+
+{ Adds a printer for objects another unit knows (once). }
+procedure RegisterInspectExtra(Hook: TJsInspectExtra);
 
 { The text console.log prints for one value (strings as they are). }
 function InspectValue(R: TJsRealm; Value: TJsValue): string;
@@ -64,6 +66,31 @@ function InspectNested(R: TJsRealm; Value: TJsValue): string;
 function QuoteString(const Text: string): string;
 
 implementation
+
+var
+  InspectExtras: array of TJsInspectExtra;
+
+procedure RegisterInspectExtra(Hook: TJsInspectExtra);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(InspectExtras) do
+    if InspectExtras[Index] = Hook then
+      Exit;
+  SetLength(InspectExtras, Length(InspectExtras) + 1);
+  InspectExtras[High(InspectExtras)] := Hook;
+end;
+
+function InspectExtra(R: TJsRealm; Target: TJsObject; out Text: string): Boolean;
+var
+  Index: Integer;
+begin
+  Text := '';
+  for Index := 0 to High(InspectExtras) do
+    if InspectExtras[Index](R, Target, Text) then
+      Exit(True);
+  Result := False;
+end;
 
 type
   TInspector = class
@@ -282,7 +309,7 @@ begin
     end;
     Exit(StringToUtf8(FRealm.Heap, JsAsString(Value)));
   end;
-  if Assigned(JsInspectExtra) and JsInspectExtra(FRealm, Target, Extra) then
+  if InspectExtra(FRealm, Target, Extra) then
     Exit(Extra);
   if Seen(Target) then
     Exit('[Circular]');
