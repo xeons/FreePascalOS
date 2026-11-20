@@ -715,6 +715,7 @@ begin
   FStackTop := Base + Count;
   Inc(FFrameCount);
   Suspension.State := ssExecuting;
+  Suspension.Awaiting := False;
   Throwing := False;
   if Suspension.Delegating then
   begin
@@ -3025,7 +3026,7 @@ DispatchLoop:
             JsUndefined, JsUndefined);
           SaveFrame(Suspension, Frame, PC + 3, PC, Code[PC + 1]);
           Suspension.State := ssSuspendedYield;
-          Suspension.ResumeKind := -2;
+          Suspension.Awaiting := True;
           FStackTop := Frame^.SavedTop;
           Dec(FFrameCount);
           FExit := exSuspend;

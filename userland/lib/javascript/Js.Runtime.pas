@@ -75,6 +75,8 @@ type
     destructor Destroy; override;
     function PushRoot(Value: TJsValue): Integer;
     procedure PopRoots(Mark: Integer); inline;
+    { Replaces a pushed root's value. }
+    procedure SetRoot(Index: Integer; Value: TJsValue); inline;
     function CharacterString(Code: Word): TJsString;
     function Intern(const Text: string): TJsValue;
     function AtomValue(Name: TJsAtomName): TJsValue; inline;
@@ -149,6 +151,11 @@ end;
 procedure TJsRuntime.PopRoots(Mark: Integer);
 begin
   FTempRootCount := Mark;
+end;
+
+procedure TJsRuntime.SetRoot(Index: Integer; Value: TJsValue);
+begin
+  FTempRoots[Index] := Value;
 end;
 
 function TJsRuntime.CharacterString(Code: Word): TJsString;

@@ -201,6 +201,8 @@ type
     SuspendPC: Integer;
     { Suspended in yield*: the next resumption goes to the inner iterator. }
     Delegating: Boolean;
+    { Suspended in await (an async generator's driver waits for it). }
+    Awaiting: Boolean;
     { Async functions: the promise and its resolving functions. }
     Promise: TJsValue;
     ResolveFunction: TJsValue;

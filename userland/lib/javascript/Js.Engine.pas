@@ -194,6 +194,9 @@ type
 
 implementation
 
+uses
+  Math;
+
 { TJsHostObject }
 
 destructor TJsHostObject.Destroy;
@@ -260,6 +263,8 @@ end;
 constructor TJsEngine.Create(const Options: TJsEngineOptions);
 begin
   inherited Create;
+  { JavaScript arithmetic gives NaN and infinities, never traps. }
+  SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide, exOverflow, exUnderflow, exPrecision]);
   FRuntime := TJsRuntime.Create;
   FRuntime.Heap.MinimumThreshold := Options.InitialHeapThreshold;
   FRuntime.Heap.Threshold := Options.InitialHeapThreshold;
