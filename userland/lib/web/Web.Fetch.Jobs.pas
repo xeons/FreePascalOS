@@ -70,6 +70,8 @@ type
     { For the consumer. }
     Tag: PtrInt;
     BytesReceived: Int64;
+    { The Referer of the current hop ('' for none). }
+    Referrer: string;
     constructor Create(Id: QWord; Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer);
     destructor Destroy; override;
     procedure SetResponse(Response: TFetchResponse);

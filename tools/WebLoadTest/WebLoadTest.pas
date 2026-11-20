@@ -32,10 +32,11 @@ uses
   TestChecks,
   WebLoadTest.EventLoop,
   WebLoadTest.FetchRules,
-  Web.Fetch.Fetcher;
+  WebLoadTest.Fetching;
 
 begin
   RunEventLoopTests;
   RunFetchRuleTests;
+  RunFetchingTests;
   FinishChecks('web load test');
 end.

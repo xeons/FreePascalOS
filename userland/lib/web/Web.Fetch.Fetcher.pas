@@ -478,12 +478,9 @@ var
   Referrer: string;
 begin
   Request := Job.Request;
-  if Request.ReferrerKind <> ReferrerNone then
-  begin
-    Request.Headers.Remove('referer');
-    if ComputeReferrer(Job, Referrer) then
-      Request.Headers.SetValue('referer', Referrer);
-  end;
+  Job.Referrer := '';
+  if (Request.ReferrerKind <> ReferrerNone) and ComputeReferrer(Job, Referrer) then
+    Job.Referrer := Referrer;
   UpgradeMixedContentRequest(Request);
   Current := Request.CurrentUrl;
   if FNetwork.Hsts.UpgradeUrl(Current) then
@@ -730,6 +727,8 @@ begin
   Request := Job.Request;
   for Index := 0 to Request.Headers.Count - 1 do
     Target.Headers.Add(Request.Headers[Index].Name, Request.Headers[Index].Value);
+  if Job.Referrer <> '' then
+    Target.Headers.SetValue('referer', Job.Referrer);
   if not Target.Headers.Has('accept') then
     Target.Headers.SetValue('accept', AcceptForDestination(Request.Destination));
   if not Target.Headers.Has('accept-language') and (FNetwork.AcceptLanguage <> '') then
@@ -790,8 +789,8 @@ begin
     if Length(Job.UnsafeHeaderNames) > 0 then
       Result.Headers.SetValue('access-control-request-headers', string.Join(',', Job.UnsafeHeaderNames));
     Result.Headers.SetValue('origin', SerializedRequestOrigin(Job));
-    if Request.Headers.Has('referer') then
-      Result.Headers.SetValue('referer', Request.Headers.Value('referer'));
+    if Job.Referrer <> '' then
+      Result.Headers.SetValue('referer', Job.Referrer);
     Result.CredentialsMode := CredentialsOmit;
     Result.CacheMode := CacheModeNoStore;
   end
