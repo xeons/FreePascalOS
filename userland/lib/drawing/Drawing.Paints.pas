@@ -71,8 +71,11 @@ type
     CentreX, CentreY, Radius: Double;
     FocusX, FocusY, FocusRadius: Double;
     ToPaintSpace: TAffineTransform;
-    { Pattern: the tile (not owned). }
+    { Pattern: the tile (not owned), repeated or transparent outside
+      it, sampled at the nearest pixel or between the four nearest. }
     Tile: TSurface;
+    TileRepeat: Boolean;
+    Smooth: Boolean;
     { Made by PreparePaint. }
     Ramp: array of TColor;
   end;
@@ -144,7 +147,78 @@ begin
   Result := Default(TPaint);
   Result.Kind := PaintPattern;
   Result.Tile := Tile;
+  Result.TileRepeat := True;
   Result.ToPaintSpace := ToPaintSpace;
+end;
+
+{ The tile's pixel at (X, Y): wrapped when it repeats, else clamped to
+  its edge (Inside False when the point is beyond it). }
+function TilePixel(const Paint: TPaint; X, Y: LongInt): TColor;
+begin
+  if Paint.TileRepeat then
+  begin
+    X := X mod Paint.Tile.Width;
+    if X < 0 then
+      Inc(X, Paint.Tile.Width);
+    Y := Y mod Paint.Tile.Height;
+    if Y < 0 then
+      Inc(Y, Paint.Tile.Height);
+  end
+  else
+  begin
+    if X < 0 then
+      X := 0;
+    if X >= Paint.Tile.Width then
+      X := Paint.Tile.Width - 1;
+    if Y < 0 then
+      Y := 0;
+    if Y >= Paint.Tile.Height then
+      Y := Paint.Tile.Height - 1;
+  end;
+  Result := SurfaceLine(Paint.Tile, Y)[X];
+end;
+
+{ Four colours mixed by their weights, premultiplied. }
+function MixFour(C00, C10, C01, C11: TColor; FractionX, FractionY: Double): TColor;
+var
+  W00, W10, W01, W11: Double;
+  A00, A10, A01, A11: Double;
+  Alpha, Red, Green, Blue: Double;
+begin
+  W00 := (1 - FractionX) * (1 - FractionY);
+  W10 := FractionX * (1 - FractionY);
+  W01 := (1 - FractionX) * FractionY;
+  W11 := FractionX * FractionY;
+  A00 := AlphaOf(C00) * W00;
+  A10 := AlphaOf(C10) * W10;
+  A01 := AlphaOf(C01) * W01;
+  A11 := AlphaOf(C11) * W11;
+  Alpha := A00 + A10 + A01 + A11;
+  if Alpha < 0.5 then
+    Exit(ColorTransparent);
+  Red := (RedOf(C00) * A00 + RedOf(C10) * A10 + RedOf(C01) * A01 + RedOf(C11) * A11) / Alpha;
+  Green := (GreenOf(C00) * A00 + GreenOf(C10) * A10 + GreenOf(C01) * A01 + GreenOf(C11) * A11) / Alpha;
+  Blue := (BlueOf(C00) * A00 + BlueOf(C10) * A10 + BlueOf(C01) * A01 + BlueOf(C11) * A11) / Alpha;
+  Result := ArgbColor(Min(255, Round(Alpha)), Min(255, Round(Red)), Min(255, Round(Green)), Min(255, Round(Blue)));
+end;
+
+function SampleTile(const Paint: TPaint; X, Y: Double): TColor;
+var
+  BaseX, BaseY: LongInt;
+  FractionX, FractionY: Double;
+begin
+  if not Paint.TileRepeat and ((X < 0) or (Y < 0) or (X >= Paint.Tile.Width) or (Y >= Paint.Tile.Height)) then
+    Exit(ColorTransparent);
+  if not Paint.Smooth then
+    Exit(TilePixel(Paint, Floor(X), Floor(Y)));
+  X := X - 0.5;
+  Y := Y - 0.5;
+  BaseX := Floor(X);
+  BaseY := Floor(Y);
+  FractionX := X - BaseX;
+  FractionY := Y - BaseY;
+  Result := MixFour(TilePixel(Paint, BaseX, BaseY), TilePixel(Paint, BaseX + 1, BaseY),
+    TilePixel(Paint, BaseX, BaseY + 1), TilePixel(Paint, BaseX + 1, BaseY + 1), FractionX, FractionY);
 end;
 
 function GradientIsSolid(const Stops: TGradientStops; out Color: TColor): Boolean;
@@ -307,7 +381,6 @@ var
   StepX, StepY: Double;
   DX, DY, LengthSquare: Double;
   T: Double;
-  TileX, TileY: LongInt;
 begin
   case Paint.Kind of
     PaintSolid:
@@ -355,15 +428,7 @@ begin
                  (Abs(PaintY) > 1E9) then
                 Colors[Index] := ColorTransparent
               else
-              begin
-                TileX := Floor(PaintX) mod Paint.Tile.Width;
-                if TileX < 0 then
-                  Inc(TileX, Paint.Tile.Width);
-                TileY := Floor(PaintY) mod Paint.Tile.Height;
-                if TileY < 0 then
-                  Inc(TileY, Paint.Tile.Height);
-                Colors[Index] := SurfaceLine(Paint.Tile, TileY)[TileX];
-              end;
+                Colors[Index] := SampleTile(Paint, PaintX, PaintY);
               PaintX := PaintX + StepX;
               PaintY := PaintY + StepY;
             end;
