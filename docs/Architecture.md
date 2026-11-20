@@ -9199,7 +9199,8 @@ and `<style>`/`<link>` changes mark the sheets dirty. After restyling an
 element it compares old and new styles struct by struct (structs are
 interned, so pointers compare) and reports the kind of change to the
 layout: boxes (display, position, float, generated content, lists),
-layout, or paint; a changed inherited group restyles the children.
+layout, or paint (the boxes then take the new styles and nothing is laid
+out again); a changed inherited group restyles the children.
 
 ### Text (Web.Text)
 
@@ -9220,7 +9221,8 @@ same width at every device scale; painting renders glyphs at the device
 pixel size from libfont's glyph cache and places them where layout
 measured them. Measurements are cached per (font, string) in one hash
 table (cleared when full). Bold without a bold face is drawn twice, one
-device pixel apart. `Web.Text.Breaking` has UTF-8 stepping,
+device pixel apart; italic or oblique without such a face is drawn
+sheared (a synthetic oblique). `Web.Text.Breaking` has UTF-8 stepping,
 text-transform (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic) and
 line break opportunities (a simplified UAX #14: after spaces, U+200B and
 hyphens between letters, around ideographs, never before closing
@@ -9444,16 +9446,14 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), synthetic italics (no italic faces are installed), font
-loading from @font-face, ::first-line and ::first-letter, inline boxes
+scripts), font loading from @font-face, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes, true sticky positioning,
 transforms, filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, scrollbars (the web view draws
 them from ScrollContainers), incremental display list updates (it is
-rebuilt whole when anything changes), and a paint-only restyle that does
-not relayout (a paint change rebuilds the element's child boxes today).
+rebuilt whole when anything changes).
 
 ## The AArch64 port
 

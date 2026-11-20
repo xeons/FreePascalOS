@@ -64,6 +64,7 @@ type
     FWeight: Integer;
     FItalic: Boolean;
     FSyntheticBold: Boolean;
+    FSyntheticItalic: Boolean;
     FAscent, FDescent, FLineGap: Double;
     FUnitScale: Double;
     FLatinAdvances: array[0..255] of Single;
@@ -88,6 +89,8 @@ type
     property Weight: Integer read FWeight;
     property Italic: Boolean read FItalic;
     property SyntheticBold: Boolean read FSyntheticBold;
+    { Italic or oblique wanted but the face is upright: drawn slanted. }
+    property SyntheticItalic: Boolean read FSyntheticItalic;
     property Ascent: Double read FAscent;
     property Descent: Double read FDescent;
     property LineGap: Double read FLineGap;
@@ -142,6 +145,7 @@ begin
   FWeight := Weight;
   FItalic := Italic;
   FSyntheticBold := (Weight >= 600) and (Primary <> nil) and (Primary.Weight < 600);
+  FSyntheticItalic := Italic and (Primary <> nil) and not Primary.Italic;
   if (Primary = nil) or (Primary.Font = nil) then
   begin
     FAscent := Size * 0.8;

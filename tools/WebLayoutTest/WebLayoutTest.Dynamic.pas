@@ -84,7 +84,7 @@ var
   Layout: TDocumentLayout;
   Element, Child: TElement;
   Index: Integer;
-  SkippedBefore: Int64;
+  SkippedBefore, LaidOutBefore: Int64;
 begin
   Layout := LayoutText(DynamicPage, 600, Document);
   try
@@ -122,6 +122,12 @@ begin
     Layout.Update;
     Check(BoxesSkipped > SkippedBefore, 'incremental: clean boxes skipped');
     CheckSame(Layout, Document, 'last paragraph changed');
+    { A change painting alone shows: no box is laid out again. }
+    LaidOutBefore := BoxesLaidOut;
+    Document.GetElementById('title').SetAttribute('style', 'background-color: yellow');
+    Layout.Update;
+    Check(BoxesLaidOut = LaidOutBefore, 'incremental: a paint-only change lays nothing out');
+    CheckSame(Layout, Document, 'background color');
     { Dynamic states. }
     Layout.SetElementStates(Document.GetElementById('first'), [esHover]);
     Layout.Update;

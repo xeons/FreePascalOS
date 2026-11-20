@@ -387,10 +387,12 @@ end;
 
 { ---- text ---- }
 
+{ Bold draws the glyph twice a pixel apart (a synthetic bold); Slant
+  shears it, rows above the baseline moved right (a synthetic oblique). }
 procedure DrawGlyph(var Raster: TRaster; Font: TOutlineFont; PixelSize: Integer; Glyph: LongWord; PenX, BaselineY: Double;
-  Color: TColor; Bold: Boolean);
+  Color: TColor; Bold: Boolean; Slant: Double = 0);
 var
-  Quarters, Whole, Row, BaselinePixel: LongInt;
+  Quarters, Whole, Row, BaselinePixel, Shift: LongInt;
   Bitmap: PGlyphBitmap;
 begin
   Quarters := Floor(PenX * SubpixelSteps + 0.5);
@@ -401,10 +403,11 @@ begin
   BaselinePixel := Floor(BaselineY + 0.5);
   for Row := 0 to Bitmap^.Height - 1 do
   begin
-    BlendCoverageSpan(Raster.Canvas, BaselinePixel + Bitmap^.Top + Row, Whole + Bitmap^.Left,
+    Shift := Round(-(Bitmap^.Top + Row) * Slant);
+    BlendCoverageSpan(Raster.Canvas, BaselinePixel + Bitmap^.Top + Row, Whole + Bitmap^.Left + Shift,
       @Bitmap^.Coverage[Row * Bitmap^.Width], Bitmap^.Width, Color);
     if Bold then
-      BlendCoverageSpan(Raster.Canvas, BaselinePixel + Bitmap^.Top + Row, Whole + Bitmap^.Left + 1,
+      BlendCoverageSpan(Raster.Canvas, BaselinePixel + Bitmap^.Top + Row, Whole + Bitmap^.Left + 1 + Shift,
         @Bitmap^.Coverage[Row * Bitmap^.Width], Bitmap^.Width, Color);
   end;
 end;
@@ -413,10 +416,13 @@ procedure DrawText(var Raster: TRaster; const Item: TDisplayItem);
 var
   Run: TTextRun;
   Count, Index, PixelSize, Spaces, Characters: Integer;
-  Baseline, StartX, PenX: Double;
+  Baseline, StartX, PenX, Slant: Double;
   Font: TOutlineFont;
 begin
   Run := Raster.List.Texts[Item.Index];
+  Slant := 0;
+  if Run.Font.SyntheticItalic then
+    Slant := 0.2;
   Run.Font.PlaceGlyphs(Run.Box.Text, Run.TextStart, Run.TextLength, Raster.Glyphs, Count);
   PixelSize := Max(1, Round(Run.Font.Size * Raster.View.Scale));
   Baseline := DeviceY(Raster, Run.Baseline);
@@ -429,7 +435,7 @@ begin
     Font := Raster.Glyphs[Index].Face.Font;
     if Font <> nil then
       DrawGlyph(Raster, Font, PixelSize, Raster.Glyphs[Index].Glyph, PenX, Baseline, Item.Color,
-        Run.Font.SyntheticBold);
+        Run.Font.SyntheticBold, Slant);
     if Raster.Glyphs[Index].CodePoint = 32 then
       Inc(Spaces);
     Inc(Characters);

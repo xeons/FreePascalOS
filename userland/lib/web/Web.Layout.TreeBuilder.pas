@@ -61,7 +61,6 @@ type
     FOldChildren: array of TLayoutBox;
     FBuildDepth: Integer;
     function TakeReusableBox(Node: TNode; Parent: TLayoutBox): TLayoutBox;
-    function AnonymousStyleFor(ParentStyle: TCssComputedStyle): TCssComputedStyle;
     function NewAnonymousBlock(Parent: TLayoutBox): TLayoutBox;
     procedure AddChildrenOf(Parent: TLayoutBox; Node: TNode);
     procedure AddNodeBox(Parent: TLayoutBox; Node: TNode);
@@ -85,6 +84,8 @@ type
     { Drops Box's children and builds them again from its node. }
     procedure BuildChildren(Box: TLayoutBox);
     procedure BuildChildrenAnew(Box: TLayoutBox);
+    { The (cached) style of anonymous boxes under ParentStyle. }
+    function AnonymousStyleFor(ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { Forgets the cached anonymous styles. }
     procedure ClearCaches;
     property Styler: TDocumentStyler read FStyler;

@@ -41,7 +41,7 @@ unit Web.Layout.Document;
 interface
 
 uses
-  Web.Dom, Css.ElementAdapter, Web.Style.Resolver, Web.Layout.Resources, Web.Layout.Boxes,
+  Web.Dom, Css.ElementAdapter, Css.ComputedStyle, Web.Style.Resolver, Web.Layout.Resources, Web.Layout.Boxes,
   Web.Layout.TreeBuilder, Web.Layout.Context;
 
 type
@@ -77,6 +77,7 @@ type
     procedure AttributeChanged(Node: TNode);
     procedure ResourcesChanged(Change: TResourceChange);
     procedure MarkBoxesOf(Node: TNode);
+    procedure TakePaintStyles(Box: TLayoutBox; Element: TElement; Style: TCssComputedStyle);
     procedure RebuildDirtyBoxes(Node: TNode);
     procedure ApplyEnvironment;
     procedure ComputeScrollExtents;
@@ -260,11 +261,44 @@ begin
     Box.Style.Release;
     Box.Style := Data^.Style.AddRef;
   end;
+  if (Change = scPaint) and (Data <> nil) then
+  begin
+    { Only painting changes: the boxes take the new styles, no layout. }
+    TakePaintStyles(Box, Element, Data^.Style);
+    Exit;
+  end;
   if Box.Kind = bkReplaced then
     Box.MarkNeedsLayout
   else
     MarkBoxesOf(Element);
   FLayoutDirty := True;
+end;
+
+{ The text boxes of Element's own text and the anonymous boxes between
+  take the element's new style. }
+procedure TDocumentLayout.TakePaintStyles(Box: TLayoutBox; Element: TElement; Style: TCssComputedStyle);
+var
+  Child: TLayoutBox;
+  NewStyle: TCssComputedStyle;
+begin
+  Child := Box.FirstChild;
+  while Child <> nil do
+  begin
+    if (Child.Kind = bkText) and (Child.Node <> nil) and (Child.Node.ParentNode = Element) then
+      NewStyle := Style
+    else if (bfAnonymous in Child.Flags) and (Child.Node = nil) and not (Child is TTextBox) then
+      NewStyle := FBuilder.AnonymousStyleFor(Box.Style)
+    else
+      NewStyle := nil;
+    if (NewStyle <> nil) and (Child.Style <> NewStyle) then
+    begin
+      Child.Style.Release;
+      Child.Style := NewStyle.AddRef;
+    end;
+    if (bfAnonymous in Child.Flags) and (Child.Node = nil) then
+      TakePaintStyles(Child, Element, Style);
+    Child := Child.NextSibling;
+  end;
 end;
 
 procedure TDocumentLayout.TextChanged(Node: TNode);

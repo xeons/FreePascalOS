@@ -1090,13 +1090,14 @@ Part 2 (style, layout, painting):
 - [ ] Grid: subgrid, dense packing, baseline alignment, named lines, the full
       intrinsic track sizing algorithm
 - [ ] Fixed table layout, collapsing borders, `visibility: collapse`
-- [ ] Bidi and writing modes, shaping beyond kerning, synthetic italics,
-      @font-face loading, ::first-line/::first-letter
+- [x] Synthetic bold and oblique for faces the system lacks; paint-only
+      restyle without relayout
+- [ ] Bidi and writing modes, shaping beyond kerning, @font-face loading,
+      ::first-line/::first-letter
 - [ ] Inline boxes split around blocks, relative inline boxes, real sticky
       positioning, transforms, filters, blend modes, clip-path,
       border-image, conic gradients, blurred text shadows
-- [ ] Paint-only restyle without relayout; incremental display list
-      updates; scrollbars (left to the web view)
+- [ ] Incremental display list updates; scrollbars (left to the web view)
 
 Later phases: loading through libhttp, JavaScript bindings (wrappers in
 the node's rare data, `TScriptHost`, element interface classes via
