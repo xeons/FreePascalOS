@@ -33,7 +33,7 @@ interface
 
 uses
   SysUtils,
-  Generics.Collections,
+  Web.IdMaps,
   Web.EventLoop.Tasks;
 
 type
@@ -47,7 +47,7 @@ type
   private
     FHeap: array of TDelayedTaskEntry;
     FCount: Integer;
-    FLive: specialize TDictionary<QWord, TWebTask>;
+    FLive: TIdMap;
     FNextHandle: QWord;
     function Earlier(constref First, Second: TDelayedTaskEntry): Boolean;
     procedure SiftUp(Index: Integer);
@@ -76,12 +76,12 @@ implementation
 constructor TDelayedTaskList.Create;
 begin
   inherited Create;
-  FLive := specialize TDictionary<QWord, TWebTask>.Create;
+  FLive := TIdMap.Create;
 end;
 
 destructor TDelayedTaskList.Destroy;
 var
-  Task: TWebTask;
+  Task: TObject;
 begin
   for Task in FLive.Values do
     Task.Free;
@@ -167,7 +167,7 @@ end;
 
 function TDelayedTaskList.Cancel(Handle: QWord): Boolean;
 var
-  Task: TWebTask;
+  Task: TObject;
 begin
   Result := FLive.TryGetValue(Handle, Task);
   if not Result then
@@ -226,19 +226,14 @@ end;
 
 procedure TDelayedTaskList.Discard(Group: Pointer);
 var
-  Handles: array of QWord;
-  Pair: specialize TPair<QWord, TWebTask>;
+  Handles: TIdArray;
+  Task: TObject;
   Index: Integer;
 begin
-  Handles := nil;
-  for Pair in FLive do
-    if Pair.Value.Group = Group then
-    begin
-      SetLength(Handles, Length(Handles) + 1);
-      Handles[High(Handles)] := Pair.Key;
-    end;
+  Handles := FLive.Keys;
   for Index := 0 to High(Handles) do
-    Cancel(Handles[Index]);
+    if FLive.TryGetValue(Handles[Index], Task) and (TWebTask(Task).Group = Group) then
+      Cancel(Handles[Index]);
 end;
 
 function TDelayedTaskList.Count: Integer;

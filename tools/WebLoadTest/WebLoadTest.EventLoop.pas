@@ -40,7 +40,8 @@ uses
   Web.EventLoop.Tasks,
   Web.EventLoop,
   Web.EventLoop.Timers,
-  Web.EventLoop.AnimationFrames;
+  Web.EventLoop.AnimationFrames,
+  Web.IdMaps;
 
 type
   TManualClock = class
@@ -474,8 +475,40 @@ begin
   end;
 end;
 
+procedure CheckIdMap;
+var
+  Map: TIdMap;
+  Index: Integer;
+  Value: TObject;
+  Good: Boolean;
+begin
+  Map := TIdMap.Create;
+  try
+    for Index := 1 to 10000 do
+      Map.Add(QWord(Index) * 7919, TObject(PtrUInt(Index)));
+    for Index := 1 to 10000 do
+      if Index mod 2 = 0 then
+        Map.Remove(QWord(Index) * 7919);
+    Good := Map.Count = 5000;
+    for Index := 1 to 10000 do
+      if Map.TryGetValue(QWord(Index) * 7919, Value) <> (Index mod 2 = 1) then
+        Good := False
+      else if (Index mod 2 = 1) and (PtrUInt(Value) <> PtrUInt(Index)) then
+        Good := False;
+    for Index := 1 to 100000 do
+    begin
+      Map.Add(QWord(Index) + 1000000000, nil);
+      Map.Remove(QWord(Index) + 1000000000);
+    end;
+    Check(Good and (Map.Count = 5000) and (Length(Map.Keys) = 5000), 'id map: adds, removes, lookups');
+  finally
+    Map.Free;
+  end;
+end;
+
 procedure RunEventLoopTests;
 begin
+  CheckIdMap;
   CheckTasksAndMicrotasks;
   CheckTimers;
   CheckAnimationFrames;

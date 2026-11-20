@@ -42,7 +42,6 @@ interface
 uses
   SysUtils,
   Classes,
-  Generics.Collections,
   Url.Records;
 
 type
@@ -52,7 +51,8 @@ type
     IncludeSubDomains: Boolean;
   end;
 
-  THstsEntry = record
+  THstsEntry = class
+  public
     Expiry: Int64;
     IncludeSubDomains: Boolean;
   end;
@@ -62,8 +62,12 @@ type
   THstsStore = class
   private
     FLock: TRTLCriticalSection;
-    FEntries: specialize TDictionary<string, THstsEntry>;
+    { Host names, sorted, each with its THstsEntry (owned). }
+    FEntries: TStringList;
     FClock: THstsClock;
+    function EntryOf(const Host: string): THstsEntry;
+    procedure SetEntry(const Host: string; Expiry: Int64; IncludeSubDomains: Boolean);
+    procedure RemoveEntry(const Host: string);
     function Now: Int64;
     function FindLocked(const Host: string; out Entry: THstsEntry): Boolean;
   public
@@ -169,7 +173,10 @@ constructor THstsStore.Create(Clock: THstsClock);
 begin
   inherited Create;
   InitCriticalSection(FLock);
-  FEntries := specialize TDictionary<string, THstsEntry>.Create;
+  FEntries := TStringList.Create;
+  FEntries.Sorted := True;
+  FEntries.CaseSensitive := True;
+  FEntries.OwnsObjects := True;
   FClock := Clock;
 end;
 
@@ -188,20 +195,46 @@ begin
     Result := SystemUnixTime;
 end;
 
-procedure THstsStore.AddHost(const Host: string; MaxAgeSeconds: Int64; IncludeSubDomains: Boolean);
+function THstsStore.EntryOf(const Host: string): THstsEntry;
+var
+  Index: Integer;
+begin
+  if FEntries.Find(Host, Index) then
+    Result := THstsEntry(FEntries.Objects[Index])
+  else
+    Result := nil;
+end;
+
+procedure THstsStore.SetEntry(const Host: string; Expiry: Int64; IncludeSubDomains: Boolean);
 var
   Entry: THstsEntry;
+begin
+  Entry := EntryOf(Host);
+  if Entry = nil then
+  begin
+    Entry := THstsEntry.Create;
+    FEntries.AddObject(Host, Entry);
+  end;
+  Entry.Expiry := Expiry;
+  Entry.IncludeSubDomains := IncludeSubDomains;
+end;
+
+procedure THstsStore.RemoveEntry(const Host: string);
+var
+  Index: Integer;
+begin
+  if FEntries.Find(Host, Index) then
+    FEntries.Delete(Index);
+end;
+
+procedure THstsStore.AddHost(const Host: string; MaxAgeSeconds: Int64; IncludeSubDomains: Boolean);
 begin
   EnterCriticalSection(FLock);
   try
     if MaxAgeSeconds <= 0 then
-      FEntries.Remove(LowerCase(Host))
+      RemoveEntry(LowerCase(Host))
     else
-    begin
-      Entry.Expiry := Now + MaxAgeSeconds;
-      Entry.IncludeSubDomains := IncludeSubDomains;
-      FEntries.AddOrSetValue(LowerCase(Host), Entry);
-    end;
+      SetEntry(LowerCase(Host), Now + MaxAgeSeconds, IncludeSubDomains);
   finally
     LeaveCriticalSection(FLock);
   end;
@@ -211,7 +244,7 @@ procedure THstsStore.RemoveHost(const Host: string);
 begin
   EnterCriticalSection(FLock);
   try
-    FEntries.Remove(LowerCase(Host));
+    RemoveEntry(LowerCase(Host));
   finally
     LeaveCriticalSection(FLock);
   end;
@@ -241,10 +274,11 @@ begin
   Congruent := True;
   while Candidate <> '' do
   begin
-    if FEntries.TryGetValue(Candidate, Entry) then
+    Entry := EntryOf(Candidate);
+    if Entry <> nil then
     begin
       if Entry.Expiry <= Moment then
-        FEntries.Remove(Candidate)
+        RemoveEntry(Candidate)
       else if Congruent or Entry.IncludeSubDomains then
         Exit(True);
     end;
@@ -254,6 +288,7 @@ begin
     Candidate := Copy(Candidate, Dot + 1, MaxInt);
     Congruent := False;
   end;
+  Entry := nil;
   Result := False;
 end;
 
@@ -289,17 +324,21 @@ end;
 
 function THstsStore.SaveToText: string;
 var
-  Pair: specialize TPair<string, THstsEntry>;
+  Index: Integer;
+  Entry: THstsEntry;
   Moment: Int64;
 begin
   Result := '';
   Moment := Now;
   EnterCriticalSection(FLock);
   try
-    for Pair in FEntries do
-      if Pair.Value.Expiry > Moment then
-        Result := Result + Pair.Key + ' ' + IntToStr(Pair.Value.Expiry) + ' ' +
-          BoolToStr(Pair.Value.IncludeSubDomains, '1', '0') + LineEnding;
+    for Index := 0 to FEntries.Count - 1 do
+    begin
+      Entry := THstsEntry(FEntries.Objects[Index]);
+      if Entry.Expiry > Moment then
+        Result := Result + FEntries[Index] + ' ' + IntToStr(Entry.Expiry) + ' ' +
+          BoolToStr(Entry.IncludeSubDomains, '1', '0') + LineEnding;
+    end;
   finally
     LeaveCriticalSection(FLock);
   end;
@@ -309,7 +348,7 @@ procedure THstsStore.LoadFromText(const Text: string);
 var
   Lines, Parts: TStringArray;
   Index: Integer;
-  Entry: THstsEntry;
+  Expiry: Int64;
 begin
   Lines := Text.Split([#10]);
   EnterCriticalSection(FLock);
@@ -317,10 +356,9 @@ begin
     for Index := 0 to High(Lines) do
     begin
       Parts := Trim(Lines[Index]).Split([' ']);
-      if (Length(Parts) <> 3) or not TryStrToInt64(Parts[1], Entry.Expiry) then
+      if (Length(Parts) <> 3) or not TryStrToInt64(Parts[1], Expiry) then
         Continue;
-      Entry.IncludeSubDomains := Parts[2] = '1';
-      FEntries.AddOrSetValue(LowerCase(Parts[0]), Entry);
+      SetEntry(LowerCase(Parts[0]), Expiry, Parts[2] = '1');
     end;
   finally
     LeaveCriticalSection(FLock);

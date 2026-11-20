@@ -56,7 +56,7 @@ interface
 uses
   SysUtils,
   Classes,
-  Generics.Collections,
+  Web.IdMaps,
   Url.Records,
   Url.Origins,
   Http.Client,
@@ -79,7 +79,8 @@ const
 type
   THopKind = (HopMain, HopPreflight);
 
-  THopRecord = record
+  THopRecord = class
+  public
     JobId: QWord;
     Kind: THopKind;
   end;
@@ -101,8 +102,8 @@ type
   private
     FLoop: TEventLoop;
     FNetwork: TNetworkContext;
-    FJobs: specialize TDictionary<QWord, TFetchJob>;
-    FHops: specialize TDictionary<QWord, THopRecord>;
+    FJobs: TIdMap;
+    FHops: TIdMap;
     FRunner: THopRunner;
     FNextJobId: QWord;
     FNextHopId: QWord;
@@ -110,6 +111,7 @@ type
     FCollectQueued: Boolean;
     FFileReaders: TList;
     function FindJob(Id: QWord; out Job: TFetchJob): Boolean;
+    function FindHop(Id: QWord; out Hop: THopRecord): Boolean;
     procedure StartQueued(Data: TObject);
     procedure MainFetch(Job: TFetchJob);
     procedure SchemeFetch(Job: TFetchJob);
@@ -235,8 +237,8 @@ begin
   inherited Create;
   FLoop := Loop;
   FNetwork := Network;
-  FJobs := specialize TDictionary<QWord, TFetchJob>.Create;
-  FHops := specialize TDictionary<QWord, THopRecord>.Create;
+  FJobs := TIdMap.Create;
+  FHops := TIdMap.Create;
   FRunner := THopRunner.Create(Loop, Self, @HandleHead, @HandleData, @HandleDone);
   FGarbage := TList.Create;
   FFileReaders := TList.Create;
@@ -244,14 +246,16 @@ end;
 
 destructor TFetcher.Destroy;
 var
-  Job: TFetchJob;
+  Item: TObject;
   Index: Integer;
 begin
   FRunner.Free;
   FLoop.DiscardTasks(Self);
-  for Job in FJobs.Values do
-    Job.Free;
+  for Item in FJobs.Values do
+    Item.Free;
   FJobs.Free;
+  for Item in FHops.Values do
+    Item.Free;
   FHops.Free;
   for Index := 0 to FGarbage.Count - 1 do
     TFetchJob(FGarbage[Index]).Free;
@@ -263,8 +267,19 @@ begin
 end;
 
 function TFetcher.FindJob(Id: QWord; out Job: TFetchJob): Boolean;
+var
+  Found: TObject;
 begin
-  Result := FJobs.TryGetValue(Id, Job) and Job.Active;
+  Result := FJobs.TryGetValue(Id, Found) and TFetchJob(Found).Active;
+  Job := TFetchJob(Found);
+end;
+
+function TFetcher.FindHop(Id: QWord; out Hop: THopRecord): Boolean;
+var
+  Found: TObject;
+begin
+  Result := FHops.TryGetValue(Id, Found);
+  Hop := THopRecord(Found);
 end;
 
 function TFetcher.Fetch(Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer): TFetchJob;
@@ -297,19 +312,13 @@ end;
 
 procedure TFetcher.CancelGroup(Group: Pointer);
 var
-  Victims: array of TFetchJob;
-  Job: TFetchJob;
+  Jobs: TObjectArray;
   Index: Integer;
 begin
-  Victims := nil;
-  for Job in FJobs.Values do
-    if (Job.Group = Group) and Job.Active then
-    begin
-      SetLength(Victims, Length(Victims) + 1);
-      Victims[High(Victims)] := Job;
-    end;
-  for Index := 0 to High(Victims) do
-    Cancel(Victims[Index]);
+  Jobs := FJobs.Values;
+  for Index := 0 to High(Jobs) do
+    if (TFetchJob(Jobs[Index]).Group = Group) and TFetchJob(Jobs[Index]).Active then
+      Cancel(TFetchJob(Jobs[Index]));
 end;
 
 function TFetcher.ActiveJobCount: Integer;
@@ -845,6 +854,7 @@ var
   Hop: THopRecord;
 begin
   Inc(FNextHopId);
+  Hop := THopRecord.Create;
   Hop.JobId := Job.Id;
   Hop.Kind := Kind;
   FHops.Add(FNextHopId, Hop);
@@ -880,7 +890,7 @@ var
   Hop: THopRecord;
   Job: TFetchJob;
 begin
-  if not FHops.TryGetValue(Message.HopId, Hop) or not FindJob(Hop.JobId, Job) or
+  if not FindHop(Message.HopId, Hop) or not FindJob(Hop.JobId, Job) or
      (Job.CurrentHop <> Message.HopId) then
     Exit;
   if Hop.Kind = HopPreflight then
@@ -1077,7 +1087,7 @@ var
   Hop: THopRecord;
   Job: TFetchJob;
 begin
-  if not FHops.TryGetValue(Message.HopId, Hop) or not FindJob(Hop.JobId, Job) or
+  if not FindHop(Message.HopId, Hop) or not FindJob(Hop.JobId, Job) or
      (Job.CurrentHop <> Message.HopId) or (Hop.Kind <> HopMain) then
     Exit;
   if Length(Message.Bytes) > 0 then
@@ -1089,11 +1099,16 @@ var
   Hop: THopRecord;
   Job: TFetchJob;
   Known: Boolean;
+  JobId: QWord;
 begin
-  Known := FHops.TryGetValue(Message.HopId, Hop);
+  Known := FindHop(Message.HopId, Hop);
   FHops.Remove(Message.HopId);
   FRunner.Release(Message.HopId);
-  if not Known or not FindJob(Hop.JobId, Job) or (Job.CurrentHop <> Message.HopId) then
+  if not Known then
+    Exit;
+  JobId := Hop.JobId;
+  Hop.Free;
+  if not FindJob(JobId, Job) or (Job.CurrentHop <> Message.HopId) then
     Exit;
   Job.CurrentHop := 0;
   if Job.State in [JobPreflight, JobAwaitingResponse] then

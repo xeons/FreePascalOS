@@ -41,7 +41,7 @@ interface
 
 uses
   SysUtils,
-  Generics.Collections,
+  Web.IdMaps,
   Web.EventLoop.Tasks,
   Web.EventLoop;
 
@@ -93,8 +93,9 @@ type
   private
     FLoop: TEventLoop;
     FGroup: Pointer;
-    FTimers: specialize TDictionary<LongInt, TActiveTimer>;
+    FTimers: TIdMap;
     FNextId: LongInt;
+    function FindTimer(Id: LongInt; out Timer: TActiveTimer): Boolean;
     procedure Schedule(Timer: TActiveTimer);
     procedure RunTimer(Id: LongInt);
   public
@@ -149,7 +150,7 @@ begin
   inherited Create;
   FLoop := Loop;
   FGroup := Group;
-  FTimers := specialize TDictionary<LongInt, TActiveTimer>.Create;
+  FTimers := TIdMap.Create;
 end;
 
 destructor TTimerList.Destroy;
@@ -187,7 +188,7 @@ begin
   Timer.Id := FNextId;
   Timer.Handler := Handler;
   Timer.Timeout := TimeoutMilliseconds;
-  FTimers.Add(Timer.Id, Timer);
+  FTimers.Add(QWord(Timer.Id), Timer);
   Schedule(Timer);
   Result := Timer.Id;
 end;
@@ -197,7 +198,7 @@ var
   Timer: TActiveTimer;
 begin
   Result := SetTimeout(Handler, TimeoutMilliseconds);
-  if FTimers.TryGetValue(Result, Timer) then
+  if FindTimer(Result, Timer) then
     Timer.Repeating := True;
 end;
 
@@ -205,7 +206,7 @@ procedure TTimerList.RunTimer(Id: LongInt);
 var
   Timer: TActiveTimer;
 begin
-  if not FTimers.TryGetValue(Id, Timer) then
+  if not FindTimer(Id, Timer) then
     Exit;
   Timer.ScheduledHandle := 0;
   Timer.Running := True;
@@ -213,14 +214,14 @@ begin
     Timer.Handler.Invoke;
   finally
     Timer.Running := False;
-    if not FTimers.ContainsKey(Id) then
+    if not FTimers.ContainsKey(QWord(Id)) then
       { The handler cleared its own timer. }
       Timer.Free
     else if Timer.Repeating then
       Schedule(Timer)
     else
     begin
-      FTimers.Remove(Id);
+      FTimers.Remove(QWord(Id));
       Timer.Free;
     end;
   end;
@@ -230,9 +231,9 @@ procedure TTimerList.ClearTimer(Id: LongInt);
 var
   Timer: TActiveTimer;
 begin
-  if not FTimers.TryGetValue(Id, Timer) then
+  if not FindTimer(Id, Timer) then
     Exit;
-  FTimers.Remove(Id);
+  FTimers.Remove(QWord(Id));
   if Timer.ScheduledHandle <> 0 then
     FLoop.CancelScheduledTask(Timer.ScheduledHandle);
   if not Timer.Running then
@@ -241,18 +242,20 @@ end;
 
 procedure TTimerList.ClearAll;
 var
-  Ids: array of LongInt;
-  Id: LongInt;
+  Ids: TIdArray;
   Index: Integer;
 begin
-  Ids := nil;
-  for Id in FTimers.Keys do
-  begin
-    SetLength(Ids, Length(Ids) + 1);
-    Ids[High(Ids)] := Id;
-  end;
+  Ids := FTimers.Keys;
   for Index := 0 to High(Ids) do
-    ClearTimer(Ids[Index]);
+    ClearTimer(LongInt(Ids[Index]));
+end;
+
+function TTimerList.FindTimer(Id: LongInt; out Timer: TActiveTimer): Boolean;
+var
+  Found: TObject;
+begin
+  Result := FTimers.TryGetValue(QWord(Id), Found);
+  Timer := TActiveTimer(Found);
 end;
 
 function TTimerList.ActiveCount: Integer;
