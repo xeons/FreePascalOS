@@ -6318,6 +6318,40 @@ can precede initialisation. A script's own declarations are global
 bindings found by name (var/function on the global object, let/const/
 class in the global lexical environment).
 
+**Lazy compilation.** A function of 160 source characters or more
+(not class constructors, field initializers or functions using private
+names) gets a stub TJsCode: its flags, name, length and source range,
+and a TJsLazyFunction holding the position of its parameter list and
+the chain of scopes around it (`Js.EvalScopes`, shared per scope). The
+first parse still checks its early errors and marks the outer variables
+it uses as captured; its bytecode is made on the first call
+(EnterFrame), by parsing the function again from its parameters inside
+scopes rebuilt from the chain, so its identifiers resolve to the same
+environment hops and slots. The closures keep the TJsCode, which is
+filled in place.
+
+**Direct eval, with, arguments** (`Js.Scopes`, `Js.EvalScopes`,
+`Js.DirectEval`, `Js.Arguments`). A call `eval(...)` marks every scope
+around it exposed: their variables live in environments, and the
+function keeps its this, new.target, home object and arguments as
+implicit variables. The call site keeps a TJsEvalChain (each scope's
+kind, environment size and variables with their slots); at run time,
+when the callee is %eval%, the source is parsed inside scopes rebuilt
+from it and compiled like an arrow's body, then run as a closure on the
+caller's environment at the call - no lookup by name. Sloppy var and
+function declarations go to an existing binding of the function, to
+the global object at a script's top level, or to the function's eval
+var object, which the names of the function and of everything nested
+in it look in before the scopes outside. A with statement keeps its
+object (ToObject) in a scope's environment; every identifier inside it
+records the with objects (and eval var objects) on its way out and
+compiles to lookups in them first (opLookupDynamic and kin, honouring
+@@unscopables; a found function is called with the object as this).
+A sloppy function with simple parameters that uses arguments gets a
+mapped arguments object: its parameters are kept in the environment
+and arguments[i] reads and writes their slots until unmapped. None of
+this costs anything in functions that use none of it.
+
 **Interpreter** (`Js.Interpreter`): one value stack of fixed capacity
 holds every frame's registers (so pointers handed to natives stay
 valid) and a fixed frame array bounds recursion (RangeError beyond). A
@@ -6331,18 +6365,61 @@ prototype changes). Globals have their own caches. Exceptions look up
 the frame's handler table (innermost first); a generator's return() is
 a return completion that only finally handlers take. Generators, async
 functions and async generators run in frames copied into and out of
-their suspension object at each yield or await.
+their suspension object at each yield or await. A property site that
+sees several shapes keeps up to three more cache entries (polymorphic,
+the oldest replaced after four). Indexed reads and writes of typed
+arrays and their length (while %TypedArray%.prototype's length getter
+is the original) and for-of over them take direct paths.
 
-**Collector** (`Js.Heap`): precise, tracing, stop-the-world
-mark-and-sweep with an explicit mark stack. It runs only at safe points
-(loop back edges, frame entries), so no allocation ever collects; native
-code keeps values it holds across calls into JavaScript in the runtime's
-temporary roots. Weak structures: the atom table, shape transitions,
+**Collector** (`Js.Heap`): precise, tracing mark-and-sweep with an
+explicit mark stack; the marking stops the world, the sweeping is
+incremental. It runs only at safe points (loop back edges, frame
+entries), so no allocation ever collects; native code keeps values it
+holds across calls into JavaScript in the runtime's temporary roots.
+The few cells with weak links of their own (shapes, collection
+iterators) are kept on a list of their own and swept in the pause;
+the rest is swept a slice (4096 cells) per safe point afterwards, the
+safe point threshold dropping to zero until it is done, while new cells
+go to a fresh list. An explicit collection, or one near the memory
+limit, sweeps at once. LongestPause, TotalPause, MarkTime and SweepTime
+are measured (TJsEngine.CollectorStatistics). Marking remains a pause
+proportional to the live heap (8 ms for the 85 MB gc-large-heap
+benchmark): making it incremental needs a write barrier on every store
+of a reference into a cell (object slots and elements, environments,
+the built-ins' direct element writes), which is the next step. Weak structures: the atom table, shape transitions,
 WeakMap/WeakSet (ephemerons: values marked to a fixpoint for live keys),
 WeakRef, FinalizationRegistry (cleanup queued as jobs). The next
 collection is due at twice what survived (at least 4 MiB by default);
 the memory limit and interrupts are checked at safe points and stop the
 script with an uncatchable InternalError.
+
+**Binary data** (`Js.ArrayBuffers`, `Js.Builtins.ArrayBuffer`,
+`Js.Builtins.TypedArrays`, `Js.Builtins.Atomics`, `Js.Builtins.Base64`):
+ArrayBuffer (resizable, transfer and transferToFixedLength moving the
+memory without a copy, detached), SharedArrayBuffer (growable; one
+agent), DataView with Float16, the twelve typed array kinds with
+Float16Array (integer-indexed exotic objects: canonical numeric keys are
+elements or nothing; fixed or length-tracking windows, out of bounds
+after a shrink or detach), %TypedArray% with all its methods working on
+the bytes (moves between same kinds, numeric sort without a comparator),
+Atomics (single agent: wait throws as on a main thread), Math.f16round,
+and Uint8Array base64/hex. A buffer's block counts towards the heap and
+may be the host's memory (freed through the host's procedure).
+
+**Modules** (`Js.ModuleRecords`, `Js.Modules`): every import and
+export form, import attributes (`with { type: "json" }` for JSON
+modules), namespace objects, live bindings (an import reads the
+exporter's environment slot through opGetImport), cycles (module
+environments exist from compilation; linking runs each module's
+initializer, which makes its hoisted functions), top-level await (the
+body of a module that awaits is an async function; evaluation follows
+the specification's asynchronous module steps), import.meta (url,
+resolve, plus what the host adds) and import(). The host resolves
+specifiers (default: "./" and "../" against the referrer) and fetches
+sources (TJsModuleFetch.Succeed or Fail, at once or later); the module
+map fetches each key once. Linking and evaluation run as a job after a
+graph has loaded. The js shell runs `.mjs` files and `-M` as modules,
+reading imports from files.
 
 **Embedding** (`Js.Engine`): `TJsEngine` (one realm) with Evaluate /
 TryEvaluate, Call, Construct, RunJobs (the microtask queue), host
@@ -6350,7 +6427,13 @@ functions (plain callbacks with a magic number, or methods of objects),
 host classes (`DefineClass`: constructor, prototype, instances carrying
 native data with a finalizer and a trace hook for the JavaScript values
 the host keeps alive), Protect/Unprotect for values held across calls,
-MemoryLimit, Interrupt (any thread), CollectGarbage and heap statistics.
+MemoryLimit, Interrupt (any thread), CollectGarbage and heap statistics;
+binary data without copies (NewArrayBuffer, NewArrayBufferFrom,
+NewExternalArrayBuffer, NewTypedArray, NewUint8Array, BufferSourceData,
+DetachArrayBuffer, IsArrayBuffer, IsTypedArray; natives use
+Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray); modules
+(EvaluateModule, ImportModule, ModuleNamespace, and the ModuleResolver,
+ModuleFetcher and ModuleMetaHook hooks).
 Uncaught exceptions reach the host as `EJsError` with the stack text.
 `Js.Platform` holds the clock and time zone hooks; `Js.SystemClock`
 fills them on FreePascalOS from the kernel's clock and the time zone
@@ -6361,29 +6444,46 @@ constructors), Array, String, Number, Boolean, Symbol, BigInt, Math,
 JSON, Error and its kinds (with causes and V8-style stack traces),
 Map/Set (ordered hash tables whose iterators survive deletions; the Set
 methods), WeakMap/WeakSet/WeakRef/FinalizationRegistry, Promise (all,
-allSettled, any, race, withResolvers, try), iterator helpers
+allSettled, any, race, withResolvers, try), Array.fromAsync (written in
+JavaScript, `Js.Builtins.SelfHosted`), iterator helpers
 (Iterator.prototype.map and the others, Iterator.from), Reflect, Proxy,
 Date (proleptic Gregorian arithmetic, ISO and toString/toUTCString
 parsing, en-US locale strings), RegExp (`Js.RegExpCompiler` and
 `Js.RegExpMatcher`: a backtracking matcher with an undo stack; named
 groups, back references, lookahead and lookbehind, the u, v, y, s, d, i,
-m, g flags, \p general categories and a few scripts), globalThis, the URI
-functions, parseInt/parseFloat, indirect eval, queueMicrotask, console.
-`Js.Inspect` prints values as Node's util.inspect does, on one line.
+m, g flags, \p general categories and 38 scripts by their blocks),
+globalThis, the URI functions, parseInt/parseFloat, eval,
+queueMicrotask, console, Error.captureStackTrace and stackTraceLimit.
+Annex B: escape/unescape, the String HTML methods, __defineGetter__ and
+its kin, the RegExp statics ($1-$9, input, lastMatch...).
+String.prototype.normalize (`Js.Normalization`): UAX #15 over tables
+written by hand - Latin-1, Latin Extended-A, pinyin, Romanian and
+Vietnamese letters, basic Greek, Cyrillic, Hangul (computed), the
+combining marks' classes, and the common compatibility forms; Greek
+Extended, other Latin Extended Additional letters and other scripts'
+marks are left as they are. Intl (`Js.Builtins.Intl`), one locale
+(en-US): NumberFormat (decimal, percent, currency, unit; digits,
+grouping, signs; formatToParts), DateTimeFormat (fields and
+date/timeStyle, local zone or UTC), Collator (code point order;
+base/accent sensitivity, numeric), PluralRules, Segmenter (graphemes,
+words, sentences), ListFormat; Number, BigInt and Date toLocaleString
+use them. `Js.Inspect` prints values as Node's util.inspect does, on
+one line.
 
-Not there yet: modules (import/export, import()), direct eval (eval
-runs in the global scope), the with statement, sloppy-mode mapped
-arguments, typed arrays and ArrayBuffer, Intl, String.prototype.normalize
-(returns the text unchanged), Annex B escape/unescape and the RegExp
-legacy statics; there is no JIT and the collector is neither
-incremental nor generational.
+Not there yet: structuredClone (a host matter), private names inside
+direct eval code, locales other than en-US, the full Unicode tables for
+normalization and RegExp scripts; there is no JIT, and the collector's
+marking is neither incremental nor generational.
 
 `make javascript-test` (tools/JavaScriptTest) runs each
-`scripts/*.js` against the output written in its trailing `/* expected`
-comment, checks the embedding API (host functions and classes,
-finalizers, protected values, the memory limit, interrupts) and runs
-`benchmarks/*.js`, reporting time, the heap's peak and the process's
-peak bytes; `JS_GC_STRESS=1` collects every 16 KiB to find missed roots.
+`scripts/*.js` (and each `scripts/*.mjs` as a module, its imports in
+`scripts/modules`) against the output written in its trailing
+`/* expected` comment, checks the embedding API (host functions and
+classes, finalizers, protected values, the memory limit, interrupts,
+buffers without copies, modules fetched later) and runs
+`benchmarks/*.js`, reporting time, the heap's peak, the process's peak
+bytes, the collections and the longest pause; `JS_GC_STRESS=1` collects
+every 16 KiB to find missed roots.
 
 ## Network drivers
 

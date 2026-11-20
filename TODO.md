@@ -1035,12 +1035,20 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] RegExp engine: named groups, lookbehind, unicode and sticky flags, indices
 - [x] Embedding API (Js.Engine): host functions and classes with native data, jobs, memory limit, interrupts
 - [x] js shell with REPL, timers, print/load; host test with scripts, API checks and benchmarks
-- [ ] Modules (import/export, dynamic import), direct eval, with
-- [ ] Typed arrays, ArrayBuffer, DataView, structuredClone
-- [ ] Intl, String.prototype.normalize, Annex B escape/unescape, RegExp legacy statics
-- [ ] Sloppy mode mapped arguments
-- [ ] Incremental or generational collection; lazy compilation of function bodies
-- [ ] Faster property paths: polymorphic inline caches, fused instructions for more cases
+- [x] Modules (all import/export forms, live bindings, cycles, top-level await, import.meta, import(),
+      JSON modules) with host resolve/fetch hooks; direct eval with the caller's scope; with
+- [x] Typed arrays (all kinds, Float16Array), ArrayBuffer (resizable, transfer), SharedArrayBuffer,
+      DataView, Atomics (one agent), Uint8Array base64/hex; buffers without copies in the embedding API
+- [ ] structuredClone (with libweb: it is an HTML algorithm)
+- [x] Intl (en-US: NumberFormat, DateTimeFormat, Collator, PluralRules, Segmenter, ListFormat),
+      String.prototype.normalize, Annex B escape/unescape, HTML methods, RegExp legacy statics
+- [ ] Unicode tables generated from the UCD for normalize and RegExp scripts (hand-written subsets now);
+      more Intl locales
+- [x] Sloppy mode mapped arguments
+- [x] Incremental sweeping with pause statistics; lazy compilation of function bodies
+- [ ] Incremental or generational marking (needs a write barrier on reference stores)
+- [x] Polymorphic inline caches (four shapes per site)
+- [ ] Fused instructions for more cases; deeper prototype chains in the inline caches
 
 ## Tooling
 
