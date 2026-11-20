@@ -31,8 +31,8 @@
     10.0.2.104:443   HTTPS with a certificate for another name
     10.0.2.105:443   HTTPS with a certificate from an unknown authority
     10.0.2.106:443   HTTPS with an expired certificate
-    10.0.2.107:443   HTTPS speaking HTTP/2 when offered (its certificate
-                     does not name this address: --no-check-certificate)
+    10.0.2.107:443   HTTPS speaking HTTP/2 when offered (checked against
+                     the test root like 10.0.2.101)
 
   The test root is fetched over HTTP first and given to wget with
   --ca-certificate. Each check runs a command line through sh and
@@ -75,7 +75,7 @@ const
   DataHash = 'df0f6306fcfb22cadc19e9868af0728ea9444c363c55ac205c4782a827176d9e';
   Hello = 'Hello from the FreePascalOS test server'#10;
   Trust = '--ca-certificate=ca.pem ';
-  Http2 = '--no-check-certificate ';
+  Http2 = Trust;
 
   CommandTests: array[0..70] of TCommandTest = (
     { Plain HTTP, and the test root for the rest. }

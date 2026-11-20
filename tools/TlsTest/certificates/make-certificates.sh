@@ -24,7 +24,7 @@
 #   intermediate    P-384 intermediate under ca (RSA PKCS#1 SHA-256),
 #                   path length 0
 #   server          P-256 server under intermediate (ECDSA SHA-384) for
-#                   localhost, 127.0.0.1, 10.0.2.101 and 10.0.2.103
+#                   localhost, 127.0.0.1, 10.0.2.101, 10.0.2.103 and 10.0.2.107
 #   server-rsa      RSA-2048 server under ca, signed with RSA-PSS SHA-256,
 #                   for the same names
 #   wrong-name      P-256 server under intermediate for other.example only
@@ -42,7 +42,7 @@ cd "$(dirname "$0")"
 
 not_before=20260101000000Z
 not_after=21251231235959Z
-server_names="subjectAltName=DNS:localhost,IP:127.0.0.1,IP:10.0.2.101,IP:10.0.2.103"
+server_names="subjectAltName=DNS:localhost,IP:127.0.0.1,IP:10.0.2.101,IP:10.0.2.103,IP:10.0.2.107"
 server_usage="keyUsage=critical,digitalSignature"
 server_purpose="extendedKeyUsage=serverAuth"
 
