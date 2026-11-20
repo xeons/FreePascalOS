@@ -36,6 +36,7 @@ type
     Url: string;
     Width, Height, Scale: Double;
     WholePage: Boolean;
+    ScrollY: Double;
     PngFile: string;
     LayoutFile: string;
     DomFile: string;
@@ -498,7 +499,9 @@ begin
   begin
     FLayout.SetViewport(FLayout.ViewportWidth, Min(Ceil(FLayout.DocumentHeight), 30000), FLayout.Scale);
     FLayout.Update;
-  end;
+  end
+  else if FOptions.ScrollY > 0 then
+    FLayout.SetScrollOffset(nil, 0, FOptions.ScrollY);
   Width := Max(1, Round(FLayout.ViewportWidth * FLayout.Scale));
   Height := Max(1, Round(FLayout.ViewportHeight * FLayout.Scale));
   if not CreateSurface(Surface, Width, Height, ColorWhite) then

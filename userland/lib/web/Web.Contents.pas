@@ -92,6 +92,7 @@ uses
   Web.Layout.Dump,
   Web.Paint.DisplayList,
   Web.Paint.Gradients,
+  Web.Paint.Sticky,
   Web.Paint.Builder,
   Web.Paint.Raster,
   Web.Paint.Painter,

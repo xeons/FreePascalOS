@@ -52,6 +52,7 @@ begin
   CheckIncrementalLayout;
   CheckHitTesting;
   CheckPainting;
+  CheckStickyPainting;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

@@ -50,6 +50,8 @@ type
     ScrollX, ScrollY: Single;
     { Device pixels per CSS pixel. }
     Scale: Single;
+    { The viewport's size in CSS px (sticky boxes keep inside it). }
+    ViewportWidth, ViewportHeight: Single;
     { The part of the surface to draw (device pixels). }
     Damage: TRectangle;
   end;
@@ -66,7 +68,7 @@ uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Image.Surfaces, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
-  Web.Text.FontInstances, Web.Paint.Gradients;
+  Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky;
 
 type
   TGroup = record
@@ -82,6 +84,10 @@ type
     Shape: TCoverageShape;
   end;
 
+  TOrigin = record
+    X, Y: Single;
+  end;
+
   TRaster = record
     List: TDisplayList;
     RoundedClips: array of TRoundedClip;
@@ -91,7 +97,11 @@ type
     ClipDepth: Integer;
     Groups: array of TGroup;
     GroupDepth: Integer;
-    FixedDepth: Integer;
+    { The document point drawn at the surface's top left: the scroll
+      offset, (0, 0) in fixed subtrees, less sticky offsets. }
+    OriginX, OriginY: Single;
+    Origins: array of TOrigin;
+    OriginDepth: Integer;
     Glyphs: TPlacedGlyphArray;
   end;
 
@@ -105,18 +115,43 @@ end;
 
 function DeviceX(const Raster: TRaster; X: Single): Double; inline;
 begin
-  if Raster.FixedDepth > 0 then
-    Result := X * Raster.View.Scale
-  else
-    Result := (X - Raster.View.ScrollX) * Raster.View.Scale;
+  Result := (X - Raster.OriginX) * Raster.View.Scale;
 end;
 
 function DeviceY(const Raster: TRaster; Y: Single): Double; inline;
 begin
-  if Raster.FixedDepth > 0 then
-    Result := Y * Raster.View.Scale
-  else
-    Result := (Y - Raster.View.ScrollY) * Raster.View.Scale;
+  Result := (Y - Raster.OriginY) * Raster.View.Scale;
+end;
+
+procedure PushOrigin(var Raster: TRaster; X, Y: Single);
+begin
+  if Raster.OriginDepth >= Length(Raster.Origins) then
+    SetLength(Raster.Origins, Raster.OriginDepth * 2 + 4);
+  Raster.Origins[Raster.OriginDepth].X := Raster.OriginX;
+  Raster.Origins[Raster.OriginDepth].Y := Raster.OriginY;
+  Inc(Raster.OriginDepth);
+  Raster.OriginX := X;
+  Raster.OriginY := Y;
+end;
+
+procedure PopOrigin(var Raster: TRaster);
+begin
+  if Raster.OriginDepth = 0 then
+    Exit;
+  Dec(Raster.OriginDepth);
+  Raster.OriginX := Raster.Origins[Raster.OriginDepth].X;
+  Raster.OriginY := Raster.Origins[Raster.OriginDepth].Y;
+end;
+
+{ A sticky subtree is drawn moved by its offset for the scrollport the
+  current origin shows. }
+procedure PushSticky(var Raster: TRaster; const Item: TDisplayItem);
+var
+  OffsetX, OffsetY: Single;
+begin
+  StickyOffset(Raster.List.Stickies[Item.Index], Item.X, Item.Y, Item.Width, Item.Height, Raster.OriginX,
+    Raster.OriginY, Raster.View.ViewportWidth, Raster.View.ViewportHeight, OffsetX, OffsetY);
+  PushOrigin(Raster, Raster.OriginX - OffsetX, Raster.OriginY - OffsetY);
 end;
 
 function DeviceRectangle(const Raster: TRaster; X, Y, Width, Height: Single): TRectangle;
@@ -911,7 +946,10 @@ begin
   Raster.ClipDepth := 0;
   Raster.Groups := nil;
   Raster.GroupDepth := 0;
-  Raster.FixedDepth := 0;
+  Raster.OriginX := View.ScrollX;
+  Raster.OriginY := View.ScrollY;
+  Raster.Origins := nil;
+  Raster.OriginDepth := 0;
   Raster.Glyphs := nil;
   BeginCanvas(Raster.Canvas, Surface);
   SetRegionToRectangle(Region, View.Damage);
@@ -925,8 +963,9 @@ begin
       diPopClip: PopClip(Raster);
       diPushOpacity: PushGroup(Raster, Item^);
       diPopOpacity: PopGroup(Raster);
-      diPushFixed: Inc(Raster.FixedDepth);
-      diPopFixed: Dec(Raster.FixedDepth);
+      diPushFixed: PushOrigin(Raster, 0, 0);
+      diPushSticky: PushSticky(Raster, Item^);
+      diPopFixed, diPopSticky: PopOrigin(Raster);
       diHitArea: ;
     else
       if not ItemVisible(Raster, Item^) then

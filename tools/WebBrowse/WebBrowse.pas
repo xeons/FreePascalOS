@@ -29,6 +29,7 @@
     -w WIDTH       viewport width in CSS pixels (1280)
     -h HEIGHT      viewport height (800)
     -s SCALE       device pixel ratio (1)
+    -y OFFSET      scroll the viewport down this far before painting
     --full         paint the whole document height (up to 30000 px)
     -l FILE        the layout tree ("-": standard output)
     --dom FILE     the document serialized as HTML ("-": standard output)
@@ -65,7 +66,7 @@ var
 
 procedure Usage;
 begin
-  WriteLn(StdErr, 'usage: webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [--full] [-l FILE] [--dom FILE] [-c] [-n]');
+  WriteLn(StdErr, 'usage: webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y Y] [--full] [-l FILE] [--dom FILE] [-c] [-n]');
   WriteLn(StdErr, '         [--live] [-p] [-m] [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [-f FONTDIR] [-v] URL');
   Halt(2);
 end;
@@ -92,6 +93,8 @@ begin
       Options.Height := StrToFloatDef(NextArgument, 800)
     else if Argument = '-s' then
       Options.Scale := StrToFloatDef(NextArgument, 1)
+    else if Argument = '-y' then
+      Options.ScrollY := StrToFloatDef(NextArgument, 0)
     else if Argument = '--full' then
       Options.WholePage := True
     else if Argument = '-l' then

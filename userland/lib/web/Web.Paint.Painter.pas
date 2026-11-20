@@ -72,7 +72,7 @@ implementation
 
 uses
   Web.Profiling,
-  Math, Web.Paint.Builder, Web.Paint.Raster;
+  Math, Web.Paint.Builder, Web.Paint.Raster, Web.Paint.Sticky;
 
 constructor TDocumentPainter.Create(Layout: TDocumentLayout);
 begin
@@ -111,6 +111,8 @@ begin
   View.ScrollX := ScrollX;
   View.ScrollY := ScrollY;
   View.Scale := FLayout.Scale;
+  View.ViewportWidth := FLayout.ViewportWidth;
+  View.ViewportHeight := FLayout.ViewportHeight;
   View.Damage := Damage;
   EnterPhase(PhasePaint);
   try
@@ -125,11 +127,16 @@ type
   TClip = record
     Left, Top, Right, Bottom: Single;
   end;
+  TOriginPoint = record
+    X, Y: Single;
+  end;
 var
   Clips: array of TClip;
-  ClipCount, FixedDepth, Index: Integer;
+  ClipCount, Index: Integer;
+  Origins: array of TOriginPoint;
+  OriginDepth: Integer;
   Item: PDisplayItem;
-  ScrollX, ScrollY, PointX, PointY: Single;
+  ScrollX, ScrollY, PointX, PointY, OriginX, OriginY, OffsetX, OffsetY: Single;
   Inside: Boolean;
   Box: TLayoutBox;
   Node: TNode;
@@ -142,21 +149,16 @@ begin
   Clips := nil;
   SetLength(Clips, 16);
   ClipCount := 0;
-  FixedDepth := 0;
+  Origins := nil;
+  OriginDepth := 0;
+  OriginX := ScrollX;
+  OriginY := ScrollY;
   Box := nil;
   for Index := 0 to FList.Count - 1 do
   begin
     Item := @FList.Items[Index];
-    if FixedDepth > 0 then
-    begin
-      PointX := X;
-      PointY := Y;
-    end
-    else
-    begin
-      PointX := X + ScrollX;
-      PointY := Y + ScrollY;
-    end;
+    PointX := X + OriginX;
+    PointY := Y + OriginY;
     case Item^.Kind of
       diPushClip:
         begin
@@ -178,10 +180,33 @@ begin
       diPopClip:
         if ClipCount > 0 then
           Dec(ClipCount);
-      diPushFixed:
-        Inc(FixedDepth);
-      diPopFixed:
-        Dec(FixedDepth);
+      diPushFixed, diPushSticky:
+        begin
+          if OriginDepth >= Length(Origins) then
+            SetLength(Origins, OriginDepth * 2 + 4);
+          Origins[OriginDepth].X := OriginX;
+          Origins[OriginDepth].Y := OriginY;
+          Inc(OriginDepth);
+          if Item^.Kind = diPushFixed then
+          begin
+            OriginX := 0;
+            OriginY := 0;
+          end
+          else
+          begin
+            StickyOffset(FList.Stickies[Item^.Index], Item^.X, Item^.Y, Item^.Width, Item^.Height, OriginX,
+              OriginY, FLayout.ViewportWidth, FLayout.ViewportHeight, OffsetX, OffsetY);
+            OriginX := OriginX - OffsetX;
+            OriginY := OriginY - OffsetY;
+          end;
+        end;
+      diPopFixed, diPopSticky:
+        if OriginDepth > 0 then
+        begin
+          Dec(OriginDepth);
+          OriginX := Origins[OriginDepth].X;
+          OriginY := Origins[OriginDepth].Y;
+        end;
       diPushOpacity, diPopOpacity:
         ;
     else

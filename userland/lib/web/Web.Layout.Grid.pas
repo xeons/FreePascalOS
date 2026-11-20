@@ -747,9 +747,9 @@ begin
           Tracks[Track].Size.MaxValue)))
       else
         Tracks[Track].Limit := Max(Tracks[Track].Limit, MaxSizes[Item]);
-    end
-    else if Tracks[Track].Size.MaxKind = tkFlex then
-      Tracks[Track].Base := Max(Tracks[Track].Base, MinSizes[Item]);
+    end;
+    { A flexible track's minimum came from its min sizing function above
+      (auto: the content's; minmax(0, 1fr): none). }
   end;
   { Items spanning several tracks spread what they need. }
   for Item := 0 to High(Starts) do

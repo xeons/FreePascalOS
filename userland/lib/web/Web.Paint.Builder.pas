@@ -54,7 +54,7 @@ implementation
 uses
   Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
-  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Image.Model;
+  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model;
 
 type
   TClipEntry = record
@@ -79,6 +79,7 @@ type
     Resources: TDocumentResources;
     CanvasBox: TLayoutBox;
     Order: Integer;
+    ViewportWidth, ViewportHeight: Single;
   end;
 
 procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single); forward;
@@ -1052,6 +1053,118 @@ begin
   end;
 end;
 
+{ Where a box's border box is drawn (scroll offsets of the scroll
+  containers it is in applied, sticky offsets not). }
+procedure DrawnOrigin(Box: TLayoutBox; out X, Y: Single);
+var
+  Parent: TLayoutBox;
+begin
+  X := 0;
+  Y := 0;
+  while (Box <> nil) and (Box.Kind <> bkViewport) do
+  begin
+    X := X + Box.X + Box.RelativeX;
+    Y := Y + Box.Y + Box.RelativeY;
+    Parent := Box.Parent;
+    if (Parent <> nil) and (Parent.Kind <> bkInline) then
+    begin
+      X := X + ScrollShiftX(Parent);
+      Y := Y + ScrollShiftY(Parent);
+    end;
+    while (Parent <> nil) and (Parent.Kind = bkInline) do
+      Parent := Parent.Parent;
+    Box := Parent;
+  end;
+end;
+
+function NearestScrollContainer(Box: TLayoutBox): TLayoutBox;
+begin
+  Result := Box.Parent;
+  while (Result <> nil) and not (bfScrollContainer in Result.Flags) do
+    Result := Result.Parent;
+end;
+
+{ A sticky box's run: the limits from its containing block (the nearest
+  block ancestor's content box, all of its scrollable overflow when it
+  scrolls) less its margins, and its insets (percentages of the
+  scrollport). Box is drawn at (X, Y). }
+function StickyRunOf(Box: TLayoutBox; X, Y, PortWidth, PortHeight: Single): TStickyRun;
+var
+  Block: TLayoutBox;
+  InnerX, InnerY, Left, Top, Width, Height: Single;
+begin
+  Result := Default(TStickyRun);
+  Block := Box.Parent;
+  while (Block <> nil) and (Block.Kind = bkInline) do
+    Block := Block.Parent;
+  { The block's children are placed from (InnerX, InnerY). }
+  InnerX := X - Box.X - Box.RelativeX;
+  InnerY := Y - Box.Y - Box.RelativeY;
+  if (Block = nil) or (Block.Kind = bkViewport) then
+  begin
+    Left := InnerX;
+    Top := InnerY;
+    Width := PortWidth;
+    Height := PortHeight;
+    if Block <> nil then
+    begin
+      Width := Max(Block.Width, Block.ScrollWidth);
+      Height := Max(Block.Height, Block.ScrollHeight);
+    end;
+  end
+  else
+  begin
+    { A scroll container's content box scrolls with its children. }
+    Left :=InnerX + Block.Border[sideLeft] + Block.Padding[sideLeft];
+    Top := InnerY + Block.Border[sideTop] + Block.Padding[sideTop];
+    Width := Block.Width - HorizontalBorderPadding(Block);
+    Height := Block.Height - VerticalBorderPadding(Block);
+    if bfScrollContainer in Block.Flags then
+    begin
+      Width := Max(Width, Block.ScrollWidth - Block.Padding[sideLeft] - Block.Padding[sideRight]);
+      Height := Max(Height, Block.ScrollHeight - Block.Padding[sideTop] - Block.Padding[sideBottom]);
+    end;
+  end;
+  Result.LimitLeft := Left + Box.Margin[sideLeft];
+  Result.LimitTop := Top + Box.Margin[sideTop];
+  Result.LimitRight := Left + Width - Box.Margin[sideRight];
+  Result.LimitBottom := Top + Height - Box.Margin[sideBottom];
+  Result.HasLeft := TryLength(Box.Style, cpLeft, PortWidth, Result.InsetLeft);
+  Result.HasTop := TryLength(Box.Style, cpTop, PortHeight, Result.InsetTop);
+  Result.HasRight := TryLength(Box.Style, cpRight, PortWidth, Result.InsetRight);
+  Result.HasBottom := TryLength(Box.Style, cpBottom, PortHeight, Result.InsetBottom);
+end;
+
+{ Paints a sticky layer: under the viewport inside a push/pop whose
+  offset painting works out; inside an inner scroll container (whose
+  scroll offset is known now) at its offset already. }
+procedure PaintStickyLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
+var
+  Container: TLayoutBox;
+  Run: TStickyRun;
+  Entry: PDisplayItem;
+  PortX, PortY, PortWidth, PortHeight, OffsetX, OffsetY: Single;
+begin
+  Container := NearestScrollContainer(Box);
+  if (Container = nil) or (Container.Kind = bkViewport) then
+  begin
+    Run := StickyRunOf(Box, X, Y, Builder.ViewportWidth, Builder.ViewportHeight);
+    Entry := Builder.List.Add(diPushSticky, X, Y, Box.Width, Box.Height, Box);
+    Entry^.Index := Builder.List.AddSticky(Run);
+    PaintLayer(Builder, Box, X, Y);
+    Builder.List.Add(diPopSticky, 0, 0, 0, 0, Box);
+    Exit;
+  end;
+  DrawnOrigin(Container, PortX, PortY);
+  PortX := PortX + Container.Border[sideLeft];
+  PortY := PortY + Container.Border[sideTop];
+  PortWidth := Container.Width - Container.Border[sideLeft] - Container.Border[sideRight];
+  PortHeight := Container.Height - Container.Border[sideTop] - Container.Border[sideBottom];
+  Run := StickyRunOf(Box, X, Y, PortWidth, PortHeight);
+  StickyOffset(Run, X, Y, Box.Width, Box.Height, PortX, PortY, PortWidth, PortHeight, OffsetX, OffsetY);
+  PaintLayer(Builder, Box, X + OffsetX, Y + OffsetY);
+end;
+
 procedure PaintLayerWithClips(var Builder: TBuilder; const Layer: TLayer);
 var
   Index: Integer;
@@ -1065,7 +1178,10 @@ begin
   end;
   if bfFixed in Layer.Box.Flags then
     Builder.List.Add(diPushFixed, 0, 0, 0, 0, Layer.Box);
-  PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y);
+  if bfSticky in Layer.Box.Flags then
+    PaintStickyLayer(Builder, Layer.Box, Layer.X, Layer.Y)
+  else
+    PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y);
   if bfFixed in Layer.Box.Flags then
     Builder.List.Add(diPopFixed, 0, 0, 0, 0, Layer.Box);
   for Index := 0 to High(Layer.Clips) do
@@ -1182,6 +1298,8 @@ begin
   Builder.List := List;
   Builder.Resources := Resources;
   Builder.Order := 0;
+  Builder.ViewportWidth := Root.Width;
+  Builder.ViewportHeight := Root.Height;
   Canvas := FindCanvasBox(Root);
   Builder.CanvasBox := Canvas;
   Width := Max(Root.Width, Root.ScrollWidth);

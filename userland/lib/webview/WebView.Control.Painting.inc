@@ -56,7 +56,7 @@ begin
   List := FPainter.DisplayList;
   FListHasFixed := False;
   for Index := 0 to List.Count - 1 do
-    if List.Items[Index].Kind = diPushFixed then
+    if List.Items[Index].Kind in [diPushFixed, diPushSticky] then
     begin
       FListHasFixed := True;
       Break;
