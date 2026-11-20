@@ -8201,6 +8201,260 @@ filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
 
+## Style engine (libcss)
+
+libcss (`userland/lib/css`, units `Css.*`, `libcss.so`) is the style
+engine of the web platform: CSS syntax, selectors, values, the property
+table, style sheets, media queries, the cascade and computed styles. It
+depends on libsystem only and knows no document model: it sees elements
+through an adapter the host implements (libweb for its DOM, the tests
+for a toy tree). `cssdump` (`/bin/cssdump`) parses style sheets with it
+and prints them back normalized.
+
+**Atoms and the element adapter.** Every name the engine compares is an
+atom of one process wide table (`Css.Atoms`): a LongWord, interned once,
+never freed, with its ASCII lowercase atom at hand. The table is seeded
+with the keywords of `Css.Keywords` in enum order, so a keyword's atom is
+its ordinal and keyword tests compare integers; a keyword's spelling
+comes from its identifier (`kwInlineBlock` is `inline-block`). A host
+refers to elements by opaque handles (`TCssElement`, any pointer) and
+implements one `TCssElementAdapter`: local name and namespace (atoms),
+whether it is an HTML element in an HTML document (case-insensitive
+names and some attribute values), id and classes (atoms), attribute
+lookup (by namespace and name, and by index for `[*|x]`), element-only
+navigation (parent, previous and next sibling, first and last child),
+`:empty`, the root, the state flags (`TCssElementState`: hover, active,
+focus, focus-visible, focus-within, link, visited, target, checked,
+disabled, enabled, placeholder-shown, open, modal and the others), the
+language and direction, the quirks mode, and the parsed style attribute
+and presentational hints (declaration blocks the host keeps). The
+cheapest arrangement, the one libweb is meant to use, is to intern the
+DOM's element and attribute names, ids and classes in libcss's table:
+the adapter then returns stored integers and the engine allocates
+nothing per element.
+
+**Syntax.** The tokenizer follows CSS Syntax Level 3 exactly on UTF-8
+(preprocessing, escapes decoded, every byte from 0x80 up an ident code
+point, numbers with their integer flag and sign). A token list is one
+dynamic array ending in EOF, in which every opening bracket and function
+token knows the index of its closer: a component value is a token or a
+range, skipping one is a jump, and the parsers walk `TCssTokenCursor`
+ranges without building trees of component values. `Css.Parser` has the
+rule and declaration algorithms with their error recovery, the @import
+and @namespace ordering rules, and CSS Nesting: in a style rule's block
+"ident : ..." is tried as a declaration and re-read as a nested rule
+when its value holds a {} block among other things; declarations after
+a nested rule become a nested declarations rule (they behave like "&").
+The object model (`Css.Stylesheets`) has style rules with child rules,
+@media, @supports (decided when parsed), @container (parsed and kept,
+not evaluated yet), @layer blocks and statements, @import (the host
+loads the sheet and hangs it on the rule), @namespace, @font-face (its
+descriptors parsed, unicode-range from the source text), @keyframes,
+@page and @property. Each serializes as CSSOM says; `Css.Serialization`
+escapes identifiers, strings and numbers and writes token runs back
+with the comments that keep tokens apart.
+
+**Selectors.** Selectors Level 4 (`Css.Selectors`, `Css.SelectorParser`):
+type and universal selectors with namespaces, id, class, attribute
+selectors with all operators and the i/s flags, every pseudo-class of the
+level (state ones from the adapter's flags; structural ones including
+`:nth-child(An+B of S)` and the -of-type family; `:is`, `:where`
+(forgiving), `:not`, `:has` with relative selectors, `:lang` with
+wildcards, `:dir`, `:root`, `:scope`, `:empty`), the pseudo-elements
+::before ::after ::marker ::placeholder ::selection ::first-line
+::first-letter ::backdrop ::file-selector-button (unknown ::-webkit-
+ones are valid and never match), the four combinators and the nesting
+selector '&'. A complex selector keeps its compounds right to left;
+specificity is (a, b, c) packed in ten bits each. Matching
+(`Css.SelectorMatching`) starts at the subject and walks left; a failure
+says how far back to restart (later sibling, closest descendant, or
+give up), the WebKit/Servo scheme, so descendant combinators do not
+backtrack quadratically. Sibling positions for `:nth-*` are cached per
+element. `:has` searches the subtree or following siblings of its
+element.
+
+**The bloom filter and the rule index.** While a tree is styled
+top-down, the names (lowercased local name, id, classes) of the
+ancestors are counted in a 4096 entry counting bloom filter
+(`Css.BloomFilter`, two 12 bit hashes per name). Each selector carries
+up to four hashes of names its ancestor compounds need; a selector one
+of them is missing for is rejected without touching the tree. The rule
+index (`Css.RuleIndex`) holds every style rule selector that applies in
+the current environment (its @media, @supports and @import conditions
+hold), hashed by the subject compound's id, else class, else type, else
+into the universal list; an element is matched only against its id's,
+classes' and type's buckets and the universal one. The index also ranks
+cascade layers (per origin, by first declaration, sublayers before the
+layer's own rules, unlayered last; anonymous layers are unique) and
+collects @keyframes, @font-face and @property rules.
+
+**Values and the property table.** Specified values (`Css.Values`) are
+immutable reference counted nodes: keyword, number, integer,
+percentage, dimension (every unit of Values 4: absolute, font-relative,
+viewport including s/l/d variants, container, angles, times,
+frequencies, resolutions, fr), color, string, URL, custom identifier,
+math function, list (space, comma or slash), function (gradients,
+transforms, counters, attr(), basic shapes ...), and the raw tokens of
+a value that still has var() (and of custom properties). Math functions
+(`Css.Calc`) are full Values 4: calc, min, max, clamp, round, mod, rem,
+abs, sign, the trigonometric and exponential functions, the constants;
+the tree is type-checked with exponents per base type and simplified
+(like units combined, absolute units made canonical, number-only
+functions computed). Colors (`Css.Colors`, `Css.ColorParser`) are CSS
+Color 4 and 5: named, hex, rgb/hsl (legacy and modern syntax), hwb, lab,
+lch, oklab, oklch, color() in every predefined space, color-mix() (with
+hue methods, premultiplied), currentcolor and the system colors (a
+light and a dark table the host can replace); conversions go through
+CIE XYZ with the specification's matrices, and drawing gets sRGB
+clipped to the gamut. Images (`Css.Images`) are url(), image-set() and
+linear, radial and conic gradients (repeating too, with an
+interpolation color space), checked and kept as typed function values;
+`Css.Transforms` checks every transform function.
+
+The property table (`Css.PropertyIds`, `Css.PropertyTable`) has one row
+per property: about 220 physical longhands, 34 logical ones, 55
+shorthands and `cpCustom`. A row gives the group the computed value
+lives in, the initial value as text (parsed once with the property's own
+grammar), the grammar, how the value is computed and how it animates.
+A property's name comes from its identifier. Grammars are table driven
+(`Css.Grammar`): alternatives of keywords and basic types
+(`<length-percentage+>` is non-negative), keyword sets in braces, comma
+lists with a leading '#', or `@name` for a routine of the value parsers
+(`Css.BoxParsers`, `Css.GridParsers`, `Css.TextParsers`: display in its
+full multi-keyword syntax, sizes with fit-content(), the alignment
+values, track lists with repeat() and line names, template areas
+checked to be rectangles, grid lines, font families, shadows, cursors,
+content and counters, easing functions, filters, clip paths, background
+layers and the rest). `Css.Shorthands` expands margin, padding, inset,
+every border shorthand (physical and logical), border-radius with its
+slash, border-image, outline, background (layers), background-position,
+font (system fonts too), font-variant, flex, flex-flow, grid,
+grid-template (both forms), grid-row/column/area, gap, place-*,
+overflow, list-style (with its 'none' rule), text-decoration, transition,
+animation, columns, column-rule and container; what a shorthand leaves
+out gets its initial value, and `all` takes the CSS-wide keywords.
+
+**Declarations.** A declaration block (`Css.Declarations`) is an array
+of small records (property, importance, the shorthand it came from,
+custom property name, value). Shorthands are stored as their longhands;
+serialization folds them back where the shorthand can be written (box
+sides, pairs, border sides, flex, grid lines, and any shorthand whose
+longhands all came from one var() value). A later declaration of a
+property replaces an earlier one, except that a normal one does not
+replace an !important one.
+
+**The cascade.** For an element (or one of its pseudo-elements) the
+engine collects the matching rules' blocks, the presentational hints
+and the style attribute. Each block takes part with its normal and its
+important declarations, ordered as Cascade 5 says: origin and
+importance (user agent, user, author normal; author, user, user agent
+important), element-attached declarations over rules, cascade layer
+(later wins for normal, earlier for important; presentational hints
+below every author layer), specificity, order of appearance. Walking
+them from the highest priority, the first declaration of a property
+wins; `revert` skips the rest of its origin, `revert-layer` the rest of
+its layer. Writing mode and direction are cascaded first so that
+logical properties are mapped to the physical ones in the same pass.
+Custom properties cascade by name.
+
+**Computed styles.** A computed value (`Css.ComputedValues`) is a 24
+byte record: kind, keyword, px and percent as singles (or a 16 bit per
+channel sRGB color), and a reference to a value tree for what does not
+fit. Lengths are made absolute: em against the element's font size (the
+parent's for font-size), rem against the root's, ex, ch, cap and ic as
+fractions of the em, lh and rlh, viewport units against the media
+environment, container units falling back to the small viewport.
+Percentages stay until layout gives a basis (`ResolveComputed`), and a
+calc() that is not px plus percent (min(10px, 5%)) stays a calculation
+with px leaves. currentcolor stays except in `color`, font-weight's
+bolder and lighter follow the parent, line-height in units becomes a
+length, border, outline and column-rule widths snap to device pixels and
+are 0 when their style is none or hidden, display is blockified for
+floats, absolutely positioned boxes and the root, and a float is none
+when the box is absolutely positioned. var() is substituted before
+anything is computed: custom properties are resolved in dependency
+order with cycle detection (a property in a cycle is invalid; one that
+refers to it uses its fallback), env() knows the safe-area and titlebar
+variables (the host can set them), a value that fails after
+substitution is invalid at computed-value time and acts as unset, and a
+shorthand with var() is expanded once its tokens are known. Registered
+custom properties (@property) can be non-inherited and give initial
+values.
+
+Computed values are stored in style structs (`Css.StyleStructs`): one
+reference counted block per property group, like Gecko's and Servo's
+(font, inherited text, inherited box, inherited user interface, lists,
+inherited table; box, position and sizing with flex and grid, margins,
+padding, borders, outline, backgrounds, effects, text decoration,
+generated content, table, columns, user interface, animations). A group
+is all inherited or all not, so a child inherits a group by taking its
+parent's pointer; a group nothing was declared for is the shared
+initial struct; every rebuilt struct is interned in the struct cache, so
+elements with equal values in a group share one struct. A computed
+style (`Css.ComputedStyle`) is a pointer per group, the custom property
+set (shared with the parent when the element declares none) and its
+pseudo-element.
+
+**The style engine.** `TCssStyleEngine` (`Css.StyleEngine`) keeps the
+sheets (the HTML user agent sheet of the HTML Standard's rendering
+section, its quirks mode additions in quirks mode, user sheets and the
+document's author sheets, which stay the host's), the media environment
+(`TCssMediaEnvironment`: viewport in CSS pixels, resolution from the
+system's DPI scale, color scheme, motion, transparency and contrast
+preferences, forced colors, hover and pointer, scripting, color gamut,
+dynamic range, update; set by the host), the rule index, the struct
+cache and the style sharing cache. `ResolveStyle(Element, ParentStyle)`
+gives a new reference; `ResolvePseudoStyle` gives nil when no rule
+targets the pseudo-element; `StyleTree` styles a subtree top-down with
+the bloom filter (hosts walking themselves call PushAncestor and
+PopAncestor). Elements with the same parent style that match the same
+rules, with no style attribute or presentational hints and no attr()
+in their declarations, get the same computed style from the sharing
+cache without cascading again. `TreeChanged` forgets sibling positions
+and shared styles; `Invalidate` rebuilds the index (sheets changed,
+media changed).
+
+Media queries (`Css.MediaQueries`) are Level 4 and 5: media types, not
+and only, and/or/not conditions, the range syntax (`400px <= width <
+700px`), min-/max- prefixes, and the features width, height,
+aspect-ratio, device-*, resolution (with `infinite`),
+-webkit-device-pixel-ratio, orientation, color, color-index, monochrome,
+grid, prefers-color-scheme, prefers-reduced-motion,
+prefers-reduced-transparency, prefers-reduced-data, prefers-contrast,
+forced-colors, inverted-colors, hover, any-hover, pointer, any-pointer,
+scripting, display-mode, color-gamut, dynamic-range, update, scan and
+overflow-*; evaluation is three-valued and an unknown feature is false
+at the top. em in a query is the environment's initial font size.
+
+**Memory.** On the test's synthetic page (1767 elements, the user agent
+sheet and a typical author sheet) the engine makes 44 distinct computed
+styles (40 elements per style; 1723 of the elements come from the
+sharing cache), 66 distinct structs (each used by 13 styles), about 17
+bytes of computed style per element; a style with nothing shared would
+be 5480 bytes. libcss.so is about 0.9 MB.
+
+**Tests.** `make css-test` (tools/CssTest) builds libcss on the host and
+checks tokenizer cases, parse-and-serialize round trips of values,
+shorthands and style sheets, specificity, matching against a small tree
+through the test adapter (with and without the bloom filter, quirks
+mode), cascade order with origins, layers, !important, the style
+attribute and revert, computed values (em, rem, %, calc, var() with
+fallbacks and cycles, viewport units, border snapping, blockification),
+the user agent sheet, media query evaluation, @supports, color
+conversions against answers computed by `make-color-vectors.py` from
+the primaries and white points (not from the matrices libcss uses), and
+memory and sharing on the synthetic page, which it reports. coretest
+runs cssdump on three inputs in the system.
+
+**Not done yet.** Container queries are parsed but not evaluated (no
+container matches, so their rules do not apply); :visited is matched
+from the adapter's flag, with no privacy split of styles; relative color
+syntax (`rgb(from ...)`), light-dark(), @scope, @counter-style,
+@font-feature-values and SVG properties are not supported; transitions
+and animations are parsed and stored but not run; gamut mapping is
+clipping; computed colors are 16 bit sRGB; the cascade's sort is an
+insertion sort (fine for the dozens of rules that match one element).
+
 ## The AArch64 port
 
 The target is the **Raspberry Pi 4** (and the Pi 400 and the Compute
