@@ -80,6 +80,7 @@ uses
   Web.Layout.Replaced,
   Web.Layout.Block,
   Web.Layout.Flex,
+  Web.Layout.Grid,
   Web.Layout.Table,
   Web.Layout.Positioned,
   Web.Layout.Dispatch,

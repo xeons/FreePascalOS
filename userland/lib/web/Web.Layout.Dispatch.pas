@@ -65,7 +65,7 @@ implementation
 
 uses
   Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Block,
-  Web.Layout.Replaced, Web.Layout.Flex, Web.Layout.Table, Web.Layout.Positioned;
+  Web.Layout.Replaced, Web.Layout.Flex, Web.Layout.Grid, Web.Layout.Table, Web.Layout.Positioned;
 
 function MakeChildInput(const Parent: TLayoutInput; ContentWidth, ContentHeight: Single;
   Mode: TWidthMode): TLayoutInput;
@@ -259,6 +259,8 @@ begin
         LayoutReplaced(TReplacedBox(Box), ContentInput);
       bkFlex:
         LayoutFlexContainer(Box, ContentInput);
+      bkGrid:
+        LayoutGridContainer(Box, ContentInput);
       bkTable:
         LayoutTable(Box, ContentInput);
       bkText, bkLineBreak, bkInline, bkTableColumn, bkTableColumnGroup:

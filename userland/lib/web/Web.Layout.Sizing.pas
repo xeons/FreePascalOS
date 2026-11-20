@@ -264,7 +264,7 @@ begin
           MinWidth := 0;
         Exit;
       end;
-    bkFlex:
+    bkFlex, bkGrid:
       FlexChildrenWidths(Box, MinWidth, MaxWidth);
     bkTable:
       begin

@@ -1084,8 +1084,11 @@ Part 2 (style, layout, painting):
       opacity, rounded clips), hit testing
 - [x] `webrender` (/bin and host), `make web-layout-test` with reference
       pages and layout dumps
-- [ ] Grid layout (track sizing, placement); grid containers lay out as
-      blocks for now
+- [x] Grid layout, basic: templates with repeat()/minmax()/fr/auto-fill,
+      areas, line and span placement, auto placement (row/column, sparse),
+      implicit tracks, simplified track sizing, alignment, gaps
+- [ ] Grid: subgrid, dense packing, baseline alignment, named lines, the full
+      intrinsic track sizing algorithm
 - [ ] Fixed table layout, collapsing borders, `visibility: collapse`
 - [ ] Bidi and writing modes, shaping beyond kerning, synthetic italics,
       @font-face loading, ::first-line/::first-letter

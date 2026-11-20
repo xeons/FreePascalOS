@@ -9309,6 +9309,18 @@ its size.
   with freezing, cross sizes, align-content, stretch, auto margins,
   justify-content, align-items/align-self with baselines, gaps, order,
   reversed directions and wrap-reverse.
+- Grid (`Web.Layout.Grid`, CSS Grid 1 in its basic form): explicit
+  tracks from grid-template-columns/rows (lengths, percentages, fr,
+  auto, min-content, max-content, minmax(), fit-content(), repeat() with
+  counts and auto-fill/auto-fit) and grid-template-areas; placement by
+  line numbers (negative from the end), spans and area names, the rest
+  by the sparse auto-placement cursor in row or column flow; implicit
+  tracks from grid-auto-rows/columns; track sizing (fixed, intrinsic
+  from the items' min/max-content contributions with spanning items
+  spread, growth to the limits, fr sharing with the minimum kept, auto
+  tracks stretched); columns first, rows from the items laid out at
+  their widths; justify/align-self and -items (stretch, start, center,
+  end), justify/align-content, gaps.
 - Tables (`Web.Layout.Table`): automatic layout in brief (grid with
   colspan/rowspan, header groups first and footers last, column
   min/max from cells, spanning cells spread, distribution by what each
@@ -9405,7 +9417,7 @@ view only calls Update (and repaints when PaintVersion moved).
 `make web-layout-test` (in `make test`) builds tools/WebLayoutTest on the
 host with libcss, libfont, libdrawing and libimage. It lays out the
 reference pages of `tools/WebTest/render` (block margins, inline text,
-floats, positioning, lists and generated content, flex, tables, replaced
+floats, positioning, lists and generated content, flex, grid, tables, replaced
 elements and controls, legacy attributes and overflow, painting) and
 compares their layout tree dumps with the `.txt` files beside them
 (`make web-layout-update` rewrites those; look at the difference and at
@@ -9427,7 +9439,8 @@ images referred to by relative URLs are read from beside the page.
 
 ### Not done yet (layout and painting)
 
-Grid layout (grid containers are laid out as blocks), the fixed table
+Grid's subgrid, dense packing, baseline alignment, named lines and the
+full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
