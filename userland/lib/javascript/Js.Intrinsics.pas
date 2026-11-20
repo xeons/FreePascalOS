@@ -66,7 +66,9 @@ uses
   Js.Builtins.Atomics,
   Js.Builtins.Base64,
   Js.Modules,
-  Js.DirectEval;
+  Js.DirectEval,
+  Js.Builtins.AnnexB,
+  Js.Builtins.Intl;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -159,6 +161,8 @@ begin
   RecordTypedArrayShapes(R);
   InstallModules(R);
   InstallDirectEval(R);
+  InstallAnnexB(R);
+  InstallIntl(R);
 end;
 
 end.

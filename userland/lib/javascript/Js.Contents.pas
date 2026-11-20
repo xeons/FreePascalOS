@@ -65,6 +65,9 @@ uses
   Js.EvalScopes,
   Js.Arguments,
   Js.DirectEval,
+  Js.Builtins.AnnexB,
+  Js.Normalization,
+  Js.Builtins.Intl,
   Js.Intrinsics,
   Js.Engine;
 

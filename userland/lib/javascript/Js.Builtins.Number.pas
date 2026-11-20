@@ -50,6 +50,16 @@ uses
   Js.Interpreter;
 
 procedure InstallNumber(R: TJsInterpreterRealm);
+{ Value (not negative) rounded half up to Fraction decimals, exactly. }
+function FormatFixed(Heap: TJsHeap; Value: Double; Fraction: Integer): string;
+{ The Count significant digits of Value (positive), and its decimal
+  exponent. }
+procedure PrecisionDigits(Heap: TJsHeap; Value: Double; Count: Integer; out Digits: string; out Exponent: Integer);
+
+var
+  { Number.prototype.toLocaleString with locales and options (set by
+    Js.Builtins.Intl). }
+  JsNumberLocaleHook: function(R: TJsRealm; Value: TJsValue; Locales, Options: TJsValue): TJsValue = nil;
 
 implementation
 
@@ -242,6 +252,8 @@ var
 begin
   if not ThisNumber(R, This, Number) then
     Exit(JsException);
+  if Assigned(JsNumberLocaleHook) then
+    Exit(JsNumberLocaleHook(R, JsNumber(Number), Arg(Args, ArgCount, 0), Arg(Args, ArgCount, 1)));
   Result := JsStringValue(NumberToJsString(R, Number));
 end;
 
