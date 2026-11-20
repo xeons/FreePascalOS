@@ -356,6 +356,7 @@ function ValueToText(R: TJsRealm; Value: TJsValue): string;
 implementation
 
 uses
+  Web.Profiling,
   Js.Inspect;
 
 var
@@ -1219,14 +1220,19 @@ end;
 
 procedure TBindingContext.EnterScript;
 begin
+  EnterPhase(PhaseScript);
   Inc(FCallDepth);
 end;
 
 procedure TBindingContext.LeaveScript;
 begin
   Dec(FCallDepth);
-  if FCallDepth = 0 then
-    PerformMicrotaskCheckpoint;
+  try
+    if FCallDepth = 0 then
+      PerformMicrotaskCheckpoint;
+  finally
+    LeavePhase;
+  end;
 end;
 
 function TBindingContext.CallFunction(F, This: TJsValue; const Args: array of TJsValue; out Value: TJsValue;

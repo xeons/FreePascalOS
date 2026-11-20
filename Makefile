@@ -195,7 +195,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test javascript-test web-layout-test webrender web-load-test web-script-test
+	quic-test css-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
 all: esp
 
@@ -1288,6 +1288,33 @@ web-load-test: $(WEB_LOAD_TEST)
 	@$(WEB_LOAD_TEST) > build/tools/web-load-test.out || \
 		{ grep -A2 FAIL build/tools/web-load-test.out | head -100; echo "WEB LOAD TEST FAILED (build/tools/web-load-test.out)"; exit 1; }
 	@echo "WEB LOAD TEST PASSED: $$(tail -n 1 build/tools/web-load-test.out | cut -d ' ' -f 4-)"
+
+# webbrowse on the host (not part of make test): the real pipeline -
+# TWebPage over libhttp and libtls on host sockets with the host's roots,
+# the layout sink, page scripting, the event loop driven like the web
+# view - loads a URL and writes a PNG, the layout tree, the DOM, console
+# messages, the network log, phase times and peak memory, with a
+# watchdog that says where a hung page thread is
+# (build/tools/webbrowse -o page.png -n -p https://example.com/).
+WEB_BROWSE := build/tools/webbrowse
+WEB_BROWSE_UNITS := build/tools/webbrowse-units
+WEB_BROWSE_SOURCES := $(wildcard tools/WebBrowse/*.pas) tools/TlsTest/Crypto.Random.pas $(WEB_LOAD_TEST_SOURCES)
+
+$(WEB_BROWSE_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
+		$(WEB_BINDING_SOURCES)
+	@mkdir -p $(WEB_BROWSE_UNITS)
+	python3 -B userland/lib/web/make-tables.py $(WEB_BROWSE_UNITS)
+	python3 -B userland/lib/web/make-bindings.py $(WEB_BROWSE_UNITS)
+	@touch $@
+
+$(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
+	fpc -Mobjfpc -O2 -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
+		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
+		-Fuuserland/lib/javascript -Fushared -Fishared \
+		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WebBrowse/WebBrowse.pas
+
+webbrowse: $(WEB_BROWSE)
 
 # The resolver's EDNS(0) and cache of answers (libsystem) and the network
 # service's DHCP and DHCPv6 messages build for the host too, with range

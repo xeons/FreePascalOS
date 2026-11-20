@@ -71,6 +71,7 @@ type
 implementation
 
 uses
+  Web.Profiling,
   Math, Web.Paint.Builder, Web.Paint.Raster;
 
 constructor TDocumentPainter.Create(Layout: TDocumentLayout);
@@ -90,7 +91,12 @@ procedure TDocumentPainter.Refresh;
 begin
   if FBuilt and (FBuiltVersion = FLayout.DisplayListVersion) then
     Exit;
-  BuildDisplayList(FLayout.Root, FLayout.Resources, FList);
+  EnterPhase(PhasePaint);
+  try
+    BuildDisplayList(FLayout.Root, FLayout.Resources, FList);
+  finally
+    LeavePhase;
+  end;
   FBuiltVersion := FLayout.DisplayListVersion;
   FBuilt := True;
 end;
@@ -106,7 +112,12 @@ begin
   View.ScrollY := ScrollY;
   View.Scale := FLayout.Scale;
   View.Damage := Damage;
-  RasterizeDisplayList(FList, Surface, View);
+  EnterPhase(PhasePaint);
+  try
+    RasterizeDisplayList(FList, Surface, View);
+  finally
+    LeavePhase;
+  end;
 end;
 
 function TDocumentPainter.HitTest(X, Y: Single): THitTestResult;

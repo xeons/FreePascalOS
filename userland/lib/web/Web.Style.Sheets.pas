@@ -69,6 +69,7 @@ function IsStyleSheetOwner(Element: TElement): Boolean;
 implementation
 
 uses
+  Web.Profiling,
   SysUtils, Web.Atoms, Css.Parser, Css.MediaQueries;
 
 function IsStyleSheetOwner(Element: TElement): Boolean;
@@ -136,7 +137,12 @@ begin
     FStyleSheets[Found].Sheet.Free;
     FStyleSheets[Found].Sheet := nil;
   end;
-  Result := ParseStyleSheet(Source, coAuthor, FDocument.Url);
+  EnterPhase(PhaseStyleSheetParse);
+  try
+    Result := ParseStyleSheet(Source, coAuthor, FDocument.Url);
+  finally
+    LeavePhase;
+  end;
   if Trim(Media) <> '' then
     Result.Media := ParseMediaQueryText(Media);
   Index := Found;

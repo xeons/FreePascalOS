@@ -194,6 +194,7 @@ type
 implementation
 
 uses
+  Web.Profiling,
   Url.Parser,
   Web.Atoms,
   Web.Namespaces,
@@ -448,6 +449,7 @@ end;
 procedure TDocumentLoader.ParserCall(Bytes: PByte; Count: SizeInt; Finish, Resume: Boolean);
 begin
   Inc(FInParser);
+  EnterPhase(PhaseHtmlParse);
   try
     if Resume then
       FParser.Resume
@@ -456,6 +458,7 @@ begin
     else
       FParser.WriteBytes(Bytes, Count);
   finally
+    LeavePhase;
     Dec(FInParser);
   end;
 end;

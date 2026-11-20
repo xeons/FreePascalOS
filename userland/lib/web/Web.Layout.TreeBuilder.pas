@@ -672,12 +672,12 @@ var
 begin
   Result := TLayoutBox.Create(bkViewport, nil, nil);
   Result.Flags := Result.Flags + [bfAnonymous, bfNewFormattingContext, bfScrollContainer];
+  { The viewport has a style even before the document has a root (a
+    page committed before its first bytes are parsed is laid out). }
+  Result.Style := FStyler.AnonymousStyle(nil);
   Root := Document.DocumentElement;
   if (Root <> nil) and (StyleOf(Root) <> nil) then
-  begin
-    Result.Style := FStyler.AnonymousStyle(nil);
     AddNodeBox(Result, Root);
-  end;
 end;
 
 { ---- anonymous boxes ---- }

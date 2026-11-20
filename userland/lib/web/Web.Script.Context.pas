@@ -132,6 +132,7 @@ type
 implementation
 
 uses
+  Web.Profiling,
   Js.Objects,
   Js.Engine,
   Web.Bindings.Install,
@@ -303,6 +304,7 @@ begin
   if (Element <> nil) and not Element.HasAttributeAtom(AtomSrc) then
     Name := Name + ' (inline script ' + IntToStr(FScriptCount) + ')';
   EnterScript;
+  SetPhaseDetail(Name);
   try
     try
       Engine.Evaluate(Source, Name);

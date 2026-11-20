@@ -83,6 +83,7 @@ type
     procedure TakeElementImage(Box: TReplacedBox; Element: TElement);
     procedure TakePaintStyles(Box: TLayoutBox; Element: TElement; Style: TCssComputedStyle);
     procedure RebuildDirtyBoxes(Node: TNode);
+    procedure UpdateBoxes;
     procedure ApplyEnvironment;
     procedure ComputeScrollExtents;
   public
@@ -126,6 +127,7 @@ type
 implementation
 
 uses
+  Web.Profiling,
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
   Web.Layout.Positioned, Web.Text.FontInstances;
 
@@ -452,10 +454,52 @@ end;
 procedure TDocumentLayout.Update;
 var
   Input: TLayoutInput;
-  Data: PNodeData;
   Viewport: TLayoutBox;
 begin
-  FStyler.UpdateStyles;
+  EnterPhase(PhaseStyle);
+  try
+    FStyler.UpdateStyles;
+  finally
+    LeavePhase;
+  end;
+  EnterPhase(PhaseBoxes);
+  try
+    UpdateBoxes;
+  finally
+    LeavePhase;
+  end;
+  Viewport := FRoot;
+  if FLayoutDirty or ([bfNeedsLayout, bfChildNeedsLayout] * Viewport.Flags <> []) then
+  begin
+    EnterPhase(PhaseLayout);
+    try
+      FillChar(Input, SizeOf(Input), 0);
+      Input.AvailableWidth := FViewportWidth;
+      Input.ContainingHeight := FViewportHeight;
+      Input.WidthMode := wmStretch;
+      Input.FixedWidth := -1;
+      Input.FixedHeight := -1;
+      Input.ViewportWidth := FViewportWidth;
+      Input.ViewportHeight := FViewportHeight;
+      FFixedBoxes.Clear;
+      Input.FixedBoxes := FFixedBoxes;
+      LayoutBox(Viewport, Input);
+      LayoutPositionedBoxes(Viewport, FFixedBoxes, Input);
+      ComputeScrollExtents;
+      FLayoutDirty := False;
+      Inc(FPaintVersion);
+    finally
+      LeavePhase;
+    end;
+  end;
+end;
+
+{ The box tree brought up to date with the styles: built whole the first
+  time (and after a full rebuild), else the dirty subtrees again. }
+procedure TDocumentLayout.UpdateBoxes;
+var
+  Data: PNodeData;
+begin
   if FFullRebuild or (FRoot = nil) then
   begin
     FreeBoxTree(FRoot);
@@ -472,25 +516,6 @@ begin
   begin
     ResolveGeneratedContent(FRoot);
     FBoxesChanged := False;
-    Inc(FPaintVersion);
-  end;
-  Viewport := FRoot;
-  if FLayoutDirty or ([bfNeedsLayout, bfChildNeedsLayout] * Viewport.Flags <> []) then
-  begin
-    FillChar(Input, SizeOf(Input), 0);
-    Input.AvailableWidth := FViewportWidth;
-    Input.ContainingHeight := FViewportHeight;
-    Input.WidthMode := wmStretch;
-    Input.FixedWidth := -1;
-    Input.FixedHeight := -1;
-    Input.ViewportWidth := FViewportWidth;
-    Input.ViewportHeight := FViewportHeight;
-    FFixedBoxes.Clear;
-    Input.FixedBoxes := FFixedBoxes;
-    LayoutBox(Viewport, Input);
-    LayoutPositionedBoxes(Viewport, FFixedBoxes, Input);
-    ComputeScrollExtents;
-    FLayoutDirty := False;
     Inc(FPaintVersion);
   end;
 end;

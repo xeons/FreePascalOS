@@ -145,6 +145,7 @@ function RelHasToken(Element: TElement; const Token: string): Boolean;
 implementation
 
 uses
+  Web.Profiling,
   Url.Parser,
   Css.Parser,
   Css.MediaQueries,
@@ -405,7 +406,13 @@ begin
   if not EncodingForLabel(DocumentEncodingName, Encoding) then
     Encoding := TextEncodingUtf8;
   Text := DecodeStyleSheetBytes(Fetch.Body, Fetch.Charset, Encoding);
-  Result := ParseStyleSheet(Text, coAuthor, SerializeUrl(Fetch.FinalUrl));
+  EnterPhase(PhaseStyleSheetParse);
+  try
+    SetPhaseDetail(SerializeUrl(Fetch.FinalUrl));
+    Result := ParseStyleSheet(Text, coAuthor, SerializeUrl(Fetch.FinalUrl));
+  finally
+    LeavePhase;
+  end;
 end;
 
 procedure TStyleSheetLoader.RootComplete(Fetch: TBufferedFetch; Success: Boolean);

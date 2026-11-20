@@ -32,6 +32,7 @@ interface
 
 uses
   Web.TextBuffers,
+  Web.Profiling,
   Web.Atoms,
   Web.Namespaces,
   Web.Encoding.Labels,
@@ -113,6 +114,7 @@ uses
   Web.Fetch.LocalFiles,
   Web.Fetch.NetworkContexts,
   Web.Fetch.Jobs,
+  Web.Fetch.Monitors,
   Web.Fetch.HttpHops,
   Web.Fetch.Fetcher,
   Web.Navigation.Events,
