@@ -165,6 +165,7 @@ function ErrorCaptureStackTrace(R: TJsRealm; const This: TJsValue; Args: PJsValu
 var
   Target: TJsValue;
   Header: TJsValue;
+  Skip: TJsObject;
 begin
   Target := Arg(Args, ArgCount, 0);
   if not JsIsObject(Target) then
@@ -172,8 +173,11 @@ begin
   Header := ToStringValue(R, Target);
   if Header = JsException then
     Exit(JsException);
+  Skip := nil;
+  if JsIsObject(Arg(Args, ArgCount, 1)) then
+    Skip := JsAsObject(Args^[1]);
   JsAsObject(Target).DefineData(R, R.Atom(anStack), R.NewString(StringToUtf8(R.Heap, JsAsString(Header)) +
-    TJsInterpreterRealm(R).StackTraceText), PropertyHidden);
+    TJsInterpreterRealm(R).StackTraceTextFor(Skip)), PropertyHidden);
   Result := JsUndefined;
 end;
 
@@ -204,6 +208,7 @@ begin
       R.Intrinsics[inError] := Constructor_;
       DefineMethod(R, Prototype, 'toString', @ErrorPrototypeToString, 0);
       DefineMethod(R, Constructor_, 'captureStackTrace', @ErrorCaptureStackTrace, 1);
+      Constructor_.DefineData(R, R.Intern('stackTraceLimit'), JsInteger(10), PropertyDefault);
     end
     else
       Constructor_.Proto := Base;

@@ -202,6 +202,12 @@ type
     function NewError(Kind: TJsErrorKind; const Message: string): TJsObject; override;
     { The stack trace text of the frames running now. }
     function StackTraceText: string;
+    { The frames' text, at most Error.stackTraceLimit of them, leaving
+      out those down to the last call of SkipUntil (when not nil:
+      Error.captureStackTrace's second argument). }
+    function StackTraceTextFor(SkipUntil: TJsObject): string;
+    { Error.stackTraceLimit (frames; -1 when it is not a number). }
+    function StackTraceLimit: Integer;
     function NewClosure(Code: TJsCode; Environment: TJsEnvironment): TJsClosure;
     function RunScript(Code: TJsCode): TJsValue;
     { Resumes a generator or async function: the value it yields or
@@ -478,15 +484,61 @@ end;
 
 { Errors }
 
-function TJsInterpreterRealm.StackTraceText: string;
+function TJsInterpreterRealm.StackTraceLimit: Integer;
 var
-  Index, Line, Column: Integer;
+  ErrorConstructor: TJsObject;
+  Slot: Integer;
+  Flags: Byte;
+  Value: TJsValue;
+begin
+  Result := 10;
+  ErrorConstructor := Intrinsics[inError];
+  if ErrorConstructor = nil then
+    Exit;
+  { Read without running code: a data property or nothing. }
+  Slot := ErrorConstructor.Shape.Find(Intern('stackTraceLimit'), Flags);
+  if (Slot < 0) or ((Flags and PropertyAccessor) <> 0) then
+    Exit(-1);
+  Value := ErrorConstructor.GetSlot(Slot);
+  if not JsIsNumber(Value) then
+    Exit(-1);
+  if IsNaNDouble(JsNumberValue(Value)) or (JsNumberValue(Value) < 0) then
+    Exit(0);
+  if JsNumberValue(Value) > 1000 then
+    Exit(1000);
+  Result := Trunc(JsNumberValue(Value));
+end;
+
+function TJsInterpreterRealm.StackTraceText: string;
+begin
+  Result := StackTraceTextFor(nil);
+end;
+
+function TJsInterpreterRealm.StackTraceTextFor(SkipUntil: TJsObject): string;
+var
+  Index, Line, Column, Limit, Count, Top: Integer;
   Frame: PJsFrame;
   Name, FileName: string;
 begin
   Result := '';
-  for Index := FFrameCount - 1 downto 0 do
+  Limit := StackTraceLimit;
+  if Limit < 0 then
+    Exit;
+  Top := FFrameCount - 1;
+  if SkipUntil <> nil then
   begin
+    while (Top >= 0) and (FFrames^[Top].Callee <> SkipUntil) do
+      Dec(Top);
+    if Top < 0 then
+      Exit;
+    Dec(Top);
+  end;
+  Count := 0;
+  for Index := Top downto 0 do
+  begin
+    if Count >= Limit then
+      Break;
+    Inc(Count);
     Frame := @FFrames^[Index];
     { Callers stand after their call instruction. }
     if Index < FFrameCount - 1 then

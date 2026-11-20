@@ -68,7 +68,8 @@ uses
   Js.Modules,
   Js.DirectEval,
   Js.Builtins.AnnexB,
-  Js.Builtins.Intl;
+  Js.Builtins.Intl,
+  Js.Builtins.SelfHosted;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -163,6 +164,7 @@ begin
   InstallDirectEval(R);
   InstallAnnexB(R);
   InstallIntl(R);
+  InstallSelfHosted(R);
 end;
 
 end.

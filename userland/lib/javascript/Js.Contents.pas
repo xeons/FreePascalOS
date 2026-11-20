@@ -68,6 +68,7 @@ uses
   Js.Builtins.AnnexB,
   Js.Normalization,
   Js.Builtins.Intl,
+  Js.Builtins.SelfHosted,
   Js.Intrinsics,
   Js.Engine;
 
