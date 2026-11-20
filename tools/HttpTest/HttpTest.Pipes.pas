@@ -113,7 +113,10 @@ begin
       if Result > Count then
         Result := Count;
       Move(FData[0], Buffer^, Result);
-      Move(FData[Result], FData[0], FCount - Result);
+      { FData[Result] is past the end when everything was taken (a range
+        error under -Cr, raised with the lock held). }
+      if FCount > Result then
+        Move(FData[Result], FData[0], FCount - Result);
       Dec(FCount, Result);
       LeaveCriticalSection(FLock);
       Exit;

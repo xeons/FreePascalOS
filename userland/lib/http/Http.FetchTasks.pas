@@ -141,6 +141,9 @@ begin
       on Error: Exception do
         FOutcome := HttpFailure(HttpProtocolError, Error.Message);
     end;
+    { The fetch is over (an exception may have left an exchange tracked):
+      a later Cancel must not reach what it used. }
+    FToken.Untrack;
     if FResponse <> nil then
       FResponse.Finish;
   finally

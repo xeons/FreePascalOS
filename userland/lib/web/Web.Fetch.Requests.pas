@@ -72,7 +72,7 @@ type
   TResponseTainting = (TaintingBasic, TaintingCors, TaintingOpaque);
   TFetchPriorityHint = (FetchPriorityAuto, FetchPriorityHigh, FetchPriorityLow);
   TReferrerKind = (ReferrerClient, ReferrerNone, ReferrerUrl);
-  TParserMetadata = (ParserMetadataNone, ParserInserted, NotParserInserted);
+  TParserMetadata = (ParserMetadataNone, ParserMetadataInserted, ParserMetadataNotInserted);
 
   { The environment a request is made for: a document (or the browser
     itself, with an opaque origin and no URL, for typed addresses). }

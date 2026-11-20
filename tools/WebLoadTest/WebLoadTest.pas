@@ -18,7 +18,8 @@
 
 {
   WebLoadTest - checks libweb's loading side on the host (make
-  web-load-test): the event loop and timers.
+  web-load-test): the event loop and timers, the fetch layer, document
+  loading, subresources and navigation.
 
   Prints one line per check and the totals; exits with 1 if any failed.
 }
@@ -32,11 +33,14 @@ uses
   TestChecks,
   WebLoadTest.EventLoop,
   WebLoadTest.FetchRules,
-  WebLoadTest.Fetching;
+  WebLoadTest.Fetching,
+  WebLoadTest.Loading,
+  Web.Navigation.Pages;
 
 begin
   RunEventLoopTests;
   RunFetchRuleTests;
   RunFetchingTests;
+  RunLoadingTests;
   FinishChecks('web load test');
 end.

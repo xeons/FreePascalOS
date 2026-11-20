@@ -219,6 +219,17 @@ begin
   Result := LowerCase(TrimHttpWhitespace(First)) = 'nosniff';
 end;
 
+{ Whether the first bytes could change the type (so they are worth
+  waiting for): no or an unknown type, the Apache defaults, images. }
+function SniffingCanChange(const Essence: string; NoSniff, ApacheBug: Boolean): Boolean;
+begin
+  if IsUnknownMimeType(Essence) then
+    Exit(True);
+  if NoSniff then
+    Exit(False);
+  Result := ApacheBug or IsImageMimeType(Essence);
+end;
+
 constructor TFetcher.Create(Loop: TEventLoop; Network: TNetworkContext);
 begin
   inherited Create;
@@ -1049,7 +1060,8 @@ begin
     Exit;
   end;
   Job.SetResponse(Response);
-  if Request.SniffContent and (Response.Status <> 204) and (Response.Status <> 304) then
+  if Request.SniffContent and (Response.Status <> 204) and (Response.Status <> 304) and
+     SniffingCanChange(Essence, NoSniff, IsApacheBugContentType(Response.Headers.Value('content-type'))) then
     Job.State := JobSniffing
   else
   begin
