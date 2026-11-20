@@ -8786,6 +8786,471 @@ filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
 
+## Style engine (libcss)
+
+libcss (`userland/lib/css`, units `Css.*`, `libcss.so`) is the style
+engine of the web platform: CSS syntax, selectors, values, the property
+table, style sheets, media queries, the cascade and computed styles. It
+depends on libsystem only and knows no document model: it sees elements
+through an adapter the host implements (libweb for its DOM, the tests
+for a toy tree). `cssdump` (`/bin/cssdump`) parses style sheets with it
+and prints them back normalized.
+
+**Atoms and the element adapter.** Every name the engine compares is an
+atom of one process wide table (`Css.Atoms`): a LongWord, interned once,
+never freed, with its ASCII lowercase atom at hand. The table is seeded
+with the keywords of `Css.Keywords` in enum order, so a keyword's atom is
+its ordinal and keyword tests compare integers; a keyword's spelling
+comes from its identifier (`kwInlineBlock` is `inline-block`). A host
+refers to elements by opaque handles (`TCssElement`, any pointer) and
+implements one `TCssElementAdapter`: local name and namespace (atoms),
+whether it is an HTML element in an HTML document (case-insensitive
+names and some attribute values), id and classes (atoms), attribute
+lookup (by namespace and name, and by index for `[*|x]`), element-only
+navigation (parent, previous and next sibling, first and last child),
+`:empty`, the root, the state flags (`TCssElementState`: hover, active,
+focus, focus-visible, focus-within, link, visited, target, checked,
+disabled, enabled, placeholder-shown, open, modal and the others), the
+language and direction, the quirks mode, and the parsed style attribute
+and presentational hints (declaration blocks the host keeps). The
+cheapest arrangement, the one libweb is meant to use, is to intern the
+DOM's element and attribute names, ids and classes in libcss's table:
+the adapter then returns stored integers and the engine allocates
+nothing per element.
+
+**Syntax.** The tokenizer follows CSS Syntax Level 3 exactly on UTF-8
+(preprocessing, escapes decoded, every byte from 0x80 up an ident code
+point, numbers with their integer flag and sign). A token list is one
+dynamic array ending in EOF, in which every opening bracket and function
+token knows the index of its closer: a component value is a token or a
+range, skipping one is a jump, and the parsers walk `TCssTokenCursor`
+ranges without building trees of component values. `Css.Parser` has the
+rule and declaration algorithms with their error recovery, the @import
+and @namespace ordering rules, and CSS Nesting: in a style rule's block
+"ident : ..." is tried as a declaration and re-read as a nested rule
+when its value holds a {} block among other things; declarations after
+a nested rule become a nested declarations rule (they behave like "&").
+The object model (`Css.Stylesheets`) has style rules with child rules,
+@media, @supports (decided when parsed), @container (parsed and kept,
+not evaluated yet), @layer blocks and statements, @import (the host
+loads the sheet and hangs it on the rule), @namespace, @font-face (its
+descriptors parsed, unicode-range from the source text), @keyframes,
+@page and @property. Each serializes as CSSOM says; `Css.Serialization`
+escapes identifiers, strings and numbers and writes token runs back
+with the comments that keep tokens apart.
+
+**Selectors.** Selectors Level 4 (`Css.Selectors`, `Css.SelectorParser`):
+type and universal selectors with namespaces, id, class, attribute
+selectors with all operators and the i/s flags, every pseudo-class of the
+level (state ones from the adapter's flags; structural ones including
+`:nth-child(An+B of S)` and the -of-type family; `:is`, `:where`
+(forgiving), `:not`, `:has` with relative selectors, `:lang` with
+wildcards, `:dir`, `:root`, `:scope`, `:empty`), the pseudo-elements
+::before ::after ::marker ::placeholder ::selection ::first-line
+::first-letter ::backdrop ::file-selector-button (unknown ::-webkit-
+ones are valid and never match), the four combinators and the nesting
+selector '&'. A complex selector keeps its compounds right to left;
+specificity is (a, b, c) packed in ten bits each. Matching
+(`Css.SelectorMatching`) starts at the subject and walks left; a failure
+says how far back to restart (later sibling, closest descendant, or
+give up), the WebKit/Servo scheme, so descendant combinators do not
+backtrack quadratically. Sibling positions for `:nth-*` are cached per
+element. `:has` searches the subtree or following siblings of its
+element.
+
+**The bloom filter and the rule index.** While a tree is styled
+top-down, the names (lowercased local name, id, classes) of the
+ancestors are counted in a 4096 entry counting bloom filter
+(`Css.BloomFilter`, two 12 bit hashes per name). Each selector carries
+up to four hashes of names its ancestor compounds need; a selector one
+of them is missing for is rejected without touching the tree. The rule
+index (`Css.RuleIndex`) holds every style rule selector that applies in
+the current environment (its @media, @supports and @import conditions
+hold), hashed by the subject compound's id, else class, else type, else
+into the universal list; an element is matched only against its id's,
+classes' and type's buckets and the universal one. The index also ranks
+cascade layers (per origin, by first declaration, sublayers before the
+layer's own rules, unlayered last; anonymous layers are unique) and
+collects @keyframes, @font-face and @property rules.
+
+**Values and the property table.** Specified values (`Css.Values`) are
+immutable reference counted nodes: keyword, number, integer,
+percentage, dimension (every unit of Values 4: absolute, font-relative,
+viewport including s/l/d variants, container, angles, times,
+frequencies, resolutions, fr), color, string, URL, custom identifier,
+math function, list (space, comma or slash), function (gradients,
+transforms, counters, attr(), basic shapes ...), and the raw tokens of
+a value that still has var() (and of custom properties). Math functions
+(`Css.Calc`) are full Values 4: calc, min, max, clamp, round, mod, rem,
+abs, sign, the trigonometric and exponential functions, the constants;
+the tree is type-checked with exponents per base type and simplified
+(like units combined, absolute units made canonical, number-only
+functions computed). Colors (`Css.Colors`, `Css.ColorParser`) are CSS
+Color 4 and 5: named, hex, rgb/hsl (legacy and modern syntax), hwb, lab,
+lch, oklab, oklch, color() in every predefined space, color-mix() (with
+hue methods, premultiplied), currentcolor and the system colors (a
+light and a dark table the host can replace); conversions go through
+CIE XYZ with the specification's matrices, and drawing gets sRGB
+clipped to the gamut. Images (`Css.Images`) are url(), image-set() and
+linear, radial and conic gradients (repeating too, with an
+interpolation color space), checked and kept as typed function values;
+`Css.Transforms` checks every transform function.
+
+The property table (`Css.PropertyIds`, `Css.PropertyTable`) has one row
+per property: about 220 physical longhands, 34 logical ones, 55
+shorthands and `cpCustom`. A row gives the group the computed value
+lives in, the initial value as text (parsed once with the property's own
+grammar), the grammar, how the value is computed and how it animates.
+A property's name comes from its identifier. Grammars are table driven
+(`Css.Grammar`): alternatives of keywords and basic types
+(`<length-percentage+>` is non-negative), keyword sets in braces, comma
+lists with a leading '#', or `@name` for a routine of the value parsers
+(`Css.BoxParsers`, `Css.GridParsers`, `Css.TextParsers`: display in its
+full multi-keyword syntax, sizes with fit-content(), the alignment
+values, track lists with repeat() and line names, template areas
+checked to be rectangles, grid lines, font families, shadows, cursors,
+content and counters, easing functions, filters, clip paths, background
+layers and the rest). `Css.Shorthands` expands margin, padding, inset,
+every border shorthand (physical and logical), border-radius with its
+slash, border-image, outline, background (layers), background-position,
+font (system fonts too), font-variant, flex, flex-flow, grid,
+grid-template (both forms), grid-row/column/area, gap, place-*,
+overflow, list-style (with its 'none' rule), text-decoration, transition,
+animation, columns, column-rule and container; what a shorthand leaves
+out gets its initial value, and `all` takes the CSS-wide keywords.
+
+**Declarations.** A declaration block (`Css.Declarations`) is an array
+of small records (property, importance, the shorthand it came from,
+custom property name, value). Shorthands are stored as their longhands;
+serialization folds them back where the shorthand can be written (box
+sides, pairs, border sides, flex, grid lines, and any shorthand whose
+longhands all came from one var() value). A later declaration of a
+property replaces an earlier one, except that a normal one does not
+replace an !important one.
+
+**The cascade.** For an element (or one of its pseudo-elements) the
+engine collects the matching rules' blocks, the presentational hints
+and the style attribute. Each block takes part with its normal and its
+important declarations, ordered as Cascade 5 says: origin and
+importance (user agent, user, author normal; author, user, user agent
+important), element-attached declarations over rules, cascade layer
+(later wins for normal, earlier for important; presentational hints
+below every author layer), specificity, order of appearance. Walking
+them from the highest priority, the first declaration of a property
+wins; `revert` skips the rest of its origin, `revert-layer` the rest of
+its layer. Writing mode and direction are cascaded first so that
+logical properties are mapped to the physical ones in the same pass.
+Custom properties cascade by name.
+
+**Computed styles.** A computed value (`Css.ComputedValues`) is a 24
+byte record: kind, keyword, px and percent as singles (or a 16 bit per
+channel sRGB color), and a reference to a value tree for what does not
+fit. Lengths are made absolute: em against the element's font size (the
+parent's for font-size), rem against the root's, ex, ch, cap and ic as
+fractions of the em, lh and rlh, viewport units against the media
+environment, container units falling back to the small viewport.
+Percentages stay until layout gives a basis (`ResolveComputed`), and a
+calc() that is not px plus percent (min(10px, 5%)) stays a calculation
+with px leaves. currentcolor stays except in `color`, font-weight's
+bolder and lighter follow the parent, line-height in units becomes a
+length, border, outline and column-rule widths snap to device pixels and
+are 0 when their style is none or hidden, display is blockified for
+floats, absolutely positioned boxes and the root, and a float is none
+when the box is absolutely positioned. var() is substituted before
+anything is computed: custom properties are resolved in dependency
+order with cycle detection (a property in a cycle is invalid; one that
+refers to it uses its fallback), env() knows the safe-area and titlebar
+variables (the host can set them), a value that fails after
+substitution is invalid at computed-value time and acts as unset, and a
+shorthand with var() is expanded once its tokens are known. Registered
+custom properties (@property) can be non-inherited and give initial
+values.
+
+Computed values are stored in style structs (`Css.StyleStructs`): one
+reference counted block per property group, like Gecko's and Servo's
+(font, inherited text, inherited box, inherited user interface, lists,
+inherited table; box, position and sizing with flex and grid, margins,
+padding, borders, outline, backgrounds, effects, text decoration,
+generated content, table, columns, user interface, animations). A group
+is all inherited or all not, so a child inherits a group by taking its
+parent's pointer; a group nothing was declared for is the shared
+initial struct; every rebuilt struct is interned in the struct cache, so
+elements with equal values in a group share one struct. A computed
+style (`Css.ComputedStyle`) is a pointer per group, the custom property
+set (shared with the parent when the element declares none) and its
+pseudo-element.
+
+**The style engine.** `TCssStyleEngine` (`Css.StyleEngine`) keeps the
+sheets (the HTML user agent sheet of the HTML Standard's rendering
+section, its quirks mode additions in quirks mode, user sheets and the
+document's author sheets, which stay the host's), the media environment
+(`TCssMediaEnvironment`: viewport in CSS pixels, resolution from the
+system's DPI scale, color scheme, motion, transparency and contrast
+preferences, forced colors, hover and pointer, scripting, color gamut,
+dynamic range, update; set by the host), the rule index, the struct
+cache and the style sharing cache. `ResolveStyle(Element, ParentStyle)`
+gives a new reference; `ResolvePseudoStyle` gives nil when no rule
+targets the pseudo-element; `StyleTree` styles a subtree top-down with
+the bloom filter (hosts walking themselves call PushAncestor and
+PopAncestor). Elements with the same parent style that match the same
+rules, with no style attribute or presentational hints and no attr()
+in their declarations, get the same computed style from the sharing
+cache without cascading again. `TreeChanged` forgets sibling positions
+and shared styles; `Invalidate` rebuilds the index (sheets changed,
+media changed).
+
+Media queries (`Css.MediaQueries`) are Level 4 and 5: media types, not
+and only, and/or/not conditions, the range syntax (`400px <= width <
+700px`), min-/max- prefixes, and the features width, height,
+aspect-ratio, device-*, resolution (with `infinite`),
+-webkit-device-pixel-ratio, orientation, color, color-index, monochrome,
+grid, prefers-color-scheme, prefers-reduced-motion,
+prefers-reduced-transparency, prefers-reduced-data, prefers-contrast,
+forced-colors, inverted-colors, hover, any-hover, pointer, any-pointer,
+scripting, display-mode, color-gamut, dynamic-range, update, scan and
+overflow-*; evaluation is three-valued and an unknown feature is false
+at the top. em in a query is the environment's initial font size.
+
+**Memory.** On the test's synthetic page (1767 elements, the user agent
+sheet and a typical author sheet) the engine makes 44 distinct computed
+styles (40 elements per style; 1723 of the elements come from the
+sharing cache), 66 distinct structs (each used by 13 styles), about 17
+bytes of computed style per element; a style with nothing shared would
+be 5480 bytes. libcss.so is about 0.9 MB.
+
+**Tests.** `make css-test` (tools/CssTest) builds libcss on the host and
+checks tokenizer cases, parse-and-serialize round trips of values,
+shorthands and style sheets, specificity, matching against a small tree
+through the test adapter (with and without the bloom filter, quirks
+mode), cascade order with origins, layers, !important, the style
+attribute and revert, computed values (em, rem, %, calc, var() with
+fallbacks and cycles, viewport units, border snapping, blockification),
+the user agent sheet, media query evaluation, @supports, color
+conversions against answers computed by `make-color-vectors.py` from
+the primaries and white points (not from the matrices libcss uses), and
+memory and sharing on the synthetic page, which it reports. coretest
+runs cssdump on three inputs in the system.
+
+**Not done yet.** Container queries are parsed but not evaluated (no
+container matches, so their rules do not apply); :visited is matched
+from the adapter's flag, with no privacy split of styles; relative color
+syntax (`rgb(from ...)`), light-dark(), @scope, @counter-style,
+@font-feature-values and SVG properties are not supported; transitions
+and animations are parsed and stored but not run; gamut mapping is
+clipping; computed colors are 16 bit sRGB; the cascade's sort is an
+insertion sort (fine for the dozens of rules that match one element).
+
+## Web engine (libweb)
+
+libweb (`userland/lib/web`, `libweb.so`, units `Web.*`) is the browser
+engine that both the browser application and the web view control will
+use. Part 1, here, is the text side: the WHATWG Encoding Standard, the
+HTML parser and the DOM. Layout, painting, resource loading (through
+libhttp), the CSS adapter (libcss) and the script bindings
+(libjavascript) are later phases, and the structures below leave room
+for them. It depends on libsystem only; `htmldump` (in /bin) is its
+command line front end.
+
+### Atoms and namespaces
+
+Names are atoms (`Web.Atoms`): a process-wide table interns element and
+attribute local names, namespaces, prefixes, event types and class
+names once, and they compare as 32 bit integers. The well-known HTML,
+SVG and MathML names are predeclared constants (`AtomDiv`,
+`AtomForeignObject`, `AtomSvgNamespace`, ...), generated at build time
+from `data/well-known-names.txt` by `make-tables.py`; the table only
+grows and is not locked (the documents' thread makes atoms). A node
+keeps its namespace and prefix together as a 16 bit `TNamespaceId`
+(`Web.Namespaces`), an index into a table of (namespace, prefix) pairs
+whose common ones are fixed (`NamespaceHtml`, `NamespaceSvg`,
+`NamespaceXLink` with the xlink prefix, ...).
+
+### Encodings
+
+`Web.Encoding.*` implements the Encoding Standard: all encodings and
+their labels (from `data/encoding-labels.txt`), "get an encoding",
+streaming decoders that take bytes in any number of pieces and append
+UTF-8 to a `TTextBuffer` (UTF-8 with the standard's maximal-subpart
+replacement, UTF-16LE/BE with lone surrogates replaced, the 27
+single-byte encodings from index tables in `data/single-byte-indexes.txt`,
+x-user-defined, replacement), the BOM sniff, the meta prescan with its
+"get an attribute" algorithm, the extraction of a charset from a
+Content-Type pragma, and the HTML encoding sniffing algorithm (BOM,
+transport charset: certain; prescan of the first 1024 bytes: tentative;
+windows-1252). The UTF-8 encoder (lone surrogates to U+FFFD) and UTF-16
+helpers are in `Web.Encoding.Utf8`. The multi-byte CJK encodings (GBK,
+gb18030, Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR) are recognized
+but not decoded yet: the parser reads them as windows-1252 and says so
+(`UnsupportedEncoding`).
+
+The data files were written once from the standards' tables (the named
+references and the single-byte indexes with Python's own copies of
+them, patched where WHATWG differs: KOI8-U is KOI8-RU, windows-1255
+0xCA, the C1 bytes of the windows-* encodings); nothing is downloaded.
+
+### Text: UTF-8 inside, UTF-16 at the API
+
+The DOM keeps text and attribute values in UTF-8 (`string`). The DOM's
+offsets and lengths (`length`, `substringData`, `splitText`, later
+ranges and JavaScript's view of strings) are in UTF-16 code units;
+`TCharacterData` converts them with `Web.Encoding.Utf8`, and a text node
+remembers whether its text is all ASCII (a flag computed on first use),
+in which case offsets are the same and no scan is needed. A lone
+surrogate set from JavaScript is kept as generalized UTF-8 (WTF-8, the
+surrogate's three bytes); the parser never makes one. The tokenizer can
+work on bytes because every character HTML's syntax looks at is ASCII:
+non-ASCII bytes only ever pass through as data.
+
+### The DOM
+
+`Web.Dom` holds the node classes (they refer to each other, so one unit,
+its code spread over `Web.Dom.*.inc` by concern): `TNode`,
+`TContainerNode` (documents, fragments, elements: only these have child
+links), `TCharacterData` with `TText`, `TCDataSection`, `TComment`,
+`TProcessingInstruction`, `TDocumentType`, `TElement`, `TAttr`,
+`TDocumentFragment` and `TDocument`; `TNodeList` (live child lists that
+remember their position, fixed lists), `THtmlCollection` (live, cached
+until the global DOM version moves: `children`, `getElementsByTagName`,
+`...TagNameNS`, `...ClassName`, `namedItem`), `TDomTokenList`
+(`classList`), `TNamedNodeMap`. `Web.Dom.Exceptions` has DOMException
+(`EDomException` with the WebIDL error name and legacy code).
+
+- The mutation algorithms follow the DOM Standard: ensure pre-insertion
+  validity, pre-insert, insert (fragments insert their children),
+  append, replace, replace all, pre-remove, remove and adopt, and the
+  Node, ParentNode and ChildNode methods on them (`insertBefore`,
+  `replaceChildren`, `before`, `replaceWith`, ...), with
+  HierarchyRequestError and NotFoundError where the standard throws.
+  Element and attribute names are checked with the relaxed 2025 rules
+  ("valid element local name"), and `createElementNS`/`setAttributeNS`
+  use "validate and extract". Live ranges and node iterators are marked
+  in the code for the Range work of a later phase.
+- Attributes are an array of 16 byte records (value, local name atom,
+  namespace id) on the element; `Attr` nodes are made only when asked
+  for and keep their identity while the attribute lives. Ids are in a
+  per-document map (each id's connected elements, the first in tree
+  order found when several share it and kept until they change); class
+  names are cached as atoms for selector matching (`HasClass`).
+- `TDocumentObserver` is the hook for later phases: it gets exactly the
+  tree mutation records MutationObserver queues (`TreeMutated`), the
+  children changed steps, each node becoming connected (after the
+  insertion, like the insertion steps scripts need) or disconnected,
+  attribute and character data changes with old values.
+  `TDocument.ElementClassFor` picks the element class (the bindings will
+  give HTML elements their interface classes); `LayoutData` and
+  `ScriptWrapper` are slots for layout and the bindings.
+- Templates have their contents in a fragment of the document's
+  inert "template contents owner" document; cloning copies them and
+  adoption moves them, as the HTML Standard says.
+
+Events (`Web.Dom.Events`): `TEventTarget` (no fields of its own; nodes
+keep their listeners in the rare data), `TEvent`, `TEventListener`
+objects owned by the target's list. Dispatch builds the path through
+"get the parent", runs capture listeners from the top down, the
+target's capture and then other listeners, and bubble listeners back
+up; stopPropagation, stopImmediatePropagation, preventDefault
+(cancelable only, not in passive listeners), once, listeners added or
+removed during dispatch, and exceptions in listeners (reported, the
+others still run) behave as the standard says. Shadow trees,
+retargeting and activation behavior come with the later phases; the
+event loop too.
+
+### Node size and lifetime
+
+A node object is small: after the VMT, 8 bytes hold its kind, flags,
+namespace id and local name atom; then the parent and sibling links,
+its document, a layout data slot and a pointer to rare data (script
+wrapper, reference counts, listeners, cached lists, Attr objects,
+template contents), made only when needed. On x86-64 an element is 88
+bytes (96 with the heap's header; the size was chosen to fit that heap
+class) and a text node 72 (80). On the test's generated document
+(3.4 MB of HTML, 380,000 nodes) the whole document costs about 150
+bytes of heap per node, text and attributes included; whitespace-only
+texts between tags are shared strings.
+
+Nodes are kept alive by their parent and by references (Retain/Release:
+the bindings will hold one per wrapper). A node counts the references
+in its whole subtree, so a detached subtree knows at once whether
+anything in it is referenced; a referenced detached subtree keeps its
+document alive; a document lives while referenced (its creator holds
+the first reference) or while anything of it is. Detached unreferenced
+subtrees (removed nodes, nodes created and never inserted) are listed
+and freed by `CollectGarbage`, which the owner calls between tasks,
+never in the middle of an algorithm, so a removed node stays valid
+until then; a document frees its listed nodes when it goes. Trees are
+freed, cloned, compared and serialized without recursion, so a parsed
+tree may be any depth.
+
+### The HTML parser
+
+`Web.Html.*` is the HTML Standard's parsing algorithm, complete:
+
+- The input stream (`Web.Html.InputStream`) keeps decoded text with CR
+  and CR LF normalized (also across pieces) and counts the input
+  stream preprocessing errors.
+- The tokenizer (`Web.Html.Tokenizer`, states in
+  `Web.Html.Tokenizer*.inc`) has every state of the standard, with the
+  parse errors by their codes. It stops wherever the input runs out and
+  carries on with the next piece; lookaheads ("DOCTYPE", "[CDATA[",
+  named references) wait until enough input is there. Plain runs of
+  text are copied in one move and reach the tree builder as one token.
+  The 2231 named character references (`data/named-character-references.txt`)
+  are matched longest first by narrowing the sorted names one character
+  at a time.
+- The tree builder (`Web.Html.TreeBuilder`, modes in
+  `Web.Html.TreeBuilder*.inc`) has all 23 insertion modes, the stack of
+  open elements with the scope checks, the list of active formatting
+  elements with the Noah's Ark clause, the adoption agency algorithm,
+  foster parenting, template contents and the template insertion modes,
+  foreign content with the SVG and MathML name and attribute adjustments
+  and integration points, the document mode from the DOCTYPE
+  (`Web.Html.Quirks`), and the fragment case. Parse errors are counted
+  (and listed with `CollectErrors`), never fatal.
+- `Web.Html.Parser` joins them: bytes in, with sniffing and decoders; a
+  meta charset met later while the confidence is tentative switches the
+  decoder when everything so far was ASCII and otherwise asks for a
+  restart, which `ParseHtmlDocument` does. For scripts (phase 2) the
+  parser calls a `TScriptHost` at each script end tag with the insertion
+  point set and the script nesting level raised; the host can call
+  `DocumentWrite`, which tokenizes the written text at once up to the
+  insertion point, and can pause the parser for a parsing-blocking
+  script (`Resume` carries on). With scripting off (the default)
+  noscript is parsed as markup. `ParseHtmlFragment` is the fragment
+  parsing algorithm.
+- `Web.Html.Serializer` is the HTML fragment serialization algorithm
+  (attribute values escape `<` and `>` too, as since 2025),
+  `Web.Html.Markup` innerHTML, outerHTML and insertAdjacentHTML, and
+  `Web.Html.TreeDump` the html5lib test format.
+
+Not yet: the 2025 customizable `<select>` parser changes (the classic
+"in select" modes are implemented), declarative shadow roots on
+`<template shadowrootmode>`, form owners of form-associated elements.
+
+`htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
+prints its tree in the html5lib format (`-s` the serialization, `-e`
+the parse errors, `-c` the transport charset, `-f` a fragment in an
+HTML context element).
+
+### Tests
+
+`make web-test` (in `make test`) builds `tools/WebTest` on the host
+against the library's sources. Its tree construction cases are in the
+html5lib format (`tools/WebTest/tree-construction/*.dat`, written from
+the standard's algorithm: misnested formatting and the adoption agency,
+tables and foster parenting, templates, foreign content, character
+references, raw text elements, comments, doctypes and document modes,
+fragments); each case is parsed whole and again one byte at a time, and
+some are checked for the document mode (`#mode`) or for parsing their
+serialization again (`#roundtrip`). The other checks cover the decoders
+(error cases, in pieces), labels, the prescan and sniffing, the
+parser's encoding changes and restarts, the DOM's mutation algorithms
+and their errors, UTF-16 offsets, attributes and Attr nodes, ids,
+live collections, classList, cloning and comparison, namespaces, the
+observer hook, node lifetime, the script hook with document.write and
+pausing, innerHTML and friends, event dispatch, and serialization. The
+test prints the parser's speed and bytes per node ("perf" lines): on the
+build machine about 2.3 million nodes (20 MB of HTML) per second.
+
 ## The AArch64 port
 
 The target is the **Raspberry Pi 4** (and the Pi 400 and the Compute

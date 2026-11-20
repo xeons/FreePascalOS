@@ -1,0 +1,136 @@
+#data
+&amp;&lt;&gt;&quot;&nbsp;&apos;
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "&<>" '"
+
+#data
+&ampx;&amp
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "&x;&"
+
+#data
+&notit; &notin; &not
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "¬it; ∉ ¬"
+
+#data
+&#65;&#x42;&#X43&#0068;&#x;&#;
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "ABCD&#x;&#;"
+
+#data
+&#0;&#x80;&#x9F;&#1114112;&#xD800;&#x10FFFF;&#xFFFF;
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "�€Ÿ��􏿿￿"
+
+#data
+&#99999999999999999999;x
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "�x"
+
+#data
+<a href="?a=1&amp=2&copy=3&copy;4&notin" title='&copy;&copy &lt'>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       href="?a=1&amp=2&copy=3©4&notin"
+|       title="©© <"
+
+#data
+<a href=x&gt;y&lt=z>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       href="x>y&lt=z"
+
+#data
+&unknown; &; & x &#
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "&unknown; &; & x &#"
+
+#data
+&AElig &NotEqualTilde; &fjlig; &Afr; &CounterClockwiseContourIntegral;
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "Æ ≂̸ fj 𝔄 ∳"
+
+#data
+<textarea>&lt;&amp;</textarea><title>&amp;</title>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       "<&"
+|     <title>
+|       "&"
+
+#data
+<body><script>&amp;</script><style>&lt;</style>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "&amp;"
+|     <style>
+|       "&lt;"
+
+#data
+&ZZZ;&zwnj;&zwj;&yuml
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "&ZZZ;‌‍ÿ"
+
+#data
+<p title="&amp;&#x26;&#38;">&#x26;amp;</p>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       title="&&&"
+|       "&amp;"

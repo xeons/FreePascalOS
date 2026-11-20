@@ -995,6 +995,32 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         virt has none); I/O BARs are assigned but the port window
         (`Hal.PortIo.SetPortIoWindow`) is not set
 
+## Web platform: style engine (libcss)
+
+- [x] CSS Syntax Level 3 tokenizer and parser with error recovery; CSS Nesting
+- [x] Style sheet object model with CSSOM serialization; cssdump
+- [x] Selectors Level 4 (:is/:where/:not/:has, nth-child of S, attribute flags,
+      pseudo-elements), right-to-left matching, ancestor bloom filter, rule
+      buckets by id, class and type
+- [x] Values: units of Values 4, math functions, colors (Color 4/5 with
+      color-mix), gradients, transforms, var() and env()
+- [x] Property table (about 220 longhands, logical properties, 55 shorthands)
+- [x] Media queries 4/5 with the range syntax; @supports; @layer; @import;
+      @font-face, @keyframes, @page and @property parsed
+- [x] Cascade 5 (origins, importance, layers, style attribute, revert,
+      revert-layer) and computed values in shared, interned style structs;
+      style sharing cache
+- [x] HTML user agent style sheet and quirks mode additions
+- [x] Host test (make css-test) and coretest lines for cssdump
+- [ ] Container queries: evaluate @container once layout knows container sizes
+- [ ] :visited privacy (two styles per link, only color differences shown)
+- [ ] Relative color syntax, light-dark(), @scope, @counter-style,
+      @font-feature-values, SVG presentation properties
+- [ ] Run transitions and animations (interpolation per animation type)
+- [ ] Gamut mapping in OKLCh instead of clipping
+- [ ] Incremental restyle (invalidation by changed class, id, attribute or state
+      instead of restyling the subtree)
+
 ## Tooling
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results
@@ -1016,3 +1042,42 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Self test "exited threads did not release their stacks"
       (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
       machines running at once: probably a fixed wait too short under load
+
+## Web engine (libweb)
+
+Part 1 (encodings, HTML parsing, DOM):
+- [x] Atoms with the well-known HTML/SVG/MathML names as constants; 16 bit
+      namespace ids
+- [x] Encoding Standard: labels, streaming UTF-8 / UTF-16LE/BE / single-byte /
+      x-user-defined / replacement decoders, BOM sniff, meta prescan, HTML
+      encoding sniffing, UTF-8 encoder, UTF-16 offset helpers
+- [ ] Decoders (and encoders) for the multi-byte CJK encodings: GBK, gb18030,
+      Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR (labels recognized, read as
+      windows-1252 for now); single-byte encoders for form submission
+- [x] HTML tokenizer (all states, all 2231 named references, error codes),
+      streaming in any pieces
+- [x] Tree construction: all insertion modes, adoption agency, foster
+      parenting, templates, foreign content, quirks, fragment parsing
+- [x] Script hooks: script host at script end tags, insertion point,
+      document.write, pause/resume; meta charset changes and restarts
+- [ ] The 2025 customizable `<select>` parser changes (the classic "in select"
+      modes are implemented)
+- [ ] Declarative shadow roots (`<template shadowrootmode>`) and shadow trees
+      in the DOM (slots, retargeting, composed events)
+- [ ] Form owners of form-associated elements (the parser's form pointer)
+- [x] DOM core: nodes, mutation algorithms with validity checks, Attr nodes,
+      ids, live NodeList/HTMLCollection, DOMTokenList, NamedNodeMap, cloning,
+      comparison, namespaces, observer hooks, lifetime (references and
+      collection)
+- [x] Events: EventTarget, capture/bubble dispatch, once/passive, stop flags
+- [ ] Ranges and StaticRange, NodeIterator/TreeWalker (the mutation algorithms
+      mark where live ranges are adjusted)
+- [ ] MutationObserver on the observer hook (records are already exact)
+- [x] HTML fragment serialization, innerHTML/outerHTML/insertAdjacentHTML
+- [x] `htmldump`; host test (`make web-test`) with html5lib-format cases
+- [ ] Text kept in a document arena instead of one string per node (about
+      150 bytes per node today, text included)
+
+Later phases: libcss adapter and computed style, layout and painting,
+loading through libhttp, JavaScript bindings (wrappers in the node's rare
+data, `TScriptHost`, element interface classes via `ElementClassFor`).

@@ -1,0 +1,41 @@
+# The names libweb's atom table starts with, in the order of their atoms:
+# each becomes a constant (Atom + the name with each part capitalized, or
+# the identifier given as Identifier=name). Names may appear in several
+# sections; the first occurrence counts.
+
+# Namespaces and their prefixes
+AtomHtmlNamespace=http://www.w3.org/1999/xhtml
+AtomSvgNamespace=http://www.w3.org/2000/svg
+AtomMathMlNamespace=http://www.w3.org/1998/Math/MathML
+AtomXLinkNamespace=http://www.w3.org/1999/xlink
+AtomXmlNamespace=http://www.w3.org/XML/1998/namespace
+AtomXmlnsNamespace=http://www.w3.org/2000/xmlns/
+xlink xml xmlns
+
+# HTML elements
+a abbr acronym address applet area article aside audio b base basefont bdi bdo bgsound big blink
+blockquote body br button canvas caption center cite code col colgroup data datalist dd del details
+dfn dialog dir div dl dt em embed fieldset figcaption figure font footer form frame frameset h1 h2
+h3 h4 h5 h6 head header hgroup hr html i iframe image img input ins isindex kbd keygen label legend
+li link listing main map mark marquee menu menuitem meta meter nav nobr noembed noframes noscript
+object ol optgroup option output p param picture plaintext pre progress q rb rp rt rtc ruby s samp
+script search section select selectedcontent slot small source span strike strong style sub summary
+sup table tbody td template textarea tfoot th thead time title tr track tt u ul var video wbr xmp
+
+# SVG elements
+svg foreignObject desc g path rect circle ellipse line polyline polygon text tspan use defs symbol
+image
+
+# MathML elements
+math mi mo mn ms mtext mglyph malignmark annotation-xml semantics mrow
+
+# Attributes
+id class style name type href src rel content charset http-equiv value action method encoding
+color face size lang dir alt width height disabled hidden selected checked for prompt label target
+media async defer nomodule crossorigin integrity srcdoc sandbox colspan rowspan span start
+reversed placeholder readonly required multiple autofocus tabindex accesskey contenteditable
+draggable spellcheck translate part is nonce srcset sizes loading form list min max step pattern
+maxlength minlength cols rows wrap shadowrootmode
+actuate arcrole role show space
+AtomDefinitionUrl=definitionURL
+AtomDefinitionUrlLowerCase=definitionurl

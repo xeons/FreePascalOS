@@ -32,7 +32,9 @@
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
 #                  HTTP/3 connections; h3get, wget)
+#                  libsystem <- libweb (the browser engine; htmldump)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
+#                  libsystem <- libcss (the style engine; cssdump, libweb)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -96,6 +98,8 @@ COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
+CSS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/css
+WEB_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/web
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -112,6 +116,8 @@ COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
+CSS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcss.so
+WEB_LIBRARY := $(USER_LIBRARY_OUTPUT)/libweb.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -165,7 +171,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -298,6 +304,37 @@ $(SSH_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/ssh/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libssh.so -o $@ \
 		$(SSH_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
+# libcss: the style engine (CSS syntax, selectors, values, the cascade,
+# computed styles); it knows no document model (an element adapter).
+$(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
+	@rm -rf $(CSS_LIBRARY_OBJECTS)
+	@mkdir -p $(CSS_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/css \
+		-FU$(CSS_LIBRARY_OBJECTS) userland/lib/css/Css.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcss.so -o $@ \
+		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libweb: the browser engine (encodings, the HTML parser, the DOM). Its
+# tables (atoms, encodings, named character references) are generated
+# from userland/lib/web/data by make-tables.py.
+WEB_GENERATED := $(USER_BUILD_DIRECTORY)/web-generated
+WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
+
+$(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
+	@rm -rf $(WEB_GENERATED)
+	@mkdir -p $(WEB_GENERATED)
+	python3 -B userland/lib/web/make-tables.py $(WEB_GENERATED)
+	@touch $@
+
+$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) \
+		$(wildcard userland/lib/web/*.inc)
+	@rm -rf $(WEB_LIBRARY_OBJECTS)
+	@mkdir -p $(WEB_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/web \
+		-Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
+		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
 $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
@@ -411,10 +448,20 @@ $(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat
 $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # The SSH server, its SFTP subsystem and the client programs speak SSH
 # through libssh.
+# htmldump parses HTML through libweb.
+WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump)
+$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb
+$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS)
+$(WEB_PROGRAMS): $(WEB_LIBRARY)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
 $(SSH_PROGRAMS): $(SSH_LIBRARY)
+# cssdump parses style sheets through libcss.
+CSS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,cssdump)
+$(CSS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcss
+$(CSS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CSS_LIBRARY_OBJECTS)
+$(CSS_PROGRAMS): $(CSS_LIBRARY)
 # gzip compresses through libcompression.
 COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
