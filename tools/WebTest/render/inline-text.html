@@ -1,0 +1,47 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 16px sans-serif; }
+p { margin: 0 0 8px; }
+.lh { line-height: 30px; }
+.big { font-size: 28px; }
+.pre { white-space: pre; font-family: monospace; }
+.nowrap { white-space: nowrap; width: 120px; }
+.prewrap { white-space: pre-wrap; width: 200px; }
+.preline { white-space: pre-line; }
+.narrow { width: 100px; }
+.anywhere { overflow-wrap: anywhere; width: 100px; }
+.breakall { word-break: break-all; width: 100px; }
+.right { text-align: right; }
+.center { text-align: center; }
+.justify { text-align: justify; width: 260px; }
+.indent { text-indent: 40px; width: 260px; }
+.spacing { letter-spacing: 3px; word-spacing: 10px; }
+.upper { text-transform: uppercase; }
+.cap { text-transform: capitalize; }
+.box { border: 2px solid; padding: 0 4px; background: #eef; }
+</style></head>
+<body>
+<p class=lh>Line height thirty, <span class=big>big</span> text.</p>
+<p>Sub<sub>script</sub> and super<sup>script</sup>, <span style="vertical-align: middle; font-size: 10px">middle</span>, <span style="vertical-align: 5px">raised</span>, <span style="vertical-align: text-top; font-size: 10px">text-top</span>.</p>
+<p class=pre>pre    keeps   spaces
+and	tabs</p>
+<p class=nowrap>No wrapping happens in this paragraph at all.</p>
+<p class=prewrap>Pre wrap   keeps   spaces but
+wraps long lines when they do not fit.</p>
+<p class=preline>Pre line   collapses   spaces
+but keeps line breaks.</p>
+<p class=narrow>Averyveryverylongwordthatoverflows here.</p>
+<p class=anywhere>Averyveryverylongwordthatbreaks here.</p>
+<p class=breakall>Break all breaks words anywhere.</p>
+<p class=right>Right aligned.</p>
+<p class=center>Centered text.</p>
+<p class=justify>Justified text spreads the free space between the words of each line except the last.</p>
+<p class=indent>Indented first line of a paragraph that wraps onto a second line.</p>
+<p class=spacing>Letter and word spacing.</p>
+<p class=upper>uppercase text</p>
+<p class=cap>capitalize every word</p>
+<p>First line<br>second line<br><br>after an empty line.</p>
+<p class=narrow>An <span class=box>inline box that wraps</span> across lines.</p>
+<p>Collapsing   <b> spaces </b>   across   boxes.</p>
+</body></html>

@@ -304,6 +304,7 @@ begin
         ChildY := Y
       else
         ChildY := Y + Resolve(Combined);
+      ChildY := ChildY + Child.LeadingOffset;
       Inc(Attempt);
       if (Abs(ChildY - Estimate) < 0.01) or (Input.Floats.Count = 0) or (Attempt >= 2) or
          (bfNewFormattingContext in Child.Flags) and not NewContext then
@@ -332,8 +333,8 @@ begin
       end
       else
       begin
-        Child.Y := Box.ContentTop + Y;
-        Y := Y + Child.Height;
+        Child.Y := Box.ContentTop + Y + Child.LeadingOffset;
+        Y := Y + Child.LeadingOffset + Child.Height;
         Pending := EmptyStrut;
         Pending.Positive := Child.BottomPositive;
         Pending.Negative := Child.BottomNegative;
@@ -460,6 +461,7 @@ begin
   finally
     OwnFloats.Free;
   end;
+  Box.ContentExtent := ContentHeight;
   if Box.Kind <> bkViewport then
     ComputeUsedHeight(Box, Input, ContentHeight)
   else

@@ -1,0 +1,97 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x453.56
+    block <body> at (8,8) size 484x435.56
+      table <table> at (8,24.3) size 258.43x119.19
+        caption <caption> at (9,8) size 256.43x16.3
+          line 0 at y 8 height 16.3 baseline 21
+            text "Caption above" at (80.52,8) size 113.4x16.3
+        row-group <thead> at (9,29.3) size 256.43x24.3
+          row <tr> at (9,29.3) size 256.43x24.3
+            cell <th> at (13,29.3) size 186.66x24.3
+              line 0 at y 33.3 height 16.3 baseline 46.29
+                text "Name" at (20,33.3) size 45.25x16.3
+            cell <th> at (203.66,29.3) size 57.78x24.3
+              line 0 at y 33.3 height 16.3 baseline 46.29
+                text "Value" at (210.66,33.3) size 43.78x16.3
+        row-group <tfoot> at (9,114.19) size 256.43x24.3
+          row <tr> at (9,114.19) size 256.43x24.3
+            cell <td> at (13,114.19) size 248.43x24.3
+              line 0 at y 118.19 height 16.3 baseline 131.18
+                text "Footer last" at (20,118.19) size 74.25x16.3
+        row-group <tbody> at (9,57.59) size 256.43x52.59
+          row <tr> at (9,57.59) size 256.43x24.3
+            cell <td> at (13,57.59) size 186.66x24.3
+              line 0 at y 61.59 height 16.3 baseline 74.59
+                text "Alpha" at (20,61.59) size 39.81x16.3
+            cell <td> at (203.66,57.59) size 57.78x24.3
+              line 0 at y 61.59 height 16.3 baseline 74.59
+                text "1" at (210.66,61.59) size 8.91x16.3
+          row <tr> at (9,85.89) size 256.43x24.3
+            cell <td> at (13,85.89) size 186.66x24.3
+              line 0 at y 89.89 height 16.3 baseline 102.89
+                text "Beta with a longer name" at (20,89.89) size 172.66x16.3
+            cell <td> at (203.66,85.89) size 57.78x24.3
+              line 0 at y 89.89 height 16.3 baseline 102.89
+                text "22" at (210.66,89.89) size 17.81x16.3
+      table <table> at (8,153.48) size 484x34.3
+        row-group <tbody> at (9,158.48) size 482x24.3
+          row <tr> at (9,158.48) size 482x24.3
+            cell <td> at (13,158.48) size 169.39x24.3
+              line 0 at y 162.48 height 16.3 baseline 175.48
+                text "fixed 120" at (20,162.48) size 65.34x16.3
+            cell <td> at (186.39,158.48) size 57.53x24.3
+              line 0 at y 162.48 height 16.3 baseline 175.48
+                text "auto" at (193.39,162.48) size 31.51x16.3
+            cell <td> at (247.92,158.48) size 239.08x24.3
+              line 0 at y 162.48 height 16.3 baseline 175.48
+                text "auto, longer text content" at (254.92,162.48) size 175.12x16.3
+      table <table> at (8,197.78) size 202.32x62.59
+        row-group <tbody> at (9,202.78) size 200.32x52.59
+          row <tr> at (9,202.78) size 200.32x24.3
+            cell <td> at (13,202.78) size 123.68x52.59
+              line 0 at y 220.93 height 16.3 baseline 233.92
+                text "Spans two rows" at (20,220.93) size 109.68x16.3
+            cell <td> at (140.68,202.78) size 64.63x24.3
+              line 0 at y 206.78 height 16.3 baseline 219.78
+                text "top" at (147.68,206.78) size 22.94x16.3
+          row <tr> at (9,231.08) size 200.32x24.3
+            cell <td> at (140.68,231.08) size 64.63x24.3
+              line 0 at y 235.08 height 16.3 baseline 248.07
+                text "bottom" at (147.68,235.08) size 50.63x16.3
+      table <table> at (8,270.38) size 248.64x58
+        row-group <tbody> at (9,275.38) size 246.64x48
+          row <tr> at (9,275.38) size 246.64x48
+            cell <td> at (13,275.38) size 36.94x48
+              line 0 at y 279.38 height 16.3 baseline 292.37
+                text "top" at (20,279.38) size 22.94x16.3
+            cell <td> at (53.94,275.38) size 61.8x48
+              line 0 at y 291.23 height 16.3 baseline 304.22
+                text "middle" at (60.94,291.23) size 47.8x16.3
+            cell <td> at (119.75,275.38) size 64.63x48
+              line 0 at y 303.08 height 16.3 baseline 316.07
+                text "bottom" at (126.75,303.08) size 50.63x16.3
+            cell <td> at (188.38,275.38) size 63.26x48
+              line 0 at y 291.23 height 16.3 baseline 304.22
+                text "default" at (195.38,291.23) size 49.26x16.3
+      table <table> at (100,338.38) size 300x28.3
+        row-group <tbody> at (101,339.38) size 298x26.3
+          row <tr> at (101,339.38) size 298x26.3
+            cell <td> at (101,339.38) size 74.47x26.3
+              line 0 at y 344.38 height 16.3 baseline 357.37
+                text "right" at (137.57,344.38) size 32.89x16.3
+            cell <td> at (175.47,339.38) size 223.53x26.3
+              line 0 at y 344.38 height 16.3 baseline 357.37
+                text "legacy attributes" at (180.47,344.38) size 118.76x16.3
+      table <table> at (8,376.67) size 484x66.89
+        row-group <tbody> at (9,381.67) size 482x56.89
+          row <tr> at (9,381.67) size 482x56.89
+            cell <td> at (13,381.67) size 420.02x56.89
+              line 0 at y 385.67 height 16.3 baseline 398.67
+                text "A cell that is long enough to wrap when the table is" at (20,385.67) size 361.29x16.3
+              line 1 at y 401.97 height 16.3 baseline 414.96
+                text "limited by the width of the page it is on, which is narrow" at (20,401.97) size 394.71x16.3
+              line 2 at y 418.27 height 16.3 baseline 431.26
+                text "here." at (20,418.27) size 36x16.3
+            cell <td> at (437.02,381.67) size 49.98x56.89
+              line 0 at y 401.97 height 16.3 baseline 414.96
+                text "short" at (444.02,401.97) size 35.98x16.3

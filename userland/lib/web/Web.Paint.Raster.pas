@@ -63,7 +63,7 @@ var
 implementation
 
 uses
-  Math, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
+  Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Image.Surfaces, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
   Web.Text.FontInstances, Web.Paint.Gradients;
@@ -728,6 +728,49 @@ begin
   end;
 end;
 
+{ A text field's value, a textarea's lines, clipped to the content box. }
+procedure DrawControlText(var Raster: TRaster; const Item: TDisplayItem);
+var
+  Font: TTextFont;
+  Text, Line: string;
+  Saved: TRegion;
+  Count, Index, PixelSize, LineNumber, Start, Stop: Integer;
+  Baseline, LineHeight: Double;
+begin
+  Font := TextFontOf(Item.Box.Style);
+  Text := Raster.List.Strings[Item.Index];
+  CopyRegion(Raster.Canvas.Clip, Saved);
+  IntersectRegionWithRectangle(Raster.Canvas.Clip, DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height));
+  try
+    PixelSize := Max(1, Round(Font.Size * Raster.View.Scale));
+    LineHeight := Font.Ascent + Font.Descent;
+    if TReplacedBox(Item.Box).ControlKind = ControlTextField then
+      Text := StringReplace(Text, #10, ' ', [rfReplaceAll]);
+    LineNumber := 0;
+    Start := 1;
+    while Start <= Length(Text) + 1 do
+    begin
+      Stop := Start;
+      while (Stop <= Length(Text)) and (Text[Stop] <> #10) do
+        Inc(Stop);
+      Line := Copy(Text, Start, Stop - Start);
+      if TReplacedBox(Item.Box).ControlKind = ControlTextField then
+        Baseline := Item.Y + (Item.Height - LineHeight) / 2 + Font.Ascent
+      else
+        Baseline := Item.Y + LineNumber * LineHeight + Font.Ascent;
+      Font.PlaceGlyphs(Line, 1, Length(Line), Raster.Glyphs, Count);
+      for Index := 0 to Count - 1 do
+        if Raster.Glyphs[Index].Face.Font <> nil then
+          DrawGlyph(Raster, Raster.Glyphs[Index].Face.Font, PixelSize, Raster.Glyphs[Index].Glyph,
+            DeviceX(Raster, Item.X + Raster.Glyphs[Index].X), DeviceY(Raster, Baseline), Item.Color, False);
+      Inc(LineNumber);
+      Start := Stop + 1;
+    end;
+  finally
+    Raster.Canvas.Clip := Saved;
+  end;
+end;
+
 { ---- clips and groups ---- }
 
 procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem); forward;
@@ -890,6 +933,7 @@ begin
         diGradient: DrawGradient(Raster, Item^);
         diShadow: DrawShadow(Raster, Item^);
         diControl: DrawControl(Raster, Item^);
+        diControlText: DrawControlText(Raster, Item^);
       end;
     end;
   end;

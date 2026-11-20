@@ -56,6 +56,7 @@ var
   ParentX, ParentY, StaticX, StaticY, Remaining: Single;
   ChildInput: TLayoutInput;
   OwnPositioned: TPositionedList;
+  SavedMargins: TBoxEdges;
 begin
   if Container.Kind = bkViewport then
   begin
@@ -142,7 +143,11 @@ begin
     ChildInput.FixedHeight := ContainingHeight - TopValue - BottomValue - Box.Margin[sideTop] -
       Box.Margin[sideBottom];
   Box.MarkNeedsLayout;
+  SavedMargins := Box.Margin;
   LayoutBox(Box, ChildInput);
+  { The layout resolved the margins again (auto as 0). }
+  Box.Margin[sideLeft] := SavedMargins[sideLeft];
+  Box.Margin[sideRight] := SavedMargins[sideRight];
   OwnPositioned.Free;
   if not HasTop and not HasBottom then
   begin

@@ -1,0 +1,24 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 16px sans-serif; }
+.l { float: left; width: 80px; height: 60px; background: #fcc; margin: 0 8px 4px 0; }
+.r { float: right; width: 100px; height: 40px; background: #cfc; }
+.small { float: left; width: 30px; height: 30px; background: #ccf; }
+.clear { clear: both; background: #eee; }
+.root { overflow: hidden; background: #ffd; height: 40px; }
+.container { background: #def; }
+.flowroot { display: flow-root; background: #fdf; }
+</style></head>
+<body>
+<div class=l></div><div class=r></div>
+<p>Text flows around a left float and a right float, filling the space between them and then the full width once the floats end below.</p>
+<div class=clear>Cleared below both floats.</div>
+<div class=small></div><div class=small></div><div class=small></div>
+<div class=root>A formatting context root beside the floats.</div>
+<div class=clear></div>
+<div class=container><div class=l></div>The container does not contain its float.</div>
+<div class=flowroot><div class=l></div>A flow root contains its float.</div>
+<p>After.</p>
+<p><span style="float: right; width: 60px; height: 20px; background: #cfc"></span>A float inside a line of text, placed beside it on the right.</p>
+</body></html>

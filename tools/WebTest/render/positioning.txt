@@ -1,0 +1,28 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x222.59
+    block <body> at (8,8) size 484x206.59
+      block <div> at (28,18) size 484x16.3
+        line 0 at y 8 height 16.3 baseline 21
+          text "Relatively positioned by 20px and 10px." at (8,8) size 281.77x16.3
+      block <div> at (8,44.3) size 484x124
+        line 0 at y 46.3 height 16.3 baseline 59.29
+          text "Static text " at (10,46.3) size 76.56x16.3
+          text "follows." at (86.56,46.3) size 53.03x16.3
+        block <div> at (20,56.3) size 50x30 positioned
+        block <div> at (420,136.3) size 60x20 positioned
+        block <div> at (110,96.3) size 280x40 positioned
+        block <div> at (210,51.3) size 80x10 positioned
+        block <div> at (20,106.3) size 80.06x16.3 positioned
+          line 0 at y 106.3 height 16.3 baseline 119.29
+            text "shrink to fit" at (20,106.3) size 80.06x16.3
+        block <span> at (86.56,46.3) size 98.34x16.3 positioned
+          line 0 at y 46.3 height 16.3 baseline 59.29
+            text "static position" at (86.56,46.3) size 98.34x16.3
+      block <div> at (460,0) size 40x40 positioned
+      block <div> at (0,200) size 200x100 positioned
+      block <div> at (8,168.3) size 484x30
+        line 0 at y 168.3 height 16.3 baseline 181.29
+          text "z-index 1" at (8,168.3) size 64.06x16.3
+      block <div> at (8,198.3) size 484x16.3
+        line 0 at y 198.3 height 16.3 baseline 211.29
+          text "Sticky laid out as relative." at (8,198.3) size 180.96x16.3

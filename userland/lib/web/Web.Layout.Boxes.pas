@@ -194,6 +194,12 @@ type
     { The min-content and max-content border box widths, -1 when not
       known (forgotten when the box or something below it changes). }
     MinContentWidth, MaxContentWidth: Single;
+    { The height its contents took (content box), whatever its own
+      height says: table cells align their contents with it. }
+    ContentExtent: Single;
+    { Space above the border box that belongs to the box (a table's
+      captions), after its collapsed top margin. }
+    LeadingOffset: Single;
     constructor Create(AKind: TBoxKind; ANode: TNode; AStyle: TCssComputedStyle);
     destructor Destroy; override;
     procedure AppendChild(Child: TLayoutBox);

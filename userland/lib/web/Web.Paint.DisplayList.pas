@@ -62,7 +62,10 @@ type
     { Items up to the pop do not move with the viewport's scroll. }
     diPushFixed, diPopFixed,
     { Not drawn: where a box is, for hit testing. }
-    diHitArea);
+    diHitArea,
+    { A control's own text (a text field's value; Index: a string), in
+      the box's font, clipped to the bounds. }
+    diControlText);
 
   TDisplayItem = record
     Kind: TDisplayItemKind;
@@ -128,6 +131,8 @@ type
     GradientCount: Integer;
     Shadows: array of TShadowRun;
     ShadowCount: Integer;
+    Strings: array of string;
+    StringCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
     procedure Clear;
@@ -138,6 +143,7 @@ type
     function AddImage(const Value: TImageRun): Integer;
     function AddGradient(const Value: TGradientRun): Integer;
     function AddShadow(const Value: TShadowRun): Integer;
+    function AddString(const Value: string): Integer;
     { Bytes the list holds. }
     function MemoryBytes: PtrUInt;
   end;
@@ -153,6 +159,7 @@ begin
   ImageCount := 0;
   GradientCount := 0;
   ShadowCount := 0;
+  StringCount := 0;
   CanvasColor := ColorWhite;
 end;
 
@@ -225,6 +232,15 @@ begin
   Shadows[ShadowCount] := Value;
   Result := ShadowCount;
   Inc(ShadowCount);
+end;
+
+function TDisplayList.AddString(const Value: string): Integer;
+begin
+  if StringCount >= Length(Strings) then
+    SetLength(Strings, StringCount * 2 + 4);
+  Strings[StringCount] := Value;
+  Result := StringCount;
+  Inc(StringCount);
 end;
 
 function TDisplayList.MemoryBytes: PtrUInt;

@@ -1,0 +1,170 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x673.4
+    block <body> at (8,8) size 484x657.4
+      block <h3> at (8,8) size 484x18.62
+        line 0 at y 8 height 18.62 baseline 22.85
+          inline-box ::before at (8,8) size 96.05x18.62
+          text "Section 1: " at (8,8) size 96.05x18.62
+          text "Lists" at (104.05,8) size 42.38x18.62
+      block <ul> at (8,41.62) size 484x69.84
+        block <li> at (48,41.62) size 444x17.46
+          line 0 at y 41.62 height 17.46 baseline 55.55
+            text "Disc" at (48,41.62) size 31.78x17.46
+          block ::marker at (34.65,41.62) size 8.85x17.46
+            line 0 at y 41.62 height 17.46 baseline 55.55
+              text "•" at (34.65,41.62) size 8.85x17.46
+        block <li> at (48,59.09) size 444x52.38
+          block ::marker at (34.65,59.09) size 8.85x17.46
+            line 0 at y 59.09 height 17.46 baseline 73.01
+              text "•" at (34.65,59.09) size 8.85x17.46
+          block (anonymous) at (48,59.09) size 444x17.46
+            line 0 at y 59.09 height 17.46 baseline 73.01
+              text "Disc" at (48,59.09) size 31.78x17.46
+          block <ul> at (48,76.55) size 444x34.92
+            block <li> at (88,76.55) size 404x34.92
+              block ::marker at (74.65,76.55) size 8.85x17.46
+                line 0 at y 76.55 height 17.46 baseline 90.47
+                  text "◦" at (74.65,76.55) size 8.85x17.46
+              block (anonymous) at (88,76.55) size 404x17.46
+                line 0 at y 76.55 height 17.46 baseline 90.47
+                  text "Circle" at (88,76.55) size 42.12x17.46
+              block <ul> at (88,94.01) size 404x17.46
+                block <li> at (128,94.01) size 364x17.46
+                  line 0 at y 94.01 height 17.46 baseline 107.93
+                    text "Square" at (128,94.01) size 52.81x17.46
+                  block ::marker at (113.33,94.01) size 10.17x17.46
+                    line 0 at y 94.01 height 17.46 baseline 107.93
+                      text "▪" at (113.33,94.01) size 10.17x17.46
+      block <ol> at (8,126.47) size 484x69.84
+        block <li> at (48,126.47) size 444x17.46
+          line 0 at y 126.47 height 17.46 baseline 140.39
+            text "Four" at (48,126.47) size 32.94x17.46
+          block ::marker at (29.19,126.47) size 14.31x17.46
+            line 0 at y 126.47 height 17.46 baseline 140.39
+              text "4." at (29.19,126.47) size 14.31x17.46
+        block <li> at (48,143.93) size 444x17.46
+          line 0 at y 143.93 height 17.46 baseline 157.85
+            text "Five" at (48,143.93) size 29.81x17.46
+          block ::marker at (29.19,143.93) size 14.31x17.46
+            line 0 at y 143.93 height 17.46 baseline 157.85
+              text "5." at (29.19,143.93) size 14.31x17.46
+        block <li> at (48,161.39) size 444x17.46
+          line 0 at y 161.39 height 17.46 baseline 175.31
+            text "Nine" at (48,161.39) size 34.12x17.46
+          block ::marker at (29.19,161.39) size 14.31x17.46
+            line 0 at y 161.39 height 17.46 baseline 175.31
+              text "9." at (29.19,161.39) size 14.31x17.46
+        block <li> at (48,178.85) size 444x17.46
+          line 0 at y 178.85 height 17.46 baseline 192.77
+            text "Ten" at (48,178.85) size 25.35x17.46
+          block ::marker at (19.65,178.85) size 23.85x17.46
+            line 0 at y 178.85 height 17.46 baseline 192.77
+              text "10." at (19.65,178.85) size 23.85x17.46
+      block <ol> at (8,211.31) size 484x69.84
+        block <li> at (48,211.31) size 444x17.46
+          line 0 at y 211.31 height 17.46 baseline 225.24
+            text "One" at (48,211.31) size 30.54x17.46
+          block ::marker at (34.31,211.31) size 9.19x17.46
+            line 0 at y 211.31 height 17.46 baseline 225.24
+              text "I." at (34.31,211.31) size 9.19x17.46
+        block <li> at (48,228.77) size 444x17.46
+          line 0 at y 228.77 height 17.46 baseline 242.7
+            text "Two" at (48,228.77) size 28.12x17.46
+          block ::marker at (29.88,228.77) size 13.62x17.46
+            line 0 at y 228.77 height 17.46 baseline 242.7
+              text "II." at (29.88,228.77) size 13.62x17.46
+        block <li> at (48,246.23) size 444x17.46
+          line 0 at y 246.23 height 17.46 baseline 260.16
+            text "Three" at (48,246.23) size 42.96x17.46
+          block ::marker at (25.46,246.23) size 18.04x17.46
+            line 0 at y 246.23 height 17.46 baseline 260.16
+              text "III." at (25.46,246.23) size 18.04x17.46
+        block <li> at (48,263.7) size 444x17.46
+          line 0 at y 263.7 height 17.46 baseline 277.62
+            text "Four" at (48,263.7) size 32.94x17.46
+          block ::marker at (25.98,263.7) size 17.52x17.46
+            line 0 at y 263.7 height 17.46 baseline 277.62
+              text "IV." at (25.98,263.7) size 17.52x17.46
+      block <ol> at (8,296.16) size 484x34.92
+        block <li> at (48,296.16) size 444x34.92
+          line 0 at y 296.16 height 17.46 baseline 310.08
+            inline-box ::marker at (48,296.16) size 18.73x17.46
+            text "a. " at (48,296.16) size 18.73x17.46
+            text "Inside marker that wraps onto another line of this" at (66.73,296.16) size 373.05x17.46
+          line 1 at y 313.62 height 17.46 baseline 327.54
+            text "narrow list item text." at (48,313.62) size 156.48x17.46
+      block <ul> at (8,346.08) size 484x17.46
+        block <li> at (48,346.08) size 444x17.46
+          line 0 at y 346.08 height 17.46 baseline 360
+            text "No marker" at (48,346.08) size 78.68x17.46
+      block <h3> at (8,378.54) size 484x18.62
+        line 0 at y 378.54 height 18.62 baseline 393.39
+          inline-box ::before at (8,378.54) size 96.05x18.62
+          text "Section 2: " at (8,378.54) size 96.05x18.62
+          text "Counters" at (104.05,378.54) size 81.43x18.62
+      block <ol> at (8,412.16) size 484x69.84
+        block <li> at (48,412.16) size 444x52.38
+          block (anonymous) at (48,412.16) size 444x17.46
+            line 0 at y 412.16 height 17.46 baseline 426.09
+              inline-box ::before at (48,412.16) size 14.31x17.46
+              text "1 " at (48,412.16) size 14.31x17.46
+              text "A" at (62.31,412.16) size 10.26x17.46
+          block <ol> at (48,429.62) size 444x34.92
+            block <li> at (88,429.62) size 404x17.46
+              line 0 at y 429.62 height 17.46 baseline 443.55
+                inline-box ::before at (88,429.62) size 28.62x17.46
+                text "1.1 " at (88,429.62) size 28.62x17.46
+                text "A.1" at (116.62,429.62) size 24.31x17.46
+            block <li> at (88,447.09) size 404x17.46
+              line 0 at y 447.09 height 17.46 baseline 461.01
+                inline-box ::before at (88,447.09) size 28.62x17.46
+                text "1.2 " at (88,447.09) size 28.62x17.46
+                text "A.2" at (116.62,447.09) size 24.31x17.46
+        block <li> at (48,464.55) size 444x17.46
+          line 0 at y 464.55 height 17.46 baseline 478.47
+            inline-box ::before at (48,464.55) size 14.31x17.46
+            text "2 " at (48,464.55) size 14.31x17.46
+            text "B" at (62.31,464.55) size 10.29x17.46
+      block <h3> at (8,497.01) size 484x18.62
+        line 0 at y 497.01 height 18.62 baseline 511.86
+          inline-box ::before at (8,497.01) size 96.05x18.62
+          text "Section 3: " at (8,497.01) size 96.05x18.62
+          text "Generated" at (104.05,497.01) size 94.87x18.62
+      block <p> at (8,530.63) size 484x17.46
+        line 0 at y 530.63 height 17.46 baseline 544.56
+          text "Attribute content" at (8,530.63) size 128.43x17.46
+          inline-box ::after at (136.43,530.63) size 44.6x17.46
+          text " [info]" at (136.43,530.63) size 44.6x17.46
+      block <p> at (8,563.09) size 484x17.46
+        line 0 at y 563.09 height 17.46 baseline 577.02
+          text "Quotes: " at (8,563.09) size 63.24x17.46
+          inline-box <q> at (71.24,563.09) size 153.11x17.46
+          inline-box ::before at (71.24,563.09) size 7.77x17.46
+          text "“" at (71.24,563.09) size 7.77x17.46
+          text "outer " at (79.01,563.09) size 44.73x17.46
+          inline-box <q> at (123.74,563.09) size 48.11x17.46
+          inline-box ::before at (123.74,563.09) size 4.77x17.46
+          text "‘" at (123.74,563.09) size 4.77x17.46
+          text "inner" at (128.51,563.09) size 38.58x17.46
+          inline-box ::after at (167.08,563.09) size 4.77x17.46
+          text "’" at (167.08,563.09) size 4.77x17.46
+          text " outer" at (171.85,563.09) size 44.73x17.46
+          inline-box ::after at (216.58,563.09) size 7.77x17.46
+          text "”" at (216.58,563.09) size 7.77x17.46
+          text "." at (224.35,563.09) size 4.77x17.46
+      block <div> at (8,595.55) size 484x34.92
+        block ::before at (8,595.55) size 484x17.46
+          line 0 at y 595.55 height 17.46 baseline 609.48
+            text "Block before" at (8,595.55) size 93.61x17.46
+        block (anonymous) at (8,613.02) size 484x17.46
+          line 0 at y 613.02 height 17.46 baseline 626.94
+            text "Content after the block." at (8,613.02) size 178.63x17.46
+      block <div> at (8,630.48) size 484x34.92
+        line 0 at y 630.48 height 17.46 baseline 644.4
+          text "display contents keeps " at (8,630.48) size 176.76x17.46
+          inline-box <b> at (184.76,630.48) size 68.84x17.46
+          text "children" at (184.76,630.48) size 68.84x17.46
+          text " in the flow; " at (253.6,630.48) size 93.31x17.46
+          text "none leaves" at (346.91,630.48) size 90.7x17.46
+        line 1 at y 647.94 height 17.46 baseline 661.86
+          text "nothing." at (8,647.94) size 62.04x17.46

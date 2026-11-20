@@ -487,7 +487,6 @@ begin
       ChildInput.Floats := nil;
       LayoutBox(Child, ChildInput);
       Child.X := Box.ContentLeft + Child.Margin[sideLeft];
-      Child.Y := Box.ContentTop + CaptionHeight + Child.Margin[sideTop];
       CaptionHeight := CaptionHeight + Child.MarginBoxHeight;
     end;
     Child := Child.NextSibling;
@@ -501,7 +500,7 @@ begin
   RowTops[Grid.RowCount] := Y;
   if Grid.RowCount = 0 then
     Y := 0;
-  ContentHeight := CaptionHeight + Y;
+  ContentHeight := Y;
   { A specified table height taller than the rows: the rows share it. }
   Specified := SpecifiedBorderBoxHeight(Box, Input.ContainingHeight);
   if (Specified > ContentHeight + VerticalBorderPadding(Box)) and (Grid.RowCount > 0) then
@@ -515,7 +514,7 @@ begin
       Y := Y + RowHeights[RowIndex] + Grid.SpacingY;
     end;
     RowTops[Grid.RowCount] := Y;
-    ContentHeight := CaptionHeight + Y;
+    ContentHeight := Y;
   end;
   { Row groups and rows as boxes. }
   Group := Box.FirstChild;
@@ -536,7 +535,7 @@ begin
       if GroupTop < 0 then
         GroupTop := 0;
       Group.X := Box.ContentLeft;
-      Group.Y := Box.ContentTop + CaptionHeight + GroupTop;
+      Group.Y := Box.ContentTop + GroupTop;
       Group.Width := Box.ContentWidth;
       Group.Height := Height;
       Group.Flags := Group.Flags - [bfNeedsLayout, bfChildNeedsLayout];
@@ -564,7 +563,7 @@ begin
     CellWidth := ColumnLefts[Last] + Grid.ColumnWidth[Last] - ColumnLefts[Cell^.Column];
     Height := RowTops[Cell^.Row + Cell^.RowSpan - 1] + RowHeights[Cell^.Row + Cell^.RowSpan - 1] -
       RowTops[Cell^.Row];
-    ContentHeight := Cell^.Cell.Height;
+    ContentHeight := Cell^.Cell.ContentExtent + VerticalBorderPadding(Cell^.Cell);
     if Abs(Cell^.Cell.Height - Height) > 0.01 then
     begin
       Cell^.Cell.MarkNeedsLayout;
@@ -585,28 +584,41 @@ begin
       end;
     ShiftContents(Cell^.Cell, Offset);
   end;
-  { Captions below. }
-  ContentHeight := CaptionHeight + RowTops[Grid.RowCount];
+  { Captions go outside the grid's border: above it (in the space added
+    to the top margin) and below it. }
+  ContentHeight := RowTops[Grid.RowCount];
   if Grid.RowCount = 0 then
-    ContentHeight := CaptionHeight;
+    ContentHeight := 0;
+  Box.Height := Max(ContentHeight + VerticalBorderPadding(Box), SpecifiedBorderBoxHeight(Box, Input.ContainingHeight));
+  Y := -CaptionHeight;
+  Extra := 0;
   Child := Box.FirstChild;
   while Child <> nil do
   begin
-    if (Child.Kind = bkTableCaption) and (Child.Style.Keyword(cpCaptionSide) = kwBottom) then
+    if Child.Kind = bkTableCaption then
     begin
-      ChildInput := MakeChildInput(Input, Box.ContentWidth, Indefinite, wmStretch);
-      ChildInput.Floats := nil;
-      LayoutBox(Child, ChildInput);
-      Child.X := Box.ContentLeft + Child.Margin[sideLeft];
-      Child.Y := Box.ContentTop + ContentHeight + Child.Margin[sideTop];
-      ContentHeight := ContentHeight + Child.MarginBoxHeight;
+      if Child.Style.Keyword(cpCaptionSide) <> kwBottom then
+      begin
+        Child.Y := Y + Child.Margin[sideTop];
+        Y := Y + Child.MarginBoxHeight;
+      end
+      else
+      begin
+        ChildInput := MakeChildInput(Input, Box.ContentWidth, Indefinite, wmStretch);
+        ChildInput.Floats := nil;
+        LayoutBox(Child, ChildInput);
+        Child.X := Box.ContentLeft + Child.Margin[sideLeft];
+        Child.Y := Box.Height + Extra + Child.Margin[sideTop];
+        Extra := Extra + Child.MarginBoxHeight;
+      end;
     end;
     Child := Child.NextSibling;
   end;
-  Box.Height := Max(ContentHeight + VerticalBorderPadding(Box), SpecifiedBorderBoxHeight(Box, Input.ContainingHeight));
+  Box.LeadingOffset := CaptionHeight;
+  Box.Margin[sideBottom] := Box.Margin[sideBottom] + Extra;
   Box.FirstBaseline := -1;
   if (Grid.RowCount > 0) and (Grid.CellCount > 0) and (Grid.Cells[0].Cell.FirstBaseline >= 0) then
-    Box.FirstBaseline := Box.ContentTop + CaptionHeight + RowTops[0] + Grid.Cells[0].Cell.FirstBaseline;
+    Box.FirstBaseline := Box.ContentTop + RowTops[0] + Grid.Cells[0].Cell.FirstBaseline;
   Box.LastBaseline := Box.FirstBaseline;
   Box.TopPositive := Max(Box.Margin[sideTop], 0);
   Box.TopNegative := Min(Box.Margin[sideTop], 0);

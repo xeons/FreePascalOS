@@ -286,7 +286,9 @@ begin
       Item^.MaxMain := MaxBorderBoxWidth(Box, State.InnerMain);
       if IsAutoValue(Style, cpMinWidth) and not (bfClipsOverflow in Box.Flags) then
       begin
-        IntrinsicWidths(Box, MinContent, MaxContent);
+        { The content-based minimum: the min-content width, but no more
+          than a specified width. }
+        ContentIntrinsicWidths(Box, MinContent, MaxContent);
         Item^.MinMain := MinContent;
         Specified := SpecifiedBorderBoxWidth(Box, State.InnerMain);
         if (Specified >= 0) and (Specified < Item^.MinMain) then

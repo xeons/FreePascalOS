@@ -188,6 +188,8 @@ begin
   FAdapter := TDomElementAdapter.Create(Document);
   FEngine := TCssStyleEngine.Create(FAdapter, True);
   FSheetList := TDocumentSheetList.Create(Document, Resources);
+  { The engine's additions to the user agent sheet come first. }
+  FEngine.AddStyleSheet(EngineUserAgentSheet);
   FSheetsDirty := True;
   if FResources <> nil then
     FResources.AddListener(@ResourcesChanged);
@@ -230,8 +232,6 @@ begin
     Exit;
   for Index := 0 to High(FActiveSheets) do
     FEngine.RemoveStyleSheet(FActiveSheets[Index]);
-  FEngine.RemoveStyleSheet(EngineUserAgentSheet);
-  FEngine.AddStyleSheet(EngineUserAgentSheet);
   for Index := 0 to High(Sheets) do
     FEngine.AddStyleSheet(Sheets[Index]);
   FActiveSheets := Sheets;

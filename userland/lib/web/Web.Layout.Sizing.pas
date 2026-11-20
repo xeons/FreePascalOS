@@ -40,6 +40,9 @@ uses
 
 { Border box widths. }
 procedure IntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
+{ The widths of the content (with border and padding), whatever the
+  box's own width property says. }
+procedure ContentIntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
 { The shrink-to-fit border box width in Available (CSS 2.2 10.3.5). }
 function ShrinkToFitWidth(Box: TLayoutBox; Available: Single): Single;
 { Fixed (non-percentage) margins left + right. }
@@ -247,6 +250,42 @@ begin
   end;
 end;
 
+procedure ContentIntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
+var
+  Edges: Single;
+begin
+  Edges := FixedBorderPadding(Box);
+  case Box.Kind of
+    bkReplaced:
+      begin
+        MaxWidth := ReplacedContentWidth(TReplacedBox(Box), -1);
+        MinWidth := MaxWidth;
+        if HasPercentage(Box.Style, cpWidth) or HasPercentage(Box.Style, cpMaxWidth) then
+          MinWidth := 0;
+        Exit;
+      end;
+    bkFlex:
+      FlexChildrenWidths(Box, MinWidth, MaxWidth);
+    bkTable:
+      begin
+        TableIntrinsicWidths(Box, MinWidth, MaxWidth);
+        Exit;
+      end;
+    bkText, bkLineBreak, bkInline:
+      begin
+        MinWidth := 0;
+        MaxWidth := 0;
+      end;
+  else
+    if bfChildrenInline in Box.Flags then
+      InlineContentWidths(Box, MinWidth, MaxWidth)
+    else
+      BlockChildrenWidths(Box, MinWidth, MaxWidth);
+  end;
+  MinWidth := MinWidth + Edges;
+  MaxWidth := MaxWidth + Edges;
+end;
+
 procedure IntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
 var
   Specified, Edges, MinLimit, MaxLimit: Single;
@@ -274,36 +313,7 @@ begin
     MaxWidth := Specified;
   end
   else
-  begin
-    case Box.Kind of
-      bkReplaced:
-        begin
-          MaxWidth := ReplacedContentWidth(TReplacedBox(Box), -1);
-          MinWidth := MaxWidth;
-          if HasPercentage(Box.Style, cpWidth) or HasPercentage(Box.Style, cpMaxWidth) then
-            MinWidth := 0;
-        end;
-      bkFlex:
-        FlexChildrenWidths(Box, MinWidth, MaxWidth);
-      bkTable:
-        TableIntrinsicWidths(Box, MinWidth, MaxWidth);
-      bkText, bkLineBreak, bkInline:
-        begin
-          MinWidth := 0;
-          MaxWidth := 0;
-        end;
-    else
-      if bfChildrenInline in Box.Flags then
-        InlineContentWidths(Box, MinWidth, MaxWidth)
-      else
-        BlockChildrenWidths(Box, MinWidth, MaxWidth);
-    end;
-    if Box.Kind <> bkTable then
-    begin
-      MinWidth := MinWidth + Edges;
-      MaxWidth := MaxWidth + Edges;
-    end;
-  end;
+    ContentIntrinsicWidths(Box, MinWidth, MaxWidth);
   { min-width and max-width with fixed lengths. }
   Value := Box.Style.Value(cpMaxWidth);
   if Value^.Kind = cvLength then

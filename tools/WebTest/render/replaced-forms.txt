@@ -1,0 +1,70 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x524.89
+    block <body> at (8,14) size 484x496.89
+      block <p> at (8,14) size 484x35.3
+        line 0 at y 14 height 35.3 baseline 46
+          text "An image with only width and height attributes: " at (8,33) size 339.6x16.3
+          atomic <img> at (347.6,14) size 42x32
+          text " inline." at (389.6,33) size 46.93x16.3
+        replaced <img> at (347.6,14) size 42x32
+      block <p> at (8,63.3) size 484x16.3
+        line 0 at y 63.3 height 16.3 baseline 76.3
+          text "Width only, no image: " at (8,63.3) size 158.3x16.3
+          atomic <img> at (166.3,74.3) size 52x2
+          text " and a block image:" at (218.3,63.3) size 138.19x16.3
+        replaced <img> at (166.3,74.3) size 52x2
+      replaced <img> at (8,93.6) size 62x22
+      block <p> at (8,129.6) size 484x155.3
+        line 0 at y 129.6 height 155.3 baseline 281.6
+          text "Default replaced sizes: " at (8,268.6) size 164.27x16.3
+          atomic <canvas> at (172.27,129.6) size 302x152
+        replaced <canvas> at (172.27,129.6) size 302x152
+      block <p> at (8,298.9) size 484x47.3
+        line 0 at y 298.9 height 47.3 baseline 342.9
+          atomic <iframe> at (8,298.9) size 124x44
+          text " iframe" at (132,329.91) size 49.85x16.3
+        replaced <iframe> at (8,298.9) size 124x44
+      block <p> at (8,360.2) size 484x24.82
+        line 0 at y 360.2 height 24.82 baseline 381.72
+          text "Text field " at (8,368.73) size 67.42x16.3
+          atomic <input> at (75.42,360.2) size 177.66x21.52
+          text " and " at (253.08,368.73) size 35.24x16.3
+          atomic <input> at (288.32,362.72) size 20x19
+          text " check " at (308.32,368.73) size 49.89x16.3
+          atomic <input> at (358.21,362.72) size 20x19
+          text " radio." at (378.21,368.73) size 44.33x16.3
+        replaced <input> at (75.42,360.2) size 177.66x21.52
+        replaced <input> at (292.32,365.72) size 13x13
+        replaced <input> at (362.21,365.72) size 13x13
+      block <p> at (8,399.02) size 484x21.52
+        line 0 at y 399.02 height 21.52 baseline 414.4
+          atomic <button> at (8,399.02) size 60.66x21.52
+          text " " at (68.66,401.41) size 4.45x16.3
+          atomic <input> at (73.11,399.02) size 63.3x21.52
+          text " " at (136.41,401.41) size 4.45x16.3
+          atomic <select> at (140.86,400.02) size 66.45x19.52
+        inline-block <button> at (8,399.02) size 60.66x21.52
+          line 0 at y 402.02 height 15.52 baseline 414.4
+            text "Button" at (16,402.02) size 44.66x15.52
+        inline-block <input> at (73.11,399.02) size 63.3x21.52
+          line 0 at y 402.02 height 15.52 baseline 414.4
+            text "Submit" at (81.11,402.02) size 47.3x15.52
+        inline-block <select> at (140.86,400.02) size 66.45x19.52
+          line 0 at y 402.02 height 15.52 baseline 414.4
+            text "Chosen ▾" at (143.86,402.02) size 60.45x15.52
+      block <p> at (8,434.54) size 484x40.34
+        line 0 at y 434.54 height 40.34 baseline 471.59
+          atomic <textarea> at (8,434.54) size 92.83x37.04
+          text " " at (100.83,458.59) size 4.45x16.3
+          atomic <meter> at (105.28,455.59) size 80x16
+          text " " at (185.28,458.59) size 4.45x16.3
+          atomic <progress> at (189.73,455.59) size 80x16
+        replaced <textarea> at (8,434.54) size 92.83x37.04 scroll 88.83x33.04
+        replaced <meter> at (105.28,455.59) size 80x16
+        replaced <progress> at (189.73,455.59) size 80x16
+      block <p> at (8,488.89) size 484x22
+        line 0 at y 488.89 height 22 baseline 503.67
+          text "Middle " at (8,490.67) size 50.7x16.3
+          atomic <img> at (58.7,488.89) size 22x22
+          text " aligned." at (80.7,490.67) size 60.52x16.3
+        replaced <img> at (58.7,488.89) size 22x22

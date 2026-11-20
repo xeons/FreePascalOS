@@ -606,6 +606,8 @@ var
   Run: TImageRun;
   Entry: PDisplayItem;
   NeedsClip: Boolean;
+  Text: string;
+  Color: TColor;
 begin
   ContentX := X + Box.ContentLeft;
   ContentY := Y + Box.ContentTop;
@@ -618,6 +620,27 @@ begin
     Entry^.Color := ToColor(Box.Style.Color);
     if (Box.Node <> nil) and Box.Node.IsElement and TElement(Box.Node).HasAttributeAtom(AtomChecked) then
       Entry^.Value := 1;
+    if (Box.ControlKind in [ControlTextField, ControlTextArea]) and (Box.Node <> nil) and Box.Node.IsElement then
+    begin
+      if Box.ControlKind = ControlTextArea then
+        Text := DescendantTextContent(Box.Node)
+      else if TElement(Box.Node).HasAttributeAtom(AtomValue) then
+        Text := TElement(Box.Node).AttributeValueOf(AtomValue)
+      else
+        Text := '';
+      Color := ToColor(Box.Style.Color);
+      if (Text = '') and TElement(Box.Node).HasAttributeAtom(AtomPlaceholder) then
+      begin
+        Text := TElement(Box.Node).AttributeValueOf(AtomPlaceholder);
+        Color := FadeColor(Color, 128);
+      end;
+      if Text <> '' then
+      begin
+        Entry := Builder.List.Add(diControlText, ContentX, ContentY, ContentWidth, ContentHeight, Box);
+        Entry^.Index := Builder.List.AddString(Text);
+        Entry^.Color := Color;
+      end;
+    end;
     Exit;
   end;
   if (Box.Image = nil) or (Box.Image.Width = 0) or (Box.Image.Height = 0) then
