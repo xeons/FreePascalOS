@@ -39,9 +39,12 @@ uses
   TestChecks,
   Http.AltServices,
   Http.Cache,
+  Http.Connections,
   Http.Cookies,
   Http.HeaderFields,
+  Http.Observers,
   Http.PublicSuffixes,
+  Http.Results,
   Url.Parser,
   Url.Records;
 
@@ -202,16 +205,79 @@ begin
   end;
 end;
 
+function RefusingFactory(constref Url: TUrlRecord; constref Service: THttpAltService;
+  constref Settings: THttpClientSettings; Observer: THttpClientObserver; out Failure: THttpResult): THttpConnection;
+begin
+  Failure := HttpFailure(HttpConnectFailed, 'not here');
+  Result := nil;
+end;
+
 procedure TestAltSvc;
+const
+  Origin = 'https://alt.test:443';
 var
   Services: THttpAltServiceArray;
+  Service: THttpAltService;
+  Factory: THttpConnectionFactory;
   Clear: Boolean;
+  Cache, Copy_: THttpAltServiceCache;
+  Index: Integer;
+  Text: string;
 begin
   Check(ParseAltSvc('h3=":443"; ma=3600, h3%2D29=":8443", h2="alt.example:443"; persist=1', Now, Services, Clear) and
     (Length(Services) = 3) and (Services[0].Expires = Now + 3600) and (Services[1].ProtocolId = 'h3-29') and
     (Services[2].Host = 'alt.example') and (Services[2].Expires = Now + DefaultAltServiceMaxAge),
     'Alt-Svc: parsed');
+  Check(not Services[0].Persist and Services[2].Persist, 'Alt-Svc: persist=1');
   Check(ParseAltSvc('clear', Now, Services, Clear) and Clear, 'Alt-Svc: clear');
+  Check(ParseAltSvc('h3="[2001:db8::1]:443", h3=":0", h3="host", h3=":70000", h3=":443"; ma=0, ' +
+    'h3=":443"; ma=x', Now, Services, Clear) and (Length(Services) = 2) and (Services[0].Host = '2001:db8::1') and
+    (Services[1].Expires = Now + DefaultAltServiceMaxAge),
+    'Alt-Svc: IPv6 host; bad ports and ma=0 dropped; a bad ma ignored');
+  Check(IsHttp3ProtocolId('h3') and IsHttp3ProtocolId('h3-29') and not IsHttp3ProtocolId('h2'),
+    'Alt-Svc: HTTP/3 protocol ids');
+
+  RegisterConnectionFactory('x-test', @RefusingFactory);
+  Cache := THttpAltServiceCache.Create;
+  Copy_ := THttpAltServiceCache.Create;
+  try
+    Cache.Update(Origin, 'x-test=":8443"; ma=60, h3=":443"; persist=1', Now);
+    Check(Length(Cache.ServicesOf(Origin, Now)) = 2, 'Alt-Svc cache: kept');
+    Check(Length(Cache.ServicesOf(Origin, Now + 61)) = 1, 'Alt-Svc cache: expired by ma');
+    Check(Cache.Choose(Origin, Now, True, Service, Factory) and (Service.ProtocolId = 'x-test') and
+      (Service.Port = 8443), 'Alt-Svc cache: chooses an alternative with a factory');
+    Cache.MarkBroken(Origin, 'x-test', Now);
+    Check(not Cache.Choose(Origin, Now, True, Service, Factory), 'Alt-Svc cache: broken for a while');
+    Cache.Update(Origin, 'x-test=":8443"', Now);
+    Check(not Cache.Choose(Origin, Now, True, Service, Factory), 'Alt-Svc cache: still broken when advertised again');
+    Check(Cache.Choose(Origin, Now + BrokenAltServiceSeconds + 1, True, Service, Factory),
+      'Alt-Svc cache: broken only five minutes');
+    Cache.Update(Origin, 'h3=":443"; persist=1, x-test=":9443"', Now);
+    Text := Cache.SaveText(Now);
+    Check(Text = Origin + ' h3 - 443 ' + IntToStr(Now + DefaultAltServiceMaxAge) + ' 1'#10 + Origin + ' x-test - 9443 ' +
+      IntToStr(Now + DefaultAltServiceMaxAge) + ' 0'#10, 'Alt-Svc cache: saved as text');
+    Copy_.LoadText(Text + 'garbage line'#10 + Origin + ' h3 - 443 ' + IntToStr(Now - 1) + ' 0'#10, Now);
+    Services := Copy_.ServicesOf(Origin, Now);
+    Check((Length(Services) = 2) and Services[0].Persist and (Services[1].Port = 9443) and (Services[0].Host = ''),
+      'Alt-Svc cache: read back (bad and expired lines skipped)');
+    Check(Copy_.Choose(Origin, Now, False, Service, Factory) and (Service.ProtocolId = 'x-test'),
+      'Alt-Svc cache: h3 passed over when HTTP/3 is not allowed');
+    Cache.Update(Origin, 'clear', Now);
+    Check(Length(Cache.ServicesOf(Origin, Now)) = 0, 'Alt-Svc cache: clear forgets the origin');
+    for Index := 1 to MaximumAltServiceOrigins + 10 do
+      Cache.Update('https://o' + IntToStr(Index) + '.test:443', 'h3=":443"', Now);
+    Check((Cache.OriginCount = MaximumAltServiceOrigins) and
+      (Length(Cache.ServicesOf('https://o1.test:443', Now)) = 0) and
+      (Length(Cache.ServicesOf('https://o522.test:443', Now)) = 1), 'Alt-Svc cache: bounded, oldest out first');
+    Text := '';
+    for Index := 1 to 20 do
+      Text := Text + 'h3=":' + IntToStr(1000 + Index) + '", ';
+    Cache.Update(Origin, Text, Now);
+    Check(Length(Cache.ServicesOf(Origin, Now)) = MaximumAltServicesPerOrigin, 'Alt-Svc cache: eight per origin');
+  finally
+    Copy_.Free;
+    Cache.Free;
+  end;
 end;
 
 procedure TestCookiesAndCache(const WorkDirectory: string);

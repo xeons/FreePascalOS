@@ -27,7 +27,10 @@
   and Authorization (once the server asked), takes Set-Cookie into the
   jar and Alt-Svc into the alternative services, and sends the request
   again on a new connection when a kept one turned out closed, or a
-  server refused it unprocessed (HTTP/2 REFUSED_STREAM, GOAWAY).
+  server refused it unprocessed (HTTP/2 REFUSED_STREAM, GOAWAY). An
+  alternative service that fails (its factory finds no connection, or
+  its new connection carries no answer to a request that may go again)
+  is marked broken for five minutes and the request goes over TCP.
 
   Fetch: Execute with what Fetch (the WHATWG standard) adds - the
   cache (fresh responses served, stale ones revalidated, 304 freshened,
@@ -110,6 +113,8 @@ type
     function ObtainConnection(constref Url: TUrlRecord; ForceNew: Boolean; out Connection: THttpConnection;
       out Exchange: THttpExchange; out Reused: Boolean): THttpResult;
     procedure Abandon(Exchange: THttpExchange; Connection: THttpConnection);
+    function ShouldFallBack(Request: THttpRequest; WasAlternative: Boolean; constref Failure: THttpResult;
+      SendFailed: Boolean): Boolean;
     procedure TakeResponseFields(Request: THttpRequest; Response: THttpResponse);
     function ResponseFromCache(Request: THttpRequest; Entry: THttpCacheEntry): THttpResponse;
     function DeliverBody(Request: THttpRequest; Response: THttpResponse; Sink: THttpBodySink;
@@ -383,9 +388,9 @@ begin
   Connection := nil;
   Exchange := nil;
   Key := OriginKeyOf(Url);
-  if (Url.Scheme = 'https') and FAltServices.Choose(Key, Now, Service, Factory) then
+  if (Url.Scheme = 'https') and FAltServices.Choose(Key, Now, FSettings.AllowHttp3, Service, Factory) then
   begin
-    Connection := Factory(Url, Service, FSettings, Result);
+    Connection := Factory(Url, Service, FSettings, Observer, Result);
     if Connection <> nil then
     begin
       Connection.OriginKey := Key;
@@ -441,6 +446,22 @@ begin
   FPool.Release(Connection);
 end;
 
+{ A new connection to an alternative service failed the request before
+  its answer: when the request may simply go again, the alternative is
+  marked broken and the origin's own connection used. }
+function THttpClient.ShouldFallBack(Request: THttpRequest; WasAlternative: Boolean; constref Failure: THttpResult;
+  SendFailed: Boolean): Boolean;
+begin
+  Result := False;
+  if not WasAlternative or (Failure.Code = HttpCanceled) then
+    Exit;
+  if not (SendFailed or Failure.Retryable or (MethodIsIdempotent(Request.Method) and
+     (Failure.Code in [HttpNoResponse, HttpReadFailed, HttpTimedOut, HttpProtocolError, HttpStreamReset]))) then
+    Exit;
+  FAltServices.MarkBroken(OriginKeyOf(Request.Url), 'h3', Now);
+  Result := True;
+end;
+
 procedure THttpClient.TakeResponseFields(Request: THttpRequest; Response: THttpResponse);
 var
   Value: string;
@@ -458,7 +479,7 @@ var
   Info: THttpResponseHeadInfo;
   Connection: THttpConnection;
   Exchange: THttpExchange;
-  Reused, ForceNew, SentAuthorization: Boolean;
+  Reused, ForceNew, SentAuthorization, WasAlternative: Boolean;
   Attempt: Integer;
 begin
   Response := nil;
@@ -477,6 +498,7 @@ begin
     if Exchange = nil then
       Exit(HttpFailure(HttpConnectFailed, 'the connection takes no request'));
     ForceNew := True;
+    WasAlternative := not Reused and (Connection.Protocol = HttpProtocol3);
     if Token <> nil then
       Token.TrackExchange(Exchange);
     Result := Exchange.Send(Head);
@@ -494,7 +516,7 @@ begin
         Observer.StaleConnection(False);
         Continue;
       end;
-      if Result.Retryable then
+      if Result.Retryable or ShouldFallBack(Request, WasAlternative, Result, True) then
         Continue;
       Exit;
     end;
@@ -514,7 +536,7 @@ begin
         Observer.StaleConnection(True);
         Continue;
       end;
-      if Result.Retryable then
+      if Result.Retryable or ShouldFallBack(Request, WasAlternative, Result, False) then
         Continue;
       Exit;
     end;

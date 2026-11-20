@@ -38,6 +38,8 @@ uses
 const
   DefaultClientUserAgent = 'FreePascalOS-libhttp/1.0';
   DefaultTimeoutMilliseconds = 60 * 1000;
+  { A blocked UDP path costs this much once, then TCP for five minutes. }
+  DefaultAltServiceTimeoutMilliseconds = 3000;
 
 type
   THttpClientSettings = record
@@ -53,6 +55,12 @@ type
     CipherSuites: TCipherSuiteList;
     { Offer "h2" by ALPN over TLS. }
     AllowHttp2: Boolean;
+    { Use HTTP/3 where an origin advertised it (Alt-Svc) and an "h3"
+      connection factory is registered (libquic's EnableHttp3). }
+    AllowHttp3: Boolean;
+    { How long connecting to an alternative service (the QUIC
+      handshake) may take before the origin's own connection is used. }
+    AltServiceTimeoutMilliseconds: Int64;
     { '' sends none (and asks for identity); else the Accept-Encoding sent
       when a request does not set it. }
     AcceptEncoding: string;
@@ -68,6 +76,10 @@ type
     procedure Connecting(const Host, Address: string; Port: Word); virtual;
     procedure Connected; virtual;
     procedure ConnectFailed(const Reason: string); virtual;
+    { A connection to an alternative service (ProtocolId "h3") the origin
+      advertised; Connected or ConnectFailed follows (after a failure the
+      origin's own connection is made). }
+    procedure ConnectingAlternative(const Host: string; Port: Word; const ProtocolId: string); virtual;
     { With certificate checks off: what the check would have refused. }
     procedure CertificateNotVerified(const Host, Reason: string); virtual;
     { HostText has an IPv6 address in brackets. }
@@ -93,6 +105,8 @@ begin
   Result.TimeoutMilliseconds := DefaultTimeoutMilliseconds;
   Result.VerifyCertificates := True;
   Result.AllowHttp2 := True;
+  Result.AllowHttp3 := True;
+  Result.AltServiceTimeoutMilliseconds := DefaultAltServiceTimeoutMilliseconds;
   Result.AcceptEncoding := SupportedAcceptEncoding;
   Result.MaximumRedirects := DefaultMaximumRedirects;
 end;
@@ -118,6 +132,10 @@ begin
 end;
 
 procedure THttpClientObserver.ConnectFailed(const Reason: string);
+begin
+end;
+
+procedure THttpClientObserver.ConnectingAlternative(const Host: string; Port: Word; const ProtocolId: string);
 begin
 end;
 
