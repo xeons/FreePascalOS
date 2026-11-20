@@ -71,6 +71,9 @@ uses
   Js.Conversions,
   Js.Operations,
   Js.Promises,
+  Js.ArrayBuffers,
+  Js.ModuleRecords,
+  Js.Arguments,
   Js.Bytecode;
 
 const
@@ -161,6 +164,9 @@ type
     function ForInNext(Iterator: TJsForInIterator; out Key: TJsValue): Integer;
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
+    function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
+    function DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
+    function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
   public
@@ -174,8 +180,20 @@ type
     { The weak collections' state (Js.Builtins.Collections), freed with
       the realm. }
     WeakState: TObject;
+    { The module loader (Js.Modules), freed with the realm. }
+    ModuleLoader: TObject;
     { For console.time: milliseconds now (Js.Platform). }
     ConsoleIndent: Integer;
+    { What a typed array's length getter is found through, as installed:
+      the kinds' prototypes' shape, %TypedArray%.prototype's shape, the
+      slot of its length accessor and the getter (TypedArrayLengthIntact
+      lets the interpreter read the length directly while they hold). }
+    TypedArrayKindShapes: array[TJsTypedArrayKind] of TJsShape;
+    TypedArrayPrototypeShape: TJsShape;
+    TypedArrayLengthSlot: Integer;
+    TypedArrayLengthGetter: TJsValue;
+    { %TypedArray%.prototype.values. }
+    TypedArrayValues: TJsValue;
     constructor Create(ARuntime: TJsRuntime; StackCapacity: Integer = DefaultStackCapacity;
       MaximumFrames: Integer = DefaultMaximumFrames);
     destructor Destroy; override;
@@ -184,6 +202,12 @@ type
     function NewError(Kind: TJsErrorKind; const Message: string): TJsObject; override;
     { The stack trace text of the frames running now. }
     function StackTraceText: string;
+    { The frames' text, at most Error.stackTraceLimit of them, leaving
+      out those down to the last call of SkipUntil (when not nil:
+      Error.captureStackTrace's second argument). }
+    function StackTraceTextFor(SkipUntil: TJsObject): string;
+    { Error.stackTraceLimit (frames; -1 when it is not a number). }
+    function StackTraceLimit: Integer;
     function NewClosure(Code: TJsCode; Environment: TJsEnvironment): TJsClosure;
     function RunScript(Code: TJsCode): TJsValue;
     { Resumes a generator or async function: the value it yields or
@@ -196,6 +220,13 @@ type
 function ErrorKindName(Kind: TJsErrorKind): string;
 
 var
+  { Compiles a lazy function's code in place; False when that threw
+  (set by Js.DirectEval, which has the compiler). }
+  JsCompileLazyHook: function(R: TJsRealm; Code: TJsCode): Boolean = nil;
+  { A direct eval: compiles Source against the scopes Chain describes
+    and runs it in Environment (set by Js.DirectEval). }
+  JsDirectEvalHook: function(R: TJsRealm; Source: TJsValue; Chain: TJsCell; Caller: TJsCode;
+    Environment: TJsEnvironment; This: TJsValue): TJsValue = nil;
   { Called for each async generator made (Js.Generators sets up its
     driver). }
   JsAsyncGeneratorCreated: procedure(R: TJsRealm; Suspension: TJsSuspension) = nil;
@@ -251,6 +282,8 @@ end;
 constructor TJsInterpreterRealm.Create(ARuntime: TJsRuntime; StackCapacity: Integer; MaximumFrames: Integer);
 begin
   inherited Create(ARuntime);
+  TypedArrayLengthGetter := JsUndefined;
+  TypedArrayValues := JsUndefined;
   FStackCapacity := StackCapacity;
   FStack := GetMem(StackCapacity * SizeOf(TJsValue));
   FMaximumFrames := MaximumFrames;
@@ -265,6 +298,7 @@ end;
 destructor TJsInterpreterRealm.Destroy;
 begin
   WeakState.Free;
+  ModuleLoader.Free;
   FreeMem(FStack);
   FreeMem(FFrames);
   inherited Destroy;
@@ -273,6 +307,7 @@ end;
 procedure TJsInterpreterRealm.TraceRealm(Tracer: TJsTracer);
 var
   Index: Integer;
+  Kind: TJsTypedArrayKind;
   Frame: PJsFrame;
 begin
   inherited TraceRealm(Tracer);
@@ -288,6 +323,11 @@ begin
   end;
   Tracer.MarkCell(FunctionShape);
   Tracer.MarkCell(GlobalLexicals);
+  for Kind := Low(TJsTypedArrayKind) to High(TJsTypedArrayKind) do
+    Tracer.MarkCell(TypedArrayKindShapes[Kind]);
+  Tracer.MarkCell(TypedArrayPrototypeShape);
+  Tracer.MarkValue(TypedArrayLengthGetter);
+  Tracer.MarkValue(TypedArrayValues);
   Tracer.MarkValues(@UnhandledRejections[0], Length(UnhandledRejections));
 end;
 
@@ -351,9 +391,11 @@ begin
     Terminate('Script interrupted');
     Exit(False);
   end;
+  if Heap.Sweeping then
+    Heap.SweepSome;
   if Heap.ShouldCollect then
   begin
-    Heap.Collect;
+    Heap.Collect(True);
     if Heap.OverLimit then
     begin
       Terminate('Out of memory');
@@ -363,6 +405,78 @@ begin
   Result := True;
 end;
 
+{ The length an array or typed array iterated by index has now. }
+function FastIterationLength(Target: TJsObject): Int64; inline;
+begin
+  if Target.ObjectClass = ocTypedArray then
+    Result := TJsTypedArray(Target).CurrentLength
+  else
+    Result := TJsArray(Target).ArrayLength;
+end;
+
+{ for-of over a typed array whose iteration nobody changed: iterated by
+  index like a plain array. }
+function TJsInterpreterRealm.IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
+var
+  Target, KindPrototype, Prototype: TJsObject;
+  Slot: Integer;
+  Flags: Byte;
+begin
+  Result := False;
+  if not JsIsObject(Value) then
+    Exit;
+  Target := JsAsObject(Value);
+  if (Target.ObjectClass <> ocTypedArray) or TJsTypedArray(Target).IsOutOfBounds then
+    Exit;
+  KindPrototype := Target.Proto;
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShapes[TJsTypedArray(Target).ElementKind]) then
+    Exit;
+  Prototype := KindPrototype.Proto;
+  if Prototype <> Intrinsics[inTypedArrayPrototype] then
+    Exit;
+  Slot := Prototype.Shape.Find(Runtime.SymbolValue(wsIterator), Flags);
+  if (Slot < 0) or ((Flags and PropertyAccessor) <> 0) or (Prototype.GetSlot(Slot) <> TypedArrayValues) then
+    Exit;
+  Result := IsPlainArrayIterator(Self);
+end;
+
+function TJsInterpreterRealm.TypedArrayLengthIntact(Target: TJsObject): Boolean;
+var
+  KindPrototype, Prototype: TJsObject;
+  Pair: TJsValue;
+begin
+  Result := False;
+  KindPrototype := Target.Proto;
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShapes[TJsTypedArray(Target).ElementKind]) then
+    Exit;
+  Prototype := KindPrototype.Proto;
+  if (Prototype <> Intrinsics[inTypedArrayPrototype]) or (Prototype.Shape <> TypedArrayPrototypeShape) then
+    Exit;
+  Pair := Prototype.GetSlot(TypedArrayLengthSlot);
+  Result := TJsAccessorPair(JsAsCell(Pair)).Getter = TypedArrayLengthGetter;
+end;
+
+{ Whether a with object (Kind 0: @@unscopables can hide a name) or an
+  eval var object (1) has the name; -1 when that threw. }
+function TJsInterpreterRealm.DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
+var
+  Unscopables, Blocked: TJsValue;
+begin
+  Result := Target.HasProperty(Self, Key);
+  if (Result <= 0) or (Kind <> 0) then
+    Exit;
+  Unscopables := Target.Get(Self, Runtime.SymbolValue(wsUnscopables), JsObjectValue(Target));
+  if Unscopables = JsException then
+    Exit(-1);
+  if not JsIsObject(Unscopables) then
+    Exit;
+  Blocked := JsAsObject(Unscopables).Get(Self, Key, Unscopables);
+  if Blocked = JsException then
+    Exit(-1);
+  if ToBoolean(Blocked) then
+    Result := 0;
+end;
+
 function TJsInterpreterRealm.NotCallable(Value: TJsValue): TJsValue;
 begin
   Result := ThrowTypeError(ValueToPascal(Self, Value) + ' is not a function');
@@ -370,15 +484,61 @@ end;
 
 { Errors }
 
-function TJsInterpreterRealm.StackTraceText: string;
+function TJsInterpreterRealm.StackTraceLimit: Integer;
 var
-  Index, Line, Column: Integer;
+  ErrorConstructor: TJsObject;
+  Slot: Integer;
+  Flags: Byte;
+  Value: TJsValue;
+begin
+  Result := 10;
+  ErrorConstructor := Intrinsics[inError];
+  if ErrorConstructor = nil then
+    Exit;
+  { Read without running code: a data property or nothing. }
+  Slot := ErrorConstructor.Shape.Find(Intern('stackTraceLimit'), Flags);
+  if (Slot < 0) or ((Flags and PropertyAccessor) <> 0) then
+    Exit(-1);
+  Value := ErrorConstructor.GetSlot(Slot);
+  if not JsIsNumber(Value) then
+    Exit(-1);
+  if IsNaNDouble(JsNumberValue(Value)) or (JsNumberValue(Value) < 0) then
+    Exit(0);
+  if JsNumberValue(Value) > 1000 then
+    Exit(1000);
+  Result := Trunc(JsNumberValue(Value));
+end;
+
+function TJsInterpreterRealm.StackTraceText: string;
+begin
+  Result := StackTraceTextFor(nil);
+end;
+
+function TJsInterpreterRealm.StackTraceTextFor(SkipUntil: TJsObject): string;
+var
+  Index, Line, Column, Limit, Count, Top: Integer;
   Frame: PJsFrame;
   Name, FileName: string;
 begin
   Result := '';
-  for Index := FFrameCount - 1 downto 0 do
+  Limit := StackTraceLimit;
+  if Limit < 0 then
+    Exit;
+  Top := FFrameCount - 1;
+  if SkipUntil <> nil then
   begin
+    while (Top >= 0) and (FFrames^[Top].Callee <> SkipUntil) do
+      Dec(Top);
+    if Top < 0 then
+      Exit;
+    Dec(Top);
+  end;
+  Count := 0;
+  for Index := Top downto 0 do
+  begin
+    if Count >= Limit then
+      Break;
+    Inc(Count);
     Frame := @FFrames^[Index];
     { Callers stand after their call instruction. }
     if Index < FFrameCount - 1 then
@@ -424,7 +584,14 @@ var
   Index: Integer;
   Thrower: TJsValue;
 begin
-  Result := NewObjectOfClass(TJsObject, Intrinsics[inObjectPrototype], ocArguments);
+  if (Closure.Code.Flags and CodeMappedArguments) <> 0 then
+  begin
+    { Mapped to the parameters by the prologue (opMapArguments). }
+    Result := NewObjectOfClass(TJsMappedArguments, Intrinsics[inObjectPrototype], ocArguments);
+    Result.ObjectFlags := Result.ObjectFlags or ObjectExotic;
+  end
+  else
+    Result := NewObjectOfClass(TJsObject, Intrinsics[inObjectPrototype], ocArguments);
   if Count > 0 then
   begin
     Result.EnsureElementCapacity(Self, Count);
@@ -455,6 +622,8 @@ var
   Frame: PJsFrame;
 begin
   Code := Closure.Code;
+  if ((Code.Flags and CodeLazy) <> 0) and not JsCompileLazyHook(Self, Code) then
+    Exit(False);
   if (FFrameCount >= FMaximumFrames) or (Base + Code.RegisterCount + 8 > FStackCapacity) then
   begin
     ThrowRangeError('Maximum call stack size exceeded');
@@ -893,6 +1062,7 @@ begin
       begin
         if (Flags and PropertyAccessor) = 0 then
         begin
+          Cache := CacheEntryFor(Cache, Target.Shape);
           Cache^.Shape := Target.Shape;
           Cache^.Generation := Target.Shape.Generation;
           Cache^.Slot := Slot;
@@ -911,6 +1081,7 @@ begin
           Slot := Holder.Shape.Find(Key, Flags);
           if (Slot >= 0) and ((Flags and PropertyAccessor) = 0) then
           begin
+            Cache := CacheEntryFor(Cache, Target.Shape);
             Cache^.Shape := Target.Shape;
             Cache^.Generation := Target.Shape.Generation;
             Cache^.Slot := Slot;
@@ -949,6 +1120,7 @@ begin
     Slot := NewShape.Find(Key, Flags);
     if (Slot >= 0) and ((Flags and (PropertyAccessor or PropertyWritable)) = PropertyWritable) then
     begin
+      Cache := CacheEntryFor(Cache, NewShape);
       Cache^.Shape := NewShape;
       Cache^.Generation := NewShape.Generation;
       Cache^.Slot := Slot;
@@ -958,6 +1130,7 @@ begin
   else if (not NewShape.IsDictionary) and (NewShape.Parent = OldShape) and (NewShape.Key = Key) and
     (NewShape.Flags = PropertyDefault) then
   begin
+    Cache := CacheEntryFor(Cache, OldShape);
     Cache^.Shape := OldShape;
     Cache^.Generation := 0;
     Cache^.Slot := NewShape.Slot;
@@ -1477,6 +1650,11 @@ var
   PrivateName: TJsSymbol;
   TypeofCache: TJsPropertyCache;
   Descriptor: TJsPropertyDescriptor;
+  TypedArray: TJsTypedArray;
+  Address: PByte;
+  Binding: ^TJsImportBinding;
+  Module: TJsModule;
+  Entry: PJsPropertyCache;
 label
   ReloadFrame, DispatchLoop, Unwind, DoReturn, Finished;
 begin
@@ -1756,6 +1934,26 @@ DispatchLoop:
                 Inc(PC, 5);
                 Continue;
               end;
+            end
+            else if Cache^.Extra <> nil then
+            begin
+              { A site that has seen several shapes. }
+              Entry := FindCacheEntry(Cache, Target.Shape);
+              if (Entry <> nil) and (Target.Shape.Generation = Entry^.Generation) then
+              begin
+                if Entry^.Holder = nil then
+                begin
+                  Regs[Code[PC + 1]] := Target.GetSlot(Entry^.Slot);
+                  Inc(PC, 5);
+                  Continue;
+                end;
+                if (Target.Proto = Entry^.Holder) and (Entry^.Holder.Shape = Entry^.HolderShape) then
+                begin
+                  Regs[Code[PC + 1]] := Entry^.Holder.GetSlot(Entry^.Slot);
+                  Inc(PC, 5);
+                  Continue;
+                end;
+              end;
             end;
           end;
           Value := GetNamedSlow(A, Constants[Code[PC + 3]], Cache);
@@ -1769,6 +1967,9 @@ DispatchLoop:
           A := Regs[Code[PC + 2]];
           if JsIsObject(A) and (JsAsObject(A).ObjectClass = ocArray) then
             Regs[Code[PC + 1]] := JsNumber(TJsArray(JsAsObject(A)).ArrayLength)
+          else if JsIsObject(A) and (JsAsObject(A).ObjectClass = ocTypedArray) and
+            TypedArrayLengthIntact(JsAsObject(A)) then
+            Regs[Code[PC + 1]] := JsNumber(TJsTypedArray(JsAsObject(A)).CurrentLength)
           else if JsIsString(A) then
             Regs[Code[PC + 1]] := JsInteger(JsAsString(A).Length)
           else
@@ -1806,6 +2007,30 @@ DispatchLoop:
                 Inc(PC, 5);
                 Continue;
               end;
+            end
+            else if Cache^.Extra <> nil then
+            begin
+              Entry := FindCacheEntry(Cache, Target.Shape);
+              if Entry <> nil then
+              begin
+                if Entry^.NewShape = nil then
+                begin
+                  if Target.Shape.Generation = Entry^.Generation then
+                  begin
+                    Target.SetSlot(Entry^.Slot, Regs[Code[PC + 3]]);
+                    Inc(PC, 5);
+                    Continue;
+                  end;
+                end
+                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+                begin
+                  Target.EnsureSlotCapacity(Self, Entry^.Slot + 1);
+                  Target.Shape := Entry^.NewShape;
+                  Target.SetSlot(Entry^.Slot, Regs[Code[PC + 3]]);
+                  Inc(PC, 5);
+                  Continue;
+                end;
+              end;
             end;
           end;
           if not SetNamedSlow(A, Constants[Code[PC + 2]], Regs[Code[PC + 3]], Cache,
@@ -1830,6 +2055,29 @@ DispatchLoop:
                 Inc(PC, 4);
                 Continue;
               end;
+            end
+            else if (Target.ObjectClass = ocTypedArray) and (X >= 0) then
+            begin
+              TypedArray := TJsTypedArray(Target);
+              if X < TypedArray.CurrentLength then
+              begin
+                Address := TypedArray.ElementAddress(X);
+                case TypedArray.ElementKind of
+                  taUint8, taUint8Clamped: Value := JsInteger(Address^);
+                  taInt8: Value := JsInteger(ShortInt(Address^));
+                  taInt16: Value := JsInteger(PSmallInt(Address)^);
+                  taUint16: Value := JsInteger(PWord(Address)^);
+                  taInt32: Value := JsInteger(PLongInt(Address)^);
+                  taFloat64: Value := JsNumber(PDouble(Address)^);
+                else
+                  Value := ReadElement(Self, TypedArray.ElementKind, Address);
+                end;
+              end
+              else
+                Value := JsUndefined;
+              Regs[Code[PC + 1]] := Value;
+              Inc(PC, 4);
+              Continue;
             end;
           end
           else if JsIsInteger(Key) and JsIsString(A) then
@@ -1863,6 +2111,33 @@ DispatchLoop:
               if (X < Target.ElementCount) and (Target.Elements^[X] <> JsHole) then
               begin
                 Target.Elements^[X] := Regs[Code[PC + 3]];
+                Inc(PC, 4);
+                Continue;
+              end;
+            end
+            else if (Target.ObjectClass = ocTypedArray) and (X >= 0) then
+            begin
+              { A number (a BigInt for the BigInt kinds) needs no
+                conversion that could run JavaScript. }
+              Value := Regs[Code[PC + 3]];
+              TypedArray := TJsTypedArray(Target);
+              if JsIsNumber(Value) <> IsBigIntKind(TypedArray.ElementKind) then
+              begin
+                if X < TypedArray.CurrentLength then
+                begin
+                  Address := TypedArray.ElementAddress(X);
+                  if JsIsInteger(Value) and (TypedArray.ElementKind in [taInt8, taUint8, taInt32, taUint32]) then
+                  begin
+                    if TypedArray.ElementKind <= taUint8 then
+                      Address^ := Byte(JsAsInteger(Value))
+                    else
+                      PLongInt(Address)^ := JsAsInteger(Value);
+                  end
+                  else if TypedArray.ElementKind = taFloat64 then
+                    PDouble(Address)^ := JsNumberValue(Value)
+                  else
+                    WriteElement(Self, TypedArray.ElementKind, Address, Value);
+                end;
                 Inc(PC, 4);
                 Continue;
               end;
@@ -2747,7 +3022,7 @@ DispatchLoop:
         begin
           Index := Code[PC + 1];
           Value := Regs[Code[PC + 2]];
-          if (Code[PC + 3] = 0) and IsPlainArrayIteration(Self, Value) then
+          if (Code[PC + 3] = 0) and (IsPlainArrayIteration(Self, Value) or IsPlainTypedArrayIteration(Value)) then
           begin
             Regs[Index] := Value;
             Regs[Index + 1] := JsInteger(0);
@@ -2771,7 +3046,12 @@ DispatchLoop:
           begin
             ArrayValue := TJsArray(JsAsObject(Regs[Index]));
             X := JsAsInteger(B);
-            if LongWord(X) < ArrayValue.ArrayLength then
+            if (ArrayValue.ObjectClass = ocTypedArray) and TJsTypedArray(TJsObject(ArrayValue)).IsOutOfBounds then
+            begin
+              ThrowTypeError('Cannot perform %ArrayIteratorPrototype%.next on a detached ArrayBuffer');
+              goto Unwind;
+            end;
+            if X < FastIterationLength(ArrayValue) then
             begin
               if (X < ArrayValue.ElementCount) and (ArrayValue.Elements^[X] <> JsHole) then
                 Value := ArrayValue.Elements^[X]
@@ -2852,7 +3132,7 @@ DispatchLoop:
           begin
             Target := JsAsObject(Regs[Index]);
             X := JsAsInteger(B);
-            while LongWord(X) < TJsArray(Target).ArrayLength do
+            while X < FastIterationLength(Target) do
             begin
               Value := Target.Get(Self, JsInteger(X), Regs[Index]);
               if Value = JsException then
@@ -3056,6 +3336,211 @@ DispatchLoop:
         end;
       opDebugger, opResumeKind, opReturnCompletion, opEnterWith, opLast:
         Inc(PC, 1 + OperandCounts[Op]);
+      opLookupDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 2] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 3]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 4]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Value := JsAsObject(A).Get(Self, Constants[Code[PC + 4]], A);
+              Frame := @FFrames^[FrameIndex];
+              if Value = JsException then
+                goto Unwind;
+              Regs[Code[PC + 1]] := Value;
+              if Code[PC + 6] >= 0 then
+              begin
+                if Code[PC + 5] = 0 then
+                  Regs[Code[PC + 6]] := A
+                else
+                  Regs[Code[PC + 6]] := JsUndefined;
+              end;
+              PC := Code[PC + 7];
+              Continue;
+            end;
+          end;
+          Inc(PC, 8);
+        end;
+      opStoreDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 1] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 2]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 3]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Comparison := JsAsObject(A).SetValue(Self, Constants[Code[PC + 3]], Regs[Code[PC + 4]], A);
+              Frame := @FFrames^[FrameIndex];
+              if Comparison < 0 then
+                goto Unwind;
+              if (Comparison = 0) and ((CodeObject.Flags and CodeStrict) <> 0) then
+              begin
+                ThrowTypeError('Cannot assign to read only property ''' + KeyToPascal(Self, Constants[Code[PC + 3]]) +
+                  '''');
+                goto Unwind;
+              end;
+              PC := Code[PC + 6];
+              Continue;
+            end;
+          end;
+          Inc(PC, 7);
+        end;
+      opDeleteDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 2] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 3]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 4]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Comparison := JsAsObject(A).DeleteProperty(Self, Constants[Code[PC + 4]]);
+              Frame := @FFrames^[FrameIndex];
+              if Comparison < 0 then
+                goto Unwind;
+              Regs[Code[PC + 1]] := JsBoolean(Comparison > 0);
+              PC := Code[PC + 6];
+              Continue;
+            end;
+          end;
+          Inc(PC, 7);
+        end;
+      opToObject:
+        begin
+          Value := Regs[Code[PC + 2]];
+          if not JsIsObject(Value) then
+          begin
+            if JsIsNullish(Value) then
+            begin
+              ThrowTypeError('Cannot convert undefined or null to object');
+              goto Unwind;
+            end;
+            Value := ToObject(Self, Value);
+          end;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 3);
+        end;
+      opDeclareEvalVar:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 1] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 2]];
+          if not JsIsObject(A) then
+          begin
+            A := JsObjectValue(NewObject(nil));
+            Environment.Slots^[Code[PC + 2]] := A;
+          end;
+          Key := Constants[Code[PC + 3]];
+          if Code[PC + 4] >= 0 then
+            JsAsObject(A).DefineData(Self, Key, Regs[Code[PC + 4]], PropertyDefault)
+          else if JsAsObject(A).Shape.Find(Key, Flags) < 0 then
+            JsAsObject(A).DefineData(Self, Key, JsUndefined, PropertyDefault);
+          Inc(PC, 5);
+        end;
+      opDirectEval:
+        begin
+          Index := Code[PC + 2];
+          Callee := Regs[Index];
+          Count := Code[PC + 3];
+          FStackTop := Frame^.Base + CodeObject.RegisterCount;
+          if (Callee = JsObjectValue(Intrinsics[inEval])) and Assigned(JsDirectEvalHook) then
+          begin
+            if Count = 0 then
+              Value := JsUndefined
+            else if not JsIsString(Regs[Index + 2]) then
+              Value := Regs[Index + 2]
+            else
+              Value := JsDirectEvalHook(Self, Regs[Index + 2], CodeObject.EvalChains[Code[PC + 4]], CodeObject,
+                Frame^.Environment, Regs[-1]);
+          end
+          else
+            Value := Call(Callee, Regs[Index + 1], @Regs[Index + 2], Count);
+          Frame := @FFrames^[FrameIndex];
+          if Value = JsException then
+            goto Unwind;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 5);
+        end;
+      opMapArguments:
+        begin
+          Value := Regs[Code[PC + 1]];
+          if JsIsObject(Value) and (JsAsObject(Value) is TJsMappedArguments) then
+            MapArguments(TJsMappedArguments(JsAsObject(Value)), Frame^.Environment, CodeObject.ParameterSlots,
+              Frame^.ArgumentCount);
+          Inc(PC, 2);
+        end;
+      opGetImport:
+        begin
+          Binding := @TJsModule(CodeObject.Module).ImportBindings[Code[PC + 2]];
+          if Binding^.Environment = nil then
+            Value := Binding^.Value
+          else
+          begin
+            Value := Binding^.Environment.Slots^[Binding^.Slot];
+            if Value = JsHole then
+            begin
+              ThrowReferenceError('Cannot access ''' + ValueToPascal(Self, Constants[Code[PC + 3]]) +
+                ''' before initialization');
+              goto Unwind;
+            end;
+          end;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 4);
+        end;
+      opImportCall:
+        begin
+          FStackTop := Frame^.Base + CodeObject.RegisterCount;
+          if Code[PC + 3] >= 0 then
+            B := Regs[Code[PC + 3]]
+          else
+            B := JsUndefined;
+          if Assigned(JsDynamicImportHook) then
+            Value := JsDynamicImportHook(Self, CodeObject, Regs[Code[PC + 2]], B)
+          else
+            Value := ThrowTypeError('import() is not available');
+          Frame := @FFrames^[FrameIndex];
+          if Value = JsException then
+            goto Unwind;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 4);
+        end;
+      opImportMeta:
+        begin
+          Module := TJsModule(CodeObject.Module);
+          if Module.Meta = nil then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            if Assigned(JsImportMetaHook) then
+              Module.Meta := JsImportMetaHook(Self, Module);
+            if Module.Meta = nil then
+              Module.Meta := NewObject(nil);
+            Frame := @FFrames^[FrameIndex];
+          end;
+          Regs[Code[PC + 1]] := JsObjectValue(Module.Meta);
+          Inc(PC, 2);
+        end;
       opRegExp:
         begin
           FStackTop := Frame^.Base + CodeObject.RegisterCount;

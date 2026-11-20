@@ -114,6 +114,7 @@ type
     destructor Destroy; override;
     procedure Trace(Tracer: TJsTracer); override;
     procedure Dying; override;
+    class function NeedsDying: Boolean; override;
     function MemorySize: SizeInt; override;
     { The slot of Key, or -1; Flags gets its attributes. }
     function Find(SearchKey: TJsValue; out PropertyFlags: Byte): Integer;
@@ -263,6 +264,11 @@ begin
   if IsDictionary then
     for Index := 0 to Table.EntryCount - 1 do
       Tracer.MarkValue(Table.Entries[Index].Key);
+end;
+
+class function TJsShape.NeedsDying: Boolean;
+begin
+  Result := True;
 end;
 
 procedure TJsShape.Dying;

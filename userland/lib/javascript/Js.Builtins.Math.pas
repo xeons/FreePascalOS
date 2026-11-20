@@ -40,6 +40,7 @@ uses
   Js.Functions,
   Js.Conversions,
   Js.Operations,
+  Js.ArrayBuffers,
   Js.Bytecode,
   Js.Interpreter;
 
@@ -67,7 +68,7 @@ const
   FnAbs = 0; FnAcos = 1; FnAcosh = 2; FnAsin = 3; FnAsinh = 4; FnAtan = 5; FnAtanh = 6; FnCbrt = 7;
   FnCeil = 8; FnCos = 9; FnCosh = 10; FnExp = 11; FnExpm1 = 12; FnFloor = 13; FnFround = 14; FnLog = 15;
   FnLog1p = 16; FnLog10 = 17; FnLog2 = 18; FnRound = 19; FnSign = 20; FnSin = 21; FnSinh = 22; FnSqrt = 23;
-  FnTan = 24; FnTanh = 25; FnTrunc = 26; FnClz32 = 27;
+  FnTan = 24; FnTanh = 25; FnTrunc = 26; FnClz32 = 27; FnF16round = 28;
 
 function RoundHalfUp(X: Double): Double;
 var
@@ -185,6 +186,7 @@ begin
       else
         Result := JsNumber(Floor(X));
     FnFround: Result := JsDouble(Single(X));
+    FnF16round: Result := JsNumber(HalfToDouble(DoubleToHalf(X)));
     FnLog:
       if IsNaNDouble(X) or (X < 0) then
         Result := JsNaN
@@ -418,6 +420,7 @@ begin
   Unary('expm1', FnExpm1);
   Unary('floor', FnFloor);
   Unary('fround', FnFround);
+  Unary('f16round', FnF16round);
   Unary('log', FnLog);
   Unary('log1p', FnLog1p);
   Unary('log10', FnLog10);

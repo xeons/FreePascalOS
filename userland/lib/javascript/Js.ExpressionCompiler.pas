@@ -225,7 +225,7 @@ begin
     nkUpdate: CompileUpdate(Node, -1, True);
     nkAssign: CompileAssign(Node, -1, True);
     nkIdentifier:
-      if Node.Variable = nil then
+      if (Node.Variable = nil) or HasDynamicScopes(Node) then
         Expression(Node, -1)
       else if NeedsTdzCheck(Node.Variable, Node) then
         LoadVariable(Node.Variable, Node.Text, -1, Node);
@@ -242,6 +242,7 @@ end;
 function TJsExpressionCompiler.Expression(Node: TJsNode; Target: Integer): Integer;
 var
   Name: UnicodeString;
+  Specifier, Options: Integer;
 begin
   case Node.Kind of
     nkNumber, nkString, nkNull, nkTrue, nkFalse, nkBigInt, nkRegExp:
@@ -335,7 +336,29 @@ begin
     nkSpread:
       raise EJsSyntaxError.CreateAt('Unexpected spread', Node.Line, Node.Column);
     nkDynamicImport:
-      raise EJsSyntaxError.CreateAt('import() is not supported yet', Node.Line, Node.Column);
+      begin
+        if Target < 0 then
+          Target := AllocateRegister;
+        Result := Target;
+        Target := FNextRegister;
+        Specifier := AllocateRegister;
+        ExpressionInto(Node.A, Specifier);
+        Options := -1;
+        if Node.B <> nil then
+        begin
+          Options := AllocateRegister;
+          ExpressionInto(Node.B, Options);
+        end;
+        Emit(opImportCall, Result, Specifier, Options);
+        ReleaseTo(Target);
+      end;
+    nkImportMeta:
+      begin
+        if Target < 0 then
+          Target := AllocateRegister;
+        Emit(opImportMeta, Target);
+        Result := Target;
+      end;
   else
     raise EJsSyntaxError.CreateAt('Unsupported expression', Node.Line, Node.Column);
   end;
@@ -762,6 +785,7 @@ end;
 
 function TJsExpressionCompiler.CompileCall(Node: TJsNode; Target: Integer): Integer;
 var
+  Patches: TJsIntegerList;
   Mark, Base, Count, SpreadArray, Key: Integer;
   Callee: TJsNode;
   Name: UnicodeString;
@@ -806,6 +830,18 @@ begin
     EmitGetSuper(Callee, Base, Key);
     ReleaseTo(Base + 2);
   end
+  else if HasDynamicScopes(Callee) then
+  begin
+    { A name found in a with object is called with the object as this. }
+    IsMethod := False;
+    Emit(opLoadUndefined, Base + 1);
+    Patches := EmitDynamicLoads(Callee, Callee.Text, Base, Base + 1);
+    Key := LoadVariableStatic(Callee.Variable, Callee.Text, Base, Callee);
+    if Key <> Base then
+      Emit(opMove, Base, Key);
+    PatchListHere(Patches);
+    ReleaseTo(Base + 2);
+  end
   else
   begin
     IsMethod := False;
@@ -817,7 +853,9 @@ begin
     OptionalExit(Base);
   CompileArguments(Node, Base + 2, Count, SpreadArray);
   NoteLine(Node);
-  if SpreadArray >= 0 then
+  if ((Node.Flags and CallFlagDirectEval) <> 0) and (SpreadArray < 0) then
+    Emit(opDirectEval, Target, Base, Count, AddEvalChain)
+  else if SpreadArray >= 0 then
     Emit(opCallSpread, Target, Base, SpreadArray)
   else if IsMethod then
     Emit(opCallMethod, Target, Base, Count)
@@ -889,7 +927,8 @@ end;
 
 function TJsExpressionCompiler.CompileUnary(Node: TJsNode; Target: Integer): Integer;
 var
-  Mark, Value, ObjectRegister, Key: Integer;
+  Mark, Value, ObjectRegister, Key, Done: Integer;
+  Patches: TJsIntegerList;
   Operand: TJsNode;
   Name: UnicodeString;
 begin
@@ -900,17 +939,50 @@ begin
   Operand := Node.A;
   case Node.Op of
     tkTypeof:
-      if (Operand.Kind = nkIdentifier) and (Operand.Variable = nil) then
+      if HasDynamicScopes(Operand) then
+      begin
+        Value := AllocateRegister;
+        Patches := EmitDynamicLoads(Operand, Operand.Text, Value, -1);
+        if Operand.Variable = nil then
+        begin
+          Emit(opTypeofGlobal, Target, AtomConstant(Operand.Text));
+          Done := EmitJump;
+        end
+        else
+        begin
+          Done := -1;
+          Key := LoadVariableStatic(Operand.Variable, Operand.Text, Value, Operand);
+          if Key <> Value then
+            Emit(opMove, Value, Key);
+        end;
+        PatchListHere(Patches);
+        Emit(opTypeof, Target, Value);
+        if Done >= 0 then
+          PatchHere(Done);
+      end
+      else if (Operand.Kind = nkIdentifier) and (Operand.Variable = nil) then
         Emit(opTypeofGlobal, Target, AtomConstant(Operand.Text))
       else
         Emit(opTypeof, Target, Expression(Operand, -1));
     tkDelete:
       case Operand.Kind of
         nkIdentifier:
-          if Operand.Variable = nil then
-            Emit(opDeleteGlobal, Target, AtomConstant(Operand.Text))
-          else
-            Emit(opLoadFalse, Target);
+          begin
+            Patches := nil;
+            SetLength(Patches, Length(Operand.DynamicScopes));
+            for Key := 0 to High(Operand.DynamicScopes) do
+            begin
+              Emit(opDeleteDynamic, Target, EnvironmentHops(Operand.DynamicScopes[Key].Scope),
+                Operand.DynamicScopes[Key].Index, AtomConstant(Operand.Text), DynamicKind(Operand.DynamicScopes[Key]));
+              EmitRaw(0);
+              Patches[Key] := LastOperand;
+            end;
+            if Operand.Variable = nil then
+              Emit(opDeleteGlobal, Target, AtomConstant(Operand.Text))
+            else
+              Emit(opLoadFalse, Target);
+            PatchListHere(Patches);
+          end;
         nkMember:
           begin
             ObjectRegister := Expression(Operand.A, -1);

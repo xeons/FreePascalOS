@@ -49,7 +49,7 @@ const
   MaximumDepth = 400;
 
 type
-  TJsParseGoal = (pgScript, pgFunctionBody, pgEval);
+  TJsParseGoal = (pgScript, pgFunctionBody, pgEval, pgModule);
 
   TJsParser = class
   private
@@ -72,6 +72,8 @@ type
     FLoopDepth: Integer;
     FSwitchDepth: Integer;
     FPrivateScopes: array of TJsScope;
+    { Parsing a module (import.meta allowed throughout). }
+    ModuleGoal: Boolean;
     procedure Fail(const Text: string);
     procedure FailAt(const Token: TJsToken; const Text: string);
     procedure Unexpected;
@@ -114,9 +116,21 @@ type
     function ParseSwitch: TJsNode;
     function ParseWith: TJsNode;
     function ParseLabeledOrExpression: TJsNode;
-    function ParseFunctionDeclaration(IsAsync: Boolean): TJsNode;
+    function ParseFunctionDeclaration(IsAsync: Boolean; DefaultExport: Boolean = False): TJsNode;
     function ParseClassDeclaration: TJsNode;
     function IsLetDeclaration: Boolean;
+
+    { Modules }
+    function ParseModuleItem: TJsNode;
+    function ParseImportDeclaration: TJsNode;
+    function ParseExportDeclaration: TJsNode;
+    function ParseModuleSpecifier(out Json: Boolean): UnicodeString;
+    function ParseImportAttributes: Boolean;
+    function ParseModuleExportName(out IsString: Boolean): UnicodeString;
+    procedure AddExportEntry(const Entry: TJsExportEntry);
+    procedure AddLocalExport(const ExportName, LocalName: UnicodeString; const Token: TJsToken);
+    procedure ExportBoundNames(Node: TJsNode; const Token: TJsToken);
+    procedure FinishModuleExports;
 
     { Functions and classes }
     function ParseFunction(Kind: TJsFunctionKind; IsAsync, IsGenerator: Boolean;
@@ -158,6 +172,14 @@ type
     destructor Destroy; override;
     { The whole program; Strict as if it began with "use strict". }
     function ParseProgram(Strict: Boolean; Goal: TJsParseGoal = pgScript): TJsNode;
+    { A direct eval's code, inside the scopes around the call (Outer:
+      the innermost). }
+    function ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
+    { A lazily compiled function, parsed again from its parameter list
+      (an arrow: from its start) at the position given, inside the
+      scopes around it (Outer: the innermost). }
+    function ParseLazyFunction(Start, Line, Column: Integer; Outer: TJsScope; Kind: TJsFunctionKind;
+      IsAsync, IsGenerator, Strict, HasSelfName: Boolean; const Name: UnicodeString): TJsFunctionInfo;
     { The source text between two positions (Function.prototype.toString). }
     function SourceText(Start, Finish: Integer): UnicodeString;
   end;
@@ -213,6 +235,8 @@ begin
   FPreviousLine := FToken.Line;
   FPreviousFinish := FToken.Finish;
   FLexer.Next(FToken);
+  if (FToken.Kind = tkPrivateName) and (FFunction <> nil) then
+    FFunction.UsesPrivateNames := True;
 end;
 
 function TJsParser.PeekToken: TJsToken;
@@ -316,7 +340,7 @@ begin
   Result.Parent := FScope;
   if FScope <> nil then
     FScope.AddChild(Result);
-  if Kind in [skScript, skFunction, skEval] then
+  if Kind in [skScript, skFunction, skEval, skModule] then
     Result.FunctionScope := Result
   else
     Result.FunctionScope := FScope.FunctionScope;
@@ -469,6 +493,16 @@ begin
   Info := TJsFunctionInfo.Create;
   FArena.Own(Info);
   Info.Kind := fkScript;
+  if Goal = pgModule then
+  begin
+    { Modules are strict, and await may appear at their top level. }
+    Info.Kind := fkModule;
+    Strict := True;
+    FInAsync := True;
+    ModuleGoal := True;
+    Info.ModuleSyntax := TJsModuleSyntax.Create;
+    FArena.Own(Info.ModuleSyntax);
+  end;
   Info.IsStrict := Strict;
   FFunction := Info;
   FStrict := Strict;
@@ -476,6 +510,8 @@ begin
   Result := NewNode(nkProgram);
   if Goal = pgEval then
     Result.Scope := PushScope(skEval)
+  else if Goal = pgModule then
+    Result.Scope := PushScope(skModule)
   else
     Result.Scope := PushScope(skScript);
   Info.Scope := Result.Scope;
@@ -496,13 +532,524 @@ begin
       else if FToken.Kind <> tkString then
         Directives := False;
     end;
-    Statement := ParseStatementListItem;
+    if Goal = pgModule then
+      Statement := ParseModuleItem
+    else
+      Statement := ParseStatementListItem;
     if Directives and ((Statement.Kind <> nkExpressionStatement) or (Statement.A.Kind <> nkString)) then
       Directives := False;
     Result.Add(Statement);
   end;
+  if Goal = pgModule then
+    FinishModuleExports;
   PopScope;
 end;
+
+function TJsParser.ParseLazyFunction(Start, Line, Column: Integer; Outer: TJsScope; Kind: TJsFunctionKind;
+  IsAsync, IsGenerator, Strict, HasSelfName: Boolean; const Name: UnicodeString): TJsFunctionInfo;
+var
+  StartToken: TJsToken;
+  Node: TJsNode;
+begin
+  FScope := Outer;
+  FFunction := Outer.Func;
+  FStrict := Strict;
+  FLexer.RestorePosition(Start, Line, Start - Column + 1);
+  Next;
+  StartToken := FToken;
+  if Kind = fkArrow then
+  begin
+    Node := ParseAssignment;
+    if (Node.Kind <> nkFunction) or (Node.Func = nil) then
+      Fail('Internal error: lazy function');
+    Exit(Node.Func);
+  end;
+  Result := ParseFunction(Kind, IsAsync, IsGenerator, Name, StartToken);
+  if HasSelfName then
+    NameFunctionExpression(Result);
+end;
+
+function TJsParser.ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
+begin
+  FScope := Outer;
+  Result := ParseProgram(Strict, pgEval);
+end;
+
+{ Modules }
+
+function TJsParser.ParseModuleItem: TJsNode;
+begin
+  if (FToken.Kind = tkImport) and not (PeekToken.Kind in [tkLeftParen, tkDot]) then
+    Exit(ParseImportDeclaration);
+  if FToken.Kind = tkExport then
+    Exit(ParseExportDeclaration);
+  Result := ParseStatementListItem;
+end;
+
+{ The attributes after a module specifier (with, type json): True for
+  JSON. }
+function TJsParser.ParseImportAttributes: Boolean;
+var
+  Key, Value: UnicodeString;
+  Seen: array of UnicodeString;
+  Index: Integer;
+begin
+  Result := False;
+  if not ((FToken.Kind = tkWith) or (IsContextual('assert') and not FToken.NewlineBefore)) then
+    Exit;
+  Next;
+  Expect(tkLeftBrace);
+  Seen := nil;
+  while FToken.Kind <> tkRightBrace do
+  begin
+    if FToken.Kind = tkString then
+    begin
+      Key := FToken.Text;
+      Next;
+    end
+    else
+      Key := IdentifierName;
+    for Index := 0 to High(Seen) do
+      if Seen[Index] = Key then
+        Fail('Import attribute has duplicate key ''' + string(Key) + '''');
+    SetLength(Seen, Length(Seen) + 1);
+    Seen[High(Seen)] := Key;
+    Expect(tkColon);
+    if FToken.Kind <> tkString then
+      Unexpected;
+    Value := FToken.Text;
+    Next;
+    if Key <> 'type' then
+      Fail('Unsupported import attribute ''' + string(Key) + '''');
+    if Value = 'json' then
+      Result := True
+    else
+      Fail('Unsupported module type ''' + string(Value) + '''');
+    if not Accept(tkComma) then
+      Break;
+  end;
+  Expect(tkRightBrace);
+end;
+
+function TJsParser.ParseModuleSpecifier(out Json: Boolean): UnicodeString;
+begin
+  if FToken.Kind <> tkString then
+    Unexpected;
+  Result := FToken.Text;
+  Next;
+  Json := ParseImportAttributes;
+end;
+
+{ An identifier name or a string (export a as "b c"). }
+function TJsParser.ParseModuleExportName(out IsString: Boolean): UnicodeString;
+var
+  Index: Integer;
+begin
+  IsString := FToken.Kind = tkString;
+  if not IsString then
+    Exit(IdentifierName);
+  Result := FToken.Text;
+  { Lone surrogates are not allowed in export names. }
+  Index := 1;
+  while Index <= Length(Result) do
+  begin
+    if (Ord(Result[Index]) >= $D800) and (Ord(Result[Index]) <= $DBFF) then
+    begin
+      if (Index = Length(Result)) or (Ord(Result[Index + 1]) < $DC00) or (Ord(Result[Index + 1]) > $DFFF) then
+        Fail('Invalid module export name: contains unpaired surrogate');
+      Inc(Index);
+    end
+    else if (Ord(Result[Index]) >= $DC00) and (Ord(Result[Index]) <= $DFFF) then
+      Fail('Invalid module export name: contains unpaired surrogate');
+    Inc(Index);
+  end;
+  Next;
+end;
+
+function IsReservedImportName(const Name: UnicodeString): Boolean;
+begin
+  Result := (Name = 'eval') or (Name = 'arguments') or (Name = 'await') or (Name = 'yield') or (Name = 'let') or
+    (Name = 'static') or (Name = 'implements') or (Name = 'interface') or (Name = 'package') or
+    (Name = 'private') or (Name = 'protected') or (Name = 'public');
+end;
+
+function TJsParser.ParseImportDeclaration: TJsNode;
+type
+  TPendingImport = record
+    ImportName: UnicodeString;
+    LocalName: UnicodeString;
+    IsNamespace: Boolean;
+    Token: TJsToken;
+  end;
+var
+  Syntax: TJsModuleSyntax;
+  Pending: array of TPendingImport;
+  Specifier, ImportName: UnicodeString;
+  Json, IsString, NeedsMore: Boolean;
+  Request, Index: Integer;
+  NameToken: TJsToken;
+  Variable: TJsVariable;
+
+  procedure AddPending(const AImportName, ALocalName: UnicodeString; ANamespace: Boolean; const AToken: TJsToken);
+  begin
+    SetLength(Pending, Length(Pending) + 1);
+    Pending[High(Pending)].ImportName := AImportName;
+    Pending[High(Pending)].LocalName := ALocalName;
+    Pending[High(Pending)].IsNamespace := ANamespace;
+    Pending[High(Pending)].Token := AToken;
+  end;
+
+begin
+  Syntax := FFunction.ModuleSyntax;
+  if (FFunction.Kind <> fkModule) or (FScope <> FScope.FunctionScope) then
+    Fail('Unexpected token ''import''');
+  Result := NewNode(nkEmpty);
+  Next;
+  Pending := nil;
+  if FToken.Kind = tkString then
+  begin
+    Specifier := ParseModuleSpecifier(Json);
+    Syntax.AddRequest(Specifier, Json);
+    ConsumeSemicolon;
+    Exit;
+  end;
+  NeedsMore := True;
+  if FToken.Kind = tkIdentifier then
+  begin
+    NameToken := FToken;
+    AddPending('default', BindingIdentifierName, False, NameToken);
+    NeedsMore := Accept(tkComma);
+  end;
+  if NeedsMore then
+  begin
+    if FToken.Kind = tkStar then
+    begin
+      Next;
+      if not IsContextual('as') then
+        Unexpected;
+      Next;
+      NameToken := FToken;
+      AddPending('*', BindingIdentifierName, True, NameToken);
+    end
+    else if FToken.Kind = tkLeftBrace then
+    begin
+      Next;
+      while FToken.Kind <> tkRightBrace do
+      begin
+        NameToken := FToken;
+        ImportName := ParseModuleExportName(IsString);
+        if IsContextual('as') then
+        begin
+          Next;
+          NameToken := FToken;
+          AddPending(ImportName, BindingIdentifierName, False, NameToken);
+        end
+        else
+        begin
+          if IsString or (NameToken.Kind <> tkIdentifier) or IsReservedImportName(ImportName) then
+            FailAt(NameToken, 'Unexpected reserved word');
+          AddPending(ImportName, ImportName, False, NameToken);
+        end;
+        if not Accept(tkComma) then
+          Break;
+      end;
+      Expect(tkRightBrace);
+    end
+    else
+      Unexpected;
+  end;
+  if not IsContextual('from') then
+    Unexpected;
+  Next;
+  Specifier := ParseModuleSpecifier(Json);
+  ConsumeSemicolon;
+  Request := Syntax.AddRequest(Specifier, Json);
+  for Index := 0 to High(Pending) do
+  begin
+    Variable := DeclareName(Pending[Index].LocalName, dkImport, Pending[Index].Token);
+    Syntax.AddImport(Request, Pending[Index].ImportName, Pending[Index].LocalName, Pending[Index].IsNamespace,
+      Variable);
+  end;
+end;
+
+procedure TJsParser.AddExportEntry(const Entry: TJsExportEntry);
+var
+  Syntax: TJsModuleSyntax;
+begin
+  Syntax := FFunction.ModuleSyntax;
+  if Syntax.HasExport(Entry.ExportName) then
+    raise EJsSyntaxError.CreateAt('Duplicate export of ''' + string(Entry.ExportName) + '''', Entry.Line,
+      Entry.Column);
+  Syntax.AddExport(Entry);
+end;
+
+procedure TJsParser.AddLocalExport(const ExportName, LocalName: UnicodeString; const Token: TJsToken);
+var
+  Entry: TJsExportEntry;
+begin
+  Entry := Default(TJsExportEntry);
+  Entry.ExportName := ExportName;
+  Entry.LocalName := LocalName;
+  Entry.Request := -1;
+  Entry.Line := Token.Line;
+  Entry.Column := Token.Column;
+  AddExportEntry(Entry);
+end;
+
+{ The names a declaration binds, each exported under its own name. }
+procedure TJsParser.ExportBoundNames(Node: TJsNode; const Token: TJsToken);
+
+  procedure FromPattern(Pattern: TJsNode);
+  var
+    Index: Integer;
+  begin
+    if Pattern = nil then
+      Exit;
+    case Pattern.Kind of
+      nkIdentifier: AddLocalExport(Pattern.Text, Pattern.Text, Token);
+      nkArrayPattern:
+        for Index := 0 to Pattern.Count - 1 do
+          FromPattern(Pattern.List[Index]);
+      nkObjectPattern:
+        for Index := 0 to Pattern.Count - 1 do
+          if Pattern.List[Index].Kind = nkRest then
+            FromPattern(Pattern.List[Index].A)
+          else
+            FromPattern(Pattern.List[Index].B);
+      nkAssignPattern, nkRest:
+        FromPattern(Pattern.A);
+    end;
+  end;
+
+var
+  Index: Integer;
+begin
+  case Node.Kind of
+    nkVariables:
+      for Index := 0 to Node.Count - 1 do
+        FromPattern(Node.List[Index].A);
+    nkFunctionDeclaration:
+      AddLocalExport(Node.Func.Name, Node.Func.Name, Token);
+    nkClassDeclaration:
+      AddLocalExport(Node.Text, Node.Text, Token);
+  else
+    FailAt(Token, 'Unexpected token ''export''');
+  end;
+end;
+
+function TJsParser.ParseExportDeclaration: TJsNode;
+type
+  TPendingExport = record
+    LocalName: UnicodeString;
+    ExportName: UnicodeString;
+    LocalIsString: Boolean;
+    Token: TJsToken;
+  end;
+var
+  Syntax: TJsModuleSyntax;
+  StartToken, NameToken, Peeked: TJsToken;
+  Pending: array of TPendingExport;
+  Entry: TJsExportEntry;
+  Specifier: UnicodeString;
+  Json, IsString: Boolean;
+  Request, Index: Integer;
+  Variable: TJsVariable;
+  Expression: TJsNode;
+begin
+  Syntax := FFunction.ModuleSyntax;
+  if (FFunction.Kind <> fkModule) or (FScope <> FScope.FunctionScope) then
+    Fail('Unexpected token ''export''');
+  StartToken := FToken;
+  Next;
+  Entry := Default(TJsExportEntry);
+  Entry.Line := StartToken.Line;
+  Entry.Column := StartToken.Column;
+  case FToken.Kind of
+    tkStar:
+      begin
+        Next;
+        Result := NewNode(nkEmpty);
+        if IsContextual('as') then
+        begin
+          Next;
+          Entry.ExportName := ParseModuleExportName(IsString);
+          if not IsContextual('from') then
+            Unexpected;
+          Next;
+          Specifier := ParseModuleSpecifier(Json);
+          Entry.Request := Syntax.AddRequest(Specifier, Json);
+          Entry.ImportName := '*';
+          Entry.IsNamespace := True;
+          AddExportEntry(Entry);
+        end
+        else
+        begin
+          if not IsContextual('from') then
+            Unexpected;
+          Next;
+          Specifier := ParseModuleSpecifier(Json);
+          Request := Syntax.AddRequest(Specifier, Json);
+          SetLength(Syntax.StarExports, Length(Syntax.StarExports) + 1);
+          Syntax.StarExports[High(Syntax.StarExports)] := Request;
+        end;
+        ConsumeSemicolon;
+      end;
+    tkLeftBrace:
+      begin
+        Next;
+        Pending := nil;
+        while FToken.Kind <> tkRightBrace do
+        begin
+          SetLength(Pending, Length(Pending) + 1);
+          Pending[High(Pending)].Token := FToken;
+          Pending[High(Pending)].LocalName := ParseModuleExportName(IsString);
+          Pending[High(Pending)].LocalIsString := IsString;
+          if IsContextual('as') then
+          begin
+            Next;
+            Pending[High(Pending)].ExportName := ParseModuleExportName(IsString);
+          end
+          else
+            Pending[High(Pending)].ExportName := Pending[High(Pending)].LocalName;
+          if not Accept(tkComma) then
+            Break;
+        end;
+        Expect(tkRightBrace);
+        Result := NewNode(nkEmpty);
+        if IsContextual('from') then
+        begin
+          Next;
+          Specifier := ParseModuleSpecifier(Json);
+          Request := Syntax.AddRequest(Specifier, Json);
+          for Index := 0 to High(Pending) do
+          begin
+            Entry.ExportName := Pending[Index].ExportName;
+            Entry.Request := Request;
+            Entry.ImportName := Pending[Index].LocalName;
+            Entry.Line := Pending[Index].Token.Line;
+            Entry.Column := Pending[Index].Token.Column;
+            AddExportEntry(Entry);
+          end;
+        end
+        else
+          for Index := 0 to High(Pending) do
+          begin
+            if Pending[Index].LocalIsString or (Pending[Index].Token.Kind <> tkIdentifier) then
+              FailAt(Pending[Index].Token, 'Unexpected export name');
+            AddLocalExport(Pending[Index].ExportName, Pending[Index].LocalName, Pending[Index].Token);
+          end;
+        ConsumeSemicolon;
+      end;
+    tkDefault:
+      begin
+        Next;
+        NameToken := FToken;
+        if FToken.Kind = tkFunction then
+        begin
+          Result := ParseFunctionDeclaration(False, True);
+          AddLocalExport('default', Result.A.Text, NameToken);
+          Exit;
+        end;
+        if IsContextual('async') then
+        begin
+          Peeked := PeekToken;
+          if (Peeked.Kind = tkFunction) and not Peeked.NewlineBefore then
+          begin
+            Next;
+            Result := ParseFunctionDeclaration(True, True);
+            AddLocalExport('default', Result.A.Text, NameToken);
+            Exit;
+          end;
+        end;
+        if (FToken.Kind = tkClass) and (PeekToken.Kind = tkIdentifier) then
+        begin
+          Result := ParseClassDeclaration;
+          AddLocalExport('default', Result.Text, NameToken);
+          Exit;
+        end;
+        Expression := ParseAssignment;
+        ConsumeSemicolon;
+        Variable := DeclareName('*default*', dkLet, NameToken);
+        if Variable <> nil then
+          Variable.DeclarationStart := 0;
+        Result := NewNodeAt(nkExport, StartToken);
+        Result.A := Expression;
+        Result.B := NewIdentifier('*default*', NameToken);
+        AddLocalExport('default', '*default*', NameToken);
+      end;
+    tkVar:
+      begin
+        NameToken := FToken;
+        Result := ParseVariableStatement(dkVar, False);
+        ExportBoundNames(Result, NameToken);
+      end;
+    tkConst:
+      begin
+        NameToken := FToken;
+        Result := ParseVariableStatement(dkConst, False);
+        ExportBoundNames(Result, NameToken);
+      end;
+    tkFunction, tkClass:
+      begin
+        NameToken := FToken;
+        Result := ParseStatementListItem;
+        ExportBoundNames(Result, NameToken);
+      end;
+  else
+    NameToken := FToken;
+    if IsLetDeclaration then
+      Result := ParseVariableStatement(dkLet, False)
+    else if IsContextual('async') and (PeekToken.Kind = tkFunction) then
+      Result := ParseStatementListItem
+    else
+    begin
+      Unexpected;
+      Result := nil;
+    end;
+    ExportBoundNames(Result, NameToken);
+  end;
+end;
+
+{ After the whole module: each local export names a declaration; one
+  naming an import re-exports what was imported. }
+procedure TJsParser.FinishModuleExports;
+var
+  Syntax: TJsModuleSyntax;
+  Index, ImportIndex: Integer;
+  Variable: TJsVariable;
+  Kept: array of TJsExportEntry;
+  Entry: TJsExportEntry;
+begin
+  Syntax := FFunction.ModuleSyntax;
+  Kept := nil;
+  for Index := 0 to High(Syntax.LocalExports) do
+  begin
+    Entry := Syntax.LocalExports[Index];
+    Variable := FScope.Find(Entry.LocalName);
+    if Variable = nil then
+      raise EJsSyntaxError.CreateAt('Export ''' + string(Entry.LocalName) + ''' is not defined in module',
+        Entry.Line, Entry.Column);
+    if Variable.Kind = dkImport then
+    begin
+      for ImportIndex := 0 to High(Syntax.Imports) do
+        if Syntax.Imports[ImportIndex].LocalName = Entry.LocalName then
+        begin
+          Entry.Request := Syntax.Imports[ImportIndex].Request;
+          Entry.ImportName := Syntax.Imports[ImportIndex].ImportName;
+          Entry.IsNamespace := Syntax.Imports[ImportIndex].IsNamespace;
+          Break;
+        end;
+      SetLength(Syntax.IndirectExports, Length(Syntax.IndirectExports) + 1);
+      Syntax.IndirectExports[High(Syntax.IndirectExports)] := Entry;
+      Continue;
+    end;
+    Entry.Variable := Variable;
+    SetLength(Kept, Length(Kept) + 1);
+    Kept[High(Kept)] := Entry;
+  end;
+  Syntax.LocalExports := Kept;
+end;
+
 
 { Statements }
 
@@ -703,6 +1250,8 @@ begin
   if IsContextual('await') and FInAsync then
   begin
     IsAwait := True;
+    if FFunction.Kind = fkModule then
+      FFunction.IsAsync := True;
     Next;
   end;
   Expect(tkLeftParen);
@@ -770,7 +1319,7 @@ end;
 
 function TJsParser.ParseReturn: TJsNode;
 begin
-  if FFunction.Kind = fkScript then
+  if FFunction.Kind in [fkScript, fkModule] then
     Fail('Illegal return statement');
   Result := NewNode(nkReturn);
   Next;
@@ -884,7 +1433,16 @@ begin
   Expect(tkLeftParen);
   Result.A := ParseExpression;
   Expect(tkRightParen);
-  Result.B := ParseStatement;
+  { The body's names are looked up in the object first: a scope whose
+    environment holds it. }
+  Result.Scope := PushScope(skBlock);
+  Result.Scope.WithVariable := Result.Scope.Declare('%with', dkImplicit, 0);
+  Result.Scope.WithVariable.Captured := True;
+  try
+    Result.B := ParseStatement;
+  finally
+    PopScope;
+  end;
 end;
 
 function TJsParser.ParseLabeledOrExpression: TJsNode;
@@ -927,11 +1485,11 @@ begin
   ConsumeSemicolon;
 end;
 
-function TJsParser.ParseFunctionDeclaration(IsAsync: Boolean): TJsNode;
+function TJsParser.ParseFunctionDeclaration(IsAsync: Boolean; DefaultExport: Boolean): TJsNode;
 var
   StartToken, NameToken: TJsToken;
   IsGenerator: Boolean;
-  Name: UnicodeString;
+  Name, BindingName: UnicodeString;
   Variable: TJsVariable;
   Kind: TJsDeclarationKind;
   Outer, AnnexScope: TJsScope;
@@ -942,7 +1500,17 @@ begin
   Expect(tkFunction);
   IsGenerator := Accept(tkStar);
   NameToken := FToken;
-  Name := BindingIdentifierName;
+  if DefaultExport and (FToken.Kind = tkLeftParen) then
+  begin
+    { export default function (): bound as *default*, named default. }
+    Name := 'default';
+    BindingName := '*default*';
+  end
+  else
+  begin
+    Name := BindingIdentifierName;
+    BindingName := Name;
+  end;
   Result := NewNodeAt(nkFunctionDeclaration, StartToken);
   if FScope = FScope.FunctionScope then
     Kind := dkFunction
@@ -988,9 +1556,9 @@ begin
     end;
   end
   else
-    DeclareName(Name, Kind, NameToken);
+    DeclareName(BindingName, Kind, NameToken);
   Result.Func := ParseFunction(fkNormal, IsAsync, IsGenerator, Name, StartToken);
-  Result.A := NewIdentifier(Name, NameToken);
+  Result.A := NewIdentifier(BindingName, NameToken);
   { The reference belongs to the declaring scope, not the function. }
 end;
 
@@ -1043,12 +1611,17 @@ begin
   try
     FInGenerator := IsGenerator;
     FInAsync := IsAsync;
+    Result.ParametersStart := FToken.Start;
+    Result.ParametersLine := FToken.Line;
+    Result.ParametersColumn := FToken.Column;
     ParseParameters(Result);
     ParseFunctionBody(Result);
     Result.SourceFinish := FPreviousFinish;
   finally
     PopScope;
     FFunction := SavedFunction;
+    if Result.UsesPrivateNames and (FFunction <> nil) then
+      FFunction.UsesPrivateNames := True;
     FStrict := SavedStrict;
     FInGenerator := SavedGenerator;
     FInAsync := SavedAsync;
@@ -1251,6 +1824,8 @@ begin
     FSwitchDepth := SavedSwitch;
     PopScope;
     FFunction := SavedFunction;
+    if Info.UsesPrivateNames and (FFunction <> nil) then
+      FFunction.UsesPrivateNames := True;
   end;
   Result := NewNodeAt(nkFunction, StartToken);
   Result.Func := Info;
@@ -2039,6 +2614,8 @@ begin
       begin
         if FInClassField then
           Fail('await is not allowed here');
+        if FFunction.Kind = fkModule then
+          FFunction.IsAsync := True;
         Next;
         Result := NewNodeAt(nkAwait, StartToken);
         Result.A := ParseUnary();
@@ -2171,11 +2748,21 @@ begin
     begin
       if not IsContextual('meta') then
         Unexpected;
-      Fail('Cannot use ''import.meta'' outside a module');
+      if not ModuleGoal then
+        Fail('Cannot use ''import.meta'' outside a module');
+      Next;
+      Result := NewNodeAt(nkImportMeta, StartToken);
+      Result := ParseCallTail(Result, True);
+      Exit;
     end;
     Result := NewNodeAt(nkDynamicImport, StartToken);
     Expect(tkLeftParen);
     Result.A := ParseAssignment;
+    if Accept(tkComma) and (FToken.Kind <> tkRightParen) then
+    begin
+      Result.B := ParseAssignment;
+      Accept(tkComma);
+    end;
     Expect(tkRightParen);
   end
   else
@@ -2276,6 +2863,14 @@ begin
             Break;
           Call := FArena.NewNode(nkCall, StartLine, StartColumn);
           Call.A := Result;
+          if (Result.Kind = nkIdentifier) and (Result.Text = 'eval') and not InOptionalChain then
+          begin
+            { A direct eval (when eval is the intrinsic at run time). }
+            Call.Flags := Call.Flags or CallFlagDirectEval;
+            Call.Scope := FScope;
+            FScope.AddReference(Call);
+            FFunction.ContainsDirectEval := True;
+          end;
           ParseArguments(Call);
           Result := Call;
         end;

@@ -49,6 +49,25 @@ uses
 
 procedure InstallDate(R: TJsInterpreterRealm);
 
+{ Calendar fields of a time value (ECMA-262 21.4.1), for Intl. }
+function YearFromTime(T: Double): Double;
+function MonthFromTime(T: Double): Integer;
+function DateFromTime(T: Double): Integer;
+function WeekDay(T: Double): Integer;
+function HourFromTime(T: Double): Integer;
+function MinFromTime(T: Double): Integer;
+function SecFromTime(T: Double): Integer;
+function MsFromTime(T: Double): Integer;
+function LocalTime(T: Double): Double;
+function LocalOffset(UtcTime: Double): Double;
+{ The time value of a Date object (False when Value is not one). }
+function DateTimeOf(Value: TJsValue; out Time: Double): Boolean;
+
+var
+  { toLocaleString (Kind 0), toLocaleDateString (1), toLocaleTimeString
+    (2) with their locales and options (set by Js.Builtins.Intl). }
+  JsDateLocaleHook: function(R: TJsRealm; Time: Double; Kind: Integer; Locales, Options: TJsValue): TJsValue = nil;
+
 implementation
 
 const
@@ -928,6 +947,8 @@ begin
       Exit(R.ThrowRangeError('Invalid time value'));
     Exit(R.NewString('Invalid Date'));
   end;
+  if (Callee.Magic >= 5) and Assigned(JsDateLocaleHook) then
+    Exit(JsDateLocaleHook(R, T, Callee.Magic - 5, Arg(Args, ArgCount, 0), Arg(Args, ArgCount, 1)));
   Local := LocalTime(T);
   case Callee.Magic of
     0: Result := R.NewString(DatePart(Local) + ' ' + TimePart(T));
@@ -940,6 +961,14 @@ begin
   else
     Result := R.NewString(LocaleTimeText(Local));
   end;
+end;
+
+function DateTimeOf(Value: TJsValue; out Time: Double): Boolean;
+begin
+  Time := 0;
+  Result := JsIsObject(Value) and (JsAsObject(Value) is TJsDate);
+  if Result then
+    Time := TJsDate(JsAsObject(Value)).Time;
 end;
 
 function DateToJson(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;

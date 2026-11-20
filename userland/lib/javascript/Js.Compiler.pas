@@ -61,21 +61,32 @@ uses
   Js.Bytecode,
   Js.CodeBuilder,
   Js.ExpressionCompiler,
-  Js.StatementCompiler;
+  Js.StatementCompiler,
+  Js.EvalScopes,
+  Js.ModuleRecords;
 
 type
   TJsFunctionCompiler = class(TJsStatementCompiler)
   protected
     FParent: TJsFunctionCompiler;
+    { A sloppy function with simple parameters using arguments. }
+    FMappedArguments: Boolean;
     procedure EmitReturnValue(Value: Integer); override;
     procedure CompilePrologue;
     procedure CompileFieldInitializerBody;
     function PrivateNameVariable(ClassNode: TJsNode; const Name: UnicodeString): TJsVariable;
     procedure SetCodeFlags(const Name: UnicodeString);
+    function LazyStub(Info: TJsFunctionInfo; const Name: UnicodeString): TJsCode;
+    procedure SetParameterSlots(FormalCount: Integer);
   public
     constructor Create(Context: TJsCompileContext; Info: TJsFunctionInfo; Parent: TJsFunctionCompiler);
     function CompileFunction(const Name: UnicodeString): TJsCode;
     function CompileScriptBody(Program_: TJsNode): TJsCode;
+    function CompileModuleBody(Program_: TJsNode): TJsCode;
+    { A direct eval's code: EvalVarNames go to the eval var object of
+      VariableScope's function. }
+    function CompileEvalBody(Program_: TJsNode; const EvalVarNames: TJsNameArray; VariableScope: TJsScope): TJsCode;
+    function CompileModuleInitializer(Program_: TJsNode): TJsCode;
     function CompileFunctionNode(Node: TJsNode; Target: Integer; const Name: UnicodeString;
       HasName: Boolean): Integer; override;
     function CompileClass(Node: TJsNode; Target: Integer; const Name: UnicodeString): Integer; override;
@@ -85,6 +96,12 @@ type
 { Compiles a script (or the code of an indirect eval: global). }
 function CompileScript(Realm: TJsRealm; const Source: UnicodeString; const FileName: string;
   Strict: Boolean = False): TJsCode;
+{ Compiles a module's source into Module (its codes, requests, imports,
+  exports and environment); raises EJsSyntaxError. }
+procedure CompileModule(Realm: TJsRealm; const Source: UnicodeString; const FileName: string; Module: TJsModule);
+{ Compiles a lazy function's code in place (its first call); raises
+  EJsSyntaxError. }
+procedure CompileLazyFunction(Realm: TJsRealm; Code: TJsCode);
 { The code of a function made by the Function constructor. }
 function CompileFunctionSource(Realm: TJsRealm; const Parameters, Body: UnicodeString; IsAsync,
   IsGenerator: Boolean): TJsCode;
@@ -147,6 +164,92 @@ begin
   Result := (FInfo <> nil) and (Scope = FInfo.Scope);
 end;
 
+const
+  { Functions with less source than this are compiled at once. }
+  LazySourceLength = 160;
+
+function FunctionCodeFlags(Info: TJsFunctionInfo): LongWord;
+begin
+  Result := 0;
+  if Info.IsStrict then
+    Result := Result or CodeStrict;
+  if Info.IsGenerator then
+    Result := Result or CodeGenerator;
+  if Info.IsAsync then
+    Result := Result or CodeAsync;
+  case Info.Kind of
+    fkArrow: Result := Result or CodeArrow;
+    fkNormal:
+      if not Info.IsAsync and not Info.IsGenerator then
+        Result := Result or CodeConstructor;
+    fkMethod, fkClassFieldInitializer: Result := Result or CodeMethod;
+    fkGetter: Result := Result or CodeMethod or CodeGetter;
+    fkSetter: Result := Result or CodeMethod or CodeSetter;
+    fkClassConstructor: Result := Result or CodeClassConstructor or CodeConstructor;
+    fkDerivedConstructor: Result := Result or CodeClassConstructor or CodeConstructor or CodeDerivedConstructor;
+    fkScript, fkModule: Result := Result or CodeScript;
+  end;
+end;
+
+function FunctionFullName(Info: TJsFunctionInfo; const Name: UnicodeString): UnicodeString;
+begin
+  Result := Name;
+  if Info.Kind = fkGetter then
+    Result := 'get ' + Name
+  else if Info.Kind = fkSetter then
+    Result := 'set ' + Name;
+end;
+
+{ A function compiled on its first call: its body was parsed (early
+  errors checked, its free variables marked captured), but it gets no
+  bytecode until then. Not for class constructors and field
+  initializers, functions using private names, or short ones. }
+function IsLazyCandidate(Info: TJsFunctionInfo): Boolean;
+begin
+  Result := (Info.Kind in [fkNormal, fkArrow, fkMethod, fkGetter, fkSetter]) and not Info.UsesPrivateNames and
+    (Info.SourceFinish - Info.SourceStart >= LazySourceLength) and
+    ((Info.Kind = fkArrow) or (Info.ParametersLine > 0));
+end;
+
+function TJsFunctionCompiler.LazyStub(Info: TJsFunctionInfo; const Name: UnicodeString): TJsCode;
+var
+  Lazy: TJsLazyFunction;
+begin
+  Result := TJsCode.Create;
+  Heap.Register(Result, ckCode);
+  Result.Source := FContext.Source;
+  Result.Module := FContext.Module;
+  Result.ArgumentsRegister := -1;
+  Result.RestRegister := -1;
+  Result.Flags := FunctionCodeFlags(Info) or CodeLazy;
+  Result.Name := Runtime.Atoms.Intern(NewStringFromUnicode(Heap, FunctionFullName(Info, Name)));
+  Result.Length := Info.Length;
+  Result.SourceStart := Info.SourceStart;
+  Result.SourceFinish := Info.SourceFinish;
+  Lazy := TJsLazyFunction.Create;
+  Heap.Register(Lazy, ckOther);
+  Lazy.Chain := FContext.ChainFor(Info.Scope.Parent);
+  if Info.Kind = fkArrow then
+  begin
+    Lazy.Start := Info.SourceStart;
+    Lazy.Line := Info.Line;
+    Lazy.Column := Info.Column;
+  end
+  else
+  begin
+    Lazy.Start := Info.ParametersStart;
+    Lazy.Line := Info.ParametersLine;
+    Lazy.Column := Info.ParametersColumn;
+  end;
+  Lazy.FunctionKind := Info.Kind;
+  Lazy.IsAsync := Info.IsAsync;
+  Lazy.IsGenerator := Info.IsGenerator;
+  Lazy.IsStrict := Info.IsStrict;
+  Lazy.HasSelfName := Info.SelfVariable <> nil;
+  Lazy.Name := Name;
+  Result.Lazy := Lazy;
+end;
+
 function TJsFunctionCompiler.CompileFunctionNode(Node: TJsNode; Target: Integer; const Name: UnicodeString;
   HasName: Boolean): Integer;
 var
@@ -157,11 +260,16 @@ begin
   FunctionName := Node.Func.Name;
   if (FunctionName = '') and HasName then
     FunctionName := Name;
-  Child := TJsFunctionCompiler.Create(FContext, Node.Func, Self);
-  try
-    NewCode := Child.CompileFunction(FunctionName);
-  finally
-    Child.Free;
+  if IsLazyCandidate(Node.Func) then
+    NewCode := LazyStub(Node.Func, FunctionName)
+  else
+  begin
+    Child := TJsFunctionCompiler.Create(FContext, Node.Func, Self);
+    try
+      NewCode := Child.CompileFunction(FunctionName);
+    finally
+      Child.Free;
+    end;
   end;
   if Target < 0 then
     Target := AllocateRegister;
@@ -196,35 +304,15 @@ var
   Flags: LongWord;
   FullName: UnicodeString;
 begin
-  Flags := 0;
-  if FInfo.IsStrict then
-    Flags := Flags or CodeStrict;
-  if FInfo.IsGenerator then
-    Flags := Flags or CodeGenerator;
-  if FInfo.IsAsync then
-    Flags := Flags or CodeAsync;
-  case FInfo.Kind of
-    fkArrow: Flags := Flags or CodeArrow;
-    fkNormal:
-      if not FInfo.IsAsync and not FInfo.IsGenerator then
-        Flags := Flags or CodeConstructor;
-    fkMethod, fkClassFieldInitializer: Flags := Flags or CodeMethod;
-    fkGetter: Flags := Flags or CodeMethod or CodeGetter;
-    fkSetter: Flags := Flags or CodeMethod or CodeSetter;
-    fkClassConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor;
-    fkDerivedConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor or CodeDerivedConstructor;
-    fkScript: Flags := Flags or CodeScript;
-  end;
+  Flags := FunctionCodeFlags(FInfo);
   if FCode.RestRegister >= 0 then
     Flags := Flags or CodeHasRest;
   if FCode.ArgumentsRegister >= 0 then
     Flags := Flags or CodeNeedsArguments;
+  if FMappedArguments then
+    Flags := Flags or CodeMappedArguments;
   FCode.Flags := Flags;
-  FullName := Name;
-  if FInfo.Kind = fkGetter then
-    FullName := 'get ' + Name
-  else if FInfo.Kind = fkSetter then
-    FullName := 'set ' + Name;
+  FullName := FunctionFullName(FInfo, Name);
   FCode.Name := Runtime.Atoms.Intern(NewStringFromUnicode(Heap, FullName));
   FCode.Length := FInfo.Length;
   FCode.SourceStart := FInfo.SourceStart;
@@ -246,6 +334,8 @@ begin
     if (Parameter.Kind = nkIdentifier) and (Parameter.Variable <> nil) and Parameter.Variable.Captured then
       StoreVariable(Parameter.Variable, Parameter.Text, Index, True);
   end;
+  if FMappedArguments then
+    Emit(opMapArguments, FCode.ArgumentsRegister);
   if FCode.RestRegister >= 0 then
   begin
     Parameter := FInfo.Parameters[FInfo.ParameterCount - 1].A;
@@ -320,6 +410,14 @@ begin
   if (FormalCount > 0) and (FInfo.Parameters[FormalCount - 1].Kind = nkRest) then
     Dec(FormalCount);
   FCode.ParameterCount := FormalCount;
+  { arguments[i] aliases the i-th parameter: the parameters live in the
+    environment the arguments object reads. }
+  FMappedArguments := not FInfo.IsStrict and FInfo.HasSimpleParameters and (FInfo.ArgumentsVariable <> nil) and
+    (FormalCount > 0);
+  if FMappedArguments then
+    for Index := 0 to FormalCount - 1 do
+      if (FInfo.Parameters[Index].Kind = nkIdentifier) and (FInfo.Parameters[Index].Variable <> nil) then
+        FInfo.Parameters[Index].Variable.Captured := True;
   FLocalCount := FormalCount;
   FNextRegister := FormalCount;
   FMaxRegister := FormalCount;
@@ -344,6 +442,8 @@ begin
       Variable.Index := FCode.ArgumentsRegister;
   end;
   LayoutScope(FInfo.Scope, True);
+  if FMappedArguments then
+    SetParameterSlots(FormalCount);
   CompilePrologue;
   if FInfo.Kind = fkClassFieldInitializer then
   begin
@@ -370,6 +470,30 @@ begin
   end;
   SetCodeFlags(Name);
   Result := FinishCode;
+end;
+
+{ The environment slot of each parameter; of parameters with one name
+  only the last maps. }
+procedure TJsFunctionCompiler.SetParameterSlots(FormalCount: Integer);
+var
+  Index, Later: Integer;
+  Parameter: TJsNode;
+  Shadowed: Boolean;
+begin
+  SetLength(FCode.ParameterSlots, FormalCount);
+  for Index := 0 to FormalCount - 1 do
+  begin
+    Parameter := FInfo.Parameters[Index];
+    FCode.ParameterSlots[Index] := -1;
+    if (Parameter.Kind <> nkIdentifier) or (Parameter.Variable = nil) then
+      Continue;
+    Shadowed := False;
+    for Later := Index + 1 to FormalCount - 1 do
+      if (FInfo.Parameters[Later].Kind = nkIdentifier) and (FInfo.Parameters[Later].Text = Parameter.Text) then
+        Shadowed := True;
+    if not Shadowed then
+      FCode.ParameterSlots[Index] := Parameter.Variable.Index;
+  end;
 end;
 
 function TJsFunctionCompiler.PrivateNameVariable(ClassNode: TJsNode; const Name: UnicodeString): TJsVariable;
@@ -658,6 +782,98 @@ begin
   Result := FinishCode;
 end;
 
+{ A module's top level: its declarations live in the module's
+  environment (made before the code runs), its function declarations
+  are made by the initializer when the module is linked. }
+function TJsFunctionCompiler.CompileModuleBody(Program_: TJsNode): TJsCode;
+var
+  Scope: TJsScope;
+begin
+  Scope := Program_.Scope;
+  FScope := Scope;
+  LayoutScope(Scope, True);
+  EnterScope(Scope);
+  if FInfo.ThisVariable <> nil then
+    StoreVariable(FInfo.ThisVariable, '%this', -1, True);
+  CompileStatements(Program_.List, Program_.Count);
+  Emit(opReturnUndefined);
+  SetCodeFlags('');
+  Result := FinishCode;
+end;
+
+function TJsFunctionCompiler.CompileEvalBody(Program_: TJsNode; const EvalVarNames: TJsNameArray;
+  VariableScope: TJsScope): TJsCode;
+var
+  Scope: TJsScope;
+  Index, Mark, Value: Integer;
+  Node: TJsNode;
+  Variable, Holder: TJsVariable;
+
+  function GoesToEvalVars(const Name: UnicodeString): Boolean;
+  var
+    Position: Integer;
+  begin
+    for Position := 0 to High(EvalVarNames) do
+      if EvalVarNames[Position] = Name then
+        Exit(True);
+    Result := False;
+  end;
+
+begin
+  Scope := Program_.Scope;
+  FScope := Scope;
+  FCompletionRegister := AllocateLocal;
+  LayoutScope(Scope, True);
+  EnterScope(Scope);
+  Emit(opLoadUndefined, FCompletionRegister);
+  Holder := nil;
+  if VariableScope.Func <> nil then
+    Holder := VariableScope.Func.EvalVarsVariable;
+  for Index := 0 to Scope.VariableCount - 1 do
+  begin
+    Variable := Scope.Variables[Index];
+    if Variable.IsGlobal and (Variable.Kind = dkVar) then
+      Emit(opDeclareGlobalVar, AtomConstant(Variable.Name), -1);
+  end;
+  if Holder <> nil then
+    for Index := 0 to High(EvalVarNames) do
+      Emit(opDeclareEvalVar, EnvironmentHops(Holder.Scope), Holder.Index, AtomConstant(EvalVarNames[Index]), -1);
+  { The functions, made before the code runs. }
+  for Index := 0 to Program_.Count - 1 do
+  begin
+    Node := Program_.List[Index];
+    while (Node.Kind = nkLabeled) and (Node.A <> nil) do
+      Node := Node.A;
+    if Node.Kind <> nkFunctionDeclaration then
+      Continue;
+    Mark := FNextRegister;
+    Value := CompileFunctionNode(Node, -1, Node.Func.Name, True);
+    if (Holder <> nil) and GoesToEvalVars(Node.A.Text) then
+      Emit(opDeclareEvalVar, EnvironmentHops(Holder.Scope), Holder.Index, AtomConstant(Node.A.Text), Value)
+    else if (Node.A.Variable <> nil) and Node.A.Variable.IsGlobal then
+      Emit(opDeclareGlobalVar, AtomConstant(Node.A.Text), Value)
+    else
+      StoreVariable(Node.A.Variable, Node.A.Text, Value, True, Node.A);
+    ReleaseTo(Mark);
+  end;
+  CompileStatements(Program_.List, Program_.Count);
+  Emit(opReturn, FCompletionRegister);
+  SetCodeFlags('eval');
+  Result := FinishCode;
+end;
+
+{ After CompileModuleBody (which laid the scope out). }
+function TJsFunctionCompiler.CompileModuleInitializer(Program_: TJsNode): TJsCode;
+begin
+  FScope := Program_.Scope;
+  EnterScope(Program_.Scope);
+  HoistFunctions(Program_.List, Program_.Count);
+  Emit(opReturnUndefined);
+  SetCodeFlags('');
+  FCode.Flags := CodeStrict or CodeScript;
+  Result := FinishCode;
+end;
+
 procedure MarkGlobals(Scope: TJsScope);
 var
   Index: Integer;
@@ -716,6 +932,163 @@ begin
     Program_ := Parser.ParseProgram(Strict);
     Result := CompileProgramNode(Realm, Program_, Source, FileName);
   finally
+    Parser.Free;
+    Arena.Free;
+  end;
+end;
+
+procedure FillModuleRecord(Realm: TJsRealm; Module: TJsModule; Syntax: TJsModuleSyntax; Scope: TJsScope);
+var
+  Index: Integer;
+  Variable: TJsVariable;
+begin
+  SetLength(Module.Requests, Length(Syntax.Requests));
+  SetLength(Module.RequestedModules, Length(Syntax.Requests));
+  for Index := 0 to High(Syntax.Requests) do
+  begin
+    Module.Requests[Index].Specifier := Syntax.Requests[Index].Specifier;
+    Module.Requests[Index].Json := Syntax.Requests[Index].Json;
+  end;
+  SetLength(Module.Imports, Length(Syntax.Imports));
+  SetLength(Module.ImportBindings, Length(Syntax.Imports));
+  for Index := 0 to High(Syntax.Imports) do
+  begin
+    Module.Imports[Index].Request := Syntax.Imports[Index].Request;
+    Module.Imports[Index].ImportName := Syntax.Imports[Index].ImportName;
+    Module.Imports[Index].IsNamespace := Syntax.Imports[Index].IsNamespace;
+    Module.ImportBindings[Index].Value := JsUndefined;
+  end;
+  SetLength(Module.LocalExports, Length(Syntax.LocalExports));
+  for Index := 0 to High(Syntax.LocalExports) do
+  begin
+    Module.LocalExports[Index].ExportName := Syntax.LocalExports[Index].ExportName;
+    Module.LocalExports[Index].Slot := Syntax.LocalExports[Index].Variable.Index;
+  end;
+  SetLength(Module.IndirectExports, Length(Syntax.IndirectExports));
+  for Index := 0 to High(Syntax.IndirectExports) do
+  begin
+    Module.IndirectExports[Index].ExportName := Syntax.IndirectExports[Index].ExportName;
+    Module.IndirectExports[Index].Request := Syntax.IndirectExports[Index].Request;
+    Module.IndirectExports[Index].ImportName := Syntax.IndirectExports[Index].ImportName;
+    Module.IndirectExports[Index].IsNamespace := Syntax.IndirectExports[Index].IsNamespace;
+  end;
+  Module.StarExports := Copy(Syntax.StarExports);
+  { The environment, with its lexical bindings in the dead zone. }
+  Module.Environment := NewEnvironment(Realm.Heap, nil, Scope.EnvironmentSize);
+  for Index := 0 to Scope.VariableCount - 1 do
+  begin
+    Variable := Scope.Variables[Index];
+    if Variable.IsLexical and (Variable.Kind <> dkImport) and (Variable.Index >= 0) then
+      Module.Environment.Slots^[Variable.Index] := JsHole;
+  end;
+end;
+
+procedure CompileModule(Realm: TJsRealm; const Source: UnicodeString; const FileName: string; Module: TJsModule);
+var
+  Arena: TJsAstArena;
+  Parser: TJsParser;
+  Program_: TJsNode;
+  Context: TJsCompileContext;
+  Compiler: TJsFunctionCompiler;
+  Scope: TJsScope;
+  Syntax: TJsModuleSyntax;
+  Index: Integer;
+begin
+  Arena := TJsAstArena.Create;
+  Parser := TJsParser.Create(Source, Arena);
+  Context := nil;
+  try
+    Program_ := Parser.ParseProgram(True, pgModule);
+    ResolveProgram(Program_);
+    Scope := Program_.Scope;
+    Syntax := Program_.Func.ModuleSyntax;
+    Scope.EnvironmentProvided := True;
+    for Index := 0 to High(Syntax.Imports) do
+      if Syntax.Imports[Index].Variable <> nil then
+        Syntax.Imports[Index].Variable.Index := Index;
+    for Index := 0 to Scope.VariableCount - 1 do
+      if Scope.Variables[Index].Kind <> dkImport then
+        Scope.Variables[Index].Captured := True;
+    Context := TJsCompileContext.Create;
+    Context.Realm := Realm;
+    Context.FileName := FileName;
+    Context.Module := Module;
+    Context.Source := TJsSource.Create;
+    Realm.Heap.Register(Context.Source, ckOther);
+    Context.Source.FileName := FileName;
+    Context.Source.Text := Source;
+    Realm.Heap.Account(Length(Source) * 2);
+    Compiler := TJsFunctionCompiler.Create(Context, Program_.Func, nil);
+    try
+      Module.Body := Compiler.CompileModuleBody(Program_);
+    finally
+      Compiler.Free;
+    end;
+    Compiler := TJsFunctionCompiler.Create(Context, Program_.Func, nil);
+    try
+      Module.Initializer := Compiler.CompileModuleInitializer(Program_);
+    finally
+      Compiler.Free;
+    end;
+    Module.HasTopLevelAwait := Program_.Func.IsAsync;
+    FillModuleRecord(Realm, Module, Syntax, Scope);
+  finally
+    Context.Free;
+    Parser.Free;
+    Arena.Free;
+  end;
+end;
+
+procedure CompileLazyFunction(Realm: TJsRealm; Code: TJsCode);
+var
+  Lazy: TJsLazyFunction;
+  Arena: TJsAstArena;
+  Parser: TJsParser;
+  Info: TJsFunctionInfo;
+  Context: TJsCompileContext;
+  Compiler: TJsFunctionCompiler;
+  Compiled: TJsCode;
+begin
+  Lazy := TJsLazyFunction(Code.Lazy);
+  Arena := TJsAstArena.Create;
+  Parser := nil;
+  Context := nil;
+  try
+    Parser := TJsParser.Create(Code.Source.Text, Arena);
+    Info := Parser.ParseLazyFunction(Lazy.Start, Lazy.Line, Lazy.Column, BuildScopes(Lazy.Chain, Arena), Lazy.FunctionKind,
+      Lazy.IsAsync, Lazy.IsGenerator, Lazy.IsStrict, Lazy.HasSelfName, Lazy.Name);
+    ResolveFunctionScope(Info.Scope);
+    Context := TJsCompileContext.Create;
+    Context.Realm := Realm;
+    Context.FileName := Code.Source.FileName;
+    Context.Source := Code.Source;
+    Context.Module := Code.Module;
+    Compiler := TJsFunctionCompiler.Create(Context, Info, nil);
+    try
+      Compiled := Compiler.CompileFunction(Lazy.Name);
+    finally
+      Compiler.Free;
+    end;
+    { The closures hold Code: it becomes the compiled code. }
+    Code.Instructions := Compiled.Instructions;
+    Code.Constants := Compiled.Constants;
+    Code.Functions := Compiled.Functions;
+    Code.Caches := Compiled.Caches;
+    Compiled.Caches := nil;
+    Code.Handlers := Compiled.Handlers;
+    Code.Lines := Compiled.Lines;
+    Code.RegisterCount := Compiled.RegisterCount;
+    Code.ParameterCount := Compiled.ParameterCount;
+    Code.ArgumentsRegister := Compiled.ArgumentsRegister;
+    Code.RestRegister := Compiled.RestRegister;
+    Code.TemplateObjects := Compiled.TemplateObjects;
+    Code.EvalChains := Compiled.EvalChains;
+    Code.ParameterSlots := Compiled.ParameterSlots;
+    Code.Flags := Compiled.Flags;
+    Code.Lazy := nil;
+    Realm.Heap.Account(Code.MemorySize - Code.InstanceSize);
+  finally
+    Context.Free;
     Parser.Free;
     Arena.Free;
   end;

@@ -45,7 +45,8 @@ uses
   Js.Functions,
   Js.BigIntegers,
   Js.Conversions,
-  Js.Promises;
+  Js.Promises,
+  Js.ArrayBuffers;
 
 type
   { The entries of a Map (pairs) or Set (single values), for printing. }
@@ -103,6 +104,8 @@ type
     function ConstructorName(Target: TJsObject): string;
     function ObjectText(Target: TJsObject; Depth: Integer): string;
     function PropertiesText(Target: TJsObject; Depth: Integer; SkipIndices: Boolean; out Count: Integer): string;
+    function TypedArrayText(Target: TJsTypedArray; Depth: Integer): string;
+    function BufferText(Buffer: TJsArrayBuffer): string;
   public
     constructor Create(R: TJsRealm);
     function Format(Value: TJsValue; Depth: Integer; Nested: Boolean): string;
@@ -279,6 +282,71 @@ begin
   end;
 end;
 
+{ Uint8Array(3) [ 1, 2, 3 ], as Node prints it. }
+function TInspector.TypedArrayText(Target: TJsTypedArray; Depth: Integer): string;
+var
+  Length, Index: SizeInt;
+  Items, Properties: string;
+  PropertyCount: Integer;
+begin
+  Length := Target.CurrentLength;
+  Items := '';
+  Index := 0;
+  while Index < Length do
+  begin
+    if Index > 0 then
+      Items := Items + ', ';
+    if Index >= 100 then
+    begin
+      Items := Items + '... ' + IntToStr(Length - Index) + ' more items';
+      Break;
+    end;
+    Items := Items + Format(TypedArrayGet(FRealm, Target, Index), Depth + 1, True);
+    Inc(Index);
+  end;
+  Properties := PropertiesText(Target, Depth, True, PropertyCount);
+  if PropertyCount > 0 then
+  begin
+    if Items <> '' then
+      Items := Items + ', ';
+    Items := Items + Properties;
+  end;
+  Result := TypedArrayNames[Target.ElementKind] + '(' + IntToStr(Length) + ') ';
+  if Items = '' then
+    Result := Result + '[]'
+  else
+    Result := Result + '[ ' + Items + ' ]';
+end;
+
+{ "ArrayBuffer [Uint8Contents]: <01 02>, byteLength: 2" in braces, as Node prints it. }
+function TInspector.BufferText(Buffer: TJsArrayBuffer): string;
+const
+  HexDigits: array[0..15] of Char = '0123456789abcdef';
+var
+  Index: SizeInt;
+  Contents: string;
+begin
+  if Buffer.Shared then
+    Result := 'SharedArrayBuffer { '
+  else
+    Result := 'ArrayBuffer { ';
+  if Buffer.Detached then
+    Exit(Result + '(detached), byteLength: 0 }');
+  Contents := '';
+  for Index := 0 to Buffer.ByteLength - 1 do
+  begin
+    if Index >= 50 then
+    begin
+      Contents := Contents + ' ... ' + IntToStr(Buffer.ByteLength - 50) + ' more bytes';
+      Break;
+    end;
+    if Index > 0 then
+      Contents := Contents + ' ';
+    Contents := Contents + HexDigits[Buffer.Data[Index] shr 4] + HexDigits[Buffer.Data[Index] and 15];
+  end;
+  Result := Result + '[Uint8Contents]: <' + Contents + '>, byteLength: ' + IntToStr(Buffer.ByteLength) + ' }';
+end;
+
 function TInspector.ObjectText(Target: TJsObject; Depth: Integer): string;
 var
   Items: string;
@@ -438,6 +506,16 @@ begin
             Name := 'BigInt';
           end;
           Exit('[' + Name + ': ' + Format(TJsPrimitiveObject(Target).PrimitiveValue, Depth + 1, True) + ']');
+        end;
+      ocTypedArray: Exit(TypedArrayText(TJsTypedArray(Target), Depth));
+      ocArrayBuffer: Exit(BufferText(TJsArrayBuffer(Target)));
+      ocDataView:
+        begin
+          Count := TJsDataView(Target).CurrentByteLength;
+          if Count < 0 then
+            Count := 0;
+          Exit('DataView { byteLength: ' + IntToStr(Count) + ', byteOffset: ' +
+            IntToStr(TJsDataView(Target).ByteOffset) + ', buffer: ' + BufferText(TJsDataView(Target).Buffer) + ' }');
         end;
       ocWeakMap: Exit('WeakMap { <items unknown> }');
       ocWeakSet: Exit('WeakSet { <items unknown> }');

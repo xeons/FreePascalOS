@@ -21,7 +21,8 @@
 
   JavaScriptTest SCRIPTS BENCHMARKS
 
-  Runs every SCRIPTS/*.js in a fresh engine, with its console output
+  Runs every SCRIPTS/*.js (and every SCRIPTS/*.mjs as a module, its
+  imports read from files relative to it) in a fresh engine, with its console output
   (and "Uncaught ..." for an exception that escapes, after the promise
   jobs have run) compared line by line with the block comment at the
   end of the file that starts with "/* expected". Then runs every
@@ -45,6 +46,9 @@ uses
   Js.Functions,
   Js.Operations,
   Js.Interpreter,
+  Js.ArrayBuffers,
+  Js.Modules,
+  Js.Promises,
   Js.Engine;
 
 { The counting memory manager }
@@ -117,6 +121,8 @@ begin
   SetMemoryManager(Manager);
 end;
 
+function ReadText(const Path: string): string; forward;
+
 { Output capture }
 
 type
@@ -126,6 +132,12 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Write(const Text: string; IsError: Boolean);
+    procedure Fetch(Request: TJsModuleFetch);
+    { Scripts are named without their directory: their imports resolve
+      against the scripts' directory. }
+    function Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+  public
+    Directory: string;
   end;
 
 constructor TCapture.Create;
@@ -138,6 +150,29 @@ destructor TCapture.Destroy;
 begin
   Lines.Free;
   inherited Destroy;
+end;
+
+{ Modules are files: the key is the path. }
+procedure TCapture.Fetch(Request: TJsModuleFetch);
+var
+  Text: string;
+begin
+  if not FileExists(Request.Key) then
+  begin
+    Request.Fail('Cannot find module ''' + ExtractFileName(Request.Key) + '''');
+    Exit;
+  end;
+  Text := ReadText(Request.Key);
+  Request.Succeed(Text);
+end;
+
+function TCapture.Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+begin
+  if Pos('/', ReferrerKey) = 0 then
+    Key := ResolveRelativePath(Specifier, Directory + ReferrerKey)
+  else
+    Key := ResolveRelativePath(Specifier, ReferrerKey);
+  Result := True;
 end;
 
 procedure TCapture.Write(const Text: string; IsError: Boolean);
@@ -245,8 +280,14 @@ begin
       Exit;
     end;
     Engine.Realm.ConsoleWriter := @Capture.Write;
+    Engine.ModuleFetcher := @Capture.Fetch;
+    Engine.ModuleResolver := @Capture.Resolve;
+    Capture.Directory := ExtractFilePath(Path);
     try
-      Engine.Evaluate(Source, ExtractFileName(Path));
+      if ExtractFileExt(Path) = '.mjs' then
+        Engine.EvaluateModule(Source, Path)
+      else
+        Engine.Evaluate(Source, ExtractFileName(Path));
       Engine.RunJobs;
     except
       on Error: EJsError do
@@ -297,6 +338,7 @@ var
   Started: QWord;
   Elapsed: QWord;
   BaseBytes: Int64;
+  Statistics: TJsCollectorStatistics;
 begin
   Capture := TCapture.Create;
   BaseBytes := CurrentBytes;
@@ -309,8 +351,10 @@ begin
       Engine.Evaluate(ReadText(Path), ExtractFileName(Path));
       Engine.RunJobs;
       Elapsed := GetTickCount64 - Started;
-      WriteLn(Format('BENCH %-24s %6d ms  heap peak %8d KiB  process peak %8d KiB', [ExtractFileName(Path), Elapsed,
-        Engine.PeakHeapBytes div 1024, (PeakBytes - BaseBytes) div 1024]));
+      Statistics := Engine.CollectorStatistics;
+      WriteLn(Format('BENCH %-27s %6d ms  heap peak %8d KiB  process peak %8d KiB  gc %3d, longest %4d ms',
+        [ExtractFileName(Path), Elapsed, Engine.PeakHeapBytes div 1024, (PeakBytes - BaseBytes) div 1024,
+        Statistics.Collections, Round(Statistics.LongestPause)]));
       Check(True, 'benchmark ' + ExtractFileName(Path));
     except
       on Error: EJsError do
@@ -344,6 +388,116 @@ type
 
 var
   PointClass: TJsHostClass;
+  ExternalFreed: Integer;
+
+procedure FreeExternalBytes(Data: Pointer; ByteLength: SizeInt; Context: Pointer);
+begin
+  Inc(ExternalFreed);
+  FreeMem(Data);
+end;
+
+type
+  { A host whose fetches finish later. }
+  TDeferredModules = class
+  public
+    Pending: array of TJsModuleFetch;
+    procedure Fetch(Request: TJsModuleFetch);
+  end;
+
+procedure TDeferredModules.Fetch(Request: TJsModuleFetch);
+begin
+  SetLength(Pending, Length(Pending) + 1);
+  Pending[High(Pending)] := Request;
+end;
+
+{ Modules fetched asynchronously by the host. }
+procedure TestModuleLoading;
+var
+  Engine: TJsEngine;
+  Host: TDeferredModules;
+  Promise, Namespace: TJsValue;
+begin
+  Host := TDeferredModules.Create;
+  Engine := TJsEngine.Create;
+  try
+    Engine.ModuleFetcher := @Host.Fetch;
+    Promise := Engine.EvaluateModule('import { v } from "./lib/dep.mjs"; globalThis.seen = v * 2;', 'app/main.mjs');
+    Check((Length(Host.Pending) = 1) and (Host.Pending[0].Key = 'app/lib/dep.mjs') and
+      (Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'seen') = JsUndefined), 'api: module fetch deferred');
+    Host.Pending[0].Succeed('export const v = 21;');
+    Host.Pending := nil;
+    Engine.RunJobs;
+    Check(Engine.ToNumber(Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'seen')) = 42,
+      'api: module evaluated once its import arrived');
+    Check(TJsPromise(JsAsObject(Promise)).State = psFulfilled, 'api: module evaluation promise');
+    Namespace := Engine.ModuleNamespace('app/lib/dep.mjs');
+    Check(Engine.ToNumber(Engine.GetProperty(Namespace, 'v')) = 21, 'api: module namespace');
+    Promise := Engine.ImportModule('./lib/dep.mjs', 'app/main.mjs');
+    Engine.RunJobs;
+    Check((Length(Host.Pending) = 0) and (TJsPromise(JsAsObject(Promise)).Value = Namespace),
+      'api: import of a loaded module');
+    Promise := Engine.EvaluateModule('import "./gone.mjs";', 'app/other.mjs');
+    Host.Pending[0].Fail('not found');
+    Host.Pending := nil;
+    Engine.RunJobs;
+    Check(TJsPromise(JsAsObject(Promise)).State = psRejected, 'api: failed fetch rejects');
+  finally
+    Engine.Free;
+    Host.Free;
+  end;
+end;
+
+{ ArrayBuffers made and read from Pascal without copies. }
+procedure TestBinaryData;
+var
+  Engine: TJsEngine;
+  Buffer, View, Value: TJsValue;
+  Data: PByte;
+  Taken: Pointer;
+  Length: SizeInt;
+  Memory: PByte;
+  Index: Integer;
+begin
+  ExternalFreed := 0;
+  Engine := TJsEngine.Create;
+  try
+    Buffer := Engine.NewArrayBuffer(4);
+    Check(Engine.BufferSourceData(Buffer, Data, Length) and (Length = 4), 'api: new ArrayBuffer');
+    for Index := 0 to 3 do
+      Data[Index] := Index + 10;
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'hostBuffer', Buffer);
+    Value := Engine.Evaluate('new Uint8Array(hostBuffer).join()');
+    Check(Engine.ToText(Value) = '10,11,12,13', 'api: script sees the host''s bytes');
+    View := Engine.Evaluate('const v = new Uint8Array(8); v.set([1, 2, 3, 4, 5], 2); v.subarray(2, 5)');
+    Check(Engine.IsTypedArray(View) and Engine.BufferSourceData(View, Data, Length) and (Length = 3) and
+      (Data[0] = 1) and (Data[2] = 3), 'api: bytes of a typed array view');
+    Memory := GetMem(3);
+    Memory[0] := 7;
+    Memory[1] := 8;
+    Memory[2] := 9;
+    Buffer := Engine.NewExternalArrayBuffer(Memory, 3, @FreeExternalBytes, nil);
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'external', Buffer);
+    Value := Engine.Evaluate('new Uint8Array(external).reduce((a, b) => a + b) + external.byteLength');
+    Check(Engine.ToNumber(Value) = 27, 'api: external ArrayBuffer');
+    Engine.Evaluate('external.transfer(); external = null');
+    Engine.CollectGarbage;
+    Check(ExternalFreed = 1, 'api: external memory freed once when the buffer goes');
+    View := Engine.NewUint8Array(Memory, 0);
+    Check(Engine.IsTypedArray(View), 'api: empty Uint8Array');
+    Buffer := Engine.Evaluate('globalThis.taken = new Uint8Array([4, 5, 6]).buffer; taken');
+    Check(Engine.DetachArrayBuffer(Buffer, Taken, Length) and (Length = 3) and (PByte(Taken)[2] = 6),
+      'api: detach takes the bytes');
+    FreeMem(Taken);
+    Value := Engine.Evaluate('taken.detached && taken.byteLength === 0');
+    Check(Value = JsTrue, 'api: the detached buffer in the script');
+    View := Engine.NewTypedArray(taInt16, Engine.NewArrayBuffer(8), 2, 2);
+    Engine.SetProperty(JsObjectValue(Engine.GlobalObject), 'shorts', View);
+    Value := Engine.Evaluate('shorts.length + shorts.byteOffset + (shorts instanceof Int16Array ? 100 : 0)');
+    Check(Engine.ToNumber(Value) = 104, 'api: typed array on a host buffer');
+  finally
+    Engine.Free;
+  end;
+end;
 
 procedure TApiFixture.Finalize(HostClass: TJsHostClass; NativeData: Pointer);
 begin
@@ -497,10 +651,19 @@ begin
       until FindNext(Search) <> 0;
       FindClose(Search);
     end;
+    if FindFirst(ScriptDirectory + '*.mjs', faAnyFile, Search) = 0 then
+    begin
+      repeat
+        Files.Add(ScriptDirectory + Search.Name);
+      until FindNext(Search) <> 0;
+      FindClose(Search);
+    end;
     Files.Sort;
     for Index := 0 to Files.Count - 1 do
       RunScript(Files[Index]);
     TestEmbedding;
+    TestBinaryData;
+    TestModuleLoading;
     Files.Clear;
     if FindFirst(BenchmarkDirectory + '*.js', faAnyFile, Search) = 0 then
     begin

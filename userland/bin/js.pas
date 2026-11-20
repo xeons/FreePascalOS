@@ -19,7 +19,7 @@
 {
   js - run JavaScript
 
-  js [-i] [-e CODE] [-m BYTES] [FILE [ARGUMENT...]]
+  js [-i] [-M] [-e CODE] [-m BYTES] [FILE [ARGUMENT...]]
 
   Runs FILE (or CODE), then the promise jobs and the timers it set,
   and exits with status 1 if anything threw. With no FILE and no CODE,
@@ -30,6 +30,8 @@
 
     -e CODE    run CODE
     -i         go interactive afterwards
+    -M         run FILE as an ES module (also when it ends in .mjs); its
+               imports are files, relative to the importing file
     -m BYTES   limit the heap (K and M suffixes)
 }
 program js;
@@ -45,13 +47,14 @@ uses
   Util.Messages,
   JsShell.Timers,
   JsShell.Globals,
+  JsShell.Modules,
   Js.Values,
   Js.Objects,
   Js.Promises,
   Js.Engine;
 
 const
-  Usage = 'usage: js [-i] [-e code] [-m bytes] [file [argument...]]';
+  Usage = 'usage: js [-i] [-M] [-e code] [-m bytes] [file [argument...]]';
 
 var
   Engine: TJsEngine;
@@ -90,6 +93,22 @@ procedure RunCode(const Source, FileName: string);
 begin
   try
     Engine.Evaluate(Source, FileName);
+    RunPendingWork(Engine);
+    ReportRejections;
+  except
+    on Error: EJsError do
+    begin
+      WriteLn(StdErr, Error.Message);
+      Failed := True;
+    end;
+  end;
+end;
+
+{ Runs a module file, then everything it left to do. }
+procedure RunModule(const Source, FileName: string);
+begin
+  try
+    Engine.EvaluateModule(Source, FileName);
     RunPendingWork(Engine);
     ReportRejections;
   except
@@ -174,7 +193,7 @@ end;
 var
   Index: Integer;
   Code, FileName, Text: string;
-  HasCode, Interactive: Boolean;
+  HasCode, Interactive, AsModule: Boolean;
   Limit: Int64;
   Arguments: array of string;
 
@@ -183,6 +202,7 @@ begin
   FileName := '';
   HasCode := False;
   Interactive := False;
+  AsModule := False;
   Limit := 0;
   Arguments := nil;
   Index := 1;
@@ -206,6 +226,8 @@ begin
     end
     else if ParamStr(Index) = '-i' then
       Interactive := True
+    else if ParamStr(Index) = '-M' then
+      AsModule := True
     else if ParamStr(Index) = '-m' then
     begin
       Inc(Index);
@@ -234,13 +256,17 @@ begin
   try
     Engine.MemoryLimit := Limit;
     InstallShellGlobals(Engine, Arguments);
+    InstallFileModules(Engine);
     if HasCode then
       RunCode(Code, '<command line>');
     if FileName <> '' then
     begin
       if not ReadSource(FileName, Text) then
         Halt(2);
-      RunCode(Text, FileName);
+      if AsModule or (ExtractFileExt(FileName) = '.mjs') then
+        RunModule(Text, FileName)
+      else
+        RunCode(Text, FileName);
     end;
     if Interactive or (not HasCode and (FileName = '')) then
       Interact;

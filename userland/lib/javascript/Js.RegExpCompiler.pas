@@ -128,6 +128,98 @@ uses
   Character;
 
 const
+  { Scripts by their blocks (an approximation of the Script property:
+    the characters of a block shared with other scripts count for the
+    block's script). Names and aliases, then the ranges. }
+  ScriptTable: array[0..37] of string = (
+    'Latin Latn:0041-005A,0061-007A,00AA,00BA,00C0-00D6,00D8-00F6,00F8-02B8,02E0-02E4,1D00-1D25,1D2C-1D5C,' +
+      '1D62-1D65,1D6B-1D77,1D79-1DBE,1E00-1EFF,2071,207F,2090-209C,212A,212B,2132,214E,2160-2188,2C60-2C7F,' +
+      'A722-A787,A78B-A7FF,AB30-AB5A,AB5C-AB64,FB00-FB06,FF21-FF3A,FF41-FF5A',
+    'Greek Grek:0370-0373,0375-0377,037A-037D,037F,0384,0386,0388-03E1,03F0-03FF,1D26-1D2A,1D5D-1D61,1D66-1D6A,' +
+      '1DBF,1F00-1FFE,2126,AB65',
+    'Cyrillic Cyrl:0400-0484,0487-052F,1C80-1C88,1D2B,1D78,2DE0-2DFF,A640-A69F,FE2E,FE2F',
+    'Armenian Armn:0531-0556,0559-058A,058D-058F,FB13-FB17',
+    'Hebrew Hebr:0591-05C7,05D0-05EA,05EF-05F4,FB1D-FB4F',
+    'Arabic Arab:0600-0604,0606-060B,060D-061A,061C-061E,0620-063F,0641-064A,0656-066F,0671-06DC,06DE-06FF,' +
+      '0750-077F,0870-089F,08A0-08FF,FB50-FDFF,FE70-FEFC',
+    'Syriac Syrc:0700-074F,0860-086A',
+    'Thaana Thaa:0780-07B1',
+    'Devanagari Deva:0900-0950,0955-0963,0966-097F,A8E0-A8FF',
+    'Bengali Beng:0980-09FE',
+    'Gurmukhi Guru:0A01-0A76',
+    'Gujarati Gujr:0A81-0AFF',
+    'Oriya Orya:0B01-0B77',
+    'Tamil Taml:0B82-0BFA,11FC0-11FFF',
+    'Telugu Telu:0C00-0C7F',
+    'Kannada Knda:0C80-0CF3',
+    'Malayalam Mlym:0D00-0D7F',
+    'Sinhala Sinh:0D81-0DF4,111E1-111F4',
+    'Thai Thai:0E01-0E3A,0E40-0E5B',
+    'Lao Laoo:0E81-0EDF',
+    'Tibetan Tibt:0F00-0FD4,0FD9,0FDA',
+    'Myanmar Mymr:1000-109F,A9E0-A9FE,AA60-AA7F',
+    'Georgian Geor:10A0-10FF,1C90-1CBF,2D00-2D2D',
+    'Hangul Hang:1100-11FF,302E,302F,3131-318E,3200-321E,3260-327E,A960-A97C,AC00-D7A3,D7B0-D7FB,FFA0-FFDC',
+    'Ethiopic Ethi:1200-139F,2D80-2DDE,AB01-AB2E',
+    'Cherokee Cher:13A0-13FD,AB70-ABBF',
+    'Khmer Khmr:1780-17F9,19E0-19FF',
+    'Mongolian Mong:1800-1801,1804,1806-18AA',
+    'Hiragana Hira:3041-3096,309D-309F,1B001-1B11F,1F200',
+    'Katakana Kana:30A1-30FA,30FD-30FF,31F0-31FF,32D0-32FE,3300-3357,FF66-FF6F,FF71-FF9D,1B000',
+    'Bopomofo Bopo:02EA,02EB,3105-312F,31A0-31BF',
+    'Han Hani:2E80-2E99,2E9B-2EF3,2F00-2FD5,3005,3007,3021-3029,3038-303B,3400-4DBF,4E00-9FFF,F900-FA6D,' +
+      'FA70-FAD9,20000-2A6DF,2A700-2EBE0,2F800-2FA1D,30000-3134A',
+    'Yi Yiii:A000-A48C,A490-A4C6',
+    'Tifinagh Tfng:2D30-2D67,2D6F,2D70,2D7F',
+    'Coptic Copt Qaac:03E2-03EF,2C80-2CF3,2CF9-2CFF',
+    'Runic Runr:16A0-16EA,16EE-16F8',
+    'Inherited Zinh Qaai:0300-036F,0485,0486,064B-0655,0670,1AB0-1ACE,1CD0-1CD2,1CD4-1CE0,1DC0-1DFF,200C,200D,' +
+      '20D0-20F0,FE00-FE0F,FE20-FE2D,E0100-E01EF',
+    'Common Zyyy:0000-0040,005B-0060,007B-00A9,00AB-00B9,00BB-00BF,00D7,00F7,02B9-02DF,02E5-02E9,02EC-02FF,0374,' +
+      '037E,0385,0387,0605,060C,061B,061F,0640,06DD,0964,0965,0E3F,10FB,16EB-16ED,2000-200B,200E-2064,2066-2070,' +
+      '2074-207E,2080-208E,20A0-20C0,2100-2125,2127-2129,212C-2131,2133-214D,214F-215F,2189-218B,2190-2426,' +
+      '2440-244A,2460-27FF,2900-2B73,2B76-2B95,2B97-2BFF,2E00-2E5D,3000-3004,3006,3008-3020,3030-3037,303C-303F,' +
+      'FE10-FE19,FE30-FE52,FE54-FE66,FE68-FE6B,FEFF,FF01-FF20,FF3B-FF40,FF5B-FF65,FF70,FF9E,FF9F,FFE0-FFE6,' +
+      'FFE8-FFEE,FFF9-FFFD,1F000-1F0FF,1F300-1FAFF');
+
+{ Adds the ranges of the script Name (or alias) to Target; False for a
+  script the table does not have. }
+function AddScriptRanges(Target: TRxClass; const Name: UnicodeString): Boolean;
+var
+  Index, Colon, Separator: Integer;
+  Names, Ranges, Item: string;
+  Items: TStringArray;
+  Low, High: LongWord;
+begin
+  for Index := 0 to System.High(ScriptTable) do
+  begin
+    Colon := Pos(':', ScriptTable[Index]);
+    Names := ' ' + Copy(ScriptTable[Index], 1, Colon - 1) + ' ';
+    if Pos(' ' + string(Name) + ' ', Names) = 0 then
+      Continue;
+    Ranges := Copy(ScriptTable[Index], Colon + 1, MaxInt);
+    Items := Ranges.Split([',']);
+    for Item in Items do
+    begin
+      Separator := Pos('-', Item);
+      if Separator > 0 then
+      begin
+        Low := StrToInt('$' + Copy(Item, 1, Separator - 1));
+        High := StrToInt('$' + Copy(Item, Separator + 1, MaxInt));
+      end
+      else
+      begin
+        Low := StrToInt('$' + Item);
+        High := Low;
+      end;
+      Target.AddRange(Low, High);
+    end;
+    Exit(True);
+  end;
+  Result := False;
+end;
+
+const
   MaximumRepeat = 1000000000;
 
 { General categories as bits (TUnicodeCategory order). }
@@ -1054,39 +1146,10 @@ begin
     Name := Copy(Name, 1, EqualsAt - 1);
     if (Name <> 'General_Category') and (Name <> 'gc') then
     begin
-      { Scripts: only those that are whole blocks are known. }
+      { Scripts (by blocks: see ScriptTable). }
       if ((Name = 'Script') or (Name = 'sc') or (Name = 'Script_Extensions') or (Name = 'scx')) then
       begin
-        if (Value = 'Latin') or (Value = 'Latn') then
-        begin
-          Target.AddRange(Ord('A'), Ord('Z'));
-          Target.AddRange(Ord('a'), Ord('z'));
-          Target.AddRange($AA, $AA);
-          Target.AddRange($BA, $BA);
-          Target.AddRange($C0, $D6);
-          Target.AddRange($D8, $F6);
-          Target.AddRange($F8, $24F);
-          Target.AddRange($1E00, $1EFF);
-        end
-        else if (Value = 'Greek') or (Value = 'Grek') then
-          Target.AddRange($370, $3FF)
-        else if (Value = 'Cyrillic') or (Value = 'Cyrl') then
-          Target.AddRange($400, $52F)
-        else if (Value = 'Han') or (Value = 'Hani') then
-        begin
-          Target.AddRange($4E00, $9FFF);
-          Target.AddRange($3400, $4DBF);
-          Target.AddRange($20000, $2A6DF);
-        end
-        else if (Value = 'Hiragana') or (Value = 'Hira') then
-          Target.AddRange($3040, $309F)
-        else if (Value = 'Katakana') or (Value = 'Kana') then
-          Target.AddRange($30A0, $30FF)
-        else if (Value = 'Arabic') or (Value = 'Arab') then
-          Target.AddRange($600, $6FF)
-        else if (Value = 'Hebrew') or (Value = 'Hebr') then
-          Target.AddRange($590, $5FF)
-        else
+        if not AddScriptRanges(Target, Value) then
           Fail('Invalid property name');
         if Negated then
           Target.Negated := not Target.Negated;
