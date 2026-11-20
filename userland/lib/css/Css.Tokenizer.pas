@@ -174,7 +174,8 @@ end;
 
 function IsValidEscape(First, Second: Char): Boolean; inline;
 begin
-  Result := (First = '\') and (Second <> #10) and (Second <> #0);
+  { A backslash before EOF is a valid escape too (it stands for U+FFFD). }
+  Result := (First = '\') and (Second <> #10);
 end;
 
 function StartsIdentSequence(First, Second, Third: Char): Boolean;

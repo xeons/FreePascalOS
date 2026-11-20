@@ -437,7 +437,10 @@ begin
   Flags := LongWord(Ord(PseudoElement)) shl FlagPseudoShift;
   if IsRoot then
     Flags := Flags or FlagRoot;
-  Hash := LongWord((QWord(PtrUInt(Parent)) * 2654435761) and $FFFFFFFF) xor Flags;
+  if Parent <> nil then
+    Hash := LongWord((QWord(Parent.Serial) * 2654435761) and $FFFFFFFF) xor Flags
+  else
+    Hash := Flags;
   for Index := 0 to SignatureCount - 1 do
     Hash := LongWord((QWord(Hash xor LongWord(FSignature[Index])) * 16777619) and $FFFFFFFF);
   if Shareable then

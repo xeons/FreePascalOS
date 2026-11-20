@@ -43,12 +43,12 @@ function PropertyName(Id: TCssPropertyId): string;
   "--name", cpInvalid for unknown names. }
 function PropertyByName(const Name: string): TCssPropertyId;
 function PropertyInfo(Id: TCssPropertyId): TCssPropertyInfo;
-function PropertyGroup(Id: TCssPropertyId): TCssPropertyGroup; inline;
-function IsInheritedProperty(Id: TCssPropertyId): Boolean; inline;
+function PropertyGroup(Id: TCssPropertyId): TCssPropertyGroup;
+function IsInheritedProperty(Id: TCssPropertyId): Boolean;
 { A longhand's slot within its group's struct. }
-function PropertySlot(Id: TCssPropertyId): Integer; inline;
+function PropertySlot(Id: TCssPropertyId): Integer;
 { The number of properties stored in a group. }
-function GroupSize(Group: TCssPropertyGroup): Integer; inline;
+function GroupSize(Group: TCssPropertyGroup): Integer;
 { The property stored in a group's slot. }
 function PropertyAtSlot(Group: TCssPropertyGroup; Slot: Integer): TCssPropertyId;
 function IsCustomPropertyName(const Name: string): Boolean;

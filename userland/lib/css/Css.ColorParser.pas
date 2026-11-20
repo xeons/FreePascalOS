@@ -274,7 +274,7 @@ end;
 function ParseHslOrHwb(Contents: TCssTokenCursor; IsHwb: Boolean; out Color: TCssColor): Boolean;
 var
   Channels: TChannels;
-  Count, Index: Integer;
+  Count: Integer;
   Legacy: Boolean;
   Mask: Byte;
   Second, Third: Double;

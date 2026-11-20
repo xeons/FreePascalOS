@@ -522,7 +522,12 @@ begin
   if Color.Space = Space then
     Exit(Color);
   try
-    Values := FromXyzD65(ToXyzD65(Color), Space);
+    if (Space = csSrgb) and (Color.Space = csHsl) then
+      Values := HslToSrgb(Triple(Color)[0], Triple(Color)[1], Triple(Color)[2])
+    else if (Space = csSrgb) and (Color.Space = csHwb) then
+      Values := HwbToSrgb(Triple(Color)[0], Triple(Color)[1], Triple(Color)[2])
+    else
+      Values := FromXyzD65(ToXyzD65(Color), Space);
   except
     on EMathError do
       Values := Default(TColorTriple);
@@ -567,10 +572,10 @@ var
   Red, Green, Blue, Alpha: Double;
 begin
   ColorToSrgb(Color, Red, Green, Blue, Alpha);
-  Result.Red := Round(Red * 255);
-  Result.Green := Round(Green * 255);
-  Result.Blue := Round(Blue * 255);
-  Result.Alpha := Round(Alpha * 255);
+  Result.Red := Floor(Red * 255 + 0.5);
+  Result.Green := Floor(Green * 255 + 0.5);
+  Result.Blue := Floor(Blue * 255 + 0.5);
+  Result.Alpha := Floor(Alpha * 255 + 0.5);
 end;
 
 function SameColor(const A, B: TCssColor): Boolean;
@@ -856,11 +861,13 @@ begin
   if Color.Legacy or (Color.Space in [csHsl, csHwb]) then
   begin
     ColorToSrgb(Color, Red, Green, Blue, Alpha);
+    { Channels round half up, as CSSOM serializes them. }
     if Alpha >= 1 then
-      Result := Format('rgb(%d, %d, %d)', [Round(Red * 255), Round(Green * 255), Round(Blue * 255)])
+      Result := Format('rgb(%d, %d, %d)', [Floor(Red * 255 + 0.5), Floor(Green * 255 + 0.5),
+        Floor(Blue * 255 + 0.5)])
     else
-      Result := Format('rgba(%d, %d, %d, %s)', [Round(Red * 255), Round(Green * 255),
-        Round(Blue * 255), SerializeAlpha(Alpha)]);
+      Result := Format('rgba(%d, %d, %d, %s)', [Floor(Red * 255 + 0.5), Floor(Green * 255 + 0.5),
+        Floor(Blue * 255 + 0.5), SerializeAlpha(Alpha)]);
     Exit;
   end;
   Suffix := '';

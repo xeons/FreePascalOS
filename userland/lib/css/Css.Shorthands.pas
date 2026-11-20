@@ -1001,7 +1001,8 @@ begin
   Result := (Position <> nil) or (Image <> nil) or (ListType <> nil) or (Nones > 0);
   if Nones > 0 then
   begin
-    if (Nones = 2) and (Image = nil) and (ListType = nil) then
+    { none sets whichever of the image and the type is not given. }
+    if (Nones <= 2) and (Image = nil) and (ListType = nil) then
     begin
       Image := NewKeyword(kwNone);
       ListType := NewKeyword(kwNone);

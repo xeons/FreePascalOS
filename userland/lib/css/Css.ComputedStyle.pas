@@ -44,6 +44,8 @@ type
     Structs: array[TCssStructGroup] of PCssStyleStruct;
     Custom: TCssCustomProperties;
     PseudoElement: TCssPseudoElement;
+    { A number unique to this style (hash keys). }
+    Serial: LongWord;
     constructor Create;
     destructor Destroy; override;
     function AddRef: TCssComputedStyle;
@@ -68,6 +70,7 @@ type
 
 var
   LiveStyleCount: Integer = 0;
+  NextStyleSerial: LongWord = 0;
 
 implementation
 
@@ -78,6 +81,7 @@ constructor TCssComputedStyle.Create;
 begin
   inherited Create;
   FReferences := 1;
+  Serial := InterlockedIncrement(NextStyleSerial);
   InterlockedIncrement(LiveStyleCount);
 end;
 

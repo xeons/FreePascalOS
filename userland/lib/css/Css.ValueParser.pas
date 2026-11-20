@@ -61,7 +61,7 @@ function ParseUrlValue(var Cursor: TCssTokenCursor): TCssValue;
   value form (a bad token or block). }
 function ParseGenericValue(var Cursor: TCssTokenCursor): TCssValue;
 { Whether a token is the delimiter Character. }
-function IsDelimToken(Token: PCssToken; const Character: string): Boolean; inline;
+function IsDelimToken(Token: PCssToken; const Character: string): Boolean;
 { Consumes a comma (and whitespace before it) if there is one. }
 function SkipComma(var Cursor: TCssTokenCursor): Boolean;
 function SkipDelim(var Cursor: TCssTokenCursor; const Character: string): Boolean;

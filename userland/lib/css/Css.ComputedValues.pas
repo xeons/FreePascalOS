@@ -238,12 +238,17 @@ begin
   end;
 end;
 
+function Channel8(Value: Word): Integer;
+begin
+  Result := (Value * 255 + 32767) div 65535;
+end;
+
 function ComputedToRgba8(const Value: TCssComputedValue): TCssRgba8;
 begin
-  Result.Red := Value.Red shr 8;
-  Result.Green := Value.Green shr 8;
-  Result.Blue := Value.Blue shr 8;
-  Result.Alpha := Value.Alpha shr 8;
+  Result.Red := Channel8(Value.Red);
+  Result.Green := Channel8(Value.Green);
+  Result.Blue := Channel8(Value.Blue);
+  Result.Alpha := Channel8(Value.Alpha);
 end;
 
 function SameComputed(const A, B: TCssComputedValue): Boolean;
@@ -295,25 +300,36 @@ begin
   end;
 end;
 
+{ A single precision number with the digits it really has (six
+  significant ones), so 28.8 does not come out as 28.799999. }
+function SerializeSingle(Value: Single): string;
+var
+  Settings: TFormatSettings;
+begin
+  Settings := DefaultFormatSettings;
+  Settings.DecimalSeparator := '.';
+  Result := SerializeNumber(StrToFloat(FloatToStrF(Value, ffExponent, 6, 0, Settings), Settings));
+end;
+
 function SerializeComputed(const Value: TCssComputedValue): string;
 begin
   case Value.Kind of
     cvKeyword: Result := KeywordName(TCssKeyword(Value.Keyword));
-    cvLength: Result := SerializeNumber(Value.Number) + 'px';
-    cvPercentage: Result := SerializeNumber(Value.Percent) + '%';
+    cvLength: Result := SerializeSingle(Value.Number) + 'px';
+    cvPercentage: Result := SerializeSingle(Value.Percent) + '%';
     cvLengthPercentage:
       if Value.Number < 0 then
-        Result := 'calc(' + SerializeNumber(Value.Percent) + '% - ' + SerializeNumber(-Value.Number) + 'px)'
+        Result := 'calc(' + SerializeSingle(Value.Percent) + '% - ' + SerializeSingle(-Value.Number) + 'px)'
       else
-        Result := 'calc(' + SerializeNumber(Value.Percent) + '% + ' + SerializeNumber(Value.Number) + 'px)';
-    cvNumber: Result := SerializeNumber(Value.Number);
+        Result := 'calc(' + SerializeSingle(Value.Percent) + '% + ' + SerializeSingle(Value.Number) + 'px)';
+    cvNumber: Result := SerializeSingle(Value.Number);
     cvInteger: Result := IntToStr(Round(Value.Number));
     cvColor:
       if Value.Alpha = 65535 then
-        Result := Format('rgb(%d, %d, %d)', [Round(Value.Red / 257), Round(Value.Green / 257), Round(Value.Blue / 257)])
+        Result := Format('rgb(%d, %d, %d)', [Channel8(Value.Red), Channel8(Value.Green), Channel8(Value.Blue)])
       else
-        Result := Format('rgba(%d, %d, %d, %s)', [Round(Value.Red / 257), Round(Value.Green / 257),
-          Round(Value.Blue / 257), SerializeNumber(Round(Value.Alpha / 65535 * 1000) / 1000)]);
+        Result := Format('rgba(%d, %d, %d, %s)', [Channel8(Value.Red), Channel8(Value.Green),
+          Channel8(Value.Blue), SerializeNumber(Round(Value.Alpha / 65535 * 1000) / 1000)]);
     cvCurrentColor: Result := 'currentcolor';
     cvCalc, cvValue:
       if Value.Data <> nil then
