@@ -214,6 +214,9 @@ type
 function ErrorKindName(Kind: TJsErrorKind): string;
 
 var
+  { Compiles a lazy function's code in place; False when that threw
+  (set by Js.DirectEval, which has the compiler). }
+  JsCompileLazyHook: function(R: TJsRealm; Code: TJsCode): Boolean = nil;
   { A direct eval: compiles Source against the scopes Chain describes
     and runs it in Environment (set by Js.DirectEval). }
   JsDirectEvalHook: function(R: TJsRealm; Source: TJsValue; Chain: TJsCell; Caller: TJsCode;
@@ -567,6 +570,8 @@ var
   Frame: PJsFrame;
 begin
   Code := Closure.Code;
+  if ((Code.Flags and CodeLazy) <> 0) and not JsCompileLazyHook(Self, Code) then
+    Exit(False);
   if (FFrameCount >= FMaximumFrames) or (Base + Code.RegisterCount + 8 > FStackCapacity) then
   begin
     ThrowRangeError('Maximum call stack size exceeded');

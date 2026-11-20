@@ -90,6 +90,10 @@ type
     FileName: string;
     { The module being compiled (nil for a script). }
     Module: TJsCell;
+    { The scope chains made for the lazy functions, per scope. }
+    ChainScopes: array of TJsScope;
+    Chains: array of TJsEvalChain;
+    function ChainFor(Scope: TJsScope): TJsEvalChain;
   end;
 
   TJsCodeBuilder = class
@@ -244,6 +248,24 @@ begin
   SetLength(Gaps, Length(Gaps) + 1);
   Gaps[High(Gaps)].Start := Start;
   Gaps[High(Gaps)].Finish := Finish;
+end;
+
+{ TJsCompileContext }
+
+function TJsCompileContext.ChainFor(Scope: TJsScope): TJsEvalChain;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(ChainScopes) do
+    if ChainScopes[Index] = Scope then
+      Exit(Chains[Index]);
+  Result := BuildEvalChain(Scope, False);
+  Realm.Heap.Register(Result, ckOther);
+  Realm.Heap.Account(Result.MemorySize - Result.InstanceSize);
+  SetLength(ChainScopes, Length(ChainScopes) + 1);
+  ChainScopes[High(ChainScopes)] := Scope;
+  SetLength(Chains, Length(Chains) + 1);
+  Chains[High(Chains)] := Result;
 end;
 
 { TJsCodeBuilder }

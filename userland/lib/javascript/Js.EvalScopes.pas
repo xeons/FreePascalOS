@@ -70,12 +70,34 @@ type
     function MemorySize: SizeInt; override;
   end;
 
+  { A function compiled when first called: where its parameters start
+    in the source, what it is, and the scopes around it. }
+  TJsLazyFunction = class(TJsCell)
+  public
+    Chain: TJsEvalChain;
+    Start: Integer;
+    Line: Integer;
+    Column: Integer;
+    FunctionKind: TJsFunctionKind;
+    IsAsync: Boolean;
+    IsGenerator: Boolean;
+    IsStrict: Boolean;
+    HasSelfName: Boolean;
+    Name: UnicodeString;
+    procedure Trace(Tracer: TJsTracer); override;
+  end;
+
 { The chain of scopes from Scope out (the call of a direct eval). }
 function BuildEvalChain(Scope: TJsScope; Strict: Boolean): TJsEvalChain;
 { Scopes like the chain's (owned by Arena); the innermost is returned. }
 function BuildScopes(Chain: TJsEvalChain; Arena: TJsAstArena): TJsScope;
 
 implementation
+
+procedure TJsLazyFunction.Trace(Tracer: TJsTracer);
+begin
+  Tracer.MarkCell(Chain);
+end;
 
 function TJsEvalChain.MemorySize: SizeInt;
 var

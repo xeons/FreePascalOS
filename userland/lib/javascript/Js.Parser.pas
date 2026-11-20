@@ -175,6 +175,11 @@ type
     { A direct eval's code, inside the scopes around the call (Outer:
       the innermost). }
     function ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
+    { A lazily compiled function, parsed again from its parameter list
+      (an arrow: from its start) at the position given, inside the
+      scopes around it (Outer: the innermost). }
+    function ParseLazyFunction(Start, Line, Column: Integer; Outer: TJsScope; Kind: TJsFunctionKind;
+      IsAsync, IsGenerator, Strict, HasSelfName: Boolean; const Name: UnicodeString): TJsFunctionInfo;
     { The source text between two positions (Function.prototype.toString). }
     function SourceText(Start, Finish: Integer): UnicodeString;
   end;
@@ -230,6 +235,8 @@ begin
   FPreviousLine := FToken.Line;
   FPreviousFinish := FToken.Finish;
   FLexer.Next(FToken);
+  if (FToken.Kind = tkPrivateName) and (FFunction <> nil) then
+    FFunction.UsesPrivateNames := True;
 end;
 
 function TJsParser.PeekToken: TJsToken;
@@ -536,6 +543,30 @@ begin
   if Goal = pgModule then
     FinishModuleExports;
   PopScope;
+end;
+
+function TJsParser.ParseLazyFunction(Start, Line, Column: Integer; Outer: TJsScope; Kind: TJsFunctionKind;
+  IsAsync, IsGenerator, Strict, HasSelfName: Boolean; const Name: UnicodeString): TJsFunctionInfo;
+var
+  StartToken: TJsToken;
+  Node: TJsNode;
+begin
+  FScope := Outer;
+  FFunction := Outer.Func;
+  FStrict := Strict;
+  FLexer.RestorePosition(Start, Line, Start - Column + 1);
+  Next;
+  StartToken := FToken;
+  if Kind = fkArrow then
+  begin
+    Node := ParseAssignment;
+    if (Node.Kind <> nkFunction) or (Node.Func = nil) then
+      Fail('Internal error: lazy function');
+    Exit(Node.Func);
+  end;
+  Result := ParseFunction(Kind, IsAsync, IsGenerator, Name, StartToken);
+  if HasSelfName then
+    NameFunctionExpression(Result);
 end;
 
 function TJsParser.ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
@@ -1580,12 +1611,17 @@ begin
   try
     FInGenerator := IsGenerator;
     FInAsync := IsAsync;
+    Result.ParametersStart := FToken.Start;
+    Result.ParametersLine := FToken.Line;
+    Result.ParametersColumn := FToken.Column;
     ParseParameters(Result);
     ParseFunctionBody(Result);
     Result.SourceFinish := FPreviousFinish;
   finally
     PopScope;
     FFunction := SavedFunction;
+    if Result.UsesPrivateNames and (FFunction <> nil) then
+      FFunction.UsesPrivateNames := True;
     FStrict := SavedStrict;
     FInGenerator := SavedGenerator;
     FInAsync := SavedAsync;
@@ -1788,6 +1824,8 @@ begin
     FSwitchDepth := SavedSwitch;
     PopScope;
     FFunction := SavedFunction;
+    if Info.UsesPrivateNames and (FFunction <> nil) then
+      FFunction.UsesPrivateNames := True;
   end;
   Result := NewNodeAt(nkFunction, StartToken);
   Result.Func := Info;

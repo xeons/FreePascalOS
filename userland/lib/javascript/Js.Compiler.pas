@@ -62,6 +62,7 @@ uses
   Js.CodeBuilder,
   Js.ExpressionCompiler,
   Js.StatementCompiler,
+  Js.EvalScopes,
   Js.ModuleRecords;
 
 type
@@ -75,6 +76,7 @@ type
     procedure CompileFieldInitializerBody;
     function PrivateNameVariable(ClassNode: TJsNode; const Name: UnicodeString): TJsVariable;
     procedure SetCodeFlags(const Name: UnicodeString);
+    function LazyStub(Info: TJsFunctionInfo; const Name: UnicodeString): TJsCode;
     procedure SetParameterSlots(FormalCount: Integer);
   public
     constructor Create(Context: TJsCompileContext; Info: TJsFunctionInfo; Parent: TJsFunctionCompiler);
@@ -97,6 +99,9 @@ function CompileScript(Realm: TJsRealm; const Source: UnicodeString; const FileN
 { Compiles a module's source into Module (its codes, requests, imports,
   exports and environment); raises EJsSyntaxError. }
 procedure CompileModule(Realm: TJsRealm; const Source: UnicodeString; const FileName: string; Module: TJsModule);
+{ Compiles a lazy function's code in place (its first call); raises
+  EJsSyntaxError. }
+procedure CompileLazyFunction(Realm: TJsRealm; Code: TJsCode);
 { The code of a function made by the Function constructor. }
 function CompileFunctionSource(Realm: TJsRealm; const Parameters, Body: UnicodeString; IsAsync,
   IsGenerator: Boolean): TJsCode;
@@ -159,6 +164,92 @@ begin
   Result := (FInfo <> nil) and (Scope = FInfo.Scope);
 end;
 
+const
+  { Functions with less source than this are compiled at once. }
+  LazySourceLength = 160;
+
+function FunctionCodeFlags(Info: TJsFunctionInfo): LongWord;
+begin
+  Result := 0;
+  if Info.IsStrict then
+    Result := Result or CodeStrict;
+  if Info.IsGenerator then
+    Result := Result or CodeGenerator;
+  if Info.IsAsync then
+    Result := Result or CodeAsync;
+  case Info.Kind of
+    fkArrow: Result := Result or CodeArrow;
+    fkNormal:
+      if not Info.IsAsync and not Info.IsGenerator then
+        Result := Result or CodeConstructor;
+    fkMethod, fkClassFieldInitializer: Result := Result or CodeMethod;
+    fkGetter: Result := Result or CodeMethod or CodeGetter;
+    fkSetter: Result := Result or CodeMethod or CodeSetter;
+    fkClassConstructor: Result := Result or CodeClassConstructor or CodeConstructor;
+    fkDerivedConstructor: Result := Result or CodeClassConstructor or CodeConstructor or CodeDerivedConstructor;
+    fkScript, fkModule: Result := Result or CodeScript;
+  end;
+end;
+
+function FunctionFullName(Info: TJsFunctionInfo; const Name: UnicodeString): UnicodeString;
+begin
+  Result := Name;
+  if Info.Kind = fkGetter then
+    Result := 'get ' + Name
+  else if Info.Kind = fkSetter then
+    Result := 'set ' + Name;
+end;
+
+{ A function compiled on its first call: its body was parsed (early
+  errors checked, its free variables marked captured), but it gets no
+  bytecode until then. Not for class constructors and field
+  initializers, functions using private names, or short ones. }
+function IsLazyCandidate(Info: TJsFunctionInfo): Boolean;
+begin
+  Result := (Info.Kind in [fkNormal, fkArrow, fkMethod, fkGetter, fkSetter]) and not Info.UsesPrivateNames and
+    (Info.SourceFinish - Info.SourceStart >= LazySourceLength) and
+    ((Info.Kind = fkArrow) or (Info.ParametersLine > 0));
+end;
+
+function TJsFunctionCompiler.LazyStub(Info: TJsFunctionInfo; const Name: UnicodeString): TJsCode;
+var
+  Lazy: TJsLazyFunction;
+begin
+  Result := TJsCode.Create;
+  Heap.Register(Result, ckCode);
+  Result.Source := FContext.Source;
+  Result.Module := FContext.Module;
+  Result.ArgumentsRegister := -1;
+  Result.RestRegister := -1;
+  Result.Flags := FunctionCodeFlags(Info) or CodeLazy;
+  Result.Name := Runtime.Atoms.Intern(NewStringFromUnicode(Heap, FunctionFullName(Info, Name)));
+  Result.Length := Info.Length;
+  Result.SourceStart := Info.SourceStart;
+  Result.SourceFinish := Info.SourceFinish;
+  Lazy := TJsLazyFunction.Create;
+  Heap.Register(Lazy, ckOther);
+  Lazy.Chain := FContext.ChainFor(Info.Scope.Parent);
+  if Info.Kind = fkArrow then
+  begin
+    Lazy.Start := Info.SourceStart;
+    Lazy.Line := Info.Line;
+    Lazy.Column := Info.Column;
+  end
+  else
+  begin
+    Lazy.Start := Info.ParametersStart;
+    Lazy.Line := Info.ParametersLine;
+    Lazy.Column := Info.ParametersColumn;
+  end;
+  Lazy.FunctionKind := Info.Kind;
+  Lazy.IsAsync := Info.IsAsync;
+  Lazy.IsGenerator := Info.IsGenerator;
+  Lazy.IsStrict := Info.IsStrict;
+  Lazy.HasSelfName := Info.SelfVariable <> nil;
+  Lazy.Name := Name;
+  Result.Lazy := Lazy;
+end;
+
 function TJsFunctionCompiler.CompileFunctionNode(Node: TJsNode; Target: Integer; const Name: UnicodeString;
   HasName: Boolean): Integer;
 var
@@ -169,11 +260,16 @@ begin
   FunctionName := Node.Func.Name;
   if (FunctionName = '') and HasName then
     FunctionName := Name;
-  Child := TJsFunctionCompiler.Create(FContext, Node.Func, Self);
-  try
-    NewCode := Child.CompileFunction(FunctionName);
-  finally
-    Child.Free;
+  if IsLazyCandidate(Node.Func) then
+    NewCode := LazyStub(Node.Func, FunctionName)
+  else
+  begin
+    Child := TJsFunctionCompiler.Create(FContext, Node.Func, Self);
+    try
+      NewCode := Child.CompileFunction(FunctionName);
+    finally
+      Child.Free;
+    end;
   end;
   if Target < 0 then
     Target := AllocateRegister;
@@ -208,25 +304,7 @@ var
   Flags: LongWord;
   FullName: UnicodeString;
 begin
-  Flags := 0;
-  if FInfo.IsStrict then
-    Flags := Flags or CodeStrict;
-  if FInfo.IsGenerator then
-    Flags := Flags or CodeGenerator;
-  if FInfo.IsAsync then
-    Flags := Flags or CodeAsync;
-  case FInfo.Kind of
-    fkArrow: Flags := Flags or CodeArrow;
-    fkNormal:
-      if not FInfo.IsAsync and not FInfo.IsGenerator then
-        Flags := Flags or CodeConstructor;
-    fkMethod, fkClassFieldInitializer: Flags := Flags or CodeMethod;
-    fkGetter: Flags := Flags or CodeMethod or CodeGetter;
-    fkSetter: Flags := Flags or CodeMethod or CodeSetter;
-    fkClassConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor;
-    fkDerivedConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor or CodeDerivedConstructor;
-    fkScript, fkModule: Flags := Flags or CodeScript;
-  end;
+  Flags := FunctionCodeFlags(FInfo);
   if FCode.RestRegister >= 0 then
     Flags := Flags or CodeHasRest;
   if FCode.ArgumentsRegister >= 0 then
@@ -234,11 +312,7 @@ begin
   if FMappedArguments then
     Flags := Flags or CodeMappedArguments;
   FCode.Flags := Flags;
-  FullName := Name;
-  if FInfo.Kind = fkGetter then
-    FullName := 'get ' + Name
-  else if FInfo.Kind = fkSetter then
-    FullName := 'set ' + Name;
+  FullName := FunctionFullName(FInfo, Name);
   FCode.Name := Runtime.Atoms.Intern(NewStringFromUnicode(Heap, FullName));
   FCode.Length := FInfo.Length;
   FCode.SourceStart := FInfo.SourceStart;
@@ -958,6 +1032,61 @@ begin
     end;
     Module.HasTopLevelAwait := Program_.Func.IsAsync;
     FillModuleRecord(Realm, Module, Syntax, Scope);
+  finally
+    Context.Free;
+    Parser.Free;
+    Arena.Free;
+  end;
+end;
+
+procedure CompileLazyFunction(Realm: TJsRealm; Code: TJsCode);
+var
+  Lazy: TJsLazyFunction;
+  Arena: TJsAstArena;
+  Parser: TJsParser;
+  Info: TJsFunctionInfo;
+  Context: TJsCompileContext;
+  Compiler: TJsFunctionCompiler;
+  Compiled: TJsCode;
+begin
+  Lazy := TJsLazyFunction(Code.Lazy);
+  Arena := TJsAstArena.Create;
+  Parser := nil;
+  Context := nil;
+  try
+    Parser := TJsParser.Create(Code.Source.Text, Arena);
+    Info := Parser.ParseLazyFunction(Lazy.Start, Lazy.Line, Lazy.Column, BuildScopes(Lazy.Chain, Arena), Lazy.FunctionKind,
+      Lazy.IsAsync, Lazy.IsGenerator, Lazy.IsStrict, Lazy.HasSelfName, Lazy.Name);
+    ResolveFunctionScope(Info.Scope);
+    Context := TJsCompileContext.Create;
+    Context.Realm := Realm;
+    Context.FileName := Code.Source.FileName;
+    Context.Source := Code.Source;
+    Context.Module := Code.Module;
+    Compiler := TJsFunctionCompiler.Create(Context, Info, nil);
+    try
+      Compiled := Compiler.CompileFunction(Lazy.Name);
+    finally
+      Compiler.Free;
+    end;
+    { The closures hold Code: it becomes the compiled code. }
+    Code.Instructions := Compiled.Instructions;
+    Code.Constants := Compiled.Constants;
+    Code.Functions := Compiled.Functions;
+    Code.Caches := Compiled.Caches;
+    Compiled.Caches := nil;
+    Code.Handlers := Compiled.Handlers;
+    Code.Lines := Compiled.Lines;
+    Code.RegisterCount := Compiled.RegisterCount;
+    Code.ParameterCount := Compiled.ParameterCount;
+    Code.ArgumentsRegister := Compiled.ArgumentsRegister;
+    Code.RestRegister := Compiled.RestRegister;
+    Code.TemplateObjects := Compiled.TemplateObjects;
+    Code.EvalChains := Compiled.EvalChains;
+    Code.ParameterSlots := Compiled.ParameterSlots;
+    Code.Flags := Compiled.Flags;
+    Code.Lazy := nil;
+    Realm.Heap.Account(Code.MemorySize - Code.InstanceSize);
   finally
     Context.Free;
     Parser.Free;

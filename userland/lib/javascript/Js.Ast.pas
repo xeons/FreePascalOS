@@ -247,6 +247,14 @@ type
     SourceFinish: Integer;
     Line: Integer;
     Column: Integer;
+    { Where the parameter list starts (a lazy function is parsed again
+      from there when first called). }
+    ParametersStart: Integer;
+    ParametersLine: Integer;
+    ParametersColumn: Integer;
+    { Private names appear in it (it needs its class's private scope:
+      not compiled lazily). }
+    UsesPrivateNames: Boolean;
     { Class constructors: the class's field initializers. }
     FieldInitializer: TJsNode;
     ClassNode: TJsNode;

@@ -190,9 +190,24 @@ begin
   end;
 end;
 
+function CompileLazy(R: TJsRealm; Code: TJsCode): Boolean;
+begin
+  try
+    CompileLazyFunction(R, Code);
+    Result := True;
+  except
+    on Error: EJsSyntaxError do
+    begin
+      R.ThrowError(ekSyntax, Error.Message);
+      Result := False;
+    end;
+  end;
+end;
+
 procedure InstallDirectEval(R: TJsInterpreterRealm);
 begin
   JsDirectEvalHook := @DirectEval;
+  JsCompileLazyHook := @CompileLazy;
 end;
 
 end.

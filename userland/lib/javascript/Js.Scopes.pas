@@ -59,6 +59,10 @@ uses
   misplaced new.target or super. }
 procedure ResolveProgram(Program_: TJsNode);
 
+{ Resolves one function's references (a lazily compiled function,
+  parsed inside scopes rebuilt around it). }
+procedure ResolveFunctionScope(Scope: TJsScope);
+
 { The nearest scope that has its own this (a function not an arrow, a
   script, an eval). }
 function ThisScopeOf(Scope: TJsScope): TJsScope;
@@ -303,6 +307,13 @@ begin
   end;
   for Index := 0 to Scope.ChildCount - 1 do
     ResolveScope(Scope.Children[Index]);
+end;
+
+procedure ResolveFunctionScope(Scope: TJsScope);
+begin
+  PrepareScope(Scope);
+  ResolveScope(Scope);
+  CaptureExposed(Scope);
 end;
 
 procedure ResolveProgram(Program_: TJsNode);

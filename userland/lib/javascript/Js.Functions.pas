@@ -65,6 +65,8 @@ const
   CodeMappedArguments = 2048;
   CodeGetter = 4096;
   CodeSetter = 8192;
+  { Not compiled yet: compiled from Lazy when first called. }
+  CodeLazy = 16384;
 
 type
   PJsPropertyCacheExtra = ^TJsPropertyCacheExtra;
@@ -141,6 +143,9 @@ type
     { Mapped arguments: the environment slot of each parameter (-1: not
       mapped). }
     ParameterSlots: array of Integer;
+    { A lazy function: where its source is and what is around it
+      (TJsLazyFunction). }
+    Lazy: TJsCell;
     destructor Destroy; override;
     procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
@@ -326,6 +331,7 @@ begin
   Tracer.MarkCell(Name);
   Tracer.MarkCell(Source);
   Tracer.MarkCell(Module);
+  Tracer.MarkCell(Lazy);
   for Index := 0 to High(EvalChains) do
     Tracer.MarkCell(EvalChains[Index]);
   Tracer.MarkValues(@TemplateObjects[0], System.Length(TemplateObjects));
