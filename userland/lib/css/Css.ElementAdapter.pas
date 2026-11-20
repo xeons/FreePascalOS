@@ -77,11 +77,11 @@ type
     function ClassAt(Element: TCssElement; Index: Integer): TCssAtom; virtual; abstract;
     { The attribute in namespace NamespaceUri (NoAtom: none) with local
       name LocalName (lowercase for HTML elements in HTML documents). }
-    function FindAttribute(Element: TCssElement; NamespaceUri, LocalName: TCssAtom;
+    function FindAttribute(Element: TCssElement; AttributeNamespace, AttributeName: TCssAtom;
       out Value: string): Boolean; virtual; abstract;
     { All attributes, for [*|name]. }
     function AttributeCount(Element: TCssElement): Integer; virtual; abstract;
-    procedure AttributeAt(Element: TCssElement; Index: Integer; out NamespaceUri, LocalName: TCssAtom;
+    procedure AttributeAt(Element: TCssElement; Index: Integer; out AttributeNamespace, AttributeName: TCssAtom;
       out Value: string); virtual; abstract;
 
     function Parent(Element: TCssElement): TCssElement; virtual; abstract;
