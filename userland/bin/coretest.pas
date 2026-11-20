@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..389] of TCommandTest = (
+  CommandTests: array[0..390] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -662,7 +662,9 @@ const
     { cssdump: style sheets through libcss, printed back normalized. }
     (Command: 'printf "a{color:red;margin:1px 1px}" | cssdump'; ExpectedOutput: 'a { color: rgb(255, 0, 0); margin: 1px; }'#10; ExpectedStatus: 0),
     (Command: 'printf "margin:1px 2px;color:blue;bogus:1" | cssdump -d'; ExpectedOutput: 'margin: 1px 2px; color: rgb(0, 0, 255);'#10; ExpectedStatus: 0),
-    (Command: 'printf "a > b.c, #x:hover {}" | cssdump -s'; ExpectedOutput: '(0,1,2) a > b.c'#10'(1,1,0) #x:hover'#10; ExpectedStatus: 0)
+    (Command: 'printf "a > b.c, #x:hover {}" | cssdump -s'; ExpectedOutput: '(0,1,2) a > b.c'#10'(1,1,0) #x:hover'#10; ExpectedStatus: 0),
+    { libweb: htmldump parses a file into the html5lib tree format and serializes it again. }
+    (Command: 'printf ''<!DOCTYPE html><title>T</title><p class=a>x&amp;y<b>z</p>'' > t.html; htmldump t.html; htmldump -s t.html; echo; rm t.html'; ExpectedOutput: '| <!DOCTYPE html>'#10'| <html>'#10'|   <head>'#10'|     <title>'#10'|       "T"'#10'|   <body>'#10'|     <p>'#10'|       class="a"'#10'|       "x&y"'#10'|       <b>'#10'|         "z"'#10'<!DOCTYPE html><html><head><title>T</title></head><body><p class="a">x&amp;y<b>z</b></p></body></html>'#10; ExpectedStatus: 0)
   );
 
 var

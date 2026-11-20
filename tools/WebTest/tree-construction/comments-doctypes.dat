@@ -1,0 +1,276 @@
+#data
+<!DOCTYPE html><!----><!-- a -- b --><!--->x<!-- y --!><!-- z --!x-->
+#errors
+#document
+| <!DOCTYPE html>
+| <!--  -->
+| <!--  a -- b  -->
+| <!--  -->
+| <html>
+|   <head>
+|   <body>
+|     "x"
+|     <!--  y  -->
+|     <!--  z --!x -->
+
+#data
+<!DOCTYPE html><!-- <!-- nested --> -->
+#errors
+#document
+| <!DOCTYPE html>
+| <!--  <!-- nested  -->
+| <html>
+|   <head>
+|   <body>
+|     "-->"
+
+#data
+<!DOCTYPE html><?php x ?></ y><!x>
+#errors
+#document
+| <!DOCTYPE html>
+| <!-- ?php x ? -->
+| <!--  y -->
+| <!-- x -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><!-- unterminated
+#errors
+#document
+| <!DOCTYPE html>
+| <!--  unterminated -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><!--a<!--b-->
+#errors
+#document
+| <!DOCTYPE html>
+| <!-- a<!--b -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html>
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!doctype HTML>
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<html>
+#errors
+#mode quirks
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01 Transitional//EN" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+#errors
+#mode limited-quirks
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+#errors
+#mode limited-quirks
+#document
+| <!DOCTYPE html "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html SYSTEM "about:legacy-compat">
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html "" "about:legacy-compat">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE foo>
+#errors
+#mode quirks
+#document
+| <!DOCTYPE foo>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE>
+#errors
+#mode quirks
+#document
+| <!DOCTYPE >
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3O//DTD W3 HTML Strict 3.0//EN//">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "-//W3O//DTD W3 HTML Strict 3.0//EN//" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//IETF//DTD HTML 2.0//EN">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "-//IETF//DTD HTML 2.0//EN" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html SYSTEM "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "" "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html public 'x' "y">
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html "x" "y">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html bogus>
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC>
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html SYSTEM "x" junk>
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html "" "x">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPEhtml>
+#errors
+#mode no-quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "unterminated>
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "unterminated" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><!DOCTYPE html>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+
+#data
+<!DOCTYPE html PUBLIC "html">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "html" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN">
+#errors
+#mode quirks
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01 Frameset//EN" "">
+| <html>
+|   <head>
+|   <body>

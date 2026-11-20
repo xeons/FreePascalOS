@@ -1,0 +1,633 @@
+#data
+Test
+#errors
+(1,0): expected-doctype-but-got-chars
+#document
+| <html>
+|   <head>
+|   <body>
+|     "Test"
+
+#data
+<p>One<p>Two
+#errors
+(1,3): expected-doctype-but-got-start-tag
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "One"
+|     <p>
+|       "Two"
+
+#data
+<!DOCTYPE html><html><head></head><body></body></html>
+#errors
+#roundtrip
+#mode no-quirks
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!-- c --><!DOCTYPE html>x
+#errors
+#document
+| <!--  c  -->
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+
+#data
+  <html>  <head>  </head>  <body>x
+#errors
+(1,8): expected-doctype-but-got-start-tag
+#document
+| <html>
+|   <head>
+|     "  "
+|   "  "
+|   <body>
+|     "x"
+
+#data
+<!DOCTYPE html><p>a</p>b</body>c</html>d
+#errors
+(1,32): unexpected-char-after-body
+(1,40): unexpected-char-after-body
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "a"
+|     "bcd"
+
+#data
+<!DOCTYPE html>x</html><!-- c -->
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+| <!--  c  -->
+
+#data
+<!DOCTYPE html>x</body><!--c-->
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+|   <!-- c -->
+
+#data
+<!DOCTYPE html>a</br>b
+#errors
+(1,20): unexpected-end-tag-treated-as
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "a"
+|     <br>
+|     "b"
+
+#data
+</p>x
+#errors
+(1,4): expected-doctype-but-got-end-tag
+(1,4): unexpected-end-tag-before-html
+#document
+| <html>
+|   <head>
+|   <body>
+|     "x"
+
+#data
+<!DOCTYPE html><body></p>x
+#errors
+(1,25): unexpected-end-tag
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     "x"
+
+#data
+<!DOCTYPE html><h1>a<h2>b</h1>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <h1>
+|       "a"
+|     <h2>
+|       "b"
+|     "c"
+
+#data
+<!DOCTYPE html><ul><li>a<li>b</ul><li>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <ul>
+|       <li>
+|         "a"
+|       <li>
+|         "b"
+|     <li>
+|       "c"
+
+#data
+<!DOCTYPE html><dl><dt>a<dd>b<dt>c</dl>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <dl>
+|       <dt>
+|         "a"
+|       <dd>
+|         "b"
+|       <dt>
+|         "c"
+
+#data
+<!DOCTYPE html><p><div>x</div>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <div>
+|       "x"
+
+#data
+<!DOCTYPE html><li><div><li>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <li>
+|       <div>
+|     <li>
+|       "x"
+
+#data
+<!DOCTYPE html><li><span><li>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <li>
+|       <span>
+|     <li>
+|       "x"
+
+#data
+<!DOCTYPE html><li><address><li>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <li>
+|       <address>
+|     <li>
+|       "x"
+
+#data
+<!DOCTYPE html><li><ul><li>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <li>
+|       <ul>
+|         <li>
+|           "x"
+
+#data
+<!DOCTYPE html><body a=1><body b=2 a=3>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     a="1"
+|     b="2"
+
+#data
+<html a=1><html b=2 a=3>
+#errors
+#document
+| <html>
+|   a="1"
+|   b="2"
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><image src=x>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <img>
+|       src="x"
+
+#data
+<!DOCTYPE html><isindex prompt=q>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <isindex>
+|       prompt="q"
+
+#data
+<!DOCTYPE html><button>a<button>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <button>
+|       "a"
+|     <button>
+|       "b"
+
+#data
+<!DOCTYPE html><p><hr>x
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <hr>
+|     "x"
+
+#data
+<!DOCTYPE html><form><form><input></form><input>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <form>
+|       <input>
+|     <input>
+
+#data
+<!DOCTYPE html><frameset><frame></frameset>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+
+#data
+<!DOCTYPE html><frameset> x <frame></frameset> y <noframes>z</noframes>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <frameset>
+|     "  "
+|     <frame>
+|   "  "
+|   <noframes>
+|     "z"
+
+#data
+<!DOCTYPE html><p>x<frameset>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "x"
+
+#data
+<!DOCTYPE html><body><frameset><frame>
+#errors
+(1,31): unexpected-start-tag
+(1,38): unexpected-start-tag-ignored
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><div><frameset><frame>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+
+#data
+<!DOCTYPE html><ruby>a<rb>b<rt>c<rp>d<rtc>e<rt>f</ruby>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <ruby>
+|       "a"
+|       <rb>
+|         "b"
+|       <rt>
+|         "c"
+|       <rp>
+|         "d"
+|       <rtc>
+|         "e"
+|         <rt>
+|           "f"
+
+#data
+<!DOCTYPE html><option>a<option>b<optgroup>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <option>
+|       "a"
+|     <option>
+|       "b"
+|     <optgroup>
+|       "c"
+
+#data
+<!DOCTYPE html><search><p>x</search>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <search>
+|       <p>
+|         "x"
+|     "y"
+
+#data
+<!DOCTYPE html><p><search>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <search>
+|       "x"
+
+#data
+<!DOCTYPE html><applet><b>x</applet>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <applet>
+|       <b>
+|         "x"
+|     "y"
+
+#data
+<!DOCTYPE html><object><p>x</object>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <object>
+|       <p>
+|         "x"
+
+#data
+<!DOCTYPE html><div>a</span>b</div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       "ab"
+
+#data
+<!DOCTYPE html><span><div>a</span>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <span>
+|       <div>
+|         "ab"
+
+#data
+<!DOCTYPE html><input type=hidden><frameset>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <frameset>
+
+#data
+<!DOCTYPE html><input><frameset>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <input>
+
+#data
+<!DOCTYPE html><head><meta charset=utf-8><link rel=x><base href=y><title>T</title><style>s</style></head><body>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <meta>
+|       charset="utf-8"
+|     <link>
+|       rel="x"
+|     <base>
+|       href="y"
+|     <title>
+|       "T"
+|     <style>
+|       "s"
+|   <body>
+
+#data
+<!DOCTYPE html></head><meta x>y<link z>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <meta>
+|       x=""
+|   <body>
+|     "y"
+|     <link>
+|       z=""
+
+#data
+<!DOCTYPE html><head></head><title>t</title>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <title>
+|       "t"
+|   <body>
+|     "x"
+
+#data
+<!DOCTYPE html><html><head></head><!-- a --><body>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <!--  a  -->
+|   <body>
+
+#data
+<!DOCTYPE html><p id=a class="b c" data-x='y' z>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       class="b c"
+|       data-x="y"
+|       id="a"
+|       z=""
+
+#data
+<!DOCTYPE html><p a=1 a=2 A=3 b>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       a="1"
+|       b=""
+
+#data
+<!DOCTYPE html><DIV ClAsS=X>y</dIv>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       class="X"
+|       "y"
+
+#data
+<!DOCTYPE html><table><p>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <table>
+
+#data
+<!DOCTYPE html><p><table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <table>
+
+#data
+<p><table>
+#errors
+#mode quirks
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       <table>

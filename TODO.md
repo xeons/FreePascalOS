@@ -1024,3 +1024,42 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Self test "exited threads did not release their stacks"
       (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
       machines running at once: probably a fixed wait too short under load
+
+## Web engine (libweb)
+
+Part 1 (encodings, HTML parsing, DOM):
+- [x] Atoms with the well-known HTML/SVG/MathML names as constants; 16 bit
+      namespace ids
+- [x] Encoding Standard: labels, streaming UTF-8 / UTF-16LE/BE / single-byte /
+      x-user-defined / replacement decoders, BOM sniff, meta prescan, HTML
+      encoding sniffing, UTF-8 encoder, UTF-16 offset helpers
+- [ ] Decoders (and encoders) for the multi-byte CJK encodings: GBK, gb18030,
+      Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR (labels recognized, read as
+      windows-1252 for now); single-byte encoders for form submission
+- [x] HTML tokenizer (all states, all 2231 named references, error codes),
+      streaming in any pieces
+- [x] Tree construction: all insertion modes, adoption agency, foster
+      parenting, templates, foreign content, quirks, fragment parsing
+- [x] Script hooks: script host at script end tags, insertion point,
+      document.write, pause/resume; meta charset changes and restarts
+- [ ] The 2025 customizable `<select>` parser changes (the classic "in select"
+      modes are implemented)
+- [ ] Declarative shadow roots (`<template shadowrootmode>`) and shadow trees
+      in the DOM (slots, retargeting, composed events)
+- [ ] Form owners of form-associated elements (the parser's form pointer)
+- [x] DOM core: nodes, mutation algorithms with validity checks, Attr nodes,
+      ids, live NodeList/HTMLCollection, DOMTokenList, NamedNodeMap, cloning,
+      comparison, namespaces, observer hooks, lifetime (references and
+      collection)
+- [x] Events: EventTarget, capture/bubble dispatch, once/passive, stop flags
+- [ ] Ranges and StaticRange, NodeIterator/TreeWalker (the mutation algorithms
+      mark where live ranges are adjusted)
+- [ ] MutationObserver on the observer hook (records are already exact)
+- [x] HTML fragment serialization, innerHTML/outerHTML/insertAdjacentHTML
+- [x] `htmldump`; host test (`make web-test`) with html5lib-format cases
+- [ ] Text kept in a document arena instead of one string per node (about
+      150 bytes per node today, text included)
+
+Later phases: libcss adapter and computed style, layout and painting,
+loading through libhttp, JavaScript bindings (wrappers in the node's rare
+data, `TScriptHost`, element interface classes via `ElementClassFor`).

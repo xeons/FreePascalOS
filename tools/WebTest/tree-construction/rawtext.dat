@@ -1,0 +1,244 @@
+#data
+<body><script><!--<script></script>--></script>x
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "<!--<script></script>-->"
+|     "x"
+
+#data
+<body><script><!--</script>x
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "<!--"
+|     "x"
+
+#data
+<body><script>a</SCRIPT >b</script x>c
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "a"
+|     "bc"
+
+#data
+<body><script>a</scripts>b</script>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "a</scripts>b"
+
+#data
+<script>x
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       "x"
+|   <body>
+
+#data
+<style></p></style>
+#errors
+#document
+| <html>
+|   <head>
+|     <style>
+|       "</p>"
+|   <body>
+
+#data
+<!DOCTYPE html><plaintext></plaintext>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <plaintext>
+|       "</plaintext>x"
+
+#data
+<!DOCTYPE html><textarea>
+x</textarea>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       "x"
+
+#data
+<!DOCTYPE html><pre>
+
+x</pre>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <pre>
+|       "
+x"
+
+#data
+<!DOCTYPE html><listing>
+x</listing>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <listing>
+|       "x"
+
+#data
+<!DOCTYPE html><pre><b>
+x</b></pre>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <pre>
+|       <b>
+|         "
+x"
+
+#data
+<!DOCTYPE html><xmp><b></xmp>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <xmp>
+|       "<b>"
+
+#data
+<!DOCTYPE html><iframe><p>x</iframe><noembed><b></noembed>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <iframe>
+|       "<p>x"
+|     <noembed>
+|       "<b>"
+
+#data
+<noscript><p>x</p></noscript>
+#errors
+#script-off
+#document
+| <html>
+|   <head>
+|     <noscript>
+|   <body>
+|     <p>
+|       "x"
+
+#data
+<noscript><p>x</p></noscript>
+#errors
+#script-on
+#document
+| <html>
+|   <head>
+|     <noscript>
+|       "<p>x</p>"
+|   <body>
+
+#data
+<noscript><link rel=x><style>s</style></noscript>y
+#errors
+#script-off
+#document
+| <html>
+|   <head>
+|     <noscript>
+|       <link>
+|         rel="x"
+|       <style>
+|         "s"
+|   <body>
+|     "y"
+
+#data
+<!DOCTYPE html><body><noscript><p>x</p></noscript>
+#errors
+#script-off
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <noscript>
+|       <p>
+|         "x"
+
+#data
+<title><b>x</title>
+#errors
+#document
+| <html>
+|   <head>
+|     <title>
+|       "<b>x"
+|   <body>
+
+#data
+<title>x</ti</title>
+#errors
+#document
+| <html>
+|   <head>
+|     <title>
+|       "x</ti"
+|   <body>
+
+#data
+<!DOCTYPE html><textarea></textarea x="1"></textarea>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+
+#data
+<!DOCTYPE html><body><script><!--<script>x</script>y</script>--></script>z
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <script>
+|       "<!--<script>x</script>y"
+|     "-->z"

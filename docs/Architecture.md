@@ -8937,6 +8937,217 @@ and animations are parsed and stored but not run; gamut mapping is
 clipping; computed colors are 16 bit sRGB; the cascade's sort is an
 insertion sort (fine for the dozens of rules that match one element).
 
+## Web engine (libweb)
+
+libweb (`userland/lib/web`, `libweb.so`, units `Web.*`) is the browser
+engine that both the browser application and the web view control will
+use. Part 1, here, is the text side: the WHATWG Encoding Standard, the
+HTML parser and the DOM. Layout, painting, resource loading (through
+libhttp), the CSS adapter (libcss) and the script bindings
+(libjavascript) are later phases, and the structures below leave room
+for them. It depends on libsystem only; `htmldump` (in /bin) is its
+command line front end.
+
+### Atoms and namespaces
+
+Names are atoms (`Web.Atoms`): a process-wide table interns element and
+attribute local names, namespaces, prefixes, event types and class
+names once, and they compare as 32 bit integers. The well-known HTML,
+SVG and MathML names are predeclared constants (`AtomDiv`,
+`AtomForeignObject`, `AtomSvgNamespace`, ...), generated at build time
+from `data/well-known-names.txt` by `make-tables.py`; the table only
+grows and is not locked (the documents' thread makes atoms). A node
+keeps its namespace and prefix together as a 16 bit `TNamespaceId`
+(`Web.Namespaces`), an index into a table of (namespace, prefix) pairs
+whose common ones are fixed (`NamespaceHtml`, `NamespaceSvg`,
+`NamespaceXLink` with the xlink prefix, ...).
+
+### Encodings
+
+`Web.Encoding.*` implements the Encoding Standard: all encodings and
+their labels (from `data/encoding-labels.txt`), "get an encoding",
+streaming decoders that take bytes in any number of pieces and append
+UTF-8 to a `TTextBuffer` (UTF-8 with the standard's maximal-subpart
+replacement, UTF-16LE/BE with lone surrogates replaced, the 27
+single-byte encodings from index tables in `data/single-byte-indexes.txt`,
+x-user-defined, replacement), the BOM sniff, the meta prescan with its
+"get an attribute" algorithm, the extraction of a charset from a
+Content-Type pragma, and the HTML encoding sniffing algorithm (BOM,
+transport charset: certain; prescan of the first 1024 bytes: tentative;
+windows-1252). The UTF-8 encoder (lone surrogates to U+FFFD) and UTF-16
+helpers are in `Web.Encoding.Utf8`. The multi-byte CJK encodings (GBK,
+gb18030, Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR) are recognized
+but not decoded yet: the parser reads them as windows-1252 and says so
+(`UnsupportedEncoding`).
+
+The data files were written once from the standards' tables (the named
+references and the single-byte indexes with Python's own copies of
+them, patched where WHATWG differs: KOI8-U is KOI8-RU, windows-1255
+0xCA, the C1 bytes of the windows-* encodings); nothing is downloaded.
+
+### Text: UTF-8 inside, UTF-16 at the API
+
+The DOM keeps text and attribute values in UTF-8 (`string`). The DOM's
+offsets and lengths (`length`, `substringData`, `splitText`, later
+ranges and JavaScript's view of strings) are in UTF-16 code units;
+`TCharacterData` converts them with `Web.Encoding.Utf8`, and a text node
+remembers whether its text is all ASCII (a flag computed on first use),
+in which case offsets are the same and no scan is needed. A lone
+surrogate set from JavaScript is kept as generalized UTF-8 (WTF-8, the
+surrogate's three bytes); the parser never makes one. The tokenizer can
+work on bytes because every character HTML's syntax looks at is ASCII:
+non-ASCII bytes only ever pass through as data.
+
+### The DOM
+
+`Web.Dom` holds the node classes (they refer to each other, so one unit,
+its code spread over `Web.Dom.*.inc` by concern): `TNode`,
+`TContainerNode` (documents, fragments, elements: only these have child
+links), `TCharacterData` with `TText`, `TCDataSection`, `TComment`,
+`TProcessingInstruction`, `TDocumentType`, `TElement`, `TAttr`,
+`TDocumentFragment` and `TDocument`; `TNodeList` (live child lists that
+remember their position, fixed lists), `THtmlCollection` (live, cached
+until the global DOM version moves: `children`, `getElementsByTagName`,
+`...TagNameNS`, `...ClassName`, `namedItem`), `TDomTokenList`
+(`classList`), `TNamedNodeMap`. `Web.Dom.Exceptions` has DOMException
+(`EDomException` with the WebIDL error name and legacy code).
+
+- The mutation algorithms follow the DOM Standard: ensure pre-insertion
+  validity, pre-insert, insert (fragments insert their children),
+  append, replace, replace all, pre-remove, remove and adopt, and the
+  Node, ParentNode and ChildNode methods on them (`insertBefore`,
+  `replaceChildren`, `before`, `replaceWith`, ...), with
+  HierarchyRequestError and NotFoundError where the standard throws.
+  Element and attribute names are checked with the relaxed 2025 rules
+  ("valid element local name"), and `createElementNS`/`setAttributeNS`
+  use "validate and extract". Live ranges and node iterators are marked
+  in the code for the Range work of a later phase.
+- Attributes are an array of 16 byte records (value, local name atom,
+  namespace id) on the element; `Attr` nodes are made only when asked
+  for and keep their identity while the attribute lives. Ids are in a
+  per-document map (each id's connected elements, the first in tree
+  order found when several share it and kept until they change); class
+  names are cached as atoms for selector matching (`HasClass`).
+- `TDocumentObserver` is the hook for later phases: it gets exactly the
+  tree mutation records MutationObserver queues (`TreeMutated`), the
+  children changed steps, each node becoming connected (after the
+  insertion, like the insertion steps scripts need) or disconnected,
+  attribute and character data changes with old values.
+  `TDocument.ElementClassFor` picks the element class (the bindings will
+  give HTML elements their interface classes); `LayoutData` and
+  `ScriptWrapper` are slots for layout and the bindings.
+- Templates have their contents in a fragment of the document's
+  inert "template contents owner" document; cloning copies them and
+  adoption moves them, as the HTML Standard says.
+
+Events (`Web.Dom.Events`): `TEventTarget` (no fields of its own; nodes
+keep their listeners in the rare data), `TEvent`, `TEventListener`
+objects owned by the target's list. Dispatch builds the path through
+"get the parent", runs capture listeners from the top down, the
+target's capture and then other listeners, and bubble listeners back
+up; stopPropagation, stopImmediatePropagation, preventDefault
+(cancelable only, not in passive listeners), once, listeners added or
+removed during dispatch, and exceptions in listeners (reported, the
+others still run) behave as the standard says. Shadow trees,
+retargeting and activation behavior come with the later phases; the
+event loop too.
+
+### Node size and lifetime
+
+A node object is small: after the VMT, 8 bytes hold its kind, flags,
+namespace id and local name atom; then the parent and sibling links,
+its document, a layout data slot and a pointer to rare data (script
+wrapper, reference counts, listeners, cached lists, Attr objects,
+template contents), made only when needed. On x86-64 an element is 88
+bytes (96 with the heap's header; the size was chosen to fit that heap
+class) and a text node 72 (80). On the test's generated document
+(3.4 MB of HTML, 380,000 nodes) the whole document costs about 150
+bytes of heap per node, text and attributes included; whitespace-only
+texts between tags are shared strings.
+
+Nodes are kept alive by their parent and by references (Retain/Release:
+the bindings will hold one per wrapper). A node counts the references
+in its whole subtree, so a detached subtree knows at once whether
+anything in it is referenced; a referenced detached subtree keeps its
+document alive; a document lives while referenced (its creator holds
+the first reference) or while anything of it is. Detached unreferenced
+subtrees (removed nodes, nodes created and never inserted) are listed
+and freed by `CollectGarbage`, which the owner calls between tasks,
+never in the middle of an algorithm, so a removed node stays valid
+until then; a document frees its listed nodes when it goes. Trees are
+freed, cloned, compared and serialized without recursion, so a parsed
+tree may be any depth.
+
+### The HTML parser
+
+`Web.Html.*` is the HTML Standard's parsing algorithm, complete:
+
+- The input stream (`Web.Html.InputStream`) keeps decoded text with CR
+  and CR LF normalized (also across pieces) and counts the input
+  stream preprocessing errors.
+- The tokenizer (`Web.Html.Tokenizer`, states in
+  `Web.Html.Tokenizer*.inc`) has every state of the standard, with the
+  parse errors by their codes. It stops wherever the input runs out and
+  carries on with the next piece; lookaheads ("DOCTYPE", "[CDATA[",
+  named references) wait until enough input is there. Plain runs of
+  text are copied in one move and reach the tree builder as one token.
+  The 2231 named character references (`data/named-character-references.txt`)
+  are matched longest first by narrowing the sorted names one character
+  at a time.
+- The tree builder (`Web.Html.TreeBuilder`, modes in
+  `Web.Html.TreeBuilder*.inc`) has all 23 insertion modes, the stack of
+  open elements with the scope checks, the list of active formatting
+  elements with the Noah's Ark clause, the adoption agency algorithm,
+  foster parenting, template contents and the template insertion modes,
+  foreign content with the SVG and MathML name and attribute adjustments
+  and integration points, the document mode from the DOCTYPE
+  (`Web.Html.Quirks`), and the fragment case. Parse errors are counted
+  (and listed with `CollectErrors`), never fatal.
+- `Web.Html.Parser` joins them: bytes in, with sniffing and decoders; a
+  meta charset met later while the confidence is tentative switches the
+  decoder when everything so far was ASCII and otherwise asks for a
+  restart, which `ParseHtmlDocument` does. For scripts (phase 2) the
+  parser calls a `TScriptHost` at each script end tag with the insertion
+  point set and the script nesting level raised; the host can call
+  `DocumentWrite`, which tokenizes the written text at once up to the
+  insertion point, and can pause the parser for a parsing-blocking
+  script (`Resume` carries on). With scripting off (the default)
+  noscript is parsed as markup. `ParseHtmlFragment` is the fragment
+  parsing algorithm.
+- `Web.Html.Serializer` is the HTML fragment serialization algorithm
+  (attribute values escape `<` and `>` too, as since 2025),
+  `Web.Html.Markup` innerHTML, outerHTML and insertAdjacentHTML, and
+  `Web.Html.TreeDump` the html5lib test format.
+
+Not yet: the 2025 customizable `<select>` parser changes (the classic
+"in select" modes are implemented), declarative shadow roots on
+`<template shadowrootmode>`, form owners of form-associated elements.
+
+`htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
+prints its tree in the html5lib format (`-s` the serialization, `-e`
+the parse errors, `-c` the transport charset, `-f` a fragment in an
+HTML context element).
+
+### Tests
+
+`make web-test` (in `make test`) builds `tools/WebTest` on the host
+against the library's sources. Its tree construction cases are in the
+html5lib format (`tools/WebTest/tree-construction/*.dat`, written from
+the standard's algorithm: misnested formatting and the adoption agency,
+tables and foster parenting, templates, foreign content, character
+references, raw text elements, comments, doctypes and document modes,
+fragments); each case is parsed whole and again one byte at a time, and
+some are checked for the document mode (`#mode`) or for parsing their
+serialization again (`#roundtrip`). The other checks cover the decoders
+(error cases, in pieces), labels, the prescan and sniffing, the
+parser's encoding changes and restarts, the DOM's mutation algorithms
+and their errors, UTF-16 offsets, attributes and Attr nodes, ids,
+live collections, classList, cloning and comparison, namespaces, the
+observer hook, node lifetime, the script hook with document.write and
+pausing, innerHTML and friends, event dispatch, and serialization. The
+test prints the parser's speed and bytes per node ("perf" lines): on the
+build machine about 2.3 million nodes (20 MB of HTML) per second.
+
 ## The AArch64 port
 
 The target is the **Raspberry Pi 4** (and the Pi 400 and the Compute

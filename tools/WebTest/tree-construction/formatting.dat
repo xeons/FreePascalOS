@@ -1,0 +1,349 @@
+#data
+<!DOCTYPE html><b><p>x</b>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|     <p>
+|       <b>
+|         "x"
+|       "y"
+
+#data
+<!DOCTYPE html><a><p>X<a>Y</a>Z</p></a>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|     <p>
+|       <a>
+|         "X"
+|       <a>
+|         "Y"
+|       "Z"
+
+#data
+<!DOCTYPE html><a>1<div>2<div>3</a>4</div>5</div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       "1"
+|     <div>
+|       <a>
+|         "2"
+|       <div>
+|         <a>
+|           "3"
+|         "4"
+|       "5"
+
+#data
+<!DOCTYPE html><b>1<p>2<i>3</b>4</p>5
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       "1"
+|     <p>
+|       <b>
+|         "2"
+|         <i>
+|           "3"
+|       <i>
+|         "4"
+|     <i>
+|       "5"
+
+#data
+<!DOCTYPE html><b>one<i>two</b>three</i>four
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       "one"
+|       <i>
+|         "two"
+|     <i>
+|       "three"
+|     "four"
+
+#data
+<!DOCTYPE html><nobr>a<nobr>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <nobr>
+|       "a"
+|     <nobr>
+|       "b"
+
+#data
+<!DOCTYPE html><p><b><b><b><b>x</p>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       <b>
+|         <b>
+|           <b>
+|             <b>
+|               "x"
+|     <b>
+|       <b>
+|         <b>
+|           "y"
+
+#data
+<!DOCTYPE html><p><b class=x><b class=x><b><b class=x>x</p>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       <b>
+|         class="x"
+|         <b>
+|           class="x"
+|           <b>
+|             <b>
+|               class="x"
+|               "x"
+|     <b>
+|       class="x"
+|       <b>
+|         class="x"
+|         <b>
+|           <b>
+|             class="x"
+|             "y"
+
+#data
+<!DOCTYPE html><p><i>a</p>b<p>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       <i>
+|         "a"
+|     <i>
+|       "b"
+|       <p>
+|         "c"
+
+#data
+<!DOCTYPE html><a href=1>x<a href=2>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       href="1"
+|       "x"
+|     <a>
+|       href="2"
+|       "y"
+
+#data
+<!DOCTYPE html><a><div><a>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|     <div>
+|       <a>
+|       <a>
+|         "x"
+
+#data
+<!DOCTYPE html><em><table><tr><td>a</em>b</td></tr></table>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <em>
+|       <table>
+|         <tbody>
+|           <tr>
+|             <td>
+|               "ab"
+|       "c"
+
+#data
+<!DOCTYPE html><b><table><td><i>x</table>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       <table>
+|         <tbody>
+|           <tr>
+|             <td>
+|               <i>
+|                 "x"
+|       "y"
+
+#data
+<!DOCTYPE html><div><b></div>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <b>
+|     <b>
+|       "x"
+
+#data
+<!DOCTYPE html><u><s><tt>x</u>y</s>z
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <u>
+|       <s>
+|         <tt>
+|           "x"
+|     <s>
+|       <tt>
+|         "y"
+|     <tt>
+|       "z"
+
+#data
+<!DOCTYPE html><font color=red><p>a</font>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <font>
+|       color="red"
+|     <p>
+|       <font>
+|         color="red"
+|         "a"
+|       "b"
+
+#data
+<!DOCTYPE html><b><button>x</b>y</button>z
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|     <button>
+|       <b>
+|         "x"
+|       "y"
+|     "z"
+
+#data
+<!DOCTYPE html><b>x<marquee>y</b>z</marquee>w
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       "x"
+|       <marquee>
+|         "yz"
+|       "w"
+
+#data
+<!DOCTYPE html><code><code><code><code><code>x</code></code>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <code>
+|       <code>
+|         <code>
+|           <code>
+|             <code>
+|               "x"
+|           "y"
+
+#data
+<!DOCTYPE html><b><i><u><s><em><div>x</b>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       <i>
+|         <u>
+|           <s>
+|             <em>
+|     <u>
+|       <s>
+|         <em>
+|           <div>
+|             <b>
+|               "x"
+|             "y"
+
+#data
+<!DOCTYPE html><select><optgroup><option>a</optgroup><option>b</option></option>c</select>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <optgroup>
+|         <option>
+|           "a"
+|       <option>
+|         "b"
+|       "c"
