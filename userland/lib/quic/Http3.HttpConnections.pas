@@ -51,7 +51,9 @@
     so the client sends it again on another connection.
   - Reprioritize sends PRIORITY_UPDATE (RFC 9218).
 
-  The connection is usable while the QUIC connection is open, no
+  The thread that runs a slice knows its exchange from a small table of
+  threads under the lock. The connection is usable while the QUIC
+  connection is open, no
   GOAWAY came and its idle timeout is more than a second away; the
   exchanges in flight at once are kept within the streams the server
   allows. Plain Pascal over a connected TQuicConnection, so it runs on
@@ -83,6 +85,13 @@ const
 
 type
   THttp3Connection = class;
+  THttp3Exchange = class;
+
+  { Which exchange a thread inside libquic works for. }
+  TWaitingThread = record
+    Thread: TThreadID;
+    Exchange: THttp3Exchange;
+  end;
 
   { The HTTP/3 connection whose waits go in slices, with the lock let go
     between them. }
@@ -132,8 +141,13 @@ type
     FClosed: Boolean;
     FUsable: Boolean;
     FIdleDeadline: Int64;
+    FWaiting: array of TWaitingThread;
     procedure Lock;
+    { Lock, noting that this thread works for Exchange until Unlock. }
+    procedure LockFor(Exchange: THttp3Exchange);
     procedure Unlock;
+    { Under the lock: the exchange this thread works for, or nil. }
+    function ExchangeOfThisThread: THttp3Exchange;
     { Under the lock: lets the other threads in for a moment. }
     procedure LetOthersIn;
     { Under the lock: FUsable and FIdleDeadline from the connection. }
@@ -171,10 +185,6 @@ const
   NoTimeoutMilliseconds = Int64(24) * 3600 * 1000;
   BodyPieceSize = 16384;
 
-threadvar
-  { The exchange whose call into libquic this thread is making. }
-  WaitingExchange: THttp3Exchange;
-
 function IsConnectionSpecific(const Name: string): Boolean;
 begin
   Result := (Name = 'connection') or (Name = 'keep-alive') or (Name = 'proxy-connection') or
@@ -191,7 +201,7 @@ begin
   Result := LastError;
   if Result <> 0 then
     Exit;
-  Exchange := WaitingExchange;
+  Exchange := FOwner.ExchangeOfThisThread;
   if (Exchange <> nil) and Exchange.FAborted then
     Exit(Http3ErrorCanceled);
   Slice := Deadline - QuicMilliseconds;
@@ -249,11 +259,43 @@ begin
   EnterCriticalSection(FLock);
 end;
 
-procedure THttp3Connection.Unlock;
+procedure THttp3Connection.LockFor(Exchange: THttp3Exchange);
+var
+  Entry: TWaitingThread;
 begin
-  WaitingExchange := nil;
+  EnterCriticalSection(FLock);
+  Entry.Thread := GetCurrentThreadId;
+  Entry.Exchange := Exchange;
+  SetLength(FWaiting, Length(FWaiting) + 1);
+  FWaiting[High(FWaiting)] := Entry;
+end;
+
+procedure THttp3Connection.Unlock;
+var
+  Index: Integer;
+  Thread: TThreadID;
+begin
+  Thread := GetCurrentThreadId;
+  for Index := High(FWaiting) downto 0 do
+    if FWaiting[Index].Thread = Thread then
+    begin
+      Delete(FWaiting, Index, 1);
+      Break;
+    end;
   Refresh;
   LeaveCriticalSection(FLock);
+end;
+
+function THttp3Connection.ExchangeOfThisThread: THttp3Exchange;
+var
+  Index: Integer;
+  Thread: TThreadID;
+begin
+  Thread := GetCurrentThreadId;
+  for Index := High(FWaiting) downto 0 do
+    if FWaiting[Index].Thread = Thread then
+      Exit(FWaiting[Index].Exchange);
+  Result := nil;
 end;
 
 procedure THttp3Connection.LetOthersIn;
@@ -489,11 +531,9 @@ begin
       Exit(HttpFailure(HttpSendFailed, 'the request content could not be read'));
     if Count = 0 then
       Break;
-    FConnection.Lock;
+    FConnection.LockFor(Self);
     try
-      WaitingExchange := Self;
       Written := FRequest.WriteBody(@Piece[0], Count);
-      WaitingExchange := nil;
       { The server stopped reading: it has answered, or will. }
       if Written = QuicErrorStreamStopped then
         Exit(HttpOk);
@@ -519,11 +559,9 @@ begin
     Exit(Failed(HttpCanceled, 'canceled'));
   if FRequest <> nil then
     Exit(Failed(HttpSendFailed, 'the request was sent already'));
-  FConnection.Lock;
+  FConnection.LockFor(Self);
   try
-    WaitingExchange := Self;
     Result := OpenRequest(Head);
-    WaitingExchange := nil;
   finally
     FConnection.Unlock;
   end;
@@ -543,11 +581,9 @@ begin
   Head.ContentLength := -1;
   if FRequest = nil then
     Exit(Failed(HttpSendFailed, 'the request was not sent'));
-  FConnection.Lock;
+  FConnection.LockFor(Self);
   try
-    WaitingExchange := Self;
     Error := FRequest.ReadHead;
-    WaitingExchange := nil;
     if Error <> 0 then
     begin
       FLastResult := RequestFailure(Error, False);
@@ -583,11 +619,9 @@ begin
     Failed(HttpCanceled, 'canceled');
     Exit(-1);
   end;
-  FConnection.Lock;
+  FConnection.LockFor(Self);
   try
-    WaitingExchange := Self;
     Result := FRequest.ReadBody(Buffer, Count);
-    WaitingExchange := nil;
     if Result = 0 then
     begin
       FBodyEnded := True;
