@@ -29,6 +29,7 @@
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
+#                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -91,6 +92,7 @@ TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
+JAVASCRIPT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/javascript
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -105,6 +107,7 @@ TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
+JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -158,7 +161,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -268,6 +271,15 @@ $(SSH_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/ssh/*.pas)
 		-Fuuserland/lib/ssh -FU$(SSH_LIBRARY_OBJECTS) userland/lib/ssh/Ssh.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libssh.so -o $@ \
 		$(SSH_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
+
+# libjavascript: the ECMAScript engine (Js.*) and its embedding API.
+$(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pas)
+	@rm -rf $(JAVASCRIPT_LIBRARY_OBJECTS)
+	@mkdir -p $(JAVASCRIPT_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/javascript \
+		-FU$(JAVASCRIPT_LIBRARY_OBJECTS) userland/lib/javascript/Js.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libjavascript.so -o $@ \
+		$(JAVASCRIPT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
@@ -385,6 +397,11 @@ SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-key
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
 $(SSH_PROGRAMS): $(SSH_LIBRARY)
+# The JavaScript shell runs scripts with libjavascript.
+JAVASCRIPT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,js)
+$(JAVASCRIPT_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ljavascript
+$(JAVASCRIPT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(JAVASCRIPT_LIBRARY_OBJECTS)
+$(JAVASCRIPT_PROGRAMS): $(JAVASCRIPT_LIBRARY)
 # gzip compresses through libcompression.
 COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression

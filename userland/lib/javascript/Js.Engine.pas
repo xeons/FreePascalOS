@@ -195,7 +195,10 @@ type
 implementation
 
 uses
-  Math;
+  Math
+  { On FreePascalOS (LINUX is undefined there) the kernel's clock and
+    the time zone database; the host tests keep the runtime's. }
+  {$ifndef LINUX}, Js.SystemClock{$endif};
 
 { TJsHostObject }
 
