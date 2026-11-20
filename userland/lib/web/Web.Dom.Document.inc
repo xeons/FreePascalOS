@@ -534,6 +534,14 @@ begin
     FObservers[Index - 1].CharacterDataChanged(Node, OldValue);
 end;
 
+function TDocument.GetTheParent(Event: TEvent): TEventTarget;
+begin
+  if Event.EventType = AtomizeLowerCase('load') then
+    Result := nil
+  else
+    Result := FDefaultView;
+end;
+
 procedure TDocument.SubtreeConnected(Root: TNode);
 var
   Node: TNode;
@@ -692,15 +700,6 @@ const
   Names: array[TDocumentReadyState] of string = ('loading', 'interactive', 'complete');
 begin
   Result := Names[FReadyState];
-end;
-
-function TDocument.GetTheParent(Event: TEvent): TEventTarget;
-begin
-  { HTML: a document's parent is its window, except for load events. }
-  if (FDefaultView = nil) or (Event.TypeName = 'load') then
-    Result := nil
-  else
-    Result := FDefaultView;
 end;
 
 function TDocument.GetTitle: string;

@@ -21,7 +21,8 @@
   parser and the DOM, the event loop, the fetch layer over libhttp,
   document and subresource loading, navigation, styling (through
   libcss), text (through libfont), layout and painting (through
-  libdrawing and libimage). Compiling this unit compiles all of them.
+  libdrawing and libimage) and the script
+  bindings (through libjavascript). Compiling this unit compiles all of them.
 }
 unit Web.Contents;
 
@@ -132,7 +133,26 @@ uses
   Web.Navigation.SessionHistory,
   Web.Navigation.ErrorPages,
   Web.Navigation.Navigables,
-  Web.Navigation.Pages;
+  Web.Navigation.Pages,
+  Web.Dom.UiEvents,
+  Web.ScriptEnvironment,
+  Web.Bindings.Types,
+  Web.Bindings.Strings,
+  Web.Bindings.Listeners,
+  Web.Bindings.Context,
+  Web.Bindings.UrlResolution,
+  Web.Bindings.Selectors,
+  Web.Bindings.FormControls,
+  Web.Bindings.Reflection,
+  Web.Bindings.EventHandlers,
+  Web.Bindings.Tables,
+  Web.Bindings.Conversions,
+  Web.Bindings.Dispatch,
+  Web.Bindings.Exotic,
+  Web.Bindings.Install,
+  Web.Script.Timers,
+  Web.Script.Prelude,
+  Web.Script.Context;
 
 implementation
 

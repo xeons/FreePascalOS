@@ -42,6 +42,13 @@ type
   { The bytes that end a run (ScanRun). }
   TStopTable = array[0..255] of Boolean;
 
+  { An insertion point and limit put aside while a nested script or
+    document.write runs (offsets kept up to date as text moves). }
+  TInsertionState = record
+    InsertionPoint: SizeInt;
+    Limit: SizeInt;
+  end;
+
   THtmlInputStream = class
   private
     FBuffer: string;
@@ -51,6 +58,8 @@ type
     FLastWasCarriageReturn: Boolean;
     FInsertionPoint: SizeInt;
     FLimit: SizeInt;
+    FSavedStates: array of TInsertionState;
+    FSavedCount: Integer;
     FPreprocessingErrors: SizeInt;
     procedure Reserve(Extra: SizeInt);
     procedure Compact;
@@ -91,6 +100,11 @@ type
     procedure SetInsertionPointHere;
     procedure ClearInsertionPoint;
     function HasInsertionPoint: Boolean; inline;
+    { Puts the insertion point and the limit aside, and brings them back
+      (the standard's "old insertion point" of nested scripts and
+      document.write calls). }
+    procedure SaveInsertionState;
+    procedure RestoreInsertionState;
     property Ended: Boolean read FEnded;
     property PreprocessingErrors: SizeInt read FPreprocessingErrors;
   end;
@@ -119,18 +133,28 @@ end;
 procedure THtmlInputStream.Compact;
 var
   Shift: SizeInt;
+  Index: Integer;
 begin
   Shift := FPosition;
   if (Shift < 65536) or (Shift < FLength div 2) then
     Exit;
-  if FInsertionPoint <> NoInsertionPoint then
-  begin
-    if FInsertionPoint < Shift then
+  if (FInsertionPoint <> NoInsertionPoint) and (FInsertionPoint < Shift) then
+    Exit;
+  for Index := 1 to FSavedCount do
+    if (FSavedStates[Index - 1].InsertionPoint <> NoInsertionPoint) and
+      (FSavedStates[Index - 1].InsertionPoint < Shift) then
       Exit;
+  if FInsertionPoint <> NoInsertionPoint then
     Dec(FInsertionPoint, Shift);
-  end;
   if FLimit >= 0 then
     Dec(FLimit, Shift);
+  for Index := 1 to FSavedCount do
+  begin
+    if FSavedStates[Index - 1].InsertionPoint <> NoInsertionPoint then
+      Dec(FSavedStates[Index - 1].InsertionPoint, Shift);
+    if FSavedStates[Index - 1].Limit >= 0 then
+      Dec(FSavedStates[Index - 1].Limit, Shift);
+  end;
   Move(FBuffer[Shift + 1], FBuffer[1], FLength - Shift);
   Dec(FLength, Shift);
   FPosition := 0;
@@ -215,6 +239,7 @@ end;
 
 procedure THtmlInputStream.InsertAtInsertionPoint(const Text: string);
 var
+  Index: Integer;
   Normalized: string;
   Written: SizeInt;
   LastWasCarriageReturn: Boolean;
@@ -243,6 +268,14 @@ begin
   FLength := SavedLength + Written;
   if (FLimit >= 0) and (FLimit >= FInsertionPoint) then
     Inc(FLimit, Written);
+  for Index := 1 to FSavedCount do
+  begin
+    if (FSavedStates[Index - 1].InsertionPoint <> NoInsertionPoint) and
+      (FSavedStates[Index - 1].InsertionPoint >= FInsertionPoint) then
+      Inc(FSavedStates[Index - 1].InsertionPoint, Written);
+    if (FSavedStates[Index - 1].Limit >= 0) and (FSavedStates[Index - 1].Limit >= FInsertionPoint) then
+      Inc(FSavedStates[Index - 1].Limit, Written);
+  end;
   Inc(FInsertionPoint, Written);
 end;
 
@@ -346,6 +379,24 @@ end;
 function THtmlInputStream.HasInsertionPoint: Boolean;
 begin
   Result := FInsertionPoint <> NoInsertionPoint;
+end;
+
+procedure THtmlInputStream.SaveInsertionState;
+begin
+  if FSavedCount >= Length(FSavedStates) then
+    SetLength(FSavedStates, FSavedCount * 2 + 4);
+  FSavedStates[FSavedCount].InsertionPoint := FInsertionPoint;
+  FSavedStates[FSavedCount].Limit := FLimit;
+  Inc(FSavedCount);
+end;
+
+procedure THtmlInputStream.RestoreInsertionState;
+begin
+  if FSavedCount = 0 then
+    Exit;
+  Dec(FSavedCount);
+  FInsertionPoint := FSavedStates[FSavedCount].InsertionPoint;
+  FLimit := FSavedStates[FSavedCount].Limit;
 end;
 
 end.
