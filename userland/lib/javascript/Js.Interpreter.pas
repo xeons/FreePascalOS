@@ -171,6 +171,9 @@ type
     { Unhandled rejections noted by the tracker. }
     UnhandledRejections: TJsValueList;
     ConsoleWriter: TJsConsoleWriter;
+    { The weak collections' state (Js.Builtins.Collections), freed with
+      the realm. }
+    WeakState: TObject;
     { For console.time: milliseconds now (Js.Platform). }
     ConsoleIndent: Integer;
     constructor Create(ARuntime: TJsRuntime; StackCapacity: Integer = DefaultStackCapacity;
@@ -261,6 +264,7 @@ end;
 
 destructor TJsInterpreterRealm.Destroy;
 begin
+  WeakState.Free;
   FreeMem(FStack);
   FreeMem(FFrames);
   inherited Destroy;

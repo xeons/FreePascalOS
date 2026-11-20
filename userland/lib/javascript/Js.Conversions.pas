@@ -466,9 +466,18 @@ begin
       Break;
   end;
   { Text: d.dddE+xx }
+  { The runtime leaves out a zero exponent. }
   ExponentPosition := Pos('E', Text);
-  Mantissa := Copy(Text, 1, ExponentPosition - 1);
-  Val(Copy(Text, ExponentPosition + 1, MaxInt), Exponent, Code);
+  if ExponentPosition = 0 then
+  begin
+    Mantissa := Text;
+    Exponent := 0;
+  end
+  else
+  begin
+    Mantissa := Copy(Text, 1, ExponentPosition - 1);
+    Val(Copy(Text, ExponentPosition + 1, MaxInt), Exponent, Code);
+  end;
   Digits := '';
   for Position := 1 to System.Length(Mantissa) do
     if Mantissa[Position] in ['0'..'9'] then
