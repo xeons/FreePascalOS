@@ -1,0 +1,11 @@
+# Browser: how the Start menu and the desktop show it
+# (Configuration.ProgramInfo). Installed as /app/browser/program.info.
+
+[Program]
+Name = Browser
+Description = Browse the web and local pages
+Category = Internet
+Icon = app-web-browser
+Executable = browser
+Keywords = ["web", "internet", "browser", "http"]
+Version = 1.0
