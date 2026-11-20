@@ -128,7 +128,13 @@ type
     inFinalizationRegistryPrototype, inRegExpPrototype, inRegExp, inDatePrototype,
     inArrayBufferPrototype, inDataViewPrototype, inTypedArrayPrototype,
     inThrowTypeError, inObject, inFunction, inArray, inArrayValues, inEval,
-    inProxy, inPromiseResolveFunctions, inError);
+    inProxy, inPromiseResolveFunctions, inError,
+    inArrayBuffer, inSharedArrayBuffer, inSharedArrayBufferPrototype, inDataView, inTypedArray,
+    inInt8ArrayPrototype, inUint8ArrayPrototype, inUint8ClampedArrayPrototype, inInt16ArrayPrototype,
+    inUint16ArrayPrototype, inInt32ArrayPrototype, inUint32ArrayPrototype, inFloat16ArrayPrototype,
+    inFloat32ArrayPrototype, inFloat64ArrayPrototype, inBigInt64ArrayPrototype, inBigUint64ArrayPrototype,
+    inInt8Array, inUint8Array, inUint8ClampedArray, inInt16Array, inUint16Array, inInt32Array, inUint32Array,
+    inFloat16Array, inFloat32Array, inFloat64Array, inBigInt64Array, inBigUint64Array);
 
   TJsRealm = class;
   TJsObject = class;

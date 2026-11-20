@@ -52,10 +52,13 @@ uses
   Js.BigIntegers,
   Js.Lexer,
   Js.Ast,
+  Js.EvalScopes,
   Js.Bytecode;
 
 type
   TJsControlKind = (ctLoop, ctSwitch, ctLabel, ctFinally, ctIterator);
+
+  TJsIntegerList = array of Integer;
 
   TJsGap = record
     Start: Integer;
@@ -85,6 +88,12 @@ type
     Realm: TJsRealm;
     Source: TJsSource;
     FileName: string;
+    { The module being compiled (nil for a script). }
+    Module: TJsCell;
+    { The scope chains made for the lazy functions, per scope. }
+    ChainScopes: array of TJsScope;
+    Chains: array of TJsEvalChain;
+    function ChainFor(Scope: TJsScope): TJsEvalChain;
   end;
 
   TJsCodeBuilder = class
@@ -118,6 +127,7 @@ type
     FControlCount: Integer;
     FStrict: Boolean;
     FTemplateSites: Integer;
+    FEvalChains: array of TJsCell;
     function Heap: TJsHeap; inline;
     function Runtime: TJsRuntime; inline;
   public
@@ -169,6 +179,25 @@ type
       Reference: TJsNode = nil): Integer;
     procedure StoreVariable(Variable: TJsVariable; const Name: UnicodeString; Source: Integer;
       Initializing: Boolean; Reference: TJsNode = nil);
+    { The variable alone, without the dynamic objects in the way. }
+    function LoadVariableStatic(Variable: TJsVariable; const Name: UnicodeString; Target: Integer;
+      Reference: TJsNode = nil): Integer;
+    procedure StoreVariableStatic(Variable: TJsVariable; const Name: UnicodeString; Source: Integer;
+      Initializing: Boolean; Reference: TJsNode = nil);
+    { A reference inside with statements or below a sloppy direct eval:
+      looks the name up in each object (the value into Target, the
+      object into ThisRegister when it is a with object); returns the
+      jumps to patch past the static load. }
+    function EmitDynamicLoads(Reference: TJsNode; const Name: UnicodeString; Target,
+      ThisRegister: Integer): TJsIntegerList;
+    function HasDynamicScopes(Reference: TJsNode): Boolean; inline;
+    { One more operand word after an instruction. }
+    procedure EmitRaw(Value: LongInt);
+    procedure PatchListHere(const Patches: TJsIntegerList);
+    { The kind operand of a dynamic object variable. }
+    function DynamicKind(Variable: TJsVariable): Integer;
+    { The scopes a direct eval at the current scope sees; its index. }
+    function AddEvalChain: Integer;
     function NeedsTdzCheck(Variable: TJsVariable; Reference: TJsNode): Boolean;
     procedure InitializeLexicals(Scope: TJsScope);
 
@@ -189,11 +218,15 @@ type
 
 function DeclarationIsConstant(Variable: TJsVariable): Boolean; inline;
 
+const
+  DynamicWith = 0;
+  DynamicEvalVars = 1;
+
 implementation
 
 function DeclarationIsConstant(Variable: TJsVariable): Boolean;
 begin
-  Result := (Variable <> nil) and (Variable.Kind in [dkConst, dkClassInner]);
+  Result := (Variable <> nil) and (Variable.Kind in [dkConst, dkClassInner, dkImport]);
 end;
 
 { TJsControl }
@@ -217,6 +250,24 @@ begin
   Gaps[High(Gaps)].Finish := Finish;
 end;
 
+{ TJsCompileContext }
+
+function TJsCompileContext.ChainFor(Scope: TJsScope): TJsEvalChain;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(ChainScopes) do
+    if ChainScopes[Index] = Scope then
+      Exit(Chains[Index]);
+  Result := BuildEvalChain(Scope, False);
+  Realm.Heap.Register(Result, ckOther);
+  Realm.Heap.Account(Result.MemorySize - Result.InstanceSize);
+  SetLength(ChainScopes, Length(ChainScopes) + 1);
+  ChainScopes[High(ChainScopes)] := Scope;
+  SetLength(Chains, Length(Chains) + 1);
+  Chains[High(Chains)] := Result;
+end;
+
 { TJsCodeBuilder }
 
 constructor TJsCodeBuilder.Create(Context: TJsCompileContext; Info: TJsFunctionInfo);
@@ -227,6 +278,7 @@ begin
   FCode := TJsCode.Create;
   Heap.Register(FCode, ckCode);
   FCode.Source := Context.Source;
+  FCode.Module := Context.Module;
   FCode.ArgumentsRegister := -1;
   FCode.RestRegister := -1;
   SetLength(FInstructions, 64);
@@ -552,7 +604,7 @@ begin
   for Index := 0 to Scope.VariableCount - 1 do
   begin
     Variable := Scope.Variables[Index];
-    if Variable.IsGlobal then
+    if Variable.IsGlobal or (Variable.Kind = dkImport) then
       Continue;
     if Variable.Captured then
     begin
@@ -563,13 +615,16 @@ begin
       Variable.Index := AllocateLocal;
   end;
   for Index := 0 to Scope.ChildCount - 1 do
-    if not (Scope.Children[Index].Kind in [skFunction, skScript, skEval]) then
+    if not (Scope.Children[Index].Kind in [skFunction, skScript, skEval, skModule]) then
       LayoutScope(Scope.Children[Index], False);
 end;
 
 procedure TJsCodeBuilder.EnterScope(Scope: TJsScope);
 begin
   FScope := Scope;
+  { A module's environment exists already, its holes set. }
+  if Scope.EnvironmentProvided then
+    Exit;
   if Scope.HasEnvironment then
   begin
     Emit(opPushScope, Scope.EnvironmentSize);
@@ -580,7 +635,7 @@ end;
 
 procedure TJsCodeBuilder.LeaveScope(Scope: TJsScope);
 begin
-  if Scope.HasEnvironment then
+  if Scope.HasEnvironment and not Scope.EnvironmentProvided then
   begin
     Emit(opPopScope);
     Dec(FEnvironmentDepth);
@@ -600,7 +655,7 @@ begin
   for Index := 0 to Scope.VariableCount - 1 do
   begin
     Variable := Scope.Variables[Index];
-    if not Variable.IsLexical or Variable.IsGlobal then
+    if not Variable.IsLexical or Variable.IsGlobal or (Variable.Kind = dkImport) then
       Continue;
     if Variable.Captured then
     begin
@@ -651,7 +706,88 @@ begin
   Result := Trunc(Reference.Number) < Variable.DeclarationStart;
 end;
 
+procedure TJsCodeBuilder.EmitRaw(Value: LongInt);
+begin
+  if FCount + 8 > Length(FInstructions) then
+    SetLength(FInstructions, Length(FInstructions) * 2);
+  FInstructions[FCount] := Value;
+  Inc(FCount);
+end;
+
+function TJsCodeBuilder.HasDynamicScopes(Reference: TJsNode): Boolean;
+begin
+  Result := (Reference <> nil) and (Reference.Kind = nkIdentifier) and (Length(Reference.DynamicScopes) > 0);
+end;
+
+function TJsCodeBuilder.DynamicKind(Variable: TJsVariable): Integer;
+begin
+  if Variable.Name = '%with' then
+    Result := DynamicWith
+  else
+    Result := DynamicEvalVars;
+end;
+
+procedure TJsCodeBuilder.PatchListHere(const Patches: TJsIntegerList);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Patches) do
+    PatchHere(Patches[Index]);
+end;
+
+function TJsCodeBuilder.EmitDynamicLoads(Reference: TJsNode; const Name: UnicodeString; Target,
+  ThisRegister: Integer): TJsIntegerList;
+var
+  Index: Integer;
+  Dynamic: TJsVariable;
+begin
+  Result := nil;
+  SetLength(Result, Length(Reference.DynamicScopes));
+  for Index := 0 to High(Reference.DynamicScopes) do
+  begin
+    Dynamic := Reference.DynamicScopes[Index];
+    Emit(opLookupDynamic, Target, EnvironmentHops(Dynamic.Scope), Dynamic.Index, AtomConstant(Name));
+    { Three more operands: the kind, the this register, the found target. }
+    EmitRaw(DynamicKind(Dynamic));
+    EmitRaw(ThisRegister);
+    EmitRaw(0);
+    Result[Index] := LastOperand;
+  end;
+end;
+
+function TJsCodeBuilder.AddEvalChain: Integer;
+var
+  Chain: TJsEvalChain;
+begin
+  Chain := BuildEvalChain(FScope, FStrict);
+  Heap.Register(Chain, ckOther);
+  Heap.Account(Chain.MemorySize - Chain.InstanceSize);
+  Result := Length(FEvalChains);
+  SetLength(FEvalChains, Result + 1);
+  FEvalChains[Result] := Chain;
+end;
+
 function TJsCodeBuilder.LoadVariable(Variable: TJsVariable; const Name: UnicodeString; Target: Integer;
+  Reference: TJsNode): Integer;
+var
+  Patches: TJsIntegerList;
+  Value: Integer;
+begin
+  if HasDynamicScopes(Reference) then
+  begin
+    if Target < 0 then
+      Target := AllocateRegister;
+    Patches := EmitDynamicLoads(Reference, Name, Target, -1);
+    Value := LoadVariableStatic(Variable, Name, Target, Reference);
+    if Value <> Target then
+      Emit(opMove, Target, Value);
+    PatchListHere(Patches);
+    Exit(Target);
+  end;
+  Result := LoadVariableStatic(Variable, Name, Target, Reference);
+end;
+
+function TJsCodeBuilder.LoadVariableStatic(Variable: TJsVariable; const Name: UnicodeString; Target: Integer;
   Reference: TJsNode): Integer;
 var
   Check: Boolean;
@@ -661,6 +797,14 @@ begin
     if Target < 0 then
       Target := AllocateRegister;
     Emit(opGetGlobal, Target, AtomConstant(Name), NewCache);
+    Exit(Target);
+  end;
+  if Variable.Kind = dkImport then
+  begin
+    { Live: read from the exporter's binding each time. }
+    if Target < 0 then
+      Target := AllocateRegister;
+    Emit(opGetImport, Target, Variable.Index, AtomConstant(Name));
     Exit(Target);
   end;
   Check := NeedsTdzCheck(Variable, Reference);
@@ -683,6 +827,32 @@ begin
 end;
 
 procedure TJsCodeBuilder.StoreVariable(Variable: TJsVariable; const Name: UnicodeString; Source: Integer;
+  Initializing: Boolean; Reference: TJsNode);
+var
+  Patches: TJsIntegerList;
+  Index: Integer;
+  Dynamic: TJsVariable;
+begin
+  if not Initializing and HasDynamicScopes(Reference) then
+  begin
+    Patches := nil;
+    SetLength(Patches, Length(Reference.DynamicScopes));
+    for Index := 0 to High(Reference.DynamicScopes) do
+    begin
+      Dynamic := Reference.DynamicScopes[Index];
+      Emit(opStoreDynamic, EnvironmentHops(Dynamic.Scope), Dynamic.Index, AtomConstant(Name), Source,
+        DynamicKind(Dynamic));
+      EmitRaw(0);
+      Patches[Index] := LastOperand;
+    end;
+    StoreVariableStatic(Variable, Name, Source, Initializing, Reference);
+    PatchListHere(Patches);
+    Exit;
+  end;
+  StoreVariableStatic(Variable, Name, Source, Initializing, Reference);
+end;
+
+procedure TJsCodeBuilder.StoreVariableStatic(Variable: TJsVariable; const Name: UnicodeString; Source: Integer;
   Initializing: Boolean; Reference: TJsNode);
 begin
   if (Variable <> nil) and Variable.IsGlobal and Initializing and Variable.IsLexical then
@@ -801,6 +971,7 @@ begin
     FillChar(Result.Caches[0], FCacheCount * SizeOf(TJsPropertyCache), 0);
   Result.Handlers := Copy(FHandlers, 0, FHandlerCount);
   Result.Lines := Copy(FLines, 0, FLineCount);
+  Result.EvalChains := Copy(FEvalChains);
   Result.RegisterCount := FMaxRegister;
   SetLength(Result.TemplateObjects, FTemplateSites);
   Heap.Account(Result.MemorySize - Result.InstanceSize);

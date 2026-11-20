@@ -99,6 +99,7 @@ type
     Done: Boolean;
     procedure Trace(Tracer: TJsTracer); override;
     procedure Dying; override;
+    class function NeedsDying: Boolean; override;
   end;
 
 procedure InstallCollections(R: TJsInterpreterRealm);
@@ -340,6 +341,11 @@ procedure TJsCollectionIterator.Trace(Tracer: TJsTracer);
 begin
   inherited Trace(Tracer);
   Tracer.MarkCell(Collection);
+end;
+
+class function TJsCollectionIterator.NeedsDying: Boolean;
+begin
+  Result := True;
 end;
 
 procedure TJsCollectionIterator.Dying;

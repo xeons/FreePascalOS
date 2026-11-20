@@ -107,6 +107,7 @@ type
     function Peek(Offset: Integer = 0): WideChar; inline;
     procedure SkipSpace;
     procedure ScanIdentifier(var Token: TJsToken);
+    function ScanSimpleInteger(var Token: TJsToken): Boolean;
     procedure ScanNumber(var Token: TJsToken);
     procedure ScanString(var Token: TJsToken; Quote: WideChar);
     function ScanEscape(var Token: TJsToken; InTemplate: Boolean): UnicodeString;
@@ -176,25 +177,38 @@ begin
   end;
 end;
 
+{ Compares without making strings (this runs for every identifier). }
+function SameKeyword(const Name: UnicodeString; const Keyword: string): Boolean; inline;
+var
+  Index: Integer;
+begin
+  if Length(Name) <> Length(Keyword) then
+    Exit(False);
+  for Index := 2 to Length(Name) do
+    if Name[Index] <> WideChar(Keyword[Index]) then
+      Exit(False);
+  Result := True;
+end;
+
 function KeywordToken(const Name: UnicodeString; out Kind: TJsTokenKind): Boolean;
 var
   Candidate: TJsTokenKind;
-  Text: string;
+  First: WideChar;
 begin
   Result := False;
   Kind := tkIdentifier;
   if (Length(Name) < 2) or (Length(Name) > 10) or (Name[1] < 'a') or (Name[1] > 'w') then
     Exit;
-  Text := string(Name);
+  First := Name[1];
   for Candidate := tkBreak to tkWith do
-    if KeywordTexts[Candidate] = Text then
+    if (WideChar(KeywordTexts[Candidate][1]) = First) and SameKeyword(Name, KeywordTexts[Candidate]) then
     begin
       Kind := Candidate;
       Exit(True);
     end;
 end;
 
-function IsLineTerminator(Character: WideChar): Boolean;
+function IsLineTerminator(Character: WideChar): Boolean; inline;
 begin
   Result := (Character = #10) or (Character = #13) or (Character = #$2028) or (Character = #$2029);
 end;
@@ -292,6 +306,13 @@ begin
   while FPosition <= FLength do
   begin
     Character := FSource[FPosition];
+    if Character = ' ' then
+    begin
+      Inc(FPosition);
+      Continue;
+    end;
+    if (Character > '/') and (Character < #$80) then
+      Break;
     if IsLineTerminator(Character) then
     begin
       if (Character = #13) and (Peek(1) = #10) then
@@ -526,7 +547,28 @@ var
   Dummy: TJsToken;
   Piece: UnicodeString;
   CodePoint: LongWord;
+  Start: Integer;
 begin
+  { The common case: ASCII letters, digits, $ and _ only, taken whole. }
+  Start := FPosition;
+  while FPosition <= FLength do
+  begin
+    Character := FSource[FPosition];
+    case Character of
+      'a'..'z', 'A'..'Z', '0'..'9', '$', '_':
+        Inc(FPosition);
+    else
+      Break;
+    end;
+  end;
+  if (FPosition > FLength) or ((FSource[FPosition] <> '') and (Ord(FSource[FPosition]) < 128)) then
+  begin
+    Token.Text := Copy(FSource, Start, FPosition - Start);
+    Token.Kind := tkIdentifier;
+    KeywordToken(Token.Text, Token.Kind);
+    Exit;
+  end;
+  FPosition := Start;
   Name := '';
   while FPosition <= FLength do
   begin
@@ -562,6 +604,41 @@ begin
   Token.Kind := tkIdentifier;
   if not Token.Escaped then
     KeywordToken(Name, Token.Kind);
+end;
+
+{ The common case: a decimal integer of up to 15 digits, no separators,
+  fraction, exponent or suffix. False (nothing consumed) otherwise. }
+function TJsLexer.ScanSimpleInteger(var Token: TJsToken): Boolean;
+var
+  Start, Index: Integer;
+  Value: Int64;
+  Character: WideChar;
+begin
+  Result := False;
+  Start := FPosition;
+  Index := FPosition;
+  Value := 0;
+  while (Index <= FLength) and (FSource[Index] >= '0') and (FSource[Index] <= '9') do
+  begin
+    Value := Value * 10 + (Ord(FSource[Index]) - Ord('0'));
+    Inc(Index);
+  end;
+  if (Index - Start > 15) or ((FSource[Start] = '0') and (Index - Start > 1)) then
+    Exit;
+  if Index <= FLength then
+  begin
+    Character := FSource[Index];
+    case Character of
+      '.', '_', '$', '\', 'a'..'z', 'A'..'Z':
+        Exit;
+    end;
+    if Ord(Character) > 127 then
+      Exit;
+  end;
+  FPosition := Index;
+  Token.Number := Value;
+  Token.Text := Copy(FSource, Start, Index - Start);
+  Result := True;
 end;
 
 procedure TJsLexer.ScanNumber(var Token: TJsToken);
@@ -601,6 +678,8 @@ var
 
 begin
   Token.Kind := tkNumber;
+  if ScanSimpleInteger(Token) then
+    Exit;
   Digits := '';
   Radix := 10;
   IsLegacyOctal := False;
@@ -832,32 +911,171 @@ end;
 
 procedure TJsLexer.ScanPunctuator(var Token: TJsToken);
 var
-  Kind: TJsTokenKind;
   Best: TJsTokenKind;
-  BestLength, Size, Index: Integer;
-  Text: string;
-  Matches: Boolean;
+  BestLength: Integer;
+  Next1, Next2, Next3: WideChar;
+
+  procedure Take(Kind: TJsTokenKind; Size: Integer);
+  begin
+    Best := Kind;
+    BestLength := Size;
+  end;
+
 begin
   Best := tkEnd;
   BestLength := 0;
-  for Kind := tkLeftBrace to tkAt do
-  begin
-    Text := PunctuatorTexts[Kind];
-    Size := Length(Text);
-    if (Size <= BestLength) or (FPosition + Size - 1 > FLength) then
-      Continue;
-    Matches := True;
-    for Index := 1 to Size do
-      if FSource[FPosition + Index - 1] <> WideChar(Text[Index]) then
+  Next1 := Peek(1);
+  Next2 := Peek(2);
+  Next3 := Peek(3);
+  { The longest punctuator starting here. }
+  case FSource[FPosition] of
+    '{': Take(tkLeftBrace, 1);
+    '}': Take(tkRightBrace, 1);
+    '(': Take(tkLeftParen, 1);
+    ')': Take(tkRightParen, 1);
+    '[': Take(tkLeftBracket, 1);
+    ']': Take(tkRightBracket, 1);
+    ';': Take(tkSemicolon, 1);
+    ',': Take(tkComma, 1);
+    '~': Take(tkTilde, 1);
+    ':': Take(tkColon, 1);
+    '#': Take(tkHash, 1);
+    '@': Take(tkAt, 1);
+    '.':
+      if (Next1 = '.') and (Next2 = '.') then
+        Take(tkEllipsis, 3)
+      else
+        Take(tkDot, 1);
+    '<':
+      if Next1 = '<' then
       begin
-        Matches := False;
-        Break;
-      end;
-    if Matches then
-    begin
-      Best := Kind;
-      BestLength := Size;
-    end;
+        if Next2 = '=' then
+          Take(tkShiftLeftAssign, 3)
+        else
+          Take(tkShiftLeft, 2);
+      end
+      else if Next1 = '=' then
+        Take(tkLessEqual, 2)
+      else
+        Take(tkLess, 1);
+    '>':
+      if Next1 = '>' then
+      begin
+        if Next2 = '>' then
+        begin
+          if Next3 = '=' then
+            Take(tkShiftRightUnsignedAssign, 4)
+          else
+            Take(tkShiftRightUnsigned, 3);
+        end
+        else if Next2 = '=' then
+          Take(tkShiftRightAssign, 3)
+        else
+          Take(tkShiftRight, 2);
+      end
+      else if Next1 = '=' then
+        Take(tkGreaterEqual, 2)
+      else
+        Take(tkGreater, 1);
+    '=':
+      if Next1 = '=' then
+      begin
+        if Next2 = '=' then
+          Take(tkStrictEqual, 3)
+        else
+          Take(tkEqual, 2);
+      end
+      else if Next1 = '>' then
+        Take(tkArrow, 2)
+      else
+        Take(tkAssign, 1);
+    '!':
+      if Next1 = '=' then
+      begin
+        if Next2 = '=' then
+          Take(tkStrictNotEqual, 3)
+        else
+          Take(tkNotEqual, 2);
+      end
+      else
+        Take(tkBang, 1);
+    '+':
+      if Next1 = '+' then
+        Take(tkPlusPlus, 2)
+      else if Next1 = '=' then
+        Take(tkPlusAssign, 2)
+      else
+        Take(tkPlus, 1);
+    '-':
+      if Next1 = '-' then
+        Take(tkMinusMinus, 2)
+      else if Next1 = '=' then
+        Take(tkMinusAssign, 2)
+      else
+        Take(tkMinus, 1);
+    '*':
+      if Next1 = '*' then
+      begin
+        if Next2 = '=' then
+          Take(tkStarStarAssign, 3)
+        else
+          Take(tkStarStar, 2);
+      end
+      else if Next1 = '=' then
+        Take(tkStarAssign, 2)
+      else
+        Take(tkStar, 1);
+    '/':
+      if Next1 = '=' then
+        Take(tkSlashAssign, 2)
+      else
+        Take(tkSlash, 1);
+    '%':
+      if Next1 = '=' then
+        Take(tkPercentAssign, 2)
+      else
+        Take(tkPercent, 1);
+    '&':
+      if Next1 = '&' then
+      begin
+        if Next2 = '=' then
+          Take(tkAndAndAssign, 3)
+        else
+          Take(tkAndAnd, 2);
+      end
+      else if Next1 = '=' then
+        Take(tkAmpersandAssign, 2)
+      else
+        Take(tkAmpersand, 1);
+    '|':
+      if Next1 = '|' then
+      begin
+        if Next2 = '=' then
+          Take(tkOrOrAssign, 3)
+        else
+          Take(tkOrOr, 2);
+      end
+      else if Next1 = '=' then
+        Take(tkBarAssign, 2)
+      else
+        Take(tkBar, 1);
+    '^':
+      if Next1 = '=' then
+        Take(tkCaretAssign, 2)
+      else
+        Take(tkCaret, 1);
+    '?':
+      if Next1 = '?' then
+      begin
+        if Next2 = '=' then
+          Take(tkQuestionQuestionAssign, 3)
+        else
+          Take(tkQuestionQuestion, 2);
+      end
+      else if Next1 = '.' then
+        Take(tkQuestionDot, 2)
+      else
+        Take(tkQuestion, 1);
   end;
   { ?. followed by a digit is ? then a number (a ? .5 : b). }
   if (Best = tkQuestionDot) and (Peek(2) >= '0') and (Peek(2) <= '9') then
@@ -875,7 +1093,16 @@ procedure TJsLexer.Next(out Token: TJsToken);
 var
   Character: WideChar;
 begin
-  Token := Default(TJsToken);
+  { Field by field: a whole-record assignment copies the strings
+    through their type information, for every token. }
+  Token.Kind := tkEnd;
+  Token.Text := '';
+  Token.Raw := '';
+  Token.Number := 0;
+  Token.TemplateTail := False;
+  Token.InvalidEscape := False;
+  Token.LegacyOctal := False;
+  Token.Escaped := False;
   FNewline := False;
   SkipSpace;
   Token.NewlineBefore := FNewline;

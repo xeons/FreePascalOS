@@ -112,14 +112,15 @@ type
     nkFunctionDeclaration, { Func }
     nkClassDeclaration,    { as nkClass }
     nkWith,            { A object, B body }
-    nkImport,          { module syntax (not compiled yet) }
-    nkExport);
+    nkImport,          { unused: imports are entries of the module syntax }
+    nkExport);         { export default expression: A; Variable: the *default* binding }
 
   TJsDeclarationKind = (dkVar, dkLet, dkConst, dkFunction, dkParameter, dkClass,
-    dkCatch, dkImplicit, dkClassInner);
+    dkCatch, dkImplicit, dkClassInner, dkImport);
 
   TJsScope = class;
   TJsFunctionInfo = class;
+  TJsNameArray = array of UnicodeString;
   TJsVariable = class;
 
   TJsNode = class
@@ -141,6 +142,10 @@ type
     Variable: TJsVariable;
     { The scope an identifier appears in. }
     ReferenceScope: TJsScope;
+    { An identifier inside with statements or below a function with a
+      sloppy direct eval: the objects (variables holding them, innermost
+      first) to look the name up in before Variable. }
+    DynamicScopes: array of TJsVariable;
     procedure Add(Node: TJsNode);
   end;
 
@@ -163,7 +168,7 @@ type
     function IsLexical: Boolean;
   end;
 
-  TJsScopeKind = (skScript, skFunction, skBlock, skCatch, skClass, skFor, skSwitch, skEval);
+  TJsScopeKind = (skScript, skFunction, skBlock, skCatch, skClass, skFor, skSwitch, skEval, skModule);
 
   TJsScope = class
   public
@@ -181,6 +186,15 @@ type
     { Captured variables need an environment made when the scope is
       entered. }
     EnvironmentSize: Integer;
+    { The environment exists before the code runs (a module's, made when
+      the module is linked): entering the scope makes none. }
+    EnvironmentProvided: Boolean;
+    { A with statement's scope: the variable holding its object. }
+    WithVariable: TJsVariable;
+    { A direct eval can see the scope's bindings by name: they all live
+      in its environment. }
+    EvalExposed: Boolean;
+    procedure RemoveVariable(Variable: TJsVariable);
     { The scope's environment, at run time, is pushed on entry. }
     function HasEnvironment: Boolean; inline;
     function Find(const Name: UnicodeString): TJsVariable;
@@ -191,7 +205,9 @@ type
   end;
 
   TJsFunctionKind = (fkNormal, fkArrow, fkMethod, fkGetter, fkSetter, fkClassConstructor,
-    fkDerivedConstructor, fkClassFieldInitializer, fkScript);
+    fkDerivedConstructor, fkClassFieldInitializer, fkScript, fkModule);
+
+  TJsModuleSyntax = class;
 
   TJsFunctionInfo = class
   public
@@ -224,14 +240,74 @@ type
     UsesSuper: Boolean;
     UsesNewTarget: Boolean;
     ContainsDirectEval: Boolean;
+    { A sloppy function with a direct eval: the variable holding the
+      object the eval's var declarations go to. }
+    EvalVarsVariable: TJsVariable;
     SourceStart: Integer;
     SourceFinish: Integer;
     Line: Integer;
     Column: Integer;
+    { Where the parameter list starts (a lazy function is parsed again
+      from there when first called). }
+    ParametersStart: Integer;
+    ParametersLine: Integer;
+    ParametersColumn: Integer;
+    { Private names appear in it (it needs its class's private scope:
+      not compiled lazily). }
+    UsesPrivateNames: Boolean;
     { Class constructors: the class's field initializers. }
     FieldInitializer: TJsNode;
     ClassNode: TJsNode;
+    { A module: its imports and exports. }
+    ModuleSyntax: TJsModuleSyntax;
     destructor Destroy; override;
+  end;
+
+  { A module request: the specifier and whether it asks for JSON
+    (with type "json"). }
+  TJsModuleRequestEntry = record
+    Specifier: UnicodeString;
+    Json: Boolean;
+  end;
+
+  { import ImportName as LocalName from Request; ImportName '*' with
+    IsNamespace for import * as LocalName. }
+  TJsImportEntry = record
+    Request: Integer;
+    ImportName: UnicodeString;
+    IsNamespace: Boolean;
+    LocalName: UnicodeString;
+    Variable: TJsVariable;
+  end;
+
+  { An export: of a local binding (Request -1, LocalName, Variable), or
+    of what another module exports (Request, ImportName; IsNamespace
+    for export * as ExportName). }
+  TJsExportEntry = record
+    ExportName: UnicodeString;
+    Request: Integer;
+    ImportName: UnicodeString;
+    IsNamespace: Boolean;
+    LocalName: UnicodeString;
+    Variable: TJsVariable;
+    Line: Integer;
+    Column: Integer;
+  end;
+
+  TJsModuleSyntax = class
+  public
+    Requests: array of TJsModuleRequestEntry;
+    Imports: array of TJsImportEntry;
+    LocalExports: array of TJsExportEntry;
+    IndirectExports: array of TJsExportEntry;
+    { export * from: the requests. }
+    StarExports: array of Integer;
+    { The request for Specifier (made the first time). }
+    function AddRequest(const Specifier: UnicodeString; Json: Boolean): Integer;
+    function AddImport(Request: Integer; const ImportName, LocalName: UnicodeString; IsNamespace: Boolean;
+      Variable: TJsVariable): Integer;
+    function HasExport(const Name: UnicodeString): Boolean;
+    procedure AddExport(const Entry: TJsExportEntry);
   end;
 
   { Owns every node and scope made for one compilation. }
@@ -264,6 +340,8 @@ const
   MemberFlagComputed = 1;
   MemberFlagOptional = 2;
   MemberFlagPrivate = 4;
+  { nkCall: eval(...), a direct eval when eval is the intrinsic }
+  CallFlagDirectEval = 8;
   { nkUpdate }
   UpdateFlagPrefix = 1;
   { nkYield }
@@ -279,7 +357,61 @@ implementation
 
 function DeclarationIsLexical(Kind: TJsDeclarationKind): Boolean;
 begin
-  Result := Kind in [dkLet, dkConst, dkClass, dkClassInner];
+  Result := Kind in [dkLet, dkConst, dkClass, dkClassInner, dkImport];
+end;
+
+{ TJsModuleSyntax }
+
+function TJsModuleSyntax.AddRequest(const Specifier: UnicodeString; Json: Boolean): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Requests) do
+    if (Requests[Index].Specifier = Specifier) and (Requests[Index].Json = Json) then
+      Exit(Index);
+  Result := Length(Requests);
+  SetLength(Requests, Result + 1);
+  Requests[Result].Specifier := Specifier;
+  Requests[Result].Json := Json;
+end;
+
+function TJsModuleSyntax.AddImport(Request: Integer; const ImportName, LocalName: UnicodeString;
+  IsNamespace: Boolean; Variable: TJsVariable): Integer;
+begin
+  Result := Length(Imports);
+  SetLength(Imports, Result + 1);
+  Imports[Result].Request := Request;
+  Imports[Result].ImportName := ImportName;
+  Imports[Result].IsNamespace := IsNamespace;
+  Imports[Result].LocalName := LocalName;
+  Imports[Result].Variable := Variable;
+end;
+
+function TJsModuleSyntax.HasExport(const Name: UnicodeString): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(LocalExports) do
+    if LocalExports[Index].ExportName = Name then
+      Exit(True);
+  for Index := 0 to High(IndirectExports) do
+    if IndirectExports[Index].ExportName = Name then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TJsModuleSyntax.AddExport(const Entry: TJsExportEntry);
+begin
+  if Entry.Request < 0 then
+  begin
+    SetLength(LocalExports, Length(LocalExports) + 1);
+    LocalExports[High(LocalExports)] := Entry;
+  end
+  else
+  begin
+    SetLength(IndirectExports, Length(IndirectExports) + 1);
+    IndirectExports[High(IndirectExports)] := Entry;
+  end;
 end;
 
 procedure TJsNode.Add(Node: TJsNode);
@@ -331,6 +463,20 @@ begin
   References[ReferenceCount] := Node;
   Inc(ReferenceCount);
   Node.ReferenceScope := Self;
+end;
+
+procedure TJsScope.RemoveVariable(Variable: TJsVariable);
+var
+  Index: Integer;
+begin
+  for Index := 0 to VariableCount - 1 do
+    if Variables[Index] = Variable then
+    begin
+      Variables[Index] := Variables[VariableCount - 1];
+      Dec(VariableCount);
+      Variable.Free;
+      Exit;
+    end;
 end;
 
 procedure TJsScope.AddChild(Scope: TJsScope);

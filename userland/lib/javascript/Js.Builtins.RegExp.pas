@@ -58,6 +58,9 @@ procedure InstallRegExp(R: TJsInterpreterRealm);
 
 implementation
 
+uses
+  Js.Builtins.AnnexB;
+
 const
   FlagHasIndices = 1;
   FlagGlobal = 2;
@@ -368,6 +371,7 @@ begin
   end;
   Captures := Copy(Target.Matcher.Captures);
   Program_ := Target.Program_;
+  RecordLegacyMatch(R, Text, Captures, Program_.GroupCount);
   if Global or Sticky then
     if not SetLastIndex(R, Target, Captures[1]) then
       Exit(JsException);

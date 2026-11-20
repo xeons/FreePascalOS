@@ -109,6 +109,9 @@ type
     procedure Dying; virtual;
     { Bytes this cell holds, its instance and its buffers. }
     function MemorySize: SizeInt; virtual;
+    { Cells with weak links of their own to cut in Dying: swept during
+      the collection's pause, not later. }
+    class function NeedsDying: Boolean; virtual;
   end;
 
   TJsCellList = array of TJsCell;
@@ -331,6 +334,11 @@ end;
 
 procedure TJsCell.Dying;
 begin
+end;
+
+class function TJsCell.NeedsDying: Boolean;
+begin
+  Result := False;
 end;
 
 function TJsCell.MemorySize: SizeInt;

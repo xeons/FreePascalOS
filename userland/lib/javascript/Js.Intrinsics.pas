@@ -60,7 +60,16 @@ uses
   Js.Builtins.Reflect,
   Js.Builtins.BigInt,
   Js.Builtins.Date,
-  Js.Builtins.RegExp;
+  Js.Builtins.RegExp,
+  Js.Builtins.ArrayBuffer,
+  Js.Builtins.TypedArrays,
+  Js.Builtins.Atomics,
+  Js.Builtins.Base64,
+  Js.Modules,
+  Js.DirectEval,
+  Js.Builtins.AnnexB,
+  Js.Builtins.Intl,
+  Js.Builtins.SelfHosted;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -146,6 +155,16 @@ begin
   InstallBigInt(R);
   InstallDate(R);
   InstallRegExp(R);
+  InstallArrayBuffer(R);
+  InstallTypedArrays(R);
+  InstallAtomics(R);
+  InstallBase64(R);
+  RecordTypedArrayShapes(R);
+  InstallModules(R);
+  InstallDirectEval(R);
+  InstallAnnexB(R);
+  InstallIntl(R);
+  InstallSelfHosted(R);
 end;
 
 end.

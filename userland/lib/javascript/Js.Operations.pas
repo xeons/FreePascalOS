@@ -93,6 +93,8 @@ function LengthOfArrayLike(R: TJsRealm; Target: TJsObject; out Length: Int64): B
 { Array.prototype[@@iterator] and %ArrayIteratorPrototype%.next are
   untouched, so iterating this array can skip the protocol. }
 function IsPlainArrayIteration(R: TJsRealm; Value: TJsValue): Boolean;
+{ %ArrayIteratorPrototype%.next is the original. }
+function IsPlainArrayIterator(R: TJsRealm): Boolean;
 function IndexKey(R: TJsRealm; Index: Int64): TJsValue;
 function CreateListFromArrayLike(R: TJsRealm; Value: TJsValue; out Values: TJsValueList): Boolean;
 function SpeciesConstructor(R: TJsRealm; Target: TJsObject; Default: TJsValue): TJsValue;
@@ -509,8 +511,8 @@ end;
 function IsPlainArrayIteration(R: TJsRealm; Value: TJsValue): Boolean;
 var
   Target: TJsObject;
-  Method, Next: TJsValue;
-  ArrayPrototype, IteratorPrototype: TJsObject;
+  Method: TJsValue;
+  ArrayPrototype: TJsObject;
   Slot: Integer;
   Flags: Byte;
 begin
@@ -531,6 +533,17 @@ begin
   Method := ArrayPrototype.GetSlot(Slot);
   if Method <> JsObjectValue(R.Intrinsics[inArrayValues]) then
     Exit;
+  Result := IsPlainArrayIterator(R);
+end;
+
+function IsPlainArrayIterator(R: TJsRealm): Boolean;
+var
+  IteratorPrototype: TJsObject;
+  Next: TJsValue;
+  Slot: Integer;
+  Flags: Byte;
+begin
+  Result := False;
   IteratorPrototype := R.Intrinsics[inArrayIteratorPrototype];
   Slot := IteratorPrototype.Shape.Find(R.Atom(anNext), Flags);
   if (Slot < 0) or ((Flags and PropertyAccessor) <> 0) then

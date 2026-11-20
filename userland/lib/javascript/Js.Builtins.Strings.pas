@@ -23,8 +23,7 @@
   match, matchAll, replace, replaceAll, search and split hand a pattern
   object to its Symbol.match... method (RegExp's); with a string
   pattern they work here. Case mapping uses the Unicode tables of the
-  runtime library; normalize returns the text unchanged (the forms are
-  not implemented yet).
+  runtime library; normalize uses Js.Normalization.
 }
 unit Js.Builtins.Strings;
 
@@ -60,7 +59,8 @@ function GetSubstitution(R: TJsRealm; Matched, Text: TJsString; Position: Intege
 implementation
 
 uses
-  Character;
+  Character,
+  Js.Normalization;
 
 function ThisString(R: TJsRealm; This: TJsValue; const Name: string): TJsString;
 begin
@@ -1010,20 +1010,29 @@ function StringNormalize(R: TJsRealm; const This: TJsValue; Args: PJsValueArray;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Text, Form: TJsString;
+  NormalForm: TJsNormalForm;
 begin
   Text := ThisString(R, This, 'normalize');
   if Text = nil then
     Exit(JsException);
+  NormalForm := nfC;
   if Arg(Args, ArgCount, 0) <> JsUndefined then
   begin
     Form := ArgumentString(R, Args, ArgCount, 0);
     if Form = nil then
       Exit(JsException);
-    if not (StringEqualsAscii(Form, 'NFC') or StringEqualsAscii(Form, 'NFD') or StringEqualsAscii(Form, 'NFKC') or
-      StringEqualsAscii(Form, 'NFKD')) then
+    if StringEqualsAscii(Form, 'NFC') then
+      NormalForm := nfC
+    else if StringEqualsAscii(Form, 'NFD') then
+      NormalForm := nfD
+    else if StringEqualsAscii(Form, 'NFKC') then
+      NormalForm := nfKC
+    else if StringEqualsAscii(Form, 'NFKD') then
+      NormalForm := nfKD
+    else
       Exit(R.ThrowRangeError('The normalization form should be one of NFC, NFD, NFKC, NFKD.'));
   end;
-  Result := JsStringValue(Text);
+  Result := JsStringValue(NewStringFromUnicode(R.Heap, NormalizeText(StringToUnicode(R.Heap, Text), NormalForm)));
 end;
 
 function StringValueOf(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
