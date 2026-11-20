@@ -242,6 +242,7 @@ end;
 function TJsExpressionCompiler.Expression(Node: TJsNode; Target: Integer): Integer;
 var
   Name: UnicodeString;
+  Specifier, Options: Integer;
 begin
   case Node.Kind of
     nkNumber, nkString, nkNull, nkTrue, nkFalse, nkBigInt, nkRegExp:
@@ -335,7 +336,29 @@ begin
     nkSpread:
       raise EJsSyntaxError.CreateAt('Unexpected spread', Node.Line, Node.Column);
     nkDynamicImport:
-      raise EJsSyntaxError.CreateAt('import() is not supported yet', Node.Line, Node.Column);
+      begin
+        if Target < 0 then
+          Target := AllocateRegister;
+        Result := Target;
+        Target := FNextRegister;
+        Specifier := AllocateRegister;
+        ExpressionInto(Node.A, Specifier);
+        Options := -1;
+        if Node.B <> nil then
+        begin
+          Options := AllocateRegister;
+          ExpressionInto(Node.B, Options);
+        end;
+        Emit(opImportCall, Result, Specifier, Options);
+        ReleaseTo(Target);
+      end;
+    nkImportMeta:
+      begin
+        if Target < 0 then
+          Target := AllocateRegister;
+        Emit(opImportMeta, Target);
+        Result := Target;
+      end;
   else
     raise EJsSyntaxError.CreateAt('Unsupported expression', Node.Line, Node.Column);
   end;

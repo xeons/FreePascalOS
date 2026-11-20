@@ -76,6 +76,9 @@ uses
   Js.Inspect,
   Js.Interpreter,
   Js.ArrayBuffers,
+  Js.ModuleRecords,
+  Js.Modules,
+  Js.Promises,
   Js.Intrinsics;
 
 type
@@ -87,6 +90,10 @@ type
   TJsNativeFunction = Js.Functions.TJsNativeFunction;
   TJsTypedArrayKind = Js.ArrayBuffers.TJsTypedArrayKind;
   TJsBufferFreeProc = Js.ArrayBuffers.TJsBufferFreeProc;
+  TJsModuleFetch = Js.Modules.TJsModuleFetch;
+  TJsModuleResolver = Js.Modules.TJsModuleResolver;
+  TJsModuleFetcher = Js.Modules.TJsModuleFetcher;
+  TJsModuleMetaHook = Js.Modules.TJsModuleMetaHook;
 
   { An uncaught JavaScript exception (or a syntax error), as text. }
   EJsError = class(Exception)
@@ -148,6 +155,12 @@ type
     function GetMemoryLimit: Int64;
     procedure SetMemoryLimit(Value: Int64);
     procedure FinishCall;
+    function GetModuleResolver: TJsModuleResolver;
+    procedure SetModuleResolver(Value: TJsModuleResolver);
+    function GetModuleFetcher: TJsModuleFetcher;
+    procedure SetModuleFetcher(Value: TJsModuleFetcher);
+    function GetModuleMetaHook: TJsModuleMetaHook;
+    procedure SetModuleMetaHook(Value: TJsModuleMetaHook);
   public
     constructor Create;
     constructor Create(const Options: TJsEngineOptions);
@@ -210,6 +223,19 @@ type
     function IsArrayBuffer(Value: TJsValue): Boolean;
     function IsTypedArray(Value: TJsValue): Boolean;
 
+    { ES modules. Runs Source as the module Key: its imports are
+      resolved and fetched through ModuleResolver and ModuleFetcher,
+      then it is linked and evaluated in the job queue (run here).
+      Returns the promise of its evaluation (still pending when a fetch
+      or a top-level await has not finished); raises EJsError for a
+      syntax error or when the evaluation failed already. }
+    function EvaluateModule(const Source, Key: string): TJsValue;
+    { import(Specifier) as from the module ReferrerKey: a promise for the
+      namespace (settled by RunJobs once the graph is fetched). }
+    function ImportModule(const Specifier: string; const ReferrerKey: string = ''): TJsValue;
+    { The namespace of the module loaded as Key (undefined: none). }
+    function ModuleNamespace(const Key: string): TJsValue;
+
     { A class: a constructor named Name on the global object (Callback
       handles new; nil makes it not constructible from scripts). }
     function DefineClass(const Name: string; Callback: TJsNativeCallback; Length: Integer;
@@ -229,6 +255,14 @@ type
     property Runtime: TJsRuntime read FRuntime;
     property Realm: TJsInterpreterRealm read FRealm;
     property MemoryLimit: Int64 read GetMemoryLimit write SetMemoryLimit;
+    { Specifier and referrer key to module key (default: "./" and "../"
+      against the referrer's directory, others as they are). }
+    property ModuleResolver: TJsModuleResolver read GetModuleResolver write SetModuleResolver;
+    { Fetches a module's source: calls Fetch.Succeed or Fetch.Fail, now
+      or later. }
+    property ModuleFetcher: TJsModuleFetcher read GetModuleFetcher write SetModuleFetcher;
+    { Adds to import.meta (url and resolve are there already). }
+    property ModuleMetaHook: TJsModuleMetaHook read GetModuleMetaHook write SetModuleMetaHook;
   end;
 
 implementation
@@ -620,6 +654,78 @@ end;
 function TJsEngine.IsTypedArray(Value: TJsValue): Boolean;
 begin
   Result := JsIsObject(Value) and (JsAsObject(Value) is TJsTypedArray);
+end;
+
+function TJsEngine.GetModuleResolver: TJsModuleResolver;
+begin
+  Result := ModuleLoaderOf(FRealm).Resolver;
+end;
+
+procedure TJsEngine.SetModuleResolver(Value: TJsModuleResolver);
+begin
+  ModuleLoaderOf(FRealm).Resolver := Value;
+end;
+
+function TJsEngine.GetModuleFetcher: TJsModuleFetcher;
+begin
+  Result := ModuleLoaderOf(FRealm).Fetcher;
+end;
+
+procedure TJsEngine.SetModuleFetcher(Value: TJsModuleFetcher);
+begin
+  ModuleLoaderOf(FRealm).Fetcher := Value;
+end;
+
+function TJsEngine.GetModuleMetaHook: TJsModuleMetaHook;
+begin
+  Result := ModuleLoaderOf(FRealm).MetaHook;
+end;
+
+procedure TJsEngine.SetModuleMetaHook(Value: TJsModuleMetaHook);
+begin
+  ModuleLoaderOf(FRealm).MetaHook := Value;
+end;
+
+function TJsEngine.EvaluateModule(const Source, Key: string): TJsValue;
+var
+  Handle: Integer;
+  Promise: TJsPromise;
+begin
+  Result := ModuleLoaderOf(FRealm).EvaluateSource(Source, Key);
+  if Result = JsException then
+    RaiseException;
+  Handle := Protect(Result);
+  try
+    RunJobs;
+    Promise := TJsPromise(JsAsObject(Result));
+    if Promise.State = psRejected then
+    begin
+      { Reported here, not as an unhandled rejection. }
+      Promise.IsHandled := True;
+      if Assigned(JsRejectionTracker) then
+        JsRejectionTracker(FRealm, Promise, True);
+      FRuntime.Exception := Promise.Value;
+      FRuntime.HasException := True;
+      RaiseException;
+    end;
+  finally
+    Unprotect(Handle);
+  end;
+end;
+
+function TJsEngine.ImportModule(const Specifier: string; const ReferrerKey: string): TJsValue;
+begin
+  Result := ModuleLoaderOf(FRealm).Import(Specifier, ReferrerKey, False);
+end;
+
+function TJsEngine.ModuleNamespace(const Key: string): TJsValue;
+var
+  Module: TJsModule;
+begin
+  Module := ModuleLoaderOf(FRealm).ModuleFor(Key);
+  if (Module = nil) or (Module.Status in [msNew, msUnlinked, msLinking]) then
+    Exit(JsUndefined);
+  Result := JsObjectValue(GetModuleNamespace(FRealm, Module));
 end;
 
 function HostConstructorRefused(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;

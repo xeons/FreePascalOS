@@ -164,6 +164,10 @@ type
     opGetArgumentsObject, { dst }
     opRegExp,             { dst, body constant, flags constant }
     opEnterWith,          { (not supported: throws) }
+    { Modules }
+    opGetImport,          { dst, import index, name constant: an import binding's value }
+    opImportCall,         { dst, specifier, options (-1: none): import() }
+    opImportMeta,         { dst }
     opLast);
 
 var
@@ -185,7 +189,7 @@ begin
     opLoadUndefined, opLoadNull, opLoadTrue, opLoadFalse, opLoadHole, opPushScope, opThrowConstAssign,
     opThrowReference, opLoadHome, opLoadNewTarget, opLoadCallee, opNewObject, opArrayHole, opJump,
     opReturn, opThrow, opIteratorClose, opIteratorCloseQuiet, opResumeKind, opRethrowCompletion,
-    opReturnCompletion, opGetArgumentsObject, opThrowIfNotHole:
+    opReturnCompletion, opGetArgumentsObject, opThrowIfNotHole, opImportMeta:
       Result := 1;
     opLoadInteger, opLoadConstant, opMove, opCheckInitialized, opTypeofGlobal, opDeclareGlobalVar,
     opDeclareGlobalLexical, opInitializeGlobalLexical, opDeleteGlobal, opClosure, opNewArray,
@@ -205,7 +209,7 @@ begin
     opGreater, opGreaterEqual, opInstanceof, opIn, opJumpIfLessFalse, opJumpIfLessEqualFalse,
     opJumpIfGreaterFalse, opJumpIfGreaterEqualFalse, opJumpIfStrictEqualFalse,
     opJumpIfStrictNotEqualFalse, opCall, opCallMethod, opCallSpread, opNew, opNewSpread,
-    opGetIterator, opIteratorNext, opForInNext, opRegExp, opSetClassSlot:
+    opGetIterator, opIteratorNext, opForInNext, opRegExp, opSetClassSlot, opGetImport, opImportCall:
       Result := 3;
     opGetEnvironmentChecked, opSetEnvironmentChecked, opSetGlobal, opGetNamed, opSetNamed,
     opDefineField, opDefineMethod, opDefineGetter, opDefineSetter, opDefinePrivateAccessor,

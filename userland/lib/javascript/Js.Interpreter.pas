@@ -72,6 +72,7 @@ uses
   Js.Operations,
   Js.Promises,
   Js.ArrayBuffers,
+  Js.ModuleRecords,
   Js.Bytecode;
 
 const
@@ -177,6 +178,8 @@ type
     { The weak collections' state (Js.Builtins.Collections), freed with
       the realm. }
     WeakState: TObject;
+    { The module loader (Js.Modules), freed with the realm. }
+    ModuleLoader: TObject;
     { For console.time: milliseconds now (Js.Platform). }
     ConsoleIndent: Integer;
     { What a typed array's length getter is found through, as installed:
@@ -280,6 +283,7 @@ end;
 destructor TJsInterpreterRealm.Destroy;
 begin
   WeakState.Free;
+  ModuleLoader.Free;
   FreeMem(FStack);
   FreeMem(FFrames);
   inherited Destroy;
@@ -1551,6 +1555,8 @@ var
   Descriptor: TJsPropertyDescriptor;
   TypedArray: TJsTypedArray;
   Address: PByte;
+  Binding: ^TJsImportBinding;
+  Module: TJsModule;
 label
   ReloadFrame, DispatchLoop, Unwind, DoReturn, Finished;
 begin
@@ -3188,6 +3194,56 @@ DispatchLoop:
         end;
       opDebugger, opResumeKind, opReturnCompletion, opEnterWith, opLast:
         Inc(PC, 1 + OperandCounts[Op]);
+      opGetImport:
+        begin
+          Binding := @TJsModule(CodeObject.Module).ImportBindings[Code[PC + 2]];
+          if Binding^.Environment = nil then
+            Value := Binding^.Value
+          else
+          begin
+            Value := Binding^.Environment.Slots^[Binding^.Slot];
+            if Value = JsHole then
+            begin
+              ThrowReferenceError('Cannot access ''' + ValueToPascal(Self, Constants[Code[PC + 3]]) +
+                ''' before initialization');
+              goto Unwind;
+            end;
+          end;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 4);
+        end;
+      opImportCall:
+        begin
+          FStackTop := Frame^.Base + CodeObject.RegisterCount;
+          if Code[PC + 3] >= 0 then
+            B := Regs[Code[PC + 3]]
+          else
+            B := JsUndefined;
+          if Assigned(JsDynamicImportHook) then
+            Value := JsDynamicImportHook(Self, CodeObject, Regs[Code[PC + 2]], B)
+          else
+            Value := ThrowTypeError('import() is not available');
+          Frame := @FFrames^[FrameIndex];
+          if Value = JsException then
+            goto Unwind;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 4);
+        end;
+      opImportMeta:
+        begin
+          Module := TJsModule(CodeObject.Module);
+          if Module.Meta = nil then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            if Assigned(JsImportMetaHook) then
+              Module.Meta := JsImportMetaHook(Self, Module);
+            if Module.Meta = nil then
+              Module.Meta := NewObject(nil);
+            Frame := @FFrames^[FrameIndex];
+          end;
+          Regs[Code[PC + 1]] := JsObjectValue(Module.Meta);
+          Inc(PC, 2);
+        end;
       opRegExp:
         begin
           FStackTop := Frame^.Base + CodeObject.RegisterCount;

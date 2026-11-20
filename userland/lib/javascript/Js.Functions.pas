@@ -123,6 +123,8 @@ type
     RestRegister: Integer;
     { Template objects made at each site (GetTemplateObject). }
     TemplateObjects: TJsValueList;
+    { The module the code belongs to (a TJsModule; nil in scripts). }
+    Module: TJsCell;
     procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
     function LineAt(PC: Integer; out Column: Integer): Integer;
@@ -251,6 +253,7 @@ begin
   end;
   Tracer.MarkCell(Name);
   Tracer.MarkCell(Source);
+  Tracer.MarkCell(Module);
   Tracer.MarkValues(@TemplateObjects[0], System.Length(TemplateObjects));
 end;
 

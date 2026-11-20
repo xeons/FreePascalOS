@@ -177,6 +177,12 @@ begin
     nkDebugger: Emit(opDebugger);
     nkFunctionDeclaration: CompileFunctionDeclaration(Node);
     nkClassDeclaration: CompileClassDeclaration(Node);
+    nkExport:
+      begin
+        { export default expression: the *default* binding. }
+        Value := NamedExpression(Node.A, -1, 'default');
+        StoreVariable(Node.B.Variable, '*default*', Value, True);
+      end;
     nkWith:
       raise EJsSyntaxError.CreateAt('The with statement is not supported', Node.Line, Node.Column);
   else

@@ -60,6 +60,8 @@ uses
   Js.Builtins.TypedArrays,
   Js.Builtins.Atomics,
   Js.Builtins.Base64,
+  Js.ModuleRecords,
+  Js.Modules,
   Js.Intrinsics,
   Js.Engine;
 

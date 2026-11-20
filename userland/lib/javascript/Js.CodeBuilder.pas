@@ -85,6 +85,8 @@ type
     Realm: TJsRealm;
     Source: TJsSource;
     FileName: string;
+    { The module being compiled (nil for a script). }
+    Module: TJsCell;
   end;
 
   TJsCodeBuilder = class
@@ -193,7 +195,7 @@ implementation
 
 function DeclarationIsConstant(Variable: TJsVariable): Boolean;
 begin
-  Result := (Variable <> nil) and (Variable.Kind in [dkConst, dkClassInner]);
+  Result := (Variable <> nil) and (Variable.Kind in [dkConst, dkClassInner, dkImport]);
 end;
 
 { TJsControl }
@@ -227,6 +229,7 @@ begin
   FCode := TJsCode.Create;
   Heap.Register(FCode, ckCode);
   FCode.Source := Context.Source;
+  FCode.Module := Context.Module;
   FCode.ArgumentsRegister := -1;
   FCode.RestRegister := -1;
   SetLength(FInstructions, 64);
@@ -552,7 +555,7 @@ begin
   for Index := 0 to Scope.VariableCount - 1 do
   begin
     Variable := Scope.Variables[Index];
-    if Variable.IsGlobal then
+    if Variable.IsGlobal or (Variable.Kind = dkImport) then
       Continue;
     if Variable.Captured then
     begin
@@ -563,13 +566,16 @@ begin
       Variable.Index := AllocateLocal;
   end;
   for Index := 0 to Scope.ChildCount - 1 do
-    if not (Scope.Children[Index].Kind in [skFunction, skScript, skEval]) then
+    if not (Scope.Children[Index].Kind in [skFunction, skScript, skEval, skModule]) then
       LayoutScope(Scope.Children[Index], False);
 end;
 
 procedure TJsCodeBuilder.EnterScope(Scope: TJsScope);
 begin
   FScope := Scope;
+  { A module's environment exists already, its holes set. }
+  if Scope.EnvironmentProvided then
+    Exit;
   if Scope.HasEnvironment then
   begin
     Emit(opPushScope, Scope.EnvironmentSize);
@@ -580,7 +586,7 @@ end;
 
 procedure TJsCodeBuilder.LeaveScope(Scope: TJsScope);
 begin
-  if Scope.HasEnvironment then
+  if Scope.HasEnvironment and not Scope.EnvironmentProvided then
   begin
     Emit(opPopScope);
     Dec(FEnvironmentDepth);
@@ -600,7 +606,7 @@ begin
   for Index := 0 to Scope.VariableCount - 1 do
   begin
     Variable := Scope.Variables[Index];
-    if not Variable.IsLexical or Variable.IsGlobal then
+    if not Variable.IsLexical or Variable.IsGlobal or (Variable.Kind = dkImport) then
       Continue;
     if Variable.Captured then
     begin
@@ -661,6 +667,14 @@ begin
     if Target < 0 then
       Target := AllocateRegister;
     Emit(opGetGlobal, Target, AtomConstant(Name), NewCache);
+    Exit(Target);
+  end;
+  if Variable.Kind = dkImport then
+  begin
+    { Live: read from the exporter's binding each time. }
+    if Target < 0 then
+      Target := AllocateRegister;
+    Emit(opGetImport, Target, Variable.Index, AtomConstant(Name));
     Exit(Target);
   end;
   Check := NeedsTdzCheck(Variable, Reference);

@@ -21,7 +21,8 @@
 
   JavaScriptTest SCRIPTS BENCHMARKS
 
-  Runs every SCRIPTS/*.js in a fresh engine, with its console output
+  Runs every SCRIPTS/*.js (and every SCRIPTS/*.mjs as a module, its
+  imports read from files relative to it) in a fresh engine, with its console output
   (and "Uncaught ..." for an exception that escapes, after the promise
   jobs have run) compared line by line with the block comment at the
   end of the file that starts with "/* expected". Then runs every
@@ -46,6 +47,8 @@ uses
   Js.Operations,
   Js.Interpreter,
   Js.ArrayBuffers,
+  Js.Modules,
+  Js.Promises,
   Js.Engine;
 
 { The counting memory manager }
@@ -118,6 +121,8 @@ begin
   SetMemoryManager(Manager);
 end;
 
+function ReadText(const Path: string): string; forward;
+
 { Output capture }
 
 type
@@ -127,6 +132,12 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Write(const Text: string; IsError: Boolean);
+    procedure Fetch(Request: TJsModuleFetch);
+    { Scripts are named without their directory: their imports resolve
+      against the scripts' directory. }
+    function Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+  public
+    Directory: string;
   end;
 
 constructor TCapture.Create;
@@ -139,6 +150,29 @@ destructor TCapture.Destroy;
 begin
   Lines.Free;
   inherited Destroy;
+end;
+
+{ Modules are files: the key is the path. }
+procedure TCapture.Fetch(Request: TJsModuleFetch);
+var
+  Text: string;
+begin
+  if not FileExists(Request.Key) then
+  begin
+    Request.Fail('Cannot find module ''' + ExtractFileName(Request.Key) + '''');
+    Exit;
+  end;
+  Text := ReadText(Request.Key);
+  Request.Succeed(Text);
+end;
+
+function TCapture.Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+begin
+  if Pos('/', ReferrerKey) = 0 then
+    Key := ResolveRelativePath(Specifier, Directory + ReferrerKey)
+  else
+    Key := ResolveRelativePath(Specifier, ReferrerKey);
+  Result := True;
 end;
 
 procedure TCapture.Write(const Text: string; IsError: Boolean);
@@ -246,8 +280,14 @@ begin
       Exit;
     end;
     Engine.Realm.ConsoleWriter := @Capture.Write;
+    Engine.ModuleFetcher := @Capture.Fetch;
+    Engine.ModuleResolver := @Capture.Resolve;
+    Capture.Directory := ExtractFilePath(Path);
     try
-      Engine.Evaluate(Source, ExtractFileName(Path));
+      if ExtractFileExt(Path) = '.mjs' then
+        Engine.EvaluateModule(Source, Path)
+      else
+        Engine.Evaluate(Source, ExtractFileName(Path));
       Engine.RunJobs;
     except
       on Error: EJsError do
@@ -351,6 +391,57 @@ procedure FreeExternalBytes(Data: Pointer; ByteLength: SizeInt; Context: Pointer
 begin
   Inc(ExternalFreed);
   FreeMem(Data);
+end;
+
+type
+  { A host whose fetches finish later. }
+  TDeferredModules = class
+  public
+    Pending: array of TJsModuleFetch;
+    procedure Fetch(Request: TJsModuleFetch);
+  end;
+
+procedure TDeferredModules.Fetch(Request: TJsModuleFetch);
+begin
+  SetLength(Pending, Length(Pending) + 1);
+  Pending[High(Pending)] := Request;
+end;
+
+{ Modules fetched asynchronously by the host. }
+procedure TestModuleLoading;
+var
+  Engine: TJsEngine;
+  Host: TDeferredModules;
+  Promise, Namespace: TJsValue;
+begin
+  Host := TDeferredModules.Create;
+  Engine := TJsEngine.Create;
+  try
+    Engine.ModuleFetcher := @Host.Fetch;
+    Promise := Engine.EvaluateModule('import { v } from "./lib/dep.mjs"; globalThis.seen = v * 2;', 'app/main.mjs');
+    Check((Length(Host.Pending) = 1) and (Host.Pending[0].Key = 'app/lib/dep.mjs') and
+      (Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'seen') = JsUndefined), 'api: module fetch deferred');
+    Host.Pending[0].Succeed('export const v = 21;');
+    Host.Pending := nil;
+    Engine.RunJobs;
+    Check(Engine.ToNumber(Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'seen')) = 42,
+      'api: module evaluated once its import arrived');
+    Check(TJsPromise(JsAsObject(Promise)).State = psFulfilled, 'api: module evaluation promise');
+    Namespace := Engine.ModuleNamespace('app/lib/dep.mjs');
+    Check(Engine.ToNumber(Engine.GetProperty(Namespace, 'v')) = 21, 'api: module namespace');
+    Promise := Engine.ImportModule('./lib/dep.mjs', 'app/main.mjs');
+    Engine.RunJobs;
+    Check((Length(Host.Pending) = 0) and (TJsPromise(JsAsObject(Promise)).Value = Namespace),
+      'api: import of a loaded module');
+    Promise := Engine.EvaluateModule('import "./gone.mjs";', 'app/other.mjs');
+    Host.Pending[0].Fail('not found');
+    Host.Pending := nil;
+    Engine.RunJobs;
+    Check(TJsPromise(JsAsObject(Promise)).State = psRejected, 'api: failed fetch rejects');
+  finally
+    Engine.Free;
+    Host.Free;
+  end;
 end;
 
 { ArrayBuffers made and read from Pascal without copies. }
@@ -557,11 +648,19 @@ begin
       until FindNext(Search) <> 0;
       FindClose(Search);
     end;
+    if FindFirst(ScriptDirectory + '*.mjs', faAnyFile, Search) = 0 then
+    begin
+      repeat
+        Files.Add(ScriptDirectory + Search.Name);
+      until FindNext(Search) <> 0;
+      FindClose(Search);
+    end;
     Files.Sort;
     for Index := 0 to Files.Count - 1 do
       RunScript(Files[Index]);
     TestEmbedding;
     TestBinaryData;
+    TestModuleLoading;
     Files.Clear;
     if FindFirst(BenchmarkDirectory + '*.js', faAnyFile, Search) = 0 then
     begin

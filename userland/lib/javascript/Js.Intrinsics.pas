@@ -64,7 +64,8 @@ uses
   Js.Builtins.ArrayBuffer,
   Js.Builtins.TypedArrays,
   Js.Builtins.Atomics,
-  Js.Builtins.Base64;
+  Js.Builtins.Base64,
+  Js.Modules;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -155,6 +156,7 @@ begin
   InstallAtomics(R);
   InstallBase64(R);
   RecordTypedArrayShapes(R);
+  InstallModules(R);
 end;
 
 end.

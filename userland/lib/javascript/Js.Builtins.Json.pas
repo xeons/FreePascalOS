@@ -45,6 +45,9 @@ uses
   Js.Interpreter;
 
 procedure InstallJson(R: TJsInterpreterRealm);
+{ JSON.parse of a string value (a SyntaxError thrown when it is not
+  JSON). }
+function ParseJsonText(R: TJsRealm; Text: TJsValue): TJsValue;
 
 implementation
 
@@ -478,6 +481,11 @@ begin
   finally
     R.Runtime.PopRoots(Mark);
   end;
+end;
+
+function ParseJsonText(R: TJsRealm; Text: TJsValue): TJsValue;
+begin
+  Result := JsonParse(R, JsUndefined, PJsValueArray(@Text), 1, nil, JsUndefined);
 end;
 
 { Stringifying }

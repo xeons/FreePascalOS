@@ -61,7 +61,8 @@ uses
   Js.Bytecode,
   Js.CodeBuilder,
   Js.ExpressionCompiler,
-  Js.StatementCompiler;
+  Js.StatementCompiler,
+  Js.ModuleRecords;
 
 type
   TJsFunctionCompiler = class(TJsStatementCompiler)
@@ -76,6 +77,8 @@ type
     constructor Create(Context: TJsCompileContext; Info: TJsFunctionInfo; Parent: TJsFunctionCompiler);
     function CompileFunction(const Name: UnicodeString): TJsCode;
     function CompileScriptBody(Program_: TJsNode): TJsCode;
+    function CompileModuleBody(Program_: TJsNode): TJsCode;
+    function CompileModuleInitializer(Program_: TJsNode): TJsCode;
     function CompileFunctionNode(Node: TJsNode; Target: Integer; const Name: UnicodeString;
       HasName: Boolean): Integer; override;
     function CompileClass(Node: TJsNode; Target: Integer; const Name: UnicodeString): Integer; override;
@@ -85,6 +88,9 @@ type
 { Compiles a script (or the code of an indirect eval: global). }
 function CompileScript(Realm: TJsRealm; const Source: UnicodeString; const FileName: string;
   Strict: Boolean = False): TJsCode;
+{ Compiles a module's source into Module (its codes, requests, imports,
+  exports and environment); raises EJsSyntaxError. }
+procedure CompileModule(Realm: TJsRealm; const Source: UnicodeString; const FileName: string; Module: TJsModule);
 { The code of a function made by the Function constructor. }
 function CompileFunctionSource(Realm: TJsRealm; const Parameters, Body: UnicodeString; IsAsync,
   IsGenerator: Boolean): TJsCode;
@@ -213,7 +219,7 @@ begin
     fkSetter: Flags := Flags or CodeMethod or CodeSetter;
     fkClassConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor;
     fkDerivedConstructor: Flags := Flags or CodeClassConstructor or CodeConstructor or CodeDerivedConstructor;
-    fkScript: Flags := Flags or CodeScript;
+    fkScript, fkModule: Flags := Flags or CodeScript;
   end;
   if FCode.RestRegister >= 0 then
     Flags := Flags or CodeHasRest;
@@ -658,6 +664,37 @@ begin
   Result := FinishCode;
 end;
 
+{ A module's top level: its declarations live in the module's
+  environment (made before the code runs), its function declarations
+  are made by the initializer when the module is linked. }
+function TJsFunctionCompiler.CompileModuleBody(Program_: TJsNode): TJsCode;
+var
+  Scope: TJsScope;
+begin
+  Scope := Program_.Scope;
+  FScope := Scope;
+  LayoutScope(Scope, True);
+  EnterScope(Scope);
+  if FInfo.ThisVariable <> nil then
+    StoreVariable(FInfo.ThisVariable, '%this', -1, True);
+  CompileStatements(Program_.List, Program_.Count);
+  Emit(opReturnUndefined);
+  SetCodeFlags('');
+  Result := FinishCode;
+end;
+
+{ After CompileModuleBody (which laid the scope out). }
+function TJsFunctionCompiler.CompileModuleInitializer(Program_: TJsNode): TJsCode;
+begin
+  FScope := Program_.Scope;
+  EnterScope(Program_.Scope);
+  HoistFunctions(Program_.List, Program_.Count);
+  Emit(opReturnUndefined);
+  SetCodeFlags('');
+  FCode.Flags := CodeStrict or CodeScript;
+  Result := FinishCode;
+end;
+
 procedure MarkGlobals(Scope: TJsScope);
 var
   Index: Integer;
@@ -716,6 +753,108 @@ begin
     Program_ := Parser.ParseProgram(Strict);
     Result := CompileProgramNode(Realm, Program_, Source, FileName);
   finally
+    Parser.Free;
+    Arena.Free;
+  end;
+end;
+
+procedure FillModuleRecord(Realm: TJsRealm; Module: TJsModule; Syntax: TJsModuleSyntax; Scope: TJsScope);
+var
+  Index: Integer;
+  Variable: TJsVariable;
+begin
+  SetLength(Module.Requests, Length(Syntax.Requests));
+  SetLength(Module.RequestedModules, Length(Syntax.Requests));
+  for Index := 0 to High(Syntax.Requests) do
+  begin
+    Module.Requests[Index].Specifier := Syntax.Requests[Index].Specifier;
+    Module.Requests[Index].Json := Syntax.Requests[Index].Json;
+  end;
+  SetLength(Module.Imports, Length(Syntax.Imports));
+  SetLength(Module.ImportBindings, Length(Syntax.Imports));
+  for Index := 0 to High(Syntax.Imports) do
+  begin
+    Module.Imports[Index].Request := Syntax.Imports[Index].Request;
+    Module.Imports[Index].ImportName := Syntax.Imports[Index].ImportName;
+    Module.Imports[Index].IsNamespace := Syntax.Imports[Index].IsNamespace;
+    Module.ImportBindings[Index].Value := JsUndefined;
+  end;
+  SetLength(Module.LocalExports, Length(Syntax.LocalExports));
+  for Index := 0 to High(Syntax.LocalExports) do
+  begin
+    Module.LocalExports[Index].ExportName := Syntax.LocalExports[Index].ExportName;
+    Module.LocalExports[Index].Slot := Syntax.LocalExports[Index].Variable.Index;
+  end;
+  SetLength(Module.IndirectExports, Length(Syntax.IndirectExports));
+  for Index := 0 to High(Syntax.IndirectExports) do
+  begin
+    Module.IndirectExports[Index].ExportName := Syntax.IndirectExports[Index].ExportName;
+    Module.IndirectExports[Index].Request := Syntax.IndirectExports[Index].Request;
+    Module.IndirectExports[Index].ImportName := Syntax.IndirectExports[Index].ImportName;
+    Module.IndirectExports[Index].IsNamespace := Syntax.IndirectExports[Index].IsNamespace;
+  end;
+  Module.StarExports := Copy(Syntax.StarExports);
+  { The environment, with its lexical bindings in the dead zone. }
+  Module.Environment := NewEnvironment(Realm.Heap, nil, Scope.EnvironmentSize);
+  for Index := 0 to Scope.VariableCount - 1 do
+  begin
+    Variable := Scope.Variables[Index];
+    if Variable.IsLexical and (Variable.Kind <> dkImport) and (Variable.Index >= 0) then
+      Module.Environment.Slots^[Variable.Index] := JsHole;
+  end;
+end;
+
+procedure CompileModule(Realm: TJsRealm; const Source: UnicodeString; const FileName: string; Module: TJsModule);
+var
+  Arena: TJsAstArena;
+  Parser: TJsParser;
+  Program_: TJsNode;
+  Context: TJsCompileContext;
+  Compiler: TJsFunctionCompiler;
+  Scope: TJsScope;
+  Syntax: TJsModuleSyntax;
+  Index: Integer;
+begin
+  Arena := TJsAstArena.Create;
+  Parser := TJsParser.Create(Source, Arena);
+  Context := nil;
+  try
+    Program_ := Parser.ParseProgram(True, pgModule);
+    ResolveProgram(Program_);
+    Scope := Program_.Scope;
+    Syntax := Program_.Func.ModuleSyntax;
+    Scope.EnvironmentProvided := True;
+    for Index := 0 to High(Syntax.Imports) do
+      if Syntax.Imports[Index].Variable <> nil then
+        Syntax.Imports[Index].Variable.Index := Index;
+    for Index := 0 to Scope.VariableCount - 1 do
+      if Scope.Variables[Index].Kind <> dkImport then
+        Scope.Variables[Index].Captured := True;
+    Context := TJsCompileContext.Create;
+    Context.Realm := Realm;
+    Context.FileName := FileName;
+    Context.Module := Module;
+    Context.Source := TJsSource.Create;
+    Realm.Heap.Register(Context.Source, ckOther);
+    Context.Source.FileName := FileName;
+    Context.Source.Text := Source;
+    Realm.Heap.Account(Length(Source) * 2);
+    Compiler := TJsFunctionCompiler.Create(Context, Program_.Func, nil);
+    try
+      Module.Body := Compiler.CompileModuleBody(Program_);
+    finally
+      Compiler.Free;
+    end;
+    Compiler := TJsFunctionCompiler.Create(Context, Program_.Func, nil);
+    try
+      Module.Initializer := Compiler.CompileModuleInitializer(Program_);
+    finally
+      Compiler.Free;
+    end;
+    Module.HasTopLevelAwait := Program_.Func.IsAsync;
+    FillModuleRecord(Realm, Module, Syntax, Scope);
+  finally
+    Context.Free;
     Parser.Free;
     Arena.Free;
   end;
