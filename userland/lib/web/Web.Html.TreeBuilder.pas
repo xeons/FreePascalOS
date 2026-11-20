@@ -92,6 +92,10 @@ type
     FOnScriptEnd: TScriptEndEvent;
     FOnEncodingDeclared: TEncodingDeclaredEvent;
     FOnParseError: TParseErrorEvent;
+    { Short whitespace-only texts ("\n  " between tags), shared by the
+      text nodes that have them. }
+    FWhitespaceTexts: array[0..63] of string;
+    function SharedText(const Text: string): string;
     procedure ParseError(const Code: string);
     { The dispatcher. }
     procedure DispatchToken(var Token: TToken);
@@ -461,6 +465,26 @@ begin
   Result := InsertHtmlElement(Token);
 end;
 
+function THtmlTreeBuilder.SharedText(const Text: string): string;
+var
+  Index: SizeInt;
+  Hash: LongWord;
+begin
+  Result := Text;
+  if Length(Text) > 32 then
+    Exit;
+  Hash := Length(Text);
+  for Index := 1 to Length(Text) do
+  begin
+    if not IsWhitespaceByte(Text[Index]) then
+      Exit;
+    Hash := (Hash * 7 + Ord(Text[Index])) and 63;
+  end;
+  if FWhitespaceTexts[Hash] <> Text then
+    FWhitespaceTexts[Hash] := Text;
+  Result := FWhitespaceTexts[Hash];
+end;
+
 procedure THtmlTreeBuilder.InsertCharacters(const Text: string);
 var
   Parent, Before, Previous: TNode;
@@ -477,7 +501,7 @@ begin
   if (Previous <> nil) and (Previous.NodeType = NodeTypeText) then
     TText(Previous).AppendDataFromParser(Text)
   else
-    InsertAt(Parent.NodeDocument.NewText(Text), Parent, Before);
+    InsertAt(Parent.NodeDocument.NewText(SharedText(Text)), Parent, Before);
 end;
 
 procedure THtmlTreeBuilder.InsertComment(const Text: string; Parent: TNode);

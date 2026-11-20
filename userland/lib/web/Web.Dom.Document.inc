@@ -212,7 +212,7 @@ begin
   inherited Create;
   InitializeNode(Self, NodeTypeDocument, Self);
   FFlags := FFlags or NodeFlagConnected;
-  FSubtreeReferences := 1;
+  RareData.SubtreeReferences := 1;
   FIsHtmlDocument := HtmlDocument;
   if HtmlDocument then
     FContentType := 'text/html'
@@ -537,7 +537,6 @@ end;
 procedure TDocument.SubtreeConnected(Root: TNode);
 var
   Node: TNode;
-  Index: Integer;
 begin
   Node := Root;
   while Node <> nil do
@@ -545,6 +544,19 @@ begin
     Node.FFlags := Node.FFlags or NodeFlagConnected;
     if (Node.FFlags and NodeFlagHasId) <> 0 then
       RegisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
+    Node := Node.NextInTree(Root);
+  end;
+end;
+
+{ The insertion steps: told after the insertion and its mutation record. }
+procedure TDocument.NotifySubtreeConnected(Root: TNode);
+var
+  Node: TNode;
+  Index: Integer;
+begin
+  Node := Root;
+  while Node <> nil do
+  begin
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeConnected(Node);
     Node := Node.NextInTree(Root);

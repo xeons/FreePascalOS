@@ -1,0 +1,223 @@
+#data
+<template>a</template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         "a"
+|   <body>
+
+#data
+<!DOCTYPE html><body><template><tr><td>x</td></tr></template>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <template>
+|       content
+|         <tr>
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><template><template>x</template></template>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <template>
+|           content
+|             "x"
+|   <body>
+
+#data
+<!DOCTYPE html><table><template><td>x</td></template></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <template>
+|         content
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><body><template><div>a</template>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <template>
+|       content
+|         <div>
+|           "a"
+|     "b"
+
+#data
+<!DOCTYPE html><template><col></template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <col>
+|   <body>
+
+#data
+<!DOCTYPE html><template><caption>c</caption><tbody><tr><td>x</template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <caption>
+|           "c"
+|         <tbody>
+|           <tr>
+|             <td>
+|               "x"
+|   <body>
+
+#data
+<!DOCTYPE html><template><td>a</td><td>b</template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <td>
+|           "a"
+|         <td>
+|           "b"
+|   <body>
+
+#data
+<!DOCTYPE html><template><b>x</template>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <b>
+|           "x"
+|   <body>
+|     "y"
+
+#data
+<!DOCTYPE html><template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|   <body>
+
+#data
+<!DOCTYPE html><template><div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <div>
+|   <body>
+
+#data
+<!DOCTYPE html><body></template>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+
+#data
+<!DOCTYPE html><template><html a=1><body b=2>x</template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         "x"
+|   <body>
+
+#data
+<!DOCTYPE html><template><form><input></form></template><form>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <form>
+|           <input>
+|   <body>
+|     <form>
+
+#data
+<!DOCTYPE html><template><frame></template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|   <body>
+
+#data
+<!DOCTYPE html><template><select><option>a</template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <select>
+|           <option>
+|             "a"
+|   <body>
+
+#data
+<!DOCTYPE html><template><svg><template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <svg svg>
+|           <svg template>
+|   <body>

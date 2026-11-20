@@ -33,6 +33,24 @@ var
   NodeObjectCount: Int64;
   GlobalDomVersion: LongWord;
 
+{ The subtree reference count and the collector slot live in the rare
+  data: most nodes have neither. }
+function SubtreeCount(Node: TNode): LongWord; inline;
+begin
+  if Node.FRareData = nil then
+    Result := 0
+  else
+    Result := Node.FRareData.SubtreeReferences;
+end;
+
+function CollectorSlotOf(Node: TNode): LongWord; inline;
+begin
+  if Node.FRareData = nil then
+    Result := 0
+  else
+    Result := Node.FRareData.CollectorSlot;
+end;
+
 function DomVersion: LongWord;
 begin
   Result := GlobalDomVersion;
@@ -60,21 +78,21 @@ end;
 
 procedure ListForCollection(Node: TNode);
 begin
-  if Node.FCollectorSlot <> 0 then
+  if CollectorSlotOf(Node) <> 0 then
     Exit;
   if CollectorCount >= Length(CollectorEntries) then
     SetLength(CollectorEntries, CollectorCount * 2 + 64);
   CollectorEntries[CollectorCount] := Node;
   Inc(CollectorCount);
-  Node.FCollectorSlot := CollectorCount;
+  Node.RareData.CollectorSlot := CollectorCount;
 end;
 
 procedure UnlistFromCollection(Node: TNode);
 begin
-  if Node.FCollectorSlot = 0 then
+  if CollectorSlotOf(Node) = 0 then
     Exit;
-  CollectorEntries[Node.FCollectorSlot - 1] := nil;
-  Node.FCollectorSlot := 0;
+  CollectorEntries[Node.FRareData.CollectorSlot - 1] := nil;
+  Node.FRareData.CollectorSlot := 0;
   while (CollectorCount > 0) and (CollectorEntries[CollectorCount - 1] = nil) do
     Dec(CollectorCount);
 end;
@@ -101,7 +119,7 @@ var
 begin
   Current := Node;
   repeat
-    Inc(Current.FSubtreeReferences, Count);
+    Inc(Current.RareData.SubtreeReferences, Count);
     Result := Current;
     Current := ReferenceParent(Current);
   until Current = nil;
@@ -113,7 +131,7 @@ var
 begin
   Current := Node;
   repeat
-    Dec(Current.FSubtreeReferences, Count);
+    Dec(Current.FRareData.SubtreeReferences, Count);
     Result := Current;
     Current := ReferenceParent(Current);
   until Current = nil;
@@ -124,7 +142,7 @@ var
   Root: TNode;
 begin
   Root := AddSubtreeReferences(Self, 1);
-  if (Root.FNodeType <> NodeTypeDocument) and (Root.FSubtreeReferences = 1) then
+  if (Root.FNodeType <> NodeTypeDocument) and (SubtreeCount(Root) = 1) then
     Root.FOwnerDocument.Retain;
 end;
 
@@ -134,7 +152,7 @@ var
   Document: TDocument;
 begin
   Root := RemoveSubtreeReferences(Self, 1);
-  if Root.FSubtreeReferences <> 0 then
+  if SubtreeCount(Root) <> 0 then
     Exit;
   if Root.FNodeType = NodeTypeDocument then
   begin
@@ -166,7 +184,7 @@ var
   Count: LongWord;
   OldRoot: TNode;
 begin
-  Count := Node.FSubtreeReferences;
+  Count := SubtreeCount(Node);
   if Count = 0 then
   begin
     if not IsHostedRoot(Node) then
@@ -175,7 +193,7 @@ begin
   end;
   Node.FOwnerDocument.Retain;
   OldRoot := RemoveSubtreeReferences(OldParent, Count);
-  if (OldRoot.FNodeType <> NodeTypeDocument) and (OldRoot.FSubtreeReferences = 0) then
+  if (OldRoot.FNodeType <> NodeTypeDocument) and (SubtreeCount(OldRoot) = 0) then
   begin
     if not IsHostedRoot(OldRoot) then
       ListForCollection(OldRoot);
@@ -192,11 +210,11 @@ var
   NewRoot: TNode;
 begin
   UnlistFromCollection(Node);
-  Count := Node.FSubtreeReferences;
+  Count := SubtreeCount(Node);
   if Count = 0 then
     Exit;
   NewRoot := AddSubtreeReferences(NewParent, Count);
-  if (NewRoot.FNodeType <> NodeTypeDocument) and (NewRoot.FSubtreeReferences = Count) then
+  if (NewRoot.FNodeType <> NodeTypeDocument) and (SubtreeCount(NewRoot) = Count) then
     NewRoot.FOwnerDocument.Retain;
   Node.FOwnerDocument.Release;
 end;
@@ -204,7 +222,7 @@ end;
 { Node, a root, moves to another document. }
 procedure RootChangedDocument(Node: TNode; OldDocument, NewDocument: TDocument);
 begin
-  if Node.FSubtreeReferences > 0 then
+  if SubtreeCount(Node) > 0 then
   begin
     NewDocument.Retain;
     OldDocument.Release;
@@ -256,7 +274,7 @@ begin
     Node := CollectorEntries[Index - 1];
     if Node = nil then
       Continue;
-    if (ReferenceParent(Node) = nil) and (Node.FSubtreeReferences = 0) and not IsHostedRoot(Node) then
+    if (ReferenceParent(Node) = nil) and (SubtreeCount(Node) = 0) and not IsHostedRoot(Node) then
     begin
       if DoomedCount >= Length(Doomed) then
         SetLength(Doomed, DoomedCount * 2 + 16);
@@ -266,7 +284,7 @@ begin
     else
     begin
       CollectorEntries[Index - 1] := nil;
-      Node.FCollectorSlot := 0;
+      Node.FRareData.CollectorSlot := 0;
     end;
   end;
   for Index := 1 to DoomedCount do
@@ -283,7 +301,7 @@ begin
   while Index < CollectorCount do
   begin
     Node := CollectorEntries[Index];
-    if (Node <> nil) and (Node.FOwnerDocument = Self) and (Node.FSubtreeReferences = 0) and
+    if (Node <> nil) and (Node.FOwnerDocument = Self) and (SubtreeCount(Node) = 0) and
       (ReferenceParent(Node) = nil) then
       FreeTree(Node);
     Inc(Index);

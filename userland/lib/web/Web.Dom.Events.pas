@@ -83,10 +83,12 @@ type
     FDispatchDepth: Integer;
     FHasRemovedEntries: Boolean;
     procedure Purge;
+    function IsCallbackUsed(Callback: TEventListener; const Entries: TListenerEntryArray; Count: Integer): Boolean;
   public
     destructor Destroy; override;
     { Adds a listener; the list owns Callback from then on (a duplicate
-      is freed at once). False for a duplicate. }
+      is freed at once). False for a duplicate. One callback object may
+      serve several entries (other types, capture); it is freed once. }
     function Add(EventType: TAtom; Callback: TEventListener; const Options: TEventListenerOptions): Boolean;
     function Remove(EventType: TAtom; Callback: TEventListener; Capture: Boolean): Boolean;
     function HasListenersFor(EventType: TAtom): Boolean;
@@ -184,15 +186,27 @@ begin
   Result := Other = Self;
 end;
 
+function TEventListenerList.IsCallbackUsed(Callback: TEventListener; const Entries: TListenerEntryArray;
+  Count: Integer): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 1 to Count do
+    if Entries[Index - 1].Callback = Callback then
+      Exit(True);
+  Result := False;
+end;
+
 destructor TEventListenerList.Destroy;
 var
   Index: Integer;
 begin
+  { Each callback once: the first entry that has it frees it. }
   for Index := 1 to FCount do
-  begin
-    FEntries[Index - 1].Callback.Free;
+    if not IsCallbackUsed(FEntries[Index - 1].Callback, FEntries, Index - 1) then
+      FEntries[Index - 1].Callback.Free;
+  for Index := 1 to FCount do
     FEntries[Index - 1].Free;
-  end;
   inherited Destroy;
 end;
 
@@ -208,7 +222,7 @@ begin
     if not Entry.Removed and (Entry.EventType = EventType) and (Entry.Capture = Options.Capture) and
       Entry.Callback.IsSameCallback(Callback) then
     begin
-      if Entry.Callback <> Callback then
+      if not IsCallbackUsed(Callback, FEntries, FCount) then
         Callback.Free;
       Exit(False);
     end;
@@ -249,14 +263,18 @@ end;
 
 procedure TEventListenerList.Purge;
 var
-  Source, Destination: Integer;
+  Source, Destination, RemovedCount, Index: Integer;
+  Removed: TListenerEntryArray;
 begin
+  Removed := nil;
+  SetLength(Removed, FCount);
+  RemovedCount := 0;
   Destination := 0;
   for Source := 1 to FCount do
     if FEntries[Source - 1].Removed then
     begin
-      FEntries[Source - 1].Callback.Free;
-      FEntries[Source - 1].Free;
+      Removed[RemovedCount] := FEntries[Source - 1];
+      Inc(RemovedCount);
     end
     else
     begin
@@ -265,6 +283,13 @@ begin
     end;
   FCount := Destination;
   FHasRemovedEntries := False;
+  { A callback goes when no remaining entry has it, once. }
+  for Index := 1 to RemovedCount do
+    if not IsCallbackUsed(Removed[Index - 1].Callback, FEntries, FCount) and
+      not IsCallbackUsed(Removed[Index - 1].Callback, Removed, Index - 1) then
+      Removed[Index - 1].Callback.Free;
+  for Index := 1 to RemovedCount do
+    Removed[Index - 1].Free;
 end;
 
 function TEventListenerList.HasListenersFor(EventType: TAtom): Boolean;

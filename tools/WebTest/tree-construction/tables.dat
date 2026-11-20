@@ -1,0 +1,457 @@
+#data
+<!DOCTYPE html><table><tr><td>a</td></tr></table>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "a"
+
+#data
+<!DOCTYPE html><table>a<tr>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "a"
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<!DOCTYPE html><table> <tr> </tr> </table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       " "
+|       <tbody>
+|         <tr>
+|           " "
+|         " "
+
+#data
+<!DOCTYPE html><table><td>x</td>y</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "y"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><table><b>x</b></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       "x"
+|     <table>
+
+#data
+<!DOCTYPE html><div><table><div>x</div></table></div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <div>
+|         "x"
+|       <table>
+
+#data
+<!DOCTYPE html><table><input type=hidden><input></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <input>
+|     <table>
+|       <input>
+|         type="hidden"
+
+#data
+<!DOCTYPE html><table><form><tr></form>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <form>
+|       <tbody>
+|         <tr>
+
+#data
+<!DOCTYPE html><table><caption>c<td>x</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         "c"
+|       <tbody>
+|         <tr>
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><table><col><tr><td>a</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <colgroup>
+|         <col>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "a"
+
+#data
+<!DOCTYPE html><table><colgroup><col span=2></colgroup><thead><tr><th>h<tbody><tr><td>d<tfoot><tr><td>f</table>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <colgroup>
+|         <col>
+|           span="2"
+|       <thead>
+|         <tr>
+|           <th>
+|             "h"
+|       <tbody>
+|         <tr>
+|           <td>
+|             "d"
+|       <tfoot>
+|         <tr>
+|           <td>
+|             "f"
+
+#data
+<!DOCTYPE html><table><tr><td><table><tr><td>x</table>y</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <table>
+|               <tbody>
+|                 <tr>
+|                   <td>
+|                     "x"
+|             "y"
+
+#data
+<!DOCTYPE html><table><table>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|     "x"
+|     <table>
+
+#data
+<!DOCTYPE html><table><tr><td>a<td>b<tr><td>c
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "a"
+|           <td>
+|             "b"
+|         <tr>
+|           <td>
+|             "c"
+
+#data
+<!DOCTYPE html><table><tr><th>a</th><td>b</tr></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <th>
+|             "a"
+|           <td>
+|             "b"
+
+#data
+<!DOCTYPE html><table><tbody><td>x</tbody><tr><td>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "x"
+|       <tbody>
+|         <tr>
+|           <td>
+|             "y"
+
+#data
+<!DOCTYPE html><table><tr><td><p>a</td><td>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <p>
+|               "a"
+|           <td>
+|             "b"
+
+#data
+<!DOCTYPE html><table><tr></td></th></tbody>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<!DOCTYPE html><table><script>s</script><style>t</style></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <script>
+|         "s"
+|       <style>
+|         "t"
+
+#data
+<!DOCTYPE html><table><tr>a<td>b</td>c</tr>d</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "acd"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "b"
+
+#data
+<!DOCTYPE html><table><a>1<td>2</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       "1"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "2"
+
+#data
+<!DOCTYPE html><table><tr><td><b>x</td></tr></table>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <b>
+|               "x"
+|     "y"
+
+#data
+<!DOCTYPE html><table><caption><b>x</caption>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "y"
+|     <table>
+|       <caption>
+|         <b>
+|           "x"
+
+#data
+<!DOCTYPE html><table><colgroup>x</colgroup>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "x"
+|     <table>
+|       <colgroup>
+
+#data
+<!DOCTYPE html><table></caption></col></colgroup></html></tbody></td></tfoot></th></thead></tr><tr>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<!DOCTYPE html><table><tr><td></body></caption></col></colgroup></html>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><table><select><option>a<td>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <option>
+|         "a"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "b"
+
+#data
+<!DOCTYPE html><table><tr><td><select><option>a</table>b
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <select>
+|               <option>
+|                 "a"
+|     "b"
+
+#data
+<!DOCTYPE html><table><tr><td><select><td>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <select>
+|           <td>
+|             "x"
+
+#data
+<table><td>x
+#errors
+#mode quirks
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "x"

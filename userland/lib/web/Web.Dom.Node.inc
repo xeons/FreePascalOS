@@ -71,7 +71,7 @@ begin
   if TemplateContent <> nil then
   begin
     TemplateContent.FHost := nil;
-    if TemplateContent.FSubtreeReferences = 0 then
+    if SubtreeCount(TemplateContent) = 0 then
       FreeTree(TemplateContent);
   end;
   inherited Destroy;
@@ -107,6 +107,25 @@ begin
   if FRareData = nil then
     FRareData := TNodeRareData.Create;
   Result := FRareData;
+end;
+
+function TNode.GetSubtreeReferences: LongWord;
+begin
+  Result := SubtreeCount(Self);
+end;
+
+function TNode.GetScriptWrapper: Pointer;
+begin
+  if FRareData = nil then
+    Result := nil
+  else
+    Result := FRareData.ScriptWrapper;
+end;
+
+procedure TNode.SetScriptWrapper(Value: Pointer);
+begin
+  if (Value <> nil) or (FRareData <> nil) then
+    RareData.ScriptWrapper := Value;
 end;
 
 function TNode.GetFirstChild: TNode;

@@ -1,0 +1,197 @@
+#data
+x</td>y
+#errors
+#document-fragment
+td
+#document
+| "xy"
+
+#data
+<td>x
+#errors
+#document-fragment
+tr
+#document
+| <td>
+|   "x"
+
+#data
+<tr><td>x
+#errors
+#document-fragment
+table
+#document
+| <tbody>
+|   <tr>
+|     <td>
+|       "x"
+
+#data
+<td>x</td><td>y
+#errors
+#document-fragment
+tbody
+#document
+| <tr>
+|   <td>
+|     "x"
+|   <td>
+|     "y"
+
+#data
+<option>a<option>b
+#errors
+#document-fragment
+select
+#document
+| <option>
+|   "a"
+| <option>
+|   "b"
+
+#data
+<b>x</b>&amp;
+#errors
+#document-fragment
+textarea
+#document
+| "<b>x</b>&"
+
+#data
+<b>x</b>&amp;
+#errors
+#document-fragment
+script
+#document
+| "<b>x</b>&amp;"
+
+#data
+<b>x</b>
+#errors
+#document-fragment
+style
+#document
+| "<b>x</b>"
+
+#data
+<circle/><p>x
+#errors
+#document-fragment
+svg svg
+#document
+| <svg circle>
+| <p>
+|   "x"
+
+#data
+<mi>x</mi>
+#errors
+#document-fragment
+math math
+#document
+| <math mi>
+|   "x"
+
+#data
+<b>x
+#errors
+#document-fragment
+math mi
+#document
+| <b>
+|   "x"
+
+#data
+<td>x
+#errors
+#document-fragment
+template
+#document
+| <td>
+|   "x"
+
+#data
+<p>a<html x=1>b
+#errors
+#document-fragment
+body
+#document
+| <p>
+|   "ab"
+
+#data
+<head><body>x
+#errors
+#document-fragment
+div
+#document
+| "x"
+
+#data
+</p>x
+#errors
+#document-fragment
+p
+#document
+| <p>
+| "x"
+
+#data
+<li>a<li>b
+#errors
+#document-fragment
+ul
+#document
+| <li>
+|   "a"
+| <li>
+|   "b"
+
+#data
+<col><col>
+#errors
+#document-fragment
+colgroup
+#document
+| <col>
+| <col>
+
+#data
+<title>t</title><meta>
+#errors
+#document-fragment
+head
+#document
+| <title>
+|   "t"
+| <meta>
+
+#data
+<frame>
+#errors
+#document-fragment
+frameset
+#document
+| <frame>
+
+#data
+a<b>b<i>c</b>d
+#errors
+#document-fragment
+div
+#document
+| "a"
+| <b>
+|   "b"
+|   <i>
+|     "c"
+| <i>
+|   "d"
+
+#data
+<plaintext>x</plaintext>
+#errors
+#document-fragment
+plaintext
+#document
+| "<plaintext>x</plaintext>"

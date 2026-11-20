@@ -1,0 +1,366 @@
+#data
+<!DOCTYPE html><svg><path/><circle></circle></svg>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg path>
+|       <svg circle>
+
+#data
+<!DOCTYPE html><svg><foreignObject><p>x</p></foreignObject></svg>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg foreignObject>
+|         <p>
+|           "x"
+
+#data
+<!DOCTYPE html><svg><p>x</p></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|     <p>
+|       "x"
+
+#data
+<!DOCTYPE html><math><mi>x</mi><mtext><b>y</b></mtext></math>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+|         "x"
+|       <math mtext>
+|         <b>
+|           "y"
+
+#data
+<!DOCTYPE html><svg><clippath/><lineargradient gradientunits="x"/><feGaussianBlur stddeviation="2"/></svg>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg clipPath>
+|       <svg linearGradient>
+|         gradientUnits="x"
+|       <svg feGaussianBlur>
+|         stdDeviation="2"
+
+#data
+<!DOCTYPE html><svg xlink:href=a xml:lang=b xmlns:xlink=c xmlns=d viewbox="0 0 1 1"></svg>
+#errors
+#roundtrip
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       viewBox="0 0 1 1"
+|       xlink href="a"
+|       xml lang="b"
+|       xmlns xlink="c"
+|       xmlns xmlns="d"
+
+#data
+<!DOCTYPE html><math definitionurl=x xlink:show=y><mi definitionurl=z></mi></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       definitionURL="x"
+|       xlink show="y"
+|       <math mi>
+|         definitionURL="z"
+
+#data
+<!DOCTYPE html><svg><![CDATA[a<b]]></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       "a<b"
+
+#data
+<!DOCTYPE html><svg><![CDATA[x]]y]]]>z</svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       "x]]y]z"
+
+#data
+<!DOCTYPE html><div><![CDATA[x]]></div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <!-- [CDATA[x]] -->
+
+#data
+<!DOCTYPE html><math><annotation-xml encoding="text/html"><div>x</div></annotation-xml></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math annotation-xml>
+|         encoding="text/html"
+|         <div>
+|           "x"
+
+#data
+<!DOCTYPE html><math><annotation-xml><div>x</div></annotation-xml></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math annotation-xml>
+|     <div>
+|       "x"
+
+#data
+<!DOCTYPE html><math><annotation-xml><svg><g/></svg></annotation-xml></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math annotation-xml>
+|         <svg svg>
+|           <svg g>
+
+#data
+<!DOCTYPE html><svg><title><b>x</b></title><desc>d</desc></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg title>
+|         <b>
+|           "x"
+|       <svg desc>
+|         "d"
+
+#data
+<!DOCTYPE html><svg><font color=red>x</font></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|     <font>
+|       color="red"
+|       "x"
+
+#data
+<!DOCTYPE html><svg><font>x</font></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg font>
+|         "x"
+
+#data
+<!DOCTYPE html><svg><script>a</script></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg script>
+|         "a"
+
+#data
+<!DOCTYPE html><svg><g><path></g>x</svg>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg g>
+|         <svg path>
+|       "x"
+|     "y"
+
+#data
+<!DOCTYPE html><svg><G></g></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg g>
+
+#data
+<!DOCTYPE html><div><svg></div>x
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <svg svg>
+|     "x"
+
+#data
+<!DOCTYPE html><svg></p>x</svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|     <p>
+|     "x"
+
+#data
+<!DOCTYPE html><table><svg><g>x</g></svg></table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg g>
+|         "x"
+|     <table>
+
+#data
+<!DOCTYPE html><table><tr><td><svg><desc><td>x</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <svg svg>
+|               <svg desc>
+|           <td>
+|             "x"
+
+#data
+<!DOCTYPE html><math><mi><mglyph/><malignmark/></mi></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+|         <math mglyph>
+|         <math malignmark>
+
+#data
+<!DOCTYPE html><math><mo><svg><path/></svg></mo></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mo>
+|         <svg svg>
+|           <svg path>
+
+#data
+<!DOCTYPE html><svg><foreignObject><svg><circle/></svg></foreignObject></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg foreignObject>
+|         <svg svg>
+|           <svg circle>
+
+#data
+<!DOCTYPE html><svg>a&amp;b<!--c--></svg>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       "a&b"
+|       <!-- c -->
+
+#data
+<!DOCTYPE html><select><svg>x</svg></select>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       "x"

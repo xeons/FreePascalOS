@@ -31,10 +31,13 @@
   Nodes are small: a node keeps its kind, flags, namespace id (namespace
   and prefix in 16 bits, Web.Namespaces) and local name atom in 8 bytes;
   the tree links; its document; a slot for layout data (computed style,
-  boxes) and one for its script wrapper; and a pointer to rarely needed
-  data (listeners, cached lists, Attr objects, template contents), made
+  boxes); and a pointer to rarely needed data (the script wrapper,
+  reference counts, listeners, cached lists, Attr objects, template
+  contents), made
   on demand. Only containers (documents, fragments, elements) have child
-  links. Attributes are an array of 16 byte records (value, local name
+  links. On 64-bit machines an element object is 88 bytes and a text
+  node 72 (plus the heap's header and the text's string): the reference
+  counts, which few nodes need, are in the rare data. Attributes are an array of 16 byte records (value, local name
   atom, namespace id); Attr objects exist only when asked for.
 
   Text is kept as UTF-8. The DOM's offsets and lengths are in UTF-16 code
@@ -173,14 +176,11 @@ type
     FFlags: Byte;
     FNamespaceId: TNamespaceId;
     FLocalName: TAtom;
-    FSubtreeReferences: LongWord;
-    FCollectorSlot: LongWord;
     FParent: TContainerNode;
     FPreviousSibling: TNode;
     FNextSibling: TNode;
     FOwnerDocument: TDocument;
     FLayoutData: Pointer;
-    FScriptWrapper: Pointer;
     FRareData: TNodeRareData;
     function GetFirstChild: TNode; inline;
     function GetLastChild: TNode; inline;
@@ -191,6 +191,9 @@ type
     function GetPreviousElementSibling: TElement;
     function GetNextElementSibling: TElement;
     function GetRareData: TNodeRareData;
+    function GetSubtreeReferences: LongWord;
+    function GetScriptWrapper: Pointer;
+    procedure SetScriptWrapper(Value: Pointer);
   protected
     function GetNodeName: string; virtual; abstract;
     function GetNodeValue: string; virtual;
@@ -280,8 +283,10 @@ type
     property LocalNameAtom: TAtom read FLocalName;
     property NamespaceId: TNamespaceId read FNamespaceId;
     property LayoutData: Pointer read FLayoutData write FLayoutData;
-    property ScriptWrapper: Pointer read FScriptWrapper write FScriptWrapper;
-    property SubtreeReferences: LongWord read FSubtreeReferences;
+    { The script binding's wrapper (kept with the rare data: most nodes
+      never get one). }
+    property ScriptWrapper: Pointer read GetScriptWrapper write SetScriptWrapper;
+    property SubtreeReferences: LongWord read GetSubtreeReferences;
   end;
 
   TContainerNode = class(TNode)
@@ -514,6 +519,7 @@ type
       const OldValue: string; HadValue: Boolean);
     procedure NotifyCharacterDataChanged(Node: TCharacterData; const OldValue: string);
     procedure SubtreeConnected(Root: TNode);
+    procedure NotifySubtreeConnected(Root: TNode);
     procedure SubtreeDisconnected(Root: TNode);
     procedure RegisterId(Element: TElement; const IdValue: string);
     procedure UnregisterId(Element: TElement; const IdValue: string);
@@ -672,6 +678,11 @@ type
 
   TNodeRareData = class
   public
+    ScriptWrapper: Pointer;
+    { References to the node and its descendants (Retain/Release). }
+    SubtreeReferences: LongWord;
+    { Where the node is in the list of nodes to collect, plus one. }
+    CollectorSlot: LongWord;
     Listeners: TEventListenerList;
     ChildNodeList: TChildNodeList;
     ChildrenCollection: THtmlCollection;

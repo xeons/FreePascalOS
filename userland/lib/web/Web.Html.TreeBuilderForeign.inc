@@ -69,7 +69,7 @@ begin
           while (FOpenElements.Count > 0) and not (IsMathMlTextIntegrationPoint(CurrentNode) or
             IsHtmlIntegrationPoint(CurrentNode) or CurrentNode.IsHtml) do
             FOpenElements.Pop;
-          DispatchToken(Token);
+          ProcessInMode(FMode, Token);
           Exit;
         end;
         Adjusted := AdjustedCurrentNode;
@@ -111,7 +111,7 @@ begin
           while (FOpenElements.Count > 0) and not (IsMathMlTextIntegrationPoint(CurrentNode) or
             IsHtmlIntegrationPoint(CurrentNode) or CurrentNode.IsHtml) do
             FOpenElements.Pop;
-          DispatchToken(Token);
+          ProcessInMode(FMode, Token);
           Exit;
         end;
         if (Token.TagName = AtomScript) and (CurrentNode.LocalNameAtom = AtomScript) and

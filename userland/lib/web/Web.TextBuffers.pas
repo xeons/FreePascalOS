@@ -135,6 +135,14 @@ function TTextBuffer.TakeText: string;
 begin
   if FLength = 0 then
     Exit('');
+  if System.Length(FData) - FLength > 32 then
+  begin
+    { Much room to spare: the text gets a block of its own size (a
+      shrunk string keeps its big block), and the buffer is reused. }
+    Result := Copy(FData, 1, FLength);
+    FLength := 0;
+    Exit;
+  end;
   SetLength(FData, FLength);
   Result := FData;
   FData := '';

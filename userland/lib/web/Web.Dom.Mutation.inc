@@ -291,6 +291,9 @@ begin
     if not SuppressObservers then
       Document.NotifyTreeMutated(Parent, Nodes, nil, PreviousSibling, Child);
     Document.NotifyChildrenChanged(Parent);
+    if (Parent.FFlags and NodeFlagConnected) <> 0 then
+      for Index := 1 to System.Length(Nodes) do
+        Document.NotifySubtreeConnected(Nodes[Index - 1]);
   end;
 end;
 
