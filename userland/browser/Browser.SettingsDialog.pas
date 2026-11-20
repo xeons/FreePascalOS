@@ -18,7 +18,7 @@
 
 {
   Tools > Settings: the home page, the search URL ("%s" for the words;
-  empty for none), HTTP/3 and the bookmarks bar.
+  empty for none), HTTP/3, JavaScript and the bookmarks bar.
 }
 unit Browser.SettingsDialog;
 
@@ -46,7 +46,7 @@ uses
 
 const
   DialogWidth = 460;
-  DialogHeight = 210;
+  DialogHeight = 236;
   LabelWidth = 110;
   RowHeight = 30;
 
@@ -57,6 +57,7 @@ type
     FSearchEdit: TEditBox;
     FHttp3Box: TCheckBox;
     FBarBox: TCheckBox;
+    FScriptBox: TCheckBox;
     function AddRow(Top: LongInt; const Caption: string): TEditBox;
   protected
     procedure Showing; override;
@@ -99,6 +100,11 @@ begin
   FHttp3Box.Checked := Settings.Http3;
   FHttp3Box.SetBounds(DialogMargin, Top, DialogWidth - 2 * DialogMargin, 20);
   Inc(Top, 24);
+  FScriptBox := TCheckBox.Create(Root);
+  FScriptBox.Text := 'Run &JavaScript (from the next page loaded)';
+  FScriptBox.Checked := Settings.JavaScript;
+  FScriptBox.SetBounds(DialogMargin, Top, DialogWidth - 2 * DialogMargin, 20);
+  Inc(Top, 24);
   FBarBox := TCheckBox.Create(Root);
   FBarBox.Text := 'Show the &bookmarks bar';
   FBarBox.Checked := Settings.BookmarksBar;
@@ -121,6 +127,7 @@ begin
   Settings.SearchUrl := Trim(FSearchEdit.Text);
   Settings.Http3 := FHttp3Box.Checked;
   Settings.BookmarksBar := FBarBox.Checked;
+  Settings.JavaScript := FScriptBox.Checked;
 end;
 
 function EditBrowserSettings(Owner: TWindow; var Settings: TBrowserSettings): Boolean;

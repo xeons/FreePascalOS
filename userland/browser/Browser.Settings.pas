@@ -19,8 +19,8 @@
 {
   The browser's settings, the user's (group Browser): the home page
   (about:home unless set), the search URL (empty: no search engine;
-  "%s" stands for the words, percent-encoded), whether HTTP/3 is used
-  and whether the bookmarks bar shows. Saved when the settings dialog
+  "%s" stands for the words, percent-encoded), whether HTTP/3 is used,
+  whether pages run JavaScript and whether the bookmarks bar shows. Saved when the settings dialog
   is closed with OK.
 }
 unit Browser.Settings;
@@ -39,6 +39,7 @@ type
     SearchUrl: string;
     Http3: Boolean;
     BookmarksBar: Boolean;
+    JavaScript: Boolean;
   end;
 
 function LoadBrowserSettings: TBrowserSettings;
@@ -55,6 +56,7 @@ const
   SearchUrlSetting = 'Browser/SearchUrl';
   Http3Setting = 'Browser/Http3';
   BookmarksBarSetting = 'Browser/BookmarksBar';
+  JavaScriptSetting = 'Browser/JavaScript';
 
 function LoadBrowserSettings: TBrowserSettings;
 var
@@ -68,6 +70,7 @@ begin
     Result.SearchUrl := Store.ReadString(SearchUrlSetting, '');
     Result.Http3 := Store.ReadBoolean(Http3Setting, True);
     Result.BookmarksBar := Store.ReadBoolean(BookmarksBarSetting, True);
+    Result.JavaScript := Store.ReadBoolean(JavaScriptSetting, True);
   finally
     Store.Free;
   end;
@@ -84,6 +87,7 @@ begin
     Store.WriteString(SearchUrlSetting, Settings.SearchUrl);
     Store.WriteBoolean(Http3Setting, Settings.Http3);
     Store.WriteBoolean(BookmarksBarSetting, Settings.BookmarksBar);
+    Store.WriteBoolean(JavaScriptSetting, Settings.JavaScript);
   finally
     Store.Free;
   end;

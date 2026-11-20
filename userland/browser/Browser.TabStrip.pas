@@ -70,7 +70,7 @@ type
     function TabBox(Index: Integer): TRectangle;
     function CloseBox(Index: Integer): TRectangle;
     function NewTabBox: TRectangle;
-    procedure HitAt(X, Y: LongInt; out Tab: Integer; out OnClose, OnNew: Boolean);
+    procedure HitAt(X, Y: LongInt; out Tab: Integer; out OverClose, OverNew: Boolean);
     procedure PaintTab(var Canvas: TCanvas; Index: Integer);
     procedure PaintSpinner(var Canvas: TCanvas; const Box: TRectangle);
     procedure SpinTimerFired(Sender: TTimer);
@@ -264,20 +264,20 @@ begin
   Result := MakeRectangle(Left, Scaled(6), Scaled(NewTabWidth - 4), RectangleHeight(PixelBounds) - Scaled(10));
 end;
 
-procedure TTabStrip.HitAt(X, Y: LongInt; out Tab: Integer; out OnClose, OnNew: Boolean);
+procedure TTabStrip.HitAt(X, Y: LongInt; out Tab: Integer; out OverClose, OverNew: Boolean);
 var
   Index: Integer;
 begin
   Tab := -1;
-  OnClose := False;
-  OnNew := RectangleContainsPoint(NewTabBox, X, Y);
-  if OnNew then
+  OverClose := False;
+  OverNew := RectangleContainsPoint(NewTabBox, X, Y);
+  if OverNew then
     Exit;
   for Index := 0 to FItems.Count - 1 do
     if RectangleContainsPoint(TabBox(Index), X, Y) then
     begin
       Tab := Index;
-      OnClose := RectangleContainsPoint(CloseBox(Index), X, Y);
+      OverClose := RectangleContainsPoint(CloseBox(Index), X, Y);
       Exit;
     end;
 end;
@@ -405,15 +405,15 @@ end;
 procedure TTabStrip.PointerMove(X, Y: LongInt; Buttons: LongWord);
 var
   Tab: Integer;
-  OnClose, OnNew: Boolean;
+  OverClose, OverNew: Boolean;
 begin
   inherited PointerMove(X, Y, Buttons);
-  HitAt(X, Y, Tab, OnClose, OnNew);
-  if (Tab <> FHotTab) or (OnClose <> FHotClose) or (OnNew <> FHotNew) then
+  HitAt(X, Y, Tab, OverClose, OverNew);
+  if (Tab <> FHotTab) or (OverClose <> FHotClose) or (OverNew <> FHotNew) then
   begin
     FHotTab := Tab;
-    FHotClose := OnClose;
-    FHotNew := OnNew;
+    FHotClose := OverClose;
+    FHotNew := OverNew;
     Invalidate;
   end;
 end;
@@ -430,11 +430,11 @@ end;
 procedure TTabStrip.PointerUp(X, Y: LongInt; Button: LongWord);
 var
   Tab: Integer;
-  OnClose, OnNew: Boolean;
+  OverClose, OverNew: Boolean;
 begin
   inherited PointerUp(X, Y, Button);
-  HitAt(X, Y, Tab, OnClose, OnNew);
-  if OnNew and (Button = ButtonLeft) then
+  HitAt(X, Y, Tab, OverClose, OverNew);
+  if OverNew and (Button = ButtonLeft) then
   begin
     if Assigned(FOnNewTab) then
       FOnNewTab(Self);
@@ -442,7 +442,7 @@ begin
   end;
   if Tab < 0 then
     Exit;
-  if (Button = ButtonMiddle) or ((Button = ButtonLeft) and OnClose) then
+  if (Button = ButtonMiddle) or ((Button = ButtonLeft) and OverClose) then
   begin
     if Assigned(FOnClose) then
       FOnClose(Self, Tab);
@@ -457,18 +457,18 @@ end;
 function TTabStrip.HintAt(X, Y: LongInt; out Area: TRectangle): string;
 var
   Tab: Integer;
-  OnClose, OnNew: Boolean;
+  OverClose, OverNew: Boolean;
 begin
-  HitAt(X, Y, Tab, OnClose, OnNew);
+  HitAt(X, Y, Tab, OverClose, OverNew);
   Area := MakeRectangle(0, 0, 0, 0);
-  if OnNew then
+  if OverNew then
   begin
     Area := NewTabBox;
     Exit('New tab (Ctrl+T)');
   end;
   if Tab < 0 then
     Exit('');
-  if OnClose then
+  if OverClose then
   begin
     Area := CloseBox(Tab);
     Exit('Close tab (Ctrl+W)');

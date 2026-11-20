@@ -102,6 +102,9 @@ type
     destructor Destroy; override;
     function Add(const AText: string; AOnClick: TMenuItemEvent = nil; const AShortcutText: string = ''): TMenuItem;
     procedure AddSeparator;
+    { Frees every item below this one (a menu filled again in its
+      OnOpening; none of them may have an accelerator). }
+    procedure Clear;
     { The text as shown ("Open..." for "&Open..."). }
     function Caption: string;
     { The image list its picture is in: its menu's, or the nearest one
@@ -290,6 +293,15 @@ begin
     TMenuItem(FItems[Index]).Free;
   FItems.Free;
   inherited Destroy;
+end;
+
+procedure TMenuItem.Clear;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to FItems.Count - 1 do
+    TMenuItem(FItems[Index]).Free;
+  FItems.Clear;
 end;
 
 function TMenuItem.GetItem(Index: LongInt): TMenuItem;

@@ -75,6 +75,7 @@ implementation
 uses
   Abi.SystemCalls,
   Controls.Keys,
+  Controls.LayoutRules,
   Controls.Window;
 
 const
