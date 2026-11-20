@@ -652,6 +652,25 @@ normalized (0-65535), not pixels.
       gzip (--compression)
 - [ ] wget later: -N (timestamps), -nc, --spider, -H with -D, CSS url()
       links for -p, --ask-password, SHA-512-256 and auth-int Digest
+- [x] libhttp (userland/lib/http): the URL Standard (parser, setters,
+      hosts with IPv4/IPv6/Punycode, URLSearchParams, origins); HTTP/1.1
+      and HTTP/2 (HPACK, flow control, RFC 9218 priorities, GOAWAY,
+      several threads sharing a connection); cookies after RFC 6265bis
+      (SameSite, prefixes, public suffixes); a memory and disk cache;
+      Basic/Digest; gzip/deflate; Alt-Svc with connection factories;
+      fetch tasks on threads; wget moved onto it (HTTP/2 by ALPN,
+      --no-http2); host tests (RFC 7541 appendix C, libnghttp2, curl
+      against the test server) and HTTP/2 checks in wgettest
+- [ ] libhttp: HTTP/3 through libquic (register an "h3" connection factory
+      in Http.AltServices and race it against TCP), Brotli (needs RFC
+      7932's dictionary in the tree) and zstd, proxies (http_proxy,
+      CONNECT), 100-continue, a PING keep-alive and idle timeout for
+      HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
+      suffix list on the system disk, a persistent cookie store for the
+      browser, HSTS, CORS and the rest of Fetch's request modes (libweb)
+- [ ] wgettest's HTTP/2 server address (10.0.2.107) is not in the test
+      certificate, so those checks use --no-check-certificate; adding it
+      to tools/TlsTest/certificates would let them verify
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no
