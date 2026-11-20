@@ -65,7 +65,8 @@ uses
   Js.Builtins.TypedArrays,
   Js.Builtins.Atomics,
   Js.Builtins.Base64,
-  Js.Modules;
+  Js.Modules,
+  Js.DirectEval;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -157,6 +158,7 @@ begin
   InstallBase64(R);
   RecordTypedArrayShapes(R);
   InstallModules(R);
+  InstallDirectEval(R);
 end;
 
 end.

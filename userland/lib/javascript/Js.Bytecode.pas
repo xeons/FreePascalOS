@@ -168,6 +168,14 @@ type
     opGetImport,          { dst, import index, name constant: an import binding's value }
     opImportCall,         { dst, specifier, options (-1: none): import() }
     opImportMeta,         { dst }
+    { Dynamic names: with objects and a function's eval var object }
+    opLookupDynamic,      { dst, hops, slot, name constant, kind, this register or -1, found target }
+    opStoreDynamic,       { hops, slot, name constant, src, kind, done target }
+    opDeleteDynamic,      { dst, hops, slot, name constant, kind, done target }
+    opToObject,           { dst, src }
+    opDeclareEvalVar,     { hops, slot, name constant, value register or -1 }
+    opDirectEval,         { dst, f, argument count, eval chain index }
+    opMapArguments,       { arguments register: links a sloppy function's arguments to its parameters }
     opLast);
 
 var
@@ -189,7 +197,7 @@ begin
     opLoadUndefined, opLoadNull, opLoadTrue, opLoadFalse, opLoadHole, opPushScope, opThrowConstAssign,
     opThrowReference, opLoadHome, opLoadNewTarget, opLoadCallee, opNewObject, opArrayHole, opJump,
     opReturn, opThrow, opIteratorClose, opIteratorCloseQuiet, opResumeKind, opRethrowCompletion,
-    opReturnCompletion, opGetArgumentsObject, opThrowIfNotHole, opImportMeta:
+    opReturnCompletion, opGetArgumentsObject, opThrowIfNotHole, opImportMeta, opMapArguments:
       Result := 1;
     opLoadInteger, opLoadConstant, opMove, opCheckInitialized, opTypeofGlobal, opDeclareGlobalVar,
     opDeclareGlobalLexical, opInitializeGlobalLexical, opDeleteGlobal, opClosure, opNewArray,
@@ -199,7 +207,7 @@ begin
     opJumpIfTrue, opJumpIfFalse, opJumpIfNullish, opJumpIfNotNullish, opJumpIfUndefined,
     opJumpIfNotUndefined, opThrowIfNullish, opThrowIfNotObject, opForInStart,
     opIteratorRest, opYield, opYieldDelegate, opAwait, opAsyncGeneratorYield,
-    opCreateRestFromArguments, opRunClassFields, opGetClassSlot:
+    opCreateRestFromArguments, opRunClassFields, opGetClassSlot, opToObject:
       Result := 2;
     opGetEnvironment, opSetEnvironment, opGetGlobal, opGetIndex, opSetIndex, opGetLength,
     opDeleteNamed, opDeleteIndex, opDefineIndex, opCopyDataProperties, opGetPrivate, opSetPrivate,
@@ -217,6 +225,12 @@ begin
       Result := 4;
     opSuperCall:
       Result := 5;
+    opDeclareEvalVar, opDirectEval:
+      Result := 4;
+    opStoreDynamic, opDeleteDynamic:
+      Result := 6;
+    opLookupDynamic:
+      Result := 7;
   else
     Result := 0;
   end;

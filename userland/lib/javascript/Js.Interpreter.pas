@@ -73,6 +73,7 @@ uses
   Js.Promises,
   Js.ArrayBuffers,
   Js.ModuleRecords,
+  Js.Arguments,
   Js.Bytecode;
 
 const
@@ -164,6 +165,7 @@ type
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
     function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
+    function DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
     function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
@@ -212,6 +214,10 @@ type
 function ErrorKindName(Kind: TJsErrorKind): string;
 
 var
+  { A direct eval: compiles Source against the scopes Chain describes
+    and runs it in Environment (set by Js.DirectEval). }
+  JsDirectEvalHook: function(R: TJsRealm; Source: TJsValue; Chain: TJsCell; Caller: TJsCode;
+    Environment: TJsEnvironment; This: TJsValue): TJsValue = nil;
   { Called for each async generator made (Js.Generators sets up its
     driver). }
   JsAsyncGeneratorCreated: procedure(R: TJsRealm; Suspension: TJsSuspension) = nil;
@@ -439,6 +445,27 @@ begin
   Result := TJsAccessorPair(JsAsCell(Pair)).Getter = TypedArrayLengthGetter;
 end;
 
+{ Whether a with object (Kind 0: @@unscopables can hide a name) or an
+  eval var object (1) has the name; -1 when that threw. }
+function TJsInterpreterRealm.DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
+var
+  Unscopables, Blocked: TJsValue;
+begin
+  Result := Target.HasProperty(Self, Key);
+  if (Result <= 0) or (Kind <> 0) then
+    Exit;
+  Unscopables := Target.Get(Self, Runtime.SymbolValue(wsUnscopables), JsObjectValue(Target));
+  if Unscopables = JsException then
+    Exit(-1);
+  if not JsIsObject(Unscopables) then
+    Exit;
+  Blocked := JsAsObject(Unscopables).Get(Self, Key, Unscopables);
+  if Blocked = JsException then
+    Exit(-1);
+  if ToBoolean(Blocked) then
+    Result := 0;
+end;
+
 function TJsInterpreterRealm.NotCallable(Value: TJsValue): TJsValue;
 begin
   Result := ThrowTypeError(ValueToPascal(Self, Value) + ' is not a function');
@@ -500,7 +527,14 @@ var
   Index: Integer;
   Thrower: TJsValue;
 begin
-  Result := NewObjectOfClass(TJsObject, Intrinsics[inObjectPrototype], ocArguments);
+  if (Closure.Code.Flags and CodeMappedArguments) <> 0 then
+  begin
+    { Mapped to the parameters by the prologue (opMapArguments). }
+    Result := NewObjectOfClass(TJsMappedArguments, Intrinsics[inObjectPrototype], ocArguments);
+    Result.ObjectFlags := Result.ObjectFlags or ObjectExotic;
+  end
+  else
+    Result := NewObjectOfClass(TJsObject, Intrinsics[inObjectPrototype], ocArguments);
   if Count > 0 then
   begin
     Result.EnsureElementCapacity(Self, Count);
@@ -3194,6 +3228,161 @@ DispatchLoop:
         end;
       opDebugger, opResumeKind, opReturnCompletion, opEnterWith, opLast:
         Inc(PC, 1 + OperandCounts[Op]);
+      opLookupDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 2] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 3]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 4]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Value := JsAsObject(A).Get(Self, Constants[Code[PC + 4]], A);
+              Frame := @FFrames^[FrameIndex];
+              if Value = JsException then
+                goto Unwind;
+              Regs[Code[PC + 1]] := Value;
+              if Code[PC + 6] >= 0 then
+              begin
+                if Code[PC + 5] = 0 then
+                  Regs[Code[PC + 6]] := A
+                else
+                  Regs[Code[PC + 6]] := JsUndefined;
+              end;
+              PC := Code[PC + 7];
+              Continue;
+            end;
+          end;
+          Inc(PC, 8);
+        end;
+      opStoreDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 1] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 2]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 3]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Comparison := JsAsObject(A).SetValue(Self, Constants[Code[PC + 3]], Regs[Code[PC + 4]], A);
+              Frame := @FFrames^[FrameIndex];
+              if Comparison < 0 then
+                goto Unwind;
+              if (Comparison = 0) and ((CodeObject.Flags and CodeStrict) <> 0) then
+              begin
+                ThrowTypeError('Cannot assign to read only property ''' + KeyToPascal(Self, Constants[Code[PC + 3]]) +
+                  '''');
+                goto Unwind;
+              end;
+              PC := Code[PC + 6];
+              Continue;
+            end;
+          end;
+          Inc(PC, 7);
+        end;
+      opDeleteDynamic:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 2] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 3]];
+          if JsIsObject(A) then
+          begin
+            FStackTop := Frame^.Base + CodeObject.RegisterCount;
+            Comparison := DynamicHas(JsAsObject(A), Constants[Code[PC + 4]], Code[PC + 5]);
+            Frame := @FFrames^[FrameIndex];
+            if Comparison < 0 then
+              goto Unwind;
+            if Comparison > 0 then
+            begin
+              Comparison := JsAsObject(A).DeleteProperty(Self, Constants[Code[PC + 4]]);
+              Frame := @FFrames^[FrameIndex];
+              if Comparison < 0 then
+                goto Unwind;
+              Regs[Code[PC + 1]] := JsBoolean(Comparison > 0);
+              PC := Code[PC + 6];
+              Continue;
+            end;
+          end;
+          Inc(PC, 7);
+        end;
+      opToObject:
+        begin
+          Value := Regs[Code[PC + 2]];
+          if not JsIsObject(Value) then
+          begin
+            if JsIsNullish(Value) then
+            begin
+              ThrowTypeError('Cannot convert undefined or null to object');
+              goto Unwind;
+            end;
+            Value := ToObject(Self, Value);
+          end;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 3);
+        end;
+      opDeclareEvalVar:
+        begin
+          Environment := Frame^.Environment;
+          for Index := 1 to Code[PC + 1] do
+            Environment := Environment.Parent;
+          A := Environment.Slots^[Code[PC + 2]];
+          if not JsIsObject(A) then
+          begin
+            A := JsObjectValue(NewObject(nil));
+            Environment.Slots^[Code[PC + 2]] := A;
+          end;
+          Key := Constants[Code[PC + 3]];
+          if Code[PC + 4] >= 0 then
+            JsAsObject(A).DefineData(Self, Key, Regs[Code[PC + 4]], PropertyDefault)
+          else if JsAsObject(A).Shape.Find(Key, Flags) < 0 then
+            JsAsObject(A).DefineData(Self, Key, JsUndefined, PropertyDefault);
+          Inc(PC, 5);
+        end;
+      opDirectEval:
+        begin
+          Index := Code[PC + 2];
+          Callee := Regs[Index];
+          Count := Code[PC + 3];
+          FStackTop := Frame^.Base + CodeObject.RegisterCount;
+          if (Callee = JsObjectValue(Intrinsics[inEval])) and Assigned(JsDirectEvalHook) then
+          begin
+            if Count = 0 then
+              Value := JsUndefined
+            else if not JsIsString(Regs[Index + 2]) then
+              Value := Regs[Index + 2]
+            else
+              Value := JsDirectEvalHook(Self, Regs[Index + 2], CodeObject.EvalChains[Code[PC + 4]], CodeObject,
+                Frame^.Environment, Regs[-1]);
+          end
+          else
+            Value := Call(Callee, Regs[Index + 1], @Regs[Index + 2], Count);
+          Frame := @FFrames^[FrameIndex];
+          if Value = JsException then
+            goto Unwind;
+          Regs[Code[PC + 1]] := Value;
+          Inc(PC, 5);
+        end;
+      opMapArguments:
+        begin
+          Value := Regs[Code[PC + 1]];
+          if JsIsObject(Value) and (JsAsObject(Value) is TJsMappedArguments) then
+            MapArguments(TJsMappedArguments(JsAsObject(Value)), Frame^.Environment, CodeObject.ParameterSlots,
+              Frame^.ArgumentCount);
+          Inc(PC, 2);
+        end;
       opGetImport:
         begin
           Binding := @TJsModule(CodeObject.Module).ImportBindings[Code[PC + 2]];

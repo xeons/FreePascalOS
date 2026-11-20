@@ -34,6 +34,16 @@
 
   Locations (registers and environment slots) are given out by the
   compiler, per function.
+
+  A direct eval sees every binding of the scopes around it by name, so
+  those scopes are exposed: all their variables live in environments
+  (described to the eval's compiler at run time), and the function's
+  this, new.target, home object and arguments are kept as implicit
+  variables too. A sloppy function containing one also gets an object
+  for the var declarations the eval makes, and every name in a with
+  statement's body is looked up in the with object first: the
+  identifiers that pass such objects on their way out record them
+  (DynamicScopes) for the compiler.
 }
 unit Js.Scopes;
 
@@ -57,7 +67,8 @@ implementation
 
 function IsArrowScope(Scope: TJsScope): Boolean;
 begin
-  Result := (Scope.Kind = skFunction) and (Scope.Func <> nil) and (Scope.Func.Kind = fkArrow);
+  { A direct eval's code takes this from around it, like an arrow. }
+  Result := (Scope.Kind in [skFunction, skEval]) and (Scope.Func <> nil) and (Scope.Func.Kind = fkArrow);
 end;
 
 function ThisScopeOf(Scope: TJsScope): TJsScope;
@@ -83,6 +94,13 @@ begin
   raise EJsSyntaxError.CreateAt(Text, Node.Line, Node.Column);
 end;
 
+procedure AddDynamicScope(Node: TJsNode; Variable: TJsVariable);
+begin
+  SetLength(Node.DynamicScopes, Length(Node.DynamicScopes) + 1);
+  Node.DynamicScopes[High(Node.DynamicScopes)] := Variable;
+  Variable.Captured := True;
+end;
+
 procedure ResolveIdentifier(Node: TJsNode; Scope: TJsScope);
 var
   Walk: TJsScope;
@@ -92,6 +110,7 @@ begin
   Name := Node.Text;
   Walk := Scope;
   Variable := nil;
+  Node.DynamicScopes := nil;
   while Walk <> nil do
   begin
     Variable := Walk.Find(Name);
@@ -104,6 +123,11 @@ begin
       Walk.Func.UsesArguments := True;
       Break;
     end;
+    if Walk.WithVariable <> nil then
+      AddDynamicScope(Node, Walk.WithVariable);
+    if (Walk.Kind = skFunction) and (Walk.Func <> nil) and (Walk.Func.EvalVarsVariable <> nil) and
+      (Walk = Walk.FunctionScope) then
+      AddDynamicScope(Node, Walk.Func.EvalVarsVariable);
     Walk := Walk.Parent;
   end;
   Node.Variable := Variable;
@@ -184,14 +208,81 @@ begin
   end;
 end;
 
+{ A direct eval in Scope: expose the scopes around it, keep what the
+  eval's code may ask of its function. }
+procedure PrepareDirectEval(Scope: TJsScope);
+var
+  Walk, Owner, VarScope: TJsScope;
+  Info: TJsFunctionInfo;
+begin
+  Walk := Scope;
+  while Walk <> nil do
+  begin
+    Walk.EvalExposed := True;
+    Walk := Walk.Parent;
+  end;
+  { The scope the eval's var declarations go to (sloppy code). }
+  VarScope := Scope.FunctionScope;
+  while (VarScope.Kind = skEval) and (VarScope.Parent <> nil) do
+    VarScope := VarScope.Parent.FunctionScope;
+  if (VarScope.Kind = skFunction) and (VarScope.Func <> nil) and not VarScope.Func.IsStrict and
+    (VarScope.Func.EvalVarsVariable = nil) then
+  begin
+    VarScope.Func.EvalVarsVariable := VarScope.Declare('%evalvars', dkImplicit, 0);
+    VarScope.Func.EvalVarsVariable.Captured := True;
+  end;
+  Owner := ThisScopeOf(Scope);
+  Info := Owner.Func;
+  if Info = nil then
+    Exit;
+  if Owner.Kind in [skScript, skModule] then
+  begin
+    EnsureImplicit(Owner, '%this', Info.ThisVariable).Captured := True;
+    Info.UsesThis := True;
+    Exit;
+  end;
+  if Owner.Kind <> skFunction then
+    Exit;
+  EnsureImplicit(Owner, '%this', Info.ThisVariable).Captured := True;
+  Info.UsesThis := True;
+  EnsureImplicit(Owner, '%newtarget', Info.NewTargetVariable).Captured := True;
+  if Info.Kind in [fkMethod, fkGetter, fkSetter, fkClassConstructor, fkDerivedConstructor,
+    fkClassFieldInitializer] then
+    EnsureImplicit(Owner, '%home', Info.HomeVariable).Captured := True;
+  if Info.Kind = fkDerivedConstructor then
+    EnsureImplicit(Owner, '%function', Info.FunctionVariable).Captured := True;
+  if not (Info.Kind in [fkArrow, fkClassFieldInitializer]) then
+  begin
+    EnsureImplicit(Owner, 'arguments', Info.ArgumentsVariable).Captured := True;
+    Info.UsesArguments := True;
+  end;
+end;
+
 procedure PrepareScope(Scope: TJsScope);
 var
   Index: Integer;
 begin
   if (Scope.Kind = skFunction) and (Scope.Func <> nil) and (Scope.Func.Kind = fkDerivedConstructor) then
     EnsureImplicit(Scope, '%this', Scope.Func.ThisVariable);
+  for Index := 0 to Scope.ReferenceCount - 1 do
+    if (Scope.References[Index].Kind = nkCall) and
+      ((Scope.References[Index].Flags and CallFlagDirectEval) <> 0) then
+      PrepareDirectEval(Scope);
   for Index := 0 to Scope.ChildCount - 1 do
     PrepareScope(Scope.Children[Index]);
+end;
+
+{ Every variable of an exposed scope lives in its environment. }
+procedure CaptureExposed(Scope: TJsScope);
+var
+  Index: Integer;
+begin
+  if Scope.EvalExposed then
+    for Index := 0 to Scope.VariableCount - 1 do
+      if Scope.Variables[Index].Kind <> dkImport then
+        Scope.Variables[Index].Captured := True;
+  for Index := 0 to Scope.ChildCount - 1 do
+    CaptureExposed(Scope.Children[Index]);
 end;
 
 procedure ResolveScope(Scope: TJsScope);
@@ -218,6 +309,7 @@ procedure ResolveProgram(Program_: TJsNode);
 begin
   PrepareScope(Program_.Scope);
   ResolveScope(Program_.Scope);
+  CaptureExposed(Program_.Scope);
 end;
 
 end.

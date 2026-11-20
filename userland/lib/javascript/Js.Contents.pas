@@ -62,6 +62,9 @@ uses
   Js.Builtins.Base64,
   Js.ModuleRecords,
   Js.Modules,
+  Js.EvalScopes,
+  Js.Arguments,
+  Js.DirectEval,
   Js.Intrinsics,
   Js.Engine;
 

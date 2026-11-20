@@ -172,6 +172,9 @@ type
     destructor Destroy; override;
     { The whole program; Strict as if it began with "use strict". }
     function ParseProgram(Strict: Boolean; Goal: TJsParseGoal = pgScript): TJsNode;
+    { A direct eval's code, inside the scopes around the call (Outer:
+      the innermost). }
+    function ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
     { The source text between two positions (Function.prototype.toString). }
     function SourceText(Start, Finish: Integer): UnicodeString;
   end;
@@ -533,6 +536,12 @@ begin
   if Goal = pgModule then
     FinishModuleExports;
   PopScope;
+end;
+
+function TJsParser.ParseEval(Strict: Boolean; Outer: TJsScope): TJsNode;
+begin
+  FScope := Outer;
+  Result := ParseProgram(Strict, pgEval);
 end;
 
 { Modules }
@@ -1393,7 +1402,16 @@ begin
   Expect(tkLeftParen);
   Result.A := ParseExpression;
   Expect(tkRightParen);
-  Result.B := ParseStatement;
+  { The body's names are looked up in the object first: a scope whose
+    environment holds it. }
+  Result.Scope := PushScope(skBlock);
+  Result.Scope.WithVariable := Result.Scope.Declare('%with', dkImplicit, 0);
+  Result.Scope.WithVariable.Captured := True;
+  try
+    Result.B := ParseStatement;
+  finally
+    PopScope;
+  end;
 end;
 
 function TJsParser.ParseLabeledOrExpression: TJsNode;
@@ -2807,6 +2825,14 @@ begin
             Break;
           Call := FArena.NewNode(nkCall, StartLine, StartColumn);
           Call.A := Result;
+          if (Result.Kind = nkIdentifier) and (Result.Text = 'eval') and not InOptionalChain then
+          begin
+            { A direct eval (when eval is the intrinsic at run time). }
+            Call.Flags := Call.Flags or CallFlagDirectEval;
+            Call.Scope := FScope;
+            FScope.AddReference(Call);
+            FFunction.ContainsDirectEval := True;
+          end;
           ParseArguments(Call);
           Result := Call;
         end;

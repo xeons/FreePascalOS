@@ -63,6 +63,7 @@ type
     function TakeLabels: TJsControl;
     procedure CompileStatements(const List: array of TJsNode; Count: Integer);
     procedure HoistFunctions(const List: array of TJsNode; Count: Integer);
+    procedure CompileWith(Node: TJsNode);
     procedure CompileVariables(Node: TJsNode);
     procedure CompileBlock(Node: TJsNode);
     procedure CompileIf(Node: TJsNode);
@@ -183,12 +184,28 @@ begin
         Value := NamedExpression(Node.A, -1, 'default');
         StoreVariable(Node.B.Variable, '*default*', Value, True);
       end;
-    nkWith:
-      raise EJsSyntaxError.CreateAt('The with statement is not supported', Node.Line, Node.Column);
+    nkWith: CompileWith(Node);
   else
     raise EJsSyntaxError.CreateAt('Unsupported statement', Node.Line, Node.Column);
   end;
   ReleaseTo(Mark);
+end;
+
+{ with (object) body: the object (ToObject) goes in the with scope's
+  environment, where the body's names look first. }
+procedure TJsStatementCompiler.CompileWith(Node: TJsNode);
+var
+  Mark, Value, Target: Integer;
+begin
+  Mark := FNextRegister;
+  Value := Expression(Node.A, -1);
+  Target := AllocateRegister;
+  Emit(opToObject, Target, Value);
+  EnterScope(Node.Scope);
+  StoreVariable(Node.Scope.WithVariable, '%with', Target, True);
+  ReleaseTo(Mark);
+  Statement(Node.B);
+  LeaveScope(Node.Scope);
 end;
 
 procedure TJsStatementCompiler.CompileVariables(Node: TJsNode);

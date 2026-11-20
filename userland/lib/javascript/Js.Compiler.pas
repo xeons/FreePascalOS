@@ -68,16 +68,22 @@ type
   TJsFunctionCompiler = class(TJsStatementCompiler)
   protected
     FParent: TJsFunctionCompiler;
+    { A sloppy function with simple parameters using arguments. }
+    FMappedArguments: Boolean;
     procedure EmitReturnValue(Value: Integer); override;
     procedure CompilePrologue;
     procedure CompileFieldInitializerBody;
     function PrivateNameVariable(ClassNode: TJsNode; const Name: UnicodeString): TJsVariable;
     procedure SetCodeFlags(const Name: UnicodeString);
+    procedure SetParameterSlots(FormalCount: Integer);
   public
     constructor Create(Context: TJsCompileContext; Info: TJsFunctionInfo; Parent: TJsFunctionCompiler);
     function CompileFunction(const Name: UnicodeString): TJsCode;
     function CompileScriptBody(Program_: TJsNode): TJsCode;
     function CompileModuleBody(Program_: TJsNode): TJsCode;
+    { A direct eval's code: EvalVarNames go to the eval var object of
+      VariableScope's function. }
+    function CompileEvalBody(Program_: TJsNode; const EvalVarNames: TJsNameArray; VariableScope: TJsScope): TJsCode;
     function CompileModuleInitializer(Program_: TJsNode): TJsCode;
     function CompileFunctionNode(Node: TJsNode; Target: Integer; const Name: UnicodeString;
       HasName: Boolean): Integer; override;
@@ -225,6 +231,8 @@ begin
     Flags := Flags or CodeHasRest;
   if FCode.ArgumentsRegister >= 0 then
     Flags := Flags or CodeNeedsArguments;
+  if FMappedArguments then
+    Flags := Flags or CodeMappedArguments;
   FCode.Flags := Flags;
   FullName := Name;
   if FInfo.Kind = fkGetter then
@@ -252,6 +260,8 @@ begin
     if (Parameter.Kind = nkIdentifier) and (Parameter.Variable <> nil) and Parameter.Variable.Captured then
       StoreVariable(Parameter.Variable, Parameter.Text, Index, True);
   end;
+  if FMappedArguments then
+    Emit(opMapArguments, FCode.ArgumentsRegister);
   if FCode.RestRegister >= 0 then
   begin
     Parameter := FInfo.Parameters[FInfo.ParameterCount - 1].A;
@@ -326,6 +336,14 @@ begin
   if (FormalCount > 0) and (FInfo.Parameters[FormalCount - 1].Kind = nkRest) then
     Dec(FormalCount);
   FCode.ParameterCount := FormalCount;
+  { arguments[i] aliases the i-th parameter: the parameters live in the
+    environment the arguments object reads. }
+  FMappedArguments := not FInfo.IsStrict and FInfo.HasSimpleParameters and (FInfo.ArgumentsVariable <> nil) and
+    (FormalCount > 0);
+  if FMappedArguments then
+    for Index := 0 to FormalCount - 1 do
+      if (FInfo.Parameters[Index].Kind = nkIdentifier) and (FInfo.Parameters[Index].Variable <> nil) then
+        FInfo.Parameters[Index].Variable.Captured := True;
   FLocalCount := FormalCount;
   FNextRegister := FormalCount;
   FMaxRegister := FormalCount;
@@ -350,6 +368,8 @@ begin
       Variable.Index := FCode.ArgumentsRegister;
   end;
   LayoutScope(FInfo.Scope, True);
+  if FMappedArguments then
+    SetParameterSlots(FormalCount);
   CompilePrologue;
   if FInfo.Kind = fkClassFieldInitializer then
   begin
@@ -376,6 +396,30 @@ begin
   end;
   SetCodeFlags(Name);
   Result := FinishCode;
+end;
+
+{ The environment slot of each parameter; of parameters with one name
+  only the last maps. }
+procedure TJsFunctionCompiler.SetParameterSlots(FormalCount: Integer);
+var
+  Index, Later: Integer;
+  Parameter: TJsNode;
+  Shadowed: Boolean;
+begin
+  SetLength(FCode.ParameterSlots, FormalCount);
+  for Index := 0 to FormalCount - 1 do
+  begin
+    Parameter := FInfo.Parameters[Index];
+    FCode.ParameterSlots[Index] := -1;
+    if (Parameter.Kind <> nkIdentifier) or (Parameter.Variable = nil) then
+      Continue;
+    Shadowed := False;
+    for Later := Index + 1 to FormalCount - 1 do
+      if (FInfo.Parameters[Later].Kind = nkIdentifier) and (FInfo.Parameters[Later].Text = Parameter.Text) then
+        Shadowed := True;
+    if not Shadowed then
+      FCode.ParameterSlots[Index] := Parameter.Variable.Index;
+  end;
 end;
 
 function TJsFunctionCompiler.PrivateNameVariable(ClassNode: TJsNode; const Name: UnicodeString): TJsVariable;
@@ -680,6 +724,67 @@ begin
   CompileStatements(Program_.List, Program_.Count);
   Emit(opReturnUndefined);
   SetCodeFlags('');
+  Result := FinishCode;
+end;
+
+function TJsFunctionCompiler.CompileEvalBody(Program_: TJsNode; const EvalVarNames: TJsNameArray;
+  VariableScope: TJsScope): TJsCode;
+var
+  Scope: TJsScope;
+  Index, Mark, Value: Integer;
+  Node: TJsNode;
+  Variable, Holder: TJsVariable;
+
+  function GoesToEvalVars(const Name: UnicodeString): Boolean;
+  var
+    Position: Integer;
+  begin
+    for Position := 0 to High(EvalVarNames) do
+      if EvalVarNames[Position] = Name then
+        Exit(True);
+    Result := False;
+  end;
+
+begin
+  Scope := Program_.Scope;
+  FScope := Scope;
+  FCompletionRegister := AllocateLocal;
+  LayoutScope(Scope, True);
+  EnterScope(Scope);
+  Emit(opLoadUndefined, FCompletionRegister);
+  Holder := nil;
+  if VariableScope.Func <> nil then
+    Holder := VariableScope.Func.EvalVarsVariable;
+  for Index := 0 to Scope.VariableCount - 1 do
+  begin
+    Variable := Scope.Variables[Index];
+    if Variable.IsGlobal and (Variable.Kind = dkVar) then
+      Emit(opDeclareGlobalVar, AtomConstant(Variable.Name), -1);
+  end;
+  if Holder <> nil then
+    for Index := 0 to High(EvalVarNames) do
+      Emit(opDeclareEvalVar, EnvironmentHops(Holder.Scope), Holder.Index, AtomConstant(EvalVarNames[Index]), -1);
+  { The functions, made before the code runs. }
+  for Index := 0 to Program_.Count - 1 do
+  begin
+    Node := Program_.List[Index];
+    while (Node.Kind = nkLabeled) and (Node.A <> nil) do
+      Node := Node.A;
+    if Node.Kind <> nkFunctionDeclaration then
+      Continue;
+    Mark := FNextRegister;
+    Value := CompileFunctionNode(Node, -1, Node.Func.Name, True);
+    if (Holder <> nil) and GoesToEvalVars(Node.A.Text) then
+      Emit(opDeclareEvalVar, EnvironmentHops(Holder.Scope), Holder.Index, AtomConstant(Node.A.Text), Value)
+    else if (Node.A.Variable <> nil) and Node.A.Variable.IsGlobal then
+      Emit(opDeclareGlobalVar, AtomConstant(Node.A.Text), Value)
+    else
+      StoreVariable(Node.A.Variable, Node.A.Text, Value, True, Node.A);
+    ReleaseTo(Mark);
+  end;
+  CompileStatements(Program_.List, Program_.Count);
+  Emit(opReturn, FCompletionRegister);
+  SetCodeFlags('eval');
   Result := FinishCode;
 end;
 

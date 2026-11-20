@@ -120,6 +120,7 @@ type
 
   TJsScope = class;
   TJsFunctionInfo = class;
+  TJsNameArray = array of UnicodeString;
   TJsVariable = class;
 
   TJsNode = class
@@ -141,6 +142,10 @@ type
     Variable: TJsVariable;
     { The scope an identifier appears in. }
     ReferenceScope: TJsScope;
+    { An identifier inside with statements or below a function with a
+      sloppy direct eval: the objects (variables holding them, innermost
+      first) to look the name up in before Variable. }
+    DynamicScopes: array of TJsVariable;
     procedure Add(Node: TJsNode);
   end;
 
@@ -184,6 +189,12 @@ type
     { The environment exists before the code runs (a module's, made when
       the module is linked): entering the scope makes none. }
     EnvironmentProvided: Boolean;
+    { A with statement's scope: the variable holding its object. }
+    WithVariable: TJsVariable;
+    { A direct eval can see the scope's bindings by name: they all live
+      in its environment. }
+    EvalExposed: Boolean;
+    procedure RemoveVariable(Variable: TJsVariable);
     { The scope's environment, at run time, is pushed on entry. }
     function HasEnvironment: Boolean; inline;
     function Find(const Name: UnicodeString): TJsVariable;
@@ -229,6 +240,9 @@ type
     UsesSuper: Boolean;
     UsesNewTarget: Boolean;
     ContainsDirectEval: Boolean;
+    { A sloppy function with a direct eval: the variable holding the
+      object the eval's var declarations go to. }
+    EvalVarsVariable: TJsVariable;
     SourceStart: Integer;
     SourceFinish: Integer;
     Line: Integer;
@@ -318,6 +332,8 @@ const
   MemberFlagComputed = 1;
   MemberFlagOptional = 2;
   MemberFlagPrivate = 4;
+  { nkCall: eval(...), a direct eval when eval is the intrinsic }
+  CallFlagDirectEval = 8;
   { nkUpdate }
   UpdateFlagPrefix = 1;
   { nkYield }
@@ -439,6 +455,20 @@ begin
   References[ReferenceCount] := Node;
   Inc(ReferenceCount);
   Node.ReferenceScope := Self;
+end;
+
+procedure TJsScope.RemoveVariable(Variable: TJsVariable);
+var
+  Index: Integer;
+begin
+  for Index := 0 to VariableCount - 1 do
+    if Variables[Index] = Variable then
+    begin
+      Variables[Index] := Variables[VariableCount - 1];
+      Dec(VariableCount);
+      Variable.Free;
+      Exit;
+    end;
 end;
 
 procedure TJsScope.AddChild(Scope: TJsScope);

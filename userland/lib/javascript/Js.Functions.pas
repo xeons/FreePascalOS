@@ -125,6 +125,11 @@ type
     TemplateObjects: TJsValueList;
     { The module the code belongs to (a TJsModule; nil in scripts). }
     Module: TJsCell;
+    { The scopes each direct eval call sees (TJsEvalChain). }
+    EvalChains: array of TJsCell;
+    { Mapped arguments: the environment slot of each parameter (-1: not
+      mapped). }
+    ParameterSlots: array of Integer;
     procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
     function LineAt(PC: Integer; out Column: Integer): Integer;
@@ -254,6 +259,8 @@ begin
   Tracer.MarkCell(Name);
   Tracer.MarkCell(Source);
   Tracer.MarkCell(Module);
+  for Index := 0 to High(EvalChains) do
+    Tracer.MarkCell(EvalChains[Index]);
   Tracer.MarkValues(@TemplateObjects[0], System.Length(TemplateObjects));
 end;
 
