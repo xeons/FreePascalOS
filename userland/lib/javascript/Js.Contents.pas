@@ -58,6 +58,8 @@ uses
   Js.ArrayBuffers,
   Js.Builtins.ArrayBuffer,
   Js.Builtins.TypedArrays,
+  Js.Builtins.Atomics,
+  Js.Builtins.Base64,
   Js.Intrinsics,
   Js.Engine;
 

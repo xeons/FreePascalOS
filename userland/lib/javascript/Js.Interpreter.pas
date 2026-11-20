@@ -183,7 +183,7 @@ type
       the kinds' prototypes' shape, %TypedArray%.prototype's shape, the
       slot of its length accessor and the getter (TypedArrayLengthIntact
       lets the interpreter read the length directly while they hold). }
-    TypedArrayKindShape: TJsShape;
+    TypedArrayKindShapes: array[TJsTypedArrayKind] of TJsShape;
     TypedArrayPrototypeShape: TJsShape;
     TypedArrayLengthSlot: Integer;
     TypedArrayLengthGetter: TJsValue;
@@ -288,6 +288,7 @@ end;
 procedure TJsInterpreterRealm.TraceRealm(Tracer: TJsTracer);
 var
   Index: Integer;
+  Kind: TJsTypedArrayKind;
   Frame: PJsFrame;
 begin
   inherited TraceRealm(Tracer);
@@ -303,7 +304,8 @@ begin
   end;
   Tracer.MarkCell(FunctionShape);
   Tracer.MarkCell(GlobalLexicals);
-  Tracer.MarkCell(TypedArrayKindShape);
+  for Kind := Low(TJsTypedArrayKind) to High(TJsTypedArrayKind) do
+    Tracer.MarkCell(TypedArrayKindShapes[Kind]);
   Tracer.MarkCell(TypedArrayPrototypeShape);
   Tracer.MarkValue(TypedArrayLengthGetter);
   Tracer.MarkValue(TypedArrayValues);
@@ -406,7 +408,7 @@ begin
   if (Target.ObjectClass <> ocTypedArray) or TJsTypedArray(Target).IsOutOfBounds then
     Exit;
   KindPrototype := Target.Proto;
-  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShape) then
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShapes[TJsTypedArray(Target).ElementKind]) then
     Exit;
   Prototype := KindPrototype.Proto;
   if Prototype <> Intrinsics[inTypedArrayPrototype] then
@@ -424,7 +426,7 @@ var
 begin
   Result := False;
   KindPrototype := Target.Proto;
-  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShape) then
+  if (Target.Shape <> Runtime.RootShape) or (KindPrototype = nil) or (KindPrototype.Shape <> TypedArrayKindShapes[TJsTypedArray(Target).ElementKind]) then
     Exit;
   Prototype := KindPrototype.Proto;
   if (Prototype <> Intrinsics[inTypedArrayPrototype]) or (Prototype.Shape <> TypedArrayPrototypeShape) then

@@ -62,7 +62,9 @@ uses
   Js.Builtins.Date,
   Js.Builtins.RegExp,
   Js.Builtins.ArrayBuffer,
-  Js.Builtins.TypedArrays;
+  Js.Builtins.TypedArrays,
+  Js.Builtins.Atomics,
+  Js.Builtins.Base64;
 
 procedure CreateIntrinsics(R: TJsInterpreterRealm);
 var
@@ -150,6 +152,9 @@ begin
   InstallRegExp(R);
   InstallArrayBuffer(R);
   InstallTypedArrays(R);
+  InstallAtomics(R);
+  InstallBase64(R);
+  RecordTypedArrayShapes(R);
 end;
 
 end.

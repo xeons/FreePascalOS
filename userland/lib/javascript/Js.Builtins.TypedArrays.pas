@@ -49,6 +49,9 @@ uses
   Js.Interpreter;
 
 procedure InstallTypedArrays(R: TJsInterpreterRealm);
+{ Notes the kinds' prototypes' shapes once they are complete (after the
+  units adding methods to one kind, like Uint8Array's base64). }
+procedure RecordTypedArrayShapes(R: TJsInterpreterRealm);
 { A new typed array of Kind with Length zero elements (a buffer of its
   own); nil when the allocation failed (RangeError thrown). }
 function NewTypedArray(R: TJsRealm; Kind: TJsTypedArrayKind; Length: SizeInt): TJsTypedArray;
@@ -1438,6 +1441,14 @@ begin
   Result := JsObjectValue(Made);
 end;
 
+procedure RecordTypedArrayShapes(R: TJsInterpreterRealm);
+var
+  Kind: TJsTypedArrayKind;
+begin
+  for Kind := Low(TJsTypedArrayKind) to High(TJsTypedArrayKind) do
+    R.TypedArrayKindShapes[Kind] := R.Intrinsics[TypedArrayPrototypes[Kind]].Shape;
+end;
+
 procedure InstallTypedArrays(R: TJsInterpreterRealm);
 var
   Abstract, Constructor_: TJsNativeFunction;
@@ -1515,7 +1526,7 @@ begin
     KindPrototype.DefineData(R, BytesKey, JsInteger(TypedArrayElementSizes[Kind]), 0);
   end;
   { The interpreter's direct length path, valid while these stay. }
-  R.TypedArrayKindShape := R.Intrinsics[inUint8ArrayPrototype].Shape;
+  RecordTypedArrayShapes(R);
   R.TypedArrayPrototypeShape := Prototype.Shape;
   R.TypedArrayLengthSlot := Prototype.Shape.Find(R.LengthKey, Flags);
   R.TypedArrayLengthGetter := TJsAccessorPair(JsAsCell(Prototype.GetSlot(R.TypedArrayLengthSlot))).Getter;
