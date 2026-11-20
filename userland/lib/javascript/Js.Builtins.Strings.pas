@@ -953,6 +953,38 @@ begin
   Result := R.Call(GetMethod(R, Created, R.Runtime.SymbolValue(Symbol)), Created, @Values[0], 1);
 end;
 
+{ A locale-free collation close to the root locale's for common text:
+  letters compare case-insensitively first, then lowercase sorts before
+  uppercase, then by code unit. }
+function CompareForLocale(R: TJsRealm; Text, Other: TJsString): Integer;
+var
+  Index, Shorter: Integer;
+  A, B: UnicodeString;
+  Tie: Integer;
+begin
+  A := TCharacter.ToLower(StringToUnicode(R.Heap, Text));
+  B := TCharacter.ToLower(StringToUnicode(R.Heap, Other));
+  Shorter := Length(A);
+  if Length(B) < Shorter then
+    Shorter := Length(B);
+  for Index := 1 to Shorter do
+    if A[Index] <> B[Index] then
+      Exit(Ord(A[Index]) - Ord(B[Index]));
+  if Length(A) <> Length(B) then
+    Exit(Length(A) - Length(B));
+  Tie := 0;
+  Text.Flatten(R.Heap);
+  Other.Flatten(R.Heap);
+  for Index := 0 to Text.Length - 1 do
+    if Text.CharAt(Index) <> Other.CharAt(Index) then
+    begin
+      { Lowercase first: the larger code unit (lowercase ASCII) wins. }
+      Tie := Integer(Other.CharAt(Index)) - Integer(Text.CharAt(Index));
+      Break;
+    end;
+  Result := Tie;
+end;
+
 function StringLocaleCompare(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
@@ -965,7 +997,7 @@ begin
   Other := ArgumentString(R, Args, ArgCount, 0);
   if Other = nil then
     Exit(JsException);
-  Comparison := WideCompareStr(StringToUnicode(R.Heap, Text), StringToUnicode(R.Heap, Other));
+  Comparison := CompareForLocale(R, Text, Other);
   if Comparison < 0 then
     Result := JsInteger(-1)
   else if Comparison > 0 then

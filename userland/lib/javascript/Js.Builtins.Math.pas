@@ -84,6 +84,8 @@ begin
     Result := Lower + 1
   else
     Result := Lower;
+  if (Result = 0) and (X < 0) then
+    Result := -0.0;
 end;
 
 function MathUnary(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;

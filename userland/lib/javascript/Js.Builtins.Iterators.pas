@@ -227,6 +227,8 @@ const
   HelperTake = 2;
   HelperDrop = 3;
   HelperFlatMap = 4;
+  { Iterator.from of an iterator not inheriting Iterator.prototype. }
+  HelperWrap = 5;
 
 function GetIteratorDirect(R: TJsRealm; Value: TJsValue; out Iterator: TJsIteratorRecord): Boolean;
 begin
@@ -252,6 +254,8 @@ begin
   if not JsIsObject(This) or not (JsAsObject(This) is TJsIteratorHelper) then
     Exit(R.ThrowTypeError('Iterator helper next called on incompatible receiver'));
   Helper := TJsIteratorHelper(JsAsObject(This));
+  if Helper.Operation = HelperWrap then
+    Exit(R.Call(Helper.Underlying.NextMethod, Helper.Underlying.Iterator, nil, 0));
   while not Helper.Done do
   begin
     if Helper.InnerActive then
@@ -499,6 +503,7 @@ var
   Value, Method: TJsValue;
   Iterator: TJsIteratorRecord;
   Walk: TJsObject;
+  Helper: TJsIteratorHelper;
 begin
   Value := Arg(Args, ArgCount, 0);
   if JsIsString(Value) then
@@ -521,7 +526,13 @@ begin
       Exit(Iterator.Iterator);
     Walk := Walk.Proto;
   end;
-  Result := Iterator.Iterator;
+  Helper := TJsIteratorHelper(R.NewObjectOfClass(TJsIteratorHelper, JsAsObject(Callee.Data), ocIterator));
+  Helper.Operation := HelperWrap;
+  Helper.Underlying := Iterator;
+  Helper.Mapper := JsUndefined;
+  Helper.Inner.Iterator := JsUndefined;
+  Helper.Inner.NextMethod := JsUndefined;
+  Result := JsObjectValue(Helper);
 end;
 
 function IteratorConstructor(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
@@ -566,8 +577,9 @@ begin
     R.NewString('String Iterator'), PropertyConfigurable);
   { Iterator and its helpers. }
   Constructor_ := DefineConstructor(R, R.GlobalObject, 'Iterator', @IteratorConstructor, 0, IteratorPrototype);
-  DefineMethod(R, Constructor_, 'from', @IteratorFrom, 1);
   HelperPrototype := R.NewObject(IteratorPrototype);
+  DefineMethod(R, Constructor_, 'from', @IteratorFrom, 1);
+  TJsNativeFunction(JsAsObject(Constructor_.GetValue(R, R.Intern('from')))).Data := JsObjectValue(HelperPrototype);
   DefineMethod(R, HelperPrototype, 'next', @HelperNext, 0);
   DefineMethod(R, HelperPrototype, 'return', @HelperReturn, 0);
   HelperPrototype.DefineData(R, R.Runtime.SymbolValue(wsToStringTag), R.NewString('Iterator Helper'),

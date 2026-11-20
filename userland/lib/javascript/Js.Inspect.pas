@@ -168,7 +168,7 @@ begin
   if JsIsSymbol(Key) then
     Exit('[' + KeyToPascal(FRealm, Key) + ']');
   Result := KeyToPascal(FRealm, Key);
-  if not IsIdentifierText(Result) and not JsIsInteger(Key) then
+  if not IsIdentifierText(Result) then
     Result := QuoteString(Result);
 end;
 

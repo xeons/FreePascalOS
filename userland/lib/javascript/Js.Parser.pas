@@ -1439,6 +1439,9 @@ begin
     FunctionNode := NewNodeAt(nkFunction, StartToken);
     FunctionNode.Func := ParseFunction(Kind, IsAsync, IsGenerator, KeyName, StartToken);
     FunctionNode.Func.ClassNode := ClassNode;
+    { The constructor takes the class's name. }
+    if Kind in [fkClassConstructor, fkDerivedConstructor] then
+      FunctionNode.Func.Name := '';
     Result.B := FunctionNode;
     Exit;
   end;

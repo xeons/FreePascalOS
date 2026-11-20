@@ -380,7 +380,11 @@ begin
   for Index := FFrameCount - 1 downto 0 do
   begin
     Frame := @FFrames^[Index];
-    Line := Frame^.Code.LineAt(Frame^.PC, Column);
+    { Callers stand after their call instruction. }
+    if Index < FFrameCount - 1 then
+      Line := Frame^.Code.LineAt(Frame^.PC - 1, Column)
+    else
+      Line := Frame^.Code.LineAt(Frame^.PC, Column);
     Name := '';
     if Frame^.Code.Name <> nil then
       Name := StringToUtf8(Heap, Frame^.Code.Name);
@@ -3145,6 +3149,8 @@ Unwind:
       goto Finished;
     end;
     FrameIndex := FFrameCount - 1;
+    { The caller stands after its call instruction: look inside it. }
+    Dec(FFrames^[FrameIndex].PC);
   end;
 
 Finished:

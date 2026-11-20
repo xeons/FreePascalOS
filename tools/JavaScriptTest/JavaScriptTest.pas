@@ -227,11 +227,17 @@ var
   Source: string;
   Index: Integer;
   Same: Boolean;
+  Options: TJsEngineOptions;
 begin
   Source := ReadText(Path);
   Expected := TStringList.Create;
   Capture := TCapture.Create;
-  Engine := TJsEngine.Create;
+  { JS_GC_STRESS: collect every few kilobytes, to shake out roots the
+    collector misses. }
+  Options := TJsEngine.DefaultOptions;
+  if GetEnvironmentVariable('JS_GC_STRESS') <> '' then
+    Options.InitialHeapThreshold := 16 * 1024;
+  Engine := TJsEngine.Create(Options);
   try
     if not ExpectedOf(Source, Expected) then
     begin

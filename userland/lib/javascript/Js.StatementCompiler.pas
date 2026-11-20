@@ -463,6 +463,8 @@ begin
   Emit(opGetNamed, Flag, Value, AtomConstant('done'), NewCache);
   Done := EmitJumpIf(opJumpIfTrue, Flag);
   Emit(opGetNamed, Value, Value, AtomConstant('value'), NewCache);
+  { A sync iterator's values may be promises (async-from-sync). }
+  Emit(opAwait, Value, Value);
   ReleaseTo(Value + 1);
   EnterScope(Scope);
   BindLoopTarget(Node.A, Value);
