@@ -1005,6 +1005,7 @@ begin
       begin
         if (Flags and PropertyAccessor) = 0 then
         begin
+          Cache := CacheEntryFor(Cache, Target.Shape);
           Cache^.Shape := Target.Shape;
           Cache^.Generation := Target.Shape.Generation;
           Cache^.Slot := Slot;
@@ -1023,6 +1024,7 @@ begin
           Slot := Holder.Shape.Find(Key, Flags);
           if (Slot >= 0) and ((Flags and PropertyAccessor) = 0) then
           begin
+            Cache := CacheEntryFor(Cache, Target.Shape);
             Cache^.Shape := Target.Shape;
             Cache^.Generation := Target.Shape.Generation;
             Cache^.Slot := Slot;
@@ -1061,6 +1063,7 @@ begin
     Slot := NewShape.Find(Key, Flags);
     if (Slot >= 0) and ((Flags and (PropertyAccessor or PropertyWritable)) = PropertyWritable) then
     begin
+      Cache := CacheEntryFor(Cache, NewShape);
       Cache^.Shape := NewShape;
       Cache^.Generation := NewShape.Generation;
       Cache^.Slot := Slot;
@@ -1070,6 +1073,7 @@ begin
   else if (not NewShape.IsDictionary) and (NewShape.Parent = OldShape) and (NewShape.Key = Key) and
     (NewShape.Flags = PropertyDefault) then
   begin
+    Cache := CacheEntryFor(Cache, OldShape);
     Cache^.Shape := OldShape;
     Cache^.Generation := 0;
     Cache^.Slot := NewShape.Slot;
@@ -1593,6 +1597,7 @@ var
   Address: PByte;
   Binding: ^TJsImportBinding;
   Module: TJsModule;
+  Entry: PJsPropertyCache;
 label
   ReloadFrame, DispatchLoop, Unwind, DoReturn, Finished;
 begin
@@ -1872,6 +1877,26 @@ DispatchLoop:
                 Inc(PC, 5);
                 Continue;
               end;
+            end
+            else if Cache^.Extra <> nil then
+            begin
+              { A site that has seen several shapes. }
+              Entry := FindCacheEntry(Cache, Target.Shape);
+              if (Entry <> nil) and (Target.Shape.Generation = Entry^.Generation) then
+              begin
+                if Entry^.Holder = nil then
+                begin
+                  Regs[Code[PC + 1]] := Target.GetSlot(Entry^.Slot);
+                  Inc(PC, 5);
+                  Continue;
+                end;
+                if (Target.Proto = Entry^.Holder) and (Entry^.Holder.Shape = Entry^.HolderShape) then
+                begin
+                  Regs[Code[PC + 1]] := Entry^.Holder.GetSlot(Entry^.Slot);
+                  Inc(PC, 5);
+                  Continue;
+                end;
+              end;
             end;
           end;
           Value := GetNamedSlow(A, Constants[Code[PC + 3]], Cache);
@@ -1924,6 +1949,30 @@ DispatchLoop:
                 Target.SetSlot(Cache^.Slot, Regs[Code[PC + 3]]);
                 Inc(PC, 5);
                 Continue;
+              end;
+            end
+            else if Cache^.Extra <> nil then
+            begin
+              Entry := FindCacheEntry(Cache, Target.Shape);
+              if Entry <> nil then
+              begin
+                if Entry^.NewShape = nil then
+                begin
+                  if Target.Shape.Generation = Entry^.Generation then
+                  begin
+                    Target.SetSlot(Entry^.Slot, Regs[Code[PC + 3]]);
+                    Inc(PC, 5);
+                    Continue;
+                  end;
+                end
+                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+                begin
+                  Target.EnsureSlotCapacity(Self, Entry^.Slot + 1);
+                  Target.Shape := Entry^.NewShape;
+                  Target.SetSlot(Entry^.Slot, Regs[Code[PC + 3]]);
+                  Inc(PC, 5);
+                  Continue;
+                end;
               end;
             end;
           end;

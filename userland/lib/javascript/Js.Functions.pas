@@ -67,6 +67,11 @@ const
   CodeSetter = 8192;
 
 type
+  PJsPropertyCacheExtra = ^TJsPropertyCacheExtra;
+
+  { An inline cache: what one property access site saw last. A site
+    that sees objects of several shapes gets up to three more entries
+    (Extra), the oldest replaced after that. }
   TJsPropertyCache = record
     Shape: TJsShape;
     Generation: LongWord;
@@ -77,8 +82,14 @@ type
     { An addition: the shape after it, and the prototype epoch then. }
     NewShape: TJsShape;
     Epoch: LongWord;
+    Extra: PJsPropertyCacheExtra;
   end;
   PJsPropertyCache = ^TJsPropertyCache;
+
+  TJsPropertyCacheExtra = record
+    Entries: array[0..2] of TJsPropertyCache;
+    Next: Integer;
+  end;
 
   TJsHandler = record
     StartPC: Integer;
@@ -130,6 +141,7 @@ type
     { Mapped arguments: the environment slot of each parameter (-1: not
       mapped). }
     ParameterSlots: array of Integer;
+    destructor Destroy; override;
     procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
     function LineAt(PC: Integer; out Column: Integer): Integer;
@@ -229,6 +241,11 @@ type
   end;
 
 function NewEnvironment(Heap: TJsHeap; Parent: TJsEnvironment; Count: Integer): TJsEnvironment;
+{ The entry of Cache to fill for objects of Shape: the first while it is
+  free or for Shape, else one of the extra ones. }
+function CacheEntryFor(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCache;
+{ The extra entry for Shape (nil: none). }
+function FindCacheEntry(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCache; inline;
 function ArgumentOrUndefined(Args: PJsValueArray; ArgCount, Index: Integer): TJsValue; inline;
 function JsIsCallable(Value: TJsValue): Boolean; inline;
 function JsIsConstructor(Value: TJsValue): Boolean;
@@ -240,21 +257,71 @@ begin
   Result := InstanceSize + System.Length(Text) * 2 + System.Length(FileName);
 end;
 
+function CacheEntryFor(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCache;
+var
+  Index: Integer;
+  Extra: PJsPropertyCacheExtra;
+begin
+  if (Cache^.Shape = nil) or (Cache^.Shape = Shape) then
+    Exit(Cache);
+  Extra := Cache^.Extra;
+  if Extra = nil then
+  begin
+    New(Extra);
+    FillChar(Extra^, SizeOf(TJsPropertyCacheExtra), 0);
+    Cache^.Extra := Extra;
+  end;
+  for Index := 0 to 2 do
+    if (Extra^.Entries[Index].Shape = nil) or (Extra^.Entries[Index].Shape = Shape) then
+      Exit(@Extra^.Entries[Index]);
+  Result := @Extra^.Entries[Extra^.Next];
+  FillChar(Result^, SizeOf(TJsPropertyCache), 0);
+  Extra^.Next := (Extra^.Next + 1) mod 3;
+end;
+
+function FindCacheEntry(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCache;
+var
+  Index: Integer;
+begin
+  for Index := 0 to 2 do
+    if Cache^.Extra^.Entries[Index].Shape = Shape then
+      Exit(@Cache^.Extra^.Entries[Index]);
+  Result := nil;
+end;
+
+procedure MarkCacheEntry(Tracer: TJsTracer; const Entry: TJsPropertyCache);
+begin
+  Tracer.MarkCell(Entry.Shape);
+  Tracer.MarkCell(Entry.Holder);
+  Tracer.MarkCell(Entry.HolderShape);
+  Tracer.MarkCell(Entry.NewShape);
+end;
+
 { TJsCode }
+
+destructor TJsCode.Destroy;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Caches) do
+    if Caches[Index].Extra <> nil then
+      Dispose(Caches[Index].Extra);
+  inherited Destroy;
+end;
 
 procedure TJsCode.Trace(Tracer: TJsTracer);
 var
-  Index: Integer;
+  Index, Inner: Integer;
 begin
   Tracer.MarkValues(@Constants[0], System.Length(Constants));
   for Index := 0 to High(Functions) do
     Tracer.MarkCell(Functions[Index]);
   for Index := 0 to High(Caches) do
   begin
-    Tracer.MarkCell(Caches[Index].Shape);
-    Tracer.MarkCell(Caches[Index].Holder);
-    Tracer.MarkCell(Caches[Index].HolderShape);
-    Tracer.MarkCell(Caches[Index].NewShape);
+    MarkCacheEntry(Tracer, Caches[Index]);
+    if Caches[Index].Extra <> nil then
+      for Inner := 0 to 2 do
+        MarkCacheEntry(Tracer, Caches[Index].Extra^.Entries[Inner]);
   end;
   Tracer.MarkCell(Name);
   Tracer.MarkCell(Source);
